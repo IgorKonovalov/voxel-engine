@@ -168,6 +168,15 @@ under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2
   (`B` key, carves into an already dug cave, 1d61aba): 3.07 to 4.63 ms over about 20 runs.
   Both miss the 2 ms budget; the budget stands (owner's call at the Plan 0001 close) and the
   edit cost gets its own plan after Plan 0002.
+  **Reading (dev reference, AMD Ryzen 9 5900HS, Plan 0003, 96afb82):** the same `worst` case
+  reads 3.656 ms (CI 3.641 to 3.672 ms) with the dev box under outside load (load average
+  about 10), against 4.548 to 4.641 ms for the Plan 0001 edit path run alternately in the same
+  window; the fly-through `B` line (`--level --seed 1`) reads 3.33 to 3.41 ms against 4.42 to
+  4.46 ms. **Quiet-box reading at the Plan 0003 close** (a958ec1, same `vxe-world` tree,
+  exclusive perf lock, 1-minute load under 3.5 and falling, nothing else running): `worst`
+  3.556 to 3.566 ms (CI 3.552 to 3.572 ms over two runs), `mixed` 2.586 to 2.596 ms, `tool`
+  8.119 to 8.120 ms; the fly-through `B` line 3.30 to 3.34 ms. It misses the 2 ms budget; the
+  budget stands (owner's call at the Plan 0003 close) and Plan 0014 is the second pass.
 - **Results** are returned synchronously with the edit, per material, exact.
 - **Determinism:** the same op list on the same seed yields bit-identical voxels and results on
   Linux and Windows. CI asserts a fixed vector's hash on both arms. **Asserted:**

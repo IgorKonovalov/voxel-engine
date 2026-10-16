@@ -1,48 +1,116 @@
-//! The edit budget (`nfr.md` §4): 100 carves of radius 10 voxels (1 m at 10 cm) at distinct
-//! seeded positions, each iteration on a fresh solid world so every carve expands uniform
-//! bricks, the worst case.
+//! The edit budget (`nfr.md` §4), three cases, each iteration on a freshly generated world
+//! built outside the timed region:
+//!
+//! - `worst`: 100 carves of radius 10 voxels (1 m at 10 cm) at distinct seeded positions on a
+//!   solid world, so every carve expands uniform bricks.
+//! - `mixed`: the same 100 carves on a world of 16-voxel cubes, two thirds rock and one third
+//!   air, so the carves meet uniform-air, uniform-rock and (after earlier carves) `Full` bricks.
+//! - `tool`: 100 capsule carves of radius 5 voxels and length 30 voxels at seeded centres and
+//!   seeded directions on the solid world.
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use vxe_world::hash::mix64;
 use vxe_world::*;
 
-fn solid_world() -> World {
-    let mut table = MaterialTable::new();
-    let rock = table.push(Material::named("rock"));
-    World::generate(
-        ChunkExtent::new([-2, -2, -2], [2, 2, 2]),
-        &UniformSource(rock),
-        &table,
-    )
+fn extent() -> ChunkExtent {
+    ChunkExtent::new([-2, -2, -2], [2, 2, 2])
 }
 
-/// 100 distinct centres within ±100 voxels of the origin, so every sphere stays resident.
-fn centres() -> Vec<Fixed3> {
-    let mut out: Vec<Fixed3> = Vec::new();
-    let mut state = 0x5EED_0004u64;
+fn table() -> (MaterialTable, MaterialId) {
+    let mut table = MaterialTable::new();
+    let rock = table.push(Material::named("rock"));
+    (table, rock)
+}
+
+fn solid_world() -> World {
+    let (table, rock) = table();
+    World::generate(extent(), &UniformSource(rock), &table)
+}
+
+/// `material = if ((x >> 4) + (y >> 4) + (z >> 4)).rem_euclid(3) != 0 { 1 } else { 0 }`. The
+/// value is constant over each 16³ cube, so it is evaluated once per brick (bricks are 8³ and
+/// aligned to the cubes).
+struct CubesSource;
+
+impl WorldSource for CubesSource {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        let base = coord.min_voxel().0;
+        for slot in 0..CHUNK_BRICKS {
+            let b = brick_of_slot(slot);
+            let v = [0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE);
+            let m = if ((v[0] >> 4) + (v[1] >> 4) + (v[2] >> 4)).rem_euclid(3) != 0 {
+                1
+            } else {
+                AIR
+            };
+            out.set_brick(slot, Brick::Uniform(m));
+        }
+    }
+}
+
+fn mixed_world() -> World {
+    let (table, _) = table();
+    World::generate(extent(), &CubesSource, &table)
+}
+
+/// 100 distinct voxels within ±100 voxels of the origin, so every op stays resident.
+fn seeded_voxels(seed: u64) -> Vec<[i32; 3]> {
+    let mut out: Vec<[i32; 3]> = Vec::new();
+    let mut state = seed;
     while out.len() < 100 {
         let v = [0; 3].map(|_| {
             state = mix64(state);
             (state % 201) as i32 - 100
         });
-        let c = centre_of_voxel(v);
-        if !out.contains(&c) {
-            out.push(c);
+        if !out.contains(&v) {
+            out.push(v);
         }
     }
     out
 }
 
-fn carves(c: &mut Criterion) {
-    let ops: Vec<_> = centres()
+fn sphere_ops() -> Vec<EditOp> {
+    seeded_voxels(0x5EED_0004)
         .into_iter()
-        .map(|p| EditOp::sphere(p, 10 * FIXED_ONE, Mode::Carve))
-        .collect();
-    c.bench_function("100 radius-10 carves, fresh solid world", |b| {
+        .map(|v| EditOp::sphere(centre_of_voxel(v), 10 * FIXED_ONE, Mode::Carve))
+        .collect()
+}
+
+/// Capsules of radius 5 voxels whose segment is 30 voxels long (to within one fixed unit),
+/// centred on seeded voxels, along seeded non-zero integer directions.
+fn tool_ops() -> Vec<EditOp> {
+    let mut state = 0x5EED_7001u64;
+    seeded_voxels(0x5EED_7000)
+        .into_iter()
+        .map(|v| {
+            let d = loop {
+                let d = [0; 3].map(|_| {
+                    state = mix64(state);
+                    (state % 513) as i64 - 256
+                });
+                if d != [0; 3] {
+                    break d;
+                }
+            };
+            let len = (d.iter().map(|c| c * c).sum::<i64>()).isqrt().max(1);
+            let half = d.map(|c| c * 15 * FIXED_ONE / len);
+            let c = centre_of_voxel(v).0;
+            EditOp::capsule(
+                Fixed3([0, 1, 2].map(|k| c[k] - half[k])),
+                Fixed3([0, 1, 2].map(|k| c[k] + half[k])),
+                5 * FIXED_ONE,
+                Mode::Carve,
+            )
+        })
+        .collect()
+}
+
+fn run(c: &mut Criterion, name: &str, setup: fn() -> World, ops: &[EditOp]) {
+    c.bench_function(name, |b| {
         b.iter_batched(
-            solid_world,
+            setup,
             |world| {
-                for op in &ops {
+                for op in ops {
                     std::hint::black_box(world.apply(op).unwrap());
                 }
                 world
@@ -52,5 +120,12 @@ fn carves(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, carves);
+fn edits(c: &mut Criterion) {
+    let spheres = sphere_ops();
+    run(c, "worst", solid_world, &spheres);
+    run(c, "mixed", mixed_world, &spheres);
+    run(c, "tool", solid_world, &tool_ops());
+}
+
+criterion_group!(benches, edits);
 criterion_main!(benches);

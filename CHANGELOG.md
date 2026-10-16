@@ -6,6 +6,22 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-17
+
+Plan 0003: the edit-cost pass. `World::apply` returns the same voxels and results as before
+(a brute-force oracle and both pinned hashes say so) and the `worst` edit bench drops from
+about 4.6 to 3.56 ms on the dev box, still over the 2 ms figure in `docs/nfr.md` §4, which
+stands; Plan 0014 is the second pass.
+
+- `vxe-world`: edits resolve the mode once per op into a target table, write each brick row
+  as a span solved from the shape, and tally counts by material id and bounds once per brick.
+  Public, newly: `Shape::voxel_bounds` and `Shape::contains` (were crate-private), and
+  `Shape::row_span` (new), the inclusive run of voxel `x` indices in a row whose centres lie
+  inside the shape.
+- Tests and benches: `reference_apply` (a brute-force edit model in test support), the
+  oracle test over 200 seeded ops, a row-span property test, and the `worst`, `mixed` and
+  `tool` cases of the `edits` bench.
+
 ## [0.4.0] - 2026-10-16
 
 Plan 0005: the surface-look spike, the first M2 plan. The owner chose per-voxel contour planes

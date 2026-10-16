@@ -149,8 +149,9 @@ edit persistence and the narrowed, sharded mirror, all tested headless. M1 is do
 **recorded misses on two `nfr.md` §2 lines** (owner's ruling at the Plan 0002 close): the
 streaming line (render-thread CPU p50 about 7 ms, p99 52 to 61 ms against 1.0 ms) and primary
 rays in the streamed world (6.69 ms at 1080p against 3.0 ms), both on the dev reference. The
-budgets stand. The §4 edit-cost miss carries forward from Plan 0001 to Plan 0003, which
-read 3.1 to 3.7 ms; Plan 0014 (draft) is the second pass against the same 2 ms figure.
+budgets stand. The §4 edit-cost miss carries forward from Plan 0001 to Plan 0003 (closed 2026-10-17,
+v0.4.1), which cut the `worst` bench from 4.6 to 3.56 ms on a quiet dev box with no result or
+hash moved; the owner keeps the 2 ms figure, and Plan 0014 (approved) is the second pass.
 
 **Next, before M2's lighting:** a streaming-CPU plan (incremental queue, residency sweep and
 window shift; narrowing and staging on workers) and a march-pass diagnosis spike (step counts,

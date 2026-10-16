@@ -4,7 +4,7 @@
 //! distances in `i64`; the capsule multiplies two squared lengths and works in `i128`. Both
 //! stay exact for coordinates within ±2^30 fixed-point units (±4 M voxels) of each other.
 
-use crate::fixed::{Fixed3, first_centre_at_or_above, last_centre_at_or_below};
+use crate::fixed::{Fixed3, centre, first_centre_at_or_above, last_centre_at_or_below};
 
 /// A region of space in fixed point.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -30,7 +30,8 @@ pub(crate) enum Coverage {
 
 impl Shape {
     /// Inclusive voxel bounds of every voxel whose centre may lie inside; `None` when empty.
-    pub(crate) fn voxel_bounds(&self) -> Option<([i64; 3], [i64; 3])> {
+    /// An edit with this shape reads and writes no voxel outside them.
+    pub fn voxel_bounds(&self) -> Option<([i64; 3], [i64; 3])> {
         let (lo, hi) = match *self {
             Shape::Sphere { c, r } => {
                 if r < 0 {
@@ -58,8 +59,9 @@ impl Shape {
         (0..3).all(|k| lo[k] <= hi[k]).then_some((lo, hi))
     }
 
-    /// Whether the fixed-point point `p` is inside.
-    pub(crate) fn contains(&self, p: [i64; 3]) -> bool {
+    /// Whether the fixed-point point `p` is inside. An edit changes a voxel only when this
+    /// holds for its centre (`256 v + 128` per axis).
+    pub fn contains(&self, p: [i64; 3]) -> bool {
         match *self {
             Shape::Sphere { c, r } => dist2(p, c.0) <= r * r,
             Shape::Box_ { min, max } => (0..3).all(|k| p[k] >= min.0[k] && p[k] < max.0[k]),
@@ -69,6 +71,49 @@ impl Shape {
                 num <= r * r * den
             }
         }
+    }
+
+    /// The inclusive range of voxel indices `x` in `x_lo..=x_hi` whose centres
+    /// `(256 x + 128, 256 y + 128, 256 z + 128)` lie inside, or `None` when there are none.
+    /// The set of such `x` is always one contiguous range, because every shape is convex.
+    ///
+    /// The sphere solves `dx² <= r² - dy² - dz²` with an integer square root: for a
+    /// non-negative integer `rem`, `dx² <= rem` exactly when `|dx| <= isqrt(rem)`. The box
+    /// clips its half-open range. The capsule scans inward from both ends with the test of
+    /// [`Shape::contains`], exact because the capsule is convex.
+    pub fn row_span(&self, y: i64, z: i64, x_lo: i64, x_hi: i64) -> Option<(i64, i64)> {
+        let (lo, hi) = match *self {
+            Shape::Sphere { c, r } => {
+                let dy = centre(y) - c.0[1];
+                let dz = centre(z) - c.0[2];
+                let rem = r * r - dy * dy - dz * dz;
+                if r < 0 || rem < 0 {
+                    return None;
+                }
+                let h = rem.isqrt();
+                (
+                    first_centre_at_or_above(c.0[0] - h).max(x_lo),
+                    last_centre_at_or_below(c.0[0] + h).min(x_hi),
+                )
+            }
+            Shape::Box_ { min, max } => {
+                let (cy, cz) = (centre(y), centre(z));
+                if cy < min.0[1] || cy >= max.0[1] || cz < min.0[2] || cz >= max.0[2] {
+                    return None;
+                }
+                (
+                    first_centre_at_or_above(min.0[0]).max(x_lo),
+                    last_centre_at_or_below(max.0[0] - 1).min(x_hi),
+                )
+            }
+            Shape::Capsule { a, b, r } => {
+                let row = CapsuleRow::new(a.0, b.0, r, centre(y), centre(z));
+                let lo = (x_lo..=x_hi).find(|&x| row.contains(centre(x)))?;
+                let hi = (lo..=x_hi).rev().find(|&x| row.contains(centre(x)))?;
+                (lo, hi)
+            }
+        };
+        (lo <= hi).then_some((lo, hi))
     }
 
     /// Relation to every fixed-point centre in the box `clo..=chi`. `Outside` and `Inside`
@@ -155,6 +200,55 @@ fn segment_dist2(p: [i64; 3], a: [i64; 3], b: [i64; 3]) -> (i128, i128) {
     }
     // |w|² - t² / |d|², over the common denominator |d|².
     (ww * len2 - t * t, len2)
+}
+
+/// The capsule test of [`Shape::contains`] along one row (fixed `y`, `z`): the terms that do
+/// not depend on `x` are summed once, so each point costs three products. Every sum is the
+/// same exact integer `segment_dist2` forms, so the verdict is identical point for point.
+struct CapsuleRow {
+    ax: i128,
+    bx: i128,
+    dx: i128,
+    len2: i128,
+    r2: i128,
+    /// `y`, `z` parts of `w·d`, `|w|²` and `|p - b|²`.
+    t_yz: i128,
+    ww_yz: i128,
+    ee_yz: i128,
+}
+
+impl CapsuleRow {
+    fn new(a: [i64; 3], b: [i64; 3], r: i64, cy: i64, cz: i64) -> Self {
+        let d = [0, 1, 2].map(|k| i128::from(b[k] - a[k]));
+        let (wy, wz) = (i128::from(cy - a[1]), i128::from(cz - a[2]));
+        let (ey, ez) = (i128::from(cy - b[1]), i128::from(cz - b[2]));
+        Self {
+            ax: i128::from(a[0]),
+            bx: i128::from(b[0]),
+            dx: d[0],
+            len2: d[0] * d[0] + d[1] * d[1] + d[2] * d[2],
+            r2: i128::from(r) * i128::from(r),
+            t_yz: wy * d[1] + wz * d[2],
+            ww_yz: wy * wy + wz * wz,
+            ee_yz: ey * ey + ez * ez,
+        }
+    }
+
+    /// Whether the point `(cx, y, z)` is inside.
+    #[inline]
+    fn contains(&self, cx: i64) -> bool {
+        let wx = i128::from(cx) - self.ax;
+        let t = wx * self.dx + self.t_yz;
+        let ww = wx * wx + self.ww_yz;
+        if self.len2 == 0 || t <= 0 {
+            ww <= self.r2
+        } else if t >= self.len2 {
+            let ex = i128::from(cx) - self.bx;
+            ex * ex + self.ee_yz <= self.r2
+        } else {
+            ww * self.len2 - t * t <= self.r2 * self.len2
+        }
+    }
 }
 
 /// Smallest `s >= 0` with `s * s >= n`.
