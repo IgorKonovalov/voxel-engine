@@ -4,7 +4,7 @@
 //! By default the cave is unbounded and streams around the camera (ADR-0003): full detail
 //! within `r_full` chunks, mips out to `r_lod`. `--level` generates the bounded level instead.
 //!
-//! `flythrough [--seed N] [--level] [--walk] [--render WxH] [--frames N] [--bench N]
+//! `flythrough [--seed N] [--level] [--vault] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH]
 //! [--view VIEW] [--detail]`. `--render` fixes the marcher's resolution (the window
 //! scales it); `--frames` exits after N frames, printing the `F1` readings over the last
@@ -17,7 +17,9 @@
 //! attribute pages, so `N` can reach `contour` (without `--look` it skips it), and gives rock
 //! its procedural detail (`--rock-detail` sets rock's feature scale in voxels and strength,
 //! default `flythrough::ROCK_DETAIL`); `--view` starts in a view (`shaded`, `normals`, `hitmask`) and
-//! `--detail` with detail on. `N` cycles the normal mode and `V` toggles detail.
+//! `--detail` with detail on. `N` cycles the normal mode and `V` toggles detail. `--vault`
+//! places a 16-voxel room with an indestructible shell 10 m along +x from the spawn, written
+//! over the cave as it generates (on the level, clamped inside the extent).
 //!
 //! Keys: `G` toggles fly and walk mode (on the bounded level only; streaming refuses it, as it
 //! refuses `--walk`); in walk mode `W A S D` walk at 3 m/s and `Space` jumps, or, held against
@@ -32,7 +34,7 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use fly::{Fly, Walk};
-use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK};
+use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, VAULT_EDGE};
 use flythrough::{RESIDENCY, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
 use vxe_render::glam::Vec3;
@@ -106,6 +108,8 @@ struct Args {
     autopilot: bool,
     headless: bool,
     walk: bool,
+    /// `--vault`: the cave generates with the vault room ahead of the spawn.
+    vault: bool,
     sync_budget: u64,
     /// `--look`: the starting normal mode.
     look: Option<NormalMode>,
@@ -144,6 +148,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         autopilot: false,
         headless: false,
         walk: false,
+        vault: false,
         sync_budget: SYNC_BUDGET_MIB << 20,
         look: None,
         detail: false,
@@ -188,6 +193,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--autopilot" => args.autopilot = true,
             "--headless" => args.headless = true,
             "--walk" => args.walk = true,
+            "--vault" => args.vault = true,
             _ => return Err(format!("unknown argument {flag}")),
         }
     }
@@ -1516,9 +1522,19 @@ fn main() {
     let seed = args.seed;
     let (spawn, pending) = if args.level {
         let source = CaveSource::new(seed, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
+        if args.vault {
+            println!(
+                "vault: {VAULT_EDGE}^3 shell room at {:?}",
+                source.vault_origin().0
+            );
+        }
         let generation = std::thread::spawn(move || {
             let t = now();
-            let world = World::generate(source.extent, &source, &materials(args));
+            let world = if args.vault {
+                World::generate(source.extent, &source.with_vault(), &materials(args))
+            } else {
+                World::generate(source.extent, &source, &materials(args))
+            };
             println!(
                 "generated seed {seed} over {LEVEL_CHUNKS:?} chunks in {:.0} ms: {} full bricks",
                 ms_since(t),
@@ -1534,14 +1550,20 @@ fn main() {
             .saturating_sub(1)
             .max(1);
         let world = World::new(&materials(args));
-        let mut streamer = Streamer::new(
-            Arc::new(source),
-            StreamConfig {
-                residency: RESIDENCY,
-                workers,
-                persist: PersistConfig::default(),
-            },
-        );
+        let cfg = StreamConfig {
+            residency: RESIDENCY,
+            workers,
+            persist: PersistConfig::default(),
+        };
+        let mut streamer = if args.vault {
+            println!(
+                "vault: {VAULT_EDGE}^3 shell room at {:?}",
+                source.vault_origin().0
+            );
+            Streamer::new(Arc::new(source.with_vault()), cfg)
+        } else {
+            Streamer::new(Arc::new(source), cfg)
+        };
         // Workers start on the spawn's chunks while the shell opens the window.
         streamer.update(&world, &[source.spawn()]);
         println!(
