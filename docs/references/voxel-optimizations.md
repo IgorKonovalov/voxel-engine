@@ -11,7 +11,10 @@ Each entry ends with the milestone it informs. The distilled list is at the end.
 
 - **Amanatides & Woo, "A Fast Voxel Traversal Algorithm for Ray Tracing", Eurographics 1987.**
   <https://www.eecs.yorku.ca/~amana/research/grid.pdf>. The 3D-DDA every voxel marcher is built
-  on: stepping to the next cell costs two comparisons and one addition. M1.
+  on: stepping to the next cell costs two comparisons and one addition. M1. Our walks
+  (`vxe-world` raycast, `march.wgsl`) skip empty space in cells of several aligned sizes, so
+  they recompute each step's exit from the ray origin instead of accumulating `tMax += tDelta`:
+  the incremental form assumes one cell size, and recomputing keeps the CPU walk exact.
 - **Laine & Karras, "Efficient Sparse Voxel Octrees", I3D 2010.**
   <https://www.nvidia.com/docs/IO/88889/laine2010i3d_paper.pdf>, extended tech report
   <https://research.nvidia.com/sites/default/files/publications/laine2010tr1_paper.pdf>. The

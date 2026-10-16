@@ -1,6 +1,6 @@
 # 0014: Edit cost under 2 ms, second pass: the allocation measured, a brick-array pool, cheaper sphere spans and an analytic capsule row
 
-> **Status:** draft
+> **Status:** approved
 > **Created:** 2026-10-16
 > **Milestone:** M1 follow-up in `docs/roadmap.md` (the `nfr.md` §4 miss, carried from Plans
 > 0001 and 0003)

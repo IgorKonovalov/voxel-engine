@@ -1,6 +1,6 @@
 # 0013: Contour as the fly-through's default: the shadow-ray origin, a streamed footprint under 3 GB, and a weaker rock detail
 
-> **Status:** draft
+> **Status:** approved
 > **Created:** 2026-10-16
 > **Milestone:** M2 in `docs/roadmap.md` (the surface follow-up before the lighting plan)
 > **Related ADRs:** [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
