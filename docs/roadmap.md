@@ -22,8 +22,9 @@ A game-agnostic voxel engine, as a Rust library workspace (ADR-0001):
   on destruction and replicate edits as compact ops.
 - **Spatial queries** (raycast, sweeps, region counts, coarse grids) that serve collision,
   acoustics and navigation from the same data.
-- **Scripting hosts** (WASM for deterministic server-side logic, Lua for client-side scripts)
-  so a game's rules can be data and scripts rather than engine code.
+- **A logic boundary** so a game's server logic is a component behind one trait, developed
+  natively and shipped as WebAssembly (ADR-0010); a Lua host for client-side scripts is
+  deferred until a consumer asks.
 
 What the engine is not: a framework. No ECS, no scene editor, no asset pipeline beyond voxel
 model import. A game owns its loop and composes the crates it needs.
@@ -41,6 +42,7 @@ plan that implements them (see [`adrs/README.md`](adrs/README.md)).
 | Platforms | Linux + Windows, 2019 mid-range desktop GPU baseline, 6 GB VRAM | + macOS; RTX/RDNA2-only |
 | First milestone | a fly-through with digging, built on a headless world crate that is tested without a window | headless-only first; sound graybox first |
 | API surface | Rust crates by git dependency, plus scripting: **WASM (wasmtime) for deterministic server logic, Lua (mlua) for client-side scripts** | Rust only; a C ABI; a single runtime for both |
+| Logic as a component (added 2026-10-16, ADR-0010) | the game's whole server logic implements one `Logic` trait (inputs in, edits and queries through a `Host` handle, opaque bytes out); the same crate links natively for development and ships as a WebAssembly component; the logic produces a level layout and the engine's parallel generator turns it into voxels; Lua is deferred | an engine-owned loop with script hooks; native-only logic; Lua for server logic; generation inside the component |
 | Entities | voxel models (MagicaVoxel-style volumes) on rigs of rigid parts, traced in the same pipeline as the world | skinned triangle meshes with a hybrid rasterize + RT path; deciding later |
 | Repo | public GitHub, MIT OR Apache-2.0 | private; local only |
 | Harness | Ritmolux-style: ADRs, phased plans, architect/dev skills, deny hooks, CI gates | CLAUDE.md + ADRs only |
@@ -252,16 +254,22 @@ work), and the light (real-time GI standing in for the baked occlusion).
 - **Visible proof:** a knock in the fly-through sounds different behind thin and thick walls.
 - **ADRs expected:** HRTF source and audio thread model.
 
-### M5: Simulation split and scripting (Plan 0007 drafts the split and the log; the WASM host gets its own plan after Plan 0007 closes, since it binds the server API; the Lua host is deferred until a consumer asks)
+### M5: Simulation split and the logic component (Plan 0007 drafts the split, the logs and the logic boundary; Plan 0011 the WebAssembly host, after Plan 0007 closes)
 
-- An authoritative world plus edit log on the server side; a client mirror fed by ops over an
-  in-memory channel; snapshot and replay from seed plus log.
-- `vxe-script-wasm`: a `wasmtime` host for server logic with deterministic configuration
-  (canonical NaNs, no clock, fuel metering), typed bindings to world queries and edits.
-- `vxe-script-lua`: an `mlua` host for client-side scripts (presentation, UI hooks), hot reload.
-- **Headless proof:** a replayed log reproduces the world hash; a WASM script's output is
-  identical on both CI arms.
-- **ADRs expected:** scripting split and binding style; channel abstraction.
+- An authoritative world plus op and input logs on the server side; clients send inputs, a
+  `Logic` behind a trait decides the edits through a `Host` handle; a client mirror fed by
+  ops over an in-memory channel, sharing the world in solo; replay from seed plus ops, or
+  re-simulation from seed plus inputs (ADR-0007, ADR-0010).
+- `vxe-script-wasm`: a `wasmtime` host implementing `Logic` for a component built from the
+  same crate as the native logic, with deterministic configuration (canonical NaNs, clocks
+  and entropy from the tick, fuel per tick, a memory cap).
+- Deferred: a Lua host for client-side scripts, until a consumer asks. Follow-ups named by
+  the plans: the level-layout format the logic produces and the generator consumes; entity
+  snapshots across the boundary (with M6); the server owning streaming focus points.
+- **Headless proof:** a replayed log reproduces the world hash; the native and component
+  builds of one logic produce byte-equal op logs on both CI arms.
+- **ADRs:** ADR-0007 (log, channel, client modes) and ADR-0010 (logic as a component), both
+  proposed with their plans.
 
 ### M6: Entities as voxel models (Plan 0008 drafts the `.vox` import; the render half follows Plan 0005)
 

@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0010.**
+**Next free number: 0011.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -23,6 +23,7 @@ the status.
 | [0007](0007-server-op-log-byte-channel-shared-and-owned-clients.md) | Server-owned op log replayed from seed, a byte channel, and a client that shares the world in solo play | proposed |
 | [0008](0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) | Collapse as a capped support flood on the coarse grid and rigid vertical drop ops, not a rigid-body engine | proposed |
 | [0009](0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) | The testbed HUD is an embedded 8 × 8 bitmap font drawn in one overlay pass, with no UI library | proposed |
+| [0010](0010-game-logic-as-a-component-behind-a-logic-trait.md) | The game's server logic is a component behind a `Logic` trait, developed natively and shipped as WebAssembly; Lua is deferred | proposed |
 
 ## Decisions taken but not yet recorded
 
@@ -33,6 +34,5 @@ rather than the intention:
 
 - Far-field clipmap (coarser rings beyond the full-detail radius): with the far-field plan,
   after M1.
-- Scripting split, WASM for server logic and Lua for client scripts: with the scripting plan.
 - Dynamic entities as voxel models on rigid-part rigs: with the entities plan.
 - Network transport: with the networking plan.
