@@ -511,8 +511,8 @@ late is acceptable; a hole near the camera is not, and the unready-near counter 
 | 2: Edited-chunk persistence and disk spill | dev | done | f59b8f1 |
 | 3: Mirror window, dirty-chunk set, budgeted batched upload | dev | done | 4bc17bd |
 | 4: Per-chunk 8-bit palette, wide fallback | dev | done | 8b5147b |
-| 5: Brick pool sharded over four bindings | dev | done | committed with this row |
-| 6: Chunk mips in `vxe-world` | dev | not started | |
+| 5: Brick pool sharded over four bindings | dev | done | 138b3bd |
+| 6: Chunk mips in `vxe-world` | dev | done | committed with this row |
 | 7: The LOD-only ring and the mip walk | dev | not started | |
 | 8: The fly-through streams; autopilot, sweep and readings | dev | not started | |
 
@@ -596,6 +596,13 @@ each. Empty is fine.)_
 - Phase 5: the level's first sync takes about 500 ms of CPU on the dev box against about
   345 ms at Phase 3, from scanning each narrowed brick for new palette materials before
   writing its indices (about 150 ms; a single-pass variant read 670 ms).
+- Phase 6: the determinism vector's mips hash (`World::mips_hash`, 0x6cc1_4fda_4b7f_5188) is
+  taken over the world after the op list and asserted separately; the existing voxel-and-
+  result constant is unchanged. It was blessed on Linux here; the Windows arm has not run it
+  yet (CI on push).
+- Phase 6: public API: `ChunkMips::{build, level, cell, full_bricks, write_hash}`, `majority`,
+  `MIP_LEVELS`, `MIP_BRICKS`, `World::mips_hash`. `World::lod` arrives with the ring in
+  Phase 7.
 
 ### Close triggers
 

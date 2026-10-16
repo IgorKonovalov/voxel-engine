@@ -24,6 +24,7 @@ mod edit;
 mod fixed;
 pub mod hash;
 mod material;
+mod mips;
 mod persist;
 mod query;
 mod raycast;
@@ -41,6 +42,7 @@ pub use coords::{
 pub use edit::{EditError, EditOp, EditResult, Mode};
 pub use fixed::{FIXED_HALF, FIXED_ONE, Fixed3, centre_of_voxel};
 pub use material::{AIR, Material, MaterialFlags, MaterialId, MaterialTable};
+pub use mips::{ChunkMips, MIP_BRICKS, MIP_LEVELS, majority};
 pub use persist::{PersistConfig, SPILL_VERSION, SpillError, decode_spill, encode_spill};
 pub use query::QueryStats;
 pub use raycast::{Face, Hit};

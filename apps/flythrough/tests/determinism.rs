@@ -1,6 +1,7 @@
 //! The cross-platform determinism vector (`nfr.md` §6): a fixed cave, a fixed op list, one
-//! hash over the voxels and every result. CI runs it on Linux and Windows; the constant was
-//! blessed on Linux and a mismatch on either arm is a defect in an integer path.
+//! hash over the voxels and every result, and a second over the mips of the edited chunks.
+//! CI runs it on Linux and Windows; the constants were blessed on Linux and a mismatch on
+//! either arm is a defect in an integer path.
 
 use flythrough::cave::{CaveSource, SHELL};
 use flythrough::cave_materials;
@@ -157,6 +158,12 @@ fn determinism_vector() {
 
     // Blessed on Linux x86_64. Never loosened to make another arm pass.
     assert_eq!(h.finish(), 0x2b6b_6a0d_1f9b_8d75);
+
+    // The mips of every chunk of the edited world (`World::mips_hash`), the LOD-only tier's
+    // contents. Blessed on Linux x86_64, asserted on every arm.
+    let mips = world.mips_hash();
+    println!("mips hash {mips:#018x}");
+    assert_eq!(mips, 0x6cc1_4fda_4b7f_5188);
 }
 
 #[test]

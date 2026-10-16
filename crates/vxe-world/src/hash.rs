@@ -4,6 +4,7 @@
 //! values on every platform and compiler.
 
 use crate::coords::BRICK_VOXELS;
+use crate::mips::{ChunkMips, MIP_LEVELS};
 use crate::store::{World, read};
 
 /// FNV-1a, 64-bit.
@@ -48,6 +49,39 @@ impl World {
                     h.write(&b.get(i).to_le_bytes());
                 }
             }
+        }
+        h.finish()
+    }
+}
+
+impl ChunkMips {
+    /// Feeds the mips to `h`: levels 1 to 3, mip-bricks in order, cells x-fastest as
+    /// little-endian `u16`, a `Uniform` mip-brick as its 512 expanded cells.
+    pub fn write_hash(&self, h: &mut Fnv1a) {
+        for n in 1..=MIP_LEVELS {
+            for b in self.level(n) {
+                for i in 0..BRICK_VOXELS {
+                    h.write(&b.get(i).to_le_bytes());
+                }
+            }
+        }
+    }
+}
+
+impl World {
+    /// FNV-1a 64 over the mips of every resident chunk, built from its current voxels:
+    /// chunks ascending, each as its coordinate (three little-endian `i32`) then
+    /// [`ChunkMips::write_hash`].
+    pub fn mips_hash(&self) -> u64 {
+        let mut h = Fnv1a::default();
+        for c in self.store.coords() {
+            let Some(chunk) = self.store.get(c) else {
+                continue;
+            };
+            for v in c.0 {
+                h.write(&v.to_le_bytes());
+            }
+            ChunkMips::build(&read(&chunk)).write_hash(&mut h);
         }
         h.finish()
     }
