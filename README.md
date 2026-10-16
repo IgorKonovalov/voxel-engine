@@ -12,12 +12,29 @@ It is a **library workspace, not a framework**. There is no ECS, no scene editor
 pipeline beyond voxel-model import. A game composes the crates it needs and owns its own loop
 and entity model.
 
-> **Status: pre-alpha.** The repository holds the workspace skeleton, the architecture decisions,
-> the roadmap and the budgets. No engine code has landed yet. See
-> [`docs/roadmap.md`](docs/roadmap.md) for what comes first and
-> [`CHANGELOG.md`](CHANGELOG.md) for what has shipped.
+> **Status: pre-alpha.** Milestone M1 has shipped: a streamed, editable, ray-marched world
+> you can fly through and dig. Everything else on the list below is planned or in progress.
+> [`CHANGELOG.md`](CHANGELOG.md) says what has shipped, [`docs/roadmap.md`](docs/roadmap.md)
+> what comes next, and [`docs/plans/README.md`](docs/plans/README.md) what is in flight.
 
-## What it will do
+## What works today
+
+- **A brick-map world** of `u16` voxels in 8³ bricks and 64³ chunks, with a material table
+  whose rows carry an opaque payload for the game. Bounded worlds, and unbounded ones
+  streamed around a focus point on a worker pool, with an LOD-only ring of mips out past full
+  detail and edited chunks kept in RAM or spilled to disk.
+- **Deterministic edits.** Sphere, box, capsule and tool-along-ray shapes; carve, fill and
+  replace modes; each op returns per-material counts, the touched chunks and bounds. Integer
+  math throughout, pinned by a cross-platform hash.
+- **Queries:** an integer raycast, point and box queries, and brick occupancy masks.
+- **A compute ray marcher** in WGSL over a sharded GPU mirror of the world, uploaded
+  incrementally from the dirty set, with a headlamp and a shadow ray.
+- **The fly-through** testbed: fly, dig and fill, and print what each edit changed, plus
+  headless benchmarks and golden images.
+
+The figures behind these, met and missed, are in [`docs/nfr.md`](docs/nfr.md).
+
+## Where it is going
 
 - **Streaming world.** Voxels live in a chunked brick map with LOD mips, paged around focus
   points and generated on background threads by a source the game provides.
@@ -63,8 +80,33 @@ Then:
 
 ```sh
 cargo build
-cargo run -p flythrough
+cargo run --release -p flythrough
 ```
+
+### The fly-through
+
+With no flags it streams an unbounded seeded cave around the camera.
+
+| Input | Does |
+|-------|------|
+| Mouse, `W` `A` `S` `D`, `Space` / `C` | Look and fly; hold `Shift` to go faster |
+| Left / right click | Dig / fill at the crosshair; the edit result prints to the terminal |
+| Scroll | Change the dig radius |
+| `L` | Toggle the shadow ray |
+| `B` | Run the carve benchmark in place |
+| `F1` | Sample the next frames and print frame-time readings |
+| `Esc` | Quit |
+
+| Flag | Does |
+|------|------|
+| `--level` | The bounded level instead of the streamed cave |
+| `--seed N` | World seed (default 1) |
+| `--headless` | Run the same frames on an offscreen target, with no window |
+| `--frames N` | Exit after `N` frames, printing the `F1` readings over the last ones |
+| `--bench N` | Run the `B` benchmark `N` times after the first upload, before the first frame |
+| `--autopilot` | Dig, fly 300 m out and back through the streamed cave, print streaming readings |
+| `--render WxH` | Fix the marcher's resolution; the window scales it |
+| `--sync-budget MiB` | Bytes uploaded to the GPU mirror per frame |
 
 ### Checks
 
