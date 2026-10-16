@@ -5,7 +5,8 @@
 //! within `r_full` chunks, mips out to `r_lod`. `--level` generates the bounded level instead.
 //!
 //! `flythrough [--seed N] [--level] [--render WxH] [--frames N] [--bench N] [--autopilot]
-//! [--sync-budget MIB] [--headless] [--look MODE] [--view VIEW] [--detail]`. `--render` fixes the marcher's resolution (the window
+//! [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH] [--view VIEW]
+//! [--detail]`. `--render` fixes the marcher's resolution (the window
 //! scales it); `--frames` exits after N frames, printing the `F1` readings over the last
 //! ones; `--bench` runs the `B` bench N times right after the first mirror upload, before
 //! the first frame; `--autopilot` digs, flies 300 m out and back and prints the streaming
@@ -13,7 +14,8 @@
 //! `--headless` runs the same frames on an offscreen target with no window; `--look` starts
 //! in a normal mode (`face`, `trilinear8`, `gradient27`, `contour`) and gives the mirror
 //! attribute pages, so `N` can reach `contour` (without `--look` it skips it), and gives rock
-//! its procedural detail; `--view` starts in a view (`shaded`, `normals`, `hitmask`) and
+//! its procedural detail (`--rock-detail` sets rock's feature scale in voxels and strength,
+//! default `flythrough::ROCK_DETAIL`); `--view` starts in a view (`shaded`, `normals`, `hitmask`) and
 //! `--detail` with detail on. `N` cycles the normal mode and `V` toggles detail.
 
 mod fly;
@@ -94,6 +96,8 @@ struct Args {
     look: Option<NormalMode>,
     /// `--detail`: start with procedural detail on.
     detail: bool,
+    /// `--rock-detail`: rock's feature scale (voxels) and strength under `--look`.
+    rock_detail: [f32; 2],
     view: ViewMode,
 }
 
@@ -109,6 +113,7 @@ fn parse_args() -> Result<Args, String> {
         sync_budget: SYNC_BUDGET_MIB << 20,
         look: None,
         detail: false,
+        rock_detail: flythrough::ROCK_DETAIL,
         view: ViewMode::Shaded,
     };
     let mut it = std::env::args().skip(1);
@@ -138,6 +143,7 @@ fn parse_args() -> Result<Args, String> {
                     "--look takes face, trilinear8, gradient27 or contour, not {v}"
                 ))?);
             }
+            "--rock-detail" => args.rock_detail = parse_rock_detail(&value()?)?,
             "--view" => {
                 let v = value()?;
                 args.view = ViewMode::from_name(&v)
@@ -150,10 +156,30 @@ fn parse_args() -> Result<Args, String> {
             _ => return Err(format!("unknown argument {flag}")),
         }
     }
+    if args.rock_detail != flythrough::ROCK_DETAIL && args.look.is_none() {
+        return Err("--rock-detail applies under --look".to_owned());
+    }
     if args.autopilot && args.level {
         return Err("--autopilot streams; it does not take --level".to_owned());
     }
     Ok(args)
+}
+
+/// `SCALE,STRENGTH`: a feature scale in voxels above 0 and a strength in `[0, 1]`.
+fn parse_rock_detail(v: &str) -> Result<[f32; 2], String> {
+    let err = || format!("--rock-detail takes SCALE,STRENGTH (e.g. 4,0.3), not {v}");
+    let (scale, strength) = v.split_once(',').ok_or_else(err)?;
+    let parse = |s: &str| s.trim().parse::<f32>().map_err(|_| err());
+    let [scale, strength] = [parse(scale)?, parse(strength)?];
+    if !(scale > 0.0 && scale.is_finite()) {
+        return Err(format!("--rock-detail: scale must be above 0, not {scale}"));
+    }
+    if !(0.0..=1.0).contains(&strength) {
+        return Err(format!(
+            "--rock-detail: strength must be in [0, 1], not {strength}"
+        ));
+    }
+    Ok([scale, strength])
 }
 
 /// One printed line per edit: `carved: rock 1234, ore 12 (3 chunks, 0.21 ms)`.
@@ -359,6 +385,11 @@ struct Run {
 }
 
 impl Run {
+    /// Rock's detail pair when the table carries it (under `--look`).
+    fn rock_detail(&self) -> Option<[f32; 2]> {
+        self.args.look.is_some().then_some(self.args.rock_detail)
+    }
+
     fn camera_ray(&self) -> (Fixed3, [i64; 3]) {
         let c = &self.fly.camera;
         let origin = c
@@ -518,7 +549,7 @@ impl Run {
         println!(
             "frame ({w}x{h}, median of {}, {}): cpu {:.3} ms, gpu march {gpu}; full bricks {}, mirror {} B live, {} B allocated",
             cpu_ms.len(),
-            look_line(&self.look),
+            look_line(&self.look, self.rock_detail()),
             median(&mut cpu_ms),
             self.world.stats().full_bricks,
             gfx.mirror.mirror_bytes(),
@@ -966,11 +997,11 @@ impl Run {
         if input.pressed(KeyCode::KeyN) {
             let contour = self.gfx.as_ref().is_some_and(|g| g.mirror.surface_attrs());
             self.look.normal_mode = self.look.normal_mode.next(contour);
-            println!("{}", look_line(&self.look));
+            println!("{}", look_line(&self.look, self.rock_detail()));
         }
         if input.pressed(KeyCode::KeyV) {
             self.look.detail = !self.look.detail;
-            println!("{}", look_line(&self.look));
+            println!("{}", look_line(&self.look, self.rock_detail()));
         }
         if input.pressed(KeyCode::F1) {
             self.samples = Some(Samples::default());
@@ -1054,10 +1085,14 @@ impl Run {
     }
 }
 
-/// `look face, detail off, view shaded`.
-fn look_line(look: &LookParams) -> String {
+/// `look face, detail off, view shaded`, or with rock's detail under `--look`:
+/// `look face, detail off (rock scale 4, strength 0.3), view shaded`.
+fn look_line(look: &LookParams, rock_detail: Option<[f32; 2]>) -> String {
+    let rock = rock_detail.map_or_else(String::new, |[scale, strength]| {
+        format!(" (rock scale {scale}, strength {strength})")
+    });
     format!(
-        "look {}, detail {}, view {}",
+        "look {}, detail {}{rock}, view {}",
         look.normal_mode.name(),
         if look.detail { "on" } else { "off" },
         look.view.name()
@@ -1246,10 +1281,11 @@ fn pollster_block_on<F: std::future::Future>(f: F) -> F::Output {
     }
 }
 
-/// The cave's material table; under `--look`, with rock's procedural detail.
+/// The cave's material table; under `--look`, with rock's procedural detail at
+/// `--rock-detail`.
 fn materials(args: Args) -> MaterialTable {
     if args.look.is_some() {
-        flythrough::look_materials()
+        flythrough::look_materials_with(args.rock_detail)
     } else {
         cave_materials()
     }
@@ -1363,6 +1399,30 @@ mod tests {
             edit_line("filled", &EditResult::default(), &cave_materials(), 0.0),
             "filled: nothing (0 chunks, 0.00 ms)"
         );
+    }
+
+    #[test]
+    fn rock_detail_parses_scale_and_strength() {
+        assert_eq!(parse_rock_detail("8,0.6"), Ok([8.0, 0.6]));
+        assert_eq!(parse_rock_detail("2.5, 0"), Ok([2.5, 0.0]));
+        assert!(parse_rock_detail("4").is_err());
+        assert!(parse_rock_detail("0,0.3").is_err());
+        assert!(parse_rock_detail("4,1.5").is_err());
+        assert!(parse_rock_detail("4,x").is_err());
+    }
+
+    #[test]
+    fn the_look_line_names_rock_detail_under_look() {
+        let look = LookParams {
+            normal_mode: NormalMode::Face,
+            detail: true,
+            view: ViewMode::Shaded,
+        };
+        assert_eq!(
+            look_line(&look, Some([4.0, 0.3])),
+            "look face, detail on (rock scale 4, strength 0.3), view shaded"
+        );
+        assert_eq!(look_line(&look, None), "look face, detail on, view shaded");
     }
 
     #[test]

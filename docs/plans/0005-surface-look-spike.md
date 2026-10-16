@@ -595,6 +595,13 @@ each. Empty is fine.)_
 - Phase 4: the zero-strength, 20 %, world-position and 64-byte-row checks are in
   `apps/flythrough/tests/look.rs` (`material_rows_are_64_bytes` checks the live mirror bytes
   as slots, records, table and 64 B rows).
+- Fix pass, finding 1 (rock detail strength not adjustable): `--rock-detail SCALE,STRENGTH`
+  (default `ROCK_DETAIL`, scale above 0, strength in [0, 1], accepted only with `--look`) sets
+  rock's row through `flythrough::look_materials_with`; the look line prints it, e.g.
+  `look face, detail on (rock scale 8, strength 0.6), view shaded`. `DETAIL_TILT`,
+  `ROCK_DETAIL` and the goldens are unchanged. Phase 6 example:
+  `cargo run --release -p flythrough -- --level --seed 1 --look face --rock-detail 4,0.5`
+  (restart to change the strength; `V` still toggles detail). Commit: committed with this line.
 
 ### Close triggers
 
