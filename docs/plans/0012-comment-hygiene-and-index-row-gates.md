@@ -1,6 +1,6 @@
 # 0012: Two repository gates copied from Ritmolux: comment hygiene in sources, and a byte cap on index rows
 
-> **Status:** draft
+> **Status:** approved (2026-10-16)
 > **Created:** 2026-10-16
 > **Milestone:** none; repository tooling, not an engine slice. It serves the `CLAUDE.md` rule that a rule which keeps getting broken gets a mechanical gate.
 > **Related ADRs:** none. The alternative to a gate is the prose that already states each rule in `CLAUDE.md`; the reasoning behind both gates is recorded in Ritmolux as its ADR-0127 (comment hygiene) and ADR-0116 (index-row cap) and is not restated here.

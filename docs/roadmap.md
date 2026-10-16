@@ -192,7 +192,14 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (Plan 0005 drafts the surface-look spike; the lighting plan follows its close)
+### M2: Lighting that holds in the dark (in progress: Plan 0005 closed; a surface follow-up plan and the lighting plan next)
+
+Plan 0005 closed 2026-10-16 (v0.4.0): the surface-look spike measured four normal modes and
+procedural detail, and the owner chose per-voxel contour planes with weaker rock detail
+(ADR-0011). The fly-through's default stays face normals until a surface follow-up plan fixes
+contour's shadow-ray origin and fits its streamed footprint, which ran the 8 GiB dev card out
+of memory at the default radius; Plan 0005's "Follow-up items" list the work. Neither that
+plan nor the lighting plan is drafted yet.
 
 **Goal:** the consumer's P0 rendering bar. Few lights, emissive voxels, destruction, no ghosting.
 The quality reference is the Sibenik cathedral in Laine & Karras 2010, Figure 1. That image is
@@ -229,7 +236,7 @@ work), and the light (real-time GI standing in for the baked occlusion).
 - **Visible proof:** golden images of a dark cave with one emissive vein, before and after a
   carve, with a stated SSIM floor against the reference.
 - **Budgets:** the full frame at 1080p output on the baseline GPU.
-- **ADRs expected:** denoiser family; upscaler choice.
+- **ADRs expected:** denoiser family; upscaler choice. Surface representation: ADR-0011.
 
 ### M3: Collision, character controller, coarse grids (Plan 0004; drafted)
 

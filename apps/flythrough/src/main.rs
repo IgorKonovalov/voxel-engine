@@ -5,12 +5,18 @@
 //! within `r_full` chunks, mips out to `r_lod`. `--level` generates the bounded level instead.
 //!
 //! `flythrough [--seed N] [--level] [--render WxH] [--frames N] [--bench N] [--autopilot]
-//! [--sync-budget MIB] [--headless]`. `--render` fixes the marcher's resolution (the window
+//! [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH] [--view VIEW]
+//! [--detail]`. `--render` fixes the marcher's resolution (the window
 //! scales it); `--frames` exits after N frames, printing the `F1` readings over the last
 //! ones; `--bench` runs the `B` bench N times right after the first mirror upload, before
 //! the first frame; `--autopilot` digs, flies 300 m out and back and prints the streaming
 //! readings (see [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame;
-//! `--headless` runs the same frames on an offscreen target with no window.
+//! `--headless` runs the same frames on an offscreen target with no window; `--look` starts
+//! in a normal mode (`face`, `trilinear8`, `gradient27`, `contour`) and gives the mirror
+//! attribute pages, so `N` can reach `contour` (without `--look` it skips it), and gives rock
+//! its procedural detail (`--rock-detail` sets rock's feature scale in voxels and strength,
+//! default `flythrough::ROCK_DETAIL`); `--view` starts in a view (`shaded`, `normals`, `hitmask`) and
+//! `--detail` with detail on. `N` cycles the normal mode and `V` toggles detail.
 
 mod fly;
 
@@ -24,9 +30,10 @@ use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK};
 use flythrough::{RESIDENCY, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
 use vxe_render::glam::Vec3;
+use vxe_render::gpu_world;
 use vxe_render::{
-    Camera, GpuWorld, LightParams, LodParams, MarchTimer, Marcher, MirrorConfig, Presenter, Window,
-    wgpu,
+    Camera, GpuWorld, LightParams, LodParams, LookParams, MarchTimer, Marcher, MirrorConfig,
+    NormalMode, Presenter, ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -85,6 +92,13 @@ struct Args {
     autopilot: bool,
     headless: bool,
     sync_budget: u64,
+    /// `--look`: the starting normal mode.
+    look: Option<NormalMode>,
+    /// `--detail`: start with procedural detail on.
+    detail: bool,
+    /// `--rock-detail`: rock's feature scale (voxels) and strength under `--look`.
+    rock_detail: [f32; 2],
+    view: ViewMode,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -97,6 +111,10 @@ fn parse_args() -> Result<Args, String> {
         autopilot: false,
         headless: false,
         sync_budget: SYNC_BUDGET_MIB << 20,
+        look: None,
+        detail: false,
+        rock_detail: flythrough::ROCK_DETAIL,
+        view: ViewMode::Shaded,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -119,16 +137,49 @@ fn parse_args() -> Result<Args, String> {
                     .map_err(|e| format!("--sync-budget: {e}"))?;
                 args.sync_budget = mib << 20;
             }
+            "--look" => {
+                let v = value()?;
+                args.look = Some(NormalMode::from_name(&v).ok_or(format!(
+                    "--look takes face, trilinear8, gradient27 or contour, not {v}"
+                ))?);
+            }
+            "--rock-detail" => args.rock_detail = parse_rock_detail(&value()?)?,
+            "--view" => {
+                let v = value()?;
+                args.view = ViewMode::from_name(&v)
+                    .ok_or(format!("--view takes shaded, normals or hitmask, not {v}"))?;
+            }
             "--level" => args.level = true,
+            "--detail" => args.detail = true,
             "--autopilot" => args.autopilot = true,
             "--headless" => args.headless = true,
             _ => return Err(format!("unknown argument {flag}")),
         }
     }
+    if args.rock_detail != flythrough::ROCK_DETAIL && args.look.is_none() {
+        return Err("--rock-detail applies under --look".to_owned());
+    }
     if args.autopilot && args.level {
         return Err("--autopilot streams; it does not take --level".to_owned());
     }
     Ok(args)
+}
+
+/// `SCALE,STRENGTH`: a feature scale in voxels above 0 and a strength in `[0, 1]`.
+fn parse_rock_detail(v: &str) -> Result<[f32; 2], String> {
+    let err = || format!("--rock-detail takes SCALE,STRENGTH (e.g. 4,0.3), not {v}");
+    let (scale, strength) = v.split_once(',').ok_or_else(err)?;
+    let parse = |s: &str| s.trim().parse::<f32>().map_err(|_| err());
+    let [scale, strength] = [parse(scale)?, parse(strength)?];
+    if !(scale > 0.0 && scale.is_finite()) {
+        return Err(format!("--rock-detail: scale must be above 0, not {scale}"));
+    }
+    if !(0.0..=1.0).contains(&strength) {
+        return Err(format!(
+            "--rock-detail: strength must be in [0, 1], not {strength}"
+        ));
+    }
+    Ok([scale, strength])
 }
 
 /// One printed line per edit: `carved: rock 1234, ore 12 (3 chunks, 0.21 ms)`.
@@ -196,6 +247,38 @@ struct Gfx {
     marcher: Marcher,
     presenter: Presenter,
     timer: Option<MarchTimer>,
+    /// Times the attribute pass, with attribute pages and `TIMESTAMP_QUERY`.
+    attr_timer: Option<MarchTimer>,
+}
+
+impl Gfx {
+    /// Runs the attribute pass over what changed, alone, and waits for it: the bricks in its
+    /// work list and its GPU time when timed.
+    fn timed_attrs(&mut self, gpu: &Gpu) -> (usize, Option<f64>) {
+        let mut enc = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let timer = self.attr_timer.as_ref();
+        let n = self
+            .mirror
+            .update_attrs_timed(&mut enc, timer.map(MarchTimer::writes));
+        if let Some(t) = timer.filter(|_| n > 0) {
+            t.resolve(&mut enc);
+        }
+        gpu.queue.submit([enc.finish()]);
+        let ms = timer
+            .filter(|_| n > 0)
+            .map(|t| t.read_ms(&gpu.device, &gpu.queue));
+        (n, ms)
+    }
+}
+
+/// `attrib: 383608 bricks in 12.345 ms GPU (initial fill)`.
+fn attr_line(what: &str, (n, ms): (usize, Option<f64>)) -> String {
+    let ms = ms.map_or("n/a (no TIMESTAMP_QUERY)".to_owned(), |ms| {
+        format!("{ms:.3} ms")
+    });
+    format!("attrib: {n} bricks in {ms} GPU ({what})")
 }
 
 #[derive(Default)]
@@ -291,6 +374,7 @@ struct Run {
     args: Args,
     fly: Fly,
     light: LightParams,
+    look: LookParams,
     dig_radius: i64,
     bench_runs: u64,
     frame: u32,
@@ -301,6 +385,11 @@ struct Run {
 }
 
 impl Run {
+    /// Rock's detail pair when the table carries it (under `--look`).
+    fn rock_detail(&self) -> Option<[f32; 2]> {
+        self.args.look.is_some().then_some(self.args.rock_detail)
+    }
+
     fn camera_ray(&self) -> (Fixed3, [i64; 3]) {
         let c = &self.fly.camera;
         let origin = c
@@ -379,10 +468,25 @@ impl Run {
             }
         }
 
+        // With attribute pages, the first carve is synced and its attribute pass timed alone.
+        let attrs = self.gfx.as_ref().is_some_and(|g| g.mirror.surface_attrs());
+        let mut results: Vec<Result<EditResult, EditError>> = Vec::with_capacity(ops.len());
+        let mut edit_ms = 0.0;
+        if attrs && let Some(gfx) = self.gfx.as_mut() {
+            let t = now();
+            results.push(self.world.apply(&ops[0]));
+            edit_ms += ms_since(t);
+            match gfx.mirror.sync(&self.world, &gpu.queue) {
+                Ok(_) => println!(
+                    "{}",
+                    attr_line("one carve of radius 1 m", gfx.timed_attrs(gpu))
+                ),
+                Err(e) => println!("bench: sync failed, {e}"),
+            }
+        }
         let t = now();
-        let results: Vec<Result<EditResult, EditError>> =
-            ops.iter().map(|op| self.world.apply(op)).collect();
-        let edit_ms = ms_since(t);
+        results.extend(ops[results.len()..].iter().map(|op| self.world.apply(op)));
+        edit_ms += ms_since(t);
 
         let mut counts = BTreeMap::<MaterialId, u32>::new();
         let mut touched = BTreeSet::new();
@@ -424,6 +528,10 @@ impl Run {
             ),
             Err(e) => println!("bench: sync failed, {e}"),
         }
+        if attrs {
+            let what = format!("the other {} carves", BENCH_CARVES - 1);
+            println!("{}", attr_line(&what, gfx.timed_attrs(gpu)));
+        }
     }
 
     fn report(&mut self, samples: Samples) {
@@ -439,11 +547,13 @@ impl Run {
             format!("{:.3} ms", median(&mut gpu_ms))
         };
         println!(
-            "frame ({w}x{h}, median of {}): cpu {:.3} ms, gpu march {gpu}; full bricks {}, mirror {} B",
+            "frame ({w}x{h}, median of {}, {}): cpu {:.3} ms, gpu march {gpu}; full bricks {}, mirror {} B live, {} B allocated",
             cpu_ms.len(),
+            look_line(&self.look, self.rock_detail()),
             median(&mut cpu_ms),
             self.world.stats().full_bricks,
-            gfx.mirror.mirror_bytes()
+            gfx.mirror.mirror_bytes(),
+            gfx.mirror.allocated_bytes()
         );
     }
 
@@ -473,8 +583,15 @@ impl Run {
         let pool = if self.stream.is_some() {
             STREAM_POOL_BYTES
         } else {
-            (self.world.stats().full_bricks as u64 + POOL_HEADROOM_BRICKS)
-                * vxe_render::gpu_world::SLOT_BYTES
+            let bricks = self.world.stats().full_bricks as u64 + POOL_HEADROOM_BRICKS;
+            // With attribute pages each page holds `ATTR_PAGE_BRICK_SLOTS` bricks.
+            let slots = if self.args.look.is_some() {
+                bricks.div_ceil(u64::from(gpu_world::ATTR_PAGE_BRICK_SLOTS))
+                    * u64::from(gpu_world::POOL_PAGE_SLOTS)
+            } else {
+                bricks
+            };
+            slots * gpu_world::SLOT_BYTES
         };
         (
             adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
@@ -490,6 +607,8 @@ impl Run {
             .contains(wgpu::Features::TIMESTAMP_QUERY)
             .then(|| MarchTimer::new(&gpu.device));
         println!("device ready after {:.0} ms", ms_since(self.start));
+        let attr_timer =
+            (self.args.look.is_some() && timer.is_some()).then(|| MarchTimer::new(&gpu.device));
         let mut marcher = Marcher::new(&gpu.device, w, h);
         let mirror = if self.stream.is_some() {
             marcher.set_lod(LodParams {
@@ -498,38 +617,55 @@ impl Run {
             });
             self.init_stream(gpu)
         } else {
-            let mut mirror = GpuWorld::new(&gpu.device, self.world.extent());
+            let mut mirror =
+                self.new_mirror(gpu, MirrorConfig::new(Window::Fixed(self.world.extent())));
             mirror.set_focus(self.spawn);
             let t = now();
             match mirror.sync(&self.world, &gpu.queue) {
                 Ok(s) => println!(
-                    "mirror: uploaded {} B ({} bricks, {} chunks, {} writes) in {:.0} ms",
+                    "mirror: uploaded {} B ({} bricks, {} chunks, {} writes) in {:.0} ms; mirror {} B live, {} B allocated",
                     s.bytes,
                     s.bricks,
                     s.chunks,
                     s.writes,
-                    ms_since(t)
+                    ms_since(t),
+                    mirror.mirror_bytes(),
+                    mirror.allocated_bytes()
                 ),
                 Err(e) => eprintln!("mirror sync failed: {e}"),
             }
             mirror
         };
-        self.gfx = Some(Gfx {
+        let mut gfx = Gfx {
             mirror,
             marcher,
             presenter: Presenter::new(&gpu.device, gpu.surface_format),
             timer,
-        });
+            attr_timer,
+        };
+        if gfx.mirror.surface_attrs() {
+            println!("{}", attr_line("initial fill", gfx.timed_attrs(gpu)));
+        }
+        self.gfx = Some(gfx);
         for _ in 0..self.args.bench {
             self.bench(gpu);
+        }
+    }
+
+    /// A mirror under `cfg`, with attribute pages when `--look` was given.
+    fn new_mirror(&self, gpu: &Gpu, cfg: MirrorConfig) -> GpuWorld {
+        if self.args.look.is_some() {
+            GpuWorld::with_surface_attrs(&gpu.device, cfg)
+        } else {
+            GpuWorld::with_config(&gpu.device, cfg)
         }
     }
 
     /// The streaming mirror, returned once the chunks within squared distance `NEAR_D2` of
     /// the spawn chunk are resident and mirrored full.
     fn init_stream(&mut self, gpu: &Gpu) -> GpuWorld {
-        let mut mirror = GpuWorld::with_config(
-            &gpu.device,
+        let mut mirror = self.new_mirror(
+            gpu,
             MirrorConfig {
                 sync_budget_bytes: self.args.sync_budget,
                 ..MirrorConfig::new(Window::Follow {
@@ -858,6 +994,15 @@ impl Run {
         if input.pressed(KeyCode::KeyB) {
             self.bench(gpu);
         }
+        if input.pressed(KeyCode::KeyN) {
+            let contour = self.gfx.as_ref().is_some_and(|g| g.mirror.surface_attrs());
+            self.look.normal_mode = self.look.normal_mode.next(contour);
+            println!("{}", look_line(&self.look, self.rock_detail()));
+        }
+        if input.pressed(KeyCode::KeyV) {
+            self.look.detail = !self.look.detail;
+            println!("{}", look_line(&self.look, self.rock_detail()));
+        }
         if input.pressed(KeyCode::F1) {
             self.samples = Some(Samples::default());
         }
@@ -885,6 +1030,7 @@ impl Run {
         let Some(gfx) = self.gfx.as_mut() else {
             return Flow::Exit;
         };
+        gfx.marcher.set_look(self.look);
         let params = gfx
             .marcher
             .params(&gfx.mirror, &self.fly.camera, &self.light);
@@ -895,6 +1041,7 @@ impl Run {
         let mut enc = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        gfx.mirror.update_attrs(&mut enc);
         gfx.marcher.encode(
             &gpu.device,
             &gpu.queue,
@@ -936,6 +1083,20 @@ impl Run {
         }
         Flow::Continue
     }
+}
+
+/// `look face, detail off, view shaded`, or with rock's detail under `--look`:
+/// `look face, detail off (rock scale 4, strength 0.3), view shaded`.
+fn look_line(look: &LookParams, rock_detail: Option<[f32; 2]>) -> String {
+    let rock = rock_detail.map_or_else(String::new, |[scale, strength]| {
+        format!(" (rock scale {scale}, strength {strength})")
+    });
+    format!(
+        "look {}, detail {}{rock}, view {}",
+        look.normal_mode.name(),
+        if look.detail { "on" } else { "off" },
+        look.view.name()
+    )
 }
 
 /// Logs a teardown stage before and after it runs, like the shell's, so a hang at exit
@@ -1035,6 +1196,11 @@ impl App for Flythrough {
                 args: self.args,
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
+                look: LookParams {
+                    normal_mode: self.args.look.unwrap_or_default(),
+                    detail: self.args.detail,
+                    view: self.args.view,
+                },
                 dig_radius: DIG_RADIUS,
                 bench_runs: 0,
                 frame: 0,
@@ -1154,6 +1320,16 @@ fn pollster_block_on<F: std::future::Future>(f: F) -> F::Output {
     }
 }
 
+/// The cave's material table; under `--look`, with rock's procedural detail at
+/// `--rock-detail`.
+fn materials(args: Args) -> MaterialTable {
+    if args.look.is_some() {
+        flythrough::look_materials_with(args.rock_detail)
+    } else {
+        cave_materials()
+    }
+}
+
 fn main() {
     // The fly-through's own lines and the shell's teardown trace show by default; RUST_LOG
     // overrides.
@@ -1175,7 +1351,7 @@ fn main() {
         let source = CaveSource::new(seed, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
         let generation = std::thread::spawn(move || {
             let t = now();
-            let world = World::generate(source.extent, &source, &cave_materials());
+            let world = World::generate(source.extent, &source, &materials(args));
             println!(
                 "generated seed {seed} over {LEVEL_CHUNKS:?} chunks in {:.0} ms: {} full bricks",
                 ms_since(t),
@@ -1190,7 +1366,7 @@ fn main() {
             .map_or(1, usize::from)
             .saturating_sub(1)
             .max(1);
-        let world = World::new(&cave_materials());
+        let world = World::new(&materials(args));
         let mut streamer = Streamer::new(
             Arc::new(source),
             StreamConfig {
@@ -1268,6 +1444,30 @@ mod tests {
             edit_line("filled", &EditResult::default(), &cave_materials(), 0.0),
             "filled: nothing (0 chunks, 0.00 ms)"
         );
+    }
+
+    #[test]
+    fn rock_detail_parses_scale_and_strength() {
+        assert_eq!(parse_rock_detail("8,0.6"), Ok([8.0, 0.6]));
+        assert_eq!(parse_rock_detail("2.5, 0"), Ok([2.5, 0.0]));
+        assert!(parse_rock_detail("4").is_err());
+        assert!(parse_rock_detail("0,0.3").is_err());
+        assert!(parse_rock_detail("4,1.5").is_err());
+        assert!(parse_rock_detail("4,x").is_err());
+    }
+
+    #[test]
+    fn the_look_line_names_rock_detail_under_look() {
+        let look = LookParams {
+            normal_mode: NormalMode::Face,
+            detail: true,
+            view: ViewMode::Shaded,
+        };
+        assert_eq!(
+            look_line(&look, Some([4.0, 0.3])),
+            "look face, detail on (rock scale 4, strength 0.3), view shaded"
+        );
+        assert_eq!(look_line(&look, None), "look face, detail on, view shaded");
     }
 
     #[test]

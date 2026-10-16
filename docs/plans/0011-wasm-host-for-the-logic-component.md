@@ -1,6 +1,6 @@
 # 0011: A WebAssembly host for the logic component, proven by native-versus-component equality
 
-> **Status:** draft
+> **Status:** approved (2026-10-16)
 > **Created:** 2026-10-16
 > **Milestone:** M5 in `docs/roadmap.md` (the scripting half)
 > **Related ADRs:** [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (logic behind a trait, native and component), [ADR-0007](../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (the server loop it plugs into), ADR-0001 (stack)

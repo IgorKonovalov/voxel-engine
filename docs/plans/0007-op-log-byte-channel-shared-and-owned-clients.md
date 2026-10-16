@@ -1,6 +1,6 @@
 # 0007: Server-owned op log, a byte channel, the logic boundary, shared and owned clients, and replay from seed plus log
 
-> **Status:** draft (amended 2026-10-16 with the logic boundary, ADR-0010)
+> **Status:** approved (2026-10-16; amended the same day with the logic boundary, ADR-0010)
 > **Created:** 2026-10-16
 > **Milestone:** M5 in `docs/roadmap.md` (the simulation split; the WASM host is Plan 0011)
 > **Related ADRs:** [ADR-0007](../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (log, channel, client modes), [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (logic behind a trait, native and component), ADR-0002 (per-chunk locked access), ADR-0001 (stack)

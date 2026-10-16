@@ -1,6 +1,8 @@
 # 0005: The surface-look spike: smoothed normals, per-voxel contour planes and procedural detail, measured on screen
 
-> **Status:** approved (2026-10-16)
+> **Status:** done (closed 2026-10-16, v0.4.0). Verdict: every phase landed and the owner chose
+> contour with weaker rock detail; the surface decision is ADR-0011, and the shadow-ray origin
+> and the streamed footprint are owed to the follow-up plan (see "Close").
 > **Created:** 2026-10-16
 > **Amended:** 2026-10-16, after Plan 0002's close, for the tree it shipped: the contour
 > attribute lives in attribute pages inside the existing pool shards (no new storage binding;
@@ -495,12 +497,35 @@ are the numbers the owner's call weighs.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The harness and the face-normal baseline | dev | not started | |
-| 2: Mode A, normals smoothed in the shader | dev | not started | |
-| 3: Mode B, per-voxel contour planes in attribute pages | dev | not started | |
-| 4: Mode C, procedural per-material detail | dev | not started | |
-| 5: Readings and the comparison table | dev | not started | |
-| 6: The owner's call | human | not started | |
+| 1: The harness and the face-normal baseline | dev | done: face cavity normal error 40.75 degrees, pillar silhouette error 172 px (lavapipe); occluder centre normal (-1, 1/255, 1/255); `primary.png`, `headlamp.png`, `lod.png` byte for byte; face 1080p march 17.218 / 17.261 / 17.255 ms on RADV Renoir (RTX 3080 lost from the bus, see Notes) | ca7dc23 |
+| 2: Mode A, normals smoothed in the shader | dev | done: cavity normal error trilinear8 18.62, gradient27 6.95 degrees (face 40.75, same run); pillar silhouette 172 px in all three; occluder centre (-1, 1/255, 1/255) in both; `look_trilinear8.png`, `look_gradient27.png` blessed on lavapipe; 1080p march trilinear8 25.024 / 24.885 / 24.872 ms, gradient27 41.277 / 41.400 / 41.353 ms on RADV Renoir | 9480183 |
+| 3: Mode B, per-voxel contour planes in attribute pages | dev | done: layout and floor readback tests in `mirror.rs`; face goldens byte for byte with attribute pages over 1 and 3 shards (`lod.png` 1 and 2); contour cavity normal error 7.41 degrees, pillar silhouette 32 px (face 40.75, 172, same run, lavapipe); `look_contour.png` blessed on lavapipe. RTX 3080 Laptop GPU, `--level --headless --seed 1 --frames 1`: without `--look` 207 681 088 B live, 213 334 144 B allocated; `--look contour` 606 633 408 B live, 613 759 104 B allocated; first sync 571 writes (195 without); 1080p contour march 1.891 / 1.891 / 1.892 ms; attrib initial fill (383 608 bricks) 55.020 / 39.581 / 41.722 / 41.889 ms; one 1 m carve 46 bricks 0.020 ms; the other 99 bench carves 2777 bricks 0.310 ms | 6d77f12 |
+| 4: Mode C, procedural per-material detail | dev | done: zero-strength detail leaves `primary.png`, `headlamp.png`, `lod.png` byte for byte; rock `[4.0, 0.3]` differs from face at 22.99 % of pixels by more than 8/255 (lavapipe), `look_detail.png` blessed on lavapipe; pillar pole decodes `[5, 162, 135]` from both cameras (`[0, 128, 128]` without detail); material rows 64 B, level mirror 606 633 536 B live with `--look` (+128 B for 4 rows). RTX 3080 Laptop GPU, 1080p march with detail: face 1.919 / 1.954 / 1.956 ms, gradient27 4.579 / 4.537 / 4.538 ms | 37b22fa |
+| 5: Readings and the comparison table | dev | done: table below; `nfr.md` §2 and §3 lines; streamed `--autopilot --headless --look contour` reached full residency at 3 309 723 820 B live, 4 103 413 164 B allocated, then stopped on `wgpu error: Out of Memory` (RTX 3080 Laptop GPU, 8 GiB) | 745ea7a |
+| 6: The owner's call | human | done 2026-10-16: **contour**, rock detail on but weaker than `[4, 0.3]`. Contour reads best on screen; its artifacts (black lines, dark specks) come with the shadow ray and vanish with `L` off, so the contour shadow-ray origin must be fixed, and the streamed footprint must fit the 8 GiB card. Gradient27 was the runner-up (its shadows also read wrong, and it costs twice face). Detail at 0.3 reads "between noise and shadows". See Notes | |
+
+### Comparison table (Phase 5)
+
+Image metrics: `cargo nextest run -p flythrough --test look --no-capture every_mode`, lavapipe
+(llvmpipe, Mesa 26.2.2), 320 x 180; detail rows put rock at `[4.0, 0.3]`. March: 1080p
+median of the last 30 of 300 frames, `flythrough --level --headless --seed 1 --render
+1920x1080 --frames 300 --look MODE [--detail]`, three runs, RTX 3080 Laptop GPU, 37b22fa,
+under the exclusive lock, 1-minute load between 3 and 5 at the time. Mirror bytes: the level
+with `--look` (attribute pages in every mode), live / allocated, same runs.
+
+| mode | detail | cavity normal error (deg) | pillar silhouette error (px) | 1080p march (ms) | mirror at the level, live / allocated (B) |
+|---|---|---|---|---|---|
+| Face | off | 40.75 | 172 | 1.876 / 1.877 / 1.877 (no `--look`: 1.859 / 1.826 / 1.858) | 606 633 536 / 613 759 232 (no `--look`: 207 681 216 / 213 334 272) |
+| Face | on | 46.36 | 172 | 1.994 / 1.976 / 1.995 | 606 633 536 / 613 759 232 |
+| Trilinear8 | off | 18.62 | 172 | 2.878 / 2.874 / 2.907 | 606 633 536 / 613 759 232 |
+| Trilinear8 | on | 32.53 | 172 | 3.020 / 3.051 / 3.048 | 606 633 536 / 613 759 232 |
+| Gradient27 | off | 6.95 | 172 | 4.568 / 4.612 / 4.564 | 606 633 536 / 613 759 232 |
+| Gradient27 | on | 28.32 | 172 | 4.675 / 4.583 / 4.629 | 606 633 536 / 613 759 232 |
+| Contour | off | 7.41 | 32 | 1.944 / 1.927 / 1.944 | 606 633 536 / 613 759 232 |
+| Contour | on | 28.40 | 32 | 2.069 / 2.068 / 2.069 | 606 633 536 / 613 759 232 |
+
+Face, Trilinear8 and Gradient27 read no attribute; their mirror needs none, and the bytes
+without `--look` are in the Face row.
 
 ### Notes
 
@@ -508,20 +533,145 @@ _(Deviations from the plan, with the commit, stated without justification. Done-
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
 
+- Phase 1: the RTX 3080 Laptop GPU fell off the PCIe bus at 17:51 on 2026-10-16 (kernel:
+  `NVRM: GSP core unresponsive`, then `GPU lost from the bus`); `nvidia-smi` and
+  `vulkaninfo` no longer list it. The headless fly-through's high-performance adapter is then
+  RADV Renoir (the integrated GPU), and every timing and VRAM reading in this log is taken on
+  it and names it. The RTX 3080 readings the plan asks for are not taken.
+- Phase 1: `LookParams`, `NormalMode` and `ViewMode` live in `marcher.rs`; `light.rs` is
+  unchanged.
+- Phase 2: `Trilinear8` takes its gradient at the hit point on the entry face: along the hit
+  axis the 2 x 2 x 2 stencil is the hit voxel and the voxel across the face (weight 1/2 each),
+  on the other axes the two voxel centres either side of the point. At the point pushed half
+  a voxel into the surface (the hit voxel's centre on that axis) the stencil spans two solid
+  voxels on a flat wall and the gradient along the face normal is zero.
+- Phase 1: the harness helpers (`make_lod`, `carved_world`, `lod_scene`) are copied into
+  `tests/support/mod.rs`; `tests/golden.rs` keeps its own copies unchanged.
+- Phase 3: the RTX 3080 Laptop GPU is back on the bus after a reboot (`nvidia-smi -L` checked
+  before and after each reading); every Phase 3 figure named RTX is on it. Phases 1 and 2's
+  figures stay the Renoir ones; the RTX figures for every mode are Phase 5's table.
+- Phase 3: `surface_attrs` is a constructor, `GpuWorld::with_surface_attrs(device, cfg)`, with
+  a `surface_attrs()` getter, not a `MirrorConfig` field: `apps/flythrough/tests/level_mirror.rs`
+  builds `MirrorConfig` with every field named and stays unchanged.
+- Phase 3: `GpuWorld::update_attrs_timed(encoder, timestamps)` sits beside
+  `update_attrs(encoder)` for the pass timings; both return the bricks in the work list.
+- Phase 3: `free_slots()` returns the plain kind's free single slots (every slot without
+  attribute pages). Pages keep their kind for the mirror's life; a page freed of bricks is not
+  handed to the other kind.
+- Phase 3: `attrib.wgsl` runs one workgroup of 256 per brick, loading the 10 x 10 x 10
+  occupancy around the brick into workgroup memory once.
+- Phase 3: the face-with-attribute-pages golden check, the contour metrics and the contour
+  golden are in `apps/flythrough/tests/look.rs`; the layout and floor readback tests in
+  `crates/vxe-render/tests/mirror.rs`.
+- Phase 3: with `--look`, `--bench` applies and syncs the first of its 100 carves alone and
+  times its attribute pass, then the other 99; the `bench:` sync line covers those 99. The
+  level's `mirror: uploaded` line also prints live and allocated bytes, since a `--frames 1`
+  run prints no frame line.
+- Phase 3: `look_contour.png` shows isolated dark pixels on lit wall (lavapipe image).
+- Phase 4: the normal tilt carries a gain, `DETAIL_TILT = 4` in `march.wgsl`: the tilted
+  normal is `normalize(n - strength * 4 * g_t)` with `g_t` the tangential noise gradient in
+  feature units. Without the gain the scene changed at 6.90 % of pixels.
+- Phase 4: `apps/flythrough/src/main.rs` changed outside Files touched: `--look` generates
+  the world with `flythrough::look_materials()` (rock at `ROCK_DETAIL = [4.0, 0.3]`), and a
+  new `--detail` flag starts with detail on, for the headless timings.
+- Phase 5: `--autopilot` already took `--look`; `apps/flythrough/src/main.rs` is unchanged in
+  this phase. The streamed contour run stopped on an out-of-memory error after full
+  residency, so no peak bytes were printed.
+- Phase 5: the 1080p table was taken while the 1-minute load average read between 3 and 5
+  (`uptime` 3.31 / 4.63 / 6.40 right after; the owner's other software), so the CPU side was
+  under load; the figures are GPU timestamps.
+- Phase 5: with detail on, the cavity normal error rises in every mode (detail is measured
+  against the smooth analytic sphere).
+- Phase 6 awaits the owner: `cargo run --release -p flythrough -- --level --seed 1 --look face`
+  (windowed, at the keyboard of the dev box). `N` cycles face, trilinear8, gradient27, contour
+  (`--look` gives the mirror attribute pages, so contour is reachable); `V` toggles detail
+  (rock at `[4.0, 0.3]`). Judge at arm's length from a carved wall (left click digs) and at
+  5 m from a cavern wall: which normal mode, whether detail is on and at what rock strength,
+  and the on-screen reason in one or two sentences; or two finalists and the measurement that
+  would separate them. Also look for contour's isolated dark pixels and leaks through thin
+  walls.
+- Open owner questions, not blocks: lavapipe cannot fit the level with attribute pages
+  (`PoolTooLarge` by design), so the level-size contour readings are dev-box only; the
+  streamed contour mirror (4.10 GB allocated at full residency) runs out of the 8 GiB card's
+  memory under motion.
+- Phase 4: the zero-strength, 20 %, world-position and 64-byte-row checks are in
+  `apps/flythrough/tests/look.rs` (`material_rows_are_64_bytes` checks the live mirror bytes
+  as slots, records, table and 64 B rows).
+- Fix pass, finding 1 (rock detail strength not adjustable): `--rock-detail SCALE,STRENGTH`
+  (default `ROCK_DETAIL`, scale above 0, strength in [0, 1], accepted only with `--look`) sets
+  rock's row through `flythrough::look_materials_with`; the look line prints it, e.g.
+  `look face, detail on (rock scale 8, strength 0.6), view shaded`. `DETAIL_TILT`,
+  `ROCK_DETAIL` and the goldens are unchanged. Phase 6 example:
+  `cargo run --release -p flythrough -- --level --seed 1 --look face --rock-detail 4,0.5`
+  (restart to change the strength; `V` still toggles detail). Commit 6d4f953.
+- Fix pass, finding 2 (contour shadow-ray origin), measurement only, no shader change, no
+  rebless: `contour_dark_specks_with_and_without_shadows` in `apps/flythrough/tests/look.rs`
+  (`#[ignore]`, run with `--run-ignored only`) renders the contour golden scene (carved
+  world, `scene_camera`, headlamp, 320x180; the shadows-on render equals `look_contour.png`)
+  and counts interior pixels whose Rec. 709 luma is below half the median luma of their 8
+  neighbours. llvmpipe (LLVM 22.1.8, Mesa 26.2.2), exclusive lock: contour with shadows 646,
+  without 301, 372 only with shadows; face with shadows 1179, without 1017, 174 only with
+  shadows. Commit: committed with this line.
+- Phase 6, the owner's call (windowed `--level --seed 1 --look face` at 7c51dbb, RTX 3080 Laptop GPU, fullscreen 2530x1378, 2026-10-16). Owner's words: "I like gradient27 the most, but shadows look not right; contour feels weird with a lot of artifacts - black lines"; "contours without shadows look the best (if I press L)"; detail "looks like something between noise and shadows, maybe less will be better". `F1` medians at 2530x1378, detail off / on: face 3.958 / 4.029 ms, trilinear8 5.380 / 7.443 ms, gradient27 8.059 / 9.546 ms, contour 5.064 / 5.471 ms (march only; the owner's other software may have been loading the machine). Recorded by the orchestrating session from the owner's answers. The owner first named two finalists (gradient27 and contour), then settled: "I was wrong, contour is the best mode".
+
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** the look harness (`view` and `normal_mode` flag bits, cavity and pillar
+  scenes, two metrics), modes `Trilinear8`, `Gradient27`, `Contour` (attribute pages and
+  `attrib.wgsl`) and procedural detail, behind flags; the fly-through's default stays face
+  normals. Commits ca7dc23, 9480183, 6d77f12, 37b22fa, 745ea7a.
+- **Public API changed:** `vxe-render`: `LookParams`, `NormalMode`, `ViewMode`,
+  `Marcher::set_look` / `look`, `FLAG_*` look bits; `GpuWorld::with_surface_attrs`,
+  `surface_attrs`, `update_attrs`, `update_attrs_timed`, `live_attr_slots`, `in_attr_page`;
+  `gpu_world::{ATTR_PAGE_BRICK_SLOTS, NO_PLANE, attr_slot}`; `MATERIAL_FLOATS` 8 -> 16;
+  `attrib` module, `ATTRIB_WGSL`; `free_slots` now returns the plain kind's list. `vxe-world`:
+  `Material::detail`. `flythrough`: `ROCK_DETAIL`, `look_materials`, flags `--look`, `--view`,
+  `--detail`.
+- **Budget readings:** the comparison table above and the Phase 3 and 4 rows, every timing on
+  the RTX 3080 Laptop GPU under the exclusive lock (Phases 1 and 2 rows on RADV Renoir);
+  `nfr.md` §2 per-mode primary rays (Contour 1.927 to 1.944 ms, Gradient27 4.564 to 4.612 ms,
+  against 3.0 ms); §3 level with attribute pages 613 759 104 B allocated, streamed 4 103 413 164
+  B allocated at full residency then out of memory, against 3 GB.
+- **Gate at the tip (745ea7a):** `cargo build --workspace` 0; `cargo nextest run --workspace`
+  111 passed, 0 skipped (exclusive lock); `cargo test --workspace --doc` 0; `cargo clippy
+  --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check`
+  advisories, bans, licenses, sources ok; `node scripts/check-doc-links.mjs` 58 links resolve.
+- **Outstanding `human` phases:** none; Phase 6 recorded 2026-10-16: contour (Notes).
 
-## Followups
+## Close
 
-- The surface-representation ADR, from Phase 6 and the Phase 5 table, including the attribute
-  layout if mode B is kept.
-- Least-squares plane fit for the contour offset, if needed.
-- A smaller attribute footprint (surface voxels only, a smaller encoding, or a per-block
-  plane), if mode B is kept and the streamed reading misses §3.
+Closed 2026-10-16 at v0.4.0 after a fresh-session review (verdict: ready for the owner's call,
+no blocker or major) and the owner's Phase 6 call. The decision is ADR-0011: per-voxel contour
+planes in attribute pages of the brick pool, with procedural per-material detail. Gate at the
+close, on the merge of `main` into this branch (64c62c6): build, nextest (114 passed, 1
+skipped: the ignored speck count), doctests, clippy, fmt, `cargo deny`, the hook bite tests and
+the doc-link checker all pass.
+
+### Follow-up items
+
+The next surface plan cites these by number (Plan 0005 follow-up N). Items 1 to 3 gate making
+`Contour` the fly-through's default.
+
+1. **Shadow-ray origin under contour.** Offset the shadow ray along the plane normal for a
+   plane hit (face normal for a cube hit), per ADR-0011; measure it with
+   `contour_dark_specks_with_and_without_shadows` (372 only-with-shadows in contour against 174
+   in face before the fix) and rebless `look_contour.png`.
+2. **Streamed footprint.** Fit the streamed contour mirror into the 8 GiB dev card and the 3 GB
+   §3 line (reached 3 309 723 820 B live, 4 103 413 164 B allocated at full residency, then
+   `wgpu error: Out of Memory`). Candidates: attributes on surface voxels only, a smaller
+   encoding, a per-block plane, a smaller `r_full`; the choice is measured and may need an ADR.
+3. **Rock detail default.** Set `ROCK_DETAIL` weaker than `[4.0, 0.3]` from the owner's eye
+   (`--rock-detail SCALE,STRENGTH`), and make contour plus detail the fly-through's default
+   once 1 and 2 land.
+4. **Readings still owed.** The streamed attribute-pass cost under motion (neighbour recompute
+   on chunk arrival and eviction), and every mode on the baseline GPU (M2's close).
+5. **`AttribPass::encode` allocates per call.** It creates its buffers and bind group on every
+   call from the frame path; keep them and grow on demand.
+6. **No test of the shell path.** Nothing tests the attribute recompute of boundary bricks when
+   a neighbour chunk arrives or is evicted; add a headless readback test.
+7. **Comment wrap.** The `detail` comment in `crates/vxe-render/src/shaders/march.wgsl`
+   (around lines 503 to 506) breaks mid-sentence; rewrap it.
+8. **Later, if the eye asks.** A least-squares plane fit for the contour offset, and a
+   downsampled plane per mip cell so the LOD ring is not cubic.
