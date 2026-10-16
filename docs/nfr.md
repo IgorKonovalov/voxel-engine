@@ -181,3 +181,5 @@ peaked at 1 686 395 092 and 1 696 279 292 B, resident RAM at 3 243 445 888 and
 - Binary size.
 - Mobile, web or console targets.
 - Frame rates above 60 fps as a gate; they are welcome, not required.
+- VR on the baseline. The VR-readiness decision in `roadmap.md` keeps the renderer's doors
+  open; a VR plan adds its own profile here (two views, 90 Hz, a named card) when scheduled.

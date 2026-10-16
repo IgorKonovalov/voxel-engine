@@ -45,6 +45,8 @@ plan that implements them (see [`adrs/README.md`](adrs/README.md)).
 | Repo | public GitHub, MIT OR Apache-2.0 | private; local only |
 | Harness | Ritmolux-style: ADRs, phased plans, architect/dev skills, deny hooks, CI gates | CLAUDE.md + ADRs only |
 | Surface look (added 2026-10-16) | smooth and natural rock, not visible cubes, with the Sibenik cathedral figure of Laine & Karras 2010 (ESVO, Figure 1) as the quality reference: not photorealism, but that level of believable surface and soft light; the mechanism (per-voxel normal smoothing, per-voxel contour planes in the GPU mirror, procedural per-material surface detail, or another) is chosen by measurement after M1, balancing image, frame cost and simplicity | a blocky aesthetic; photorealism; committing to ESVO-style contours before anything is on screen |
+| VR readiness (added 2026-10-16) | PC VR is a possible later target, so the renderer keeps three doors open from M2 on: a view is an asymmetric frustum (origin, basis, four tangent half-angles) and the frame renders N views, not one camera with a symmetric field of view; lighting is view-independent or shareable across views where the cost is equal; presentation is decoupled from the window surface. Actual VR support (OpenXR, 90 Hz, two eyes) is an unscheduled milestone with its own hardware floor, never a promise on the baseline GPU. See "Unscheduled: PC VR" below | building OpenXR support now; standalone headsets (mobile GPU, Android); treating VR as a mode of the baseline budget |
+| Physics (added 2026-10-16) | **voxel dynamics, not a rigid-body engine.** Collapse is emergent and authoritative: `vxe-world` answers which region lost its connection to the anchor after an edit, and deterministic ops decide what the world looks like afterwards. Fall damage is a controller event. Debris and falling pieces may be animated client-side by a rigid-body library as a cosmetic layer that never writes to the world. Revises M8 and the consumer's "scripted collapse only" wording | a general physics engine (`rapier`) in the authoritative world; scripted-only collapse; no collapse at all |
 
 ## The first consumer's needs, mapped
 
@@ -71,7 +73,8 @@ before content production, P2 = later). The consumer's first playable slice need
 | Listen server, prediction, replication, late join, positional voice | P1 | M9 |
 | `.vox` import, debug views | P1 | M6 (import), M7 (views) |
 | Volumetrics (dust, fog) | P1 | M8, a deliberate deferral: it needs M2's marcher and denoiser first |
-| Scripted collapse, loot highlighting, dedicated servers | P2 | M8, M6 (emissive entities; the highlight itself is game-side), M9+ |
+| Collapse (emergent, per the physics decision above), loot highlighting, dedicated servers | P2 | M8 (support query, collapse ops, cosmetic debris), M6 (emissive entities; the highlight itself is game-side), M9+ |
+| Fall damage | P0 (implied by the controller) | M3: the controller reports the landing speed; the damage rule is the game's |
 
 ## Storage shape (starting proposal, fixed by Plan 0001's ADR)
 
@@ -176,7 +179,7 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark
+### M2: Lighting that holds in the dark (Plan 0005 drafts the surface-look spike; the lighting plan follows its close)
 
 **Goal:** the consumer's P0 rendering bar. Few lights, emissive voxels, destruction, no ghosting.
 The quality reference is the Sibenik cathedral in Laine & Karras 2010, Figure 1. That image is
@@ -202,6 +205,12 @@ work), and the light (real-time GI standing in for the baked occlusion).
   attribute in the GPU mirror of non-uniform bricks so this spike changes no layout.
 - Exposure, tone mapping, and an upscaler. FSR 2 is MIT and cheap at 1080p but has no WGSL
   port; the port is plan-sized work, and a TAA upscaler of our own is the fallback.
+- The view generalisation from the VR-readiness decision: the marcher takes a list of views,
+  each an origin, a basis and four tangent half-angles (left, right, up, down), and every stage
+  that keeps history (accumulation, denoiser, upscaler) keeps it per view. On a flat screen the
+  list has one symmetric entry and nothing costs more. This lands in the lighting plan because
+  that plan rewrites the marcher's parameter block and creates the history buffers; doing it
+  later would touch every stage twice.
 - **Headless proof:** irradiance in a closed test box matches an analytic value within a stated
   tolerance; a carve invalidates exactly the touched history region.
 - **Visible proof:** golden images of a dark cave with one emissive vein, before and after a
@@ -209,7 +218,7 @@ work), and the light (real-time GI standing in for the baked occlusion).
 - **Budgets:** the full frame at 1080p output on the baseline GPU.
 - **ADRs expected:** denoiser family; upscaler choice.
 
-### M3: Collision, character controller, coarse grids
+### M3: Collision, character controller, coarse grids (Plan 0004; drafted)
 
 - `vxe-sim`: capsule sweeps against bricks (the raycast stays in `vxe-world`, which owns all
   primitive queries); a character controller with steps, slopes and climbing out of holes;
@@ -220,7 +229,7 @@ work), and the light (real-time GI standing in for the baked occlusion).
   under its feet changes the coarse grid cell and emits one notification.
 - **Visible proof:** walking instead of flying in the fly-through.
 
-### M4: Spatial audio
+### M4: Spatial audio (Plan 0006; drafted)
 
 - `vxe-audio`: output through `cpal`, a mixer, HRTF spatialization, occlusion and transmission
   by ray probes through the material table's acoustic triple, early reflections from ray probes,
@@ -258,10 +267,32 @@ work), and the light (real-time GI standing in for the baked occlusion).
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane
   (`criterion` for CPU, timestamp queries for GPU) with readings committed per named machine.
 
-### M8: Volumetrics, debris and scripted collapse
+### M8: Volumetrics, debris and collapse
 
-- Dust and fog in the ray marcher; short-lived particle debris from edits; region move and
-  removal ops for scripted collapse. No structural physics.
+- Dust and fog in the ray marcher; short-lived particle debris from edits.
+- **Support query** in `vxe-world`: after an edit, the set of coarse-grid cells (0.8 m, from
+  M3) that are solid but no longer connected to the anchor (the indestructible shell, the
+  world boundary, or an explicit anchor set the game supplies). Incremental connected
+  components over the touched region, integer, deterministic, so a server tick can run it
+  after every carve. Returns regions as cell sets with their voxel counts per material, the
+  same shape as an edit result.
+- **Collapse ops**: cut a region out of the world into a free-standing voxel volume, drop it
+  along the vertical axis in fixed point until it rests on solid, and stamp it back as an
+  additive op. Translation only, no rotation, so the stamp is lossless and the outcome is
+  bit-identical on both CI arms. A second op removes an unsupported region outright and fills
+  the cells below with a rubble material. The game picks one per region from the support
+  query's answer. Both are ordinary ops: they return per-material counts and the touched
+  region, and replicate through M5's log.
+- **Cosmetic rigid bodies**: a client-side layer, in its own optional crate, that animates the
+  pieces of a collapsed region with a rigid-body library (`rapier` or similar) between the
+  server's "region R fell at tick T" and the stamped result, then fades the pieces into the
+  authoritative world. It never writes to `vxe-world` and nothing deterministic reads it.
+- **Headless proof:** carving the single pillar under a 3 × 3 cell slab returns that slab as
+  one unsupported region with its exact material counts; the drop op lands it on the floor
+  with every voxel in place and the same hash on both CI arms.
+- **ADRs expected:** voxel dynamics versus a physics engine (the rejected alternatives are a
+  general rigid-body engine in the authoritative world, scripted-only collapse, and rotating
+  pieces).
 
 ### M9: Networking
 
@@ -269,6 +300,31 @@ work), and the light (real-time GI standing in for the baked occlusion).
   entity replication with interest management, late join by seed plus compressed op log,
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
+
+### Unscheduled: PC VR
+
+Not a numbered milestone and not on the first consumer's list. Recorded so that the doors the
+VR-readiness decision keeps open stay open, and so the cost is on paper before anyone asks.
+
+- **What favours the engine.** Compute ray marching has no per-view vertex work: a second eye
+  is a second ray origin and basis, and the head pose is a uniform written just before the
+  dispatch, so late latching is free. The marcher picks its own rays, so foveation is a
+  dispatch pattern over tiles rather than a vendor extension. HRTF audio (M4) is already
+  head-relative. Voxel-model entities (M6) trace in the same pass, so there is no second
+  pipeline to make stereo.
+- **What it would take.** A `vxe-xr` shell next to `vxe-app` that owns the OpenXR session and
+  swapchains (`openxr` crate, Vulkan handles exchanged through `wgpu-hal`), hands the renderer
+  two views per frame and submits the textures with depth for the runtime's reprojection; a
+  VR profile in `nfr.md` (two eyes, 90 Hz, a named high-end card) that is its own floor; and a
+  lighting path that both eyes share, which is the M2 fallback (per-chunk irradiance probes or
+  cone tracing over the mips), since 1 spp path tracing with a temporal denoiser is what head
+  motion punishes most.
+- **The hard number.** Pixel rate. A Valve Index at 90 Hz is about 3.3× the pixels per second
+  of 1080p at 60 Hz; a Quest 3 over Link about 6.6×. Ray-march cost is linear in pixels, so
+  VR on the baseline GPU of `nfr.md` §1 is not a goal and never will be; a VR plan names its
+  own card.
+- **Prerequisites before a plan is drafted:** M2 closed with the view list in place, M6 for
+  hands and tools as entities, and a headset on the dev box.
 
 ## Risks
 
@@ -297,6 +353,10 @@ work), and the light (real-time GI standing in for the baked occlusion).
 - Own gameplay: loot, monsters, items, levels, AI, a gameplay noise model. The consumer builds
   those on the engine's queries and results.
 - Be a framework: no ECS, no scene editor, no general asset pipeline.
-- Structural physics or rigid-body debris.
+- Run a rigid-body engine in the authoritative world. Collapse is voxel dynamics (M8): a
+  support query and deterministic ops. A rigid-body library may animate debris client-side,
+  as a cosmetic layer that nothing deterministic reads.
+- Promise VR on the baseline GPU. VR readiness is a set of doors kept open (see the decisions
+  table and "Unscheduled: PC VR"); VR itself names its own hardware floor.
 - Hardware ray tracing or vendor upscalers, unless a later ADR adds a vendor path.
 - macOS testing or gating, until a consumer needs it.
