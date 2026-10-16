@@ -645,6 +645,11 @@ each. Empty is fine.)_
   only a dev-dependency of the app and `Cargo.toml` is not in Files touched.
 - Phase 8: `determinism.rs` gains a test that the unbounded cave's interior chunks equal the
   bounded cave's; the bounded vector and its constants are unchanged.
+- Fix pass, review finding 1 (major, VRAM and RAM readings were live accounting): new
+  `GpuWorld::allocated_bytes` (sizes of the four shards, masks, records, table, materials);
+  the autopilot prints peak live and peak allocated mirror bytes and the process peak RSS
+  (`VmHWM`, Linux only, else `n/a`); `full residency` prints both mirror figures. Commit:
+  committed with this line.
 
 ### Close triggers
 

@@ -151,6 +151,21 @@ fn material_name(table: &MaterialTable, m: MaterialId) -> String {
         .map_or_else(|| format!("#{m}"), |row| row.name.clone())
 }
 
+/// The process's peak resident set (`VmHWM`) in bytes, read from `/proc/self/status`; `None`
+/// where that file does not exist or does not carry the line.
+fn peak_rss_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|l| l.starts_with("VmHWM:"))?;
+    let kb: u64 = line
+        .trim_start_matches("VmHWM:")
+        .trim()
+        .trim_end_matches("kB")
+        .trim()
+        .parse()
+        .ok()?;
+    Some(kb * 1024)
+}
+
 fn median(v: &mut [f64]) -> f64 {
     v.sort_by(f64::total_cmp);
     v[v.len() / 2]
@@ -261,6 +276,7 @@ struct Autopilot {
     cpu_ms: Vec<f64>,
     latency_from: usize,
     peak_mirror: u64,
+    peak_allocated: u64,
     peak_resident: u64,
     peak_persisted: u64,
     generated_at_takeoff: u64,
@@ -590,11 +606,12 @@ impl Run {
         {
             stream.full_residency = true;
             println!(
-                "full residency after {:.0} ms: {} full, {} LOD-only chunks, mirror {} B",
+                "full residency after {:.0} ms: {} full, {} LOD-only chunks, mirror {} B live, {} B allocated",
                 ms_since(self.start),
                 st.resident_full,
                 st.resident_lod,
-                gfx.mirror.mirror_bytes()
+                gfx.mirror.mirror_bytes(),
+                gfx.mirror.allocated_bytes()
             );
         }
         Ok(())
@@ -724,6 +741,7 @@ impl Run {
             p.cpu_ms.push(cpu);
         }
         p.peak_mirror = p.peak_mirror.max(gfx.mirror.mirror_bytes());
+        p.peak_allocated = p.peak_allocated.max(gfx.mirror.allocated_bytes());
         p.peak_persisted = p
             .peak_persisted
             .max(stream.streamer.stats().persisted_ram_bytes);
@@ -763,10 +781,12 @@ impl Run {
         );
         let st = stream.streamer.stats();
         println!(
-            "autopilot: peak mirror {} B, resident RAM peak {} B (now {} B), persisted RAM peak {} B",
+            "autopilot: peak mirror {} B live, {} B allocated, resident RAM peak {} B (now {} B), process peak RSS {} (dev reference), persisted RAM peak {} B",
             p.peak_mirror,
+            p.peak_allocated,
             p.peak_resident.max(resident),
             resident,
+            peak_rss_bytes().map_or_else(|| "n/a".to_owned(), |b| format!("{b} B")),
             p.peak_persisted.max(st.persisted_ram_bytes)
         );
         if p.gpu_ms.is_empty() {
@@ -979,6 +999,7 @@ impl App for Flythrough {
                 cpu_ms: Vec::new(),
                 latency_from: 0,
                 peak_mirror: 0,
+                peak_allocated: 0,
                 peak_resident: 0,
                 peak_persisted: 0,
                 generated_at_takeoff: 0,

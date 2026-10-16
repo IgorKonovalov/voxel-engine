@@ -509,12 +509,26 @@ impl GpuWorld {
         })
     }
 
-    /// Bytes the mirror occupies on the GPU by the uploader's accounting: pool slots in use
-    /// with their masks, the records of mirrored chunks, chunk table and material rows.
+    /// Bytes the mirror occupies on the GPU by the uploader's live accounting: pool slots in
+    /// use with their masks, the records of mirrored chunks, chunk table and material rows.
+    /// Free slots, free records and growth headroom are not counted; `allocated_bytes` is
+    /// what the buffers hold.
     pub fn mirror_bytes(&self) -> u64 {
         u64::from(self.live_slots()) * (SLOT_BYTES + MASK_BYTES)
             + self.mirrored.len() as u64 * RECORD_BYTES
             + self.table_cpu.len() as u64 * 4
+            + self.materials.size()
+    }
+
+    /// Bytes of the GPU buffers the mirror holds: every pool shard (placeholders included),
+    /// masks, records, chunk table and materials, at their allocated sizes. Buffers grow and
+    /// never shrink, so this stays at its peak while `mirror_bytes`, the live accounting,
+    /// falls with evictions.
+    pub fn allocated_bytes(&self) -> u64 {
+        self.shards.iter().map(wgpu::Buffer::size).sum::<u64>()
+            + self.masks.size()
+            + self.records.size()
+            + self.table.size()
             + self.materials.size()
     }
 

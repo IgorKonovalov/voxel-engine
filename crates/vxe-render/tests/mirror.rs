@@ -79,6 +79,14 @@ fn sync_uploads_dirty_bricks_once() {
     assert_eq!(first.chunks, 4);
     assert_eq!(gpu.live_slots(), 256);
     assert_eq!(gpu.pool_slots(), POOL_PAGE_SLOTS);
+    // Allocation is the buffers' sizes, and covers the live accounting.
+    let allocated: u64 = (0..4).map(|k| gpu.pool_shard(k).size()).sum::<u64>()
+        + gpu.masks().size()
+        + gpu.records().size()
+        + gpu.table().size()
+        + gpu.materials().size();
+    assert_eq!(gpu.allocated_bytes(), allocated);
+    assert!(gpu.allocated_bytes() >= gpu.mirror_bytes());
     for c in world.store().coords() {
         assert!(!world.store().get(c).unwrap().read().unwrap().any_dirty());
     }
@@ -359,7 +367,11 @@ fn a_following_window_mirrors_the_streamed_residency() {
         .map(|e| e & !FULL_BIT)
         .collect();
     assert!(!evicted_slots.is_empty());
+    let (live_before, allocated_before) = (gpu.mirror_bytes(), gpu.allocated_bytes());
     gpu.apply_events(&ev);
+    // Eviction lowers the live accounting; the buffers never shrink.
+    assert!(gpu.mirror_bytes() < live_before);
+    assert_eq!(gpu.allocated_bytes(), allocated_before);
     // Eviction returns exactly the evicted chunks' slots to the free list.
     let free: HashSet<u32> = gpu.free_slots().iter().copied().collect();
     assert_eq!(free, evicted_slots);
