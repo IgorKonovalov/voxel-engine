@@ -11,9 +11,14 @@
 > the reflection direction set, the hit point (the face) and the tap delay as excess over the
 > direct path, so the expected echo is 1160 samples. See "Amendment 2026-10-16 (second)" below.
 > **Amended 2026-10-16 (third):** the HRIR pack uses one window start for every direction
-> (sample 54 of 256), not one per direction; each reflection tap is scaled by its source's
-> occlusion multiplier; Phase 3's rendered ratios are stated with reflections off, and the
-> figures with reflections on move to Phase 4. See "Amendment 2026-10-16 (third)" below.
+> (sample 62 of 256; corrected in the fourth amendment), not one per direction; each reflection
+> tap is scaled by its source's occlusion multiplier; Phase 3's rendered ratios are stated with
+> reflections off, and the figures with reflections on move to Phase 4. See "Amendment
+> 2026-10-16 (third)" below.
+> **Amended 2026-10-16 (fourth):** corrects the third amendment's window rule and start (an
+> ear's onset is a tenth of the louder ear's peak; the start is sample 62); restates Phase 4's
+> tap check against the unoccluded tap gain; states the turning test's level figure as a dip;
+> moves the acoustics bench to `apps/flythrough`. See "Amendment 2026-10-16 (fourth)" below.
 
 ## TL;DR
 
@@ -113,10 +118,11 @@ The fix pass on `plan-0006` stopped on two blocks (the log's Notes at 23ccbf2 an
 owner decided both on 2026-10-16, after an A/B listen of the first.
 
 **Phase 2, the pack window.** One window start for every direction replaces the per-direction
-rule. The packer computes each ear's onset as before (the first sample reaching a tenth of that
-ear's own peak), takes the earliest onset over every kept direction and both ears, and starts
-every direction's two 128-tap responses 8 samples before it. For D2 at stride 3 that is sample
-54 of the source's 256. The format, the direction count and the size (3,044,420 bytes) do not
+rule. The packer computes each ear's onset (the fourth amendment states the rule: the first
+sample reaching a tenth of the direction's louder ear's peak), takes the earliest onset over
+every kept direction and both ears, and starts every direction's two 128-tap responses 8
+samples before it. For D2 at stride 3 that is sample 62 of the source's 256 (corrected in the
+fourth amendment). The format, the direction count and the size (3,044,420 bytes) do not
 change; the file keeps its name, `assets/sadie2_d2_48k.hrir`, and its bytes become those of
 dev's candidate `sadie2_d2_48k_global_window.hrir` (sha256 `86375f1c8ff0...`, the full hash in
 the log), packed from the same `D2_HRIR_SOFA.zip` (md5 `f555491d1b6b1a108bb4d26b63ad84a4`).
@@ -178,6 +184,43 @@ raised-cosine direction crossfade (2f497aa; still one block, as ADR-0006 says), 
 opt-level 2 in dev builds (`Cargo.toml`, 2f497aa), the per-sample low-pass coefficient glide
 (8a0d6c5), the callback meter and recorder behind `--audio-debug` and the `FLYTHROUGH_HRIR`
 pack override (96de82d), and the two fourth-difference tests that guard the crossfade and the glide.
+
+## Amendment 2026-10-16 (fourth)
+
+The close review of `plan-0006` found the third amendment's text out of step with the bytes the
+owner heard, and one Phase 4 check that cannot hold as worded (the log's Notes on Phases 2 and
+4). The owner's standing "go with your recommendations" applies the reviewer's corrections
+below. No new pack is made.
+
+**Phase 2, the pack window, corrected.** The pack the owner A/B'd has sha256
+`86375f1c8ff076131ccdd8cd4b8ae6f7cac4dc5d2224f90376a013b9149719b7`. It takes an ear's onset as
+the first sample reaching a tenth of the direction's **louder** ear's peak. Its shared window
+starts at sample 62, which is 8 before the earliest onset (70). The least energy kept is
+0.9714. The 54 was a misreport. The own-peak rule gives start 44 and a different pack that the
+owner never heard; it is not adopted. Review check: all 2950 directions equal the previous
+per-direction pack's taps at an offset of -35..+18 samples (that pack's starts ran 44 to 97),
+which places the shared start at 62.
+
+**Phase 2, the turning check's level figure.** It is the deepest dip of either ear's 440 Hz
+magnitude inside any 256-frame span, below the lower of the span's two ends. The
+nearest-direction step is not bounded here; its max-minus-min of 0.28 dB is the baseline for
+the interpolation follow-up.
+
+**Phase 4, the tap check, restated.** Transmission 1 leaves absorption in the multiplier
+(measured 0.5 per tap), so the old check cannot hold. New check, in Phase 3's 5 m and 0.5 m
+scenes:
+
+- the source multiplier matches Phase 3's figures (0.08404 and 0.4183) within 1 %;
+- each tap's gain equals that multiplier times `(1 - A(m)) / max(|L - H| + |H - S|, 1 m)`,
+  computed in the test from the tap's hit point, within `1e-6` relative.
+
+The other five delays in Phase 4's echo scene are measured values: 1457, 1631, 1922, 2947,
+3684 samples (the second amendment's 1458, 1634, 1922, 2938, 3661 were the draft's arithmetic).
+
+**Phase 5, where the acoustics bench lives.** It moves to `apps/flythrough/benches/acoustics.rs`;
+the mixer bench stays in `crates/vxe-audio/benches/mixer.rs`. No crate under `crates/` depends
+on an app. The mixer bench also reports a turning variant (every voice crossfades directions
+each block). Rejected alternative: keeping `flythrough` as a dev-dependency of `vxe-audio`.
 
 ## Context & problem
 
@@ -303,7 +346,9 @@ Shared conventions for every phase:
     (amended 2026-10-16: with `--azimuth-stride 3`, the default) reads the SADIE II subject D2 HRIR SOFA at 48 kHz (from the `D2_HRIR_SOFA.zip` archive on
     the Zenodo record, 38 MB, not committed), truncates each HRIR to 128 taps keeping the onset
     (amended 2026-10-16, third: every direction's two 128-tap responses start at one sample,
-    8 samples before the earliest onset of any kept direction and either ear, sample 54 for D2;
+    8 samples before the earliest onset of any kept direction and either ear, an ear's onset
+    being the first sample reaching a tenth of the direction's louder ear's peak, sample 62 for
+    D2 (fourth amendment);
     the packer prints that start and the least fraction of an ear's energy kept, at least 0.95),
     and writes the pack: a 20-byte header (`b"VXEH"`, version 1, sample
     rate, tap count, direction count), the direction table (azimuth, elevation in degrees as
@@ -315,8 +360,9 @@ Shared conventions for every phase:
     elevation ring, the largest change in either ear's 440 Hz phase is below 0.15 rad (0.078
     measured; the per-direction pack measured 1.822); printed and recorded. A 440 Hz hum 1 m
     ahead, the listener turning at 90 deg/s with the listener set once per 256-frame block:
-    within any one block, either ear's 440 Hz phase moves by less than 0.2 rad and its level by
-    less than 0.25 dB (0.058 rad and 0.04 dB measured; the per-direction pack 0.811 rad and
+    within any one block, either ear's 440 Hz phase moves by less than 0.2 rad and its level
+    dips by less than 0.25 dB below the span's ends (fourth amendment; 0.058 rad and 0.04 dB
+    measured; the per-direction pack 0.811 rad and
     0.90 dB; static 0.001 rad).
   - `assets/README.md` names the source (SADIE II, University of York, Zenodo DOI
     10.5281/zenodo.10886409), the subject, the licence (Apache 2.0) and the attribution text
@@ -410,9 +456,11 @@ Shared conventions for every phase:
     onset shifts both peaks equally). The second peak's amplitude relative to the first is
     `0.7 * (1 / 10.2888) / (1 / 2) = 0.1361`, within 10 % (the HRIR shapes both).
   - With the wall removed, no second peak above 1 % of the first exists within 100 ms.
-  - (Amended 2026-10-16, third.) Phase 3's 5 m and 0.5 m wall scenes with reflections on:
-    every tap's gain equals the source's occlusion multiplier times that tap's gain in the same
-    scene with the wall's transmission set to 1, within `1e-6` relative; the rendered ratios to
+  - (Amended 2026-10-16, third; tap check restated in the fourth.) Phase 3's 5 m and 0.5 m
+    wall scenes with reflections on: the source multiplier matches Phase 3's figures (0.08404
+    and 0.4183) within 1 %; each tap's gain equals that multiplier times
+    `(1 - A(m)) / max(|L - H| + |H - S|, 1 m)`, computed in the test from the tap's hit point,
+    within `1e-6` relative; the rendered ratios to
     the open scene are 0.1136 (100 Hz) and 0.6452 (2 kHz), each within 2 % (measured under this
     rule, not derived). With reflections off, `Acoustics` sends no taps.
   - The `--audio` fly-through's `F1` line prints the number of active taps and the last
@@ -423,6 +471,7 @@ Shared conventions for every phase:
 - **What:** the callback and acoustics cost readings against the proposals, and the proposals
   into `nfr.md`.
 - **Files touched:** `crates/vxe-audio/benches/mixer.rs`, `crates/vxe-audio/Cargo.toml`,
+  `apps/flythrough/benches/acoustics.rs` and `apps/flythrough/Cargo.toml` (fourth amendment),
   `apps/flythrough/src/main.rs`, `docs/nfr.md`.
 - **Done when:**
   - `cargo bench -p vxe-audio --bench mixer`: one 256-frame block with 32 HRTF voices, each

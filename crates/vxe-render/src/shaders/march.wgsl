@@ -152,6 +152,13 @@ fn floor_div(a: vec3<i32>, b: i32) -> vec3<i32> {
     return vec3<i32>(floor(vec3<f32>(a) / f32(b)));
 }
 
+// True in the lane of axis `k`. A component store through a runtime index (`v[k] = x`) is
+// not addressable under FXC, the D3D12 HLSL compiler, so writes go through
+// `select(v, vec3(x), axis_mask(k))` instead; reads through a runtime index are fine.
+fn axis_mask(k: i32) -> vec3<bool> {
+    return vec3<i32>(0, 1, 2) == vec3<i32>(k);
+}
+
 // The mip level a LOD-only chunk is walked at: forced, or by its squared chunk distance to the
 // camera's chunk.
 fn lod_level(chunk: vec3<i32>) -> u32 {
@@ -321,7 +328,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
         axis = select(select(2, 1, tmin.y == t0), 0, tmin.x == t0);
         let p = o + d * t;
         let edge = i32(round(p[axis]));
-        v[axis] = select(edge - 1, edge, d[axis] > 0.0);
+        v = select(v, vec3<i32>(select(edge - 1, edge, d[axis] > 0.0)), axis_mask(axis));
     }
     v = clamp(v, bmin_i, bmax_i - vec3<i32>(1));
     let contour = contour_active();
@@ -357,7 +364,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
         if (tk.z < tk[k]) { k = 2; }
         t = tk[k];
         v = voxel_at(o + d * t, d);
-        v[k] = select(edge[k] - 1, edge[k], d[k] > 0.0);
+        v = select(v, vec3<i32>(select(edge[k] - 1, edge[k], d[k] > 0.0)), axis_mask(k));
         axis = k;
     }
     return miss;
@@ -376,8 +383,7 @@ fn view_mode() -> u32 {
 fn face_normal(d: vec3<f32>, h: Hit) -> vec3<f32> {
     var n = -d;
     if (h.axis >= 0) {
-        n = vec3<f32>(0.0);
-        n[h.axis] = -sign(d[h.axis]);
+        n = select(vec3<f32>(0.0), vec3<f32>(-sign(d[h.axis])), axis_mask(h.axis));
     }
     return n;
 }
@@ -422,8 +428,8 @@ fn trilinear8_normal(p: vec3<f32>, h: Hit, nf: vec3<f32>) -> vec3<f32> {
     var base = vec3<i32>(floor(p - 0.5));
     var f = p - 0.5 - vec3<f32>(base);
     let k = h.axis;
-    base[k] = min(h.voxel[k], h.voxel[k] + i32(nf[k]));
-    f[k] = 0.5;
+    base = select(base, vec3<i32>(min(h.voxel[k], h.voxel[k] + i32(nf[k]))), axis_mask(k));
+    f = select(f, vec3<f32>(0.5), axis_mask(k));
     var c: array<f32, 8>;
     for (var i = 0; i < 8; i++) {
         c[i] = occupancy(base + vec3<i32>(i & 1, (i >> 1) & 1, i >> 2));
