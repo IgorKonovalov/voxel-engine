@@ -938,6 +938,30 @@ impl Run {
     }
 }
 
+/// Logs a teardown stage before and after it runs, like the shell's, so a hang at exit
+/// names its stage.
+fn teardown_stage(what: &str, f: impl FnOnce()) {
+    log::info!("teardown: dropping the {what}");
+    let t = now();
+    f();
+    log::info!("teardown: {what} dropped in {:.1} ms", ms_since(t));
+}
+
+impl Drop for Run {
+    /// Stops and joins the streamer's workers first, then drops the GPU mirror and passes,
+    /// then the world (swapped for an empty one, whose drop is free).
+    fn drop(&mut self) {
+        if let Some(stream) = self.stream.take() {
+            teardown_stage("streamer", || drop(stream));
+        }
+        if let Some(gfx) = self.gfx.take() {
+            teardown_stage("GPU mirror and passes", || drop(gfx));
+        }
+        let world = std::mem::replace(&mut self.world, World::new(&MaterialTable::new()));
+        teardown_stage("world", || drop(world));
+    }
+}
+
 /// The fixed-point centre of the voxel holding `p`.
 fn centre_fixed(p: Vec3) -> Fixed3 {
     vxe_world::centre_of_voxel(voxel_of(p))
@@ -1047,7 +1071,8 @@ impl App for Flythrough {
 }
 
 /// Runs `app` without a window: a device on the high-performance adapter and an offscreen
-/// target in place of the surface, the same frames until the app exits.
+/// target in place of the surface, the same frames until the app exits. Teardown follows
+/// the windowed shell's order (the app, then the queue, device and adapter), traced alike.
 fn run_headless(mut app: Flythrough, size: [u32; 2]) -> Result<(), String> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = pollster_block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -1094,11 +1119,25 @@ fn run_headless(mut app: Flythrough, size: [u32; 2]) -> Result<(), String> {
         let dt = (t - last).as_secs_f32();
         last = t;
         if app.frame(&gpu, &input, dt, &view) == Flow::Exit {
-            return Ok(());
+            log::info!("teardown: the app asked to exit");
+            break;
         }
         // Keep the queue from running ahead of the GPU, as presenting would.
         let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
     }
+    drop(view);
+    drop(target);
+    teardown_stage("app", || drop(app));
+    let Gpu {
+        adapter,
+        device,
+        queue,
+        ..
+    } = gpu;
+    teardown_stage("queue", || drop(queue));
+    teardown_stage("device", || drop(device));
+    teardown_stage("adapter", || drop(adapter));
+    Ok(())
 }
 
 /// Drives a future to completion on this thread; `wgpu`'s native futures are ready at once
@@ -1116,7 +1155,12 @@ fn pollster_block_on<F: std::future::Future>(f: F) -> F::Output {
 }
 
 fn main() {
-    env_logger::init();
+    // The fly-through's own lines and the shell's teardown trace show by default; RUST_LOG
+    // overrides.
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("error,vxe_app=info,flythrough=info"),
+    )
+    .init();
     let start = now();
     let args = match parse_args() {
         Ok(a) => a,
@@ -1198,6 +1242,7 @@ fn main() {
         eprintln!("flythrough: {e}");
         std::process::exit(1);
     }
+    log::info!("teardown: done, exiting the process");
 }
 
 #[cfg(test)]

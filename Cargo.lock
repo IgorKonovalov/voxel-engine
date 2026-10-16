@@ -547,6 +547,7 @@ name = "flythrough"
 version = "0.3.0"
 dependencies = [
  "env_logger",
+ "log",
  "png",
  "pollster",
  "vxe-app",
