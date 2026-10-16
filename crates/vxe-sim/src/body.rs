@@ -152,12 +152,14 @@ impl SolidBox {
         let below = self.max[2] <= fz;
         let above = self.min[2] >= top;
         let vz = i128::from(delta[2]);
-        if dx * dx + dy * dy < r * r {
+        let d2 = dx * dx + dy * dy;
+        if d2 < r * r {
             return (below && vz < 0) || (above && vz > 0) || (!below && !above);
         }
         let toward = i128::from(delta[0]) * dx + i128::from(delta[1]) * dy;
-        let dxy = isqrt((dx * dx + dy * dy) as u128) as i128;
-        let t = (dxy - r).max(0);
+        // `t > 0` iff the floored plan distance exceeds the radius; the root is taken only
+        // when both gaps are open and the sign needs it.
+        let t_open = d2 >= (r + 1) * (r + 1);
         let (gz, vz_close) = if below {
             (i128::from(fz - self.max[2]), -vz)
         } else if above {
@@ -165,10 +167,15 @@ impl SolidBox {
         } else {
             (0, 0)
         };
-        if t == 0 && gz == 0 {
-            return toward > 0 && (!below || vz < 0) && (!above || vz > 0);
+        match (t_open, gz > 0) {
+            (false, false) => toward > 0 && (!below || vz < 0) && (!above || vz > 0),
+            (true, false) => toward > 0,
+            (false, true) => vz_close > 0,
+            (true, true) => {
+                let dxy = isqrt(d2 as u128) as i128;
+                (dxy - r) * toward + gz * vz_close * dxy > 0
+            }
         }
-        t * toward + gz * vz_close * dxy > 0
     }
 
     /// The box's lattice point nearest the foot point.

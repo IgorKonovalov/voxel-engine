@@ -44,24 +44,30 @@ fn nearest(boxes: &[SolidBox], b: &Body, lo: [i64; 3], hi: [i64; 3]) -> Option<(
 }
 
 /// The nearest of `boxes` meeting `[lo, hi)` that a move by `delta` closes on
-/// ([`SolidBox::closes_on`]), by [`Key`]. A box the move runs along or away from cannot stop
-/// it. Without that filter a box within the floored gap of zero, or within the gap at which
-/// every advance rounds to zero, stops every move from there, including one straight away
-/// from it, and the body never moves again.
+/// ([`SolidBox::closes_on`]), by [`Key`], and whether any box meeting the region was left out.
+/// A box the move runs along or away from cannot stop it. Without that filter a box within
+/// the floored gap of zero, or within the gap at which every advance rounds to zero, stops
+/// every move from there, including one straight away from it, and the body never moves
+/// again.
 fn nearest_blocking(
     boxes: &[SolidBox],
     b: &Body,
     lo: [i64; 3],
     hi: [i64; 3],
     delta: [i64; 3],
-) -> Option<(Key, Contact)> {
-    let (key, bx) = boxes
+) -> (Option<(Key, Contact)>, bool) {
+    let mut left_out = false;
+    let n = boxes
         .iter()
         .filter(|x| x.intersects(lo, hi))
+        .filter(|x| {
+            let c = x.closes_on(b, delta);
+            left_out |= !c;
+            c
+        })
         .map(|x| (x.key(b), x))
-        .filter(|(_, x)| x.closes_on(b, delta))
-        .min_by_key(|(k, _)| *k)?;
-    Some((key, bx.contact(b, key.voxel)))
+        .min_by_key(|(k, _)| *k);
+    (n.map(|(key, bx)| (key, bx.contact(b, key.voxel))), left_out)
 }
 
 fn to_i64(v: i128) -> i64 {
@@ -134,7 +140,8 @@ pub fn sweep_with_stats(world: &World, body: &Body, delta: Fixed3) -> (Sweep, Qu
         out.iterations += 1;
         let b = body.at(pos);
         let (rlo, rhi) = swept_region(&b, rem);
-        let Some((key, contact)) = nearest_blocking(&boxes, &b, rlo, rhi, rem) else {
+        let (nearest, left_out) = nearest_blocking(&boxes, &b, rlo, rhi, rem);
+        let Some((key, contact)) = nearest else {
             pos = [0, 1, 2].map(|k| pos[k] + rem[k]);
             rem = [0; 3];
             break;
@@ -164,11 +171,15 @@ pub fn sweep_with_stats(world: &World, body: &Body, delta: Fixed3) -> (Sweep, Qu
         }
         let next = [0, 1, 2].map(|k| pos[k] + adv[k]);
         // A box left out as not closed on can lie under one unit from the body, and an
-        // advance rounded off the line of the delta can reach into it. Stop short of that.
-        let nb = body.at(next);
-        if let Some(x) = boxes.iter().find(|x| x.overlaps(&nb)) {
-            out.contact = Some(x.contact(&b, x.key(&b).voxel));
-            break;
+        // advance rounded off the line of the delta, or a sign taken from the floored plan
+        // distance, can reach into it. Stop short of that. With no box left out, `g` bounds
+        // the gap to every box the region holds and the check is not needed.
+        if left_out {
+            let nb = body.at(next);
+            if let Some(x) = boxes.iter().find(|x| x.overlaps(&nb)) {
+                out.contact = Some(x.contact(&b, x.key(&b).voxel));
+                break;
+            }
         }
         pos = next;
         rem = [0, 1, 2].map(|k| rem[k] - adv[k]);
@@ -176,7 +187,9 @@ pub fn sweep_with_stats(world: &World, body: &Body, delta: Fixed3) -> (Sweep, Qu
     if rem != [0; 3] && out.contact.is_none() {
         let b = body.at(pos);
         let (rlo, rhi) = swept_region(&b, rem);
-        out.contact = nearest_blocking(&boxes, &b, rlo, rhi, rem).map(|(_, c)| c);
+        out.contact = nearest_blocking(&boxes, &b, rlo, rhi, rem)
+            .0
+            .map(|(_, c)| c);
     }
     out.moved = Fixed3([0, 1, 2].map(|k| pos[k] - start[k]));
     (out, stats)
