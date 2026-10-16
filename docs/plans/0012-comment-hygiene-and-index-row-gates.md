@@ -1,6 +1,6 @@
 # 0012: Two repository gates copied from Ritmolux: comment hygiene in sources, and a byte cap on index rows
 
-> **Status:** approved (2026-10-16)
+> **Status:** in-progress (2026-10-17)
 > **Created:** 2026-10-16
 > **Milestone:** none; repository tooling, not an engine slice. It serves the `CLAUDE.md` rule that a rule which keeps getting broken gets a mechanical gate.
 > **Related ADRs:** none. The alternative to a gate is the prose that already states each rule in `CLAUDE.md`; the reasoning behind both gates is recorded in Ritmolux as its ADR-0127 (comment hygiene) and ADR-0116 (index-row cap) and is not restated here.
@@ -188,7 +188,7 @@ Proposal, not a reading: under five seconds for all three gates on a CI runner.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The comment-hygiene gate | dev | not started | |
+| 1: The comment-hygiene gate | dev | done | committed with this row |
 | 2: The index-row gate and the roster markers | dev | not started | |
 
 ### Notes
@@ -196,6 +196,13 @@ Proposal, not a reading: under five seconds for all three gates on a CI runner.
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: the four `world_budget.rs` literals were already one source line each; the 12-space run is hand-typed column alignment. Neither a `\` continuation nor one line each removes it, so the label column is printed with a width specifier (`{:LABEL$}`, `LABEL = 19`) and the label passed as an argument.
+- Phase 1: `world_budget` has no `--frames` flag. Before/after compared on `--chunks 6x6x3 --seed 1` and `--stream 3,5 --seed 1` (release build): byte-identical except the `generation:` and `voxels/s/...` timing lines, whose first 19 columns are identical.
+- Phase 1: the adapted gate also prefixes Ritmolux ADR, plan and backlog numbers in the copied fixture seeds' prose with `Ritmolux`, and its error message's example citations name this repository's numbers.
+- Phase 1: `seeded.wgsl` seeds two findings, not one: the `//` relative link the plan names, and a relative link after the inner close of a nested `/* */` comment, which pins the nesting rule (a non-nesting lexer reports 12).
+- Phase 1, other lanes: the comment gate run over the tips of `plan-0006` (44a1582), `plan-0013` (d75a0af) and `plan-0014` (2129bfb) reports only the five findings fixed here; `plan-0013` edits both `world_budget.rs` and `gpu_world.rs`, so its merge carries them in its own line numbers (109, 112, 114, 177; 1157) and needs the same fixes. No `plan-0004` branch exists yet.
+- Phase 1: `CLAUDE.md`'s `ci.yml` line in "Where things live" still lists only doc links among the gates; updated in Phase 2, whose Files touched name `CLAUDE.md` whole.
 
 ### Close triggers
 

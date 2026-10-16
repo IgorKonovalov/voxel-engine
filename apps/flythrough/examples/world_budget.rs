@@ -28,6 +28,9 @@ use vxe_world::{
 const SLOT_AND_MASK: usize = 512 + 8;
 const RECORD: usize = 2560;
 
+/// Width of the label column the figures are printed after.
+const LABEL: usize = 19;
+
 #[allow(
     clippy::disallowed_methods,
     reason = "a budget tool timing generation; the world itself reads no clock"
@@ -90,13 +93,13 @@ fn bounded(seed: u64, chunks: [i32; 3]) {
     let air = air.iter().find(|(m, _)| *m == 0).map_or(0, |&(_, n)| n);
 
     println!(
-        "extent:            {}x{}x{} chunks, seed {seed}",
-        chunks[0], chunks[1], chunks[2]
+        "{:LABEL$}{}x{}x{} chunks, seed {seed}",
+        "extent:", chunks[0], chunks[1], chunks[2]
     );
-    println!("chunks:            {}", s.chunks);
+    println!("{:LABEL$}{}", "chunks:", s.chunks);
     println!(
-        "bricks:            {} Full, {} Uniform",
-        s.full_bricks, s.uniform_bricks
+        "{:LABEL$}{} Full, {} Uniform",
+        "bricks:", s.full_bricks, s.uniform_bricks
     );
     println!(
         "full fraction:     {:.2} %",
@@ -158,8 +161,8 @@ fn streamed(seed: u64, r: Residency) {
         r.r_full, r.r_lod, r.hysteresis
     );
     println!(
-        "chunks:            {} full, {} LOD-only",
-        st.resident_full, st.resident_lod
+        "{:LABEL$}{} full, {} LOD-only",
+        "chunks:", st.resident_full, st.resident_lod
     );
     println!(
         "full fraction:     {:.2} % of full chunks' bricks",

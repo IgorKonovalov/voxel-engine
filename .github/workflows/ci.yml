@@ -46,6 +46,8 @@ jobs:
         run: node --test ".claude/hooks/*.test.mjs"
       - name: Doc links
         run: node scripts/check-doc-links.mjs
+      - name: Comment hygiene
+        run: node scripts/check-comment-hygiene.mjs
 
   deny:
     runs-on: ubuntu-latest
