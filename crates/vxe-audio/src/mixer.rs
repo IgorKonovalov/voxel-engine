@@ -10,8 +10,8 @@
 //! 3. spatialise. On the HRTF path the samples run through the two 128-tap FIRs of the measured
 //!    direction nearest to the source (time-domain convolution over the voice's last `taps - 1`
 //!    inputs and this block). When the nearest direction changes between blocks, the block is
-//!    filtered with both the old and the new FIRs and crossfaded linearly from old to new over
-//!    the block, so the switch never steps. On the panning path a constant-power pan on the
+//!    filtered with both the old and the new FIRs and crossfaded from old to new over the
+//!    block along a raised cosine, so the switch neither steps nor kinks at the block edges. On the panning path a constant-power pan on the
 //!    listener's right axis is smoothed like the gain.
 //!
 //! Nothing here allocates after construction: the voice list, the scratch and every voice's
@@ -224,7 +224,7 @@ impl Mixer {
                             convolve(input, hrtf.reversed(from, ear), &mut y[..n]);
                         }
                         for (i, f) in out.chunks_exact_mut(2).enumerate() {
-                            let w = (i + 1) as f32 / n as f32;
+                            let w = crossfade_weight(i, n);
                             f[0] += old[0][i] + (new[0][i] - old[0][i]) * w;
                             f[1] += old[1][i] + (new[1][i] - old[1][i]) * w;
                         }
@@ -261,6 +261,16 @@ impl Mixer {
             }
         }
     }
+}
+
+/// Weight of the new filter at frame `i` of an `n`-frame crossfade: a raised cosine from
+/// `0.5 - 0.5 cos(pi / (n + 1))` up to `0.5 + 0.5 cos(pi / (n + 1))`, symmetric about the
+/// block's middle. Its slope is near zero at both ends, so a crossfade that follows another
+/// in the next block (a source whose nearest direction changes every block) joins it without
+/// a kink; a linear ramp changes slope by `(new - old) / n` at every block boundary.
+fn crossfade_weight(i: usize, n: usize) -> f32 {
+    let x = (i + 1) as f32 / (n + 1) as f32;
+    0.5 - 0.5 * (std::f32::consts::PI * x).cos()
 }
 
 /// `out[n] = sum_j h_reversed[j] * input[n + j]`: a causal FIR over `input`, which holds

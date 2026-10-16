@@ -65,3 +65,8 @@ opt-level = 2
 
 [profile.dev.package.flythrough]
 opt-level = 2
+
+# The mixer runs on the audio device's callback: unoptimized, one HRTF voice whose direction
+# changes costs about 2.5 ms of a 5.33 ms block and the stream underruns.
+[profile.dev.package.vxe-audio]
+opt-level = 2

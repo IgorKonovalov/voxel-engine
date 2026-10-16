@@ -239,6 +239,8 @@ struct Audio {
     table: MaterialTable,
     /// The voices playing and where, in voxel units.
     voices: Vec<(VoiceId, [f32; 3])>,
+    /// Stream errors (underruns among them) already reported.
+    stream_errors: u64,
 }
 
 impl Audio {
@@ -282,6 +284,7 @@ impl Audio {
                     acoustics,
                     table: acoustic_table(),
                     voices: Vec::new(),
+                    stream_errors: 0,
                 })
             }
             Err(e) => {
@@ -1014,6 +1017,11 @@ impl Run {
         let listener = flythrough::listener(&self.fly.camera);
         // A full channel drops this frame's listener; the next frame sends a fresh one.
         let _ = audio.output.set_listener(listener);
+        let errors = audio.output.stream_errors();
+        if errors > audio.stream_errors {
+            println!("audio: {errors} stream errors so far (an underrun is heard as a click)");
+            audio.stream_errors = errors;
+        }
         for id in audio.output.finished() {
             audio.voices.retain(|(v, _)| *v != id);
         }
