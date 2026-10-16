@@ -5,6 +5,8 @@
 > **Milestone:** M4 in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0006](../adrs/0006-hrtf-source-and-audio-thread-model.md) (HRTF source, rendering, thread model), ADR-0002 (access model: probes take short chunk read locks), ADR-0001 (stack)
 > **Prerequisite:** Plan 0001 closed. Independent of Plans 0002 to 0005 and of their readings.
+> **Amended 2026-10-16:** the HRIR pack keeps every 3rd azimuth of each SADIE II D2 ring
+> (2950 directions, about 3.0 MB); header is 20 bytes. See "Amendment 2026-10-16" below.
 
 ## TL;DR
 
@@ -18,6 +20,30 @@ of probe rays around the listener, turned into delay taps. The first thing a rea
 headless test: a 100 Hz tone 10 m away behind 5 m of a material with transmission 0.5 and
 absorption 0.3 per metre renders at 0.0814 of its unoccluded level. The first thing the user
 hears is a knock on the wall they just dug, muffled when they walk around the corner.
+
+## Amendment 2026-10-16
+
+Phase 2 stopped on the pack size. SADIE II subject D2 is a KEMAR measured at 8802 directions
+(22 elevation rings of 400 azimuths at 0.9 degrees, plus the two poles), not the about 2800 the
+draft assumed. Packed whole, the file is 9,083,684 bytes, three times the repo's current size,
+and a committed blob never leaves history.
+
+**Decision:** the packer takes `--azimuth-stride N` (default 3) and keeps ring azimuth indices
+divisible by N, plus both poles. At stride 3 that is 22 rings x 134 (indices 0, 3, ..., 399)
++ 2 poles = 2950 directions, and 20 + 2950 x 8 + 2950 x 2 x 128 x 4 = 3,044,420 bytes. Azimuth
+spacing becomes 2.7 degrees, every elevation ring stays. Nearest-direction lookup with the
+one-block crossfade (ADR-0006) is unchanged; 2.7 degrees sits inside the frontal localisation
+blur, and the moving-source done-when still has to hold.
+
+**Rejected:** the full 8802-direction pack (9.08 MB in history for steps below hearing on the
+first consumer's use); stride 2 (4402 directions, 4.54 MB) as the default, kept as the fallback
+if the owner hears azimuth stepping at the Phase 5 listening check (re-run the packer, one new
+blob); a human SADIE subject (about 2800 directions, but the plan pins D2 and a re-pin needs a
+new licence and attribution check); `f16` or fewer taps (changes the format and the 128-tap
+argument in ADR-0006 for a saving stride already gives).
+
+Also corrected: the header is a magic plus four `u32`, 20 bytes; D2 is a KEMAR, so the
++90 degree expectation no longer quotes a KU100 figure.
 
 ## Context & problem
 
@@ -140,13 +166,14 @@ Shared conventions for every phase:
   README.md}`, `crates/vxe-audio/tests/hrtf.rs`, `Cargo.toml` (`sofar` dev pin).
 - **Done when:**
   - `cargo run -p vxe-audio --example hrir_pack -- <D2 48 kHz SOFA path> assets/sadie2_d2_48k.hrir`
-    reads the SADIE II subject D2 HRIR SOFA at 48 kHz (from the `D2_HRIR_SOFA.zip` archive on
+    (amended 2026-10-16: with `--azimuth-stride 3`, the default) reads the SADIE II subject D2 HRIR SOFA at 48 kHz (from the `D2_HRIR_SOFA.zip` archive on
     the Zenodo record, 38 MB, not committed), truncates each HRIR to 128 taps keeping the onset
     (the pack stores, per direction, the two 128-tap responses starting 8 samples before the
-    earlier ear's onset), and writes the pack: a 16-byte header (`b"VXEH"`, version 1, sample
+    earlier ear's onset), and writes the pack: a 20-byte header (`b"VXEH"`, version 1, sample
     rate, tap count, direction count), the direction table (azimuth, elevation in degrees as
     `f32`), then the taps. The log records the direction count and the pack's byte size
-    (expected about 3 MB for about 2800 directions).
+    (amended 2026-10-16: 2950 directions and 3,044,420 bytes at stride 3; the log records the packer's own counts, and `20 + dirs x 8 + dirs x
+    1024` must equal the file size).
   - `assets/README.md` names the source (SADIE II, University of York, Zenodo DOI
     10.5281/zenodo.10886409), the subject, the licence (Apache 2.0) and the attribution text
     SADIE II asks for; `LICENSE-SADIE-II.txt` is the licence copy.
@@ -156,7 +183,7 @@ Shared conventions for every phase:
     bin table, and equals a brute-force search over all directions for 1000 seeded directions.
   - A 2 kHz tone at azimuth +90 degrees (listener's right), elevation 0, 2 m: the right channel
     RMS exceeds the left by at least 6 dB over the last 0.1 s of a 0.5 s render (the measured
-    difference is printed and recorded; a KU100-class head shows about 10 dB here). The same
+    difference is printed and recorded; D2 is a KEMAR). The same
     tone in front: the channels differ by at most 1 dB. The same tone at -90 degrees mirrors
     the +90 result within 1 dB.
   - A source moving from -90 to +90 degrees over 1 s at 2 m renders without any sample-to-sample
@@ -299,7 +326,7 @@ close writes them in with the dev-box readings.
 |---|---|---|
 | Mixer callback, 32 HRTF voices, one 256-frame block (5.33 ms of audio) | 1.0 ms on the baseline CPU; the arithmetic is 32 x 2 x 128 x 256 = 2.1 million multiply-adds per block plus filters and taps, so well under on the dev box | `bench mixer`; the fly-through's `F1` maximum block time |
 | `Acoustics::update`, 32 sources | 0.5 ms per call (240 integer rays through the brick map) | `bench mixer` |
-| Audio RAM | the pack (about 3 MB), 200 ms delay lines (38 KB per voice), scratch | printed by the bench |
+| Audio RAM | the pack (about 3.0 MB at stride 3), 200 ms delay lines (38 KB per voice), scratch | printed by the bench |
 | Startup | pack load under 10 ms | the fly-through's startup line |
 | `nfr.md` §6 | `trace_materials` is integer and pinned on both arms; nothing else here is deterministic by contract | the pinned hash in `queries.rs` |
 
