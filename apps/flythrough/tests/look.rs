@@ -358,6 +358,74 @@ fn contour_golden() {
     assert!(f >= 0.01, "look_contour.png: {:.2} %", f * 100.0);
 }
 
+/// Pixels of a `WIDTH` x `HEIGHT` RGBA image whose Rec. 709 luma is below half the median luma
+/// of their 8 neighbours; border pixels are not counted.
+fn dark_specks(rgba: &[u8]) -> Vec<usize> {
+    let (w, h) = (WIDTH as usize, HEIGHT as usize);
+    let luma = |i: usize| {
+        let p = &rgba[i * 4..i * 4 + 3];
+        0.2126 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[2])
+    };
+    let mut specks = Vec::new();
+    for y in 1..h - 1 {
+        for x in 1..w - 1 {
+            let mut n = [0.0; 8];
+            let mut k = 0;
+            for dy in [-1, 0, 1] {
+                for dx in [-1, 0, 1] {
+                    if (dx, dy) != (0, 0) {
+                        n[k] = luma((y as isize + dy) as usize * w + (x as isize + dx) as usize);
+                        k += 1;
+                    }
+                }
+            }
+            n.sort_by(f64::total_cmp);
+            // The median of eight: the mean of the middle two.
+            let median = 0.5 * (n[3] + n[4]);
+            if luma(y * w + x) < 0.5 * median {
+                specks.push(y * w + x);
+            }
+        }
+    }
+    specks
+}
+
+/// A diagnostic, not a gate: the dark specks of the contour golden scene with the headlamp's
+/// shadow ray on and off, and in face mode for comparison. Run with `--ignored` and read the
+/// printed counts.
+#[test]
+#[ignore = "diagnostic: prints speck counts, asserts nothing about them"]
+fn contour_dark_specks_with_and_without_shadows() {
+    let world = carved_world();
+    let Some(mut rig) = attr_rig(&world) else {
+        return;
+    };
+    let off = LightParams {
+        shadows: false,
+        ..LightParams::headlamp()
+    };
+    for mode in [NormalMode::Contour, NormalMode::Face] {
+        let render = |rig: &mut LookRig, light: &LightParams| {
+            rig.render(&scene_camera(), light, look(mode, ViewMode::Shaded))
+        };
+        let on_img = render(&mut rig, &LightParams::headlamp());
+        let off_img = render(&mut rig, &off);
+        if mode == NormalMode::Contour {
+            let golden = read_png(&golden_path("look_contour.png")).0;
+            assert_eq!(on_img, golden, "the shadows-on render is look_contour.png");
+        }
+        let on = dark_specks(&on_img);
+        let off = dark_specks(&off_img);
+        let only_on = on.iter().filter(|i| off.binary_search(i).is_err()).count();
+        println!(
+            "{} ({WIDTH}x{HEIGHT}, headlamp): dark specks with shadows {}, without {}, only with {only_on}",
+            mode.name(),
+            on.len(),
+            off.len()
+        );
+    }
+}
+
 fn detail_look(normal_mode: NormalMode, view: ViewMode) -> LookParams {
     LookParams {
         normal_mode,

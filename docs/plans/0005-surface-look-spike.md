@@ -601,7 +601,15 @@ each. Empty is fine.)_
   `look face, detail on (rock scale 8, strength 0.6), view shaded`. `DETAIL_TILT`,
   `ROCK_DETAIL` and the goldens are unchanged. Phase 6 example:
   `cargo run --release -p flythrough -- --level --seed 1 --look face --rock-detail 4,0.5`
-  (restart to change the strength; `V` still toggles detail). Commit: committed with this line.
+  (restart to change the strength; `V` still toggles detail). Commit 6d4f953.
+- Fix pass, finding 2 (contour shadow-ray origin), measurement only, no shader change, no
+  rebless: `contour_dark_specks_with_and_without_shadows` in `apps/flythrough/tests/look.rs`
+  (`#[ignore]`, run with `--run-ignored only`) renders the contour golden scene (carved
+  world, `scene_camera`, headlamp, 320x180; the shadows-on render equals `look_contour.png`)
+  and counts interior pixels whose Rec. 709 luma is below half the median luma of their 8
+  neighbours. llvmpipe (LLVM 22.1.8, Mesa 26.2.2), exclusive lock: contour with shadows 646,
+  without 301, 372 only with shadows; face with shadows 1179, without 1017, 174 only with
+  shadows. Commit: committed with this line.
 
 ### Close triggers
 
