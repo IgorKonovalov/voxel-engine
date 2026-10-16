@@ -19,6 +19,8 @@ pub const POOL_PAGE_SLOTS: u32 = 4096;
 pub const BRICK_BYTES: u64 = (BRICK_VOXELS * 2) as u64;
 /// Bytes of one brick's occupancy mask: 64 bits, low word first.
 pub const MASK_BYTES: u64 = 8;
+/// Most slots `sync` stages on the CPU before writing a run: one pool page, 4 MiB of voxels.
+const STAGE_SLOTS: u32 = POOL_PAGE_SLOTS;
 /// Chunk table entry of a chunk with no record.
 pub const ABSENT: u32 = u32::MAX;
 /// Chunk record entry bit: set, the low bits are a pool slot; clear, they are a material.
@@ -73,6 +75,11 @@ pub struct GpuWorld {
     free: Vec<u32>,
     next_slot: u32,
     bytes_written: u64,
+    /// The run of consecutive pool slots staged for one write: its first slot, its voxels and
+    /// its masks. Kept across syncs so staging allocates only while it first grows.
+    stage_start: u32,
+    stage_voxels: Vec<u16>,
+    stage_masks: Vec<u32>,
 }
 
 impl GpuWorld {
@@ -116,6 +123,9 @@ impl GpuWorld {
             free: Vec::new(),
             next_slot: 0,
             bytes_written: 0,
+            stage_start: 0,
+            stage_voxels: Vec::new(),
+            stage_masks: Vec::new(),
         }
     }
 
@@ -219,8 +229,26 @@ impl GpuWorld {
 
     /// Uploads every dirty brick of the chunks of `world` inside the extent and clears their
     /// dirty bits. Takes one chunk lock at a time, in ascending coordinate order.
+    ///
+    /// `Full` bricks are staged and written one run of consecutive pool slots at a time (one
+    /// call for the voxels, one for the masks), so a first sync, which hands out slots in
+    /// order, writes the pool in a few page-sized calls.
     pub fn sync(&mut self, world: &World, queue: &wgpu::Queue) -> Result<SyncStats, MirrorError> {
         let mut stats = SyncStats::default();
+        let result = self.sync_chunks(world, queue, &mut stats);
+        // Bricks staged before a failed allocation are still written: their records already
+        // name their slots.
+        self.flush_stage(queue);
+        self.bytes_written += stats.bytes;
+        result.map(|()| stats)
+    }
+
+    fn sync_chunks(
+        &mut self,
+        world: &World,
+        queue: &wgpu::Queue,
+        stats: &mut SyncStats,
+    ) -> Result<(), MirrorError> {
         if !self.materials_written {
             stats.bytes += self.write_materials(world.materials(), queue);
             self.materials_written = true;
@@ -258,17 +286,8 @@ impl GpuWorld {
                         } else {
                             self.alloc(queue)?
                         };
-                        queue.write_buffer(
-                            &self.pool,
-                            u64::from(s) * BRICK_BYTES,
-                            bytemuck::cast_slice(&v[..]),
-                        );
                         let mask = chunk.brick(slot).occupancy_mask();
-                        queue.write_buffer(
-                            &self.masks,
-                            u64::from(s) * MASK_BYTES,
-                            bytemuck::bytes_of(&[mask as u32, (mask >> 32) as u32]),
-                        );
+                        self.stage(s, &v[..], mask, queue);
                         stats.bytes += BRICK_BYTES + MASK_BYTES;
                         stats.bricks += 1;
                         FULL_BIT | s
@@ -291,8 +310,44 @@ impl GpuWorld {
             stats.chunks += 1;
             chunk.clear_dirty();
         }
-        self.bytes_written += stats.bytes;
-        Ok(stats)
+        Ok(())
+    }
+
+    /// Appends slot `s` to the staged run, first writing the run out if `s` does not extend it
+    /// or it is full.
+    fn stage(&mut self, s: u32, voxels: &[u16], mask: u64, queue: &wgpu::Queue) {
+        let len = self.stage_masks.len() as u32 / 2;
+        if len > 0 && (s != self.stage_start + len || len >= STAGE_SLOTS) {
+            self.flush_stage(queue);
+        }
+        if self.stage_masks.is_empty() {
+            self.stage_start = s;
+        }
+        self.stage_voxels.extend_from_slice(voxels);
+        self.stage_masks
+            .extend_from_slice(&[mask as u32, (mask >> 32) as u32]);
+    }
+
+    /// Writes the staged run into the current pool and masks buffers and empties it. A pool
+    /// grown since the run began holds its slots too, so the run always targets the live
+    /// buffers.
+    fn flush_stage(&mut self, queue: &wgpu::Queue) {
+        if self.stage_masks.is_empty() {
+            return;
+        }
+        let s = u64::from(self.stage_start);
+        queue.write_buffer(
+            &self.pool,
+            s * BRICK_BYTES,
+            bytemuck::cast_slice(&self.stage_voxels),
+        );
+        queue.write_buffer(
+            &self.masks,
+            s * MASK_BYTES,
+            bytemuck::cast_slice(&self.stage_masks),
+        );
+        self.stage_voxels.clear();
+        self.stage_masks.clear();
     }
 
     /// Index into the chunk table: the coordinate wrapped into the window, which in a bounded

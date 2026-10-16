@@ -103,6 +103,28 @@ fn sync_uploads_dirty_bricks_once() {
         let z = (i / 64) as i32;
         assert_eq!(v, u16::from(z < 3), "voxel {i}");
     }
+
+    // The same slot's mask is the brick's occupancy mask, low word first.
+    let mask = world
+        .store()
+        .get(ChunkCoord([1, 0, 0]))
+        .unwrap()
+        .read()
+        .unwrap()
+        .brick(0)
+        .occupancy_mask();
+    assert_ne!(mask, 0);
+    let bytes = readback::read_buffer(
+        &device,
+        &queue,
+        gpu.masks(),
+        u64::from(e & !FULL_BIT) * 8,
+        8,
+    );
+    assert_eq!(
+        bytemuck::cast_slice::<u8, u32>(&bytes),
+        [mask as u32, (mask >> 32) as u32]
+    );
 }
 
 #[test]
