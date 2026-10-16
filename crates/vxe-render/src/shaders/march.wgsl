@@ -289,9 +289,73 @@ fn face_normal(d: vec3<f32>, h: Hit) -> vec3<f32> {
     return n;
 }
 
-// The shading normal of hit `h` under the current normal mode.
+// 1 for a solid voxel, 0 for air, read through `lookup` (a LOD-only chunk answers with its
+// mip cell).
+fn occupancy(v: vec3<i32>) -> f32 {
+    return select(0.0, 1.0, lookup(v).size == 0);
+}
+
+// `-normalize(g)`, or `fallback` when the gradient `g` vanishes.
+fn normal_from_gradient(g: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
+    let l2 = dot(g, g);
+    if (l2 < 1e-12) {
+        return fallback;
+    }
+    return -g * inverseSqrt(l2);
+}
+
+// Central differences of occupancy over the 3 x 3 x 3 voxels around the hit voxel: each axis
+// sums the nine voxels on its positive face minus the nine on its negative face.
+fn gradient27_normal(h: Hit, fallback: vec3<f32>) -> vec3<f32> {
+    var g = vec3<f32>(0.0);
+    for (var z = -1; z <= 1; z++) {
+        for (var y = -1; y <= 1; y++) {
+            for (var x = -1; x <= 1; x++) {
+                let o = vec3<i32>(x, y, z);
+                if (any(o != vec3<i32>(0))) {
+                    g += vec3<f32>(o) * occupancy(h.voxel + o);
+                }
+            }
+        }
+    }
+    return normal_from_gradient(g, fallback);
+}
+
+// The gradient of the trilinearly interpolated occupancy of the 2 x 2 x 2 voxel centres
+// around the hit point `p`. Along the hit axis the stencil is exactly the hit voxel and the
+// voxel across the entry face, at weight 1/2 each, so a flat wall reads its face normal; on
+// the other axes it is the two voxel centres either side of `p`.
+fn trilinear8_normal(p: vec3<f32>, h: Hit, nf: vec3<f32>) -> vec3<f32> {
+    var base = vec3<i32>(floor(p - 0.5));
+    var f = p - 0.5 - vec3<f32>(base);
+    let k = h.axis;
+    base[k] = min(h.voxel[k], h.voxel[k] + i32(nf[k]));
+    f[k] = 0.5;
+    var c: array<f32, 8>;
+    for (var i = 0; i < 8; i++) {
+        c[i] = occupancy(base + vec3<i32>(i & 1, (i >> 1) & 1, i >> 2));
+    }
+    let gx = mix(mix(c[1] - c[0], c[3] - c[2], f.y), mix(c[5] - c[4], c[7] - c[6], f.y), f.z);
+    let gy = mix(mix(c[2] - c[0], c[3] - c[1], f.x), mix(c[6] - c[4], c[7] - c[5], f.x), f.z);
+    let gz = mix(mix(c[4] - c[0], c[5] - c[1], f.x), mix(c[6] - c[2], c[7] - c[3], f.x), f.y);
+    return normal_from_gradient(vec3<f32>(gx, gy, gz), nf);
+}
+
+// The shading normal of hit `h` under the current normal mode. A ray that starts inside rock
+// (no entry face) keeps the face-mode normal in every mode.
 fn surface_normal(o: vec3<f32>, d: vec3<f32>, h: Hit) -> vec3<f32> {
-    return face_normal(d, h);
+    let nf = face_normal(d, h);
+    if (h.axis < 0) {
+        return nf;
+    }
+    let mode = normal_mode();
+    if (mode == NORMAL_TRILINEAR8) {
+        return trilinear8_normal(o + d * h.t, h, nf);
+    }
+    if (mode == NORMAL_GRADIENT27) {
+        return gradient27_normal(h, nf);
+    }
+    return nf;
 }
 
 fn shade(o: vec3<f32>, d: vec3<f32>, h: Hit, n: vec3<f32>) -> vec3<f32> {

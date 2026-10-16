@@ -114,3 +114,64 @@ fn the_default_look_leaves_the_goldens_byte_for_byte() {
     let differing = img.iter().zip(&golden).filter(|(a, b)| a != b).count();
     assert_eq!(differing, 0, "lod.png: {differing} bytes differ");
 }
+
+/// Mode A: both smoothed normals cut the cavity's normal error and move no hit.
+#[test]
+fn smoothed_normals_cut_the_normal_error_and_move_no_hit() {
+    let Some((face_error, face_silhouette)) = metrics(NormalMode::Face) else {
+        return;
+    };
+    let (tri_error, tri_silhouette) = metrics(NormalMode::Trilinear8).unwrap();
+    let (g27_error, g27_silhouette) = metrics(NormalMode::Gradient27).unwrap();
+    assert!(g27_error <= 12.0, "gradient27 {g27_error:.2} degrees");
+    assert!(
+        tri_error <= face_error / 2.0,
+        "trilinear8 {tri_error:.2} degrees against face {face_error:.2}"
+    );
+    assert_eq!(tri_silhouette, face_silhouette);
+    assert_eq!(g27_silhouette, face_silhouette);
+}
+
+#[test]
+fn smoothing_does_not_bend_a_flat_wall() {
+    for mode in [NormalMode::Trilinear8, NormalMode::Gradient27] {
+        let Some(n) = occluder_centre_normal(mode) else {
+            return;
+        };
+        for (k, want) in [-1.0f32, 0.0, 0.0].into_iter().enumerate() {
+            assert!(
+                (n[k] - want).abs() <= 2.0 / 255.0 + 1e-6,
+                "{}: channel {k}: {} against {want}",
+                mode.name(),
+                n[k]
+            );
+        }
+    }
+}
+
+/// The golden scene under the headlamp in `look`.
+fn cave_render(look: LookParams) -> Option<Vec<u8>> {
+    let world = carved_world();
+    let mut rig = LookRig::new(&world, None)?;
+    Some(rig.render(&scene_camera(), &LightParams::headlamp(), look))
+}
+
+#[test]
+fn smoothed_normal_goldens() {
+    for (name, mode) in [
+        ("look_trilinear8.png", NormalMode::Trilinear8),
+        ("look_gradient27.png", NormalMode::Gradient27),
+    ] {
+        let Some(img) = cave_render(look(mode, ViewMode::Shaded)) else {
+            return;
+        };
+        assert_golden(name, &img);
+        let (face, _, _) = read_png(&golden_path("headlamp.png"));
+        let f = fraction_differing(&img, &face, 8);
+        println!(
+            "{name} differs from headlamp.png at {:.2} % of pixels",
+            f * 100.0
+        );
+        assert!(f >= 0.01, "{name}: {:.2} %", f * 100.0);
+    }
+}

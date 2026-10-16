@@ -495,8 +495,8 @@ are the numbers the owner's call weighs.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The harness and the face-normal baseline | dev | done: face cavity normal error 40.75 degrees, pillar silhouette error 172 px (lavapipe); occluder centre normal (-1, 1/255, 1/255); `primary.png`, `headlamp.png`, `lod.png` byte for byte; face 1080p march 17.218 / 17.261 / 17.255 ms on RADV Renoir (RTX 3080 lost from the bus, see Notes) | committed with this row |
-| 2: Mode A, normals smoothed in the shader | dev | not started | |
+| 1: The harness and the face-normal baseline | dev | done: face cavity normal error 40.75 degrees, pillar silhouette error 172 px (lavapipe); occluder centre normal (-1, 1/255, 1/255); `primary.png`, `headlamp.png`, `lod.png` byte for byte; face 1080p march 17.218 / 17.261 / 17.255 ms on RADV Renoir (RTX 3080 lost from the bus, see Notes) | ca7dc23 |
+| 2: Mode A, normals smoothed in the shader | dev | done: cavity normal error trilinear8 18.62, gradient27 6.95 degrees (face 40.75, same run); pillar silhouette 172 px in all three; occluder centre (-1, 1/255, 1/255) in both; `look_trilinear8.png`, `look_gradient27.png` blessed on lavapipe; 1080p march trilinear8 25.024 / 24.885 / 24.872 ms, gradient27 41.277 / 41.400 / 41.353 ms on RADV Renoir | committed with this row |
 | 3: Mode B, per-voxel contour planes in attribute pages | dev | not started | |
 | 4: Mode C, procedural per-material detail | dev | not started | |
 | 5: Readings and the comparison table | dev | not started | |
@@ -515,6 +515,11 @@ each. Empty is fine.)_
   it and names it. The RTX 3080 readings the plan asks for are not taken.
 - Phase 1: `LookParams`, `NormalMode` and `ViewMode` live in `marcher.rs`; `light.rs` is
   unchanged.
+- Phase 2: `Trilinear8` takes its gradient at the hit point on the entry face: along the hit
+  axis the 2 x 2 x 2 stencil is the hit voxel and the voxel across the face (weight 1/2 each),
+  on the other axes the two voxel centres either side of the point. At the point pushed half
+  a voxel into the surface (the hit voxel's centre on that axis) the stencil spans two solid
+  voxels on a flat wall and the gradient along the face normal is zero.
 - Phase 1: the harness helpers (`make_lod`, `carved_world`, `lod_scene`) are copied into
   `tests/support/mod.rs`; `tests/golden.rs` keeps its own copies unchanged.
 
