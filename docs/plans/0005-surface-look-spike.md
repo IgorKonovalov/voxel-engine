@@ -500,7 +500,7 @@ are the numbers the owner's call weighs.
 | 3: Mode B, per-voxel contour planes in attribute pages | dev | done: layout and floor readback tests in `mirror.rs`; face goldens byte for byte with attribute pages over 1 and 3 shards (`lod.png` 1 and 2); contour cavity normal error 7.41 degrees, pillar silhouette 32 px (face 40.75, 172, same run, lavapipe); `look_contour.png` blessed on lavapipe. RTX 3080 Laptop GPU, `--level --headless --seed 1 --frames 1`: without `--look` 207 681 088 B live, 213 334 144 B allocated; `--look contour` 606 633 408 B live, 613 759 104 B allocated; first sync 571 writes (195 without); 1080p contour march 1.891 / 1.891 / 1.892 ms; attrib initial fill (383 608 bricks) 55.020 / 39.581 / 41.722 / 41.889 ms; one 1 m carve 46 bricks 0.020 ms; the other 99 bench carves 2777 bricks 0.310 ms | 6d77f12 |
 | 4: Mode C, procedural per-material detail | dev | done: zero-strength detail leaves `primary.png`, `headlamp.png`, `lod.png` byte for byte; rock `[4.0, 0.3]` differs from face at 22.99 % of pixels by more than 8/255 (lavapipe), `look_detail.png` blessed on lavapipe; pillar pole decodes `[5, 162, 135]` from both cameras (`[0, 128, 128]` without detail); material rows 64 B, level mirror 606 633 536 B live with `--look` (+128 B for 4 rows). RTX 3080 Laptop GPU, 1080p march with detail: face 1.919 / 1.954 / 1.956 ms, gradient27 4.579 / 4.537 / 4.538 ms | 37b22fa |
 | 5: Readings and the comparison table | dev | done: table below; `nfr.md` §2 and §3 lines; streamed `--autopilot --headless --look contour` reached full residency at 3 309 723 820 B live, 4 103 413 164 B allocated, then stopped on `wgpu error: Out of Memory` (RTX 3080 Laptop GPU, 8 GiB) | 745ea7a |
-| 6: The owner's call | human | awaits the owner (see Notes) | |
+| 6: The owner's call | human | done 2026-10-16, two finalists: **gradient27** is the owner's favourite look, but its shadows look wrong; **contour** reads best of all with the shadow ray off (`L`), and with shadows on shows many artifacts (black lines, dark specks). Detail at rock `[4, 0.3]` reads "between noise and shadows": keep it, weaker. Separating measurement: contour with a corrected shadow-ray origin (no self-hit specks or black lines, judged on screen) and a streamed footprint that fits, against gradient27's look at contour's cost (precomputed attribute normal, cube hit) under 3.0 ms at 1080p on the dev box. See Notes | |
 
 ### Comparison table (Phase 5)
 
@@ -610,6 +610,7 @@ each. Empty is fine.)_
   neighbours. llvmpipe (LLVM 22.1.8, Mesa 26.2.2), exclusive lock: contour with shadows 646,
   without 301, 372 only with shadows; face with shadows 1179, without 1017, 174 only with
   shadows. Commit: committed with this line.
+- Phase 6, the owner's call (windowed `--level --seed 1 --look face` at 7c51dbb, RTX 3080 Laptop GPU, fullscreen 2530x1378, 2026-10-16). Owner's words: "I like gradient27 the most, but shadows look not right; contour feels weird with a lot of artifacts - black lines"; "contours without shadows look the best (if I press L)"; detail "looks like something between noise and shadows, maybe less will be better". `F1` medians at 2530x1378, detail off / on: face 3.958 / 4.029 ms, trilinear8 5.380 / 7.443 ms, gradient27 8.059 / 9.546 ms, contour 5.064 / 5.471 ms (march only; the owner's other software may have been loading the machine). Recorded by the orchestrating session from the owner's answers.
 
 ### Close triggers
 
@@ -635,7 +636,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   111 passed, 0 skipped (exclusive lock); `cargo test --workspace --doc` 0; `cargo clippy
   --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check`
   advisories, bans, licenses, sources ok; `node scripts/check-doc-links.mjs` 58 links resolve.
-- **Outstanding `human` phases:** Phase 6, the owner's call (Notes).
+- **Outstanding `human` phases:** none; Phase 6 recorded 2026-10-16 with two finalists (Notes).
 
 ## Followups
 
