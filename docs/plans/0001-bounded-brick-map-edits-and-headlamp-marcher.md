@@ -363,8 +363,9 @@ Shared conventions for every phase:
 - **What:** the 64-bit occupancy mask per `Full` brick in the mirror and a block-level step
   in the marcher, with the primary-ray timing read before and after.
 - **Files touched:** `crates/vxe-world/src/brick.rs` (mask builder), `crates/vxe-render/src/{gpu_world.rs,
-  marcher.rs}`, `crates/vxe-render/src/shaders/march.wgsl`,
-  `crates/vxe-world/tests/bricks.rs`, `docs/nfr.md`.
+  marcher.rs, light.rs}`, `crates/vxe-render/src/shaders/march.wgsl`,
+  `crates/vxe-world/tests/bricks.rs`, `apps/flythrough/tests/golden.rs`,
+  `apps/flythrough/tests/golden/{primary.png, headlamp.png}`, `docs/nfr.md`.
 - **Done when:**
   - `Brick::occupancy_mask()` of a brick with the single solid voxel `[3,3,3]` is `1 << 21`
     (block `(1,1,1)`, bit `bx + 4 by + 16 bz`); of an all-air brick, 0; of an all-solid brick,
@@ -372,8 +373,32 @@ Shared conventions for every phase:
     64 seeded random bricks.
   - The marcher walks the 4 × 4 × 4 mask before touching voxels: an unset block advances the
     ray by a 2 × 2 × 2 block in one step.
-  - `apps/flythrough/tests/golden/primary.png` and `golden/headlamp.png` match bit-exactly on
-    lavapipe: the mask changes no hit.
+  - **A masks-off switch reproduces the Phase 7 walk exactly.** A `masks` flag in the march
+    params (alongside `LightParams::shadows`, existing for this test and the fly-through's
+    debug use) makes the shader step voxels without reading `brick_masks`. Before re-blessing,
+    the masks-off renders of the Phase 5 scene under `LightParams::at_eye()` and
+    `LightParams::headlamp()` match the committed Phase 7 `primary.png` and `headlamp.png`
+    byte for byte, and the log records that check.
+  - **The mask moves only isolated corner pixels.** A test in `golden.rs` renders the carved
+    cave with masks on and off, under `at_eye()` and under `headlamp()`, and for each pair:
+    - prints the count of pixels differing by more than 2/255 in any channel, and the log
+      records both counts (19 and 23 measured before this amendment, on llvmpipe, Mesa 26.2.2);
+    - asserts that count is at most 57 (the existing 0.1 % floor of 57 600 pixels);
+    - asserts **no two differing pixels are 8-neighbours**. A mask bug (a wrong bit layout,
+      a skip past an occupied block) opens holes the size of a block, and a 2 × 2 × 2 block
+      at the cave's 4 to 6 m wall distance covers several pixels at 320 × 180, so it shows as
+      a cluster. A tie broken differently at a grazing corner moves one pixel. If the
+      differing pixels cluster, the mask is wrong: stop and report, don't loosen the check.
+  - `golden/primary.png` and `golden/headlamp.png` are re-blessed on lavapipe with masks on
+    and compared under the existing floor from then on. The occluder scene still reads
+    between 820 and 840 shadowed pixels, inside the computed band.
+  - *Why not bit-exact (amended after the Phase 8 block).* Skipping a block reaches the next
+    boundary by a different `f32` path than stepping its two voxels, so at a near-tie corner
+    the two walks can pick adjacent voxels. That is the disagreement Risks already accepts
+    between the GPU and CPU walks, now between two GPU walks. Making block and voxel steps
+    traversal-invariant was considered and not taken: it is open-ended and need not reproduce
+    the Phase 7 goldens either. The per-pixel cause is a hypothesis, not checked against the
+    CPU raycast; the isolation assertion is what separates it from a mask defect.
   - The log records the primary-pass GPU time at 1920 × 1080 from the fly-through's spawn
     pose on the dev box before and after this phase (timestamp queries), and `nfr.md` §2 gets
     the reading labelled dev reference.
@@ -451,7 +476,9 @@ says so.
   resolution floor.
 - **GPU and CPU DDA disagreement.** The shader walks in `f32`; the CPU raycast is integer. At a
   grazing voxel corner they may pick adjacent voxels. The dig lands where the CPU says; a
-  one-voxel visual mismatch at corners is accepted and noted, not hidden.
+  one-voxel visual mismatch at corners is accepted and noted, not hidden. The Phase 8 block
+  skip makes the same kind of choice differently from the voxel walk; Phase 8 bounds it to
+  isolated pixels.
 - **Blessing across arms.** The determinism constant is blessed on Linux. If the Windows arm
   disagrees, the cause is a non-integer path and is a defect to fix; the test is not loosened.
 - **Generation cost against the first-frame budget.** 840 M voxels of noise per start is too
