@@ -10,8 +10,11 @@ layout), derived from the **SADIE II Database**, University of York.
   (md5 `f555491d1b6b1a108bb4d26b63ad84a4`), member `D2_48K_24bit_256tap_FIR_SOFA.sofa`.
 - **Subject:** D2 (KEMAR dummy head), 48 kHz, 8802 measured directions.
 - **Modifications:** every 3rd azimuth of each elevation ring kept, plus both poles (2950
-  directions); each response truncated to 128 taps starting 8 samples before the earlier ear's
-  onset; stored as little-endian `f32`. Regenerate with
+  directions); every response truncated to the same 128-tap window, starting 8 samples before
+  the earliest onset over all kept directions and both ears (sample 62 of 256; an ear's onset
+  is its first sample reaching a tenth of the louder ear's peak for that direction); stored as
+  little-endian `f32`. The packer prints the window start and the least fraction of an ear's
+  energy the window keeps (0.9714). Regenerate with
   `cargo run -p vxe-audio --example hrir_pack -- --azimuth-stride 3 <SOFA path> assets/sadie2_d2_48k.hrir`.
 - **Licence:** Apache License 2.0; the copy is `LICENSE-SADIE-II.txt` (the record's
   `LICENSE.txt`). It covers this file only; the rest of the repository keeps its own licence.

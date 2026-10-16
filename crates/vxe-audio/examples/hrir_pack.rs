@@ -4,10 +4,14 @@
 //!
 //! Reads the SOFA file at 48 kHz without normalisation. Directions are grouped into rings of
 //! equal elevation; within a ring, sorted by azimuth, only the indices divisible by the stride
-//! (default 3) are kept, so a ring of one direction (a pole) always survives. Per kept
-//! direction, the packer keeps 128
-//! taps per ear starting [`PRE_ONSET`] samples before the earlier ear's onset (the first sample
-//! whose magnitude reaches a tenth of that ear's peak). The shipped pack is SADIE II subject D2
+//! (default 3) are kept, so a ring of one direction (a pole) always survives. Every kept
+//! direction keeps 128 taps per ear from one shared window start: [`PRE_ONSET`] samples before
+//! the earliest onset over all kept directions and both ears (an ear's onset is the first
+//! sample whose magnitude reaches a tenth of the direction's louder ear's peak). One start for every
+//! direction keeps neighbouring directions' responses time-aligned, so the mixer's crossfade
+//! between them is not a phase jump; a per-direction start lets the far ear's faint early
+//! response move a window by up to 23 samples. The packer prints the start and the least
+//! fraction of an ear's energy that falls inside its window. The shipped pack is SADIE II subject D2
 //! from `D2_HRIR_SOFA.zip`, file `D2_48K_24bit_256tap_FIR_SOFA.sofa`; see `assets/README.md`.
 //!
 //! Pack format, little-endian: magic `b"VXEH"`, `u32` version 1, `u32` rate, `u32` taps,
@@ -19,18 +23,27 @@ use sofar::reader::OpenOptions;
 
 const RATE: u32 = 48_000;
 const TAPS: usize = 128;
-/// Samples kept before the earlier ear's onset.
+/// Samples kept before the earliest onset of any kept direction and either ear.
 const PRE_ONSET: usize = 8;
-/// An ear's onset is its first sample at or above this fraction of its peak magnitude.
+/// An ear's onset is its first sample at or above this fraction of the louder ear's peak
+/// magnitude for that direction.
 const ONSET_FRACTION: f32 = 0.1;
 /// Default ring azimuth stride: SADIE II D2's 0.9 degree rings become 2.7 degrees.
 const DEFAULT_STRIDE: usize = 3;
 
-fn onset(ir: &[f32]) -> usize {
-    let peak = ir.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
+fn peak(ir: &[f32]) -> f32 {
+    ir.iter().fold(0.0f32, |m, &s| m.max(s.abs()))
+}
+
+/// The first sample of `ir` at or above `threshold` in magnitude, or its length.
+fn onset(ir: &[f32], threshold: f32) -> usize {
     ir.iter()
-        .position(|s| s.abs() >= ONSET_FRACTION * peak)
-        .unwrap_or(0)
+        .position(|s| s.abs() >= threshold)
+        .unwrap_or(ir.len())
+}
+
+fn energy(ir: &[f32]) -> f64 {
+    ir.iter().map(|&x| f64::from(x) * f64::from(x)).sum()
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -95,16 +108,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let kept = keep.iter().filter(|&&k| k).count();
 
+    let ears = |i: usize| {
+        (
+            &ir[i * 2 * n..i * 2 * n + n],
+            &ir[i * 2 * n + n..i * 2 * n + 2 * n],
+        )
+    };
+    let earliest = (0..m)
+        .filter(|&i| keep[i])
+        .map(|i| {
+            let (left, right) = ears(i);
+            let threshold = ONSET_FRACTION * peak(left).max(peak(right));
+            onset(left, threshold).min(onset(right, threshold))
+        })
+        .min()
+        .ok_or("no directions kept")?;
+    if earliest >= n {
+        return Err("every response is silent".into());
+    }
+    let start = earliest.saturating_sub(PRE_ONSET);
+
     let mut dirs = Vec::with_capacity(kept);
     let mut taps = Vec::with_capacity(kept * 2 * TAPS);
-    let mut lead = Vec::with_capacity(kept);
+    let mut min_kept = 1.0f64;
     for i in (0..m).filter(|&i| keep[i]) {
         dirs.push(angles[i]);
-        let left = &ir[i * 2 * n..i * 2 * n + n];
-        let right = &ir[i * 2 * n + n..i * 2 * n + 2 * n];
-        let start = onset(left).min(onset(right)).saturating_sub(PRE_ONSET);
-        lead.push(start);
+        let (left, right) = ears(i);
         for ear in [left, right] {
+            let all = energy(ear);
+            if all > 0.0 {
+                let window = &ear[start..(start + TAPS).min(n)];
+                min_kept = min_kept.min(energy(window) / all);
+            }
             taps.extend((start..start + TAPS).map(|k| ear.get(k).copied().unwrap_or(0.0)));
         }
     }
@@ -125,10 +160,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write(out_path, &out)?;
     assert_eq!(out.len(), 20 + d * 8 + d * 2 * TAPS * 4);
     println!(
-        "{m} directions in {} rings, {n} taps in the file; azimuth stride {stride} keeps {d}; {TAPS} taps from samples {}..={} onward; wrote {} bytes to {out_path}",
+        "{m} directions in {} rings, {n} taps in the file; azimuth stride {stride} keeps {d}; window start {start} (earliest onset {earliest}), {TAPS} taps; least energy kept in a window {min_kept:.4}; wrote {} bytes to {out_path}",
         rings.len(),
-        lead.iter().min().unwrap_or(&0),
-        lead.iter().max().unwrap_or(&0),
         out.len()
     );
     Ok(())

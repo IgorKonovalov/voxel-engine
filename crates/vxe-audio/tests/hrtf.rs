@@ -357,3 +357,153 @@ fn probe_updates_add_no_kinks() {
         );
     }
 }
+
+/// One ear's response at 440 Hz, `sum h[n] e^(-i w n)`, as (re, im).
+fn at_440(h: &[f32]) -> (f64, f64) {
+    let w = std::f64::consts::TAU * 440.0 / f64::from(RATE);
+    h.iter().enumerate().fold((0.0, 0.0), |(re, im), (n, &x)| {
+        let (s, c) = (w * n as f64).sin_cos();
+        (re + f64::from(x) * c, im - f64::from(x) * s)
+    })
+}
+
+/// The absolute phase difference of two complex values, wrapped into `[0, pi]`.
+fn phase_step(a: (f64, f64), b: (f64, f64)) -> f64 {
+    let d = b.1.atan2(b.0) - a.1.atan2(a.0);
+    (d + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
+}
+
+/// The pack shares one window start across directions, so neighbouring directions' responses
+/// are time-aligned and the direction crossfade blends two near-equal phases. With a start per
+/// direction the largest step was 1.822 rad, and the crossfade between two such windows is
+/// heard as a click while turning.
+#[test]
+fn ring_neighbours_differ_little_in_440_hz_phase() {
+    let h = Hrtf::sadie2_d2();
+    // Rings keyed by elevation in tenths of a degree, members as (azimuth, index).
+    let mut rings: std::collections::BTreeMap<i32, Vec<(f32, usize)>> = Default::default();
+    for i in 0..h.len() {
+        let [x, y, z] = h.direction(i);
+        let el = z.clamp(-1.0, 1.0).asin().to_degrees();
+        let az = y.atan2(x).to_degrees().rem_euclid(360.0);
+        rings
+            .entry((el * 10.0).round() as i32)
+            .or_default()
+            .push((az, i));
+    }
+    let mut worst = (0.0f64, 0, 0.0f32);
+    for (&el, ring) in &mut rings {
+        if ring.len() < 2 {
+            continue;
+        }
+        ring.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let responses: Vec<[(f64, f64); 2]> = ring
+            .iter()
+            .map(|&(_, i)| h.impulse(i).map(|ear| at_440(&ear)))
+            .collect();
+        for k in 0..ring.len() {
+            let next = (k + 1) % ring.len();
+            for (&a, &b) in responses[k].iter().zip(&responses[next]) {
+                let step = phase_step(a, b).abs();
+                if step > worst.0 {
+                    worst = (step, el, ring[k].0);
+                }
+            }
+        }
+    }
+    println!(
+        "largest ring-neighbour 440 Hz phase step: {:.4} rad (elevation {:.1}, azimuth {:.1})",
+        worst.0,
+        f64::from(worst.1) / 10.0,
+        worst.2
+    );
+    assert!(worst.0 < 0.15, "ring-neighbour phase step {} rad", worst.0);
+}
+
+/// Per channel, the hum demodulated at 440 Hz over a sliding one-cycle window (109 frames):
+/// the unwrapped phase and the magnitude at every frame from the 109th on.
+fn demodulate_440(out: &[f32], channel: usize) -> (Vec<f64>, Vec<f64>) {
+    let ch: Vec<f64> = out
+        .iter()
+        .skip(channel)
+        .step_by(2)
+        .map(|&x| f64::from(x))
+        .collect();
+    let w = std::f64::consts::TAU * 440.0 / f64::from(RATE);
+    let cycle = 109usize;
+    let (mut re, mut im) = (0.0f64, 0.0f64);
+    let mut z = Vec::with_capacity(ch.len());
+    for n in 0..ch.len() {
+        let (s, c) = (w * n as f64).sin_cos();
+        re += ch[n] * c;
+        im -= ch[n] * s;
+        if n >= cycle {
+            let (s, c) = (w * (n - cycle) as f64).sin_cos();
+            re -= ch[n - cycle] * c;
+            im += ch[n - cycle] * s;
+            z.push((re, im));
+        }
+    }
+    let mut phase = Vec::with_capacity(z.len());
+    let mut acc = 0.0f64;
+    for k in 0..z.len() {
+        if k > 0 {
+            acc += phase_step(z[k - 1], z[k]);
+        }
+        phase.push(acc);
+    }
+    let mag = z.iter().map(|(r, i)| r.hypot(*i)).collect();
+    (phase, mag)
+}
+
+/// Over every 256-frame span of either channel (spans starting every 16 frames): the largest
+/// 440 Hz phase change (highest minus lowest unwrapped phase in the span), and the deepest
+/// level dip, in dB, of the span's lowest magnitude below the lower of its two ends. The dip is
+/// what a crossfade between two misaligned responses does (they partly cancel mid-fade); a
+/// level that steps from one nearest direction to the next without a dip is the
+/// nearest-direction unevenness ADR-0006 leaves to interpolation, and is not measured here.
+fn worst_block_change(out: &[f32]) -> (f64, f64) {
+    let (mut phase_worst, mut level_worst) = (0.0f64, 0.0f64);
+    for channel in 0..2 {
+        let (phase, mag) = demodulate_440(out, channel);
+        for k in (0..phase.len().saturating_sub(BLOCK)).step_by(16) {
+            let span = &phase[k..=k + BLOCK];
+            let (lo, hi) = span
+                .iter()
+                .fold((f64::MAX, f64::MIN), |(l, h), &p| (l.min(p), h.max(p)));
+            phase_worst = phase_worst.max(hi - lo);
+            let ends = mag[k].min(mag[k + BLOCK]);
+            let lo = mag[k..=k + BLOCK].iter().copied().fold(f64::MAX, f64::min);
+            level_worst = level_worst.max(20.0 * (ends / lo).log10());
+        }
+    }
+    (phase_worst, level_worst)
+}
+
+/// A 440 Hz hum 1 m ahead while the listener turns at 90 deg/s, set once per 256-frame block:
+/// within any block either ear's phase and level move only as far as the turn itself moves
+/// them. With a window start per direction this measured 0.811 rad and 0.90 dB.
+#[test]
+fn turning_past_a_hum_keeps_its_phase_and_level_steady_within_a_block() {
+    let still = render_hum([10.0, 0.0, 0.0], BLOCK, 2.0, |_| Listener::default());
+    let (still_phase, still_level) = worst_block_change(&still[2 * SETTLE..]);
+    // Back and forth over -90..+90 degrees so every direction of the horizon in front passes.
+    let yaw_at = |t: f32| {
+        let p = (t * 90.0 / 180.0) % 2.0;
+        if p < 1.0 {
+            -90.0 + 180.0 * p
+        } else {
+            90.0 - 180.0 * (p - 1.0)
+        }
+    };
+    let out = render_hum([10.0, 0.0, 0.0], BLOCK, 4.0, |t| {
+        facing(yaw_at(t), [0.0; 3])
+    });
+    let (phase, level) = worst_block_change(&out[2 * SETTLE..]);
+    println!(
+        "turning 90 deg/s: largest 440 Hz change within 256 frames {phase:.4} rad, {level:.4} dB \
+         (static {still_phase:.4} rad, {still_level:.4} dB)"
+    );
+    assert!(phase < 0.2, "phase moved {phase} rad within a block");
+    assert!(level < 0.25, "level moved {level} dB within a block");
+}
