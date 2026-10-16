@@ -528,15 +528,7 @@ says so.
 | 5: GPU mirror and primary-ray marcher with a golden image | dev | done | 6a3ab55 |
 | 6: Headlamp with a shadow ray | dev | done | 4da3c9a |
 | 7: Window shell and the fly-through | dev | done | 84b4f55 |
-| 8: Brick occupancy masks | dev | blocked | |
-
-### Resume notes (delete when Phase 8 lands)
-
-- **Blocked on:** the Phase 8 done-when "`primary.png` and `golden/headlamp.png` match bit-exactly on lavapipe: the mask changes no hit". With the masks, 19 of 57 600 pixels of `primary.png` and 23 of `headlamp.png` differ (0.0295 % and 0.0260 % beyond 2/255, inside the 0.1 % floor). They are isolated single pixels with no cluster. Diagnosis, not verified per pixel: the walk sets the exit axis exactly and the other axes from the f32 position, so near a corner tie, skipping a 2x2x2 block reaches some boundaries by a different float path than stepping its voxels. The slab test still reads 823, and the cave's shadow fraction is still 0.31 %. Routed to `/architect` by the owner.
-- **Candidate fixes named to the owner:** amend the done-when to re-bless both goldens under the existing floor with the differing count printed; or rework the DDA so block and voxel steps make identical decisions (open-ended, and it may still move the goldens).
-- **Readings (primary-pass GPU time, `flythrough --seed 1 --render 1920x1080 --frames 300`, median of the last 30 frames, spawn pose, headlamp with shadows, NVIDIA GeForce RTX 3080 Laptop GPU, Vulkan):** before masks, at 84b4f55: 1.992, 2.005 and 1.992 ms over three runs. With the uncommitted masks: 1.864 (first run), 1.533 and 1.547 ms. Mirror at level size with masks: 402 449 984 B.
-- **Uncommitted Phase 8 work in worktree `.claude/worktrees/plan-0001-phase-8` (branch `plan-0001-phase-8`):** `Brick::occupancy_mask` in `crates/vxe-world/src/brick.rs` and `crates/vxe-world/tests/bricks.rs` (single voxel `[3,3,3]` gives `1 << 21`, uniform air 0, uniform solid `u64::MAX`, and 64 seeded bricks match brute force, all passing). `brick_masks` buffer in `crates/vxe-render/src/gpu_world.rs` (written with each `Full` brick, grown and copied with the pool, counted in `mirror_bytes`). Binding 6 in `marcher.rs`. A 2^3 block skip in `march.wgsl` `lookup`. `docs/nfr.md` has not been touched yet.
-- **Gate at the tip (84b4f55):** `cargo build`, `cargo nextest run --workspace` (47 passed), `cargo test --doc`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check` and `cargo deny check` all exit 0.
+| 8: Brick occupancy masks | dev | done | committed with this row |
 
 ### Notes
 
@@ -588,6 +580,14 @@ each. Empty is fine.)_
 - Phase 7: scroll changes the dig radius (0.1 m steps, 0.1 to 3 m); the fill radius stays 0.3 m. `B` prints one aggregated `carved:` line for its 100 carves plus one `bench:` line with edit CPU time and sync bytes, not 100 lines. Movement is `W`/`A`/`S`/`D`, `Space` up, `C` down, `Shift` x4 (commit of Phase 7).
 - Phase 7: the fly-through takes `--render WxH` (fixed marcher resolution, scaled to the window) and `--frames N` (exit after N frames, printing the `F1` reading over the last 30); `F1` prints medians over 30 frames (commit of Phase 7).
 - Phase 7: the windowed run was launched on the dev box (Hyprland, Wayland) only with `--frames`; WASD, mouse look, clicks, `L`, `B`, `F1` and `Esc` were not driven by input in this session. `Fly` and `Input` have headless unit tests; the edit-line format has one (commit of Phase 7).
+- Phase 8: blocked on the bit-exact golden done-when (owner's call); resolved by the plan amendment in 8074a34.
+- Phase 8: the `masks` switch is a `LightParams` field (default `true` in `at_eye()` and `headlamp()`), sent as `FLAG_MASKS` (bit 1 of `Params::flags`). The fly-through has no key for it: `apps/flythrough/src` is outside Phase 8's `Files touched` (commit of Phase 8).
+- Phase 8: before re-blessing, masks-off renders of the carved cave under `at_eye()` and `headlamp()` matched the committed Phase 7 `primary.png` and `headlamp.png` in every byte (0 pixels differing), on llvmpipe (LLVM 22.1.8, Mesa 26.2.2). That was a one-time test, removed before the re-bless (commit of Phase 8).
+- Phase 8: `masks_move_only_isolated_pixels` reads 17 pixels (`at_eye()`) and 15 (`headlamp()`) differing by more than 2/255 between masks on and off, none touching another, on the same adapter. The block notes' 19 and 23 do not match their own 0.0295 % and 0.0260 %, which are 17 and 15 of 57 600 (commit of Phase 8).
+- Phase 8: with the mask bit index transposed in `march.wgsl` (`k.z + 4 k.y + 16 k.x`), the same test read 6604 differing pixels under `at_eye()` and failed on the count. The shader was restored before the commit (commit of Phase 8).
+- Phase 8: `primary.png` and `headlamp.png` were re-blessed with masks on; the occluder scene still reads 823 and the cave shadow fraction 0.31 % (commit of Phase 8).
+- Phase 8: `sync` writes each `Full` brick's mask as its own 8-byte `write_buffer`, doubling the per-brick write calls. The initial level-size upload went from 853 to 888 ms (Phase 7) to 1889 to 1976 ms, and `first frame after` read 4231, 2972, 2869 and 2983 ms, over the §7 budget of 3000 on one run (see Close triggers).
+- Phase 8: `crates/vxe-world/tests/bricks.rs` uses `is_multiple_of` to satisfy `clippy::manual_is_multiple_of` (commit of Phase 8).
 
 ### Close triggers
 

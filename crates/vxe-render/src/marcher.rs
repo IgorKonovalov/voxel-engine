@@ -34,6 +34,8 @@ pub struct Params {
 
 /// `Params::flags` bit: trace the shadow ray.
 pub const FLAG_SHADOWS: u32 = 1;
+/// `Params::flags` bit: skip empty blocks through the brick occupancy masks.
+pub const FLAG_MASKS: u32 = 2;
 
 pub struct Marcher {
     pipeline: wgpu::ComputePipeline,
@@ -76,6 +78,7 @@ impl Marcher {
                 storage(2),
                 storage(3),
                 storage(4),
+                storage(6),
                 wgpu::BindGroupLayoutEntry {
                     binding: 5,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -145,7 +148,8 @@ impl Marcher {
             cos_outer: light.outer.cos(),
             size: [w, h],
             cos_inner: light.inner.cos(),
-            flags: if light.shadows { FLAG_SHADOWS } else { 0 },
+            flags: if light.shadows { FLAG_SHADOWS } else { 0 }
+                | if light.masks { FLAG_MASKS } else { 0 },
             ..Params::default()
         }
     }
@@ -192,6 +196,10 @@ impl Marcher {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: world.masks().as_entire_binding(),
                 },
             ],
         });

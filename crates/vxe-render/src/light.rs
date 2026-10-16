@@ -17,6 +17,9 @@ pub struct LightParams {
     /// Trace one shadow ray from each lit hit toward the lamp. Off only for tests and the
     /// fly-through's debug toggle.
     pub shadows: bool,
+    /// Skip empty 2 × 2 × 2 blocks of a full brick through its occupancy mask. Off only for
+    /// tests and debugging: the walk then steps every voxel of a full brick.
+    pub masks: bool,
 }
 
 impl LightParams {
@@ -30,6 +33,7 @@ impl LightParams {
             inner: 0.35,
             outer: 0.70,
             shadows: false,
+            masks: true,
         }
     }
 

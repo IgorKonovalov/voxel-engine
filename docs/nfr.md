@@ -34,6 +34,13 @@ measurement:
 | Upscale, tone map, post | 1.5 ms |
 | Headroom (entities, volumetrics, game work) | 2.1 ms |
 
+**Primary rays, dev reference (not the baseline):** 1.59 ms with brick occupancy masks, 1.99 to
+2.01 ms without them. Timestamp queries around the march pass, median of the last 30 of 300
+frames, `flythrough --seed 1 --render 1920x1080 --frames 300` from the spawn pose, three runs
+each. The pass includes the headlamp's one shadow ray per lit pixel, so it covers more than the
+primary-ray line. NVIDIA GeForce RTX 3080 Laptop GPU, Vulkan, driver 610.57.04 (Plan 0001
+Phase 8). No baseline reading yet (§1).
+
 No frame may stall on paging: work attributable to streaming on the render thread is capped at
 the streaming line above; the rest runs on background threads.
 

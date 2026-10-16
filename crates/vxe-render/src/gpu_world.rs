@@ -1,10 +1,10 @@
-//! The GPU mirror of a world's bricks (ADR-0002): brick pool, chunk records, chunk table and
-//! material rows, uploaded per dirty brick.
+//! The GPU mirror of a world's bricks (ADR-0002): brick pool, brick occupancy masks, chunk
+//! records, chunk table and material rows, uploaded per dirty brick.
 //!
 //! The CPU keeps a copy of every chunk record entry, so `sync` knows which pool slot a brick
 //! held before the edit. A brick that becomes `Full` takes a slot from the free list, or the
 //! next never-used slot; a brick that collapses to `Uniform` returns its slot to the free list.
-//! The pool grows by whole pages, copying the old contents on the GPU.
+//! The pool and the masks grow together by whole pages, copying the old contents on the GPU.
 
 use std::collections::HashMap;
 use std::sync::PoisonError;
@@ -17,6 +17,8 @@ use vxe_world::{BRICK_VOXELS, Brick, CHUNK_BRICKS, ChunkCoord, ChunkExtent, Mate
 pub const POOL_PAGE_SLOTS: u32 = 4096;
 /// Bytes of one brick's voxels in the pool.
 pub const BRICK_BYTES: u64 = (BRICK_VOXELS * 2) as u64;
+/// Bytes of one brick's occupancy mask: 64 bits, low word first.
+pub const MASK_BYTES: u64 = 8;
 /// Chunk table entry of a chunk with no record.
 pub const ABSENT: u32 = u32::MAX;
 /// Chunk record entry bit: set, the low bits are a pool slot; clear, they are a material.
@@ -56,6 +58,7 @@ pub struct GpuWorld {
     device: wgpu::Device,
     extent: ChunkExtent,
     pool: wgpu::Buffer,
+    masks: wgpu::Buffer,
     pool_slots: u32,
     records: wgpu::Buffer,
     table: wgpu::Buffer,
@@ -97,11 +100,11 @@ impl GpuWorld {
             contents: bytemuck::cast_slice(&vec![ABSENT; n]),
             usage: storage,
         });
-        let pool = Self::create_pool(device, 0);
         Self {
             device: device.clone(),
             extent,
-            pool,
+            pool: Self::create_pool(device, 0),
+            masks: Self::create_masks(device, 0),
             pool_slots: 0,
             records,
             table,
@@ -128,6 +131,17 @@ impl GpuWorld {
         })
     }
 
+    fn create_masks(device: &wgpu::Device, slots: u32) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("brick_masks"),
+            size: u64::from(slots.max(1)) * MASK_BYTES,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        })
+    }
+
     fn create_materials(device: &wgpu::Device, rows: usize) -> wgpu::Buffer {
         device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("materials"),
@@ -143,6 +157,11 @@ impl GpuWorld {
 
     pub fn pool(&self) -> &wgpu::Buffer {
         &self.pool
+    }
+
+    /// Occupancy mask of each pool slot, `[slot][2 x u32]`.
+    pub fn masks(&self) -> &wgpu::Buffer {
+        &self.masks
     }
 
     pub fn records(&self) -> &wgpu::Buffer {
@@ -189,10 +208,10 @@ impl GpuWorld {
         self.record_of.get(&coord).copied()
     }
 
-    /// Bytes the mirror occupies on the GPU by the uploader's accounting: pool slots in use,
-    /// chunk records, chunk table and material rows.
+    /// Bytes the mirror occupies on the GPU by the uploader's accounting: pool slots in use
+    /// with their masks, chunk records, chunk table and material rows.
     pub fn mirror_bytes(&self) -> u64 {
-        u64::from(self.live_slots()) * BRICK_BYTES
+        u64::from(self.live_slots()) * (BRICK_BYTES + MASK_BYTES)
             + self.entries.len() as u64 * 4
             + self.present.len() as u64 * 4
             + self.materials.size()
@@ -244,7 +263,13 @@ impl GpuWorld {
                             u64::from(s) * BRICK_BYTES,
                             bytemuck::cast_slice(&v[..]),
                         );
-                        stats.bytes += BRICK_BYTES;
+                        let mask = chunk.brick(slot).occupancy_mask();
+                        queue.write_buffer(
+                            &self.masks,
+                            u64::from(s) * MASK_BYTES,
+                            bytemuck::bytes_of(&[mask as u32, (mask >> 32) as u32]),
+                        );
+                        stats.bytes += BRICK_BYTES + MASK_BYTES;
                         stats.bricks += 1;
                         FULL_BIT | s
                     }
@@ -331,6 +356,7 @@ impl GpuWorld {
             return Err(MirrorError::PoolTooLarge { needed, limit });
         }
         let pool = Self::create_pool(&self.device, new_slots as u32);
+        let masks = Self::create_masks(&self.device, new_slots as u32);
         if self.pool_slots > 0 {
             let mut enc = self
                 .device
@@ -344,9 +370,17 @@ impl GpuWorld {
                 0,
                 u64::from(self.pool_slots) * BRICK_BYTES,
             );
+            enc.copy_buffer_to_buffer(
+                &self.masks,
+                0,
+                &masks,
+                0,
+                u64::from(self.pool_slots) * MASK_BYTES,
+            );
             queue.submit([enc.finish()]);
         }
         self.pool = pool;
+        self.masks = masks;
         self.pool_slots = new_slots as u32;
         Ok(())
     }

@@ -1,16 +1,20 @@
 // Primary-ray marcher over the brick-map mirror (ADR-0002), one invocation per pixel.
 //
 // Bindings, group 0:
-//   0  uniform  params         camera, extent, light, target size, flags (bit 0: shadow ray)
+//   0  uniform  params         camera, extent, light, target size, flags (bit 0: shadow ray,
+//                              bit 1: occupancy masks)
 //   1  storage  brick_pool     [slot][256 x u32], two u16 voxels per word, x fastest
 //   2  storage  chunk_records  [record][512 x u32]; bit 31 set: pool slot, clear: uniform material
 //   3  storage  chunk_table    [wrapped chunk]u32 record index, 0xFFFFFFFF when absent
 //   4  storage  materials      [id][2 x vec4]: albedo rgb + roughness, emission rgb + flag bits
 //   5  storage texture         rgba8unorm output
+//   6  storage  brick_masks    [slot][2 x u32]; bit b set: block (b & 3, (b >> 2) & 3, b >> 4)
+//                              of the slot's brick holds a non-air voxel
 //
-// World units are voxels. The walk is a DDA over cells of three sizes: a chunk that is absent
-// is skipped as one 64^3 cell, a uniform-air brick as one 8^3 cell, and the voxels of a full
-// brick one at a time. A uniform solid brick is hit where the ray enters it. Each step leaves
+// World units are voxels. The walk is a DDA over cells of four sizes: a chunk that is absent
+// is skipped as one 64^3 cell, a uniform-air brick as one 8^3 cell, an empty 2^3 block of a
+// full brick (its mask bit clear) as one 2^3 cell when the masks flag is set, and the voxels of an occupied block one at
+// a time. A uniform solid brick is hit where the ray enters it. Each step leaves
 // the current cell through its nearest face; the coordinate on the exit axis is set exactly
 // from the face, the others come from the float position, rounded toward the side the ray is
 // heading so that a position on a boundary (a tie between axes) lands in the voxel entered.
@@ -43,6 +47,7 @@ struct Params {
 @group(0) @binding(3) var<storage, read> chunk_table: array<u32>;
 @group(0) @binding(4) var<storage, read> materials: array<vec4<f32>>;
 @group(0) @binding(5) var target_tex: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(6) var<storage, read> brick_masks: array<u32>;
 
 const ABSENT: u32 = 0xFFFFFFFFu;
 const FULL_BIT: u32 = 0x80000000u;
@@ -50,6 +55,7 @@ const MAX_STEPS: u32 = 4096u;
 const BIG: f32 = 3.0e38;
 // Params.flags bits.
 const FLAG_SHADOWS: u32 = 1u;
+const FLAG_MASKS: u32 = 2u;
 
 // What the walk found at a voxel: `size` is the edge of the empty cell to skip, or 0 for a
 // solid voxel of `material`.
@@ -94,6 +100,12 @@ fn lookup(v: vec3<i32>) -> Cell {
     }
     let slot = entry & ~FULL_BIT;
     let l = local - b * 8;
+    let k = l / 2;
+    let bit = u32(k.x + 4 * k.y + 16 * k.z);
+    if ((params.flags & FLAG_MASKS) != 0u
+        && (brick_masks[slot * 2u + bit / 32u] & (1u << (bit % 32u))) == 0u) {
+        return Cell(2, 0u);
+    }
     let i = u32(l.x + 8 * (l.y + 8 * l.z));
     let word = brick_pool[slot * 256u + i / 2u];
     let m = (word >> ((i & 1u) * 16u)) & 0xFFFFu;

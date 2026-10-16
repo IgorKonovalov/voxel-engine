@@ -86,6 +86,50 @@ fn headlamp_shadows_only_remove_light() {
     );
 }
 
+#[test]
+fn masks_move_only_isolated_pixels() {
+    for (name, lit) in [
+        ("at_eye", LightParams::at_eye()),
+        ("headlamp", LightParams::headlamp()),
+    ] {
+        let unmasked = LightParams {
+            masks: false,
+            ..lit
+        };
+        let Some(images) = render(&carved_world(), &[lit, unmasked]) else {
+            return;
+        };
+        let differing = differing_pixels(&images[0], &images[1], 2);
+        println!(
+            "{name}: masks on and off differ at {} pixels by more than 2/255",
+            differing.len()
+        );
+        // The golden floor: 0.1 % of 57 600 pixels.
+        assert!(differing.len() <= 57, "{name}: {} pixels", differing.len());
+        // A skip past an occupied block opens a hole several pixels wide; a corner tie broken
+        // the other way moves one pixel.
+        for (i, &(c, r)) in differing.iter().enumerate() {
+            for &(c2, r2) in &differing[i + 1..] {
+                assert!(
+                    c.abs_diff(c2) > 1 || r.abs_diff(r2) > 1,
+                    "{name}: differing pixels ({c}, {r}) and ({c2}, {r2}) touch"
+                );
+            }
+        }
+    }
+}
+
+/// Pixels (column, row) whose largest channel difference between `a` and `b` exceeds
+/// `tolerance`.
+fn differing_pixels(a: &[u8], b: &[u8], tolerance: u8) -> Vec<(u32, u32)> {
+    a.chunks(4)
+        .zip(b.chunks(4))
+        .enumerate()
+        .filter(|(_, (p, q))| (0..3).any(|k| p[k].abs_diff(q[k]) > tolerance))
+        .map(|(i, _)| (i as u32 % WIDTH, i as u32 / WIDTH))
+        .collect()
+}
+
 /// Pixels of `plain` darker than `shadowed` in any channel.
 fn darker_pixels(shadowed: &[u8], plain: &[u8]) -> usize {
     shadowed

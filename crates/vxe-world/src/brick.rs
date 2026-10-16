@@ -52,6 +52,25 @@ impl Brick {
         }
     }
 
+    /// One bit per 2 × 2 × 2 block, set when the block holds a non-air voxel. Block
+    /// `(bx, by, bz)` (components in `0..4`) is bit `bx + 4 by + 16 bz`.
+    pub fn occupancy_mask(&self) -> u64 {
+        match self {
+            Self::Uniform(AIR) => 0,
+            Self::Uniform(_) => u64::MAX,
+            Self::Full(v) => {
+                let mut mask = 0;
+                for (i, &m) in v.iter().enumerate() {
+                    if m != AIR {
+                        let (x, y, z) = (i % 8 / 2, i / 8 % 8 / 2, i / 64 / 2);
+                        mask |= 1 << (x + 4 * y + 16 * z);
+                    }
+                }
+                mask
+            }
+        }
+    }
+
     pub fn is_full(&self) -> bool {
         matches!(self, Self::Full(_))
     }
