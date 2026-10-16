@@ -95,6 +95,9 @@ pub const MATERIAL_FLOATS: usize = 8;
 pub enum MirrorError {
     /// The pool would need `needed` bytes; the device allows `limit`.
     PoolTooLarge { needed: u64, limit: u64 },
+    /// The chunk records would need `needed` bytes; the device binds at most `limit`, a
+    /// whole number of records.
+    RecordsTooLarge { needed: u64, limit: u64 },
 }
 
 impl std::fmt::Display for MirrorError {
@@ -103,6 +106,10 @@ impl std::fmt::Display for MirrorError {
             Self::PoolTooLarge { needed, limit } => write!(
                 f,
                 "brick pool needs {needed} bytes; the device binds at most {limit}"
+            ),
+            Self::RecordsTooLarge { needed, limit } => write!(
+                f,
+                "chunk records need {needed} bytes; the device binds at most {limit}"
             ),
         }
     }
@@ -165,6 +172,9 @@ pub struct ShardLayout {
     pub slots_per_shard: u32,
     /// `min(MAX_SHARDS, max_storage_buffers_per_shader_stage - OTHER_STORAGE_BUFFERS)`.
     pub shards: u32,
+    /// Chunk records the one record buffer can hold:
+    /// `min(max_storage_buffer_binding_size, max_buffer_size) / RECORD_BYTES`.
+    pub record_capacity: u32,
 }
 
 impl ShardLayout {
@@ -183,9 +193,11 @@ impl ShardLayout {
             .max_storage_buffers_per_shader_stage
             .saturating_sub(OTHER_STORAGE_BUFFERS)
             .clamp(1, MAX_SHARDS);
+        let record_capacity = (bytes / RECORD_BYTES).min(u64::from(u32::MAX)) as u32;
         Self {
             slots_per_shard,
             shards,
+            record_capacity,
         }
     }
 
@@ -692,7 +704,8 @@ impl GpuWorld {
     /// is spent, and clears their dirty bits. Takes one chunk lock at a time.
     ///
     /// Fails with `PoolTooLarge`, writing nothing, when the chosen chunks' new `Full` bricks
-    /// would not fit the largest pool the device can bind.
+    /// would not fit the largest pool the device can bind, and with `RecordsTooLarge` when
+    /// their new records would not fit the largest record buffer it can bind.
     pub fn sync(&mut self, world: &World, queue: &wgpu::Queue) -> Result<SyncStats, MirrorError> {
         let mut st = SyncStats::default();
         self.reconcile_window(world);
@@ -702,13 +715,21 @@ impl GpuWorld {
             }
         }
 
-        let new_full = self.select(world, &mut st);
+        let (new_full, new_records) = self.select(world, &mut st);
         let limit = self.pool_limit_slots();
         let peak = u64::from(self.live_slots()) + new_full;
         if peak > limit {
             return Err(MirrorError::PoolTooLarge {
                 needed: peak * SLOT_BYTES,
                 limit: limit * SLOT_BYTES,
+            });
+        }
+        let records = self.mirrored.len() as u64 + new_records;
+        let record_limit = u64::from(self.layout.record_capacity);
+        if records > record_limit {
+            return Err(MirrorError::RecordsTooLarge {
+                needed: records * RECORD_BYTES,
+                limit: record_limit * RECORD_BYTES,
             });
         }
 
@@ -731,8 +752,9 @@ impl GpuWorld {
 
     /// Walks the pending set nearest first and picks chunks into `self.selected` until the
     /// estimated bytes reach the budget. Returns the count of bricks among them that need a
-    /// new slot.
-    fn select(&mut self, world: &World, st: &mut SyncStats) -> u64 {
+    /// new slot, and of chunks among them not mirrored yet, which need a new record (a chunk
+    /// changing tier frees its record before it takes one).
+    fn select(&mut self, world: &World, st: &mut SyncStats) -> (u64, u64) {
         let budget = self.cfg.sync_budget_bytes;
         // Writes that happen whatever is chosen count against the budget first.
         let mut bytes = self.table_changed.len() as u64 * 4;
@@ -742,6 +764,7 @@ impl GpuWorld {
         self.selected.clear();
         self.stale.clear();
         let mut new_full = 0u64;
+        let mut new_records = 0u64;
         for &(_, coord) in &self.pending {
             if bytes >= budget && !self.selected.is_empty() {
                 break;
@@ -801,6 +824,7 @@ impl GpuWorld {
                 }
             }
             bytes += chunk_bytes;
+            new_records += u64::from(mirrored.is_none());
             self.selected.push(Selected { coord, src });
         }
         let mut stale = std::mem::take(&mut self.stale);
@@ -809,7 +833,7 @@ impl GpuWorld {
         }
         stale.clear();
         self.stale = stale;
-        new_full
+        (new_full, new_records)
     }
 
     /// Uploads the chunks `select` chose, stopping at the first failed allocation, and
@@ -854,7 +878,7 @@ impl GpuWorld {
     ) -> Result<(), MirrorError> {
         let (rec, mut palette, was_wide, new) = match self.mirrored.remove(&coord) {
             Some(m) => (m.record, m.palette, m.wide, false),
-            None => (self.alloc_record(queue, st), vec![AIR], false, true),
+            None => (self.alloc_record(queue, st)?, vec![AIR], false, true),
         };
         let base = rec as usize * RECORD_WORDS;
         if new {
@@ -1114,14 +1138,28 @@ impl GpuWorld {
         st.bytes += bytes.len() as u64;
     }
 
-    fn alloc_record(&mut self, queue: &wgpu::Queue, st: &mut SyncStats) -> u32 {
+    /// A free record, or the next never-used one, growing the record buffer up to the
+    /// device's record capacity. `sync` checks that capacity before uploading, so the error
+    /// here is a backstop.
+    fn alloc_record(
+        &mut self,
+        queue: &wgpu::Queue,
+        st: &mut SyncStats,
+    ) -> Result<u32, MirrorError> {
         if let Some(r) = self.free_records.pop() {
-            return r;
+            return Ok(r);
         }
         if self.next_record >= self.record_cap {
-            // Half again at least, as the pool grows.
+            let limit = self.layout.record_capacity;
+            if self.next_record >= limit {
+                return Err(MirrorError::RecordsTooLarge {
+                    needed: (u64::from(self.next_record) + 1) * RECORD_BYTES,
+                    limit: u64::from(limit) * RECORD_BYTES,
+                });
+            }
+            // Half again at least, as the pool grows, in whole pages capped at the capacity.
             let want = (self.next_record + 1).max(self.record_cap * 3 / 2);
-            let cap = want.div_ceil(RECORD_PAGE) * RECORD_PAGE;
+            let cap = (want.div_ceil(RECORD_PAGE) * RECORD_PAGE).min(limit);
             let records = Self::create_records(&self.device, cap);
             if self.record_cap > 0 {
                 let mut enc = self
@@ -1144,7 +1182,7 @@ impl GpuWorld {
             self.entries.resize(cap as usize * RECORD_WORDS, 0);
         }
         self.next_record += 1;
-        self.next_record - 1
+        Ok(self.next_record - 1)
     }
 
     /// Slots the pool can hold over all its shards.

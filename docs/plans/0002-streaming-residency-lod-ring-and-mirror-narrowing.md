@@ -653,7 +653,15 @@ each. Empty is fine.)_
 - Fix pass, review finding 2 (minor, per-chunk heap allocation in sync): `upload_record` reads
   bricks in place through a `Bricks` enum (a chunk with its dirty bits, or mips indexed by
   `LOD_LEVEL_ENTRY`) instead of a scratch `Vec`; `select`'s chosen and stale lists are
-  `GpuWorld` fields cleared at its start. Commit: committed with this line.
+  `GpuWorld` fields cleared at its start. Commit: 8aef914.
+- Fix pass, review finding 3 (minor, records unchecked against the binding limit): new
+  `ShardLayout::record_capacity` (`min(binding, buffer) / RECORD_BYTES`) and a new variant
+  `MirrorError::RecordsTooLarge { needed, limit }` in bytes, chosen over generalising
+  `PoolTooLarge`. `sync` checks mirrored chunks plus the selection's chunks not yet mirrored
+  against the capacity before writing; `alloc_record` caps growth at the capacity and returns
+  the same error as a backstop. The 4 MiB device test ran on lavapipe (no skip); with the
+  pre-check disabled it fails on the backstop's error (1640 records' bytes needed). Commit:
+  committed with this line.
 
 ### Close triggers
 

@@ -593,6 +593,66 @@ fn the_shard_layout_follows_the_limits_alone() {
     assert_eq!(l.capacity(), 4 * 8192);
 }
 
+#[test]
+fn the_record_capacity_follows_the_limits() {
+    // lavapipe: 128 MiB per binding holds 52 428 records of 2560 B.
+    let l = ShardLayout::from_limits(&limits(128 << 20, 2_147_483_647, 8), None);
+    assert_eq!(l.record_capacity, 52_428);
+    let l = ShardLayout::from_limits(&limits(4 << 20, 2_147_483_647, 8), None);
+    assert_eq!(l.record_capacity, 1638);
+    // The smaller of the two size limits binds.
+    let l = ShardLayout::from_limits(&limits(1 << 30, 4 << 20, 8), None);
+    assert_eq!(l.record_capacity, 1638);
+}
+
+/// More chunks than a 4 MiB binding holds records for: `sync` fails before writing anything.
+#[test]
+fn records_past_the_binding_fail_and_leave_the_mirror_untouched() {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        force_fallback_adapter: true,
+        ..Default::default()
+    }))
+    .or_else(|_| pollster::block_on(instance.request_adapter(&Default::default())));
+    let Ok(adapter) = adapter else {
+        println!("skipped: no adapter");
+        return;
+    };
+    let mut required = vxe_render::limits_for(&adapter, 16 << 20);
+    required.max_storage_buffer_binding_size = 4 << 20;
+    let desc = wgpu::DeviceDescriptor {
+        required_limits: required,
+        ..Default::default()
+    };
+    let Ok((device, queue)) = pollster::block_on(adapter.request_device(&desc)) else {
+        println!("skipped: the adapter refuses a 4 MiB storage binding limit");
+        return;
+    };
+    assert_eq!(device.limits().max_storage_buffer_binding_size, 4 << 20);
+
+    // 12 x 12 x 12 = 1728 uniform chunks: no `Full` brick, one record each.
+    let mut t = MaterialTable::new();
+    let rock = t.push(Material::named("rock"));
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [12, 12, 12]),
+        &UniformSource(rock),
+        &t,
+    );
+    assert_eq!(world.store().coords().len(), 1728);
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    assert_eq!(gpu.shard_layout().record_capacity, 1638);
+    let err = gpu.sync(&world, &queue).unwrap_err();
+    assert_eq!(
+        err,
+        vxe_render::MirrorError::RecordsTooLarge {
+            needed: 1728 * RECORD_BYTES,
+            limit: 1638 * RECORD_BYTES,
+        }
+    );
+    assert_eq!(gpu.mirrored_chunks(), 0);
+    assert_eq!(gpu.bytes_written(), 0);
+}
+
 /// The mirror's sizing code names no backend, vendor or adapter: only limits decide.
 #[test]
 fn the_mirror_never_reads_the_backend_or_vendor() {
