@@ -4,6 +4,7 @@
 > **Created:** 2026-10-16
 > **Milestone:** M5 in `docs/roadmap.md` (the simulation split; the WASM host is Plan 0011)
 > **Related ADRs:** [ADR-0007](../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (log, channel, client modes), [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (logic behind a trait, native and component), ADR-0002 (per-chunk locked access), ADR-0001 (stack)
+> **Amended:** 2026-10-17, a boundary entry for directly submitted ops (Phase 3 unblock; orchestrator-applied, owner may overturn; see "Amendment 2026-10-17")
 > **Prerequisite:** Plan 0001 closed. Independent of Plans 0002 to 0006 and of their readings. Bounded worlds only; the server's ownership of streaming focus points is a named follow-up.
 
 ## TL;DR
@@ -44,7 +45,8 @@ world operation. `Channel`, `MemChannel`, `Logic`, `Host`, `Server` and `Client`
 `vxe-net`. The tick is a counter the caller advances; the engine reads no clock. Inputs and
 events are opaque byte payloads the logic defines; the engine never decodes them. Ops may also
 be submitted directly on the host side (tests, editors); they are applied before the logic's
-tick and logged like any other. The fly-through becomes the first consumer: its digs are
+tick and logged like any other, followed by a boundary entry that lets re-simulation tell
+them from the logic's ops (amended 2026-10-17). The fly-through becomes the first consumer: its digs are
 inputs to a native `DigLogic`, one `tick` runs per frame, and the printed edit lines come from
 the client's events.
 
@@ -101,6 +103,14 @@ flowchart LR
     to equal logs. A byte string cut inside an entry decodes to `WireError::Truncated { at }`
     with `at` the offset of the entry that failed; an unknown op kind to
     `WireError::UnknownKind(k)`; an input `len` running past the end to `Truncated`.
+  - (Added 2026-10-17; lands with Phase 3's resume.) A boundary entry is `tick: u64`, `seq:
+    u32`, kind `u8` = `KIND_BOUNDARY` (0x80), 13 bytes, no payload; 0x80 sits clear of the
+    op kinds 1 to 4 and of everything Plans 0008 and 0009 may claim below it. `OpLog`
+    records one with a seq that ascends like any entry's. `World::replay` skips it and
+    returns results for op entries only. `OpLog::len` counts op entries; the log file
+    header's op count counts every entry, boundaries included, because the decoder reads
+    that many. The test round-trips a log holding a boundary through `encode`/`decode` and
+    a `LogFile`, and asserts its 13 bytes.
   - `World::replay(&self, log: &OpLog) -> Vec<Result<EditResult, EditError>>` applies the
     entries in `seq` order. In `determinism.rs`, the vector's 24 ops pushed to a log,
     encoded, decoded and replayed on a fresh `generate(0x5EED_0001)` world return the same
@@ -141,7 +151,8 @@ flowchart LR
     with a host handle and the seed; `submit(&self, op: EditOp) -> u32` returns the `seq`
     it assigned, under one lock, in call order; `attach(&mut self, Endpoint) -> u32` returns
     the client index; `tick(&mut self) -> TickReport { tick, applied: u32, refused: u32,
-    inputs: u32 }` applies every directly submitted op in `seq` order, then drains every
+    inputs: u32 }` applies every directly submitted op in `seq` order (and, per Phase 3's
+    interleaving, logs a boundary after them), then drains every
     attached endpoint's `Input` messages (endpoints in attach order, each in arrival order)
     into `ClientInput`s appended to the input log, then calls `logic.tick`, during which
     `Host::apply` assigns the next `seq`, applies, logs and announces; then sends the
@@ -153,11 +164,12 @@ flowchart LR
     origin, then `Fill(2)` of the same sphere, then `Replace { from: 2, to: 5 }` of it, then
     a sphere at `[10000, 0, 0]`. One `tick`: the client polls exactly four events with seqs
     0 to 3 and results `[(3, 4169)]`, `[(0, 4169)]`, `[(2, 4169)]` and `Refused` with
-    `NotResident`; `ops.len() == 3`; the server's tick is 1; `Arc::ptr_eq` holds between
+    `NotResident`; `ops.len() == 3` and one boundary entry at seq 4 (Phase 3's
+    interleaving); the server's tick is 1; `Arc::ptr_eq` holds between
     the client's and the server's world.
   - Two threads each submit 100 sphere carves (radius 1 m at distinct centres, from the
-    seeded helper in `tests/support`), then one `tick`: the op log's seqs are 0 to 199 with
-    each op exactly once, and the world's hash equals the hash of applying the log's ops in
+    seeded helper in `tests/support`), then one `tick`: the op entries' seqs are 0 to 199
+    with each op exactly once, followed by a boundary at seq 200, and the world's hash equals the hash of applying the log's ops in
     `seq` order on a fresh `solid3_world()`.
 
 ### Phase 3: The logic boundary and re-simulation
@@ -165,7 +177,9 @@ flowchart LR
 - **What:** inputs through the channel to a `Logic`, the `Host` handle, and replay by
   re-running the logic on the input log.
 - **Files touched:** `crates/vxe-net/src/{logic.rs, server.rs}`,
-  `crates/vxe-net/tests/{logic.rs, support/mod.rs}`.
+  `crates/vxe-net/tests/{logic.rs, shared.rs, support/mod.rs}`; for the boundary entry
+  (Phase 1's amended bullet, landed with this phase): `crates/vxe-world/src/{log.rs,
+  wire.rs}`, `crates/vxe-world/tests/log.rs`.
 - **Done when:**
   - `Host` offers `apply(op) -> Result<EditResult, EditError>`, `material_at(v)`,
     `raycast(origin, dir, max) -> Option<Hit>` (Plan 0001's CPU raycast) and
@@ -177,7 +191,7 @@ flowchart LR
     payload; its broadcast is the 8-byte state after the tick.
   - `EchoLogic`, 100 inputs from one shared client over 10 ticks (10 per tick): 100
     `Applied` events in input order, the input log holds 100 entries with the right ticks,
-    and `Server::resimulate(world: Arc<World>, logic, seed, &inputs) -> OpLog` on a fresh
+    and `Server::resimulate(world: Arc<World>, logic, seed, &ops, &inputs) -> OpLog` on a fresh
     `solid3_world()` and a fresh `EchoLogic` yields an op log whose encoded bytes equal the
     live one's and a world with the same hash.
   - `SeededLogic` with seed 7, 100 inputs: re-simulation with seed 7 gives the same op-log
@@ -186,11 +200,17 @@ flowchart LR
     `Event::Logic` per tick whose bytes are the logic's state.
   - A `Host::apply` that is refused (`NotResident`) is announced as `Refused`, not logged,
     and the logic receives the `Err` to decide what to do.
-  - Interleaving: direct `submit` ops and logic ops in the same tick are logged with the
-    submitted ones first; re-simulation reproduces the direct ops by replaying them from the
-    op log at their ticks before running the logic for that tick (`resimulate` takes both
-    logs). The test submits 5 direct ops at tick 3 among the `EchoLogic` run and gets equal
-    bytes.
+  - Interleaving (amended 2026-10-17, see "Amendment 2026-10-17"): in a tick that drains at
+    least one directly submitted op, applied or refused, the server logs those that applied,
+    then a boundary entry `(tick, seq)` that takes the next seq, then the logic's ops. The
+    boundary is not announced and counts in neither `applied` nor `refused`.
+    `Server::resimulate(world, logic, seed, &OpLog, &InputLog) -> OpLog` runs ticks 0
+    through the later of the last input's and the last op entry's tick. At a tick with a
+    boundary, it applies that tick's op entries whose seqs lie at or above its own next seq
+    and below the boundary's (at tick 0 this skips the ops `init` already produced), records
+    them under their logged seqs, continues seqs from boundary + 1, then runs the logic. The
+    test submits 5 direct ops at tick 3 among the `EchoLogic` run, the third of them
+    `NotResident`, and gets equal op-log bytes and an equal world hash.
 
 ### Phase 4: Owned client and desync detection
 - **Owner skill:** dev
@@ -225,7 +245,7 @@ flowchart LR
   - `flythrough::replay_file(path, mode) -> Result<(World, u64), ReplayError>` (library,
     headless) rebuilds the cave with `CaveSource` from the header's seed and extent, then
     either replays the op log (`Mode::Ops`) or re-simulates the input log through a fresh
-    `DigLogic` (`Mode::Inputs`), returning the world and its hash. `CaveSource::VERSION: u32
+    `DigLogic`, with the op log for its boundaries (`Mode::Inputs`), returning the world and its hash. `CaveSource::VERSION: u32
     = 1` is in the header; a mismatch reads as `ReplayError::SourceVersion { file, ours }`.
   - `tests/replay.rs`: a `LogFile` of the determinism vector's ops replays to the vector's
     hash through `Mode::Ops`; a `LogFile` with 20 `Dig` inputs at fixed rays and the ops
@@ -247,7 +267,8 @@ flowchart LR
 - **Done when:**
   - `cargo bench -p vxe-world --bench replay`: decode plus replay of 10 000 radius-1 m carves
     on a solid 4³-chunk world (seeded centres inside the interior), as ops per second; the
-    encoded op log is exactly 470 000 bytes plus the 60-byte header.
+    log is built with `OpLog::push`, so it holds no boundary, and the encoded op log is
+    exactly 470 000 bytes plus the 60-byte header.
   - `cargo bench -p vxe-net --bench tick`: 100 inputs, one tick through `EchoLogic` and one
     poll in shared mode, against 100 direct `apply` calls; the overhead in microseconds.
     Proposal: under 100 µs.
@@ -257,13 +278,13 @@ flowchart LR
 
 ```rust
 // illustrative
-pub struct LogEntry { pub tick: u64, pub seq: u32, pub op: Op }
+pub enum LogEntry { Op { tick: u64, seq: u32, op: Op }, Boundary { tick: u64, seq: u32 } } // boundary kind 0x80
 pub enum Op { Edit(EditOp) }                 // kinds 2..=4 reserved (Plans 0008, 0009)
 pub struct OpLog { entries: Vec<LogEntry> }
 pub struct InputEntry { pub tick: u64, pub client: u32, pub bytes: Vec<u8> }
 pub struct InputLog { entries: Vec<InputEntry> }
 pub struct LogFile { pub seed: u64, pub source_version: u32, pub extent: ChunkExtent, pub ops: OpLog, pub inputs: InputLog }
-pub enum WireError { Truncated { at: usize }, UnknownKind(u8), BadMagic, UnsupportedFormat(u32) }
+pub enum WireError { Truncated { at: usize }, UnknownKind(u8), BadMagic, UnsupportedFormat(u32), Trailing { at: usize }, Io(ErrorKind) }
 
 pub trait Channel { fn send(&self, bytes: Vec<u8>); fn try_recv(&self) -> Option<Vec<u8>>; }
 pub enum Message {
@@ -285,8 +306,8 @@ pub trait Logic {
     fn init(&mut self, host: &mut dyn Host, seed: u64);
     fn tick(&mut self, host: &mut dyn Host, tick: u64, inputs: &[ClientInput]) -> TickOutput;
 }
-pub struct Server { world: Arc<World>, logic: Box<dyn Logic>, ops: OpLog, inputs: InputLog, pending: Mutex<Vec<(u32, Op)>>, next_seq: AtomicU32, tick: u64, clients: Vec<Endpoint> }
-pub enum ClientWorld { Shared(Arc<World>), Owned(World) }
+pub struct Server { world: Arc<World>, logic: Mutex<Box<dyn Logic>>, ops: OpLog, inputs: InputLog, pending: Mutex<Vec<(u32, Op)>>, next_seq: AtomicU32, tick: u64, clients: Vec<Endpoint> }
+pub enum ClientWorld { Shared(Arc<World>), Owned(Box<World>) }
 pub struct Client { world: ClientWorld, endpoint: Endpoint, desynced: bool }
 pub enum Event {
     Applied { tick: u64, seq: u32, op: Op, result: EditResult },
@@ -333,6 +354,61 @@ component and pass `Host` across the boundary as imports.
   may pool.
 - **Open:** whether `Refused` should carry the full op or only its `seq`. The plan says the
   op, so a client can retry without remembering what it sent.
+
+## Amendment 2026-10-17: a boundary entry for submitted ops
+
+`dev` stopped Phase 3 at the Interleaving done-when: the op log could not tell a directly
+submitted op from a logic op of the same tick, and a refused submitted op took a seq that
+neither log recorded. **Decision: a boundary entry.** A tick that drained at least one
+submitted op logs a 13-byte `(tick, seq)` boundary after the ones that applied; its seq is
+the first one left to the logic. Replay skips it; re-simulation applies the tick's op entries
+below it, resumes the seq count after it, then runs the logic. The wording lives in Phase 1,
+Phase 2 and Phase 3's amended bullets and in Data shapes; ADR-0007's Decision gains one
+sentence, ADR-0010 is unchanged.
+
+This call was applied by the orchestrator under the owner's standing "go with your
+recommendations" while the owner was away overnight (2026-10-16 to 17), on a read-only architect
+analysis. **The owner may overturn it**; until then it binds `dev`.
+
+Rejected:
+
+- **(a) Submitted ops in the input log under client `u32::MAX`.** No format change, but the
+  engine would decode a class of input entries, against ADR-0010's rule that inputs are
+  opaque bytes the engine never decodes, and the input log would stop being only the logic's.
+- **(b) A flag byte or a distinct op kind on submitted entries.** Moves the 47/65/75-byte
+  arithmetic, Phase 6's 470 000 bytes and the blessed op-log hash, and still cannot recover
+  a refused submitted op, which is not logged.
+- **(c) A third log of submitted ops.** The most churn: a new type, a `LogFile` field, the
+  header from 60 to 68 bytes, for no consumer that needs submitted ops separately.
+- **(d) Re-simulate only sessions with no submissions.** A session that mixes them would
+  re-simulate wrong with no error; silent divergence is the failure this plan exists to stop.
+- **(e) Seqs only for applied ops.** Breaks Phase 2's shipped `submit -> u32` (the seq is
+  returned before the op applies) and ADR-0007's Decision, where `submit` assigns the next
+  `seq`.
+
+Unchanged: the 47, 65 and 75-byte entry sizes, the 60-byte header, Phase 6's 470 000 bytes
+and the blessed op-log hash `0x5ac8_737d_db0f_ccec`. The determinism vector builds its log
+with `OpLog::push` and the replay bench is specified the same way, so neither holds a
+boundary; only logs a `Server` writes after a submission do.
+
+`dev`'s deviations in the Implementation log's Notes, reviewed:
+
+- Accepted, and folded into Data shapes where they change a shape: `WireError::Trailing`
+  and `Io`; `OpLog::record`; mode, shape and error tags from 1; `tests/support` created in
+  Phase 2; message tags in `vxe-net`'s `message.rs` (the messages live there; the edit
+  result and error encodings stay in `vxe_world::wire`); the `Event` payload length as
+  `u32` (1 + 8 + 4 + `n`); `Logic: Send` with the logic in a `Mutex` reached by `get_mut`;
+  no `Event` for an empty broadcast; undecodable or misaddressed bytes dropped (an
+  in-memory channel produces none; M9's transport revisits it); `TickReport::tick` as the
+  tick that ran, `current_tick()` as the next, and the extra accessors; `Owned(Box<World>)`;
+  `EchoLogic`'s outcome bytes; `SeededLogic`'s start `seed ^ 0x9e37_79b9_7f4a_7c15` and its
+  `state % 234 - 117` draw, which with a 1 m radius stays inside `solid3_world`'s ±128
+  voxels; the tick draining endpoints before the shared step, since the order of world and
+  log effects is unchanged; the `Cargo.lock` change.
+- Superseded: `resimulate` without the op log and stopping at the last input's tick. The
+  amended Phase 3 bullet gives it the op log and runs to the later of the two last ticks.
+  A logic that acts in later ticks with neither input nor op is still not reproduced past
+  that point; it stays a named limit until a log records a tick count.
 
 ## What this plan does NOT do
 
