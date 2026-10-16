@@ -44,7 +44,7 @@ plan that implements them (see [`adrs/README.md`](adrs/README.md)).
 | Entities | voxel models (MagicaVoxel-style volumes) on rigs of rigid parts, traced in the same pipeline as the world | skinned triangle meshes with a hybrid rasterize + RT path; deciding later |
 | Repo | public GitHub, MIT OR Apache-2.0 | private; local only |
 | Harness | Ritmolux-style: ADRs, phased plans, architect/dev skills, deny hooks, CI gates | CLAUDE.md + ADRs only |
-| Surface look (added 2026-10-16) | smooth and natural rock, not visible cubes; the mechanism (per-voxel normal smoothing, per-voxel contour planes in the GPU mirror, or another) is chosen by measurement after M1, balancing image, frame cost and simplicity | a blocky aesthetic; committing to ESVO-style contours before anything is on screen |
+| Surface look (added 2026-10-16) | smooth and natural rock, not visible cubes, with the Sibenik cathedral figure of Laine & Karras 2010 (ESVO, Figure 1) as the quality reference: not photorealism, but that level of believable surface and soft light; the mechanism (per-voxel normal smoothing, per-voxel contour planes in the GPU mirror, procedural per-material surface detail, or another) is chosen by measurement after M1, balancing image, frame cost and simplicity | a blocky aesthetic; photorealism; committing to ESVO-style contours before anything is on screen |
 
 ## The first consumer's needs, mapped
 
@@ -171,6 +171,13 @@ layout.
 ### M2: Lighting that holds in the dark
 
 **Goal:** the consumer's P0 rendering bar. Few lights, emissive voxels, destruction, no ghosting.
+The quality reference is the Sibenik cathedral in Laine & Karras 2010, Figure 1. That image is
+5 mm voxels with a unique colour and precomputed ambient occlusion per voxel, 2.7 GB on the GPU:
+twenty times our resolution and shading data we do not store. At 10 cm and one material id per
+voxel the same impression has to come from three cheaper places, each measured in its own
+spike: the silhouette (contours or normal smoothing), the surface texture (procedural
+per-material detail evaluated in the shader from world position, the way Teardown's materials
+work), and the light (real-time GI standing in for the baked occlusion).
 
 - Light extraction from bricks: emissive voxels become light samples, and a vein of thousands
   of them is sampled by reservoir resampling (ReSTIR-style) rather than a flat light list.
