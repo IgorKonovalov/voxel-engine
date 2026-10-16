@@ -189,7 +189,7 @@ Proposal, not a reading: under five seconds for all three gates on a CI runner.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The comment-hygiene gate | dev | done | 5061a90 |
-| 2: The index-row gate and the roster markers | dev | done | committed with this row |
+| 2: The index-row gate and the roster markers | dev | done | c6c950d |
 
 ### Notes
 
@@ -216,11 +216,11 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** docs-chore-only (repository tooling): `scripts/check-comment-hygiene.mjs`, `scripts/check-index-rows.mjs` with `--self-test`, fixture trees `comment-hygiene/`, `index-rows/`, `index-rows-red/` and their README, three CI steps, roster markers in both index READMEs, two trimmed rows; source changes are one doc comment in `gpu_world.rs` and the label column of the `world_budget` example.
+- **Public API changed:** none.
+- **Budget readings:** none; no `nfr.md` figure touched. The three gates run in well under a second each on the dev box (not timed under the lock; no budget reading).
+- **Gate at the tip (c6c950d):** `cargo build --workspace` 0; `cargo nextest run --workspace` 0, 125 passed, 1 skipped (exclusive lock, NVIDIA GeForce RTX 3080 Laptop GPU per `nvidia-smi -L`); `cargo test --workspace --doc` 0; `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` 0 (advisories, bans, licenses, sources ok); hook bite tests 0, 59 of 59; `check-doc-links.mjs` 0, 89 links; `check-comment-hygiene.mjs` 0, 53 tracked sources, 0 escapes; `check-index-rows.mjs` 0, 3 regions, 25 rows; `check-index-rows.mjs --self-test` 0, 9 of 9. Fixture runs: `comment-hygiene` 1 with 13 findings, `index-rows` 0, `index-rows-red` 1 with 1 over cap and 2 misshaped.
+- **Outstanding `human` phases:** none.
 
 ## Followups
 
