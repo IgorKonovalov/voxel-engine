@@ -4,19 +4,25 @@
 //! By default the cave is unbounded and streams around the camera (ADR-0003): full detail
 //! within `r_full` chunks, mips out to `r_lod`. `--level` generates the bounded level instead.
 //!
-//! `flythrough [--seed N] [--level] [--render WxH] [--frames N] [--bench N] [--autopilot]
-//! [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH] [--view VIEW]
-//! [--detail]`. `--render` fixes the marcher's resolution (the window
+//! `flythrough [--seed N] [--level] [--walk] [--render WxH] [--frames N] [--bench N]
+//! [--autopilot] [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH]
+//! [--view VIEW] [--detail]`. `--render` fixes the marcher's resolution (the window
 //! scales it); `--frames` exits after N frames, printing the `F1` readings over the last
 //! ones; `--bench` runs the `B` bench N times right after the first mirror upload, before
 //! the first frame; `--autopilot` digs, flies 300 m out and back and prints the streaming
 //! readings (see [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame;
-//! `--headless` runs the same frames on an offscreen target with no window; `--look` starts
+//! `--headless` runs the same frames on an offscreen target with no window; `--walk` (with
+//! `--level`) starts in walk mode, the body spawned in the spawn pocket; `--look` starts
 //! in a normal mode (`face`, `trilinear8`, `gradient27`, `contour`) and gives the mirror
 //! attribute pages, so `N` can reach `contour` (without `--look` it skips it), and gives rock
 //! its procedural detail (`--rock-detail` sets rock's feature scale in voxels and strength,
 //! default `flythrough::ROCK_DETAIL`); `--view` starts in a view (`shaded`, `normals`, `hitmask`) and
 //! `--detail` with detail on. `N` cycles the normal mode and `V` toggles detail.
+//!
+//! Keys: `G` toggles fly and walk mode (on the bounded level only; streaming refuses it, as it
+//! refuses `--walk`); in walk mode `W A S D` walk at 3 m/s and `Space` jumps, or, held against
+//! a wall with a standable top within 1.2 m, climbs it. On the bounded level the fly-through
+//! keeps a coarse grid and walkable map updated from every edit; `K` prints them.
 
 mod fly;
 
@@ -25,7 +31,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use fly::Fly;
+use fly::{Fly, Walk};
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK};
 use flythrough::{RESIDENCY, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
@@ -37,8 +43,9 @@ use vxe_render::{
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
-    ChunkCoord, ChunkExtent, EditError, EditOp, EditResult, FIXED_ONE, Fixed3, MaterialId,
-    MaterialTable, Mode, PersistConfig, StreamConfig, Streamer, Tier, VoxelCoord, World,
+    ChunkCoord, ChunkExtent, CoarseGrid, EditError, EditOp, EditResult, FIXED_ONE, Fixed3,
+    MaterialId, MaterialTable, Mode, PersistConfig, StreamConfig, Streamer, Tier, VoxelCoord,
+    WalkableMap, WalkableParams, World,
 };
 
 /// Reach of the dig and fill rays: 10 m.
@@ -69,6 +76,13 @@ const PILOT_REACH: i64 = 300 * FIXED_ONE;
 const PILOT_RADIUS: i64 = 10 * FIXED_ONE;
 const PILOT_SPEED: f32 = 100.0;
 const PILOT_LEG_SECS: f64 = 30.0;
+/// Walkable cells: at most 64 solid voxels, on a floor cell of at least 448, under two open
+/// cells (1.6 m).
+const WALKABLE: WalkableParams = WalkableParams {
+    max_solid: 64,
+    min_floor: 448,
+    clearance: 2,
+};
 
 #[allow(
     clippy::disallowed_methods,
@@ -91,6 +105,7 @@ struct Args {
     level: bool,
     autopilot: bool,
     headless: bool,
+    walk: bool,
     sync_budget: u64,
     /// `--look`: the starting normal mode.
     look: Option<NormalMode>,
@@ -101,7 +116,25 @@ struct Args {
     view: ViewMode,
 }
 
+/// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
+const WALK_NEEDS_LEVEL: &str =
+    "walk mode needs --level (the coarse grid is not wired to streaming)";
+
+/// Walk mode is available only on the bounded level.
+fn walk_allowed(streaming: bool) -> Result<(), &'static str> {
+    if streaming {
+        Err(WALK_NEEDS_LEVEL)
+    } else {
+        Ok(())
+    }
+}
+
 fn parse_args() -> Result<Args, String> {
+    parse_args_from(std::env::args().skip(1))
+}
+
+/// The arguments after the program name.
+fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut args = Args {
         seed: 1,
         render: None,
@@ -110,13 +143,14 @@ fn parse_args() -> Result<Args, String> {
         level: false,
         autopilot: false,
         headless: false,
+        walk: false,
         sync_budget: SYNC_BUDGET_MIB << 20,
         look: None,
         detail: false,
         rock_detail: flythrough::ROCK_DETAIL,
         view: ViewMode::Shaded,
     };
-    let mut it = std::env::args().skip(1);
+    let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or(format!("{flag} needs a value"));
         match flag.as_str() {
@@ -153,6 +187,7 @@ fn parse_args() -> Result<Args, String> {
             "--detail" => args.detail = true,
             "--autopilot" => args.autopilot = true,
             "--headless" => args.headless = true,
+            "--walk" => args.walk = true,
             _ => return Err(format!("unknown argument {flag}")),
         }
     }
@@ -161,6 +196,9 @@ fn parse_args() -> Result<Args, String> {
     }
     if args.autopilot && args.level {
         return Err("--autopilot streams; it does not take --level".to_owned());
+    }
+    if args.walk {
+        walk_allowed(!args.level).map_err(|e| format!("--walk: {e}"))?;
     }
     Ok(args)
 }
@@ -365,6 +403,52 @@ struct Autopilot {
     generated_at_takeoff: u64,
 }
 
+/// The bounded level's coarse grid and walkable map, updated from every edit.
+struct Coarse {
+    grid: CoarseGrid,
+    map: WalkableMap,
+    /// Cells the last edit changed, and the grid plus walkable update time in microseconds.
+    last: Option<(usize, f64)>,
+}
+
+impl Coarse {
+    fn build(world: &World) -> Self {
+        let t = now();
+        let grid = CoarseGrid::build(world);
+        let map = WalkableMap::build(&grid, WALKABLE);
+        println!(
+            "coarse: {} chunks, {} bytes, {} walkable cells, built in {:.0} ms",
+            grid.len(),
+            grid.bytes(),
+            map.count(),
+            ms_since(t)
+        );
+        Self {
+            grid,
+            map,
+            last: None,
+        }
+    }
+
+    fn update(&mut self, world: &World, r: &EditResult) {
+        let t = now();
+        let changes = self.grid.update(world, r);
+        self.map.update(&self.grid, &changes);
+        self.last = Some((changes.len(), ms_since(t) * 1e3));
+    }
+
+    /// The `K` line.
+    fn line(&self) -> String {
+        match self.last {
+            Some((m, us)) => format!(
+                "coarse: {} walkable cells, last edit changed {m} cells in {us:.0} us",
+                self.map.count()
+            ),
+            None => format!("coarse: {} walkable cells, no edit yet", self.map.count()),
+        }
+    }
+}
+
 /// The running fly-through, once the world exists.
 struct Run {
     start: Instant,
@@ -382,9 +466,44 @@ struct Run {
     samples: Option<Samples>,
     stream: Option<Stream>,
     pilot: Option<Autopilot>,
+    /// Walk mode's body, `None` in fly mode.
+    walk: Option<Walk>,
+    coarse: Option<Coarse>,
 }
 
 impl Run {
+    fn edited(&mut self, r: &EditResult) {
+        if let Some(c) = self.coarse.as_mut() {
+            c.update(&self.world, r);
+        }
+    }
+
+    /// `G`: walk mode with the body under the camera, or back to flight.
+    fn toggle_walk(&mut self) {
+        if self.walk.take().is_some() {
+            println!("fly mode");
+            return;
+        }
+        if let Err(e) = walk_allowed(self.stream.is_some()) {
+            println!("walk: {e}; still flying");
+            return;
+        }
+        match Walk::at_camera(&self.world, &self.fly.camera) {
+            Some(w) => {
+                self.walk = Some(w);
+                println!("walk mode");
+            }
+            None => println!("walk: no room for the body here; still flying"),
+        }
+    }
+
+    fn coarse_line(&self) -> String {
+        match &self.coarse {
+            None => "coarse: not kept while streaming".to_owned(),
+            Some(c) => c.line(),
+        }
+    }
+
     /// Rock's detail pair when the table carries it (under `--look`).
     fn rock_detail(&self) -> Option<[f32; 2]> {
         self.args.look.is_some().then_some(self.args.rock_detail)
@@ -404,17 +523,20 @@ impl Run {
         (Fixed3(origin), dir)
     }
 
-    fn apply(&self, verb: &str, op: &EditOp) {
+    fn apply(&mut self, verb: &str, op: &EditOp) {
         let t = now();
         let r = self.world.apply(op);
         let ms = ms_since(t);
         match r {
-            Ok(r) => println!("{}", edit_line(verb, &r, self.world.materials(), ms)),
+            Ok(r) => {
+                println!("{}", edit_line(verb, &r, self.world.materials(), ms));
+                self.edited(&r);
+            }
             Err(e) => println!("{verb}: refused, {e}"),
         }
     }
 
-    fn dig(&self) {
+    fn dig(&mut self) {
         let (origin, dir) = self.camera_ray();
         let t = now();
         let op = EditOp::tool_along_ray(
@@ -430,12 +552,15 @@ impl Run {
         let r = self.world.apply(&op);
         let ms = resolve_ms + ms_since(t);
         match r {
-            Ok(r) => println!("{}", edit_line("carved", &r, self.world.materials(), ms)),
+            Ok(r) => {
+                println!("{}", edit_line("carved", &r, self.world.materials(), ms));
+                self.edited(&r);
+            }
             Err(e) => println!("carved: refused, {e}"),
         }
     }
 
-    fn fill(&self) {
+    fn fill(&mut self) {
         let (origin, dir) = self.camera_ray();
         let Some(hit) = self.world.raycast(origin, dir, REACH) else {
             println!("filled: no surface within 10 m");
@@ -507,6 +632,9 @@ impl Run {
             touched: touched.into_iter().collect(),
             aabb: None,
         };
+        for r in results.iter().flatten() {
+            self.edited(r);
+        }
         println!(
             "{}",
             edit_line("carved", &total, self.world.materials(), edit_ms)
@@ -956,7 +1084,14 @@ impl Run {
                 return Flow::Exit;
             }
         } else {
-            self.fly.update(input, dt);
+            match self.walk.as_mut() {
+                Some(w) => {
+                    for line in w.update(&self.world, input, &mut self.fly.camera, dt) {
+                        println!("{line}");
+                    }
+                }
+                None => self.fly.update(input, dt),
+            }
             self.handle_input(gpu, input);
         }
         if let Some(n) = self.args.frames
@@ -993,6 +1128,12 @@ impl Run {
         }
         if input.pressed(KeyCode::KeyB) {
             self.bench(gpu);
+        }
+        if input.pressed(KeyCode::KeyG) {
+            self.toggle_walk();
+        }
+        if input.pressed(KeyCode::KeyK) {
+            println!("{}", self.coarse_line());
         }
         if input.pressed(KeyCode::KeyN) {
             let contour = self.gfx.as_ref().is_some_and(|g| g.mirror.surface_attrs());
@@ -1079,6 +1220,20 @@ impl Run {
         }
         self.frame += 1;
         if self.args.frames.is_some_and(|n| self.frame >= n) {
+            if let Some(w) = &self.walk {
+                println!(
+                    "walk: foot at {:?} (fixed), {}",
+                    w.state.foot.0,
+                    if w.state.grounded {
+                        "grounded"
+                    } else {
+                        "airborne"
+                    }
+                );
+            }
+            if self.coarse.is_some() {
+                println!("{}", self.coarse_line());
+            }
             return Flow::Exit;
         }
         Flow::Continue
@@ -1189,6 +1344,16 @@ impl App for Flythrough {
                 peak_persisted: 0,
                 generated_at_takeoff: 0,
             });
+            let coarse = stream.is_none().then(|| Coarse::build(&world));
+            let walk = if self.args.walk {
+                let w = Walk::at_camera(&world, &self.camera);
+                if w.is_none() {
+                    println!("walk: no room for the body at the spawn; flying");
+                }
+                w
+            } else {
+                None
+            };
             self.run = Some(Run {
                 start: self.start,
                 world,
@@ -1208,6 +1373,8 @@ impl App for Flythrough {
                 samples: None,
                 stream,
                 pilot,
+                walk,
+                coarse,
             });
         }
         match self.run.as_mut() {
@@ -1425,6 +1592,23 @@ fn main() {
 mod tests {
     use super::*;
 
+    fn argv(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    /// `--walk` and `G` refuse walk mode alike while streaming; the bounded level allows it.
+    #[test]
+    fn walk_mode_is_refused_while_streaming() {
+        assert_eq!(
+            parse_args_from(argv(&["--walk"])).err().as_deref(),
+            Some("--walk: walk mode needs --level (the coarse grid is not wired to streaming)")
+        );
+        let a = parse_args_from(argv(&["--walk", "--level"])).expect("--walk --level parses");
+        assert!(a.walk && a.level);
+        assert_eq!(walk_allowed(true), Err(WALK_NEEDS_LEVEL));
+        assert_eq!(walk_allowed(false), Ok(()));
+    }
+
     #[test]
     fn an_edit_prints_one_line_with_material_names() {
         let r = EditResult {
@@ -1444,6 +1628,37 @@ mod tests {
             edit_line("filled", &EditResult::default(), &cave_materials(), 0.0),
             "filled: nothing (0 chunks, 0.00 ms)"
         );
+    }
+
+    /// The `K` bookkeeping, scripted: an edit updates the kept grid and walkable map to what
+    /// a rebuild from the edited world gives, and records the changed-cell count.
+    #[test]
+    fn an_edit_keeps_the_coarse_grid_and_walkable_map_current() {
+        let world = World::generate(
+            ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
+            &vxe_world::UniformSource(ROCK),
+            &cave_materials(),
+        );
+        let mut c = Coarse::build(&world);
+        assert_eq!(c.map.count(), 0, "a solid world has no walkable cell");
+        // A 2 m box carved out of the solid: 27 bricks touched, a floor under open cells.
+        let r = world
+            .apply(&EditOp::box_(
+                Fixed3([-8 * FIXED_ONE, -8 * FIXED_ONE, -8 * FIXED_ONE]),
+                Fixed3([16 * FIXED_ONE, 16 * FIXED_ONE, 16 * FIXED_ONE]),
+                Mode::Carve,
+            ))
+            .unwrap();
+        c.update(&world, &r);
+        let rebuilt = CoarseGrid::build(&world);
+        let expected = WalkableMap::build(&rebuilt, WALKABLE);
+        assert_eq!(c.last.map(|(m, _)| m), Some(27));
+        assert!(expected.count() > 0);
+        assert_eq!(c.map.cells(), expected.cells());
+        assert!(c.line().starts_with(&format!(
+            "coarse: {} walkable cells, last edit changed 27 cells in ",
+            expected.count()
+        )));
     }
 
     #[test]
