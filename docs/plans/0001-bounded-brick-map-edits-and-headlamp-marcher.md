@@ -459,10 +459,17 @@ says so.
 | 2: All shapes, all modes, indestructible, atomic failure | dev | done | 4f2cd02 |
 | 3: Raycast, queries, tool-along-ray | dev | done | 64d93d8 |
 | 4: Cave source, determinism vector, world budget readings | dev | done | 62bb87a |
-| 5: GPU mirror and primary-ray marcher with a golden image | dev | done | committed with this row |
-| 6: Headlamp with a shadow ray | dev | not started | |
+| 5: GPU mirror and primary-ray marcher with a golden image | dev | done | 6a3ab55 |
+| 6: Headlamp with a shadow ray | dev | blocked | |
 | 7: Window shell and the fly-through | dev | not started | |
 | 8: Brick occupancy masks | dev | not started | |
+
+### Resume notes (delete when Phase 6 lands)
+
+- **Blocked on:** the Phase 6 done-when "at least 1 % of pixels are brighter by more than 8/255" without the shadow ray. Measured 0.31 % on lavapipe for the Phase 5 scene (carved seed-7 cave, spawn pose, 320 x 180) with the plan's lamp at 0.25 m right and 0.15 m down. The other shadow assertion holds: no pixel of the unshadowed image is darker than the shadowed one. A diff mask places the shadowed pixels on terrace edges and on the rim of the carved hollow, on the side away from the lamp. The walls are 4.4 to 5.7 m from the eye, so a 0.29 m offset gives little parallax. Routed to `/architect` by the owner.
+- **Candidate fixes named to the owner:** lower the floor (for example to 0.2 %); keep 1 % and render the shadow comparison from a pose that faces nearer geometry (the floor is 3.1 m below the spawn); or change the lamp offset. Each changes the plan text.
+- **Uncommitted Phase 6 work in the tree:** `crates/vxe-render/src/light.rs` (`LightParams::{at_eye, headlamp}`, `shadows` flag), `crates/vxe-render/src/{lib.rs, marcher.rs}`, `crates/vxe-render/src/shaders/march.wgsl` (march takes `t_limit`; one shadow ray when flag bit 0 is set), `apps/flythrough/tests/golden.rs` (headlamp test), `apps/flythrough/tests/golden/headlamp.png` (blessed from that tree). `primary.png` compares at 0.0000 % with that tree.
+- **Gate at the tip (6a3ab55):** `cargo build`, `cargo nextest run --workspace` (38 passed), `cargo test --doc`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check` and `cargo deny check` all exit 0.
 
 ### Notes
 
