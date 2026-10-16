@@ -388,3 +388,18 @@ The baseline CPU is not on hand; readings are dev reference and say so.
 - Phase 2 facts gathered before the block: `D2_HRIR_SOFA.zip` downloaded from Zenodo record 10886409 (DOI 10.5281/zenodo.10886409), md5 `f555491d1b6b1a108bb4d26b63ad84a4` matching the record; the record's licence is `apache2.0` and its `LICENSE.txt` (md5 `0ba5044c64ef53cb0189c9546081e228`) is the Apache 2.0 text; the SOFA's `License` attribute reads "Copyright 2018, University of York, Licensed under the Apache License, Version 2.0"; York's page asks that "the original dataset must be referenced whenever used in original or modified form" and that academic work cite DOI 10.3390/app8112029. The file used is `D2_48K_24bit_256tap_FIR_SOFA.sofa` (256 taps, zero per-filter delays); onsets put the 128-tap windows' starts at samples 44 to 97.
 - Phase 2, for the architect: the pack format block lists magic + four `u32` fields, which is a 20-byte header, not the 16 bytes the done-when states; and D2 is a KEMAR, not the KU100 (that is D1) the +90 degree expectation names.
 - Phase 2 work in progress is left uncommitted in this worktree: the `sofar` dev pin (`default-features = false`) in `Cargo.toml` and `crates/vxe-audio/Cargo.toml`, `Cargo.lock`, and `crates/vxe-audio/examples/hrir_pack.rs` (reads the SOFA, writes the pack as specified; produced the figures above). The tip's committed gate is Phase 1's.
+
+### Close triggers
+
+_(Facts for the architect. No recommendations, and no suggested version bump.)_
+
+- **What shipped:**
+- **Public API changed:**
+- **Budget readings:**
+- **Gate at the tip:**
+- **Outstanding `human` phases:**
+
+## Followups
+
+- Reverb from the reflection fan's hit statistics; resonance-driven synthesis hooks.
+- HRTF direction interpolation; a device-rate resampler; a probe worker thread.
