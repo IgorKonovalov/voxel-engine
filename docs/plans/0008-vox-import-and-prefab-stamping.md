@@ -1,6 +1,6 @@
 # 0008: MagicaVoxel import with a material map, and prefab stamping with 24 rotations at generation time and at runtime
 
-> **Status:** approved (2026-10-16)
+> **Status:** in-progress
 > **Created:** 2026-10-16
 > **Milestone:** the headless halves of M6 (`.vox` import) and M7 (prefab stamping) in `docs/roadmap.md`, brought forward because neither needs the renderer
 > **Related ADRs:** ADR-0002 (layout, access model), ADR-0001 (stack); none new, the decisions here have no alternative worth a record beyond the ones named under "Decision"
@@ -239,7 +239,14 @@ Prefab memory: 2 bytes plus one bit per voxel. A 16³ prefab is 8 KiB + 512 B; a
 
 | Phase | Owner | Status | Notes |
 |---|---|---|---|
-| 1: Prefab, rotations, runtime stamp | dev | not started | |
+| 1: Prefab, rotations, runtime stamp | dev | done | committed with this row |
 | 2: `.vox` parsing and the material map | dev | not started | |
 | 3: Generation-time placement | dev | not started | |
 | 4: The fly-through's vault, and the bench | dev | not started | |
+
+### Notes
+
+- Phase 1, done-when not satisfiable as stated: `count_in_box([8, 8, 8], [24, 24, 24])` takes inclusive bounds (`query.rs`), so that box is 17³ and returns `[(0, 2744), (3, 817), (4, 1352)]` after the vault stamp. The test asserts that literal call with the 817 rock voxels, and asserts `count_in_box([8, 8, 8], [23, 23, 23]) == [(0, 2744), (4, 1352)]` (the vault's own 16³ box).
+- Phase 1: `Prefab::new` stores a masked-out voxel as `AIR` and clears mask bits past the last voxel, so `id()` depends only on what a stamp writes. It panics on a voxel count or mask length that does not match the size.
+- Phase 1: public API beyond the data shapes: `Rot::{from_rows, row, determinant, apply_size}`, `Prefab::{size, len, is_empty, written_count}`. `Rot::all()` order: axis permutations lexicographic, then sign bits ascending, determinant +1 kept.
+- Phase 1: `stamp.rs` keeps its own counts-and-bounds tally rather than sharing the private one in `edit.rs` (not in Files touched). A `Uniform` brick is expanded only when a written voxel differs from it.
