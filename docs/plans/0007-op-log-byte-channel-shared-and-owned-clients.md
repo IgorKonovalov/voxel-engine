@@ -350,11 +350,11 @@ component and pass `Host` across the boundary as imports.
 | Phase | Owner | Status | Notes |
 |---|---|---|---|
 | 1: OpLog, InputLog, wire encoding, replay | dev | done | d77ef85; op-log FNV-1a 64 of the vector (1446 bytes) blessed on Linux x86_64 as `0x5ac8_737d_db0f_ccec` |
-| 2: Server, shared client, direct submission | dev | done | committed with this row |
-| 3: The logic boundary and re-simulation | dev | not started | |
-| 4: Owned client and desync detection | dev | not started | |
-| 5: Save, replay, fly-through on the split | dev | not started | |
-| 6: Readings | dev | not started | |
+| 2: Server, shared client, direct submission | dev | done | 5a93da9 |
+| 3: The logic boundary and re-simulation | dev | blocked | committed with this row; every done-when but Interleaving (see Notes) |
+| 4: Owned client and desync detection | dev | not started | stopped at the Phase 3 block |
+| 5: Save, replay, fly-through on the split | dev | not started | stopped at the Phase 3 block |
+| 6: Readings | dev | not started | stopped at the Phase 3 block |
 
 ### Notes
 
@@ -368,3 +368,7 @@ component and pass `Host` across the boundary as imports.
 - Phase 2: an empty `TickOutput::broadcast` sends no `Event` (the four-event assertion with `NoLogic` depends on it). Bytes a client or server receives that do not decode, or that carry a message addressed the other way, are dropped.
 - Phase 2: `TickReport::tick` is the tick that ran (0 for the first `tick()`); `Server::current_tick()` returns the next one (1 after it). `Server` also exposes `world()`, `ops()` and `inputs()`; `Client` exposes `world()` and `shared_world()`.
 - Phase 2: `ClientWorld::Owned` holds a `Box<World>` (clippy `large_enum_variant` under `-D warnings`).
+- Phase 3, BLOCKED, the Interleaving done-when (design call missing): the op log cannot tell a directly submitted op from a logic op of the same tick. Both are 47-byte `(tick, seq, op)` entries with the submitted ones first, so in each tick the submitted entries are a prefix of unknown length: a tick-3 log holding seqs 30, 31, 32 comes from one submitted op and two logic ops as well as from three logic ops. Re-simulation must apply that prefix before the logic runs (the logic's queries see it), so it cannot try splits after the fact. A refused submitted op takes a seq and is not logged, so it also shifts every later seq of the tick, and nothing in either log records it. Options: (a) record each submitted op in the input log under a reserved client index (`u32::MAX`) with its wire bytes as payload, applied before the logic and not handed to it; `resimulate` reproduces the ops and their seq gaps from the input log, no format change, but the engine decodes one class of input entry and the input log is no longer only the logic's; (b) a format change marking submitted entries in the op log (a flag byte, or a distinct op kind), which moves the 47/65/75-byte arithmetic, the 470 000-byte figure of Phase 6 and the op-log hash blessed in Phase 1, and still loses refused submitted ops; (c) the server keeps a third log of submitted ops with their seqs, refused ones included, and `LogFile` carries it (the 60-byte header grows a count); (d) re-simulation is defined for sessions without direct submission only (those replay through `World::replay`), and the Interleaving bullet is dropped.
+- Phase 3: `Server::resimulate(world, logic, seed, &InputLog) -> OpLog` has the signature of the bullet that introduces it (no op log), and runs ticks 0 through the last input entry's tick; the logs carry no tick count, so a logic that acts in later ticks with no input is not reproduced past that point.
+- Phase 3: `EchoLogic` broadcasts one outcome byte per input (1 applied, 2 refused, 3 undecodable), empty in a tick without inputs; the refused-apply test reads the `2` from that broadcast to show the logic received the `Err`. `SeededLogic` starts from `seed ^ 0x9e37_79b9_7f4a_7c15` (xorshift64 13/7/17 sticks at 0) and draws each axis as `state % 234 - 117`.
+- Phase 3: `Server::tick` drains the endpoints before applying the submitted ops and hands both to one internal step that `resimulate` shares; the order of everything that touches the world or the logs is the one Phase 2 names.

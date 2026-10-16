@@ -1,7 +1,7 @@
 //! The server: the authoritative world, its op and input logs, and the tick (ADR-0007).
 //!
 //! One [`Server::tick`] runs, in order: every directly submitted op in `seq` order; then the
-//! drain of every attached endpoint's inputs (endpoints in attach order, each in arrival
+//! inputs drained from every attached endpoint (endpoints in attach order, each in arrival
 //! order), appended to the input log; then the logic's tick, whose host applies, logs and
 //! announces each op it requests; then the logic's broadcast to every client. Seqs come from
 //! one counter shared by submission and the logic's host, so the op log's order is the order
@@ -172,13 +172,29 @@ impl Server {
 
     /// Runs one tick (see the module documentation) and advances the tick counter.
     pub fn tick(&mut self) -> TickReport {
+        let mut inputs = Vec::new();
+        for (i, c) in self.clients.iter().enumerate() {
+            let client = u32::try_from(i).expect("client count fits u32");
+            while let Some(bytes) = c.try_recv() {
+                // A client sends only inputs; anything else is not addressed to the server.
+                if let Ok(Message::Input { bytes }) = Message::decode(&bytes) {
+                    inputs.push(ClientInput { client, bytes });
+                }
+            }
+        }
+        self.step(inputs)
+    }
+
+    /// One tick on `inputs`: submitted ops, the inputs into the input log, the logic, the
+    /// broadcast. Draining the channels touches no world state, so [`Server::tick`] drains
+    /// before calling this and [`Server::resimulate`] passes logged inputs instead.
+    fn step(&mut self, inputs: Vec<ClientInput>) -> TickReport {
         let tick = self.tick;
         let pending = std::mem::take(
             self.pending
                 .get_mut()
                 .unwrap_or_else(PoisonError::into_inner),
         );
-
         let logic = self.logic.get_mut().unwrap_or_else(PoisonError::into_inner);
         let mut host = TickHost {
             world: &self.world,
@@ -192,16 +208,8 @@ impl Server {
         for (seq, op) in pending {
             let _ = host.apply_seq(seq, op);
         }
-        let mut inputs = Vec::new();
-        for (i, c) in self.clients.iter().enumerate() {
-            let client = u32::try_from(i).expect("client count fits u32");
-            while let Some(bytes) = c.try_recv() {
-                // A client sends only inputs; anything else is not addressed to the server.
-                if let Ok(Message::Input { bytes }) = Message::decode(&bytes) {
-                    self.inputs.push(tick, client, bytes.clone());
-                    inputs.push(ClientInput { client, bytes });
-                }
-            }
+        for input in &inputs {
+            self.inputs.push(tick, input.client, input.bytes.clone());
         }
         let out = logic.tick(&mut host, tick, &inputs);
         let (applied, refused) = (host.applied, host.refused);
@@ -221,6 +229,35 @@ impl Server {
             refused,
             inputs: u32::try_from(inputs.len()).expect("input count fits u32"),
         }
+    }
+
+    /// Re-runs a session from its seed and its input log: a server on `world` with `logic`
+    /// initialised from `seed` runs ticks 0 through the last input's tick, each on the
+    /// inputs logged for it, and the op log it builds is returned. Equal to the live op log
+    /// when the logic is a pure function of its seed and inputs and the session submitted no
+    /// ops directly.
+    pub fn resimulate(
+        world: Arc<World>,
+        logic: Box<dyn Logic>,
+        seed: u64,
+        inputs: &InputLog,
+    ) -> OpLog {
+        let mut server = Self::new(world, logic, seed);
+        let entries = inputs.entries();
+        let mut i = 0;
+        let last = entries.last().map(|e| e.tick);
+        while last.is_some_and(|last| server.tick <= last) {
+            let mut batch = Vec::new();
+            while let Some(e) = entries.get(i).filter(|e| e.tick == server.tick) {
+                batch.push(ClientInput {
+                    client: e.client,
+                    bytes: e.bytes.clone(),
+                });
+                i += 1;
+            }
+            server.step(batch);
+        }
+        server.ops
     }
 
     /// The authoritative world.
