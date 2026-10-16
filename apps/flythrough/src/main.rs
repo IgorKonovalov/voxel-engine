@@ -304,6 +304,8 @@ struct Audio {
     stream_errors: u64,
     /// `--audio-debug`: when the callback's readings were last printed.
     debug: Option<Instant>,
+    /// Wall time of the last `Acoustics::update`, in milliseconds.
+    update_ms: f64,
 }
 
 /// An environment variable naming an HRIR pack to use instead of the shipped one, for
@@ -421,6 +423,7 @@ impl Audio {
                     voices: Vec::new(),
                     stream_errors: 0,
                     debug: debug.then(now),
+                    update_ms: 0.0,
                 })
             }
             Err(e) => {
@@ -774,6 +777,13 @@ impl Run {
             gfx.mirror.mirror_bytes(),
             gfx.mirror.allocated_bytes()
         );
+        if let Some(audio) = &self.audio {
+            println!(
+                "audio: {} active taps, last acoustics update {:.3} ms",
+                audio.acoustics.active_taps(),
+                audio.update_ms
+            );
+        }
     }
 
     /// RAM held by resident chunks: full chunks' voxels and LOD-only chunks' mips.
@@ -1275,6 +1285,7 @@ impl Run {
             audio.voices.retain(|(v, _)| *v != id);
         }
         let output = &audio.output;
+        let t = now();
         audio.acoustics.update(
             &self.world,
             &audio.table,
@@ -1286,6 +1297,7 @@ impl Run {
                 let _ = output.send(cmd);
             },
         );
+        audio.update_ms = ms_since(t);
     }
 
     /// Streams, syncs, marches and presents one frame begun at `t0`.

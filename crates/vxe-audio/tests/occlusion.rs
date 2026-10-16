@@ -82,7 +82,8 @@ fn tail_rms(out: &[f32]) -> f32 {
 }
 
 /// 0.5 s of a tone of `freq` and amplitude 0.5 at `SOURCE`, heard at `LISTENER` facing +x,
-/// with the acoustics probed once through `world` before the first block.
+/// with the acoustics probed once through `world` before the first block and the early
+/// reflections off, so the render is the direct path alone.
 fn render(world: &World, freq: f32) -> f32 {
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
     let listener = Listener {
@@ -97,6 +98,7 @@ fn render(world: &World, freq: f32) -> f32 {
         PlayParams::at(centre(SOURCE)),
     ));
     let mut acoustics = Acoustics::new(mixer.clock());
+    acoustics.set_reflections(false);
     acoustics.update(
         world,
         world.materials(),
@@ -106,6 +108,7 @@ fn render(world: &World, freq: f32) -> f32 {
         &mut |cmd| mixer.apply(cmd),
     );
     assert_eq!(acoustics.last_probed(), 1);
+    assert_eq!(acoustics.active_taps(), 0);
     let mut out = vec![0.0; 2 * FRAMES];
     mixer.render(&mut out, FRAMES);
     tail_rms(&out)

@@ -31,12 +31,17 @@ mod mixer;
 mod output;
 mod voice;
 
-pub use acoustics::{Acoustics, BlockClock, Occlusion, occlusion};
+pub use acoustics::{
+    Acoustics, BlockClock, Occlusion, REFLECTION_RANGE_METRES, REFLECTION_RAYS, Reflection,
+    occlusion, reflection_directions, reflections, taps,
+};
 pub use command::{COMMAND_CAPACITY, Command};
 pub use hrtf::Hrtf;
 pub use mixer::{MAX_VOICES, Mixer};
 pub use output::{Output, OutputStats};
-pub use voice::{AcousticTargets, MAX_TAPS, OPEN_CUTOFF_HZ, PlayParams, Sound, Tap, VoiceId};
+pub use voice::{
+    AcousticTargets, MAX_DELAY_FRAMES, MAX_TAPS, OPEN_CUTOFF_HZ, PlayParams, Sound, Tap, VoiceId,
+};
 
 /// The mixer's sample rate in frames per second.
 pub const RATE: u32 = 48_000;

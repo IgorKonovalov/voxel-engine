@@ -7,7 +7,13 @@
 //!    and low-pass them with a one-pole filter (`y += a (x - y)`, `a = 1 - exp(-2 pi fc / fs)`)
 //!    at the acoustic cutoff `fc`. The coefficient `a` moves through the same smoother every
 //!    sample; at [`OPEN_CUTOFF_HZ`] its target is 1, where the filter passes its input;
-//! 3. spatialise. On the HRTF path the samples run through the two 128-tap FIRs of the measured
+//! 3. add the early reflections: the voice's samples times its own gain (smoothed like the
+//!    others, no distance gain; the acoustics fold the occlusion into each tap's gain) go into a
+//!    [`MAX_DELAY_FRAMES`] delay line, and each [`crate::Tap`] adds the line's sample
+//!    `delay_frames` back times the tap's gain. When the acoustics replace the taps, the next
+//!    block renders both sets and crossfades from old to new along the same raised cosine as a
+//!    direction change;
+//! 4. spatialise. On the HRTF path the samples run through the two 128-tap FIRs of the measured
 //!    direction nearest to the source (time-domain convolution over the voice's last `taps - 1`
 //!    inputs and this block). When the nearest direction changes between blocks, the block is
 //!    filtered with both the old and the new FIRs and crossfaded from old to new over the
@@ -22,7 +28,7 @@ use std::sync::Arc;
 use crate::acoustics::BlockClock;
 use crate::command::Command;
 use crate::hrtf::Hrtf;
-use crate::voice::{OPEN_CUTOFF_HZ, Voice, VoiceBuffers, VoiceId};
+use crate::voice::{MAX_DELAY_FRAMES, OPEN_CUTOFF_HZ, Tap, Voice, VoiceBuffers, VoiceId};
 use crate::{BLOCK, Listener, RATE, SMOOTHING_SECONDS, cross, dot, length, normalize_or, sub};
 
 /// Voices the mixer holds at once.
@@ -131,7 +137,18 @@ impl Mixer {
             Command::SetListener(l) => self.listener = l,
             Command::SetAcoustics(id, targets) => {
                 if let Some(v) = self.voice_mut(id) {
+                    let count = usize::from(targets.tap_count.min(crate::MAX_TAPS as u8));
+                    let changed = count != usize::from(v.acoustic.tap_count)
+                        || targets.taps[..count] != v.acoustic.taps[..count];
+                    // A second change before the block renders keeps fading out from what
+                    // was last heard.
+                    if v.started && changed && !v.fading {
+                        v.old_taps = v.acoustic.taps;
+                        v.old_tap_count = v.acoustic.tap_count;
+                        v.fading = true;
+                    }
                     v.acoustic = targets;
+                    v.acoustic.tap_count = count as u8;
                     if !v.started {
                         v.lowpass_a = lowpass_coefficient(targets.cutoff_hz);
                     }
@@ -174,9 +191,24 @@ impl Mixer {
             let target_gain = v.params.gain / d.max(1.0) * v.acoustic.gain;
             let dir = normalize_or(rel, [1.0, 0.0, 0.0]);
             let dry = &mut self.dry[..n];
-            v.read(dry, self.hrtf.as_ref().map_or(0, |h| h.taps() - 1));
+            let tail = v.tap_tail() + self.hrtf.as_ref().map_or(0, |h| h.taps() - 1);
+            v.read(dry, tail);
             if !v.started {
                 v.gain = target_gain;
+                v.own_gain = v.params.gain;
+            }
+            // The delay line takes the voice's own-gained signal before distance and occlusion.
+            let echo_start = v.echo_pos;
+            {
+                let ring = &mut v.buffers.echo;
+                let len = ring.len();
+                let mut og = v.own_gain;
+                for (i, &s) in dry.iter().enumerate() {
+                    og += (v.params.gain - og) * k;
+                    ring[(echo_start + i) % len] = s * og;
+                }
+                v.own_gain = og;
+                v.echo_pos = (echo_start + n) % len;
             }
             let mut g = v.gain;
             for s in dry.iter_mut() {
@@ -204,6 +236,21 @@ impl Mixer {
                 v.lowpass = y;
             } else if let Some(&last) = dry.last() {
                 v.lowpass = last;
+            }
+            let taps = &v.acoustic.taps[..usize::from(v.acoustic.tap_count)];
+            let ring = &v.buffers.echo;
+            if v.fading {
+                let old = &v.old_taps[..usize::from(v.old_tap_count)];
+                for (i, s) in dry.iter_mut().enumerate() {
+                    let a = tap_sum(old, ring, echo_start + i);
+                    let b = tap_sum(taps, ring, echo_start + i);
+                    *s += a + (b - a) * crossfade_weight(i, n);
+                }
+                v.fading = false;
+            } else if !taps.is_empty() {
+                for (i, s) in dry.iter_mut().enumerate() {
+                    *s += tap_sum(taps, ring, echo_start + i);
+                }
             }
             match &self.hrtf {
                 Some(hrtf) => {
@@ -288,6 +335,19 @@ fn lowpass_coefficient(cutoff_hz: f32) -> f32 {
 fn crossfade_weight(i: usize, n: usize) -> f32 {
     let x = (i + 1) as f32 / (n + 1) as f32;
     0.5 - 0.5 * (std::f32::consts::PI * x).cos()
+}
+
+/// The taps' sum at ring position `at`: each tap's gain times the sample `delay_frames` before
+/// it. `ring` is at least [`MAX_DELAY_FRAMES`] plus one block long and `at` was written this
+/// block, so every delay up to [`MAX_DELAY_FRAMES`] reads a sample not yet overwritten.
+fn tap_sum(taps: &[Tap], ring: &[f32], at: usize) -> f32 {
+    let len = ring.len();
+    taps.iter()
+        .map(|t| {
+            let d = (t.delay_frames as usize).min(MAX_DELAY_FRAMES);
+            t.gain * ring[(at + len - d) % len]
+        })
+        .sum()
 }
 
 /// `out[n] = sum_j h_reversed[j] * input[n + j]`: a causal FIR over `input`, which holds

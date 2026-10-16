@@ -51,6 +51,8 @@ impl PlayParams {
 
 /// Taps a voice carries at most.
 pub const MAX_TAPS: usize = 16;
+/// The longest tap delay: 200 ms at [`crate::RATE`], the length of a voice's delay line.
+pub const MAX_DELAY_FRAMES: usize = 9_600;
 /// The cutoff of an unobstructed voice; at or above it the low-pass is bypassed.
 pub const OPEN_CUTOFF_HZ: f32 = 20_000.0;
 
@@ -98,6 +100,15 @@ pub(crate) struct Voice {
     pub pan: [f32; 2],
     /// The acoustics' targets for this voice.
     pub acoustic: AcousticTargets,
+    /// The taps the next block fades out from while [`Voice::fading`] (one block).
+    pub old_taps: [Tap; MAX_TAPS],
+    pub old_tap_count: u8,
+    /// The taps changed since the last block rendered.
+    pub fading: bool,
+    /// The voice's own gain, as smoothed so far, for the delay line's input.
+    pub own_gain: f32,
+    /// Where the next block goes in [`VoiceBuffers::echo`].
+    pub echo_pos: usize,
     /// The low-pass coefficient as smoothed so far, 1 when open (the acoustic gain smooths
     /// inside `gain`).
     pub lowpass_a: f32,
@@ -116,17 +127,23 @@ pub(crate) struct Voice {
 /// ends, so the callback never allocates.
 pub(crate) struct VoiceBuffers {
     pub history: Vec<f32>,
+    /// The delay line the taps read: a ring of the voice's own-gained signal,
+    /// [`MAX_DELAY_FRAMES`] plus one block long so a whole block can be written before any tap
+    /// of it is read.
+    pub echo: Vec<f32>,
 }
 
 impl VoiceBuffers {
     pub fn new(taps: usize) -> Self {
         Self {
             history: vec![0.0; taps.saturating_sub(1)],
+            echo: vec![0.0; MAX_DELAY_FRAMES + crate::BLOCK],
         }
     }
 
     pub fn clear(&mut self) {
         self.history.fill(0.0);
+        self.echo.fill(0.0);
     }
 }
 
@@ -142,12 +159,33 @@ impl Voice {
             gain: 0.0,
             pan: [0.0; 2],
             acoustic: AcousticTargets::default(),
+            old_taps: [Tap::default(); MAX_TAPS],
+            old_tap_count: 0,
+            fading: false,
+            own_gain: 0.0,
+            echo_pos: 0,
             lowpass_a: 1.0,
             lowpass: 0.0,
             dir: 0,
             buffers,
             started: false,
         }
+    }
+
+    /// The longest delay among the taps this voice plays now.
+    pub fn tap_tail(&self) -> usize {
+        let cur = &self.acoustic.taps[..usize::from(self.acoustic.tap_count)];
+        let old = &self.old_taps[..if self.fading {
+            usize::from(self.old_tap_count)
+        } else {
+            0
+        }];
+        cur.iter()
+            .chain(old)
+            .map(|t| t.delay_frames as usize)
+            .max()
+            .unwrap_or(0)
+            .min(MAX_DELAY_FRAMES)
     }
 
     /// Fills `out` with the voice's next samples, zeros past the end of a non-looping sound.
