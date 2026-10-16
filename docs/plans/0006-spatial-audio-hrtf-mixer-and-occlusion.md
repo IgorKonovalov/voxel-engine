@@ -7,6 +7,9 @@
 > **Prerequisite:** Plan 0001 closed. Independent of Plans 0002 to 0005 and of their readings.
 > **Amended 2026-10-16:** the HRIR pack keeps every 3rd azimuth of each SADIE II D2 ring
 > (2950 directions, about 3.0 MB); header is 20 bytes. See "Amendment 2026-10-16" below.
+> **Amended 2026-10-16 (second):** Phase 3's partial-cover pillar is 3 x 3 voxels; Phase 4 pins
+> the reflection direction set, the hit point (the face) and the tap delay as excess over the
+> direct path, so the expected echo is 1160 samples. See "Amendment 2026-10-16 (second)" below.
 
 ## TL;DR
 
@@ -44,6 +47,61 @@ argument in ADR-0006 for a saving stride already gives).
 
 Also corrected: the header is a magic plus four `u32`, 20 bytes; D2 is a KEMAR, so the
 +90 degree expectation no longer quotes a KU100 figure.
+
+## Amendment 2026-10-16 (second)
+
+Phase 3 stopped on the partial-cover done-when (`plan-0006` at 1b8a894); Phase 4 has two
+conventions the draft left open. The owner chose the recommendations below on 2026-10-16.
+
+**Phase 3, partial cover.** The draft's pillar (`x in [100, 150)`, `y in [123, 133)`, all `z`)
+lies on all seven probe rays and measures 0.083982, the full-wall figure. The draft's arithmetic
+was wrong: the direct ray and the two `±x` offset rays are collinear, so anything on the direct
+ray covers those three, and the `±y` and `±z` offset rays stay within 1.65 to 3.3 voxels of the
+axis over `x in [100, 150)`, inside a 10-voxel pillar. **Decision:** the pillar is
+`x in [100, 150)`, `y in [127, 130)`, `z in [127, 130)`. It holds the axis (`y = z = 128.5`);
+the `±y` and `±z` offset rays aim 5 voxels off the axis at the source, which is 150 voxels
+beyond the listener, so at `x = 100` they sit 1.65 voxels off the axis, at `y` or `z` 130.15 or
+126.85, outside it. It covers exactly the direct and `±x` rays, and the expected multiplier
+stays `(3 * 0.08404 + 4) / 7 = 0.6074` within 1 % (dev measured 0.607444). Also corrected: the
+source at `(200, 128, 128)` is 15 m from the listener at `x = 50.5`, not 10 m; every asserted
+figure is a ratio to the same scene without the wall and is unchanged. The 5 m multiplier is
+asserted within 1 % of 0.08404 (dev measured 0.083982: the four off-axis rays cross 5.003 m).
+Rejected: a slab `y in [127, 130)`, all `z` (five rays, 0.345713), which tests the same model
+with a less legible figure.
+
+**Phase 4, the direction set.** The sixteen directions are a Fibonacci sphere with its poles on
+the world `x` axis, in world axes (not turned with the listener):
+`x_i = 1 - 2i / 15`, `r_i = sqrt(1 - x_i²)`, `phi_i = i * pi * (3 - sqrt 5)`,
+`d_i = (x_i, r_i cos phi_i, r_i sin phi_i)` for `i = 0..15`, in `f32`. Then `d_0` is exactly
+`(1, 0, 0)` and `d_15` exactly `(-1, 0, 0)`; the test lists `d_0`, `d_1 = (0.8667, -0.3679,
+0.3370)` and `d_2 = (0.7333, 0.0594, -0.6773)` to four places. Rejected: the textbook
+half-offset Fibonacci set (`x_i = 1 - (2i + 1) / 16`), which puts no ray on the axis the test
+scene uses and turns the expected echo into an off-axis calculation.
+
+**Phase 4, the hit point and the delay.** The hit point `H` is where the ray enters the solid:
+`origin + dir * t0` of the first solid run `trace_materials` returns, which is exact in fixed
+point. We take the face, not the hit voxel's centre, because the face is where the surface is,
+the run's `t0` is already the query's output, and the centre would add a half-voxel bias that
+depends on the incidence angle. The tap delay is the **excess** over the direct path,
+`(|L - H| + |H - S| - |L - S|) / 343 m/s`, rounded to whole frames, because this mixer gives the
+direct path no propagation delay (no Doppler, Phase 1). The tap feeds the voice's mono signal
+ahead of its HRIR FIR, so the direct sound and its echoes share the voice's HRIR and onset; its
+gain multiplies the voice's own gain, not the direct path's distance gain. In the Phase 4 scene
+the listener at `x = 0.5` is 4.95 m from the face at `x = 50`: the `+x` ray hits
+`H = (50, 128.5, 128.5)`, `|L - H| = 4.95 m`, `|H - S| = sqrt(4.95² + 2²) = 5.3388 m`, and the
+echo trails the direct peak by `(10.2888 - 2) / 343 s = 24.166 ms`, **1160 samples** (1159.94),
+within ±2 samples (frame rounding plus the shared FIR's peak; the hit is exact, so the draft's
+0.1 m quantisation allowance no longer applies). Its amplitude relative to the direct peak is
+`0.7 * 2 / 10.2888 = 0.1361`, within 10 %. Five more rays hit the wall inside the extent, at
+1458, 1634, 1922, 2938 and 3661 samples, with relative amplitudes 0.113 to 0.050; the first echo
+is the earliest peak after the direct one, more than 290 samples clear of the next. Rejected:
+the voxel centre (dev's flagged alternative; 1173 samples by the draft's arithmetic, which
+also placed the listener 5 m from the face).
+
+**Listening checks.** A `dev` fix pass is in flight on `plan-0006` for two defects the owner
+heard on the dev box: left and right swapped, and clicks when turning or when a source's
+distance changes. Phase 3's listening check (the `J` hum behind a wall) is re-run after that
+pass lands, and so is Phase 1's `H` knock; the log records both.
 
 ## Context & problem
 
@@ -224,13 +282,14 @@ Shared conventions for every phase:
     on every one of the seven rays). The gain multiplier is `0.5 * 0.7^5 = 0.08404`; the cutoff
     is `392.16 Hz`; the one-pole response at 100 Hz is `0.9690`; the rendered RMS over the last
     0.1 s equals the same scene without the wall times `0.0814`, within 2 %. Without the wall
-    the multiplier is exactly 1 and the cutoff 20 000 Hz.
+    the multiplier is exactly 1 and the cutoff 20 000 Hz. (Amended 2026-10-16: the source is
+    15 m from the listener, not 10 m; the multiplier is asserted within 1 %.)
   - A thin wall: 0.5 m of `W` gives the multiplier `0.5 * 0.7^0.5 = 0.4183` and the cutoff
     `3333 Hz`; a 2 kHz tone behind it renders at `0.4183 * (1 / sqrt(1 + (2000 / 3333)²)) =
     0.358` of the open level, within 2 %.
-  - Partial cover: a wall of `W` covering only the direct ray and the two `±z` offset rays
-    (a pillar `x in [100, 150)`, `y in [123, 133)`, all `z`) gives the multiplier `(3 * 0.08404
-    + 4) / 7 = 0.6074` within 1 %.
+  - Partial cover (amended 2026-10-16): a pillar of `W` covering only the direct ray and the
+    two `±x` offset rays, which are collinear with it (`x in [100, 150)`, `y in [127, 130)`,
+    `z in [127, 130)`), gives the multiplier `(3 * 0.08404 + 4) / 7 = 0.6074` within 1 %.
   - `Acoustics::update(&world, listener, metres_per_voxel)` probes every voice whose position
     or the listener moved by more than 0.1 m since its last probe, or at least once per 500 ms
     of audio time (counted in blocks, no clock), and sends the targets over the command
@@ -243,21 +302,23 @@ Shared conventions for every phase:
 - **Files touched:** `crates/vxe-audio/src/{acoustics.rs, mixer.rs, voice.rs}`,
   `crates/vxe-audio/tests/reflections.rs`.
 - **Done when:**
-  - The sixteen directions are a fixed Fibonacci-sphere set computed in `f32` once at startup
-    (listed in a test by their first three values so a change is visible). For each ray that
-    hits within 50 m at point `H` with material `m`, every voice gets a tap at delay `(|L - H|
-    + |H - S|) / 343 m/s` seconds with gain `(1 - A(m)) * (1 m / (|L - H| + |H - S|))` relative
-    to the direct path's gain, at most 16 taps per voice, in a 200 ms delay line per voice;
+  - The sixteen directions are a fixed Fibonacci-sphere set computed in `f32` once at startup,
+    poles on the world `x` axis as "Amendment 2026-10-16 (second)" constructs it (listed in a
+    test by their first three values so a change is visible). For each ray that hits within
+    50 m at point `H` (the entry of the first solid run) with material `m`, every voice gets a
+    tap at delay `(|L - H| + |H - S| - |L - S|) / 343 m/s` seconds, the excess over the direct
+    path, with gain `(1 - A(m)) * (1 m / (|L - H| + |H - S|))` times the voice's own gain, fed
+    ahead of the voice's HRIR FIR, at most 16 taps per voice, in a 200 ms delay line per voice;
     taps are replaced with a one-block crossfade when the acoustics update changes them.
   - Headless: an air world over chunks `[0, 4)³`; a wall of material `W` (`A = 0.3`) filling
     `x in [50, 60)`; listener at voxel centre `(0, 128, 128)`... (that voxel is in the extent;
-    `[0, 4)³` is voxels `[0, 256)³`), source at `(0, 148, 128)` (2 m along `+y`), both 5 m from
-    the wall face at `x = 50`. A one-sample impulse of amplitude 1.0 rendered for 100 ms shows
-    its direct peak and a second peak whose delay after the direct peak is `(5 + sqrt(29) -
-    2) / 343 s = 24.447 ms`, that is `1173` samples at 48 kHz, within ±10 samples (the voxel
-    quantisation of the hit is 0.1 m, 14 samples at most in the path sum; the HRIR onset shifts
-    both peaks equally). The second peak's amplitude relative to the first is `0.7 * (1 /
-    10.385) / (1 / 2) = 0.1348`, within 10 % (the HRIR shapes both).
+    `[0, 4)³` is voxels `[0, 256)³`), source at `(0, 148, 128)` (2 m along `+y`), both 4.95 m
+    from the wall face at `x = 50` (amended 2026-10-16). A one-sample impulse of amplitude 1.0
+    rendered for 100 ms shows its direct peak and a second peak, from the `+x` ray, whose delay
+    after the direct peak is `(4.95 + sqrt(4.95² + 2²) - 2) / 343 s = 24.166 ms`, that is
+    `1160` samples at 48 kHz, within ±2 samples (the hit is the exact face entry; the HRIR
+    onset shifts both peaks equally). The second peak's amplitude relative to the first is
+    `0.7 * (1 / 10.2888) / (1 / 2) = 0.1361`, within 10 % (the HRIR shapes both).
   - With the wall removed, no second peak above 1 % of the first exists within 100 ms.
   - The `--audio` fly-through's `F1` line prints the number of active taps and the last
     acoustics update's time.
