@@ -153,7 +153,7 @@ pub fn sweep_with_stats(world: &World, body: &Body, delta: Fixed3) -> (Sweep, Qu
         }
         let r = rem.map(i128::from);
         let rr = r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
-        // The whole remainder when it is no longer than `g`; else `g` along it, scaled by the
+        // The whole remainder when it is at most `g` long; else `g` along it, scaled by the
         // root of `|rem|²` rounded up, so the advance is never longer than `g`. With the
         // root rounded down, a remainder up to one unit longer than `g` passed for `g` and
         // was taken whole, ending inside the box.
@@ -171,9 +171,9 @@ pub fn sweep_with_stats(world: &World, body: &Body, delta: Fixed3) -> (Sweep, Qu
         }
         let next = [0, 1, 2].map(|k| pos[k] + adv[k]);
         // A box left out as not closed on can lie under one unit from the body, and an
-        // advance rounded off the line of the delta, or a sign taken from the floored plan
-        // distance, can reach into it. Stop short of that. With no box left out, `g` bounds
-        // the gap to every box the region holds and the check is not needed.
+        // advance rounded off the line of the delta, or a sign taken from the floored
+        // horizontal distance, can reach into it. Stop short of that. With no box left out,
+        // `g` bounds the gap to every box the region holds and the check is not needed.
         if left_out {
             let nb = body.at(next);
             if let Some(x) = boxes.iter().find(|x| x.overlaps(&nb)) {
