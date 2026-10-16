@@ -5,12 +5,14 @@
 //! within `r_full` chunks, mips out to `r_lod`. `--level` generates the bounded level instead.
 //!
 //! `flythrough [--seed N] [--level] [--render WxH] [--frames N] [--bench N] [--autopilot]
-//! [--sync-budget MIB] [--headless]`. `--render` fixes the marcher's resolution (the window
+//! [--sync-budget MIB] [--headless] [--look MODE] [--view VIEW]`. `--render` fixes the marcher's resolution (the window
 //! scales it); `--frames` exits after N frames, printing the `F1` readings over the last
 //! ones; `--bench` runs the `B` bench N times right after the first mirror upload, before
 //! the first frame; `--autopilot` digs, flies 300 m out and back and prints the streaming
 //! readings (see [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame;
-//! `--headless` runs the same frames on an offscreen target with no window.
+//! `--headless` runs the same frames on an offscreen target with no window; `--look` starts
+//! in a normal mode (`face`, `trilinear8`, `gradient27`, `contour`) and `--view` in a view
+//! (`shaded`, `normals`, `hitmask`). `N` cycles the normal mode and `V` toggles detail.
 
 mod fly;
 
@@ -25,8 +27,8 @@ use flythrough::{RESIDENCY, cave_materials, chunk_ram, chunks_hash, mips_ram, pe
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
 use vxe_render::glam::Vec3;
 use vxe_render::{
-    Camera, GpuWorld, LightParams, LodParams, MarchTimer, Marcher, MirrorConfig, Presenter, Window,
-    wgpu,
+    Camera, GpuWorld, LightParams, LodParams, LookParams, MarchTimer, Marcher, MirrorConfig,
+    NormalMode, Presenter, ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -85,6 +87,9 @@ struct Args {
     autopilot: bool,
     headless: bool,
     sync_budget: u64,
+    /// `--look`: the starting normal mode.
+    look: Option<NormalMode>,
+    view: ViewMode,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -97,6 +102,8 @@ fn parse_args() -> Result<Args, String> {
         autopilot: false,
         headless: false,
         sync_budget: SYNC_BUDGET_MIB << 20,
+        look: None,
+        view: ViewMode::Shaded,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -118,6 +125,17 @@ fn parse_args() -> Result<Args, String> {
                     .parse()
                     .map_err(|e| format!("--sync-budget: {e}"))?;
                 args.sync_budget = mib << 20;
+            }
+            "--look" => {
+                let v = value()?;
+                args.look = Some(NormalMode::from_name(&v).ok_or(format!(
+                    "--look takes face, trilinear8, gradient27 or contour, not {v}"
+                ))?);
+            }
+            "--view" => {
+                let v = value()?;
+                args.view = ViewMode::from_name(&v)
+                    .ok_or(format!("--view takes shaded, normals or hitmask, not {v}"))?;
             }
             "--level" => args.level = true,
             "--autopilot" => args.autopilot = true,
@@ -291,6 +309,7 @@ struct Run {
     args: Args,
     fly: Fly,
     light: LightParams,
+    look: LookParams,
     dig_radius: i64,
     bench_runs: u64,
     frame: u32,
@@ -439,8 +458,9 @@ impl Run {
             format!("{:.3} ms", median(&mut gpu_ms))
         };
         println!(
-            "frame ({w}x{h}, median of {}): cpu {:.3} ms, gpu march {gpu}; full bricks {}, mirror {} B",
+            "frame ({w}x{h}, median of {}, {}): cpu {:.3} ms, gpu march {gpu}; full bricks {}, mirror {} B",
             cpu_ms.len(),
+            look_line(&self.look),
             median(&mut cpu_ms),
             self.world.stats().full_bricks,
             gfx.mirror.mirror_bytes()
@@ -858,6 +878,14 @@ impl Run {
         if input.pressed(KeyCode::KeyB) {
             self.bench(gpu);
         }
+        if input.pressed(KeyCode::KeyN) {
+            self.look.normal_mode = self.look.normal_mode.next(false);
+            println!("{}", look_line(&self.look));
+        }
+        if input.pressed(KeyCode::KeyV) {
+            self.look.detail = !self.look.detail;
+            println!("{}", look_line(&self.look));
+        }
         if input.pressed(KeyCode::F1) {
             self.samples = Some(Samples::default());
         }
@@ -885,6 +913,7 @@ impl Run {
         let Some(gfx) = self.gfx.as_mut() else {
             return Flow::Exit;
         };
+        gfx.marcher.set_look(self.look);
         let params = gfx
             .marcher
             .params(&gfx.mirror, &self.fly.camera, &self.light);
@@ -936,6 +965,16 @@ impl Run {
         }
         Flow::Continue
     }
+}
+
+/// `look face, detail off, view shaded`.
+fn look_line(look: &LookParams) -> String {
+    format!(
+        "look {}, detail {}, view {}",
+        look.normal_mode.name(),
+        if look.detail { "on" } else { "off" },
+        look.view.name()
+    )
 }
 
 /// The fixed-point centre of the voxel holding `p`.
@@ -1011,6 +1050,11 @@ impl App for Flythrough {
                 args: self.args,
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
+                look: LookParams {
+                    normal_mode: self.args.look.unwrap_or_default(),
+                    detail: false,
+                    view: self.args.view,
+                },
                 dig_radius: DIG_RADIUS,
                 bench_runs: 0,
                 frame: 0,

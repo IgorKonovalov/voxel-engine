@@ -2,7 +2,8 @@
 //
 // Bindings, group 0:
 //   0  uniform  params         camera, mirror window, light, target size, flags (bit 0: shadow ray,
-//                              bit 1: occupancy masks)
+//                              bit 1: occupancy masks, bits 2..4: normal mode, bit 4: detail,
+//                              bits 5..7: view, bit 7: the mirror has attribute pages)
 //   1  storage  brick_pool0    shard 0 of the pool: [slot][128 x u32], four u8 palette indices
 //                              per word, x fastest; a wide brick is two slots, [256 x u32] of
 //                              u16 voxel pairs. Slot s is slot s % slots_per_shard of shard
@@ -85,6 +86,18 @@ const BIG: f32 = 3.0e38;
 // Params.flags bits.
 const FLAG_SHADOWS: u32 = 1u;
 const FLAG_MASKS: u32 = 2u;
+const NORMAL_SHIFT: u32 = 2u;
+const FLAG_DETAIL: u32 = 16u;
+const VIEW_SHIFT: u32 = 5u;
+const FLAG_ATTR_PAGES: u32 = 128u;
+// Normal modes (flags bits 2..4) and views (flags bits 5..7).
+const NORMAL_FACE: u32 = 0u;
+const NORMAL_TRILINEAR8: u32 = 1u;
+const NORMAL_GRADIENT27: u32 = 2u;
+const NORMAL_CONTOUR: u32 = 3u;
+const VIEW_SHADED: u32 = 0u;
+const VIEW_NORMALS: u32 = 1u;
+const VIEW_HITMASK: u32 = 2u;
 
 // What the walk found at a voxel: `size` is the edge of the empty cell to skip, or 0 for a
 // solid voxel of `material`.
@@ -257,12 +270,34 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
     return miss;
 }
 
-fn shade(o: vec3<f32>, d: vec3<f32>, h: Hit) -> vec3<f32> {
+fn normal_mode() -> u32 {
+    return (params.flags >> NORMAL_SHIFT) & 3u;
+}
+
+fn view_mode() -> u32 {
+    return (params.flags >> VIEW_SHIFT) & 3u;
+}
+
+// The normal of the face the ray entered the hit voxel through; `-d` when the ray started
+// inside rock.
+fn face_normal(d: vec3<f32>, h: Hit) -> vec3<f32> {
     var n = -d;
     if (h.axis >= 0) {
         n = vec3<f32>(0.0);
         n[h.axis] = -sign(d[h.axis]);
     }
+    return n;
+}
+
+// The shading normal of hit `h` under the current normal mode.
+fn surface_normal(o: vec3<f32>, d: vec3<f32>, h: Hit) -> vec3<f32> {
+    return face_normal(d, h);
+}
+
+fn shade(o: vec3<f32>, d: vec3<f32>, h: Hit, n: vec3<f32>) -> vec3<f32> {
+    // The shadow ray leaves along the face normal in every mode: it is a robustness offset
+    // out of the hit voxel, not part of the look.
+    let nf = face_normal(d, h);
     let p = o + d * h.t;
     let albedo = materials[h.material * 2u].xyz;
     let to_light = params.light_pos - p;
@@ -274,7 +309,7 @@ fn shade(o: vec3<f32>, d: vec3<f32>, h: Hit) -> vec3<f32> {
     // One shadow ray, from half a voxel off the face toward the lamp; any rock before the lamp
     // removes its light.
     if ((params.flags & FLAG_SHADOWS) != 0u && lit > 0.0) {
-        let s = march(p + n * 0.5, l, sqrt(dist2));
+        let s = march(p + nf * 0.5, l, sqrt(dist2));
         if (s.found) {
             lit = 0.0;
         }
@@ -295,9 +330,20 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
     let o = params.cam_pos;
     let h = march(o, d, BIG);
+    let view = view_mode();
+    if (view == VIEW_HITMASK) {
+        textureStore(target_tex, vec2<i32>(gid.xy), vec4<f32>(vec3<f32>(select(0.0, 1.0, h.found)), 1.0));
+        return;
+    }
     var c = vec3<f32>(0.0);
     if (h.found) {
-        c = shade(o, d, h);
+        let n = surface_normal(o, d, h);
+        if (view == VIEW_NORMALS) {
+            // The normal itself, linear: n * 0.5 + 0.5 per channel.
+            textureStore(target_tex, vec2<i32>(gid.xy), vec4<f32>(n * 0.5 + 0.5, 1.0));
+            return;
+        }
+        c = shade(o, d, h, n);
     }
     // Display encoding: clamp, then an approximate sRGB transfer.
     c = pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));

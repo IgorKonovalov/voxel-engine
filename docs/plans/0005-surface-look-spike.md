@@ -1,6 +1,6 @@
 # 0005: The surface-look spike: smoothed normals, per-voxel contour planes and procedural detail, measured on screen
 
-> **Status:** approved (2026-10-16)
+> **Status:** in-progress (2026-10-16)
 > **Created:** 2026-10-16
 > **Amended:** 2026-10-16, after Plan 0002's close, for the tree it shipped: the contour
 > attribute lives in attribute pages inside the existing pool shards (no new storage binding;
@@ -495,7 +495,7 @@ are the numbers the owner's call weighs.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The harness and the face-normal baseline | dev | not started | |
+| 1: The harness and the face-normal baseline | dev | done: face cavity normal error 40.75 degrees, pillar silhouette error 172 px (lavapipe); occluder centre normal (-1, 1/255, 1/255); `primary.png`, `headlamp.png`, `lod.png` byte for byte; face 1080p march 17.218 / 17.261 / 17.255 ms on RADV Renoir (RTX 3080 lost from the bus, see Notes) | committed with this row |
 | 2: Mode A, normals smoothed in the shader | dev | not started | |
 | 3: Mode B, per-voxel contour planes in attribute pages | dev | not started | |
 | 4: Mode C, procedural per-material detail | dev | not started | |
@@ -507,6 +507,16 @@ are the numbers the owner's call weighs.
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: the RTX 3080 Laptop GPU fell off the PCIe bus at 17:51 on 2026-10-16 (kernel:
+  `NVRM: GSP core unresponsive`, then `GPU lost from the bus`); `nvidia-smi` and
+  `vulkaninfo` no longer list it. The headless fly-through's high-performance adapter is then
+  RADV Renoir (the integrated GPU), and every timing and VRAM reading in this log is taken on
+  it and names it. The RTX 3080 readings the plan asks for are not taken.
+- Phase 1: `LookParams`, `NormalMode` and `ViewMode` live in `marcher.rs`; `light.rs` is
+  unchanged.
+- Phase 1: the harness helpers (`make_lod`, `carved_world`, `lod_scene`) are copied into
+  `tests/support/mod.rs`; `tests/golden.rs` keeps its own copies unchanged.
 
 ### Close triggers
 
