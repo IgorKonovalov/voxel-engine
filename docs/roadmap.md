@@ -176,7 +176,7 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark
+### M2: Lighting that holds in the dark (Plan 0005 drafts the surface-look spike; the lighting plan follows its close)
 
 **Goal:** the consumer's P0 rendering bar. Few lights, emissive voxels, destruction, no ghosting.
 The quality reference is the Sibenik cathedral in Laine & Karras 2010, Figure 1. That image is
@@ -209,7 +209,7 @@ work), and the light (real-time GI standing in for the baked occlusion).
 - **Budgets:** the full frame at 1080p output on the baseline GPU.
 - **ADRs expected:** denoiser family; upscaler choice.
 
-### M3: Collision, character controller, coarse grids
+### M3: Collision, character controller, coarse grids (Plan 0004; drafted)
 
 - `vxe-sim`: capsule sweeps against bricks (the raycast stays in `vxe-world`, which owns all
   primitive queries); a character controller with steps, slopes and climbing out of holes;
@@ -220,7 +220,7 @@ work), and the light (real-time GI standing in for the baked occlusion).
   under its feet changes the coarse grid cell and emits one notification.
 - **Visible proof:** walking instead of flying in the fly-through.
 
-### M4: Spatial audio
+### M4: Spatial audio (Plan 0006; drafted)
 
 - `vxe-audio`: output through `cpal`, a mixer, HRTF spatialization, occlusion and transmission
   by ray probes through the material table's acoustic triple, early reflections from ray probes,
