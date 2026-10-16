@@ -76,6 +76,11 @@ With occupancy masks (Plan 0001 Phase 8), the level-size mirror reads 402 449 98
 fly-through's first sync. Both measured `Full` fractions are above the 10 % assumption above; the cave is about 29 %
 air with caverns on a 6.4 m lattice.
 
+With 8-bit palette indices (Plan 0002 Phase 4, ADR-0004) the level-size mirror reads
+207 681 088 B: pool 196 407 296 B (512 B for each of the 383 608 `Full` bricks, no wide chunk),
+masks 8 B per brick, records 2560 B per chunk (512 entries and a 256-entry `u16` palette),
+table 4 B per chunk, from `apps/flythrough/tests/level_mirror.rs` on the dev box.
+
 ## 4. Edits
 
 - **Cost:** 100 sphere carves of radius 1 m (exactly 4169 voxels each at 10 cm, the lattice

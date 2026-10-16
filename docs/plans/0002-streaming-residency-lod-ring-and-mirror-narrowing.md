@@ -509,8 +509,8 @@ late is acceptable; a hole near the camera is not, and the unready-near counter 
 |---|---|---|---|
 | 1: Streamer skeleton, full tier only | dev | done | ac973d2 |
 | 2: Edited-chunk persistence and disk spill | dev | done | f59b8f1 |
-| 3: Mirror window, dirty-chunk set, budgeted batched upload | dev | done | committed with this row |
-| 4: Per-chunk 8-bit palette, wide fallback | dev | not started | |
+| 3: Mirror window, dirty-chunk set, budgeted batched upload | dev | done | 4bc17bd |
+| 4: Per-chunk 8-bit palette, wide fallback | dev | done | committed with this row |
 | 5: Brick pool sharded over four bindings | dev | not started | |
 | 6: Chunk mips in `vxe-world` | dev | not started | |
 | 7: The LOD-only ring and the mip walk | dev | not started | |
@@ -564,6 +564,24 @@ each. Empty is fine.)_
   the fixed-window constructor.
 - Phase 3: the `B` bench syncs issued 656 to 2186 queue writes for 1.6 to 2.0 K bricks, since
   bricks rewritten in place sit in scattered slots and each slot is its own run.
+- Phase 4: the plan's "one chunk's largest upload (526 848 B: a wide chunk, 512 x 1024 +
+  2560)" leaves out the masks a wide chunk also writes (16 B per brick, 8 B per slot); by
+  `SyncStats::bytes` a wide chunk's upload is 512 x 1040 + 2560 + 4 = 535 044 B. The test
+  asserts the plan's 526 848 B, which the cave meets (no wide chunk; its largest sync read
+  8 502 448 B against 8 912 896 B).
+- Phase 4: outside Files touched, `apps/flythrough/tests/level_mirror.rs` holds the level-size
+  narrowing assertions (live pool bytes, no wide chunk, record size, mirror bytes); still
+  skipped on lavapipe until Phase 5.
+- Phase 4: the primary-pass GPU times before and after were read headless with an uncommitted
+  scratch test (same level world, spawn pose, headlamp, 1920 x 1080, timestamps around the
+  march pass, median of the last 30 of 300 frames, each frame read back before the next),
+  because the windowed loop stalls with the display off. They are not comparable with
+  Plan 0001's 1.59 ms windowed reading.
+- Phase 4: a chunk that turns wide during a sync is estimated narrow by the selection pass, so
+  that sync can pass the budget plus one chunk, and the `PoolTooLarge` pre-check undercounts
+  its slots.
+- Phase 4: public API: `SLOT_BYTES` replaces `BRICK_BYTES`; new `PALETTE_ENTRIES`, `WIDE_BIT`,
+  `SLOT_MASK`, `GpuWorld::{live_pool_bytes, palette, is_wide, wide_chunks}`.
 
 ### Close triggers
 
@@ -582,6 +600,12 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     for 1.2 to 2.0 MB, interactive.
   - Phase 3 commit, 8 MiB sync budget on the level world (`level_mirror.rs`, RADV Renoir):
     48 syncs, largest 8 582 152 B (line: 8 912 896 B).
+  - Phase 4 commit, level world narrowed: live pool 196 407 296 B, mirror 207 681 088 B (was
+    402 449 984 B), first sync 195 writes; 8 MiB budget: 25 syncs, largest 8 502 448 B (RADV
+    Renoir).
+  - March pass at 1920 x 1080, spawn pose, headlamp, level seed 1, headless timestamps
+    (scratch test, median of last 30 of 300): before Phase 4 (4bc17bd) 1.854, 1.854,
+    1.874 ms; after Phase 4 1.869, 1.889, 1.886 ms. RTX 3080 Laptop GPU, driver 610.57.04.
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 

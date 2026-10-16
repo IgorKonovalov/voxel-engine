@@ -1,10 +1,13 @@
-// Primary-ray marcher over the brick-map mirror (ADR-0002), one invocation per pixel.
+// Primary-ray marcher over the brick-map mirror (ADR-0002, ADR-0004), one invocation per pixel.
 //
 // Bindings, group 0:
 //   0  uniform  params         camera, mirror window, light, target size, flags (bit 0: shadow ray,
 //                              bit 1: occupancy masks)
-//   1  storage  brick_pool     [slot][256 x u32], two u16 voxels per word, x fastest
-//   2  storage  chunk_records  [record][512 x u32]; bit 31 set: pool slot, clear: uniform material
+//   1  storage  brick_pool     [slot][128 x u32], four u8 palette indices per word, x fastest;
+//                              a wide brick is two slots, [256 x u32] of u16 voxel pairs
+//   2  storage  chunk_records  [record][640 x u32]: 512 brick entries, then the palette as
+//                              256 u16 (index 0 air). Entry bit 31 set: pool slot in bits
+//                              0..30, bit 30 wide; clear: the uniform material
 //   3  storage  chunk_table    [wrapped chunk]u32 record index, 0xFFFFFFFF when absent
 //   4  storage  materials      [id][2 x vec4]: albedo rgb + roughness, emission rgb + flag bits
 //   5  storage texture         rgba8unorm output
@@ -51,6 +54,13 @@ struct Params {
 
 const ABSENT: u32 = 0xFFFFFFFFu;
 const FULL_BIT: u32 = 0x80000000u;
+const WIDE_BIT: u32 = 0x40000000u;
+const SLOT_MASK: u32 = 0x3FFFFFFFu;
+// u32 words of a pool slot and of a chunk record, and the record word where the palette
+// starts.
+const SLOT_WORDS: u32 = 128u;
+const RECORD_WORDS: u32 = 640u;
+const PALETTE_WORD: u32 = 512u;
 const MAX_STEPS: u32 = 4096u;
 const BIG: f32 = 3.0e38;
 // Params.flags bits.
@@ -92,14 +102,15 @@ fn lookup(v: vec3<i32>) -> Cell {
     }
     let local = v - chunk * 64;
     let b = local / 8;
-    let entry = chunk_records[record * 512u + u32(b.x + 8 * (b.y + 8 * b.z))];
+    let base = record * RECORD_WORDS;
+    let entry = chunk_records[base + u32(b.x + 8 * (b.y + 8 * b.z))];
     if ((entry & FULL_BIT) == 0u) {
         if (entry == 0u) {
             return Cell(8, 0u);
         }
         return Cell(0, entry);
     }
-    let slot = entry & ~FULL_BIT;
+    let slot = entry & SLOT_MASK;
     let l = local - b * 8;
     let k = l / 2;
     let bit = u32(k.x + 4 * k.y + 16 * k.z);
@@ -108,14 +119,25 @@ fn lookup(v: vec3<i32>) -> Cell {
         return Cell(2, 0u);
     }
     let i = u32(l.x + 8 * (l.y + 8 * l.z));
-    let word = brick_pool[slot * 256u + i / 2u];
-    let m = (word >> ((i & 1u) * 16u)) & 0xFFFFu;
+    var m = 0u;
+    if ((entry & WIDE_BIT) != 0u) {
+        // A wide brick: slots `slot` and `slot + 1` hold 512 u16 voxels.
+        let word = brick_pool[slot * SLOT_WORDS + i / 2u];
+        m = (word >> ((i & 1u) * 16u)) & 0xFFFFu;
+    } else {
+        // A narrow brick: one byte per voxel, an index into the record's palette; 0 is air.
+        let word = brick_pool[slot * SLOT_WORDS + i / 4u];
+        let index = (word >> ((i & 3u) * 8u)) & 0xFFu;
+        if (index != 0u) {
+            let pair = chunk_records[base + PALETTE_WORD + index / 2u];
+            m = (pair >> ((index & 1u) * 16u)) & 0xFFFFu;
+        }
+    }
     if (m == 0u) {
         return Cell(1, 0u);
     }
     return Cell(0, m);
 }
-
 // The voxel holding `p` on a ray of direction `d`: on an axis the ray travels down, a position
 // exactly on a voxel boundary belongs to the voxel below.
 fn voxel_at(p: vec3<f32>, d: vec3<f32>) -> vec3<i32> {

@@ -1,9 +1,10 @@
 //! The mirror on the level-size cave (seed 1, 20 x 20 x 8 chunks): how many queue writes the
-//! first sync issues, and that a byte budget bounds every sync.
+//! first sync issues, what the narrowed mirror occupies, and that a byte budget bounds every
+//! sync.
 
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
 use flythrough::cave_materials;
-use vxe_render::gpu_world::BRICK_BYTES;
+use vxe_render::gpu_world::{RECORD_BYTES, SLOT_BYTES};
 use vxe_render::{GpuWorld, MirrorConfig, Window, wgpu};
 use vxe_world::*;
 
@@ -43,7 +44,7 @@ fn device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue)> {
 fn the_first_sync_issues_at_most_three_writes_per_chunk() {
     let (world, source) = level();
     let s = world.stats();
-    let Some((device, queue)) = device(s.full_bricks as u64 * BRICK_BYTES) else {
+    let Some((device, queue)) = device(s.full_bricks as u64 * SLOT_BYTES) else {
         return;
     };
     let mut gpu = GpuWorld::new(&device, world.extent());
@@ -57,15 +58,31 @@ fn the_first_sync_issues_at_most_three_writes_per_chunk() {
     assert_eq!(st.bricks, s.full_bricks as u64);
     assert!(st.writes <= 3 * 3200 + 8, "{} writes", st.writes);
     assert_eq!(st.pending_chunks, 0);
+
+    // Narrowed: one 512-byte slot per Full brick, no wide chunk, and a 2560-byte record per
+    // mirrored chunk.
+    assert_eq!(s.full_bricks, 383_608);
+    assert_eq!(gpu.live_pool_bytes(), 512 * s.full_bricks as u64);
+    assert_eq!(gpu.live_pool_bytes(), 196_407_296);
+    assert_eq!(gpu.wide_chunks(), 0);
+    assert_eq!(RECORD_BYTES, 2560);
+    assert!(gpu.records().size() >= 3200 * RECORD_BYTES);
+    assert_eq!(
+        gpu.mirror_bytes(),
+        383_608 * (512 + 8) + 3200 * 2560 + 3200 * 4 + gpu.materials().size()
+    );
+    println!("mirror bytes {}", gpu.mirror_bytes());
 }
 
 #[test]
 fn every_budgeted_sync_writes_at_most_the_budget_plus_one_chunk() {
     const BUDGET: u64 = 8 << 20;
-    // A wide chunk's upload: 512 two-slot bricks and its record with palette.
+    // Plan 0002's figure for a wide chunk's upload: 512 two-slot bricks and its record with
+    // palette. It leaves out the bricks' masks (16 B each); no cave chunk is wide, and a
+    // narrow chunk's largest upload, masks included, is 512 x 520 + 2560 + 4 B.
     const LARGEST_CHUNK: u64 = 512 * 1024 + 2560;
     let (world, source) = level();
-    let Some((device, queue)) = device(world.stats().full_bricks as u64 * BRICK_BYTES) else {
+    let Some((device, queue)) = device(world.stats().full_bricks as u64 * SLOT_BYTES) else {
         return;
     };
     let mut gpu = GpuWorld::with_config(

@@ -19,23 +19,32 @@
 //! that leaves the mirror, return their slots to the free list. `Full` bricks are staged and
 //! written in runs of consecutive pool slots, records in runs of consecutive records, and
 //! table entries in runs of nearby indices, so a first sync issues a few writes per page.
+//!
+//! Voxels are narrowed to 8 bits (ADR-0004). A `Full` brick takes one 512-byte slot of palette
+//! indices, and each record carries its chunk's palette of 256 `u16` materials after its 512
+//! entries; index 0 is air in every palette. A palette only grows while its chunk is
+//! mirrored, so bricks already uploaded keep their indices. A chunk that needs more than 255
+//! non-air materials is *wide*: each `Full` brick takes two slots from an even slot and holds
+//! `u16` voxels, and a chunk that turns wide uploads every `Full` brick again.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::PoisonError;
 
 use vxe_world::{
-    BRICK_VOXELS, Brick, CHUNK_BRICKS, ChunkCoord, ChunkExtent, MaterialTable, StreamEvents,
-    VoxelCoord, World,
+    AIR, BRICK_VOXELS, Brick, CHUNK_BRICKS, ChunkCoord, ChunkExtent, MaterialId, MaterialTable,
+    StreamEvents, VoxelCoord, World,
 };
 
 /// Pool slots per growth step.
 pub const POOL_PAGE_SLOTS: u32 = 4096;
-/// Bytes of one brick's voxels in the pool.
-pub const BRICK_BYTES: u64 = (BRICK_VOXELS * 2) as u64;
+/// Bytes of one pool slot: a narrow brick's 512 palette indices, or half a wide brick.
+pub const SLOT_BYTES: u64 = BRICK_VOXELS as u64;
 /// Bytes of one brick's occupancy mask: 64 bits, low word first.
 pub const MASK_BYTES: u64 = 8;
-/// `u32` words of one chunk record.
-pub const RECORD_WORDS: usize = CHUNK_BRICKS;
+/// Entries in a palette, index 0 being air.
+pub const PALETTE_ENTRIES: usize = 256;
+/// `u32` words of one chunk record: 512 brick entries, then the palette as `u16` pairs.
+pub const RECORD_WORDS: usize = CHUNK_BRICKS + PALETTE_ENTRIES / 2;
 /// Bytes of one chunk record.
 pub const RECORD_BYTES: u64 = (RECORD_WORDS * 4) as u64;
 /// Records per growth step of the record buffer.
@@ -50,6 +59,12 @@ const TABLE_GAP: u32 = 64;
 pub const ABSENT: u32 = u32::MAX;
 /// Chunk record entry bit: set, the low bits are a pool slot; clear, they are a material.
 pub const FULL_BIT: u32 = 1 << 31;
+/// Chunk record entry bit, with `FULL_BIT`: the brick is wide, two slots of `u16` voxels.
+pub const WIDE_BIT: u32 = 1 << 30;
+/// The pool slot in a `Full` entry.
+pub const SLOT_MASK: u32 = WIDE_BIT - 1;
+/// `rev` value of a material not in the palette being built.
+const NO_INDEX: u16 = u16::MAX;
 /// `f32`s per material row: albedo rgb, roughness, emission rgb, flags as bits.
 pub const MATERIAL_FLOATS: usize = 8;
 
@@ -107,6 +122,13 @@ pub struct MirrorConfig {
     pub sync_budget_bytes: u64,
 }
 
+/// What the mirror keeps for a mirrored chunk besides its record entries.
+struct Mirrored {
+    record: u32,
+    palette: Vec<MaterialId>,
+    wide: bool,
+}
+
 /// A chunk chosen for this sync's upload.
 struct Selected {
     coord: ChunkCoord,
@@ -128,8 +150,7 @@ pub struct GpuWorld {
     table: wgpu::Buffer,
     materials: wgpu::Buffer,
     materials_written: bool,
-    /// Record index of every mirrored chunk.
-    mirrored: HashMap<ChunkCoord, u32>,
+    mirrored: HashMap<ChunkCoord, Mirrored>,
     /// CPU copy of every record's entries, `record_cap * RECORD_WORDS`.
     entries: Vec<u32>,
     free_records: Vec<u32>,
@@ -138,7 +159,11 @@ pub struct GpuWorld {
     table_cpu: Vec<u32>,
     table_changed: Vec<u32>,
     free: Vec<u32>,
+    /// First slots of free slot pairs, from wide bricks.
+    free_pairs: Vec<u32>,
     next_slot: u32,
+    /// Palette index of every material while one chunk is narrowed, else `NO_INDEX`.
+    rev: Vec<u16>,
     /// Chunks waiting for an upload, keyed by squared distance to `pending_focus`.
     pending: BTreeSet<(i64, ChunkCoord)>,
     pending_d2: HashMap<ChunkCoord, i64>,
@@ -147,7 +172,7 @@ pub struct GpuWorld {
     /// The run of consecutive pool slots staged for one write: its first slot, its voxels
     /// and its masks. Kept across syncs so staging allocates only while it first grows.
     stage_start: u32,
-    stage_voxels: Vec<u16>,
+    stage_voxels: Vec<u8>,
     stage_masks: Vec<u32>,
     /// The run of consecutive records staged for one write.
     rec_stage_start: u32,
@@ -214,7 +239,9 @@ impl GpuWorld {
             table_cpu: vec![ABSENT; n],
             table_changed: Vec::new(),
             free: Vec::new(),
+            free_pairs: Vec::new(),
             next_slot: 0,
+            rev: vec![NO_INDEX; 1 << 16],
             pending: BTreeSet::new(),
             pending_d2: HashMap::new(),
             pending_focus: focus,
@@ -240,7 +267,7 @@ impl GpuWorld {
     }
 
     fn create_pool(device: &wgpu::Device, slots: u32) -> wgpu::Buffer {
-        Self::storage_buffer(device, "brick_pool", u64::from(slots.max(1)) * BRICK_BYTES)
+        Self::storage_buffer(device, "brick_pool", u64::from(slots.max(1)) * SLOT_BYTES)
     }
 
     fn create_masks(device: &wgpu::Device, slots: u32) -> wgpu::Buffer {
@@ -308,9 +335,29 @@ impl GpuWorld {
         self.pool_slots
     }
 
-    /// Slots currently holding a `Full` brick.
+    /// Slots currently holding a `Full` brick or half of a wide one.
     pub fn live_slots(&self) -> u32 {
-        self.next_slot - self.free.len() as u32
+        self.next_slot - self.free.len() as u32 - 2 * self.free_pairs.len() as u32
+    }
+
+    /// Bytes of the pool slots in use.
+    pub fn live_pool_bytes(&self) -> u64 {
+        u64::from(self.live_slots()) * SLOT_BYTES
+    }
+
+    /// The palette the mirror holds for `coord`, index 0 first.
+    pub fn palette(&self, coord: ChunkCoord) -> Option<&[MaterialId]> {
+        self.mirrored.get(&coord).map(|m| m.palette.as_slice())
+    }
+
+    /// Whether `coord` is mirrored wide.
+    pub fn is_wide(&self, coord: ChunkCoord) -> bool {
+        self.mirrored.get(&coord).is_some_and(|m| m.wide)
+    }
+
+    /// Mirrored chunks that are wide.
+    pub fn wide_chunks(&self) -> usize {
+        self.mirrored.values().filter(|m| m.wide).count()
     }
 
     /// Slots returned and not yet reused, in the order they will be reused last-first.
@@ -339,13 +386,13 @@ impl GpuWorld {
 
     /// The record entry the mirror holds for brick `slot` of chunk `coord`.
     pub fn entry(&self, coord: ChunkCoord, slot: usize) -> Option<u32> {
-        let r = *self.mirrored.get(&coord)?;
+        let r = self.mirrored.get(&coord)?.record;
         Some(self.entries[r as usize * RECORD_WORDS + slot])
     }
 
     /// Record index of `coord`, if it is mirrored.
     pub fn record_index(&self, coord: ChunkCoord) -> Option<u32> {
-        self.mirrored.get(&coord).copied()
+        self.mirrored.get(&coord).map(|m| m.record)
     }
 
     /// Index of `coord` in the chunk table: the coordinate wrapped into the window size.
@@ -365,7 +412,7 @@ impl GpuWorld {
     /// Bytes the mirror occupies on the GPU by the uploader's accounting: pool slots in use
     /// with their masks, the records of mirrored chunks, chunk table and material rows.
     pub fn mirror_bytes(&self) -> u64 {
-        u64::from(self.live_slots()) * (BRICK_BYTES + MASK_BYTES)
+        u64::from(self.live_slots()) * (SLOT_BYTES + MASK_BYTES)
             + self.mirrored.len() as u64 * RECORD_BYTES
             + self.table_cpu.len() as u64 * 4
             + self.materials.size()
@@ -383,15 +430,21 @@ impl GpuWorld {
     /// cleared on the next sync.
     fn drop_chunk(&mut self, coord: ChunkCoord) {
         self.unqueue(coord);
-        let Some(rec) = self.mirrored.remove(&coord) else {
+        let Some(Mirrored { record: rec, .. }) = self.mirrored.remove(&coord) else {
             return;
         };
         let base = rec as usize * RECORD_WORDS;
-        let mut slots: Vec<u32> = self.entries[base..base + RECORD_WORDS]
-            .iter()
-            .filter(|&&e| e & FULL_BIT != 0)
-            .map(|&e| e & !FULL_BIT)
-            .collect();
+        let mut slots = Vec::new();
+        for &e in &self.entries[base..base + CHUNK_BRICKS] {
+            if e & FULL_BIT == 0 {
+                continue;
+            }
+            if e & WIDE_BIT != 0 {
+                self.free_pairs.push(e & SLOT_MASK);
+            } else {
+                slots.push(e & SLOT_MASK);
+            }
+        }
         self.entries[base..base + RECORD_WORDS].fill(0);
         // Pushed highest first, so the next allocations pop them in ascending order and the
         // chunk that reuses them is written in long runs.
@@ -493,8 +546,8 @@ impl GpuWorld {
         let peak = u64::from(self.live_slots()) + new_full;
         if peak > limit {
             return Err(MirrorError::PoolTooLarge {
-                needed: peak * BRICK_BYTES,
-                limit: limit * BRICK_BYTES,
+                needed: peak * SLOT_BYTES,
+                limit: limit * SLOT_BYTES,
             });
         }
 
@@ -536,7 +589,13 @@ impl GpuWorld {
                 stale.push(coord);
                 continue;
             };
-            let rec = self.mirrored.get(&coord).copied();
+            let (rec, wide) = match self.mirrored.get(&coord) {
+                Some(m) => (Some(m.record), m.wide),
+                None => (None, false),
+            };
+            // A chunk that turns wide during upload is estimated narrow here: its upload, and
+            // the slots it needs, can exceed this estimate (ADR-0004's rare path).
+            let (slots, slot_bytes) = if wide { (2, 2) } else { (1, 1) };
             {
                 let ch = chunk.read().unwrap_or_else(PoisonError::into_inner);
                 if rec.is_some() && !ch.any_dirty() {
@@ -552,10 +611,10 @@ impl GpuWorld {
                         continue;
                     }
                     if ch.brick(slot).is_full() {
-                        chunk_bytes += BRICK_BYTES + MASK_BYTES;
+                        chunk_bytes += slot_bytes * (SLOT_BYTES + MASK_BYTES);
                         let old = rec.map_or(0, |r| self.entries[r as usize * RECORD_WORDS + slot]);
                         if old & FULL_BIT == 0 {
-                            new_full += 1;
+                            new_full += slots;
                         }
                     }
                 }
@@ -577,49 +636,76 @@ impl GpuWorld {
     ) -> Result<(), MirrorError> {
         for Selected { coord, chunk } in selected {
             let mut chunk = chunk.write().unwrap_or_else(PoisonError::into_inner);
-            let (rec, new) = match self.mirrored.get(&coord) {
-                Some(&r) => (r, false),
-                None => (self.alloc_record(queue, st), true),
+            let (rec, mut palette, was_wide, new) = match self.mirrored.remove(&coord) {
+                Some(m) => (m.record, m.palette, m.wide, false),
+                None => (self.alloc_record(queue, st), vec![AIR], false, true),
             };
             let base = rec as usize * RECORD_WORDS;
             if new {
                 self.entries[base..base + RECORD_WORDS].fill(0);
             }
+            for (i, &m) in palette.iter().enumerate() {
+                self.rev[usize::from(m)] = i as u16;
+            }
+            // Append the uploaded bricks' new materials; past 255 non-air the chunk is wide.
+            let mut wide = was_wide;
+            if !wide {
+                'scan: for slot in 0..CHUNK_BRICKS {
+                    if !new && !chunk.is_dirty(slot) {
+                        continue;
+                    }
+                    let Brick::Full(v) = chunk.brick(slot) else {
+                        continue;
+                    };
+                    for &m in v.iter() {
+                        if self.rev[usize::from(m)] == NO_INDEX {
+                            if palette.len() == PALETTE_ENTRIES {
+                                wide = true;
+                                break 'scan;
+                            }
+                            self.rev[usize::from(m)] = palette.len() as u16;
+                            palette.push(m);
+                        }
+                    }
+                }
+            }
+            let every = new || wide != was_wide;
+            let mut result = Ok(());
             for slot in 0..CHUNK_BRICKS {
-                if !new && !chunk.is_dirty(slot) {
+                if !every && !chunk.is_dirty(slot) {
                     continue;
                 }
-                let i = base + slot;
-                let old = self.entries[i];
-                self.entries[i] = match chunk.brick(slot) {
-                    Brick::Full(v) => {
-                        let s = if old & FULL_BIT != 0 {
-                            old & !FULL_BIT
-                        } else {
-                            self.alloc(queue, st)?
-                        };
-                        let mask = chunk.brick(slot).occupancy_mask();
-                        self.stage(s, &v[..], mask, queue, st);
-                        st.bytes += BRICK_BYTES + MASK_BYTES;
-                        st.bricks += 1;
-                        FULL_BIT | s
-                    }
-                    Brick::Uniform(m) => {
-                        if old & FULL_BIT != 0 {
-                            self.free.push(old & !FULL_BIT);
-                        }
-                        u32::from(*m)
-                    }
-                };
+                result = self.upload_brick(base + slot, chunk.brick(slot), wide, queue, st);
+                if result.is_err() {
+                    break;
+                }
             }
+            for &m in &palette {
+                self.rev[usize::from(m)] = NO_INDEX;
+            }
+            for (k, w) in self.entries[base + CHUNK_BRICKS..base + RECORD_WORDS]
+                .iter_mut()
+                .enumerate()
+            {
+                let at = |i: usize| u32::from(palette.get(i).copied().unwrap_or(AIR));
+                *w = at(2 * k) | at(2 * k + 1) << 16;
+            }
+            self.mirrored.insert(
+                coord,
+                Mirrored {
+                    record: rec,
+                    palette,
+                    wide,
+                },
+            );
             self.stage_record(rec, queue, st);
             st.bytes += RECORD_BYTES;
             if new {
-                self.mirrored.insert(coord, rec);
                 let t = self.table_index(coord);
                 self.table_cpu[t as usize] = rec;
                 self.table_changed.push(t);
             }
+            result?;
             st.chunks += 1;
             chunk.clear_dirty();
             self.unqueue(coord);
@@ -627,16 +713,73 @@ impl GpuWorld {
         Ok(())
     }
 
-    /// Appends slot `s` to the staged run, first writing the run out if `s` does not extend it
-    /// or it is full.
-    fn stage(
+    /// Writes `brick` into record entry `i`: a narrow brick as palette indices through `rev`,
+    /// a wide one as two slots of `u16` voxels, a uniform one as its material. A slot of the
+    /// wrong width is returned and a new one taken.
+    fn upload_brick(
         &mut self,
-        s: u32,
-        voxels: &[u16],
-        mask: u64,
+        i: usize,
+        brick: &Brick,
+        wide: bool,
         queue: &wgpu::Queue,
         st: &mut SyncStats,
-    ) {
+    ) -> Result<(), MirrorError> {
+        let old = self.entries[i];
+        let old_slot = (old & FULL_BIT != 0).then_some((old & SLOT_MASK, old & WIDE_BIT != 0));
+        let Brick::Full(v) = brick else {
+            if let Some(s) = old_slot {
+                self.free_slot(s);
+            }
+            self.entries[i] = u32::from(brick.get(0));
+            return Ok(());
+        };
+        let mask = brick.occupancy_mask();
+        let s = match old_slot {
+            Some((s, w)) if w == wide => s,
+            _ => {
+                let s = if wide {
+                    self.alloc_pair(queue, st)?
+                } else {
+                    self.alloc(queue, st)?
+                };
+                if let Some(old) = old_slot {
+                    self.free_slot(old);
+                }
+                s
+            }
+        };
+        if wide {
+            let bytes: &[u8] = bytemuck::cast_slice(&v[..]);
+            let (lo, hi) = bytes.split_at(SLOT_BYTES as usize);
+            self.stage(s, lo, mask, queue, st);
+            self.stage(s + 1, hi, 0, queue, st);
+            st.bytes += 2 * (SLOT_BYTES + MASK_BYTES);
+            self.entries[i] = FULL_BIT | WIDE_BIT | s;
+        } else {
+            let mut idx = [0u8; BRICK_VOXELS];
+            for (d, &m) in idx.iter_mut().zip(v.iter()) {
+                *d = self.rev[usize::from(m)] as u8;
+            }
+            self.stage(s, &idx, mask, queue, st);
+            st.bytes += SLOT_BYTES + MASK_BYTES;
+            self.entries[i] = FULL_BIT | s;
+        }
+        st.bricks += 1;
+        Ok(())
+    }
+
+    /// Returns a slot, or a wide brick's slot pair, to its free list.
+    fn free_slot(&mut self, (s, wide): (u32, bool)) {
+        if wide {
+            self.free_pairs.push(s);
+        } else {
+            self.free.push(s);
+        }
+    }
+
+    /// Appends slot `s` to the staged run, first writing the run out if `s` does not extend it
+    /// or it is full.
+    fn stage(&mut self, s: u32, bytes: &[u8], mask: u64, queue: &wgpu::Queue, st: &mut SyncStats) {
         let len = self.stage_masks.len() as u32 / 2;
         if len > 0 && (s != self.stage_start + len || len >= STAGE_SLOTS) {
             self.flush_stage(queue, st);
@@ -644,7 +787,7 @@ impl GpuWorld {
         if self.stage_masks.is_empty() {
             self.stage_start = s;
         }
-        self.stage_voxels.extend_from_slice(voxels);
+        self.stage_voxels.extend_from_slice(bytes);
         self.stage_masks
             .extend_from_slice(&[mask as u32, (mask >> 32) as u32]);
     }
@@ -659,7 +802,7 @@ impl GpuWorld {
         let s = u64::from(self.stage_start);
         queue.write_buffer(
             &self.pool,
-            s * BRICK_BYTES,
+            s * SLOT_BYTES,
             bytemuck::cast_slice(&self.stage_voxels),
         );
         queue.write_buffer(
@@ -791,7 +934,7 @@ impl GpuWorld {
         limits
             .max_storage_buffer_binding_size
             .min(limits.max_buffer_size)
-            / BRICK_BYTES
+            / SLOT_BYTES
     }
 
     fn alloc(&mut self, queue: &wgpu::Queue, st: &mut SyncStats) -> Result<u32, MirrorError> {
@@ -803,6 +946,23 @@ impl GpuWorld {
         }
         self.next_slot += 1;
         Ok(self.next_slot - 1)
+    }
+
+    /// Two adjacent slots starting on an even slot, for a wide brick. An odd next slot is
+    /// skipped onto the single free list.
+    fn alloc_pair(&mut self, queue: &wgpu::Queue, st: &mut SyncStats) -> Result<u32, MirrorError> {
+        if let Some(s) = self.free_pairs.pop() {
+            return Ok(s);
+        }
+        let start = self.next_slot + self.next_slot % 2;
+        if start + 2 > self.pool_slots {
+            self.grow_to(u64::from(start) + 2, queue, st)?;
+        }
+        if start != self.next_slot {
+            self.free.push(self.next_slot);
+        }
+        self.next_slot = start + 2;
+        Ok(start)
     }
 
     /// Grows the pool to hold at least `slots`, in whole pages capped at the device limit,
@@ -819,8 +979,8 @@ impl GpuWorld {
         let limit = self.pool_limit_slots();
         if slots > limit {
             return Err(MirrorError::PoolTooLarge {
-                needed: slots * BRICK_BYTES,
-                limit: limit * BRICK_BYTES,
+                needed: slots * SLOT_BYTES,
+                limit: limit * SLOT_BYTES,
             });
         }
         let page = u64::from(POOL_PAGE_SLOTS);
@@ -838,7 +998,7 @@ impl GpuWorld {
                 0,
                 &pool,
                 0,
-                u64::from(self.pool_slots) * BRICK_BYTES,
+                u64::from(self.pool_slots) * SLOT_BYTES,
             );
             enc.copy_buffer_to_buffer(
                 &self.masks,
