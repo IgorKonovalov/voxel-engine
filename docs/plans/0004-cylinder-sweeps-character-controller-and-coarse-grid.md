@@ -398,8 +398,8 @@ with the dev-box readings. Every one is a guess until read.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `vxe-sim`, the distance and the sweep | dev | done | committed with this row |
-| 2: Walk, step, slide, fall | dev | not started | |
+| 1: `vxe-sim`, the distance and the sweep | dev | done | b1377d7 |
+| 2: Walk, step, slide, fall | dev | done | committed with this row |
 | 3: Ledge climb and the pinned course | dev | not started | |
 | 4: The coarse grid | dev | not started | |
 | 5: Walkable space | dev | not started | |
@@ -412,6 +412,11 @@ with the dev-box readings. Every one is a guess until read.
 - Phase 1: a sweep that stops because every component rounds to zero, or at the iteration cap, reports the nearest box in the remaining region as its contact.
 - Phase 1: public API beyond the data shapes: `isqrt`, `Body::at`, `Contact::{is_floor, is_ceiling, is_wall}` (classified from the normal's sign), `distance2_with_stats`, `sweep_with_stats` (return `vxe_world::QueryStats`), `MAX_SWEEP_ITERATIONS`.
 - Phase 1: `Cargo.toml` also gains `[profile.dev.package.vxe-sim] opt-level = 2` (fixture worlds took 1.4 s each to generate in a test build).
+- Phase 2: a downward vertical move lands (grounded, `landed`, `vz = 0`) on a floor contact or, when the sweep spends its delta, when the ground probe from its end hits a floor; with the floor contact alone the jump lands exactly on `z = 0` on tick 41 with no contact and `landed` is `None` there.
+- Phase 2: the step attempt runs only when the state was grounded at the start of the tick. The step's and the climb probe's down sweeps require a floor contact, as written.
+- Phase 2: the climb probe's forward sweep, and the climb's forward move, go `radius` units along the reversed horizontal contact normal (scaled by `radius / isqrt(|n|²)`, rounded toward zero).
+- Phase 2: `blocked` is set when, after the step attempt and up to two slides, a wall contact still leaves an unspent remainder, including when the projection onto the wall is zero (head-on). Grounded is probed at the start of the vertical step when `vz <= 0`, before the jump decision. `CharacterState::new(foot)` starts with `vz = 0`, not grounded.
+- Phase 2: also touches `crates/vxe-sim/tests/support/mod.rs` (the test parameters and a tick runner that asserts no overlap after every tick).
 
 ### Close triggers
 

@@ -2,7 +2,9 @@
 //! `[-2, 2)³`, material 1 solid, and the test body.
 #![allow(dead_code, reason = "shared across test binaries; each uses a subset")]
 
-use vxe_sim::Body;
+use vxe_sim::{
+    Body, CharacterController, CharacterState, ControllerParams, MoveInput, MoveResult, overlaps,
+};
 use vxe_world::*;
 
 /// The solid material.
@@ -84,3 +86,57 @@ pub fn f6() -> World {
     world(|[x, _, z]| z < 0 || ((60..80).contains(&x) && z < x - 60) || (x >= 80 && z < 20))
 }
 pub const F6_START: [i64; 3] = [12928, 2688, 0];
+
+/// The plan's test parameters.
+pub fn params() -> ControllerParams {
+    ControllerParams {
+        radius: RADIUS,
+        height: HEIGHT,
+        step_height: 1024,
+        climb_height: 3072,
+        climb_speed: 64,
+        gravity: -8,
+        max_fall: 1024,
+        jump_speed: 160,
+        ground_probe: 2,
+    }
+}
+
+/// 0.5 voxel per tick along +x: 3 m/s at 60 Hz.
+pub const WISH: [i64; 2] = [128, 0];
+
+/// One tick's record: the result and the state after it.
+pub struct Step {
+    pub r: MoveResult,
+    pub s: CharacterState,
+}
+
+/// Runs `ticks` ticks from `start`, `input(tick)` giving each tick's input (ticks count from
+/// 1), and asserts the body never overlaps the world after a tick.
+pub fn run(
+    world: &World,
+    start: [i64; 3],
+    ticks: u32,
+    mut input: impl FnMut(u32) -> MoveInput,
+) -> Vec<Step> {
+    let cc = CharacterController::new(params());
+    let mut s = CharacterState::new(Fixed3(start));
+    let mut out = Vec::new();
+    for t in 1..=ticks {
+        let r = cc.tick(world, &mut s, &input(t));
+        assert!(
+            !overlaps(world, &body_at(s.foot.0)),
+            "tick {t}: overlapping at {:?}",
+            s.foot
+        );
+        out.push(Step { r, s });
+    }
+    out
+}
+
+pub fn walk(wish: [i64; 2]) -> impl FnMut(u32) -> MoveInput {
+    move |_| MoveInput {
+        wish,
+        ..MoveInput::default()
+    }
+}

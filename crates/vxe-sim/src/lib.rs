@@ -21,9 +21,13 @@
 //! ```
 
 mod body;
+mod controller;
 mod sweep;
 
 pub use body::{Body, Contact, isqrt};
+pub use controller::{
+    CharacterController, CharacterState, ControllerParams, MAX_CONTACTS, MoveInput, MoveResult,
+};
 pub use sweep::{
     MAX_SWEEP_ITERATIONS, Sweep, distance2, distance2_with_stats, overlaps, sweep, sweep_with_stats,
 };
