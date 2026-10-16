@@ -5,7 +5,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use vxe_render::gpu_world::{
-    ABSENT, FULL_BIT, POOL_PAGE_SLOTS, RECORD_BYTES, RECORD_WORDS, SLOT_BYTES, SLOT_MASK, WIDE_BIT,
+    ABSENT, FULL_BIT, LOD_BIT, LOD_LEVEL_ENTRY, POOL_PAGE_SLOTS, RECORD_BYTES, RECORD_WORDS,
+    SLOT_BYTES, SLOT_MASK, WIDE_BIT,
 };
 use vxe_render::{GpuWorld, MARCH_WGSL, MirrorConfig, ShardLayout, Window, readback, wgpu};
 use vxe_world::*;
@@ -650,4 +651,111 @@ fn a_world_past_four_shards_fails_and_leaves_the_mirror_untouched() {
     // The chunks keep their dirty bits for a later sync.
     let c = world.store().get(ChunkCoord([0, 0, 0])).unwrap();
     assert!(c.read().unwrap().any_dirty());
+}
+
+impl Readback {
+    /// Asserts that `coord`'s table entry is a LOD record whose 73 entries decode to the
+    /// world's mips for it; returns the slots its `Full` mip-bricks occupy.
+    fn assert_lod(&self, gpu: &GpuWorld, world: &World, coord: ChunkCoord) -> Vec<u32> {
+        let t = self.table[gpu.table_index(coord) as usize];
+        assert_ne!(t, ABSENT, "{coord:?} has no table entry");
+        assert_eq!(t & LOD_BIT, LOD_BIT, "{coord:?} is not a LOD record");
+        let rec = t & SLOT_MASK;
+        let mips = world.lod(coord).expect("LOD-only in the world");
+        let mut slots = Vec::new();
+        for n in 1..=MIP_LEVELS {
+            for (j, brick) in mips.level(n).iter().enumerate() {
+                let e = self.records[rec as usize * RECORD_WORDS + LOD_LEVEL_ENTRY[n - 1] + j];
+                match brick {
+                    Brick::Uniform(m) => assert_eq!(e, u32::from(*m), "{coord:?} L{n} {j}"),
+                    Brick::Full(v) => {
+                        assert_ne!(e & FULL_BIT, 0, "{coord:?} L{n} {j}");
+                        assert_eq!(self.voxels(rec, e), &v[..], "{coord:?} L{n} {j}");
+                        slots.push(e & SLOT_MASK);
+                    }
+                }
+            }
+        }
+        slots
+    }
+}
+
+/// A two-tier residency through the mirror: LOD records decode to the world's mips, and a
+/// demoted chunk trades its full record for a LOD one, its slots going back to the pool.
+#[test]
+fn lod_records_decode_to_the_mips_and_demotion_frees_the_full_slots() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = World::new(&mixed_table());
+    let mut s = Streamer::new(
+        Arc::new(Mixed),
+        StreamConfig {
+            residency: Residency {
+                r_full: 1,
+                r_lod: 2,
+                hysteresis: 0,
+            },
+            workers: 4,
+            persist: PersistConfig::default(),
+        },
+    );
+    let mut gpu = GpuWorld::with_config(&device, MirrorConfig::new(Window::Follow { side: 7 }));
+    let step = |s: &mut Streamer, gpu: &mut GpuWorld, focus: VoxelCoord| {
+        s.update(&world, &[focus]);
+        let ev = s.wait_idle(&world);
+        gpu.apply_events(&ev);
+        gpu.set_focus(focus);
+        gpu.sync(&world, &queue).unwrap();
+        ev
+    };
+    step(&mut s, &mut gpu, VoxelCoord([0, 0, 0]));
+    assert_eq!(world.lod_coords().len(), 26);
+    let rb = Readback::new(&device, &queue, &gpu);
+    for c in world.store().coords() {
+        assert!(!gpu.is_lod(c));
+        rb.assert_chunk(&gpu, &world, c);
+    }
+    let mut lod_slots = 0;
+    for c in world.lod_coords() {
+        assert!(gpu.is_lod(c));
+        lod_slots += rb.assert_lod(&gpu, &world, c).len();
+    }
+    assert!(
+        lod_slots > 26,
+        "the ring holds Full mip-bricks: {lod_slots}"
+    );
+
+    let demoted = ChunkCoord([1, 0, 0]);
+    let full_slots: HashSet<u32> = (0..512)
+        .filter_map(|slot| gpu.entry(demoted, slot))
+        .filter(|e| e & FULL_BIT != 0)
+        .map(|e| e & SLOT_MASK)
+        .collect();
+    assert!(!full_slots.is_empty());
+
+    let ev = step(&mut s, &mut gpu, VoxelCoord([-64, 0, 0]));
+    assert!(ev.demoted.contains(&demoted));
+    assert!(gpu.is_lod(demoted));
+    let rb = Readback::new(&device, &queue, &gpu);
+    let mut live = HashSet::new();
+    for c in world.store().coords() {
+        live.extend(rb.assert_chunk(&gpu, &world, c));
+    }
+    for c in world.lod_coords() {
+        live.extend(rb.assert_lod(&gpu, &world, c));
+    }
+    assert_eq!(live.len() as u32, gpu.live_slots());
+    // Each slot the demoted chunk's full record held is free, or reused by a live record.
+    let free: HashSet<u32> = gpu.free_slots().iter().copied().collect();
+    for slot in &full_slots {
+        assert!(free.contains(slot) != live.contains(slot), "slot {slot}");
+    }
+    assert!(full_slots.iter().any(|s| free.contains(s)));
+    let lod_full = world.lod(demoted).unwrap().full_bricks();
+    assert!(
+        lod_full < full_slots.len(),
+        "{lod_full} mip-bricks for {} bricks",
+        full_slots.len()
+    );
 }

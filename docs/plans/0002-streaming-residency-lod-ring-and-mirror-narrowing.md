@@ -512,8 +512,8 @@ late is acceptable; a hole near the camera is not, and the unready-near counter 
 | 3: Mirror window, dirty-chunk set, budgeted batched upload | dev | done | 4bc17bd |
 | 4: Per-chunk 8-bit palette, wide fallback | dev | done | 8b5147b |
 | 5: Brick pool sharded over four bindings | dev | done | 138b3bd |
-| 6: Chunk mips in `vxe-world` | dev | done | committed with this row |
-| 7: The LOD-only ring and the mip walk | dev | not started | |
+| 6: Chunk mips in `vxe-world` | dev | done | 8472735 |
+| 7: The LOD-only ring and the mip walk | dev | done | committed with this row |
 | 8: The fly-through streams; autopilot, sweep and readings | dev | not started | |
 
 ### Notes
@@ -603,6 +603,22 @@ each. Empty is fine.)_
 - Phase 6: public API: `ChunkMips::{build, level, cell, full_bricks, write_hash}`, `majority`,
   `MIP_LEVELS`, `MIP_BRICKS`, `World::mips_hash`. `World::lod` arrives with the ring in
   Phase 7.
+- Phase 7: outside Files touched, `crates/vxe-render/src/lib.rs` re-exports `LodParams`.
+- Phase 7: public API: `Tier::LodOnly`, `StreamEvents::demoted`, `StreamStats::resident_lod`,
+  `World::{lod, insert_lod, remove_lod, lod_coords}` (`insert_lod` also builds the LOD test
+  scenes), `LodParams`, `Marcher::{set_lod, lod}`, `LOD_BIT`, `LOD_LEVEL_ENTRY`,
+  `GpuWorld::is_lod`; `Params` trades its padding for `forced_level`, `lod1_r2`, `lod2_r2`.
+- Phase 7: a demoting chunk leaves the store (and is persisted if edited) when the demotion is
+  queued, and its mips become resident when the worker returns them; meanwhile edits see it as
+  non-resident and the mirror keeps drawing its full record. A demotion whose chunk is wanted
+  full again by then is reported as evicted and the chunk is reloaded.
+- Phase 7: the level-selection done-when is tested two ways: the golden scene with
+  `r_full = 3` equals forced level 1 and with `r_full = 0` forced level 3, and a column
+  scene with one LOD chunk at squared distance 9 equals forced level 2 at `r_full = 1`.
+- Phase 7: the identity test renders with `LightParams::at_eye()` and `headlamp()` (shadow
+  rays walk the mips too); 27 484 of 57 600 pixels are lit.
+- Phase 7: `lod.png` was blessed on the dev box's lavapipe (llvmpipe, Mesa 26.2.2, LLVM
+  22.1.8); it differs from `primary.png` at 6.70 % of pixels by more than 8/255.
 
 ### Close triggers
 
@@ -637,6 +653,9 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     (`primary_golden_shows_the_carve`); the new sharded golden test 1.27 s.
   - Phase 5 commit, level first sync CPU (headless scratch timing, RTX 3080 Laptop): 497,
     515, 499 ms.
+  - Phase 7 commit, slowest golden test serially on the dev box's llvmpipe: 1.63 s
+    (`masks_move_only_isolated_pixels`); the new ones 0.37 s (identity), 0.55 s
+    (`lod.png`), 1.16 s (level selection).
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 

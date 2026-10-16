@@ -6,7 +6,9 @@ use flythrough::cave::ROCK;
 use flythrough::cave_materials;
 use support::*;
 use vxe_render::gpu_world::POOL_PAGE_SLOTS;
-use vxe_render::{Camera, GpuWorld, LightParams, Marcher, MirrorConfig, Window, readback};
+use vxe_render::{
+    Camera, GpuWorld, LightParams, LodParams, Marcher, MirrorConfig, Window, readback, wgpu,
+};
 use vxe_world::*;
 
 /// The scene from the spawn pose under each of `lights`, on one device.
@@ -250,6 +252,205 @@ fn goldens_match_bit_exactly_over_one_and_several_shards() {
             assert_eq!(
                 differing, 0,
                 "{name} over {shards} shards: {differing} bytes differ"
+            );
+        }
+    }
+}
+
+/// Makes every chunk of `world` for which `lod` holds LOD-only: out of the store, into the
+/// world's mips.
+fn make_lod(world: &World, lod: impl Fn(ChunkCoord) -> bool) {
+    for c in world.store().coords() {
+        if lod(c) {
+            let chunk = world.store().remove(c).unwrap();
+            let mips = ChunkMips::build(&chunk.read().unwrap());
+            world.insert_lod(c, std::sync::Arc::new(mips));
+        }
+    }
+}
+
+/// Renders `world` from `camera` under each of `lights` with `lod`, on `device`.
+fn render_with(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    world: &World,
+    camera: &Camera,
+    lights: &[LightParams],
+    lod: LodParams,
+) -> Vec<Vec<u8>> {
+    let mut gpu = GpuWorld::new(device, world.extent());
+    gpu.sync(world, queue).expect("mirror fits the adapter");
+    let mut marcher = Marcher::new(device, WIDTH, HEIGHT);
+    marcher.set_lod(lod);
+    lights
+        .iter()
+        .map(|light| {
+            marcher.render(device, queue, &gpu, camera, light);
+            readback::read_rgba8(device, queue, marcher.target())
+        })
+        .collect()
+}
+
+fn forced(level: u32) -> LodParams {
+    LodParams {
+        r_full: 1,
+        forced_level: Some(level),
+    }
+}
+
+/// Uniform chunks, solid material 3 below z = 0 and air above, render bit-identically when
+/// every chunk but the camera's is LOD-only at any forced level: a uniform chunk's mips are
+/// hit on the same entry face as its voxels.
+#[test]
+fn uniform_chunks_render_identically_from_their_mips() {
+    let source = UniformBelow;
+    let extent = ChunkExtent::new([-3, -3, -2], [3, 3, 2]);
+    let full = World::generate(extent, &source, &cave_materials());
+    let Some((device, queue)) = software_device(4096 * 512) else {
+        return;
+    };
+    let camera = Camera {
+        position: [32.5, 32.5, 20.5].into(),
+        yaw: 0.6,
+        pitch: -0.5,
+        vfov: 70f32.to_radians(),
+    };
+    let cam_chunk = ChunkCoord([0, 0, 0]);
+    let lights = [LightParams::at_eye(), LightParams::headlamp()];
+    let want = render_with(&device, &queue, &full, &camera, &lights, forced(1));
+    let lit = want[0].chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
+    println!("{lit} lit pixels of {}", WIDTH * HEIGHT);
+    assert!(lit > (WIDTH * HEIGHT / 4) as usize, "{lit} lit pixels");
+
+    let lod = World::generate(extent, &source, &cave_materials());
+    make_lod(&lod, |c| c != cam_chunk);
+    assert_eq!(lod.store().coords(), [cam_chunk]);
+    for level in 1..=3 {
+        let got = render_with(&device, &queue, &lod, &camera, &lights, forced(level));
+        for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+            let differing = g.iter().zip(w).filter(|(a, b)| a != b).count();
+            assert_eq!(
+                differing, 0,
+                "level {level}, light {i}: {differing} bytes differ"
+            );
+        }
+    }
+}
+
+/// Rock below z = 0, air above.
+struct UniformBelow;
+
+impl WorldSource for UniformBelow {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        let m = if coord.0[2] < 0 { ROCK } else { AIR };
+        for slot in 0..CHUNK_BRICKS {
+            out.set_brick(slot, Brick::Uniform(m));
+        }
+    }
+}
+
+/// The carved golden scene with every chunk farther than squared distance 1 from the
+/// camera's chunk LOD-only.
+fn lod_scene() -> World {
+    let world = carved_world();
+    let cam = VoxelCoord(scene_source().spawn().0).chunk();
+    make_lod(&world, |c| {
+        (0..3).map(|k| (c.0[k] - cam.0[k]).pow(2)).sum::<i32>() > 1
+    });
+    world
+}
+
+/// `lod.png`: the golden scene from the spawn pose with chunks past squared distance 1 of the
+/// camera's chunk walked at forced level 1. The LOD walk visibly changes the image.
+#[test]
+fn lod_golden_walks_the_ring_at_level_1() {
+    let world = lod_scene();
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let images = render_with(
+        &device,
+        &queue,
+        &world,
+        &scene_camera(),
+        &[LightParams::at_eye()],
+        forced(1),
+    );
+    assert_golden("lod.png", &images[0]);
+    let (primary, _, _) = read_png(&golden_path("primary.png"));
+    let f = fraction_differing(&images[0], &primary, 8);
+    println!("lod differs from primary at {:.2} % of pixels", f * 100.0);
+    assert!(f >= 0.01, "{:.2} %", f * 100.0);
+}
+
+/// Without a forced level the marcher picks level 1 within `(2 r_full)^2` of the camera's
+/// chunk, level 2 within `(4 r_full)^2`, else 3. In the golden scene every chunk lies within
+/// squared distance 27 of the camera's: with r_full = 3 the image equals forced level 1, with
+/// r_full = 0 forced level 3. A chunk at squared distance 9 with r_full = 1 is walked at
+/// level 2.
+#[test]
+fn the_lod_level_follows_the_distance_to_the_camera_chunk() {
+    let world = lod_scene();
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let light = [LightParams::at_eye()];
+    let auto = |r_full| LodParams {
+        r_full,
+        forced_level: None,
+    };
+    let differing = |a: &[u8], b: &[u8]| a.iter().zip(b).filter(|(x, y)| x != y).count();
+    {
+        let render = |lod| render_with(&device, &queue, &world, &scene_camera(), &light, lod);
+        let (l1, l3) = (render(forced(1)), render(forced(3)));
+        assert!(differing(&l1[0], &l3[0]) > 0, "levels 1 and 3 render alike");
+        assert_eq!(differing(&render(auto(3))[0], &l1[0]), 0);
+        assert_eq!(differing(&render(auto(0))[0], &l3[0]), 0);
+    }
+
+    // Columns one voxel wide every 16 voxels in chunk [3, 0, 0], air elsewhere; seen from the
+    // middle of chunk [0, 0, 0] looking along +x. Squared distance 9: level 2 at r_full = 1.
+    let columns = World::generate(
+        ChunkExtent::new([0, -1, -1], [4, 2, 2]),
+        &Columns,
+        &cave_materials(),
+    );
+    make_lod(&columns, |c| c != ChunkCoord([0, 0, 0]));
+    let camera = Camera {
+        position: [32.5, 32.5, 32.5].into(),
+        yaw: 0.0,
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    };
+    let render = |lod| render_with(&device, &queue, &columns, &camera, &light, lod);
+    let levels: Vec<Vec<u8>> = (1..=3).map(|l| render(forced(l)).remove(0)).collect();
+    assert!(differing(&levels[0], &levels[1]) > 0 && differing(&levels[1], &levels[2]) > 0);
+    let picked = render(auto(1)).remove(0);
+    assert_eq!(
+        differing(&picked, &levels[1]),
+        0,
+        "r_full = 1 walks d2 = 9 at level 2"
+    );
+}
+
+/// Rock columns along z at x and y multiples of 16 in chunks with x = 3, air elsewhere.
+struct Columns;
+
+impl WorldSource for Columns {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        let base = coord.min_voxel().0;
+        for slot in 0..CHUNK_BRICKS {
+            let b = brick_of_slot(slot);
+            out.set_brick(
+                slot,
+                Brick::from_fn(|l| {
+                    let v = [0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + l[k]);
+                    if coord.0[0] == 3 && v[0] % 16 == 0 && v[1].rem_euclid(16) == 0 {
+                        ROCK
+                    } else {
+                        AIR
+                    }
+                }),
             );
         }
     }

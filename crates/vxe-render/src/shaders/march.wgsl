@@ -10,7 +10,9 @@
 //   2  storage  chunk_records  [record][640 x u32]: 512 brick entries, then the palette as
 //                              256 u16 (index 0 air). Entry bit 31 set: pool slot in bits
 //                              0..30, bit 30 wide; clear: the uniform material
-//   3  storage  chunk_table    [wrapped chunk]u32 record index, 0xFFFFFFFF when absent
+//   3  storage  chunk_table    [wrapped chunk]u32 record index in bits 0..30, bit 30 set for a
+//                              LOD record (entries 0..64 mip level 1, 64..72 level 2, 72
+//                              level 3); 0xFFFFFFFF when absent
 //   4  storage  materials      [id][2 x vec4]: albedo rgb + roughness, emission rgb + flag bits
 //   5  storage texture         rgba8unorm output
 //   6  storage  brick_masks    [slot][2 x u32]; bit b set: block (b & 3, (b >> 2) & 3, b >> 4)
@@ -21,8 +23,12 @@
 //
 // World units are voxels. The walk is a DDA over cells of four sizes: a chunk that is absent
 // is skipped as one 64^3 cell, a uniform-air brick as one 8^3 cell, an empty 2^3 block of a
-// full brick (its mask bit clear) as one 2^3 cell when the masks flag is set, and the voxels of an occupied block one at
-// a time. A uniform solid brick is hit where the ray enters it. Each step leaves
+// full brick (its mask bit clear) as one 2^3 cell when the masks flag is set, and the voxels
+// of an occupied block one at a time. A uniform solid brick is hit where the ray enters it.
+// A LOD-only chunk is walked the same way at its mip level L, every size scaled by 2^L: a
+// uniform-air mip-brick is one (8 * 2^L)^3 cell, an empty mask block one (2 * 2^L)^3 cell,
+// and each mip cell one (2^L)^3 cell. Every skip is aligned to its size, so a solid cell is
+// always entered on its face. Each step leaves
 // the current cell through its nearest face; the coordinate on the exit axis is set exactly
 // from the face, the others come from the float position, rounded toward the side the ray is
 // heading so that a position on a boundary (a tie between axes) lands in the voxel entered.
@@ -48,9 +54,9 @@ struct Params {
     cos_inner: f32,
     flags: u32,
     slots_per_shard: u32,
-    _pad4: u32,
-    _pad5: u32,
-    _pad6: u32,
+    forced_level: u32,
+    lod1_r2: i32,
+    lod2_r2: i32,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -66,6 +72,7 @@ struct Params {
 
 const ABSENT: u32 = 0xFFFFFFFFu;
 const FULL_BIT: u32 = 0x80000000u;
+const LOD_BIT: u32 = 0x40000000u;
 const WIDE_BIT: u32 = 0x40000000u;
 const SLOT_MASK: u32 = 0x3FFFFFFFu;
 // u32 words of a pool slot and of a chunk record, and the record word where the palette
@@ -111,6 +118,23 @@ fn floor_div(a: vec3<i32>, b: i32) -> vec3<i32> {
     return vec3<i32>(floor(vec3<f32>(a) / f32(b)));
 }
 
+// The mip level a LOD-only chunk is walked at: forced, or by its squared chunk distance to the
+// camera's chunk.
+fn lod_level(chunk: vec3<i32>) -> u32 {
+    if (params.forced_level != 0u) {
+        return params.forced_level;
+    }
+    let d = chunk - floor_div(vec3<i32>(floor(params.cam_pos)), 64);
+    let d2 = dot(d, d);
+    if (d2 <= params.lod1_r2) {
+        return 1u;
+    }
+    if (d2 <= params.lod2_r2) {
+        return 2u;
+    }
+    return 3u;
+}
+
 fn lookup(v: vec3<i32>) -> Cell {
     let chunk = floor_div(v, 64);
     let rel = chunk - params.window_min;
@@ -121,27 +145,37 @@ fn lookup(v: vec3<i32>) -> Cell {
     // Wrapped addressing: the table is indexed by the chunk coordinate modulo the window size,
     // and the range check above keeps every lookup inside the current window.
     let wr = ((chunk % w) + w) % w;
-    let record = chunk_table[u32(wr.x + w.x * (wr.y + w.y * wr.z))];
-    if (record == ABSENT) {
+    let t = chunk_table[u32(wr.x + w.x * (wr.y + w.y * wr.z))];
+    if (t == ABSENT) {
         return Cell(64, 0u);
     }
-    let local = v - chunk * 64;
-    let b = local / 8;
-    let base = record * RECORD_WORDS;
-    let entry = chunk_records[base + u32(b.x + 8 * (b.y + 8 * b.z))];
+    // A full chunk is level 0: voxels in 8^3 bricks, 8 bricks to an edge. A LOD record holds
+    // level L's cells in 8^3 mip-bricks, 8 >> L to an edge, from entry 0, 64 or 72.
+    var level = 0u;
+    var first = 0u;
+    if ((t & LOD_BIT) != 0u) {
+        level = lod_level(chunk);
+        first = select(select(72u, 64u, level == 2u), 0u, level == 1u);
+    }
+    let cell = 1 << level;
+    let e = 8 >> level;
+    let base = (t & SLOT_MASK) * RECORD_WORDS;
+    let c = (v - chunk * 64) >> vec3<u32>(level);
+    let b = c / 8;
+    let entry = chunk_records[base + first + u32(b.x + e * (b.y + e * b.z))];
     if ((entry & FULL_BIT) == 0u) {
         if (entry == 0u) {
-            return Cell(8, 0u);
+            return Cell(8 * cell, 0u);
         }
         return Cell(0, entry);
     }
     let slot = entry & SLOT_MASK;
-    let l = local - b * 8;
+    let l = c - b * 8;
     let k = l / 2;
     let bit = u32(k.x + 4 * k.y + 16 * k.z);
     if ((params.flags & FLAG_MASKS) != 0u
         && (brick_masks[slot * 2u + bit / 32u] & (1u << (bit % 32u))) == 0u) {
-        return Cell(2, 0u);
+        return Cell(2 * cell, 0u);
     }
     let i = u32(l.x + 8 * (l.y + 8 * l.z));
     var m = 0u;
@@ -159,7 +193,7 @@ fn lookup(v: vec3<i32>) -> Cell {
         }
     }
     if (m == 0u) {
-        return Cell(1, 0u);
+        return Cell(cell, 0u);
     }
     return Cell(0, m);
 }

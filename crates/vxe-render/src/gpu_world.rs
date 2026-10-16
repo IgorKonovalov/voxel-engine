@@ -33,13 +33,19 @@
 //! straddles two shards. Shards fill in order and only the last one in use grows; shards not
 //! yet in use are one-slot placeholders, so the marcher can always bind all of them. Masks,
 //! records, table and materials stay one buffer each, the masks indexed by global slot.
+//!
+//! A LOD-only chunk (ADR-0003) is mirrored from its mips as a LOD record: entries 0..64 hold
+//! level 1's mip-bricks, 64..72 level 2's and 72 level 3's, encoded like brick entries and
+//! narrowed through the record's palette like voxel bricks. Its table entry carries
+//! `LOD_BIT`. A chunk that changes tier gets a new record: its old one and its slots are
+//! freed in the same sync.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::PoisonError;
 
 use vxe_world::{
-    AIR, BRICK_VOXELS, Brick, CHUNK_BRICKS, ChunkCoord, ChunkExtent, MaterialId, MaterialTable,
-    StreamEvents, VoxelCoord, World,
+    AIR, BRICK_VOXELS, Brick, CHUNK_BRICKS, ChunkCoord, ChunkExtent, ChunkMips, MIP_LEVELS,
+    MaterialId, MaterialTable, StreamEvents, VoxelCoord, World,
 };
 
 /// Pool slots per growth step, and the unit `slots_per_shard` is a multiple of.
@@ -75,6 +81,10 @@ pub const FULL_BIT: u32 = 1 << 31;
 pub const WIDE_BIT: u32 = 1 << 30;
 /// The pool slot in a `Full` entry.
 pub const SLOT_MASK: u32 = WIDE_BIT - 1;
+/// Chunk table entry bit: the record is a LOD record. The record index is in the low 30 bits.
+pub const LOD_BIT: u32 = 1 << 30;
+/// First entry of each mip level in a LOD record, level 1 first.
+pub const LOD_LEVEL_ENTRY: [usize; MIP_LEVELS] = [0, 64, 72];
 /// `rev` value of a material not in the palette being built.
 const NO_INDEX: u16 = u16::MAX;
 /// `f32`s per material row: albedo rgb, roughness, emission rgb, flags as bits.
@@ -190,12 +200,20 @@ struct Mirrored {
     record: u32,
     palette: Vec<MaterialId>,
     wide: bool,
+    /// A LOD record, from the chunk's mips.
+    lod: bool,
+}
+
+/// What a chosen chunk is uploaded from.
+enum Src {
+    Full(std::sync::Arc<std::sync::RwLock<vxe_world::Chunk>>),
+    Lod(std::sync::Arc<ChunkMips>),
 }
 
 /// A chunk chosen for this sync's upload.
 struct Selected {
     coord: ChunkCoord,
-    chunk: std::sync::Arc<std::sync::RwLock<vxe_world::Chunk>>,
+    src: Src,
 }
 
 pub struct GpuWorld {
@@ -432,6 +450,11 @@ impl GpuWorld {
         self.mirrored.get(&coord).is_some_and(|m| m.wide)
     }
 
+    /// Whether `coord` is mirrored from its mips.
+    pub fn is_lod(&self, coord: ChunkCoord) -> bool {
+        self.mirrored.get(&coord).is_some_and(|m| m.lod)
+    }
+
     /// Mirrored chunks that are wide.
     pub fn wide_chunks(&self) -> usize {
         self.mirrored.values().filter(|m| m.wide).count()
@@ -507,6 +530,11 @@ impl GpuWorld {
     /// cleared on the next sync.
     fn drop_chunk(&mut self, coord: ChunkCoord) {
         self.unqueue(coord);
+        self.drop_record(coord);
+    }
+
+    /// Frees `coord`'s record and slots and clears its table entry, leaving it queued.
+    fn drop_record(&mut self, coord: ChunkCoord) {
         let Some(Mirrored { record: rec, .. }) = self.mirrored.remove(&coord) else {
             return;
         };
@@ -530,7 +558,7 @@ impl GpuWorld {
         self.free_records.push(rec);
         if self.in_window(coord) {
             let i = self.table_index(coord);
-            if self.table_cpu[i as usize] == rec {
+            if self.table_cpu[i as usize] & !LOD_BIT == rec {
                 self.table_cpu[i as usize] = ABSENT;
                 self.table_changed.push(i);
             }
@@ -572,7 +600,7 @@ impl GpuWorld {
         if !self.initialized {
             self.initialized = true;
             self.window_min = new_min;
-            for c in world.store().coords() {
+            for c in world.store().coords().into_iter().chain(world.lod_coords()) {
                 if self.in_window(c) {
                     self.enqueue(c);
                 }
@@ -598,7 +626,7 @@ impl GpuWorld {
         }
         self.window_min = new_min;
         for c in box_difference(new, old) {
-            if world.store().contains(c) {
+            if world.store().contains(c) || world.lod(c).is_some() {
                 self.enqueue(c);
             }
         }
@@ -662,42 +690,61 @@ impl GpuWorld {
                 break;
             }
             st.chunks_visited += 1;
-            let Some(chunk) = world.store().get(coord) else {
-                stale.push(coord);
-                continue;
+            // The full chunk wins over mips: a promoted chunk replaces its LOD record.
+            let src = match world.store().get(coord) {
+                Some(chunk) => Src::Full(chunk),
+                None => match world.lod(coord) {
+                    Some(mips) => Src::Lod(mips),
+                    None => {
+                        stale.push(coord);
+                        continue;
+                    }
+                },
             };
-            let (rec, wide) = match self.mirrored.get(&coord) {
-                Some(m) => (Some(m.record), m.wide),
-                None => (None, false),
+            let mirrored = self.mirrored.get(&coord);
+            // A record of the other tier is replaced whole.
+            let (rec, wide) = match mirrored {
+                Some(m) if m.lod == matches!(src, Src::Lod(_)) => (Some(m.record), m.wide),
+                _ => (None, false),
             };
             // A chunk that turns wide during upload is estimated narrow here: its upload, and
             // the slots it needs, can exceed this estimate (ADR-0004's rare path).
             let (slots, slot_bytes) = if wide { (2, 2) } else { (1, 1) };
-            {
-                let ch = chunk.read().unwrap_or_else(PoisonError::into_inner);
-                if rec.is_some() && !ch.any_dirty() {
-                    stale.push(coord);
-                    continue;
-                }
-                let mut chunk_bytes = RECORD_BYTES;
-                if rec.is_none() {
-                    chunk_bytes += 4;
-                }
-                for slot in 0..CHUNK_BRICKS {
-                    if rec.is_some() && !ch.is_dirty(slot) {
+            let mut chunk_bytes = RECORD_BYTES + if rec.is_none() { 4 } else { 0 };
+            match &src {
+                Src::Full(chunk) => {
+                    let ch = chunk.read().unwrap_or_else(PoisonError::into_inner);
+                    if rec.is_some() && !ch.any_dirty() {
+                        stale.push(coord);
                         continue;
                     }
-                    if ch.brick(slot).is_full() {
-                        chunk_bytes += slot_bytes * (SLOT_BYTES + MASK_BYTES);
-                        let old = rec.map_or(0, |r| self.entries[r as usize * RECORD_WORDS + slot]);
-                        if old & FULL_BIT == 0 {
-                            new_full += slots;
+                    for slot in 0..CHUNK_BRICKS {
+                        if rec.is_some() && !ch.is_dirty(slot) {
+                            continue;
+                        }
+                        if ch.brick(slot).is_full() {
+                            chunk_bytes += slot_bytes * (SLOT_BYTES + MASK_BYTES);
+                            let old =
+                                rec.map_or(0, |r| self.entries[r as usize * RECORD_WORDS + slot]);
+                            if old & FULL_BIT == 0 {
+                                new_full += slots;
+                            }
                         }
                     }
                 }
-                bytes += chunk_bytes;
+                Src::Lod(mips) => {
+                    // Mips never change: a chunk already mirrored LOD-only needs nothing.
+                    if rec.is_some() {
+                        stale.push(coord);
+                        continue;
+                    }
+                    let full = mips.full_bricks() as u64;
+                    chunk_bytes += full * (SLOT_BYTES + MASK_BYTES);
+                    new_full += full;
+                }
             }
-            selected.push(Selected { coord, chunk });
+            bytes += chunk_bytes;
+            selected.push(Selected { coord, src });
         }
         for c in stale {
             self.unqueue(c);
@@ -711,86 +758,119 @@ impl GpuWorld {
         queue: &wgpu::Queue,
         st: &mut SyncStats,
     ) -> Result<(), MirrorError> {
-        for Selected { coord, chunk } in selected {
-            let mut chunk = chunk.write().unwrap_or_else(PoisonError::into_inner);
-            let (rec, mut palette, was_wide, new) = match self.mirrored.remove(&coord) {
-                Some(m) => (m.record, m.palette, m.wide, false),
-                None => (self.alloc_record(queue, st), vec![AIR], false, true),
-            };
-            let base = rec as usize * RECORD_WORDS;
-            if new {
-                self.entries[base..base + RECORD_WORDS].fill(0);
+        for Selected { coord, src } in selected {
+            let lod = matches!(src, Src::Lod(_));
+            if self.mirrored.get(&coord).is_some_and(|m| m.lod != lod) {
+                self.drop_record(coord);
             }
-            for (i, &m) in palette.iter().enumerate() {
-                self.rev[usize::from(m)] = i as u16;
-            }
-            // Append the uploaded bricks' new materials; past 255 non-air the chunk is wide.
-            let mut wide = was_wide;
-            if !wide {
-                'scan: for slot in 0..CHUNK_BRICKS {
-                    if !new && !chunk.is_dirty(slot) {
-                        continue;
+            match src {
+                Src::Full(chunk) => {
+                    let mut ch = chunk.write().unwrap_or_else(PoisonError::into_inner);
+                    {
+                        let bricks: Vec<&Brick> = ch.bricks().iter().collect();
+                        let dirty: Vec<bool> = (0..CHUNK_BRICKS).map(|s| ch.is_dirty(s)).collect();
+                        self.upload_record(coord, &bricks, &dirty, false, queue, st)?;
                     }
-                    let Brick::Full(v) = chunk.brick(slot) else {
-                        continue;
-                    };
-                    // Voxels come in runs of one material; a repeat needs no lookup.
-                    for &m in v.iter() {
-                        if self.rev[usize::from(m)] == NO_INDEX {
-                            if palette.len() == PALETTE_ENTRIES {
-                                wide = true;
-                                break 'scan;
-                            }
-                            self.rev[usize::from(m)] = palette.len() as u16;
-                            palette.push(m);
-                        }
-                    }
+                    ch.clear_dirty();
+                }
+                Src::Lod(mips) => {
+                    let bricks: Vec<&Brick> =
+                        (1..=MIP_LEVELS).flat_map(|n| mips.level(n)).collect();
+                    let dirty = vec![true; bricks.len()];
+                    self.upload_record(coord, &bricks, &dirty, true, queue, st)?;
                 }
             }
-            let every = new || wide != was_wide;
-            let mut result = Ok(());
-            for slot in 0..CHUNK_BRICKS {
-                if !every && !chunk.is_dirty(slot) {
-                    continue;
-                }
-                result = self.upload_brick(base + slot, chunk.brick(slot), wide, queue, st);
-                if result.is_err() {
-                    break;
-                }
-            }
-            for &m in &palette {
-                self.rev[usize::from(m)] = NO_INDEX;
-            }
-            for (k, w) in self.entries[base + CHUNK_BRICKS..base + RECORD_WORDS]
-                .iter_mut()
-                .enumerate()
-            {
-                let at = |i: usize| u32::from(palette.get(i).copied().unwrap_or(AIR));
-                *w = at(2 * k) | at(2 * k + 1) << 16;
-            }
-            self.mirrored.insert(
-                coord,
-                Mirrored {
-                    record: rec,
-                    palette,
-                    wide,
-                },
-            );
-            self.stage_record(rec, queue, st);
-            st.bytes += RECORD_BYTES;
-            if new {
-                let t = self.table_index(coord);
-                self.table_cpu[t as usize] = rec;
-                self.table_changed.push(t);
-            }
-            result?;
-            st.chunks += 1;
-            chunk.clear_dirty();
-            self.unqueue(coord);
         }
         Ok(())
     }
 
+    /// Writes one chunk's record: `bricks` into its entries (512 voxel bricks, or a LOD
+    /// record's 73 mip-bricks), the ones `dirty` marks unless the record is new or turns
+    /// wide, then its palette and, for a new record, its table entry.
+    fn upload_record(
+        &mut self,
+        coord: ChunkCoord,
+        bricks: &[&Brick],
+        dirty: &[bool],
+        lod: bool,
+        queue: &wgpu::Queue,
+        st: &mut SyncStats,
+    ) -> Result<(), MirrorError> {
+        let (rec, mut palette, was_wide, new) = match self.mirrored.remove(&coord) {
+            Some(m) => (m.record, m.palette, m.wide, false),
+            None => (self.alloc_record(queue, st), vec![AIR], false, true),
+        };
+        let base = rec as usize * RECORD_WORDS;
+        if new {
+            self.entries[base..base + RECORD_WORDS].fill(0);
+        }
+        for (i, &m) in palette.iter().enumerate() {
+            self.rev[usize::from(m)] = i as u16;
+        }
+        // Append the uploaded bricks' new materials; past 255 non-air the chunk is wide.
+        let mut wide = was_wide;
+        if !wide {
+            'scan: for (i, brick) in bricks.iter().enumerate() {
+                if !new && !dirty[i] {
+                    continue;
+                }
+                let Brick::Full(v) = brick else {
+                    continue;
+                };
+                for &m in v.iter() {
+                    if self.rev[usize::from(m)] == NO_INDEX {
+                        if palette.len() == PALETTE_ENTRIES {
+                            wide = true;
+                            break 'scan;
+                        }
+                        self.rev[usize::from(m)] = palette.len() as u16;
+                        palette.push(m);
+                    }
+                }
+            }
+        }
+        let every = new || wide != was_wide;
+        let mut result = Ok(());
+        for (i, brick) in bricks.iter().enumerate() {
+            if !every && !dirty[i] {
+                continue;
+            }
+            result = self.upload_brick(base + i, brick, wide, queue, st);
+            if result.is_err() {
+                break;
+            }
+        }
+        for &m in &palette {
+            self.rev[usize::from(m)] = NO_INDEX;
+        }
+        for (k, w) in self.entries[base + CHUNK_BRICKS..base + RECORD_WORDS]
+            .iter_mut()
+            .enumerate()
+        {
+            let at = |i: usize| u32::from(palette.get(i).copied().unwrap_or(AIR));
+            *w = at(2 * k) | at(2 * k + 1) << 16;
+        }
+        self.mirrored.insert(
+            coord,
+            Mirrored {
+                record: rec,
+                palette,
+                wide,
+                lod,
+            },
+        );
+        self.stage_record(rec, queue, st);
+        st.bytes += RECORD_BYTES;
+        if new {
+            let t = self.table_index(coord);
+            self.table_cpu[t as usize] = if lod { rec | LOD_BIT } else { rec };
+            self.table_changed.push(t);
+        }
+        result?;
+        st.chunks += 1;
+        self.unqueue(coord);
+        Ok(())
+    }
     /// Writes `brick` into record entry `i`: a narrow brick as palette indices through `rev`,
     /// a wide one as two slots of `u16` voxels, a uniform one as its material. A slot of the
     /// wrong width is returned and a new one taken.

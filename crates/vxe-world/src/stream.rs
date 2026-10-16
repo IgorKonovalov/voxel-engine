@@ -1,20 +1,30 @@
-//! Streaming residency (ADR-0003): chunks resident in spheres around focus points, generated
-//! on a worker pool and inserted and evicted on the caller's thread.
+//! Streaming residency (ADR-0003): chunks resident around focus points in two tiers,
+//! generated on a worker pool and inserted, demoted and evicted on the caller's thread.
 //!
 //! Distances are integer chunk units. With `d2` the smallest squared distance from a chunk to
-//! any focus chunk, a chunk is wanted when `d2 <= r_full^2`, and a resident chunk is evicted
-//! once `d2 > (r_full + h)^2`.
+//! any focus chunk, a chunk is wanted *full* when `d2 <= r_full^2` and wanted *LOD-only*
+//! when it is not full and `d2 <= r_lod^2`. A full chunk is demoted to LOD-only once
+//! `d2 > (r_full + h)^2`, and a resident chunk of either tier is evicted once
+//! `d2 > (r_lod + h)^2`. A full chunk is a store chunk; a LOD-only chunk keeps only its
+//! mips ([`ChunkMips`]), which the world holds beside the store.
 //!
 //! The caller drives everything: [`Streamer::update`] takes the focus points and, when a
 //! focus chunk moved, rebuilds the job queue; [`Streamer::poll`] inserts finished chunks and
-//! performs evictions. The queue is ordered by `(d2, coord)`, so the nearest chunks load first
-//! and ties fall to coordinate order. A queued job whose chunk stops being wanted is dropped
-//! at the next rebuild. Nothing here reads a clock: latency is counted in `update` calls.
+//! performs demotions and evictions. The queue is ordered by tier (full loads and promotions
+//! first), then `d2`, then coordinate, so the nearest chunks load first and ties fall to
+//! coordinate order. A queued job whose chunk stops being wanted is dropped at the next
+//! rebuild. Nothing here reads a clock: latency is counted in `update` calls.
 //!
-//! An evicted chunk that was ever edited goes to the persistence map (`persist.rs`) and a
-//! load of its coordinate takes it back from there, from RAM or from its spill file, instead
-//! of generating it. A spill file that fails its checks is reported and its chunk stays
-//! non-resident for the streamer's life: an edit is never silently regenerated away.
+//! A LOD-only chunk is built from a full chunk: generated (and dropped once its mips are
+//! built), read from persistence (which keeps it), or demoted from residency, in which case a
+//! worker builds its mips after the chunk has left the store. Promotion loads the full chunk
+//! again, from persistence or the source.
+//!
+//! An evicted or demoted chunk that was ever edited goes to the persistence map
+//! (`persist.rs`) and a full load of its coordinate takes it back from there, from RAM or
+//! from its spill file, instead of generating it. A spill file that fails its checks is
+//! reported and its chunk stays non-resident for the streamer's life: an edit is never
+//! silently regenerated away.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::AssertUnwindSafe;
@@ -25,6 +35,7 @@ use std::thread::JoinHandle;
 
 use crate::chunk::Chunk;
 use crate::coords::{ChunkCoord, VoxelCoord};
+use crate::mips::ChunkMips;
 use crate::persist::{self, PersistConfig, Persisted, SpillError};
 use crate::source::WorldSource;
 use crate::store::{World, read};
@@ -42,8 +53,16 @@ impl Residency {
         i64::from(self.r_full).pow(2)
     }
 
+    fn lod2(&self) -> i64 {
+        i64::from(self.r_lod.max(self.r_full)).pow(2)
+    }
+
     fn keep_full2(&self) -> i64 {
         i64::from(self.r_full + self.hysteresis).pow(2)
+    }
+
+    fn keep_lod2(&self) -> i64 {
+        i64::from(self.r_lod.max(self.r_full) + self.hysteresis).pow(2)
     }
 }
 
@@ -60,6 +79,8 @@ pub struct StreamConfig {
 pub enum Tier {
     /// Every voxel, in the world's store: edits, queries and raycasts see it.
     Full,
+    /// Only its mips, in [`World::lod`]: drawn by the mirror, invisible to edits and queries.
+    LodOnly,
 }
 
 /// A failure the streamer reports instead of acting on.
@@ -73,26 +94,33 @@ pub enum StreamError {
 /// What one `poll` (or `wait_idle`) changed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StreamEvents {
-    /// Chunks inserted, with their tier, in insertion order.
+    /// Chunks inserted, with their tier, in insertion order. A promotion is a `Full` load of
+    /// a LOD-only chunk.
     pub loaded: Vec<(ChunkCoord, Tier)>,
+    /// Full chunks that became LOD-only.
+    pub demoted: Vec<ChunkCoord>,
     /// Chunks removed from residency.
     pub evicted: Vec<ChunkCoord>,
     pub errors: Vec<StreamError>,
     /// For each chunk in `loaded` as `Full`, the `update` calls between the one that first
-    /// wanted it and its insertion.
+    /// wanted it full and its insertion.
     pub latency_ticks: Vec<u32>,
 }
 
 impl StreamEvents {
     fn append(&mut self, mut other: StreamEvents) {
         self.loaded.append(&mut other.loaded);
+        self.demoted.append(&mut other.demoted);
         self.evicted.append(&mut other.evicted);
         self.errors.append(&mut other.errors);
         self.latency_ticks.append(&mut other.latency_ticks);
     }
 
     pub fn is_empty(&self) -> bool {
-        self.loaded.is_empty() && self.evicted.is_empty() && self.errors.is_empty()
+        self.loaded.is_empty()
+            && self.demoted.is_empty()
+            && self.evicted.is_empty()
+            && self.errors.is_empty()
     }
 }
 
@@ -102,11 +130,12 @@ pub struct StreamStats {
     /// `update` calls so far.
     pub ticks: u64,
     pub resident_full: usize,
+    pub resident_lod: usize,
     /// Jobs queued and not yet taken by a worker.
     pub queued: usize,
-    /// Load jobs queued or running.
+    /// Load and demotion jobs queued or running.
     pub in_flight: usize,
-    /// Chunks generated from the source over the streamer's life.
+    /// Chunks generated from the source over the streamer's life, for either tier.
     pub generated_chunks: u64,
     /// Chunks taken back from persistence over the streamer's life.
     pub restored_chunks: u64,
@@ -119,9 +148,10 @@ pub struct StreamStats {
     pub persist_over_cap: bool,
 }
 
-/// A job's queue key: smaller runs first.
+/// A job's queue key: smaller runs first. Full loads sort before LOD loads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct Key {
+    tier: Tier,
     d2: i64,
     coord: ChunkCoord,
 }
@@ -136,16 +166,29 @@ struct SpillJob {
     seq: u64,
 }
 
+/// Build the mips of a chunk that just left the store.
+struct DemoteJob {
+    coord: ChunkCoord,
+    chunk: Arc<RwLock<Chunk>>,
+}
+
 enum Done {
-    /// Generated from the source.
-    Generated {
-        coord: ChunkCoord,
-        chunk: Box<Chunk>,
-    },
-    /// Taken back from persistence.
-    Restored {
+    /// A full chunk, generated from the source (`restored` false) or taken back from
+    /// persistence.
+    Full {
         coord: ChunkCoord,
         chunk: Arc<RwLock<Chunk>>,
+        restored: bool,
+    },
+    /// Mips for a LOD-only load; `generated` when the full chunk came from the source.
+    Lod {
+        coord: ChunkCoord,
+        mips: Arc<ChunkMips>,
+        generated: bool,
+    },
+    Demoted {
+        coord: ChunkCoord,
+        mips: Arc<ChunkMips>,
     },
     LoadFailed {
         coord: ChunkCoord,
@@ -162,8 +205,9 @@ enum Done {
 struct Queue {
     /// Sorted descending by key, so `pop` takes the nearest.
     jobs: Vec<Job>,
-    /// Spill writes, taken before any load.
+    /// Spill writes and demotions, taken before any load.
     io: VecDeque<SpillJob>,
+    demote: VecDeque<DemoteJob>,
     shutdown: bool,
 }
 
@@ -186,17 +230,18 @@ pub struct Streamer {
     workers: Vec<JoinHandle<()>>,
     results: Receiver<Done>,
     focus: Vec<ChunkCoord>,
-    /// Set when the focus chunks change; the next `poll` sweeps residency for evictions.
+    /// Set when the focus chunks change or a chunk arrives outside its band; the next `poll`
+    /// sweeps residency for demotions and evictions.
     sweep: bool,
     resident: HashMap<ChunkCoord, Tier>,
-    /// Chunks with a load job queued or running.
-    in_flight: HashSet<ChunkCoord>,
+    /// Chunks with a load or demotion job queued or running, and the tier it produces.
+    in_flight: HashMap<ChunkCoord, Tier>,
     /// Chunks with a spill write queued or running.
     spilling: HashSet<ChunkCoord>,
     /// Chunks whose spill write or read failed: not spilled, or not loaded, again.
     spill_failed: HashSet<ChunkCoord>,
     load_failed: HashSet<ChunkCoord>,
-    /// The tick at which each chunk with a job was first wanted.
+    /// The tick at which each chunk with a full load was first wanted full.
     wanted_since: HashMap<ChunkCoord, u64>,
     tick: u64,
     generated: u64,
@@ -230,7 +275,7 @@ impl Streamer {
             focus: Vec::new(),
             sweep: false,
             resident: HashMap::new(),
-            in_flight: HashSet::new(),
+            in_flight: HashMap::new(),
             spilling: HashSet::new(),
             spill_failed: HashSet::new(),
             load_failed: HashSet::new(),
@@ -246,8 +291,8 @@ impl Streamer {
     }
 
     /// Takes this tick's focus points. When the set of focus chunks differs from the last
-    /// call's, the queue is rebuilt from the chunks now wanted and not resident, and the next
-    /// `poll` sweeps for evictions.
+    /// call's, the queue is rebuilt from the chunks now wanted and not resident at their
+    /// tier, and the next `poll` sweeps for demotions and evictions.
     pub fn update(&mut self, _world: &World, focus: &[VoxelCoord]) {
         self.tick += 1;
         let mut chunks: Vec<ChunkCoord> = focus.iter().map(|v| v.chunk()).collect();
@@ -270,10 +315,23 @@ impl Streamer {
             .unwrap_or(i64::MAX)
     }
 
+    /// The tier `c` is wanted in at the current focus, if any.
+    fn wanted_tier(&self, c: ChunkCoord) -> Option<Tier> {
+        let d = self.d2(c);
+        if d <= self.cfg.residency.full2() {
+            Some(Tier::Full)
+        } else if d <= self.cfg.residency.lod2() {
+            Some(Tier::LodOnly)
+        } else {
+            None
+        }
+    }
+
     /// Every chunk wanted at the current focus with its queue key, ascending.
     fn wanted(&self) -> Vec<Key> {
-        let r = self.cfg.residency.r_full;
-        let r2 = self.cfg.residency.full2();
+        let r = self.cfg.residency.r_lod.max(self.cfg.residency.r_full);
+        let r2 = self.cfg.residency.lod2();
+        let full2 = self.cfg.residency.full2();
         let mut keys = Vec::new();
         let mut seen = HashSet::new();
         for f in &self.focus {
@@ -288,16 +346,32 @@ impl Streamer {
                         if self.focus.len() > 1 && !seen.insert(coord) {
                             continue;
                         }
-                        keys.push(Key {
-                            d2: self.d2(coord),
-                            coord,
-                        });
+                        let d2 = self.d2(coord);
+                        let tier = if d2 <= full2 {
+                            Tier::Full
+                        } else {
+                            Tier::LodOnly
+                        };
+                        keys.push(Key { tier, d2, coord });
                     }
                 }
             }
         }
         keys.sort_unstable();
         keys
+    }
+
+    /// Whether `key` needs a job: its chunk is not resident at the wanted tier (a full chunk
+    /// also serves a LOD-only want), has no job, and has not failed to load.
+    fn needs_job(&self, key: &Key) -> bool {
+        let resident = self.resident.get(&key.coord);
+        let satisfied = match key.tier {
+            Tier::Full => resident == Some(&Tier::Full),
+            Tier::LodOnly => resident.is_some(),
+        };
+        !satisfied
+            && !self.in_flight.contains_key(&key.coord)
+            && !self.load_failed.contains(&key.coord)
     }
 
     fn rebuild_queue(&mut self) {
@@ -310,26 +384,53 @@ impl Streamer {
         let mut jobs = Vec::new();
         let mut still_wanted = HashSet::new();
         for key in wanted {
-            still_wanted.insert(key.coord);
-            if self.resident.contains_key(&key.coord)
-                || self.in_flight.contains(&key.coord)
-                || self.load_failed.contains(&key.coord)
-            {
+            if key.tier == Tier::Full {
+                still_wanted.insert(key.coord);
+            }
+            if !self.needs_job(&key) {
                 continue;
             }
-            self.wanted_since.entry(key.coord).or_insert(self.tick);
-            self.in_flight.insert(key.coord);
+            if key.tier == Tier::Full {
+                self.wanted_since.entry(key.coord).or_insert(self.tick);
+            }
+            self.in_flight.insert(key.coord, key.tier);
             jobs.push(Job { key });
         }
-        self.wanted_since
-            .retain(|c, _| still_wanted.contains(c) || self.in_flight.contains(c));
+        self.wanted_since.retain(|c, _| still_wanted.contains(c));
         jobs.reverse();
         q.jobs = jobs;
         drop(q);
         self.shared.wake.notify_all();
     }
 
-    /// Inserts every finished chunk and performs evictions. Never blocks on a worker.
+    /// Queues a load for `c` if the current focus wants it at a tier it lacks; for chunks
+    /// whose job finished without leaving them at their wanted tier.
+    fn requeue(&mut self, c: ChunkCoord) {
+        let Some(tier) = self.wanted_tier(c) else {
+            return;
+        };
+        let key = Key {
+            tier,
+            d2: self.d2(c),
+            coord: c,
+        };
+        if !self.needs_job(&key) {
+            return;
+        }
+        if tier == Tier::Full {
+            self.wanted_since.entry(c).or_insert(self.tick);
+        }
+        self.in_flight.insert(c, tier);
+        let mut q = lock(&self.shared.queue);
+        // Descending order: insert before the first job with a smaller key.
+        let at = q.jobs.partition_point(|j| j.key > key);
+        q.jobs.insert(at, Job { key });
+        drop(q);
+        self.shared.wake.notify_one();
+    }
+
+    /// Inserts every finished chunk and performs demotions and evictions. Never blocks on a
+    /// worker.
     pub fn poll(&mut self, world: &World) -> StreamEvents {
         let mut done = Vec::new();
         while let Ok(d) = self.results.try_recv() {
@@ -355,26 +456,85 @@ impl Streamer {
         events
     }
 
+    fn persist(&self, coord: ChunkCoord, chunk: Arc<RwLock<Chunk>>) {
+        if read(&chunk).is_edited() {
+            lock(&self.shared.persisted).insert(coord, chunk);
+        }
+    }
+
     fn apply(&mut self, world: &World, done: Vec<Done>) -> StreamEvents {
         let mut ev = StreamEvents::default();
-        let keep2 = self.cfg.residency.keep_full2();
+        let keep_full2 = self.cfg.residency.keep_full2();
+        let keep_lod2 = self.cfg.residency.keep_lod2();
         let mut inserts: Vec<(ChunkCoord, Arc<RwLock<Chunk>>)> = Vec::new();
+        let mut requeue = Vec::new();
         for d in done {
-            let (coord, chunk) = match d {
-                Done::Generated { coord, chunk } => {
-                    self.generated += 1;
-                    (coord, Arc::new(RwLock::new(*chunk)))
+            match d {
+                Done::Full {
+                    coord,
+                    chunk,
+                    restored,
+                } => {
+                    if restored {
+                        self.restored += 1;
+                    } else {
+                        self.generated += 1;
+                    }
+                    self.in_flight.remove(&coord);
+                    let since = self.wanted_since.remove(&coord);
+                    let d = self.d2(coord);
+                    // A chunk that left both bands while it loaded is dropped, or goes back
+                    // to persistence if it holds edits.
+                    if d > keep_lod2 {
+                        self.persist(coord, chunk);
+                        requeue.push(coord);
+                        continue;
+                    }
+                    // Past the full band it is inserted anyway; the sweep demotes it.
+                    if d > keep_full2 {
+                        self.sweep = true;
+                    }
+                    inserts.push((coord, chunk));
+                    ev.loaded.push((coord, Tier::Full));
+                    let since = since.unwrap_or(self.tick);
+                    ev.latency_ticks
+                        .push(u32::try_from(self.tick - since).unwrap_or(u32::MAX));
                 }
-                Done::Restored { coord, chunk } => {
-                    self.restored += 1;
-                    (coord, chunk)
+                Done::Lod {
+                    coord,
+                    mips,
+                    generated,
+                } => {
+                    if generated {
+                        self.generated += 1;
+                    }
+                    self.in_flight.remove(&coord);
+                    if self.d2(coord) <= keep_lod2 && !self.resident.contains_key(&coord) {
+                        world.insert_lod(coord, mips);
+                        self.resident.insert(coord, Tier::LodOnly);
+                        ev.loaded.push((coord, Tier::LodOnly));
+                    }
+                    requeue.push(coord);
+                }
+                Done::Demoted { coord, mips } => {
+                    self.in_flight.remove(&coord);
+                    if self.wanted_tier(coord) != Some(Tier::Full) && self.d2(coord) <= keep_lod2 {
+                        world.insert_lod(coord, mips);
+                        self.resident.insert(coord, Tier::LodOnly);
+                        ev.demoted.push(coord);
+                    } else {
+                        // Wanted full again, or out of range: the mirror still holds the
+                        // full chunk it had, so report it gone.
+                        self.resident.remove(&coord);
+                        ev.evicted.push(coord);
+                        requeue.push(coord);
+                    }
                 }
                 Done::LoadFailed { coord, kind } => {
                     self.in_flight.remove(&coord);
                     self.wanted_since.remove(&coord);
                     self.load_failed.insert(coord);
                     ev.errors.push(StreamError::Spill { coord, kind });
-                    continue;
                 }
                 Done::Spilled { coord, result } => {
                     self.spilling.remove(&coord);
@@ -382,70 +542,84 @@ impl Streamer {
                         self.spill_failed.insert(coord);
                         ev.errors.push(StreamError::Spill { coord, kind });
                     }
-                    continue;
                 }
                 Done::Panicked(e) => std::panic::resume_unwind(e),
-            };
-            self.in_flight.remove(&coord);
-            let since = self.wanted_since.remove(&coord);
-            // A chunk that left the keep radius while it was loaded is dropped, or goes back
-            // to persistence if it holds edits.
-            if self.d2(coord) > keep2 {
-                if read(&chunk).is_edited() {
-                    lock(&self.shared.persisted).insert(coord, chunk);
-                }
-                continue;
             }
-            inserts.push((coord, chunk));
-            ev.loaded.push((coord, Tier::Full));
-            let since = since.unwrap_or(self.tick);
-            ev.latency_ticks
-                .push(u32::try_from(self.tick - since).unwrap_or(u32::MAX));
         }
+
         let mut evict = Vec::new();
+        let mut demote = Vec::new();
         if self.sweep {
             self.sweep = false;
-            evict = self
-                .resident
-                .keys()
-                .copied()
-                .filter(|&c| self.d2(c) > keep2)
-                .collect();
+            for (&c, &tier) in &self.resident {
+                let d = self.d2(c);
+                if d > keep_lod2 {
+                    evict.push((c, tier));
+                } else if tier == Tier::Full && d > keep_full2 {
+                    demote.push(c);
+                }
+            }
             evict.sort_unstable();
+            demote.sort_unstable();
         }
+        // Chunks inserted now that the sweep found outside their bands are left for the next
+        // sweep; none is both inserted and removed in one poll.
         let mut removed = Vec::new();
-        if !inserts.is_empty() || !evict.is_empty() {
+        let mut demoting = Vec::new();
+        if !inserts.is_empty() || !evict.is_empty() || !demote.is_empty() {
             let mut map = world.store.write_lock();
             for (coord, chunk) in inserts {
                 map.insert(coord, chunk);
                 self.resident.insert(coord, Tier::Full);
+                world.remove_lod(coord);
             }
-            for &coord in &evict {
-                if let Some(chunk) = map.remove(coord) {
-                    removed.push((coord, chunk));
+            for &(coord, tier) in &evict {
+                if tier == Tier::Full {
+                    if let Some(chunk) = map.remove(coord) {
+                        removed.push((coord, chunk));
+                    }
+                } else {
+                    world.remove_lod(coord);
                 }
                 self.resident.remove(&coord);
             }
-        }
-        // Outside the map lock: persisting reads each chunk's flag under its own lock.
-        let mut persisted = lock(&self.shared.persisted);
-        for (coord, chunk) in removed {
-            if read(&chunk).is_edited() {
-                persisted.insert(coord, chunk);
+            for &coord in &demote {
+                if let Some(chunk) = map.remove(coord) {
+                    demoting.push((coord, chunk));
+                }
             }
         }
-        let spills = self.spills_due(&persisted);
-        drop(persisted);
-        if !spills.is_empty() {
+        // Outside the map lock: persisting reads each chunk's flag under its own lock.
+        for (coord, chunk) in removed {
+            self.persist(coord, chunk);
+        }
+        for (coord, chunk) in &demoting {
+            self.persist(*coord, chunk.clone());
+            // Neither in the store nor LOD-only until its mips arrive; the mirror keeps the
+            // full chunk it has meanwhile.
+            self.resident.remove(coord);
+            self.in_flight.insert(*coord, Tier::LodOnly);
+        }
+        let spills = {
+            let persisted = lock(&self.shared.persisted);
+            self.spills_due(&persisted)
+        };
+        if !spills.is_empty() || !demoting.is_empty() {
             let mut q = lock(&self.shared.queue);
             for job in spills {
                 self.spilling.insert(job.coord);
                 q.io.push_back(job);
             }
+            for (coord, chunk) in demoting {
+                q.demote.push_back(DemoteJob { coord, chunk });
+            }
             drop(q);
             self.shared.wake.notify_all();
         }
-        ev.evicted = evict;
+        for c in requeue {
+            self.requeue(c);
+        }
+        ev.evicted.extend(evict.into_iter().map(|(c, _)| c));
         ev
     }
 
@@ -478,9 +652,11 @@ impl Streamer {
 
     pub fn stats(&self) -> StreamStats {
         let p = lock(&self.shared.persisted);
+        let full = self.resident.values().filter(|&&t| t == Tier::Full).count();
         StreamStats {
             ticks: self.tick,
-            resident_full: self.resident.len(),
+            resident_full: full,
+            resident_lod: self.resident.len() - full,
             queued: lock(&self.shared.queue).jobs.len(),
             in_flight: self.in_flight.len(),
             generated_chunks: self.generated,
@@ -521,8 +697,9 @@ fn d2(a: ChunkCoord, b: ChunkCoord) -> i64 {
 }
 
 enum Work {
-    Load(ChunkCoord),
+    Load(Key),
     Spill(SpillJob),
+    Demote(DemoteJob),
 }
 
 fn worker<S: WorldSource + ?Sized>(shared: &Shared, source: &S, tx: &Sender<Done>) {
@@ -536,15 +713,23 @@ fn worker<S: WorldSource + ?Sized>(shared: &Shared, source: &S, tx: &Sender<Done
                 if let Some(job) = q.io.pop_front() {
                     break Work::Spill(job);
                 }
+                if let Some(job) = q.demote.pop_front() {
+                    break Work::Demote(job);
+                }
                 if let Some(job) = q.jobs.pop() {
-                    break Work::Load(job.key.coord);
+                    break Work::Load(job.key);
                 }
                 q = shared.wake.wait(q).unwrap_or_else(PoisonError::into_inner);
             }
         };
         let r = std::panic::catch_unwind(AssertUnwindSafe(|| match work {
-            Work::Load(coord) => load(shared, source, coord),
+            Work::Load(key) if key.tier == Tier::Full => load_full(shared, source, key.coord),
+            Work::Load(key) => load_lod(shared, source, key.coord),
             Work::Spill(job) => spill(shared, job),
+            Work::Demote(DemoteJob { coord, chunk }) => Done::Demoted {
+                coord,
+                mips: Arc::new(ChunkMips::build(&read(&chunk))),
+            },
         }));
         let done = r.unwrap_or_else(Done::Panicked);
         if tx.send(done).is_err() {
@@ -553,43 +738,90 @@ fn worker<S: WorldSource + ?Sized>(shared: &Shared, source: &S, tx: &Sender<Done
     }
 }
 
-/// Loads `coord` from persistence if it is there, else from the source.
-fn load<S: WorldSource + ?Sized>(shared: &Shared, source: &S, coord: ChunkCoord) -> Done {
-    let file = {
-        let mut p = lock(&shared.persisted);
-        if let Some(e) = p.take(coord) {
-            crate::store::write(&e.chunk).mark_all_dirty();
-            return Done::Restored {
-                coord,
-                chunk: e.chunk,
-            };
+/// Where a persisted chunk was found: in RAM (taken out, or shared when kept), or a file.
+enum Found {
+    Ram(Arc<RwLock<Chunk>>),
+    File(PathBuf),
+}
+
+/// Looks `coord` up in persistence. A full load takes a RAM entry out; a LOD load (`keep`)
+/// leaves it, since a LOD-only chunk does not hold the voxels.
+fn find_persisted(shared: &Shared, coord: ChunkCoord, keep: bool) -> Option<Found> {
+    let mut p = lock(&shared.persisted);
+    if keep {
+        if let Some(e) = p.ram.get(&coord) {
+            return Some(Found::Ram(e.chunk.clone()));
         }
-        p.spilled.get(&coord).cloned()
-    };
-    if let Some(path) = file {
-        let decoded = std::fs::read(&path)
-            .map_err(|_| SpillError::Io)
-            .and_then(|bytes| persist::decode_spill(&bytes, shared.world_key));
-        return match decoded {
-            Ok((c, chunk)) if c == coord => {
+    } else if let Some(e) = p.take(coord) {
+        return Some(Found::Ram(e.chunk));
+    }
+    p.spilled.get(&coord).cloned().map(Found::File)
+}
+
+fn read_spill(shared: &Shared, coord: ChunkCoord, path: &PathBuf) -> Result<Chunk, SpillError> {
+    let bytes = std::fs::read(path).map_err(|_| SpillError::Io)?;
+    match persist::decode_spill(&bytes, shared.world_key)? {
+        (c, chunk) if c == coord => Ok(chunk),
+        _ => Err(SpillError::Corrupt),
+    }
+}
+
+/// Loads `coord` full from persistence if it is there, else from the source.
+fn load_full<S: WorldSource + ?Sized>(shared: &Shared, source: &S, coord: ChunkCoord) -> Done {
+    match find_persisted(shared, coord, false) {
+        Some(Found::Ram(chunk)) => {
+            crate::store::write(&chunk).mark_all_dirty();
+            Done::Full {
+                coord,
+                chunk,
+                restored: true,
+            }
+        }
+        Some(Found::File(path)) => match read_spill(shared, coord, &path) {
+            Ok(chunk) => {
                 lock(&shared.persisted).spilled.remove(&coord);
                 // The chunk is restored either way; a file left behind is only disk.
                 let _ = std::fs::remove_file(&path);
-                Done::Restored {
+                Done::Full {
                     coord,
                     chunk: Arc::new(RwLock::new(chunk)),
+                    restored: true,
                 }
             }
-            Ok(_) => Done::LoadFailed {
-                coord,
-                kind: SpillError::Corrupt,
-            },
             Err(kind) => Done::LoadFailed { coord, kind },
-        };
+        },
+        None => {
+            let mut chunk = Chunk::default();
+            source.chunk(coord, &mut chunk);
+            Done::Full {
+                coord,
+                chunk: Arc::new(RwLock::new(chunk)),
+                restored: false,
+            }
+        }
     }
-    let mut chunk = Box::<Chunk>::default();
-    source.chunk(coord, &mut chunk);
-    Done::Generated { coord, chunk }
+}
+
+/// Builds `coord`'s mips from its persisted copy if there is one, else from a freshly
+/// generated chunk that is then dropped.
+fn load_lod<S: WorldSource + ?Sized>(shared: &Shared, source: &S, coord: ChunkCoord) -> Done {
+    let (mips, generated) = match find_persisted(shared, coord, true) {
+        Some(Found::Ram(chunk)) => (ChunkMips::build(&read(&chunk)), false),
+        Some(Found::File(path)) => match read_spill(shared, coord, &path) {
+            Ok(chunk) => (ChunkMips::build(&chunk), false),
+            Err(kind) => return Done::LoadFailed { coord, kind },
+        },
+        None => {
+            let mut chunk = Chunk::default();
+            source.chunk(coord, &mut chunk);
+            (ChunkMips::build(&chunk), true)
+        }
+    };
+    Done::Lod {
+        coord,
+        mips: Arc::new(mips),
+        generated,
+    }
 }
 
 /// Writes a RAM entry to its spill file, then drops it from RAM if it is still the same
@@ -641,13 +873,13 @@ mod tests {
     use super::*;
     use crate::source::UniformSource;
 
-    fn streamer(r: i32) -> Streamer {
+    fn streamer(r_full: i32, r_lod: i32) -> Streamer {
         Streamer::new(
             Arc::new(UniformSource(3)),
             StreamConfig {
                 residency: Residency {
-                    r_full: r,
-                    r_lod: r,
+                    r_full,
+                    r_lod,
                     hysteresis: 1,
                 },
                 workers: 1,
@@ -656,9 +888,18 @@ mod tests {
         )
     }
 
+    /// Stops the worker so it cannot take a job before the queue is read.
+    fn stop_workers(s: &mut Streamer) {
+        lock(&s.shared.queue).shutdown = true;
+        s.shared.wake.notify_all();
+        for w in s.workers.drain(..) {
+            w.join().unwrap();
+        }
+    }
+
     #[test]
     fn queue_runs_nearest_first_with_ties_by_coordinate() {
-        let mut s = streamer(2);
+        let mut s = streamer(2, 2);
         s.focus = vec![ChunkCoord([0, 0, 0])];
         let order: Vec<[i32; 3]> = s.wanted().iter().map(|k| k.coord.0).collect();
         assert_eq!(order.len(), 33);
@@ -688,16 +929,24 @@ mod tests {
         expect.sort_unstable();
         assert_eq!(ring2, expect);
 
-        // The queue the workers pop from holds the same order. The worker is stopped first so
-        // it cannot take a job before the queue is read.
-        lock(&s.shared.queue).shutdown = true;
-        s.shared.wake.notify_all();
-        for w in s.workers.drain(..) {
-            w.join().unwrap();
-        }
+        // The queue the workers pop from holds the same order.
+        stop_workers(&mut s);
         s.rebuild_queue();
         let q = lock(&s.shared.queue);
         let popped: Vec<[i32; 3]> = q.jobs.iter().rev().map(|j| j.key.coord.0).collect();
         assert_eq!(popped, order);
+    }
+
+    #[test]
+    fn full_loads_come_before_every_lod_load() {
+        let mut s = streamer(1, 2);
+        stop_workers(&mut s);
+        s.focus = vec![ChunkCoord([0, 0, 0])];
+        s.rebuild_queue();
+        let q = lock(&s.shared.queue);
+        let tiers: Vec<Tier> = q.jobs.iter().rev().map(|j| j.key.tier).collect();
+        assert_eq!(tiers.len(), 33);
+        assert!(tiers[..7].iter().all(|&t| t == Tier::Full));
+        assert!(tiers[7..].iter().all(|&t| t == Tier::LodOnly));
     }
 }

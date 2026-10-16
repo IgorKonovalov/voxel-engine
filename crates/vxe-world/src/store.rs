@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGua
 use crate::chunk::Chunk;
 use crate::coords::{ChunkCoord, ChunkExtent, VoxelCoord};
 use crate::material::{MaterialId, MaterialTable};
+use crate::mips::ChunkMips;
 use crate::source::WorldSource;
 
 /// Read guard that survives a poisoned lock. A chunk is structurally valid at every point an
@@ -148,9 +149,14 @@ pub struct WorldStats {
 /// A world of resident chunks. [`World::generate`] makes a bounded one, every chunk of an
 /// extent generated up front and resident for good; [`World::new`] makes an empty, unbounded
 /// one that a [`crate::Streamer`] fills and empties around focus points.
+///
+/// Besides the full chunks of the store, a world holds the mips of its LOD-only chunks
+/// (ADR-0003). Edits, queries and raycasts see only the store, so to them a LOD-only chunk is
+/// not resident; the GPU mirror draws it from its mips.
 #[derive(Debug)]
 pub struct World {
     pub(crate) store: ChunkStore,
+    lods: RwLock<HashMap<ChunkCoord, Arc<ChunkMips>>>,
     extent: ChunkExtent,
     pub(crate) materials: MaterialTable,
 }
@@ -160,6 +166,7 @@ impl World {
     pub fn new(table: &MaterialTable) -> Self {
         Self {
             store: ChunkStore::new(),
+            lods: RwLock::default(),
             extent: ChunkExtent::new([0, 0, 0], [0, 0, 0]),
             materials: table.clone(),
         }
@@ -214,6 +221,7 @@ impl World {
         });
         Self {
             store,
+            lods: RwLock::default(),
             extent,
             materials: table.clone(),
         }
@@ -230,6 +238,31 @@ impl World {
 
     pub fn store(&self) -> &ChunkStore {
         &self.store
+    }
+
+    /// The mips of LOD-only chunk `c`, if it is one.
+    pub fn lod(&self, c: ChunkCoord) -> Option<Arc<ChunkMips>> {
+        read(&self.lods).get(&c).cloned()
+    }
+
+    /// Makes `c` LOD-only with `mips`, and marks it in the dirty-chunk set so the mirror
+    /// uploads it. The streamer calls it; tests call it to build LOD scenes. A full chunk at
+    /// `c` should be removed from the store first: the mirror prefers the full chunk.
+    pub fn insert_lod(&self, c: ChunkCoord, mips: Arc<ChunkMips>) {
+        write(&self.lods).insert(c, mips);
+        self.store.mark_dirty(c);
+    }
+
+    /// Drops `c`'s mips.
+    pub fn remove_lod(&self, c: ChunkCoord) -> Option<Arc<ChunkMips>> {
+        write(&self.lods).remove(&c)
+    }
+
+    /// LOD-only chunks, ascending.
+    pub fn lod_coords(&self) -> Vec<ChunkCoord> {
+        let mut v: Vec<_> = read(&self.lods).keys().copied().collect();
+        v.sort_unstable();
+        v
     }
 
     /// Chunk and brick counts, read one chunk lock at a time.

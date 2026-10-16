@@ -246,3 +246,91 @@ fn the_store_write_lock_never_sees_half_an_op() {
         "the locker saw the first chunk carved while the op was stalled on the second"
     );
 }
+
+fn at_chunk(c: [i32; 3]) -> VoxelCoord {
+    VoxelCoord(c.map(|v| v * CHUNK_EDGE))
+}
+
+/// Air cells of level `n` of `mips`.
+fn air_cells(mips: &ChunkMips, n: usize) -> usize {
+    let e = 64 >> n;
+    (0..e * e * e)
+        .filter(|&i| mips.cell(n, [i % e, i / e % e, i / (e * e)]) == AIR)
+        .count()
+}
+
+#[test]
+fn a_lod_ring_holds_26_mip_only_chunks_that_edits_and_queries_cannot_see() {
+    let world = World::new(&test_table());
+    let mut s = Streamer::new(Arc::new(UniformSource(3)), config(1, 2, 0, 4));
+    s.update(&world, &[at_chunk([0, 0, 0])]);
+    let ev = s.wait_idle(&world);
+    let full = ball([0, 0, 0], 1);
+    let ring: Vec<ChunkCoord> = ball([0, 0, 0], 4)
+        .into_iter()
+        .filter(|c| !full.contains(c))
+        .collect();
+    assert_eq!((full.len(), ring.len()), (7, 26));
+    assert_eq!(world.store().coords(), full);
+    assert_eq!(world.lod_coords(), ring);
+    let lods = ev
+        .loaded
+        .iter()
+        .filter(|(_, t)| *t == Tier::LodOnly)
+        .count();
+    assert_eq!(lods, 26);
+    assert_eq!((s.stats().resident_full, s.stats().resident_lod), (7, 26));
+
+    for &c in &ring {
+        assert_eq!(s.tier(c), Some(Tier::LodOnly));
+        let v = c.min_voxel().0.map(|v| v + 5);
+        assert_eq!(world.material_at(v), None, "{c:?}");
+        let op = EditOp::sphere(centre_of_voxel(v), 2 * FIXED_ONE, Mode::Carve);
+        assert_eq!(world.apply(&op), Err(EditError::NotResident(c)));
+        assert!(world.count_in_box(v, v).is_empty());
+    }
+}
+
+#[test]
+fn a_carved_chunk_demotes_to_its_mips_and_promotes_back_from_persistence() {
+    let world = World::new(&test_table());
+    let mut s = Streamer::new(Arc::new(UniformSource(3)), config(1, 2, 0, 4));
+    s.update(&world, &[at_chunk([0, 0, 0])]);
+    s.wait_idle(&world);
+    let carved = ChunkCoord([1, 0, 0]);
+    let r = world
+        .apply(&EditOp::sphere(
+            centre_of_voxel([96, 32, 32]),
+            10 * FIXED_ONE,
+            Mode::Carve,
+        ))
+        .unwrap();
+    assert_eq!(r.changed_from, [(3, 4169)]);
+    assert_eq!(r.touched, [carved]);
+    let after_carve = chunks_hash(&world, &[carved]);
+
+    // Squared distance 4 from [-1, 0, 0]: past r_full = 1, within r_lod = 2.
+    s.update(&world, &[at_chunk([-1, 0, 0])]);
+    let ev = s.wait_idle(&world);
+    assert!(ev.demoted.contains(&carved), "{:?}", ev.demoted);
+    assert_eq!(s.tier(carved), Some(Tier::LodOnly));
+    assert!(!world.store().contains(carved));
+    assert!(s.is_persisted(carved));
+    let mips = world.lod(carved).expect("demoted to its mips");
+    assert_eq!(
+        (
+            air_cells(&mips, 1),
+            air_cells(&mips, 2),
+            air_cells(&mips, 3)
+        ),
+        (410, 32, 0)
+    );
+
+    s.update(&world, &[at_chunk([0, 0, 0])]);
+    let ev = s.wait_idle(&world);
+    assert!(ev.loaded.contains(&(carved, Tier::Full)));
+    assert_eq!(s.tier(carved), Some(Tier::Full));
+    assert!(world.lod(carved).is_none());
+    assert!(!s.is_persisted(carved));
+    assert_eq!(chunks_hash(&world, &[carved]), after_carve);
+}

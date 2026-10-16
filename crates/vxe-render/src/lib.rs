@@ -15,7 +15,7 @@ pub mod readback;
 pub use camera::Camera;
 pub use gpu_world::{GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncStats, Window};
 pub use light::LightParams;
-pub use marcher::{MarchTimer, Marcher};
+pub use marcher::{LodParams, MarchTimer, Marcher};
 pub use present::Presenter;
 pub use {glam, wgpu};
 

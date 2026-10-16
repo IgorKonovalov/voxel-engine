@@ -32,7 +32,12 @@ pub struct Params {
     pub flags: u32,
     /// Pool slots per shard: slot `s` is slot `s % n` of shard `s / n`.
     pub slots_per_shard: u32,
-    pub _pad4: [u32; 3],
+    /// The mip level every LOD-only chunk is walked at, 1 to 3; 0 picks it by distance.
+    pub forced_level: u32,
+    /// A LOD-only chunk within this squared chunk distance of the camera chunk is walked at
+    /// level 1, within `lod2_r2` at level 2, and farther at level 3.
+    pub lod1_r2: i32,
+    pub lod2_r2: i32,
 }
 
 /// `Params::flags` bit: trace the shadow ray.
@@ -40,11 +45,32 @@ pub const FLAG_SHADOWS: u32 = 1;
 /// `Params::flags` bit: skip empty blocks through the brick occupancy masks.
 pub const FLAG_MASKS: u32 = 2;
 
+/// How the marcher picks the mip level of a LOD-only chunk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LodParams {
+    /// The streamer's full-detail radius in chunks. A LOD-only chunk within squared chunk
+    /// distance `(2 r_full)^2` of the camera chunk is walked at level 1, within
+    /// `(4 r_full)^2` at level 2, and farther at level 3.
+    pub r_full: i32,
+    /// Walks every LOD-only chunk at this level instead (1 to 3), for tests.
+    pub forced_level: Option<u32>,
+}
+
+impl Default for LodParams {
+    fn default() -> Self {
+        Self {
+            r_full: 16,
+            forced_level: None,
+        }
+    }
+}
+
 pub struct Marcher {
     pipeline: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
     params: wgpu::Buffer,
     target: wgpu::Texture,
+    lod: LodParams,
 }
 
 impl Marcher {
@@ -121,7 +147,17 @@ impl Marcher {
             layout,
             params,
             target: create_target(device, width, height),
+            lod: LodParams::default(),
         }
+    }
+
+    /// Sets how LOD-only chunks pick their mip level.
+    pub fn set_lod(&mut self, lod: LodParams) {
+        self.lod = lod;
+    }
+
+    pub fn lod(&self) -> LodParams {
+        self.lod
     }
 
     pub fn target(&self) -> &wgpu::Texture {
@@ -157,6 +193,9 @@ impl Marcher {
             flags: if light.shadows { FLAG_SHADOWS } else { 0 }
                 | if light.masks { FLAG_MASKS } else { 0 },
             slots_per_shard: world.shard_layout().slots_per_shard,
+            forced_level: self.lod.forced_level.unwrap_or(0),
+            lod1_r2: (2 * self.lod.r_full).pow(2),
+            lod2_r2: (4 * self.lod.r_full).pow(2),
             ..Params::default()
         }
     }
