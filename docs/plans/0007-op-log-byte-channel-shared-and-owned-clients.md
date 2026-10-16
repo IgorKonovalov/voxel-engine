@@ -349,8 +349,8 @@ component and pass `Host` across the boundary as imports.
 
 | Phase | Owner | Status | Notes |
 |---|---|---|---|
-| 1: OpLog, InputLog, wire encoding, replay | dev | done | committed with this row; op-log FNV-1a 64 of the vector (1446 bytes) blessed on Linux x86_64 as `0x5ac8_737d_db0f_ccec` |
-| 2: Server, shared client, direct submission | dev | not started | |
+| 1: OpLog, InputLog, wire encoding, replay | dev | done | d77ef85; op-log FNV-1a 64 of the vector (1446 bytes) blessed on Linux x86_64 as `0x5ac8_737d_db0f_ccec` |
+| 2: Server, shared client, direct submission | dev | done | committed with this row |
 | 3: The logic boundary and re-simulation | dev | not started | |
 | 4: Owned client and desync detection | dev | not started | |
 | 5: Save, replay, fly-through on the split | dev | not started | |
@@ -361,3 +361,10 @@ component and pass `Host` across the boundary as imports.
 - Phase 1: `WireError` has two variants beyond Data shapes: `Trailing { at }` (bytes after the last entry a log file's header counts, or after a message) and `Io(ErrorKind)` (from `LogFile::read_from`). An unknown mode, shape, error or aabb-presence tag also decodes as `UnknownKind(k)`.
 - Phase 1: `OpLog::record(tick, seq, op)` added beside `push`, for a server whose seqs have gaps (refused ops take a seq and are not logged); it panics on a seq that does not ascend. `Op::apply(&World)` added.
 - Phase 1: the mode and shape tags are 1, 2, 3 (`MODE_CARVE`/`FILL`/`REPLACE`, `SHAPE_SPHERE`/`BOX`/`CAPSULE`), so tag 0 is never valid; `ERROR_NOT_RESIDENT` is 1.
+- Phase 2: `crates/vxe-net/tests/support/mod.rs` was created here (Files touched lists it under Phase 3); it holds `solid3_world`, `SplitMix64` and the seeded 1 m carve centres the two-thread test uses.
+- Phase 2: the message tags (`MSG_APPLIED` = 1, `MSG_REFUSED` = 2, `MSG_EVENT` = 3, `MSG_INPUT` = 4) are named constants in `crates/vxe-net/src/message.rs`, not `wire.rs`; `EditResult` and `EditError` encodings are in `vxe_world::wire`.
+- Phase 2: an `Event` message's payload length is a `u32` (an `Input`'s is the `u16` the plan names): 1 + 8 + 4 + `n` bytes.
+- Phase 2: `Logic: Send`, and the server keeps its logic in a `Mutex` reached only through `get_mut`, so `Server` is `Sync` for threads calling `submit(&self)`. `Endpoint` keeps its receiver in a `Mutex` for the same reason.
+- Phase 2: an empty `TickOutput::broadcast` sends no `Event` (the four-event assertion with `NoLogic` depends on it). Bytes a client or server receives that do not decode, or that carry a message addressed the other way, are dropped.
+- Phase 2: `TickReport::tick` is the tick that ran (0 for the first `tick()`); `Server::current_tick()` returns the next one (1 after it). `Server` also exposes `world()`, `ops()` and `inputs()`; `Client` exposes `world()` and `shared_world()`.
+- Phase 2: `ClientWorld::Owned` holds a `Box<World>` (clippy `large_enum_variant` under `-D warnings`).

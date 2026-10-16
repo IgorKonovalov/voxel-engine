@@ -1941,6 +1941,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vxe-net"
+version = "0.5.0"
+dependencies = [
+ "vxe-world",
+]
+
+[[package]]
 name = "vxe-render"
 version = "0.5.0"
 dependencies = [
