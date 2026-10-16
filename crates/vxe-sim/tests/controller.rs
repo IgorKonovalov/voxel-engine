@@ -247,7 +247,7 @@ fn a_move_past_a_corner_never_steps_without_rising() {
     let wish = [30, -120];
     let s = sweep(&world, &body_at(start), Fixed3([wish[0], wish[1], 0]));
     assert_eq!(s.iterations, MAX_SWEEP_ITERATIONS);
-    assert_eq!(s.moved, Fixed3([12, -88, 0]));
+    assert_eq!(s.moved, Fixed3([12, -89, 0]));
     assert!(s.contact.is_some_and(|c| c.is_wall()));
     let (r, st) = one_tick(&world, start, wish);
     assert!(r.stepped);

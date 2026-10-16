@@ -241,3 +241,32 @@ fn an_oblique_move_away_from_a_box_one_unit_off_spends_its_delta() {
         Some([20, 20])
     );
 }
+
+/// Short moves at every angle toward the pillar, from 1 to 24 units off its face and off its
+/// edge: the sweep never ends inside it. With `|remaining|` rounded down, a remainder longer
+/// than the gap by under one unit passed for the gap and was taken whole: on the seed-1 level
+/// a remainder of `(-4, -10)` (10.77 units) against a gap of 10 ended inside a voxel.
+#[test]
+fn a_short_move_never_ends_inside_a_box() {
+    let w = pillar();
+    let mut ends = 0;
+    for gap in 1..=24i64 {
+        let k = isqrt(((RADIUS + gap) * (RADIUS + gap) / 2) as u128) as i64 + 1;
+        for axis in [[5120 - RADIUS - gap, 5248], [5120 - k, 5120 - k]] {
+            let b = body_at([axis[0], axis[1], 0]);
+            assert!(!overlaps(&w, &b));
+            for dx in -24..=24 {
+                for dy in -24..=24 {
+                    let s = sweep(&w, &b, Fixed3([dx, dy, 0]));
+                    let f = [axis[0] + s.moved.0[0], axis[1] + s.moved.0[1], 0];
+                    assert!(
+                        !overlaps(&w, &body_at(f)),
+                        "gap {gap} from {axis:?} by {dx}, {dy}"
+                    );
+                    ends += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(ends, 24 * 2 * 49 * 49);
+}

@@ -96,8 +96,9 @@ pub fn overlaps(world: &World, body: &Body) -> bool {
 /// Moves `body` along `delta` until it touches a solid box, by conservative advancement.
 ///
 /// Each iteration takes `g`, the floor of the root of the smallest squared distance to a
-/// solid box in the region swept along the remaining delta, and advances by
-/// `min(g, |remaining|)` along the delta, every component rounded toward zero. Boxes the
+/// solid box in the region swept along the remaining delta, and advances by the whole
+/// remainder when `g² >= |remaining|²`, else by `g` along it (scaled by `|remaining|` rounded
+/// up, every component rounded toward zero), so no advance is longer than `g`. Boxes the
 /// remaining delta does not close on (it runs along or away from them) are left out of `g`.
 /// It stops on `g == 0` (that box is the contact), when an advance would overlap a box (that
 /// box is the contact; the advance is not taken), when the delta is spent (no contact), when
@@ -144,10 +145,19 @@ pub fn sweep_with_stats(world: &World, body: &Body, delta: Fixed3) -> (Sweep, Qu
             break;
         }
         let r = rem.map(i128::from);
-        let len = isqrt((r[0] * r[0] + r[1] * r[1] + r[2] * r[2]) as u128) as i128;
-        let step = g.min(len);
-        // `/` on integers rounds toward zero.
-        let adv = r.map(|c| (c * step / len) as i64);
+        let rr = r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
+        // The whole remainder when it is no longer than `g`; else `g` along it, scaled by the
+        // root of `|rem|²` rounded up, so the advance is never longer than `g`. With the
+        // root rounded down, a remainder up to one unit longer than `g` passed for `g` and
+        // was taken whole, ending inside the box.
+        let adv = if g * g >= rr {
+            rem
+        } else {
+            let len = isqrt(rr as u128) as i128;
+            let len = if len * len < rr { len + 1 } else { len };
+            // `/` on integers rounds toward zero.
+            r.map(|c| (c * g / len) as i64)
+        };
         if adv == [0; 3] {
             out.contact = Some(contact);
             break;
