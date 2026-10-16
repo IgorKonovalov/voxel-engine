@@ -75,8 +75,9 @@ Laptop GPU; taken while the machine's 1-minute load read between 3 and 5):** fac
 1.877 ms (1.826 to 1.859 ms without `--look`, so without attribute pages), face with detail
 1.976 to 1.995 ms, `Trilinear8` 2.874 to 2.907 ms (with detail 3.020 to 3.051), `Gradient27`
 4.564 to 4.612 ms (with detail 4.583 to 4.675), `Contour` 1.927 to 1.944 ms (with detail
-2.068 to 2.069). The march pass includes the headlamp's shadow ray. No mode is chosen yet; the
-surface ADR records the choice.
+2.068 to 2.069). The march pass includes the headlamp's shadow ray. ADR-0011 chooses `Contour`
+with detail; on the baseline (about two to three times slower) the level's contour reading
+projects to roughly 3.9 to 5.8 ms against the 3.0 ms line, a projection, not a reading.
 
 No frame may stall on paging: work attributable to streaming on the render thread is capped at
 the streaming line above; the rest runs on background threads.
@@ -152,7 +153,8 @@ rows at 37b22fa. Streamed (`flythrough --autopilot --headless --look contour`, 3
 16, r_lod 24, h 1, 15 workers): at full residency 3 309 723 820 B live and 4 103 413 164 B
 allocated, over the 3 GB line, against Plan 0002's 1 675 304 748 B allocated in face mode; the
 run then stopped in its outbound flight on `wgpu error: Out of Memory` on the 8 GiB card, so
-no peak was read.
+no peak was read. A recorded miss: ADR-0011 keeps contour planes, and fitting this footprint
+under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2).
 
 ## 4. Edits
 
