@@ -253,6 +253,7 @@ impl World {
                 }
             }
             if chunk_changed {
+                chunk.mark_edited();
                 touched.push(coord);
             }
         }

@@ -507,8 +507,8 @@ late is acceptable; a hole near the camera is not, and the unready-near counter 
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Streamer skeleton, full tier only | dev | done | committed with this row |
-| 2: Edited-chunk persistence and disk spill | dev | not started | |
+| 1: Streamer skeleton, full tier only | dev | done | ac973d2 |
+| 2: Edited-chunk persistence and disk spill | dev | done | committed with this row |
 | 3: Mirror window, dirty-chunk set, budgeted batched upload | dev | not started | |
 | 4: Per-chunk 8-bit palette, wide fallback | dev | not started | |
 | 5: Brick pool sharded over four bindings | dev | not started | |
@@ -530,6 +530,16 @@ each. Empty is fine.)_
   streamer and the lock tests.
 - Phase 1: an extra test, `the_store_write_lock_never_sees_half_an_op`, checks that `apply`
   keeps the map lock through its writes; it fails when the lock is dropped before the writes.
+- Phase 2: public additions beyond the data shapes: `StreamStats` fields `restored_chunks`,
+  `persisted_ram_chunks`, `persisted_ram_bytes`, `spilled_chunks`; `Streamer::is_persisted`;
+  `encode_spill`, `decode_spill` and `SPILL_VERSION` (used by the round-trip test).
+- Phase 2: `PersistConfig::default()` is a 1 GiB RAM cap, no spill directory, key 0.
+- Phase 2: a chunk whose spill read fails is never queued again by that streamer; its file
+  stays in the directory.
+- Phase 2: the racing test runs 20 rounds of 100 ops; each round starts settled at one focus
+  and moves the focus after its 50th op, so the second half races eviction or loading.
+- Phase 2: outside Files touched, `crates/vxe-world/tests/stream.rs` gains the new
+  `StreamConfig::persist` field.
 
 ### Close triggers
 

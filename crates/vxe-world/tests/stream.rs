@@ -19,6 +19,7 @@ fn config(r_full: i32, r_lod: i32, hysteresis: i32, workers: usize) -> StreamCon
             hysteresis,
         },
         workers,
+        persist: PersistConfig::default(),
     }
 }
 

@@ -12,6 +12,9 @@ pub struct Chunk {
     bricks: [Brick; CHUNK_BRICKS],
     /// Bit `s` set: slot `s` changed since the mirror last cleared it.
     dirty: [u64; CHUNK_BRICKS / 64],
+    /// Set by any edit that changed a voxel, never cleared: an evicted edited chunk is
+    /// persisted instead of dropped (ADR-0003).
+    edited: bool,
 }
 
 impl Default for Chunk {
@@ -27,6 +30,7 @@ impl Chunk {
         Self {
             bricks: std::array::from_fn(|_| Brick::Uniform(m)),
             dirty: [u64::MAX; CHUNK_BRICKS / 64],
+            edited: false,
         }
     }
 
@@ -69,5 +73,19 @@ impl Chunk {
     /// Clears every dirty bit; the mirror calls it after copying the dirty slots out.
     pub fn clear_dirty(&mut self) {
         self.dirty = [0; CHUNK_BRICKS / 64];
+    }
+
+    /// Marks every slot dirty, so a chunk coming back into residency is uploaded whole.
+    pub(crate) fn mark_all_dirty(&mut self) {
+        self.dirty = [u64::MAX; CHUNK_BRICKS / 64];
+    }
+
+    /// Whether an edit has ever changed a voxel of this chunk.
+    pub fn is_edited(&self) -> bool {
+        self.edited
+    }
+
+    pub(crate) fn mark_edited(&mut self) {
+        self.edited = true;
     }
 }

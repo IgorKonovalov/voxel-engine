@@ -10,17 +10,24 @@
 //! performs evictions. The queue is ordered by `(d2, coord)`, so the nearest chunks load first
 //! and ties fall to coordinate order. A queued job whose chunk stops being wanted is dropped
 //! at the next rebuild. Nothing here reads a clock: latency is counted in `update` calls.
+//!
+//! An evicted chunk that was ever edited goes to the persistence map (`persist.rs`) and a
+//! load of its coordinate takes it back from there, from RAM or from its spill file, instead
+//! of generating it. A spill file that fails its checks is reported and its chunk stays
+//! non-resident for the streamer's life: an edit is never silently regenerated away.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::AssertUnwindSafe;
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock};
 use std::thread::JoinHandle;
 
 use crate::chunk::Chunk;
 use crate::coords::{ChunkCoord, VoxelCoord};
+use crate::persist::{self, PersistConfig, Persisted, SpillError};
 use crate::source::WorldSource;
-use crate::store::World;
+use crate::store::{World, read};
 
 /// Residency radii in chunks, and the hysteresis applied past each.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,6 +52,7 @@ pub struct StreamConfig {
     pub residency: Residency,
     /// Worker threads; at least one is started.
     pub workers: usize,
+    pub persist: PersistConfig,
 }
 
 /// The tier a chunk is resident in.
@@ -54,6 +62,14 @@ pub enum Tier {
     Full,
 }
 
+/// A failure the streamer reports instead of acting on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StreamError {
+    /// Writing or reading `coord`'s spill file failed. On a failed write the chunk stays in
+    /// RAM; on a failed read it stays non-resident and the file is left in place.
+    Spill { coord: ChunkCoord, kind: SpillError },
+}
+
 /// What one `poll` (or `wait_idle`) changed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StreamEvents {
@@ -61,6 +77,7 @@ pub struct StreamEvents {
     pub loaded: Vec<(ChunkCoord, Tier)>,
     /// Chunks removed from residency.
     pub evicted: Vec<ChunkCoord>,
+    pub errors: Vec<StreamError>,
     /// For each chunk in `loaded` as `Full`, the `update` calls between the one that first
     /// wanted it and its insertion.
     pub latency_ticks: Vec<u32>,
@@ -70,11 +87,12 @@ impl StreamEvents {
     fn append(&mut self, mut other: StreamEvents) {
         self.loaded.append(&mut other.loaded);
         self.evicted.append(&mut other.evicted);
+        self.errors.append(&mut other.errors);
         self.latency_ticks.append(&mut other.latency_ticks);
     }
 
     pub fn is_empty(&self) -> bool {
-        self.loaded.is_empty() && self.evicted.is_empty()
+        self.loaded.is_empty() && self.evicted.is_empty() && self.errors.is_empty()
     }
 }
 
@@ -86,10 +104,19 @@ pub struct StreamStats {
     pub resident_full: usize,
     /// Jobs queued and not yet taken by a worker.
     pub queued: usize,
-    /// Jobs queued or running.
+    /// Load jobs queued or running.
     pub in_flight: usize,
     /// Chunks generated from the source over the streamer's life.
     pub generated_chunks: u64,
+    /// Chunks taken back from persistence over the streamer's life.
+    pub restored_chunks: u64,
+    /// Persisted chunks held in RAM, and their bytes.
+    pub persisted_ram_chunks: usize,
+    pub persisted_ram_bytes: u64,
+    /// Persisted chunks held in spill files.
+    pub spilled_chunks: usize,
+    /// Persisted RAM exceeds `PersistConfig::ram_cap_bytes`.
+    pub persist_over_cap: bool,
 }
 
 /// A job's queue key: smaller runs first.
@@ -103,10 +130,30 @@ struct Job {
     key: Key,
 }
 
+/// Write `coord`'s RAM entry of sequence number `seq` to a spill file.
+struct SpillJob {
+    coord: ChunkCoord,
+    seq: u64,
+}
+
 enum Done {
-    Loaded {
+    /// Generated from the source.
+    Generated {
         coord: ChunkCoord,
         chunk: Box<Chunk>,
+    },
+    /// Taken back from persistence.
+    Restored {
+        coord: ChunkCoord,
+        chunk: Arc<RwLock<Chunk>>,
+    },
+    LoadFailed {
+        coord: ChunkCoord,
+        kind: SpillError,
+    },
+    Spilled {
+        coord: ChunkCoord,
+        result: Result<(), SpillError>,
     },
     Panicked(Box<dyn std::any::Any + Send>),
 }
@@ -115,12 +162,17 @@ enum Done {
 struct Queue {
     /// Sorted descending by key, so `pop` takes the nearest.
     jobs: Vec<Job>,
+    /// Spill writes, taken before any load.
+    io: VecDeque<SpillJob>,
     shutdown: bool,
 }
 
 struct Shared {
     queue: Mutex<Queue>,
     wake: Condvar,
+    persisted: Mutex<Persisted>,
+    spill_dir: Option<PathBuf>,
+    world_key: u64,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -137,12 +189,18 @@ pub struct Streamer {
     /// Set when the focus chunks change; the next `poll` sweeps residency for evictions.
     sweep: bool,
     resident: HashMap<ChunkCoord, Tier>,
-    /// Chunks with a job queued or running.
+    /// Chunks with a load job queued or running.
     in_flight: HashSet<ChunkCoord>,
+    /// Chunks with a spill write queued or running.
+    spilling: HashSet<ChunkCoord>,
+    /// Chunks whose spill write or read failed: not spilled, or not loaded, again.
+    spill_failed: HashSet<ChunkCoord>,
+    load_failed: HashSet<ChunkCoord>,
     /// The tick at which each chunk with a job was first wanted.
     wanted_since: HashMap<ChunkCoord, u64>,
     tick: u64,
     generated: u64,
+    restored: u64,
 }
 
 impl Streamer {
@@ -151,6 +209,9 @@ impl Streamer {
         let shared = Arc::new(Shared {
             queue: Mutex::new(Queue::default()),
             wake: Condvar::new(),
+            persisted: Mutex::new(Persisted::default()),
+            spill_dir: cfg.persist.spill_dir.clone(),
+            world_key: cfg.persist.world_key,
         });
         let (tx, results) = mpsc::channel();
         let workers = (0..cfg.workers.max(1))
@@ -170,9 +231,13 @@ impl Streamer {
             sweep: false,
             resident: HashMap::new(),
             in_flight: HashSet::new(),
+            spilling: HashSet::new(),
+            spill_failed: HashSet::new(),
+            load_failed: HashSet::new(),
             wanted_since: HashMap::new(),
             tick: 0,
             generated: 0,
+            restored: 0,
         }
     }
 
@@ -246,7 +311,10 @@ impl Streamer {
         let mut still_wanted = HashSet::new();
         for key in wanted {
             still_wanted.insert(key.coord);
-            if self.resident.contains_key(&key.coord) || self.in_flight.contains(&key.coord) {
+            if self.resident.contains_key(&key.coord)
+                || self.in_flight.contains(&key.coord)
+                || self.load_failed.contains(&key.coord)
+            {
                 continue;
             }
             self.wanted_since.entry(key.coord).or_insert(self.tick);
@@ -274,7 +342,7 @@ impl Streamer {
     /// changed meanwhile. For tests and startup.
     pub fn wait_idle(&mut self, world: &World) -> StreamEvents {
         let mut events = self.poll(world);
-        while !self.in_flight.is_empty() {
+        while !self.in_flight.is_empty() || !self.spilling.is_empty() {
             let Ok(d) = self.results.recv() else {
                 break;
             };
@@ -290,25 +358,49 @@ impl Streamer {
     fn apply(&mut self, world: &World, done: Vec<Done>) -> StreamEvents {
         let mut ev = StreamEvents::default();
         let keep2 = self.cfg.residency.keep_full2();
-        let mut inserts = Vec::new();
+        let mut inserts: Vec<(ChunkCoord, Arc<RwLock<Chunk>>)> = Vec::new();
         for d in done {
-            match d {
-                Done::Loaded { coord, chunk } => {
-                    self.in_flight.remove(&coord);
+            let (coord, chunk) = match d {
+                Done::Generated { coord, chunk } => {
                     self.generated += 1;
-                    let since = self.wanted_since.remove(&coord);
-                    // A chunk that left the keep radius while it was generated is dropped.
-                    if self.d2(coord) > keep2 {
-                        continue;
+                    (coord, Arc::new(RwLock::new(*chunk)))
+                }
+                Done::Restored { coord, chunk } => {
+                    self.restored += 1;
+                    (coord, chunk)
+                }
+                Done::LoadFailed { coord, kind } => {
+                    self.in_flight.remove(&coord);
+                    self.wanted_since.remove(&coord);
+                    self.load_failed.insert(coord);
+                    ev.errors.push(StreamError::Spill { coord, kind });
+                    continue;
+                }
+                Done::Spilled { coord, result } => {
+                    self.spilling.remove(&coord);
+                    if let Err(kind) = result {
+                        self.spill_failed.insert(coord);
+                        ev.errors.push(StreamError::Spill { coord, kind });
                     }
-                    inserts.push((coord, *chunk));
-                    ev.loaded.push((coord, Tier::Full));
-                    let since = since.unwrap_or(self.tick);
-                    ev.latency_ticks
-                        .push(u32::try_from(self.tick - since).unwrap_or(u32::MAX));
+                    continue;
                 }
                 Done::Panicked(e) => std::panic::resume_unwind(e),
+            };
+            self.in_flight.remove(&coord);
+            let since = self.wanted_since.remove(&coord);
+            // A chunk that left the keep radius while it was loaded is dropped, or goes back
+            // to persistence if it holds edits.
+            if self.d2(coord) > keep2 {
+                if read(&chunk).is_edited() {
+                    lock(&self.shared.persisted).insert(coord, chunk);
+                }
+                continue;
             }
+            inserts.push((coord, chunk));
+            ev.loaded.push((coord, Tier::Full));
+            let since = since.unwrap_or(self.tick);
+            ev.latency_ticks
+                .push(u32::try_from(self.tick - since).unwrap_or(u32::MAX));
         }
         let mut evict = Vec::new();
         if self.sweep {
@@ -321,34 +413,94 @@ impl Streamer {
                 .collect();
             evict.sort_unstable();
         }
+        let mut removed = Vec::new();
         if !inserts.is_empty() || !evict.is_empty() {
             let mut map = world.store.write_lock();
             for (coord, chunk) in inserts {
-                map.insert(coord, Arc::new(RwLock::new(chunk)));
+                map.insert(coord, chunk);
                 self.resident.insert(coord, Tier::Full);
             }
             for &coord in &evict {
-                map.remove(coord);
+                if let Some(chunk) = map.remove(coord) {
+                    removed.push((coord, chunk));
+                }
                 self.resident.remove(&coord);
             }
+        }
+        // Outside the map lock: persisting reads each chunk's flag under its own lock.
+        let mut persisted = lock(&self.shared.persisted);
+        for (coord, chunk) in removed {
+            if read(&chunk).is_edited() {
+                persisted.insert(coord, chunk);
+            }
+        }
+        let spills = self.spills_due(&persisted);
+        drop(persisted);
+        if !spills.is_empty() {
+            let mut q = lock(&self.shared.queue);
+            for job in spills {
+                self.spilling.insert(job.coord);
+                q.io.push_back(job);
+            }
+            drop(q);
+            self.shared.wake.notify_all();
         }
         ev.evicted = evict;
         ev
     }
 
+    /// Spill writes that bring persisted RAM under the cap, oldest entries first, skipping
+    /// entries already being written or whose write failed.
+    fn spills_due(&self, p: &Persisted) -> Vec<SpillJob> {
+        let mut jobs = Vec::new();
+        if self.shared.spill_dir.is_none() {
+            return jobs;
+        }
+        let cap = self.cfg.persist.ram_cap_bytes;
+        let mut bytes: u64 = p
+            .ram
+            .iter()
+            .filter(|(c, _)| !self.spilling.contains(c))
+            .map(|(_, e)| e.bytes)
+            .sum();
+        for (&seq, &coord) in &p.by_seq {
+            if bytes <= cap {
+                break;
+            }
+            if self.spilling.contains(&coord) || self.spill_failed.contains(&coord) {
+                continue;
+            }
+            bytes -= p.ram[&coord].bytes;
+            jobs.push(SpillJob { coord, seq });
+        }
+        jobs
+    }
+
     pub fn stats(&self) -> StreamStats {
+        let p = lock(&self.shared.persisted);
         StreamStats {
             ticks: self.tick,
             resident_full: self.resident.len(),
             queued: lock(&self.shared.queue).jobs.len(),
             in_flight: self.in_flight.len(),
             generated_chunks: self.generated,
+            restored_chunks: self.restored,
+            persisted_ram_chunks: p.ram.len(),
+            persisted_ram_bytes: p.ram_bytes,
+            spilled_chunks: p.spilled.len(),
+            persist_over_cap: p.ram_bytes > self.cfg.persist.ram_cap_bytes,
         }
     }
 
     /// The tier `coord` is resident in, if any.
     pub fn tier(&self, coord: ChunkCoord) -> Option<Tier> {
         self.resident.get(&coord).copied()
+    }
+
+    /// Whether `coord` is held by persistence, in RAM or in a spill file.
+    pub fn is_persisted(&self, coord: ChunkCoord) -> bool {
+        let p = lock(&self.shared.persisted);
+        p.ram.contains_key(&coord) || p.spilled.contains_key(&coord)
     }
 }
 
@@ -368,33 +520,119 @@ fn d2(a: ChunkCoord, b: ChunkCoord) -> i64 {
         .sum()
 }
 
+enum Work {
+    Load(ChunkCoord),
+    Spill(SpillJob),
+}
+
 fn worker<S: WorldSource + ?Sized>(shared: &Shared, source: &S, tx: &Sender<Done>) {
     loop {
-        let job = {
+        let work = {
             let mut q = lock(&shared.queue);
             loop {
                 if q.shutdown {
                     return;
                 }
+                if let Some(job) = q.io.pop_front() {
+                    break Work::Spill(job);
+                }
                 if let Some(job) = q.jobs.pop() {
-                    break job;
+                    break Work::Load(job.key.coord);
                 }
                 q = shared.wake.wait(q).unwrap_or_else(PoisonError::into_inner);
             }
         };
-        let coord = job.key.coord;
-        let r = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            let mut chunk = Box::<Chunk>::default();
-            source.chunk(coord, &mut chunk);
-            chunk
+        let r = std::panic::catch_unwind(AssertUnwindSafe(|| match work {
+            Work::Load(coord) => load(shared, source, coord),
+            Work::Spill(job) => spill(shared, job),
         }));
-        let done = match r {
-            Ok(chunk) => Done::Loaded { coord, chunk },
-            Err(e) => Done::Panicked(e),
-        };
+        let done = r.unwrap_or_else(Done::Panicked);
         if tx.send(done).is_err() {
             return;
         }
+    }
+}
+
+/// Loads `coord` from persistence if it is there, else from the source.
+fn load<S: WorldSource + ?Sized>(shared: &Shared, source: &S, coord: ChunkCoord) -> Done {
+    let file = {
+        let mut p = lock(&shared.persisted);
+        if let Some(e) = p.take(coord) {
+            crate::store::write(&e.chunk).mark_all_dirty();
+            return Done::Restored {
+                coord,
+                chunk: e.chunk,
+            };
+        }
+        p.spilled.get(&coord).cloned()
+    };
+    if let Some(path) = file {
+        let decoded = std::fs::read(&path)
+            .map_err(|_| SpillError::Io)
+            .and_then(|bytes| persist::decode_spill(&bytes, shared.world_key));
+        return match decoded {
+            Ok((c, chunk)) if c == coord => {
+                lock(&shared.persisted).spilled.remove(&coord);
+                // The chunk is restored either way; a file left behind is only disk.
+                let _ = std::fs::remove_file(&path);
+                Done::Restored {
+                    coord,
+                    chunk: Arc::new(RwLock::new(chunk)),
+                }
+            }
+            Ok(_) => Done::LoadFailed {
+                coord,
+                kind: SpillError::Corrupt,
+            },
+            Err(kind) => Done::LoadFailed { coord, kind },
+        };
+    }
+    let mut chunk = Box::<Chunk>::default();
+    source.chunk(coord, &mut chunk);
+    Done::Generated { coord, chunk }
+}
+
+/// Writes a RAM entry to its spill file, then drops it from RAM if it is still the same
+/// entry. An entry a load took back meanwhile keeps no file.
+fn spill(shared: &Shared, job: SpillJob) -> Done {
+    let SpillJob { coord, seq } = job;
+    let Some(dir) = &shared.spill_dir else {
+        return Done::Spilled {
+            coord,
+            result: Ok(()),
+        };
+    };
+    let chunk = {
+        let p = lock(&shared.persisted);
+        match p.ram.get(&coord) {
+            Some(e) if e.seq == seq => e.chunk.clone(),
+            _ => {
+                return Done::Spilled {
+                    coord,
+                    result: Ok(()),
+                };
+            }
+        }
+    };
+    let bytes = persist::encode_spill(coord, &read(&chunk), shared.world_key);
+    let path = persist::spill_path(dir, coord, seq);
+    if let Err(kind) = persist::write_file(&path, &bytes) {
+        return Done::Spilled {
+            coord,
+            result: Err(kind),
+        };
+    }
+    let mut p = lock(&shared.persisted);
+    if p.ram.get(&coord).is_some_and(|e| e.seq == seq) {
+        p.take(coord);
+        p.spilled.insert(coord, path);
+    } else {
+        drop(p);
+        let _ = std::fs::remove_file(&path);
+    }
+    Done::Spilled {
+        coord,
+        result: Ok(()),
     }
 }
 
@@ -413,6 +651,7 @@ mod tests {
                     hysteresis: 1,
                 },
                 workers: 1,
+                persist: PersistConfig::default(),
             },
         )
     }
