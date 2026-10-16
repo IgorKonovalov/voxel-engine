@@ -326,3 +326,68 @@ fn an_oblique_walk_slides_along_a_voxel_staircase_wall() {
     }
     assert_eq!(foot(&steps, 120), [12424, 1862, 0]);
 }
+
+/// A ledge 1 m tall (`x >= 30`, `z < 10`) with a ceiling at `z >= ceiling`.
+fn ledge(ceiling: i32) -> World {
+    world(move |[x, _, z]| z < 0 || (x >= 30 && z < 10) || z >= ceiling)
+}
+
+/// With climb held, a wish 30 degrees off head-on into a 1 m ledge climbs it. The probe used
+/// to run only when the slides left the body blocked, and a wish at any angle slides along
+/// the ledge's face, so no climb began unless the wish was exactly head-on.
+#[test]
+fn a_ledge_met_30_degrees_off_head_on_is_climbed_with_climb_held() {
+    let steps = run(&ledge(1000), S, 120, |_| MoveInput {
+        wish: [111, 64],
+        jump: true,
+        climb: true,
+    });
+    let began = ticks_where(&steps, |s| s.s.is_climbing());
+    assert!(!began.is_empty(), "no climb began");
+    assert!(ticks_where(&steps, |s| s.r.blocked).is_empty());
+    let climbed = ticks_where(&steps, |s| s.r.climbed);
+    assert_eq!(climbed.len(), 1);
+    // `jump` is held too, as the fly-through's `Space` sends it: the body hops on the ledge
+    // top after the climb and lands back on it.
+    let t = climbed[0] as usize;
+    assert!(steps[t - 1].s.foot.0[0] >= 30 * 256 - RADIUS);
+    assert!(steps[t - 1..].iter().all(|s| s.s.foot.0[2] >= 2560));
+    assert!(
+        steps[t..]
+            .iter()
+            .any(|s| s.r.landed.is_some() && s.s.foot.0[2] == 2560)
+    );
+
+    // Without climb held, the same wish slides along the face and never probes.
+    let steps = run(&ledge(1000), S, 120, walk([111, 64]));
+    assert!(
+        steps
+            .iter()
+            .all(|s| s.r.climb_available.is_none() && !s.s.is_climbing())
+    );
+    assert!(steps.iter().all(|s| s.s.foot.0[2] == 0));
+}
+
+/// A ledge under a ceiling 2.9 m up leaves 1.9 m over the 1 m ledge, room for the 1.8 m body;
+/// the probe used to demand a full `climb_height` (1.2 m) of rise above the body's head and
+/// refused it. Under a ceiling 2.7 m up (1.7 m over the ledge) the body does not fit and no
+/// climb is offered.
+#[test]
+fn a_ledge_under_a_low_ceiling_is_climbed_when_the_body_fits_over_it() {
+    let steps = run(&ledge(29), S, 120, climb_held(WISH, u32::MAX));
+    let st = &steps[33];
+    assert!(st.r.blocked);
+    assert_eq!(st.r.climb_available, Some(Fixed3([7680, 2688, 2560])));
+    assert!(st.s.is_climbing(), "climbing begins on tick 34");
+    assert_eq!(ticks_where(&steps, |s| s.r.climbed).len(), 1);
+    assert_eq!(foot(&steps, 120)[2], 2560);
+    assert!(steps[119].s.grounded);
+
+    let steps = run(&ledge(27), S, 120, climb_held(WISH, u32::MAX));
+    assert!(
+        steps
+            .iter()
+            .all(|s| s.r.climb_available.is_none() && !s.s.is_climbing())
+    );
+    assert_eq!(foot(&steps, 120), [6912, 2688, 0]);
+}

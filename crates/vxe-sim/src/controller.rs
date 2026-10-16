@@ -1,9 +1,10 @@
 //! A character controller composed of sweeps in a fixed per-tick order (ADR-0005).
 //!
 //! One tick: a horizontal move by the wish vector, with a step attempt and up to two slides
-//! when a wall blocks it and a probe for a climbable ledge when it stays blocked; then a
-//! vertical move under gravity. Every parameter is in fixed units per tick; the caller owns the
-//! tick rate. A slope is a staircase of voxels and is climbed as steps.
+//! when a wall blocks it, and a probe for a climbable ledge when it stays blocked or, with
+//! climb held, when it ran into a wall within 60 degrees of head-on; then a vertical move
+//! under gravity. Every parameter is in fixed units per tick; the caller owns the tick rate.
+//! A slope is a staircase of voxels and is climbed as steps.
 
 use vxe_world::{Fixed3, World};
 
@@ -86,8 +87,9 @@ pub struct MoveResult {
     /// The horizontal move stepped up onto a rise of more than zero and at most `step_height`.
     pub stepped: bool,
     pub climbed: bool,
-    /// Where the foot would land climbing the ledge the body is blocked by: a floor within
-    /// `(step_height, climb_height]` above the foot.
+    /// Where the foot would land climbing the ledge the body is blocked by, or, with `climb`
+    /// held, the ledge whose wall the wish ran into within 60 degrees of head-on: a floor
+    /// within `(step_height, climb_height]` above the foot.
     pub climb_available: Option<Fixed3>,
     /// The first [`MAX_CONTACTS`] contacts of the tick's sweeps, in sweep order.
     pub contacts: Vec<Contact>,
@@ -133,6 +135,14 @@ fn project_on_wall(w: [i64; 2], n: [i64; 3]) -> [i64; 2] {
         };
         (w[k] - s) as i64
     })
+}
+
+/// Whether `w` runs into the wall whose contact normal is `n` within 60 degrees of head-on:
+/// `w . n < 0` and `4 (w . n)² >= |w|² |n|²` (the cosine is at least one half), in `i128`.
+fn faces(w: [i64; 2], n: [i64; 3]) -> bool {
+    let (w, n) = (w.map(i128::from), [n[0], n[1]].map(i128::from));
+    let dot = w[0] * n[0] + w[1] * n[1];
+    dot < 0 && 4 * dot * dot >= (w[0] * w[0] + w[1] * w[1]) * (n[0] * n[0] + n[1] * n[1])
 }
 
 /// Whether a sweep stopped on a floor contact.
@@ -212,13 +222,17 @@ impl CharacterController {
         [(-x * r / len) as i64, (-y * r / len) as i64]
     }
 
-    /// Sweep a copy up by `climb_height` (fully), into the wall by `radius` (fully), down by
-    /// `climb_height`; the landing foot when that ends on a floor risen by more than
-    /// `step_height` and at most `climb_height`.
+    /// Sweep a copy up by `climb_height` or until a ceiling stops it (it must rise more than
+    /// `step_height`), into the wall by `radius` (fully), and down by as much as it rose; the
+    /// landing foot when that ends on a floor risen by more than `step_height` and at most
+    /// `climb_height`. The rise is not required to be the full `climb_height`: a ledge under a
+    /// ceiling closer than `height + climb_height` above the foot is climbable when the body
+    /// fits over it.
     fn climb_probe(&self, world: &World, foot: [i64; 3], dir: [i64; 2]) -> Option<[i64; 3]> {
         let p = &self.params;
         let up = sweep(world, &self.body(foot), Fixed3([0, 0, p.climb_height]));
-        if up.moved != Fixed3([0, 0, p.climb_height]) {
+        let rose = up.moved.0[2];
+        if rose <= p.step_height {
             return None;
         }
         let f1 = add(foot, up.moved);
@@ -228,7 +242,7 @@ impl CharacterController {
             return None;
         }
         let f2 = add(f1, fw.moved);
-        let down = sweep(world, &self.body(f2), Fixed3([0, 0, -p.climb_height]));
+        let down = sweep(world, &self.body(f2), Fixed3([0, 0, -rose]));
         let f3 = add(f2, down.moved);
         let rise = f3[2] - foot[2];
         (on_floor(&down) && rise > p.step_height && rise <= p.climb_height).then_some(f3)
@@ -277,6 +291,7 @@ impl CharacterController {
         let Some(mut wall) = s.contact.filter(|c| c.is_wall()) else {
             return;
         };
+        let pushed = wall;
         if rem == [0, 0] {
             return;
         }
@@ -307,11 +322,17 @@ impl CharacterController {
                 }
             }
         }
-        if rem == [0, 0] {
+        r.blocked = rem != [0, 0];
+        // A wish that meets a wall obliquely slides along it and is never blocked; with climb
+        // held, the wall it ran into is probed when the wish is within 60 degrees of head-on.
+        let probe_wall = if r.blocked {
+            wall
+        } else if input.climb && faces(wish, pushed.normal) {
+            pushed
+        } else {
             return;
-        }
-        r.blocked = true;
-        let dir = self.wall_direction(wall.normal);
+        };
+        let dir = self.wall_direction(probe_wall.normal);
         r.climb_available = self.climb_probe(world, *foot, dir).map(Fixed3);
         if let Some(landing) = r.climb_available
             && input.climb

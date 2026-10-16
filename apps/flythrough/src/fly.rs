@@ -317,11 +317,52 @@ mod tests {
         assert!(lines.contains(&"walk: grounded"));
     }
 
+    /// The owner's walk check, scripted: in a 1 m deep trench, facing its long wall 30
+    /// degrees off head-on, `W` plus `Space` climbs out. The wish slides along the wall, so
+    /// the climb has to begin without the body being blocked.
+    #[test]
+    fn w_and_space_climb_out_of_a_trench_facing_its_wall_at_an_angle() {
+        use vxe_world::{EditOp, Mode};
+        let world = floor_world();
+        world
+            .apply(&EditOp::box_(
+                Fixed3([-10 * 256, -60 * 256, -10 * 256]),
+                Fixed3([10 * 256, 60 * 256, 0]),
+                Mode::Carve,
+            ))
+            .unwrap();
+        let mut walk = Walk {
+            controller: CharacterController::new(walk_params()),
+            state: CharacterState::new(Fixed3([128, 128, -10 * 256])),
+            pending: 0.0,
+        };
+        let mut cam = Camera {
+            yaw: 30f32.to_radians(),
+            ..camera_at(walk.eye(), 0.0)
+        };
+        let mut input = Input::default();
+        input.key_down(KeyCode::KeyW);
+        input.key_down(KeyCode::Space);
+        let mut lines = Vec::new();
+        for _ in 0..180 {
+            lines.extend(walk.tick(&world, &Walk::input(&input, &cam)));
+            cam.position = walk.eye();
+            if lines.contains(&"walk: climbed") {
+                break;
+            }
+        }
+        assert!(lines.contains(&"walk: climbing"), "{lines:?}");
+        assert!(lines.contains(&"walk: climbed"), "{lines:?}");
+        // `Space` held hops the body off the rim on the tick it climbs out.
+        assert!(walk.state.foot.0[2] >= 0, "out of the trench");
+        assert!(walk.state.foot.0[0] >= 10 * 256 - walk_params().radius);
+    }
+
     /// Random walks on the seed-1 level with `Space` held on a third of them and a carve near
-    /// the body before a quarter of them: after every
-    /// tick the body does not overlap the world, and it never stays put for 30 ticks at a
-    /// pose where no sweep (16 horizontal directions, up, down) moves it. Before the sweep
-    /// left out boxes a move does not close on, the body froze in mid-air beside a voxel edge
+    /// the body before a quarter of them: after every tick the body does not overlap the
+    /// world, it never stays put for 30 ticks at a pose where no sweep (16 horizontal
+    /// directions, up, down) moves it, and some walk climbs a ledge. Before the sweep left
+    /// out boxes a move does not close on, the body froze in mid-air beside a voxel edge
     /// within the first few walks of every seed tried.
     #[test]
     fn random_walks_on_the_level_never_freeze_or_overlap() {
@@ -345,7 +386,7 @@ mod tests {
             })
             .chain([[0, 0, 256], [0, 0, -256]])
             .collect();
-        let (mut still, mut ticks, mut digs) = (0, 0, 0);
+        let (mut still, mut climbs, mut ticks, mut digs) = (0, 0, 0, 0);
         for walk in 0..800 {
             let a = (next() % 3600) as f32 / 3600.0 * std::f32::consts::TAU;
             let wish = [
@@ -378,6 +419,7 @@ mod tests {
                 };
                 let r = c.tick(&world, &mut st, &input);
                 ticks += 1;
+                climbs += u32::from(r.climbed);
                 let f = st.foot.0;
                 assert!(
                     !overlaps(&world, &c.body(f)),
@@ -400,6 +442,7 @@ mod tests {
         }
         assert!(ticks > 40_000);
         assert!(digs > 100, "{digs} carves");
+        assert!(climbs > 0, "no climb in {ticks} ticks");
     }
 
     #[test]
