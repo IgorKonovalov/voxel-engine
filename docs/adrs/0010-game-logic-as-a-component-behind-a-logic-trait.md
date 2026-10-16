@@ -1,0 +1,124 @@
+# ADR-0010: The game's server logic is a component behind a `Logic` trait, developed natively and shipped as WebAssembly; Lua is deferred
+
+> **Status:** proposed
+> **Date:** 2026-10-16
+> **Related plan(s):** [Plan 0007](../plans/0007-op-log-byte-channel-shared-and-owned-clients.md) (the trait and the server loop), [Plan 0011](../plans/0011-wasm-host-for-the-logic-component.md) (the host)
+> **Supersedes:** the founding interview's "WASM for deterministic server logic, Lua for client scripts" (`docs/roadmap.md`, API surface), in the part that concerns what the hosts are for
+
+## Context
+
+The founding interview chose scripting hosts, WebAssembly for server logic and Lua for client
+scripts, without saying what the first script would be. On 2026-10-16 the owner looked at the
+first consumer's draft (`~/Work/voxel-roguelite`) and the systems it will build on
+(`~/Work/recompilcation-project`, a reimplementation-grade specification of Diablo II's item
+creation, monster spawning, level generation and, from ADR-0014 there, combat simulation) and
+decided that the whole of the game's server logic runs as a component.
+
+The facts that make this a decision:
+
+- **The logic is integer and seed-driven.** Every system the recompilation project documents
+  is integer arithmetic on per-thing seeds: the RNG core, the seed tree, treasure classes,
+  quality rolls, affixes, monster pools, packs, combat formulas. Such code is bit-identical in
+  WebAssembly and native alike, so determinism, replays and late join follow from the
+  arithmetic rather than from discipline.
+- **The engine knows no gameplay** (`CLAUDE.md`). Tables, treasure classes, monster families,
+  the consumer's attention and noise models have to live somewhere that is not `crates/`.
+- **Co-op is planned** (consumer note 0004): solo runs an in-process server; co-op replaces
+  the channel. A listen server, a dedicated server, a replay and, later, client-side
+  prediction of digging all want the identical logic.
+- **Debugging inside WebAssembly is poor**, the component model and its toolchain still move,
+  and `wasmtime` is a heavy build. A developer iterating on game rules cannot pay that every
+  run.
+- **Big data must not cross the boundary.** A chunk is 512 KiB at `u16`; the generator runs
+  on a thread pool at over 100 M voxels per second per thread (`nfr.md` §5). A generator
+  inside a single-threaded component would lose both.
+
+## Decision
+
+The game's server logic implements one trait, `Logic`, with `init(host, seed)` and
+`tick(host, tick, inputs) -> output`. The engine's server (`vxe-net`, Plan 0007) drains client
+inputs once per tick, calls `tick`, applies the edits the logic requests through a `Host`
+handle (queries and edits only), logs the inputs and the ops, and announces results and the
+logic's output to clients. Inputs and outputs are opaque bytes the logic defines; the engine
+never decodes them.
+
+The logic crate compiles two ways from one source: **linked natively** behind the trait for
+development, tests and the fly-through, and **as a WebAssembly component** hosted by
+`vxe-script-wasm` (Plan 0011) for shipping, mods and the determinism guarantee. The host is
+configured deterministically: canonical NaNs, no wall clock, no entropy, fuel metering per
+tick. The walking skeleton of the host is the equality of the two: the same logic, native and
+as a component, driven by the same input log, produces the same op-log bytes and the same
+world hash on both CI arms.
+
+Level generation splits: the logic produces a compact level layout (rooms, corridors, vault
+placements, material regions, the indestructible shell) and the engine's parallel generator
+turns the layout into voxels with integer noise. Voxels never cross the boundary; layouts do.
+The layout format is its own plan; Plan 0008's generation-time stamping is its first piece.
+
+Lua is deferred. No consumer needs client-side scripts, and the engine has no UI for them to
+hook. The Lua host gets a plan when a consumer asks.
+
+## Consequences
+
+### Positive
+
+- One artifact runs solo, listen server, dedicated server, replay and, later, prediction.
+- The engine stays gameplay-free by construction: the boundary is queries, edits and bytes.
+- Determinism across platforms, replays from seed plus inputs, and desync diagnosis come from
+  the component's configuration and the logic's integer arithmetic, not from a policy.
+- The native path keeps the everyday loop fast and debuggable; the component path is a CI
+  gate and a shipping format.
+- Mods are components against the same WIT world.
+
+### Negative
+
+- **Two build targets of one crate.** A dependency the logic pulls in must build for both; a
+  crate that reads a clock or spawns threads fails on the component target late.
+- **The host API grows with every engine plan.** Each new query (grid, support, stamp, the
+  controller) is a trait method and a WIT import, amended into the boundary when its plan
+  closes. The boundary is the engine's most visible API and it changes often at first.
+- **Entities cross the boundary every tick.** The logic owns monsters, players, items on the
+  floor and projectiles; the host must receive a compact snapshot of their transforms and
+  models for rendering and replication. That API is defined with M6.
+- **Per-call overhead.** A host import costs tens of nanoseconds in `wasmtime`; a tick with
+  thousands of queries (pathfinding at ARPG counts, which the consumer names as its hardest
+  problem) needs a measurement early, and may need batched query imports.
+- **Toolchain churn and build cost.** `wasmtime` and the component tooling are heavy and
+  moving; the host crate stays out of `default-members`, and the guest target must be
+  installed in CI.
+- **Re-simulation requires a pure logic.** A native logic that reads a clock or an unseeded
+  RNG replays wrongly and nothing stops it but review; the component configuration removes
+  those sources only for shipped logic.
+
+## Alternatives considered
+
+### Alternative A: An engine-owned loop with script hooks (the edit rule)
+
+The engine runs the server loop and calls scripts at hooks: on edit result, on tick, on
+generation. Rejected because a game of this depth needs a hook for every system, the loop
+would become the engine's framework by accretion (against ADR-0001), and the game's own state
+would be split between the engine's loop and the scripts.
+
+### Alternative B: Native logic only
+
+The logic crate behind the trait, linked natively, with determinism by integer discipline, as
+`vxe-world` already does. Rejected not for determinism but for everything else the component
+buys: mods, sandboxing, the identical artifact for prediction, and a guarantee that does not
+depend on review. The native path is kept as the development loop, so this alternative is
+half of the decision rather than a rejection of it.
+
+### Alternative C: Lua for server logic
+
+One runtime for both sides. Rejected because Lua's number model is floating point, its
+performance on table-heavy integer systems is a fraction of compiled code, and it offers no
+memory sandbox or fuel accounting without a custom build.
+
+### Alternative D: Generation inside the component
+
+The component implements `WorldSource` and fills chunks over the boundary. Rejected for the
+boundary cost (half a megabyte per chunk) and the loss of the thread pool; the layout split
+keeps the deterministic decisions in the logic and the voxel work in the host.
+
+## Outcome
+
+_(Added at acceptance if Plan 0007 or Plan 0011 falsifies something above.)_

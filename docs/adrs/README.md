@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0007.**
+**Next free number: 0012.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -15,11 +15,16 @@ the status.
 | ADR  | Title | Status |
 |------|-------|--------|
 | [0001](0001-rust-library-workspace-wgpu-compute-ray-marching.md) | Rust library workspace, wgpu compute ray marching, streaming brick-map world | accepted |
-| [0002](0002-brick-map-layout-and-per-chunk-locked-access.md) | Brick-map storage layout, GPU mirror, and per-chunk locked access | accepted; mirror clauses superseded by ADR-0004 |
+| [0002](0002-brick-map-layout-and-per-chunk-locked-access.md) | Brick-map storage layout, GPU mirror, and per-chunk locked access | accepted; mirror clauses superseded by ADR-0004; attribute reservation settled by ADR-0011 |
 | [0003](0003-sphere-residency-with-lod-ring-and-edit-persistence.md) | Sphere residency with an LOD-only ring, edited-chunk persistence with disk spill | accepted |
 | [0004](0004-palette-narrowed-sharded-brick-pool.md) | Per-chunk 8-bit palette mirror and a brick pool sharded over fixed bindings | accepted |
 | [0005](0005-vertical-cylinder-collision-by-integer-conservative-advancement.md) | Character collision as a vertical cylinder swept by integer conservative advancement | proposed |
 | [0006](0006-hrtf-source-and-audio-thread-model.md) | SADIE II HRTFs in a packed f32 format, time-domain FIR, mixer on the device callback | proposed |
+| [0007](0007-server-op-log-byte-channel-shared-and-owned-clients.md) | Server-owned op log replayed from seed, a byte channel, and a client that shares the world in solo play | proposed |
+| [0008](0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) | Collapse as a capped support flood on the coarse grid and rigid vertical drop ops, not a rigid-body engine | proposed |
+| [0009](0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) | The testbed HUD is an embedded 8 × 8 bitmap font drawn in one overlay pass, with no UI library | proposed |
+| [0010](0010-game-logic-as-a-component-behind-a-logic-trait.md) | The game's server logic is a component behind a `Logic` trait, developed natively and shipped as WebAssembly; Lua is deferred | proposed |
+| [0011](0011-contour-planes-in-attribute-pages-with-procedural-detail.md) | Smooth surfaces from per-voxel contour planes in attribute pages of the brick pool, with procedural per-material detail | accepted |
 
 ## Decisions taken but not yet recorded
 
@@ -30,6 +35,5 @@ rather than the intention:
 
 - Far-field clipmap (coarser rings beyond the full-detail radius): with the far-field plan,
   after M1.
-- Scripting split, WASM for server logic and Lua for client scripts: with the scripting plan.
 - Dynamic entities as voxel models on rigid-part rigs: with the entities plan.
 - Network transport: with the networking plan.

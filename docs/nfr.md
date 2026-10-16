@@ -68,6 +68,17 @@ spawn at the same commit. The line stands (owner's ruling, 2026-10-16); a march-
 spike runs before M2's lighting. The autopilot's flight reading (p50 0.46 ms) is not evidence
 for the line: its +x path flies through rock.
 
+**Primary rays per surface-look mode (dev reference, Plan 0005 Phase 5, 37b22fa, headless
+`flythrough --level --seed 1 --render 1920x1080 --frames 300 --look MODE [--detail]` from the
+spawn pose, median of the last 30 of 300 frames, three runs each, NVIDIA GeForce RTX 3080
+Laptop GPU; taken while the machine's 1-minute load read between 3 and 5):** face 1.876 to
+1.877 ms (1.826 to 1.859 ms without `--look`, so without attribute pages), face with detail
+1.976 to 1.995 ms, `Trilinear8` 2.874 to 2.907 ms (with detail 3.020 to 3.051), `Gradient27`
+4.564 to 4.612 ms (with detail 4.583 to 4.675), `Contour` 1.927 to 1.944 ms (with detail
+2.068 to 2.069). The march pass includes the headlamp's shadow ray. ADR-0011 chooses `Contour`
+with detail; on the baseline (about two to three times slower) the level's contour reading
+projects to roughly 3.9 to 5.8 ms against the 3.0 ms line, a projection, not a reading.
+
 No frame may stall on paging: work attributable to streaming on the render thread is capped at
 the streaming line above; the rest runs on background threads.
 
@@ -131,6 +142,19 @@ unbounded cave seed 1, r_full 16, r_lod 24, h 1, 15 workers, RTX 3080 Laptop GPU
   (`VmHWM`, the whole fly-through, dev reference) reads 3 869 564 928 and 3 873 890 304 B,
   about 3.87 GB against the 4 GB line. RAM is the tightest margin at these defaults; they are
   revisited on the baseline card at M2.
+
+**Attribute pages (dev reference, Plan 0005, RTX 3080 Laptop GPU).** The contour attribute
+(`u16` per voxel) lives in attribute pages of the pool: 1040 B more live per `Full` brick of a
+full chunk, and a page holds 1364 bricks in 4096 slots. At the level (`flythrough --level
+--headless --seed 1 --frames 1`, 6d77f12): 207 681 088 B live and 213 334 144 B allocated
+without attribute pages; 606 633 408 B live and 613 759 104 B allocated with them
+(`--look contour`), a live rise of exactly 1040 x 383 608 B. 128 B more with 64-byte material
+rows at 37b22fa. Streamed (`flythrough --autopilot --headless --look contour`, 37b22fa, r_full
+16, r_lod 24, h 1, 15 workers): at full residency 3 309 723 820 B live and 4 103 413 164 B
+allocated, over the 3 GB line, against Plan 0002's 1 675 304 748 B allocated in face mode; the
+run then stopped in its outbound flight on `wgpu error: Out of Memory` on the 8 GiB card, so
+no peak was read. A recorded miss: ADR-0011 keeps contour planes, and fitting this footprint
+under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2).
 
 ## 4. Edits
 

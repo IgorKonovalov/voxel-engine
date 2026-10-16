@@ -167,3 +167,269 @@ pub fn assert_golden(name: &str, rgba: &[u8]) {
     );
     assert!(f <= 0.001, "{name}: {:.4} % of pixels differ", f * 100.0);
 }
+
+// ---- The surface-look harness (tests/look.rs) ----
+
+use flythrough::cave::ROCK;
+use vxe_render::glam::Vec3;
+use vxe_render::{GpuWorld, LightParams, LodParams, LookParams, Marcher, MirrorConfig, readback};
+
+/// Rows 0 (air) and 1..=5, plain, row 3 with the cave's rock albedo: the solid material-3
+/// world of the cavity scene.
+pub fn look_table() -> MaterialTable {
+    let rock = cave_materials().get(ROCK).expect("rock row").clone();
+    let mut t = MaterialTable::new();
+    for i in 1..=5u16 {
+        let m = if i == 3 {
+            Material {
+                name: "m3".to_owned(),
+                ..rock.clone()
+            }
+        } else {
+            Material::named(format!("m{i}"))
+        };
+        assert_eq!(t.push(m), i);
+    }
+    t
+}
+
+/// The cavity's centre and radius in voxels: the centre of voxel `[0, 0, 0]`.
+pub const CAVITY_CENTRE: [f32; 3] = [0.5, 0.5, 0.5];
+pub const CAVITY_RADIUS: i64 = 40;
+
+/// Solid material 3 over chunks `[-2, 2)^3`, carved by a radius-40 sphere centred on voxel
+/// `[0, 0, 0]`.
+pub fn cavity_world() -> World {
+    cavity_world_with(look_table())
+}
+
+pub fn cavity_world_with(table: MaterialTable) -> World {
+    let world = World::generate(
+        ChunkExtent::new([-2, -2, -2], [2, 2, 2]),
+        &UniformSource(3),
+        &table,
+    );
+    let r = world
+        .apply(&EditOp::sphere(
+            centre_of_voxel([0, 0, 0]),
+            CAVITY_RADIUS * FIXED_ONE,
+            Mode::Carve,
+        ))
+        .expect("the cavity is resident");
+    assert!(!r.changed_from.is_empty());
+    world
+}
+
+/// At the cavity's centre looking +x.
+pub fn cavity_camera() -> Camera {
+    Camera {
+        position: CAVITY_CENTRE.into(),
+        yaw: 0.0,
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    }
+}
+
+/// The pillar sphere's centre and radius in voxels: the centre of voxel `[96, 64, 64]`.
+pub const PILLAR_CENTRE: [f32; 3] = [96.5, 64.5, 64.5];
+pub const PILLAR_RADIUS: f32 = 20.0;
+
+/// Air over chunks `[0, 2)^3` under `table`, with a rock sphere of radius 20 filled at the
+/// centre of voxel `[96, 64, 64]`.
+pub fn pillar_world_with(table: MaterialTable) -> World {
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [2, 2, 2]),
+        &UniformSource(AIR),
+        &table,
+    );
+    world
+        .apply(&EditOp::sphere(
+            centre_of_voxel([96, 64, 64]),
+            20 * FIXED_ONE,
+            Mode::Fill(ROCK),
+        ))
+        .expect("the pillar is resident");
+    world
+}
+
+pub fn pillar_world() -> World {
+    pillar_world_with(cave_materials())
+}
+
+/// At `(16.5, 64.5, 64.5)` looking +x.
+pub fn pillar_camera() -> Camera {
+    Camera {
+        position: [16.5, 64.5, 64.5].into(),
+        yaw: 0.0,
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    }
+}
+
+/// The occluder scene: air over chunks `[0, 2)^3`, a rock wall at x `[44, 46)` and a slab at
+/// x `[28, 30)`, y and z `[56, 68)`, both facing -x toward the camera.
+pub fn occluder_world() -> World {
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [2, 2, 2]),
+        &UniformSource(AIR),
+        &cave_materials(),
+    );
+    for (min, max) in [([44, 0, 0], [46, 128, 128]), ([28, 56, 56], [30, 68, 68])] {
+        let op = EditOp::box_(
+            Fixed3(min.map(|v: i64| v * FIXED_ONE)),
+            Fixed3(max.map(|v: i64| v * FIXED_ONE)),
+            Mode::Fill(ROCK),
+        );
+        world.apply(&op).expect("the occluder scene is resident");
+    }
+    world
+}
+
+/// At `(8.5, 64.5, 64.5)` looking +x.
+pub fn occluder_camera() -> Camera {
+    Camera {
+        position: [8.5, 64.5, 64.5].into(),
+        yaw: 0.0,
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    }
+}
+
+/// The primary ray of pixel (`col`, `row`) of a `WIDTH` x `HEIGHT` target, as `march.wgsl`
+/// builds it.
+pub fn pixel_ray(camera: &Camera, col: u32, row: u32) -> Vec3 {
+    let (fwd, right, up) = camera.basis();
+    let tan = (camera.vfov * 0.5).tan();
+    let aspect = WIDTH as f32 / HEIGHT as f32;
+    let nx = (col as f32 + 0.5) / WIDTH as f32 * 2.0 - 1.0;
+    let ny = (row as f32 + 0.5) / HEIGHT as f32 * 2.0 - 1.0;
+    (fwd + right * (nx * tan * aspect) - up * (ny * tan)).normalize()
+}
+
+/// The normal a `view = Normals` pixel encodes.
+pub fn decode_normal(p: &[u8]) -> Vec3 {
+    Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32) / 255.0 * 2.0 - 1.0
+}
+
+/// Mean angle in degrees between each pixel's decoded normal and the cavity's analytic
+/// normal. The camera sits at the centre `c`, so a hit `p = c + d t` has the inward normal
+/// `(c - p) / |c - p| = -d`. A pixel that missed counts as 180 degrees.
+pub fn cavity_normal_error(rgba: &[u8], camera: &Camera) -> f64 {
+    let mut sum = 0.0f64;
+    for (i, p) in rgba.chunks(4).enumerate() {
+        let (col, row) = (i as u32 % WIDTH, i as u32 / WIDTH);
+        let want = -pixel_ray(camera, col, row);
+        let got = decode_normal(p);
+        let angle = if got.length() < 0.5 {
+            180.0
+        } else {
+            f64::from(got.normalize().dot(want).clamp(-1.0, 1.0))
+                .acos()
+                .to_degrees()
+        };
+        sum += angle;
+    }
+    sum / (rgba.len() / 4) as f64
+}
+
+/// Pixels where a `view = HitMask` render disagrees with the pillar's analytic disc: the
+/// pixel's centre ray meets the sphere of radius `PILLAR_RADIUS` or not.
+pub fn pillar_silhouette_error(rgba: &[u8], camera: &Camera) -> usize {
+    let c = Vec3::from(PILLAR_CENTRE);
+    let o = camera.position;
+    rgba.chunks(4)
+        .enumerate()
+        .filter(|(i, p)| {
+            let d = pixel_ray(camera, *i as u32 % WIDTH, *i as u32 / WIDTH);
+            let oc = c - o;
+            let along = oc.dot(d);
+            let disc = along > 0.0 && oc.length_squared() - along * along <= PILLAR_RADIUS.powi(2);
+            let hit = p[0] > 127;
+            hit != disc
+        })
+        .count()
+}
+
+/// Makes every chunk of `world` for which `lod` holds LOD-only: out of the store, into the
+/// world's mips.
+pub fn make_lod(world: &World, lod: impl Fn(ChunkCoord) -> bool) {
+    for c in world.store().coords() {
+        if lod(c) {
+            let chunk = world.store().remove(c).unwrap();
+            let mips = ChunkMips::build(&chunk.read().unwrap());
+            world.insert_lod(c, std::sync::Arc::new(mips));
+        }
+    }
+}
+
+/// The golden scene with its carve.
+pub fn carved_world() -> World {
+    let world = scene_world();
+    let r = world.apply(&scene_carve(&world)).unwrap();
+    assert!(!r.changed_from.is_empty(), "the carve removes rock");
+    world
+}
+
+/// The carved golden scene with every chunk farther than squared distance 1 from the
+/// camera's chunk LOD-only (`lod.png`'s scene).
+pub fn lod_scene() -> World {
+    let world = carved_world();
+    let cam = VoxelCoord(scene_source().spawn().0).chunk();
+    make_lod(&world, |c| {
+        (0..3).map(|k| (c.0[k] - cam.0[k]).pow(2)).sum::<i32>() > 1
+    });
+    world
+}
+
+/// The LOD walk `lod.png` uses: every LOD-only chunk at level 1.
+pub fn lod_forced_1() -> LodParams {
+    LodParams {
+        r_full: 1,
+        forced_level: Some(1),
+    }
+}
+
+/// A software device and the mirror of one world on it, rendering in any look.
+pub struct LookRig {
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub gpu: GpuWorld,
+    pub marcher: Marcher,
+}
+
+impl LookRig {
+    /// `world` mirrored under `cfg` (`None`: a fixed window over its extent) on the software
+    /// adapter; `None` with a printed skip when there is none.
+    pub fn new(world: &World, cfg: Option<MirrorConfig>) -> Option<Self> {
+        let full = world.stats().full_bricks as u64;
+        let (device, queue) = software_device(((full + 4096) * 512).max(64 << 20))?;
+        Some(Self::on(device, queue, world, cfg))
+    }
+
+    pub fn on(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        world: &World,
+        cfg: Option<MirrorConfig>,
+    ) -> Self {
+        let cfg =
+            cfg.unwrap_or_else(|| MirrorConfig::new(vxe_render::Window::Fixed(world.extent())));
+        let mut gpu = GpuWorld::with_config(&device, cfg);
+        gpu.sync(world, &queue).expect("mirror fits the adapter");
+        let marcher = Marcher::new(&device, WIDTH, HEIGHT);
+        Self {
+            device,
+            queue,
+            gpu,
+            marcher,
+        }
+    }
+
+    /// One render of `camera` lit by `light` in `look`, read back as RGBA8.
+    pub fn render(&mut self, camera: &Camera, light: &LightParams, look: LookParams) -> Vec<u8> {
+        self.marcher.set_look(look);
+        self.marcher
+            .render(&self.device, &self.queue, &self.gpu, camera, light);
+        readback::read_rgba8(&self.device, &self.queue, self.marcher.target())
+    }
+}

@@ -80,6 +80,12 @@ impl std::fmt::Display for ShellError {
 impl std::error::Error for ShellError {}
 
 /// Runs `app` in a window until it returns [`Flow::Exit`] or the window closes.
+///
+/// Teardown runs after the event loop returns, in a fixed order with each stage logged at
+/// `info` (target `vxe_app::shell`), so a hang at exit names the stage it hangs in: the app,
+/// the surface (its swapchain waits for the device to idle), the queue (waits for submitted
+/// work and pending presents), the device and adapter, then the window. `run_app` consumes
+/// the event loop, so it is gone before the first stage.
 pub fn run<A: App>(config: ShellConfig, app: A) -> Result<(), ShellError> {
     let event_loop = EventLoop::new().map_err(ShellError::EventLoop)?;
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -91,10 +97,23 @@ pub fn run<A: App>(config: ShellConfig, app: A) -> Result<(), ShellError> {
         last_frame: None,
         error: None,
     };
-    event_loop
-        .run_app(&mut shell)
-        .map_err(ShellError::EventLoop)?;
-    shell.error.map_or(Ok(()), Err)
+    let ran = event_loop.run_app(&mut shell);
+    log::info!("teardown: event loop returned");
+    let error = shell.teardown();
+    ran.map_err(ShellError::EventLoop)?;
+    error.map_or(Ok(()), Err)
+}
+
+/// Runs one teardown stage between two log lines, so the last line before a hang is the
+/// stage that hangs.
+fn stage(what: &str, f: impl FnOnce()) {
+    log::info!("teardown: dropping the {what}");
+    let t = now();
+    f();
+    log::info!(
+        "teardown: {what} dropped in {:.1} ms",
+        (now() - t).as_secs_f64() * 1e3
+    );
 }
 
 struct State {
@@ -122,6 +141,35 @@ fn now() -> Instant {
 }
 
 impl<A: App> Shell<A> {
+    /// Drops the app, then the window state in the order [`run`] documents; returns the
+    /// setup error, if any.
+    fn teardown(self) -> Option<ShellError> {
+        let Shell {
+            app, state, error, ..
+        } = self;
+        stage("app", || drop(app));
+        if let Some(State {
+            window,
+            surface,
+            config: _,
+            gpu,
+        }) = state
+        {
+            let Gpu {
+                adapter,
+                device,
+                queue,
+                ..
+            } = gpu;
+            stage("surface", || drop(surface));
+            stage("queue", || drop(queue));
+            stage("device", || drop(device));
+            stage("adapter", || drop(adapter));
+            stage("window", || drop(window));
+        }
+        error
+    }
+
     fn create(&mut self, event_loop: &ActiveEventLoop) -> Result<State, String> {
         let attrs = Window::default_attributes()
             .with_title(self.config.title.clone())
@@ -214,6 +262,7 @@ impl<A: App> Shell<A> {
         state.window.pre_present_notify();
         state.gpu.queue.present(texture);
         if flow == Flow::Exit {
+            log::info!("teardown: the app asked to exit");
             event_loop.exit();
         }
     }
@@ -239,7 +288,10 @@ impl<A: App> ApplicationHandler for Shell<A> {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                log::info!("teardown: close requested");
+                event_loop.exit();
+            }
             WindowEvent::Resized(size) => {
                 if let Some(state) = self.state.as_mut()
                     && size.width > 0
@@ -279,6 +331,10 @@ impl<A: App> ApplicationHandler for Shell<A> {
         if let DeviceEvent::MouseMotion { delta } = event {
             self.input.add_mouse_delta(delta.0, delta.1);
         }
+    }
+
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        log::info!("teardown: event loop exiting");
     }
 
     fn about_to_wait(&mut self, _: &ActiveEventLoop) {
