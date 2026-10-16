@@ -155,12 +155,14 @@ fn half_a_metre_of_wall_renders_a_2_khz_tone_at_0_358() {
 }
 
 #[test]
-#[ignore = "blocked, Plan 0006 Phase 3: this pillar lies on all seven rays and measures 0.0840"]
 fn a_pillar_covering_three_rays_gives_0_6074() {
-    // The pillar as specified: x in [100, 150), y in [123, 133), all z. The direct ray and the
-    // two +-x side rays are collinear, and the +-y and +-z side rays stay within 3.3 voxels of
-    // the axis inside x in [100, 150), so all seven cross the pillar.
-    let pillar = world(|v| (100..150).contains(&v[0]) && (123..133).contains(&v[1]));
+    // A 3 x 3 pillar x in [100, 150), y and z in [127, 130) holds the axis (y = z = 128.5), so
+    // it covers the direct ray and the two collinear +-x side rays. The +-y and +-z side rays
+    // aim 5 voxels off the axis at the source, so at x = 100 they sit 1.65 voxels off it, at y
+    // or z 130.15 or 126.85, outside the pillar.
+    let pillar = world(|v| {
+        (100..150).contains(&v[0]) && (127..130).contains(&v[1]) && (127..130).contains(&v[2])
+    });
     let o = occ(&pillar);
     assert_within(o.gain, (3.0 * 0.08404 + 4.0) / 7.0, 0.01, "gain multiplier");
 }
