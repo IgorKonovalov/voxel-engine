@@ -48,6 +48,8 @@ pub struct Mixer {
     input: Vec<f32>,
     /// The old and new FIR outputs of one voice for a crossfade, per ear.
     wet: [[Vec<f32>; 2]; 2],
+    /// One block of one voice's reflections, from its new taps and (while they fade) its old.
+    echo_mix: [Vec<f32>; 2],
     /// Voices that ended since the last [`Mixer::drain_finished`].
     finished: Vec<VoiceId>,
     /// Per-sample step of the one-pole smoother.
@@ -78,6 +80,7 @@ impl Mixer {
             dry: vec![0.0; BLOCK],
             input: vec![0.0; taps - 1 + BLOCK],
             wet: std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; BLOCK])),
+            echo_mix: std::array::from_fn(|_| vec![0.0; BLOCK]),
             finished: Vec::with_capacity(MAX_VOICES),
             smooth_k: 1.0 - (-1.0 / (SMOOTHING_SECONDS * RATE as f32)).exp(),
             clock: BlockClock::default(),
@@ -202,10 +205,14 @@ impl Mixer {
             {
                 let ring = &mut v.buffers.echo;
                 let len = ring.len();
+                // The block lands in at most two runs: up to the ring's end, then from its start.
+                let first = (len - echo_start).min(n);
+                let (head, wrap) = ring.split_at_mut(echo_start);
+                let runs = wrap[..first].iter_mut().chain(&mut head[..n - first]);
                 let mut og = v.own_gain;
-                for (i, &s) in dry.iter().enumerate() {
+                for (r, &s) in runs.zip(dry.iter()) {
                     og += (v.params.gain - og) * k;
-                    ring[(echo_start + i) % len] = s * og;
+                    *r = s * og;
                 }
                 v.own_gain = og;
                 v.echo_pos = (echo_start + n) % len;
@@ -239,17 +246,21 @@ impl Mixer {
             }
             let taps = &v.acoustic.taps[..usize::from(v.acoustic.tap_count)];
             let ring = &v.buffers.echo;
+            let [mix_new, mix_old] = &mut self.echo_mix;
             if v.fading {
                 let old = &v.old_taps[..usize::from(v.old_tap_count)];
+                let (a, b) = (&mut mix_old[..n], &mut mix_new[..n]);
+                tap_block(old, ring, echo_start, a);
+                tap_block(taps, ring, echo_start, b);
                 for (i, s) in dry.iter_mut().enumerate() {
-                    let a = tap_sum(old, ring, echo_start + i);
-                    let b = tap_sum(taps, ring, echo_start + i);
-                    *s += a + (b - a) * crossfade_weight(i, n);
+                    *s += a[i] + (b[i] - a[i]) * crossfade_weight(i, n);
                 }
                 v.fading = false;
             } else if !taps.is_empty() {
-                for (i, s) in dry.iter_mut().enumerate() {
-                    *s += tap_sum(taps, ring, echo_start + i);
+                let b = &mut mix_new[..n];
+                tap_block(taps, ring, echo_start, b);
+                for (s, &e) in dry.iter_mut().zip(b.iter()) {
+                    *s += e;
                 }
             }
             match &self.hrtf {
@@ -337,26 +348,54 @@ fn crossfade_weight(i: usize, n: usize) -> f32 {
     0.5 - 0.5 * (std::f32::consts::PI * x).cos()
 }
 
-/// The taps' sum at ring position `at`: each tap's gain times the sample `delay_frames` before
-/// it. `ring` is at least [`MAX_DELAY_FRAMES`] plus one block long and `at` was written this
-/// block, so every delay up to [`MAX_DELAY_FRAMES`] reads a sample not yet overwritten.
-fn tap_sum(taps: &[Tap], ring: &[f32], at: usize) -> f32 {
+/// `out[i]` = the taps' sum at ring position `at + i`: each tap's gain times the sample
+/// `delay_frames` before it. `ring` is at least [`MAX_DELAY_FRAMES`] plus one block long and
+/// the block at `at` was written this block, so every delay up to [`MAX_DELAY_FRAMES`] reads a
+/// sample not yet overwritten. Each tap finds its read start once and adds over the block in
+/// at most two contiguous runs (split where the ring wraps), taps in order, so every output
+/// sample sums its taps in the same order as a per-sample loop would.
+fn tap_block(taps: &[Tap], ring: &[f32], at: usize, out: &mut [f32]) {
     let len = ring.len();
-    taps.iter()
-        .map(|t| {
-            let d = (t.delay_frames as usize).min(MAX_DELAY_FRAMES);
-            t.gain * ring[(at + len - d) % len]
-        })
-        .sum()
+    out.fill(0.0);
+    for t in taps {
+        let d = (t.delay_frames as usize).min(MAX_DELAY_FRAMES);
+        let start = (at + len - d) % len;
+        let first = (len - start).min(out.len());
+        let (a, b) = out.split_at_mut(first);
+        for (y, &x) in a.iter_mut().zip(&ring[start..start + first]) {
+            *y += t.gain * x;
+        }
+        let rest = b.len();
+        for (y, &x) in b.iter_mut().zip(&ring[..rest]) {
+            *y += t.gain * x;
+        }
+    }
 }
 
+/// Independent partial sums in [`convolve`]: one dependent chain of `f32` adds runs at one add
+/// latency per multiply-add, and the compiler may not reassociate it; eight chains vectorise.
+const LANES: usize = 8;
+
 /// `out[n] = sum_j h_reversed[j] * input[n + j]`: a causal FIR over `input`, which holds
-/// `h_reversed.len() - 1` samples of history before the block.
+/// `h_reversed.len() - 1` samples of history before the block. The products accumulate in
+/// [`LANES`] partial sums (lane `l` takes every tap `j` with `j % LANES == l`), added together
+/// at the end, then any taps past the last whole group of [`LANES`].
 fn convolve(input: &[f32], h_reversed: &[f32], out: &mut [f32]) {
     let taps = h_reversed.len();
+    let (h_lanes, h_rest) = h_reversed.as_chunks::<LANES>();
     for (n, y) in out.iter_mut().enumerate() {
-        let x = &input[n..n + taps];
-        *y = x.iter().zip(h_reversed).map(|(a, b)| a * b).sum();
+        let (x_lanes, x_rest) = input[n..n + taps].as_chunks::<LANES>();
+        let mut acc = [0.0f32; LANES];
+        for (xs, hs) in x_lanes.iter().zip(h_lanes) {
+            for ((a, x), h) in acc.iter_mut().zip(xs).zip(hs) {
+                *a += x * h;
+            }
+        }
+        let mut sum = acc.iter().sum::<f32>();
+        for (x, h) in x_rest.iter().zip(h_rest) {
+            sum += x * h;
+        }
+        *y = sum;
     }
 }
 
@@ -394,4 +433,49 @@ fn pan_gains(dir: [f32; 3], d: f32) -> [f32; 2] {
     };
     let theta = (right + 1.0) * std::f32::consts::FRAC_PI_4;
     [theta.cos(), theta.sin()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A seeded SplitMix64 stream of `f32` in [-1, 1).
+    fn noise(seed: u64, count: usize) -> Vec<f32> {
+        let mut s = seed;
+        (0..count)
+            .map(|_| {
+                s = s.wrapping_add(0x9e37_79b9_7f4a_7c15);
+                let mut z = s;
+                z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+                z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+                z ^= z >> 31;
+                (z >> 40) as f32 / (1u64 << 23) as f32 - 1.0
+            })
+            .collect()
+    }
+
+    /// Relative to the sum of the products' magnitudes, the scale a dot product's rounding
+    /// error is bounded by: a random signed filter cancels to near zero at some samples, where
+    /// an error relative to the output itself measures the cancellation, not the sum's order.
+    #[test]
+    fn convolve_matches_a_naive_f64_convolution() {
+        const TAPS: usize = 128;
+        let h = noise(0x0006_0001, TAPS);
+        let input = noise(0x0006_0002, TAPS - 1 + BLOCK);
+        let mut out = vec![0.0f32; BLOCK];
+        convolve(&input, &h, &mut out);
+        let mut worst = 0.0f64;
+        for (n, &y) in out.iter().enumerate() {
+            let products = (0..TAPS).map(|j| f64::from(h[j]) * f64::from(input[n + j]));
+            let want: f64 = products.clone().sum();
+            let scale: f64 = products.map(f64::abs).sum();
+            let rel = (f64::from(y) - want).abs() / scale;
+            assert!(
+                rel < 1e-5,
+                "out[{n}] = {y}, naive f64 {want} over magnitude {scale}: relative error {rel}"
+            );
+            worst = worst.max(rel);
+        }
+        println!("convolve against f64, {TAPS} taps x {BLOCK}: worst relative error {worst:e}");
+    }
 }
