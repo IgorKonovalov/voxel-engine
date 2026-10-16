@@ -375,7 +375,7 @@ The baseline CPU is not on hand; readings are dev reference and say so.
 |---|---|---|---|
 | 1: `vxe-audio`, the mixer and the output stream | dev | done: `vxe-audio` with `Mixer`, `Output` over cpal 0.18.2, bounded command channel (1024); 6 crate tests; `--audio` + `H` knock in the fly-through; `--audio --headless --frames 10` (seed 1, no key pressed, silent stream) printed `audio: Default Audio Device, 48000 Hz, 2 ch, f32` | 5a6697a |
 | 2: HRTF: the pack, the FIR, the crossfade | dev | done: packer printed `8802 directions in 24 rings, 256 taps in the file; azimuth stride 3 keeps 2950; 128 taps from samples 44..=97 onward; wrote 3044420 bytes` (= 20 + 2950 x 8 + 2950 x 1024); kept rings are 134 directions with gaps of 1.0 to 3.0 degrees; 2 kHz at 2 m: +90 right over left 6.81 dB, front 0.89 dB, -90 left over right 7.33 dB; moving -90 to +90 over 1 s: max step 0.0589 vs static front 0.0523; front gain at 1 kHz read from the pack: left 0.5187, right 0.5585; pack load 7.1 to 8.9 ms (release test build, shared lock) | bd04e56 |
-| 3: Material traversal and occlusion | dev | blocked on the partial-cover done-when (see Notes); the rest landed: `trace_materials` gives `[Run{0,0,2688}, Run{3,2688,25600}]` and the layer runs at 2688, 4992, 7552; 500-ray hash `0xbae9_1463_c336_8745` (Linux x86_64); 5 m wall: multiplier 0.083982, cutoff 392.157 Hz, rendered 100 Hz ratio 0.081379; open: multiplier 1, cutoff 20 000 Hz; 0.5 m wall: multiplier 0.418304, cutoff 3333.33 Hz, 2 kHz ratio 0.359709; probe cadence: 0.11 m move reprobes, 0.10 m does not, block 94 reprobes and 93 does not | committed with this row |
+| 3: Material traversal and occlusion | dev | blocked on the partial-cover done-when (see Notes); the rest landed: `trace_materials` gives `[Run{0,0,2688}, Run{3,2688,25600}]` and the layer runs at 2688, 4992, 7552; 500-ray hash `0xbae9_1463_c336_8745` (Linux x86_64); 5 m wall: multiplier 0.083982, cutoff 392.157 Hz, rendered 100 Hz ratio 0.081379; open: multiplier 1, cutoff 20 000 Hz; 0.5 m wall: multiplier 0.418304, cutoff 3333.33 Hz, 2 kHz ratio 0.359709; probe cadence: 0.11 m move reprobes, 0.10 m does not, block 94 reprobes and 93 does not | 79b3d87 |
 | 4: Early reflections | dev | not started | |
 | 5: Benches, readings and the fly-through's audio HUD | dev | not started | |
 
@@ -406,11 +406,11 @@ The baseline CPU is not on hand; readings are dev reference and say so.
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** Phases 1 and 2; Phase 3 except the partial-cover done-when (blocked, see Notes). Phases 4 and 5 not started.
+- **Public API changed:** `vxe-world`: `World::trace_materials`, `Run`. `vxe-audio`: `Acoustics`, `BlockClock`, `Occlusion`, `occlusion()`, `AcousticTargets`, `Tap`, `MAX_TAPS`, `OPEN_CUTOFF_HZ`, `Command::SetAcoustics`, `Mixer::clock`.
+- **Budget readings:** none yet (Phase 5).
+- **Gate at the tip (79b3d87, dev box, CARGO_BUILD_JOBS=3):** `cargo build --workspace` exit 0; `cargo nextest run --workspace` under the exclusive lock on the RTX 3080 Laptop GPU: 115 passed, 1 skipped (the ignored partial-cover test); `cargo test --workspace --doc` 2 passed; `cargo clippy --workspace --all-targets -- -D warnings` exit 0; `cargo fmt --all --check` exit 0; `cargo deny check` advisories, bans, licenses, sources ok; `node scripts/check-doc-links.mjs` 58 links resolve.
+- **Outstanding `human` phases:** none in the plan; listening checks awaiting the owner are in Notes (Phase 1 `H`, Phase 3 `J`).
 
 ## Followups
 
