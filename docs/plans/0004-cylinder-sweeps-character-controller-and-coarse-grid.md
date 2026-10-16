@@ -1,6 +1,6 @@
 # 0004: Cylinder sweeps, a character controller, and a per-brick coarse grid with change notifications
 
-> **Status:** approved (2026-10-16)
+> **Status:** in-progress
 > **Created:** 2026-10-16
 > **Milestone:** M3 in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0005](../adrs/0005-vertical-cylinder-collision-by-integer-conservative-advancement.md) (body shape, sweep, where it lives), ADR-0002 (layout and access model), ADR-0001 (stack)
@@ -398,7 +398,7 @@ with the dev-box readings. Every one is a guess until read.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `vxe-sim`, the distance and the sweep | dev | not started | |
+| 1: `vxe-sim`, the distance and the sweep | dev | done | committed with this row |
 | 2: Walk, step, slide, fall | dev | not started | |
 | 3: Ledge climb and the pinned course | dev | not started | |
 | 4: The coarse grid | dev | not started | |
@@ -407,9 +407,11 @@ with the dev-box readings. Every one is a guess until read.
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: the contact among boxes at equal `d²` is picked by the key `(d², squared distance from the foot point to the box's nearest lattice point [bmin, bmax - 1], voxel coordinate)`; plain ascending voxel coordinate would pick `[7, 10, -1]`, not `[10, 10, -1]`, in the F1 drop test. The contact voxel of a `Uniform` brick is the voxel holding that nearest lattice point.
+- Phase 1: the swept region is the body's half-open bounding box extended along the remaining delta; `distance2` probes the body's bounding box grown by one voxel on every side.
+- Phase 1: a sweep that stops because every component rounds to zero, or at the iteration cap, reports the nearest box in the remaining region as its contact.
+- Phase 1: public API beyond the data shapes: `isqrt`, `Body::at`, `Contact::{is_floor, is_ceiling, is_wall}` (classified from the normal's sign), `distance2_with_stats`, `sweep_with_stats` (return `vxe_world::QueryStats`), `MAX_SWEEP_ITERATIONS`.
+- Phase 1: `Cargo.toml` also gains `[profile.dev.package.vxe-sim] opt-level = 2` (fixture worlds took 1.4 s each to generate in a test build).
 
 ### Close triggers
 

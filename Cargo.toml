@@ -36,6 +36,7 @@ png = "=0.18.1"
 pollster = "=1.0.1"
 # Engine crates other engine crates depend on. The exact version tracks
 # [workspace.package].version above; bump both together.
+vxe-sim = { path = "crates/vxe-sim", version = "=0.3.0" }
 vxe-world = { path = "crates/vxe-world", version = "=0.3.0" }
 # Only the backends we ship (ADR-0001): Vulkan on Linux and Windows, DX12 on Windows.
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "dx12", "wgsl"] }
@@ -58,4 +59,8 @@ opt-level = 2
 opt-level = 2
 
 [profile.dev.package.flythrough]
+opt-level = 2
+
+# The collision tests generate six closure-source worlds and run 300-tick courses on them.
+[profile.dev.package.vxe-sim]
 opt-level = 2

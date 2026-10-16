@@ -1950,6 +1950,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vxe-sim"
+version = "0.3.0"
+dependencies = [
+ "vxe-world",
+]
+
+[[package]]
 name = "vxe-world"
 version = "0.3.0"
 dependencies = [
