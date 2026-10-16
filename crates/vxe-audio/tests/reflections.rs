@@ -28,14 +28,9 @@ impl<F: Fn([i32; 3]) -> MaterialId + Sync> WorldSource for FnSource<F> {
 
 /// Air over chunks `[0, 4)³` (voxels `[0, 256)³`), `W` wherever `solid` holds.
 fn world(solid: impl Fn([i32; 3]) -> bool + Sync) -> World {
-    world_with(0.5, solid)
-}
-
-/// As [`world`], with the wall's transmission set to `transmission`.
-fn world_with(transmission: f32, solid: impl Fn([i32; 3]) -> bool + Sync) -> World {
     let mut t = MaterialTable::new();
     let mut w = Material::named("wall");
-    w.acoustic = [0.3, transmission, 0.0];
+    w.acoustic = [0.3, 0.5, 0.0];
     assert_eq!(t.push(w), W);
     World::generate(
         ChunkExtent::new([0, 0, 0], [4, 4, 4]),
@@ -251,89 +246,68 @@ fn wall(x0: i32, x1: i32) -> impl Fn([i32; 3]) -> bool + Sync + Copy {
     move |v| (x0..x1).contains(&v[0])
 }
 
-/// Every tap carries the source's occlusion multiplier: against the same scene's taps computed
-/// with the multiplier left out (the `H -> S` legs and the listener's rays are the same), each
-/// gain is the multiplier times it.
+/// Every tap carries the source's occlusion multiplier. In Phase 3's two wall scenes the sent
+/// multiplier is Phase 3's figure, and each sent tap is that multiplier times the wall's
+/// `1 - A` over the reflected path `|L - H| + |H - S|` (at least 1 m), delayed by the path's
+/// excess over the direct one, all computed here in `f64` from each hit's point.
 #[test]
 fn every_tap_carries_the_source_occlusion_multiplier() {
-    for (x0, x1) in [(100, 150), (100, 105)] {
+    /// The wall row's absorption per metre.
+    const ABSORPTION: f64 = 0.3;
+    let dist = |a: [f32; 3], b: [f32; 3]| -> f64 {
+        let d = [0, 1, 2].map(|k| f64::from(a[k]) - f64::from(b[k]));
+        (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() * f64::from(MPV)
+    };
+    let (l, s) = (centre(OCC_LISTENER), centre(OCC_SOURCE));
+    for ((x0, x1), multiplier) in [((100, 150), 0.08404), ((100, 105), 0.4183)] {
         let walled = world(wall(x0, x1));
-        let o = occlusion(
-            &walled,
-            walled.materials(),
-            centre(OCC_LISTENER),
-            centre(OCC_SOURCE),
-            MPV,
-        );
         let sent = occluded_targets(&walled);
+        assert!(
+            (f64::from(sent.gain) - multiplier).abs() <= 0.01 * multiplier,
+            "wall [{x0}, {x1}): multiplier {} against {multiplier}",
+            sent.gain
+        );
         let hits = reflections(
             &walled,
             walled.materials(),
-            centre(OCC_LISTENER),
+            l,
             &reflection_directions(),
             MPV,
         );
-        let (bare, n) = taps(&hits, centre(OCC_LISTENER), centre(OCC_SOURCE), MPV, 1.0);
-        assert!(n > 0, "the wall gives taps");
-        assert_eq!(sent.tap_count, n);
-        for (s, b) in sent.taps[..usize::from(n)].iter().zip(&bare) {
-            assert_eq!(s.delay_frames, b.delay_frames);
-            let expected = o.gain * b.gain;
+        let direct = dist(l, s);
+        let expected: Vec<(u32, f64)> = hits
+            .iter()
+            .filter_map(|h| {
+                let path = dist(l, h.point) + dist(h.point, s);
+                let delay = ((path - direct) / 343.0 * 48_000.0).round();
+                (delay <= MAX_DELAY_FRAMES as f64).then(|| {
+                    let gain = f64::from(sent.gain) * (1.0 - ABSORPTION) / path.max(1.0);
+                    (delay as u32, gain)
+                })
+            })
+            .take(MAX_TAPS)
+            .collect();
+        assert!(!expected.is_empty(), "the wall gives taps");
+        assert_eq!(usize::from(sent.tap_count), expected.len());
+        let mut worst = 0.0f64;
+        for (t, &(delay, gain)) in sent.taps.iter().zip(&expected) {
+            assert_eq!(t.delay_frames, delay, "wall [{x0}, {x1}): tap {t:?}");
+            let rel = (f64::from(t.gain) - gain).abs() / gain;
             assert!(
-                (s.gain - expected).abs() <= 1e-6 * expected,
-                "wall [{x0}, {x1}): tap {s:?} against {expected}"
+                rel <= 1e-6,
+                "wall [{x0}, {x1}): tap {t:?} against {gain}, relative {rel}"
             );
+            worst = worst.max(rel);
         }
         println!(
-            "wall [{x0}, {x1}): multiplier {}, {n} taps, gains {:?}",
-            o.gain,
-            sent.taps[..usize::from(n)]
+            "wall [{x0}, {x1}): multiplier {}, {} taps, gains {:?}, worst relative {worst:e}",
+            sent.gain,
+            sent.tap_count,
+            sent.taps[..usize::from(sent.tap_count)]
                 .iter()
                 .map(|t| t.gain)
                 .collect::<Vec<_>>()
         );
-    }
-}
-
-/// The amended Phase 4 check as worded: each tap's gain equals the multiplier times the same
-/// tap's gain with the wall's transmission set to 1. Transmission 1 leaves the wall's
-/// absorption (`0.7^L`) in the multiplier, so the ratio is `mult(T = 0.5) / mult(T = 1)`, 0.5
-/// here, not `mult(T = 0.5)`. Held as worded until the plan is amended.
-#[test]
-#[ignore = "the worded check does not hold under the amended tap rule; see the plan's Notes"]
-fn every_tap_is_the_multiplier_times_its_transmission_1_gain() {
-    for (x0, x1) in [(100, 150), (100, 105)] {
-        let walled = world(wall(x0, x1));
-        let o = occlusion(
-            &walled,
-            walled.materials(),
-            centre(OCC_LISTENER),
-            centre(OCC_SOURCE),
-            MPV,
-        );
-        let sent = occluded_targets(&walled);
-        let clear = occluded_targets(&world_with(1.0, wall(x0, x1)));
-        assert_eq!(sent.tap_count, clear.tap_count);
-        for (s, c) in sent
-            .taps
-            .iter()
-            .zip(&clear.taps)
-            .take(usize::from(sent.tap_count))
-        {
-            println!(
-                "wall [{x0}, {x1}): tap {} over its transmission-1 gain {}: {} (multiplier {})",
-                s.gain,
-                c.gain,
-                s.gain / c.gain,
-                o.gain
-            );
-            let expected = o.gain * c.gain;
-            assert!(
-                (s.gain - expected).abs() <= 1e-6 * expected,
-                "wall [{x0}, {x1}): tap {} against {expected}",
-                s.gain
-            );
-        }
     }
 }
 
