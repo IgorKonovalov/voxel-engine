@@ -1,8 +1,12 @@
-//! Free flight: mouse look and WASD movement of a camera in voxel units, z up.
+//! Free flight and walking: mouse look and WASD movement of a camera in voxel units, z up.
+//! Flight moves the camera freely; walking moves a character body through the world with the
+//! `vxe-sim` controller at a fixed 60 Hz tick and puts the camera at its eye.
 
 use vxe_app::{Input, KeyCode};
 use vxe_render::Camera;
-use vxe_render::glam::Vec3;
+use vxe_render::glam::{Vec2, Vec3};
+use vxe_sim::{CharacterController, CharacterState, ControllerParams, MoveInput, overlaps};
+use vxe_world::{FIXED_ONE, Fixed3, World};
 
 /// Radians of turn per unit of relative mouse motion.
 const LOOK_PER_COUNT: f32 = 0.0025;
@@ -25,24 +29,152 @@ impl Fly {
     /// Turns by the frame's mouse motion and moves by the held keys over `dt` seconds:
     /// `W`/`S` along the view, `A`/`D` sideways, `Space`/`C` up and down in world z.
     pub fn update(&mut self, input: &Input, dt: f32) {
-        let [dx, dy] = input.mouse_delta();
+        look(&mut self.camera, input);
         let c = &mut self.camera;
-        c.yaw -= dx as f32 * LOOK_PER_COUNT;
-        c.pitch = (c.pitch - dy as f32 * LOOK_PER_COUNT).clamp(-PITCH_LIMIT, PITCH_LIMIT);
-
         let (forward, right, _) = c.basis();
-        let axis = |plus, minus| {
-            f32::from(u8::from(input.held(plus))) - f32::from(u8::from(input.held(minus)))
-        };
-        let wish = forward * axis(KeyCode::KeyW, KeyCode::KeyS)
-            + right * axis(KeyCode::KeyD, KeyCode::KeyA)
-            + Vec3::Z * axis(KeyCode::Space, KeyCode::KeyC);
+        let wish = forward * axis(input, KeyCode::KeyW, KeyCode::KeyS)
+            + right * axis(input, KeyCode::KeyD, KeyCode::KeyA)
+            + Vec3::Z * axis(input, KeyCode::Space, KeyCode::KeyC);
         let speed = if input.held(KeyCode::ShiftLeft) {
             SPEED * BOOST
         } else {
             SPEED
         };
         c.position += wish.normalize_or_zero() * speed * dt;
+    }
+}
+
+/// Turns `camera` by the frame's mouse motion.
+fn look(camera: &mut Camera, input: &Input) {
+    let [dx, dy] = input.mouse_delta();
+    camera.yaw -= dx as f32 * LOOK_PER_COUNT;
+    camera.pitch = (camera.pitch - dy as f32 * LOOK_PER_COUNT).clamp(-PITCH_LIMIT, PITCH_LIMIT);
+}
+
+/// `+1`, `-1` or `0` from a pair of held keys.
+fn axis(input: &Input, plus: KeyCode, minus: KeyCode) -> f32 {
+    f32::from(u8::from(input.held(plus))) - f32::from(u8::from(input.held(minus)))
+}
+
+/// Controller ticks per second; parameters below are per tick.
+pub const TICK_HZ: f32 = 60.0;
+/// At most this many ticks catch up in one frame; a longer stall drops time.
+const MAX_TICKS_PER_FRAME: u32 = 8;
+/// The eye above the foot: 1.7 m.
+const EYE: f32 = 17.0;
+/// Walking speed: 128 fixed units (0.5 voxel) per tick, 3 m/s at 60 Hz.
+const WALK_WISH: f32 = 128.0;
+
+/// The body and limits of walk mode (Plan 0004's test parameters): a 0.6 m by 1.8 m cylinder
+/// that steps 0.4 m, climbs ledges up to 1.2 m and jumps about 0.6 m.
+pub fn walk_params() -> ControllerParams {
+    ControllerParams {
+        radius: 768,
+        height: 4608,
+        step_height: 1024,
+        climb_height: 3072,
+        climb_speed: 64,
+        gravity: -8,
+        max_fall: 1024,
+        jump_speed: 160,
+        ground_probe: 2,
+    }
+}
+
+/// Walk mode: a character body moved by the controller, the camera at its eye.
+#[derive(Clone, Copy, Debug)]
+pub struct Walk {
+    pub controller: CharacterController,
+    pub state: CharacterState,
+    /// Seconds not yet spent on ticks.
+    pending: f32,
+}
+
+impl Walk {
+    /// A body whose eye is at the camera, or `None` when it would overlap the world there.
+    pub fn at_camera(world: &World, camera: &Camera) -> Option<Self> {
+        let controller = CharacterController::new(walk_params());
+        let p = camera.position - Vec3::Z * EYE;
+        let foot = p.to_array().map(|v| (v * FIXED_ONE as f32).floor() as i64);
+        if overlaps(world, &controller.body(foot)) {
+            return None;
+        }
+        Some(Self {
+            controller,
+            state: CharacterState::new(Fixed3(foot)),
+            pending: 0.0,
+        })
+    }
+
+    /// The tick input from held keys: `W`/`S`/`A`/`D` walk along the camera's heading at
+    /// 3 m/s, `Space` jumps and, held against a wall with a standable top within 1.2 m,
+    /// climbs it.
+    pub fn input(input: &Input, camera: &Camera) -> MoveInput {
+        let (forward, right, _) = camera.basis();
+        let f = Vec2::new(forward.x, forward.y).normalize_or_zero();
+        let r = Vec2::new(right.x, right.y).normalize_or_zero();
+        let w = (f * axis(input, KeyCode::KeyW, KeyCode::KeyS)
+            + r * axis(input, KeyCode::KeyD, KeyCode::KeyA))
+        .normalize_or_zero()
+            * WALK_WISH;
+        let space = input.held(KeyCode::Space);
+        MoveInput {
+            wish: [w.x.round() as i64, w.y.round() as i64],
+            jump: space,
+            climb: space,
+        }
+    }
+
+    /// Turns the camera, runs the ticks `dt` seconds owe, and puts the camera at the eye.
+    /// Returns the state-change lines to print: `walk: grounded`, `walk: stepped`,
+    /// `walk: climbing`, `walk: climbed`.
+    pub fn update(
+        &mut self,
+        world: &World,
+        input: &Input,
+        camera: &mut Camera,
+        dt: f32,
+    ) -> Vec<&'static str> {
+        look(camera, input);
+        self.pending += dt;
+        let step = 1.0 / TICK_HZ;
+        let mut ticks = 0;
+        let mut lines = Vec::new();
+        while self.pending >= step && ticks < MAX_TICKS_PER_FRAME {
+            self.pending -= step;
+            ticks += 1;
+            lines.extend(self.tick(world, &Self::input(input, camera)));
+        }
+        if ticks == MAX_TICKS_PER_FRAME {
+            self.pending = 0.0;
+        }
+        camera.position = self.eye();
+        lines
+    }
+
+    /// One controller tick, and the state-change lines it caused.
+    pub fn tick(&mut self, world: &World, input: &MoveInput) -> Vec<&'static str> {
+        let (was_grounded, was_climbing) = (self.state.grounded, self.state.is_climbing());
+        let r = self.controller.tick(world, &mut self.state, input);
+        let mut lines = Vec::new();
+        if r.stepped {
+            lines.push("walk: stepped");
+        }
+        if self.state.is_climbing() && !was_climbing {
+            lines.push("walk: climbing");
+        }
+        if r.climbed {
+            lines.push("walk: climbed");
+        }
+        if self.state.grounded && !was_grounded {
+            lines.push("walk: grounded");
+        }
+        lines
+    }
+
+    /// The eye position in voxels.
+    pub fn eye(&self) -> Vec3 {
+        Vec3::from_array(self.state.foot.0.map(|v| v as f32 / FIXED_ONE as f32)) + Vec3::Z * EYE
     }
 }
 
@@ -80,6 +212,109 @@ mod tests {
             "turned toward -y, the camera's right at yaw 0"
         );
         assert!(forward.z < 0.0, "looks down");
+    }
+
+    /// A floor of material 1 at `z < 0` over chunks `[-1, 1)³`.
+    fn floor_world() -> World {
+        let mut t = vxe_world::MaterialTable::new();
+        let rock = t.push(vxe_world::Material::named("rock"));
+        struct Floor(u16);
+        impl vxe_world::WorldSource for Floor {
+            fn chunk(&self, c: vxe_world::ChunkCoord, out: &mut vxe_world::Chunk) {
+                if c.0[2] < 0 {
+                    for slot in 0..vxe_world::CHUNK_BRICKS {
+                        out.set_brick(slot, vxe_world::Brick::Uniform(self.0));
+                    }
+                }
+            }
+        }
+        World::generate(
+            vxe_world::ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
+            &Floor(rock),
+            &t,
+        )
+    }
+
+    fn camera_at(p: Vec3, pitch: f32) -> Camera {
+        Camera {
+            position: p,
+            yaw: 0.0,
+            pitch,
+            vfov: 1.0,
+        }
+    }
+
+    #[test]
+    fn walking_with_w_moves_three_metres_per_second() {
+        let world = floor_world();
+        let mut cam = camera_at(Vec3::new(0.5, 0.5, 20.0), 0.0);
+        let mut walk = Walk::at_camera(&world, &cam).unwrap();
+        let mut input = Input::default();
+        // Fall to the floor from 0.3 m up.
+        for _ in 0..30 {
+            walk.update(&world, &input, &mut cam, 1.0 / 60.0 + 1e-6);
+        }
+        assert!(walk.state.grounded);
+        assert_eq!(walk.state.foot.0[2], 0);
+        let x0 = walk.state.foot.0[0];
+        input.key_down(KeyCode::KeyW);
+        for _ in 0..60 {
+            walk.update(&world, &input, &mut cam, 1.0 / 60.0 + 1e-6);
+        }
+        // 60 ticks at 128 units: 30 voxels, 3 m.
+        assert_eq!(walk.state.foot.0[0] - x0, 60 * 128);
+        assert!((cam.position.z - EYE).abs() < 1e-4);
+    }
+
+    /// The hand-driven check scripted: dig a 1 m hole under the feet, fall in, then hold
+    /// forward and `Space` until the body climbs out.
+    #[test]
+    fn a_body_falls_into_a_dug_hole_and_climbs_out_with_w_and_space() {
+        use vxe_world::{EditOp, Mode};
+        let world = floor_world();
+        let mut walk = Walk {
+            controller: CharacterController::new(walk_params()),
+            state: CharacterState::new(Fixed3([128, 128, 0])),
+            pending: 0.0,
+        };
+        let idle = MoveInput::default();
+        for _ in 0..5 {
+            walk.tick(&world, &idle);
+        }
+        assert!(walk.state.grounded);
+        // A 1 m (10 voxel) deep, 1 m wide hole under the feet.
+        let r = world
+            .apply(&EditOp::box_(
+                Fixed3([-5 * 256, -5 * 256, -10 * 256]),
+                Fixed3([5 * 256, 5 * 256, 0]),
+                Mode::Carve,
+            ))
+            .unwrap();
+        assert_eq!(r.changed_from, [(1, 1000)]);
+        let mut lines = Vec::new();
+        for _ in 0..120 {
+            lines.extend(walk.tick(&world, &idle));
+        }
+        assert_eq!(walk.state.foot.0[2], -10 * 256, "fell to the hole's floor");
+        assert!(walk.state.grounded);
+        let mut cam = camera_at(Vec3::ZERO, 0.0);
+        let mut input = Input::default();
+        input.key_down(KeyCode::KeyW);
+        input.key_down(KeyCode::Space);
+        let mut climbed = false;
+        for _ in 0..240 {
+            let step = walk.tick(&world, &Walk::input(&input, &cam));
+            climbed |= step.contains(&"walk: climbed");
+            lines.extend(step);
+            cam.position = walk.eye();
+            if climbed && walk.state.grounded {
+                break;
+            }
+        }
+        assert!(climbed, "{lines:?}");
+        assert!(walk.state.foot.0[2] >= 0 && walk.state.foot.0[0] >= 5 * 256);
+        assert!(lines.contains(&"walk: climbing"));
+        assert!(lines.contains(&"walk: grounded"));
     }
 
     #[test]

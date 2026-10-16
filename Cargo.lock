@@ -551,6 +551,7 @@ dependencies = [
  "pollster",
  "vxe-app",
  "vxe-render",
+ "vxe-sim",
  "vxe-world",
 ]
 
@@ -1953,6 +1954,7 @@ dependencies = [
 name = "vxe-sim"
 version = "0.3.0"
 dependencies = [
+ "criterion",
  "vxe-world",
 ]
 

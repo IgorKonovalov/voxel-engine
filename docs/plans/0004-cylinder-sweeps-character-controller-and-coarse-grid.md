@@ -402,8 +402,8 @@ with the dev-box readings. Every one is a guess until read.
 | 2: Walk, step, slide, fall | dev | done | 215285a |
 | 3: Ledge climb and the pinned course | dev | done | f8ecdc9 |
 | 4: The coarse grid | dev | done | 611dfe5 |
-| 5: Walkable space | dev | done | committed with this row |
-| 6: Walk mode in the fly-through, benches, readings | dev | not started | |
+| 5: Walkable space | dev | done | c7abac7 |
+| 6: Walk mode in the fly-through, benches, readings | dev | done | committed with this row |
 
 ### Notes
 
@@ -423,6 +423,12 @@ with the dev-box readings. Every one is a guess until read.
 - Phase 4: `world_budget` prints the grid lines for the bounded cave only (`--chunks`), not for `--stream`.
 - Phase 5, done-when not satisfiable as stated: "recomputes only the changed cells and the `clearance + 1` cells above and the one below each" conflicts with the walkability definition (cell `c` depends on `c - 1` .. `c + clearance`) and with the full-rebuild equivalence done-when. A change at `g` can flip only `g - clearance ..= g + 1`; `update` recomputes exactly that set, deduplicated, and the tests count it (pillar: 6 distinct cells for 3 changes; one isolated change: `clearance + 2 = 4`). With the stated set (`g - 1 ..= g + clearance + 1`) the pillar test and the 32-sequence equivalence test fail (run on the dev box, then reverted).
 - Phase 5: `coarse.rs` is not touched. Public API beyond the data shapes: `WalkableMap::{params, update_with_stats, cells}`, `WalkableStats { cells_recomputed }`. A cell in a chunk the grid no longer holds is cleared from the map by `update`.
+- Phase 6: `Space` in walk mode sets both `jump` and `climb`. `--walk` without `--level` is refused. The coarse grid and walkable map are kept on the bounded level only (`K` prints `coarse: not kept while streaming` otherwise); `--frames N` prints the body's foot and the `K` line at exit.
+- Phase 6: headless parts scripted as tests: `fly::tests::walking_with_w_moves_three_metres_per_second` (60 ticks with `W` move 7680 units), `fly::tests::a_body_falls_into_a_dug_hole_and_climbs_out_with_w_and_space` (1 m box carved under the feet, falls to `z = -2560`, `W` plus `Space` prints `walk: climbing`, `walk: climbed`, `walk: grounded`), `tests::an_edit_keeps_the_coarse_grid_and_walkable_map_current` (27 changed cells, map equals a rebuild).
+- Phase 6: `flythrough --level --seed 1 --walk --headless --frames 4000` on the dev box (RTX 3080 Laptop): the eye at the spawn voxel `[640, 640, 256]` centre puts the foot at `[163968, 163968, 61312]`; the run printed `walk: grounded`, ended at `[163968, 163968, 58112]` grounded; `coarse: 3200 chunks, 6553600 bytes, 3010 walkable cells, built in 231 ms`.
+- Phase 6, awaits the owner (windowed, by hand): `cargo run --release -p flythrough -- --level --seed 1 --walk`; judge the fall to the pocket floor, `G` toggling fly and walk, `W A S D` at 3 m/s, `Space` jumping and climbing a ledge within 1.2 m, left click looking down to dig a 1 m hole, falling in, `W` plus `Space` climbing out, the `walk: grounded / stepped / climbing / climbed` lines, and `K` printing `coarse: <n> walkable cells, last edit changed <m> cells in <t> us`. The log does not record this as driven by hand.
+- Phase 6: the coarse bench runs on the solid world: Plan 0003 Phase 1's `mixed` world is not on this branch. The controller bench also times 300 F6 ticks: the F6 body leaves the `[-2, 2)^3` extent before tick 300 and falls through non-resident space, so most of the 1000 ticks are free fall.
+- Phase 6: `Cargo.lock` is touched (the `vxe-sim` and `criterion` edges); not in Files touched. `docs/nfr.md` is not touched (the close writes it).
 
 ### Close triggers
 

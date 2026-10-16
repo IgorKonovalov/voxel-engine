@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 env_logger.workspace = true
 vxe-world = { path = "../../crates/vxe-world" }
+vxe-sim = { path = "../../crates/vxe-sim" }
 vxe-render = { path = "../../crates/vxe-render" }
 vxe-app = { path = "../../crates/vxe-app" }
 
