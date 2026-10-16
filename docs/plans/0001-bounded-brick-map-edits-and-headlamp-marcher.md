@@ -499,16 +499,9 @@ says so.
 | 3: Raycast, queries, tool-along-ray | dev | done | 64d93d8 |
 | 4: Cave source, determinism vector, world budget readings | dev | done | 62bb87a |
 | 5: GPU mirror and primary-ray marcher with a golden image | dev | done | 6a3ab55 |
-| 6: Headlamp with a shadow ray | dev | blocked | |
+| 6: Headlamp with a shadow ray | dev | done | committed with this row |
 | 7: Window shell and the fly-through | dev | not started | |
 | 8: Brick occupancy masks | dev | not started | |
-
-### Resume notes (delete when Phase 6 lands)
-
-- **Blocked on:** the Phase 6 done-when "at least 1 % of pixels are brighter by more than 8/255" without the shadow ray. Measured 0.31 % on lavapipe for the Phase 5 scene (carved seed-7 cave, spawn pose, 320 x 180) with the plan's lamp at 0.25 m right and 0.15 m down. The other shadow assertion holds: no pixel of the unshadowed image is darker than the shadowed one. A diff mask places the shadowed pixels on terrace edges and on the rim of the carved hollow, on the side away from the lamp. The walls are 4.4 to 5.7 m from the eye, so a 0.29 m offset gives little parallax. Routed to `/architect` by the owner.
-- **Candidate fixes named to the owner:** lower the floor (for example to 0.2 %); keep 1 % and render the shadow comparison from a pose that faces nearer geometry (the floor is 3.1 m below the spawn); or change the lamp offset. Each changes the plan text.
-- **Uncommitted Phase 6 work in the tree:** `crates/vxe-render/src/light.rs` (`LightParams::{at_eye, headlamp}`, `shadows` flag), `crates/vxe-render/src/{lib.rs, marcher.rs}`, `crates/vxe-render/src/shaders/march.wgsl` (march takes `t_limit`; one shadow ray when flag bit 0 is set), `apps/flythrough/tests/golden.rs` (headlamp test), `apps/flythrough/tests/golden/headlamp.png` (blessed from that tree). `primary.png` compares at 0.0000 % with that tree.
-- **Gate at the tip (6a3ab55):** `cargo build`, `cargo nextest run --workspace` (38 passed), `cargo test --doc`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check` and `cargo deny check` all exit 0.
 
 ### Notes
 
@@ -549,6 +542,9 @@ each. Empty is fine.)_
 - Phase 5: camera units are voxels, z up; the lamp sits at the eye with intensity 1200, cone 0.35 to 0.70 rad, and the output is clamped then raised to 1/2.2 (commit of Phase 5).
 - Phase 5: `GpuWorld::sync` takes `&mut self` and returns `Result<SyncStats, MirrorError>`; pool pages are 4096 slots (4 MiB) (commit of Phase 5).
 - Phase 5: lavapipe binds at most 134 217 728 B per storage buffer, below the level-size pool (383 608 Full bricks, about 375 MiB); the RTX 3080 binds 2 147 483 644 B, below the 32x32x32 pool (3 487 326 Full bricks, about 3.3 GiB).
+- Phase 6: `LightParams` carries intensity and cone angles as well as the offsets and the `shadows` flag; `LightParams::at_eye()` keeps the Phase 5 values (intensity 1200, cone 0.35 to 0.70 rad). `Marcher::render` and `Marcher::params` take `&LightParams` (commit of Phase 6).
+- Phase 6: the occluder scene reads 823 pixels brighter by more than 8/255 (range 820 to 840, 830 computed), all inside columns [130,207] and rows [63,140]; the cave scene reads 0.31 %. Both on lavapipe (llvmpipe, Mesa 26.2.2) (commit of Phase 6).
+- Phase 6: `primary.png` and `headlamp.png` re-blessed under `VXE_BLESS=1` came out byte-identical to the committed files (commit of Phase 6).
 
 ### Close triggers
 

@@ -6,11 +6,13 @@
 
 pub mod camera;
 pub mod gpu_world;
+pub mod light;
 pub mod marcher;
 pub mod readback;
 
 pub use camera::Camera;
 pub use gpu_world::{GpuWorld, MirrorError, SyncStats};
+pub use light::LightParams;
 pub use marcher::Marcher;
 pub use wgpu;
 

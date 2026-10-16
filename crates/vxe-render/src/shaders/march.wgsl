@@ -1,7 +1,7 @@
 // Primary-ray marcher over the brick-map mirror (ADR-0002), one invocation per pixel.
 //
 // Bindings, group 0:
-//   0  uniform  params         camera, extent, light, target size
+//   0  uniform  params         camera, extent, light, target size, flags (bit 0: shadow ray)
 //   1  storage  brick_pool     [slot][256 x u32], two u16 voxels per word, x fastest
 //   2  storage  chunk_records  [record][512 x u32]; bit 31 set: pool slot, clear: uniform material
 //   3  storage  chunk_table    [wrapped chunk]u32 record index, 0xFFFFFFFF when absent
@@ -48,6 +48,8 @@ const ABSENT: u32 = 0xFFFFFFFFu;
 const FULL_BIT: u32 = 0x80000000u;
 const MAX_STEPS: u32 = 4096u;
 const BIG: f32 = 3.0e38;
+// Params.flags bits.
+const FLAG_SHADOWS: u32 = 1u;
 
 // What the walk found at a voxel: `size` is the edge of the empty cell to skip, or 0 for a
 // solid voxel of `material`.
@@ -107,7 +109,8 @@ fn voxel_at(p: vec3<f32>, d: vec3<f32>) -> vec3<i32> {
     return vec3<i32>(select(floor(p), ceil(p) - 1.0, d < vec3<f32>(0.0)));
 }
 
-fn march(o: vec3<f32>, d: vec3<f32>) -> Hit {
+// The first solid voxel along `o + d t` for `0 <= t <= t_limit`.
+fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
     var miss = Hit(false, vec3<i32>(0), -1, 0.0, 0u);
     let bmin_i = params.extent_min * 64;
     let bmax_i = (params.extent_min + params.extent_size) * 64;
@@ -137,6 +140,9 @@ fn march(o: vec3<f32>, d: vec3<f32>) -> Hit {
 
     for (var step = 0u; step < MAX_STEPS; step++) {
         if (any(v < bmin_i) || any(v >= bmax_i)) {
+            return miss;
+        }
+        if (t > t_limit) {
             return miss;
         }
         let c = lookup(v);
@@ -170,7 +176,16 @@ fn shade(o: vec3<f32>, d: vec3<f32>, h: Hit) -> vec3<f32> {
     let l = to_light * inverseSqrt(dist2);
     let ndl = max(dot(n, l), 0.0);
     let cone = smoothstep(params.cos_outer, params.cos_inner, dot(-l, params.light_dir));
-    return albedo * (params.light_intensity * cone * ndl / dist2);
+    var lit = params.light_intensity * cone * ndl / dist2;
+    // One shadow ray, from half a voxel off the face toward the lamp; any rock before the lamp
+    // removes its light.
+    if ((params.flags & FLAG_SHADOWS) != 0u && lit > 0.0) {
+        let s = march(p + n * 0.5, l, sqrt(dist2));
+        if (s.found) {
+            lit = 0.0;
+        }
+    }
+    return albedo * lit;
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -185,7 +200,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         - params.cam_up * (ndc.y * params.tan_half_fov)
     );
     let o = params.cam_pos;
-    let h = march(o, d);
+    let h = march(o, d, BIG);
     var c = vec3<f32>(0.0);
     if (h.found) {
         c = shade(o, d, h);

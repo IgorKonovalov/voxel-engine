@@ -2,6 +2,7 @@
 
 use crate::camera::Camera;
 use crate::gpu_world::GpuWorld;
+use crate::light::LightParams;
 
 /// Workgroup edge in pixels; must match `@workgroup_size` in `march.wgsl`.
 pub const WORKGROUP: u32 = 8;
@@ -31,11 +32,8 @@ pub struct Params {
     pub flags: u32,
 }
 
-/// Spot-lamp intensity in the shader's units: radiance at one voxel of distance, on axis.
-const LAMP_INTENSITY: f32 = 1200.0;
-/// Cone half-angles of the lamp, inner (full) and outer (zero), in radians.
-const LAMP_INNER: f32 = 0.35;
-const LAMP_OUTER: f32 = 0.70;
+/// `Params::flags` bit: trace the shadow ray.
+pub const FLAG_SHADOWS: u32 = 1;
 
 pub struct Marcher {
     pipeline: wgpu::ComputePipeline,
@@ -137,8 +135,8 @@ impl Marcher {
         &self.target
     }
 
-    /// The uniform block for `camera` over `world`, with the lamp at the eye.
-    pub fn params(&self, world: &GpuWorld, camera: &Camera) -> Params {
+    /// The uniform block for `camera` over `world`, lit by `light`.
+    pub fn params(&self, world: &GpuWorld, camera: &Camera, light: &LightParams) -> Params {
         let (fwd, right, up) = camera.basis();
         let (w, h) = (self.target.width(), self.target.height());
         let e = world.extent();
@@ -151,12 +149,14 @@ impl Marcher {
             cam_fwd: fwd.to_array(),
             extent_min: e.min.0,
             extent_size: e.size(),
-            light_pos: camera.position.to_array(),
-            light_intensity: LAMP_INTENSITY,
+            light_pos: (camera.position + right * light.offset_right - up * light.offset_down)
+                .to_array(),
+            light_intensity: light.intensity,
             light_dir: fwd.to_array(),
-            cos_outer: LAMP_OUTER.cos(),
+            cos_outer: light.outer.cos(),
             size: [w, h],
-            cos_inner: LAMP_INNER.cos(),
+            cos_inner: light.inner.cos(),
+            flags: if light.shadows { FLAG_SHADOWS } else { 0 },
             ..Params::default()
         }
     }
@@ -217,15 +217,16 @@ impl Marcher {
         );
     }
 
-    /// Marches `camera` over `world` and submits the work.
+    /// Marches `camera` over `world` lit by `light`, and submits the work.
     pub fn render(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         world: &GpuWorld,
         camera: &Camera,
+        light: &LightParams,
     ) {
-        let params = self.params(world, camera);
+        let params = self.params(world, camera, light);
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         self.encode(device, queue, &mut enc, world, &params);
         queue.submit([enc.finish()]);
