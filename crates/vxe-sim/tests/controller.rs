@@ -369,9 +369,9 @@ fn a_ledge_met_30_degrees_off_head_on_is_climbed_with_climb_held() {
 }
 
 /// A ledge under a ceiling 2.9 m up leaves 1.9 m over the 1 m ledge, room for the 1.8 m body;
-/// the probe used to demand a full `climb_height` (1.2 m) of rise above the body's head and
-/// refused it. Under a ceiling 2.7 m up (1.7 m over the ledge) the body does not fit and no
-/// climb is offered.
+/// a probe that demanded a full `climb_height` (1.2 m) of rise above the body's head would
+/// refuse it; the climb is offered. Under a ceiling 2.7 m up (1.7 m over the ledge) the body
+/// does not fit and no climb is offered.
 #[test]
 fn a_ledge_under_a_low_ceiling_is_climbed_when_the_body_fits_over_it() {
     let steps = run(&ledge(29), S, 120, climb_held(WISH, u32::MAX));
