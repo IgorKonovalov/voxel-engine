@@ -10,6 +10,10 @@
 > **Amended 2026-10-16 (second):** Phase 3's partial-cover pillar is 3 x 3 voxels; Phase 4 pins
 > the reflection direction set, the hit point (the face) and the tap delay as excess over the
 > direct path, so the expected echo is 1160 samples. See "Amendment 2026-10-16 (second)" below.
+> **Amended 2026-10-16 (third):** the HRIR pack uses one window start for every direction
+> (sample 54 of 256), not one per direction; each reflection tap is scaled by its source's
+> occlusion multiplier; Phase 3's rendered ratios are stated with reflections off, and the
+> figures with reflections on move to Phase 4. See "Amendment 2026-10-16 (third)" below.
 
 ## TL;DR
 
@@ -102,6 +106,78 @@ also placed the listener 5 m from the face).
 heard on the dev box: left and right swapped, and clicks when turning or when a source's
 distance changes. Phase 3's listening check (the `J` hum behind a wall) is re-run after that
 pass lands, and so is Phase 1's `H` knock; the log records both.
+
+## Amendment 2026-10-16 (third)
+
+The fix pass on `plan-0006` stopped on two blocks (the log's Notes at 23ccbf2 and fa7c920). The
+owner decided both on 2026-10-16, after an A/B listen of the first.
+
+**Phase 2, the pack window.** One window start for every direction replaces the per-direction
+rule. The packer computes each ear's onset as before (the first sample reaching a tenth of that
+ear's own peak), takes the earliest onset over every kept direction and both ears, and starts
+every direction's two 128-tap responses 8 samples before it. For D2 at stride 3 that is sample
+54 of the source's 256. The format, the direction count and the size (3,044,420 bytes) do not
+change; the file keeps its name, `assets/sadie2_d2_48k.hrir`, and its bytes become those of
+dev's candidate `sadie2_d2_48k_global_window.hrir` (sha256 `86375f1c8ff0...`, the full hash in
+the log), packed from the same `D2_HRIR_SOFA.zip` (md5 `f555491d1b6b1a108bb4d26b63ad84a4`).
+
+Why: the per-direction rule caused the turning clicks. A tenth of the far ear's peak is often
+reached by its faint early response, so neighbouring directions' windows start up to 23 samples
+apart and their 440 Hz phases differ by up to 1.822 rad; the one-block crossfade between them
+is a 5 ms phase jump. With one window the largest ring-neighbour phase step is 0.078 rad, the
+least energy any ear keeps in its window rises from 0.934 to 0.971, and every Phase 2 and 3
+check holds (2 kHz at +90 degrees 7.10 dB, front 0.71 dB, -90 degrees 7.60 dB; moving max step
+0.0576 against static 0.0519; the fly-through's side test 19.6 and 17.9 dB). The owner A/B'd it
+live with `--audio-debug`: blocks with a 440 Hz phase jump over 0.3 rad fell from 378 of 2722 to
+14 of 3611, level steps over 0.5 dB per 5 ms from 11.4/s to 2.6/s, and the clicks were gone by
+ear. The replaced pack stays in history as a second blob of about 3 MB; that is accepted.
+
+What remains is unevenness, not clicks: about 7 interaural level steps over 0.5 dB per second
+while turning, from nearest-direction switching at the pack's spacing. That is ADR-0006's
+direction-interpolation follow-up, which this measurement now motivates; it is not in this plan.
+
+Rejected: a per-direction window with one onset threshold for both ears (a tenth of the louder
+ear's peak), which still steps 1.032 rad between neighbours; interpolation or a separated
+fractional ITD now, which is the follow-up above and a larger change than the defect needs.
+
+ADR-0006 does not state the window rule (it is a packer detail), so its decision is unchanged;
+its nearest-direction consequence gains a dated line pointing at this measurement.
+
+**Phase 4 against Phase 3, option (c).** With reflections on, the listener's rays hit the
+occluding wall's near face, and a tap gain of `(1 - A) / path` carries no occlusion for the
+hit-to-source leg, which runs through the wall: the echo was louder than the occluded direct
+sound (0.6623 and 1.2332 against 0.0814 and 0.358). **Decision:** every tap's gain is also
+multiplied by its source's occlusion multiplier (the mean of the seven probe rays, Phase 3). No
+extra rays; the 240-ray budget stands. It is an approximation: a source occluded from the
+listener is taken as equally occluded from every reflector.
+
+Phase 3's rendered-ratio done-whens are stated **with reflections off**, and the figures with
+reflections on become a Phase 4 check. That keeps Phase 3's figures analytic (they follow from
+the occlusion model and the one-pole response alone) and keeps a change to the reflection fan
+from moving a Phase 3 test. `Acoustics` gains a reflections switch (on by default; the name is
+dev's) that sends no taps when off; Phase 3's rendered tests turn it off.
+
+Under (c), dev measured the Phase 3 scenes with reflections on at 0.1136 (5 m wall, 100 Hz) and
+0.6452 (0.5 m wall, 2 kHz). These are measured, not derived: they depend on where the sixteen
+rays hit the walls of those scenes. Phase 4 asserts them within 2 % as a regression guard, and
+asserts the analytic property behind them on the targets: in each scene every tap's gain equals
+the source's multiplier times the same tap's gain with the wall's transmission set to 1, within
+`1e-6` relative. Phase 4's own echo scene has nothing between listener and source (multiplier
+1), so its figures (1160 samples, 0.1361) do not change.
+
+Rejected: (a) Phase 3's tests drop the taps and nothing else changes (0.081379 and 0.359709),
+which leaves the echo louder than the direct sound behind a wall in the product; (b) occlude
+the hit-to-source leg with one more ray per hit (0.1040 and 0.6481), which is the better model
+but 16 more rays per probed voice, 752 rays for 32 sources against the 240 the Budgets row
+counts. (b) is the upgrade if the owner hears (c)'s approximation; it needs a new budget.
+
+**Recorded from the fix pass.** The owner's left/right swap was the headset's system channel
+map (`speaker-test` played "Front Left" in the right ear), not the engine; no change. These fix
+pass changes on `plan-0006` are accepted as deviations outside the phases' Files touched: the
+raised-cosine direction crossfade (2f497aa; still one block, as ADR-0006 says), `vxe-audio` at
+opt-level 2 in dev builds (`Cargo.toml`, 2f497aa), the per-sample low-pass coefficient glide
+(8a0d6c5), the callback meter and recorder behind `--audio-debug` and the `FLYTHROUGH_HRIR`
+pack override (96de82d), and the two fourth-difference tests that guard the crossfade and the glide.
 
 ## Context & problem
 
@@ -221,17 +297,27 @@ Shared conventions for every phase:
   per voice.
 - **Files touched:** `crates/vxe-audio/examples/hrir_pack.rs`, `crates/vxe-audio/src/{hrtf.rs,
   mixer.rs, voice.rs}`, `crates/vxe-audio/assets/{sadie2_d2_48k.hrir, LICENSE-SADIE-II.txt,
-  README.md}`, `crates/vxe-audio/tests/hrtf.rs`, `Cargo.toml` (`sofar` dev pin).
+  README.md}` (third amendment: the README's modifications line states the one window), `crates/vxe-audio/tests/hrtf.rs`, `Cargo.toml` (`sofar` dev pin).
 - **Done when:**
   - `cargo run -p vxe-audio --example hrir_pack -- <D2 48 kHz SOFA path> assets/sadie2_d2_48k.hrir`
     (amended 2026-10-16: with `--azimuth-stride 3`, the default) reads the SADIE II subject D2 HRIR SOFA at 48 kHz (from the `D2_HRIR_SOFA.zip` archive on
     the Zenodo record, 38 MB, not committed), truncates each HRIR to 128 taps keeping the onset
-    (the pack stores, per direction, the two 128-tap responses starting 8 samples before the
-    earlier ear's onset), and writes the pack: a 20-byte header (`b"VXEH"`, version 1, sample
+    (amended 2026-10-16, third: every direction's two 128-tap responses start at one sample,
+    8 samples before the earliest onset of any kept direction and either ear, sample 54 for D2;
+    the packer prints that start and the least fraction of an ear's energy kept, at least 0.95),
+    and writes the pack: a 20-byte header (`b"VXEH"`, version 1, sample
     rate, tap count, direction count), the direction table (azimuth, elevation in degrees as
     `f32`), then the taps. The log records the direction count and the pack's byte size
     (amended 2026-10-16: 2950 directions and 3,044,420 bytes at stride 3; the log records the packer's own counts, and `20 + dirs x 8 + dirs x
-    1024` must equal the file size).
+    1024` must equal the file size; third amendment: the log records the pack's sha256, which
+    begins `86375f1c`).
+  - (Amended 2026-10-16, third.) Read from the pack at test start: between neighbours on every
+    elevation ring, the largest change in either ear's 440 Hz phase is below 0.15 rad (0.078
+    measured; the per-direction pack measured 1.822); printed and recorded. A 440 Hz hum 1 m
+    ahead, the listener turning at 90 deg/s with the listener set once per 256-frame block:
+    within any one block, either ear's 440 Hz phase moves by less than 0.2 rad and its level by
+    less than 0.25 dB (0.058 rad and 0.04 dB measured; the per-direction pack 0.811 rad and
+    0.90 dB; static 0.001 rad).
   - `assets/README.md` names the source (SADIE II, University of York, Zenodo DOI
     10.5281/zenodo.10886409), the subject, the licence (Apache 2.0) and the attribution text
     SADIE II asks for; `LICENSE-SADIE-II.txt` is the licence copy.
@@ -276,6 +362,9 @@ Shared conventions for every phase:
     `thickness = sum of solid run lengths`; the source's gain multiplier is the mean of the
     seven `g`, and its cutoff is `20 000 Hz / (1 + 10 * thickness_m)` using the thickness of
     the direct ray. The mixer applies the gain and a one-pole low-pass at the cutoff per voice.
+  - (Amended 2026-10-16, third.) The two rendered-ratio checks below run with `Acoustics`'
+    reflections switched off, so they measure the direct path; Phase 4 states the same scenes
+    with reflections on.
   - Headless: an air world over chunks `[0, 4)³` with a wall of material `W` (`acoustic =
     [0.3, 0.5, 0.0]`) filling `x in [100, 150)` (5 m), listener at voxel centre `(50, 128,
     128)`, a 100 Hz source of amplitude 0.5 at `(150 + 50, 128, 128)` (10 m away, 5 m of wall
@@ -307,7 +396,8 @@ Shared conventions for every phase:
     test by their first three values so a change is visible). For each ray that hits within
     50 m at point `H` (the entry of the first solid run) with material `m`, every voice gets a
     tap at delay `(|L - H| + |H - S| - |L - S|) / 343 m/s` seconds, the excess over the direct
-    path, with gain `(1 - A(m)) * (1 m / (|L - H| + |H - S|))` times the voice's own gain, fed
+    path, with gain `(1 - A(m)) * (1 m / (|L - H| + |H - S|))` times the voice's own gain and
+    times the voice's occlusion multiplier from Phase 3 (amended 2026-10-16, third), fed
     ahead of the voice's HRIR FIR, at most 16 taps per voice, in a 200 ms delay line per voice;
     taps are replaced with a one-block crossfade when the acoustics update changes them.
   - Headless: an air world over chunks `[0, 4)³`; a wall of material `W` (`A = 0.3`) filling
@@ -320,6 +410,11 @@ Shared conventions for every phase:
     onset shifts both peaks equally). The second peak's amplitude relative to the first is
     `0.7 * (1 / 10.2888) / (1 / 2) = 0.1361`, within 10 % (the HRIR shapes both).
   - With the wall removed, no second peak above 1 % of the first exists within 100 ms.
+  - (Amended 2026-10-16, third.) Phase 3's 5 m and 0.5 m wall scenes with reflections on:
+    every tap's gain equals the source's occlusion multiplier times that tap's gain in the same
+    scene with the wall's transmission set to 1, within `1e-6` relative; the rendered ratios to
+    the open scene are 0.1136 (100 Hz) and 0.6452 (2 kHz), each within 2 % (measured under this
+    rule, not derived). With reflections off, `Acoustics` sends no taps.
   - The `--audio` fly-through's `F1` line prints the number of active taps and the last
     acoustics update's time.
 
@@ -401,7 +496,9 @@ The baseline CPU is not on hand; readings are dev reference and say so.
   resampler is a follow-up (ADR-0006).
 - **Nearest-direction stepping** may be audible on slow pans (ADR-0006). The moving-source test
   bounds the click, not the step; the owner's ear decides whether interpolation is the next
-  plan.
+  plan. (2026-10-16: with the one-window pack, the owner's `--audio-debug` recording still shows
+  about 7 interaural level steps over 0.5 dB per second while turning; that measurement is the
+  case for interpolation.)
 - **Probe cost on the game thread.** 240 rays per update at most; each ray is a brick-map DDA
   of up to 50 m. The bench reads it. If it crowds the frame, the follow-up is a worker thread
   fed by a snapshot of positions, which ADR-0006 already names.

@@ -72,6 +72,9 @@ perceptual layer; the consumer's gameplay noise model lives on M3's coarse grid,
   source steps between filters; the one-block crossfade hides the click, not the step. SADIE II's
   measurement grid is dense enough (a few degrees) that the step is small; the plan's moving
   source test bounds the discontinuity, and interpolation is a follow-up if the owner hears it.
+  (2026-10-16, Plan 0006's third amendment: with the pack on one window start, the owner's
+  recording while turning shows about 7 interaural level steps over 0.5 dB per second, which
+  is the measured case for that follow-up.)
 - **One head for everyone.** A generic dummy head localises worse than an individual HRTF for
   some listeners. Swapping the pack is a file change.
 - **48 kHz only.** The mixer runs at the pack's rate; a device that cannot open 48 kHz fails
