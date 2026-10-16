@@ -1,6 +1,6 @@
 # 0010: A toggleable stats HUD: a bitmap-font text grid and a frame-time strip drawn as one overlay pass
 
-> **Status:** draft
+> **Status:** approved (2026-10-16)
 > **Created:** 2026-10-16
 > **Milestone:** M7 in `docs/roadmap.md` (tooling; the profiler overlay half, brought forward)
 > **Related ADRs:** [ADR-0009](../adrs/0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) (no UI library), ADR-0001 (stack)
