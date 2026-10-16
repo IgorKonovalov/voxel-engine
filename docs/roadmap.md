@@ -150,11 +150,16 @@ layout.
   trait, `(seed, chunk coord) -> chunk`; the edit ops listed under "Storage shape" in integer
   math returning results; CPU raycast (DDA), point query and region material counts; dirty
   tracking for upload.
-- `vxe-world` (Plan 0002): streaming around one or more focus points on a background thread
-  pool with eviction and edit persistence for paged-out chunks; LOD mips.
+- `vxe-world` (Plan 0002, ADR-0003): sphere residency around one or more focus points on a
+  background thread pool, in two tiers: full detail inside `r_full`, and an LOD-only ring out
+  to `r_lod` that keeps only mips (32³, 16³, 8³), not bricks. Edited chunks are persisted on
+  eviction, in RAM with disk spill. Plan 0001's `Full` fraction reading (about 21 %, not 10 %)
+  is why the ring replaces bricks instead of adding mips to every resident chunk.
 - `vxe-render`: incremental per-brick upload; primary-ray DDA in compute over the brick
-  occupancy masks; one spot light with a shadow ray; LOD rays beyond a distance (Plan 0002);
-  blit to the swapchain.
+  occupancy masks; one spot light with a shadow ray; blit to the swapchain. Plan 0002
+  (ADR-0004): a wrapped window following the camera, budgeted batched uploads, an 8-bit
+  per-chunk palette, a pool sharded over up to four bindings, and a mip walk for LOD-only
+  chunks.
 - `vxe-app`: window, keyboard and mouse, frame loop, surface resize.
 - `apps/flythrough`: an integer-noise cave `WorldSource`; prints edit results.
 - **Headless proof:** a fixed op list on a fixed seed hashes to the same voxels and the same

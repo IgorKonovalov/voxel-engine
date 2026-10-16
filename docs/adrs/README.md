@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0003.**
+**Next free number: 0005.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -16,6 +16,8 @@ the status.
 |------|-------|--------|
 | [0001](0001-rust-library-workspace-wgpu-compute-ray-marching.md) | Rust library workspace, wgpu compute ray marching, streaming brick-map world | accepted |
 | [0002](0002-brick-map-layout-and-per-chunk-locked-access.md) | Brick-map storage layout, GPU mirror, and per-chunk locked access | proposed |
+| [0003](0003-sphere-residency-with-lod-ring-and-edit-persistence.md) | Sphere residency with an LOD-only ring, edited-chunk persistence with disk spill | proposed |
+| [0004](0004-palette-narrowed-sharded-brick-pool.md) | Per-chunk 8-bit palette mirror and a brick pool sharded over fixed bindings | proposed |
 
 ## Decisions taken but not yet recorded
 

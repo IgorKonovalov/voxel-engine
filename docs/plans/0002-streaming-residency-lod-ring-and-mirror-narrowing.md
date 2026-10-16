@@ -1,0 +1,520 @@
+# 0002: Streaming residency, an LOD-only ring, and a narrowed, sharded mirror
+
+> **Status:** draft
+> **Created:** 2026-10-16
+> **Milestone:** M1 in `docs/roadmap.md` (second of two plans; closes M1)
+> **Related ADRs:** [ADR-0003](../adrs/0003-sphere-residency-with-lod-ring-and-edit-persistence.md) (residency tiers, LOD-only ring, persistence, edit/eviction exclusion), [ADR-0004](../adrs/0004-palette-narrowed-sharded-brick-pool.md) (8-bit palette mirror, sharded pool), ADR-0002 (layout, access model), ADR-0001 (stack)
+> **Prerequisite:** Plan 0001 closed, including its Phase 8 (brick occupancy masks). This plan
+> assumes the `brick_masks` binding and the block-level marcher step exist.
+
+## TL;DR
+
+The world stops being a box generated up front. In `vxe-world`, a `Streamer` keeps chunks
+resident in spheres around focus points. Full-detail chunks lie inside `r_full`, and a ring out
+to `r_lod` keeps only 32³/16³/8³ mips. A `std::thread` pool generates and demotes chunks off the
+caller's thread. An evicted chunk that was ever edited is kept in RAM, spills to disk past a
+cap, and comes back byte-identical. In `vxe-render`, the mirror follows the camera through a
+wrapped window. It uploads nearest-first under a per-frame byte budget, in batched writes. It
+stores voxels as 8-bit indices into a per-chunk palette, splits the brick pool over up to four
+bindings, and the marcher walks LOD-only chunks at mip resolution. The first thing a reader sees
+is a headless test: a radius-2 residency around chunk `[0,0,0]` holds exactly 33 chunks, and
+after the focus moves three chunks along x it holds 42, with 22 evicted. The first thing the
+user sees is the fly-through streaming an unbounded cave. `--autopilot` digs a hole, flies
+300 m away and back, and prints that the hole's chunks hash as they did right after the dig.
+
+## Context & problem
+
+Plan 0001 delivered the bounded walking skeleton. M1 is not done until the world streams
+(ADR-0001, `nfr.md` §5), and Plan 0001's readings (its Implementation log, `nfr.md` §3 and §5)
+add four problems this plan must solve:
+
+- **VRAM.** The cave's `Full` brick fraction is 20.8 % to 23.4 %, against the 10 % the roadmap
+  assumed. A 32³-chunk cube mirrors to 3.5 GB at `u16`, over the 3 GB world line, before any LOD.
+- **Binding limits.** One storage binding holds at most 2 GiB on the dev box and 128 MiB on
+  lavapipe. The level-size pool (about 375 MiB) already fails on lavapipe.
+- **Upload.** The initial mirror of the level is 383 608 one-brick `write_buffer` calls taking
+  853 to 888 ms, the largest item in time to first frame. A streaming world uploads all the
+  time, under the 1.0 ms streaming line of `nfr.md` §2.
+- **Persistence.** Edits are ops on resident chunks. A chunk that leaves residency must come
+  back with its edits (`nfr.md` §5, last bullet).
+
+Consumer requirements served (`project-context.md`, "The first consumer"): P1 stacked levels
+generated in the background, which streaming covers, and P0 generation as a pure function of
+the seed, kept under streaming. The consumer's P0 bounded levels need no streaming, and
+`World::generate` stays for them.
+
+`nfr.md` figures touched: §2 primary rays (the palette lookup and the LOD walk) and the
+streaming line; §3 world VRAM and RAM; §5 residency latency and generation throughput under
+streaming; §6 determinism (mips join the cross-platform vector); §7 time to first frame.
+
+## Decision
+
+We implement ADR-0003 and ADR-0004 in one plan, world first:
+
+- In `vxe-world`, sphere residency in two tiers with hysteresis, driven by `update(focus)` and
+  `poll()` on the caller's thread over a `std::thread` worker pool. `World::apply` holds the
+  store map's read lock for the whole op. Edited chunks are persisted in RAM with disk spill.
+- Also in `vxe-world`, `ChunkMips` built from a full chunk.
+- In `vxe-render`, a wrapped mirror window around one focus (the camera), a dirty-chunk set so
+  an idle sync costs nothing, nearest-first budgeted uploads in batched writes, 8-bit
+  palettes with a wide fallback, up to four pool shards, and LOD records walked by the marcher
+  at a per-chunk mip level.
+- `apps/flythrough` streams an unbounded cave and gains an autopilot that measures what the
+  close needs.
+
+The radii are parameters. Their defaults (`r_full = 16`, about 102 m; `r_lod = 24`, about 154 m;
+`h = 1`) are proposals that a headless sweep in Phase 8 checks, and the close sets them from
+it. That follows the owner's decide-by-measurement rule.
+
+Rejected (details in the ADRs): cube residency (1.9 times the chunks); mips in every resident
+chunk (adds VRAM instead of replacing it); op-log replay for persistence (M5 owns the log);
+keeping the ring's full voxels in RAM (4.8 GB); per-brick variable-width palettes (allocator
+complexity first, saving second); a global 8-bit remap (caps a world at 255 materials); and
+storage binding arrays (a native-only feature unproven on the baseline). We rejected splitting
+LOD into a Plan 0003 because the VRAM line can only be read once, with all three levers in
+place.
+
+## Architecture diagram
+
+```mermaid
+flowchart LR
+    subgraph consumer["apps/flythrough"]
+        CAM[camera + autopilot<br/>focus points]
+        SRC[CaveSource unbounded]
+    end
+    subgraph world["vxe-world (headless)"]
+        STR[Streamer<br/>update / poll]
+        POOL[worker pool<br/>generate, demote, spill I/O]
+        ST[(full chunks)]
+        LOD[(LOD-only ChunkMips)]
+        PER[(persisted edited chunks<br/>RAM, spill dir)]
+    end
+    subgraph render["vxe-render (wgpu)"]
+        MIR[GpuWorld window:<br/>u8 pool x4 shards, masks,<br/>records + palette, table]
+        SH[march.wgsl<br/>full walk + mip walk]
+    end
+    CAM --> STR
+    STR --> POOL
+    SRC --> POOL
+    POOL --> ST
+    POOL --> LOD
+    ST <-->|evict edited / reload| PER
+    STR -->|residency events| MIR
+    ST -->|dirty bricks| MIR
+    LOD -->|mip-bricks| MIR
+    MIR --> SH
+```
+
+A chunk's lifecycle, with `d` the integer chunk distance to the nearest focus chunk:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Queued: d <= r_lod
+    Queued --> Full: generated or reloaded, d <= r_full
+    Queued --> LodOnly: generated or reloaded, mips built
+    LodOnly --> Queued: d <= r_full (promote, regenerate)
+    Full --> LodOnly: d > r_full + h (demote; persist if edited)
+    LodOnly --> [*]: d > r_lod + h (evict)
+    Full --> [*]: d > r_lod + h (evict; persist if edited)
+```
+
+## Implementation phases
+
+Each phase ships as its own commit. `dev` implements all phases in one session with no review
+between phases. The architect reviews once at the end, in a fresh session. Phase 1 is the
+walking skeleton.
+
+Shared conventions for every phase:
+
+- Plan 0001's conventions hold: coordinates, fixed point, integer shape tests, a "solid
+  material-3 world" from `UniformSource(3)`, the test material table, and FNV-1a 64 hashes in
+  ascending chunk order with `Uniform` bricks hashed expanded.
+- **Distances are integer chunk units.** The focus chunk is the focus voxel's `chunk()`.
+  `d2(c, f) = |c - f|^2` in `i64`. Chunk `c` is wanted full when `min_f d2 <= r_full^2`, and
+  wanted LOD-only when it is not full and `min_f d2 <= r_lod^2`. A full chunk is demoted only
+  when `min_f d2 > (r_full + h)^2`; a resident chunk of either tier is evicted only when
+  `min_f d2 > (r_lod + h)^2`.
+- **No clock in `vxe-world`.** Latency is counted in `update` ticks. The fly-through converts
+  ticks to milliseconds with its own frame timer (the app shell's `#[allow]` pattern).
+- **Tests drive the streamer synchronously** with `wait_idle(&world)`, which blocks until the
+  queue is empty and all results are polled. No test sleeps.
+- New dependencies: none expected. Threads, the queue, channels and file I/O are `std`. Spill
+  tests use a directory under `std::env::temp_dir()` named from the test name and
+  `std::process::id()`, removed by the test.
+
+### Phase 1: Streamer skeleton, full tier only
+- **Owner skill:** dev
+- **What:** an empty unbounded `World`, a `Streamer` that loads and evicts full chunks around
+  focus points on a worker pool, and `World::apply` holding the store map's read lock for the
+  whole op.
+- **Files touched:** `crates/vxe-world/src/{lib.rs, store.rs, stream.rs, edit.rs}`,
+  `crates/vxe-world/tests/stream.rs`, `crates/vxe-world/tests/support/mod.rs`.
+- **Done when:**
+  - With `UniformSource(3)`, `r_full = r_lod = 2`, `h = 1` and one focus at voxel `[0,0,0]`,
+    after `update` and `wait_idle` the store holds exactly the 33 coordinates with
+    `x^2 + y^2 + z^2 <= 4`.
+  - After the focus moves to voxel `[192,0,0]` (chunk `[3,0,0]`), `update` and `wait_idle`
+    leave exactly 42 resident chunks: the 33 within distance 2 of `[3,0,0]`, plus the 9 old
+    chunks within distance 3 of it that are not among the 33. The 22 chunks farther than 3
+    are evicted. `poll` reports those 22 as evicted, and each of the 42 as loaded exactly once
+    over both steps.
+  - Every streamed chunk hashes equal to the same coordinate from `World::generate` over a
+    covering extent, on the `flythrough` cave's per-voxel closure stand-in in
+    `tests/support` (a non-uniform source, so the hash is not trivially equal).
+  - The resident set's world hash is identical with 1 worker and with 8 workers.
+  - A unit test of the queue order on a radius-2 set around `[0,0,0]`: the focus chunk
+    first, then its 6 face neighbours in ascending coordinate order, then the 12 at squared
+    distance 2.
+  - A carve on a chunk evicted in the second step returns `NotResident` with that coordinate
+    and changes nothing.
+  - `World::apply` takes the store map's read lock before its residency check and releases it
+    after the last write. A test holds a map write lock on another thread and shows `apply`
+    blocks until it is released (a `Barrier` and a `std::sync::mpsc` handshake, no sleeps).
+
+### Phase 2: Edited-chunk persistence and disk spill
+- **Owner skill:** dev
+- **What:** an `edited` flag on chunks, a persistence map that takes edited chunks on
+  eviction and gives them back on reload, and spill files past a RAM cap.
+- **Files touched:** `crates/vxe-world/src/{lib.rs, chunk.rs, edit.rs, stream.rs, persist.rs}`,
+  `crates/vxe-world/tests/persist.rs`.
+- **Done when:**
+  - On a solid material-3 world with `r_full = r_lod = 1` and the focus at `[0,0,0]`, a
+    radius-10-voxel sphere carve centred on voxel `[32,32,32]` returns `{3: 4169}`, touched
+    `[[0,0,0]]`. Moving the focus to chunk `[10,0,0]` evicts all 7 chunks, and persistence
+    holds exactly 1 (the 6 unedited chunks are not persisted). Moving back reloads
+    `[0,0,0]` from persistence, not from the source: its hash equals the hash taken right
+    after the carve, `material_at([32,32,32])` is air and `material_at([32,32,43])` is 3.
+  - The same sequence with `ram_cap_bytes = 0` and a spill directory leaves one file in the
+    directory while the chunk is evicted, with 0 bytes held in RAM. After reload the file is
+    gone and the hash matches. With no spill directory and cap 0, the chunk stays in RAM and
+    `StreamStats::persist_over_cap` is true.
+  - A spill file round-trips byte-exactly: write, read, then rewrite gives the same bytes.
+    Flipping one byte of the brick payload makes the reload report
+    `StreamError::Spill { coord: [0,0,0], kind: Corrupt }`; the chunk stays non-resident and
+    the other 6 chunks load. A file written under world key 1 and read under key 2 reports
+    `WorldMismatch`.
+  - **No lost edit under racing eviction.** One thread applies 2000 radius-2-voxel carves at
+    SplitMix64-seeded voxel centres in chunks `x` in `[-1, 1]`, `y = z = 0`, recording which
+    ops returned `Ok`. Another thread alternates the focus between chunk `[0,0,0]` and chunk
+    `[4,0,0]` (`r_full = r_lod = 1`) and polls. At the end the focus returns to `[0,0,0]` and
+    `wait_idle` runs. The hash of the 7 chunks resident at focus `[0,0,0]` equals that of
+    the same chunks in a bounded world over `[-1, 2)^3` with only the `Ok` ops applied in
+    issue order (an `Ok` op touches only those 7, so the reference never fails). The test runs on 4
+    workers. The op sequence is seeded; the interleaving is not, and the assertion holds for
+    every interleaving.
+
+### Phase 3: Mirror window, dirty-chunk set, budgeted batched upload
+- **Owner skill:** dev
+- **What:** `GpuWorld` mirrors the chunks inside a cubic window of side `W` that follows one
+  focus, takes residency events from `poll`, visits only dirty chunks on `sync`, uploads them
+  nearest-first under a byte budget, and batches its queue writes.
+- **Files touched:** `crates/vxe-world/src/{store.rs, chunk.rs, edit.rs, stream.rs}` (the
+  dirty-chunk set), `crates/vxe-render/src/{gpu_world.rs, marcher.rs}`,
+  `crates/vxe-render/src/shaders/march.wgsl` (window origin replaces the extent),
+  `crates/vxe-render/tests/mirror.rs`, `apps/flythrough/src/main.rs` (the bounded world
+  through the new API).
+- **Done when:**
+  - `World` keeps a set of chunks with any dirty brick, and `sync` visits only those. A
+    second `sync` with no edit and no residency event visits 0 chunks
+    (`SyncStats::chunks_visited`) and writes 0 bytes.
+  - On the Phase 1 scenario (`r = 2`, `h = 1`, `W = 7`), after the move and a full sync, the
+    mirror holds exactly 42 live records. For each of the 42 chunks, a readback of table,
+    records and pool decodes to that chunk's CPU voxels. The live pool slot count equals the
+    `Full` bricks of the 42 chunks. The 22 evicted chunks' slots are on the free list.
+  - On the level-size seed-1 world, the initial sync issues at most `3 × chunks + 8` queue
+    writes and copy commands (`SyncStats::writes`; Plan 0001's path issued one per brick,
+    383 608 or more). The log records the dev-box upload time against Plan 0001's 853 to
+    888 ms.
+  - With `sync_budget_bytes = 8 MiB`, every sync of that world writes at most 8 MiB plus one
+    chunk's largest upload (526 848 B: a wide chunk, 512 × 1024 + 2560). The first sync
+    includes the chunk holding the focus voxel. `SyncStats::pending_chunks` reaches 0.
+  - `apps/flythrough/tests/golden/primary.png` and `headlamp.png` match bit-exactly on
+    lavapipe, with the window set to the golden extent.
+
+### Phase 4: Per-chunk 8-bit palette, wide fallback
+- **Owner skill:** dev
+- **What:** pool slots of 512 one-byte palette indices, a 256-entry `u16` palette after each
+  record's brick entries, and two-slot `u16` bricks for wide chunks (ADR-0004).
+- **Files touched:** `crates/vxe-render/src/gpu_world.rs`, `crates/vxe-render/src/shaders/march.wgsl`,
+  `crates/vxe-render/tests/mirror.rs`, `docs/nfr.md` (§3 mirror bytes).
+- **Done when:**
+  - On the level-size seed-1 world, live pool bytes equal `512 × Full bricks` exactly:
+    196 407 296 B for its 383 608 `Full` bricks, with no wide chunk in the cave. Records are
+    2560 B per mirrored chunk.
+  - A closure-source chunk using 300 distinct non-air materials is wide. Each of its `Full`
+    bricks holds an even-aligned slot pair, and the readback decodes to its CPU voxels. A
+    two-material chunk next to it decodes through its palette.
+  - A `Fill` with a material not yet in a chunk's palette appends it. That sync uploads only
+    the touched bricks plus the chunk's record and palette; the chunk's other `Full` bricks
+    are not rewritten (`SyncStats::bricks`). A fill that pushes a chunk past 255 non-air
+    materials turns it wide and rewrites every `Full` brick of that chunk.
+  - `primary.png` and `headlamp.png` match bit-exactly on lavapipe: narrowing changes no
+    pixel.
+  - The log records the primary-pass GPU time at 1920 × 1080 from the fly-through's spawn pose
+    on the dev box, before and after this phase.
+
+### Phase 5: Brick pool sharded over four bindings
+- **Owner skill:** dev
+- **What:** the pool as up to four storage buffers of `slots_per_shard` slots each, sized
+  from the adapter's limits, with a shard `switch` in the shader.
+- **Files touched:** `crates/vxe-render/src/{gpu_world.rs, marcher.rs, lib.rs}`,
+  `crates/vxe-render/src/shaders/march.wgsl`, `crates/vxe-render/tests/mirror.rs`,
+  `apps/flythrough/tests/golden.rs`.
+- **Done when:**
+  - `slots_per_shard` is the largest multiple of 4096 with `slots × 512` within both
+    `max_storage_buffer_binding_size` and `max_buffer_size`. The shard count is
+    `min(4, max_storage_buffers_per_shader_stage - 4)`. A `MirrorConfig::max_shard_slots` test
+    knob caps it lower. Nothing reads the adapter's backend or vendor.
+  - On lavapipe (128 MiB per binding, so 262 144 slots per shard), the level-size seed-1 world
+    syncs without `PoolTooLarge`, using 2 shards for its 383 608 slots. A readback of 1000
+    SplitMix64-chosen `Full` bricks, at least one of them in shard 1, decodes to the CPU
+    voxels.
+  - With `max_shard_slots` set so the golden scene needs at least 2 and at most 4 shards,
+    `primary.png` and `headlamp.png` match bit-exactly on lavapipe.
+  - A world that needs more than four shards' slots fails `sync` with `PoolTooLarge`,
+    reporting the four-shard capacity, and changes nothing in the mirror.
+  - The log records `max_storage_buffers_per_shader_stage` for lavapipe, the RTX 3080 Laptop
+    and RADV.
+
+### Phase 6: Chunk mips in `vxe-world`
+- **Owner skill:** dev
+- **What:** `ChunkMips::build(&Chunk)`: three levels of mip-bricks (64, 8 and 1), as
+  `Brick`s of 8³ cells, under ADR-0003's conservative majority rule. Mips join the
+  determinism vector.
+- **Files touched:** `crates/vxe-world/src/{lib.rs, mips.rs, hash.rs}`,
+  `crates/vxe-world/tests/mips.rs`, `apps/flythrough/tests/determinism.rs`.
+- **Done when:**
+  - An air chunk with one voxel of material 5 at local `[3,3,3]` has cell `[1,1,1]` = 5 at
+    level 1 and cell `[0,0,0]` = 5 at levels 2 and 3. Every other cell is air. Level 1 has
+    exactly 1 `Full` mip-brick of 64, level 2 has 1 of 8, and level 3 has 1 of 1.
+  - Within one 2³ block, 4 voxels of material 2 and 4 of material 7 give 2 (tie to the lower
+    id). 3 of 7, 1 of 2 and 4 air give 7 (air never wins while anything is solid). 8 air give
+    air.
+  - A uniform chunk of material `m` has every mip-brick `Uniform(m)` and no `Full` one.
+  - On a solid material-3 chunk carved by a radius-10 sphere centred on local `[32,32,32]`
+    (4169 voxels), exactly 410 level-1 cells, 32 level-2 cells and 0 level-3 cells are air
+    (the cells whose voxels all lie in the sphere).
+  - Mips equal a brute-force reference built from voxels over 16 SplitMix64-seeded chunks.
+  - `apps/flythrough/tests/determinism.rs` also hashes the mips of every chunk of the fixed
+    vector. The constant is blessed on Linux and asserted on the Windows CI arm.
+
+### Phase 7: The LOD-only ring and the mip walk
+- **Owner skill:** dev
+- **What:** the streamer's second tier (demote, promote, evict LOD-only), LOD records in the
+  mirror (73 mip-brick entries plus the palette, flagged in the chunk table), and a marcher
+  that walks a LOD-only chunk's mip level as a DDA over cells of `2^level` voxels.
+- **Files touched:** `crates/vxe-world/src/{stream.rs, store.rs}`,
+  `crates/vxe-world/tests/stream.rs`, `crates/vxe-render/src/{gpu_world.rs, marcher.rs}`,
+  `crates/vxe-render/src/shaders/march.wgsl`, `crates/vxe-render/tests/mirror.rs`,
+  `apps/flythrough/tests/golden.rs`, `apps/flythrough/tests/golden/lod.png`.
+- **Done when:**
+  - `r_full = 1`, `r_lod = 2`, `h = 0`, focus `[0,0,0]` on a solid material-3 world: 7 full
+    chunks and 26 LOD-only. Queries and `apply` treat the 26 as non-resident.
+  - A radius-10 carve at voxel `[96,32,32]` (local `[32,32,32]` of chunk `[1,0,0]`) returns
+    `{3: 4169}`. Moving the focus to chunk `[-1,0,0]` demotes `[1,0,0]` (squared distance
+    4). Its mips show 410, 32 and 0 air cells at levels 1 to 3, and persistence holds it.
+    Moving back promotes it from persistence, hash-equal to the post-carve hash.
+  - The mirror's readback of a LOD record decodes to the chunk's `ChunkMips`. A demoted
+    chunk's full-brick slots return to the free list.
+  - The marcher picks a LOD-only chunk's level from its squared chunk distance to the camera
+    chunk: level 1 within `(2 r_full)^2`, level 2 within `(4 r_full)^2`, else 3. A params
+    override forces a level for tests.
+  - **Identity property:** a scene of uniform chunks (solid material 3 below `z = 0`, air
+    above) renders bit-identically on lavapipe with every chunk except the camera's
+    LOD-only at each forced level, against all full, because a uniform chunk's mips hit at
+    the same entry face.
+  - `apps/flythrough/tests/golden/lod.png`: the seed-7 golden scene from the spawn pose,
+    with chunks at squared distance > 1 from the camera chunk LOD-only at forced level 1.
+    Same tolerance and skip rule as `primary.png`. The test also asserts at least 1 % of
+    pixels differ from `primary.png` by more than 8/255, so the LOD walk is really in use.
+
+### Phase 8: The fly-through streams; autopilot, sweep and readings
+- **Owner skill:** dev
+- **What:** an unbounded `CaveSource`, the fly-through on the streamer by default (`--level`
+  keeps the bounded world), an `--autopilot` run that measures streaming, and a headless
+  `world_budget --stream` sweep.
+- **Files touched:** `apps/flythrough/src/{cave.rs, main.rs, lib.rs}`,
+  `apps/flythrough/examples/world_budget.rs`, `apps/flythrough/tests/determinism.rs` (the
+  bounded vector unchanged), `docs/nfr.md`.
+- **Done when:**
+  - `CaveSource::unbounded(seed)` has no extent and no shell. The bounded constructor and its
+    goldens are unchanged, and the spawn pocket sits at a fixed voxel. The first frame waits
+    for the 33 chunks within squared distance 4 of the spawn chunk to be resident and
+    mirrored, not for all of `r_full`. The log reads time to first frame and time to full
+    residency separately.
+  - `--autopilot` waits for full residency, then carves 1 m at the first rock hit within 30 m
+    along +x (CPU raycast, `tool_along_ray`). It prints the counts and records the hash of the
+    touched chunks. It then flies +x at 10 m/s for 30 s (300 m, beyond `(r_lod + h) × 6.4 m =
+    160 m`, so the touched chunks are evicted), flies back for 30 s, and waits for those
+    chunks to be full again. It prints `return: <n> chunks, hash match` or
+    `hash MISMATCH` and exits.
+  - The autopilot prints the following, all dev reference:
+    - unready-near frames: frames in which a chunk wanted full within squared distance
+      `(r_full - 2)^2` of the camera chunk is not yet both resident and mirrored. The
+      target is 0 at 10 m/s.
+    - render-thread streaming CPU per frame (`update + poll + sync`): p50, p99 and max,
+      against the 1.0 ms line.
+    - residency latency from wanted to mirrored (ticks converted to ms): p95 and max,
+      against the 500 ms proposal.
+    - peak mirror bytes, resident RAM and persisted RAM.
+  - `world_budget --stream R_FULL,R_LOD` builds the residency around the unbounded cave's
+    spawn headlessly. It reports chunks per tier, CPU bytes and the projected mirror bytes
+    (at 8 bits, palettes and records included, mips counted). It runs for `R_FULL` in
+    {10, 12, 16} and `R_LOD` in {R_FULL + 4, R_FULL + 8}, and the six rows go into `nfr.md`
+    §3.
+  - The fly-through's defaults are `r_full = 16`, `r_lod = 24`, `h = 1`, and the window side
+    is `2 (r_lod + h) + 1 = 51`.
+
+## Data shapes
+
+```rust
+// illustrative: vxe-world
+pub struct Residency { pub r_full: i32, pub r_lod: i32, pub hysteresis: i32 }
+pub struct PersistConfig { pub ram_cap_bytes: u64, pub spill_dir: Option<PathBuf>, pub world_key: u64 }
+pub struct StreamConfig { pub residency: Residency, pub workers: usize, pub persist: PersistConfig }
+
+pub struct Streamer { /* worker pool, queue ordered by (d2, coord), tick counter */ }
+impl Streamer {
+    pub fn new<S: WorldSource + Send + Sync + 'static>(source: Arc<S>, cfg: StreamConfig) -> Self;
+    pub fn update(&mut self, world: &World, focus: &[VoxelCoord]);   // recomputes when a focus chunk moves
+    pub fn poll(&mut self, world: &World) -> StreamEvents;            // inserts, evicts, persists
+    pub fn wait_idle(&mut self, world: &World) -> StreamEvents;       // tests and startup
+    pub fn stats(&self) -> StreamStats;
+}
+pub struct StreamEvents {
+    pub loaded: Vec<(ChunkCoord, Tier)>, pub demoted: Vec<ChunkCoord>,
+    pub evicted: Vec<ChunkCoord>, pub errors: Vec<StreamError>,
+    pub latency_ticks: Vec<u32>,                                      // per chunk loaded full
+}
+pub enum Tier { Full, LodOnly }
+pub enum StreamError { Spill { coord: ChunkCoord, kind: SpillError } }
+pub enum SpillError { Io, Corrupt, WorldMismatch, Version }
+
+pub struct ChunkMips { levels: [Vec<Brick>; 3] }   // 64, 8, 1 mip-bricks of 8^3 cells
+
+impl World {
+    pub fn new(table: &MaterialTable) -> Self;                         // empty, unbounded
+    pub fn lod(&self, c: ChunkCoord) -> Option<Arc<ChunkMips>>;
+}
+```
+
+```text
+GPU mirror after this plan (ADR-0004 over ADR-0002), little-endian u32 words:
+  params          uniform   camera, window_min, window_size, light, lod radii, forced level, flags
+  brick_pool[k]   storage   k = 0..4; [slot_in_shard][128 x u32], four u8 palette indices per word;
+                            a wide brick is two slots holding [256 x u32] of u16 pairs
+  brick_masks     storage   [global slot][2 x u32] (Plan 0001 Phase 8), mip-bricks included
+  chunk_records   storage   [record][640 x u32]: 512 entries, then the palette (256 x u16)
+                            entry: bit 31 full | bit 30 wide | slot in bits 0..30,
+                                   or the uniform material in bits 0..16
+                            LOD record: entries 0..64 level 1, 64..72 level 2, 72 level 3
+  chunk_table     storage   [wrapped coord]u32: record index | bit 30 LOD-only; 0xFFFF_FFFF absent
+  materials       storage   [id][8 x f32], unchanged
+  storage buffers per stage: 4 shards + 4 = 8 (WebGPU default limit)
+```
+
+## Budgets
+
+| `nfr.md` figure | Expected effect | How the close measures it |
+|---|---|---|
+| §3 world VRAM (3 GB) | Projected, a guess from Plan 0001's 20.79 % `Full` fraction: about 0.99 GB for 17 077 full chunks at `r_full = 16` (57.9 KB each: pool 54.5 KB, masks 0.85 KB, record 2.56 KB), plus about 0.67 GB for 40 700 ring chunks at `r_lod = 24`. The ring's per-chunk cost (about 16.5 KB, assuming 35 % of level-1 mip-bricks are `Full`) has never been measured. | `world_budget --stream` sweep (six rows), and the autopilot's peak mirror bytes, dev box |
+| §3 world RAM (4 GB) | Resident full chunks at about 117 KB each (about 2.0 GB at `r_full = 16`), mips, and persisted chunks | the same sweep and the autopilot's RAM line |
+| §2 primary rays (3.0 ms) | The palette lookup and the LOD walk; expected small | spawn-pose timestamps at 1080p before and after Phase 4, and at close, dev reference |
+| §2 streaming line (1.0 ms) | First real reading | the autopilot's render-thread streaming CPU, p99 and max |
+| §5 residency latency (500 ms) and throughput | First reading under motion. At 10 m/s the full sphere's leading face needs about 1260 chunks/s and the ring's about 2830 chunks/s; together about 1.1e9 voxels/s, against about 1.65e9 on the dev box's 15 workers at Plan 0001's per-thread rate | the autopilot's latency p95 and max and its unready-near frames; generation voxels/s/worker from `StreamStats` |
+| §6 determinism | Mips join the vector; streaming changes no voxel | `determinism.rs` on both arms; Phase 1 and 2 hash tests |
+| §7 time to first frame (3 s) | Should drop: 33 chunks and batched upload, not 3200 chunks one brick at a time | the fly-through's startup lines (first frame, full residency), dev box |
+
+The baseline GPU is not on hand; every GPU figure in this plan is a dev-reference reading and
+says so. On the baseline's 4 cores the ring will likely lag at 10 m/s. Far geometry arriving
+late is acceptable; a hole near the camera is not, and the unready-near counter is the check.
+
+## Risks & open questions
+
+- **Generation rate with a ring.** Each ring chunk is generated at full detail and
+  downsampled, and each promotion generates again (ADR-0003). If the dev box's unready-near
+  frames are not 0 at 10 m/s, the levers are a smaller default `r_lod`, or full promotions
+  preempting LOD jobs harder. A `WorldSource::mips` method that skips full generation is the
+  clipmap plan's, not this one's.
+- **Holes at the camera when uploads lag.** An unmirrored chunk is drawn as empty space. The
+  nearest-first budget is the mechanism and the unready-near counter is the check. The plan
+  does not add a "not yet loaded" fill.
+- **Determinism.** Residency timing varies between runs, but chunk contents must not. The
+  Phase 1 thread-count test, the Phase 2 interleaving test and the mips vector defend it. The
+  queue order ties to coordinates, so even scheduling is reproducible for a fixed worker
+  count, though no test depends on that.
+- **Threading.** `apply` holds the map read lock for an op's duration. Insertion and eviction
+  wait for it, and no lock is held across generation or spill I/O. A worker reads a chunk
+  under its read lock to demote it. A burst of 100 carves holds the read lock for about 5 ms
+  (Plan 0001's bench), so `poll` can stall that long on the render thread. The autopilot's
+  max streaming CPU would show it. If it does, `poll` defers insertion with `try_write`
+  instead of blocking.
+- **Spill I/O on workers.** A slow disk delays reload, not the frame. A spill directory on a
+  full disk reports `Io` and the chunk stays in RAM.
+- **Palette lookup cost.** One extra dependent read per voxel hit. Phase 4 measures it.
+- **LOD look.** Mips are conservative, so thin gaps close and holes shrink by up to a cell. A
+  level-1 cell (20 cm) at 102 m spans about 2.4 pixels at 1080p and a 90 degree field of view.
+  This is the owner's on-screen call at the close, which may move `r_full` or the level radii.
+- **Window size.** A cubic window of side 51 is 132 651 table entries (about 0.5 MB). With
+  several focus points, chunks outside the camera's window are resident but not mirrored.
+  That is intended: one camera, one window.
+- **Plan 0001 drift.** If Plan 0001's close changes the mask buffer or the marcher
+  structure, Phases 3 to 5 and 7 adapt. Approve this plan after that close, not before.
+- **Open:** whether the LOD record should get its own smaller stride (it uses 73 of 512
+  entries; a shared stride costs about 104 MB at the default ring). It stays one stride
+  unless the sweep says otherwise.
+
+## What this plan does NOT do
+
+- **The edit-cost miss** (4.9 ms against §4's 2 ms): its own plan after this one, or an
+  `nfr.md` revision the close of Plan 0001 decides.
+- **The far-field clipmap** and a `WorldSource` method that generates coarse cells directly:
+  its own plan after M1.
+- **LOD rays inside full-detail chunks**, CPU queries or raycasts against LOD-only chunks.
+- **A save format or op log on disk:** M5. The spill is a per-process cache with no
+  compatibility promise.
+- **Per-brick variable-width palettes, binding arrays, more than four shards:** ADR-0004
+  alternatives, revisited on a baseline reading.
+- **Several mirror windows, or several cameras.**
+- **Streaming for the consumer's bounded levels:** `World::generate` stays for them.
+- **A baseline-GPU reading:** M2's close (`nfr.md` §1).
+- **Lighting, denoising and the smooth-surface spike:** M2.
+
+## Implementation log
+
+> Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
+> above are the contract. This section records what happened.** Observations, never conclusions:
+> no pass list, no self-assessment. Deviations and unmet done-whens are **always** disclosed.
+> Keep it shorter than `## Implementation phases`.
+
+| phase | owner | state | commit |
+|---|---|---|---|
+| 1: Streamer skeleton, full tier only | dev | not started | |
+| 2: Edited-chunk persistence and disk spill | dev | not started | |
+| 3: Mirror window, dirty-chunk set, budgeted batched upload | dev | not started | |
+| 4: Per-chunk 8-bit palette, wide fallback | dev | not started | |
+| 5: Brick pool sharded over four bindings | dev | not started | |
+| 6: Chunk mips in `vxe-world` | dev | not started | |
+| 7: The LOD-only ring and the mip walk | dev | not started | |
+| 8: The fly-through streams; autopilot, sweep and readings | dev | not started | |
+
+### Notes
+
+_(Deviations from the plan, with the commit, stated without justification. Done-whens not
+satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
+each. Empty is fine.)_
+
+### Close triggers
+
+_(Facts for the architect. No recommendations, and no suggested version bump.)_
+
+- **What shipped:**
+- **Public API changed:**
+- **Budget readings:**
+- **Gate at the tip:**
+- **Outstanding `human` phases:**
+
+## Followups
+
+- Edit-cost plan for `nfr.md` §4 (the 4.9 ms bench).
+- Far-field clipmap with a direct coarse `WorldSource` method (roadmap "Far field").
