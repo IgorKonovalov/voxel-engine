@@ -51,9 +51,10 @@ the frame dropping.
 
 ## 4. Edits
 
-- **Cost:** 100 sphere carves of radius 1 m (about 4189 voxels each at 10 cm) in one frame cost
-  at most 2 ms of CPU including result counting and dirty marking, and their upload fits in the
-  streaming line of §2.
+- **Cost:** 100 sphere carves of radius 1 m (exactly 4169 voxels each at 10 cm, the lattice
+  count on voxel centres; the continuous volume is about 4189) in one frame cost at most 2 ms
+  of CPU including result counting and dirty marking, and their upload (up to about 6400 bricks,
+  6.4 MB, if every touched brick is non-uniform) fits in the streaming line of §2.
 - **Results** are returned synchronously with the edit, per material, exact.
 - **Determinism:** the same op list on the same seed yields bit-identical voxels and results on
   Linux and Windows. CI asserts a fixed vector's hash on both arms.
@@ -63,7 +64,9 @@ the frame dropping.
 - Chunk generation and LOD building run on background threads; the render thread only swaps
   pointers and issues uploads.
 - Moving the focus point at 10 m/s keeps the full-detail radius resident; a chunk entering the
-  radius is resident within 500 ms (proposal).
+  radius is resident within 500 ms (proposal). At a 100 m radius that is about 1200 chunks per
+  second, roughly 300 M voxels per second across the baseline's four cores, so generation
+  throughput per core is a measured figure from Plan 0002 on and the radius default follows it.
 - An edited chunk that is evicted and later reloaded reproduces the edit.
 
 ## 6. Determinism and headless operation

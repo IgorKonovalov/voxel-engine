@@ -23,7 +23,11 @@ Settled in the founding interview (2026-10-16) and written up in
 an ADR when the plan that implements it is drafted, so the ADR carries the concrete shape
 rather than the intention:
 
-- Storage layout (brick size, chunk size, LOD mips, paging unit): with Plan 0001.
+- Storage layout (brick size, chunk size, occupancy masks, LOD mips, paging unit) and the world
+  access model (how generator, render, audio and game threads share the chunk store): with
+  Plan 0001.
+- Far-field clipmap (coarser rings beyond the full-detail radius): with the far-field plan,
+  after M1.
 - Scripting split, WASM for server logic and Lua for client scripts: with the scripting plan.
 - Dynamic entities as voxel models on rigid-part rigs: with the entities plan.
 - Network transport: with the networking plan.

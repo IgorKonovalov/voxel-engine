@@ -9,7 +9,7 @@ state from `git log`. Completed plans move to `done/`.
 
 | Plan | Title | Status | Live constraint |
 |------|-------|--------|-----------------|
-| _none yet_ | | | Plan 0001 is milestone M1 in [`docs/roadmap.md`](../roadmap.md); drafted once the roadmap is approved |
+| _none yet_ | | | Plans 0001 (bounded skeleton) and 0002 (streaming, LOD) are milestone M1 in [`docs/roadmap.md`](../roadmap.md); drafted once the roadmap is approved |
 
 ## Recently closed
 

@@ -6,7 +6,9 @@ this document are **starting proposals** to be checked against measurements, not
 budgets they feed are in [`nfr.md`](nfr.md).
 
 Written 2026-10-16 from the founding interview. Revise this file when a milestone closes or a
-decision changes; a changed decision also gets an ADR.
+decision changes; a changed decision also gets an ADR. The external techniques and numbers the
+storage, LOD and lighting proposals below lean on are collected, with links, in
+[`references/voxel-optimizations.md`](references/voxel-optimizations.md).
 
 ## What we are building
 
@@ -55,7 +57,7 @@ before content production, P2 = later). The consumer's first playable slice need
 | First-person camera, stable close-range image | P0 | M1 |
 | Dark scenes with few lights, emissive voxels as runtime-changeable lights, denoising under destruction | P0 | M2 |
 | Material table: visuals, hardness, acoustic triple, opaque payload | P0 | M1 (table), M4 (acoustics used) |
-| Raycast, sweeps, point and region material queries | P0 | M1 (raycast, region counts), M3 (sweeps) |
+| Raycast, sweeps, point and region material queries | P0 | M1 (raycast, point and region queries), M3 (sweeps) |
 | Character controller against voxels | P0 | M3 |
 | Coarse 1 m occupancy grid, incrementally updated | P0 | M3 |
 | 3D positional audio with HRTF; occlusion and transmission through voxels | P0 | M4 |
@@ -67,27 +69,60 @@ before content production, P2 = later). The consumer's first playable slice need
 | Dynamic entities lit consistently | P1 | M6 |
 | Listen server, prediction, replication, late join, positional voice | P1 | M9 |
 | `.vox` import, debug views | P1 | M6 (import), M7 (views) |
-| Volumetrics, scripted collapse, loot highlighting, dedicated servers | P2 | M8, M8, game-side, M9+ |
+| Volumetrics (dust, fog) | P1 | M8, a deliberate deferral: it needs M2's marcher and denoiser first |
+| Scripted collapse, loot highlighting, dedicated servers | P2 | M8, M6 (emissive entities; the highlight itself is game-side), M9+ |
 
 ## Storage shape (starting proposal, fixed by Plan 0001's ADR)
 
-- **Voxel:** one `u16` material id. Material 0 is air. Flags such as indestructible live in the
-  material table, not per voxel, unless a plan shows a need.
+- **Voxel:** one `u16` material id and nothing else. Material 0 is air. Every per-voxel
+  property is a property of its material row: the indestructible flag, emission, hardness. A
+  voxel that must differ from its neighbours of the same substance (the prefab's indestructible
+  shell, the crystal that lights up when sound reaches it) is a second material row (`limestone
+  shell`, `crystal lit`), and changing it at runtime is a replace-material edit op, not a
+  per-voxel override. The consumer's shell mask and runtime emission both resolve this way.
 - **Brick:** 8 × 8 × 8 voxels, 1 KiB. A brick whose voxels are all one material is stored as that
-  one value, not as 1 KiB. Caves are mostly uniform rock or air, so most bricks are uniform.
+  one value, not as 1 KiB. Caves are mostly uniform rock or air, so most bricks are uniform. The
+  GPU mirror keeps a 64-bit occupancy mask per brick (one bit per 2 × 2 × 2 block) so the marcher
+  skips empty space without reading voxels; the `u16` width is the CPU truth, and the mirror may
+  narrow to a per-chunk palette index where Plan 0001's measurement says bandwidth needs it.
 - **Chunk:** 64 × 64 × 64 voxels = 8 × 8 × 8 bricks, 6.4 m at 10 cm. The chunk is the unit of
   generation, paging, upload, dirty tracking and edit persistence. It carries LOD mips (32³, 16³,
-  8³, majority material) for rays beyond the full-detail radius and for far chunks that are
-  resident only at LOD.
+  8³) for rays beyond the full-detail distance inside the resident set. Mips are as sparse as
+  bricks: a uniform chunk stores none, and a mip cell is an occupancy bit plus a one-byte
+  palette or majority index, never a `u16`. At full width the three mips are about 73 KiB per
+  chunk, which across the full-detail cube is about 2.3 GiB on their own, more than the bricks;
+  at one byte they are under 300 MB, and sparsity cuts that further.
+- **Far field.** "LOD to about 1 km" is not reachable by paging chunks at LOD: a 1 km radius is
+  about 30 million chunks, and generating them at full detail to downsample is a thousand times
+  the full-detail work. The far field is a clipmap: rings of coarser cells with their own paging
+  unit and a `WorldSource` method that produces a cell at a coarser level directly. Nothing in
+  the first consumer needs it. M1 ships mips inside the resident set; the clipmap is its own
+  later plan, and until then the far field is simply not drawn.
 - **Scale check:** a 100 m full-detail radius is about 32 chunks across, roughly 33 k chunks. If
   every brick were non-uniform that would be 17 GB, so the budget relies on uniformity: the
   working assumption is under 10 % non-uniform bricks, about 1.7 GB, and the VRAM budget in
   `nfr.md` is 3 GB with eviction to LOD when exceeded. Plan 0001 measures this on a real cave.
+  The first consumer's bounded level is about 3200 chunks, a tenth of that.
 - **Edits** address voxels in integer coordinates; shape parameters are fixed-point (1/256
-  voxel). A sphere test is `dx² + dy² + dz² <= r²` in 64-bit integers. Results are per-material
-  counts plus the touched chunk set.
-- **Coarse grids** (for the consumer's noise model and navigation) are derived per chunk from
-  bricks and updated incrementally from the touched set.
+  voxel). A sphere test is `dx² + dy² + dz² <= r²` in 64-bit integers on voxel centres, so a
+  radius-10 sphere in solid material covers exactly 4169 voxels (the lattice count; the
+  continuous volume is about 4189). Results are per-material counts plus the touched chunk set.
+  Ops are sphere, box, capsule, tool-along-ray (a capsule from the ray origin to its hit),
+  additive, subtractive and replace-material. An op whose shape touches a non-resident chunk
+  fails with that chunk's coordinate rather than generating it synchronously; the caller (the
+  server's focus points) keeps the chunks it edits resident.
+- **Coarse grids** (for the consumer's noise model and navigation) have one cell per brick
+  (0.8 m), so a cell never straddles a chunk and a uniform brick's single value is its occupancy
+  for free. They are derived per chunk and updated incrementally from the touched set. The
+  consumer asked for "about 1 m"; 0.8 m is within that.
+- **World access model.** By M4 the generator pool writes chunks, the render thread uploads
+  them, the audio thread probes them and the game queries them. The chunk store is a concurrent
+  structure with per-chunk interior locking or snapshot swapping, decided in Plan 0001's ADR
+  alongside the layout, because it shapes every later crate.
+- **Generation determinism.** `WorldSource` is the game's, but anything the engine ships (the
+  fly-through's cave, the CI vector) uses integer hashing and integer noise, or a pure-Rust
+  `libm`. Platform transcendentals (`sin`, `exp`, `powf`) differ in the last bit between glibc
+  and MSVC and would break the cross-arm hash by luck rather than by design.
 
 ## Milestones
 
@@ -104,32 +139,48 @@ Workspace skeleton, harness, ADR-0001, this roadmap, `nfr.md`. No engine code.
 **Goal:** a window showing a ray-marched, streaming voxel cave lit by a headlamp. You fly, carve
 spheres, and the per-material voxel counts print to the console.
 
-- `vxe-world`: brick map and chunk store; material table (id, name, albedo, roughness, emission,
-  hardness, flags, opaque payload); `WorldSource` trait, `(seed, chunk coord) -> chunk`;
-  streaming around a focus point on a background thread pool with eviction; edit ops (sphere,
-  box, capsule, additive and subtractive) in integer math returning results; CPU raycast (DDA)
-  and region material counts; dirty tracking for upload; LOD mips.
-- `vxe-render`: incremental brick upload; primary-ray DDA in compute; one spot light with a
-  shadow ray; LOD rays beyond a distance; blit to the swapchain.
+M1 is two plans. Plan 0001 is the bounded walking skeleton: brick map, edits, queries, renderer,
+a finite source. Plan 0002 adds streaming, eviction and LOD mips on top. The storage ADR is
+written with Plan 0001 and already carries chunk addressing for paging, so Plan 0002 changes no
+layout.
+
+- `vxe-world` (Plan 0001): brick map and chunk store with the access model above; material
+  table (id, name, albedo, roughness, emission, hardness, flags, opaque payload); `WorldSource`
+  trait, `(seed, chunk coord) -> chunk`; the edit ops listed under "Storage shape" in integer
+  math returning results; CPU raycast (DDA), point query and region material counts; dirty
+  tracking for upload.
+- `vxe-world` (Plan 0002): streaming around one or more focus points on a background thread
+  pool with eviction and edit persistence for paged-out chunks; LOD mips.
+- `vxe-render`: incremental per-brick upload; primary-ray DDA in compute over the brick
+  occupancy masks; one spot light with a shadow ray; LOD rays beyond a distance (Plan 0002);
+  blit to the swapchain.
 - `vxe-app`: window, keyboard and mouse, frame loop, surface resize.
-- `apps/flythrough`: a noise-cave `WorldSource`; prints edit results.
+- `apps/flythrough`: an integer-noise cave `WorldSource`; prints edit results.
 - **Headless proof:** a fixed op list on a fixed seed hashes to the same voxels and the same
-  per-material counts on the Linux and Windows CI arms; raycast hits known voxels; streaming
-  evicts and reloads a chunk with its edits intact.
+  per-material counts on the Linux and Windows CI arms; a radius-10 carve in solid material
+  returns the lattice count; raycast hits known voxels; an op on a non-resident chunk fails
+  with that coordinate; streaming evicts and reloads a chunk with its edits intact
+  (Plan 0002).
 - **Visible proof:** a golden image on lavapipe of a fixed view after a fixed carve.
-- **Budgets:** world VRAM and RAM at the full-detail radius; edit cost (100 r = 1 m carves per
-  frame); primary-ray frame time at 1080p on the dev box and on the baseline when available.
-- **ADRs expected:** storage layout.
+- **Budgets:** world VRAM and RAM at the full-detail radius, bricks and mips separately; edit
+  cost (100 r = 1 m carves per frame) and their upload; generation throughput per core;
+  primary-ray frame time at 1080p on the dev box and on the baseline when available.
+- **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
 ### M2: Lighting that holds in the dark
 
 **Goal:** the consumer's P0 rendering bar. Few lights, emissive voxels, destruction, no ghosting.
 
-- Light extraction from bricks (emissive voxels become light samples; emission changeable at
-  runtime by material table edits or per-voxel override).
+- Light extraction from bricks: emissive voxels become light samples, and a vein of thousands
+  of them is sampled by reservoir resampling (ReSTIR-style) rather than a flat light list.
+  Emission changes at runtime through the material table or a replace-material op.
 - One-sample path tracing with next-event estimation; temporal accumulation; a spatiotemporal
-  denoiser (SVGF-family) whose history is invalidated in regions touched by edits.
-- Exposure, tone mapping, an open-source upscaler ported to WGSL.
+  denoiser (SVGF-family) whose history is invalidated in regions touched by edits, measured
+  against A-SVGF's gradient test before the cheaper invalidation is kept.
+- A named fallback before the plan starts, in case 1 spp path tracing misses the baseline
+  budget: voxel cone tracing over the mips we already own, or irradiance probes per chunk.
+- Exposure, tone mapping, and an upscaler. FSR 2 is MIT and cheap at 1080p but has no WGSL
+  port; the port is plan-sized work, and a TAA upscaler of our own is the fallback.
 - **Headless proof:** irradiance in a closed test box matches an analytic value within a stated
   tolerance; a carve invalidates exactly the touched history region.
 - **Visible proof:** golden images of a dark cave with one emissive vein, before and after a
@@ -139,10 +190,11 @@ spheres, and the per-material voxel counts print to the console.
 
 ### M3: Collision, character controller, coarse grids
 
-- `vxe-sim`: raycasts and capsule sweeps against bricks; a character controller with steps,
-  slopes and climbing out of holes; shape queries for tool reach.
-- `vxe-world`: a 1 m occupancy and dominant-material grid, updated incrementally from touched
-  chunks; region change notifications; walkable-space extraction.
+- `vxe-sim`: capsule sweeps against bricks (the raycast stays in `vxe-world`, which owns all
+  primitive queries); a character controller with steps, slopes and climbing out of holes;
+  shape queries for tool reach.
+- `vxe-world`: a one-cell-per-brick (0.8 m) occupancy and dominant-material grid, updated
+  incrementally from touched chunks; region change notifications; walkable-space extraction.
 - **Headless proof:** a capsule walking a known course ends where the fixture says; a carve
   under its feet changes the coarse grid cell and emits one notification.
 - **Visible proof:** walking instead of flying in the fly-through.
@@ -203,12 +255,21 @@ spheres, and the per-material voxel counts print to the console.
   SSIM, analytic irradiance) from the start, and the baseline GPU in hand before M2 closes.
 - **Streaming complexity before the first pixel (M1).** Mitigation: the fly-through's source is
   trivial noise; paging is tested headless with a tiny radius.
-- **VRAM at the full-detail radius** rests on a uniformity assumption. Mitigation: Plan 0001
-  measures it and the LOD eviction path exists from M1.
+- **VRAM at the full-detail radius** rests on a uniformity assumption, and the mips can cost
+  more than the bricks if stored at full width. Mitigation: Plan 0001 measures bricks and mips
+  separately, mips are sparse and one byte per cell, and the LOD eviction path exists from
+  Plan 0002.
+- **Generation throughput.** Keeping a 100 m full-detail radius resident at 10 m/s means about
+  1200 chunks, roughly 300 M voxels, per second on the baseline's four cores. Mitigation: the
+  radius is a parameter with a conservative default, Plan 0002 measures voxels per second per
+  core, and the first consumer's bounded level needs no streaming at all.
 - **`wgpu` feature gaps.** Mitigation: the renderer's needs list (subgroups, 64-bit atomics,
   bindless) is checked against the baseline adapter in M1, and any vendor path is an ADR.
-- **Determinism across platforms** rests on integer edit math and on scripting hosts configured
-  for it. Mitigation: CI asserts hashes on both arms from M1 on.
+- **Determinism across platforms** rests on integer edit math, integer generation in anything
+  the engine ships, and scripting hosts configured for it. Mitigation: CI asserts hashes on
+  both arms from M1 on, and `clippy.toml` can deny the platform transcendentals in `vxe-world`.
+- **The upscaler port (M2).** No WGSL port of FSR 2 exists. Mitigation: the M2 plan sizes the
+  port as its own phase and names the TAA fallback.
 
 ## What the engine will not do
 
