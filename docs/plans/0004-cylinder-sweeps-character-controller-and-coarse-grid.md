@@ -399,8 +399,8 @@ with the dev-box readings. Every one is a guess until read.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: `vxe-sim`, the distance and the sweep | dev | done | b1377d7 |
-| 2: Walk, step, slide, fall | dev | done | committed with this row |
-| 3: Ledge climb and the pinned course | dev | not started | |
+| 2: Walk, step, slide, fall | dev | done | 215285a |
+| 3: Ledge climb and the pinned course | dev | done | committed with this row |
 | 4: The coarse grid | dev | not started | |
 | 5: Walkable space | dev | not started | |
 | 6: Walk mode in the fly-through, benches, readings | dev | not started | |
@@ -417,6 +417,8 @@ with the dev-box readings. Every one is a guess until read.
 - Phase 2: the climb probe's forward sweep, and the climb's forward move, go `radius` units along the reversed horizontal contact normal (scaled by `radius / isqrt(|n|²)`, rounded toward zero).
 - Phase 2: `blocked` is set when, after the step attempt and up to two slides, a wall contact still leaves an unspent remainder, including when the projection onto the wall is zero (head-on). Grounded is probed at the start of the vertical step when `vz <= 0`, before the jump decision. `CharacterState::new(foot)` starts with `vz = 0`, not grounded.
 - Phase 2: also touches `crates/vxe-sim/tests/support/mod.rs` (the test parameters and a tick runner that asserts no overlap after every tick).
+- Phase 3: a climbing tick skips the vertical step; the tick on which the climb finishes runs it (the ground probe sets `grounded`). A rise cut short by a ceiling ends the climb. `CharacterState::is_climbing()` exposes the private climbing state.
+- Phase 3: course inputs: F1 `WISH` with `jump` on ticks 1, 61, 121, 181, 241; F2, F3, F6 `WISH`; F4, F5 `WISH` with `climb` held. The hash feeds, per tick, foot, `vz`, `grounded`, `blocked`, `stepped`, `climbed`, climbing, `climb_available` and `landed`. Within 300 ticks the F1, F3, F4, F5 and F6 bodies walk past the `[-2, 2)³` extent and fall through the non-resident space (no solid there). Constant `0x0c80_8031_d14f_27eb`, blessed on the dev box (Linux); the Windows arm is CI's.
 
 ### Close triggers
 

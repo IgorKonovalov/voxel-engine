@@ -50,16 +50,29 @@ pub struct CharacterState {
     /// Vertical speed, fixed units per tick, up positive.
     pub vz: i64,
     pub grounded: bool,
+    climbing: Option<Climb>,
+}
+
+/// A ledge climb in progress: rise to `target_z`, then move `dir` onto the ledge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct Climb {
+    target_z: i64,
+    dir: [i64; 2],
 }
 
 impl CharacterState {
-    /// At rest at `foot`, not yet grounded; the first tick's probe decides.
+    /// At rest at `foot`, not yet grounded (the first tick's probe decides), not climbing.
     pub fn new(foot: Fixed3) -> Self {
         Self {
             foot,
             vz: 0,
             grounded: false,
+            climbing: None,
         }
+    }
+
+    pub fn is_climbing(&self) -> bool {
+        self.climbing.is_some()
     }
 }
 
@@ -207,14 +220,26 @@ impl CharacterController {
     }
 
     /// Advances `state` by one tick of `input` and reports what happened.
+    ///
+    /// The order is fixed: a climb in progress (released `climb` ends it first); else the
+    /// horizontal move, which may start a climb and run its first rise; then, unless the body
+    /// is still climbing, the vertical move. A climbing tick takes no horizontal input and no
+    /// gravity.
     pub fn tick(&self, world: &World, state: &mut CharacterState, input: &MoveInput) -> MoveResult {
         let mut r = MoveResult::default();
         let start = state.foot.0;
         let mut foot = start;
-        if input.wish != [0, 0] {
+        if state.climbing.is_some() && !input.climb {
+            state.climbing = None;
+        }
+        if state.climbing.is_some() {
+            self.climb(world, state, &mut foot, &mut r);
+        } else if input.wish != [0, 0] {
             self.horizontal(world, state, &mut foot, input, &mut r);
         }
-        self.vertical(world, state, &mut foot, input, &mut r);
+        if state.climbing.is_none() {
+            self.vertical(world, state, &mut foot, input, &mut r);
+        }
         state.foot = Fixed3(foot);
         r.grounded = state.grounded;
         r.moved = Fixed3([0, 1, 2].map(|k| foot[k] - start[k]));
@@ -270,6 +295,47 @@ impl CharacterController {
         r.blocked = true;
         let dir = self.wall_direction(wall.normal);
         r.climb_available = self.climb_probe(world, *foot, dir).map(Fixed3);
+        if let Some(landing) = r.climb_available
+            && input.climb
+        {
+            state.climbing = Some(Climb {
+                target_z: landing.0[2],
+                dir,
+            });
+            self.climb(world, state, foot, r);
+        }
+    }
+
+    /// One climbing tick: rise by `min(climb_speed, remaining)`; once at the target height,
+    /// move onto the ledge and leave the climbing state. A rise cut short by a ceiling ends
+    /// the climb where it is.
+    fn climb(
+        &self,
+        world: &World,
+        state: &mut CharacterState,
+        foot: &mut [i64; 3],
+        r: &mut MoveResult,
+    ) {
+        let Some(c) = state.climbing else {
+            return;
+        };
+        state.vz = 0;
+        state.grounded = false;
+        let rise = self.params.climb_speed.min(c.target_z - foot[2]).max(0);
+        let up = sweep(world, &self.body(*foot), Fixed3([0, 0, rise]));
+        r.touch(up.contact);
+        *foot = add(*foot, up.moved);
+        if up.moved.0[2] < rise {
+            state.climbing = None;
+            return;
+        }
+        if foot[2] >= c.target_z {
+            let fw = sweep(world, &self.body(*foot), Fixed3([c.dir[0], c.dir[1], 0]));
+            r.touch(fw.contact);
+            *foot = add(*foot, fw.moved);
+            r.climbed = true;
+            state.climbing = None;
+        }
     }
 
     fn vertical(

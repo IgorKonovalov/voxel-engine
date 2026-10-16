@@ -139,3 +139,75 @@ fn a_long_fall_is_capped_and_lands_once() {
     assert_eq!(ticks_where(&steps, |s| s.r.landed.is_some()), [80]);
     assert_eq!(steps[79].r.landed, Some(640));
 }
+
+fn climb_held(wish: [i64; 2], release_on: u32) -> impl FnMut(u32) -> MoveInput {
+    move |t| MoveInput {
+        wish,
+        jump: false,
+        climb: t < release_on,
+    }
+}
+
+#[test]
+fn a_tall_step_is_climbed_while_climb_is_held() {
+    let steps = run(&f4(), S, 60, climb_held(WISH, u32::MAX));
+    let st34 = &steps[33];
+    assert!(st34.r.blocked);
+    assert!(st34.s.is_climbing(), "climbing begins on tick 34");
+    assert_eq!(st34.s.foot.0, [6912, 2688, 64]);
+    assert!(
+        ticks_where(&steps, |s| s.r.blocked)
+            .iter()
+            .all(|&t| t >= 34)
+    );
+    assert_eq!(ticks_where(&steps, |s| s.r.climbed), [53]);
+    assert_eq!(
+        ticks_where(&steps, |s| s.s.is_climbing()),
+        (34..=52).collect::<Vec<_>>()
+    );
+    assert_eq!(foot(&steps, 53), [7680, 2688, 1280]);
+    assert_eq!(foot(&steps, 60), [8576, 2688, 1280]);
+    assert!(steps[59].s.grounded);
+}
+
+#[test]
+fn a_dug_pit_is_climbed_out_of() {
+    let steps = run(&f5(), F5_START, 60, climb_held(WISH, u32::MAX));
+    assert_eq!(foot(&steps, 1), [14080, 13952, -2048]);
+    assert!(!steps[0].r.blocked);
+    assert!(steps[1].r.blocked);
+    assert!(steps[1].s.is_climbing(), "tick 2 begins the climb");
+    assert_eq!(ticks_where(&steps, |s| s.r.climbed), [33]);
+    assert_eq!(foot(&steps, 33), [14848, 13952, 0]);
+    assert_eq!(foot(&steps, 60), [18304, 13952, 0]);
+    assert!(steps[59].s.grounded);
+}
+
+#[test]
+fn releasing_climb_drops_the_body_back_down() {
+    let steps = run(&f4(), S, 60, climb_held(WISH, 40));
+    assert!(steps[38].s.is_climbing());
+    assert_eq!(foot(&steps, 39)[2], 6 * 64);
+    assert!(
+        ticks_where(&steps, |s| s.s.is_climbing())
+            .iter()
+            .all(|&t| t < 40)
+    );
+    assert!(ticks_where(&steps, |s| s.r.climbed).is_empty());
+    let st60 = &steps[59];
+    assert_eq!(st60.s.foot.0, [6912, 2688, 0]);
+    assert!(st60.s.grounded);
+    let landed = ticks_where(&steps, |s| s.r.landed.is_some());
+    assert_eq!(landed.len(), 1);
+    let land = landed[0];
+    assert!(land > 40 && land <= 60);
+    for t in land..=60 {
+        let st = &steps[t as usize - 1];
+        assert_eq!(st.s.foot.0, [6912, 2688, 0], "tick {t}");
+        assert_eq!(
+            st.r.climb_available,
+            Some(Fixed3([7680, 2688, 1280])),
+            "tick {t}"
+        );
+    }
+}
