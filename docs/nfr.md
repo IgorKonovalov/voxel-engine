@@ -240,8 +240,8 @@ under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2
 `vxe-audio` (Plan 0006, ADR-0006): 48 kHz stereo `f32`, 256-frame blocks (5.33 ms), mixed on
 the device callback. The figures are proposals; the baseline CPU is not on hand, so every
 reading is dev reference. **The readings below were taken under the exclusive machine lock but
-with a 1-minute load average of 9 to 12 from other builds, and are to be retaken on a quiet
-box.**
+with a 1-minute load average of 9 to 21 from other builds. The quiet-box retake (exclusive lock,
+1-minute load average 1.8 to 2.0) is in Plan 0006's Close triggers.**
 
 - **Mixer callback, 32 HRTF voices, one 256-frame block:** 1.0 ms on the baseline CPU
   (proposal; 32 x 2 x 128 x 256 = 2.1 million multiply-adds plus filters and taps).
