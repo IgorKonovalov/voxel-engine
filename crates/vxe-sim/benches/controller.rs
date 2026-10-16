@@ -1,6 +1,10 @@
 //! The collision budget (`nfr.md`, collision and coarse grids): 1000 controller ticks of the
 //! F6 staircase course, and 1000 sweeps of the F2 wall case (a body swept 10000 fixed units
 //! along `+x` into the wall two chunks away). The fixtures are the integration tests'.
+//!
+//! The longer F6 runs leave the `[-2, 2)³` extent near tick 150 and fall from there, so most
+//! of their ticks are free fall. The 60-tick run is exactly the staircase walk the controller
+//! test pins (20 steps, grounded on the top at tick 60): every tick on terrain.
 
 #[path = "../tests/support/mod.rs"]
 mod support;
@@ -49,5 +53,23 @@ fn sweeps(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, ticks, sweeps);
+fn terrain_ticks(c: &mut Criterion) {
+    let world = f6();
+    let cc = CharacterController::new(params());
+    c.bench_function("60 ticks of the F6 staircase, all on terrain", |b| {
+        b.iter_batched(
+            || CharacterState::new(Fixed3(F6_START)),
+            |mut s| {
+                for _ in 0..60 {
+                    std::hint::black_box(cc.tick(&world, &mut s, &WALK));
+                }
+                assert!(s.grounded && s.foot == Fixed3([20608, 2688, 5120]));
+                s
+            },
+            BatchSize::SmallInput,
+        )
+    });
+}
+
+criterion_group!(benches, ticks, terrain_ticks, sweeps);
 criterion_main!(benches);
