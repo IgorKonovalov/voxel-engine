@@ -25,7 +25,7 @@ use fly::Fly;
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK};
 use flythrough::{RESIDENCY, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
-use vxe_audio::{Acoustics, Hrtf, Listener, Mixer, Output, PlayParams, Sound, VoiceId};
+use vxe_audio::{Acoustics, Hrtf, Mixer, Output, PlayParams, Sound, VoiceId};
 use vxe_render::glam::Vec3;
 use vxe_render::{
     Camera, GpuWorld, LightParams, LodParams, MarchTimer, Marcher, MirrorConfig, Presenter, Window,
@@ -1011,12 +1011,7 @@ impl Run {
         let Some(audio) = self.audio.as_mut() else {
             return;
         };
-        let (forward, _, up) = self.fly.camera.basis();
-        let listener = Listener {
-            position: self.fly.camera.position.to_array(),
-            forward: forward.to_array(),
-            up: up.to_array(),
-        };
+        let listener = flythrough::listener(&self.fly.camera);
         // A full channel drops this frame's listener; the next frame sends a fresh one.
         let _ = audio.output.set_listener(listener);
         for id in audio.output.finished() {
