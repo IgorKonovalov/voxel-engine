@@ -1,0 +1,278 @@
+//! A text overlay drawn over a finished frame (ADR-0009): rows of ASCII bytes laid out as a
+//! grid of 8 x 8 glyph cells at an integer scale, alpha-blended onto the target by one
+//! fullscreen fragment pass. The overlay knows nothing of what the rows say; the application
+//! formats them.
+//!
+//! The cell grid is laid out at its cap, [`GRID_COLS`] x [`GRID_ROWS`] cells, with a fixed row
+//! stride of [`GRID_COLS`]; the part a target shows is `ceil(width / (8 scale))` x
+//! `ceil(height / (8 scale))` cells from the top-left, and the rest is clipped, never wrapped.
+
+use crate::font8x8::{FONT, printable};
+
+/// The source of the overlay shader, for headless validation.
+pub const HUD_WGSL: &str = include_str!("shaders/hud.wgsl");
+
+/// The most columns of cells the overlay holds; the cell buffer's row stride.
+pub const GRID_COLS: u32 = 256;
+/// The most rows of cells the overlay holds.
+pub const GRID_ROWS: u32 = 128;
+/// Bytes of the cell buffer: one `u32` per cell at the cap (128 KiB).
+pub const CELL_BYTES: u64 = (GRID_COLS * GRID_ROWS * 4) as u64;
+
+/// The colour of a row of text.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HudColour {
+    #[default]
+    White = 0,
+    Yellow = 1,
+    Red = 2,
+}
+
+/// The uniform block of `hud.wgsl`, field for field.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+struct Params {
+    scale: u32,
+    _pad: [u32; 3],
+}
+
+pub struct HudOverlay {
+    pipeline: wgpu::RenderPipeline,
+    bind: wgpu::BindGroup,
+    cells: wgpu::Buffer,
+    scale: u32,
+    /// Rows of cells the last `set_text` wrote; the next one clears any it does not reuse.
+    rows: u32,
+    /// The CPU copy of the rows being written, reused between calls.
+    staging: Vec<u32>,
+}
+
+impl HudOverlay {
+    /// An overlay for targets of `format`, each glyph pixel drawn as `scale` x `scale` target
+    /// pixels. `scale` is at least 1.
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, scale: u32) -> Self {
+        let scale = scale.max(1);
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("hud.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(HUD_WGSL.into()),
+        });
+        let storage = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("hud"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                storage(1),
+                storage(2),
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("hud"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("hud"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let buffer = |label, size, usage, contents: Option<&[u8]>| {
+            let b = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage,
+                mapped_at_creation: contents.is_some(),
+            });
+            if let Some(bytes) = contents {
+                b.slice(..)
+                    .get_mapped_range_mut()
+                    .expect("mapped at creation")
+                    .copy_from_slice(bytes);
+                b.unmap();
+            }
+            b
+        };
+        let params = buffer(
+            "hud params",
+            size_of::<Params>() as u64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            Some(bytemuck::bytes_of(&Params {
+                scale,
+                ..Params::default()
+            })),
+        );
+        let cells = buffer(
+            "hud cells",
+            CELL_BYTES,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            None,
+        );
+        let font = buffer(
+            "hud font",
+            size_of_val(&FONT) as u64,
+            wgpu::BufferUsages::STORAGE,
+            Some(FONT.as_flattened()),
+        );
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("hud"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: cells.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: font.as_entire_binding(),
+                },
+            ],
+        });
+        Self {
+            pipeline,
+            bind,
+            cells,
+            scale,
+            rows: 0,
+            staging: Vec::new(),
+        }
+    }
+
+    pub fn scale(&self) -> u32 {
+        self.scale
+    }
+
+    /// Replaces the text with `rows`, all white, from the top-left cell.
+    pub fn set_text(&mut self, queue: &wgpu::Queue, rows: &[&[u8]]) {
+        self.write_rows(queue, rows.iter().map(|&r| (r, HudColour::White)));
+    }
+
+    /// Replaces the text with `rows`, each in its colour, from the top-left cell. A row past
+    /// [`GRID_ROWS`] or a byte past [`GRID_COLS`] is dropped; a byte outside 32 to 126 draws
+    /// as `?`.
+    pub fn set_rows(&mut self, queue: &wgpu::Queue, rows: &[(&[u8], HudColour)]) {
+        self.write_rows(queue, rows.iter().copied());
+    }
+
+    fn write_rows<'a>(
+        &mut self,
+        queue: &wgpu::Queue,
+        rows: impl ExactSizeIterator<Item = (&'a [u8], HudColour)>,
+    ) {
+        let n = (rows.len() as u32).min(GRID_ROWS);
+        // Rows the previous text used and this one does not are written blank.
+        let written = n.max(self.rows);
+        self.staging.clear();
+        self.staging.resize((written * GRID_COLS) as usize, 0);
+        for (cells, (bytes, colour)) in self.staging.chunks_mut(GRID_COLS as usize).zip(rows) {
+            for (cell, &b) in cells.iter_mut().zip(bytes) {
+                *cell = u32::from(printable(b)) | (colour as u32) << 8;
+            }
+        }
+        if written > 0 {
+            queue.write_buffer(&self.cells, 0, bytemuck::cast_slice(&self.staging));
+        }
+        self.rows = n;
+    }
+
+    /// Records the overlay onto `view`, a `width` x `height` target, into `encoder`; what the
+    /// target holds stays under it.
+    pub fn encode(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) {
+        self.encode_timed(encoder, view, width, height, None);
+    }
+
+    /// [`Self::encode`], writing the pass's start and end timestamps when `timestamps` is
+    /// given.
+    pub fn encode_timed(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
+    ) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("hud"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            timestamp_writes: timestamps,
+            ..Default::default()
+        });
+        if width == 0 || height == 0 {
+            return;
+        }
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.bind, &[]);
+        // The first instance is the target height, read by the shader as `instance_index`.
+        pass.draw(0..3, height..height + 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HUD_WGSL;
+
+    #[test]
+    fn hud_wgsl_validates_through_naga() {
+        let module = wgpu::naga::front::wgsl::parse_str(HUD_WGSL).expect("hud.wgsl parses");
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("hud.wgsl validates");
+    }
+}

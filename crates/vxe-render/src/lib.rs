@@ -3,11 +3,13 @@
 //! on the graphics backend.
 //!
 //! [`GpuWorld`] mirrors a `vxe_world::World` into the ADR-0002 buffers; [`Marcher`] draws it
-//! and [`Presenter`] puts the result on a surface.
+//! and [`Presenter`] puts the result on a surface; [`HudOverlay`] draws text over it.
 
 pub mod attrib;
 pub mod camera;
+pub mod font8x8;
 pub mod gpu_world;
+pub mod hud;
 pub mod light;
 pub mod marcher;
 pub mod present;
@@ -15,6 +17,7 @@ pub mod readback;
 
 pub use camera::Camera;
 pub use gpu_world::{GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncStats, Window};
+pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
 pub use marcher::{LodParams, LookParams, MarchTimer, Marcher, NormalMode, ViewMode};
 pub use present::Presenter;

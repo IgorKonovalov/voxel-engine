@@ -1,6 +1,6 @@
 # 0010: A toggleable stats HUD: a bitmap-font text grid and a frame-time strip drawn as one overlay pass
 
-> **Status:** approved (2026-10-16)
+> **Status:** in-progress
 > **Created:** 2026-10-16
 > **Milestone:** M7 in `docs/roadmap.md` (tooling; the profiler overlay half, brought forward)
 > **Related ADRs:** [ADR-0009](../adrs/0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) (no UI library), ADR-0001 (stack)
@@ -232,7 +232,7 @@ Buffers: cells 128 KiB at the cap, font 760 bytes, samples 1 KiB, params 64 byte
 
 | Phase | Owner | Status | Notes |
 |---|---|---|---|
-| 1: The overlay pass and the font | dev | not started | |
+| 1: The overlay pass and the font | dev | done | `HudOverlay` (`hud.rs`, `hud.wgsl`), `font8x8.rs` from `font8x8_basic.h`; lavapipe (llvmpipe, LLVM 22.1.8): `A` at scale 2 has 28 set bits, 112 white pixels, 33 shadow pixels, every pixel at `x >= 17` the clear colour; `present.wgsl`, `march.wgsl`, `present.rs` unchanged and Plan 0001's goldens pass; gate: 175 tests run, 175 passed, 1 skipped. Commit: committed with this row |
 | 2: The frame-time strip and the pass timer | dev | not started | |
 | 3: Stats in the fly-through and the toggle | dev | not started | |
 | 4: The golden with the HUD on | dev | not started | |
