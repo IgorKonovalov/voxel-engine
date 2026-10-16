@@ -11,8 +11,10 @@
 //! the first frame; `--autopilot` digs, flies 300 m out and back and prints the streaming
 //! readings (see [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame;
 //! `--headless` runs the same frames on an offscreen target with no window; `--look` starts
-//! in a normal mode (`face`, `trilinear8`, `gradient27`, `contour`) and `--view` in a view
-//! (`shaded`, `normals`, `hitmask`). `N` cycles the normal mode and `V` toggles detail.
+//! in a normal mode (`face`, `trilinear8`, `gradient27`, `contour`) and gives the mirror
+//! attribute pages, so `N` can reach `contour` (without `--look` it skips it); `--view` starts
+//! in a view (`shaded`, `normals`, `hitmask`). `N` cycles the normal mode and `V` toggles
+//! detail.
 
 mod fly;
 
@@ -26,6 +28,7 @@ use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK};
 use flythrough::{RESIDENCY, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
 use vxe_render::glam::Vec3;
+use vxe_render::gpu_world;
 use vxe_render::{
     Camera, GpuWorld, LightParams, LodParams, LookParams, MarchTimer, Marcher, MirrorConfig,
     NormalMode, Presenter, ViewMode, Window, wgpu,
@@ -214,6 +217,38 @@ struct Gfx {
     marcher: Marcher,
     presenter: Presenter,
     timer: Option<MarchTimer>,
+    /// Times the attribute pass, with attribute pages and `TIMESTAMP_QUERY`.
+    attr_timer: Option<MarchTimer>,
+}
+
+impl Gfx {
+    /// Runs the attribute pass over what changed, alone, and waits for it: the bricks in its
+    /// work list and its GPU time when timed.
+    fn timed_attrs(&mut self, gpu: &Gpu) -> (usize, Option<f64>) {
+        let mut enc = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let timer = self.attr_timer.as_ref();
+        let n = self
+            .mirror
+            .update_attrs_timed(&mut enc, timer.map(MarchTimer::writes));
+        if let Some(t) = timer.filter(|_| n > 0) {
+            t.resolve(&mut enc);
+        }
+        gpu.queue.submit([enc.finish()]);
+        let ms = timer
+            .filter(|_| n > 0)
+            .map(|t| t.read_ms(&gpu.device, &gpu.queue));
+        (n, ms)
+    }
+}
+
+/// `attrib: 383608 bricks in 12.345 ms GPU (initial fill)`.
+fn attr_line(what: &str, (n, ms): (usize, Option<f64>)) -> String {
+    let ms = ms.map_or("n/a (no TIMESTAMP_QUERY)".to_owned(), |ms| {
+        format!("{ms:.3} ms")
+    });
+    format!("attrib: {n} bricks in {ms} GPU ({what})")
 }
 
 #[derive(Default)]
@@ -398,10 +433,25 @@ impl Run {
             }
         }
 
+        // With attribute pages, the first carve is synced and its attribute pass timed alone.
+        let attrs = self.gfx.as_ref().is_some_and(|g| g.mirror.surface_attrs());
+        let mut results: Vec<Result<EditResult, EditError>> = Vec::with_capacity(ops.len());
+        let mut edit_ms = 0.0;
+        if attrs && let Some(gfx) = self.gfx.as_mut() {
+            let t = now();
+            results.push(self.world.apply(&ops[0]));
+            edit_ms += ms_since(t);
+            match gfx.mirror.sync(&self.world, &gpu.queue) {
+                Ok(_) => println!(
+                    "{}",
+                    attr_line("one carve of radius 1 m", gfx.timed_attrs(gpu))
+                ),
+                Err(e) => println!("bench: sync failed, {e}"),
+            }
+        }
         let t = now();
-        let results: Vec<Result<EditResult, EditError>> =
-            ops.iter().map(|op| self.world.apply(op)).collect();
-        let edit_ms = ms_since(t);
+        results.extend(ops[results.len()..].iter().map(|op| self.world.apply(op)));
+        edit_ms += ms_since(t);
 
         let mut counts = BTreeMap::<MaterialId, u32>::new();
         let mut touched = BTreeSet::new();
@@ -443,6 +493,10 @@ impl Run {
             ),
             Err(e) => println!("bench: sync failed, {e}"),
         }
+        if attrs {
+            let what = format!("the other {} carves", BENCH_CARVES - 1);
+            println!("{}", attr_line(&what, gfx.timed_attrs(gpu)));
+        }
     }
 
     fn report(&mut self, samples: Samples) {
@@ -458,12 +512,13 @@ impl Run {
             format!("{:.3} ms", median(&mut gpu_ms))
         };
         println!(
-            "frame ({w}x{h}, median of {}, {}): cpu {:.3} ms, gpu march {gpu}; full bricks {}, mirror {} B",
+            "frame ({w}x{h}, median of {}, {}): cpu {:.3} ms, gpu march {gpu}; full bricks {}, mirror {} B live, {} B allocated",
             cpu_ms.len(),
             look_line(&self.look),
             median(&mut cpu_ms),
             self.world.stats().full_bricks,
-            gfx.mirror.mirror_bytes()
+            gfx.mirror.mirror_bytes(),
+            gfx.mirror.allocated_bytes()
         );
     }
 
@@ -493,8 +548,15 @@ impl Run {
         let pool = if self.stream.is_some() {
             STREAM_POOL_BYTES
         } else {
-            (self.world.stats().full_bricks as u64 + POOL_HEADROOM_BRICKS)
-                * vxe_render::gpu_world::SLOT_BYTES
+            let bricks = self.world.stats().full_bricks as u64 + POOL_HEADROOM_BRICKS;
+            // With attribute pages each page holds `ATTR_PAGE_BRICK_SLOTS` bricks.
+            let slots = if self.args.look.is_some() {
+                bricks.div_ceil(u64::from(gpu_world::ATTR_PAGE_BRICK_SLOTS))
+                    * u64::from(gpu_world::POOL_PAGE_SLOTS)
+            } else {
+                bricks
+            };
+            slots * gpu_world::SLOT_BYTES
         };
         (
             adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
@@ -510,6 +572,8 @@ impl Run {
             .contains(wgpu::Features::TIMESTAMP_QUERY)
             .then(|| MarchTimer::new(&gpu.device));
         println!("device ready after {:.0} ms", ms_since(self.start));
+        let attr_timer =
+            (self.args.look.is_some() && timer.is_some()).then(|| MarchTimer::new(&gpu.device));
         let mut marcher = Marcher::new(&gpu.device, w, h);
         let mirror = if self.stream.is_some() {
             marcher.set_lod(LodParams {
@@ -518,38 +582,55 @@ impl Run {
             });
             self.init_stream(gpu)
         } else {
-            let mut mirror = GpuWorld::new(&gpu.device, self.world.extent());
+            let mut mirror =
+                self.new_mirror(gpu, MirrorConfig::new(Window::Fixed(self.world.extent())));
             mirror.set_focus(self.spawn);
             let t = now();
             match mirror.sync(&self.world, &gpu.queue) {
                 Ok(s) => println!(
-                    "mirror: uploaded {} B ({} bricks, {} chunks, {} writes) in {:.0} ms",
+                    "mirror: uploaded {} B ({} bricks, {} chunks, {} writes) in {:.0} ms; mirror {} B live, {} B allocated",
                     s.bytes,
                     s.bricks,
                     s.chunks,
                     s.writes,
-                    ms_since(t)
+                    ms_since(t),
+                    mirror.mirror_bytes(),
+                    mirror.allocated_bytes()
                 ),
                 Err(e) => eprintln!("mirror sync failed: {e}"),
             }
             mirror
         };
-        self.gfx = Some(Gfx {
+        let mut gfx = Gfx {
             mirror,
             marcher,
             presenter: Presenter::new(&gpu.device, gpu.surface_format),
             timer,
-        });
+            attr_timer,
+        };
+        if gfx.mirror.surface_attrs() {
+            println!("{}", attr_line("initial fill", gfx.timed_attrs(gpu)));
+        }
+        self.gfx = Some(gfx);
         for _ in 0..self.args.bench {
             self.bench(gpu);
+        }
+    }
+
+    /// A mirror under `cfg`, with attribute pages when `--look` was given.
+    fn new_mirror(&self, gpu: &Gpu, cfg: MirrorConfig) -> GpuWorld {
+        if self.args.look.is_some() {
+            GpuWorld::with_surface_attrs(&gpu.device, cfg)
+        } else {
+            GpuWorld::with_config(&gpu.device, cfg)
         }
     }
 
     /// The streaming mirror, returned once the chunks within squared distance `NEAR_D2` of
     /// the spawn chunk are resident and mirrored full.
     fn init_stream(&mut self, gpu: &Gpu) -> GpuWorld {
-        let mut mirror = GpuWorld::with_config(
-            &gpu.device,
+        let mut mirror = self.new_mirror(
+            gpu,
             MirrorConfig {
                 sync_budget_bytes: self.args.sync_budget,
                 ..MirrorConfig::new(Window::Follow {
@@ -879,7 +960,8 @@ impl Run {
             self.bench(gpu);
         }
         if input.pressed(KeyCode::KeyN) {
-            self.look.normal_mode = self.look.normal_mode.next(false);
+            let contour = self.gfx.as_ref().is_some_and(|g| g.mirror.surface_attrs());
+            self.look.normal_mode = self.look.normal_mode.next(contour);
             println!("{}", look_line(&self.look));
         }
         if input.pressed(KeyCode::KeyV) {
@@ -924,6 +1006,7 @@ impl Run {
         let mut enc = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        gfx.mirror.update_attrs(&mut enc);
         gfx.marcher.encode(
             &gpu.device,
             &gpu.queue,

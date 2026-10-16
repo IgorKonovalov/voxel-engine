@@ -22,6 +22,16 @@
 //   8  storage  brick_pool2    pool shard 2
 //   9  storage  brick_pool3    pool shard 3
 //
+// With attribute pages (flag bit 7), a full chunk's Full brick in slot s of the page
+// p = s - s % 4096 has its 512 u16 contour attributes in slots p + 1364 + 2 (s - p) and the
+// one after, two per word, x fastest: bits 0..6 octahedral u, 6..12 octahedral v, 12..16 the
+// plane offset code k for (k - 7) / 8 voxel along the normal from the voxel centre; 0xFFFF is
+// no plane. In the Contour normal mode the walk tests a solid voxel that has a plane against
+// the ray: it is hit where the ray enters the plane's solid half-space inside the voxel's
+// cube, with the plane normal, and skipped when the ray's segment through the cube misses
+// that half-space. A solid voxel with no plane, of a uniform brick or of a mip-brick, hits
+// as a cube.
+//
 // World units are voxels. The walk is a DDA over cells of four sizes: a chunk that is absent
 // is skipped as one 64^3 cell, a uniform-air brick as one 8^3 cell, an empty 2^3 block of a
 // full brick (its mask bit clear) as one 2^3 cell when the masks flag is set, and the voxels
@@ -98,20 +108,30 @@ const NORMAL_CONTOUR: u32 = 3u;
 const VIEW_SHADED: u32 = 0u;
 const VIEW_NORMALS: u32 = 1u;
 const VIEW_HITMASK: u32 = 2u;
+// Attribute pages: brick slots per page, slots per page, and the attribute of no plane.
+const PAGE_SLOTS: u32 = 4096u;
+const ATTR_PAGE_BRICK_SLOTS: u32 = 1364u;
+const NO_PLANE: u32 = 0xFFFFu;
 
 // What the walk found at a voxel: `size` is the edge of the empty cell to skip, or 0 for a
-// solid voxel of `material`.
+// solid voxel of `material`. A solid voxel of a full chunk's Full brick carries its brick's
+// pool slot and its index in the brick; any other cell carries ABSENT.
 struct Cell {
     size: i32,
     material: u32,
+    slot: u32,
+    index: u32,
 };
 
+// `plane`: the hit is on a contour plane, `n` its normal.
 struct Hit {
     found: bool,
     voxel: vec3<i32>,
     axis: i32,
     t: f32,
     material: u32,
+    plane: bool,
+    n: vec3<f32>,
 };
 
 // Word `word` of the brick in global pool slot `slot` (a wide brick's words run on into the
@@ -153,14 +173,14 @@ fn lookup(v: vec3<i32>) -> Cell {
     let rel = chunk - params.window_min;
     let w = params.window_size;
     if (any(rel < vec3<i32>(0)) || any(rel >= w)) {
-        return Cell(64, 0u);
+        return Cell(64, 0u, ABSENT, 0u);
     }
     // Wrapped addressing: the table is indexed by the chunk coordinate modulo the window size,
     // and the range check above keeps every lookup inside the current window.
     let wr = ((chunk % w) + w) % w;
     let t = chunk_table[u32(wr.x + w.x * (wr.y + w.y * wr.z))];
     if (t == ABSENT) {
-        return Cell(64, 0u);
+        return Cell(64, 0u, ABSENT, 0u);
     }
     // A full chunk is level 0: voxels in 8^3 bricks, 8 bricks to an edge. A LOD record holds
     // level L's cells in 8^3 mip-bricks, 8 >> L to an edge, from entry 0, 64 or 72.
@@ -178,9 +198,9 @@ fn lookup(v: vec3<i32>) -> Cell {
     let entry = chunk_records[base + first + u32(b.x + e * (b.y + e * b.z))];
     if ((entry & FULL_BIT) == 0u) {
         if (entry == 0u) {
-            return Cell(8 * cell, 0u);
+            return Cell(8 * cell, 0u, ABSENT, 0u);
         }
-        return Cell(0, entry);
+        return Cell(0, entry, ABSENT, 0u);
     }
     let slot = entry & SLOT_MASK;
     let l = c - b * 8;
@@ -188,7 +208,7 @@ fn lookup(v: vec3<i32>) -> Cell {
     let bit = u32(k.x + 4 * k.y + 16 * k.z);
     if ((params.flags & FLAG_MASKS) != 0u
         && (brick_masks[slot * 2u + bit / 32u] & (1u << (bit % 32u))) == 0u) {
-        return Cell(2 * cell, 0u);
+        return Cell(2 * cell, 0u, ABSENT, 0u);
     }
     let i = u32(l.x + 8 * (l.y + 8 * l.z));
     var m = 0u;
@@ -206,9 +226,9 @@ fn lookup(v: vec3<i32>) -> Cell {
         }
     }
     if (m == 0u) {
-        return Cell(cell, 0u);
+        return Cell(cell, 0u, ABSENT, 0u);
     }
-    return Cell(0, m);
+    return Cell(0, m, select(ABSENT, slot, level == 0u), i);
 }
 // The voxel holding `p` on a ray of direction `d`: on an axis the ray travels down, a position
 // exactly on a voxel boundary belongs to the voxel below.
@@ -216,9 +236,68 @@ fn voxel_at(p: vec3<f32>, d: vec3<f32>) -> vec3<i32> {
     return vec3<i32>(select(floor(p), ceil(p) - 1.0, d < vec3<f32>(0.0)));
 }
 
+// Octahedral decoding of 6 + 6 bits into a unit vector.
+fn decode_octahedral(e: u32) -> vec3<f32> {
+    let p = vec2<f32>(f32(e & 63u), f32((e >> 6u) & 63u)) / 63.0 * 2.0 - 1.0;
+    var n = vec3<f32>(p, 1.0 - abs(p.x) - abs(p.y));
+    if (n.z < 0.0) {
+        let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0));
+        n = vec3<f32>((1.0 - abs(n.yx)) * s, n.z);
+    }
+    return normalize(n);
+}
+
+// The contour attribute of voxel `index` of the Full brick in pool slot `slot`.
+fn contour_attr(slot: u32, index: u32) -> u32 {
+    let page = slot - slot % PAGE_SLOTS;
+    let attr_slot = page + ATTR_PAGE_BRICK_SLOTS + 2u * (slot - page);
+    return (pool_word(attr_slot, index / 2u) >> ((index & 1u) * 16u)) & 0xFFFFu;
+}
+
+// The contour test of solid voxel `v`, entered at `t`: `kind` 0 when the voxel has no plane,
+// 1 for a hit at `t` with normal `n`, 2 when the ray misses the plane's solid half-space
+// inside the voxel's cube.
+struct Contour {
+    kind: u32,
+    t: f32,
+    n: vec3<f32>,
+};
+
+fn contour_test(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t: f32, c: Cell) -> Contour {
+    var none = Contour(0u, t, vec3<f32>(0.0));
+    if (c.slot == ABSENT) {
+        return none;
+    }
+    let a = contour_attr(c.slot, c.index);
+    if (a == NO_PLANE) {
+        return none;
+    }
+    let n = decode_octahedral(a);
+    let offset = (f32(a >> 12u) - 7.0) / 8.0;
+    // Signed distance along n from the plane, negative inside the solid half-space.
+    let centre = vec3<f32>(v) + 0.5;
+    let s_in = dot(n, o + d * t - centre) - offset;
+    if (s_in <= 0.0) {
+        return Contour(1u, t, n);
+    }
+    let edge = vec3<f32>(v) + select(vec3<f32>(0.0), vec3<f32>(1.0), d > vec3<f32>(0.0));
+    let tk = select(vec3<f32>(BIG), (edge - o) * inv, d != vec3<f32>(0.0));
+    let t_out = min(min(tk.x, tk.y), tk.z);
+    let s_out = dot(n, o + d * t_out - centre) - offset;
+    if (s_out > 0.0) {
+        return Contour(2u, t, n);
+    }
+    return Contour(1u, t + (t_out - t) * s_in / (s_in - s_out), n);
+}
+
+fn contour_active() -> bool {
+    return ((params.flags >> NORMAL_SHIFT) & 3u) == NORMAL_CONTOUR
+        && (params.flags & FLAG_ATTR_PAGES) != 0u;
+}
+
 // The first solid voxel along `o + d t` for `0 <= t <= t_limit`.
 fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
-    var miss = Hit(false, vec3<i32>(0), -1, 0.0, 0u);
+    var miss = Hit(false, vec3<i32>(0), -1, 0.0, 0u, false, vec3<f32>(0.0));
     let bmin_i = params.window_min * 64;
     let bmax_i = (params.window_min + params.window_size) * 64;
     let bmin = vec3<f32>(bmin_i);
@@ -244,6 +323,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
         v[axis] = select(edge - 1, edge, d[axis] > 0.0);
     }
     v = clamp(v, bmin_i, bmax_i - vec3<i32>(1));
+    let contour = contour_active();
 
     for (var step = 0u; step < MAX_STEPS; step++) {
         if (any(v < bmin_i) || any(v >= bmax_i)) {
@@ -253,11 +333,23 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
             return miss;
         }
         let c = lookup(v);
-        if (c.size == 0) {
-            return Hit(true, v, axis, t, c.material);
+        var size = c.size;
+        if (size == 0) {
+            if (!contour) {
+                return Hit(true, v, axis, t, c.material, false, vec3<f32>(0.0));
+            }
+            let p = contour_test(o, d, inv, v, t, c);
+            if (p.kind == 0u) {
+                return Hit(true, v, axis, t, c.material, false, vec3<f32>(0.0));
+            }
+            if (p.kind == 1u) {
+                return Hit(true, v, axis, p.t, c.material, true, p.n);
+            }
+            // The ray passes the voxel outside its plane: walk on as through air.
+            size = 1;
         }
-        let cell_min = floor_div(v, c.size) * c.size;
-        let edge = cell_min + select(vec3<i32>(0), vec3<i32>(c.size), d > vec3<f32>(0.0));
+        let cell_min = floor_div(v, size) * size;
+        let edge = cell_min + select(vec3<i32>(0), vec3<i32>(size), d > vec3<f32>(0.0));
         let tk = select(vec3<f32>(BIG), (vec3<f32>(edge) - o) * inv, d != vec3<f32>(0.0));
         var k = 0;
         if (tk.y < tk[k]) { k = 1; }
@@ -347,6 +439,9 @@ fn surface_normal(o: vec3<f32>, d: vec3<f32>, h: Hit) -> vec3<f32> {
     let nf = face_normal(d, h);
     if (h.axis < 0) {
         return nf;
+    }
+    if (h.plane) {
+        return h.n;
     }
     let mode = normal_mode();
     if (mode == NORMAL_TRILINEAR8) {

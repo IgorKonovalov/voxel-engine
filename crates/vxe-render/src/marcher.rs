@@ -307,7 +307,12 @@ impl Marcher {
             cos_inner: light.inner.cos(),
             flags: if light.shadows { FLAG_SHADOWS } else { 0 }
                 | if light.masks { FLAG_MASKS } else { 0 }
-                | self.look.flags(),
+                | self.look.flags()
+                | if world.surface_attrs() {
+                    FLAG_ATTR_PAGES
+                } else {
+                    0
+                },
             slots_per_shard: world.shard_layout().slots_per_shard,
             forced_level: self.lod.forced_level.unwrap_or(0),
             lod1_r2: (2 * self.lod.r_full).pow(2),

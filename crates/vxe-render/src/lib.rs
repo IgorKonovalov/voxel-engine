@@ -5,6 +5,7 @@
 //! [`GpuWorld`] mirrors a `vxe_world::World` into the ADR-0002 buffers; [`Marcher`] draws it
 //! and [`Presenter`] puts the result on a surface.
 
+pub mod attrib;
 pub mod camera;
 pub mod gpu_world;
 pub mod light;
@@ -21,6 +22,8 @@ pub use {glam, wgpu};
 
 /// The source of the primary-ray shader, for headless validation.
 pub const MARCH_WGSL: &str = include_str!("shaders/march.wgsl");
+/// The source of the contour-attribute pass, for headless validation.
+pub const ATTRIB_WGSL: &str = include_str!("shaders/attrib.wgsl");
 
 /// Limits to request from `adapter`: the defaults, with the storage-binding and buffer-size
 /// limits raised toward what a brick pool of `pool_bytes` needs in one shard, capped at what

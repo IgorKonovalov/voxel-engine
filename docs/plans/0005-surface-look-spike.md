@@ -496,8 +496,8 @@ are the numbers the owner's call weighs.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The harness and the face-normal baseline | dev | done: face cavity normal error 40.75 degrees, pillar silhouette error 172 px (lavapipe); occluder centre normal (-1, 1/255, 1/255); `primary.png`, `headlamp.png`, `lod.png` byte for byte; face 1080p march 17.218 / 17.261 / 17.255 ms on RADV Renoir (RTX 3080 lost from the bus, see Notes) | ca7dc23 |
-| 2: Mode A, normals smoothed in the shader | dev | done: cavity normal error trilinear8 18.62, gradient27 6.95 degrees (face 40.75, same run); pillar silhouette 172 px in all three; occluder centre (-1, 1/255, 1/255) in both; `look_trilinear8.png`, `look_gradient27.png` blessed on lavapipe; 1080p march trilinear8 25.024 / 24.885 / 24.872 ms, gradient27 41.277 / 41.400 / 41.353 ms on RADV Renoir | committed with this row |
-| 3: Mode B, per-voxel contour planes in attribute pages | dev | not started | |
+| 2: Mode A, normals smoothed in the shader | dev | done: cavity normal error trilinear8 18.62, gradient27 6.95 degrees (face 40.75, same run); pillar silhouette 172 px in all three; occluder centre (-1, 1/255, 1/255) in both; `look_trilinear8.png`, `look_gradient27.png` blessed on lavapipe; 1080p march trilinear8 25.024 / 24.885 / 24.872 ms, gradient27 41.277 / 41.400 / 41.353 ms on RADV Renoir | 9480183 |
+| 3: Mode B, per-voxel contour planes in attribute pages | dev | done: layout and floor readback tests in `mirror.rs`; face goldens byte for byte with attribute pages over 1 and 3 shards (`lod.png` 1 and 2); contour cavity normal error 7.41 degrees, pillar silhouette 32 px (face 40.75, 172, same run, lavapipe); `look_contour.png` blessed on lavapipe. RTX 3080 Laptop GPU, `--level --headless --seed 1 --frames 1`: without `--look` 207 681 088 B live, 213 334 144 B allocated; `--look contour` 606 633 408 B live, 613 759 104 B allocated; first sync 571 writes (195 without); 1080p contour march 1.891 / 1.891 / 1.892 ms; attrib initial fill (383 608 bricks) 55.020 / 39.581 / 41.722 / 41.889 ms; one 1 m carve 46 bricks 0.020 ms; the other 99 bench carves 2777 bricks 0.310 ms | committed with this row |
 | 4: Mode C, procedural per-material detail | dev | not started | |
 | 5: Readings and the comparison table | dev | not started | |
 | 6: The owner's call | human | not started | |
@@ -522,6 +522,27 @@ each. Empty is fine.)_
   voxels on a flat wall and the gradient along the face normal is zero.
 - Phase 1: the harness helpers (`make_lod`, `carved_world`, `lod_scene`) are copied into
   `tests/support/mod.rs`; `tests/golden.rs` keeps its own copies unchanged.
+- Phase 3: the RTX 3080 Laptop GPU is back on the bus after a reboot (`nvidia-smi -L` checked
+  before and after each reading); every Phase 3 figure named RTX is on it. Phases 1 and 2's
+  figures stay the Renoir ones; the RTX figures for every mode are Phase 5's table.
+- Phase 3: `surface_attrs` is a constructor, `GpuWorld::with_surface_attrs(device, cfg)`, with
+  a `surface_attrs()` getter, not a `MirrorConfig` field: `apps/flythrough/tests/level_mirror.rs`
+  builds `MirrorConfig` with every field named and stays unchanged.
+- Phase 3: `GpuWorld::update_attrs_timed(encoder, timestamps)` sits beside
+  `update_attrs(encoder)` for the pass timings; both return the bricks in the work list.
+- Phase 3: `free_slots()` returns the plain kind's free single slots (every slot without
+  attribute pages). Pages keep their kind for the mirror's life; a page freed of bricks is not
+  handed to the other kind.
+- Phase 3: `attrib.wgsl` runs one workgroup of 256 per brick, loading the 10 x 10 x 10
+  occupancy around the brick into workgroup memory once.
+- Phase 3: the face-with-attribute-pages golden check, the contour metrics and the contour
+  golden are in `apps/flythrough/tests/look.rs`; the layout and floor readback tests in
+  `crates/vxe-render/tests/mirror.rs`.
+- Phase 3: with `--look`, `--bench` applies and syncs the first of its 100 carves alone and
+  times its attribute pass, then the other 99; the `bench:` sync line covers those 99. The
+  level's `mirror: uploaded` line also prints live and allocated bytes, since a `--frames 1`
+  run prints no frame line.
+- Phase 3: `look_contour.png` shows isolated dark pixels on lit wall (lavapipe image).
 
 ### Close triggers
 
