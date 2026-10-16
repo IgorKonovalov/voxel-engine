@@ -16,3 +16,9 @@ vxe-world.workspace = true
 
 [dev-dependencies]
 sofar.workspace = true
+criterion.workspace = true
+flythrough = { path = "../../apps/flythrough" }
+
+[[bench]]
+name = "mixer"
+harness = false

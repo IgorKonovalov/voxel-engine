@@ -302,8 +302,13 @@ struct Audio {
     voices: Vec<(VoiceId, [f32; 3])>,
     /// Stream errors (underruns among them) already reported.
     stream_errors: u64,
-    /// `--audio-debug`: when the callback's readings were last printed.
-    debug: Option<Instant>,
+    /// `--audio-debug`: print the callback's readings each second.
+    debug: bool,
+    /// When the callback's readings were last taken.
+    stats_at: Instant,
+    /// The longest callback (the mixer's render of one device buffer, timed inside the
+    /// callback) over the last whole second, in milliseconds.
+    callback_max_ms: f32,
     /// Wall time of the last `Acoustics::update`, in milliseconds.
     update_ms: f64,
 }
@@ -318,7 +323,7 @@ const AUDIO_DEBUG_WAV: &str = "flythrough-audio-debug.wav";
 
 impl Drop for Audio {
     fn drop(&mut self) {
-        if self.debug.is_none() {
+        if !self.debug {
             return;
         }
         let samples = self.output.take_recording();
@@ -422,7 +427,9 @@ impl Audio {
                     table: acoustic_table(),
                     voices: Vec::new(),
                     stream_errors: 0,
-                    debug: debug.then(now),
+                    debug,
+                    stats_at: now(),
+                    callback_max_ms: 0.0,
                     update_ms: 0.0,
                 })
             }
@@ -779,7 +786,10 @@ impl Run {
         );
         if let Some(audio) = &self.audio {
             println!(
-                "audio: {} active taps, last acoustics update {:.3} ms",
+                "audio: {} voices, callback max {:.3} ms over the last second, {} active taps, \
+                 last acoustics update {:.3} ms",
+                audio.voices.len(),
+                audio.callback_max_ms,
                 audio.acoustics.active_taps(),
                 audio.update_ms
             );
@@ -1262,24 +1272,25 @@ impl Run {
             println!("audio: {errors} stream errors so far (an underrun is heard as a click)");
             audio.stream_errors = errors;
         }
-        if let Some(last) = audio.debug
-            && ms_since(last) >= 1000.0
-        {
+        if ms_since(audio.stats_at) >= 1000.0 {
             let s = audio.output.take_stats();
-            println!(
-                "audio-debug: {} callbacks of {}..{} frames, busy max {:.3} ms, gap max {:.2} ms, {} late, peak {:.3}, {} clipped, kink max {:.2e}, {} voices",
-                s.callbacks,
-                s.frames_min,
-                s.frames_max,
-                s.busy_max_ms,
-                s.gap_max_ms,
-                s.late,
-                s.peak,
-                s.clipped,
-                s.kink_max,
-                audio.voices.len()
-            );
-            audio.debug = Some(now());
+            audio.callback_max_ms = s.busy_max_ms;
+            audio.stats_at = now();
+            if audio.debug {
+                println!(
+                    "audio-debug: {} callbacks of {}..{} frames, busy max {:.3} ms, gap max {:.2} ms, {} late, peak {:.3}, {} clipped, kink max {:.2e}, {} voices",
+                    s.callbacks,
+                    s.frames_min,
+                    s.frames_max,
+                    s.busy_max_ms,
+                    s.gap_max_ms,
+                    s.late,
+                    s.peak,
+                    s.clipped,
+                    s.kink_max,
+                    audio.voices.len()
+                );
+            }
         }
         for id in audio.output.finished() {
             audio.voices.retain(|(v, _)| *v != id);
