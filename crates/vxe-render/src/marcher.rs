@@ -30,6 +30,9 @@ pub struct Params {
     pub size: [u32; 2],
     pub cos_inner: f32,
     pub flags: u32,
+    /// Pool slots per shard: slot `s` is slot `s % n` of shard `s / n`.
+    pub slots_per_shard: u32,
+    pub _pad4: [u32; 3],
 }
 
 /// `Params::flags` bit: trace the shadow ray.
@@ -79,6 +82,9 @@ impl Marcher {
                 storage(3),
                 storage(4),
                 storage(6),
+                storage(7),
+                storage(8),
+                storage(9),
                 wgpu::BindGroupLayoutEntry {
                     binding: 5,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -150,6 +156,7 @@ impl Marcher {
             cos_inner: light.inner.cos(),
             flags: if light.shadows { FLAG_SHADOWS } else { 0 }
                 | if light.masks { FLAG_MASKS } else { 0 },
+            slots_per_shard: world.shard_layout().slots_per_shard,
             ..Params::default()
         }
     }
@@ -179,7 +186,19 @@ impl Marcher {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: world.pool().as_entire_binding(),
+                    resource: world.pool_shard(0).as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: world.pool_shard(1).as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: world.pool_shard(2).as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: world.pool_shard(3).as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use vxe_render::gpu_world::{
     ABSENT, FULL_BIT, POOL_PAGE_SLOTS, RECORD_BYTES, RECORD_WORDS, SLOT_BYTES, SLOT_MASK, WIDE_BIT,
 };
-use vxe_render::{GpuWorld, MARCH_WGSL, MirrorConfig, Window, readback, wgpu};
+use vxe_render::{GpuWorld, MARCH_WGSL, MirrorConfig, ShardLayout, Window, readback, wgpu};
 use vxe_world::*;
 
 /// The shader parses and validates headless, without a device.
@@ -112,7 +112,7 @@ fn sync_uploads_dirty_bricks_once() {
     let pool = readback::read_buffer(
         &device,
         &queue,
-        gpu.pool(),
+        gpu.pool_shard(0),
         u64::from(e & SLOT_MASK) * SLOT_BYTES,
         SLOT_BYTES,
     );
@@ -235,7 +235,9 @@ impl Readback {
         Self {
             table: bytemuck::cast_slice(&all(gpu.table())).to_vec(),
             records: bytemuck::cast_slice(&all(gpu.records())).to_vec(),
-            pool: all(gpu.pool()),
+            pool: (0..gpu.shards_in_use().max(1))
+                .flat_map(|k| all(gpu.pool_shard(k)))
+                .collect(),
             masks: bytemuck::cast_slice(&all(gpu.masks())).to_vec(),
         }
     }
@@ -324,6 +326,7 @@ fn a_following_window_mirrors_the_streamed_residency() {
         MirrorConfig {
             window: Window::Follow { side: 7 },
             sync_budget_bytes: u64::MAX,
+            max_shard_slots: None,
         },
     );
 
@@ -538,4 +541,113 @@ fn a_new_material_appends_to_the_palette_and_an_overflow_turns_the_chunk_wide() 
     let slots = Readback::new(&device, &queue, &gpu).assert_chunk(&gpu, &world, c);
     assert_eq!(slots.len() as u32, 2 * full);
     assert_eq!(gpu.live_slots(), 2 * full);
+}
+
+fn limits(binding: u64, buffer: u64, storage_buffers: u32) -> wgpu::Limits {
+    wgpu::Limits {
+        max_storage_buffer_binding_size: binding,
+        max_buffer_size: buffer,
+        max_storage_buffers_per_shader_stage: storage_buffers,
+        ..wgpu::Limits::default()
+    }
+}
+
+#[test]
+fn the_shard_layout_follows_the_limits_alone() {
+    // lavapipe: 128 MiB per binding.
+    let l = ShardLayout::from_limits(&limits(128 << 20, 2_147_483_647, 8), None);
+    assert_eq!(l.slots_per_shard, 262_144);
+    assert_eq!(l.shards, 4);
+    // RTX 3080 Laptop and RADV: 2 147 483 644 B per binding, the largest page multiple below.
+    let l = ShardLayout::from_limits(&limits(2_147_483_644, 4_294_967_295, 8), None);
+    assert_eq!(l.slots_per_shard, 1023 * 4096);
+    assert!(u64::from(l.slots_per_shard) * 512 <= 2_147_483_644);
+    // The smaller of the two size limits binds.
+    let l = ShardLayout::from_limits(&limits(1 << 30, 100 << 20, 8), None);
+    assert_eq!(l.slots_per_shard, 204_800);
+    // Shards: storage buffers per stage less the four other bindings, at most four.
+    assert_eq!(
+        ShardLayout::from_limits(&limits(1 << 30, 1 << 30, 6), None).shards,
+        2
+    );
+    assert_eq!(
+        ShardLayout::from_limits(&limits(1 << 30, 1 << 30, 48), None).shards,
+        4
+    );
+    // The test knob caps slots per shard, rounded down to a page.
+    let l = ShardLayout::from_limits(&limits(128 << 20, 1 << 31, 8), Some(10_000));
+    assert_eq!(l.slots_per_shard, 8192);
+    assert_eq!(l.capacity(), 4 * 8192);
+}
+
+/// The mirror's sizing code names no backend, vendor or adapter: only limits decide.
+#[test]
+fn the_mirror_never_reads_the_backend_or_vendor() {
+    for (name, text) in [
+        ("gpu_world.rs", include_str!("../src/gpu_world.rs")),
+        ("marcher.rs", include_str!("../src/marcher.rs")),
+        ("lib.rs", include_str!("../src/lib.rs")),
+    ] {
+        for word in ["get_info", "Backend", "backend(", "vendor", "AdapterInfo"] {
+            let hits = text
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .filter(|l| l.contains(word))
+                .count();
+            assert_eq!(hits, 0, "{name} uses {word}");
+        }
+    }
+}
+
+/// Every brick of every chunk is `Full`: two materials in a checkerboard.
+struct Checker;
+
+impl WorldSource for Checker {
+    fn chunk(&self, _coord: ChunkCoord, out: &mut Chunk) {
+        for slot in 0..CHUNK_BRICKS {
+            out.set_brick(
+                slot,
+                Brick::from_fn(|l| 1 + ((l[0] + l[1] + l[2]) % 2) as u16),
+            );
+        }
+    }
+}
+
+#[test]
+fn a_world_past_four_shards_fails_and_leaves_the_mirror_untouched() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    // 36 chunks of 512 Full bricks: 18 432 slots, past four shards of 4096.
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [4, 3, 3]),
+        &Checker,
+        &numbered_table(2),
+    );
+    assert_eq!(world.stats().full_bricks, 18_432);
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            max_shard_slots: Some(4096),
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        },
+    );
+    assert_eq!(gpu.shard_layout().capacity(), 16_384);
+    let err = gpu.sync(&world, &queue).unwrap_err();
+    assert_eq!(
+        err,
+        vxe_render::MirrorError::PoolTooLarge {
+            needed: 18_432 * SLOT_BYTES,
+            limit: 16_384 * SLOT_BYTES,
+        }
+    );
+    assert_eq!(gpu.bytes_written(), 0);
+    assert_eq!(gpu.mirrored_chunks(), 0);
+    assert_eq!(gpu.live_slots(), 0);
+    assert_eq!(gpu.pool_slots(), 0);
+    assert_eq!(gpu.shards_in_use(), 0);
+    assert!(gpu.free_slots().is_empty());
+    // The chunks keep their dirty bits for a later sync.
+    let c = world.store().get(ChunkCoord([0, 0, 0])).unwrap();
+    assert!(c.read().unwrap().any_dirty());
 }

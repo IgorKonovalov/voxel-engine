@@ -1,11 +1,14 @@
-//! The mirror on the level-size cave (seed 1, 20 x 20 x 8 chunks): how many queue writes the
-//! first sync issues, what the narrowed mirror occupies, and that a byte budget bounds every
-//! sync.
+//! The mirror on the level-size cave (seed 1, 20 x 20 x 8 chunks) on the software adapter:
+//! how many queue writes the first sync issues, what the narrowed mirror occupies, that it
+//! spreads over pool shards past lavapipe's 128 MiB binding, and that a byte budget bounds
+//! every sync.
+
+mod support;
 
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
 use flythrough::cave_materials;
-use vxe_render::gpu_world::{RECORD_BYTES, SLOT_BYTES};
-use vxe_render::{GpuWorld, MirrorConfig, Window, wgpu};
+use vxe_render::gpu_world::{FULL_BIT, RECORD_BYTES, RECORD_WORDS, SLOT_BYTES, SLOT_MASK};
+use vxe_render::{GpuWorld, MirrorConfig, Window, readback, wgpu};
 use vxe_world::*;
 
 fn level() -> (World, CaveSource) {
@@ -16,35 +19,16 @@ fn level() -> (World, CaveSource) {
     )
 }
 
-/// A device on an adapter that can bind a pool of `pool_bytes` in one buffer, or `None` with
-/// a printed skip when no adapter can.
-fn device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
-    let adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN));
-    let fits = |a: &wgpu::Adapter| {
-        let l = a.limits();
-        l.max_storage_buffer_binding_size.min(l.max_buffer_size) >= pool_bytes
-    };
-    let Some(adapter) = adapters.into_iter().find(fits) else {
-        println!("skipped: no adapter binds a {pool_bytes} B pool");
-        return None;
-    };
-    println!("adapter: {}", adapter.get_info().name);
-    let desc = wgpu::DeviceDescriptor {
-        required_limits: vxe_render::limits_for(&adapter, pool_bytes),
-        ..Default::default()
-    };
-    Some(pollster::block_on(adapter.request_device(&desc)).expect("device"))
+/// The software adapter with limits for the level's pool.
+fn device(world: &World) -> Option<(wgpu::Device, wgpu::Queue)> {
+    support::software_device(world.stats().full_bricks as u64 * SLOT_BYTES)
 }
 
 #[test]
 fn the_first_sync_issues_at_most_three_writes_per_chunk() {
     let (world, source) = level();
     let s = world.stats();
-    let Some((device, queue)) = device(s.full_bricks as u64 * SLOT_BYTES) else {
+    let Some((device, queue)) = device(&world) else {
         return;
     };
     let mut gpu = GpuWorld::new(&device, world.extent());
@@ -82,7 +66,7 @@ fn every_budgeted_sync_writes_at_most_the_budget_plus_one_chunk() {
     // narrow chunk's largest upload, masks included, is 512 x 520 + 2560 + 4 B.
     const LARGEST_CHUNK: u64 = 512 * 1024 + 2560;
     let (world, source) = level();
-    let Some((device, queue)) = device(world.stats().full_bricks as u64 * SLOT_BYTES) else {
+    let Some((device, queue)) = device(&world) else {
         return;
     };
     let mut gpu = GpuWorld::with_config(
@@ -90,6 +74,7 @@ fn every_budgeted_sync_writes_at_most_the_budget_plus_one_chunk() {
         MirrorConfig {
             window: Window::Fixed(world.extent()),
             sync_budget_bytes: BUDGET,
+            max_shard_slots: None,
         },
     );
     gpu.set_focus(source.spawn());
@@ -116,4 +101,83 @@ fn every_budgeted_sync_writes_at_most_the_budget_plus_one_chunk() {
     println!("{syncs} syncs, largest {largest} B");
     assert_eq!(gpu.mirrored_chunks(), 3200);
     assert!(syncs > 1);
+}
+
+/// SplitMix64: a seeded, platform-independent stream for test inputs.
+struct SplitMix64(u64);
+
+impl SplitMix64 {
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        vxe_world::hash::mix64(self.0)
+    }
+}
+
+/// On lavapipe one binding holds 128 MiB, 262 144 slots: the level's 383 608 slots take two
+/// shards, and bricks on both sides of the boundary read back as their CPU voxels.
+#[test]
+fn the_level_spreads_over_two_shards_on_the_software_adapter() {
+    let (world, source) = level();
+    let Some((device, queue)) = device(&world) else {
+        return;
+    };
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    let layout = gpu.shard_layout();
+    println!("layout {layout:?}");
+    assert_eq!(device.limits().max_storage_buffer_binding_size, 128 << 20);
+    assert_eq!(layout.slots_per_shard, 262_144);
+    assert_eq!(layout.shards, 4);
+    gpu.set_focus(source.spawn());
+    gpu.sync(&world, &queue)
+        .expect("no PoolTooLarge over four shards");
+    assert_eq!(gpu.live_slots(), 383_608);
+    assert_eq!(gpu.shards_in_use(), 2);
+
+    // Every Full brick by (chunk, slot), ascending; 1000 drawn with a seeded stream.
+    let mut full = Vec::new();
+    for c in world.store().coords() {
+        let chunk = world.store().get(c).unwrap();
+        let chunk = chunk.read().unwrap();
+        for (slot, b) in chunk.bricks().iter().enumerate() {
+            if b.is_full() {
+                full.push((c, slot));
+            }
+        }
+    }
+    let mut rng = SplitMix64(0x5A4D_0005);
+    let picks: Vec<(ChunkCoord, usize)> = (0..1000)
+        .map(|_| full[(rng.next_u64() % full.len() as u64) as usize])
+        .collect();
+
+    let shards: Vec<Vec<u8>> = (0..2)
+        .map(|k| {
+            let b = gpu.pool_shard(k);
+            readback::read_buffer(&device, &queue, b, 0, b.size())
+        })
+        .collect();
+    let records = readback::read_buffer(&device, &queue, gpu.records(), 0, gpu.records().size());
+    let records: Vec<u32> = records
+        .chunks_exact(4)
+        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+    let mut in_shard_1 = 0;
+    for &(c, slot) in &picks {
+        let rec = gpu.record_index(c).unwrap() as usize * RECORD_WORDS;
+        let e = records[rec + slot];
+        assert_eq!(Some(e), gpu.entry(c, slot));
+        assert_eq!(e & FULL_BIT, FULL_BIT);
+        let s = e & SLOT_MASK;
+        let (k, local) = (s / layout.slots_per_shard, s % layout.slots_per_shard);
+        in_shard_1 += usize::from(k == 1);
+        let bytes = &shards[k as usize][local as usize * 512..][..512];
+        let palette = &records[rec + 512..rec + 640];
+        let chunk = world.store().get(c).unwrap();
+        let chunk = chunk.read().unwrap();
+        for (i, &index) in bytes.iter().enumerate() {
+            let m = (palette[usize::from(index) / 2] >> (16 * (index & 1))) as u16;
+            assert_eq!(m, chunk.brick(slot).get(i), "{c:?} brick {slot} voxel {i}");
+        }
+    }
+    println!("{in_shard_1} of 1000 bricks in shard 1");
+    assert!(in_shard_1 >= 1);
 }

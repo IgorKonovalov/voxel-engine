@@ -3,8 +3,10 @@
 // Bindings, group 0:
 //   0  uniform  params         camera, mirror window, light, target size, flags (bit 0: shadow ray,
 //                              bit 1: occupancy masks)
-//   1  storage  brick_pool     [slot][128 x u32], four u8 palette indices per word, x fastest;
-//                              a wide brick is two slots, [256 x u32] of u16 voxel pairs
+//   1  storage  brick_pool0    shard 0 of the pool: [slot][128 x u32], four u8 palette indices
+//                              per word, x fastest; a wide brick is two slots, [256 x u32] of
+//                              u16 voxel pairs. Slot s is slot s % slots_per_shard of shard
+//                              s / slots_per_shard; 7, 8 and 9 are shards 1 to 3
 //   2  storage  chunk_records  [record][640 x u32]: 512 brick entries, then the palette as
 //                              256 u16 (index 0 air). Entry bit 31 set: pool slot in bits
 //                              0..30, bit 30 wide; clear: the uniform material
@@ -13,6 +15,9 @@
 //   5  storage texture         rgba8unorm output
 //   6  storage  brick_masks    [slot][2 x u32]; bit b set: block (b & 3, (b >> 2) & 3, b >> 4)
 //                              of the slot's brick holds a non-air voxel
+//   7  storage  brick_pool1    pool shard 1
+//   8  storage  brick_pool2    pool shard 2
+//   9  storage  brick_pool3    pool shard 3
 //
 // World units are voxels. The walk is a DDA over cells of four sizes: a chunk that is absent
 // is skipped as one 64^3 cell, a uniform-air brick as one 8^3 cell, an empty 2^3 block of a
@@ -42,15 +47,22 @@ struct Params {
     size: vec2<u32>,
     cos_inner: f32,
     flags: u32,
+    slots_per_shard: u32,
+    _pad4: u32,
+    _pad5: u32,
+    _pad6: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> brick_pool: array<u32>;
+@group(0) @binding(1) var<storage, read> brick_pool0: array<u32>;
 @group(0) @binding(2) var<storage, read> chunk_records: array<u32>;
 @group(0) @binding(3) var<storage, read> chunk_table: array<u32>;
 @group(0) @binding(4) var<storage, read> materials: array<vec4<f32>>;
 @group(0) @binding(5) var target_tex: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(6) var<storage, read> brick_masks: array<u32>;
+@group(0) @binding(7) var<storage, read> brick_pool1: array<u32>;
+@group(0) @binding(8) var<storage, read> brick_pool2: array<u32>;
+@group(0) @binding(9) var<storage, read> brick_pool3: array<u32>;
 
 const ABSENT: u32 = 0xFFFFFFFFu;
 const FULL_BIT: u32 = 0x80000000u;
@@ -81,6 +93,19 @@ struct Hit {
     t: f32,
     material: u32,
 };
+
+// Word `word` of the brick in global pool slot `slot` (a wide brick's words run on into the
+// next slot, which is in the same shard).
+fn pool_word(slot: u32, word: u32) -> u32 {
+    let shard = slot / params.slots_per_shard;
+    let i = (slot - shard * params.slots_per_shard) * SLOT_WORDS + word;
+    switch shard {
+        case 0u: { return brick_pool0[i]; }
+        case 1u: { return brick_pool1[i]; }
+        case 2u: { return brick_pool2[i]; }
+        default: { return brick_pool3[i]; }
+    }
+}
 
 fn floor_div(a: vec3<i32>, b: i32) -> vec3<i32> {
     return vec3<i32>(floor(vec3<f32>(a) / f32(b)));
@@ -122,11 +147,11 @@ fn lookup(v: vec3<i32>) -> Cell {
     var m = 0u;
     if ((entry & WIDE_BIT) != 0u) {
         // A wide brick: slots `slot` and `slot + 1` hold 512 u16 voxels.
-        let word = brick_pool[slot * SLOT_WORDS + i / 2u];
+        let word = pool_word(slot, i / 2u);
         m = (word >> ((i & 1u) * 16u)) & 0xFFFFu;
     } else {
         // A narrow brick: one byte per voxel, an index into the record's palette; 0 is air.
-        let word = brick_pool[slot * SLOT_WORDS + i / 4u];
+        let word = pool_word(slot, i / 4u);
         let index = (word >> ((i & 3u) * 8u)) & 0xFFu;
         if (index != 0u) {
             let pair = chunk_records[base + PALETTE_WORD + index / 2u];

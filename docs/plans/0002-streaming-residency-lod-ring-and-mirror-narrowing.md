@@ -510,8 +510,8 @@ late is acceptable; a hole near the camera is not, and the unready-near counter 
 | 1: Streamer skeleton, full tier only | dev | done | ac973d2 |
 | 2: Edited-chunk persistence and disk spill | dev | done | f59b8f1 |
 | 3: Mirror window, dirty-chunk set, budgeted batched upload | dev | done | 4bc17bd |
-| 4: Per-chunk 8-bit palette, wide fallback | dev | done | committed with this row |
-| 5: Brick pool sharded over four bindings | dev | not started | |
+| 4: Per-chunk 8-bit palette, wide fallback | dev | done | 8b5147b |
+| 5: Brick pool sharded over four bindings | dev | done | committed with this row |
 | 6: Chunk mips in `vxe-world` | dev | not started | |
 | 7: The LOD-only ring and the mip walk | dev | not started | |
 | 8: The fly-through streams; autopilot, sweep and readings | dev | not started | |
@@ -582,6 +582,20 @@ each. Empty is fine.)_
   its slots.
 - Phase 4: public API: `SLOT_BYTES` replaces `BRICK_BYTES`; new `PALETTE_ENTRIES`, `WIDE_BIT`,
   `SLOT_MASK`, `GpuWorld::{live_pool_bytes, palette, is_wide, wide_chunks}`.
+- Phase 5: outside Files touched, `apps/flythrough/tests/level_mirror.rs` moves to the software
+  adapter (`support::software_device`), so its three level-size tests run on lavapipe and in
+  CI; it holds the two-shard readback test. Each takes about 7.5 s serially on the dev box.
+- Phase 5: `ShardLayout::from_limits` reads the device's requested limits; `limits_for` keeps
+  `max_storage_buffers_per_shader_stage` at 8, so every adapter here gets 4 shards.
+- Phase 5: public API: `ShardLayout`, `MAX_SHARDS`, `OTHER_STORAGE_BUFFERS`,
+  `MirrorConfig::{max_shard_slots, new}`, `GpuWorld::{pool_shard, shard_layout,
+  shards_in_use}`; `GpuWorld::pool` is gone. The marcher binds shards 1 to 3 at bindings 7 to
+  9 and `Params` gains `slots_per_shard`.
+- Phase 5: `goldens_match_bit_exactly_over_one_and_several_shards` also asserts byte equality
+  for the unsharded mirror, which covers Phases 3 and 4's bit-exact claim from here on.
+- Phase 5: the level's first sync takes about 500 ms of CPU on the dev box against about
+  345 ms at Phase 3, from scanning each narrowed brick for new palette materials before
+  writing its indices (about 150 ms; a single-pass variant read 670 ms).
 
 ### Close triggers
 
@@ -606,6 +620,16 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   - March pass at 1920 x 1080, spawn pose, headlamp, level seed 1, headless timestamps
     (scratch test, median of last 30 of 300): before Phase 4 (4bc17bd) 1.854, 1.854,
     1.874 ms; after Phase 4 1.869, 1.889, 1.886 ms. RTX 3080 Laptop GPU, driver 610.57.04.
+  - Phase 5, `max_storage_buffers_per_shader_stage` offered by each Vulkan adapter (wgpu
+    `Adapter::limits`): lavapipe (llvmpipe, Mesa 26.2.2, LLVM 22.1.8) 48; RTX 3080 Laptop
+    GPU (NVIDIA 610.57.04) 524 288; RADV Renoir (Mesa 26.2.2) 2 097 150. Binding size:
+    134 217 728, 2 147 483 644 and 2 147 483 644 B.
+  - Phase 5 commit, level world on lavapipe: 262 144 slots per shard, 2 shards in use for
+    383 608 slots; 322 of the 1000 sampled bricks in shard 1.
+  - Phase 5 commit, slowest golden test serially on the dev box's llvmpipe: 1.58 s
+    (`primary_golden_shows_the_carve`); the new sharded golden test 1.27 s.
+  - Phase 5 commit, level first sync CPU (headless scratch timing, RTX 3080 Laptop): 497,
+    515, 499 ms.
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 

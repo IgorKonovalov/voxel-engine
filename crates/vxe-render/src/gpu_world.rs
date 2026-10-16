@@ -26,6 +26,13 @@
 //! mirrored, so bricks already uploaded keep their indices. A chunk that needs more than 255
 //! non-air materials is *wide*: each `Full` brick takes two slots from an even slot and holds
 //! `u16` voxels, and a chunk that turns wide uploads every `Full` brick again.
+//!
+//! The pool is sharded over up to `MAX_SHARDS` storage buffers (ADR-0004). Slot `s` lives in
+//! shard `s / slots_per_shard`; `slots_per_shard` is the largest multiple of a page that fits
+//! the device's binding and buffer size limits, so a wide brick's even-aligned pair never
+//! straddles two shards. Shards fill in order and only the last one in use grows; shards not
+//! yet in use are one-slot placeholders, so the marcher can always bind all of them. Masks,
+//! records, table and materials stay one buffer each, the masks indexed by global slot.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::PoisonError;
@@ -35,8 +42,13 @@ use vxe_world::{
     StreamEvents, VoxelCoord, World,
 };
 
-/// Pool slots per growth step.
+/// Pool slots per growth step, and the unit `slots_per_shard` is a multiple of.
 pub const POOL_PAGE_SLOTS: u32 = 4096;
+/// Most storage buffers the pool is sharded over.
+pub const MAX_SHARDS: u32 = 4;
+/// Storage buffers the marcher binds besides the pool shards: masks, records, table,
+/// materials.
+pub const OTHER_STORAGE_BUFFERS: u32 = 4;
 /// Bytes of one pool slot: a narrow brick's 512 palette indices, or half a wide brick.
 pub const SLOT_BYTES: u64 = BRICK_VOXELS as u64;
 /// Bytes of one brick's occupancy mask: 64 bits, low word first.
@@ -120,6 +132,57 @@ pub struct MirrorConfig {
     pub window: Window,
     /// Bytes a sync writes before it stops taking chunks; `u64::MAX` for no budget.
     pub sync_budget_bytes: u64,
+    /// Caps the slots per pool shard below what the device allows; for tests.
+    pub max_shard_slots: Option<u32>,
+}
+
+impl MirrorConfig {
+    /// A window with no sync budget and no shard cap.
+    pub fn new(window: Window) -> Self {
+        Self {
+            window,
+            sync_budget_bytes: u64::MAX,
+            max_shard_slots: None,
+        }
+    }
+}
+
+/// How the pool is split over storage buffers on a device.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShardLayout {
+    /// The largest multiple of `POOL_PAGE_SLOTS` whose bytes fit one binding and one buffer,
+    /// at most `max_shard_slots` rounded down to a page.
+    pub slots_per_shard: u32,
+    /// `min(MAX_SHARDS, max_storage_buffers_per_shader_stage - OTHER_STORAGE_BUFFERS)`.
+    pub shards: u32,
+}
+
+impl ShardLayout {
+    /// The layout `limits` allow. Reads only the limits, never the backend or vendor.
+    pub fn from_limits(limits: &wgpu::Limits, max_shard_slots: Option<u32>) -> Self {
+        let bytes = limits
+            .max_storage_buffer_binding_size
+            .min(limits.max_buffer_size);
+        let page = u64::from(POOL_PAGE_SLOTS);
+        let mut slots = bytes / SLOT_BYTES;
+        if let Some(cap) = max_shard_slots {
+            slots = slots.min(u64::from(cap));
+        }
+        let slots_per_shard = ((slots / page) * page).clamp(page, u64::from(u32::MAX / 2)) as u32;
+        let shards = limits
+            .max_storage_buffers_per_shader_stage
+            .saturating_sub(OTHER_STORAGE_BUFFERS)
+            .clamp(1, MAX_SHARDS);
+        Self {
+            slots_per_shard,
+            shards,
+        }
+    }
+
+    /// Slots the pool can hold over all its shards.
+    pub fn capacity(&self) -> u64 {
+        u64::from(self.slots_per_shard) * u64::from(self.shards)
+    }
 }
 
 /// What the mirror keeps for a mirrored chunk besides its record entries.
@@ -142,7 +205,11 @@ pub struct GpuWorld {
     window_size: [i32; 3],
     focus: ChunkCoord,
     initialized: bool,
-    pool: wgpu::Buffer,
+    layout: ShardLayout,
+    /// One buffer per shard; a shard not in use is a one-slot placeholder.
+    shards: Vec<wgpu::Buffer>,
+    /// Slots allocated in each shard, 0 for a placeholder.
+    shard_slots: Vec<u32>,
     masks: wgpu::Buffer,
     pool_slots: u32,
     records: wgpu::Buffer,
@@ -182,17 +249,12 @@ pub struct GpuWorld {
 impl GpuWorld {
     /// A mirror of a bounded world: the window is `extent`, fixed, with no sync budget.
     pub fn new(device: &wgpu::Device, extent: ChunkExtent) -> Self {
-        Self::with_config(
-            device,
-            MirrorConfig {
-                window: Window::Fixed(extent),
-                sync_budget_bytes: u64::MAX,
-            },
-        )
+        Self::with_config(device, MirrorConfig::new(Window::Fixed(extent)))
     }
 
     /// A mirror with an explicit window and sync budget. The pool starts empty.
     pub fn with_config(device: &wgpu::Device, cfg: MirrorConfig) -> Self {
+        let layout = ShardLayout::from_limits(&device.limits(), cfg.max_shard_slots);
         let (window_min, window_size, focus) = match cfg.window {
             Window::Fixed(e) => {
                 let s = e.size();
@@ -224,7 +286,11 @@ impl GpuWorld {
             window_size,
             focus,
             initialized: false,
-            pool: Self::create_pool(device, 0),
+            layout,
+            shards: (0..MAX_SHARDS)
+                .map(|_| Self::create_pool(device, 0))
+                .collect(),
+            shard_slots: vec![0; MAX_SHARDS as usize],
             masks: Self::create_masks(device, 0),
             pool_slots: 0,
             records: Self::create_records(device, 0),
@@ -309,8 +375,19 @@ impl GpuWorld {
         self.focus = v.chunk();
     }
 
-    pub fn pool(&self) -> &wgpu::Buffer {
-        &self.pool
+    /// Pool shard `k`, for `k < MAX_SHARDS`; a shard not in use is a one-slot placeholder.
+    pub fn pool_shard(&self, k: usize) -> &wgpu::Buffer {
+        &self.shards[k]
+    }
+
+    /// How the pool is split on this device.
+    pub fn shard_layout(&self) -> ShardLayout {
+        self.layout
+    }
+
+    /// Shards holding allocated slots.
+    pub fn shards_in_use(&self) -> usize {
+        self.shard_slots.iter().filter(|&&n| n > 0).count()
     }
 
     /// Occupancy mask of each pool slot, `[slot][2 x u32]`.
@@ -657,6 +734,7 @@ impl GpuWorld {
                     let Brick::Full(v) = chunk.brick(slot) else {
                         continue;
                     };
+                    // Voxels come in runs of one material; a repeat needs no lookup.
                     for &m in v.iter() {
                         if self.rev[usize::from(m)] == NO_INDEX {
                             if palette.len() == PALETTE_ENTRIES {
@@ -781,7 +859,8 @@ impl GpuWorld {
     /// or it is full.
     fn stage(&mut self, s: u32, bytes: &[u8], mask: u64, queue: &wgpu::Queue, st: &mut SyncStats) {
         let len = self.stage_masks.len() as u32 / 2;
-        if len > 0 && (s != self.stage_start + len || len >= STAGE_SLOTS) {
+        let boundary = s.is_multiple_of(self.layout.slots_per_shard);
+        if len > 0 && (s != self.stage_start + len || len >= STAGE_SLOTS || boundary) {
             self.flush_stage(queue, st);
         }
         if self.stage_masks.is_empty() {
@@ -800,9 +879,11 @@ impl GpuWorld {
             return;
         }
         let s = u64::from(self.stage_start);
+        let sps = self.layout.slots_per_shard;
+        let shard = (self.stage_start / sps) as usize;
         queue.write_buffer(
-            &self.pool,
-            s * SLOT_BYTES,
+            &self.shards[shard],
+            u64::from(self.stage_start % sps) * SLOT_BYTES,
             bytemuck::cast_slice(&self.stage_voxels),
         );
         queue.write_buffer(
@@ -928,13 +1009,9 @@ impl GpuWorld {
         self.next_record - 1
     }
 
-    /// Slots the device can bind in one pool buffer.
+    /// Slots the pool can hold over all its shards.
     fn pool_limit_slots(&self) -> u64 {
-        let limits = self.device.limits();
-        limits
-            .max_storage_buffer_binding_size
-            .min(limits.max_buffer_size)
-            / SLOT_BYTES
+        self.layout.capacity()
     }
 
     fn alloc(&mut self, queue: &wgpu::Queue, st: &mut SyncStats) -> Result<u32, MirrorError> {
@@ -985,21 +1062,35 @@ impl GpuWorld {
         }
         let page = u64::from(POOL_PAGE_SLOTS);
         let new_slots = (slots.div_ceil(page).max(1) * page).min(limit);
-        let pool = Self::create_pool(&self.device, new_slots as u32);
+        let sps = u64::from(self.layout.slots_per_shard);
+        let mut enc = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("grow pool"),
+            });
+        let mut copies = 0;
+        for k in 0..self.layout.shards as usize {
+            let want = new_slots.saturating_sub(k as u64 * sps).min(sps) as u32;
+            let have = self.shard_slots[k];
+            if want <= have {
+                continue;
+            }
+            let shard = Self::create_pool(&self.device, want);
+            if have > 0 {
+                enc.copy_buffer_to_buffer(
+                    &self.shards[k],
+                    0,
+                    &shard,
+                    0,
+                    u64::from(have) * SLOT_BYTES,
+                );
+                copies += 1;
+            }
+            self.shards[k] = shard;
+            self.shard_slots[k] = want;
+        }
         let masks = Self::create_masks(&self.device, new_slots as u32);
         if self.pool_slots > 0 {
-            let mut enc = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("grow pool"),
-                });
-            enc.copy_buffer_to_buffer(
-                &self.pool,
-                0,
-                &pool,
-                0,
-                u64::from(self.pool_slots) * SLOT_BYTES,
-            );
             enc.copy_buffer_to_buffer(
                 &self.masks,
                 0,
@@ -1007,10 +1098,12 @@ impl GpuWorld {
                 0,
                 u64::from(self.pool_slots) * MASK_BYTES,
             );
-            queue.submit([enc.finish()]);
-            st.writes += 2;
+            copies += 1;
         }
-        self.pool = pool;
+        if copies > 0 {
+            queue.submit([enc.finish()]);
+            st.writes += copies;
+        }
         self.masks = masks;
         self.pool_slots = new_slots as u32;
         Ok(())

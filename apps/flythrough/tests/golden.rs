@@ -5,7 +5,8 @@ mod support;
 use flythrough::cave::ROCK;
 use flythrough::cave_materials;
 use support::*;
-use vxe_render::{Camera, GpuWorld, LightParams, Marcher, readback};
+use vxe_render::gpu_world::POOL_PAGE_SLOTS;
+use vxe_render::{Camera, GpuWorld, LightParams, Marcher, MirrorConfig, Window, readback};
 use vxe_world::*;
 
 /// The scene from the spawn pose under each of `lights`, on one device.
@@ -16,7 +17,7 @@ fn render(world: &World, lights: &[LightParams]) -> Option<Vec<Vec<u8>>> {
 /// `world` from `camera` under each of `lights`, on one device.
 fn render_from(world: &World, camera: &Camera, lights: &[LightParams]) -> Option<Vec<Vec<u8>>> {
     let full = world.stats().full_bricks as u64;
-    let (device, queue) = software_device((full + 4096) * 1024)?;
+    let (device, queue) = software_device((full + 4096) * 512)?;
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync(world, &queue).expect("mirror fits the adapter");
     let marcher = Marcher::new(&device, WIDTH, HEIGHT);
@@ -203,4 +204,53 @@ fn headlamp_slab_casts_the_computed_shadow() {
         (820..=840).contains(&brighter),
         "{brighter} shadowed pixels, 830 computed"
     );
+}
+
+/// `primary.png` and `headlamp.png` match byte for byte with the pool in one shard and split
+/// over two to four: the mirror's layout changes no pixel. One scene, one device.
+#[test]
+fn goldens_match_bit_exactly_over_one_and_several_shards() {
+    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+        return;
+    }
+    let world = carved_world();
+    let full = world.stats().full_bricks as u64;
+    let Some((device, queue)) = software_device((full + 4096) * 512) else {
+        return;
+    };
+    // The smallest page multiple that holds the scene in at most four shards.
+    let page = u64::from(POOL_PAGE_SLOTS);
+    let cap = full.div_ceil(4).div_ceil(page) * page;
+    let goldens = [
+        ("primary.png", LightParams::at_eye()),
+        ("headlamp.png", LightParams::headlamp()),
+    ]
+    .map(|(name, light)| (name, light, read_png(&golden_path(name)).0));
+    let marcher = Marcher::new(&device, WIDTH, HEIGHT);
+    for max_shard_slots in [None, Some(cap as u32)] {
+        let mut gpu = GpuWorld::with_config(
+            &device,
+            MirrorConfig {
+                max_shard_slots,
+                ..MirrorConfig::new(Window::Fixed(world.extent()))
+            },
+        );
+        gpu.sync(&world, &queue).expect("mirror fits the adapter");
+        let shards = gpu.shards_in_use();
+        println!("max_shard_slots {max_shard_slots:?}: {full} slots over {shards} shards");
+        if max_shard_slots.is_some() {
+            assert!((2..=4).contains(&shards), "{shards} shards");
+        } else {
+            assert_eq!(shards, 1);
+        }
+        for (name, light, golden) in &goldens {
+            marcher.render(&device, &queue, &gpu, &scene_camera(), light);
+            let img = readback::read_rgba8(&device, &queue, marcher.target());
+            let differing = img.iter().zip(golden).filter(|(a, b)| a != b).count();
+            assert_eq!(
+                differing, 0,
+                "{name} over {shards} shards: {differing} bytes differ"
+            );
+        }
+    }
 }
