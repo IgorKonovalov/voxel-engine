@@ -33,6 +33,7 @@ mod shape;
 mod source;
 mod store;
 mod stream;
+mod walkable;
 
 pub use brick::Brick;
 pub use chunk::Chunk;
@@ -52,3 +53,4 @@ pub use shape::Shape;
 pub use source::{UniformSource, WorldSource};
 pub use store::{ChunkStore, StoreWriteGuard, World, WorldStats};
 pub use stream::{Residency, StreamConfig, StreamError, StreamEvents, StreamStats, Streamer, Tier};
+pub use walkable::{WalkableMap, WalkableParams, WalkableStats};
