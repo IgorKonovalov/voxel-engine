@@ -1,6 +1,8 @@
 # 0005: The surface-look spike: smoothed normals, per-voxel contour planes and procedural detail, measured on screen
 
-> **Status:** in-progress (2026-10-16)
+> **Status:** done (closed 2026-10-16, v0.4.0). Verdict: every phase landed and the owner chose
+> contour with weaker rock detail; the surface decision is ADR-0011, and the shadow-ray origin
+> and the streamed footprint are owed to the follow-up plan (see "Close").
 > **Created:** 2026-10-16
 > **Amended:** 2026-10-16, after Plan 0002's close, for the tree it shipped: the contour
 > attribute lives in attribute pages inside the existing pool shards (no new storage binding;
@@ -638,10 +640,38 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   advisories, bans, licenses, sources ok; `node scripts/check-doc-links.mjs` 58 links resolve.
 - **Outstanding `human` phases:** none; Phase 6 recorded 2026-10-16: contour (Notes).
 
-## Followups
+## Close
 
-- The surface-representation ADR, from Phase 6 and the Phase 5 table, including the attribute
-  layout if mode B is kept.
-- Least-squares plane fit for the contour offset, if needed.
-- A smaller attribute footprint (surface voxels only, a smaller encoding, or a per-block
-  plane), if mode B is kept and the streamed reading misses §3.
+Closed 2026-10-16 at v0.4.0 after a fresh-session review (verdict: ready for the owner's call,
+no blocker or major) and the owner's Phase 6 call. The decision is ADR-0011: per-voxel contour
+planes in attribute pages of the brick pool, with procedural per-material detail. Gate at the
+close, on the merge of `main` into this branch (64c62c6): build, nextest (114 passed, 1
+skipped: the ignored speck count), doctests, clippy, fmt, `cargo deny`, the hook bite tests and
+the doc-link checker all pass.
+
+### Follow-up items
+
+The next surface plan cites these by number (Plan 0005 follow-up N). Items 1 to 3 gate making
+`Contour` the fly-through's default.
+
+1. **Shadow-ray origin under contour.** Offset the shadow ray along the plane normal for a
+   plane hit (face normal for a cube hit), per ADR-0011; measure it with
+   `contour_dark_specks_with_and_without_shadows` (372 only-with-shadows in contour against 174
+   in face before the fix) and rebless `look_contour.png`.
+2. **Streamed footprint.** Fit the streamed contour mirror into the 8 GiB dev card and the 3 GB
+   §3 line (reached 3 309 723 820 B live, 4 103 413 164 B allocated at full residency, then
+   `wgpu error: Out of Memory`). Candidates: attributes on surface voxels only, a smaller
+   encoding, a per-block plane, a smaller `r_full`; the choice is measured and may need an ADR.
+3. **Rock detail default.** Set `ROCK_DETAIL` weaker than `[4.0, 0.3]` from the owner's eye
+   (`--rock-detail SCALE,STRENGTH`), and make contour plus detail the fly-through's default
+   once 1 and 2 land.
+4. **Readings still owed.** The streamed attribute-pass cost under motion (neighbour recompute
+   on chunk arrival and eviction), and every mode on the baseline GPU (M2's close).
+5. **`AttribPass::encode` allocates per call.** It creates its buffers and bind group on every
+   call from the frame path; keep them and grow on demand.
+6. **No test of the shell path.** Nothing tests the attribute recompute of boundary bricks when
+   a neighbour chunk arrives or is evicted; add a headless readback test.
+7. **Comment wrap.** The `detail` comment in `crates/vxe-render/src/shaders/march.wgsl`
+   (around lines 503 to 506) breaks mid-sentence; rewrap it.
+8. **Later, if the eye asks.** A least-squares plane fit for the contour offset, and a
+   downsampled plane per mip cell so the LOD ring is not cubic.
