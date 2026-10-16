@@ -513,8 +513,8 @@ late is acceptable; a hole near the camera is not, and the unready-near counter 
 | 4: Per-chunk 8-bit palette, wide fallback | dev | done | 8b5147b |
 | 5: Brick pool sharded over four bindings | dev | done | 138b3bd |
 | 6: Chunk mips in `vxe-world` | dev | done | 8472735 |
-| 7: The LOD-only ring and the mip walk | dev | done | committed with this row |
-| 8: The fly-through streams; autopilot, sweep and readings | dev | not started | |
+| 7: The LOD-only ring and the mip walk | dev | done | 2a3e43a |
+| 8: The fly-through streams; autopilot, sweep and readings | dev | done | committed with this row |
 
 ### Notes
 
@@ -619,6 +619,32 @@ each. Empty is fine.)_
   rays walk the mips too); 27 484 of 57 600 pixels are lit.
 - Phase 7: `lod.png` was blessed on the dev box's lavapipe (llvmpipe, Mesa 26.2.2, LLVM
   22.1.8); it differs from `primary.png` at 6.70 % of pixels by more than 8/255.
+- Phase 8: outside Files touched, `crates/vxe-render/src/gpu_world.rs` grows the pool and the
+  record buffer by at least half again instead of one page; the first autopilot run grew the
+  pool almost every sync, copying a whole shard each time (full residency 29.3 s; 11.2 to
+  12.8 s after).
+- Phase 8: the fly-through gains `--headless` (the same frames on the high-performance adapter
+  with an offscreen target; no window, surface or present) and `--sync-budget MIB` (default
+  2 MiB per frame). The Phase 8 readings are headless: the display was off (DPMS) for most of
+  the session, and when it came back on the one windowed autopilot run took stray clicks from
+  the desktop (five fills near the spawn before takeoff; the carve and its hash check came
+  after them). The autopilot now ignores every input but `Escape`.
+- Phase 8: the autopilot's flight is a straight line along +x through rock; most flight
+  frames look at rock from inside it, so its march-pass p50 (0.36 to 0.46 ms) is not an
+  open-cave view. Its p99 (24 to 39 ms) and max (91 to 228 ms) frames coincide with heavy
+  uploads.
+- Phase 8: streaming CPU misses the 1.0 ms line: p50 about 7 ms (mostly `sync` narrowing and
+  writing its 2 MiB), p99 58 to 63 ms and max 83 to 112 ms on the frames whose focus chunk
+  changed (`update` rebuilds the queue over about 58 000 wanted chunks, `poll` sweeps every
+  resident chunk, the mirror's window shift walks every mirrored chunk). Not acted on.
+- Phase 8: the march pass from the unbounded cave's spawn at 1080p reads 6.69 ms at rest after
+  full residency (headless), above the 3.0 ms primary-ray line; the bounded level's spawn
+  reads 1.95 ms at the same commit.
+- Phase 8: the streamer runs `available_parallelism - 1` workers (15 on the dev box).
+- Phase 8: `main.rs` drives `wgpu` futures with a small spin `block_on`, since `pollster` is
+  only a dev-dependency of the app and `Cargo.toml` is not in Files touched.
+- Phase 8: `determinism.rs` gains a test that the unbounded cave's interior chunks equal the
+  bounded cave's; the bounded vector and its constants are unchanged.
 
 ### Close triggers
 
@@ -656,6 +682,26 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   - Phase 7 commit, slowest golden test serially on the dev box's llvmpipe: 1.63 s
     (`masks_move_only_isolated_pixels`); the new ones 0.37 s (identity), 0.55 s
     (`lod.png`), 1.16 s (level selection).
+  - Phase 8 commit, `world_budget --stream` (unbounded cave seed 1, h 1, 16 workers): the six
+    rows in `nfr.md` §3; at r_full 16, r_lod 24: 17 077 full and 40 700 LOD-only chunks,
+    CPU 2915.9 MiB, mirror 1529.5 MiB (855.1 full, 673.9 LOD); generation 7.16 s,
+    1.32e8 voxels/s/worker. Full fraction 18.5 to 18.8 %, `Full` mip-bricks about 39 %.
+  - Phase 8 commit, headless `flythrough --autopilot` (RTX 3080 Laptop GPU, 1280 x 720, r_full
+    16, r_lod 24, h 1, 15 workers, 2 MiB sync budget), two runs: first frame 1491 and 457 ms
+    (device ready 1268 and 417 ms), full residency 12 798 and 12 685 ms; `return: 2 chunks,
+    hash match` both; unready-near frames 0 of 2775 and 0 of 2772; streaming CPU p50 7.013 and
+    6.968 ms, p99 57.807 and 60.656 ms, max 83.065 and 105.557 ms; latency wanted to mirrored
+    p95 462 and 455 ms, max 1779 and 2359 ms (72 995 chunks each); peak mirror 1 686 395 092
+    and 1 696 279 292 B; resident RAM peak 3 243 445 888 and 3 239 272 240 B; persisted RAM
+    peak 233 616 B; march GPU p50 0.456 ms both, p99 35.326 and 31.686 ms, max 124.482 and
+    228.348 ms; 6.958e7 and 6.948e7 voxels/s/worker over the flight.
+  - Phase 8, one windowed `flythrough --autopilot` (Hyprland, window 1256 x 1378, before the
+    autopilot ignored input; stray fills at the spawn): full residency 15 816 ms, `return: 2
+    chunks, hash match`, unready-near 0 of 2113, streaming CPU p50 7.033, p99 62.536, max
+    83.152 ms, latency p95 815, max 2441 ms, march GPU p50 0.361, p99 23.914, max 91.444 ms.
+  - Phase 8 commit, headless 1920 x 1080 from the spawn, median of the last 30 of 300 frames:
+    bounded `--level` 1.953, 1.954, 1.956 ms (first sync 506 to 517 ms); streaming, at rest
+    after full residency (1500 frames), 6.689 ms with 0.349 ms CPU per frame.
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 

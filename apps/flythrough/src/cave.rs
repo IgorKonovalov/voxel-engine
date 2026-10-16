@@ -1,5 +1,7 @@
 //! A seeded cave: integer value noise thresholded into rock and air, ore veins from a second
 //! noise, an indestructible shell around the extent, and an air pocket at the spawn point.
+//! The unbounded cave ([`CaveSource::unbounded`]) is the same noise everywhere, with no extent
+//! and no shell, and its spawn pocket at the fixed voxel [`UNBOUNDED_SPAWN`].
 //!
 //! Every value is a pure integer function of the seed and the voxel coordinate, so chunks can
 //! be generated in any order on any thread and on any platform with identical bytes.
@@ -35,21 +37,44 @@ const SHELL_THICKNESS: i32 = 2;
 pub const SPAWN_POCKET_RADIUS: i64 = 30;
 /// Chunks of the level the fly-through generates: 1280 x 1280 x 512 voxels.
 pub const LEVEL_CHUNKS: [i32; 3] = [20, 20, 8];
+/// The spawn voxel of the unbounded cave: the centre of chunk `[0, 0, 0]`.
+pub const UNBOUNDED_SPAWN: VoxelCoord = VoxelCoord([32, 32, 32]);
 
-/// The cave over a bounded extent of chunks.
+/// The cave over a bounded extent of chunks, or unbounded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CaveSource {
     pub seed: u64,
+    /// The bounded cave's extent; empty for the unbounded cave.
     pub extent: ChunkExtent,
+    /// Whether the extent's faces carry the indestructible shell.
+    pub bounded: bool,
 }
 
 impl CaveSource {
+    /// The cave over `extent`, inside a shell, with its spawn pocket at the extent's centre.
     pub fn new(seed: u64, extent: ChunkExtent) -> Self {
-        Self { seed, extent }
+        Self {
+            seed,
+            extent,
+            bounded: true,
+        }
     }
 
-    /// The voxel at the centre of the extent, where the spawn pocket is carved.
+    /// The cave everywhere: no extent, no shell, the spawn pocket at [`UNBOUNDED_SPAWN`].
+    pub fn unbounded(seed: u64) -> Self {
+        Self {
+            seed,
+            extent: ChunkExtent::new([0, 0, 0], [0, 0, 0]),
+            bounded: false,
+        }
+    }
+
+    /// The voxel where the spawn pocket is carved: the centre of the extent, or
+    /// [`UNBOUNDED_SPAWN`].
     pub fn spawn(&self) -> VoxelCoord {
+        if !self.bounded {
+            return UNBOUNDED_SPAWN;
+        }
         VoxelCoord(
             [0, 1, 2].map(|k| (self.extent.min.0[k] + self.extent.max.0[k]) * CHUNK_EDGE / 2),
         )
@@ -83,10 +108,11 @@ impl CaveSource {
     }
 
     fn in_shell(&self, p: [i32; 3]) -> bool {
-        (0..3).any(|k| {
-            p[k] < self.extent.min.0[k] * CHUNK_EDGE + SHELL_THICKNESS
-                || p[k] >= self.extent.max.0[k] * CHUNK_EDGE - SHELL_THICKNESS
-        })
+        self.bounded
+            && (0..3).any(|k| {
+                p[k] < self.extent.min.0[k] * CHUNK_EDGE + SHELL_THICKNESS
+                    || p[k] >= self.extent.max.0[k] * CHUNK_EDGE - SHELL_THICKNESS
+            })
     }
 
     fn in_pocket(&self, p: [i32; 3]) -> bool {
@@ -112,10 +138,11 @@ impl CaveSource {
     /// evaluated per voxel.
     pub fn brick(&self, b: [i32; 3]) -> Brick {
         let hi = b.map(|v| v + BRICK_EDGE - 1);
-        let near_shell = (0..3).any(|k| {
-            b[k] < self.extent.min.0[k] * CHUNK_EDGE + SHELL_THICKNESS
-                || hi[k] >= self.extent.max.0[k] * CHUNK_EDGE - SHELL_THICKNESS
-        });
+        let near_shell = self.bounded
+            && (0..3).any(|k| {
+                b[k] < self.extent.min.0[k] * CHUNK_EDGE + SHELL_THICKNESS
+                    || hi[k] >= self.extent.max.0[k] * CHUNK_EDGE - SHELL_THICKNESS
+            });
         let s = self.spawn().0;
         let pocket_near: i64 = (0..3)
             .map(|k| (i64::from(s[k].clamp(b[k], hi[k])) - i64::from(s[k])).pow(2))
@@ -208,6 +235,30 @@ mod tests {
         }
         // Most of the sample is uniform, so the early-out is doing work.
         assert!(uniform > 12 * 12 * 12 / 2, "{uniform}");
+    }
+
+    #[test]
+    fn the_unbounded_cave_has_no_shell_and_a_fixed_pocket() {
+        let bounded = cave(1);
+        let open = CaveSource::unbounded(1);
+        assert_eq!(open.spawn(), UNBOUNDED_SPAWN);
+        assert_eq!(open.material([32, 32, 32]), AIR);
+        assert_eq!(open.material([32 + 30, 32, 32]), AIR);
+        // Where the bounded cave has its shell, the unbounded one has rock, ore or air.
+        for p in [[0, 100, 100], [255, 100, 100], [-5000, 77, 1 << 20]] {
+            assert_ne!(open.material(p), SHELL, "{p:?}");
+        }
+        assert_eq!(bounded.material([0, 100, 100]), SHELL);
+        // Away from both pockets and the shell, both caves are the same noise.
+        for p in [[10, 200, 40], [200, 20, 220], [100, 100, 10]] {
+            assert_eq!(open.material(p), bounded.material(p), "{p:?}");
+        }
+        // The early-out agrees with per-voxel evaluation without a shell too.
+        for b in [[-64, 0, 0], [1024, -512, 64], [24, 24, 24]] {
+            let fast = open.brick(b);
+            let slow = Brick::from_fn(|l| open.material([0, 1, 2].map(|k| b[k] + l[k])));
+            assert_eq!(fast, slow, "brick at {b:?}");
+        }
     }
 
     #[test]

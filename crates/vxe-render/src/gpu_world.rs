@@ -1063,7 +1063,9 @@ impl GpuWorld {
             return r;
         }
         if self.next_record >= self.record_cap {
-            let cap = (self.next_record + 1).div_ceil(RECORD_PAGE) * RECORD_PAGE;
+            // Half again at least, as the pool grows.
+            let want = (self.next_record + 1).max(self.record_cap * 3 / 2);
+            let cap = want.div_ceil(RECORD_PAGE) * RECORD_PAGE;
             let records = Self::create_records(&self.device, cap);
             if self.record_cap > 0 {
                 let mut enc = self
@@ -1122,8 +1124,8 @@ impl GpuWorld {
         Ok(start)
     }
 
-    /// Grows the pool to hold at least `slots`, in whole pages capped at the device limit,
-    /// keeping its contents.
+    /// Grows the pool to hold at least `slots` and at least half again its size, in whole
+    /// pages capped at the device limit, keeping its contents.
     fn grow_to(
         &mut self,
         slots: u64,
@@ -1140,8 +1142,11 @@ impl GpuWorld {
                 limit: limit * SLOT_BYTES,
             });
         }
+        // Half again at least, so a pool growing every sync copies its contents a logarithmic
+        // number of times rather than once per page.
         let page = u64::from(POOL_PAGE_SLOTS);
-        let new_slots = (slots.div_ceil(page).max(1) * page).min(limit);
+        let want = slots.max(u64::from(self.pool_slots) * 3 / 2);
+        let new_slots = (want.div_ceil(page).max(1) * page).min(limit);
         let sps = u64::from(self.layout.slots_per_shard);
         let mut enc = self
             .device

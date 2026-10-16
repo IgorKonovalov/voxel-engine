@@ -203,3 +203,30 @@ fn generation_sources_contain_no_floating_point() {
         }
     }
 }
+
+/// The unbounded cave is the bounded cave's noise without shell or extent: chunks away from
+/// both caves' shells and spawn pockets are byte-identical, and each is a pure function of
+/// the seed and coordinate.
+#[test]
+fn the_unbounded_cave_matches_the_bounded_one_in_the_interior() {
+    let bounded = CaveSource::new(0x5EED_0001, ChunkExtent::new([0, 0, 0], [8, 8, 8]));
+    let open = CaveSource::unbounded(0x5EED_0001);
+    let chunk = |s: &CaveSource, c: [i32; 3]| {
+        let mut out = Chunk::default();
+        s.chunk(ChunkCoord(c), &mut out);
+        out
+    };
+    for c in [[1, 1, 1], [2, 5, 1], [6, 6, 6]] {
+        assert_eq!(chunk(&open, c), chunk(&bounded, c), "{c:?}");
+        assert_eq!(chunk(&open, c), chunk(&open, c));
+    }
+    // Far outside any extent the unbounded cave still has rock and air, and no shell.
+    let far = chunk(&open, [-300, 41, 7]);
+    let mut seen = std::collections::BTreeSet::new();
+    for b in far.bricks() {
+        for i in 0..BRICK_VOXELS {
+            seen.insert(b.get(i));
+        }
+    }
+    assert!(seen.contains(&AIR) && !seen.contains(&SHELL), "{seen:?}");
+}

@@ -49,6 +49,16 @@ dirty-chunk set and a byte budget. Same session, `F1` read the march pass at 3.8
 2530 × 1378 away from the spawn pose: views differ by more than 2× from the spawn reading
 above. RTX 3080 Laptop GPU, Ryzen 9 5900HS.
 
+**Streaming line under motion (dev reference, Plan 0002 Phase 8, headless `flythrough
+--autopilot`, unbounded cave seed 1, r_full 16, r_lod 24, h 1, 15 workers, 2 MiB sync budget,
+RTX 3080 Laptop GPU, Ryzen 9 5900HS):** render-thread `update + poll + sync` per frame over a
+60 s flight at 10 m/s, two runs: p50 7.01 and 6.97 ms, p99 57.8 and 60.7 ms, max 83.1 and
+105.6 ms, against the 1.0 ms line. Most frames spend it in `sync` narrowing and uploading
+about 2 MiB; the p99 frames are the ones whose focus chunk changed (queue rebuild, residency
+sweep and window shift over about 58 000 chunks). At rest after full residency a frame's CPU
+reads 0.35 ms. The march pass from the unbounded cave's spawn at 1920 x 1080 reads 6.69 ms at
+rest (headless, timestamps), against 1.95 ms from the bounded level's spawn at the same commit.
+
 No frame may stall on paging: work attributable to streaming on the render thread is capped at
 the streaming line above; the rest runs on background threads.
 
@@ -81,6 +91,27 @@ With 8-bit palette indices (Plan 0002 Phase 4, ADR-0004) the level-size mirror r
 masks 8 B per brick, records 2560 B per chunk (512 entries and a 256-entry `u16` palette),
 table 4 B per chunk, from `apps/flythrough/tests/level_mirror.rs` on the dev box.
 
+**Streamed residency (dev reference, Plan 0002 Phase 8, unbounded cave seed 1 around its spawn,
+hysteresis 1, `cargo run --release -p flythrough --example world_budget -- --stream
+R_FULL,R_LOD`, 16 workers, Ryzen 9 5900HS).** Mirror bytes at 8-bit palette indices (ADR-0004):
+512 + 8 B per `Full` brick or mip-brick, 2560 B per record for full and LOD-only chunks alike,
+plus the `W^3` chunk table. CPU bytes: full chunks' slot arrays and `Full` bricks, LOD-only
+chunks' mip-brick slots and `Full` mip-bricks. In every row about 18.5 to 18.8 % of a full
+chunk's bricks and about 39 % of the ring's mip-bricks are `Full`.
+
+| r_full | r_lod | Full chunks | LOD-only chunks | CPU MiB | Mirror MiB (full) | Mirror MiB (LOD) | Mirror MiB (total) |
+|---|---|---|---|---|---|---|---|
+| 10 | 14 | 4 169 | 7 344 | 634.2 | 205.7 | 123.4 | 329.2 |
+| 10 | 18 | 4 169 | 20 236 | 1 006.2 | 205.7 | 336.0 | 541.9 |
+| 12 | 16 | 7 153 | 9 924 | 1 012.7 | 355.9 | 165.5 | 521.5 |
+| 12 | 20 | 7 153 | 26 248 | 1 486.2 | 355.9 | 436.0 | 792.2 |
+| 16 | 20 | 17 077 | 16 324 | 2 210.0 | 855.1 | 270.5 | 1 126.0 |
+| 16 | 24 | 17 077 | 40 700 | 2 915.9 | 855.1 | 673.9 | 1 529.5 |
+
+Under motion (headless `flythrough --autopilot`, r_full 16, r_lod 24, two runs) the mirror
+peaked at 1 686 395 092 and 1 696 279 292 B, resident RAM at 3 243 445 888 and
+3 239 272 240 B, and persisted RAM at 233 616 B.
+
 ## 4. Edits
 
 - **Cost:** 100 sphere carves of radius 1 m (exactly 4169 voxels each at 10 cm, the lattice
@@ -112,6 +143,16 @@ table 4 B per chunk, from `apps/flythrough/tests/level_mirror.rs` on the dev box
   20 × 20 × 8 chunks (0.509 s) and 1.12e8 at 32 × 32 × 32 (4.785 s), bounded and synchronous,
   from `world_budget`.
 - An edited chunk that is evicted and later reloaded reproduces the edit.
+  **Asserted** headlessly by `crates/vxe-world/tests/persist.rs` (RAM, spill file, racing
+  eviction) and under motion by `flythrough --autopilot` (`return: 2 chunks, hash match`
+  after flying 300 m out and back), Plan 0002 Phase 8.
+- **Reading under motion (dev reference, Plan 0002 Phase 8, headless `flythrough
+  --autopilot`, unbounded cave seed 1, r_full 16, r_lod 24, 15 workers, RTX 3080 Laptop GPU,
+  Ryzen 9 5900HS):** at 10 m/s, 0 frames out of 2775 and 2772 had a chunk wanted full within
+  14 chunks of the camera's not yet resident and mirrored. Wanted-to-mirrored latency of the
+  73 000 chunks loaded full: p95 462 and 455 ms, max 1779 and 2359 ms. Generation under
+  streaming: 6.95e7 voxels/s/worker over the flight (both tiers, 15 workers beside the render
+  thread), against 1.23e8 to 1.34e8 headless in `world_budget --stream`.
 
 ## 6. Determinism and headless operation
 
@@ -128,6 +169,10 @@ table 4 B per chunk, from `apps/flythrough/tests/level_mirror.rs` on the dev box
   GPU, Ryzen 9 5900HS, Hyprland):** 2226 to 2301 ms cold (dGPU suspended before launch),
   1063 to 1187 ms warm; device creation dominates cold start (1838 to 1903 ms), the mirror
   upload is 349 to 357 ms for 402 MB. 2282 ms on the owner's interactive run at 1d61aba.
+  **Reading (Plan 0002 Phase 8, streaming unbounded cave seed 1, headless on the RTX 3080
+  Laptop GPU, so no window or surface):** the first frame waits for the 33 chunks within
+  squared distance 4 of the spawn chunk: first frame at 1491 and 457 ms (device ready at 1268
+  and 417 ms); full residency (17 077 full, 40 700 LOD-only chunks) at 12 798 and 12 685 ms.
 - An incremental `cargo build` of a one-crate change under 10 s on the dev reference; the
   everyday loop does not compile crates a plan does not touch (`default-members`).
 
