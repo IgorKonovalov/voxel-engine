@@ -649,7 +649,11 @@ each. Empty is fine.)_
   `GpuWorld::allocated_bytes` (sizes of the four shards, masks, records, table, materials);
   the autopilot prints peak live and peak allocated mirror bytes and the process peak RSS
   (`VmHWM`, Linux only, else `n/a`); `full residency` prints both mirror figures. Commit:
-  committed with this line.
+  6c7c276.
+- Fix pass, review finding 2 (minor, per-chunk heap allocation in sync): `upload_record` reads
+  bricks in place through a `Bricks` enum (a chunk with its dirty bits, or mips indexed by
+  `LOD_LEVEL_ENTRY`) instead of a scratch `Vec`; `select`'s chosen and stale lists are
+  `GpuWorld` fields cleared at its start. Commit: committed with this line.
 
 ### Close triggers
 

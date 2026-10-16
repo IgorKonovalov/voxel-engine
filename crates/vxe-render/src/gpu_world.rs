@@ -216,6 +216,42 @@ struct Selected {
     src: Src,
 }
 
+/// The bricks one record is written from, read in place.
+enum Bricks<'a> {
+    /// A full chunk's 512 bricks and its dirty bits.
+    Chunk(&'a vxe_world::Chunk),
+    /// A LOD record's mip-bricks, level 1 first; every one counts as dirty.
+    Mips(&'a ChunkMips),
+}
+
+impl<'a> Bricks<'a> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Chunk(_) => CHUNK_BRICKS,
+            Self::Mips(m) => (1..=MIP_LEVELS).map(|n| m.level(n).len()).sum(),
+        }
+    }
+
+    /// Entry `i`'s brick: a chunk's brick `i`, or the mip-brick at record entry `i`, each
+    /// level starting at its `LOD_LEVEL_ENTRY`.
+    fn get(&self, i: usize) -> &'a Brick {
+        match self {
+            Self::Chunk(ch) => &ch.bricks()[i],
+            Self::Mips(m) => {
+                let k = LOD_LEVEL_ENTRY.iter().rposition(|&e| e <= i).unwrap_or(0);
+                &m.level(k + 1)[i - LOD_LEVEL_ENTRY[k]]
+            }
+        }
+    }
+
+    fn is_dirty(&self, i: usize) -> bool {
+        match self {
+            Self::Chunk(ch) => ch.is_dirty(i),
+            Self::Mips(_) => true,
+        }
+    }
+}
+
 pub struct GpuWorld {
     device: wgpu::Device,
     cfg: MirrorConfig,
@@ -262,6 +298,10 @@ pub struct GpuWorld {
     /// The run of consecutive records staged for one write.
     rec_stage_start: u32,
     rec_stage: Vec<u32>,
+    /// The chunks `select` chose and the stale ones it unqueues, cleared at the start of
+    /// each `select` and kept for their capacity.
+    selected: Vec<Selected>,
+    stale: Vec<ChunkCoord>,
 }
 
 impl GpuWorld {
@@ -335,6 +375,8 @@ impl GpuWorld {
             stage_masks: Vec::new(),
             rec_stage_start: 0,
             rec_stage: Vec::new(),
+            selected: Vec::new(),
+            stale: Vec::new(),
         }
     }
 
@@ -660,7 +702,7 @@ impl GpuWorld {
             }
         }
 
-        let (selected, new_full) = self.select(world, &mut st);
+        let new_full = self.select(world, &mut st);
         let limit = self.pool_limit_slots();
         let peak = u64::from(self.live_slots()) + new_full;
         if peak > limit {
@@ -677,7 +719,7 @@ impl GpuWorld {
             self.write_materials(world.materials(), queue, &mut st);
             self.materials_written = true;
         }
-        let result = self.upload(selected, queue, &mut st);
+        let result = self.upload(queue, &mut st);
         // Staged runs are written even after a failed allocation: their records name them.
         self.flush_stage(queue, &mut st);
         self.flush_records(queue, &mut st);
@@ -687,20 +729,21 @@ impl GpuWorld {
         result.map(|()| st)
     }
 
-    /// Walks the pending set nearest first and picks chunks until the estimated bytes reach
-    /// the budget. Returns them with the count of bricks among them that need a new slot.
-    fn select(&mut self, world: &World, st: &mut SyncStats) -> (Vec<Selected>, u64) {
+    /// Walks the pending set nearest first and picks chunks into `self.selected` until the
+    /// estimated bytes reach the budget. Returns the count of bricks among them that need a
+    /// new slot.
+    fn select(&mut self, world: &World, st: &mut SyncStats) -> u64 {
         let budget = self.cfg.sync_budget_bytes;
         // Writes that happen whatever is chosen count against the budget first.
         let mut bytes = self.table_changed.len() as u64 * 4;
         if !self.materials_written {
             bytes += (world.materials().len() * MATERIAL_FLOATS * 4) as u64;
         }
-        let mut selected = Vec::new();
+        self.selected.clear();
+        self.stale.clear();
         let mut new_full = 0u64;
-        let mut stale = Vec::new();
         for &(_, coord) in &self.pending {
-            if bytes >= budget && !selected.is_empty() {
+            if bytes >= budget && !self.selected.is_empty() {
                 break;
             }
             st.chunks_visited += 1;
@@ -710,7 +753,7 @@ impl GpuWorld {
                 None => match world.lod(coord) {
                     Some(mips) => Src::Lod(mips),
                     None => {
-                        stale.push(coord);
+                        self.stale.push(coord);
                         continue;
                     }
                 },
@@ -729,7 +772,7 @@ impl GpuWorld {
                 Src::Full(chunk) => {
                     let ch = chunk.read().unwrap_or_else(PoisonError::into_inner);
                     if rec.is_some() && !ch.any_dirty() {
-                        stale.push(coord);
+                        self.stale.push(coord);
                         continue;
                     }
                     for slot in 0..CHUNK_BRICKS {
@@ -749,7 +792,7 @@ impl GpuWorld {
                 Src::Lod(mips) => {
                     // Mips never change: a chunk already mirrored LOD-only needs nothing.
                     if rec.is_some() {
-                        stale.push(coord);
+                        self.stale.push(coord);
                         continue;
                     }
                     let full = mips.full_bricks() as u64;
@@ -758,54 +801,53 @@ impl GpuWorld {
                 }
             }
             bytes += chunk_bytes;
-            selected.push(Selected { coord, src });
+            self.selected.push(Selected { coord, src });
         }
-        for c in stale {
+        let mut stale = std::mem::take(&mut self.stale);
+        for &c in &stale {
             self.unqueue(c);
         }
-        (selected, new_full)
+        stale.clear();
+        self.stale = stale;
+        new_full
     }
 
-    fn upload(
-        &mut self,
-        selected: Vec<Selected>,
-        queue: &wgpu::Queue,
-        st: &mut SyncStats,
-    ) -> Result<(), MirrorError> {
-        for Selected { coord, src } in selected {
+    /// Uploads the chunks `select` chose, stopping at the first failed allocation, and
+    /// empties `self.selected`.
+    fn upload(&mut self, queue: &wgpu::Queue, st: &mut SyncStats) -> Result<(), MirrorError> {
+        let mut selected = std::mem::take(&mut self.selected);
+        let mut result = Ok(());
+        for Selected { coord, src } in selected.drain(..) {
             let lod = matches!(src, Src::Lod(_));
             if self.mirrored.get(&coord).is_some_and(|m| m.lod != lod) {
                 self.drop_record(coord);
             }
-            match src {
+            result = match src {
                 Src::Full(chunk) => {
                     let mut ch = chunk.write().unwrap_or_else(PoisonError::into_inner);
-                    {
-                        let bricks: Vec<&Brick> = ch.bricks().iter().collect();
-                        let dirty: Vec<bool> = (0..CHUNK_BRICKS).map(|s| ch.is_dirty(s)).collect();
-                        self.upload_record(coord, &bricks, &dirty, false, queue, st)?;
+                    let r = self.upload_record(coord, Bricks::Chunk(&ch), false, queue, st);
+                    if r.is_ok() {
+                        ch.clear_dirty();
                     }
-                    ch.clear_dirty();
+                    r
                 }
-                Src::Lod(mips) => {
-                    let bricks: Vec<&Brick> =
-                        (1..=MIP_LEVELS).flat_map(|n| mips.level(n)).collect();
-                    let dirty = vec![true; bricks.len()];
-                    self.upload_record(coord, &bricks, &dirty, true, queue, st)?;
-                }
+                Src::Lod(mips) => self.upload_record(coord, Bricks::Mips(&mips), true, queue, st),
+            };
+            if result.is_err() {
+                break;
             }
         }
-        Ok(())
+        self.selected = selected;
+        result
     }
 
     /// Writes one chunk's record: `bricks` into its entries (512 voxel bricks, or a LOD
-    /// record's 73 mip-bricks), the ones `dirty` marks unless the record is new or turns
-    /// wide, then its palette and, for a new record, its table entry.
+    /// record's 73 mip-bricks), the dirty ones unless the record is new or turns wide, then
+    /// its palette and, for a new record, its table entry.
     fn upload_record(
         &mut self,
         coord: ChunkCoord,
-        bricks: &[&Brick],
-        dirty: &[bool],
+        bricks: Bricks<'_>,
         lod: bool,
         queue: &wgpu::Queue,
         st: &mut SyncStats,
@@ -824,11 +866,11 @@ impl GpuWorld {
         // Append the uploaded bricks' new materials; past 255 non-air the chunk is wide.
         let mut wide = was_wide;
         if !wide {
-            'scan: for (i, brick) in bricks.iter().enumerate() {
-                if !new && !dirty[i] {
+            'scan: for i in 0..bricks.len() {
+                if !new && !bricks.is_dirty(i) {
                     continue;
                 }
-                let Brick::Full(v) = brick else {
+                let Brick::Full(v) = bricks.get(i) else {
                     continue;
                 };
                 for &m in v.iter() {
@@ -845,11 +887,11 @@ impl GpuWorld {
         }
         let every = new || wide != was_wide;
         let mut result = Ok(());
-        for (i, brick) in bricks.iter().enumerate() {
-            if !every && !dirty[i] {
+        for i in 0..bricks.len() {
+            if !every && !bricks.is_dirty(i) {
                 continue;
             }
-            result = self.upload_brick(base + i, brick, wide, queue, st);
+            result = self.upload_brick(base + i, bricks.get(i), wide, queue, st);
             if result.is_err() {
                 break;
             }
