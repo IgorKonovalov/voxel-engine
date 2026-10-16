@@ -349,3 +349,18 @@ fn later_placements_win_where_they_overlap() {
     );
     assert_eq!(w.material_at([8, 8, 8]), Some(5));
 }
+
+#[test]
+fn rot_apply_is_total_at_the_i32_extremes() {
+    for r in Rot::all() {
+        let v = r.apply([i32::MIN, i32::MAX, 0]);
+        // A signed permutation: each component is one input component, negated or not,
+        // and i32::MIN negates to itself.
+        for c in v {
+            assert!(
+                [i32::MIN, i32::MAX, -i32::MAX, 0].contains(&c),
+                "{r:?} {v:?}"
+            );
+        }
+    }
+}

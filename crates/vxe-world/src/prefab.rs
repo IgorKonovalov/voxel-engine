@@ -116,11 +116,12 @@ impl Rot {
         Self { axis, neg }
     }
 
-    /// The matrix times `v`.
+    /// The matrix times `v`. Negation wraps, so `i32::MIN` maps to itself on a negated row
+    /// rather than panicking.
     pub fn apply(self, v: [i32; 3]) -> [i32; 3] {
         [0, 1, 2].map(|k| {
             let c = v[usize::from(self.axis[k])];
-            if self.neg[k] { -c } else { c }
+            if self.neg[k] { c.wrapping_neg() } else { c }
         })
     }
 
@@ -151,9 +152,12 @@ impl Prefab {
     /// # Panics
     ///
     /// When `voxels` does not hold exactly `sx * sy * sz` values, or `mask` does not hold
-    /// exactly `voxels.len().div_ceil(64)` words.
+    /// exactly `voxels.len().div_ceil(64)` words, or when `sx * sy * sz` overflows `usize`.
     pub fn new(size: [u32; 3], mut voxels: Vec<MaterialId>, mask: Option<Vec<u64>>) -> Self {
-        let n = size.iter().map(|&s| s as usize).product::<usize>();
+        let n = size
+            .iter()
+            .try_fold(1usize, |n, &s| n.checked_mul(s as usize))
+            .expect("prefab voxel count does not match its size: the size overflows usize");
         assert_eq!(
             voxels.len(),
             n,
