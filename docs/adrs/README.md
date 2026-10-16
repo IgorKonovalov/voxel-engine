@@ -1,0 +1,29 @@
+# Architecture Decision Records
+
+Numbered, append-only records of decisions that have a rejected alternative worth remembering.
+Accepted ADRs are never edited in place. To change a decision, write a new ADR that supersedes
+the old one and update the status here.
+
+Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
+a code comment.
+
+**Next free number: 0002.**
+
+An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
+the status.
+
+| ADR  | Title | Status |
+|------|-------|--------|
+| [0001](0001-rust-library-workspace-wgpu-compute-ray-marching.md) | Rust library workspace, wgpu compute ray marching, streaming brick-map world | accepted |
+
+## Decisions taken but not yet recorded
+
+Settled in the founding interview (2026-10-16) and written up in
+[`docs/roadmap.md`](../roadmap.md) under "Decisions from the founding interview". Each becomes
+an ADR when the plan that implements it is drafted, so the ADR carries the concrete shape
+rather than the intention:
+
+- Storage layout (brick size, chunk size, LOD mips, paging unit): with Plan 0001.
+- Scripting split, WASM for server logic and Lua for client scripts: with the scripting plan.
+- Dynamic entities as voxel models on rigid-part rigs: with the entities plan.
+- Network transport: with the networking plan.

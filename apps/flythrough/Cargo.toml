@@ -1,0 +1,17 @@
+[package]
+name = "flythrough"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "The engine's own testbed: fly through a streaming voxel world and dig"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+vxe-world = { path = "../../crates/vxe-world" }
+vxe-render = { path = "../../crates/vxe-render" }
+vxe-app = { path = "../../crates/vxe-app" }

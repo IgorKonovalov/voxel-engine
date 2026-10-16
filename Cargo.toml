@@ -1,0 +1,39 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*"]
+default-members = ["crates/*", "apps/*"]
+
+[workspace.package]
+# Single source of truth for the engine version. Member crates inherit it via
+# `version.workspace = true`; bumped once per plan at the architect close.
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/IgorKonovalov/voxel-engine"
+rust-version = "1.97"
+
+# Baseline lints shared by every workspace member (opted in with
+# `lints.workspace = true`). Hot-path panic denial is a per-module pragma, not
+# workspace-wide, so idiomatic test code is never fought.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "warn"
+unimplemented = "warn"
+
+[workspace.dependencies]
+# Versions are pinned exactly and live here, once. A crate takes a dependency
+# with `foo.workspace = true`. Nothing is listed until a plan needs it.
+
+[profile.release]
+# The world and the ray marcher are the hot paths; LTO and a single codegen
+# unit are the usual free win for a release build.
+lto = "thin"
+codegen-units = 1
+
+[profile.dev.package."*"]
+# Dependencies optimized even in dev builds, so a debug fly-through is usable.
+opt-level = 2

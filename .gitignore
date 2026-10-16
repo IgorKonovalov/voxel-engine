@@ -1,0 +1,18 @@
+# Rust
+/target
+**/target
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude Code local overrides and in-repo plan lanes
+.claude/settings.local.json
+.claude/worktrees/
+
+# Render output and benchmark readings kept locally. Golden baselines that a
+# test asserts against ARE committed, under crates/*/tests/golden/.
+renders/
+spike/

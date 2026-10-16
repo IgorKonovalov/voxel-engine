@@ -1,0 +1,13 @@
+[package]
+name = "vxe-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "placeholder; see docs/roadmap.md"
+
+[lints]
+workspace = true
+
+[dependencies]

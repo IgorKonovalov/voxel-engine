@@ -1,0 +1,50 @@
+# Build, tests, doctests, clippy, fmt and the supply-chain gate on Linux and
+# Windows for every push. GPU tests run on a software Vulkan adapter (Mesa's
+# lavapipe on Linux); golden baselines are blessed on lavapipe, so image
+# comparisons assert on the Linux arm and print-and-skip elsewhere. Real-vendor
+# GPU checks stay manual (docs/nfr.md).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # winit's Wayland and X11 backends need the xkbcommon and wayland headers;
+      # mesa-vulkan-drivers carries lavapipe, without which wgpu finds no adapter.
+      - name: Install the Linux build packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libwayland-dev mesa-vulkan-drivers
+      # rustup on the runner auto-installs the toolchain pinned in rust-toolchain.toml.
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+      - run: cargo build --workspace
+      # `--no-tests=pass` keeps the skeleton green until Plan 0001 lands tests.
+      - run: cargo nextest run --workspace --no-tests=pass
+      - run: cargo test --workspace --doc
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo fmt --all --check
+      - name: Hook bite tests
+        run: node --test ".claude/hooks/*.test.mjs"
+      - name: Doc links
+        run: node scripts/check-doc-links.mjs
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2

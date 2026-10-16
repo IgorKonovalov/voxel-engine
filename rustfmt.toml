@@ -1,0 +1,4 @@
+# Stable rustfmt options only. Enforced by `cargo fmt --all --check` in CI.
+edition = "2024"
+newline_style = "Unix"
+max_width = 100
