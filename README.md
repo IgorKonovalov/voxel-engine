@@ -3,6 +3,12 @@
 [![CI](https://github.com/IgorKonovalov/voxel-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/IgorKonovalov/voxel-engine/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
+![A cave passage in the fly-through's bounded level, lit by the headlamp](docs/images/hero.png)
+
+<sub>The bounded level, seed 1, ray-marched under the headlamp on an RTX 3080 Laptop GPU at
+1600x900. Regenerate with `cargo run --release -p flythrough --example hero -- --at 40,661,261
+--yaw 300 --pitch -8`.</sub>
+
 A game-agnostic voxel engine in Rust. A streaming world of small voxels (10 cm at the first
 consumer's scale) is ray-marched in compute shaders through [`wgpu`](https://wgpu.rs), edited at
 runtime with deterministic operations that report what they changed, and queried for collision,
