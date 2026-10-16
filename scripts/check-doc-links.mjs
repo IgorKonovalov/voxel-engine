@@ -14,8 +14,11 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, dirname, resolve, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = resolve(dirname(new URL(import.meta.url).pathname), '..');
+// fileURLToPath, not URL.pathname: the latter yields "/D:/..." on Windows, which is not a
+// directory, and git would be spawned with a missing cwd (ENOENT).
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 function markdownFiles() {
   const out = execFileSync(
