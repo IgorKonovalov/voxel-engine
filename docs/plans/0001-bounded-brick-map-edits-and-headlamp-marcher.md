@@ -154,8 +154,11 @@ Shared conventions for every phase:
   - After the radius-10 carve in the solid material-3 world, `Mode::Fill(2)` with a box of
     voxels `[-1,1]³` (fixed `[-256,-256,-256]..[512,512,512]`) returns `changed_from == [(0, 27)]`;
     filling it again returns `[]`; `Fill` never overwrites a non-air voxel.
-  - A radius-10 sphere centred on voxel `[127,0,0]` of the `[-2,2)³` world returns
-    `Err(EditError::NotResident([2,0,0]))` and the world hash is identical before and after.
+  - A radius-10 sphere centred on voxel `[127,0,0]` of the `[-2,2)³` world spans voxels
+    `x ∈ [117,137]`, `y, z ∈ [-10,10]` and so reaches four non-resident chunks: `[2,-1,-1]`,
+    `[2,-1,0]`, `[2,0,-1]` and `[2,0,0]`. It returns `Err(EditError::NotResident([2,-1,-1]))`,
+    the first of them in ascending coordinate order (ADR-0002), and the world hash is
+    identical before and after.
   - A fixed list of ops mixing every shape and mode produces the same `changed_from` vector
     whether applied to a world generated with one thread or sixteen (generation parallelism is
     invisible).
@@ -196,29 +199,36 @@ Shared conventions for every phase:
 - **What:** a seeded integer-noise cave `WorldSource` in `apps/flythrough` (the engine ships
   no terrain), the CI determinism vector asserted on both arms, a `criterion` bench for the edit
   budget, and a release example that prints the RAM and mirror sizes at two scene sizes.
-- **Files touched:** `apps/flythrough/src/cave.rs`, `apps/flythrough/Cargo.toml`,
-  `crates/vxe-world/tests/determinism.rs`, `crates/vxe-world/benches/edits.rs`,
-  `crates/vxe-world/examples/world_budget.rs`, `crates/vxe-world/src/hash.rs` (FNV-1a and
-  the integer hash and value noise helpers the cave builds on, since they are reusable and
+  `flythrough` gains a library target (`src/lib.rs`, exporting `pub mod cave`) next to its
+  binary, so its own tests and examples can use `CaveSource`. `vxe-world` does not depend on
+  `flythrough`, not even as a dev-dependency: that would be a cycle, and it would pull `winit`
+  and `wgpu` into `vxe-world`'s test build. Everything that needs the cave therefore lives
+  under `apps/flythrough/`.
+- **Files touched:** `apps/flythrough/src/{lib.rs, cave.rs}`, `apps/flythrough/Cargo.toml`,
+  `apps/flythrough/tests/determinism.rs`, `apps/flythrough/examples/world_budget.rs`,
+  `crates/vxe-world/benches/edits.rs`, `crates/vxe-world/Cargo.toml` (the `criterion`
+  dev-dependency and the bench target), `crates/vxe-world/src/hash.rs` (FNV-1a and the
+  integer hash and value noise helpers the cave builds on, because they are reusable and
   deterministic), `docs/nfr.md`.
 - **Done when:**
   - `CaveSource { seed, extent }` produces chunks from integer value noise with a 64-bit mix
     hash, trilinear interpolation in fixed point, and a threshold; materials are 1 rock, 2 ore
     (veins from a second noise), 3 shell on the outermost 2 voxels of the extent flagged
     indestructible, 0 air; a spherical air pocket of radius 3 m exists at the stated spawn
-    point. No `f32`, `f64`, `sin`, `exp` or `powf` in the source (a grep in the test).
+    point. No `f32`, `f64`, `sin`, `exp` or `powf` appears in `apps/flythrough/src/cave.rs`
+    or `crates/vxe-world/src/hash.rs` (a test greps both).
   - Same seed, same chunk: identical bytes; seeds 1 and 2 differ in at least one chunk.
   - A brick whose eight corner densities all sit beyond a margin from the threshold is emitted
     `Uniform` without per-voxel evaluation; the spawn pocket and the shell are applied after.
-  - `tests/determinism.rs` generates the cave with seed `0x5EED_0001` over chunks `[0,4)³`,
+  - `apps/flythrough/tests/determinism.rs` generates the cave with seed `0x5EED_0001` over chunks `[0,4)³`,
     applies a fixed list of 24 ops (every shape and mode, one of them failing on a
     non-resident chunk), hashes the voxels and every result (and the error) with FNV-1a 64,
-    and asserts the hash equals a literal constant blessed on Linux. CI runs it on both arms;
-    the constant is not loosened to make Windows pass.
+    and asserts the hash equals a literal constant blessed on Linux. CI runs it on both arms
+    through `cargo nextest run --workspace`; the constant is not loosened to make Windows pass.
   - `cargo bench -p vxe-world --bench edits` measures 100 radius-10 carves at distinct seeded
     positions in a fresh solid world per iteration (every carve expands uniform bricks, the
     worst case) and the log records the reading on the dev box against `nfr.md` §4 (2 ms).
-  - `cargo run --release -p vxe-world --example world_budget -- --chunks 20x20x8 --seed 1`
+  - `cargo run --release -p flythrough --example world_budget -- --chunks 20x20x8 --seed 1`
     and `-- --chunks 32x32x32 --seed 1` print: chunk count, `Full` and `Uniform` brick counts
     and the `Full` fraction, CPU bytes by accounting (`Full` bricks × 1024 + chunks × slot
     array), mirror bytes by the same formula the uploader uses (`Full` bricks × (1024 + 8) +
@@ -231,16 +241,22 @@ Shared conventions for every phase:
 - **Owner skill:** dev
 - **What:** `vxe-render` mirrors the store into the ADR-0002 buffers, uploads dirty bricks,
   and marches primary rays in a WGSL compute shader into an `rgba8` target, shaded as albedo
-  times a spot-light term without shadows. A headless golden test runs on lavapipe.
+  times a spot-light term without shadows. A headless golden test runs on lavapipe. It lives
+  in `apps/flythrough/tests/`, because the scene is the cave and `vxe-render` cannot depend on
+  `flythrough` (the Phase 4 reasoning). Mirror and upload tests that need no cave stay in
+  `crates/vxe-render/tests/`.
 - **Files touched:** `crates/vxe-render/Cargo.toml`, `crates/vxe-render/src/{lib.rs,
   gpu_world.rs, camera.rs, marcher.rs, readback.rs}`,
-  `crates/vxe-render/src/shaders/march.wgsl`, `crates/vxe-render/tests/golden.rs`,
-  `crates/vxe-render/tests/golden/primary.png`, `crates/vxe-render/tests/support/mod.rs`.
+  `crates/vxe-render/src/shaders/march.wgsl`, `crates/vxe-render/tests/mirror.rs`,
+  `apps/flythrough/Cargo.toml` (`pollster` and `png` dev-dependencies),
+  `apps/flythrough/tests/golden.rs`, `apps/flythrough/tests/golden/primary.png`,
+  `apps/flythrough/tests/support/mod.rs`.
 - **Done when:**
   - `GpuWorld::new(device, extent)` sizes the chunk table to the extent, grows the brick pool
     by whole pages (initially from `stats().full_bricks`), and `sync(&world, &queue)` uploads
     every dirty brick and clears the dirty bits; after a second `sync` with no edits, zero
-    bytes are written (a counter the test reads).
+    bytes are written (a counter that `crates/vxe-render/tests/mirror.rs` reads, on a
+    closure-source world).
   - A brick that collapses to `Uniform` frees its pool slot and the chunk record entry becomes
     `uniform | material`; the free list reuses the slot on the next expansion.
   - The shader walks chunk table, chunk record, then voxels of a `Full` brick with a
@@ -250,17 +266,21 @@ Shared conventions for every phase:
   - The device is requested with `max_storage_buffer_binding_size` and `max_buffer_size` set to
     the adapter's values (clamped to what the pool needs); the golden test prints the
     adapter's name and both limits, and the log records them for lavapipe and for the dev box.
-  - `tests/golden.rs` requests a software adapter (`force_fallback_adapter`), builds the cave
+  - `apps/flythrough/tests/golden.rs` requests a software adapter (`force_fallback_adapter`),
+    builds the cave
     with seed 7 over chunks `[0,6)³` with the spawn at its centre, applies one radius-10 carve
     1.5 m ahead of the camera, renders 320 × 180 from the fixed spawn pose, reads the target
-    back, and compares to `tests/golden/primary.png`: at most 0.1 % of pixels differ by more
+    back, and compares to `apps/flythrough/tests/golden/primary.png`: at most 0.1 % of pixels
+    differ by more
     than 2/255 in any channel (exact match is expected on the same Mesa; the tolerance absorbs a
     runner upgrade). If no adapter is found the test prints `skipped: no software adapter` and
     passes, so the Windows arm stays green; `VXE_BLESS=1` rewrites the golden.
   - The golden shows the carve: the test also renders the same scene without the carve and
     asserts that at least 2 % of pixels differ from the golden by more than 8/255 (the carve
-    is visible), and that the golden holds at least two colours each covering 5 % of the
-    pixels or more (a uniform image fails; inside a closed pocket no ray misses).
+    is visible), and that the golden holds at least two colour bins each covering 5 % of the
+    pixels or more (a uniform image fails; inside a closed pocket no ray misses). A colour bin
+    is the top 3 bits of each of r, g and b (512 bins), because continuous spot shading
+    rarely repeats an exact colour.
 
 ### Phase 6: Headlamp with a shadow ray
 - **Owner skill:** dev
@@ -268,9 +288,10 @@ Shared conventions for every phase:
   0.15 m, so shadows are visible), cone falloff, inverse-square attenuation, and one shadow ray
   per pixel from the hit point offset half a voxel along the face normal toward the lamp.
 - **Files touched:** `crates/vxe-render/src/shaders/march.wgsl`, `crates/vxe-render/src/{marcher.rs,
-  light.rs}`, `crates/vxe-render/tests/golden.rs`, `crates/vxe-render/tests/golden/headlamp.png`.
+  light.rs}`, `apps/flythrough/tests/golden.rs`, `apps/flythrough/tests/golden/headlamp.png`.
 - **Done when:**
-  - `golden/headlamp.png` is blessed on lavapipe for the Phase 5 scene with the lamp on and
+  - `apps/flythrough/tests/golden/headlamp.png` is blessed on lavapipe for the Phase 5 scene
+    with the lamp on and
     compared under the same floor.
   - Rendering the scene with the shadow ray disabled (a `LightParams` flag that exists for this
     test and the fly-through's debug toggle) gives an image in which no pixel is darker than
@@ -319,8 +340,8 @@ Shared conventions for every phase:
     64 seeded random bricks.
   - The marcher walks the 4 × 4 × 4 mask before touching voxels: an unset block advances the
     ray by a 2 × 2 × 2 block in one step.
-  - `golden/primary.png` and `golden/headlamp.png` match bit-exactly on lavapipe: the mask
-    changes no hit.
+  - `apps/flythrough/tests/golden/primary.png` and `golden/headlamp.png` match bit-exactly on
+    lavapipe: the mask changes no hit.
   - The log records the primary-pass GPU time at 1920 × 1080 from the fly-through's spawn
     pose on the dev box before and after this phase (timestamp queries), and `nfr.md` §2 gets
     the reading labelled dev reference.
