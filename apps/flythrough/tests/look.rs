@@ -5,6 +5,7 @@
 mod support;
 
 use support::*;
+use vxe_render::attrib::AttribQuant;
 use vxe_render::gpu_world::{ATTR_PAGE_BRICK_SLOTS, POOL_PAGE_SLOTS, SLOT_BYTES};
 use vxe_render::{
     GpuWorld, LightParams, LookParams, Marcher, MirrorConfig, NormalMode, ViewMode, Window, wgpu,
@@ -41,11 +42,23 @@ fn attr_rig_on(
     world: &World,
     max_shard_slots: Option<u32>,
 ) -> LookRig {
+    attr_rig_quant(device, queue, world, max_shard_slots, AttribQuant::None)
+}
+
+/// [`attr_rig_on`], its attributes written at `quant`.
+fn attr_rig_quant(
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    world: &World,
+    max_shard_slots: Option<u32>,
+    quant: AttribQuant,
+) -> LookRig {
     let cfg = MirrorConfig {
         max_shard_slots,
         ..MirrorConfig::new(Window::Fixed(world.extent()))
     };
     let mut gpu = GpuWorld::with_surface_attrs(&device, cfg);
+    gpu.set_attrib_quant(quant);
     gpu.sync(world, &queue).expect("mirror fits the adapter");
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     let bricks = gpu.update_attrs(&mut enc);
@@ -66,9 +79,14 @@ fn attr_rig_on(
 
 /// [`attr_rig_on`] on the software adapter; `None` with a printed skip when there is none.
 fn attr_rig(world: &World) -> Option<LookRig> {
+    attr_rig_at(world, AttribQuant::None)
+}
+
+/// [`attr_rig`], its attributes written at `quant`.
+fn attr_rig_at(world: &World, quant: AttribQuant) -> Option<LookRig> {
     let full = world.stats().full_bricks as u64;
     let (device, queue) = software_device(attr_pool_bytes(full).max(64 << 20))?;
-    Some(attr_rig_on(device, queue, world, None))
+    Some(attr_rig_quant(device, queue, world, None, quant))
 }
 
 /// Cavity normal error (degrees) and pillar silhouette error (pixels) of `mode`, over mirrors
@@ -85,6 +103,11 @@ fn metrics_with(mode: NormalMode, attrs: bool) -> Option<(f64, usize)> {
 /// [`metrics_with`], with `detail` on and rock (the cavity's row 3, the pillar's rock) at
 /// [`SPIKE_ROCK_DETAIL`] when `detail` is set.
 fn metrics_of(mode: NormalMode, detail: bool, attrs: bool) -> Option<(f64, usize)> {
+    metrics_at(mode, detail, attrs.then_some(AttribQuant::None))
+}
+
+/// [`metrics_of`], over mirrors whose attributes are written at `quant` when it is given.
+fn metrics_at(mode: NormalMode, detail: bool, quant: Option<AttribQuant>) -> Option<(f64, usize)> {
     let mut cavity_table = look_table();
     let mut pillar_table = flythrough::cave_materials();
     if detail {
@@ -106,8 +129,8 @@ fn metrics_of(mode: NormalMode, detail: bool, attrs: bool) -> Option<(f64, usize
         view,
     };
     let cavity = cavity_world_with(cavity_table);
-    let mut rig = if attrs {
-        attr_rig(&cavity)?
+    let mut rig = if let Some(q) = quant {
+        attr_rig_at(&cavity, q)?
     } else {
         LookRig::new(&cavity, None)?
     };
@@ -116,8 +139,8 @@ fn metrics_of(mode: NormalMode, detail: bool, attrs: bool) -> Option<(f64, usize
     let normal_error = cavity_normal_error(&normals, &cam);
 
     let pillar = pillar_world_with(pillar_table);
-    let mut rig = if attrs {
-        attr_rig_on(rig.device, rig.queue, &pillar, None)
+    let mut rig = if let Some(q) = quant {
+        attr_rig_quant(rig.device, rig.queue, &pillar, None, q)
     } else {
         LookRig::on(rig.device, rig.queue, &pillar, None)
     };
@@ -125,9 +148,13 @@ fn metrics_of(mode: NormalMode, detail: bool, attrs: bool) -> Option<(f64, usize
     let mask = rig.render(&cam, &LightParams::at_eye(), look(ViewMode::HitMask));
     let silhouette = pillar_silhouette_error(&mask, &cam);
     println!(
-        "{}{}: cavity normal error {normal_error:.2} degrees, pillar silhouette error {silhouette} pixels",
+        "{}{}{}: cavity normal error {normal_error:.2} degrees, pillar silhouette error {silhouette} pixels",
         mode.name(),
-        if detail { " + detail" } else { "" }
+        if detail { " + detail" } else { "" },
+        match quant {
+            Some(q) if q != AttribQuant::None => format!(" at {}", q.name()),
+            _ => String::new(),
+        }
     );
     Some((normal_error, silhouette))
 }
@@ -624,5 +651,40 @@ fn every_mode_with_and_without_detail() {
     // Detail moves no hit: each mode's silhouette is the same with and without it.
     for pair in rows.chunks(2) {
         assert_eq!(pair[0].2.1, pair[1].2.1, "{}", pair[0].0.name());
+    }
+}
+
+/// The footprint candidates' look metrics: contour with its attributes at each emulated
+/// precision. `none` is the full attribute; `code8` and `block2` are the lossy candidates,
+/// which still cut the face silhouette error. Read the table with `--no-capture`.
+#[test]
+fn contour_metrics_at_each_attribute_precision() {
+    let Some((_, face_silhouette)) = metrics(NormalMode::Face) else {
+        return;
+    };
+    let mut rows = Vec::new();
+    for q in AttribQuant::ALL {
+        let (error, silhouette) = metrics_at(NormalMode::Contour, false, Some(q)).unwrap();
+        rows.push((q, error, silhouette));
+    }
+    println!("| precision | cavity normal error (degrees) | pillar silhouette error (px) |");
+    println!("|---|---|---|");
+    for (q, error, silhouette) in &rows {
+        println!("| {} | {error:.2} | {silhouette} |", q.name());
+    }
+    let (_, full_error, full_silhouette) = rows[0];
+    let full = metrics_with(NormalMode::Contour, true).unwrap();
+    assert_eq!(
+        (full_error, full_silhouette),
+        full,
+        "AttribQuant::None is the full attribute"
+    );
+    for (q, error, silhouette) in &rows[1..] {
+        assert!(
+            *silhouette < face_silhouette,
+            "{}: silhouette {silhouette} against face {face_silhouette}",
+            q.name()
+        );
+        assert!(error.is_finite(), "{}: {error}", q.name());
     }
 }

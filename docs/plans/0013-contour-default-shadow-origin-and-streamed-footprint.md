@@ -321,12 +321,45 @@ The baseline GPU is not on hand; every figure is a dev-reference reading and say
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The shadow ray leaves the plane | dev | done: offset 0.5 voxel along the plane normal kept; only-with-shadows specks contour 52 (347 with, 301 without) against face 174 (1179, 1017), llvmpipe 320 x 180; contour metrics 7.41 degrees, 32 px; `look_contour.png` reblessed on llvmpipe (24.34 % of pixels differ from `headlamp.png` by more than 8/255), other goldens unchanged; look tests pin rock to `SPIKE_ROCK_DETAIL` | 82b19b8 |
-| 2: The attribute pass keeps its buffers, and the shell path is tested | dev | done: `AttribPass` keeps its uniform, a work buffer (next power of two, at least 256 items) and its bind group; 46 items x 1000 then 2777 read `buffer_builds() == 2`, capacity 256 then 4096, attribute bytes equal to a fresh mirror's pass; the shell test failed on its first state (east absent read `NO_PLANE`) until the chunk table was created filled with `ABSENT`; arrival and eviction halves pass with `attr_work` unchanged | committed with this row |
-| 3: The footprint census and the candidates | dev | not started | |
-| 4: The owner's footprint call | human | not started | |
+| 2: The attribute pass keeps its buffers, and the shell path is tested | dev | done: `AttribPass` keeps its uniform, a work buffer (next power of two, at least 256 items) and its bind group; 46 items x 1000 then 2777 read `buffer_builds() == 2`, capacity 256 then 4096, attribute bytes equal to a fresh mirror's pass; the shell test failed on its first state (east absent read `NO_PLANE`) until the chunk table was created filled with `ABSENT`; arrival and eviction halves pass with `attr_work` unchanged | 9ffa2a5 |
+| 3: The footprint census and the candidates | dev | done: `world_budget --stream R_FULL,R_LOD --surface`, `--residency`, `--attrib-quant`, `AttribQuant` (`None` writes the full attribute: layout and floor tests unchanged, contour metrics 7.41 degrees, 32 px); at 16,24 the census reads 1 640 292 bricks, x 1040 = 1 705 903 680 B against the 1 705 903 808 B rise (-0.000 %); table below | committed with this row |
+| 4: The owner's footprint call | human | awaits the owner | |
 | 5: The chosen footprint | dev | not started | |
 | 6: Rock detail on screen | human | not started | |
 | 7: Contour plus detail as the default, and the streamed readings | dev | not started | |
+
+### Footprint candidates (Phase 3)
+
+Census: `world_budget --stream R,24 --surface --seed 1` (this phase's commit), unbounded
+cave seed 1, CPU only. At 16,24: 17 077 full chunks, 1 640 292 `Full` bricks, 57 703 350 plane
+voxels (35.2 per brick, 6.87 % of their voxels), 20 123 752 of 104 978 688 2 x 2 x 2 blocks
+holding one (19.17 %); bricks by plane voxels: 0..31 44.12 %, 32..63 37.58 %, 64..95 18.29 %,
+96..127 175 bricks, 128..159 2 bricks. At 12,24: 682 400 bricks, 23 899 197 plane voxels;
+at 14,24: 1 109 349 bricks, 39 015 306. The face mirror at each residency is the census
+formula's (at 16,24 it equals Plan 0002's 1 603 820 012 B; 12,24: 1 253 834 532 B;
+14,24: 1 409 664 492 B). Metrics: contour on llvmpipe, 320 x 180,
+`contour_metrics_at_each_attribute_precision`.
+
+| row | attribute B live | mirror B live | allocated x 1.44 (guess) | allocated x 1.93 (guess) | cavity normal error (deg) | pillar silhouette error (px) | added per-hit work |
+|---|---|---|---|---|---|---|---|
+| current, 16,24 | 1 705 903 680 | 3 309 723 692 | 4.77 GB | 6.38 GB | 7.41 | 32 | none |
+| A, 16,24 | 220 385 388 | 1 824 205 400 | 2.63 GB | 3.52 GB | 7.41 | 32 | a popcount over the brick's mask prefix |
+| B, 16,24 | 852 951 840 | 2 456 771 852 | 3.54 GB | 4.74 GB | 14.71 | 40 | none |
+| C, 16,24 | 209 957 376 | 1 813 777 388 | 2.61 GB | 3.50 GB | 5.50 | 44 | none |
+| D, 12,24 | 709 696 000 | 1 963 530 532 | 2.83 GB | 3.79 GB | 7.41 | 32 | none |
+| D, 14,24 | 1 153 722 960 | 2 563 387 452 | 3.69 GB | 4.94 GB | 7.41 | 32 | none |
+| A at 14,24 | 149 028 948 | 1 558 693 440 | 2.24 GB | 3.01 GB | 7.41 | 32 | as A |
+| C at 14,24 | 141 996 672 | 1 551 661 164 | 2.23 GB | 2.99 GB | 5.50 | 44 | none |
+| A at 12,24 | 91 471 994 | 1 345 306 526 | 1.94 GB | 2.59 GB | 7.41 | 32 | as A |
+| C at 12,24 | 87 347 200 | 1 341 181 732 | 1.93 GB | 2.59 GB | 5.50 | 44 | none |
+
+D at 12,24 measured, current layout: `flythrough --autopilot --headless --look contour
+--residency 12,24 --seed 1`, NVIDIA GeForce RTX 3080 Laptop GPU, exclusive lock, 1-minute
+load 12.29 before and 14.88 after. Full residency 7 153 full and 50 624 LOD-only chunks,
+1 963 530 660 B live, 2 789 252 524 B allocated; flight peak 2 128 118 260 B live,
+4 103 413 164 B allocated; `return: 2 chunks, hash match`, no wgpu error. The x 1.93 column
+is that run's peak allocated over peak live (1.928), applied to every row; the x 1.44 column is
+the plan's face-mode ratio. Both are guesses for A, B and C, whose layouts are not built.
 
 ### Notes
 
@@ -343,6 +376,12 @@ each. Empty is fine.)_
   `queue`; at most one encoded pass per `queue.submit` (documented on `encode`).
 - Phase 2: the bind group is also rebuilt when the record or table buffer is replaced (they
   are bound too), and `GpuWorld` drops it when it replaces a shard or the record buffer.
+- Phase 3: `GpuWorld::set_attrib_quant` added in `crates/vxe-render/src/gpu_world.rs`, which
+  Phase 3's Files touched does not name.
+- Phase 3: the table has four combination rows (A and C at 14,24 and 12,24) because no row at
+  16,24 is under 3.0 GB in the x 1.93 column; at x 1.44, A, C and D at 12,24 are.
+- Phase 3: D at 12,24 measured 4 103 413 164 B peak allocated under motion against its
+  2.83 GB guess (the same allocated figure as Plan 0005's 16,24 run at its out-of-memory stop).
 
 ### Close triggers
 

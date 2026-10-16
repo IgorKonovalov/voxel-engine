@@ -6,7 +6,7 @@
 //!
 //! `flythrough [--seed N] [--level] [--render WxH] [--frames N] [--bench N] [--autopilot]
 //! [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH] [--view VIEW]
-//! [--detail]`. `--render` fixes the marcher's resolution (the window
+//! [--detail] [--residency R_FULL,R_LOD] [--attrib-quant Q]`. `--render` fixes the marcher's resolution (the window
 //! scales it); `--frames` exits after N frames, printing the `F1` readings over the last
 //! ones; `--bench` runs the `B` bench N times right after the first mirror upload, before
 //! the first frame; `--autopilot` digs, flies 300 m out and back and prints the streaming
@@ -16,7 +16,9 @@
 //! attribute pages, so `N` can reach `contour` (without `--look` it skips it), and gives rock
 //! its procedural detail (`--rock-detail` sets rock's feature scale in voxels and strength,
 //! default `flythrough::ROCK_DETAIL`); `--view` starts in a view (`shaded`, `normals`, `hitmask`) and
-//! `--detail` with detail on. `N` cycles the normal mode and `V` toggles detail.
+//! `--detail` with detail on. `--residency` sets the streamed radii (default
+//! `flythrough::RESIDENCY`); `--attrib-quant` (`none`, `code8`, `block2`, under `--look`)
+//! writes contour attributes at an emulated smaller precision. `N` cycles the normal mode and `V` toggles detail.
 
 mod fly;
 
@@ -29,6 +31,7 @@ use fly::Fly;
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK};
 use flythrough::{RESIDENCY, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
+use vxe_render::attrib::AttribQuant;
 use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::{
@@ -38,7 +41,7 @@ use vxe_render::{
 use vxe_world::hash::mix64;
 use vxe_world::{
     ChunkCoord, ChunkExtent, EditError, EditOp, EditResult, FIXED_ONE, Fixed3, MaterialId,
-    MaterialTable, Mode, PersistConfig, StreamConfig, Streamer, Tier, VoxelCoord, World,
+    MaterialTable, Mode, PersistConfig, Residency, StreamConfig, Streamer, Tier, VoxelCoord, World,
 };
 
 /// Reach of the dig and fill rays: 10 m.
@@ -99,6 +102,10 @@ struct Args {
     /// `--rock-detail`: rock's feature scale (voxels) and strength under `--look`.
     rock_detail: [f32; 2],
     view: ViewMode,
+    /// `--residency`: the streamed full and LOD radii in chunks (hysteresis 1).
+    residency: Residency,
+    /// `--attrib-quant`: an emulated attribute precision, for comparing footprints.
+    attrib_quant: AttribQuant,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -115,6 +122,8 @@ fn parse_args() -> Result<Args, String> {
         detail: false,
         rock_detail: flythrough::ROCK_DETAIL,
         view: ViewMode::Shaded,
+        residency: RESIDENCY,
+        attrib_quant: AttribQuant::None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -149,6 +158,29 @@ fn parse_args() -> Result<Args, String> {
                 args.view = ViewMode::from_name(&v)
                     .ok_or(format!("--view takes shaded, normals or hitmask, not {v}"))?;
             }
+            "--residency" => {
+                let v = value()?;
+                let err = || format!("--residency takes R_FULL,R_LOD (e.g. 16,24), not {v}");
+                let (f, l) = v.split_once(',').ok_or_else(err)?;
+                let [r_full, r_lod] = [f, l].map(|s| s.trim().parse::<i32>().ok());
+                let (Some(r_full), Some(r_lod)) = (r_full, r_lod) else {
+                    return Err(err());
+                };
+                if !(1 <= r_full && r_full <= r_lod) {
+                    return Err(err());
+                }
+                args.residency = Residency {
+                    r_full,
+                    r_lod,
+                    ..RESIDENCY
+                };
+            }
+            "--attrib-quant" => {
+                let v = value()?;
+                args.attrib_quant = AttribQuant::from_name(&v).ok_or(format!(
+                    "--attrib-quant takes none, code8 or block2, not {v}"
+                ))?;
+            }
             "--level" => args.level = true,
             "--detail" => args.detail = true,
             "--autopilot" => args.autopilot = true,
@@ -158,6 +190,9 @@ fn parse_args() -> Result<Args, String> {
     }
     if args.rock_detail != flythrough::ROCK_DETAIL && args.look.is_none() {
         return Err("--rock-detail applies under --look".to_owned());
+    }
+    if args.attrib_quant != AttribQuant::None && args.look.is_none() {
+        return Err("--attrib-quant applies under --look".to_owned());
     }
     if args.autopilot && args.level {
         return Err("--autopilot streams; it does not take --level".to_owned());
@@ -612,7 +647,7 @@ impl Run {
         let mut marcher = Marcher::new(&gpu.device, w, h);
         let mirror = if self.stream.is_some() {
             marcher.set_lod(LodParams {
-                r_full: RESIDENCY.r_full,
+                r_full: self.args.residency.r_full,
                 forced_level: None,
             });
             self.init_stream(gpu)
@@ -655,7 +690,9 @@ impl Run {
     /// A mirror under `cfg`, with attribute pages when `--look` was given.
     fn new_mirror(&self, gpu: &Gpu, cfg: MirrorConfig) -> GpuWorld {
         if self.args.look.is_some() {
-            GpuWorld::with_surface_attrs(&gpu.device, cfg)
+            let mut mirror = GpuWorld::with_surface_attrs(&gpu.device, cfg);
+            mirror.set_attrib_quant(self.args.attrib_quant);
+            mirror
         } else {
             GpuWorld::with_config(&gpu.device, cfg)
         }
@@ -669,7 +706,7 @@ impl Run {
             MirrorConfig {
                 sync_budget_bytes: self.args.sync_budget,
                 ..MirrorConfig::new(Window::Follow {
-                    side: flythrough::window_side(RESIDENCY),
+                    side: flythrough::window_side(self.args.residency),
                 })
             },
         );
@@ -893,7 +930,7 @@ impl Run {
         else {
             return;
         };
-        let r = RESIDENCY;
+        let r = self.args.residency;
         println!(
             "autopilot: unready-near frames {} of {} (chunks wanted full within {} of the camera's)",
             p.unready_frames,
@@ -1177,7 +1214,7 @@ impl App for Flythrough {
                 origin: self.camera.position,
                 touched: Vec::new(),
                 hash: 0,
-                near: ball((RESIDENCY.r_full - 2).pow(2)),
+                near: ball((self.args.residency.r_full - 2).pow(2)),
                 flight_frames: 0,
                 unready_frames: 0,
                 gpu_ms: Vec::new(),
@@ -1370,7 +1407,7 @@ fn main() {
         let mut streamer = Streamer::new(
             Arc::new(source),
             StreamConfig {
-                residency: RESIDENCY,
+                residency: args.residency,
                 workers,
                 persist: PersistConfig::default(),
             },
@@ -1379,10 +1416,10 @@ fn main() {
         streamer.update(&world, &[source.spawn()]);
         println!(
             "streaming seed {seed}: r_full {}, r_lod {}, h {}, {workers} workers, window {}",
-            RESIDENCY.r_full,
-            RESIDENCY.r_lod,
-            RESIDENCY.hysteresis,
-            flythrough::window_side(RESIDENCY)
+            args.residency.r_full,
+            args.residency.r_lod,
+            args.residency.hysteresis,
+            flythrough::window_side(args.residency)
         );
         (
             source.spawn(),

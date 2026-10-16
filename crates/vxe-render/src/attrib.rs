@@ -25,7 +25,49 @@ struct Params {
     window_size: [i32; 3],
     items: u32,
     groups_x: u32,
-    _pad: [u32; 3],
+    quant: u32,
+    _pad: [u32; 2],
+}
+
+/// An emulated attribute precision, written into the full layout so the marcher reads it
+/// unchanged: for comparing footprint candidates, not for shipping.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AttribQuant {
+    /// The full attribute: 6 + 6-bit octahedral normal and a 4-bit offset code.
+    #[default]
+    None,
+    /// An 8-bit code: a 3 + 3-bit octahedral normal and a 2-bit offset of `-3/8`, `-1/8`,
+    /// `1/8` or `3/8` voxel.
+    Code8,
+    /// One plane per 2 x 2 x 2 block: every solid voxel of a block that holds a plane takes
+    /// the block's plane (the normalised sum of its voxels' normals, at the mean of their
+    /// offsets from the block centre); a block with none reads no plane.
+    Block2,
+}
+
+impl AttribQuant {
+    pub const ALL: [Self; 3] = [Self::None, Self::Code8, Self::Block2];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Code8 => "code8",
+            Self::Block2 => "block2",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|q| q.name() == s)
+    }
+
+    /// The value of `attrib.wgsl`'s `params.quant`.
+    fn code(self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::Code8 => 1,
+            Self::Block2 => 2,
+        }
+    }
 }
 
 /// The buffers of the mirror the pass binds.
@@ -51,6 +93,7 @@ pub struct AttribPass {
     /// table); rebuilt when the work buffer or one of those is replaced.
     bind: Option<(wgpu::BindGroup, [wgpu::Buffer; 6])>,
     builds: u32,
+    quant: AttribQuant,
 }
 
 /// Fewest items a work buffer holds.
@@ -113,6 +156,7 @@ impl AttribPass {
             work: None,
             bind: None,
             builds: 0,
+            quant: AttribQuant::None,
         }
     }
 
@@ -120,6 +164,11 @@ impl AttribPass {
     /// the last.
     pub fn buffer_builds(&self) -> u32 {
         self.builds
+    }
+
+    /// Sets the precision the next passes write.
+    pub fn set_quant(&mut self, quant: AttribQuant) {
+        self.quant = quant;
     }
 
     /// Drops the bind group, and with it the mirror buffers it holds; the next `encode`
@@ -160,7 +209,8 @@ impl AttribPass {
             window_size: b.window.1,
             items: groups,
             groups_x,
-            _pad: [0; 3],
+            quant: self.quant.code(),
+            _pad: [0; 2],
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&params));
         if self.work_capacity() < items.len() {

@@ -494,6 +494,14 @@ impl GpuWorld {
         m
     }
 
+    /// Sets the precision the attribute pass writes from now on; for comparing footprint
+    /// candidates. No effect without attribute pages. Attributes already written keep theirs.
+    pub fn set_attrib_quant(&mut self, quant: crate::attrib::AttribQuant) {
+        if let Some(pass) = &mut self.attrib {
+            pass.set_quant(quant);
+        }
+    }
+
     /// Whether the mirror holds attribute pages.
     pub fn surface_attrs(&self) -> bool {
         self.surface_attrs
