@@ -16,7 +16,6 @@ state from `git log`. Completed plans move to `done/`.
 | [0009](0009-support-query-and-collapse-ops.md) | A support query on the coarse grid, and deterministic drop and rubble ops for collapse | approved | M8's collapse half; prerequisite Plan 0004 closed, otherwise independent. Paired with ADR-0008. |
 | [0010](0010-stats-hud-bitmap-font-overlay.md) | A toggleable stats HUD: a bitmap-font text grid and a frame-time strip drawn as one overlay pass | approved | M7's overlay, amended 2026-10-16 to copy `PassTimer` and `FrameStats` from Ritmolux; independent of every plan. Paired with ADR-0009. |
 | [0011](0011-wasm-host-for-the-logic-component.md) | A WebAssembly host for the logic component, proven by native-versus-component equality | approved | M5's scripting half, new crate `vxe-script-wasm`; prerequisite Plan 0007 closed. Paired with ADR-0010. |
-| [0012](0012-comment-hygiene-and-index-row-gates.md) | Two repository gates copied from Ritmolux: comment hygiene in sources, and a byte cap on index rows | approved | Tooling, no milestone; independent of every plan, touches `ci.yml` and both index READMEs. No ADR. |
 | [0013](0013-contour-default-shadow-origin-and-streamed-footprint.md) | Contour as the fly-through's default: the shadow-ray origin, a streamed footprint under 3 GB, and a weaker rock detail | approved | M2 surface follow-up to ADR-0011; two `human` phases. The footprint pick gets its own ADR. |
 | [0014](0014-edit-cost-brick-array-pool-and-cheaper-spans.md) | Edit cost under 2 ms, second pass: the allocation measured, a brick-array pool, cheaper sphere spans and an analytic capsule row | approved | The `nfr.md` §4 edit figure, 3.56 ms quiet at Plan 0003's close; prerequisites met. No ADR. |
 <!-- roster:end -->
@@ -26,6 +25,7 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0012](done/0012-comment-hygiene-and-index-row-gates.md) | Two repository gates copied from Ritmolux: comment hygiene in sources, and a byte cap on index rows | 2026-10-17, no version bump |
 | [0004](done/0004-cylinder-sweeps-character-controller-and-coarse-grid.md) | Cylinder sweeps, a character controller, and a per-brick coarse grid with change notifications | 2026-10-17, v0.5.0 |
 | [0003](done/0003-edit-cost-span-fills-and-per-op-tables.md) | Edit cost under 2 ms: row spans, a per-op target table and per-brick tallies | 2026-10-17, v0.4.1 |
 | [0005](done/0005-surface-look-spike.md) | The surface-look spike: smoothed normals, per-voxel contour planes and procedural detail, measured on screen | 2026-10-16, v0.4.0 |

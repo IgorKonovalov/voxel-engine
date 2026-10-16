@@ -1,6 +1,6 @@
 # 0012: Two repository gates copied from Ritmolux: comment hygiene in sources, and a byte cap on index rows
 
-> **Status:** in-progress (2026-10-17)
+> **Status:** done (2026-10-17): the two gates bite their fixtures and pass the merged tree; no version bump, CI tooling only
 > **Created:** 2026-10-16
 > **Milestone:** none; repository tooling, not an engine slice. It serves the `CLAUDE.md` rule that a rule which keeps getting broken gets a mechanical gate.
 > **Related ADRs:** none. The alternative to a gate is the prose that already states each rule in `CLAUDE.md`; the reasoning behind both gates is recorded in Ritmolux as its ADR-0127 (comment hygiene) and ADR-0116 (index-row cap) and is not restated here.
@@ -229,3 +229,38 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 ## Followups
 
 - The panic-denial pragma and its guard test, once `vxe-audio` exists on `main`.
+- Run the comment-hygiene fixture in CI, or give `check-comment-hygiene.mjs` a `--self-test`
+  like the index-row gate's. Today CI runs it over the repository only, so a detector that
+  stops matching goes green in CI; only the manual fixture run (13 findings expected) shows it.
+- Copied prose that still credits `check-doc-links.mjs` with a convention it lacks:
+  `scripts/check-comment-hygiene.mjs` line 39 says the optional `root` argument follows
+  `check-doc-links.mjs`, and `scripts/fixtures/README.md` says the gates in `scripts/` take one;
+  `check-doc-links.mjs` takes no argument. Restate when either file is next touched.
+
+## Close
+
+Closed 2026-10-17 with no version bump after a fresh-session review and one fix pass; the
+fresh-session recheck of the fix pass found both findings fixed and nothing new to send back.
+
+**Recheck of the fix pass** (`71eb1be` against `f3879fe`, read past the merge of `main` at
+`ae20447`): 6d15c90 restates the six `vxe-sim` comments the review named, plus the other
+top-view `plan` uses, as `horizontal` or `xy`, with no `hygiene-allow` escape; the one surviving
+`Plan 0004` in `tests/support/mod.rs` is a bare citation. b0beee9 drops the four false copied
+claims (`check-doc-links.mjs` skipping `scripts/fixtures`, its success line, the push-time
+window) and the fixture's `check-doc-links.mjs` convention line, and the green fixture now says
+four properties, matching its four sections. Two lesser copied claims of the same kind remain
+(followup 3); they are prose, not behaviour, and do not hold the close.
+
+**Gates at the close** (the close's working tree on 71eb1be): `check-comment-hygiene.mjs` 0
+(67 tracked sources, 0 escapes) and 1 with 13 findings on `scripts/fixtures/comment-hygiene`;
+`check-index-rows.mjs` 0; `check-index-rows.mjs --self-test` 0, 9 of 9; `check-doc-links.mjs` 0.
+The cargo gate is the fix pass's on b0beee9 (Close triggers); the close touches no source.
+
+### Decisions recorded at the close
+
+The owner was away. The orchestrating session took these under the owner's standing "go with
+your recommendations", following the review; the owner can overturn either.
+
+1. **No version bump.** The plan ships CI tooling and comment rewording; no public API or
+   behaviour changes, so `Cargo.toml` stays at 0.5.0.
+2. **An `[Unreleased]` CHANGELOG line** records the plan, to ride with the next versioned close.
