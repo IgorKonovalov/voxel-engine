@@ -351,7 +351,7 @@ component and pass `Host` across the boundary as imports.
 |---|---|---|---|
 | 1: OpLog, InputLog, wire encoding, replay | dev | done | d77ef85; op-log FNV-1a 64 of the vector (1446 bytes) blessed on Linux x86_64 as `0x5ac8_737d_db0f_ccec` |
 | 2: Server, shared client, direct submission | dev | done | 5a93da9 |
-| 3: The logic boundary and re-simulation | dev | blocked | committed with this row; every done-when but Interleaving (see Notes) |
+| 3: The logic boundary and re-simulation | dev | blocked | 2c32389; every done-when but Interleaving (see Notes) |
 | 4: Owned client and desync detection | dev | not started | stopped at the Phase 3 block |
 | 5: Save, replay, fly-through on the split | dev | not started | stopped at the Phase 3 block |
 | 6: Readings | dev | not started | stopped at the Phase 3 block |
@@ -372,3 +372,13 @@ component and pass `Host` across the boundary as imports.
 - Phase 3: `Server::resimulate(world, logic, seed, &InputLog) -> OpLog` has the signature of the bullet that introduces it (no op log), and runs ticks 0 through the last input entry's tick; the logs carry no tick count, so a logic that acts in later ticks with no input is not reproduced past that point.
 - Phase 3: `EchoLogic` broadcasts one outcome byte per input (1 applied, 2 refused, 3 undecodable), empty in a tick without inputs; the refused-apply test reads the `2` from that broadcast to show the logic received the `Err`. `SeededLogic` starts from `seed ^ 0x9e37_79b9_7f4a_7c15` (xorshift64 13/7/17 sticks at 0) and draws each axis as `state % 234 - 117`.
 - Phase 3: `Server::tick` drains the endpoints before applying the submitted ops and hands both to one internal step that `resimulate` shares; the order of everything that touches the world or the logs is the one Phase 2 names.
+- Phases 1 to 3: `Cargo.lock` changed with the new `vxe-net` member (no new external crate).
+
+### Close triggers
+
+- **What shipped:** Phases 1 and 2 whole; Phase 3 without the Interleaving done-when; Phases 4 to 6 not started (stopped at the Phase 3 block). `vxe-world`: `wire` module, `OpLog`, `InputLog`, `LogFile`, `World::replay`. New crate `vxe-net`: `Channel`, `MemChannel`, `Endpoint`, `Message`, `Logic`, `Host`, `NoLogic`, `Server` (`submit`, `attach`, `tick`, `resimulate`), `Client::shared`.
+- **Public API changed:** additions only, listed above; no existing item changed.
+- **Determinism:** the vector's ops through an encoded and decoded log replay to `0x2b6b_6a0d_1f9b_8d75`; the encoded op log (24 entries, ticks 0 to 23, 1446 bytes) hashes to `0x5ac8_737d_db0f_ccec`, blessed on Linux x86_64 at d77ef85. Not yet run on the Windows arm.
+- **Budget readings:** none; Phase 6 not reached.
+- **Gate at 2c32389:** `cargo build --workspace --all-targets` 0; `cargo fmt --all --check` 0; `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo test --workspace --doc` 0; `cargo nextest run --workspace` 0, 194 passed, 1 skipped (exclusive lock, NVIDIA GeForce RTX 3080 Laptop GPU per `nvidia-smi -L`); `cargo deny check` 0 (advisories, bans, licenses, sources ok); `check-doc-links.mjs` 0, 89 links; `check-comment-hygiene.mjs` 0, 78 tracked sources, 0 escapes; `check-index-rows.mjs` 0; `check-index-rows.mjs --self-test` 0, 9 of 9; hook bite tests 0, 59 of 59.
+- **Outstanding:** the Phase 3 design call above, then Phases 3 (Interleaving), 4, 5 and 6.
