@@ -1,7 +1,7 @@
 //! A text overlay drawn over a finished frame (ADR-0009): rows of ASCII bytes laid out as a
-//! grid of 8 x 8 glyph cells at an integer scale, alpha-blended onto the target by one
-//! fullscreen fragment pass. The overlay knows nothing of what the rows say; the application
-//! formats them.
+//! grid of 8 x 8 glyph cells at an integer scale, and a strip of bars for recent samples (such
+//! as frame times), alpha-blended onto the target by one fullscreen fragment pass. The
+//! overlay knows nothing of what the rows or samples say; the application supplies them.
 //!
 //! The cell grid is laid out at its cap, [`GRID_COLS`] x [`GRID_ROWS`] cells, with a fixed row
 //! stride of [`GRID_COLS`]; the part a target shows is `ceil(width / (8 scale))` x
@@ -18,6 +18,14 @@ pub const GRID_COLS: u32 = 256;
 pub const GRID_ROWS: u32 = 128;
 /// Bytes of the cell buffer: one `u32` per cell at the cap (128 KiB).
 pub const CELL_BYTES: u64 = (GRID_COLS * GRID_ROWS * 4) as u64;
+/// The most samples the strip holds.
+pub const MAX_SAMPLES: usize = 256;
+/// The strip's height in glyph pixels: `64 scale` target pixels.
+pub const STRIP_PX: u32 = 64;
+/// The frame time the strip's red line marks when its ceiling is above it: one 60 Hz frame.
+pub const LINE_MS: f32 = 1000.0 / 60.0;
+/// `Params::line_px` for no line.
+const NO_LINE: u32 = u32::MAX;
 
 /// The colour of a row of text.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -33,13 +41,17 @@ pub enum HudColour {
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 struct Params {
     scale: u32,
-    _pad: [u32; 3],
+    sample_count: u32,
+    ceiling_ms: f32,
+    line_px: u32,
 }
 
 pub struct HudOverlay {
     pipeline: wgpu::RenderPipeline,
     bind: wgpu::BindGroup,
+    params: wgpu::Buffer,
     cells: wgpu::Buffer,
+    samples: wgpu::Buffer,
     scale: u32,
     /// Rows of cells the last `set_text` wrote; the next one clears any it does not reuse.
     rows: u32,
@@ -81,6 +93,7 @@ impl HudOverlay {
                 },
                 storage(1),
                 storage(2),
+                storage(3),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -135,12 +148,20 @@ impl HudOverlay {
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             Some(bytemuck::bytes_of(&Params {
                 scale,
-                ..Params::default()
+                sample_count: 0,
+                ceiling_ms: 1.0,
+                line_px: NO_LINE,
             })),
         );
         let cells = buffer(
             "hud cells",
             CELL_BYTES,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            None,
+        );
+        let samples = buffer(
+            "hud samples",
+            (MAX_SAMPLES * size_of::<f32>()) as u64,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             None,
         );
@@ -166,12 +187,18 @@ impl HudOverlay {
                     binding: 2,
                     resource: font.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: samples.as_entire_binding(),
+                },
             ],
         });
         Self {
             pipeline,
             bind,
+            params,
             cells,
+            samples,
             scale,
             rows: 0,
             staging: Vec::new(),
@@ -213,6 +240,30 @@ impl HudOverlay {
             queue.write_buffer(&self.cells, 0, bytemuck::cast_slice(&self.staging));
         }
         self.rows = n;
+    }
+
+    /// Replaces the strip with `samples`, oldest first; past [`MAX_SAMPLES`] only the last
+    /// ones are kept. A sample of `ceiling_ms` fills the strip's height and larger ones clamp;
+    /// when `ceiling_ms` is above [`LINE_MS`] a one-pixel red line marks that height. An empty
+    /// slice or a `ceiling_ms` that is not above zero hides the strip.
+    pub fn set_samples(&mut self, queue: &wgpu::Queue, samples: &[f32], ceiling_ms: f32) {
+        let samples = &samples[samples.len().saturating_sub(MAX_SAMPLES)..];
+        let shown = ceiling_ms > 0.0 && ceiling_ms.is_finite();
+        let strip_px = STRIP_PX * self.scale;
+        let params = Params {
+            scale: self.scale,
+            sample_count: if shown { samples.len() as u32 } else { 0 },
+            ceiling_ms: if shown { ceiling_ms } else { 1.0 },
+            line_px: if shown && ceiling_ms > LINE_MS {
+                ((LINE_MS / ceiling_ms * strip_px as f32).round() as u32).min(strip_px - 1)
+            } else {
+                NO_LINE
+            },
+        };
+        if !samples.is_empty() {
+            queue.write_buffer(&self.samples, 0, bytemuck::cast_slice(samples));
+        }
+        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
     }
 
     /// Records the overlay onto `view`, a `width` x `height` target, into `encoder`; what the

@@ -1,6 +1,6 @@
 # 0010: A toggleable stats HUD: a bitmap-font text grid and a frame-time strip drawn as one overlay pass
 
-> **Status:** in-progress
+> **Status:** in-progress (blocked at Phase 2; see Notes)
 > **Created:** 2026-10-16
 > **Milestone:** M7 in `docs/roadmap.md` (tooling; the profiler overlay half, brought forward)
 > **Related ADRs:** [ADR-0009](../adrs/0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) (no UI library), ADR-0001 (stack)
@@ -232,7 +232,51 @@ Buffers: cells 128 KiB at the cap, font 760 bytes, samples 1 KiB, params 64 byte
 
 | Phase | Owner | Status | Notes |
 |---|---|---|---|
-| 1: The overlay pass and the font | dev | done | `HudOverlay` (`hud.rs`, `hud.wgsl`), `font8x8.rs` from `font8x8_basic.h`; lavapipe (llvmpipe, LLVM 22.1.8): `A` at scale 2 has 28 set bits, 112 white pixels, 33 shadow pixels, every pixel at `x >= 17` the clear colour; `present.wgsl`, `march.wgsl`, `present.rs` unchanged and Plan 0001's goldens pass; gate: 175 tests run, 175 passed, 1 skipped. Commit: committed with this row |
-| 2: The frame-time strip and the pass timer | dev | not started | |
+| 1: The overlay pass and the font | dev | done | `HudOverlay` (`hud.rs`, `hud.wgsl`), `font8x8.rs` from `font8x8_basic.h`; lavapipe (llvmpipe, LLVM 22.1.8): `A` at scale 2 has 28 set bits, 112 white pixels, 33 shadow pixels, every pixel at `x >= 17` the clear colour; `present.wgsl`, `march.wgsl`, `present.rs` unchanged and Plan 0001's goldens pass; gate: 175 tests run, 175 passed, 1 skipped. Commit: 04fffd5 |
+| 2: The frame-time strip and the pass timer | dev | blocked: the 1.5 to 1.7 ms band | `set_samples` and the strip; lavapipe: samples `[0, 16, 32, 64]`, ceiling 32, scale 1 give columns of 0, 32, 64, 64 white pixels and the red line 33 rows above the strip's bottom row in columns 0 and 1. `PassTimer` in `marcher.rs`, `MarchTimer` a type alias. March GPU, `flythrough --headless --seed 1 --render 1920x1080 --frames 300`, median of the last 30, three runs each, RTX 3080 Laptop GPU, exclusive lock: before (04fffd5) 6.684 / 7.100 / 6.683 ms, after 6.779 / 6.787 / 6.797 ms; with `--level` added, before 1.712 / 1.753 / 1.714 ms, after 1.753 / 1.720 / 1.707 ms. HUD pass (`hud_pass_reading_at_1080p`, ignored test, release): 1920 x 1080, 24 rows x 100 characters, 240 samples, scale 2, median of 300: 0.0573 / 0.0573 / 0.0573 ms. Gate: 177 tests run, 177 passed, 2 skipped. Commit: committed with this row |
 | 3: Stats in the fly-through and the toggle | dev | not started | |
 | 4: The golden with the HUD on | dev | not started | |
+
+### Notes
+
+- **Block (Phase 2):** the done-when names "the march reading at the spawn pose (`--seed 1
+  --render 1920x1080 --frames 300`) on the dev box stays within the 1.5 to 1.7 ms band of
+  `nfr.md` §2". That command now streams the unbounded cave (the default mode since Plan 0002)
+  and reads 6.68 to 7.10 ms before the refactor and 6.78 to 6.80 ms after it; with `--level`
+  it reads 1.71 to 1.75 ms before and 1.71 to 1.75 ms after. Neither is inside 1.5 to 1.7 at
+  the commit before the refactor, so the done-when cannot be met as stated by any change in
+  this plan. The 1.59 ms of `nfr.md` §2 is the Plan 0001 reading; `nfr.md` also records 1.95
+  ms (Plan 0002) and 1.826 to 1.859 ms (Plan 0005) for the bounded level's spawn. Options:
+  (a) restate the done-when as before/after equality within noise on a named command
+  (`--level`, readings above), (b) restate the band to the current `--level` reading, (c)
+  keep the band and treat it as a march regression to diagnose outside this plan. Phases 3
+  and 4 are not started.
+- Deviation, 04fffd5: the cell buffer always has the cap layout (256 columns stride x 128
+  rows); the visible `ceil(width / 8 scale)` x `ceil(height / 8 scale)` cells are the ones the
+  target's pixels reach. `set_text` takes no size, so it cannot size the grid to the target.
+- Deviation, 04fffd5: `encode` passes the target height to the shader as the draw's first
+  instance (`instance_index`), because `encode` takes no queue to write a uniform.
+- Deviation, 04fffd5: `HudOverlay::set_rows` and `HudColour` added beside `set_text`, for the
+  per-row colour of "Risks & open questions"; `encode_timed` added beside `encode` for the
+  HUD's `PassTimer`.
+- Deviation, 04fffd5: `hud.wgsl`'s naga validation is a unit test in `hud.rs`;
+  `tests/shader_portability.rs` (outside Files touched) does not list `hud.wgsl`.
+- Deviation, this row's commit: `PassTimer` keeps a two-timestamp query set (the done-when)
+  rather than Ritmolux's fixed set of index pairs; the march and the HUD each own one.
+  `MarchTimer::new` now takes the queue and returns `Option`; the fly-through's two call sites
+  follow.
+- Deviation, this row's commit: the HUD reading is an ignored test in `tests/hud.rs` run by
+  hand, not a fly-through run (the fly-through draws no HUD until Phase 3).
+- Deviation, this row's commit: `crates/vxe-render/src/lib.rs` (outside Phase 2's Files
+  touched) re-exports `PassTimer`.
+- The red line is drawn where no bar covers it; the strip has no backdrop.
+
+### Close triggers
+
+- Stopped at Phase 2 on the block above. Gate at the tip: `cargo build`, `cargo nextest run
+  --workspace` (177 run, 177 passed, 2 skipped), `cargo test --workspace --doc`, `cargo clippy
+  --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`, `cargo deny check`,
+  hook bite tests, `check-doc-links.mjs`: all exit 0.
+- Readings: Phase 2 row; NVIDIA GeForce RTX 3080 Laptop GPU, Ryzen 9 5900HS, headless,
+  every GPU command and timing under the exclusive perf lock; the 1-minute load average read
+  6 to 25 during the readings (other lanes building).

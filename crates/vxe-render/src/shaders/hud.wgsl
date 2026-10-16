@@ -8,23 +8,32 @@
 //                        bits 0..8 the ASCII byte (below 32 is blank), bits 8..16 the colour
 //   2  storage  font     95 glyphs x 8 row bytes packed little-endian into 190 u32s;
 //                        bit 0 of a row byte is the glyph's leftmost pixel
+//   3  storage  samples  up to 256 f32 strip samples, oldest first
 //
 // The draw's first instance carries the target's height in pixels (see `vs_main`).
 //
-// A set glyph bit is opaque in its cell's colour. Where none lands, a pixel whose
-// up-left neighbour (-1, -1) is a set bit is the shadow: black at alpha 0.75. Everything
-// else is transparent.
+// A set glyph bit is opaque in its cell's colour. Otherwise, inside the strip, a sample's
+// bar is opaque white and the line row is opaque red where no bar covers it. Otherwise a
+// pixel whose up-left neighbour (-1, -1) is a set glyph bit is the shadow: black at alpha
+// 0.75. Everything else is transparent.
+//
+// The strip: sample i is column i, `scale` pixels wide, from the left edge. Its bottom row
+// sits directly above the last text row of the target (8 scale pixels up from the bottom
+// edge) and it is 64 scale pixels tall. A sample of `ceiling_ms` fills the height; larger
+// ones clamp. The bar of sample s is round(min(s / ceiling_ms, 1) * 64 scale) pixels tall.
 
 struct Params {
     scale: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
+    sample_count: u32,
+    ceiling_ms: f32,
+    // Pixel rows above the strip's bottom row of the red line; NONE for no line.
+    line_px: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> cells: array<u32>;
 @group(0) @binding(2) var<storage, read> font: array<u32, 190>;
+@group(0) @binding(3) var<storage, read> samples: array<f32, 256>;
 
 const GRID_COLS: u32 = 256u;
 const GRID_ROWS: u32 = 128u;
@@ -77,6 +86,31 @@ fn text_at(q: vec2<u32>) -> u32 {
     return (cell >> 8u) & 0xffu;
 }
 
+// The strip's colour at `q` on a target `height` pixels tall: 0 white (a bar), 2 red (the
+// line), or NONE outside the strip or where neither is.
+fn strip_at(q: vec2<u32>, height: u32) -> u32 {
+    let s = params.scale;
+    let strip_px = 64u * s;
+    let bottom = 8u * s;
+    if height < bottom + strip_px || q.x >= params.sample_count * s {
+        return NONE;
+    }
+    let base = height - bottom; // the first pixel row below the strip
+    if q.y >= base || q.y < base - strip_px {
+        return NONE;
+    }
+    let up = base - 1u - q.y; // 0 on the strip's bottom row
+    let v = clamp(samples[q.x / s] / params.ceiling_ms, 0.0, 1.0);
+    let bar = u32(floor(v * f32(strip_px) + 0.5));
+    if up < bar {
+        return 0u;
+    }
+    if up == params.line_px {
+        return 2u;
+    }
+    return NONE;
+}
+
 // 0 white, 1 yellow, 2 red; anything else white.
 fn palette(c: u32) -> vec3<f32> {
     switch c {
@@ -92,6 +126,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let lit = text_at(q);
     if lit != NONE {
         return vec4<f32>(palette(lit), 1.0);
+    }
+    let bar = strip_at(q, in.height);
+    if bar != NONE {
+        return vec4<f32>(palette(bar), 1.0);
     }
     if q.x >= 1u && q.y >= 1u && text_at(q - vec2<u32>(1u, 1u)) != NONE {
         return vec4<f32>(0.0, 0.0, 0.0, SHADOW_ALPHA);

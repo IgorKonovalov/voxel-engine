@@ -19,7 +19,7 @@ pub use camera::Camera;
 pub use gpu_world::{GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncStats, Window};
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
-pub use marcher::{LodParams, LookParams, MarchTimer, Marcher, NormalMode, ViewMode};
+pub use marcher::{LodParams, LookParams, MarchTimer, Marcher, NormalMode, PassTimer, ViewMode};
 pub use present::Presenter;
 pub use {glam, wgpu};
 

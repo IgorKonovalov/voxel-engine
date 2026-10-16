@@ -171,3 +171,144 @@ fn fewer_rows_clear_the_old_ones() {
     let white = img.chunks(4).filter(|p| p[..3] == WHITE).count();
     assert_eq!(white, bits as usize);
 }
+
+const RED: [u8; 3] = [255, 64, 64];
+
+/// Samples `[0, c/2, c, 2c]` at scale 1 with `c = 32 ms`: bars of 0, 32, 64 and 64 white
+/// pixels in columns 0 to 3, and the red line at `round(64 * (1000 / 60) / 32) = 33` rows
+/// above the strip's bottom row wherever no bar covers it (columns 0 and 1).
+#[test]
+fn strip_bars_scale_with_the_ceiling_and_clamp() {
+    let Some((device, queue)) = software_device() else {
+        return;
+    };
+    let (w, h) = (16, 80);
+    let c = 32.0;
+    let mut hud = HudOverlay::new(&device, wgpu::TextureFormat::Rgba8Unorm, 1);
+    hud.set_samples(&queue, &[0.0, c / 2.0, c, 2.0 * c], c);
+    let img = draw(
+        &device,
+        &queue,
+        &hud,
+        &cleared_target(&device, &queue, w, h),
+    );
+    let px = |x: u32, y: u32| &img[((y * w + x) * 4) as usize..][..4];
+
+    // The strip's bottom row sits above the last text row: y = 80 - 8 - 1 = 71.
+    let bottom = h - 8 - 1;
+    let line_y = bottom - 33;
+    for (x, want) in [0u32, 32, 64, 64].into_iter().enumerate() {
+        let x = x as u32;
+        let white: Vec<u32> = (0..h).filter(|&y| px(x, y)[..3] == WHITE).collect();
+        assert_eq!(white.len(), want as usize, "column {x}");
+        // The bar is contiguous from the strip's bottom row up.
+        assert!(white.iter().all(|&y| y <= bottom && y > bottom - want));
+        let red: Vec<u32> = (0..h).filter(|&y| px(x, y)[..3] == RED).collect();
+        if want <= 33 {
+            assert_eq!(red, [line_y], "column {x}: the red line row");
+        } else {
+            assert!(red.is_empty(), "column {x}: the bar covers the line");
+        }
+    }
+    // Nothing else is drawn.
+    for y in 0..h {
+        for x in 4..w {
+            assert_eq!(px(x, y), CLEAR, "pixel ({x}, {y})");
+        }
+    }
+    for x in 0..4 {
+        for y in 0..h {
+            let p = px(x, y);
+            assert!(
+                p[..3] == WHITE || p[..3] == RED || p == CLEAR,
+                "pixel ({x}, {y}) is {p:?}"
+            );
+        }
+    }
+}
+
+/// A ceiling at or below one 60 Hz frame draws no line, and an empty slice hides the strip.
+#[test]
+fn no_line_at_a_low_ceiling_and_no_strip_without_samples() {
+    let Some((device, queue)) = software_device() else {
+        return;
+    };
+    let (w, h) = (8, 80);
+    let mut hud = HudOverlay::new(&device, wgpu::TextureFormat::Rgba8Unorm, 1);
+    hud.set_samples(&queue, &[8.0], 16.0);
+    let img = draw(
+        &device,
+        &queue,
+        &hud,
+        &cleared_target(&device, &queue, w, h),
+    );
+    assert_eq!(img.chunks(4).filter(|p| p[..3] == WHITE).count(), 32);
+    assert_eq!(img.chunks(4).filter(|p| p[..3] == RED).count(), 0);
+    hud.set_samples(&queue, &[], 16.0);
+    let img = draw(
+        &device,
+        &queue,
+        &hud,
+        &cleared_target(&device, &queue, w, h),
+    );
+    assert!(img.chunks(4).all(|p| p == CLEAR));
+}
+
+/// The HUD pass's GPU time at 1920 x 1080: 24 rows of 100 characters and 240 samples, scale
+/// 2, on the high-performance adapter with timestamp queries; median of 300 frames. A reading,
+/// not a check: run with `--ignored` on the machine being measured.
+#[test]
+#[ignore = "a GPU timing reading; run by hand with --ignored"]
+fn hud_pass_reading_at_1080p() {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        ..Default::default()
+    }))
+    .expect("an adapter");
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
+        ..Default::default()
+    }))
+    .expect("a device");
+    let Some(timer) = vxe_render::PassTimer::new(&device, &queue) else {
+        println!(
+            "skipped: {} has no TIMESTAMP_QUERY",
+            adapter.get_info().name
+        );
+        return;
+    };
+    let (w, h) = (1920, 1080);
+    let target = cleared_target(&device, &queue, w, h);
+    let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+    let mut hud = HudOverlay::new(&device, wgpu::TextureFormat::Rgba8Unorm, 2);
+    let rows: Vec<Vec<u8>> = (0..24)
+        .map(|r| {
+            (0..100)
+                .map(|c| b' ' + 1 + ((r * 7 + c) % 94) as u8)
+                .collect()
+        })
+        .collect();
+    let rows: Vec<&[u8]> = rows.iter().map(Vec::as_slice).collect();
+    let samples: Vec<f32> = (0..240).map(|i| (i % 40) as f32).collect();
+    let mut ms = Vec::new();
+    for _ in 0..300 {
+        hud.set_text(&queue, &rows);
+        hud.set_samples(&queue, &samples, 33.3);
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        hud.encode_timed(&mut enc, &view, w, h, Some(timer.render_writes()));
+        timer.resolve(&mut enc);
+        queue.submit([enc.finish()]);
+        ms.push(timer.read_ms(&device, &queue));
+    }
+    ms.sort_by(f64::total_cmp);
+    println!(
+        "hud pass on {} at {w}x{h}, 24 rows x 100 chars, 240 samples, scale 2: median {:.4} ms, \
+         p99 {:.4} ms, max {:.4} ms over {} frames",
+        adapter.get_info().name,
+        ms[ms.len() / 2],
+        ms[ms.len() * 99 / 100],
+        ms[ms.len() - 1],
+        ms.len()
+    );
+}

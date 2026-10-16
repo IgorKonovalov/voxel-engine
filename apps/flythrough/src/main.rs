@@ -729,14 +729,12 @@ impl Run {
 
     fn init(&mut self, gpu: &Gpu) {
         let [w, h] = self.args.render.unwrap_or(gpu.size);
-        let timer = gpu
-            .device
-            .features()
-            .contains(wgpu::Features::TIMESTAMP_QUERY)
-            .then(|| MarchTimer::new(&gpu.device));
+        let timer = MarchTimer::new(&gpu.device, &gpu.queue);
         println!("device ready after {:.0} ms", ms_since(self.start));
-        let attr_timer =
-            (self.args.look.is_some() && timer.is_some()).then(|| MarchTimer::new(&gpu.device));
+        let attr_timer = self
+            .args
+            .look
+            .and_then(|_| MarchTimer::new(&gpu.device, &gpu.queue));
         let mut marcher = Marcher::new(&gpu.device, w, h);
         let mirror = if self.stream.is_some() {
             marcher.set_lod(LodParams {
