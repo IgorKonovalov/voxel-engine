@@ -144,6 +144,11 @@ unbounded cave seed 1, r_full 16, r_lod 24, h 1, 15 workers, RTX 3080 Laptop GPU
   (`B` key, carves into an already dug cave, 1d61aba): 3.07 to 4.63 ms over about 20 runs.
   Both miss the 2 ms budget; the budget stands (owner's call at the Plan 0001 close) and the
   edit cost gets its own plan after Plan 0002.
+  **Reading (dev reference, AMD Ryzen 9 5900HS, Plan 0003, 96afb82):** the same `worst` case
+  reads 3.656 ms (CI 3.641 to 3.672 ms) with the dev box under outside load (load average
+  about 10), against 4.548 to 4.641 ms for the Plan 0001 edit path run alternately in the same
+  window; the fly-through `B` line (`--level --seed 1`) reads 3.33 to 3.41 ms against 4.42 to
+  4.46 ms. It misses the 2 ms budget; the budget stands, pending the Plan 0003 close.
 - **Results** are returned synchronously with the edit, per material, exact.
 - **Determinism:** the same op list on the same seed yields bit-identical voxels and results on
   Linux and Windows. CI asserts a fixed vector's hash on both arms. **Asserted:**

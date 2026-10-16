@@ -292,8 +292,8 @@ dev box projects to about 3 ms there. That projection is a guess until the basel
 | 1: The breakdown and the oracle | dev | done | `55abca6` |
 | 2: The per-op target table | dev | done | `81fce28` |
 | 3: Row spans | dev | done | `d399ee8` |
-| 4: Per-brick tallies and one collapse | dev | done | committed with this row |
-| 5: Readings against the figure | dev | not started | |
+| 4: Per-brick tallies and one collapse | dev | done | `96afb82` |
+| 5: Readings against the figure | dev | done; `worst` reads 2.0 ms or more, plan stops at the figure | committed with this row |
 
 ### Notes
 
@@ -330,13 +330,29 @@ dev box projects to about 3 ms there. That projection is a guess until the basel
   of another session at about 90% of one core each, load average about 5), so absolute
   readings moved by up to 30% between runs of the same binary; phase-to-phase comparisons
   are paired runs of both binaries alternated under one exclusive lock.
+- Phase 5, unmet done-when: `worst` reads 3.656 ms at the tip, not under 2.0 ms. Per the
+  done-when the breakdown at the tip is recorded below and the figure is not widened.
+- Phase 5: `tool` at the tip reads the same as the Plan 0001 path in the paired run (8.266 /
+  8.204 against 8.255 / 8.229 ms); the Phase 3 tree's quiet-box run read 6.455 ms. A capsule
+  row with no inside centre still scans its whole window with the capsule test.
+- Phase 5: with `GLIBC_TUNABLES=glibc.malloc.trim_threshold=4000000000:glibc.malloc.top_pad=268435456`
+  (heap never returned to the kernel between iterations) the tip's `worst` reads 3.639 / 3.631
+  ms against 3.693 / 3.769 ms without, run alternately; diagnostic only, not a reading.
+- Phase 5: `apps/flythrough/src/main.rs` is unchanged (the `B` line already prints edit CPU
+  and sync bytes).
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
+- **What shipped:** `TargetTable` (per-op target lookup), `Shape::row_span` with row spans
+  solved once per brick row (`RowCache`) and written as slices, `CapsuleRow`, a per-op
+  `Tally` indexed by material id with per-run counts and per-brick bounds; the oracle test
+  `apply_matches_the_reference_over_seeded_ops`, `ids_beyond_the_table_are_counted_like_the_reference`,
+  `tests/shapes.rs` (1000-row span property test, sphere boundary test), the `worst`, `mixed`
+  and `tool` bench cases; the `nfr.md` §4 Plan 0003 reading.
+- **Public API changed:** `Shape::voxel_bounds` and `Shape::contains` from `pub(crate)` to
+  `pub` (Phase 1); new `pub fn Shape::row_span` (Phase 3). No other public type changed.
 - **Budget readings:** (all `cargo bench -p vxe-world --bench edits`, AMD Ryzen 9 5900HS dev
   box, release bench profile, taken under the exclusive perf lock; mean, CI in brackets)
   - Phase 1, edit path of `486ea9c` (the Plan 0001 path as amended by Plan 0002): `worst`
@@ -356,8 +372,36 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     1 / round 2: Phase 3 `worst` 4.131 [4.121, 4.141] / 4.176 [4.166, 4.188], `mixed` 2.950 /
     2.950, `tool` 8.532 / 8.617 ms; Phase 4 tree `worst` 3.585 [3.580, 3.590] / 3.641 [3.628,
     3.660], `mixed` 2.618 / 2.658, `tool` 8.176 / 8.243 ms. Load average 5 during the runs.
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+  - Phase 5, tip (`96afb82` tree), `cargo bench -p vxe-world --bench edits`: `worst` 3.656 ms
+    [3.641, 3.672]; `mixed` 2.670 ms [2.661, 2.680]; `tool` 8.265 ms [8.235, 8.309]; load
+    average 10 to 14 from other sessions.
+  - Phase 5, tip paired with the Plan 0001 edit path (`55abca6` tree), alternated twice,
+    round 1 / round 2: Plan 0001 path `worst` 4.641 [4.621, 4.664] / 4.548 [4.531, 4.567],
+    `mixed` 3.121 / 3.102, `tool` 8.255 / 8.229 ms; tip `worst` 3.778 [3.767, 3.789] / 3.774
+    [3.765, 3.784], `mixed` 2.652 / 2.656, `tool` 8.266 / 8.204 ms. Load average 8 to 10.
+  - Phase 5 breakdown of `worst` at the tip, the Phase 1 method (gdb sampling, SIGINT every
+    30 ms, release bench profile with debuginfo), 260 samples inside `World::apply`, first
+    `vxe_world` frame: `Brick::expand` 36.5% (35.0% in libc under `Box::new`, the allocation);
+    `write_rows` 22.3% plus `CarveBits::target` 6.9%; `Shape::row_span` 15.4% (`isqrt`
+    about 10%); `edit_brick` 8.1% (the span pre-pass); `RowCache::span` 3.8%; `World::apply`
+    2.7%; `Brick::collapse` 1.2%.
+  - Fly-through `B` bench, `flythrough --level --seed 1 --headless --bench 1 --frames 1`,
+    release, NVIDIA GeForce RTX 3080 Laptop GPU (`nvidia-smi -L`), three runs each,
+    alternated: Plan 0001 edit path (`55abca6` tree) edits 4.43 / 4.42 / 4.46 ms CPU; tip edits
+    3.33 / 3.41 / 3.34 ms CPU. Both: `carved: rock 340502, ore 126 (39 chunks)`, sync uploaded
+    1165320 B (2049 bricks, 39 chunks, 656 writes), sync 8.55 to 8.72 ms (one tip run
+    14.56 ms).
+  - Every reading above was taken under the exclusive perf lock; load outside the lock is as
+    stated per reading.- **Gate at the tip** (tree of the Phase 5 commit, `CARGO_BUILD_JOBS=3`): `cargo build
+  --workspace --all-targets` exit 0; `cargo clippy --workspace --all-targets -- -D warnings`
+  exit 0; `cargo fmt --all --check` exit 0; `cargo test --workspace --doc` exit 0 (1
+  doctest); `cargo nextest run --workspace` exit 0, 101 passed, 0 skipped (exclusive lock,
+  RTX 3080 Laptop GPU), including `apply_matches_the_reference_over_seeded_ops`,
+  `determinism_vector` (`0x2b6b_6a0d_1f9b_8d75`) and `raycast_hit_list_is_pinned`
+  (`0xa0f2_c477_8892_c8fb`), both constants unchanged; `cargo deny check` exit 0 (advisories,
+  bans, licenses, sources ok); `node scripts/check-doc-links.mjs` exit 0, 45 links.
+- **Outstanding `human` phases:** none. The `nfr.md` §4 figure (2 ms) is missed at the tip;
+  the plan stops there for the close to decide.
 
 ## Followups
 
