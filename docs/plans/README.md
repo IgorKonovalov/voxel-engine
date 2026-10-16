@@ -18,8 +18,8 @@ state from `git log`. Completed plans move to `done/`.
 | [0010](0010-stats-hud-bitmap-font-overlay.md) | A toggleable stats HUD: a bitmap-font text grid and a frame-time strip drawn as one overlay pass | approved | M7's overlay, amended 2026-10-16 to copy `PassTimer` and `FrameStats` from Ritmolux; independent of every plan. Paired with ADR-0009. |
 | [0011](0011-wasm-host-for-the-logic-component.md) | A WebAssembly host for the logic component, proven by native-versus-component equality | approved | M5's scripting half, new crate `vxe-script-wasm`; prerequisite Plan 0007 closed. Paired with ADR-0010. |
 | [0012](0012-comment-hygiene-and-index-row-gates.md) | Two repository gates copied from Ritmolux: comment hygiene in sources, and a byte cap on index rows | approved | Tooling, no milestone; independent of every plan, touches `ci.yml` and both index READMEs. No ADR. |
-| [0013](0013-contour-default-shadow-origin-and-streamed-footprint.md) | Contour as the fly-through's default: the shadow-ray origin, a streamed footprint under 3 GB, and a weaker rock detail | draft | M2 surface follow-up to ADR-0011; two `human` phases. The footprint pick gets its own ADR. |
-| [0014](0014-edit-cost-brick-array-pool-and-cheaper-spans.md) | Edit cost under 2 ms, second pass: the allocation measured, a brick-array pool, cheaper sphere spans and an analytic capsule row | draft | The §4 figure Plan 0003 missed; prerequisite Plan 0003 closed and `perf` on the dev box. No ADR. |
+| [0013](0013-contour-default-shadow-origin-and-streamed-footprint.md) | Contour as the fly-through's default: the shadow-ray origin, a streamed footprint under 3 GB, and a weaker rock detail | approved | M2 surface follow-up to ADR-0011; two `human` phases. The footprint pick gets its own ADR. |
+| [0014](0014-edit-cost-brick-array-pool-and-cheaper-spans.md) | Edit cost under 2 ms, second pass: the allocation measured, a brick-array pool, cheaper sphere spans and an analytic capsule row | approved | The §4 figure Plan 0003 missed; prerequisite Plan 0003 closed and `perf` on the dev box. No ADR. |
 
 ## Recently closed
 
