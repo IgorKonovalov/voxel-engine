@@ -20,5 +20,10 @@ vxe-app = { path = "../../crates/vxe-app" }
 vxe-audio = { path = "../../crates/vxe-audio" }
 
 [dev-dependencies]
+criterion.workspace = true
 png.workspace = true
 pollster.workspace = true
+
+[[bench]]
+name = "acoustics"
+harness = false

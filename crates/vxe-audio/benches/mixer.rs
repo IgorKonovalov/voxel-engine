@@ -1,21 +1,19 @@
-//! The audio budgets: one 256-frame mixer block with 32 HRTF voices, each low-passed and
-//! carrying 16 reflection taps; and one `Acoustics::update` probing 32 sources (7 occlusion
-//! rays each, 224, plus the listener's 16 reflection rays) in the fly-through's seed-1 level
-//! cave. Prints the audio RAM the mixer and the pack hold.
+//! The mixer budget: one 256-frame block with 32 HRTF voices, each low-passed and carrying 16
+//! reflection taps, with the listener still (every voice on one FIR pair) and turning (every
+//! voice crossfading between two FIR pairs, the worst case). Prints the audio RAM the mixer and
+//! the pack hold. The `Acoustics::update` budget is the fly-through's `acoustics` bench, which
+//! owns the cave it probes.
 
 use std::hint::black_box;
 
-use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
-use flythrough::cave_materials;
+use criterion::{Criterion, criterion_group, criterion_main};
 use vxe_audio::*;
-use vxe_world::{ChunkExtent, Material, MaterialTable, World};
 
 const MPV: f32 = 0.1;
 const SOURCES: usize = 32;
 
 /// 32 positions (voxel units) on three rings around `centre`, 2 to 12 m out, at different
-/// heights, so the voices take different HRTF directions and the probes different paths.
+/// heights, so the voices take different HRTF directions.
 fn sources(centre: [f32; 3]) -> Vec<[f32; 3]> {
     (0..SOURCES)
         .map(|i| {
@@ -48,10 +46,10 @@ fn noise() -> Sound {
     )
 }
 
-fn mixer_block(c: &mut Criterion) {
-    let hrtf = Hrtf::sadie2_d2();
-    let pack_bytes = hrtf.heap_bytes();
-    let mut mixer = Mixer::new(hrtf, MPV);
+/// A mixer at the origin with the 32 looping noise voices, each with 16 taps and a low-pass,
+/// rendered past the start so the delay lines are full and the gains and filters settled.
+fn loaded_mixer() -> Mixer {
+    let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
     let sound = noise();
     for (i, p) in sources([0.0; 3]).into_iter().enumerate() {
         let id = VoiceId(i as u32 + 1);
@@ -81,11 +79,16 @@ fn mixer_block(c: &mut Criterion) {
         ));
     }
     let mut out = vec![0.0f32; 2 * BLOCK];
-    // Past the start, with the delay lines full and the low-pass and gains settled.
     for _ in 0..200 {
         mixer.render(&mut out, BLOCK);
     }
     assert_eq!(mixer.voice_count(), SOURCES);
+    mixer
+}
+
+fn mixer_block(c: &mut Criterion) {
+    let mut mixer = loaded_mixer();
+    let pack_bytes = mixer.hrtf().map_or(0, |h| h.heap_bytes());
     // Every voice owns its history and a delay line of MAX_DELAY_FRAMES plus one block,
     // pooled for MAX_VOICES at construction.
     let delay_line = (MAX_DELAY_FRAMES + BLOCK) * 4;
@@ -94,6 +97,7 @@ fn mixer_block(c: &mut Criterion) {
          {MAX_VOICES}-voice pool",
         delay_line * MAX_VOICES
     );
+    let mut out = vec![0.0f32; 2 * BLOCK];
     c.bench_function(
         "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each",
         |b| {
@@ -105,60 +109,57 @@ fn mixer_block(c: &mut Criterion) {
     );
 }
 
-/// The cave's table with the fly-through's acoustic triple on every row but air.
-fn acoustic_table() -> MaterialTable {
-    let mut t = MaterialTable::new();
-    for row in cave_materials().rows().iter().skip(1) {
-        t.push(Material {
-            acoustic: [0.3, 0.5, 0.0],
-            ..row.clone()
-        });
+/// Yaw per block in the turning variant.
+const YAW_STEP_DEG: f32 = 90.0;
+
+/// The listener at the origin facing `yaw_deg` about +z.
+fn facing(yaw_deg: f32) -> Listener {
+    let (s, c) = yaw_deg.to_radians().sin_cos();
+    Listener {
+        forward: [c, s, 0.0],
+        ..Listener::default()
     }
-    t
 }
 
-fn acoustics_update(c: &mut Criterion) {
-    let source = CaveSource::new(1, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
-    let world = World::generate(source.extent, &source, &cave_materials());
-    let table = acoustic_table();
-    let spawn = source.spawn().0.map(|v| v as f32 + 0.5);
-    let listener = Listener {
-        position: spawn,
-        ..Listener::default()
-    };
-    let voices: Vec<(VoiceId, [f32; 3])> = sources(spawn)
-        .into_iter()
-        .enumerate()
-        .map(|(i, p)| (VoiceId(i as u32 + 1), p))
-        .collect();
-    let clock = Mixer::new(Hrtf::sadie2_d2(), MPV).clock();
-    // A fresh `Acoustics` each iteration has every voice due, so each call probes all 32.
-    let mut probe = Acoustics::new(clock.clone());
-    let mut sent = 0;
-    probe.update(&world, &table, &listener, &voices, MPV, &mut |_| sent += 1);
-    assert_eq!(probe.last_probed(), SOURCES);
-    assert_eq!(sent, SOURCES);
-    println!(
-        "acoustics: {} sources probed at the seed-1 level spawn, {} taps",
-        probe.last_probed(),
-        probe.active_taps()
-    );
+/// `p` in the frame of a listener at the origin facing `yaw_deg`: x front, y left, z up.
+fn local(p: [f32; 3], yaw_deg: f32) -> [f32; 3] {
+    let (s, c) = yaw_deg.to_radians().sin_cos();
+    let v = [p[0] * c + p[1] * s, -p[0] * s + p[1] * c, p[2]];
+    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    v.map(|x| x / len)
+}
+
+fn mixer_block_turning(c: &mut Criterion) {
+    let mut mixer = loaded_mixer();
+    // Each step of YAW_STEP_DEG moves every voice to another measured direction, so every
+    // block renders two FIR pairs per voice and crossfades them.
+    let hrtf = mixer.hrtf().cloned().expect("the HRTF mixer");
+    let steps = (360.0 / YAW_STEP_DEG) as usize;
+    for p in sources([0.0; 3]) {
+        for k in 0..steps {
+            let yaw = k as f32 * YAW_STEP_DEG;
+            assert_ne!(
+                hrtf.nearest(local(p, yaw)),
+                hrtf.nearest(local(p, yaw + YAW_STEP_DEG)),
+                "source {p:?} keeps its direction from yaw {yaw}"
+            );
+        }
+    }
+    let mut out = vec![0.0f32; 2 * BLOCK];
+    let mut k = 0usize;
     c.bench_function(
-        "acoustics: update of 32 sources (224 occlusion + 16 reflection rays), seed-1 level",
+        "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, \
+         listener turning (every voice crossfades)",
         |b| {
-            b.iter_batched(
-                || Acoustics::new(clock.clone()),
-                |mut a| {
-                    a.update(&world, &table, &listener, &voices, MPV, &mut |cmd| {
-                        black_box(cmd);
-                    });
-                    a
-                },
-                BatchSize::SmallInput,
-            )
+            b.iter(|| {
+                k = (k + 1) % steps;
+                mixer.apply(Command::SetListener(facing(k as f32 * YAW_STEP_DEG)));
+                mixer.render(&mut out, BLOCK);
+                black_box(&out);
+            })
         },
     );
 }
 
-criterion_group!(benches, mixer_block, acoustics_update);
+criterion_group!(benches, mixer_block, mixer_block_turning);
 criterion_main!(benches);
