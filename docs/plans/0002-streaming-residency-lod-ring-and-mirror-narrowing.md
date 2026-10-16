@@ -514,7 +514,7 @@ late is acceptable; a hole near the camera is not, and the unready-near counter 
 | 5: Brick pool sharded over four bindings | dev | done | 138b3bd |
 | 6: Chunk mips in `vxe-world` | dev | done | 8472735 |
 | 7: The LOD-only ring and the mip walk | dev | done | 2a3e43a |
-| 8: The fly-through streams; autopilot, sweep and readings | dev | done | committed with this row |
+| 8: The fly-through streams; autopilot, sweep and readings | dev | done | 05334d7 |
 
 ### Notes
 
@@ -650,8 +650,30 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
+- **What shipped:** in `vxe-world`, `Streamer` (two-tier sphere residency on a `std::thread`
+  pool, `update`/`poll`/`wait_idle`), edited-chunk persistence with spill files (`persist.rs`),
+  `ChunkMips` (`mips.rs`), a dirty-chunk set, and `World::apply` holding the store map's read
+  lock to its last write. In `vxe-render`, a windowed mirror (fixed or following), nearest-first
+  budgeted batched sync, 8-bit per-chunk palettes with a wide fallback, a pool sharded over up
+  to four bindings, LOD records and a mip-level walk in `march.wgsl`. In `apps/flythrough`,
+  the unbounded streaming cave by default (`--level` for the bounded one), `--autopilot`,
+  `--headless`, `--sync-budget`, `--bench`, and `world_budget --stream`. New golden:
+  `apps/flythrough/tests/golden/lod.png`. Root `Cargo.toml`: dev-profile `opt-level = 2` for
+  `vxe-world` and `flythrough`.
+- **Public API changed:** `vxe-world`: `World::new`, `World::{lod, insert_lod, remove_lod,
+  lod_coords, mips_hash}`, `World::extent` empty for a streamed world; `ChunkStore::{remove,
+  write_lock, mark_dirty, take_dirty, dirty_len}`, `StoreWriteGuard`; `Chunk::is_edited`;
+  `Streamer`, `StreamConfig`, `Residency`, `Tier`, `StreamEvents`, `StreamStats`,
+  `StreamError`; `PersistConfig`, `SpillError`, `encode_spill`, `decode_spill`,
+  `SPILL_VERSION`; `ChunkMips`, `majority`, `MIP_LEVELS`, `MIP_BRICKS`. `vxe-render`:
+  `GpuWorld::new(device, extent)` keeps its signature as the fixed-window constructor, and
+  gains `with_config`, `set_focus`, `apply_events`, `pool_shard` (replacing `pool`) and the
+  accessors listed in the Notes; `MirrorConfig`, `Window`, `ShardLayout`, `LodParams`,
+  `Marcher::set_lod`; `SyncStats` gains `chunks_visited`, `writes`, `pending_chunks`;
+  `SLOT_BYTES` replaces `BRICK_BYTES`; `Params` changes layout (window, shards, LOD). The
+  marcher binds three more storage buffers (7 to 9). `flythrough`: `CaveSource::unbounded`,
+  `CaveSource::bounded`, `UNBOUNDED_SPAWN`, `RESIDENCY`, `window_side`, `chunks_hash`,
+  `chunk_ram`, `mips_ram`, `percentile`.
 - **Budget readings:** (dev box: RTX 3080 Laptop GPU, Ryzen 9 5900HS, Hyprland, release
   build, unless stated)
   - Phase 3 commit, level-size bounded cave seed 1 (3200 chunks), first `sync`: 195 writes
@@ -702,8 +724,13 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   - Phase 8 commit, headless 1920 x 1080 from the spawn, median of the last 30 of 300 frames:
     bounded `--level` 1.953, 1.954, 1.956 ms (first sync 506 to 517 ms); streaming, at rest
     after full residency (1500 frames), 6.689 ms with 0.349 ms CPU per frame.
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **Gate at the tip (05334d7, dev box):** `cargo build` exit 0; `cargo nextest run --workspace`
+  exit 0, 92 tests run, 92 passed, 0 skipped (lavapipe present, goldens compared); `cargo test
+  --workspace --doc` exit 0 (1 doctest); `cargo clippy --workspace --all-targets -- -D
+  warnings` exit 0; `cargo fmt --all --check` exit 0; `cargo deny check` exit 0; `node
+  scripts/check-doc-links.mjs` exit 0 (34 links); `node --test ".claude/hooks/*.test.mjs"` 34
+  passed. Nothing pushed; the Windows CI arm has not run the new mips constant.
+- **Outstanding `human` phases:** none.
 
 ## Followups
 
