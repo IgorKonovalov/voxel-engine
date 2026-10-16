@@ -44,6 +44,7 @@ plan that implements them (see [`adrs/README.md`](adrs/README.md)).
 | Entities | voxel models (MagicaVoxel-style volumes) on rigs of rigid parts, traced in the same pipeline as the world | skinned triangle meshes with a hybrid rasterize + RT path; deciding later |
 | Repo | public GitHub, MIT OR Apache-2.0 | private; local only |
 | Harness | Ritmolux-style: ADRs, phased plans, architect/dev skills, deny hooks, CI gates | CLAUDE.md + ADRs only |
+| Surface look (added 2026-10-16) | smooth and natural rock, not visible cubes; the mechanism (per-voxel normal smoothing, per-voxel contour planes in the GPU mirror, or another) is chosen by measurement after M1, balancing image, frame cost and simplicity | a blocky aesthetic; committing to ESVO-style contours before anything is on screen |
 
 ## The first consumer's needs, mapped
 
@@ -179,6 +180,11 @@ layout.
   against A-SVGF's gradient test before the cheaper invalidation is kept.
 - A named fallback before the plan starts, in case 1 spp path tracing misses the baseline
   budget: voxel cone tracing over the mips we already own, or irradiance probes per chunk.
+- The smooth-surface spike: normal smoothing against per-voxel contour planes (ESVO's
+  contours without the octree, fitted from the generator's distance field, the carve's
+  analytic shape, or the 3 × 3 × 3 neighbourhood), compared on screen and by frame cost and
+  VRAM on surface voxels. Plan 0001's storage ADR leaves room for an optional per-voxel
+  attribute in the GPU mirror of non-uniform bricks so this spike changes no layout.
 - Exposure, tone mapping, and an upscaler. FSR 2 is MIT and cheap at 1080p but has no WGSL
   port; the port is plan-sized work, and a TAA upscaler of our own is the fallback.
 - **Headless proof:** irradiance in a closed test box matches an analytic value within a stated
