@@ -46,6 +46,60 @@ impl<F: Fn(VoxelCoord) -> MaterialId> WorldSource for FnSource<F> {
     }
 }
 
+/// A per-voxel closure standing in for the fly-through's cave (which `vxe-world` cannot depend
+/// on): each brick is air, rock (1) or mixed by a hash of its brick coordinate, and a mixed
+/// brick draws each voxel from air, 1 and 2 by a hash of the voxel. Chunks hold `Uniform` and
+/// `Full` bricks, and every value is a pure integer function of the voxel coordinate. Cheap
+/// enough per voxel for unoptimized test builds, unlike the cave's three noise octaves.
+pub fn cave_like_source() -> FnSource<impl Fn(VoxelCoord) -> MaterialId + Send + Sync + 'static> {
+    FnSource(
+        |v: VoxelCoord| match hash::hash3(0x5EED_CAFE, v.0.map(|c| c >> 3)) % 16 {
+            0..4 => AIR,
+            4..12 => 1,
+            _ => (hash::hash3(0x0EE0_0EE0, v.0) % 3) as MaterialId,
+        },
+    )
+}
+
+/// FNV-1a 64 over the chunks `coords` of `world` (each must be resident), in the given
+/// order, laid out as [`world_hash`] lays out every chunk.
+pub fn chunks_hash(world: &World, coords: &[ChunkCoord]) -> u64 {
+    let mut h = Fnv1a::default();
+    for c in coords {
+        for v in c.0 {
+            h.write(&v.to_le_bytes());
+        }
+        let chunk = world
+            .store()
+            .get(*c)
+            .unwrap_or_else(|| panic!("{c:?} resident"));
+        let chunk = chunk.read().unwrap();
+        for b in chunk.bricks() {
+            for i in 0..BRICK_VOXELS {
+                h.write(&b.get(i).to_le_bytes());
+            }
+        }
+    }
+    h.0
+}
+
+/// Chunk coordinates within squared distance `r2` of `centre`, ascending.
+pub fn ball(centre: [i32; 3], r2: i32) -> Vec<ChunkCoord> {
+    let r = (1..).find(|r| r * r > r2).unwrap();
+    let mut v = Vec::new();
+    for x in -r..=r {
+        for y in -r..=r {
+            for z in -r..=r {
+                if x * x + y * y + z * z <= r2 {
+                    v.push(ChunkCoord([centre[0] + x, centre[1] + y, centre[2] + z]));
+                }
+            }
+        }
+    }
+    v.sort_unstable();
+    v
+}
+
 /// FNV-1a 64 over the resident voxels: chunks ascending (coordinate as three little-endian
 /// `i32`), bricks in slot order, voxels x-fastest as little-endian `u16`. A `Uniform` brick
 /// hashes as its 512 expanded values, so representation never moves the hash.

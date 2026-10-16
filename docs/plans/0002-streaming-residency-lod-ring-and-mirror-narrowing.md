@@ -1,6 +1,6 @@
 # 0002: Streaming residency, an LOD-only ring, and a narrowed, sharded mirror
 
-> **Status:** approved (2026-10-16, amended at Plan 0001's close)
+> **Status:** in-progress
 > **Created:** 2026-10-16
 > **Milestone:** M1 in `docs/roadmap.md` (second of two plans; closes M1)
 > **Related ADRs:** [ADR-0003](../adrs/0003-sphere-residency-with-lod-ring-and-edit-persistence.md) (residency tiers, LOD-only ring, persistence, edit/eviction exclusion), [ADR-0004](../adrs/0004-palette-narrowed-sharded-brick-pool.md) (8-bit palette mirror, sharded pool), ADR-0002 (layout, access model), ADR-0001 (stack)
@@ -507,7 +507,7 @@ late is acceptable; a hole near the camera is not, and the unready-near counter 
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Streamer skeleton, full tier only | dev | not started | |
+| 1: Streamer skeleton, full tier only | dev | done | committed with this row |
 | 2: Edited-chunk persistence and disk spill | dev | not started | |
 | 3: Mirror window, dirty-chunk set, budgeted batched upload | dev | not started | |
 | 4: Per-chunk 8-bit palette, wide fallback | dev | not started | |
@@ -521,6 +521,15 @@ late is acceptable; a hole near the camera is not, and the unready-near counter 
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: the cave stand-in in `crates/vxe-world/tests/support` is a hash-per-brick and
+  hash-per-voxel closure (air, 1, 2), not value noise; a noise closure took 37 s for the
+  worker-count test in the unoptimized test build.
+- Phase 1: public additions beyond the data shapes: `ChunkStore::remove`,
+  `ChunkStore::write_lock` and `StoreWriteGuard` (insert, remove, get, contains), used by the
+  streamer and the lock tests.
+- Phase 1: an extra test, `the_store_write_lock_never_sees_half_an_op`, checks that `apply`
+  keeps the map lock through its writes; it fails when the lock is dropped before the writes.
 
 ### Close triggers
 

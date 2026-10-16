@@ -29,6 +29,7 @@ mod raycast;
 mod shape;
 mod source;
 mod store;
+mod stream;
 
 pub use brick::Brick;
 pub use chunk::Chunk;
@@ -43,4 +44,5 @@ pub use query::QueryStats;
 pub use raycast::{Face, Hit};
 pub use shape::Shape;
 pub use source::{UniformSource, WorldSource};
-pub use store::{ChunkStore, World, WorldStats};
+pub use store::{ChunkStore, StoreWriteGuard, World, WorldStats};
+pub use stream::{Residency, StreamConfig, StreamEvents, StreamStats, Streamer, Tier};

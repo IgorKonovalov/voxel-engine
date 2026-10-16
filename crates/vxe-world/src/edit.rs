@@ -5,7 +5,8 @@
 //! machine. An op first checks that every chunk holding a voxel centre inside the shape is
 //! resident and fails with the first missing coordinate (ascending order) before changing
 //! anything; then it writes each chunk in place under that chunk's write lock, in ascending
-//! coordinate order (ADR-0002).
+//! coordinate order (ADR-0002). The store map's read lock is held from before the check until
+//! after the last write, so a streamer cannot evict a chunk the op has checked (ADR-0003).
 
 use crate::brick::Brick;
 use crate::coords::index_in_brick;
@@ -192,10 +193,11 @@ impl World {
         let clo = lo.map(|v| v.div_euclid(edge));
         let chi = hi.map(|v| v.div_euclid(edge));
 
-        // Residency first: collect every chunk the shape may reach, ascending, or fail.
+        // Residency first: collect every chunk the shape may reach, ascending, or fail. The map
+        // guard lives to the end of the function: insertion and eviction wait for the op.
+        let map = read(&self.store.chunks);
         let mut chunks = Vec::new();
         {
-            let map = read(&self.store.chunks);
             for x in clo[0]..=chi[0] {
                 for y in clo[1]..=chi[1] {
                     for z in clo[2]..=chi[2] {
@@ -209,7 +211,7 @@ impl World {
                         }
                         let coord = ChunkCoord(to_i32(c));
                         match map.get(&coord) {
-                            Some(chunk) => chunks.push((coord, vlo, vhi, chunk.clone())),
+                            Some(chunk) => chunks.push((coord, vlo, vhi, chunk)),
                             None if reaches(&op.shape, vlo, vhi) => {
                                 return Err(EditError::NotResident(coord));
                             }
@@ -223,7 +225,7 @@ impl World {
         let mut tally = Tally::default();
         let mut touched = Vec::new();
         for (coord, vlo, vhi, chunk) in chunks {
-            let mut chunk = write(&chunk);
+            let mut chunk = write(chunk);
             let base = coord.min_voxel().0.map(i64::from);
             let be = i64::from(BRICK_EDGE);
             let blo = [0, 1, 2].map(|k| (vlo[k] - base[k]) / be);
@@ -255,6 +257,7 @@ impl World {
             }
         }
 
+        drop(map);
         tally.counts.sort_unstable();
         Ok(EditResult {
             changed_from: tally.counts,
