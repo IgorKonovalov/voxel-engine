@@ -24,7 +24,7 @@ use fly::Fly;
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK};
 use flythrough::{RESIDENCY, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
-use vxe_audio::{Listener, Mixer, Output, PlayParams, Sound};
+use vxe_audio::{Hrtf, Listener, Mixer, Output, PlayParams, Sound};
 use vxe_render::glam::Vec3;
 use vxe_render::{
     Camera, GpuWorld, LightParams, LodParams, MarchTimer, Marcher, MirrorConfig, Presenter, Window,
@@ -208,7 +208,15 @@ struct Audio {
 impl Audio {
     /// Opens the default device; prints why when it cannot.
     fn open() -> Option<Self> {
-        match Output::open(Mixer::new(METRES_PER_VOXEL)) {
+        let t = now();
+        let hrtf = Hrtf::sadie2_d2();
+        println!(
+            "audio: HRIR pack loaded in {:.1} ms ({} directions, {} taps)",
+            ms_since(t),
+            hrtf.len(),
+            hrtf.taps()
+        );
+        match Output::open(Mixer::new(hrtf, METRES_PER_VOXEL)) {
             Ok(output) => {
                 println!("audio: {}", output.device());
                 Some(Self {

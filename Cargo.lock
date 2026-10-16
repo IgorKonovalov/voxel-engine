@@ -1915,6 +1915,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sofar"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ba07a7507e4ff68a059effe66c2a4efffbb45092d4a6885ae1b989a41ef94cb"
+dependencies = [
+ "arrayvec",
+ "bitflags 2.13.2",
+ "log",
+ "miniz_oxide 0.9.1",
+ "thiserror 2.0.21",
+ "winnow",
+]
+
+[[package]]
 name = "spirv"
 version = "0.4.0+sdk-1.4.341.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2095,6 +2109,7 @@ name = "vxe-audio"
 version = "0.3.0"
 dependencies = [
  "cpal",
+ "sofar",
 ]
 
 [[package]]

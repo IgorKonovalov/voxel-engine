@@ -36,6 +36,9 @@ glam = { version = "=0.34.1", features = ["bytemuck"] }
 log = "=0.4.34"
 png = "=0.18.1"
 pollster = "=1.0.1"
+# The HRIR packer example reads SOFA with it (ADR-0006); a dev-dependency only, reading
+# needs neither its renderer nor its resampler.
+sofar = { version = "=0.4.0", default-features = false }
 # Engine crates other engine crates depend on. The exact version tracks
 # [workspace.package].version above; bump both together.
 vxe-audio = { path = "crates/vxe-audio", version = "=0.3.0" }

@@ -1,8 +1,11 @@
-//! Headless mixer renders: distance gain, panning, looping, ending, and no allocation per block.
+//! Headless mixer renders: distance gain, direction, looping, ending, and no allocation per
+//! block. Everything runs through the HRTF path except the hard-right panning check, which
+//! holds the constant-power panner to its 20 dB.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::f32::consts::{PI, SQRT_2};
+use std::sync::Arc;
 
 use vxe_audio::*;
 
@@ -68,10 +71,28 @@ fn tail_rms(out: &[f32]) -> [f32; 2] {
     })
 }
 
+/// The HRTF path's mixer over the shipped pack.
+fn mixer() -> Mixer {
+    Mixer::new(Hrtf::sadie2_d2(), MPV)
+}
+
+/// `|H(freq)|` of measurement `i`'s left and right impulse responses: the gain a steady tone
+/// of `freq` gets through them.
+fn gain_at(hrtf: &Arc<Hrtf>, i: usize, freq: f32) -> [f32; 2] {
+    hrtf.impulse(i).map(|h| {
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        for (n, &x) in h.iter().enumerate() {
+            let w = 2.0 * std::f64::consts::PI * f64::from(freq) * n as f64 / f64::from(RATE);
+            re += f64::from(x) * w.cos();
+            im -= f64::from(x) * w.sin();
+        }
+        re.hypot(im) as f32
+    })
+}
+
 /// 0.5 s of a 1 kHz tone of amplitude 0.5 at `position` (voxels), listener at the origin
 /// facing +x with +z up.
-fn render_at(position: [f32; 3]) -> [f32; 2] {
-    let mut m = Mixer::new(MPV);
+fn render_at(mut m: Mixer, position: [f32; 3]) -> [f32; 2] {
     m.apply(Command::Play(
         VoiceId(1),
         tone(1000.0, 0.5, FRAMES),
@@ -90,26 +111,53 @@ fn assert_within(actual: f32, expected: f32, rel: f32, what: &str) {
 }
 
 #[test]
-fn distance_gain_and_centre_pan() {
-    let centre = 0.5 / SQRT_2 * (1.0 / SQRT_2);
-    let one_m = render_at([10.0, 0.0, 0.0]);
+fn distance_gain_in_front() {
+    // The tone's RMS through the front measurement's two responses, read from the pack.
+    let hrtf = Hrtf::sadie2_d2();
+    let front = gain_at(&hrtf, hrtf.nearest([1.0, 0.0, 0.0]), 1000.0);
+    println!(
+        "front-direction gain at 1 kHz: left {}, right {}",
+        front[0], front[1]
+    );
+    let one_m = render_at(mixer(), [10.0, 0.0, 0.0]);
     for (c, rms) in one_m.iter().enumerate() {
-        assert_within(*rms, centre, 0.01, &format!("1 m, channel {c}"));
+        assert_within(
+            *rms,
+            0.5 / SQRT_2 * front[c],
+            0.01,
+            &format!("1 m, channel {c}"),
+        );
     }
-    let two_m = render_at([20.0, 0.0, 0.0]);
+    let two_m = render_at(mixer(), [20.0, 0.0, 0.0]);
     for (c, rms) in two_m.iter().enumerate() {
-        assert_within(*rms, centre / 2.0, 0.01, &format!("2 m, channel {c}"));
+        assert_within(
+            *rms,
+            0.5 / SQRT_2 * front[c] / 2.0,
+            0.01,
+            &format!("2 m, channel {c}"),
+        );
     }
-    let half_m = render_at([5.0, 0.0, 0.0]);
+    let half_m = render_at(mixer(), [5.0, 0.0, 0.0]);
     for (c, rms) in half_m.iter().enumerate() {
         assert_within(*rms, one_m[c], 0.01, &format!("0.5 m, channel {c}"));
     }
 }
 
 #[test]
-fn a_source_on_the_right_is_20_db_louder_on_the_right() {
+fn the_panner_at_centre_gives_each_channel_half_the_power() {
+    let centre = 0.5 / SQRT_2 * (1.0 / SQRT_2);
+    for (c, rms) in render_at(Mixer::panning(MPV), [10.0, 0.0, 0.0])
+        .iter()
+        .enumerate()
+    {
+        assert_within(*rms, centre, 0.01, &format!("panned 1 m, channel {c}"));
+    }
+}
+
+#[test]
+fn a_source_on_the_right_is_20_db_louder_on_the_right_when_panned() {
     // Facing +x with +z up, the listener's right is -y.
-    let [l, r] = render_at([0.0, -10.0, 0.0]);
+    let [l, r] = render_at(Mixer::panning(MPV), [0.0, -10.0, 0.0]);
     let db = 20.0 * (r / l.max(1e-12)).log10();
     assert!(db >= 20.0, "right over left {db} dB (left {l}, right {r})");
 }
@@ -132,7 +180,7 @@ fn a_looping_voice_wraps_without_a_discontinuity() {
     let short = tone(480.0, 0.5, 1000);
     let long = tone(480.0, 0.5, 48_000);
     let render = |sound: Sound, looping: bool| {
-        let mut m = Mixer::new(MPV);
+        let mut m = mixer();
         m.apply(Command::Play(
             VoiceId(7),
             sound,
@@ -160,7 +208,7 @@ fn a_looping_voice_wraps_without_a_discontinuity() {
 
 #[test]
 fn a_one_shot_voice_ends_and_reports_finished() {
-    let mut m = Mixer::new(MPV);
+    let mut m = mixer();
     m.apply(Command::Play(
         VoiceId(3),
         tone(480.0, 0.5, 1000),
@@ -173,13 +221,14 @@ fn a_one_shot_voice_ends_and_reports_finished() {
     assert_eq!(finished, [VoiceId(3)]);
     assert!(!m.is_playing(VoiceId(3)));
     assert_eq!(m.voice_count(), 0);
-    // Silence after the sound's 1000 samples.
-    assert!(out[2 * 1000..].iter().all(|&s| s == 0.0));
+    // Silence once the sound's 1000 samples have left the 128-tap filter.
+    let taps = Hrtf::sadie2_d2().taps();
+    assert!(out[2 * (1000 + taps - 1)..].iter().all(|&s| s == 0.0));
 }
 
 #[test]
 fn sixty_four_voices_render_a_block_without_allocating() {
-    let mut m = Mixer::new(MPV);
+    let mut m = mixer();
     let sound = tone(440.0, 0.1, 48_000);
     for i in 0..64u32 {
         let a = i as f32 * 0.1;

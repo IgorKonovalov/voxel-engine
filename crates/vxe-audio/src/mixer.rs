@@ -1,25 +1,43 @@
 //! The mixer: voices in, interleaved stereo out, one block at a time.
 //!
-//! Per voice and block: read the voice's mono samples, derive its per-channel gain from the
-//! listener (distance gain `1 / max(d, 1 m)`, constant-power pan on the listener's right axis),
-//! and add the samples into the output through a one-pole gain smoother of
-//! [`crate::SMOOTHING_SECONDS`]. Nothing here allocates after construction: the voice list and
-//! the scratch are sized once, a `Play` beyond [`MAX_VOICES`] is dropped.
+//! Per voice and block:
+//! 1. read the voice's mono samples;
+//! 2. scale them by the voice's gain times the distance gain `1 / max(d, 1 m)`, through a
+//!    one-pole smoother of [`crate::SMOOTHING_SECONDS`];
+//! 3. spatialise. On the HRTF path the samples run through the two 128-tap FIRs of the measured
+//!    direction nearest to the source (time-domain convolution over the voice's last `taps - 1`
+//!    inputs and this block). When the nearest direction changes between blocks, the block is
+//!    filtered with both the old and the new FIRs and crossfaded linearly from old to new over
+//!    the block, so the switch never steps. On the panning path a constant-power pan on the
+//!    listener's right axis is smoothed like the gain.
+//!
+//! Nothing here allocates after construction: the voice list, the scratch and every voice's
+//! buffers come from pools sized once for [`MAX_VOICES`]; a `Play` beyond it is dropped.
+
+use std::sync::Arc;
 
 use crate::command::Command;
-use crate::voice::{Voice, VoiceId};
+use crate::hrtf::Hrtf;
+use crate::voice::{Voice, VoiceBuffers, VoiceId};
 use crate::{BLOCK, Listener, RATE, SMOOTHING_SECONDS, cross, dot, length, normalize_or, sub};
 
 /// Voices the mixer holds at once.
-pub const MAX_VOICES: usize = 256;
+pub const MAX_VOICES: usize = 64;
 
 /// Mixes voices into interleaved stereo `f32` at [`RATE`].
 pub struct Mixer {
     voices: Vec<Voice>,
+    /// Buffers of voices not playing.
+    spare: Vec<VoiceBuffers>,
+    hrtf: Option<Arc<Hrtf>>,
     listener: Listener,
     metres_per_voxel: f32,
     /// One block of one voice's mono samples.
-    scratch: Vec<f32>,
+    dry: Vec<f32>,
+    /// The FIR input of one voice: its history, then this block, gained.
+    input: Vec<f32>,
+    /// The old and new FIR outputs of one voice for a crossfade, per ear.
+    wet: [[Vec<f32>; 2]; 2],
     /// Voices that ended since the last [`Mixer::drain_finished`].
     finished: Vec<VoiceId>,
     /// Per-sample step of the one-pole smoother.
@@ -27,13 +45,27 @@ pub struct Mixer {
 }
 
 impl Mixer {
-    /// A mixer for a world of `metres_per_voxel` (0.1 for 10 cm voxels).
-    pub fn new(metres_per_voxel: f32) -> Self {
+    /// A binaural mixer over `hrtf` for a world of `metres_per_voxel` (0.1 for 10 cm voxels).
+    pub fn new(hrtf: Arc<Hrtf>, metres_per_voxel: f32) -> Self {
+        Self::build(Some(hrtf), metres_per_voxel)
+    }
+
+    /// A mixer that pans with constant power instead of filtering through an HRTF.
+    pub fn panning(metres_per_voxel: f32) -> Self {
+        Self::build(None, metres_per_voxel)
+    }
+
+    fn build(hrtf: Option<Arc<Hrtf>>, metres_per_voxel: f32) -> Self {
+        let taps = hrtf.as_ref().map_or(1, |h| h.taps());
         Self {
             voices: Vec::with_capacity(MAX_VOICES),
+            spare: (0..MAX_VOICES).map(|_| VoiceBuffers::new(taps)).collect(),
+            hrtf,
             listener: Listener::default(),
             metres_per_voxel,
-            scratch: vec![0.0; BLOCK],
+            dry: vec![0.0; BLOCK],
+            input: vec![0.0; taps - 1 + BLOCK],
+            wet: std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; BLOCK])),
             finished: Vec::with_capacity(MAX_VOICES),
             smooth_k: 1.0 - (-1.0 / (SMOOTHING_SECONDS * RATE as f32)).exp(),
         }
@@ -41,6 +73,10 @@ impl Mixer {
 
     pub fn listener(&self) -> &Listener {
         &self.listener
+    }
+
+    pub fn hrtf(&self) -> Option<&Arc<Hrtf>> {
+        self.hrtf.as_ref()
     }
 
     /// Voices playing, finished ones excluded.
@@ -58,8 +94,10 @@ impl Mixer {
     pub fn apply(&mut self, cmd: Command) {
         match cmd {
             Command::Play(id, sound, params) => {
-                if self.voices.len() < MAX_VOICES && !self.is_playing(id) {
-                    self.voices.push(Voice::new(id, sound, params));
+                if !self.is_playing(id)
+                    && let Some(buffers) = self.spare.pop()
+                {
+                    self.voices.push(Voice::new(id, sound, params, buffers));
                 }
             }
             Command::SetPosition(id, p) => {
@@ -72,7 +110,12 @@ impl Mixer {
                     v.params.gain = g;
                 }
             }
-            Command::Stop(id) => self.voices.retain(|v| v.id != id),
+            Command::Stop(id) => {
+                if let Some(i) = self.voices.iter().position(|v| v.id == id) {
+                    let v = self.voices.swap_remove(i);
+                    self.spare.push(v.buffers);
+                }
+            }
             Command::SetListener(l) => self.listener = l,
         }
     }
@@ -103,51 +146,130 @@ impl Mixer {
     fn render_block(&mut self, out: &mut [f32]) {
         let n = out.len() / 2;
         let k = self.smooth_k;
-        let listener = self.listener;
-        let right = normalize_or(cross(listener.forward, listener.up), [0.0, -1.0, 0.0]);
-        let scratch = &mut self.scratch[..n];
+        let frame = ListenerFrame::new(&self.listener);
         for v in &mut self.voices {
-            v.read(scratch);
-            let target = channel_gains(&listener, right, self.metres_per_voxel, v);
+            let rel = frame.local(sub(v.params.position, self.listener.position));
+            let d = length(rel) * self.metres_per_voxel;
+            let target_gain = v.params.gain / d.max(1.0);
+            let dir = normalize_or(rel, [1.0, 0.0, 0.0]);
+            let dry = &mut self.dry[..n];
+            v.read(dry, self.hrtf.as_ref().map_or(0, |h| h.taps() - 1));
             if !v.started {
-                v.gain = target;
-                v.started = true;
+                v.gain = target_gain;
             }
-            let [mut gl, mut gr] = v.gain;
-            for (frame, &s) in out.chunks_exact_mut(2).zip(scratch.iter()) {
-                gl += (target[0] - gl) * k;
-                gr += (target[1] - gr) * k;
-                frame[0] += s * gl;
-                frame[1] += s * gr;
+            let mut g = v.gain;
+            for s in dry.iter_mut() {
+                g += (target_gain - g) * k;
+                *s *= g;
             }
-            v.gain = [gl, gr];
+            v.gain = g;
+            match &self.hrtf {
+                Some(hrtf) => {
+                    let to = hrtf.nearest(dir);
+                    if !v.started {
+                        v.dir = to;
+                    }
+                    let from = v.dir;
+                    v.dir = to;
+                    let taps = hrtf.taps();
+                    let input = &mut self.input[..taps - 1 + n];
+                    input[..taps - 1].copy_from_slice(&v.buffers.history);
+                    input[taps - 1..].copy_from_slice(dry);
+                    let [new, old] = &mut self.wet;
+                    for (ear, y) in new.iter_mut().enumerate() {
+                        convolve(input, hrtf.reversed(to, ear), &mut y[..n]);
+                    }
+                    if from == to {
+                        for (i, f) in out.chunks_exact_mut(2).enumerate() {
+                            f[0] += new[0][i];
+                            f[1] += new[1][i];
+                        }
+                    } else {
+                        for (ear, y) in old.iter_mut().enumerate() {
+                            convolve(input, hrtf.reversed(from, ear), &mut y[..n]);
+                        }
+                        for (i, f) in out.chunks_exact_mut(2).enumerate() {
+                            let w = (i + 1) as f32 / n as f32;
+                            f[0] += old[0][i] + (new[0][i] - old[0][i]) * w;
+                            f[1] += old[1][i] + (new[1][i] - old[1][i]) * w;
+                        }
+                    }
+                    v.buffers.history.copy_from_slice(&input[n..]);
+                }
+                None => {
+                    let target = pan_gains(dir, d);
+                    if !v.started {
+                        v.pan = target;
+                    }
+                    let [mut gl, mut gr] = v.pan;
+                    for (f, &s) in out.chunks_exact_mut(2).zip(dry.iter()) {
+                        gl += (target[0] - gl) * k;
+                        gr += (target[1] - gr) * k;
+                        f[0] += s * gl;
+                        f[1] += s * gr;
+                    }
+                    v.pan = [gl, gr];
+                }
+            }
+            v.started = true;
         }
-        let finished = &mut self.finished;
-        self.voices.retain(|v| {
-            if v.finished && finished.len() < finished.capacity() {
-                finished.push(v.id);
+        let mut i = 0;
+        while i < self.voices.len() {
+            if self.voices[i].finished {
+                let v = self.voices.swap_remove(i);
+                if self.finished.len() < self.finished.capacity() {
+                    self.finished.push(v.id);
+                }
+                self.spare.push(v.buffers);
+            } else {
+                i += 1;
             }
-            !v.finished
-        });
+        }
     }
 }
 
-/// Left and right gain of `v` heard by `listener`: its own gain, the distance gain and a
-/// constant-power pan (`cos`, `sin` of an angle from 0 at hard left to pi/2 at hard right).
-fn channel_gains(
-    listener: &Listener,
-    right: [f32; 3],
-    metres_per_voxel: f32,
-    v: &Voice,
-) -> [f32; 2] {
-    let rel = sub(v.params.position, listener.position);
-    let d = length(rel) * metres_per_voxel;
-    let g = v.params.gain / d.max(1.0);
-    let pan = if d > 1e-6 {
-        dot(normalize_or(rel, [0.0; 3]), right).clamp(-1.0, 1.0)
+/// `out[n] = sum_j h_reversed[j] * input[n + j]`: a causal FIR over `input`, which holds
+/// `h_reversed.len() - 1` samples of history before the block.
+fn convolve(input: &[f32], h_reversed: &[f32], out: &mut [f32]) {
+    let taps = h_reversed.len();
+    for (n, y) in out.iter_mut().enumerate() {
+        let x = &input[n..n + taps];
+        *y = x.iter().zip(h_reversed).map(|(a, b)| a * b).sum();
+    }
+}
+
+/// The listener's axes, for turning world offsets into its frame: x front, y left, z up.
+struct ListenerFrame {
+    front: [f32; 3],
+    left: [f32; 3],
+    up: [f32; 3],
+}
+
+impl ListenerFrame {
+    fn new(l: &Listener) -> Self {
+        let front = normalize_or(l.forward, [1.0, 0.0, 0.0]);
+        let right = normalize_or(cross(front, l.up), [0.0, -1.0, 0.0]);
+        let up = cross(right, front);
+        Self {
+            front,
+            left: right.map(|c| -c),
+            up,
+        }
+    }
+
+    fn local(&self, v: [f32; 3]) -> [f32; 3] {
+        [dot(v, self.front), dot(v, self.left), dot(v, self.up)]
+    }
+}
+
+/// Constant-power pan gains for unit direction `dir` in the listener's frame (`cos`, `sin` of
+/// an angle from 0 at hard left to pi/2 at hard right); centre for a source at the listener.
+fn pan_gains(dir: [f32; 3], d: f32) -> [f32; 2] {
+    let right = if d > 1e-6 {
+        (-dir[1]).clamp(-1.0, 1.0)
     } else {
         0.0
     };
-    let theta = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
-    [g * theta.cos(), g * theta.sin()]
+    let theta = (right + 1.0) * std::f32::consts::FRAC_PI_4;
+    [theta.cos(), theta.sin()]
 }

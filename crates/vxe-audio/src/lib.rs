@@ -1,6 +1,8 @@
 //! Spatial audio: positional voices mixed to binaural stereo, played through `cpal`.
 //!
-//! The [`Mixer`] renders blocks of interleaved stereo `f32` at [`RATE`] into a caller's buffer,
+//! The [`Mixer`] filters each voice through the head-related impulse responses of the
+//! measured direction nearest to it ([`Hrtf`], SADIE II subject D2 shipped in `assets/`) and
+//! renders blocks of interleaved stereo `f32` at [`RATE`] into a caller's buffer,
 //! so every behaviour is testable without a device. [`Output`] moves a mixer onto the device
 //! callback (ADR-0006): the callback owns it, drains a bounded command channel at the top of
 //! each block and never blocks or allocates for a command.
@@ -14,7 +16,7 @@
 //! ```
 //! use vxe_audio::*;
 //!
-//! let mut mixer = Mixer::new(0.1);
+//! let mut mixer = Mixer::new(Hrtf::sadie2_d2(), 0.1);
 //! let tone: Vec<f32> = (0..4800).map(|n| (n as f32 * 0.1).sin()).collect();
 //! mixer.apply(Command::Play(VoiceId(1), Sound::new(tone), PlayParams::at([10.0, 0.0, 0.0])));
 //! let mut out = vec![0.0; 2 * BLOCK];
@@ -23,11 +25,13 @@
 //! ```
 
 mod command;
+mod hrtf;
 mod mixer;
 mod output;
 mod voice;
 
 pub use command::{COMMAND_CAPACITY, Command};
+pub use hrtf::Hrtf;
 pub use mixer::{MAX_VOICES, Mixer};
 pub use output::Output;
 pub use voice::{PlayParams, Sound, VoiceId};

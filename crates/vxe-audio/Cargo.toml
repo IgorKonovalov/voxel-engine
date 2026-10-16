@@ -12,3 +12,6 @@ workspace = true
 
 [dependencies]
 cpal.workspace = true
+
+[dev-dependencies]
+sofar.workspace = true
