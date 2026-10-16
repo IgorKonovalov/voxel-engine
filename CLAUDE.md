@@ -49,7 +49,8 @@ docs/
 .claude/
 ├── settings.json    # Registers the PreToolUse deny-hooks
 ├── hooks/           # block-broad-git-add, block-attribution-trailers,
-│                    #   block-push-and-history-rewrite. They DENY, not advise.
+│                    #   block-push-and-history-rewrite, block-compositor-window-close.
+│                    #   They DENY, not advise.
 │                    #   Bite tests: `node --test ".claude/hooks/*.test.mjs"`
 └── skills/          # architect (designs docs/) + dev (writes code)
 scripts/
