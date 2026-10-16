@@ -242,7 +242,7 @@ Prefab memory: 2 bytes plus one bit per voxel. A 16³ prefab is 8 KiB + 512 B; a
 | 1: Prefab, rotations, runtime stamp | dev | done | 0fe5fd1 |
 | 2: `.vox` parsing and the material map | dev | done | 897531e |
 | 3: Generation-time placement | dev | done | 83ab811 |
-| 4: The fly-through's vault, and the bench | dev | blocked: `V` key (Notes); `--vault` and the bench done | committed with this row |
+| 4: The fly-through's vault, and the bench | dev | blocked: `V` key (Notes); `--vault` and the bench done | bf0bbd0 |
 
 ### Notes
 
@@ -264,3 +264,13 @@ Prefab memory: 2 bytes plus one bit per voxel. A 16³ prefab is 8 KiB + 512 B; a
 - Phase 4: the bench has a third case, `prefab64_uniform` (all material 2, every brick expands and collapses back), beside `vault16` and `prefab64_mixed` (air, rock or material 2 by a voxel hash; every brick stays `Full`). The vault's shell is material 2 of a two-row table, on a one-chunk solid world generated outside the timed region.
 - Phase 4: a comment reading "1.6 m" in `cave.rs` failed `generation_sources_contain_no_floating_point` (it scans for float literals); it reads "160 cm".
 - Phase 4, awaits the owner (windowed): `cargo run --release -p flythrough -- --level --vault`; turn to face +x from the spawn (the start yaw) and fly 10 m: judge that a dark 1.6 m cube sits ahead, that digging into it with the left mouse button carves rock around it but not its shell (the `carved` line counts no `shell`). The shell cannot be dug, so the hollow inside is not reachable in the fly-through.
+
+### Close triggers
+
+_(Facts for the architect. No recommendations, and no suggested version bump.)_
+
+- **Stopped on a block:** Phase 4's `V` binding (Notes). Every other done-when of Phases 1 to 4 is implemented; Phase 1's `count_in_box` assertion is recorded as not satisfiable as written (Notes).
+- **What shipped:** `vxe-world`: `Prefab`, `Rot`, `World::stamp`, `StampedSource`, bench `stamp`. New crate `vxe-assets`: `VoxFile`, `VoxModel`, `Node`, `Placement`, `VoxError`, `VoxMap`, `Slot`, `Unmapped`, `DEFAULT_PALETTE`, `decode_rotation`, `MAX_MODEL_EDGE`. Fly-through: `--vault`.
+- **Budget readings:** dev box AMD Ryzen 9 5900HS (Linux), working tree of 83ab811 with the Phase 4 bench (the stamp code is unchanged in bf0bbd0), `cargo bench -p vxe-world --bench stamp`, criterion median (low, high), exclusive lock, load average 2.9 falling to 2.1 over the run. `vault16` 22.782 us (22.745, 22.821) against the 100 us proposal; `prefab64_mixed` 2.0175 ms (2.0158, 2.0191) and `prefab64_uniform` 1.4551 ms (1.4536, 1.4568) against the 5 ms proposal. Prefab RAM is the plan's arithmetic (2 bytes plus one bit per voxel); `StampedSource` holds one rotated copy per placement.
+- **Gate at bf0bbd0 (working tree before commit):** `cargo build --workspace` 0; `cargo nextest run --workspace` 196 passed, 1 skipped, exit 0 (exclusive lock, NVIDIA GeForce RTX 3080 Laptop GPU present); `cargo test --workspace --doc` 0 (3 doctests); `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` advisories, bans, licenses, sources ok; `node scripts/check-doc-links.mjs` 76 links resolve; `node --test .claude/hooks/*.test.mjs` 59 pass. CARGO_BUILD_JOBS=3.
+- **Outstanding `human` phases:** none. Phase 4's `--vault` look awaits the owner (Notes).
