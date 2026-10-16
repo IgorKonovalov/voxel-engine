@@ -5,8 +5,8 @@
 //! 2. scale them by the voice's gain times the distance gain `1 / max(d, 1 m)` times the
 //!    acoustic gain multiplier, through a one-pole smoother of [`crate::SMOOTHING_SECONDS`],
 //!    and low-pass them with a one-pole filter (`y += a (x - y)`, `a = 1 - exp(-2 pi fc / fs)`)
-//!    at the acoustic cutoff `fc`. The cutoff moves through the same smoother, advanced once per
-//!    block, and the filter is bypassed while it sits at [`OPEN_CUTOFF_HZ`];
+//!    at the acoustic cutoff `fc`. The coefficient `a` moves through the same smoother every
+//!    sample; at [`OPEN_CUTOFF_HZ`] its target is 1, where the filter passes its input;
 //! 3. spatialise. On the HRTF path the samples run through the two 128-tap FIRs of the measured
 //!    direction nearest to the source (time-domain convolution over the voice's last `taps - 1`
 //!    inputs and this block). When the nearest direction changes between blocks, the block is
@@ -133,7 +133,7 @@ impl Mixer {
                 if let Some(v) = self.voice_mut(id) {
                     v.acoustic = targets;
                     if !v.started {
-                        v.cutoff = targets.cutoff_hz;
+                        v.lowpass_a = lowpass_coefficient(targets.cutoff_hz);
                     }
                 }
             }
@@ -184,16 +184,23 @@ impl Mixer {
                 *s *= g;
             }
             v.gain = g;
-            // The cutoff's smoother, advanced by the whole block at once.
-            let target_cutoff = v.acoustic.cutoff_hz.min(OPEN_CUTOFF_HZ);
-            v.cutoff += (target_cutoff - v.cutoff) * (1.0 - (1.0 - k).powi(n as i32));
-            if v.cutoff < OPEN_CUTOFF_HZ - 0.5 {
-                let a = 1.0 - (-2.0 * std::f32::consts::PI * v.cutoff / RATE as f32).exp();
+            // The coefficient moves every sample, so neither a probe's new cutoff nor the step
+            // into or out of the bypass (a = 1) changes the output's slope at a block edge.
+            let target_a = lowpass_coefficient(v.acoustic.cutoff_hz);
+            if v.lowpass_a < 1.0 || target_a < 1.0 {
+                let mut a = v.lowpass_a;
                 let mut y = v.lowpass;
                 for s in dry.iter_mut() {
+                    a += (target_a - a) * k;
                     y += a * (*s - y);
                     *s = y;
                 }
+                // Within float reach of the bypass, take it.
+                v.lowpass_a = if target_a == 1.0 && a > 1.0 - 1e-6 {
+                    1.0
+                } else {
+                    a
+                };
                 v.lowpass = y;
             } else if let Some(&last) = dry.last() {
                 v.lowpass = last;
@@ -260,6 +267,16 @@ impl Mixer {
                 i += 1;
             }
         }
+    }
+}
+
+/// The one-pole low-pass coefficient `a = 1 - exp(-2 pi fc / fs)` of `y += a (x - y)` for
+/// cutoff `fc`; 1 (the filter passes its input) at or above [`OPEN_CUTOFF_HZ`].
+fn lowpass_coefficient(cutoff_hz: f32) -> f32 {
+    if cutoff_hz >= OPEN_CUTOFF_HZ {
+        1.0
+    } else {
+        1.0 - (-2.0 * std::f32::consts::PI * cutoff_hz / RATE as f32).exp()
     }
 }
 

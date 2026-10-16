@@ -98,8 +98,9 @@ pub(crate) struct Voice {
     pub pan: [f32; 2],
     /// The acoustics' targets for this voice.
     pub acoustic: AcousticTargets,
-    /// The low-pass cutoff as smoothed so far (the acoustic gain smooths inside `gain`).
-    pub cutoff: f32,
+    /// The low-pass coefficient as smoothed so far, 1 when open (the acoustic gain smooths
+    /// inside `gain`).
+    pub lowpass_a: f32,
     /// The one-pole low-pass's state.
     pub lowpass: f32,
     /// HRTF path: the measurement the last block was filtered with.
@@ -141,7 +142,7 @@ impl Voice {
             gain: 0.0,
             pan: [0.0; 2],
             acoustic: AcousticTargets::default(),
-            cutoff: OPEN_CUTOFF_HZ,
+            lowpass_a: 1.0,
             lowpass: 0.0,
             dir: 0,
             buffers,

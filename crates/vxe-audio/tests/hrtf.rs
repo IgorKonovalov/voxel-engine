@@ -308,3 +308,52 @@ fn turning_and_walking_past_a_tone_add_no_kinks_at_block_edges() {
         assert!(kink <= bound, "walking: {kink} against 4 x {static_kink}");
     }
 }
+
+/// A probe's new targets every 12 callbacks of 512 frames (128 ms, about the 0.1 m cadence at
+/// walking pace): the low-pass coefficient and the gain glide, so neither the new cutoff nor
+/// the step into or out of the open bypass kinks the output at a block edge. With the cutoff
+/// stepped once per block and the bypass switched hard, these measured 87 to 780 x static.
+#[test]
+fn probe_updates_add_no_kinks() {
+    let base = render_hum([20.0, 0.0, 0.0], 2 * BLOCK, 2.0, |_| Listener::default());
+    let static_kink = max_kink(&base[2 * SETTLE..]);
+    for (name, a, b) in [
+        ("cutoff 20000 <-> 13333", (1.0, 20_000.0), (1.0, 13_333.0)),
+        ("cutoff 20000 <-> 5000", (1.0, 20_000.0), (1.0, 5_000.0)),
+        ("gain 1 <-> 0.93", (1.0, 20_000.0), (0.93, 20_000.0)),
+        ("cutoff 19000 <-> 13333", (1.0, 19_000.0), (1.0, 13_333.0)),
+    ] {
+        let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+        m.apply(Command::Play(
+            VoiceId(1),
+            clean_hum(),
+            PlayParams {
+                looping: true,
+                ..PlayParams::at([20.0, 0.0, 0.0])
+            },
+        ));
+        let frames = 2 * RATE as usize;
+        let mut out = vec![0.0; 2 * frames];
+        for (k, chunk) in out.chunks_mut(2 * 2 * BLOCK).enumerate() {
+            let (g, c) = if (k / 12) % 2 == 0 { a } else { b };
+            m.apply(Command::SetAcoustics(
+                VoiceId(1),
+                AcousticTargets {
+                    gain: g,
+                    cutoff_hz: c,
+                    ..AcousticTargets::default()
+                },
+            ));
+            m.render(chunk, 2 * BLOCK);
+        }
+        let kink = max_kink(&out[2 * SETTLE..]);
+        println!(
+            "{name}: max kink {kink:e} ({:.1} x static {static_kink:e})",
+            kink / static_kink
+        );
+        assert!(
+            kink <= 4.0 * static_kink,
+            "{name}: {kink} against 4 x {static_kink}"
+        );
+    }
+}
