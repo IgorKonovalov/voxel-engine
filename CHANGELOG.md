@@ -6,6 +6,27 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-17
+
+Plan 0004: M3, collision, a character controller and coarse grids (ADR-0005). The F2 wall
+sweep reads 26.3 us against the 5 us proposal (`docs/nfr.md` section 8) and awaits the
+owner's call; a body embedded by an edit is not pushed out (no depenetration).
+
+- `vxe-sim` (new crate, depends on `vxe-world` only): a vertical-cylinder `Body`, integer
+  `distance2` and `overlaps`, a conservative-advancement `sweep` that leaves out boxes the
+  move does not close on and never takes an advance into a box, and a `CharacterController`
+  with walk, step-up, wall slide, gravity, jump with the landing speed reported, and a
+  multi-tick ledge climb; a pinned course hash in `tests/course.rs`; `isqrt`,
+  `MAX_SWEEP_ITERATIONS`, `sweep_with_stats`, `distance2_with_stats`; the `controller` bench.
+- `vxe-world`: `CoarseGrid` (one `CoarseCell { solid, dominant }` per brick, updated from an
+  `EditResult`, returning sorted `CellChange`s, with `chunk_loaded` and `chunk_evicted` hooks
+  not yet wired to the streamer) and `WalkableMap` with `WalkableParams` and
+  `WalkableStats`, updated incrementally from the grid's changes; the `coarse` bench.
+- `apps/flythrough`: walk mode on the bounded level (`--walk`, `G`, `W A S D` at 3 m/s,
+  `Space` to jump and climb), the coarse grid and walkable map kept from every edit (`K`
+  prints them), and the coarse-grid lines in `world_budget --chunks`.
+- Dev profile: `opt-level = 2` for `vxe-sim`.
+
 ## [0.4.1] - 2026-10-17
 
 Plan 0003: the edit-cost pass. `World::apply` returns the same voxels and results as before

@@ -1,4 +1,5 @@
-//! Prints the cave's storage figures (`nfr.md` §3, §5), bounded or streamed.
+//! Prints the cave's storage figures (`nfr.md` §3, §5), bounded or streamed, and for the
+//! bounded cave the coarse grid's bytes (4 per brick) and single-threaded build time.
 //!
 //! ```text
 //! cargo run --release -p flythrough --example world_budget -- --chunks 20x20x8 --seed 1
@@ -20,8 +21,8 @@ use std::sync::Arc;
 use flythrough::cave::CaveSource;
 use flythrough::{cave_materials, chunk_ram, mips_ram, window_side};
 use vxe_world::{
-    BRICK_VOXELS, Brick, CHUNK_BRICKS, ChunkExtent, PersistConfig, Residency, StreamConfig,
-    Streamer, World,
+    BRICK_VOXELS, Brick, CHUNK_BRICKS, ChunkExtent, CoarseGrid, PersistConfig, Residency,
+    StreamConfig, Streamer, World,
 };
 
 /// Mirror bytes per `Full` brick or mip-brick, and per mirrored chunk's record.
@@ -80,6 +81,10 @@ fn bounded(seed: u64, chunks: [i32; 3]) {
     let world = World::generate_with_threads(extent, &source, &table, threads);
     let secs = (now() - start).as_secs_f64();
 
+    let start = now();
+    let grid = CoarseGrid::build(&world);
+    let grid_secs = (now() - start).as_secs_f64();
+
     let s = world.stats();
     let bricks = s.full_bricks + s.uniform_bricks;
     let slot_array = CHUNK_BRICKS * size_of::<Brick>();
@@ -114,6 +119,13 @@ fn bounded(seed: u64, chunks: [i32; 3]) {
     );
     println!("generation:        {:.3} s on {threads} threads", secs);
     println!("voxels/s/thread:   {:.3e}", voxels / secs / threads as f64);
+    println!(
+        "coarse grid:       {} bytes ({:.1} MiB), {} per chunk",
+        grid.bytes(),
+        mib(grid.bytes() as u64),
+        grid.bytes() / grid.len().max(1)
+    );
+    println!("coarse build:      {:.1} ms on 1 thread", grid_secs * 1e3);
 }
 
 fn streamed(seed: u64, r: Residency) {

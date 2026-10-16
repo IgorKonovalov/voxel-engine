@@ -30,8 +30,9 @@ crates/
 ├── vxe-render/      # wgpu: brick upload, compute ray marching, lighting, denoise, upscale,
 │                    #   voxel-model entities. WGSL under src/shaders/. Never branches on backend
 ├── vxe-app/         # winit shell: window, input, surface, frame loop. Thin and optional
-└── (planned, one per plan) vxe-sim (collision, character controller), vxe-audio (spatial
-    playback, occlusion through the grid), vxe-script-wasm (wasmtime host, server logic),
+├── vxe-sim/         # cylinder sweeps and the character controller (step, slide, climb, fall).
+│                    #   HEADLESS and DETERMINISTIC like vxe-world, which is its only dependency
+└── (planned, one per plan) vxe-audio (spatial playback, occlusion through the grid), vxe-script-wasm (wasmtime host, server logic),
     vxe-script-lua (mlua host, client scripts), vxe-net (channel abstraction, later QUIC),
     vxe-assets (.vox import, prefab stamping)
 apps/
