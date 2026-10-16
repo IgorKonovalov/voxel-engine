@@ -9,6 +9,9 @@
 > standing "go with your recommendations"; the owner can overturn it): Phase 4 binds the
 > aim-point stamp to `P`, since `V` already toggles procedural detail, and Phase 1's box count
 > is restated for `count_in_box`'s inclusive bounds. See "Amendment 2026-10-17" below.
+> **Amended again 2026-10-17**, after the close review (same standing, same overturnability):
+> Phase 2 caps a model axis at 256 and adds caps on placements and translations for hostile
+> input. See "Amendment 2026-10-17, close review" below.
 
 ## TL;DR
 
@@ -130,6 +133,61 @@ Each deviation in the Implementation log's Notes on `plan-0008`, ruled:
 - **Accepted:** the bench's third case, `prefab64_uniform`, beside the two the plan named.
 - **Accepted:** the `cave.rs` comment reading "160 cm" so the float-literal scan stays green.
 
+## Amendment 2026-10-17, close review
+
+Made after the close review of `plan-0008`, which found that the planned model-size cap does
+not bound memory. Applied by the orchestrator under the owner's standing "go with your
+recommendations" while the owner was away. Each item below is the reviewer's recommendation,
+orchestrator-applied, and the owner can overturn any of them; overturning one changes only
+the Phase 2 done-whens it names.
+
+### 4. A model axis is capped at 256, not 1024
+
+**The problem.** A `SIZE` chunk of 1024³ followed by an `XYZI` with zero voxels passes
+`MAX_MODEL_EDGE = 1024`, and `VoxMap::to_prefab` then allocates for every cell of the model:
+a `u8` index per voxel, a `u16` material per voxel and one mask bit per voxel, 3.125 bytes a
+voxel. At 1024³ = 2³⁰ voxels that is 3.125 GiB, from a file of about 70 bytes. `XYZI`
+coordinates are `u8`, so no voxel can sit past index 255 on any axis; cells past 255 can only
+ever be empty.
+
+**Decision.** `MAX_MODEL_EDGE = 256`, and Phase 2's `TooLarge` done-when reads 256. The
+largest model `to_prefab` accepts is 256³ = 2²⁴ = 16,777,216 voxels, and 2²⁴ × 3.125 B =
+52,428,800 B = 50 MiB (16 MiB of index, 32 MiB of material, 2 MiB of mask). That is still a
+lot for a hostile file, but it is bounded, and it is the largest model the format can fill.
+
+**Rejected.** Keeping 1024 and sizing from the voxels' bounding box: it changes the model's
+centre, which `Placement::min_corner` depends on. Lazy allocation in `to_prefab`: the dense
+`Prefab` is the plan's data shape.
+
+### 5. Caps on placements and translations
+
+**The problem.** A shared subtree is placed once per reference (item 3), so a scene graph in
+which each `nGRP` lists the same child twice doubles the placement count per level: a small
+file can ask for billions of placements. And an `nTRN` `_t` component is parsed as `i32`;
+`i32::MIN` under a rotation that negates that axis overflows when the rotation is applied.
+
+**Decision.** Two engine constants in `vxe-assets`:
+
+- `MAX_PLACEMENTS = 65_536`. A scene graph whose placement count exceeds it is refused as
+  `VoxError::Malformed`, during the walk, before the count is reached in memory.
+- `MAX_TRANSLATION = 1 << 20`. An `nTRN` `_t` component whose magnitude exceeds it is refused
+  as `VoxError::Malformed`, so negating one under a rotation cannot overflow.
+
+Both land in Phase 2's done-whens. A composed translation could still leave `i32` only
+through a chain of more than 2^31 / 2^20 = 2048 nested `nTRN` nodes; that is listed under
+item 6, not decided here.
+
+### 6. Follow-ups, not done-whens
+
+- **The rotated even-sized model's pivot.** `min_corner` subtracts `rotated_size / 2`; for an
+  even edge under a 180-degree turn, MagicaVoxel may pivot one voxel off from that. A test
+  against a model exported from MagicaVoxel with an even size, turned 180 degrees, settles it;
+  if the stamp is off by one, `min_corner` takes the rotation as well as the rotated size.
+- **A possible rename of `Prefab::vault`.** The helper's name reads as gameplay vocabulary in
+  `vxe-world`; a neutral name (a shelled box) is a candidate. The owner's call.
+- **Composed translations.** Whether the walk composes `_t` with checked arithmetic, so a
+  deep `nTRN` chain refuses as `Malformed` rather than overflowing (see item 5).
+
 ## Architecture diagram
 
 ```mermaid
@@ -209,7 +267,16 @@ flowchart LR
     pairs, `RGBA`, `nTRN`, `nGRP`, `nSHP`; `MATL`, `LAYR`, `rOBJ`, `rCAM`, `NOTE` and `IMAP`
     are skipped by size, and a test file containing each of them parses to the same models
     as one without. A chunk cut short reads as `VoxError::Truncated { chunk: [u8; 4], at }`.
-    A model axis over 1024 reads as `VoxError::TooLarge`.
+    A model axis over 256 (`MAX_MODEL_EDGE`) reads as `VoxError::TooLarge`: a `SIZE` of
+    257 × 1 × 1 is refused, 256 × 256 × 256 with zero voxels parses. (Amended 2026-10-17
+    from 1024; see "Amendment 2026-10-17, close review" item 4.)
+  - Hostile scene graphs and transforms are refused without a panic. (Added 2026-10-17; see
+    "Amendment 2026-10-17, close review" item 5.) A graph of 16 nested `nGRP` levels, each
+    listing the same child twice, yields exactly 65_536 placements (`MAX_PLACEMENTS`); the
+    same graph at depth 17 (131_072) reads as `VoxError::Malformed`. An `nTRN` with `_t`
+    of `-2147483648 0 0` under a parent whose `_r` is 52 (a 180-degree turn about z, which
+    negates x) reads as `VoxError::Malformed`, since the component's magnitude exceeds
+    `MAX_TRANSLATION = 1 << 20`.
   - `VoxModel { size: [u32; 3], voxels: Vec<[u8; 4]> }` as `(x, y, z, index)` in file order;
     `palette: [[u8; 4]; 256]` with MagicaVoxel's default palette when `RGBA` is absent, and
     the documented offset: `RGBA` entry `k` is the colour of index `k + 1`; index 0 is empty.
