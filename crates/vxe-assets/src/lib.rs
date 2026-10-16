@@ -22,4 +22,7 @@ mod vox;
 
 pub use map::{Slot, Unmapped, VoxMap};
 pub use palette::DEFAULT_PALETTE;
-pub use vox::{MAX_MODEL_EDGE, Node, Placement, VoxError, VoxFile, VoxModel, decode_rotation};
+pub use vox::{
+    MAX_MODEL_EDGE, MAX_PLACEMENTS, MAX_TRANSLATION, Node, Placement, VoxError, VoxFile, VoxModel,
+    decode_rotation,
+};

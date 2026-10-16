@@ -13,8 +13,18 @@ use vxe_world::{Rot, VoxelCoord};
 
 use crate::palette::DEFAULT_PALETTE;
 
-/// The largest model edge accepted, in voxels.
-pub const MAX_MODEL_EDGE: u32 = 1024;
+/// The largest model edge accepted, in voxels. `XYZI` coordinates are `u8`, so no voxel
+/// sits past index 255 on an axis; a longer axis could only add empty cells.
+pub const MAX_MODEL_EDGE: u32 = 256;
+
+/// The most placements a scene graph may make. A subtree is placed once per reference, so
+/// without a cap a group that lists the same child twice per level doubles the count per
+/// level of a small file.
+pub const MAX_PLACEMENTS: usize = 65_536;
+
+/// The largest magnitude of a `_t` component. Composing up to 2047 nested transforms of this
+/// size stays inside `i32`; a deeper chain whose sum leaves `i32` is refused.
+pub const MAX_TRANSLATION: i32 = 1 << 20;
 
 /// Why a file did not parse.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -93,8 +103,12 @@ impl Placement {
     /// The minimum corner of the model's rotated box. MagicaVoxel's translation places the
     /// model's centre, taken as `size / 2` in integer division per axis of the rotated size,
     /// so a stamp at this corner reproduces the editor's layout.
+    /// The subtraction wraps, so a hand-built placement near `i32::MIN` cannot panic; a
+    /// parsed file's translations are far inside the range.
     pub fn min_corner(&self, rotated_size: [u32; 3]) -> VoxelCoord {
-        VoxelCoord([0, 1, 2].map(|k| self.translation[k] - (rotated_size[k] / 2) as i32))
+        VoxelCoord(
+            [0, 1, 2].map(|k| self.translation[k].wrapping_sub((rotated_size[k] / 2) as i32)),
+        )
     }
 }
 
@@ -224,6 +238,11 @@ fn frame(r: &Reader<'_>, attrs: &[Pair<'_>]) -> Result<([i32; 3], Rot), VoxError
                 }
                 if it.next().is_some() {
                     return Err(r.malformed("_t is not three integers"));
+                }
+                if t.iter()
+                    .any(|c| c.unsigned_abs() > MAX_TRANSLATION.unsigned_abs())
+                {
+                    return Err(r.malformed("_t out of range"));
                 }
             }
             b"_r" => {
@@ -409,16 +428,16 @@ impl VoxFile {
                 what: "SIZE without its XYZI",
             });
         }
-        file.check_graph()?;
+        file.walk(&mut |_| {})?;
         Ok(file)
     }
 
-    /// Node 0 exists, every child and model a node names exists, and no node is its own
-    /// descendant. An iterative depth-first walk, so a deep graph cannot exhaust the stack.
-    fn check_graph(&self) -> Result<(), VoxError> {
-        if self.nodes.is_empty() {
-            return Ok(());
-        }
+    /// Node 0 exists, every child and model a node names exists, no node is its own
+    /// descendant, and no node places more than [`MAX_PLACEMENTS`] models. Returns each
+    /// reachable node's placement count. An iterative depth-first walk, so a deep graph cannot
+    /// exhaust the stack; each node is finished once, in post-order, when its children's
+    /// counts are known, so a shared subtree costs one visit however often it is placed.
+    fn check_graph(&self) -> Result<BTreeMap<u32, u64>, VoxError> {
         if !self.nodes.contains_key(&0) {
             return Err(VoxError::SceneGraph {
                 node: 0,
@@ -427,6 +446,7 @@ impl VoxFile {
         }
         // 1: on the current path; 2: finished.
         let mut state: BTreeMap<u32, u8> = BTreeMap::new();
+        let mut counts: BTreeMap<u32, u64> = BTreeMap::new();
         // (node, index of the next child to visit)
         let mut stack: Vec<(u32, usize)> = vec![(0, 0)];
         state.insert(0, 1);
@@ -466,8 +486,89 @@ impl VoxFile {
                     }
                 }
             } else {
+                // Every child is finished, so its count is present.
+                let count = |c: &u32| counts.get(c).copied().unwrap_or(0);
+                let (n, chunk) = match &self.nodes[&id] {
+                    Node::Transform { child, .. } => (count(child), *b"nTRN"),
+                    Node::Group { children } => (
+                        children
+                            .iter()
+                            .fold(0u64, |a, c| a.saturating_add(count(c))),
+                        *b"nGRP",
+                    ),
+                    Node::Shape { models } => (models.len() as u64, *b"nSHP"),
+                };
+                if n > MAX_PLACEMENTS as u64 {
+                    return Err(VoxError::Malformed {
+                        chunk,
+                        what: "places more models than MAX_PLACEMENTS",
+                    });
+                }
+                counts.insert(id, n);
                 state.insert(id, 2);
                 stack.pop();
+            }
+        }
+        Ok(counts)
+    }
+
+    /// Checks the graph, then hands `emit` every placement in [`VoxFile::placements`]'s
+    /// order. Subtrees that place nothing are not entered, so the walk's cost is bounded by
+    /// the placement count times the graph's depth. Translations compose with checked
+    /// addition: a sum that leaves `i32` is [`VoxError::Malformed`], since each `_t`
+    /// component is within [`MAX_TRANSLATION`] and turning it by a rotation cannot overflow.
+    fn walk(&self, emit: &mut impl FnMut(Placement)) -> Result<(), VoxError> {
+        if self.nodes.is_empty() {
+            for model in 0..self.models.len() {
+                emit(Placement {
+                    model,
+                    translation: [0; 3],
+                    rot: Rot::IDENTITY,
+                });
+            }
+            return Ok(());
+        }
+        let counts = self.check_graph()?;
+        let places = |c: &u32| counts.get(c).is_some_and(|&n| n > 0);
+        let mut stack = vec![(0u32, [0i32; 3], Rot::IDENTITY)];
+        while let Some((id, t, rot)) = stack.pop() {
+            match &self.nodes[&id] {
+                Node::Transform {
+                    child,
+                    translation,
+                    rot: r,
+                } => {
+                    if !places(child) {
+                        continue;
+                    }
+                    let d = rot.apply(*translation);
+                    let mut sum = [0; 3];
+                    for k in 0..3 {
+                        sum[k] = t[k].checked_add(d[k]).ok_or(VoxError::Malformed {
+                            chunk: *b"nTRN",
+                            what: "composed _t overflows i32",
+                        })?;
+                    }
+                    stack.push((*child, sum, r.then(rot)));
+                }
+                Node::Group { children } => {
+                    stack.extend(
+                        children
+                            .iter()
+                            .rev()
+                            .filter(|c| places(c))
+                            .map(|&c| (c, t, rot)),
+                    );
+                }
+                Node::Shape { models } => {
+                    for &m in models {
+                        emit(Placement {
+                            model: m as usize,
+                            translation: t,
+                            rot,
+                        });
+                    }
+                }
             }
         }
         Ok(())
@@ -476,46 +577,14 @@ impl VoxFile {
     /// Every model the scene graph places, walking from node 0 depth first in child order and
     /// composing translations and rotations down the path (a child's frame is turned by its
     /// parents' rotation, then offset by their translation). Without a scene graph, one
-    /// placement per model at translation 0 and [`Rot::IDENTITY`].
+    /// placement per model at translation 0 and [`Rot::IDENTITY`]. At most
+    /// [`MAX_PLACEMENTS`] entries.
     pub fn placements(&self) -> Vec<Placement> {
-        if self.nodes.is_empty() {
-            return (0..self.models.len())
-                .map(|model| Placement {
-                    model,
-                    translation: [0; 3],
-                    rot: Rot::IDENTITY,
-                })
-                .collect();
-        }
         let mut out = Vec::new();
-        let mut stack = vec![(0u32, [0i32; 3], Rot::IDENTITY)];
-        while let Some((id, t, rot)) = stack.pop() {
-            // `parse` checked the graph, so every id resolves.
-            let Some(node) = self.nodes.get(&id) else {
-                continue;
-            };
-            match node {
-                Node::Transform {
-                    child,
-                    translation,
-                    rot: r,
-                } => {
-                    let d = rot.apply(*translation);
-                    let t = [0, 1, 2].map(|k| t[k].wrapping_add(d[k]));
-                    stack.push((*child, t, r.then(rot)));
-                }
-                Node::Group { children } => {
-                    stack.extend(children.iter().rev().map(|&c| (c, t, rot)));
-                }
-                Node::Shape { models } => {
-                    out.extend(models.iter().map(|&m| Placement {
-                        model: m as usize,
-                        translation: t,
-                        rot,
-                    }));
-                }
-            }
-        }
+        // A file `parse` returned passes the walk's checks, so this cannot fail; a graph
+        // edited after parsing into one that fails them yields the placements found before
+        // the fault.
+        let _ = self.walk(&mut |p| out.push(p));
         out
     }
 }

@@ -176,17 +176,28 @@ fn a_chunk_cut_short_is_truncated_with_its_id_and_offset() {
 }
 
 #[test]
-fn a_model_axis_over_1024_is_too_large() {
+fn a_model_axis_over_256_is_too_large() {
     let big = VoxModel {
-        size: [1025, 1, 1],
+        size: [257, 1, 1],
         voxels: vec![],
     };
     assert_eq!(
         VoxFile::parse(&vox_bytes(&[big], None, &[])),
-        Err(VoxError::TooLarge { size: [1025, 1, 1] })
+        Err(VoxError::TooLarge { size: [257, 1, 1] })
+    );
+    assert_eq!(MAX_MODEL_EDGE, 256);
+    let empty = VoxModel {
+        size: [256, 256, 256],
+        voxels: vec![],
+    };
+    assert_eq!(
+        VoxFile::parse(&vox_bytes(std::slice::from_ref(&empty), None, &[]))
+            .unwrap()
+            .models,
+        [empty]
     );
     let edge = VoxModel {
-        size: [1024, 1, 1024],
+        size: [256, 1, 256],
         voxels: vec![[255, 0, 255, 1]],
     };
     assert_eq!(
@@ -396,4 +407,159 @@ fn the_vault_round_trips_through_a_vox_file() {
     let p = map.to_prefab(&f.models[0]).unwrap();
     assert_eq!(p.id(), Prefab::vault(16, 4).id());
     assert_eq!(p, Prefab::vault(16, 4));
+}
+
+/// Groups 0..depth, each listing the next node twice, then a shape of model 0: 2^depth
+/// placements from a file linear in `depth`.
+fn doubling_graph(depth: i32) -> Vec<TestNode> {
+    let mut nodes: Vec<TestNode> = (0..depth)
+        .map(|id| TestNode::Grp {
+            id,
+            children: vec![id + 1, id + 1],
+        })
+        .collect();
+    nodes.push(TestNode::Shp {
+        id: depth,
+        models: vec![0],
+    });
+    nodes
+}
+
+#[test]
+fn a_shared_subtree_is_capped_at_max_placements() {
+    let models = [two_voxel_model()];
+    assert_eq!(MAX_PLACEMENTS, 65_536);
+    let f = VoxFile::parse(&vox_bytes(&models, None, &doubling_graph(16))).unwrap();
+    let p = f.placements();
+    assert_eq!(p.len(), 65_536);
+    assert!(p.iter().all(|p| p.model == 0 && p.translation == [0; 3]));
+    assert_eq!(
+        VoxFile::parse(&vox_bytes(&models, None, &doubling_graph(17))),
+        Err(VoxError::Malformed {
+            chunk: *b"nGRP",
+            what: "places more models than MAX_PLACEMENTS"
+        })
+    );
+    // Depth 40 asks for 2^40 placements; it is refused as quickly as depth 17.
+    assert!(matches!(
+        VoxFile::parse(&vox_bytes(&models, None, &doubling_graph(40))),
+        Err(VoxError::Malformed { .. })
+    ));
+}
+
+#[test]
+fn a_subtree_that_places_nothing_is_not_walked() {
+    // 2^40 paths ending in a shape with no models: zero placements, and no exponential walk.
+    let models = [two_voxel_model()];
+    let mut nodes = doubling_graph(40);
+    nodes.pop();
+    nodes.push(TestNode::Shp {
+        id: 40,
+        models: vec![],
+    });
+    let f = VoxFile::parse(&vox_bytes(&models, None, &nodes)).unwrap();
+    assert_eq!(f.placements(), []);
+}
+
+/// Transform 0 (`_r` = `r0`) -> transform 1 (`_t` = `t1`) -> shape 2 with model 0.
+fn turned_translation(r0: u8, t1: [i32; 3]) -> Vec<TestNode> {
+    vec![
+        TestNode::Trn {
+            id: 0,
+            child: 1,
+            t: None,
+            r: Some(r0),
+        },
+        TestNode::Trn {
+            id: 1,
+            child: 2,
+            t: Some(t1),
+            r: None,
+        },
+        TestNode::Shp {
+            id: 2,
+            models: vec![0],
+        },
+    ]
+}
+
+#[test]
+fn a_translation_past_max_translation_is_refused() {
+    let models = [two_voxel_model()];
+    // 52: rows (-1, 0, 0), (0, -1, 0), (0, 0, 1), a 180-degree turn about z that negates x.
+    let z180 = (1 << 2) | (1 << 4) | (1 << 5);
+    assert_eq!(z180, 52);
+    assert_eq!(decode_rotation(z180).unwrap().apply([1, 2, 3]), [-1, -2, 3]);
+    let out_of_range = Err(VoxError::Malformed {
+        chunk: *b"nTRN",
+        what: "_t out of range",
+    });
+    assert_eq!(
+        VoxFile::parse(&vox_bytes(
+            &models,
+            None,
+            &turned_translation(z180, [i32::MIN, 0, 0])
+        )),
+        out_of_range
+    );
+    assert_eq!(MAX_TRANSLATION, 1 << 20);
+    let f = VoxFile::parse(&vox_bytes(
+        &models,
+        None,
+        &turned_translation(z180, [1_048_576, 0, -1_048_576]),
+    ))
+    .unwrap();
+    assert_eq!(f.placements()[0].translation, [-1_048_576, 0, -1_048_576]);
+    for t in [[-1_048_577, 0, 0], [0, 1_048_577, 0], [0, 0, i32::MAX]] {
+        assert_eq!(
+            VoxFile::parse(&vox_bytes(&models, None, &turned_translation(z180, t))),
+            out_of_range,
+            "{t:?}"
+        );
+    }
+}
+
+/// A chain of `n` transforms, each `_t` = (2^20, 0, 0), ending in a shape of model 0.
+fn translation_chain(n: i32) -> Vec<TestNode> {
+    let mut nodes: Vec<TestNode> = (0..n)
+        .map(|id| TestNode::Trn {
+            id,
+            child: id + 1,
+            t: Some([1 << 20, 0, 0]),
+            r: None,
+        })
+        .collect();
+    nodes.push(TestNode::Shp {
+        id: n,
+        models: vec![0],
+    });
+    nodes
+}
+
+#[test]
+fn a_composed_translation_that_leaves_i32_is_refused() {
+    let models = [two_voxel_model()];
+    // 2047 * 2^20 = 2^31 - 2^20 fits in i32; 2048 * 2^20 = 2^31 does not.
+    let f = VoxFile::parse(&vox_bytes(&models, None, &translation_chain(2047))).unwrap();
+    assert_eq!(f.placements()[0].translation, [2047 << 20, 0, 0]);
+    assert_eq!(
+        VoxFile::parse(&vox_bytes(&models, None, &translation_chain(2048))),
+        Err(VoxError::Malformed {
+            chunk: *b"nTRN",
+            what: "composed _t overflows i32"
+        })
+    );
+}
+
+#[test]
+fn min_corner_is_total_at_the_i32_extremes() {
+    let p = Placement {
+        model: 0,
+        translation: [i32::MIN, i32::MAX, 0],
+        rot: Rot::IDENTITY,
+    };
+    assert_eq!(
+        p.min_corner([4, 4, 4]),
+        VoxelCoord([i32::MIN.wrapping_sub(2), i32::MAX - 2, -2])
+    );
 }
