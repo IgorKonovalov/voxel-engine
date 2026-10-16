@@ -44,7 +44,8 @@ docs/
 ├── plans/           # NNNN-<slug>.md: phased implementation plans
 │   ├── README.md    #   Plans index + next free number. Read this each session
 │   └── done/        #   Closed plans move here (architect close ceremony)
-└── references/      # annotated external sources (papers, talks, repos) a plan cites by title
+└── references/      # annotated external sources (papers, talks, repos) a plan cites by title.
+                     #   local/ (gitignored) holds saved copies of some reference material
 .claude/
 ├── settings.json    # Registers the PreToolUse deny-hooks
 ├── hooks/           # block-broad-git-add, block-attribution-trailers,

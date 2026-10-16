@@ -16,3 +16,7 @@ Thumbs.db
 # test asserts against ARE committed, under crates/*/tests/golden/.
 renders/
 spike/
+
+# Local copies of external reference material (papers, posts). Not ours to
+# redistribute; the annotated index that cites them is committed next to it.
+docs/references/local/
