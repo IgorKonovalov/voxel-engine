@@ -21,6 +21,9 @@
 //! places a 16-voxel room with an indestructible shell 10 m along +x from the spawn, written
 //! over the cave as it generates (on the level, clamped inside the extent).
 //!
+//! `P` stamps that 16-voxel room at runtime, unrotated, with its minimum corner at the voxel
+//! the dig ray hits, and prints what it changed like a dig does.
+//!
 //! Keys: `G` toggles fly and walk mode (on the bounded level only; streaming refuses it, as it
 //! refuses `--walk`); in walk mode `W A S D` walk at 3 m/s and `Space` jumps, or, held against
 //! a wall with a standable top within 1.2 m, climbs it. On the bounded level the fly-through
@@ -34,7 +37,7 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use fly::{Fly, Walk};
-use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, VAULT_EDGE};
+use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, VAULT_EDGE, vault};
 use flythrough::{RESIDENCY, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
 use vxe_render::glam::Vec3;
@@ -46,7 +49,7 @@ use vxe_render::{
 use vxe_world::hash::mix64;
 use vxe_world::{
     ChunkCoord, ChunkExtent, CoarseGrid, EditError, EditOp, EditResult, FIXED_ONE, Fixed3,
-    MaterialId, MaterialTable, Mode, PersistConfig, StreamConfig, Streamer, Tier, VoxelCoord,
+    MaterialId, MaterialTable, Mode, PersistConfig, Rot, StreamConfig, Streamer, Tier, VoxelCoord,
     WalkableMap, WalkableParams, World,
 };
 
@@ -238,6 +241,30 @@ fn edit_line(verb: &str, r: &EditResult, table: &MaterialTable, ms: f64) -> Stri
             .join(", ")
     };
     format!("{verb}: {counts} ({} chunks, {ms:.2} ms)", r.touched.len())
+}
+
+/// `P`'s edit: the vault stamped unrotated with its minimum corner at the first solid voxel
+/// the ray enters within [`REACH`]; `None` when it enters none.
+fn stamp_at_aim(
+    world: &World,
+    origin: Fixed3,
+    dir: [i64; 3],
+) -> Option<Result<EditResult, EditError>> {
+    let hit = world.raycast(origin, dir, REACH)?;
+    Some(world.stamp(&vault(), hit.voxel, Rot::IDENTITY))
+}
+
+/// The `P` line: [`edit_line`] on success, the refusal, or the miss.
+fn stamp_line(
+    out: &Option<Result<EditResult, EditError>>,
+    table: &MaterialTable,
+    ms: f64,
+) -> String {
+    match out {
+        None => "stamped: no surface within 10 m".to_owned(),
+        Some(Ok(r)) => edit_line("stamped", r, table, ms),
+        Some(Err(e)) => format!("stamped: refused, {e}"),
+    }
 }
 
 fn material_name(table: &MaterialTable, m: MaterialId) -> String {
@@ -563,6 +590,18 @@ impl Run {
                 self.edited(&r);
             }
             Err(e) => println!("carved: refused, {e}"),
+        }
+    }
+
+    /// `P`: the vault at the aim point, through the same post-edit path as a dig.
+    fn stamp(&mut self) {
+        let (origin, dir) = self.camera_ray();
+        let t = now();
+        let out = stamp_at_aim(&self.world, origin, dir);
+        let ms = ms_since(t);
+        println!("{}", stamp_line(&out, self.world.materials(), ms));
+        if let Some(Ok(r)) = &out {
+            self.edited(r);
         }
     }
 
@@ -1135,6 +1174,9 @@ impl Run {
         if input.pressed(KeyCode::KeyB) {
             self.bench(gpu);
         }
+        if input.pressed(KeyCode::KeyP) {
+            self.stamp();
+        }
         if input.pressed(KeyCode::KeyG) {
             self.toggle_walk();
         }
@@ -1613,6 +1655,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flythrough::cave::SHELL;
 
     fn argv(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| (*s).to_owned()).collect()
@@ -1681,6 +1724,62 @@ mod tests {
             "coarse: {} walkable cells, last edit changed 27 cells in ",
             expected.count()
         )));
+    }
+
+    /// `P` headless: from inside a carved 16-voxel box in solid rock, the ray along +x enters
+    /// rock at x = 8 and the vault lands there; aimed so the vault crosses the extent's edge it
+    /// is refused; aimed out of the world it misses.
+    #[test]
+    fn p_stamps_the_vault_at_the_aim_point() {
+        let table = cave_materials();
+        let world = World::generate(
+            ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
+            &vxe_world::UniformSource(ROCK),
+            &table,
+        );
+        world
+            .apply(&EditOp::box_(
+                Fixed3([-8 * FIXED_ONE; 3]),
+                Fixed3([8 * FIXED_ONE; 3]),
+                Mode::Carve,
+            ))
+            .unwrap();
+        let centre = Fixed3([FIXED_ONE / 2; 3]);
+        let out = stamp_at_aim(&world, centre, [FIXED_ONE, 0, 0]);
+        let r = out.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(r.changed_from, vec![(ROCK, 4096)]);
+        assert_eq!(r.touched, vec![ChunkCoord([0, 0, 0])]);
+        assert_eq!(
+            world.count_in_box([8, 0, 0], [23, 15, 15]),
+            vec![(0, 2744), (SHELL, 1352)]
+        );
+        assert_eq!(
+            world.count_in_box([8, 0, 0], [24, 16, 16]),
+            vec![(0, 2744), (ROCK, 817), (SHELL, 1352)]
+        );
+        assert_eq!(
+            stamp_line(&out, &table, 0.5),
+            "stamped: rock 4096 (1 chunks, 0.50 ms)"
+        );
+
+        // From inside rock at x = 51 the ray hits that voxel, and a vault there would reach
+        // x = 66, past the resident x <= 63: refused, nothing written.
+        let past = Fixed3([51 * FIXED_ONE + FIXED_ONE / 2, FIXED_ONE / 2, FIXED_ONE / 2]);
+        let before = world.count_in_box([-64; 3], [63; 3]);
+        let out = stamp_at_aim(&world, past, [FIXED_ONE, 0, 0]);
+        assert_eq!(
+            stamp_line(&out, &table, 0.0),
+            "stamped: refused, chunk [1, 0, 0] is not resident"
+        );
+        assert_eq!(world.count_in_box([-64; 3], [63; 3]), before);
+
+        let outside = Fixed3([200 * FIXED_ONE, 0, 0]);
+        let out = stamp_at_aim(&world, outside, [FIXED_ONE, 0, 0]);
+        assert!(out.is_none());
+        assert_eq!(
+            stamp_line(&out, &table, 0.0),
+            "stamped: no surface within 10 m"
+        );
     }
 
     #[test]
