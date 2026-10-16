@@ -1,6 +1,6 @@
 # 0006: Spatial audio: a headless HRTF mixer on the device callback, occlusion and early reflections through the material table
 
-> **Status:** approved (2026-10-16)
+> **Status:** in-progress
 > **Created:** 2026-10-16
 > **Milestone:** M4 in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0006](../adrs/0006-hrtf-source-and-audio-thread-model.md) (HRTF source, rendering, thread model), ADR-0002 (access model: probes take short chunk read locks), ADR-0001 (stack)
@@ -346,7 +346,7 @@ The baseline CPU is not on hand; readings are dev reference and say so.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `vxe-audio`, the mixer and the output stream | dev | not started | |
+| 1: `vxe-audio`, the mixer and the output stream | dev | done: `vxe-audio` with `Mixer`, `Output` over cpal 0.18.2, bounded command channel (1024); 6 crate tests; `--audio` + `H` knock in the fly-through; `--audio --headless --frames 10` (seed 1, no key pressed, silent stream) printed `audio: Default Audio Device, 48000 Hz, 2 ch, f32` | committed with this row |
 | 2: HRTF: the pack, the FIR, the crossfade | dev | not started | |
 | 3: Material traversal and occlusion | dev | not started | |
 | 4: Early reflections | dev | not started | |
@@ -354,9 +354,9 @@ The baseline CPU is not on hand; readings are dev reference and say so.
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1, awaits the owner: hearing the `H` knock on the dev box (no sound was played in this session; only a silent stream was opened for the device line).
+- Phase 1: the loop-discontinuity bound is the largest step of the same tone rendered as one 48 000-sample non-looping buffer through the same mixer path, so the bound holds through the HRTF FIR of Phase 2.
+- Phase 1: `Output` also carries `device()`, `stream_errors()`, `finished()` and `pause()`; `Mixer` carries `drain_finished`, `is_playing`, `voice_count`, `MAX_VOICES = 256` (a `Play` beyond it is dropped).
 
 ### Close triggers
 

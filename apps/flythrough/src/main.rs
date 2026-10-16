@@ -5,12 +5,13 @@
 //! within `r_full` chunks, mips out to `r_lod`. `--level` generates the bounded level instead.
 //!
 //! `flythrough [--seed N] [--level] [--render WxH] [--frames N] [--bench N] [--autopilot]
-//! [--sync-budget MIB] [--headless]`. `--render` fixes the marcher's resolution (the window
+//! [--sync-budget MIB] [--headless] [--audio]`. `--render` fixes the marcher's resolution (the window
 //! scales it); `--frames` exits after N frames, printing the `F1` readings over the last
 //! ones; `--bench` runs the `B` bench N times right after the first mirror upload, before
 //! the first frame; `--autopilot` digs, flies 300 m out and back and prints the streaming
 //! readings (see [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame;
-//! `--headless` runs the same frames on an offscreen target with no window.
+//! `--headless` runs the same frames on an offscreen target with no window; `--audio` opens the
+//! default output device, and `H` plays a knock at the point the last left click dug.
 
 mod fly;
 
@@ -23,6 +24,7 @@ use fly::Fly;
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK};
 use flythrough::{RESIDENCY, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
+use vxe_audio::{Listener, Mixer, Output, PlayParams, Sound};
 use vxe_render::glam::Vec3;
 use vxe_render::{
     Camera, GpuWorld, LightParams, LodParams, MarchTimer, Marcher, MirrorConfig, Presenter, Window,
@@ -62,6 +64,12 @@ const PILOT_REACH: i64 = 300 * FIXED_ONE;
 const PILOT_RADIUS: i64 = 10 * FIXED_ONE;
 const PILOT_SPEED: f32 = 100.0;
 const PILOT_LEG_SECS: f64 = 30.0;
+/// Metres per voxel, for the audio mixer's distances.
+const METRES_PER_VOXEL: f32 = 0.1;
+/// The knock: 50 ms of seeded noise under an exponential decay of 10 ms time constant.
+const KNOCK_SEED: u64 = 0x0006_0001;
+const KNOCK_SECONDS: f32 = 0.05;
+const KNOCK_DECAY_SECONDS: f32 = 0.01;
 
 #[allow(
     clippy::disallowed_methods,
@@ -85,6 +93,7 @@ struct Args {
     autopilot: bool,
     headless: bool,
     sync_budget: u64,
+    audio: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -97,6 +106,7 @@ fn parse_args() -> Result<Args, String> {
         autopilot: false,
         headless: false,
         sync_budget: SYNC_BUDGET_MIB << 20,
+        audio: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -122,6 +132,7 @@ fn parse_args() -> Result<Args, String> {
             "--level" => args.level = true,
             "--autopilot" => args.autopilot = true,
             "--headless" => args.headless = true,
+            "--audio" => args.audio = true,
             _ => return Err(format!("unknown argument {flag}")),
         }
     }
@@ -169,6 +180,49 @@ fn peak_rss_bytes() -> Option<u64> {
 fn median(v: &mut [f64]) -> f64 {
     v.sort_by(f64::total_cmp);
     v[v.len() / 2]
+}
+
+/// SplitMix64 noise in `[-1, 1)` under an exponential decay: the knock `H` plays.
+fn knock() -> Sound {
+    let mut state = KNOCK_SEED;
+    let len = (KNOCK_SECONDS * vxe_audio::RATE as f32) as usize;
+    let samples: Vec<f32> = (0..len)
+        .map(|n| {
+            state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let noise = (mix64(state) >> 40) as f32 / (1u64 << 23) as f32 - 1.0;
+            let t = n as f32 / vxe_audio::RATE as f32;
+            0.8 * noise * (-t / KNOCK_DECAY_SECONDS).exp()
+        })
+        .collect();
+    Sound::new(samples)
+}
+
+/// The audio of `--audio`: the output stream and the sounds the keys play.
+struct Audio {
+    output: Output,
+    knock: Sound,
+    /// Where the last left click dug, in voxel units.
+    dig_point: Option<[f32; 3]>,
+}
+
+impl Audio {
+    /// Opens the default device; prints why when it cannot.
+    fn open() -> Option<Self> {
+        match Output::open(Mixer::new(METRES_PER_VOXEL)) {
+            Ok(output) => {
+                println!("audio: {}", output.device());
+                Some(Self {
+                    output,
+                    knock: knock(),
+                    dig_point: None,
+                })
+            }
+            Err(e) => {
+                println!("audio: off, {e}");
+                None
+            }
+        }
+    }
 }
 
 fn voxel_of(p: Vec3) -> VoxelCoord {
@@ -298,6 +352,7 @@ struct Run {
     samples: Option<Samples>,
     stream: Option<Stream>,
     pilot: Option<Autopilot>,
+    audio: Option<Audio>,
 }
 
 impl Run {
@@ -325,8 +380,17 @@ impl Run {
         }
     }
 
-    fn dig(&self) {
+    fn dig(&mut self) {
         let (origin, dir) = self.camera_ray();
+        if let Some(audio) = self.audio.as_mut() {
+            let t = self
+                .world
+                .raycast(origin, dir, REACH)
+                .map_or(REACH, |h| h.t);
+            audio.dig_point = Some(
+                [0, 1, 2].map(|k| (origin.0[k] + dir[k] * t / FIXED_ONE) as f32 / FIXED_ONE as f32),
+            );
+        }
         let t = now();
         let op = EditOp::tool_along_ray(
             &self.world,
@@ -823,6 +887,7 @@ impl Run {
             self.fly.update(input, dt);
             self.handle_input(gpu, input);
         }
+        self.audio_step();
         if let Some(n) = self.args.frames
             && self.frame + SAMPLES as u32 == n
         {
@@ -861,6 +926,34 @@ impl Run {
         if input.pressed(KeyCode::F1) {
             self.samples = Some(Samples::default());
         }
+        if let Some(audio) = self.audio.as_mut()
+            && input.pressed(KeyCode::KeyH)
+        {
+            match audio.dig_point {
+                Some(p) => {
+                    if let Err(e) = audio.output.play(&audio.knock, PlayParams::at(p)) {
+                        println!("knock: {e}");
+                    }
+                }
+                None => println!("knock: no dig point yet; left-click first"),
+            }
+        }
+    }
+
+    /// Sends the camera to the mixer as its listener.
+    fn audio_step(&mut self) {
+        let Some(audio) = self.audio.as_ref() else {
+            return;
+        };
+        let (forward, _, up) = self.fly.camera.basis();
+        let listener = Listener {
+            position: self.fly.camera.position.to_array(),
+            forward: forward.to_array(),
+            up: up.to_array(),
+        };
+        // A full channel drops this frame's listener; the next frame sends a fresh one.
+        let _ = audio.output.set_listener(listener);
+        for _ in audio.output.finished() {}
     }
 
     /// Streams, syncs, marches and presents one frame begun at `t0`.
@@ -960,6 +1053,7 @@ struct Flythrough {
     camera: Camera,
     pending: Option<Pending>,
     run: Option<Run>,
+    audio: Option<Audio>,
 }
 
 impl App for Flythrough {
@@ -1018,6 +1112,7 @@ impl App for Flythrough {
                 samples: None,
                 stream,
                 pilot,
+                audio: self.audio.take(),
             });
         }
         match self.run.as_mut() {
@@ -1183,6 +1278,7 @@ fn main() {
         camera,
         pending: Some(pending),
         run: None,
+        audio: if args.audio { Audio::open() } else { None },
     };
     let result = if args.headless {
         run_headless(app, size)

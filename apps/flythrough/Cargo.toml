@@ -16,6 +16,7 @@ env_logger.workspace = true
 vxe-world = { path = "../../crates/vxe-world" }
 vxe-render = { path = "../../crates/vxe-render" }
 vxe-app = { path = "../../crates/vxe-app" }
+vxe-audio = { path = "../../crates/vxe-audio" }
 
 [dev-dependencies]
 png.workspace = true
