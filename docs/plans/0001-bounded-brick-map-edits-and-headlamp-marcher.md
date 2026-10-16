@@ -528,7 +528,7 @@ says so.
 | 5: GPU mirror and primary-ray marcher with a golden image | dev | done | 6a3ab55 |
 | 6: Headlamp with a shadow ray | dev | done | 4da3c9a |
 | 7: Window shell and the fly-through | dev | done | 84b4f55 |
-| 8: Brick occupancy masks | dev | done | committed with this row |
+| 8: Brick occupancy masks | dev | done | 3561541 |
 
 ### Notes
 
@@ -593,17 +593,19 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
+- **What shipped:** the bounded brick-map world with deterministic integer edits (sphere, box, capsule; carve, fill, replace) that report per-material counts, touched chunks and bounds; raycast, box queries and tool-along-ray; the seeded cave source and a pinned determinism hash; the GPU mirror with incremental upload and occupancy masks; the compute marcher with an offset headlamp and one shadow ray; the `winit` shell and the fly-through with dig, fill, readings and a timed `--frames` mode. Phases 1 to 8, commits b78443f to 3561541.
+- **Public API changed:** new crates' first public surface. `vxe-world`: `World`, `ChunkStore`, `WorldStats`, `Brick` (with `occupancy_mask`), `Chunk`, coordinate types, `Fixed3`/`FIXED_ONE`/`FIXED_HALF`/`centre_of_voxel`, `EditOp`/`EditResult`/`EditError`/`Mode`/`Shape`, `Material`/`MaterialFlags`/`MaterialId`/`MaterialTable`/`AIR`, `QueryStats`, `Hit`/`Face`, `WorldSource`/`UniformSource`, `hash`. `vxe-render`: `Camera`, `GpuWorld`/`MirrorError`/`SyncStats`, `LightParams` (with `shadows` and `masks`), `Marcher`/`MarchTimer`, `Presenter`, `readback`, `limits_for`, `MARCH_WGSL`, re-exported `wgpu` and `glam`. `vxe-app`: `App`, `Flow`, `Gpu`, `ShellConfig`, `ShellError`, `run`, `Input`, `KeyCode`, `MouseButton`, re-exported `wgpu` and `winit`. `flythrough` lib: `cave`, `cave_materials`.
 - **Budget readings:**
   - §4 edit cost: `cargo bench -p vxe-world --bench edits`, 100 radius-10 carves on a fresh solid world: 4.9199 ms (CI 4.8698 to 4.9768 ms). AMD Ryzen 9 5900HS, release bench profile, Phase 4 commit.
   - §3 world memory: `world_budget --chunks 20x20x8 --seed 1`: 3200 chunks, 383 608 Full / 1 254 792 Uniform (23.41 %), CPU 419 028 992 B, mirror 402 437 184 B. `--chunks 32x32x32 --seed 1`: 32 768 chunks, 3 487 326 Full / 13 289 890 Uniform (20.79 %), CPU 3 839 457 280 B, mirror 3 666 029 424 B. AMD Ryzen 9 5900HS, release, Phase 4 commit.
   - §5 generation: 0.509 s at 20x20x8 (1.029e8 voxels/s/thread), 4.785 s at 32x32x32 (1.122e8 voxels/s/thread), 16 threads, same machine and commit.
   - §7 time to first frame: `cargo run --release -p flythrough -- --seed 1` (20x20x8 chunks, 1280x720 requested, NVIDIA GeForce RTX 3080 Laptop GPU, Vulkan, Hyprland): 2973, 3151 and 3156 ms after dGPU idle; 1916 and 1920 ms warm. Breakdown of one idle run: generation 574 ms (in parallel with device setup), device ready at 1887 ms, mirror upload 888 ms (399 381 120 B). Phase 7 commit.
-  - §3 mirror at level size from the fly-through: 399 381 120 B after the initial sync, 383 608 Full bricks, same machine and commit.
+  - §3 mirror at level size from the fly-through: 399 381 120 B after the initial sync, 383 608 Full bricks, same machine and commit. With masks (Phase 8 commit 3561541): 402 449 984 B.
+  - §2 primary pass (march with headlamp and shadow ray): `flythrough --seed 1 --render 1920x1080 --frames 300`, median of the last 30 frames, spawn pose, NVIDIA GeForce RTX 3080 Laptop GPU, Vulkan, driver 610.57.04. Without masks (84b4f55): 1.992, 2.005, 1.992 ms. With masks (3561541): 1.575, 1.586, 1.587 ms, and 1.586 ms on a fourth run. Recorded in `nfr.md` §2 as dev reference.
+  - §7 time to first frame with masks (3561541, same command and machine as the §2 runs): 4231, 2972, 2869 and 2983 ms; mirror upload 1952, 1976, 1889 and 1946 ms for 402 449 984 B.
 - **Adapter limits (Phase 5, from `wgpu` 30.0.1 `Adapter::limits`):** llvmpipe (LLVM 22.1.8, Mesa 26.2.2, Vulkan): `max_storage_buffer_binding_size` 134 217 728, `max_buffer_size` 2 147 483 647. NVIDIA GeForce RTX 3080 Laptop GPU (Vulkan): 2 147 483 644 and 4 294 967 295. AMD Radeon Graphics (RADV RENOIR): 2 147 483 644 and 2 147 483 647.
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **Gate at the tip (3561541, Linux, dev box):** `cargo build`, `cargo nextest run --workspace` (51 passed, 0 skipped), `cargo test --doc`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check` and `cargo deny check` all exit 0; `node scripts/check-doc-links.mjs` (28 links resolve); `node --test .claude/hooks/*.test.mjs` (34 passed). The Windows CI arm has not run (nothing pushed).
+- **Outstanding `human` phases:** none.
 
 ## Followups
 
