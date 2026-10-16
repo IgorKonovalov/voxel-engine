@@ -188,8 +188,8 @@ Proposal, not a reading: under five seconds for all three gates on a CI runner.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The comment-hygiene gate | dev | done | committed with this row |
-| 2: The index-row gate and the roster markers | dev | not started | |
+| 1: The comment-hygiene gate | dev | done | 5061a90 |
+| 2: The index-row gate and the roster markers | dev | done | committed with this row |
 
 ### Notes
 
@@ -203,6 +203,14 @@ each. Empty is fine.)_
 - Phase 1: `seeded.wgsl` seeds two findings, not one: the `//` relative link the plan names, and a relative link after the inner close of a nested `/* */` comment, which pins the nesting rule (a non-nesting lexer reports 12).
 - Phase 1, other lanes: the comment gate run over the tips of `plan-0006` (44a1582), `plan-0013` (d75a0af) and `plan-0014` (2129bfb) reports only the five findings fixed here; `plan-0013` edits both `world_budget.rs` and `gpu_world.rs`, so its merge carries them in its own line numbers (109, 112, 114, 177; 1157) and needs the same fixes. No `plan-0004` branch exists yet.
 - Phase 1: `CLAUDE.md`'s `ci.yml` line in "Where things live" still lists only doc links among the gates; updated in Phase 2, whose Files touched name `CLAUDE.md` whole.
+- Phase 2: the gate reported two rows over cap, 0007 (354 bytes) and 0014 (321 bytes). 0007 drops "bounded worlds" and "reserves op kinds for Plans 0008 and 0009" (both in the plan body); 0014 drops "`perf` installed" (in the plan's Prerequisite) and restates its figure without "missed".
+- Phase 2: the self-test's repository half names the two index READMEs (Ritmolux's third roster has no counterpart) with floors of 5 rows per roster and 15 across the repository, against 11 and 14 measured; Ritmolux's were 20 and 100.
+- Phase 2: the green fixture's root is `scripts/fixtures/index-rows`, not `scripts/fixtures`; the red tree is its sibling and `SEEDED_TREES` names `scripts/fixtures` alone.
+- Phase 2: the self-test adds an exact-match assertion on the red tree's over-cap line (`roster.md:25  437 bytes (cap 320)`) beside the copied shape regex; 9 records (Ritmolux: 10, with three rosters).
+- Phase 2: both fixture trees' prose names the root paths of this repository and prefixes Ritmolux ADR and backlog numbers; no row line inside a marker changed, and line numbers are unchanged. `check-doc-links.mjs` here does not skip `scripts/fixtures`; every fixture link resolves.
+- Phase 2: the gate's over-cap and shape messages show this repository's three row forms (all tables) instead of Ritmolux's bullet and ledger forms.
+- Phase 2: mutation check: with `TABLE_ROW` and `BULLET` matching nothing, `--self-test` reports 1/9 and exits 1 while the plain run exits 0.
+- Phase 2, other lanes: at their current tips `plan-0006`, `plan-0013` and `plan-0014` still carry the 354-byte 0007 row, and `plan-0014` the 321-byte 0014 row; each merge must keep this branch's trimmed rows and the four marker lines, or the index gate fails on `main`.
 
 ### Close triggers
 

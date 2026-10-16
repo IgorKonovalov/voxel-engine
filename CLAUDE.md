@@ -56,8 +56,9 @@ docs/
 scripts/
 ├── check-doc-links.mjs        # every relative markdown link resolves (run at every plan close)
 ├── check-comment-hygiene.mjs  # no relative link or plan-relative narration in .rs/.wgsl comments
+├── check-index-rows.mjs       # rows inside roster:begin markers in the index READMEs <= 320 bytes
 └── fixtures/                  # seeded trees each gate bites on; README lists the expected findings
-.github/workflows/ci.yml  # build, nextest, doctests, clippy, fmt, hooks, doc links; cargo-deny
+.github/workflows/ci.yml  # build, nextest, doctests, clippy, fmt, hooks, doc gates; cargo-deny
 ```
 
 `.claude/` is **committed** (except `settings.local.json`).

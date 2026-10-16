@@ -48,6 +48,10 @@ jobs:
         run: node scripts/check-doc-links.mjs
       - name: Comment hygiene
         run: node scripts/check-comment-hygiene.mjs
+      - name: Index rows
+        run: node scripts/check-index-rows.mjs
+      - name: Index rows self-test
+        run: node scripts/check-index-rows.mjs --self-test
 
   deny:
     runs-on: ubuntu-latest

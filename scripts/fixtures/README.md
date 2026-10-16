@@ -59,3 +59,55 @@ than obeyed:
 
 An escape with **no reason after the colon** is itself a finding. That is not seeded, since it
 would make the counts above wrong, but it is asserted by the gate's own header.
+
+## `index-rows/`: for `check-index-rows.mjs`
+
+```
+node scripts/check-index-rows.mjs scripts/fixtures/index-rows
+```
+
+Expect **exit 0**: this tree passes rather than fails, and it is half the instrument. A byte cap is
+trivially red on a tree with a fat row in it, so the assertion here is the reverse: the gate
+measures the rows it should and stays silent about everything else. Green means all four hold:
+
+| Case | Seeded in `roster.md` as | Expected |
+|------|--------------------------|----------|
+| a row inside a region, at width | a 258-byte table row | measured, not reported |
+| a second region in the same file | a bullet region below the table region | **3** regions counted in the file, proving the count is a count |
+| a row outside every region | a 1,100-odd-byte unmarked table row | not measured at all |
+| a fenced row inside a region | an over-cap row inside a ```` ```markdown ```` block | not measured; a document describing a roster is not one |
+
+The third case is the gate's documented hole: a row moved past a marker escapes silently. The
+per-file region count printed on success is the mitigation, so a deleted marker shows up as a
+region that vanished.
+
+## `index-rows-red/`: the same gate's other half
+
+```
+node scripts/check-index-rows.mjs scripts/fixtures/index-rows-red
+```
+
+Expect **exit 1 and exactly three breaks**, one over cap and two of the wrong shape:
+
+| Case in `roster.md` | Expected |
+|---------------------|----------|
+| a 437-byte table row inside a `roster:begin cap=320` region | reported as `roster.md:25  437 bytes (cap 320)` |
+| a correctly sized row in the same region | measured, not reported |
+| a bullet row in a table region, well under cap, above the table header | reported as `roster.md:47  a bullet row in a table region (expected a table row; ...)` |
+| the byte-identical bullet in a bullet region | not reported; the check is the row's form against its region's majority |
+| a region holding one row of each form | reported once, at the region's opening line 74, naming both counts |
+
+The two trees are siblings, each its own root, so neither run reaches the other's rows.
+
+## `--self-test`: the counts are asserted, not printed
+
+```
+node scripts/check-index-rows.mjs --self-test    # expects exit 0, 9 of 9
+```
+
+Exit 0 from the green tree and from the repository is not on its own an assertion: a detector whose
+row regexes stopped matching reports `0 rows, 0 over cap` and exits 0 from both. The self-test
+asserts the green tree's exact 3 regions and 4 rows with nothing reported; the red tree's exact 4
+regions, 8 rows, 1 over cap and 2 misshaped, with the over-cap line equal to the one above and each
+shape report in its printed form; and a floor of 5 rows in each of `docs/adrs/README.md` and
+`docs/plans/README.md` and 15 across the repository, which a dead detector takes to zero.
