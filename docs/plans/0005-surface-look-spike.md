@@ -499,8 +499,8 @@ are the numbers the owner's call weighs.
 | 2: Mode A, normals smoothed in the shader | dev | done: cavity normal error trilinear8 18.62, gradient27 6.95 degrees (face 40.75, same run); pillar silhouette 172 px in all three; occluder centre (-1, 1/255, 1/255) in both; `look_trilinear8.png`, `look_gradient27.png` blessed on lavapipe; 1080p march trilinear8 25.024 / 24.885 / 24.872 ms, gradient27 41.277 / 41.400 / 41.353 ms on RADV Renoir | 9480183 |
 | 3: Mode B, per-voxel contour planes in attribute pages | dev | done: layout and floor readback tests in `mirror.rs`; face goldens byte for byte with attribute pages over 1 and 3 shards (`lod.png` 1 and 2); contour cavity normal error 7.41 degrees, pillar silhouette 32 px (face 40.75, 172, same run, lavapipe); `look_contour.png` blessed on lavapipe. RTX 3080 Laptop GPU, `--level --headless --seed 1 --frames 1`: without `--look` 207 681 088 B live, 213 334 144 B allocated; `--look contour` 606 633 408 B live, 613 759 104 B allocated; first sync 571 writes (195 without); 1080p contour march 1.891 / 1.891 / 1.892 ms; attrib initial fill (383 608 bricks) 55.020 / 39.581 / 41.722 / 41.889 ms; one 1 m carve 46 bricks 0.020 ms; the other 99 bench carves 2777 bricks 0.310 ms | 6d77f12 |
 | 4: Mode C, procedural per-material detail | dev | done: zero-strength detail leaves `primary.png`, `headlamp.png`, `lod.png` byte for byte; rock `[4.0, 0.3]` differs from face at 22.99 % of pixels by more than 8/255 (lavapipe), `look_detail.png` blessed on lavapipe; pillar pole decodes `[5, 162, 135]` from both cameras (`[0, 128, 128]` without detail); material rows 64 B, level mirror 606 633 536 B live with `--look` (+128 B for 4 rows). RTX 3080 Laptop GPU, 1080p march with detail: face 1.919 / 1.954 / 1.956 ms, gradient27 4.579 / 4.537 / 4.538 ms | 37b22fa |
-| 5: Readings and the comparison table | dev | done: table below; `nfr.md` §2 and §3 lines; streamed `--autopilot --headless --look contour` reached full residency at 3 309 723 820 B live, 4 103 413 164 B allocated, then stopped on `wgpu error: Out of Memory` (RTX 3080 Laptop GPU, 8 GiB) | committed with this row |
-| 6: The owner's call | human | not started | |
+| 5: Readings and the comparison table | dev | done: table below; `nfr.md` §2 and §3 lines; streamed `--autopilot --headless --look contour` reached full residency at 3 309 723 820 B live, 4 103 413 164 B allocated, then stopped on `wgpu error: Out of Memory` (RTX 3080 Laptop GPU, 8 GiB) | 745ea7a |
+| 6: The owner's call | human | awaits the owner (see Notes) | |
 
 ### Comparison table (Phase 5)
 
@@ -580,6 +580,18 @@ each. Empty is fine.)_
   under load; the figures are GPU timestamps.
 - Phase 5: with detail on, the cavity normal error rises in every mode (detail is measured
   against the smooth analytic sphere).
+- Phase 6 awaits the owner: `cargo run --release -p flythrough -- --level --seed 1 --look face`
+  (windowed, at the keyboard of the dev box). `N` cycles face, trilinear8, gradient27, contour
+  (`--look` gives the mirror attribute pages, so contour is reachable); `V` toggles detail
+  (rock at `[4.0, 0.3]`). Judge at arm's length from a carved wall (left click digs) and at
+  5 m from a cavern wall: which normal mode, whether detail is on and at what rock strength,
+  and the on-screen reason in one or two sentences; or two finalists and the measurement that
+  would separate them. Also look for contour's isolated dark pixels and leaks through thin
+  walls.
+- Open owner questions, not blocks: lavapipe cannot fit the level with attribute pages
+  (`PoolTooLarge` by design), so the level-size contour readings are dev-box only; the
+  streamed contour mirror (4.10 GB allocated at full residency) runs out of the 8 GiB card's
+  memory under motion.
 - Phase 4: the zero-strength, 20 %, world-position and 64-byte-row checks are in
   `apps/flythrough/tests/look.rs` (`material_rows_are_64_bytes` checks the live mirror bytes
   as slots, records, table and 64 B rows).
@@ -588,11 +600,27 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** the look harness (`view` and `normal_mode` flag bits, cavity and pillar
+  scenes, two metrics), modes `Trilinear8`, `Gradient27`, `Contour` (attribute pages and
+  `attrib.wgsl`) and procedural detail, behind flags; the fly-through's default stays face
+  normals. Commits ca7dc23, 9480183, 6d77f12, 37b22fa, 745ea7a.
+- **Public API changed:** `vxe-render`: `LookParams`, `NormalMode`, `ViewMode`,
+  `Marcher::set_look` / `look`, `FLAG_*` look bits; `GpuWorld::with_surface_attrs`,
+  `surface_attrs`, `update_attrs`, `update_attrs_timed`, `live_attr_slots`, `in_attr_page`;
+  `gpu_world::{ATTR_PAGE_BRICK_SLOTS, NO_PLANE, attr_slot}`; `MATERIAL_FLOATS` 8 -> 16;
+  `attrib` module, `ATTRIB_WGSL`; `free_slots` now returns the plain kind's list. `vxe-world`:
+  `Material::detail`. `flythrough`: `ROCK_DETAIL`, `look_materials`, flags `--look`, `--view`,
+  `--detail`.
+- **Budget readings:** the comparison table above and the Phase 3 and 4 rows, every timing on
+  the RTX 3080 Laptop GPU under the exclusive lock (Phases 1 and 2 rows on RADV Renoir);
+  `nfr.md` §2 per-mode primary rays (Contour 1.927 to 1.944 ms, Gradient27 4.564 to 4.612 ms,
+  against 3.0 ms); §3 level with attribute pages 613 759 104 B allocated, streamed 4 103 413 164
+  B allocated at full residency then out of memory, against 3 GB.
+- **Gate at the tip (745ea7a):** `cargo build --workspace` 0; `cargo nextest run --workspace`
+  111 passed, 0 skipped (exclusive lock); `cargo test --workspace --doc` 0; `cargo clippy
+  --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check`
+  advisories, bans, licenses, sources ok; `node scripts/check-doc-links.mjs` 58 links resolve.
+- **Outstanding `human` phases:** Phase 6, the owner's call (Notes).
 
 ## Followups
 
