@@ -346,8 +346,8 @@ The baseline CPU is not on hand; readings are dev reference and say so.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `vxe-audio`, the mixer and the output stream | dev | done: `vxe-audio` with `Mixer`, `Output` over cpal 0.18.2, bounded command channel (1024); 6 crate tests; `--audio` + `H` knock in the fly-through; `--audio --headless --frames 10` (seed 1, no key pressed, silent stream) printed `audio: Default Audio Device, 48000 Hz, 2 ch, f32` | committed with this row |
-| 2: HRTF: the pack, the FIR, the crossfade | dev | not started | |
+| 1: `vxe-audio`, the mixer and the output stream | dev | done: `vxe-audio` with `Mixer`, `Output` over cpal 0.18.2, bounded command channel (1024); 6 crate tests; `--audio` + `H` knock in the fly-through; `--audio --headless --frames 10` (seed 1, no key pressed, silent stream) printed `audio: Default Audio Device, 48000 Hz, 2 ch, f32` | 5a6697a |
+| 2: HRTF: the pack, the FIR, the crossfade | dev | blocked (see Notes): the D2 pack is 8802 directions, 9 083 684 bytes; nothing of Phase 2 committed | committed with this row |
 | 3: Material traversal and occlusion | dev | not started | |
 | 4: Early reflections | dev | not started | |
 | 5: Benches, readings and the fly-through's audio HUD | dev | not started | |
@@ -357,18 +357,7 @@ The baseline CPU is not on hand; readings are dev reference and say so.
 - Phase 1, awaits the owner: hearing the `H` knock on the dev box (no sound was played in this session; only a silent stream was opened for the device line).
 - Phase 1: the loop-discontinuity bound is the largest step of the same tone rendered as one 48 000-sample non-looping buffer through the same mixer path, so the bound holds through the HRTF FIR of Phase 2.
 - Phase 1: `Output` also carries `device()`, `stream_errors()`, `finished()` and `pause()`; `Mixer` carries `drain_finished`, `is_playing`, `voice_count`, `MAX_VOICES = 256` (a `Play` beyond it is dropped).
-
-### Close triggers
-
-_(Facts for the architect. No recommendations, and no suggested version bump.)_
-
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
-
-## Followups
-
-- Reverb from the reflection fan's hit statistics; resonance-driven synthesis hooks.
-- HRTF direction interpolation; a device-rate resampler; a probe worker thread.
+- **Phase 2 blocked, design call missing.** The plan and ADR-0006 price the pack at about 3 MB for about 2800 directions. SADIE II subject D2 is a KEMAR dummy head measured at 8802 directions (York's database page: "Subject: D2 Info: KEMAR Points: 8802"; the 48 kHz SOFA confirms it: 22 elevation rings of 400 directions at 0.9 degree azimuth spacing, plus the two poles). Packed as the plan states (128 taps x 2 ears x f32 per direction), the pack is 9 083 684 bytes, three times the priced size; the repository is 2.95 MiB today and a committed blob cannot be removed without a history rewrite, so nothing was committed. Options: (a) commit the full 8802-direction pack (9.08 MB); (b) thin the azimuth rings in the packer, every 3rd direction of each 400-direction ring giving 2950 directions and 3 044 420 bytes (every 2nd: 4402 directions, 4 542 452 bytes); computed, not packed; (c) a different subject (the human subjects' SOFA archives are 9 to 12 MB against D2's 38 MB, consistent with about 2800 directions, but the plan pins D2); (d) a smaller tap type or count. Measured with the packer below, on the source the plan pins.
+- Phase 2 facts gathered before the block: `D2_HRIR_SOFA.zip` downloaded from Zenodo record 10886409 (DOI 10.5281/zenodo.10886409), md5 `f555491d1b6b1a108bb4d26b63ad84a4` matching the record; the record's licence is `apache2.0` and its `LICENSE.txt` (md5 `0ba5044c64ef53cb0189c9546081e228`) is the Apache 2.0 text; the SOFA's `License` attribute reads "Copyright 2018, University of York, Licensed under the Apache License, Version 2.0"; York's page asks that "the original dataset must be referenced whenever used in original or modified form" and that academic work cite DOI 10.3390/app8112029. The file used is `D2_48K_24bit_256tap_FIR_SOFA.sofa` (256 taps, zero per-filter delays); onsets put the 128-tap windows' starts at samples 44 to 97.
+- Phase 2, for the architect: the pack format block lists magic + four `u32` fields, which is a 20-byte header, not the 16 bytes the done-when states; and D2 is a KEMAR, not the KU100 (that is D1) the +90 degree expectation names.
+- Phase 2 work in progress is left uncommitted in this worktree: the `sofar` dev pin (`default-features = false`) in `Cargo.toml` and `crates/vxe-audio/Cargo.toml`, `Cargo.lock`, and `crates/vxe-audio/examples/hrir_pack.rs` (reads the SOFA, writes the pack as specified; produced the figures above). The tip's committed gate is Phase 1's.
