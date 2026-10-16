@@ -19,6 +19,7 @@
 
 mod brick;
 mod chunk;
+mod coarse;
 mod coords;
 mod edit;
 mod fixed;
@@ -35,6 +36,7 @@ mod stream;
 
 pub use brick::Brick;
 pub use chunk::Chunk;
+pub use coarse::{CellChange, CoarseCell, CoarseGrid};
 pub use coords::{
     BRICK_EDGE, BRICK_VOXELS, CHUNK_BRICKS, CHUNK_EDGE, CHUNK_EDGE_BRICKS, ChunkCoord, ChunkExtent,
     VoxelCoord, brick_of_slot, brick_slot, brick_slot_of_local, index_in_brick,

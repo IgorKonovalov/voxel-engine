@@ -400,8 +400,8 @@ with the dev-box readings. Every one is a guess until read.
 |---|---|---|---|
 | 1: `vxe-sim`, the distance and the sweep | dev | done | b1377d7 |
 | 2: Walk, step, slide, fall | dev | done | 215285a |
-| 3: Ledge climb and the pinned course | dev | done | committed with this row |
-| 4: The coarse grid | dev | not started | |
+| 3: Ledge climb and the pinned course | dev | done | f8ecdc9 |
+| 4: The coarse grid | dev | done | committed with this row |
 | 5: Walkable space | dev | not started | |
 | 6: Walk mode in the fly-through, benches, readings | dev | not started | |
 
@@ -419,6 +419,8 @@ with the dev-box readings. Every one is a guess until read.
 - Phase 2: also touches `crates/vxe-sim/tests/support/mod.rs` (the test parameters and a tick runner that asserts no overlap after every tick).
 - Phase 3: a climbing tick skips the vertical step; the tick on which the climb finishes runs it (the ground probe sets `grounded`). A rise cut short by a ceiling ends the climb. `CharacterState::is_climbing()` exposes the private climbing state.
 - Phase 3: course inputs: F1 `WISH` with `jump` on ticks 1, 61, 121, 181, 241; F2, F3, F6 `WISH`; F4, F5 `WISH` with `climb` held. The hash feeds, per tick, foot, `vz`, `grounded`, `blocked`, `stepped`, `climbed`, climbing, `climb_available` and `landed`. Within 300 ticks the F1, F3, F4, F5 and F6 bodies walk past the `[-2, 2)³` extent and fall through the non-resident space (no solid there). Constant `0x0c80_8031_d14f_27eb`, blessed on the dev box (Linux); the Windows arm is CI's.
+- Phase 4: public API beyond the data shapes: `CoarseCell::of(&Brick)`, `CoarseGrid::{new, build_with_stats, update_with_stats, chunk, contains, chunks, len, is_empty, bytes}`; the `_with_stats` forms return `QueryStats` (one voxel-array read per `Full` brick), used to show a `Uniform` brick costs no voxel read (solid world build: 0 reads; carved-world build and the carve's update: 32 each).
+- Phase 4: `world_budget` prints the grid lines for the bounded cave only (`--chunks`), not for `--stream`.
 
 ### Close triggers
 
