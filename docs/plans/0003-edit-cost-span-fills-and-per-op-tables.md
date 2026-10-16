@@ -1,6 +1,6 @@
 # 0003: Edit cost under 2 ms: row spans, a per-op target table and per-brick tallies
 
-> **Status:** approved (2026-10-16)
+> **Status:** in-progress
 > **Created:** 2026-10-16
 > **Milestone:** M1 follow-up in `docs/roadmap.md` (the `nfr.md` §4 miss recorded by Plan 0001)
 > **Related ADRs:** [ADR-0002](../adrs/0002-brick-map-layout-and-per-chunk-locked-access.md) (layout and access model, unchanged by this plan). No new ADR: the choices here are implementation choices with no architecture-level alternative worth a record, and the rejected ones are named under "Decision".
@@ -289,7 +289,7 @@ dev box projects to about 3 ms there. That projection is a guess until the basel
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The breakdown and the oracle | dev | not started | |
+| 1: The breakdown and the oracle | dev | done | committed with this row |
 | 2: The per-op target table | dev | not started | |
 | 3: Row spans | dev | not started | |
 | 4: Per-brick tallies and one collapse | dev | not started | |
@@ -297,9 +297,12 @@ dev box projects to about 3 ms there. That projection is a guess until the basel
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: `Shape::voxel_bounds` and `Shape::contains` went from `pub(crate)` to `pub` so the
+  test-support reference can call them; `crates/vxe-world/src/shape.rs` is outside Phase 1's
+  Files touched.
+- Phase 1: the profile is from `eu-stack -i` sampling the bench (`--profile-time 25`, release
+  bench profile with debuginfo, built in a scratch target dir); `perf` and `samply` are not
+  installed. 235 main-thread samples, 187 inside `World::apply`.
 
 ### Close triggers
 
@@ -307,7 +310,15 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 - **What shipped:**
 - **Public API changed:**
-- **Budget readings:**
+- **Budget readings:** (all `cargo bench -p vxe-world --bench edits`, AMD Ryzen 9 5900HS dev
+  box, release bench profile, taken under the exclusive perf lock; mean, CI in brackets)
+  - Phase 1, edit path of `486ea9c` (the Plan 0001 path as amended by Plan 0002): `worst`
+    4.613 ms [4.568, 4.667]; `mixed` 3.103 ms [3.090, 3.116]; `tool` 8.287 ms [8.254, 8.324].
+  - Phase 1 breakdown of `worst` at `486ea9c`, self time over the 187 samples inside
+    `World::apply` (inlined frames attributed to the inlined function): libc, all under
+    `System::alloc`, 20.3%; `RangeInclusive<i64>::next` (the voxel loops) 12.3%;
+    `edit_brick` 9.6%; `Mode::target` 9.1% plus `bool::then_some` 9.1%; `Tally::add` 7.0%;
+    `i64::lt` 7.0%; `Shape::contains` 4.3%.
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 

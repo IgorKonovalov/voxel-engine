@@ -168,3 +168,119 @@ pub fn carved_world() -> World {
         .unwrap();
     world
 }
+
+/// What [`reference_apply`] says `World::apply` must do with one op.
+#[derive(Debug)]
+pub struct Expected {
+    /// The result or error `World::apply` must return.
+    pub result: Result<EditResult, EditError>,
+    /// The op's inclusive voxel bounds; `None` for an empty shape.
+    pub bounds: Option<([i64; 3], [i64; 3])>,
+    /// The material of every voxel in `bounds` after the op, x fastest, then y, then z;
+    /// `None` for a voxel in a non-resident chunk.
+    pub after: Vec<Option<MaterialId>>,
+}
+
+/// The material a voxel of `old` becomes under `mode`, or `None` when it is unchanged, read
+/// straight from the material table.
+fn reference_target(mode: Mode, old: MaterialId, table: &MaterialTable) -> Option<MaterialId> {
+    let new = match mode {
+        Mode::Carve => {
+            let indestructible = table
+                .get(old)
+                .is_some_and(|m| m.flags.contains(MaterialFlags::INDESTRUCTIBLE));
+            (old != AIR && !indestructible).then_some(AIR)
+        }
+        Mode::Fill(m) => (old == AIR).then_some(m),
+        Mode::Replace { from, to } => (old == from).then_some(to),
+    }?;
+    (new != old).then_some(new)
+}
+
+/// A brute-force model of `World::apply`: every voxel centre in the shape's voxel bounds is
+/// tested with `Shape::contains`, the mode is applied by a direct `MaterialTable` lookup, and
+/// the op fails on the least non-resident chunk holding an inside centre. Reads `world` one
+/// voxel at a time and never calls `World::apply`.
+pub fn reference_apply(world: &World, op: &EditOp) -> Expected {
+    let Some((lo, hi)) = op.shape.voxel_bounds() else {
+        return Expected {
+            result: Ok(EditResult::default()),
+            bounds: None,
+            after: Vec::new(),
+        };
+    };
+    let table = world.materials();
+    let mut missing: Option<ChunkCoord> = None;
+    let mut before = Vec::new();
+    let mut after = Vec::new();
+    let mut counts = std::collections::BTreeMap::<MaterialId, u32>::new();
+    let mut touched = std::collections::BTreeSet::<ChunkCoord>::new();
+    let mut aabb: Option<([i64; 3], [i64; 3])> = None;
+    for z in lo[2]..=hi[2] {
+        for y in lo[1]..=hi[1] {
+            for x in lo[0]..=hi[0] {
+                let v = [x, y, z];
+                let vc = VoxelCoord(v.map(|c| i32::try_from(c).expect("voxel fits i32")));
+                let old = world.material_at(vc);
+                before.push(old);
+                let inside = op.shape.contains(v.map(|c| c * FIXED_ONE + FIXED_HALF));
+                let new = match (inside, old) {
+                    (false, _) => old,
+                    (true, None) => {
+                        let c = vc.chunk();
+                        missing = Some(missing.map_or(c, |m| m.min(c)));
+                        None
+                    }
+                    (true, Some(o)) => match reference_target(op.mode, o, table) {
+                        None => Some(o),
+                        Some(n) => {
+                            *counts.entry(o).or_default() += 1;
+                            touched.insert(vc.chunk());
+                            aabb = Some(match aabb {
+                                None => (v, v),
+                                Some((a, b)) => (
+                                    [0, 1, 2].map(|k| a[k].min(v[k])),
+                                    [0, 1, 2].map(|k| b[k].max(v[k])),
+                                ),
+                            });
+                            Some(n)
+                        }
+                    },
+                };
+                after.push(new);
+            }
+        }
+    }
+    let to_voxel = |v: [i64; 3]| VoxelCoord(v.map(|c| i32::try_from(c).expect("fits i32")));
+    let (result, after) = match missing {
+        Some(c) => (Err(EditError::NotResident(c)), before),
+        None => (
+            Ok(EditResult {
+                changed_from: counts.into_iter().collect(),
+                touched: touched.into_iter().collect(),
+                aabb: aabb.map(|(a, b)| (to_voxel(a), to_voxel(b))),
+            }),
+            after,
+        ),
+    };
+    Expected {
+        result,
+        bounds: Some((lo, hi)),
+        after,
+    }
+}
+
+/// The material of every voxel in `lo..=hi`, x fastest, as [`Expected::after`] lays it out.
+pub fn materials_in(world: &World, lo: [i64; 3], hi: [i64; 3]) -> Vec<Option<MaterialId>> {
+    let mut out = Vec::new();
+    for z in lo[2]..=hi[2] {
+        for y in lo[1]..=hi[1] {
+            for x in lo[0]..=hi[0] {
+                out.push(world.material_at(VoxelCoord(
+                    [x, y, z].map(|c| i32::try_from(c).expect("voxel fits i32")),
+                )));
+            }
+        }
+    }
+    out
+}

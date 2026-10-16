@@ -338,3 +338,82 @@ fn tool_along_ray_without_a_hit_ends_at_max_t() {
     );
     assert_eq!(world.apply(&op).unwrap().changed_from, []);
 }
+
+/// One op of the oracle run: shape and mode cycle with `i`, sizes and positions come from
+/// `rng`. Every eighth op from 7 sits within 8 voxels of the world's +x, -y or +z face with a
+/// radius of at least 10 voxels, so it reaches a non-resident chunk.
+fn seeded_op(i: usize, rng: &mut SplitMix64) -> EditOp {
+    let near_edge = i % 40 == 7;
+    let mut c = [0; 3].map(|_| rng.range(-100, 100) * FIXED_ONE + rng.range(-128, 127));
+    if near_edge {
+        let axis = (i / 40) % 3;
+        let side = if axis == 1 { -1 } else { 1 };
+        c[axis] = side * rng.range(120, 127) * FIXED_ONE + rng.range(-128, 127);
+    }
+    let size = |rng: &mut SplitMix64| {
+        if near_edge {
+            rng.range(10 * FIXED_ONE, 12 * FIXED_ONE)
+        } else {
+            rng.range(FIXED_ONE, 12 * FIXED_ONE)
+        }
+    };
+    let mode = match (i / 3) % 3 {
+        0 => Mode::Carve,
+        1 => Mode::Fill(rng.range(1, 5) as MaterialId),
+        _ => Mode::Replace {
+            from: rng.range(0, 5) as MaterialId,
+            to: rng.range(0, 5) as MaterialId,
+        },
+    };
+    match i % 3 {
+        0 => EditOp::sphere(Fixed3(c), size(rng), mode),
+        1 => {
+            let lo = [0; 3].map(|_| size(rng));
+            let hi = [0; 3].map(|_| size(rng));
+            EditOp::box_(
+                Fixed3([0, 1, 2].map(|k| c[k] - lo[k])),
+                Fixed3([0, 1, 2].map(|k| c[k] + hi[k])),
+                mode,
+            )
+        }
+        _ => {
+            let d = [0; 3].map(|_| rng.range(-12 * FIXED_ONE, 12 * FIXED_ONE));
+            let r = size(rng);
+            EditOp::capsule(Fixed3(c), Fixed3([0, 1, 2].map(|k| c[k] + d[k])), r, mode)
+        }
+    }
+}
+
+/// 200 seeded ops of every shape and mode on a world where every brick is `Full` and all six
+/// materials occur: `World::apply` returns exactly what the brute-force reference says, and
+/// leaves every voxel in the op's bounds as the reference says.
+#[test]
+fn apply_matches_the_reference_over_seeded_ops() {
+    let world = World::generate(
+        test_extent(),
+        &FnSource(|v: VoxelCoord| (hash::hash3(0x0003_0001, v.0) % 6) as MaterialId),
+        &test_table(),
+    );
+    let mut rng = SplitMix64(0x0003_0001);
+    let mut changed = 0;
+    let mut failed = 0;
+    for i in 0..200 {
+        let op = seeded_op(i, &mut rng);
+        let expected = reference_apply(&world, &op);
+        assert_eq!(world.apply(&op), expected.result, "op {i}: {op:?}");
+        if let Some((lo, hi)) = expected.bounds {
+            assert!(
+                materials_in(&world, lo, hi) == expected.after,
+                "op {i}: voxels differ from the reference after {op:?}"
+            );
+        }
+        match &expected.result {
+            Ok(r) if !r.changed_from.is_empty() => changed += 1,
+            Ok(_) => {}
+            Err(_) => failed += 1,
+        }
+    }
+    println!("{changed} of 200 ops changed voxels; {failed} failed on a non-resident chunk");
+    assert!(changed >= 150, "{changed} ops changed voxels");
+    assert!(failed >= 5, "{failed} ops reached a non-resident chunk");
+}

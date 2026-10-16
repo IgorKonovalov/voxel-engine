@@ -30,7 +30,8 @@ pub(crate) enum Coverage {
 
 impl Shape {
     /// Inclusive voxel bounds of every voxel whose centre may lie inside; `None` when empty.
-    pub(crate) fn voxel_bounds(&self) -> Option<([i64; 3], [i64; 3])> {
+    /// An edit with this shape reads and writes no voxel outside them.
+    pub fn voxel_bounds(&self) -> Option<([i64; 3], [i64; 3])> {
         let (lo, hi) = match *self {
             Shape::Sphere { c, r } => {
                 if r < 0 {
@@ -58,8 +59,9 @@ impl Shape {
         (0..3).all(|k| lo[k] <= hi[k]).then_some((lo, hi))
     }
 
-    /// Whether the fixed-point point `p` is inside.
-    pub(crate) fn contains(&self, p: [i64; 3]) -> bool {
+    /// Whether the fixed-point point `p` is inside. An edit changes a voxel only when this
+    /// holds for its centre (`256 v + 128` per axis).
+    pub fn contains(&self, p: [i64; 3]) -> bool {
         match *self {
             Shape::Sphere { c, r } => dist2(p, c.0) <= r * r,
             Shape::Box_ { min, max } => (0..3).all(|k| p[k] >= min.0[k] && p[k] < max.0[k]),
