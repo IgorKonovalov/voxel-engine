@@ -211,6 +211,9 @@ each. Empty is fine.)_
 - Phase 2: the gate's over-cap and shape messages show this repository's three row forms (all tables) instead of Ritmolux's bullet and ledger forms.
 - Phase 2: mutation check: with `TABLE_ROW` and `BULLET` matching nothing, `--self-test` reports 1/9 and exits 1 while the plain run exits 0.
 - Phase 2, other lanes: at their current tips `plan-0006`, `plan-0013` and `plan-0014` still carry the 354-byte 0007 row, and `plan-0014` the 321-byte 0014 row; each merge must keep this branch's trimmed rows and the four marker lines, or the index gate fails on `main`.
+- Fix pass, step 0: `git merge main` (ae20447, a merge commit) brought in plan 0004's `vxe-sim` without conflicts; `check-comment-hygiene.mjs` then reported exactly the six `vxe-sim` findings the review named.
+- Fix pass, finding 1 (major), 6d15c90: the six comments restated without `hygiene-allow`; every other top-view `plan` in `vxe-sim` (body.rs 14, 37, 102, 123, 138, 142, 144, 145, 160; sweep.rs 174; tests/sweep.rs 179; tests/support/mod.rs 12) also reads `horizontal` or `xy`, and three touched comments were rewrapped to 100 columns.
+- Fix pass, finding 2 (minor), b0beee9: the four copied comments corrected; `scripts/fixtures/index-rows/roster.md` line 4 (`the scripts/fixtures/ convention check-doc-links.mjs established`, the same false claim, not named in the review) now reads `the repository gates share`. No line inside a marker changed and no line number moved.
 
 ### Close triggers
 
@@ -220,6 +223,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Public API changed:** none.
 - **Budget readings:** none; no `nfr.md` figure touched. The three gates run in well under a second each on the dev box (not timed under the lock; no budget reading).
 - **Gate at the tip (c6c950d):** `cargo build --workspace` 0; `cargo nextest run --workspace` 0, 125 passed, 1 skipped (exclusive lock, NVIDIA GeForce RTX 3080 Laptop GPU per `nvidia-smi -L`); `cargo test --workspace --doc` 0; `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` 0 (advisories, bans, licenses, sources ok); hook bite tests 0, 59 of 59; `check-doc-links.mjs` 0, 89 links; `check-comment-hygiene.mjs` 0, 53 tracked sources, 0 escapes; `check-index-rows.mjs` 0, 3 regions, 25 rows; `check-index-rows.mjs --self-test` 0, 9 of 9. Fixture runs: `comment-hygiene` 1 with 13 findings, `index-rows` 0, `index-rows-red` 1 with 1 over cap and 2 misshaped.
+- **Gate after the fix pass (b0beee9):** `cargo build --workspace --all-targets` 0; `cargo nextest run --workspace` 0, 170 passed, 1 skipped (exclusive lock, NVIDIA GeForce RTX 3080 Laptop GPU per `nvidia-smi -L`); `cargo test --workspace --doc` 0; `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` 0 (advisories, bans, licenses, sources ok); hook bite tests 0, 59 of 59; `check-doc-links.mjs` 0, 89 links; `check-comment-hygiene.mjs` 0, 67 tracked sources, 0 escapes; `check-index-rows.mjs` 0; `check-index-rows.mjs --self-test` 0, 9 of 9. Fixture runs: `comment-hygiene` 1 with 13 findings, `index-rows` 0, `index-rows-red` 1 with 1 over cap and 2 misshaped. The same gate ran green on 6d15c90 before its commit.
 - **Outstanding `human` phases:** none.
 
 ## Followups
