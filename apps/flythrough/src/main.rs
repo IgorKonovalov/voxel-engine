@@ -13,10 +13,10 @@
 //! `--headless` runs the same frames on an offscreen target with no window; `--walk` (with
 //! `--level`) starts in walk mode, the body spawned in the spawn pocket.
 //!
-//! Keys: `G` toggles fly and walk mode; in walk mode `W A S D` walk at 3 m/s and `Space` jumps,
-//! or, held against a wall with a standable top within 1.2 m, climbs it. On the bounded level
-//! the fly-through keeps a coarse grid and walkable map updated from every edit; `K` prints
-//! them.
+//! Keys: `G` toggles fly and walk mode (on the bounded level only; streaming refuses it, as it
+//! refuses `--walk`); in walk mode `W A S D` walk at 3 m/s and `Space` jumps, or, held against
+//! a wall with a standable top within 1.2 m, climbs it. On the bounded level the fly-through
+//! keeps a coarse grid and walkable map updated from every edit; `K` prints them.
 
 mod fly;
 
@@ -102,7 +102,25 @@ struct Args {
     sync_budget: u64,
 }
 
+/// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
+const WALK_NEEDS_LEVEL: &str =
+    "walk mode needs --level (the coarse grid is not wired to streaming)";
+
+/// Walk mode is available only on the bounded level.
+fn walk_allowed(streaming: bool) -> Result<(), &'static str> {
+    if streaming {
+        Err(WALK_NEEDS_LEVEL)
+    } else {
+        Ok(())
+    }
+}
+
 fn parse_args() -> Result<Args, String> {
+    parse_args_from(std::env::args().skip(1))
+}
+
+/// The arguments after the program name.
+fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut args = Args {
         seed: 1,
         render: None,
@@ -114,7 +132,7 @@ fn parse_args() -> Result<Args, String> {
         walk: false,
         sync_budget: SYNC_BUDGET_MIB << 20,
     };
-    let mut it = std::env::args().skip(1);
+    let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or(format!("{flag} needs a value"));
         match flag.as_str() {
@@ -145,8 +163,8 @@ fn parse_args() -> Result<Args, String> {
     if args.autopilot && args.level {
         return Err("--autopilot streams; it does not take --level".to_owned());
     }
-    if args.walk && !args.level {
-        return Err("--walk needs --level (the coarse grid is not wired to streaming)".to_owned());
+    if args.walk {
+        walk_allowed(!args.level).map_err(|e| format!("--walk: {e}"))?;
     }
     Ok(args)
 }
@@ -380,6 +398,10 @@ impl Run {
     fn toggle_walk(&mut self) {
         if self.walk.take().is_some() {
             println!("fly mode");
+            return;
+        }
+        if let Err(e) = walk_allowed(self.stream.is_some()) {
+            println!("walk: {e}; still flying");
             return;
         }
         match Walk::at_camera(&self.world, &self.fly.camera) {
@@ -1348,6 +1370,23 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn argv(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    /// `--walk` and `G` refuse walk mode alike while streaming; the bounded level allows it.
+    #[test]
+    fn walk_mode_is_refused_while_streaming() {
+        assert_eq!(
+            parse_args_from(argv(&["--walk"])).err().as_deref(),
+            Some("--walk: walk mode needs --level (the coarse grid is not wired to streaming)")
+        );
+        let a = parse_args_from(argv(&["--walk", "--level"])).expect("--walk --level parses");
+        assert!(a.walk && a.level);
+        assert_eq!(walk_allowed(true), Err(WALK_NEEDS_LEVEL));
+        assert_eq!(walk_allowed(false), Ok(()));
+    }
 
     #[test]
     fn an_edit_prints_one_line_with_material_names() {
