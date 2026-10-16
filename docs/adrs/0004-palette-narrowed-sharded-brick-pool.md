@@ -1,8 +1,8 @@
 # ADR-0004: Per-chunk 8-bit palette mirror and a brick pool sharded over fixed bindings
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-16)
 > **Date:** 2026-10-16
-> **Related plan(s):** [Plan 0002](../plans/0002-streaming-residency-lod-ring-and-mirror-narrowing.md)
+> **Related plan(s):** [Plan 0002](../plans/done/0002-streaming-residency-lod-ring-and-mirror-narrowing.md)
 > **Supersedes in part:** ADR-0002's mirror clauses: voxels at `u16` in the mirror, and the
 > brick pool as one storage buffer. The CPU layout and the access model of ADR-0002 stand.
 
@@ -98,3 +98,34 @@ because it needs a native-only `wgpu` feature (storage-buffer binding arrays wit
 indexing) that is not checked on the baseline adapter and that lavapipe's CI path would have
 to prove. Any vendor- or feature-specific path is an ADR of its own. Fixed bindings work
 within WebGPU's default limits on every adapter we target.
+
+## Outcome
+
+Added at acceptance, 2026-10-16, from Plan 0002's readings and its close review:
+
+- **The shader always binds four shard bindings.** Unused shards bind a one-slot placeholder,
+  so the marcher needs 8 storage buffers per stage whatever `shards` computes to. The computed
+  shard count decides capacity, not the bind group layout. 8 is the WebGPU default, so this
+  holds on every adapter we target, but a further storage binding (a per-voxel attribute pool,
+  for one) needs either a higher requested limit or a packed binding.
+- **Records are capped per binding, not by 2 GiB.** The records stay one binding, but its size
+  is the adapter's `max_storage_buffer_binding_size`: lavapipe's 128 MiB holds 52 428 records,
+  fewer than the 57 777 chunks the default residency mirrors. `ShardLayout::record_capacity`
+  carries the cap and `sync` fails with `MirrorError::RecordsTooLarge`, writing nothing, before
+  it would grow past it, as `PoolTooLarge` does for the pool.
+- **Buffers grow by half again and never shrink.** The pool shards and the record buffer grow
+  1.5x at a time and keep their size after evictions, so allocated bytes exceed the live
+  accounting. At the defaults the mirror peaks at about 1.69 GB live and 2.43 GB allocated
+  (`GpuWorld::mirror_bytes` against `GpuWorld::allocated_bytes`), against the 3 GB line. The
+  budget is read on allocated bytes.
+- **Narrowing costs about 150 ms on the level's first sync** (about 345 to about 500 ms), the
+  palette scan before indices are written. Accepted; the scan moves to workers in the
+  streaming-CPU plan.
+- **The palette lookup costs nothing measurable:** the level's 1080p march pass read 1.854 to
+  1.874 ms before narrowing and 1.869 to 1.889 ms after.
+- **No cave chunk is wide.** The wide path is held by its dedicated test only. A chunk that turns
+  wide during a sync is estimated narrow when the sync is budgeted, so a failed allocation on
+  that path can leave a half-updated record; that is a recorded followup, not a change to the
+  decision.
+- **The LOD record shares the full record's stride.** About 99 MiB of LOD records at the
+  defaults, under budget; a smaller stride stays open.

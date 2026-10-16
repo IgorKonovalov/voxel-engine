@@ -1,6 +1,6 @@
 # ADR-0002: Brick-map storage layout, GPU mirror, and per-chunk locked access
 
-> **Status:** accepted (2026-10-16); mirror clauses superseded in part by ADR-0004 once accepted
+> **Status:** accepted (2026-10-16); mirror clauses (`u16` pool voxels, one pool binding) superseded by ADR-0004 (accepted 2026-10-16)
 > **Date:** 2026-10-16
 > **Related plan(s):** [Plan 0001](../plans/done/0001-bounded-brick-map-edits-and-headlamp-marcher.md)
 

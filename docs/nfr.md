@@ -49,15 +49,24 @@ dirty-chunk set and a byte budget. Same session, `F1` read the march pass at 3.8
 2530 × 1378 away from the spawn pose: views differ by more than 2× from the spawn reading
 above. RTX 3080 Laptop GPU, Ryzen 9 5900HS.
 
-**Streaming line under motion (dev reference, Plan 0002 Phase 8, headless `flythrough
---autopilot`, unbounded cave seed 1, r_full 16, r_lod 24, h 1, 15 workers, 2 MiB sync budget,
-RTX 3080 Laptop GPU, Ryzen 9 5900HS):** render-thread `update + poll + sync` per frame over a
-60 s flight at 10 m/s, two runs: p50 7.01 and 6.97 ms, p99 57.8 and 60.7 ms, max 83.1 and
-105.6 ms, against the 1.0 ms line. Most frames spend it in `sync` narrowing and uploading
+**Streaming line under motion: a recorded miss (dev reference, Plan 0002 Phase 8 at 05334d7
+and the close review at ffc73e8, headless `flythrough --autopilot`, unbounded cave seed 1,
+r_full 16, r_lod 24, h 1, 15 workers, 2 MiB sync budget, RTX 3080 Laptop GPU, Ryzen 9
+5900HS):** render-thread `update + poll + sync` per frame over a 60 s flight at 10 m/s, four
+runs: p50 6.94 to 7.13 ms, p99 51.8 to 60.7 ms, max 83.1 to 119.8 ms, against the 1.0 ms line.
+The line stands (owner's ruling at the Plan 0002 close, 2026-10-16); a streaming-CPU plan is
+the next work against it. Most frames spend it in `sync` narrowing and uploading
 about 2 MiB; the p99 frames are the ones whose focus chunk changed (queue rebuild, residency
 sweep and window shift over about 58 000 chunks). At rest after full residency a frame's CPU
-reads 0.35 ms. The march pass from the unbounded cave's spawn at 1920 x 1080 reads 6.69 ms at
-rest (headless, timestamps), against 1.95 ms from the bounded level's spawn at the same commit.
+reads 0.35 ms.
+
+**Primary rays in the streamed world: a recorded miss (dev reference, Plan 0002 Phase 8,
+05334d7, reproduced at ffc73e8):** the march pass from the unbounded cave's spawn at
+1920 x 1080 reads 6.69 ms at rest after full residency (headless, timestamps, median of the
+last 30 of 300 frames), against the 3.0 ms line and against 1.95 ms from the bounded level's
+spawn at the same commit. The line stands (owner's ruling, 2026-10-16); a march-pass diagnosis
+spike runs before M2's lighting. The autopilot's flight reading (p50 0.46 ms) is not evidence
+for the line: its +x path flies through rock.
 
 No frame may stall on paging: work attributable to streaming on the render thread is capped at
 the streaming line above; the rest runs on background threads.
@@ -108,9 +117,20 @@ chunk's bricks and about 39 % of the ring's mip-bricks are `Full`.
 | 16 | 20 | 17 077 | 16 324 | 2 210.0 | 855.1 | 270.5 | 1 126.0 |
 | 16 | 24 | 17 077 | 40 700 | 2 915.9 | 855.1 | 673.9 | 1 529.5 |
 
-Under motion (headless `flythrough --autopilot`, r_full 16, r_lod 24, two runs) the mirror
-peaked at 1 686 395 092 and 1 696 279 292 B, resident RAM at 3 243 445 888 and
-3 239 272 240 B, and persisted RAM at 233 616 B.
+**Under motion (dev reference, Plan 0002 fix pass, 076b1c4, headless `flythrough --autopilot`,
+unbounded cave seed 1, r_full 16, r_lod 24, h 1, 15 workers, RTX 3080 Laptop GPU, NVIDIA
+610.57.04, Ryzen 9 5900HS, two runs):**
+
+- **World VRAM:** the mirror peaked at 1 672 823 572 and 1 692 743 692 B by live accounting
+  (`GpuWorld::mirror_bytes`) and at 2 431 425 836 B allocated (`GpuWorld::allocated_bytes`,
+  both runs), against the 3 GB line. The budget is read on allocated bytes: buffers grow by
+  half again and never shrink (ADR-0004 Outcome). At full residency, 1 603 820 012 B live and
+  1 675 304 748 B allocated.
+- **World RAM:** resident chunks account for 3 242 091 312 and 3 239 741 232 B at peak (slot
+  arrays, `Full` bricks and mips), and persisted RAM for 233 616 B. The process peak RSS
+  (`VmHWM`, the whole fly-through, dev reference) reads 3 869 564 928 and 3 873 890 304 B,
+  about 3.87 GB against the 4 GB line. RAM is the tightest margin at these defaults; they are
+  revisited on the baseline card at M2.
 
 ## 4. Edits
 
@@ -142,6 +162,10 @@ peaked at 1 686 395 092 and 1 696 279 292 B, resident RAM at 3 243 445 888 and
   commit):** the `flythrough` cave generates at 1.03e8 voxels per second per thread at
   20 × 20 × 8 chunks (0.509 s) and 1.12e8 at 32 × 32 × 32 (4.785 s), bounded and synchronous,
   from `world_budget`.
+- **Residency latency (dev reference, Plan 0002 Phase 8, 05334d7, and the close review at
+  ffc73e8, headless autopilot as below):** wanted-to-mirrored p95 431 to 481 ms over four
+  runs, under the 500 ms proposal; max 1678 to 3669 ms, over it. The proposal stands as a p95
+  figure; the tail is the streaming-CPU plan's.
 - An edited chunk that is evicted and later reloaded reproduces the edit.
   **Asserted** headlessly by `crates/vxe-world/tests/persist.rs` (RAM, spill file, racing
   eviction) and under motion by `flythrough --autopilot` (`return: 2 chunks, hash match`
@@ -161,6 +185,10 @@ peaked at 1 686 395 092 and 1 696 279 292 B, resident RAM at 3 243 445 888 and
 - Everything the engine generates takes an explicit seed. There is no engine-owned global RNG.
 - Render tests run on the software adapter (lavapipe) in CI; golden baselines are blessed there
   and real-vendor readings are recorded separately, never substituted.
+- Chunk mips join the determinism vector (`apps/flythrough/tests/determinism.rs`, Plan 0002):
+  the mips hash `0x6cc1_4fda_4b7f_5188` is blessed on Linux. The Windows arm confirms it on
+  the first `main` CI run after Plan 0002's merge; a mismatch is a defect in an integer path,
+  fixed forward.
 
 ## 7. Startup and build
 
@@ -172,7 +200,14 @@ peaked at 1 686 395 092 and 1 696 279 292 B, resident RAM at 3 243 445 888 and
   **Reading (Plan 0002 Phase 8, streaming unbounded cave seed 1, headless on the RTX 3080
   Laptop GPU, so no window or surface):** the first frame waits for the 33 chunks within
   squared distance 4 of the spawn chunk: first frame at 1491 and 457 ms (device ready at 1268
-  and 417 ms); full residency (17 077 full, 40 700 LOD-only chunks) at 12 798 and 12 685 ms.
+  and 417 ms); full residency (17 077 full, 40 700 LOD-only chunks) at 12 798 and 12 685 ms,
+  and at 12 134 and 11 697 ms at the fix-pass commit (076b1c4). The close review's cold run
+  (ffc73e8) read device ready 1968 ms and first frame 2075 ms. These runs create no window or
+  surface, so a windowed first frame adds that cost.
+  **Level-size first sync after narrowing (Plan 0002 Phases 5 and 8, RTX 3080 Laptop GPU):**
+  497 to 517 ms, up from Plan 0001's 349 to 357 ms for the `u16` mirror; the palette scan
+  before indices are written. Accepted at the Plan 0002 close (owner, 2026-10-16); TTFF stays
+  under 3 s.
 - An incremental `cargo build` of a one-crate change under 10 s on the dev reference; the
   everyday loop does not compile crates a plan does not touch (`default-members`).
 

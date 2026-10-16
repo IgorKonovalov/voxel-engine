@@ -1,9 +1,13 @@
 # 0002: Streaming residency, an LOD-only ring, and a narrowed, sharded mirror
 
-> **Status:** in-progress
+> **Status:** done (closed 2026-10-16, v0.3.0). Verdict: streaming residency, the LOD-only
+> ring, persistence and the narrowed, sharded mirror match the plan and are tested headless;
+> closed after a fix pass (6c7c276 allocated bytes and peak RSS, 8aef914 no per-chunk sync
+> allocation, 076b1c4 `RecordsTooLarge`), with recorded misses on the streaming line and the
+> streamed march pass (`nfr.md` §2), both budgets unchanged.
 > **Created:** 2026-10-16
 > **Milestone:** M1 in `docs/roadmap.md` (second of two plans; closes M1)
-> **Related ADRs:** [ADR-0003](../adrs/0003-sphere-residency-with-lod-ring-and-edit-persistence.md) (residency tiers, LOD-only ring, persistence, edit/eviction exclusion), [ADR-0004](../adrs/0004-palette-narrowed-sharded-brick-pool.md) (8-bit palette mirror, sharded pool), ADR-0002 (layout, access model), ADR-0001 (stack)
+> **Related ADRs:** [ADR-0003](../../adrs/0003-sphere-residency-with-lod-ring-and-edit-persistence.md) (residency tiers, LOD-only ring, persistence, edit/eviction exclusion), [ADR-0004](../../adrs/0004-palette-narrowed-sharded-brick-pool.md) (8-bit palette mirror, sharded pool), ADR-0002 (layout, access model), ADR-0001 (stack)
 > **Prerequisite:** Plan 0001 closed (done 2026-10-16, v0.2.0), including its Phase 8 (brick
 > occupancy masks) and its fix pass (batched runs in `GpuWorld::sync`).
 
@@ -237,6 +241,10 @@ Shared conventions for every phase:
   - With `sync_budget_bytes = 8 MiB`, every sync of that world writes at most 8 MiB plus one
     chunk's largest upload (526 848 B: a wide chunk, 512 × 1024 + 2560). The first sync
     includes the chunk holding the focus voxel. `SyncStats::pending_chunks` reaches 0.
+    *Erratum (2026-10-16, at the close):* the 526 848 B figure omits the occupancy masks. A
+    wide chunk's largest upload is 535 044 B (512 × 1040 + 2560 + 4: two slots and two masks
+    per brick, the record and its table entry). The test's bound stays valid for the cave,
+    whose largest narrow chunk is about 269 KB.
   - `apps/flythrough/tests/golden/primary.png` and `headlamp.png` match bit-exactly on
     lavapipe, with the window set to the golden extent.
 
@@ -763,6 +771,31 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Outstanding `human` phases:** none.
 
 ## Followups
+
+Decided by the owner at the close (2026-10-16):
+
+- **Streaming-CPU plan** (next M1-adjacent work, ahead of anything adding streaming load):
+  incremental queue maintenance on a focus move, a residency sweep over the entering and
+  leaving shells only, a window shift that touches only the slabs, narrowing and staging moved
+  to workers. Against the §2 miss (p50 about 7 ms, p99 52 to 61 ms vs 1.0 ms); it also takes
+  the palette scan behind the level-size first sync (about 500 ms).
+- **March-pass diagnosis spike** before M2 lighting: per-pixel step counts, the cost of
+  `MAX_STEPS = 4096` rays across a 51-chunk window, the LOD level radii, LOD walk against long
+  open-cave rays. Against the streamed march miss (6.69 ms vs 3.0 ms at 1080p).
+- **Autopilot flight through open cave:** the +x line flies through rock, so the flight's
+  march p50 (0.46 ms) defends nothing; re-specify the path so the flight reading defends §2.
+- **The owner watches one windowed LOD run** before calling the LOD look settled.
+- **Wide-turn mid-sync half-written record** (review m3): a chunk that turns wide during a
+  sync is estimated narrow in `select`, and a failed allocation then leaves a half-updated
+  record and its `Mirrored` entry. Fix with a conservative pre-check or a record rollback.
+- **Revisit the residency defaults 16/24/1 on the baseline card at M2** (12/16 costs about a
+  third of 16/24 in the sweep; RAM is the tightest margin, 3.87 GB peak RSS against 4 GB).
+- The LOD record's own smaller stride stays open (about 99 MiB of LOD records at 16/24,
+  under budget, so one stride for now).
+- Windows determinism: the first `main` CI run after the merge confirms the mips constant
+  `0x6cc1_4fda_4b7f_5188` on the Windows arm; a mismatch is fixed forward.
+
+Carried from the plan:
 
 - Edit-cost plan for `nfr.md` §4 (the 4.9 ms bench).
 - Far-field clipmap with a direct coarse `WorldSource` method (roadmap "Far field").

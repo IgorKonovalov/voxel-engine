@@ -1,8 +1,8 @@
 # ADR-0003: Sphere residency with an LOD-only ring, edited-chunk persistence with disk spill
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-16)
 > **Date:** 2026-10-16
-> **Related plan(s):** [Plan 0002](../plans/0002-streaming-residency-lod-ring-and-mirror-narrowing.md)
+> **Related plan(s):** [Plan 0002](../plans/done/0002-streaming-residency-lod-ring-and-mirror-narrowing.md)
 
 ## Context
 
@@ -133,3 +133,31 @@ the edited chunk itself is exact today, and its RAM cost is bounded by how much 
 Promotion and demotion would then cost no generation. It was rejected on RAM. At the
 measured 117 KB per chunk, a ring from 16 to 24 chunks (40 700 chunks) is about 4.8 GB, more
 than the whole 4 GB world-RAM line.
+
+## Outcome
+
+Added at acceptance, 2026-10-16, from Plan 0002's readings (its Implementation log; dev
+reference, RTX 3080 Laptop GPU, Ryzen 9 5900HS):
+
+- **The defaults are `r_full = 16`, `r_lod = 24`, `h = 1`**, from the `world_budget --stream`
+  sweep in `nfr.md` §3: 17 077 full and 40 700 LOD-only chunks, 2915.9 MiB of CPU and
+  1529.5 MiB of mirror around the cave's spawn. They are dev-reference defaults; the baseline
+  card revisits them at M2.
+- **The ring costs a little more per chunk than guessed.** About 39 % of level-1 mip-bricks are
+  `Full`, against the 35 % assumed, so a ring chunk mirrors to about 17.4 KB against the
+  16.5 KB estimate. A full chunk mirrors to about 52.5 KB, below the 57.9 KB estimate, because
+  the streamed cave's `Full` fraction is 18.5 to 18.8 %, not the bounded level's 20.8 %.
+- **RAM is the tightest margin.** The resident set accounts for about 3.24 GB at the
+  defaults and the process peaks at 3.87 GB RSS, against the 4 GB world-RAM line.
+- **Generation under streaming is slower than headless.** 6.95e7 voxels per second per worker
+  with 15 workers beside the render thread, against 1.23e8 to 1.34e8 in `world_budget`. The
+  dev box keeps the full sphere resident at 10 m/s (no unready-near frame); the baseline's four
+  cores will not reach the leading face's rate, as the Negative consequence foresaw.
+- **A demoting chunk leaves the store when the demotion is queued**, not when its mips
+  return: edits see it as non-resident meanwhile, and the mirror keeps drawing its full record
+  until the LOD record replaces it. This refines, and does not change, the edit/eviction
+  exclusion above.
+- **The render-thread side of residency misses the streaming line.** `update` and `poll`
+  rebuild the queue and sweep the whole resident set when the focus chunk changes, which puts
+  the p99 frame at 52 to 61 ms. The tiers and the exclusion stand; an incremental queue and
+  sweep are the streaming-CPU plan's.

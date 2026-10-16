@@ -100,8 +100,9 @@ before content production, P2 = later). The consumer's first playable slice need
   about 30 million chunks, and generating them at full detail to downsample is a thousand times
   the full-detail work. The far field is a clipmap: rings of coarser cells with their own paging
   unit and a `WorldSource` method that produces a cell at a coarser level directly. Nothing in
-  the first consumer needs it. M1 ships mips inside the resident set; the clipmap is its own
-  later plan, and until then the far field is simply not drawn.
+  the first consumer needs it. M1 ships an LOD-only ring of mips around the full-detail sphere
+  (ADR-0003), out to `r_lod` chunks (about 154 m at the default 24); the clipmap is its own
+  later plan, and until then the far field beyond the ring is simply not drawn.
 - **Scale check:** a 100 m full-detail radius is about 32 chunks across, roughly 33 k chunks. If
   every brick were non-uniform that would be 17 GB, so the budget relies on uniformity: the
   working assumption is under 10 % non-uniform bricks, about 1.7 GB, and the VRAM budget in
@@ -138,10 +139,20 @@ are independent of M2, and M5 can move ahead of M4 if the consumer's server/clie
 
 Workspace skeleton, harness, ADR-0001, this roadmap, `nfr.md`. No engine code.
 
-### M1: Fly-through with digging (Plans 0001 and 0002; in progress)
+### M1: Fly-through with digging (Plans 0001 and 0002; done 2026-10-16, with recorded misses)
 
-Plan 0001 closed 2026-10-16 (v0.2.0): the bounded half is done, with the determinism vector
-green on both CI arms. Plan 0002 (streaming, LOD ring, narrowed mirror) closes M1.
+Plan 0001 closed 2026-10-16 (v0.2.0): the bounded half, with the determinism vector green on
+both CI arms. Plan 0002 closed 2026-10-16 (v0.3.0): streaming residency, the LOD-only ring,
+edit persistence and the narrowed, sharded mirror, all tested headless. M1 is done with
+**recorded misses on two `nfr.md` §2 lines** (owner's ruling at the Plan 0002 close): the
+streaming line (render-thread CPU p50 about 7 ms, p99 52 to 61 ms against 1.0 ms) and primary
+rays in the streamed world (6.69 ms at 1080p against 3.0 ms), both on the dev reference. The
+budgets stand. The §4 edit-cost miss carries forward from Plan 0001 to Plan 0003.
+
+**Next, before M2's lighting:** a streaming-CPU plan (incremental queue, residency sweep and
+window shift; narrowing and staging on workers) and a march-pass diagnosis spike (step counts,
+the 4096-step cap, LOD radii; an autopilot path through open cave). Neither is drafted yet.
+Plan 0002's Followups list the rest.
 
 **Goal:** a window showing a ray-marched, streaming voxel cave lit by a headlamp. You fly, carve
 spheres, and the per-material voxel counts print to the console.
