@@ -14,6 +14,8 @@ pub const HEIGHT: u32 = 180;
 
 /// A device on the software Vulkan adapter (lavapipe), or `None` with a printed skip when the
 /// machine has none. Goldens are blessed on lavapipe, so no other adapter stands in for it.
+/// With `VXE_REQUIRE_SOFTWARE_ADAPTER=1` a missing adapter panics instead, so a CI arm that
+/// promises image comparisons cannot pass by skipping them.
 pub fn software_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN,
@@ -25,8 +27,19 @@ pub fn software_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue)> {
     }));
     let adapter = match adapter {
         Ok(a) if a.get_info().device_type == wgpu::DeviceType::Cpu => a,
-        _ => {
-            println!("skipped: no software adapter");
+        other => {
+            let found = match other {
+                Ok(a) => format!(
+                    "{:?} adapter {}",
+                    a.get_info().device_type,
+                    a.get_info().name
+                ),
+                Err(e) => format!("no adapter ({e})"),
+            };
+            if std::env::var("VXE_REQUIRE_SOFTWARE_ADAPTER").as_deref() == Ok("1") {
+                panic!("VXE_REQUIRE_SOFTWARE_ADAPTER=1 but the fallback is {found}");
+            }
+            println!("skipped: no software adapter ({found})");
             return None;
         }
     };

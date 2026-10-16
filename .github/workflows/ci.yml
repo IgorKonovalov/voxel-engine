@@ -1,7 +1,8 @@
 # Build, tests, doctests, clippy, fmt and the supply-chain gate on Linux and
 # Windows for every push. GPU tests run on a software Vulkan adapter (Mesa's
 # lavapipe on Linux); golden baselines are blessed on lavapipe, so image
-# comparisons assert on the Linux arm and print-and-skip elsewhere. Real-vendor
+# comparisons assert on the Linux arm (VXE_REQUIRE_SOFTWARE_ADAPTER=1 fails
+# them if lavapipe is missing) and print-and-skip elsewhere. Real-vendor
 # GPU checks stay manual (docs/nfr.md).
 name: CI
 
@@ -34,7 +35,10 @@ jobs:
       - uses: taiki-e/install-action@nextest
       - run: cargo build --workspace
       # `--no-tests=pass` keeps the skeleton green until Plan 0001 lands tests.
+      # On Linux a missing lavapipe fails the golden tests instead of skipping them.
       - run: cargo nextest run --workspace --no-tests=pass
+        env:
+          VXE_REQUIRE_SOFTWARE_ADAPTER: ${{ runner.os == 'Linux' && '1' || '' }}
       - run: cargo test --workspace --doc
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo fmt --all --check
