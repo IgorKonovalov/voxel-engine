@@ -1,9 +1,14 @@
 # 0004: Cylinder sweeps, a character controller, and a per-brick coarse grid with change notifications
 
-> **Status:** in-progress
+> **Status:** done (closed 2026-10-17, v0.5.0). Verdict: every phase landed and the owner's
+> windowed walk check passed after the walk-check fix pass; ADR-0005 is accepted with an
+> Outcome, the sweep cost (26.3 µs) awaits the owner's call, and depenetration is a followup
+> (see "Close").
+> **Amended:** 2026-10-17 at the close: the Sweep and Controller tick conventions and "What
+> this plan does NOT do" record what the fix passes shipped.
 > **Created:** 2026-10-16
 > **Milestone:** M3 in `docs/roadmap.md`
-> **Related ADRs:** [ADR-0005](../adrs/0005-vertical-cylinder-collision-by-integer-conservative-advancement.md) (body shape, sweep, where it lives), ADR-0002 (layout and access model), ADR-0001 (stack)
+> **Related ADRs:** [ADR-0005](../../adrs/0005-vertical-cylinder-collision-by-integer-conservative-advancement.md) (body shape, sweep, where it lives), ADR-0002 (layout and access model), ADR-0001 (stack)
 > **Prerequisite:** Plan 0001 closed. Independent of Plan 0002 and of its readings; the coarse grid gains its streaming hooks here and is wired to the streamer when both plans are closed.
 
 ## TL;DR
@@ -103,12 +108,20 @@ Shared conventions for every phase:
   a floor (`vz = +1`) or ceiling with normal `(0, 0, vz * r)`. Else it is a rim contact and
   counts as a wall. A contact is **walkable** iff it is a floor.
 - **Sweep.** `sweep(world, body, delta)`: iterate: `g² = min d²` over the solid boxes in the
-  region swept by the body's box along the remaining delta; `g = isqrt(g²)`; if `g == 0` stop
-  with the nearest box as the contact (ties broken by ascending voxel coordinate); else advance
-  by `min(g, |remaining|)` along the delta, each component `delta_k * step / |delta|` rounded
-  toward zero; stop when the delta is spent or every component rounds to zero; cap 64
-  iterations. A sweep that spends its whole delta reports no contact even if it ends touching.
-  `|delta| = isqrt(sum of squares)`; `delta` components are bounded to `2^31` fixed units.
+  region swept by the body's box along the remaining delta **that the remaining delta closes
+  on** (`SolidBox::closes_on`: the gap's rate along the delta is negative; a box the delta runs
+  along or away from is left out); `g = isqrt(g²)`; if `g == 0` stop with the nearest such box
+  as the contact (ties broken by ascending voxel coordinate). Else take the whole remainder
+  only when `g² >= |remaining|²`; otherwise advance by `g` along the delta, each component
+  `remaining_k * g / L` rounded toward zero, with `L` the root of `|remaining|²` **rounded
+  up**, so no advance is longer than `g`. An advance that would overlap a box (checked when a
+  box was left out) is not taken, and that box is the contact. Stop when the delta is spent or
+  every component rounds to zero; cap 64 iterations, and at the cap the contact is the nearest
+  box the remaining delta closes on. A sweep that spends its whole delta reports no contact
+  even if it ends touching. `delta` components are bounded to `2^31` fixed units. (Amended at
+  the close, 2026-10-17, from the walk-check fix pass: the closes-on filter, the overlap guard
+  and the step-length rule replace "advance by `min(g, |remaining|)`" with `|delta|` rounded
+  down, which froze the body beside voxel edges and let it overshoot into a box.)
 - **Controller tick** (fixed order; `wish` is horizontal, fixed units per tick):
   1. If climbing: rise by `min(climb_speed, remaining)` with an upward sweep; if the foot has
      reached the target height, sweep forward by `radius` along the stored wall direction,
@@ -116,15 +129,22 @@ Shared conventions for every phase:
   2. Horizontal: sweep by `wish`. On a wall contact with remainder: **step attempt**: sweep up
      by `step_height` (must move the full height), sweep forward by the remainder (must move
      more than zero), sweep down by `step_height`; accept iff the down sweep ends on a floor
-     contact and the foot rose by at most `step_height`; set `stepped`. Otherwise revert and
+     contact and the foot rose by at most `step_height`; set `stepped` only when the foot rose
+     (a landing at the start height is a plain continuation). Otherwise revert and
      **slide**: project the remainder onto the wall plane (`w - n (w . n) / |n|²` in `i128`,
-     rounded toward zero, horizontal components of `n` only) and sweep once more; at most two
-     slides. If still blocked, set `blocked`; run the **climb probe**: sweep a copy up by
-     `climb_height` (must move fully), forward by `radius` (must move fully), down by
-     `climb_height`; if it ends on a floor contact with a rise in `(step_height,
-     climb_height]`, report `climb_available = Some(landing foot)` and, if `input.climb`, enter
-     the climbing state with that target height and the wall direction, and run step 1 in this
-     same tick.
+     horizontal components of `n` only, each component rounded toward the side `n` points to,
+     so `p . n >= 0`) and sweep once more; at most two slides. If still blocked, set `blocked`.
+     Run the **climb probe** when blocked, and also, with `input.climb` held, when the wish ran
+     into a wall within 60 degrees of head-on (`4 (w . n)² >= |w|² |n|²`) whether or not the
+     slide moved the body: sweep a copy up by `climb_height` (it may stop at a ceiling once it
+     has risen more than `step_height`), forward by `radius` (must move fully), down by what
+     it rose; if it ends on a floor contact with a rise in `(step_height, climb_height]`,
+     report `climb_available = Some(landing foot)` (so it can be reported on a tick that is not
+     blocked) and, if `input.climb`, enter the climbing state with that target height and the
+     wall direction, and run step 1 in this same tick. (Amended at the close, 2026-10-17, from
+     the fix passes: the zero-rise step guard, the slide rounding and the climb probe's
+     trigger and ceiling rule replace "rounded toward zero", "if still blocked" and "must move
+     fully".)
   3. Vertical: if grounded and `input.jump`, `vz = jump_speed`; else if not grounded, `vz =
      max(vz + gravity, -max_fall)`. Sweep by `(0, 0, vz)`. On a floor contact while moving
      down: grounded, `landed = Some(-vz)` (the impact speed, so the game can rule on fall
@@ -388,6 +408,10 @@ with the dev-box readings. Every one is a guess until read.
   subscription mechanism is M5's server tick.
 - **Wiring the grid to the streamer** (`StreamEvents` from Plan 0002): follow-up.
 - **A CPU raycast against LOD-only chunks**: Plan 0002 excludes it too.
+- **Depenetration.** A body that starts a tick overlapping solid (an edit fills the body)
+  stays where it is: `sweep` returns `started_overlapping` and nothing pushes it out. Known
+  gap, recorded at the close (2026-10-17) as a followup; `Walk::at_camera` already refuses to
+  place a body that overlaps.
 
 ## Implementation log
 
@@ -464,3 +488,79 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   `demoted` chunk (full to LOD-only) counts as evicted for the grid.
 - A support-radius parameter smaller than the body radius, if the overhang shows.
 - HRTF-side use of `Contact` for footstep material (Plan 0006 reads the material table).
+
+## Close
+
+Closed 2026-10-17 at v0.5.0 after a fresh-session review and two fix passes; the second
+fix-pass review found it ready to close with no further fixes. The plan's Sweep and
+Controller tick conventions are amended to what the walk-check fix pass shipped, and ADR-0005
+is accepted with a dated Outcome recording the same.
+
+**Readings at the close** (quiet box, AMD Ryzen 9 5900HS laptop dev box, Linux, commit
+b94622a, the merge of `main` into this branch with `vxe-sim` unchanged from cf3bbc6; criterion
+medians under the exclusive perf lock, load average 1.7 to 2.3 at each start): controller tick
+2.60 µs on terrain (60 staircase ticks), 1.74 µs and 0.77 µs per tick over 300 and 1000 F6
+ticks; sweep 26.3 µs (two runs); coarse update 13.5 µs; walkable update 8.1 µs. Written into
+`docs/nfr.md` section 8 with the budgets.
+
+**Gate at the close** (the close's working tree on b94622a, with the version bump;
+CARGO_BUILD_JOBS=3): `cargo build --workspace --all-targets` 0; `cargo nextest run
+--workspace` 163 passed, 1 skipped (Plan 0005's ignored speck count), exit 0 under the
+exclusive lock on the RTX 3080 Laptop GPU; doctests 0 (2); `cargo clippy --workspace
+--all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` advisories,
+bans, licenses, sources ok; the hook bite tests 59 pass; `node scripts/check-doc-links.mjs` 76
+links resolve.
+
+### Decisions recorded at the close
+
+The owner was away overnight. The orchestrating session took items 1 to 5 under the owner's
+standing "go with your recommendations", following the second fix-pass review; the owner can
+overturn any of them.
+
+1. **Embedded body is a known gap.** A body that starts a tick overlapping solid (an edit fills
+   it) never moves: `sweep` returns `started_overlapping` and nothing pushes out. Recorded in
+   "What this plan does NOT do", in ADR-0005's Outcome as a new negative consequence, and as
+   followup 1. The log's "a `G` placement the overlap check passes" is a wording slip:
+   `Walk::at_camera` refuses a placement that overlaps (`apps/flythrough/src/fly.rs`), so only
+   an edit embeds a body.
+2. **Sweep figure recorded as measured.** The quiet-box F2 reading, 26.3 µs per sweep, goes
+   into `nfr.md` section 8 as measured. It is well above the 20 µs at which the orchestrator
+   asked for escalation (the owner accepted 17.5 µs at fe50d6d; the walk-check pass costs
+   about 50 % on the quiet box, not the 10 % the loaded runs suggested), so **the line awaits
+   the owner's call**: accept 26.3 µs, or schedule followup 5.
+3. **Oblique voxel-edge walls** rarely report `blocked` or `climb_available` without `climb`
+   held: followup 2.
+4. **A second pinned course** for the cases the fix pass found: followup 3.
+5. **Minor bump** to 0.5.0 (a feature plan: a new crate and new `vxe-world` API).
+
+Earlier owner calls, kept: accept the measured sweep figure (at 17.5 µs; see 2 for the new
+reading), `Space` for both jump and climb in the fly-through, and the zero-rise step guard
+with its test `a_move_past_a_corner_never_steps_without_rising`.
+
+Architect's own call at the close: the new budgets go into `nfr.md` as section 8, "Collision
+and coarse grids", and "Not goals" becomes section 9 (nothing cites it by number).
+
+## Followups
+
+1. **Depenetration.** Push a body that starts a tick overlapping solid out to the nearest free
+   pose, deterministically, or report it so the caller can; test with a fill on the body in
+   the level walk test.
+2. **Oblique voxel-edge walls.** A wish into an oblique staircase wall rarely sets `blocked`
+   or offers `climb_available` without `climb` held, so a game that shows a climb prompt from
+   `climb_available` misses it there.
+3. **A second pinned course** covering the fix pass's cases: a fall beside a voxel edge, an
+   oblique slide along a staircase wall, an angled climb and a climb under a low ceiling, with
+   its own hash constant on both CI arms.
+4. **Worst-case tick.** Bench a tick whose sweep hits the 64-iteration cap on a grazing corner;
+   the benches read only typical ticks.
+5. **Sweep cost**, if the owner does not accept 26.3 µs: profile the F2 wall case (region
+   collection, `closes_on` roots, the overlap guard) against the 20 µs line.
+6. **Float wishes in a test.** The fuzz walk in `apps/flythrough/src/fly.rs`'s tests
+   (`random_walks_on_the_level_never_freeze_or_overlap`) builds wishes from `f32` `cos` and
+   `sin`; harmless in a fly-through test, but integer wishes would make the walk reproducible
+   across platforms.
+7. **Nit:** `SolidBox::closes_on`'s both-gaps-open branch could read `toward > 0 && vz_close >
+   0`.
+8. Carried from the plan: wire `CoarseGrid::chunk_loaded` and `chunk_evicted` to the
+   streamer's events (Plan 0002), and re-run the coarse bench on Plan 0003's `mixed` world once
+   both are on `main`.

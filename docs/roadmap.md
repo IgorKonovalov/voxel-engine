@@ -242,7 +242,15 @@ work), and the light (real-time GI standing in for the baked occlusion).
 - **ADRs expected:** denoiser family; upscaler choice. Surface representation: ADR-0011; its
   streamed footprint: a new ADR at Plan 0013 Phase 4.
 
-### M3: Collision, character controller, coarse grids (Plan 0004; drafted)
+### M3: Collision, character controller, coarse grids (Plan 0004; done 2026-10-17)
+
+Plan 0004 closed 2026-10-17 (v0.5.0): `vxe-sim` sweeps a vertical cylinder (ADR-0005, not a
+capsule) and drives a controller with step, slide, fall, jump and ledge climb, pinned by a
+course hash; `vxe-world` keeps the coarse grid and walkable map from edit results; the
+fly-through walks on the bounded level and the owner drove it by hand. Open: the sweep cost
+(`nfr.md` section 8, awaiting the owner's call), depenetration, and wiring the grid to the
+streamer; Plan 0004's Followups list them. Plan 0009 (collapse) is unblocked.
+
 
 - `vxe-sim`: capsule sweeps against bricks (the raycast stays in `vxe-world`, which owns all
   primitive queries); a character controller with steps, slopes and climbing out of holes;
