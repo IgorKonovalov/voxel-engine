@@ -9,8 +9,9 @@
 //! after the last write, so a streamer cannot evict a chunk the op has checked (ADR-0003).
 
 use crate::brick::Brick;
-use crate::coords::index_in_brick;
-use crate::coords::{BRICK_EDGE, BRICK_VOXELS, CHUNK_EDGE, ChunkCoord, VoxelCoord, brick_slot};
+use crate::coords::{
+    BRICK_EDGE, BRICK_VOXELS, CHUNK_EDGE, CHUNK_EDGE_BRICKS, ChunkCoord, VoxelCoord, brick_slot,
+};
 use crate::fixed::{Fixed3, centre};
 use crate::material::{AIR, MaterialFlags, MaterialId, MaterialTable};
 use crate::raycast::point_at;
@@ -154,14 +155,55 @@ impl TargetTable {
     #[inline]
     fn target(&self, old: MaterialId) -> Option<MaterialId> {
         match *self {
-            Self::Carve { ref carves, rows } => {
-                let m = usize::from(old);
-                // `rows >= 1` (row 0 is air), so an id at or beyond `rows` is not air.
-                (m >= rows || carves[m / 64] >> (m % 64) & 1 != 0).then_some(AIR)
-            }
-            Self::Fill(m) => (old == AIR && m != AIR).then_some(m),
-            Self::Replace { from, to } => (old == from && from != to).then_some(to),
+            Self::Carve { ref carves, rows } => CarveBits { carves, rows }.target(old),
+            Self::Fill(m) => FillAir(m).target(old),
+            Self::Replace { from, to } => ReplaceOne { from, to }.target(old),
         }
+    }
+}
+
+/// One variant of [`TargetTable`] as its own type, so the row loop is compiled once per
+/// variant with the lookup inlined and no `match` per voxel.
+trait Target: Copy {
+    /// The material a voxel of `old` becomes, or `None` when the op leaves it unchanged.
+    fn target(self, old: MaterialId) -> Option<MaterialId>;
+}
+
+#[derive(Clone, Copy)]
+struct CarveBits<'a> {
+    carves: &'a [u64],
+    rows: usize,
+}
+
+impl Target for CarveBits<'_> {
+    #[inline]
+    fn target(self, old: MaterialId) -> Option<MaterialId> {
+        let m = usize::from(old);
+        // `rows >= 1` (row 0 is air), so an id at or beyond `rows` is not air.
+        (m >= self.rows || self.carves[m / 64] >> (m % 64) & 1 != 0).then_some(AIR)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct FillAir(MaterialId);
+
+impl Target for FillAir {
+    #[inline]
+    fn target(self, old: MaterialId) -> Option<MaterialId> {
+        (old == AIR && self.0 != AIR).then_some(self.0)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ReplaceOne {
+    from: MaterialId,
+    to: MaterialId,
+}
+
+impl Target for ReplaceOne {
+    #[inline]
+    fn target(self, old: MaterialId) -> Option<MaterialId> {
+        (old == self.from && self.from != self.to).then_some(self.to)
     }
 }
 
@@ -283,21 +325,40 @@ impl World {
             let blo = [0, 1, 2].map(|k| (vlo[k] - base[k]) / be);
             let bhi = [0, 1, 2].map(|k| (vhi[k] - base[k]) / be);
             let mut chunk_changed = false;
+            let mut covs = [Coverage::Outside; CHUNK_EDGE_BRICKS as usize];
             for bz in blo[2]..=bhi[2] {
                 for by in blo[1]..=bhi[1] {
+                    // One brick row (fixed `by`, `bz`): the bricks share their `y`, `z` voxel
+                    // rows, so each row's span is solved once over the x window of the row's
+                    // `Partial` bricks and clipped per brick.
+                    let mut window: Option<(i64, i64)> = None;
                     for bx in blo[0]..=bhi[0] {
-                        let b = [bx, by, bz];
-                        let bmin = [0, 1, 2].map(|k| base[k] + b[k] * be);
+                        let bmin = [0, 1, 2].map(|k| base[k] + [bx, by, bz][k] * be);
                         let elo = [0, 1, 2].map(|k| bmin[k].max(vlo[k]));
                         let ehi = [0, 1, 2].map(|k| (bmin[k] + be - 1).min(vhi[k]));
                         let (a, c) = centres(elo, ehi);
                         let cov = op.shape.coverage(a, c);
+                        covs[bx as usize] = cov;
+                        if cov == Coverage::Partial {
+                            window = Some(match window {
+                                Some((x0, _)) => (x0, ehi[0]),
+                                None => (elo[0], ehi[0]),
+                            });
+                        }
+                    }
+                    let mut rows = RowCache::new(&op.shape, window);
+                    for bx in blo[0]..=bhi[0] {
+                        let cov = covs[bx as usize];
                         if cov == Coverage::Outside {
                             continue;
                         }
+                        let b = [bx, by, bz];
+                        let bmin = [0, 1, 2].map(|k| base[k] + b[k] * be);
+                        let elo = [0, 1, 2].map(|k| bmin[k].max(vlo[k]));
+                        let ehi = [0, 1, 2].map(|k| (bmin[k] + be - 1).min(vhi[k]));
                         let slot = brick_slot(b.map(|v| v as i32));
                         let brick = chunk.brick_mut(slot);
-                        if edit_brick(brick, &op.shape, &targets, cov, bmin, elo, ehi, &mut tally) {
+                        if edit_brick(brick, &targets, cov, bmin, elo, ehi, &mut rows, &mut tally) {
                             chunk.mark_dirty(slot);
                             chunk_changed = true;
                         }
@@ -323,7 +384,7 @@ impl World {
     }
 }
 
-/// Applies `op` to the voxels `elo..=ehi` of the brick whose minimum voxel is `bmin`.
+/// Applies the op to the voxels `elo..=ehi` of the brick whose minimum voxel is `bmin`.
 /// Returns whether any voxel changed. Leaves the brick collapsed if it became uniform.
 #[allow(
     clippy::too_many_arguments,
@@ -331,12 +392,12 @@ impl World {
 )]
 fn edit_brick(
     brick: &mut Brick,
-    shape: &Shape,
     targets: &TargetTable,
     cov: Coverage,
     bmin: [i64; 3],
     elo: [i64; 3],
     ehi: [i64; 3],
+    rows: &mut RowCache<'_>,
     tally: &mut Tally,
 ) -> bool {
     let whole = (0..3).all(|k| elo[k] == bmin[k] && ehi[k] == bmin[k] + i64::from(BRICK_EDGE) - 1);
@@ -351,27 +412,114 @@ fn edit_brick(
         }
     }
 
-    let mut changed = false;
+    // The span of every row of the edit box, in brick-local `x`, clipped to the box; rows
+    // with no inside centre are empty (`x0 > x1`).
+    let mut spans = [(1u8, 0u8); BRICK_EDGE as usize * BRICK_EDGE as usize];
+    let mut any = false;
     for z in elo[2]..=ehi[2] {
         for y in elo[1]..=ehi[1] {
-            for x in elo[0]..=ehi[0] {
-                let v = [x, y, z];
-                if cov == Coverage::Partial && !shape.contains(v.map(centre)) {
-                    continue;
-                }
-                let i = index_in_brick([0, 1, 2].map(|k| (v[k] - bmin[k]) as i32));
-                let old = brick.get(i);
-                let Some(new) = targets.target(old) else {
-                    continue;
-                };
-                brick.expand()[i] = new;
-                tally.add(old, 1, v, v);
-                changed = true;
+            let (x0, x1) = if cov == Coverage::Inside {
+                (elo[0], ehi[0])
+            } else {
+                let (x0, x1) = rows.span(y, z);
+                (x0.max(elo[0]), x1.min(ehi[0]))
+            };
+            if x0 <= x1 {
+                let r = local(y, bmin[1]) + BRICK_EDGE as usize * local(z, bmin[2]);
+                spans[r] = ((x0 - bmin[0]) as u8, (x1 - bmin[0]) as u8);
+                any = true;
             }
         }
     }
+    if !any {
+        return false;
+    }
+    let changed = match *targets {
+        TargetTable::Carve {
+            ref carves,
+            rows: n,
+        } => write_rows(brick, bmin, &spans, CarveBits { carves, rows: n }, tally),
+        TargetTable::Fill(m) => write_rows(brick, bmin, &spans, FillAir(m), tally),
+        TargetTable::Replace { from, to } => {
+            write_rows(brick, bmin, &spans, ReplaceOne { from, to }, tally)
+        }
+    };
     if changed {
         brick.collapse();
+    }
+    changed
+}
+
+/// The brick-local index (`0..8`) of voxel coordinate `v` in the brick starting at `min`.
+fn local(v: i64, min: i64) -> usize {
+    (v - min) as usize
+}
+
+/// The spans of one brick row's voxel rows (fixed `y`, `z`), each solved by
+/// [`Shape::row_span`] over the row's x window at its first use and kept for the other bricks
+/// of the brick row. Indexed by `y` and `z` modulo the brick edge.
+struct RowCache<'a> {
+    shape: &'a Shape,
+    /// The x window of the brick row's `Partial` bricks; `None` when it has none.
+    window: Option<(i64, i64)>,
+    /// Bit `y % 8 + 8 (z % 8)` set when that row's span is solved.
+    solved: u64,
+    span: [(i64, i64); BRICK_EDGE as usize * BRICK_EDGE as usize],
+}
+
+impl<'a> RowCache<'a> {
+    fn new(shape: &'a Shape, window: Option<(i64, i64)>) -> Self {
+        Self {
+            shape,
+            window,
+            solved: 0,
+            span: [(1, 0); BRICK_EDGE as usize * BRICK_EDGE as usize],
+        }
+    }
+
+    /// The inclusive span of row `(y, z)` within the window, empty (`x0 > x1`) when no centre
+    /// is inside. Called only for rows of a `Partial` brick, so the window is set.
+    fn span(&mut self, y: i64, z: i64) -> (i64, i64) {
+        let be = i64::from(BRICK_EDGE);
+        let r = (y.rem_euclid(be) + be * z.rem_euclid(be)) as usize;
+        if self.solved >> r & 1 == 0 {
+            let (lo, hi) = self.window.expect("a Partial brick sets the window");
+            self.span[r] = self.shape.row_span(y, z, lo, hi).unwrap_or((1, 0));
+            self.solved |= 1 << r;
+        }
+        self.span[r]
+    }
+}
+
+/// Writes every row span of `spans` (brick-local, row `y + 8 z`, empty when `x0 > x1`) into
+/// `brick`: per voxel, read the old value, look up its target, write it, count the old value.
+/// Expands the brick once. Returns whether any voxel changed; does not collapse.
+fn write_rows<T: Target>(
+    brick: &mut Brick,
+    bmin: [i64; 3],
+    spans: &[(u8, u8); BRICK_EDGE as usize * BRICK_EDGE as usize],
+    t: T,
+    tally: &mut Tally,
+) -> bool {
+    let voxels = brick.expand();
+    let mut changed = false;
+    for (r, &(x0, x1)) in spans.iter().enumerate() {
+        if x0 > x1 {
+            continue;
+        }
+        let (x0, x1) = (usize::from(x0), usize::from(x1));
+        let row = r * BRICK_EDGE as usize;
+        let (y, z) = (r % BRICK_EDGE as usize, r / BRICK_EDGE as usize);
+        for (x, cell) in (x0..=x1).zip(&mut voxels[row + x0..=row + x1]) {
+            let old = *cell;
+            let Some(new) = t.target(old) else {
+                continue;
+            };
+            *cell = new;
+            let v = [bmin[0] + x as i64, bmin[1] + y as i64, bmin[2] + z as i64];
+            tally.add(old, 1, v, v);
+            changed = true;
+        }
     }
     changed
 }

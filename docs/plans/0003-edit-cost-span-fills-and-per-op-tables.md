@@ -290,8 +290,8 @@ dev box projects to about 3 ms there. That projection is a guess until the basel
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The breakdown and the oracle | dev | done | `55abca6` |
-| 2: The per-op target table | dev | done | committed with this row |
-| 3: Row spans | dev | not started | |
+| 2: The per-op target table | dev | done | `81fce28` |
+| 3: Row spans | dev | done | committed with this row |
 | 4: Per-brick tallies and one collapse | dev | not started | |
 | 5: Readings against the figure | dev | not started | |
 
@@ -307,6 +307,18 @@ dev box projects to about 3 ms there. That projection is a guess until the basel
   `Mode::target` did (no row, no flags); the carve bit for such an id reads clear, as the
   done-when states, and the unit test asserts both. `material.rs` is unchanged; the unit tests
   live in `edit.rs`.
+- Phase 3: `Shape::row_span` is `pub` (the integration test in `tests/shapes.rs` calls it).
+- Phase 3: spans are solved once per voxel row of a brick row (fixed `by`, `bz` within a
+  chunk), over the x window of that brick row's `Partial` bricks, and clipped per brick
+  (`RowCache` in `edit.rs`); `Inside` bricks take the full row without a solve. A first draft
+  that solved every row per brick read slower than Phase 2 (`worst` 4.574, `mixed` 3.143,
+  `tool` 12.238 ms, uncommitted tree); its sampled profile (gdb, SIGINT every 30 ms, 270
+  samples inside `apply` per case) put 50% of `tool` in `Shape::contains` /
+  `segment_dist2` called from the capsule's row scan and 18% of `worst` in
+  `Shape::row_span` (`isqrt` about half of it).
+- Phase 3: the capsule's row scan uses `CapsuleRow` in `shape.rs`, the `contains` capsule
+  test with the row's `y`, `z` terms summed once, not `Shape::contains` itself; the 1000-row
+  property test compares it against `Shape::contains`.
 
 ### Close triggers
 
@@ -325,6 +337,10 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     `i64::lt` 7.0%; `Shape::contains` 4.3%.
   - Phase 2, the Phase 2 commit's tree: `worst` 4.475 ms [4.436, 4.521]; `mixed` 2.998 ms
     [2.972, 3.028]; `tool` 8.324 ms [8.269, 8.394].
+  - Phase 3, the Phase 3 commit's tree: `worst` 3.120 ms [3.104, 3.137]; `mixed` 2.232 ms
+    [2.224, 2.241]; `tool` 6.455 ms [6.436, 6.476]. A repeat run read `worst` 3.131, `mixed`
+    2.328, `tool` 6.807 ms with load average 5.5 from other sessions; an earlier run of the
+    same code read 3.634 / 2.583 / 7.060 ms.
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 

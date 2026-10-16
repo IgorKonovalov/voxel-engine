@@ -1,0 +1,99 @@
+mod support;
+
+use support::*;
+use vxe_world::*;
+
+fn centre(i: i64) -> i64 {
+    i * FIXED_ONE + FIXED_HALF
+}
+
+/// The exact set `{x in x_lo..=x_hi : contains(centre(x, y, z))}` as a range, or `None` when
+/// it is empty. Panics when the set has a gap.
+fn contained_range(shape: &Shape, y: i64, z: i64, x_lo: i64, x_hi: i64) -> Option<(i64, i64)> {
+    let xs: Vec<i64> = (x_lo..=x_hi)
+        .filter(|&x| shape.contains([centre(x), centre(y), centre(z)]))
+        .collect();
+    let (&first, &last) = (xs.first()?, xs.last()?);
+    assert_eq!(
+        xs.len() as i64,
+        last - first + 1,
+        "gap in {shape:?} row {y} {z}"
+    );
+    Some((first, last))
+}
+
+fn seeded_shape(rng: &mut SplitMix64, kind: u64) -> Shape {
+    let point = |rng: &mut SplitMix64| Fixed3([0; 3].map(|_| rng.range(-64 * 256, 64 * 256)));
+    let radius = |rng: &mut SplitMix64| rng.range(FIXED_ONE, 40 * FIXED_ONE);
+    match kind {
+        0 => Shape::Sphere {
+            c: point(rng),
+            r: radius(rng),
+        },
+        1 => {
+            let c = point(rng);
+            let lo = [0; 3].map(|_| radius(rng));
+            let hi = [0; 3].map(|_| radius(rng));
+            Shape::Box_ {
+                min: Fixed3([0, 1, 2].map(|k| c.0[k] - lo[k])),
+                max: Fixed3([0, 1, 2].map(|k| c.0[k] + hi[k])),
+            }
+        }
+        _ => Shape::Capsule {
+            a: point(rng),
+            b: point(rng),
+            r: radius(rng),
+        },
+    }
+}
+
+/// For 1000 seeded rows over all three shapes, the span equals the exact set of contained
+/// centres in the row's window: both `None`, or the same inclusive range.
+#[test]
+fn row_span_equals_the_set_of_contained_centres() {
+    let mut rng = SplitMix64(0x0003_0003);
+    let mut spans = 0;
+    for i in 0..1000 {
+        let shape = seeded_shape(&mut rng, i % 3);
+        // Rows within two voxels of the shape's bounds, so most meet the shape and the rest
+        // pass just outside it.
+        let (lo, hi) = shape.voxel_bounds().unwrap();
+        let y = rng.range(lo[1] - 2, hi[1] + 2);
+        let z = rng.range(lo[2] - 2, hi[2] + 2);
+        // Windows from one voxel wide to wider than the shape, starting anywhere from just
+        // before the shape to its far end.
+        let x_lo = rng.range(lo[0] - 4, hi[0]);
+        let x_hi = x_lo + rng.range(0, hi[0] - lo[0] + 8);
+        let expected = contained_range(&shape, y, z, x_lo, x_hi);
+        assert_eq!(
+            shape.row_span(y, z, x_lo, x_hi),
+            expected,
+            "row {i}: {shape:?} y {y} z {z} x {x_lo}..={x_hi}"
+        );
+        spans += usize::from(expected.is_some());
+    }
+    println!("{spans} of 1000 rows hold a span");
+    assert!(spans >= 300, "{spans} rows hold a span");
+}
+
+/// A centre exactly on the sphere's surface, `|256 x + 128 - cx| == h`, is inside.
+#[test]
+fn row_span_includes_the_sphere_boundary() {
+    let c = Fixed3([128 + 17, 128, 128]);
+    // x = 3: 256 * 3 + 128 - 145 = 751. x = -3: |-768 + 128 - 145| = 785.
+    let sphere = |r| Shape::Sphere { c, r };
+    assert_eq!(sphere(751).row_span(0, 0, -10, 10), Some((-2, 3)));
+    assert_eq!(sphere(750).row_span(0, 0, -10, 10), Some((-2, 2)));
+    assert_eq!(sphere(785).row_span(0, 0, -10, 10), Some((-3, 3)));
+    // Centred on a voxel, radius 3 voxels: the poles at +-3 are on the surface.
+    let s = Shape::Sphere {
+        c: centre_of_voxel([0, 0, 0]),
+        r: 3 * FIXED_ONE,
+    };
+    assert_eq!(s.row_span(0, 0, -10, 10), Some((-3, 3)));
+    assert_eq!(s.row_span(3, 0, -10, 10), Some((0, 0)));
+    assert_eq!(s.row_span(3, 1, -10, 10), None);
+    // The window clips.
+    assert_eq!(s.row_span(0, 0, 1, 10), Some((1, 3)));
+    assert_eq!(s.row_span(0, 0, 4, 10), None);
+}
