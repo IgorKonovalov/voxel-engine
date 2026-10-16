@@ -1125,8 +1125,9 @@ impl GpuWorld {
     }
 
     /// Writes one chunk's record: `bricks` into its entries (512 voxel bricks, or a LOD
-    /// record's 73 mip-bricks), the dirty ones unless the record is new or turns wide, then
-    /// its palette and, for a new record, its table entry.
+    /// record's 73 mip-bricks): every brick when `coord` had no record before this call or
+    /// its width changes, else the dirty ones; then its palette and, for a record allocated
+    /// here, its table entry.
     fn upload_record(
         &mut self,
         coord: ChunkCoord,

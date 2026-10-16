@@ -11,7 +11,7 @@ use vxe_world::{
 };
 
 /// A vertical cylinder: its axis is the vertical line through `foot`, it occupies `z` in
-/// `[foot.z, foot.z + height)` and plan distance `< radius` from the axis (ADR-0005).
+/// `[foot.z, foot.z + height)` and horizontal distance `< radius` from the axis (ADR-0005).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Body {
     pub foot: Fixed3,
@@ -32,9 +32,9 @@ impl Body {
 /// Where a body touches the world.
 ///
 /// `normal` is an integer direction, not a unit vector: `(h.x, h.y, 0)` for a wall, with `h`
-/// the plan vector from the box's nearest point to the axis; `(0, 0, radius)` for a floor and
-/// `(0, 0, -radius)` for a ceiling. A rim contact (the box is vertically separated but its
-/// plan rectangle is not within the radius of the axis) counts as a wall.
+/// the horizontal (xy) vector from the box's nearest point to the axis; `(0, 0, radius)` for a
+/// floor and `(0, 0, -radius)` for a ceiling. A rim contact (the box is vertically separated
+/// but its xy rectangle is not within the radius of the axis) counts as a wall.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Contact {
     pub voxel: VoxelCoord,
@@ -99,7 +99,7 @@ impl SolidBox {
         (0..3).all(|k| self.min[k] < hi[k] && self.max[k] > lo[k])
     }
 
-    /// `(dx, dy)`: the box's plan rectangle's nearest point to the axis, minus the axis.
+    /// `(dx, dy)`: the box's xy rectangle's nearest point to the axis, minus the axis.
     fn plan_delta(&self, b: &Body) -> [i64; 2] {
         [0, 1].map(|k| b.foot.0[k].clamp(self.min[k], self.max[k]) - b.foot.0[k])
     }
@@ -110,7 +110,7 @@ impl SolidBox {
         (self.min[2] - (fz + b.height)).max(fz - self.max[2]).max(0)
     }
 
-    /// `max(0, d_xy - r)² + d_z²` with `d_xy` the floor of the plan distance: a lower bound
+    /// `max(0, d_xy - r)² + d_z²` with `d_xy` the floor of the horizontal distance: a lower bound
     /// on the squared Euclidean gap between body and box.
     pub fn distance2(&self, b: &Body) -> i128 {
         let [dx, dy] = self.plan_delta(b).map(i128::from);
@@ -120,7 +120,7 @@ impl SolidBox {
         t * t + dz * dz
     }
 
-    /// Strict interior overlap: inside the radius in plan and overlapping in `z`. Touching is
+    /// Strict interior overlap: inside the radius in xy and overlapping in `z`. Touching is
     /// not overlapping.
     pub fn overlaps(&self, b: &Body) -> bool {
         let [dx, dy] = self.plan_delta(b).map(i128::from);
@@ -134,15 +134,15 @@ impl SolidBox {
     /// by the cylinder), so the gap is a convex function along a line: a move that does not
     /// start to close it never closes it, and the box cannot stop that move.
     ///
-    /// With the plan gap `t = max(0, d_xy - r)`, `toward = delta_xy . (dx, dy)` (positive
-    /// toward the box in plan) and the vertical gap `g_z` closed at the rate `v_z` (`-delta.z`
+    /// With the horizontal gap `t = max(0, d_xy - r)`, `toward = delta_xy . (dx, dy)` (positive
+    /// toward the box in xy) and the vertical gap `g_z` closed at the rate `v_z` (`-delta.z`
     /// for a box under the body, `delta.z` for one over it), the move closes on the box iff
     /// `t * toward + g_z * v_z * d_xy > 0`: the rate at which the gap shrinks, times the
     /// positive `d_xy * gap`. A box under
-    /// (over) the body's base and inside the radius in plan is closed on only by a move down
+    /// (over) the body's base and inside the radius in xy is closed on only by a move down
     /// (up). A box at floored distance zero (`t == 0`, `g_z == 0`: touching, or less than one
-    /// unit away at an irrational plan distance) beside the body is closed on only by a move
-    /// toward it in plan that does not leave its `z` range through the face it touches. An
+    /// unit away at an irrational horizontal distance) beside the body is closed on only by a move
+    /// toward it in xy that does not leave its `z` range through the face it touches. An
     /// overlapping box is always closed on.
     pub fn closes_on(&self, b: &Body, delta: [i64; 3]) -> bool {
         let [dx, dy] = self.plan_delta(b).map(i128::from);
@@ -157,7 +157,7 @@ impl SolidBox {
             return (below && vz < 0) || (above && vz > 0) || (!below && !above);
         }
         let toward = i128::from(delta[0]) * dx + i128::from(delta[1]) * dy;
-        // `t > 0` iff the floored plan distance exceeds the radius; the root is taken only
+        // `t > 0` iff the floored horizontal distance exceeds the radius; the root is taken only
         // when both gaps are open and the sign needs it.
         let t_open = d2 >= (r + 1) * (r + 1);
         let (gz, vz_close) = if below {

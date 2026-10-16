@@ -6,6 +6,8 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+Plan 0012 (no version: repository tooling): CI runs `scripts/check-comment-hygiene.mjs` (no relative link or plan-relative narration in `.rs`/`.wgsl` comments) and `scripts/check-index-rows.mjs` with `--self-test` (rows inside `roster:begin` markers at most 320 bytes); seeded fixture trees under `scripts/fixtures/`.
+
 ## [0.5.0] - 2026-10-17
 
 Plan 0004: M3, collision, a character controller and coarse grids (ADR-0005). The F2 wall

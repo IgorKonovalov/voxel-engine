@@ -12,6 +12,7 @@ a code comment.
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
 
+<!-- roster:begin cap=320 -->
 | ADR  | Title | Status |
 |------|-------|--------|
 | [0001](0001-rust-library-workspace-wgpu-compute-ray-marching.md) | Rust library workspace, wgpu compute ray marching, streaming brick-map world | accepted |
@@ -25,6 +26,7 @@ the status.
 | [0009](0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) | The testbed HUD is an embedded 8 × 8 bitmap font drawn in one overlay pass, with no UI library | proposed |
 | [0010](0010-game-logic-as-a-component-behind-a-logic-trait.md) | The game's server logic is a component behind a `Logic` trait, developed natively and shipped as WebAssembly; Lua is deferred | proposed |
 | [0011](0011-contour-planes-in-attribute-pages-with-procedural-detail.md) | Smooth surfaces from per-voxel contour planes in attribute pages of the brick pool, with procedural per-material detail | accepted |
+<!-- roster:end -->
 
 ## Decisions taken but not yet recorded
 
