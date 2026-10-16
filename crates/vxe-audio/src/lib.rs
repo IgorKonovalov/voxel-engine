@@ -35,7 +35,7 @@ pub use acoustics::{Acoustics, BlockClock, Occlusion, occlusion};
 pub use command::{COMMAND_CAPACITY, Command};
 pub use hrtf::Hrtf;
 pub use mixer::{MAX_VOICES, Mixer};
-pub use output::Output;
+pub use output::{Output, OutputStats};
 pub use voice::{AcousticTargets, MAX_TAPS, OPEN_CUTOFF_HZ, PlayParams, Sound, Tap, VoiceId};
 
 /// The mixer's sample rate in frames per second.

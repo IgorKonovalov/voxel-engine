@@ -6,7 +6,7 @@
 //!
 //! `flythrough [--seed N] [--level] [--render WxH] [--frames N] [--bench N] [--autopilot]
 //! [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH] [--view VIEW]
-//! [--detail] [--audio]`. `--render` fixes the marcher's resolution (the window
+//! [--detail] [--audio] [--audio-debug]`. `--render` fixes the marcher's resolution (the window
 //! scales it); `--frames` exits after N frames, printing the `F1` readings over the last
 //! ones; `--bench` runs the `B` bench N times right after the first mirror upload, before
 //! the first frame; `--autopilot` digs, flies 300 m out and back and prints the streaming
@@ -18,7 +18,10 @@
 //! default `flythrough::ROCK_DETAIL`); `--view` starts in a view (`shaded`, `normals`, `hitmask`) and
 //! `--detail` with detail on. `N` cycles the normal mode and `V` toggles detail. `--audio` opens
 //! the default output device, `H` plays a knock and `J` a looping hum at the point the last left
-//! click dug; every frame probes their occlusion through the world.
+//! click dug; every frame probes their occlusion through the world. `--audio-debug` is `--audio`
+//! plus a line a second of the output callback's readings, and on exit writes the last 60 s
+//! the callback handed the device to `flythrough-audio-debug.wav`. `FLYTHROUGH_HRIR=<pack>` in
+//! the environment loads that HRIR pack instead of the shipped one.
 
 mod fly;
 
@@ -108,6 +111,8 @@ struct Args {
     headless: bool,
     sync_budget: u64,
     audio: bool,
+    /// `--audio-debug`: print the callback's readings and record its output.
+    audio_debug: bool,
     /// `--look`: the starting normal mode.
     look: Option<NormalMode>,
     /// `--detail`: start with procedural detail on.
@@ -128,6 +133,7 @@ fn parse_args() -> Result<Args, String> {
         headless: false,
         sync_budget: SYNC_BUDGET_MIB << 20,
         audio: false,
+        audio_debug: false,
         look: None,
         detail: false,
         rock_detail: flythrough::ROCK_DETAIL,
@@ -171,6 +177,10 @@ fn parse_args() -> Result<Args, String> {
             "--autopilot" => args.autopilot = true,
             "--headless" => args.headless = true,
             "--audio" => args.audio = true,
+            "--audio-debug" => {
+                args.audio = true;
+                args.audio_debug = true;
+            }
             _ => return Err(format!("unknown argument {flag}")),
         }
     }
@@ -292,6 +302,55 @@ struct Audio {
     voices: Vec<(VoiceId, [f32; 3])>,
     /// Stream errors (underruns among them) already reported.
     stream_errors: u64,
+    /// `--audio-debug`: when the callback's readings were last printed.
+    debug: Option<Instant>,
+}
+
+/// An environment variable naming an HRIR pack to use instead of the shipped one, for
+/// listening comparisons.
+const HRIR_ENV: &str = "FLYTHROUGH_HRIR";
+
+/// Seconds of output `--audio-debug` keeps, and where it writes them.
+const AUDIO_DEBUG_SECONDS: f32 = 60.0;
+const AUDIO_DEBUG_WAV: &str = "flythrough-audio-debug.wav";
+
+impl Drop for Audio {
+    fn drop(&mut self) {
+        if self.debug.is_none() {
+            return;
+        }
+        let samples = self.output.take_recording();
+        match std::fs::write(AUDIO_DEBUG_WAV, wav_f32_stereo(&samples)) {
+            Ok(()) => println!(
+                "audio-debug: wrote {:.1} s of the device's output to {AUDIO_DEBUG_WAV}",
+                samples.len() as f32 / 2.0 / vxe_audio::RATE as f32
+            ),
+            Err(e) => println!("audio-debug: {AUDIO_DEBUG_WAV}: {e}"),
+        }
+    }
+}
+
+/// A 32-bit float stereo WAV file of interleaved `samples` at the mixer's rate.
+fn wav_f32_stereo(samples: &[f32]) -> Vec<u8> {
+    let data = (samples.len() * 4) as u32;
+    let rate = vxe_audio::RATE;
+    let mut b = Vec::with_capacity(44 + data as usize);
+    b.extend_from_slice(b"RIFF");
+    b.extend_from_slice(&(36 + data).to_le_bytes());
+    b.extend_from_slice(b"WAVEfmt ");
+    b.extend_from_slice(&16u32.to_le_bytes());
+    b.extend_from_slice(&3u16.to_le_bytes()); // IEEE float
+    b.extend_from_slice(&2u16.to_le_bytes());
+    b.extend_from_slice(&rate.to_le_bytes());
+    b.extend_from_slice(&(rate * 8).to_le_bytes());
+    b.extend_from_slice(&8u16.to_le_bytes());
+    b.extend_from_slice(&32u16.to_le_bytes());
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&data.to_le_bytes());
+    for &x in samples {
+        b.extend_from_slice(&x.to_le_bytes());
+    }
+    b
 }
 
 impl Audio {
@@ -312,10 +371,32 @@ impl Audio {
         }
     }
 
-    /// Opens the default device; prints why when it cannot.
-    fn open() -> Option<Self> {
+    /// Opens the default device; prints why when it cannot. `debug` meters and records the
+    /// callback.
+    fn open(debug: bool) -> Option<Self> {
         let t = now();
-        let hrtf = Hrtf::sadie2_d2();
+        let hrtf = match std::env::var_os(HRIR_ENV) {
+            Some(path) => match std::fs::read(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|b| Hrtf::load(&b).map_err(|e| e.to_string()))
+            {
+                Ok(h) => {
+                    println!(
+                        "audio: HRIR pack from {HRIR_ENV}={}",
+                        path.to_string_lossy()
+                    );
+                    std::sync::Arc::new(h)
+                }
+                Err(e) => {
+                    println!(
+                        "audio: {HRIR_ENV}={}: {e}; using the shipped pack",
+                        path.to_string_lossy()
+                    );
+                    Hrtf::sadie2_d2()
+                }
+            },
+            None => Hrtf::sadie2_d2(),
+        };
         println!(
             "audio: HRIR pack loaded in {:.1} ms ({} directions, {} taps)",
             ms_since(t),
@@ -327,6 +408,9 @@ impl Audio {
         match Output::open(mixer) {
             Ok(output) => {
                 println!("audio: {}", output.device());
+                if debug {
+                    output.record(AUDIO_DEBUG_SECONDS);
+                }
                 Some(Self {
                     output,
                     knock: knock(),
@@ -336,6 +420,7 @@ impl Audio {
                     table: acoustic_table(),
                     voices: Vec::new(),
                     stream_errors: 0,
+                    debug: debug.then(now),
                 })
             }
             Err(e) => {
@@ -1167,6 +1252,25 @@ impl Run {
             println!("audio: {errors} stream errors so far (an underrun is heard as a click)");
             audio.stream_errors = errors;
         }
+        if let Some(last) = audio.debug
+            && ms_since(last) >= 1000.0
+        {
+            let s = audio.output.take_stats();
+            println!(
+                "audio-debug: {} callbacks of {}..{} frames, busy max {:.3} ms, gap max {:.2} ms, {} late, peak {:.3}, {} clipped, kink max {:.2e}, {} voices",
+                s.callbacks,
+                s.frames_min,
+                s.frames_max,
+                s.busy_max_ms,
+                s.gap_max_ms,
+                s.late,
+                s.peak,
+                s.clipped,
+                s.kink_max,
+                audio.voices.len()
+            );
+            audio.debug = Some(now());
+        }
         for id in audio.output.finished() {
             audio.voices.retain(|(v, _)| *v != id);
         }
@@ -1581,7 +1685,11 @@ fn main() {
         camera,
         pending: Some(pending),
         run: None,
-        audio: if args.audio { Audio::open() } else { None },
+        audio: if args.audio {
+            Audio::open(args.audio_debug)
+        } else {
+            None
+        },
     };
     let result = if args.headless {
         run_headless(app, size)
