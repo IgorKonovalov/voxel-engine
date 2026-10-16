@@ -1,6 +1,6 @@
 # 0007: Server-owned op log, a byte channel, the logic boundary, shared and owned clients, and replay from seed plus log
 
-> **Status:** approved (2026-10-16; amended the same day with the logic boundary, ADR-0010)
+> **Status:** in-progress
 > **Created:** 2026-10-16
 > **Milestone:** M5 in `docs/roadmap.md` (the simulation split; the WASM host is Plan 0011)
 > **Related ADRs:** [ADR-0007](../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (log, channel, client modes), [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (logic behind a trait, native and component), ADR-0002 (per-chunk locked access), ADR-0001 (stack)
@@ -349,9 +349,15 @@ component and pass `Host` across the boundary as imports.
 
 | Phase | Owner | Status | Notes |
 |---|---|---|---|
-| 1: OpLog, InputLog, wire encoding, replay | dev | not started | |
+| 1: OpLog, InputLog, wire encoding, replay | dev | done | committed with this row; op-log FNV-1a 64 of the vector (1446 bytes) blessed on Linux x86_64 as `0x5ac8_737d_db0f_ccec` |
 | 2: Server, shared client, direct submission | dev | not started | |
 | 3: The logic boundary and re-simulation | dev | not started | |
 | 4: Owned client and desync detection | dev | not started | |
 | 5: Save, replay, fly-through on the split | dev | not started | |
 | 6: Readings | dev | not started | |
+
+### Notes
+
+- Phase 1: `WireError` has two variants beyond Data shapes: `Trailing { at }` (bytes after the last entry a log file's header counts, or after a message) and `Io(ErrorKind)` (from `LogFile::read_from`). An unknown mode, shape, error or aabb-presence tag also decodes as `UnknownKind(k)`.
+- Phase 1: `OpLog::record(tick, seq, op)` added beside `push`, for a server whose seqs have gaps (refused ops take a seq and are not logged); it panics on a seq that does not ascend. `Op::apply(&World)` added.
+- Phase 1: the mode and shape tags are 1, 2, 3 (`MODE_CARVE`/`FILL`/`REPLACE`, `SHAPE_SPHERE`/`BOX`/`CAPSULE`), so tag 0 is never valid; `ERROR_NOT_RESIDENT` is 1.
