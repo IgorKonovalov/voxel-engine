@@ -22,8 +22,9 @@ A game-agnostic voxel engine, as a Rust library workspace (ADR-0001):
   on destruction and replicate edits as compact ops.
 - **Spatial queries** (raycast, sweeps, region counts, coarse grids) that serve collision,
   acoustics and navigation from the same data.
-- **Scripting hosts** (WASM for deterministic server-side logic, Lua for client-side scripts)
-  so a game's rules can be data and scripts rather than engine code.
+- **A logic boundary** so a game's server logic is a component behind one trait, developed
+  natively and shipped as WebAssembly (ADR-0010); a Lua host for client-side scripts is
+  deferred until a consumer asks.
 
 What the engine is not: a framework. No ECS, no scene editor, no asset pipeline beyond voxel
 model import. A game owns its loop and composes the crates it needs.
@@ -41,6 +42,7 @@ plan that implements them (see [`adrs/README.md`](adrs/README.md)).
 | Platforms | Linux + Windows, 2019 mid-range desktop GPU baseline, 6 GB VRAM | + macOS; RTX/RDNA2-only |
 | First milestone | a fly-through with digging, built on a headless world crate that is tested without a window | headless-only first; sound graybox first |
 | API surface | Rust crates by git dependency, plus scripting: **WASM (wasmtime) for deterministic server logic, Lua (mlua) for client-side scripts** | Rust only; a C ABI; a single runtime for both |
+| Logic as a component (added 2026-10-16, ADR-0010) | the game's whole server logic implements one `Logic` trait (inputs in, edits and queries through a `Host` handle, opaque bytes out); the same crate links natively for development and ships as a WebAssembly component; the logic produces a level layout and the engine's parallel generator turns it into voxels; Lua is deferred | an engine-owned loop with script hooks; native-only logic; Lua for server logic; generation inside the component |
 | Entities | voxel models (MagicaVoxel-style volumes) on rigs of rigid parts, traced in the same pipeline as the world | skinned triangle meshes with a hybrid rasterize + RT path; deciding later |
 | Repo | public GitHub, MIT OR Apache-2.0 | private; local only |
 | Harness | Ritmolux-style: ADRs, phased plans, architect/dev skills, deny hooks, CI gates | CLAUDE.md + ADRs only |
@@ -147,7 +149,8 @@ edit persistence and the narrowed, sharded mirror, all tested headless. M1 is do
 **recorded misses on two `nfr.md` §2 lines** (owner's ruling at the Plan 0002 close): the
 streaming line (render-thread CPU p50 about 7 ms, p99 52 to 61 ms against 1.0 ms) and primary
 rays in the streamed world (6.69 ms at 1080p against 3.0 ms), both on the dev reference. The
-budgets stand. The §4 edit-cost miss carries forward from Plan 0001 to Plan 0003.
+budgets stand. The §4 edit-cost miss carries forward from Plan 0001 to Plan 0003, which
+read 3.1 to 3.7 ms; Plan 0014 (draft) is the second pass against the same 2 ms figure.
 
 **Next, before M2's lighting:** a streaming-CPU plan (incremental queue, residency sweep and
 window shift; narrowing and staging on workers) and a march-pass diagnosis spike (step counts,
@@ -190,7 +193,16 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (Plan 0005 drafts the surface-look spike; the lighting plan follows its close)
+### M2: Lighting that holds in the dark (in progress: Plan 0005 closed; Plan 0013 drafts the surface follow-up; the lighting plan next)
+
+Plan 0005 closed 2026-10-16 (v0.4.0): the surface-look spike measured four normal modes and
+procedural detail, and the owner chose per-voxel contour planes with weaker rock detail
+(ADR-0011). The fly-through's default stays face normals until a surface follow-up plan fixes
+contour's shadow-ray origin and fits its streamed footprint, which ran the 8 GiB dev card out
+of memory at the default radius; Plan 0005's "Follow-up items" list the work. Plan 0013
+(draft) is that follow-up: the shadow-ray origin, a footprint chosen by measurement and recorded
+in its own ADR, the owner's rock detail, then contour plus detail as the default. The lighting
+plan is not drafted yet.
 
 **Goal:** the consumer's P0 rendering bar. Few lights, emissive voxels, destruction, no ghosting.
 The quality reference is the Sibenik cathedral in Laine & Karras 2010, Figure 1. That image is
@@ -227,7 +239,8 @@ work), and the light (real-time GI standing in for the baked occlusion).
 - **Visible proof:** golden images of a dark cave with one emissive vein, before and after a
   carve, with a stated SSIM floor against the reference.
 - **Budgets:** the full frame at 1080p output on the baseline GPU.
-- **ADRs expected:** denoiser family; upscaler choice.
+- **ADRs expected:** denoiser family; upscaler choice. Surface representation: ADR-0011; its
+  streamed footprint: a new ADR at Plan 0013 Phase 4.
 
 ### M3: Collision, character controller, coarse grids (Plan 0004; drafted)
 
@@ -252,16 +265,22 @@ work), and the light (real-time GI standing in for the baked occlusion).
 - **Visible proof:** a knock in the fly-through sounds different behind thin and thick walls.
 - **ADRs expected:** HRTF source and audio thread model.
 
-### M5: Simulation split and scripting (Plan 0007 drafts the split and the log; the WASM host gets its own plan after Plan 0007 closes, since it binds the server API; the Lua host is deferred until a consumer asks)
+### M5: Simulation split and the logic component (Plan 0007 drafts the split, the logs and the logic boundary; Plan 0011 the WebAssembly host, after Plan 0007 closes)
 
-- An authoritative world plus edit log on the server side; a client mirror fed by ops over an
-  in-memory channel; snapshot and replay from seed plus log.
-- `vxe-script-wasm`: a `wasmtime` host for server logic with deterministic configuration
-  (canonical NaNs, no clock, fuel metering), typed bindings to world queries and edits.
-- `vxe-script-lua`: an `mlua` host for client-side scripts (presentation, UI hooks), hot reload.
-- **Headless proof:** a replayed log reproduces the world hash; a WASM script's output is
-  identical on both CI arms.
-- **ADRs expected:** scripting split and binding style; channel abstraction.
+- An authoritative world plus op and input logs on the server side; clients send inputs, a
+  `Logic` behind a trait decides the edits through a `Host` handle; a client mirror fed by
+  ops over an in-memory channel, sharing the world in solo; replay from seed plus ops, or
+  re-simulation from seed plus inputs (ADR-0007, ADR-0010).
+- `vxe-script-wasm`: a `wasmtime` host implementing `Logic` for a component built from the
+  same crate as the native logic, with deterministic configuration (canonical NaNs, clocks
+  and entropy from the tick, fuel per tick, a memory cap).
+- Deferred: a Lua host for client-side scripts, until a consumer asks. Follow-ups named by
+  the plans: the level-layout format the logic produces and the generator consumes; entity
+  snapshots across the boundary (with M6); the server owning streaming focus points.
+- **Headless proof:** a replayed log reproduces the world hash; the native and component
+  builds of one logic produce byte-equal op logs on both CI arms.
+- **ADRs:** ADR-0007 (log, channel, client modes) and ADR-0010 (logic as a component), both
+  proposed with their plans.
 
 ### M6: Entities as voxel models (Plan 0008 drafts the `.vox` import; the render half follows Plan 0005)
 

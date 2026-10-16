@@ -1,6 +1,6 @@
 # 0009: A support query on the coarse grid, and deterministic drop and rubble ops for collapse
 
-> **Status:** draft
+> **Status:** approved (2026-10-16)
 > **Created:** 2026-10-16
 > **Milestone:** M8 in `docs/roadmap.md` (the collapse half; volumetrics, debris and the cosmetic rigid-body layer stay in M8 proper)
 > **Related ADRs:** [ADR-0008](../adrs/0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) (the mechanism and what it is not), ADR-0005 (the controller's landing event), ADR-0002 (layout, access model)

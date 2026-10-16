@@ -1,10 +1,13 @@
 # 0010: A toggleable stats HUD: a bitmap-font text grid and a frame-time strip drawn as one overlay pass
 
-> **Status:** draft
+> **Status:** approved (2026-10-16)
 > **Created:** 2026-10-16
 > **Milestone:** M7 in `docs/roadmap.md` (tooling; the profiler overlay half, brought forward)
 > **Related ADRs:** [ADR-0009](../adrs/0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) (no UI library), ADR-0001 (stack)
 > **Prerequisite:** Plan 0001 closed. Independent of every other plan; it touches `apps/flythrough/src/main.rs`, which Plans 0002, 0004, 0007, 0008 and 0009 also touch, so merges are expected and conflicts are textual only.
+> **Amended 2026-10-16**, before "go": Phase 2's `PassTimer` and Phase 3's frame-time window
+> are copied from Ritmolux (the owner's sibling repository, commit `ad375596`) and adapted,
+> not written fresh. See "Amendment 2026-10-16" below.
 
 ## TL;DR
 
@@ -37,6 +40,39 @@ with the same mechanism that times the march.
 
 We rejected `egui`, `glyphon` and CPU-rasterised text (ADR-0009), and we rejected putting the
 stats struct in `vxe-app`: the shell stays thin, and the rows are the testbed's business.
+
+## Amendment 2026-10-16
+
+Made before "go", after a survey of `~/Work/Ritmolux` (the owner's music visualiser, same
+licence, same owner, so its code is copied without ceremony). Two pieces of this plan already
+exist there, tested, and `dev` copies them instead of writing them. Both citations are to
+Ritmolux commit `ad375596`.
+
+1. **`PassTimer` starts from Ritmolux's `core/src/render/gpu.rs`, `PassTimer`** (the struct and
+   its `new`, `claim`, resolve and read path; about lines 294 to 480). What is kept: `new`
+   returns `Option<Self>` and is `None` on a device without `TIMESTAMP_QUERY`, so a caller on
+   the software adapter gets no timer rather than a validation error; the tick period is read
+   off the queue once at construction; the resolve buffer (`QUERY_RESOLVE | COPY_SRC`) and the
+   `MAP_READ` readback buffer are separate, because wgpu forbids one buffer carrying both; the
+   query set holds a fixed number of index pairs so several passes in one frame are timed
+   against one set and one resolve. What is **not** copied: the thread-local `ARMED` slot that
+   lets Ritmolux's forty pass call sites claim a slot without a parameter. This engine has two
+   call sites, the march and the HUD, and they take the writes explicitly, as `MarchTimer`
+   does today. Phase 2's done-when is unchanged; its "Files touched" gains nothing.
+2. **The frame-time window is Ritmolux's `FrameStats`** (`core/src/diag/mod.rs`, about lines
+   130 to 260, with its tests): a fixed ring of 240 deltas fed explicitly, no clock read,
+   giving fps, mean, median and p99 by nearest rank from a stack-local sorted copy, so it
+   allocates nothing per frame and tests headless with made-up deltas. It is copied into
+   `apps/flythrough/src/hud.rs` (the stats are the testbed's), and its ring **is** the strip's
+   sample source, so the window is 240 frames, not one second, and `HudStats.frame_ms` carries
+   mean, median, p99 and max rather than min, mean and max. The `Diag` wrapper around it, the
+   GPU-byte accounting and the analysis fields are Ritmolux's and are not copied. The clock
+   read stays where the fly-through already has it.
+
+Also surveyed and rejected for this plan: Ritmolux's `overlay_font.rs` (a 5 x 7 partial glyph
+set; ADR-0009 chose a full 8 x 8 ASCII font) and its `overlay.rs` (one quad per lit font pixel
+through an instanced pipeline; this plan's cell grid in one fragment pass is the cheaper shape
+for 24 rows of text).
 
 ## Architecture diagram
 
@@ -97,7 +133,9 @@ flowchart LR
     larger samples clamp, and a one-pixel red line marks 16.67 ms when `ceiling_ms > 16.67`.
   - Headless at scale 1 with samples `[0, c/2, c, 2c]` and `ceiling_ms = c = 32`: the four
     columns hold 0, 32, 64 and 64 white pixels respectively, plus the red line row.
-  - `PassTimer` owns a two-timestamp query set with `writes()`, `resolve()` and `read_ms()`;
+  - `PassTimer` owns a two-timestamp query set with `writes()`, `resolve()` and `read_ms()`,
+    following the Ritmolux shape named in "Amendment 2026-10-16" (`new` is `None` without
+    `TIMESTAMP_QUERY`; the period is read once; resolve and readback buffers are separate);
     `MarchTimer` is a type alias and keeps its API; the march reading at the spawn pose
     (`--seed 1 --render 1920x1080 --frames 300`) on the dev box stays within the 1.5 to
     1.7 ms band of `nfr.md` §2, re-read and logged, so the refactor changed nothing.
@@ -110,7 +148,10 @@ flowchart LR
 - **Files touched:** `apps/flythrough/src/{main.rs, hud.rs, lib.rs}`.
 - **Done when:**
   - `HudStats` (Data shapes) is filled every frame from what already exists: frame CPU time
-    and the 1 s window's fps, min, average and max; `MarchTimer` and the HUD timer; the last
+    and the 240-frame window's fps, mean, median, p99 and max, from the `FrameStats` ring
+    copied per "Amendment 2026-10-16" (its tests come with it: a ring fed 240 equal deltas
+    reports that delta as mean, median and p99; a ring fed one 100 ms delta among 239 of
+    1 ms reports a p99 of 100 ms and a median of 1 ms); `MarchTimer` and the HUD timer; the last
     `SyncStats` (bytes, chunks, milliseconds); `GpuWorld::mirror_bytes`, `live_slots` and
     `free_slots().len()`; `World::stats` (resident chunks, `Full` bricks, CPU bytes); the
     last edit's verb, counts and milliseconds; camera position and chunk; mode (fly, and
@@ -120,7 +161,8 @@ flowchart LR
     time is measured with `Instant` and shown on its own row. Proposal: under 50 µs.
   - `F2` toggles; `--hud` starts visible. `--frames N` prints the `HudStats` rows at exit
     through the same `Display`; `F1` keeps printing its snapshot.
-  - The strip holds the last 240 CPU frame times with `ceiling_ms = 33.3`.
+  - The strip holds the last 240 CPU frame times with `ceiling_ms = 33.3`, read in
+    chronological order from the same `FrameStats` ring the rows are computed from.
   - A `--frames 300 --hud` run prints an average frame time within 5 % of the one printed by
     the same run without `--hud`, which defends "the HUD does not move the readings".
 
@@ -145,13 +187,15 @@ pub struct HudOverlay { cells: wgpu::Buffer, font: wgpu::Buffer, samples: wgpu::
 // params: size, scale, cols, rows, strip origin and height, sample count, ceiling_ms
 
 pub struct HudStats {
-    pub fps: f32, pub frame_ms: (f32, f32, f32), pub march_ms: f32, pub hud_ms: f32,
+    pub fps: f32, pub frame_ms: FrameMs, pub march_ms: f32, pub hud_ms: f32,
     pub upload_bytes: u64, pub upload_ms: f32, pub upload_chunks: u32,
     pub mirror_bytes: u64, pub pool_live: u32, pub pool_free: u32,
     pub chunks: u32, pub full_bricks: u64, pub cpu_bytes: u64, pub rss_bytes: Option<u64>,
     pub last_edit: Option<EditLine>, pub camera: [f32; 3], pub chunk: [i32; 3], pub mode: Mode,
     pub format_us: u32,
 }
+pub struct FrameMs { pub mean: f32, pub p50: f32, pub p99: f32, pub max: f32 }  // from FrameStats, 240-frame ring
+pub struct FrameStats { ring: [f32; 240], head: usize, len: usize, frames_total: u64 }  // copied from Ritmolux diag
 ```
 
 Buffers: cells 128 KiB at the cap, font 760 bytes, samples 1 KiB, params 64 bytes.

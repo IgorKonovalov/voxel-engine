@@ -6,6 +6,27 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-16
+
+Plan 0005: the surface-look spike, the first M2 plan. The owner chose per-voxel contour planes
+with procedural detail (ADR-0011); the fly-through's default stays face normals until the
+follow-up fixes contour's shadow-ray origin and its streamed footprint, which runs out of
+memory on an 8 GiB card at the default radius (`docs/nfr.md` §3).
+
+- `vxe-world`: `Material::detail` (feature scale in voxels, strength in `[0, 1]`; default no
+  detail).
+- `vxe-render`: `LookParams`, `NormalMode` (`Face`, `Trilinear8`, `Gradient27`, `Contour`) and
+  `ViewMode` (`Shaded`, `Normals`, `HitMask`) in `Params.flags`, set with `Marcher::set_look`;
+  `GpuWorld::with_surface_attrs`, a mirror whose full chunks' bricks live in attribute pages
+  of the existing pool shards, filled by the `attrib.wgsl` pass (`update_attrs`,
+  `update_attrs_timed`); contour-plane hits in the marcher; procedural per-material detail in
+  the shader. Breaking: `MATERIAL_FLOATS` 8 -> 16 (64-byte material rows), and `free_slots`
+  returns only the plain pages' free list.
+- `apps/flythrough`: keys `N` and `V`; flags `--look`, `--view`, `--detail`, `--rock-detail`;
+  `look_materials`, `ROCK_DETAIL`; the look harness (`tests/look.rs`: cavity normal error,
+  pillar silhouette error, the comparison over every mode) and goldens `look_trilinear8.png`,
+  `look_gradient27.png`, `look_contour.png`, `look_detail.png`.
+
 ## [0.3.0] - 2026-10-16
 
 Plan 0002: the streaming half of M1, which closes M1 with recorded misses on the streaming

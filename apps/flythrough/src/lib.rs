@@ -53,6 +53,30 @@ pub fn cave_materials() -> MaterialTable {
     t
 }
 
+/// Rock's procedural detail under `--look`: a 40 cm feature scale (4 voxels) at strength 0.3.
+pub const ROCK_DETAIL: [f32; 2] = [4.0, 0.3];
+
+/// [`cave_materials`] with rock's detail set to [`ROCK_DETAIL`]: the table the fly-through
+/// uses under `--look`. Every other row keeps no detail.
+pub fn look_materials() -> MaterialTable {
+    look_materials_with(ROCK_DETAIL)
+}
+
+/// [`cave_materials`] with rock's detail set to `rock_detail` (feature scale in voxels,
+/// strength): the table under `--look --rock-detail`. Every other row keeps no detail.
+pub fn look_materials_with(rock_detail: [f32; 2]) -> MaterialTable {
+    let base = cave_materials();
+    let mut t = MaterialTable::new();
+    for (id, row) in base.rows().iter().enumerate().skip(1) {
+        let mut row = row.clone();
+        if id == usize::from(cave::ROCK) {
+            row.detail = rock_detail;
+        }
+        t.push(row);
+    }
+    t
+}
+
 /// FNV-1a 64 over the voxels of the resident chunks `coords`, in the given order: each as its
 /// coordinate (three little-endian `i32`), then its bricks in slot order with voxels x-fastest
 /// as little-endian `u16`, a `Uniform` brick expanded. `None` if one is not resident.
@@ -102,6 +126,26 @@ pub fn percentile(v: &mut [f64], p: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn look_materials_puts_the_override_on_rock_only() {
+        let t = look_materials_with([8.0, 0.75]);
+        let base = cave_materials();
+        assert_eq!(t.rows().len(), base.rows().len());
+        for (id, row) in t.rows().iter().enumerate() {
+            let want = if id == usize::from(cave::ROCK) {
+                [8.0, 0.75]
+            } else {
+                [0.0, 0.0]
+            };
+            assert_eq!(row.detail, want, "row {id} ({})", row.name);
+            assert_eq!(row.albedo, base.rows()[id].albedo, "row {id}");
+        }
+        assert_eq!(
+            look_materials().get(cave::ROCK).map(|r| r.detail),
+            Some(ROCK_DETAIL)
+        );
+    }
 
     #[test]
     fn percentiles_by_nearest_rank() {

@@ -76,6 +76,38 @@ const cases = {
       'git reset crates/vxe-world/src/lib.rs',
     ],
   },
+  'block-compositor-window-close.js': {
+    deny: [
+      // The two commands that closed the VS Code window on 2026-10-16.
+      `hyprctl dispatch "hl.dsp.window.close('address:0x55a08c4018f0')"`,
+      `hyprctl dispatch 'hl.dsp.window.close({ title = "^nonexistentwindow$" })'`,
+      "hyprctl dispatch closewindow 'title:^flythrough$'",
+      'hyprctl dispatch killactive',
+      'hyprctl dispatch forcekillactive',
+      'hyprctl dispatch exit',
+      'hyprctl -i 0 dispatch killactive',
+      'hyprctl kill',
+      'sleep 5; hyprctl dispatch closewindow address:0x1',
+      'bash -c "hyprctl dispatch killactive"',
+      'wlrctl toplevel close title:flythrough',
+      'swaymsg kill',
+      'xdotool windowclose 12345',
+      'wmctrl -ic 0x1',
+    ],
+    allow: [
+      'hyprctl clients -j',
+      'hyprctl activewindow',
+      'hyprctl dispatch togglespecialworkspace vxe',
+      'hyprctl dispatch focuswindow address:0x1',
+      `hyprctl dispatch "hl.dsp.window.move({ workspace = '1', window = 'address:0x1' })"`,
+      'hyprctl dispatch movetoworkspacesilent "special:vxe,title:^flythrough$"',
+      'hyprctl monitors | grep dpms',
+      'grep -n closewindow .claude/hooks/block-compositor-window-close.js',
+      'pkill -f target/release/flythrough',
+      'kill -INT 12345',
+      './target/release/flythrough --frames 120',
+    ],
+  },
 };
 
 for (const [hook, { deny, allow }] of Object.entries(cases)) {
