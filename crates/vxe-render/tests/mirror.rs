@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use vxe_render::attrib::{AttribBindings, AttribItem, AttribPass};
 use vxe_render::gpu_world::{
     ABSENT, ATTR_PAGE_BRICK_SLOTS, FULL_BIT, LOD_BIT, LOD_LEVEL_ENTRY, MASK_BYTES, NO_PLANE,
     POOL_PAGE_SLOTS, RECORD_BYTES, RECORD_WORDS, SLOT_BYTES, SLOT_MASK, WIDE_BIT, attr_slot,
@@ -1045,4 +1046,160 @@ fn the_attribute_pass_fills_the_floor_and_reaches_a_carve_s_neighbours() {
         attr_of(&device, &queue, &gpu, [5, 3, 1]),
         attr_of(&device, &queue, &fresh, [5, 3, 1])
     );
+}
+
+/// The work list of every `Full` brick `gpu` mirrors for `world`'s chunks, in chunk then slot
+/// order.
+fn all_items(gpu: &GpuWorld, world: &World) -> Vec<AttribItem> {
+    let mut coords = world.store().coords();
+    coords.sort_by_key(|c| c.0);
+    let mut items = Vec::new();
+    for c in coords {
+        for slot in 0..CHUNK_BRICKS {
+            let e = gpu.entry(c, slot).unwrap();
+            if e & FULL_BIT != 0 {
+                let b = brick_of_slot(slot);
+                items.push(AttribItem {
+                    slot: e & SLOT_MASK,
+                    origin: [0, 1, 2].map(|k| (c.0[k] * 8 + b[k]) * BRICK_EDGE),
+                });
+            }
+        }
+    }
+    items
+}
+
+/// The kept work buffer grows to the next power of two of a list that outgrows it, at least
+/// 256 items, and only then: a 46-item list encoded 1000 times and a 2777-item list once
+/// (the two carve sizes) build two buffers, and the attributes they write are the ones the
+/// mirror's own pass writes.
+#[test]
+fn the_attribute_pass_keeps_its_work_buffer_until_a_list_outgrows_it() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = world();
+    let cfg = || MirrorConfig::new(Window::Fixed(world.extent()));
+    let mut gpu = GpuWorld::with_surface_attrs(&device, cfg());
+    gpu.sync(&world, &queue).unwrap();
+    let items = all_items(&gpu, &world);
+    assert_eq!(items.len(), 256);
+    let e = gpu.window();
+    let mut pass = AttribPass::new(&device);
+    assert_eq!((pass.buffer_builds(), pass.work_capacity()), (0, 0));
+    let run = |pass: &mut AttribPass, list: &[AttribItem]| {
+        let b = AttribBindings {
+            shards: [0, 1, 2, 3].map(|k| gpu.pool_shard(k)),
+            records: gpu.records(),
+            table: gpu.table(),
+            window: (e.min.0, e.size()),
+            slots_per_shard: gpu.shard_layout().slots_per_shard,
+        };
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        pass.encode(&device, &queue, &mut enc, &b, list, None);
+        queue.submit([enc.finish()]);
+    };
+    for _ in 0..1000 {
+        run(&mut pass, &items[..46]);
+    }
+    assert_eq!((pass.buffer_builds(), pass.work_capacity()), (1, 256));
+    let long: Vec<AttribItem> = items.iter().copied().cycle().take(2777).collect();
+    run(&mut pass, &long);
+    assert_eq!(pass.buffer_builds(), 2);
+    assert_eq!(pass.work_capacity(), 4096);
+
+    // The same attribute bytes as a mirror whose own pass filled every brick once.
+    let mut fresh = GpuWorld::with_surface_attrs(&device, cfg());
+    fresh.sync(&world, &queue).unwrap();
+    assert_eq!(update_attrs(&device, &queue, &mut fresh), 256);
+    let attrs = |g: &GpuWorld| {
+        let sps = g.shard_layout().slots_per_shard;
+        let mut out = Vec::new();
+        for item in &items {
+            let a = attr_slot(item.slot);
+            out.extend(readback::read_buffer(
+                &device,
+                &queue,
+                g.pool_shard((a / sps) as usize),
+                u64::from(a % sps) * SLOT_BYTES,
+                2 * SLOT_BYTES,
+            ));
+        }
+        out
+    };
+    let (kept, per_mirror) = (attrs(&gpu), attrs(&fresh));
+    assert_eq!(kept.len(), 256 * 1024);
+    assert!(kept.iter().any(|&b| b != 0xFF), "some voxel has a plane");
+    assert!(
+        kept == per_mirror,
+        "the kept-buffer pass writes the same attributes"
+    );
+}
+
+/// Rock filling chunk `(0, 0, 0)` except an air voxel at `(60, 4, 4)`, so its brick
+/// `(7, 0, 0)` is `Full` and every other brick is uniform rock.
+fn holed_rock() -> Chunk {
+    let mut c = Chunk::uniform(1);
+    c.set_brick(
+        brick_slot([7, 0, 0]),
+        Brick::from_fn(|l| u16::from(l != [4, 4, 4])),
+    );
+    c
+}
+
+/// The attribute of voxel `(63, 4, 4)` decodes to a `+x` plane while chunk `(1, 0, 0)` is
+/// absent, to no plane while it is solid rock, and to the `+x` plane again once it leaves:
+/// the boundary bricks next to a chunk whose record arrives or goes are recomputed.
+#[test]
+fn a_neighbour_chunk_arriving_and_leaving_recomputes_the_shell() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let mut t = MaterialTable::new();
+    t.push(Material::named("rock"));
+    let world = World::new(&t);
+    let (here, east) = (ChunkCoord([0, 0, 0]), ChunkCoord([1, 0, 0]));
+    world.store().insert(here, holed_rock());
+    let mut gpu = GpuWorld::with_surface_attrs(
+        &device,
+        MirrorConfig::new(Window::Fixed(ChunkExtent::new([0, 0, 0], [2, 1, 1]))),
+    );
+    let v = [63, 4, 4];
+    let plus_x = |a: u16, when: &str| {
+        let (n, _) = decode_attr(a).unwrap_or_else(|| panic!("{when}: no plane"));
+        assert!(n[0] > 0.9, "{when}: normal {n:?}");
+    };
+
+    gpu.sync(&world, &queue).unwrap();
+    assert_eq!(update_attrs(&device, &queue, &mut gpu), 1);
+    plus_x(attr_of(&device, &queue, &gpu, v), "east absent");
+
+    world.store().insert(east, Chunk::uniform(1));
+    let st = gpu.sync(&world, &queue).unwrap();
+    assert_eq!(st.chunks, 1);
+    assert!(gpu.is_mirrored(east));
+    assert_eq!(
+        update_attrs(&device, &queue, &mut gpu),
+        1,
+        "the shell brick"
+    );
+    assert_eq!(
+        attr_of(&device, &queue, &gpu, v),
+        NO_PLANE,
+        "east solid: six solid face neighbours"
+    );
+
+    world.store().remove(east);
+    gpu.apply_events(&StreamEvents {
+        evicted: vec![east],
+        ..Default::default()
+    });
+    gpu.sync(&world, &queue).unwrap();
+    assert!(!gpu.is_mirrored(east));
+    assert_eq!(
+        update_attrs(&device, &queue, &mut gpu),
+        1,
+        "the shell brick"
+    );
+    plus_x(attr_of(&device, &queue, &gpu, v), "east evicted");
 }

@@ -376,6 +376,8 @@ pub struct GpuWorld {
     attr_bricks: HashSet<[i32; 3]>,
     shell_chunks: HashSet<ChunkCoord>,
     attrib: Option<AttribPass>,
+    /// The queue of the last `sync`, which writes the attribute pass's uniform and work list.
+    queue: Option<wgpu::Queue>,
     /// Palette index of every material while one chunk is narrowed, else `NO_INDEX`.
     rev: Vec<u16>,
     /// Chunks waiting for an upload, keyed by squared distance to `pending_focus`.
@@ -424,12 +426,16 @@ impl GpuWorld {
         let storage = wgpu::BufferUsages::STORAGE
             | wgpu::BufferUsages::COPY_DST
             | wgpu::BufferUsages::COPY_SRC;
-        let table = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("chunk_table"),
-            size: (n * 4) as u64,
-            usage: storage,
-            mapped_at_creation: false,
-        });
+        // Every entry starts ABSENT, as `table_cpu` does: `flush_table` writes only entries
+        // that change, so an entry no chunk ever took must not read as record 0.
+        let table = wgpu::util::DeviceExt::create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("chunk_table"),
+                contents: &vec![0xFF; n * 4],
+                usage: storage,
+            },
+        );
         Self {
             device: device.clone(),
             cfg,
@@ -463,6 +469,7 @@ impl GpuWorld {
             attr_bricks: HashSet::new(),
             shell_chunks: HashSet::new(),
             attrib: None,
+            queue: None,
             rev: vec![NO_INDEX; 1 << 16],
             pending: BTreeSet::new(),
             pending_d2: HashMap::new(),
@@ -718,8 +725,11 @@ impl GpuWorld {
         timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) -> usize {
         let items = self.attr_work();
-        if let Some(pass) = &self.attrib {
-            let e = self.window();
+        if let (Some(pass), Some(queue)) = (&mut self.attrib, &self.queue) {
+            let e = ChunkExtent::new(
+                self.window_min,
+                [0, 1, 2].map(|k| self.window_min[k] + self.window_size[k]),
+            );
             let b = AttribBindings {
                 shards: [0, 1, 2, 3].map(|k| &self.shards[k]),
                 records: &self.records,
@@ -727,9 +737,17 @@ impl GpuWorld {
                 window: (e.min.0, e.size()),
                 slots_per_shard: self.layout.slots_per_shard,
             };
-            pass.encode(&self.device, encoder, &b, &items, timestamps);
+            pass.encode(&self.device, queue, encoder, &b, &items, timestamps);
         }
         items.len()
+    }
+
+    /// Drops the attribute pass's bind group, so that a replaced pool shard or record buffer
+    /// is freed now rather than when the next pass rebinds.
+    fn release_attrib_bindings(&mut self) {
+        if let Some(pass) = &mut self.attrib {
+            pass.release_bindings();
+        }
     }
 
     /// The attribute pass's work list from what changed since the last one, deduplicated,
@@ -936,6 +954,9 @@ impl GpuWorld {
     /// their new records would not fit the largest record buffer it can bind.
     pub fn sync(&mut self, world: &World, queue: &wgpu::Queue) -> Result<SyncStats, MirrorError> {
         let mut st = SyncStats::default();
+        if self.attrib.is_some() && self.queue.is_none() {
+            self.queue = Some(queue.clone());
+        }
         self.reconcile_window(world);
         for c in world.store().take_dirty() {
             if self.in_window(c) {
@@ -1462,6 +1483,7 @@ impl GpuWorld {
                 st.writes += 1;
             }
             self.records = records;
+            self.release_attrib_bindings();
             self.record_cap = cap;
             self.entries.resize(cap as usize * RECORD_WORDS, 0);
         }
@@ -1602,6 +1624,7 @@ impl GpuWorld {
                 copies += 1;
             }
             self.shards[k] = shard;
+            self.release_attrib_bindings();
             self.shard_slots[k] = want;
         }
         let masks = Self::create_masks(&self.device, new_slots as u32);

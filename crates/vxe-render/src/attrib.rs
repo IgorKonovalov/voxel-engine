@@ -39,10 +39,22 @@ pub struct AttribBindings<'a> {
     pub slots_per_shard: u32,
 }
 
+/// The pass, with the buffers it keeps between calls: its uniform, its work list (grown on
+/// demand, never shrunk) and the bind group over them and the mirror's buffers.
 pub struct AttribPass {
     pipeline: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
+    uniform: wgpu::Buffer,
+    /// The work-list buffer and its capacity in items.
+    work: Option<(wgpu::Buffer, usize)>,
+    /// The bind group and the mirror buffers it binds, in binding order (shards, records,
+    /// table); rebuilt when the work buffer or one of those is replaced.
+    bind: Option<(wgpu::BindGroup, [wgpu::Buffer; 6])>,
+    builds: u32,
 }
+
+/// Fewest items a work buffer holds.
+const MIN_WORK_ITEMS: usize = 256;
 
 impl AttribPass {
     pub fn new(device: &wgpu::Device) -> Self {
@@ -88,14 +100,49 @@ impl AttribPass {
             compilation_options: Default::default(),
             cache: None,
         });
-        Self { pipeline, layout }
+        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("attrib params"),
+            size: size_of::<Params>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        Self {
+            pipeline,
+            layout,
+            uniform,
+            work: None,
+            bind: None,
+            builds: 0,
+        }
+    }
+
+    /// Work buffers built so far: the first at first use, then one each time a list outgrew
+    /// the last.
+    pub fn buffer_builds(&self) -> u32 {
+        self.builds
+    }
+
+    /// Drops the bind group, and with it the mirror buffers it holds; the next `encode`
+    /// rebuilds it.
+    pub fn release_bindings(&mut self) {
+        self.bind = None;
+    }
+
+    /// The work buffer's capacity in items, 0 before first use.
+    pub fn work_capacity(&self) -> usize {
+        self.work.as_ref().map_or(0, |w| w.1)
     }
 
     /// Records the pass over `items` into `encoder`, one workgroup per item. Records nothing
     /// for an empty list.
+    ///
+    /// The uniform and the work list are written through `queue`, so they take effect at the
+    /// next `queue.submit`, ahead of every command buffer it submits: at most one encoded
+    /// pass may be submitted per `submit` call, or the later list overwrites the earlier.
     pub fn encode(
-        &self,
+        &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         b: &AttribBindings<'_>,
         items: &[AttribItem],
@@ -115,70 +162,58 @@ impl AttribPass {
             groups_x,
             _pad: [0; 3],
         };
-        let uniform = init_buffer(
-            device,
-            "attrib params",
-            bytemuck::bytes_of(&params),
-            wgpu::BufferUsages::UNIFORM,
-        );
-        let work = init_buffer(
-            device,
-            "attrib_work",
-            bytemuck::cast_slice(items),
-            wgpu::BufferUsages::STORAGE,
-        );
-        let mut entries = vec![wgpu::BindGroupEntry {
-            binding: 0,
-            resource: uniform.as_entire_binding(),
-        }];
-        for (k, s) in b.shards.iter().enumerate() {
-            entries.push(wgpu::BindGroupEntry {
-                binding: 1 + k as u32,
-                resource: s.as_entire_binding(),
+        queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&params));
+        if self.work_capacity() < items.len() {
+            let cap = items.len().next_power_of_two().max(MIN_WORK_ITEMS);
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("attrib_work"),
+                size: (cap * size_of::<AttribItem>()) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             });
+            self.work = Some((buffer, cap));
+            self.bind = None;
+            self.builds += 1;
         }
-        entries.extend([
-            wgpu::BindGroupEntry {
-                binding: 5,
-                resource: b.records.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 6,
-                resource: b.table.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
+        let work = &self.work.as_ref().expect("built above").0;
+        queue.write_buffer(work, 0, bytemuck::cast_slice(items));
+        let bound = [
+            b.shards[0].clone(),
+            b.shards[1].clone(),
+            b.shards[2].clone(),
+            b.shards[3].clone(),
+            b.records.clone(),
+            b.table.clone(),
+        ];
+        if self.bind.as_ref().is_none_or(|(_, was)| *was != bound) {
+            let mut entries = vec![wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.uniform.as_entire_binding(),
+            }];
+            for (k, buffer) in bound.iter().enumerate() {
+                entries.push(wgpu::BindGroupEntry {
+                    binding: 1 + k as u32,
+                    resource: buffer.as_entire_binding(),
+                });
+            }
+            entries.push(wgpu::BindGroupEntry {
                 binding: 7,
                 resource: work.as_entire_binding(),
-            },
-        ]);
-        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("attrib"),
-            layout: &self.layout,
-            entries: &entries,
-        });
+            });
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("attrib"),
+                layout: &self.layout,
+                entries: &entries,
+            });
+            self.bind = Some((group, bound));
+        }
+        let group = &self.bind.as_ref().expect("built above").0;
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("attrib"),
             timestamp_writes: timestamps,
         });
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &bind, &[]);
+        pass.set_bind_group(0, group, &[]);
         pass.dispatch_workgroups(groups_x, groups_y, 1);
     }
-}
-
-/// A buffer of `usage` holding `bytes`, zero-padded to at least 16 bytes.
-fn init_buffer(
-    device: &wgpu::Device,
-    label: &str,
-    bytes: &[u8],
-    usage: wgpu::BufferUsages,
-) -> wgpu::Buffer {
-    use wgpu::util::DeviceExt;
-    let mut contents = bytes.to_vec();
-    contents.resize(bytes.len().max(16).next_multiple_of(4), 0);
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(label),
-        contents: &contents,
-        usage,
-    })
 }
