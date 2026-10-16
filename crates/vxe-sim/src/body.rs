@@ -129,6 +129,48 @@ impl SolidBox {
         dx * dx + dy * dy < r * r && fz < self.max[2] && fz + b.height > self.min[2]
     }
 
+    /// Whether a move along `delta` from the body's position starts to close the gap to this
+    /// box. The set of foot positions where the body overlaps the box is convex (the box grown
+    /// by the cylinder), so the gap is a convex function along a line: a move that does not
+    /// start to close it never closes it, and the box cannot stop that move.
+    ///
+    /// With the plan gap `t = max(0, d_xy - r)`, `toward = delta_xy . (dx, dy)` (positive
+    /// toward the box in plan) and the vertical gap `g_z` closed at the rate `v_z` (`-delta.z`
+    /// for a box under the body, `delta.z` for one over it), the move closes on the box iff
+    /// `t * toward + g_z * v_z * d_xy > 0`: the rate at which the gap shrinks, times the
+    /// positive `d_xy * gap`. A box under
+    /// (over) the body's base and inside the radius in plan is closed on only by a move down
+    /// (up). A box at floored distance zero (`t == 0`, `g_z == 0`: touching, or less than one
+    /// unit away at an irrational plan distance) beside the body is closed on only by a move
+    /// toward it in plan that does not leave its `z` range through the face it touches. An
+    /// overlapping box is always closed on.
+    pub fn closes_on(&self, b: &Body, delta: [i64; 3]) -> bool {
+        let [dx, dy] = self.plan_delta(b).map(i128::from);
+        let r = i128::from(b.radius);
+        let fz = b.foot.0[2];
+        let top = fz + b.height;
+        let below = self.max[2] <= fz;
+        let above = self.min[2] >= top;
+        let vz = i128::from(delta[2]);
+        if dx * dx + dy * dy < r * r {
+            return (below && vz < 0) || (above && vz > 0) || (!below && !above);
+        }
+        let toward = i128::from(delta[0]) * dx + i128::from(delta[1]) * dy;
+        let dxy = isqrt((dx * dx + dy * dy) as u128) as i128;
+        let t = (dxy - r).max(0);
+        let (gz, vz_close) = if below {
+            (i128::from(fz - self.max[2]), -vz)
+        } else if above {
+            (i128::from(self.min[2] - top), vz)
+        } else {
+            (0, 0)
+        };
+        if t == 0 && gz == 0 {
+            return toward > 0 && (!below || vz < 0) && (!above || vz > 0);
+        }
+        t * toward + gz * vz_close * dxy > 0
+    }
+
     /// The box's lattice point nearest the foot point.
     fn nearest_point(&self, b: &Body) -> [i64; 3] {
         [0, 1, 2].map(|k| b.foot.0[k].clamp(self.min[k], self.max[k] - 1))

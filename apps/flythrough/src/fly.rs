@@ -317,6 +317,93 @@ mod tests {
         assert!(lines.contains(&"walk: grounded"));
     }
 
+    /// Random walks on the seed-1 level with `Space` held on a third of them and a carve near
+    /// the body before a quarter of them: after every
+    /// tick the body does not overlap the world, and it never stays put for 30 ticks at a
+    /// pose where no sweep (16 horizontal directions, up, down) moves it. Before the sweep
+    /// left out boxes a move does not close on, the body froze in mid-air beside a voxel edge
+    /// within the first few walks of every seed tried.
+    #[test]
+    fn random_walks_on_the_level_never_freeze_or_overlap() {
+        use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
+        use vxe_sim::sweep;
+        let source = CaveSource::new(1, vxe_world::ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
+        let world = World::generate(source.extent, &source, &flythrough::cave_materials());
+        let c = CharacterController::new(walk_params());
+        let mut st = CharacterState::new(Fixed3(source.spawn().0.map(|v| i64::from(v) * 256)));
+        let mut rng = 1u64;
+        let mut next = || {
+            rng = rng
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            rng >> 33
+        };
+        let dirs: Vec<[i64; 3]> = (0..16)
+            .map(|k| {
+                let a = k as f32 * std::f32::consts::TAU / 16.0;
+                [(a.cos() * 128.0) as i64, (a.sin() * 128.0) as i64, 0]
+            })
+            .chain([[0, 0, 256], [0, 0, -256]])
+            .collect();
+        let (mut still, mut climbs, mut ticks, mut digs) = (0, 0, 0, 0);
+        for walk in 0..800 {
+            let a = (next() % 3600) as f32 / 3600.0 * std::f32::consts::TAU;
+            let wish = [
+                (a.cos() * 128.0).round() as i64,
+                (a.sin() * 128.0).round() as i64,
+            ];
+            let space = next() % 3 == 0;
+            if next() % 4 == 0 {
+                // A dig near the body, as the left click makes: up to 3 m off in plan.
+                let f = st.foot.0;
+                let mut off = |span: u64, lo: i64| (next() % span) as i64 - lo;
+                let at = [
+                    f[0] + off(60, 30) * 256,
+                    f[1] + off(60, 30) * 256,
+                    f[2] + off(30, 10) * 256,
+                ];
+                let radius = (5 + next() % 11) as i64 * 256;
+                let r = world.apply(&vxe_world::EditOp::sphere(
+                    Fixed3(at),
+                    radius,
+                    vxe_world::Mode::Carve,
+                ));
+                digs += u32::from(r.is_ok());
+            }
+            for _ in 0..20 + next() % 100 {
+                let input = MoveInput {
+                    wish,
+                    jump: space,
+                    climb: space,
+                };
+                let r = c.tick(&world, &mut st, &input);
+                ticks += 1;
+                climbs += u32::from(r.climbed);
+                let f = st.foot.0;
+                assert!(
+                    !overlaps(&world, &c.body(f)),
+                    "walk {walk}: overlapping at {f:?}"
+                );
+                let m = r.moved.0;
+                still = if m[0] * m[0] + m[1] * m[1] + m[2] * m[2] < 4 && !st.is_climbing() {
+                    still + 1
+                } else {
+                    0
+                };
+                if still == 30 {
+                    let free = dirs.iter().any(|d| {
+                        let s = sweep(&world, &c.body(f), Fixed3(*d)).moved.0;
+                        s[0] * s[0] + s[1] * s[1] + s[2] * s[2] >= 16 * 16
+                    });
+                    assert!(free, "walk {walk}: frozen at {f:?}, vz {}", st.vz);
+                }
+            }
+        }
+        assert!(ticks > 40_000);
+        assert!(digs > 100, "{digs} carves");
+        assert!(climbs > 0, "no climb in {ticks} ticks");
+    }
+
     #[test]
     fn pitch_is_clamped_short_of_vertical() {
         let mut f = fly();

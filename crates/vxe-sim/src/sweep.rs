@@ -43,6 +43,27 @@ fn nearest(boxes: &[SolidBox], b: &Body, lo: [i64; 3], hi: [i64; 3]) -> Option<(
     Some((key, bx.contact(b, key.voxel)))
 }
 
+/// The nearest of `boxes` meeting `[lo, hi)` that a move by `delta` closes on
+/// ([`SolidBox::closes_on`]), by [`Key`]. A box the move runs along or away from cannot stop
+/// it. Without that filter a box within the floored gap of zero, or within the gap at which
+/// every advance rounds to zero, stops every move from there, including one straight away
+/// from it, and the body never moves again.
+fn nearest_blocking(
+    boxes: &[SolidBox],
+    b: &Body,
+    lo: [i64; 3],
+    hi: [i64; 3],
+    delta: [i64; 3],
+) -> Option<(Key, Contact)> {
+    let (key, bx) = boxes
+        .iter()
+        .filter(|x| x.intersects(lo, hi))
+        .map(|x| (x.key(b), x))
+        .filter(|(_, x)| x.closes_on(b, delta))
+        .min_by_key(|(k, _)| *k)?;
+    Some((key, bx.contact(b, key.voxel)))
+}
+
 fn to_i64(v: i128) -> i64 {
     v.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
 }
@@ -76,10 +97,13 @@ pub fn overlaps(world: &World, body: &Body) -> bool {
 ///
 /// Each iteration takes `g`, the floor of the root of the smallest squared distance to a
 /// solid box in the region swept along the remaining delta, and advances by
-/// `min(g, |remaining|)` along the delta, every component rounded toward zero. It stops on
-/// `g == 0` (that box is the contact), when the delta is spent (no contact), when every
-/// component rounds to zero, or after [`MAX_SWEEP_ITERATIONS`] (the nearest box is the
-/// contact). Delta components are bounded to `2^31` fixed units.
+/// `min(g, |remaining|)` along the delta, every component rounded toward zero. Boxes the
+/// remaining delta does not close on (it runs along or away from them) are left out of `g`.
+/// It stops on `g == 0` (that box is the contact), when an advance would overlap a box (that
+/// box is the contact; the advance is not taken), when the delta is spent (no contact), when
+/// every component rounds to zero, or after [`MAX_SWEEP_ITERATIONS`] (the nearest box the
+/// remaining delta closes on is the contact). Delta components are bounded to `2^31` fixed
+/// units.
 pub fn sweep(world: &World, body: &Body, delta: Fixed3) -> Sweep {
     sweep_with_stats(world, body, delta).0
 }
@@ -109,7 +133,7 @@ pub fn sweep_with_stats(world: &World, body: &Body, delta: Fixed3) -> (Sweep, Qu
         out.iterations += 1;
         let b = body.at(pos);
         let (rlo, rhi) = swept_region(&b, rem);
-        let Some((key, contact)) = nearest(&boxes, &b, rlo, rhi) else {
+        let Some((key, contact)) = nearest_blocking(&boxes, &b, rlo, rhi, rem) else {
             pos = [0, 1, 2].map(|k| pos[k] + rem[k]);
             rem = [0; 3];
             break;
@@ -128,13 +152,21 @@ pub fn sweep_with_stats(world: &World, body: &Body, delta: Fixed3) -> (Sweep, Qu
             out.contact = Some(contact);
             break;
         }
-        pos = [0, 1, 2].map(|k| pos[k] + adv[k]);
+        let next = [0, 1, 2].map(|k| pos[k] + adv[k]);
+        // A box left out as not closed on can lie under one unit from the body, and an
+        // advance rounded off the line of the delta can reach into it. Stop short of that.
+        let nb = body.at(next);
+        if let Some(x) = boxes.iter().find(|x| x.overlaps(&nb)) {
+            out.contact = Some(x.contact(&b, x.key(&b).voxel));
+            break;
+        }
+        pos = next;
         rem = [0, 1, 2].map(|k| rem[k] - adv[k]);
     }
     if rem != [0; 3] && out.contact.is_none() {
         let b = body.at(pos);
         let (rlo, rhi) = swept_region(&b, rem);
-        out.contact = nearest(&boxes, &b, rlo, rhi).map(|(_, c)| c);
+        out.contact = nearest_blocking(&boxes, &b, rlo, rhi, rem).map(|(_, c)| c);
     }
     out.moved = Fixed3([0, 1, 2].map(|k| pos[k] - start[k]));
     (out, stats)

@@ -236,8 +236,10 @@ fn one_tick(world: &World, start: [i64; 3], wish: [i64; 2]) -> (MoveResult, Char
 }
 
 /// A sweep can stop with a wall contact and delta left over without running into the box:
-/// here the iteration cap, on an oblique move away from an outside corner the body starts 2
-/// units from. The step attempt that follows must not report a step unless the foot rose.
+/// here the iteration cap, on an oblique move that grazes an outside corner the body starts 2
+/// units from. The step attempt that follows must not report a step unless the foot rose:
+/// here it carries the body over the corner onto the block, its axis within the radius of
+/// the block's top.
 #[test]
 fn a_move_past_a_corner_never_steps_without_rising() {
     let world = low_block();
@@ -248,8 +250,8 @@ fn a_move_past_a_corner_never_steps_without_rising() {
     assert_eq!(s.moved, Fixed3([12, -88, 0]));
     assert!(s.contact.is_some_and(|c| c.is_wall()));
     let (r, st) = one_tick(&world, start, wish);
-    assert!(!r.stepped);
-    assert_eq!(st.foot.0[2], 0);
+    assert!(r.stepped);
+    assert_eq!(st.foot.0, [4382, 4944, 256]);
 
     // The same corner at clearances 0 to 8 and twelve directions: whenever a tick steps, the
     // foot rose; and the iteration cap is among the cases.
@@ -281,4 +283,20 @@ fn a_move_past_a_corner_never_steps_without_rising() {
         }
     }
     assert!(capped > 0);
+}
+
+/// The owner's frozen body: airborne under one unit beside a voxel edge (the pose of the
+/// sweep test `a_box_under_one_unit_away_stops_only_a_move_that_closes_on_it`), it must fall
+/// to the floor and walk away from the edge, not hang there with every sweep moving nothing.
+#[test]
+fn a_body_beside_a_voxel_edge_falls_and_walks_away() {
+    let w = world(|[x, y, z]| z < 0 || (x == 20 && y == 20));
+    let start = [5120 - 763, 5120 - 95, 1000];
+    let steps = run(&w, start, 60, |_| MoveInput::default());
+    assert_eq!(foot(&steps, 60), [start[0], start[1], 0]);
+    assert!(steps[59].s.grounded);
+    let steps = run(&w, start, 60, walk([-128, 0]));
+    let [x, _, z] = foot(&steps, 60);
+    assert_eq!(x, start[0] - 60 * 128);
+    assert_eq!(z, 0);
 }

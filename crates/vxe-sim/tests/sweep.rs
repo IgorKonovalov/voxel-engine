@@ -169,3 +169,75 @@ fn the_sweep_reads_no_voxel_array_of_a_uniform_brick() {
     assert_eq!(s.moved, Fixed3([0, 0, -2560]));
     assert!(stats.voxel_arrays_read > 0);
 }
+
+/// A pillar one voxel square, `x, y in [20, 21)`, all `z >= 0`, on the F1 floor.
+fn pillar() -> World {
+    world(|[x, y, z]| z < 0 || (x == 20 && y == 20))
+}
+
+/// The axis `(763, 95)` units from the pillar's `(-x, -y)` vertical edge: 768.89 units in
+/// plan, which floors to the radius, so the pillar is at `d² == 0` without overlapping. On
+/// the seed-1 level a falling body reached such a pose beside a voxel edge and no sweep moved
+/// it again, in any direction.
+const BESIDE_EDGE: [i64; 2] = [5120 - 763, 5120 - 95];
+
+#[test]
+fn a_box_under_one_unit_away_stops_only_a_move_that_closes_on_it() {
+    let w = pillar();
+    let b = body_at([BESIDE_EDGE[0], BESIDE_EDGE[1], 1000]);
+    assert!(!overlaps(&w, &b));
+    assert_eq!(
+        distance2(&w, &b).map(|(d, c)| (d, c.voxel)),
+        Some((0, VoxelCoord([20, 20, 3])))
+    );
+
+    // Down past it onto the floor.
+    let s = sweep(&w, &b, Fixed3([0, 0, -2000]));
+    assert_eq!(s.moved, Fixed3([0, 0, -1000]));
+    assert!(s.contact.expect("floor").is_floor());
+
+    // Away from it, along its tangent, and up: the whole delta, no contact.
+    for delta in [
+        [-128, 0, 0],
+        [0, -128, 0],
+        [-90, -90, 0],
+        [-95, 763, 0],
+        [95, -763, 0],
+        [0, 0, 500],
+        [-100, 20, 300],
+    ] {
+        let s = sweep(&w, &b, Fixed3(delta));
+        assert_eq!(s.moved, Fixed3(delta), "{delta:?}");
+        assert_eq!(s.contact, None, "{delta:?}");
+    }
+
+    // Into it: no motion, the pillar is the contact.
+    for delta in [[128, 16, 0], [128, 128, 0], [16, 128, -40]] {
+        let s = sweep(&w, &b, Fixed3(delta));
+        assert_eq!(s.moved, Fixed3([0, 0, 0]), "{delta:?}");
+        let c = s.contact.expect("contact");
+        assert_eq!([c.voxel.0[0], c.voxel.0[1]], [20, 20], "{delta:?}");
+        assert!(c.is_wall(), "{delta:?}");
+    }
+}
+
+/// One unit further out (`(763, 100)`: 769.52 units, `g == 1`), every oblique advance rounds
+/// to zero on every component; a move away from the pillar must not stop on that.
+#[test]
+fn an_oblique_move_away_from_a_box_one_unit_off_spends_its_delta() {
+    let w = pillar();
+    let b = body_at([5120 - 763, 5120 - 100, 1000]);
+    assert_eq!(distance2(&w, &b).map(|(d, _)| d), Some(1));
+    for delta in [[-90, -90, 0], [-120, 40, 0], [-30, 120, 0]] {
+        let s = sweep(&w, &b, Fixed3(delta));
+        assert_eq!(s.moved, Fixed3(delta), "{delta:?}");
+        assert_eq!(s.contact, None, "{delta:?}");
+    }
+    // Toward it, the advance rounds to zero and the pillar is the contact (ADR-0005's creep).
+    let s = sweep(&w, &b, Fixed3([90, 90, 0]));
+    assert_eq!(s.moved, Fixed3([0, 0, 0]));
+    assert_eq!(
+        s.contact.map(|c| [c.voxel.0[0], c.voxel.0[1]]),
+        Some([20, 20])
+    );
+}
