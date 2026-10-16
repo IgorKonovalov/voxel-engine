@@ -1,9 +1,11 @@
 # 0003: Edit cost under 2 ms: row spans, a per-op target table and per-brick tallies
 
-> **Status:** in-progress
+> **Status:** done (closed 2026-10-17, v0.4.1). Verdict: every phase landed with the results
+> and both pinned hashes unchanged; `worst` reads 3.56 ms on a quiet box against the 2 ms
+> figure, which the owner keeps, and the miss carries to Plan 0014 (see "Close").
 > **Created:** 2026-10-16
 > **Milestone:** M1 follow-up in `docs/roadmap.md` (the `nfr.md` §4 miss recorded by Plan 0001)
-> **Related ADRs:** [ADR-0002](../adrs/0002-brick-map-layout-and-per-chunk-locked-access.md) (layout and access model, unchanged by this plan). No new ADR: the choices here are implementation choices with no architecture-level alternative worth a record, and the rejected ones are named under "Decision".
+> **Related ADRs:** [ADR-0002](../../adrs/0002-brick-map-layout-and-per-chunk-locked-access.md) (layout and access model, unchanged by this plan). No new ADR: the choices here are implementation choices with no architecture-level alternative worth a record, and the rejected ones are named under "Decision".
 > **Prerequisite:** Plan 0002 closed, as the Plan 0001 close decided (`nfr.md` §4: "the edit cost gets its own plan after Plan 0002"). Nothing here depends on Plan 0002's readings; the sequencing avoids a merge in `edit.rs`, which Plan 0002 Phases 1 and 3 also change.
 
 ## TL;DR
@@ -392,7 +394,8 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     1165320 B (2049 bricks, 39 chunks, 656 writes), sync 8.55 to 8.72 ms (one tip run
     14.56 ms).
   - Every reading above was taken under the exclusive perf lock; load outside the lock is as
-    stated per reading.- **Gate at the tip** (tree of the Phase 5 commit, `CARGO_BUILD_JOBS=3`): `cargo build
+    stated per reading.
+- **Gate at the tip** (tree of the Phase 5 commit, `CARGO_BUILD_JOBS=3`): `cargo build
   --workspace --all-targets` exit 0; `cargo clippy --workspace --all-targets -- -D warnings`
   exit 0; `cargo fmt --all --check` exit 0; `cargo test --workspace --doc` exit 0 (1
   doctest); `cargo nextest run --workspace` exit 0, 101 passed, 0 skipped (exclusive lock,
@@ -403,6 +406,54 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Outstanding `human` phases:** none. The `nfr.md` §4 figure (2 ms) is missed at the tip;
   the plan stops there for the close to decide.
 
+## Close
+
+Closed 2026-10-17 at v0.4.1 after a fresh-session review (verdict: ready to close, no blocker
+or major; the one unmet done-when is Phase 5's "under 2.0 ms", which the plan routes to the
+close). Owner's calls, given 2026-10-16:
+
+- **The 2 ms figure in `nfr.md` §4 stays.** The miss carries to Plan 0014 (approved), which
+  measures the allocation with `perf` on a quiet box and then cuts `Brick::expand`'s
+  allocation, the sphere's per-row `isqrt` and the capsule's row scan.
+- **Patch bump** (v0.4.1): a performance plan with no behaviour change; the public API only
+  grows.
+- **The three newly public `Shape` methods stay public** (`Shape::voxel_bounds`,
+  `Shape::contains`, `Shape::row_span`) and the CHANGELOG lists them.
+
+**Quiet-box readings at the close** (AMD Ryzen 9 5900HS laptop dev box, `a958ec1`: the merge
+of `main` into this branch, whose `vxe-world` tree equals `96afb82`; release bench profile;
+exclusive perf lock; 1-minute load 2.7 to 3.5 at the start of each run, falling from another
+lane's job that ended before the lock was granted, about 0.1 to 0.5 before it). Two runs of
+`cargo bench -p vxe-world --bench edits`, run 1 / run 2, mean [CI]:
+
+- `worst` 3.566 [3.561, 3.572] / 3.556 [3.552, 3.561] ms;
+- `mixed` 2.596 [2.592, 2.599] / 2.586 [2.583, 2.589] ms;
+- `tool` 8.119 [8.112, 8.129] / 8.120 [8.114, 8.126] ms.
+
+Fly-through `B` bench (`flythrough --level --seed 1 --headless --bench 1 --frames 1`, release,
+NVIDIA GeForce RTX 3080 Laptop GPU), three runs: edits 3.34 / 3.30 / 3.33 ms CPU; `carved:
+rock 340502, ore 126 (39 chunks)`; sync uploaded 1165320 B (2049 bricks, 39 chunks, 656
+writes) in 8.87 to 8.97 ms. The quiet readings agree with the loaded ones in the log to within
+about 3 %, so the log's figures stand.
+
+Gate at the close, on `a958ec1` (`CARGO_BUILD_JOBS=3`): build, `cargo nextest run
+--workspace` under the exclusive lock (125 run, 125 passed, 1 skipped; RTX 3080 Laptop GPU),
+doctests, clippy `-D warnings`, fmt, `cargo deny`, the hook bite tests and the doc-link
+checker all pass; `determinism_vector` and `raycast_hit_list_is_pinned` hold their constants.
+
 ## Followups
 
-- Allocation-free result path, if the frame-path rule bites.
+Plan 0014 cites these by number (Plan 0003 follow-up N).
+
+1. **The §4 miss** (`worst` 3.56 ms against 2 ms): Plan 0014, approved, which takes the
+   allocation in `Brick::expand`, the sphere span's `isqrt` and an analytic capsule row.
+2. **`tool` did not improve** (8.12 ms against 8.23 to 8.29 ms on the Plan 0001 path): a
+   capsule row with no inside centre still scans its whole window with the capsule test.
+   Plan 0014's analytic capsule row.
+3. **No oracle run over `Uniform` bricks.** The oracle world is all `Full` bricks, so the
+   `Uniform` expand path is checked only by the determinism vector and the bench's results.
+   Plan 0014 adds it.
+4. **Allocation-free result path** (a caller-provided scratch for `EditResult` and `Tally`),
+   if the frame-path rule bites.
+5. **Baseline reading.** Every figure here is the dev box; the 4-core baseline CPU of `nfr.md`
+   §1 is read at M2's close.
