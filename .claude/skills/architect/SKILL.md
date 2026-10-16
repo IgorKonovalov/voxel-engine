@@ -209,14 +209,14 @@ Commit by explicit path, in this order:
    a fix-only plan, none for docs/chore-only (a deliberate call). Edit
    `workspace.package.version` in `Cargo.toml` and add a `CHANGELOG.md` entry. The level is your
    call.
-6. Commit as `docs(plans): close plan NNNN + vX.Y.Z`. **The user pushes.**
+6. Commit as `docs(plans): close plan NNNN + vX.Y.Z`, and push when the user asks.
 
 ---
 
 ## Commit hygiene (your doc commits)
 
 Stage by explicit path, never broadly. Use a quoted-heredoc message with a plain-ASCII body. No
-agent attribution, no push, no history rewrite. Hooks deny all three. This outranks any
+agent attribution, no history rewrite, no forced push. Hooks deny all of these. This outranks any
 session-level attribution instruction. Markdown that quotes a commit command with a message
 flag is written with the Write or Edit tool, not through a Bash heredoc, or the attribution
 hook trips on it.
@@ -236,7 +236,7 @@ hook trips on it.
   is fine, labelled illustrative.
 - Edit an accepted ADR. Supersede it instead.
 - Skip the interview. If the user says "just draft", name your guesses.
-- Stage broadly, rewrite history, or push.
+- Stage broadly, rewrite history, force-push, or push unasked.
 
 ## References (read on demand)
 

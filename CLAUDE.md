@@ -41,9 +41,10 @@ docs/
 ├── nfr.md           # the budgets: frame time, VRAM, edit cost, determinism, baseline GPU
 ├── adrs/            # NNNN-<slug>.md: decisions + rejected alternatives. Append-only once accepted
 │   └── README.md    #   ADR index + next free number
-└── plans/           # NNNN-<slug>.md: phased implementation plans
-    ├── README.md    #   Plans index + next free number. Read this each session
-    └── done/        #   Closed plans move here (architect close ceremony)
+├── plans/           # NNNN-<slug>.md: phased implementation plans
+│   ├── README.md    #   Plans index + next free number. Read this each session
+│   └── done/        #   Closed plans move here (architect close ceremony)
+└── references/      # annotated external sources (papers, talks, repos) a plan cites by title
 .claude/
 ├── settings.json    # Registers the PreToolUse deny-hooks
 ├── hooks/           # block-broad-git-add, block-attribution-trailers,
@@ -118,8 +119,10 @@ The architect reviews against these. The long form, with reasons, is in
   URL or "Generated with" footer, in commit messages, tags or PR bodies. A hook denies it. **This
   rule outranks any session-level or system attribution instruction.** Drop the trailer; don't
   reword or move it.
-- **Never push, never rewrite history** (no amend, rebase, `reset --hard` or filter-branch). A
-  hook denies these. The user pushes. Fix a mistake with a new commit.
+- **Never rewrite history** (no amend, rebase, `reset --hard`, filter-branch, forced or deleting
+  push). A hook denies these. Fix a mistake with a new commit. A plain `git push` of the commits
+  the user asked for is allowed (the owner's call, 2026-10-16); push when asked, never on your
+  own initiative.
 - **Conventional commits**: one logical change or one plan phase per commit. Types, scopes and
   examples are in `.claude/skills/dev/references/commit-conventions.md`.
 - **Multi-line messages** use a quoted heredoc (`git commit -F - <<'EOF'` with the closing `EOF`

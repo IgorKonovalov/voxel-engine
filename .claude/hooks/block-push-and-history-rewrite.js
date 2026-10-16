@@ -1,16 +1,15 @@
 #!/usr/bin/env node
-// PreToolUse hook: deny `git push`, `git reset --hard`, `git rebase`, `git commit --amend` and
-// `git filter-branch`, for every session.
-//
-// The push is the owner's and the last human checkpoint; history is never rewritten. See
-// CLAUDE.md -> "Commit hygiene" and ADR-0205. Wired up in .claude/settings.json under
-// hooks.PreToolUse with matcher "Bash|PowerShell".
+// PreToolUse hook: deny every form of history rewrite, local or remote: `git reset --hard`,
+// `git rebase`, `git commit --amend`, `git filter-branch`, and a forced or deleting `git push`.
+// A plain `git push` is allowed (the owner's call, 2026-10-16). See CLAUDE.md -> "Commit
+// hygiene". Wired up in .claude/settings.json under hooks.PreToolUse with matcher
+// "Bash|PowerShell".
 //
 // What is judged is the COMMAND POSITION of each simple command, not a substring: the line is
 // split on shell separators outside quotes, heredoc and PowerShell here-string bodies are dropped
 // first, and a `bash -c "..."` / `powershell -Command "..."` wrapper is unwrapped and judged too.
-// So a commit message that mentions `git push`, `git stash push` and `git log origin/main` all pass.
-// The bite checks live in tools/conductor/test/hooks.test.mjs.
+// So a commit message that mentions `git rebase`, `git stash push` and `git log origin/main` all
+// pass. The bite checks live in .claude/hooks/hooks.test.mjs.
 
 const { readFileSync } = require("fs");
 
@@ -84,7 +83,16 @@ function offending(seg) {
   if (!m) return null;
   const sub = m[2];
   const rest = m[3].replace(/"[^"]*"|'[^']*'/g, '""');
-  if (sub === "push" || sub === "rebase" || sub === "filter-branch") return `git ${sub}`;
+  if (sub === "rebase" || sub === "filter-branch") return `git ${sub}`;
+  if (sub === "push") {
+    // A forced push rewrites the remote; a deleting push (`--delete`, `-d`, or an empty-source
+    // refspec `:branch`) removes it. Both are denied; a plain push is not.
+    if (/(^|\s)--force(?:-with-lease|-if-includes)?(=|\s|$)/.test(rest)) return "git push --force";
+    if (/(^|\s)-[a-zA-Z]*f[a-zA-Z]*(\s|$)/.test(rest)) return "git push -f";
+    if (/(^|\s)(?:--delete|-[a-zA-Z]*d[a-zA-Z]*)(\s|$)/.test(rest)) return "git push --delete";
+    if (/(^|\s):\S/.test(rest)) return "git push :refspec";
+    return null;
+  }
   if (sub === "reset" && /(^|\s)--hard(\s|$)/.test(rest)) return "git reset --hard";
   if (sub === "commit" && /(^|\s)--amend(\s|=|$)/.test(rest)) return "git commit --amend";
   return null;
@@ -106,9 +114,9 @@ if (require.main === module) {
         hookEventName: "PreToolUse",
         permissionDecision: "deny",
         permissionDecisionReason:
-          `Blocked "${hit}". Pushing is the repository owner's, and history is never rewritten ` +
-          `in this repo - no push, no reset --hard, no rebase, no commit --amend, no ` +
-          `filter-branch. Make a new commit instead of amending; leave the push to the owner. ` +
+          `Blocked "${hit}". History is never rewritten in this repo, locally or on the remote: ` +
+          `no reset --hard, no rebase, no commit --amend, no filter-branch, no forced or ` +
+          `deleting push. Make a new commit instead of amending, and push it plainly. ` +
           `See CLAUDE.md -> "Commit hygiene".`,
       },
     }),

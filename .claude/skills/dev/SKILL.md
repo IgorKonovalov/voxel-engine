@@ -1,6 +1,6 @@
 ---
 name: dev
-description: Implements architect-authored plans in the voxel engine. Reads a named plan in docs/plans/, restates its scope, waits for an explicit "go", then writes the Rust and WGSL for every dev-owned phase in order, runs each phase's done-when checks and budget readings, writes the plan's Implementation log, and commits per phase with conventional-commit messages. Never pushes, never authors plans or ADRs, never starts without confirmation. Use whenever the user wants to build, code up or implement a plan or phase: "implement plan 0001", "do phase 3", "start coding the brick map", "pick up where we left off", or "fix the review findings on plan N". Trigger even without the word "implement" if the user names a plan, a phase, or done-when criteria and clearly wants code.
+description: Implements architect-authored plans in the voxel engine. Reads a named plan in docs/plans/, restates its scope, waits for an explicit "go", then writes the Rust and WGSL for every dev-owned phase in order, runs each phase's done-when checks and budget readings, writes the plan's Implementation log, and commits per phase with conventional-commit messages. Never rewrites history, never authors plans or ADRs, never starts without confirmation. Use whenever the user wants to build, code up or implement a plan or phase: "implement plan 0001", "do phase 3", "start coding the brick map", "pick up where we left off", or "fix the review findings on plan N". Trigger even without the word "implement" if the user names a plan, a phase, or done-when criteria and clearly wants code.
 ---
 
 # dev: voxel engine
@@ -140,7 +140,8 @@ behave as assumed, the baseline adapter lacks a feature, or a done-when is impos
 
 - Edit anything in a plan except `Status:` and `## Implementation log`, or write ADRs.
 - Start without an explicit "go".
-- Push, open PRs, amend, rebase or reset. The hooks deny these, and the user pushes.
+- Open PRs, amend, rebase, `reset --hard` or force-push. The hooks deny the rewrites. A plain
+  push is allowed when the user asks for it.
 - Skip done-when checks, stage broadly, or add agent attribution to commits.
 - Pause between phases for review.
 
