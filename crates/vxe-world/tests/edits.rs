@@ -289,3 +289,52 @@ fn results_do_not_depend_on_generation_thread_count() {
             >= 6
     );
 }
+
+#[test]
+fn tool_along_ray_carves_a_capsule_to_the_hit_face() {
+    let world = carved_world();
+    let origin = centre_of_voxel([0, 0, 0]);
+    let op = EditOp::tool_along_ray(
+        &world,
+        origin,
+        [0, 0, 256],
+        100 * 256,
+        2 * FIXED_ONE,
+        Mode::Carve,
+    );
+    assert_eq!(
+        op.shape,
+        Shape::Capsule {
+            a: origin,
+            b: Fixed3([128, 128, 2816]),
+            r: 512
+        }
+    );
+    let r = world.apply(&op).unwrap();
+    assert_eq!(r.changed_from, [(3, 26)]);
+    assert_eq!(r.aabb.unwrap().0.0[2], 10);
+    assert_eq!(r.aabb.unwrap().1.0[2], 12);
+}
+
+#[test]
+fn tool_along_ray_without_a_hit_ends_at_max_t() {
+    let world = carved_world();
+    let origin = centre_of_voxel([0, 0, 0]);
+    let op = EditOp::tool_along_ray(
+        &world,
+        origin,
+        [0, 0, 256],
+        5 * 256,
+        2 * FIXED_ONE,
+        Mode::Carve,
+    );
+    assert_eq!(
+        op.shape,
+        Shape::Capsule {
+            a: origin,
+            b: Fixed3([128, 128, 128 + 5 * 256]),
+            r: 512
+        }
+    );
+    assert_eq!(world.apply(&op).unwrap().changed_from, []);
+}

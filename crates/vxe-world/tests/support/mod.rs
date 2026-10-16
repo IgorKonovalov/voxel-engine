@@ -83,3 +83,34 @@ impl Fnv1a {
         }
     }
 }
+
+/// SplitMix64: a seeded, platform-independent stream for test inputs.
+pub struct SplitMix64(pub u64);
+
+impl SplitMix64 {
+    pub fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    }
+
+    /// Uniform in `lo..=hi`.
+    pub fn range(&mut self, lo: i64, hi: i64) -> i64 {
+        lo + (self.next_u64() % (hi - lo + 1) as u64) as i64
+    }
+}
+
+/// The solid material-3 world after the radius-10 carve at the origin.
+pub fn carved_world() -> World {
+    let world = solid3_world();
+    world
+        .apply(&EditOp::sphere(
+            centre_of_voxel([0, 0, 0]),
+            10 * FIXED_ONE,
+            Mode::Carve,
+        ))
+        .unwrap();
+    world
+}

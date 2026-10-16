@@ -456,8 +456,8 @@ says so.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: Brick map and the first carve | dev | done | b78443f |
-| 2: All shapes, all modes, indestructible, atomic failure | dev | done | committed with this row |
-| 3: Raycast, queries, tool-along-ray | dev | not started | |
+| 2: All shapes, all modes, indestructible, atomic failure | dev | done | 4f2cd02 |
+| 3: Raycast, queries, tool-along-ray | dev | done | committed with this row |
 | 4: Cave source, determinism vector, world budget readings | dev | not started | |
 | 5: GPU mirror and primary-ray marcher with a golden image | dev | not started | |
 | 6: Headlamp with a shadow ray | dev | not started | |
@@ -480,6 +480,12 @@ each. Empty is fine.)_
 - Phase 2: `NotResident` is raised only for a missing chunk that holds a voxel centre inside the shape, decided brick by brick and then per voxel; a missing chunk inside the shape's bounding box but holding no inside centre does not fail the op (commit of Phase 2).
 - Phase 2: the capsule's `Outside` test for a box is conservative (bounding box, then the box's bounding sphere against the segment), so surface bricks fall back to the per-voxel test; counts are unaffected (commit of Phase 2).
 - Phase 2: `Mode::target` returns `None` when the new material equals the old, so `Fill(0)` and `Replace { from: m, to: m }` change and report nothing (commit of Phase 2).
+- Phase 3: `crates/vxe-world/src/lib.rs` (modules, re-exports) and `crates/vxe-world/tests/support/mod.rs` (`SplitMix64`, `carved_world`) changed outside the phase's `Files touched` (commit of Phase 3).
+- Phase 3: the voxel-array read counter is crate API, `World::count_in_box_with_stats` returning `QueryStats { voxel_arrays_read }`, not a test-support counter; test support cannot see inside the crate (commit of Phase 3).
+- Phase 3: `count_in_box` counts are `u64`; voxels in non-resident chunks are not counted (commit of Phase 3).
+- Phase 3: `EditOp::tool_along_ray` takes `&World` as its first argument and returns the resolved capsule op; the caller applies it (commit of Phase 3).
+- Phase 3: the raycast skips a non-resident chunk as one empty 64³ cell; `Hit::t` is the exact entry parameter rounded down (commit of Phase 3).
+- Phase 3: the ten brute-force directions are `[256,256,256]` plus nine from SplitMix64 seed `0x1ca57` (commit of Phase 3).
 
 ### Close triggers
 

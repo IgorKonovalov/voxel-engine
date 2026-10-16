@@ -12,6 +12,7 @@ use crate::coords::index_in_brick;
 use crate::coords::{BRICK_EDGE, BRICK_VOXELS, CHUNK_EDGE, ChunkCoord, VoxelCoord, brick_slot};
 use crate::fixed::{Fixed3, centre};
 use crate::material::{AIR, MaterialId, MaterialTable};
+use crate::raycast::point_at;
 use crate::shape::{Coverage, Shape};
 use crate::store::{World, read, write};
 
@@ -79,6 +80,24 @@ impl EditOp {
             shape: Shape::Capsule { a, b, r },
             mode,
         }
+    }
+
+    /// A capsule of radius `r` from `origin` to where the ray `origin + dir * t / 256` enters
+    /// the first non-air voxel of `world`, or to `t = max_t` when nothing is hit. The end point
+    /// is exact fixed point rounded down.
+    pub fn tool_along_ray(
+        world: &World,
+        origin: Fixed3,
+        dir: [i64; 3],
+        max_t: i64,
+        r: i64,
+        mode: Mode,
+    ) -> Self {
+        let end = match world.raycast_exact(origin, dir, max_t) {
+            Some(h) => point_at(origin, dir, h.t_num, h.t_den),
+            None => point_at(origin, dir, i128::from(max_t), 1),
+        };
+        Self::capsule(origin, end, r, mode)
     }
 }
 

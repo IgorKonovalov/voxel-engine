@@ -23,6 +23,8 @@ mod coords;
 mod edit;
 mod fixed;
 mod material;
+mod query;
+mod raycast;
 mod shape;
 mod source;
 mod store;
@@ -36,6 +38,8 @@ pub use coords::{
 pub use edit::{EditError, EditOp, EditResult, Mode};
 pub use fixed::{FIXED_HALF, FIXED_ONE, Fixed3, centre_of_voxel};
 pub use material::{AIR, Material, MaterialFlags, MaterialId, MaterialTable};
+pub use query::QueryStats;
+pub use raycast::{Face, Hit};
 pub use shape::Shape;
 pub use source::{UniformSource, WorldSource};
 pub use store::{ChunkStore, World, WorldStats};
