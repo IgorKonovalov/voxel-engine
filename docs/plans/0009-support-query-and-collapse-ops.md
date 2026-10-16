@@ -1,6 +1,6 @@
 # 0009: A support query on the coarse grid, and deterministic drop and rubble ops for collapse
 
-> **Status:** approved (2026-10-16)
+> **Status:** in-progress
 > **Created:** 2026-10-16
 > **Milestone:** M8 in `docs/roadmap.md` (the collapse half; volumetrics, debris and the cosmetic rigid-body layer stay in M8 proper)
 > **Related ADRs:** [ADR-0008](../adrs/0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) (the mechanism and what it is not), ADR-0005 (the controller's landing event), ADR-0002 (layout, access model)
@@ -250,9 +250,18 @@ calls. The drop's column table is one `i32` per column of the footprint (576 for
 
 ## Implementation log
 
-| Phase | Owner | Status | Notes |
+| phase | owner | state | commit |
 |---|---|---|---|
-| 1: The support flood | dev | not started | |
+| 1: The support flood | dev | done | committed with this row |
 | 2: The drop op | dev | not started | |
 | 3: The remove op with rubble | dev | not started | |
 | 4: Collapse in the fly-through | dev | not started | |
+
+### Notes
+
+- Phase 1: public API beyond the data shapes: `CellCoord::min_voxel`, `CellChange::cell()`, `CoarseGrid::cell_at(CellCoord)`. `CellCoord` has no `From<[i32; 3]>` (the inherent `from(chunk, slot)` would shadow it).
+- Phase 1: a chunk is resident for the query when the grid holds it and the world's store holds it; a neighbour in any other chunk ends the flood as supported. A flood also ends as supported when it reaches a cell an earlier flood of the same call settled as supported. An anchor rule other than non-residency applies to load-bearing cells only (the flood never steps on another).
+- Phase 1: "exceeds `max_region`" is taken as more than `max_region` cells in the flood (`max_region = 9` on the slab yields the region; 8 does not; both asserted).
+- Phase 1: in a bounded world every cell on the extent's faces borders a chunk outside the extent, which is not resident, so the faces anchor through non-residency even with `boundary_anchors = false` (test `a_cell_in_a_chunk_the_grid_does_not_hold_anchors`).
+- Phase 1: a `Region`'s `aabb` falls back to its cells' bounds when its bricks hold no solid voxel (only reachable with `solid_min = 0`).
+- Phase 1: bench reading: `find_unsupported` after the radius-10 carve at the origin of a solid `[-2, 2)^3` world, 32 changed cells: 390.5 us per query (criterion median of [390.14, 390.53, 390.99] us), AMD Ryzen 9 5900HS, taken under the exclusive lock, at the Phase 1 commit. The first candidate's flood reaches the cap (4097 cells); every later candidate meets a cell it settled as supported.

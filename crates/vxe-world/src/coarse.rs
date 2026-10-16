@@ -9,7 +9,10 @@
 use std::collections::HashMap;
 
 use crate::brick::Brick;
-use crate::coords::{BRICK_EDGE, CHUNK_BRICKS, CHUNK_EDGE, ChunkCoord, brick_slot};
+use crate::coords::{
+    BRICK_EDGE, CHUNK_BRICKS, CHUNK_EDGE, CHUNK_EDGE_BRICKS, ChunkCoord, VoxelCoord, brick_of_slot,
+    brick_slot,
+};
 use crate::edit::EditResult;
 use crate::material::{AIR, MaterialId};
 use crate::query::QueryStats;
@@ -77,6 +80,41 @@ fn tally(counts: &mut Vec<(MaterialId, u16)>, (m, n): (MaterialId, u16)) {
     }
 }
 
+/// A cell's global brick coordinate: `chunk * 8 + brick` on each axis. Cell `g` holds voxels
+/// `[8 g, 8 g + 8)` along each axis.
+///
+/// The derived order (x, then y, then z) is the order every cell walk and cell list uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub struct CellCoord(pub [i32; 3]);
+
+impl CellCoord {
+    /// The cell of brick `slot` in chunk `chunk`.
+    pub fn from(chunk: ChunkCoord, slot: usize) -> Self {
+        let b = brick_of_slot(slot);
+        Self([0, 1, 2].map(|k| chunk.0[k] * CHUNK_EDGE_BRICKS + b[k]))
+    }
+
+    /// The chunk holding this cell and the cell's brick slot in it.
+    pub fn split(self) -> (ChunkCoord, usize) {
+        let e = CHUNK_EDGE_BRICKS;
+        (
+            ChunkCoord(self.0.map(|v| v.div_euclid(e))),
+            brick_slot(self.0.map(|v| v.rem_euclid(e))),
+        )
+    }
+
+    /// The voxel at the cell's minimum corner.
+    pub fn min_voxel(self) -> VoxelCoord {
+        VoxelCoord(self.0.map(|v| v * BRICK_EDGE))
+    }
+}
+
+impl PartialEq<[i32; 3]> for CellCoord {
+    fn eq(&self, other: &[i32; 3]) -> bool {
+        self.0 == *other
+    }
+}
+
 /// A cell that an update changed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CellChange {
@@ -85,6 +123,13 @@ pub struct CellChange {
     pub slot: u16,
     pub before: CoarseCell,
     pub after: CoarseCell,
+}
+
+impl CellChange {
+    /// The global coordinate of the changed cell.
+    pub fn cell(&self) -> CellCoord {
+        CellCoord::from(self.chunk, usize::from(self.slot))
+    }
 }
 
 /// One cell per brick of the chunks it holds; 4 bytes a cell, 2048 a chunk.
@@ -146,6 +191,12 @@ impl CoarseGrid {
     /// The cell of brick `slot` in chunk `chunk`, if the grid holds that chunk.
     pub fn cell(&self, chunk: ChunkCoord, slot: usize) -> Option<CoarseCell> {
         self.cells.get(&chunk).map(|c| c[slot])
+    }
+
+    /// The cell at global coordinate `c`, if the grid holds its chunk.
+    pub fn cell_at(&self, c: CellCoord) -> Option<CoarseCell> {
+        let (chunk, slot) = c.split();
+        self.cell(chunk, slot)
     }
 
     /// The chunk's 512 cells, if the grid holds it.

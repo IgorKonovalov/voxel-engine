@@ -33,11 +33,12 @@ mod shape;
 mod source;
 mod store;
 mod stream;
+mod support;
 mod walkable;
 
 pub use brick::Brick;
 pub use chunk::Chunk;
-pub use coarse::{CellChange, CoarseCell, CoarseGrid};
+pub use coarse::{CellChange, CellCoord, CoarseCell, CoarseGrid};
 pub use coords::{
     BRICK_EDGE, BRICK_VOXELS, CHUNK_BRICKS, CHUNK_EDGE, CHUNK_EDGE_BRICKS, ChunkCoord, ChunkExtent,
     VoxelCoord, brick_of_slot, brick_slot, brick_slot_of_local, index_in_brick,
@@ -53,4 +54,5 @@ pub use shape::Shape;
 pub use source::{UniformSource, WorldSource};
 pub use store::{ChunkStore, StoreWriteGuard, World, WorldStats};
 pub use stream::{Residency, StreamConfig, StreamError, StreamEvents, StreamStats, Streamer, Tier};
+pub use support::{Anchors, Region, SupportParams, find_unsupported};
 pub use walkable::{WalkableMap, WalkableParams, WalkableStats};
