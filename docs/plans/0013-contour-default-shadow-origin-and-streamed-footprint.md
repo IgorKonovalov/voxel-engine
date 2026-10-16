@@ -1,6 +1,6 @@
 # 0013: Contour as the fly-through's default: the shadow-ray origin, a streamed footprint under 3 GB, and a weaker rock detail
 
-> **Status:** approved
+> **Status:** in-progress
 > **Created:** 2026-10-16
 > **Milestone:** M2 in `docs/roadmap.md` (the surface follow-up before the lighting plan)
 > **Related ADRs:** [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
@@ -320,7 +320,7 @@ The baseline GPU is not on hand; every figure is a dev-reference reading and say
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The shadow ray leaves the plane | dev | not started | |
+| 1: The shadow ray leaves the plane | dev | done: offset 0.5 voxel along the plane normal kept; only-with-shadows specks contour 52 (347 with, 301 without) against face 174 (1179, 1017), llvmpipe 320 x 180; contour metrics 7.41 degrees, 32 px; `look_contour.png` reblessed on llvmpipe (24.34 % of pixels differ from `headlamp.png` by more than 8/255), other goldens unchanged; look tests pin rock to `SPIKE_ROCK_DETAIL` | committed with this row |
 | 2: The attribute pass keeps its buffers, and the shell path is tested | dev | not started | |
 | 3: The footprint census and the candidates | dev | not started | |
 | 4: The owner's footprint call | human | not started | |

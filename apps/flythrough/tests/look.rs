@@ -11,6 +11,15 @@ use vxe_render::{
 };
 use vxe_world::World;
 
+/// Rock's detail in the look tests: the spike's `[scale, strength]`, pinned here so that the
+/// fly-through's default can move without moving a golden or a metric.
+const SPIKE_ROCK_DETAIL: [f32; 2] = [4.0, 0.3];
+
+/// The cave table with rock at [`SPIKE_ROCK_DETAIL`].
+fn spike_materials() -> vxe_world::MaterialTable {
+    flythrough::look_materials_with(SPIKE_ROCK_DETAIL)
+}
+
 fn look(normal_mode: NormalMode, view: ViewMode) -> LookParams {
     LookParams {
         normal_mode,
@@ -74,7 +83,7 @@ fn metrics_with(mode: NormalMode, attrs: bool) -> Option<(f64, usize)> {
 }
 
 /// [`metrics_with`], with `detail` on and rock (the cavity's row 3, the pillar's rock) at
-/// `ROCK_DETAIL` when `detail` is set.
+/// [`SPIKE_ROCK_DETAIL`] when `detail` is set.
 fn metrics_of(mode: NormalMode, detail: bool, attrs: bool) -> Option<(f64, usize)> {
     let mut cavity_table = look_table();
     let mut pillar_table = flythrough::cave_materials();
@@ -84,12 +93,12 @@ fn metrics_of(mode: NormalMode, detail: bool, attrs: bool) -> Option<(f64, usize
         for (id, row) in cavity_table.rows().iter().enumerate().skip(1) {
             let mut row = row.clone();
             if id == 3 {
-                row.detail = flythrough::ROCK_DETAIL;
+                row.detail = SPIKE_ROCK_DETAIL;
             }
             t.push(row);
         }
         cavity_table = t;
-        pillar_table = flythrough::look_materials();
+        pillar_table = spike_materials();
     }
     let look = |view| LookParams {
         normal_mode: mode,
@@ -390,11 +399,10 @@ fn dark_specks(rgba: &[u8]) -> Vec<usize> {
     specks
 }
 
-/// A diagnostic, not a gate: the dark specks of the contour golden scene with the headlamp's
-/// shadow ray on and off, and in face mode for comparison. Run with `--ignored` and read the
-/// printed counts.
+/// The contour golden scene's dark specks that appear only with the headlamp's shadow ray:
+/// contour's count is at most face mode's in the same run, so the shadow ray of a plane hit
+/// starts clear of the rock the plane cuts.
 #[test]
-#[ignore = "diagnostic: prints speck counts, asserts nothing about them"]
 fn contour_dark_specks_with_and_without_shadows() {
     let world = carved_world();
     let Some(mut rig) = attr_rig(&world) else {
@@ -404,15 +412,20 @@ fn contour_dark_specks_with_and_without_shadows() {
         shadows: false,
         ..LightParams::headlamp()
     };
+    let mut only_with = Vec::new();
     for mode in [NormalMode::Contour, NormalMode::Face] {
         let render = |rig: &mut LookRig, light: &LightParams| {
             rig.render(&scene_camera(), light, look(mode, ViewMode::Shaded))
         };
         let on_img = render(&mut rig, &LightParams::headlamp());
         let off_img = render(&mut rig, &off);
-        if mode == NormalMode::Contour {
+        if mode == NormalMode::Contour && std::env::var("VXE_BLESS").as_deref() != Ok("1") {
             let golden = read_png(&golden_path("look_contour.png")).0;
-            assert_eq!(on_img, golden, "the shadows-on render is look_contour.png");
+            let differing = on_img.iter().zip(&golden).filter(|(a, b)| a != b).count();
+            assert_eq!(
+                differing, 0,
+                "the shadows-on render is look_contour.png: {differing} bytes differ"
+            );
         }
         let on = dark_specks(&on_img);
         let off = dark_specks(&off_img);
@@ -423,7 +436,14 @@ fn contour_dark_specks_with_and_without_shadows() {
             on.len(),
             off.len()
         );
+        only_with.push(only_on);
     }
+    assert!(
+        only_with[0] <= only_with[1],
+        "contour {} only-with-shadows specks against face {}",
+        only_with[0],
+        only_with[1]
+    );
 }
 
 fn detail_look(normal_mode: NormalMode, view: ViewMode) -> LookParams {
@@ -481,7 +501,7 @@ fn zero_strength_detail_leaves_the_goldens_byte_for_byte() {
 /// than 8/255 against face mode.
 #[test]
 fn rock_detail_golden() {
-    let table = flythrough::look_materials();
+    let table = spike_materials();
     let rock = table.get(flythrough::cave::ROCK).unwrap();
     assert_eq!(rock.detail, [4.0, 0.3]);
     let world = carved_world_with(&table);
@@ -511,7 +531,7 @@ fn rock_detail_golden() {
 /// the same detailed normal from two camera positions on one line of sight.
 #[test]
 fn detail_is_a_function_of_world_position() {
-    let world = pillar_world_with(flythrough::look_materials());
+    let world = pillar_world_with(spike_materials());
     let Some(mut rig) = LookRig::new(&world, None) else {
         return;
     };
