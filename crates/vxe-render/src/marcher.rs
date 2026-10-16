@@ -44,6 +44,110 @@ pub struct Params {
 pub const FLAG_SHADOWS: u32 = 1;
 /// `Params::flags` bit: skip empty blocks through the brick occupancy masks.
 pub const FLAG_MASKS: u32 = 2;
+/// `Params::flags` bits 2..4: the [`NormalMode`].
+pub const NORMAL_SHIFT: u32 = 2;
+/// `Params::flags` bit: perturb the shading with per-material procedural detail.
+pub const FLAG_DETAIL: u32 = 1 << 4;
+/// `Params::flags` bits 5..7: the [`ViewMode`].
+pub const VIEW_SHIFT: u32 = 5;
+/// `Params::flags` bit: the mirror holds attribute pages (`MirrorConfig::surface_attrs`).
+pub const FLAG_ATTR_PAGES: u32 = 1 << 7;
+
+/// How the marcher finds the normal at a hit, and in `Contour` the hit itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NormalMode {
+    /// The normal of the voxel face the ray entered through.
+    #[default]
+    Face,
+    /// The gradient of the trilinearly interpolated occupancy of the 2 x 2 x 2 voxels around
+    /// the hit point pushed half a voxel into the surface.
+    Trilinear8,
+    /// Central differences of occupancy over the 3 x 3 x 3 voxels around the hit voxel.
+    Gradient27,
+    /// The per-voxel contour plane read from the mirror's attribute pages; it moves the hit
+    /// too. Needs a mirror with `surface_attrs`; without one it shades as `Face`.
+    Contour,
+}
+
+impl NormalMode {
+    pub const ALL: [Self; 4] = [
+        Self::Face,
+        Self::Trilinear8,
+        Self::Gradient27,
+        Self::Contour,
+    ];
+
+    /// The lower-case name the fly-through prints and parses.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Face => "face",
+            Self::Trilinear8 => "trilinear8",
+            Self::Gradient27 => "gradient27",
+            Self::Contour => "contour",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+
+    /// The next mode in `ALL` order, wrapping, skipping `Contour` unless `contour` is set.
+    pub fn next(self, contour: bool) -> Self {
+        let i = Self::ALL.iter().position(|&m| m == self).unwrap_or(0);
+        let n = Self::ALL[(i + 1) % Self::ALL.len()];
+        if n == Self::Contour && !contour {
+            Self::Face
+        } else {
+            n
+        }
+    }
+}
+
+/// What the marcher writes to its target.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ViewMode {
+    /// The lit image, display-encoded.
+    #[default]
+    Shaded,
+    /// The shading normal `n` as `n * 0.5 + 0.5` per channel, linear; black on a miss.
+    Normals,
+    /// White where the primary ray hits, black elsewhere.
+    HitMask,
+}
+
+impl ViewMode {
+    pub const ALL: [Self; 3] = [Self::Shaded, Self::Normals, Self::HitMask];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Shaded => "shaded",
+            Self::Normals => "normals",
+            Self::HitMask => "hitmask",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+}
+
+/// The surface look: normal mode, procedural detail and view. The default is face normals,
+/// no detail, shaded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LookParams {
+    pub normal_mode: NormalMode,
+    pub detail: bool,
+    pub view: ViewMode,
+}
+
+impl LookParams {
+    /// The look's bits of `Params::flags`.
+    pub fn flags(&self) -> u32 {
+        (self.normal_mode as u32) << NORMAL_SHIFT
+            | if self.detail { FLAG_DETAIL } else { 0 }
+            | (self.view as u32) << VIEW_SHIFT
+    }
+}
 
 /// How the marcher picks the mip level of a LOD-only chunk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,6 +175,7 @@ pub struct Marcher {
     params: wgpu::Buffer,
     target: wgpu::Texture,
     lod: LodParams,
+    look: LookParams,
 }
 
 impl Marcher {
@@ -148,6 +253,7 @@ impl Marcher {
             params,
             target: create_target(device, width, height),
             lod: LodParams::default(),
+            look: LookParams::default(),
         }
     }
 
@@ -158,6 +264,15 @@ impl Marcher {
 
     pub fn lod(&self) -> LodParams {
         self.lod
+    }
+
+    /// Sets the surface look: normal mode, detail and view.
+    pub fn set_look(&mut self, look: LookParams) {
+        self.look = look;
+    }
+
+    pub fn look(&self) -> LookParams {
+        self.look
     }
 
     pub fn target(&self) -> &wgpu::Texture {
@@ -191,7 +306,13 @@ impl Marcher {
             size: [w, h],
             cos_inner: light.inner.cos(),
             flags: if light.shadows { FLAG_SHADOWS } else { 0 }
-                | if light.masks { FLAG_MASKS } else { 0 },
+                | if light.masks { FLAG_MASKS } else { 0 }
+                | self.look.flags()
+                | if world.surface_attrs() {
+                    FLAG_ATTR_PAGES
+                } else {
+                    0
+                },
             slots_per_shard: world.shard_layout().slots_per_shard,
             forced_level: self.lod.forced_level.unwrap_or(0),
             lod1_r2: (2 * self.lod.r_full).pow(2),

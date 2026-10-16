@@ -35,7 +35,9 @@ a few percent of one core, so an FFT is not needed for the voice count the first
 
 **HRTF source.** We ship one SADIE II head (subject D2, 48 kHz) packed by an engine-owned
 example into an engine-owned format: a little-endian header, a direction table in azimuth and
-elevation, and 128 `f32` taps per ear per direction. The pack (about 3 MB) is committed under
+elevation, and 128 `f32` taps per ear per direction. D2 is measured at 8802 directions; the
+packer keeps every 3rd azimuth of each ring (2950 directions, 2.7 degree spacing; the full set
+would be 9.08 MB in history, rejected). The pack (about 3.0 MB) is committed under
 `crates/vxe-audio/assets/` with the Apache 2.0 licence text and the attribution SADIE II
 requires. The 38 MB SOFA archive is not committed; the packer reads it through `sofar` as a
 dev-dependency of the example and is re-run only to change the head or the tap count.
@@ -70,6 +72,9 @@ perceptual layer; the consumer's gameplay noise model lives on M3's coarse grid,
   source steps between filters; the one-block crossfade hides the click, not the step. SADIE II's
   measurement grid is dense enough (a few degrees) that the step is small; the plan's moving
   source test bounds the discontinuity, and interpolation is a follow-up if the owner hears it.
+  (2026-10-16, Plan 0006's third amendment: with the pack on one window start, the owner's
+  recording while turning shows about 7 interaural level steps over 0.5 dB per second, which
+  is the measured case for that follow-up.)
 - **One head for everyone.** A generic dummy head localises worse than an individual HRTF for
   some listeners. Swapping the pack is a file change.
 - **48 kHz only.** The mixer runs at the pack's rate; a device that cannot open 48 kHz fails

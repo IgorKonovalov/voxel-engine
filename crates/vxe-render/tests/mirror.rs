@@ -5,10 +5,12 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use vxe_render::gpu_world::{
-    ABSENT, FULL_BIT, LOD_BIT, LOD_LEVEL_ENTRY, POOL_PAGE_SLOTS, RECORD_BYTES, RECORD_WORDS,
-    SLOT_BYTES, SLOT_MASK, WIDE_BIT,
+    ABSENT, ATTR_PAGE_BRICK_SLOTS, FULL_BIT, LOD_BIT, LOD_LEVEL_ENTRY, MASK_BYTES, NO_PLANE,
+    POOL_PAGE_SLOTS, RECORD_BYTES, RECORD_WORDS, SLOT_BYTES, SLOT_MASK, WIDE_BIT, attr_slot,
 };
-use vxe_render::{GpuWorld, MARCH_WGSL, MirrorConfig, ShardLayout, Window, readback, wgpu};
+use vxe_render::{
+    ATTRIB_WGSL, GpuWorld, MARCH_WGSL, MirrorConfig, ShardLayout, Window, readback, wgpu,
+};
 use vxe_world::*;
 
 /// The shader parses and validates headless, without a device.
@@ -21,6 +23,18 @@ fn march_wgsl_validates() {
     )
     .validate(&module)
     .expect("march.wgsl validates");
+}
+
+/// The attribute pass's shader parses and validates headless.
+#[test]
+fn attrib_wgsl_validates() {
+    let module = wgpu::naga::front::wgsl::parse_str(ATTRIB_WGSL).expect("attrib.wgsl parses");
+    wgpu::naga::valid::Validator::new(
+        wgpu::naga::valid::ValidationFlags::all(),
+        wgpu::naga::valid::Capabilities::default(),
+    )
+    .validate(&module)
+    .expect("attrib.wgsl validates");
 }
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -829,5 +843,206 @@ fn lod_records_decode_to_the_mips_and_demotion_frees_the_full_slots() {
         lod_full < full_slots.len(),
         "{lod_full} mip-bricks for {} bricks",
         full_slots.len()
+    );
+}
+
+// ---- Attribute pages (contour attributes) ----
+
+/// Chunk `[0, 0, 0]` cycles through 300 materials (wide) and chunk `[3, 0, 0]` holds
+/// materials 7 and 9 below z = 4 (as in `ManyAndTwo`); every other chunk is a two-material
+/// checkerboard of `Full` bricks.
+struct WideAndChecker;
+
+impl WorldSource for WideAndChecker {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        if coord.0[0] == 0 || coord.0[0] == 3 {
+            ManyAndTwo.chunk(coord, out);
+        } else {
+            Checker.chunk(coord, out);
+        }
+    }
+}
+
+/// With attribute pages, full chunks' bricks take brick slots of attribute pages, mip-bricks
+/// slots of plain pages, and each brick's attribute slots lie in its own shard.
+#[test]
+fn attribute_pages_hold_full_bricks_and_plain_pages_mip_bricks() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    // A wide chunk (1024 slots), two narrow chunks (1024 slots) and a LOD-only chunk.
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [4, 1, 1]),
+        &WideAndChecker,
+        &numbered_table(300),
+    );
+    let lod = ChunkCoord([3, 0, 0]);
+    let chunk = world.store().remove(lod).unwrap();
+    let mips = ChunkMips::build(&chunk.read().unwrap());
+    world.insert_lod(lod, Arc::new(mips));
+    let cfg = MirrorConfig {
+        max_shard_slots: Some(POOL_PAGE_SLOTS),
+        ..MirrorConfig::new(Window::Fixed(world.extent()))
+    };
+    let mut gpu = GpuWorld::with_surface_attrs(&device, cfg);
+    gpu.sync(&world, &queue).unwrap();
+    assert!(gpu.surface_attrs());
+    assert!(gpu.is_wide(ChunkCoord([0, 0, 0])));
+    assert!(gpu.is_lod(lod));
+    let sps = gpu.shard_layout().slots_per_shard;
+    assert_eq!(sps, POOL_PAGE_SLOTS);
+    assert!(gpu.shards_in_use() >= 3, "{} shards", gpu.shards_in_use());
+
+    let rb = Readback::new(&device, &queue, &gpu);
+    let mut brick_pages = HashSet::new();
+    let mut brick_slots = 0;
+    for c in world.store().coords() {
+        for s in rb.assert_chunk(&gpu, &world, c) {
+            brick_slots += 1;
+            assert!(gpu.in_attr_page(s), "{c:?} slot {s}");
+            assert!(
+                s % POOL_PAGE_SLOTS < ATTR_PAGE_BRICK_SLOTS,
+                "{c:?} slot {s}"
+            );
+            brick_pages.insert(s / POOL_PAGE_SLOTS);
+        }
+        for i in 0..CHUNK_BRICKS {
+            let e = gpu.entry(c, i).unwrap();
+            assert_ne!(e & FULL_BIT, 0);
+            let s = e & SLOT_MASK;
+            if e & WIDE_BIT != 0 {
+                assert_eq!(s % 2, 0, "{c:?} brick {i}: wide pair at odd slot {s}");
+            }
+            let a = attr_slot(s);
+            assert_eq!(a, s - s % 4096 + 1364 + 2 * (s % 4096));
+            for k in [a, a + 1] {
+                assert_eq!(k / sps, s / sps, "{c:?} brick {i}: attribute slot {k}");
+                // Attribute slots carry no occupancy mask: the CPU never writes them.
+                assert_eq!(rb.masks[k as usize * 2..k as usize * 2 + 2], [0, 0]);
+            }
+        }
+    }
+    assert_eq!(brick_slots, 2 * 512 + 2 * 512);
+    assert_eq!(gpu.live_attr_slots(), 2048);
+    let mip_slots = rb.assert_lod(&gpu, &world, lod);
+    assert!(!mip_slots.is_empty());
+    for s in &mip_slots {
+        assert!(!gpu.in_attr_page(*s), "mip slot {s}");
+        assert!(
+            !brick_pages.contains(&(s / POOL_PAGE_SLOTS)),
+            "mip slot {s}"
+        );
+    }
+    assert_eq!(gpu.live_slots(), 2048 + mip_slots.len() as u32);
+
+    // The live accounting adds the attribute slots and their masks of each brick slot in an
+    // attribute page, against the same world mirrored without attribute pages.
+    let mut plain =
+        GpuWorld::with_config(&device, MirrorConfig::new(Window::Fixed(world.extent())));
+    // Re-dirty nothing: a new mirror uploads every resident chunk on its first sync.
+    plain.sync(&world, &queue).unwrap();
+    assert_eq!(plain.live_slots(), gpu.live_slots());
+    assert_eq!(
+        gpu.mirror_bytes() - plain.mirror_bytes(),
+        2048 * 2 * (SLOT_BYTES + MASK_BYTES)
+    );
+}
+
+/// The decoded attribute: the octahedral normal and the offset code, or `None` for no plane.
+fn decode_attr(a: u16) -> Option<([f32; 3], u16)> {
+    if a == NO_PLANE {
+        return None;
+    }
+    let q = [f32::from(a & 63), f32::from((a >> 6) & 63)].map(|v| v / 63.0 * 2.0 - 1.0);
+    let mut n = [q[0], q[1], 1.0 - q[0].abs() - q[1].abs()];
+    if n[2] < 0.0 {
+        let (x, y) = (n[0], n[1]);
+        n[0] = (1.0 - y.abs()) * if x >= 0.0 { 1.0 } else { -1.0 };
+        n[1] = (1.0 - x.abs()) * if y >= 0.0 { 1.0 } else { -1.0 };
+    }
+    let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+    Some((n.map(|v| v / l), a >> 12))
+}
+
+/// Runs the attribute pass over what changed and waits for it.
+fn update_attrs(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &mut GpuWorld) -> usize {
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    let n = gpu.update_attrs(&mut enc);
+    queue.submit([enc.finish()]);
+    n
+}
+
+/// The attribute of world voxel `v`, which lies in a `Full` brick of a mirrored full chunk.
+fn attr_of(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &GpuWorld, v: [i32; 3]) -> u16 {
+    let voxel = VoxelCoord(v);
+    let e = gpu.entry(voxel.chunk(), voxel.brick_slot()).unwrap();
+    assert_ne!(e & FULL_BIT, 0, "{v:?} is in a Full brick");
+    let a = attr_slot(e & SLOT_MASK);
+    let sps = gpu.shard_layout().slots_per_shard;
+    let i = voxel.index_in_brick() as u64;
+    let bytes = readback::read_buffer(
+        device,
+        queue,
+        gpu.pool_shard((a / sps) as usize),
+        u64::from(a % sps) * SLOT_BYTES + (i / 2) * 4,
+        4,
+    );
+    let word = u32::from_le_bytes(bytes.try_into().unwrap());
+    (word >> (16 * (i & 1))) as u16
+}
+
+#[test]
+fn the_attribute_pass_fills_the_floor_and_reaches_a_carve_s_neighbours() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = world();
+    let mut gpu =
+        GpuWorld::with_surface_attrs(&device, MirrorConfig::new(Window::Fixed(world.extent())));
+    gpu.sync(&world, &queue).unwrap();
+    assert_eq!(update_attrs(&device, &queue, &mut gpu), 256);
+    assert_eq!(
+        update_attrs(&device, &queue, &mut gpu),
+        0,
+        "nothing changed"
+    );
+
+    // The top solid layer: 18 of the 27 voxels solid, offset (18/27 - 0.5) * 3 = +1/2, code 11.
+    let (n, code) = decode_attr(attr_of(&device, &queue, &gpu, [3, 3, 2])).expect("a plane");
+    let angle = n[2].clamp(-1.0, 1.0).acos().to_degrees();
+    assert!(angle <= 3.0, "normal {n:?} is {angle} degrees off +z");
+    assert_eq!(code, 11);
+    // Six solid face neighbours: no plane.
+    assert_eq!(attr_of(&device, &queue, &gpu, [3, 3, 1]), NO_PLANE);
+    // Interior beside brick [0, 8)^3's +x face, in the unchanged brick [8, 16) x [0, 8)^2.
+    let beside = [8, 3, 1];
+    assert_eq!(attr_of(&device, &queue, &gpu, beside), NO_PLANE);
+
+    // Carve x in [6, 8) of the floor in brick [0, 8)^3: the voxel beside it gains a plane.
+    let r = world
+        .apply(&EditOp::box_(
+            Fixed3([6 * FIXED_ONE, 0, 0]),
+            Fixed3([8 * FIXED_ONE, 8 * FIXED_ONE, 3 * FIXED_ONE]),
+            Mode::Carve,
+        ))
+        .unwrap();
+    assert_eq!(r.changed_from, [(1, 2 * 8 * 3)]);
+    let s = gpu.sync(&world, &queue).unwrap();
+    assert_eq!(s.bricks, 1, "only the carved brick is written");
+    // The carved brick and its 26 neighbours: those in the mirror that are Full.
+    let n = update_attrs(&device, &queue, &mut gpu);
+    assert!(n > 1 && n <= 27, "{n} bricks");
+    let after = attr_of(&device, &queue, &gpu, beside);
+    assert_ne!(after, NO_PLANE);
+
+    // A mirror built from scratch computes every attribute: the neighbour pass agrees.
+    let mut fresh =
+        GpuWorld::with_surface_attrs(&device, MirrorConfig::new(Window::Fixed(world.extent())));
+    fresh.sync(&world, &queue).unwrap();
+    update_attrs(&device, &queue, &mut fresh);
+    assert_eq!(after, attr_of(&device, &queue, &fresh, beside));
+    assert_eq!(
+        attr_of(&device, &queue, &gpu, [5, 3, 1]),
+        attr_of(&device, &queue, &fresh, [5, 3, 1])
     );
 }
