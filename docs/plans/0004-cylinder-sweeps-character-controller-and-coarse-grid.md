@@ -403,7 +403,7 @@ with the dev-box readings. Every one is a guess until read.
 | 3: Ledge climb and the pinned course | dev | done | f8ecdc9 |
 | 4: The coarse grid | dev | done | 611dfe5 |
 | 5: Walkable space | dev | done | c7abac7 |
-| 6: Walk mode in the fly-through, benches, readings | dev | done | committed with this row |
+| 6: Walk mode in the fly-through, benches, readings | dev | done | fe50d6d |
 
 ### Notes
 
@@ -434,11 +434,11 @@ with the dev-box readings. Every one is a guess until read.
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** new crate `vxe-sim` (cylinder distance, integer sweep, character controller with step, slide, fall, jump, ledge climb; pinned course hash `0x0c80_8031_d14f_27eb`); `vxe-world` coarse grid and walkable map; fly-through `--walk`, `G`, `K`; benches `vxe-sim/controller` and `vxe-world/coarse`.
+- **Public API changed:** `vxe-sim` (new): `Body`, `Contact`, `isqrt`, the `controller` and `sweep` exports in `crates/vxe-sim/src/lib.rs`. `vxe-world` (added): `CellChange`, `CoarseCell`, `CoarseGrid`, `WalkableMap`, `WalkableParams`, `WalkableStats`. Extras beyond the data shapes are listed per phase in Notes.
+- **Budget readings:** dev box AMD Ryzen 9 5900HS (Linux), commit fe50d6d, `cargo bench`, criterion median (low, high), under the exclusive lock. Controller tick: `1000 ticks of the F6 course` 522.20 us (521.41, 523.19), 0.52 us per tick; `300 ticks of the F6 course` 372.15 us (371.11, 373.31), 1.24 us per tick; proposal 20 us. Sweep: `1000 sweeps of the F2 wall case` 17.539 ms (17.391, 17.701), 17.5 us per sweep; proposal 5 us. Coarse grid update after a radius-10 (1 m) carve, solid world: 100 updates 1.1287 ms (1.1144, 1.1440), 11.3 us per update; proposal 50 us. Walkable update from those changes: 100 updates 667.78 us (659.36, 677.02), 6.7 us per update; proposal 20 us. Coarse grid RAM at the level (`--level --seed 1`, headless on NVIDIA GeForce RTX 3080 Laptop GPU): 3200 chunks, 6553600 bytes, built in 231 ms.
+- **Gate at the tip (fe50d6d):** `cargo build --workspace --all-targets` 0; `cargo nextest run --workspace` 128 passed, 0 skipped, exit 0 (exclusive lock, RTX 3080 Laptop present); `cargo test --workspace --doc` 0 (2 doctests); `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` advisories, bans, licenses, sources ok; `node scripts/check-doc-links.mjs` 45 links resolve. CARGO_BUILD_JOBS=3.
+- **Outstanding `human` phases:** none. Phase 6's hand-driven walk-mode checks await the owner (Notes).
 
 ## Followups
 
