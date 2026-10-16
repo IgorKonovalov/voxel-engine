@@ -1,8 +1,8 @@
 # ADR-0002: Brick-map storage layout, GPU mirror, and per-chunk locked access
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-16); mirror clauses superseded in part by ADR-0004 once accepted
 > **Date:** 2026-10-16
-> **Related plan(s):** [Plan 0001](../plans/0001-bounded-brick-map-edits-and-headlamp-marcher.md)
+> **Related plan(s):** [Plan 0001](../plans/done/0001-bounded-brick-map-edits-and-headlamp-marcher.md)
 
 ## Context
 
@@ -132,4 +132,15 @@ renderer would need a second full copy of the voxels in RAM from day one.
 
 ## Outcome
 
-_(Added at acceptance if Plan 0001 falsifies something above.)_
+Added at acceptance, 2026-10-16, from Plan 0001's readings (its Implementation log):
+
+- **The uniform fraction is lower than assumed.** The cave's `Full` fraction is 20.8 % to
+  23.4 %, not 10 %, so the `u16` mirror estimate above (1.7 GB at a 100 m radius) is low by
+  about double; a 32³-chunk cube mirrors to 3.5 GB. ADR-0004 narrows and shards the mirror in
+  response.
+- **The uploader takes a chunk write lock, not a read lock.** `GpuWorld::sync` clears the
+  chunk's dirty bits as it copies, so it holds the write lock for the copy. The cost is the one
+  named under Negative (readers wait behind the uploader as they would behind an edit); the
+  access model is otherwise as written.
+- **Binding limits bite at level size.** lavapipe binds 128 MiB per storage buffer, below the
+  level-size pool (about 375 MiB at `u16`); the dev box binds 2 GiB. ADR-0004 shards the pool.

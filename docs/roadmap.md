@@ -135,7 +135,10 @@ are independent of M2, and M5 can move ahead of M4 if the consumer's server/clie
 
 Workspace skeleton, harness, ADR-0001, this roadmap, `nfr.md`. No engine code.
 
-### M1: Fly-through with digging (Plan 0001)
+### M1: Fly-through with digging (Plans 0001 and 0002; in progress)
+
+Plan 0001 closed 2026-10-16 (v0.2.0): the bounded half is done, with the determinism vector
+green on both CI arms. Plan 0002 (streaming, LOD ring, narrowed mirror) closes M1.
 
 **Goal:** a window showing a ray-marched, streaming voxel cave lit by a headlamp. You fly, carve
 spheres, and the per-material voxel counts print to the console.

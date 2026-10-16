@@ -9,12 +9,13 @@ state from `git log`. Completed plans move to `done/`.
 
 | Plan | Title | Status | Live constraint |
 |------|-------|--------|-----------------|
-| [0001](0001-bounded-brick-map-edits-and-headlamp-marcher.md) | Bounded brick map, deterministic edits, and a headlamp ray marcher | in-progress | First half of M1 in [`docs/roadmap.md`](../roadmap.md); the bounded world, all edit ops, queries, cave source, primary marcher plus one shadow ray, window shell, fly-through. Phase 8 (masks) and the close review outstanding; streaming and LOD are Plan 0002. Paired with ADR-0002. |
 | [0002](0002-streaming-residency-lod-ring-and-mirror-narrowing.md) | Streaming residency, an LOD-only ring, and a narrowed, sharded mirror | draft | Second half of M1; approve only after Plan 0001 closes (it builds on 0001's Phase 8 masks and its review's call on the readings). Paired with ADR-0003 and ADR-0004. |
 
 ## Recently closed
 
-_none_
+| Plan | Title | Closed |
+|------|-------|--------|
+| [0001](done/0001-bounded-brick-map-edits-and-headlamp-marcher.md) | Bounded brick map, deterministic edits, and a headlamp ray marcher | 2026-10-16, v0.2.0 |
 
 ## Conventions
 

@@ -1,9 +1,13 @@
 # 0001: Bounded brick map, deterministic edits, and a headlamp ray marcher
 
-> **Status:** in-progress
+> **Status:** done (closed 2026-10-16, v0.2.0). Verdict: the bounded world, its edits and
+> its GPU mirror match the plan. Closed after a fix pass (112cfa0 batched upload, 1d61aba CI
+> adapter gate), green CI on both arms at 1d61aba, and an owner-driven fly-through run in which
+> every control worked. The §4 edit-cost miss and the upload-line miss carry forward with the
+> budgets unchanged (`nfr.md` §2, §4).
 > **Created:** 2026-10-16
 > **Milestone:** M1 in `docs/roadmap.md` (first of two plans; Plan 0002 adds streaming and LOD)
-> **Related ADRs:** [ADR-0002](../adrs/0002-brick-map-layout-and-per-chunk-locked-access.md) (storage layout, GPU mirror, access model), ADR-0001 (stack)
+> **Related ADRs:** [ADR-0002](../../adrs/0002-brick-map-layout-and-per-chunk-locked-access.md) (storage layout, GPU mirror, access model), ADR-0001 (stack)
 
 ## TL;DR
 
@@ -614,5 +618,15 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
-- Per-chunk 8-bit palette in the mirror (ADR-0002, "named follow-up"), after the VRAM reading.
+- Per-chunk 8-bit palette in the mirror and a sharded pool: taken by Plan 0002 (ADR-0004).
+- Edit cost against `nfr.md` §4: the budget stays at 2 ms (owner's call at this close). Its
+  own plan after Plan 0002.
+- The upload line: in-frame `sync` of 100 carves reads 3.9 to 12.9 ms against the 1.0 ms
+  streaming line, and every `sync` walks every chunk under a write lock. Plan 0002 Phase 3
+  (dirty-chunk set, budgeted upload).
+- Golden test time on the Linux CI arm: 60 and 67 s, over this plan's 30 s risk line. Carried
+  into Plan 0002 as a convention.
+- `ubuntu-latest` moves to Ubuntu 26 from 2026-10-19, with a newer Mesa. If the goldens fail
+  there, re-bless on the new runner's lavapipe; never widen the floor.
+- `MAX_STEPS` exhaustion in `march.wgsl` reads as a miss, so an exhausted shadow ray leaks light.
 - A `Fill` result that also reports the written material, if a consumer needs it.

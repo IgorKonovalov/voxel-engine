@@ -41,6 +41,14 @@ each. The pass includes the headlamp's one shadow ray per lit pixel, so it cover
 primary-ray line. NVIDIA GeForce RTX 3080 Laptop GPU, Vulkan, driver 610.57.04 (Plan 0001
 Phase 8). No baseline reading yet (§1).
 
+**Streaming line, first observation (dev reference, Plan 0001 close, 1d61aba):** the
+fly-through's `B` key (100 radius-1 m carves near the camera, then one `GpuWorld::sync`)
+uploaded 1.2 to 2.0 MB in 3.9 to 12.9 ms of render-thread CPU over about 20 runs, against
+the 1.0 ms line. Part of that is `sync` visiting every chunk; Plan 0002 Phase 3 adds a
+dirty-chunk set and a byte budget. Same session, `F1` read the march pass at 3.8 to 8.1 ms at
+2530 × 1378 away from the spawn pose: views differ by more than 2× from the spawn reading
+above. RTX 3080 Laptop GPU, Ryzen 9 5900HS.
+
 No frame may stall on paging: work attributable to streaming on the render thread is capped at
 the streaming line above; the rest runs on background threads.
 
@@ -64,7 +72,8 @@ the frame dropping.
 | 20 × 20 × 8 (the level, 128 × 128 × 51 m) | 23.41 % | 399.6 MiB | 383.8 MiB |
 | 32 × 32 × 32 (204.8 m cube) | 20.79 % | 3661.6 MiB | 3496.2 MiB |
 
-Both measured `Full` fractions are above the 10 % assumption above; the cave is about 29 %
+With occupancy masks (Plan 0001 Phase 8), the level-size mirror reads 402 449 984 B from the
+fly-through's first sync. Both measured `Full` fractions are above the 10 % assumption above; the cave is about 29 %
 air with caverns on a 6.4 m lattice.
 
 ## 4. Edits
@@ -73,9 +82,17 @@ air with caverns on a 6.4 m lattice.
   count on voxel centres; the continuous volume is about 4189) in one frame cost at most 2 ms
   of CPU including result counting and dirty marking, and their upload (up to about 6400 bricks,
   6.4 MB, if every touched brick is non-uniform) fits in the streaming line of §2.
+  **Readings (dev reference, AMD Ryzen 9 5900HS, Plan 0001):** `cargo bench -p vxe-world
+  --bench edits` (100 radius-10 carves on a fresh solid world, every carve expanding uniform
+  bricks, the worst case): 4.92 ms (CI 4.87 to 4.98 ms), Phase 4 commit. In the fly-through
+  (`B` key, carves into an already dug cave, 1d61aba): 3.07 to 4.63 ms over about 20 runs.
+  Both miss the 2 ms budget; the budget stands (owner's call at the Plan 0001 close) and the
+  edit cost gets its own plan after Plan 0002.
 - **Results** are returned synchronously with the edit, per material, exact.
 - **Determinism:** the same op list on the same seed yields bit-identical voxels and results on
-  Linux and Windows. CI asserts a fixed vector's hash on both arms.
+  Linux and Windows. CI asserts a fixed vector's hash on both arms. **Asserted:**
+  `determinism_vector` passed on the Linux and Windows CI arms at 9565c5a and 1d61aba
+  (Plan 0001), with the hash blessed on Linux.
 
 ## 5. Streaming
 
@@ -102,6 +119,10 @@ air with caverns on a 6.4 m lattice.
 ## 7. Startup and build
 
 - Time to first frame in `apps/flythrough` under 3 s on the dev reference (proposal).
+  **Reading (Plan 0001, 112cfa0, level-size bounded cave seed 1, 3200 chunks, RTX 3080 Laptop
+  GPU, Ryzen 9 5900HS, Hyprland):** 2226 to 2301 ms cold (dGPU suspended before launch),
+  1063 to 1187 ms warm; device creation dominates cold start (1838 to 1903 ms), the mirror
+  upload is 349 to 357 ms for 402 MB. 2282 ms on the owner's interactive run at 1d61aba.
 - An incremental `cargo build` of a one-crate change under 10 s on the dev reference; the
   everyday loop does not compile crates a plan does not touch (`default-members`).
 
