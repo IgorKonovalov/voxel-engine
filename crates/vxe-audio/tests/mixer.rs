@@ -226,29 +226,68 @@ fn a_one_shot_voice_ends_and_reports_finished() {
     assert!(out[2 * (1000 + taps - 1)..].iter().all(|&s| s == 0.0));
 }
 
+/// `MAX_TAPS` taps for voice `voice` in block `block`: a new set whenever `block` changes.
+fn moving_taps(voice: u32, block: u32) -> AcousticTargets {
+    let mut taps = [Tap::default(); MAX_TAPS];
+    for (k, t) in taps.iter_mut().enumerate() {
+        *t = Tap {
+            delay_frames: 200 + 500 * k as u32 + 3 * voice + 11 * block,
+            gain: 0.02 + 0.001 * block as f32,
+        };
+    }
+    AcousticTargets {
+        gain: 0.8,
+        cutoff_hz: 2_000.0,
+        taps,
+        tap_count: MAX_TAPS as u8,
+    }
+}
+
+/// While counting, every block turns the listener (every voice crossfades directions), replaces
+/// every voice's 16 taps (every voice crossfades its reflections), keeps the 2 kHz low-pass on,
+/// and one block stops a voice and plays another into its pooled buffers.
 #[test]
 fn sixty_four_voices_render_a_block_without_allocating() {
     let mut m = mixer();
     let sound = tone(440.0, 0.1, 48_000);
-    for i in 0..64u32 {
+    let params = |i: u32| {
         let a = i as f32 * 0.1;
-        m.apply(Command::Play(
-            VoiceId(i),
-            sound.clone(),
-            PlayParams {
-                position: [30.0 * a.cos(), 30.0 * a.sin(), 0.0],
-                gain: 1.0,
-                looping: true,
-            },
-        ));
+        PlayParams {
+            position: [30.0 * a.cos(), 30.0 * a.sin(), 0.0],
+            gain: 1.0,
+            looping: true,
+        }
+    };
+    for i in 0..64u32 {
+        m.apply(Command::Play(VoiceId(i), sound.clone(), params(i)));
+        m.apply(Command::SetAcoustics(VoiceId(i), moving_taps(i, 0)));
     }
     let mut out = vec![0.0; 2 * BLOCK];
     m.render(&mut out, BLOCK);
+    // The replacement voice's sound, cloned before counting.
+    let mut replacement = Some(sound.clone());
     COUNTING.with(|c| c.set(true));
-    for _ in 0..16 {
+    for block in 1..=16u32 {
+        let (s, c) = (block as f32 * 0.5).sin_cos();
+        m.apply(Command::SetListener(Listener {
+            forward: [c, s, 0.0],
+            ..Listener::default()
+        }));
+        if block == 8 {
+            m.apply(Command::Stop(VoiceId(5)));
+            if let Some(sound) = replacement.take() {
+                m.apply(Command::Play(VoiceId(64), sound, params(5)));
+            }
+        }
+        for i in (0..=64u32).filter(|&i| i != 5) {
+            m.apply(Command::SetAcoustics(VoiceId(i), moving_taps(i, block)));
+        }
         m.render(&mut out, BLOCK);
     }
     COUNTING.with(|c| c.set(false));
     assert_eq!(ALLOCATIONS.with(Cell::get), 0);
     assert_eq!(m.voice_count(), 64);
+    assert!(!m.is_playing(VoiceId(5)));
+    assert!(m.is_playing(VoiceId(64)));
+    assert!(out.iter().all(|s| s.is_finite()));
 }
