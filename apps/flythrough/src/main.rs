@@ -1,9 +1,10 @@
 //! The engine's testbed (milestone 1 in `docs/roadmap.md`): a window showing the ray-marched
 //! cave lit by a headlamp. Fly, dig, and read the per-material counts each edit returns.
 //!
-//! `flythrough [--seed N] [--render WxH] [--frames N]`. `--render` fixes the marcher's
-//! resolution (the window scales it); `--frames` exits after N frames, printing the `F1`
-//! readings over the last ones.
+//! `flythrough [--seed N] [--render WxH] [--frames N] [--bench N]`. `--render` fixes the
+//! marcher's resolution (the window scales it); `--frames` exits after N frames, printing the
+//! `F1` readings over the last ones; `--bench` runs the `B` bench N times right after the
+//! first mirror upload, before the first frame.
 
 mod fly;
 
@@ -19,7 +20,7 @@ use vxe_render::{Camera, GpuWorld, LightParams, MarchTimer, Marcher, Presenter, 
 use vxe_world::hash::mix64;
 use vxe_world::{
     ChunkExtent, EditError, EditOp, EditResult, FIXED_ONE, Fixed3, MaterialId, MaterialTable, Mode,
-    World,
+    VoxelCoord, World,
 };
 
 /// Reach of the dig and fill rays: 10 m.
@@ -57,6 +58,7 @@ struct Args {
     seed: u64,
     render: Option<[u32; 2]>,
     frames: Option<u32>,
+    bench: u32,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -64,6 +66,7 @@ fn parse_args() -> Result<Args, String> {
         seed: 1,
         render: None,
         frames: None,
+        bench: 0,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -79,6 +82,7 @@ fn parse_args() -> Result<Args, String> {
             "--frames" => {
                 args.frames = Some(value()?.parse().map_err(|e| format!("--frames: {e}"))?)
             }
+            "--bench" => args.bench = value()?.parse().map_err(|e| format!("--bench: {e}"))?,
             _ => return Err(format!("unknown argument {flag}")),
         }
     }
@@ -127,6 +131,8 @@ struct Samples {
 struct Run {
     start: Instant,
     world: World,
+    /// The voxel the camera starts in; the mirror uploads nearest it first.
+    spawn: VoxelCoord,
     args: Args,
     fly: Fly,
     light: LightParams,
@@ -250,10 +256,13 @@ impl Run {
         match gfx.mirror.sync(&self.world, &gpu.queue) {
             Ok(s) => println!(
                 "bench: {BENCH_CARVES} carves of radius 1 m within 10 m ({refused} refused): \
-                 edits {edit_ms:.2} ms CPU; sync uploaded {} B ({} bricks, {} chunks) in {:.2} ms",
+                 edits {edit_ms:.2} ms CPU; sync uploaded {} B ({} bricks, {} chunks, {} visited, \
+                 {} writes) in {:.2} ms",
                 s.bytes,
                 s.bricks,
                 s.chunks,
+                s.chunks_visited,
+                s.writes,
                 ms_since(t)
             ),
             Err(e) => println!("bench: sync failed, {e}"),
@@ -301,13 +310,15 @@ impl Run {
             .then(|| MarchTimer::new(&gpu.device));
         println!("device ready after {:.0} ms", ms_since(self.start));
         let mut mirror = GpuWorld::new(&gpu.device, self.world.extent());
+        mirror.set_focus(self.spawn);
         let t = now();
         match mirror.sync(&self.world, &gpu.queue) {
             Ok(s) => println!(
-                "mirror: uploaded {} B ({} bricks, {} chunks) in {:.0} ms",
+                "mirror: uploaded {} B ({} bricks, {} chunks, {} writes) in {:.0} ms",
                 s.bytes,
                 s.bricks,
                 s.chunks,
+                s.writes,
                 ms_since(t)
             ),
             Err(e) => eprintln!("mirror sync failed: {e}"),
@@ -318,6 +329,9 @@ impl Run {
             presenter: Presenter::new(&gpu.device, gpu.surface_format),
             timer,
         });
+        for _ in 0..self.args.bench {
+            self.bench(gpu);
+        }
     }
 
     fn resized(&mut self, gpu: &Gpu) {
@@ -436,6 +450,7 @@ impl App for Flythrough {
             self.run = Some(Run {
                 start: self.start,
                 world,
+                spawn: VoxelCoord(self.camera.position.to_array().map(|v| v.floor() as i32)),
                 args: self.args,
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),

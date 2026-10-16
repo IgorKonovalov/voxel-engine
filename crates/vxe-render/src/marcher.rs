@@ -19,9 +19,9 @@ pub struct Params {
     pub _pad0: f32,
     pub cam_fwd: [f32; 3],
     pub _pad1: f32,
-    pub extent_min: [i32; 3],
+    pub window_min: [i32; 3],
     pub _pad2: i32,
-    pub extent_size: [i32; 3],
+    pub window_size: [i32; 3],
     pub _pad3: i32,
     pub light_pos: [f32; 3],
     pub light_intensity: f32,
@@ -131,7 +131,7 @@ impl Marcher {
     pub fn params(&self, world: &GpuWorld, camera: &Camera, light: &LightParams) -> Params {
         let (fwd, right, up) = camera.basis();
         let (w, h) = (self.target.width(), self.target.height());
-        let e = world.extent();
+        let e = world.window();
         Params {
             cam_pos: camera.position.to_array(),
             tan_half_fov: (camera.vfov * 0.5).tan(),
@@ -139,8 +139,8 @@ impl Marcher {
             aspect: w as f32 / h as f32,
             cam_up: up.to_array(),
             cam_fwd: fwd.to_array(),
-            extent_min: e.min.0,
-            extent_size: e.size(),
+            window_min: e.min.0,
+            window_size: e.size(),
             light_pos: (camera.position + right * light.offset_right - up * light.offset_down)
                 .to_array(),
             light_intensity: light.intensity,

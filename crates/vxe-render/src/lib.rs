@@ -13,7 +13,7 @@ pub mod present;
 pub mod readback;
 
 pub use camera::Camera;
-pub use gpu_world::{GpuWorld, MirrorError, SyncStats};
+pub use gpu_world::{GpuWorld, MirrorConfig, MirrorError, SyncStats, Window};
 pub use light::LightParams;
 pub use marcher::{MarchTimer, Marcher};
 pub use present::Presenter;

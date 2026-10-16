@@ -1,7 +1,7 @@
 // Primary-ray marcher over the brick-map mirror (ADR-0002), one invocation per pixel.
 //
 // Bindings, group 0:
-//   0  uniform  params         camera, extent, light, target size, flags (bit 0: shadow ray,
+//   0  uniform  params         camera, mirror window, light, target size, flags (bit 0: shadow ray,
 //                              bit 1: occupancy masks)
 //   1  storage  brick_pool     [slot][256 x u32], two u16 voxels per word, x fastest
 //   2  storage  chunk_records  [record][512 x u32]; bit 31 set: pool slot, clear: uniform material
@@ -28,9 +28,9 @@ struct Params {
     _pad0: f32,
     cam_fwd: vec3<f32>,
     _pad1: f32,
-    extent_min: vec3<i32>,
+    window_min: vec3<i32>,
     _pad2: i32,
-    extent_size: vec3<i32>,
+    window_size: vec3<i32>,
     _pad3: i32,
     light_pos: vec3<f32>,
     light_intensity: f32,
@@ -78,12 +78,13 @@ fn floor_div(a: vec3<i32>, b: i32) -> vec3<i32> {
 
 fn lookup(v: vec3<i32>) -> Cell {
     let chunk = floor_div(v, 64);
-    let rel = chunk - params.extent_min;
-    let w = params.extent_size;
+    let rel = chunk - params.window_min;
+    let w = params.window_size;
     if (any(rel < vec3<i32>(0)) || any(rel >= w)) {
         return Cell(64, 0u);
     }
-    // Wrapped addressing; the window equals the extent here, so the wrap is the identity.
+    // Wrapped addressing: the table is indexed by the chunk coordinate modulo the window size,
+    // and the range check above keeps every lookup inside the current window.
     let wr = ((chunk % w) + w) % w;
     let record = chunk_table[u32(wr.x + w.x * (wr.y + w.y * wr.z))];
     if (record == ABSENT) {
@@ -124,8 +125,8 @@ fn voxel_at(p: vec3<f32>, d: vec3<f32>) -> vec3<i32> {
 // The first solid voxel along `o + d t` for `0 <= t <= t_limit`.
 fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
     var miss = Hit(false, vec3<i32>(0), -1, 0.0, 0u);
-    let bmin_i = params.extent_min * 64;
-    let bmax_i = (params.extent_min + params.extent_size) * 64;
+    let bmin_i = params.window_min * 64;
+    let bmax_i = (params.window_min + params.window_size) * 64;
     let bmin = vec3<f32>(bmin_i);
     let bmax = vec3<f32>(bmax_i);
     let inv = select(vec3<f32>(BIG), 1.0 / d, d != vec3<f32>(0.0));

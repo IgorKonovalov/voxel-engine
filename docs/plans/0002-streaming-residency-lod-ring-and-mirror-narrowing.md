@@ -508,8 +508,8 @@ late is acceptable; a hole near the camera is not, and the unready-near counter 
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: Streamer skeleton, full tier only | dev | done | ac973d2 |
-| 2: Edited-chunk persistence and disk spill | dev | done | committed with this row |
-| 3: Mirror window, dirty-chunk set, budgeted batched upload | dev | not started | |
+| 2: Edited-chunk persistence and disk spill | dev | done | f59b8f1 |
+| 3: Mirror window, dirty-chunk set, budgeted batched upload | dev | done | committed with this row |
 | 4: Per-chunk 8-bit palette, wide fallback | dev | not started | |
 | 5: Brick pool sharded over four bindings | dev | not started | |
 | 6: Chunk mips in `vxe-world` | dev | not started | |
@@ -540,6 +540,30 @@ each. Empty is fine.)_
   and moves the focus after its 50th op, so the second half races eviction or loading.
 - Phase 2: outside Files touched, `crates/vxe-world/tests/stream.rs` gains the new
   `StreamConfig::persist` field.
+- Phase 3: outside Files touched, the root `Cargo.toml` sets `opt-level = 2` for `vxe-world`
+  and `flythrough` in the dev profile; the level-size cave took 52 s to generate in a test
+  build without it and 1.7 s with it. The serial workspace test run went from 25 s to 6.6 s.
+- Phase 3: outside Files touched, a new `apps/flythrough/tests/level_mirror.rs` holds the
+  level-size write-count and budget tests. They pick any Vulkan adapter that binds the whole
+  pool in one buffer and print a skip otherwise; until Phase 5 that skips on lavapipe (128 MiB
+  per binding), so CI does not run them. On the dev box they ran on RADV Renoir.
+- Phase 3: "the 22 evicted chunks' slots are on the free list" is asserted right after
+  `apply_events` (the free list equals their slot set); after the following sync each of those
+  slots is either reused by a new chunk or still free.
+- Phase 3: the five `B` readings come from a new `--bench N` flag that runs the `B` bench N
+  times after the first mirror upload, at the spawn pose. The display was off (DPMS) during
+  the session, so the windowed loop stalled after its first frame and a `wtype` key press
+  never reached the window.
+- Phase 3: bit-exactness of `primary.png` and `headlamp.png` was checked with an uncommitted
+  scratch test (0 differing bytes each); `golden.rs` is not in Files touched and keeps its
+  tolerance assertion.
+- Phase 3: public API beyond the data shapes: `MirrorConfig`, `Window`, `GpuWorld::with_config`,
+  `set_focus`, `focus`, `window`, `apply_events`, `table_index`, `is_mirrored`,
+  `mirrored_chunks`, `pending_chunks`; `SyncStats::{chunks_visited, writes, pending_chunks}`;
+  `ChunkStore::{mark_dirty, take_dirty, dirty_len}`. `GpuWorld::new(device, extent)` stays as
+  the fixed-window constructor.
+- Phase 3: the `B` bench syncs issued 656 to 2186 queue writes for 1.6 to 2.0 K bricks, since
+  bricks rewritten in place sit in scattered slots and each slot is its own run.
 
 ### Close triggers
 
@@ -547,7 +571,17 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 - **What shipped:**
 - **Public API changed:**
-- **Budget readings:**
+- **Budget readings:** (dev box: RTX 3080 Laptop GPU, Ryzen 9 5900HS, Hyprland, release
+  build, unless stated)
+  - Phase 3 commit, level-size bounded cave seed 1 (3200 chunks), first `sync`: 195 writes
+    (line: 9608), 402 449 984 B, 331, 333, 335 and 345 ms over four launches (Plan 0001:
+    349 to 357 ms).
+  - Phase 3 commit, `B` bench via `--bench 5` at the spawn pose, `sync` render-thread CPU:
+    17.41 ms (2 194 440 B; this sync grew the pool), 5.23 ms (2 075 696 B), 6.05 ms
+    (2 025 128 B), 6.37 ms (1 993 200 B), 6.44 ms (1 773 432 B). Plan 0001: 3.9 to 12.9 ms
+    for 1.2 to 2.0 MB, interactive.
+  - Phase 3 commit, 8 MiB sync budget on the level world (`level_mirror.rs`, RADV Renoir):
+    48 syncs, largest 8 582 152 B (line: 8 912 896 B).
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 

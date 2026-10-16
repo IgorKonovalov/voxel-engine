@@ -1,8 +1,11 @@
 //! The GPU mirror against a closure-source world: what `sync` uploads, what it frees, and
 //! that the buffers hold what the CPU accounting says.
 
-use vxe_render::gpu_world::{FULL_BIT, POOL_PAGE_SLOTS};
-use vxe_render::{GpuWorld, MARCH_WGSL, readback, wgpu};
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use vxe_render::gpu_world::{ABSENT, FULL_BIT, POOL_PAGE_SLOTS};
+use vxe_render::{GpuWorld, MARCH_WGSL, MirrorConfig, Window, readback, wgpu};
 use vxe_world::*;
 
 /// The shader parses and validates headless, without a device.
@@ -77,9 +80,13 @@ fn sync_uploads_dirty_bricks_once() {
         assert!(!world.store().get(c).unwrap().read().unwrap().any_dirty());
     }
 
+    // The dirty-chunk set is empty: an idle sync visits no chunk and writes nothing.
+    assert_eq!(world.store().dirty_len(), 0);
     let before = gpu.bytes_written();
     let second = gpu.sync(&world, &queue).unwrap();
     assert_eq!(second.bytes, 0);
+    assert_eq!(second.chunks_visited, 0);
+    assert_eq!(second.writes, 0);
     assert_eq!(gpu.bytes_written(), before);
 
     // The GPU records equal the CPU entries, and a full brick's pool bytes are its voxels.
@@ -172,4 +179,195 @@ fn a_collapsed_brick_frees_its_slot_for_the_next_expansion() {
     let rec = gpu.record_index(ChunkCoord([0, 0, 0])).unwrap() as u64;
     let bytes = readback::read_buffer(&device, &queue, gpu.records(), rec * 2048, 4);
     assert_eq!(bytemuck::cast_slice::<u8, u32>(&bytes), [0]);
+}
+
+/// Each brick is air, material 1 or mixed by a hash of its brick coordinate; a mixed brick
+/// draws each voxel from air, 1 and 2. Chunks hold `Uniform` and `Full` bricks.
+struct Mixed;
+
+impl WorldSource for Mixed {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        let base = coord.min_voxel().0;
+        for slot in 0..CHUNK_BRICKS {
+            let b = brick_of_slot(slot);
+            let bmin = [0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE);
+            let class = hash::hash3(0xB0B, bmin.map(|v| v >> 3)) % 16;
+            out.set_brick(
+                slot,
+                Brick::from_fn(|l| match class {
+                    0..6 => 0,
+                    6..12 => 1,
+                    _ => (hash::hash3(0xF00D, [0, 1, 2].map(|k| bmin[k] + l[k])) % 3) as u16,
+                }),
+            );
+        }
+    }
+}
+
+fn mixed_table() -> MaterialTable {
+    let mut t = MaterialTable::new();
+    t.push(Material::named("one"));
+    t.push(Material::named("two"));
+    t
+}
+
+/// Whole-buffer copies of the mirror, decoded the way the shader reads them.
+struct Readback {
+    table: Vec<u32>,
+    records: Vec<u32>,
+    pool: Vec<u16>,
+    masks: Vec<u32>,
+}
+
+impl Readback {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &GpuWorld) -> Self {
+        let all = |b: &wgpu::Buffer| readback::read_buffer(device, queue, b, 0, b.size());
+        Self {
+            table: bytemuck::cast_slice(&all(gpu.table())).to_vec(),
+            records: bytemuck::cast_slice(&all(gpu.records())).to_vec(),
+            pool: bytemuck::cast_slice(&all(gpu.pool())).to_vec(),
+            masks: bytemuck::cast_slice(&all(gpu.masks())).to_vec(),
+        }
+    }
+
+    /// Asserts that the table, records and pool hold `coord`'s CPU bricks; returns its
+    /// `Full` slots.
+    fn assert_chunk(&self, gpu: &GpuWorld, world: &World, coord: ChunkCoord) -> Vec<u32> {
+        let rec = self.table[gpu.table_index(coord) as usize];
+        assert_ne!(rec, ABSENT, "{coord:?} has no table entry");
+        let chunk = world.store().get(coord).unwrap();
+        let chunk = chunk.read().unwrap();
+        let mut slots = Vec::new();
+        for (slot, brick) in chunk.bricks().iter().enumerate() {
+            let e = self.records[rec as usize * 512 + slot];
+            match brick {
+                Brick::Uniform(m) => assert_eq!(e, u32::from(*m), "{coord:?} brick {slot}"),
+                Brick::Full(v) => {
+                    assert_ne!(e & FULL_BIT, 0, "{coord:?} brick {slot}");
+                    let s = (e & !FULL_BIT) as usize;
+                    assert_eq!(
+                        &self.pool[s * 512..s * 512 + 512],
+                        &v[..],
+                        "{coord:?} {slot}"
+                    );
+                    let mask = brick.occupancy_mask();
+                    assert_eq!(
+                        self.masks[s * 2..s * 2 + 2],
+                        [mask as u32, (mask >> 32) as u32]
+                    );
+                    slots.push(s as u32);
+                }
+            }
+        }
+        slots
+    }
+}
+
+fn full_bricks(world: &World, coords: &[ChunkCoord]) -> u32 {
+    coords
+        .iter()
+        .map(|&c| {
+            let chunk = world.store().get(c).unwrap();
+            let chunk = chunk.read().unwrap();
+            chunk.bricks().iter().filter(|b| b.is_full()).count() as u32
+        })
+        .sum()
+}
+
+/// The streamer's radius-2 scenario through a following window of side 7: after the move the
+/// mirror holds the 42 resident chunks, each decoding to its CPU voxels, and the evicted
+/// chunks' slots went to the free list.
+#[test]
+fn a_following_window_mirrors_the_streamed_residency() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = World::new(&mixed_table());
+    let mut s = Streamer::new(
+        Arc::new(Mixed),
+        StreamConfig {
+            residency: Residency {
+                r_full: 2,
+                r_lod: 2,
+                hysteresis: 1,
+            },
+            workers: 4,
+            persist: PersistConfig::default(),
+        },
+    );
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            window: Window::Follow { side: 7 },
+            sync_budget_bytes: u64::MAX,
+        },
+    );
+
+    let focus = VoxelCoord([0, 0, 0]);
+    s.update(&world, &[focus]);
+    let ev = s.wait_idle(&world);
+    gpu.apply_events(&ev);
+    gpu.set_focus(focus);
+    let st = gpu.sync(&world, &queue).unwrap();
+    assert_eq!(st.chunks, 33);
+    assert_eq!(gpu.mirrored_chunks(), 33);
+    let first = world.store().coords();
+    let rb = Readback::new(&device, &queue, &gpu);
+    let mut old_slots = HashSet::new();
+    for &c in &first {
+        old_slots.extend(rb.assert_chunk(&gpu, &world, c));
+    }
+
+    let focus = VoxelCoord([192, 0, 0]);
+    s.update(&world, &[focus]);
+    let ev = s.wait_idle(&world);
+    assert_eq!(ev.evicted.len(), 22);
+    let evicted_slots: HashSet<u32> = ev
+        .evicted
+        .iter()
+        .flat_map(|&c| (0..512).map(move |slot| (c, slot)))
+        .filter_map(|(c, slot)| gpu.entry(c, slot))
+        .filter(|e| e & FULL_BIT != 0)
+        .map(|e| e & !FULL_BIT)
+        .collect();
+    assert!(!evicted_slots.is_empty());
+    gpu.apply_events(&ev);
+    // Eviction returns exactly the evicted chunks' slots to the free list.
+    let free: HashSet<u32> = gpu.free_slots().iter().copied().collect();
+    assert_eq!(free, evicted_slots);
+
+    gpu.set_focus(focus);
+    let st = gpu.sync(&world, &queue).unwrap();
+    assert_eq!(st.pending_chunks, 0);
+    let resident = world.store().coords();
+    assert_eq!(resident.len(), 42);
+    assert_eq!(gpu.mirrored_chunks(), 42);
+    for &c in &ev.evicted {
+        assert!(!gpu.is_mirrored(c));
+    }
+    let rb = Readback::new(&device, &queue, &gpu);
+    let mut live = HashSet::new();
+    for &c in &resident {
+        for s in rb.assert_chunk(&gpu, &world, c) {
+            assert!(live.insert(s), "slot {s} held twice");
+        }
+    }
+    assert_eq!(gpu.live_slots(), full_bricks(&world, &resident));
+    assert_eq!(live.len() as u32, gpu.live_slots());
+    // Every evicted slot is either reused by a new chunk or still free; none leaked.
+    let free: HashSet<u32> = gpu.free_slots().iter().copied().collect();
+    for s in &evicted_slots {
+        assert!(live.contains(s) != free.contains(s), "slot {s}");
+    }
+    // The evicted chunks' table entries are gone: their wrapped indices now hold new chunks
+    // or nothing.
+    for &c in &ev.evicted {
+        let t = gpu.table_index(c) as usize;
+        let holder = resident.iter().find(|&&r| gpu.table_index(r) as usize == t);
+        match holder {
+            Some(&r) => assert_eq!(Some(rb.table[t]), gpu.record_index(r)),
+            None => assert_eq!(rb.table[t], ABSENT),
+        }
+    }
+    assert!(old_slots.len() > 100);
 }

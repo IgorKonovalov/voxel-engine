@@ -6,8 +6,8 @@
 //! no chunk can be inserted or removed between its residency check and its last write.
 //! Readers take short per-chunk read locks.
 
-use std::collections::HashMap;
-use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::chunk::Chunk;
 use crate::coords::{ChunkCoord, ChunkExtent, VoxelCoord};
@@ -26,10 +26,16 @@ pub(crate) fn write<T>(l: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
     l.write().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Resident chunks, keyed by coordinate.
+/// Resident chunks, keyed by coordinate, and the set of chunks with a dirty brick.
+///
+/// The dirty-chunk set has one consumer, the GPU mirror, which drains it on every sync and
+/// then visits only those chunks. Inserting a chunk and an edit that changes one add it;
+/// removing a chunk drops it. Code that changes a resident chunk's bricks by hand calls
+/// [`ChunkStore::mark_dirty`].
 #[derive(Default, Debug)]
 pub struct ChunkStore {
     pub(crate) chunks: RwLock<HashMap<ChunkCoord, Arc<RwLock<Chunk>>>>,
+    dirty: Mutex<HashSet<ChunkCoord>>,
 }
 
 impl ChunkStore {
@@ -37,20 +43,41 @@ impl ChunkStore {
         Self::default()
     }
 
-    /// Inserts or replaces the chunk at `coord`.
+    /// Inserts or replaces the chunk at `coord`, and marks it dirty.
     pub fn insert(&self, coord: ChunkCoord, chunk: Chunk) {
-        write(&self.chunks).insert(coord, Arc::new(RwLock::new(chunk)));
+        self.write_lock()
+            .insert(coord, Arc::new(RwLock::new(chunk)));
     }
 
     /// Removes the chunk at `coord` and hands it back.
     pub fn remove(&self, coord: ChunkCoord) -> Option<Arc<RwLock<Chunk>>> {
-        write(&self.chunks).remove(&coord)
+        self.write_lock().remove(coord)
     }
 
     /// The map's write lock, for a batch of inserts and removals under one acquisition. While
     /// the guard lives, edits wait (they hold the read lock for their whole run).
     pub fn write_lock(&self) -> StoreWriteGuard<'_> {
-        StoreWriteGuard(write(&self.chunks))
+        StoreWriteGuard {
+            map: write(&self.chunks),
+            dirty: &self.dirty,
+        }
+    }
+
+    /// Adds `coord` to the dirty-chunk set.
+    pub fn mark_dirty(&self, coord: ChunkCoord) {
+        lock(&self.dirty).insert(coord);
+    }
+
+    /// Empties the dirty-chunk set and returns its coordinates, ascending.
+    pub fn take_dirty(&self) -> Vec<ChunkCoord> {
+        let mut v: Vec<_> = lock(&self.dirty).drain().collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Chunks in the dirty-chunk set.
+    pub fn dirty_len(&self) -> usize {
+        lock(&self.dirty).len()
     }
 
     /// The chunk at `coord`, if resident.
@@ -78,24 +105,35 @@ impl ChunkStore {
     }
 }
 
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// The store map under its write lock; see [`ChunkStore::write_lock`].
-pub struct StoreWriteGuard<'a>(RwLockWriteGuard<'a, HashMap<ChunkCoord, Arc<RwLock<Chunk>>>>);
+pub struct StoreWriteGuard<'a> {
+    map: RwLockWriteGuard<'a, HashMap<ChunkCoord, Arc<RwLock<Chunk>>>>,
+    dirty: &'a Mutex<HashSet<ChunkCoord>>,
+}
 
 impl StoreWriteGuard<'_> {
+    /// Inserts or replaces the chunk at `coord`, and marks it dirty.
     pub fn insert(&mut self, coord: ChunkCoord, chunk: Arc<RwLock<Chunk>>) {
-        self.0.insert(coord, chunk);
+        self.map.insert(coord, chunk);
+        lock(self.dirty).insert(coord);
     }
 
+    /// Removes the chunk at `coord`, and drops it from the dirty-chunk set.
     pub fn remove(&mut self, coord: ChunkCoord) -> Option<Arc<RwLock<Chunk>>> {
-        self.0.remove(&coord)
+        lock(self.dirty).remove(&coord);
+        self.map.remove(&coord)
     }
 
     pub fn contains(&self, coord: ChunkCoord) -> bool {
-        self.0.contains_key(&coord)
+        self.map.contains_key(&coord)
     }
 
     pub fn get(&self, coord: ChunkCoord) -> Option<Arc<RwLock<Chunk>>> {
-        self.0.get(&coord).cloned()
+        self.map.get(&coord).cloned()
     }
 }
 
