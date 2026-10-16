@@ -269,7 +269,9 @@ Shared conventions for every phase:
   - `apps/flythrough/tests/golden.rs` requests a software adapter (`force_fallback_adapter`),
     builds the cave
     with seed 7 over chunks `[0,6)³` with the spawn at its centre, applies one radius-10 carve
-    1.5 m ahead of the camera, renders 320 × 180 from the fixed spawn pose, reads the target
+    centred where the camera's +x view ray from the spawn voxel's centre first enters rock
+    (5.7 m ahead at seed 7: the spawn pocket opens into a natural cavern, so a carve at a fixed
+    1.5 m or 3 m lands in air), renders 320 × 180 from the fixed spawn pose, reads the target
     back, and compares to `apps/flythrough/tests/golden/primary.png`: at most 0.1 % of pixels
     differ by more
     than 2/255 in any channel (exact match is expected on the same Mesa; the tolerance absorbs a
@@ -278,7 +280,8 @@ Shared conventions for every phase:
   - The golden shows the carve: the test also renders the same scene without the carve and
     asserts that at least 2 % of pixels differ from the golden by more than 8/255 (the carve
     is visible), and that the golden holds at least two colour bins each covering 5 % of the
-    pixels or more (a uniform image fails; inside a closed pocket no ray misses). A colour bin
+    pixels or more (a uniform image fails; the indestructible shell bounds the extent, so no
+    ray misses). A colour bin
     is the top 3 bits of each of r, g and b (512 bins), because continuous spot shading
     rarely repeats an exact colour.
 
@@ -287,17 +290,46 @@ Shared conventions for every phase:
 - **What:** a spot light carried with the camera but offset from the eye (right 0.25 m, down
   0.15 m, so shadows are visible), cone falloff, inverse-square attenuation, and one shadow ray
   per pixel from the hit point offset half a voxel along the face normal toward the lamp.
-- **Files touched:** `crates/vxe-render/src/shaders/march.wgsl`, `crates/vxe-render/src/{marcher.rs,
-  light.rs}`, `apps/flythrough/tests/golden.rs`, `apps/flythrough/tests/golden/headlamp.png`.
+- **Files touched:** `crates/vxe-render/src/shaders/march.wgsl`, `crates/vxe-render/src/{lib.rs,
+  marcher.rs, light.rs}`, `apps/flythrough/tests/golden.rs`,
+  `apps/flythrough/tests/golden/headlamp.png`, `apps/flythrough/tests/support/mod.rs` (if the
+  occluder scene's world or camera lands there).
 - **Done when:**
   - `apps/flythrough/tests/golden/headlamp.png` is blessed on lavapipe for the Phase 5 scene
-    with the lamp on and
-    compared under the same floor.
-  - Rendering the scene with the shadow ray disabled (a `LightParams` flag that exists for this
-    test and the fly-through's debug toggle) gives an image in which no pixel is darker than
-    the shadowed image, and at least 1 % of pixels are brighter by more than 8/255: shadows
-    exist and only ever remove light.
-  - `golden/primary.png` is unchanged by this phase.
+    with the lamp on (`LightParams::headlamp()`) and compared under the same floor.
+  - On the Phase 5 scene, the same render with the shadow ray disabled (a `LightParams` flag
+    that exists for this test and the fly-through's debug toggle) has no pixel darker than the
+    shadowed image in any channel: shadows only ever remove light. The test prints the
+    fraction of pixels brighter by more than 8/255 and the log records it (0.31 % measured
+    before this amendment). There is no floor on that fraction. The walls are 4 to 6 m away,
+    so the 0.29 m lamp offset gives too little parallax for a floor to mean anything, and
+    `headlamp.png` already pins the cave's shadows.
+  - **Shadows exist, on a scene where the count can be computed.** An occluder scene in
+    `golden.rs`: `UniformSource` air over chunks `[0,2)³` under `cave_materials()`, with rock
+    (material 1) filled into a wall
+    at voxels x `[44,46)`, y and z `[0,128)`, and into an occluder slab at x `[28,30)`, y and
+    z `[56,68)`. The camera sits at `(8.5, 64.5, 64.5)` looking along +x (yaw 0, pitch 0,
+    vfov 70°), at 320 × 180, with `LightParams::headlamp()`, so the lamp sits at
+    `(8.5, 62.0, 63.0)`. Rendered with shadows on and off, the scene has no pixel darker
+    unshadowed. **Between 820 and 840 pixels** (830 computed) are brighter by more than
+    8/255. Each of those pixels lies in columns `[130,207]` and rows `[63,140]` (row 0 at
+    the top): an L-shaped band along the occluder's left and top edges, the side away from
+    the lamp. Every other pixel is identical between the two renders.
+    - *Arithmetic (done in this amendment with an f64 model of `march.wgsl`: pixel-centre
+      rays, the half-voxel shadow-ray offset, the cone smoothstep, inverse square, and
+      gamma 1/2.2).* Eye and lamp both lie inside the slab's y and z ranges, so the slab's
+      near face at x = 28 (19.5 voxels from the eye) casts the shadow on the wall face at
+      x = 44 (35.5 voxels away; the shadow ray starts at 35.0). The visible band is the lamp
+      offset times (35.0 / 19.5 − 1) = 0.795: 1.99 voxels wide on the left and 1.19 on the
+      top. At 0.276 voxels per pixel on the wall, that is 7 columns (130 to 136) and 4 rows
+      (63 to 66) of pixel centres. Every shadow edge and image edge lies 0.42 px or more from
+      a pixel centre, so moving the eye or the lamp by 0.06 voxels flips no pixel. The dimmest
+      shadowed pixel reads 129/255 (rock's blue channel) unshadowed, far above the 8/255
+      threshold. The ±10 px
+      tolerance absorbs f32 DDA error at the slab's corners. If the count lands outside it,
+      the shadow ray is wrong. Stop and report; don't widen the range.
+  - `golden/primary.png` is unchanged by this phase. It renders with `LightParams::at_eye()`
+    (no offset, no shadow ray) and compares bit-identical.
 
 ### Phase 7: Window shell and the fly-through
 - **Owner skill:** dev
@@ -430,6 +462,13 @@ says so.
 - **Threading.** No lock is held across generation; the uploader takes one chunk read lock at a
   time; ops lock chunks in ascending order. A test asserts generation output is independent of
   thread count; nothing else in this plan runs concurrently with edits.
+- **Readings from Phases 4 and 5 that miss their figures** (edit bench against §4, the `Full`
+  fraction against §3's assumption, the 32³ mirror against the §3 world line, the per-binding
+  limits on lavapipe and the dev box; numbers in the Implementation log's Close triggers). None
+  blocks Phases 6 to 8. The golden scenes bind well under lavapipe's 128 MiB, and the
+  fly-through's level-size pool fits the dev box's 2 GiB binding. The close review weighs
+  each one: fix it in Plan 0002 (pool sharding, palette narrowing), take an optimisation
+  followup, or revise the figure in `nfr.md` with the reading.
 - **Open:** whether `Fill` should report the material it wrote as well as the air it replaced.
   The result keys by old material only; the consumer's P0 needs removed-per-material, which
   that gives. Revisit when a consumer asks.
