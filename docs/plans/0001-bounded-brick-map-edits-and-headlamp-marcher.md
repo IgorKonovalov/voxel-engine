@@ -458,8 +458,8 @@ says so.
 | 1: Brick map and the first carve | dev | done | b78443f |
 | 2: All shapes, all modes, indestructible, atomic failure | dev | done | 4f2cd02 |
 | 3: Raycast, queries, tool-along-ray | dev | done | 64d93d8 |
-| 4: Cave source, determinism vector, world budget readings | dev | done | committed with this row |
-| 5: GPU mirror and primary-ray marcher with a golden image | dev | not started | |
+| 4: Cave source, determinism vector, world budget readings | dev | done | 62bb87a |
+| 5: GPU mirror and primary-ray marcher with a golden image | dev | done | committed with this row |
 | 6: Headlamp with a shadow ray | dev | not started | |
 | 7: Window shell and the fly-through | dev | not started | |
 | 8: Brick occupancy masks | dev | not started | |
@@ -495,6 +495,14 @@ each. Empty is fine.)_
 - Phase 4: the edit bench reads 4.92 ms against the §4 budget of 2 ms (see Close triggers).
 - Phase 4: the measured `Full` fraction (23.41 % at level size, 20.79 % at 32³ chunks) is above the 10 % `nfr.md` §3 assumption; the 32³ mirror (3496.2 MiB) exceeds the 3 GB §3 world-VRAM line.
 - Phase 4: the determinism constant `0x2b6b_6a0d_1f9b_8d75` is blessed on Linux; the Windows arm has not run it yet (nothing pushed).
+- Phase 5: the golden carve is centred where the camera's +x view ray first enters rock (5.7 m ahead at seed 7), not 1.5 m ahead: at seed 7 the spawn pocket opens into a natural cavern, so carves at 1.5 m and at 3 m both lie in air. Owner's decision (commit of Phase 5).
+- Phase 5: the root `Cargo.toml` changed outside `Files touched`: `bytemuck`, `glam`, `png`, `pollster`, `wgpu` pins, and `vxe-world` as a workspace dependency with `version = "=0.1.0"`, because `cargo deny` treats a versionless path dependency of a publishable crate as a wildcard (commit of Phase 5).
+- Phase 5: `wgpu` is taken with default features off: `std`, `parking_lot`, `vulkan`, `dx12`, `wgsl` (commit of Phase 5).
+- Phase 5: the golden test's adapter is the Vulkan backend's fallback adapter and must report `DeviceType::Cpu`; otherwise it prints `skipped: no software adapter`. `crates/vxe-render/tests/mirror.rs` takes any adapter, fallback first (commit of Phase 5).
+- Phase 5: `vxe-render` also exports `limits_for(adapter, pool_bytes)`, `MARCH_WGSL` (validated through `naga` in `mirror.rs`), and re-exports `wgpu` so `flythrough` tests take no direct `wgpu` dependency (commit of Phase 5).
+- Phase 5: camera units are voxels, z up; the lamp sits at the eye with intensity 1200, cone 0.35 to 0.70 rad, and the output is clamped then raised to 1/2.2 (commit of Phase 5).
+- Phase 5: `GpuWorld::sync` takes `&mut self` and returns `Result<SyncStats, MirrorError>`; pool pages are 4096 slots (4 MiB) (commit of Phase 5).
+- Phase 5: lavapipe binds at most 134 217 728 B per storage buffer, below the level-size pool (383 608 Full bricks, about 375 MiB); the RTX 3080 binds 2 147 483 644 B, below the 32x32x32 pool (3 487 326 Full bricks, about 3.3 GiB).
 
 ### Close triggers
 
@@ -506,6 +514,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   - §4 edit cost: `cargo bench -p vxe-world --bench edits`, 100 radius-10 carves on a fresh solid world: 4.9199 ms (CI 4.8698 to 4.9768 ms). AMD Ryzen 9 5900HS, release bench profile, Phase 4 commit.
   - §3 world memory: `world_budget --chunks 20x20x8 --seed 1`: 3200 chunks, 383 608 Full / 1 254 792 Uniform (23.41 %), CPU 419 028 992 B, mirror 402 437 184 B. `--chunks 32x32x32 --seed 1`: 32 768 chunks, 3 487 326 Full / 13 289 890 Uniform (20.79 %), CPU 3 839 457 280 B, mirror 3 666 029 424 B. AMD Ryzen 9 5900HS, release, Phase 4 commit.
   - §5 generation: 0.509 s at 20x20x8 (1.029e8 voxels/s/thread), 4.785 s at 32x32x32 (1.122e8 voxels/s/thread), 16 threads, same machine and commit.
+- **Adapter limits (Phase 5, from `wgpu` 30.0.1 `Adapter::limits`):** llvmpipe (LLVM 22.1.8, Mesa 26.2.2, Vulkan): `max_storage_buffer_binding_size` 134 217 728, `max_buffer_size` 2 147 483 647. NVIDIA GeForce RTX 3080 Laptop GPU (Vulkan): 2 147 483 644 and 4 294 967 295. AMD Radeon Graphics (RADV RENOIR): 2 147 483 644 and 2 147 483 647.
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 

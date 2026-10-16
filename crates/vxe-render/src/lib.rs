@@ -2,4 +2,31 @@
 //! through `wgpu` (ADR-0001). Shaders are WGSL under `src/shaders/`. Nothing here branches
 //! on the graphics backend.
 //!
-//! The first real contents land with Plan 0001 (`docs/plans/`).
+//! [`GpuWorld`] mirrors a `vxe_world::World` into the ADR-0002 buffers; [`Marcher`] draws it.
+
+pub mod camera;
+pub mod gpu_world;
+pub mod marcher;
+pub mod readback;
+
+pub use camera::Camera;
+pub use gpu_world::{GpuWorld, MirrorError, SyncStats};
+pub use marcher::Marcher;
+pub use wgpu;
+
+/// The source of the primary-ray shader, for headless validation.
+pub const MARCH_WGSL: &str = include_str!("shaders/march.wgsl");
+
+/// Limits to request from `adapter`: the defaults, with the storage-binding and buffer-size
+/// limits raised to what a brick pool of `pool_bytes` needs, capped at what the adapter offers.
+pub fn limits_for(adapter: &wgpu::Adapter, pool_bytes: u64) -> wgpu::Limits {
+    let offered = adapter.limits();
+    let mut l = wgpu::Limits::default();
+    l.max_storage_buffer_binding_size = offered
+        .max_storage_buffer_binding_size
+        .min(pool_bytes.max(l.max_storage_buffer_binding_size));
+    l.max_buffer_size = offered
+        .max_buffer_size
+        .min(pool_bytes.max(l.max_buffer_size));
+    l
+}

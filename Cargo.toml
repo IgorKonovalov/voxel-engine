@@ -27,7 +27,16 @@ unimplemented = "warn"
 [workspace.dependencies]
 # Versions are pinned exactly and live here, once. A crate takes a dependency
 # with `foo.workspace = true`. Nothing is listed until a plan needs it.
+bytemuck = { version = "=1.25.2", features = ["derive"] }
 criterion = { version = "=0.8.2", default-features = false, features = ["cargo_bench_support"] }
+glam = { version = "=0.34.1", features = ["bytemuck"] }
+png = "=0.18.1"
+pollster = "=1.0.1"
+# Engine crates other engine crates depend on. The exact version tracks
+# [workspace.package].version above; bump both together.
+vxe-world = { path = "crates/vxe-world", version = "=0.1.0" }
+# Only the backends we ship (ADR-0001): Vulkan on Linux and Windows, DX12 on Windows.
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "dx12", "wgsl"] }
 
 [profile.release]
 # The world and the ray marcher are the hot paths; LTO and a single codegen

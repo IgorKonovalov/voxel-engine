@@ -11,3 +11,10 @@ description = "placeholder; see docs/roadmap.md"
 workspace = true
 
 [dependencies]
+bytemuck.workspace = true
+glam.workspace = true
+vxe-world.workspace = true
+wgpu.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true

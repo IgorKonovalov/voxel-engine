@@ -15,3 +15,7 @@ workspace = true
 vxe-world = { path = "../../crates/vxe-world" }
 vxe-render = { path = "../../crates/vxe-render" }
 vxe-app = { path = "../../crates/vxe-app" }
+
+[dev-dependencies]
+png.workspace = true
+pollster.workspace = true
