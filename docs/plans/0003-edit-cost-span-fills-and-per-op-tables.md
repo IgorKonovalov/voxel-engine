@@ -101,6 +101,10 @@ Shared conventions for every phase:
   Phase 1, `apps/flythrough/tests/determinism.rs` with its constant `0x2b6b_6a0d_1f9b_8d75`, and
   `raycast_hit_list_is_pinned` with `0xa0f2_c477_8892_c8fb`. A phase that moves either constant
   has a defect; the constant is not re-blessed.
+- **The edit path keeps Plan 0002's side effects** (amended at Plan 0002's close): `apply`
+  holds the store map's read lock for the whole op, marks the store's dirty-chunk set and
+  sets `Chunk::is_edited` on every chunk it changes. `crates/vxe-world/tests/stream.rs` and
+  `crates/vxe-world/tests/persist.rs` stay green and unchanged in every phase.
 - No `f32` or `f64` enters `edit.rs` or `shape.rs`. `i64::isqrt` (stable since Rust 1.84) is
   the square root.
 - The bench is run with `cargo bench -p vxe-world --bench edits` on the dev box; every reading
@@ -206,8 +210,10 @@ Shared conventions for every phase:
     intervals, machine and commit. If `worst` reads 2.0 ms or more, the log records the
     Phase 1 breakdown repeated at the tip and the plan stops here without widening the figure:
     the close decides between a follow-up and an `nfr.md` revision with the reading.
-  - `cargo run --release -p flythrough -- --seed 1`, key `B` (100 radius-10 carves within 10 m
-    of the spawn): the log records the `bench:` line's edit CPU time and sync bytes on the dev
+  - `cargo run --release -p flythrough -- --level --seed 1`, key `B` or the `--bench` flag
+    (100 radius-10 carves within 10 m of the spawn, on the bounded level so the figures compare
+    with Plans 0001 and 0002; amended at Plan 0002's close, since the fly-through now streams
+    by default): the log records the `bench:` line's edit CPU time and sync bytes on the dev
     box, before and after this plan.
   - `nfr.md` §4 carries the `worst` reading as a dev-reference reading under the figure, with
     machine and commit, replacing nothing (the figure stays 2 ms).

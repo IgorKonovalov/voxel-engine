@@ -276,7 +276,8 @@ Shared conventions for every phase:
   `crates/vxe-sim/benches/controller.rs`, `crates/vxe-world/benches/coarse.rs`,
   `crates/vxe-sim/Cargo.toml`, `crates/vxe-world/Cargo.toml`, `docs/nfr.md`.
 - **Done when:**
-  - `cargo run --release -p flythrough -- --seed 1 --walk` spawns the body at the spawn pocket
+  - `cargo run --release -p flythrough -- --level --seed 1 --walk` (the bounded level: the
+    coarse grid is not wired to streaming in this plan; amended at Plan 0002's close) spawns the body at the spawn pocket
     and it falls to the pocket floor; `G` toggles between fly and walk; in walk mode `W A S D`
     move at 3 m/s, `Space` jumps, holding `Space` against a wall with a standable top within
     1.2 m climbs it; `L`-style debug lines print `walk: grounded`, `walk: stepped`, `walk:
@@ -422,6 +423,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
-- Wire `CoarseGrid::chunk_loaded` and `chunk_evicted` to Plan 0002's `StreamEvents`.
+- Wire `CoarseGrid::chunk_loaded` and `chunk_evicted` to Plan 0002's `StreamEvents`; a
+  `demoted` chunk (full to LOD-only) counts as evicted for the grid.
 - A support-radius parameter smaller than the body radius, if the overhang shows.
 - HRTF-side use of `Contact` for footstep material (Plan 0006 reads the material table).
