@@ -252,7 +252,7 @@ work), and the light (real-time GI standing in for the baked occlusion).
 - **Visible proof:** a knock in the fly-through sounds different behind thin and thick walls.
 - **ADRs expected:** HRTF source and audio thread model.
 
-### M5: Simulation split and scripting
+### M5: Simulation split and scripting (Plan 0007 drafts the split and the log; the WASM host gets its own plan after Plan 0007 closes, since it binds the server API; the Lua host is deferred until a consumer asks)
 
 - An authoritative world plus edit log on the server side; a client mirror fed by ops over an
   in-memory channel; snapshot and replay from seed plus log.
@@ -263,7 +263,7 @@ work), and the light (real-time GI standing in for the baked occlusion).
   identical on both CI arms.
 - **ADRs expected:** scripting split and binding style; channel abstraction.
 
-### M6: Entities as voxel models
+### M6: Entities as voxel models (Plan 0008 drafts the `.vox` import; the render half follows Plan 0005)
 
 - `vxe-assets`: `.vox` import with material mapping.
 - `vxe-render`: instanced voxel volumes with transforms traced in the same pipeline (a small
@@ -272,13 +272,13 @@ work), and the light (real-time GI standing in for the baked occlusion).
 - **Visible proof:** a golden image of an animated model casting a shadow on the world.
 - **ADRs expected:** entity representation.
 
-### M7: Tooling
+### M7: Tooling (Plan 0008 drafts prefab stamping, Plan 0010 the stats HUD)
 
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane
   (`criterion` for CPU, timestamp queries for GPU) with readings committed per named machine.
 
-### M8: Volumetrics, debris and collapse
+### M8: Volumetrics, debris and collapse (Plan 0009 drafts the support query and the collapse ops; the cosmetic rigid-body layer follows M6)
 
 - Dust and fog in the ray marcher; short-lived particle debris from edits.
 - **Support query** in `vxe-world`: after an edit, the set of coarse-grid cells (0.8 m, from
