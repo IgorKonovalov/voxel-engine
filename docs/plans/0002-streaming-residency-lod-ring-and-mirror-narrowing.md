@@ -1,11 +1,11 @@
 # 0002: Streaming residency, an LOD-only ring, and a narrowed, sharded mirror
 
-> **Status:** draft
+> **Status:** approved (2026-10-16, amended at Plan 0001's close)
 > **Created:** 2026-10-16
 > **Milestone:** M1 in `docs/roadmap.md` (second of two plans; closes M1)
 > **Related ADRs:** [ADR-0003](../adrs/0003-sphere-residency-with-lod-ring-and-edit-persistence.md) (residency tiers, LOD-only ring, persistence, edit/eviction exclusion), [ADR-0004](../adrs/0004-palette-narrowed-sharded-brick-pool.md) (8-bit palette mirror, sharded pool), ADR-0002 (layout, access model), ADR-0001 (stack)
-> **Prerequisite:** Plan 0001 closed, including its Phase 8 (brick occupancy masks). This plan
-> assumes the `brick_masks` binding and the block-level marcher step exist.
+> **Prerequisite:** Plan 0001 closed (done 2026-10-16, v0.2.0), including its Phase 8 (brick
+> occupancy masks) and its fix pass (batched runs in `GpuWorld::sync`).
 
 ## TL;DR
 
@@ -32,9 +32,11 @@ add four problems this plan must solve:
   assumed. A 32³-chunk cube mirrors to 3.5 GB at `u16`, over the 3 GB world line, before any LOD.
 - **Binding limits.** One storage binding holds at most 2 GiB on the dev box and 128 MiB on
   lavapipe. The level-size pool (about 375 MiB) already fails on lavapipe.
-- **Upload.** The initial mirror of the level is 383 608 one-brick `write_buffer` calls taking
-  853 to 888 ms, the largest item in time to first frame. A streaming world uploads all the
-  time, under the 1.0 ms streaming line of `nfr.md` §2.
+- **Upload.** Plan 0001's fix pass batched the initial mirror into runs of consecutive pool
+  slots (349 to 357 ms for the level, down from 853 to 888 ms), but `sync` still visits every
+  chunk under a write lock and writes one record per dirty chunk. In the fly-through, 100
+  carves then one `sync` read 3.9 to 12.9 ms of render-thread CPU for 1.2 to 2.0 MB, against
+  the 1.0 ms streaming line of `nfr.md` §2. A streaming world uploads all the time.
 - **Persistence.** Edits are ops on resident chunks. A chunk that leaves residency must come
   back with its edits (`nfr.md` §5, last bullet).
 
@@ -138,6 +140,12 @@ Shared conventions for every phase:
   ticks to milliseconds with its own frame timer (the app shell's `#[allow]` pattern).
 - **Tests drive the streamer synchronously** with `wait_idle(&world)`, which blocks until the
   queue is empty and all results are polled. No test sleeps.
+- **Golden test time.** On the Linux CI arm Plan 0001's golden tests took up to 67 s each,
+  over its 30 s line, because each test regenerates the cave and renders it several times.
+  Every golden test this plan adds or changes generates each scene once per test binary and
+  reuses one device. On the dev box's llvmpipe the slowest golden test finishes within 10 s
+  (CI runners read about 2.5 times slower), and the log records the slowest per phase that
+  touches `golden.rs`.
 - New dependencies: none expected. Threads, the queue, channels and file I/O are `std`. Spill
   tests use a directory under `std::env::temp_dir()` named from the test name and
   `std::process::id()`, removed by the test.
@@ -222,9 +230,10 @@ Shared conventions for every phase:
     records and pool decodes to that chunk's CPU voxels. The live pool slot count equals the
     `Full` bricks of the 42 chunks. The 22 evicted chunks' slots are on the free list.
   - On the level-size seed-1 world, the initial sync issues at most `3 × chunks + 8` queue
-    writes and copy commands (`SyncStats::writes`; Plan 0001's path issued one per brick,
-    383 608 or more). The log records the dev-box upload time against Plan 0001's 853 to
-    888 ms.
+    writes and copy commands (`SyncStats::writes`). The log records the dev-box upload time
+    against Plan 0001's 349 to 357 ms.
+  - The fly-through's `B` key (bounded `--level` world) prints its `sync` time; the log records
+    five readings against Plan 0001's 3.9 to 12.9 ms for 1.2 to 2.0 MB.
   - With `sync_budget_bytes = 8 MiB`, every sync of that world writes at most 8 MiB plus one
     chunk's largest upload (526 848 B: a wide chunk, 512 × 1024 + 2560). The first sync
     includes the chunk holding the focus voxel. `SyncStats::pending_chunks` reaches 0.
@@ -357,6 +366,10 @@ Shared conventions for every phase:
     - residency latency from wanted to mirrored (ticks converted to ms): p95 and max,
       against the 500 ms proposal.
     - peak mirror bytes, resident RAM and persisted RAM.
+    - march-pass GPU time over the flight (timestamp queries, when the adapter has
+      `Features::TIMESTAMP_QUERY`): p50, p99 and max. Plan 0001's close saw 3.8 to 8.1 ms at
+      2530 × 1378 away from spawn, against 1.59 ms at 1080p from spawn, so the spawn pose
+      alone does not defend §2.
   - `world_budget --stream R_FULL,R_LOD` builds the residency around the unbounded cave's
     spawn headlessly. It reports chunks per tier, CPU bytes and the projected mirror bytes
     (at 8 bits, palettes and records included, mips counted). It runs for `R_FULL` in
@@ -419,7 +432,7 @@ GPU mirror after this plan (ADR-0004 over ADR-0002), little-endian u32 words:
 |---|---|---|
 | §3 world VRAM (3 GB) | Projected, a guess from Plan 0001's 20.79 % `Full` fraction: about 0.99 GB for 17 077 full chunks at `r_full = 16` (57.9 KB each: pool 54.5 KB, masks 0.85 KB, record 2.56 KB), plus about 0.67 GB for 40 700 ring chunks at `r_lod = 24`. The ring's per-chunk cost (about 16.5 KB, assuming 35 % of level-1 mip-bricks are `Full`) has never been measured. | `world_budget --stream` sweep (six rows), and the autopilot's peak mirror bytes, dev box |
 | §3 world RAM (4 GB) | Resident full chunks at about 117 KB each (about 2.0 GB at `r_full = 16`), mips, and persisted chunks | the same sweep and the autopilot's RAM line |
-| §2 primary rays (3.0 ms) | The palette lookup and the LOD walk; expected small | spawn-pose timestamps at 1080p before and after Phase 4, and at close, dev reference |
+| §2 primary rays (3.0 ms) | The palette lookup and the LOD walk; expected small | spawn-pose timestamps at 1080p before and after Phase 4, and at close, plus the autopilot's march p50/p99 over the flight, dev reference |
 | §2 streaming line (1.0 ms) | First real reading | the autopilot's render-thread streaming CPU, p99 and max |
 | §5 residency latency (500 ms) and throughput | First reading under motion. At 10 m/s the full sphere's leading face needs about 1260 chunks/s and the ring's about 2830 chunks/s; together about 1.1e9 voxels/s, against about 1.65e9 on the dev box's 15 workers at Plan 0001's per-thread rate | the autopilot's latency p95 and max and its unready-near frames; generation voxels/s/worker from `StreamStats` |
 | §6 determinism | Mips join the vector; streaming changes no voxel | `determinism.rs` on both arms; Phase 1 and 2 hash tests |
@@ -458,16 +471,21 @@ late is acceptable; a hole near the camera is not, and the unready-near counter 
 - **Window size.** A cubic window of side 51 is 132 651 table entries (about 0.5 MB). With
   several focus points, chunks outside the camera's window are resident but not mirrored.
   That is intended: one camera, one window.
-- **Plan 0001 drift.** If Plan 0001's close changes the mask buffer or the marcher
-  structure, Phases 3 to 5 and 7 adapt. Approve this plan after that close, not before.
+- **Plan 0001 drift.** Resolved at its close: the mask buffer and the marcher structure are
+  as this plan assumes. `GpuWorld::sync` already stages `Full` bricks in runs of consecutive
+  slots (112cfa0); Phase 3 builds on that, not on per-brick writes.
+- **CI runner image.** `ubuntu-latest` moves to Ubuntu 26 from 2026-10-19, with a newer Mesa.
+  If the goldens fail there with no code change, re-bless on the new runner's lavapipe in its
+  own commit and record it; never widen the floor.
 - **Open:** whether the LOD record should get its own smaller stride (it uses 73 of 512
   entries; a shared stride costs about 104 MB at the default ring). It stays one stride
   unless the sweep says otherwise.
 
 ## What this plan does NOT do
 
-- **The edit-cost miss** (4.9 ms against §4's 2 ms): its own plan after this one, or an
-  `nfr.md` revision the close of Plan 0001 decides.
+- **The edit-cost miss** (4.9 ms bench, 3.1 to 4.6 ms in the fly-through, against §4's
+  2 ms): the budget stands (owner's call at Plan 0001's close), and the fix is its own plan
+  after this one.
 - **The far-field clipmap** and a `WorldSource` method that generates coarse cells directly:
   its own plan after M1.
 - **LOD rays inside full-detail chunks**, CPU queries or raycasts against LOD-only chunks.

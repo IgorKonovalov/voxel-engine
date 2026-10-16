@@ -9,7 +9,7 @@ state from `git log`. Completed plans move to `done/`.
 
 | Plan | Title | Status | Live constraint |
 |------|-------|--------|-----------------|
-| [0002](0002-streaming-residency-lod-ring-and-mirror-narrowing.md) | Streaming residency, an LOD-only ring, and a narrowed, sharded mirror | draft | Second half of M1; approve only after Plan 0001 closes (it builds on 0001's Phase 8 masks and its review's call on the readings). Paired with ADR-0003 and ADR-0004. |
+| [0002](0002-streaming-residency-lod-ring-and-mirror-narrowing.md) | Streaming residency, an LOD-only ring, and a narrowed, sharded mirror | approved | Second half of M1; closes it. Amended at Plan 0001's close with its upload, golden-time and edit-cost readings. Paired with ADR-0003 and ADR-0004. |
 
 ## Recently closed
 
