@@ -457,8 +457,8 @@ says so.
 |---|---|---|---|
 | 1: Brick map and the first carve | dev | done | b78443f |
 | 2: All shapes, all modes, indestructible, atomic failure | dev | done | 4f2cd02 |
-| 3: Raycast, queries, tool-along-ray | dev | done | committed with this row |
-| 4: Cave source, determinism vector, world budget readings | dev | not started | |
+| 3: Raycast, queries, tool-along-ray | dev | done | 64d93d8 |
+| 4: Cave source, determinism vector, world budget readings | dev | done | committed with this row |
 | 5: GPU mirror and primary-ray marcher with a golden image | dev | not started | |
 | 6: Headlamp with a shadow ray | dev | not started | |
 | 7: Window shell and the fly-through | dev | not started | |
@@ -486,6 +486,15 @@ each. Empty is fine.)_
 - Phase 3: `EditOp::tool_along_ray` takes `&World` as its first argument and returns the resolved capsule op; the caller applies it (commit of Phase 3).
 - Phase 3: the raycast skips a non-resident chunk as one empty 64³ cell; `Hit::t` is the exact entry parameter rounded down (commit of Phase 3).
 - Phase 3: the ten brute-force directions are `[256,256,256]` plus nine from SplitMix64 seed `0x1ca57` (commit of Phase 3).
+- Phase 4: `crates/vxe-world/src/lib.rs` (`pub mod hash`) and the root `Cargo.toml` (`criterion` in `[workspace.dependencies]`) changed outside the phase's `Files touched` (commit of Phase 4).
+- Phase 4: the cave's material table is `flythrough::cave_materials()` in `apps/flythrough/src/lib.rs`, not in `cave.rs`, because its albedo rows are floating point (commit of Phase 4).
+- Phase 4: `hash.rs` also carries `World::voxel_hash` and `ValueNoise::{cell_of, corners, interpolate}`; the cave evaluates a non-uniform brick from one set of lattice corners per noise, bit-identical to `sample` (commit of Phase 4).
+- Phase 4: cave parameters: caverns on a 64-voxel lattice, detail on a 16-voxel lattice at 1/8 weight, air above density 6000, ore on a 16-voxel lattice above 28000, early-out margin 4; spawn is the extent's centre voxel (commit of Phase 4).
+- Phase 4: the float grep also rejects digit-dot-digit literals (commit of Phase 4).
+- Phase 4: `criterion` 0.8.2 is taken with default features off (`cargo_bench_support` only) (commit of Phase 4).
+- Phase 4: the edit bench reads 4.92 ms against the §4 budget of 2 ms (see Close triggers).
+- Phase 4: the measured `Full` fraction (23.41 % at level size, 20.79 % at 32³ chunks) is above the 10 % `nfr.md` §3 assumption; the 32³ mirror (3496.2 MiB) exceeds the 3 GB §3 world-VRAM line.
+- Phase 4: the determinism constant `0x2b6b_6a0d_1f9b_8d75` is blessed on Linux; the Windows arm has not run it yet (nothing pushed).
 
 ### Close triggers
 
@@ -494,6 +503,9 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **What shipped:**
 - **Public API changed:**
 - **Budget readings:**
+  - §4 edit cost: `cargo bench -p vxe-world --bench edits`, 100 radius-10 carves on a fresh solid world: 4.9199 ms (CI 4.8698 to 4.9768 ms). AMD Ryzen 9 5900HS, release bench profile, Phase 4 commit.
+  - §3 world memory: `world_budget --chunks 20x20x8 --seed 1`: 3200 chunks, 383 608 Full / 1 254 792 Uniform (23.41 %), CPU 419 028 992 B, mirror 402 437 184 B. `--chunks 32x32x32 --seed 1`: 32 768 chunks, 3 487 326 Full / 13 289 890 Uniform (20.79 %), CPU 3 839 457 280 B, mirror 3 666 029 424 B. AMD Ryzen 9 5900HS, release, Phase 4 commit.
+  - §5 generation: 0.509 s at 20x20x8 (1.029e8 voxels/s/thread), 4.785 s at 32x32x32 (1.122e8 voxels/s/thread), 16 threads, same machine and commit.
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 

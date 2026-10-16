@@ -27,6 +27,7 @@ unimplemented = "warn"
 [workspace.dependencies]
 # Versions are pinned exactly and live here, once. A crate takes a dependency
 # with `foo.workspace = true`. Nothing is listed until a plan needs it.
+criterion = { version = "=0.8.2", default-features = false, features = ["cargo_bench_support"] }
 
 [profile.release]
 # The world and the ray marcher are the hot paths; LTO and a single codegen

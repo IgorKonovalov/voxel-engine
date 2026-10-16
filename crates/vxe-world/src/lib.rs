@@ -22,6 +22,7 @@ mod chunk;
 mod coords;
 mod edit;
 mod fixed;
+pub mod hash;
 mod material;
 mod query;
 mod raycast;

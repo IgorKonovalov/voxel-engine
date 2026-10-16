@@ -5,7 +5,7 @@ of the figures below. Each figure is a **proposal until a measurement replaces i
 measurement names the commit, the machine, the resolution and the scene. A plan that touches
 storage or the frame states which figures it affects and measures them at its close.
 
-Written 2026-10-16. Nothing here is measured yet.
+Written 2026-10-16. Readings are added under the figure they measure, each naming its source.
 
 ## 1. Hardware
 
@@ -49,6 +49,17 @@ The world figure rests on the uniform-brick assumption in `roadmap.md` (under 10
 non-uniform at full detail). When exceeded, far chunks drop to LOD-only residency rather than
 the frame dropping.
 
+**Readings (dev reference, 2026-10-16, Plan 0001 Phase 4 commit, `flythrough` cave seed 1,
+`cargo run --release -p flythrough --example world_budget`):**
+
+| Extent (chunks) | `Full` fraction | CPU bytes | Mirror bytes (no LOD) |
+|---|---|---|---|
+| 20 × 20 × 8 (the level, 128 × 128 × 51 m) | 23.41 % | 399.6 MiB | 383.8 MiB |
+| 32 × 32 × 32 (204.8 m cube) | 20.79 % | 3661.6 MiB | 3496.2 MiB |
+
+Both measured `Full` fractions are above the 10 % assumption above; the cave is about 29 %
+air with caverns on a 6.4 m lattice.
+
 ## 4. Edits
 
 - **Cost:** 100 sphere carves of radius 1 m (exactly 4169 voxels each at 10 cm, the lattice
@@ -67,6 +78,10 @@ the frame dropping.
   radius is resident within 500 ms (proposal). At a 100 m radius that is about 1200 chunks per
   second, roughly 300 M voxels per second across the baseline's four cores, so generation
   throughput per core is a measured figure from Plan 0002 on and the radius default follows it.
+  **Reading (dev reference, AMD Ryzen 9 5900HS, 16 threads, 2026-10-16, Plan 0001 Phase 4
+  commit):** the `flythrough` cave generates at 1.03e8 voxels per second per thread at
+  20 × 20 × 8 chunks (0.509 s) and 1.12e8 at 32 × 32 × 32 (4.785 s), bounded and synchronous,
+  from `world_budget`.
 - An edited chunk that is evicted and later reloaded reproduces the edit.
 
 ## 6. Determinism and headless operation

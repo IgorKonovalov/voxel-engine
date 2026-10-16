@@ -11,3 +11,10 @@ description = "placeholder; see docs/roadmap.md"
 workspace = true
 
 [dependencies]
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "edits"
+harness = false
