@@ -300,3 +300,29 @@ fn a_body_beside_a_voxel_edge_falls_and_walks_away() {
     assert_eq!(x, start[0] - 60 * 128);
     assert_eq!(z, 0);
 }
+
+/// A wall of 45-degree voxel stairs, `x + y >= 60`, on the F1 floor: every contact is a voxel
+/// edge with an oblique normal.
+fn oblique_wall() -> World {
+    world(|[x, y, z]| z < 0 || x + y >= 60)
+}
+
+/// A wish 30 degrees off head-on into the oblique wall slides along it at every tick after
+/// the first contact. With the projection onto the wall rounded toward zero per component,
+/// the slide pointed a fraction of a unit into the edge it touched, the sweep stopped it at
+/// once, and the body stood still against the wall about half the ticks.
+#[test]
+fn an_oblique_walk_slides_along_a_voxel_staircase_wall() {
+    let steps = run(&oblique_wall(), S, 120, walk([124, 33]));
+    let first = (1..)
+        .zip(&steps)
+        .find(|(_, s)| !s.r.contacts.is_empty())
+        .map(|(t, _)| t);
+    assert_eq!(first, Some(57));
+    for (t, st) in (1..).zip(&steps).skip(56) {
+        let [mx, my, _] = st.r.moved.0;
+        assert!(mx * mx + my * my >= 32 * 32, "tick {t}: moved {mx}, {my}");
+        assert!(!st.r.blocked, "tick {t}");
+    }
+    assert_eq!(foot(&steps, 120), [12424, 1862, 0]);
+}

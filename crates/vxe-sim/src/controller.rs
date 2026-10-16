@@ -110,7 +110,11 @@ fn add(a: [i64; 3], b: Fixed3) -> [i64; 3] {
 }
 
 /// `w - n (w . n) / |n|²` over the horizontal components of `n`, in `i128`, each component
-/// rounded toward zero. Zero when `n` has no horizontal part.
+/// rounded toward the side `n` points to (up where `n_k > 0`, down where `n_k < 0`), so the
+/// result never points into the wall: `p . n >= 0`. Rounded toward zero instead, `p . n` takes
+/// the sign of `w . n`, which is negative for a wish into the wall, and on an oblique wall the
+/// slide closed on the very edge it touched and the sweep stopped it at once. Zero when `n`
+/// has no horizontal part.
 fn project_on_wall(w: [i64; 2], n: [i64; 3]) -> [i64; 2] {
     let (n, w) = ([n[0], n[1]].map(i128::from), w.map(i128::from));
     let nn = n[0] * n[0] + n[1] * n[1];
@@ -118,7 +122,17 @@ fn project_on_wall(w: [i64; 2], n: [i64; 3]) -> [i64; 2] {
         return [0, 0];
     }
     let dot = w[0] * n[0] + w[1] * n[1];
-    [0, 1].map(|k| (w[k] - n[k] * dot / nn) as i64)
+    [0, 1].map(|k| {
+        let q = n[k] * dot;
+        // `w_k - q / nn`, rounded up where `n_k > 0` (the quotient rounded down) and down
+        // where `n_k < 0` (the quotient rounded up).
+        let s = if n[k] > 0 {
+            q.div_euclid(nn)
+        } else {
+            -(-q).div_euclid(nn)
+        };
+        (w[k] - s) as i64
+    })
 }
 
 /// Whether a sweep stopped on a floor contact.

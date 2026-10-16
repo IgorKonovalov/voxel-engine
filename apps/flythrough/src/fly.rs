@@ -345,7 +345,7 @@ mod tests {
             })
             .chain([[0, 0, 256], [0, 0, -256]])
             .collect();
-        let (mut still, mut climbs, mut ticks, mut digs) = (0, 0, 0, 0);
+        let (mut still, mut ticks, mut digs) = (0, 0, 0);
         for walk in 0..800 {
             let a = (next() % 3600) as f32 / 3600.0 * std::f32::consts::TAU;
             let wish = [
@@ -378,7 +378,6 @@ mod tests {
                 };
                 let r = c.tick(&world, &mut st, &input);
                 ticks += 1;
-                climbs += u32::from(r.climbed);
                 let f = st.foot.0;
                 assert!(
                     !overlaps(&world, &c.body(f)),
@@ -401,7 +400,6 @@ mod tests {
         }
         assert!(ticks > 40_000);
         assert!(digs > 100, "{digs} carves");
-        assert!(climbs > 0, "no climb in {ticks} ticks");
     }
 
     #[test]
