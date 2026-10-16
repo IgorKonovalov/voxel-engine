@@ -288,8 +288,8 @@ to 3 to 4 ms there; a guess until the baseline is measured.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The uniform-brick oracle and the allocation measured | dev | done | committed with this row |
-| 2: A brick-array pool | dev | not started | |
+| 1: The uniform-brick oracle and the allocation measured | dev | done | `baf0ac0` |
+| 2: A brick-array pool | dev | done | committed with this row |
 | 3: An exact span walk for the sphere | dev | not started | |
 | 4: An analytic capsule row | dev | not started | |
 | 5: Readings against the figure | dev | not started | |
@@ -316,6 +316,18 @@ to 3 to 4 ms there; a guess until the baseline is measured.
   36.5 %) does not hold at this tip: `Brick::expand` is 5.0 % of `worst`'s samples inside
   `apply`, `write_rows` 54.2 %, span work 24.9 %. The phases continue as written; Phase 5
   carries the miss path.
+- Phase 2: the pool's list type is `SpareArrays = Vec<Box<[u16; 512]>>` with
+  `#[allow(clippy::vec_box)]` and a reason (each box moves into `Brick::Full` as is).
+- Phase 2: `crates/vxe-world/src/lib.rs` is unchanged (the new API is `World` methods and an
+  associated constant).
+- Phase 2: the streaming workers do not call `reserve_brick_arrays` (a worker holds no
+  `World`); the streamer's eviction and its drop of a chunk that left both bands while
+  loading give unedited chunks' arrays back on the caller's thread (`World::recycle_chunk`).
+- Phase 2: the bench also gains `tool_warm` (the `tool` case with the same reserve), read by
+  Phase 4's done-when; `WARM_ARRAYS` is 2500 (24.9 expansions per `worst` carve and 24.1 per
+  `tool` carve, times 100, rounded up).
+- Phase 2: the fly-through reserves 4096 arrays after each frame's input and edits and before
+  each `--bench` run, and its `bench:` line prints the pool's size in KiB after the carves.
 
 ### Close triggers
 
@@ -364,6 +376,14 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     5.0 % with `Box::new` 4.9 %, `collapse` 2.0 %, libc 3.9 %; `mixed` 49.6 %, 28.3 %
     (15.4 %), 4.0 % (3.9 %), 2.1 %, 3.4 %; `tool` `CapsuleRow::contains` 48.9 %, span work
     68.6 %, `write_rows` 19.4 %, `Brick::expand` 0.8 %.
+  - Phase 2, paired with the Phase 1 tree (`baf0ac0`), alternated, `cargo bench` binaries
+    of both trees, mean [CI]; 1-minute load at the start of each run 1.93 (base), 1.83
+    (Phase 2), 1.75 (base), 1.65 (Phase 2), 2.44 after the last, so the round-2 Phase 2 run
+    is diagnostic. Round 1: base `worst` 3.597 [3.592, 3.602], `mixed` 2.543, `tool` 8.048
+    ms; Phase 2 `worst` 3.504 [3.495, 3.516], `worst_warm` 3.272 [3.268, 3.277], `mixed`
+    2.479, `tool` 8.010, `tool_warm` 7.914 [7.908, 7.921] ms. Round 2: base `worst` 3.539
+    [3.535, 3.543], `mixed` 2.549, `tool` 8.050 ms; Phase 2 (diagnostic) `worst` 3.356,
+    `worst_warm` 3.221, `mixed` 2.447, `tool` 8.024, `tool_warm` 7.925 ms.
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 

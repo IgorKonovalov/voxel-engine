@@ -3,6 +3,17 @@
 use crate::coords::{BRICK_EDGE, BRICK_VOXELS, index_in_brick};
 use crate::material::{AIR, MaterialId};
 
+/// The 512 raw voxels of a `Full` brick.
+pub(crate) type Voxels = [MaterialId; BRICK_VOXELS];
+
+/// Arrays ready to back expanded bricks. Each stays boxed in the list because it moves into
+/// [`Brick::Full`] as the box it is, without a copy or a new allocation.
+#[allow(
+    clippy::vec_box,
+    reason = "the boxes move into Brick::Full; unboxed arrays would be copied into a new box"
+)]
+pub(crate) type SpareArrays = Vec<Box<Voxels>>;
+
 /// 8³ voxels, indexed x-fastest (`x + 8 y + 64 z`).
 ///
 /// Invariant kept by every mutator in this crate: a brick whose voxels are all one material
@@ -75,10 +86,19 @@ impl Brick {
         matches!(self, Self::Full(_))
     }
 
-    /// The raw voxels of a `Full` brick, writable. Expands a `Uniform` brick first.
-    pub(crate) fn expand(&mut self) -> &mut [MaterialId; BRICK_VOXELS] {
+    /// The raw voxels of a `Full` brick, writable. Expands a `Uniform` brick first, into an
+    /// array taken from `spare` when it holds one (every voxel is overwritten), else into a
+    /// fresh allocation.
+    pub(crate) fn expand(&mut self, spare: &mut SpareArrays) -> &mut Voxels {
         if let Self::Uniform(m) = *self {
-            *self = Self::Full(Box::new([m; BRICK_VOXELS]));
+            let v = match spare.pop() {
+                Some(mut v) => {
+                    v.fill(m);
+                    v
+                }
+                None => Box::new([m; BRICK_VOXELS]),
+            };
+            *self = Self::Full(v);
         }
         match self {
             Self::Full(v) => v,
@@ -86,12 +106,15 @@ impl Brick {
         }
     }
 
-    /// Collapses a `Full` brick whose voxels are all equal back to `Uniform`.
-    pub(crate) fn collapse(&mut self) {
+    /// Collapses a `Full` brick whose voxels are all equal back to `Uniform`, and pushes its
+    /// array onto `spare`.
+    pub(crate) fn collapse(&mut self, spare: &mut SpareArrays) {
         if let Self::Full(v) = self {
             let first = v[0];
-            if v.iter().all(|&m| m == first) {
-                *self = Self::Uniform(first);
+            if v.iter().all(|&m| m == first)
+                && let Self::Full(v) = std::mem::replace(self, Self::Uniform(first))
+            {
+                spare.push(v);
             }
         }
     }

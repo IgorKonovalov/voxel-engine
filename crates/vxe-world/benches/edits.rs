@@ -7,6 +7,8 @@
 //!   air, so the carves meet uniform-air, uniform-rock and (after earlier carves) `Full` bricks.
 //! - `tool`: 100 capsule carves of radius 5 voxels and length 30 voxels at seeded centres and
 //!   seeded directions on the solid world.
+//! - `worst_warm` and `tool_warm`: `worst` and `tool` with the world's brick-array pool
+//!   reserved in the untimed setup, as a caller that reserves off the edit path sees them.
 //!
 //! The `expand` group splits what `Brick::expand` costs per 1000 arrays: the allocation on
 //! fresh heap, the allocator's hot path, the 1 KiB fill, and the allocation on heap that was
@@ -193,11 +195,24 @@ fn expand(c: &mut Criterion) {
     g.finish();
 }
 
+/// Arrays reserved for the warm cases: about 25 bricks expanded per carve (24.9 for the
+/// spheres and 24.1 for the capsules, counted over the 100 carves), times 100 carves.
+const WARM_ARRAYS: usize = 2500;
+
+fn solid_world_warm() -> World {
+    let world = solid_world();
+    world.reserve_brick_arrays(WARM_ARRAYS);
+    world
+}
+
 fn edits(c: &mut Criterion) {
     let spheres = sphere_ops();
+    let tools = tool_ops();
     run(c, "worst", solid_world, &spheres);
+    run(c, "worst_warm", solid_world_warm, &spheres);
     run(c, "mixed", mixed_world, &spheres);
-    run(c, "tool", solid_world, &tool_ops());
+    run(c, "tool", solid_world, &tools);
+    run(c, "tool_warm", solid_world_warm, &tools);
 }
 
 criterion_group!(benches, edits, expand);

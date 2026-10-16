@@ -8,7 +8,7 @@
 //! coordinate order (ADR-0002). The store map's read lock is held from before the check until
 //! after the last write, so a streamer cannot evict a chunk the op has checked (ADR-0003).
 
-use crate::brick::Brick;
+use crate::brick::{Brick, SpareArrays};
 use crate::coords::{
     BRICK_EDGE, BRICK_VOXELS, CHUNK_EDGE, CHUNK_EDGE_BRICKS, ChunkCoord, VoxelCoord, brick_slot,
 };
@@ -345,13 +345,19 @@ impl World {
             }
         }
 
+        // One batch of pooled arrays for every brick the op may expand: at most the bricks
+        // its voxel bounds overlap.
+        let be = i64::from(BRICK_EDGE);
+        let bound = (0..3)
+            .map(|k| usize::try_from(hi[k].div_euclid(be) - lo[k].div_euclid(be) + 1).unwrap_or(0))
+            .fold(1usize, usize::saturating_mul);
+        let mut spare = self.brick_arrays.take(bound);
         let targets = TargetTable::new(op.mode, &self.materials);
         let mut tally = Tally::new(self.materials.len());
         let mut touched = Vec::new();
         for (coord, vlo, vhi, chunk) in chunks {
             let mut chunk = write(chunk);
             let base = coord.min_voxel().0.map(i64::from);
-            let be = i64::from(BRICK_EDGE);
             let blo = [0, 1, 2].map(|k| (vlo[k] - base[k]) / be);
             let bhi = [0, 1, 2].map(|k| (vhi[k] - base[k]) / be);
             let mut chunk_changed = false;
@@ -388,7 +394,13 @@ impl World {
                         let ehi = [0, 1, 2].map(|k| (bmin[k] + be - 1).min(vhi[k]));
                         let slot = brick_slot(b.map(|v| v as i32));
                         let brick = chunk.brick_mut(slot);
-                        if edit_brick(brick, &targets, cov, bmin, elo, ehi, &mut rows, &mut tally) {
+                        let edit = BrickEdit {
+                            cov,
+                            bmin,
+                            elo,
+                            ehi,
+                        };
+                        if edit_brick(brick, &targets, edit, &mut rows, &mut spare, &mut tally) {
                             chunk.mark_dirty(slot);
                             chunk_changed = true;
                         }
@@ -403,6 +415,7 @@ impl World {
         }
 
         drop(map);
+        self.brick_arrays.give(spare);
         let aabb = tally
             .any
             .then(|| (VoxelCoord(to_i32(tally.lo)), VoxelCoord(to_i32(tally.hi))));
@@ -414,22 +427,33 @@ impl World {
     }
 }
 
-/// Applies the op to the voxels `elo..=ehi` of the brick whose minimum voxel is `bmin`.
-/// Returns whether any voxel changed. Leaves the brick collapsed if it became uniform.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the inner loop of apply; a struct would only rename these"
-)]
-fn edit_brick(
-    brick: &mut Brick,
-    targets: &TargetTable,
+/// Where an op meets one brick: the brick's coverage, its minimum voxel, and the voxels
+/// `elo..=ehi` of it inside the op's bounds.
+#[derive(Clone, Copy)]
+struct BrickEdit {
     cov: Coverage,
     bmin: [i64; 3],
     elo: [i64; 3],
     ehi: [i64; 3],
+}
+
+/// Applies the op to the voxels `elo..=ehi` of the brick whose minimum voxel is `bmin`.
+/// Returns whether any voxel changed. Expands into an array from `spare` and leaves the
+/// brick collapsed, its array pushed onto `spare`, if it became uniform.
+fn edit_brick(
+    brick: &mut Brick,
+    targets: &TargetTable,
+    edit: BrickEdit,
     rows: &mut RowCache<'_>,
+    spare: &mut SpareArrays,
     tally: &mut Tally,
 ) -> bool {
+    let BrickEdit {
+        cov,
+        bmin,
+        elo,
+        ehi,
+    } = edit;
     let whole = (0..3).all(|k| elo[k] == bmin[k] && ehi[k] == bmin[k] + i64::from(BRICK_EDGE) - 1);
     if let Brick::Uniform(m) = *brick {
         let Some(n) = targets.target(m) else {
@@ -469,14 +493,21 @@ fn edit_brick(
         TargetTable::Carve {
             ref carves,
             rows: n,
-        } => write_rows(brick, bmin, &spans, CarveBits { carves, rows: n }, tally),
-        TargetTable::Fill(m) => write_rows(brick, bmin, &spans, FillAir(m), tally),
+        } => write_rows(
+            brick,
+            bmin,
+            &spans,
+            CarveBits { carves, rows: n },
+            spare,
+            tally,
+        ),
+        TargetTable::Fill(m) => write_rows(brick, bmin, &spans, FillAir(m), spare, tally),
         TargetTable::Replace { from, to } => {
-            write_rows(brick, bmin, &spans, ReplaceOne { from, to }, tally)
+            write_rows(brick, bmin, &spans, ReplaceOne { from, to }, spare, tally)
         }
     };
     if changed {
-        brick.collapse();
+        brick.collapse(spare);
     }
     changed
 }
@@ -525,16 +556,17 @@ impl<'a> RowCache<'a> {
 /// Writes every row span of `spans` (brick-local, row `y + 8 z`, empty when `x0 > x1`) into
 /// `brick`: per voxel, read the old value, look up its target, write it, count the old value.
 /// Counts go to `tally` per run of equal old values, and the bounds once per brick, from the
-/// first and last changed voxel of each row. Expands the brick once. Returns whether any voxel
-/// changed; does not collapse.
+/// first and last changed voxel of each row. Expands the brick once, into an array from
+/// `spare` when it has one. Returns whether any voxel changed; does not collapse.
 fn write_rows<T: Target>(
     brick: &mut Brick,
     bmin: [i64; 3],
     spans: &[(u8, u8); BRICK_EDGE as usize * BRICK_EDGE as usize],
     t: T,
+    spare: &mut SpareArrays,
     tally: &mut Tally,
 ) -> bool {
-    let voxels = brick.expand();
+    let voxels = brick.expand(spare);
     // The run of equal old values being counted, and the brick-local bounds of the changes.
     let (mut run_m, mut run_n) = (AIR, 0u32);
     let (mut lo, mut hi) = ([usize::MAX; 3], [0usize; 3]);
