@@ -1,6 +1,6 @@
 # 0014: Edit cost under 2 ms, second pass: the allocation measured, a brick-array pool, cheaper sphere spans and an analytic capsule row
 
-> **Status:** approved
+> **Status:** in-progress
 > **Created:** 2026-10-16
 > **Milestone:** M1 follow-up in `docs/roadmap.md` (the `nfr.md` §4 miss, carried from Plans
 > 0001 and 0003)
@@ -288,7 +288,7 @@ to 3 to 4 ms there; a guess until the baseline is measured.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The uniform-brick oracle and the allocation measured | dev | not started | |
+| 1: The uniform-brick oracle and the allocation measured | dev | done | committed with this row |
 | 2: A brick-array pool | dev | not started | |
 | 3: An exact span walk for the sphere | dev | not started | |
 | 4: An analytic capsule row | dev | not started | |
@@ -296,9 +296,26 @@ to 3 to 4 ms there; a guess until the baseline is measured.
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: the `perf record` breakdowns are of a scratch harness (uncommitted) that runs the
+  bench's three cases (same worlds, same 100 ops, same release profile, with debuginfo) and
+  enables the counters (`perf record --delay=-1 --control fifo:...`) only around each
+  iteration's 100 `apply` calls, 300 iterations; every sample is inside `World::apply`. In
+  `perf record` of the criterion bench binary itself, DWARF call chains from `row_span` and
+  `isqrt` (out-of-line) end before `World::apply` (also with a 64 KiB stack copy), so a
+  "chain passes through `apply`" filter dropped those samples; that record put `Box::new` at
+  2.1 % and `write_rows` at 68.4 % of the 20825 samples it kept for `worst`.
+- Phase 1: `perf stat` is recorded twice per case: on the criterion bench process
+  (`--profile-time 10`, the done-when's form, generation and drops included), and on the
+  harness with counters only around the applies (apply alone). `perf stat --control` prints
+  user and system seconds as 0; its task-clock is the apply time.
+- Phase 1: `perf record -e page-faults:u -c 1 --call-graph dwarf` of the bench (`worst` and
+  `tool`, 3 s each) found no page fault with `World::apply` in its chain.
+- Phase 1: the 1 KiB fill is about 1.4 % of `worst` (below the 10 % that triggers Phase 2's
+  fused expand), so Phase 2 keeps the fill.
+- Phase 1: the plan's budget arithmetic (the pool removing about 1.2 ms of `Brick::expand`'s
+  36.5 %) does not hold at this tip: `Brick::expand` is 5.0 % of `worst`'s samples inside
+  `apply`, `write_rows` 54.2 %, span work 24.9 %. The phases continue as written; Phase 5
+  carries the miss path.
 
 ### Close triggers
 
@@ -306,7 +323,47 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 - **What shipped:**
 - **Public API changed:**
-- **Budget readings:**
+- **Budget readings:** (AMD Ryzen 9 5900HS dev box, release bench profile, exclusive perf lock,
+  1-minute load from `uptime` before / after each run)
+  - Phase 1, Plan 0003's tip edit path (`2129bfb` source, Phase 1 bench file), load 1.65 /
+    1.45: `cargo bench` `worst` 3.557 ms [3.552, 3.562]; `mixed` 2.554 ms [2.550, 2.558];
+    `tool` 8.060 ms [8.053, 8.067]. `expand` group, per 1000 arrays: `fresh_kept` 46.19 µs
+    [46.10, 46.29]; `alloc_drop` 65.11 µs [64.78, 65.47]; `fill` 20.45 µs [20.43, 20.48];
+    `pretouched` 45.32 µs [45.13, 45.49]. Per expansion: about 46 ns, of which the fill
+    about 20 ns (44 %), the allocator about 25 ns (54 %), first touch about 1 ns
+    (`fresh_kept` minus `pretouched`, 2 %).
+  - Phase 1 counts per carve (uncommitted instrumentation): first `worst` carve 32 bricks
+    expanded, 0 collapsed, 416 rows solved; over the 100 `worst` carves 24.9 expanded, 0.1
+    collapsed, 546 rows per carve (`mixed` 16.6, 0.1, 460). First `tool` carve 26 expanded,
+    0 collapsed, 1284 rows solved, 6821 capsule tests (5.31 per row; 643 rows with no inside
+    centre took 4027, 6.26 each); over the 100 `tool` carves 24.1 expanded, 677 rows, 10.99
+    tests per row, 11.78 per empty row.
+  - Phase 1 `perf stat -e task-clock,page-faults,cycles:u,instructions:u`, criterion process
+    (`--profile-time 10`): `worst` 14224.6 ms task-clock, 1080813 faults, 30.49 G cycles,
+    103.12 G instructions, user 9.82 s, sys 4.96 s; `mixed` 14669.9 ms, 1002419, 30.79 G,
+    101.12 G, user 9.95 s, sys 5.47 s; `tool` 11863.8 ms, 412754, 31.90 G, 104.42 G, user
+    10.03 s, sys 2.08 s. Apply only (harness, 300 iterations): `worst` 1056.5 ms (3.52 ms per
+    iteration), 1273 faults (4.2 per iteration), 3.412 G cycles, 12.418 G instructions;
+    `mixed` 780.5 ms, 848, 2.517 G, 8.843 G; `tool` 2448.9 ms, 1234, 7.947 G, 26.527 G.
+  - Phase 1 `perf record -F 4999 -e cycles:u --call-graph dwarf`, harness, load 1.84 / 1.79.
+    Top ten by self time (leaf frame, inlined functions as their own symbol), share of the
+    samples inside `World::apply` (samples):
+    `worst` (5877): `write_rows` 20.2 % (1185), `CarveBits::target` 10.7 % (630),
+    `int_sqrt::u32_stages` 7.9 % (464), `edit_brick` 6.5 % (383), `RowCache::span` 4.9 %
+    (287), `Range::is_empty` 4.8 % (285), `usize::min` 4.8 % (280), `Shape::row_span` 4.0 %
+    (234), libc 3.8 % (223), `i64::lt` 3.1 % (181).
+    `mixed` (4353): `write_rows` 18.2 % (794), `target` 10.7 % (465), `u32_stages` 9.8 %
+    (427), `edit_brick` 6.2 % (268), `row_span` 5.1 % (221), `is_empty` 4.4 % (193), `min`
+    4.3 % (186), `RowCache::span` 4.2 % (182), libc 3.2 % (141), `overflowing_mul` 2.8 % (122).
+    `tool` (12628): `CapsuleRow::contains` 48.3 % (6104), `write_rows` 7.5 % (950),
+    `row_span` 4.6 % (579), `CapsuleRow::new` 4.1 % (522), `target` 3.8 % (483),
+    `edit_brick` 3.7 % (469), `lt` 3.1 % (396), the capsule scan's `find` 3.1 % (387),
+    `RowCache::span` 2.9 % (362), `is_empty` 2.2 % (280).
+    Inclusive (call chain holds the frame): `worst` `write_rows` 54.2 %, span work
+    (`RowCache::span`, `row_span`, `isqrt`) 24.9 % with `isqrt` 12.5 %, `Brick::expand`
+    5.0 % with `Box::new` 4.9 %, `collapse` 2.0 %, libc 3.9 %; `mixed` 49.6 %, 28.3 %
+    (15.4 %), 4.0 % (3.9 %), 2.1 %, 3.4 %; `tool` `CapsuleRow::contains` 48.9 %, span work
+    68.6 %, `write_rows` 19.4 %, `Brick::expand` 0.8 %.
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 

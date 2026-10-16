@@ -384,6 +384,33 @@ fn seeded_op(i: usize, rng: &mut SplitMix64) -> EditOp {
     }
 }
 
+/// Runs the oracle's 200 seeded ops (seed `0x0003_0001`, [`seeded_op`]) in sequence on
+/// `world`: each result or error, and every voxel in the op's bounds afterwards, equals what
+/// the brute-force reference says. Returns how many ops changed a voxel and how many failed on
+/// a non-resident chunk.
+fn run_seeded_ops_against_the_reference(world: &World) -> (usize, usize) {
+    let mut rng = SplitMix64(0x0003_0001);
+    let mut changed = 0;
+    let mut failed = 0;
+    for i in 0..200 {
+        let op = seeded_op(i, &mut rng);
+        let expected = reference_apply(world, &op);
+        assert_eq!(world.apply(&op), expected.result, "op {i}: {op:?}");
+        if let Some((lo, hi)) = expected.bounds {
+            assert!(
+                materials_in(world, lo, hi) == expected.after,
+                "op {i}: voxels differ from the reference after {op:?}"
+            );
+        }
+        match &expected.result {
+            Ok(r) if !r.changed_from.is_empty() => changed += 1,
+            Ok(_) => {}
+            Err(_) => failed += 1,
+        }
+    }
+    (changed, failed)
+}
+
 /// 200 seeded ops of every shape and mode on a world where every brick is `Full` and all six
 /// materials occur: `World::apply` returns exactly what the brute-force reference says, and
 /// leaves every voxel in the op's bounds as the reference says.
@@ -394,28 +421,37 @@ fn apply_matches_the_reference_over_seeded_ops() {
         &FnSource(|v: VoxelCoord| (hash::hash3(0x0003_0001, v.0) % 6) as MaterialId),
         &test_table(),
     );
-    let mut rng = SplitMix64(0x0003_0001);
-    let mut changed = 0;
-    let mut failed = 0;
-    for i in 0..200 {
-        let op = seeded_op(i, &mut rng);
-        let expected = reference_apply(&world, &op);
-        assert_eq!(world.apply(&op), expected.result, "op {i}: {op:?}");
-        if let Some((lo, hi)) = expected.bounds {
-            assert!(
-                materials_in(&world, lo, hi) == expected.after,
-                "op {i}: voxels differ from the reference after {op:?}"
-            );
-        }
-        match &expected.result {
-            Ok(r) if !r.changed_from.is_empty() => changed += 1,
-            Ok(_) => {}
-            Err(_) => failed += 1,
-        }
-    }
+    let (changed, failed) = run_seeded_ops_against_the_reference(&world);
     println!("{changed} of 200 ops changed voxels; {failed} failed on a non-resident chunk");
     assert!(changed >= 150, "{changed} ops changed voxels");
     assert!(failed >= 5, "{failed} ops reached a non-resident chunk");
+}
+
+/// The same 200 seeded ops on two worlds of `Uniform` bricks only, the edit bench's cubes
+/// world and the solid material-3 world, so the ops expand, write and collapse uniform
+/// bricks: every result, error and voxel equals the reference.
+#[test]
+fn apply_matches_the_reference_on_uniform_worlds() {
+    for (name, world) in [("cubes", cubes_world()), ("solid", solid3_world())] {
+        let stats = world.stats();
+        assert_eq!(
+            stats.full_bricks, 0,
+            "{name}: a Full brick before the first op"
+        );
+        assert_eq!(stats.uniform_bricks, 64 * CHUNK_BRICKS, "{name}");
+        let (changed, failed) = run_seeded_ops_against_the_reference(&world);
+        println!(
+            "{name}: {changed} of 200 ops changed voxels; {failed} failed on a non-resident chunk"
+        );
+        assert!(
+            failed >= 5,
+            "{name}: {failed} ops reached a non-resident chunk"
+        );
+        assert!(
+            world.stats().full_bricks > 0,
+            "{name}: no brick was expanded"
+        );
+    }
 }
 
 /// A carve over bricks that hold only indestructible materials, `Full` ones (4 and a second

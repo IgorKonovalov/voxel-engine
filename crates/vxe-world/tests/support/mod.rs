@@ -46,6 +46,33 @@ impl<F: Fn(VoxelCoord) -> MaterialId> WorldSource for FnSource<F> {
     }
 }
 
+/// The edit bench's cubes world: `material = 1` where
+/// `((x >> 4) + (y >> 4) + (z >> 4)).rem_euclid(3) != 0`, else air, over chunks `[-2, 2)³`.
+/// The value is constant over each 16³ cube and the cubes align with the 8³ bricks, so every
+/// brick is generated `Uniform`.
+pub fn cubes_world() -> World {
+    World::generate(test_extent(), &CubesSource, &test_table())
+}
+
+/// The source of [`cubes_world`], evaluated once per brick.
+pub struct CubesSource;
+
+impl WorldSource for CubesSource {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        let base = coord.min_voxel().0;
+        for slot in 0..CHUNK_BRICKS {
+            let b = brick_of_slot(slot);
+            let v = [0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE);
+            let m = if ((v[0] >> 4) + (v[1] >> 4) + (v[2] >> 4)).rem_euclid(3) != 0 {
+                1
+            } else {
+                AIR
+            };
+            out.set_brick(slot, Brick::Uniform(m));
+        }
+    }
+}
+
 /// A per-voxel closure standing in for the fly-through's cave (which `vxe-world` cannot depend
 /// on): each brick is air, rock (1) or mixed by a hash of its brick coordinate, and a mixed
 /// brick draws each voxel from air, 1 and 2 by a hash of the voxel. Chunks hold `Uniform` and
