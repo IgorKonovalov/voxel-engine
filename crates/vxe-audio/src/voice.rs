@@ -49,6 +49,40 @@ impl PlayParams {
     }
 }
 
+/// Taps a voice carries at most.
+pub const MAX_TAPS: usize = 16;
+/// The cutoff of an unobstructed voice; at or above it the low-pass is bypassed.
+pub const OPEN_CUTOFF_HZ: f32 = 20_000.0;
+
+/// One delayed copy of a voice's signal: an early reflection.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Tap {
+    pub delay_frames: u32,
+    pub gain: f32,
+}
+
+/// What the world does to a voice, from [`crate::Acoustics`]: a gain multiplier and a low-pass
+/// cutoff for the direct path, and the reflection taps.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AcousticTargets {
+    pub gain: f32,
+    pub cutoff_hz: f32,
+    pub taps: [Tap; MAX_TAPS],
+    pub tap_count: u8,
+}
+
+impl Default for AcousticTargets {
+    /// Unobstructed: gain 1, cutoff [`OPEN_CUTOFF_HZ`], no taps.
+    fn default() -> Self {
+        Self {
+            gain: 1.0,
+            cutoff_hz: OPEN_CUTOFF_HZ,
+            taps: [Tap::default(); MAX_TAPS],
+            tap_count: 0,
+        }
+    }
+}
+
 /// One playing sound and its per-voice mixer state.
 pub(crate) struct Voice {
     pub id: VoiceId,
@@ -62,6 +96,12 @@ pub(crate) struct Voice {
     pub gain: f32,
     /// Panning path: left and right pan gain as smoothed so far.
     pub pan: [f32; 2],
+    /// The acoustics' targets for this voice.
+    pub acoustic: AcousticTargets,
+    /// The low-pass cutoff as smoothed so far (the acoustic gain smooths inside `gain`).
+    pub cutoff: f32,
+    /// The one-pole low-pass's state.
+    pub lowpass: f32,
     /// HRTF path: the measurement the last block was filtered with.
     pub dir: usize,
     /// HRTF path: the last `taps - 1` filter inputs, oldest first.
@@ -100,6 +140,9 @@ impl Voice {
             finished: false,
             gain: 0.0,
             pan: [0.0; 2],
+            acoustic: AcousticTargets::default(),
+            cutoff: OPEN_CUTOFF_HZ,
+            lowpass: 0.0,
             dir: 0,
             buffers,
             started: false,

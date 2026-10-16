@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 cpal.workspace = true
+vxe-world.workspace = true
 
 [dev-dependencies]
 sofar.workspace = true

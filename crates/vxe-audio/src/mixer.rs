@@ -2,8 +2,11 @@
 //!
 //! Per voice and block:
 //! 1. read the voice's mono samples;
-//! 2. scale them by the voice's gain times the distance gain `1 / max(d, 1 m)`, through a
-//!    one-pole smoother of [`crate::SMOOTHING_SECONDS`];
+//! 2. scale them by the voice's gain times the distance gain `1 / max(d, 1 m)` times the
+//!    acoustic gain multiplier, through a one-pole smoother of [`crate::SMOOTHING_SECONDS`],
+//!    and low-pass them with a one-pole filter (`y += a (x - y)`, `a = 1 - exp(-2 pi fc / fs)`)
+//!    at the acoustic cutoff `fc`. The cutoff moves through the same smoother, advanced once per
+//!    block, and the filter is bypassed while it sits at [`OPEN_CUTOFF_HZ`];
 //! 3. spatialise. On the HRTF path the samples run through the two 128-tap FIRs of the measured
 //!    direction nearest to the source (time-domain convolution over the voice's last `taps - 1`
 //!    inputs and this block). When the nearest direction changes between blocks, the block is
@@ -16,9 +19,10 @@
 
 use std::sync::Arc;
 
+use crate::acoustics::BlockClock;
 use crate::command::Command;
 use crate::hrtf::Hrtf;
-use crate::voice::{Voice, VoiceBuffers, VoiceId};
+use crate::voice::{OPEN_CUTOFF_HZ, Voice, VoiceBuffers, VoiceId};
 use crate::{BLOCK, Listener, RATE, SMOOTHING_SECONDS, cross, dot, length, normalize_or, sub};
 
 /// Voices the mixer holds at once.
@@ -42,6 +46,8 @@ pub struct Mixer {
     finished: Vec<VoiceId>,
     /// Per-sample step of the one-pole smoother.
     smooth_k: f32,
+    /// Blocks rendered, for [`crate::Acoustics`]' cadence.
+    clock: BlockClock,
 }
 
 impl Mixer {
@@ -68,7 +74,13 @@ impl Mixer {
             wet: std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; BLOCK])),
             finished: Vec::with_capacity(MAX_VOICES),
             smooth_k: 1.0 - (-1.0 / (SMOOTHING_SECONDS * RATE as f32)).exp(),
+            clock: BlockClock::default(),
         }
+    }
+
+    /// The count of blocks this mixer has rendered, shared with whoever holds a clone.
+    pub fn clock(&self) -> BlockClock {
+        self.clock.clone()
     }
 
     pub fn listener(&self) -> &Listener {
@@ -117,6 +129,14 @@ impl Mixer {
                 }
             }
             Command::SetListener(l) => self.listener = l,
+            Command::SetAcoustics(id, targets) => {
+                if let Some(v) = self.voice_mut(id) {
+                    v.acoustic = targets;
+                    if !v.started {
+                        v.cutoff = targets.cutoff_hz;
+                    }
+                }
+            }
         }
     }
 
@@ -145,12 +165,13 @@ impl Mixer {
     /// One block of at most [`BLOCK`] frames, added into `out`.
     fn render_block(&mut self, out: &mut [f32]) {
         let n = out.len() / 2;
+        self.clock.tick();
         let k = self.smooth_k;
         let frame = ListenerFrame::new(&self.listener);
         for v in &mut self.voices {
             let rel = frame.local(sub(v.params.position, self.listener.position));
             let d = length(rel) * self.metres_per_voxel;
-            let target_gain = v.params.gain / d.max(1.0);
+            let target_gain = v.params.gain / d.max(1.0) * v.acoustic.gain;
             let dir = normalize_or(rel, [1.0, 0.0, 0.0]);
             let dry = &mut self.dry[..n];
             v.read(dry, self.hrtf.as_ref().map_or(0, |h| h.taps() - 1));
@@ -163,6 +184,20 @@ impl Mixer {
                 *s *= g;
             }
             v.gain = g;
+            // The cutoff's smoother, advanced by the whole block at once.
+            let target_cutoff = v.acoustic.cutoff_hz.min(OPEN_CUTOFF_HZ);
+            v.cutoff += (target_cutoff - v.cutoff) * (1.0 - (1.0 - k).powi(n as i32));
+            if v.cutoff < OPEN_CUTOFF_HZ - 0.5 {
+                let a = 1.0 - (-2.0 * std::f32::consts::PI * v.cutoff / RATE as f32).exp();
+                let mut y = v.lowpass;
+                for s in dry.iter_mut() {
+                    y += a * (*s - y);
+                    *s = y;
+                }
+                v.lowpass = y;
+            } else if let Some(&last) = dry.last() {
+                v.lowpass = last;
+            }
             match &self.hrtf {
                 Some(hrtf) => {
                     let to = hrtf.nearest(dir);

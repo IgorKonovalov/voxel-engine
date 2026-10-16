@@ -6,7 +6,7 @@
 
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 
-use crate::voice::{PlayParams, Sound, VoiceId};
+use crate::voice::{AcousticTargets, PlayParams, Sound, VoiceId};
 use crate::{AudioError, Listener};
 
 /// Slots in the command channel.
@@ -20,6 +20,7 @@ pub enum Command {
     SetGain(VoiceId, f32),
     Stop(VoiceId),
     SetListener(Listener),
+    SetAcoustics(VoiceId, AcousticTargets),
 }
 
 pub(crate) struct CommandSender(SyncSender<Command>);

@@ -11,7 +11,8 @@
 //! the first frame; `--autopilot` digs, flies 300 m out and back and prints the streaming
 //! readings (see [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame;
 //! `--headless` runs the same frames on an offscreen target with no window; `--audio` opens the
-//! default output device, and `H` plays a knock at the point the last left click dug.
+//! default output device, `H` plays a knock and `J` a looping hum at the point the last left
+//! click dug; every frame probes their occlusion through the world.
 
 mod fly;
 
@@ -24,7 +25,7 @@ use fly::Fly;
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK};
 use flythrough::{RESIDENCY, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
-use vxe_audio::{Hrtf, Listener, Mixer, Output, PlayParams, Sound};
+use vxe_audio::{Acoustics, Hrtf, Listener, Mixer, Output, PlayParams, Sound, VoiceId};
 use vxe_render::glam::Vec3;
 use vxe_render::{
     Camera, GpuWorld, LightParams, LodParams, MarchTimer, Marcher, MirrorConfig, Presenter, Window,
@@ -70,6 +71,12 @@ const METRES_PER_VOXEL: f32 = 0.1;
 const KNOCK_SEED: u64 = 0x0006_0001;
 const KNOCK_SECONDS: f32 = 0.05;
 const KNOCK_DECAY_SECONDS: f32 = 0.01;
+/// The hum `J` plays: one second of 440 Hz (a whole number of cycles, so it loops cleanly).
+const HUM_HZ: f32 = 440.0;
+const HUM_AMPLITUDE: f32 = 0.3;
+/// The acoustic triple (absorption per metre, transmission, resonance) the probes give every
+/// solid cave row; the cave's own table leaves it zero, which would block all sound.
+const CAVE_ACOUSTIC: [f32; 3] = [0.3, 0.5, 0.0];
 
 #[allow(
     clippy::disallowed_methods,
@@ -197,15 +204,61 @@ fn knock() -> Sound {
     Sound::new(samples)
 }
 
-/// The audio of `--audio`: the output stream and the sounds the keys play.
+/// The cave's material table with [`CAVE_ACOUSTIC`] on every row but air.
+fn acoustic_table() -> MaterialTable {
+    let mut t = MaterialTable::new();
+    for row in cave_materials().rows().iter().skip(1) {
+        t.push(vxe_world::Material {
+            acoustic: CAVE_ACOUSTIC,
+            ..row.clone()
+        });
+    }
+    t
+}
+
+/// One second of the `J` hum.
+fn hum() -> Sound {
+    let rate = vxe_audio::RATE as f32;
+    Sound::new(
+        (0..vxe_audio::RATE)
+            .map(|n| HUM_AMPLITUDE * (std::f32::consts::TAU * HUM_HZ * n as f32 / rate).sin())
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// The audio of `--audio`: the output stream, the sounds the keys play and the acoustics
+/// probing them.
 struct Audio {
     output: Output,
     knock: Sound,
+    hum: Sound,
     /// Where the last left click dug, in voxel units.
     dig_point: Option<[f32; 3]>,
+    acoustics: Acoustics,
+    /// The cave's rows with [`CAVE_ACOUSTIC`] on every solid one.
+    table: MaterialTable,
+    /// The voices playing and where, in voxel units.
+    voices: Vec<(VoiceId, [f32; 3])>,
 }
 
 impl Audio {
+    /// Plays the sound `name` names (`knock` or `hum`) at the dig point with `params`.
+    fn play(&mut self, name: &str, params: impl Fn([f32; 3]) -> PlayParams) {
+        let Some(p) = self.dig_point else {
+            println!("{name}: no dig point yet; left-click first");
+            return;
+        };
+        let sound = if name == "hum" {
+            &self.hum
+        } else {
+            &self.knock
+        };
+        match self.output.play(sound, params(p)) {
+            Ok(id) => self.voices.push((id, p)),
+            Err(e) => println!("{name}: {e}"),
+        }
+    }
+
     /// Opens the default device; prints why when it cannot.
     fn open() -> Option<Self> {
         let t = now();
@@ -216,13 +269,19 @@ impl Audio {
             hrtf.len(),
             hrtf.taps()
         );
-        match Output::open(Mixer::new(hrtf, METRES_PER_VOXEL)) {
+        let mixer = Mixer::new(hrtf, METRES_PER_VOXEL);
+        let acoustics = Acoustics::new(mixer.clock());
+        match Output::open(mixer) {
             Ok(output) => {
                 println!("audio: {}", output.device());
                 Some(Self {
                     output,
                     knock: knock(),
+                    hum: hum(),
                     dig_point: None,
+                    acoustics,
+                    table: acoustic_table(),
+                    voices: Vec::new(),
                 })
             }
             Err(e) => {
@@ -934,23 +993,22 @@ impl Run {
         if input.pressed(KeyCode::F1) {
             self.samples = Some(Samples::default());
         }
-        if let Some(audio) = self.audio.as_mut()
-            && input.pressed(KeyCode::KeyH)
-        {
-            match audio.dig_point {
-                Some(p) => {
-                    if let Err(e) = audio.output.play(&audio.knock, PlayParams::at(p)) {
-                        println!("knock: {e}");
-                    }
-                }
-                None => println!("knock: no dig point yet; left-click first"),
+        if let Some(audio) = self.audio.as_mut() {
+            if input.pressed(KeyCode::KeyH) {
+                audio.play("knock", PlayParams::at);
+            }
+            if input.pressed(KeyCode::KeyJ) {
+                audio.play("hum", |p| PlayParams {
+                    looping: true,
+                    ..PlayParams::at(p)
+                });
             }
         }
     }
 
-    /// Sends the camera to the mixer as its listener.
+    /// Sends the camera to the mixer as its listener and probes the voices' occlusion.
     fn audio_step(&mut self) {
-        let Some(audio) = self.audio.as_ref() else {
+        let Some(audio) = self.audio.as_mut() else {
             return;
         };
         let (forward, _, up) = self.fly.camera.basis();
@@ -961,7 +1019,21 @@ impl Run {
         };
         // A full channel drops this frame's listener; the next frame sends a fresh one.
         let _ = audio.output.set_listener(listener);
-        for _ in audio.output.finished() {}
+        for id in audio.output.finished() {
+            audio.voices.retain(|(v, _)| *v != id);
+        }
+        let output = &audio.output;
+        audio.acoustics.update(
+            &self.world,
+            &audio.table,
+            &listener,
+            &audio.voices,
+            METRES_PER_VOXEL,
+            // A full channel drops these targets; the voice is probed again within 500 ms.
+            &mut |cmd| {
+                let _ = output.send(cmd);
+            },
+        );
     }
 
     /// Streams, syncs, marches and presents one frame begun at `t0`.

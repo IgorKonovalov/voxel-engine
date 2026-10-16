@@ -148,3 +148,146 @@ fn raycast_hit_list_is_pinned() {
     // Blessed on Linux x86_64; a change here is a change in raycast results.
     assert_eq!(h.0, 0xa0f2_c477_8892_c8fb);
 }
+
+#[test]
+fn trace_materials_reports_the_cavity_and_the_rock() {
+    let world = carved_world();
+    assert_eq!(
+        world.trace_materials(centre_of_voxel([0, 0, 0]), UP, 100 * 256),
+        [
+            Run {
+                material: 0,
+                t0: 0,
+                t1: 2688
+            },
+            Run {
+                material: 3,
+                t0: 2688,
+                t1: 25600
+            },
+        ]
+    );
+}
+
+#[test]
+fn trace_materials_splits_at_a_layer_of_another_material() {
+    let world = carved_world();
+    // z in [20, 30) becomes material 2 over the whole extent.
+    world
+        .apply(&EditOp::box_(
+            Fixed3([-128 * 256, -128 * 256, 20 * 256]),
+            Fixed3([128 * 256, 128 * 256, 30 * 256]),
+            Mode::Replace { from: 3, to: 2 },
+        ))
+        .unwrap();
+    let runs = world.trace_materials(centre_of_voxel([0, 0, 0]), UP, 100 * 256);
+    // Faces at z = 20 and z = 30 seen from z = 0.5: 19.5 and 29.5 voxels.
+    assert_eq!(
+        runs,
+        [
+            Run {
+                material: 0,
+                t0: 0,
+                t1: 2688
+            },
+            Run {
+                material: 3,
+                t0: 2688,
+                t1: 4992
+            },
+            Run {
+                material: 2,
+                t0: 4992,
+                t1: 7552
+            },
+            Run {
+                material: 3,
+                t0: 7552,
+                t1: 25600
+            },
+        ]
+    );
+}
+
+#[test]
+fn trace_materials_covers_missing_chunks_as_air() {
+    let world = carved_world();
+    // From inside the cavity out past the extent's +z edge at z = 128.
+    let runs = world.trace_materials(centre_of_voxel([0, 0, 0]), UP, 200 * 256);
+    assert_eq!(
+        runs.last(),
+        Some(&Run {
+            material: 0,
+            t0: 128 * 256 - 128,
+            t1: 200 * 256
+        })
+    );
+    assert_eq!(runs.len(), 3);
+}
+
+#[test]
+fn trace_materials_agrees_with_the_raycast_and_the_voxels_it_crosses() {
+    let world = carved_world();
+    let mut rng = SplitMix64(0x0006_0003);
+    for _ in 0..200 {
+        let o = Fixed3([0; 3].map(|_| rng.range(-9 * 256, 9 * 256)));
+        let d = [0; 3].map(|_| rng.range(-1024, 1024));
+        let max_t = rng.range(0, 40 * 256);
+        let runs = world.trace_materials(o, d, max_t);
+        // The runs tile [0, max_t] and alternate material.
+        assert_eq!(runs.first().map(|r| r.t0), Some(0));
+        assert_eq!(runs.last().map(|r| r.t1), Some(max_t));
+        for w in runs.windows(2) {
+            assert_eq!(w[0].t1, w[1].t0);
+            assert_ne!(w[0].material, w[1].material);
+        }
+        // The first solid run starts where the raycast hits.
+        let first_solid = runs.iter().find(|r| r.material != AIR).map(|r| r.t0);
+        assert_eq!(
+            first_solid,
+            world.raycast(o, d, max_t).map(|h| h.t),
+            "{o:?} {d:?}"
+        );
+        // Sampled along the ray away from run boundaries, each point's voxel holds its run's
+        // material.
+        for t in (0..=max_t).step_by(37) {
+            let Some(run) = runs.iter().find(|r| r.t0 + 2 <= t && t + 2 <= r.t1) else {
+                continue;
+            };
+            let v = [0, 1, 2].map(|k| {
+                (i128::from(o.0[k]) * 256 + i128::from(d[k]) * i128::from(t)).div_euclid(256 * 256)
+                    as i32
+            });
+            assert_eq!(
+                world.material_at(v).unwrap_or(AIR),
+                run.material,
+                "{o:?} {d:?} t {t}"
+            );
+        }
+    }
+}
+
+#[test]
+fn trace_materials_list_is_pinned() {
+    let world = carved_world();
+    let mut rng = SplitMix64(0x5EED_0006);
+    let mut h = Fnv1a::default();
+    let mut runs_total = 0;
+    for _ in 0..500 {
+        // From inside the cavity, through the rock and out of the extent into missing chunks.
+        let o = Fixed3([0; 3].map(|_| rng.range(-9 * 256, 9 * 256)));
+        let d = [0; 3].map(|_| rng.range(-1024, 1024));
+        let max_t = rng.range(0, 200 * 256);
+        let runs = world.trace_materials(o, d, max_t);
+        runs_total += runs.len();
+        h.write(&(runs.len() as u32).to_le_bytes());
+        for r in runs {
+            h.write(&r.material.to_le_bytes());
+            h.write(&r.t0.to_le_bytes());
+            h.write(&r.t1.to_le_bytes());
+        }
+    }
+    assert!(runs_total > 1000, "{runs_total}");
+    // Blessed on Linux x86_64; a change here is a change in trace_materials results.
+    assert_eq!(h.0, 0xbae9_1463_c336_8745);
+}

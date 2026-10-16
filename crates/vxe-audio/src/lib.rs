@@ -24,17 +24,19 @@
 //! assert!(out.iter().any(|&s| s != 0.0));
 //! ```
 
+mod acoustics;
 mod command;
 mod hrtf;
 mod mixer;
 mod output;
 mod voice;
 
+pub use acoustics::{Acoustics, BlockClock, Occlusion, occlusion};
 pub use command::{COMMAND_CAPACITY, Command};
 pub use hrtf::Hrtf;
 pub use mixer::{MAX_VOICES, Mixer};
 pub use output::Output;
-pub use voice::{PlayParams, Sound, VoiceId};
+pub use voice::{AcousticTargets, MAX_TAPS, OPEN_CUTOFF_HZ, PlayParams, Sound, Tap, VoiceId};
 
 /// The mixer's sample rate in frames per second.
 pub const RATE: u32 = 48_000;

@@ -2110,6 +2110,7 @@ version = "0.3.0"
 dependencies = [
  "cpal",
  "sofar",
+ "vxe-world",
 ]
 
 [[package]]
