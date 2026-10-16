@@ -1,0 +1,19 @@
+# LF everywhere. rustfmt.toml pins newline_style = "Unix", and Windows git
+# defaults to core.autocrlf=true, which would rewrite every checkout to CRLF
+# and fail `cargo fmt --check`. Forcing eol=lf keeps the tree byte-identical
+# on Linux and Windows, which the determinism checks in vxe-world also rely on.
+* text=auto eol=lf
+
+# Binary assets, never normalised or diffed as text.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.vox  binary
+*.ktx2 binary
+*.wav  binary
+*.ogg  binary
+*.ttf  binary
+*.otf  binary
+*.woff2 binary

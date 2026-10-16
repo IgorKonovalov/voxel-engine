@@ -20,7 +20,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # winit's Wayland and X11 backends need the xkbcommon and wayland headers;
       # mesa-vulkan-drivers carries lavapipe, without which wgpu finds no adapter.
       - name: Install the Linux build packages
@@ -46,5 +46,5 @@ jobs:
   deny:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: EmbarkStudios/cargo-deny-action@v2
