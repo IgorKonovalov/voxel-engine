@@ -417,3 +417,45 @@ fn apply_matches_the_reference_over_seeded_ops() {
     assert!(changed >= 150, "{changed} ops changed voxels");
     assert!(failed >= 5, "{failed} ops reached a non-resident chunk");
 }
+
+/// A carve over bricks that hold only indestructible materials, `Full` ones (4 and a second
+/// indestructible row 6 in a checkerboard) and `Uniform` ones (all 4), writes nothing: no
+/// result, no dirty brick or chunk, no edited flag, no voxel or representation change.
+#[test]
+fn carving_only_indestructible_bricks_writes_nothing() {
+    let mut table = test_table();
+    let mut m6 = Material::named("m6");
+    m6.flags = MaterialFlags::INDESTRUCTIBLE;
+    assert_eq!(table.push(m6), 6);
+    let world = World::generate(
+        test_extent(),
+        &FnSource(|v: VoxelCoord| {
+            let [x, y, z] = v.0;
+            match (x >= 0, (x + y + z).rem_euclid(2)) {
+                (false, 0) => 4,
+                (false, _) => 6,
+                (true, _) => 4,
+            }
+        }),
+        &table,
+    );
+    let _ = world.store().take_dirty();
+    for c in world.store().coords() {
+        world.store().get(c).unwrap().write().unwrap().clear_dirty();
+    }
+    let before = world_hash(&world);
+    let stats = world.stats();
+    assert!(stats.full_bricks > 0 && stats.uniform_bricks > 0);
+
+    let r = world.apply(&sphere10(Mode::Carve)).unwrap();
+    assert_eq!(r, EditResult::default());
+    assert_eq!(world.store().dirty_len(), 0);
+    for c in world.store().coords() {
+        let chunk = world.store().get(c).unwrap();
+        let chunk = chunk.read().unwrap();
+        assert!(!chunk.any_dirty(), "{c:?}");
+        assert!(!chunk.is_edited(), "{c:?}");
+    }
+    assert_eq!(world_hash(&world), before);
+    assert_eq!(world.stats(), stats);
+}

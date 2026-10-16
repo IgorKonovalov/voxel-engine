@@ -12,7 +12,7 @@ use crate::brick::Brick;
 use crate::coords::index_in_brick;
 use crate::coords::{BRICK_EDGE, BRICK_VOXELS, CHUNK_EDGE, ChunkCoord, VoxelCoord, brick_slot};
 use crate::fixed::{Fixed3, centre};
-use crate::material::{AIR, MaterialId, MaterialTable};
+use crate::material::{AIR, MaterialFlags, MaterialId, MaterialTable};
 use crate::raycast::point_at;
 use crate::shape::{Coverage, Shape};
 use crate::store::{World, read, write};
@@ -102,15 +102,66 @@ impl EditOp {
     }
 }
 
-impl Mode {
-    /// The material a voxel of `old` becomes, or `None` when the mode leaves it unchanged.
-    fn target(self, old: MaterialId, table: &MaterialTable) -> Option<MaterialId> {
-        let new = match self {
-            Mode::Carve => (old != AIR && !table.is_indestructible(old)).then_some(AIR),
-            Mode::Fill(m) => (old == AIR).then_some(m),
-            Mode::Replace { from, to } => (old == from).then_some(to),
-        }?;
-        (new != old).then_some(new)
+/// What an op does to each old material, resolved once per op from the mode and the
+/// material table, so the voxel loop reads a bit or compares one id instead of calling into
+/// the table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TargetTable {
+    /// Bit `m` of `carves` (word `m / 64`, bit `m % 64`) is set when row `m` exists, is not
+    /// air and is not indestructible. An id with no row has no flags, so `Carve` turns it to
+    /// air as well; that case is decided outside the bits.
+    Carve { carves: Vec<u64>, rows: usize },
+    /// Air becomes this material.
+    Fill(MaterialId),
+    /// `from` becomes `to`.
+    Replace { from: MaterialId, to: MaterialId },
+}
+
+impl TargetTable {
+    fn new(mode: Mode, table: &MaterialTable) -> Self {
+        match mode {
+            Mode::Carve => Self::carve(table),
+            Mode::Fill(m) => Self::Fill(m),
+            Mode::Replace { from, to } => Self::Replace { from, to },
+        }
+    }
+
+    fn carve(table: &MaterialTable) -> Self {
+        let rows = table.len();
+        let mut carves = vec![0u64; rows.div_ceil(64)];
+        for (m, row) in table.rows().iter().enumerate() {
+            if m != usize::from(AIR) && !row.flags.contains(MaterialFlags::INDESTRUCTIBLE) {
+                carves[m / 64] |= 1 << (m % 64);
+            }
+        }
+        Self::Carve { carves, rows }
+    }
+
+    /// Bit `m` of a `Carve` table; clear for an id beyond the table's rows and for the other
+    /// variants.
+    #[cfg(test)]
+    fn carve_bit(&self, m: MaterialId) -> bool {
+        match self {
+            Self::Carve { carves, .. } => {
+                let m = usize::from(m);
+                carves.get(m / 64).is_some_and(|w| w >> (m % 64) & 1 != 0)
+            }
+            _ => false,
+        }
+    }
+
+    /// The material a voxel of `old` becomes, or `None` when the op leaves it unchanged.
+    #[inline]
+    fn target(&self, old: MaterialId) -> Option<MaterialId> {
+        match *self {
+            Self::Carve { ref carves, rows } => {
+                let m = usize::from(old);
+                // `rows >= 1` (row 0 is air), so an id at or beyond `rows` is not air.
+                (m >= rows || carves[m / 64] >> (m % 64) & 1 != 0).then_some(AIR)
+            }
+            Self::Fill(m) => (old == AIR && m != AIR).then_some(m),
+            Self::Replace { from, to } => (old == from && from != to).then_some(to),
+        }
     }
 }
 
@@ -222,6 +273,7 @@ impl World {
             }
         }
 
+        let targets = TargetTable::new(op.mode, &self.materials);
         let mut tally = Tally::default();
         let mut touched = Vec::new();
         for (coord, vlo, vhi, chunk) in chunks {
@@ -245,7 +297,7 @@ impl World {
                         }
                         let slot = brick_slot(b.map(|v| v as i32));
                         let brick = chunk.brick_mut(slot);
-                        if edit_brick(brick, op, &self.materials, cov, bmin, elo, ehi, &mut tally) {
+                        if edit_brick(brick, &op.shape, &targets, cov, bmin, elo, ehi, &mut tally) {
                             chunk.mark_dirty(slot);
                             chunk_changed = true;
                         }
@@ -279,8 +331,8 @@ impl World {
 )]
 fn edit_brick(
     brick: &mut Brick,
-    op: &EditOp,
-    table: &MaterialTable,
+    shape: &Shape,
+    targets: &TargetTable,
     cov: Coverage,
     bmin: [i64; 3],
     elo: [i64; 3],
@@ -289,7 +341,7 @@ fn edit_brick(
 ) -> bool {
     let whole = (0..3).all(|k| elo[k] == bmin[k] && ehi[k] == bmin[k] + i64::from(BRICK_EDGE) - 1);
     if let Brick::Uniform(m) = *brick {
-        let Some(n) = op.mode.target(m, table) else {
+        let Some(n) = targets.target(m) else {
             return false;
         };
         if whole && cov == Coverage::Inside {
@@ -304,17 +356,14 @@ fn edit_brick(
         for y in elo[1]..=ehi[1] {
             for x in elo[0]..=ehi[0] {
                 let v = [x, y, z];
-                if cov == Coverage::Partial && !op.shape.contains(v.map(centre)) {
+                if cov == Coverage::Partial && !shape.contains(v.map(centre)) {
                     continue;
                 }
                 let i = index_in_brick([0, 1, 2].map(|k| (v[k] - bmin[k]) as i32));
                 let old = brick.get(i);
-                let Some(new) = op.mode.target(old, table) else {
+                let Some(new) = targets.target(old) else {
                     continue;
                 };
-                if new == old {
-                    continue;
-                }
                 brick.expand()[i] = new;
                 tally.add(old, 1, v, v);
                 changed = true;
@@ -325,4 +374,59 @@ fn edit_brick(
         brick.collapse();
     }
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::material::Material;
+
+    /// Rows 0 (air), 1..=5, with 4 indestructible: the integration tests' table.
+    fn test_table() -> MaterialTable {
+        let mut t = MaterialTable::new();
+        for i in 1..=5u16 {
+            let mut m = Material::named(format!("m{i}"));
+            if i == 4 {
+                m.flags = MaterialFlags::INDESTRUCTIBLE;
+            }
+            t.push(m);
+        }
+        t
+    }
+
+    #[test]
+    fn carve_table_sets_a_bit_per_carvable_row() {
+        let t = TargetTable::carve(&test_table());
+        for m in [1, 2, 3, 5] {
+            assert!(t.carve_bit(m), "bit {m}");
+        }
+        for m in [0, 4, 6, 64, 1000, MaterialId::MAX] {
+            assert!(!t.carve_bit(m), "bit {m}");
+        }
+    }
+
+    #[test]
+    fn targets_agree_with_the_mode_over_every_low_id() {
+        let table = test_table();
+        let modes = [
+            Mode::Carve,
+            Mode::Fill(2),
+            Mode::Fill(AIR),
+            Mode::Replace { from: 3, to: 5 },
+            Mode::Replace { from: 4, to: 4 },
+            Mode::Replace { from: 7, to: 0 },
+        ];
+        for mode in modes {
+            let t = TargetTable::new(mode, &table);
+            for old in 0..300u16 {
+                let expected = match mode {
+                    Mode::Carve => (old != AIR && !table.is_indestructible(old)).then_some(AIR),
+                    Mode::Fill(m) => (old == AIR).then_some(m),
+                    Mode::Replace { from, to } => (old == from).then_some(to),
+                }
+                .filter(|&n| n != old);
+                assert_eq!(t.target(old), expected, "{mode:?} on {old}");
+            }
+        }
+    }
 }

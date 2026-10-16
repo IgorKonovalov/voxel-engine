@@ -289,8 +289,8 @@ dev box projects to about 3 ms there. That projection is a guess until the basel
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The breakdown and the oracle | dev | done | committed with this row |
-| 2: The per-op target table | dev | not started | |
+| 1: The breakdown and the oracle | dev | done | `55abca6` |
+| 2: The per-op target table | dev | done | committed with this row |
 | 3: Row spans | dev | not started | |
 | 4: Per-brick tallies and one collapse | dev | not started | |
 | 5: Readings against the figure | dev | not started | |
@@ -303,6 +303,10 @@ dev box projects to about 3 ms there. That projection is a guess until the basel
 - Phase 1: the profile is from `eu-stack -i` sampling the bench (`--profile-time 25`, release
   bench profile with debuginfo, built in a scratch target dir); `perf` and `samply` are not
   installed. 235 main-thread samples, 187 inside `World::apply`.
+- Phase 2: `TargetTable::target` under `Carve` turns an id with no table row into air, as
+  `Mode::target` did (no row, no flags); the carve bit for such an id reads clear, as the
+  done-when states, and the unit test asserts both. `material.rs` is unchanged; the unit tests
+  live in `edit.rs`.
 
 ### Close triggers
 
@@ -319,6 +323,8 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     `System::alloc`, 20.3%; `RangeInclusive<i64>::next` (the voxel loops) 12.3%;
     `edit_brick` 9.6%; `Mode::target` 9.1% plus `bool::then_some` 9.1%; `Tally::add` 7.0%;
     `i64::lt` 7.0%; `Shape::contains` 4.3%.
+  - Phase 2, the Phase 2 commit's tree: `worst` 4.475 ms [4.436, 4.521]; `mixed` 2.998 ms
+    [2.972, 3.028]; `tool` 8.324 ms [8.269, 8.394].
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 
