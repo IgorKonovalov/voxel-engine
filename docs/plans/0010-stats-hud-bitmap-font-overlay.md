@@ -8,6 +8,10 @@
 > **Amended 2026-10-16**, before "go": Phase 2's `PassTimer` and Phase 3's frame-time window
 > are copied from Ritmolux (the owner's sibling repository, commit `ad375596`) and adapted,
 > not written fresh. See "Amendment 2026-10-16" below.
+> **Amended 2026-10-17**, during implementation (orchestrator-applied under the owner's
+> standing "go with your recommendations"; the owner can overturn it): the march check becomes
+> before/after equality on a named `--level` command, and Phase 3 samples the world's stats at
+> a cadence instead of every frame. See "Amendment 2026-10-17" below.
 
 ## TL;DR
 
@@ -74,6 +78,115 @@ set; ADR-0009 chose a full 8 x 8 ASCII font) and its `overlay.rs` (one quad per 
 through an instanced pipeline; this plan's cell grid in one fragment pass is the cheaper shape
 for 24 rows of text).
 
+## Amendment 2026-10-17
+
+Made during implementation, after `dev` stopped at Phase 2 on branch `plan-0010` (tip
+`ee4e88e`; the readings are in the Implementation log there). Applied by the orchestrator
+under the owner's standing "go with your recommendations" while the owner was away; it is a
+recommendation the owner can overturn, and overturning it changes only the done-whens below,
+not the code already written.
+
+### 1. The march check is before/after equality on `--level`, not the 1.5 to 1.7 ms band
+
+**The problem.** Phase 2's done-when asked that the march reading of `flythrough --seed 1
+--render 1920x1080 --frames 300` stay within the 1.5 to 1.7 ms band of `nfr.md` §2. The band
+is Plan 0001's 1.59 ms. Since Plan 0002 that command streams the unbounded cave (6.68 to 7.10
+ms at the commit before the refactor), and the bounded level that Plan 0001 measured now needs
+`--level` (1.71 to 1.75 ms before the refactor). `nfr.md` §2 itself records the level's spawn
+at 1.95 ms (Plan 0002) and 1.826 to 1.859 ms (Plan 0005). The base commit misses the band, so
+no change in this plan can meet it; the done-when was a stale citation, not a claim about
+`PassTimer`.
+
+**Chosen: (a), equality within noise on a named command.** What the refactor must defend is
+"`PassTimer` changed nothing", which is a before/after claim. The rule: the march GPU reading
+of `flythrough --headless --level --seed 1 --render 1920x1080 --frames 300` (timestamps,
+median of the last 30 of 300 frames), three runs at the parent commit and three at the
+phase's commit, under the exclusive perf lock; the median of the three after-runs is within
+3 % of the median of the three before-runs. 3 % sits above the run-to-run spread of the
+readings already logged (1.712 to 1.753 ms, 2.4 %). The streamed command's reading is logged
+beside it for the record and is not gated: its own spread before the refactor was 6 %.
+
+**Rejected: (b), move the band to the current `--level` reading.** It turns an equality claim
+into an absolute number that drifts with every plan touching the march (it has moved three
+times already), so the next plan inherits the same stale band. **Rejected: (c), keep the band
+and diagnose a march regression outside this plan.** The readings show no regression to
+diagnose: the level's spawn reads lower now than at Plan 0005 (1.826 to 1.859 ms), and the gap
+to 1.59 ms is the march gaining features since Plan 0001, recorded in `nfr.md` §2. The
+march-pass diagnosis spike that `nfr.md` §2 already names owns the streamed miss.
+
+**Result for Phase 2.** The readings in the log meet the rule: before 1.712 / 1.753 / 1.714 ms
+(median 1.714), after 1.753 / 1.720 / 1.707 ms (median 1.720), 0.35 % apart. Phase 2 is done
+on those readings; `dev` records the verdict and needs no new run.
+
+**The same stale reference elsewhere.** Phase 3's "within 5 %" check named no command, and
+the Budgets row's "march reading with the HUD on equals the reading with it off" named no
+rule. Both now cite the commands and rules above. Phase 4 cites no band or command (its
+golden is Plan 0001's fixed view, a test fixture, not a fly-through run) and is unchanged.
+
+### 2. Phase 3 samples the world's stats at a cadence, not every frame
+
+**The problem.** Phase 3 asked for `World::stats` every frame. `World::stats` walks every
+resident chunk and every brick under each chunk's read lock; on the streamed world (about 1.6
+million `Full` bricks at full residency) that is a walk over millions of bricks on the render
+thread, competing for chunk locks with the streamer's workers, and it would move the very
+frame readings Phase 3 must defend. `Streamer::stats` is cheaper but not free: it counts the
+resident map (tens of thousands of entries) and takes the queue and persistence mutexes.
+
+**Chosen: per-frame sources stay O(1); world-side stats are sampled.** Every frame `HudStats`
+takes only what costs nothing: the `FrameStats` ring, the two `PassTimer` readings, the last
+`SyncStats`, the mirror's counters (`mirror_bytes`, `live_slots`, `free_slots().len()`), the
+last edit, the camera and mode, and RSS. `World::stats` (and `Streamer::stats` in the streamed
+mode, for resident full and LOD chunks) is called only:
+
+- once when the HUD turns visible,
+- every Nth frame while it is visible (N below),
+- once at exit for the `--frames` print,
+
+and never on a frame where the HUD is hidden and no `--frames` print is due. The rows show the
+sample's age in frames beside the chunk and brick figures. `cpu_bytes` has no source in
+`WorldStats` (it holds chunks, uniform and full bricks only); the fly-through computes it as
+`full_bricks` times the size of one full brick's voxel array plus `chunks` times the size of
+`Chunk`, and its row is labelled as an estimate. No new API in `vxe-world`.
+
+**What `dev` measures to pick N, and the rule.** One `World::stats` call on the streamed world
+at the unbounded cave's spawn after full residency, median of 10 calls, release build, logged
+with the machine. Under 1 ms (the `nfr.md` §2 streaming line): N = 60. 1 ms or more: N = 240,
+one sample per `FrameStats` window, so a sample's spike reaches at most the window's max and
+not its p99 by nearest rank. Either way the rows show the call's measured cost beside the
+formatting time.
+
+**Rejected:** per-frame `World::stats` as first written (the walk above, every frame);
+incremental counters kept by `vxe-world` or the streamer (it changes the deterministic crate's
+store and stream for a testbed tool's convenience, outside Files touched; a later plan can add
+them if a consumer needs live counts); running the walk on a worker thread (a thread and a
+channel for a figure the HUD can show a second late).
+
+### 3. The Phase 1 and Phase 2 deviations
+
+Each deviation in the Implementation log's Notes, ruled:
+
+- **Accepted:** the cell buffer always has the cap layout (256-column stride by 128 rows). The
+  done-when's cap already sized it at 128 KiB in Budgets; `set_text` cannot see the target.
+- **Accepted:** the target height reaches the shader as the draw's first instance, since
+  `encode` takes no queue. The mechanism stays in a comment beside the draw.
+- **Accepted:** `set_rows`, `HudColour` and `encode_timed` beside `set_text` and `encode`.
+  They implement the per-row colour that "Risks & open questions" settled on, and the HUD's
+  timer.
+- **Rejected:** `hud.wgsl`'s portability check living only as a unit test in `hud.rs`.
+  `tests/shader_portability.rs` is the one list of shaders checked against the FXC rule for
+  the Windows backend, and a shader missing from it escapes that check. Phase 3 adds
+  `hud.wgsl` to its `SHADERS` list; the unit test may stay.
+- **Accepted:** `PassTimer` with one two-timestamp query set per instance rather than
+  Ritmolux's fixed set of index pairs. Phase 2's done-when named the two-timestamp set, and
+  with two call sites a shared set buys nothing. `MarchTimer::new` taking the queue and
+  returning `Option` follows from "the period is read once" and "`None` without
+  `TIMESTAMP_QUERY`" in the 2026-10-16 amendment.
+- **Accepted for Phase 2:** the HUD pass reading as an ignored test (0.0573 ms, under the 0.1
+  ms proposal). Phase 3 adds the fly-through reading, since the fly-through draws the HUD
+  from then on.
+- **Accepted:** `crates/vxe-render/src/lib.rs` re-exporting `PassTimer`.
+- **Accepted:** the red line drawn only where no bar covers it, with no strip backdrop.
+
 ## Architecture diagram
 
 ```mermaid
@@ -136,24 +249,37 @@ flowchart LR
   - `PassTimer` owns a two-timestamp query set with `writes()`, `resolve()` and `read_ms()`,
     following the Ritmolux shape named in "Amendment 2026-10-16" (`new` is `None` without
     `TIMESTAMP_QUERY`; the period is read once; resolve and readback buffers are separate);
-    `MarchTimer` is a type alias and keeps its API; the march reading at the spawn pose
-    (`--seed 1 --render 1920x1080 --frames 300`) on the dev box stays within the 1.5 to
-    1.7 ms band of `nfr.md` §2, re-read and logged, so the refactor changed nothing.
+    `MarchTimer` is a type alias; the march reading of `flythrough --headless --level --seed
+    1 --render 1920x1080 --frames 300` on the dev box, three runs at the parent commit and
+    three at this phase's, has an after-median within 3 % of the before-median, logged with
+    the streamed command's reading beside it (ungated), so the refactor changed nothing
+    (amended 2026-10-17; was the stale 1.5 to 1.7 ms band).
   - A second `PassTimer` around the HUD pass; its reading at 1920 × 1080 with 24 rows of
     text and 240 samples is logged. Proposal: under 0.1 ms on the dev box.
 
 ### Phase 3: Stats in the fly-through and the toggle
 - **Owner skill:** dev
 - **What:** `HudStats`, its rows, `F2`, `--hud`, and the `--frames` print.
-- **Files touched:** `apps/flythrough/src/{main.rs, hud.rs, lib.rs}`.
+- **Files touched:** `apps/flythrough/src/{main.rs, hud.rs, lib.rs}`,
+  `crates/vxe-render/tests/shader_portability.rs` (adds `hud.wgsl` to `SHADERS`).
 - **Done when:**
-  - `HudStats` (Data shapes) is filled every frame from what already exists: frame CPU time
+  - `hud.wgsl` is in `tests/shader_portability.rs`'s `SHADERS` and passes its checks.
+  - Per "Amendment 2026-10-17" item 2: the per-frame fields come only from O(1) sources;
+    `World::stats` and `Streamer::stats` are called on toggle-on, every Nth visible frame and
+    once at exit for `--frames`, never on a hidden frame otherwise; one `World::stats` call
+    on the streamed world after full residency is measured (median of 10, release) and
+    logged, and N is 60 if it is under 1 ms, else 240; the rows show the sample's age and the
+    call's cost. A test drives the cadence with a stub counter: 300 hidden frames make no
+    call, toggling on makes one, and 120 visible frames then make exactly `120 / N` more
+    (rounded down).
+  - `HudStats` (Data shapes) is filled from what already exists: frame CPU time
     and the 240-frame window's fps, mean, median, p99 and max, from the `FrameStats` ring
     copied per "Amendment 2026-10-16" (its tests come with it: a ring fed 240 equal deltas
     reports that delta as mean, median and p99; a ring fed one 100 ms delta among 239 of
     1 ms reports a p99 of 100 ms and a median of 1 ms); `MarchTimer` and the HUD timer; the last
     `SyncStats` (bytes, chunks, milliseconds); `GpuWorld::mirror_bytes`, `live_slots` and
-    `free_slots().len()`; `World::stats` (resident chunks, `Full` bricks, CPU bytes); the
+    `free_slots().len()`; `World::stats` at its cadence (resident chunks, `Full` bricks, and
+    CPU bytes as the estimate the amendment defines); the
     last edit's verb, counts and milliseconds; camera position and chunk; mode (fly, and
     walk once Plan 0004 lands); process RSS from `/proc/self/statm` (second field times the
     page size) on Linux and `None` elsewhere, shown as `n/a`.
@@ -163,8 +289,14 @@ flowchart LR
     through the same `Display`; `F1` keeps printing its snapshot.
   - The strip holds the last 240 CPU frame times with `ceiling_ms = 33.3`, read in
     chronological order from the same `FrameStats` ring the rows are computed from.
-  - A `--frames 300 --hud` run prints an average frame time within 5 % of the one printed by
-    the same run without `--hud`, which defends "the HUD does not move the readings".
+  - "The HUD does not move the readings", on two commands, three runs with `--hud` and three
+    without, under the exclusive perf lock: `flythrough --headless --level --seed 1 --render
+    1920x1080 --frames 300` and the same without `--level` (the streamed cave). For each
+    command the median of the three printed average frame times with `--hud` is within 5 %
+    of the median without it; on the `--level` command the march reading's median with
+    `--hud` is also within 3 % of the median without it. The HUD pass reading from the
+    `--hud` runs is logged (proposal: under 0.1 ms). (Amended 2026-10-17; the check named no
+    command before.)
 
 ### Phase 4: The golden with the HUD on
 - **Owner skill:** dev
@@ -204,7 +336,7 @@ Buffers: cells 128 KiB at the cap, font 760 bytes, samples 1 KiB, params 64 byte
 
 | Figure | Expected effect | Close measures by |
 |---|---|---|
-| `nfr.md` §2 | No new line (a tool, not a frame stage). Constraint: the march reading with the HUD on equals the reading with it off within noise; the HUD pass itself under 0.1 ms at 1080p (proposal) | Phase 2 and Phase 3 readings, dev box, commit named |
+| `nfr.md` §2 | No new line (a tool, not a frame stage). Constraint: the march reading with the HUD on equals the reading with it off within noise (3 % on medians of three, `--level` command, per "Amendment 2026-10-17"); the HUD pass itself under 0.1 ms at 1080p (proposal) | Phase 2 and Phase 3 readings, dev box, commit named |
 | §3 "everything else in VRAM" | Under 200 KiB | Arithmetic above |
 
 ## Risks & open questions

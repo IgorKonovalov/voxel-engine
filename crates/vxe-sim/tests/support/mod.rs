@@ -9,7 +9,7 @@ use vxe_world::*;
 
 /// The solid material.
 pub const ROCK: MaterialId = 1;
-/// The default start: voxel 10's centre in plan, resting on the F1 floor.
+/// The default start: voxel 10's centre in xy, resting on the F1 floor.
 pub const S: [i64; 3] = [2688, 2688, 0];
 pub const RADIUS: i64 = 768;
 pub const HEIGHT: i64 = 4608;
@@ -87,7 +87,7 @@ pub fn f6() -> World {
 }
 pub const F6_START: [i64; 3] = [12928, 2688, 0];
 
-/// The plan's test parameters.
+/// The controller parameters every test shares, the figures Plan 0004 names.
 pub fn params() -> ControllerParams {
     ControllerParams {
         radius: RADIUS,

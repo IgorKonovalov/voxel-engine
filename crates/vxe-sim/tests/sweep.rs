@@ -176,7 +176,7 @@ fn pillar() -> World {
 }
 
 /// The axis `(763, 95)` units from the pillar's `(-x, -y)` vertical edge: 768.89 units in
-/// plan, which floors to the radius, so the pillar is at `d² == 0` without overlapping. On
+/// xy, which floors to the radius, so the pillar is at `d² == 0` without overlapping. On
 /// the seed-1 level a falling body reached such a pose beside a voxel edge and no sweep moved
 /// it again, in any direction.
 const BESIDE_EDGE: [i64; 2] = [5120 - 763, 5120 - 95];
