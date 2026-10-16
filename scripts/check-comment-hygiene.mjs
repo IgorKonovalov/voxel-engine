@@ -81,8 +81,8 @@ const REPO = resolve(process.argv[2] ?? REPO_ROOT);
 const SKIP_DIRS = new Set(["target", "node_modules", ".git"]);
 
 // The fixture tree carries this checker's own bite check and is skipped on a
-// repo walk, exactly as check-doc-links.mjs skips it; it is scanned when it IS
-// the root, which is the only way its seeded findings are reachable. Skipped BY
+// repo walk; it is scanned when it IS the root, which is the only way its
+// seeded findings are reachable. Skipped BY
 // PATH, not by directory name — in Ritmolux the name form also swallowed
 // core/tests/fixtures/.
 //
@@ -138,10 +138,9 @@ function inSeededTree(abs) {
  * its users to skip the gate that fires on theirs. Patching the two trees by
  * name fixed those two and left the next `pip install` to re-break it.
  *
- * The consequence to know: a source file that git has never seen is not judged.
- * At push time — the only time this runs — every file in the push is committed,
- * so the window is a file created and not yet added, which is also the window in
- * which no gate in this repository can see it.
+ * The consequence to know: the gate judges the tracked set, so a source file
+ * that git has never seen is not judged. A file created and not yet added is
+ * outside it until `git add` puts it there.
  */
 function sourceFiles() {
   try {

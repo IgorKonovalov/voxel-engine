@@ -1,14 +1,14 @@
 # Index-row fixture
 
 The bite check for `scripts/check-index-rows.mjs`, on the `scripts/fixtures/`
-convention `check-doc-links.mjs` established. Scanned only when the fixture tree
+convention the repository gates share. Scanned only when the fixture tree
 is the scan root:
 
 ```
 node scripts/check-index-rows.mjs scripts/fixtures/index-rows   # expects exit 0
 ```
 
-It exits 0 while asserting three separate properties, so a regression in any one
+It exits 0 while asserting four separate properties, so a regression in any one
 of them is a red run rather than a quieter green one.
 
 ## Rows inside a region are measured and are under cap
