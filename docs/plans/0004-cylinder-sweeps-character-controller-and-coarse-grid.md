@@ -127,7 +127,9 @@ Shared conventions for every phase:
      same tick.
   3. Vertical: if grounded and `input.jump`, `vz = jump_speed`; else if not grounded, `vz =
      max(vz + gravity, -max_fall)`. Sweep by `(0, 0, vz)`. On a floor contact while moving
-     down: grounded, `vz = 0`. On a ceiling contact while moving up: `vz = 0`. Grounded is
+     down: grounded, `landed = Some(-vz)` (the impact speed, so the game can rule on fall
+     damage without keeping the previous tick's state; amended 2026-10-16 from the roadmap's
+     physics decision), then `vz = 0`. On a ceiling contact while moving up: `vz = 0`. Grounded is
      re-evaluated every tick by a downward probe sweep of `ground_probe` units when `vz <= 0`.
   Test parameters: `step_height = 1024`, `climb_height = 3072`, `climb_speed = 64`, `gravity =
   -8`, `max_fall = 1024`, `jump_speed = 160`, `ground_probe = 2`, `wish = (128, 0)` (0.5 voxel
@@ -192,7 +194,12 @@ Shared conventions for every phase:
     maximum `z` in `[1500, 1700]` (the ballistic estimate is `160² / 16 = 1600`, quantised by
     the per-tick integration), and is grounded again at `z = 0` by tick 45, never overlapping.
   - F1, body dropped from `z = 25600` (100 voxels): `vz` never exceeds `max_fall` in
-    magnitude, and the body lands at `z = 0` without overlapping on any tick.
+    magnitude, and the body lands at `z = 0` without overlapping on any tick. `landed` is
+    `Some(640)` on tick 80 and `None` on every other tick: after `n` ticks the fall is
+    `4n(n + 1)` units (`gravity = -8`, never reaching `max_fall`), 25280 after tick 79 and
+    25920 after tick 80, so tick 80 sweeps from `z = 320` with `vz = -640` and is clipped by
+    the floor. In the jump case above, `landed == Some(160)` on tick 41: the rise is 1680 over
+    ticks 1 to 21, and the descent `4k(k + 1)` equals 1680 at `k = 20` exactly.
 
 ### Phase 3: Ledge climb and the pinned course
 - **Owner skill:** dev
@@ -306,6 +313,7 @@ pub struct CharacterState { pub foot: Fixed3, pub vz: i64, pub grounded: bool, c
 pub struct MoveResult {
     pub moved: Fixed3, pub grounded: bool, pub blocked: bool, pub stepped: bool,
     pub climbed: bool, pub climb_available: Option<Fixed3>, pub contacts: Vec<Contact>,  // at most 4
+    pub landed: Option<i64>,  // impact speed on the tick the body comes to rest on a floor
 }
 impl CharacterController {
     pub fn tick(&self, world: &World, state: &mut CharacterState, input: &MoveInput) -> MoveResult;

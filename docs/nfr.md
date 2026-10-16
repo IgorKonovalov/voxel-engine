@@ -131,3 +131,5 @@ air with caverns on a 6.4 m lattice.
 - Binary size.
 - Mobile, web or console targets.
 - Frame rates above 60 fps as a gate; they are welcome, not required.
+- VR on the baseline. The VR-readiness decision in `roadmap.md` keeps the renderer's doors
+  open; a VR plan adds its own profile here (two views, 90 Hz, a named card) when scheduled.
