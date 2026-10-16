@@ -498,9 +498,32 @@ are the numbers the owner's call weighs.
 | 1: The harness and the face-normal baseline | dev | done: face cavity normal error 40.75 degrees, pillar silhouette error 172 px (lavapipe); occluder centre normal (-1, 1/255, 1/255); `primary.png`, `headlamp.png`, `lod.png` byte for byte; face 1080p march 17.218 / 17.261 / 17.255 ms on RADV Renoir (RTX 3080 lost from the bus, see Notes) | ca7dc23 |
 | 2: Mode A, normals smoothed in the shader | dev | done: cavity normal error trilinear8 18.62, gradient27 6.95 degrees (face 40.75, same run); pillar silhouette 172 px in all three; occluder centre (-1, 1/255, 1/255) in both; `look_trilinear8.png`, `look_gradient27.png` blessed on lavapipe; 1080p march trilinear8 25.024 / 24.885 / 24.872 ms, gradient27 41.277 / 41.400 / 41.353 ms on RADV Renoir | 9480183 |
 | 3: Mode B, per-voxel contour planes in attribute pages | dev | done: layout and floor readback tests in `mirror.rs`; face goldens byte for byte with attribute pages over 1 and 3 shards (`lod.png` 1 and 2); contour cavity normal error 7.41 degrees, pillar silhouette 32 px (face 40.75, 172, same run, lavapipe); `look_contour.png` blessed on lavapipe. RTX 3080 Laptop GPU, `--level --headless --seed 1 --frames 1`: without `--look` 207 681 088 B live, 213 334 144 B allocated; `--look contour` 606 633 408 B live, 613 759 104 B allocated; first sync 571 writes (195 without); 1080p contour march 1.891 / 1.891 / 1.892 ms; attrib initial fill (383 608 bricks) 55.020 / 39.581 / 41.722 / 41.889 ms; one 1 m carve 46 bricks 0.020 ms; the other 99 bench carves 2777 bricks 0.310 ms | 6d77f12 |
-| 4: Mode C, procedural per-material detail | dev | done: zero-strength detail leaves `primary.png`, `headlamp.png`, `lod.png` byte for byte; rock `[4.0, 0.3]` differs from face at 22.99 % of pixels by more than 8/255 (lavapipe), `look_detail.png` blessed on lavapipe; pillar pole decodes `[5, 162, 135]` from both cameras (`[0, 128, 128]` without detail); material rows 64 B, level mirror 606 633 536 B live with `--look` (+128 B for 4 rows). RTX 3080 Laptop GPU, 1080p march with detail: face 1.919 / 1.954 / 1.956 ms, gradient27 4.579 / 4.537 / 4.538 ms | committed with this row |
-| 5: Readings and the comparison table | dev | not started | |
+| 4: Mode C, procedural per-material detail | dev | done: zero-strength detail leaves `primary.png`, `headlamp.png`, `lod.png` byte for byte; rock `[4.0, 0.3]` differs from face at 22.99 % of pixels by more than 8/255 (lavapipe), `look_detail.png` blessed on lavapipe; pillar pole decodes `[5, 162, 135]` from both cameras (`[0, 128, 128]` without detail); material rows 64 B, level mirror 606 633 536 B live with `--look` (+128 B for 4 rows). RTX 3080 Laptop GPU, 1080p march with detail: face 1.919 / 1.954 / 1.956 ms, gradient27 4.579 / 4.537 / 4.538 ms | 37b22fa |
+| 5: Readings and the comparison table | dev | done: table below; `nfr.md` §2 and §3 lines; streamed `--autopilot --headless --look contour` reached full residency at 3 309 723 820 B live, 4 103 413 164 B allocated, then stopped on `wgpu error: Out of Memory` (RTX 3080 Laptop GPU, 8 GiB) | committed with this row |
 | 6: The owner's call | human | not started | |
+
+### Comparison table (Phase 5)
+
+Image metrics: `cargo nextest run -p flythrough --test look --no-capture every_mode`, lavapipe
+(llvmpipe, Mesa 26.2.2), 320 x 180; detail rows put rock at `[4.0, 0.3]`. March: 1080p
+median of the last 30 of 300 frames, `flythrough --level --headless --seed 1 --render
+1920x1080 --frames 300 --look MODE [--detail]`, three runs, RTX 3080 Laptop GPU, 37b22fa,
+under the exclusive lock, 1-minute load between 3 and 5 at the time. Mirror bytes: the level
+with `--look` (attribute pages in every mode), live / allocated, same runs.
+
+| mode | detail | cavity normal error (deg) | pillar silhouette error (px) | 1080p march (ms) | mirror at the level, live / allocated (B) |
+|---|---|---|---|---|---|
+| Face | off | 40.75 | 172 | 1.876 / 1.877 / 1.877 (no `--look`: 1.859 / 1.826 / 1.858) | 606 633 536 / 613 759 232 (no `--look`: 207 681 216 / 213 334 272) |
+| Face | on | 46.36 | 172 | 1.994 / 1.976 / 1.995 | 606 633 536 / 613 759 232 |
+| Trilinear8 | off | 18.62 | 172 | 2.878 / 2.874 / 2.907 | 606 633 536 / 613 759 232 |
+| Trilinear8 | on | 32.53 | 172 | 3.020 / 3.051 / 3.048 | 606 633 536 / 613 759 232 |
+| Gradient27 | off | 6.95 | 172 | 4.568 / 4.612 / 4.564 | 606 633 536 / 613 759 232 |
+| Gradient27 | on | 28.32 | 172 | 4.675 / 4.583 / 4.629 | 606 633 536 / 613 759 232 |
+| Contour | off | 7.41 | 32 | 1.944 / 1.927 / 1.944 | 606 633 536 / 613 759 232 |
+| Contour | on | 28.40 | 32 | 2.069 / 2.068 / 2.069 | 606 633 536 / 613 759 232 |
+
+Face, Trilinear8 and Gradient27 read no attribute; their mirror needs none, and the bytes
+without `--look` are in the Face row.
 
 ### Notes
 
@@ -549,6 +572,14 @@ each. Empty is fine.)_
 - Phase 4: `apps/flythrough/src/main.rs` changed outside Files touched: `--look` generates
   the world with `flythrough::look_materials()` (rock at `ROCK_DETAIL = [4.0, 0.3]`), and a
   new `--detail` flag starts with detail on, for the headless timings.
+- Phase 5: `--autopilot` already took `--look`; `apps/flythrough/src/main.rs` is unchanged in
+  this phase. The streamed contour run stopped on an out-of-memory error after full
+  residency, so no peak bytes were printed.
+- Phase 5: the 1080p table was taken while the 1-minute load average read between 3 and 5
+  (`uptime` 3.31 / 4.63 / 6.40 right after; the owner's other software), so the CPU side was
+  under load; the figures are GPU timestamps.
+- Phase 5: with detail on, the cavity normal error rises in every mode (detail is measured
+  against the smooth analytic sphere).
 - Phase 4: the zero-strength, 20 %, world-position and 64-byte-row checks are in
   `apps/flythrough/tests/look.rs` (`material_rows_are_64_bytes` checks the live mirror bytes
   as slots, records, table and 64 B rows).

@@ -70,28 +70,55 @@ fn metrics(mode: NormalMode) -> Option<(f64, usize)> {
 
 /// [`metrics`], over mirrors with attribute pages when `attrs` is set.
 fn metrics_with(mode: NormalMode, attrs: bool) -> Option<(f64, usize)> {
-    let cavity = cavity_world();
+    metrics_of(mode, false, attrs)
+}
+
+/// [`metrics_with`], with `detail` on and rock (the cavity's row 3, the pillar's rock) at
+/// `ROCK_DETAIL` when `detail` is set.
+fn metrics_of(mode: NormalMode, detail: bool, attrs: bool) -> Option<(f64, usize)> {
+    let mut cavity_table = look_table();
+    let mut pillar_table = flythrough::cave_materials();
+    if detail {
+        // Row 3 is the cavity's rock; `look_table` keeps rows in id order.
+        let mut t = vxe_world::MaterialTable::new();
+        for (id, row) in cavity_table.rows().iter().enumerate().skip(1) {
+            let mut row = row.clone();
+            if id == 3 {
+                row.detail = flythrough::ROCK_DETAIL;
+            }
+            t.push(row);
+        }
+        cavity_table = t;
+        pillar_table = flythrough::look_materials();
+    }
+    let look = |view| LookParams {
+        normal_mode: mode,
+        detail,
+        view,
+    };
+    let cavity = cavity_world_with(cavity_table);
     let mut rig = if attrs {
         attr_rig(&cavity)?
     } else {
         LookRig::new(&cavity, None)?
     };
     let cam = cavity_camera();
-    let normals = rig.render(&cam, &LightParams::at_eye(), look(mode, ViewMode::Normals));
+    let normals = rig.render(&cam, &LightParams::at_eye(), look(ViewMode::Normals));
     let normal_error = cavity_normal_error(&normals, &cam);
 
-    let pillar = pillar_world();
+    let pillar = pillar_world_with(pillar_table);
     let mut rig = if attrs {
         attr_rig_on(rig.device, rig.queue, &pillar, None)
     } else {
         LookRig::on(rig.device, rig.queue, &pillar, None)
     };
     let cam = pillar_camera();
-    let mask = rig.render(&cam, &LightParams::at_eye(), look(mode, ViewMode::HitMask));
+    let mask = rig.render(&cam, &LightParams::at_eye(), look(ViewMode::HitMask));
     let silhouette = pillar_silhouette_error(&mask, &cam);
     println!(
-        "{}: cavity normal error {normal_error:.2} degrees, pillar silhouette error {silhouette} pixels",
-        mode.name()
+        "{}{}: cavity normal error {normal_error:.2} degrees, pillar silhouette error {silhouette} pixels",
+        mode.name(),
+        if detail { " + detail" } else { "" }
     );
     Some((normal_error, silhouette))
 }
@@ -482,4 +509,32 @@ fn material_rows_are_64_bytes() {
             + window * 4
             + rows * 64
     );
+}
+
+/// The comparison table's image metrics, one line per mode with and without detail, in one
+/// run: `cargo nextest run -p flythrough --test look --no-capture every_mode`.
+#[test]
+fn every_mode_with_and_without_detail() {
+    let mut rows = Vec::new();
+    for mode in NormalMode::ALL {
+        for detail in [false, true] {
+            let Some(m) = metrics_of(mode, detail, mode == NormalMode::Contour) else {
+                return;
+            };
+            rows.push((mode, detail, m));
+        }
+    }
+    println!("| mode | detail | cavity normal error (degrees) | pillar silhouette error (px) |");
+    println!("|---|---|---|---|");
+    for (mode, detail, (error, silhouette)) in &rows {
+        println!(
+            "| {} | {} | {error:.2} | {silhouette} |",
+            mode.name(),
+            if *detail { "on" } else { "off" }
+        );
+    }
+    // Detail moves no hit: each mode's silhouette is the same with and without it.
+    for pair in rows.chunks(2) {
+        assert_eq!(pair[0].2.1, pair[1].2.1, "{}", pair[0].0.name());
+    }
 }
