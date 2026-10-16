@@ -291,8 +291,8 @@ dev box projects to about 3 ms there. That projection is a guess until the basel
 |---|---|---|---|
 | 1: The breakdown and the oracle | dev | done | `55abca6` |
 | 2: The per-op target table | dev | done | `81fce28` |
-| 3: Row spans | dev | done | committed with this row |
-| 4: Per-brick tallies and one collapse | dev | not started | |
+| 3: Row spans | dev | done | `d399ee8` |
+| 4: Per-brick tallies and one collapse | dev | done | committed with this row |
 | 5: Readings against the figure | dev | not started | |
 
 ### Notes
@@ -319,6 +319,17 @@ dev box projects to about 3 ms there. That projection is a guess until the basel
 - Phase 3: the capsule's row scan uses `CapsuleRow` in `shape.rs`, the `contains` capsule
   test with the row's `y`, `z` terms summed once, not `Shape::contains` itself; the 1000-row
   property test compares it against `Shape::contains`.
+- Phase 4: counts accumulate per run of equal old values within a brick (one `Tally::count`
+  per run, not per voxel). Bounds per row come from the first and last *changed* voxel of the
+  span, not the span's ends, so a span holding unchanged voxels (indestructible, or no target)
+  does not widen `aabb`. An id beyond the table's rows grows `counts` (the only allocation
+  after `Tally::new`, besides `seen` past 16 ids); `tests/edits.rs` gains
+  `ids_beyond_the_table_are_counted_like_the_reference` for that path. `brick.rs` is
+  unchanged.
+- From Phase 4 on the dev box carried load outside the perf lock (a `gdb` and a `game.exe`
+  of another session at about 90% of one core each, load average about 5), so absolute
+  readings moved by up to 30% between runs of the same binary; phase-to-phase comparisons
+  are paired runs of both binaries alternated under one exclusive lock.
 
 ### Close triggers
 
@@ -341,6 +352,10 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     [2.224, 2.241]; `tool` 6.455 ms [6.436, 6.476]. A repeat run read `worst` 3.131, `mixed`
     2.328, `tool` 6.807 ms with load average 5.5 from other sessions; an earlier run of the
     same code read 3.634 / 2.583 / 7.060 ms.
+  - Phase 4, paired with Phase 3 (`d399ee8`), alternated twice, 5 s measurement each, round
+    1 / round 2: Phase 3 `worst` 4.131 [4.121, 4.141] / 4.176 [4.166, 4.188], `mixed` 2.950 /
+    2.950, `tool` 8.532 / 8.617 ms; Phase 4 tree `worst` 3.585 [3.580, 3.590] / 3.641 [3.628,
+    3.660], `mixed` 2.618 / 2.658, `tool` 8.176 / 8.243 ms. Load average 5 during the runs.
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 

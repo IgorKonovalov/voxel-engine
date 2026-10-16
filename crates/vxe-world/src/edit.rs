@@ -207,21 +207,42 @@ impl Target for ReplaceOne {
     }
 }
 
-/// Per-op accumulation of counts and bounds.
-#[derive(Default)]
+/// Per-op accumulation of counts and bounds. `counts` is indexed by material id and sized to
+/// the material table once per op; `seen` lists each id the first time its count leaves zero.
 struct Tally {
-    counts: Vec<(MaterialId, u32)>,
+    counts: Vec<u32>,
+    seen: Vec<MaterialId>,
     lo: [i64; 3],
     hi: [i64; 3],
     any: bool,
 }
 
 impl Tally {
-    fn add(&mut self, m: MaterialId, n: u32, lo: [i64; 3], hi: [i64; 3]) {
-        match self.counts.iter_mut().find(|(k, _)| *k == m) {
-            Some((_, c)) => *c += n,
-            None => self.counts.push((m, n)),
+    fn new(rows: usize) -> Self {
+        Self {
+            counts: vec![0; rows],
+            seen: Vec::with_capacity(rows.min(16)),
+            lo: [0; 3],
+            hi: [0; 3],
+            any: false,
         }
+    }
+
+    /// Counts `n >= 1` changed voxels of old material `m`. An id beyond the table's rows (a
+    /// voxel the table does not describe) grows `counts` to reach it.
+    fn count(&mut self, m: MaterialId, n: u32) {
+        let i = usize::from(m);
+        if i >= self.counts.len() {
+            self.counts.resize(i + 1, 0);
+        }
+        if self.counts[i] == 0 {
+            self.seen.push(m);
+        }
+        self.counts[i] += n;
+    }
+
+    /// Widens the bounds of the changed voxels to hold `lo..=hi`.
+    fn bound(&mut self, lo: [i64; 3], hi: [i64; 3]) {
         if self.any {
             for k in 0..3 {
                 self.lo[k] = self.lo[k].min(lo[k]);
@@ -230,6 +251,15 @@ impl Tally {
         } else {
             (self.lo, self.hi, self.any) = (lo, hi, true);
         }
+    }
+
+    /// `changed_from`: the seen ids ascending, each with its count.
+    fn changed_from(mut self) -> Vec<(MaterialId, u32)> {
+        self.seen.sort_unstable();
+        self.seen
+            .iter()
+            .map(|&m| (m, self.counts[usize::from(m)]))
+            .collect()
     }
 }
 
@@ -316,7 +346,7 @@ impl World {
         }
 
         let targets = TargetTable::new(op.mode, &self.materials);
-        let mut tally = Tally::default();
+        let mut tally = Tally::new(self.materials.len());
         let mut touched = Vec::new();
         for (coord, vlo, vhi, chunk) in chunks {
             let mut chunk = write(chunk);
@@ -373,13 +403,13 @@ impl World {
         }
 
         drop(map);
-        tally.counts.sort_unstable();
+        let aabb = tally
+            .any
+            .then(|| (VoxelCoord(to_i32(tally.lo)), VoxelCoord(to_i32(tally.hi))));
         Ok(EditResult {
-            changed_from: tally.counts,
+            changed_from: tally.changed_from(),
             touched,
-            aabb: tally
-                .any
-                .then(|| (VoxelCoord(to_i32(tally.lo)), VoxelCoord(to_i32(tally.hi)))),
+            aabb,
         })
     }
 }
@@ -407,7 +437,8 @@ fn edit_brick(
         };
         if whole && cov == Coverage::Inside {
             *brick = Brick::Uniform(n);
-            tally.add(m, BRICK_VOXELS as u32, elo, ehi);
+            tally.count(m, BRICK_VOXELS as u32);
+            tally.bound(elo, ehi);
             return true;
         }
     }
@@ -493,7 +524,9 @@ impl<'a> RowCache<'a> {
 
 /// Writes every row span of `spans` (brick-local, row `y + 8 z`, empty when `x0 > x1`) into
 /// `brick`: per voxel, read the old value, look up its target, write it, count the old value.
-/// Expands the brick once. Returns whether any voxel changed; does not collapse.
+/// Counts go to `tally` per run of equal old values, and the bounds once per brick, from the
+/// first and last changed voxel of each row. Expands the brick once. Returns whether any voxel
+/// changed; does not collapse.
 fn write_rows<T: Target>(
     brick: &mut Brick,
     bmin: [i64; 3],
@@ -502,26 +535,49 @@ fn write_rows<T: Target>(
     tally: &mut Tally,
 ) -> bool {
     let voxels = brick.expand();
-    let mut changed = false;
+    // The run of equal old values being counted, and the brick-local bounds of the changes.
+    let (mut run_m, mut run_n) = (AIR, 0u32);
+    let (mut lo, mut hi) = ([usize::MAX; 3], [0usize; 3]);
     for (r, &(x0, x1)) in spans.iter().enumerate() {
         if x0 > x1 {
             continue;
         }
         let (x0, x1) = (usize::from(x0), usize::from(x1));
         let row = r * BRICK_EDGE as usize;
-        let (y, z) = (r % BRICK_EDGE as usize, r / BRICK_EDGE as usize);
+        let (mut first, mut last) = (usize::MAX, 0);
         for (x, cell) in (x0..=x1).zip(&mut voxels[row + x0..=row + x1]) {
             let old = *cell;
             let Some(new) = t.target(old) else {
                 continue;
             };
             *cell = new;
-            let v = [bmin[0] + x as i64, bmin[1] + y as i64, bmin[2] + z as i64];
-            tally.add(old, 1, v, v);
-            changed = true;
+            if old != run_m {
+                if run_n > 0 {
+                    tally.count(run_m, run_n);
+                }
+                (run_m, run_n) = (old, 0);
+            }
+            run_n += 1;
+            first = first.min(x);
+            last = x;
+        }
+        if first != usize::MAX {
+            let (y, z) = (r % BRICK_EDGE as usize, r / BRICK_EDGE as usize);
+            lo = [lo[0].min(first), lo[1].min(y), lo[2].min(z)];
+            hi = [hi[0].max(last), hi[1].max(y), hi[2].max(z)];
         }
     }
-    changed
+    if run_n > 0 {
+        tally.count(run_m, run_n);
+    }
+    if lo[0] == usize::MAX {
+        return false;
+    }
+    tally.bound(
+        [0, 1, 2].map(|k| bmin[k] + lo[k] as i64),
+        [0, 1, 2].map(|k| bmin[k] + hi[k] as i64),
+    );
+    true
 }
 
 #[cfg(test)]

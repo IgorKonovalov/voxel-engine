@@ -459,3 +459,47 @@ fn carving_only_indestructible_bricks_writes_nothing() {
     assert_eq!(world_hash(&world), before);
     assert_eq!(world.stats(), stats);
 }
+
+/// Voxels whose ids have no table row (6, 7 and 8 against a six-row table) are carved and
+/// counted like any other: 60 seeded carves and replaces of every shape match the reference,
+/// and the results count ids beyond the table.
+#[test]
+fn ids_beyond_the_table_are_counted_like_the_reference() {
+    let world = World::generate(
+        test_extent(),
+        &FnSource(|v: VoxelCoord| (hash::hash3(0x0003_0004, v.0) % 9) as MaterialId),
+        &test_table(),
+    );
+    assert_eq!(world.materials().len(), 6);
+    let mut rng = SplitMix64(0x0003_0004);
+    let mut beyond = 0;
+    for i in 0..60 {
+        let c = [0; 3].map(|_| rng.range(-60, 60) * FIXED_ONE + rng.range(-128, 127));
+        let r = rng.range(FIXED_ONE, 10 * FIXED_ONE);
+        let mode = if i % 2 == 0 {
+            Mode::Carve
+        } else {
+            Mode::Replace {
+                from: rng.range(6, 8) as MaterialId,
+                to: rng.range(0, 5) as MaterialId,
+            }
+        };
+        let op = match i % 3 {
+            0 => EditOp::sphere(Fixed3(c), r, mode),
+            1 => EditOp::box_(Fixed3(c.map(|v| v - r)), Fixed3(c.map(|v| v + r)), mode),
+            _ => EditOp::capsule(Fixed3(c), Fixed3(c.map(|v| v + 3 * r)), r / 2 + 1, mode),
+        };
+        let expected = reference_apply(&world, &op);
+        let got = world.apply(&op);
+        assert_eq!(got, expected.result, "op {i}: {op:?}");
+        if let Some((lo, hi)) = expected.bounds {
+            assert!(
+                materials_in(&world, lo, hi) == expected.after,
+                "op {i}: voxels differ from the reference after {op:?}"
+            );
+        }
+        let r = got.unwrap();
+        beyond += r.changed_from.iter().filter(|(m, _)| *m >= 6).count();
+    }
+    assert!(beyond >= 30, "{beyond} counts of ids beyond the table");
+}
