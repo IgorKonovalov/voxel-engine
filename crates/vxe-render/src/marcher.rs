@@ -107,32 +107,21 @@ impl Marcher {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let target = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("march target"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::STORAGE_BINDING
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
         Self {
             pipeline,
             layout,
             params,
-            target,
+            target: create_target(device, width, height),
         }
     }
 
     pub fn target(&self) -> &wgpu::Texture {
         &self.target
+    }
+
+    /// Replaces the target with one of `width` × `height`; the pipeline is kept.
+    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        self.target = create_target(device, width, height);
     }
 
     /// The uniform block for `camera` over `world`, lit by `light`.
@@ -161,7 +150,8 @@ impl Marcher {
         }
     }
 
-    /// Records the march of `camera` over `world` into `encoder`.
+    /// Records the march of `camera` over `world` into `encoder`, writing the pass's start and
+    /// end timestamps when `timestamps` is given.
     pub fn encode(
         &self,
         device: &wgpu::Device,
@@ -169,6 +159,7 @@ impl Marcher {
         encoder: &mut wgpu::CommandEncoder,
         world: &GpuWorld,
         params: &Params,
+        timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) {
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(params));
         let view = self
@@ -206,7 +197,7 @@ impl Marcher {
         });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("march"),
-            timestamp_writes: None,
+            timestamp_writes: timestamps,
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &bind, &[]);
@@ -228,7 +219,73 @@ impl Marcher {
     ) {
         let params = self.params(world, camera, light);
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        self.encode(device, queue, &mut enc, world, &params);
+        self.encode(device, queue, &mut enc, world, &params, None);
         queue.submit([enc.finish()]);
+    }
+}
+
+fn create_target(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("march target"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::STORAGE_BINDING
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    })
+}
+
+/// GPU duration of the march pass through two timestamp queries. Needs
+/// `Features::TIMESTAMP_QUERY` on the device.
+pub struct MarchTimer {
+    queries: wgpu::QuerySet,
+    resolve: wgpu::Buffer,
+}
+
+impl MarchTimer {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let queries = device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("march timer"),
+            ty: wgpu::QueryType::Timestamp,
+            count: 2,
+        });
+        let resolve = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("march timer resolve"),
+            size: 2 * size_of::<u64>() as u64,
+            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        Self { queries, resolve }
+    }
+
+    /// The timestamp writes to pass to [`Marcher::encode`].
+    pub fn writes(&self) -> wgpu::ComputePassTimestampWrites<'_> {
+        wgpu::ComputePassTimestampWrites {
+            query_set: &self.queries,
+            beginning_of_pass_write_index: Some(0),
+            end_of_pass_write_index: Some(1),
+        }
+    }
+
+    /// Records the copy of both timestamps into the resolve buffer; call after the pass.
+    pub fn resolve(&self, encoder: &mut wgpu::CommandEncoder) {
+        encoder.resolve_query_set(&self.queries, 0..2, &self.resolve, 0);
+    }
+
+    /// Milliseconds between the two timestamps of the last resolved pass. Blocks until the
+    /// GPU has finished it.
+    pub fn read_ms(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> f64 {
+        let bytes = crate::readback::read_buffer(device, queue, &self.resolve, 0, 16);
+        let t: &[u64] = bytemuck::cast_slice(&bytes);
+        let ticks = t[1].saturating_sub(t[0]);
+        ticks as f64 * f64::from(queue.get_timestamp_period()) / 1.0e6
     }
 }

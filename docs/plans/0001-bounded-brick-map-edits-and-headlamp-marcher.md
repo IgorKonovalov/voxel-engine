@@ -499,8 +499,8 @@ says so.
 | 3: Raycast, queries, tool-along-ray | dev | done | 64d93d8 |
 | 4: Cave source, determinism vector, world budget readings | dev | done | 62bb87a |
 | 5: GPU mirror and primary-ray marcher with a golden image | dev | done | 6a3ab55 |
-| 6: Headlamp with a shadow ray | dev | done | committed with this row |
-| 7: Window shell and the fly-through | dev | not started | |
+| 6: Headlamp with a shadow ray | dev | done | 4da3c9a |
+| 7: Window shell and the fly-through | dev | done | committed with this row |
 | 8: Brick occupancy masks | dev | not started | |
 
 ### Notes
@@ -545,6 +545,14 @@ each. Empty is fine.)_
 - Phase 6: `LightParams` carries intensity and cone angles as well as the offsets and the `shadows` flag; `LightParams::at_eye()` keeps the Phase 5 values (intensity 1200, cone 0.35 to 0.70 rad). `Marcher::render` and `Marcher::params` take `&LightParams` (commit of Phase 6).
 - Phase 6: the occluder scene reads 823 pixels brighter by more than 8/255 (range 820 to 840, 830 computed), all inside columns [130,207] and rows [63,140]; the cave scene reads 0.31 %. Both on lavapipe (llvmpipe, Mesa 26.2.2) (commit of Phase 6).
 - Phase 6: `primary.png` and `headlamp.png` re-blessed under `VXE_BLESS=1` came out byte-identical to the committed files (commit of Phase 6).
+- Phase 7 (owner-approved): `crates/vxe-render/src/marcher.rs` changed outside `Files touched`: `Marcher::encode` takes optional `ComputePassTimestampWrites`, `Marcher::resize`, and `MarchTimer` (two timestamp queries around the march pass) (commit of Phase 7).
+- Phase 7: also outside `Files touched`: the root `Cargo.toml` (`winit` =0.30.13 with `rwh_06`, `x11`, `wayland`, `wayland-dlopen` and no client-side decorations; `log` =0.4.34; `env_logger` =0.11.11 with default features off), `crates/vxe-render/src/lib.rs` (`present` module, re-exports of `Presenter`, `MarchTimer` and `glam`), and `crates/vxe-render/src/shaders/present.wgsl` with a `naga` validation unit test in `present.rs` (commit of Phase 7).
+- Phase 7: `log` is a dependency of `vxe-app` (cursor-grab fallback warning, adapter line), not of the fly-through only (commit of Phase 7).
+- Phase 7: the world generates on a spawned thread while the shell creates the window and device, and is joined in `App::device_request`; Vulkan instance creation took 1.64 s on the dev box with the dGPU asleep (commit of Phase 7).
+- Phase 7: `first frame after <n> ms` does not hold under 3000 on every cold start: 2973, 3151 and 3156 ms when the dGPU had been idle (one run started after `runtime_status` read `suspended`), 1916 to 1920 ms warm (see Close triggers). The initial mirror upload (383 608 one-brick `write_buffer` calls, 853 to 888 ms) is the largest item after device creation; batching it is not done here.
+- Phase 7: scroll changes the dig radius (0.1 m steps, 0.1 to 3 m); the fill radius stays 0.3 m. `B` prints one aggregated `carved:` line for its 100 carves plus one `bench:` line with edit CPU time and sync bytes, not 100 lines. Movement is `W`/`A`/`S`/`D`, `Space` up, `C` down, `Shift` x4 (commit of Phase 7).
+- Phase 7: the fly-through takes `--render WxH` (fixed marcher resolution, scaled to the window) and `--frames N` (exit after N frames, printing the `F1` reading over the last 30); `F1` prints medians over 30 frames (commit of Phase 7).
+- Phase 7: the windowed run was launched on the dev box (Hyprland, Wayland) only with `--frames`; WASD, mouse look, clicks, `L`, `B`, `F1` and `Esc` were not driven by input in this session. `Fly` and `Input` have headless unit tests; the edit-line format has one (commit of Phase 7).
 
 ### Close triggers
 
@@ -556,6 +564,8 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   - §4 edit cost: `cargo bench -p vxe-world --bench edits`, 100 radius-10 carves on a fresh solid world: 4.9199 ms (CI 4.8698 to 4.9768 ms). AMD Ryzen 9 5900HS, release bench profile, Phase 4 commit.
   - §3 world memory: `world_budget --chunks 20x20x8 --seed 1`: 3200 chunks, 383 608 Full / 1 254 792 Uniform (23.41 %), CPU 419 028 992 B, mirror 402 437 184 B. `--chunks 32x32x32 --seed 1`: 32 768 chunks, 3 487 326 Full / 13 289 890 Uniform (20.79 %), CPU 3 839 457 280 B, mirror 3 666 029 424 B. AMD Ryzen 9 5900HS, release, Phase 4 commit.
   - §5 generation: 0.509 s at 20x20x8 (1.029e8 voxels/s/thread), 4.785 s at 32x32x32 (1.122e8 voxels/s/thread), 16 threads, same machine and commit.
+  - §7 time to first frame: `cargo run --release -p flythrough -- --seed 1` (20x20x8 chunks, 1280x720 requested, NVIDIA GeForce RTX 3080 Laptop GPU, Vulkan, Hyprland): 2973, 3151 and 3156 ms after dGPU idle; 1916 and 1920 ms warm. Breakdown of one idle run: generation 574 ms (in parallel with device setup), device ready at 1887 ms, mirror upload 888 ms (399 381 120 B). Phase 7 commit.
+  - §3 mirror at level size from the fly-through: 399 381 120 B after the initial sync, 383 608 Full bricks, same machine and commit.
 - **Adapter limits (Phase 5, from `wgpu` 30.0.1 `Adapter::limits`):** llvmpipe (LLVM 22.1.8, Mesa 26.2.2, Vulkan): `max_storage_buffer_binding_size` 134 217 728, `max_buffer_size` 2 147 483 647. NVIDIA GeForce RTX 3080 Laptop GPU (Vulkan): 2 147 483 644 and 4 294 967 295. AMD Radeon Graphics (RADV RENOIR): 2 147 483 644 and 2 147 483 647.
 - **Gate at the tip:**
 - **Outstanding `human` phases:**

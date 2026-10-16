@@ -33,6 +33,8 @@ const MARGIN: i64 = 4;
 const SHELL_THICKNESS: i32 = 2;
 /// Radius of the spawn pocket, in voxels (3 m at 10 cm).
 pub const SPAWN_POCKET_RADIUS: i64 = 30;
+/// Chunks of the level the fly-through generates: 1280 x 1280 x 512 voxels.
+pub const LEVEL_CHUNKS: [i32; 3] = [20, 20, 8];
 
 /// The cave over a bounded extent of chunks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

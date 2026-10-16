@@ -2,19 +2,22 @@
 //! through `wgpu` (ADR-0001). Shaders are WGSL under `src/shaders/`. Nothing here branches
 //! on the graphics backend.
 //!
-//! [`GpuWorld`] mirrors a `vxe_world::World` into the ADR-0002 buffers; [`Marcher`] draws it.
+//! [`GpuWorld`] mirrors a `vxe_world::World` into the ADR-0002 buffers; [`Marcher`] draws it
+//! and [`Presenter`] puts the result on a surface.
 
 pub mod camera;
 pub mod gpu_world;
 pub mod light;
 pub mod marcher;
+pub mod present;
 pub mod readback;
 
 pub use camera::Camera;
 pub use gpu_world::{GpuWorld, MirrorError, SyncStats};
 pub use light::LightParams;
-pub use marcher::Marcher;
-pub use wgpu;
+pub use marcher::{MarchTimer, Marcher};
+pub use present::Presenter;
+pub use {glam, wgpu};
 
 /// The source of the primary-ray shader, for headless validation.
 pub const MARCH_WGSL: &str = include_str!("shaders/march.wgsl");
