@@ -99,6 +99,8 @@ With no flags it streams an unbounded seeded cave around the camera.
 | Left / right click | Dig / fill at the crosshair; the edit result prints to the terminal |
 | Scroll | Change the dig radius |
 | `L` | Toggle the shadow ray |
+| `N` | Cycle the normal mode: face, trilinear8, gradient27, contour (contour only under `--look`) |
+| `V` | Toggle procedural surface detail |
 | `B` | Run the carve benchmark in place |
 | `F1` | Sample the next frames and print frame-time readings |
 | `Esc` | Quit |
@@ -113,6 +115,10 @@ With no flags it streams an unbounded seeded cave around the camera.
 | `--autopilot` | Dig, fly 300 m out and back through the streamed cave, print streaming readings |
 | `--render WxH` | Fix the marcher's resolution; the window scales it |
 | `--sync-budget MiB` | Bytes uploaded to the GPU mirror per frame |
+| `--look MODE` | Start in normal mode `face`, `trilinear8`, `gradient27` or `contour`, with attribute pages for contour and rock detail |
+| `--view VIEW` | Write `shaded` (default), `normals` or `hitmask` to the target |
+| `--detail` | Start with procedural surface detail on |
+| `--rock-detail SCALE,STRENGTH` | Rock's detail feature scale in voxels and strength in [0, 1], under `--look` (default 4,0.3) |
 
 ### Checks
 
