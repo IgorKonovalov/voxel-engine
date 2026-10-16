@@ -497,8 +497,8 @@ are the numbers the owner's call weighs.
 |---|---|---|---|
 | 1: The harness and the face-normal baseline | dev | done: face cavity normal error 40.75 degrees, pillar silhouette error 172 px (lavapipe); occluder centre normal (-1, 1/255, 1/255); `primary.png`, `headlamp.png`, `lod.png` byte for byte; face 1080p march 17.218 / 17.261 / 17.255 ms on RADV Renoir (RTX 3080 lost from the bus, see Notes) | ca7dc23 |
 | 2: Mode A, normals smoothed in the shader | dev | done: cavity normal error trilinear8 18.62, gradient27 6.95 degrees (face 40.75, same run); pillar silhouette 172 px in all three; occluder centre (-1, 1/255, 1/255) in both; `look_trilinear8.png`, `look_gradient27.png` blessed on lavapipe; 1080p march trilinear8 25.024 / 24.885 / 24.872 ms, gradient27 41.277 / 41.400 / 41.353 ms on RADV Renoir | 9480183 |
-| 3: Mode B, per-voxel contour planes in attribute pages | dev | done: layout and floor readback tests in `mirror.rs`; face goldens byte for byte with attribute pages over 1 and 3 shards (`lod.png` 1 and 2); contour cavity normal error 7.41 degrees, pillar silhouette 32 px (face 40.75, 172, same run, lavapipe); `look_contour.png` blessed on lavapipe. RTX 3080 Laptop GPU, `--level --headless --seed 1 --frames 1`: without `--look` 207 681 088 B live, 213 334 144 B allocated; `--look contour` 606 633 408 B live, 613 759 104 B allocated; first sync 571 writes (195 without); 1080p contour march 1.891 / 1.891 / 1.892 ms; attrib initial fill (383 608 bricks) 55.020 / 39.581 / 41.722 / 41.889 ms; one 1 m carve 46 bricks 0.020 ms; the other 99 bench carves 2777 bricks 0.310 ms | committed with this row |
-| 4: Mode C, procedural per-material detail | dev | not started | |
+| 3: Mode B, per-voxel contour planes in attribute pages | dev | done: layout and floor readback tests in `mirror.rs`; face goldens byte for byte with attribute pages over 1 and 3 shards (`lod.png` 1 and 2); contour cavity normal error 7.41 degrees, pillar silhouette 32 px (face 40.75, 172, same run, lavapipe); `look_contour.png` blessed on lavapipe. RTX 3080 Laptop GPU, `--level --headless --seed 1 --frames 1`: without `--look` 207 681 088 B live, 213 334 144 B allocated; `--look contour` 606 633 408 B live, 613 759 104 B allocated; first sync 571 writes (195 without); 1080p contour march 1.891 / 1.891 / 1.892 ms; attrib initial fill (383 608 bricks) 55.020 / 39.581 / 41.722 / 41.889 ms; one 1 m carve 46 bricks 0.020 ms; the other 99 bench carves 2777 bricks 0.310 ms | 6d77f12 |
+| 4: Mode C, procedural per-material detail | dev | done: zero-strength detail leaves `primary.png`, `headlamp.png`, `lod.png` byte for byte; rock `[4.0, 0.3]` differs from face at 22.99 % of pixels by more than 8/255 (lavapipe), `look_detail.png` blessed on lavapipe; pillar pole decodes `[5, 162, 135]` from both cameras (`[0, 128, 128]` without detail); material rows 64 B, level mirror 606 633 536 B live with `--look` (+128 B for 4 rows). RTX 3080 Laptop GPU, 1080p march with detail: face 1.919 / 1.954 / 1.956 ms, gradient27 4.579 / 4.537 / 4.538 ms | committed with this row |
 | 5: Readings and the comparison table | dev | not started | |
 | 6: The owner's call | human | not started | |
 
@@ -543,6 +543,15 @@ each. Empty is fine.)_
   level's `mirror: uploaded` line also prints live and allocated bytes, since a `--frames 1`
   run prints no frame line.
 - Phase 3: `look_contour.png` shows isolated dark pixels on lit wall (lavapipe image).
+- Phase 4: the normal tilt carries a gain, `DETAIL_TILT = 4` in `march.wgsl`: the tilted
+  normal is `normalize(n - strength * 4 * g_t)` with `g_t` the tangential noise gradient in
+  feature units. Without the gain the scene changed at 6.90 % of pixels.
+- Phase 4: `apps/flythrough/src/main.rs` changed outside Files touched: `--look` generates
+  the world with `flythrough::look_materials()` (rock at `ROCK_DETAIL = [4.0, 0.3]`), and a
+  new `--detail` flag starts with detail on, for the headless timings.
+- Phase 4: the zero-strength, 20 %, world-position and 64-byte-row checks are in
+  `apps/flythrough/tests/look.rs` (`material_rows_are_64_bytes` checks the live mirror bytes
+  as slots, records, table and 64 B rows).
 
 ### Close triggers
 

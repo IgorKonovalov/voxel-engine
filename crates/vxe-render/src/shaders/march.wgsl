@@ -14,7 +14,8 @@
 //   3  storage  chunk_table    [wrapped chunk]u32 record index in bits 0..30, bit 30 set for a
 //                              LOD record (entries 0..64 mip level 1, 64..72 level 2, 72
 //                              level 3); 0xFFFFFFFF when absent
-//   4  storage  materials      [id][2 x vec4]: albedo rgb + roughness, emission rgb + flag bits
+//   4  storage  materials      [id][4 x vec4]: albedo rgb + roughness, emission rgb + flag bits,
+//                              detail scale (voxels) + detail strength + 2 spare, 4 spare
 //   5  storage texture         rgba8unorm output
 //   6  storage  brick_masks    [slot][2 x u32]; bit b set: block (b & 3, (b >> 2) & 3, b >> 4)
 //                              of the slot's brick holds a non-air voxel
@@ -453,12 +454,75 @@ fn surface_normal(o: vec3<f32>, d: vec3<f32>, h: Hit) -> vec3<f32> {
     return nf;
 }
 
-fn shade(o: vec3<f32>, d: vec3<f32>, h: Hit, n: vec3<f32>) -> vec3<f32> {
+// A hash of lattice point `c` to [0, 1).
+fn hash3(c: vec3<i32>) -> f32 {
+    let x = bitcast<vec3<u32>>(c) * vec3<u32>(1597334677u, 3812015801u, 2798796415u);
+    var h = (x.x ^ x.y ^ x.z) * 2654435761u;
+    h ^= h >> 15u;
+    h *= 2246822519u;
+    h ^= h >> 13u;
+    return f32(h >> 8u) / 16777216.0;
+}
+
+// Value noise at `p` with a quintic fade: the value in [0, 1) and its gradient.
+fn value_noise(p: vec3<f32>) -> vec4<f32> {
+    let fl = floor(p);
+    let i = vec3<i32>(fl);
+    let f = p - fl;
+    let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    let du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+    let a = hash3(i);
+    let b = hash3(i + vec3<i32>(1, 0, 0));
+    let c = hash3(i + vec3<i32>(0, 1, 0));
+    let dd = hash3(i + vec3<i32>(1, 1, 0));
+    let e = hash3(i + vec3<i32>(0, 0, 1));
+    let ff = hash3(i + vec3<i32>(1, 0, 1));
+    let g = hash3(i + vec3<i32>(0, 1, 1));
+    let hh = hash3(i + vec3<i32>(1, 1, 1));
+    let k1 = b - a;
+    let k2 = c - a;
+    let k3 = e - a;
+    let k4 = a - b - c + dd;
+    let k5 = a - c - e + g;
+    let k6 = a - b - e + ff;
+    let k7 = -a + b + c - dd + e - ff - g + hh;
+    let v = a + k1 * u.x + k2 * u.y + k3 * u.z + k4 * u.x * u.y + k5 * u.y * u.z
+        + k6 * u.z * u.x + k7 * u.x * u.y * u.z;
+    let grad = du * vec3<f32>(
+        k1 + k4 * u.y + k6 * u.z + k7 * u.y * u.z,
+        k2 + k5 * u.z + k4 * u.x + k7 * u.z * u.x,
+        k3 + k6 * u.x + k5 * u.y + k7 * u.x * u.y,
+    );
+    return vec4<f32>(v, grad);
+}
+
+// Normal tilt of the detail term per unit strength and unit noise gradient in feature units.
+const DETAIL_TILT: f32 = 4.0;
+
+// Procedural detail at world point `p` (voxels) on a surface of normal `n`: two octaves of
+// value noise at feature scale `scale` and `scale / 2`, weights 1 and 1/2. Returns the normal
+// tilted against the noise's tangential gradient (in feature units) times `strength` and
+// `DETAIL_TILT`, and the
+// albedo factor `1 + strength (2 v - 1)` for the noise value `v` in [0, 1). A pure function of
+// `p`, so a wall point shades the same from any camera.
+fn detail(p: vec3<f32>, n: vec3<f32>, scale: f32, strength: f32) -> vec4<f32> {
+    let q = p / scale;
+    let o1 = value_noise(q);
+    let o2 = value_noise(q * 2.0 + vec3<f32>(17.0, 31.0, 47.0));
+    let v = (o1.x + 0.5 * o2.x) / 1.5;
+    // Gradient with respect to q: octave 2 is sampled at 2q.
+    let g = (o1.yzw + o2.yzw) / 1.5;
+    let gt = g - dot(g, n) * n;
+    let tilted = normalize(n - (strength * DETAIL_TILT) * gt);
+    return vec4<f32>(tilted, 1.0 + strength * (2.0 * v - 1.0));
+}
+
+fn shade(o: vec3<f32>, d: vec3<f32>, h: Hit, n: vec3<f32>, tint: f32) -> vec3<f32> {
     // The shadow ray leaves along the face normal in every mode: it is a robustness offset
     // out of the hit voxel, not part of the look.
     let nf = face_normal(d, h);
     let p = o + d * h.t;
-    let albedo = materials[h.material * 2u].xyz;
+    let albedo = materials[h.material * 4u].xyz * tint;
     let to_light = params.light_pos - p;
     let dist2 = max(dot(to_light, to_light), 1e-4);
     let l = to_light * inverseSqrt(dist2);
@@ -496,13 +560,23 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     var c = vec3<f32>(0.0);
     if (h.found) {
-        let n = surface_normal(o, d, h);
+        var n = surface_normal(o, d, h);
+        var tint = 1.0;
+        if ((params.flags & FLAG_DETAIL) != 0u) {
+            // Exactly no change at strength 0.
+            let row = materials[h.material * 4u + 2u];
+            if (row.y > 0.0) {
+                let dt = detail(o + d * h.t, n, row.x, row.y);
+                n = dt.xyz;
+                tint = dt.w;
+            }
+        }
         if (view == VIEW_NORMALS) {
             // The normal itself, linear: n * 0.5 + 0.5 per channel.
             textureStore(target_tex, vec2<i32>(gid.xy), vec4<f32>(n * 0.5 + 0.5, 1.0));
             return;
         }
-        c = shade(o, d, h, n);
+        c = shade(o, d, h, n, tint);
     }
     // Display encoding: clamp, then an approximate sRGB transfer.
     c = pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));

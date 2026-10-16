@@ -5,16 +5,16 @@
 //! within `r_full` chunks, mips out to `r_lod`. `--level` generates the bounded level instead.
 //!
 //! `flythrough [--seed N] [--level] [--render WxH] [--frames N] [--bench N] [--autopilot]
-//! [--sync-budget MIB] [--headless] [--look MODE] [--view VIEW]`. `--render` fixes the marcher's resolution (the window
+//! [--sync-budget MIB] [--headless] [--look MODE] [--view VIEW] [--detail]`. `--render` fixes the marcher's resolution (the window
 //! scales it); `--frames` exits after N frames, printing the `F1` readings over the last
 //! ones; `--bench` runs the `B` bench N times right after the first mirror upload, before
 //! the first frame; `--autopilot` digs, flies 300 m out and back and prints the streaming
 //! readings (see [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame;
 //! `--headless` runs the same frames on an offscreen target with no window; `--look` starts
 //! in a normal mode (`face`, `trilinear8`, `gradient27`, `contour`) and gives the mirror
-//! attribute pages, so `N` can reach `contour` (without `--look` it skips it); `--view` starts
-//! in a view (`shaded`, `normals`, `hitmask`). `N` cycles the normal mode and `V` toggles
-//! detail.
+//! attribute pages, so `N` can reach `contour` (without `--look` it skips it), and gives rock
+//! its procedural detail; `--view` starts in a view (`shaded`, `normals`, `hitmask`) and
+//! `--detail` with detail on. `N` cycles the normal mode and `V` toggles detail.
 
 mod fly;
 
@@ -92,6 +92,8 @@ struct Args {
     sync_budget: u64,
     /// `--look`: the starting normal mode.
     look: Option<NormalMode>,
+    /// `--detail`: start with procedural detail on.
+    detail: bool,
     view: ViewMode,
 }
 
@@ -106,6 +108,7 @@ fn parse_args() -> Result<Args, String> {
         headless: false,
         sync_budget: SYNC_BUDGET_MIB << 20,
         look: None,
+        detail: false,
         view: ViewMode::Shaded,
     };
     let mut it = std::env::args().skip(1);
@@ -141,6 +144,7 @@ fn parse_args() -> Result<Args, String> {
                     .ok_or(format!("--view takes shaded, normals or hitmask, not {v}"))?;
             }
             "--level" => args.level = true,
+            "--detail" => args.detail = true,
             "--autopilot" => args.autopilot = true,
             "--headless" => args.headless = true,
             _ => return Err(format!("unknown argument {flag}")),
@@ -1135,7 +1139,7 @@ impl App for Flythrough {
                 light: LightParams::headlamp(),
                 look: LookParams {
                     normal_mode: self.args.look.unwrap_or_default(),
-                    detail: false,
+                    detail: self.args.detail,
                     view: self.args.view,
                 },
                 dig_radius: DIG_RADIUS,
@@ -1242,6 +1246,15 @@ fn pollster_block_on<F: std::future::Future>(f: F) -> F::Output {
     }
 }
 
+/// The cave's material table; under `--look`, with rock's procedural detail.
+fn materials(args: Args) -> MaterialTable {
+    if args.look.is_some() {
+        flythrough::look_materials()
+    } else {
+        cave_materials()
+    }
+}
+
 fn main() {
     env_logger::init();
     let start = now();
@@ -1258,7 +1271,7 @@ fn main() {
         let source = CaveSource::new(seed, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
         let generation = std::thread::spawn(move || {
             let t = now();
-            let world = World::generate(source.extent, &source, &cave_materials());
+            let world = World::generate(source.extent, &source, &materials(args));
             println!(
                 "generated seed {seed} over {LEVEL_CHUNKS:?} chunks in {:.0} ms: {} full bricks",
                 ms_since(t),
@@ -1273,7 +1286,7 @@ fn main() {
             .map_or(1, usize::from)
             .saturating_sub(1)
             .max(1);
-        let world = World::new(&cave_materials());
+        let world = World::new(&materials(args));
         let mut streamer = Streamer::new(
             Arc::new(source),
             StreamConfig {

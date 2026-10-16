@@ -101,8 +101,9 @@ pub const LOD_BIT: u32 = 1 << 30;
 pub const LOD_LEVEL_ENTRY: [usize; MIP_LEVELS] = [0, 64, 72];
 /// `rev` value of a material not in the palette being built.
 const NO_INDEX: u16 = u16::MAX;
-/// `f32`s per material row: albedo rgb, roughness, emission rgb, flags as bits.
-pub const MATERIAL_FLOATS: usize = 8;
+/// `f32`s per material row: albedo rgb, roughness, emission rgb, flags as bits, detail scale
+/// and strength, 6 spare.
+pub const MATERIAL_FLOATS: usize = 16;
 /// Brick slots of an attribute page; the rest of the page holds their attributes, two slots
 /// per brick slot, and its last 4 slots are unused.
 pub const ATTR_PAGE_BRICK_SLOTS: u32 = 1364;
@@ -1401,6 +1402,14 @@ impl GpuWorld {
                     m.emission[1],
                     m.emission[2],
                     f32::from_bits(m.flags.0),
+                    m.detail[0],
+                    m.detail[1],
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
                 ]
             })
             .collect();

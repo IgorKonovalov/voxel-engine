@@ -44,10 +44,13 @@ pub struct Material {
     /// Absorption, transmission, resonance.
     pub acoustic: [f32; 3],
     pub payload: u64,
+    /// Procedural surface detail for the renderer: feature scale in voxels, strength in
+    /// `[0, 1]`. Strength 0 is no detail.
+    pub detail: [f32; 2],
 }
 
 impl Material {
-    /// A grey, rough, non-emissive row with no flags.
+    /// A grey, rough, non-emissive row with no flags and no detail.
     pub fn named(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -58,6 +61,7 @@ impl Material {
             flags: MaterialFlags::empty(),
             acoustic: [0.0; 3],
             payload: 0,
+            detail: [0.0; 2],
         }
     }
 }

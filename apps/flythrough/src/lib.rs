@@ -39,6 +39,24 @@ pub fn cave_materials() -> MaterialTable {
     t
 }
 
+/// Rock's procedural detail under `--look`: a 40 cm feature scale (4 voxels) at strength 0.3.
+pub const ROCK_DETAIL: [f32; 2] = [4.0, 0.3];
+
+/// [`cave_materials`] with rock's detail set to [`ROCK_DETAIL`]: the table the fly-through
+/// uses under `--look`. Every other row keeps no detail.
+pub fn look_materials() -> MaterialTable {
+    let base = cave_materials();
+    let mut t = MaterialTable::new();
+    for (id, row) in base.rows().iter().enumerate().skip(1) {
+        let mut row = row.clone();
+        if id == usize::from(cave::ROCK) {
+            row.detail = ROCK_DETAIL;
+        }
+        t.push(row);
+    }
+    t
+}
+
 /// FNV-1a 64 over the voxels of the resident chunks `coords`, in the given order: each as its
 /// coordinate (three little-endian `i32`), then its bricks in slot order with voxels x-fastest
 /// as little-endian `u16`, a `Uniform` brick expanded. `None` if one is not resident.

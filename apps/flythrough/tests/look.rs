@@ -330,3 +330,156 @@ fn contour_golden() {
     );
     assert!(f >= 0.01, "look_contour.png: {:.2} %", f * 100.0);
 }
+
+fn detail_look(normal_mode: NormalMode, view: ViewMode) -> LookParams {
+    LookParams {
+        normal_mode,
+        detail: true,
+        view,
+    }
+}
+
+/// The golden scene with its carve, under `table`.
+fn carved_world_with(table: &vxe_world::MaterialTable) -> World {
+    let source = scene_source();
+    let world = World::generate(source.extent, &source, table);
+    let r = world.apply(&scene_carve(&world)).unwrap();
+    assert!(!r.changed_from.is_empty(), "the carve removes rock");
+    world
+}
+
+/// With every row's strength at 0, the detail term is exactly zero: `primary.png`,
+/// `headlamp.png` and `lod.png` render byte for byte with detail on.
+#[test]
+fn zero_strength_detail_leaves_the_goldens_byte_for_byte() {
+    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+        return;
+    }
+    let world = carved_world();
+    assert!(
+        world.materials().rows().iter().all(|m| m.detail[1] == 0.0),
+        "the cave table carries no detail"
+    );
+    let Some(mut rig) = LookRig::new(&world, None) else {
+        return;
+    };
+    let on = detail_look(NormalMode::Face, ViewMode::Shaded);
+    for (name, light) in [
+        ("primary.png", LightParams::at_eye()),
+        ("headlamp.png", LightParams::headlamp()),
+    ] {
+        let img = rig.render(&scene_camera(), &light, on);
+        let golden = read_png(&golden_path(name)).0;
+        let differing = img.iter().zip(&golden).filter(|(a, b)| a != b).count();
+        assert_eq!(differing, 0, "{name}: {differing} bytes differ");
+    }
+    let lod = lod_scene();
+    let mut rig = LookRig::on(rig.device, rig.queue, &lod, None);
+    rig.marcher.set_lod(lod_forced_1());
+    let img = rig.render(&scene_camera(), &LightParams::at_eye(), on);
+    let golden = read_png(&golden_path("lod.png")).0;
+    let differing = img.iter().zip(&golden).filter(|(a, b)| a != b).count();
+    assert_eq!(differing, 0, "lod.png: {differing} bytes differ");
+}
+
+/// Rock at `detail = [4.0, 0.3]` changes at least 20 % of the headlamp scene's pixels by more
+/// than 8/255 against face mode.
+#[test]
+fn rock_detail_golden() {
+    let table = flythrough::look_materials();
+    let rock = table.get(flythrough::cave::ROCK).unwrap();
+    assert_eq!(rock.detail, [4.0, 0.3]);
+    let world = carved_world_with(&table);
+    let Some(mut rig) = LookRig::new(&world, None) else {
+        return;
+    };
+    let img = rig.render(
+        &scene_camera(),
+        &LightParams::headlamp(),
+        detail_look(NormalMode::Face, ViewMode::Shaded),
+    );
+    assert_golden("look_detail.png", &img);
+    let face = rig.render(
+        &scene_camera(),
+        &LightParams::headlamp(),
+        look(NormalMode::Face, ViewMode::Shaded),
+    );
+    let f = fraction_differing(&img, &face, 8);
+    println!(
+        "look_detail.png differs from face mode at {:.2} % of pixels by more than 8/255",
+        f * 100.0
+    );
+    assert!(f >= 0.20, "{:.2} %", f * 100.0);
+}
+
+/// The detail noise is a function of world position alone: the pillar's front pole decodes
+/// the same detailed normal from two camera positions on one line of sight.
+#[test]
+fn detail_is_a_function_of_world_position() {
+    let world = pillar_world_with(flythrough::look_materials());
+    let Some(mut rig) = LookRig::new(&world, None) else {
+        return;
+    };
+    let near = pillar_camera();
+    let (col, row) = (WIDTH / 2, HEIGHT / 2);
+    let d = pixel_ray(&near, col, row);
+    let far = vxe_render::Camera {
+        position: near.position - d * 30.0,
+        ..near
+    };
+    let on = detail_look(NormalMode::Face, ViewMode::Normals);
+    let i = (row * WIDTH + col) as usize * 4;
+    let a = rig.render(&near, &LightParams::at_eye(), on)[i..i + 4].to_vec();
+    let b = rig.render(&far, &LightParams::at_eye(), on)[i..i + 4].to_vec();
+    let flat = rig.render(
+        &near,
+        &LightParams::at_eye(),
+        look(NormalMode::Face, ViewMode::Normals),
+    )[i..i + 4]
+        .to_vec();
+    println!(
+        "pole normal {:?} from both cameras {:?} / {:?}, without detail {:?}",
+        decode_normal(&a),
+        a,
+        b,
+        flat
+    );
+    for k in 0..3 {
+        assert!(
+            a[k].abs_diff(b[k]) <= 2,
+            "channel {k}: {} against {}",
+            a[k],
+            b[k]
+        );
+    }
+    assert!(
+        (0..3).any(|k| a[k].abs_diff(flat[k]) > 4),
+        "detail tilts the pole's normal: {a:?} against {flat:?}"
+    );
+}
+
+/// A material row is 64 B on the GPU, and the live mirror bytes are the slots, records,
+/// table and those rows, nothing else.
+#[test]
+fn material_rows_are_64_bytes() {
+    let world = carved_world();
+    let Some(rig) = LookRig::new(&world, None) else {
+        return;
+    };
+    let gpu = &rig.gpu;
+    let rows = world.materials().len() as u64;
+    assert_eq!(gpu.materials().size(), rows * 64);
+    let window = world
+        .extent()
+        .size()
+        .iter()
+        .map(|&v| v as u64)
+        .product::<u64>();
+    assert_eq!(
+        gpu.mirror_bytes(),
+        u64::from(gpu.live_slots()) * (512 + 8)
+            + gpu.mirrored_chunks() as u64 * 2560
+            + window * 4
+            + rows * 64
+    );
+}
