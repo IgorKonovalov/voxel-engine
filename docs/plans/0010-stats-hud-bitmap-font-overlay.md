@@ -233,7 +233,7 @@ Buffers: cells 128 KiB at the cap, font 760 bytes, samples 1 KiB, params 64 byte
 | Phase | Owner | Status | Notes |
 |---|---|---|---|
 | 1: The overlay pass and the font | dev | done | `HudOverlay` (`hud.rs`, `hud.wgsl`), `font8x8.rs` from `font8x8_basic.h`; lavapipe (llvmpipe, LLVM 22.1.8): `A` at scale 2 has 28 set bits, 112 white pixels, 33 shadow pixels, every pixel at `x >= 17` the clear colour; `present.wgsl`, `march.wgsl`, `present.rs` unchanged and Plan 0001's goldens pass; gate: 175 tests run, 175 passed, 1 skipped. Commit: 04fffd5 |
-| 2: The frame-time strip and the pass timer | dev | blocked: the 1.5 to 1.7 ms band | `set_samples` and the strip; lavapipe: samples `[0, 16, 32, 64]`, ceiling 32, scale 1 give columns of 0, 32, 64, 64 white pixels and the red line 33 rows above the strip's bottom row in columns 0 and 1. `PassTimer` in `marcher.rs`, `MarchTimer` a type alias. March GPU, `flythrough --headless --seed 1 --render 1920x1080 --frames 300`, median of the last 30, three runs each, RTX 3080 Laptop GPU, exclusive lock: before (04fffd5) 6.684 / 7.100 / 6.683 ms, after 6.779 / 6.787 / 6.797 ms; with `--level` added, before 1.712 / 1.753 / 1.714 ms, after 1.753 / 1.720 / 1.707 ms. HUD pass (`hud_pass_reading_at_1080p`, ignored test, release): 1920 x 1080, 24 rows x 100 characters, 240 samples, scale 2, median of 300: 0.0573 / 0.0573 / 0.0573 ms. Gate: 177 tests run, 177 passed, 2 skipped. Commit: committed with this row |
+| 2: The frame-time strip and the pass timer | dev | blocked: the 1.5 to 1.7 ms band | `set_samples` and the strip; lavapipe: samples `[0, 16, 32, 64]`, ceiling 32, scale 1 give columns of 0, 32, 64, 64 white pixels and the red line 33 rows above the strip's bottom row in columns 0 and 1. `PassTimer` in `marcher.rs`, `MarchTimer` a type alias. March GPU, `flythrough --headless --seed 1 --render 1920x1080 --frames 300`, median of the last 30, three runs each, RTX 3080 Laptop GPU, exclusive lock: before (04fffd5) 6.684 / 7.100 / 6.683 ms, after 6.779 / 6.787 / 6.797 ms; with `--level` added, before 1.712 / 1.753 / 1.714 ms, after 1.753 / 1.720 / 1.707 ms. HUD pass (`hud_pass_reading_at_1080p`, ignored test, release): 1920 x 1080, 24 rows x 100 characters, 240 samples, scale 2, median of 300: 0.0573 / 0.0573 / 0.0573 ms. Gate: 177 tests run, 177 passed, 2 skipped. Commit: cbee825 |
 | 3: Stats in the fly-through and the toggle | dev | not started | |
 | 4: The golden with the HUD on | dev | not started | |
 
@@ -261,13 +261,13 @@ Buffers: cells 128 KiB at the cap, font 760 bytes, samples 1 KiB, params 64 byte
   HUD's `PassTimer`.
 - Deviation, 04fffd5: `hud.wgsl`'s naga validation is a unit test in `hud.rs`;
   `tests/shader_portability.rs` (outside Files touched) does not list `hud.wgsl`.
-- Deviation, this row's commit: `PassTimer` keeps a two-timestamp query set (the done-when)
+- Deviation, cbee825: `PassTimer` keeps a two-timestamp query set (the done-when)
   rather than Ritmolux's fixed set of index pairs; the march and the HUD each own one.
   `MarchTimer::new` now takes the queue and returns `Option`; the fly-through's two call sites
   follow.
-- Deviation, this row's commit: the HUD reading is an ignored test in `tests/hud.rs` run by
+- Deviation, cbee825: the HUD reading is an ignored test in `tests/hud.rs` run by
   hand, not a fly-through run (the fly-through draws no HUD until Phase 3).
-- Deviation, this row's commit: `crates/vxe-render/src/lib.rs` (outside Phase 2's Files
+- Deviation, cbee825: `crates/vxe-render/src/lib.rs` (outside Phase 2's Files
   touched) re-exports `PassTimer`.
 - The red line is drawn where no bar covers it; the strip has no backdrop.
 
