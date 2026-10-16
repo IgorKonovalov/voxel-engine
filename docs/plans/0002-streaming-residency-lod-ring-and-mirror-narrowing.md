@@ -661,7 +661,7 @@ each. Empty is fine.)_
   against the capacity before writing; `alloc_record` caps growth at the capacity and returns
   the same error as a backstop. The 4 MiB device test ran on lavapipe (no skip); with the
   pre-check disabled it fails on the backstop's error (1640 records' bytes needed). Commit:
-  committed with this line.
+  076b1c4.
 
 ### Close triggers
 
@@ -741,6 +741,19 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   - Phase 8 commit, headless 1920 x 1080 from the spawn, median of the last 30 of 300 frames:
     bounded `--level` 1.953, 1.954, 1.956 ms (first sync 506 to 517 ms); streaming, at rest
     after full residency (1500 frames), 6.689 ms with 0.349 ms CPU per frame.
+  - Fix-pass tip (076b1c4), headless `flythrough --autopilot --headless`, release (RTX 3080
+    Laptop GPU, NVIDIA 610.57.04, 1280 x 720, r_full 16, r_lod 24, h 1, 15 workers, window
+    51, 2 MiB sync budget), two runs: full residency 12 134 and 11 697 ms, mirror at full
+    residency 1 603 820 012 B live and 1 675 304 748 B allocated (both runs); peak mirror
+    1 672 823 572 and 1 692 743 692 B live, 2 431 425 836 B allocated (both runs); resident
+    RAM accounting peak 3 242 091 312 and 3 239 741 232 B; process peak RSS (`VmHWM`)
+    3 869 564 928 and 3 873 890 304 B; persisted RAM peak 233 616 B; `return: 2 chunks, hash
+    match` both; unready-near 0 of 2574 and 0 of 2655.
+- **Gate at the fix-pass tip (076b1c4, dev box):** `cargo build` exit 0; `cargo nextest run
+  --workspace` exit 0, 94 tests run, 94 passed, 0 skipped; `cargo test --workspace --doc`
+  exit 0; `cargo clippy --workspace --all-targets -- -D warnings` exit 0; `cargo fmt --all
+  --check` exit 0; `cargo deny check` exit 0; `node scripts/check-doc-links.mjs` exit 0 (34
+  links). Nothing pushed.
 - **Gate at the tip (05334d7, dev box):** `cargo build` exit 0; `cargo nextest run --workspace`
   exit 0, 92 tests run, 92 passed, 0 skipped (lavapipe present, goldens compared); `cargo test
   --workspace --doc` exit 0 (1 doctest); `cargo clippy --workspace --all-targets -- -D
