@@ -239,8 +239,8 @@ Prefab memory: 2 bytes plus one bit per voxel. A 16³ prefab is 8 KiB + 512 B; a
 
 | Phase | Owner | Status | Notes |
 |---|---|---|---|
-| 1: Prefab, rotations, runtime stamp | dev | done | committed with this row |
-| 2: `.vox` parsing and the material map | dev | not started | |
+| 1: Prefab, rotations, runtime stamp | dev | done | 0fe5fd1 |
+| 2: `.vox` parsing and the material map | dev | done | committed with this row |
 | 3: Generation-time placement | dev | not started | |
 | 4: The fly-through's vault, and the bench | dev | not started | |
 
@@ -250,3 +250,8 @@ Prefab memory: 2 bytes plus one bit per voxel. A 16³ prefab is 8 KiB + 512 B; a
 - Phase 1: `Prefab::new` stores a masked-out voxel as `AIR` and clears mask bits past the last voxel, so `id()` depends only on what a stamp writes. It panics on a voxel count or mask length that does not match the size.
 - Phase 1: public API beyond the data shapes: `Rot::{from_rows, row, determinant, apply_size}`, `Prefab::{size, len, is_empty, written_count}`. `Rot::all()` order: axis permutations lexicographic, then sign bits ascending, determinant +1 kept.
 - Phase 1: `stamp.rs` keeps its own counts-and-bounds tally rather than sharing the private one in `edit.rs` (not in Files touched). A `Uniform` brick is expanded only when a written voxel differs from it.
+- Phase 2: the default palette is generated from its pattern (6³ cube without black, blue fastest, then four ten-step ramps) rather than transcribed; the test pins FNV-1a 64 `0xfd04_e720_d946_8c0c` over its 1024 bytes, computed from the spec's `default_palette` listing (ephtracy/voxel-model, `MagicaVoxel-file-format-vox.txt`), plus seven sampled entries.
+- Phase 2: `VoxError` variants beyond the plan's: `Magic([u8; 4])`, `Rotation(u8)` (a `_r` byte with a repeated axis or a reflection; `Rot` holds only determinant +1, so mirrored transforms are refused), `Malformed { chunk, what }` (negative counts or sizes, a voxel outside its model, `SIZE` without `XYZI`, a duplicate node id, a bad `_t`), `SceneGraph { node, what }` (missing node 0, a missing child or model, a cycle). `TooLarge` carries `{ size }`. `Truncated.at` is the file offset of the first missing byte (the end of the chunk's, or its parent's, available bytes).
+- Phase 2: the scene graph is checked in `parse`, so `placements()` returns `Vec<Placement>` without an error. Placements are listed depth first in child order from node 0; frame 0 only. A node reached twice (a shared subtree) is placed twice.
+- Phase 2: public API beyond the data shapes: `VoxFile { version, models, palette, nodes: BTreeMap<u32, Node>, imap_present }`, `Node`, `decode_rotation`, `DEFAULT_PALETTE`, `MAX_MODEL_EDGE`, `VoxMap::get`, `Default` for `VoxMap` and `Slot`, `Unmapped` as a tuple struct implementing `Error`. `VoxMap::to_prefab(&self, &VoxModel)`. Index 0 (an unlisted cell) counts as used by `to_prefab` when the model has an empty cell.
+- Phase 2: `Cargo.lock` is touched (the new crate); not in Files touched. The test-side writer has `vox_bytes_with` (version and extra chunks), `file`, `chunk`, `dict`, `string`, `size_chunk`, `xyzi_chunk`, `node_chunk`, `vault_model` besides `vox_bytes`.
