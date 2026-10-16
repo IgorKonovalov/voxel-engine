@@ -1,6 +1,6 @@
 # 0005: The surface-look spike: smoothed normals, per-voxel contour planes and procedural detail, measured on screen
 
-> **Status:** draft
+> **Status:** approved (2026-10-16)
 > **Created:** 2026-10-16
 > **Milestone:** M2 in `docs/roadmap.md` (first M2 plan; it produces the measurements the lighting plan and the surface ADR are written from)
 > **Related ADRs:** ADR-0002 (the reserved parallel pool for a per-voxel attribute), ADR-0001 (stack). This plan writes no ADR; the surface-representation ADR is written at its close from the readings and the owner's call.

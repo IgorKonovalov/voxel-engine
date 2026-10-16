@@ -1,6 +1,6 @@
 # 0004: Cylinder sweeps, a character controller, and a per-brick coarse grid with change notifications
 
-> **Status:** draft
+> **Status:** approved (2026-10-16)
 > **Created:** 2026-10-16
 > **Milestone:** M3 in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0005](../adrs/0005-vertical-cylinder-collision-by-integer-conservative-advancement.md) (body shape, sweep, where it lives), ADR-0002 (layout and access model), ADR-0001 (stack)
