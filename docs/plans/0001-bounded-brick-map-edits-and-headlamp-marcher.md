@@ -1,6 +1,6 @@
 # 0001: Bounded brick map, deterministic edits, and a headlamp ray marcher
 
-> **Status:** approved
+> **Status:** in-progress
 > **Created:** 2026-10-16
 > **Milestone:** M1 in `docs/roadmap.md` (first of two plans; Plan 0002 adds streaming and LOD)
 > **Related ADRs:** [ADR-0002](../adrs/0002-brick-map-layout-and-per-chunk-locked-access.md) (storage layout, GPU mirror, access model), ADR-0001 (stack)
@@ -434,7 +434,7 @@ says so.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Brick map and the first carve | dev | not started | |
+| 1: Brick map and the first carve | dev | done | committed with this row |
 | 2: All shapes, all modes, indestructible, atomic failure | dev | not started | |
 | 3: Raycast, queries, tool-along-ray | dev | not started | |
 | 4: Cave source, determinism vector, world budget readings | dev | not started | |
@@ -448,6 +448,12 @@ says so.
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: the `Box_` shape landed in `edit.rs` in Phase 1, because the collapse done-when carves a box (commit of Phase 1).
+- Phase 1: `EditResult::aabb` is `Option<(VoxelCoord, VoxelCoord)>`, `None` when nothing changed (commit of Phase 1).
+- Phase 1: the collapse done-when ("`full_bricks` unchanged") cannot hold after the sphere, where brick `[0,8)³` is `Full`. Per the owner, the test runs it on a fresh solid world (0 -> 0, brick is `Uniform(0)`) and also asserts 32 -> 31 after the sphere, with the box carving 32 voxels (commit of Phase 1).
+- Phase 2: the done-when expects `NotResident([2,0,0])` for the sphere at `[127,0,0]`, but the shape also reaches non-resident `[2,-1,-1]`, `[2,-1,0]` and `[2,0,-1]`, and `[2,-1,-1]` comes first in ascending order. Routed to `/architect` by the owner before Phase 2 starts.
+- Phase 4 (owner-approved, not yet applied): `CaveSource` is unreachable from `vxe-world` tests, so `flythrough` gets a lib target and `determinism.rs` and `world_budget.rs` move under `apps/flythrough/`.
 
 ### Close triggers
 
