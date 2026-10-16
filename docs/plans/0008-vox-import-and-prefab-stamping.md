@@ -240,8 +240,8 @@ Prefab memory: 2 bytes plus one bit per voxel. A 16³ prefab is 8 KiB + 512 B; a
 | Phase | Owner | Status | Notes |
 |---|---|---|---|
 | 1: Prefab, rotations, runtime stamp | dev | done | 0fe5fd1 |
-| 2: `.vox` parsing and the material map | dev | done | committed with this row |
-| 3: Generation-time placement | dev | not started | |
+| 2: `.vox` parsing and the material map | dev | done | 897531e |
+| 3: Generation-time placement | dev | done | committed with this row |
 | 4: The fly-through's vault, and the bench | dev | not started | |
 
 ### Notes
@@ -255,3 +255,6 @@ Prefab memory: 2 bytes plus one bit per voxel. A 16³ prefab is 8 KiB + 512 B; a
 - Phase 2: the scene graph is checked in `parse`, so `placements()` returns `Vec<Placement>` without an error. Placements are listed depth first in child order from node 0; frame 0 only. A node reached twice (a shared subtree) is placed twice.
 - Phase 2: public API beyond the data shapes: `VoxFile { version, models, palette, nodes: BTreeMap<u32, Node>, imap_present }`, `Node`, `decode_rotation`, `DEFAULT_PALETTE`, `MAX_MODEL_EDGE`, `VoxMap::get`, `Default` for `VoxMap` and `Slot`, `Unmapped` as a tuple struct implementing `Error`. `VoxMap::to_prefab(&self, &VoxModel)`. Index 0 (an unlisted cell) counts as used by `to_prefab` when the model has an empty cell.
 - Phase 2: `Cargo.lock` is touched (the new crate); not in Files touched. The test-side writer has `vox_bytes_with` (version and extra chunks), `file`, `chunk`, `dict`, `string`, `size_chunk`, `xyzi_chunk`, `node_chunk`, `vault_model` besides `vox_bytes`.
+- Phase 3: the one-chunk generation is compared with `solid3_world()` after the stamp by the hash of chunk `[0, 0, 0]` (the support `chunks_hash`), since the two worlds hold 1 and 64 chunks; the same `StampedSource` over `test_extent()` is also compared by the whole-world `voxel_hash`.
+- Phase 3: `StampedSource` lives in `source.rs` and shares the brick writer with `World::stamp` (`stamp.rs`). Per chunk it allocates nothing besides the boxed voxels of a `Uniform` brick that a placement turns mixed (the chunk's own storage). It never sets the chunk's edited flag. A placement reaching past the extent is clipped (the plan's open question left as written).
+- Phase 3: the thread-count test uses five placements (two rotated, one crossing chunk corners, one clipped by the extent) over the support's `cave_like_source`, and also checks the four unclipped placements generate the same hash as stamping them in order at runtime. Public API beyond the data shapes: `StampedSource::{base, boxes}`.

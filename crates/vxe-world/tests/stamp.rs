@@ -1,6 +1,7 @@
 mod support;
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use support::*;
 use vxe_world::*;
@@ -236,4 +237,115 @@ fn stamp_outside_the_extent_fails_with_the_first_missing_chunk_and_changes_nothi
         .unwrap_err();
     assert_eq!(e, EditError::NotResident(ChunkCoord([2, -1, 0])));
     assert_eq!(world.voxel_hash(), before);
+}
+
+fn vault_at(origin: [i32; 3], rot: Rot) -> (Arc<Prefab>, VoxelCoord, Rot) {
+    (Arc::new(Prefab::vault(16, 4)), VoxelCoord(origin), rot)
+}
+
+#[test]
+fn a_generated_placement_equals_the_runtime_stamp() {
+    let runtime = solid3_world();
+    runtime
+        .stamp(&Prefab::vault(16, 4), [8, 8, 8], Rot::IDENTITY)
+        .unwrap();
+
+    // One chunk: compared as chunk [0, 0, 0], the only chunk the vault touches.
+    let source = StampedSource::new(UniformSource(3), vec![vault_at([8, 8, 8], Rot::IDENTITY)]);
+    let one = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &source,
+        &test_table(),
+    );
+    let c0 = [ChunkCoord([0, 0, 0])];
+    assert_eq!(chunks_hash(&one, &c0), chunks_hash(&runtime, &c0));
+    assert_eq!(one.material_at([8, 8, 8]), Some(4));
+    assert_eq!(one.material_at([15, 15, 15]), Some(0));
+    assert_eq!(
+        one.count_in_box([0, 0, 0], [63, 63, 63]),
+        [(0, 2744), (3, 262_144 - 4096), (4, 1352)]
+    );
+
+    // The whole test extent: the full world hash.
+    let all = World::generate(test_extent(), &source, &test_table());
+    assert_eq!(all.voxel_hash(), runtime.voxel_hash());
+}
+
+#[test]
+fn a_placement_straddling_two_chunks_generates_like_the_runtime_stamp() {
+    let extent = ChunkExtent::new([0, 0, 0], [2, 1, 1]);
+    let runtime = World::generate(extent, &UniformSource(3), &test_table());
+    let r = runtime
+        .stamp(&Prefab::vault(16, 4), [56, 8, 8], Rot::IDENTITY)
+        .unwrap();
+    assert_eq!(r.touched, [ChunkCoord([0, 0, 0]), ChunkCoord([1, 0, 0])]);
+    assert_eq!(r.changed_from, [(3, 4096)]);
+
+    let source = StampedSource::new(UniformSource(3), vec![vault_at([56, 8, 8], Rot::IDENTITY)]);
+    let generated = World::generate(extent, &source, &test_table());
+    assert_eq!(generated.voxel_hash(), runtime.voxel_hash());
+    assert_eq!(generated.material_at([63, 8, 8]), Some(4));
+    assert_eq!(generated.material_at([64, 9, 9]), Some(0));
+    assert_eq!(generated.material_at([71, 8, 8]), Some(4));
+    assert_eq!(generated.material_at([72, 8, 8]), Some(3));
+}
+
+#[test]
+fn generation_with_placements_does_not_depend_on_the_thread_count() {
+    let extent = ChunkExtent::new([-1, -1, -1], [2, 2, 1]);
+    let placements = vec![
+        vault_at([56, 8, 8], Rot::IDENTITY),
+        vault_at([-8, -8, -8], Rot::Z90),
+        (Arc::new(tripod()), VoxelCoord([63, 63, -2]), Rot::Z90),
+        (
+            Arc::new(tripod()),
+            VoxelCoord([-1, 62, 60]),
+            Rot::Z90.inverse(),
+        ),
+        // Reaches past the extent on +x and -y: clipped.
+        vault_at([120, -70, 0], Rot::IDENTITY),
+    ];
+    let source = StampedSource::new(cave_like_source(), placements.clone());
+    let one = World::generate_with_threads(extent, &source, &test_table(), 1);
+    let seven = World::generate_with_threads(extent, &source, &test_table(), 7);
+    assert_eq!(one.voxel_hash(), seven.voxel_hash());
+
+    // And it equals the base world with each placement stamped in order, where the stamp
+    // fits inside the extent.
+    let runtime = World::generate(extent, &cave_like_source(), &test_table());
+    for (p, origin, rot) in &placements[..4] {
+        runtime.stamp(p, *origin, *rot).unwrap();
+    }
+    let clipped = StampedSource::new(cave_like_source(), placements[..4].to_vec());
+    assert_eq!(
+        World::generate_with_threads(extent, &clipped, &test_table(), 3).voxel_hash(),
+        runtime.voxel_hash()
+    );
+    // The fifth placement only writes inside the extent.
+    assert_eq!(one.material_at([120, -64, 0]), Some(4));
+    assert_eq!(one.material_at([127, -55, 0]), Some(4));
+}
+
+#[test]
+fn later_placements_win_where_they_overlap() {
+    let extent = ChunkExtent::new([0, 0, 0], [1, 1, 1]);
+    let t = (Arc::new(tripod()), VoxelCoord([8, 8, 8]), Rot::IDENTITY);
+    let six = (
+        Arc::new(Prefab::new([1, 1, 1], vec![6], None)),
+        VoxelCoord([8, 8, 8]),
+        Rot::IDENTITY,
+    );
+    let w = World::generate(
+        extent,
+        &StampedSource::new(UniformSource(3), vec![t.clone(), six.clone()]),
+        &test_table(),
+    );
+    assert_eq!(w.material_at([8, 8, 8]), Some(6));
+    assert_eq!(w.material_at([9, 8, 8]), Some(5));
+    let w = World::generate(
+        extent,
+        &StampedSource::new(UniformSource(3), vec![six, t]),
+        &test_table(),
+    );
+    assert_eq!(w.material_at([8, 8, 8]), Some(5));
 }

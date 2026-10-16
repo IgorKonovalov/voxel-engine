@@ -64,7 +64,7 @@ impl Tally {
 
 /// The inclusive voxel box `lo..=hi` a prefab of `size` covers with its minimum corner at
 /// `origin`, in `i64` so the far corner cannot overflow; `None` for an empty prefab.
-fn voxel_box(origin: VoxelCoord, size: [u32; 3]) -> Option<([i64; 3], [i64; 3])> {
+pub(crate) fn voxel_box(origin: VoxelCoord, size: [u32; 3]) -> Option<([i64; 3], [i64; 3])> {
     if size.contains(&0) {
         return None;
     }
@@ -192,6 +192,24 @@ fn blit(
         }
     }
     changed_any
+}
+
+/// Writes the masked voxels of `prefab` (already rotated, covering the voxel box `lo..=hi`
+/// with its minimum corner at `lo`) that fall inside chunk `coord`. For sources: counts
+/// nothing and leaves the chunk's edited flag alone. Returns whether any voxel changed.
+pub(crate) fn blit_into(
+    chunk: &mut Chunk,
+    coord: ChunkCoord,
+    prefab: &Prefab,
+    lo: [i64; 3],
+    hi: [i64; 3],
+) -> bool {
+    let c = coord.0.map(i64::from);
+    let (clo, chi) = clip_to_chunk(c, lo, hi);
+    if (0..3).any(|k| clo[k] > chi[k]) {
+        return false;
+    }
+    blit(chunk, coord, prefab, lo, clo, chi, None)
 }
 
 impl World {

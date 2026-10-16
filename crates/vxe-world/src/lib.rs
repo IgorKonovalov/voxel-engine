@@ -53,7 +53,7 @@ pub use prefab::{Prefab, Rot};
 pub use query::QueryStats;
 pub use raycast::{Face, Hit};
 pub use shape::Shape;
-pub use source::{UniformSource, WorldSource};
+pub use source::{StampedSource, UniformSource, WorldSource};
 pub use store::{ChunkStore, StoreWriteGuard, World, WorldStats};
 pub use stream::{Residency, StreamConfig, StreamError, StreamEvents, StreamStats, Streamer, Tier};
 pub use walkable::{WalkableMap, WalkableParams, WalkableStats};
