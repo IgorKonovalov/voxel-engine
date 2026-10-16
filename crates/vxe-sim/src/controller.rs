@@ -83,7 +83,7 @@ pub struct MoveResult {
     pub grounded: bool,
     /// The horizontal move stayed blocked by a wall after the step attempt and the slides.
     pub blocked: bool,
-    /// The horizontal move stepped up onto a rise of at most `step_height`.
+    /// The horizontal move stepped up onto a rise of more than zero and at most `step_height`.
     pub stepped: bool,
     pub climbed: bool,
     /// Where the foot would land climbing the ledge the body is blocked by: a floor within
@@ -168,7 +168,8 @@ impl CharacterController {
     }
 
     /// Sweep up by `step_height` (fully), forward by `rem` (more than zero), down by
-    /// `step_height`; the landing foot when that ends on a floor at most `step_height` up.
+    /// `step_height`; the landing foot when that ends on a floor at most `step_height` up,
+    /// which may be no rise at all.
     fn step_attempt(&self, world: &World, foot: [i64; 3], rem: [i64; 2]) -> Option<[i64; 3]> {
         let h = self.params.step_height;
         let up = sweep(world, &self.body(foot), Fixed3([0, 0, h]));
@@ -268,8 +269,11 @@ impl CharacterController {
         if state.grounded
             && let Some(f) = self.step_attempt(world, *foot, rem)
         {
+            // A sweep can stop short of a box it does not touch (every component rounds to
+            // zero, or the iteration cap); the attempt then lifts, moves and drops back to the
+            // same height. That is a plain continuation, not a step.
+            r.stepped = f[2] > foot[2];
             *foot = f;
-            r.stepped = true;
             return;
         }
         for _ in 0..2 {

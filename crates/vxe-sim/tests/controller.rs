@@ -211,3 +211,74 @@ fn releasing_climb_drops_the_body_back_down() {
         );
     }
 }
+
+/// A block one voxel tall, `x, y in [20, 30)`, on the F1 floor: its `(-x, -y)` corner sits at
+/// `(5120, 5120)`, and a step attempt's forward move at `step_height` clears it.
+fn low_block() -> World {
+    world(|[x, y, z]| z < 0 || ((20..30).contains(&x) && (20..30).contains(&y) && z == 0))
+}
+
+/// One grounded tick of `wish` from `start`.
+fn one_tick(world: &World, start: [i64; 3], wish: [i64; 2]) -> (MoveResult, CharacterState) {
+    let cc = CharacterController::new(params());
+    let mut s = CharacterState::new(Fixed3(start));
+    s.grounded = true;
+    let r = cc.tick(
+        world,
+        &mut s,
+        &MoveInput {
+            wish,
+            ..MoveInput::default()
+        },
+    );
+    assert!(!overlaps(world, &body_at(s.foot.0)));
+    (r, s)
+}
+
+/// A sweep can stop with a wall contact and delta left over without running into the box:
+/// here the iteration cap, on an oblique move away from an outside corner the body starts 2
+/// units from. The step attempt that follows must not report a step unless the foot rose.
+#[test]
+fn a_move_past_a_corner_never_steps_without_rising() {
+    let world = low_block();
+    let start = [5120 - RADIUS, 5120 - 56, 0];
+    let wish = [30, -120];
+    let s = sweep(&world, &body_at(start), Fixed3([wish[0], wish[1], 0]));
+    assert_eq!(s.iterations, MAX_SWEEP_ITERATIONS);
+    assert_eq!(s.moved, Fixed3([12, -88, 0]));
+    assert!(s.contact.is_some_and(|c| c.is_wall()));
+    let (r, st) = one_tick(&world, start, wish);
+    assert!(!r.stepped);
+    assert_eq!(st.foot.0[2], 0);
+
+    // The same corner at clearances 0 to 8 and twelve directions: whenever a tick steps, the
+    // foot rose; and the iteration cap is among the cases.
+    let mut capped = 0;
+    for dy in 38..=64 {
+        let start = [5120 - RADIUS, 5120 - dy, 0];
+        for wish in [
+            [5, -128],
+            [13, -127],
+            [20, -126],
+            [30, -120],
+            [45, -120],
+            [64, -111],
+            [91, -91],
+            [111, -64],
+            [120, -45],
+            [126, -20],
+            [128, 0],
+            [127, 13],
+        ] {
+            let s = sweep(&world, &body_at(start), Fixed3([wish[0], wish[1], 0]));
+            capped += u32::from(s.iterations == MAX_SWEEP_ITERATIONS);
+            let (r, st) = one_tick(&world, start, wish);
+            assert!(
+                !r.stepped || st.foot.0[2] > 0,
+                "dy {dy} wish {wish:?}: stepped at z {}",
+                st.foot.0[2]
+            );
+        }
+    }
+    assert!(capped > 0);
+}
