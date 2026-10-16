@@ -1,32 +1,29 @@
 //! Edit operations: a shape and a mode in, the voxels that changed (by old material) out.
 //!
-//! A voxel is inside a shape when its fixed-point centre is. Every predicate compares
-//! integers, so the same op on the same world changes the same voxels on every machine.
-//! An op first checks that every chunk the shape may touch is resident and fails with the
-//! first missing coordinate (ascending order) before changing anything; then it writes each
-//! chunk in place under that chunk's write lock, in ascending coordinate order (ADR-0002).
+//! A voxel is inside a shape when its fixed-point centre is (see `shape.rs`). Every predicate
+//! compares integers, so the same op on the same world changes the same voxels on every
+//! machine. An op first checks that every chunk holding a voxel centre inside the shape is
+//! resident and fails with the first missing coordinate (ascending order) before changing
+//! anything; then it writes each chunk in place under that chunk's write lock, in ascending
+//! coordinate order (ADR-0002).
 
 use crate::brick::Brick;
 use crate::coords::index_in_brick;
 use crate::coords::{BRICK_EDGE, BRICK_VOXELS, CHUNK_EDGE, ChunkCoord, VoxelCoord, brick_slot};
-use crate::fixed::{Fixed3, centre, first_centre_at_or_above, last_centre_at_or_below};
+use crate::fixed::{Fixed3, centre};
 use crate::material::{AIR, MaterialId, MaterialTable};
+use crate::shape::{Coverage, Shape};
 use crate::store::{World, read, write};
-
-/// A region of space in fixed point.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Shape {
-    /// Centres within distance `r` of `c`, boundary included.
-    Sphere { c: Fixed3, r: i64 },
-    /// Centres in the half-open box `[min, max)`.
-    Box_ { min: Fixed3, max: Fixed3 },
-}
 
 /// What an op does to the voxels inside its shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Mode {
-    /// Every non-air voxel becomes air.
+    /// Every non-air voxel becomes air, except voxels of an `INDESTRUCTIBLE` material.
     Carve,
+    /// Every air voxel becomes this material; non-air voxels are left alone.
+    Fill(MaterialId),
+    /// Every voxel of `from` becomes `to`, whatever the flags of either.
+    Replace { from: MaterialId, to: MaterialId },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -76,91 +73,24 @@ impl EditOp {
             mode,
         }
     }
-}
 
-/// How a box of voxel centres relates to a shape.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Coverage {
-    /// No centre in the box is inside.
-    Outside,
-    /// Every centre in the box is inside.
-    Inside,
-    /// Unknown; test each voxel.
-    Partial,
-}
-
-impl Shape {
-    /// Inclusive voxel bounds of every voxel whose centre may lie inside; `None` when empty.
-    fn voxel_bounds(&self) -> Option<([i64; 3], [i64; 3])> {
-        let (lo, hi) = match *self {
-            Shape::Sphere { c, r } => {
-                if r < 0 {
-                    return None;
-                }
-                (
-                    c.0.map(|v| first_centre_at_or_above(v - r)),
-                    c.0.map(|v| last_centre_at_or_below(v + r)),
-                )
-            }
-            Shape::Box_ { min, max } => (
-                min.0.map(first_centre_at_or_above),
-                max.0.map(|v| last_centre_at_or_below(v - 1)),
-            ),
-        };
-        (0..3).all(|k| lo[k] <= hi[k]).then_some((lo, hi))
-    }
-
-    /// Whether the fixed-point point `p` is inside.
-    fn contains(&self, p: [i64; 3]) -> bool {
-        match *self {
-            Shape::Sphere { c, r } => dist2(p, c.0) <= r * r,
-            Shape::Box_ { min, max } => (0..3).all(|k| p[k] >= min.0[k] && p[k] < max.0[k]),
+    pub fn capsule(a: Fixed3, b: Fixed3, r: i64, mode: Mode) -> Self {
+        Self {
+            shape: Shape::Capsule { a, b, r },
+            mode,
         }
     }
-
-    /// Relation to the centres of voxels `lo..=hi` (fixed-point centre box `clo..=chi`).
-    fn coverage(&self, clo: [i64; 3], chi: [i64; 3]) -> Coverage {
-        match *self {
-            Shape::Sphere { c, r } => {
-                let mut near = 0;
-                let mut far = 0;
-                for k in 0..3 {
-                    let n = c.0[k].clamp(clo[k], chi[k]) - c.0[k];
-                    let f = (clo[k] - c.0[k]).abs().max((chi[k] - c.0[k]).abs());
-                    near += n * n;
-                    far += f * f;
-                }
-                if near > r * r {
-                    Coverage::Outside
-                } else if far <= r * r {
-                    Coverage::Inside
-                } else {
-                    Coverage::Partial
-                }
-            }
-            Shape::Box_ { min, max } => {
-                if (0..3).any(|k| chi[k] < min.0[k] || clo[k] >= max.0[k]) {
-                    Coverage::Outside
-                } else if (0..3).all(|k| clo[k] >= min.0[k] && chi[k] < max.0[k]) {
-                    Coverage::Inside
-                } else {
-                    Coverage::Partial
-                }
-            }
-        }
-    }
-}
-
-fn dist2(a: [i64; 3], b: [i64; 3]) -> i64 {
-    (0..3).map(|k| (a[k] - b[k]) * (a[k] - b[k])).sum()
 }
 
 impl Mode {
-    /// The material a voxel of `old` becomes, or `None` when the mode leaves it alone.
-    fn target(self, old: MaterialId, _table: &MaterialTable) -> Option<MaterialId> {
-        match self {
-            Mode::Carve => (old != AIR).then_some(AIR),
-        }
+    /// The material a voxel of `old` becomes, or `None` when the mode leaves it unchanged.
+    fn target(self, old: MaterialId, table: &MaterialTable) -> Option<MaterialId> {
+        let new = match self {
+            Mode::Carve => (old != AIR && !table.is_indestructible(old)).then_some(AIR),
+            Mode::Fill(m) => (old == AIR).then_some(m),
+            Mode::Replace { from, to } => (old == from).then_some(to),
+        }?;
+        (new != old).then_some(new)
     }
 }
 
@@ -188,6 +118,40 @@ impl Tally {
             (self.lo, self.hi, self.any) = (lo, hi, true);
         }
     }
+}
+
+/// Whether any voxel centre in `lo..=hi` (one chunk's part of the shape bounds) is inside,
+/// decided brick by brick so only bricks on the surface test single voxels.
+fn reaches(shape: &Shape, lo: [i64; 3], hi: [i64; 3]) -> bool {
+    let be = i64::from(BRICK_EDGE);
+    let blo = lo.map(|v| v.div_euclid(be));
+    let bhi = hi.map(|v| v.div_euclid(be));
+    for bz in blo[2]..=bhi[2] {
+        for by in blo[1]..=bhi[1] {
+            for bx in blo[0]..=bhi[0] {
+                let b = [bx, by, bz];
+                let elo = [0, 1, 2].map(|k| (b[k] * be).max(lo[k]));
+                let ehi = [0, 1, 2].map(|k| (b[k] * be + be - 1).min(hi[k]));
+                let (a, c) = centres(elo, ehi);
+                match shape.coverage(a, c) {
+                    Coverage::Outside => {}
+                    Coverage::Inside => return true,
+                    Coverage::Partial => {
+                        for z in elo[2]..=ehi[2] {
+                            for y in elo[1]..=ehi[1] {
+                                for x in elo[0]..=ehi[0] {
+                                    if shape.contains([x, y, z].map(centre)) {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 fn centres(lo: [i64; 3], hi: [i64; 3]) -> ([i64; 3], [i64; 3]) {
@@ -227,7 +191,10 @@ impl World {
                         let coord = ChunkCoord(to_i32(c));
                         match map.get(&coord) {
                             Some(chunk) => chunks.push((coord, vlo, vhi, chunk.clone())),
-                            None => return Err(EditError::NotResident(coord)),
+                            None if reaches(&op.shape, vlo, vhi) => {
+                                return Err(EditError::NotResident(coord));
+                            }
+                            None => {}
                         }
                     }
                 }

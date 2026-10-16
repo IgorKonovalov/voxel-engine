@@ -455,8 +455,8 @@ says so.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Brick map and the first carve | dev | done | committed with this row |
-| 2: All shapes, all modes, indestructible, atomic failure | dev | not started | |
+| 1: Brick map and the first carve | dev | done | b78443f |
+| 2: All shapes, all modes, indestructible, atomic failure | dev | done | committed with this row |
 | 3: Raycast, queries, tool-along-ray | dev | not started | |
 | 4: Cave source, determinism vector, world budget readings | dev | not started | |
 | 5: GPU mirror and primary-ray marcher with a golden image | dev | not started | |
@@ -473,8 +473,13 @@ each. Empty is fine.)_
 - Phase 1: the `Box_` shape landed in `edit.rs` in Phase 1, because the collapse done-when carves a box (commit of Phase 1).
 - Phase 1: `EditResult::aabb` is `Option<(VoxelCoord, VoxelCoord)>`, `None` when nothing changed (commit of Phase 1).
 - Phase 1: the collapse done-when ("`full_bricks` unchanged") cannot hold after the sphere, where brick `[0,8)³` is `Full`. Per the owner, the test runs it on a fresh solid world (0 -> 0, brick is `Uniform(0)`) and also asserts 32 -> 31 after the sphere, with the box carving 32 voxels (commit of Phase 1).
-- Phase 2: the done-when expects `NotResident([2,0,0])` for the sphere at `[127,0,0]`, but the shape also reaches non-resident `[2,-1,-1]`, `[2,-1,0]` and `[2,0,-1]`, and `[2,-1,-1]` comes first in ascending order. Routed to `/architect` by the owner before Phase 2 starts.
-- Phase 4 (owner-approved, not yet applied): `CaveSource` is unreachable from `vxe-world` tests, so `flythrough` gets a lib target and `determinism.rs` and `world_budget.rs` move under `apps/flythrough/`.
+- Phase 2: the done-when expects `NotResident([2,0,0])` for the sphere at `[127,0,0]`, but the shape also reaches non-resident `[2,-1,-1]`, `[2,-1,0]` and `[2,0,-1]`, and `[2,-1,-1]` comes first in ascending order. Routed to `/architect` by the owner before Phase 2 starts; resolved by the plan amendment in 6a9a240.
+- Phase 4 (owner-approved): `CaveSource` is unreachable from `vxe-world` tests, so `flythrough` gets a lib target and `determinism.rs` and `world_budget.rs` move under `apps/flythrough/`; applied to the plan in 6a9a240.
+- Phase 2: `crates/vxe-world/src/lib.rs` (the `shape` module and re-exports) and `crates/vxe-world/tests/support/mod.rs` (the FNV-1a world hash) changed outside the phase's `Files touched`, with the owner's approval (commit of Phase 2).
+- Phase 2: `Shape` moved from `edit.rs` to `shape.rs` and is re-exported from the crate root as before (commit of Phase 2).
+- Phase 2: `NotResident` is raised only for a missing chunk that holds a voxel centre inside the shape, decided brick by brick and then per voxel; a missing chunk inside the shape's bounding box but holding no inside centre does not fail the op (commit of Phase 2).
+- Phase 2: the capsule's `Outside` test for a box is conservative (bounding box, then the box's bounding sphere against the segment), so surface bricks fall back to the per-voxel test; counts are unaffected (commit of Phase 2).
+- Phase 2: `Mode::target` returns `None` when the new material equals the old, so `Fill(0)` and `Replace { from: m, to: m }` change and report nothing (commit of Phase 2).
 
 ### Close triggers
 

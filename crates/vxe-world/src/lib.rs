@@ -23,6 +23,7 @@ mod coords;
 mod edit;
 mod fixed;
 mod material;
+mod shape;
 mod source;
 mod store;
 
@@ -32,8 +33,9 @@ pub use coords::{
     BRICK_EDGE, BRICK_VOXELS, CHUNK_BRICKS, CHUNK_EDGE, CHUNK_EDGE_BRICKS, ChunkCoord, ChunkExtent,
     VoxelCoord, brick_of_slot, brick_slot, brick_slot_of_local, index_in_brick,
 };
-pub use edit::{EditError, EditOp, EditResult, Mode, Shape};
+pub use edit::{EditError, EditOp, EditResult, Mode};
 pub use fixed::{FIXED_HALF, FIXED_ONE, Fixed3, centre_of_voxel};
 pub use material::{AIR, Material, MaterialFlags, MaterialId, MaterialTable};
+pub use shape::Shape;
 pub use source::{UniformSource, WorldSource};
 pub use store::{ChunkStore, World, WorldStats};

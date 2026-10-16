@@ -112,4 +112,9 @@ impl MaterialTable {
     pub fn flags(&self, id: MaterialId) -> MaterialFlags {
         self.get(id).map_or(MaterialFlags::empty(), |m| m.flags)
     }
+
+    /// Whether `Carve` leaves voxels of `id` in place.
+    pub fn is_indestructible(&self, id: MaterialId) -> bool {
+        self.flags(id).contains(MaterialFlags::INDESTRUCTIBLE)
+    }
 }
