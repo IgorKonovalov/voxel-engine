@@ -268,7 +268,7 @@ streamer; Plan 0004's Followups list them. Plan 0009 (collapse) is unblocked.
   under its feet changes the coarse grid cell and emits one notification.
 - **Visible proof:** walking instead of flying in the fly-through.
 
-### M4: Spatial audio (Plan 0006; drafted)
+### M4: Spatial audio (Plan 0006 merged, awaiting its close; Plan 0020 drafts the reverb)
 
 - `vxe-audio`: output through `cpal`, a mixer, HRTF spatialization, occlusion and transmission
   by ray probes through the material table's acoustic triple, early reflections from ray probes,
@@ -278,7 +278,14 @@ streamer; Plan 0004's Followups list them. Plan 0009 (collapse) is unblocked.
   listener attenuated by the table's value; an open corridor yields a reflection at the expected
   delay.
 - **Visible proof:** a knock in the fly-through sounds different behind thin and thick walls.
-- **ADRs expected:** HRTF source and audio thread model.
+- **ADRs expected:** HRTF source and audio thread model (ADR-0006); the late tail's synthesis
+  and its parameter source (ADR-0015).
+- **Second slice (Plan 0020):** a late tail whose decay time and level follow the room the
+  listener sees (a ray fan, Eyring), early echoes heard from their wall's direction, taps that
+  glide instead of swapping (the moving-listener clicks), and a streamed voice so a microphone
+  can be heard echoing in the cave. Headless proof: three closed cubes of 4, 12 and 36 m give
+  Schroeder-measured decay times within 20 percent of 0.75, 2.26 and 6.77 s and in that order.
+  Heard proof: the owner's `--room` checks and the cave walk.
 
 ### M5: Simulation split and the logic component (done: Plans 0007, v0.10.0, and 0011, v0.11.0)
 

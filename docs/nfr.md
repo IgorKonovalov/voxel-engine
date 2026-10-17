@@ -435,6 +435,12 @@ with a 1-minute load average of 9 to 21 from other builds. The quiet-box retake 
 - **Determinism:** `World::trace_materials` is integer and its 500-ray hash is pinned in
   `crates/vxe-world/tests/queries.rs` on both arms; nothing else in `vxe-audio` is
   deterministic by contract (§6).
+- **Plan 0020 proposals (the late tail, sixteen direction buses, the room fan; dev box, to be
+  read at its close):** mixer block, 32 HRTF voices, static, at most 0.6 ms (today 0.3619 ms;
+  the buses are 1 048 576 multiply-adds per block, about half the 32-voice FIR load) and
+  turning at most 1.0 ms (today 0.6667 ms); `Acoustics::update`, 32 sources, at most 1.1 ms
+  with a 16-ray fan slice in the call (today 1.0294 ms); audio RAM plus 323 584 B for the tail's
+  lines, about 24.5 KB for the buses, 8 KB of tap state and 19.2 KB per streamed voice.
 
 ## 10. Not goals (for now)
 

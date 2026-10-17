@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0015.**
+**Next free number: 0016.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -29,6 +29,7 @@ the status.
 | [0012](0012-mask-first-brick-with-per-brick-palette-planes.md) | A brick is occupancy masks plus a per-brick palette in bit planes, the same bytes on the CPU and in the mirror | proposed |
 | [0013](0013-mirror-reserves-its-vram-budget-up-front.md) | The mirror reserves its VRAM budget up front and never reallocates | accepted |
 | [0014](0014-prefab-identity-in-the-op-log.md) | A stamp op names its prefab by content id, and a save carries the prefabs it names | accepted |
+| [0015](0015-late-reverb-as-a-shared-fdn-from-a-listener-ray-fan.md) | Late reverb is one listener-shared feedback delay network driven by a ray fan from the listener; early echoes render from their wall's direction | proposed |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
