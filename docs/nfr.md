@@ -183,6 +183,18 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   3.556 to 3.566 ms (CI 3.552 to 3.572 ms over two runs), `mixed` 2.586 to 2.596 ms, `tool`
   8.119 to 8.120 ms; the fly-through `B` line 3.30 to 3.34 ms. It misses the 2 ms budget; the
   budget stands (owner's call at the Plan 0003 close) and Plan 0014 is the second pass.
+  **Quiet-box reading at the Plan 0014 tip (dev reference, AMD Ryzen 9 5900HS, 5850218,
+  exclusive perf lock, 1-minute load 1.93 before and 1.50 after, paired and alternated with
+  the Plan 0003 tip 2129bfb):** `worst_warm` (the `worst` case after
+  `World::reserve_brick_arrays`) 3.034 to 3.054 ms (CI 3.031 to 3.057 ms over two runs);
+  `worst` 3.189 to 3.264 ms (CI 3.187 to 3.269 ms), against 3.549 ms for the Plan 0003 tip
+  in the same window; `mixed` 2.326 to 2.355 ms; `tool` 6.777 to 6.798 ms, `tool_warm` 6.660
+  to 6.688 ms. The fly-through `B` line (`--level --seed 1 --headless --bench 1`) reads 2.98
+  to 3.04 ms against 3.31 to 3.32 ms, three runs each. The warm figure assumes the reserve
+  runs off the edit path: the caller tops the pool up between frames (the fly-through does,
+  after each frame's edits), so a frame's expansions take pooled arrays instead of
+  allocating. Both readings miss the 2 ms budget; the 2 ms figure is unchanged, and the
+  remaining cost is the row write bounded by the brick representation (Plan 0014's close).
 - **Results** are returned synchronously with the edit, per material, exact.
 - **Stamp cost (proposals, Plan 0008):** a 16³ prefab stamp (the shelled box `Prefab::vault`)
   into solid rock costs under 100 µs, and a 64³ all-written prefab under 5 ms, both including
