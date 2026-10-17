@@ -13,7 +13,7 @@ workspace = true
 [features]
 default = ["host"]
 # The host: `WasmLogic` on `wasmtime`.
-host = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:rand_core"]
+host = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:rand_core", "dep:bytes", "dep:tokio"]
 # The guest side: the WIT world's bindings and `export_logic!`, for a logic crate built as a
 # component. A guest depends on this crate without default features.
 guest = ["dep:wit-bindgen"]
@@ -21,7 +21,9 @@ guest = ["dep:wit-bindgen"]
 [dependencies]
 vxe-net.workspace = true
 vxe-world.workspace = true
+bytes = { workspace = true, optional = true }
 rand_core = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 wasmtime = { workspace = true, optional = true }
 wasmtime-wasi = { workspace = true, optional = true }
 wit-bindgen = { workspace = true, optional = true }

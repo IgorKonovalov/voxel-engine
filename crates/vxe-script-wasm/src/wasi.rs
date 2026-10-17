@@ -12,19 +12,23 @@
 //!   loop is ready on the first poll, so no wait spends wall time or reveals how much passed.
 //!   wasmtime-wasi's own implementations wait on a real-time deadline whatever the clock
 //!   reads; the host shadows them in the linker (`ready_timer`).
+//! - **Stderr.** Kept for a trap's message: at most `STDERR_BYTES` of one call's writes, the
+//!   rest dropped, cleared by the host before each call. Writing never fails or closes.
 //! - **Nothing else.** No preopened directories, no environment variables, no arguments,
-//!   stdin closed, stdout discarded, stderr kept for a trap's message, no network.
+//!   stdin closed, stdout discarded, no network.
 
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use bytes::Bytes;
 use rand_core::TryRng;
 use vxe_world::hash::mix64;
 use wasmtime::component::{Resource, ResourceTable};
-use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
-use wasmtime_wasi::p2::{DynPollable, Pollable, subscribe};
+use wasmtime_wasi::cli::{IsTerminal, StdoutStream};
+use wasmtime_wasi::p2::pipe::SinkOutputStream;
+use wasmtime_wasi::p2::{DynPollable, OutputStream, Pollable, StreamResult, subscribe};
 use wasmtime_wasi::{HostMonotonicClock, HostWallClock, WasiCtx};
 
 /// The xorshift state a call's stream starts from: `mix64(seed ^ tick)`, or the golden-ratio
@@ -169,15 +173,76 @@ pub(crate) fn ready_timer(table: &mut ResourceTable) -> wasmtime::Result<Resourc
     subscribe(table, timer)
 }
 
+/// Most stderr bytes kept from one call, for a trap's message.
+const STDERR_BYTES: usize = 64 * 1024;
+
+/// The component's stderr: the first `STDERR_BYTES` written since the host last cleared it.
+/// Every write succeeds and every permit is the same, so what the component observes of its
+/// stderr never depends on how much it wrote before.
+#[derive(Clone, Default)]
+pub(crate) struct CallStderr(Arc<Mutex<Vec<u8>>>);
+
+impl CallStderr {
+    pub(crate) fn clear(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
+
+    pub(crate) fn contents(&self) -> Vec<u8> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl IsTerminal for CallStderr {
+    fn is_terminal(&self) -> bool {
+        false
+    }
+}
+
+impl StdoutStream for CallStderr {
+    fn p2_stream(&self) -> Box<dyn OutputStream> {
+        Box::new(self.clone())
+    }
+
+    /// The WASIp3 stream, which the host does not link: a sink.
+    fn async_stream(&self) -> Box<dyn tokio::io::AsyncWrite + Send + Sync> {
+        SinkOutputStream.async_stream()
+    }
+}
+
+#[wasmtime_wasi::async_trait]
+impl Pollable for CallStderr {
+    async fn ready(&mut self) {}
+}
+
+impl OutputStream for CallStderr {
+    fn write(&mut self, bytes: Bytes) -> StreamResult<()> {
+        let mut kept = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let room = STDERR_BYTES.saturating_sub(kept.len());
+        kept.extend_from_slice(&bytes[..bytes.len().min(room)]);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> StreamResult<()> {
+        Ok(())
+    }
+
+    fn check_write(&mut self) -> StreamResult<usize> {
+        Ok(STDERR_BYTES)
+    }
+}
+
 /// What the host keeps to steer and read the component's WASI.
 pub(crate) struct WasiHandles {
     pub clock: TickClock,
     pub random: TickRandom,
-    pub stderr: MemoryOutputPipe,
+    pub stderr: CallStderr,
 }
-
-/// Most stderr bytes kept, for a trap's message.
-const STDERR_BYTES: usize = 64 * 1024;
 
 /// A context for a component initialised with `seed`, its clocks at tick 0's reading.
 pub(crate) fn context(seed: u64, frame_ns: u64) -> (WasiCtx, WasiHandles) {
@@ -186,7 +251,7 @@ pub(crate) fn context(seed: u64, frame_ns: u64) -> (WasiCtx, WasiHandles) {
     let mut insecure_seed = [0; 16];
     random.fill(&mut insecure_seed);
     random.restart(stream_state(seed, 0));
-    let stderr = MemoryOutputPipe::new(STDERR_BYTES);
+    let stderr = CallStderr::default();
     let ctx = WasiCtx::builder()
         .monotonic_clock(Monotonic {
             clock: clock.clone(),

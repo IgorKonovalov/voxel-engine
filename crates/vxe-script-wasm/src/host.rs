@@ -320,7 +320,7 @@ impl WasmLogic {
             .map_err(|e| LogicError::Load(format!("{e:#}")))?;
         let logic = match self.pre.instantiate(&mut store) {
             Ok(l) => l,
-            Err(e) => return Err(classify(&store, &handles, 0, 0, e)),
+            Err(e) => return Err(classify(&store, &handles, 0, e)),
         };
         self.live = Some(Live {
             store,
@@ -383,7 +383,7 @@ impl WasmLogic {
         live.store
             .set_fuel(config.fuel_per_tick)
             .map_err(|e| LogicError::Load(format!("{e:#}")))?;
-        let stderr_before = live.wasi.stderr.contents().len();
+        live.wasi.stderr.clear();
         // SAFETY: only the trait object's lifetime bound is erased. The pointer is cleared
         // below, before `host`'s borrow ends, on both the normal and the unwinding path, and
         // `State::host` is the only reader.
@@ -397,7 +397,7 @@ impl WasmLogic {
         live.store.data_mut().host = Lent(None);
         match result {
             Ok(Ok(r)) => Ok(r),
-            Ok(Err(e)) => Err(classify(&live.store, &live.wasi, tick, stderr_before, e)),
+            Ok(Err(e)) => Err(classify(&live.store, &live.wasi, tick, e)),
             Err(panic) => resume_unwind(panic),
         }
     }
@@ -405,14 +405,9 @@ impl WasmLogic {
 
 /// The [`LogicError`] for a failed call at `tick`: the memory cap when the limiter refused a
 /// growth during it, fuel when it ran out, otherwise a trap with its message and what the
-/// component wrote to stderr during the call (a panic's message).
-fn classify(
-    store: &Store<State>,
-    wasi: &WasiHandles,
-    tick: u64,
-    stderr_before: usize,
-    e: wasmtime::Error,
-) -> LogicError {
+/// component wrote to stderr during the call (a panic's message; the stderr the host keeps
+/// holds only the current call's writes).
+fn classify(store: &Store<State>, wasi: &WasiHandles, tick: u64, e: wasmtime::Error) -> LogicError {
     if store.data().limits.hit {
         return LogicError::Memory { tick };
     }
@@ -420,7 +415,7 @@ fn classify(
         return LogicError::Fuel { tick };
     }
     let stderr = wasi.stderr.contents();
-    let written = String::from_utf8_lossy(stderr.get(stderr_before..).unwrap_or_default());
+    let written = String::from_utf8_lossy(&stderr);
     let written = written.trim();
     let message = if written.is_empty() {
         format!("{e:#}")

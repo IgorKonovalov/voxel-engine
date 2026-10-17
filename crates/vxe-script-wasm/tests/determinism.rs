@@ -1,7 +1,8 @@
 //! The component observes nothing but its seed and its inputs. Each knob of the host's
 //! configuration has a guest that would notice its absence: `probe` reads NaN bits, both
 //! clocks, `getrandom`, `HashMap` order, the filesystem and the environment; `spin` never
-//! returns; `hog` applies its inputs, then allocates 1 GiB; `timer` sleeps and polls a timer.
+//! returns; `hog` applies its inputs, then allocates 1 GiB; `timer` sleeps and polls a timer;
+//! `chatty` writes 1 KiB of stderr per tick and panics at tick 100.
 //! A logic that fails a call is stopped for the rest of the run, and the ops it applied before
 //! failing stay.
 
@@ -328,4 +329,36 @@ fn timers_are_always_ready_and_never_wait() {
     }
     let elapsed = start.elapsed();
     assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
+}
+
+/// Stderr never fills: `chatty` writes 1 KiB per tick, 100 KiB over ticks 0 to 99 (more than
+/// the 64 KiB the host keeps for one call), and every one of those ticks returns. Its panic at
+/// tick 100 becomes a trap whose message carries the panic's, and the logic stops.
+#[test]
+fn stderr_never_fills_and_a_guest_panic_is_a_trap_with_its_message() {
+    let mut logic =
+        WasmLogic::load(&guest("chatty"), &WasmConfig::default()).expect("chatty loads");
+    let world = solid3_world();
+    let mut host = WorldHost(&world);
+    logic.try_init(&mut host, 0).expect("chatty's init returns");
+    for tick in 0..100 {
+        assert_eq!(
+            logic.try_tick(&mut host, tick, &[]),
+            Ok(TickOutput::default()),
+            "tick {tick}"
+        );
+    }
+    match logic.try_tick(&mut host, 100, &[]) {
+        Err(LogicError::Trap { tick: 100, message }) => {
+            assert!(message.contains("chatty stops at tick 100"), "{message}");
+        }
+        r => panic!("{r:?}"),
+    }
+    assert_eq!(
+        logic.try_tick(&mut host, 101, &[]),
+        Err(LogicError::Stopped {
+            tick: 101,
+            since: 100
+        })
+    );
 }
