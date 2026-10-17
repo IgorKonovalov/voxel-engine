@@ -296,6 +296,7 @@ fn submitted_ops_interleave_with_the_logic_and_resimulate_to_equal_bytes() {
                 applied: 14,
                 refused: 1,
                 inputs: 10,
+                logic_error: None,
             }
         } else {
             TickReport {
@@ -303,6 +304,7 @@ fn submitted_ops_interleave_with_the_logic_and_resimulate_to_equal_bytes() {
                 applied: 10,
                 refused: 0,
                 inputs: 10,
+                logic_error: None,
             }
         };
         assert_eq!(report, want);

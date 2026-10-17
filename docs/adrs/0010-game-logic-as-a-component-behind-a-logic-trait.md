@@ -1,8 +1,8 @@
 # ADR-0010: The game's server logic is a component behind a `Logic` trait, developed natively and shipped as WebAssembly; Lua is deferred
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-17, at the Plan 0011 close)
 > **Date:** 2026-10-16
-> **Related plan(s):** [Plan 0007](../plans/done/0007-op-log-byte-channel-shared-and-owned-clients.md) (the trait and the server loop), [Plan 0011](../plans/0011-wasm-host-for-the-logic-component.md) (the host)
+> **Related plan(s):** [Plan 0007](../plans/done/0007-op-log-byte-channel-shared-and-owned-clients.md) (the trait and the server loop), [Plan 0011](../plans/done/0011-wasm-host-for-the-logic-component.md) (the host)
 > **Supersedes:** the founding interview's "WASM for deterministic server logic, Lua for client scripts" (`docs/roadmap.md`, API surface), in the part that concerns what the hosts are for
 
 ## Context
@@ -121,4 +121,42 @@ keeps the deterministic decisions in the logic and the voxel work in the host.
 
 ## Outcome
 
-_(Added at acceptance if Plan 0007 or Plan 0011 falsifies something above.)_
+**2026-10-17, at the Plan 0011 close (v0.11.0).** The decision stands: the echo logic and
+the fly-through's dig logic, native and as a component, give byte-equal op logs and equal
+world hashes on Linux (the Windows arm confirms it after a push). The build refines or
+corrects the text above in these points:
+
+- **A failed logic is stopped (fail-stop).** wasmtime does not enter a component instance
+  again after a trap, and the component model leaves a trapped instance's state undefined.
+  When a hosted logic fails a call (fuel, memory cap, any trap), the failure is reported once
+  and every later tick reports `LogicError::Stopped`; the server carries on without the
+  logic. Ops the logic applied before failing stay applied and logged. Rejected: (a) a fresh
+  instance and `init(seed)` again (the logic restarts while the world keeps its edits, and
+  `init`'s ops apply twice), (b) a fresh instance without `init` (the same, with the seed
+  lost), (d) restoring a snapshot taken before the tick (the component API exposes no state
+  copy, a guest `save`/`load` pair changes the WIT world, and the world has no undo).
+- **The WIT `hit` record mirrors `vxe_world::Hit`**: `{ voxel, face: option<face>, t,
+  material }`, not a normal and a distance.
+- **`LogicError` lives in `vxe-net`**, beside the trait, so the server can carry it:
+  `Logic::take_error` (provided, default `None`) is called after `init` and every `tick`,
+  `TickReport::logic_error` surfaces it, and `Server::init_error` returns `init`'s failure.
+- **The build split is by cargo features.** `vxe-script-wasm` has a default `host` feature
+  (`WasmLogic` on `wasmtime`) and a `guest` feature (the bindings and `export_logic!`); the
+  fly-through's `--logic wasm` sits behind its `wasm` feature, off by default, so the
+  everyday build compiles no `wasmtime`.
+- **The component has clocks and entropy, fixed by the tick, not none.** Both clocks read
+  `tick x frame_ns`; timers (`subscribe-duration`, `subscribe-instant`) are always ready, so
+  a sleep returns at once; `wasi:random` is a xorshift stream seeded from the logic's seed and
+  the tick, and `insecure-seed` (the standard library's `HashMap` keys) is fixed at
+  instantiation. "No wall clock, no entropy" above means none that varies between runs.
+- **A host call costs about 1.4 µs, not tens of nanoseconds** (an `apply` of a radius-1 m
+  carve over native, the tick's entry and the inputs' lowering included; `wasmtime` 49.0.3,
+  `nfr.md` §4). The budget is 2 µs per `apply` call; a 100-carve tick through the component
+  is 1.03× native.
+- **Host-call work is not metered by fuel.** Fuel counts the guest's instructions; a query
+  the host runs for it (a large `count_in_box`, a long raycast) costs the guest one call. A
+  known limit; bounding or metering it is a follow-up. A panic in a host import (the world
+  asserting on a shape the guest chose) becomes the logic's trap, not a server panic.
+- **Re-simulating a failure is exact only with the same component bytes, `WasmConfig` and
+  `wasmtime` version.** Fuel accounting can change between releases and the fuel per tick
+  moves the failing tick; the log file's header records none of them yet.

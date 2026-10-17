@@ -274,15 +274,24 @@ streamer; Plan 0004's Followups list them. Plan 0009 (collapse) is unblocked.
 - **Visible proof:** a knock in the fly-through sounds different behind thin and thick walls.
 - **ADRs expected:** HRTF source and audio thread model.
 
-### M5: Simulation split and the logic component (the split half done in Plan 0007, v0.10.0; Plan 0011's WebAssembly host open)
+### M5: Simulation split and the logic component (done: Plans 0007, v0.10.0, and 0011, v0.11.0)
 
 Plan 0007 closed 2026-10-17 (v0.10.0): `vxe-net` (byte channel, server tick, shared and
 owned clients with desync detection), `vxe-world`'s op and input logs, log file and wire, and
 the fly-through's digs, fills and bench through a server, saved and replayed under `--level`
-(ADR-0007, accepted). Plan 0011's WebAssembly host stays open, and ADR-0010 with it. Followup
-from the close: op kinds 2 to 4 (stamp, drop, remove) in `Op`, the wire and `Host`, with the
-fly-through's stamp and collapse moving into `DigLogic`, so a saved session no longer refuses
-them; a stamp entry needs a prefab reference the log can name, likely an ADR.
+(ADR-0007, accepted). Followup from the close: op kinds 2 to 4 (stamp, drop, remove) in
+`Op`, the wire and `Host`, with the fly-through's stamp and collapse moving into `DigLogic`, so
+a saved session no longer refuses them; a stamp entry needs a prefab reference the log can
+name, likely an ADR.
+
+Plan 0011 closed 2026-10-17 (v0.11.0): `vxe-script-wasm` hosts a logic component under
+deterministic WASI (clocks fixed to the tick, always-ready timers, seeded entropy), fuel per
+call and a total memory cap, and stops a logic after its first failed call (ADR-0010,
+accepted). The fly-through's dig logic (`flythrough-logic`) runs natively or, with
+`--features wasm` and `--logic wasm`, as a component, to the same hash. Followups from the
+close: bounded or metered host-call work, with `vxe-world` range checks on shapes; a component
+hash and the `WasmConfig` in the log header; batched query imports; a per-call measurement of
+a cheap query.
 
 
 - An authoritative world plus op and input logs on the server side; clients send inputs, a
@@ -298,7 +307,7 @@ them; a stamp entry needs a prefab reference the log can name, likely an ADR.
 - **Headless proof:** a replayed log reproduces the world hash; the native and component
   builds of one logic produce byte-equal op logs on both CI arms.
 - **ADRs:** ADR-0007 (log, channel, client modes) and ADR-0010 (logic as a component), both
-  proposed with their plans.
+  accepted at their plans' closes.
 
 ### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; the render half follows Plan 0005)
 

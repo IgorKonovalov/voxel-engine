@@ -6,33 +6,38 @@
 //!
 //! `flythrough [--seed N] [--level] [--vault] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH]
-//! [--view VIEW] [--detail] [--hud] [--save PATH] [--replay PATH]`. `--render` fixes the
-//! marcher's resolution (the window scales it); `--frames` exits after N frames, printing the
-//! `F1` readings over the last ones and the stats HUD's rows; `--hud` starts with the stats HUD
-//! shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first frame;
-//! `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
-//! [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame;
-//! `--headless` runs the same frames on an offscreen target with no window; `--walk` (with
-//! `--level`) starts in walk mode, the body spawned in the spawn pocket; `--look` starts
-//! in a normal mode (`face`, `trilinear8`, `gradient27`, `contour`) and gives the mirror
-//! attribute pages, so `N` can reach `contour` (without `--look` it skips it), and gives rock
-//! its procedural detail (`--rock-detail` sets rock's feature scale in voxels and strength,
-//! default `flythrough::ROCK_DETAIL`); `--view` starts in a view (`shaded`, `normals`, `hitmask`) and
-//! `--detail` with detail on. `N` cycles the normal mode and `V` toggles detail. `--vault`
-//! places a 16-voxel room with an indestructible shell 10 m along +x from the spawn, written
-//! over the cave as it generates (on the level, clamped inside the extent).
+//! [--view VIEW] [--detail] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]`.
+//! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
+//! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
+//! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
+//! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
+//! [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame; `--headless` runs the
+//! same frames on an offscreen target with no window; `--walk` (with `--level`) starts in walk
+//! mode, the body spawned in the spawn pocket; `--look` starts in a normal mode (`face`,
+//! `trilinear8`, `gradient27`, `contour`) and gives the mirror attribute pages, so `N` can reach
+//! `contour` (without `--look` it skips it), and gives rock its procedural detail (`--rock-detail`
+//! sets rock's feature scale in voxels and strength, default `flythrough::ROCK_DETAIL`); `--view`
+//! starts in a view (`shaded`, `normals`, `hitmask`) and `--detail` with detail on. `N` cycles the
+//! normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
+//! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
+//! inside the extent).
 //!
 //! `P` stamps that 16-voxel room at runtime, unrotated, with its minimum corner at the voxel
 //! the dig ray hits, and prints what it changed like a dig does.
 //!
-//! Every edit goes through the simulation split (ADR-0007, ADR-0010): digs, fills and the
-//! bench are inputs a shared client sends to a server running `flythrough::logic::DigLogic`;
-//! one server tick runs per frame before the mirror sync, and the printed edit lines come
-//! from the client's events. With `--level`, `--save` writes the session's log file on exit
-//! and prints the world's hash; `--replay` rebuilds a saved session's world by re-simulating
-//! its inputs before the first frame and prints the same hash. Two edits bypass the split:
-//! `P` stamps the server's world directly, so it is refused under `--save` (a stamp is not in
-//! the op log), and the autopilot's carve (streaming only) applies to the world directly.
+//! Every edit goes through the simulation split (ADR-0007, ADR-0010): digs, fills and the bench are
+//! inputs a shared client sends to a server running `flythrough::logic::DigLogic` (`--logic
+//! native`, the default) or the same logic as a component hosted on `wasmtime` (`--logic wasm`,
+//! from `target/guests/flythrough-logic.wasm`, or `--logic wasm=PATH`; needs a build with
+//! `--features wasm`, and `scripts/build-guests.sh` builds the component). The fly-through prints
+//! which runs; a hosted logic that fails (a trap, its fuel, its memory cap) is printed once and
+//! stopped, and the session continues without it. Replay re-simulates through the chosen logic too.
+//! One server tick runs per frame before the mirror sync, and the printed edit lines come from the
+//! client's events. With `--level`, `--save` writes the session's log file on exit and prints the
+//! world's hash; `--replay` rebuilds a saved session's world by re-simulating its inputs before the
+//! first frame and prints the same hash. Two edits bypass the split: `P` stamps the server's world
+//! directly, so it is refused under `--save` (a stamp is not in the op log), and the autopilot's
+//! carve (streaming only) applies to the world directly.
 //! Collapse's falls and crumbles also edit the world outside the op log, so under `--save` and
 //! `--replay` the support query does not run and `R` is refused.
 //! `--vault` does not combine with `--save` or `--replay`: the log file does not record it.
@@ -58,10 +63,12 @@ use std::time::Instant;
 use fly::{Fly, Walk};
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, VAULT_EDGE, vault};
 use flythrough::hud::{self, Cadence, EditLine, FrameStats, HudStats, WorldSample};
-use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, DigLogic, FILL_VERB, REACH};
-use flythrough::{RESIDENCY, RUBBLE, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
+use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB, REACH};
+use flythrough::{
+    LogicChoice, RESIDENCY, RUBBLE, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile,
+};
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
-use vxe_net::{Client, Event, MemChannel, Server};
+use vxe_net::{Client, Event, Logic, LogicError, MemChannel, Server};
 use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::{
@@ -166,6 +173,8 @@ struct Args {
     save: Option<std::path::PathBuf>,
     /// `--replay`: the log file whose session is re-simulated before the first frame.
     replay: Option<std::path::PathBuf>,
+    /// `--logic`: the server's logic, native or the hosted component.
+    logic: LogicChoice,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -241,6 +250,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         hud: false,
         save: None,
         replay: None,
+        logic: LogicChoice::Native,
     };
     let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
@@ -277,6 +287,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--save" => args.save = Some(value()?.into()),
             "--replay" => args.replay = Some(value()?.into()),
+            "--logic" => args.logic = LogicChoice::parse(&value()?)?,
             "--level" => args.level = true,
             "--detail" => args.detail = true,
             "--autopilot" => args.autopilot = true,
@@ -304,6 +315,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     }
     if (args.save.is_some() || args.replay.is_some()) && args.vault {
         return Err(SAVE_EXCLUDES_VAULT.to_owned());
+    }
+    if matches!(args.logic, LogicChoice::Wasm(_)) && !cfg!(feature = "wasm") {
+        return Err(flythrough::WASM_NEEDS_FEATURE.to_owned());
     }
     Ok(args)
 }
@@ -780,22 +794,38 @@ fn counts_line(table: &MaterialTable, counts: &[(MaterialId, u32)]) -> String {
         .join(", ")
 }
 
-/// The simulation split around the world: the server running [`DigLogic`] and the shared
-/// client every edit goes through.
+/// The simulation split around the world: the server running the fly-through's logic
+/// (`--logic`) and the shared client every edit goes through.
 struct Net {
     server: Server,
     client: Client,
+    /// Whether the logic's failure has been printed: a hosted logic that fails is stopped,
+    /// and every later tick reports [`LogicError::Stopped`], which is not printed again.
+    logic_failed: bool,
 }
 
 impl Net {
-    fn new(world: &Arc<World>, seed: u64) -> Self {
-        let mut server = Server::new(world.clone(), Box::new(DigLogic), seed);
+    fn new(world: &Arc<World>, logic: Box<dyn Logic>, seed: u64) -> Self {
+        let mut server = Server::new(world.clone(), logic, seed);
         let (near, far) = MemChannel::pair();
         server.attach(far);
-        Self {
+        let mut net = Self {
             server,
             client: Client::shared(world.clone(), near),
+            logic_failed: false,
+        };
+        if let Some(e) = net.server.init_error().cloned()
+            && let Some(line) = net.logic_failure(&e)
+        {
+            println!("{line}");
         }
+        net
+    }
+
+    /// The line to print for the logic's failure `e`: `Some` the first time, `None` after.
+    fn logic_failure(&mut self, e: &LogicError) -> Option<String> {
+        (!std::mem::replace(&mut self.logic_failed, true))
+            .then(|| format!("logic: {e}; stopped, the session continues without it"))
     }
 }
 
@@ -1055,8 +1085,11 @@ impl Run {
     fn tick(&mut self, gpu: &Gpu) {
         let Some(net) = self.net.as_mut() else { return };
         let t = now();
-        net.server.tick();
+        let report = net.server.tick();
         let ms = ms_since(t);
+        if let Some(line) = report.logic_error.and_then(|e| net.logic_failure(&e)) {
+            println!("{line}");
+        }
         let events = net.client.poll();
 
         let mut ops = std::collections::VecDeque::new();
@@ -1898,6 +1931,8 @@ struct Flythrough {
     start: Instant,
     args: Args,
     camera: Camera,
+    /// The server's logic, loaded before the window opens; taken when the run starts.
+    logic: Option<Box<dyn Logic>>,
     pending: Option<Pending>,
     run: Option<Run>,
 }
@@ -1946,7 +1981,11 @@ impl App for Flythrough {
             });
             let coarse = stream.is_none().then(|| Coarse::build(&world));
             let world = Arc::new(world);
-            let net = Net::new(&world, self.args.seed);
+            let logic = self
+                .logic
+                .take()
+                .expect("the logic is loaded once, in main");
+            let net = Net::new(&world, logic, self.args.seed);
             let walk = if self.args.walk {
                 let w = Walk::at_camera(&world, &self.camera);
                 if w.is_none() {
@@ -2117,8 +2156,19 @@ fn main() {
         }
     };
 
+    let load_logic = |choice: &LogicChoice| match choice.load() {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("flythrough: --logic {choice}: {e}");
+            std::process::exit(1);
+        }
+    };
+    let logic = load_logic(&args.logic);
+    println!("logic: {}", args.logic);
+
     let seed = args.seed;
     let (spawn, pending) = if let Some(path) = args.replay.clone() {
+        let replay_logic = load_logic(&args.logic);
         let file = match flythrough::read_log_file(&path) {
             Ok(f) => f,
             Err(e) => {
@@ -2131,11 +2181,12 @@ fn main() {
         let table = materials(&args);
         let source = CaveSource::new(file.seed, file.extent);
         let generation = std::thread::spawn(move || {
-            let (world, ops) = match flythrough::replay_log(
+            let (world, ops) = match flythrough::replay_log_with(
                 &file,
                 flythrough::Mode::Inputs,
                 ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS),
                 &table,
+                replay_logic,
             ) {
                 Ok(r) => r,
                 Err(e) => {
@@ -2228,6 +2279,7 @@ fn main() {
         start,
         args,
         camera,
+        logic: Some(logic),
         pending: Some(pending),
         run: None,
     };
@@ -2285,6 +2337,44 @@ mod tests {
         assert_eq!(a.bench, 1);
         assert!(parse_args_from(argv(&["--level", "--save", "a", "--replay", "b"])).is_err());
         assert!(parse_args_from(argv(&["--level", "--replay"])).is_err());
+    }
+
+    /// `--logic` takes `native`, `wasm` or `wasm=PATH`; without the `wasm` feature `wasm` is
+    /// refused with a message naming the feature.
+    #[test]
+    fn logic_selects_native_or_the_component() {
+        let a = parse_args_from(argv(&[])).expect("no arguments parse");
+        assert_eq!(a.logic, LogicChoice::Native);
+        assert!(parse_args_from(argv(&["--logic", "lua"])).is_err());
+        assert!(parse_args_from(argv(&["--logic"])).is_err());
+        let wasm = parse_args_from(argv(&["--logic", "wasm=x.wasm"]));
+        if cfg!(feature = "wasm") {
+            assert_eq!(
+                wasm.expect("parses").logic,
+                LogicChoice::Wasm("x.wasm".into())
+            );
+        } else {
+            let e = wasm.err().expect("refused without the feature");
+            assert!(e.contains("--features wasm"), "{e}");
+        }
+    }
+
+    /// A failed logic's line names the error and that the session goes on, and is given
+    /// once: the `Stopped` reports of the ticks after it print nothing.
+    #[test]
+    fn a_failed_logic_is_printed_once() {
+        let world = Arc::new(World::new(&cave_materials()));
+        let mut net = Net::new(&world, LogicChoice::Native.load().expect("native"), 0);
+        assert_eq!(
+            net.logic_failure(&LogicError::Fuel { tick: 3 }).as_deref(),
+            Some(
+                "logic: logic ran out of fuel at tick 3; stopped, the session continues without it"
+            )
+        );
+        assert_eq!(
+            net.logic_failure(&LogicError::Stopped { tick: 4, since: 3 }),
+            None
+        );
     }
 
     /// The log file does not record the vault, so `--vault` refuses `--save` and `--replay`.

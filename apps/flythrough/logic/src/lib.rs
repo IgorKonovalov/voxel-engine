@@ -1,6 +1,8 @@
 //! The fly-through's server logic: digs, fills and the bench as inputs, applied through the
 //! host (ADR-0010). It depends on `vxe-net`'s traits and `vxe-world` alone, nothing GPU, so
-//! the same crate can be compiled as a logic component.
+//! the same crate builds natively (the fly-through links it) and, with the `component`
+//! feature for `wasm32-wasip2`, as a logic component that exports [`DigLogic`]
+//! (`scripts/build-guests.sh` places it at `target/guests/flythrough-logic.wasm`).
 //!
 //! An input is a tag `u8` then little-endian fields, `Fixed3` as 3 × `i64`:
 //!
@@ -203,3 +205,6 @@ impl Logic for DigLogic {
         }
     }
 }
+
+#[cfg(feature = "component")]
+vxe_script_wasm::export_logic!(DigLogic);

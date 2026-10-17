@@ -105,7 +105,8 @@ fn one_tick_applies_submitted_ops_in_order_and_the_shared_client_sees_them() {
             tick: 0,
             applied: 3,
             refused: 1,
-            inputs: 0
+            inputs: 0,
+            logic_error: None,
         }
     );
     let events = client.poll();

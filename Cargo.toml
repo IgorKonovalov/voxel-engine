@@ -1,12 +1,28 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/*"]
-default-members = ["crates/*", "apps/*"]
+members = [
+    "crates/*",
+    "crates/vxe-script-wasm/guests/*",
+    "apps/*",
+    "apps/flythrough/logic",
+]
+# The everyday loop: everything but the WebAssembly host (`wasmtime` is a heavy build) and its
+# guests, which `scripts/build-guests.sh` builds for `wasm32-wasip2` (ADR-0010).
+default-members = [
+    "crates/vxe-app",
+    "crates/vxe-assets",
+    "crates/vxe-net",
+    "crates/vxe-render",
+    "crates/vxe-sim",
+    "crates/vxe-world",
+    "apps/flythrough",
+    "apps/flythrough/logic",
+]
 
 [workspace.package]
 # Single source of truth for the engine version. Member crates inherit it via
 # `version.workspace = true`; bumped once per plan at the architect close.
-version = "0.10.0"
+version = "0.11.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/IgorKonovalov/voxel-engine"
@@ -30,16 +46,33 @@ unimplemented = "warn"
 bytemuck = { version = "=1.25.2", features = ["derive"] }
 criterion = { version = "=0.8.2", default-features = false, features = ["cargo_bench_support"] }
 env_logger = { version = "=0.11.11", default-features = false }
+# The probe component's entropy source: what a logic crate reaching for randomness would use.
+getrandom = { version = "=0.4.3", default-features = false }
 glam = { version = "=0.34.1", features = ["bytemuck"] }
 log = "=0.4.34"
 png = "=0.18.1"
 pollster = "=1.0.1"
 # Engine crates other engine crates depend on. The exact version tracks
 # [workspace.package].version above; bump both together.
-vxe-assets = { path = "crates/vxe-assets", version = "=0.10.0" }
-vxe-net = { path = "crates/vxe-net", version = "=0.10.0" }
-vxe-sim = { path = "crates/vxe-sim", version = "=0.10.0" }
-vxe-world = { path = "crates/vxe-world", version = "=0.10.0" }
+vxe-assets = { path = "crates/vxe-assets", version = "=0.11.0" }
+vxe-net = { path = "crates/vxe-net", version = "=0.11.0" }
+vxe-sim = { path = "crates/vxe-sim", version = "=0.11.0" }
+# Without its default `host` feature, so a guest takes only the bindings (`guest`).
+vxe-script-wasm = { path = "crates/vxe-script-wasm", version = "=0.11.0", default-features = false }
+vxe-world = { path = "crates/vxe-world", version = "=0.11.0" }
+# The WebAssembly host for the logic component (ADR-0010) and the guest bindings. The three
+# move together (wit-bindgen at the release on wasmtime's wasm-tools, 0.258): a bump is its
+# own commit, gated by the native-versus-component equality test.
+wasmtime = { version = "=49.0.3", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
+wasmtime-wasi = { version = "=49.0.3", default-features = false }
+# The trait the WASI random interfaces take, at wasmtime-wasi's version.
+rand_core = { version = "=0.10.1", default-features = false }
+wit-bindgen = { version = "=0.61.1", default-features = false, features = ["macros", "realloc"] }
+# The `timer` guest's direct `wasi:clocks` calls, at the version getrandom already pulls in.
+wasip2 = { version = "=1.0.4", default-features = false, features = ["std"] }
+# The names wasmtime-wasi's stream traits take (`Bytes`, tokio's `AsyncWrite`), at its versions.
+bytes = { version = "=1.12.1", default-features = false }
+tokio = { version = "=1.53.3", default-features = false }
 # Only the backends we ship (ADR-0001): Vulkan on Linux and Windows, DX12 on Windows.
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "dx12", "wgsl"] }
 # Wayland and X11 on Linux without client-side decorations (the window manager draws them).

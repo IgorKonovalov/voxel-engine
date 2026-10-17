@@ -21,6 +21,44 @@ pub struct TickOutput {
     pub broadcast: Vec<u8>,
 }
 
+/// Why a logic could not be loaded or could not finish a call. A native logic never fails;
+/// a hosted one (`vxe-script-wasm`) fails when its component cannot load, traps (a panic is
+/// a trap), runs out of its fuel for the tick, or outgrows its memory cap. A hosted logic
+/// that failed a call is stopped: every later tick reports [`LogicError::Stopped`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LogicError {
+    /// The logic could not be loaded, linked or instantiated.
+    Load(String),
+    /// The logic trapped during the call for `tick`.
+    Trap { tick: u64, message: String },
+    /// The logic used up its fuel for `tick`.
+    Fuel { tick: u64 },
+    /// The logic tried to grow its memory past its cap during `tick`.
+    Memory { tick: u64 },
+    /// The logic was not called for `tick` because its call for tick `since` failed (0 for
+    /// a failed `init`); it stays stopped for the rest of the run.
+    Stopped { tick: u64, since: u64 },
+}
+
+impl std::fmt::Display for LogicError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Load(m) => write!(f, "logic failed to load: {m}"),
+            Self::Trap { tick, message } => write!(f, "logic trapped at tick {tick}: {message}"),
+            Self::Fuel { tick } => write!(f, "logic ran out of fuel at tick {tick}"),
+            Self::Memory { tick } => write!(f, "logic exceeded its memory cap at tick {tick}"),
+            Self::Stopped { tick, since } => {
+                write!(
+                    f,
+                    "logic not run at tick {tick}: stopped since it failed at tick {since}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for LogicError {}
+
 /// What the logic may do to and ask of the authoritative world.
 pub trait Host {
     /// Applies an edit now. An applied op is logged and announced as applied; a refused one
@@ -42,6 +80,12 @@ pub trait Logic: Send {
     fn init(&mut self, host: &mut dyn Host, seed: u64);
     /// Called once per server tick with the inputs consumed in it, in consumption order.
     fn tick(&mut self, host: &mut dyn Host, tick: u64, inputs: &[ClientInput]) -> TickOutput;
+    /// Why the last `init` or `tick` failed, if it did, cleared by reading it. The server
+    /// asks after every call. A native logic never fails (a panic is a panic), so the
+    /// default is `None`; a hosted logic reports its trap, fuel or memory cap here.
+    fn take_error(&mut self) -> Option<LogicError> {
+        None
+    }
 }
 
 /// A logic that does nothing: the server only applies directly submitted ops.

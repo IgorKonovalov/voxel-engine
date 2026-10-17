@@ -32,9 +32,11 @@ mod client;
 mod logic;
 mod message;
 mod server;
+#[cfg(feature = "test-logic")]
+pub mod test_logic;
 
 pub use channel::{Channel, Endpoint, MemChannel};
 pub use client::{Client, ClientWorld, Event};
-pub use logic::{ClientInput, Host, Logic, NoLogic, TickOutput};
+pub use logic::{ClientInput, Host, Logic, LogicError, NoLogic, TickOutput};
 pub use message::{MSG_APPLIED, MSG_EVENT, MSG_INPUT, MSG_REFUSED, Message};
 pub use server::{Server, TickReport};

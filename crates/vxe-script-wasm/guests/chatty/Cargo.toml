@@ -1,0 +1,21 @@
+[package]
+name = "chatty-guest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "A component whose tick writes 1 KiB to stderr, and panics at tick 100"
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
+[dependencies]
+vxe-net.workspace = true
+vxe-script-wasm = { workspace = true, features = ["guest"] }
