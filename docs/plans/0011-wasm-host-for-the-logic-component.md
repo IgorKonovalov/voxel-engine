@@ -1,6 +1,6 @@
 # 0011: A WebAssembly host for the logic component, proven by native-versus-component equality
 
-> **Status:** approved (2026-10-16)
+> **Status:** in-progress (2026-10-17)
 > **Created:** 2026-10-16
 > **Milestone:** M5 in `docs/roadmap.md` (the scripting half)
 > **Related ADRs:** [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (logic behind a trait, native and component), [ADR-0007](../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (the server loop it plugs into), ADR-0001 (stack)
@@ -248,7 +248,19 @@ fifty lines and generated bindings.
 
 | Phase | Owner | Status | Notes |
 |---|---|---|---|
-| 1: Host skeleton and the echo guest | dev | not started | |
+| 1: Host skeleton and the echo guest | dev | done | committed with this row; `tests/equality.rs` pins the echo world hash `0x8f7d_4016_15d9_5c4d` (native and component, Linux x86_64) |
 | 2: Determinism configuration | dev | not started | |
 | 3: The fly-through's logic as a component | dev | not started | |
 | 4: Readings | dev | not started | |
+
+### Notes
+
+- Phase 1: pins are `wasmtime` and `wasmtime-wasi` `=49.0.3` (the latest stable; `50.0.0-rc.1` is a release candidate) and `wit-bindgen` `=0.61.1`, not the latest `0.63.0`: 0.61.1 is the release on wasmtime 49's `wasm-tools` (0.258), so the two share `wasmparser`, `wit-parser` and `wasm-encoder`. A fourth row, `rand_core` `=0.10.1`, is the trait `wasmtime-wasi` takes for its random generators. `cargo deny check` passes with them.
+- Phase 1: the `wasm32-wasip2` target was added to the dev box's 1.97.1 toolchain with `rustup target add wasm32-wasip2`; CI runs the same command before `scripts/build-guests.sh`.
+- Phase 1: `LogicError` lives in `vxe-net` (`logic.rs`, re-exported as `vxe_script_wasm::LogicError`), so the server can carry it; `crates/vxe-net/src/logic.rs` is outside Files touched.
+- Phase 1: `test_logic.rs` holds all of `crates/vxe-net/tests/support/mod.rs` (the world, the seeded carves, `op_bytes`, the xorshift helpers, `EchoLogic`, `SeededLogic`); `tests/support/mod.rs` re-exports it, and `vxe-net` takes itself as a dev-dependency with `test-logic`. `crates/vxe-net/{Cargo.toml, src/lib.rs, tests/support/mod.rs}` are outside Files touched.
+- Phase 1: the guest adapter is one macro, `vxe_script_wasm::export_logic!(Type)` (`src/guest.rs`, outside Files touched), behind the crate's `guest` feature; the host is its default `host` feature. A guest depends on the crate without default features, so it does not build `wasmtime`. The adapter keeps one `Default` instance of the logic in a thread-local.
+- Phase 1: the WIT `hit` record mirrors `vxe_world::Hit`: `{ voxel, face: option<face>, t, material }` with a six-case `face` enum, where Data shapes sketched `normal` and `distance`. `apply`'s answer is a tag byte, 0 then the result's wire bytes, 1 then the error's, or 2 alone for op bytes that do not decode (`encode_answer`/`decode_answer` in `lib.rs`).
+- Phase 1: `WasmLogic::load` compiles and links the component and checks it against the world; the store and the instance are made in `init`, where the seed is known, because the WASI context is built from it. `WasmLogic` also has `try_init`/`try_tick` returning `Result<_, LogicError>` and `take_error`.
+- Phase 1: `scripts/build-guests.sh` names each component after its directory under `guests/` (`echo.wasm`); the package is `echo-guest`. The tests find components at `target/guests/` under the workspace root whatever `CARGO_TARGET_DIR` is.
+- Phase 1: `vxe-net`'s `EchoLogic` test pins no world hash, so `tests/equality.rs` pins the hash of the same inputs (`seeded_carves(0xEC40, 100)`, ten a tick, on `solid3_world()`) as `ECHO_HASH` and asserts both runs equal it. It also asserts equal input-log bytes and client events, and re-simulates the component's session through the component to the same op-log bytes.

@@ -1,7 +1,17 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/*"]
-default-members = ["crates/*", "apps/*"]
+members = ["crates/*", "crates/vxe-script-wasm/guests/*", "apps/*"]
+# The everyday loop: everything but the WebAssembly host (`wasmtime` is a heavy build) and its
+# guests, which `scripts/build-guests.sh` builds for `wasm32-wasip2` (ADR-0010).
+default-members = [
+    "crates/vxe-app",
+    "crates/vxe-assets",
+    "crates/vxe-net",
+    "crates/vxe-render",
+    "crates/vxe-sim",
+    "crates/vxe-world",
+    "apps/flythrough",
+]
 
 [workspace.package]
 # Single source of truth for the engine version. Member crates inherit it via
@@ -39,7 +49,17 @@ pollster = "=1.0.1"
 vxe-assets = { path = "crates/vxe-assets", version = "=0.10.0" }
 vxe-net = { path = "crates/vxe-net", version = "=0.10.0" }
 vxe-sim = { path = "crates/vxe-sim", version = "=0.10.0" }
+# Without its default `host` feature, so a guest takes only the bindings (`guest`).
+vxe-script-wasm = { path = "crates/vxe-script-wasm", version = "=0.10.0", default-features = false }
 vxe-world = { path = "crates/vxe-world", version = "=0.10.0" }
+# The WebAssembly host for the logic component (ADR-0010) and the guest bindings. The three
+# move together (wit-bindgen at the release on wasmtime's wasm-tools, 0.258): a bump is its
+# own commit, gated by the native-versus-component equality test.
+wasmtime = { version = "=49.0.3", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
+wasmtime-wasi = { version = "=49.0.3", default-features = false }
+# The trait the WASI random interfaces take, at wasmtime-wasi's version.
+rand_core = { version = "=0.10.1", default-features = false }
+wit-bindgen = { version = "=0.61.1", default-features = false, features = ["macros", "realloc"] }
 # Only the backends we ship (ADR-0001): Vulkan on Linux and Windows, DX12 on Windows.
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "dx12", "wgsl"] }
 # Wayland and X11 on Linux without client-side decorations (the window manager draws them).

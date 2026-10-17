@@ -33,6 +33,12 @@ jobs:
       # rustup on the runner auto-installs the toolchain pinned in rust-toolchain.toml.
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
+      # The logic components (ADR-0010) are built for wasm32-wasip2 before the tests that
+      # load them; the host's tests fail, not skip, when one is missing.
+      - run: rustup target add wasm32-wasip2
+      - name: Build the logic components
+        shell: bash
+        run: scripts/build-guests.sh
       - run: cargo build --workspace
       # `--no-tests=pass` keeps the skeleton green until Plan 0001 lands tests.
       # On Linux a missing lavapipe fails the golden tests instead of skipping them.

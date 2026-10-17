@@ -10,10 +10,16 @@ description = "Server-owned op log, a byte channel, the logic boundary, and shar
 [lints]
 workspace = true
 
+[features]
+# The test logics and fixtures in `test_logic`, for this crate's tests, the WebAssembly host's
+# tests and its guests.
+test-logic = []
+
 [dependencies]
 vxe-world.workspace = true
 
 [dev-dependencies]
+vxe-net = { workspace = true, features = ["test-logic"] }
 criterion.workspace = true
 
 [[bench]]
