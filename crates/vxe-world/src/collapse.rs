@@ -1,6 +1,7 @@
 //! The collapse ops (ADR-0008): a rigid vertical drop of a region of cells, and its removal with
 //! rubble. Both take the region as cells (from [`crate::find_unsupported`] or the caller's own
-//! choice) and act on every solid voxel of those cells' bricks.
+//! choice) and act on every solid voxel of those cells' bricks, except that the removal spares
+//! voxels of an `INDESTRUCTIBLE` material as `Mode::Carve` does.
 //!
 //! An op first checks that every chunk holding a region cell is resident, then snapshots the
 //! region's bricks and scans the columns under them, failing with `NotResident` before anything
@@ -148,10 +149,6 @@ impl Snapshot {
         Ok(Self { bricks, stacks })
     }
 
-    fn contains(&self, c: CellCoord) -> bool {
-        self.bricks.contains_key(&CellKey(c))
-    }
-
     fn brick(&self, c: CellCoord) -> &Brick {
         &self.bricks[&CellKey(c)]
     }
@@ -182,14 +179,16 @@ impl Snapshot {
     }
 
     /// Voxels below `z` (exclusive) in column `(x, y)` that are free to fall into, counted down
-    /// to the first solid voxel outside the region, at most `max`. A region voxel, solid or
-    /// not, is free. Fails with the chunk of the first non-resident voxel reached.
+    /// to the first solid voxel outside the region, at most `max`. A region voxel is free
+    /// unless `spare` holds for its material (a voxel the op leaves in place). Fails with the
+    /// chunk of the first non-resident voxel reached.
     fn gap_below(
         &self,
         reader: &mut Reader<'_>,
         [x, y]: [i32; 2],
         z: i32,
         max: i32,
+        spare: &impl Fn(MaterialId) -> bool,
     ) -> Result<i32, ChunkCoord> {
         let mut gap = 0;
         while gap < max {
@@ -197,11 +196,26 @@ impl Snapshot {
             let cell = cell_of([x, y, top]);
             // Voxels from `top` down to the bottom of its cell.
             let span = (top.rem_euclid(BE) + 1).min(max - gap);
-            if self.contains(cell) {
-                gap += span;
-                continue;
-            }
-            match reader.brick(cell)? {
+            let brick = match self.bricks.get(&CellKey(cell)) {
+                Some(b) => match b {
+                    Brick::Uniform(m) if !spare(*m) => {
+                        gap += span;
+                        continue;
+                    }
+                    Brick::Uniform(_) => break,
+                    Brick::Full(v) => {
+                        for k in 0..span {
+                            if spare(v[index_of([x, y, top - k])]) {
+                                return Ok(gap);
+                            }
+                            gap += 1;
+                        }
+                        continue;
+                    }
+                },
+                None => reader.brick(cell)?,
+            };
+            match brick {
                 Brick::Uniform(AIR) => gap += span,
                 Brick::Uniform(_) => break,
                 Brick::Full(v) => {
@@ -219,12 +233,20 @@ impl Snapshot {
 }
 
 impl Snapshot {
-    /// Whether voxel `v` is air once the region's solid voxels are carved: a region voxel
-    /// always is; another is when the world holds air there. A voxel in a chunk that is not
-    /// resident is not.
-    fn air_after_carve(&self, reader: &mut Reader<'_>, v: [i32; 3]) -> bool {
+    /// Whether voxel `v` is air once the region's solid voxels are carved: a region voxel is
+    /// unless `spare` holds for its material; another is when the world holds air there. A
+    /// voxel in a chunk that is not resident is not.
+    fn air_after_carve(
+        &self,
+        reader: &mut Reader<'_>,
+        v: [i32; 3],
+        spare: &impl Fn(MaterialId) -> bool,
+    ) -> bool {
         let cell = cell_of(v);
-        self.contains(cell) || reader.brick(cell).is_ok_and(|b| b.get(index_of(v)) == AIR)
+        match self.bricks.get(&CellKey(cell)) {
+            Some(b) => !spare(b.get(index_of(v))),
+            None => reader.brick(cell).is_ok_and(|b| b.get(index_of(v)) == AIR),
+        }
     }
 }
 
@@ -266,19 +288,31 @@ impl Bounds {
     }
 }
 
-/// The bricks an op will write, composed in memory: each starts as the world's brick (or as
-/// air for a region cell, whose solid voxels all leave) and takes voxel writes.
+/// The bricks an op will write, composed in memory: each starts as the world's brick (or, for
+/// a region cell, as its spared voxels in air, since every other solid voxel leaves) and takes
+/// voxel writes.
 struct Compose {
     bricks: CellMap<Brick>,
 }
 
 impl Compose {
-    /// Every region cell, emptied.
-    fn new(snap: &Snapshot) -> Self {
+    /// Every region cell, holding only the voxels `spare` keeps.
+    fn new(snap: &Snapshot, spare: &impl Fn(MaterialId) -> bool) -> Self {
+        let kept = |m: MaterialId| if spare(m) { m } else { AIR };
         let bricks = snap
             .bricks
-            .keys()
-            .map(|&k| (k, Brick::Uniform(AIR)))
+            .iter()
+            .map(|(&k, b)| {
+                let b = match b {
+                    Brick::Uniform(m) => Brick::Uniform(kept(*m)),
+                    Brick::Full(v) => {
+                        let mut b = Brick::Full(Box::new(v.map(kept)));
+                        b.collapse();
+                        b
+                    }
+                };
+                (k, b)
+            })
             .collect();
         Self { bricks }
     }
@@ -334,7 +368,8 @@ impl World {
     /// region voxel down to the first solid voxel, capped at `max_drop`. A column whose region
     /// voxels are split by a solid voxel outside the region is also scanned below each upper
     /// run, the region's own voxels counting as free (they move too), so no landed voxel ever
-    /// overwrites a solid voxel outside the region. Fails with `NotResident`, changing nothing,
+    /// overwrites a solid voxel outside the region. Every solid voxel moves, an `INDESTRUCTIBLE`
+    /// one included: a rigid move destroys nothing. Fails with `NotResident`, changing nothing,
     /// when a cell's chunk, or a voxel a scan reaches, is not resident.
     pub fn drop_region(&self, cells: &[CellCoord], max_drop: i32) -> Result<DropResult, EditError> {
         let map = read(&self.store.chunks);
@@ -358,7 +393,7 @@ impl World {
                     if solid && !below_solid {
                         let z = cz * BE + lz as i32;
                         let gap = snap
-                            .gap_below(&mut reader, *xy, z, max_drop)
+                            .gap_below(&mut reader, *xy, z, max_drop, &|_| false)
                             .map_err(EditError::NotResident)?;
                         dropped = dropped.min(gap);
                     }
@@ -373,7 +408,7 @@ impl World {
 
         let mut moved = Counts::default();
         let mut bounds = Bounds::default();
-        let mut compose = Compose::new(&snap);
+        let mut compose = Compose::new(&snap, &|_| false);
         let mut touched = BTreeSet::new();
         for (&[cx, cy], zs) in &snap.stacks {
             for &cz in zs {
@@ -444,11 +479,13 @@ impl World {
     /// Carves every solid voxel of `cells`' bricks and piles a fraction of each column's
     /// carved volume as rubble of material `rubble` on the first solid voxel below it.
     ///
-    /// Per voxel column of the footprint, `n` voxels are carved and `h = n * fraction.0 /
-    /// fraction.1` (integer division; 0 when `fraction.1 == 0` or `rubble` is air). The scan
-    /// goes down from the column's lowest carved voxel through air to the first solid voxel
-    /// within `max_depth`; `h` rubble voxels are written upward from it, fewer where the air
-    /// above it (after the carve) runs out. A column with no solid voxel within `max_depth`
+    /// As `Mode::Carve` does, the carve spares voxels of an `INDESTRUCTIBLE` material: they stay
+    /// in place, are not in `removed` and do not count toward a column's `n`, and they are solid
+    /// to the rubble scan and the rubble run. Per voxel column of the footprint, `n` voxels are
+    /// carved and `h = n * fraction.0 / fraction.1` (integer division; 0 when
+    /// `fraction.1 == 0` or `rubble` is air). The scan goes down from the column's lowest carved
+    /// voxel through air to the first solid voxel within `max_depth`; `h` rubble voxels are
+    /// written upward from it, fewer where the air above it (after the carve) runs out. A column with no solid voxel within `max_depth`
     /// gets no rubble. Fails with `NotResident`, changing nothing, when a cell's chunk, or a
     /// voxel a scan reaches, is not resident.
     pub fn remove_region(
@@ -464,6 +501,8 @@ impl World {
         if columns.is_empty() {
             return Ok(RemoveResult::default());
         }
+        let spare = |m: MaterialId| self.materials.is_indestructible(m);
+        let carved = |m: MaterialId| m != AIR && !spare(m);
 
         // Scan every column first, so a non-resident chunk fails the op before any write.
         let mut reader = Reader::new(&map);
@@ -473,7 +512,7 @@ impl World {
             let mut lowest: Option<i32> = None;
             for (cz, col) in parts {
                 for (lz, &m) in col.iter().enumerate() {
-                    if m != AIR {
+                    if carved(m) {
                         n += 1;
                         lowest.get_or_insert(cz * BE + lz as i32);
                     }
@@ -486,7 +525,7 @@ impl World {
                 n * u64::from(fraction.0) / u64::from(fraction.1)
             };
             let gap = snap
-                .gap_below(&mut reader, *xy, lowest, max_depth)
+                .gap_below(&mut reader, *xy, lowest, max_depth, &spare)
                 .map_err(EditError::NotResident)?;
             if h > 0 && gap < max_depth {
                 let h = i32::try_from(h).unwrap_or(i32::MAX);
@@ -494,7 +533,7 @@ impl World {
             }
         }
 
-        let mut compose = Compose::new(&snap);
+        let mut compose = Compose::new(&snap, &spare);
         let mut removed = Counts::default();
         let mut bounds = Bounds::default();
         let mut touched = BTreeSet::new();
@@ -503,7 +542,7 @@ impl World {
                 let c = CellCoord([cx, cy, cz]);
                 let min = c.min_voxel().0;
                 let (lo, hi) = match snap.brick(c) {
-                    Brick::Uniform(AIR) => continue,
+                    Brick::Uniform(m) if !carved(*m) => continue,
                     Brick::Uniform(m) => {
                         removed.add(*m, 512);
                         ([0; 3], [BE - 1; 3])
@@ -511,12 +550,15 @@ impl World {
                     Brick::Full(vox) => {
                         let (mut lo, mut hi) = ([BE; 3], [-1; 3]);
                         for (i, &m) in vox.iter().enumerate() {
-                            if m != AIR {
+                            if carved(m) {
                                 removed.add(m, 1);
                                 let l = [i % 8, i / 8 % 8, i / 64].map(|x| x as i32);
                                 lo = [0, 1, 2].map(|k| lo[k].min(l[k]));
                                 hi = [0, 1, 2].map(|k| hi[k].max(l[k]));
                             }
+                        }
+                        if hi[0] < 0 {
+                            continue;
                         }
                         (lo, hi)
                     }
@@ -532,7 +574,7 @@ impl World {
         for ([x, y, z0], h) in piles {
             let mut top = None;
             for z in z0..z0.saturating_add(h) {
-                if !snap.air_after_carve(&mut reader, [x, y, z]) {
+                if !snap.air_after_carve(&mut reader, [x, y, z], &spare) {
                     break;
                 }
                 compose.set(&mut reader, [x, y, z], rubble);

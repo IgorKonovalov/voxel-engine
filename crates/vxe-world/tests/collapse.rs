@@ -517,6 +517,52 @@ fn removing_the_slab_piles_a_quarter_of_it_as_rubble_on_the_floor() {
 }
 
 #[test]
+fn remove_region_spares_indestructible_voxels() {
+    // Fixture F with the slab voxel [30, 30, 40] of material 4 (indestructible).
+    let world = fixture();
+    world
+        .apply(&box_op(
+            [30, 30, 40],
+            [31, 31, 41],
+            Mode::Replace { from: 3, to: 4 },
+        ))
+        .unwrap();
+    assert_eq!(world.material_at([30, 30, 40]), Some(4));
+    let mut grid = CoarseGrid::build(&world);
+    let changes = carve(&world, &mut grid, PILLAR.0, PILLAR.1);
+    let regions = query(&world, &grid, params(), &changes);
+    assert_eq!(
+        regions,
+        [Region {
+            cells: slab_cells(),
+            counts: vec![(3, 4607), (4, 1)],
+            aabb: (VoxelCoord([24, 24, 40]), VoxelCoord([47, 47, 47])),
+        }]
+    );
+
+    let r = world.remove_region(&slab_cells(), 7, (1, 4), 64).unwrap();
+    assert_eq!(r.removed, [(3, 4607)]);
+    assert_eq!(world.material_at([30, 30, 40]), Some(4));
+    // Column (30, 30) carved 7 voxels: h = 7 / 4 = 1, landing on the spared voxel at z = 41.
+    // The other 575 columns carved 8 each: 2 rubble voxels on the floor.
+    assert_eq!(r.placed, 575 * 2 + 1);
+    assert_eq!(r.placed, 1151);
+    assert_eq!(world.material_at([30, 30, 41]), Some(7));
+    assert_eq!(world.material_at([30, 30, 8]), Some(AIR));
+
+    let expected = build(&[
+        (FLOOR.0, FLOOR.1, 3),
+        ([24, 24, 8], [48, 48, 10], 7),
+        ([30, 30, 40], [31, 31, 41], 4),
+        ([30, 30, 41], [31, 31, 42], 7),
+    ]);
+    expected
+        .apply(&box_op([30, 30, 8], [31, 31, 10], Mode::Carve))
+        .unwrap();
+    assert_eq!(world.voxel_hash(), expected.voxel_hash());
+}
+
+#[test]
 fn no_fraction_leaves_the_floor_alone_and_a_whole_one_piles_the_slab() {
     let (world, _, _) = carved();
     let r = world.remove_region(&slab_cells(), 7, (0, 1), 64).unwrap();
