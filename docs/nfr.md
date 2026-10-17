@@ -204,6 +204,19 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   vxe-world --bench stamp`, exclusive perf lock, box under outside load of about 2 to 5,
   commits 83ab811 and 39d3700):** `vault16` 22.6 to 22.8 µs; `prefab64_mixed` 2.02 to 2.07 ms;
   `prefab64_uniform` 1.455 ms. Both under their proposals; the proposals stand as budgets.
+- **Collapse cost (proposals, Plan 0009):** `find_unsupported` after a radius-10 carve at the
+  centre of a solid 4³-chunk world (every flood runs to the cap) under 1 ms; `drop_region` of
+  the 9-cell test slab under 100 µs; `remove_region` of that slab with rubble 1/4 under
+  200 µs; `drop_region` of a 4096-cell cube (2 097 152 voxels) under 20 ms (a guess at the
+  proposal). **Readings (dev reference, AMD Ryzen 9 5900HS, Linux, `cargo bench -p vxe-world
+  --bench collapse`, criterion medians, exclusive perf lock; at b0d5565 with 1-minute load
+  4.57 falling to 2.18, and at 09556ed after the brick-array pool merge with load 11.75 falling
+  to 4.18):** `find_unsupported` 327 to 396 µs; slab drop by 32 72 µs and by 10 (not a
+  multiple of the brick edge) 49 to 50 µs; `remove_region` 119 to 127 µs; cube drop by 64
+  6.8 to 6.9 ms and by 60 8.1 to 8.6 ms; cube drop by 8 5.15 ms (no proposal). In the
+  fly-through, the query after a 0.5 m dig on the seed-1 level reads 492 to 619 µs over six
+  digs (release build, 25b483d; no proposal). Every reading is under its proposal; the
+  proposals stand as budgets.
 - **Logs (Plan 0007):** an op log entry is 47 bytes for a sphere carve (65 for a box fill, 75
   for a capsule replace), a boundary entry 13, an input entry 14 bytes plus its payload; a log
   file adds a 60-byte header.
@@ -265,6 +278,10 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   count: `generate_with_threads` at 1 and 7 threads gives the same hash, and
   `crates/vxe-world/tests/stamp.rs` pins it at `0x7ee7_eeb7_0956_d069`, blessed on Linux; the
   stamp is integer-only, so the Windows arm must reproduce it.
+- The collapse course (`crates/vxe-world/tests/collapse.rs`, Plan 0009: a query, four per-tick
+  drops and a removal, hashing every result and the world after each step) pins
+  `0x3178_0a15_61c1_3041`, blessed on Linux. The Windows arm confirms it on the first CI run
+  after a push of `main`; the ops are integer-only, so a mismatch is a defect, fixed forward.
 
 ## 7. Startup and build
 

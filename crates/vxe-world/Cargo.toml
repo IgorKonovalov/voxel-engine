@@ -28,5 +28,9 @@ name = "stamp"
 harness = false
 
 [[bench]]
+name = "collapse"
+harness = false
+
+[[bench]]
 name = "replay"
 harness = false

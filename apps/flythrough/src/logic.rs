@@ -27,6 +27,8 @@ pub const BENCH_CARVES: usize = 100;
 pub const BENCH_RADIUS: i64 = 10 * FIXED_ONE;
 pub const BENCH_SPREAD: i64 = 100;
 
+/// The verb of a dig's `op` line.
+pub const DIG_VERB: &str = "carved";
 /// The verb of a bench carve's `op` line.
 pub const BENCH_VERB: &str = "bench";
 

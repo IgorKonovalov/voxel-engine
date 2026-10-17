@@ -1,8 +1,8 @@
 # ADR-0008: Collapse as a capped support flood on the coarse grid and rigid vertical drop ops, not a rigid-body engine
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-17, at Plan 0009's close; see Outcome)
 > **Date:** 2026-10-16
-> **Related plan(s):** [Plan 0009](../plans/0009-support-query-and-collapse-ops.md)
+> **Related plan(s):** [Plan 0009](../plans/done/0009-support-query-and-collapse-ops.md)
 
 ## Context
 
@@ -107,4 +107,23 @@ brick is there.
 
 ## Outcome
 
-_(Added at acceptance if Plan 0009 falsifies something above.)_
+Accepted 2026-10-17 at Plan 0009's close. The flood, the cap, the two ops, the integer
+determinism and the rejected alternatives stand as written. The implementation and its review
+fix pass settled four points the Decision left open or stated too loosely:
+
+- **Outside-extent chunks are air.** A chunk outside a non-empty world extent reads as known
+  air, not as a non-resident (unknown, anchoring) chunk, so `boundary_anchors` means what it
+  says: off, the extent's faces hold nothing up. A chunk inside the extent that the grid or the
+  world lacks, or any chunk of an unbounded world, stays unknown and anchors.
+- **Every run gets a gap scan.** The drop scans the gap below every run of region voxels in a
+  column, not only below the column's lowest region voxel. The region's own voxels count as
+  free. A solid voxel outside the region that sits between two runs wedges the piece, so no
+  landed voxel overwrites one.
+- **Only multiples of 8 stay on the cell lattice.** A per-tick drop keeps the piece on the cell
+  lattice only when it moves by a multiple of the brick edge (8). After any other drop the
+  piece straddles two cell layers, and the caller re-derives its cells from the grid. The op
+  moves every solid voxel of the named cells' bricks. On the next tick those cells include the
+  piece's destination bricks, so the piece takes along any foreign voxels in them.
+- **`INDESTRUCTIBLE` voxels.** `remove_region` spares them, as `Mode::Carve` does: they stay in
+  place and do not count as removed. `drop_region` moves them, because a rigid move destroys
+  nothing.
