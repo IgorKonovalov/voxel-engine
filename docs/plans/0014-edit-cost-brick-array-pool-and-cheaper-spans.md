@@ -378,7 +378,7 @@ to 3 to 4 ms there; a guess until the baseline is measured.
 | 2: A brick-array pool | dev | done | `7ed81d3` |
 | 3: An exact span walk for the sphere | dev | done (as amended 2026-10-17) | `5850b77` |
 | 4: An analytic capsule row | dev | done | `5850218` |
-| 5: Readings against the figure | dev | done (as amended 2026-10-17); `worst_warm` 2.0 ms or more | committed with this row |
+| 5: Readings against the figure | dev | done (as amended 2026-10-17); `worst_warm` 2.0 ms or more | `86123a5` |
 
 ### Notes
 
@@ -469,8 +469,11 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   `World::recycle_chunk` on the streamer's eviction), `a_pooled_expand_allocates_nothing`,
   `an_evicted_chunk_returns_its_arrays`, the bench cases `worst_warm` and `tool_warm`, the
   fly-through's reserve and pool size on its `bench:` line. Phase 3: `sphere_row_spans`
-  (brick-row sphere walk) used by `RowCache`, `walked_spans_equal_solved_spans`. Phases 4 and
-  5 not started.
+  (brick-row sphere walk) used by `RowCache`, `walked_spans_equal_solved_spans`. Merge of
+  `main`: `World::stamp` takes and gives back pooled arrays. Phase 4: `CapsuleRow::nearest`,
+  `first_true` / `last_true` bisection in `Shape::row_span`'s capsule arm,
+  `capsule_row_span_equals_the_set_of_contained_centres`,
+  `capsule_rows_cost_logarithmic_tests`. Phase 5: `nfr.md` §4's Plan 0014 reading.
 - **Public API changed:** `World::BRICK_ARRAY_POOL_CAP`, `World::reserve_brick_arrays`,
   `World::pool_len` (Phase 2). Nothing removed or changed.
 - **Budget readings:** (AMD Ryzen 9 5900HS dev box, release bench profile, every reading under
@@ -596,18 +599,23 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     1.16: `main` `vault16` 22.30 / 22.27 µs, `prefab64_mixed` 2.065 / 2.031 ms,
     `prefab64_uniform` 1.426 / 1.427 ms; tip 20.36 / 20.53 µs, 1.927 / 1.919 ms, 1.304 /
     1.305 ms.
-- **Gate at the tip** (tree of `5850b77`, `CARGO_BUILD_JOBS=3`): `cargo build --workspace
+- **Gate at the tip** (tree of `86123a5`, `CARGO_BUILD_JOBS=3`): `cargo build --workspace
   --all-targets` exit 0; `cargo clippy --workspace --all-targets -- -D warnings` exit 0;
   `cargo fmt --all --check` exit 0; `cargo test --workspace --doc` exit 0 (1 doctest);
-  `cargo nextest run --workspace` exit 0, 129 run, 129 passed, 1 skipped (exclusive lock,
+  `cargo nextest run --workspace` exit 0, 212 run, 212 passed, 1 skipped (exclusive lock,
   NVIDIA GeForce RTX 3080 Laptop GPU from `nvidia-smi -L`), including
   `apply_matches_the_reference_over_seeded_ops`, `apply_matches_the_reference_on_uniform_worlds`,
-  `walked_spans_equal_solved_spans`, `determinism_vector` (`0x2b6b_6a0d_1f9b_8d75`) and
-  `raycast_hit_list_is_pinned` (`0xa0f2_c477_8892_c8fb`), both constants unchanged;
-  `cargo deny check` exit 0 (advisories, bans, licenses, sources ok); the hook bite tests
-  exit 0; `node scripts/check-doc-links.mjs` exit 0, 76 links.
-- **Outstanding `human` phases:** none. The plan stopped at Phase 3's profile done-when
-  (13.2 % against under 5 %); Phases 4 and 5 are not started and `nfr.md` is unchanged.
+  `walked_spans_equal_solved_spans`, `capsule_row_span_equals_the_set_of_contained_centres`,
+  `capsule_rows_cost_logarithmic_tests`, `row_span_equals_the_set_of_contained_centres`,
+  `determinism_vector` (`0x2b6b_6a0d_1f9b_8d75`) and `raycast_hit_list_is_pinned`
+  (`0xa0f2_c477_8892_c8fb`), both constants unchanged; `cargo deny check` exit 0
+  (advisories, bans, licenses, sources ok); the hook bite tests exit 0;
+  `node scripts/check-doc-links.mjs` exit 0, 89 links; `node scripts/check-comment-hygiene.mjs`
+  exit 0; `node scripts/check-index-rows.mjs` exit 0 and its `--self-test` exit 0 (9/9).
+- **Every timing and profile reading** above was taken under the exclusive perf lock.
+- **Outstanding `human` phases:** none. `worst_warm` does not reach 2.0 ms (3.034 to 3.054
+  ms at the tip); per the amendment the close holds the brick representation ADR question and
+  the `nfr.md` §4 revision, neither decided here.
 
 ## Followups
 
