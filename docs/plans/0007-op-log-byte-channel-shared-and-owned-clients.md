@@ -427,8 +427,8 @@ boundary; only logs a `Server` writes after a submission do.
 |---|---|---|---|
 | 1: OpLog, InputLog, wire encoding, replay | dev | done | d77ef85; op-log FNV-1a 64 of the vector (1446 bytes) blessed on Linux x86_64 as `0x5ac8_737d_db0f_ccec` |
 | 2: Server, shared client, direct submission | dev | done | 5a93da9 |
-| 3: The logic boundary and re-simulation | dev | done | 2c32389; Interleaving and the boundary entry committed with this row, after merging main (07e53f1) for the 2026-10-17 amendment |
-| 4: Owned client and desync detection | dev | not started | stopped at the Phase 3 block |
+| 3: The logic boundary and re-simulation | dev | done | 2c32389; Interleaving and the boundary entry ba27191, after merging main (07e53f1) for the 2026-10-17 amendment |
+| 4: Owned client and desync detection | dev | done | committed with this row |
 | 5: Save, replay, fly-through on the split | dev | not started | stopped at the Phase 3 block |
 | 6: Readings | dev | not started | stopped at the Phase 3 block |
 
@@ -450,6 +450,9 @@ boundary; only logs a `Server` writes after a submission do.
 - Phase 3: a second interleaving test (`submissions_at_tick_0_after_init_ops_and_a_refused_only_tick_resimulate`) covers the tick-0 lower bound with a logic whose `init` applies ops, and a tick whose only submission was refused.
 - Phase 3: `EchoLogic` broadcasts one outcome byte per input (1 applied, 2 refused, 3 undecodable), empty in a tick without inputs; the refused-apply test reads the `2` from that broadcast to show the logic received the `Err`. `SeededLogic` starts from `seed ^ 0x9e37_79b9_7f4a_7c15` (xorshift64 13/7/17 sticks at 0) and draws each axis as `state % 234 - 117`.
 - Phase 3: `Server::tick` drains the endpoints before applying the submitted ops and hands both to one internal step that `resimulate` shares; the order of everything that touches the world or the logs is the one Phase 2 names.
+- Phase 4: an op the owned client's world refuses while the server applied it is a `Desync` with `ours` the empty `EditResult` (the Data shapes `ours` is an `EditResult`, not a `Result`).
+- Phase 4: after a desync, `Applied` messages still yield `Event::Applied` with the server's result (and are not applied); `Refused` messages are passed through on an owned client without applying anything.
+- Phase 4: the fault test sends ops 0 to 9, carves the fault sphere on the client's world, then sends an ordinary op 10 and the fault sphere as op 11 (the bullet's "after 10 ops" and "input 11" with seqs from 0). A third test covers the refused-locally desync.
 - Phases 1 to 3: `Cargo.lock` changed with the new `vxe-net` member (no new external crate).
 
 ### Close triggers

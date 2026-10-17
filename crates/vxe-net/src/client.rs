@@ -2,7 +2,9 @@
 //!
 //! A shared client holds the server's own `Arc<World>` and reads results from the messages:
 //! solo play, with no second world. An owned client holds its own world, applies every
-//! applied op to it, and compares its result with the server's.
+//! applied op to it, and compares its result with the server's. On the first difference it
+//! reports [`Event::Desync`] and stops applying: its world differs from the server's, and
+//! every later result would differ for the same reason.
 
 use std::sync::Arc;
 
@@ -39,6 +41,13 @@ pub enum Event {
     },
     /// The logic's broadcast for a tick.
     Logic { tick: u64, bytes: Vec<u8> },
+    /// An owned client's result for op `seq` differs from the server's. `ours` is empty when
+    /// the client's world refused the op. The client applies nothing after this.
+    Desync {
+        seq: u32,
+        ours: EditResult,
+        theirs: EditResult,
+    },
 }
 
 #[derive(Debug)]
@@ -53,6 +62,16 @@ impl Client {
     pub fn shared(world: Arc<World>, endpoint: Endpoint) -> Self {
         Self {
             world: ClientWorld::Shared(world),
+            endpoint,
+            desynced: false,
+        }
+    }
+
+    /// A client that keeps its own `world` in step with the server's: it must start equal to
+    /// the server's world, and every applied op is applied to it and its result compared.
+    pub fn owned(world: World, endpoint: Endpoint) -> Self {
+        Self {
+            world: ClientWorld::Owned(Box::new(world)),
             endpoint,
             desynced: false,
         }
@@ -85,7 +104,10 @@ impl Client {
     }
 
     /// Every pending message, decoded, in arrival order. Bytes that do not decode as a
-    /// server message are dropped.
+    /// server message are dropped. An owned client applies each applied op to its world
+    /// first and reports [`Event::Desync`] instead of [`Event::Applied`] when its result
+    /// differs; once desynced, applied ops pass through as [`Event::Applied`] with the
+    /// server's result and are not applied.
     pub fn poll(&mut self) -> Vec<Event> {
         let mut events = Vec::new();
         while let Some(bytes) = self.endpoint.try_recv() {
@@ -98,11 +120,21 @@ impl Client {
                     seq,
                     op,
                     result,
-                } => Event::Applied {
-                    tick,
-                    seq,
-                    op,
-                    result,
+                } => match self.check(&op, &result) {
+                    Some(ours) => {
+                        self.desynced = true;
+                        Event::Desync {
+                            seq,
+                            ours,
+                            theirs: result,
+                        }
+                    }
+                    None => Event::Applied {
+                        tick,
+                        seq,
+                        op,
+                        result,
+                    },
                 },
                 Message::Refused {
                     tick,
@@ -121,5 +153,23 @@ impl Client {
             events.push(event);
         }
         events
+    }
+
+    /// For an owned, in-step client: applies `op` to its world and returns its own result
+    /// when that differs from `theirs`, or an empty result when its world refuses the op.
+    /// `None` otherwise, and always for a shared or
+    /// desynced client.
+    fn check(&self, op: &Op, theirs: &EditResult) -> Option<EditResult> {
+        let ClientWorld::Owned(world) = &self.world else {
+            return None;
+        };
+        if self.desynced {
+            return None;
+        }
+        match op.apply(world) {
+            Ok(ours) => (ours != *theirs).then_some(ours),
+            // The server applied what this world refuses: the worlds differ in residency.
+            Err(_) => Some(EditResult::default()),
+        }
     }
 }
