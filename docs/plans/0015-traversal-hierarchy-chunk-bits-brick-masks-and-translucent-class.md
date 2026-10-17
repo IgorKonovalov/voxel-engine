@@ -1,6 +1,6 @@
 # 0015: The traversal hierarchy: chunk bits, full-resolution brick masks, a one-read-per-level walk, and the translucent class
 
-> **Status:** draft
+> **Status:** approved (2026-10-17)
 > **Created:** 2026-10-17
 > **Milestone:** M2 in `docs/roadmap.md` (the frame-time floor before the lighting plan)
 > **Related ADRs:** [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
