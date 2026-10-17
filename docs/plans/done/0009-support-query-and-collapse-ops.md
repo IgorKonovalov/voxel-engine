@@ -1,9 +1,9 @@
 # 0009: A support query on the coarse grid, and deterministic drop and rubble ops for collapse
 
-> **Status:** in-progress
+> **Status:** done (2026-10-17, v0.8.0): the support flood, `drop_region` and `remove_region` shipped with every done-when met and every budget inside its proposal; the four review findings are fixed and rechecked, and the windowed checks await the owner.
 > **Created:** 2026-10-16
 > **Milestone:** M8 in `docs/roadmap.md` (the collapse half; volumetrics, debris and the cosmetic rigid-body layer stay in M8 proper)
-> **Related ADRs:** [ADR-0008](../adrs/0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) (the mechanism and what it is not), ADR-0005 (the controller's landing event), ADR-0002 (layout, access model)
+> **Related ADRs:** [ADR-0008](../../adrs/0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) (the mechanism and what it is not), ADR-0005 (the controller's landing event), ADR-0002 (layout, access model)
 > **Prerequisite:** Plan 0004 closed (`CoarseGrid`, `CellChange`). Independent of Plans 0002, 0003 and 0005 to 0008. Plan 0007 reserves op kinds 3 and 4 for the two ops here; wiring them through `Server` is a follow-up once both close.
 
 ## TL;DR
@@ -301,3 +301,64 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Determinism:** course constant blessed on Linux; the Windows arm of CI runs the same test.
 - **Gate at 25b483d (the close commit changes this plan only):** `cargo build --workspace --all-targets` 0; `cargo nextest run --workspace` 191 passed, 2 skipped, exit 0 (exclusive lock, NVIDIA GeForce RTX 3080 Laptop GPU present); `cargo test --workspace --doc` 0; `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` advisories, bans, licenses, sources ok; `node scripts/check-doc-links.mjs` 0; `node scripts/check-comment-hygiene.mjs` 0; `node scripts/check-index-rows.mjs` 0 and `--self-test` 9/9; `node --test .claude/hooks/*.test.mjs` 0. CARGO_BUILD_JOBS=3.
 - **Outstanding `human` phases:** none. Phase 4's hand-driven checks await the owner (Notes).
+
+## Close
+
+**Verdict (2026-10-17, fresh-session recheck of the fix pass 680ed22..6af67d3 and the merge of
+`main` at 09556ed):** closed. All four review findings are fixed, and each fix has its test or
+its reading. Every phase is done, every done-when holds, and every collapse reading is inside
+its proposal.
+
+- **Finding 1:** a chunk outside a non-empty extent reads as known air, so `boundary_anchors`
+  is meaningful (`boundary_anchors_off_lets_the_floor_go_and_a_missing_chunk_anchors`).
+- **Finding 2:** `remove_region` spares `INDESTRUCTIBLE` voxels and `drop_region` moves them
+  (`remove_region_spares_indestructible_voxels`; `drop_region`'s doc).
+- **Finding 3:** the drop copies one layer at a time, and the unaligned cases are benched.
+- **Finding 4:** the `drop_region` docs say how a per-tick caller tracks its region.
+- **The pool merge:** `Compose` takes a `SpareArrays` batch after the scans and gives it back
+  once the map lock is released. The three hashes are unchanged (course
+  `0x3178_0a15_61c1_3041`, `determinism_vector` `0x2b6b_6a0d_1f9b_8d75`,
+  `raycast_hit_list_is_pinned` `0xa0f2_c477_8892_c8fb`).
+
+**Readings** (`nfr.md` §4 "Collapse cost"; AMD Ryzen 9 5900HS; exclusive perf lock; the load is
+in the Notes):
+
+| Case | Reading | Proposal |
+|---|---|---|
+| `find_unsupported` | 327-396 us | 1 ms |
+| slab drop by 32 | 72 us | 100 us |
+| slab drop by 10 | 49-50 us | 100 us |
+| `remove_region` | 119-127 us | 200 us |
+| cube drop by 64 | 6.8-6.9 ms | 20 ms |
+| cube drop by 60 | 8.1-8.6 ms | 20 ms |
+| cube drop by 8 | 5.15 ms | none |
+| query after a cave dig | 492-619 us | none |
+
+The collapse course constant is blessed on Linux. Its Windows arm is pending a push.
+
+**Orchestrator-applied calls (under the owner's standing go, overturnable by the owner):**
+
+- A chunk outside a non-empty extent is known air. One inside the extent that the grid or the
+  world lacks, or any chunk of an unbounded world, stays unknown and anchors.
+- `remove_region` spares `INDESTRUCTIBLE` voxels, as `Mode::Carve` does. `drop_region` moves
+  them, because a rigid move destroys nothing.
+- The minor bump to v0.8.0. The API change is additive.
+
+ADR-0008 is accepted with a dated Outcome.
+
+**Awaiting the owner, in a window:** `cargo run --release -p flythrough -- --level --seed 1`.
+Dig out the rock under a ledge and judge the `unsupported:` line and the fall of 8 voxels a
+frame. Then press `R` and dig under another ledge to judge the rubble pile. Press `F1` to read
+the `collapse: last query` line.
+
+## Followups
+
+- **Wire the collapse ops through `Server` and `Host`.** `drop_region` and `remove_region`
+  become op kinds 3 and 4, alongside Plan 0007's stamp, kind 2. Until that wiring exists,
+  the fly-through turns collapse off under `--save`. That flag arrives with Plan 0007 and is
+  not on this branch. Without the gate, a fall or a removal would be missing from the op log,
+  and a replay would diverge.
+- **`walkable.rs` duplicates two helpers.** Its private `global` and `split` equal
+  `CellCoord::from` and `CellCoord::split`.
+- **`Compose::commit` drops the arrays it displaces.** It does not return the arrays of the
+  world bricks it replaces to the pool.

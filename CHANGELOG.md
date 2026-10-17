@@ -8,6 +8,31 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 Plan 0012 (no version: repository tooling): CI runs `scripts/check-comment-hygiene.mjs` (no relative link or plan-relative narration in `.rs`/`.wgsl` comments) and `scripts/check-index-rows.mjs` with `--self-test` (rows inside `roster:begin` markers at most 320 bytes); seeded fixture trees under `scripts/fixtures/`.
 
+## [0.8.0] - 2026-10-17
+
+Plan 0009: the collapse half of M8 (ADR-0008, accepted). A support query on the coarse grid
+reports which solid regions lost their anchor after an edit, and two integer ops drop a region
+straight down or remove it with rubble. Every reading is under its proposal (`docs/nfr.md`
+section 4, "Collapse cost"; AMD Ryzen 9 5900HS): the query 327-396 us against 1 ms, the slab
+drop 49-72 us against 100 us, the removal 119-127 us against 200 us, and the 4096-cell cube
+drop 6.8-8.6 ms against 20 ms. Three windowed checks await the owner.
+
+- `vxe-world`: `CellCoord` (a global coarse-grid cell), `CellChange::cell` and
+  `CoarseGrid::cell_at`.
+- `vxe-world`: `SupportParams`, `Anchors`, `Region` and `find_unsupported`, a capped flood over
+  load-bearing cells from an edit's changed cells. A chunk outside a non-empty extent reads as
+  air, so `boundary_anchors` decides whether the extent's faces hold anything up.
+- `vxe-world`: `World::drop_region`, a rigid in-place vertical translation by the air gap
+  under the region, at most `max_drop`. `World::remove_region` carves the region and piles a
+  fraction as rubble; it spares `INDESTRUCTIBLE` voxels, which `drop_region` moves.
+  `DropResult` and `RemoveResult` carry `edit_result()` for `CoarseGrid::update`.
+- `vxe-world` tests and benches: the `collapse` bench (query, slab and cube drops aligned and
+  unaligned, removal) and the collapse course test in `tests/collapse.rs`, pinned at
+  `0x3178_0a15_61c1_3041`.
+- `apps/flythrough`: on `--level`, the support query runs after every dig and an unsupported
+  region falls 8 voxels a frame. `R` toggles removal with rubble instead of the fall, and `F1`
+  prints the last query's time. A `RUBBLE` material (row 4) joins `cave_materials()`.
+
 ## [0.7.0] - 2026-10-17
 
 Plan 0014: the second pass on the `docs/nfr.md` §4 edit cost. Edits are cheaper, but the

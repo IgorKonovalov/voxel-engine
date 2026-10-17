@@ -308,32 +308,35 @@ streamer; Plan 0004's Followups list them. Plan 0009 (collapse) is unblocked.
 - Follow-up: once Plan 0007 closes, the runtime stamp goes through `Server` as op kind 2
   (reserved there), so a stamp is a logged, replayable op like an edit.
 
-### M8: Volumetrics, debris and collapse (Plan 0009 drafts the support query and the collapse ops; the cosmetic rigid-body layer follows M6)
+### M8: Volumetrics, debris and collapse (support query and collapse ops shipped in Plan 0009, v0.8.0; volumetrics, debris and the cosmetic rigid-body layer remain open, the last after M6)
 
 - Dust and fog in the ray marcher; short-lived particle debris from edits.
 - **Support query** in `vxe-world`: after an edit, the set of coarse-grid cells (0.8 m, from
   M3) that are solid but no longer connected to the anchor (the indestructible shell, the
-  world boundary, or an explicit anchor set the game supplies). Incremental connected
-  components over the touched region, integer, deterministic, so a server tick can run it
-  after every carve. Returns regions as cell sets with their voxel counts per material, the
-  same shape as an edit result.
-- **Collapse ops**: cut a region out of the world into a free-standing voxel volume, drop it
-  along the vertical axis in fixed point until it rests on solid, and stamp it back as an
-  additive op. Translation only, no rotation, so the stamp is lossless and the outcome is
+  world boundary, or an explicit anchor set the game supplies). A capped flood (ADR-0008)
+  from the edit's changed cells over load-bearing cells, integer, deterministic and holding
+  nothing between calls, so a server tick can run it after every carve. Returns regions as
+  cell sets with their voxel counts per material, the same shape as an edit result. Shipped
+  in Plan 0009.
+- **Collapse ops**: translate a region's voxels straight down in place, as one rigid piece,
+  by the integer air gap under its columns (at most a per-call maximum, so a per-tick call is
+  an animated fall). Translation only, no rotation, so the move is lossless and the outcome is
   bit-identical on both CI arms. A second op removes an unsupported region outright and fills
   the cells below with a rubble material. The game picks one per region from the support
   query's answer. Both are ordinary ops: they return per-material counts and the touched
-  region, and replicate through M5's log.
+  region, and replicate through M5's log once they are wired as op kinds 3 and 4 (a
+  followup of Plan 0009). Shipped in Plan 0009 as `World::drop_region` and
+  `World::remove_region`.
 - **Cosmetic rigid bodies**: a client-side layer, in its own optional crate, that animates the
   pieces of a collapsed region with a rigid-body library (`rapier` or similar) between the
-  server's "region R fell at tick T" and the stamped result, then fades the pieces into the
+  server's "region R fell at tick T" and the landed result, then fades the pieces into the
   authoritative world. It never writes to `vxe-world` and nothing deterministic reads it.
 - **Headless proof:** carving the single pillar under a 3 × 3 cell slab returns that slab as
   one unsupported region with its exact material counts; the drop op lands it on the floor
   with every voxel in place and the same hash on both CI arms.
 - **ADRs expected:** voxel dynamics versus a physics engine (the rejected alternatives are a
   general rigid-body engine in the authoritative world, scripted-only collapse, and rotating
-  pieces).
+  pieces): ADR-0008, accepted at Plan 0009's close.
 
 ### M9: Networking
 
