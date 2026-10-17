@@ -6,7 +6,9 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
-Plan 0012 (no version: repository tooling): CI runs `scripts/check-comment-hygiene.mjs` (no relative link or plan-relative narration in `.rs`/`.wgsl` comments) and `scripts/check-index-rows.mjs` with `--self-test` (rows inside `roster:begin` markers at most 320 bytes); seeded fixture trees under `scripts/fixtures/`.
+## [0.11.1] - 2026-10-17
+
+Plan 0012 (a patch bump, the owner's call on 2026-10-17 over the close's "no version"): CI runs `scripts/check-comment-hygiene.mjs` (no relative link or plan-relative narration in `.rs`/`.wgsl` comments) and `scripts/check-index-rows.mjs` with `--self-test` (rows inside `roster:begin` markers at most 320 bytes); seeded fixture trees under `scripts/fixtures/`.
 
 ## [0.11.0] - 2026-10-17
 

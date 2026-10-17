@@ -376,7 +376,7 @@ the Windows arm confirms it on the first `main` CI run after Plan 0004's merge.
 | Figure | Budget | Measured by |
 |---|---|---|
 | Controller tick, one body | 20 µs | `cargo bench -p vxe-sim --bench controller` |
-| Sweep, one body, one contact | the measured figure (see the reading; proposal was 5 µs) | same bench, `1000 sweeps of the F2 wall case` |
+| Sweep, one body, one contact | 26.3 µs (the Plan 0004 close reading, accepted by the owner 2026-10-17; the proposal was 5 µs); a sweep profile is scheduled only when a scene sweeps more than about 100 bodies a tick | same bench, `1000 sweeps of the F2 wall case` |
 | Coarse grid update after a radius-1 m carve | 50 µs | `cargo bench -p vxe-world --bench coarse` |
 | Walkable update after that change | 20 µs | same bench |
 | Coarse grid RAM | 4 B per brick, 2048 B per chunk | `world_budget --chunks` |
@@ -393,9 +393,9 @@ criterion median (low, high), exclusive perf lock, load average 1.7 to 2.3 at ea
 - **Sweep:** `1000 sweeps of the F2 wall case` 26.303 ms (26.295, 26.312), and 26.264 ms on
   a second run: **26.3 µs per sweep**, against the 5 µs proposal. The owner accepted the
   measured figure as the line at 17.5 µs (fe50d6d); the walk-check fix pass (closes-on filter,
-  overlap guard, rounded-up step length; ADR-0005 Outcome) raised it to 26.3 µs. **Above
-  20 µs: awaits the owner's call** whether 26.3 µs stands as the line or a sweep-cost
-  followup is scheduled.
+  overlap guard, rounded-up step length; ADR-0005 Outcome) raised it to 26.3 µs. **The
+  owner accepted 26.3 µs as the line (2026-10-17)**, with a sweep profile scheduled only
+  when a scene sweeps more than about 100 bodies a tick.
 - **Coarse grid update** after a radius-10 (1 m) carve on the solid world: 100 updates
   1.3544 ms (1.3528, 1.3560), **13.5 µs per update**. **Walkable update** from those changes:
   807.17 µs (805.83, 808.64), **8.1 µs per update**. Both under their lines. Plan 0003's

@@ -105,6 +105,10 @@ at the measured 1.44x overhead, so the growth-rule follow-up is still needed) or
 `block2` holds up by eye and you accept a lossy interim. Plan 0013's Phase 4 wording ("its own
 ADR") is satisfied by ADR-0012; the architect amends the plan when the branch merges main.
 
+**Answered, 2026-10-17: D at 14.** Phase 4's log gets "D at 14, lossless; the final
+surface-only form comes with ADR-0012's mirror-slot plan"; Phase 5 builds radius 14 as the
+fly-through default with contour, and the growth-rule plan (D7.4) is scheduled.
+
 ---
 
 ## D2. Plan 0006: the listening checks and two audio budgets
@@ -140,6 +144,8 @@ integer DDA shared with `World::raycast`, with a chunk-map lookup and lock per s
   the DDA is deliberately shared with the engine's raycast; changing it here touches a pinned
   hash's code path and delays the close.
 - **Recommendation: (a).**
+- **Answered, 2026-10-17: (a).** The close records 1.0 ms with the arithmetic as the
+  acoustics line; the chunk-handle cache and the probe worker thread are follow-ups.
 
 **D2c. HRIR pack load at 13.6 ms against 10 ms.** Measured in the release fly-through on a
 quiet box; a release test build read 7 to 9 ms. It runs once at startup.
@@ -573,6 +579,12 @@ hash, the stamped-world hash, and native-versus-component equality. Until it run
 These were applied under your standing "go with your recommendations". Each closed plan's
 `## Close` section lists them as overturnable. If you overturn one, the plan or ADR gets an
 amendment and dev a small pass.
+
+**Answered, 2026-10-17.** Three overturned, the rest stand: **0004** gets depenetration (a
+body an edit fills into is lifted out by up to a step height); **0011** restarts a trapped
+script from its seed instead of staying `Stopped` (ADR-0010 gets a dated Outcome; the
+restart re-runs `init` on the edited world, which the plan must state); **0012** gets its
+patch bump (v0.11.1). The first two go into the post-overnight fix plan (D7).
 
 | Plan | Call | Why | Main alternative and its cost |
 |---|---|---|---|
