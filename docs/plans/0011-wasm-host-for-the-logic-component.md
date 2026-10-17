@@ -5,6 +5,11 @@
 > **Milestone:** M5 in `docs/roadmap.md` (the scripting half)
 > **Related ADRs:** [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (logic behind a trait, native and component), [ADR-0007](../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (the server loop it plugs into), ADR-0001 (stack)
 > **Prerequisite:** Plan 0007 closed (the `Logic` and `Host` traits, the logs, `DigLogic`). Independent of every other plan.
+> **Amended 2026-10-17:** a hosted logic that fails a call (fuel, memory cap, trap) is
+> stopped for the rest of the run (fail-stop); later ticks report `LogicError::Stopped` and
+> the server carries on without it. Ops it applied before failing stay applied and logged.
+> `--logic wasm` sits behind a `wasm` cargo feature on `flythrough`. See "Amendment
+> 2026-10-17" below.
 
 ## TL;DR
 
@@ -17,6 +22,69 @@ Plan 0007, native and as a component, driven by the same 100 inputs, produces th
 op-log bytes and the same world hash, on both CI arms. The first thing the user sees is
 `--logic wasm` in the fly-through: the testbed's own dig logic running as a component, with
 `--replay` giving the same hash as the native run.
+
+## Amendment 2026-10-17
+
+Phase 2 stopped on its fuel done-when ("the store is usable for the next tick"). wasmtime
+49.0.3 does not enter a component instance again after any trap, and the component model
+specifies the same: a trap leaves the instance's state undefined, so nothing may call it
+again. The draft assumed a tick that runs out of fuel is a skipped tick with the logic's
+state intact. That is not available, so the decision is what a failed logic becomes.
+
+**Decision: fail-stop.** When a hosted logic fails a call (`init` or `tick`: fuel, memory
+cap, any other trap), `WasmLogic` reports that failure once, as today
+(`LogicError::{Fuel, Memory, Trap}` for that tick), and never enters the instance again.
+Every later `tick` returns `LogicError::Stopped { tick, since }`, where `since` is the tick
+of the failing call (0 for `init`), without calling into wasmtime. The server carries on:
+it still logs each tick's inputs, applies submitted ops, and surfaces the error in
+`TickReport::logic_error`. Recovery is the consumer's call, made from things it already
+owns: end the session, or rebuild from the save (seed plus log) up to the tick before the
+failure with a fixed logic, or drop the input that triggered it.
+
+**Edits applied before a failure stay.** The world has no rollback. Ops the logic applied
+through `Host::apply` before it failed are in the world and in the op log, with the failing
+tick's seqs, like any other. This is a property of the boundary, not an accident: the log
+records what the world did, so `Mode::Ops` replay is exact, and re-simulation reproduces the
+failure and the partial ops at the same tick, because fuel counts wasm instructions and the
+memory cap counts pages. Re-simulation is exact only with the same component bytes, the same
+`WasmConfig` and the same `wasmtime` version; the log header records none of them (see
+Risks).
+
+**Rejected:**
+
+- **(a) A fresh instance plus `init(seed)` again at the next tick.** Deterministic, but the
+  restarted logic believes it is at the start of the run while the world holds every edit
+  since. `init`'s own ops apply a second time (a fill or a stamp is not idempotent), and the
+  logic's state (whatever a game keeps: entities, rolls, counters) silently resets. A
+  logic that restarts mid-run is a worse failure than one that stops, because it looks alive.
+- **(b) A fresh instance without `init`.** The same contradiction, plus the seed is lost, so
+  the logic's own RNG starts from `Default`. Strictly worse than (a).
+- **(d) Restore the guest from a snapshot taken before the tick.** The WIT world has no
+  state export, so the host would have to copy the component's linear memories, globals and
+  tables into a fresh instance, which wasmtime's component API does not expose; the
+  alternative, a guest-exported `save`/`load` pair, changes the WIT world and asks every
+  logic to serialize itself. It would also need the world rolled back to undo the tick's
+  partial edits, and `vxe-world` has no undo. Both are new mechanisms with their own
+  tradeoffs and need an ADR; nothing in this plan asks for them. If a consumer needs a
+  logic that survives its own traps, that ADR is where it starts.
+
+ADR-0010 says the host meters fuel per tick and says nothing about what a failed logic
+becomes; this plan's Risks already read "the server records the tick and continues". Fail-stop
+keeps both. Applied by the orchestrator under the owner's standing "go with your
+recommendations" on 2026-10-17; the owner may overturn it, and (a) is the fallback if a
+consumer wants a logic that restarts.
+
+**Phase 3's feature flag.** `--logic wasm` needs `vxe-script-wasm` with its `host` feature,
+which compiles `wasmtime`, and Phase 4 requires that a default-members build does not.
+`flythrough` gets a `wasm` cargo feature, off by default, that enables an optional
+dependency on `vxe-script-wasm`. Without it, `--logic wasm` exits non-zero with a message
+naming `--features wasm`. `tests/component.rs` declares `required-features = ["wasm"]`, and
+CI runs it on both arms with `cargo nextest run -p flythrough --features wasm` after
+`scripts/build-guests.sh`. We rejected a separate binary (a second `main` that duplicates the
+fly-through's argument handling and frame loop) and making `vxe-script-wasm` a default member
+(the everyday loop would compile `wasmtime`, against §7).
+
+The phase texts below carry the changes, each marked "amended 2026-10-17".
 
 ## Context & problem
 
@@ -114,7 +182,8 @@ flowchart LR
   inputs, each knob with a guest that would notice its absence.
 - **Files touched:** `crates/vxe-script-wasm/src/{lib.rs, wasi.rs}`,
   `crates/vxe-script-wasm/guests/{probe, spin, hog}/`,
-  `crates/vxe-script-wasm/tests/determinism.rs`.
+  `crates/vxe-script-wasm/tests/determinism.rs`; amended 2026-10-17:
+  `crates/vxe-net/src/{logic.rs, server.rs}` (`LogicError::Stopped`, `TickReport`).
 - **Done when:**
   - `WasmConfig { fuel_per_tick: u64, memory_bytes: u64, frame_ns: u64 }` with defaults
     `10_000_000_000`, `64 MiB`, `16_666_667`.
@@ -129,14 +198,25 @@ flowchart LR
     the same stream). The plan does not claim that order equals the native one; a logic that
     depends on `HashMap` order is wrong on both sides, and the review lens for logic crates
     says so.
-  - The `spin` guest loops forever in `tick`: `WasmLogic::tick` returns `LogicError::Fuel {
-    tick }` and the store is usable for the next tick (the fuel is reset per tick).
-  - The `hog` guest allocates 1 GiB in `tick`: `LogicError::Memory { tick }`.
+  - (amended 2026-10-17: fail-stop) The `spin` guest loops forever in `tick`. Over ticks 0,
+    1 and 2, `WasmLogic` returns `LogicError::Fuel { tick: 0 }`, then `LogicError::Stopped
+    { tick: 1, since: 0 }` and `Stopped { tick: 2, since: 0 }`, and the later two do not
+    enter wasmtime. The ignored `after_running_out_of_fuel_the_next_tick_runs_again` is
+    replaced by this test. A logic whose `init` fails reports the failure through
+    `Server::init_error()` and `Stopped { tick, since: 0 }` on every tick.
+  - (amended 2026-10-17: edits before a failure) The `hog` guest first applies each of its
+    tick's inputs as a wire-encoded op through the host (as `EchoLogic` does), then
+    allocates 1 GiB: `LogicError::Memory { tick }`. With one radius-1 m carve as tick 0's
+    input, the report is `applied: 1` with `logic_error: Some(Memory { tick: 0 })`, the op
+    log holds that carve at tick 0, the world's hash equals the hash of `solid3_world()`
+    after that carve applied directly, and `Server::resimulate` with a fresh `hog` component
+    and the same `WasmConfig` gives equal op-log bytes and the same hash.
   - No filesystem preopens and no environment: the `probe` guest's attempt to open `/` and
     to read an environment variable both fail inside the guest and are reported in its
     broadcast as failures.
-  - `Server` treats a `LogicError` as a tick with no logic ops and surfaces it in
-    `TickReport::logic_error`; the inputs of that tick are still logged.
+  - `Server` treats a `LogicError` as a tick with no further logic ops (amended
+    2026-10-17: ops the logic applied before failing stay applied and logged) and surfaces
+    it in `TickReport::logic_error`; the inputs of that tick are still logged.
 
 ### Phase 3: The fly-through's logic as a component
 - **Owner skill:** dev
@@ -144,17 +224,24 @@ flowchart LR
 - **Files touched:** `apps/flythrough/logic/{Cargo.toml, src/lib.rs}` (package
   `flythrough-logic`, workspace member, outside `default-members` only for its `component`
   feature build), `apps/flythrough/src/{main.rs, lib.rs}`, `apps/flythrough/Cargo.toml`,
-  `scripts/build-guests.sh` (adds this guest), `apps/flythrough/tests/component.rs`.
+  `scripts/build-guests.sh` (adds this guest), `apps/flythrough/tests/component.rs`;
+  amended 2026-10-17: `.github/workflows/ci.yml` (the `--features wasm` test step).
 - **Done when:**
+  - (amended 2026-10-17) `flythrough` has a `wasm` feature, off by default, enabling an
+    optional dependency on `vxe-script-wasm`; without it `--logic wasm` exits non-zero with
+    a message naming `--features wasm`. `tests/component.rs` has `required-features =
+    ["wasm"]`, and CI runs `cargo nextest run -p flythrough --features wasm` on both arms
+    after `scripts/build-guests.sh`.
   - `flythrough-logic` holds `DigLogic` from Plan 0007 unchanged in behaviour, as an `rlib`
     for the native path and, with `--features component`, as the WIT export.
   - `--logic native` (default) and `--logic wasm[=path]` (default path
     `target/guests/flythrough-logic.wasm`) select the implementation; the fly-through prints
-    which one runs.
+    which one runs. A hosted logic that fails is printed once and the session continues
+    without it (amended 2026-10-17).
   - `tests/component.rs`: Plan 0007's replay fixture (20 `Dig` inputs at fixed rays) through
     `replay_file` in `Mode::Inputs` with native `DigLogic` and with `WasmLogic` gives the
     same hash; the `Bench` input (100 carves) through both gives equal op-log bytes.
-  - A session `--frames 2 --bench --logic wasm --save a.log` followed by `--frames 1
+  - A session (built with `--features wasm`) `--frames 2 --bench --logic wasm --save a.log` followed by `--frames 1
     --replay a.log --logic native` prints the same hash twice; the log records both lines.
 
 ### Phase 4: Readings
@@ -169,7 +256,8 @@ flowchart LR
     native `DigLogic`, as a ratio. Proposals: under 1 µs per host call, under 2× for the
     tick. Readings go into the log and `nfr.md` §4 with machine, commit and `wasmtime`
     version.
-  - `cargo build` of the default members does not compile `wasmtime`; the log records the
+  - `cargo build` of the default members does not compile `wasmtime` (amended 2026-10-17:
+    and `cargo tree -p flythrough -e normal` without features lists no `wasmtime`); the log records the
     incremental build time of a one-line change in `vxe-world` before and after this plan
     (`nfr.md` §7, under 10 s).
 
@@ -226,8 +314,14 @@ fifty lines and generated bindings.
 - **`HashMap` order.** Deterministic within the component by the seeded `RandomState`, but
   not equal to native. Logic crates must not depend on it; the probe test documents the
   guarantee that exists and no more.
-- **Panics in the guest** become traps; the server records the tick and continues. A
-  panicking logic is a bug in the logic, and the fly-through prints it.
+- **Panics in the guest** become traps; the server records the tick and continues without
+  the logic (fail-stop, amended 2026-10-17). A panicking logic is a bug in the logic, and the
+  fly-through prints it.
+- **Re-simulating a failure** (amended 2026-10-17) is exact only with the same component
+  bytes, `WasmConfig` and `wasmtime` version: fuel accounting can change between `wasmtime`
+  releases, and a different `fuel_per_tick` moves the failing tick. `LogFile`'s header
+  records none of them, as it records `CaveSource::VERSION`. Recording a component hash and
+  the config in the header is a follow-up for the plan that ships a logic in a save.
 - **Host-call volume.** Pathfinding or per-monster queries at hundreds per tick will show
   in the Phase 4 ratio; batched imports (a list of raycasts per call) are the known answer
   and are added when a consumer's measurement asks.
