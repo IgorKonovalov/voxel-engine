@@ -8,6 +8,49 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 Plan 0012 (no version: repository tooling): CI runs `scripts/check-comment-hygiene.mjs` (no relative link or plan-relative narration in `.rs`/`.wgsl` comments) and `scripts/check-index-rows.mjs` with `--self-test` (rows inside `roster:begin` markers at most 320 bytes); seeded fixture trees under `scripts/fixtures/`.
 
+## [0.11.0] - 2026-10-17
+
+Plan 0011: the scripting half of M5 (ADR-0010, accepted). A logic crate builds natively or as
+a WebAssembly component, and a `wasmtime` host runs the component so that it can observe
+nothing but its seed and its inputs. The same logic, native and as a component, gives
+byte-equal op logs and equal world hashes from the same inputs: the echo logic pins
+`0x8f7d_4016_15d9_5c4d`, and the fly-through session gives `0x86ca427a47e8908c` either way
+(asserted on Linux; the Windows arm confirms it after a push). Readings (`docs/nfr.md`
+sections 4 and 7; AMD Ryzen 9 5900HS, `wasmtime` 49.0.3, 07a3be1): a host call costs 1.37 to
+1.42 us over native, which misses the 1 us proposal; the budget is now 2 us per `apply`
+call. The `Bench` tick through the component is 1.031 to 1.034x native, under the 2x budget.
+An empty component tick reads 1.1 to 1.25 us. The incremental default build reads 1.46 to
+1.48 s and compiles no `wasmtime`.
+
+- New crate `vxe-script-wasm` (not a default member): the WIT world `wit/logic.wit` (`init`,
+  `tick`, and host imports `apply`, `material-at`, `raycast`, `count-in-box`, whose `hit`
+  record mirrors `vxe_world::Hit`). `WasmLogic` implements `Logic` for a component, with
+  `load`, `try_init` and `try_tick`. `WasmConfig` sets the fuel per call, a memory cap over
+  all of the component's memories, and the clocks' nanoseconds per tick. The WASI context is
+  deterministic: both clocks read `tick x frame_ns`, timers are always ready, entropy is a
+  stream seeded from the seed and the tick, stdout is discarded and stderr is kept per call
+  for a trap's message. There are no files, environment, arguments or network. A logic that
+  fails a call (fuel, memory cap, trap, or a panic in a host import) is stopped for the run.
+  Features: `host` (default, `wasmtime`) and `guest` (the bindings and `export_logic!`). The
+  test components are under `guests/` (echo, probe, spin, hog, timer, chatty), with the
+  `boundary` bench.
+- `vxe-net`: `LogicError` (`Load`, `Trap`, `Fuel`, `Memory`, `Stopped`); a provided
+  `Logic::take_error`; `TickReport::logic_error`, which makes `TickReport` no longer `Copy`
+  (breaking); `Server::init_error`. A `test-logic` feature exports the test world, the seeded
+  carves and `EchoLogic` for other crates' tests.
+- `apps/flythrough`: the dig logic moves to the `flythrough-logic` crate
+  (`apps/flythrough/logic/`), re-exported as `flythrough::logic`; it is a native rlib, or a
+  component with its `component` feature. `--logic native|wasm[=PATH]` picks the logic. Its
+  `wasm` form needs a build with `--features wasm`, off by default. A failed hosted logic is
+  printed once, and the session continues without it.
+- `scripts/build-guests.sh` builds every component into `target/guests/`. CI installs
+  `wasm32-wasip2` and builds the guests. It runs `nextest -p flythrough --features wasm`, the
+  `--features wasm` clippy, and `wasm32-wasip2` clippy on the guests and on
+  `flythrough-logic --features component`. `rust-toolchain.toml` lists the target.
+- New workspace pins: `wasmtime` and `wasmtime-wasi` `=49.0.3`, `wit-bindgen` `=0.61.1`,
+  `rand_core` `=0.10.1`, `getrandom` `=0.4.3`, `wasip2` `=1.0.4`, `bytes` `=1.12.1`, `tokio`
+  `=1.53.3`.
+
 ## [0.10.0] - 2026-10-17
 
 Plan 0007: the simulation half of M5 (ADR-0007, accepted; ADR-0010's trait half, still

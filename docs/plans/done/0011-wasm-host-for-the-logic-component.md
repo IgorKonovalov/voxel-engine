@@ -1,9 +1,9 @@
 # 0011: A WebAssembly host for the logic component, proven by native-versus-component equality
 
-> **Status:** in-progress (2026-10-17): every phase implemented; awaits the close review
+> **Status:** done (2026-10-17, v0.11.0): `vxe-script-wasm` hosts a logic component under deterministic WASI with fuel, a total memory cap and fail-stop, and the fly-through's dig logic runs natively or as a component to the same hash; the review's three majors and three minors were fixed and rechecked, and the Windows arm awaits a push.
 > **Created:** 2026-10-16
 > **Milestone:** M5 in `docs/roadmap.md` (the scripting half)
-> **Related ADRs:** [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (logic behind a trait, native and component), [ADR-0007](../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (the server loop it plugs into), ADR-0001 (stack)
+> **Related ADRs:** [ADR-0010](../../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (logic behind a trait, native and component), [ADR-0007](../../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (the server loop it plugs into), ADR-0001 (stack)
 > **Prerequisite:** Plan 0007 closed (the `Logic` and `Host` traits, the logs, `DigLogic`). Independent of every other plan.
 > **Amended 2026-10-17:** a hosted logic that fails a call (fuel, memory cap, trap) is
 > stopped for the rest of the run (fail-stop); later ticks report `LogicError::Stopped` and
@@ -392,3 +392,101 @@ fifty lines and generated bindings.
 - **Determinism:** native and component runs give equal op-log bytes and world hashes on Linux x86_64: the echo logic (`0x8f7d_4016_15d9_5c4d`), the 20-dig replay fixture and the `Bench` input through `flythrough-logic`, and the fly-through session (`--level --headless --frames 2 --bench 1 --logic wasm --save` then `--frames 1 --replay --logic native`, release build, both `0x86ca427a47e8908c`). Fail-stop: `spin` gives `Fuel { tick: 0 }`, `Stopped { 1, 0 }`, `Stopped { 2, 0 }`; `hog`'s carve stays applied, logged and re-simulates. The Windows arm has not run any of it (needs a push).
 - **Readings** (dev reference, `wasmtime` 49.0.3, exclusive perf lock, 1-minute load 1.87 before and 1.66 after the two bench runs, 1.99 to 1.91 for the build timing): per host call 1.42 and 1.37 µs over native (proposal under 1 µs: missed); `Bench` tick 1.031× and 1.034× native (proposal under 2×); incremental default-members build after a one-line `vxe-world` change 1.40 to 1.49 s before the plan (066d90e) and 1.46 to 1.48 s after (budget under 10 s); `cargo tree -p flythrough -e normal` and the default members' `cargo tree -e normal,build` list no `wasmtime`. Recorded in `nfr.md` §4 and §7.
 - **Gate after the fix pass** (ffe425d content; same machine, `CARGO_BUILD_JOBS=3`): `scripts/build-guests.sh` built chatty, echo, hog, probe, spin, timer and flythrough-logic, exit 0; `cargo build`, `cargo build --workspace --all-targets`, `cargo build -p flythrough --features wasm --all-targets` exit 0; `cargo nextest run --workspace --no-tests=pass` 316 passed, 4 skipped, and `cargo nextest run -p flythrough --features wasm` 86 passed, 3 skipped (NVIDIA GeForce RTX 3080 Laptop GPU per `nvidia-smi -L`, exclusive lock); `cargo test --workspace --doc`, both workspace clippy runs, the `wasm32-wasip2` clippy of all six guests and of `flythrough-logic --features component`, `cargo fmt --all --check`, `cargo deny check` exit 0; hook bite tests, doc links, comment hygiene, index rows and its self-test exit 0. `ECHO_HASH` `0x8f7d_4016_15d9_5c4d` holds (`tests/equality.rs`), and the release fly-through session (`--level --headless --frames 2 --bench 1 --logic wasm --save`, then `--frames 1 --replay --logic native`) printed `world hash 0x86ca427a47e8908c` and `replayed 1 inputs, 100 ops, hash 0x86ca427a47e8908c`.
+
+## Close
+
+**Verdict (2026-10-17, fresh-session review, a `dev` fix pass d1be523..4f8fe2a, then a
+fresh-session recheck at 4f8fe2a):** closed. Every phase is done and every done-when holds,
+Phase 2's fuel done-when as amended on 2026-10-17 (fail-stop). The recheck found every review
+finding fixed:
+
+- **M1** (timers waited on real time): `shadow_timers` replaces
+  `wasi:clocks/monotonic-clock@0.2.12`'s `subscribe-duration` and `subscribe-instant` with an
+  always-ready pollable (a5cf70f). The `timer` guest sleeps 30 s and polls a fresh 1 s timer
+  each tick; `timers_are_always_ready_and_never_wait` asserts `[1]` on every tick of two loads
+  and under 5 s of wall time. The pinned instance name is commented as moving with a
+  `wasmtime-wasi` bump, and the test fails if it does not.
+- **M2** (stderr filled and then failed the guest): `CallStderr` is cleared before each call,
+  keeps at most 64 KiB, and every write succeeds with a constant permit (c4c5db1). The
+  `chatty` guest writes 100 KiB over ticks 0 to 99, all `Ok`, and its panic at tick 100 is a
+  `Trap` whose message carries the panic's, then `Stopped { 101, 100 }`.
+- **M3** (a host-import panic unwound into the server): each of the four imports runs under
+  `guarded` (`catch_unwind`), so a panic is the call's error and the logic's trap (aaf87db).
+  `PanicHost` through the echo component gives `Trap { tick: 0 }` with "host refuses", then
+  `Stopped`; the `i64::MAX` sphere through a `Server` (debug builds, where the fixed-point
+  overflow panics) is `logic_error: Trap { tick: 0, .. }` with the world hash unchanged.
+- **m1:** the memory cap is on the total across a store's memories (14b765f), with a unit test
+  of a second memory refused what the first left.
+- **m2:** a second fresh `hog` session reproduces the first's `TickReport` and op-log bytes
+  (26a260b).
+- **m3:** CI runs `wasm32-wasip2` clippy over every guest crate (listed from the directory,
+  not by name) and over `flythrough-logic --features component` (1ea6202).
+- **n1:** the fly-through's module doc is rewrapped to 100 columns, text unchanged (ffe425d).
+
+The fix pass adds three workspace rows, `wasip2` `=1.0.4` (the `timer` guest only), `bytes`
+`=1.12.1` and `tokio` `=1.53.3` (under `vxe-script-wasm`'s `host` feature), all
+`default-features = false` and already in the lock through `getrandom` and `wasmtime-wasi`;
+`cargo deny check` passes, and neither `cargo tree -p flythrough -e normal` nor the default
+members' `cargo tree -e normal,build` lists `wasmtime`, `tokio` or `vxe-script-wasm`. The echo
+hash `0x8f7d_4016_15d9_5c4d` and the fly-through session hash `0x86ca427a47e8908c` are
+unchanged.
+
+**Recheck evidence at the close commit** (dev reference, AMD Ryzen 9 5900HS, NVIDIA GeForce
+RTX 3080 Laptop GPU per `nvidia-smi -L`, exclusive perf lock for nextest and the fly-through
+runs, `CARGO_BUILD_JOBS=3`): `scripts/build-guests.sh` built the six guests and
+`flythrough-logic`. `cargo build`, the `--workspace --all-targets` build and the
+`-p flythrough --features wasm --all-targets` build all exit 0. `cargo nextest run --workspace` ran 316
+tests: 316 passed and 4 skipped. `-p flythrough --features wasm` ran 86: 86 passed and 3
+skipped. Doctests, both workspace clippy runs, the `wasm32-wasip2` clippy of the guests and of
+`flythrough-logic --features component`, `cargo fmt --all --check` and `cargo deny check` all
+exit 0. The hook bite tests pass (59). Doc links, comment hygiene, index rows and its self-test
+all exit 0. Each fix-pass test above passed by name. The release session
+`--level --seed 1 --headless --frames 2 --bench 1 --logic wasm --save` printed
+`world hash 0x86ca427a47e8908c`, and `--frames 1 --replay --logic native` printed
+`replayed 1 inputs, 100 ops, hash 0x86ca427a47e8908c`.
+
+**Readings** (dev reference, AMD Ryzen 9 5900HS, Linux, `wasmtime` 49.0.3, exclusive perf
+lock, 07a3be1; re-run after M3 in the fix pass):
+
+| Figure | Reading | Check or budget |
+|---|---|---|
+| Per host call (`apply` of a radius-1 m carve, over native) | 1.42 and 1.37 µs; 1.38 µs after M3 | 1 µs proposal missed; budget now 2 µs |
+| Empty component tick | 1.12 and 1.25 µs; 1.125 µs after M3 | reading, no budget |
+| `Bench` tick through the component | 1.031× and 1.034× native; 1.033× after M3 | under 2× (proposal, now a budget) |
+| Incremental default-members build, one-line `vxe-world` change | 1.46 to 1.48 s (1.40 to 1.49 s before the plan) | under 10 s; no `wasmtime` in the default build |
+
+**Orchestrator-applied calls (under the owner's standing go, overturnable by the owner):**
+
+- **Fail-stop** (Amendment 2026-10-17, 7533adc): a hosted logic that fails a call is stopped
+  for the run; (a) a fresh instance with `init` again, (b) without `init` and (d) a snapshot
+  restore are rejected, recorded in ADR-0010's Outcome.
+- **Always-ready timers** (M1): a guest's sleep and timers return at once, so no wait spends
+  wall time or reveals it; a guest that wants to wait has nothing to wait for in a tick.
+- **A panic in a host import is the logic's trap** (M3), not a server panic. The world
+  refusing out-of-range shapes with an error is a `vxe-world` follow-up.
+- **Host-call work is not metered by fuel:** fuel counts the guest's instructions, so a
+  guest can ask the host for an expensive query (a large `count_in_box`, a long raycast)
+  within its fuel. A known limit, named in ADR-0010's Outcome and a follow-up below.
+- **The per-call budget is 2 µs per `apply` call.** The 1 µs proposal missed at 1.37 to 1.42 µs;
+  the figure carries the tick's entry and the inputs' lowering, and the `Bench` ratio
+  (1.03×) shows it does not matter at 100 calls a tick.
+- **v0.11.0**, the next minor after Plan 0007's v0.10.0: a new crate and new public API
+  (`LogicError`, `Logic::take_error`, `TickReport::logic_error`, `TickReport` no longer
+  `Copy`).
+
+ADR-0010 is accepted with a dated Outcome.
+
+## Followups
+
+- **Bounded or metered host-call work**: charge fuel per import by the work it does, or cap
+  a query's extent, so a guest cannot spend unbounded host time within its fuel. With it,
+  **`vxe-world` range checks on shapes**: refuse a shape whose fixed-point math overflows with
+  an `EditError` instead of a panic (today `guarded` turns that panic into a trap).
+- **A component hash and the `WasmConfig` in the log header**, so a saved session that
+  re-simulates a failure names the exact component and fuel it needs.
+- **Batched query imports** (a list of raycasts or material reads per call), when a
+  consumer's tick makes hundreds of queries.
+- **A cheap-query per-call measurement** (`material_at`): today's figure is an `apply` call
+  whose carve dominates, so the boundary cost of a cheap query is not read on its own.
+- **The Windows CI arm** confirms the native-versus-component equality and the echo hash on
+  the first CI run after a push of `main`.

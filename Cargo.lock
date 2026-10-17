@@ -329,7 +329,7 @@ dependencies = [
 
 [[package]]
 name = "chatty-guest"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -782,7 +782,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "echo-guest"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -884,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "flythrough"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "env_logger",
  "flythrough-logic",
@@ -901,7 +901,7 @@ dependencies = [
 
 [[package]]
 name = "flythrough-logic"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -1158,7 +1158,7 @@ checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
 
 [[package]]
 name = "hog-guest"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -2134,7 +2134,7 @@ dependencies = [
 
 [[package]]
 name = "probe-guest"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "getrandom 0.4.3",
  "vxe-net",
@@ -2579,7 +2579,7 @@ dependencies = [
 
 [[package]]
 name = "spin-guest"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -2696,7 +2696,7 @@ dependencies = [
 
 [[package]]
 name = "timer-guest"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -2848,7 +2848,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vxe-app"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "log",
  "pollster",
@@ -2858,14 +2858,14 @@ dependencies = [
 
 [[package]]
 name = "vxe-assets"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "vxe-world",
 ]
 
 [[package]]
 name = "vxe-net"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "criterion",
  "vxe-net",
@@ -2874,7 +2874,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-render"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bytemuck",
  "glam",
@@ -2885,7 +2885,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-script-wasm"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bytes",
  "criterion",
@@ -2901,7 +2901,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-sim"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "criterion",
  "vxe-world",
@@ -2909,7 +2909,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-world"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "criterion",
 ]

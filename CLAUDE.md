@@ -40,10 +40,15 @@ crates/
 │                    #   prefabs; depends on vxe-world only
 ├── vxe-net/         # channel abstraction, server tick and op/input logs, the Logic and
 │                    #   Host traits, shared/owned clients; later QUIC. No wall clock
+├── vxe-script-wasm/ # wasmtime host for logic components: the WIT world, deterministic WASI
+│                    #   (tick clocks, seeded entropy), fuel and a memory cap. Not a default
+│                    #   member. guests/ holds the test components
 └── (planned, one per plan) vxe-audio (spatial playback, occlusion through the grid),
-    vxe-script-wasm (wasmtime host, server logic), vxe-script-lua (mlua host, client scripts)
+    vxe-script-lua (mlua host, client scripts)
 apps/
 └── flythrough/      # the engine's own testbed binary: fly, dig, read edit results
+    └── logic/       # flythrough-logic: the dig logic, a native rlib or (feature
+                     #   `component`) a WebAssembly component
 docs/
 ├── roadmap.md       # milestones M0..M9 and the decisions behind them. Read this first
 ├── nfr.md           # the budgets: frame time, VRAM, edit cost, determinism, baseline GPU
@@ -62,6 +67,7 @@ docs/
 │                    #   Bite tests: `node --test ".claude/hooks/*.test.mjs"`
 └── skills/          # architect (designs docs/) + dev (writes code)
 scripts/
+├── build-guests.sh            # builds every logic component into target/guests/ (wasm32-wasip2)
 ├── check-doc-links.mjs        # every relative markdown link resolves (run at every plan close)
 ├── check-comment-hygiene.mjs  # no relative link or plan-relative narration in .rs/.wgsl comments
 ├── check-index-rows.mjs       # rows inside roster:begin markers in the index READMEs <= 320 bytes
