@@ -1,6 +1,6 @@
 # 0010: A toggleable stats HUD: a bitmap-font text grid and a frame-time strip drawn as one overlay pass
 
-> **Status:** in-progress (blocked at Phase 2; see Notes)
+> **Status:** in-progress (blocked at Phase 3; see Notes)
 > **Created:** 2026-10-16
 > **Milestone:** M7 in `docs/roadmap.md` (tooling; the profiler overlay half, brought forward)
 > **Related ADRs:** [ADR-0009](../adrs/0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) (no UI library), ADR-0001 (stack)
@@ -365,24 +365,31 @@ Buffers: cells 128 KiB at the cap, font 760 bytes, samples 1 KiB, params 64 byte
 | Phase | Owner | Status | Notes |
 |---|---|---|---|
 | 1: The overlay pass and the font | dev | done | `HudOverlay` (`hud.rs`, `hud.wgsl`), `font8x8.rs` from `font8x8_basic.h`; lavapipe (llvmpipe, LLVM 22.1.8): `A` at scale 2 has 28 set bits, 112 white pixels, 33 shadow pixels, every pixel at `x >= 17` the clear colour; `present.wgsl`, `march.wgsl`, `present.rs` unchanged and Plan 0001's goldens pass; gate: 175 tests run, 175 passed, 1 skipped. Commit: 04fffd5 |
-| 2: The frame-time strip and the pass timer | dev | blocked: the 1.5 to 1.7 ms band | `set_samples` and the strip; lavapipe: samples `[0, 16, 32, 64]`, ceiling 32, scale 1 give columns of 0, 32, 64, 64 white pixels and the red line 33 rows above the strip's bottom row in columns 0 and 1. `PassTimer` in `marcher.rs`, `MarchTimer` a type alias. March GPU, `flythrough --headless --seed 1 --render 1920x1080 --frames 300`, median of the last 30, three runs each, RTX 3080 Laptop GPU, exclusive lock: before (04fffd5) 6.684 / 7.100 / 6.683 ms, after 6.779 / 6.787 / 6.797 ms; with `--level` added, before 1.712 / 1.753 / 1.714 ms, after 1.753 / 1.720 / 1.707 ms. HUD pass (`hud_pass_reading_at_1080p`, ignored test, release): 1920 x 1080, 24 rows x 100 characters, 240 samples, scale 2, median of 300: 0.0573 / 0.0573 / 0.0573 ms. Gate: 177 tests run, 177 passed, 2 skipped. Commit: cbee825 |
-| 3: Stats in the fly-through and the toggle | dev | not started | |
+| 2: The frame-time strip and the pass timer | dev | done | `set_samples` and the strip; lavapipe: samples `[0, 16, 32, 64]`, ceiling 32, scale 1 give columns of 0, 32, 64, 64 white pixels and the red line 33 rows above the strip's bottom row in columns 0 and 1. `PassTimer` in `marcher.rs`, `MarchTimer` a type alias. March GPU, `flythrough --headless --seed 1 --render 1920x1080 --frames 300`, median of the last 30, three runs each, RTX 3080 Laptop GPU, exclusive lock: before (04fffd5) 6.684 / 7.100 / 6.683 ms, after 6.779 / 6.787 / 6.797 ms; with `--level` added, before 1.712 / 1.753 / 1.714 ms, after 1.753 / 1.720 / 1.707 ms; after-median 1.720 vs before-median 1.714 ms on `--level`, 0.35 %, within 3 % (Amendment 2026-10-17). HUD pass (`hud_pass_reading_at_1080p`, ignored test, release): 1920 x 1080, 24 rows x 100 characters, 240 samples, scale 2, median of 300: 0.0573 / 0.0573 / 0.0573 ms. Gate: 177 tests run, 177 passed, 2 skipped. Commit: cbee825 |
+| 3: Stats in the fly-through and the toggle | dev | blocked: the p99 test's arithmetic; the streamed 5 % check | `hud.wgsl` in `tests/shader_portability.rs`'s `SHADERS`; its check passes. `apps/flythrough/src/hud.rs`: `FrameStats` copied from Ritmolux `ad375596` with its tests, `HudStats`, `Cadence`, `WorldSample`, `EditLine`, `Mode`; `F2` toggles, `--hud` starts visible, `--frames` prints the rows at exit after a fresh sample. `World::stats` on the streamed cave at its spawn after full residency (ignored test `world_stats_call_on_the_streamed_world_at_full_residency`, release, 17077 chunks, 1640292 full bricks, 40700 LOD-only): median of 10 14.854 ms (min 14.570, max 15.681), 1-minute load 3.17; so N = 240. Cadence test with a stub counter, N = 60 and N = 240: 300 hidden frames 0 calls, toggle on 1, then 120 visible frames `120 / N` more (2 and 0). `FrameStats`: 240 equal 5 ms deltas give mean, median and p99 5 ms; one 100 ms delta among 239 of 1 ms gives median 1 ms, p99 1 ms, max 100 ms. Formatting: 4 to 9 us in the `--hud` runs. Readings, `flythrough --headless [--level] --seed 1 --render 1920x1080 --frames 300 [--hud]`, three runs each, interleaved, exclusive lock, 1-minute load 1.13 to 3.29: `--level` frame mean (the exit print, 240-frame window) without 2.29 / 2.25 / 2.20 ms (median 2.25), with `--hud` 2.32 / 2.39 / 2.34 ms (median 2.34), +4.0 %; march (median of the last 30) without 1.708 / 1.736 / 1.722 ms (median 1.722), with 1.787 / 1.708 / 1.723 ms (median 1.723), +0.06 %; streamed frame mean without 20.38 / 24.64 / 22.58 ms (median 22.58), with 20.88 / 20.17 / 20.50 ms (median 20.50), -9.2 %; streamed march without 6.687 / 6.791 / 8.998, with 6.751 / 7.099 / 7.666 ms. HUD pass (median of the last 30) `--level` 0.0389 / 0.0379 / 0.0379 ms, streamed 0.0369 / 0.0379 / 0.0410 ms. An earlier set at a build reading RSS every frame (1-minute load 1.89 to 5.45): `--level` frame mean without 2.17 / 2.13 / 2.07, with 2.22 / 2.33 / 2.40 ms (+9.4 %); streamed without 20.41 / 24.98 / 21.49, with 20.99 / 24.08 / 21.18 ms (-1.4 %). Gate: 188 tests run, 188 passed, 3 skipped. Commit: committed with this row |
 | 4: The golden with the HUD on | dev | not started | |
 
 ### Notes
 
-- **Block (Phase 2):** the done-when names "the march reading at the spawn pose (`--seed 1
-  --render 1920x1080 --frames 300`) on the dev box stays within the 1.5 to 1.7 ms band of
-  `nfr.md` §2". That command now streams the unbounded cave (the default mode since Plan 0002)
-  and reads 6.68 to 7.10 ms before the refactor and 6.78 to 6.80 ms after it; with `--level`
-  it reads 1.71 to 1.75 ms before and 1.71 to 1.75 ms after. Neither is inside 1.5 to 1.7 at
-  the commit before the refactor, so the done-when cannot be met as stated by any change in
-  this plan. The 1.59 ms of `nfr.md` §2 is the Plan 0001 reading; `nfr.md` also records 1.95
-  ms (Plan 0002) and 1.826 to 1.859 ms (Plan 0005) for the bounded level's spawn. Options:
-  (a) restate the done-when as before/after equality within noise on a named command
-  (`--level`, readings above), (b) restate the band to the current `--level` reading, (c)
-  keep the band and treat it as a march regression to diagnose outside this plan. Phases 3
-  and 4 are not started.
+- **Block (Phase 3), the p99 test:** the done-when asks that "a ring fed one 100 ms delta among
+  239 of 1 ms reports a p99 of 100 ms". The copied `FrameStats` takes p99 at index
+  `round(0.99 x 239) = 237` of the sorted window, which holds 1 ms; nearest rank by
+  `ceil(0.99 x 240) = 238` (the 238th sample, index 237) gives 1 ms too. One sample is 0.42 %
+  of 240, under the 1 % a p99 excludes, so no nearest-rank definition puts it at p99; the
+  amendment's own N rule says the same ("reaches at most the window's max and not its p99").
+  The test as written asserts median 1 ms, p99 1 ms, max 100 ms. Options: (a) accept that
+  assertion (the spike in the max, not the p99); (b) restate the case with three spikes (3 of
+  240 = 1.25 %, so index 237 holds 100 ms); (c) change the percentile definition away from the
+  copied code.
+- **Block (Phase 3), the streamed 5 % check:** the streamed command's frame mean with `--hud`
+  is 9.2 % below the mean without it (medians 20.50 and 22.58 ms), outside "within 5 %" in the
+  direction of the HUD costing less than nothing; the three runs without the HUD spread from
+  20.38 to 24.64 ms (21 %), and an earlier set read -1.4 %. The last 240 of 300 frames of that
+  command fall before full residency, so the mean is the streaming load's. The `--level`
+  command meets both its checks (+4.0 % and +0.06 %). Options: (a) gate the 5 % on `--level`
+  only and log the streamed one, as Phase 2 does; (b) run the streamed command until full
+  residency first (more frames, or a rest pose) and gate that; (c) more runs per side.
+- Phase 4 is not started.
 - Deviation, 04fffd5: the cell buffer always has the cap layout (256 columns stride x 128
   rows); the visible `ceil(width / 8 scale)` x `ceil(height / 8 scale)` cells are the ones the
   target's pixels reach. `set_text` takes no size, so it cannot size the grid to the target.
@@ -402,13 +409,35 @@ Buffers: cells 128 KiB at the cap, font 760 bytes, samples 1 KiB, params 64 byte
 - Deviation, cbee825: `crates/vxe-render/src/lib.rs` (outside Phase 2's Files
   touched) re-exports `PassTimer`.
 - The red line is drawn where no bar covers it; the strip has no backdrop.
+- Deviation, Phase 3: the process RSS is read with the world sample, at the cadence, not every
+  frame. A diagnostic build (not committed) read the `--level` frame mean at 2.34 / 2.42 ms with
+  the per-frame `/proc/self/statm` read and 2.22 / 2.26 ms without it (2.11 / 2.22 ms with the
+  HUD off).
+- Deviation, Phase 3: `HudStats.march_ms` and `hud_ms` are `Option<f32>` (`n/a` without
+  `TIMESTAMP_QUERY`); `HudStats` adds `cpu_ms`, the frame's render-thread CPU from its start to
+  its submit, beside the window's `frame_ms`.
+- Deviation, Phase 3: the `FrameStats` ring and the strip are fed the delta between frames
+  (the `dt` the shell passes), not the render-thread CPU time; the first frame's delta is
+  skipped. The "printed average frame time" of the check is the exit print's `frame mean`.
+- Deviation, Phase 3: while the HUD is shown the march and HUD timers run and are read every
+  frame; the `F1` and `--frames` line gains `gpu hud` (median of its frames) when the HUD is
+  drawn.
+- Deviation, Phase 3: `format_us` shows the previous frame's formatting time.
+- Deviation, Phase 3: row colours: the frame row is red when the window's max is above 33.3 ms
+  and yellow when its p99 is above 16.67 ms; `cpu` yellow above 16.67 ms; march yellow above
+  3.0 ms; upload yellow above 1.0 ms.
+- Deviation, Phase 3: the `World::stats` reading is an ignored test in `main.rs`'s tests,
+  run by hand in release.
 
 ### Close triggers
 
-- Stopped at Phase 2 on the block above. Gate at the tip: `cargo build`, `cargo nextest run
-  --workspace` (177 run, 177 passed, 2 skipped), `cargo test --workspace --doc`, `cargo clippy
-  --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`, `cargo deny check`,
-  hook bite tests, `check-doc-links.mjs`: all exit 0.
-- Readings: Phase 2 row; NVIDIA GeForce RTX 3080 Laptop GPU, Ryzen 9 5900HS, headless,
-  every GPU command and timing under the exclusive perf lock; the 1-minute load average read
-  6 to 25 during the readings (other lanes building).
+- Stopped at Phase 3 on the two blocks above. Gate at the Phase 3 commit: `cargo build`,
+  `cargo nextest run --workspace` (188 run, 188 passed, 3 skipped), `cargo test --workspace
+  --doc`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`,
+  `cargo deny check`, hook bite tests (59), `check-doc-links.mjs`,
+  `check-comment-hygiene.mjs`, `check-index-rows.mjs` and its `--self-test`: all exit 0.
+- Readings: Phase 2 and Phase 3 rows; NVIDIA GeForce RTX 3080 Laptop GPU, Ryzen 9 5900HS,
+  headless, every GPU command and timing under the exclusive perf lock. Phase 2's 1-minute
+  load read 6 to 25; Phase 3's readings were taken at a 1-minute load of 4 or less after up
+  to five retries a minute apart, except the earlier set's one run at 5.45 (logged in the
+  Phase 3 row).

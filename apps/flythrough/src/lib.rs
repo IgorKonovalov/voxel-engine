@@ -3,6 +3,7 @@
 //! engine ships no terrain; this cave is the testbed's own.
 
 pub mod cave;
+pub mod hud;
 
 use vxe_world::hash::Fnv1a;
 use vxe_world::{
