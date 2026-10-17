@@ -79,6 +79,16 @@ Laptop GPU; taken while the machine's 1-minute load read between 3 and 5):** fac
 with detail; on the baseline (about two to three times slower) the level's contour reading
 projects to roughly 3.9 to 5.8 ms against the 3.0 ms line, a projection, not a reading.
 
+**Stats HUD (dev reference, Plan 0010, f91726f, headless `flythrough [--level] --seed 1
+--render 1920x1080 --frames 300 [--hud]`, three runs each, NVIDIA GeForce RTX 3080 Laptop GPU,
+Ryzen 9 5900HS):** a tool, not a frame stage, so it has no line in the table. The HUD pass
+reads 0.038 ms at 1080p and scale 2 (median of the last 30 frames), against the plan's 0.1 ms
+proposal. With the HUD shown on `--level`, the march reads +0.06 % (1.723 vs 1.722 ms) and the
+frame mean +4.0 % (2.34 vs 2.25 ms), which includes the per-frame timer readback. `World::stats`
+reads 14.85 ms on the streamed cave at full residency, so the fly-through samples it once per
+240 frames while the HUD is shown. The streamed world's readings are logged in the plan, not
+gated.
+
 No frame may stall on paging: work attributable to streaming on the render thread is capped at
 the streaming line above; the rest runs on background threads.
 
@@ -157,6 +167,10 @@ no peak was read. A recorded miss: ADR-0011 keeps contour planes, and fitting th
 under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2).
 
 **Brick-array pool (Plan 0014).** The pool adds at most 8 MiB per world (`World::BRICK_ARRAY_POOL_CAP` 8192 arrays x 1 KiB); the fly-through holds a 4096-array reserve (2326 KiB pooled after the `B` bench, 5850218, dev reference).
+
+**Stats HUD (arithmetic, Plan 0010; ADR-0009).** The overlay holds about 130 KiB of VRAM
+under "everything else": a 128 KiB cell buffer at the 256 x 128 cap layout (`u32` per cell),
+a 1 KiB sample buffer (256 `f32`), the font and a small parameter block, under the 200 KiB ADR-0009 states.
 
 **Prefabs (arithmetic, Plan 0008; no reading needed).** A `Prefab` holds 2 B of material plus
 one mask bit per voxel: a 16³ prefab is 8 KiB + 512 B, a 64³ one 512 KiB + 32 KiB. A parsed

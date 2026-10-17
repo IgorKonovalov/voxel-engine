@@ -1,9 +1,9 @@
 # 0010: A toggleable stats HUD: a bitmap-font text grid and a frame-time strip drawn as one overlay pass
 
-> **Status:** in-progress
+> **Status:** done (2026-10-17, v0.9.0): `HudOverlay`, the frame-time strip, `PassTimer` and the fly-through's `F2` HUD shipped with every done-when met on the amended checks and the HUD golden blessed; the fresh review passed it with no fix pass, its minors are follow-ups, and the windowed look awaits the owner.
 > **Created:** 2026-10-16
 > **Milestone:** M7 in `docs/roadmap.md` (tooling; the profiler overlay half, brought forward)
-> **Related ADRs:** [ADR-0009](../adrs/0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) (no UI library), ADR-0001 (stack)
+> **Related ADRs:** [ADR-0009](../../adrs/0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) (no UI library), ADR-0001 (stack)
 > **Prerequisite:** Plan 0001 closed. Independent of every other plan; it touches `apps/flythrough/src/main.rs`, which Plans 0002, 0004, 0007, 0008 and 0009 also touch, so merges are expected and conflicts are textual only.
 > **Amended 2026-10-16**, before "go": Phase 2's `PassTimer` and Phase 3's frame-time window
 > are copied from Ritmolux (the owner's sibling repository, commit `ad375596`) and adapted,
@@ -563,3 +563,68 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   `check-doc-links.mjs`, `check-comment-hygiene.mjs`, `check-index-rows.mjs` and its
   `--self-test` 0. CARGO_BUILD_JOBS=3.
 - **Outstanding `human` phases:** none. The on-screen HUD awaits the owner (Notes).
+
+## Close
+
+**Verdict (2026-10-17, fresh-session review at 63453cc, then the merge of `main` at ede864c):**
+closed with no fix pass. Every phase is done. Every done-when holds as amended on 2026-10-17
+(twice). The HUD golden is blessed on lavapipe, and Plan 0001's primary golden is unchanged
+byte for byte.
+
+**Readings** (dev reference, NVIDIA GeForce RTX 3080 Laptop GPU, AMD Ryzen 9 5900HS, f91726f,
+headless, exclusive perf lock; the runs and loads are in the Phase 2 and 3 rows):
+
+| Figure | Reading | Check or proposal |
+|---|---|---|
+| HUD pass, 1920 x 1080, scale 2 | 0.038 ms (fly-through), 0.057 ms (24 x 100 grid, ignored test) | under 0.1 ms (plan proposal) |
+| March with the HUD on, `--level` | +0.06 % (1.723 vs 1.722 ms) | within 3 % |
+| Frame mean with the HUD on, `--level` | +4.0 % (2.34 vs 2.25 ms) | within 5 % |
+| Frame mean with the HUD on, streamed | -9.2 % (logged, not gated) | none (cold-start noise about 21 %) |
+| `World::stats`, streamed cave at full residency | 14.85 ms, once per 240 frames while shown | none |
+| HUD buffers | about 130 KiB (arithmetic) | under 200 KiB (ADR-0009) |
+
+**The merge of `main` (plans 0014 and 0009), judged:** all three behaviour decisions are
+accepted.
+
+- **Collapse drops and `R` removals update the last-edit row without printing.** Their printed
+  lines keep main's form (`removed:`, `landed after`), and a drop happens every frame of a
+  fall. Printing each drop would flood the console, so the row is the right place for them.
+- **The `P` stamp goes through `record_edit`.** Its printed line is unchanged, and the HUD row
+  now shows a stamp like any other edit.
+- **The autopilot is untouched.** It prints its own `autopilot:` lines and runs headless. Its
+  carve not reaching the HUD row has no reader today.
+
+**Orchestrator-applied calls (under the owner's standing go, overturnable by the owner):**
+
+- Close before the owner's windowed look. The look is recorded below as awaiting the owner,
+  not as a blocker.
+- The minor bump to v0.9.0, the next minor after Plan 0009's v0.8.0. `MarchTimer::new` changes
+  signature (it takes the queue and returns `Option`). SemVer 0.x allows that in a minor.
+- The review's minors and nits are follow-ups for one `dev` pass after the merge, not a fix
+  pass before the close.
+- No off-thread `World::stats` for now. The 15 ms hitch every 240 frames while the HUD is shown
+  lands in the window's max, not in its p99.
+
+ADR-0009 is accepted with a dated Outcome.
+
+**Awaiting the owner, in a window:** `cargo run --release -p flythrough -- --level --hud`.
+Judge that the rows read at the top-left in white, with over-budget rows yellow. The frame-time
+strip should sit at the bottom-left above one text row, with the red 16.67 ms line. `F2` hides
+and shows the HUD, and `F1` still prints its snapshot.
+
+## Followups
+
+One `dev` pass after the merge to `main` takes the first three:
+
+- **Per-frame allocations while the HUD is shown** (review minor 1). The rows `Vec` in
+  `apps/flythrough/src/main.rs` (about line 652 at the review), the `last_edit` clone (about
+  line 630) and the ms-formatting closure in `apps/flythrough/src/hud.rs` (about line 356)
+  each allocate every frame. Reuse buffers so a shown HUD allocates nothing per frame.
+- **The `cpu bytes` estimate misses the brick-array pool** (review minor 2). Add
+  `World::pool_len()` to `WorldSample` and count it. Relabel the pool row `gpu pool`, since it
+  reports mirror slots.
+- **Nits.** `PassTimer::read_ms` has an unused `_queue` parameter. `HudOverlay` and its
+  `scale` lack doc comments.
+- **Risk, needs the owner's Windows run:** `encode` passes the target height as the draw's
+  first instance (`instance_index`). That `first_instance` reaches the shader on D3D12 is
+  unverified.
