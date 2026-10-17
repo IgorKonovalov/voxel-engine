@@ -376,6 +376,12 @@ a cheap query.
   region, and replicate through M5's log once they are wired as op kinds 3 and 4 (a
   followup of Plan 0009). Shipped in Plan 0009 as `World::drop_region` and
   `World::remove_region`.
+- **Stress (open; owner's call, 2026-10-17):** overhangs fail by span and weight, not only
+  when the support query finds them disconnected. The owner's windowed test of v0.12.0
+  found collapse rarely triggers in the cave, because a cell one eighth solid still bears
+  load and a thin bridge holds an overhang up. Needs an ADR revising ADR-0008's
+  connectivity-only rule (the alternatives include tuning the load-bearing threshold, which
+  the owner did not choose) and its own plan; not drafted.
 - **Cosmetic rigid bodies**: a client-side layer, in its own optional crate, that animates the
   pieces of a collapsed region with a rigid-body library (`rapier` or similar) between the
   server's "region R fell at tick T" and the landed result, then fades the pieces into the

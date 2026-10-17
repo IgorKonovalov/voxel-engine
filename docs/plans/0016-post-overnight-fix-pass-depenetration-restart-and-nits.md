@@ -12,6 +12,11 @@
 > **Source:** `docs/decisions-pending.md` D6 (the owner overturned two overnight calls) and
 > D7 item 3; Plan 0004 Followup 1; Plan 0010 Followups (the first three) and Plan 0014
 > Followups (two comment nits).
+> **Amended:** 2026-10-17, before `dev` started, with two findings from the owner's windowed
+> test of v0.12.0: rubble that rounds away on a thin region (Phase 4) and a scroll wheel that
+> never changes the dig radius on smooth scrolling (Phase 5), rechecked in a window (Phase 6).
+> The test's third finding, collapse that rarely triggers in the cave, is a stress model the
+> owner wants as its own ADR and plan (see "What this plan does NOT do").
 
 ## TL;DR
 
@@ -22,7 +27,10 @@ staying stopped for the run; and the five review nits from Plans 0010 and 0014 a
 (a shown HUD allocates nothing per frame, the memory estimate counts the brick-array pool,
 two stale comments, an unused parameter, two missing doc comments). The first thing a
 reader sees is the level walk test: a fill on the body's feet is followed by a tick that
-ends with the body standing on the new floor.
+ends with the body standing on the new floor. The amendment adds two fixes from the owner's
+windowed test: a removed region's rubble carries each column's rounding remainder to the next
+column, so a thin region piles its quarter instead of nothing, and the fly-through banks
+fractional scroll until it makes a whole step.
 
 ## Context & problem
 
@@ -54,6 +62,20 @@ comment (`main.rs:92`) means 2 Mi voxels, 4 MiB, and `CapsuleRow::nearest`
 (`crates/vxe-world/src/shape.rs:379`) should state the `i128` range its closed form stays
 within.
 
+**Rubble that rounds away.** `World::remove_region` piles `h = n * fraction.0 / fraction.1`
+rubble voxels per voxel column, by integer division per column
+(`crates/vxe-world/src/collapse.rs:575-579`). A column with fewer than 4 carved voxels gets
+none at the fly-through's quarter, so a region that is thin in z piles nothing: the owner's
+test printed `removed: {rock: 201}, 0 rubble` for a 2-cell region. The doc comment states
+the per-column rule, so this is the specified behaviour, not a bug in the code; the owner
+wants the region's quarter on the floor.
+
+**The scroll wheel.** `handle_input` adds `input.scroll().round()` steps to the dig radius
+each frame (`apps/flythrough/src/main.rs:1975-1981`), and `vxe-app` reports a pixel delta
+as `y / 40` lines (`crates/vxe-app/src/shell.rs:320-323`). Smooth or touchpad scrolling
+delivers less than half a line per frame, which rounds to zero and is cleared with the
+frame's input: the owner scrolled about 40 times and every line read `dig radius 0.5 m`.
+
 Budgets touched: none moves. `nfr.md` §8's controller tick (2.6 µs on terrain) is re-read
 because the tick gains an overlap test at its start.
 
@@ -66,10 +88,18 @@ poses and takes the first free one, reporting the lift in the tick's result; a b
 free pose within reach stays and reports `embedded`. The host restarts a trapped logic on
 the next tick with a fresh instance and `init(seed)`, at most `max_restarts` times per
 session (default 8), then stops as today; each restart is reported. The nits are fixed as
-the reviews worded them. We rejected depenetration inside `sweep` (it would change what
+the reviews worded them. `remove_region` keeps one integer accumulator across the columns in
+their fixed order (cell stacks in `BTreeMap` order, then `ly`, then `lx`): each column adds
+`n * fraction.0`, takes the accumulator's whole multiples of `fraction.1` as its `h` and
+keeps the rest, so the region piles `floor(N * fraction.0 / fraction.1)` in total less only
+what finds no ground or no air. The fly-through banks scroll in an accumulator, takes whole
+steps toward zero and keeps the fraction. We rejected depenetration inside `sweep` (it would change what
 every caller of `sweep` sees and the pinned sweep test), and an unbounded restart loop (a
 logic that traps every tick would re-instantiate the component every tick, a server-side
-cost the guest controls).
+cost the guest controls). For rubble we rejected rounding each column up (a one-voxel
+sheet would pile as much rubble as it had voxels, not a quarter). For the scroll we
+rejected changing `vxe-app`'s `Input` to bank fractions (it reports what the frame
+delivered; how a consumer quantises it is the consumer's choice).
 
 ## Architecture diagram
 
@@ -175,6 +205,51 @@ between phases. The architect reviews once at the end, in a fresh session.
     `missing_docs` clean on `HudOverlay` and `scale`; the two comments read as the reviews
     asked.
 
+### Phase 4: Rubble carries the rounding remainder across columns
+- **Owner skill:** dev
+- **What:** in `remove_region`'s column scan, a `u64` accumulator starts at 0; for each
+  column with a carved voxel, `acc += n * fraction.0`, `h = acc / fraction.1`,
+  `acc -= h * fraction.1` (both 0 when `fraction.1 == 0` or `rubble` is air, as today). A
+  column with no ground within `max_depth`, or whose air runs out, loses the part of its
+  `h` it cannot place; the remainder still carries. The doc comment states the new rule.
+- **Files touched:** `crates/vxe-world/src/collapse.rs`, `crates/vxe-world/tests/collapse.rs`.
+- **Done when:**
+  - A new test removes a one-voxel-thick 8 x 8 sheet of material 3 (64 columns, `n = 1`
+    each) held 10 voxels over a solid floor, with `(1, 4)` and `max_depth = 64`: `removed`
+    is `{3: 64}` and `placed == 16`, one rubble voxel on the floor under each column where
+    the accumulator reaches 4, that is local `lx` in `{3, 7}` for every `ly` in the
+    cell's column order; the test lists the 16 voxels. Today's code places 0 there.
+  - The existing pins stand unchanged: the slab piles 1152, the slab with one
+    indestructible voxel 1151 (`floor(4607 / 4)`, as before), `(0, 1)` piles 0 and `(1, 1)`
+    4608, and the depth test's 32 versus 33 split.
+  - The cross-arm collapse hash test, if it pins a `remove_region` outcome on a region with
+    a column of `n mod 4 != 0` other than the spared one, is re-pinned in this commit with
+    the reason in the log; otherwise it is unchanged.
+
+### Phase 5: Smooth scrolling changes the dig radius
+- **Owner skill:** dev
+- **What:** a `flythrough::ScrollSteps` holds an `f32` carry; `add(delta) -> i64` adds the
+  frame's scroll, returns the whole steps toward zero and keeps the fraction. The
+  fly-through uses it for the dig radius, prints the radius only when it changes, and
+  clears the carry when the radius sits at either end of `DIG_RANGE` and the scroll
+  pushes past it, so scrolling past a limit banks nothing.
+- **Files touched:** `apps/flythrough/src/lib.rs`, `apps/flythrough/src/main.rs`.
+- **Done when:**
+  - A unit test feeds `ScrollSteps`: four deltas of `0.25` give `0, 0, 0, 1`; `0.3` then
+    `-0.3` give `0, 0`; `2.0` gives `2`; `-0.6, -0.6` give `0, -1` and leave a carry of
+    `-0.2` (within `1e-6`).
+  - A test of the fly-through's radius handling (or of the function it calls) shows that
+    32 frames of `0.125` lines (exact in `f32`) raise the radius from 0.5 m to 0.9 m, and that at 3.0 m
+    further upward scroll prints nothing and a later downward line steps to 2.9 m at once.
+
+### Phase 6: The owner rechecks in a window
+- **Owner skill:** human
+- **What:** the owner runs `flythrough --level` from their own terminal, scrolls with the
+  device that failed and removes a thin region with `R` on.
+- **Done when:** the dig radius follows the scroll in 0.1 m steps, and a removed thin region
+  prints a rubble count near a quarter of its removed voxels (less only the columns with no
+  ground within 6.4 m).
+
 ## Data shapes
 
 ```rust
@@ -204,6 +279,8 @@ pub enum LogicError {
 - `nfr.md` §4 component boundary: a restart costs an instantiation (the TTFF reading of
   Plan 0011: tens of milliseconds for the fly-through's component, read in the log), paid
   at most `max_restarts` times.
+- `remove_region`: one integer add, divide and subtract per column, beside a column scan
+  that already reads every voxel; no reading needed.
 - Nothing else moves. The HUD's "no per-frame allocation" is a property, asserted in a test.
 
 ## Risks & open questions
@@ -219,6 +296,12 @@ pub enum LogicError {
 
 ## What this plan does NOT do
 
+- A stress model for collapse. The owner's test found that collapse rarely triggers in the
+  cave: a 0.8 m cell with 64 of 512 voxels solid still bears load, so a thin leftover bridge
+  holds an overhang up. The owner chose (2026-10-17) overhangs that fail by span and weight,
+  not only by disconnection: a new engine mechanism with its own ADR (ADR-0008's
+  connectivity-only query is the alternative it would revise) and plan, recorded under M8
+  in `docs/roadmap.md`. This plan does not tune the fly-through's `SUPPORT` constants.
 - Snapshot restore of a logic's state (ADR-0010 rejected it; it needs its own ADR).
 - Depenetration for bodies other than the controller's cylinder, or a notification to the
   game beyond `MoveResult`.
@@ -237,6 +320,9 @@ pub enum LogicError {
 | 1: Depenetration in the controller | dev | not started | |
 | 2: A trapped logic restarts from its seed | dev | not started | |
 | 3: The review nits | dev | not started | |
+| 4: Rubble carries the rounding remainder | dev | not started | |
+| 5: Smooth scrolling changes the dig radius | dev | not started | |
+| 6: The owner rechecks in a window | human | not started | |
 
 ### Notes
 
@@ -256,4 +342,5 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
-- None at draft time.
+- A stress model for collapse (span and weight), its own ADR and plan under M8; see "What
+  this plan does NOT do".
