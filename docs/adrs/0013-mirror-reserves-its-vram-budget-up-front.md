@@ -1,6 +1,6 @@
 # ADR-0013: The mirror reserves its VRAM budget up front and never reallocates
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-17)
 > **Date:** 2026-10-17
 > **Related plan(s):** [Plan 0017](../plans/0017-mirror-budget-reservation-page-kinds-and-pressure.md)
 > **Supersedes in part, once accepted:** ADR-0004's Outcome clause "buffers grow by half

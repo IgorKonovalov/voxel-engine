@@ -1,6 +1,6 @@
 # 0018: Stamp, drop and remove as op kinds 2 to 4 through the server, the log and the logic host
 
-> **Status:** draft
+> **Status:** approved (2026-10-17)
 > **Created:** 2026-10-17
 > **Milestone:** M5 (the simulation split, completed for every op) and M8 (collapse through the log) in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0014](../adrs/0014-prefab-identity-in-the-op-log.md) (proposed; how a

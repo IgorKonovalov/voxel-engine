@@ -1,6 +1,6 @@
 # ADR-0014: A stamp op names its prefab by content id, and a save carries the prefabs it names
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-17)
 > **Date:** 2026-10-17
 > **Related plan(s):** [Plan 0018](../plans/0018-server-routed-stamp-drop-and-remove.md)
 

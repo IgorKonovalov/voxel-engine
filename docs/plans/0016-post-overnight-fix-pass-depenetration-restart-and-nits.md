@@ -1,6 +1,6 @@
 # 0016: The post-overnight fix pass: depenetration, a logic that restarts after a trap, and the review nits
 
-> **Status:** draft
+> **Status:** approved (2026-10-17)
 > **Created:** 2026-10-17
 > **Milestone:** M3 (depenetration), M5 (restart) and M7 (the HUD nits) in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0005](../adrs/0005-vertical-cylinder-collision-by-integer-conservative-advancement.md)

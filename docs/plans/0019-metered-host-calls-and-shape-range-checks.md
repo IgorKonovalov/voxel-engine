@@ -1,6 +1,6 @@
 # 0019: Host calls charged by their work, and a world that refuses out-of-range shapes and queries
 
-> **Status:** draft
+> **Status:** approved (2026-10-17)
 > **Created:** 2026-10-17
 > **Milestone:** M5 in `docs/roadmap.md` (the logic host's safety) and M1's edit contract
 > **Related ADRs:** [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md)

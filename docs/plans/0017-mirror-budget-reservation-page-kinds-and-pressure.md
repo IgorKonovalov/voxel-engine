@@ -1,6 +1,6 @@
 # 0017: The mirror reserves its budget: fixed buffers, empty pages that change kind, and a pressure signal the streamer follows
 
-> **Status:** draft
+> **Status:** approved (2026-10-17)
 > **Created:** 2026-10-17
 > **Milestone:** M2 in `docs/roadmap.md` (the footprint work that lets Plan 0013's radius be chosen against content)
 > **Related ADRs:** [ADR-0013](../adrs/0013-mirror-reserves-its-vram-budget-up-front.md)
