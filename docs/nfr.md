@@ -246,6 +246,19 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   1-minute load 1.66):** `cargo bench -p vxe-net --bench tick`: 3.4706 ms (CI 3.4663 to
   3.4756 ms) through `EchoLogic` against 3.3859 ms (CI 3.3782 to 3.3990 ms) direct, an
   overhead of 84.7 µs per 100 inputs.
+- **Component boundary (proposals, Plan 0011):** a host call from a logic component (the
+  `apply` import of a radius-1 m carve: the op's wire bytes out, the tagged answer back) costs
+  under 1 µs more than a native `Host::apply`; the fly-through's `Bench` tick (100 carves)
+  through the component costs under 2× native `DigLogic`.
+  **Readings (dev reference, AMD Ryzen 9 5900HS, Linux, `wasmtime` 49.0.3, Plan 0011 Phase 4
+  at 70b40ec plus the bench, exclusive perf lock, 1-minute load 1.87 before and 1.66 after two
+  runs):** `cargo bench -p vxe-script-wasm --bench boundary`, each tick on a fresh
+  `solid3_world()` through a host straight on the world: 100 carves through the echo
+  component 3.1181 and 3.1225 ms against native `EchoLogic` 2.9765 and 2.9858 ms, so 1.42 and
+  1.37 µs per host call, the tick's entry and the inputs' lowering included (an empty
+  component tick reads 1.12 and 1.25 µs). The per-call figure misses the 1 µs proposal. The
+  `Bench` tick through the `flythrough-logic` component 3.1984 and 3.2065 ms against native
+  `DigLogic` 3.1033 and 3.1025 ms: 1.031× and 1.034×, under the 2× proposal.
 - **Determinism:** the same op list on the same seed yields bit-identical voxels and results on
   Linux and Windows. CI asserts a fixed vector's hash on both arms. **Asserted:**
   `determinism_vector` passed on the Linux and Windows CI arms at 9565c5a and 1d61aba
@@ -324,6 +337,13 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   under 3 s.
 - An incremental `cargo build` of a one-crate change under 10 s on the dev reference; the
   everyday loop does not compile crates a plan does not touch (`default-members`).
+  **Reading (Plan 0011 Phase 4, dev reference, AMD Ryzen 9 5900HS, `CARGO_BUILD_JOBS=3`,
+  exclusive perf lock, 1-minute load 1.99 to 1.91):** default-members `cargo build` after a
+  one-line change (a `pub const`) to `crates/vxe-world/src/lib.rs`, alternated three times:
+  1.40 to 1.49 s on the tree before Plan 0011 (066d90e), 1.46 to 1.48 s at its tip (70b40ec
+  plus the bench). The default members compile no `wasmtime`: `cargo tree -e normal,build`
+  of them and `cargo tree -p flythrough -e normal` list none; `flythrough --features wasm`
+  brings it in.
 
 ## 8. Collision and coarse grids
 

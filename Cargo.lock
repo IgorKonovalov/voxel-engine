@@ -2870,6 +2870,8 @@ dependencies = [
 name = "vxe-script-wasm"
 version = "0.10.0"
 dependencies = [
+ "criterion",
+ "flythrough-logic",
  "rand_core",
  "vxe-net",
  "vxe-world",

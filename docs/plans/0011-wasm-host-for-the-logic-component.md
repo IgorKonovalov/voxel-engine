@@ -344,8 +344,8 @@ fifty lines and generated bindings.
 |---|---|---|---|
 | 1: Host skeleton and the echo guest | dev | done | 60c1d34; `tests/equality.rs` pins the echo world hash `0x8f7d_4016_15d9_5c4d` (native and component, Linux x86_64) |
 | 2: Determinism configuration | dev | done | d9473eb (blocked), then 8234eea (fail-stop per the amendment) |
-| 3: The fly-through's logic as a component | dev | done | committed with this row; `--frames 2 --bench 1 --logic wasm --save` printed `world hash 0x86ca427a47e8908c`, `--replay --logic native` printed `replayed 1 inputs, 100 ops, hash 0x86ca427a47e8908c` |
-| 4: Readings | dev | not started | |
+| 3: The fly-through's logic as a component | dev | done | 70b40ec; `--frames 2 --bench 1 --logic wasm --save` printed `world hash 0x86ca427a47e8908c`, `--replay --logic native` printed `replayed 1 inputs, 100 ops, hash 0x86ca427a47e8908c` |
+| 4: Readings | dev | done | committed with this row; per host call 1.42 and 1.37 µs (proposal 1 µs, missed); `Bench` tick 1.031× and 1.034× native (proposal 2×); incremental build 1.40 to 1.49 s before, 1.46 to 1.48 s after |
 
 ### Notes
 
@@ -372,6 +372,10 @@ fifty lines and generated bindings.
 - Phase 3: a failed hosted logic prints `logic: <error>; stopped, the session continues without it` once (at `init` or the failing tick); the `Stopped` reports after it print nothing. Run headless with `--logic wasm=target/guests/spin.wasm --level --frames 4 --bench 1`: the line printed once, at tick 0 (`Fuel`), and the session ran its frames and exited 0.
 - Phase 3: `tests/component.rs` loads the component through `LogicChoice::Wasm(..).load()`, copies `tests/replay.rs`'s 20-dig fixture, and also asserts the live sessions' op-log bytes, events and hash equal; the bench test asserts equal op-log bytes, events and hash.
 - Phase 3: CI also runs `cargo clippy -p flythrough --features wasm --all-targets -- -D warnings` (not named by the phase), with the `--features wasm` nextest step after the workspace one on both arms.
+
+- Phase 4: the per-call figure is (100 carves through the echo component − 100 through native `EchoLogic`) / 100, both ticks on a host straight on the world (`WorldHost`, no logs), so it carries the tick's entry and the 100 inputs' lowering; the empty component tick (1.12 and 1.25 µs) is the entry alone. It misses the 1 µs proposal by about 0.4 µs; recorded in `nfr.md` §4 as a reading against the proposal, not as a budget.
+- Phase 4: `vxe-script-wasm` takes `flythrough-logic` (path) and `criterion` as dev-dependencies for the bench; the bench reuses `tests/support/mod.rs` for the component paths. The `Bench` input runs at origin `[0, 0, 0]` on `solid3_world()`, seed 9.
+- Phase 4: the incremental build was measured with `CARGO_BUILD_JOBS=3` (the shared machine rule), on a `git archive` export of 066d90e under `target/tmp/before` with its own target directory, alternated with this tree.
 
 ### Close triggers
 

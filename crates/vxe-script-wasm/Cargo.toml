@@ -28,3 +28,10 @@ wit-bindgen = { workspace = true, optional = true }
 
 [dev-dependencies]
 vxe-net = { workspace = true, features = ["test-logic"] }
+criterion.workspace = true
+# The fly-through's `DigLogic`, native, against its component in the boundary bench.
+flythrough-logic = { path = "../../apps/flythrough/logic" }
+
+[[bench]]
+name = "boundary"
+harness = false
