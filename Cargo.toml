@@ -1,6 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "crates/vxe-script-wasm/guests/*", "apps/*"]
+members = [
+    "crates/*",
+    "crates/vxe-script-wasm/guests/*",
+    "apps/*",
+    "apps/flythrough/logic",
+]
 # The everyday loop: everything but the WebAssembly host (`wasmtime` is a heavy build) and its
 # guests, which `scripts/build-guests.sh` builds for `wasm32-wasip2` (ADR-0010).
 default-members = [
@@ -11,6 +16,7 @@ default-members = [
     "crates/vxe-sim",
     "crates/vxe-world",
     "apps/flythrough",
+    "apps/flythrough/logic",
 ]
 
 [workspace.package]

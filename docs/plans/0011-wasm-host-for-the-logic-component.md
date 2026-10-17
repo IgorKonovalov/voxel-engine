@@ -343,8 +343,8 @@ fifty lines and generated bindings.
 | Phase | Owner | Status | Notes |
 |---|---|---|---|
 | 1: Host skeleton and the echo guest | dev | done | 60c1d34; `tests/equality.rs` pins the echo world hash `0x8f7d_4016_15d9_5c4d` (native and component, Linux x86_64) |
-| 2: Determinism configuration | dev | done | d9473eb (blocked), then fail-stop per the amendment: committed with this row |
-| 3: The fly-through's logic as a component | dev | not started | |
+| 2: Determinism configuration | dev | done | d9473eb (blocked), then 8234eea (fail-stop per the amendment) |
+| 3: The fly-through's logic as a component | dev | done | committed with this row; `--frames 2 --bench 1 --logic wasm --save` printed `world hash 0x86ca427a47e8908c`, `--replay --logic native` printed `replayed 1 inputs, 100 ops, hash 0x86ca427a47e8908c` |
 | 4: Readings | dev | not started | |
 
 ### Notes
@@ -365,6 +365,13 @@ fifty lines and generated bindings.
 - Phase 2: the memory cap applies to each linear memory through a `ResourceLimiter` that fails the growth (a trap) and records it, so a hit is `LogicError::Memory` whatever the guest does with the failure; tables may grow to 65 536 elements. The engine also sets `relaxed_simd_deterministic`.
 - Phase 2: the probe reads the monotonic clock through a hand-declared import of `wasi:clocks/monotonic-clock@0.2.0` `now` (the standard library hides it behind `Instant`), avoiding the `wasip2` crate and its second `wit-bindgen`; `getrandom` `=0.4.3` is a new workspace row (already in the lock through `wasmtime`'s dependencies, no new transitive crate). The probe's broadcast ends with two flags for opening `/` and reading `HOME` (0 failed); both read 0. A `#[allow(clippy::disallowed_methods)]` with a reason covers its `SystemTime::now`.
 - Phase 2: the fuel and server tests run `spin` at 50 000 000 fuel per tick to stay fast. At the default 10 000 000 000, one `spin` tick ran out of fuel after 709 ms (release, RTX 3080 laptop dev box, exclusive lock, 1-minute load 3.03; a throwaway test, not committed).
+
+- Phase 3: `DigLogic` moved with `git mv` from `apps/flythrough/src/logic.rs` (deleted there; outside Files touched) to `apps/flythrough/logic/src/lib.rs` unchanged but for the module doc and the `export_logic!` line behind `component`; `flythrough` re-exports the crate as `flythrough::logic`, so existing paths hold. The root `Cargo.toml` (outside Files touched) lists `apps/flythrough/logic` in `members` (the `apps/*` glob does not reach it) and in `default-members`; `Cargo.lock` gains the package.
+- Phase 3: `flythrough-logic` is an rlib only; `scripts/build-guests.sh` builds its component with `cargo rustc -p flythrough-logic --features component --crate-type cdylib --target wasm32-wasip2 --release`, so the native build links no cdylib. The script's `build` helper now takes the cargo subcommand.
+- Phase 3: `apps/flythrough/src/lib.rs` gains `LogicChoice` (`native`, `wasm`, `wasm=PATH`, `load()`), `DEFAULT_COMPONENT`, `WASM_NEEDS_FEATURE`, and `replay_file_with`/`replay_log_with` taking the logic; `replay_file`/`replay_log` keep their signatures with `DigLogic`. Without the feature, `--logic wasm` is refused in argument parsing: exit 2 and `flythrough: --logic wasm needs a build with --features wasm (cargo run -p flythrough --features wasm)` (run). A component that does not load exits 1 before the window, naming the path. Replay re-simulates through the chosen logic, loaded a second time.
+- Phase 3: a failed hosted logic prints `logic: <error>; stopped, the session continues without it` once (at `init` or the failing tick); the `Stopped` reports after it print nothing. Run headless with `--logic wasm=target/guests/spin.wasm --level --frames 4 --bench 1`: the line printed once, at tick 0 (`Fuel`), and the session ran its frames and exited 0.
+- Phase 3: `tests/component.rs` loads the component through `LogicChoice::Wasm(..).load()`, copies `tests/replay.rs`'s 20-dig fixture, and also asserts the live sessions' op-log bytes, events and hash equal; the bench test asserts equal op-log bytes, events and hash.
+- Phase 3: CI also runs `cargo clippy -p flythrough --features wasm --all-targets -- -D warnings` (not named by the phase), with the `--features wasm` nextest step after the workspace one on both arms.
 
 ### Close triggers
 

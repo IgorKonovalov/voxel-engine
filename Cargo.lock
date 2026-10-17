@@ -879,13 +879,24 @@ name = "flythrough"
 version = "0.10.0"
 dependencies = [
  "env_logger",
+ "flythrough-logic",
  "log",
  "png",
  "pollster",
  "vxe-app",
  "vxe-net",
  "vxe-render",
+ "vxe-script-wasm",
  "vxe-sim",
+ "vxe-world",
+]
+
+[[package]]
+name = "flythrough-logic"
+version = "0.10.0"
+dependencies = [
+ "vxe-net",
+ "vxe-script-wasm",
  "vxe-world",
 ]
 

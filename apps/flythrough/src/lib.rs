@@ -1,14 +1,16 @@
 //! The fly-through's reusable parts: the cave world source its binary, tests and examples
-//! share, its server logic, save replay, the streaming defaults, and the small measurement
+//! share, its server logic (the `flythrough-logic` crate, as [`logic`]) and the choice of its
+//! native or hosted build, save replay, the streaming defaults, and the small measurement
 //! helpers its readings use. The engine ships no terrain; this cave is the testbed's own.
 
 pub mod cave;
 pub mod hud;
-pub mod logic;
+pub use flythrough_logic as logic;
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use vxe_net::Server;
+use vxe_net::{Logic, Server};
 use vxe_world::hash::Fnv1a;
 use vxe_world::{
     BRICK_VOXELS, Chunk, ChunkCoord, ChunkExtent, ChunkMips, LogFile, Material, MaterialFlags,
@@ -104,6 +106,68 @@ impl CaveSource {
     pub const VERSION: u32 = 1;
 }
 
+/// Where `scripts/build-guests.sh` places the logic component, relative to the workspace root.
+pub const DEFAULT_COMPONENT: &str = "target/guests/flythrough-logic.wasm";
+
+/// Why `--logic wasm` is refused by a build without the `wasm` feature.
+pub const WASM_NEEDS_FEATURE: &str =
+    "--logic wasm needs a build with --features wasm (cargo run -p flythrough --features wasm)";
+
+/// Which build of [`DigLogic`] the server runs: `--logic native` or `--logic wasm[=path]`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum LogicChoice {
+    /// [`DigLogic`] linked into the binary.
+    #[default]
+    Native,
+    /// The `flythrough-logic` component at this path, hosted by `vxe-script-wasm`.
+    Wasm(PathBuf),
+}
+
+impl LogicChoice {
+    /// Parses `native`, `wasm` (the component at [`DEFAULT_COMPONENT`]) or `wasm=PATH`.
+    pub fn parse(v: &str) -> Result<Self, String> {
+        match v.split_once('=') {
+            None if v == "native" => Ok(Self::Native),
+            None if v == "wasm" => Ok(Self::Wasm(DEFAULT_COMPONENT.into())),
+            Some(("wasm", path)) if !path.is_empty() => Ok(Self::Wasm(path.into())),
+            _ => Err(format!("--logic takes native, wasm or wasm=PATH, not {v}")),
+        }
+    }
+
+    /// A fresh logic of this choice. For [`LogicChoice::Wasm`], loads and compiles the
+    /// component under the default `WasmConfig`; fails with the load error, or with
+    /// [`WASM_NEEDS_FEATURE`] in a build without the `wasm` feature.
+    pub fn load(&self) -> Result<Box<dyn Logic>, String> {
+        match self {
+            Self::Native => Ok(Box::new(DigLogic)),
+            Self::Wasm(path) => load_component(path),
+        }
+    }
+}
+
+impl std::fmt::Display for LogicChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Native => write!(f, "native"),
+            Self::Wasm(path) => write!(f, "wasm ({})", path.display()),
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+fn load_component(path: &Path) -> Result<Box<dyn Logic>, String> {
+    let config = vxe_script_wasm::WasmConfig::default();
+    match vxe_script_wasm::WasmLogic::load(path, &config) {
+        Ok(logic) => Ok(Box::new(logic)),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(not(feature = "wasm"))]
+fn load_component(_path: &Path) -> Result<Box<dyn Logic>, String> {
+    Err(WASM_NEEDS_FEATURE.to_owned())
+}
+
 /// How [`replay_file`] rebuilds a session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -158,8 +222,19 @@ pub fn replay_file(
     mode: Mode,
     extent: ChunkExtent,
 ) -> Result<(World, u64), ReplayError> {
+    replay_file_with(path, mode, extent, Box::new(DigLogic))
+}
+
+/// [`replay_file`] with `logic` re-simulating the inputs under [`Mode::Inputs`] (unused under
+/// [`Mode::Ops`]): a fresh [`DigLogic`], native or hosted.
+pub fn replay_file_with(
+    path: impl AsRef<std::path::Path>,
+    mode: Mode,
+    extent: ChunkExtent,
+    logic: Box<dyn Logic>,
+) -> Result<(World, u64), ReplayError> {
     let file = read_log_file(path)?;
-    let (world, _) = replay_log(&file, mode, extent, &cave_materials())?;
+    let (world, _) = replay_log_with(&file, mode, extent, &cave_materials(), logic)?;
     let hash = world.voxel_hash();
     Ok((world, hash))
 }
@@ -181,6 +256,18 @@ pub fn replay_log(
     extent: ChunkExtent,
     table: &MaterialTable,
 ) -> Result<(World, OpLog), ReplayError> {
+    replay_log_with(file, mode, extent, table, Box::new(DigLogic))
+}
+
+/// [`replay_log`] with `logic` re-simulating the inputs under [`Mode::Inputs`] (unused under
+/// [`Mode::Ops`]): a fresh [`DigLogic`], native or hosted, initialised with the save's seed.
+pub fn replay_log_with(
+    file: &LogFile,
+    mode: Mode,
+    extent: ChunkExtent,
+    table: &MaterialTable,
+    logic: Box<dyn Logic>,
+) -> Result<(World, OpLog), ReplayError> {
     if file.extent != extent {
         return Err(ReplayError::Extent { file: file.extent });
     }
@@ -199,13 +286,7 @@ pub fn replay_log(
         }
         Mode::Inputs => {
             let world = Arc::new(world);
-            let ops = Server::resimulate(
-                world.clone(),
-                Box::new(DigLogic),
-                file.seed,
-                &file.ops,
-                &file.inputs,
-            );
+            let ops = Server::resimulate(world.clone(), logic, file.seed, &file.ops, &file.inputs);
             let world = Arc::into_inner(world).expect("the re-simulation's server is dropped");
             Ok((world, ops))
         }
@@ -268,6 +349,34 @@ mod tests {
         assert_eq!(percentile(&mut v, 100.0), 100.0);
         assert_eq!(percentile(&mut [3.0], 95.0), 3.0);
         assert!(percentile(&mut [], 50.0).is_nan());
+    }
+
+    #[test]
+    fn logic_choice_parses_native_wasm_and_a_path() {
+        assert_eq!(LogicChoice::parse("native"), Ok(LogicChoice::Native));
+        assert_eq!(
+            LogicChoice::parse("wasm"),
+            Ok(LogicChoice::Wasm(DEFAULT_COMPONENT.into()))
+        );
+        assert_eq!(
+            LogicChoice::parse("wasm=a/b.wasm"),
+            Ok(LogicChoice::Wasm("a/b.wasm".into()))
+        );
+        for bad in ["", "wasm=", "lua", "native=x"] {
+            assert!(LogicChoice::parse(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    /// Without the `wasm` feature a hosted logic is refused with a message naming it.
+    #[cfg(not(feature = "wasm"))]
+    #[test]
+    fn a_build_without_the_wasm_feature_refuses_the_component() {
+        let e = LogicChoice::Wasm(DEFAULT_COMPONENT.into())
+            .load()
+            .err()
+            .expect("refused");
+        assert!(e.contains("--features wasm"), "{e}");
+        assert!(LogicChoice::Native.load().is_ok());
     }
 
     #[test]

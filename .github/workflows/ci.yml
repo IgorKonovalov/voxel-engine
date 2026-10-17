@@ -45,8 +45,14 @@ jobs:
       - run: cargo nextest run --workspace --no-tests=pass
         env:
           VXE_REQUIRE_SOFTWARE_ADAPTER: ${{ runner.os == 'Linux' && '1' || '' }}
+      # The fly-through's `wasm` feature (off in the workspace build) hosts its logic
+      # component; its tests (`tests/component.rs`) need the feature and the built component.
+      - run: cargo nextest run -p flythrough --features wasm
+        env:
+          VXE_REQUIRE_SOFTWARE_ADAPTER: ${{ runner.os == 'Linux' && '1' || '' }}
       - run: cargo test --workspace --doc
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy -p flythrough --features wasm --all-targets -- -D warnings
       - run: cargo fmt --all --check
       - name: Hook bite tests
         run: node --test ".claude/hooks/*.test.mjs"
