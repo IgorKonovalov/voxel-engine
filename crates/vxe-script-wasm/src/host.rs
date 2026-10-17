@@ -149,20 +149,40 @@ fn wit_face(f: Face) -> wit::Face {
     }
 }
 
+/// Runs one host import's call. A panic in it (the world asserting on parameters the guest
+/// chose, such as a shape whose fixed-point math overflows) becomes an error, so the call
+/// traps and the logic stops instead of the panic unwinding through wasmtime into the
+/// server. The world refusing out-of-range shapes with an error is a vxe-world follow-up.
+fn guarded<R>(call: impl FnOnce() -> wasmtime::Result<R>) -> wasmtime::Result<R> {
+    match catch_unwind(AssertUnwindSafe(call)) {
+        Ok(r) => r,
+        Err(panic) => {
+            let message = panic
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("a payload that is not a string");
+            wasmtime::bail!("host call panicked: {message}")
+        }
+    }
+}
+
 impl wit::Host for State {
     fn apply(&mut self, op: Vec<u8>) -> wasmtime::Result<Vec<u8>> {
-        let host = self.host()?;
-        let mut r = Reader::new(&op);
-        let op = match decode_op(&mut r) {
-            Ok(op) if r.is_empty() => op,
-            _ => return Ok(vec![ANSWER_UNDECODABLE]),
-        };
-        let Op::Edit(op) = op;
-        Ok(encode_answer(&host.apply(op)))
+        guarded(|| {
+            let host = self.host()?;
+            let mut r = Reader::new(&op);
+            let op = match decode_op(&mut r) {
+                Ok(op) if r.is_empty() => op,
+                _ => return Ok(vec![ANSWER_UNDECODABLE]),
+            };
+            let Op::Edit(op) = op;
+            Ok(encode_answer(&host.apply(op)))
+        })
     }
 
     fn material_at(&mut self, v: wit::Voxel) -> wasmtime::Result<Option<u16>> {
-        Ok(self.host()?.material_at(voxel(v)))
+        guarded(|| Ok(self.host()?.material_at(voxel(v))))
     }
 
     fn raycast(
@@ -171,13 +191,15 @@ impl wit::Host for State {
         dir: wit::Fixed3,
         max: i64,
     ) -> wasmtime::Result<Option<wit::Hit>> {
-        let hit = self.host()?.raycast(fixed3(origin), fixed3(dir), max);
-        Ok(hit.map(|h| wit::Hit {
-            voxel: wit_voxel(h.voxel),
-            face: h.face.map(wit_face),
-            t: h.t,
-            material: h.material,
-        }))
+        guarded(|| {
+            let hit = self.host()?.raycast(fixed3(origin), fixed3(dir), max);
+            Ok(hit.map(|h| wit::Hit {
+                voxel: wit_voxel(h.voxel),
+                face: h.face.map(wit_face),
+                t: h.t,
+                material: h.material,
+            }))
+        })
     }
 
     fn count_in_box(
@@ -185,7 +207,7 @@ impl wit::Host for State {
         lo: wit::Voxel,
         hi: wit::Voxel,
     ) -> wasmtime::Result<Vec<(u16, u64)>> {
-        Ok(self.host()?.count_in_box(voxel(lo), voxel(hi)))
+        guarded(|| Ok(self.host()?.count_in_box(voxel(lo), voxel(hi))))
     }
 }
 
@@ -393,6 +415,8 @@ impl WasmLogic {
             )
         };
         live.store.data_mut().host = Lent(Some(ptr));
+        // A panic in a host import is already a trap (`guarded`); this catches any other
+        // panic only to clear the lent pointer before resuming it.
         let result = catch_unwind(AssertUnwindSafe(|| f(&mut live.store, &live.logic)));
         live.store.data_mut().host = Lent(None);
         match result {

@@ -16,7 +16,9 @@ use vxe_net::test_logic::*;
 use vxe_net::*;
 use vxe_script_wasm::{WasmConfig, WasmLogic};
 use vxe_world::hash::mix64;
-use vxe_world::{EditError, EditOp, EditResult, Fixed3, Hit, MaterialId, Op, VoxelCoord, World};
+use vxe_world::{
+    EditError, EditOp, EditResult, Fixed3, Hit, MaterialId, Mode, Op, VoxelCoord, World,
+};
 
 /// A host straight on a world, for calling a [`WasmLogic`] without a server.
 struct WorldHost<'a>(&'a World);
@@ -361,4 +363,67 @@ fn stderr_never_fills_and_a_guest_panic_is_a_trap_with_its_message() {
             since: 100
         })
     );
+}
+
+/// A host whose `apply` panics, as the world does on some shapes a guest can choose.
+struct PanicHost;
+
+impl Host for PanicHost {
+    fn apply(&mut self, _op: EditOp) -> Result<EditResult, EditError> {
+        panic!("host refuses");
+    }
+
+    fn material_at(&self, _v: VoxelCoord) -> Option<MaterialId> {
+        None
+    }
+
+    fn raycast(&self, _origin: Fixed3, _dir: Fixed3, _max: i64) -> Option<Hit> {
+        None
+    }
+
+    fn count_in_box(&self, _lo: VoxelCoord, _hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
+        Vec::new()
+    }
+}
+
+/// A panic in a host import traps the call with the panic's message and stops the logic; it
+/// does not unwind into the caller (this test would not get to its assertions if it did).
+#[test]
+fn a_host_import_that_panics_traps_and_stops_the_logic() {
+    let mut logic = WasmLogic::load(&guest("echo"), &WasmConfig::default()).expect("echo loads");
+    let mut host = PanicHost;
+    logic.try_init(&mut host, 0).expect("echo's init returns");
+    let carve = ClientInput {
+        client: 0,
+        bytes: op_bytes(seeded_carves(0x0011, 1)[0]),
+    };
+    match logic.try_tick(&mut host, 0, std::slice::from_ref(&carve)) {
+        Err(LogicError::Trap { tick: 0, message }) => {
+            assert!(message.contains("host refuses"), "{message}");
+        }
+        r => panic!("{r:?}"),
+    }
+    assert_eq!(
+        logic.try_tick(&mut host, 1, &[carve]),
+        Err(LogicError::Stopped { tick: 1, since: 0 })
+    );
+}
+
+/// In a build with overflow checks, a sphere of radius `i64::MAX` panics in the world's
+/// fixed-point math; through a component it is the logic's trap, and the server runs on.
+#[cfg(debug_assertions)]
+#[test]
+fn an_overflowing_shape_from_a_component_is_a_trap_not_a_server_panic() {
+    let (mut server, client) = session("echo", &WasmConfig::default(), 0);
+    client.send_input(op_bytes(EditOp::sphere(
+        Fixed3([0; 3]),
+        i64::MAX,
+        Mode::Carve,
+    )));
+    let report = server.tick();
+    assert!(
+        matches!(report.logic_error, Some(LogicError::Trap { tick: 0, .. })),
+        "{report:?}"
+    );
+    assert_eq!(server.world().voxel_hash(), solid3_world().voxel_hash());
 }
