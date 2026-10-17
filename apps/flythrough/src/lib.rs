@@ -10,8 +10,8 @@ use std::sync::Arc;
 use vxe_net::Server;
 use vxe_world::hash::Fnv1a;
 use vxe_world::{
-    BRICK_VOXELS, Chunk, ChunkCoord, ChunkMips, LogFile, Material, MaterialFlags, MaterialTable,
-    OpLog, Residency, WireError, World,
+    BRICK_VOXELS, Chunk, ChunkCoord, ChunkExtent, ChunkMips, LogFile, Material, MaterialFlags,
+    MaterialTable, OpLog, Residency, WireError, World,
 };
 
 use cave::CaveSource;
@@ -118,6 +118,11 @@ pub enum ReplayError {
         file: u32,
         ours: u32,
     },
+    /// The save's extent is not the one the caller replays (the bounded level's, for the
+    /// binary); checked before anything is generated.
+    Extent {
+        file: ChunkExtent,
+    },
 }
 
 impl std::fmt::Display for ReplayError {
@@ -128,6 +133,11 @@ impl std::fmt::Display for ReplayError {
             Self::SourceVersion { file, ours } => {
                 write!(f, "saved with cave version {file}, this build is {ours}")
             }
+            Self::Extent { file } => write!(
+                f,
+                "saved over chunks {:?}..{:?}, not the level's extent",
+                file.min.0, file.max.0
+            ),
         }
     }
 }
@@ -135,13 +145,15 @@ impl std::fmt::Display for ReplayError {
 impl std::error::Error for ReplayError {}
 
 /// Reads the save at `path` and rebuilds its world (see [`replay_log`]) with
-/// [`cave_materials`]. Returns the world and its voxel hash.
+/// [`cave_materials`], refusing a save whose extent is not `extent`. Returns the world and
+/// its voxel hash.
 pub fn replay_file(
     path: impl AsRef<std::path::Path>,
     mode: Mode,
+    extent: ChunkExtent,
 ) -> Result<(World, u64), ReplayError> {
     let file = read_log_file(path)?;
-    let (world, _) = replay_log(&file, mode, &cave_materials())?;
+    let (world, _) = replay_log(&file, mode, extent, &cave_materials())?;
     let hash = world.voxel_hash();
     Ok((world, hash))
 }
@@ -152,15 +164,20 @@ pub fn read_log_file(path: impl AsRef<std::path::Path>) -> Result<LogFile, Repla
     LogFile::read_from(&mut f).map_err(ReplayError::Wire)
 }
 
-/// Rebuilds a save's world: the bounded cave of its seed over its extent, generated with
-/// `table`, then its op log replayed ([`Mode::Ops`]) or its input log re-simulated through
+/// Rebuilds a save's world: the bounded cave of its seed over its extent, which must equal
+/// `extent` (so a corrupt header cannot ask for an unbounded world), generated with `table`,
+/// then its op log replayed ([`Mode::Ops`]) or its input log re-simulated through
 /// a fresh [`DigLogic`] seeded with the save's seed ([`Mode::Inputs`]). Returns the world and
 /// the op log it was rebuilt from: the save's, or the one re-simulation produced.
 pub fn replay_log(
     file: &LogFile,
     mode: Mode,
+    extent: ChunkExtent,
     table: &MaterialTable,
 ) -> Result<(World, OpLog), ReplayError> {
+    if file.extent != extent {
+        return Err(ReplayError::Extent { file: file.extent });
+    }
     if file.source_version != CaveSource::VERSION {
         return Err(ReplayError::SourceVersion {
             file: file.source_version,

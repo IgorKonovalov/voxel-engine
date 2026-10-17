@@ -165,7 +165,7 @@ fn the_determinism_vector_replays_from_a_log_file_to_its_hash() {
     let results: Vec<_> = ops.iter().map(|op| direct.apply(op)).collect();
 
     let path = write(&file_of(log, InputLog::new()), "vector.log");
-    let (world, hash) = replay_file(&path, Replay::Ops).unwrap();
+    let (world, hash) = replay_file(&path, Replay::Ops, extent()).unwrap();
     assert_eq!(hash, world.voxel_hash());
     assert_eq!(hash, direct.voxel_hash());
 
@@ -234,8 +234,8 @@ fn twenty_digs_rebuild_to_the_same_hash_from_ops_and_from_inputs() {
         &file_of(server.ops().clone(), server.inputs().clone()),
         "digs.log",
     );
-    let (_, by_ops) = replay_file(&path, Replay::Ops).unwrap();
-    let (_, by_inputs) = replay_file(&path, Replay::Inputs).unwrap();
+    let (_, by_ops) = replay_file(&path, Replay::Ops, extent()).unwrap();
+    let (_, by_inputs) = replay_file(&path, Replay::Inputs, extent()).unwrap();
     assert_eq!(by_ops, live);
     assert_eq!(by_inputs, live);
 }
@@ -245,11 +245,32 @@ fn a_save_of_another_cave_version_is_refused() {
     let mut file = file_of(OpLog::new(), InputLog::new());
     file.source_version = CaveSource::VERSION + 1;
     let path = write(&file, "version.log");
-    match replay_file(&path, Replay::Ops) {
+    match replay_file(&path, Replay::Ops, extent()) {
         Err(ReplayError::SourceVersion { file, ours }) => {
             assert_eq!((file, ours), (2, 1));
         }
         r => panic!("{:?}", r.map(|(_, h)| h)),
+    }
+}
+
+/// A save over another extent than the one the caller replays is refused before anything is
+/// generated, so a corrupt header cannot ask for an unbounded world.
+#[test]
+fn a_save_of_another_extent_is_refused() {
+    let mut file = file_of(OpLog::new(), InputLog::new());
+    file.extent = ChunkExtent::new([-1, -1, -1], [1, 1, 1]);
+    let path = write(&file, "extent.log");
+    for mode in [Replay::Ops, Replay::Inputs] {
+        match replay_file(&path, mode, extent()) {
+            Err(e @ ReplayError::Extent { file }) => {
+                assert_eq!(file, ChunkExtent::new([-1, -1, -1], [1, 1, 1]));
+                assert_eq!(
+                    e.to_string(),
+                    "saved over chunks [-1, -1, -1]..[1, 1, 1], not the level's extent"
+                );
+            }
+            r => panic!("{mode:?}: {:?}", r.map(|(_, h)| h)),
+        }
     }
 }
 

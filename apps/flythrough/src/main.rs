@@ -1692,8 +1692,12 @@ fn main() {
         let table = materials(&args);
         let source = CaveSource::new(file.seed, file.extent);
         let generation = std::thread::spawn(move || {
-            let (world, ops) = match flythrough::replay_log(&file, flythrough::Mode::Inputs, &table)
-            {
+            let (world, ops) = match flythrough::replay_log(
+                &file,
+                flythrough::Mode::Inputs,
+                ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS),
+                &table,
+            ) {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("flythrough: --replay {}: {e}", path.display());
