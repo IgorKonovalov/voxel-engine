@@ -6,8 +6,8 @@ pub mod cave;
 
 use vxe_world::hash::Fnv1a;
 use vxe_world::{
-    BRICK_VOXELS, Chunk, ChunkCoord, ChunkMips, Material, MaterialFlags, MaterialTable, Residency,
-    World,
+    BRICK_VOXELS, Chunk, ChunkCoord, ChunkMips, Material, MaterialFlags, MaterialId, MaterialTable,
+    Residency, World,
 };
 
 /// The fly-through's residency defaults (Plan 0002): full detail to 16 chunks (102 m), mips
@@ -23,8 +23,12 @@ pub fn window_side(r: Residency) -> i32 {
     2 * (r.r_lod.max(r.r_full) + r.hysteresis) + 1
 }
 
-/// The cave's table: air, rock, ore, and the indestructible shell, at the ids `cave` uses.
-/// It lives here rather than in `cave.rs` so that file stays free of floating point.
+/// The rubble a collapsing region leaves when `R` has the fly-through remove unsupported regions
+/// instead of dropping them. The cave never generates it.
+pub const RUBBLE: MaterialId = 4;
+
+/// The cave's table: air, rock, ore, the indestructible shell (at the ids `cave` uses), and
+/// [`RUBBLE`]. It lives here rather than in `cave.rs` so that file stays free of floating point.
 pub fn cave_materials() -> MaterialTable {
     let mut t = MaterialTable::new();
     let row = |name: &str, albedo: [f32; 3]| Material {
@@ -36,6 +40,7 @@ pub fn cave_materials() -> MaterialTable {
     let mut shell = row("shell", [0.12, 0.12, 0.14]);
     shell.flags = MaterialFlags::INDESTRUCTIBLE;
     assert_eq!(t.push(shell), cave::SHELL);
+    assert_eq!(t.push(row("rubble", [0.36, 0.33, 0.30])), RUBBLE);
     t
 }
 

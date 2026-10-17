@@ -254,8 +254,8 @@ calls. The drop's column table is one `i32` per column of the footprint (576 for
 |---|---|---|---|
 | 1: The support flood | dev | done | db8dba9 |
 | 2: The drop op | dev | done | cff74d5 |
-| 3: The remove op with rubble | dev | done | committed with this row |
-| 4: Collapse in the fly-through | dev | not started | |
+| 3: The remove op with rubble | dev | done | a5ac4dd |
+| 4: Collapse in the fly-through | dev | done | committed with this row |
 
 ### Notes
 
@@ -276,3 +276,10 @@ calls. The drop's column table is one `i32` per column of the footprint (576 for
 - Phase 3: the course drops the slab with the cells re-derived from the grid after each drop (as in Phase 2) and asserts the falls `[10, 10, 10, 2]`; it hashes each `EditResult`, the `Region`s, each `DropResult` and the `RemoveResult` (counts, touched chunks, aabb, `dropped`, `placed`) and `voxel_hash` after every step. Constant `0x3178_0a15_61c1_3041`, blessed on the dev box (Linux); the Windows arm is CI's (`os: [ubuntu-latest, windows-latest]`).
 - Phase 3: also touches `crates/vxe-world/benches/collapse.rs` (the remove budget) and `crates/vxe-world/src/lib.rs` (the `RemoveResult` export); neither is in Files touched.
 - Phase 3: bench readings, AMD Ryzen 9 5900HS, exclusive lock, at the Phase 3 commit: `remove_region` of the fixture's 9-cell slab, rubble 1/4: 125.1 us ([124.85, 125.10, 125.38] us); in the same run `find_unsupported` 391.0 us, the slab drop 78.2 us, the 4096-cell drop 6.56 ms.
+- Phase 4: the grid, the query and the falls run on the bounded level (`--level`) only, where the fly-through already kept a coarse grid; while streaming no grid is kept and `R` prints `collapse: not kept while streaming`. The startup line is the existing `coarse: <chunks> chunks, <bytes> bytes, <n> walkable cells, built in <ms> ms`.
+- Phase 4, deviation: a falling region ends on the first drop shorter than 8 voxels (zero included), not on a call returning `dropped == 0`. After a whole-step drop the region's cells are its old cells one cell lower; after a shorter drop the voxels straddle two cell layers and the cells holding only the region are not known, while a column met a solid voxel outside the region, so the next drop would be 0. `landed after N frames` counts the frames the region moved on.
+- Phase 4: a region the query reports that overlaps a region already falling is skipped. Fills do not run the query (the done-when names digs). Rubble removal is 1/4 down to 64 voxels (6.4 m); the line is `removed: {rock: 4608}, 1152 rubble`. `F1` prints `collapse: last query <us> us, <n> regions` after the frame line.
+- Phase 4: `RUBBLE = 4` is defined in `lib.rs` beside `cave_materials()` (the cave's other ids live in `cave.rs`, outside Files touched). Every existing test and golden passed unchanged with the row added.
+- Phase 4: headless scripted tests `tests::digging_out_the_pillar_drops_the_ledge_8_voxels_a_frame` (one-chunk ledge fixture in rock: `unsupported: 9 cells, {rock: 4608}`, four frames of 8, `landed after 4 frames, fell 32 voxels`, grid equal to a rebuild) and `tests::with_r_the_ledge_is_removed_leaving_a_quarter_as_rubble`; the reading test `tests::a_dig_in_the_level_prints_the_query_time` is `#[ignore]`d (level generation in an unoptimized test build).
+- Phase 4 reading, AMD Ryzen 9 5900HS, release build, exclusive lock, at the Phase 4 commit: seed-1 level, six default-radius (0.5 m) digs from the spawn along +x, -x, +y, -y, +z, -z: 329/118/329/329/329/513 voxels, 8/5/8/8/8/13 changed cells, query 619/501/531/495/493/492 us, 0 regions each (`cargo test --release -p flythrough --bin flythrough -- --ignored --nocapture a_dig_in_the_level_prints_the_query_time`). `flythrough --level --seed 1 --headless --frames 10` on the RTX 3080 Laptop printed `coarse: 3200 chunks, 6553600 bytes, 3010 walkable cells, built in 263 ms`.
+- Phase 4, awaits the owner (windowed, by hand): `cargo run --release -p flythrough -- --level --seed 1`; dig out the rock under a ledge or an overhang and judge the `unsupported: N cells, {...}` line, the ledge falling at a steady 8 voxels a frame and `landed after N frames, fell M voxels`; press `R`, dig under another and judge the region vanishing into a rubble pile; press `F1` and read the `collapse: last query` line. The log does not record this as driven by hand.
