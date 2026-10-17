@@ -156,6 +156,12 @@ run then stopped in its outbound flight on `wgpu error: Out of Memory` on the 8 
 no peak was read. A recorded miss: ADR-0011 keeps contour planes, and fitting this footprint
 under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2).
 
+**Prefabs (arithmetic, Plan 0008; no reading needed).** A `Prefab` holds 2 B of material plus
+one mask bit per voxel: a 16³ prefab is 8 KiB + 512 B, a 64³ one 512 KiB + 32 KiB. A parsed
+`.vox` model is capped at 256³ per axis (`MAX_MODEL_EDGE`), so the largest `to_prefab`
+allocation is about 50 MiB including its index buffer. `StampedSource` holds one rotated copy
+of the prefab per placement, so its RAM grows with the placement count, not the prefab count.
+
 ## 4. Edits
 
 - **Cost:** 100 sphere carves of radius 1 m (exactly 4169 voxels each at 10 cm, the lattice
@@ -178,6 +184,12 @@ under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2
   8.119 to 8.120 ms; the fly-through `B` line 3.30 to 3.34 ms. It misses the 2 ms budget; the
   budget stands (owner's call at the Plan 0003 close) and Plan 0014 is the second pass.
 - **Results** are returned synchronously with the edit, per material, exact.
+- **Stamp cost (proposals, Plan 0008):** a 16³ prefab stamp (the shelled box `Prefab::vault`)
+  into solid rock costs under 100 µs, and a 64³ all-written prefab under 5 ms, both including
+  the `EditResult` tally. **Readings (dev reference, AMD Ryzen 9 5900HS, `cargo bench -p
+  vxe-world --bench stamp`, exclusive perf lock, box under outside load of about 2 to 5,
+  commits 83ab811 and 39d3700):** `vault16` 22.6 to 22.8 µs; `prefab64_mixed` 2.02 to 2.07 ms;
+  `prefab64_uniform` 1.455 ms. Both under their proposals; the proposals stand as budgets.
 - **Determinism:** the same op list on the same seed yields bit-identical voxels and results on
   Linux and Windows. CI asserts a fixed vector's hash on both arms. **Asserted:**
   `determinism_vector` passed on the Linux and Windows CI arms at 9565c5a and 1d61aba
@@ -222,6 +234,10 @@ under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2
   the mips hash `0x6cc1_4fda_4b7f_5188` is blessed on Linux. The Windows arm confirms it on
   the first `main` CI run after Plan 0002's merge; a mismatch is a defect in an integer path,
   fixed forward.
+- Generation with prefab placements (`StampedSource`, Plan 0008) is independent of the thread
+  count: `generate_with_threads` at 1 and 7 threads gives the same hash, and
+  `crates/vxe-world/tests/stamp.rs` pins it at `0x7ee7_eeb7_0956_d069`, blessed on Linux; the
+  stamp is integer-only, so the Windows arm must reproduce it.
 
 ## 7. Startup and build
 

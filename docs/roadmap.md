@@ -291,20 +291,22 @@ streamer; Plan 0004's Followups list them. Plan 0009 (collapse) is unblocked.
 - **ADRs:** ADR-0007 (log, channel, client modes) and ADR-0010 (logic as a component), both
   proposed with their plans.
 
-### M6: Entities as voxel models (Plan 0008 drafts the `.vox` import; the render half follows Plan 0005)
+### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; the render half follows Plan 0005)
 
-- `vxe-assets`: `.vox` import with material mapping.
+- `vxe-assets`: `.vox` import with material mapping. Done in Plan 0008 (v0.6.0).
 - `vxe-render`: instanced voxel volumes with transforms traced in the same pipeline (a small
   top-level structure of AABBs walked in compute), rigid-part rigs, consistent lighting and
   shadows, emissive entities.
 - **Visible proof:** a golden image of an animated model casting a shadow on the world.
 - **ADRs expected:** entity representation.
 
-### M7: Tooling (Plan 0008 drafts prefab stamping, Plan 0010 the stats HUD)
+### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); debug views and the profiler remain; Plan 0010 the stats HUD)
 
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane
   (`criterion` for CPU, timestamp queries for GPU) with readings committed per named machine.
+- Follow-up: once Plan 0007 closes, the runtime stamp goes through `Server` as op kind 2
+  (reserved there), so a stamp is a logged, replayable op like an edit.
 
 ### M8: Volumetrics, debris and collapse (Plan 0009 drafts the support query and the collapse ops; the cosmetic rigid-body layer follows M6)
 

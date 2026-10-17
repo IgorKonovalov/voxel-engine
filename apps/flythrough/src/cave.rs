@@ -13,10 +13,12 @@
 //! on that side and is emitted without evaluating its voxels. `MARGIN` covers the integer
 //! rounding in `ValueNoise::sample` (under one unit per octave, plus the detail shift).
 
+use std::sync::Arc;
+
 use vxe_world::hash::ValueNoise;
 use vxe_world::{
     AIR, BRICK_EDGE, Brick, CHUNK_BRICKS, CHUNK_EDGE, Chunk, ChunkCoord, ChunkExtent, MaterialId,
-    VoxelCoord, WorldSource, brick_of_slot,
+    Prefab, Rot, StampedSource, VoxelCoord, WorldSource, brick_of_slot,
 };
 
 pub const ROCK: MaterialId = 1;
@@ -39,6 +41,16 @@ pub const SPAWN_POCKET_RADIUS: i64 = 30;
 pub const LEVEL_CHUNKS: [i32; 3] = [20, 20, 8];
 /// The spawn voxel of the unbounded cave: the centre of chunk `[0, 0, 0]`.
 pub const UNBOUNDED_SPAWN: VoxelCoord = VoxelCoord([32, 32, 32]);
+
+/// Edge of the `--vault` room, in voxels (160 cm at 10 cm).
+pub const VAULT_EDGE: u32 = 16;
+/// How far along +x from the spawn the `--vault` room's minimum corner sits (10 m).
+pub const VAULT_AHEAD: i32 = 100;
+
+/// The `--vault` room: a [`VAULT_EDGE`] cube of [`SHELL`] around air.
+pub fn vault() -> Prefab {
+    Prefab::vault(VAULT_EDGE, SHELL)
+}
 
 /// The cave over a bounded extent of chunks, or unbounded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,6 +90,28 @@ impl CaveSource {
         VoxelCoord(
             [0, 1, 2].map(|k| (self.extent.min.0[k] + self.extent.max.0[k]) * CHUNK_EDGE / 2),
         )
+    }
+
+    /// The `--vault` room's minimum corner: [`VAULT_AHEAD`] voxels along +x from the spawn,
+    /// clamped on the bounded cave so the whole room lies inside the extent.
+    pub fn vault_origin(&self) -> VoxelCoord {
+        let s = self.spawn().0;
+        let mut o = [s[0] + VAULT_AHEAD, s[1], s[2]];
+        if self.bounded {
+            let edge = VAULT_EDGE as i32;
+            for (k, c) in o.iter_mut().enumerate() {
+                let lo = self.extent.min.0[k] * CHUNK_EDGE;
+                let hi = self.extent.max.0[k] * CHUNK_EDGE - edge;
+                *c = (*c).min(hi).max(lo);
+            }
+        }
+        VoxelCoord(o)
+    }
+
+    /// This cave with the `--vault` room placed at [`CaveSource::vault_origin`].
+    pub fn with_vault(self) -> StampedSource<CaveSource> {
+        let origin = self.vault_origin();
+        StampedSource::new(self, vec![(Arc::new(vault()), origin, Rot::IDENTITY)])
     }
 
     fn density_noise(&self) -> (ValueNoise, ValueNoise) {
@@ -259,6 +293,57 @@ mod tests {
             let slow = Brick::from_fn(|l| open.material([0, 1, 2].map(|k| b[k] + l[k])));
             assert_eq!(fast, slow, "brick at {b:?}");
         }
+    }
+
+    /// `--vault` puts the room 100 voxels along +x from the spawn and changes nothing else.
+    #[test]
+    fn the_vault_sits_ahead_of_the_spawn_inside_the_extent() {
+        let c = cave(1);
+        assert_eq!(c.vault_origin(), VoxelCoord([228, 128, 128]));
+        let v = c.with_vault();
+        // Chunk [3, 2, 2] holds the whole room (x 228..=243, y and z 128..=143).
+        let coord = ChunkCoord([3, 2, 2]);
+        let (mut plain, mut vaulted) = (Chunk::default(), Chunk::default());
+        c.chunk(coord, &mut plain);
+        v.chunk(coord, &mut vaulted);
+        let at = |ch: &Chunk, p: [i32; 3]| {
+            let p = VoxelCoord(p);
+            ch.brick(p.brick_slot()).get(p.index_in_brick())
+        };
+        assert_eq!(at(&vaulted, [228, 128, 128]), SHELL);
+        assert_eq!(at(&vaulted, [243, 143, 143]), SHELL);
+        assert_eq!(at(&vaulted, [235, 128, 135]), SHELL);
+        assert_eq!(at(&vaulted, [235, 135, 135]), AIR);
+        let mut differ = 0;
+        for z in 128..192 {
+            for y in 128..192 {
+                for x in 192..256 {
+                    let p = [x, y, z];
+                    let inside =
+                        (0..3).all(|k| p[k] >= [228, 128, 128][k] && p[k] <= [243, 143, 143][k]);
+                    if inside {
+                        differ += i32::from(at(&plain, p) != at(&vaulted, p));
+                    } else {
+                        assert_eq!(at(&plain, p), at(&vaulted, p), "{p:?}");
+                    }
+                }
+            }
+        }
+        assert!(differ > 0);
+        // Other chunks are the plain cave's.
+        let (mut a, mut b) = (Chunk::default(), Chunk::default());
+        c.chunk(ChunkCoord([2, 2, 2]), &mut a);
+        v.chunk(ChunkCoord([2, 2, 2]), &mut b);
+        assert_eq!(a, b);
+
+        // On a small extent the room is clamped inside it: x at most 128 - 16.
+        let small = CaveSource::new(1, ChunkExtent::new([0, 0, 0], [2, 2, 2]));
+        assert_eq!(small.vault_origin(), VoxelCoord([112, 64, 64]));
+        // Unbounded: no clamp.
+        assert_eq!(
+            CaveSource::unbounded(1).vault_origin(),
+            VoxelCoord([132, 32, 32])
+        );
     }
 
     #[test]

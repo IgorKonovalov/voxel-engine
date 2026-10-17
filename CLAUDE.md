@@ -25,16 +25,18 @@ game or any gameplay concept.**
 ```
 crates/
 ├── vxe-world/       # voxel storage (brick map), material table, edit ops + results, spatial
-│                    #   queries, coarse grids, LOD mips, chunk streaming. HEADLESS and
+│                    #   queries, coarse grids, LOD mips, chunk streaming, prefabs and
+│                    #   stamping (runtime and generation time). HEADLESS and
 │                    #   DETERMINISTIC: no GPU, no wall clock, no unseeded RNG, integer edit math
 ├── vxe-render/      # wgpu: brick upload, compute ray marching, lighting, denoise, upscale,
 │                    #   voxel-model entities. WGSL under src/shaders/. Never branches on backend
 ├── vxe-app/         # winit shell: window, input, surface, frame loop. Thin and optional
 ├── vxe-sim/         # cylinder sweeps and the character controller (step, slide, climb, fall).
 │                    #   HEADLESS and DETERMINISTIC like vxe-world, which is its only dependency
+├── vxe-assets/      # .vox parsing, palette, palette-to-material map producing vxe-world
+│                    #   prefabs; depends on vxe-world only
 └── (planned, one per plan) vxe-audio (spatial playback, occlusion through the grid), vxe-script-wasm (wasmtime host, server logic),
-    vxe-script-lua (mlua host, client scripts), vxe-net (channel abstraction, later QUIC),
-    vxe-assets (.vox import, prefab stamping)
+    vxe-script-lua (mlua host, client scripts), vxe-net (channel abstraction, later QUIC)
 apps/
 └── flythrough/      # the engine's own testbed binary: fly, dig, read edit results
 docs/
