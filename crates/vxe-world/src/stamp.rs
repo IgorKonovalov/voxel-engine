@@ -10,7 +10,7 @@
 //! write lock at a time in ascending order under the store map's read lock (ADR-0002,
 //! ADR-0003).
 
-use crate::brick::Brick;
+use crate::brick::{Brick, SpareArrays};
 use crate::chunk::Chunk;
 use crate::coords::{BRICK_EDGE, CHUNK_EDGE, ChunkCoord, VoxelCoord, brick_slot, index_in_brick};
 use crate::edit::{EditError, EditResult};
@@ -110,8 +110,13 @@ fn writes_any(prefab: &Prefab, origin: [i64; 3], lo: [i64; 3], hi: [i64; 3]) -> 
 
 /// Writes the masked voxels of `prefab` (already rotated, minimum corner at `origin`) that
 /// fall inside `lo..=hi`, a box within chunk `coord` and within the prefab's box. Marks
-/// changed slots dirty and collapses bricks that became uniform. Returns whether any voxel
-/// changed. Allocates only when a `Uniform` brick must expand to hold mixed voxels.
+/// changed slots dirty and collapses bricks that became uniform, pushing their arrays onto
+/// `spare`. Returns whether any voxel changed. A `Uniform` brick that must hold mixed voxels
+/// expands into an array from `spare`, or a new one when `spare` is empty.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the blit's inputs plus the caller's spare arrays"
+)]
 fn blit(
     chunk: &mut Chunk,
     coord: ChunkCoord,
@@ -120,6 +125,7 @@ fn blit(
     lo: [i64; 3],
     hi: [i64; 3],
     mut tally: Option<&mut Tally>,
+    spare: &mut SpareArrays,
 ) -> bool {
     let be = i64::from(BRICK_EDGE);
     let base = coord.min_voxel().0.map(i64::from);
@@ -156,7 +162,7 @@ fn blit(
                         continue;
                     }
                 }
-                let voxels = brick.expand();
+                let voxels = brick.expand(spare);
                 let mut changed = false;
                 for z in elo[2]..=ehi[2] {
                     for y in elo[1]..=ehi[1] {
@@ -184,7 +190,7 @@ fn blit(
                     }
                 }
                 if changed {
-                    brick.collapse();
+                    brick.collapse(spare);
                     chunk.mark_dirty(slot);
                     changed_any = true;
                 }
@@ -209,7 +215,17 @@ pub(crate) fn blit_into(
     if (0..3).any(|k| clo[k] > chi[k]) {
         return false;
     }
-    blit(chunk, coord, prefab, lo, clo, chi, None)
+    // A source holds no world pool: expansions allocate, and collapsed arrays are freed.
+    blit(
+        chunk,
+        coord,
+        prefab,
+        lo,
+        clo,
+        chi,
+        None,
+        &mut SpareArrays::new(),
+    )
 }
 
 impl World {
@@ -252,17 +268,35 @@ impl World {
             }
         }
 
+        // One batch of pooled arrays for every brick the stamp may expand: at most the bricks
+        // its box overlaps.
+        let be = i64::from(BRICK_EDGE);
+        let bound = (0..3)
+            .map(|k| usize::try_from(hi[k].div_euclid(be) - lo[k].div_euclid(be) + 1).unwrap_or(0))
+            .fold(1usize, usize::saturating_mul);
+        let mut spare = self.brick_arrays.take(bound);
         let mut tally = Tally::new(self.materials.len());
         let mut touched = Vec::new();
         for (coord, clo, chi, chunk) in chunks {
             let mut chunk = write(chunk);
-            if blit(&mut chunk, coord, prefab, o, clo, chi, Some(&mut tally)) {
+            let changed = blit(
+                &mut chunk,
+                coord,
+                prefab,
+                o,
+                clo,
+                chi,
+                Some(&mut tally),
+                &mut spare,
+            );
+            if changed {
                 chunk.mark_edited();
                 self.store.mark_dirty(coord);
                 touched.push(coord);
             }
         }
         drop(map);
+        self.brick_arrays.give(spare);
         Ok(EditResult {
             changed_from: tally.changed_from(),
             touched,
