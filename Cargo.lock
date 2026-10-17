@@ -551,6 +551,7 @@ dependencies = [
  "png",
  "pollster",
  "vxe-app",
+ "vxe-net",
  "vxe-render",
  "vxe-sim",
  "vxe-world",

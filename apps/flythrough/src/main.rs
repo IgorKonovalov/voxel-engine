@@ -6,10 +6,10 @@
 //!
 //! `flythrough [--seed N] [--level] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH]
-//! [--view VIEW] [--detail]`. `--render` fixes the marcher's resolution (the window
+//! [--view VIEW] [--detail] [--save PATH] [--replay PATH]`. `--render` fixes the marcher's
+//! resolution (the window
 //! scales it); `--frames` exits after N frames, printing the `F1` readings over the last
-//! ones; `--bench` runs the `B` bench N times right after the first mirror upload, before
-//! the first frame; `--autopilot` digs, flies 300 m out and back and prints the streaming
+//! ones; `--bench` sends N `B` bench inputs on the first frame; `--autopilot` digs, flies 300 m out and back and prints the streaming
 //! readings (see [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame;
 //! `--headless` runs the same frames on an offscreen target with no window; `--walk` (with
 //! `--level`) starts in walk mode, the body spawned in the spawn pocket; `--look` starts
@@ -18,6 +18,13 @@
 //! its procedural detail (`--rock-detail` sets rock's feature scale in voxels and strength,
 //! default `flythrough::ROCK_DETAIL`); `--view` starts in a view (`shaded`, `normals`, `hitmask`) and
 //! `--detail` with detail on. `N` cycles the normal mode and `V` toggles detail.
+//!
+//! Every edit goes through the simulation split (ADR-0007, ADR-0010): digs, fills and the
+//! bench are inputs a shared client sends to a server running `flythrough::logic::DigLogic`;
+//! one server tick runs per frame before the mirror sync, and the printed edit lines come
+//! from the client's events. With `--level`, `--save` writes the session's log file on exit
+//! and prints the world's hash; `--replay` rebuilds a saved session's world by re-simulating
+//! its inputs before the first frame and prints the same hash.
 //!
 //! Keys: `G` toggles fly and walk mode (on the bounded level only; streaming refuses it, as it
 //! refuses `--walk`); in walk mode `W A S D` walk at 3 m/s and `Space` jumps, or, held against
@@ -33,33 +40,28 @@ use std::time::Instant;
 
 use fly::{Fly, Walk};
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK};
+use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DigInput, DigLogic};
 use flythrough::{RESIDENCY, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
+use vxe_net::{Client, Event, MemChannel, Server};
 use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::{
     Camera, GpuWorld, LightParams, LodParams, LookParams, MarchTimer, Marcher, MirrorConfig,
     NormalMode, Presenter, ViewMode, Window, wgpu,
 };
-use vxe_world::hash::mix64;
 use vxe_world::{
-    ChunkCoord, ChunkExtent, CoarseGrid, EditError, EditOp, EditResult, FIXED_ONE, Fixed3,
+    ChunkCoord, ChunkExtent, CoarseGrid, EditOp, EditResult, FIXED_ONE, Fixed3, LogFile,
     MaterialId, MaterialTable, Mode, PersistConfig, StreamConfig, Streamer, Tier, VoxelCoord,
     WalkableMap, WalkableParams, World,
 };
 
-/// Reach of the dig and fill rays: 10 m.
-const REACH: i64 = 100 * FIXED_ONE;
 /// Dig radius at start (0.5 m), its scroll step (0.1 m) and its range.
 const DIG_RADIUS: i64 = 5 * FIXED_ONE;
 const DIG_STEP: i64 = FIXED_ONE;
 const DIG_RANGE: (i64, i64) = (FIXED_ONE, 30 * FIXED_ONE);
 /// Radius of the right-click fill: 0.3 m.
 const FILL_RADIUS: i64 = 3 * FIXED_ONE;
-/// The `B` bench: this many radius-1 m carves, centred within 10 m of the camera.
-const BENCH_CARVES: usize = 100;
-const BENCH_RADIUS: i64 = 10 * FIXED_ONE;
-const BENCH_SPREAD: i64 = 100;
 /// Free pool slots requested beyond the bounded level's `Full` bricks, so digging can grow
 /// the pool: 64 Ki slots.
 const POOL_HEADROOM_BRICKS: u64 = 65_536;
@@ -96,7 +98,7 @@ fn ms_since(t: Instant) -> f64 {
     (now() - t).as_secs_f64() * 1e3
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Args {
     seed: u64,
     render: Option<[u32; 2]>,
@@ -114,11 +116,19 @@ struct Args {
     /// `--rock-detail`: rock's feature scale (voxels) and strength under `--look`.
     rock_detail: [f32; 2],
     view: ViewMode,
+    /// `--save`: where the session's log file is written on exit.
+    save: Option<std::path::PathBuf>,
+    /// `--replay`: the log file whose session is re-simulated before the first frame.
+    replay: Option<std::path::PathBuf>,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
 const WALK_NEEDS_LEVEL: &str =
     "walk mode needs --level (the coarse grid is not wired to streaming)";
+
+/// Why `--save` and `--replay` are refused while streaming: a replay regenerates a bounded
+/// world, and a streaming session's residency is not in its log.
+const SAVE_NEEDS_LEVEL: &str = "--save and --replay need --level (replay rebuilds a bounded world)";
 
 /// Walk mode is available only on the bounded level.
 fn walk_allowed(streaming: bool) -> Result<(), &'static str> {
@@ -149,6 +159,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         detail: false,
         rock_detail: flythrough::ROCK_DETAIL,
         view: ViewMode::Shaded,
+        save: None,
+        replay: None,
     };
     let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
@@ -183,6 +195,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 args.view = ViewMode::from_name(&v)
                     .ok_or(format!("--view takes shaded, normals or hitmask, not {v}"))?;
             }
+            "--save" => args.save = Some(value()?.into()),
+            "--replay" => args.replay = Some(value()?.into()),
             "--level" => args.level = true,
             "--detail" => args.detail = true,
             "--autopilot" => args.autopilot = true,
@@ -199,6 +213,12 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     }
     if args.walk {
         walk_allowed(!args.level).map_err(|e| format!("--walk: {e}"))?;
+    }
+    if (args.save.is_some() || args.replay.is_some()) && !args.level {
+        return Err(SAVE_NEEDS_LEVEL.to_owned());
+    }
+    if args.save.is_some() && args.replay.is_some() {
+        return Err("--save and --replay do not combine".to_owned());
     }
     Ok(args)
 }
@@ -449,10 +469,41 @@ impl Coarse {
     }
 }
 
+/// The simulation split around the world: the server running [`DigLogic`] and the shared
+/// client every edit goes through.
+struct Net {
+    server: Server,
+    client: Client,
+}
+
+impl Net {
+    fn new(world: &Arc<World>, seed: u64) -> Self {
+        let mut server = Server::new(world.clone(), Box::new(DigLogic), seed);
+        let (near, far) = MemChannel::pair();
+        server.attach(far);
+        Self {
+            server,
+            client: Client::shared(world.clone(), near),
+        }
+    }
+}
+
+/// Bench carves the client has seen this tick, summed until a bench's [`BENCH_CARVES`] are in.
+#[derive(Default)]
+struct BenchSum {
+    carves: usize,
+    refused: usize,
+    counts: BTreeMap<MaterialId, u32>,
+    touched: BTreeSet<ChunkCoord>,
+}
+
 /// The running fly-through, once the world exists.
 struct Run {
     start: Instant,
-    world: World,
+    /// The server's world, which the shared client, the mirror and the queries read.
+    world: Arc<World>,
+    /// `None` only while dropping.
+    net: Option<Net>,
     /// The voxel the camera starts in; the mirror uploads nearest it first.
     spawn: VoxelCoord,
     args: Args,
@@ -523,128 +574,123 @@ impl Run {
         (Fixed3(origin), dir)
     }
 
-    fn apply(&mut self, verb: &str, op: &EditOp) {
-        let t = now();
-        let r = self.world.apply(op);
-        let ms = ms_since(t);
-        match r {
-            Ok(r) => {
-                println!("{}", edit_line(verb, &r, self.world.materials(), ms));
-                self.edited(&r);
-            }
-            Err(e) => println!("{verb}: refused, {e}"),
+    fn send(&self, input: DigInput) {
+        if let Some(net) = &self.net {
+            net.client.send_input(input.encode());
         }
     }
 
+    /// Left click: a dig along the camera ray.
     fn dig(&mut self) {
         let (origin, dir) = self.camera_ray();
-        let t = now();
-        let op = EditOp::tool_along_ray(
-            &self.world,
+        self.send(DigInput::Dig {
             origin,
             dir,
-            REACH,
-            self.dig_radius,
-            Mode::Carve,
-        );
-        let resolve_ms = ms_since(t);
-        let t = now();
-        let r = self.world.apply(&op);
-        let ms = resolve_ms + ms_since(t);
-        match r {
-            Ok(r) => {
-                println!("{}", edit_line("carved", &r, self.world.materials(), ms));
-                self.edited(&r);
-            }
-            Err(e) => println!("carved: refused, {e}"),
-        }
+            radius: self.dig_radius,
+        });
     }
 
+    /// Right click: a fill where the camera ray hits.
     fn fill(&mut self) {
         let (origin, dir) = self.camera_ray();
-        let Some(hit) = self.world.raycast(origin, dir, REACH) else {
-            println!("filled: no surface within 10 m");
-            return;
-        };
-        let at = Fixed3([0, 1, 2].map(|k| origin.0[k] + dir[k] * hit.t / FIXED_ONE));
-        self.apply("filled", &EditOp::sphere(at, FILL_RADIUS, Mode::Fill(ROCK)));
+        self.send(DigInput::Fill {
+            origin,
+            dir,
+            radius: FILL_RADIUS,
+            material: ROCK,
+        });
     }
 
-    /// `B`: carves at seeded positions within 10 m, then one mirror sync, both timed.
-    fn bench(&mut self, gpu: &Gpu) {
-        let centre = self
+    /// `B`: a bench input, its carves seeded from `--seed` and the count of benches so far,
+    /// centred on the camera's voxel.
+    fn bench(&mut self) {
+        let origin = self
             .fly
             .camera
             .position
             .to_array()
             .map(|v| v.floor() as i64);
-        let mut state = mix64(self.args.seed ^ self.bench_runs.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+        let seed = self.args.seed ^ self.bench_runs.wrapping_mul(0x9e37_79b9_7f4a_7c15);
         self.bench_runs += 1;
-        let mut next = || {
-            state = mix64(state.wrapping_add(1));
-            (state % (2 * BENCH_SPREAD as u64 + 1)) as i64 - BENCH_SPREAD
-        };
-        let mut ops = Vec::with_capacity(BENCH_CARVES);
-        while ops.len() < BENCH_CARVES {
-            let d = [next(), next(), next()];
-            if d.iter().map(|v| v * v).sum::<i64>() <= BENCH_SPREAD * BENCH_SPREAD {
-                let c = [0, 1, 2].map(|k| (centre[k] + d[k]) * FIXED_ONE + FIXED_ONE / 2);
-                ops.push(EditOp::sphere(Fixed3(c), BENCH_RADIUS, Mode::Carve));
-            }
-        }
+        self.send(DigInput::Bench { origin, seed });
+    }
 
-        // With attribute pages, the first carve is synced and its attribute pass timed alone.
-        let attrs = self.gfx.as_ref().is_some_and(|g| g.mirror.surface_attrs());
-        let mut results: Vec<Result<EditResult, EditError>> = Vec::with_capacity(ops.len());
-        let mut edit_ms = 0.0;
-        if attrs && let Some(gfx) = self.gfx.as_mut() {
-            let t = now();
-            results.push(self.world.apply(&ops[0]));
-            edit_ms += ms_since(t);
-            match gfx.mirror.sync(&self.world, &gpu.queue) {
-                Ok(_) => println!(
-                    "{}",
-                    attr_line("one carve of radius 1 m", gfx.timed_attrs(gpu))
-                ),
-                Err(e) => println!("bench: sync failed, {e}"),
-            }
-        }
+    /// The frame's server tick, timed, then the client's events: one printed line per dig
+    /// or fill and per bench, the coarse grid updated from every applied result. A tick that
+    /// finished a bench syncs the mirror at once and prints the bench line.
+    fn tick(&mut self, gpu: &Gpu) {
+        let Some(net) = self.net.as_mut() else { return };
         let t = now();
-        results.extend(ops[results.len()..].iter().map(|op| self.world.apply(op)));
-        edit_ms += ms_since(t);
+        net.server.tick();
+        let ms = ms_since(t);
+        let events = net.client.poll();
 
-        let mut counts = BTreeMap::<MaterialId, u32>::new();
-        let mut touched = BTreeSet::new();
-        let mut refused = 0;
-        for r in &results {
-            match r {
-                Ok(r) => {
-                    for &(m, n) in &r.changed_from {
-                        *counts.entry(m).or_default() += n;
-                    }
-                    touched.extend(r.touched.iter().copied());
+        let mut ops = std::collections::VecDeque::new();
+        let mut bench = BenchSum::default();
+        let mut benches = (0, 0);
+        for event in events {
+            let Event::Logic { bytes, .. } = event else {
+                ops.push_back(event);
+                continue;
+            };
+            for line in String::from_utf8_lossy(&bytes).lines() {
+                let Some(verb) = line.strip_prefix("op ") else {
+                    println!("{line}");
+                    continue;
+                };
+                let result = match ops.pop_front() {
+                    Some(Event::Applied { result, .. }) => Ok(result),
+                    Some(Event::Refused { error, .. }) => Err(error),
+                    _ => continue,
+                };
+                if let Ok(r) = &result {
+                    self.edited(r);
                 }
-                Err(_) => refused += 1,
+                if verb != BENCH_VERB {
+                    match result {
+                        Ok(r) => println!("{}", edit_line(verb, &r, self.world.materials(), ms)),
+                        Err(e) => println!("{verb}: refused, {e}"),
+                    }
+                    continue;
+                }
+                match result {
+                    Ok(r) => {
+                        for (m, n) in r.changed_from {
+                            *bench.counts.entry(m).or_default() += n;
+                        }
+                        bench.touched.extend(r.touched);
+                    }
+                    Err(_) => bench.refused += 1,
+                }
+                bench.carves += 1;
+                if bench.carves == BENCH_CARVES {
+                    let done = std::mem::take(&mut bench);
+                    let total = EditResult {
+                        changed_from: done.counts.into_iter().collect(),
+                        touched: done.touched.into_iter().collect(),
+                        aabb: None,
+                    };
+                    println!(
+                        "{}",
+                        edit_line("carved", &total, self.world.materials(), ms)
+                    );
+                    benches = (benches.0 + 1, benches.1 + done.refused);
+                }
             }
         }
-        let total = EditResult {
-            changed_from: counts.into_iter().collect(),
-            touched: touched.into_iter().collect(),
-            aabb: None,
-        };
-        for r in results.iter().flatten() {
-            self.edited(r);
+        if benches.0 > 0 {
+            self.bench_sync(gpu, benches.0 * BENCH_CARVES, benches.1, ms);
         }
-        println!(
-            "{}",
-            edit_line("carved", &total, self.world.materials(), edit_ms)
-        );
+    }
 
+    /// The mirror sync after a bench, timed, with the bench line; with attribute pages, the
+    /// attribute pass over the carves timed alone.
+    fn bench_sync(&mut self, gpu: &Gpu, carves: usize, refused: usize, edit_ms: f64) {
         let Some(gfx) = self.gfx.as_mut() else { return };
         let t = now();
         match gfx.mirror.sync(&self.world, &gpu.queue) {
             Ok(s) => println!(
-                "bench: {BENCH_CARVES} carves of radius 1 m within 10 m ({refused} refused): \
+                "bench: {carves} carves of radius 1 m within 10 m ({refused} refused): \
                  edits {edit_ms:.2} ms CPU; sync uploaded {} B ({} bricks, {} chunks, {} visited, \
                  {} writes) in {:.2} ms",
                 s.bytes,
@@ -656,9 +702,34 @@ impl Run {
             ),
             Err(e) => println!("bench: sync failed, {e}"),
         }
-        if attrs {
-            let what = format!("the other {} carves", BENCH_CARVES - 1);
+        if gfx.mirror.surface_attrs() {
+            let what = format!("{carves} carves of radius 1 m");
             println!("{}", attr_line(&what, gfx.timed_attrs(gpu)));
+        }
+    }
+
+    /// `--save`: the session's log file, and the world's hash.
+    fn save(&self) {
+        let (Some(path), Some(net)) = (&self.args.save, &self.net) else {
+            return;
+        };
+        let file = LogFile {
+            seed: self.args.seed,
+            source_version: CaveSource::VERSION,
+            extent: self.world.extent(),
+            ops: net.server.ops().clone(),
+            inputs: net.server.inputs().clone(),
+        };
+        println!("world hash 0x{:016x}", self.world.voxel_hash());
+        let written = std::fs::File::create(path).and_then(|mut f| file.write_to(&mut f));
+        match written {
+            Ok(()) => println!(
+                "saved {} inputs, {} ops to {}",
+                file.inputs.len(),
+                file.ops.len(),
+                path.display()
+            ),
+            Err(e) => eprintln!("save to {} failed: {e}", path.display()),
         }
     }
 
@@ -775,9 +846,6 @@ impl Run {
             println!("{}", attr_line("initial fill", gfx.timed_attrs(gpu)));
         }
         self.gfx = Some(gfx);
-        for _ in 0..self.args.bench {
-            self.bench(gpu);
-        }
     }
 
     /// A mirror under `cfg`, with attribute pages when `--look` was given.
@@ -1079,6 +1147,11 @@ impl Run {
         if input.pressed(KeyCode::Escape) {
             return Flow::Exit;
         }
+        if self.frame == 0 {
+            for _ in 0..self.args.bench {
+                self.bench();
+            }
+        }
         if self.pilot.is_some() {
             if self.pilot_step() == Flow::Exit {
                 return Flow::Exit;
@@ -1092,7 +1165,7 @@ impl Run {
                 }
                 None => self.fly.update(input, dt),
             }
-            self.handle_input(gpu, input);
+            self.handle_input(input);
         }
         if let Some(n) = self.args.frames
             && self.frame + SAMPLES as u32 == n
@@ -1104,7 +1177,7 @@ impl Run {
 
     /// The keys and buttons of interactive flight; the autopilot takes none of them, so a
     /// stray click cannot change the world it measures.
-    fn handle_input(&mut self, gpu: &Gpu, input: &Input) {
+    fn handle_input(&mut self, input: &Input) {
         if input.pressed(KeyCode::KeyL) {
             self.light.shadows = !self.light.shadows;
             println!(
@@ -1127,7 +1200,7 @@ impl Run {
             self.fill();
         }
         if input.pressed(KeyCode::KeyB) {
-            self.bench(gpu);
+            self.bench();
         }
         if input.pressed(KeyCode::KeyG) {
             self.toggle_walk();
@@ -1149,8 +1222,9 @@ impl Run {
         }
     }
 
-    /// Streams, syncs, marches and presents one frame begun at `t0`.
+    /// Ticks the server, then streams, syncs, marches and presents one frame begun at `t0`.
     fn draw(&mut self, gpu: &Gpu, surface: &wgpu::TextureView, t0: Instant) -> Flow {
+        self.tick(gpu);
         if self.stream.is_some() {
             if let Err(e) = self.stream_step(gpu) {
                 eprintln!("mirror sync failed: {e}");
@@ -1264,16 +1338,21 @@ fn teardown_stage(what: &str, f: impl FnOnce()) {
 }
 
 impl Drop for Run {
-    /// Stops and joins the streamer's workers first, then drops the GPU mirror and passes,
-    /// then the world (swapped for an empty one, whose drop is free).
+    /// Writes the `--save` file, drops the server and client, stops and joins the streamer's
+    /// workers, then drops the GPU mirror and passes, then the world (swapped for an empty
+    /// one, whose drop is free; the server and client held the other references).
     fn drop(&mut self) {
+        self.save();
+        // The server and client hold the world's other references and their logs; their
+        // drop is cheap and is not a traced stage.
+        drop(self.net.take());
         if let Some(stream) = self.stream.take() {
             teardown_stage("streamer", || drop(stream));
         }
         if let Some(gfx) = self.gfx.take() {
             teardown_stage("GPU mirror and passes", || drop(gfx));
         }
-        let world = std::mem::replace(&mut self.world, World::new(&MaterialTable::new()));
+        let world = std::mem::replace(&mut self.world, Arc::new(World::new(&MaterialTable::new())));
         teardown_stage("world", || drop(world));
     }
 }
@@ -1345,6 +1424,8 @@ impl App for Flythrough {
                 generated_at_takeoff: 0,
             });
             let coarse = stream.is_none().then(|| Coarse::build(&world));
+            let world = Arc::new(world);
+            let net = Net::new(&world, self.args.seed);
             let walk = if self.args.walk {
                 let w = Walk::at_camera(&world, &self.camera);
                 if w.is_none() {
@@ -1357,8 +1438,9 @@ impl App for Flythrough {
             self.run = Some(Run {
                 start: self.start,
                 world,
+                net: Some(net),
                 spawn: voxel_of(self.camera.position),
-                args: self.args,
+                args: self.args.clone(),
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
                 look: LookParams {
@@ -1489,7 +1571,7 @@ fn pollster_block_on<F: std::future::Future>(f: F) -> F::Output {
 
 /// The cave's material table; under `--look`, with rock's procedural detail at
 /// `--rock-detail`.
-fn materials(args: Args) -> MaterialTable {
+fn materials(args: &Args) -> MaterialTable {
     if args.look.is_some() {
         flythrough::look_materials_with(args.rock_detail)
     } else {
@@ -1505,7 +1587,7 @@ fn main() {
     )
     .init();
     let start = now();
-    let args = match parse_args() {
+    let mut args = match parse_args() {
         Ok(a) => a,
         Err(e) => {
             eprintln!("flythrough: {e}");
@@ -1514,11 +1596,45 @@ fn main() {
     };
 
     let seed = args.seed;
-    let (spawn, pending) = if args.level {
+    let (spawn, pending) = if let Some(path) = args.replay.clone() {
+        let file = match flythrough::read_log_file(&path) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("flythrough: --replay {}: {e}", path.display());
+                std::process::exit(1);
+            }
+        };
+        // The session continues under the save's seed.
+        args.seed = file.seed;
+        let table = materials(&args);
+        let source = CaveSource::new(file.seed, file.extent);
+        let generation = std::thread::spawn(move || {
+            let (world, ops) = match flythrough::replay_log(&file, flythrough::Mode::Inputs, &table)
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("flythrough: --replay {}: {e}", path.display());
+                    std::process::exit(1);
+                }
+            };
+            println!(
+                "replayed {} inputs, {} ops, hash 0x{:016x}",
+                file.inputs.len(),
+                ops.len(),
+                world.voxel_hash()
+            );
+            if ops != file.ops {
+                println!("replay: the re-simulated op log differs from the saved one");
+            }
+            world
+        });
+        (source.spawn(), Pending::Level(generation))
+    } else if args.level {
         let source = CaveSource::new(seed, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
+        let table = materials(&args);
         let generation = std::thread::spawn(move || {
             let t = now();
-            let world = World::generate(source.extent, &source, &materials(args));
+            let world = World::generate(source.extent, &source, &table);
             println!(
                 "generated seed {seed} over {LEVEL_CHUNKS:?} chunks in {:.0} ms: {} full bricks",
                 ms_since(t),
@@ -1533,7 +1649,7 @@ fn main() {
             .map_or(1, usize::from)
             .saturating_sub(1)
             .max(1);
-        let world = World::new(&materials(args));
+        let world = World::new(&materials(&args));
         let mut streamer = Streamer::new(
             Arc::new(source),
             StreamConfig {
@@ -1564,6 +1680,7 @@ fn main() {
         vfov: 70f32.to_radians(),
     };
     let size = args.render.unwrap_or([1280, 720]);
+    let headless = args.headless;
     let app = Flythrough {
         start,
         args,
@@ -1571,7 +1688,7 @@ fn main() {
         pending: Some(pending),
         run: None,
     };
-    let result = if args.headless {
+    let result = if headless {
         run_headless(app, size)
     } else {
         let config = ShellConfig {
@@ -1607,6 +1724,23 @@ mod tests {
         assert!(a.walk && a.level);
         assert_eq!(walk_allowed(true), Err(WALK_NEEDS_LEVEL));
         assert_eq!(walk_allowed(false), Ok(()));
+    }
+
+    /// `--save` and `--replay` take a path, need the bounded level, and do not combine.
+    #[test]
+    fn save_and_replay_need_the_level() {
+        for flag in ["--save", "--replay"] {
+            assert_eq!(
+                parse_args_from(argv(&[flag, "a.log"])).err().as_deref(),
+                Some(SAVE_NEEDS_LEVEL)
+            );
+        }
+        let a = parse_args_from(argv(&["--level", "--bench", "1", "--save", "a.log"]))
+            .expect("--level --bench 1 --save parses");
+        assert_eq!(a.save.as_deref(), Some(std::path::Path::new("a.log")));
+        assert_eq!(a.bench, 1);
+        assert!(parse_args_from(argv(&["--level", "--save", "a", "--replay", "b"])).is_err());
+        assert!(parse_args_from(argv(&["--level", "--replay"])).is_err());
     }
 
     #[test]

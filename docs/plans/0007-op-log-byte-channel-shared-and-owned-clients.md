@@ -428,8 +428,8 @@ boundary; only logs a `Server` writes after a submission do.
 | 1: OpLog, InputLog, wire encoding, replay | dev | done | d77ef85; op-log FNV-1a 64 of the vector (1446 bytes) blessed on Linux x86_64 as `0x5ac8_737d_db0f_ccec` |
 | 2: Server, shared client, direct submission | dev | done | 5a93da9 |
 | 3: The logic boundary and re-simulation | dev | done | 2c32389; Interleaving and the boundary entry ba27191, after merging main (07e53f1) for the 2026-10-17 amendment |
-| 4: Owned client and desync detection | dev | done | committed with this row |
-| 5: Save, replay, fly-through on the split | dev | not started | stopped at the Phase 3 block |
+| 4: Owned client and desync detection | dev | done | f8708b7 |
+| 5: Save, replay, fly-through on the split | dev | done | committed with this row; `--level --seed 1 --headless --frames 2 --bench 1 --save a.log` printed `world hash 0x86ca427a47e8908c`, then `--level --headless --frames 1 --replay a.log` printed `replayed 1 inputs, 100 ops, hash 0x86ca427a47e8908c` (release, NVIDIA GeForce RTX 3080 Laptop GPU, exclusive lock) |
 | 6: Readings | dev | not started | stopped at the Phase 3 block |
 
 ### Notes
@@ -453,7 +453,17 @@ boundary; only logs a `Server` writes after a submission do.
 - Phase 4: an op the owned client's world refuses while the server applied it is a `Desync` with `ours` the empty `EditResult` (the Data shapes `ours` is an `EditResult`, not a `Result`).
 - Phase 4: after a desync, `Applied` messages still yield `Event::Applied` with the server's result (and are not applied); `Refused` messages are passed through on an owned client without applying anything.
 - Phase 4: the fault test sends ops 0 to 9, carves the fault sphere on the client's world, then sends an ordinary op 10 and the fault sphere as op 11 (the bullet's "after 10 ops" and "input 11" with seqs from 0). A third test covers the refused-locally desync.
-- Phases 1 to 3: `Cargo.lock` changed with the new `vxe-net` member (no new external crate).
+- Phase 5: `--bench` keeps its count argument (`--bench N`, which Plan 0014's reading command uses), so the session ran with `--bench 1`; it sends N `Bench` inputs on the first frame instead of running the bench in `init`.
+- Phase 5: `--save` and `--replay` require `--level` (the replay rebuilds the bounded cave from the header's extent; a streaming session's residency is not in the log), so the session ran with `--level`; the two flags together are refused.
+- Phase 5: a dig's capsule ends at `origin + dir * hit.t / 256` from `Host::raycast`'s floored `t`, where `EditOp::tool_along_ray` used the exact rational `t`; the end point can differ from the pre-split dig by under one fixed unit per axis.
+- Phase 5: `DigLogic`'s broadcast has one `op <verb>` line per op it attempts, applied or refused (the client pairs it with the op's `Applied` or `Refused` event), and free text lines (`filled: no surface within 10 m`); the client prints one summed line per bench of 100 `op bench` lines, as before. The `ms` in a printed edit line is the whole server tick's time.
+- Phase 5: under `--look` the bench prints one attribute-pass line for all its carves; the separate "one carve of radius 1 m" line is gone (the server applies a bench's 100 carves in one tick, with no sync between them).
+- Phase 5: the autopilot's carve still calls `World::apply` on the server's world directly, not through an input (streaming only; not saved).
+- Phase 5: `CaveSource::VERSION` is declared in an `impl CaveSource` block in `lib.rs` (`cave.rs` is not in Files touched). `lib.rs` also exposes `read_log_file` and `replay_log(&LogFile, Mode, &MaterialTable) -> (World, OpLog)`, which `--replay` uses with the `--look` table; `--replay` prints a line when the re-simulated op log differs from the saved one.
+- Phase 5: `tests/replay.rs` copies the vector's 24 ops from `determinism.rs` and holds the copy to the blessed op-log hash; its vector check recomposes the vector hash from the direct path's results and the replayed world's voxel hash.
+- Phase 5: the server and client are dropped first in `Run`'s teardown, untraced (`tests/shutdown.rs` asserts the exact stage list).
+- Phase 5: `README.md`'s flag table does not list `--save` and `--replay` (not in Files touched).
+- Phases 1 to 3 and 5: `Cargo.lock` changed with the new `vxe-net` member and the fly-through's dependency on it (no new external crate).
 
 ### Close triggers
 
