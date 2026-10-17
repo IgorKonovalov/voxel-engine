@@ -309,6 +309,12 @@ fn generation_with_placements_does_not_depend_on_the_thread_count() {
     let one = World::generate_with_threads(extent, &source, &test_table(), 1);
     let seven = World::generate_with_threads(extent, &source, &test_table(), 7);
     assert_eq!(one.voxel_hash(), seven.voxel_hash());
+    // Blessed on Linux; the stamp is integer-only, so every CI platform must reproduce it.
+    assert_eq!(
+        one.voxel_hash(),
+        0x7ee7_eeb7_0956_d069,
+        "stamped world hash"
+    );
 
     // And it equals the base world with each placement stamped in order, where the stamp
     // fits inside the extent.
@@ -362,5 +368,122 @@ fn rot_apply_is_total_at_the_i32_extremes() {
                 "{r:?} {v:?}"
             );
         }
+    }
+}
+
+/// What a box edit in `mode` turns `old` into.
+fn edit_target(mode: Mode, old: MaterialId, table: &MaterialTable) -> MaterialId {
+    match mode {
+        Mode::Carve if old != AIR && !table.is_indestructible(old) => AIR,
+        Mode::Fill(m) if old == AIR => m,
+        Mode::Replace { from, to } if old == from => to,
+        _ => old,
+    }
+}
+
+/// The cave-like world with two vaults stamped in, so material 4 (indestructible) is present.
+fn vaulted_cave() -> World {
+    let w = World::generate(test_extent(), &cave_like_source(), &test_table());
+    w.stamp(&Prefab::vault(16, 4), [-20, -20, -20], Rot::IDENTITY)
+        .unwrap();
+    w.stamp(&Prefab::vault(16, 4), [30, 2, -5], Rot::IDENTITY)
+        .unwrap();
+    w
+}
+
+#[test]
+fn stamp_tally_agrees_with_apply_on_random_boxes() {
+    let mut rng = SplitMix64(0x1234_5678);
+    let modes = [
+        Mode::Carve,
+        Mode::Fill(5),
+        Mode::Replace { from: 1, to: 2 },
+        Mode::Replace { from: 4, to: 0 },
+    ];
+    for i in 0..120 {
+        let a = vaulted_cave();
+        let b = vaulted_cave();
+        let lo = [0; 3].map(|_| rng.range(-128, 100) as i32);
+        let size = [0; 3].map(|_| rng.range(1, 40) as u32);
+        let hi = [0, 1, 2].map(|k| (lo[k] + size[k] as i32 - 1).min(127));
+        let size = [0, 1, 2].map(|k| (hi[k] - lo[k] + 1) as u32);
+        let mode = modes[i % modes.len()];
+        let masked_all = i % 2 == 0;
+        // Each cell holds the box edit's target of the old material; the mask covers every
+        // cell on even cases, and the changed cells plus a random third on odd ones.
+        let mut voxels = Vec::new();
+        let n = (size[0] * size[1] * size[2]) as usize;
+        let mut mask = vec![0u64; n.div_ceil(64)];
+        let mut idx = 0;
+        for z in lo[2]..=hi[2] {
+            for y in lo[1]..=hi[1] {
+                for x in lo[0]..=hi[0] {
+                    let old = b.material_at([x, y, z]).unwrap();
+                    let new = edit_target(mode, old, b.materials());
+                    voxels.push(new);
+                    if masked_all || new != old || rng.next_u64().is_multiple_of(3) {
+                        mask[idx / 64] |= 1 << (idx % 64);
+                    }
+                    idx += 1;
+                }
+            }
+        }
+        let prefab = Prefab::new(size, voxels, Some(mask));
+        let fx = |v: i32| i64::from(v) * FIXED_ONE;
+        let ra = a
+            .apply(&EditOp::box_(
+                Fixed3(lo.map(fx)),
+                Fixed3(hi.map(|v| fx(v + 1))),
+                mode,
+            ))
+            .unwrap();
+        let rb = b.stamp(&prefab, lo, Rot::IDENTITY).unwrap();
+        assert_eq!(ra, rb, "case {i} {lo:?}..={hi:?} {mode:?}");
+        assert_eq!(a.voxel_hash(), b.voxel_hash(), "case {i}");
+        assert_eq!(a.stats(), b.stats(), "case {i}");
+    }
+}
+
+#[test]
+fn the_vault_stamp_equals_a_carve_then_a_replace() {
+    let one = FIXED_ONE;
+    let a = solid3_world();
+    let carve = a
+        .apply(&EditOp::box_(
+            Fixed3([9 * one; 3]),
+            Fixed3([23 * one; 3]),
+            Mode::Carve,
+        ))
+        .unwrap();
+    let replace = a
+        .apply(&EditOp::box_(
+            Fixed3([8 * one; 3]),
+            Fixed3([24 * one; 3]),
+            Mode::Replace { from: 3, to: 4 },
+        ))
+        .unwrap();
+    assert_eq!(carve.changed_from, [(3, 2744)]);
+    assert_eq!(replace.changed_from, [(3, 1352)]);
+    let b = solid3_world();
+    let stamp = b
+        .stamp(&Prefab::vault(16, 4), [8, 8, 8], Rot::IDENTITY)
+        .unwrap();
+    assert_eq!(stamp.changed_from, [(3, 4096)]);
+    assert_eq!(stamp.touched, replace.touched);
+    assert_eq!(stamp.aabb, replace.aabb);
+    assert_eq!(a.voxel_hash(), b.voxel_hash());
+}
+
+#[test]
+fn a_rotated_stamp_equals_the_identity_stamp_of_the_rotated_prefab() {
+    let voxels = (0..3 * 5 * 7).map(|i| (i % 6) as MaterialId).collect();
+    let q = Prefab::new([3, 5, 7], voxels, None);
+    for r in Rot::all() {
+        let a = vaulted_cave();
+        let b = vaulted_cave();
+        let ra = a.stamp(&q, [60, -3, 1], r).unwrap();
+        let rb = b.stamp(&q.rotated(r), [60, -3, 1], Rot::IDENTITY).unwrap();
+        assert_eq!(ra, rb, "{r:?}");
+        assert_eq!(a.voxel_hash(), b.voxel_hash(), "{r:?}");
     }
 }
