@@ -1,10 +1,10 @@
 # 0014: Edit cost under 2 ms, second pass: the allocation measured, a brick-array pool, cheaper sphere spans and an analytic capsule row
 
-> **Status:** approved
+> **Status:** done (2026-10-17, v0.7.0): the pool, the sphere span walk and the analytic capsule row shipped as amended; edits are cheaper but miss the 2 ms §4 figure, and the representation-versus-target decision awaits the owner.
 > **Created:** 2026-10-16
 > **Milestone:** M1 follow-up in `docs/roadmap.md` (the `nfr.md` §4 miss, carried from Plans
 > 0001 and 0003)
-> **Related ADRs:** [ADR-0002](../adrs/0002-brick-map-layout-and-per-chunk-locked-access.md)
+> **Related ADRs:** [ADR-0002](../../adrs/0002-brick-map-layout-and-per-chunk-locked-access.md)
 > (brick layout and access model, unchanged here: a phase that would change the brick
 > representation stops and goes to the architect as an ADR question). No new ADR.
 > **Prerequisite:** Plan 0003 closed (its tip is this plan's baseline). `perf` installed on the
@@ -374,28 +374,280 @@ to 3 to 4 ms there; a guess until the baseline is measured.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The uniform-brick oracle and the allocation measured | dev | not started | |
-| 2: A brick-array pool | dev | not started | |
-| 3: An exact span walk for the sphere | dev | not started | |
-| 4: An analytic capsule row | dev | not started | |
-| 5: Readings against the figure | dev | not started | |
+| 1: The uniform-brick oracle and the allocation measured | dev | done | `baf0ac0` |
+| 2: A brick-array pool | dev | done | `7ed81d3` |
+| 3: An exact span walk for the sphere | dev | done (as amended 2026-10-17) | `5850b77` |
+| 4: An analytic capsule row | dev | done | `5850218` |
+| 5: Readings against the figure | dev | done (as amended 2026-10-17); `worst_warm` 2.0 ms or more | `86123a5` |
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: the `perf record` breakdowns are of a scratch harness (uncommitted) that runs the
+  bench's three cases (same worlds, same 100 ops, same release profile, with debuginfo) and
+  enables the counters (`perf record --delay=-1 --control fifo:...`) only around each
+  iteration's 100 `apply` calls, 300 iterations; every sample is inside `World::apply`. In
+  `perf record` of the criterion bench binary itself, DWARF call chains from `row_span` and
+  `isqrt` (out-of-line) end before `World::apply` (also with a 64 KiB stack copy), so a
+  "chain passes through `apply`" filter dropped those samples; that record put `Box::new` at
+  2.1 % and `write_rows` at 68.4 % of the 20825 samples it kept for `worst`.
+- Phase 1: `perf stat` is recorded twice per case: on the criterion bench process
+  (`--profile-time 10`, the done-when's form, generation and drops included), and on the
+  harness with counters only around the applies (apply alone). `perf stat --control` prints
+  user and system seconds as 0; its task-clock is the apply time.
+- Phase 1: `perf record -e page-faults:u -c 1 --call-graph dwarf` of the bench (`worst` and
+  `tool`, 3 s each) found no page fault with `World::apply` in its chain.
+- Phase 1: the 1 KiB fill is about 1.4 % of `worst` (below the 10 % that triggers Phase 2's
+  fused expand), so Phase 2 keeps the fill.
+- Phase 1: the plan's budget arithmetic (the pool removing about 1.2 ms of `Brick::expand`'s
+  36.5 %) does not hold at this tip: `Brick::expand` is 5.0 % of `worst`'s samples inside
+  `apply`, `write_rows` 54.2 %, span work 24.9 %. The phases continue as written; Phase 5
+  carries the miss path.
+- Phase 2: the pool's list type is `SpareArrays = Vec<Box<[u16; 512]>>` with
+  `#[allow(clippy::vec_box)]` and a reason (each box moves into `Brick::Full` as is).
+- Phase 2: `crates/vxe-world/src/lib.rs` is unchanged (the new API is `World` methods and an
+  associated constant).
+- Phase 2: the streaming workers do not call `reserve_brick_arrays` (a worker holds no
+  `World`); the streamer's eviction and its drop of a chunk that left both bands while
+  loading give unedited chunks' arrays back on the caller's thread (`World::recycle_chunk`).
+- Phase 2: the bench also gains `tool_warm` (the `tool` case with the same reserve), read by
+  Phase 4's done-when; `WARM_ARRAYS` is 2500 (24.9 expansions per `worst` carve and 24.1 per
+  `tool` carve, times 100, rounded up).
+- Phase 2: the fly-through reserves 4096 arrays after each frame's input and edits and before
+  each `--bench` run, and its `bench:` line prints the pool's size in KiB after the carves.
+- Phase 3: the sphere's spans are walked for a whole brick row up front
+  (`sphere_row_spans` in `shape.rs`, called when `RowCache` is built for a brick row with a
+  `Partial` brick) instead of per row from `Shape::row_span`; `Shape::row_span` is unchanged
+  and keeps `isqrt`. A row with no neighbouring span is solved with `isqrt` when it is the
+  brick row's first row or its `rem` exceeds `(8 * 256)²`, and otherwise walked outward from
+  the centre nearest `cx`.
+- Phase 3: `walked_spans_equal_solved_spans` is a unit test in `shape.rs` (it calls the
+  crate-private `sphere_row_spans`); `crates/vxe-world/tests/shapes.rs` is unchanged.
+- Phase 3, unmet done-when: the sphere's span work reads 13.2 % of the samples inside
+  `World::apply` for `worst_warm` (12.0 % for `worst`), not under 5 %. Same harness and
+  method as Phase 1: 19.1 % at Plan 0003's tip (`row_span` and what it calls or inlines),
+  15.8 % with a per-row walk (`RowWalk`, an uncommitted draft), 13.2 % with the brick-row
+  walk committed here. `RowCache::span`'s own lookup is a further 4.7 %. A scratch
+  microbenchmark of the span computation alone over the bench's 100 spheres (44100 rows,
+  29158 walked, 2542 solved, 12400 with `rem < 0`): `isqrt` per row 0.58 ms, per-row walk
+  0.43 ms, brick-row walk 0.31 ms, with the centre start 0.27 ms per 100 spheres; the walk
+  is about 35 instructions, branch misses are 0.5 % of branches. Under 5 % of a 3.0 ms
+  `apply` is about 0.15 ms for about 54600 rows per 100 carves (about 2.7 ns, 11 cycles, a
+  row). Per the batch rules the plan stopped here.
+- Phase 3, after the amendment of 2026-10-17: the readings at `5850b77` (span work 13.2 % of
+  `worst_warm`'s samples inside `World::apply`, against at most 14 %; `worst_warm` 3.014 and
+  3.023 ms against the Phase 2 tree's 3.226 and 3.247 ms, paired) meet the amended done-when.
+  No code changed for it.
+- Merge of `main` (`87227d6`): `crates/vxe-world/src/stamp.rs` (Plan 0008's stamp) called
+  `Brick::expand` and `collapse` without the pool argument; `World::stamp` now takes one
+  batch from the brick-array pool per stamp and gives it back, and `blit_into` (sources) passes
+  an empty local list. The file is outside every phase's Files touched.
+- Phase 4: before the commit, an uncommitted draft of the same code read, diagnostic, paired
+  with the Phase 3 tree (load 1.81 / 1.47 / 1.27): Phase 3 `tool` 7.989, `tool_warm` 7.897,
+  `worst_warm` 3.022 ms; draft `tool` 6.833, `tool_warm` 6.707, `worst_warm` 3.075 ms.
+- Phase 4: the test-count bound (`capsule_rows_cost_logarithmic_tests`, 1000 seeded rows,
+  439 with a span and 561 without) is a unit test in `shape.rs`, counting
+  `CapsuleRow::contains` calls through a `#[cfg(test)]` thread-local counter.
+- Phase 4: `tool_warm` (6.658 / 6.651 ms) reads above `worst_warm` (3.033 / 3.023 ms) in the
+  same run, about 2.2 times; the breakdown is in the Close triggers.
+- Phase 4: the Phase 3 side of the paired run is the bench built from the merge commit
+  `87227d6` (Phase 3 code plus `main`), so the two binaries differ by Phase 4 only.
+- Phase 5, unmet done-when: `worst_warm` reads 3.034 to 3.054 ms, not under 2.0 ms. The
+  Phase 1 profile is repeated at the tip (Close triggers) and `nfr.md` §4 keeps 2 ms.
+- Phase 5: Plan 0003's tip bench (`2129bfb` source with the Phase 1 bench file) has `worst`,
+  `mixed` and `tool` only; `worst_warm` and `tool_warm` need the pool and have no Plan 0003
+  counterpart, so each pairs with the same window's `worst` and `tool` there.
+- Phase 5: the fly-through's Plan 0003 side is the release `flythrough` built from `2129bfb`,
+  whose `bench:` line has no pool figure.
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** Phase 1: `apply_matches_the_reference_on_uniform_worlds`, the bench
+  group `expand`, `cubes_world` in the test support. Phase 2: the brick-array pool
+  (`BrickArrays`, `SpareArrays`, pool-aware `Brick::expand` / `collapse`,
+  `World::recycle_chunk` on the streamer's eviction), `a_pooled_expand_allocates_nothing`,
+  `an_evicted_chunk_returns_its_arrays`, the bench cases `worst_warm` and `tool_warm`, the
+  fly-through's reserve and pool size on its `bench:` line. Phase 3: `sphere_row_spans`
+  (brick-row sphere walk) used by `RowCache`, `walked_spans_equal_solved_spans`. Merge of
+  `main`: `World::stamp` takes and gives back pooled arrays. Phase 4: `CapsuleRow::nearest`,
+  `first_true` / `last_true` bisection in `Shape::row_span`'s capsule arm,
+  `capsule_row_span_equals_the_set_of_contained_centres`,
+  `capsule_rows_cost_logarithmic_tests`. Phase 5: `nfr.md` §4's Plan 0014 reading.
+- **Public API changed:** `World::BRICK_ARRAY_POOL_CAP`, `World::reserve_brick_arrays`,
+  `World::pool_len` (Phase 2). Nothing removed or changed.
+- **Budget readings:** (AMD Ryzen 9 5900HS dev box, release bench profile, every reading under
+  the exclusive perf lock, 1-minute load from `uptime` before / after each run; the
+  `perf record` and `perf stat` figures are cycles and counts, not times)
+  - Phase 1, Plan 0003's tip edit path (`2129bfb` source, Phase 1 bench file), load 1.65 /
+    1.45: `cargo bench` `worst` 3.557 ms [3.552, 3.562]; `mixed` 2.554 ms [2.550, 2.558];
+    `tool` 8.060 ms [8.053, 8.067]. `expand` group, per 1000 arrays: `fresh_kept` 46.19 µs
+    [46.10, 46.29]; `alloc_drop` 65.11 µs [64.78, 65.47]; `fill` 20.45 µs [20.43, 20.48];
+    `pretouched` 45.32 µs [45.13, 45.49]. Per expansion: about 46 ns, of which the fill
+    about 20 ns (44 %), the allocator about 25 ns (54 %), first touch about 1 ns
+    (`fresh_kept` minus `pretouched`, 2 %).
+  - Phase 1 counts per carve (uncommitted instrumentation): first `worst` carve 32 bricks
+    expanded, 0 collapsed, 416 rows solved; over the 100 `worst` carves 24.9 expanded, 0.1
+    collapsed, 546 rows per carve (`mixed` 16.6, 0.1, 460). First `tool` carve 26 expanded,
+    0 collapsed, 1284 rows solved, 6821 capsule tests (5.31 per row; 643 rows with no inside
+    centre took 4027, 6.26 each); over the 100 `tool` carves 24.1 expanded, 677 rows, 10.99
+    tests per row, 11.78 per empty row.
+  - Phase 1 `perf stat -e task-clock,page-faults,cycles:u,instructions:u`, criterion process
+    (`--profile-time 10`): `worst` 14224.6 ms task-clock, 1080813 faults, 30.49 G cycles,
+    103.12 G instructions, user 9.82 s, sys 4.96 s; `mixed` 14669.9 ms, 1002419, 30.79 G,
+    101.12 G, user 9.95 s, sys 5.47 s; `tool` 11863.8 ms, 412754, 31.90 G, 104.42 G, user
+    10.03 s, sys 2.08 s. Apply only (harness, 300 iterations): `worst` 1056.5 ms (3.52 ms per
+    iteration), 1273 faults (4.2 per iteration), 3.412 G cycles, 12.418 G instructions;
+    `mixed` 780.5 ms, 848, 2.517 G, 8.843 G; `tool` 2448.9 ms, 1234, 7.947 G, 26.527 G.
+  - Phase 1 `perf record -F 4999 -e cycles:u --call-graph dwarf`, harness, load 1.84 / 1.79.
+    Top ten by self time (leaf frame, inlined functions as their own symbol), share of the
+    samples inside `World::apply` (samples):
+    `worst` (5877): `write_rows` 20.2 % (1185), `CarveBits::target` 10.7 % (630),
+    `int_sqrt::u32_stages` 7.9 % (464), `edit_brick` 6.5 % (383), `RowCache::span` 4.9 %
+    (287), `Range::is_empty` 4.8 % (285), `usize::min` 4.8 % (280), `Shape::row_span` 4.0 %
+    (234), libc 3.8 % (223), `i64::lt` 3.1 % (181).
+    `mixed` (4353): `write_rows` 18.2 % (794), `target` 10.7 % (465), `u32_stages` 9.8 %
+    (427), `edit_brick` 6.2 % (268), `row_span` 5.1 % (221), `is_empty` 4.4 % (193), `min`
+    4.3 % (186), `RowCache::span` 4.2 % (182), libc 3.2 % (141), `overflowing_mul` 2.8 % (122).
+    `tool` (12628): `CapsuleRow::contains` 48.3 % (6104), `write_rows` 7.5 % (950),
+    `row_span` 4.6 % (579), `CapsuleRow::new` 4.1 % (522), `target` 3.8 % (483),
+    `edit_brick` 3.7 % (469), `lt` 3.1 % (396), the capsule scan's `find` 3.1 % (387),
+    `RowCache::span` 2.9 % (362), `is_empty` 2.2 % (280).
+    Inclusive (call chain holds the frame): `worst` `write_rows` 54.2 %, span work
+    (`RowCache::span`, `row_span`, `isqrt`) 24.9 % with `isqrt` 12.5 %, `Brick::expand`
+    5.0 % with `Box::new` 4.9 %, `collapse` 2.0 %, libc 3.9 %; `mixed` 49.6 %, 28.3 %
+    (15.4 %), 4.0 % (3.9 %), 2.1 %, 3.4 %; `tool` `CapsuleRow::contains` 48.9 %, span work
+    68.6 %, `write_rows` 19.4 %, `Brick::expand` 0.8 %.
+  - Phase 2, paired with the Phase 1 tree (`baf0ac0`), alternated, `cargo bench` binaries
+    of both trees, mean [CI]; 1-minute load at the start of each run 1.93 (base), 1.83
+    (Phase 2), 1.75 (base), 1.65 (Phase 2), 2.44 after the last, so the round-2 Phase 2 run
+    is diagnostic. Round 1: base `worst` 3.597 [3.592, 3.602], `mixed` 2.543, `tool` 8.048
+    ms; Phase 2 `worst` 3.504 [3.495, 3.516], `worst_warm` 3.272 [3.268, 3.277], `mixed`
+    2.479, `tool` 8.010, `tool_warm` 7.914 [7.908, 7.921] ms. Round 2: base `worst` 3.539
+    [3.535, 3.543], `mixed` 2.549, `tool` 8.050 ms; Phase 2 (diagnostic) `worst` 3.356,
+    `worst_warm` 3.221, `mixed` 2.447, `tool` 8.024, `tool_warm` 7.925 ms.
+  - Phase 3 profile, harness `perf record` of `worst_warm` (300 iterations, 5086 samples),
+    load 1.70 / 1.64: the sphere's row solve (`sphere_row_spans` and what it calls or
+    inlines) 13.2 % (669 samples), `RowCache::span`'s own lookup 4.7 % (237). Same run,
+    `worst` (5220 samples): 12.0 % (627) and 5.1 % (267). Top self symbols for
+    `worst_warm`: `write_rows` 19.8 %, `CarveBits::target` 12.0 %, `edit_brick` 8.7 %,
+    `Range::is_empty` 6.0 %, `i64::lt` 4.5 %, `walk_sphere_span` 4.5 %, `RowCache::span`
+    4.4 %, `sphere_row_spans` 3.8 %, `usize::min` 3.7 %, `Brick::expand` 2.8 %.
+  - Phase 3, paired with the Phase 2 tree (`7ed81d3`), alternated, load at the start of each
+    run 1.85, 1.37, 1.47, 1.39, 1.51 after. Round 1 / round 2, mean [CI]: Phase 2 `worst`
+    3.398 / 3.458, `worst_warm` 3.226 [3.220, 3.232] / 3.247 [3.242, 3.252], `mixed` 2.452 /
+    2.453, `tool` 7.977 / 7.984, `tool_warm` 7.869 / 7.915 ms; Phase 3 `worst` 3.234 /
+    3.249, `worst_warm` 3.014 [3.011, 3.018] / 3.023 [3.020, 3.027], `mixed` 2.334 / 2.334,
+    `tool` 7.989 / 7.980, `tool_warm` 7.884 / 7.880 ms.
+  - Phase 4, paired with the Phase 3 tree (bench built from `87227d6`), alternated, two
+    rounds, one quiet-lock hold; 1-minute load 1.94 before, 1.46, 1.48, 1.39 at the starts of
+    the next three runs, 1.24 after. Round 1 / round 2, mean [CI]: Phase 3 `worst` 3.260 /
+    3.241, `worst_warm` 3.026 [3.022, 3.030] / 3.033 [3.028, 3.038], `mixed` 2.329 / 2.329,
+    `tool` 8.014 / 8.020, `tool_warm` 7.911 [7.905, 7.917] / 7.912 [7.903, 7.923] ms;
+    Phase 4 `worst` 3.161 / 3.139, `worst_warm` 3.033 [3.030, 3.036] / 3.023 [3.019, 3.028],
+    `mixed` 2.334 / 2.325, `tool` 6.778 / 6.774, `tool_warm` 6.658 [6.653, 6.664] / 6.651
+    [6.646, 6.656] ms. `tool_warm` is 15.8 % / 15.9 % below Phase 3's.
+  - Phase 4 profile, harness `perf record` of `tool_warm` (300 iterations, 10498 samples),
+    load 1.13 / 1.20. Top self symbols: `CapsuleRow::contains` 26.2 %, `write_rows` 7.6 %,
+    `last_true` 4.0 %, `CarveBits::target` 3.8 %, `edit_brick` 3.7 %, `i128::div_euclid`
+    3.6 %, `CapsuleRow::new` 3.5 %, `RowCache::span` 3.3 %, `Shape::row_span` 3.2 %,
+    `first_true` 3.1 %, `CapsuleRow::nearest` 3.1 %, `Range::is_empty` 2.9 %; the 128-bit
+    division helpers (`u128_by_u64_div_rem`, `__divti3`, `__udivti3`) a further 5.2 %.
+    Inclusive: the capsule test (`CapsuleRow::contains`) 27.5 %; `nearest` 16.5 % (its two
+    tests and the `i128` closed form), `first_true` 12.6 %, `last_true` 14.3 %;
+    `Shape::row_span` 51.0 %, span work 57.8 %, `write_rows` 22.7 %, `Brick::expand` 1.9 %.
+  - Phase 5, paired with Plan 0003's tip (bench built from `2129bfb` with the Phase 1 bench
+    file) against the tip (bench source of `5850218`), alternated, two rounds, one quiet-lock
+    hold; 1-minute load 1.93 before, 1.95, 1.48, 1.80 at the starts of the next three runs,
+    1.50 after. Round 1 / round 2, mean [CI]: Plan 0003 `worst` 3.549 [3.544, 3.553] / 3.549
+    [3.544, 3.554], `mixed` 2.545 [2.541, 2.548] / 2.550 [2.547, 2.554], `tool` 8.043 [8.038,
+    8.049] / 8.056 [8.052, 8.061] ms; tip `worst` 3.189 [3.187, 3.193] / 3.264 [3.259,
+    3.269], `worst_warm` 3.054 [3.051, 3.057] / 3.034 [3.031, 3.036], `mixed` 2.355 [2.352,
+    2.359] / 2.326 [2.323, 2.328], `tool` 6.798 [6.794, 6.802] / 6.777 [6.768, 6.788],
+    `tool_warm` 6.688 [6.684, 6.693] / 6.660 [6.654, 6.667] ms.
+  - Phase 5, the Phase 1 harness profile repeated at the tip (harness on the `5850218` source,
+    release with debuginfo, 300 iterations, counters only around the applies), one quiet-lock
+    hold, load 1.92 / 1.66. `perf stat` apply only: `worst` 936.6 ms task-clock (3.11 ms per
+    iteration), 1272 faults, 3.021 G cycles, 11.091 G instructions; `worst_warm` 920.7 ms, 2
+    faults, 2.973 G, 10.782 G; `mixed` 697.3 ms, 850, 2.244 G, 8.080 G; `tool` 2047.0 ms,
+    1234, 6.633 G, 21.254 G; `tool_warm` 2033.4 ms, 2, 6.600 G, 20.958 G. `perf record`
+    shares of the samples inside `World::apply`:
+    `worst` (5178): self `write_rows` 18.9 %, `CarveBits::target` 9.3 %, `edit_brick` 6.6 %,
+    `RowCache::span` 6.5 %, `Range::is_empty` 6.5 %, libc 4.8 %, `walk_sphere_span` 4.0 %,
+    `sphere_row_spans` 4.0 %, `usize::min` 3.8 %, `i64::lt` 3.2 %; inclusive `write_rows`
+    54.9 %, row solve 12.9 %, `RowCache::span` own 6.9 %, `Brick::expand` 5.6 % (`Box::new`
+    3.5 %), `collapse` 2.4 %.
+    `worst_warm` (4918): self `write_rows` 19.6 %, `target` 9.5 %, `edit_brick` 7.1 %,
+    `is_empty` 6.6 %, `RowCache::span` 6.6 %, `walk_sphere_span` 4.2 %, `min` 4.1 %,
+    `sphere_row_spans` 3.5 %, `lt` 3.3 %, `Brick::expand` 2.7 %; inclusive `write_rows`
+    54.6 %, row solve 12.2 %, `RowCache::span` own 7.1 %, `Brick::expand` 2.9 %, `collapse`
+    2.3 %.
+    `mixed` (3922): inclusive `write_rows` 50.7 %, row solve 16.2 %, `RowCache::span` own
+    5.9 %, `Brick::expand` 4.8 %, `collapse` 2.2 %.
+    `tool` (10595): self `CapsuleRow::contains` 26.6 %, `write_rows` 7.7 %; inclusive the
+    capsule test 27.9 %, the row solve 54.0 %, `write_rows` 20.6 %, `Brick::expand` 0.8 %.
+    `tool_warm` (10454): inclusive the capsule test 27.8 %, the row solve 53.0 %,
+    `write_rows` 21.5 %, `Brick::expand` 1.3 %.
+  - Phase 5, fly-through, `--level --seed 1 --headless --bench 1 --frames 1`, release,
+    NVIDIA GeForce RTX 3080 Laptop GPU (from `nvidia-smi -L` and the `headless on` line),
+    three rounds alternated in one quiet-lock hold, load 1.83 before, 1.77 after. `bench:`
+    edit CPU, Plan 0003 (`2129bfb`) / tip (`5850218` source): 3.32 / 3.04, 3.32 / 2.98,
+    3.31 / 3.00 ms. Every run: `carved: rock 340502, ore 126 (39 chunks)`; sync uploaded
+    1165320 B (2049 bricks, 39 chunks, 656 writes); the tip's pool after the carves 2326 KiB.
+  - Diagnostic (not a done-when): `cargo bench -p vxe-world --bench stamp`, `main`'s
+    `fc9f43e` against the tip (pooled `World::stamp`), alternated, two rounds, load 1.83 /
+    1.16: `main` `vault16` 22.30 / 22.27 µs, `prefab64_mixed` 2.065 / 2.031 ms,
+    `prefab64_uniform` 1.426 / 1.427 ms; tip 20.36 / 20.53 µs, 1.927 / 1.919 ms, 1.304 /
+    1.305 ms.
+- **Gate at the tip** (tree of `86123a5`, `CARGO_BUILD_JOBS=3`): `cargo build --workspace
+  --all-targets` exit 0; `cargo clippy --workspace --all-targets -- -D warnings` exit 0;
+  `cargo fmt --all --check` exit 0; `cargo test --workspace --doc` exit 0 (1 doctest);
+  `cargo nextest run --workspace` exit 0, 212 run, 212 passed, 1 skipped (exclusive lock,
+  NVIDIA GeForce RTX 3080 Laptop GPU from `nvidia-smi -L`), including
+  `apply_matches_the_reference_over_seeded_ops`, `apply_matches_the_reference_on_uniform_worlds`,
+  `walked_spans_equal_solved_spans`, `capsule_row_span_equals_the_set_of_contained_centres`,
+  `capsule_rows_cost_logarithmic_tests`, `row_span_equals_the_set_of_contained_centres`,
+  `determinism_vector` (`0x2b6b_6a0d_1f9b_8d75`) and `raycast_hit_list_is_pinned`
+  (`0xa0f2_c477_8892_c8fb`), both constants unchanged; `cargo deny check` exit 0
+  (advisories, bans, licenses, sources ok); the hook bite tests exit 0;
+  `node scripts/check-doc-links.mjs` exit 0, 89 links; `node scripts/check-comment-hygiene.mjs`
+  exit 0; `node scripts/check-index-rows.mjs` exit 0 and its `--self-test` exit 0 (9/9).
+- **Every timing and profile reading** above was taken under the exclusive perf lock.
+- **Outstanding `human` phases:** none. `worst_warm` does not reach 2.0 ms (3.034 to 3.054
+  ms at the tip); per the amendment the close holds the brick representation ADR question and
+  the `nfr.md` §4 revision, neither decided here.
+
+## Close
+
+**Verdict (2026-10-17, fresh-session review of the tip 72fac81):** closed. Every phase is done,
+every done-when holds as amended on 2026-10-17, and the review found no blocker or major, only
+two code-comment nits (followups below). The 2 ms `nfr.md` §4 target is missed, as the
+amendment stated and the log records.
+
+**Readings** (Close triggers above; `nfr.md` §4, all under the exclusive perf lock, AMD Ryzen 9
+5900HS, paired against Plan 0003's tip): `worst` 3.55 to 3.19-3.26 ms, `mixed` 2.55 to
+2.33-2.36 ms, `tool` 8.05 to 6.78-6.80 ms, `worst_warm` 3.03-3.05 ms; the fly-through `B` line
+3.31-3.32 to 2.98-3.04 ms. Pool RAM: at most 8 MiB per world (`nfr.md` §3).
+
+**Orchestrator-applied calls (overturnable by the owner):** the minor bump to v0.7.0 (additive
+API: `World::BRICK_ARRAY_POOL_CAP`, `World::reserve_brick_arrays`, `World::pool_len`); the two
+nits and the demoted-chunk gap recorded as followups for the next dev pass.
+
+**Decision awaiting the owner: the brick representation versus the §4 target.** Not taken here.
+
+- **Option A:** a brick-representation ADR (a layout that writes a row cheaper than ADR-0002's
+  dense `u16` array, superseding part of ADR-0002), then a plan.
+- **Option B:** revise `nfr.md` §4 to a measured cap in place of 2 ms.
+- **The reviewer recommends B now, with A deferred** until a consumer frame shows the edit
+  cost matters.
+- **The arithmetic:** at the tip, `write_rows` is 54.6 % of `worst_warm` inclusive, about
+  1.66 ms of the 3.04 ms. Removing the row solve, the span lookup and `Brick::expand` entirely
+  leaves about 2.4 ms. Nothing inside ADR-0002's representation reaches 2 ms.
 
 ## Followups
 
+- **`apps/flythrough/src/main.rs:69` comment nit:** it says "4 Mi" but means 2 Mi voxels, 4 MiB.
+- **`CapsuleRow::nearest` comment nit** (`crates/vxe-world/src/shape.rs`): state the `i128` range the closed form stays within.
+- **Demoted chunks do not return their arrays to the pool** (only an evicted chunk does);
+  route a full-to-LOD demotion through `World::recycle_chunk` as well.
 - Allocation-free result path (Plan 0003's followup), if the frame path shows it.

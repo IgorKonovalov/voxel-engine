@@ -48,9 +48,9 @@ use vxe_render::{
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
-    ChunkCoord, ChunkExtent, CoarseGrid, EditError, EditOp, EditResult, FIXED_ONE, Fixed3,
-    MaterialId, MaterialTable, Mode, PersistConfig, Rot, StreamConfig, Streamer, Tier, VoxelCoord,
-    WalkableMap, WalkableParams, World,
+    BRICK_VOXELS, ChunkCoord, ChunkExtent, CoarseGrid, EditError, EditOp, EditResult, FIXED_ONE,
+    Fixed3, MaterialId, MaterialTable, Mode, PersistConfig, Rot, StreamConfig, Streamer, Tier,
+    VoxelCoord, WalkableMap, WalkableParams, World,
 };
 
 /// Reach of the dig and fill rays: 10 m.
@@ -65,6 +65,9 @@ const FILL_RADIUS: i64 = 3 * FIXED_ONE;
 const BENCH_CARVES: usize = 100;
 const BENCH_RADIUS: i64 = 10 * FIXED_ONE;
 const BENCH_SPREAD: i64 = 100;
+/// Brick arrays the world's pool is topped up to after each frame's edits and before the `B`
+/// bench: 4 Mi of `u16` voxels, more than the bench's 100 carves expand.
+const RESERVE_ARRAYS: usize = 4096;
 /// Free pool slots requested beyond the bounded level's `Full` bricks, so digging can grow
 /// the pool: 64 Ki slots.
 const POOL_HEADROOM_BRICKS: u64 = 65_536;
@@ -690,8 +693,9 @@ impl Run {
         match gfx.mirror.sync(&self.world, &gpu.queue) {
             Ok(s) => println!(
                 "bench: {BENCH_CARVES} carves of radius 1 m within 10 m ({refused} refused): \
-                 edits {edit_ms:.2} ms CPU; sync uploaded {} B ({} bricks, {} chunks, {} visited, \
-                 {} writes) in {:.2} ms",
+                 edits {edit_ms:.2} ms CPU, brick-array pool {} KiB; sync uploaded {} B ({} bricks, \
+                 {} chunks, {} visited, {} writes) in {:.2} ms",
+                self.world.pool_len() * BRICK_VOXELS * 2 / 1024,
                 s.bytes,
                 s.bricks,
                 s.chunks,
@@ -821,6 +825,7 @@ impl Run {
         }
         self.gfx = Some(gfx);
         for _ in 0..self.args.bench {
+            self.world.reserve_brick_arrays(RESERVE_ARRAYS);
             self.bench(gpu);
         }
     }
@@ -1139,6 +1144,8 @@ impl Run {
             }
             self.handle_input(gpu, input);
         }
+        // Off the edit path: the next frame's edits take touched arrays from the pool.
+        self.world.reserve_brick_arrays(RESERVE_ARRAYS);
         if let Some(n) = self.args.frames
             && self.frame + SAMPLES as u32 == n
         {

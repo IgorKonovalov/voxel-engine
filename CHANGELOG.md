@@ -8,6 +8,26 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 Plan 0012 (no version: repository tooling): CI runs `scripts/check-comment-hygiene.mjs` (no relative link or plan-relative narration in `.rs`/`.wgsl` comments) and `scripts/check-index-rows.mjs` with `--self-test` (rows inside `roster:begin` markers at most 320 bytes); seeded fixture trees under `scripts/fixtures/`.
 
+## [0.7.0] - 2026-10-17
+
+Plan 0014: the second pass on the `docs/nfr.md` §4 edit cost. Edits are cheaper, but the
+2 ms figure is still missed; the choice between a brick-representation ADR and a measured §4
+cap awaits the owner. Readings (AMD Ryzen 9 5900HS, `cargo bench -p vxe-world --bench edits`,
+paired with the Plan 0003 tip): `worst` 3.55 -> 3.19-3.26 ms, `mixed` 2.55 -> 2.33-2.36 ms,
+`tool` 8.05 -> 6.78-6.80 ms, and the new `worst_warm` 3.03-3.05 ms.
+
+- `vxe-world`: a brick-array pool. Expanding a uniform brick takes a pooled array, collapsing
+  one and evicting a chunk give arrays back. New API: `World::BRICK_ARRAY_POOL_CAP` (8192
+  arrays, at most 8 MiB), `World::reserve_brick_arrays` and `World::pool_len`.
+- `vxe-world`: the sphere's row spans come from a brick-row span walk, and a capsule row is
+  solved analytically from its nearest centre plus a bisection instead of a linear scan.
+- `vxe-world`: `World::stamp` takes and gives back pooled arrays.
+- `vxe-world` tests and benches: a uniform-world reference oracle
+  (`apply_matches_the_reference_on_uniform_worlds`); the `worst_warm` and `tool_warm` edit
+  bench cases (after a reserve) and the `expand` bench group.
+- `apps/flythrough`: tops the pool up to a 4096-array reserve after each frame's edits and
+  prints the pool size on its `bench:` line.
+
 ## [0.6.0] - 2026-10-17
 
 Plan 0008: the headless halves of M6 (`.vox` import) and M7 (prefab stamping). The stamp
