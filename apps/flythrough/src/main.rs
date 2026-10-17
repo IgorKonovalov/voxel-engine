@@ -55,7 +55,9 @@
 //! query's time and region count.
 //!
 //! `--audio` opens the default output device, `H` plays a knock and `J` a looping hum at the point
-//! the last left click dug; every frame probes their occlusion through the world. `--audio-debug` is
+//! the last left click dug; every frame probes their occlusion through the world. `T` plays a
+//! looping pulse (a knock each second) there, to hear the echoes in its gaps; `E` toggles the
+//! early reflections. `--audio-debug` is
 //! `--audio` plus a line a second of the output callback's readings, and on exit writes the last
 //! 60 s the callback handed the device to `flythrough-audio-debug.wav`. `FLYTHROUGH_HRIR=<pack>`
 //! in the environment loads that HRIR pack instead of the shipped one.
@@ -149,8 +151,10 @@ const METRES_PER_VOXEL: f32 = 0.1;
 const KNOCK_SEED: u64 = 0x0006_0001;
 const KNOCK_SECONDS: f32 = 0.05;
 const KNOCK_DECAY_SECONDS: f32 = 0.01;
-/// The hum `J` plays: one second of 440 Hz (a whole number of cycles, so it loops cleanly).
-const HUM_HZ: f32 = 440.0;
+/// The hums `J` plays in turn, one note per press so each source can be told apart by ear:
+/// an A minor pentatonic from A3 to D5, rounded to whole hertz so one second holds a whole
+/// number of cycles and loops cleanly.
+const HUM_HZ: [u32; 8] = [220, 262, 294, 330, 392, 440, 523, 587];
 const HUM_AMPLITUDE: f32 = 0.3;
 /// The acoustic triple (absorption per metre, transmission, resonance) the probes give every
 /// solid cave row; the cave's own table leaves it zero, which would block all sound.
@@ -449,6 +453,19 @@ fn median(v: &mut [f64]) -> f64 {
 
 /// SplitMix64 noise in `[-1, 1)` under an exponential decay: the knock `H` plays.
 fn knock() -> Sound {
+    Sound::new(knock_samples())
+}
+
+/// The `T` pulse: one knock at the start of each second, silence after it, so a looping pulse
+/// leaves gaps in which the echoes off far walls can be heard on their own.
+fn pulse() -> Sound {
+    let mut samples = knock_samples();
+    samples.resize(vxe_audio::RATE as usize, 0.0);
+    Sound::new(samples)
+}
+
+/// The knock's samples.
+fn knock_samples() -> Vec<f32> {
     let mut state = KNOCK_SEED;
     let len = (KNOCK_SECONDS * vxe_audio::RATE as f32) as usize;
     let samples: Vec<f32> = (0..len)
@@ -459,7 +476,7 @@ fn knock() -> Sound {
             0.8 * noise * (-t / KNOCK_DECAY_SECONDS).exp()
         })
         .collect();
-    Sound::new(samples)
+    samples
 }
 
 /// The cave's material table with [`CAVE_ACOUSTIC`] on every row but air.
@@ -474,12 +491,12 @@ fn acoustic_table() -> MaterialTable {
     t
 }
 
-/// One second of the `J` hum.
-fn hum() -> Sound {
+/// One second of a `J` hum at `hz`.
+fn hum(hz: u32) -> Sound {
     let rate = vxe_audio::RATE as f32;
     Sound::new(
         (0..vxe_audio::RATE)
-            .map(|n| HUM_AMPLITUDE * (std::f32::consts::TAU * HUM_HZ * n as f32 / rate).sin())
+            .map(|n| HUM_AMPLITUDE * (std::f32::consts::TAU * hz as f32 * n as f32 / rate).sin())
             .collect::<Vec<_>>(),
     )
 }
@@ -489,7 +506,12 @@ fn hum() -> Sound {
 struct Audio {
     output: Output,
     knock: Sound,
-    hum: Sound,
+    /// The looping knock `T` plays.
+    pulse: Sound,
+    /// One hum per [`HUM_HZ`] note.
+    hums: Vec<Sound>,
+    /// The note the next `J` plays, an index into [`HUM_HZ`].
+    next_hum: usize,
     /// Where the last left click dug, in voxel units.
     dig_point: Option<[f32; 3]>,
     acoustics: Acoustics,
@@ -558,14 +580,27 @@ fn wav_f32_stereo(samples: &[f32]) -> Vec<u8> {
 }
 
 impl Audio {
-    /// Plays the sound `name` names (`knock` or `hum`) at the dig point with `params`.
+    /// Plays the sound `name` names (`knock`, `hum` or `pulse`) at the dig point with `params`.
     fn play(&mut self, name: &str, params: impl Fn([f32; 3]) -> PlayParams) {
         let Some(p) = self.dig_point else {
             println!("{name}: no dig point yet; left-click first");
             return;
         };
         let sound = if name == "hum" {
-            &self.hum
+            let i = self.next_hum;
+            self.next_hum = (i + 1) % self.hums.len();
+            println!(
+                "hum: note {} of {}, {} Hz, at [{:.1}, {:.1}, {:.1}]",
+                i + 1,
+                self.hums.len(),
+                HUM_HZ[i],
+                p[0],
+                p[1],
+                p[2]
+            );
+            &self.hums[i]
+        } else if name == "pulse" {
+            &self.pulse
         } else {
             &self.knock
         };
@@ -618,7 +653,9 @@ impl Audio {
                 Some(Self {
                     output,
                     knock: knock(),
-                    hum: hum(),
+                    pulse: pulse(),
+                    hums: HUM_HZ.iter().map(|&hz| hum(hz)).collect(),
+                    next_hum: 0,
                     dig_point: None,
                     acoustics,
                     table: acoustic_table(),
@@ -1984,6 +2021,17 @@ impl Run {
         if let Some(audio) = self.audio.as_mut() {
             if input.pressed(KeyCode::KeyH) {
                 audio.play("knock", PlayParams::at);
+            }
+            if input.pressed(KeyCode::KeyT) {
+                audio.play("pulse", |p| PlayParams {
+                    looping: true,
+                    ..PlayParams::at(p)
+                });
+            }
+            if input.pressed(KeyCode::KeyE) {
+                let on = !audio.acoustics.reflections_on();
+                audio.acoustics.set_reflections(on);
+                println!("echoes {}", if on { "on" } else { "off" });
             }
             if input.pressed(KeyCode::KeyJ) {
                 audio.play("hum", |p| PlayParams {
