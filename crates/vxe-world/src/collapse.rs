@@ -410,6 +410,13 @@ impl World {
     /// overwrites a solid voxel outside the region. Every solid voxel moves, an `INDESTRUCTIBLE`
     /// one included: a rigid move destroys nothing. Fails with `NotResident`, changing nothing,
     /// when a cell's chunk, or a voxel a scan reaches, is not resident.
+    ///
+    /// The op moves every solid voxel of the named cells' bricks, including voxels that were
+    /// not part of the region the caller had in mind. A caller dropping a piece tick by tick
+    /// names its cells again on every call: after a drop by a multiple of `BRICK_EDGE` the
+    /// piece's voxels lie in its cells shifted down by `dropped / BRICK_EDGE`; after any other
+    /// drop they straddle two cell layers, and the caller re-derives the cells (for example from
+    /// a [`crate::CoarseGrid`] updated with [`DropResult::edit_result`]).
     pub fn drop_region(&self, cells: &[CellCoord], max_drop: i32) -> Result<DropResult, EditError> {
         let map = read(&self.store.chunks);
         let snap = Snapshot::take(&map, cells)?;
