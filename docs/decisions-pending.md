@@ -91,10 +91,19 @@ shadows. Look at silhouettes and walls close up and at about 5 m.
 for the growth rule; if that later brings overhead down, the radius can go back to 16. If C
 does not hold up, take **A at 14**.
 
-**What an answer starts.** The architect writes ADR-0012 from your pick, the plan-0013 branch
-merges main (it is 10 plans behind, with known conflicts in `march.wgsl`, `gpu_world.rs` and
-`world_budget.rs`), then dev builds Phase 5. Phase 6 (you set rock detail strength by eye) and
-Phase 7 (contour becomes the default) follow.
+**What an answer starts.** The plan-0013 branch merges main (it is 10 plans behind, with
+known conflicts in `march.wgsl`, `gpu_world.rs` and `world_budget.rs`), then dev builds
+Phase 5. Phase 6 (you set rock detail strength by eye) and Phase 7 (contour becomes the
+default) follow.
+
+**Update, 2026-10-17 (after the brick decision).** ADR-0012 (proposed) now settles the
+footprint's final form as **A, surface-only**, stored at the popcount index of a surface mask
+inside the brick's variable-size mirror slot; that arrives with ADR-0012's mirror-slot plan,
+after Plan 0015. So Phase 4's pick is the **interim** row that lets contour become the default
+now: the recommendation is **D at 14** (no lossy change to undo later; about 3.69 GB allocated
+at the measured 1.44x overhead, so the growth-rule follow-up is still needed) or **C at 14** if
+`block2` holds up by eye and you accept a lossy interim. Plan 0013's Phase 4 wording ("its own
+ADR") is satisfied by ADR-0012; the architect amends the plan when the branch merges main.
 
 ---
 
@@ -185,6 +194,14 @@ representation (ADR-0002: a brick is either uniform or a full `[u16; 512]`) reac
     frame, the work returns with more of the engine built on today's representation.
 - **Recommendation: B now, with A recorded as a deferred follow-up**, to be reopened when the
   baseline CPU is measured (M2's close) or a real frame shows edit cost.
+
+**Answered, 2026-10-17.** The owner reframed the question around frame-time stability and
+chose **A**, in the form of D3a's option 3 on both sides of the upload: ADR-0012 (proposed),
+with Plan 0015 (the traversal hierarchy, drafted) first, then the CPU-format plan whose Phase 1
+is D3a's census-and-kernel spike, then the mirror-slot plan. The 2 ms figure stays as written
+until the format plan's close reads the new kernel; D3a's six questions are answered in
+ADR-0012's Context and Decision except the first (dev box or baseline for the 2 ms figure),
+which the format plan's close puts to the owner with the reading in hand.
 
 ---
 

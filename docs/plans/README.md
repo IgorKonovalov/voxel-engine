@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0015** (ADRs are a separate sequence; next free there is **0012**).
+**Next free number: 0016** (ADRs are a separate sequence; next free there is **0013**).
 
 ## Active roster
 
@@ -11,7 +11,8 @@ state from `git log`. Completed plans move to `done/`.
 | Plan | Title | Status | Live constraint |
 |------|-------|--------|-----------------|
 | [0006](0006-spatial-audio-hrtf-mixer-and-occlusion.md) | Spatial audio: a headless HRTF mixer on the device callback, occlusion and early reflections through the material table | approved | M4, new crate `vxe-audio`; amended three times 2026-10-16; Phase 4 unblocked on `plan-0006`. Paired with ADR-0006. |
-| [0013](0013-contour-default-shadow-origin-and-streamed-footprint.md) | Contour as the fly-through's default: the shadow-ray origin, a streamed footprint under 3 GB, and a weaker rock detail | approved | M2 surface follow-up to ADR-0011; two `human` phases. The footprint pick gets its own ADR. |
+| [0013](0013-contour-default-shadow-origin-and-streamed-footprint.md) | Contour as the fly-through's default: the shadow-ray origin, a streamed footprint under 3 GB, and a weaker rock detail | approved | M2 surface follow-up to ADR-0011; two `human` phases. ADR-0012 settles the footprint; Phase 4 picks the interim. |
+| [0015](0015-traversal-hierarchy-chunk-bits-brick-masks-and-translucent-class.md) | The traversal hierarchy: chunk bits, full-resolution brick masks, a one-read-per-level walk, and the translucent class | draft | M2, first step of ADR-0012 on today's pool. Conflicts with `plan-0013` in the marcher. |
 <!-- roster:end -->
 
 ## Recently closed

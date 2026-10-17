@@ -49,6 +49,7 @@ plan that implements them (see [`adrs/README.md`](adrs/README.md)).
 | Surface look (added 2026-10-16) | smooth and natural rock, not visible cubes, with the Sibenik cathedral figure of Laine & Karras 2010 (ESVO, Figure 1) as the quality reference: not photorealism, but that level of believable surface and soft light; the mechanism (per-voxel normal smoothing, per-voxel contour planes in the GPU mirror, procedural per-material surface detail, or another) is chosen by measurement after M1, balancing image, frame cost and simplicity | a blocky aesthetic; photorealism; committing to ESVO-style contours before anything is on screen |
 | VR readiness (added 2026-10-16) | PC VR is a possible later target, so the renderer keeps three doors open from M2 on: a view is an asymmetric frustum (origin, basis, four tangent half-angles) and the frame renders N views, not one camera with a symmetric field of view; lighting is view-independent or shareable across views where the cost is equal; presentation is decoupled from the window surface. Actual VR support (OpenXR, 90 Hz, two eyes) is an unscheduled milestone with its own hardware floor, never a promise on the baseline GPU. See "Unscheduled: PC VR" below | building OpenXR support now; standalone headsets (mobile GPU, Android); treating VR as a mode of the baseline budget |
 | Physics (added 2026-10-16) | **voxel dynamics, not a rigid-body engine.** Collapse is emergent and authoritative: `vxe-world` answers which region lost its connection to the anchor after an edit, and deterministic ops decide what the world looks like afterwards. Fall damage is a controller event. Debris and falling pieces may be animated client-side by a rigid-body library as a cosmetic layer that never writes to the world. Revises M8 and the consumer's "scripted collapse only" wording | a general physics engine (`rapier`) in the authoritative world; scripted-only collapse; no collapse at all |
+| Floor, profiles and scene scale (added 2026-10-17) | the GTX 1660-class floor of `nfr.md` §1 stays the 60 fps gate at 1080p with an upscaler; a named **portable profile** (Switch-2-class: about 1.7 to 3 TFLOPS, 68 to 102 GB/s, 9 GB shared) is a target of the quality settings (internal resolution, full-detail radius, translucent layers, lighting tier), at 720p and 30 to 60 fps; 120 fps is welcome where a fast machine reaches it through a performance profile, not a gate. Lighting has two tiers: direct light by one shadow ray per light at half resolution with blur and temporal reprojection on the floor, ReSTIR direct lighting where the budget allows, and indirect light from probes in both. Glass, water and lava are translucent voxels in the brick map; mist, smoke and fire are a separate coarse volume. Open-sky and kilometre-scale scenes are in scope, so the far-field clipmap is a scheduled plan, not a maybe. The brick representation that serves all of this is ADR-0012 | Switch 1 (about 0.4 TFLOPS, 25.6 GB/s shared, no public graphics API for `wgpu`); raising the floor to the dev laptop; 120 fps as a budget; media as voxels in the brick map |
 
 ## The first consumer's needs, mapped
 
@@ -194,7 +195,12 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plan 0005 closed; Plan 0013 drafts the surface follow-up; the lighting plan next)
+### M2: Lighting that holds in the dark (in progress: Plan 0005 closed; Plan 0013 is the surface follow-up; Plan 0015 drafts the traversal hierarchy; the lighting plan next)
+
+Plan 0015 (draft, 2026-10-17) comes before the lighting plan: it gives the marcher a
+hierarchy of occupancy bits (chunk bits, 512-bit brick masks, a walk that reads one line per
+level) and the translucent material class, on today's pool, as the first step of ADR-0012.
+Every lighting pass casts rays through that walk, so its cost per ray is settled first.
 
 Plan 0005 closed 2026-10-16 (v0.4.0): the surface-look spike measured four normal modes and
 procedural detail, and the owner chose per-voxel contour planes with weaker rock detail
@@ -328,7 +334,11 @@ a cheap query.
 
 ### M8: Volumetrics, debris and collapse (support query and collapse ops shipped in Plan 0009, v0.8.0; volumetrics, debris and the cosmetic rigid-body layer remain open, the last after M6)
 
-- Dust and fog in the ray marcher; short-lived particle debris from edits.
+- Dust, fog, mist and smoke as a separate coarse volume (a froxel grid or a per-brick density
+  grid, marched at half resolution with a fixed step count and composited over the opaque
+  hit; owner's call, 2026-10-17), never as voxels in the brick map; short-lived particle
+  debris from edits. Translucent solids (glass, water, lava) are voxels of a translucent
+  material class instead, composited by Plan 0015's bounded walk.
 - **Support query** in `vxe-world`: after an edit, the set of coarse-grid cells (0.8 m, from
   M3) that are solid but no longer connected to the anchor (the indestructible shell, the
   world boundary, or an explicit anchor set the game supplies). A capped flood (ADR-0008)

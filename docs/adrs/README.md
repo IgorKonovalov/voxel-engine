@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0012.**
+**Next free number: 0013.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -26,6 +26,7 @@ the status.
 | [0009](0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) | The testbed HUD is an embedded 8 × 8 bitmap font drawn in one overlay pass, with no UI library | accepted |
 | [0010](0010-game-logic-as-a-component-behind-a-logic-trait.md) | The game's server logic is a component behind a `Logic` trait, developed natively and shipped as WebAssembly; Lua is deferred | accepted |
 | [0011](0011-contour-planes-in-attribute-pages-with-procedural-detail.md) | Smooth surfaces from per-voxel contour planes in attribute pages of the brick pool, with procedural per-material detail | accepted |
+| [0012](0012-mask-first-brick-with-per-brick-palette-planes.md) | A brick is occupancy masks plus a per-brick palette in bit planes, the same bytes on the CPU and in the mirror | proposed |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

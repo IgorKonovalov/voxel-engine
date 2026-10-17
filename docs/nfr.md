@@ -9,15 +9,22 @@ Written 2026-10-16. Readings are added under the figure they measure, each namin
 
 ## 1. Hardware
 
-| | Baseline (the floor) | Dev reference |
-|---|---|---|
-| GPU | 2019 mid-range desktop: GTX 1660 / RX 5600 class, 6 GB VRAM, Vulkan 1.2, no RT hardware | NVIDIA RTX 3080 Laptop, 8 GB, driver 610 |
-| CPU | 4 cores / 8 threads | 16 threads (AMD, Cezanne) |
-| RAM | 16 GB | 30 GB |
-| OS | Linux (Vulkan), Windows (Vulkan or DX12 through wgpu) | Arch Linux, Wayland |
+| | Baseline (the floor) | Dev reference | Portable profile (a quality profile, not a gate) |
+|---|---|---|---|
+| GPU | 2019 mid-range desktop: GTX 1660 / RX 5600 class, 6 GB VRAM, Vulkan 1.2, no RT hardware | NVIDIA RTX 3080 Laptop, 8 GB, driver 610 | Switch-2 class: about 1.7 to 3 TFLOPS, 68 to 102 GB/s, published figures; no device on hand |
+| CPU | 4 cores / 8 threads | 16 threads (AMD, Cezanne) | 8 ARM cores class |
+| RAM | 16 GB | 30 GB | 9 GB shared by CPU and GPU |
+| OS | Linux (Vulkan), Windows (Vulkan or DX12 through wgpu) | Arch Linux, Wayland | none targeted; the profile is held on a PC of that class |
 
 A perf figure measured only on the dev reference is labelled as such. The baseline card is to be
 acquired or borrowed before M2 closes; until then the baseline numbers are projections.
+
+The portable profile (owner, 2026-10-17; `roadmap.md`, "Floor, profiles and scene scale") is
+a named setting of the quality knobs (internal resolution, full-detail radius, translucent
+layers, lighting tier) at 720p output and 30 to 60 fps. It has no reading until a machine of
+that class is on hand; until then its figure is the storage reads per ray that Plan 0015
+counts, against about three uncached 64-byte lines per ray at 720p and 60 fps with three rays
+a pixel (arithmetic from the published bandwidth).
 
 ## 2. Frame budget
 
@@ -401,7 +408,11 @@ criterion median (low, high), exclusive perf lock, load average 1.7 to 2.3 at ea
 ## 9. Not goals (for now)
 
 - Binary size.
-- Mobile, web or console targets.
-- Frame rates above 60 fps as a gate; they are welcome, not required.
+- Mobile, web or console targets as such. The portable profile of §1 is a PC-class setting
+  that a Switch-2-class device could run; a console port, its SDK and its certification are
+  not planned, and Switch 1 is out of reach for a ray marcher of this shape (owner,
+  2026-10-17).
+- Frame rates above 60 fps as a gate; they are welcome, not required. A fast machine
+  reaches 120 fps through a performance profile, not through a budget row here.
 - VR on the baseline. The VR-readiness decision in `roadmap.md` keeps the renderer's doors
   open; a VR plan adds its own profile here (two views, 90 Hz, a named card) when scheduled.
