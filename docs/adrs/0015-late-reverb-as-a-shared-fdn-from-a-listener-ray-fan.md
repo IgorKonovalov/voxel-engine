@@ -1,6 +1,6 @@
 # ADR-0015: Late reverb is one listener-shared feedback delay network driven by a ray fan from the listener; early echoes render from their wall's direction
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-17)
 > **Date:** 2026-10-17
 > **Related plan(s):** [Plan 0020](../plans/0020-cavern-reverb-directional-echoes-and-gliding-taps.md)
 

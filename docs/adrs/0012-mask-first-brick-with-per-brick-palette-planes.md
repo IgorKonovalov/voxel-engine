@@ -1,6 +1,6 @@
 # ADR-0012: A brick is occupancy masks plus a per-brick palette in bit planes, the same bytes on the CPU and in the mirror
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-17)
 > **Date:** 2026-10-17
 > **Related plan(s):** [Plan 0015](../plans/0015-traversal-hierarchy-chunk-bits-brick-masks-and-translucent-class.md)
 > (the traversal hierarchy on today's pool), then a CPU-format plan and a mirror-slot plan,

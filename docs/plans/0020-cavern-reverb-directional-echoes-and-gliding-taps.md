@@ -1,6 +1,6 @@
 # 0020: Cavern reverb: a late tail sized by the room the listener sees, echoes from their walls, taps that glide, and the player's own voice in the cave
 
-> **Status:** draft
+> **Status:** approved (2026-10-17)
 > **Created:** 2026-10-17
 > **Milestone:** M4 in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0015](../adrs/0015-late-reverb-as-a-shared-fdn-from-a-listener-ray-fan.md) (the tail, the fan, the skin-depth rule, the direction buses), ADR-0006 (mixer on the callback, probes on the caller's thread)

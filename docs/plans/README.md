@@ -17,7 +17,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0017](0017-mirror-budget-reservation-page-kinds-and-pressure.md) | The mirror reserves its budget: fixed buffers, empty pages that change kind, and a pressure signal the streamer follows | approved | Paired with ADR-0013. Best after Plan 0015. |
 | [0018](0018-server-routed-stamp-drop-and-remove.md) | Stamp, drop and remove as op kinds 2 to 4 through the server, the log and the logic host | approved | Paired with ADR-0014; `LOG_FORMAT` 2. |
 | [0019](0019-metered-host-calls-and-shape-range-checks.md) | Host calls charged by their work, and a world that refuses out-of-range shapes and queries | approved | Shares an `EditError` variant with Plan 0018. |
-| [0020](0020-cavern-reverb-directional-echoes-and-gliding-taps.md) | Cavern reverb: a late tail sized by the room the listener sees, echoes from their walls, taps that glide, and the player's own voice in the cave | draft | M4, paired with ADR-0015. After Plan 0006 closes; takes over its moving-click finding. |
+| [0020](0020-cavern-reverb-directional-echoes-and-gliding-taps.md) | Cavern reverb: a late tail sized by the room the listener sees, echoes from their walls, taps that glide, and the player's own voice in the cave | approved | M4, paired with ADR-0015. After Plan 0006 closes; takes over its moving-click finding. |
 <!-- roster:end -->
 
 ## Recently closed
