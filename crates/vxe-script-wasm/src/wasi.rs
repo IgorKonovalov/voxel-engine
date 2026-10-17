@@ -7,6 +7,11 @@
 //!   each output's eight little-endian bytes in turn. `wasi:random/insecure-seed` (which the
 //!   standard library's `HashMap` keys come from) is the first sixteen bytes of the stream
 //!   for tick 0, fixed when the component is instantiated.
+//! - **Timers.** `wasi:clocks/monotonic-clock`'s `subscribe-duration` and `subscribe-instant`
+//!   return a pollable that is always ready: a sleep returns at once and a timer polled in a
+//!   loop is ready on the first poll, so no wait spends wall time or reveals how much passed.
+//!   wasmtime-wasi's own implementations wait on a real-time deadline whatever the clock
+//!   reads; the host shadows them in the linker (`ready_timer`).
 //! - **Nothing else.** No preopened directories, no environment variables, no arguments,
 //!   stdin closed, stdout discarded, stderr kept for a trap's message, no network.
 
@@ -17,7 +22,9 @@ use std::time::Duration;
 
 use rand_core::TryRng;
 use vxe_world::hash::mix64;
+use wasmtime::component::{Resource, ResourceTable};
 use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
+use wasmtime_wasi::p2::{DynPollable, Pollable, subscribe};
 use wasmtime_wasi::{HostMonotonicClock, HostWallClock, WasiCtx};
 
 /// The xorshift state a call's stream starts from: `mix64(seed ^ tick)`, or the golden-ratio
@@ -145,6 +152,21 @@ impl TryRng for TickRandom {
         self.fill(dst);
         Ok(())
     }
+}
+
+/// A timer that is ready from the start.
+struct Ready;
+
+#[wasmtime_wasi::async_trait]
+impl Pollable for Ready {
+    async fn ready(&mut self) {}
+}
+
+/// The pollable `subscribe-duration` and `subscribe-instant` return in place of
+/// wasmtime-wasi's real-time deadline: always ready.
+pub(crate) fn ready_timer(table: &mut ResourceTable) -> wasmtime::Result<Resource<DynPollable>> {
+    let timer = table.push(Ready)?;
+    subscribe(table, timer)
 }
 
 /// What the host keeps to steer and read the component's WASI.

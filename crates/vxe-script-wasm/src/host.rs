@@ -13,11 +13,12 @@ use std::ptr::NonNull;
 use vxe_net::{ClientInput, Host, Logic, LogicError, TickOutput};
 use vxe_world::wire::{Reader, decode_op};
 use vxe_world::{Face, Fixed3, Op, VoxelCoord};
+use wasmtime::StoreContextMut;
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Engine, ResourceLimiter, Store, Trap};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
-use crate::wasi::{WasiHandles, context, stream_state};
+use crate::wasi::{WasiHandles, context, ready_timer, stream_state};
 use crate::{ANSWER_UNDECODABLE, encode_answer};
 
 mod bindings {
@@ -188,6 +189,33 @@ impl wit::Host for State {
     }
 }
 
+/// The `wasi:clocks/monotonic-clock` instance `add_to_linker_sync` registers. A component
+/// importing another 0.2 minor version resolves to it by semver; a wasmtime-wasi bump that
+/// moves it must move this too, or the shadowing below defines a second instance and the
+/// `timer` guest's test fails.
+const MONOTONIC_CLOCK: &str = "wasi:clocks/monotonic-clock@0.2.12";
+
+/// Replaces wasmtime-wasi's `subscribe-duration` and `subscribe-instant`, which wait on a
+/// real-time deadline, with timers that are always ready (`wasi` module).
+fn shadow_timers(linker: &mut Linker<State>) -> wasmtime::Result<()> {
+    linker.allow_shadowing(true);
+    let mut clock = linker.instance(MONOTONIC_CLOCK)?;
+    clock.func_wrap(
+        "subscribe-duration",
+        |mut store: StoreContextMut<'_, State>, (_,): (u64,)| {
+            Ok((ready_timer(&mut store.data_mut().table)?,))
+        },
+    )?;
+    clock.func_wrap(
+        "subscribe-instant",
+        |mut store: StoreContextMut<'_, State>, (_,): (u64,)| {
+            Ok((ready_timer(&mut store.data_mut().table)?,))
+        },
+    )?;
+    linker.allow_shadowing(false);
+    Ok(())
+}
+
 /// An instantiated component.
 struct Live {
     store: Store<State>,
@@ -239,6 +267,7 @@ impl WasmLogic {
         let component = Component::from_file(&engine, path).map_err(load)?;
         let mut linker = Linker::<State>::new(&engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker).map_err(load)?;
+        shadow_timers(&mut linker).map_err(load)?;
         bindings::Logic::add_to_linker::<State, wasmtime::component::HasSelf<State>>(
             &mut linker,
             |s| s,

@@ -2687,6 +2687,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "timer-guest"
+version = "0.10.0"
+dependencies = [
+ "vxe-net",
+ "vxe-script-wasm",
+ "wasip2",
+]
+
+[[package]]
 name = "tinystr"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

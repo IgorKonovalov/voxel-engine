@@ -1,12 +1,14 @@
 //! The component observes nothing but its seed and its inputs. Each knob of the host's
 //! configuration has a guest that would notice its absence: `probe` reads NaN bits, both
 //! clocks, `getrandom`, `HashMap` order, the filesystem and the environment; `spin` never
-//! returns; `hog` applies its inputs, then allocates 1 GiB. A logic that fails a call is
-//! stopped for the rest of the run, and the ops it applied before failing stay.
+//! returns; `hog` applies its inputs, then allocates 1 GiB; `timer` sleeps and polls a timer.
+//! A logic that fails a call is stopped for the rest of the run, and the ops it applied before
+//! failing stay.
 
 mod support;
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use support::guest;
 use vxe_net::test_logic::*;
@@ -298,4 +300,32 @@ fn edits_applied_before_a_failure_stay_and_resimulate() {
     );
     assert_eq!(ops.encode(), server.ops().encode());
     assert_eq!(fresh.voxel_hash(), direct.voxel_hash());
+}
+
+/// The component's timers are always ready: `timer` sleeps 30 s and then polls a fresh 1 s
+/// timer every tick, yet each tick broadcasts `[1]` (ready) and two loads of three ticks take
+/// well under one sleep of wall time. A real timer would block the host thread for each sleep.
+#[test]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the test measures that a guest's sleep spends no wall time"
+)]
+fn timers_are_always_ready_and_never_wait() {
+    let start = Instant::now();
+    for _ in 0..2 {
+        let mut logic =
+            WasmLogic::load(&guest("timer"), &WasmConfig::default()).expect("timer loads");
+        let world = solid3_world();
+        let mut host = WorldHost(&world);
+        logic.try_init(&mut host, 0).expect("timer's init returns");
+        let broadcasts: Vec<_> = (0..3)
+            .map(|tick| logic.try_tick(&mut host, tick, &[]))
+            .collect();
+        assert_eq!(
+            broadcasts,
+            [0, 1, 2].map(|_| Ok(TickOutput { broadcast: vec![1] }))
+        );
+    }
+    let elapsed = start.elapsed();
+    assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
 }

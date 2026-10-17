@@ -68,6 +68,8 @@ wasmtime-wasi = { version = "=49.0.3", default-features = false }
 # The trait the WASI random interfaces take, at wasmtime-wasi's version.
 rand_core = { version = "=0.10.1", default-features = false }
 wit-bindgen = { version = "=0.61.1", default-features = false, features = ["macros", "realloc"] }
+# The `timer` guest's direct `wasi:clocks` calls, at the version getrandom already pulls in.
+wasip2 = { version = "=1.0.4", default-features = false, features = ["std"] }
 # Only the backends we ship (ADR-0001): Vulkan on Linux and Windows, DX12 on Windows.
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "dx12", "wgsl"] }
 # Wayland and X11 on Linux without client-side decorations (the window manager draws them).
