@@ -262,16 +262,18 @@ fn a_logic_error_is_a_tick_without_logic_ops_whose_inputs_are_logged() {
     assert_eq!(server.world().voxel_hash(), solid3_world().voxel_hash());
 }
 
-/// Ops a logic applied before it failed stay applied and logged, and re-simulation with a
-/// fresh component under the same configuration reproduces them and the failure.
+/// Ops a logic applied before it failed stay applied and logged; re-simulation with a fresh
+/// component under the same configuration reproduces them, and a second run of the session
+/// reproduces the failure at the same tick with the same partial ops.
 #[test]
 fn edits_applied_before_a_failure_stay_and_resimulate() {
     let config = WasmConfig::default();
     let (mut server, client) = session("hog", &config, 0);
     let op = seeded_carves(0x0011, 1)[0];
     client.send_input(op_bytes(op));
+    let report = server.tick();
     assert_eq!(
-        server.tick(),
+        report,
         TickReport {
             tick: 0,
             applied: 1,
@@ -303,6 +305,12 @@ fn edits_applied_before_a_failure_stay_and_resimulate() {
     );
     assert_eq!(ops.encode(), server.ops().encode());
     assert_eq!(fresh.voxel_hash(), direct.voxel_hash());
+
+    // A second run of the same session fails the same way at the same tick, after the same op.
+    let (mut again, again_client) = session("hog", &config, 0);
+    again_client.send_input(op_bytes(op));
+    assert_eq!(again.tick(), report);
+    assert_eq!(again.ops().encode(), server.ops().encode());
 }
 
 /// The component's timers are always ready: `timer` sleeps 30 s and then polls a fresh 1 s
