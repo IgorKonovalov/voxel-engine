@@ -6,38 +6,38 @@
 //!
 //! `flythrough [--seed N] [--level] [--vault] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH]
-//! [--view VIEW] [--detail] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]`. `--render` fixes the
-//! marcher's resolution (the window scales it); `--frames` exits after N frames, printing the
-//! `F1` readings over the last ones and the stats HUD's rows; `--hud` starts with the stats HUD
-//! shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first frame;
-//! `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
-//! [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame;
-//! `--headless` runs the same frames on an offscreen target with no window; `--walk` (with
-//! `--level`) starts in walk mode, the body spawned in the spawn pocket; `--look` starts
-//! in a normal mode (`face`, `trilinear8`, `gradient27`, `contour`) and gives the mirror
-//! attribute pages, so `N` can reach `contour` (without `--look` it skips it), and gives rock
-//! its procedural detail (`--rock-detail` sets rock's feature scale in voxels and strength,
-//! default `flythrough::ROCK_DETAIL`); `--view` starts in a view (`shaded`, `normals`, `hitmask`) and
-//! `--detail` with detail on. `N` cycles the normal mode and `V` toggles detail. `--vault`
-//! places a 16-voxel room with an indestructible shell 10 m along +x from the spawn, written
-//! over the cave as it generates (on the level, clamped inside the extent).
+//! [--view VIEW] [--detail] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]`.
+//! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
+//! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
+//! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
+//! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
+//! [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame; `--headless` runs the
+//! same frames on an offscreen target with no window; `--walk` (with `--level`) starts in walk
+//! mode, the body spawned in the spawn pocket; `--look` starts in a normal mode (`face`,
+//! `trilinear8`, `gradient27`, `contour`) and gives the mirror attribute pages, so `N` can reach
+//! `contour` (without `--look` it skips it), and gives rock its procedural detail (`--rock-detail`
+//! sets rock's feature scale in voxels and strength, default `flythrough::ROCK_DETAIL`); `--view`
+//! starts in a view (`shaded`, `normals`, `hitmask`) and `--detail` with detail on. `N` cycles the
+//! normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
+//! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
+//! inside the extent).
 //!
 //! `P` stamps that 16-voxel room at runtime, unrotated, with its minimum corner at the voxel
 //! the dig ray hits, and prints what it changed like a dig does.
 //!
-//! Every edit goes through the simulation split (ADR-0007, ADR-0010): digs, fills and the
-//! bench are inputs a shared client sends to a server running `flythrough::logic::DigLogic`
-//! (`--logic native`, the default) or the same logic as a component hosted on `wasmtime`
-//! (`--logic wasm`, from `target/guests/flythrough-logic.wasm`, or `--logic wasm=PATH`; needs
-//! a build with `--features wasm`, and `scripts/build-guests.sh` builds the component). The
-//! fly-through prints which runs; a hosted logic that fails (a trap, its fuel, its memory cap)
-//! is printed once and stopped, and the session continues without it. Replay re-simulates
-//! through the chosen logic too. One server tick runs per frame before the mirror sync, and the printed edit lines come
-//! from the client's events. With `--level`, `--save` writes the session's log file on exit
-//! and prints the world's hash; `--replay` rebuilds a saved session's world by re-simulating
-//! its inputs before the first frame and prints the same hash. Two edits bypass the split:
-//! `P` stamps the server's world directly, so it is refused under `--save` (a stamp is not in
-//! the op log), and the autopilot's carve (streaming only) applies to the world directly.
+//! Every edit goes through the simulation split (ADR-0007, ADR-0010): digs, fills and the bench are
+//! inputs a shared client sends to a server running `flythrough::logic::DigLogic` (`--logic
+//! native`, the default) or the same logic as a component hosted on `wasmtime` (`--logic wasm`,
+//! from `target/guests/flythrough-logic.wasm`, or `--logic wasm=PATH`; needs a build with
+//! `--features wasm`, and `scripts/build-guests.sh` builds the component). The fly-through prints
+//! which runs; a hosted logic that fails (a trap, its fuel, its memory cap) is printed once and
+//! stopped, and the session continues without it. Replay re-simulates through the chosen logic too.
+//! One server tick runs per frame before the mirror sync, and the printed edit lines come from the
+//! client's events. With `--level`, `--save` writes the session's log file on exit and prints the
+//! world's hash; `--replay` rebuilds a saved session's world by re-simulating its inputs before the
+//! first frame and prints the same hash. Two edits bypass the split: `P` stamps the server's world
+//! directly, so it is refused under `--save` (a stamp is not in the op log), and the autopilot's
+//! carve (streaming only) applies to the world directly.
 //! Collapse's falls and crumbles also edit the world outside the op log, so under `--save` and
 //! `--replay` the support query does not run and `R` is refused.
 //! `--vault` does not combine with `--save` or `--replay`: the log file does not record it.
