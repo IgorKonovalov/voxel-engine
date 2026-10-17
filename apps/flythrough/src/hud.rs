@@ -480,6 +480,18 @@ mod tests {
         assert!((f.max - 100.0).abs() < 1e-3, "max {}", f.max);
     }
 
+    /// Three spikes in a full window sort to indices 237 to 239, so the p99 index
+    /// `round(0.99 x 239) = 237` holds a spike; the median index `round(0.5 x 239) = 120`
+    /// still holds 1 ms. Two spikes would leave index 237 at 1 ms.
+    #[test]
+    fn three_spikes_among_237_read_in_the_p99() {
+        let s = fed([100.0; 3].into_iter().chain([1.0; RING - 3]));
+        let f = s.frame_ms();
+        assert!((f.p99 - 100.0).abs() < 1e-3, "p99 {}", f.p99);
+        assert!((f.p50 - 1.0).abs() < 1e-4, "p50 {}", f.p50);
+        assert!((f.max - 100.0).abs() < 1e-3, "max {}", f.max);
+    }
+
     #[test]
     fn a_known_sequence_reads_nearest_rank() {
         let s = fed((1..=100).map(|v| v as f32));
