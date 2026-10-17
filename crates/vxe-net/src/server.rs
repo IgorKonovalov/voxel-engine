@@ -7,6 +7,11 @@
 //! announces each op it requests; then the logic's broadcast to every client. Seqs come from
 //! one counter shared by submission and the logic's host, so the op log's order is the order
 //! the ops were applied in.
+//!
+//! A logic that fails a call ([`Logic::take_error`], a hosted logic's trap, fuel or memory
+//! cap) leaves its tick without a broadcast and the error in [`TickReport::logic_error`]; the
+//! tick's inputs are logged all the same, and ops the logic applied before it failed stay
+//! applied and logged. The next tick calls the logic again.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -17,11 +22,11 @@ use vxe_world::{
 };
 
 use crate::channel::{Channel, Endpoint};
-use crate::logic::{ClientInput, Host, Logic};
+use crate::logic::{ClientInput, Host, Logic, LogicError};
 use crate::message::Message;
 
 /// What one tick did.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TickReport {
     /// The tick that ran.
     pub tick: u64,
@@ -31,6 +36,8 @@ pub struct TickReport {
     pub refused: u32,
     /// Inputs consumed.
     pub inputs: u32,
+    /// Why the logic's tick failed, when it did; the tick then has no broadcast.
+    pub logic_error: Option<LogicError>,
 }
 
 pub struct Server {
@@ -44,6 +51,7 @@ pub struct Server {
     next_seq: AtomicU32,
     tick: u64,
     clients: Vec<Endpoint>,
+    init_error: Option<LogicError>,
 }
 
 impl std::fmt::Debug for Server {
@@ -145,6 +153,7 @@ impl Server {
             };
             logic.init(&mut host, seed);
         }
+        let init_error = logic.take_error();
         Self {
             world,
             logic: Mutex::new(logic),
@@ -154,7 +163,13 @@ impl Server {
             next_seq,
             tick: 0,
             clients: Vec::new(),
+            init_error,
         }
+    }
+
+    /// Why the logic's `init` failed, when it did.
+    pub fn init_error(&self) -> Option<&LogicError> {
+        self.init_error.as_ref()
     }
 
     /// Queues `op` for the next tick and returns its seq. Callers on several threads get
@@ -226,8 +241,9 @@ impl Server {
             self.inputs.push(tick, input.client, input.bytes.clone());
         }
         let out = logic.tick(&mut host, tick, &inputs);
+        let logic_error = logic.take_error();
         let (applied, refused) = (host.applied, host.refused);
-        if !out.broadcast.is_empty() {
+        if logic_error.is_none() && !out.broadcast.is_empty() {
             broadcast(
                 &self.clients,
                 &Message::Event {
@@ -242,6 +258,7 @@ impl Server {
             applied,
             refused,
             inputs: u32::try_from(inputs.len()).expect("input count fits u32"),
+            logic_error,
         }
     }
 

@@ -198,7 +198,8 @@ struct Live {
 /// A logic component loaded from a file, implementing [`Logic`].
 ///
 /// A failed call leaves the tick without a broadcast; the error is kept for
-/// [`WasmLogic::take_error`]. The component's state after a trap is its state at the trap.
+/// [`Logic::take_error`]. wasmtime does not enter a component instance again after it
+/// trapped, so every call after a failed one fails with [`LogicError::Trap`].
 pub struct WasmLogic {
     pre: bindings::LogicPre<State>,
     config: WasmConfig,
@@ -246,11 +247,6 @@ impl WasmLogic {
             live: None,
             error: None,
         })
-    }
-
-    /// The error of the last failed call, if any, cleared by reading it.
-    pub fn take_error(&mut self) -> Option<LogicError> {
-        self.error.take()
     }
 
     /// Instantiates the component for `seed` and calls its `init` with `host` lent.
@@ -388,5 +384,9 @@ impl Logic for WasmLogic {
             self.error = Some(e);
             TickOutput::default()
         })
+    }
+
+    fn take_error(&mut self) -> Option<LogicError> {
+        self.error.take()
     }
 }

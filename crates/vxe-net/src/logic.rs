@@ -70,6 +70,12 @@ pub trait Logic: Send {
     fn init(&mut self, host: &mut dyn Host, seed: u64);
     /// Called once per server tick with the inputs consumed in it, in consumption order.
     fn tick(&mut self, host: &mut dyn Host, tick: u64, inputs: &[ClientInput]) -> TickOutput;
+    /// Why the last `init` or `tick` failed, if it did, cleared by reading it. The server
+    /// asks after every call. A native logic never fails (a panic is a panic), so the
+    /// default is `None`; a hosted logic reports its trap, fuel or memory cap here.
+    fn take_error(&mut self) -> Option<LogicError> {
+        None
+    }
 }
 
 /// A logic that does nothing: the server only applies directly submitted ops.
