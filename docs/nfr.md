@@ -405,7 +405,38 @@ criterion median (low, high), exclusive perf lock, load average 1.7 to 2.3 at ea
   (arithmetic, not read). Grid build at the level, one thread (`world_budget --chunks 20x20x8
   --seed 1`): 156.3 ms at the close review; grid plus walkable map in the fly-through 231 ms.
 
-## 9. Not goals (for now)
+## 9. Audio
+
+`vxe-audio` (Plan 0006, ADR-0006): 48 kHz stereo `f32`, 256-frame blocks (5.33 ms), mixed on
+the device callback. The figures are proposals; the baseline CPU is not on hand, so every
+reading is dev reference. **The readings below were taken under the exclusive machine lock but
+with a 1-minute load average of 9 to 21 from other builds. The quiet-box retake (exclusive lock,
+1-minute load average 1.8 to 2.0) is in Plan 0006's Close triggers.**
+
+- **Mixer callback, 32 HRTF voices, one 256-frame block:** 1.0 ms on the baseline CPU
+  (proposal; 32 x 2 x 128 x 256 = 2.1 million multiply-adds plus filters and taps).
+  **Reading (Plan 0006 Phase 5, `cargo bench -p vxe-audio --bench mixer`, release, Ryzen 9
+  5900HS, load average 9 to 21):** 1.875 ms (1.856 to 1.895 ms) per block with 32 voices of
+  looping noise, each low-passed and carrying 16 taps, no direction change. Over the proposal
+  on the dev box.
+- **`Acoustics::update`, 32 sources:** 0.5 ms per call (proposal; 224 occlusion rays plus 16
+  reflection rays). **Reading (same bench, seed-1 level-size cave, listener at the spawn,
+  sources 2 to 12 m out, every source due):** 1.301 ms (1.254 to 1.348 ms), 512 taps sent. Over
+  the proposal on the dev box.
+- **Audio RAM:** the pack plus 200 ms delay lines plus scratch (proposal). **Reading:** pack
+  3 194 204 B in memory (3 044 420 B on disk); delay line 39 424 B per voice, 2 523 136 B for
+  the 64-voice pool allocated at `Mixer::new`.
+- **Startup:** pack load under 10 ms (proposal). **Reading:** 14.6 ms in a dev build of the
+  fly-through (headless, load average 11.5); 7.1 to 8.9 ms in a release test build (Plan 0006
+  Phase 2, shared lock).
+- **Fly-through `F1`:** the callback times itself (`OutputStats::busy_max_ms`) and `F1` prints
+  the longest callback over the last second, the voices, the active taps and the last
+  acoustics update's time. Reading with 8 voices playing: awaits the owner (a window run).
+- **Determinism:** `World::trace_materials` is integer and its 500-ray hash is pinned in
+  `crates/vxe-world/tests/queries.rs` on both arms; nothing else in `vxe-audio` is
+  deterministic by contract (§6).
+
+## 10. Not goals (for now)
 
 - Binary size.
 - Mobile, web or console targets as such. The portable profile of §1 is a PC-class setting

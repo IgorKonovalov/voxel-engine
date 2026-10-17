@@ -59,7 +59,7 @@ pub use mips::{ChunkMips, MIP_BRICKS, MIP_LEVELS, majority};
 pub use persist::{PersistConfig, SPILL_VERSION, SpillError, decode_spill, encode_spill};
 pub use prefab::{Prefab, Rot};
 pub use query::QueryStats;
-pub use raycast::{Face, Hit};
+pub use raycast::{Face, Hit, Run};
 pub use shape::Shape;
 pub use source::{StampedSource, UniformSource, WorldSource};
 pub use store::{ChunkStore, StoreWriteGuard, World, WorldStats};

@@ -8,6 +8,10 @@
 //! The walk steps through cells of three sizes: a missing chunk is skipped as one 64³ cell, a
 //! `Uniform` air brick as one 8³ cell, and voxels of a `Full` brick one at a time. The first
 //! non-air voxel is the hit.
+//!
+//! [`World::trace_materials`] walks the same cells through solids as well as air: a missing
+//! chunk is one 64³ cell of air, any `Uniform` brick one 8³ cell of its material, and it
+//! reports the runs of equal material the ray crosses.
 
 use crate::coords::{BRICK_EDGE, CHUNK_EDGE, VoxelCoord};
 use crate::fixed::{FIXED_ONE, Fixed3};
@@ -49,6 +53,15 @@ pub struct Hit {
     /// Ray parameter where the ray enters the voxel, rounded down.
     pub t: i64,
     pub material: MaterialId,
+}
+
+/// A stretch of a ray through one material: from parameter `t0` to `t1`, both exact crossing
+/// times rounded down (`t1` is `max_t` for the last run).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Run {
+    pub material: MaterialId,
+    pub t0: i64,
+    pub t1: i64,
 }
 
 /// A hit plus its exact entry parameter `t_num / t_den` (`t_den > 0`).
@@ -121,6 +134,87 @@ impl World {
             let (n, m, k) = best?;
             (num, den) = (n, m);
             face = Some(Face::entered(k, dir[k]));
+        }
+    }
+
+    /// The runs of equal material along the ray `origin + dir * t / 256`, `0 <= t <= max_t`,
+    /// in order, covering `[0, max_t]` without gaps. Consecutive cells of one material merge
+    /// into one run; a missing chunk reads as [`AIR`]. Empty when `max_t < 0`.
+    pub fn trace_materials(&self, origin: Fixed3, dir: [i64; 3], max_t: i64) -> Vec<Run> {
+        let mut runs = Vec::new();
+        if max_t < 0 {
+            return runs;
+        }
+        let o = origin.0.map(i128::from);
+        let d = dir.map(i128::from);
+        let one = i128::from(FIXED_ONE);
+        let max = i128::from(max_t);
+        let (mut num, mut den): (i128, i128) = (0, 1);
+        // The open run: its material and entry parameter.
+        let mut open: Option<(MaterialId, i64)> = None;
+        loop {
+            let v = voxel_at(o, d, num, den);
+            let (material, size) = self.material_cell(v);
+            let t = num.div_euclid(den) as i64;
+            match open {
+                Some((m, _)) if m == material => {}
+                Some((m, t0)) => {
+                    runs.push(Run {
+                        material: m,
+                        t0,
+                        t1: t,
+                    });
+                    open = Some((material, t));
+                }
+                None => open = Some((material, t)),
+            }
+            let size = i128::from(size);
+            // Leave the `size`-aligned cell: the earliest boundary crossing, lowest axis first.
+            let mut best: Option<(i128, i128)> = None;
+            for k in 0..3 {
+                if d[k] == 0 {
+                    continue;
+                }
+                let cell_min = i128::from(v[k]).div_euclid(size) * size;
+                let edge = if d[k] > 0 { cell_min + size } else { cell_min };
+                let n = (edge * one - o[k]) * one * d[k].signum();
+                let m = d[k].abs();
+                if best.is_none_or(|(bn, bm)| n * bm < bn * m) {
+                    best = Some((n, m));
+                }
+            }
+            match best {
+                Some((n, m)) if n < max * m => (num, den) = (n, m),
+                _ => {
+                    if let Some((m, t0)) = open {
+                        runs.push(Run {
+                            material: m,
+                            t0,
+                            t1: max_t,
+                        });
+                    }
+                    return runs;
+                }
+            }
+        }
+    }
+
+    /// The material at `v` and the edge of the cell sharing it: a missing chunk (air), a
+    /// `Uniform` brick, or one voxel of a `Full` brick.
+    fn material_cell(&self, v: [i64; 3]) -> (MaterialId, i64) {
+        let [Ok(x), Ok(y), Ok(z)] = v.map(i32::try_from) else {
+            return (AIR, i64::from(CHUNK_EDGE));
+        };
+        let v = VoxelCoord([x, y, z]);
+        let Some(chunk) = self.store.get(v.chunk()) else {
+            return (AIR, i64::from(CHUNK_EDGE));
+        };
+        let chunk = read(&chunk);
+        let brick = chunk.brick(v.brick_slot());
+        if brick.is_full() {
+            (brick.get(v.index_in_brick()), 1)
+        } else {
+            (brick.get(0), i64::from(BRICK_EDGE))
         }
     }
 

@@ -41,7 +41,12 @@ pub struct Material {
     pub emission: [f32; 3],
     pub hardness: f32,
     pub flags: MaterialFlags,
-    /// Absorption, transmission, resonance.
+    /// The acoustic triple `[A, T, R]`. `A` is absorption per metre of path: a sound crossing
+    /// the material keeps `(1 - A)` of its amplitude per metre, and a reflection off its face
+    /// keeps `(1 - A)`. `T` is transmission, the amplitude factor of entering the material,
+    /// applied once per run of it along a path. `R`, resonance, is unused. A row of zeros
+    /// (transmission 0) blocks sound completely. The `vxe-audio` crate's `acoustics` module
+    /// applies it; nothing in this crate reads it.
     pub acoustic: [f32; 3],
     pub payload: u64,
     /// Procedural surface detail for the renderer: feature scale in voxels, strength in

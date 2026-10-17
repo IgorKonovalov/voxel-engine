@@ -26,11 +26,17 @@ vxe-render = { path = "../../crates/vxe-render" }
 vxe-app = { path = "../../crates/vxe-app" }
 flythrough-logic = { path = "logic" }
 vxe-script-wasm = { workspace = true, features = ["host"], optional = true }
+vxe-audio = { path = "../../crates/vxe-audio" }
 
 [dev-dependencies]
+criterion.workspace = true
 png.workspace = true
 pollster.workspace = true
 
 [[test]]
 name = "component"
 required-features = ["wasm"]
+
+[[bench]]
+name = "acoustics"
+harness = false

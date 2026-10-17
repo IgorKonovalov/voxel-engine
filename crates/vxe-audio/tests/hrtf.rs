@@ -1,0 +1,509 @@
+//! The HRIR pack and binaural rendering: validation, nearest-direction lookup, interaural
+//! level differences, and the direction-change crossfade.
+
+use std::f32::consts::PI;
+
+use vxe_audio::*;
+
+static PACK: &[u8] = include_bytes!("../assets/sadie2_d2_48k.hrir");
+
+const MPV: f32 = 0.1;
+const FRAMES: usize = 24_000;
+const TAIL: usize = 4_800;
+
+/// SplitMix64: a seeded stream for test inputs.
+struct SplitMix64(u64);
+
+impl SplitMix64 {
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    }
+
+    /// Uniform in `[0, 1)`.
+    fn unit(&mut self) -> f32 {
+        (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32
+    }
+}
+
+#[test]
+fn the_shipped_pack_loads() {
+    let h = Hrtf::load(PACK).unwrap();
+    assert_eq!(h.len(), 2950);
+    assert_eq!(h.taps(), 128);
+    assert_eq!(PACK.len(), 20 + h.len() * 8 + h.len() * 1024);
+}
+
+#[test]
+fn a_bad_pack_is_rejected() {
+    let mut magic = PACK.to_vec();
+    magic[0] = b'X';
+    assert_eq!(
+        Hrtf::load(&magic).unwrap_err(),
+        AudioError::Pack("wrong magic")
+    );
+    let mut rate = PACK.to_vec();
+    rate[8..12].copy_from_slice(&44_100u32.to_le_bytes());
+    assert_eq!(
+        Hrtf::load(&rate).unwrap_err(),
+        AudioError::Pack("sample rate is not 48000")
+    );
+    assert_eq!(
+        Hrtf::load(&PACK[..PACK.len() - 1]).unwrap_err(),
+        AudioError::Pack("size does not match the header")
+    );
+    let mut longer = PACK.to_vec();
+    longer.extend_from_slice(&[0; 4]);
+    assert_eq!(
+        Hrtf::load(&longer).unwrap_err(),
+        AudioError::Pack("size does not match the header")
+    );
+    assert_eq!(
+        Hrtf::load(&PACK[..10]).unwrap_err(),
+        AudioError::Pack("shorter than the header")
+    );
+}
+
+#[test]
+fn the_bin_table_agrees_with_a_brute_force_search() {
+    let h = Hrtf::sadie2_d2();
+    let mut rng = SplitMix64(0x0006_0002);
+    for _ in 0..1000 {
+        // Uniform on the sphere: z uniform in [-1, 1], azimuth uniform.
+        let z = 2.0 * rng.unit() - 1.0;
+        let a = 2.0 * PI * rng.unit();
+        let r = (1.0 - z * z).max(0.0).sqrt();
+        let d = [r * a.cos(), r * a.sin(), z];
+        assert_eq!(h.nearest(d), h.nearest_brute_force(d), "direction {d:?}");
+    }
+    // The poles and the seams of the table.
+    for d in [
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, -1.0],
+        [-1.0, 0.0, 0.0],
+        [-1.0, -1e-7, 0.0],
+        [1.0, 0.0, 0.0],
+    ] {
+        assert_eq!(h.nearest(d), h.nearest_brute_force(d), "direction {d:?}");
+    }
+}
+
+fn tone(freq: f32, amplitude: f32, len: usize) -> Sound {
+    Sound::new(
+        (0..len)
+            .map(|n| amplitude * (2.0 * PI * freq * n as f32 / RATE as f32).sin())
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// RMS of the left and right channels over the last `TAIL` frames of `out`.
+fn tail_rms(out: &[f32]) -> [f32; 2] {
+    let tail = &out[out.len() - 2 * TAIL..];
+    [0, 1].map(|c| {
+        let sum: f64 = tail
+            .iter()
+            .skip(c)
+            .step_by(2)
+            .map(|&s| f64::from(s) * f64::from(s))
+            .sum();
+        (sum / TAIL as f64).sqrt() as f32
+    })
+}
+
+/// Voxel position at `distance_m` and azimuth `deg` (0 in front, +90 on the listener's right)
+/// for the default listener (facing +x, +z up, so the right is -y).
+fn at_azimuth(deg: f32, distance_m: f32) -> [f32; 3] {
+    let (s, c) = deg.to_radians().sin_cos();
+    let r = distance_m / MPV;
+    [r * c, -r * s, 0.0]
+}
+
+/// 0.5 s of a 2 kHz tone of amplitude 0.5 at azimuth `deg`, 2 m.
+fn render_2k(deg: f32) -> Vec<f32> {
+    let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    m.apply(Command::Play(
+        VoiceId(1),
+        tone(2000.0, 0.5, FRAMES),
+        PlayParams::at(at_azimuth(deg, 2.0)),
+    ));
+    let mut out = vec![0.0; 2 * FRAMES];
+    m.render(&mut out, FRAMES);
+    out
+}
+
+fn db(a: f32, b: f32) -> f32 {
+    20.0 * (a / b).log10()
+}
+
+#[test]
+fn a_tone_on_the_right_is_louder_on_the_right() {
+    let [l, r] = tail_rms(&render_2k(90.0));
+    let right = db(r, l);
+    println!("2 kHz at +90 degrees, 2 m: right over left {right:.2} dB (left {l}, right {r})");
+    assert!(right >= 6.0, "right over left {right} dB");
+
+    let [l, r] = tail_rms(&render_2k(0.0));
+    let front = db(r, l);
+    println!("2 kHz in front, 2 m: right over left {front:.2} dB");
+    assert!(front.abs() <= 1.0, "front channels differ by {front} dB");
+
+    let [l, r] = tail_rms(&render_2k(-90.0));
+    let left = db(l, r);
+    println!("2 kHz at -90 degrees, 2 m: left over right {left:.2} dB");
+    assert!(
+        (left - right).abs() <= 1.0,
+        "-90 gives {left} dB, +90 gives {right} dB"
+    );
+}
+
+fn max_step(out: &[f32]) -> f32 {
+    [0, 1]
+        .map(|c| {
+            let ch: Vec<f32> = out.iter().skip(c).step_by(2).copied().collect();
+            ch.windows(2)
+                .map(|w| (w[1] - w[0]).abs())
+                .fold(0.0, f32::max)
+        })
+        .into_iter()
+        .fold(0.0, f32::max)
+}
+
+#[test]
+fn a_moving_source_switches_filters_without_a_click() {
+    let static_step = max_step(&render_2k(0.0));
+    let blocks = RATE as usize / BLOCK + 1;
+    let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    m.apply(Command::Play(
+        VoiceId(1),
+        tone(2000.0, 0.5, blocks * BLOCK),
+        PlayParams::at(at_azimuth(-90.0, 2.0)),
+    ));
+    let mut out = vec![0.0; 2 * blocks * BLOCK];
+    for (b, block) in out.chunks_mut(2 * BLOCK).enumerate() {
+        let t = (b * BLOCK) as f32 / RATE as f32;
+        let deg = -90.0 + 180.0 * t.min(1.0);
+        m.apply(Command::SetPosition(VoiceId(1), at_azimuth(deg, 2.0)));
+        m.render(block, BLOCK);
+    }
+    let moving_step = max_step(&out);
+    println!(
+        "moving -90 to +90 over 1 s at 2 m: max step {moving_step}, static front max step {static_step}"
+    );
+    assert!(
+        moving_step <= 2.0 * static_step,
+        "moving step {moving_step} vs static {static_step}"
+    );
+}
+
+/// One second of 440 Hz at amplitude 0.3 (a whole number of cycles, so it loops cleanly), the
+/// phase computed in `f64`: an `f32` phase grows to 2765 rad and jitters by its rounding, which
+/// would mask the kinks measured below.
+fn clean_hum() -> Sound {
+    Sound::new(
+        (0..RATE as usize)
+            .map(|n| {
+                (0.3 * (std::f64::consts::TAU * 440.0 * n as f64 / f64::from(RATE)).sin()) as f32
+            })
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// The largest magnitude of the fourth difference over both channels. It is a high-pass of
+/// gain `(2 sin(pi f / RATE))^4`: 1.1e-5 at 440 Hz, 2.2 at 10 kHz. A smooth tone shows almost
+/// nothing; a step or a change of slope at a block edge shows as a spike of about its size.
+fn max_kink(out: &[f32]) -> f32 {
+    [0, 1]
+        .map(|c| {
+            let ch: Vec<f32> = out.iter().skip(c).step_by(2).copied().collect();
+            ch.windows(5)
+                .map(|w| (w[4] - 4.0 * w[3] + 6.0 * w[2] - 4.0 * w[1] + w[0]).abs())
+                .fold(0.0, f32::max)
+        })
+        .into_iter()
+        .fold(0.0, f32::max)
+}
+
+/// Frames skipped before measuring, so every render is past its start.
+const SETTLE: usize = 9_600;
+
+/// The looping hum at voxel position `source`, rendered for `seconds` in device callbacks of
+/// `period` frames, with the listener set from `listener_at(t)` (`t` in seconds) at the top of
+/// each callback as the fly-through's frames do.
+fn render_hum(
+    source: [f32; 3],
+    period: usize,
+    seconds: f32,
+    listener_at: impl Fn(f32) -> Listener,
+) -> Vec<f32> {
+    let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    m.apply(Command::Play(
+        VoiceId(1),
+        clean_hum(),
+        PlayParams {
+            looping: true,
+            ..PlayParams::at(source)
+        },
+    ));
+    let frames = (seconds * RATE as f32) as usize;
+    let mut out = vec![0.0; 2 * frames];
+    for (k, chunk) in out.chunks_mut(2 * period).enumerate() {
+        m.apply(Command::SetListener(listener_at(
+            (k * period) as f32 / RATE as f32,
+        )));
+        m.render(chunk, period);
+    }
+    out
+}
+
+fn facing(yaw_deg: f32, position: [f32; 3]) -> Listener {
+    let (s, c) = yaw_deg.to_radians().sin_cos();
+    Listener {
+        position,
+        forward: [c, s, 0.0],
+        up: [0.0, 0.0, 1.0],
+    }
+}
+
+#[test]
+fn turning_and_walking_past_a_tone_add_no_kinks_at_block_edges() {
+    // The static reference: the hum 1 m and 2 m away (the nearest and farthest the moving
+    // renders come) at 24 azimuths each, the loudest kink of any of them.
+    let mut static_kink = 0.0f32;
+    for r in [10.0, 20.0] {
+        for k in 0..24 {
+            let a = (15.0 * k as f32).to_radians();
+            let source = [r * a.cos(), r * a.sin(), 0.0];
+            let out = render_hum(source, BLOCK, 1.0, |_| Listener::default());
+            static_kink = static_kink.max(max_kink(&out[2 * SETTLE..]));
+        }
+    }
+    println!("static hum at 1 m and 2 m, 24 azimuths: max kink {static_kink:e}");
+    let bound = 4.0 * static_kink;
+    // 512 frames is the period cpal opens on the dev box's PipeWire default device.
+    for period in [BLOCK, 2 * BLOCK, 4 * BLOCK] {
+        for deg_per_s in [90.0, 360.0] {
+            let out = render_hum([20.0, 0.0, 0.0], period, 2.0, |t| {
+                facing(deg_per_s * t, [0.0; 3])
+            });
+            let kink = max_kink(&out[2 * SETTLE..]);
+            println!(
+                "turning {deg_per_s} deg/s, {period}-frame callbacks: max kink {kink:e} ({:.1} x static)",
+                kink / static_kink
+            );
+            assert!(kink <= bound, "turning: {kink} against 4 x {static_kink}");
+        }
+        // Walking at 3 m/s past the hum, 1 m to the side at the closest: distance and
+        // direction both change.
+        let out = render_hum([0.0, 10.0, 0.0], period, 4.0, |t| {
+            facing(0.0, [-60.0 + 30.0 * t, 0.0, 0.0])
+        });
+        let kink = max_kink(&out[2 * SETTLE..]);
+        println!(
+            "walking past at 3 m/s, {period}-frame callbacks: max kink {kink:e} ({:.1} x static)",
+            kink / static_kink
+        );
+        assert!(kink <= bound, "walking: {kink} against 4 x {static_kink}");
+    }
+}
+
+/// A probe's new targets every 12 callbacks of 512 frames (128 ms, about the 0.1 m cadence at
+/// walking pace): the low-pass coefficient and the gain glide, so neither the new cutoff nor
+/// the step into or out of the open bypass kinks the output at a block edge. With the cutoff
+/// stepped once per block and the bypass switched hard, these measured 87 to 780 x static.
+#[test]
+fn probe_updates_add_no_kinks() {
+    let base = render_hum([20.0, 0.0, 0.0], 2 * BLOCK, 2.0, |_| Listener::default());
+    let static_kink = max_kink(&base[2 * SETTLE..]);
+    for (name, a, b) in [
+        ("cutoff 20000 <-> 13333", (1.0, 20_000.0), (1.0, 13_333.0)),
+        ("cutoff 20000 <-> 5000", (1.0, 20_000.0), (1.0, 5_000.0)),
+        ("gain 1 <-> 0.93", (1.0, 20_000.0), (0.93, 20_000.0)),
+        ("cutoff 19000 <-> 13333", (1.0, 19_000.0), (1.0, 13_333.0)),
+    ] {
+        let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+        m.apply(Command::Play(
+            VoiceId(1),
+            clean_hum(),
+            PlayParams {
+                looping: true,
+                ..PlayParams::at([20.0, 0.0, 0.0])
+            },
+        ));
+        let frames = 2 * RATE as usize;
+        let mut out = vec![0.0; 2 * frames];
+        for (k, chunk) in out.chunks_mut(2 * 2 * BLOCK).enumerate() {
+            let (g, c) = if (k / 12) % 2 == 0 { a } else { b };
+            m.apply(Command::SetAcoustics(
+                VoiceId(1),
+                AcousticTargets {
+                    gain: g,
+                    cutoff_hz: c,
+                    ..AcousticTargets::default()
+                },
+            ));
+            m.render(chunk, 2 * BLOCK);
+        }
+        let kink = max_kink(&out[2 * SETTLE..]);
+        println!(
+            "{name}: max kink {kink:e} ({:.1} x static {static_kink:e})",
+            kink / static_kink
+        );
+        assert!(
+            kink <= 4.0 * static_kink,
+            "{name}: {kink} against 4 x {static_kink}"
+        );
+    }
+}
+
+/// One ear's response at 440 Hz, `sum h[n] e^(-i w n)`, as (re, im).
+fn at_440(h: &[f32]) -> (f64, f64) {
+    let w = std::f64::consts::TAU * 440.0 / f64::from(RATE);
+    h.iter().enumerate().fold((0.0, 0.0), |(re, im), (n, &x)| {
+        let (s, c) = (w * n as f64).sin_cos();
+        (re + f64::from(x) * c, im - f64::from(x) * s)
+    })
+}
+
+/// The absolute phase difference of two complex values, wrapped into `[0, pi]`.
+fn phase_step(a: (f64, f64), b: (f64, f64)) -> f64 {
+    let d = b.1.atan2(b.0) - a.1.atan2(a.0);
+    (d + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
+}
+
+/// The pack shares one window start across directions, so neighbouring directions' responses
+/// are time-aligned and the direction crossfade blends two near-equal phases. With a start per
+/// direction the largest step was 1.822 rad, and the crossfade between two such windows is
+/// heard as a click while turning.
+#[test]
+fn ring_neighbours_differ_little_in_440_hz_phase() {
+    let h = Hrtf::sadie2_d2();
+    // Rings keyed by elevation in tenths of a degree, members as (azimuth, index).
+    let mut rings: std::collections::BTreeMap<i32, Vec<(f32, usize)>> = Default::default();
+    for i in 0..h.len() {
+        let [x, y, z] = h.direction(i);
+        let el = z.clamp(-1.0, 1.0).asin().to_degrees();
+        let az = y.atan2(x).to_degrees().rem_euclid(360.0);
+        rings
+            .entry((el * 10.0).round() as i32)
+            .or_default()
+            .push((az, i));
+    }
+    let mut worst = (0.0f64, 0, 0.0f32);
+    for (&el, ring) in &mut rings {
+        if ring.len() < 2 {
+            continue;
+        }
+        ring.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let responses: Vec<[(f64, f64); 2]> = ring
+            .iter()
+            .map(|&(_, i)| h.impulse(i).map(|ear| at_440(&ear)))
+            .collect();
+        for k in 0..ring.len() {
+            let next = (k + 1) % ring.len();
+            for (&a, &b) in responses[k].iter().zip(&responses[next]) {
+                let step = phase_step(a, b).abs();
+                if step > worst.0 {
+                    worst = (step, el, ring[k].0);
+                }
+            }
+        }
+    }
+    println!(
+        "largest ring-neighbour 440 Hz phase step: {:.4} rad (elevation {:.1}, azimuth {:.1})",
+        worst.0,
+        f64::from(worst.1) / 10.0,
+        worst.2
+    );
+    assert!(worst.0 < 0.15, "ring-neighbour phase step {} rad", worst.0);
+}
+
+/// Per channel, the hum demodulated at 440 Hz over a sliding one-cycle window (109 frames):
+/// the unwrapped phase and the magnitude at every frame from the 109th on.
+fn demodulate_440(out: &[f32], channel: usize) -> (Vec<f64>, Vec<f64>) {
+    let ch: Vec<f64> = out
+        .iter()
+        .skip(channel)
+        .step_by(2)
+        .map(|&x| f64::from(x))
+        .collect();
+    let w = std::f64::consts::TAU * 440.0 / f64::from(RATE);
+    let cycle = 109usize;
+    let (mut re, mut im) = (0.0f64, 0.0f64);
+    let mut z = Vec::with_capacity(ch.len());
+    for n in 0..ch.len() {
+        let (s, c) = (w * n as f64).sin_cos();
+        re += ch[n] * c;
+        im -= ch[n] * s;
+        if n >= cycle {
+            let (s, c) = (w * (n - cycle) as f64).sin_cos();
+            re -= ch[n - cycle] * c;
+            im += ch[n - cycle] * s;
+            z.push((re, im));
+        }
+    }
+    let mut phase = Vec::with_capacity(z.len());
+    let mut acc = 0.0f64;
+    for k in 0..z.len() {
+        if k > 0 {
+            acc += phase_step(z[k - 1], z[k]);
+        }
+        phase.push(acc);
+    }
+    let mag = z.iter().map(|(r, i)| r.hypot(*i)).collect();
+    (phase, mag)
+}
+
+/// Over every 256-frame span of either channel (spans starting every 16 frames): the largest
+/// 440 Hz phase change (highest minus lowest unwrapped phase in the span), and the deepest
+/// level dip, in dB, of the span's lowest magnitude below the lower of its two ends. The dip is
+/// what a crossfade between two misaligned responses does (they partly cancel mid-fade); a
+/// level that steps from one nearest direction to the next without a dip is the
+/// nearest-direction unevenness ADR-0006 leaves to interpolation, and is not measured here.
+fn worst_block_change(out: &[f32]) -> (f64, f64) {
+    let (mut phase_worst, mut level_worst) = (0.0f64, 0.0f64);
+    for channel in 0..2 {
+        let (phase, mag) = demodulate_440(out, channel);
+        for k in (0..phase.len().saturating_sub(BLOCK)).step_by(16) {
+            let span = &phase[k..=k + BLOCK];
+            let (lo, hi) = span
+                .iter()
+                .fold((f64::MAX, f64::MIN), |(l, h), &p| (l.min(p), h.max(p)));
+            phase_worst = phase_worst.max(hi - lo);
+            let ends = mag[k].min(mag[k + BLOCK]);
+            let lo = mag[k..=k + BLOCK].iter().copied().fold(f64::MAX, f64::min);
+            level_worst = level_worst.max(20.0 * (ends / lo).log10());
+        }
+    }
+    (phase_worst, level_worst)
+}
+
+/// A 440 Hz hum 1 m ahead while the listener turns at 90 deg/s, set once per 256-frame block:
+/// within any block either ear's phase and level move only as far as the turn itself moves
+/// them. With a window start per direction this measured 0.811 rad and 0.90 dB.
+#[test]
+fn turning_past_a_hum_keeps_its_phase_and_level_steady_within_a_block() {
+    let still = render_hum([10.0, 0.0, 0.0], BLOCK, 2.0, |_| Listener::default());
+    let (still_phase, still_level) = worst_block_change(&still[2 * SETTLE..]);
+    // Back and forth over -90..+90 degrees so every direction of the horizon in front passes.
+    let yaw_at = |t: f32| {
+        let p = (t * 90.0 / 180.0) % 2.0;
+        if p < 1.0 {
+            -90.0 + 180.0 * p
+        } else {
+            90.0 - 180.0 * (p - 1.0)
+        }
+    };
+    let out = render_hum([10.0, 0.0, 0.0], BLOCK, 4.0, |t| {
+        facing(yaw_at(t), [0.0; 3])
+    });
+    let (phase, level) = worst_block_change(&out[2 * SETTLE..]);
+    println!(
+        "turning 90 deg/s: largest 440 Hz change within 256 frames {phase:.4} rad, {level:.4} dB \
+         (static {still_phase:.4} rad, {still_level:.4} dB)"
+    );
+    assert!(phase < 0.2, "phase moved {phase} rad within a block");
+    assert!(level < 0.25, "level moved {level} dB within a block");
+}

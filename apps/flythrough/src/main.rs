@@ -6,7 +6,8 @@
 //!
 //! `flythrough [--seed N] [--level] [--vault] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH]
-//! [--view VIEW] [--detail] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]`.
+//! [--view VIEW] [--detail] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
+//! [--audio] [--audio-debug]`.
 //! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -52,6 +53,12 @@
 //! Each region falls 8 voxels a frame until it lands (`landed after N frames, fell M voxels`);
 //! `R` toggles removing it with rubble (a quarter of its volume) instead. `F1` adds the last
 //! query's time and region count.
+//!
+//! `--audio` opens the default output device, `H` plays a knock and `J` a looping hum at the point
+//! the last left click dug; every frame probes their occlusion through the world. `--audio-debug` is
+//! `--audio` plus a line a second of the output callback's readings, and on exit writes the last
+//! 60 s the callback handed the device to `flythrough-audio-debug.wav`. `FLYTHROUGH_HRIR=<pack>`
+//! in the environment loads that HRIR pack instead of the shipped one.
 
 mod fly;
 
@@ -68,6 +75,7 @@ use flythrough::{
     LogicChoice, RESIDENCY, RUBBLE, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile,
 };
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
+use vxe_audio::{Acoustics, Hrtf, Mixer, Output, PlayParams, Sound, VoiceId};
 use vxe_net::{Client, Event, Logic, LogicError, MemChannel, Server};
 use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
@@ -75,6 +83,7 @@ use vxe_render::{
     Camera, GpuWorld, HudColour, HudOverlay, LightParams, LodParams, LookParams, MarchTimer,
     Marcher, MirrorConfig, NormalMode, PassTimer, Presenter, SyncStats, ViewMode, Window, wgpu,
 };
+use vxe_world::hash::mix64;
 use vxe_world::{
     Anchors, BRICK_VOXELS, CellChange, CellCoord, ChunkCoord, ChunkExtent, CoarseGrid, EditError,
     EditOp, EditResult, FIXED_ONE, Fixed3, LogFile, MaterialId, MaterialTable, Mode, PersistConfig,
@@ -134,6 +143,18 @@ const FALL_PER_FRAME: i32 = 8;
 /// A removed region's rubble: a quarter of each column's volume, on ground within 6.4 m.
 const RUBBLE_FRACTION: (u32, u32) = (1, 4);
 const RUBBLE_DEPTH: i32 = 64;
+/// Metres per voxel, for the audio mixer's distances.
+const METRES_PER_VOXEL: f32 = 0.1;
+/// The knock: 50 ms of seeded noise under an exponential decay of 10 ms time constant.
+const KNOCK_SEED: u64 = 0x0006_0001;
+const KNOCK_SECONDS: f32 = 0.05;
+const KNOCK_DECAY_SECONDS: f32 = 0.01;
+/// The hum `J` plays: one second of 440 Hz (a whole number of cycles, so it loops cleanly).
+const HUM_HZ: f32 = 440.0;
+const HUM_AMPLITUDE: f32 = 0.3;
+/// The acoustic triple (absorption per metre, transmission, resonance) the probes give every
+/// solid cave row; the cave's own table leaves it zero, which would block all sound.
+const CAVE_ACOUSTIC: [f32; 3] = [0.3, 0.5, 0.0];
 
 #[allow(
     clippy::disallowed_methods,
@@ -160,6 +181,9 @@ struct Args {
     /// `--vault`: the cave generates with the vault room ahead of the spawn.
     vault: bool,
     sync_budget: u64,
+    audio: bool,
+    /// `--audio-debug`: print the callback's readings and record its output.
+    audio_debug: bool,
     /// `--look`: the starting normal mode.
     look: Option<NormalMode>,
     /// `--detail`: start with procedural detail on.
@@ -243,6 +267,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         walk: false,
         vault: false,
         sync_budget: SYNC_BUDGET_MIB << 20,
+        audio: false,
+        audio_debug: false,
         look: None,
         detail: false,
         rock_detail: flythrough::ROCK_DETAIL,
@@ -295,6 +321,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--walk" => args.walk = true,
             "--hud" => args.hud = true,
             "--vault" => args.vault = true,
+            "--audio" => args.audio = true,
+            "--audio-debug" => {
+                args.audio = true;
+                args.audio_debug = true;
+            }
             _ => return Err(format!("unknown argument {flag}")),
         }
     }
@@ -414,6 +445,197 @@ fn peak_rss_bytes() -> Option<u64> {
 fn median(v: &mut [f64]) -> f64 {
     v.sort_by(f64::total_cmp);
     v[v.len() / 2]
+}
+
+/// SplitMix64 noise in `[-1, 1)` under an exponential decay: the knock `H` plays.
+fn knock() -> Sound {
+    let mut state = KNOCK_SEED;
+    let len = (KNOCK_SECONDS * vxe_audio::RATE as f32) as usize;
+    let samples: Vec<f32> = (0..len)
+        .map(|n| {
+            state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let noise = (mix64(state) >> 40) as f32 / (1u64 << 23) as f32 - 1.0;
+            let t = n as f32 / vxe_audio::RATE as f32;
+            0.8 * noise * (-t / KNOCK_DECAY_SECONDS).exp()
+        })
+        .collect();
+    Sound::new(samples)
+}
+
+/// The cave's material table with [`CAVE_ACOUSTIC`] on every row but air.
+fn acoustic_table() -> MaterialTable {
+    let mut t = MaterialTable::new();
+    for row in cave_materials().rows().iter().skip(1) {
+        t.push(vxe_world::Material {
+            acoustic: CAVE_ACOUSTIC,
+            ..row.clone()
+        });
+    }
+    t
+}
+
+/// One second of the `J` hum.
+fn hum() -> Sound {
+    let rate = vxe_audio::RATE as f32;
+    Sound::new(
+        (0..vxe_audio::RATE)
+            .map(|n| HUM_AMPLITUDE * (std::f32::consts::TAU * HUM_HZ * n as f32 / rate).sin())
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// The audio of `--audio`: the output stream, the sounds the keys play and the acoustics
+/// probing them.
+struct Audio {
+    output: Output,
+    knock: Sound,
+    hum: Sound,
+    /// Where the last left click dug, in voxel units.
+    dig_point: Option<[f32; 3]>,
+    acoustics: Acoustics,
+    /// The cave's rows with [`CAVE_ACOUSTIC`] on every solid one.
+    table: MaterialTable,
+    /// The voices playing and where, in voxel units.
+    voices: Vec<(VoiceId, [f32; 3])>,
+    /// Stream errors (underruns among them) already reported.
+    stream_errors: u64,
+    /// `--audio-debug`: print the callback's readings each second.
+    debug: bool,
+    /// When the callback's readings were last taken.
+    stats_at: Instant,
+    /// The longest callback (the mixer's render of one device buffer, timed inside the
+    /// callback) over the last whole second, in milliseconds.
+    callback_max_ms: f32,
+    /// Wall time of the last `Acoustics::update`, in milliseconds.
+    update_ms: f64,
+}
+
+/// An environment variable naming an HRIR pack to use instead of the shipped one, for
+/// listening comparisons.
+const HRIR_ENV: &str = "FLYTHROUGH_HRIR";
+
+/// Seconds of output `--audio-debug` keeps, and where it writes them.
+const AUDIO_DEBUG_SECONDS: f32 = 60.0;
+const AUDIO_DEBUG_WAV: &str = "flythrough-audio-debug.wav";
+
+impl Drop for Audio {
+    fn drop(&mut self) {
+        if !self.debug {
+            return;
+        }
+        let samples = self.output.take_recording();
+        match std::fs::write(AUDIO_DEBUG_WAV, wav_f32_stereo(&samples)) {
+            Ok(()) => println!(
+                "audio-debug: wrote {:.1} s of the device's output to {AUDIO_DEBUG_WAV}",
+                samples.len() as f32 / 2.0 / vxe_audio::RATE as f32
+            ),
+            Err(e) => println!("audio-debug: {AUDIO_DEBUG_WAV}: {e}"),
+        }
+    }
+}
+
+/// A 32-bit float stereo WAV file of interleaved `samples` at the mixer's rate.
+fn wav_f32_stereo(samples: &[f32]) -> Vec<u8> {
+    let data = (samples.len() * 4) as u32;
+    let rate = vxe_audio::RATE;
+    let mut b = Vec::with_capacity(44 + data as usize);
+    b.extend_from_slice(b"RIFF");
+    b.extend_from_slice(&(36 + data).to_le_bytes());
+    b.extend_from_slice(b"WAVEfmt ");
+    b.extend_from_slice(&16u32.to_le_bytes());
+    b.extend_from_slice(&3u16.to_le_bytes()); // IEEE float
+    b.extend_from_slice(&2u16.to_le_bytes());
+    b.extend_from_slice(&rate.to_le_bytes());
+    b.extend_from_slice(&(rate * 8).to_le_bytes());
+    b.extend_from_slice(&8u16.to_le_bytes());
+    b.extend_from_slice(&32u16.to_le_bytes());
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&data.to_le_bytes());
+    for &x in samples {
+        b.extend_from_slice(&x.to_le_bytes());
+    }
+    b
+}
+
+impl Audio {
+    /// Plays the sound `name` names (`knock` or `hum`) at the dig point with `params`.
+    fn play(&mut self, name: &str, params: impl Fn([f32; 3]) -> PlayParams) {
+        let Some(p) = self.dig_point else {
+            println!("{name}: no dig point yet; left-click first");
+            return;
+        };
+        let sound = if name == "hum" {
+            &self.hum
+        } else {
+            &self.knock
+        };
+        match self.output.play(sound, params(p)) {
+            Ok(id) => self.voices.push((id, p)),
+            Err(e) => println!("{name}: {e}"),
+        }
+    }
+
+    /// Opens the default device; prints why when it cannot. `debug` meters and records the
+    /// callback.
+    fn open(debug: bool) -> Option<Self> {
+        let t = now();
+        let hrtf = match std::env::var_os(HRIR_ENV) {
+            Some(path) => match std::fs::read(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|b| Hrtf::load(&b).map_err(|e| e.to_string()))
+            {
+                Ok(h) => {
+                    println!(
+                        "audio: HRIR pack from {HRIR_ENV}={}",
+                        path.to_string_lossy()
+                    );
+                    std::sync::Arc::new(h)
+                }
+                Err(e) => {
+                    println!(
+                        "audio: {HRIR_ENV}={}: {e}; using the shipped pack",
+                        path.to_string_lossy()
+                    );
+                    Hrtf::sadie2_d2()
+                }
+            },
+            None => Hrtf::sadie2_d2(),
+        };
+        println!(
+            "audio: HRIR pack loaded in {:.1} ms ({} directions, {} taps)",
+            ms_since(t),
+            hrtf.len(),
+            hrtf.taps()
+        );
+        let mixer = Mixer::new(hrtf, METRES_PER_VOXEL);
+        let acoustics = Acoustics::new(mixer.clock());
+        match Output::open(mixer) {
+            Ok(output) => {
+                println!("audio: {}", output.device());
+                if debug {
+                    output.record(AUDIO_DEBUG_SECONDS);
+                }
+                Some(Self {
+                    output,
+                    knock: knock(),
+                    hum: hum(),
+                    dig_point: None,
+                    acoustics,
+                    table: acoustic_table(),
+                    voices: Vec::new(),
+                    stream_errors: 0,
+                    debug,
+                    stats_at: now(),
+                    callback_max_ms: 0.0,
+                    update_ms: 0.0,
+                })
+            }
+            Err(e) => {
+                println!("audio: off, {e}");
+                None
+            }
+        }
+    }
 }
 
 fn voxel_of(p: Vec3) -> VoxelCoord {
@@ -862,6 +1084,7 @@ struct Run {
     walk: Option<Walk>,
     coarse: Option<Coarse>,
     hud: Hud,
+    audio: Option<Audio>,
 }
 
 impl Run {
@@ -1027,6 +1250,15 @@ impl Run {
     /// Left click: a dig along the camera ray.
     fn dig(&mut self) {
         let (origin, dir) = self.camera_ray();
+        if let Some(audio) = self.audio.as_mut() {
+            let t = self
+                .world
+                .raycast(origin, dir, REACH)
+                .map_or(REACH, |h| h.t);
+            audio.dig_point = Some(
+                [0, 1, 2].map(|k| (origin.0[k] + dir[k] * t / FIXED_ONE) as f32 / FIXED_ONE as f32),
+            );
+        }
         self.send(DigInput::Dig {
             origin,
             dir,
@@ -1237,6 +1469,16 @@ impl Run {
             gfx.mirror.mirror_bytes(),
             gfx.mirror.allocated_bytes()
         );
+        if let Some(audio) = &self.audio {
+            println!(
+                "audio: {} voices, callback max {:.3} ms over the last second, {} active taps, \
+                 last acoustics update {:.3} ms",
+                audio.voices.len(),
+                audio.callback_max_ms,
+                audio.acoustics.active_taps(),
+                audio.update_ms
+            );
+        }
         if let Some(c) = &self.coarse {
             println!("{}", c.query_line());
         }
@@ -1674,6 +1916,7 @@ impl Run {
         // Off the edit path, after every edit of the frame (falls included): the next frame's
         // edits take touched arrays from the pool.
         self.world.reserve_brick_arrays(RESERVE_ARRAYS);
+        self.audio_step();
         if let Some(n) = self.args.frames
             && self.frame + SAMPLES as u32 == n
         {
@@ -1738,6 +1981,69 @@ impl Run {
         if input.pressed(KeyCode::F1) {
             self.samples = Some(Samples::default());
         }
+        if let Some(audio) = self.audio.as_mut() {
+            if input.pressed(KeyCode::KeyH) {
+                audio.play("knock", PlayParams::at);
+            }
+            if input.pressed(KeyCode::KeyJ) {
+                audio.play("hum", |p| PlayParams {
+                    looping: true,
+                    ..PlayParams::at(p)
+                });
+            }
+        }
+    }
+
+    /// Sends the camera to the mixer as its listener and probes the voices' occlusion.
+    fn audio_step(&mut self) {
+        let Some(audio) = self.audio.as_mut() else {
+            return;
+        };
+        let listener = flythrough::listener(&self.fly.camera);
+        // A full channel drops this frame's listener; the next frame sends a fresh one.
+        let _ = audio.output.set_listener(listener);
+        let errors = audio.output.stream_errors();
+        if errors > audio.stream_errors {
+            println!("audio: {errors} stream errors so far (an underrun is heard as a click)");
+            audio.stream_errors = errors;
+        }
+        if ms_since(audio.stats_at) >= 1000.0 {
+            let s = audio.output.take_stats();
+            audio.callback_max_ms = s.busy_max_ms;
+            audio.stats_at = now();
+            if audio.debug {
+                println!(
+                    "audio-debug: {} callbacks of {}..{} frames, busy max {:.3} ms, gap max {:.2} ms, {} late, peak {:.3}, {} clipped, kink max {:.2e}, {} voices",
+                    s.callbacks,
+                    s.frames_min,
+                    s.frames_max,
+                    s.busy_max_ms,
+                    s.gap_max_ms,
+                    s.late,
+                    s.peak,
+                    s.clipped,
+                    s.kink_max,
+                    audio.voices.len()
+                );
+            }
+        }
+        for id in audio.output.finished() {
+            audio.voices.retain(|(v, _)| *v != id);
+        }
+        let output = &audio.output;
+        let t = now();
+        audio.acoustics.update(
+            &self.world,
+            &audio.table,
+            &listener,
+            &audio.voices,
+            METRES_PER_VOXEL,
+            // A full channel drops these targets; the voice is probed again within 500 ms.
+            &mut |cmd| {
+                let _ = output.send(cmd);
+            },
+        );
+        audio.update_ms = ms_since(t);
     }
 
     /// Ticks the server, then streams, syncs, marches and presents one frame begun at `t0`.
@@ -1935,6 +2241,7 @@ struct Flythrough {
     logic: Option<Box<dyn Logic>>,
     pending: Option<Pending>,
     run: Option<Run>,
+    audio: Option<Audio>,
 }
 
 impl App for Flythrough {
@@ -2018,6 +2325,7 @@ impl App for Flythrough {
                 walk,
                 coarse,
                 hud: Hud::new(self.args.hud),
+                audio: self.audio.take(),
             });
         }
         match self.run.as_mut() {
@@ -2275,6 +2583,11 @@ fn main() {
     };
     let size = args.render.unwrap_or([1280, 720]);
     let headless = args.headless;
+    let audio = if args.audio {
+        Audio::open(args.audio_debug)
+    } else {
+        None
+    };
     let app = Flythrough {
         start,
         args,
@@ -2282,6 +2595,7 @@ fn main() {
         logic: Some(logic),
         pending: Some(pending),
         run: None,
+        audio,
     };
     let result = if headless {
         run_headless(app, size)

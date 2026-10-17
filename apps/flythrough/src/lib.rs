@@ -10,7 +10,9 @@ pub use flythrough_logic as logic;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use vxe_audio::Listener;
 use vxe_net::{Logic, Server};
+use vxe_render::Camera;
 use vxe_world::hash::Fnv1a;
 use vxe_world::{
     BRICK_VOXELS, Chunk, ChunkCoord, ChunkExtent, ChunkMips, LogFile, Material, MaterialFlags,
@@ -31,6 +33,18 @@ pub const RESIDENCY: Residency = Residency {
 /// The side of the mirror window that holds a residency: `2 (r_lod + h) + 1` chunks.
 pub fn window_side(r: Residency) -> i32 {
     2 * (r.r_lod.max(r.r_full) + r.hysteresis) + 1
+}
+
+/// The audio listener for `camera`: its position (voxel units), its forward and its up. The
+/// mixer derives the listener's right as `forward x up`, which is the camera's right
+/// (`forward x Z`), so a source on the right of the screen plays on the right channel.
+pub fn listener(camera: &Camera) -> Listener {
+    let (forward, _, up) = camera.basis();
+    Listener {
+        position: camera.position.to_array(),
+        forward: forward.to_array(),
+        up: up.to_array(),
+    }
 }
 
 /// The rubble a collapsing region leaves when `R` has the fly-through remove unsupported regions
