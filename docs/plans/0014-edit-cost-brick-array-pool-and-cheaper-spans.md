@@ -376,8 +376,8 @@ to 3 to 4 ms there; a guess until the baseline is measured.
 |---|---|---|---|
 | 1: The uniform-brick oracle and the allocation measured | dev | done | `baf0ac0` |
 | 2: A brick-array pool | dev | done | `7ed81d3` |
-| 3: An exact span walk for the sphere | dev | code committed; profile done-when unmet, plan stopped here | `5850b77` |
-| 4: An analytic capsule row | dev | not started | |
+| 3: An exact span walk for the sphere | dev | done (as amended 2026-10-17) | `5850b77` |
+| 4: An analytic capsule row | dev | done | committed with this row |
 | 5: Readings against the figure | dev | not started | |
 
 ### Notes
@@ -432,12 +432,25 @@ to 3 to 4 ms there; a guess until the baseline is measured.
   0.43 ms, brick-row walk 0.31 ms, with the centre start 0.27 ms per 100 spheres; the walk
   is about 35 instructions, branch misses are 0.5 % of branches. Under 5 % of a 3.0 ms
   `apply` is about 0.15 ms for about 54600 rows per 100 carves (about 2.7 ns, 11 cycles, a
-  row). Per the batch rules the plan stops here: Phases 4 and 5 are not started.
-- Phase 4 (not started): an uncommitted draft of the analytic capsule row (closed form plus
-  bisection, its 1000-row property test and a test-count bound test, all passing) is kept
-  outside the repository for the session. Diagnostic quiet reading of that draft paired with
-  the Phase 3 tree (load 1.81 / 1.47 / 1.27): Phase 3 `tool` 7.989, `tool_warm` 7.897,
+  row). Per the batch rules the plan stopped here.
+- Phase 3, after the amendment of 2026-10-17: the readings at `5850b77` (span work 13.2 % of
+  `worst_warm`'s samples inside `World::apply`, against at most 14 %; `worst_warm` 3.014 and
+  3.023 ms against the Phase 2 tree's 3.226 and 3.247 ms, paired) meet the amended done-when.
+  No code changed for it.
+- Merge of `main` (`87227d6`): `crates/vxe-world/src/stamp.rs` (Plan 0008's stamp) called
+  `Brick::expand` and `collapse` without the pool argument; `World::stamp` now takes one
+  batch from the brick-array pool per stamp and gives it back, and `blit_into` (sources) passes
+  an empty local list. The file is outside every phase's Files touched.
+- Phase 4: before the commit, an uncommitted draft of the same code read, diagnostic, paired
+  with the Phase 3 tree (load 1.81 / 1.47 / 1.27): Phase 3 `tool` 7.989, `tool_warm` 7.897,
   `worst_warm` 3.022 ms; draft `tool` 6.833, `tool_warm` 6.707, `worst_warm` 3.075 ms.
+- Phase 4: the test-count bound (`capsule_rows_cost_logarithmic_tests`, 1000 seeded rows,
+  439 with a span and 561 without) is a unit test in `shape.rs`, counting
+  `CapsuleRow::contains` calls through a `#[cfg(test)]` thread-local counter.
+- Phase 4: `tool_warm` (6.658 / 6.651 ms) reads above `worst_warm` (3.033 / 3.023 ms) in the
+  same run, about 2.2 times; the breakdown is in the Close triggers.
+- Phase 4: the Phase 3 side of the paired run is the bench built from the merge commit
+  `87227d6` (Phase 3 code plus `main`), so the two binaries differ by Phase 4 only.
 
 ### Close triggers
 
@@ -516,6 +529,23 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     2.453, `tool` 7.977 / 7.984, `tool_warm` 7.869 / 7.915 ms; Phase 3 `worst` 3.234 /
     3.249, `worst_warm` 3.014 [3.011, 3.018] / 3.023 [3.020, 3.027], `mixed` 2.334 / 2.334,
     `tool` 7.989 / 7.980, `tool_warm` 7.884 / 7.880 ms.
+  - Phase 4, paired with the Phase 3 tree (bench built from `87227d6`), alternated, two
+    rounds, one quiet-lock hold; 1-minute load 1.94 before, 1.46, 1.48, 1.39 at the starts of
+    the next three runs, 1.24 after. Round 1 / round 2, mean [CI]: Phase 3 `worst` 3.260 /
+    3.241, `worst_warm` 3.026 [3.022, 3.030] / 3.033 [3.028, 3.038], `mixed` 2.329 / 2.329,
+    `tool` 8.014 / 8.020, `tool_warm` 7.911 [7.905, 7.917] / 7.912 [7.903, 7.923] ms;
+    Phase 4 `worst` 3.161 / 3.139, `worst_warm` 3.033 [3.030, 3.036] / 3.023 [3.019, 3.028],
+    `mixed` 2.334 / 2.325, `tool` 6.778 / 6.774, `tool_warm` 6.658 [6.653, 6.664] / 6.651
+    [6.646, 6.656] ms. `tool_warm` is 15.8 % / 15.9 % below Phase 3's.
+  - Phase 4 profile, harness `perf record` of `tool_warm` (300 iterations, 10498 samples),
+    load 1.13 / 1.20. Top self symbols: `CapsuleRow::contains` 26.2 %, `write_rows` 7.6 %,
+    `last_true` 4.0 %, `CarveBits::target` 3.8 %, `edit_brick` 3.7 %, `i128::div_euclid`
+    3.6 %, `CapsuleRow::new` 3.5 %, `RowCache::span` 3.3 %, `Shape::row_span` 3.2 %,
+    `first_true` 3.1 %, `CapsuleRow::nearest` 3.1 %, `Range::is_empty` 2.9 %; the 128-bit
+    division helpers (`u128_by_u64_div_rem`, `__divti3`, `__udivti3`) a further 5.2 %.
+    Inclusive: the capsule test (`CapsuleRow::contains`) 27.5 %; `nearest` 16.5 % (its two
+    tests and the `i128` closed form), `first_true` 12.6 %, `last_true` 14.3 %;
+    `Shape::row_span` 51.0 %, span work 57.8 %, `write_rows` 22.7 %, `Brick::expand` 1.9 %.
 - **Gate at the tip** (tree of `5850b77`, `CARGO_BUILD_JOBS=3`): `cargo build --workspace
   --all-targets` exit 0; `cargo clippy --workspace --all-targets -- -D warnings` exit 0;
   `cargo fmt --all --check` exit 0; `cargo test --workspace --doc` exit 0 (1 doctest);

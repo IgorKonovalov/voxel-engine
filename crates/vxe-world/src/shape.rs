@@ -79,8 +79,10 @@ impl Shape {
     ///
     /// The sphere solves `dx² <= r² - dy² - dz²` with an integer square root: for a
     /// non-negative integer `rem`, `dx² <= rem` exactly when `|dx| <= isqrt(rem)`. The box
-    /// clips its half-open range. The capsule scans inward from both ends with the test of
-    /// [`Shape::contains`], exact because the capsule is convex.
+    /// clips its half-open range. The capsule takes the window's centre nearest the segment
+    /// (see `CapsuleRow::nearest`), returns `None` when it is outside, and otherwise bisects
+    /// each end with the test of [`Shape::contains`]: at most `2 + 2 ceil(log2(w))` tests for a
+    /// window of `w` voxels, 2 when no centre is inside.
     pub fn row_span(&self, y: i64, z: i64, x_lo: i64, x_hi: i64) -> Option<(i64, i64)> {
         let (lo, hi) = match *self {
             Shape::Sphere { c, r } => {
@@ -107,10 +109,16 @@ impl Shape {
                 )
             }
             Shape::Capsule { a, b, r } => {
+                if x_lo > x_hi {
+                    return None;
+                }
                 let row = CapsuleRow::new(a.0, b.0, r, centre(y), centre(z));
-                let lo = (x_lo..=x_hi).find(|&x| row.contains(centre(x)))?;
-                let hi = (lo..=x_hi).rev().find(|&x| row.contains(centre(x)))?;
-                (lo, hi)
+                let m = row.nearest(x_lo, x_hi)?;
+                // The inside centres of the row are one interval holding `m` (the capsule is
+                // convex): bisect for its first centre in `x_lo..=m` and its last in
+                // `m..=x_hi`.
+                let inside = |x: i64| row.contains(centre(x));
+                (first_true(x_lo, m, inside), last_true(m, x_hi, inside))
             }
         };
         (lo <= hi).then_some((lo, hi))
@@ -336,6 +344,8 @@ struct CapsuleRow {
     t_yz: i128,
     ww_yz: i128,
     ee_yz: i128,
+    /// `dy² + dz²`: the segment's squared length across the row.
+    across2: i128,
 }
 
 impl CapsuleRow {
@@ -352,12 +362,47 @@ impl CapsuleRow {
             t_yz: wy * d[1] + wz * d[2],
             ww_yz: wy * wy + wz * wz,
             ee_yz: ey * ey + ez * ez,
+            across2: d[1] * d[1] + d[2] * d[2],
+        }
+    }
+
+    /// A centre of `x_lo..=x_hi` (`x_lo <= x_hi`) at least as near the segment as every other
+    /// centre of the window, if it is inside; `None` when no centre of the window is inside.
+    ///
+    /// The point of the segment `a + t d` nearest the row line minimises
+    /// `(cy - ay - t dy)² + (cz - az - t dz)²` over `t` in `[0, 1]`: `t = t_yz / across2`
+    /// clamped (any `t` when `across2 == 0`, the segment parallel to `x` or a point; `t = 0`
+    /// is taken). The row point nearest the segment then has `x* = ax + t dx`, and the
+    /// squared distance along the row is a convex function of `x` minimised there, so over the
+    /// window's centres it is least at the centre just below or just above `x*`, clamped to
+    /// the window. Both are tested: two capsule tests.
+    fn nearest(&self, x_lo: i64, x_hi: i64) -> Option<i64> {
+        // t = tn / td, in [0, 1].
+        let (tn, td) = if self.across2 == 0 {
+            (0, 1)
+        } else {
+            (self.t_yz.clamp(0, self.across2), self.across2)
+        };
+        // Below: the greatest voxel whose centre 256 i + 128 is at or below x* = ax + dx tn / td,
+        // i = floor((ax td + dx tn - 128 td) / (256 td)).
+        let num = self.ax * td + self.dx * tn - 128 * td;
+        let below = num.div_euclid(256 * td);
+        let clamp = |i: i128| i64::try_from(i.clamp(i128::from(x_lo), i128::from(x_hi)));
+        let (below, above) = (clamp(below).ok()?, clamp(below + 1).ok()?);
+        if self.contains(centre(below)) {
+            Some(below)
+        } else if above != below && self.contains(centre(above)) {
+            Some(above)
+        } else {
+            None
         }
     }
 
     /// Whether the point `(cx, y, z)` is inside.
     #[inline]
     fn contains(&self, cx: i64) -> bool {
+        #[cfg(test)]
+        tests::CAPSULE_TESTS.with(|n| n.set(n.get() + 1));
         let wx = i128::from(cx) - self.ax;
         let t = wx * self.dx + self.t_yz;
         let ww = wx * wx + self.ww_yz;
@@ -370,6 +415,37 @@ impl CapsuleRow {
             ww * self.len2 - t * t <= self.r2 * self.len2
         }
     }
+}
+
+/// The least `x` in `lo..=hi` with `f(x)`, for `f` false then true along the range and
+/// `f(hi)` true; `ceil(log2(hi - lo + 1))` calls.
+fn first_true(lo: i64, hi: i64, f: impl Fn(i64) -> bool) -> i64 {
+    // Invariant: f(x) is false for x <= out (x >= lo) and true at x = in_.
+    let (mut out, mut in_) = (lo - 1, hi);
+    while in_ - out > 1 {
+        let mid = out + (in_ - out) / 2;
+        if f(mid) {
+            in_ = mid;
+        } else {
+            out = mid;
+        }
+    }
+    in_
+}
+
+/// The greatest `x` in `lo..=hi` with `f(x)`, for `f` true then false along the range and
+/// `f(lo)` true; `ceil(log2(hi - lo + 1))` calls.
+fn last_true(lo: i64, hi: i64, f: impl Fn(i64) -> bool) -> i64 {
+    let (mut in_, mut out) = (lo, hi + 1);
+    while out - in_ > 1 {
+        let mid = in_ + (out - in_) / 2;
+        if f(mid) {
+            in_ = mid;
+        } else {
+            out = mid;
+        }
+    }
+    in_
 }
 
 /// Smallest `s >= 0` with `s * s >= n`.
@@ -444,6 +520,56 @@ mod tests {
         assert!(
             boundary >= 100,
             "{boundary} rows with a centre on the surface"
+        );
+    }
+
+    thread_local! {
+        /// `CapsuleRow::contains` calls on this thread.
+        pub(super) static CAPSULE_TESTS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+
+    /// Over 1000 seeded capsule rows (radius 1 to 40 voxels, ends within ±64 voxels, a third
+    /// of the segments parallel to `x` and a sixth of length 0), `row_span` makes at most
+    /// `2 + 2 ceil(log2(w))` capsule tests for a window of `w` voxels, and at most 2 when no
+    /// centre is inside.
+    #[test]
+    fn capsule_rows_cost_logarithmic_tests() {
+        let mut state = 0x0014_0004;
+        let (mut empty, mut full) = (0, 0);
+        for i in 0..1000 {
+            let a = [0; 3].map(|_| range(&mut state, -64 * 256, 64 * 256));
+            let b = match i % 6 {
+                0 => a,
+                1 | 2 => [range(&mut state, -64 * 256, 64 * 256), a[1], a[2]],
+                _ => [0; 3].map(|_| range(&mut state, -64 * 256, 64 * 256)),
+            };
+            let shape = Shape::Capsule {
+                a: Fixed3(a),
+                b: Fixed3(b),
+                r: range(&mut state, 256, 40 * 256),
+            };
+            let (lo, hi) = shape.voxel_bounds().unwrap();
+            let y = range(&mut state, lo[1] - 2, hi[1] + 2);
+            let z = range(&mut state, lo[2] - 2, hi[2] + 2);
+            let x_lo = range(&mut state, lo[0] - 4, hi[0]);
+            let x_hi = x_lo + range(&mut state, 0, hi[0] - lo[0] + 8);
+            let w = x_hi - x_lo + 1;
+            CAPSULE_TESTS.with(|n| n.set(0));
+            let span = shape.row_span(y, z, x_lo, x_hi);
+            let tests = CAPSULE_TESTS.with(std::cell::Cell::get);
+            let bound = 2 + 2 * u64::from(w.cast_unsigned().next_power_of_two().trailing_zeros());
+            if span.is_none() {
+                assert!(tests <= 2, "row {i}: {tests} tests and no centre inside");
+                empty += 1;
+            } else {
+                assert!(tests <= bound, "row {i}: {tests} tests for a window of {w}");
+                full += 1;
+            }
+        }
+        println!("{full} rows with a span, {empty} without");
+        assert!(
+            full >= 300 && empty >= 100,
+            "{full} with a span, {empty} without"
         );
     }
 
