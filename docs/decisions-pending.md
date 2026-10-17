@@ -130,6 +130,8 @@ or `--audio-debug` to also record a wav):
 4. With about 8 sounds playing, press `F1` and note the callback max, active taps and the last
    acoustics update time.
 
+**Answered, 2026-10-17, on `main` after the merge (7e8b3d2):** 1 to 3 pass; 4 reads a callback max of 0.429 ms with 8 voices and 128 taps. Moving (not turning) clicks with the reflections on and not with them off: the tap swap, logged in Plan 0006 as an open finding. The echoes need work before Plan 0006 closes.
+
 **D2b. `Acoustics::update` at 1.03 ms against a 0.5 ms proposal.** This is the per-frame
 occlusion and reflection probe for 32 sources. The 0.5 ms figure had no arithmetic behind it.
 The cost is about 240 rays x about 100 voxel steps x about 40 ns, and each step is the exact
