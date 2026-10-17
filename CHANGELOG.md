@@ -8,6 +8,26 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 Plan 0012 (no version: repository tooling): CI runs `scripts/check-comment-hygiene.mjs` (no relative link or plan-relative narration in `.rs`/`.wgsl` comments) and `scripts/check-index-rows.mjs` with `--self-test` (rows inside `roster:begin` markers at most 320 bytes); seeded fixture trees under `scripts/fixtures/`.
 
+## [0.6.0] - 2026-10-17
+
+Plan 0008: the headless halves of M6 (`.vox` import) and M7 (prefab stamping). The stamp
+bench reads 22.7 us for a 16³ shelled box and about 2 ms for a 64³ prefab against the 100 us
+and 5 ms proposals (`docs/nfr.md` section 4). Two windowed checks await the owner.
+
+- `vxe-assets` (new crate, depends on `vxe-world` only): a `.vox` parser for `SIZE`, `XYZI`,
+  `RGBA`, `PACK` and the `nTRN`/`nGRP`/`nSHP` scene graph, other chunks skipped by size;
+  the generated MagicaVoxel default palette; `IMAP` presence reported; `VoxMap` with
+  `Slot::{Air, Material, Skip, Unset}` and `to_prefab`; scene-graph `placements()` composing
+  integer translations and rotations, with `Placement::min_corner`. Hostile input is refused
+  without a panic: `MAX_MODEL_EDGE` 256, `MAX_PLACEMENTS` 65_536, `MAX_TRANSLATION` 1 << 20,
+  and composed translations checked against `i32`.
+- `vxe-world`: `Prefab` (dense materials plus a write mask) and `Rot` (the 24 axis-aligned
+  rotations); `World::stamp`, which writes every masked voxel and returns an `EditResult`
+  like an edit; `StampedSource`, a `WorldSource` that blits placements after its base, in
+  order and independent of the thread count (pinned hash); the `stamp` bench.
+- `apps/flythrough`: `--vault` places a shelled box ahead of the spawn, and `P` stamps one at
+  the aim point through the same post-edit path as a dig.
+
 ## [0.5.0] - 2026-10-17
 
 Plan 0004: M3, collision, a character controller and coarse grids (ADR-0005). The F2 wall

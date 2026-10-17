@@ -10,6 +10,11 @@
 > **Prerequisite:** Plan 0003 closed (its tip is this plan's baseline). `perf` installed on the
 > dev box by the owner (`pacman -S perf`; `kernel.perf_event_paranoid` at its current 2 allows
 > user-space sampling and fault counts of one's own processes).
+> **Amended 2026-10-17**, after `dev` stopped at Phase 3's profile done-when (orchestrator-applied
+> under the owner's standing "go with your recommendations"; the owner can overturn it): Phase
+> 3's done-when is restated to the measured property, Phases 4 and 5 keep their tests and run
+> to the end, and the plan states that it does not reach the 2 ms figure. See "Amendment
+> 2026-10-17, after the Phase 1 profile" below.
 
 ## TL;DR
 
@@ -83,6 +88,81 @@ that changes ADR-0002's representation and every reader of a brick, and it is an
 if Phase 1 shows the pool cannot reach the figure. We rejected `f64` square roots (`edit.rs`
 and `shape.rs` stay integer). We rejected SIMD and threading one op across bricks for Plan
 0003's reasons, which still hold.
+
+## Amendment 2026-10-17, after the Phase 1 profile
+
+Made during implementation, after `dev` stopped at Phase 3's profile done-when on branch
+`plan-0014` (tip `2c9794f`; every reading cited here is in the Implementation log's Notes and
+Close triggers there). Applied by the orchestrator under the owner's standing "go with your
+recommendations" while the owner was away; it is a recommendation the owner can overturn, and
+overturning it changes only the done-whens below, not the code already written. The owner asked
+to measure first and decide by the numbers; this amendment follows the numbers.
+
+### 1. What the profile showed, and why this plan does not reach 2 ms
+
+**The `nfr.md` §4 target of 2 ms is not reached by this plan.** The Budgets row assumed
+`Brick::expand` was 36.5 % of `worst` (Plan 0003's gdb samples on a loaded box) and that the
+pool would remove about 1.2 ms of it. Phase 1's quiet-box `perf` profile, inclusive shares of
+the samples inside `World::apply` for `worst`: `write_rows` 54.2 %, span work 24.9 % (`isqrt`
+12.5 %), `Brick::expand` 5.0 %. The pool (Phase 2) moved `worst` from 3.597 to 3.504 ms and
+read `worst_warm` 3.272 ms; the walk (Phase 3) took `worst_warm` from 3.226 to 3.014 ms,
+paired. At the Phase 3 tip, the sphere's row solve is 13.2 %, `RowCache::span` 4.7 % and
+`Brick::expand` 2.8 % (self) of `worst_warm`'s apply samples. Removing all three entirely
+leaves about 3.01 x 0.79 = 2.4 ms, so no lever inside this plan's scope (allocation, spans,
+the capsule row) can reach 2 ms. The rest is the row write itself (`write_rows` and
+`CarveBits::target`, about 55 to 57 % inclusive), which is bounded by the brick
+representation. The baseline projection (1.5 to 2 times the dev box, a guess) puts the
+plan's end state at about 4.5 to 6 ms there.
+
+### 2. Phase 3's done-when, restated to the measured property
+
+The under-5 % threshold was set before Phase 1 measured anything; at about 54600 rows per 100
+carves it needs about 11 cycles a row, and the walk is about 35 instructions with 0.5 % branch
+misses. More span work (option (b) in the stop note) would save at most about a fifth of the
+13.2 %, about 0.08 ms, and not change the outcome. Phase 3's second done-when now reads:
+
+- A quiet-box `perf` profile of `worst_warm`, by the Phase 1 harness method, puts the
+  sphere's span work (the row solve and what it calls or inlines) at **at most 14 %** of the
+  samples inside `World::apply`, down from 19.1 % at Plan 0003's tip by the same method; and
+  `worst_warm` reads lower than the Phase 2 tree's in a paired quiet-box run. The first
+  done-when (`walked_spans_equal_solved_spans`, spans equal to the solved spans, and Plan
+  0003's 1000-row test unchanged) is not relaxed.
+
+The readings at `5850b77` (13.2 %; 3.014 and 3.023 against 3.226 and 3.247 ms) meet it, so
+Phase 3 is done as amended with no further code.
+
+### 3. What Phase 4 must still show
+
+Every test-shaped done-when stands: the closed form in `i128`, the floor-or-ceiling minimiser,
+at most `2 + 2 ceil(log2(w))` capsule tests a row and 2 for an empty row, Plan 0003's 1000-row
+test unchanged, and the new 1000-row capsule-only property test. The reading changes from a
+parity gate to the measured property: `tool_warm` reads **at least 10 % below** the Phase 3
+tree's `tool_warm` in a paired quiet-box run (the uncommitted draft read 7.897 to 6.707 ms,
+15 %, diagnostic), and `worst_warm` is unchanged within the run-to-run spread, since the sphere
+path is untouched. The log still records `tool_warm` against `worst_warm` and, since parity is
+not expected, the `perf` breakdown of `tool_warm` (top self symbols and the capsule test's
+share).
+
+### 4. What Phase 5 must still show
+
+Phase 5 runs in full: the five bench cases paired with Plan 0003's tip, the profile of Phase 1
+repeated at the tip (the miss path, now the expected one), the fly-through's three `bench:`
+lines with the `carved:` line equal to Plan 0003's, and `nfr.md` §4's readings with machine,
+commit and load. §4 records the miss and keeps the 2 ms figure as written: this plan does not
+widen it. Then the plan goes to its close.
+
+### 5. Follow-up for the owner: the brick representation
+
+The remaining bulk is `write_rows`. The next lever is the representation (ADR-0002's
+`Uniform` or `Full(Box<[u16; 512]>)`): a bitmask or palette brick that writes a carve as word
+operations, or arena handles. That supersedes part of ADR-0002 and touches the renderer's
+mirror, so it is an ADR question for the owner at this plan's close, alongside the other
+choice the plan already names: revising `nfr.md` §4. Neither is decided here.
+
+**Rejected.** (b) More span work before Phase 4: at most about 0.08 ms, and it delays the
+capsule row, which the draft shows is worth about 1.2 ms on `tool`. (c) Stopping the plan now
+for the representation ADR: Phases 4 and 5 are independent of the representation, their gains
+are measured, and the close is where the plan already routes that question.
 
 ## Architecture diagram
 
@@ -184,7 +264,8 @@ Shared conventions:
     span, including the boundary `|256 x + 128 - cx| == h` inside.
   - A quiet-box `perf` profile of `worst_warm` at this phase puts the sphere's span work
     (`row_span` and what it inlines) under 5 % of the samples inside `World::apply` (15.4 % at
-    Plan 0003's close); the log records it.
+    Plan 0003's close); the log records it. (Amended 2026-10-17: restated as "the share falls
+    from 19.1 % to at most 14 %"; see "Amendment 2026-10-17, after the Phase 1 profile" item 2.)
 
 ### Phase 4: An analytic capsule row
 - **Owner skill:** dev
@@ -204,7 +285,9 @@ Shared conventions:
     and degenerate segments of length 0) gives exactly the `contains` set.
   - `tool_warm` reads no more than `worst_warm` in the same quiet-box run (the capsules carve
     fewer centres, about 2880 against 4169, over the same surface area); the log records both,
-    or the breakdown if it does not.
+    or the breakdown if it does not. (Amended 2026-10-17: the gate is `tool_warm` at least 10 %
+    below the Phase 3 tree's in a paired quiet-box run, with the breakdown recorded; see
+    "Amendment 2026-10-17, after the Phase 1 profile" item 3.)
 
 ### Phase 5: Readings against the figure
 - **Owner skill:** dev
@@ -216,7 +299,10 @@ Shared conventions:
     intervals, load, machine and commit, each paired with Plan 0003's tip. If `worst_warm`
     reads 2.0 ms or more, the log records the Phase 1 profile repeated at the tip and the plan
     stops there without widening the figure: the close decides between the brick
-    representation ADR question and an `nfr.md` revision.
+    representation ADR question and an `nfr.md` revision. (Amended 2026-10-17: `worst_warm`
+    is not expected under 2.0 ms; "stops there" means the plan goes to its close after this
+    phase's other two items, which still run; see "Amendment 2026-10-17, after the Phase 1
+    profile" item 4.)
   - `cargo run --release -p flythrough -- --level --seed 1 --headless --bench 1 --frames 1`
     (100 radius-10 carves near the spawn, the reserve called before the bench): the log records
     the `bench:` line's edit CPU time, three runs, paired with Plan 0003's tip, and the
@@ -243,7 +329,7 @@ No new dependency. `perf` is a tool on the dev box, not a crate.
 
 | `nfr.md` figure | Expected effect | How the close measures it |
 |---|---|---|
-| §4 edit cost (2 ms per 100 radius-1 m carves) | From Plan 0003's 3.1 to 3.7 ms (load-dependent) to under 2 ms for `worst_warm`. Arithmetic on Plan 0003's tip breakdown: the pool removes most of `Brick::expand`'s 36.5 % if first touch and the allocator are the cost (about 1.2 ms), the span walk most of `row_span`'s 15.4 % (about 0.4 ms); that lands near 2 ms, a guess until Phase 1 says what the 36.5 % is | `cargo bench -p vxe-world --bench edits` on a quiet box, paired with Plan 0003's tip; the fly-through's `--bench` line |
+| §4 edit cost (2 ms per 100 radius-1 m carves) | From Plan 0003's 3.1 to 3.7 ms (load-dependent) to under 2 ms for `worst_warm`. Arithmetic on Plan 0003's tip breakdown: the pool removes most of `Brick::expand`'s 36.5 % if first touch and the allocator are the cost (about 1.2 ms), the span walk most of `row_span`'s 15.4 % (about 0.4 ms); that lands near 2 ms, a guess until Phase 1 says what the 36.5 % is. (Amended 2026-10-17: Phase 1 falsified this arithmetic; `Brick::expand` is 5.0 %, and the plan does not reach 2 ms. See "Amendment 2026-10-17, after the Phase 1 profile" item 1.) | `cargo bench -p vxe-world --bench edits` on a quiet box, paired with Plan 0003's tip; the fly-through's `--bench` line |
 | §3 world RAM (4 GB; 3.87 GB peak RSS read by Plan 0002) | The pool adds at most 8 MiB | `pool_len()` times 1 KiB, printed by the fly-through's `bench:` line |
 | §6 determinism | Unchanged, asserted | both constants on both CI arms; the oracle tests |
 
