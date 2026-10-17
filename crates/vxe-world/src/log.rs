@@ -185,27 +185,41 @@ impl OpLog {
         out
     }
 
-    /// Reads entries until the bytes end.
+    /// Reads entries until the bytes end. Seqs must strictly ascend across ops and
+    /// boundaries, as [`OpLog::record`] enforces; otherwise [`WireError::OutOfOrder`].
     pub fn decode(bytes: &[u8]) -> Result<Self, WireError> {
         let mut r = Reader::new(bytes);
-        let mut entries = Vec::new();
+        let mut log = Self::new();
         while !r.is_empty() {
-            entries.push(LogEntry::decode(&mut r)?);
+            log.decode_entry(&mut r)?;
         }
-        Ok(Self::from_entries(entries))
+        Ok(log)
     }
 
     fn decode_n(r: &mut Reader<'_>, n: u64) -> Result<Self, WireError> {
-        let mut entries = Vec::new();
+        let mut log = Self::new();
         for _ in 0..n {
-            entries.push(LogEntry::decode(r)?);
+            log.decode_entry(r)?;
         }
-        Ok(Self::from_entries(entries))
+        Ok(log)
     }
 
-    fn from_entries(entries: Vec<LogEntry>) -> Self {
-        let ops = entries.iter().filter(|e| e.op().is_some()).count();
-        Self { entries, ops }
+    /// Decodes one entry and appends it, refusing a seq that does not exceed the last one.
+    fn decode_entry(&mut self, r: &mut Reader<'_>) -> Result<(), WireError> {
+        let at = r.pos();
+        let e = LogEntry::decode(r)?;
+        if self
+            .entries
+            .last()
+            .is_some_and(|last| e.seq() <= last.seq())
+        {
+            return Err(WireError::OutOfOrder { at });
+        }
+        if e.op().is_some() {
+            self.ops += 1;
+        }
+        self.entries.push(e);
+        Ok(())
     }
 }
 

@@ -60,6 +60,8 @@ pub enum WireError {
     UnsupportedFormat(u32),
     /// Bytes left over after the last entry a log file's header counts, starting at `at`.
     Trailing { at: usize },
+    /// An op log entry, starting at `at`, whose seq does not exceed the previous entry's.
+    OutOfOrder { at: usize },
     /// Reading or writing the underlying stream failed.
     Io(std::io::ErrorKind),
 }
@@ -72,6 +74,7 @@ impl std::fmt::Display for WireError {
             Self::BadMagic => write!(f, "not a voxel log file (bad magic)"),
             Self::UnsupportedFormat(v) => write!(f, "unsupported log format {v}"),
             Self::Trailing { at } => write!(f, "unexpected bytes after the last entry at {at}"),
+            Self::OutOfOrder { at } => write!(f, "op log seq out of order at offset {at}"),
             Self::Io(k) => write!(f, "i/o error: {k}"),
         }
     }

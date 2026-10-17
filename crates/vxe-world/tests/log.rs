@@ -279,6 +279,44 @@ fn record_refuses_a_seq_out_of_order() {
     log.record(0, 3, box_fill());
 }
 
+/// Bytes whose seqs do not strictly ascend decode to `OutOfOrder` at the offending entry's
+/// offset, through an op log and through a log file (offsets there count the 60-byte header),
+/// instead of reaching `record`'s panic.
+#[test]
+fn seqs_that_do_not_ascend_are_out_of_order() {
+    for second in [3, 5] {
+        let mut ops = entry_bytes(0, 5, sphere_carve());
+        assert_eq!(ops.len(), 47);
+        ops.extend(entry_bytes(0, second, sphere_carve()));
+        assert_eq!(
+            OpLog::decode(&ops),
+            Err(WireError::OutOfOrder { at: 47 }),
+            "seqs 5, {second}"
+        );
+
+        let mut bytes = LogFile {
+            seed: 1,
+            source_version: 1,
+            extent: ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+            ops: OpLog::new(),
+            inputs: InputLog::new(),
+        }
+        .encode();
+        assert_eq!(bytes.len(), 60);
+        bytes[44..52].copy_from_slice(&2u64.to_le_bytes());
+        bytes.extend(&ops);
+        assert_eq!(
+            LogFile::decode(&bytes),
+            Err(WireError::OutOfOrder { at: 60 + 47 }),
+            "file, seqs 5, {second}"
+        );
+    }
+    assert_eq!(
+        WireError::OutOfOrder { at: 47 }.to_string(),
+        "op log seq out of order at offset 47"
+    );
+}
+
 #[test]
 fn a_cut_inside_an_entry_is_truncated_at_that_entry() {
     let bytes = three_entry_log().encode();
