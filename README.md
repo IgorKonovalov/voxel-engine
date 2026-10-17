@@ -109,9 +109,10 @@ With no flags it streams an unbounded seeded cave around the camera.
 |------|------|
 | `--level` | The bounded level instead of the streamed cave |
 | `--seed N` | World seed (default 1) |
+| `--vault` | Generate a 16-voxel room with an indestructible shell 10 m along +x from the spawn |
 | `--headless` | Run the same frames on an offscreen target, with no window |
 | `--frames N` | Exit after `N` frames, printing the `F1` readings over the last ones |
-| `--bench N` | Run the `B` benchmark `N` times after the first upload, before the first frame |
+| `--bench N` | Send `N` `B` benchmark inputs on the first frame |
 | `--autopilot` | Dig, fly 300 m out and back through the streamed cave, print streaming readings |
 | `--render WxH` | Fix the marcher's resolution; the window scales it |
 | `--sync-budget MiB` | Bytes uploaded to the GPU mirror per frame |
@@ -119,6 +120,8 @@ With no flags it streams an unbounded seeded cave around the camera.
 | `--view VIEW` | Write `shaded` (default), `normals` or `hitmask` to the target |
 | `--detail` | Start with procedural surface detail on |
 | `--rock-detail SCALE,STRENGTH` | Rock's detail feature scale in voxels and strength in [0, 1], under `--look` (default 4,0.3) |
+| `--save PATH` | With `--level`: write the session's log file to `PATH` on exit and print the world hash; refuses `P` and does not combine with `--vault` |
+| `--replay PATH` | With `--level`: re-simulate a saved session before the first frame and print its hash; does not combine with `--vault` |
 
 ### Checks
 
