@@ -294,6 +294,49 @@ pub struct HudStats {
 }
 
 impl HudStats {
+    /// Hand-set constants, none of them measured, so the rows render the same on every run:
+    /// the fixture of the golden image with the HUD drawn. The frame row is yellow (p99 above
+    /// 16.67 ms) and so is the upload row (above 1 ms); the rest are white.
+    pub fn fixed() -> Self {
+        Self {
+            fps: 58.8,
+            frame_ms: FrameMs {
+                mean: 17.0,
+                p50: 16.5,
+                p99: 24.25,
+                max: 31.5,
+            },
+            cpu_ms: 4.125,
+            march_ms: Some(1.75),
+            hud_ms: Some(0.0375),
+            upload_bytes: 1_310_720,
+            upload_ms: 1.5,
+            upload_chunks: 3,
+            mirror_bytes: 268_435_456,
+            pool_live: 245_760,
+            pool_free: 16_384,
+            world: WorldSample {
+                chunks: 512,
+                lod_chunks: None,
+                full_bricks: 245_760,
+                cpu_bytes: 252_182_528,
+                age_frames: 12,
+                call_ms: 0.875,
+            },
+            rss_bytes: Some(734_003_200),
+            last_edit: Some(EditLine {
+                verb: "carved",
+                counts: vec![("rock".to_owned(), 4169)],
+                chunks: 2,
+                ms: 0.25,
+            }),
+            camera: [64.5, 64.5, 64.5],
+            chunk: [1, 1, 1],
+            mode: Mode::Fly,
+            format_us: 6,
+        }
+    }
+
     /// Writes the rows into `out`, one per line, and each row's colour into `colours`: yellow
     /// for a time row above its `nfr.md` line, red for a frame over the window longer than two
     /// 60 Hz frames. Both are cleared first.
@@ -617,6 +660,26 @@ mod tests {
         };
         spike.write_rows(&mut out, &mut colours);
         assert_eq!(colours[0], HudColour::Red, "a frame over 33.3 ms");
+    }
+
+    /// The golden's fixture: twelve rows, the frame and upload rows yellow, the rest white.
+    #[test]
+    fn fixed_stats_format_to_their_rows() {
+        let (mut out, mut colours) = (String::new(), Vec::new());
+        HudStats::fixed().write_rows(&mut out, &mut colours);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 12);
+        assert_eq!(
+            lines[0],
+            "fps 58.8  frame mean 17.00 p50 16.50 p99 24.25 max 31.50 ms (240 frames)"
+        );
+        assert_eq!(lines[3], "upload 1310720 B, 3 chunks, 1.500 ms");
+        assert_eq!(lines[9], "carved: rock 4169 (2 chunks, 0.25 ms)");
+        let yellow: Vec<usize> = (0..colours.len())
+            .filter(|&i| colours[i] != HudColour::White)
+            .collect();
+        assert_eq!(yellow, [0, 3]);
+        assert!(colours.iter().all(|&c| c != HudColour::Red));
     }
 
     #[test]
