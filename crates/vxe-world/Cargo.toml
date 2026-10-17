@@ -24,5 +24,9 @@ name = "coarse"
 harness = false
 
 [[bench]]
+name = "stamp"
+harness = false
+
+[[bench]]
 name = "replay"
 harness = false

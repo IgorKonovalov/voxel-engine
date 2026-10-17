@@ -8,6 +8,46 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 Plan 0012 (no version: repository tooling): CI runs `scripts/check-comment-hygiene.mjs` (no relative link or plan-relative narration in `.rs`/`.wgsl` comments) and `scripts/check-index-rows.mjs` with `--self-test` (rows inside `roster:begin` markers at most 320 bytes); seeded fixture trees under `scripts/fixtures/`.
 
+## [0.7.0] - 2026-10-17
+
+Plan 0014: the second pass on the `docs/nfr.md` §4 edit cost. Edits are cheaper, but the
+2 ms figure is still missed; the choice between a brick-representation ADR and a measured §4
+cap awaits the owner. Readings (AMD Ryzen 9 5900HS, `cargo bench -p vxe-world --bench edits`,
+paired with the Plan 0003 tip): `worst` 3.55 -> 3.19-3.26 ms, `mixed` 2.55 -> 2.33-2.36 ms,
+`tool` 8.05 -> 6.78-6.80 ms, and the new `worst_warm` 3.03-3.05 ms.
+
+- `vxe-world`: a brick-array pool. Expanding a uniform brick takes a pooled array, collapsing
+  one and evicting a chunk give arrays back. New API: `World::BRICK_ARRAY_POOL_CAP` (8192
+  arrays, at most 8 MiB), `World::reserve_brick_arrays` and `World::pool_len`.
+- `vxe-world`: the sphere's row spans come from a brick-row span walk, and a capsule row is
+  solved analytically from its nearest centre plus a bisection instead of a linear scan.
+- `vxe-world`: `World::stamp` takes and gives back pooled arrays.
+- `vxe-world` tests and benches: a uniform-world reference oracle
+  (`apply_matches_the_reference_on_uniform_worlds`); the `worst_warm` and `tool_warm` edit
+  bench cases (after a reserve) and the `expand` bench group.
+- `apps/flythrough`: tops the pool up to a 4096-array reserve after each frame's edits and
+  prints the pool size on its `bench:` line.
+
+## [0.6.0] - 2026-10-17
+
+Plan 0008: the headless halves of M6 (`.vox` import) and M7 (prefab stamping). The stamp
+bench reads 22.7 us for a 16³ shelled box and about 2 ms for a 64³ prefab against the 100 us
+and 5 ms proposals (`docs/nfr.md` section 4). Two windowed checks await the owner.
+
+- `vxe-assets` (new crate, depends on `vxe-world` only): a `.vox` parser for `SIZE`, `XYZI`,
+  `RGBA`, `PACK` and the `nTRN`/`nGRP`/`nSHP` scene graph, other chunks skipped by size;
+  the generated MagicaVoxel default palette; `IMAP` presence reported; `VoxMap` with
+  `Slot::{Air, Material, Skip, Unset}` and `to_prefab`; scene-graph `placements()` composing
+  integer translations and rotations, with `Placement::min_corner`. Hostile input is refused
+  without a panic: `MAX_MODEL_EDGE` 256, `MAX_PLACEMENTS` 65_536, `MAX_TRANSLATION` 1 << 20,
+  and composed translations checked against `i32`.
+- `vxe-world`: `Prefab` (dense materials plus a write mask) and `Rot` (the 24 axis-aligned
+  rotations); `World::stamp`, which writes every masked voxel and returns an `EditResult`
+  like an edit; `StampedSource`, a `WorldSource` that blits placements after its base, in
+  order and independent of the thread count (pinned hash); the `stamp` bench.
+- `apps/flythrough`: `--vault` places a shelled box ahead of the spawn, and `P` stamps one at
+  the aim point through the same post-edit path as a dig.
+
 ## [0.5.0] - 2026-10-17
 
 Plan 0004: M3, collision, a character controller and coarse grids (ADR-0005). The F2 wall

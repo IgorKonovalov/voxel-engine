@@ -544,7 +544,7 @@ dependencies = [
 
 [[package]]
 name = "flythrough"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "env_logger",
  "log",
@@ -1933,7 +1933,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vxe-app"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "log",
  "pollster",
@@ -1942,8 +1942,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vxe-assets"
+version = "0.7.0"
+dependencies = [
+ "vxe-world",
+]
+
+[[package]]
 name = "vxe-net"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "criterion",
  "vxe-world",
@@ -1951,7 +1958,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-render"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "bytemuck",
  "glam",
@@ -1962,7 +1969,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-sim"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "criterion",
  "vxe-world",
@@ -1970,7 +1977,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-world"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "criterion",
 ]

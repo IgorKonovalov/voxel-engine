@@ -151,7 +151,7 @@ streaming line (render-thread CPU p50 about 7 ms, p99 52 to 61 ms against 1.0 ms
 rays in the streamed world (6.69 ms at 1080p against 3.0 ms), both on the dev reference. The
 budgets stand. The §4 edit-cost miss carries forward from Plan 0001 to Plan 0003 (closed 2026-10-17,
 v0.4.1), which cut the `worst` bench from 4.6 to 3.56 ms on a quiet dev box with no result or
-hash moved; the owner keeps the 2 ms figure, and Plan 0014 (approved) is the second pass.
+hash moved; the owner kept the 2 ms figure. Plan 0014 (closed 2026-10-17, v0.7.0) is the second pass: a brick-array pool, a sphere span walk and an analytic capsule row cut `worst` to 3.19-3.26 ms (3.03-3.05 ms with a warm pool) and `tool` from 8.05 to 6.78-6.80 ms. The §4 miss carries forward: the row write bounds the cost inside ADR-0002's representation, and the decision between a representation ADR and a measured §4 cap awaits the owner.
 
 **Next, before M2's lighting:** a streaming-CPU plan (incremental queue, residency sweep and
 window shift; narrowing and staging on workers) and a march-pass diagnosis spike (step counts,
@@ -291,20 +291,22 @@ streamer; Plan 0004's Followups list them. Plan 0009 (collapse) is unblocked.
 - **ADRs:** ADR-0007 (log, channel, client modes) and ADR-0010 (logic as a component), both
   proposed with their plans.
 
-### M6: Entities as voxel models (Plan 0008 drafts the `.vox` import; the render half follows Plan 0005)
+### M6: Entities as voxel models (Plan 0008 closed the `.vox` import; the render half follows Plan 0005)
 
-- `vxe-assets`: `.vox` import with material mapping.
+- `vxe-assets`: `.vox` import with material mapping. Done in Plan 0008 (v0.6.0).
 - `vxe-render`: instanced voxel volumes with transforms traced in the same pipeline (a small
   top-level structure of AABBs walked in compute), rigid-part rigs, consistent lighting and
   shadows, emissive entities.
 - **Visible proof:** a golden image of an animated model casting a shadow on the world.
 - **ADRs expected:** entity representation.
 
-### M7: Tooling (Plan 0008 drafts prefab stamping, Plan 0010 the stats HUD)
+### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); debug views and the profiler remain; Plan 0010 the stats HUD)
 
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane
   (`criterion` for CPU, timestamp queries for GPU) with readings committed per named machine.
+- Follow-up: once Plan 0007 closes, the runtime stamp goes through `Server` as op kind 2
+  (reserved there), so a stamp is a logged, replayable op like an edit.
 
 ### M8: Volumetrics, debris and collapse (Plan 0009 drafts the support query and the collapse ops; the cosmetic rigid-body layer follows M6)
 
