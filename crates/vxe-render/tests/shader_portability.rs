@@ -3,10 +3,11 @@
 
 use vxe_render::wgpu::naga::{self, Block, Expression, Statement, TypeInner};
 
-const SHADERS: [(&str, &str); 3] = [
+const SHADERS: [(&str, &str); 4] = [
     ("march.wgsl", include_str!("../src/shaders/march.wgsl")),
     ("attrib.wgsl", include_str!("../src/shaders/attrib.wgsl")),
     ("present.wgsl", include_str!("../src/shaders/present.wgsl")),
+    ("hud.wgsl", include_str!("../src/shaders/hud.wgsl")),
 ];
 
 /// FXC, the D3D12 HLSL compiler, rejects a store to a vector component chosen at run time

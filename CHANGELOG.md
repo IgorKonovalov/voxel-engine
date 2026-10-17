@@ -8,6 +8,32 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 Plan 0012 (no version: repository tooling): CI runs `scripts/check-comment-hygiene.mjs` (no relative link or plan-relative narration in `.rs`/`.wgsl` comments) and `scripts/check-index-rows.mjs` with `--self-test` (rows inside `roster:begin` markers at most 320 bytes); seeded fixture trees under `scripts/fixtures/`.
 
+## [0.9.0] - 2026-10-17
+
+Plan 0010: M7's stats HUD (ADR-0009, accepted). The fly-through gets a toggleable overlay of
+text rows and a frame-time strip, drawn by one blended pass with no UI library. Readings
+(`docs/nfr.md` sections 2 and 3; NVIDIA GeForce RTX 3080 Laptop GPU, Ryzen 9 5900HS, f91726f):
+the HUD pass takes 0.038 ms at 1080p and scale 2, against a 0.1 ms proposal. With the HUD shown
+on `--level`, the march reads +0.06 % and the frame mean +4.0 %. `World::stats` takes 14.85 ms
+on the streamed cave, so it is sampled once per 240 frames. The overlay holds about 130 KiB of
+VRAM by arithmetic. The on-screen check awaits the owner.
+
+- `vxe-render`: `HudOverlay` (`set_text`, `set_rows`, `set_samples`, `encode`,
+  `encode_timed`), `HudColour`, the embedded `font8x8` table and `hud.wgsl`. The pass draws an
+  8 x 8 glyph grid at an integer scale and a bar strip with a 16.67 ms line onto the target
+  after the blit.
+- `vxe-render`: `PassTimer`, a two-timestamp GPU pass timer. `MarchTimer` is now an alias of
+  it. Breaking: `MarchTimer::new` takes the queue and returns `Option` (`None` without
+  `TIMESTAMP_QUERY`).
+- `apps/flythrough`: `F2` toggles the HUD and `--hud` starts with it shown. The rows show the
+  frame window (mean, median, p99, max), the CPU time, the march and HUD GPU times, the upload,
+  the mirror and pool, resident chunks and CPU bytes, the last edit, the camera and chunk, and
+  RSS on Linux. `--frames N` prints the same rows at exit. The world's stats and RSS are
+  sampled at a cadence while the HUD is shown.
+- Tests: `crates/vxe-render/tests/hud.rs` (glyph pixel counts, the strip, an ignored 1080p
+  reading) and `apps/flythrough/tests/hud_golden.rs`, with its baseline `golden/hud.png` blessed
+  on lavapipe. With the HUD off, the output equals `golden/primary.png` byte for byte.
+
 ## [0.8.0] - 2026-10-17
 
 Plan 0009: the collapse half of M8 (ADR-0008, accepted). A support query on the coarse grid

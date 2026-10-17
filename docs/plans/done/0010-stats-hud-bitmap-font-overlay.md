@@ -1,9 +1,9 @@
 # 0010: A toggleable stats HUD: a bitmap-font text grid and a frame-time strip drawn as one overlay pass
 
-> **Status:** approved (2026-10-16)
+> **Status:** done (2026-10-17, v0.9.0): `HudOverlay`, the frame-time strip, `PassTimer` and the fly-through's `F2` HUD shipped with every done-when met on the amended checks and the HUD golden blessed; the fresh review passed it with no fix pass, its minors are follow-ups, and the windowed look awaits the owner.
 > **Created:** 2026-10-16
 > **Milestone:** M7 in `docs/roadmap.md` (tooling; the profiler overlay half, brought forward)
-> **Related ADRs:** [ADR-0009](../adrs/0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) (no UI library), ADR-0001 (stack)
+> **Related ADRs:** [ADR-0009](../../adrs/0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) (no UI library), ADR-0001 (stack)
 > **Prerequisite:** Plan 0001 closed. Independent of every other plan; it touches `apps/flythrough/src/main.rs`, which Plans 0002, 0004, 0007, 0008 and 0009 also touch, so merges are expected and conflicts are textual only.
 > **Amended 2026-10-16**, before "go": Phase 2's `PassTimer` and Phase 3's frame-time window
 > are copied from Ritmolux (the owner's sibling repository, commit `ad375596`) and adapted,
@@ -458,7 +458,173 @@ Buffers: cells 128 KiB at the cap, font 760 bytes, samples 1 KiB, params 64 byte
 
 | Phase | Owner | Status | Notes |
 |---|---|---|---|
-| 1: The overlay pass and the font | dev | not started | |
-| 2: The frame-time strip and the pass timer | dev | not started | |
-| 3: Stats in the fly-through and the toggle | dev | not started | |
-| 4: The golden with the HUD on | dev | not started | |
+| 1: The overlay pass and the font | dev | done | `HudOverlay` (`hud.rs`, `hud.wgsl`), `font8x8.rs` from `font8x8_basic.h`; lavapipe (llvmpipe, LLVM 22.1.8): `A` at scale 2 has 28 set bits, 112 white pixels, 33 shadow pixels, every pixel at `x >= 17` the clear colour; `present.wgsl`, `march.wgsl`, `present.rs` unchanged and Plan 0001's goldens pass; gate: 175 tests run, 175 passed, 1 skipped. Commit: 04fffd5 |
+| 2: The frame-time strip and the pass timer | dev | done | `set_samples` and the strip; lavapipe: samples `[0, 16, 32, 64]`, ceiling 32, scale 1 give columns of 0, 32, 64, 64 white pixels and the red line 33 rows above the strip's bottom row in columns 0 and 1. `PassTimer` in `marcher.rs`, `MarchTimer` a type alias. March GPU, `flythrough --headless --seed 1 --render 1920x1080 --frames 300`, median of the last 30, three runs each, RTX 3080 Laptop GPU, exclusive lock: before (04fffd5) 6.684 / 7.100 / 6.683 ms, after 6.779 / 6.787 / 6.797 ms; with `--level` added, before 1.712 / 1.753 / 1.714 ms, after 1.753 / 1.720 / 1.707 ms; after-median 1.720 vs before-median 1.714 ms on `--level`, 0.35 %, within 3 % (Amendment 2026-10-17). HUD pass (`hud_pass_reading_at_1080p`, ignored test, release): 1920 x 1080, 24 rows x 100 characters, 240 samples, scale 2, median of 300: 0.0573 / 0.0573 / 0.0573 ms. Gate: 177 tests run, 177 passed, 2 skipped. Commit: cbee825 |
+| 3: Stats in the fly-through and the toggle | dev | done | `hud.wgsl` in `tests/shader_portability.rs`'s `SHADERS`; its check passes. `apps/flythrough/src/hud.rs`: `FrameStats` copied from Ritmolux `ad375596` with its tests, `HudStats`, `Cadence`, `WorldSample`, `EditLine`, `Mode`; `F2` toggles, `--hud` starts visible, `--frames` prints the rows at exit after a fresh sample. `World::stats` on the streamed cave at its spawn after full residency (ignored test `world_stats_call_on_the_streamed_world_at_full_residency`, release, 17077 chunks, 1640292 full bricks, 40700 LOD-only): median of 10 14.854 ms (min 14.570, max 15.681), 1-minute load 3.17; so N = 240. Cadence test with a stub counter, N = 60 and N = 240: 300 hidden frames 0 calls, toggle on 1, then 120 visible frames `120 / N` more (2 and 0). `FrameStats`: 240 equal 5 ms deltas give mean, median and p99 5 ms; one 100 ms delta among 239 of 1 ms gives median 1 ms, p99 1 ms, max 100 ms; three 100 ms deltas among 237 of 1 ms give p99 100 ms, median 1 ms, max 100 ms (`three_spikes_among_237_read_in_the_p99`, added after the second amendment). Formatting: 4 to 9 us in the `--hud` runs. Readings, `flythrough --headless [--level] --seed 1 --render 1920x1080 --frames 300 [--hud]`, three runs each, interleaved, exclusive lock, 1-minute load 1.13 to 3.29: `--level` frame mean (the exit print, 240-frame window) without 2.29 / 2.25 / 2.20 ms (median 2.25), with `--hud` 2.32 / 2.39 / 2.34 ms (median 2.34), +4.0 %; march (median of the last 30) without 1.708 / 1.736 / 1.722 ms (median 1.722), with 1.787 / 1.708 / 1.723 ms (median 1.723), +0.06 %; streamed frame mean without 20.38 / 24.64 / 22.58 ms (median 22.58), with 20.88 / 20.17 / 20.50 ms (median 20.50), -9.2 %; streamed march without 6.687 / 6.791 / 8.998, with 6.751 / 7.099 / 7.666 ms. HUD pass (median of the last 30) `--level` 0.0389 / 0.0379 / 0.0379 ms, streamed 0.0369 / 0.0379 / 0.0410 ms. An earlier set at a build reading RSS every frame (1-minute load 1.89 to 5.45): `--level` frame mean without 2.17 / 2.13 / 2.07, with 2.22 / 2.33 / 2.40 ms (+9.4 %); streamed without 20.41 / 24.98 / 21.49, with 20.99 / 24.08 / 21.18 ms (-1.4 %). Gate: 188 tests run, 188 passed, 3 skipped. Commit: f91726f. Verdict per Amendment 2026-10-17, second: the `--level` readings meet the check (frame mean +4.0 % within 5 %, march +0.06 % within 3 %); the streamed readings are logged, not gated; the Phase 3 deviations below are accepted there. After merging main (e6870a9), gate with the three-spike test: 225 tests run, 225 passed, 3 skipped. Commit: ba82245 |
+| 4: The golden with the HUD on | dev | done | `HudStats::fixed()` in `apps/flythrough/src/hud.rs`: hand-set constants (the `cpu bytes` figure a literal, not `cpu_bytes_estimate`), twelve rows, the frame and upload rows yellow, pinned by `fixed_stats_format_to_their_rows`. `apps/flythrough/tests/hud_golden.rs`: Plan 0001's scene (`carved_world()`, `scene_camera()`, `LightParams::at_eye()`, 320 x 180), the march target copied into an `Rgba8Unorm` render target and the overlay drawn onto it at scale 1 from `fixed()` and a fixed 240-sample strip (12 to 23.5 ms sawtooth, a 40 ms spike every 60 samples, ceiling 33.3 ms). `golden/hud.png` blessed with `VXE_BLESS=1` on lavapipe (llvmpipe, LLVM 22.1.8, Mesa 26.2.2), sha256 `02f6622c...847801`; the next run compares byte for byte: 0 bytes differ. The same test: all 11200 pixels outside the text rows (12 x 8 plus 1 shadow row) and the strip (x < 240, y 108 to 171) equal the march target; white 13546, yellow 1393, red 100 pixels. HUD off (`hud_off_is_the_primary_golden_byte_for_byte`): the march target and the copied target with no overlay both equal `golden/primary.png` byte for byte; `primary.png` is unchanged (blob `f4f3aa2d` on main and here, sha256 `4ad06b9f...61c269`), and `primary_golden_shows_the_carve` and `goldens_match_bit_exactly_over_one_and_several_shards` pass. Gate: 228 tests run, 228 passed, 3 skipped. Commit: a22564d |
+
+### Notes
+
+- Phase 3 stopped at f91726f on two blocks: the done-when's one-spike p99 case (index
+  `round(0.99 x 239) = 237` of the sorted window holds 1 ms), and the streamed command's frame
+  mean at -9.2 % against a 5 % check. Amendment 2026-10-17, second, ruled both: the three-spike
+  case is added beside the one-spike case, and the 5 % check gates `--level` only.
+- Deviation, 04fffd5: the cell buffer always has the cap layout (256 columns stride x 128
+  rows); the visible `ceil(width / 8 scale)` x `ceil(height / 8 scale)` cells are the ones the
+  target's pixels reach. `set_text` takes no size, so it cannot size the grid to the target.
+- Deviation, 04fffd5: `encode` passes the target height to the shader as the draw's first
+  instance (`instance_index`), because `encode` takes no queue to write a uniform.
+- Deviation, 04fffd5: `HudOverlay::set_rows` and `HudColour` added beside `set_text`, for the
+  per-row colour of "Risks & open questions"; `encode_timed` added beside `encode` for the
+  HUD's `PassTimer`.
+- Deviation, 04fffd5: `hud.wgsl`'s naga validation is a unit test in `hud.rs`;
+  `tests/shader_portability.rs` (outside Files touched) does not list `hud.wgsl`.
+- Deviation, cbee825: `PassTimer` keeps a two-timestamp query set (the done-when)
+  rather than Ritmolux's fixed set of index pairs; the march and the HUD each own one.
+  `MarchTimer::new` now takes the queue and returns `Option`; the fly-through's two call sites
+  follow.
+- Deviation, cbee825: the HUD reading is an ignored test in `tests/hud.rs` run by
+  hand, not a fly-through run (the fly-through draws no HUD until Phase 3).
+- Deviation, cbee825: `crates/vxe-render/src/lib.rs` (outside Phase 2's Files
+  touched) re-exports `PassTimer`.
+- The red line is drawn where no bar covers it; the strip has no backdrop.
+- Deviation, f91726f: the process RSS is read with the world sample, at the cadence, not every
+  frame. A diagnostic build (not committed) read the `--level` frame mean at 2.34 / 2.42 ms with
+  the per-frame `/proc/self/statm` read and 2.22 / 2.26 ms without it (2.11 / 2.22 ms with the
+  HUD off).
+- Deviation, f91726f: `HudStats.march_ms` and `hud_ms` are `Option<f32>` (`n/a` without
+  `TIMESTAMP_QUERY`); `HudStats` adds `cpu_ms`, the frame's render-thread CPU from its start to
+  its submit, beside the window's `frame_ms`.
+- Deviation, f91726f: the `FrameStats` ring and the strip are fed the delta between frames
+  (the `dt` the shell passes), not the render-thread CPU time; the first frame's delta is
+  skipped. The "printed average frame time" of the check is the exit print's `frame mean`.
+- Deviation, f91726f: while the HUD is shown the march and HUD timers run and are read every
+  frame; the `F1` and `--frames` line gains `gpu hud` (median of its frames) when the HUD is
+  drawn.
+- Deviation, f91726f: `format_us` shows the previous frame's formatting time.
+- Deviation, f91726f: row colours: the frame row is red when the window's max is above 33.3 ms
+  and yellow when its p99 is above 16.67 ms; `cpu` yellow above 16.67 ms; march yellow above
+  3.0 ms; upload yellow above 1.0 ms.
+- Deviation, f91726f: the `World::stats` reading is an ignored test in `main.rs`'s tests,
+  run by hand in release.
+- The Phase 1 to 3 deviations above are ruled in Amendments 2026-10-17 and 2026-10-17, second:
+  all accepted, except `hud.wgsl` missing from `tests/shader_portability.rs`, which f91726f
+  adds.
+- Deviation, Phase 4: the golden test is a new file, `apps/flythrough/tests/hud_golden.rs`,
+  beside `golden.rs` in the same directory, with its baseline `golden/hud.png`.
+- Deviation, Phase 4: the golden draws the overlay onto a copy of the march target (a render
+  target the test creates), since the golden scene has no surface or presenter; the fly-through
+  draws it onto the surface after the blit.
+- Deviation, Phase 4: the golden draws at scale 1 (the fly-through uses 2), so the twelve rows
+  and the 240-sample strip fit the 320 x 180 golden without overlapping; rows are clipped at 40
+  columns.
+- Awaits the owner (windowed, not run by an agent): the on-screen HUD. Command:
+  `cargo run --release -p flythrough -- --level --hud`. Judge: the rows read at the top-left
+  in white with over-budget rows yellow, the frame-time strip sits at the bottom-left above one
+  text row with the red 16.67 ms line, `F2` hides and shows it, and `F1` still prints its
+  snapshot.
+- Environment: during Phase 4 the user's tmpfs quota on `/tmp` was full (the shared scratchpad
+  held 11 GB of other lanes' files), so gate logs and `TMPDIR` went to this worktree's
+  `target/`; no other lane's files were touched.
+- Merge of main at e7c3367 (plans 0014 and 0009) into this branch: `main.rs` took both import
+  and constant sets, the HUD's `Run` methods, and main's `edited` returning the changed cells.
+  The dig, fill and `P` stamp go through `record_edit` with their printed lines unchanged; the
+  collapse's per-frame drops (`dropped`) and `R` removals (`removed`) set the last-edit row
+  without printing, since their printed lines keep main's form. Gate at the merge: nextest
+  256 passed, 4 skipped (ignored), with `VXE_REQUIRE_SOFTWARE_ADAPTER=1`; `golden/hud.png`
+  matched unchanged.
+
+### Close triggers
+
+_(Facts for the architect. No recommendations, and no suggested version bump.)_
+
+- **All dev phases done.** Phase 3 on the second 2026-10-17 amendment (ba82245); Phase 4 at a22564d.
+  `main` merged in at e6870a9 (conflicts in `apps/flythrough/src/main.rs`'s
+  imports and flags only, both sides kept; the plan body is main's at f241d63).
+- **What shipped:** `vxe-render`: `HudOverlay`, `HudColour`, `font8x8`, `hud.wgsl`,
+  `PassTimer` (`MarchTimer` an alias). Fly-through: `hud` module (`FrameStats`, `HudStats`
+  with `fixed()`, `Cadence`, `WorldSample`, `EditLine`, `Mode`), `F2`, `--hud`, the
+  `--frames` rows. Tests: `vxe-render/tests/hud.rs`, `flythrough/tests/hud_golden.rs`,
+  baseline `golden/hud.png`.
+- **Readings:** Phase 2 and Phase 3 rows; NVIDIA GeForce RTX 3080 Laptop GPU, AMD Ryzen 9
+  5900HS (Linux), headless, every GPU command and timing under the exclusive perf lock.
+  Phase 2's 1-minute load read 6 to 25; Phase 3's readings were taken at a 1-minute load of
+  4 or less after up to five retries a minute apart, except the earlier set's one run at 5.45
+  (logged in the Phase 3 row). Phase 4 takes no timing; its goldens ran on lavapipe (llvmpipe,
+  LLVM 22.1.8, Mesa 26.2.2).
+- **Gate at e6870a9 (the merge):** every step below exit 0; `cargo nextest run --workspace`
+  224 run, 224 passed, 3 skipped.
+- **Gate at ba82245:** every step below exit 0; nextest 225 run, 225 passed, 3 skipped.
+- **Gate at a22564d (working tree before commit):** `cargo build --workspace
+  --all-targets` 0; `cargo nextest run --workspace` 228 run, 228 passed, 3 skipped, exit 0
+  (exclusive lock, NVIDIA GeForce RTX 3080 Laptop GPU present per `nvidia-smi -L`); `cargo
+  test --workspace --doc` 0; `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo
+  fmt --all --check` 0; `cargo deny check` 0; `node --test .claude/hooks/*.test.mjs` 59 pass;
+  `check-doc-links.mjs`, `check-comment-hygiene.mjs`, `check-index-rows.mjs` and its
+  `--self-test` 0. CARGO_BUILD_JOBS=3.
+- **Outstanding `human` phases:** none. The on-screen HUD awaits the owner (Notes).
+
+## Close
+
+**Verdict (2026-10-17, fresh-session review at 63453cc, then the merge of `main` at ede864c):**
+closed with no fix pass. Every phase is done. Every done-when holds as amended on 2026-10-17
+(twice). The HUD golden is blessed on lavapipe, and Plan 0001's primary golden is unchanged
+byte for byte.
+
+**Readings** (dev reference, NVIDIA GeForce RTX 3080 Laptop GPU, AMD Ryzen 9 5900HS, f91726f,
+headless, exclusive perf lock; the runs and loads are in the Phase 2 and 3 rows):
+
+| Figure | Reading | Check or proposal |
+|---|---|---|
+| HUD pass, 1920 x 1080, scale 2 | 0.038 ms (fly-through), 0.057 ms (24 x 100 grid, ignored test) | under 0.1 ms (plan proposal) |
+| March with the HUD on, `--level` | +0.06 % (1.723 vs 1.722 ms) | within 3 % |
+| Frame mean with the HUD on, `--level` | +4.0 % (2.34 vs 2.25 ms) | within 5 % |
+| Frame mean with the HUD on, streamed | -9.2 % (logged, not gated) | none (cold-start noise about 21 %) |
+| `World::stats`, streamed cave at full residency | 14.85 ms, once per 240 frames while shown | none |
+| HUD buffers | about 130 KiB (arithmetic) | under 200 KiB (ADR-0009) |
+
+**The merge of `main` (plans 0014 and 0009), judged:** all three behaviour decisions are
+accepted.
+
+- **Collapse drops and `R` removals update the last-edit row without printing.** Their printed
+  lines keep main's form (`removed:`, `landed after`), and a drop happens every frame of a
+  fall. Printing each drop would flood the console, so the row is the right place for them.
+- **The `P` stamp goes through `record_edit`.** Its printed line is unchanged, and the HUD row
+  now shows a stamp like any other edit.
+- **The autopilot is untouched.** It prints its own `autopilot:` lines and runs headless. Its
+  carve not reaching the HUD row has no reader today.
+
+**Orchestrator-applied calls (under the owner's standing go, overturnable by the owner):**
+
+- Close before the owner's windowed look. The look is recorded below as awaiting the owner,
+  not as a blocker.
+- The minor bump to v0.9.0, the next minor after Plan 0009's v0.8.0. `MarchTimer::new` changes
+  signature (it takes the queue and returns `Option`). SemVer 0.x allows that in a minor.
+- The review's minors and nits are follow-ups for one `dev` pass after the merge, not a fix
+  pass before the close.
+- No off-thread `World::stats` for now. The 15 ms hitch every 240 frames while the HUD is shown
+  lands in the window's max, not in its p99.
+
+ADR-0009 is accepted with a dated Outcome.
+
+**Awaiting the owner, in a window:** `cargo run --release -p flythrough -- --level --hud`.
+Judge that the rows read at the top-left in white, with over-budget rows yellow. The frame-time
+strip should sit at the bottom-left above one text row, with the red 16.67 ms line. `F2` hides
+and shows the HUD, and `F1` still prints its snapshot.
+
+## Followups
+
+One `dev` pass after the merge to `main` takes the first three:
+
+- **Per-frame allocations while the HUD is shown** (review minor 1). The rows `Vec` in
+  `apps/flythrough/src/main.rs` (about line 652 at the review), the `last_edit` clone (about
+  line 630) and the ms-formatting closure in `apps/flythrough/src/hud.rs` (about line 356)
+  each allocate every frame. Reuse buffers so a shown HUD allocates nothing per frame.
+- **The `cpu bytes` estimate misses the brick-array pool** (review minor 2). Add
+  `World::pool_len()` to `WorldSample` and count it. Relabel the pool row `gpu pool`, since it
+  reports mirror slots.
+- **Nits.** `PassTimer::read_ms` has an unused `_queue` parameter. `HudOverlay` and its
+  `scale` lack doc comments.
+- **Risk, needs the owner's Windows run:** `encode` passes the target height as the draw's
+  first instance (`instance_index`). That `first_instance` reaches the shader on D3D12 is
+  unverified.

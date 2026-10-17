@@ -300,7 +300,7 @@ streamer; Plan 0004's Followups list them. Plan 0009 (collapse) is unblocked.
 - **Visible proof:** a golden image of an animated model casting a shadow on the world.
 - **ADRs expected:** entity representation.
 
-### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); debug views and the profiler remain; Plan 0010 the stats HUD)
+### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0; debug views, the profiler across passes and the benchmark lane remain)
 
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane

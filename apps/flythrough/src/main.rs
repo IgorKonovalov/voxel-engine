@@ -6,9 +6,10 @@
 //!
 //! `flythrough [--seed N] [--level] [--vault] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH]
-//! [--view VIEW] [--detail]`. `--render` fixes the marcher's resolution (the window
+//! [--view VIEW] [--detail] [--hud]`. `--render` fixes the marcher's resolution (the window
 //! scales it); `--frames` exits after N frames, printing the `F1` readings over the last
-//! ones; `--bench` runs the `B` bench N times right after the first mirror upload, before
+//! ones and the stats HUD's rows; `--hud` starts with the stats HUD shown (`F2` toggles it);
+//! `--bench` runs the `B` bench N times right after the first mirror upload, before
 //! the first frame; `--autopilot` digs, flies 300 m out and back and prints the streaming
 //! readings (see [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame;
 //! `--headless` runs the same frames on an offscreen target with no window; `--walk` (with
@@ -44,13 +45,14 @@ use std::time::Instant;
 
 use fly::{Fly, Walk};
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, VAULT_EDGE, vault};
+use flythrough::hud::{self, Cadence, EditLine, FrameStats, HudStats, WorldSample};
 use flythrough::{RESIDENCY, RUBBLE, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
 use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::{
-    Camera, GpuWorld, LightParams, LodParams, LookParams, MarchTimer, Marcher, MirrorConfig,
-    NormalMode, Presenter, ViewMode, Window, wgpu,
+    Camera, GpuWorld, HudColour, HudOverlay, LightParams, LodParams, LookParams, MarchTimer,
+    Marcher, MirrorConfig, NormalMode, PassTimer, Presenter, SyncStats, ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -98,6 +100,14 @@ const WALKABLE: WalkableParams = WalkableParams {
     min_floor: 448,
     clearance: 2,
 };
+/// The stats HUD's glyph scale: an 8 x 8 glyph covers 16 x 16 pixels.
+const HUD_SCALE: u32 = 2;
+/// Visible frames between two samples of the world's counts; see [`Cadence`]. One sample per
+/// frame-time window, because one `World::stats` call on the streamed cave at full residency
+/// costs more than the 1 ms streaming line (measured by the ignored test
+/// `world_stats_call_on_the_streamed_world_at_full_residency`), so its frame reaches at most
+/// the window's max and not its p99.
+const HUD_STATS_EVERY: u32 = 240;
 /// The support query after a dig: cells of at least 64 solid voxels bear load, a flood gives
 /// up past 4096 cells, and the level's faces anchor (ADR-0008).
 const SUPPORT: SupportParams = SupportParams {
@@ -143,6 +153,8 @@ struct Args {
     /// `--rock-detail`: rock's feature scale (voxels) and strength under `--look`.
     rock_detail: [f32; 2],
     view: ViewMode,
+    /// `--hud`: start with the stats HUD shown.
+    hud: bool,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -179,6 +191,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         detail: false,
         rock_detail: flythrough::ROCK_DETAIL,
         view: ViewMode::Shaded,
+        hud: false,
     };
     let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
@@ -218,6 +231,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--autopilot" => args.autopilot = true,
             "--headless" => args.headless = true,
             "--walk" => args.walk = true,
+            "--hud" => args.hud = true,
             "--vault" => args.vault = true,
             _ => return Err(format!("unknown argument {flag}")),
         }
@@ -252,17 +266,22 @@ fn parse_rock_detail(v: &str) -> Result<[f32; 2], String> {
 }
 
 /// One printed line per edit: `carved: rock 1234, ore 12 (3 chunks, 0.21 ms)`.
-fn edit_line(verb: &str, r: &EditResult, table: &MaterialTable, ms: f64) -> String {
-    let counts = if r.changed_from.is_empty() {
-        "nothing".to_owned()
-    } else {
-        r.changed_from
+fn edit_line(verb: &'static str, r: &EditResult, table: &MaterialTable, ms: f64) -> String {
+    edit_record(verb, r, table, ms).to_string()
+}
+
+/// The edit as the HUD's last-edit row holds it.
+fn edit_record(verb: &'static str, r: &EditResult, table: &MaterialTable, ms: f64) -> EditLine {
+    EditLine {
+        verb,
+        counts: r
+            .changed_from
             .iter()
-            .map(|&(m, n)| format!("{} {n}", material_name(table, m)))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    format!("{verb}: {counts} ({} chunks, {ms:.2} ms)", r.touched.len())
+            .map(|&(m, n)| (material_name(table, m), n))
+            .collect(),
+        chunks: r.touched.len() as u32,
+        ms: ms as f32,
+    }
 }
 
 /// `P`'s edit: the vault stamped unrotated with its minimum corner at the first solid voxel
@@ -342,6 +361,9 @@ struct Gfx {
     timer: Option<MarchTimer>,
     /// Times the attribute pass, with attribute pages and `TIMESTAMP_QUERY`.
     attr_timer: Option<MarchTimer>,
+    hud: HudOverlay,
+    /// Times the HUD pass, with `TIMESTAMP_QUERY`.
+    hud_timer: Option<PassTimer>,
 }
 
 impl Gfx {
@@ -378,6 +400,56 @@ fn attr_line(what: &str, (n, ms): (usize, Option<f64>)) -> String {
 struct Samples {
     cpu_ms: Vec<f64>,
     gpu_ms: Vec<f64>,
+    /// The HUD pass's GPU time, on frames that draw it.
+    hud_ms: Vec<f64>,
+}
+
+/// The stats HUD's state. The frame-time ring and the last sync and edit are kept on every
+/// frame; the world's counts are sampled at the cadence, and the rows formatted, only while
+/// the HUD is shown.
+struct Hud {
+    visible: bool,
+    frames: FrameStats,
+    cadence: Cadence,
+    world: WorldSample,
+    /// The process's RSS, read with the world sample: reading `/proc/self/statm` costs a
+    /// tenth of a millisecond or more in this process, too much for every frame.
+    rss_bytes: Option<u64>,
+    /// The last mirror sync and its render-thread time in milliseconds.
+    sync: (SyncStats, f64),
+    last_edit: Option<EditLine>,
+    /// Last frame's pass readings, shown on the next frame's rows.
+    march_ms: Option<f32>,
+    hud_ms: Option<f32>,
+    cpu_ms: f32,
+    format_us: u32,
+    page_bytes: u64,
+    /// Reused buffers: the rows' text, their colours, and the strip's samples.
+    text: String,
+    colours: Vec<HudColour>,
+    strip: Vec<f32>,
+}
+
+impl Hud {
+    fn new(visible: bool) -> Self {
+        Self {
+            visible,
+            frames: FrameStats::new(),
+            cadence: Cadence::new(HUD_STATS_EVERY),
+            world: WorldSample::default(),
+            rss_bytes: None,
+            sync: (SyncStats::default(), 0.0),
+            last_edit: None,
+            march_ms: None,
+            hud_ms: None,
+            cpu_ms: 0.0,
+            format_us: 0,
+            page_bytes: hud::page_bytes(),
+            text: String::new(),
+            colours: Vec::new(),
+            strip: Vec::with_capacity(hud::RING),
+        }
+    }
 }
 
 /// The streaming state of the default mode.
@@ -471,6 +543,8 @@ struct Coarse {
     crumble: bool,
     /// The last support query's time in microseconds and the regions it found.
     query: Option<(f64, usize)>,
+    /// The last drop or removal: its verb, result and time in milliseconds, for the HUD.
+    last_edit: Option<(&'static str, EditResult, f64)>,
 }
 
 /// A region on its way down: its cells (moved one cell down per full-step frame), the frames
@@ -500,6 +574,7 @@ impl Coarse {
             falling: Vec::new(),
             crumble: false,
             query: None,
+            last_edit: None,
         }
     }
 
@@ -547,14 +622,18 @@ impl Coarse {
                 counts_line(table, &region.counts)
             ));
             if self.crumble {
+                let t = now();
                 match world.remove_region(&region.cells, RUBBLE, RUBBLE_FRACTION, RUBBLE_DEPTH) {
                     Ok(r) => {
+                        let ms = ms_since(t);
                         lines.push(format!(
                             "removed: {{{}}}, {} rubble",
                             counts_line(table, &r.removed),
                             r.placed
                         ));
-                        self.update(world, &r.edit_result());
+                        let e = r.edit_result();
+                        self.update(world, &e);
+                        self.last_edit = Some(("removed", e, ms));
                     }
                     Err(e) => lines.push(format!("removed: refused, {e}")),
                 }
@@ -576,12 +655,16 @@ impl Coarse {
     fn fall(&mut self, world: &World) -> Vec<String> {
         let mut lines = Vec::new();
         for mut f in std::mem::take(&mut self.falling) {
+            let t = now();
             match world.drop_region(&f.cells, FALL_PER_FRAME) {
                 Ok(r) => {
                     if r.dropped > 0 {
+                        let ms = ms_since(t);
                         f.frames += 1;
                         f.fell += r.dropped;
-                        self.update(world, &r.edit_result());
+                        let e = r.edit_result();
+                        self.update(world, &e);
+                        self.last_edit = Some(("dropped", e, ms));
                     }
                     if r.dropped == FALL_PER_FRAME {
                         for c in &mut f.cells {
@@ -649,9 +732,104 @@ struct Run {
     /// Walk mode's body, `None` in fly mode.
     walk: Option<Walk>,
     coarse: Option<Coarse>,
+    hud: Hud,
 }
 
 impl Run {
+    /// Prints the edit's line and keeps it for the HUD.
+    fn record_edit(&mut self, verb: &'static str, r: &EditResult, ms: f64) {
+        println!("{}", self.note_edit(verb, r, ms));
+    }
+
+    /// Keeps the edit for the HUD's last-edit row without printing it, for an edit whose
+    /// printed line has another form (the collapse's drops and removals); returns the record.
+    fn note_edit(&mut self, verb: &'static str, r: &EditResult, ms: f64) -> &EditLine {
+        self.hud
+            .last_edit
+            .insert(edit_record(verb, r, self.world.materials(), ms))
+    }
+
+    /// Hands the HUD the collapse's last drop or removal, if it made one since the last call.
+    fn note_collapse_edit(&mut self) {
+        if let Some((verb, r, ms)) = self.coarse.as_mut().and_then(|c| c.last_edit.take()) {
+            self.note_edit(verb, &r, ms);
+        }
+    }
+
+    /// Samples the world's counts for the HUD: `World::stats`, and `Streamer::stats` for the
+    /// LOD-only chunks while streaming, timed together; then the process's RSS.
+    fn sample_world(&mut self) {
+        let t = now();
+        let s = self.world.stats();
+        let lod = self
+            .stream
+            .as_ref()
+            .map(|st| st.streamer.stats().resident_lod as u32);
+        self.hud.world = WorldSample::from_stats(&s, lod, ms_since(t) as f32);
+        self.hud.rss_bytes = hud::rss_bytes(self.hud.page_bytes);
+    }
+
+    /// The HUD's rows for this frame, from the O(1) sources and the last world sample.
+    fn hud_stats(&self) -> HudStats {
+        let h = &self.hud;
+        let (sync, sync_ms) = h.sync;
+        let (mirror_bytes, pool_live, pool_free) = self.gfx.as_ref().map_or((0, 0, 0), |g| {
+            (
+                g.mirror.mirror_bytes(),
+                g.mirror.live_slots(),
+                g.mirror.free_slots().len() as u32,
+            )
+        });
+        let pos = self.fly.camera.position;
+        HudStats {
+            fps: h.frames.fps(),
+            frame_ms: h.frames.frame_ms(),
+            cpu_ms: h.cpu_ms,
+            march_ms: h.march_ms,
+            hud_ms: h.hud_ms,
+            upload_bytes: sync.bytes,
+            upload_ms: sync_ms as f32,
+            upload_chunks: sync.chunks as u32,
+            mirror_bytes,
+            pool_live,
+            pool_free,
+            world: WorldSample {
+                age_frames: h.cadence.age(),
+                ..h.world
+            },
+            rss_bytes: h.rss_bytes,
+            last_edit: h.last_edit.clone(),
+            camera: pos.to_array(),
+            chunk: voxel_of(pos).chunk().0,
+            mode: if self.walk.is_some() {
+                hud::Mode::Walk
+            } else {
+                hud::Mode::Fly
+            },
+            format_us: h.format_us,
+        }
+    }
+
+    /// Formats this frame's rows and strip into the overlay, timing the formatting.
+    fn update_hud(&mut self, gpu: &Gpu) {
+        let stats = self.hud_stats();
+        let t = now();
+        let h = &mut self.hud;
+        stats.write_rows(&mut h.text, &mut h.colours);
+        h.format_us = ((now() - t).as_secs_f64() * 1e6) as u32;
+        h.strip.clear();
+        h.strip.extend(h.frames.samples().map(|s| s * 1000.0));
+        let Some(gfx) = self.gfx.as_mut() else { return };
+        let rows: Vec<(&[u8], HudColour)> = h
+            .text
+            .lines()
+            .map(str::as_bytes)
+            .zip(h.colours.iter().copied())
+            .collect();
+        gfx.hud.set_rows(&gpu.queue, &rows);
+        gfx.hud.set_samples(&gpu.queue, &h.strip, hud::CEILING_MS);
+    }
+
     /// Keeps the coarse grid current with `r`; returns its changed cells (none while
     /// streaming).
     fn edited(&mut self, r: &EditResult) -> Vec<CellChange> {
@@ -706,13 +884,13 @@ impl Run {
         (Fixed3(origin), dir)
     }
 
-    fn apply(&mut self, verb: &str, op: &EditOp) {
+    fn apply(&mut self, verb: &'static str, op: &EditOp) {
         let t = now();
         let r = self.world.apply(op);
         let ms = ms_since(t);
         match r {
             Ok(r) => {
-                println!("{}", edit_line(verb, &r, self.world.materials(), ms));
+                self.record_edit(verb, &r, ms);
                 self.edited(&r);
             }
             Err(e) => println!("{verb}: refused, {e}"),
@@ -736,13 +914,14 @@ impl Run {
         let ms = resolve_ms + ms_since(t);
         match r {
             Ok(r) => {
-                println!("{}", edit_line("carved", &r, self.world.materials(), ms));
+                self.record_edit("carved", &r, ms);
                 let changes = self.edited(&r);
                 if let Some(c) = self.coarse.as_mut() {
                     for line in c.collapse(&self.world, &changes) {
                         println!("{line}");
                     }
                 }
+                self.note_collapse_edit();
             }
             Err(e) => println!("carved: refused, {e}"),
         }
@@ -754,9 +933,12 @@ impl Run {
         let t = now();
         let out = stamp_at_aim(&self.world, origin, dir);
         let ms = ms_since(t);
-        println!("{}", stamp_line(&out, self.world.materials(), ms));
-        if let Some(Ok(r)) = &out {
-            self.edited(r);
+        match &out {
+            Some(Ok(r)) => {
+                self.record_edit("stamped", r, ms);
+                self.edited(r);
+            }
+            _ => println!("{}", stamp_line(&out, self.world.materials(), ms)),
         }
     }
 
@@ -835,10 +1017,7 @@ impl Run {
         for r in results.iter().flatten() {
             self.edited(r);
         }
-        println!(
-            "{}",
-            edit_line("carved", &total, self.world.materials(), edit_ms)
-        );
+        self.record_edit("carved", &total, edit_ms);
 
         let Some(gfx) = self.gfx.as_mut() else { return };
         let t = now();
@@ -867,6 +1046,7 @@ impl Run {
         let Samples {
             mut cpu_ms,
             mut gpu_ms,
+            mut hud_ms,
         } = samples;
         let Some(gfx) = &self.gfx else { return };
         let [w, h] = [gfx.marcher.target().width(), gfx.marcher.target().height()];
@@ -875,8 +1055,13 @@ impl Run {
         } else {
             format!("{:.3} ms", median(&mut gpu_ms))
         };
+        let hud = if hud_ms.is_empty() {
+            String::new()
+        } else {
+            format!(", gpu hud {:.4} ms", median(&mut hud_ms))
+        };
         println!(
-            "frame ({w}x{h}, median of {}, {}): cpu {:.3} ms, gpu march {gpu}; full bricks {}, mirror {} B live, {} B allocated",
+            "frame ({w}x{h}, median of {}, {}): cpu {:.3} ms, gpu march {gpu}{hud}; full bricks {}, mirror {} B live, {} B allocated",
             cpu_ms.len(),
             look_line(&self.look, self.rock_detail()),
             median(&mut cpu_ms),
@@ -933,14 +1118,12 @@ impl Run {
 
     fn init(&mut self, gpu: &Gpu) {
         let [w, h] = self.args.render.unwrap_or(gpu.size);
-        let timer = gpu
-            .device
-            .features()
-            .contains(wgpu::Features::TIMESTAMP_QUERY)
-            .then(|| MarchTimer::new(&gpu.device));
+        let timer = MarchTimer::new(&gpu.device, &gpu.queue);
         println!("device ready after {:.0} ms", ms_since(self.start));
-        let attr_timer =
-            (self.args.look.is_some() && timer.is_some()).then(|| MarchTimer::new(&gpu.device));
+        let attr_timer = self
+            .args
+            .look
+            .and_then(|_| MarchTimer::new(&gpu.device, &gpu.queue));
         let mut marcher = Marcher::new(&gpu.device, w, h);
         let mirror = if self.stream.is_some() {
             marcher.set_lod(LodParams {
@@ -974,6 +1157,8 @@ impl Run {
             presenter: Presenter::new(&gpu.device, gpu.surface_format),
             timer,
             attr_timer,
+            hud: HudOverlay::new(&gpu.device, gpu.surface_format, HUD_SCALE),
+            hud_timer: PassTimer::new(&gpu.device, &gpu.queue),
         };
         if gfx.mirror.surface_attrs() {
             println!("{}", attr_line("initial fill", gfx.timed_attrs(gpu)));
@@ -1058,14 +1243,17 @@ impl Run {
         let ev = stream.streamer.poll(&self.world);
         gfx.mirror.apply_events(&ev);
         gfx.mirror.set_focus(cam);
+        let ts = now();
         let synced = gfx.mirror.sync(&self.world, &gpu.queue);
+        let sync_ms = ms_since(ts);
         let cpu = ms_since(t);
         stream.tick_ms.push(ms_since(self.start));
         stream.cpu_ms.push(cpu);
         for e in &ev.errors {
             eprintln!("stream: {e:?}");
         }
-        synced.map_err(|e| e.to_string())?;
+        let synced = synced.map_err(|e| e.to_string())?;
+        self.hud.sync = (synced, sync_ms);
         stream.track(&ev, &gfx.mirror);
         let st = stream.streamer.stats();
         if !stream.full_residency
@@ -1284,6 +1472,13 @@ impl Run {
         if input.pressed(KeyCode::Escape) {
             return Flow::Exit;
         }
+        // The first frame's delta spans startup, not a frame.
+        if self.frame > 0 {
+            self.hud.frames.record(dt);
+        }
+        if input.pressed(KeyCode::F2) {
+            self.hud.visible = !self.hud.visible;
+        }
         if self.pilot.is_some() {
             if self.pilot_step() == Flow::Exit {
                 return Flow::Exit;
@@ -1304,6 +1499,7 @@ impl Run {
                 println!("{line}");
             }
         }
+        self.note_collapse_edit();
         // Off the edit path, after every edit of the frame (falls included): the next frame's
         // edits take touched arrays from the pool.
         self.world.reserve_brick_arrays(RESERVE_ARRAYS);
@@ -1378,13 +1574,24 @@ impl Run {
                 eprintln!("mirror sync failed: {e}");
                 return Flow::Exit;
             }
-        } else if let Some(gfx) = self.gfx.as_mut()
-            && let Err(e) = gfx.mirror.sync(&self.world, &gpu.queue)
-        {
-            eprintln!("mirror sync failed: {e}");
-            return Flow::Exit;
+        } else if let Some(gfx) = self.gfx.as_mut() {
+            let t = now();
+            match gfx.mirror.sync(&self.world, &gpu.queue) {
+                Ok(s) => self.hud.sync = (s, ms_since(t)),
+                Err(e) => {
+                    eprintln!("mirror sync failed: {e}");
+                    return Flow::Exit;
+                }
+            }
         }
         self.pilot_sample();
+        let hud = self.hud.visible;
+        if self.hud.cadence.due(hud) {
+            self.sample_world();
+        }
+        if hud {
+            self.update_hud(gpu);
+        }
         let flying = self
             .pilot
             .as_ref()
@@ -1400,7 +1607,8 @@ impl Run {
         let timer = gfx
             .timer
             .as_ref()
-            .filter(|_| self.samples.is_some() || flying);
+            .filter(|_| self.samples.is_some() || flying || hud);
+        let hud_timer = gfx.hud_timer.as_ref().filter(|_| hud);
         let mut enc = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -1418,6 +1626,19 @@ impl Run {
         }
         gfx.presenter
             .encode(&gpu.device, &mut enc, gfx.marcher.target(), surface);
+        if hud {
+            let [w, h] = gpu.size;
+            gfx.hud.encode_timed(
+                &mut enc,
+                surface,
+                w,
+                h,
+                hud_timer.map(PassTimer::render_writes),
+            );
+            if let Some(t) = hud_timer {
+                t.resolve(&mut enc);
+            }
+        }
         gpu.queue.submit([enc.finish()]);
         let cpu_ms = ms_since(t0);
 
@@ -1427,6 +1648,10 @@ impl Run {
             println!("first frame after {:.0} ms", ms_since(self.start));
         }
         let gpu_ms = timer.map(|t| t.read_ms(&gpu.device, &gpu.queue));
+        let hud_ms = hud_timer.map(|t| t.read_ms(&gpu.device, &gpu.queue));
+        self.hud.cpu_ms = cpu_ms as f32;
+        self.hud.march_ms = gpu_ms.map(|v| v as f32);
+        self.hud.hud_ms = hud_ms.map(|v| v as f32);
         if flying && let (Some(p), Some(ms)) = (self.pilot.as_mut(), gpu_ms) {
             p.gpu_ms.push(ms);
         }
@@ -1434,6 +1659,9 @@ impl Run {
             s.cpu_ms.push(cpu_ms);
             if let Some(ms) = gpu_ms {
                 s.gpu_ms.push(ms);
+            }
+            if let Some(ms) = hud_ms {
+                s.hud_ms.push(ms);
             }
             if s.cpu_ms.len() == SAMPLES {
                 let s = self.samples.take().unwrap_or_default();
@@ -1456,6 +1684,10 @@ impl Run {
             if self.coarse.is_some() {
                 println!("{}", self.coarse_line());
             }
+            self.sample_world();
+            let mut stats = self.hud_stats();
+            stats.world.age_frames = 0;
+            println!("hud:\n{stats}");
             return Flow::Exit;
         }
         Flow::Continue
@@ -1597,6 +1829,7 @@ impl App for Flythrough {
                 pilot,
                 walk,
                 coarse,
+                hud: Hud::new(self.args.hud),
             });
         }
         match self.run.as_mut() {
@@ -2098,6 +2331,57 @@ mod tests {
             "look face, detail on (rock scale 4, strength 0.3), view shaded"
         );
         assert_eq!(look_line(&look, None), "look face, detail on, view shaded");
+    }
+
+    /// The cost of one `World::stats` call on the streamed cave at its spawn after full
+    /// residency, median of 10, which sets [`HUD_STATS_EVERY`]. Run by hand in release:
+    /// `cargo test --release -p flythrough --bin flythrough -- --ignored world_stats_call`.
+    #[test]
+    #[ignore = "a timing reading, run by hand in release"]
+    fn world_stats_call_on_the_streamed_world_at_full_residency() {
+        let source = CaveSource::unbounded(1);
+        let spawn = source.spawn();
+        let world = World::new(&cave_materials());
+        let workers = std::thread::available_parallelism()
+            .map_or(1, usize::from)
+            .saturating_sub(1)
+            .max(1);
+        let mut streamer = Streamer::new(
+            Arc::new(source),
+            StreamConfig {
+                residency: RESIDENCY,
+                workers,
+                persist: PersistConfig::default(),
+            },
+        );
+        loop {
+            streamer.update(&world, &[spawn]);
+            let _ = streamer.poll(&world);
+            let st = streamer.stats();
+            if st.ticks > 1 && st.in_flight == 0 && st.queued == 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let mut ms: Vec<f64> = (0..10)
+            .map(|_| {
+                let t = now();
+                std::hint::black_box(world.stats());
+                ms_since(t)
+            })
+            .collect();
+        let s = world.stats();
+        let st = streamer.stats();
+        println!(
+            "world stats call: median {:.3} ms of 10 (min {:.3}, max {:.3}); {} chunks, {} full bricks; streamer {} full, {} lod",
+            median(&mut ms),
+            ms[0],
+            ms[9],
+            s.chunks,
+            s.full_bricks,
+            st.resident_full,
+            st.resident_lod
+        );
     }
 
     #[test]
