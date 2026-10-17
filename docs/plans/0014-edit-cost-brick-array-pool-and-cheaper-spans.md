@@ -289,8 +289,8 @@ to 3 to 4 ms there; a guess until the baseline is measured.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The uniform-brick oracle and the allocation measured | dev | done | `baf0ac0` |
-| 2: A brick-array pool | dev | done | committed with this row |
-| 3: An exact span walk for the sphere | dev | not started | |
+| 2: A brick-array pool | dev | done | `7ed81d3` |
+| 3: An exact span walk for the sphere | dev | code committed; profile done-when unmet, plan stopped here | committed with this row |
 | 4: An analytic capsule row | dev | not started | |
 | 5: Readings against the figure | dev | not started | |
 
@@ -328,6 +328,28 @@ to 3 to 4 ms there; a guess until the baseline is measured.
   `tool` carve, times 100, rounded up).
 - Phase 2: the fly-through reserves 4096 arrays after each frame's input and edits and before
   each `--bench` run, and its `bench:` line prints the pool's size in KiB after the carves.
+- Phase 3: the sphere's spans are walked for a whole brick row up front
+  (`sphere_row_spans` in `shape.rs`, called when `RowCache` is built for a brick row with a
+  `Partial` brick) instead of per row from `Shape::row_span`; `Shape::row_span` is unchanged
+  and keeps `isqrt`. A row with no neighbouring span is solved with `isqrt` when it is the
+  brick row's first row or its `rem` exceeds `(8 * 256)²`, and otherwise walked outward from
+  the centre nearest `cx`.
+- Phase 3: `walked_spans_equal_solved_spans` is a unit test in `shape.rs` (it calls the
+  crate-private `sphere_row_spans`); `crates/vxe-world/tests/shapes.rs` is unchanged.
+- Phase 3, unmet done-when: the sphere's span work reads 13.2 % of the samples inside
+  `World::apply` for `worst_warm` (12.0 % for `worst`), not under 5 %. Same harness and
+  method as Phase 1: 19.1 % at Plan 0003's tip (`row_span` and what it calls or inlines),
+  15.8 % with a per-row walk (`RowWalk`, an uncommitted draft), 13.2 % with the brick-row
+  walk committed here. `RowCache::span`'s own lookup is a further 4.7 %. A scratch
+  microbenchmark of the span computation alone over the bench's 100 spheres (44100 rows,
+  29158 walked, 2542 solved, 12400 with `rem < 0`): `isqrt` per row 0.58 ms, per-row walk
+  0.43 ms, brick-row walk 0.31 ms, with the centre start 0.27 ms per 100 spheres; the walk
+  is about 35 instructions, branch misses are 0.5 % of branches. Under 5 % of a 3.0 ms
+  `apply` is about 0.15 ms for about 54600 rows per 100 carves (about 2.7 ns, 11 cycles, a
+  row). Per the batch rules the plan stops here: Phases 4 and 5 are not started.
+- Phase 4 (not started): an uncommitted draft of the analytic capsule row (closed form plus
+  bisection, its 1000-row property test and a test-count bound test, all passing) is kept
+  outside the repository for the session.
 
 ### Close triggers
 
@@ -384,6 +406,19 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     2.479, `tool` 8.010, `tool_warm` 7.914 [7.908, 7.921] ms. Round 2: base `worst` 3.539
     [3.535, 3.543], `mixed` 2.549, `tool` 8.050 ms; Phase 2 (diagnostic) `worst` 3.356,
     `worst_warm` 3.221, `mixed` 2.447, `tool` 8.024, `tool_warm` 7.925 ms.
+  - Phase 3 profile, harness `perf record` of `worst_warm` (300 iterations, 5086 samples),
+    load 1.70 / 1.64: the sphere's row solve (`sphere_row_spans` and what it calls or
+    inlines) 13.2 % (669 samples), `RowCache::span`'s own lookup 4.7 % (237). Same run,
+    `worst` (5220 samples): 12.0 % (627) and 5.1 % (267). Top self symbols for
+    `worst_warm`: `write_rows` 19.8 %, `CarveBits::target` 12.0 %, `edit_brick` 8.7 %,
+    `Range::is_empty` 6.0 %, `i64::lt` 4.5 %, `walk_sphere_span` 4.5 %, `RowCache::span`
+    4.4 %, `sphere_row_spans` 3.8 %, `usize::min` 3.7 %, `Brick::expand` 2.8 %.
+  - Phase 3, paired with the Phase 2 tree (`7ed81d3`), alternated, load at the start of each
+    run 1.85, 1.37, 1.47, 1.39, 1.51 after. Round 1 / round 2, mean [CI]: Phase 2 `worst`
+    3.398 / 3.458, `worst_warm` 3.226 [3.220, 3.232] / 3.247 [3.242, 3.252], `mixed` 2.452 /
+    2.453, `tool` 7.977 / 7.984, `tool_warm` 7.869 / 7.915 ms; Phase 3 `worst` 3.234 /
+    3.249, `worst_warm` 3.014 [3.011, 3.018] / 3.023 [3.020, 3.027], `mixed` 2.334 / 2.334,
+    `tool` 7.989 / 7.980, `tool_warm` 7.884 / 7.880 ms.
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 

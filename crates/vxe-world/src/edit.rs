@@ -15,7 +15,7 @@ use crate::coords::{
 use crate::fixed::{Fixed3, centre};
 use crate::material::{AIR, MaterialFlags, MaterialId, MaterialTable};
 use crate::raycast::point_at;
-use crate::shape::{Coverage, Shape};
+use crate::shape::{Coverage, Shape, sphere_row_spans};
 use crate::store::{World, read, write};
 
 /// What an op does to the voxels inside its shape.
@@ -382,7 +382,15 @@ impl World {
                             });
                         }
                     }
-                    let mut rows = RowCache::new(&op.shape, window);
+                    let ys = (
+                        (base[1] + by * be).max(vlo[1]),
+                        (base[1] + by * be + be - 1).min(vhi[1]),
+                    );
+                    let zs = (
+                        (base[2] + bz * be).max(vlo[2]),
+                        (base[2] + bz * be + be - 1).min(vhi[2]),
+                    );
+                    let mut rows = RowCache::new(&op.shape, window, ys, zs);
                     for bx in blo[0]..=bhi[0] {
                         let cov = covs[bx as usize];
                         if cov == Coverage::Outside {
@@ -517,9 +525,10 @@ fn local(v: i64, min: i64) -> usize {
     (v - min) as usize
 }
 
-/// The spans of one brick row's voxel rows (fixed `y`, `z`), each solved by
-/// [`Shape::row_span`] over the row's x window at its first use and kept for the other bricks
-/// of the brick row. Indexed by `y` and `z` modulo the brick edge.
+/// The spans of one brick row's voxel rows (fixed `y`, `z`) over the x window of the brick
+/// row's `Partial` bricks, kept for every brick of the brick row and indexed by `y` and `z`
+/// modulo the brick edge. A sphere's are all walked up front by [`sphere_row_spans`]; another
+/// shape's are solved by [`Shape::row_span`] at their first use.
 struct RowCache<'a> {
     shape: &'a Shape,
     /// The x window of the brick row's `Partial` bricks; `None` when it has none.
@@ -530,13 +539,20 @@ struct RowCache<'a> {
 }
 
 impl<'a> RowCache<'a> {
-    fn new(shape: &'a Shape, window: Option<(i64, i64)>) -> Self {
-        Self {
+    /// The cache of the brick row whose rows are `ys` by `zs` (the edit box's `y` and `z`
+    /// extents, the same for every brick of the row).
+    fn new(shape: &'a Shape, window: Option<(i64, i64)>, ys: (i64, i64), zs: (i64, i64)) -> Self {
+        let mut cache = Self {
             shape,
             window,
             solved: 0,
             span: [(1, 0); BRICK_EDGE as usize * BRICK_EDGE as usize],
+        };
+        if let (&Shape::Sphere { c, r }, Some(window)) = (shape, window) {
+            sphere_row_spans(c, r, ys, zs, window, &mut cache.span);
+            cache.solved = u64::MAX;
         }
+        cache
     }
 
     /// The inclusive span of row `(y, z)` within the window, empty (`x0 > x1`) when no centre
