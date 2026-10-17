@@ -253,8 +253,8 @@ calls. The drop's column table is one `i32` per column of the footprint (576 for
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The support flood | dev | done | db8dba9 |
-| 2: The drop op | dev | done | committed with this row |
-| 3: The remove op with rubble | dev | not started | |
+| 2: The drop op | dev | done | cff74d5 |
+| 3: The remove op with rubble | dev | done | committed with this row |
 | 4: Collapse in the fly-through | dev | not started | |
 
 ### Notes
@@ -270,3 +270,9 @@ calls. The drop's column table is one `i32` per column of the footprint (576 for
 - Phase 2: public API beyond the data shapes: `DropResult::edit_result()` (`changed_from = moved`), for `CoarseGrid::update`. `dropped == 0` and `max_drop <= 0` return `DropResult::default()`. A cell in a non-resident chunk fails with the least such chunk; a scan fails with the chunk of the first non-resident voxel, columns ascending by `(x, y)`, runs ascending by `z`, each scanned to `max_drop`.
 - Phase 2: also touches `crates/vxe-world/benches/collapse.rs` (the drop budgets) and `crates/vxe-world/src/support.rs` (the cell-key hasher shared with `collapse.rs`); neither is in Files touched.
 - Phase 2: bench readings, AMD Ryzen 9 5900HS, exclusive lock, at the Phase 2 commit: `drop_region` of the fixture's 9-cell slab by 32: 79.7 us (criterion median of [79.55, 79.68, 79.82] us); a 16^3-cell cube (2 097 152 voxels) by 64: 6.95 ms ([6.945, 6.948, 6.951] ms, 10 samples). A first per-voxel version measured 879 us and 312 ms; the op now composes bricks in memory and moves a whole `Uniform` brick when the drop is a multiple of 8.
+- Phase 3: `count_in_box` takes inclusive bounds; the done-when's `count_in_box([24, 24, 8], [48, 48, 10])` is asserted as `count_in_box([24, 24, 8], [47, 47, 9]) == [(7, 1152)]` (the half-open box). Called with `[48, 48, 10]` inclusive it also counts 723 air voxels.
+- Phase 3: "within `max_depth`": the solid voxel must be one of the `max_depth` voxels scanned below the lowest carved voxel; a column with none gets no rubble (floor 32 below the slab: `max_depth = 32` places 0, `33` places 1152). The rubble run stops at the first voxel that is not air after the carve (a voxel in a non-resident chunk counts as not air). `h = 0` when `fraction.1 == 0` or `rubble == AIR`. Every solid voxel of the region's bricks is removed, an `INDESTRUCTIBLE` one included.
+- Phase 3: public API beyond the data shapes: `RemoveResult::edit_result()` (`changed_from = removed`).
+- Phase 3: the course drops the slab with the cells re-derived from the grid after each drop (as in Phase 2) and asserts the falls `[10, 10, 10, 2]`; it hashes each `EditResult`, the `Region`s, each `DropResult` and the `RemoveResult` (counts, touched chunks, aabb, `dropped`, `placed`) and `voxel_hash` after every step. Constant `0x3178_0a15_61c1_3041`, blessed on the dev box (Linux); the Windows arm is CI's (`os: [ubuntu-latest, windows-latest]`).
+- Phase 3: also touches `crates/vxe-world/benches/collapse.rs` (the remove budget) and `crates/vxe-world/src/lib.rs` (the `RemoveResult` export); neither is in Files touched.
+- Phase 3: bench readings, AMD Ryzen 9 5900HS, exclusive lock, at the Phase 3 commit: `remove_region` of the fixture's 9-cell slab, rubble 1/4: 125.1 us ([124.85, 125.10, 125.38] us); in the same run `find_unsupported` 391.0 us, the slab drop 78.2 us, the 4096-cell drop 6.56 ms.

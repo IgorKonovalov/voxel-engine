@@ -48,6 +48,31 @@ impl DropResult {
     }
 }
 
+/// What [`World::remove_region`] did.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct RemoveResult {
+    /// The region's solid voxels by material, ascending by material: all carved.
+    pub removed: Vec<(MaterialId, u32)>,
+    /// Rubble voxels written.
+    pub placed: u32,
+    /// Chunks holding a carved or a rubble voxel, ascending.
+    pub touched: Vec<ChunkCoord>,
+    /// Inclusive bounds of the carved and the rubble voxels; `None` when nothing changed.
+    pub aabb: Option<(VoxelCoord, VoxelCoord)>,
+}
+
+impl RemoveResult {
+    /// The result in the edit-result vocabulary, for [`crate::CoarseGrid::update`]:
+    /// `changed_from` is `removed`, `touched` and `aabb` are the same.
+    pub fn edit_result(&self) -> EditResult {
+        EditResult {
+            changed_from: self.removed.clone(),
+            touched: self.touched.clone(),
+            aabb: self.aabb,
+        }
+    }
+}
+
 type ChunkMap = HashMap<ChunkCoord, Arc<RwLock<Chunk>>>;
 
 const BE: i32 = BRICK_EDGE;
@@ -190,6 +215,16 @@ impl Snapshot {
             }
         }
         Ok(gap)
+    }
+}
+
+impl Snapshot {
+    /// Whether voxel `v` is air once the region's solid voxels are carved: a region voxel
+    /// always is; another is when the world holds air there. A voxel in a chunk that is not
+    /// resident is not.
+    fn air_after_carve(&self, reader: &mut Reader<'_>, v: [i32; 3]) -> bool {
+        let cell = cell_of(v);
+        self.contains(cell) || reader.brick(cell).is_ok_and(|b| b.get(index_of(v)) == AIR)
     }
 }
 
@@ -401,6 +436,120 @@ impl World {
         Ok(DropResult {
             moved: moved.sorted(),
             dropped,
+            touched: touched.into_iter().collect(),
+            aabb: bounds.get(),
+        })
+    }
+
+    /// Carves every solid voxel of `cells`' bricks and piles a fraction of each column's
+    /// carved volume as rubble of material `rubble` on the first solid voxel below it.
+    ///
+    /// Per voxel column of the footprint, `n` voxels are carved and `h = n * fraction.0 /
+    /// fraction.1` (integer division; 0 when `fraction.1 == 0` or `rubble` is air). The scan
+    /// goes down from the column's lowest carved voxel through air to the first solid voxel
+    /// within `max_depth`; `h` rubble voxels are written upward from it, fewer where the air
+    /// above it (after the carve) runs out. A column with no solid voxel within `max_depth`
+    /// gets no rubble. Fails with `NotResident`, changing nothing, when a cell's chunk, or a
+    /// voxel a scan reaches, is not resident.
+    pub fn remove_region(
+        &self,
+        cells: &[CellCoord],
+        rubble: MaterialId,
+        fraction: (u32, u32),
+        max_depth: i32,
+    ) -> Result<RemoveResult, EditError> {
+        let map = read(&self.store.chunks);
+        let snap = Snapshot::take(&map, cells)?;
+        let columns = snap.columns();
+        if columns.is_empty() {
+            return Ok(RemoveResult::default());
+        }
+
+        // Scan every column first, so a non-resident chunk fails the op before any write.
+        let mut reader = Reader::new(&map);
+        let mut piles: Vec<([i32; 3], i32)> = Vec::new();
+        for (xy, parts) in &columns {
+            let mut n: u64 = 0;
+            let mut lowest: Option<i32> = None;
+            for (cz, col) in parts {
+                for (lz, &m) in col.iter().enumerate() {
+                    if m != AIR {
+                        n += 1;
+                        lowest.get_or_insert(cz * BE + lz as i32);
+                    }
+                }
+            }
+            let Some(lowest) = lowest else { continue };
+            let h = if fraction.1 == 0 || rubble == AIR {
+                0
+            } else {
+                n * u64::from(fraction.0) / u64::from(fraction.1)
+            };
+            let gap = snap
+                .gap_below(&mut reader, *xy, lowest, max_depth)
+                .map_err(EditError::NotResident)?;
+            if h > 0 && gap < max_depth {
+                let h = i32::try_from(h).unwrap_or(i32::MAX);
+                piles.push(([xy[0], xy[1], lowest - gap], h));
+            }
+        }
+
+        let mut compose = Compose::new(&snap);
+        let mut removed = Counts::default();
+        let mut bounds = Bounds::default();
+        let mut touched = BTreeSet::new();
+        for (&[cx, cy], zs) in &snap.stacks {
+            for &cz in zs {
+                let c = CellCoord([cx, cy, cz]);
+                let min = c.min_voxel().0;
+                let (lo, hi) = match snap.brick(c) {
+                    Brick::Uniform(AIR) => continue,
+                    Brick::Uniform(m) => {
+                        removed.add(*m, 512);
+                        ([0; 3], [BE - 1; 3])
+                    }
+                    Brick::Full(vox) => {
+                        let (mut lo, mut hi) = ([BE; 3], [-1; 3]);
+                        for (i, &m) in vox.iter().enumerate() {
+                            if m != AIR {
+                                removed.add(m, 1);
+                                let l = [i % 8, i / 8 % 8, i / 64].map(|x| x as i32);
+                                lo = [0, 1, 2].map(|k| lo[k].min(l[k]));
+                                hi = [0, 1, 2].map(|k| hi[k].max(l[k]));
+                            }
+                        }
+                        (lo, hi)
+                    }
+                };
+                bounds.add(
+                    [0, 1, 2].map(|k| min[k] + lo[k]),
+                    [0, 1, 2].map(|k| min[k] + hi[k]),
+                );
+                touched.insert(c.split().0);
+            }
+        }
+        let mut placed: u32 = 0;
+        for ([x, y, z0], h) in piles {
+            let mut top = None;
+            for z in z0..z0.saturating_add(h) {
+                if !snap.air_after_carve(&mut reader, [x, y, z]) {
+                    break;
+                }
+                compose.set(&mut reader, [x, y, z], rubble);
+                touched.insert(VoxelCoord([x, y, z]).chunk());
+                placed += 1;
+                top = Some(z);
+            }
+            if let Some(top) = top {
+                bounds.add([x, y, z0], [x, y, top]);
+            }
+        }
+        drop(reader);
+        compose.commit(self, &map);
+        drop(map);
+        Ok(RemoveResult {
+            removed: removed.sorted(),
+            placed,
             touched: touched.into_iter().collect(),
             aabb: bounds.get(),
         })

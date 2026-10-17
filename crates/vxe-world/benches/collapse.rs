@@ -1,7 +1,7 @@
 //! The collapse budgets (`nfr.md` §4 edits): the support query after a radius-10 carve at the
 //! centre of a solid 4³-chunk world, where every flood runs to the cap; the drop of the test
-//! fixture's 9-cell slab; and a 64-voxel drop of a 4096-cell cube. The drops mutate the world,
-//! so each iteration builds a fresh one and only the op is timed.
+//! fixture's 9-cell slab and its removal with rubble; and a 64-voxel drop of a 4096-cell cube.
+//! The ops mutate the world, so each iteration builds a fresh one and only the op is timed.
 
 use std::time::{Duration, Instant};
 
@@ -130,6 +130,21 @@ fn drops(c: &mut Criterion) {
             total
         })
     });
+    group.bench_function(
+        "remove_region of the fixture's 9-cell slab, rubble 1/4",
+        |b| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let world = carved_fixture();
+                    let (r, dt) = timed(|| world.remove_region(&slab, 2, (1, 4), 64).unwrap());
+                    assert_eq!(r.placed, 1152);
+                    total += dt;
+                }
+                total
+            })
+        },
+    );
     group.sample_size(10);
     group.bench_function("drop_region of a 4096-cell cube, 64 voxels", |b| {
         b.iter_custom(|iters| {

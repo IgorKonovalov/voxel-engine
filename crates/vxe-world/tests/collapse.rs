@@ -468,3 +468,159 @@ fn a_solid_voxel_between_two_region_runs_wedges_the_piece() {
         ])
     );
 }
+
+#[test]
+fn removing_the_slab_piles_a_quarter_of_it_as_rubble_on_the_floor() {
+    let (world, _, _) = carved();
+    let r = world.remove_region(&slab_cells(), 7, (1, 4), 64).unwrap();
+    assert_eq!(r.removed, [(3, 4608)]);
+    // 576 columns of 8 carved voxels, 2 rubble voxels each.
+    assert_eq!(r.placed, 1152);
+    assert_eq!(r.touched, [ChunkCoord([0, 0, 0])]);
+    assert_eq!(
+        r.aabb,
+        Some((VoxelCoord([24, 24, 8]), VoxelCoord([47, 47, 47])))
+    );
+    // `count_in_box` takes inclusive bounds: the half-open box [24, 24, 8]..[48, 48, 10].
+    assert_eq!(world.count_in_box([24, 24, 8], [47, 47, 9]), [(7, 1152)]);
+    assert_eq!(
+        world.voxel_hash(),
+        direct(&[(FLOOR.0, FLOOR.1, 3), ([24, 24, 8], [48, 48, 10], 7)])
+    );
+}
+
+#[test]
+fn no_fraction_leaves_the_floor_alone_and_a_whole_one_piles_the_slab() {
+    let (world, _, _) = carved();
+    let r = world.remove_region(&slab_cells(), 7, (0, 1), 64).unwrap();
+    assert_eq!(r.removed, [(3, 4608)]);
+    assert_eq!(r.placed, 0);
+    assert_eq!(world.voxel_hash(), direct(&[(FLOOR.0, FLOOR.1, 3)]));
+
+    let (world, _, _) = carved();
+    let r = world.remove_region(&slab_cells(), 7, (1, 1), 64).unwrap();
+    assert_eq!(r.placed, 4608);
+    assert_eq!(
+        world.voxel_hash(),
+        direct(&[(FLOOR.0, FLOOR.1, 3), ([24, 24, 8], [48, 48, 16], 7)])
+    );
+}
+
+#[test]
+fn rubble_needs_ground_within_max_depth_and_a_resident_scan() {
+    // The floor is 32 below the slab: within 33 voxels, not within 32.
+    let (world, _, _) = carved();
+    assert_eq!(
+        world
+            .remove_region(&slab_cells(), 7, (1, 4), 32)
+            .unwrap()
+            .placed,
+        0
+    );
+    let (world, _, _) = carved();
+    assert_eq!(
+        world
+            .remove_region(&slab_cells(), 7, (1, 4), 33)
+            .unwrap()
+            .placed,
+        1152
+    );
+
+    // No floor: the scan leaves the chunk through its bottom face.
+    let world = build(&[(SLAB.0, SLAB.1, 3)]);
+    let before = world.voxel_hash();
+    assert_eq!(
+        world.remove_region(&slab_cells(), 7, (1, 4), 64),
+        Err(EditError::NotResident(ChunkCoord([0, 0, -1])))
+    );
+    assert_eq!(world.voxel_hash(), before);
+}
+
+/// Feeds a result's counts, chunks and bounds to `h`.
+fn feed(
+    h: &mut Fnv1a,
+    counts: &[(MaterialId, u32)],
+    touched: &[ChunkCoord],
+    aabb: Option<(VoxelCoord, VoxelCoord)>,
+) {
+    for &(m, n) in counts {
+        h.write(&m.to_le_bytes());
+        h.write(&n.to_le_bytes());
+    }
+    for c in touched {
+        for v in c.0 {
+            h.write(&v.to_le_bytes());
+        }
+    }
+    if let Some((a, b)) = aabb {
+        for v in a.0.into_iter().chain(b.0) {
+            h.write(&v.to_le_bytes());
+        }
+    }
+}
+
+fn feed_regions(h: &mut Fnv1a, regions: &[Region]) {
+    h.write(&(regions.len() as u32).to_le_bytes());
+    for r in regions {
+        for c in &r.cells {
+            for v in c.0 {
+                h.write(&v.to_le_bytes());
+            }
+        }
+        feed(h, &r.counts, &[], Some(r.aabb));
+    }
+}
+
+fn feed_world(h: &mut Fnv1a, world: &World) {
+    h.write(&world.voxel_hash().to_le_bytes());
+}
+
+#[test]
+fn the_collapse_course_hashes_to_its_pinned_constant() {
+    let mut h = Fnv1a::default();
+
+    // Carve the pillar, query, drop the slab in four steps of 10 (and a fifth that lands).
+    let world = fixture();
+    let mut grid = CoarseGrid::build(&world);
+    let r = world
+        .apply(&box_op(PILLAR.0, PILLAR.1, Mode::Carve))
+        .unwrap();
+    feed(&mut h, &r.changed_from, &r.touched, r.aabb);
+    feed_world(&mut h, &world);
+    let changes = grid.update(&world, &r);
+    let regions = query(&world, &grid, params(), &changes);
+    feed_regions(&mut h, &regions);
+    let mut cells = regions[0].cells.clone();
+    let mut falls = Vec::new();
+    for _ in 0..4 {
+        let d = world.drop_region(&cells, 10).unwrap();
+        h.write(&d.dropped.to_le_bytes());
+        feed(&mut h, &d.moved, &d.touched, d.aabb);
+        feed_world(&mut h, &world);
+        falls.push(d.dropped);
+        grid.update(&world, &d.edit_result());
+        cells = occupied_cells(&grid, [3, 3, 1], [5, 5, 7]);
+    }
+    assert_eq!(falls, [10, 10, 10, 2]);
+
+    // On a fresh fixture: carve the pillar, query, remove the slab with rubble at 1/4.
+    let world = fixture();
+    let mut grid = CoarseGrid::build(&world);
+    let r = world
+        .apply(&box_op(PILLAR.0, PILLAR.1, Mode::Carve))
+        .unwrap();
+    feed(&mut h, &r.changed_from, &r.touched, r.aabb);
+    feed_world(&mut h, &world);
+    let changes = grid.update(&world, &r);
+    let regions = query(&world, &grid, params(), &changes);
+    feed_regions(&mut h, &regions);
+    let rm = world
+        .remove_region(&regions[0].cells, 7, (1, 4), 64)
+        .unwrap();
+    h.write(&rm.placed.to_le_bytes());
+    feed(&mut h, &rm.removed, &rm.touched, rm.aabb);
+    feed_world(&mut h, &world);
+
+    // Blessed on the dev box (Linux); asserted on the Windows CI arm as well.
+    assert_eq!(h.0, 0x3178_0a15_61c1_3041, "course hash {:#018x}", h.0);
+}
