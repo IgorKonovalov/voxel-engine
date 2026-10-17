@@ -156,6 +156,12 @@ run then stopped in its outbound flight on `wgpu error: Out of Memory` on the 8 
 no peak was read. A recorded miss: ADR-0011 keeps contour planes, and fitting this footprint
 under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2).
 
+**Prefabs (arithmetic, Plan 0008; no reading needed).** A `Prefab` holds 2 B of material plus
+one mask bit per voxel: a 16³ prefab is 8 KiB + 512 B, a 64³ one 512 KiB + 32 KiB. A parsed
+`.vox` model is capped at 256³ per axis (`MAX_MODEL_EDGE`), so the largest `to_prefab`
+allocation is about 50 MiB including its index buffer. `StampedSource` holds one rotated copy
+of the prefab per placement, so its RAM grows with the placement count, not the prefab count.
+
 ## 4. Edits
 
 - **Cost:** 100 sphere carves of radius 1 m (exactly 4169 voxels each at 10 cm, the lattice
@@ -178,6 +184,12 @@ under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2
   8.119 to 8.120 ms; the fly-through `B` line 3.30 to 3.34 ms. It misses the 2 ms budget; the
   budget stands (owner's call at the Plan 0003 close) and Plan 0014 is the second pass.
 - **Results** are returned synchronously with the edit, per material, exact.
+- **Stamp cost (proposals, Plan 0008):** a 16³ prefab stamp (the shelled box `Prefab::vault`)
+  into solid rock costs under 100 µs, and a 64³ all-written prefab under 5 ms, both including
+  the `EditResult` tally. **Readings (dev reference, AMD Ryzen 9 5900HS, `cargo bench -p
+  vxe-world --bench stamp`, exclusive perf lock, box under outside load of about 2 to 5,
+  commits 83ab811 and 39d3700):** `vault16` 22.6 to 22.8 µs; `prefab64_mixed` 2.02 to 2.07 ms;
+  `prefab64_uniform` 1.455 ms. Both under their proposals; the proposals stand as budgets.
 - **Determinism:** the same op list on the same seed yields bit-identical voxels and results on
   Linux and Windows. CI asserts a fixed vector's hash on both arms. **Asserted:**
   `determinism_vector` passed on the Linux and Windows CI arms at 9565c5a and 1d61aba
@@ -222,6 +234,10 @@ under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2
   the mips hash `0x6cc1_4fda_4b7f_5188` is blessed on Linux. The Windows arm confirms it on
   the first `main` CI run after Plan 0002's merge; a mismatch is a defect in an integer path,
   fixed forward.
+- Generation with prefab placements (`StampedSource`, Plan 0008) is independent of the thread
+  count: `generate_with_threads` at 1 and 7 threads gives the same hash, and
+  `crates/vxe-world/tests/stamp.rs` pins it at `0x7ee7_eeb7_0956_d069`, blessed on Linux; the
+  stamp is integer-only, so the Windows arm must reproduce it.
 
 ## 7. Startup and build
 
@@ -244,7 +260,46 @@ under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2
 - An incremental `cargo build` of a one-crate change under 10 s on the dev reference; the
   everyday loop does not compile crates a plan does not touch (`default-members`).
 
-## 8. Not goals (for now)
+## 8. Collision and coarse grids
+
+Added at Plan 0004's close (2026-10-17). `vxe-sim` sweeps and the character controller,
+`vxe-world`'s coarse grid and walkable map. All of it is integer and joins §6: the controller
+course hash `0x0c80_8031_d14f_27eb` (`crates/vxe-sim/tests/course.rs`) is blessed on Linux and
+the Windows arm confirms it on the first `main` CI run after Plan 0004's merge.
+
+| Figure | Budget | Measured by |
+|---|---|---|
+| Controller tick, one body | 20 µs | `cargo bench -p vxe-sim --bench controller` |
+| Sweep, one body, one contact | the measured figure (see the reading; proposal was 5 µs) | same bench, `1000 sweeps of the F2 wall case` |
+| Coarse grid update after a radius-1 m carve | 50 µs | `cargo bench -p vxe-world --bench coarse` |
+| Walkable update after that change | 20 µs | same bench |
+| Coarse grid RAM | 4 B per brick, 2048 B per chunk | `world_budget --chunks` |
+
+**Readings (dev reference, quiet box, AMD Ryzen 9 5900HS laptop, Linux, commit b94622a (the
+merge of `main` into Plan 0004's branch; `vxe-sim` identical to cf3bbc6), `cargo bench`,
+criterion median (low, high), exclusive perf lock, load average 1.7 to 2.3 at each start):**
+
+- **Controller tick:** `60 ticks of the F6 staircase, all on terrain` 156.01 µs (155.84,
+  156.21), **2.60 µs per tick**; `300 ticks of the F6 course` 522.16 µs, 1.74 µs per tick;
+  `1000 ticks of the F6 course` 772.89 µs, 0.77 µs per tick (most of those ticks are free fall
+  past the fixture's extent). Under the 20 µs line. The worst case, a 64-iteration grazing
+  corner sweep inside a tick, is not benched.
+- **Sweep:** `1000 sweeps of the F2 wall case` 26.303 ms (26.295, 26.312), and 26.264 ms on
+  a second run: **26.3 µs per sweep**, against the 5 µs proposal. The owner accepted the
+  measured figure as the line at 17.5 µs (fe50d6d); the walk-check fix pass (closes-on filter,
+  overlap guard, rounded-up step length; ADR-0005 Outcome) raised it to 26.3 µs. **Above
+  20 µs: awaits the owner's call** whether 26.3 µs stands as the line or a sweep-cost
+  followup is scheduled.
+- **Coarse grid update** after a radius-10 (1 m) carve on the solid world: 100 updates
+  1.3544 ms (1.3528, 1.3560), **13.5 µs per update**. **Walkable update** from those changes:
+  807.17 µs (805.83, 808.64), **8.1 µs per update**. Both under their lines. Plan 0003's
+  `mixed` world was not on the branch; the bench runs on the solid world.
+- **Coarse grid RAM:** 6 553 600 B at the level (3200 chunks, `flythrough --level --seed 1`,
+  fe50d6d). At 32 × 32 × 32 chunks it is 67 108 864 B by the same 2048 B per chunk
+  (arithmetic, not read). Grid build at the level, one thread (`world_budget --chunks 20x20x8
+  --seed 1`): 156.3 ms at the close review; grid plus walkable map in the fly-through 231 ms.
+
+## 9. Not goals (for now)
 
 - Binary size.
 - Mobile, web or console targets.

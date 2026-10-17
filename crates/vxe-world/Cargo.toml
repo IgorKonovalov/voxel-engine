@@ -18,3 +18,11 @@ criterion.workspace = true
 [[bench]]
 name = "edits"
 harness = false
+
+[[bench]]
+name = "coarse"
+harness = false
+
+[[bench]]
+name = "stamp"
+harness = false

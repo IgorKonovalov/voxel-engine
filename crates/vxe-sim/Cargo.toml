@@ -1,0 +1,21 @@
+[package]
+name = "vxe-sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Headless, deterministic character collision against a vxe-world brick map"
+
+[lints]
+workspace = true
+
+[dependencies]
+vxe-world.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "controller"
+harness = false

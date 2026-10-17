@@ -19,6 +19,7 @@
 
 mod brick;
 mod chunk;
+mod coarse;
 mod coords;
 mod edit;
 mod fixed;
@@ -26,15 +27,19 @@ pub mod hash;
 mod material;
 mod mips;
 mod persist;
+mod prefab;
 mod query;
 mod raycast;
 mod shape;
 mod source;
+mod stamp;
 mod store;
 mod stream;
+mod walkable;
 
 pub use brick::Brick;
 pub use chunk::Chunk;
+pub use coarse::{CellChange, CoarseCell, CoarseGrid};
 pub use coords::{
     BRICK_EDGE, BRICK_VOXELS, CHUNK_BRICKS, CHUNK_EDGE, CHUNK_EDGE_BRICKS, ChunkCoord, ChunkExtent,
     VoxelCoord, brick_of_slot, brick_slot, brick_slot_of_local, index_in_brick,
@@ -44,9 +49,11 @@ pub use fixed::{FIXED_HALF, FIXED_ONE, Fixed3, centre_of_voxel};
 pub use material::{AIR, Material, MaterialFlags, MaterialId, MaterialTable};
 pub use mips::{ChunkMips, MIP_BRICKS, MIP_LEVELS, majority};
 pub use persist::{PersistConfig, SPILL_VERSION, SpillError, decode_spill, encode_spill};
+pub use prefab::{Prefab, Rot};
 pub use query::QueryStats;
 pub use raycast::{Face, Hit};
 pub use shape::Shape;
-pub use source::{UniformSource, WorldSource};
+pub use source::{StampedSource, UniformSource, WorldSource};
 pub use store::{ChunkStore, StoreWriteGuard, World, WorldStats};
 pub use stream::{Residency, StreamConfig, StreamError, StreamEvents, StreamStats, Streamer, Tier};
+pub use walkable::{WalkableMap, WalkableParams, WalkableStats};

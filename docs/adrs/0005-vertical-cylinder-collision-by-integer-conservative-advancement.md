@@ -1,8 +1,8 @@
 # ADR-0005: Character collision as a vertical cylinder swept by integer conservative advancement
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-17, at Plan 0004's close; see Outcome)
 > **Date:** 2026-10-16
-> **Related plan(s):** [Plan 0004](../plans/0004-cylinder-sweeps-character-controller-and-coarse-grid.md)
+> **Related plan(s):** [Plan 0004](../plans/done/0004-cylinder-sweeps-character-controller-and-coarse-grid.md)
 
 ## Context
 
@@ -106,4 +106,41 @@ tuning a deterministic server tick should not carry.
 
 ## Outcome
 
-_(Added at acceptance if Plan 0004 falsifies something above.)_
+Accepted 2026-10-17 at Plan 0004's close. The body shape, the distance formula, the integer
+determinism, the crate split and the rejected alternatives stand as written. The walk-check fix
+pass (the owner's windowed walk froze the body on open floor and beside walls) falsified three
+sentences of the Decision; the shipped behaviour, which these paragraphs record, is:
+
+- **The sweep.** `g` is taken only over the boxes the remaining delta **closes on** (the gap's
+  rate along the delta is negative); a box the delta runs along or away from is left out, so a
+  box under one unit beside the body no longer stops a fall or a move away from it. An advance
+  that would overlap a box (checked on an iteration that left a box out) is not taken and that
+  box is the contact. The step-length rule: the whole remainder is taken only when
+  `g² >= |remaining|²`, else `g` along it scaled by the root of `|remaining|²` rounded **up**,
+  every component rounded toward zero, so no advance is longer than `g`. With the root rounded
+  down, a remainder up to one unit longer than `g` was taken whole and ended inside the box.
+  At the iteration cap the contact is the nearest box the remaining delta closes on.
+- **"The body never penetrates"** now rests on the overlap guard as well as on `g`: with boxes
+  left out, `g` no longer bounds the gap to every box in the region. A 115 248-sweep test
+  (`a_short_move_never_ends_inside_a_box`) and 4000-walk random runs on the seed-1 level
+  assert no overlap after any sweep or tick.
+- **The ledge climb** is entered when a wall blocks, and also, with `climb` held, when the
+  wish runs into a wall within 60 degrees of head-on (`4 (w . n)² >= |w|² |n|²`) even if the
+  slide moved the body: a wish at an angle to a ledge face slides along it and was never
+  blocked. The probe's up sweep may stop at a ceiling once it has risen more than the step
+  height, and the down sweep drops by what it rose. `climb_available` can be reported on a
+  tick that is not blocked.
+- The wall slide rounds each component of the projected wish toward the side the normal points
+  to, not toward zero; rounding toward zero closed on the voxel edge being slid along.
+
+One negative consequence is added:
+
+- **No depenetration.** A body that starts a sweep overlapping solid (an edit fills the body)
+  is not moved: `sweep` reports `started_overlapping` and the controller pushes nothing out.
+  The fly-through refuses to place a body that overlaps; an edit can still embed one. Known
+  gap, a followup of Plan 0004.
+
+The creep consequence still holds: an oblique approach to a corner stops when the advance
+rounds to zero, and the iteration cap bounds the cost. The worst case (a 64-iteration grazing
+corner) is not benched. The measured costs are in `docs/nfr.md` (collision section): the F2
+wall sweep reads about five times the 5 µs the plan proposed.
