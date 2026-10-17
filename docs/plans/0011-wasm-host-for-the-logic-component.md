@@ -249,7 +249,7 @@ fifty lines and generated bindings.
 | Phase | Owner | Status | Notes |
 |---|---|---|---|
 | 1: Host skeleton and the echo guest | dev | done | 60c1d34; `tests/equality.rs` pins the echo world hash `0x8f7d_4016_15d9_5c4d` (native and component, Linux x86_64) |
-| 2: Determinism configuration | dev | blocked | committed with this row; every done-when met except "the store is usable for the next tick" after `spin`'s fuel trap (see Notes) |
+| 2: Determinism configuration | dev | blocked | d9473eb; every done-when met except "the store is usable for the next tick" after `spin`'s fuel trap (see Notes) |
 | 3: The fly-through's logic as a component | dev | not started | |
 | 4: Readings | dev | not started | |
 
@@ -270,3 +270,9 @@ fifty lines and generated bindings.
 - Phase 2: the memory cap applies to each linear memory through a `ResourceLimiter` that fails the growth (a trap) and records it, so a hit is `LogicError::Memory` whatever the guest does with the failure; tables may grow to 65 536 elements. The engine also sets `relaxed_simd_deterministic`.
 - Phase 2: the probe reads the monotonic clock through a hand-declared import of `wasi:clocks/monotonic-clock@0.2.0` `now` (the standard library hides it behind `Instant`), avoiding the `wasip2` crate and its second `wit-bindgen`; `getrandom` `=0.4.3` is a new workspace row (already in the lock through `wasmtime`'s dependencies, no new transitive crate). The probe's broadcast ends with two flags for opening `/` and reading `HOME` (0 failed); both read 0. A `#[allow(clippy::disallowed_methods)]` with a reason covers its `SystemTime::now`.
 - Phase 2: the fuel and server tests run `spin` at 50 000 000 fuel per tick to stay fast. At the default 10 000 000 000, one `spin` tick ran out of fuel after 709 ms (release, RTX 3080 laptop dev box, exclusive lock, 1-minute load 3.03; a throwaway test, not committed).
+
+### Close triggers
+
+- **Stopped at the Phase 2 block** (see Notes); Phases 3 and 4 not started. Gate at d9473eb (Linux x86_64, RTX 3080 laptop dev box, `CARGO_BUILD_JOBS=3`): `scripts/build-guests.sh` built echo, hog, probe and spin; `cargo build` and `cargo build --workspace --all-targets` exit 0; `cargo nextest run --workspace` 304 passed, 5 skipped (NVIDIA GeForce RTX 3080 Laptop GPU per `nvidia-smi -L`, exclusive lock, 1-minute load 13.86 after), the skips including the ignored `after_running_out_of_fuel_the_next_tick_runs_again`; `cargo test --workspace --doc`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo clippy -p echo-guest -p probe-guest -p spin-guest -p hog-guest --target wasm32-wasip2 -- -D warnings`, `cargo fmt --all --check`, `cargo deny check` exit 0; hook bite tests 59 passed; doc links (89), comment hygiene, index rows and its self-test (9/9) exit 0.
+- **Determinism:** native `EchoLogic` and the echo component give equal op-log bytes, input-log bytes, client events and the world hash `0x8f7d_4016_15d9_5c4d` on Linux x86_64; not yet run on the Windows arm (needs a push). The probe's readings (NaN bits `0x7fc0_0000`, clocks at `tick × frame_ns`, the seeded random bytes, `HashMap` order across loads, failing `/` and `HOME`) hold on Linux x86_64.
+- **Readings:** none yet (Phase 4).
