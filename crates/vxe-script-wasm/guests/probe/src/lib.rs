@@ -19,10 +19,19 @@ use vxe_net::{ClientInput, Host, Logic, TickOutput};
 
 // The monotonic clock's `now`, which the standard library hides behind `Instant`. Its type
 // information reaches the component through the standard library's own use of the interface.
+#[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "wasi:clocks/monotonic-clock@0.2.0")]
 unsafe extern "C" {
     #[link_name = "now"]
     safe fn monotonic_now() -> u64;
+}
+
+// The workspace build also compiles this crate for the host, where the import has no
+// definition and a DLL refuses to link with an unresolved symbol. The probe only runs as a
+// component, so the host build reads zero.
+#[cfg(not(target_arch = "wasm32"))]
+fn monotonic_now() -> u64 {
+    0
 }
 
 #[derive(Default)]
