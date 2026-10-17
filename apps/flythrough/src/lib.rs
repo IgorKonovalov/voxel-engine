@@ -1,15 +1,22 @@
 //! The fly-through's reusable parts: the cave world source its binary, tests and examples
-//! share, the streaming defaults, and the small measurement helpers its readings use. The
-//! engine ships no terrain; this cave is the testbed's own.
+//! share, its server logic, save replay, the streaming defaults, and the small measurement
+//! helpers its readings use. The engine ships no terrain; this cave is the testbed's own.
 
 pub mod cave;
 pub mod hud;
+pub mod logic;
 
+use std::sync::Arc;
+
+use vxe_net::Server;
 use vxe_world::hash::Fnv1a;
 use vxe_world::{
-    BRICK_VOXELS, Chunk, ChunkCoord, ChunkMips, Material, MaterialFlags, MaterialId, MaterialTable,
-    Residency, World,
+    BRICK_VOXELS, Chunk, ChunkCoord, ChunkExtent, ChunkMips, LogFile, Material, MaterialFlags,
+    MaterialId, MaterialTable, OpLog, Residency, WireError, World,
 };
+
+use cave::CaveSource;
+use logic::DigLogic;
 
 /// The fly-through's residency defaults (Plan 0002): full detail to 16 chunks (102 m), mips
 /// to 24 (154 m), one chunk of hysteresis.
@@ -89,6 +96,120 @@ pub fn chunks_hash(world: &World, coords: &[ChunkCoord]) -> Option<u64> {
         }
     }
     Some(h.finish())
+}
+
+impl CaveSource {
+    /// The cave's generation version, written into a save's header. A save made under
+    /// another version names other voxels and does not replay.
+    pub const VERSION: u32 = 1;
+}
+
+/// How [`replay_file`] rebuilds a session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// Applies the op log.
+    Ops,
+    /// Re-simulates the input log through a fresh [`DigLogic`], with the op log for the
+    /// boundaries of directly submitted ops.
+    Inputs,
+}
+
+/// Why a save did not replay.
+#[derive(Debug)]
+pub enum ReplayError {
+    Io(std::io::Error),
+    Wire(WireError),
+    /// The save was written by another [`CaveSource::VERSION`].
+    SourceVersion {
+        file: u32,
+        ours: u32,
+    },
+    /// The save's extent is not the one the caller replays (the bounded level's, for the
+    /// binary); checked before anything is generated.
+    Extent {
+        file: ChunkExtent,
+    },
+}
+
+impl std::fmt::Display for ReplayError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "{e}"),
+            Self::Wire(e) => write!(f, "{e}"),
+            Self::SourceVersion { file, ours } => {
+                write!(f, "saved with cave version {file}, this build is {ours}")
+            }
+            Self::Extent { file } => write!(
+                f,
+                "saved over chunks {:?}..{:?}, not the level's extent",
+                file.min.0, file.max.0
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ReplayError {}
+
+/// Reads the save at `path` and rebuilds its world (see [`replay_log`]) with
+/// [`cave_materials`], refusing a save whose extent is not `extent`. Returns the world and
+/// its voxel hash.
+pub fn replay_file(
+    path: impl AsRef<std::path::Path>,
+    mode: Mode,
+    extent: ChunkExtent,
+) -> Result<(World, u64), ReplayError> {
+    let file = read_log_file(path)?;
+    let (world, _) = replay_log(&file, mode, extent, &cave_materials())?;
+    let hash = world.voxel_hash();
+    Ok((world, hash))
+}
+
+/// Reads and decodes the save at `path`.
+pub fn read_log_file(path: impl AsRef<std::path::Path>) -> Result<LogFile, ReplayError> {
+    let mut f = std::fs::File::open(path).map_err(ReplayError::Io)?;
+    LogFile::read_from(&mut f).map_err(ReplayError::Wire)
+}
+
+/// Rebuilds a save's world: the bounded cave of its seed over its extent, which must equal
+/// `extent` (so a corrupt header cannot ask for an unbounded world), generated with `table`,
+/// then its op log replayed ([`Mode::Ops`]) or its input log re-simulated through
+/// a fresh [`DigLogic`] seeded with the save's seed ([`Mode::Inputs`]). Returns the world and
+/// the op log it was rebuilt from: the save's, or the one re-simulation produced.
+pub fn replay_log(
+    file: &LogFile,
+    mode: Mode,
+    extent: ChunkExtent,
+    table: &MaterialTable,
+) -> Result<(World, OpLog), ReplayError> {
+    if file.extent != extent {
+        return Err(ReplayError::Extent { file: file.extent });
+    }
+    if file.source_version != CaveSource::VERSION {
+        return Err(ReplayError::SourceVersion {
+            file: file.source_version,
+            ours: CaveSource::VERSION,
+        });
+    }
+    let source = CaveSource::new(file.seed, file.extent);
+    let world = World::generate(file.extent, &source, table);
+    match mode {
+        Mode::Ops => {
+            world.replay(&file.ops);
+            Ok((world, file.ops.clone()))
+        }
+        Mode::Inputs => {
+            let world = Arc::new(world);
+            let ops = Server::resimulate(
+                world.clone(),
+                Box::new(DigLogic),
+                file.seed,
+                &file.ops,
+                &file.inputs,
+            );
+            let world = Arc::into_inner(world).expect("the re-simulation's server is dropped");
+            Ok((world, ops))
+        }
+    }
 }
 
 /// RAM a resident full chunk holds: its slot array and the voxels of its `Full` bricks.

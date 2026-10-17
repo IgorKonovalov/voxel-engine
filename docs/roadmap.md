@@ -274,7 +274,16 @@ streamer; Plan 0004's Followups list them. Plan 0009 (collapse) is unblocked.
 - **Visible proof:** a knock in the fly-through sounds different behind thin and thick walls.
 - **ADRs expected:** HRTF source and audio thread model.
 
-### M5: Simulation split and the logic component (Plan 0007 drafts the split, the logs and the logic boundary; Plan 0011 the WebAssembly host, after Plan 0007 closes)
+### M5: Simulation split and the logic component (the split half done in Plan 0007, v0.10.0; Plan 0011's WebAssembly host open)
+
+Plan 0007 closed 2026-10-17 (v0.10.0): `vxe-net` (byte channel, server tick, shared and
+owned clients with desync detection), `vxe-world`'s op and input logs, log file and wire, and
+the fly-through's digs, fills and bench through a server, saved and replayed under `--level`
+(ADR-0007, accepted). Plan 0011's WebAssembly host stays open, and ADR-0010 with it. Followup
+from the close: op kinds 2 to 4 (stamp, drop, remove) in `Op`, the wire and `Host`, with the
+fly-through's stamp and collapse moving into `DigLogic`, so a saved session no longer refuses
+them; a stamp entry needs a prefab reference the log can name, likely an ADR.
+
 
 - An authoritative world plus op and input logs on the server side; clients send inputs, a
   `Logic` behind a trait decides the edits through a `Host` handle; a client mirror fed by

@@ -27,7 +27,8 @@ crates/
 ├── vxe-world/       # voxel storage (brick map), material table, edit ops + results, spatial
 │                    #   queries, coarse grids, LOD mips, chunk streaming, prefabs and
 │                    #   stamping (runtime and generation time), support query, collapse
-│                    #   ops. HEADLESS and DETERMINISTIC: no GPU, no wall clock, no
+│                    #   ops, op and input logs, the log file and its wire encoding.
+│                    #   HEADLESS and DETERMINISTIC: no GPU, no wall clock, no
 │                    #   unseeded RNG, integer edit math
 ├── vxe-render/      # wgpu: brick upload, compute ray marching, lighting, denoise, upscale,
 │                    #   voxel-model entities, a text overlay. WGSL under src/shaders/.
@@ -37,8 +38,10 @@ crates/
 │                    #   HEADLESS and DETERMINISTIC like vxe-world, which is its only dependency
 ├── vxe-assets/      # .vox parsing, palette, palette-to-material map producing vxe-world
 │                    #   prefabs; depends on vxe-world only
-└── (planned, one per plan) vxe-audio (spatial playback, occlusion through the grid), vxe-script-wasm (wasmtime host, server logic),
-    vxe-script-lua (mlua host, client scripts), vxe-net (channel abstraction, later QUIC)
+├── vxe-net/         # channel abstraction, server tick and op/input logs, the Logic and
+│                    #   Host traits, shared/owned clients; later QUIC. No wall clock
+└── (planned, one per plan) vxe-audio (spatial playback, occlusion through the grid),
+    vxe-script-wasm (wasmtime host, server logic), vxe-script-lua (mlua host, client scripts)
 apps/
 └── flythrough/      # the engine's own testbed binary: fly, dig, read edit results
 docs/

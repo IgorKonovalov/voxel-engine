@@ -1,9 +1,9 @@
 # 0007: Server-owned op log, a byte channel, the logic boundary, shared and owned clients, and replay from seed plus log
 
-> **Status:** approved (2026-10-16; amended the same day with the logic boundary, ADR-0010)
+> **Status:** done (2026-10-17, v0.10.0): `vxe-net` (channel, server tick with the boundary entry, shared and owned clients, re-simulation) and `vxe-world`'s op and input logs, log file and wire shipped with the fly-through on the split; the fresh review's major and three minors were fixed, the recheck passed on the tip after three merges of `main`, and the Windows arm of the op-log hash awaits a push.
 > **Created:** 2026-10-16
 > **Milestone:** M5 in `docs/roadmap.md` (the simulation split; the WASM host is Plan 0011)
-> **Related ADRs:** [ADR-0007](../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (log, channel, client modes), [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (logic behind a trait, native and component), ADR-0002 (per-chunk locked access), ADR-0001 (stack)
+> **Related ADRs:** [ADR-0007](../../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (log, channel, client modes), [ADR-0010](../../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (logic behind a trait, native and component), ADR-0002 (per-chunk locked access), ADR-0001 (stack)
 > **Amended:** 2026-10-17, a boundary entry for directly submitted ops (Phase 3 unblock; orchestrator-applied, owner may overturn; see "Amendment 2026-10-17")
 > **Prerequisite:** Plan 0001 closed. Independent of Plans 0002 to 0006 and of their readings. Bounded worlds only; the server's ownership of streaming focus points is a named follow-up.
 
@@ -425,9 +425,158 @@ boundary; only logs a `Server` writes after a submission do.
 
 | Phase | Owner | Status | Notes |
 |---|---|---|---|
-| 1: OpLog, InputLog, wire encoding, replay | dev | not started | |
-| 2: Server, shared client, direct submission | dev | not started | |
-| 3: The logic boundary and re-simulation | dev | not started | |
-| 4: Owned client and desync detection | dev | not started | |
-| 5: Save, replay, fly-through on the split | dev | not started | |
-| 6: Readings | dev | not started | |
+| 1: OpLog, InputLog, wire encoding, replay | dev | done | d77ef85; op-log FNV-1a 64 of the vector (1446 bytes) blessed on Linux x86_64 as `0x5ac8_737d_db0f_ccec` |
+| 2: Server, shared client, direct submission | dev | done | 5a93da9 |
+| 3: The logic boundary and re-simulation | dev | done | 2c32389; Interleaving and the boundary entry ba27191, after merging main (07e53f1) for the 2026-10-17 amendment |
+| 4: Owned client and desync detection | dev | done | f8708b7 |
+| 5: Save, replay, fly-through on the split | dev | done | 690ea1a; `--level --seed 1 --headless --frames 2 --bench 1 --save a.log` printed `world hash 0x86ca427a47e8908c`, then `--level --headless --frames 1 --replay a.log` printed `replayed 1 inputs, 100 ops, hash 0x86ca427a47e8908c` (release, NVIDIA GeForce RTX 3080 Laptop GPU, exclusive lock) |
+| 6: Readings | dev | done | c844a8f; replay 279.07 ms per 10 000 carves (about 35 800 ops/s), tick overhead 84.7 µs per 100 inputs (see Close triggers) |
+
+### Notes
+
+- Phase 1: `WireError` has two variants beyond Data shapes: `Trailing { at }` (bytes after the last entry a log file's header counts, or after a message) and `Io(ErrorKind)` (from `LogFile::read_from`). An unknown mode, shape, error or aabb-presence tag also decodes as `UnknownKind(k)`.
+- Phase 1: `OpLog::record(tick, seq, op)` added beside `push`, for a server whose seqs have gaps (refused ops take a seq and are not logged); it panics on a seq that does not ascend. `Op::apply(&World)` added.
+- Phase 1: the mode and shape tags are 1, 2, 3 (`MODE_CARVE`/`FILL`/`REPLACE`, `SHAPE_SPHERE`/`BOX`/`CAPSULE`), so tag 0 is never valid; `ERROR_NOT_RESIDENT` is 1.
+- Phase 2: `crates/vxe-net/tests/support/mod.rs` was created here (Files touched lists it under Phase 3); it holds `solid3_world`, `SplitMix64` and the seeded 1 m carve centres the two-thread test uses.
+- Phase 2: the message tags (`MSG_APPLIED` = 1, `MSG_REFUSED` = 2, `MSG_EVENT` = 3, `MSG_INPUT` = 4) are named constants in `crates/vxe-net/src/message.rs`, not `wire.rs`; `EditResult` and `EditError` encodings are in `vxe_world::wire`.
+- Phase 2: an `Event` message's payload length is a `u32` (an `Input`'s is the `u16` the plan names): 1 + 8 + 4 + `n` bytes.
+- Phase 2: `Logic: Send`, and the server keeps its logic in a `Mutex` reached only through `get_mut`, so `Server` is `Sync` for threads calling `submit(&self)`. `Endpoint` keeps its receiver in a `Mutex` for the same reason.
+- Phase 2: an empty `TickOutput::broadcast` sends no `Event` (the four-event assertion with `NoLogic` depends on it). Bytes a client or server receives that do not decode, or that carry a message addressed the other way, are dropped.
+- Phase 2: `TickReport::tick` is the tick that ran (0 for the first `tick()`); `Server::current_tick()` returns the next one (1 after it). `Server` also exposes `world()`, `ops()` and `inputs()`; `Client` exposes `world()` and `shared_world()`.
+- Phase 2: `ClientWorld::Owned` holds a `Box<World>` (clippy `large_enum_variant` under `-D warnings`).
+- Phase 3: stopped at the Interleaving done-when (no way to tell submitted ops from the logic's in the op log); resumed after the 2026-10-17 amendment (boundary entry).
+- Phase 3 (boundary): `LogEntry` is the enum of Data shapes with accessors `tick()`, `seq()` and `op() -> Option<&Op>`; `OpLog::record_boundary(tick, seq)` records one (seqs ascend across both kinds, same panic); `wire::Reader::peek_u8` added so the entry decoder can tell a boundary from an op before `decode_op`. `OpLog::is_empty` follows `len` (true for a log holding only boundaries).
+- Phase 3 (boundary): `resimulate` runs to the later of the last input's tick and the last op log entry's tick, boundaries included, so a log ending in the boundary of a tick whose submissions were all refused re-simulates to equal bytes.
+- Phase 3: a second interleaving test (`submissions_at_tick_0_after_init_ops_and_a_refused_only_tick_resimulate`) covers the tick-0 lower bound with a logic whose `init` applies ops, and a tick whose only submission was refused.
+- Phase 3: `EchoLogic` broadcasts one outcome byte per input (1 applied, 2 refused, 3 undecodable), empty in a tick without inputs; the refused-apply test reads the `2` from that broadcast to show the logic received the `Err`. `SeededLogic` starts from `seed ^ 0x9e37_79b9_7f4a_7c15` (xorshift64 13/7/17 sticks at 0) and draws each axis as `state % 234 - 117`.
+- Phase 3: `Server::tick` drains the endpoints before applying the submitted ops and hands both to one internal step that `resimulate` shares; the order of everything that touches the world or the logs is the one Phase 2 names.
+- Phase 4: an op the owned client's world refuses while the server applied it is a `Desync` with `ours` the empty `EditResult` (the Data shapes `ours` is an `EditResult`, not a `Result`).
+- Phase 4: after a desync, `Applied` messages still yield `Event::Applied` with the server's result (and are not applied); `Refused` messages are passed through on an owned client without applying anything.
+- Phase 4: the fault test sends ops 0 to 9, carves the fault sphere on the client's world, then sends an ordinary op 10 and the fault sphere as op 11 (the bullet's "after 10 ops" and "input 11" with seqs from 0). A third test covers the refused-locally desync.
+- Phase 5: `--bench` keeps its count argument (`--bench N`, which Plan 0014's reading command uses), so the session ran with `--bench 1`; it sends N `Bench` inputs on the first frame instead of running the bench in `init`.
+- Phase 5: `--save` and `--replay` require `--level` (the replay rebuilds the bounded cave from the header's extent; a streaming session's residency is not in the log), so the session ran with `--level`; the two flags together are refused.
+- Phase 5: a dig's capsule ends at `origin + dir * hit.t / 256` from `Host::raycast`'s floored `t`, where `EditOp::tool_along_ray` used the exact rational `t`; the end point can differ from the pre-split dig by under one fixed unit per axis.
+- Phase 5: `DigLogic`'s broadcast has one `op <verb>` line per op it attempts, applied or refused (the client pairs it with the op's `Applied` or `Refused` event), and free text lines (`filled: no surface within 10 m`); the client prints one summed line per bench of 100 `op bench` lines, as before. The `ms` in a printed edit line is the whole server tick's time.
+- Phase 5: under `--look` the bench prints one attribute-pass line for all its carves; the separate "one carve of radius 1 m" line is gone (the server applies a bench's 100 carves in one tick, with no sync between them).
+- Phase 5: the autopilot's carve still calls `World::apply` on the server's world directly, not through an input (streaming only; not saved).
+- Phase 5: `CaveSource::VERSION` is declared in an `impl CaveSource` block in `lib.rs` (`cave.rs` is not in Files touched). `lib.rs` also exposes `read_log_file` and `replay_log(&LogFile, Mode, &MaterialTable) -> (World, OpLog)`, which `--replay` uses with the `--look` table; `--replay` prints a line when the re-simulated op log differs from the saved one.
+- Phase 5: `tests/replay.rs` copies the vector's 24 ops from `determinism.rs` and holds the copy to the blessed op-log hash; its vector check recomposes the vector hash from the direct path's results and the replayed world's voxel hash.
+- Phase 5: the server and client are dropped first in `Run`'s teardown, untraced (`tests/shutdown.rs` asserts the exact stage list).
+- Phase 5: `README.md`'s flag table does not list `--save` and `--replay` (not in Files touched).
+- Phase 6: the tick bench times the 100 `send_input` calls with the tick and the poll; both benches build their world untimed in every iteration. The tick bench includes `tests/support/mod.rs` by `#[path]` for `EchoLogic` and the seeded carves.
+- Phase 6: `nfr.md` §4 gains three lines (log entry sizes, replay throughput without a budget, the tick overhead proposal of 100 µs), each reading with machine, load and phase.
+- Phases 1 to 3 and 5: `Cargo.lock` changed with the new `vxe-net` member and the fly-through's dependency on it (no new external crate).
+
+### Fix pass (close review, 2026-10-17)
+
+- Merge: main (4943a6e, v0.7.0) merged as 66766af with the review's resolution. The first-upload `B` loop is gone (the bench inputs go out on frame 0); Plan 0014's per-frame `reserve_brick_arrays(RESERVE_ARRAYS)` at the end of `update` runs after frame 0's inputs are sent and before `draw`'s server tick applies them, so the bench still starts from a topped-up pool. The main.rs module doc's flag paragraph was reflowed in the merge. Plan 0009 was not on main at this merge; see the second merge below.
+- Major 1 (`--vault` and `P` under `--save`): `--vault` with `--save` or `--replay` is refused (`SAVE_EXCLUDES_VAULT`); `P` under `--save` prints `stamped: refused, a stamp is not in the op log (--save)` through the pure `stamp_allowed`; the module doc names `P` and the autopilot's carve as the two edits outside the split. a407e0a.
+- Minor 2 (non-ascending seqs in a decoded log): `OpLog::decode` and `LogFile::decode` refuse a seq that does not exceed the previous entry's with `WireError::OutOfOrder { at }`. Through `LogFile::decode` the offset counts the 60-byte header, as `Truncated` and `Trailing` do there, so the file case asserts `at: 60 + 47`, not the brief's 47. 7fd6f1f.
+- Minor 3 (header extent): `replay_log` and `replay_file` take the allowed extent from the caller and return `ReplayError::Extent { file }` for any other, before generating; the binary's `--replay` passes the level's (`[0, 0, 0]..LEVEL_CHUNKS`) and `tests/replay.rs` its own 4³ fixture extent, so the existing tests keep their small world. The extent check runs before the cave-version check. 9889a92.
+- Minor 4 (README flag table): rows for `--save PATH` and `--replay PATH` (both naming the `--vault` refusal, `--save` also `P`'s), `--bench N` corrected to the first-frame inputs, and main's missing `--vault` row. Committed with this line.
+- Session re-run on the code at 9889a92 (release, headless, NVIDIA GeForce RTX 3080 Laptop GPU per `nvidia-smi -L`, exclusive lock, 1-minute load 9.72 after): `flythrough --level --seed 1 --headless --frames 2 --bench 1 --save a.log` printed `world hash 0x86ca427a47e8908c` and `saved 1 inputs, 100 ops`; `flythrough --level --headless --frames 1 --replay a.log` printed `replayed 1 inputs, 100 ops, hash 0x86ca427a47e8908c`, no "differs" line. `--level --vault --save v.log` exits with the `SAVE_EXCLUDES_VAULT` message. Bench line: `edits 3.08 ms CPU, brick-array pool 2326 KiB`, sync 1 165 320 B in 9.51 ms.
+- Second merge: main (e7c3367, v0.8.0, Plan 0009) merged as 26df268. A dig now reaches the binary as the client's event, so the support query moved from `dig()` into the tick: an applied op whose verb is the new `logic::DIG_VERB` (`carved`) runs `Coarse::collapse` over its changed cells, printing after the dig's edit line; the per-frame `fall` stays in `update`, before the tick. `logic.rs` gains `DIG_VERB` (outside the brief's files).
+- Collapse under `--save` and `--replay` (orchestrator's call, same rule as `P`): the pure `collapse_allowed(logged)` gates the support query after a dig and the per-frame fall; `R` prints `collapse: off, collapse is not in the op log (--save, --replay)`. The module doc and the README's `--save`/`--replay` rows say so. Committed with this line.
+- Session re-run on the tip tree after the second merge and the collapse gate (release, headless, NVIDIA GeForce RTX 3080 Laptop GPU per `nvidia-smi -L`, exclusive lock, 1-minute load 13.20 after): the same two commands printed `world hash 0x86ca427a47e8908c` and `replayed 1 inputs, 100 ops, hash 0x86ca427a47e8908c`, no "differs" line. Gate at this tree: build, nextest (276 passed, 2 skipped, same GPU, exclusive lock), doctests, clippy, fmt, deny, hook bite tests (59), doc links, comment hygiene, index rows and its self-test, all exit 0.
+- Third merge: main (8d2e38f, v0.9.0, Plan 0010) merged with the commit that carries this line. Workspace pins are main's `=0.9.0` plus the `vxe-net` row at `=0.9.0`. The tick's printed edit lines (digs, fills, the bench total) now go through `Run::record_edit`, so they also fill the HUD's last-edit row; an applied dig's support query is followed by `note_collapse_edit`. `record_edit` holds a `'static` verb, so the tick maps an `op` line's verb through `op_verb` over `DIG_VERB`, the new `logic::FILL_VERB` and `BENCH_VERB`; an `op` line with any other verb prints as a plain line. `logic.rs` gains `FILL_VERB` (outside the brief's files). The HUD samples `Run::world`, the server's world. A `--replay` session re-simulates before the first frame and outside the client's events, so its HUD reads `no edit yet`. Gate at this tree: build, nextest under `VXE_REQUIRE_SOFTWARE_ADAPTER=1` (298 passed, 4 skipped, exclusive lock; `golden/hud.png` and every golden matched without a rebless), doctests, clippy, fmt, deny, hook bite tests (59), doc links, comment hygiene, index rows and its self-test, all exit 0. Session re-run (release, headless, NVIDIA GeForce RTX 3080 Laptop GPU per `nvidia-smi -L`, exclusive lock): `--save` printed `world hash 0x86ca427a47e8908c`, `--replay` printed `replayed 1 inputs, 100 ops, hash 0x86ca427a47e8908c`, no "differs" line.
+
+### Close triggers
+
+- **What shipped:** all six phases. `vxe-world`: `wire` module (with `KIND_BOUNDARY`), `OpLog` (op and boundary entries), `InputLog`, `LogFile`, `World::replay`. `vxe-net`: `Channel`, `MemChannel`, `Endpoint`, `Message`, `Logic`, `Host`, `NoLogic`, `Server` (`submit`, `attach`, `tick` with the boundary entry, `resimulate` over the op and input logs), `Client::shared`, `Client::owned` with `Event::Desync`. `apps/flythrough`: `logic::DigLogic` and `DigInput`, `replay_file`, `replay_log`, `read_log_file`, `Mode`, `ReplayError`, `CaveSource::VERSION`; the binary runs every dig, fill and bench through a server and a shared client, with `--save` and `--replay` (under `--level`).
+- **Public API changed:** `vxe_world::LogEntry` became an enum (`Op`, `Boundary`) with `tick()`, `seq()` and `op()`; `Server::resimulate` gained the `&OpLog` argument; both items were added by this plan. Everything else is an addition. The fly-through's `--bench N` now sends N bench inputs on the first frame.
+- **Determinism:** the vector's ops through an encoded and decoded log replay to `0x2b6b_6a0d_1f9b_8d75`; the encoded op log (24 entries, ticks 0 to 23, 1446 bytes) hashes to `0x5ac8_737d_db0f_ccec`, blessed on Linux x86_64 at d77ef85; `tests/replay.rs` reaches the same vector hash through a `LogFile` on disk. `SeededLogic` and the interleaving tests re-simulate to equal op-log bytes and world hashes. Not yet run on the Windows arm.
+- **Fly-through session (correctness, not a timing):** at 690ea1a and again at c844a8f (release, headless, NVIDIA GeForce RTX 3080 Laptop GPU per `nvidia-smi -L`, exclusive lock; 1-minute load 20.08 on the second run): `flythrough --level --seed 1 --headless --frames 2 --bench 1 --save a.log` printed `world hash 0x86ca427a47e8908c` and `saved 1 inputs, 100 ops to …/a.log`; `flythrough --level --headless --frames 1 --replay a.log` printed `replayed 1 inputs, 100 ops, hash 0x86ca427a47e8908c`. Its bench line on the first run: `edits 3.37 ms CPU` (server tick), sync 1 165 320 B in 8.62 ms.
+- **Budget readings (dev box AMD Ryzen 9 5900HS, CPU only, exclusive perf lock, release, at the Phase 6 tree committed as c844a8f):** `cargo bench -p vxe-world --bench replay`: 279.07 ms (CI 278.48 to 279.70 ms) to decode and replay 10 000 radius-1 m carves on a solid 4³-chunk world, about 35 800 ops per second; the log file is 470 060 bytes (asserted: 470 000 plus the 60-byte header); `uptime` 1-minute load 1.45 (a first attempt at load 4.76 waited). `cargo bench -p vxe-net --bench tick`: 3.4706 ms (CI 3.4663 to 3.4756 ms) for 100 inputs sent, one `EchoLogic` tick and one poll, against 3.3859 ms (CI 3.3782 to 3.3990 ms) for 100 direct applies: 84.7 µs overhead per 100 inputs, under the 100 µs proposal; load 1.66.
+- **Gate at c844a8f:** `cargo build --workspace --all-targets` 0; `cargo fmt --all --check` 0; `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo test --workspace --doc` 0; `cargo nextest run --workspace` 0, 207 passed, 1 skipped (exclusive lock, NVIDIA GeForce RTX 3080 Laptop GPU per `nvidia-smi -L`); `cargo deny check` 0 (advisories, bans, licenses, sources ok); `check-doc-links.mjs` 0, 89 links; `check-comment-hygiene.mjs` 0, 84 tracked sources, 0 escapes; `check-index-rows.mjs` 0; `check-index-rows.mjs --self-test` 0, 9 of 9; hook bite tests 0.
+- **Outstanding:** the Windows CI arm for the determinism and re-simulation assertions; streaming sessions are not saved (the server's ownership of focus points is the named follow-up).
+
+## Close
+
+**Verdict (2026-10-17, fresh-session review, a `dev` fix pass 66766af..f690442, then a
+fresh-session recheck at 12a0e37):** closed. Every phase is done and every done-when holds,
+the Interleaving done-when as amended on 2026-10-17. The recheck found every review finding
+fixed:
+
+- **Major 1** (edits outside the log under `--save`): `--vault` with `--save` or `--replay` is
+  refused at parse time (`SAVE_EXCLUDES_VAULT`, a407e0a); `P` under `--save` is refused
+  through the pure `stamp_allowed` (a407e0a); collapse's support query, per-frame fall and
+  `R` are off under `--save` and `--replay` through `collapse_allowed` (f690442). Each gate
+  has a unit test that asserts the refusal and the allowed case.
+- **Minor 2:** `OpLog::decode` and `LogFile::decode` refuse a non-ascending seq with
+  `WireError::OutOfOrder { at }`; the test asserts the offset through both (47, and 60 + 47
+  in a file), for an equal and for a lower seq (7fd6f1f).
+- **Minor 3:** `replay_log` and `replay_file` take the allowed extent and return
+  `ReplayError::Extent` before generating; `--replay` passes the level's (9889a92).
+- **Minor 4:** the README's flag table lists `--save`, `--replay` and `--vault` and corrects
+  `--bench N` (a3babbc, f690442).
+
+**The three merges of `main`, judged** (66766af with Plan 0014, 26df268 with Plan 0009,
+12a0e37 with Plan 0010): all behaviour decisions are accepted.
+
+- **`op_verb` over `DIG_VERB`, `FILL_VERB` and `BENCH_VERB`.** The HUD row holds a `'static`
+  verb, so the tick maps a `DigLogic` `op` line onto the logic's constants; any other `op`
+  line prints as plain text. `DigLogic` emits only those three verbs. That its emitted
+  literals (`"op carved"`, `"op filled"`) are not built from the constants is a nit below.
+- **The support query moved from `dig()` into the tick**, run on an applied op whose verb is
+  `DIG_VERB`, since a dig now reaches the binary as the client's event.
+- **The tick's edit lines go through `record_edit`**, so digs, fills and a bench total fill
+  the HUD's last-edit row as before the split; an applied dig's collapse follows with
+  `note_collapse_edit`.
+- **A `--replay` session's HUD row reads `no edit yet`.** Its re-simulation runs before the
+  first frame and outside the client's events; the printed `replayed ...` line is the record.
+
+**Recheck evidence at 12a0e37** (dev reference, AMD Ryzen 9 5900HS, NVIDIA GeForce RTX 3080
+Laptop GPU per `nvidia-smi -L`, exclusive perf lock for nextest and the fly-through runs):
+the gate is green (see the close commit). Nextest ran 298 tests, 298 passed and 4 skipped;
+the four skipped are each `#[ignore]`d with a reason (`hud_pass_reading_at_1080p`, a GPU
+timing; `a_dig_in_the_level_prints_the_query_time` and
+`world_stats_call_on_the_streamed_world_at_full_residency`, release readings;
+`contour_dark_specks_with_and_without_shadows`, a diagnostic that asserts nothing). The
+release session `--level --seed 1 --headless --frames 2 --bench 1 --save` printed
+`world hash 0x86ca427a47e8908c` and `--level --headless --frames 1 --replay` printed
+`replayed 1 inputs, 100 ops, hash 0x86ca427a47e8908c`, no "differs" line. The blessed op-log
+hash `0x5ac8_737d_db0f_ccec` is unchanged since d77ef85, and the vector hash
+`0x2b6b_6a0d_1f9b_8d75` is unchanged against `main`.
+
+**Readings** (dev reference, AMD Ryzen 9 5900HS, CPU only, exclusive perf lock, c844a8f; the
+loads are in the Close triggers):
+
+| Figure | Reading | Check or proposal |
+|---|---|---|
+| Tick overhead, 100 inputs through one tick and one poll | 84.7 µs over direct applies | under 100 µs (proposal, now a budget) |
+| Replay, decode plus 10 000 radius-1 m carves | 279.07 ms, about 35 800 ops/s | none (edit-cost bound) |
+| Log entry sizes | 47 / 65 / 75 bytes per op, 13 per boundary, 14 plus payload per input, 60-byte header | asserted (470 060-byte bench file) |
+
+**Orchestrator-applied calls (under the owner's standing go, overturnable by the owner):**
+
+- **The boundary entry** (Amendment 2026-10-17, 3aa9874), recorded in ADR-0007's Decision
+  and Outcome.
+- **Refuse `--vault`, `P` and collapse under `--save` (and `--vault` and collapse under
+  `--replay`) rather than wire op kinds 2 to 4 into `Op`, the wire and `Host` now.** A saved
+  session is then exactly what its log can rebuild. Wiring the kinds is the first followup.
+- **ADR-0010 stays proposed until Plan 0011 closes.** This plan proves the trait half
+  (`Logic`, `Host`, `DigLogic`, re-simulation); the component half is Plan 0011's.
+- **v0.10.0**, the next minor after Plan 0010's v0.9.0: a new crate and new public API.
+
+ADR-0007 is accepted with a dated Outcome.
+
+## Followups
+
+- **Op kinds 2 to 4 (stamp, drop, remove) in `Op`, the wire and `Host`**, with the
+  fly-through's `P` stamp and its collapse moving into `DigLogic`, so `--save` stops refusing
+  them. A stamp entry needs a prefab reference the log can name (an id the save resolves), which
+  is likely an ADR.
+- **The owned client passes `Refused` through unchecked** (review nit): an op the server
+  refused is not confirmed refused on the client's world. M9, with prediction.
+- **`put_count` panics above 65 535 chunks** (review nit): a log file over a larger extent
+  cannot be written. Return an error or widen the field with a format version.
+- **The `u32` seq wraps** after about 4.3 billion ops in one session (review nit): name the
+  limit or widen it before M9's long-running servers.
+- **`flythrough::Mode` clashes in name** with the binary's own mode notions (review nit):
+  rename it `ReplayMode`.
+- **`DigLogic`'s `op` lines** are string literals beside `DIG_VERB` and `FILL_VERB`; build
+  them from the constants so `op_verb` cannot drift.
+- **Streaming sessions are not saved**: the server owning the streamer's focus points (named
+  in Risks).
+- **The Windows CI arm** confirms the op-log hash and the re-simulation tests on the first CI
+  run after a push of `main`.

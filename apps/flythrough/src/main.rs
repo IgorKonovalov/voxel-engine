@@ -6,12 +6,12 @@
 //!
 //! `flythrough [--seed N] [--level] [--vault] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH]
-//! [--view VIEW] [--detail] [--hud]`. `--render` fixes the marcher's resolution (the window
-//! scales it); `--frames` exits after N frames, printing the `F1` readings over the last
-//! ones and the stats HUD's rows; `--hud` starts with the stats HUD shown (`F2` toggles it);
-//! `--bench` runs the `B` bench N times right after the first mirror upload, before
-//! the first frame; `--autopilot` digs, flies 300 m out and back and prints the streaming
-//! readings (see [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame;
+//! [--view VIEW] [--detail] [--hud] [--save PATH] [--replay PATH]`. `--render` fixes the
+//! marcher's resolution (the window scales it); `--frames` exits after N frames, printing the
+//! `F1` readings over the last ones and the stats HUD's rows; `--hud` starts with the stats HUD
+//! shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first frame;
+//! `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
+//! [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame;
 //! `--headless` runs the same frames on an offscreen target with no window; `--walk` (with
 //! `--level`) starts in walk mode, the body spawned in the spawn pocket; `--look` starts
 //! in a normal mode (`face`, `trilinear8`, `gradient27`, `contour`) and gives the mirror
@@ -24,6 +24,18 @@
 //!
 //! `P` stamps that 16-voxel room at runtime, unrotated, with its minimum corner at the voxel
 //! the dig ray hits, and prints what it changed like a dig does.
+//!
+//! Every edit goes through the simulation split (ADR-0007, ADR-0010): digs, fills and the
+//! bench are inputs a shared client sends to a server running `flythrough::logic::DigLogic`;
+//! one server tick runs per frame before the mirror sync, and the printed edit lines come
+//! from the client's events. With `--level`, `--save` writes the session's log file on exit
+//! and prints the world's hash; `--replay` rebuilds a saved session's world by re-simulating
+//! its inputs before the first frame and prints the same hash. Two edits bypass the split:
+//! `P` stamps the server's world directly, so it is refused under `--save` (a stamp is not in
+//! the op log), and the autopilot's carve (streaming only) applies to the world directly.
+//! Collapse's falls and crumbles also edit the world outside the op log, so under `--save` and
+//! `--replay` the support query does not run and `R` is refused.
+//! `--vault` does not combine with `--save` or `--replay`: the log file does not record it.
 //!
 //! Keys: `G` toggles fly and walk mode (on the bounded level only; streaming refuses it, as it
 //! refuses `--walk`); in walk mode `W A S D` walk at 3 m/s and `Space` jumps, or, held against
@@ -46,34 +58,29 @@ use std::time::Instant;
 use fly::{Fly, Walk};
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, VAULT_EDGE, vault};
 use flythrough::hud::{self, Cadence, EditLine, FrameStats, HudStats, WorldSample};
+use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, DigLogic, FILL_VERB, REACH};
 use flythrough::{RESIDENCY, RUBBLE, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
+use vxe_net::{Client, Event, MemChannel, Server};
 use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::{
     Camera, GpuWorld, HudColour, HudOverlay, LightParams, LodParams, LookParams, MarchTimer,
     Marcher, MirrorConfig, NormalMode, PassTimer, Presenter, SyncStats, ViewMode, Window, wgpu,
 };
-use vxe_world::hash::mix64;
 use vxe_world::{
     Anchors, BRICK_VOXELS, CellChange, CellCoord, ChunkCoord, ChunkExtent, CoarseGrid, EditError,
-    EditOp, EditResult, FIXED_ONE, Fixed3, MaterialId, MaterialTable, Mode, PersistConfig, Rot,
-    StreamConfig, Streamer, SupportParams, Tier, VoxelCoord, WalkableMap, WalkableParams, World,
-    find_unsupported,
+    EditOp, EditResult, FIXED_ONE, Fixed3, LogFile, MaterialId, MaterialTable, Mode, PersistConfig,
+    Rot, StreamConfig, Streamer, SupportParams, Tier, VoxelCoord, WalkableMap, WalkableParams,
+    World, find_unsupported,
 };
 
-/// Reach of the dig and fill rays: 10 m.
-const REACH: i64 = 100 * FIXED_ONE;
 /// Dig radius at start (0.5 m), its scroll step (0.1 m) and its range.
 const DIG_RADIUS: i64 = 5 * FIXED_ONE;
 const DIG_STEP: i64 = FIXED_ONE;
 const DIG_RANGE: (i64, i64) = (FIXED_ONE, 30 * FIXED_ONE);
 /// Radius of the right-click fill: 0.3 m.
 const FILL_RADIUS: i64 = 3 * FIXED_ONE;
-/// The `B` bench: this many radius-1 m carves, centred within 10 m of the camera.
-const BENCH_CARVES: usize = 100;
-const BENCH_RADIUS: i64 = 10 * FIXED_ONE;
-const BENCH_SPREAD: i64 = 100;
 /// Brick arrays the world's pool is topped up to after each frame's edits and before the `B`
 /// bench: 4 Mi of `u16` voxels, more than the bench's 100 carves expand.
 const RESERVE_ARRAYS: usize = 4096;
@@ -133,7 +140,7 @@ fn ms_since(t: Instant) -> f64 {
     (now() - t).as_secs_f64() * 1e3
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Args {
     seed: u64,
     render: Option<[u32; 2]>,
@@ -155,11 +162,51 @@ struct Args {
     view: ViewMode,
     /// `--hud`: start with the stats HUD shown.
     hud: bool,
+    /// `--save`: where the session's log file is written on exit.
+    save: Option<std::path::PathBuf>,
+    /// `--replay`: the log file whose session is re-simulated before the first frame.
+    replay: Option<std::path::PathBuf>,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
 const WALK_NEEDS_LEVEL: &str =
     "walk mode needs --level (the coarse grid is not wired to streaming)";
+
+/// Why `--save` and `--replay` are refused while streaming: a replay regenerates a bounded
+/// world, and a streaming session's residency is not in its log.
+const SAVE_NEEDS_LEVEL: &str = "--save and --replay need --level (replay rebuilds a bounded world)";
+
+/// Why `--vault` is refused with `--save` and `--replay`: a log file's header records the seed
+/// and the extent, so a replay would rebuild the cave without the vault.
+const SAVE_EXCLUDES_VAULT: &str =
+    "--save and --replay do not combine with --vault (the log does not record the vault)";
+
+/// Why `P` stamps nothing under `--save`: a stamp applies to the world outside the op log, so
+/// the saved session would replay to a different world.
+const STAMP_NOT_LOGGED: &str = "a stamp is not in the op log (--save)";
+
+/// `P` is available unless the session is being saved.
+fn stamp_allowed(saving: bool) -> Result<(), &'static str> {
+    if saving {
+        Err(STAMP_NOT_LOGGED)
+    } else {
+        Ok(())
+    }
+}
+
+/// Why collapse is off under `--save` and `--replay`: its falls and crumbles edit the world
+/// outside the op log, so a saved session would replay to a different world.
+const COLLAPSE_NOT_LOGGED: &str = "collapse is not in the op log (--save, --replay)";
+
+/// Collapse (the support query after a dig, falls, `R`) runs unless the session is saved or
+/// replayed.
+fn collapse_allowed(logged: bool) -> Result<(), &'static str> {
+    if logged {
+        Err(COLLAPSE_NOT_LOGGED)
+    } else {
+        Ok(())
+    }
+}
 
 /// Walk mode is available only on the bounded level.
 fn walk_allowed(streaming: bool) -> Result<(), &'static str> {
@@ -192,6 +239,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         rock_detail: flythrough::ROCK_DETAIL,
         view: ViewMode::Shaded,
         hud: false,
+        save: None,
+        replay: None,
     };
     let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
@@ -226,6 +275,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 args.view = ViewMode::from_name(&v)
                     .ok_or(format!("--view takes shaded, normals or hitmask, not {v}"))?;
             }
+            "--save" => args.save = Some(value()?.into()),
+            "--replay" => args.replay = Some(value()?.into()),
             "--level" => args.level = true,
             "--detail" => args.detail = true,
             "--autopilot" => args.autopilot = true,
@@ -245,6 +296,15 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     if args.walk {
         walk_allowed(!args.level).map_err(|e| format!("--walk: {e}"))?;
     }
+    if (args.save.is_some() || args.replay.is_some()) && !args.level {
+        return Err(SAVE_NEEDS_LEVEL.to_owned());
+    }
+    if args.save.is_some() && args.replay.is_some() {
+        return Err("--save and --replay do not combine".to_owned());
+    }
+    if (args.save.is_some() || args.replay.is_some()) && args.vault {
+        return Err(SAVE_EXCLUDES_VAULT.to_owned());
+    }
     Ok(args)
 }
 
@@ -263,6 +323,14 @@ fn parse_rock_detail(v: &str) -> Result<[f32; 2], String> {
         ));
     }
     Ok([scale, strength])
+}
+
+/// The verb of a `DigLogic` `op` line, as the `'static` the edit lines and the HUD hold;
+/// `None` for a line that is not one of its verbs.
+fn op_verb(verb: &str) -> Option<&'static str> {
+    [DIG_VERB, FILL_VERB, BENCH_VERB]
+        .into_iter()
+        .find(|&v| v == verb)
 }
 
 /// One printed line per edit: `carved: rock 1234, ore 12 (3 chunks, 0.21 ms)`.
@@ -712,10 +780,41 @@ fn counts_line(table: &MaterialTable, counts: &[(MaterialId, u32)]) -> String {
         .join(", ")
 }
 
+/// The simulation split around the world: the server running [`DigLogic`] and the shared
+/// client every edit goes through.
+struct Net {
+    server: Server,
+    client: Client,
+}
+
+impl Net {
+    fn new(world: &Arc<World>, seed: u64) -> Self {
+        let mut server = Server::new(world.clone(), Box::new(DigLogic), seed);
+        let (near, far) = MemChannel::pair();
+        server.attach(far);
+        Self {
+            server,
+            client: Client::shared(world.clone(), near),
+        }
+    }
+}
+
+/// Bench carves the client has seen this tick, summed until a bench's [`BENCH_CARVES`] are in.
+#[derive(Default)]
+struct BenchSum {
+    carves: usize,
+    refused: usize,
+    counts: BTreeMap<MaterialId, u32>,
+    touched: BTreeSet<ChunkCoord>,
+}
+
 /// The running fly-through, once the world exists.
 struct Run {
     start: Instant,
-    world: World,
+    /// The server's world, which the shared client, the mirror and the queries read.
+    world: Arc<World>,
+    /// `None` only while dropping.
+    net: Option<Net>,
     /// The voxel the camera starts in; the mirror uploads nearest it first.
     spawn: VoxelCoord,
     args: Args,
@@ -736,6 +835,11 @@ struct Run {
 }
 
 impl Run {
+    /// Whether this session's edits go to or come from a log file.
+    fn logged(&self) -> bool {
+        self.args.save.is_some() || self.args.replay.is_some()
+    }
+
     /// Prints the edit's line and keeps it for the HUD.
     fn record_edit(&mut self, verb: &'static str, r: &EditResult, ms: f64) {
         println!("{}", self.note_edit(verb, r, ms));
@@ -884,51 +988,29 @@ impl Run {
         (Fixed3(origin), dir)
     }
 
-    fn apply(&mut self, verb: &'static str, op: &EditOp) {
-        let t = now();
-        let r = self.world.apply(op);
-        let ms = ms_since(t);
-        match r {
-            Ok(r) => {
-                self.record_edit(verb, &r, ms);
-                self.edited(&r);
-            }
-            Err(e) => println!("{verb}: refused, {e}"),
+    fn send(&self, input: DigInput) {
+        if let Some(net) = &self.net {
+            net.client.send_input(input.encode());
         }
     }
 
+    /// Left click: a dig along the camera ray.
     fn dig(&mut self) {
         let (origin, dir) = self.camera_ray();
-        let t = now();
-        let op = EditOp::tool_along_ray(
-            &self.world,
+        self.send(DigInput::Dig {
             origin,
             dir,
-            REACH,
-            self.dig_radius,
-            Mode::Carve,
-        );
-        let resolve_ms = ms_since(t);
-        let t = now();
-        let r = self.world.apply(&op);
-        let ms = resolve_ms + ms_since(t);
-        match r {
-            Ok(r) => {
-                self.record_edit("carved", &r, ms);
-                let changes = self.edited(&r);
-                if let Some(c) = self.coarse.as_mut() {
-                    for line in c.collapse(&self.world, &changes) {
-                        println!("{line}");
-                    }
-                }
-                self.note_collapse_edit();
-            }
-            Err(e) => println!("carved: refused, {e}"),
-        }
+            radius: self.dig_radius,
+        });
     }
 
-    /// `P`: the vault at the aim point, through the same post-edit path as a dig.
+    /// `P`: the vault at the aim point, stamped on the server's world directly and then through
+    /// the same post-edit path as a dig; refused under `--save`.
     fn stamp(&mut self) {
+        if let Err(e) = stamp_allowed(self.args.save.is_some()) {
+            println!("stamped: refused, {e}");
+            return;
+        }
         let (origin, dir) = self.camera_ray();
         let t = now();
         let out = stamp_at_aim(&self.world, origin, dir);
@@ -942,88 +1024,116 @@ impl Run {
         }
     }
 
+    /// Right click: a fill where the camera ray hits.
     fn fill(&mut self) {
         let (origin, dir) = self.camera_ray();
-        let Some(hit) = self.world.raycast(origin, dir, REACH) else {
-            println!("filled: no surface within 10 m");
-            return;
-        };
-        let at = Fixed3([0, 1, 2].map(|k| origin.0[k] + dir[k] * hit.t / FIXED_ONE));
-        self.apply("filled", &EditOp::sphere(at, FILL_RADIUS, Mode::Fill(ROCK)));
+        self.send(DigInput::Fill {
+            origin,
+            dir,
+            radius: FILL_RADIUS,
+            material: ROCK,
+        });
     }
 
-    /// `B`: carves at seeded positions within 10 m, then one mirror sync, both timed.
-    fn bench(&mut self, gpu: &Gpu) {
-        let centre = self
+    /// `B`: a bench input, its carves seeded from `--seed` and the count of benches so far,
+    /// centred on the camera's voxel.
+    fn bench(&mut self) {
+        let origin = self
             .fly
             .camera
             .position
             .to_array()
             .map(|v| v.floor() as i64);
-        let mut state = mix64(self.args.seed ^ self.bench_runs.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+        let seed = self.args.seed ^ self.bench_runs.wrapping_mul(0x9e37_79b9_7f4a_7c15);
         self.bench_runs += 1;
-        let mut next = || {
-            state = mix64(state.wrapping_add(1));
-            (state % (2 * BENCH_SPREAD as u64 + 1)) as i64 - BENCH_SPREAD
-        };
-        let mut ops = Vec::with_capacity(BENCH_CARVES);
-        while ops.len() < BENCH_CARVES {
-            let d = [next(), next(), next()];
-            if d.iter().map(|v| v * v).sum::<i64>() <= BENCH_SPREAD * BENCH_SPREAD {
-                let c = [0, 1, 2].map(|k| (centre[k] + d[k]) * FIXED_ONE + FIXED_ONE / 2);
-                ops.push(EditOp::sphere(Fixed3(c), BENCH_RADIUS, Mode::Carve));
-            }
-        }
+        self.send(DigInput::Bench { origin, seed });
+    }
 
-        // With attribute pages, the first carve is synced and its attribute pass timed alone.
-        let attrs = self.gfx.as_ref().is_some_and(|g| g.mirror.surface_attrs());
-        let mut results: Vec<Result<EditResult, EditError>> = Vec::with_capacity(ops.len());
-        let mut edit_ms = 0.0;
-        if attrs && let Some(gfx) = self.gfx.as_mut() {
-            let t = now();
-            results.push(self.world.apply(&ops[0]));
-            edit_ms += ms_since(t);
-            match gfx.mirror.sync(&self.world, &gpu.queue) {
-                Ok(_) => println!(
-                    "{}",
-                    attr_line("one carve of radius 1 m", gfx.timed_attrs(gpu))
-                ),
-                Err(e) => println!("bench: sync failed, {e}"),
-            }
-        }
+    /// The frame's server tick, timed, then the client's events: one printed line per dig
+    /// or fill and per bench, the coarse grid updated from every applied result. A tick that
+    /// finished a bench syncs the mirror at once and prints the bench line.
+    fn tick(&mut self, gpu: &Gpu) {
+        let Some(net) = self.net.as_mut() else { return };
         let t = now();
-        results.extend(ops[results.len()..].iter().map(|op| self.world.apply(op)));
-        edit_ms += ms_since(t);
+        net.server.tick();
+        let ms = ms_since(t);
+        let events = net.client.poll();
 
-        let mut counts = BTreeMap::<MaterialId, u32>::new();
-        let mut touched = BTreeSet::new();
-        let mut refused = 0;
-        for r in &results {
-            match r {
-                Ok(r) => {
-                    for &(m, n) in &r.changed_from {
-                        *counts.entry(m).or_default() += n;
+        let mut ops = std::collections::VecDeque::new();
+        let mut bench = BenchSum::default();
+        let mut benches = (0, 0);
+        for event in events {
+            let Event::Logic { bytes, .. } = event else {
+                ops.push_back(event);
+                continue;
+            };
+            for line in String::from_utf8_lossy(&bytes).lines() {
+                let Some(verb) = line.strip_prefix("op ").and_then(op_verb) else {
+                    println!("{line}");
+                    continue;
+                };
+                let result = match ops.pop_front() {
+                    Some(Event::Applied { result, .. }) => Ok(result),
+                    Some(Event::Refused { error, .. }) => Err(error),
+                    _ => continue,
+                };
+                let changes = match &result {
+                    Ok(r) => Some(self.edited(r)),
+                    Err(_) => None,
+                };
+                if verb != BENCH_VERB {
+                    match result {
+                        Ok(r) => self.record_edit(verb, &r, ms),
+                        Err(e) => println!("{verb}: refused, {e}"),
                     }
-                    touched.extend(r.touched.iter().copied());
+                    // An applied dig queries the support over the cells it changed.
+                    if verb == DIG_VERB
+                        && collapse_allowed(self.logged()).is_ok()
+                        && let Some(changes) = changes
+                        && let Some(c) = self.coarse.as_mut()
+                    {
+                        for line in c.collapse(&self.world, &changes) {
+                            println!("{line}");
+                        }
+                        self.note_collapse_edit();
+                    }
+                    continue;
                 }
-                Err(_) => refused += 1,
+                match result {
+                    Ok(r) => {
+                        for (m, n) in r.changed_from {
+                            *bench.counts.entry(m).or_default() += n;
+                        }
+                        bench.touched.extend(r.touched);
+                    }
+                    Err(_) => bench.refused += 1,
+                }
+                bench.carves += 1;
+                if bench.carves == BENCH_CARVES {
+                    let done = std::mem::take(&mut bench);
+                    let total = EditResult {
+                        changed_from: done.counts.into_iter().collect(),
+                        touched: done.touched.into_iter().collect(),
+                        aabb: None,
+                    };
+                    self.record_edit("carved", &total, ms);
+                    benches = (benches.0 + 1, benches.1 + done.refused);
+                }
             }
         }
-        let total = EditResult {
-            changed_from: counts.into_iter().collect(),
-            touched: touched.into_iter().collect(),
-            aabb: None,
-        };
-        for r in results.iter().flatten() {
-            self.edited(r);
+        if benches.0 > 0 {
+            self.bench_sync(gpu, benches.0 * BENCH_CARVES, benches.1, ms);
         }
-        self.record_edit("carved", &total, edit_ms);
+    }
 
+    /// The mirror sync after a bench, timed, with the bench line; with attribute pages, the
+    /// attribute pass over the carves timed alone.
+    fn bench_sync(&mut self, gpu: &Gpu, carves: usize, refused: usize, edit_ms: f64) {
         let Some(gfx) = self.gfx.as_mut() else { return };
         let t = now();
         match gfx.mirror.sync(&self.world, &gpu.queue) {
             Ok(s) => println!(
-                "bench: {BENCH_CARVES} carves of radius 1 m within 10 m ({refused} refused): \
+                "bench: {carves} carves of radius 1 m within 10 m ({refused} refused): \
                  edits {edit_ms:.2} ms CPU, brick-array pool {} KiB; sync uploaded {} B ({} bricks, \
                  {} chunks, {} visited, {} writes) in {:.2} ms",
                 self.world.pool_len() * BRICK_VOXELS * 2 / 1024,
@@ -1036,9 +1146,34 @@ impl Run {
             ),
             Err(e) => println!("bench: sync failed, {e}"),
         }
-        if attrs {
-            let what = format!("the other {} carves", BENCH_CARVES - 1);
+        if gfx.mirror.surface_attrs() {
+            let what = format!("{carves} carves of radius 1 m");
             println!("{}", attr_line(&what, gfx.timed_attrs(gpu)));
+        }
+    }
+
+    /// `--save`: the session's log file, and the world's hash.
+    fn save(&self) {
+        let (Some(path), Some(net)) = (&self.args.save, &self.net) else {
+            return;
+        };
+        let file = LogFile {
+            seed: self.args.seed,
+            source_version: CaveSource::VERSION,
+            extent: self.world.extent(),
+            ops: net.server.ops().clone(),
+            inputs: net.server.inputs().clone(),
+        };
+        println!("world hash 0x{:016x}", self.world.voxel_hash());
+        let written = std::fs::File::create(path).and_then(|mut f| file.write_to(&mut f));
+        match written {
+            Ok(()) => println!(
+                "saved {} inputs, {} ops to {}",
+                file.inputs.len(),
+                file.ops.len(),
+                path.display()
+            ),
+            Err(e) => eprintln!("save to {} failed: {e}", path.display()),
         }
     }
 
@@ -1164,10 +1299,6 @@ impl Run {
             println!("{}", attr_line("initial fill", gfx.timed_attrs(gpu)));
         }
         self.gfx = Some(gfx);
-        for _ in 0..self.args.bench {
-            self.world.reserve_brick_arrays(RESERVE_ARRAYS);
-            self.bench(gpu);
-        }
     }
 
     /// A mirror under `cfg`, with attribute pages when `--look` was given.
@@ -1479,6 +1610,11 @@ impl Run {
         if input.pressed(KeyCode::F2) {
             self.hud.visible = !self.hud.visible;
         }
+        if self.frame == 0 {
+            for _ in 0..self.args.bench {
+                self.bench();
+            }
+        }
         if self.pilot.is_some() {
             if self.pilot_step() == Flow::Exit {
                 return Flow::Exit;
@@ -1492,9 +1628,11 @@ impl Run {
                 }
                 None => self.fly.update(input, dt),
             }
-            self.handle_input(gpu, input);
+            self.handle_input(input);
         }
-        if let Some(c) = self.coarse.as_mut() {
+        if collapse_allowed(self.logged()).is_ok()
+            && let Some(c) = self.coarse.as_mut()
+        {
             for line in c.fall(&self.world) {
                 println!("{line}");
             }
@@ -1513,7 +1651,7 @@ impl Run {
 
     /// The keys and buttons of interactive flight; the autopilot takes none of them, so a
     /// stray click cannot change the world it measures.
-    fn handle_input(&mut self, gpu: &Gpu, input: &Input) {
+    fn handle_input(&mut self, input: &Input) {
         if input.pressed(KeyCode::KeyL) {
             self.light.shadows = !self.light.shadows;
             println!(
@@ -1536,7 +1674,7 @@ impl Run {
             self.fill();
         }
         if input.pressed(KeyCode::KeyB) {
-            self.bench(gpu);
+            self.bench();
         }
         if input.pressed(KeyCode::KeyP) {
             self.stamp();
@@ -1548,7 +1686,9 @@ impl Run {
             println!("{}", self.coarse_line());
         }
         if input.pressed(KeyCode::KeyR) {
+            let logged = self.logged();
             match self.coarse.as_mut() {
+                Some(_) if let Err(e) = collapse_allowed(logged) => println!("collapse: off, {e}"),
                 Some(c) => println!("{}", c.toggle_crumble()),
                 None => println!("collapse: not kept while streaming"),
             }
@@ -1567,8 +1707,9 @@ impl Run {
         }
     }
 
-    /// Streams, syncs, marches and presents one frame begun at `t0`.
+    /// Ticks the server, then streams, syncs, marches and presents one frame begun at `t0`.
     fn draw(&mut self, gpu: &Gpu, surface: &wgpu::TextureView, t0: Instant) -> Flow {
+        self.tick(gpu);
         if self.stream.is_some() {
             if let Err(e) = self.stream_step(gpu) {
                 eprintln!("mirror sync failed: {e}");
@@ -1718,16 +1859,21 @@ fn teardown_stage(what: &str, f: impl FnOnce()) {
 }
 
 impl Drop for Run {
-    /// Stops and joins the streamer's workers first, then drops the GPU mirror and passes,
-    /// then the world (swapped for an empty one, whose drop is free).
+    /// Writes the `--save` file, drops the server and client, stops and joins the streamer's
+    /// workers, then drops the GPU mirror and passes, then the world (swapped for an empty
+    /// one, whose drop is free; the server and client held the other references).
     fn drop(&mut self) {
+        self.save();
+        // The server and client hold the world's other references and their logs; their
+        // drop is cheap and is not a traced stage.
+        drop(self.net.take());
         if let Some(stream) = self.stream.take() {
             teardown_stage("streamer", || drop(stream));
         }
         if let Some(gfx) = self.gfx.take() {
             teardown_stage("GPU mirror and passes", || drop(gfx));
         }
-        let world = std::mem::replace(&mut self.world, World::new(&MaterialTable::new()));
+        let world = std::mem::replace(&mut self.world, Arc::new(World::new(&MaterialTable::new())));
         teardown_stage("world", || drop(world));
     }
 }
@@ -1799,6 +1945,8 @@ impl App for Flythrough {
                 generated_at_takeoff: 0,
             });
             let coarse = stream.is_none().then(|| Coarse::build(&world));
+            let world = Arc::new(world);
+            let net = Net::new(&world, self.args.seed);
             let walk = if self.args.walk {
                 let w = Walk::at_camera(&world, &self.camera);
                 if w.is_none() {
@@ -1811,8 +1959,9 @@ impl App for Flythrough {
             self.run = Some(Run {
                 start: self.start,
                 world,
+                net: Some(net),
                 spawn: voxel_of(self.camera.position),
-                args: self.args,
+                args: self.args.clone(),
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
                 look: LookParams {
@@ -1944,7 +2093,7 @@ fn pollster_block_on<F: std::future::Future>(f: F) -> F::Output {
 
 /// The cave's material table; under `--look`, with rock's procedural detail at
 /// `--rock-detail`.
-fn materials(args: Args) -> MaterialTable {
+fn materials(args: &Args) -> MaterialTable {
     if args.look.is_some() {
         flythrough::look_materials_with(args.rock_detail)
     } else {
@@ -1960,7 +2109,7 @@ fn main() {
     )
     .init();
     let start = now();
-    let args = match parse_args() {
+    let mut args = match parse_args() {
         Ok(a) => a,
         Err(e) => {
             eprintln!("flythrough: {e}");
@@ -1969,7 +2118,44 @@ fn main() {
     };
 
     let seed = args.seed;
-    let (spawn, pending) = if args.level {
+    let (spawn, pending) = if let Some(path) = args.replay.clone() {
+        let file = match flythrough::read_log_file(&path) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("flythrough: --replay {}: {e}", path.display());
+                std::process::exit(1);
+            }
+        };
+        // The session continues under the save's seed.
+        args.seed = file.seed;
+        let table = materials(&args);
+        let source = CaveSource::new(file.seed, file.extent);
+        let generation = std::thread::spawn(move || {
+            let (world, ops) = match flythrough::replay_log(
+                &file,
+                flythrough::Mode::Inputs,
+                ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS),
+                &table,
+            ) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("flythrough: --replay {}: {e}", path.display());
+                    std::process::exit(1);
+                }
+            };
+            println!(
+                "replayed {} inputs, {} ops, hash 0x{:016x}",
+                file.inputs.len(),
+                ops.len(),
+                world.voxel_hash()
+            );
+            if ops != file.ops {
+                println!("replay: the re-simulated op log differs from the saved one");
+            }
+            world
+        });
+        (source.spawn(), Pending::Level(generation))
+    } else if args.level {
         let source = CaveSource::new(seed, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
         if args.vault {
             println!(
@@ -1977,12 +2163,14 @@ fn main() {
                 source.vault_origin().0
             );
         }
+        let table = materials(&args);
+        let with_vault = args.vault;
         let generation = std::thread::spawn(move || {
             let t = now();
-            let world = if args.vault {
-                World::generate(source.extent, &source.with_vault(), &materials(args))
+            let world = if with_vault {
+                World::generate(source.extent, &source.with_vault(), &table)
             } else {
-                World::generate(source.extent, &source, &materials(args))
+                World::generate(source.extent, &source, &table)
             };
             println!(
                 "generated seed {seed} over {LEVEL_CHUNKS:?} chunks in {:.0} ms: {} full bricks",
@@ -1998,7 +2186,7 @@ fn main() {
             .map_or(1, usize::from)
             .saturating_sub(1)
             .max(1);
-        let world = World::new(&materials(args));
+        let world = World::new(&materials(&args));
         let cfg = StreamConfig {
             residency: RESIDENCY,
             workers,
@@ -2035,6 +2223,7 @@ fn main() {
         vfov: 70f32.to_radians(),
     };
     let size = args.render.unwrap_or([1280, 720]);
+    let headless = args.headless;
     let app = Flythrough {
         start,
         args,
@@ -2042,7 +2231,7 @@ fn main() {
         pending: Some(pending),
         run: None,
     };
-    let result = if args.headless {
+    let result = if headless {
         run_headless(app, size)
     } else {
         let config = ShellConfig {
@@ -2079,6 +2268,52 @@ mod tests {
         assert!(a.walk && a.level);
         assert_eq!(walk_allowed(true), Err(WALK_NEEDS_LEVEL));
         assert_eq!(walk_allowed(false), Ok(()));
+    }
+
+    /// `--save` and `--replay` take a path, need the bounded level, and do not combine.
+    #[test]
+    fn save_and_replay_need_the_level() {
+        for flag in ["--save", "--replay"] {
+            assert_eq!(
+                parse_args_from(argv(&[flag, "a.log"])).err().as_deref(),
+                Some(SAVE_NEEDS_LEVEL)
+            );
+        }
+        let a = parse_args_from(argv(&["--level", "--bench", "1", "--save", "a.log"]))
+            .expect("--level --bench 1 --save parses");
+        assert_eq!(a.save.as_deref(), Some(std::path::Path::new("a.log")));
+        assert_eq!(a.bench, 1);
+        assert!(parse_args_from(argv(&["--level", "--save", "a", "--replay", "b"])).is_err());
+        assert!(parse_args_from(argv(&["--level", "--replay"])).is_err());
+    }
+
+    /// The log file does not record the vault, so `--vault` refuses `--save` and `--replay`.
+    #[test]
+    fn vault_does_not_combine_with_save_or_replay() {
+        for flag in ["--save", "--replay"] {
+            assert_eq!(
+                parse_args_from(argv(&["--level", "--vault", flag, "a.log"]))
+                    .err()
+                    .as_deref(),
+                Some(SAVE_EXCLUDES_VAULT)
+            );
+        }
+        let a = parse_args_from(argv(&["--level", "--vault"])).expect("--level --vault parses");
+        assert!(a.level && a.vault);
+    }
+
+    /// Collapse edits outside the op log, so it is off while saving or replaying.
+    #[test]
+    fn collapse_is_off_under_save_and_replay() {
+        assert_eq!(collapse_allowed(true), Err(COLLAPSE_NOT_LOGGED));
+        assert_eq!(collapse_allowed(false), Ok(()));
+    }
+
+    /// A stamp is not in the op log, so `P` is refused while saving and allowed otherwise.
+    #[test]
+    fn p_is_refused_under_save() {
+        assert_eq!(stamp_allowed(true), Err(STAMP_NOT_LOGGED));
+        assert_eq!(stamp_allowed(false), Ok(()));
     }
 
     #[test]

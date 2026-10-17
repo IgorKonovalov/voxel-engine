@@ -1,0 +1,21 @@
+[package]
+name = "vxe-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Server-owned op log, a byte channel, the logic boundary, and shared and owned clients"
+
+[lints]
+workspace = true
+
+[dependencies]
+vxe-world.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "tick"
+harness = false
