@@ -281,7 +281,7 @@ fn explicit_and_indestructible_anchors_hold_the_slab() {
 }
 
 #[test]
-fn a_cell_in_a_chunk_the_grid_does_not_hold_anchors() {
+fn boundary_anchors_off_lets_the_floor_go_and_a_missing_chunk_anchors() {
     // Two chunks side by side along x; the slab reaches into the second.
     let world = World::generate(
         ChunkExtent::new([0, 0, 0], [2, 1, 1]),
@@ -293,19 +293,46 @@ fn a_cell_in_a_chunk_the_grid_does_not_hold_anchors() {
     }
     let mut grid = CoarseGrid::build(&world);
     let changes = carve(&world, &mut grid, PILLAR.0, PILLAR.1);
-    let p = SupportParams {
+    let off = SupportParams {
         boundary_anchors: false,
         ..params()
     };
-    // Boundary anchors off: the floor still touches the non-resident chunks outside the
-    // extent, and the slab (6 x 3 cells) is unsupported.
-    let regions = query(&world, &grid, p, &changes);
-    assert_eq!(regions.len(), 1);
-    assert_eq!(regions[0].cells.len(), 18);
-    assert_eq!(regions[0].counts, [(3, 9216)]);
-    // Once the grid drops the second chunk, the slab's cells there are unknown: anchors.
+    let mut floor = Vec::new();
+    for x in 0..8 {
+        for y in 0..8 {
+            floor.push(CellCoord([x, y, 0]));
+        }
+    }
+    let mut slab = Vec::new();
+    for x in 3..=8 {
+        for y in 3..=5 {
+            slab.push(CellCoord([x, y, 5]));
+        }
+    }
+    let slab_region = Region {
+        cells: slab,
+        counts: vec![(3, 9216)],
+        aabb: (VoxelCoord([24, 24, 40]), VoxelCoord([71, 47, 47])),
+    };
+    // Boundary anchors off: the chunks outside the extent are air, so the floor (first visited,
+    // through cell (4, 4, 0) below the carve) and the slab (6 x 3 cells) are both unsupported.
+    assert_eq!(
+        query(&world, &grid, off, &changes),
+        [
+            Region {
+                cells: floor,
+                counts: vec![(3, 32768)],
+                aabb: (VoxelCoord([0, 0, 0]), VoxelCoord([63, 63, 7])),
+            },
+            slab_region.clone(),
+        ]
+    );
+    // Boundary anchors on: the floor lies on the extent's bottom face; the slab alone falls.
+    assert_eq!(query(&world, &grid, params(), &changes), [slab_region]);
+    // Once the grid drops the second chunk, inside the extent, its cells are unknown: anchors.
+    // The floor reaches it through x = 8, the slab directly.
     grid.chunk_evicted(ChunkCoord([1, 0, 0]));
-    assert_eq!(query(&world, &grid, p, &changes), []);
+    assert_eq!(query(&world, &grid, off, &changes), []);
 }
 
 /// The world's hash after building `parts` on a fresh fixture chunk.

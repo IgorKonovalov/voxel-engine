@@ -5,10 +5,13 @@
 //! load-bearing cells among an edit's changed cells and their six neighbours, visited in
 //! ascending `(x, y, z)` order. Each candidate not yet settled starts a breadth-first flood over
 //! load-bearing 6-neighbours in the order -x, +x, -y, +y, -z, +z. The flood ends as supported
-//! when it reaches an anchor, a cell an earlier flood settled as supported, or a cell in a
-//! chunk that is not resident (unknown counts as anchored), or when it holds more than
-//! `max_region` cells; it ends as a region when it runs out of cells. Every step is a fixed
-//! order over integer data, so the output is canonical. Nothing is kept between calls.
+//! when it reaches an anchor, a cell an earlier flood settled as supported, or a cell whose
+//! chunk is unknown, or when it holds more than `max_region` cells; it ends as a region when it
+//! runs out of cells. A chunk is unknown when the grid or the world lacks it and it lies inside
+//! the world's extent, or anywhere in a world with an empty (unbounded) extent; unknown counts
+//! as anchored. A chunk outside a non-empty extent is known air: it holds nothing up, so with
+//! `boundary_anchors` off a piece touching the extent's faces can come loose. Every step is a
+//! fixed order over integer data, so the output is canonical. Nothing is kept between calls.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{BuildHasherDefault, Hasher};
@@ -27,12 +30,15 @@ pub struct SupportParams {
     pub solid_min: u16,
     /// The most cells a flood visits before it gives up and calls its cells supported.
     pub max_region: u32,
-    /// Whether the cells on the faces of the world's extent are anchors.
+    /// Whether the cells on the faces of the world's extent are anchors. Off, the chunks
+    /// outside a non-empty extent read as air, so the faces hold nothing up; a world with an
+    /// empty extent has no faces, and every chunk it lacks stays unknown (anchored).
     pub boundary_anchors: bool,
 }
 
 /// Cells the caller declares anchored, on top of the anchors every query knows (an
-/// `INDESTRUCTIBLE` dominant material, the extent's faces when asked, a non-resident chunk).
+/// `INDESTRUCTIBLE` dominant material, the extent's faces when asked, a chunk inside the extent
+/// (or anywhere, in an unbounded world) that the grid or the world lacks).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Anchors<'a> {
     pub explicit: &'a [CellCoord],
@@ -109,13 +115,21 @@ fn neighbours(c: CellCoord) -> [CellCoord; 6] {
 /// A cell as the flood sees it.
 #[derive(Clone, Copy)]
 enum Seen {
-    /// In a chunk that is not resident (in the world or in the grid): an anchor.
+    /// In a chunk the grid or the world lacks, inside the extent or in an unbounded world: an
+    /// anchor.
     Unknown,
     Cell(CoarseCell),
 }
 
+/// Every cell of a chunk outside a non-empty extent: air.
+static OUTSIDE: [CoarseCell; CHUNK_BRICKS] = [CoarseCell {
+    solid: 0,
+    dominant: AIR,
+}; CHUNK_BRICKS];
+
 /// Cell lookups with the chunk resolved once: per chunk, the grid's cells when both the grid
-/// and the world hold it.
+/// and the world hold it, `OUTSIDE` for a chunk outside a non-empty extent, `None` (unknown)
+/// otherwise.
 struct Cells<'g> {
     grid: &'g CoarseGrid,
     world: &'g World,
@@ -139,10 +153,12 @@ impl<'g> Cells<'g> {
             Some((k, cells)) if k == chunk => cells,
             _ => {
                 let (grid, world) = (self.grid, self.world);
-                let cells = *self
-                    .chunks
-                    .entry(chunk)
-                    .or_insert_with(|| grid.chunk(chunk).filter(|_| world.store.contains(chunk)));
+                let cells = *self.chunks.entry(chunk).or_insert_with(|| {
+                    let e = world.extent();
+                    grid.chunk(chunk)
+                        .filter(|_| world.store.contains(chunk))
+                        .or_else(|| (!e.is_empty() && !e.contains(chunk)).then_some(&OUTSIDE))
+                });
                 self.last = Some((chunk, cells));
                 cells
             }
