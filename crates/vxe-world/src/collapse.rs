@@ -324,6 +324,45 @@ impl Compose {
             .or_insert_with(|| reader.brick(c).expect("scanned resident").clone())
     }
 
+    /// Writes the solid voxels of `src`, the brick of region cell `c`, `dropped` voxels lower.
+    /// They land in at most two bricks: layers `r..8` of `src` (with `r = dropped mod 8`) in
+    /// the cell `dropped / 8` below `c`, layers `0..r` in the cell under that. Each destination
+    /// brick is looked up once and takes whole 64-voxel layers.
+    fn place_dropped(&mut self, reader: &mut Reader<'_>, c: CellCoord, src: &Brick, dropped: i32) {
+        const LAYER: usize = (BE * BE) as usize;
+        let (q, r) = (dropped.div_euclid(BE), dropped.rem_euclid(BE));
+        let [cx, cy, cz] = c.0;
+        // (destination cell, source layers, destination layer of the first source layer)
+        let upper = (CellCoord([cx, cy, cz - q]), r..BE, 0);
+        let lower = (CellCoord([cx, cy, cz - q - 1]), 0..r, BE - r);
+        for (to, layers, first) in [upper, lower] {
+            if layers.is_empty() {
+                continue;
+            }
+            let span = layers.start as usize * LAYER..layers.end as usize * LAYER;
+            let at = first as usize * LAYER;
+            let b = self.brick(reader, to);
+            match (src, &*b) {
+                (Brick::Uniform(m), Brick::Uniform(d)) if m == d => {}
+                (Brick::Uniform(m), _) => b.expand()[at..at + span.len()].fill(*m),
+                (Brick::Full(v), _) => {
+                    let from = &v[span];
+                    if let Brick::Uniform(d) = *b
+                        && from.iter().all(|&m| m == AIR || m == d)
+                    {
+                        continue;
+                    }
+                    let dst = &mut b.expand()[at..at + from.len()];
+                    for (d, &m) in dst.iter_mut().zip(from) {
+                        if m != AIR {
+                            *d = m;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn set(&mut self, reader: &mut Reader<'_>, v: [i32; 3], m: MaterialId) {
         let b = self.brick(reader, cell_of(v));
         if b.get(index_of(v)) != m {
@@ -431,14 +470,7 @@ impl World {
                                 continue;
                             }
                         }
-                        for lz in 0..BE {
-                            for ly in 0..BE {
-                                for lx in 0..BE {
-                                    let v = [min[0] + lx, min[1] + ly, min[2] + lz - dropped];
-                                    compose.set(&mut reader, v, *m);
-                                }
-                            }
-                        }
+                        compose.place_dropped(&mut reader, c, &Brick::Uniform(*m), dropped);
                     }
                     Brick::Full(vox) => {
                         let (mut lo, mut hi) = ([BE; 3], [-1; 3]);
@@ -450,10 +482,9 @@ impl World {
                             let l = [i % 8, i / 8 % 8, i / 64].map(|x| x as i32);
                             lo = [0, 1, 2].map(|k| lo[k].min(l[k]));
                             hi = [0, 1, 2].map(|k| hi[k].max(l[k]));
-                            let v = [min[0] + l[0], min[1] + l[1], min[2] + l[2] - dropped];
-                            compose.set(&mut reader, v, m);
                         }
                         if hi[0] >= 0 {
+                            compose.place_dropped(&mut reader, c, snap.brick(c), dropped);
                             let lo = [0, 1, 2].map(|k| min[k] + lo[k]);
                             let hi = [0, 1, 2].map(|k| min[k] + hi[k]);
                             bounds.add([lo[0], lo[1], lo[2] - dropped], hi);
