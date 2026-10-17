@@ -429,8 +429,8 @@ boundary; only logs a `Server` writes after a submission do.
 | 2: Server, shared client, direct submission | dev | done | 5a93da9 |
 | 3: The logic boundary and re-simulation | dev | done | 2c32389; Interleaving and the boundary entry ba27191, after merging main (07e53f1) for the 2026-10-17 amendment |
 | 4: Owned client and desync detection | dev | done | f8708b7 |
-| 5: Save, replay, fly-through on the split | dev | done | committed with this row; `--level --seed 1 --headless --frames 2 --bench 1 --save a.log` printed `world hash 0x86ca427a47e8908c`, then `--level --headless --frames 1 --replay a.log` printed `replayed 1 inputs, 100 ops, hash 0x86ca427a47e8908c` (release, NVIDIA GeForce RTX 3080 Laptop GPU, exclusive lock) |
-| 6: Readings | dev | not started | stopped at the Phase 3 block |
+| 5: Save, replay, fly-through on the split | dev | done | 690ea1a; `--level --seed 1 --headless --frames 2 --bench 1 --save a.log` printed `world hash 0x86ca427a47e8908c`, then `--level --headless --frames 1 --replay a.log` printed `replayed 1 inputs, 100 ops, hash 0x86ca427a47e8908c` (release, NVIDIA GeForce RTX 3080 Laptop GPU, exclusive lock) |
+| 6: Readings | dev | done | committed with this row; replay 279.07 ms per 10 000 carves (about 35 800 ops/s), tick overhead 84.7 µs per 100 inputs (see Close triggers) |
 
 ### Notes
 
@@ -463,6 +463,8 @@ boundary; only logs a `Server` writes after a submission do.
 - Phase 5: `tests/replay.rs` copies the vector's 24 ops from `determinism.rs` and holds the copy to the blessed op-log hash; its vector check recomposes the vector hash from the direct path's results and the replayed world's voxel hash.
 - Phase 5: the server and client are dropped first in `Run`'s teardown, untraced (`tests/shutdown.rs` asserts the exact stage list).
 - Phase 5: `README.md`'s flag table does not list `--save` and `--replay` (not in Files touched).
+- Phase 6: the tick bench times the 100 `send_input` calls with the tick and the poll; both benches build their world untimed in every iteration. The tick bench includes `tests/support/mod.rs` by `#[path]` for `EchoLogic` and the seeded carves.
+- Phase 6: `nfr.md` §4 gains three lines (log entry sizes, replay throughput without a budget, the tick overhead proposal of 100 µs), each reading with machine, load and phase.
 - Phases 1 to 3 and 5: `Cargo.lock` changed with the new `vxe-net` member and the fly-through's dependency on it (no new external crate).
 
 ### Close triggers

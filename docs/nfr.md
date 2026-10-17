@@ -178,6 +178,19 @@ under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2
   8.119 to 8.120 ms; the fly-through `B` line 3.30 to 3.34 ms. It misses the 2 ms budget; the
   budget stands (owner's call at the Plan 0003 close) and Plan 0014 is the second pass.
 - **Results** are returned synchronously with the edit, per material, exact.
+- **Logs (Plan 0007):** an op log entry is 47 bytes for a sphere carve (65 for a box fill, 75
+  for a capsule replace), a boundary entry 13, an input entry 14 bytes plus its payload; a log
+  file adds a 60-byte header.
+- **Replay throughput:** no budget yet. **Reading (dev reference, AMD Ryzen 9 5900HS, Plan
+  0007 Phase 6, exclusive perf lock, 1-minute load 1.45):** `cargo bench -p vxe-world --bench
+  replay`, decode plus replay of a 470 060-byte log file of 10 000 radius-1 m carves on a
+  solid 4³-chunk world: 279.07 ms (CI 278.48 to 279.70 ms), about 35 800 ops per second.
+- **Tick overhead:** 100 inputs through one server tick and one shared-client poll cost at
+  most 100 µs more than applying the same 100 ops directly (proposal, Plan 0007).
+  **Reading (dev reference, AMD Ryzen 9 5900HS, Plan 0007 Phase 6, exclusive perf lock,
+  1-minute load 1.66):** `cargo bench -p vxe-net --bench tick`: 3.4706 ms (CI 3.4663 to
+  3.4756 ms) through `EchoLogic` against 3.3859 ms (CI 3.3782 to 3.3990 ms) direct, an
+  overhead of 84.7 µs per 100 inputs.
 - **Determinism:** the same op list on the same seed yields bit-identical voxels and results on
   Linux and Windows. CI asserts a fixed vector's hash on both arms. **Asserted:**
   `determinism_vector` passed on the Linux and Windows CI arms at 9565c5a and 1d61aba
