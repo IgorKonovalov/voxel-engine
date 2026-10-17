@@ -23,7 +23,8 @@ pub struct TickOutput {
 
 /// Why a logic could not be loaded or could not finish a call. A native logic never fails;
 /// a hosted one (`vxe-script-wasm`) fails when its component cannot load, traps (a panic is
-/// a trap), runs out of its fuel for the tick, or outgrows its memory cap.
+/// a trap), runs out of its fuel for the tick, or outgrows its memory cap. A hosted logic
+/// that failed a call is stopped: every later tick reports [`LogicError::Stopped`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LogicError {
     /// The logic could not be loaded, linked or instantiated.
@@ -34,6 +35,9 @@ pub enum LogicError {
     Fuel { tick: u64 },
     /// The logic tried to grow its memory past its cap during `tick`.
     Memory { tick: u64 },
+    /// The logic was not called for `tick` because its call for tick `since` failed (0 for
+    /// a failed `init`); it stays stopped for the rest of the run.
+    Stopped { tick: u64, since: u64 },
 }
 
 impl std::fmt::Display for LogicError {
@@ -43,6 +47,12 @@ impl std::fmt::Display for LogicError {
             Self::Trap { tick, message } => write!(f, "logic trapped at tick {tick}: {message}"),
             Self::Fuel { tick } => write!(f, "logic ran out of fuel at tick {tick}"),
             Self::Memory { tick } => write!(f, "logic exceeded its memory cap at tick {tick}"),
+            Self::Stopped { tick, since } => {
+                write!(
+                    f,
+                    "logic not run at tick {tick}: stopped since it failed at tick {since}"
+                )
+            }
         }
     }
 }

@@ -1,7 +1,8 @@
 //! The component observes nothing but its seed and its inputs. Each knob of the host's
 //! configuration has a guest that would notice its absence: `probe` reads NaN bits, both
 //! clocks, `getrandom`, `HashMap` order, the filesystem and the environment; `spin` never
-//! returns; `hog` allocates 1 GiB.
+//! returns; `hog` applies its inputs, then allocates 1 GiB. A logic that fails a call is
+//! stopped for the rest of the run, and the ops it applied before failing stay.
 
 mod support;
 
@@ -12,7 +13,7 @@ use vxe_net::test_logic::*;
 use vxe_net::*;
 use vxe_script_wasm::{WasmConfig, WasmLogic};
 use vxe_world::hash::mix64;
-use vxe_world::{EditError, EditOp, EditResult, Fixed3, Hit, MaterialId, VoxelCoord, World};
+use vxe_world::{EditError, EditOp, EditResult, Fixed3, Hit, MaterialId, Op, VoxelCoord, World};
 
 /// A host straight on a world, for calling a [`WasmLogic`] without a server.
 struct WorldHost<'a>(&'a World);
@@ -163,22 +164,56 @@ fn spin_runs_out_of_fuel() {
     );
 }
 
-/// Blocked: wasmtime refuses to enter a component instance again after any trap ("cannot
-/// enter component instance"), so the tick after one fails with `LogicError::Trap` instead
-/// of running on fresh fuel. What the logic's state should be after a trap is open.
+/// Fail-stop: after the fuel trap at tick 0 the logic is stopped, and every later tick
+/// reports `Stopped` with the failing tick. `spin` never returns from `tick`, so a later tick
+/// that entered the component would run out of fuel again and report `Fuel`.
 #[test]
-#[ignore = "blocked: a trapped component instance cannot be re-entered; the recovery is a design call"]
-fn after_running_out_of_fuel_the_next_tick_runs_again() {
+fn after_running_out_of_fuel_the_logic_is_stopped() {
     let mut logic = WasmLogic::load(&guest("spin"), &SPIN_FUEL).expect("spin loads");
     let world = solid3_world();
     let mut host = WorldHost(&world);
     logic.try_init(&mut host, 0).expect("spin's init returns");
+    let results: Vec<_> = (0..3)
+        .map(|tick| logic.try_tick(&mut host, tick, &[]))
+        .collect();
+    assert_eq!(
+        results,
+        [
+            Err(LogicError::Fuel { tick: 0 }),
+            Err(LogicError::Stopped { tick: 1, since: 0 }),
+            Err(LogicError::Stopped { tick: 2, since: 0 }),
+        ]
+    );
+}
+
+/// A logic whose `init` fails (here: one unit of fuel) reports it through
+/// `Server::init_error()` and is stopped from tick 0; the server still logs inputs.
+#[test]
+fn a_failed_init_stops_the_logic_from_tick_zero() {
+    let starved = WasmConfig {
+        fuel_per_tick: 1,
+        ..WasmConfig::default()
+    };
+    let (mut server, mut client) = session("echo", &starved, 0);
+    assert_eq!(server.init_error(), Some(&LogicError::Fuel { tick: 0 }));
+    let carve = op_bytes(seeded_carves(0x0011, 1)[0]);
     for tick in 0..3 {
+        client.send_input(carve.clone());
         assert_eq!(
-            logic.try_tick(&mut host, tick, &[]),
-            Err(LogicError::Fuel { tick })
+            server.tick(),
+            TickReport {
+                tick,
+                applied: 0,
+                refused: 0,
+                inputs: 1,
+                logic_error: Some(LogicError::Stopped { tick, since: 0 }),
+            }
         );
     }
+    assert!(client.poll().is_empty());
+    assert_eq!(server.ops().len(), 0);
+    assert_eq!(server.inputs().len(), 3);
+    assert_eq!(server.world().voxel_hash(), solid3_world().voxel_hash());
 }
 
 #[test]
@@ -220,4 +255,47 @@ fn a_logic_error_is_a_tick_without_logic_ops_whose_inputs_are_logged() {
         .collect();
     assert_eq!(logged, [(0, 0, carve.clone()), (0, 0, carve)]);
     assert_eq!(server.world().voxel_hash(), solid3_world().voxel_hash());
+}
+
+/// Ops a logic applied before it failed stay applied and logged, and re-simulation with a
+/// fresh component under the same configuration reproduces them and the failure.
+#[test]
+fn edits_applied_before_a_failure_stay_and_resimulate() {
+    let config = WasmConfig::default();
+    let (mut server, client) = session("hog", &config, 0);
+    let op = seeded_carves(0x0011, 1)[0];
+    client.send_input(op_bytes(op));
+    assert_eq!(
+        server.tick(),
+        TickReport {
+            tick: 0,
+            applied: 1,
+            refused: 0,
+            inputs: 1,
+            logic_error: Some(LogicError::Memory { tick: 0 }),
+        }
+    );
+    let logged: Vec<(u64, Option<Op>)> = server
+        .ops()
+        .entries()
+        .iter()
+        .map(|e| (e.tick(), e.op().copied()))
+        .collect();
+    assert_eq!(logged, [(0, Some(Op::Edit(op)))]);
+
+    let direct = solid3_world();
+    direct.apply(&op).expect("the carve applies");
+    assert_eq!(server.world().voxel_hash(), direct.voxel_hash());
+
+    let fresh = Arc::new(solid3_world());
+    let logic = WasmLogic::load(&guest("hog"), &config).expect("hog loads");
+    let ops = Server::resimulate(
+        fresh.clone(),
+        Box::new(logic),
+        0,
+        server.ops(),
+        server.inputs(),
+    );
+    assert_eq!(ops.encode(), server.ops().encode());
+    assert_eq!(fresh.voxel_hash(), direct.voxel_hash());
 }

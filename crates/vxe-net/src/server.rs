@@ -11,7 +11,8 @@
 //! A logic that fails a call ([`Logic::take_error`], a hosted logic's trap, fuel or memory
 //! cap) leaves its tick without a broadcast and the error in [`TickReport::logic_error`]; the
 //! tick's inputs are logged all the same, and ops the logic applied before it failed stay
-//! applied and logged. The next tick calls the logic again.
+//! applied and logged. The next tick calls the logic again; a hosted logic that failed
+//! answers it with [`LogicError::Stopped`] without running.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};

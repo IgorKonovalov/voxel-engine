@@ -2,9 +2,9 @@
 //!
 //! The engine compiles the component once, at [`WasmLogic::load`]. [`Logic::init`] makes the
 //! store, with a WASI context built from the seed (`wasi` module), instantiates the component
-//! and calls its `init`; [`Logic::tick`] calls its `tick`. During each of those calls the
-//! server's [`Host`] is lent to the store, and the component's `host` imports answer through
-//! it; outside them an import traps.
+//! and calls its `init`; [`Logic::tick`] calls its `tick`, until a call fails and the logic
+//! stops. During each of those calls the server's [`Host`] is lent to the store, and the
+//! component's `host` imports answer through it; outside them an import traps.
 
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::path::Path;
@@ -197,15 +197,20 @@ struct Live {
 
 /// A logic component loaded from a file, implementing [`Logic`].
 ///
-/// A failed call leaves the tick without a broadcast; the error is kept for
-/// [`Logic::take_error`]. wasmtime does not enter a component instance again after it
-/// trapped, so every call after a failed one fails with [`LogicError::Trap`].
+/// A failed call (`init` or `tick`: fuel, the memory cap, any other trap) leaves its tick
+/// without a broadcast, and its error is kept for [`Logic::take_error`]. The logic is then
+/// stopped (fail-stop): a trap leaves a component instance's state undefined and wasmtime
+/// does not enter it again, so every later `tick` returns [`LogicError::Stopped`] with the
+/// failing tick (0 for `init`) without entering wasmtime. Ops the logic applied through the
+/// host before it failed stay applied. A new [`WasmLogic::try_init`] starts afresh.
 pub struct WasmLogic {
     pre: bindings::LogicPre<State>,
     config: WasmConfig,
     seed: u64,
     live: Option<Live>,
     error: Option<LogicError>,
+    /// The tick whose call failed (0 for `init`); set, the logic is stopped.
+    failed_at: Option<u64>,
 }
 
 impl std::fmt::Debug for WasmLogic {
@@ -215,6 +220,7 @@ impl std::fmt::Debug for WasmLogic {
             .field("seed", &self.seed)
             .field("live", &self.live.is_some())
             .field("error", &self.error)
+            .field("failed_at", &self.failed_at)
             .finish_non_exhaustive()
     }
 }
@@ -246,13 +252,25 @@ impl WasmLogic {
             seed: 0,
             live: None,
             error: None,
+            failed_at: None,
         })
     }
 
-    /// Instantiates the component for `seed` and calls its `init` with `host` lent.
+    /// Instantiates the component for `seed` and calls its `init` with `host` lent. A failure
+    /// stops the logic: every later tick returns [`LogicError::Stopped`] with `since: 0`.
     pub fn try_init(&mut self, host: &mut dyn Host, seed: u64) -> Result<(), LogicError> {
         self.seed = seed;
         self.live = None;
+        self.failed_at = None;
+        let result = self.instantiate_and_init(host, seed);
+        if result.is_err() {
+            self.live = None;
+            self.failed_at = Some(0);
+        }
+        result
+    }
+
+    fn instantiate_and_init(&mut self, host: &mut dyn Host, seed: u64) -> Result<(), LogicError> {
         let (wasi, handles) = context(seed, self.config.frame_ns);
         let memory_bytes = usize::try_from(self.config.memory_bytes).unwrap_or(usize::MAX);
         let mut store = Store::new(
@@ -283,13 +301,17 @@ impl WasmLogic {
         self.call(host, 0, |store, logic| logic.call_init(store, seed))
     }
 
-    /// Calls the component's `tick` with `host` lent.
+    /// Calls the component's `tick` with `host` lent; [`LogicError::Stopped`] without entering
+    /// the component once a call has failed. A failure here stops the logic.
     pub fn try_tick(
         &mut self,
         host: &mut dyn Host,
         tick: u64,
         inputs: &[ClientInput],
     ) -> Result<TickOutput, LogicError> {
+        if let Some(since) = self.failed_at {
+            return Err(LogicError::Stopped { tick, since });
+        }
         let inputs: Vec<bindings::ClientInput> = inputs
             .iter()
             .map(|i| bindings::ClientInput {
@@ -297,10 +319,17 @@ impl WasmLogic {
                 bytes: i.bytes.clone(),
             })
             .collect();
-        let broadcast = self.call(host, tick, |store, logic| {
+        let result = self.call(host, tick, |store, logic| {
             logic.call_tick(store, tick, &inputs)
-        })?;
-        Ok(TickOutput { broadcast })
+        });
+        match result {
+            Ok(broadcast) => Ok(TickOutput { broadcast }),
+            Err(e) => {
+                self.live = None;
+                self.failed_at = Some(tick);
+                Err(e)
+            }
+        }
     }
 
     /// Runs `f` on the live instance at `tick`'s clock and random stream, with fresh fuel and
@@ -316,7 +345,7 @@ impl WasmLogic {
         let Some(live) = self.live.as_mut() else {
             return Err(LogicError::Trap {
                 tick,
-                message: "the component is not instantiated (init failed or never ran)".into(),
+                message: "the component is not instantiated (init never ran)".into(),
             });
         };
         live.wasi.clock.set(tick.wrapping_mul(config.frame_ns));
