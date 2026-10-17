@@ -467,6 +467,11 @@ boundary; only logs a `Server` writes after a submission do.
 - Phase 6: `nfr.md` §4 gains three lines (log entry sizes, replay throughput without a budget, the tick overhead proposal of 100 µs), each reading with machine, load and phase.
 - Phases 1 to 3 and 5: `Cargo.lock` changed with the new `vxe-net` member and the fly-through's dependency on it (no new external crate).
 
+### Fix pass (close review, 2026-10-17)
+
+- Merge: main (4943a6e, v0.7.0) merged as 66766af with the review's resolution. The first-upload `B` loop is gone (the bench inputs go out on frame 0); Plan 0014's per-frame `reserve_brick_arrays(RESERVE_ARRAYS)` at the end of `update` runs after frame 0's inputs are sent and before `draw`'s server tick applies them, so the bench still starts from a topped-up pool. The main.rs module doc's flag paragraph was reflowed in the merge. Plan 0009 was not on main at the merge, so its collapse is not gated here.
+- Major 1 (`--vault` and `P` under `--save`): `--vault` with `--save` or `--replay` is refused (`SAVE_EXCLUDES_VAULT`); `P` under `--save` prints `stamped: refused, a stamp is not in the op log (--save)` through the pure `stamp_allowed`; the module doc names `P` and the autopilot's carve as the two edits outside the split. Committed with this line.
+
 ### Close triggers
 
 - **What shipped:** all six phases. `vxe-world`: `wire` module (with `KIND_BOUNDARY`), `OpLog` (op and boundary entries), `InputLog`, `LogFile`, `World::replay`. `vxe-net`: `Channel`, `MemChannel`, `Endpoint`, `Message`, `Logic`, `Host`, `NoLogic`, `Server` (`submit`, `attach`, `tick` with the boundary entry, `resimulate` over the op and input logs), `Client::shared`, `Client::owned` with `Event::Desync`. `apps/flythrough`: `logic::DigLogic` and `DigInput`, `replay_file`, `replay_log`, `read_log_file`, `Mode`, `ReplayError`, `CaveSource::VERSION`; the binary runs every dig, fill and bench through a server and a shared client, with `--save` and `--replay` (under `--level`).

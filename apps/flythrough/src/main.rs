@@ -29,7 +29,10 @@
 //! one server tick runs per frame before the mirror sync, and the printed edit lines come
 //! from the client's events. With `--level`, `--save` writes the session's log file on exit
 //! and prints the world's hash; `--replay` rebuilds a saved session's world by re-simulating
-//! its inputs before the first frame and prints the same hash.
+//! its inputs before the first frame and prints the same hash. Two edits bypass the split:
+//! `P` stamps the server's world directly, so it is refused under `--save` (a stamp is not in
+//! the op log), and the autopilot's carve (streaming only) applies to the world directly.
+//! `--vault` does not combine with `--save` or `--replay`: the log file does not record it.
 //!
 //! Keys: `G` toggles fly and walk mode (on the bounded level only; streaming refuses it, as it
 //! refuses `--walk`); in walk mode `W A S D` walk at 3 m/s and `Space` jumps, or, held against
@@ -140,6 +143,24 @@ const WALK_NEEDS_LEVEL: &str =
 /// world, and a streaming session's residency is not in its log.
 const SAVE_NEEDS_LEVEL: &str = "--save and --replay need --level (replay rebuilds a bounded world)";
 
+/// Why `--vault` is refused with `--save` and `--replay`: a log file's header records the seed
+/// and the extent, so a replay would rebuild the cave without the vault.
+const SAVE_EXCLUDES_VAULT: &str =
+    "--save and --replay do not combine with --vault (the log does not record the vault)";
+
+/// Why `P` stamps nothing under `--save`: a stamp applies to the world outside the op log, so
+/// the saved session would replay to a different world.
+const STAMP_NOT_LOGGED: &str = "a stamp is not in the op log (--save)";
+
+/// `P` is available unless the session is being saved.
+fn stamp_allowed(saving: bool) -> Result<(), &'static str> {
+    if saving {
+        Err(STAMP_NOT_LOGGED)
+    } else {
+        Ok(())
+    }
+}
+
 /// Walk mode is available only on the bounded level.
 fn walk_allowed(streaming: bool) -> Result<(), &'static str> {
     if streaming {
@@ -231,6 +252,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     }
     if args.save.is_some() && args.replay.is_some() {
         return Err("--save and --replay do not combine".to_owned());
+    }
+    if (args.save.is_some() || args.replay.is_some()) && args.vault {
+        return Err(SAVE_EXCLUDES_VAULT.to_owned());
     }
     Ok(args)
 }
@@ -626,8 +650,13 @@ impl Run {
         });
     }
 
-    /// `P`: the vault at the aim point, through the same post-edit path as a dig.
+    /// `P`: the vault at the aim point, stamped on the server's world directly and then through
+    /// the same post-edit path as a dig; refused under `--save`.
     fn stamp(&mut self) {
+        if let Err(e) = stamp_allowed(self.args.save.is_some()) {
+            println!("stamped: refused, {e}");
+            return;
+        }
         let (origin, dir) = self.camera_ray();
         let t = now();
         let out = stamp_at_aim(&self.world, origin, dir);
@@ -1813,6 +1842,28 @@ mod tests {
         assert_eq!(a.bench, 1);
         assert!(parse_args_from(argv(&["--level", "--save", "a", "--replay", "b"])).is_err());
         assert!(parse_args_from(argv(&["--level", "--replay"])).is_err());
+    }
+
+    /// The log file does not record the vault, so `--vault` refuses `--save` and `--replay`.
+    #[test]
+    fn vault_does_not_combine_with_save_or_replay() {
+        for flag in ["--save", "--replay"] {
+            assert_eq!(
+                parse_args_from(argv(&["--level", "--vault", flag, "a.log"]))
+                    .err()
+                    .as_deref(),
+                Some(SAVE_EXCLUDES_VAULT)
+            );
+        }
+        let a = parse_args_from(argv(&["--level", "--vault"])).expect("--level --vault parses");
+        assert!(a.level && a.vault);
+    }
+
+    /// A stamp is not in the op log, so `P` is refused while saving and allowed otherwise.
+    #[test]
+    fn p_is_refused_under_save() {
+        assert_eq!(stamp_allowed(true), Err(STAMP_NOT_LOGGED));
+        assert_eq!(stamp_allowed(false), Ok(()));
     }
 
     #[test]
