@@ -30,7 +30,7 @@ fn capsule_replace() -> EditOp {
 
 fn entry_bytes(tick: u64, seq: u32, op: EditOp) -> Vec<u8> {
     let mut out = Vec::new();
-    LogEntry {
+    LogEntry::Op {
         tick,
         seq,
         op: Op::Edit(op),
@@ -166,7 +166,7 @@ fn three_entry_log() -> OpLog {
 #[test]
 fn logs_round_trip_through_bytes() {
     let log = three_entry_log();
-    let seqs: Vec<u32> = log.entries().iter().map(|e| e.seq).collect();
+    let seqs: Vec<u32> = log.entries().iter().map(|e| e.seq()).collect();
     assert_eq!(seqs, [0, 1, 2]);
     let bytes = log.encode();
     assert_eq!(bytes.len(), 47 + 65 + 75);
@@ -189,6 +189,86 @@ fn record_keeps_caller_seqs_with_gaps() {
     log.record(1, 7, box_fill());
     assert_eq!(log.push(1, capsule_replace()), 8);
     assert_eq!(OpLog::decode(&log.encode()), Ok(log));
+}
+
+/// A log as a server writes it after a tick with submitted ops: the ops that applied, a
+/// boundary, then the logic's ops.
+fn log_with_boundary() -> OpLog {
+    let mut log = OpLog::new();
+    log.record(3, 0, sphere_carve());
+    log.record(3, 2, box_fill());
+    log.record_boundary(3, 3);
+    log.record(3, 4, capsule_replace());
+    log
+}
+
+#[test]
+fn a_boundary_entry_is_13_bytes_and_round_trips() {
+    let mut b = Vec::new();
+    LogEntry::Boundary {
+        tick: 0x0102_0304_0506_0708,
+        seq: 0x0A0B_0C0D,
+    }
+    .encode(&mut b);
+    assert_eq!(b.len(), 13);
+    assert_eq!(&b[0..8], &0x0102_0304_0506_0708u64.to_le_bytes());
+    assert_eq!(&b[8..12], &0x0A0B_0C0Du32.to_le_bytes());
+    assert_eq!(b[12], KIND_BOUNDARY);
+    assert_eq!(KIND_BOUNDARY, 0x80);
+
+    let log = log_with_boundary();
+    assert_eq!(log.len(), 3);
+    assert_eq!(log.entries().len(), 4);
+    assert_eq!(log.entries()[2], LogEntry::Boundary { tick: 3, seq: 3 });
+    assert_eq!(log.entries()[2].op(), None);
+    // The next pushed seq follows the boundary's like any entry's.
+    let mut pushed = log.clone();
+    assert_eq!(pushed.push(4, sphere_carve()), 5);
+
+    let bytes = log.encode();
+    assert_eq!(bytes.len(), 47 + 65 + 13 + 75);
+    assert_eq!(bytes[47 + 65 + 12], KIND_BOUNDARY);
+    assert_eq!(OpLog::decode(&bytes), Ok(log.clone()));
+    // A cut after the boundary's seq is truncated at the boundary's start.
+    assert_eq!(
+        OpLog::decode(&bytes[..47 + 65 + 12]),
+        Err(WireError::Truncated { at: 47 + 65 })
+    );
+
+    // The file header counts every entry, the boundary included.
+    let f = LogFile {
+        seed: 1,
+        source_version: 1,
+        extent: ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        ops: log,
+        inputs: InputLog::new(),
+    };
+    let mut bytes = Vec::new();
+    f.write_to(&mut bytes).unwrap();
+    assert_eq!(bytes.len(), 60 + 47 + 65 + 13 + 75);
+    assert_eq!(&bytes[44..52], &4u64.to_le_bytes());
+    assert_eq!(LogFile::read_from(&mut bytes.as_slice()), Ok(f));
+}
+
+#[test]
+fn replay_skips_boundaries() {
+    let direct = solid3_world();
+    let expected: Vec<_> = [sphere_carve(), box_fill(), capsule_replace()]
+        .iter()
+        .map(|op| direct.apply(op))
+        .collect();
+    let world = solid3_world();
+    let results = world.replay(&log_with_boundary());
+    assert_eq!(results, expected);
+    assert_eq!(world_hash(&world), world_hash(&direct));
+}
+
+#[test]
+#[should_panic(expected = "op log seqs ascend")]
+fn a_boundary_out_of_order_is_refused() {
+    let mut log = OpLog::new();
+    log.record(0, 3, sphere_carve());
+    log.record_boundary(0, 3);
 }
 
 #[test]

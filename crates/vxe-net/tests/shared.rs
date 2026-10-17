@@ -134,9 +134,19 @@ fn one_tick_applies_submitted_ops_in_order_and_the_shared_client_sees_them() {
         } => {}
         e => panic!("event 3: {e:?}"),
     }
+    // Three op entries, then the boundary after the tick's submitted ops at the next seq.
     assert_eq!(server.ops().len(), 3);
-    let logged: Vec<u32> = server.ops().entries().iter().map(|e| e.seq).collect();
-    assert_eq!(logged, [0, 1, 2]);
+    let logged: Vec<(u32, bool)> = server
+        .ops()
+        .entries()
+        .iter()
+        .map(|e| (e.seq(), e.op().is_some()))
+        .collect();
+    assert_eq!(logged, [(0, true), (1, true), (2, true), (4, false)]);
+    assert_eq!(
+        server.ops().entries()[3],
+        LogEntry::Boundary { tick: 0, seq: 4 }
+    );
     assert_eq!(server.current_tick(), 1);
     assert!(Arc::ptr_eq(client.shared_world().unwrap(), server.world()));
     assert_eq!(server.world().material_at([0, 0, 0]), Some(5));
@@ -168,16 +178,21 @@ fn submissions_from_two_threads_are_logged_once_each_in_seq_order() {
     let report = server.tick();
     assert_eq!((report.applied, report.refused), (200, 0));
 
-    let entries = server.ops().entries();
-    let seqs: Vec<u32> = entries.iter().map(|e| e.seq).collect();
+    let (entries, boundary) = server.ops().entries().split_at(200);
+    assert_eq!(boundary, [LogEntry::Boundary { tick: 0, seq: 200 }]);
+    let seqs: Vec<u32> = entries.iter().map(LogEntry::seq).collect();
     assert_eq!(seqs, (0..200).collect::<Vec<u32>>());
     // Each op exactly once, under the seq submit returned for it.
     submitted.sort_by_key(|(seq, _)| *seq);
     let logged: Vec<(u32, EditOp)> = entries
         .iter()
-        .map(|e| {
-            let Op::Edit(op) = e.op;
-            (e.seq, op)
+        .map(|e| match *e {
+            LogEntry::Op {
+                seq,
+                op: Op::Edit(op),
+                ..
+            } => (seq, op),
+            LogEntry::Boundary { .. } => panic!("boundary among the op entries: {e:?}"),
         })
         .collect();
     assert_eq!(logged, submitted);
@@ -188,8 +203,8 @@ fn submissions_from_two_threads_are_logged_once_each_in_seq_order() {
     assert_eq!(all, want);
 
     let fresh = solid3_world();
-    for e in entries {
-        e.op.apply(&fresh).unwrap();
+    for (_, op) in &logged {
+        fresh.apply(op).unwrap();
     }
     assert_eq!(fresh.voxel_hash(), server.world().voxel_hash());
     assert_ne!(fresh.voxel_hash(), solid3_world().voxel_hash());

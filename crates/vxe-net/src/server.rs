@@ -1,7 +1,8 @@
 //! The server: the authoritative world, its op and input logs, and the tick (ADR-0007).
 //!
-//! One [`Server::tick`] runs, in order: every directly submitted op in `seq` order; then the
-//! inputs drained from every attached endpoint (endpoints in attach order, each in arrival
+//! One [`Server::tick`] runs, in order: every directly submitted op in `seq` order, then,
+//! when there was at least one, a boundary entry in the op log that takes the next seq; then
+//! the inputs drained from every attached endpoint (endpoints in attach order, each in arrival
 //! order), appended to the input log; then the logic's tick, whose host applies, logs and
 //! announces each op it requests; then the logic's broadcast to every client. Seqs come from
 //! one counter shared by submission and the logic's host, so the op log's order is the order
@@ -11,7 +12,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use vxe_world::{
-    EditError, EditOp, EditResult, Fixed3, Hit, InputLog, MaterialId, Op, OpLog, VoxelCoord, World,
+    EditError, EditOp, EditResult, Fixed3, Hit, InputLog, LogEntry, MaterialId, Op, OpLog,
+    VoxelCoord, World,
 };
 
 use crate::channel::{Channel, Endpoint};
@@ -182,19 +184,28 @@ impl Server {
                 }
             }
         }
-        self.step(inputs)
-    }
-
-    /// One tick on `inputs`: submitted ops, the inputs into the input log, the logic, the
-    /// broadcast. Draining the channels touches no world state, so [`Server::tick`] drains
-    /// before calling this and [`Server::resimulate`] passes logged inputs instead.
-    fn step(&mut self, inputs: Vec<ClientInput>) -> TickReport {
-        let tick = self.tick;
         let pending = std::mem::take(
             self.pending
                 .get_mut()
                 .unwrap_or_else(PoisonError::into_inner),
         );
+        let boundary = (!pending.is_empty()).then(|| self.next_seq.fetch_add(1, Ordering::Relaxed));
+        self.step(inputs, pending, boundary)
+    }
+
+    /// One tick on `inputs`: the submitted ops `pending` under their seqs, the `boundary`
+    /// entry (not announced, not counted in the report), the inputs into the input log, the
+    /// logic, the broadcast. Draining the channels and the submission queue touches no world
+    /// state, so [`Server::tick`] drains before calling this and [`Server::resimulate`]
+    /// passes logged inputs and logged submitted ops instead. The caller has already moved
+    /// `next_seq` past `boundary`.
+    fn step(
+        &mut self,
+        inputs: Vec<ClientInput>,
+        pending: Vec<(u32, Op)>,
+        boundary: Option<u32>,
+    ) -> TickReport {
+        let tick = self.tick;
         let logic = self.logic.get_mut().unwrap_or_else(PoisonError::into_inner);
         let mut host = TickHost {
             world: &self.world,
@@ -207,6 +218,9 @@ impl Server {
         };
         for (seq, op) in pending {
             let _ = host.apply_seq(seq, op);
+        }
+        if let Some(seq) = boundary {
+            host.ops.record_boundary(tick, seq);
         }
         for input in &inputs {
             self.inputs.push(tick, input.client, input.bytes.clone());
@@ -231,31 +245,60 @@ impl Server {
         }
     }
 
-    /// Re-runs a session from its seed and its input log: a server on `world` with `logic`
-    /// initialised from `seed` runs ticks 0 through the last input's tick, each on the
-    /// inputs logged for it, and the op log it builds is returned. Equal to the live op log
-    /// when the logic is a pure function of its seed and inputs and the session submitted no
-    /// ops directly.
+    /// Re-runs a session from its seed, its op log and its input log: a server on `world`
+    /// with `logic` initialised from `seed` runs ticks 0 through the later of the last input's
+    /// and the last op log entry's tick, each on the inputs logged for it, and the op log it
+    /// builds is returned. At a tick with a boundary it first applies that tick's logged op
+    /// entries whose seqs lie at or above its own next seq and below the boundary's (the
+    /// directly submitted ops that applied; at tick 0 the lower bound skips the ops `init`
+    /// re-produced), records them and the boundary under their logged seqs, and continues the
+    /// seq count after the boundary. Equal to the live op log when the logic is a pure
+    /// function of its seed and inputs.
     pub fn resimulate(
         world: Arc<World>,
         logic: Box<dyn Logic>,
         seed: u64,
+        ops: &OpLog,
         inputs: &InputLog,
     ) -> OpLog {
         let mut server = Self::new(world, logic, seed);
+        let logged = ops.entries();
         let entries = inputs.entries();
-        let mut i = 0;
-        let last = entries.last().map(|e| e.tick);
+        let (mut i, mut j) = (0, 0);
+        let last = entries
+            .last()
+            .map(|e| e.tick)
+            .max(logged.last().map(LogEntry::tick));
         while last.is_some_and(|last| server.tick <= last) {
+            let tick = server.tick;
             let mut batch = Vec::new();
-            while let Some(e) = entries.get(i).filter(|e| e.tick == server.tick) {
+            while let Some(e) = entries.get(i).filter(|e| e.tick == tick) {
                 batch.push(ClientInput {
                     client: e.client,
                     bytes: e.bytes.clone(),
                 });
                 i += 1;
             }
-            server.step(batch);
+            // Entries ascend in seq and so in tick: this tick's are the run from `j`.
+            let start = j;
+            while logged.get(j).is_some_and(|e| e.tick() == tick) {
+                j += 1;
+            }
+            let this_tick = &logged[start..j];
+            let boundary = this_tick.iter().find_map(|e| match *e {
+                LogEntry::Boundary { seq, .. } => Some(seq),
+                LogEntry::Op { .. } => None,
+            });
+            let mut pending = Vec::new();
+            if let Some(b) = boundary {
+                let next = *server.next_seq.get_mut();
+                pending.extend(this_tick.iter().filter_map(|e| match *e {
+                    LogEntry::Op { seq, op, .. } if (next..b).contains(&seq) => Some((seq, op)),
+                    _ => None,
+                }));
+                *server.next_seq.get_mut() = b + 1;
+            }
+            server.step(batch, pending, boundary);
         }
         server.ops
     }
@@ -265,7 +308,7 @@ impl Server {
         &self.world
     }
 
-    /// Every applied op, in seq order.
+    /// Every applied op and every boundary, in seq order.
     pub fn ops(&self) -> &OpLog {
         &self.ops
     }

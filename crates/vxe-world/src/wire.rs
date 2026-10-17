@@ -26,6 +26,9 @@ pub const OP_EDIT: u8 = 1;
 pub const OP_RESERVED_STAMP: u8 = 2;
 pub const OP_RESERVED_DROP: u8 = 3;
 pub const OP_RESERVED_REMOVE: u8 = 4;
+/// Kind of an op log boundary entry, which has no payload. It sits clear of the op kinds so
+/// later op kinds can be claimed below it.
+pub const KIND_BOUNDARY: u8 = 0x80;
 
 /// Mode tag of [`Mode::Carve`].
 pub const MODE_CARVE: u8 = 1;
@@ -132,6 +135,14 @@ impl<'a> Reader<'a> {
         let mut a = [0; N];
         a.copy_from_slice(self.take(N)?);
         Ok(a)
+    }
+
+    /// The next byte, without consuming it.
+    pub fn peek_u8(&self) -> Result<u8, WireError> {
+        self.bytes
+            .get(self.pos)
+            .copied()
+            .ok_or(WireError::Truncated { at: self.entry })
     }
 
     pub fn u8(&mut self) -> Result<u8, WireError> {

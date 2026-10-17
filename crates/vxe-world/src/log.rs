@@ -1,6 +1,7 @@
 //! The op log, the input log and the log file: the world's history as bytes (ADR-0007).
 //!
-//! An op entry is `tick: u64`, `seq: u32`, then the op as `wire` encodes it. An input entry
+//! An op entry is `tick: u64`, `seq: u32`, then the op as `wire` encodes it. A boundary entry
+//! is `tick: u64`, `seq: u32`, then the kind [`KIND_BOUNDARY`]: 13 bytes. An input entry
 //! is `tick: u64`, `client: u32`, `len: u16`, then `len` opaque bytes. A log encodes as its
 //! entries back to back with no count; the log file's header carries the counts.
 //!
@@ -13,7 +14,7 @@
 //! | 8     | seed `u64`                              |
 //! | 4     | source version `u32`                    |
 //! | 24    | extent min then max, 6 × `i32`          |
-//! | 8     | op entry count `u64`                    |
+//! | 8     | op log entry count `u64`, boundaries in |
 //! | 8     | input entry count `u64`                 |
 
 use std::io::{Read, Write};
@@ -21,7 +22,7 @@ use std::io::{Read, Write};
 use crate::coords::{ChunkCoord, ChunkExtent};
 use crate::edit::{EditError, EditOp, EditResult};
 use crate::store::World;
-use crate::wire::{Reader, WireError, decode_op, encode_op, put_i32x3};
+use crate::wire::{KIND_BOUNDARY, Reader, WireError, decode_op, encode_op, put_i32x3};
 
 /// Magic at the start of a log file.
 pub const LOG_MAGIC: [u8; 4] = *b"VXEL";
@@ -52,38 +53,71 @@ impl From<EditOp> for Op {
     }
 }
 
-/// One applied op: the tick it ran in and its sequence number.
+/// One op log entry: an applied op, or the boundary a server logs after the directly
+/// submitted ops of a tick. A boundary's seq is the first one left to the logic in that tick;
+/// re-simulation applies the tick's op entries below it before running the logic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct LogEntry {
-    pub tick: u64,
-    pub seq: u32,
-    pub op: Op,
+pub enum LogEntry {
+    Op { tick: u64, seq: u32, op: Op },
+    Boundary { tick: u64, seq: u32 },
 }
 
 impl LogEntry {
-    /// Appends the entry's bytes.
+    pub fn tick(&self) -> u64 {
+        match *self {
+            Self::Op { tick, .. } | Self::Boundary { tick, .. } => tick,
+        }
+    }
+
+    pub fn seq(&self) -> u32 {
+        match *self {
+            Self::Op { seq, .. } | Self::Boundary { seq, .. } => seq,
+        }
+    }
+
+    /// The op of an op entry; `None` for a boundary.
+    pub fn op(&self) -> Option<&Op> {
+        match self {
+            Self::Op { op, .. } => Some(op),
+            Self::Boundary { .. } => None,
+        }
+    }
+
+    /// Appends the entry's bytes: tick, seq, then the op (whose first byte is its kind) or the
+    /// boundary kind [`KIND_BOUNDARY`] alone.
     pub fn encode(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.tick.to_le_bytes());
-        out.extend_from_slice(&self.seq.to_le_bytes());
-        encode_op(out, &self.op);
+        out.extend_from_slice(&self.tick().to_le_bytes());
+        out.extend_from_slice(&self.seq().to_le_bytes());
+        match self {
+            Self::Op { op, .. } => encode_op(out, op),
+            Self::Boundary { .. } => out.push(KIND_BOUNDARY),
+        }
     }
 
     /// Reads one entry; a short read reports the entry's start offset.
     pub fn decode(r: &mut Reader<'_>) -> Result<Self, WireError> {
         r.begin();
-        Ok(Self {
-            tick: r.u64()?,
-            seq: r.u32()?,
+        let tick = r.u64()?;
+        let seq = r.u32()?;
+        if r.peek_u8()? == KIND_BOUNDARY {
+            r.u8()?;
+            return Ok(Self::Boundary { tick, seq });
+        }
+        Ok(Self::Op {
+            tick,
+            seq,
             op: decode_op(r)?,
         })
     }
 }
 
-/// Applied ops in ascending `seq`. Seqs may have gaps: a server assigns a seq to every op it
-/// is asked to apply and logs only the ones that applied.
+/// Applied ops and boundaries in ascending `seq`. Seqs may have gaps: a server assigns a seq
+/// to every op it is asked to apply and logs only the ones that applied.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OpLog {
     entries: Vec<LogEntry>,
+    /// Op entries among `entries`, boundaries excluded.
+    ops: usize,
 }
 
 impl OpLog {
@@ -94,42 +128,52 @@ impl OpLog {
     /// Appends `op` at `tick` with the seq after the last entry's (0 for an empty log), and
     /// returns that seq.
     pub fn push(&mut self, tick: u64, op: impl Into<Op>) -> u32 {
-        let seq = self.entries.last().map_or(0, |e| e.seq + 1);
-        self.entries.push(LogEntry {
-            tick,
-            seq,
-            op: op.into(),
-        });
+        let seq = self.entries.last().map_or(0, |e| e.seq() + 1);
+        self.record(tick, seq, op);
         seq
     }
 
-    /// Appends an entry with a seq the caller assigned. Panics when `seq` does not exceed the
-    /// last entry's: the log's order is the order of truth and is never rewritten.
+    /// Appends an op entry with a seq the caller assigned. Panics when `seq` does not exceed
+    /// the last entry's: the log's order is the order of truth and is never rewritten.
     pub fn record(&mut self, tick: u64, seq: u32, op: impl Into<Op>) {
-        if let Some(last) = self.entries.last() {
-            assert!(
-                seq > last.seq,
-                "op log seqs ascend: {seq} after {}",
-                last.seq
-            );
-        }
-        self.entries.push(LogEntry {
+        self.append(LogEntry::Op {
             tick,
             seq,
             op: op.into(),
         });
+        self.ops += 1;
     }
 
+    /// Appends a boundary with a seq the caller assigned; panics like [`OpLog::record`].
+    pub fn record_boundary(&mut self, tick: u64, seq: u32) {
+        self.append(LogEntry::Boundary { tick, seq });
+    }
+
+    fn append(&mut self, e: LogEntry) {
+        if let Some(last) = self.entries.last() {
+            assert!(
+                e.seq() > last.seq(),
+                "op log seqs ascend: {} after {}",
+                e.seq(),
+                last.seq()
+            );
+        }
+        self.entries.push(e);
+    }
+
+    /// Every entry, boundaries included.
     pub fn entries(&self) -> &[LogEntry] {
         &self.entries
     }
 
+    /// Op entries, boundaries excluded.
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.ops
     }
 
+    /// True when the log holds no op entry (it may hold boundaries).
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.ops == 0
     }
 
     /// The entries' bytes, back to back.
@@ -148,7 +192,7 @@ impl OpLog {
         while !r.is_empty() {
             entries.push(LogEntry::decode(&mut r)?);
         }
-        Ok(Self { entries })
+        Ok(Self::from_entries(entries))
     }
 
     fn decode_n(r: &mut Reader<'_>, n: u64) -> Result<Self, WireError> {
@@ -156,7 +200,12 @@ impl OpLog {
         for _ in 0..n {
             entries.push(LogEntry::decode(r)?);
         }
-        Ok(Self { entries })
+        Ok(Self::from_entries(entries))
+    }
+
+    fn from_entries(entries: Vec<LogEntry>) -> Self {
+        let ops = entries.iter().filter(|e| e.op().is_some()).count();
+        Self { entries, ops }
     }
 }
 
@@ -281,7 +330,8 @@ impl LogFile {
         out.extend_from_slice(&self.source_version.to_le_bytes());
         put_i32x3(&mut out, self.extent.min.0);
         put_i32x3(&mut out, self.extent.max.0);
-        out.extend_from_slice(&(self.ops.len() as u64).to_le_bytes());
+        // Every entry, boundaries included: the decoder reads this many.
+        out.extend_from_slice(&(self.ops.entries().len() as u64).to_le_bytes());
         out.extend_from_slice(&(self.inputs.len() as u64).to_le_bytes());
         debug_assert_eq!(out.len(), LOG_HEADER_BYTES);
         for e in self.ops.entries() {
@@ -335,10 +385,15 @@ impl LogFile {
 }
 
 impl World {
-    /// Applies the log's entries in `seq` order and returns each result, in that order.
+    /// Applies the log's op entries in `seq` order and returns each result, in that order.
+    /// Boundaries are skipped and have no result.
     pub fn replay(&self, log: &OpLog) -> Vec<Result<EditResult, EditError>> {
-        let mut entries: Vec<&LogEntry> = log.entries().iter().collect();
-        entries.sort_by_key(|e| e.seq);
-        entries.iter().map(|e| e.op.apply(self)).collect()
+        let mut entries: Vec<(u32, &Op)> = log
+            .entries()
+            .iter()
+            .filter_map(|e| e.op().map(|op| (e.seq(), op)))
+            .collect();
+        entries.sort_by_key(|(seq, _)| *seq);
+        entries.iter().map(|(_, op)| op.apply(self)).collect()
     }
 }
