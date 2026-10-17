@@ -1,6 +1,6 @@
 # 0008: MagicaVoxel import with a material map, and prefab stamping with 24 rotations at generation time and at runtime
 
-> **Status:** in-progress
+> **Status:** done (2026-10-17, v0.6.0): `.vox` import and prefab stamping shipped as planned and amended; the fix pass closed every review finding. Two windowed checks await the owner.
 > **Created:** 2026-10-16
 > **Milestone:** the headless halves of M6 (`.vox` import) and M7 (prefab stamping) in `docs/roadmap.md`, brought forward because neither needs the renderer
 > **Related ADRs:** ADR-0002 (layout, access model), ADR-0001 (stack); none new, the decisions here have no alternative worth a record beyond the ones named under "Decision"
@@ -444,3 +444,60 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Gate at b01fbfb:** `cargo build --workspace` 0; `cargo nextest run --workspace` 197 passed, 1 skipped, exit 0 (exclusive lock, NVIDIA GeForce RTX 3080 Laptop GPU present per `nvidia-smi -L`); `cargo test --workspace --doc` 0 (3 doctests); `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` advisories, bans, licenses, sources ok; `node scripts/check-doc-links.mjs` 89 links resolve; `node scripts/check-comment-hygiene.mjs` OK (77 sources); `node scripts/check-index-rows.mjs` OK; `node scripts/check-index-rows.mjs --self-test` 9/9; `node --test .claude/hooks/*.test.mjs` 59 pass. CARGO_BUILD_JOBS=3.
 - **Fix pass (87e4d89, 53cfc65, and the commit with this line), gate at the working tree before this commit:** `cargo build --workspace` 0; `cargo nextest run --workspace` 206 passed, 1 skipped, exit 0 (exclusive lock, NVIDIA GeForce RTX 3080 Laptop GPU present per `nvidia-smi -L`); `cargo test --workspace --doc` 0 (3 doctests); `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` advisories, bans, licenses, sources ok; `node scripts/check-doc-links.mjs` 89 links resolve; `node scripts/check-comment-hygiene.mjs` OK (77 sources); `node scripts/check-index-rows.mjs` OK; `node scripts/check-index-rows.mjs --self-test` 9/9; `node --test .claude/hooks/*.test.mjs` 59 pass. CARGO_BUILD_JOBS=3. The same gate ran green before 87e4d89 (198 passed) and 53cfc65 (203 passed).
 - **Outstanding `human` phases:** none. Phase 4's `--vault` look and the `P` stamp await the owner (Notes, two windowed checks).
+
+## Close
+
+**Verdict (2026-10-17, fresh-session recheck of the fix pass 87e4d89, 53cfc65, f5c19d3):**
+closed. Every phase is done, every done-when holds as amended, and every finding of the close
+review is fixed with a test that asserts the claim:
+
+- **Placements capped:** `check_graph` counts placements per node in post-order (saturating),
+  refuses a node over `MAX_PLACEMENTS` as `Malformed`; the doubling graph yields exactly 65,536
+  at depth 16 and is refused at 17 and 40. The walk skips subtrees that place nothing, so its
+  cost is bounded by placements times depth.
+- **`_t` capped, composition checked:** a component over `MAX_TRANSLATION` is `Malformed`
+  (`_r` 52 over `i32::MIN` is refused); nested translations compose with `checked_add`, a
+  chain of 2047 transforms of 2^20 parses and 2048 is refused.
+- **`MAX_MODEL_EDGE` 256:** 257 refused, 256³ empty and a voxel at (255, 0, 255) parse.
+- **`Rot::apply` total** (`wrapping_neg`) and `Placement::min_corner` (`wrapping_sub`), with
+  tests at the `i32` extremes; **`Prefab::new`** takes the size with `checked_mul`.
+- **Cross-checks:** 120 seeded boxes compare a box edit with an equivalent masked stamp on
+  `EditResult`, `voxel_hash` and stats; the vault stamp equals a carve then a replace
+  (2744 + 1352 = 4096, the planned box arithmetic); a rotated stamp equals the identity stamp
+  of the rotated prefab over all 24 rotations.
+- **Pinned hash:** the thread-count generation test asserts `0x7ee7_eeb7_0956_d069`.
+
+**Deviations judged:** all accepted. The fix pass went beyond the findings in two places
+(the walk prunes empty subtrees; `placements()` stays infallible over a post-parse edit) and
+both are improvements with tests. `stamp_tally_agrees_with_apply_on_random_boxes` takes about
+26 s in the dev profile, roughly doubling workspace nextest time; it is accepted, not a CI
+problem (no nextest timeout is configured, and `vxe-world` already builds at `opt-level = 2`
+in dev, so the time is the 240 cave generations, not unoptimized code). Recorded as a
+follow-up below.
+
+**Orchestrator-applied calls (overturnable by the owner):** both 2026-10-17 amendments (the
+`P` key and the box count; the hostile-input caps), the minor bump to v0.6.0, the stamp
+proposals of 100 µs and 5 ms kept as the `docs/nfr.md` §4 budgets on the readings, and the
+acceptance of the slow cross-check.
+
+**Readings:** `docs/nfr.md` §4 (stamp cost), §3 (prefab RAM, arithmetic), §6 (pinned stamped
+hash). Bench readings were taken under the exclusive perf lock.
+
+**Awaits the owner (windowed, Notes above):**
+
+- `cargo run --release -p flythrough -- --level --vault`: the shelled box sits 10 m ahead
+  along +x and its shell does not dig.
+- `cargo run --release -p flythrough -- --level`, aim at rock and press `P`: a 1.6 m box
+  appears with a corner at the aimed voxel, the `stamped:` line prints, `K` reports the change.
+
+### Followups
+
+- **The rotated even-size pivot.** Check `min_corner` against a MagicaVoxel export of an
+  even-sized model turned 180 degrees; if off by one, `min_corner` takes the rotation.
+- **Rename `Prefab::vault`.** The name reads as gameplay vocabulary in `vxe-world`; a neutral
+  name (a shelled box) is the candidate. The owner's call.
+- **Server op kind 2.** Once Plan 0007 closes, the runtime stamp goes through `Server` as op
+  kind 2 (reserved there), and the fly-through's `P` uses it.
+- **The slow debug cross-check.** Build the vaulted cave once per test and restore it between
+  cases (or generate a smaller extent), or run fewer cases outside release, so the test drops
+  well under 26 s without losing the 120-case coverage in some profile.
