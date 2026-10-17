@@ -4,7 +4,7 @@
 //! By default the cave is unbounded and streams around the camera (ADR-0003): full detail
 //! within `r_full` chunks, mips out to `r_lod`. `--level` generates the bounded level instead.
 //!
-//! `flythrough [--seed N] [--level] [--walk] [--render WxH] [--frames N] [--bench N]
+//! `flythrough [--seed N] [--level] [--vault] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH]
 //! [--view VIEW] [--detail] [--hud]`. `--render` fixes the marcher's resolution (the window
 //! scales it); `--frames` exits after N frames, printing the `F1` readings over the last
@@ -18,7 +18,12 @@
 //! attribute pages, so `N` can reach `contour` (without `--look` it skips it), and gives rock
 //! its procedural detail (`--rock-detail` sets rock's feature scale in voxels and strength,
 //! default `flythrough::ROCK_DETAIL`); `--view` starts in a view (`shaded`, `normals`, `hitmask`) and
-//! `--detail` with detail on. `N` cycles the normal mode and `V` toggles detail.
+//! `--detail` with detail on. `N` cycles the normal mode and `V` toggles detail. `--vault`
+//! places a 16-voxel room with an indestructible shell 10 m along +x from the spawn, written
+//! over the cave as it generates (on the level, clamped inside the extent).
+//!
+//! `P` stamps that 16-voxel room at runtime, unrotated, with its minimum corner at the voxel
+//! the dig ray hits, and prints what it changed like a dig does.
 //!
 //! Keys: `G` toggles fly and walk mode (on the bounded level only; streaming refuses it, as it
 //! refuses `--walk`); in walk mode `W A S D` walk at 3 m/s and `Space` jumps, or, held against
@@ -33,7 +38,7 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use fly::{Fly, Walk};
-use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK};
+use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, VAULT_EDGE, vault};
 use flythrough::hud::{self, Cadence, EditLine, FrameStats, HudStats, WorldSample};
 use flythrough::{RESIDENCY, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
@@ -46,7 +51,7 @@ use vxe_render::{
 use vxe_world::hash::mix64;
 use vxe_world::{
     ChunkCoord, ChunkExtent, CoarseGrid, EditError, EditOp, EditResult, FIXED_ONE, Fixed3,
-    MaterialId, MaterialTable, Mode, PersistConfig, StreamConfig, Streamer, Tier, VoxelCoord,
+    MaterialId, MaterialTable, Mode, PersistConfig, Rot, StreamConfig, Streamer, Tier, VoxelCoord,
     WalkableMap, WalkableParams, World,
 };
 
@@ -116,6 +121,8 @@ struct Args {
     autopilot: bool,
     headless: bool,
     walk: bool,
+    /// `--vault`: the cave generates with the vault room ahead of the spawn.
+    vault: bool,
     sync_budget: u64,
     /// `--look`: the starting normal mode.
     look: Option<NormalMode>,
@@ -156,6 +163,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         autopilot: false,
         headless: false,
         walk: false,
+        vault: false,
         sync_budget: SYNC_BUDGET_MIB << 20,
         look: None,
         detail: false,
@@ -202,6 +210,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--headless" => args.headless = true,
             "--walk" => args.walk = true,
             "--hud" => args.hud = true,
+            "--vault" => args.vault = true,
             _ => return Err(format!("unknown argument {flag}")),
         }
     }
@@ -250,6 +259,30 @@ fn edit_record(verb: &'static str, r: &EditResult, table: &MaterialTable, ms: f6
             .collect(),
         chunks: r.touched.len() as u32,
         ms: ms as f32,
+    }
+}
+
+/// `P`'s edit: the vault stamped unrotated with its minimum corner at the first solid voxel
+/// the ray enters within [`REACH`]; `None` when it enters none.
+fn stamp_at_aim(
+    world: &World,
+    origin: Fixed3,
+    dir: [i64; 3],
+) -> Option<Result<EditResult, EditError>> {
+    let hit = world.raycast(origin, dir, REACH)?;
+    Some(world.stamp(&vault(), hit.voxel, Rot::IDENTITY))
+}
+
+/// The `P` line: [`edit_line`] on success, the refusal, or the miss.
+fn stamp_line(
+    out: &Option<Result<EditResult, EditError>>,
+    table: &MaterialTable,
+    ms: f64,
+) -> String {
+    match out {
+        None => "stamped: no surface within 10 m".to_owned(),
+        Some(Ok(r)) => edit_line("stamped", r, table, ms),
+        Some(Err(e)) => format!("stamped: refused, {e}"),
     }
 }
 
@@ -711,6 +744,18 @@ impl Run {
                 self.edited(&r);
             }
             Err(e) => println!("carved: refused, {e}"),
+        }
+    }
+
+    /// `P`: the vault at the aim point, through the same post-edit path as a dig.
+    fn stamp(&mut self) {
+        let (origin, dir) = self.camera_ray();
+        let t = now();
+        let out = stamp_at_aim(&self.world, origin, dir);
+        let ms = ms_since(t);
+        println!("{}", stamp_line(&out, self.world.materials(), ms));
+        if let Some(Ok(r)) = &out {
+            self.edited(r);
         }
     }
 
@@ -1296,6 +1341,9 @@ impl Run {
         if input.pressed(KeyCode::KeyB) {
             self.bench(gpu);
         }
+        if input.pressed(KeyCode::KeyP) {
+            self.stamp();
+        }
         if input.pressed(KeyCode::KeyG) {
             self.toggle_walk();
         }
@@ -1720,9 +1768,19 @@ fn main() {
     let seed = args.seed;
     let (spawn, pending) = if args.level {
         let source = CaveSource::new(seed, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
+        if args.vault {
+            println!(
+                "vault: {VAULT_EDGE}^3 shell room at {:?}",
+                source.vault_origin().0
+            );
+        }
         let generation = std::thread::spawn(move || {
             let t = now();
-            let world = World::generate(source.extent, &source, &materials(args));
+            let world = if args.vault {
+                World::generate(source.extent, &source.with_vault(), &materials(args))
+            } else {
+                World::generate(source.extent, &source, &materials(args))
+            };
             println!(
                 "generated seed {seed} over {LEVEL_CHUNKS:?} chunks in {:.0} ms: {} full bricks",
                 ms_since(t),
@@ -1738,14 +1796,20 @@ fn main() {
             .saturating_sub(1)
             .max(1);
         let world = World::new(&materials(args));
-        let mut streamer = Streamer::new(
-            Arc::new(source),
-            StreamConfig {
-                residency: RESIDENCY,
-                workers,
-                persist: PersistConfig::default(),
-            },
-        );
+        let cfg = StreamConfig {
+            residency: RESIDENCY,
+            workers,
+            persist: PersistConfig::default(),
+        };
+        let mut streamer = if args.vault {
+            println!(
+                "vault: {VAULT_EDGE}^3 shell room at {:?}",
+                source.vault_origin().0
+            );
+            Streamer::new(Arc::new(source.with_vault()), cfg)
+        } else {
+            Streamer::new(Arc::new(source), cfg)
+        };
         // Workers start on the spawn's chunks while the shell opens the window.
         streamer.update(&world, &[source.spawn()]);
         println!(
@@ -1795,6 +1859,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flythrough::cave::SHELL;
 
     fn argv(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| (*s).to_owned()).collect()
@@ -1863,6 +1928,62 @@ mod tests {
             "coarse: {} walkable cells, last edit changed 27 cells in ",
             expected.count()
         )));
+    }
+
+    /// `P` headless: from inside a carved 16-voxel box in solid rock, the ray along +x enters
+    /// rock at x = 8 and the vault lands there; aimed so the vault crosses the extent's edge it
+    /// is refused; aimed out of the world it misses.
+    #[test]
+    fn p_stamps_the_vault_at_the_aim_point() {
+        let table = cave_materials();
+        let world = World::generate(
+            ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
+            &vxe_world::UniformSource(ROCK),
+            &table,
+        );
+        world
+            .apply(&EditOp::box_(
+                Fixed3([-8 * FIXED_ONE; 3]),
+                Fixed3([8 * FIXED_ONE; 3]),
+                Mode::Carve,
+            ))
+            .unwrap();
+        let centre = Fixed3([FIXED_ONE / 2; 3]);
+        let out = stamp_at_aim(&world, centre, [FIXED_ONE, 0, 0]);
+        let r = out.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(r.changed_from, vec![(ROCK, 4096)]);
+        assert_eq!(r.touched, vec![ChunkCoord([0, 0, 0])]);
+        assert_eq!(
+            world.count_in_box([8, 0, 0], [23, 15, 15]),
+            vec![(0, 2744), (SHELL, 1352)]
+        );
+        assert_eq!(
+            world.count_in_box([8, 0, 0], [24, 16, 16]),
+            vec![(0, 2744), (ROCK, 817), (SHELL, 1352)]
+        );
+        assert_eq!(
+            stamp_line(&out, &table, 0.5),
+            "stamped: rock 4096 (1 chunks, 0.50 ms)"
+        );
+
+        // From inside rock at x = 51 the ray hits that voxel, and a vault there would reach
+        // x = 66, past the resident x <= 63: refused, nothing written.
+        let past = Fixed3([51 * FIXED_ONE + FIXED_ONE / 2, FIXED_ONE / 2, FIXED_ONE / 2]);
+        let before = world.count_in_box([-64; 3], [63; 3]);
+        let out = stamp_at_aim(&world, past, [FIXED_ONE, 0, 0]);
+        assert_eq!(
+            stamp_line(&out, &table, 0.0),
+            "stamped: refused, chunk [1, 0, 0] is not resident"
+        );
+        assert_eq!(world.count_in_box([-64; 3], [63; 3]), before);
+
+        let outside = Fixed3([200 * FIXED_ONE, 0, 0]);
+        let out = stamp_at_aim(&world, outside, [FIXED_ONE, 0, 0]);
+        assert!(out.is_none());
+        assert_eq!(
+            stamp_line(&out, &table, 0.0),
+            "stamped: no surface within 10 m"
+        );
     }
 
     #[test]

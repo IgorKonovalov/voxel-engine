@@ -12,6 +12,10 @@
 > standing "go with your recommendations"; the owner can overturn it): the march check becomes
 > before/after equality on a named `--level` command, and Phase 3 samples the world's stats at
 > a cadence instead of every frame. See "Amendment 2026-10-17" below.
+> **Amended 2026-10-17, second**, during implementation (orchestrator-applied under the same
+> standing "go"; the owner can overturn it): the `FrameStats` p99 case is restated with three
+> spikes, the "HUD does not move the readings" check gates the `--level` command only, and
+> the Phase 3 deviations are ruled. See "Amendment 2026-10-17, second" below.
 
 ## TL;DR
 
@@ -187,6 +191,91 @@ Each deviation in the Implementation log's Notes, ruled:
 - **Accepted:** `crates/vxe-render/src/lib.rs` re-exporting `PassTimer`.
 - **Accepted:** the red line drawn only where no bar covers it, with no strip backdrop.
 
+## Amendment 2026-10-17, second
+
+Made during implementation, after `dev` stopped at Phase 3 on branch `plan-0010` (tip
+`cfa90c8`, Phase 3 commit `f91726f`; every reading cited here is in the Implementation log
+there). Applied by the orchestrator under the owner's standing "go with your recommendations"
+while the owner was away; it is a recommendation the owner can overturn, and overturning it
+changes only the Phase 3 done-whens below, not the code already written.
+
+### 1. The p99 case: three spikes, with the index arithmetic
+
+**The problem.** Phase 3's done-when asked that "a ring fed one 100 ms delta among 239 of
+1 ms reports a p99 of 100 ms". The copied `FrameStats` sorts the window and reads index
+`round((n - 1) x q)`; for a full window, `round(239 x 0.99) = round(236.61) = 237`. One spike
+sorts to index 239, so index 237 holds 1 ms. Nearest rank by `ceil(0.99 x 240) = 238` (the
+238th sample, index 237) gives 1 ms too. One sample is 0.42 % of 240, under the 1 % a p99
+excludes, so no nearest-rank definition reports it; Amendment 2026-10-17 item 2's N rule
+already says a lone spike "reaches at most the window's max and not its p99". The done-when
+was wrong arithmetic, not a defect in the copied code.
+
+**Chosen: (b), restate the case with three spikes, and keep the one-spike case as a max
+case.** With k spikes of 100 ms in a full window of 1 ms deltas, the spikes sort to indices
+`240 - k` to 239, so index 237 holds 100 ms exactly when `k >= 3`. Two spikes (indices 238
+and 239) still read 1 ms, so three is the smallest count that proves the p99 sees spikes.
+The median reads index `round(239 x 0.5) = round(119.5) = 120` (Rust rounds half away from
+zero), which holds 1 ms for any `k <= 119`. The done-when now names two cases: three 100 ms
+deltas among 237 of 1 ms report p99 100 ms, median 1 ms and max 100 ms; one 100 ms delta
+among 239 of 1 ms reports p99 1 ms, median 1 ms and max 100 ms (the test already committed).
+
+**Rejected: (a), accept the committed one-spike assertion alone.** It is correct but proves
+only that p99 ignores a lone spike, never that p99 sees spikes at all; a p99 stuck at the
+median would pass it. **Rejected: (c), change the percentile definition.** It departs from
+the copied, tested Ritmolux code for no gain: every nearest-rank definition agrees on the
+one-spike case, and an interpolating one would report a figure no frame took.
+
+### 2. The "HUD does not move the readings" check gates `--level` only
+
+**The problem.** On the streamed command the frame mean with `--hud` read 9.2 % below the
+mean without it (medians 20.50 and 22.58 ms). The three runs without the HUD alone spread
+from 20.38 to 24.64 ms (21 %), and an earlier set read -1.4 %. The 240 measured frames of a
+300-frame run fall before full residency, so that mean measures the streaming load of a
+cold start, not the frame with or without an overlay; a 5 % gate on it is a gate on noise
+four times its width. The `--level` command meets both its checks: frame mean +4.0 %
+(medians 2.25 and 2.34 ms), march +0.06 % (medians 1.722 and 1.723 ms).
+
+**Chosen: (a), gate the `--level` command and log the streamed one.** This is the treatment
+Amendment 2026-10-17 item 1 already gave the streamed march reading (logged, not gated, for
+the same reason: its spread exceeds the threshold). The `--level` frame mean within 5 % and
+its march within 3 % defend "the HUD does not move the readings"; the streamed readings stay
+in the log for the record. Phase 3 is met on the readings already logged; `dev` records the
+verdict and needs no new run.
+
+**Rejected: (b), gate the streamed command after full residency.** It needs a new mode of
+the fly-through (run to residency, then measure) for a check the bounded level already
+answers, and the streaming CPU at rest (0.35 ms in `nfr.md` §2) is not what the HUD could
+move. **Rejected: (c), more runs per side.** A 21 % spread needs many runs per side to
+resolve 5 %, and the runs would still measure cold-start streaming, not the HUD.
+
+### 3. The Phase 3 deviations
+
+Each Phase 3 deviation in the Implementation log's Notes, ruled:
+
+- **Accepted:** the process RSS read with the world sample, at the cadence, not every frame.
+  Item 2 of the first amendment listed RSS as a per-frame source on the guess that one
+  `/proc/self/statm` read is free; the diagnostic build measured 0.12 to 0.15 ms per frame
+  and pushed the `--level` frame mean to +9.4 %. RSS shares the sample's age on its row.
+- **Accepted:** `march_ms` and `hud_ms` as `Option<f32>` shown as `n/a` without
+  `TIMESTAMP_QUERY`, matching `PassTimer::new` returning `None`; and `cpu_ms`, the
+  render-thread CPU from frame start to submit, beside the window's `frame_ms`.
+- **Accepted:** the `FrameStats` ring and the strip fed the delta between frames rather than
+  the render-thread CPU time, and the first delta skipped. A frame's delta is what fps and
+  the frame-time strip mean, and it includes the waits the CPU time hides; `cpu_ms` carries
+  the CPU figure. The first delta spans start-up, not a frame. The check's "printed average
+  frame time" is the exit print's `frame mean`.
+- **Accepted:** the march and HUD timers read every frame while the HUD is shown. The
+  `--level` march with `--hud` reads +0.06 %, so the readback moves nothing measurable.
+- **Accepted:** `format_us` showing the previous frame's formatting time. A row cannot hold
+  the time spent formatting itself without a second pass.
+- **Accepted:** the row colours: frame row red when the window's max exceeds 33.3 ms (two
+  60 fps frames, a dropped frame) and yellow when its p99 exceeds 16.67 ms; `cpu` yellow
+  above 16.67 ms; march yellow above 3.0 ms and upload yellow above 1.0 ms, the `nfr.md` §2
+  primary-ray and streaming lines. This is the rule "Risks & open questions" left to `dev`.
+- **Accepted:** the `World::stats` reading as an ignored test in `main.rs`'s tests, run by
+  hand in release: 14.854 ms median of 10 on the streamed cave at full residency, 1 ms or
+  more, so N = 240 by the first amendment's rule.
+
 ## Architecture diagram
 
 ```mermaid
@@ -275,8 +364,11 @@ flowchart LR
   - `HudStats` (Data shapes) is filled from what already exists: frame CPU time
     and the 240-frame window's fps, mean, median, p99 and max, from the `FrameStats` ring
     copied per "Amendment 2026-10-16" (its tests come with it: a ring fed 240 equal deltas
-    reports that delta as mean, median and p99; a ring fed one 100 ms delta among 239 of
-    1 ms reports a p99 of 100 ms and a median of 1 ms); `MarchTimer` and the HUD timer; the last
+    reports that delta as mean, median and p99; a ring fed three 100 ms deltas among 237 of
+    1 ms reports p99 100 ms, median 1 ms and max 100 ms, since the spikes sort to indices 237
+    to 239 and p99 reads index `round(239 x 0.99) = 237`; a ring fed one 100 ms delta among
+    239 of 1 ms reports p99 1 ms, median 1 ms and max 100 ms; amended 2026-10-17, second, was
+    one spike at p99 100 ms); `MarchTimer` and the HUD timer; the last
     `SyncStats` (bytes, chunks, milliseconds); `GpuWorld::mirror_bytes`, `live_slots` and
     `free_slots().len()`; `World::stats` at its cadence (resident chunks, `Full` bricks, and
     CPU bytes as the estimate the amendment defines); the
@@ -291,12 +383,14 @@ flowchart LR
     chronological order from the same `FrameStats` ring the rows are computed from.
   - "The HUD does not move the readings", on two commands, three runs with `--hud` and three
     without, under the exclusive perf lock: `flythrough --headless --level --seed 1 --render
-    1920x1080 --frames 300` and the same without `--level` (the streamed cave). For each
-    command the median of the three printed average frame times with `--hud` is within 5 %
-    of the median without it; on the `--level` command the march reading's median with
-    `--hud` is also within 3 % of the median without it. The HUD pass reading from the
-    `--hud` runs is logged (proposal: under 0.1 ms). (Amended 2026-10-17; the check named no
-    command before.)
+    1920x1080 --frames 300` and the same without `--level` (the streamed cave). On the
+    `--level` command the median of the three printed average frame times with `--hud` is
+    within 5 % of the median without it, and the march reading's median with `--hud` is
+    within 3 % of the median without it. The streamed command's frame means and march
+    readings are logged, not gated (its 300-frame runs end before full residency, so they
+    measure streaming load). The HUD pass reading from the `--hud` runs is logged (proposal:
+    under 0.1 ms). (Amended 2026-10-17, the check named no command before; amended again
+    2026-10-17, second, the streamed command was gated at 5 %.)
 
 ### Phase 4: The golden with the HUD on
 - **Owner skill:** dev
