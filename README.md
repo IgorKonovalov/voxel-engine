@@ -120,8 +120,8 @@ With no flags it streams an unbounded seeded cave around the camera.
 | `--view VIEW` | Write `shaded` (default), `normals` or `hitmask` to the target |
 | `--detail` | Start with procedural surface detail on |
 | `--rock-detail SCALE,STRENGTH` | Rock's detail feature scale in voxels and strength in [0, 1], under `--look` (default 4,0.3) |
-| `--save PATH` | With `--level`: write the session's log file to `PATH` on exit and print the world hash; refuses `P` and does not combine with `--vault` |
-| `--replay PATH` | With `--level`: re-simulate a saved session before the first frame and print its hash; does not combine with `--vault` |
+| `--save PATH` | With `--level`: write the session's log file to `PATH` on exit and print the world hash; refuses `P`, turns collapse off and does not combine with `--vault` |
+| `--replay PATH` | With `--level`: re-simulate a saved session before the first frame and print its hash; turns collapse off and does not combine with `--vault` |
 
 ### Checks
 

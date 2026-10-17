@@ -32,6 +32,8 @@
 //! its inputs before the first frame and prints the same hash. Two edits bypass the split:
 //! `P` stamps the server's world directly, so it is refused under `--save` (a stamp is not in
 //! the op log), and the autopilot's carve (streaming only) applies to the world directly.
+//! Collapse's falls and crumbles also edit the world outside the op log, so under `--save` and
+//! `--replay` the support query does not run and `R` is refused.
 //! `--vault` does not combine with `--save` or `--replay`: the log file does not record it.
 //!
 //! Keys: `G` toggles fly and walk mode (on the bounded level only; streaming refuses it, as it
@@ -175,6 +177,20 @@ const STAMP_NOT_LOGGED: &str = "a stamp is not in the op log (--save)";
 fn stamp_allowed(saving: bool) -> Result<(), &'static str> {
     if saving {
         Err(STAMP_NOT_LOGGED)
+    } else {
+        Ok(())
+    }
+}
+
+/// Why collapse is off under `--save` and `--replay`: its falls and crumbles edit the world
+/// outside the op log, so a saved session would replay to a different world.
+const COLLAPSE_NOT_LOGGED: &str = "collapse is not in the op log (--save, --replay)";
+
+/// Collapse (the support query after a dig, falls, `R`) runs unless the session is saved or
+/// replayed.
+fn collapse_allowed(logged: bool) -> Result<(), &'static str> {
+    if logged {
+        Err(COLLAPSE_NOT_LOGGED)
     } else {
         Ok(())
     }
@@ -727,6 +743,11 @@ struct Run {
 }
 
 impl Run {
+    /// Whether this session's edits go to or come from a log file.
+    fn logged(&self) -> bool {
+        self.args.save.is_some() || self.args.replay.is_some()
+    }
+
     /// Keeps the coarse grid current with `r`; returns its changed cells (none while
     /// streaming).
     fn edited(&mut self, r: &EditResult) -> Vec<CellChange> {
@@ -878,6 +899,7 @@ impl Run {
                     }
                     // An applied dig queries the support over the cells it changed.
                     if verb == DIG_VERB
+                        && collapse_allowed(self.logged()).is_ok()
                         && let Some(changes) = changes
                         && let Some(c) = self.coarse.as_mut()
                     {
@@ -1405,7 +1427,9 @@ impl Run {
             }
             self.handle_input(input);
         }
-        if let Some(c) = self.coarse.as_mut() {
+        if collapse_allowed(self.logged()).is_ok()
+            && let Some(c) = self.coarse.as_mut()
+        {
             for line in c.fall(&self.world) {
                 println!("{line}");
             }
@@ -1458,7 +1482,9 @@ impl Run {
             println!("{}", self.coarse_line());
         }
         if input.pressed(KeyCode::KeyR) {
+            let logged = self.logged();
             match self.coarse.as_mut() {
+                Some(_) if let Err(e) = collapse_allowed(logged) => println!("collapse: off, {e}"),
                 Some(c) => println!("{}", c.toggle_crumble()),
                 None => println!("collapse: not kept while streaming"),
             }
@@ -2033,6 +2059,13 @@ mod tests {
         }
         let a = parse_args_from(argv(&["--level", "--vault"])).expect("--level --vault parses");
         assert!(a.level && a.vault);
+    }
+
+    /// Collapse edits outside the op log, so it is off while saving or replaying.
+    #[test]
+    fn collapse_is_off_under_save_and_replay() {
+        assert_eq!(collapse_allowed(true), Err(COLLAPSE_NOT_LOGGED));
+        assert_eq!(collapse_allowed(false), Ok(()));
     }
 
     /// A stamp is not in the op log, so `P` is refused while saving and allowed otherwise.
