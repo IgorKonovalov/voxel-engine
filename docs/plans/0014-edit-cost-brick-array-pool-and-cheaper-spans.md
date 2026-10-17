@@ -290,7 +290,7 @@ to 3 to 4 ms there; a guess until the baseline is measured.
 |---|---|---|---|
 | 1: The uniform-brick oracle and the allocation measured | dev | done | `baf0ac0` |
 | 2: A brick-array pool | dev | done | `7ed81d3` |
-| 3: An exact span walk for the sphere | dev | code committed; profile done-when unmet, plan stopped here | committed with this row |
+| 3: An exact span walk for the sphere | dev | code committed; profile done-when unmet, plan stopped here | `5850b77` |
 | 4: An analytic capsule row | dev | not started | |
 | 5: Readings against the figure | dev | not started | |
 
@@ -349,16 +349,27 @@ to 3 to 4 ms there; a guess until the baseline is measured.
   row). Per the batch rules the plan stops here: Phases 4 and 5 are not started.
 - Phase 4 (not started): an uncommitted draft of the analytic capsule row (closed form plus
   bisection, its 1000-row property test and a test-count bound test, all passing) is kept
-  outside the repository for the session.
+  outside the repository for the session. Diagnostic quiet reading of that draft paired with
+  the Phase 3 tree (load 1.81 / 1.47 / 1.27): Phase 3 `tool` 7.989, `tool_warm` 7.897,
+  `worst_warm` 3.022 ms; draft `tool` 6.833, `tool_warm` 6.707, `worst_warm` 3.075 ms.
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:** (AMD Ryzen 9 5900HS dev box, release bench profile, exclusive perf lock,
-  1-minute load from `uptime` before / after each run)
+- **What shipped:** Phase 1: `apply_matches_the_reference_on_uniform_worlds`, the bench
+  group `expand`, `cubes_world` in the test support. Phase 2: the brick-array pool
+  (`BrickArrays`, `SpareArrays`, pool-aware `Brick::expand` / `collapse`,
+  `World::recycle_chunk` on the streamer's eviction), `a_pooled_expand_allocates_nothing`,
+  `an_evicted_chunk_returns_its_arrays`, the bench cases `worst_warm` and `tool_warm`, the
+  fly-through's reserve and pool size on its `bench:` line. Phase 3: `sphere_row_spans`
+  (brick-row sphere walk) used by `RowCache`, `walked_spans_equal_solved_spans`. Phases 4 and
+  5 not started.
+- **Public API changed:** `World::BRICK_ARRAY_POOL_CAP`, `World::reserve_brick_arrays`,
+  `World::pool_len` (Phase 2). Nothing removed or changed.
+- **Budget readings:** (AMD Ryzen 9 5900HS dev box, release bench profile, every reading under
+  the exclusive perf lock, 1-minute load from `uptime` before / after each run; the
+  `perf record` and `perf stat` figures are cycles and counts, not times)
   - Phase 1, Plan 0003's tip edit path (`2129bfb` source, Phase 1 bench file), load 1.65 /
     1.45: `cargo bench` `worst` 3.557 ms [3.552, 3.562]; `mixed` 2.554 ms [2.550, 2.558];
     `tool` 8.060 ms [8.053, 8.067]. `expand` group, per 1000 arrays: `fresh_kept` 46.19 µs
@@ -419,8 +430,18 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     2.453, `tool` 7.977 / 7.984, `tool_warm` 7.869 / 7.915 ms; Phase 3 `worst` 3.234 /
     3.249, `worst_warm` 3.014 [3.011, 3.018] / 3.023 [3.020, 3.027], `mixed` 2.334 / 2.334,
     `tool` 7.989 / 7.980, `tool_warm` 7.884 / 7.880 ms.
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **Gate at the tip** (tree of `5850b77`, `CARGO_BUILD_JOBS=3`): `cargo build --workspace
+  --all-targets` exit 0; `cargo clippy --workspace --all-targets -- -D warnings` exit 0;
+  `cargo fmt --all --check` exit 0; `cargo test --workspace --doc` exit 0 (1 doctest);
+  `cargo nextest run --workspace` exit 0, 129 run, 129 passed, 1 skipped (exclusive lock,
+  NVIDIA GeForce RTX 3080 Laptop GPU from `nvidia-smi -L`), including
+  `apply_matches_the_reference_over_seeded_ops`, `apply_matches_the_reference_on_uniform_worlds`,
+  `walked_spans_equal_solved_spans`, `determinism_vector` (`0x2b6b_6a0d_1f9b_8d75`) and
+  `raycast_hit_list_is_pinned` (`0xa0f2_c477_8892_c8fb`), both constants unchanged;
+  `cargo deny check` exit 0 (advisories, bans, licenses, sources ok); the hook bite tests
+  exit 0; `node scripts/check-doc-links.mjs` exit 0, 76 links.
+- **Outstanding `human` phases:** none. The plan stopped at Phase 3's profile done-when
+  (13.2 % against under 5 %); Phases 4 and 5 are not started and `nfr.md` is unchanged.
 
 ## Followups
 
