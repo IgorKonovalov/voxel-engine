@@ -20,7 +20,12 @@ Each entry ends with the milestone it informs. The distilled list is at the end.
   <https://research.nvidia.com/sites/default/files/publications/laine2010tr1_paper.pdf>. The
   reference GPU octree ray caster: compact child descriptors, contour data for sub-voxel
   geometry, a normal compression format. The structure is static; editing it is the problem the
-  brick-map camp avoids. M1 (as the rejected alternative to a brick map).
+  brick-map camp avoids. M1 (as the rejected alternative to a brick map). Section 4.2, beam
+  optimization: a coarse pass casts one conservative distance ray per 4×4 or 8×8 pixel block
+  (contours off, stopping at any voxel too small to cover a whole ray of the coarse grid), and
+  each pixel's ray starts at its block's minimum distance less a margin. Their Table 2 reads 3
+  to 27 % more primary rays per second from it across scenes and resolutions: a trim on top of
+  a hierarchy, not a replacement for one. M2 (a Plan 0015 followup).
 - **Kämpe, Sintorn, Assarsson, "High Resolution Sparse Voxel DAGs", SIGGRAPH 2013.**
   <https://www.cse.chalmers.se/~uffe/HighResolutionSparseVoxelDAGs.pdf>. Merging identical
   subtrees turns an SVO into a DAG with one to three orders of magnitude fewer nodes, traversed
@@ -82,6 +87,14 @@ Each entry ends with the milestone it informs. The distilled list is at the end.
   Naive kernels sit 1.5 to 2.5 times below the hardware optimum because of work distribution;
   persistent threads pulling from a global pool recover 80 to 90 percent of it. The
   divergence argument applies verbatim to compute DDA. M1, M2.
+- **Laine, Karras, Aila, "Megakernels Considered Harmful: Wavefront Path Tracing on GPUs",
+  HPG 2013.** <https://research.nvidia.com/sites/default/files/publications/laine2013hpg_paper.pdf>.
+  One kernel that marches, shades and spawns the next ray pays for the register count of its
+  heaviest stage at every stage and diverges at every branch; a wavefront of lean kernels (a
+  ray-cast kernel with few registers, a shading kernel, a queue between them) runs the cast at
+  full occupancy and the shading in coherent batches. The argument for splitting
+  `march.wgsl`'s primary march from its shading and shadow ray before the lighting plan adds
+  more stages to the same loop. M2 (the lighting plan).
 - **Xu et al., "Aokana: A GPU-Driven Voxel Rendering Framework for Open World Games", 2025.**
   <https://arxiv.org/abs/2505.02017>. SVDAG storage plus an LOD mechanism and a streaming
   system for tens of billions of voxels; claims up to 9 times less memory and 4.8 times faster
@@ -224,3 +237,10 @@ The techniques that recur across the sources above, in the order they matter to 
 10. **Edits as commands is proven at scale.** Teardown's multiplayer sends shapes, not voxels,
     at about 1 Mbit per client. The one trap the sources flag is float transcendentals across
     platforms; keep edit math integer and audit the generator for `sin` and friends.
+11. **Keep the march kernel lean, and march secondary rays coarsely.** The wavefront paper's
+    register argument says the hit pass should carry no shading; Teardown's 1-bit 2×2×2
+    shadow volume says shadow and occlusion rays need no voxel-level reads. With the 2³ bits
+    on the brick's mask line (Plan 0015), a coarse walk costs no storage.
+12. **Start primary rays late only after the hierarchy is in.** ESVO's beam optimization is
+    worth 3 to 27 % on top of a hierarchy; a plan that reaches for it before the bit levels
+    exist is treating a trim as a rescue.

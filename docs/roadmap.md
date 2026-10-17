@@ -195,12 +195,16 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plan 0005 closed; Plan 0013 is the surface follow-up; Plan 0015 drafts the traversal hierarchy; the lighting plan next)
+### M2: Lighting that holds in the dark (in progress: Plan 0005 closed; Plan 0013 is the surface follow-up; Plan 0015 is the traversal hierarchy; the lighting plan next)
 
-Plan 0015 (draft, 2026-10-17) comes before the lighting plan: it gives the marcher a
-hierarchy of occupancy bits (chunk bits, 512-bit brick masks, a walk that reads one line per
-level) and the translucent material class, on today's pool, as the first step of ADR-0012.
-Every lighting pass casts rays through that walk, so its cost per ray is settled first.
+Plan 0015 (approved 2026-10-17, amended the same day) comes before the lighting plan: it
+gives the marcher a hierarchy of occupancy bits (chunk bits, 512-bit brick masks on aligned
+lines, a walk that reads one line per level) and the translucent material class, on today's
+pool, as the first step of ADR-0012. Every lighting pass casts rays through that walk, so its
+cost per ray is settled first. The traversal efficiency review of 2026-10-17 (the ESVO,
+VoxelRT and wavefront sources in `references/voxel-optimizations.md`) found nothing in the
+literature that beats a bit hierarchy for an editable near field, and left two design inputs
+for the lighting plan, listed with its bullets below.
 
 Plan 0005 closed 2026-10-16 (v0.4.0): the surface-look spike measured four normal modes and
 procedural detail, and the owner chose per-voxel contour planes with weaker rock detail
@@ -220,6 +224,16 @@ spike: the silhouette (contours or normal smoothing), the surface texture (proce
 per-material detail evaluated in the shader from world position, the way Teardown's materials
 work), and the light (real-time GI standing in for the baked occlusion).
 
+- The march split from the shading: a lean hit pass that writes a compact hit buffer
+  (position, normal, material, plane) and separate passes for lighting, so the march kernel
+  carries no shading registers and secondary rays run as coherent dispatches instead of
+  branches inside the primary kernel (Laine, Karras, Aila 2013). The denoiser needs the hit
+  buffer anyway, so this is ordering, not extra work; the plan reads the march kernel's
+  register count and occupancy before and after on the dev box.
+- A coarse walk for secondary rays: shadow and ambient-occlusion rays stop at the 2³ level
+  of Plan 0015's masks, treating any block with a set bit as solid (Teardown's 1-bit shadow
+  volume), so they never read a voxel or the pool. A named mode of the walk, measured
+  against the full-resolution walk on the same rays.
 - Light extraction from bricks: emissive voxels become light samples, and a vein of thousands
   of them is sampled by reservoir resampling (ReSTIR-style) rather than a flat light list.
   Emission changes at runtime through the material table or a replace-material op.
