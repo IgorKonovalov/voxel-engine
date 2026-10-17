@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0016** (ADRs are a separate sequence; next free there is **0013**).
+**Next free number: 0020** (ADRs are a separate sequence; next free there is **0015**).
 
 ## Active roster
 
@@ -13,6 +13,10 @@ state from `git log`. Completed plans move to `done/`.
 | [0006](0006-spatial-audio-hrtf-mixer-and-occlusion.md) | Spatial audio: a headless HRTF mixer on the device callback, occlusion and early reflections through the material table | approved | M4, new crate `vxe-audio`; amended three times 2026-10-16; Phase 4 unblocked on `plan-0006`. Paired with ADR-0006. |
 | [0013](0013-contour-default-shadow-origin-and-streamed-footprint.md) | Contour as the fly-through's default: the shadow-ray origin, a streamed footprint under 3 GB, and a weaker rock detail | approved | M2 surface follow-up to ADR-0011; two `human` phases. ADR-0012 settles the footprint; Phase 4 picks the interim. |
 | [0015](0015-traversal-hierarchy-chunk-bits-brick-masks-and-translucent-class.md) | The traversal hierarchy: chunk bits, full-resolution brick masks, a one-read-per-level walk, and the translucent class | approved | M2, first step of ADR-0012 on today's pool. Conflicts with `plan-0013` in the marcher. |
+| [0016](0016-post-overnight-fix-pass-depenetration-restart-and-nits.md) | The post-overnight fix pass: depenetration, a logic that restarts after a trap, and the review nits | draft | D6 overturns and D7 item 3; ADR-0005 and ADR-0010 get dated Outcomes at the close. |
+| [0017](0017-mirror-budget-reservation-page-kinds-and-pressure.md) | The mirror reserves its budget: fixed buffers, empty pages that change kind, and a pressure signal the streamer follows | draft | Paired with ADR-0013. Best after Plan 0015. |
+| [0018](0018-server-routed-stamp-drop-and-remove.md) | Stamp, drop and remove as op kinds 2 to 4 through the server, the log and the logic host | draft | Paired with ADR-0014; `LOG_FORMAT` 2. |
+| [0019](0019-metered-host-calls-and-shape-range-checks.md) | Host calls charged by their work, and a world that refuses out-of-range shapes and queries | draft | Shares an `EditError` variant with Plan 0018. |
 <!-- roster:end -->
 
 ## Recently closed

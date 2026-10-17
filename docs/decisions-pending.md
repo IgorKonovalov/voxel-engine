@@ -607,6 +607,11 @@ patch bump (v0.11.1). The first two go into the post-overnight fix plan (D7).
 
 Say which to draft; the architect writes each as a normal plan for your approval.
 
+**Answered, 2026-10-17: all four drafted** (nothing runs until the windowed checks are
+done, the owner's word): item 3 plus the D6 overturns as Plan 0016; item 4 as Plan 0017 with
+ADR-0013; item 1 as Plan 0018 with ADR-0014; item 2 as Plan 0019. Item 5 is not scheduled
+(D4 accepted the reading). Each waits for "go".
+
 1. **Route stamp, drop and remove through the server** (op kinds 2 to 4 in the op log, the
    wire and the logic host), so `P` and collapse work under `--save`. Needs a decision on how
    the log names a prefab (an id plus content hash in the header, or the prefab bytes), likely
