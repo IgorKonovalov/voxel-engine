@@ -53,6 +53,19 @@ jobs:
       - run: cargo test --workspace --doc
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo clippy -p flythrough --features wasm --all-targets -- -D warnings
+      # The logic components build for wasm32-wasip2 only, which the workspace clippy does
+      # not check: every guest crate under crates/vxe-script-wasm/guests/, and the
+      # fly-through's logic as a component.
+      - name: Clippy on the logic components
+        shell: bash
+        run: |
+          packages=()
+          for manifest in crates/vxe-script-wasm/guests/*/Cargo.toml; do
+            packages+=(-p "$(sed -n 's/^name *= *"\(.*\)"/\1/p' "$manifest" | head -n 1)")
+          done
+          cargo clippy "${packages[@]}" --target wasm32-wasip2 -- -D warnings
+          cargo clippy -p flythrough-logic --features component --target wasm32-wasip2 \
+            -- -D warnings
       - run: cargo fmt --all --check
       - name: Hook bite tests
         run: node --test ".claude/hooks/*.test.mjs"

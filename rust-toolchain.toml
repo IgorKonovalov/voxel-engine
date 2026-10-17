@@ -1,3 +1,5 @@
 [toolchain]
 channel = "1.97.1"
 components = ["rustfmt", "clippy"]
+# The logic components (ADR-0010) build for this target.
+targets = ["wasm32-wasip2"]
