@@ -1,10 +1,10 @@
 # 0014: Edit cost under 2 ms, second pass: the allocation measured, a brick-array pool, cheaper sphere spans and an analytic capsule row
 
-> **Status:** in-progress
+> **Status:** done (2026-10-17, v0.7.0): the pool, the sphere span walk and the analytic capsule row shipped as amended; edits are cheaper but miss the 2 ms §4 figure, and the representation-versus-target decision awaits the owner.
 > **Created:** 2026-10-16
 > **Milestone:** M1 follow-up in `docs/roadmap.md` (the `nfr.md` §4 miss, carried from Plans
 > 0001 and 0003)
-> **Related ADRs:** [ADR-0002](../adrs/0002-brick-map-layout-and-per-chunk-locked-access.md)
+> **Related ADRs:** [ADR-0002](../../adrs/0002-brick-map-layout-and-per-chunk-locked-access.md)
 > (brick layout and access model, unchanged here: a phase that would change the brick
 > representation stops and goes to the architect as an ADR question). No new ADR.
 > **Prerequisite:** Plan 0003 closed (its tip is this plan's baseline). `perf` installed on the
@@ -617,6 +617,37 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   ms at the tip); per the amendment the close holds the brick representation ADR question and
   the `nfr.md` §4 revision, neither decided here.
 
+## Close
+
+**Verdict (2026-10-17, fresh-session review of the tip 72fac81):** closed. Every phase is done,
+every done-when holds as amended on 2026-10-17, and the review found no blocker or major, only
+two code-comment nits (followups below). The 2 ms `nfr.md` §4 target is missed, as the
+amendment stated and the log records.
+
+**Readings** (Close triggers above; `nfr.md` §4, all under the exclusive perf lock, AMD Ryzen 9
+5900HS, paired against Plan 0003's tip): `worst` 3.55 to 3.19-3.26 ms, `mixed` 2.55 to
+2.33-2.36 ms, `tool` 8.05 to 6.78-6.80 ms, `worst_warm` 3.03-3.05 ms; the fly-through `B` line
+3.31-3.32 to 2.98-3.04 ms. Pool RAM: at most 8 MiB per world (`nfr.md` §3).
+
+**Orchestrator-applied calls (overturnable by the owner):** the minor bump to v0.7.0 (additive
+API: `World::BRICK_ARRAY_POOL_CAP`, `World::reserve_brick_arrays`, `World::pool_len`); the two
+nits and the demoted-chunk gap recorded as followups for the next dev pass.
+
+**Decision awaiting the owner: the brick representation versus the §4 target.** Not taken here.
+
+- **Option A:** a brick-representation ADR (a layout that writes a row cheaper than ADR-0002's
+  dense `u16` array, superseding part of ADR-0002), then a plan.
+- **Option B:** revise `nfr.md` §4 to a measured cap in place of 2 ms.
+- **The reviewer recommends B now, with A deferred** until a consumer frame shows the edit
+  cost matters.
+- **The arithmetic:** at the tip, `write_rows` is 54.6 % of `worst_warm` inclusive, about
+  1.66 ms of the 3.04 ms. Removing the row solve, the span lookup and `Brick::expand` entirely
+  leaves about 2.4 ms. Nothing inside ADR-0002's representation reaches 2 ms.
+
 ## Followups
 
+- **`apps/flythrough/src/main.rs:69` comment nit:** it says "4 Mi" but means 2 Mi voxels, 4 MiB.
+- **`CapsuleRow::nearest` comment nit** (`crates/vxe-world/src/shape.rs`): state the `i128` range the closed form stays within.
+- **Demoted chunks do not return their arrays to the pool** (only an evicted chunk does);
+  route a full-to-LOD demotion through `World::recycle_chunk` as well.
 - Allocation-free result path (Plan 0003's followup), if the frame path shows it.
