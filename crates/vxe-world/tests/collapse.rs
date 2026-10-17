@@ -307,3 +307,164 @@ fn a_cell_in_a_chunk_the_grid_does_not_hold_anchors() {
     grid.chunk_evicted(ChunkCoord([1, 0, 0]));
     assert_eq!(query(&world, &grid, p, &changes), []);
 }
+
+/// The world's hash after building `parts` on a fresh fixture chunk.
+fn direct(parts: &[([i32; 3], [i32; 3], MaterialId)]) -> u64 {
+    build(parts).voxel_hash()
+}
+
+#[test]
+fn the_carved_slab_drops_32_voxels_onto_the_floor() {
+    let (world, _, _) = carved();
+    let r = world.drop_region(&slab_cells(), 64).unwrap();
+    assert_eq!(
+        r,
+        DropResult {
+            moved: vec![(3, 4608)],
+            dropped: 32,
+            touched: vec![ChunkCoord([0, 0, 0])],
+            aabb: Some((VoxelCoord([24, 24, 8]), VoxelCoord([47, 47, 47]))),
+        }
+    );
+    assert_eq!(
+        world.voxel_hash(),
+        direct(&[(FLOOR.0, FLOOR.1, 3), ([24, 24, 8], [48, 48, 16], 3)])
+    );
+    let again = world.drop_region(&slab_cells(), 64).unwrap();
+    assert_eq!(again.dropped, 0);
+    assert_eq!(again.moved, []);
+    assert_eq!(again, DropResult::default());
+}
+
+#[test]
+fn four_drops_of_ten_fall_10_10_10_2_and_end_where_one_drop_of_64_does() {
+    let (world, _, _) = carved();
+    // The slab's cells move with it: after each drop, the next call names the cells it fell to.
+    // A drop of 10 leaves the slab straddling two cell layers, so the region is the cells
+    // holding its voxels, read from the grid.
+    let mut grid = CoarseGrid::build(&world);
+    let mut cells = slab_cells();
+    let mut falls = Vec::new();
+    for _ in 0..5 {
+        let r = world.drop_region(&cells, 10).unwrap();
+        falls.push(r.dropped);
+        grid.update(&world, &r.edit_result());
+        cells = occupied_cells(&grid, [3, 3, 0], [5, 5, 7]);
+        cells.retain(|c| c.0[2] >= 1);
+    }
+    assert_eq!(falls, [10, 10, 10, 2, 0]);
+
+    let (reference, _, _) = carved();
+    reference.drop_region(&slab_cells(), 64).unwrap();
+    assert_eq!(world.voxel_hash(), reference.voxel_hash());
+}
+
+/// Cells in `lo..=hi` whose grid cell holds a solid voxel, ascending.
+fn occupied_cells(grid: &CoarseGrid, lo: [i32; 3], hi: [i32; 3]) -> Vec<CellCoord> {
+    let mut v = Vec::new();
+    for x in lo[0]..=hi[0] {
+        for y in lo[1]..=hi[1] {
+            for z in lo[2]..=hi[2] {
+                let c = CellCoord([x, y, z]);
+                if grid.cell_at(c).is_some_and(|cell| cell.solid > 0) {
+                    v.push(c);
+                }
+            }
+        }
+    }
+    v
+}
+
+#[test]
+fn an_uneven_bottom_drops_by_the_stub_gap() {
+    let world = fixture();
+    let mut grid = CoarseGrid::build(&world);
+    let changes = carve(&world, &mut grid, [32, 32, 8], [40, 40, 32]);
+    assert_eq!(changes.len(), 3);
+    let regions = query(&world, &grid, params(), &changes);
+    assert_eq!(regions.len(), 1);
+    let mut cells = slab_cells();
+    cells.push(CellCoord([4, 4, 4]));
+    cells.sort_unstable();
+    assert_eq!(regions[0].cells, cells);
+    assert_eq!(regions[0].counts, [(3, 5120)]);
+
+    let r = world.drop_region(&regions[0].cells, 64).unwrap();
+    assert_eq!(r.dropped, 24);
+    assert_eq!(r.moved, [(3, 5120)]);
+    assert_eq!(
+        r.aabb,
+        Some((VoxelCoord([24, 24, 8]), VoxelCoord([47, 47, 47])))
+    );
+    assert_eq!(
+        world.voxel_hash(),
+        direct(&[
+            (FLOOR.0, FLOOR.1, 3),
+            ([24, 24, 16], [48, 48, 24], 3),
+            ([32, 32, 8], [40, 40, 16], 3),
+        ])
+    );
+}
+
+#[test]
+fn a_drop_scanning_into_a_non_resident_chunk_changes_nothing() {
+    // The floor's chunk is gone: chunk [0, 0, 0] alone stands on chunk [0, 0, -1], absent.
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &UniformSource(AIR),
+        &test_table(),
+    );
+    world.apply(&box_op(SLAB.0, SLAB.1, Mode::Fill(3))).unwrap();
+    let before = world.voxel_hash();
+    assert_eq!(
+        world.drop_region(&slab_cells(), 64),
+        Err(EditError::NotResident(ChunkCoord([0, 0, -1])))
+    );
+    assert_eq!(world.voxel_hash(), before);
+    // Within the chunk the slab falls 40 to the chunk's floor.
+    assert_eq!(world.drop_region(&slab_cells(), 40).unwrap().dropped, 40);
+    assert_eq!(
+        world.drop_region(&[CellCoord([0, 0, 8])], 4),
+        Err(EditError::NotResident(ChunkCoord([0, 0, 1])))
+    );
+}
+
+#[test]
+fn a_solid_voxel_between_two_region_runs_wedges_the_piece() {
+    // Region cells (4, 4, 3) and (4, 4, 5), full of material 3, over a floor up to z = 20; the
+    // cell between them, (4, 4, 4), is not in the region. With one voxel of material 5 at its
+    // top, [32, 32, 39], the upper cell cannot move without landing on it.
+    let lower = ([32, 32, 24], [40, 40, 32]);
+    let upper = ([32, 32, 40], [40, 40, 48]);
+    let cells = [CellCoord([4, 4, 3]), CellCoord([4, 4, 5])];
+    let parts = [
+        ([0, 0, 0], [64, 64, 20], 3),
+        (lower.0, lower.1, 3),
+        (upper.0, upper.1, 3),
+    ];
+
+    let world = build(&parts);
+    world
+        .apply(&box_op([32, 32, 39], [33, 33, 40], Mode::Fill(5)))
+        .unwrap();
+    let before = world.voxel_hash();
+    assert_eq!(
+        world.drop_region(&cells, 64).unwrap(),
+        DropResult::default()
+    );
+    assert_eq!(world.voxel_hash(), before);
+
+    // Without the voxel both fall by the lower cell's gap of 4.
+    let world = build(&parts);
+    let r = world.drop_region(&cells, 64).unwrap();
+    assert_eq!(r.dropped, 4);
+    assert_eq!(r.moved, [(3, 1024)]);
+    assert_eq!(
+        world.voxel_hash(),
+        direct(&[
+            ([0, 0, 0], [64, 64, 20], 3),
+            ([32, 32, 20], [40, 40, 28], 3),
+            ([32, 32, 36], [40, 40, 44], 3),
+        ])
+    );
+}

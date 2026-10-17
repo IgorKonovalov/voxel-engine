@@ -20,6 +20,7 @@
 mod brick;
 mod chunk;
 mod coarse;
+mod collapse;
 mod coords;
 mod edit;
 mod fixed;
@@ -39,6 +40,7 @@ mod walkable;
 pub use brick::Brick;
 pub use chunk::Chunk;
 pub use coarse::{CellChange, CellCoord, CoarseCell, CoarseGrid};
+pub use collapse::DropResult;
 pub use coords::{
     BRICK_EDGE, BRICK_VOXELS, CHUNK_BRICKS, CHUNK_EDGE, CHUNK_EDGE_BRICKS, ChunkCoord, ChunkExtent,
     VoxelCoord, brick_of_slot, brick_slot, brick_slot_of_local, index_in_brick,

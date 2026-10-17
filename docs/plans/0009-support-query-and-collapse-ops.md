@@ -252,8 +252,8 @@ calls. The drop's column table is one `i32` per column of the footprint (576 for
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The support flood | dev | done | committed with this row |
-| 2: The drop op | dev | not started | |
+| 1: The support flood | dev | done | db8dba9 |
+| 2: The drop op | dev | done | committed with this row |
 | 3: The remove op with rubble | dev | not started | |
 | 4: Collapse in the fly-through | dev | not started | |
 
@@ -265,3 +265,8 @@ calls. The drop's column table is one `i32` per column of the footprint (576 for
 - Phase 1: in a bounded world every cell on the extent's faces borders a chunk outside the extent, which is not resident, so the faces anchor through non-residency even with `boundary_anchors = false` (test `a_cell_in_a_chunk_the_grid_does_not_hold_anchors`).
 - Phase 1: a `Region`'s `aabb` falls back to its cells' bounds when its bricks hold no solid voxel (only reachable with `solid_min = 0`).
 - Phase 1: bench reading: `find_unsupported` after the radius-10 carve at the origin of a solid `[-2, 2)^3` world, 32 changed cells: 390.5 us per query (criterion median of [390.14, 390.53, 390.99] us), AMD Ryzen 9 5900HS, taken under the exclusive lock, at the Phase 1 commit. The first candidate's flood reaches the cap (4097 cells); every later candidate meets a cell it settled as supported.
+- Phase 2: the per-tick fall test passes, per call, the cells holding the slab's voxels at that point (read from the grid kept current with `DropResult::edit_result()`, within the slab's 3 x 3 footprint above the floor), not the original 9 slab cells: after the first drop of 10 those cells hold no voxel, and a call naming them moves nothing.
+- Phase 2: a column whose region voxels are split by a solid voxel outside the region is scanned below every run of region voxels, the region's own voxels counting as free; the plan's rule (below the lowest region voxel only) is the same when no such voxel exists, and otherwise could land a voxel on a solid one. Test `a_solid_voxel_between_two_region_runs_wedges_the_piece` (dropped 0 with the voxel, 4 without).
+- Phase 2: public API beyond the data shapes: `DropResult::edit_result()` (`changed_from = moved`), for `CoarseGrid::update`. `dropped == 0` and `max_drop <= 0` return `DropResult::default()`. A cell in a non-resident chunk fails with the least such chunk; a scan fails with the chunk of the first non-resident voxel, columns ascending by `(x, y)`, runs ascending by `z`, each scanned to `max_drop`.
+- Phase 2: also touches `crates/vxe-world/benches/collapse.rs` (the drop budgets) and `crates/vxe-world/src/support.rs` (the cell-key hasher shared with `collapse.rs`); neither is in Files touched.
+- Phase 2: bench readings, AMD Ryzen 9 5900HS, exclusive lock, at the Phase 2 commit: `drop_region` of the fixture's 9-cell slab by 32: 79.7 us (criterion median of [79.55, 79.68, 79.82] us); a 16^3-cell cube (2 097 152 voxels) by 64: 6.95 ms ([6.945, 6.948, 6.951] ms, 10 samples). A first per-voxel version measured 879 us and 312 ms; the op now composes bricks in memory and moves a whole `Uniform` brick when the drop is a multiple of 8.

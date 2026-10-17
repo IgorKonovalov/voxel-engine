@@ -50,10 +50,10 @@ pub struct Region {
     pub aabb: (VoxelCoord, VoxelCoord),
 }
 
-/// A multiplicative hash for the flood's sets of cell coordinates. The sets are only probed,
-/// never iterated into the output, so the hash affects speed and not results.
+/// A multiplicative hash for sets and maps of cell coordinates. They are only probed, never
+/// iterated into an output, so the hash affects speed and not results.
 #[derive(Default)]
-struct CellHasher(u64);
+pub(crate) struct CellHasher(u64);
 
 impl CellHasher {
     fn mix(&mut self, v: u64) {
@@ -87,10 +87,10 @@ impl std::hash::Hash for CellKey {
 
 /// A cell coordinate hashed one `i32` per axis, with no length prefix.
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct CellKey(CellCoord);
+pub(crate) struct CellKey(pub(crate) CellCoord);
 
-type CellSet = HashSet<CellKey, BuildHasherDefault<CellHasher>>;
-type CellMap<V> = HashMap<CellKey, V, BuildHasherDefault<CellHasher>>;
+pub(crate) type CellSet = HashSet<CellKey, BuildHasherDefault<CellHasher>>;
+pub(crate) type CellMap<V> = HashMap<CellKey, V, BuildHasherDefault<CellHasher>>;
 
 /// The six neighbours of `c` in flood order: -x, +x, -y, +y, -z, +z.
 fn neighbours(c: CellCoord) -> [CellCoord; 6] {
