@@ -5,6 +5,13 @@
 > **Milestone:** the headless halves of M6 (`.vox` import) and M7 (prefab stamping) in `docs/roadmap.md`, brought forward because neither needs the renderer
 > **Related ADRs:** ADR-0002 (layout, access model), ADR-0001 (stack); none new, the decisions here have no alternative worth a record beyond the ones named under "Decision"
 > **Prerequisite:** Plan 0001 closed. Independent of Plans 0002 to 0007. Plan 0007 reserves op kind 2 for the stamp; wiring the stamp through `Server` is a follow-up once both close.
+> **Amended 2026-10-17**, during implementation (orchestrator-applied under the owner's
+> standing "go with your recommendations"; the owner can overturn it): Phase 4 binds the
+> aim-point stamp to `P`, since `V` already toggles procedural detail, and Phase 1's box count
+> is restated for `count_in_box`'s inclusive bounds. See "Amendment 2026-10-17" below.
+> **Amended again 2026-10-17**, after the close review (same standing, same overturnability):
+> Phase 2 caps a model axis at 256 and adds caps on placements and translations for hostile
+> input. See "Amendment 2026-10-17, close review" below.
 
 ## TL;DR
 
@@ -46,6 +53,140 @@ dependency (the format is a handful of chunk types and the mapping is the real w
 rotating at stamp time by index arithmetic (the generation path blits one placement into up to
 eight chunks, and a materialised prefab is cheaper there), and any float in the transform
 (all of this is integer).
+
+## Amendment 2026-10-17
+
+Made during implementation, after `dev` stopped at Phase 4 on branch `plan-0008` (tip
+`8e541f4`; the details are in the Implementation log's Notes there). Applied by the
+orchestrator under the owner's standing "go with your recommendations" while the owner was
+away; it is a recommendation the owner can overturn, and overturning it changes only the
+done-whens below, not the code already written.
+
+### 1. The aim-point stamp is `P`, not `V`
+
+**The problem.** Phase 4 bound the vault stamp to `V`, but `V` toggles procedural detail in the
+fly-through since Plan 0005 (`handle_input` in `apps/flythrough/src/main.rs`, and its key
+header). The plan did not choose between the two.
+
+**Decision.** The stamp takes `P` ("place"). `V` keeps detail, so the owner's habit from the
+surface look checks holds. `P` is unbound in `apps/flythrough` on `plan-0008` and on every
+open plan branch, and no open plan claims it: the claimed keys are `W A S D C Space Shift`
+(flight and walk), `Escape`, `B`, `F1`, `G`, `K` (Plan 0004), `L`, `N`, `V` (Plan 0013 and
+earlier), `F2` (Plan 0010), `H`, `J` (Plan 0006) and `R` (Plan 0009).
+
+**Rejected.** (b) Moving detail off `V` and giving `V` to the stamp: it breaks a binding the
+owner has used across the look checks, and Plan 0013's text names `V` for detail, so it
+would also amend that plan. (c) Dropping the runtime stamp from the fly-through: the
+headless tests already prove `World::stamp`, but the testbed's job is to let the owner place
+one and read its result line, as a dig does. `T` was the other free candidate; `P` is the
+mnemonic.
+
+### 2. Phase 1's box count, restated for inclusive bounds
+
+**The problem.** `count_in_box(lo, hi)` takes inclusive bounds (`query.rs`), so
+`count_in_box([8, 8, 8], [24, 24, 24])` covers 17³ = 4913 voxels: the vault's 4096 plus 817
+rock voxels on its three high faces (17³ − 16³). The plan's `[(0, 2744), (4, 1352)]` was the
+vault's own 16³ box, which is `[8, 8, 8]..=[23, 23, 23]`.
+
+**Decision.** The done-when asserts both: the vault's box `count_in_box([8, 8, 8], [23, 23,
+23]) == [(0, 2744), (4, 1352)]`, and the one-voxel-larger box `count_in_box([8, 8, 8], [24,
+24, 24]) == [(0, 2744), (3, 817), (4, 1352)]`, which pins that the stamp wrote nothing past
+its aabb. 2744 + 817 + 1352 = 4913. This is what the dev's test already asserts.
+
+### 3. The deviations in the Notes
+
+Each deviation in the Implementation log's Notes on `plan-0008`, ruled:
+
+- **Accepted:** `Prefab::new` stores a masked-out voxel as `AIR` and clears mask bits past the
+  last voxel, so `id()` depends only on what a stamp writes; it panics on a voxel count or mask
+  length that does not match the size (a caller bug, and the plan's signature returns no
+  `Result`).
+- **Accepted:** the public API beyond the data shapes on `Rot` and `Prefab`, and `Rot::all()`'s
+  order (axis permutations lexicographic, then sign bits ascending). The plan asked only for
+  one fixed order.
+- **Accepted:** `stamp.rs` keeping its own counts-and-bounds tally instead of sharing
+  `edit.rs`'s private one. The review checks that its `changed_from`, `touched` and `aabb`
+  agree with the edit path's on the Phase 1 vectors.
+- **Accepted:** the default palette generated from its pattern, pinned by an FNV-1a 64 hash of
+  the spec's listing plus seven sampled entries. The hash is the check; the generator is how.
+- **Accepted:** the extra `VoxError` variants. `Rotation(u8)` refusing a mirrored `_r` byte
+  follows from `Rot` holding only determinant +1; a consumer that flips a model in MagicaVoxel
+  gets an error, not a wrong stamp.
+- **Accepted:** the scene graph checked in `parse`, so `placements()` cannot fail; depth-first
+  order in child order from node 0, frame 0 only; a shared subtree placed once per reference.
+- **Accepted:** the `vxe-assets` public API beyond the data shapes, `to_prefab` as a method on
+  `VoxMap`, and index 0 counted as used when the model has an empty cell (`VoxMap::new` maps it
+  to `Air`, so only a caller that unsets it sees it reported).
+- **Accepted:** `Cargo.lock` touched; it is the new crate's entry.
+- **Accepted:** the one-chunk generation compared by the hash of chunk `[0, 0, 0]`, with the
+  whole-world `voxel_hash` compared over `test_extent()` as well. That is stronger than the
+  done-when.
+- **Accepted:** `StampedSource` in `source.rs`, sharing the brick writer with `World::stamp`;
+  it never sets a chunk's edited flag (generation-time content regenerates from the seed and
+  placements). The open question on clipping is settled as the dev built it: a placement
+  reaching past the extent is clipped by the chunks generated.
+- **Accepted:** the thread-count test's five placements over `cave_like_source`, and its extra
+  runtime-equals-generation check.
+- **Accepted:** `--vault` on the streaming cave as well as the level, clamped only on the
+  level; the vault's placement in `cave.rs` with its unit test; `apps/flythrough/src/lib.rs`
+  untouched; the start line `vault: 16^3 shell room at [x, y, z]`.
+- **Accepted:** the bench's third case, `prefab64_uniform`, beside the two the plan named.
+- **Accepted:** the `cave.rs` comment reading "160 cm" so the float-literal scan stays green.
+
+## Amendment 2026-10-17, close review
+
+Made after the close review of `plan-0008`, which found that the planned model-size cap does
+not bound memory. Applied by the orchestrator under the owner's standing "go with your
+recommendations" while the owner was away. Each item below is the reviewer's recommendation,
+orchestrator-applied, and the owner can overturn any of them; overturning one changes only
+the Phase 2 done-whens it names.
+
+### 4. A model axis is capped at 256, not 1024
+
+**The problem.** A `SIZE` chunk of 1024³ followed by an `XYZI` with zero voxels passes
+`MAX_MODEL_EDGE = 1024`, and `VoxMap::to_prefab` then allocates for every cell of the model:
+a `u8` index per voxel, a `u16` material per voxel and one mask bit per voxel, 3.125 bytes a
+voxel. At 1024³ = 2³⁰ voxels that is 3.125 GiB, from a file of about 70 bytes. `XYZI`
+coordinates are `u8`, so no voxel can sit past index 255 on any axis; cells past 255 can only
+ever be empty.
+
+**Decision.** `MAX_MODEL_EDGE = 256`, and Phase 2's `TooLarge` done-when reads 256. The
+largest model `to_prefab` accepts is 256³ = 2²⁴ = 16,777,216 voxels, and 2²⁴ × 3.125 B =
+52,428,800 B = 50 MiB (16 MiB of index, 32 MiB of material, 2 MiB of mask). That is still a
+lot for a hostile file, but it is bounded, and it is the largest model the format can fill.
+
+**Rejected.** Keeping 1024 and sizing from the voxels' bounding box: it changes the model's
+centre, which `Placement::min_corner` depends on. Lazy allocation in `to_prefab`: the dense
+`Prefab` is the plan's data shape.
+
+### 5. Caps on placements and translations
+
+**The problem.** A shared subtree is placed once per reference (item 3), so a scene graph in
+which each `nGRP` lists the same child twice doubles the placement count per level: a small
+file can ask for billions of placements. And an `nTRN` `_t` component is parsed as `i32`;
+`i32::MIN` under a rotation that negates that axis overflows when the rotation is applied.
+
+**Decision.** Two engine constants in `vxe-assets`:
+
+- `MAX_PLACEMENTS = 65_536`. A scene graph whose placement count exceeds it is refused as
+  `VoxError::Malformed`, during the walk, before the count is reached in memory.
+- `MAX_TRANSLATION = 1 << 20`. An `nTRN` `_t` component whose magnitude exceeds it is refused
+  as `VoxError::Malformed`, so negating one under a rotation cannot overflow.
+
+Both land in Phase 2's done-whens. A composed translation could still leave `i32` only
+through a chain of more than 2^31 / 2^20 = 2048 nested `nTRN` nodes; that is listed under
+item 6, not decided here.
+
+### 6. Follow-ups, not done-whens
+
+- **The rotated even-sized model's pivot.** `min_corner` subtracts `rotated_size / 2`; for an
+  even edge under a 180-degree turn, MagicaVoxel may pivot one voxel off from that. A test
+  against a model exported from MagicaVoxel with an even size, turned 180 degrees, settles it;
+  if the stamp is off by one, `min_corner` takes the rotation as well as the rotated size.
+- **A possible rename of `Prefab::vault`.** The helper's name reads as gameplay vocabulary in
+  `vxe-world`; a neutral name (a shelled box) is a candidate. The owner's call.
+- **Composed translations.** Whether the walk composes `_t` with checked arithmetic, so a
+  deep `nTRN` chain refuses as `Malformed` rather than overflowing (see item 5).
 
 ## Architecture diagram
 
@@ -100,10 +241,13 @@ flowchart LR
     material changed; `touched` and `aabb` as for edits; bricks that become uniform collapse.
   - On `solid3_world()`: `stamp(&vault16, [8, 8, 8], IDENTITY)` returns `changed_from ==
     [(3, 4096)]`, `touched == [[0, 0, 0]]`, `aabb == Some(([8, 8, 8], [23, 23, 23]))`;
-    `count_in_box([8, 8, 8], [24, 24, 24]) == [(0, 2744), (4, 1352)]` with the shell as
-    material 4; `material_at([8, 8, 8]) == 4`, `[15, 15, 15] == 0`, `[23, 23, 23] == 4`,
-    `[24, 8, 8] == 3`. The same stamp again returns an empty `changed_from`, empty
-    `touched` and `aabb == None`.
+    with the shell as material 4 and `count_in_box`'s bounds inclusive, the vault's own box
+    `count_in_box([8, 8, 8], [23, 23, 23]) == [(0, 2744), (4, 1352)]` and the box one voxel
+    larger `count_in_box([8, 8, 8], [24, 24, 24]) == [(0, 2744), (3, 817), (4, 1352)]`;
+    `material_at([8, 8, 8]) == 4`, `[15, 15, 15] == 0`, `[23, 23, 23] == 4`, `[24, 8, 8] ==
+    3`. The same stamp again returns an empty `changed_from`, empty
+    `touched` and `aabb == None`. (Amended 2026-10-17: the box counts, per "Amendment
+    2026-10-17" item 2.)
   - `stamp(&T, [100, 100, 100], Z90)` on `solid3_world()`: `changed_from == [(3, 7)]`;
     `material_at([101, 102, 100]) == 5`, `[100, 100, 100] == 5`, `[101, 100, 103] == 5`,
     and `[100, 101, 100] == 3` (unmasked, untouched).
@@ -123,7 +267,16 @@ flowchart LR
     pairs, `RGBA`, `nTRN`, `nGRP`, `nSHP`; `MATL`, `LAYR`, `rOBJ`, `rCAM`, `NOTE` and `IMAP`
     are skipped by size, and a test file containing each of them parses to the same models
     as one without. A chunk cut short reads as `VoxError::Truncated { chunk: [u8; 4], at }`.
-    A model axis over 1024 reads as `VoxError::TooLarge`.
+    A model axis over 256 (`MAX_MODEL_EDGE`) reads as `VoxError::TooLarge`: a `SIZE` of
+    257 × 1 × 1 is refused, 256 × 256 × 256 with zero voxels parses. (Amended 2026-10-17
+    from 1024; see "Amendment 2026-10-17, close review" item 4.)
+  - Hostile scene graphs and transforms are refused without a panic. (Added 2026-10-17; see
+    "Amendment 2026-10-17, close review" item 5.) A graph of 16 nested `nGRP` levels, each
+    listing the same child twice, yields exactly 65_536 placements (`MAX_PLACEMENTS`); the
+    same graph at depth 17 (131_072) reads as `VoxError::Malformed`. An `nTRN` with `_t`
+    of `-2147483648 0 0` under a parent whose `_r` is 52 (a 180-degree turn about z, which
+    negates x) reads as `VoxError::Malformed`, since the component's magnitude exceeds
+    `MAX_TRANSLATION = 1 << 20`.
   - `VoxModel { size: [u32; 3], voxels: Vec<[u8; 4]> }` as `(x, y, z, index)` in file order;
     `palette: [[u8; 4]; 256]` with MagicaVoxel's default palette when `RGBA` is absent, and
     the documented offset: `RGBA` entry `k` is the colour of index `k + 1`; index 0 is empty.
@@ -173,7 +326,8 @@ flowchart LR
 
 ### Phase 4: The fly-through's vault, and the bench
 - **Owner skill:** dev
-- **What:** `--vault` and the `V` key in the testbed, and the stamp bench.
+- **What:** `--vault` and the `P` key in the testbed, and the stamp bench. (Amended
+  2026-10-17: `P`, not `V`; see "Amendment 2026-10-17" item 1.)
 - **Files touched:** `apps/flythrough/src/{cave.rs, main.rs, lib.rs}`,
   `crates/vxe-world/benches/stamp.rs`, `crates/vxe-world/Cargo.toml`.
 - **Done when:**
@@ -181,9 +335,13 @@ flowchart LR
     `SHELL` material, placed with its minimum corner 100 voxels ahead of the spawn along +x
     (clamped inside the extent). Without the flag the cave is unchanged, so Plan 0001's
     determinism constants and golden image hold; the test in `determinism.rs` stays green.
-  - `V` stamps the vault at the aim point (the dig ray's hit, minimum corner at the hit
-    voxel) through `World::stamp` and prints the result line like a dig does. Once Plan 0007
-    lands, this goes through `Server` as op kind 2: follow-up.
+  - `P` stamps the vault at the aim point (the dig ray's hit, minimum corner at the hit
+    voxel) through `World::stamp` with `Rot::IDENTITY` and prints the result line like a dig
+    does (`stamped: ...` through `edit_line`, or `stamped: refused, <error>` on
+    `NotResident`, or a no-hit line); a successful stamp goes through the same post-edit path
+    as a dig, so the mirror and, on the level, the coarse grid see it. `V` still toggles
+    detail. The key header in `main.rs` lists `P`. Once Plan 0007 lands, this goes through
+    `Server` as op kind 2: follow-up. (Amended 2026-10-17: `P`, not `V`.)
   - `cargo bench -p vxe-world --bench stamp`: the 16³ vault into solid rock at `[8, 8, 8]`
     (eight uniform bricks expanded) and a 64³ all-written prefab at `[0, 0, 0]` (512
     bricks), each as microseconds per stamp. Proposals: under 100 µs and under 5 ms. The
@@ -223,8 +381,8 @@ Prefab memory: 2 bytes plus one bit per voxel. A 16³ prefab is 8 KiB + 512 B; a
   field on `VoxFile` so a caller can refuse.
 - **Write-everything semantics** let one stamp delete another's shell. By design; the game
   orders placements. Carve and fill still respect `INDESTRUCTIBLE`; only `stamp` does not.
-- **Open:** whether `StampedSource` should clip a placement that reaches outside the extent
-  (currently it blits what falls inside each generated chunk, which is the natural clip).
+- **Settled 2026-10-17:** `StampedSource` clips a placement that reaches outside the extent
+  (it blits what falls inside each generated chunk, the natural clip).
 
 ## What this plan does NOT do
 

@@ -36,7 +36,10 @@ The server owns the authoritative `World` and an `OpLog` of `(tick, seq, op)` en
 op enters through `Server::submit`, which assigns the next `seq`, and is applied at the next
 `Server::tick` in `seq` order. An applied op is appended to the log and announced to every
 attached client as an `Applied` message carrying the op and its `EditResult`; a refused op
-(`NotResident`) is announced as `Refused` and not logged.
+(`NotResident`) is announced as `Refused` and not logged. A tick that drained directly
+submitted ops also logs a boundary entry after them, carrying the first seq left to the
+logic; replay skips it, and re-simulation uses it to apply the submitted ops and resume the
+seq count (added 2026-10-17 while proposed; Plan 0007's amendment names the alternatives).
 
 The channel is a trait of two byte queues (`send`, `try_recv`) with one in-memory
 implementation now; M9's QUIC transport is another implementation of the same trait. The
