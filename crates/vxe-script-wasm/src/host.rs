@@ -36,7 +36,7 @@ use bindings::vxe::logic::host as wit;
 pub struct WasmConfig {
     /// Fuel for one call of `init` or `tick`, reset before each.
     pub fuel_per_tick: u64,
-    /// The cap on each of the component's linear memories, in bytes.
+    /// The cap on all of the component's linear memories together, in bytes.
     pub memory_bytes: u64,
     /// Nanoseconds of the component's clocks per tick.
     pub frame_ns: u64,
@@ -60,9 +60,13 @@ struct Lent(Option<NonNull<dyn Host>>);
 // another thread, and it is cleared before that borrow ends.
 unsafe impl Send for Lent {}
 
-/// The cap on memory growth; records whether the component hit it.
+/// The cap on memory growth across all of a store's linear memories; records whether the
+/// component hit it. A component with several core instances has several memories, and none
+/// of them shrinks or is freed while the store lives.
 struct Limits {
     memory_bytes: usize,
+    /// The bytes of every memory accepted so far.
+    total: usize,
     hit: bool,
 }
 
@@ -72,17 +76,20 @@ const TABLE_ELEMENTS: usize = 1 << 16;
 impl ResourceLimiter for Limits {
     fn memory_growing(
         &mut self,
-        _current: usize,
+        current: usize,
         desired: usize,
         _maximum: Option<usize>,
     ) -> wasmtime::Result<bool> {
-        if desired > self.memory_bytes {
+        let total = self.total.saturating_add(desired.saturating_sub(current));
+        if total > self.memory_bytes {
             self.hit = true;
             wasmtime::bail!(
-                "memory growth to {desired} bytes exceeds the cap of {} bytes",
+                "memory growth to {total} bytes across the component's memories exceeds the \
+                 cap of {} bytes",
                 self.memory_bytes
             );
         }
+        self.total = total;
         Ok(true)
     }
 
@@ -332,6 +339,7 @@ impl WasmLogic {
                 host: Lent(None),
                 limits: Limits {
                     memory_bytes,
+                    total: 0,
                     hit: false,
                 },
             },
@@ -465,5 +473,26 @@ impl Logic for WasmLogic {
 
     fn take_error(&mut self) -> Option<LogicError> {
         self.error.take()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The cap holds across memories: a second memory cannot take what the first left.
+    #[test]
+    fn the_memory_cap_is_on_all_memories_together() {
+        const MIB: usize = 1 << 20;
+        let mut limits = Limits {
+            memory_bytes: 64 * MIB,
+            total: 0,
+            hit: false,
+        };
+        assert!(limits.memory_growing(0, 40 * MIB, None).unwrap());
+        assert!(!limits.hit);
+        assert!(limits.memory_growing(0, 40 * MIB, None).is_err());
+        assert!(limits.hit);
+        assert_eq!(limits.total, 40 * MIB);
     }
 }
