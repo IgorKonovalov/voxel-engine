@@ -156,6 +156,8 @@ run then stopped in its outbound flight on `wgpu error: Out of Memory` on the 8 
 no peak was read. A recorded miss: ADR-0011 keeps contour planes, and fitting this footprint
 under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2).
 
+**Brick-array pool (Plan 0014).** The pool adds at most 8 MiB per world (`World::BRICK_ARRAY_POOL_CAP` 8192 arrays x 1 KiB); the fly-through holds a 4096-array reserve (2326 KiB pooled after the `B` bench, 5850218, dev reference).
+
 **Prefabs (arithmetic, Plan 0008; no reading needed).** A `Prefab` holds 2 B of material plus
 one mask bit per voxel: a 16³ prefab is 8 KiB + 512 B, a 64³ one 512 KiB + 32 KiB. A parsed
 `.vox` model is capped at 256³ per axis (`MAX_MODEL_EDGE`), so the largest `to_prefab`
@@ -183,6 +185,18 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   3.556 to 3.566 ms (CI 3.552 to 3.572 ms over two runs), `mixed` 2.586 to 2.596 ms, `tool`
   8.119 to 8.120 ms; the fly-through `B` line 3.30 to 3.34 ms. It misses the 2 ms budget; the
   budget stands (owner's call at the Plan 0003 close) and Plan 0014 is the second pass.
+  **Quiet-box reading at the Plan 0014 tip (dev reference, AMD Ryzen 9 5900HS, 5850218,
+  exclusive perf lock, 1-minute load 1.93 before and 1.50 after, paired and alternated with
+  the Plan 0003 tip 2129bfb):** `worst_warm` (the `worst` case after
+  `World::reserve_brick_arrays`) 3.034 to 3.054 ms (CI 3.031 to 3.057 ms over two runs);
+  `worst` 3.189 to 3.264 ms (CI 3.187 to 3.269 ms), against 3.549 ms for the Plan 0003 tip
+  in the same window; `mixed` 2.326 to 2.355 ms; `tool` 6.777 to 6.798 ms, `tool_warm` 6.660
+  to 6.688 ms. The fly-through `B` line (`--level --seed 1 --headless --bench 1`) reads 2.98
+  to 3.04 ms against 3.31 to 3.32 ms, three runs each. The warm figure assumes the reserve
+  runs off the edit path: the caller tops the pool up between frames (the fly-through does,
+  after each frame's edits), so a frame's expansions take pooled arrays instead of
+  allocating. Both readings miss the 2 ms budget; the 2 ms figure is unchanged, and the
+  remaining cost is the row write bounded by the brick representation (Plan 0014's close). The decision awaits the owner (a representation ADR versus a measured cap).
 - **Results** are returned synchronously with the edit, per material, exact.
 - **Stamp cost (proposals, Plan 0008):** a 16³ prefab stamp (the shelled box `Prefab::vault`)
   into solid rock costs under 100 µs, and a 64³ all-written prefab under 5 ms, both including
@@ -190,6 +204,19 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   vxe-world --bench stamp`, exclusive perf lock, box under outside load of about 2 to 5,
   commits 83ab811 and 39d3700):** `vault16` 22.6 to 22.8 µs; `prefab64_mixed` 2.02 to 2.07 ms;
   `prefab64_uniform` 1.455 ms. Both under their proposals; the proposals stand as budgets.
+- **Collapse cost (proposals, Plan 0009):** `find_unsupported` after a radius-10 carve at the
+  centre of a solid 4³-chunk world (every flood runs to the cap) under 1 ms; `drop_region` of
+  the 9-cell test slab under 100 µs; `remove_region` of that slab with rubble 1/4 under
+  200 µs; `drop_region` of a 4096-cell cube (2 097 152 voxels) under 20 ms (a guess at the
+  proposal). **Readings (dev reference, AMD Ryzen 9 5900HS, Linux, `cargo bench -p vxe-world
+  --bench collapse`, criterion medians, exclusive perf lock; at b0d5565 with 1-minute load
+  4.57 falling to 2.18, and at 09556ed after the brick-array pool merge with load 11.75 falling
+  to 4.18):** `find_unsupported` 327 to 396 µs; slab drop by 32 72 µs and by 10 (not a
+  multiple of the brick edge) 49 to 50 µs; `remove_region` 119 to 127 µs; cube drop by 64
+  6.8 to 6.9 ms and by 60 8.1 to 8.6 ms; cube drop by 8 5.15 ms (no proposal). In the
+  fly-through, the query after a 0.5 m dig on the seed-1 level reads 492 to 619 µs over six
+  digs (release build, 25b483d; no proposal). Every reading is under its proposal; the
+  proposals stand as budgets.
 - **Determinism:** the same op list on the same seed yields bit-identical voxels and results on
   Linux and Windows. CI asserts a fixed vector's hash on both arms. **Asserted:**
   `determinism_vector` passed on the Linux and Windows CI arms at 9565c5a and 1d61aba
@@ -238,6 +265,10 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   count: `generate_with_threads` at 1 and 7 threads gives the same hash, and
   `crates/vxe-world/tests/stamp.rs` pins it at `0x7ee7_eeb7_0956_d069`, blessed on Linux; the
   stamp is integer-only, so the Windows arm must reproduce it.
+- The collapse course (`crates/vxe-world/tests/collapse.rs`, Plan 0009: a query, four per-tick
+  drops and a removal, hashing every result and the world after each step) pins
+  `0x3178_0a15_61c1_3041`, blessed on Linux. The Windows arm confirms it on the first CI run
+  after a push of `main`; the ops are integer-only, so a mismatch is a defect, fixed forward.
 
 ## 7. Startup and build
 

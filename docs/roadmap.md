@@ -151,7 +151,7 @@ streaming line (render-thread CPU p50 about 7 ms, p99 52 to 61 ms against 1.0 ms
 rays in the streamed world (6.69 ms at 1080p against 3.0 ms), both on the dev reference. The
 budgets stand. The §4 edit-cost miss carries forward from Plan 0001 to Plan 0003 (closed 2026-10-17,
 v0.4.1), which cut the `worst` bench from 4.6 to 3.56 ms on a quiet dev box with no result or
-hash moved; the owner keeps the 2 ms figure, and Plan 0014 (approved) is the second pass.
+hash moved; the owner kept the 2 ms figure. Plan 0014 (closed 2026-10-17, v0.7.0) is the second pass: a brick-array pool, a sphere span walk and an analytic capsule row cut `worst` to 3.19-3.26 ms (3.03-3.05 ms with a warm pool) and `tool` from 8.05 to 6.78-6.80 ms. The §4 miss carries forward: the row write bounds the cost inside ADR-0002's representation, and the decision between a representation ADR and a measured §4 cap awaits the owner.
 
 **Next, before M2's lighting:** a streaming-CPU plan (incremental queue, residency sweep and
 window shift; narrowing and staging on workers) and a march-pass diagnosis spike (step counts,
@@ -308,32 +308,35 @@ streamer; Plan 0004's Followups list them. Plan 0009 (collapse) is unblocked.
 - Follow-up: once Plan 0007 closes, the runtime stamp goes through `Server` as op kind 2
   (reserved there), so a stamp is a logged, replayable op like an edit.
 
-### M8: Volumetrics, debris and collapse (Plan 0009 drafts the support query and the collapse ops; the cosmetic rigid-body layer follows M6)
+### M8: Volumetrics, debris and collapse (support query and collapse ops shipped in Plan 0009, v0.8.0; volumetrics, debris and the cosmetic rigid-body layer remain open, the last after M6)
 
 - Dust and fog in the ray marcher; short-lived particle debris from edits.
 - **Support query** in `vxe-world`: after an edit, the set of coarse-grid cells (0.8 m, from
   M3) that are solid but no longer connected to the anchor (the indestructible shell, the
-  world boundary, or an explicit anchor set the game supplies). Incremental connected
-  components over the touched region, integer, deterministic, so a server tick can run it
-  after every carve. Returns regions as cell sets with their voxel counts per material, the
-  same shape as an edit result.
-- **Collapse ops**: cut a region out of the world into a free-standing voxel volume, drop it
-  along the vertical axis in fixed point until it rests on solid, and stamp it back as an
-  additive op. Translation only, no rotation, so the stamp is lossless and the outcome is
+  world boundary, or an explicit anchor set the game supplies). A capped flood (ADR-0008)
+  from the edit's changed cells over load-bearing cells, integer, deterministic and holding
+  nothing between calls, so a server tick can run it after every carve. Returns regions as
+  cell sets with their voxel counts per material, the same shape as an edit result. Shipped
+  in Plan 0009.
+- **Collapse ops**: translate a region's voxels straight down in place, as one rigid piece,
+  by the integer air gap under its columns (at most a per-call maximum, so a per-tick call is
+  an animated fall). Translation only, no rotation, so the move is lossless and the outcome is
   bit-identical on both CI arms. A second op removes an unsupported region outright and fills
   the cells below with a rubble material. The game picks one per region from the support
   query's answer. Both are ordinary ops: they return per-material counts and the touched
-  region, and replicate through M5's log.
+  region, and replicate through M5's log once they are wired as op kinds 3 and 4 (a
+  followup of Plan 0009). Shipped in Plan 0009 as `World::drop_region` and
+  `World::remove_region`.
 - **Cosmetic rigid bodies**: a client-side layer, in its own optional crate, that animates the
   pieces of a collapsed region with a rigid-body library (`rapier` or similar) between the
-  server's "region R fell at tick T" and the stamped result, then fades the pieces into the
+  server's "region R fell at tick T" and the landed result, then fades the pieces into the
   authoritative world. It never writes to `vxe-world` and nothing deterministic reads it.
 - **Headless proof:** carving the single pillar under a 3 × 3 cell slab returns that slab as
   one unsupported region with its exact material counts; the drop op lands it on the floor
   with every voxel in place and the same hash on both CI arms.
 - **ADRs expected:** voxel dynamics versus a physics engine (the rejected alternatives are a
   general rigid-body engine in the authoritative world, scripted-only collapse, and rotating
-  pieces).
+  pieces): ADR-0008, accepted at Plan 0009's close.
 
 ### M9: Networking
 

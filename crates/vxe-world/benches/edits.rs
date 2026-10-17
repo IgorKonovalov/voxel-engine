@@ -7,6 +7,12 @@
 //!   air, so the carves meet uniform-air, uniform-rock and (after earlier carves) `Full` bricks.
 //! - `tool`: 100 capsule carves of radius 5 voxels and length 30 voxels at seeded centres and
 //!   seeded directions on the solid world.
+//! - `worst_warm` and `tool_warm`: `worst` and `tool` with the world's brick-array pool
+//!   reserved in the untimed setup, as a caller that reserves off the edit path sees them.
+//!
+//! The `expand` group splits what `Brick::expand` costs per 1000 arrays: the allocation on
+//! fresh heap, the allocator's hot path, the 1 KiB fill, and the allocation on heap that was
+//! touched before.
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use vxe_world::hash::mix64;
@@ -120,12 +126,94 @@ fn run(c: &mut Criterion, name: &str, setup: fn() -> World, ops: &[EditOp]) {
     });
 }
 
-fn edits(c: &mut Criterion) {
-    let spheres = sphere_ops();
-    run(c, "worst", solid_world, &spheres);
-    run(c, "mixed", mixed_world, &spheres);
-    run(c, "tool", solid_world, &tool_ops());
+/// Arrays per `expand` iteration.
+const ARRAYS: usize = 1000;
+
+type Voxels = [MaterialId; BRICK_VOXELS];
+
+/// Per 1000 arrays of 512 `u16`:
+///
+/// - `fresh_kept`: `Box::new([3; 512])`, each box kept alive to the end of the iteration and
+///   freed outside the timed region, as the edit bench's expansions are. The previous
+///   iteration's arrays were freed at the top of the heap, which glibc returns to the kernel
+///   past its trim threshold, so these allocations meet fresh pages.
+/// - `alloc_drop`: the same allocation with each box dropped before the next: the allocator's
+///   hot path, one chunk reused.
+/// - `fill`: `[3; 512]` written into each of 1000 existing, touched arrays.
+/// - `pretouched`: as `fresh_kept`, after the untimed setup allocated and freed 1000 arrays
+///   below a live fence allocation, so the freed megabyte is not at the top of the heap, is
+///   not trimmed, and its pages are touched.
+fn expand(c: &mut Criterion) {
+    let mut g = c.benchmark_group("expand");
+    g.bench_function("fresh_kept", |b| {
+        b.iter_batched(
+            || Vec::<Box<Voxels>>::with_capacity(ARRAYS),
+            |mut v| {
+                for _ in 0..ARRAYS {
+                    v.push(Box::new([std::hint::black_box(3); BRICK_VOXELS]));
+                }
+                v
+            },
+            BatchSize::LargeInput,
+        )
+    });
+    g.bench_function("alloc_drop", |b| {
+        b.iter(|| {
+            for _ in 0..ARRAYS {
+                std::hint::black_box(Box::new([std::hint::black_box(3); BRICK_VOXELS]));
+            }
+        })
+    });
+    let mut arrays: Vec<Box<Voxels>> = (0..ARRAYS).map(|_| Box::new([0; BRICK_VOXELS])).collect();
+    g.bench_function("fill", |b| {
+        b.iter(|| {
+            for a in &mut arrays {
+                a.fill(std::hint::black_box(3));
+                std::hint::black_box(&mut **a);
+            }
+        })
+    });
+    drop(arrays);
+    g.bench_function("pretouched", |b| {
+        b.iter_batched(
+            || {
+                let freed: Vec<Box<Voxels>> =
+                    (0..ARRAYS).map(|_| Box::new([0; BRICK_VOXELS])).collect();
+                let fence = Box::new([0u64; 4]);
+                drop(freed);
+                (fence, Vec::<Box<Voxels>>::with_capacity(ARRAYS))
+            },
+            |(fence, mut v)| {
+                for _ in 0..ARRAYS {
+                    v.push(Box::new([std::hint::black_box(3); BRICK_VOXELS]));
+                }
+                (fence, v)
+            },
+            BatchSize::LargeInput,
+        )
+    });
+    g.finish();
 }
 
-criterion_group!(benches, edits);
+/// Arrays reserved for the warm cases: about 25 bricks expanded per carve (24.9 for the
+/// spheres and 24.1 for the capsules, counted over the 100 carves), times 100 carves.
+const WARM_ARRAYS: usize = 2500;
+
+fn solid_world_warm() -> World {
+    let world = solid_world();
+    world.reserve_brick_arrays(WARM_ARRAYS);
+    world
+}
+
+fn edits(c: &mut Criterion) {
+    let spheres = sphere_ops();
+    let tools = tool_ops();
+    run(c, "worst", solid_world, &spheres);
+    run(c, "worst_warm", solid_world_warm, &spheres);
+    run(c, "mixed", mixed_world, &spheres);
+    run(c, "tool", solid_world, &tools);
+    run(c, "tool_warm", solid_world_warm, &tools);
+}
+
+criterion_group!(benches, edits, expand);
 criterion_main!(benches);

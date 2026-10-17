@@ -97,3 +97,60 @@ fn row_span_includes_the_sphere_boundary() {
     assert_eq!(s.row_span(0, 0, 1, 10), Some((1, 3)));
     assert_eq!(s.row_span(0, 0, 4, 10), None);
 }
+
+/// For 1000 seeded capsule rows (radius 1 to 40 voxels, ends within ±64 voxels, including
+/// segments parallel to `x` and degenerate segments of length 0, and the extremes of those
+/// ranges), the span equals the exact set of contained centres in the row's window.
+#[test]
+fn capsule_row_span_equals_the_set_of_contained_centres() {
+    let mut rng = SplitMix64(0x0014_0004);
+    let point = |rng: &mut SplitMix64| [0; 3].map(|_| rng.range(-64 * 256, 64 * 256));
+    let (mut spans, mut parallel, mut points) = (0, 0, 0);
+    for i in 0..1000 {
+        let a = match i % 50 {
+            // The corners of the range.
+            0 => [-64 * 256; 3],
+            1 => [64 * 256; 3],
+            _ => point(&mut rng),
+        };
+        let b = match i % 6 {
+            0 => a,
+            1 | 2 => [rng.range(-64 * 256, 64 * 256), a[1], a[2]],
+            _ => match i % 50 {
+                0 => [64 * 256; 3],
+                1 => [-64 * 256; 3],
+                _ => point(&mut rng),
+            },
+        };
+        let r = match i % 25 {
+            0 => FIXED_ONE,
+            1 => 40 * FIXED_ONE,
+            _ => rng.range(FIXED_ONE, 40 * FIXED_ONE),
+        };
+        let shape = Shape::Capsule {
+            a: Fixed3(a),
+            b: Fixed3(b),
+            r,
+        };
+        parallel += usize::from(a[1] == b[1] && a[2] == b[2] && a != b);
+        points += usize::from(a == b);
+        let (lo, hi) = shape.voxel_bounds().unwrap();
+        let y = rng.range(lo[1] - 2, hi[1] + 2);
+        let z = rng.range(lo[2] - 2, hi[2] + 2);
+        let x_lo = rng.range(lo[0] - 4, hi[0]);
+        let x_hi = x_lo + rng.range(0, hi[0] - lo[0] + 8);
+        let expected = contained_range(&shape, y, z, x_lo, x_hi);
+        assert_eq!(
+            shape.row_span(y, z, x_lo, x_hi),
+            expected,
+            "row {i}: {shape:?} y {y} z {z} x {x_lo}..={x_hi}"
+        );
+        spans += usize::from(expected.is_some());
+    }
+    println!("{spans} of 1000 rows hold a span; {parallel} parallel to x, {points} points");
+    assert!(spans >= 300, "{spans} rows hold a span");
+    assert!(
+        parallel >= 300 && points >= 150,
+        "{parallel} parallel, {points} points"
+    );
+}

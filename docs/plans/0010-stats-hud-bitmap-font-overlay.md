@@ -526,6 +526,13 @@ Buffers: cells 128 KiB at the cap, font 760 bytes, samples 1 KiB, params 64 byte
 - Environment: during Phase 4 the user's tmpfs quota on `/tmp` was full (the shared scratchpad
   held 11 GB of other lanes' files), so gate logs and `TMPDIR` went to this worktree's
   `target/`; no other lane's files were touched.
+- Merge of main at e7c3367 (plans 0014 and 0009) into this branch: `main.rs` took both import
+  and constant sets, the HUD's `Run` methods, and main's `edited` returning the changed cells.
+  The dig, fill and `P` stamp go through `record_edit` with their printed lines unchanged; the
+  collapse's per-frame drops (`dropped`) and `R` removals (`removed`) set the last-edit row
+  without printing, since their printed lines keep main's form. Gate at the merge: nextest
+  256 passed, 4 skipped (ignored), with `VXE_REQUIRE_SOFTWARE_ADAPTER=1`; `golden/hud.png`
+  matched unchanged.
 
 ### Close triggers
 

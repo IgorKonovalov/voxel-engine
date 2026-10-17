@@ -29,6 +29,12 @@
 //! refuses `--walk`); in walk mode `W A S D` walk at 3 m/s and `Space` jumps, or, held against
 //! a wall with a standable top within 1.2 m, climbs it. On the bounded level the fly-through
 //! keeps a coarse grid and walkable map updated from every edit; `K` prints them.
+//!
+//! Collapse (bounded level, ADR-0008): after every dig the fly-through asks the grid which
+//! regions lost their support and prints each as `unsupported: N cells, {material: count}`.
+//! Each region falls 8 voxels a frame until it lands (`landed after N frames, fell M voxels`);
+//! `R` toggles removing it with rubble (a quarter of its volume) instead. `F1` adds the last
+//! query's time and region count.
 
 mod fly;
 
@@ -40,7 +46,7 @@ use std::time::Instant;
 use fly::{Fly, Walk};
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, VAULT_EDGE, vault};
 use flythrough::hud::{self, Cadence, EditLine, FrameStats, HudStats, WorldSample};
-use flythrough::{RESIDENCY, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
+use flythrough::{RESIDENCY, RUBBLE, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile};
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
 use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
@@ -50,9 +56,10 @@ use vxe_render::{
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
-    ChunkCoord, ChunkExtent, CoarseGrid, EditError, EditOp, EditResult, FIXED_ONE, Fixed3,
-    MaterialId, MaterialTable, Mode, PersistConfig, Rot, StreamConfig, Streamer, Tier, VoxelCoord,
-    WalkableMap, WalkableParams, World,
+    Anchors, BRICK_VOXELS, CellChange, CellCoord, ChunkCoord, ChunkExtent, CoarseGrid, EditError,
+    EditOp, EditResult, FIXED_ONE, Fixed3, MaterialId, MaterialTable, Mode, PersistConfig, Rot,
+    StreamConfig, Streamer, SupportParams, Tier, VoxelCoord, WalkableMap, WalkableParams, World,
+    find_unsupported,
 };
 
 /// Reach of the dig and fill rays: 10 m.
@@ -67,6 +74,9 @@ const FILL_RADIUS: i64 = 3 * FIXED_ONE;
 const BENCH_CARVES: usize = 100;
 const BENCH_RADIUS: i64 = 10 * FIXED_ONE;
 const BENCH_SPREAD: i64 = 100;
+/// Brick arrays the world's pool is topped up to after each frame's edits and before the `B`
+/// bench: 4 Mi of `u16` voxels, more than the bench's 100 carves expand.
+const RESERVE_ARRAYS: usize = 4096;
 /// Free pool slots requested beyond the bounded level's `Full` bricks, so digging can grow
 /// the pool: 64 Ki slots.
 const POOL_HEADROOM_BRICKS: u64 = 65_536;
@@ -98,6 +108,18 @@ const HUD_SCALE: u32 = 2;
 /// `world_stats_call_on_the_streamed_world_at_full_residency`), so its frame reaches at most
 /// the window's max and not its p99.
 const HUD_STATS_EVERY: u32 = 240;
+/// The support query after a dig: cells of at least 64 solid voxels bear load, a flood gives
+/// up past 4096 cells, and the level's faces anchor (ADR-0008).
+const SUPPORT: SupportParams = SupportParams {
+    solid_min: 64,
+    max_region: 4096,
+    boundary_anchors: true,
+};
+/// Voxels a falling region drops per frame: one cell, so it stays on the cell lattice.
+const FALL_PER_FRAME: i32 = 8;
+/// A removed region's rubble: a quarter of each column's volume, on ground within 6.4 m.
+const RUBBLE_FRACTION: (u32, u32) = (1, 4);
+const RUBBLE_DEPTH: i32 = 64;
 
 #[allow(
     clippy::disallowed_methods,
@@ -508,12 +530,29 @@ struct Autopilot {
     generated_at_takeoff: u64,
 }
 
-/// The bounded level's coarse grid and walkable map, updated from every edit.
+/// The bounded level's coarse grid and walkable map, updated from every edit, and the regions
+/// falling after a dig.
 struct Coarse {
     grid: CoarseGrid,
     map: WalkableMap,
     /// Cells the last edit changed, and the grid plus walkable update time in microseconds.
     last: Option<(usize, f64)>,
+    /// Regions falling, in the order they were found.
+    falling: Vec<Falling>,
+    /// `R`: remove unsupported regions with rubble instead of dropping them.
+    crumble: bool,
+    /// The last support query's time in microseconds and the regions it found.
+    query: Option<(f64, usize)>,
+    /// The last drop or removal: its verb, result and time in milliseconds, for the HUD.
+    last_edit: Option<(&'static str, EditResult, f64)>,
+}
+
+/// A region on its way down: its cells (moved one cell down per full-step frame), the frames
+/// it moved on and the voxels it fell.
+struct Falling {
+    cells: Vec<CellCoord>,
+    frames: u32,
+    fell: i32,
 }
 
 impl Coarse {
@@ -532,14 +571,20 @@ impl Coarse {
             grid,
             map,
             last: None,
+            falling: Vec::new(),
+            crumble: false,
+            query: None,
+            last_edit: None,
         }
     }
 
-    fn update(&mut self, world: &World, r: &EditResult) {
+    /// Updates the grid and the walkable map from `r`; returns the grid's changed cells.
+    fn update(&mut self, world: &World, r: &EditResult) -> Vec<CellChange> {
         let t = now();
         let changes = self.grid.update(world, r);
         self.map.update(&self.grid, &changes);
         self.last = Some((changes.len(), ms_since(t) * 1e3));
+        changes
     }
 
     /// The `K` line.
@@ -552,6 +597,119 @@ impl Coarse {
             None => format!("coarse: {} walkable cells, no edit yet", self.map.count()),
         }
     }
+
+    /// After a dig that changed `changes`: queries the support, prints each unsupported region
+    /// and either queues it to fall or removes it with rubble. A region overlapping one already
+    /// falling is that one, and is skipped.
+    fn collapse(&mut self, world: &World, changes: &[CellChange]) -> Vec<String> {
+        let t = now();
+        let regions = find_unsupported(world, &self.grid, &SUPPORT, &Anchors::default(), changes);
+        self.query = Some((ms_since(t) * 1e3, regions.len()));
+        let table = world.materials();
+        let mut lines = Vec::new();
+        for region in regions {
+            if self.falling.iter().any(|f| {
+                region
+                    .cells
+                    .iter()
+                    .any(|c| f.cells.binary_search(c).is_ok())
+            }) {
+                continue;
+            }
+            lines.push(format!(
+                "unsupported: {} cells, {{{}}}",
+                region.cells.len(),
+                counts_line(table, &region.counts)
+            ));
+            if self.crumble {
+                let t = now();
+                match world.remove_region(&region.cells, RUBBLE, RUBBLE_FRACTION, RUBBLE_DEPTH) {
+                    Ok(r) => {
+                        let ms = ms_since(t);
+                        lines.push(format!(
+                            "removed: {{{}}}, {} rubble",
+                            counts_line(table, &r.removed),
+                            r.placed
+                        ));
+                        let e = r.edit_result();
+                        self.update(world, &e);
+                        self.last_edit = Some(("removed", e, ms));
+                    }
+                    Err(e) => lines.push(format!("removed: refused, {e}")),
+                }
+            } else {
+                self.falling.push(Falling {
+                    cells: region.cells,
+                    frames: 0,
+                    fell: 0,
+                });
+            }
+        }
+        lines
+    }
+
+    /// One frame of falling: every falling region drops by up to [`FALL_PER_FRAME`]. A drop
+    /// of a whole step moves the region's cells one cell down and it falls on; a shorter drop
+    /// (or none) means a column met solid ground, so the next drop would be zero, and the
+    /// region has landed.
+    fn fall(&mut self, world: &World) -> Vec<String> {
+        let mut lines = Vec::new();
+        for mut f in std::mem::take(&mut self.falling) {
+            let t = now();
+            match world.drop_region(&f.cells, FALL_PER_FRAME) {
+                Ok(r) => {
+                    if r.dropped > 0 {
+                        let ms = ms_since(t);
+                        f.frames += 1;
+                        f.fell += r.dropped;
+                        let e = r.edit_result();
+                        self.update(world, &e);
+                        self.last_edit = Some(("dropped", e, ms));
+                    }
+                    if r.dropped == FALL_PER_FRAME {
+                        for c in &mut f.cells {
+                            c.0[2] -= 1;
+                        }
+                        self.falling.push(f);
+                    } else {
+                        lines.push(format!(
+                            "landed after {} frames, fell {} voxels",
+                            f.frames, f.fell
+                        ));
+                    }
+                }
+                Err(e) => lines.push(format!("fall: refused, {e}")),
+            }
+        }
+        lines
+    }
+
+    /// The `R` toggle.
+    fn toggle_crumble(&mut self) -> String {
+        self.crumble = !self.crumble;
+        if self.crumble {
+            "collapse: remove unsupported regions with rubble".to_owned()
+        } else {
+            "collapse: drop unsupported regions".to_owned()
+        }
+    }
+
+    /// The `F1` collapse line.
+    fn query_line(&self) -> String {
+        match self.query {
+            Some((us, n)) => format!("collapse: last query {us:.0} us, {n} regions"),
+            None => "collapse: no query yet".to_owned(),
+        }
+    }
+}
+
+/// `rock: 4608, ore: 12`: per-material counts by name.
+fn counts_line(table: &MaterialTable, counts: &[(MaterialId, u32)]) -> String {
+    counts
+        .iter()
+        .map(|&(m, n)| format!("{}: {n}", material_name(table, m)))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The running fly-through, once the world exists.
@@ -580,9 +738,22 @@ struct Run {
 impl Run {
     /// Prints the edit's line and keeps it for the HUD.
     fn record_edit(&mut self, verb: &'static str, r: &EditResult, ms: f64) {
-        let e = edit_record(verb, r, self.world.materials(), ms);
-        println!("{e}");
-        self.hud.last_edit = Some(e);
+        println!("{}", self.note_edit(verb, r, ms));
+    }
+
+    /// Keeps the edit for the HUD's last-edit row without printing it, for an edit whose
+    /// printed line has another form (the collapse's drops and removals); returns the record.
+    fn note_edit(&mut self, verb: &'static str, r: &EditResult, ms: f64) -> &EditLine {
+        self.hud
+            .last_edit
+            .insert(edit_record(verb, r, self.world.materials(), ms))
+    }
+
+    /// Hands the HUD the collapse's last drop or removal, if it made one since the last call.
+    fn note_collapse_edit(&mut self) {
+        if let Some((verb, r, ms)) = self.coarse.as_mut().and_then(|c| c.last_edit.take()) {
+            self.note_edit(verb, &r, ms);
+        }
     }
 
     /// Samples the world's counts for the HUD: `World::stats`, and `Streamer::stats` for the
@@ -659,9 +830,12 @@ impl Run {
         gfx.hud.set_samples(&gpu.queue, &h.strip, hud::CEILING_MS);
     }
 
-    fn edited(&mut self, r: &EditResult) {
-        if let Some(c) = self.coarse.as_mut() {
-            c.update(&self.world, r);
+    /// Keeps the coarse grid current with `r`; returns its changed cells (none while
+    /// streaming).
+    fn edited(&mut self, r: &EditResult) -> Vec<CellChange> {
+        match self.coarse.as_mut() {
+            Some(c) => c.update(&self.world, r),
+            None => Vec::new(),
         }
     }
 
@@ -741,7 +915,13 @@ impl Run {
         match r {
             Ok(r) => {
                 self.record_edit("carved", &r, ms);
-                self.edited(&r);
+                let changes = self.edited(&r);
+                if let Some(c) = self.coarse.as_mut() {
+                    for line in c.collapse(&self.world, &changes) {
+                        println!("{line}");
+                    }
+                }
+                self.note_collapse_edit();
             }
             Err(e) => println!("carved: refused, {e}"),
         }
@@ -753,9 +933,12 @@ impl Run {
         let t = now();
         let out = stamp_at_aim(&self.world, origin, dir);
         let ms = ms_since(t);
-        println!("{}", stamp_line(&out, self.world.materials(), ms));
-        if let Some(Ok(r)) = &out {
-            self.edited(r);
+        match &out {
+            Some(Ok(r)) => {
+                self.record_edit("stamped", r, ms);
+                self.edited(r);
+            }
+            _ => println!("{}", stamp_line(&out, self.world.materials(), ms)),
         }
     }
 
@@ -841,8 +1024,9 @@ impl Run {
         match gfx.mirror.sync(&self.world, &gpu.queue) {
             Ok(s) => println!(
                 "bench: {BENCH_CARVES} carves of radius 1 m within 10 m ({refused} refused): \
-                 edits {edit_ms:.2} ms CPU; sync uploaded {} B ({} bricks, {} chunks, {} visited, \
-                 {} writes) in {:.2} ms",
+                 edits {edit_ms:.2} ms CPU, brick-array pool {} KiB; sync uploaded {} B ({} bricks, \
+                 {} chunks, {} visited, {} writes) in {:.2} ms",
+                self.world.pool_len() * BRICK_VOXELS * 2 / 1024,
                 s.bytes,
                 s.bricks,
                 s.chunks,
@@ -885,6 +1069,9 @@ impl Run {
             gfx.mirror.mirror_bytes(),
             gfx.mirror.allocated_bytes()
         );
+        if let Some(c) = &self.coarse {
+            println!("{}", c.query_line());
+        }
     }
 
     /// RAM held by resident chunks: full chunks' voxels and LOD-only chunks' mips.
@@ -978,6 +1165,7 @@ impl Run {
         }
         self.gfx = Some(gfx);
         for _ in 0..self.args.bench {
+            self.world.reserve_brick_arrays(RESERVE_ARRAYS);
             self.bench(gpu);
         }
     }
@@ -1306,6 +1494,15 @@ impl Run {
             }
             self.handle_input(gpu, input);
         }
+        if let Some(c) = self.coarse.as_mut() {
+            for line in c.fall(&self.world) {
+                println!("{line}");
+            }
+        }
+        self.note_collapse_edit();
+        // Off the edit path, after every edit of the frame (falls included): the next frame's
+        // edits take touched arrays from the pool.
+        self.world.reserve_brick_arrays(RESERVE_ARRAYS);
         if let Some(n) = self.args.frames
             && self.frame + SAMPLES as u32 == n
         {
@@ -1349,6 +1546,12 @@ impl Run {
         }
         if input.pressed(KeyCode::KeyK) {
             println!("{}", self.coarse_line());
+        }
+        if input.pressed(KeyCode::KeyR) {
+            match self.coarse.as_mut() {
+                Some(c) => println!("{}", c.toggle_crumble()),
+                None => println!("collapse: not kept while streaming"),
+            }
         }
         if input.pressed(KeyCode::KeyN) {
             let contour = self.gfx.as_ref().is_some_and(|g| g.mirror.surface_attrs());
@@ -1984,6 +2187,126 @@ mod tests {
             stamp_line(&out, &table, 0.0),
             "stamped: no surface within 10 m"
         );
+    }
+
+    /// A box op over the half-open voxel bounds `lo..hi`.
+    fn box_voxels(lo: [i32; 3], hi: [i32; 3], mode: Mode) -> EditOp {
+        let f = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
+        EditOp::box_(f(lo), f(hi), mode)
+    }
+
+    const PILLAR: ([i32; 3], [i32; 3]) = ([32, 32, 8], [40, 40, 40]);
+
+    /// One chunk of air holding a rock floor, a pillar and a 3 x 3-cell ledge on it.
+    fn ledge_world() -> World {
+        let world = World::generate(
+            ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+            &vxe_world::UniformSource(vxe_world::AIR),
+            &cave_materials(),
+        );
+        for (lo, hi) in [
+            ([0, 0, 0], [64, 64, 8]),
+            PILLAR,
+            ([24, 24, 40], [48, 48, 48]),
+        ] {
+            world.apply(&box_voxels(lo, hi, Mode::Fill(ROCK))).unwrap();
+        }
+        world
+    }
+
+    /// The dig's collapse, scripted: digging out the pillar reports the ledge, which falls 8
+    /// voxels a frame for 4 frames and lands on the floor.
+    #[test]
+    fn digging_out_the_pillar_drops_the_ledge_8_voxels_a_frame() {
+        let world = ledge_world();
+        let mut c = Coarse::build(&world);
+        let r = world
+            .apply(&box_voxels(PILLAR.0, PILLAR.1, Mode::Carve))
+            .unwrap();
+        let changes = c.update(&world, &r);
+        assert_eq!(
+            c.collapse(&world, &changes),
+            ["unsupported: 9 cells, {rock: 4608}"]
+        );
+        assert_eq!(c.query.map(|(_, n)| n), Some(1));
+        assert!(c.query_line().starts_with("collapse: last query "));
+        for frame in 1..=4 {
+            assert_eq!(c.fall(&world), Vec::<String>::new(), "frame {frame}");
+            assert_eq!(c.falling[0].fell, 8 * frame);
+        }
+        assert_eq!(c.fall(&world), ["landed after 4 frames, fell 32 voxels"]);
+        assert!(c.falling.is_empty());
+        assert_eq!(
+            world.count_in_box([24, 24, 8], [47, 47, 15]),
+            [(ROCK, 4608)]
+        );
+        assert_eq!(
+            world.count_in_box([24, 24, 16], [47, 47, 47]),
+            [(vxe_world::AIR, 18_432)]
+        );
+        assert_eq!(c.grid, CoarseGrid::build(&world));
+    }
+
+    /// `R`: the ledge is removed instead, a quarter of it piled as rubble on the floor.
+    #[test]
+    fn with_r_the_ledge_is_removed_leaving_a_quarter_as_rubble() {
+        let world = ledge_world();
+        let mut c = Coarse::build(&world);
+        assert_eq!(
+            c.toggle_crumble(),
+            "collapse: remove unsupported regions with rubble"
+        );
+        let r = world
+            .apply(&box_voxels(PILLAR.0, PILLAR.1, Mode::Carve))
+            .unwrap();
+        let changes = c.update(&world, &r);
+        assert_eq!(
+            c.collapse(&world, &changes),
+            [
+                "unsupported: 9 cells, {rock: 4608}",
+                "removed: {rock: 4608}, 1152 rubble"
+            ]
+        );
+        assert!(c.falling.is_empty());
+        assert_eq!(
+            world.count_in_box([24, 24, 8], [47, 47, 9]),
+            [(RUBBLE, 1152)]
+        );
+        assert_eq!(c.grid, CoarseGrid::build(&world));
+        assert_eq!(c.toggle_crumble(), "collapse: drop unsupported regions");
+    }
+
+    /// The support query after digs from the spawn of the seed-1 level, one along each axis
+    /// at the default radius, printed. Generating the level takes minutes unoptimized; run
+    /// with `cargo test --release -p flythrough -- --ignored --nocapture
+    /// a_dig_in_the_level_prints_the_query_time`.
+    #[test]
+    #[ignore = "a reading on the generated level, run in release"]
+    fn a_dig_in_the_level_prints_the_query_time() {
+        let source = CaveSource::new(1, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
+        let world = World::generate(source.extent, &source, &cave_materials());
+        let mut c = Coarse::build(&world);
+        let origin = vxe_world::centre_of_voxel(source.spawn());
+        let f = FIXED_ONE;
+        for dir in [
+            [f, 0, 0],
+            [-f, 0, 0],
+            [0, f, 0],
+            [0, -f, 0],
+            [0, 0, f],
+            [0, 0, -f],
+        ] {
+            let op = EditOp::tool_along_ray(&world, origin, dir, REACH, DIG_RADIUS, Mode::Carve);
+            let r = world.apply(&op).unwrap();
+            let changes = c.update(&world, &r);
+            let lines = c.collapse(&world, &changes);
+            println!(
+                "dig {dir:?}: {} voxels, {} changed cells; {}; {lines:?}",
+                r.changed_from.iter().map(|(_, n)| n).sum::<u32>(),
+                changes.len(),
+                c.query_line()
+            );
+        }
     }
 
     #[test]
