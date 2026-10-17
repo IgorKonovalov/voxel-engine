@@ -557,6 +557,8 @@ frame today.
   bodies arrive. Cons: work now for a cost no consumer feels yet.
 - **Recommendation: accept, and record "profile if a scene sweeps more than about 100 bodies
   a tick"** as the trigger to revisit.
+- **Answered, 2026-10-17: accept.** `nfr.md` §8 carries 26.3 us as the line and the
+  100-body trigger.
 
 ---
 
@@ -573,6 +575,7 @@ hash, the stamped-world hash, and native-versus-component equality. Until it run
 - **Hold.** Pros: none beyond reviewing first. Cons: the Windows unknowns grow with every
   plan built on top.
 - **Recommendation: push after reading this file.** Say "push" and it is one command.
+- **Answered, 2026-10-17: pushed** by the owner.
 
 ---
 

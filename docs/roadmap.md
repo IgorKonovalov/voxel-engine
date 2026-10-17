@@ -268,7 +268,7 @@ streamer; Plan 0004's Followups list them. Plan 0009 (collapse) is unblocked.
   under its feet changes the coarse grid cell and emits one notification.
 - **Visible proof:** walking instead of flying in the fly-through.
 
-### M4: Spatial audio (Plan 0006 merged, awaiting its close; Plan 0020 drafts the reverb)
+### M4: Spatial audio (Plan 0006 done 2026-10-17, v0.12.0; Plan 0020 approved for the reverb)
 
 - `vxe-audio`: output through `cpal`, a mixer, HRTF spatialization, occlusion and transmission
   by ray probes through the material table's acoustic triple, early reflections from ray probes,

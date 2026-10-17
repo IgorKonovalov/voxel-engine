@@ -43,8 +43,10 @@ crates/
 ├── vxe-script-wasm/ # wasmtime host for logic components: the WIT world, deterministic WASI
 │                    #   (tick clocks, seeded entropy), fuel and a memory cap. Not a default
 │                    #   member. guests/ holds the test components
-└── (planned, one per plan) vxe-audio (spatial playback, occlusion through the grid),
-    vxe-script-lua (mlua host, client scripts)
+├── vxe-audio/       # cpal output, an HRTF mixer on the device callback, occlusion and
+│                    #   early reflections probed through the material table; the shipped
+│                    #   HRIR pack under assets/. Depends on vxe-world only; not deterministic
+└── (planned, one per plan) vxe-script-lua (mlua host, client scripts)
 apps/
 └── flythrough/      # the engine's own testbed binary: fly, dig, read edit results
     └── logic/       # flythrough-logic: the dig logic, a native rlib or (feature

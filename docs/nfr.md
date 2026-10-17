@@ -407,31 +407,35 @@ criterion median (low, high), exclusive perf lock, load average 1.7 to 2.3 at ea
 
 ## 9. Audio
 
-`vxe-audio` (Plan 0006, ADR-0006): 48 kHz stereo `f32`, 256-frame blocks (5.33 ms), mixed on
-the device callback. The figures are proposals; the baseline CPU is not on hand, so every
-reading is dev reference. **The readings below were taken under the exclusive machine lock but
-with a 1-minute load average of 9 to 21 from other builds. The quiet-box retake (exclusive lock,
-1-minute load average 1.8 to 2.0) is in Plan 0006's Close triggers.**
+`vxe-audio` (Plan 0006 closed 2026-10-17, ADR-0006): 48 kHz stereo `f32`, 256-frame blocks
+(5.33 ms), mixed on the device callback. The baseline CPU is not on hand, so every reading is
+dev reference: Ryzen 9 5900HS laptop, release, the quiet-box protocol of Plan 0006's close
+(exclusive machine lock, 1-minute load average under 2, no other process above 7 % CPU),
+44a1582's tree unless stated. Readings taken under a load average of 9 to 21 are in the
+plan's Close triggers as superseded figures.
 
 - **Mixer callback, 32 HRTF voices, one 256-frame block:** 1.0 ms on the baseline CPU
   (proposal; 32 x 2 x 128 x 256 = 2.1 million multiply-adds plus filters and taps).
-  **Reading (Plan 0006 Phase 5, `cargo bench -p vxe-audio --bench mixer`, release, Ryzen 9
-  5900HS, load average 9 to 21):** 1.875 ms (1.856 to 1.895 ms) per block with 32 voices of
-  looping noise, each low-passed and carrying 16 taps, no direction change. Over the proposal
-  on the dev box.
-- **`Acoustics::update`, 32 sources:** 0.5 ms per call (proposal; 224 occlusion rays plus 16
-  reflection rays). **Reading (same bench, seed-1 level-size cave, listener at the spawn,
-  sources 2 to 12 m out, every source due):** 1.301 ms (1.254 to 1.348 ms), 512 taps sent. Over
-  the proposal on the dev box.
+  **Reading (`cargo bench -p vxe-audio --bench mixer`, 32 voices of looping noise, each
+  low-passed and carrying 16 taps):** 0.3619 ms (0.3615 to 0.3623) static; 0.6667 ms (0.6659
+  to 0.6673) with the listener yawing 90 degrees per block, every voice crossfading its HRIR.
+- **`Acoustics::update`, 32 sources:** about 1.0 ms per call, accepted by the owner
+  2026-10-17 (D2b) over the plan's 0.5 ms proposal, which had no arithmetic behind it: about
+  240 rays of about 100 voxel steps at about 40 ns, each step a chunk-map lookup and lock.
+  **Reading (`cargo bench -p flythrough --bench acoustics`, seed-1 level-size cave, listener
+  at the spawn, sources 2 to 12 m out, every source due, 512 taps sent):** 1.0294 ms (1.0278
+  to 1.0313). Speed-ups (a chunk handle cached across steps, a probe worker thread) are
+  followups.
 - **Audio RAM:** the pack plus 200 ms delay lines plus scratch (proposal). **Reading:** pack
   3 194 204 B in memory (3 044 420 B on disk); delay line 39 424 B per voice, 2 523 136 B for
   the 64-voice pool allocated at `Mixer::new`.
-- **Startup:** pack load under 10 ms (proposal). **Reading:** 14.6 ms in a dev build of the
-  fly-through (headless, load average 11.5); 7.1 to 8.9 ms in a release test build (Plan 0006
-  Phase 2, shared lock).
+- **Startup:** pack load under 10 ms (proposal). **Reading:** 13.5 to 13.6 ms in the release
+  fly-through over three runs (`--seed 1 --audio --headless --frames 10`, a null-ALSA
+  device); 7.1 to 8.9 ms in a release test build. Accepted as the reading (D2c): it runs once.
 - **Fly-through `F1`:** the callback times itself (`OutputStats::busy_max_ms`) and `F1` prints
   the longest callback over the last second, the voices, the active taps and the last
-  acoustics update's time. Reading with 8 voices playing: awaits the owner (a window run).
+  acoustics update's time. **Reading by the owner, 2026-10-17, `main` at 7e8b3d2 with 8
+  voices playing:** callback max 0.429 ms, 128 active taps.
 - **Determinism:** `World::trace_materials` is integer and its 500-ray hash is pinned in
   `crates/vxe-world/tests/queries.rs` on both arms; nothing else in `vxe-audio` is
   deterministic by contract (§6).

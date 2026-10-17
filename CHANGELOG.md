@@ -6,6 +6,10 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-17
+
+Plan 0006 (a minor bump, a feature plan): the `vxe-audio` crate. A headless mixer renders positional voices to binaural stereo through a packed SADIE II head (subject D2, 2950 directions, 128 taps, Apache 2.0) and plays them through `cpal` on the device callback, which allocates nothing and drains a bounded command channel per block. `World::trace_materials` walks the integer DDA through solids as material runs; `Acoustics` probes occlusion and transmission through the material table's acoustic triple and sixteen early-reflection taps per voice on the caller's thread. The fly-through plays a knock, eight hum notes, a looping pulse, toggles the echoes and meters the callback under `--audio-debug`. ADR-0006 accepted.
+
 ## [0.11.1] - 2026-10-17
 
 Plan 0012 (a patch bump, the owner's call on 2026-10-17 over the close's "no version"): CI runs `scripts/check-comment-hygiene.mjs` (no relative link or plan-relative narration in `.rs`/`.wgsl` comments) and `scripts/check-index-rows.mjs` with `--self-test` (rows inside `roster:begin` markers at most 320 bytes); seeded fixture trees under `scripts/fixtures/`.
