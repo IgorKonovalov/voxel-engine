@@ -26,8 +26,9 @@ game or any gameplay concept.**
 crates/
 ├── vxe-world/       # voxel storage (brick map), material table, edit ops + results, spatial
 │                    #   queries, coarse grids, LOD mips, chunk streaming, prefabs and
-│                    #   stamping (runtime and generation time). HEADLESS and
-│                    #   DETERMINISTIC: no GPU, no wall clock, no unseeded RNG, integer edit math
+│                    #   stamping (runtime and generation time), support query, collapse
+│                    #   ops. HEADLESS and DETERMINISTIC: no GPU, no wall clock, no
+│                    #   unseeded RNG, integer edit math
 ├── vxe-render/      # wgpu: brick upload, compute ray marching, lighting, denoise, upscale,
 │                    #   voxel-model entities. WGSL under src/shaders/. Never branches on backend
 ├── vxe-app/         # winit shell: window, input, surface, frame loop. Thin and optional
