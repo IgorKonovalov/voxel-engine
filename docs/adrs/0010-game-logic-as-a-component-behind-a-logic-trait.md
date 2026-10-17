@@ -2,7 +2,7 @@
 
 > **Status:** proposed
 > **Date:** 2026-10-16
-> **Related plan(s):** [Plan 0007](../plans/0007-op-log-byte-channel-shared-and-owned-clients.md) (the trait and the server loop), [Plan 0011](../plans/0011-wasm-host-for-the-logic-component.md) (the host)
+> **Related plan(s):** [Plan 0007](../plans/done/0007-op-log-byte-channel-shared-and-owned-clients.md) (the trait and the server loop), [Plan 0011](../plans/0011-wasm-host-for-the-logic-component.md) (the host)
 > **Supersedes:** the founding interview's "WASM for deterministic server logic, Lua for client scripts" (`docs/roadmap.md`, API surface), in the part that concerns what the hosts are for
 
 ## Context

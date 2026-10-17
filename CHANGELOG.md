@@ -8,6 +8,37 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 Plan 0012 (no version: repository tooling): CI runs `scripts/check-comment-hygiene.mjs` (no relative link or plan-relative narration in `.rs`/`.wgsl` comments) and `scripts/check-index-rows.mjs` with `--self-test` (rows inside `roster:begin` markers at most 320 bytes); seeded fixture trees under `scripts/fixtures/`.
 
+## [0.10.0] - 2026-10-17
+
+Plan 0007: the simulation half of M5 (ADR-0007, accepted; ADR-0010's trait half, still
+proposed until Plan 0011). The server owns the world and its op and input logs, clients talk
+to it over a byte channel, a `Logic` decides edits from inputs through a `Host`, and a session
+is saved as seed plus logs and rebuilt by replay or re-simulation. Readings (`docs/nfr.md`
+section 4; AMD Ryzen 9 5900HS, CPU only, c844a8f): 100 inputs through one tick cost 84.7 us
+more than 100 direct applies, under the 100 us figure that is now a budget; decoding and
+replaying 10 000 radius-1 m carves takes 279 ms (about 35 800 ops/s, bound by the edit cost;
+no budget). A sphere carve entry is 47 bytes. The op-log hash `0x5ac8_737d_db0f_ccec` is
+blessed on Linux; the Windows arm confirms it after a push.
+
+- New crate `vxe-net`: `Channel`, `MemChannel` and `Endpoint`; `Message` (`Applied`,
+  `Refused`, `Event`, `Input`); `Logic`, `Host` and `NoLogic`; `Server` with `submit`,
+  `attach`, `tick` (logging a boundary entry after directly submitted ops) and `resimulate`
+  over the op and input logs; `Client::shared` (the server's `Arc<World>`) and
+  `Client::owned` (its own world, `Event::Desync` on the first mismatched result).
+- `vxe-world`: `OpLog` (op entries and the `0x80` boundary entry), `InputLog`, `LogFile` (a
+  60-byte header of seed, source version and extent, then both logs), the `wire` module with
+  `WireError` including `OutOfOrder`, and `World::replay`.
+- `apps/flythrough`: `DigLogic` decides digs, fills and the bench, and the binary sends them
+  as inputs through a server and a shared client. `--save PATH` and `--replay PATH` under
+  `--level` write and rebuild a session (`ReplayError` covers a cave-version or extent
+  mismatch). `--bench N` sends N bench inputs on the first frame. `P`, `--vault` and collapse
+  are refused under `--save` (`--vault` and collapse also under `--replay`), since they edit
+  the world outside the op log.
+- Tests: `crates/vxe-world/tests/log.rs`, `crates/vxe-net/tests/` (two-thread submission,
+  interleaving and re-simulation, owned-client desync), `apps/flythrough/tests/replay.rs`, and
+  the op-log hash in `apps/flythrough/tests/determinism.rs`. Benches: `vxe-world`'s `replay`
+  and `vxe-net`'s `tick`.
+
 ## [0.9.0] - 2026-10-17
 
 Plan 0010: M7's stats HUD (ADR-0009, accepted). The fly-through gets a toggleable overlay of

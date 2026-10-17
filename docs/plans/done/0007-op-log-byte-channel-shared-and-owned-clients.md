@@ -1,9 +1,9 @@
 # 0007: Server-owned op log, a byte channel, the logic boundary, shared and owned clients, and replay from seed plus log
 
-> **Status:** in-progress
+> **Status:** done (2026-10-17, v0.10.0): `vxe-net` (channel, server tick with the boundary entry, shared and owned clients, re-simulation) and `vxe-world`'s op and input logs, log file and wire shipped with the fly-through on the split; the fresh review's major and three minors were fixed, the recheck passed on the tip after three merges of `main`, and the Windows arm of the op-log hash awaits a push.
 > **Created:** 2026-10-16
 > **Milestone:** M5 in `docs/roadmap.md` (the simulation split; the WASM host is Plan 0011)
-> **Related ADRs:** [ADR-0007](../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (log, channel, client modes), [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (logic behind a trait, native and component), ADR-0002 (per-chunk locked access), ADR-0001 (stack)
+> **Related ADRs:** [ADR-0007](../../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (log, channel, client modes), [ADR-0010](../../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (logic behind a trait, native and component), ADR-0002 (per-chunk locked access), ADR-0001 (stack)
 > **Amended:** 2026-10-17, a boundary entry for directly submitted ops (Phase 3 unblock; orchestrator-applied, owner may overturn; see "Amendment 2026-10-17")
 > **Prerequisite:** Plan 0001 closed. Independent of Plans 0002 to 0006 and of their readings. Bounded worlds only; the server's ownership of streaming focus points is a named follow-up.
 
@@ -489,3 +489,94 @@ boundary; only logs a `Server` writes after a submission do.
 - **Budget readings (dev box AMD Ryzen 9 5900HS, CPU only, exclusive perf lock, release, at the Phase 6 tree committed as c844a8f):** `cargo bench -p vxe-world --bench replay`: 279.07 ms (CI 278.48 to 279.70 ms) to decode and replay 10 000 radius-1 m carves on a solid 4³-chunk world, about 35 800 ops per second; the log file is 470 060 bytes (asserted: 470 000 plus the 60-byte header); `uptime` 1-minute load 1.45 (a first attempt at load 4.76 waited). `cargo bench -p vxe-net --bench tick`: 3.4706 ms (CI 3.4663 to 3.4756 ms) for 100 inputs sent, one `EchoLogic` tick and one poll, against 3.3859 ms (CI 3.3782 to 3.3990 ms) for 100 direct applies: 84.7 µs overhead per 100 inputs, under the 100 µs proposal; load 1.66.
 - **Gate at c844a8f:** `cargo build --workspace --all-targets` 0; `cargo fmt --all --check` 0; `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo test --workspace --doc` 0; `cargo nextest run --workspace` 0, 207 passed, 1 skipped (exclusive lock, NVIDIA GeForce RTX 3080 Laptop GPU per `nvidia-smi -L`); `cargo deny check` 0 (advisories, bans, licenses, sources ok); `check-doc-links.mjs` 0, 89 links; `check-comment-hygiene.mjs` 0, 84 tracked sources, 0 escapes; `check-index-rows.mjs` 0; `check-index-rows.mjs --self-test` 0, 9 of 9; hook bite tests 0.
 - **Outstanding:** the Windows CI arm for the determinism and re-simulation assertions; streaming sessions are not saved (the server's ownership of focus points is the named follow-up).
+
+## Close
+
+**Verdict (2026-10-17, fresh-session review, a `dev` fix pass 66766af..f690442, then a
+fresh-session recheck at 12a0e37):** closed. Every phase is done and every done-when holds,
+the Interleaving done-when as amended on 2026-10-17. The recheck found every review finding
+fixed:
+
+- **Major 1** (edits outside the log under `--save`): `--vault` with `--save` or `--replay` is
+  refused at parse time (`SAVE_EXCLUDES_VAULT`, a407e0a); `P` under `--save` is refused
+  through the pure `stamp_allowed` (a407e0a); collapse's support query, per-frame fall and
+  `R` are off under `--save` and `--replay` through `collapse_allowed` (f690442). Each gate
+  has a unit test that asserts the refusal and the allowed case.
+- **Minor 2:** `OpLog::decode` and `LogFile::decode` refuse a non-ascending seq with
+  `WireError::OutOfOrder { at }`; the test asserts the offset through both (47, and 60 + 47
+  in a file), for an equal and for a lower seq (7fd6f1f).
+- **Minor 3:** `replay_log` and `replay_file` take the allowed extent and return
+  `ReplayError::Extent` before generating; `--replay` passes the level's (9889a92).
+- **Minor 4:** the README's flag table lists `--save`, `--replay` and `--vault` and corrects
+  `--bench N` (a3babbc, f690442).
+
+**The three merges of `main`, judged** (66766af with Plan 0014, 26df268 with Plan 0009,
+12a0e37 with Plan 0010): all behaviour decisions are accepted.
+
+- **`op_verb` over `DIG_VERB`, `FILL_VERB` and `BENCH_VERB`.** The HUD row holds a `'static`
+  verb, so the tick maps a `DigLogic` `op` line onto the logic's constants; any other `op`
+  line prints as plain text. `DigLogic` emits only those three verbs. That its emitted
+  literals (`"op carved"`, `"op filled"`) are not built from the constants is a nit below.
+- **The support query moved from `dig()` into the tick**, run on an applied op whose verb is
+  `DIG_VERB`, since a dig now reaches the binary as the client's event.
+- **The tick's edit lines go through `record_edit`**, so digs, fills and a bench total fill
+  the HUD's last-edit row as before the split; an applied dig's collapse follows with
+  `note_collapse_edit`.
+- **A `--replay` session's HUD row reads `no edit yet`.** Its re-simulation runs before the
+  first frame and outside the client's events; the printed `replayed ...` line is the record.
+
+**Recheck evidence at 12a0e37** (dev reference, AMD Ryzen 9 5900HS, NVIDIA GeForce RTX 3080
+Laptop GPU per `nvidia-smi -L`, exclusive perf lock for nextest and the fly-through runs):
+the gate is green (see the close commit). Nextest ran 298 tests, 298 passed and 4 skipped;
+the four skipped are each `#[ignore]`d with a reason (`hud_pass_reading_at_1080p`, a GPU
+timing; `a_dig_in_the_level_prints_the_query_time` and
+`world_stats_call_on_the_streamed_world_at_full_residency`, release readings;
+`contour_dark_specks_with_and_without_shadows`, a diagnostic that asserts nothing). The
+release session `--level --seed 1 --headless --frames 2 --bench 1 --save` printed
+`world hash 0x86ca427a47e8908c` and `--level --headless --frames 1 --replay` printed
+`replayed 1 inputs, 100 ops, hash 0x86ca427a47e8908c`, no "differs" line. The blessed op-log
+hash `0x5ac8_737d_db0f_ccec` is unchanged since d77ef85, and the vector hash
+`0x2b6b_6a0d_1f9b_8d75` is unchanged against `main`.
+
+**Readings** (dev reference, AMD Ryzen 9 5900HS, CPU only, exclusive perf lock, c844a8f; the
+loads are in the Close triggers):
+
+| Figure | Reading | Check or proposal |
+|---|---|---|
+| Tick overhead, 100 inputs through one tick and one poll | 84.7 µs over direct applies | under 100 µs (proposal, now a budget) |
+| Replay, decode plus 10 000 radius-1 m carves | 279.07 ms, about 35 800 ops/s | none (edit-cost bound) |
+| Log entry sizes | 47 / 65 / 75 bytes per op, 13 per boundary, 14 plus payload per input, 60-byte header | asserted (470 060-byte bench file) |
+
+**Orchestrator-applied calls (under the owner's standing go, overturnable by the owner):**
+
+- **The boundary entry** (Amendment 2026-10-17, 3aa9874), recorded in ADR-0007's Decision
+  and Outcome.
+- **Refuse `--vault`, `P` and collapse under `--save` (and `--vault` and collapse under
+  `--replay`) rather than wire op kinds 2 to 4 into `Op`, the wire and `Host` now.** A saved
+  session is then exactly what its log can rebuild. Wiring the kinds is the first followup.
+- **ADR-0010 stays proposed until Plan 0011 closes.** This plan proves the trait half
+  (`Logic`, `Host`, `DigLogic`, re-simulation); the component half is Plan 0011's.
+- **v0.10.0**, the next minor after Plan 0010's v0.9.0: a new crate and new public API.
+
+ADR-0007 is accepted with a dated Outcome.
+
+## Followups
+
+- **Op kinds 2 to 4 (stamp, drop, remove) in `Op`, the wire and `Host`**, with the
+  fly-through's `P` stamp and its collapse moving into `DigLogic`, so `--save` stops refusing
+  them. A stamp entry needs a prefab reference the log can name (an id the save resolves), which
+  is likely an ADR.
+- **The owned client passes `Refused` through unchecked** (review nit): an op the server
+  refused is not confirmed refused on the client's world. M9, with prediction.
+- **`put_count` panics above 65 535 chunks** (review nit): a log file over a larger extent
+  cannot be written. Return an error or widen the field with a format version.
+- **The `u32` seq wraps** after about 4.3 billion ops in one session (review nit): name the
+  limit or widen it before M9's long-running servers.
+- **`flythrough::Mode` clashes in name** with the binary's own mode notions (review nit):
+  rename it `ReplayMode`.
+- **`DigLogic`'s `op` lines** are string literals beside `DIG_VERB` and `FILL_VERB`; build
+  them from the constants so `op_verb` cannot drift.
+- **Streaming sessions are not saved**: the server owning the streamer's focus points (named
+  in Risks).
+- **The Windows CI arm** confirms the op-log hash and the re-simulation tests on the first CI
+  run after a push of `main`.

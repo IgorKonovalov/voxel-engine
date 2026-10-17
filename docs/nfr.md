@@ -234,12 +234,14 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
 - **Logs (Plan 0007):** an op log entry is 47 bytes for a sphere carve (65 for a box fill, 75
   for a capsule replace), a boundary entry 13, an input entry 14 bytes plus its payload; a log
   file adds a 60-byte header.
-- **Replay throughput:** no budget yet. **Reading (dev reference, AMD Ryzen 9 5900HS, Plan
+- **Replay throughput:** no budget; a reading only, bound by the edit cost above (the ops
+  dominate, not the decode). **Reading (dev reference, AMD Ryzen 9 5900HS, Plan
   0007 Phase 6, exclusive perf lock, 1-minute load 1.45):** `cargo bench -p vxe-world --bench
   replay`, decode plus replay of a 470 060-byte log file of 10 000 radius-1 m carves on a
   solid 4³-chunk world: 279.07 ms (CI 278.48 to 279.70 ms), about 35 800 ops per second.
 - **Tick overhead:** 100 inputs through one server tick and one shared-client poll cost at
-  most 100 µs more than applying the same 100 ops directly (proposal, Plan 0007).
+  most 100 µs more than applying the same 100 ops directly (budget since the Plan 0007 close,
+  backed by the reading below).
   **Reading (dev reference, AMD Ryzen 9 5900HS, Plan 0007 Phase 6, exclusive perf lock,
   1-minute load 1.66):** `cargo bench -p vxe-net --bench tick`: 3.4706 ms (CI 3.4663 to
   3.4756 ms) through `EchoLogic` against 3.3859 ms (CI 3.3782 to 3.3990 ms) direct, an
@@ -296,6 +298,11 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   drops and a removal, hashing every result and the world after each step) pins
   `0x3178_0a15_61c1_3041`, blessed on Linux. The Windows arm confirms it on the first CI run
   after a push of `main`; the ops are integer-only, so a mismatch is a defect, fixed forward.
+- The op log (Plan 0007): the determinism vector's 24 ops encoded as an op log (1446 bytes)
+  hash to `0x5ac8_737d_db0f_ccec` (`apps/flythrough/tests/determinism.rs`), and decoding and
+  replaying that log reproduces the vector hash; `vxe-net`'s re-simulation tests hold a seeded
+  logic to equal op-log bytes. **Asserted** on Linux, blessed at d77ef85; the Windows arm
+  confirms it on the first CI run after a push of `main`.
 
 ## 7. Startup and build
 
