@@ -3,6 +3,7 @@
 //! helpers its readings use. The engine ships no terrain; this cave is the testbed's own.
 
 pub mod cave;
+pub mod hud;
 pub mod logic;
 
 use std::sync::Arc;

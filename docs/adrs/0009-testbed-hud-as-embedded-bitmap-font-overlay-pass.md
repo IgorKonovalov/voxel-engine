@@ -1,8 +1,8 @@
 # ADR-0009: The testbed HUD is an embedded 8 × 8 bitmap font drawn in one overlay pass, with no UI library
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-17, at Plan 0010's close; see Outcome)
 > **Date:** 2026-10-16
-> **Related plan(s):** [Plan 0010](../plans/0010-stats-hud-bitmap-font-overlay.md)
+> **Related plan(s):** [Plan 0010](../plans/done/0010-stats-hud-bitmap-font-overlay.md)
 
 ## Context
 
@@ -73,4 +73,21 @@ texture per frame for what a 32 KiB cell buffer carries.
 
 ## Outcome
 
-_(Added at acceptance if Plan 0010 falsifies something above.)_
+Accepted 2026-10-17 at Plan 0010's close. The embedded font, the one blended pass after the
+blit, the absence of a UI library and the rejected alternatives stand as written. The
+implementation settled four points the text above states loosely or did not foresee:
+
+- **The cell buffer is 128 KiB, not 32 KiB.** It always holds the cap layout, 256 columns by
+  128 rows of `u32` glyph indices, and the shader reads only the cells the target reaches.
+  With the 1 KiB sample buffer, the font and the parameters, the pass holds about 130 KiB,
+  still under the 200 KiB in Consequences. Alternative C's "32 KiB cell buffer" is that
+  undercount.
+- **"The march timer reads the same with the HUD on" is a 3 % check on one command.** On
+  `flythrough --level` the march reads +0.06 % with the HUD on. The streamed world's readings
+  are logged, not gated: its cold-start runs vary by about 21 % between runs (Plan 0010,
+  second amendment of 2026-10-17).
+- **The target height reaches the shader as the draw's first instance** (`instance_index`),
+  because `encode` takes no queue to write a uniform. That this holds on D3D12 is unverified
+  until a Windows run.
+- **While the HUD is shown, the march and HUD timers are read back every frame, blocking.**
+  The readback is part of the frame-time cost the 5 % check measured on `--level` (+4.0 %).

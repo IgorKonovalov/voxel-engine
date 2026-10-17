@@ -29,6 +29,8 @@ pub const BENCH_SPREAD: i64 = 100;
 
 /// The verb of a dig's `op` line.
 pub const DIG_VERB: &str = "carved";
+/// The verb of a fill's `op` line.
+pub const FILL_VERB: &str = "filled";
 /// The verb of a bench carve's `op` line.
 pub const BENCH_VERB: &str = "bench";
 

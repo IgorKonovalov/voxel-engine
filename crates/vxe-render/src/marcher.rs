@@ -430,30 +430,57 @@ fn create_target(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Textur
     })
 }
 
-/// GPU duration of the march pass through two timestamp queries. Needs
-/// `Features::TIMESTAMP_QUERY` on the device.
-pub struct MarchTimer {
+/// Bytes one resolved timestamp occupies: a `u64` tick count.
+const QUERY_BYTES: u64 = 8;
+
+/// GPU duration of one pass through a two-timestamp query set: the pass writes its start and
+/// end, [`PassTimer::resolve`] copies them out after it, and [`PassTimer::read_ms`] maps them.
+///
+/// The resolve buffer (`QUERY_RESOLVE | COPY_SRC`) and the readback buffer (`COPY_DST |
+/// MAP_READ`) are separate because wgpu forbids one buffer carrying both usages. The
+/// timestamp period is read off the queue once, at construction.
+pub struct PassTimer {
     queries: wgpu::QuerySet,
     resolve: wgpu::Buffer,
+    readback: wgpu::Buffer,
+    /// Nanoseconds per timestamp tick.
+    period_ns: f32,
 }
 
-impl MarchTimer {
-    pub fn new(device: &wgpu::Device) -> Self {
-        let queries = device.create_query_set(&wgpu::QuerySetDescriptor {
-            label: Some("march timer"),
-            ty: wgpu::QueryType::Timestamp,
-            count: 2,
-        });
-        let resolve = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("march timer resolve"),
-            size: 2 * size_of::<u64>() as u64,
-            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        Self { queries, resolve }
+/// The march pass's timer; the march and the HUD are timed alike.
+pub type MarchTimer = PassTimer;
+
+impl PassTimer {
+    /// A timer, or `None` when the device lacks `Features::TIMESTAMP_QUERY` (the software
+    /// adapter among them), so a caller there gets no timer rather than a validation error.
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Self> {
+        if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+            return None;
+        }
+        let bytes = 2 * QUERY_BYTES;
+        Some(Self {
+            queries: device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("pass timer"),
+                ty: wgpu::QueryType::Timestamp,
+                count: 2,
+            }),
+            resolve: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("pass timer resolve"),
+                size: bytes,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            }),
+            readback: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("pass timer readback"),
+                size: bytes,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            }),
+            period_ns: queue.get_timestamp_period(),
+        })
     }
 
-    /// The timestamp writes to pass to [`Marcher::encode`].
+    /// The timestamp writes for a compute pass, such as [`Marcher::encode`]'s.
     pub fn writes(&self) -> wgpu::ComputePassTimestampWrites<'_> {
         wgpu::ComputePassTimestampWrites {
             query_set: &self.queries,
@@ -462,17 +489,40 @@ impl MarchTimer {
         }
     }
 
-    /// Records the copy of both timestamps into the resolve buffer; call after the pass.
-    pub fn resolve(&self, encoder: &mut wgpu::CommandEncoder) {
-        encoder.resolve_query_set(&self.queries, 0..2, &self.resolve, 0);
+    /// The timestamp writes for a render pass, such as the HUD overlay's.
+    pub fn render_writes(&self) -> wgpu::RenderPassTimestampWrites<'_> {
+        wgpu::RenderPassTimestampWrites {
+            query_set: &self.queries,
+            beginning_of_pass_write_index: Some(0),
+            end_of_pass_write_index: Some(1),
+        }
     }
 
-    /// Milliseconds between the two timestamps of the last resolved pass. Blocks until the
-    /// GPU has finished it.
-    pub fn read_ms(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> f64 {
-        let bytes = crate::readback::read_buffer(device, queue, &self.resolve, 0, 16);
-        let t: &[u64] = bytemuck::cast_slice(&bytes);
-        let ticks = t[1].saturating_sub(t[0]);
-        ticks as f64 * f64::from(queue.get_timestamp_period()) / 1.0e6
+    /// Records the resolve of both timestamps and their copy to the readback buffer; call
+    /// after the timed pass, in the same or a later encoder.
+    pub fn resolve(&self, encoder: &mut wgpu::CommandEncoder) {
+        encoder.resolve_query_set(&self.queries, 0..2, &self.resolve, 0);
+        encoder.copy_buffer_to_buffer(&self.resolve, 0, &self.readback, 0, 2 * QUERY_BYTES);
+    }
+
+    /// Milliseconds between the two timestamps of the last resolved pass; zero when they are
+    /// out of order. Blocks until the GPU has finished the submission that resolved them.
+    pub fn read_ms(&self, device: &wgpu::Device, _queue: &wgpu::Queue) -> f64 {
+        self.readback.map_async(wgpu::MapMode::Read, .., |r| {
+            r.expect("timer readback maps");
+        });
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("device poll for the timer readback");
+        let ticks = {
+            let bytes = self
+                .readback
+                .get_mapped_range(..)
+                .expect("timer readback mapped");
+            let t: &[u64] = bytemuck::cast_slice(&bytes);
+            t[1].saturating_sub(t[0])
+        };
+        self.readback.unmap();
+        ticks as f64 * f64::from(self.period_ns) / 1.0e6
     }
 }
