@@ -5,8 +5,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use vxe_render::gpu_world::{
-    ABSENT, ATTR_PAGE_BRICK_SLOTS, FULL_BIT, LOD_BIT, LOD_LEVEL_ENTRY, MASK_BYTES, NO_PLANE,
-    POOL_PAGE_SLOTS, RECORD_BYTES, RECORD_WORDS, SLOT_BYTES, SLOT_MASK, WIDE_BIT, attr_slot,
+    ABSENT, ATTR_PAGE_BRICK_SLOTS, BITS_WORDS, EMPTY_BIT, ENTRY_WORD, FULL_BIT, LOD_BIT,
+    LOD_LEVEL_ENTRY, MASK_BYTES, NO_PLANE, PALETTE_WORD, POOL_PAGE_SLOTS, RECORD_BYTES,
+    RECORD_MASK, RECORD_WORDS, SLOT_BYTES, SLOT_MASK, WIDE_BIT, attr_slot,
 };
 use vxe_render::{
     ATTRIB_WGSL, GpuWorld, MARCH_WGSL, MirrorConfig, ShardLayout, Window, readback, wgpu,
@@ -125,12 +126,21 @@ fn sync_uploads_dirty_bricks_once() {
         RECORD_BYTES,
     );
     let words: &[u32] = bytemuck::cast_slice(&bytes);
-    for (slot, &e) in words[..512].iter().enumerate() {
+    for (slot, &e) in words[ENTRY_WORD..PALETTE_WORD].iter().enumerate() {
         assert_eq!(Some(e), gpu.entry(ChunkCoord([1, 0, 0]), slot));
     }
     assert_eq!(gpu.palette(ChunkCoord([1, 0, 0])), Some(&[0, 1][..]));
-    assert_eq!(words[512], 1 << 16, "palette entries 0 (air) and 1");
-    let e = words[0];
+    assert_eq!(
+        words[PALETTE_WORD],
+        1 << 16,
+        "palette entries 0 (air) and 1"
+    );
+    // Only the z = 0 layer of bricks is not uniform air: bricks 0..64, words 0 and 1.
+    assert_eq!(
+        words[..BITS_WORDS],
+        [!0, !0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    );
+    let e = words[ENTRY_WORD];
     assert_eq!(e & (FULL_BIT | WIDE_BIT), FULL_BIT);
     let pool = readback::read_buffer(
         &device,
@@ -210,8 +220,59 @@ fn a_collapsed_brick_frees_its_slot_for_the_next_expansion() {
     assert!(gpu.free_slots().is_empty());
 
     let rec = gpu.record_index(ChunkCoord([0, 0, 0])).unwrap() as u64;
-    let bytes = readback::read_buffer(&device, &queue, gpu.records(), rec * RECORD_BYTES, 4);
+    let at = rec * RECORD_BYTES + ENTRY_WORD as u64 * 4;
+    let bytes = readback::read_buffer(&device, &queue, gpu.records(), at, 4);
     assert_eq!(bytemuck::cast_slice::<u8, u32>(&bytes), [0]);
+}
+
+/// The chunk table entry the GPU holds for `coord`.
+fn table_entry(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &GpuWorld,
+    coord: ChunkCoord,
+) -> u32 {
+    let at = u64::from(gpu.table_index(coord)) * 4;
+    let bytes = readback::read_buffer(device, queue, gpu.table(), at, 4);
+    bytemuck::cast_slice::<u8, u32>(&bytes)[0]
+}
+
+/// A mirrored chunk of uniform-air bricks carries `EMPTY_BIT`; a one-voxel fill clears it at
+/// the next sync, and carving the voxel away sets it again, the record index unchanged.
+#[test]
+fn an_edit_in_an_empty_chunk_toggles_its_empty_bit() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    // The Floor world over two layers of chunks: the z = 1 layer is all air.
+    let mut t = MaterialTable::new();
+    t.push(Material::named("floor"));
+    let world = World::generate(ChunkExtent::new([0, 0, 0], [1, 1, 2]), &Floor, &t);
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.sync(&world, &queue).unwrap();
+    let (floor, air) = (ChunkCoord([0, 0, 0]), ChunkCoord([0, 0, 1]));
+    let rec = gpu.record_index(air).unwrap();
+    assert_eq!(table_entry(&device, &queue, &gpu, air), rec | EMPTY_BIT);
+    assert_eq!(
+        table_entry(&device, &queue, &gpu, floor),
+        gpu.record_index(floor).unwrap()
+    );
+
+    fill_voxel(&world, [5, 6, 70], 1);
+    gpu.sync(&world, &queue).unwrap();
+    assert_eq!(table_entry(&device, &queue, &gpu, air), rec);
+
+    let r = world
+        .apply(&EditOp::box_(
+            centre_of_voxel([5, 6, 70]),
+            centre_of_voxel([6, 7, 71]),
+            Mode::Carve,
+        ))
+        .unwrap();
+    assert_eq!(r.changed_from, [(1, 1)]);
+    gpu.sync(&world, &queue).unwrap();
+    assert_eq!(table_entry(&device, &queue, &gpu, air), rec | EMPTY_BIT);
+    assert_eq!(gpu.record_index(air), Some(rec));
 }
 
 /// Each brick is air, material 1 or mixed by a hash of its brick coordinate; a mixed brick
@@ -271,7 +332,7 @@ impl Readback {
         if e & WIDE_BIT != 0 {
             bytemuck::cast_slice(&self.pool[s..s + 1024]).to_vec()
         } else {
-            let palette = &self.records[rec as usize * RECORD_WORDS + 512..][..128];
+            let palette = &self.records[rec as usize * RECORD_WORDS + PALETTE_WORD..][..128];
             self.pool[s..s + 512]
                 .iter()
                 .map(|&i| (palette[usize::from(i) / 2] >> (16 * (i & 1))) as u16)
@@ -282,13 +343,26 @@ impl Readback {
     /// Asserts that the table, records and pool hold `coord`'s CPU bricks; returns the slots
     /// its `Full` bricks occupy.
     fn assert_chunk(&self, gpu: &GpuWorld, world: &World, coord: ChunkCoord) -> Vec<u32> {
-        let rec = self.table[gpu.table_index(coord) as usize];
-        assert_ne!(rec, ABSENT, "{coord:?} has no table entry");
+        let t = self.table[gpu.table_index(coord) as usize];
+        assert_ne!(t, ABSENT, "{coord:?} has no table entry");
+        let rec = t & RECORD_MASK;
         let chunk = world.store().get(coord).unwrap();
         let chunk = chunk.read().unwrap();
+        let bits = &self.records[rec as usize * RECORD_WORDS..][..BITS_WORDS];
+        assert_eq!(
+            t & EMPTY_BIT != 0,
+            bits.iter().all(|&w| w == 0),
+            "{coord:?}"
+        );
         let mut slots = Vec::new();
         for (slot, brick) in chunk.bricks().iter().enumerate() {
-            let e = self.records[rec as usize * RECORD_WORDS + slot];
+            let set = bits[slot / 32] >> (slot % 32) & 1 != 0;
+            assert_eq!(
+                set,
+                *brick != Brick::Uniform(AIR),
+                "{coord:?} brick {slot} bit"
+            );
+            let e = self.records[rec as usize * RECORD_WORDS + ENTRY_WORD + slot];
             match brick {
                 Brick::Uniform(m) => assert_eq!(e, u32::from(*m), "{coord:?} brick {slot}"),
                 Brick::Full(v) => {
@@ -609,14 +683,15 @@ fn the_shard_layout_follows_the_limits_alone() {
 
 #[test]
 fn the_record_capacity_follows_the_limits() {
-    // lavapipe: 128 MiB per binding holds 52 428 records of 2560 B.
+    // lavapipe: 128 MiB per binding holds 51 150 records of 2624 B.
+    assert_eq!(RECORD_BYTES, 2624);
     let l = ShardLayout::from_limits(&limits(128 << 20, 2_147_483_647, 8), None);
-    assert_eq!(l.record_capacity, 52_428);
+    assert_eq!(l.record_capacity, 51_150);
     let l = ShardLayout::from_limits(&limits(4 << 20, 2_147_483_647, 8), None);
-    assert_eq!(l.record_capacity, 1638);
+    assert_eq!(l.record_capacity, 1598);
     // The smaller of the two size limits binds.
     let l = ShardLayout::from_limits(&limits(1 << 30, 4 << 20, 8), None);
-    assert_eq!(l.record_capacity, 1638);
+    assert_eq!(l.record_capacity, 1598);
 }
 
 /// More chunks than a 4 MiB binding holds records for: `sync` fails before writing anything.
@@ -654,13 +729,13 @@ fn records_past_the_binding_fail_and_leave_the_mirror_untouched() {
     );
     assert_eq!(world.store().coords().len(), 1728);
     let mut gpu = GpuWorld::new(&device, world.extent());
-    assert_eq!(gpu.shard_layout().record_capacity, 1638);
+    assert_eq!(gpu.shard_layout().record_capacity, 1598);
     let err = gpu.sync(&world, &queue).unwrap_err();
     assert_eq!(
         err,
         vxe_render::MirrorError::RecordsTooLarge {
             needed: 1728 * RECORD_BYTES,
-            limit: 1638 * RECORD_BYTES,
+            limit: 1598 * RECORD_BYTES,
         }
     );
     assert_eq!(gpu.mirrored_chunks(), 0);
@@ -746,12 +821,13 @@ impl Readback {
         let t = self.table[gpu.table_index(coord) as usize];
         assert_ne!(t, ABSENT, "{coord:?} has no table entry");
         assert_eq!(t & LOD_BIT, LOD_BIT, "{coord:?} is not a LOD record");
-        let rec = t & SLOT_MASK;
+        let rec = t & RECORD_MASK;
         let mips = world.lod(coord).expect("LOD-only in the world");
         let mut slots = Vec::new();
         for n in 1..=MIP_LEVELS {
             for (j, brick) in mips.level(n).iter().enumerate() {
-                let e = self.records[rec as usize * RECORD_WORDS + LOD_LEVEL_ENTRY[n - 1] + j];
+                let e = self.records
+                    [rec as usize * RECORD_WORDS + ENTRY_WORD + LOD_LEVEL_ENTRY[n - 1] + j];
                 match brick {
                     Brick::Uniform(m) => assert_eq!(e, u32::from(*m), "{coord:?} L{n} {j}"),
                     Brick::Full(v) => {

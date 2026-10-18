@@ -7,7 +7,10 @@ mod support;
 
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
 use flythrough::cave_materials;
-use vxe_render::gpu_world::{FULL_BIT, RECORD_BYTES, RECORD_WORDS, SLOT_BYTES, SLOT_MASK};
+use vxe_render::gpu_world::{
+    ABSENT, BITS_WORDS, EMPTY_BIT, ENTRY_WORD, FULL_BIT, LOD_BIT, PALETTE_WORD, RECORD_BYTES,
+    RECORD_MASK, RECORD_WORDS, SLOT_BYTES, SLOT_MASK,
+};
 use vxe_render::{GpuWorld, MirrorConfig, Window, readback, wgpu};
 use vxe_world::*;
 
@@ -43,17 +46,17 @@ fn the_first_sync_issues_at_most_three_writes_per_chunk() {
     assert!(st.writes <= 3 * 3200 + 8, "{} writes", st.writes);
     assert_eq!(st.pending_chunks, 0);
 
-    // Narrowed: one 512-byte slot per Full brick, no wide chunk, and a 2560-byte record per
+    // Narrowed: one 512-byte slot per Full brick, no wide chunk, and a 2624-byte record per
     // mirrored chunk.
     assert_eq!(s.full_bricks, 383_608);
     assert_eq!(gpu.live_pool_bytes(), 512 * s.full_bricks as u64);
     assert_eq!(gpu.live_pool_bytes(), 196_407_296);
     assert_eq!(gpu.wide_chunks(), 0);
-    assert_eq!(RECORD_BYTES, 2560);
+    assert_eq!(RECORD_BYTES, 2624);
     assert!(gpu.records().size() >= 3200 * RECORD_BYTES);
     assert_eq!(
         gpu.mirror_bytes(),
-        383_608 * (512 + 8) + 3200 * 2560 + 3200 * 4 + gpu.materials().size()
+        383_608 * (512 + 8) + 3200 * 2624 + 3200 * 4 + gpu.materials().size()
     );
     println!("mirror bytes {}", gpu.mirror_bytes());
 }
@@ -63,8 +66,8 @@ fn every_budgeted_sync_writes_at_most_the_budget_plus_one_chunk() {
     const BUDGET: u64 = 8 << 20;
     // Plan 0002's figure for a wide chunk's upload: 512 two-slot bricks and its record with
     // palette. It leaves out the bricks' masks (16 B each); no cave chunk is wide, and a
-    // narrow chunk's largest upload, masks included, is 512 x 520 + 2560 + 4 B.
-    const LARGEST_CHUNK: u64 = 512 * 1024 + 2560;
+    // narrow chunk's largest upload, masks included, is 512 x 520 + 2624 + 4 B.
+    const LARGEST_CHUNK: u64 = 512 * 1024 + 2624;
     let (world, source) = level();
     let Some((device, queue)) = device(&world) else {
         return;
@@ -163,14 +166,14 @@ fn the_level_spreads_over_two_shards_on_the_software_adapter() {
     let mut in_shard_1 = 0;
     for &(c, slot) in &picks {
         let rec = gpu.record_index(c).unwrap() as usize * RECORD_WORDS;
-        let e = records[rec + slot];
+        let e = records[rec + ENTRY_WORD + slot];
         assert_eq!(Some(e), gpu.entry(c, slot));
         assert_eq!(e & FULL_BIT, FULL_BIT);
         let s = e & SLOT_MASK;
         let (k, local) = (s / layout.slots_per_shard, s % layout.slots_per_shard);
         in_shard_1 += usize::from(k == 1);
         let bytes = &shards[k as usize][local as usize * 512..][..512];
-        let palette = &records[rec + 512..rec + 640];
+        let palette = &records[rec + PALETTE_WORD..rec + RECORD_WORDS];
         let chunk = world.store().get(c).unwrap();
         let chunk = chunk.read().unwrap();
         for (i, &index) in bytes.iter().enumerate() {
@@ -180,4 +183,49 @@ fn the_level_spreads_over_two_shards_on_the_software_adapter() {
     }
     println!("{in_shard_1} of 1000 bricks in shard 1");
     assert!(in_shard_1 >= 1);
+}
+
+/// Every record's 16 brick-bits words hold, for each chunk, the bits of its bricks that are
+/// not `Uniform(AIR)`; the table carries `EMPTY_BIT` on exactly the entries whose bits are all
+/// clear, and every entry that is not `ABSENT` names the CPU's record.
+#[test]
+fn the_level_s_brick_bits_and_empty_bits_match_its_bricks() {
+    let (world, source) = level();
+    let Some((device, queue)) = device(&world) else {
+        return;
+    };
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.set_focus(source.spawn());
+    gpu.sync(&world, &queue).unwrap();
+    let words = |b: &wgpu::Buffer| -> Vec<u32> {
+        readback::read_buffer(&device, &queue, b, 0, b.size())
+            .chunks_exact(4)
+            .map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]))
+            .collect()
+    };
+    let records = words(gpu.records());
+    let table = words(gpu.table());
+    let mut empty = 0;
+    for c in world.store().coords() {
+        let chunk = world.store().get(c).unwrap();
+        let chunk = chunk.read().unwrap();
+        let mut want = [0u32; BITS_WORDS];
+        for (b, brick) in chunk.bricks().iter().enumerate() {
+            if *brick != Brick::Uniform(AIR) {
+                want[b / 32] |= 1 << (b % 32);
+            }
+        }
+        let rec = gpu.record_index(c).unwrap();
+        let bits = &records[rec as usize * RECORD_WORDS..][..BITS_WORDS];
+        assert_eq!(bits, want, "{c:?}");
+        let t = table[gpu.table_index(c) as usize];
+        assert_ne!(t, ABSENT, "{c:?}");
+        assert_eq!(t & LOD_BIT, 0, "{c:?}");
+        assert_eq!(t & RECORD_MASK, rec, "{c:?}");
+        let is_empty = want.iter().all(|&w| w == 0);
+        assert_eq!(t & EMPTY_BIT != 0, is_empty, "{c:?}");
+        empty += usize::from(is_empty);
+    }
+    println!("{empty} of 3200 chunks empty");
+    assert!(empty > 0 && empty < 3200);
 }

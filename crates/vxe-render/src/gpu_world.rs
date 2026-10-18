@@ -22,7 +22,10 @@
 //!
 //! Voxels are narrowed to 8 bits (ADR-0004). A `Full` brick takes one 512-byte slot of palette
 //! indices, and each record carries its chunk's palette of 256 `u16` materials after its 512
-//! entries; index 0 is air in every palette. A palette only grows while its chunk is
+//! entries; index 0 is air in every palette. Ahead of its entries a record holds 512 brick
+//! bits, one per entry that is not uniform air, and the chunk table entry of a record whose
+//! bits are all clear carries `EMPTY_BIT`, so the marcher skips an empty chunk on the table
+//! read alone. A palette only grows while its chunk is
 //! mirrored, so bricks already uploaded keep their indices. A chunk that needs more than 255
 //! non-air materials is *wide*: each `Full` brick takes two slots from an even slot and holds
 //! `u16` voxels, and a chunk that turns wide uploads every `Full` brick again.
@@ -75,8 +78,16 @@ pub const SLOT_BYTES: u64 = BRICK_VOXELS as u64;
 pub const MASK_BYTES: u64 = 8;
 /// Entries in a palette, index 0 being air.
 pub const PALETTE_ENTRIES: usize = 256;
-/// `u32` words of one chunk record: 512 brick entries, then the palette as `u16` pairs.
-pub const RECORD_WORDS: usize = CHUNK_BRICKS + PALETTE_ENTRIES / 2;
+/// `u32` words of brick bits at the head of a chunk record: bit `b` of word `b / 32` is set
+/// when record entry `b` is not uniform air.
+pub const BITS_WORDS: usize = CHUNK_BRICKS / 32;
+/// The record word of brick entry 0.
+pub const ENTRY_WORD: usize = BITS_WORDS;
+/// The record word where the palette starts.
+pub const PALETTE_WORD: usize = ENTRY_WORD + CHUNK_BRICKS;
+/// `u32` words of one chunk record: the brick bits, 512 brick entries, then the palette as
+/// `u16` pairs.
+pub const RECORD_WORDS: usize = PALETTE_WORD + PALETTE_ENTRIES / 2;
 /// Bytes of one chunk record.
 pub const RECORD_BYTES: u64 = (RECORD_WORDS * 4) as u64;
 /// Records per growth step of the record buffer.
@@ -95,8 +106,13 @@ pub const FULL_BIT: u32 = 1 << 31;
 pub const WIDE_BIT: u32 = 1 << 30;
 /// The pool slot in a `Full` entry.
 pub const SLOT_MASK: u32 = WIDE_BIT - 1;
-/// Chunk table entry bit: the record is a LOD record. The record index is in the low 30 bits.
+/// Chunk table entry bit: the record is a LOD record.
 pub const LOD_BIT: u32 = 1 << 30;
+/// Chunk table entry bit: every entry of the record is uniform air, so its brick bits are
+/// all clear. Kept equal to the record's bits on every write of the record.
+pub const EMPTY_BIT: u32 = 1 << 29;
+/// The record index in a chunk table entry that is not `ABSENT`.
+pub const RECORD_MASK: u32 = EMPTY_BIT - 1;
 /// First entry of each mip level in a LOD record, level 1 first.
 pub const LOD_LEVEL_ENTRY: [usize; MIP_LEVELS] = [0, 64, 72];
 /// `rev` value of a material not in the palette being built.
@@ -653,7 +669,7 @@ impl GpuWorld {
     /// The record entry the mirror holds for brick `slot` of chunk `coord`.
     pub fn entry(&self, coord: ChunkCoord, slot: usize) -> Option<u32> {
         let r = self.mirrored.get(&coord)?.record;
-        Some(self.entries[r as usize * RECORD_WORDS + slot])
+        Some(self.entries[r as usize * RECORD_WORDS + ENTRY_WORD + slot])
     }
 
     /// Record index of `coord`, if it is mirrored.
@@ -799,7 +815,7 @@ impl GpuWorld {
         let c = ChunkCoord(b.map(|v| v.div_euclid(e)));
         let m = self.mirrored.get(&c).filter(|m| !m.lod)?;
         let local = b.map(|v| v.rem_euclid(e));
-        let entry = self.entries[m.record as usize * RECORD_WORDS + brick_slot(local)];
+        let entry = self.entries[m.record as usize * RECORD_WORDS + ENTRY_WORD + brick_slot(local)];
         (entry & FULL_BIT != 0).then(|| AttribItem {
             slot: entry & SLOT_MASK,
             origin: b.map(|v| v * BRICK_EDGE),
@@ -836,7 +852,7 @@ impl GpuWorld {
         let a = &mut self.allocs[self.kind_for(lod) as usize];
         let base = rec as usize * RECORD_WORDS;
         let mut slots = Vec::new();
-        for &e in &self.entries[base..base + CHUNK_BRICKS] {
+        for &e in &self.entries[base + ENTRY_WORD..base + PALETTE_WORD] {
             if e & FULL_BIT == 0 {
                 continue;
             }
@@ -854,7 +870,8 @@ impl GpuWorld {
         self.free_records.push(rec);
         if self.in_window(coord) {
             let i = self.table_index(coord);
-            if self.table_cpu[i as usize] & !LOD_BIT == rec {
+            let t = self.table_cpu[i as usize];
+            if t != ABSENT && t & RECORD_MASK == rec {
                 self.table_cpu[i as usize] = ABSENT;
                 self.table_changed.push(i);
             }
@@ -1063,8 +1080,9 @@ impl GpuWorld {
                         }
                         if ch.brick(slot).is_full() {
                             chunk_bytes += slot_bytes * (SLOT_BYTES + MASK_BYTES);
-                            let old =
-                                rec.map_or(0, |r| self.entries[r as usize * RECORD_WORDS + slot]);
+                            let old = rec.map_or(0, |r| {
+                                self.entries[r as usize * RECORD_WORDS + ENTRY_WORD + slot]
+                            });
                             if old & FULL_BIT == 0 {
                                 new_full[attr] += slots;
                             }
@@ -1189,7 +1207,7 @@ impl GpuWorld {
                 self.attr_bricks
                     .insert([0, 1, 2].map(|k| coord.0[k] * CHUNK_EDGE_BRICKS + b[k]));
             }
-            result = self.upload_brick(base + i, bricks.get(i), wide, kind, queue, st);
+            result = self.upload_brick(base + ENTRY_WORD + i, bricks.get(i), wide, kind, queue, st);
             if result.is_err() {
                 break;
             }
@@ -1197,13 +1215,14 @@ impl GpuWorld {
         for &m in &palette {
             self.rev[usize::from(m)] = NO_INDEX;
         }
-        for (k, w) in self.entries[base + CHUNK_BRICKS..base + RECORD_WORDS]
+        for (k, w) in self.entries[base + PALETTE_WORD..base + RECORD_WORDS]
             .iter_mut()
             .enumerate()
         {
             let at = |i: usize| u32::from(palette.get(i).copied().unwrap_or(AIR));
             *w = at(2 * k) | at(2 * k + 1) << 16;
         }
+        let empty = self.write_bits(base);
         self.mirrored.insert(
             coord,
             Mirrored {
@@ -1215,17 +1234,33 @@ impl GpuWorld {
         );
         self.stage_record(rec, queue, st);
         st.bytes += RECORD_BYTES;
-        if new {
-            let t = self.table_index(coord);
-            self.table_cpu[t as usize] = if lod { rec | LOD_BIT } else { rec };
-            self.table_changed.push(t);
+        // A re-synced record can turn empty or stop being so: its table entry follows it.
+        let t = self.table_index(coord) as usize;
+        let want = rec | if lod { LOD_BIT } else { 0 } | if empty { EMPTY_BIT } else { 0 };
+        if new || self.table_cpu[t] != want {
+            self.table_cpu[t] = want;
+            self.table_changed.push(t as u32);
         }
         result?;
         st.chunks += 1;
         self.unqueue(coord);
         Ok(())
     }
-    /// Writes `brick` into record entry `i`: a narrow brick as palette indices through `rev`,
+
+    /// Sets the brick bits of the record at word `base` from its entries; true when they are
+    /// all clear.
+    fn write_bits(&mut self, base: usize) -> bool {
+        let (bits, rest) = self.entries[base..base + PALETTE_WORD].split_at_mut(ENTRY_WORD);
+        for (w, entries) in bits.iter_mut().zip(rest.chunks_exact(32)) {
+            *w = entries
+                .iter()
+                .enumerate()
+                .fold(0, |acc, (j, &e)| acc | u32::from(e != 0) << j);
+        }
+        bits.iter().all(|&w| w == 0)
+    }
+
+    /// Writes `brick` into record word `i`, a brick entry: a narrow brick as palette indices through `rev`,
     /// a wide one as two slots of `u16` voxels, a uniform one as its material. A slot of the
     /// wrong width is returned and a new one taken.
     fn upload_brick(

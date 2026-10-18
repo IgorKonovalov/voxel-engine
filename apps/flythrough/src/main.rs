@@ -2242,7 +2242,8 @@ impl Run {
                 && let Some(gfx) = &self.gfx
             {
                 let px = readback::read_rgba8(&gpu.device, &gpu.queue, gfx.marcher.target());
-                println!("{}", steps_line(&StepHistogram::from_rgba8(&px)));
+                let width = gfx.marcher.target().width() as usize;
+                println!("{}", steps_line(&StepHistogram::from_rgba8(&px, width)));
             }
             self.sample_world();
             self.refresh_hud_stats();
@@ -2255,14 +2256,16 @@ impl Run {
     }
 }
 
-/// The steps view's reading of one frame: `steps per ray (2073600 rays): mean 41.27, p99 133;
-/// pool reads mean 3.02, p99 18`. Counts clamp at 255 as the view does.
+/// The steps view's reading of one frame: `steps per ray (2073600 rays): mean 41.27, p99 133,
+/// block-max mean 88.10; pool reads mean 3.02, p99 18`. Counts clamp at 255 as the view does;
+/// the block-max mean is over 8 × 8 pixel blocks of each block's maximum steps.
 fn steps_line(h: &StepHistogram) -> String {
     format!(
-        "steps per ray ({} rays): mean {:.2}, p99 {}; pool reads mean {:.2}, p99 {}",
+        "steps per ray ({} rays): mean {:.2}, p99 {}, block-max mean {:.2}; pool reads mean {:.2}, p99 {}",
         h.rays(),
         h.mean_steps(),
         h.p99_steps(),
+        h.block_max_mean(),
         h.mean_pool_reads(),
         h.p99_pool_reads()
     )

@@ -421,20 +421,11 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The steps view and the headless histogram, on today's walk | dev | done | 52d6a7b |
-| 2: Chunk bits, the chunk-level and 16³ skips | dev | not started | |
+| 2: Chunk bits, the chunk-level and 16³ skips | dev | done | committed with this row |
 | 3: Full-resolution opaque masks | dev | not started | |
 | 4: A walk that re-derives state at boundaries | dev | not started | |
 | 5: The translucent class and the bounded accumulation walk | dev | not started | |
 | 6: Readings, budgets and the stats line | dev | not started | |
-
-> **Resume note (2026-10-18, delete when Phase 2 lands):** stopped before Phase 2 at
-> 52d6a7b, routed to `/architect`. Phase 4's first bullet counts one bits word per air chunk
-> (4 table + 4 bits words = 8 reads), but under the record layout (bit `b` of word `b / 32`)
-> a chunk is all clear only when all 16 bits words are, and the count leaves out the rock
-> chunk's entry read that the hit needs. Bullet 2's "at most 2 bits words" in a non-empty
-> chunk rules out testing all 16 words on entry. Options raised: an empty bit in the chunk
-> table entry (an air chunk costs the table read alone), or the 16-word line counted as one
-> read. Gate at the tip: build, nextest (352 passed, 4 skipped), doctests, clippy, fmt clean.
 
 ### Notes
 
@@ -446,6 +437,18 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
 - Phase 1: bit-exactness of the goldens is checked by re-blessing them on lavapipe
   (`VXE_BLESS=1`) and finding the PNGs unchanged in git; `assert_golden` itself tolerates
   0.1 % of pixels off by more than 2/255.
+- Phase 2: `crates/vxe-render/src/shaders/attrib.wgsl` (outside the phase's files) reads the
+  new record layout and table bits too, and skips an `EMPTY_BIT` chunk as air;
+  `apps/flythrough/tests/look.rs` (outside the phase's files) has its record bytes moved from
+  2560 to 2624.
+- Phase 2: the 16³ group test runs at level 0 and at mip levels 1 (one bits word) and 2 (the
+  level's 8 entries); level 3 has no group. `StepHistogram::from_rgba8` takes the row width.
+- Phase 2: the Phase 2 readings (histograms, block-max and march) and Phase 1's block-max are
+  not in this commit: the dev box was under load from other work, so every reading of the plan
+  is taken after Phase 6, serially, from each phase's commit, and recorded in the close
+  triggers.
+- Phase 2: `apps/flythrough/examples/world_budget.rs` still counts a 2560-byte record and an
+  8-byte mask.
 
 ### Close triggers
 

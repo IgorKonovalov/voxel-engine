@@ -8,12 +8,15 @@
 //                              per word, x fastest; a wide brick is two slots, [256 x u32] of
 //                              u16 voxel pairs. Slot s is slot s % slots_per_shard of shard
 //                              s / slots_per_shard; 7, 8 and 9 are shards 1 to 3
-//   2  storage  chunk_records  [record][640 x u32]: 512 brick entries, then the palette as
-//                              256 u16 (index 0 air). Entry bit 31 set: pool slot in bits
-//                              0..30, bit 30 wide; clear: the uniform material
-//   3  storage  chunk_table    [wrapped chunk]u32 record index in bits 0..30, bit 30 set for a
-//                              LOD record (entries 0..64 mip level 1, 64..72 level 2, 72
-//                              level 3); 0xFFFFFFFF when absent
+//   2  storage  chunk_records  [record][656 x u32]: 16 words of brick bits (bit b of word
+//                              b / 32 set when entry b is not uniform air), 512 brick entries,
+//                              then the palette as 256 u16 (index 0 air). Entry bit 31 set:
+//                              pool slot in bits 0..30, bit 30 wide; clear: the uniform
+//                              material
+//   3  storage  chunk_table    [wrapped chunk]u32 record index in bits 0..29, bit 29 set when
+//                              the record's brick bits are all clear, bit 30 set for a LOD
+//                              record (entries 0..64 mip level 1, 64..72 level 2, 72 level 3);
+//                              0xFFFFFFFF when absent
 //   4  storage  materials      [id][4 x vec4]: albedo rgb + roughness, emission rgb + flag bits,
 //                              detail scale (voxels) + detail strength + 2 spare, 4 spare
 //   5  storage texture         rgba8unorm output
@@ -33,12 +36,14 @@
 // that half-space. A solid voxel with no plane, of a uniform brick or of a mip-brick, hits
 // as a cube.
 //
-// World units are voxels. The walk is a DDA over cells of four sizes: a chunk that is absent
-// is skipped as one 64^3 cell, a uniform-air brick as one 8^3 cell, an empty 2^3 block of a
+// World units are voxels. The walk is a DDA over cells of five sizes: a chunk that is absent
+// or empty (its table entry's EMPTY_BIT) is skipped as one 64^3 cell, a 2 x 2 x 2 group of
+// bricks whose brick bits are all clear as one 16^3 cell, a uniform-air brick as one 8^3 cell, an empty 2^3 block of a
 // full brick (its mask bit clear) as one 2^3 cell when the masks flag is set, and the voxels
 // of an occupied block one at a time. A uniform solid brick is hit where the ray enters it.
 // A LOD-only chunk is walked the same way at its mip level L, every size scaled by 2^L: a
-// uniform-air mip-brick is one (8 * 2^L)^3 cell, an empty mask block one (2 * 2^L)^3 cell,
+// clear group of mip-bricks is one (16 * 2^L)^3 cell below level 3, a uniform-air mip-brick
+// one (8 * 2^L)^3 cell, an empty mask block one (2 * 2^L)^3 cell,
 // and each mip cell one (2^L)^3 cell. Every skip is aligned to its size, so a solid cell is
 // always entered on its face. Each step leaves
 // the current cell through its nearest face; the coordinate on the exit axis is set exactly
@@ -85,13 +90,16 @@ struct Params {
 const ABSENT: u32 = 0xFFFFFFFFu;
 const FULL_BIT: u32 = 0x80000000u;
 const LOD_BIT: u32 = 0x40000000u;
+const EMPTY_BIT: u32 = 0x20000000u;
+const RECORD_MASK: u32 = 0x1FFFFFFFu;
 const WIDE_BIT: u32 = 0x40000000u;
 const SLOT_MASK: u32 = 0x3FFFFFFFu;
-// u32 words of a pool slot and of a chunk record, and the record word where the palette
-// starts.
+// u32 words of a pool slot and of a chunk record, and the record words where the brick
+// entries and the palette start.
 const SLOT_WORDS: u32 = 128u;
-const RECORD_WORDS: u32 = 640u;
-const PALETTE_WORD: u32 = 512u;
+const RECORD_WORDS: u32 = 656u;
+const ENTRY_WORD: u32 = 16u;
+const PALETTE_WORD: u32 = 528u;
 const MAX_STEPS: u32 = 4096u;
 const BIG: f32 = 3.0e38;
 // Params.flags bits.
@@ -184,6 +192,31 @@ fn lod_level(chunk: vec3<i32>) -> u32 {
     return 3u;
 }
 
+// Whether the 2 x 2 x 2 group of bricks holding brick `b` of the record at word `base`, walked
+// at `level`, has a brick that is not uniform air, from the record's brick bits. At level 0
+// brick (x, y, z) is bit x + 8 (y % 4) of word 2 z + y / 4, so a group's bits are two bytes
+// in each of two words; at level 1 (entries x + 4 y + 16 z) one word holds the group; at
+// level 2 the group is the whole level, entries 64..72; level 3 has no group.
+fn group_occupied(base: u32, level: u32, b: vec3<i32>) -> bool {
+    let g = vec3<u32>(b / 2);
+    switch level {
+        case 0u: {
+            let w = base + 4u * g.z + g.y / 2u;
+            let m = 0x0303u << (2u * g.x + 16u * (g.y & 1u));
+            return ((chunk_records[w] | chunk_records[w + 2u]) & m) != 0u;
+        }
+        case 1u: {
+            return (chunk_records[base + g.z] & (0x00330033u << (2u * g.x + 8u * g.y))) != 0u;
+        }
+        case 2u: {
+            return (chunk_records[base + 2u] & 0xFFu) != 0u;
+        }
+        default: {
+            return true;
+        }
+    }
+}
+
 fn lookup(v: vec3<i32>) -> Cell {
     let chunk = floor_div(v, 64);
     let rel = chunk - params.window_min;
@@ -195,7 +228,7 @@ fn lookup(v: vec3<i32>) -> Cell {
     // and the range check above keeps every lookup inside the current window.
     let wr = ((chunk % w) + w) % w;
     let t = chunk_table[u32(wr.x + w.x * (wr.y + w.y * wr.z))];
-    if (t == ABSENT) {
+    if (t == ABSENT || (t & EMPTY_BIT) != 0u) {
         return Cell(64, 0u, ABSENT, 0u);
     }
     // A full chunk is level 0: voxels in 8^3 bricks, 8 bricks to an edge. A LOD record holds
@@ -208,10 +241,13 @@ fn lookup(v: vec3<i32>) -> Cell {
     }
     let cell = 1 << level;
     let e = 8 >> level;
-    let base = (t & SLOT_MASK) * RECORD_WORDS;
+    let base = (t & RECORD_MASK) * RECORD_WORDS;
     let c = (v - chunk * 64) >> vec3<u32>(level);
     let b = c / 8;
-    let entry = chunk_records[base + first + u32(b.x + e * (b.y + e * b.z))];
+    if (!group_occupied(base, level, b)) {
+        return Cell(16 * cell, 0u, ABSENT, 0u);
+    }
+    let entry = chunk_records[base + ENTRY_WORD + first + u32(b.x + e * (b.y + e * b.z))];
     if ((entry & FULL_BIT) == 0u) {
         if (entry == 0u) {
             return Cell(8 * cell, 0u, ABSENT, 0u);

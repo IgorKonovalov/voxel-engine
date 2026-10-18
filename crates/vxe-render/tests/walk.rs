@@ -100,18 +100,38 @@ fn three_air_then_rock() -> World {
     world([4, 1, 1], |v| if v[0] >= 192 { ROCK } else { AIR })
 }
 
-/// From the centre of the first chunk's -x face, the +x ray crosses three air chunks of eight
-/// uniform-air bricks each and hits the rock chunk's face on its 25th step, reading no pool.
+/// From the centre of the first chunk's -x face, the +x ray skips each air chunk as one 64³
+/// cell on its table entry's `EMPTY_BIT` and hits the rock chunk's face on its 4th step,
+/// reading no pool (25 steps before the chunk skip: eight uniform-air bricks per air chunk).
 #[test]
-fn a_ray_through_three_air_chunks_takes_25_steps() {
+fn a_ray_through_three_air_chunks_takes_4_steps() {
     let Some((device, queue)) = device() else {
         return;
     };
     let w = three_air_then_rock();
     assert_eq!(
         cost_x(&device, &queue, &w, [0.0, 32.5, 32.5]),
+        Cost { steps: 4, reads: 0 }
+    );
+}
+
+/// As `three_air_then_rock`, with a floor of rock bricks (brick row y = 0) in the three air
+/// chunks: each is no longer empty, but a +x ray at y = 32.5 runs through brick rows 4, in
+/// 16³ groups whose eight brick bits are clear, so it crosses each chunk in 4 steps and hits
+/// the rock chunk on its 13th.
+#[test]
+fn a_ray_above_a_floor_of_bricks_takes_4_steps_per_chunk() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let w = world(
+        [4, 1, 1],
+        |v| if v[0] >= 192 || v[1] < 8 { ROCK } else { AIR },
+    );
+    assert_eq!(
+        cost_x(&device, &queue, &w, [0.0, 32.5, 32.5]),
         Cost {
-            steps: 25,
+            steps: 3 * 4 + 1,
             reads: 0
         }
     );

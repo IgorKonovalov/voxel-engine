@@ -69,26 +69,47 @@ fn map_and_copy<T>(device: &wgpu::Device, staging: &wgpu::Buffer, f: impl FnOnce
 
 /// The walk cost a frame of the steps view (`ViewMode::Steps`) holds, from its `rgba8unorm`
 /// pixels: the histogram of steps per ray, and of pool reads per ray, each clamped at 255 as
-/// the view clamps them.
+/// the view clamps them, and each 8 × 8 pixel block's largest step count.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StepHistogram {
     /// `steps[n]` rays took `n` steps (`n = 255`: 255 or more).
     pub steps: [u64; 256],
     /// `pool_reads[n]` rays read the pool `n` times.
     pub pool_reads: [u64; 256],
+    /// The sum over 8 × 8 pixel blocks (those at the right and bottom edges may be smaller) of
+    /// each block's maximum steps, and the number of blocks.
+    pub block_max_sum: u64,
+    pub blocks: u64,
 }
 
+/// Edge in pixels of the blocks `StepHistogram` takes the maximum over: the marcher's
+/// workgroup, the rays that run in lockstep.
+pub const STEP_BLOCK: usize = 8;
+
 impl StepHistogram {
-    /// The histograms of `pixels`, tightly packed RGBA bytes: red is steps, green pool reads.
-    pub fn from_rgba8(pixels: &[u8]) -> Self {
+    /// The histograms of `pixels`, tightly packed RGBA bytes in rows of `width` pixels: red is
+    /// steps, green pool reads.
+    pub fn from_rgba8(pixels: &[u8], width: usize) -> Self {
         let mut h = Self {
             steps: [0; 256],
             pool_reads: [0; 256],
+            block_max_sum: 0,
+            blocks: 0,
         };
         for p in pixels.chunks_exact(4) {
             h.steps[usize::from(p[0])] += 1;
             h.pool_reads[usize::from(p[1])] += 1;
         }
+        let width = width.max(1);
+        let height = pixels.len() / 4 / width;
+        let bw = width.div_ceil(STEP_BLOCK);
+        let mut max = vec![0u8; bw * height.div_ceil(STEP_BLOCK)];
+        for (i, p) in pixels.chunks_exact(4).take(width * height).enumerate() {
+            let b = (i / width / STEP_BLOCK) * bw + (i % width) / STEP_BLOCK;
+            max[b] = max[b].max(p[0]);
+        }
+        h.block_max_sum = max.iter().map(|&m| u64::from(m)).sum();
+        h.blocks = max.len() as u64;
         h
     }
 
@@ -105,6 +126,15 @@ impl StepHistogram {
     /// percentile, 255 when more than 1 % of rays clamp.
     pub fn p99_steps(&self) -> u32 {
         percentile(&self.steps, 0.99)
+    }
+
+    /// Mean over 8 × 8 pixel blocks of each block's maximum steps: what a group of rays in
+    /// lockstep pays. 0 with no rays.
+    pub fn block_max_mean(&self) -> f64 {
+        if self.blocks == 0 {
+            return 0.0;
+        }
+        self.block_max_sum as f64 / self.blocks as f64
     }
 
     pub fn mean_pool_reads(&self) -> f64 {
@@ -155,12 +185,35 @@ mod tests {
             };
             px.extend_from_slice(&[steps, if i == 5 { 3 } else { 1 }, 0, 255]);
         }
-        let h = StepHistogram::from_rgba8(&px);
+        let h = StepHistogram::from_rgba8(&px, 100);
         assert_eq!(h.rays(), 100);
         assert_eq!(h.steps[10], 98);
         assert_eq!(h.mean_steps(), (98.0 * 10.0 + 20.0 + 255.0) / 100.0);
         assert_eq!(h.p99_steps(), 20);
         assert_eq!(h.mean_pool_reads(), 1.02);
         assert_eq!(h.p99_pool_reads(), 1);
+        // One row of 100 pixels: 13 blocks, the first holding the 255 and the 20, the rest 10.
+        assert_eq!(h.blocks, 13);
+        assert_eq!(h.block_max_mean(), (255.0 + 12.0 * 10.0) / 13.0);
+    }
+
+    #[test]
+    fn the_block_maximum_is_taken_over_8_by_8_pixel_blocks() {
+        // 16 × 10 pixels: four blocks, two of them 8 × 2 at the bottom. Steps are 1 except
+        // one pixel of 50 in the top-right block and one of 7 in the bottom-left block.
+        let (w, h) = (16, 10);
+        let mut px = vec![0u8; w * h * 4];
+        for (i, p) in px.chunks_exact_mut(4).enumerate() {
+            let (x, y) = (i % w, i / w);
+            p[0] = match (x, y) {
+                (12, 3) => 50,
+                (2, 9) => 7,
+                _ => 1,
+            };
+        }
+        let s = StepHistogram::from_rgba8(&px, w);
+        assert_eq!(s.blocks, 4);
+        assert_eq!(s.block_max_sum, 1 + 50 + 7 + 1);
+        assert_eq!(s.block_max_mean(), 59.0 / 4.0);
     }
 }
