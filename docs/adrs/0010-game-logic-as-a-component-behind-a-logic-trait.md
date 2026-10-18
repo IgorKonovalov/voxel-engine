@@ -1,6 +1,6 @@
 # ADR-0010: The game's server logic is a component behind a `Logic` trait, developed natively and shipped as WebAssembly; Lua is deferred
 
-> **Status:** accepted (2026-10-17, at the Plan 0011 close)
+> **Status:** accepted (2026-10-17, at the Plan 0011 close; fail-stop overturned 2026-10-18, see Outcome addendum)
 > **Date:** 2026-10-16
 > **Related plan(s):** [Plan 0007](../plans/done/0007-op-log-byte-channel-shared-and-owned-clients.md) (the trait and the server loop), [Plan 0011](../plans/done/0011-wasm-host-for-the-logic-component.md) (the host)
 > **Supersedes:** the founding interview's "WASM for deterministic server logic, Lua for client scripts" (`docs/roadmap.md`, API surface), in the part that concerns what the hosts are for
@@ -160,3 +160,17 @@ corrects the text above in these points:
 - **Re-simulating a failure is exact only with the same component bytes, `WasmConfig` and
   `wasmtime` version.** Fuel accounting can change between releases and the fuel per tick
   moves the failing tick; the log file's header records none of them yet.
+
+### Outcome addendum, 2026-10-18 (Plan 0016 close, v0.13.0)
+
+**Fail-stop is overturned** (the owner's call, 2026-10-17): alternative (a) above, a fresh
+instance and `init(seed)` again, is taken, capped. A failed call is followed on the next tick
+by a fresh instance that runs `init` at tick 0's clock and random stream, then that tick;
+`WasmConfig::max_restarts` (default 8) caps the restarts, after which every tick reports
+`LogicError::Stopped` as before. Each restart surfaces as `LogicError::Restarted` through
+`Logic::take_restart` and `TickReport::restart`, beside the failure. Ops applied before the
+failure stay applied and logged; a restart, like the failure, re-simulates exactly from the
+log under the same component bytes, `WasmConfig` and `wasmtime` version. The hazard recorded
+under (a) stands: an `init` that applies ops applies them again on each restart; no test has
+such a guest yet (a Plan 0016 followup). One restart of `flythrough-logic` reads 26.9 to
+29.3 µs median (`docs/nfr.md` section 4).

@@ -1,11 +1,11 @@
 # 0016: The post-overnight fix pass: depenetration, a logic that restarts after a trap, and the review nits
 
-> **Status:** in-progress
+> **Status:** done (closed 2026-10-18: a clean fresh-session review on 80c6ab0, every phase shipped with its tests holding the plan's figures, and the owner's window recheck of the scroll and the rubble passing)
 > **Created:** 2026-10-17
 > **Milestone:** M3 (depenetration), M5 (restart) and M7 (the HUD nits) in `docs/roadmap.md`
-> **Related ADRs:** [ADR-0005](../adrs/0005-vertical-cylinder-collision-by-integer-conservative-advancement.md)
+> **Related ADRs:** [ADR-0005](../../adrs/0005-vertical-cylinder-collision-by-integer-conservative-advancement.md)
 > (its "no depenetration" consequence closes with a dated Outcome),
-> [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (its fail-stop
+> [ADR-0010](../../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (its fail-stop
 > Outcome is overturned by a dated Outcome, the owner's call of 2026-10-17)
 > **Prerequisite:** none. Touches `vxe-sim`, `vxe-script-wasm`, `vxe-net`, the fly-through's
 > HUD and `vxe-world` comments; independent of Plans 0006, 0013 and 0015.
@@ -322,7 +322,7 @@ pub enum LogicError {
 | 3: The review nits | dev | done: the HUD's values live in `Hud::stats`, refreshed in place, its `last_edit` the only copy; rows go through `HudOverlay::set_lines`; `Ms` formats pass times in place; a counting allocator reads frame 1 > 0 B and frames 2 to 100 at 0 B; `HudOverlay::allocations()` reads 1 after each of 100 frames on llvmpipe; `cpu_bytes_estimate(2, 3, 4096)` = old + 4 194 304; `gpu pool` row; `hud.png` re-blessed on llvmpipe (1068 bytes differed), then bit-exact; `PassTimer::read_ms(&self, device)`; the `nearest` and `RESERVE_ARRAYS` comments | c0555af |
 | 4: Rubble carries the rounding remainder | dev | done: one `u64` accumulator across `remove_region`'s columns; the 8 x 8 sheet in cell `[1, 1, 2]` (10 voxels over the floor) reads `removed` `{3: 64}`, `placed` 16 at x 11 and 15 for y 8..15, z 8; slab 1152, indestructible case 1151, `(0, 1)` 0, `(1, 1)` 4608, depth 32 versus 33 unchanged; collapse course hash `0x3178_0a15_61c1_3041` unchanged, not re-pinned | aab876f |
 | 5: Smooth scrolling changes the dig radius | dev | done: `flythrough::ScrollSteps`; `0.25` x 4 gives `0, 0, 0, 1`, `0.3, -0.3` gives `0, 0`, `2.0` gives `2`, `-0.6, -0.6` gives `0, -1` with carry -0.2 within 1e-6; `scroll_dig_radius`: 32 x `0.125` steps 0.5 m to 0.9 m (changes at 0.6, 0.7, 0.8, 0.9 m); at 3.0 m five upward deltas return `None` and leave carry 0, then `-1.0` gives 2.9 m | 8922ecc |
-| 6: The owner rechecks in a window | human | awaits the owner | |
+| 6: The owner rechecks in a window | human | done 2026-10-18 on main at 106998d's build, `--level`: scroll printed `dig radius` 0.4, 0.5, 0.3, 0.2, 0.3 m (one fast flick moved two steps in a frame and printed once); a ring cut through a thin wall under `R` printed `unsupported: 5 cells, {rock: 598}` and `removed: {rock: 598}, 134 rubble` (a quarter is 149), and the next carves dug `rubble 29`, `15`, `13`, `23` | |
 
 ### Notes
 
@@ -391,10 +391,22 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   `cargo fmt --all --check` exit 0; `cargo deny check` advisories, bans, licenses, sources
   ok; `check-comment-hygiene.mjs` OK; `check-doc-links.mjs` 124 links resolve. Render tests
   ran on llvmpipe (LLVM 22.1.8).
-- **Outstanding `human` phases:** Phase 6, the owner's window recheck of the scroll and of a
-  thin region's rubble.
+- **Outstanding `human` phases:** none (Phase 6 done 2026-10-18).
 
 ## Followups
 
 - A stress model for collapse (span and weight), its own ADR and plan under M8; see "What
   this plan does NOT do".
+- Support and fall disagree at thin fills (the owner's Phase 6 run, drop mode): a 147-voxel
+  region read `unsupported: 1 cells` next to rock the owner had just filled, then `landed
+  after 0 frames, fell 0 voxels`, and was reported again on the next dig. The support query
+  skips cells under `solid_min` (64) while the fall stops on any voxel, so a region resting on
+  a thin placed layer is unsupported and cannot fall. The stress-model plan decides whether
+  the query or the fall changes.
+- The embedded-tick worst case is not benched: 76 `overlaps` calls per tick with the
+  fly-through's parameters (`vxe-sim` controller `tick`).
+- No test has a guest whose `init` edits, so the re-applied-init-ops hazard ADR-0010's
+  Outcome records is untested.
+- Doc nits from the close review: overlong doc comments at the top of `vxe-sim`'s
+  `controller.rs` and above its embedded branch; `MoveResult::moved` has no doc comment; a
+  stray `use` below the new tests in the fly-through's `main.rs` tests.

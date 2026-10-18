@@ -261,7 +261,7 @@ work), and the light (real-time GI standing in for the baked occlusion).
   carve, with a stated SSIM floor against the reference.
 - **Budgets:** the full frame at 1080p output on the baseline GPU.
 - **ADRs expected:** denoiser family; upscaler choice. Surface representation: ADR-0011; its
-  streamed footprint: a new ADR at Plan 0013 Phase 4.
+  streamed footprint: ADR-0012 (final, surface-only); Plan 0013 builds the interim radius 14.
 
 ### M3: Collision, character controller, coarse grids (Plan 0004; done 2026-10-17)
 
@@ -269,8 +269,9 @@ Plan 0004 closed 2026-10-17 (v0.5.0): `vxe-sim` sweeps a vertical cylinder (ADR-
 capsule) and drives a controller with step, slide, fall, jump and ledge climb, pinned by a
 course hash; `vxe-world` keeps the coarse grid and walkable map from edit results; the
 fly-through walks on the bounded level and the owner drove it by hand. Open: the sweep cost
-(`nfr.md` section 8, awaiting the owner's call), depenetration, and wiring the grid to the
-streamer; Plan 0004's Followups list them. Plan 0009 (collapse) is unblocked.
+(`nfr.md` section 8, awaiting the owner's call) and wiring the grid to the streamer; Plan
+0004's Followups list them. Plan 0016 (closed 2026-10-18, v0.13.0) added depenetration to the
+controller (ADR-0005's Outcome addendum). Plan 0009 (collapse) is unblocked.
 
 
 - `vxe-sim`: capsule sweeps against bricks (the raycast stays in `vxe-world`, which owns all
@@ -309,7 +310,8 @@ the fly-through's digs, fills and bench through a server, saved and replayed und
 (ADR-0007, accepted). Followup from the close: op kinds 2 to 4 (stamp, drop, remove) in
 `Op`, the wire and `Host`, with the fly-through's stamp and collapse moving into `DigLogic`, so
 a saved session no longer refuses them; a stamp entry needs a prefab reference the log can
-name, likely an ADR.
+name, likely an ADR. Plan 0016 (closed 2026-10-18, v0.13.0) replaced fail-stop with a capped
+restart from the seed (ADR-0010's Outcome addendum).
 
 Plan 0011 closed 2026-10-17 (v0.11.0): `vxe-script-wasm` hosts a logic component under
 deterministic WASI (clocks fixed to the tick, always-ready timers, seeded entropy), fuel per
@@ -345,7 +347,7 @@ a cheap query.
 - **Visible proof:** a golden image of an animated model casting a shadow on the world.
 - **ADRs expected:** entity representation.
 
-### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0; debug views, the profiler across passes and the benchmark lane remain)
+### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; debug views, the profiler across passes and the benchmark lane remain)
 
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane

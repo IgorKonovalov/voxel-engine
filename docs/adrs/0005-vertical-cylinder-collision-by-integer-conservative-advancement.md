@@ -1,6 +1,6 @@
 # ADR-0005: Character collision as a vertical cylinder swept by integer conservative advancement
 
-> **Status:** accepted (2026-10-17, at Plan 0004's close; see Outcome)
+> **Status:** accepted (2026-10-17, at Plan 0004's close; see Outcome, and its 2026-10-18 addendum)
 > **Date:** 2026-10-16
 > **Related plan(s):** [Plan 0004](../plans/done/0004-cylinder-sweeps-character-controller-and-coarse-grid.md)
 
@@ -144,3 +144,13 @@ The creep consequence still holds: an oblique approach to a corner stops when th
 rounds to zero, and the iteration cap bounds the cost. The worst case (a 64-iteration grazing
 corner) is not benched. The measured costs are in `docs/nfr.md` (collision section): the F2
 wall sweep reads about five times the 5 µs the plan proposed.
+
+### Outcome addendum, 2026-10-18 (Plan 0016 close, v0.13.0)
+
+The "No depenetration" consequence above is closed for the controller's cylinder. `tick` tests
+`overlaps` first; an overlapping body takes the first free candidate pose (up, then outward,
+within the plan's reach) and reports `MoveResult::lifted`; a body with no free candidate
+reports `MoveResult::embedded` and keeps its state for that tick. The sweep itself is
+unchanged: `sweep` still reports `started_overlapping` and moves nothing. Other bodies get no
+depenetration. The controller tick reads 108 to 111 µs for the F6 60-tick course, the same as
+before the change (`docs/nfr.md` collision section).

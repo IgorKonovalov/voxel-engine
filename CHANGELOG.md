@@ -6,6 +6,10 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-18
+
+Plan 0016 (a minor bump: public API added and changed). The character controller lifts a body an edit filled into to the nearest free pose (`MoveResult::lifted`) or reports it `embedded` (ADR-0005 Outcome addendum). A hosted logic that traps restarts from its seed up to `WasmConfig::max_restarts` (default 8) and reports `LogicError::Restarted` through `Logic::take_restart` and `TickReport::restart`, replacing fail-stop (ADR-0010 Outcome addendum). `World::remove_region` carries the rubble rounding remainder across columns, so a thin region leaves about a quarter of its volume as rubble. The fly-through banks fractional scroll so smooth-scrolling devices step the dig radius in 0.1 m steps. The HUD refreshes without allocating (`HudOverlay::set_lines`, `allocations`); `PassTimer::read_ms` drops its queue parameter.
+
 ## [0.12.0] - 2026-10-17
 
 Plan 0006 (a minor bump, a feature plan): the `vxe-audio` crate. A headless mixer renders positional voices to binaural stereo through a packed SADIE II head (subject D2, 2950 directions, 128 taps, Apache 2.0) and plays them through `cpal` on the device callback, which allocates nothing and drains a bounded command channel per block. `World::trace_materials` walks the integer DDA through solids as material runs; `Acoustics` probes occlusion and transmission through the material table's acoustic triple and sixteen early-reflection taps per voice on the caller's thread. The fly-through plays a knock, eight hum notes, a looping pulse, toggles the echoes and meters the callback under `--audio-debug`. ADR-0006 accepted.
