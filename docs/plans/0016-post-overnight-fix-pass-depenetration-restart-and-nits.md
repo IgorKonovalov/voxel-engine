@@ -321,8 +321,8 @@ pub enum LogicError {
 | 2: A trapped logic restarts from its seed | dev | done: `WasmConfig::max_restarts` (default 8), `LogicError::Restarted`, `Logic::take_restart`, `TickReport::restart`; `spin` ticks 0 to 10: `Fuel{0}`, then `Restarted{t, t-1, t}` with `Fuel{t}` for t = 1..8, then `Stopped{9, 8}`, `Stopped{10, 8}`; `hog` at 1 restart logs tick 0's and tick 1's input edits, resimulation and a second session equal; failed `init` at the default: `Restarted{t, max(t-1, 0), t+1}` with `Fuel{t}` for t = 0..7, then `Stopped{t, 7}`; `max_restarts: 0` keeps the old sequences; one restart of `flythrough-logic` 26.9 and 29.3 µs median | 5397108 |
 | 3: The review nits | dev | done: the HUD's values live in `Hud::stats`, refreshed in place, its `last_edit` the only copy; rows go through `HudOverlay::set_lines`; `Ms` formats pass times in place; a counting allocator reads frame 1 > 0 B and frames 2 to 100 at 0 B; `HudOverlay::allocations()` reads 1 after each of 100 frames on llvmpipe; `cpu_bytes_estimate(2, 3, 4096)` = old + 4 194 304; `gpu pool` row; `hud.png` re-blessed on llvmpipe (1068 bytes differed), then bit-exact; `PassTimer::read_ms(&self, device)`; the `nearest` and `RESERVE_ARRAYS` comments | c0555af |
 | 4: Rubble carries the rounding remainder | dev | done: one `u64` accumulator across `remove_region`'s columns; the 8 x 8 sheet in cell `[1, 1, 2]` (10 voxels over the floor) reads `removed` `{3: 64}`, `placed` 16 at x 11 and 15 for y 8..15, z 8; slab 1152, indestructible case 1151, `(0, 1)` 0, `(1, 1)` 4608, depth 32 versus 33 unchanged; collapse course hash `0x3178_0a15_61c1_3041` unchanged, not re-pinned | aab876f |
-| 5: Smooth scrolling changes the dig radius | dev | done: `flythrough::ScrollSteps`; `0.25` x 4 gives `0, 0, 0, 1`, `0.3, -0.3` gives `0, 0`, `2.0` gives `2`, `-0.6, -0.6` gives `0, -1` with carry -0.2 within 1e-6; `scroll_dig_radius`: 32 x `0.125` steps 0.5 m to 0.9 m (changes at 0.6, 0.7, 0.8, 0.9 m); at 3.0 m five upward deltas return `None` and leave carry 0, then `-1.0` gives 2.9 m | committed with this row |
-| 6: The owner rechecks in a window | human | not started | |
+| 5: Smooth scrolling changes the dig radius | dev | done: `flythrough::ScrollSteps`; `0.25` x 4 gives `0, 0, 0, 1`, `0.3, -0.3` gives `0, 0`, `2.0` gives `2`, `-0.6, -0.6` gives `0, -1` with carry -0.2 within 1e-6; `scroll_dig_radius`: 32 x `0.125` steps 0.5 m to 0.9 m (changes at 0.6, 0.7, 0.8, 0.9 m); at 3.0 m five upward deltas return `None` and leave carry 0, then `-1.0` gives 2.9 m | 8922ecc |
+| 6: The owner rechecks in a window | human | awaits the owner | |
 
 ### Notes
 
@@ -367,11 +367,32 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** controller depenetration (1d1b3aa); restart of a hosted logic from its
+  seed up to a cap (5397108); the HUD and comment nits (c0555af); the rubble remainder carried
+  across columns (aab876f); banked scroll for the dig radius (8922ecc).
+- **Public API changed:** `vxe_sim::MoveResult::{lifted, embedded}`;
+  `vxe_script_wasm::WasmConfig::max_restarts`, `WasmLogic::take_restart`;
+  `vxe_net::LogicError::Restarted`, `Logic::take_restart` (default `None`),
+  `TickReport::restart`; `vxe_render::HudOverlay::{set_lines, allocations}`,
+  `PassTimer::read_ms(&self, device)` (the queue parameter removed); `World::remove_region`'s
+  rubble rule (one accumulator across columns). Fly-through lib:
+  `hud::cpu_bytes_estimate(chunks, full_bricks, pool_arrays)`,
+  `hud::WorldSample::{pool_arrays, from_stats(.., pool_arrays, ..)}`, `ScrollSteps`.
+- **Budget readings:** controller tick, `60 ticks of the F6 staircase, all on terrain`,
+  108.17, 110.59, 109.61 µs at the Phase 1 tree against 108.56, 108.35, 111.60 µs at e23f309,
+  AMD Ryzen 9 5900HS laptop, Linux, not quiet (load 13.4 to 5.2), no perf lock (`nfr.md` §8).
+  One restart of `flythrough-logic`: median 26.9 and 29.3 µs over 50 each, min 24.5, max
+  109.0 µs, same machine, load 7.4 to 9.4, one-off timing loop (`nfr.md` §4).
+- **Gate at the tip (8922ecc, before this close commit):** `cargo build` exit 0;
+  `cargo nextest run --workspace --no-tests=pass` 366 passed, 4 skipped; `cargo nextest run
+  -p flythrough --features wasm` 92 passed, 3 skipped (guests built with
+  `scripts/build-guests.sh`); `cargo test --doc --workspace` 6 passed; `cargo clippy
+  --workspace --all-targets -- -D warnings` and `-p flythrough --features wasm` exit 0;
+  `cargo fmt --all --check` exit 0; `cargo deny check` advisories, bans, licenses, sources
+  ok; `check-comment-hygiene.mjs` OK; `check-doc-links.mjs` 124 links resolve. Render tests
+  ran on llvmpipe (LLVM 22.1.8).
+- **Outstanding `human` phases:** Phase 6, the owner's window recheck of the scroll and of a
+  thin region's rubble.
 
 ## Followups
 
