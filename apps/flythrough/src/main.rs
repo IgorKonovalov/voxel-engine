@@ -18,7 +18,8 @@
 //! `trilinear8`, `gradient27`, `contour`) and gives the mirror attribute pages, so `N` can reach
 //! `contour` (without `--look` it skips it), and gives rock its procedural detail (`--rock-detail`
 //! sets rock's feature scale in voxels and strength, default `flythrough::ROCK_DETAIL`); `--view`
-//! starts in a view (`shaded`, `normals`, `hitmask`) and `--detail` with detail on. `N` cycles the
+//! starts in a view (`shaded`, `normals`, `hitmask`, `steps`; with `--frames`, `steps` prints the
+//! last frame's mean and p99 steps per ray on exit) and `--detail` with detail on. `N` cycles the
 //! normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
 //! inside the extent).
@@ -82,6 +83,7 @@ use vxe_audio::{Acoustics, Hrtf, Mixer, Output, PlayParams, Sound, VoiceId};
 use vxe_net::{Client, Event, Logic, LogicError, MemChannel, Server};
 use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
+use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
     Camera, GpuWorld, HudColour, HudOverlay, LightParams, LodParams, LookParams, MarchTimer,
     Marcher, MirrorConfig, NormalMode, PassTimer, Presenter, SyncStats, ViewMode, Window, wgpu,
@@ -326,8 +328,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--rock-detail" => args.rock_detail = parse_rock_detail(&value()?)?,
             "--view" => {
                 let v = value()?;
-                args.view = ViewMode::from_name(&v)
-                    .ok_or(format!("--view takes shaded, normals or hitmask, not {v}"))?;
+                args.view = ViewMode::from_name(&v).ok_or(format!(
+                    "--view takes shaded, normals, hitmask or steps, not {v}"
+                ))?;
             }
             "--save" => args.save = Some(value()?.into()),
             "--replay" => args.replay = Some(value()?.into()),
@@ -2235,6 +2238,12 @@ impl Run {
             if self.coarse.is_some() {
                 println!("{}", self.coarse_line());
             }
+            if self.look.view == ViewMode::Steps
+                && let Some(gfx) = &self.gfx
+            {
+                let px = readback::read_rgba8(&gpu.device, &gpu.queue, gfx.marcher.target());
+                println!("{}", steps_line(&StepHistogram::from_rgba8(&px)));
+            }
             self.sample_world();
             self.refresh_hud_stats();
             let mut stats = self.hud.stats.clone();
@@ -2244,6 +2253,19 @@ impl Run {
         }
         Flow::Continue
     }
+}
+
+/// The steps view's reading of one frame: `steps per ray (2073600 rays): mean 41.27, p99 133;
+/// pool reads mean 3.02, p99 18`. Counts clamp at 255 as the view does.
+fn steps_line(h: &StepHistogram) -> String {
+    format!(
+        "steps per ray ({} rays): mean {:.2}, p99 {}; pool reads mean {:.2}, p99 {}",
+        h.rays(),
+        h.mean_steps(),
+        h.p99_steps(),
+        h.mean_pool_reads(),
+        h.p99_pool_reads()
+    )
 }
 
 /// `look face, detail off, view shaded`, or with rock's detail under `--look`:

@@ -48,10 +48,10 @@ pub const FLAG_MASKS: u32 = 2;
 pub const NORMAL_SHIFT: u32 = 2;
 /// `Params::flags` bit: perturb the shading with per-material procedural detail.
 pub const FLAG_DETAIL: u32 = 1 << 4;
-/// `Params::flags` bits 5..7: the [`ViewMode`].
+/// `Params::flags` bits 5..8: the [`ViewMode`].
 pub const VIEW_SHIFT: u32 = 5;
 /// `Params::flags` bit: the mirror holds attribute pages (`MirrorConfig::surface_attrs`).
-pub const FLAG_ATTR_PAGES: u32 = 1 << 7;
+pub const FLAG_ATTR_PAGES: u32 = 1 << 8;
 
 /// How the marcher finds the normal at a hit, and in `Contour` the hit itself.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -113,16 +113,21 @@ pub enum ViewMode {
     Normals,
     /// White where the primary ray hits, black elsewhere.
     HitMask,
+    /// The primary ray's walk cost, linear: red `min(steps, 255) / 255` for the iterations
+    /// of the walk's loop (the hitting one included), green `min(pool reads, 255) / 255`.
+    /// [`crate::readback::StepHistogram`] reads it back.
+    Steps,
 }
 
 impl ViewMode {
-    pub const ALL: [Self; 3] = [Self::Shaded, Self::Normals, Self::HitMask];
+    pub const ALL: [Self; 4] = [Self::Shaded, Self::Normals, Self::HitMask, Self::Steps];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Shaded => "shaded",
             Self::Normals => "normals",
             Self::HitMask => "hitmask",
+            Self::Steps => "steps",
         }
     }
 

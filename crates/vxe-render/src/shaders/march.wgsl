@@ -3,7 +3,7 @@
 // Bindings, group 0:
 //   0  uniform  params         camera, mirror window, light, target size, flags (bit 0: shadow ray,
 //                              bit 1: occupancy masks, bits 2..4: normal mode, bit 4: detail,
-//                              bits 5..7: view, bit 7: the mirror has attribute pages)
+//                              bits 5..8: view, bit 8: the mirror has attribute pages)
 //   1  storage  brick_pool0    shard 0 of the pool: [slot][128 x u32], four u8 palette indices
 //                              per word, x fastest; a wide brick is two slots, [256 x u32] of
 //                              u16 voxel pairs. Slot s is slot s % slots_per_shard of shard
@@ -23,7 +23,7 @@
 //   8  storage  brick_pool2    pool shard 2
 //   9  storage  brick_pool3    pool shard 3
 //
-// With attribute pages (flag bit 7), a full chunk's Full brick in slot s of the page
+// With attribute pages (flag bit 8), a full chunk's Full brick in slot s of the page
 // p = s - s % 4096 has its 512 u16 contour attributes in slots p + 1364 + 2 (s - p) and the
 // one after, two per word, x fastest: bits 0..6 octahedral u, 6..12 octahedral v, 12..16 the
 // plane offset code k for (k - 7) / 8 voxel along the normal from the voxel centre; 0xFFFF is
@@ -100,8 +100,9 @@ const FLAG_MASKS: u32 = 2u;
 const NORMAL_SHIFT: u32 = 2u;
 const FLAG_DETAIL: u32 = 16u;
 const VIEW_SHIFT: u32 = 5u;
-const FLAG_ATTR_PAGES: u32 = 128u;
-// Normal modes (flags bits 2..4) and views (flags bits 5..7).
+const VIEW_BITS: u32 = 7u;
+const FLAG_ATTR_PAGES: u32 = 256u;
+// Normal modes (flags bits 2..4) and views (flags bits 5..8).
 const NORMAL_FACE: u32 = 0u;
 const NORMAL_TRILINEAR8: u32 = 1u;
 const NORMAL_GRADIENT27: u32 = 2u;
@@ -109,6 +110,7 @@ const NORMAL_CONTOUR: u32 = 3u;
 const VIEW_SHADED: u32 = 0u;
 const VIEW_NORMALS: u32 = 1u;
 const VIEW_HITMASK: u32 = 2u;
+const VIEW_STEPS: u32 = 3u;
 // Attribute pages: brick slots per page, slots per page, and the attribute of no plane.
 const PAGE_SLOTS: u32 = 4096u;
 const ATTR_PAGE_BRICK_SLOTS: u32 = 1364u;
@@ -135,9 +137,15 @@ struct Hit {
     n: vec3<f32>,
 };
 
+// The walk's cost counters: loop iterations of `march` and `pool_word` calls since the last
+// reset. `main` resets them before the primary ray and reads them after it in the steps view.
+var<private> walk_steps: u32;
+var<private> pool_reads: u32;
+
 // Word `word` of the brick in global pool slot `slot` (a wide brick's words run on into the
 // next slot, which is in the same shard).
 fn pool_word(slot: u32, word: u32) -> u32 {
+    pool_reads += 1u;
     let shard = slot / params.slots_per_shard;
     let i = (slot - shard * params.slots_per_shard) * SLOT_WORDS + word;
     switch shard {
@@ -334,6 +342,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
     let contour = contour_active();
 
     for (var step = 0u; step < MAX_STEPS; step++) {
+        walk_steps += 1u;
         if (any(v < bmin_i) || any(v >= bmax_i)) {
             return miss;
         }
@@ -375,7 +384,7 @@ fn normal_mode() -> u32 {
 }
 
 fn view_mode() -> u32 {
-    return (params.flags >> VIEW_SHIFT) & 3u;
+    return (params.flags >> VIEW_SHIFT) & VIEW_BITS;
 }
 
 // The normal of the face the ray entered the hit voxel through; `-d` when the ray started
@@ -558,8 +567,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         - params.cam_up * (ndc.y * params.tan_half_fov)
     );
     let o = params.cam_pos;
+    walk_steps = 0u;
+    pool_reads = 0u;
     let h = march(o, d, BIG);
     let view = view_mode();
+    if (view == VIEW_STEPS) {
+        // The primary ray's cost: red its loop iterations, green its pool reads, each
+        // clamped at 255. No shading, so no shadow ray.
+        let cost = vec2<f32>(vec2<u32>(min(walk_steps, 255u), min(pool_reads, 255u))) / 255.0;
+        textureStore(target_tex, vec2<i32>(gid.xy), vec4<f32>(cost, 0.0, 1.0));
+        return;
+    }
     if (view == VIEW_HITMASK) {
         textureStore(target_tex, vec2<i32>(gid.xy), vec4<f32>(vec3<f32>(select(0.0, 1.0, h.found)), 1.0));
         return;

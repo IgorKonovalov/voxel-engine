@@ -1,6 +1,6 @@
 # 0015: The traversal hierarchy: chunk bits, full-resolution brick masks, a one-read-per-level walk, and the translucent class
 
-> **Status:** approved (2026-10-17)
+> **Status:** in-progress
 > **Created:** 2026-10-17
 > **Milestone:** M2 in `docs/roadmap.md` (the frame-time floor before the lighting plan)
 > **Related ADRs:** [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
@@ -359,7 +359,7 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The steps view and the headless histogram, on today's walk | dev | not started | |
+| 1: The steps view and the headless histogram, on today's walk | dev | done | committed with this row |
 | 2: Chunk bits, the chunk-level and 16³ skips | dev | not started | |
 | 3: Full-resolution opaque masks | dev | not started | |
 | 4: A walk that re-derives state at boundaries | dev | not started | |
@@ -368,9 +368,14 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: `FLAG_ATTR_PAGES` moved from bit 7 to bit 8 so the view field can take bits 5..8.
+- Phase 1: the streamed spawn reaches full residency after about 15 s (about 1500 frames), so
+  its readings are taken with `--frames 3000`; at `--frames 60` and `--frames 300` the
+  mirror is not fully resident (640 860 404 B live at 300). The 60-frame histogram read the
+  same as the 3000-frame one.
+- Phase 1: bit-exactness of the goldens is checked by re-blessing them on lavapipe
+  (`VXE_BLESS=1`) and finding the PNGs unchanged in git; `assert_golden` itself tolerates
+  0.1 % of pixels off by more than 2/255.
 
 ### Close triggers
 
@@ -378,7 +383,14 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 - **What shipped:**
 - **Public API changed:**
-- **Budget readings:**
+- **Budget readings:** RTX 3080 Laptop GPU, Vulkan, headless, 1920 x 1080, seed 1,
+  timestamps, median of the last 30 frames, three runs each; load average 5 to 11 from the
+  runs' own streaming workers.
+  - Phase 1 (before, 80c6ab0 plus the steps view): streamed spawn `--frames 3000` march
+    6.817 / 6.815 / 6.810 ms; level spawn `--level --frames 300` 1.859 / 1.875 / 1.858 ms.
+    Histogram `--view steps`: streamed spawn mean 15.55, p99 84 steps, pool reads mean 2.45,
+    p99 7 (same at `--frames 60` and `3000`); level spawn mean 10.48, p99 15, pool reads mean
+    2.15, p99 4. Steps-view march (no shadow ray): streamed 6.021 ms, level 1.483 ms.
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 
