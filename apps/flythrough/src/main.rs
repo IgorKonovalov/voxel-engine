@@ -74,7 +74,8 @@ use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, VAULT_EDGE, vault};
 use flythrough::hud::{self, Cadence, EditLine, FrameStats, HudStats, WorldSample};
 use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB, REACH};
 use flythrough::{
-    LogicChoice, RESIDENCY, RUBBLE, cave_materials, chunk_ram, chunks_hash, mips_ram, percentile,
+    LogicChoice, RESIDENCY, RUBBLE, ScrollSteps, cave_materials, chunk_ram, chunks_hash, mips_ram,
+    percentile,
 };
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
 use vxe_audio::{Acoustics, Hrtf, Mixer, Output, PlayParams, Sound, VoiceId};
@@ -97,6 +98,19 @@ use vxe_world::{
 const DIG_RADIUS: i64 = 5 * FIXED_ONE;
 const DIG_STEP: i64 = FIXED_ONE;
 const DIG_RANGE: (i64, i64) = (FIXED_ONE, 30 * FIXED_ONE);
+/// The dig radius after a frame's `delta` scroll lines banked in `scroll`: whole steps of
+/// [`DIG_STEP`], clamped to [`DIG_RANGE`]; `None` when it does not change. At either end of
+/// the range, scroll pushing past it is dropped rather than banked, so the first line back
+/// steps at once.
+fn scroll_dig_radius(radius: i64, scroll: &mut ScrollSteps, delta: f32) -> Option<i64> {
+    let steps = scroll.add(delta);
+    let r = (radius + steps * DIG_STEP).clamp(DIG_RANGE.0, DIG_RANGE.1);
+    if (r == DIG_RANGE.1 && scroll.carry() > 0.0) || (r == DIG_RANGE.0 && scroll.carry() < 0.0) {
+        scroll.clear();
+    }
+    (r != radius).then_some(r)
+}
+
 /// Radius of the right-click fill: 0.3 m.
 const FILL_RADIUS: i64 = 3 * FIXED_ONE;
 /// Brick arrays the world's pool is topped up to after each frame's edits and before the `B`
@@ -1125,6 +1139,8 @@ struct Run {
     light: LightParams,
     look: LookParams,
     dig_radius: i64,
+    /// Scroll banked toward the next dig-radius step.
+    scroll: ScrollSteps,
     bench_runs: u64,
     frame: u32,
     gfx: Option<Gfx>,
@@ -1981,13 +1997,11 @@ impl Run {
                 if self.light.shadows { "on" } else { "off" }
             );
         }
-        if input.scroll() != 0.0 {
-            let steps = input.scroll().round() as i64;
-            self.dig_radius = (self.dig_radius + steps * DIG_STEP).clamp(DIG_RANGE.0, DIG_RANGE.1);
-            println!(
-                "dig radius {:.1} m",
-                self.dig_radius as f64 / (10 * FIXED_ONE) as f64
-            );
+        if input.scroll() != 0.0
+            && let Some(r) = scroll_dig_radius(self.dig_radius, &mut self.scroll, input.scroll())
+        {
+            self.dig_radius = r;
+            println!("dig radius {:.1} m", r as f64 / (10 * FIXED_ONE) as f64);
         }
         if input.clicked(MouseButton::Left) {
             self.dig();
@@ -2374,6 +2388,7 @@ impl App for Flythrough {
                     view: self.args.view,
                 },
                 dig_radius: DIG_RADIUS,
+                scroll: ScrollSteps::default(),
                 bench_runs: 0,
                 frame: 0,
                 gfx: None,
@@ -2719,6 +2734,32 @@ static ALLOC: counting::Counting = counting::Counting;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 32 frames of an eighth of a line raise the dig radius from 0.5 m by four steps to
+    /// 0.9 m, each step reported once. At 3.0 m further upward scroll reports nothing and
+    /// banks nothing, so one line down steps to 2.9 m at once.
+    #[test]
+    fn smooth_scrolling_steps_the_dig_radius() {
+        let mut scroll = ScrollSteps::default();
+        let mut r = DIG_RADIUS;
+        let mut changes = Vec::new();
+        for _ in 0..32 {
+            if let Some(n) = scroll_dig_radius(r, &mut scroll, 0.125) {
+                r = n;
+                changes.push(r);
+            }
+        }
+        assert_eq!(changes, [6, 7, 8, 9].map(|v| v * FIXED_ONE));
+        assert_eq!(r, 9 * FIXED_ONE);
+
+        let mut r = 30 * FIXED_ONE;
+        for delta in [0.125, 0.5, 1.0, 0.875, 0.125] {
+            assert_eq!(scroll_dig_radius(r, &mut scroll, delta), None);
+        }
+        assert_eq!(scroll.carry(), 0.0);
+        r = scroll_dig_radius(r, &mut scroll, -1.0).expect("one line down steps");
+        assert_eq!(r, 29 * FIXED_ONE);
+    }
 
     /// A shown HUD allocates nothing per frame once its buffers have grown: 100 frames of
     /// recording a frame time, refreshing the values a frame changes, and formatting the

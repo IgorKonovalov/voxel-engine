@@ -331,9 +331,50 @@ pub fn percentile(v: &mut [f64], p: f64) -> f64 {
     v[rank.clamp(1, v.len()) - 1]
 }
 
+/// Scroll lines banked into whole steps: smooth or touchpad scrolling delivers a fraction of
+/// a line per frame, which rounding per frame would turn into no step at all.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ScrollSteps {
+    carry: f32,
+}
+
+impl ScrollSteps {
+    /// Adds a frame's scroll in lines and returns the whole steps banked, rounded toward
+    /// zero; the fraction stays for the next frame.
+    pub fn add(&mut self, delta: f32) -> i64 {
+        self.carry += delta;
+        let steps = self.carry.trunc();
+        self.carry -= steps;
+        steps as i64
+    }
+
+    /// The fraction of a step banked.
+    pub fn carry(&self) -> f32 {
+        self.carry
+    }
+
+    /// Drops the banked fraction.
+    pub fn clear(&mut self) {
+        self.carry = 0.0;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scroll_steps_bank_fractions_and_step_toward_zero() {
+        let mut s = ScrollSteps::default();
+        let quarters: Vec<i64> = [0.25; 4].iter().map(|&d| s.add(d)).collect();
+        assert_eq!(quarters, [0, 0, 0, 1]);
+        assert_eq!(s.carry(), 0.0);
+        assert_eq!([s.add(0.3), s.add(-0.3)], [0, 0]);
+        assert_eq!(s.add(2.0), 2);
+        let mut s = ScrollSteps::default();
+        assert_eq!([s.add(-0.6), s.add(-0.6)], [0, -1]);
+        assert!((s.carry() + 0.2).abs() < 1e-6, "carry {}", s.carry());
+    }
 
     #[test]
     fn look_materials_puts_the_override_on_rock_only() {
