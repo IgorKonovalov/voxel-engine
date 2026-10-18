@@ -10,7 +10,7 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Status | Live constraint |
 |------|-------|--------|-----------------|
-| [0013](0013-contour-default-shadow-origin-and-streamed-footprint.md) | Contour as the fly-through's default: the shadow-ray origin, a streamed footprint under 3 GB, and a weaker rock detail | approved | M2 surface follow-up to ADR-0011; two `human` phases. ADR-0012 settles the footprint; Phase 4 picks the interim. |
+| [0013](0013-contour-default-shadow-origin-and-streamed-footprint.md) | Contour as the fly-through's default: the shadow-ray origin, a streamed footprint under 3 GB, and a weaker rock detail | approved | Phase 4 met (D at 14). Phase 5 waits for Plan 0017; Phase 6 (human) may go first. |
 | [0015](0015-traversal-hierarchy-chunk-bits-brick-masks-and-translucent-class.md) | The traversal hierarchy: chunk bits, full-resolution brick masks, a one-read-per-level walk, and the translucent class | approved | M2, first step of ADR-0012 on today's pool. Conflicts with `plan-0013` in the marcher. |
 | [0016](0016-post-overnight-fix-pass-depenetration-restart-and-nits.md) | The post-overnight fix pass: depenetration, a logic that restarts after a trap, and the review nits | approved | D6, D7 item 3, and the rubble and scroll fixes from the 2026-10-17 window test; Phase 6 is `human`. |
 | [0017](0017-mirror-budget-reservation-page-kinds-and-pressure.md) | The mirror reserves its budget: fixed buffers, empty pages that change kind, and a pressure signal the streamer follows | approved | Paired with ADR-0013. Best after Plan 0015. |
