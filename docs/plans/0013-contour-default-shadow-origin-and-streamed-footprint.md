@@ -323,9 +323,9 @@ The baseline GPU is not on hand; every figure is a dev-reference reading and say
 | 1: The shadow ray leaves the plane | dev | done: offset 0.5 voxel along the plane normal kept; only-with-shadows specks contour 52 (347 with, 301 without) against face 174 (1179, 1017), llvmpipe 320 x 180; contour metrics 7.41 degrees, 32 px; `look_contour.png` reblessed on llvmpipe (24.34 % of pixels differ from `headlamp.png` by more than 8/255), other goldens unchanged; look tests pin rock to `SPIKE_ROCK_DETAIL` | 82b19b8 |
 | 2: The attribute pass keeps its buffers, and the shell path is tested | dev | done: `AttribPass` keeps its uniform, a work buffer (next power of two, at least 256 items) and its bind group; 46 items x 1000 then 2777 read `buffer_builds() == 2`, capacity 256 then 4096, attribute bytes equal to a fresh mirror's pass; the shell test failed on its first state (east absent read `NO_PLANE`) until the chunk table was created filled with `ABSENT`; arrival and eviction halves pass with `attr_work` unchanged | 9ffa2a5 |
 | 3: The footprint census and the candidates | dev | done: `world_budget --stream R_FULL,R_LOD --surface`, `--residency`, `--attrib-quant`, `AttribQuant` (`None` writes the full attribute: layout and floor tests unchanged, contour metrics 7.41 degrees, 32 px); at 16,24 the census reads 1 640 292 bricks, x 1040 = 1 705 903 680 B against the 1 705 903 808 B rise (-0.000 %); table below | committed with this row |
-| 4: The owner's footprint call | human | awaits the owner | |
+| 4: The owner's footprint call | human | done: D at 14,24, chosen 2026-10-17 (`docs/decisions-pending.md` D1): lossless, no layout change to undo later; the final surface-only form comes with ADR-0012's mirror-slot plan; ADR-0012 accepted 2026-10-17 | |
 | 5: The chosen footprint | dev | not started | |
-| 6: Rock detail on screen | human | not started | |
+| 6: Rock detail on screen | human | done, ahead of Phase 5: `[4.0, 0.1]`; of `--rock-detail 4,S` at S = 0.1, 0.15, 0.2 and 0.3 (today's default) on `--level --seed 1 --look contour --detail`, the owner judged 0.1 best (2026-10-18) | |
 | 7: Contour plus detail as the default, and the streamed readings | dev | not started | |
 
 ### Footprint candidates (Phase 3)
