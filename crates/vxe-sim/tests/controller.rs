@@ -391,3 +391,81 @@ fn a_ledge_under_a_low_ceiling_is_climbed_when_the_body_fits_over_it() {
     );
     assert_eq!(foot(&steps, 120), [6912, 2688, 0]);
 }
+
+/// Fills air with rock in the voxel box `[lo, hi)`.
+fn fill(world: &World, lo: [i64; 3], hi: [i64; 3]) {
+    world
+        .apply(&EditOp::box_(
+            Fixed3(lo.map(|v| v * 256)),
+            Fixed3(hi.map(|v| v * 256)),
+            Mode::Fill(ROCK),
+        ))
+        .expect("the fill applies");
+}
+
+/// One idle tick from `state`.
+fn idle_tick(world: &World, state: &mut CharacterState) -> MoveResult {
+    CharacterController::new(params()).tick(world, state, &MoveInput::default())
+}
+
+/// A body standing on F1 whose floor a fill raises by 2 voxels under its whole footprint is
+/// lifted onto the new floor by the next tick, without moving horizontally.
+#[test]
+fn a_fill_under_the_body_lifts_it_onto_the_new_floor() {
+    let world = f1();
+    let mut st = CharacterState::new(Fixed3(S));
+    idle_tick(&world, &mut st);
+    assert!(st.grounded);
+    fill(&world, [-40, -40, 0], [40, 40, 2]);
+    assert!(overlaps(&world, &body_at(st.foot.0)));
+    let r = idle_tick(&world, &mut st);
+    assert_eq!(r.lifted, Fixed3([0, 0, 512]));
+    assert!(!r.embedded);
+    assert!(!overlaps(&world, &body_at(st.foot.0)));
+    assert_eq!(st.foot.0, [2688, 2688, 512]);
+    assert!(st.grounded);
+}
+
+/// A rise of `step_height + 1` voxel is past every upward candidate up to `step_height`: the
+/// body is moved along the first free horizontal offset at distance 1 when there is one,
+/// else lifted at the smallest distance that frees it.
+#[test]
+fn a_fill_past_the_step_height_moves_the_body_aside_or_up() {
+    // The fill ends at x = 8 voxels, 640 units behind the axis: +x by one voxel frees it.
+    let world = f1();
+    let mut st = CharacterState::new(Fixed3(S));
+    fill(&world, [-40, -40, 0], [8, 40, 5]);
+    let r = idle_tick(&world, &mut st);
+    assert_eq!(r.lifted, Fixed3([256, 0, 0]));
+    assert!(!r.embedded);
+    assert_eq!(st.foot.0, [2944, 2688, 0]);
+    assert!(!overlaps(&world, &body_at(st.foot.0)));
+
+    // Under the whole reach no horizontal offset frees it; +z at 5 voxels is the first that
+    // does, after +x, -x, +y and -y at that distance.
+    let world = f1();
+    let mut st = CharacterState::new(Fixed3(S));
+    fill(&world, [-40, -40, 0], [40, 40, 5]);
+    let r = idle_tick(&world, &mut st);
+    assert_eq!(r.lifted, Fixed3([0, 0, 1280]));
+    assert!(!r.embedded);
+    assert_eq!(st.foot.0, [2688, 2688, 1280]);
+    assert!(!overlaps(&world, &body_at(st.foot.0)));
+}
+
+/// A body enclosed in solid beyond `climb_height` on every side stays where it is and
+/// reports `embedded`, tick after tick.
+#[test]
+fn a_body_enclosed_in_solid_reports_embedded_and_stays() {
+    let world = f1();
+    let mut st = CharacterState::new(Fixed3(S));
+    fill(&world, [-40, -40, 0], [40, 40, 40]);
+    for _ in 0..2 {
+        let before = st;
+        let r = idle_tick(&world, &mut st);
+        assert!(r.embedded);
+        assert_eq!(r.lifted, Fixed3([0, 0, 0]));
+        assert_eq!(r.moved, Fixed3([0, 0, 0]));
+        assert_eq!(st, before);
+    }
+}

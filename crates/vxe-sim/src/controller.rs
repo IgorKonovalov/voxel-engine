@@ -1,15 +1,16 @@
 //! A character controller composed of sweeps in a fixed per-tick order (ADR-0005).
 //!
-//! One tick: a horizontal move by the wish vector, with a step attempt and up to two slides
+//! One tick: when the body starts it overlapping solid (an edit filled into it), a lift to
+//! the first free pose of a fixed candidate sequence; then a horizontal move by the wish vector, with a step attempt and up to two slides
 //! when a wall blocks it, and a probe for a climbable ledge when it stays blocked or, with
 //! climb held, when it ran into a wall within 60 degrees of head-on; then a vertical move
 //! under gravity. Every parameter is in fixed units per tick; the caller owns the tick rate.
 //! A slope is a staircase of voxels and is climbed as steps.
 
-use vxe_world::{Fixed3, World};
+use vxe_world::{FIXED_ONE, Fixed3, World};
 
 use crate::body::{Body, Contact, isqrt};
-use crate::sweep::{Sweep, sweep};
+use crate::sweep::{Sweep, overlaps, sweep};
 
 /// Contacts a [`MoveResult`] keeps.
 pub const MAX_CONTACTS: usize = 4;
@@ -95,6 +96,11 @@ pub struct MoveResult {
     pub contacts: Vec<Contact>,
     /// The impact speed on the tick the body comes to rest on a floor while falling.
     pub landed: Option<i64>,
+    /// The offset the controller lifted the body by before sweeping, zero when none.
+    pub lifted: Fixed3,
+    /// The body overlapped solid at the start and no free pose was within reach; the tick
+    /// moved nothing.
+    pub embedded: bool,
 }
 
 impl MoveResult {
@@ -248,9 +254,38 @@ impl CharacterController {
         (on_floor(&down) && rise > p.step_height && rise <= p.climb_height).then_some(f3)
     }
 
+    /// The first offset from `foot` at which the body overlaps nothing, in a fixed order: up
+    /// by 1 voxel at a time to `step_height`, then for each distance `d` from 1 voxel to
+    /// `climb_height` in voxel steps, `+x, -x, +y, -y, +z, -z` scaled by `d`. `None` when no
+    /// candidate is free. The result depends on the world and the body alone.
+    fn depenetrate(&self, world: &World, foot: [i64; 3]) -> Option<[i64; 3]> {
+        let p = &self.params;
+        let up = (1..)
+            .map(|k| k * FIXED_ONE)
+            .take_while(|&d| d <= p.step_height)
+            .map(|d| [0, 0, d]);
+        let around = (1..)
+            .map(|k| k * FIXED_ONE)
+            .take_while(|&d| d <= p.climb_height)
+            .flat_map(|d| {
+                [
+                    [d, 0, 0],
+                    [-d, 0, 0],
+                    [0, d, 0],
+                    [0, -d, 0],
+                    [0, 0, d],
+                    [0, 0, -d],
+                ]
+            });
+        up.chain(around)
+            .find(|off| !overlaps(world, &self.body([0, 1, 2].map(|k| foot[k] + off[k]))))
+    }
+
     /// Advances `state` by one tick of `input` and reports what happened.
     ///
-    /// The order is fixed: a climb in progress (released `climb` ends it first); else the
+    /// A body that starts the tick overlapping solid is first moved by [`Self::depenetrate`]'s
+    /// offset, reported in `lifted`; when no candidate is free it stays, `embedded` is set and
+    /// the tick does nothing else. The order is then fixed: a climb in progress (released `climb` ends it first); else the
     /// horizontal move, which may start a climb and run its first rise; then, unless the body
     /// is still climbing, the vertical move. A climbing tick takes no horizontal input and no
     /// gravity.
@@ -258,6 +293,15 @@ impl CharacterController {
         let mut r = MoveResult::default();
         let start = state.foot.0;
         let mut foot = start;
+        if overlaps(world, &self.body(foot)) {
+            let Some(off) = self.depenetrate(world, foot) else {
+                r.embedded = true;
+                r.grounded = state.grounded;
+                return r;
+            };
+            r.lifted = Fixed3(off);
+            foot = [0, 1, 2].map(|k| foot[k] + off[k]);
+        }
         if state.climbing.is_some() && !input.climb {
             state.climbing = None;
         }

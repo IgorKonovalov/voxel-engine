@@ -390,6 +390,12 @@ criterion median (low, high), exclusive perf lock, load average 1.7 to 2.3 at ea
   `1000 ticks of the F6 course` 772.89 µs, 0.77 µs per tick (most of those ticks are free fall
   past the fixture's extent). Under the 20 µs line. The worst case, a 64-iteration grazing
   corner sweep inside a tick, is not benched.
+- **Controller tick with depenetration (Plan 0016 Phase 1, an overlap test at every tick's
+  start):** `60 ticks of the F6 staircase, all on terrain` 108.17, 110.59 and 109.61 µs
+  against 108.56, 108.35 and 111.60 µs for the same bench at e23f309 (no overlap test),
+  alternated on the same box: AMD Ryzen 9 5900HS laptop, Linux, not quiet (load average 13.4
+  falling to 5.2, other processes running), no perf lock. About **1.8 µs per tick**; the two
+  arms do not separate. The 156.01 µs above was not reproduced on this day by either arm.
 - **Sweep:** `1000 sweeps of the F2 wall case` 26.303 ms (26.295, 26.312), and 26.264 ms on
   a second run: **26.3 µs per sweep**, against the 5 µs proposal. The owner accepted the
   measured figure as the line at 17.5 µs (fe50d6d); the walk-check fix pass (closes-on filter,

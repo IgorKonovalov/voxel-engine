@@ -88,6 +88,8 @@ pub struct Walk {
     pub state: CharacterState,
     /// Seconds not yet spent on ticks.
     pending: f32,
+    /// The last tick found the body embedded, so `walk: embedded` prints once per episode.
+    embedded: bool,
 }
 
 impl Walk {
@@ -103,6 +105,7 @@ impl Walk {
             controller,
             state: CharacterState::new(Fixed3(foot)),
             pending: 0.0,
+            embedded: false,
         })
     }
 
@@ -127,7 +130,7 @@ impl Walk {
 
     /// Turns the camera, runs the ticks `dt` seconds owe, and puts the camera at the eye.
     /// Returns the state-change lines to print: `walk: grounded`, `walk: stepped`,
-    /// `walk: climbing`, `walk: climbed`.
+    /// `walk: climbing`, `walk: climbed`, `walk: lifted out of solid`, `walk: embedded`.
     pub fn update(
         &mut self,
         world: &World,
@@ -157,6 +160,13 @@ impl Walk {
         let (was_grounded, was_climbing) = (self.state.grounded, self.state.is_climbing());
         let r = self.controller.tick(world, &mut self.state, input);
         let mut lines = Vec::new();
+        if r.lifted != Fixed3::default() {
+            lines.push("walk: lifted out of solid");
+        }
+        if r.embedded && !self.embedded {
+            lines.push("walk: embedded");
+        }
+        self.embedded = r.embedded;
         if r.stepped {
             lines.push("walk: stepped");
         }
@@ -276,6 +286,7 @@ mod tests {
             controller: CharacterController::new(walk_params()),
             state: CharacterState::new(Fixed3([128, 128, 0])),
             pending: 0.0,
+            embedded: false,
         };
         let idle = MoveInput::default();
         for _ in 0..5 {
@@ -335,6 +346,7 @@ mod tests {
             controller: CharacterController::new(walk_params()),
             state: CharacterState::new(Fixed3([128, 128, -10 * 256])),
             pending: 0.0,
+            embedded: false,
         };
         let mut cam = Camera {
             yaw: 30f32.to_radians(),
@@ -363,7 +375,8 @@ mod tests {
     /// world, it never stays put for 30 ticks at a pose where no sweep (16 horizontal
     /// directions, up, down) moves it, and some walk climbs a ledge. Before the sweep left
     /// out boxes a move does not close on, the body froze in mid-air beside a voxel edge
-    /// within the first few walks of every seed tried.
+    /// within the first few walks of every seed tried. Every 50th walk fills rock over the
+    /// body's feet first, which the next tick lifts it out of.
     #[test]
     fn random_walks_on_the_level_never_freeze_or_overlap() {
         use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
@@ -386,8 +399,18 @@ mod tests {
             })
             .chain([[0, 0, 256], [0, 0, -256]])
             .collect();
-        let (mut still, mut climbs, mut ticks, mut digs) = (0, 0, 0, 0);
+        let (mut still, mut climbs, mut ticks, mut digs, mut lifts) = (0, 0, 0, 0, 0);
         for walk in 0..800 {
+            if walk % 50 == 0 {
+                let f = st.foot.0;
+                let r = world.apply(&vxe_world::EditOp::sphere(
+                    Fixed3([f[0], f[1], f[2] + 256]),
+                    768,
+                    vxe_world::Mode::Fill(flythrough::cave::ROCK),
+                ));
+                assert!(r.is_ok_and(|r| !r.changed_from.is_empty()), "walk {walk}");
+                assert!(overlaps(&world, &c.body(f)), "walk {walk}");
+            }
             let a = (next() % 3600) as f32 / 3600.0 * std::f32::consts::TAU;
             let wish = [
                 (a.cos() * 128.0).round() as i64,
@@ -420,6 +443,8 @@ mod tests {
                 let r = c.tick(&world, &mut st, &input);
                 ticks += 1;
                 climbs += u32::from(r.climbed);
+                lifts += u32::from(r.lifted != Fixed3::default());
+                assert!(!r.embedded, "walk {walk}: embedded at {:?}", st.foot.0);
                 let f = st.foot.0;
                 assert!(
                     !overlaps(&world, &c.body(f)),
@@ -443,6 +468,7 @@ mod tests {
         assert!(ticks > 40_000);
         assert!(digs > 100, "{digs} carves");
         assert!(climbs > 0, "no climb in {ticks} ticks");
+        assert_eq!(lifts, 16);
     }
 
     #[test]

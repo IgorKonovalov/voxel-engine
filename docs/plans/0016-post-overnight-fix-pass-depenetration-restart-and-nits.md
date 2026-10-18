@@ -1,6 +1,6 @@
 # 0016: The post-overnight fix pass: depenetration, a logic that restarts after a trap, and the review nits
 
-> **Status:** approved (2026-10-17)
+> **Status:** in-progress
 > **Created:** 2026-10-17
 > **Milestone:** M3 (depenetration), M5 (restart) and M7 (the HUD nits) in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0005](../adrs/0005-vertical-cylinder-collision-by-integer-conservative-advancement.md)
@@ -317,7 +317,7 @@ pub enum LogicError {
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Depenetration in the controller | dev | not started | |
+| 1: Depenetration in the controller | dev | done: `tick` tests `overlaps` first and takes the first free candidate; `MoveResult::lifted`, `embedded`; 2-voxel fill lifts `[0, 0, 512]` to `[2688, 2688, 512]`; 5-voxel fill lifts `[256, 0, 0]` (fill ending at x = 8) or `[0, 0, 1280]` (fill over the reach); enclosed body `embedded` twice, state unchanged; level walk: 16 fills, 16 lifts, no embed; course hash unchanged; F6 60-tick bench 108.17 to 110.59 µs against 108.35 to 111.60 µs at e23f309, same box, not quiet | committed with this row |
 | 2: A trapped logic restarts from its seed | dev | not started | |
 | 3: The review nits | dev | not started | |
 | 4: Rubble carries the rounding remainder | dev | not started | |
@@ -329,6 +329,14 @@ pub enum LogicError {
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: the F6 60-tick bench read 108 to 111 µs, outside "within 10 % of 156 µs"; the base
+  commit e23f309 read the same range in alternated runs on the same day (not a quiet box,
+  load 13.4 to 5.2). `nfr.md` §8 carries both arms.
+- Phase 1: an embedded tick returns before the climb, horizontal and vertical moves, so it
+  leaves `vz`, `grounded` and the climb state as they were.
+- Phase 1: the fly-through prints `walk: lifted out of solid` on each lifting tick and
+  `walk: embedded` once per run of embedded ticks (`Walk::embedded`).
 
 ### Close triggers
 
