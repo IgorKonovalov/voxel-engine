@@ -359,12 +359,21 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The steps view and the headless histogram, on today's walk | dev | done | committed with this row |
+| 1: The steps view and the headless histogram, on today's walk | dev | done | 52d6a7b |
 | 2: Chunk bits, the chunk-level and 16³ skips | dev | not started | |
 | 3: Full-resolution opaque masks | dev | not started | |
 | 4: A walk that re-derives state at boundaries | dev | not started | |
 | 5: The translucent class and the bounded accumulation walk | dev | not started | |
 | 6: Readings, budgets and the stats line | dev | not started | |
+
+> **Resume note (2026-10-18, delete when Phase 2 lands):** stopped before Phase 2 at
+> 52d6a7b, routed to `/architect`. Phase 4's first bullet counts one bits word per air chunk
+> (4 table + 4 bits words = 8 reads), but under the record layout (bit `b` of word `b / 32`)
+> a chunk is all clear only when all 16 bits words are, and the count leaves out the rock
+> chunk's entry read that the hit needs. Bullet 2's "at most 2 bits words" in a non-empty
+> chunk rules out testing all 16 words on entry. Options raised: an empty bit in the chunk
+> table entry (an air chunk costs the table read alone), or the 16-word line counted as one
+> read. Gate at the tip: build, nextest (352 passed, 4 skipped), doctests, clippy, fmt clean.
 
 ### Notes
 
