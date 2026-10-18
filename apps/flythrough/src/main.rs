@@ -100,7 +100,7 @@ const DIG_RANGE: (i64, i64) = (FIXED_ONE, 30 * FIXED_ONE);
 /// Radius of the right-click fill: 0.3 m.
 const FILL_RADIUS: i64 = 3 * FIXED_ONE;
 /// Brick arrays the world's pool is topped up to after each frame's edits and before the `B`
-/// bench: 4 Mi of `u16` voxels, more than the bench's 100 carves expand.
+/// bench: 2 Mi `u16` voxels (4 MiB), more than the bench's 100 carves expand.
 const RESERVE_ARRAYS: usize = 4096;
 /// Free pool slots requested beyond the bounded level's `Full` bricks, so digging can grow
 /// the pool: 64 Ki slots.
@@ -722,9 +722,7 @@ impl Gfx {
             t.resolve(&mut enc);
         }
         gpu.queue.submit([enc.finish()]);
-        let ms = timer
-            .filter(|_| n > 0)
-            .map(|t| t.read_ms(&gpu.device, &gpu.queue));
+        let ms = timer.filter(|_| n > 0).map(|t| t.read_ms(&gpu.device));
         (n, ms)
     }
 }
@@ -758,7 +756,9 @@ struct Hud {
     rss_bytes: Option<u64>,
     /// The last mirror sync and its render-thread time in milliseconds.
     sync: (SyncStats, f64),
-    last_edit: Option<EditLine>,
+    /// The rows' values, refreshed in place on every shown frame. Its `last_edit` is the only
+    /// copy of the last edit, so a frame clones nothing.
+    stats: HudStats,
     /// Last frame's pass readings, shown on the next frame's rows.
     march_ms: Option<f32>,
     hud_ms: Option<f32>,
@@ -780,7 +780,7 @@ impl Hud {
             world: WorldSample::default(),
             rss_bytes: None,
             sync: (SyncStats::default(), 0.0),
-            last_edit: None,
+            stats: HudStats::default(),
             march_ms: None,
             hud_ms: None,
             cpu_ms: 0.0,
@@ -790,6 +790,16 @@ impl Hud {
             colours: Vec::new(),
             strip: Vec::with_capacity(hud::RING),
         }
+    }
+
+    /// Formats `stats` into the reused row and colour buffers, timing it, and copies the
+    /// frame window into the reused strip.
+    fn format_rows(&mut self) {
+        let t = now();
+        self.stats.write_rows(&mut self.text, &mut self.colours);
+        self.format_us = ((now() - t).as_secs_f64() * 1e6) as u32;
+        self.strip.clear();
+        self.strip.extend(self.frames.samples().map(|s| s * 1000.0));
     }
 }
 
@@ -1143,6 +1153,7 @@ impl Run {
     /// printed line has another form (the collapse's drops and removals); returns the record.
     fn note_edit(&mut self, verb: &'static str, r: &EditResult, ms: f64) -> &EditLine {
         self.hud
+            .stats
             .last_edit
             .insert(edit_record(verb, r, self.world.materials(), ms))
     }
@@ -1163,14 +1174,14 @@ impl Run {
             .stream
             .as_ref()
             .map(|st| st.streamer.stats().resident_lod as u32);
-        self.hud.world = WorldSample::from_stats(&s, lod, ms_since(t) as f32);
+        let pool = self.world.pool_len();
+        self.hud.world = WorldSample::from_stats(&s, lod, pool, ms_since(t) as f32);
         self.hud.rss_bytes = hud::rss_bytes(self.hud.page_bytes);
     }
 
-    /// The HUD's rows for this frame, from the O(1) sources and the last world sample.
-    fn hud_stats(&self) -> HudStats {
-        let h = &self.hud;
-        let (sync, sync_ms) = h.sync;
+    /// Refreshes the HUD's values in place for this frame, from the O(1) sources and the
+    /// last world sample; the last edit is already there.
+    fn refresh_hud_stats(&mut self) {
         let (mirror_bytes, pool_live, pool_free) = self.gfx.as_ref().map_or((0, 0, 0), |g| {
             (
                 g.mirror.mirror_bytes(),
@@ -1179,52 +1190,44 @@ impl Run {
             )
         });
         let pos = self.fly.camera.position;
-        HudStats {
-            fps: h.frames.fps(),
-            frame_ms: h.frames.frame_ms(),
-            cpu_ms: h.cpu_ms,
-            march_ms: h.march_ms,
-            hud_ms: h.hud_ms,
-            upload_bytes: sync.bytes,
-            upload_ms: sync_ms as f32,
-            upload_chunks: sync.chunks as u32,
-            mirror_bytes,
-            pool_live,
-            pool_free,
-            world: WorldSample {
-                age_frames: h.cadence.age(),
-                ..h.world
-            },
-            rss_bytes: h.rss_bytes,
-            last_edit: h.last_edit.clone(),
-            camera: pos.to_array(),
-            chunk: voxel_of(pos).chunk().0,
-            mode: if self.walk.is_some() {
-                hud::Mode::Walk
-            } else {
-                hud::Mode::Fly
-            },
-            format_us: h.format_us,
-        }
+        let mode = if self.walk.is_some() {
+            hud::Mode::Walk
+        } else {
+            hud::Mode::Fly
+        };
+        let h = &mut self.hud;
+        let (sync, sync_ms) = h.sync;
+        let s = &mut h.stats;
+        s.fps = h.frames.fps();
+        s.frame_ms = h.frames.frame_ms();
+        s.cpu_ms = h.cpu_ms;
+        s.march_ms = h.march_ms;
+        s.hud_ms = h.hud_ms;
+        s.upload_bytes = sync.bytes;
+        s.upload_ms = sync_ms as f32;
+        s.upload_chunks = sync.chunks as u32;
+        s.mirror_bytes = mirror_bytes;
+        s.pool_live = pool_live;
+        s.pool_free = pool_free;
+        s.world = WorldSample {
+            age_frames: h.cadence.age(),
+            ..h.world
+        };
+        s.rss_bytes = h.rss_bytes;
+        s.camera = pos.to_array();
+        s.chunk = voxel_of(pos).chunk().0;
+        s.mode = mode;
+        s.format_us = h.format_us;
     }
 
-    /// Formats this frame's rows and strip into the overlay, timing the formatting.
+    /// Formats this frame's rows and strip into the overlay, timing the formatting. Allocates
+    /// nothing once the buffers have grown to the rows' size.
     fn update_hud(&mut self, gpu: &Gpu) {
-        let stats = self.hud_stats();
-        let t = now();
+        self.refresh_hud_stats();
         let h = &mut self.hud;
-        stats.write_rows(&mut h.text, &mut h.colours);
-        h.format_us = ((now() - t).as_secs_f64() * 1e6) as u32;
-        h.strip.clear();
-        h.strip.extend(h.frames.samples().map(|s| s * 1000.0));
+        h.format_rows();
         let Some(gfx) = self.gfx.as_mut() else { return };
-        let rows: Vec<(&[u8], HudColour)> = h
-            .text
-            .lines()
-            .map(str::as_bytes)
-            .zip(h.colours.iter().copied())
-            .collect();
-        gfx.hud.set_rows(&gpu.queue, &rows);
+        gfx.hud.set_lines(&gpu.queue, &h.text, &h.colours);
         gfx.hud.set_samples(&gpu.queue, &h.strip, hud::CEILING_MS);
     }
 
@@ -2181,8 +2184,8 @@ impl Run {
             let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
             println!("first frame after {:.0} ms", ms_since(self.start));
         }
-        let gpu_ms = timer.map(|t| t.read_ms(&gpu.device, &gpu.queue));
-        let hud_ms = hud_timer.map(|t| t.read_ms(&gpu.device, &gpu.queue));
+        let gpu_ms = timer.map(|t| t.read_ms(&gpu.device));
+        let hud_ms = hud_timer.map(|t| t.read_ms(&gpu.device));
         self.hud.cpu_ms = cpu_ms as f32;
         self.hud.march_ms = gpu_ms.map(|v| v as f32);
         self.hud.hud_ms = hud_ms.map(|v| v as f32);
@@ -2219,7 +2222,8 @@ impl Run {
                 println!("{}", self.coarse_line());
             }
             self.sample_world();
-            let mut stats = self.hud_stats();
+            self.refresh_hud_stats();
+            let mut stats = self.hud.stats.clone();
             stats.world.age_frames = 0;
             println!("hud:\n{stats}");
             return Flow::Exit;
@@ -2668,9 +2672,78 @@ fn main() {
     log::info!("teardown: done, exiting the process");
 }
 
+/// Bytes allocated on each thread, counted for the HUD's no-allocation test.
+#[cfg(test)]
+mod counting {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    thread_local! {
+        static BYTES: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// The system allocator, adding each allocation's size to the calling thread's count.
+    pub struct Counting;
+
+    // SAFETY: every call forwards to `System` unchanged; the count is a side effect that
+    // never allocates (a const-initialised thread-local `Cell`).
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let _ = BYTES.try_with(|b| b.set(b.get() + layout.size() as u64));
+            // SAFETY: the caller upholds `alloc`'s contract, which `System` shares.
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: `ptr` came from `System` through `alloc` or `realloc` with `layout`.
+            unsafe { System.dealloc(ptr, layout) }
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            let _ = BYTES.try_with(|b| b.set(b.get() + new_size as u64));
+            // SAFETY: as `dealloc`, and the caller upholds `realloc`'s size contract.
+            unsafe { System.realloc(ptr, layout, new_size) }
+        }
+    }
+
+    /// Bytes this thread has allocated so far.
+    pub fn bytes() -> u64 {
+        BYTES.with(Cell::get)
+    }
+}
+
+#[cfg(test)]
+#[global_allocator]
+static ALLOC: counting::Counting = counting::Counting;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A shown HUD allocates nothing per frame once its buffers have grown: 100 frames of
+    /// recording a frame time, refreshing the values a frame changes, and formatting the
+    /// rows and the strip, with a last edit held; frames 2 to 100 allocate 0 bytes. The
+    /// overlay's half (rows and samples written, the pass encoded) is
+    /// `vxe-render`'s `the_overlay_allocates_nothing_after_its_first_frame`.
+    #[test]
+    fn a_shown_hud_allocates_nothing_after_its_first_frame() {
+        let mut hud = Hud::new(true);
+        hud.stats = HudStats::fixed();
+        let mut per_frame = Vec::with_capacity(100);
+        for frame in 0..100u32 {
+            let before = counting::bytes();
+            hud.frames.record(0.016 + frame as f32 * 1e-5);
+            hud.stats.fps = hud.frames.fps();
+            hud.stats.frame_ms = hud.frames.frame_ms();
+            hud.stats.format_us = hud.format_us;
+            hud.format_rows();
+            per_frame.push(counting::bytes() - before);
+        }
+        assert!(per_frame[0] > 0, "the first frame grows the buffers");
+        assert_eq!(per_frame[1..], [0; 99]);
+        assert_eq!(hud.text.lines().count(), 12);
+        assert_eq!(hud.strip.len(), 100);
+    }
     use flythrough::cave::SHELL;
 
     fn argv(a: &[&str]) -> Vec<String> {

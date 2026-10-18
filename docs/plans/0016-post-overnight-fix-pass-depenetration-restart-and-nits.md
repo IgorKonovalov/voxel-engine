@@ -318,8 +318,8 @@ pub enum LogicError {
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: Depenetration in the controller | dev | done: `tick` tests `overlaps` first and takes the first free candidate; `MoveResult::lifted`, `embedded`; 2-voxel fill lifts `[0, 0, 512]` to `[2688, 2688, 512]`; 5-voxel fill lifts `[256, 0, 0]` (fill ending at x = 8) or `[0, 0, 1280]` (fill over the reach); enclosed body `embedded` twice, state unchanged; level walk: 16 fills, 16 lifts, no embed; course hash unchanged; F6 60-tick bench 108.17 to 110.59 µs against 108.35 to 111.60 µs at e23f309, same box, not quiet | 1d1b3aa |
-| 2: A trapped logic restarts from its seed | dev | done: `WasmConfig::max_restarts` (default 8), `LogicError::Restarted`, `Logic::take_restart`, `TickReport::restart`; `spin` ticks 0 to 10: `Fuel{0}`, then `Restarted{t, t-1, t}` with `Fuel{t}` for t = 1..8, then `Stopped{9, 8}`, `Stopped{10, 8}`; `hog` at 1 restart logs tick 0's and tick 1's input edits, resimulation and a second session equal; failed `init` at the default: `Restarted{t, max(t-1, 0), t+1}` with `Fuel{t}` for t = 0..7, then `Stopped{t, 7}`; `max_restarts: 0` keeps the old sequences; one restart of `flythrough-logic` 26.9 and 29.3 µs median | committed with this row |
-| 3: The review nits | dev | not started | |
+| 2: A trapped logic restarts from its seed | dev | done: `WasmConfig::max_restarts` (default 8), `LogicError::Restarted`, `Logic::take_restart`, `TickReport::restart`; `spin` ticks 0 to 10: `Fuel{0}`, then `Restarted{t, t-1, t}` with `Fuel{t}` for t = 1..8, then `Stopped{9, 8}`, `Stopped{10, 8}`; `hog` at 1 restart logs tick 0's and tick 1's input edits, resimulation and a second session equal; failed `init` at the default: `Restarted{t, max(t-1, 0), t+1}` with `Fuel{t}` for t = 0..7, then `Stopped{t, 7}`; `max_restarts: 0` keeps the old sequences; one restart of `flythrough-logic` 26.9 and 29.3 µs median | 5397108 |
+| 3: The review nits | dev | done: the HUD's values live in `Hud::stats`, refreshed in place, its `last_edit` the only copy; rows go through `HudOverlay::set_lines`; `Ms` formats pass times in place; a counting allocator reads frame 1 > 0 B and frames 2 to 100 at 0 B; `HudOverlay::allocations()` reads 1 after each of 100 frames on llvmpipe; `cpu_bytes_estimate(2, 3, 4096)` = old + 4 194 304; `gpu pool` row; `hud.png` re-blessed on llvmpipe (1068 bytes differed), then bit-exact; `PassTimer::read_ms(&self, device)`; the `nearest` and `RESERVE_ARRAYS` comments | committed with this row |
 | 4: Rubble carries the rounding remainder | dev | not started | |
 | 5: Smooth scrolling changes the dig radius | dev | not started | |
 | 6: The owner rechecks in a window | human | not started | |
@@ -349,6 +349,17 @@ each. Empty is fine.)_
 - Phase 2: the fly-through prints every failure and every restart (`logic: ...`) and the
   stop once; its test is renamed `each_failure_and_restart_prints_and_the_stop_prints_once`.
 - Phase 2: the restart reading is a one-off timing loop, not a committed bench.
+- Phase 3: `HudOverlay`, `scale` and the new `set_lines` and `allocations` are in
+  `crates/vxe-render/src/hud.rs` (the plan names `apps/flythrough/src/hud.rs`); the timer
+  whose `_queue` went is `PassTimer::read_ms` (the plan names `MarchTimer`).
+- Phase 3: the ms formatter is a `Display` adapter (`hud::Ms`) that writes into the rows'
+  `String`, not a separate reused `String`; the rows `Vec` is replaced by
+  `HudOverlay::set_lines(queue, text, colours)`.
+- Phase 3: the no-allocation test is split: a counting global allocator in the fly-through's
+  bin tests over `Hud::format_rows` (the values a frame changes refreshed by hand, not through
+  `Run::refresh_hud_stats`, which needs a window), and `HudOverlay::allocations()` over
+  `set_lines`, `set_samples` and `encode` (allocations inside `wgpu` are not counted).
+- Phase 3: `set_lines_draws_what_set_rows_draws` added in `crates/vxe-render/tests/hud.rs`.
 
 ### Close triggers
 

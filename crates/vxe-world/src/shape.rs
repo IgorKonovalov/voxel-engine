@@ -376,6 +376,11 @@ impl CapsuleRow {
     /// squared distance along the row is a convex function of `x` minimised there, so over the
     /// window's centres it is least at the centre just below or just above `x*`, clamped to
     /// the window. Both are tested: two capsule tests.
+    ///
+    /// The closed form stays inside `i128` for any `ax` in `i64` and any segment whose
+    /// components differ by at most `2^31` (the module's ±2^30 bound): `td <= across2 <=
+    /// 2^63`, so `|ax td| <= 2^126`, `|dx tn| <= 2^94` and `128 td <= 2^70`, and `num` and
+    /// `256 td` are below `2^127`.
     fn nearest(&self, x_lo: i64, x_hi: i64) -> Option<i64> {
         // t = tn / td, in [0, 1].
         let (tn, td) = if self.across2 == 0 {

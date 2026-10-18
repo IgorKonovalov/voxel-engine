@@ -507,7 +507,7 @@ impl PassTimer {
 
     /// Milliseconds between the two timestamps of the last resolved pass; zero when they are
     /// out of order. Blocks until the GPU has finished the submission that resolved them.
-    pub fn read_ms(&self, device: &wgpu::Device, _queue: &wgpu::Queue) -> f64 {
+    pub fn read_ms(&self, device: &wgpu::Device) -> f64 {
         self.readback.map_async(wgpu::MapMode::Read, .., |r| {
             r.expect("timer readback maps");
         });

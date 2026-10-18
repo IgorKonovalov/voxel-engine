@@ -46,17 +46,24 @@ struct Params {
     line_px: u32,
 }
 
+/// The overlay's GPU state: its pipeline, the cell grid and the strip's samples, written by
+/// the `set_*` calls and drawn by [`HudOverlay::encode`] over whatever the target holds.
+/// After the first call of each, the `set_*` calls and `encode` reuse every buffer they
+/// write through; [`HudOverlay::allocations`] counts the overlay's own CPU allocations.
 pub struct HudOverlay {
     pipeline: wgpu::RenderPipeline,
     bind: wgpu::BindGroup,
     params: wgpu::Buffer,
     cells: wgpu::Buffer,
     samples: wgpu::Buffer,
+    /// Target pixels per glyph pixel along each axis: a cell covers `8 scale` x `8 scale`.
     scale: u32,
     /// Rows of cells the last `set_text` wrote; the next one clears any it does not reuse.
     rows: u32,
     /// The CPU copy of the rows being written, reused between calls.
     staging: Vec<u32>,
+    /// Times `staging` grew its allocation.
+    allocations: u32,
 }
 
 impl HudOverlay {
@@ -202,16 +209,35 @@ impl HudOverlay {
             scale,
             rows: 0,
             staging: Vec::new(),
+            allocations: 0,
         }
     }
 
+    /// Target pixels per glyph pixel along each axis, as given to [`HudOverlay::new`].
     pub fn scale(&self) -> u32 {
         self.scale
+    }
+
+    /// The CPU allocations the overlay has made: each time its staging copy of the rows grew.
+    /// Rows that fit the cells already staged allocate nothing.
+    pub fn allocations(&self) -> u32 {
+        self.allocations
     }
 
     /// Replaces the text with `rows`, all white, from the top-left cell.
     pub fn set_text(&mut self, queue: &wgpu::Queue, rows: &[&[u8]]) {
         self.write_rows(queue, rows.iter().map(|&r| (r, HudColour::White)));
+    }
+
+    /// Replaces the text with the lines of `text`, line `i` in `colours[i]` (white past the
+    /// end of `colours`), as [`Self::set_rows`] does, without a slice of rows to build.
+    pub fn set_lines(&mut self, queue: &wgpu::Queue, text: &str, colours: &[HudColour]) {
+        let colour = |i| colours.get(i).copied().unwrap_or_default();
+        let rows = text
+            .lines()
+            .enumerate()
+            .map(|(i, l)| (l.as_bytes(), colour(i)));
+        self.write_rows(queue, Counted(text.lines().count(), rows));
     }
 
     /// Replaces the text with `rows`, each in its colour, from the top-left cell. A row past
@@ -229,8 +255,10 @@ impl HudOverlay {
         let n = (rows.len() as u32).min(GRID_ROWS);
         // Rows the previous text used and this one does not are written blank.
         let written = n.max(self.rows);
+        let capacity = self.staging.capacity();
         self.staging.clear();
         self.staging.resize((written * GRID_COLS) as usize, 0);
+        self.allocations += u32::from(self.staging.capacity() != capacity);
         for (cells, (bytes, colour)) in self.staging.chunks_mut(GRID_COLS as usize).zip(rows) {
             for (cell, &b) in cells.iter_mut().zip(bytes) {
                 *cell = u32::from(printable(b)) | (colour as u32) << 8;
@@ -311,6 +339,25 @@ impl HudOverlay {
         pass.draw(0..3, height..height + 1);
     }
 }
+
+/// An iterator of known length: `.0` items of `.1`.
+struct Counted<I>(usize, I);
+
+impl<I: Iterator> Iterator for Counted<I> {
+    type Item = I::Item;
+
+    fn next(&mut self) -> Option<I::Item> {
+        let item = self.1.next()?;
+        self.0 -= 1;
+        Some(item)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.0, Some(self.0))
+    }
+}
+
+impl<I: Iterator> ExactSizeIterator for Counted<I> {}
 
 #[cfg(test)]
 mod tests {

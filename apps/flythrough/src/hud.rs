@@ -205,6 +205,8 @@ pub struct WorldSample {
     /// LOD-only resident chunks, when streaming.
     pub lod_chunks: Option<u32>,
     pub full_bricks: u64,
+    /// Spare voxel arrays in the world's brick-array pool (`World::pool_len`).
+    pub pool_arrays: u64,
     /// An estimate: [`cpu_bytes_estimate`] of the counts above.
     pub cpu_bytes: u64,
     /// Frames since the sample was taken.
@@ -214,12 +216,20 @@ pub struct WorldSample {
 }
 
 impl WorldSample {
-    pub fn from_stats(s: &WorldStats, lod_chunks: Option<u32>, call_ms: f32) -> Self {
+    pub fn from_stats(
+        s: &WorldStats,
+        lod_chunks: Option<u32>,
+        pool_arrays: usize,
+        call_ms: f32,
+    ) -> Self {
+        let (chunks, full_bricks, pool_arrays) =
+            (s.chunks as u64, s.full_bricks as u64, pool_arrays as u64);
         Self {
             chunks: s.chunks as u32,
             lod_chunks,
-            full_bricks: s.full_bricks as u64,
-            cpu_bytes: cpu_bytes_estimate(s.chunks as u64, s.full_bricks as u64),
+            full_bricks,
+            pool_arrays,
+            cpu_bytes: cpu_bytes_estimate(chunks, full_bricks, pool_arrays),
             age_frames: 0,
             call_ms,
         }
@@ -227,10 +237,23 @@ impl WorldSample {
 }
 
 /// RAM the resident full chunks hold, estimated from counts alone: each `Full` brick's voxel
-/// array plus each chunk's `Chunk`. Uniform bricks live inside `Chunk`.
-pub fn cpu_bytes_estimate(chunks: u64, full_bricks: u64) -> u64 {
-    full_bricks * (BRICK_VOXELS * size_of::<MaterialId>()) as u64
+/// array, each spare array in the brick-array pool, and each chunk's `Chunk`. Uniform bricks
+/// live inside `Chunk`.
+pub fn cpu_bytes_estimate(chunks: u64, full_bricks: u64, pool_arrays: u64) -> u64 {
+    (full_bricks + pool_arrays) * (BRICK_VOXELS * size_of::<MaterialId>()) as u64
         + chunks * size_of::<Chunk>() as u64
+}
+
+/// A pass time in milliseconds to three places, or `n/a` without a reading; formats in place.
+struct Ms(Option<f32>);
+
+impl fmt::Display for Ms {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(v) => write!(f, "{v:.3} ms"),
+            None => f.write_str("n/a"),
+        }
+    }
 }
 
 /// The movement mode.
@@ -319,6 +342,7 @@ impl HudStats {
                 chunks: 512,
                 lod_chunks: None,
                 full_bricks: 245_760,
+                pool_arrays: 0,
                 cpu_bytes: 252_182_528,
                 age_frames: 12,
                 call_ms: 0.875,
@@ -353,7 +377,6 @@ impl HudStats {
             out.write_fmt(args)?;
             out.write_char('\n')
         };
-        let ms = |v: Option<f32>| v.map_or_else(|| "n/a".to_owned(), |v| format!("{v:.3} ms"));
         let over = |v: f32, line: f32| {
             if v > line {
                 HudColour::Yellow
@@ -384,7 +407,7 @@ impl HudStats {
             out,
             self.march_ms
                 .map_or(HudColour::White, |v| over(v, MARCH_LINE_MS)),
-            format_args!("gpu march {}  hud {}", ms(self.march_ms), ms(self.hud_ms)),
+            format_args!("gpu march {}  hud {}", Ms(self.march_ms), Ms(self.hud_ms)),
         )?;
         row(
             out,
@@ -398,7 +421,7 @@ impl HudStats {
             out,
             HudColour::White,
             format_args!(
-                "mirror {} B live, pool {} live / {} free slots",
+                "mirror {} B live, gpu pool {} live / {} free slots",
                 self.mirror_bytes, self.pool_live, self.pool_free
             ),
         )?;
@@ -603,12 +626,11 @@ mod tests {
     }
 
     #[test]
-    fn cpu_bytes_counts_full_brick_voxels_and_chunks() {
-        assert_eq!(cpu_bytes_estimate(0, 1), 1024);
-        assert_eq!(
-            cpu_bytes_estimate(2, 3),
-            3 * 1024 + 2 * size_of::<Chunk>() as u64
-        );
+    fn cpu_bytes_counts_full_brick_voxels_and_chunks_and_the_pool() {
+        assert_eq!(cpu_bytes_estimate(0, 1, 0), 1024);
+        let old = 3 * 1024 + 2 * size_of::<Chunk>() as u64;
+        assert_eq!(cpu_bytes_estimate(2, 3, 0), old);
+        assert_eq!(cpu_bytes_estimate(2, 3, 4096), old + 4_194_304);
     }
 
     #[test]
@@ -673,7 +695,12 @@ mod tests {
             lines[0],
             "fps 58.8  frame mean 17.00 p50 16.50 p99 24.25 max 31.50 ms (240 frames)"
         );
+        assert_eq!(lines[2], "gpu march 1.750 ms  hud 0.038 ms");
         assert_eq!(lines[3], "upload 1310720 B, 3 chunks, 1.500 ms");
+        assert_eq!(
+            lines[4],
+            "mirror 268435456 B live, gpu pool 245760 live / 16384 free slots"
+        );
         assert_eq!(lines[9], "carved: rock 4169 (2 chunks, 0.25 ms)");
         let yellow: Vec<usize> = (0..colours.len())
             .filter(|&i| colours[i] != HudColour::White)

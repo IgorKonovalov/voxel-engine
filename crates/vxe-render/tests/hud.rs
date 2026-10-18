@@ -2,7 +2,7 @@
 //! a cleared offscreen target.
 
 use vxe_render::font8x8::FONT;
-use vxe_render::{HudOverlay, readback, wgpu};
+use vxe_render::{HudColour, HudOverlay, readback, wgpu};
 
 const CLEAR: [u8; 4] = [10, 20, 30, 255];
 const WHITE: [u8; 3] = [255, 255, 255];
@@ -172,6 +172,67 @@ fn fewer_rows_clear_the_old_ones() {
     assert_eq!(white, bits as usize);
 }
 
+/// `set_lines` draws what `set_rows` draws for the same lines and colours, a colour past
+/// the end of the slice reading white.
+#[test]
+fn set_lines_draws_what_set_rows_draws() {
+    let Some((device, queue)) = software_device() else {
+        return;
+    };
+    let (w, h) = (64, 32);
+    let mut hud = HudOverlay::new(&device, wgpu::TextureFormat::Rgba8Unorm, 1);
+    hud.set_rows(
+        &queue,
+        &[
+            (b"AB".as_slice(), HudColour::Yellow),
+            (b"CD", HudColour::Red),
+            (b"EF", HudColour::White),
+        ],
+    );
+    let rows = draw(
+        &device,
+        &queue,
+        &hud,
+        &cleared_target(&device, &queue, w, h),
+    );
+    hud.set_lines(&queue, "AB\nCD\nEF\n", &[HudColour::Yellow, HudColour::Red]);
+    let lines = draw(
+        &device,
+        &queue,
+        &hud,
+        &cleared_target(&device, &queue, w, h),
+    );
+    assert!(rows.chunks(4).any(|p| p[..3] == RED));
+    assert_eq!(lines, rows);
+}
+
+/// 100 frames of twelve rows written with `set_lines`, 240 samples and the pass encoded and
+/// submitted: the overlay allocates once, on the first frame, and frames 2 to 100 allocate
+/// nothing of its own.
+#[test]
+fn the_overlay_allocates_nothing_after_its_first_frame() {
+    let Some((device, queue)) = software_device() else {
+        return;
+    };
+    let (w, h) = (320, 180);
+    let target = cleared_target(&device, &queue, w, h);
+    let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+    let mut hud = HudOverlay::new(&device, wgpu::TextureFormat::Rgba8Unorm, 1);
+    let text = "fps 58.8  frame mean 17.00 ms\n".repeat(12);
+    let colours = [HudColour::White; 12];
+    let samples: Vec<f32> = (0..240).map(|i| (i % 40) as f32).collect();
+    let mut after = Vec::new();
+    for _ in 0..100 {
+        hud.set_lines(&queue, &text, &colours);
+        hud.set_samples(&queue, &samples, 33.3);
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        hud.encode(&mut enc, &view, w, h);
+        queue.submit([enc.finish()]);
+        after.push(hud.allocations());
+    }
+    assert_eq!(after, [1; 100]);
+}
+
 const RED: [u8; 3] = [255, 64, 64];
 
 /// Samples `[0, c/2, c, 2c]` at scale 1 with `c = 32 ms`: bars of 0, 32, 64 and 64 white
@@ -299,7 +360,7 @@ fn hud_pass_reading_at_1080p() {
         hud.encode_timed(&mut enc, &view, w, h, Some(timer.render_writes()));
         timer.resolve(&mut enc);
         queue.submit([enc.finish()]);
-        ms.push(timer.read_ms(&device, &queue));
+        ms.push(timer.read_ms(&device));
     }
     ms.sort_by(f64::total_cmp);
     println!(
