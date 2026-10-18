@@ -421,11 +421,29 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The steps view and the headless histogram, on today's walk | dev | done | 52d6a7b |
-| 2: Chunk bits, the chunk-level and 16³ skips | dev | done | committed with this row |
+| 2: Chunk bits, the chunk-level and 16³ skips | dev | done | 106998d |
 | 3: Full-resolution opaque masks | dev | not started | |
 | 4: A walk that re-derives state at boundaries | dev | not started | |
 | 5: The translucent class and the bounded accumulation walk | dev | not started | |
 | 6: Readings, budgets and the stats line | dev | not started | |
+
+> **Resume note (2026-10-18, delete when Phase 3 lands):** stopped inside Phase 3 at
+> 106998d, routed to `/architect` (owner's call). Phase 3's grouped masks, `solid_bits()`, the
+> 4³ / 2³ / voxel tests and its tests are written and uncommitted in the main checkout
+> (`gpu_world.rs`, `march.wgsl`, `brick.rs`, `mirror.rs`, `walk.rs`, `level_mirror.rs`,
+> `look.rs`); every Phase 3 bullet holds except bit-exact goldens. Diagnosis: the 4³ skip
+> moves isolated pixels in every golden (`primary.png` and `headlamp.png` 2 pixels each,
+> (167, 43) and (198, 150); `lod.png`, `hud.png` (167, 43); `look_detail.png` 2), largest
+> channel differences 7 to 84 of 255. With the 4³ test disabled and the 2³ and voxel tests kept,
+> every golden re-blesses unchanged. A cell's exit puts the off-axis coordinates from the
+> float position, so a larger cell that leaves through a different plane near a corner tie
+> lands one voxel off where a smaller cell would not; Phase 2's 64³ and 16³ skips moved no
+> golden pixel on these scenes. Options raised: re-bless at Phase 3 with an isolated-pixel
+> test against the old goldens and log the bullet unmet as stated; drop the 4³ skip (the
+> "at most 4 steps inside the brick" bullet becomes 5); amend the plan. The plan's readings
+> (Phase 1 block-max at 52d6a7b plus the readback change, Phase 2's histograms, block-max and
+> march) are not taken yet: the dev box was under other load. Gate at 106998d: build,
+> nextest (372 passed, 4 skipped), doctests, clippy, fmt clean.
 
 ### Notes
 
