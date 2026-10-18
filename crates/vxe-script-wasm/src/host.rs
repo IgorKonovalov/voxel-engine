@@ -2,8 +2,9 @@
 //!
 //! The engine compiles the component once, at [`WasmLogic::load`]. [`Logic::init`] makes the
 //! store, with a WASI context built from the seed (`wasi` module), instantiates the component
-//! and calls its `init`; [`Logic::tick`] calls its `tick`, until a call fails and the logic
-//! stops. During each of those calls the server's [`Host`] is lent to the store, and the
+//! and calls its `init`; [`Logic::tick`] calls its `tick`. After a failed call the next tick
+//! starts a fresh instance from the seed, up to [`WasmConfig::max_restarts`] times, and then
+//! the logic stops. During each of those calls the server's [`Host`] is lent to the store, and the
 //! component's `host` imports answer through it; outside them an import traps.
 
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
@@ -40,6 +41,9 @@ pub struct WasmConfig {
     pub memory_bytes: u64,
     /// Nanoseconds of the component's clocks per tick.
     pub frame_ns: u64,
+    /// Fresh instances started after a failure before the logic stops for good; 0 is
+    /// fail-stop.
+    pub max_restarts: u32,
 }
 
 impl Default for WasmConfig {
@@ -48,6 +52,7 @@ impl Default for WasmConfig {
             fuel_per_tick: 10_000_000_000,
             memory_bytes: 64 << 20,
             frame_ns: 16_666_667,
+            max_restarts: 8,
         }
     }
 }
@@ -255,19 +260,30 @@ struct Live {
 /// A logic component loaded from a file, implementing [`Logic`].
 ///
 /// A failed call (`init` or `tick`: fuel, the memory cap, any other trap) leaves its tick
-/// without a broadcast, and its error is kept for [`Logic::take_error`]. The logic is then
-/// stopped (fail-stop): a trap leaves a component instance's state undefined and wasmtime
-/// does not enter it again, so every later `tick` returns [`LogicError::Stopped`] with the
-/// failing tick (0 for `init`) without entering wasmtime. Ops the logic applied through the
-/// host before it failed stay applied. A new [`WasmLogic::try_init`] starts afresh.
+/// without a broadcast, and its error is kept for [`Logic::take_error`]. A trap leaves a
+/// component instance's state undefined and wasmtime does not enter it again, so the
+/// instance is dropped. The next `tick` instantiates the component afresh, runs its `init`
+/// with the session's seed (at tick 0's clock, as at the start of the run) and then the
+/// requested `tick`, and reports [`LogicError::Restarted`] through [`Logic::take_restart`];
+/// a failure of that `init` is the tick's error, labelled with the tick. The restarted logic
+/// believes the run has just begun while the world holds every edit since, and `init`'s ops
+/// apply again on the world as it is. After [`WasmConfig::max_restarts`] restarts the logic
+/// stops: every later `tick` returns [`LogicError::Stopped`] with the last failing tick
+/// without entering wasmtime. Ops the logic applied through the host before a failure stay
+/// applied. A new [`WasmLogic::try_init`] starts afresh with the restart count at 0.
 pub struct WasmLogic {
     pre: bindings::LogicPre<State>,
     config: WasmConfig,
     seed: u64,
     live: Option<Live>,
     error: Option<LogicError>,
-    /// The tick whose call failed (0 for `init`); set, the logic is stopped.
+    /// The tick whose call last failed (0 for the first `init`); set, the next tick restarts
+    /// the component or, once `restarts` reaches the cap, the logic is stopped.
     failed_at: Option<u64>,
+    /// Fresh instances started since the last [`WasmLogic::try_init`].
+    restarts: u32,
+    /// The restart the last `tick` made, for [`Logic::take_restart`].
+    restart: Option<LogicError>,
 }
 
 impl std::fmt::Debug for WasmLogic {
@@ -278,6 +294,7 @@ impl std::fmt::Debug for WasmLogic {
             .field("live", &self.live.is_some())
             .field("error", &self.error)
             .field("failed_at", &self.failed_at)
+            .field("restarts", &self.restarts)
             .finish_non_exhaustive()
     }
 }
@@ -311,15 +328,20 @@ impl WasmLogic {
             live: None,
             error: None,
             failed_at: None,
+            restarts: 0,
+            restart: None,
         })
     }
 
-    /// Instantiates the component for `seed` and calls its `init` with `host` lent. A failure
-    /// stops the logic: every later tick returns [`LogicError::Stopped`] with `since: 0`.
+    /// Instantiates the component for `seed` and calls its `init` with `host` lent, with the
+    /// restart count at 0. After a failure the next tick restarts the component (with
+    /// `max_restarts` at 0, every later tick returns [`LogicError::Stopped`] with `since: 0`).
     pub fn try_init(&mut self, host: &mut dyn Host, seed: u64) -> Result<(), LogicError> {
         self.seed = seed;
         self.live = None;
         self.failed_at = None;
+        self.restarts = 0;
+        self.restart = None;
         let result = self.instantiate_and_init(host, seed);
         if result.is_err() {
             self.live = None;
@@ -360,16 +382,33 @@ impl WasmLogic {
         self.call(host, 0, |store, logic| logic.call_init(store, seed))
     }
 
-    /// Calls the component's `tick` with `host` lent; [`LogicError::Stopped`] without entering
-    /// the component once a call has failed. A failure here stops the logic.
+    /// Calls the component's `tick` with `host` lent. After a failed call it first restarts
+    /// the component (a fresh instance and `init`, see [`WasmLogic`]), recorded for
+    /// [`WasmLogic::take_restart`]; once `max_restarts` restarts are spent it returns
+    /// [`LogicError::Stopped`] without entering the component.
     pub fn try_tick(
         &mut self,
         host: &mut dyn Host,
         tick: u64,
         inputs: &[ClientInput],
     ) -> Result<TickOutput, LogicError> {
+        self.restart = None;
         if let Some(since) = self.failed_at {
-            return Err(LogicError::Stopped { tick, since });
+            if self.restarts >= self.config.max_restarts {
+                return Err(LogicError::Stopped { tick, since });
+            }
+            self.restarts += 1;
+            self.restart = Some(LogicError::Restarted {
+                tick,
+                after: since,
+                restarts: self.restarts,
+            });
+            self.failed_at = None;
+            if let Err(e) = self.instantiate_and_init(host, self.seed) {
+                self.live = None;
+                self.failed_at = Some(tick);
+                return Err(relabel(e, tick));
+            }
         }
         let inputs: Vec<bindings::ClientInput> = inputs
             .iter()
@@ -389,6 +428,12 @@ impl WasmLogic {
                 Err(e)
             }
         }
+    }
+
+    /// The restart the last [`WasmLogic::try_tick`] made, if it made one, cleared by reading
+    /// it.
+    pub fn take_restart(&mut self) -> Option<LogicError> {
+        self.restart.take()
     }
 
     /// Runs `f` on the live instance at `tick`'s clock and random stream, with fresh fuel and
@@ -457,6 +502,17 @@ fn classify(store: &Store<State>, wasi: &WasiHandles, tick: u64, e: wasmtime::Er
     LogicError::Trap { tick, message }
 }
 
+/// `e` with its tick replaced by `tick`: an `init` run on a restart runs at tick 0's clock
+/// and is labelled with the tick that restarted it.
+fn relabel(e: LogicError, tick: u64) -> LogicError {
+    match e {
+        LogicError::Trap { message, .. } => LogicError::Trap { tick, message },
+        LogicError::Fuel { .. } => LogicError::Fuel { tick },
+        LogicError::Memory { .. } => LogicError::Memory { tick },
+        other => other,
+    }
+}
+
 impl Logic for WasmLogic {
     fn init(&mut self, host: &mut dyn Host, seed: u64) {
         if let Err(e) = self.try_init(host, seed) {
@@ -473,6 +529,10 @@ impl Logic for WasmLogic {
 
     fn take_error(&mut self) -> Option<LogicError> {
         self.error.take()
+    }
+
+    fn take_restart(&mut self) -> Option<LogicError> {
+        WasmLogic::take_restart(self)
     }
 }
 

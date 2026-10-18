@@ -273,6 +273,13 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   `DigLogic` 3.1033 and 3.1025 ms: 1.031× and 1.034×, under the 2× proposal. Re-run after the
   close review's fix pass (host imports under `catch_unwind`): 1.38 µs per call, empty tick
   1.125 µs, `Bench` 1.033×.
+  **Restart after a failure (Plan 0016 Phase 2):** a failed call is followed on the next tick
+  by a fresh instance and `init`, at most `WasmConfig::max_restarts` times (default 8) per
+  session, then the logic stops. One restart of the `flythrough-logic` component
+  (`WasmLogic::try_init`: store, instantiation from the pre-linked component, `init`) read
+  a median of 26.9 and 29.3 µs over 50 restarts each (min 24.5, max 109.0 µs): a one-off
+  release-build timing loop, not a committed bench, AMD Ryzen 9 5900HS, Linux, not quiet
+  (load average 7.4 to 9.4), at 1d1b3aa plus Phase 2's working tree.
 - **Determinism:** the same op list on the same seed yields bit-identical voxels and results on
   Linux and Windows. CI asserts a fixed vector's hash on both arms. **Asserted:**
   `determinism_vector` passed on the Linux and Windows CI arms at 9565c5a and 1d61aba

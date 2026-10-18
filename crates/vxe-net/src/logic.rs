@@ -36,8 +36,16 @@ pub enum LogicError {
     /// The logic tried to grow its memory past its cap during `tick`.
     Memory { tick: u64 },
     /// The logic was not called for `tick` because its call for tick `since` failed (0 for
-    /// a failed `init`); it stays stopped for the rest of the run.
+    /// a failed `init`) and its restarts are spent; it stays stopped for the rest of the run.
     Stopped { tick: u64, since: u64 },
+    /// Before its call for `tick`, the logic was started afresh from its seed (a new
+    /// instance and `init`) because its call for tick `after` failed; `restarts` counts the
+    /// restarts so far, this one included. Not a failure of `tick` itself.
+    Restarted {
+        tick: u64,
+        after: u64,
+        restarts: u32,
+    },
 }
 
 impl std::fmt::Display for LogicError {
@@ -47,6 +55,15 @@ impl std::fmt::Display for LogicError {
             Self::Trap { tick, message } => write!(f, "logic trapped at tick {tick}: {message}"),
             Self::Fuel { tick } => write!(f, "logic ran out of fuel at tick {tick}"),
             Self::Memory { tick } => write!(f, "logic exceeded its memory cap at tick {tick}"),
+            Self::Restarted {
+                tick,
+                after,
+                restarts,
+            } => write!(
+                f,
+                "logic restarted from its seed at tick {tick} after it failed at tick {after} \
+                 (restart {restarts})"
+            ),
             Self::Stopped { tick, since } => {
                 write!(
                     f,
@@ -84,6 +101,12 @@ pub trait Logic: Send {
     /// asks after every call. A native logic never fails (a panic is a panic), so the
     /// default is `None`; a hosted logic reports its trap, fuel or memory cap here.
     fn take_error(&mut self) -> Option<LogicError> {
+        None
+    }
+    /// The restart made before the last `tick`, if one was ([`LogicError::Restarted`]),
+    /// cleared by reading it. The server asks after every tick. The default is `None`; a
+    /// hosted logic that starts a fresh instance after a failure reports it here.
+    fn take_restart(&mut self) -> Option<LogicError> {
         None
     }
 }

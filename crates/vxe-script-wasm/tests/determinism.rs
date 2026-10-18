@@ -3,8 +3,9 @@
 //! clocks, `getrandom`, `HashMap` order, the filesystem and the environment; `spin` never
 //! returns; `hog` applies its inputs, then allocates 1 GiB; `timer` sleeps and polls a timer;
 //! `chatty` writes 1 KiB of stderr per tick and panics at tick 100.
-//! A logic that fails a call is stopped for the rest of the run, and the ops it applied before
-//! failing stay.
+//! A logic that fails a call restarts from its seed on the next tick, up to the configured
+//! number of times, and is then stopped for the rest of the run; with no restarts allowed it
+//! is stopped at once. The ops it applied before failing stay.
 
 mod support;
 
@@ -49,8 +50,17 @@ fn wasm_config_defaults() {
             fuel_per_tick: 10_000_000_000,
             memory_bytes: 64 << 20,
             frame_ns: 16_666_667,
+            max_restarts: 8,
         }
     );
+}
+
+/// `config` with no restarts: the fail-stop host.
+fn fail_stop(config: WasmConfig) -> WasmConfig {
+    WasmConfig {
+        max_restarts: 0,
+        ..config
+    }
 }
 
 /// A server on `solid3_world()` running the component `name` under `config` with `seed`,
@@ -155,6 +165,7 @@ const SPIN_FUEL: WasmConfig = WasmConfig {
     fuel_per_tick: 50_000_000,
     memory_bytes: 64 << 20,
     frame_ns: 16_666_667,
+    max_restarts: 8,
 };
 
 #[test]
@@ -169,36 +180,83 @@ fn spin_runs_out_of_fuel() {
     );
 }
 
-/// Fail-stop: after the fuel trap at tick 0 the logic is stopped, and every later tick
-/// reports `Stopped` with the failing tick. `spin` never returns from `tick`, so a later tick
-/// that entered the component would run out of fuel again and report `Fuel`.
+/// Each tick of `logic` from 0 to `ticks - 1`: the restart it made, then its result.
+fn restart_run(
+    logic: &mut WasmLogic,
+    host: &mut dyn Host,
+    ticks: u64,
+) -> Vec<(Option<LogicError>, Result<TickOutput, LogicError>)> {
+    (0..ticks)
+        .map(|tick| {
+            let r = logic.try_tick(host, tick, &[]);
+            (logic.take_restart(), r)
+        })
+        .collect()
+}
+
+/// After the fuel trap at tick 0 each of the next eight ticks starts a fresh instance from
+/// the seed and runs out of fuel again (`spin` never returns from `tick`); the ninth tick
+/// finds the restarts spent and reports `Stopped` with the last failing tick, without
+/// entering the component.
 #[test]
-fn after_running_out_of_fuel_the_logic_is_stopped() {
+fn after_running_out_of_fuel_the_logic_restarts_then_stops() {
     let mut logic = WasmLogic::load(&guest("spin"), &SPIN_FUEL).expect("spin loads");
     let world = solid3_world();
     let mut host = WorldHost(&world);
     logic.try_init(&mut host, 0).expect("spin's init returns");
-    let results: Vec<_> = (0..3)
-        .map(|tick| logic.try_tick(&mut host, tick, &[]))
-        .collect();
+    let restarted = |tick, after, restarts| {
+        Some(LogicError::Restarted {
+            tick,
+            after,
+            restarts,
+        })
+    };
     assert_eq!(
-        results,
+        restart_run(&mut logic, &mut host, 11),
         [
-            Err(LogicError::Fuel { tick: 0 }),
-            Err(LogicError::Stopped { tick: 1, since: 0 }),
-            Err(LogicError::Stopped { tick: 2, since: 0 }),
+            (None, Err(LogicError::Fuel { tick: 0 })),
+            (restarted(1, 0, 1), Err(LogicError::Fuel { tick: 1 })),
+            (restarted(2, 1, 2), Err(LogicError::Fuel { tick: 2 })),
+            (restarted(3, 2, 3), Err(LogicError::Fuel { tick: 3 })),
+            (restarted(4, 3, 4), Err(LogicError::Fuel { tick: 4 })),
+            (restarted(5, 4, 5), Err(LogicError::Fuel { tick: 5 })),
+            (restarted(6, 5, 6), Err(LogicError::Fuel { tick: 6 })),
+            (restarted(7, 6, 7), Err(LogicError::Fuel { tick: 7 })),
+            (restarted(8, 7, 8), Err(LogicError::Fuel { tick: 8 })),
+            (None, Err(LogicError::Stopped { tick: 9, since: 8 })),
+            (None, Err(LogicError::Stopped { tick: 10, since: 8 })),
+        ]
+    );
+}
+
+/// Fail-stop with `max_restarts: 0`: after the fuel trap at tick 0 the logic is stopped, and
+/// every later tick reports `Stopped` with the failing tick. A later tick that entered the
+/// component would run out of fuel again and report `Fuel`.
+#[test]
+fn with_no_restarts_a_logic_out_of_fuel_is_stopped() {
+    let mut logic = WasmLogic::load(&guest("spin"), &fail_stop(SPIN_FUEL)).expect("spin loads");
+    let world = solid3_world();
+    let mut host = WorldHost(&world);
+    logic.try_init(&mut host, 0).expect("spin's init returns");
+    assert_eq!(
+        restart_run(&mut logic, &mut host, 3),
+        [
+            (None, Err(LogicError::Fuel { tick: 0 })),
+            (None, Err(LogicError::Stopped { tick: 1, since: 0 })),
+            (None, Err(LogicError::Stopped { tick: 2, since: 0 })),
         ]
     );
 }
 
 /// A logic whose `init` fails (here: one unit of fuel) reports it through
-/// `Server::init_error()` and is stopped from tick 0; the server still logs inputs.
+/// `Server::init_error()` and, with no restarts, is stopped from tick 0; the server still
+/// logs inputs.
 #[test]
 fn a_failed_init_stops_the_logic_from_tick_zero() {
-    let starved = WasmConfig {
+    let starved = fail_stop(WasmConfig {
         fuel_per_tick: 1,
         ..WasmConfig::default()
-    };
+    });
     let (mut server, mut client) = session("echo", &starved, 0);
     assert_eq!(server.init_error(), Some(&LogicError::Fuel { tick: 0 }));
     let carve = op_bytes(seeded_carves(0x0011, 1)[0]);
@@ -212,12 +270,57 @@ fn a_failed_init_stops_the_logic_from_tick_zero() {
                 refused: 0,
                 inputs: 1,
                 logic_error: Some(LogicError::Stopped { tick, since: 0 }),
+                restart: None,
             }
         );
     }
     assert!(client.poll().is_empty());
     assert_eq!(server.ops().len(), 0);
     assert_eq!(server.inputs().len(), 3);
+    assert_eq!(server.world().voxel_hash(), solid3_world().voxel_hash());
+}
+
+/// With the default eight restarts, a logic whose `init` always fails restarts once per
+/// tick, each attempt failing in `init` (labelled with its tick), until the cap; then it is
+/// stopped since the last failing tick.
+#[test]
+fn a_failed_init_restarts_once_per_tick_until_the_cap() {
+    let starved = WasmConfig {
+        fuel_per_tick: 1,
+        ..WasmConfig::default()
+    };
+    let (mut server, mut client) = session("echo", &starved, 0);
+    assert_eq!(server.init_error(), Some(&LogicError::Fuel { tick: 0 }));
+    let carve = op_bytes(seeded_carves(0x0011, 1)[0]);
+    for tick in 0..10u64 {
+        client.send_input(carve.clone());
+        let (logic_error, restart) = if tick < 8 {
+            (
+                LogicError::Fuel { tick },
+                Some(LogicError::Restarted {
+                    tick,
+                    after: tick.saturating_sub(1),
+                    restarts: tick as u32 + 1,
+                }),
+            )
+        } else {
+            (LogicError::Stopped { tick, since: 7 }, None)
+        };
+        assert_eq!(
+            server.tick(),
+            TickReport {
+                tick,
+                applied: 0,
+                refused: 0,
+                inputs: 1,
+                logic_error: Some(logic_error),
+                restart,
+            },
+            "tick {tick}"
+        );
+    }
+    assert!(client.poll().is_empty());
+    assert_eq!(server.ops().len(), 0);
     assert_eq!(server.world().voxel_hash(), solid3_world().voxel_hash());
 }
 
@@ -248,6 +351,7 @@ fn a_logic_error_is_a_tick_without_logic_ops_whose_inputs_are_logged() {
             refused: 0,
             inputs: 2,
             logic_error: Some(LogicError::Fuel { tick: 0 }),
+            restart: None,
         }
     );
     assert!(client.poll().is_empty());
@@ -262,25 +366,54 @@ fn a_logic_error_is_a_tick_without_logic_ops_whose_inputs_are_logged() {
     assert_eq!(server.world().voxel_hash(), solid3_world().voxel_hash());
 }
 
-/// Ops a logic applied before it failed stay applied and logged; re-simulation with a fresh
-/// component under the same configuration reproduces them, and a second run of the session
-/// reproduces the failure at the same tick with the same partial ops.
+/// Ops a logic applied before it failed stay applied and logged. With one restart, `hog`
+/// fails at tick 0 after applying that tick's input, restarts at tick 1 and applies that
+/// tick's input before it fails again: the log holds both edits in that order. (`hog`'s
+/// `init` applies nothing, so the restart's own `init` adds no op.) Re-simulation with a
+/// fresh component under the same configuration reproduces the log and the world, and a
+/// second run of the session gives the same reports and log.
 #[test]
 fn edits_applied_before_a_failure_stay_and_resimulate() {
-    let config = WasmConfig::default();
+    let config = WasmConfig {
+        max_restarts: 1,
+        ..WasmConfig::default()
+    };
+    let carves = seeded_carves(0x0011, 2);
+    let run = |server: &mut Server, client: &Client| -> Vec<TickReport> {
+        carves
+            .iter()
+            .map(|op| {
+                client.send_input(op_bytes(*op));
+                server.tick()
+            })
+            .collect()
+    };
     let (mut server, client) = session("hog", &config, 0);
-    let op = seeded_carves(0x0011, 1)[0];
-    client.send_input(op_bytes(op));
-    let report = server.tick();
+    let reports = run(&mut server, &client);
     assert_eq!(
-        report,
-        TickReport {
-            tick: 0,
-            applied: 1,
-            refused: 0,
-            inputs: 1,
-            logic_error: Some(LogicError::Memory { tick: 0 }),
-        }
+        reports,
+        [
+            TickReport {
+                tick: 0,
+                applied: 1,
+                refused: 0,
+                inputs: 1,
+                logic_error: Some(LogicError::Memory { tick: 0 }),
+                restart: None,
+            },
+            TickReport {
+                tick: 1,
+                applied: 1,
+                refused: 0,
+                inputs: 1,
+                logic_error: Some(LogicError::Memory { tick: 1 }),
+                restart: Some(LogicError::Restarted {
+                    tick: 1,
+                    after: 0,
+                    restarts: 1,
+                }),
+            },
+        ]
     );
     let logged: Vec<(u64, Option<Op>)> = server
         .ops()
@@ -288,10 +421,18 @@ fn edits_applied_before_a_failure_stay_and_resimulate() {
         .iter()
         .map(|e| (e.tick(), e.op().copied()))
         .collect();
-    assert_eq!(logged, [(0, Some(Op::Edit(op)))]);
+    assert_eq!(
+        logged,
+        [
+            (0, Some(Op::Edit(carves[0]))),
+            (1, Some(Op::Edit(carves[1])))
+        ]
+    );
 
     let direct = solid3_world();
-    direct.apply(&op).expect("the carve applies");
+    for op in &carves {
+        direct.apply(op).expect("the carve applies");
+    }
     assert_eq!(server.world().voxel_hash(), direct.voxel_hash());
 
     let fresh = Arc::new(solid3_world());
@@ -306,10 +447,9 @@ fn edits_applied_before_a_failure_stay_and_resimulate() {
     assert_eq!(ops.encode(), server.ops().encode());
     assert_eq!(fresh.voxel_hash(), direct.voxel_hash());
 
-    // A second run of the same session fails the same way at the same tick, after the same op.
+    // A second run of the same session fails and restarts the same way, after the same ops.
     let (mut again, again_client) = session("hog", &config, 0);
-    again_client.send_input(op_bytes(op));
-    assert_eq!(again.tick(), report);
+    assert_eq!(run(&mut again, &again_client), reports);
     assert_eq!(again.ops().encode(), server.ops().encode());
 }
 
@@ -343,11 +483,12 @@ fn timers_are_always_ready_and_never_wait() {
 
 /// Stderr never fills: `chatty` writes 1 KiB per tick, 100 KiB over ticks 0 to 99 (more than
 /// the 64 KiB the host keeps for one call), and every one of those ticks returns. Its panic at
-/// tick 100 becomes a trap whose message carries the panic's, and the logic stops.
+/// tick 100 becomes a trap whose message carries the panic's, and the logic (fail-stop here)
+/// stops.
 #[test]
 fn stderr_never_fills_and_a_guest_panic_is_a_trap_with_its_message() {
     let mut logic =
-        WasmLogic::load(&guest("chatty"), &WasmConfig::default()).expect("chatty loads");
+        WasmLogic::load(&guest("chatty"), &fail_stop(WasmConfig::default())).expect("chatty loads");
     let world = solid3_world();
     let mut host = WorldHost(&world);
     logic.try_init(&mut host, 0).expect("chatty's init returns");
@@ -394,11 +535,13 @@ impl Host for PanicHost {
     }
 }
 
-/// A panic in a host import traps the call with the panic's message and stops the logic; it
-/// does not unwind into the caller (this test would not get to its assertions if it did).
+/// A panic in a host import traps the call with the panic's message and stops the logic
+/// (fail-stop here); it does not unwind into the caller (this test would not get to its
+/// assertions if it did).
 #[test]
 fn a_host_import_that_panics_traps_and_stops_the_logic() {
-    let mut logic = WasmLogic::load(&guest("echo"), &WasmConfig::default()).expect("echo loads");
+    let mut logic =
+        WasmLogic::load(&guest("echo"), &fail_stop(WasmConfig::default())).expect("echo loads");
     let mut host = PanicHost;
     logic.try_init(&mut host, 0).expect("echo's init returns");
     let carve = ClientInput {

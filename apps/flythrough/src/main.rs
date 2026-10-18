@@ -1058,9 +1058,9 @@ fn counts_line(table: &MaterialTable, counts: &[(MaterialId, u32)]) -> String {
 struct Net {
     server: Server,
     client: Client,
-    /// Whether the logic's failure has been printed: a hosted logic that fails is stopped,
-    /// and every later tick reports [`LogicError::Stopped`], which is not printed again.
-    logic_failed: bool,
+    /// Whether the logic's stop has been printed: a hosted logic whose restarts are spent
+    /// reports [`LogicError::Stopped`] on every later tick, printed only the first time.
+    stop_printed: bool,
 }
 
 impl Net {
@@ -1071,7 +1071,7 @@ impl Net {
         let mut net = Self {
             server,
             client: Client::shared(world.clone(), near),
-            logic_failed: false,
+            stop_printed: false,
         };
         if let Some(e) = net.server.init_error().cloned()
             && let Some(line) = net.logic_failure(&e)
@@ -1081,10 +1081,14 @@ impl Net {
         net
     }
 
-    /// The line to print for the logic's failure `e`: `Some` the first time, `None` after.
+    /// The line to print for the logic's error `e`: every failure and every restart, and
+    /// [`LogicError::Stopped`] the first time only.
     fn logic_failure(&mut self, e: &LogicError) -> Option<String> {
-        (!std::mem::replace(&mut self.logic_failed, true))
-            .then(|| format!("logic: {e}; stopped, the session continues without it"))
+        match e {
+            LogicError::Stopped { .. } => (!std::mem::replace(&mut self.stop_printed, true))
+                .then(|| format!("logic: {e}; the session continues without it")),
+            _ => Some(format!("logic: {e}")),
+        }
     }
 }
 
@@ -1356,8 +1360,10 @@ impl Run {
         let t = now();
         let report = net.server.tick();
         let ms = ms_since(t);
-        if let Some(line) = report.logic_error.and_then(|e| net.logic_failure(&e)) {
-            println!("{line}");
+        for e in [report.restart, report.logic_error].into_iter().flatten() {
+            if let Some(line) = net.logic_failure(&e) {
+                println!("{line}");
+            }
         }
         let events = net.client.poll();
 
@@ -2721,20 +2727,43 @@ mod tests {
         }
     }
 
-    /// A failed logic's line names the error and that the session goes on, and is given
-    /// once: the `Stopped` reports of the ticks after it print nothing.
+    /// Every failure and every restart of the logic prints a line; the stop prints once,
+    /// naming that the session goes on, and the `Stopped` reports after it print nothing.
     #[test]
-    fn a_failed_logic_is_printed_once() {
+    fn each_failure_and_restart_prints_and_the_stop_prints_once() {
         let world = Arc::new(World::new(&cave_materials()));
         let mut net = Net::new(&world, LogicChoice::Native.load().expect("native"), 0);
         assert_eq!(
             net.logic_failure(&LogicError::Fuel { tick: 3 }).as_deref(),
+            Some("logic: logic ran out of fuel at tick 3")
+        );
+        assert_eq!(
+            net.logic_failure(&LogicError::Restarted {
+                tick: 4,
+                after: 3,
+                restarts: 1
+            })
+            .as_deref(),
             Some(
-                "logic: logic ran out of fuel at tick 3; stopped, the session continues without it"
+                "logic: logic restarted from its seed at tick 4 after it failed at tick 3 (restart 1)"
             )
         );
         assert_eq!(
-            net.logic_failure(&LogicError::Stopped { tick: 4, since: 3 }),
+            net.logic_failure(&LogicError::Stopped {
+                tick: 12,
+                since: 11
+            })
+            .as_deref(),
+            Some(
+                "logic: logic not run at tick 12: stopped since it failed at tick 11; the session \
+                 continues without it"
+            )
+        );
+        assert_eq!(
+            net.logic_failure(&LogicError::Stopped {
+                tick: 13,
+                since: 11
+            }),
             None
         );
     }

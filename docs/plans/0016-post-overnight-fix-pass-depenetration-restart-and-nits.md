@@ -317,8 +317,8 @@ pub enum LogicError {
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Depenetration in the controller | dev | done: `tick` tests `overlaps` first and takes the first free candidate; `MoveResult::lifted`, `embedded`; 2-voxel fill lifts `[0, 0, 512]` to `[2688, 2688, 512]`; 5-voxel fill lifts `[256, 0, 0]` (fill ending at x = 8) or `[0, 0, 1280]` (fill over the reach); enclosed body `embedded` twice, state unchanged; level walk: 16 fills, 16 lifts, no embed; course hash unchanged; F6 60-tick bench 108.17 to 110.59 µs against 108.35 to 111.60 µs at e23f309, same box, not quiet | committed with this row |
-| 2: A trapped logic restarts from its seed | dev | not started | |
+| 1: Depenetration in the controller | dev | done: `tick` tests `overlaps` first and takes the first free candidate; `MoveResult::lifted`, `embedded`; 2-voxel fill lifts `[0, 0, 512]` to `[2688, 2688, 512]`; 5-voxel fill lifts `[256, 0, 0]` (fill ending at x = 8) or `[0, 0, 1280]` (fill over the reach); enclosed body `embedded` twice, state unchanged; level walk: 16 fills, 16 lifts, no embed; course hash unchanged; F6 60-tick bench 108.17 to 110.59 µs against 108.35 to 111.60 µs at e23f309, same box, not quiet | 1d1b3aa |
+| 2: A trapped logic restarts from its seed | dev | done: `WasmConfig::max_restarts` (default 8), `LogicError::Restarted`, `Logic::take_restart`, `TickReport::restart`; `spin` ticks 0 to 10: `Fuel{0}`, then `Restarted{t, t-1, t}` with `Fuel{t}` for t = 1..8, then `Stopped{9, 8}`, `Stopped{10, 8}`; `hog` at 1 restart logs tick 0's and tick 1's input edits, resimulation and a second session equal; failed `init` at the default: `Restarted{t, max(t-1, 0), t+1}` with `Fuel{t}` for t = 0..7, then `Stopped{t, 7}`; `max_restarts: 0` keeps the old sequences; one restart of `flythrough-logic` 26.9 and 29.3 µs median | committed with this row |
 | 3: The review nits | dev | not started | |
 | 4: Rubble carries the rounding remainder | dev | not started | |
 | 5: Smooth scrolling changes the dig radius | dev | not started | |
@@ -337,6 +337,18 @@ each. Empty is fine.)_
   leaves `vz`, `grounded` and the climb state as they were.
 - Phase 1: the fly-through prints `walk: lifted out of solid` on each lifting tick and
   `walk: embedded` once per run of embedded ticks (`Walk::embedded`).
+- Phase 2: a tick's restart and its failure travel apart: `Logic::take_restart` (default
+  `None`) and `TickReport::restart` beside `logic_error` (owner's choice, 2026-10-18);
+  `crates/vxe-net/tests/{logic.rs, shared.rs}` gain `restart: None` in their `TickReport`
+  literals, outside Phase 2's Files touched.
+- Phase 2: the `hog` test's second edit is tick 1's input, applied by the restarted
+  instance's `tick`; `hog`'s `init` applies nothing, so no edit comes from `init` (owner's
+  choice, 2026-10-18).
+- Phase 2: a restart runs `init` at tick 0's clock and random stream and labels its failure
+  with the restarting tick; the `chatty` and host-panic tests run under `max_restarts: 0`.
+- Phase 2: the fly-through prints every failure and every restart (`logic: ...`) and the
+  stop once; its test is renamed `each_failure_and_restart_prints_and_the_stop_prints_once`.
+- Phase 2: the restart reading is a one-off timing loop, not a committed bench.
 
 ### Close triggers
 

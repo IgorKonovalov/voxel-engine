@@ -12,7 +12,9 @@
 //! cap) leaves its tick without a broadcast and the error in [`TickReport::logic_error`]; the
 //! tick's inputs are logged all the same, and ops the logic applied before it failed stay
 //! applied and logged. The next tick calls the logic again; a hosted logic that failed
-//! answers it with [`LogicError::Stopped`] without running.
+//! restarts from its seed first ([`Logic::take_restart`], reported in
+//! [`TickReport::restart`]) or, its restarts spent, answers with [`LogicError::Stopped`]
+//! without running.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -39,6 +41,9 @@ pub struct TickReport {
     pub inputs: u32,
     /// Why the logic's tick failed, when it did; the tick then has no broadcast.
     pub logic_error: Option<LogicError>,
+    /// The restart the logic made before this tick's call ([`LogicError::Restarted`]), when
+    /// it made one; independent of `logic_error`.
+    pub restart: Option<LogicError>,
 }
 
 pub struct Server {
@@ -243,6 +248,7 @@ impl Server {
         }
         let out = logic.tick(&mut host, tick, &inputs);
         let logic_error = logic.take_error();
+        let restart = logic.take_restart();
         let (applied, refused) = (host.applied, host.refused);
         if logic_error.is_none() && !out.broadcast.is_empty() {
             broadcast(
@@ -260,6 +266,7 @@ impl Server {
             refused,
             inputs: u32::try_from(inputs.len()).expect("input count fits u32"),
             logic_error,
+            restart,
         }
     }
 
