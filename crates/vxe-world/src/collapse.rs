@@ -531,17 +531,22 @@ impl World {
         })
     }
 
-    /// Carves every solid voxel of `cells`' bricks and piles a fraction of each column's
-    /// carved volume as rubble of material `rubble` on the first solid voxel below it.
+    /// Carves every solid voxel of `cells`' bricks and piles a fraction of the carved volume as
+    /// rubble of material `rubble`, column by column, on the first solid voxel below each.
     ///
     /// As `Mode::Carve` does, the carve spares voxels of an `INDESTRUCTIBLE` material: they stay
     /// in place, are not in `removed` and do not count toward a column's `n`, and they are solid
-    /// to the rubble scan and the rubble run. Per voxel column of the footprint, `n` voxels are
-    /// carved and `h = n * fraction.0 / fraction.1` (integer division; 0 when
-    /// `fraction.1 == 0` or `rubble` is air). The scan goes down from the column's lowest carved
-    /// voxel through air to the first solid voxel within `max_depth`; `h` rubble voxels are
-    /// written upward from it, fewer where the air above it (after the carve) runs out. A column with no solid voxel within `max_depth`
-    /// gets no rubble. Fails with `NotResident`, changing nothing, when a cell's chunk, or a
+    /// to the rubble scan and the rubble run. The voxel columns of the footprint are taken in a
+    /// fixed order (cell stacks ascending by `(cx, cy)`, then local `y`, then local `x`), and one
+    /// integer accumulator runs across them: a column with `n` carved voxels adds
+    /// `n * fraction.0`, takes `h` = the accumulator's whole multiples of `fraction.1`, and
+    /// keeps the remainder for the next column (`h` is 0 when `fraction.1 == 0` or `rubble` is
+    /// air). The region so piles `floor(N * fraction.0 / fraction.1)` voxels for `N` carved,
+    /// less only what finds no ground or no air. The scan goes down from the column's lowest
+    /// carved voxel through air to the first solid voxel within `max_depth`; `h` rubble voxels
+    /// are written upward from it, fewer where the air above it (after the carve) runs out. A
+    /// column with no solid voxel within `max_depth` loses its `h`; the remainder still
+    /// carries. Fails with `NotResident`, changing nothing, when a cell's chunk, or a
     /// voxel a scan reaches, is not resident.
     pub fn remove_region(
         &self,
@@ -562,6 +567,9 @@ impl World {
         // Scan every column first, so a non-resident chunk fails the op before any write.
         let mut reader = Reader::new(&map);
         let mut piles: Vec<([i32; 3], i32)> = Vec::new();
+        let whole = fraction.1 != 0 && rubble != AIR;
+        // Carved voxels times `fraction.0` not yet piled, below `fraction.1` between columns.
+        let mut acc: u64 = 0;
         for (xy, parts) in &columns {
             let mut n: u64 = 0;
             let mut lowest: Option<i32> = None;
@@ -574,10 +582,13 @@ impl World {
                 }
             }
             let Some(lowest) = lowest else { continue };
-            let h = if fraction.1 == 0 || rubble == AIR {
-                0
+            let h = if whole {
+                acc += n * u64::from(fraction.0);
+                let h = acc / u64::from(fraction.1);
+                acc -= h * u64::from(fraction.1);
+                h
             } else {
-                n * u64::from(fraction.0) / u64::from(fraction.1)
+                0
             };
             let gap = snap
                 .gap_below(&mut reader, *xy, lowest, max_depth, &spare)

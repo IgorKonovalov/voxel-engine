@@ -543,8 +543,9 @@ fn remove_region_spares_indestructible_voxels() {
     let r = world.remove_region(&slab_cells(), 7, (1, 4), 64).unwrap();
     assert_eq!(r.removed, [(3, 4607)]);
     assert_eq!(world.material_at([30, 30, 40]), Some(4));
-    // Column (30, 30) carved 7 voxels: h = 7 / 4 = 1, landing on the spared voxel at z = 41.
-    // The other 575 columns carved 8 each: 2 rubble voxels on the floor.
+    // Column (30, 30) carved 7 voxels: the accumulator, 0 before it, reaches 7, so h = 1,
+    // landing on the spared voxel at z = 41, and 3 carries. Every other column carved 8:
+    // 2 rubble voxels on the floor each, the 3 carrying through. floor(4607 / 4) in all.
     assert_eq!(r.placed, 575 * 2 + 1);
     assert_eq!(r.placed, 1151);
     assert_eq!(world.material_at([30, 30, 41]), Some(7));
@@ -577,6 +578,51 @@ fn no_fraction_leaves_the_floor_alone_and_a_whole_one_piles_the_slab() {
         world.voxel_hash(),
         direct(&[(FLOOR.0, FLOOR.1, 3), ([24, 24, 8], [48, 48, 16], 7)])
     );
+}
+
+/// A one-voxel-thick 8 x 8 sheet of material 3 in cell `[1, 1, 2]` (`z = 18`), 10 voxels over
+/// fixture F's floor (top at `z = 7`): 64 columns of `n = 1`. At a quarter the accumulator
+/// reaches 4 at every fourth column of the cell's order (`y`, then `x`), so 16 rubble voxels
+/// land on the floor at local `x` 3 and 7 of every row; per-column rounding piled none.
+#[test]
+fn a_thin_sheet_piles_a_quarter_by_carrying_the_remainder() {
+    let world = build(&[(FLOOR.0, FLOOR.1, 3), ([8, 8, 18], [16, 16, 19], 3)]);
+    let r = world
+        .remove_region(&[CellCoord([1, 1, 2])], 7, (1, 4), 64)
+        .unwrap();
+    assert_eq!(r.removed, [(3, 64)]);
+    assert_eq!(r.placed, 16);
+    let rubble: Vec<[i32; 3]> = (8..16)
+        .flat_map(|y| (8..16).map(move |x| [x, y, 8]))
+        .filter(|&v| world.material_at(v) == Some(7))
+        .collect();
+    assert_eq!(
+        rubble,
+        [
+            [11, 8, 8],
+            [15, 8, 8],
+            [11, 9, 8],
+            [15, 9, 8],
+            [11, 10, 8],
+            [15, 10, 8],
+            [11, 11, 8],
+            [15, 11, 8],
+            [11, 12, 8],
+            [15, 12, 8],
+            [11, 13, 8],
+            [15, 13, 8],
+            [11, 14, 8],
+            [15, 14, 8],
+            [11, 15, 8],
+            [15, 15, 8],
+        ]
+    );
+    let expected = build(&[
+        (FLOOR.0, FLOOR.1, 3),
+        ([11, 8, 8], [12, 16, 9], 7),
+        ([15, 8, 8], [16, 16, 9], 7),
+    ]);
+    assert_eq!(world.voxel_hash(), expected.voxel_hash());
 }
 
 #[test]
