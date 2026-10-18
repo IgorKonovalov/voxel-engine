@@ -15,6 +15,13 @@
 > read before and after; the mask buffer keeps every opaque mask on one 64-byte line
 > (groups of eight slots); the kernel split and the coarse secondary walk are named as the
 > lighting plan's, and beam optimization as a followup.
+> **Amended:** 2026-10-18, after Phase 1 (52d6a7b), before Phase 2: the 64³ chunk skip
+> reads an `EMPTY_BIT` in the chunk table entry instead of the record's 16 bits words, so
+> an empty chunk costs its table read alone and Phase 4's counts are satisfiable (bullet 1
+> becomes at most 7 reads, the rock chunk's entry read included); the walk holds the bits
+> words it last read; Phase 2 also reads the march time and the per-block maximum of steps;
+> the budget's expectation is restated from Phase 1's readings (the gap is not mainly step
+> count); the streamed spawn is read at `--frames 3000`.
 
 ## TL;DR
 
@@ -40,7 +47,13 @@ and 60 fps with three rays per pixel the dev box affords about twenty uncached 6
 per ray, a GTX 1660 about eight, a Switch-2-class portable about three (ADR-0012). The
 streamed cave's spawn view reads 6.69 ms for primary rays plus the headlamp's shadow ray on
 the dev box (`nfr.md` §2, a recorded miss against the 3.0 ms line); the level's spawn reads
-1.59 ms. The difference is steps through air, which the hierarchy removes.
+1.59 ms. The difference is steps through air, which the hierarchy removes. (Amended
+2026-10-18: Phase 1 does not bear this out. The streamed spawn's mean is 15.55 steps per ray
+against the level's 10.48, 1.5 times, while its march time is 3.7 times; the p99 is 84
+against 15. Most of the gap is cost per step, five dependent reads into a mirror of about
+1.7 GB against the level's tens of MB, and the long tail of a SIMT group, which runs as long
+as its slowest ray. The hierarchy addresses both, through Phase 4's reads per step and Phase
+2's skips in the tail, but in that order of weight; see `## Budgets`.)
 
 The consumer wants translucent voxels (glass, water, lava; owner, 2026-10-17) and
 `project-context.md` §"Rendering" lists volumetrics at P1; gas and smoke are a separate
@@ -61,8 +74,15 @@ the record and the 512-bit masks in the existing mask buffer, in groups of eight
 translucent 2³ words (72 B per slot on average), so the marcher still binds eight storage
 buffers, WebGPU's default limit. The grouping is what makes "one line per level" true in the
 hardware and not only in word counts: a flat 72-byte slot would start seven of every eight
-opaque masks off a line boundary, so each of those mask reads would touch two lines. We
-rejected a separate 1-bit mip chain for this plan because
+opaque masks off a line boundary, so each of those mask reads would touch two lines. The
+64³ level is not a record word: a chunk whose bricks are all `Uniform(AIR)` carries
+`EMPTY_BIT` (bit 29) in its chunk table entry, so the table read the walk already makes
+decides the chunk skip and an empty chunk's record is never read (amended 2026-10-18). We
+rejected testing the record's 16 bits words on chunk entry and counting the 64-byte line as
+one read: it is one line, but 16 loads and a dependent read after the table's, and it would
+make the Phase 4 counts a convention rather than a load count. We rejected a 17th summary
+word in the record for the same dependent read. The record index keeps 29 bits, room for
+536 870 912 records. We rejected a separate 1-bit mip chain for this plan because
 the two mask levels plus the 4³ and 2³ tests on the same line already give four cell sizes
 from two reads; a chain for secondary rays is the lighting plan's to add if it needs one. We
 rejected changing the mip-level selection or adding the far-field clipmap here: they change
@@ -81,7 +101,7 @@ flowchart LR
         U[GpuWorld::sync] --> R[record: 16 words brick bits, 512 entries, palette]
         U --> M[masks: per 8 slots, 8 aligned opaque lines + 1 line of translucent 2^3 words]
         U --> P[pool: 512 palette bytes per slot]
-        T[chunk table] --> R
+        T[chunk table: record index, LOD bit, EMPTY bit] -->|not empty| R
         R -->|bit set| M
         M -->|bit set| P
         P --> H[hit: material, contour]
@@ -125,24 +145,40 @@ between phases. The architect reviews once at the end, in a fresh session.
 ### Phase 2: Chunk bits, the chunk-level and 16³ skips
 - **Owner skill:** dev
 - **What:** each chunk record starts with 512 brick bits (bit `b` set when brick `b` is not
-  uniform air); the walk skips a chunk whose bits are all clear as one 64³ cell and a 2×2×2
-  brick group whose 8 bits are clear as one 16³ cell.
+  uniform air), and each chunk table entry carries `EMPTY_BIT` (bit 29) when the chunk's
+  record holds no brick that is not uniform air; the walk skips an absent or empty chunk as
+  one 64³ cell from the table entry alone, and a 2×2×2 brick group whose 8 bits are clear as
+  one 16³ cell.
 - **Files touched:** `crates/vxe-render/src/gpu_world.rs` (record layout: words 0..16 bits,
-  16..528 entries, 528..656 palette; `RECORD_WORDS` 656),
+  16..528 entries, 528..656 palette; `RECORD_WORDS` 656; table entry: record index in bits
+  0..29, `EMPTY_BIT` 1 << 29, `LOD_BIT` 1 << 30 as today, `ABSENT` as today; the table entry
+  is rewritten whenever a re-synced record's emptiness changes, not only for a new record),
+  `crates/vxe-render/src/readback.rs` (the mean over 8 × 8 pixel blocks of each block's
+  maximum steps),
   `crates/vxe-render/src/shaders/march.wgsl`, `crates/vxe-render/tests/mirror.rs`,
   `apps/flythrough/tests/level_mirror.rs`, the Phase 1 fixed-ray test file.
 - **Done when:**
   - On the level-size seed-1 world, a readback of every record's first 16 words equals, for
     each chunk, the bits of its bricks that are not `Uniform(AIR)` (`level_mirror.rs`), and
     the record stride is 2624 B.
+  - On the same world, a readback of the chunk table has `EMPTY_BIT` set on exactly the
+    entries whose record's 16 bits words are all zero, and the record index of every entry
+    that is not `ABSENT` equals the CPU's. In `mirror.rs`, an edit that places one voxel in a
+    mirrored empty chunk clears the entry's `EMPTY_BIT` at the next sync, and the edit that
+    removes it sets the bit again.
   - On the Phase 1 four-chunk closure world, the same +x ray takes exactly 4 steps (one per
     air chunk, then the hit on the rock chunk's face) and 0 pool reads, from 25 in Phase 1.
     On the same world with the three air chunks replaced by chunks whose bricks are uniform
     air except a solid floor layer of bricks, a +x ray through the air above the floor takes
     at most 4 steps per chunk.
   - `apps/flythrough/tests/golden/{primary,headlamp,lod}.png` match bit-exactly on lavapipe.
-  - The Phase 1 histogram command is re-run for both spawns and the log records its mean and
-    p99 beside Phase 1's.
+  - The Phase 1 histogram command is re-run for both spawns (the streamed one at
+    `--frames 3000`) and also prints the mean over 8 × 8 pixel blocks of each block's maximum
+    steps, the count a SIMT group pays. The log records mean, p99 and block-max mean beside
+    Phase 1's, with the block-max mean of Phase 1's walk read at 52d6a7b plus the readback
+    change, and one march-time reading of each spawn (median of the last 30 frames, the
+    streamed one at `--frames 3000`, the level at `--frames 300`), so the chunk skip's share
+    of the gap is read before Phase 3.
 
 ### Phase 3: Full-resolution opaque masks, with 4³, 2³ and voxel skips from one line
 - **Owner skill:** dev
@@ -182,27 +218,34 @@ between phases. The architect reviews once at the end, in a fresh session.
 - **Owner skill:** dev
 - **What:** `march` keeps the current chunk's record base, level and the current brick's
   slot across steps, re-reading the table only on entering a chunk and the record entry
-  only on entering a brick, so that per ray segment each level costs one read. The steps
-  view's green channel becomes total storage reads (table, record, mask, pool, palette).
+  only on entering a brick, so that per ray segment each level costs one read. It also holds
+  the bits words it last read with their word index, so testing a 16³ group or a brick whose
+  bits lie in a word already held costs no read; entering a chunk drops them. The steps
+  view's green channel becomes total storage loads issued (table, record bits and entries,
+  mask, pool, palette), each 32-bit load counted once.
 - **Files touched:** `crates/vxe-render/src/shaders/march.wgsl`,
   `crates/vxe-render/tests/mirror.rs` or a new `crates/vxe-render/tests/walk.rs` (fixed-ray
   read counts), `docs/nfr.md` §2.
 - **Done when:**
-  - On the Phase 1 four-chunk closure world, the +x ray reads exactly 4 table entries, 4
-    record words (the bits word of each chunk) and 0 masks or pool words: 8 reads.
+  - On the Phase 1 four-chunk closure world, the +x ray reads exactly 4 table entries (the
+    three air chunks are skipped on their `EMPTY_BIT`), at most 2 bits words and exactly 1
+    record entry, all in the rock chunk, and 0 mask, pool or palette words: at most 7 reads.
+    (The ray enters at brick `(0, 4, 4)`; its 16³ group's 8 bits lie in words 9 and 11.)
   - On a closure world of one chunk that is uniform air except one `Full` brick holding one
     solid voxel at its far corner, a +x ray through that voxel reads: 1 table entry, at
-    most 2 bits words (a 16³ group's 8 bits span two words), 1 record entry, mask words all
-    from that brick's one 64-byte opaque line (at most 8), 1 pool word, 1 palette word. A ray
-    through the same chunk that misses the brick reads 1 table entry and at most 2 bits
-    words.
+    most 2 bits words (a 16³ group's 8 bits span two words, and along x every group and brick
+    of a row of groups lies in the same two), 1 record entry, mask words all from that
+    brick's one 64-byte opaque line (at most 8), 1 pool word, 1 palette word. A +x ray
+    through the same chunk that misses the brick, through the same row of 16³ groups, reads
+    1 table entry and at most 2 bits words.
   - The goldens match bit-exactly on lavapipe.
   - March-pass readings (median of the last 30 of 300 frames, three runs, timestamp
     queries, dev box, quiet) for: `--level --seed 1 --render 1920x1080` from the spawn;
-    `--seed 1 --render 1920x1080` from the streamed spawn at full residency; and the
+    `--seed 1 --render 1920x1080 --frames 3000` from the streamed spawn (full residency
+    takes about 1500 frames, so the median is of the last 30 of 3000); and the
     autopilot's p50 and p99 (`--autopilot --headless`). Each is recorded in the log beside
-    Phase 1's reading of the same view, and the histogram command's mean and p99 beside
-    Phase 1's and Phase 2's.
+    Phase 1's reading of the same view, and the histogram command's mean, p99 and block-max
+    mean beside Phase 1's and Phase 2's.
 
 ### Phase 5: The translucent class and the bounded accumulation walk
 - **Owner skill:** dev
@@ -247,7 +290,8 @@ between phases. The architect reviews once at the end, in a fresh session.
   mask and record bytes at the level and at the streamed defaults), `crates/vxe-render/src/hud.rs`
   and `apps/flythrough/src/main.rs` (a `steps` line when the steps view is on), `README.md`.
 - **Done when:**
-  - `nfr.md` §2 holds the Phase 4 readings with machine, commit, command and load, and §3
+  - `nfr.md` §2 holds the Phase 4 readings, re-taken at the tip with Phase 4's commands (the
+    streamed spawn at `--frames 3000`), with machine, commit, command and load, and §3
     holds live and allocated mirror bytes at the level and at the streamed defaults
     (`--autopilot --headless`, peak), against Plan 0002's 1 672 823 572 B live and
     2 431 425 836 B allocated.
@@ -256,6 +300,13 @@ between phases. The architect reviews once at the end, in a fresh session.
 ## Data shapes
 
 ```text
+// illustrative: the chunk table entry (u32)
+0xFFFFFFFF  ABSENT, as today
+bits 0..29  record index
+bit 29      EMPTY_BIT: every entry of the record is uniform air (bits words all zero)
+bit 30      LOD_BIT, as today
+bit 31      clear unless ABSENT
+
 // illustrative: the chunk record (u32 words)
 0..16     brick bits: bit b of word b/32 set when brick b is not Uniform(AIR)
 16..528   brick entries as today (FULL_BIT | WIDE_BIT | slot, or the uniform material)
@@ -296,7 +347,17 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
   held to; the goal is the 3.0 ms line on the dev box, a guess until Phase 1's histogram
   says how many steps the view spends in air. The level spawn (1.59 ms) is hit-bound and is
   expected to move little. Measured at Phase 1 (before), Phase 4 and again at Phase 6,
-  three runs each.
+  three runs each, and once at Phase 2.
+  Amended 2026-10-18 from Phase 1's readings (6.81 ms streamed, 1.86 ms level; mean steps
+  15.55 against 10.48, p99 84 against 15): step count explains a minority of the 3.7 times
+  gap, so the 3.0 ms goal is a guess with weaker footing than when it was set, and the plan
+  expects most of any gain from Phase 4's reads per step, not Phase 2's skips. The phase
+  order stays: Phase 4's single-read walk needs Phase 2's bits and Phase 3's masks to be the
+  levels it reads, and Phases 2 and 3 are small. Phase 2's march and block-max readings say
+  how much of the gap the skips take; if Phase 4 leaves the streamed spawn above 3.0 ms, the
+  close records it as a miss with the per-step figures beside it, and the remaining gap goes
+  to the slot plan's smaller working set (ADR-0012) and the lighting plan's kernel split, not
+  to a new phase here.
 - **§2 streaming line.** A `Full` brick's upload grows from 520 to 584 B (+12 %), and a
   record from 2560 to 2624 B. The 2 MiB sync budget uploads about 11 % fewer bricks per
   frame; `--autopilot`'s residency latency (p95 455 to 481 ms against 500) is re-read at
