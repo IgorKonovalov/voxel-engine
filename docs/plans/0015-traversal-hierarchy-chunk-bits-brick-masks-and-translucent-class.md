@@ -527,7 +527,7 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
 | 3: Full-resolution opaque masks | dev | done | 4cafd06 |
 | 4: A walk that re-derives state at boundaries | dev | done | e564f44 |
 | 5: The translucent class and the bounded accumulation walk | dev | done | d3d2f1c |
-| 6: Readings, budgets and the stats line | dev | done | committed with this row |
+| 6: Readings, budgets and the stats line | dev | done | e0c3d58 |
 
 ### Notes
 
@@ -638,18 +638,69 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:** RTX 3080 Laptop GPU, Vulkan, headless, 1920 x 1080, seed 1,
-  timestamps, median of the last 30 frames, three runs each; load average 5 to 11 from the
-  runs' own streaming workers.
-  - Phase 1 (before, 80c6ab0 plus the steps view): streamed spawn `--frames 3000` march
-    6.817 / 6.815 / 6.810 ms; level spawn `--level --frames 300` 1.859 / 1.875 / 1.858 ms.
-    Histogram `--view steps`: streamed spawn mean 15.55, p99 84 steps, pool reads mean 2.45,
-    p99 7 (same at `--frames 60` and `3000`); level spawn mean 10.48, p99 15, pool reads mean
-    2.15, p99 4. Steps-view march (no shadow ray): streamed 6.021 ms, level 1.483 ms.
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** the steps view and its headless histogram (`ViewMode::Steps`,
+  `StepHistogram`: steps, loads, pool loads, block-max mean); chunk records headed by 512
+  brick bits and `EMPTY_BIT` in the table entry, with the 64³ and 16³ skips; full-resolution
+  opaque masks in groups of eight slots (72 B a slot) with the 4³, 2³ and voxel skips from
+  one line, `Brick::solid_bits()`; the plane-order exit and the `skips` switch, with the
+  identity of the walk with every skip on and off on the three golden scenes and a
+  corner-tie ray; a walk that holds its chunk, bits words, brick entry and mask slab across
+  steps; the translucent class (`MaterialFlags::TRANSLUCENT`, `Material::opacity`,
+  `TRANSLUCENT_BIT` in brick entries, the bounded second walk, `LookParams::translucent_layers`,
+  `ViewMode::Albedo`, `--translucent-layers`, `--view albedo`, `golden/translucent.png`); the
+  HUD's steps row; the goldens re-blessed once at Phase 3.
+- **Public API changed:** `vxe-world`: `MaterialFlags::TRANSLUCENT`, `Material::opacity`
+  (a new field; `Material::named` sets 1.0), `Material::is_translucent`,
+  `MaterialTable::is_translucent`, `Brick::solid_bits`. `vxe-render`: `LightParams::skips`
+  (new field), `LookParams::translucent_layers` (new field; `Default` is now hand-written),
+  `ViewMode::Albedo` (`ALL` has five entries), `Params::translucent_layers` in place of
+  `_pad1`, `FLAG_SKIPS`; `gpu_world`: `MASK_GROUP_SLOTS`, `OPAQUE_WORDS`, `TRANSLUCENT_WORDS`,
+  `MASK_GROUP_WORDS`, `MASK_BYTES` now 72, `opaque_mask_word`, `translucent_mask_word`,
+  `live_mask_bytes`, `TRANSLUCENT_BIT`, `MATERIAL_MASK`, `SLOT_MASK` now 29 bits,
+  `BITS_WORDS`, `EMPTY_BIT`, `RECORD_WORDS` 656, `ENTRY_WORD`, `PALETTE_WORD`; `readback`:
+  `StepHistogram::{loads, mean_loads, p99_loads}` (green is loads, blue pool reads, which
+  the Phase 1 to 3 green channel held). The steps view's green channel changed meaning at
+  Phase 4.
+- **Budget readings:** NVIDIA GeForce RTX 3080 Laptop GPU, Vulkan, headless, 1920 x 1080,
+  seed 1, timestamp queries, median of the last 30 frames (of 3000 for the streamed spawn, of
+  300 for the level), three runs each, taken after Phase 5 from each phase's commit in a
+  worktree, 2026-10-19 09:34 to 09:47 and again 09:50 for the tip; 1-minute load 5 to 11
+  throughout (the runs' own workers plus other processes on the box).
+  - Streamed spawn march (shaded, headlamp shadow ray): 52d6a7b 6.809 / 6.852 / 6.845 ms;
+    106998d 6.968 / 6.967 / 6.977; 4cafd06 2.499 / 2.514 / 2.501; e564f44
+    1.873 / 1.838 / 1.858; d3d2f1c 1.932 / 1.965 / 1.967, repeated 1.949 / 1.981 / 1.966.
+  - Level spawn march: 52d6a7b 1.822 / 1.822 / 1.822; 106998d 1.669 / 1.652 / 1.638; 4cafd06
+    1.719 / 1.655 / 1.704; e564f44 1.317 / 1.340 / 1.353; d3d2f1c 1.450 / 1.450 / 1.450,
+    repeated 1.450 / 1.463 / 1.463.
+  - Steps view (`--view steps`, no shadow ray), streamed spawn: 52d6a7b mean 15.55, p99 84,
+    block-max mean 16.26, pool reads mean 2.45, p99 7, march 6.058 ms; 106998d 12.83 / 71 /
+    13.54, pool 2.45 / 7, 6.234 ms; 4cafd06 10.98 / 53 / 11.67, pool 0.96 / 1, 1.555 ms;
+    e564f44 the same steps, loads mean 25.99, p99 131, 1.151 ms; d3d2f1c the same, 1.174 ms.
+  - Steps view, level spawn: 52d6a7b 10.48 / 15 / 10.75, pool 2.15 / 4, 1.161 ms; 106998d
+    8.64 / 13 / 8.93, pool 2.15 / 4, 1.049 ms; 4cafd06 7.49 / 11 / 7.78, pool 0.99 / 1,
+    1.072 ms; e564f44 the same steps, loads mean 18.79, p99 27, 0.839 ms; d3d2f1c the same,
+    0.855 ms.
+  - Autopilot (`--autopilot --headless --render 1920x1080`): e564f44 march p50 1.409 ms, p99
+    19.405, max 33.120 over 2819 frames, peak mirror 1 884 734 748 B live, 2 714 672 620 B
+    allocated, residency latency p95 472 ms, max 2362 ms over 72 905 chunks, streaming CPU
+    p50 7.498 ms, p99 56.286; d3d2f1c p50 1.569 ms, p99 21.174, max 32.958 over 2830 frames,
+    peak mirror 1 889 760 188 B live, 2 714 672 620 B allocated, residency p95 493 ms, max
+    1804 ms over 72 849 chunks, streaming CPU p50 7.234 ms, p99 57.365. Plan 0002's peak:
+    1 672 823 572 B live, 2 431 425 836 B allocated.
+  - Mirror bytes at rest: level 207 681 280 B live / 213 334 336 allocated (52d6a7b),
+    207 886 080 / 213 662 016 (106998d), 232 436 992 / 238 303 552 (4cafd06 on); streamed
+    spawn at full residency 1 603 820 204 / 1 675 304 940 (52d6a7b), 1 607 517 932 /
+    1 679 368 172 (106998d), 1 786 641 644 / 1 865 490 412 (4cafd06 on). Masks at the level
+    27 619 776 B (`level_mirror.rs`).
+  - Upload: a `Full` brick 584 B against 520; the level's first sync 232 436 992 B live.
+- **Gate at the tip (e0c3d58, the code of d3d2f1c plus the HUD row):** `cargo build
+  --workspace --all-targets` exit 0; `cargo nextest run --workspace --no-tests=pass` 387
+  passed, 0 failed, 4 skipped; `cargo test --doc --workspace` 0 failed; `cargo clippy
+  --workspace --all-targets -- -D warnings` exit 0; `cargo fmt --all --check` exit 0; `cargo
+  deny check` advisories, bans, licenses, sources ok; `check-comment-hygiene` OK,
+  `check-doc-links` 125 links resolve, `check-index-rows` OK. Golden tests on lavapipe
+  (llvmpipe, Mesa 26.2.2, LLVM 22.1.8).
+- **Outstanding `human` phases:** none.
 
 ## Followups
 
