@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0021** (ADRs are a separate sequence; next free there is **0016**).
+**Next free number: 0022** (ADRs are a separate sequence; next free there is **0016**).
 
 ## Active roster
 
@@ -15,6 +15,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0018](0018-server-routed-stamp-drop-and-remove.md) | Stamp, drop and remove as op kinds 2 to 4 through the server, the log and the logic host | approved | Paired with ADR-0014; `LOG_FORMAT` 2. |
 | [0019](0019-metered-host-calls-and-shape-range-checks.md) | Host calls charged by their work, and a world that refuses out-of-range shapes and queries | approved | Shares an `EditError` variant with Plan 0018. |
 | [0020](0020-cavern-reverb-directional-echoes-and-gliding-taps.md) | Cavern reverb: a late tail sized by the room the listener sees, echoes from their walls, taps that glide, and the player's own voice in the cave | approved | M4, paired with ADR-0015. After Plan 0006 closes; takes over its moving-click finding. |
+| [0021](0021-packed-cpu-brick-census-kernel-and-readers.md) | The packed CPU brick: a census and kernel bench, then masks, planes and a palette under every reader | draft | ADR-0012's second plan. Phase 2 is the owner's gate on the census and bench. |
 <!-- roster:end -->
 
 ## Recently closed
