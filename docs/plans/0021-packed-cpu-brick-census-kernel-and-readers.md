@@ -1,6 +1,6 @@
 # 0021: The packed CPU brick: a census and kernel bench, then masks, planes and a palette under every reader
 
-> **Status:** draft
+> **Status:** approved (2026-10-19)
 > **Created:** 2026-10-19
 > **Milestone:** M2 in `docs/roadmap.md` (the RAM line; ADR-0012's second plan)
 > **Related ADRs:** [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
