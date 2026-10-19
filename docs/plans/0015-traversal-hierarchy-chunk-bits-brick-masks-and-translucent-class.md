@@ -22,6 +22,13 @@
 > words it last read; Phase 2 also reads the march time and the per-block maximum of steps;
 > the budget's expectation is restated from Phase 1's readings (the gap is not mainly step
 > count); the streamed spawn is read at `--frames 3000`.
+> **Amended:** 2026-10-19, inside Phase 3 (its code uncommitted on 106998d), from the resume
+> note: the walk's off-axis coordinates at a cell exit follow plane order, so the image is
+> independent of every skip; Phase 3's bit-exact bullet becomes the identity of the walk with
+> every skip on and every skip off, plus a one-time re-bless of the goldens bounded to isolated
+> pixels against 106998d; Phases 4 and 5 inherit the identity; Phase 5's seal bullet becomes
+> an immutability test, there being no `seal` or `replace_material`; every reading of the plan
+> is taken after Phase 6, serially and unattended, from each phase's commit.
 
 ## TL;DR
 
@@ -89,6 +96,31 @@ rejected changing the mip-level selection or adding the far-field clipmap here: 
 the look and belong to the far-field plan. We rejected screen-door transparency for now: it
 needs the temporal pass the lighting plan brings, and a bounded accumulation with `N = 1` is
 the floor profile's equivalent until then.
+
+**The walk's off-axis coordinates at a cell exit follow plane order, not the float position**
+(amended 2026-10-19, inside Phase 3). Today the walk sets the exit-axis coordinate exactly
+from the face and the other two from `floor(o + d t)`, so a bigger empty cell that leaves
+through a different face near a lattice corner can land one voxel diagonally off where the
+voxel walk would not: the 4³ skip moved isolated pixels in every golden, and the 64³ and 16³
+skips moved none by luck. We make the voxel entered a function of the per-plane crossing
+values alone. Exiting through axis `k` at `t`, the walk advances each other axis `j` across
+every voxel plane `B` whose `t_j(B) = (B - o_j) inv_j` sorts before `(t, k)` in `(t, axis)`
+lexicographic order, which is exactly the order in which the voxel-by-voxel walk crosses them
+(nearest face first, the lower axis on a tie), so any decomposition of empty space into
+aligned cells enters the same solid voxel at the same `t` through the same face. The
+mechanism is dev's; the shape we expect is an estimate from the float position corrected by
+at most one plane on each off-axis with that predicate, where the estimate may be contracted
+into an FMA and the predicate decides. We rejected re-blessing the goldens with an
+isolated-pixel allowance against the skips: it turns "the hierarchy changes no pixel" from a
+property into a tolerance that Phase 4's held state, Phase 5's second walk and the lighting
+plan's coarse walk would all inherit. We rejected dropping the 4³ skip: it trades a read-free
+level for luck, since the 16³ and 64³ skips carry the same exposure. We rejected an integer
+walk on fixed-point `o` and `d`: the cross-multiplied predicates need more than 32 bits at the
+window's range, WGSL has no portable 64-bit integer, and geometric exactness was never the
+claim; cell-size independence is, and float arithmetic gives it under the plane-order rule.
+The goldens re-bless once when the rule lands, because it breaks the same corner ties
+differently from the float position; from then on bit-exactness is held by the identity of
+the walk with every skip on and every skip off, which a tolerance never defended.
 
 ## Architecture diagram
 
@@ -186,15 +218,25 @@ between phases. The architect reviews once at the end, in a fresh session.
   holds rows `y % 4` of layer `z`, bit `x + 8 (y % 4)`), laid out in groups of eight slots so
   that every opaque mask starts on a 64-byte boundary; the walk tests 4³ and 2³ blocks by
   masking the line and single voxels by bit, and reads the pool only when it has a hit.
-  Mip-bricks get the same masks from their cells.
+  Mip-bricks get the same masks from their cells. The walk's off-axis coordinates at a cell
+  exit follow plane order (amended 2026-10-19, see `## Decision`): exiting through axis `k`
+  at `t`, every plane of another axis whose crossing sorts before `(t, k)` is crossed, so the
+  voxel entered does not depend on the size of the cell left. A comparison switch disables
+  every skip (the 64³, 16³ and 8³ cells and the mask tests), so the hierarchical walk can be
+  held byte-identical to the voxel-by-voxel walk; whether that is `FLAG_MASKS` clear widened
+  or a second debug flag is dev's call.
 - **Files touched:** `crates/vxe-render/src/gpu_world.rs` (`MASK_GROUP_SLOTS` 8 and
   `MASK_GROUP_WORDS` 144: slot `s` has its opaque words at `144 (s / 8) + 16 (s % 8)` and
   its translucent words at `144 (s / 8) + 128 + 2 (s % 8)`; the buffer is sized in whole
   groups, and `grow_to` copies it as one block as today; the upload computes the bits in the
-  pass that narrows the brick), `crates/vxe-render/src/shaders/march.wgsl`,
-  `crates/vxe-world/src/brick.rs` (a `solid_bits() -> [u64; 8]` helper beside
-  `occupancy_mask`), `crates/vxe-render/tests/mirror.rs`,
-  `apps/flythrough/tests/level_mirror.rs`, `docs/nfr.md` §3 (mask bytes).
+  pass that narrows the brick), `crates/vxe-render/src/shaders/march.wgsl` (the plane-order
+  exit and its header comment), `crates/vxe-render/src/marcher.rs` if the switch is a new
+  flag, `crates/vxe-world/src/brick.rs` (a `solid_bits() -> [u64; 8]` helper beside
+  `occupancy_mask`), `crates/vxe-render/tests/mirror.rs`, `crates/vxe-render/tests/walk.rs`
+  (the diagonal ray), `apps/flythrough/tests/level_mirror.rs`,
+  `apps/flythrough/tests/golden.rs` (the identity test replaces
+  `masks_move_only_isolated_pixels`), every PNG under `apps/flythrough/tests/golden/` (one
+  re-bless), `docs/nfr.md` §3 (mask bytes).
 - **Done when:**
   - On the level-size seed-1 world, a readback of each `Full` brick's 16 mask words equals
     its CPU `solid_bits()`, and the mask buffer's live bytes are `72 × Full bricks`:
@@ -211,8 +253,30 @@ between phases. The architect reviews once at the end, in a fresh session.
   - A ray through a `Full` brick whose voxels are all air except one 2³ block it misses
     reads the pool 0 times.
   - `FLAG_MASKS` cleared still walks every voxel of a `Full` brick through the pool, as a
-    comparison switch; the goldens match bit-exactly either way.
-  - `apps/flythrough/tests/golden/{primary,headlamp,lod}.png` match bit-exactly on lavapipe.
+    comparison switch (on the far-corner world above, the same ray reads 8 steps and 8 pool
+    reads).
+  - **The walk is independent of its skips** (amended 2026-10-19). On one lavapipe device,
+    the `primary.png`, `headlamp.png` and `lod.png` scenes from their golden poses render
+    byte-identically with every skip on and with every skip off (the comparison switch), and
+    again with the mask tests alone off; the check is a strict byte comparison, as in
+    `goldens_match_bit_exactly_over_one_and_several_shards`, with no pixel allowance. The
+    voxel-by-voxel walk stays under `MAX_STEPS` on these scenes (their windows are at most a
+    few hundred voxels across; a ray that ran out of steps would show as a differing pixel).
+  - **The rule holds on a ray built to tie at every corner** (amended 2026-10-19). In
+    `walk.rs`, on a one-chunk world of air but for a lone solid voxel at `(4, 3, 0)`, the ray
+    from `(0.5, 0.5, 0.5)` along the normalized `(1, 1, 0)` hits that voxel at the same `t`
+    through the same face with every skip on and off (the skips cross the empty 4³ block
+    `[0, 4)²`, whose exit is a corner tie, and the 2³ block `[4, 6) × [2, 4)`; the voxel walk
+    crosses a tie at every lattice corner on its way). With the lone voxel at `(3, 4, 0)`
+    instead, the two walks again agree (both hit it, or both miss it and leave the window).
+  - **The goldens re-bless once, and only at isolated pixels** (amended 2026-10-19). After
+    the plane-order exit lands, every PNG under `apps/flythrough/tests/golden/` is re-blessed
+    on lavapipe (`VXE_BLESS=1`), and each re-blessed image differs from its file at 106998d
+    at isolated pixels only: no two differing pixels adjacent, 8-neighbourhood, and at most 8
+    differing pixels per image (dev's experiment read 1 or 2 per image before the rule). The
+    log lists each image's differing pixel coordinates and largest channel difference; the
+    close review re-derives them with `git show 106998d:<path>`. From this re-bless on, the
+    plan's remaining golden bullets are bit-exact against these files.
 
 ### Phase 4: A walk that re-derives chunk and brick state only at their boundaries
 - **Owner skill:** dev
@@ -238,7 +302,9 @@ between phases. The architect reviews once at the end, in a fresh session.
     brick's one 64-byte opaque line (at most 8), 1 pool word, 1 palette word. A +x ray
     through the same chunk that misses the brick, through the same row of 16³ groups, reads
     1 table entry and at most 2 bits words.
-  - The goldens match bit-exactly on lavapipe.
+  - The goldens match bit-exactly on lavapipe (the Phase 3 files), and Phase 3's identity of
+    the walk with every skip on and off still holds: the state held across steps changes
+    which words are read, never which planes are crossed (amended 2026-10-19).
   - March-pass readings (median of the last 30 of 300 frames, three runs, timestamp
     queries, dev box, quiet) for: `--level --seed 1 --render 1920x1080` from the spawn;
     `--seed 1 --render 1920x1080 --frames 3000` from the streamed spawn (full residency
@@ -276,9 +342,17 @@ between phases. The architect reviews once at the end, in a fresh session.
   - `golden/translucent.png` (the closure scene from a fixed pose, shaded) matches
     bit-exactly on lavapipe; the three existing goldens are unchanged (no translucent
     material in the level).
-  - `MaterialTable` refuses to change a material's `TRANSLUCENT` flag after `seal`, with an
-    error naming the id; `World::replace_material` and the `.vox` material map accept
-    translucent rows like any other.
+  - A material's opacity class is fixed for the world's life (amended 2026-10-19: there is no
+    `seal` and no `World::replace_material`, so the bullet as first written was
+    unsatisfiable; the owner's call, 2026-10-18). `World::materials` hands out a shared
+    reference and nothing in `vxe-world`'s public API reaches the table mutably after
+    `generate`, pinned by a `compile_fail` doc test on `world.materials().push(..)` or an
+    equivalent API test; the `.vox` material map in `vxe-assets` accepts translucent rows like
+    any other. ADR-0012's "the engine refuses to change the class after the table is sealed"
+    is met by there being no path to change it.
+  - Phase 3's identity of the walk with every skip on and off still holds on the three opaque
+    golden scenes with `translucent_layers` at its default: the second walk runs only when a
+    translucent bit was set along the ray (amended 2026-10-19).
   - `apps/flythrough/tests/determinism.rs` hashes are unchanged (no `vxe-world` data
     changed; the flag is a table property).
 
@@ -383,6 +457,14 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
   read on the dev box only.
 - **Step counts across adapters.** The fixed-ray tests use axis-aligned rays from voxel
   centres so that every `t` is exact; the goldens stay the only cross-adapter image check.
+  The plane-order rule makes the image independent of the skips on one adapter; across
+  adapters `(B - o) inv` can still round differently, so the goldens stay lavapipe-only
+  (amended 2026-10-19).
+- **The plane-order correction costs ALU per step** (amended 2026-10-19): two plane
+  crossings per off-axis, a handful of multiplies and compares against a walk whose cost is
+  dependent memory reads. If Phase 4's level-spawn march time (hit-bound, few steps) moves
+  against Phase 2's reading, the log records it beside the step histogram; the identity test
+  is not negotiable, the shape of the correction is.
 - **Register pressure.** Phase 4 keeps more state per ray; if the occupancy drops and the
   march slows on the level view, the log records both and the review decides which state
   to drop. The march loop today also carries the contour test, the detail noise and the
@@ -427,8 +509,9 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
 | 5: The translucent class and the bounded accumulation walk | dev | not started | |
 | 6: Readings, budgets and the stats line | dev | not started | |
 
-> **Resume note (2026-10-18, delete when Phase 3 lands):** stopped inside Phase 3 at
-> 106998d, routed to `/architect` (owner's call). Phase 3's grouped masks, `solid_bits()`, the
+> **Resume note (2026-10-18, delete when Phase 3 lands; answered by the 2026-10-19
+> amendment above):** stopped inside Phase 3 at 106998d, routed to `/architect` (owner's
+> call). Phase 3's grouped masks, `solid_bits()`, the
 > 4³ / 2³ / voxel tests and its tests are written and uncommitted in the main checkout
 > (`gpu_world.rs`, `march.wgsl`, `brick.rs`, `mirror.rs`, `walk.rs`, `level_mirror.rs`,
 > `look.rs`); every Phase 3 bullet holds except bit-exact goldens. Diagnosis: the 4³ skip
