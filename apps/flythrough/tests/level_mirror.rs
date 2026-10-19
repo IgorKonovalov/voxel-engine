@@ -8,8 +8,9 @@ mod support;
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
 use flythrough::cave_materials;
 use vxe_render::gpu_world::{
-    ABSENT, BITS_WORDS, EMPTY_BIT, ENTRY_WORD, FULL_BIT, LOD_BIT, PALETTE_WORD, RECORD_BYTES,
-    RECORD_MASK, RECORD_WORDS, SLOT_BYTES, SLOT_MASK,
+    ABSENT, BITS_WORDS, EMPTY_BIT, ENTRY_WORD, FULL_BIT, LOD_BIT, MASK_GROUP_WORDS, PALETTE_WORD,
+    RECORD_BYTES, RECORD_MASK, RECORD_WORDS, SLOT_BYTES, SLOT_MASK, opaque_mask_word,
+    translucent_mask_word,
 };
 use vxe_render::{GpuWorld, MirrorConfig, Window, readback, wgpu};
 use vxe_world::*;
@@ -46,8 +47,8 @@ fn the_first_sync_issues_at_most_three_writes_per_chunk() {
     assert!(st.writes <= 3 * 3200 + 8, "{} writes", st.writes);
     assert_eq!(st.pending_chunks, 0);
 
-    // Narrowed: one 512-byte slot per Full brick, no wide chunk, and a 2624-byte record per
-    // mirrored chunk.
+    // Narrowed: one 512-byte slot and 72 bytes of masks per Full brick, no wide chunk, and a
+    // 2624-byte record per mirrored chunk.
     assert_eq!(s.full_bricks, 383_608);
     assert_eq!(gpu.live_pool_bytes(), 512 * s.full_bricks as u64);
     assert_eq!(gpu.live_pool_bytes(), 196_407_296);
@@ -56,7 +57,7 @@ fn the_first_sync_issues_at_most_three_writes_per_chunk() {
     assert!(gpu.records().size() >= 3200 * RECORD_BYTES);
     assert_eq!(
         gpu.mirror_bytes(),
-        383_608 * (512 + 8) + 3200 * 2624 + 3200 * 4 + gpu.materials().size()
+        383_608 * (512 + 72) + 3200 * 2624 + 3200 * 4 + gpu.materials().size()
     );
     println!("mirror bytes {}", gpu.mirror_bytes());
 }
@@ -66,7 +67,7 @@ fn every_budgeted_sync_writes_at_most_the_budget_plus_one_chunk() {
     const BUDGET: u64 = 8 << 20;
     // Plan 0002's figure for a wide chunk's upload: 512 two-slot bricks and its record with
     // palette. It leaves out the bricks' masks (16 B each); no cave chunk is wide, and a
-    // narrow chunk's largest upload, masks included, is 512 x 520 + 2624 + 4 B.
+    // narrow chunk's largest upload, masks included, is 512 x 584 + 2624 + 4 B.
     const LARGEST_CHUNK: u64 = 512 * 1024 + 2624;
     let (world, source) = level();
     let Some((device, queue)) = device(&world) else {
@@ -228,4 +229,48 @@ fn the_level_s_brick_bits_and_empty_bits_match_its_bricks() {
     }
     println!("{empty} of 3200 chunks empty");
     assert!(empty > 0 && empty < 3200);
+}
+
+/// Every `Full` brick's 16 opaque mask words read back as its CPU `solid_bits()`, its two
+/// translucent words clear; the masks' live bytes are 72 per `Full` brick, and the buffer
+/// holds whole 576-byte groups.
+#[test]
+fn the_level_s_opaque_masks_are_its_solid_bits() {
+    let (world, source) = level();
+    let Some((device, queue)) = device(&world) else {
+        return;
+    };
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.set_focus(source.spawn());
+    gpu.sync(&world, &queue).unwrap();
+    assert_eq!(gpu.live_mask_bytes(), 72 * 383_608);
+    assert_eq!(gpu.live_mask_bytes(), 27_619_776);
+    let groups = u64::from(MASK_GROUP_WORDS) * 4;
+    assert_eq!(gpu.masks().size() % groups, 0);
+    assert!(gpu.masks().size() >= 383_608u64.div_ceil(8) * groups);
+    let masks: Vec<u32> =
+        readback::read_buffer(&device, &queue, gpu.masks(), 0, gpu.masks().size())
+            .chunks_exact(4)
+            .map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]))
+            .collect();
+    let mut checked = 0;
+    for c in world.store().coords() {
+        let chunk = world.store().get(c).unwrap();
+        let chunk = chunk.read().unwrap();
+        for (slot, brick) in chunk.bricks().iter().enumerate() {
+            if !brick.is_full() {
+                continue;
+            }
+            let s = gpu.entry(c, slot).unwrap() & SLOT_MASK;
+            let o = opaque_mask_word(s) as usize;
+            let got: [u64; 8] = std::array::from_fn(|z| {
+                u64::from(masks[o + 2 * z]) | u64::from(masks[o + 2 * z + 1]) << 32
+            });
+            assert_eq!(got, brick.solid_bits(), "{c:?} brick {slot}");
+            let t = translucent_mask_word(s) as usize;
+            assert_eq!(masks[t..t + 2], [0, 0], "{c:?} brick {slot}");
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 383_608);
 }

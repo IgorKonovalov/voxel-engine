@@ -6,8 +6,9 @@ use std::sync::Arc;
 
 use vxe_render::gpu_world::{
     ABSENT, ATTR_PAGE_BRICK_SLOTS, BITS_WORDS, EMPTY_BIT, ENTRY_WORD, FULL_BIT, LOD_BIT,
-    LOD_LEVEL_ENTRY, MASK_BYTES, NO_PLANE, PALETTE_WORD, POOL_PAGE_SLOTS, RECORD_BYTES,
-    RECORD_MASK, RECORD_WORDS, SLOT_BYTES, SLOT_MASK, WIDE_BIT, attr_slot,
+    LOD_LEVEL_ENTRY, MASK_BYTES, MASK_GROUP_SLOTS, MASK_GROUP_WORDS, NO_PLANE, PALETTE_WORD,
+    POOL_PAGE_SLOTS, RECORD_BYTES, RECORD_MASK, RECORD_WORDS, SLOT_BYTES, SLOT_MASK, WIDE_BIT,
+    attr_slot, opaque_mask_word, translucent_mask_word,
 };
 use vxe_render::{
     ATTRIB_WGSL, GpuWorld, MARCH_WGSL, MirrorConfig, ShardLayout, Window, readback, wgpu,
@@ -154,27 +155,64 @@ fn sync_uploads_dirty_bricks_once() {
         assert_eq!(index, u8::from(z < 3), "voxel {i}");
     }
 
-    // The same slot's mask is the brick's occupancy mask, low word first.
-    let mask = world
+    // The same slot's opaque mask is the brick's solid bits, its translucent words clear.
+    let bits = world
         .store()
         .get(ChunkCoord([1, 0, 0]))
         .unwrap()
         .read()
         .unwrap()
         .brick(0)
-        .occupancy_mask();
-    assert_ne!(mask, 0);
-    let bytes = readback::read_buffer(
+        .solid_bits();
+    assert_eq!(bits[..3], [u64::MAX; 3]);
+    assert_eq!(bits[3..], [0; 5]);
+    let s = e & SLOT_MASK;
+    let opaque = readback::read_buffer(
         &device,
         &queue,
         gpu.masks(),
-        u64::from(e & SLOT_MASK) * 8,
+        u64::from(opaque_mask_word(s)) * 4,
+        64,
+    );
+    let opaque: Vec<u32> = bytemuck::pod_collect_to_vec(&opaque);
+    assert_eq!(layers(&opaque), bits);
+    let translucent = readback::read_buffer(
+        &device,
+        &queue,
+        gpu.masks(),
+        u64::from(translucent_mask_word(s)) * 4,
         8,
     );
     assert_eq!(
-        bytemuck::cast_slice::<u8, u32>(&bytes),
-        [mask as u32, (mask >> 32) as u32]
+        bytemuck::pod_collect_to_vec::<u8, u32>(&translucent),
+        [0, 0]
     );
+}
+
+/// Sixteen opaque mask words as eight `u64` layers, low word first.
+fn layers(w: &[u32]) -> [u64; 8] {
+    std::array::from_fn(|z| u64::from(w[2 * z]) | u64::from(w[2 * z + 1]) << 32)
+}
+
+/// Slot s's opaque mask starts on a 64-byte line, and its two translucent words lie in its
+/// group's ninth line, at 144 (s / 8) + 128 + 2 (s % 8).
+#[test]
+fn every_opaque_mask_starts_a_line_and_the_translucent_words_share_the_ninth() {
+    assert_eq!(MASK_GROUP_SLOTS, 8);
+    assert_eq!(MASK_GROUP_WORDS, 144);
+    assert_eq!(MASK_BYTES, 72);
+    let mut lines = HashSet::new();
+    for s in 0..64u32 {
+        let o = opaque_mask_word(s) * 4;
+        assert_eq!(o % 64, 0, "slot {s}");
+        assert_eq!(o, 576 * (s / 8) + 64 * (s % 8), "slot {s}");
+        assert!(lines.insert(o / 64), "slot {s} shares a line");
+        let t = translucent_mask_word(s);
+        assert_eq!(t, 144 * (s / 8) + 128 + 2 * (s % 8), "slot {s}");
+        // Both words in the group's ninth 64-byte line.
+        assert_eq!(t * 4 / 64, 9 * (s / 8) + 8, "slot {s}");
+        assert_eq!((t + 1) * 4 / 64, 9 * (s / 8) + 8, "slot {s}");
+    }
 }
 
 #[test]
@@ -369,11 +407,14 @@ impl Readback {
                     assert_ne!(e & FULL_BIT, 0, "{coord:?} brick {slot}");
                     assert_eq!(self.voxels(rec, e), &v[..], "{coord:?} brick {slot}");
                     let s = e & SLOT_MASK;
-                    let mask = brick.occupancy_mask();
+                    let o = opaque_mask_word(s) as usize;
                     assert_eq!(
-                        self.masks[s as usize * 2..s as usize * 2 + 2],
-                        [mask as u32, (mask >> 32) as u32]
+                        layers(&self.masks[o..o + 16]),
+                        brick.solid_bits(),
+                        "{coord:?} brick {slot} mask"
                     );
+                    let t = translucent_mask_word(s) as usize;
+                    assert_eq!(self.masks[t..t + 2], [0, 0], "{coord:?} brick {slot}");
                     slots.push(s);
                     if e & WIDE_BIT != 0 {
                         assert_eq!(s % 2, 0, "{coord:?} brick {slot}: wide pair at odd slot");
@@ -994,7 +1035,12 @@ fn attribute_pages_hold_full_bricks_and_plain_pages_mip_bricks() {
             for k in [a, a + 1] {
                 assert_eq!(k / sps, s / sps, "{c:?} brick {i}: attribute slot {k}");
                 // Attribute slots carry no occupancy mask: the CPU never writes them.
-                assert_eq!(rb.masks[k as usize * 2..k as usize * 2 + 2], [0, 0]);
+                let (o, t) = (
+                    opaque_mask_word(k) as usize,
+                    translucent_mask_word(k) as usize,
+                );
+                assert!(rb.masks[o..o + 16].iter().all(|&w| w == 0));
+                assert_eq!(rb.masks[t..t + 2], [0, 0]);
             }
         }
     }

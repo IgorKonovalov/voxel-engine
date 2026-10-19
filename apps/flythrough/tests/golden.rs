@@ -89,48 +89,81 @@ fn headlamp_shadows_only_remove_light() {
     );
 }
 
-#[test]
-fn masks_move_only_isolated_pixels() {
-    for (name, lit) in [
-        ("at_eye", LightParams::at_eye()),
-        ("headlamp", LightParams::headlamp()),
-    ] {
-        let unmasked = LightParams {
-            masks: false,
-            ..lit
-        };
-        let Some(images) = render(&carved_world(), &[lit, unmasked]) else {
-            return;
-        };
-        let differing = differing_pixels(&images[0], &images[1], 2);
-        println!(
-            "{name}: masks on and off differ at {} pixels by more than 2/255",
-            differing.len()
-        );
-        // The golden floor: 0.1 % of 57 600 pixels.
-        assert!(differing.len() <= 57, "{name}: {} pixels", differing.len());
-        // A skip past an occupied block opens a hole several pixels wide; a corner tie broken
-        // the other way moves one pixel.
-        for (i, &(c, r)) in differing.iter().enumerate() {
-            for &(c2, r2) in &differing[i + 1..] {
-                assert!(
-                    c.abs_diff(c2) > 1 || r.abs_diff(r2) > 1,
-                    "{name}: differing pixels ({c}, {r}) and ({c2}, {r2}) touch"
-                );
-            }
-        }
-    }
+/// Bytes at which `a` and `b` differ.
+fn differing_bytes(a: &[u8], b: &[u8]) -> usize {
+    assert_eq!(a.len(), b.len());
+    a.iter().zip(b).filter(|(x, y)| x != y).count()
 }
 
-/// Pixels (column, row) whose largest channel difference between `a` and `b` exceeds
-/// `tolerance`.
-fn differing_pixels(a: &[u8], b: &[u8], tolerance: u8) -> Vec<(u32, u32)> {
-    a.chunks(4)
-        .zip(b.chunks(4))
-        .enumerate()
-        .filter(|(_, (p, q))| (0..3).any(|k| p[k].abs_diff(q[k]) > tolerance))
-        .map(|(i, _)| (i as u32 % WIDTH, i as u32 / WIDTH))
-        .collect()
+/// The walk is independent of its skips: the `primary.png`, `headlamp.png` and `lod.png`
+/// scenes from their golden poses render byte-identically with every skip on, with every
+/// skip off (the walk over single voxels, which stays under `MAX_STEPS` on these windows of
+/// 384 voxels) and with the mask tests alone off, on one device, and the image with every
+/// skip on is the golden file's bytes, `lod.png` included.
+#[test]
+fn the_walk_renders_the_same_bytes_with_every_skip_on_or_off() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let bless = std::env::var("VXE_BLESS").as_deref() == Ok("1");
+    let carved = carved_world();
+    let lod = lod_scene();
+    let scenes = [
+        (
+            "primary.png",
+            &carved,
+            LightParams::at_eye(),
+            LodParams::default(),
+        ),
+        (
+            "headlamp.png",
+            &carved,
+            LightParams::headlamp(),
+            LodParams::default(),
+        ),
+        ("lod.png", &lod, LightParams::at_eye(), forced(1)),
+    ];
+    for (name, world, light, lod) in scenes {
+        let variants = [
+            ("every skip on", light),
+            (
+                "every skip off",
+                LightParams {
+                    skips: false,
+                    ..light
+                },
+            ),
+            (
+                "the mask tests off",
+                LightParams {
+                    masks: false,
+                    ..light
+                },
+            ),
+        ];
+        let images = render_with(
+            &device,
+            &queue,
+            world,
+            &scene_camera(),
+            &variants.map(|(_, light)| light),
+            lod,
+        );
+        for (i, (label, _)) in variants.iter().enumerate().skip(1) {
+            let differing = differing_bytes(&images[0], &images[i]);
+            assert_eq!(
+                differing, 0,
+                "{name} with {label}: {differing} bytes differ from every skip on"
+            );
+        }
+        if !bless {
+            let differing = differing_bytes(&images[0], &read_png(&golden_path(name)).0);
+            assert_eq!(
+                differing, 0,
+                "{name}: {differing} bytes differ from the golden"
+            );
+        }
+    }
 }
 
 /// Pixels of `plain` darker than `shadowed` in any channel.

@@ -3,7 +3,8 @@
 // Bindings, group 0:
 //   0  uniform  params         camera, mirror window, light, target size, flags (bit 0: shadow ray,
 //                              bit 1: occupancy masks, bits 2..4: normal mode, bit 4: detail,
-//                              bits 5..8: view, bit 8: the mirror has attribute pages)
+//                              bits 5..8: view, bit 8: the mirror has attribute pages, bit 9:
+//                              skip empty cells larger than a voxel)
 //   1  storage  brick_pool0    shard 0 of the pool: [slot][128 x u32], four u8 palette indices
 //                              per word, x fastest; a wide brick is two slots, [256 x u32] of
 //                              u16 voxel pairs. Slot s is slot s % slots_per_shard of shard
@@ -20,8 +21,11 @@
 //   4  storage  materials      [id][4 x vec4]: albedo rgb + roughness, emission rgb + flag bits,
 //                              detail scale (voxels) + detail strength + 2 spare, 4 spare
 //   5  storage texture         rgba8unorm output
-//   6  storage  brick_masks    [slot][2 x u32]; bit b set: block (b & 3, (b >> 2) & 3, b >> 4)
-//                              of the slot's brick holds a non-air voxel
+//   6  storage  brick_masks    [slot / 8][144 x u32], groups of eight slots: slot s's opaque
+//                              mask is words 144 (s / 8) + 16 (s % 8) .. + 16, one 64-byte
+//                              line, bit i % 32 of word i / 32 set when voxel i (x + 8 y +
+//                              64 z) of its brick is not air; its two translucent words follow
+//                              the eight opaque lines at 144 (s / 8) + 128 + 2 (s % 8)
 //   7  storage  brick_pool1    pool shard 1
 //   8  storage  brick_pool2    pool shard 2
 //   9  storage  brick_pool3    pool shard 3
@@ -36,19 +40,23 @@
 // that half-space. A solid voxel with no plane, of a uniform brick or of a mip-brick, hits
 // as a cube.
 //
-// World units are voxels. The walk is a DDA over cells of five sizes: a chunk that is absent
+// World units are voxels. The walk is a DDA over cells of seven sizes: a chunk that is absent
 // or empty (its table entry's EMPTY_BIT) is skipped as one 64^3 cell, a 2 x 2 x 2 group of
-// bricks whose brick bits are all clear as one 16^3 cell, a uniform-air brick as one 8^3 cell, an empty 2^3 block of a
-// full brick (its mask bit clear) as one 2^3 cell when the masks flag is set, and the voxels
-// of an occupied block one at a time. A uniform solid brick is hit where the ray enters it.
-// A LOD-only chunk is walked the same way at its mip level L, every size scaled by 2^L: a
-// clear group of mip-bricks is one (16 * 2^L)^3 cell below level 3, a uniform-air mip-brick
-// one (8 * 2^L)^3 cell, an empty mask block one (2 * 2^L)^3 cell,
-// and each mip cell one (2^L)^3 cell. Every skip is aligned to its size, so a solid cell is
-// always entered on its face. Each step leaves
-// the current cell through its nearest face; the coordinate on the exit axis is set exactly
-// from the face, the others come from the float position, rounded toward the side the ray is
-// heading so that a position on a boundary (a tie between axes) lands in the voxel entered.
+// bricks whose brick bits are all clear as one 16^3 cell, a uniform-air brick as one 8^3
+// cell, and, when the masks flag is set, an empty 4^3 or 2^3 block or an empty voxel of a
+// full brick as one cell of its size, each read from the brick's opaque line, so the pool is
+// read only for a voxel whose bit is set. With the masks flag clear every voxel of a full
+// brick is read through the pool; with the skips flag clear every cell is one voxel (one mip
+// cell in a LOD-only chunk), the comparison walk. A uniform solid brick is hit where the ray
+// enters it. A LOD-only chunk is walked the same way at its mip level L, every size scaled by
+// 2^L: a clear group of mip-bricks is one (16 * 2^L)^3 cell below level 3, a uniform-air
+// mip-brick one (8 * 2^L)^3 cell, an empty block of a mip-brick one (4 * 2^L)^3 or
+// (2 * 2^L)^3 cell, and each mip cell one (2^L)^3 cell. Every skip is aligned to its size, so
+// a solid cell is always entered on its face. Each step leaves the current cell through its
+// nearest face, the lower axis on a tie; the coordinate on the exit axis is set exactly from
+// the face, and each other coordinate follows plane order (see `advance`): the voxel entered
+// is a function of the plane crossings alone, never of the size of the cell left, so the
+// walk finds the same voxel through the same face with every skip on or off.
 
 struct Params {
     cam_pos: vec3<f32>,
@@ -100,6 +108,8 @@ const SLOT_WORDS: u32 = 128u;
 const RECORD_WORDS: u32 = 656u;
 const ENTRY_WORD: u32 = 16u;
 const PALETTE_WORD: u32 = 528u;
+// u32 words of a group of eight slots' masks.
+const MASK_GROUP_WORDS: u32 = 144u;
 const MAX_STEPS: u32 = 4096u;
 const BIG: f32 = 3.0e38;
 // Params.flags bits.
@@ -110,6 +120,7 @@ const FLAG_DETAIL: u32 = 16u;
 const VIEW_SHIFT: u32 = 5u;
 const VIEW_BITS: u32 = 7u;
 const FLAG_ATTR_PAGES: u32 = 256u;
+const FLAG_SKIPS: u32 = 512u;
 // Normal modes (flags bits 2..4) and views (flags bits 5..8).
 const NORMAL_FACE: u32 = 0u;
 const NORMAL_TRILINEAR8: u32 = 1u;
@@ -217,7 +228,39 @@ fn group_occupied(base: u32, level: u32, b: vec3<i32>) -> bool {
     }
 }
 
+// The first word of slot `slot`'s opaque mask in its group of eight.
+fn opaque_word(slot: u32) -> u32 {
+    return MASK_GROUP_WORDS * (slot / 8u) + 16u * (slot % 8u);
+}
+
+// The edge of the empty cell holding voxel `l` (index `i`) of the brick whose opaque mask
+// starts at word `m`: 4 or 2 for an empty block, 1 for an empty voxel, 0 for a set voxel.
+// Layer z is words 2 z (rows 0..4) and 2 z + 1 (rows 4..8), bit x + 8 (y % 4); a 4^3 block
+// (bx, by, bz) is the byte-wide nibbles 0x0F0F0F0F << 4 bx of words 2 (4 bz + k) + by, and a
+// 2^3 block (cx, cy, cz) the bits 0x0303 << (2 cx + 16 (cy % 2)) of words
+// 2 (2 cz + k) + cy / 2.
+fn mask_skip(m: u32, l: vec3<u32>, i: u32) -> i32 {
+    let q = l / 4u;
+    let w4 = m + 8u * q.z + q.y;
+    let any4 = brick_masks[w4] | brick_masks[w4 + 2u] | brick_masks[w4 + 4u] | brick_masks[w4 + 6u];
+    if ((any4 & (0x0F0F0F0Fu << (4u * q.x))) == 0u) {
+        return 4;
+    }
+    let h = l / 2u;
+    let w2 = m + 4u * h.z + h.y / 2u;
+    if (((brick_masks[w2] | brick_masks[w2 + 2u]) & (0x0303u << (2u * h.x + 16u * (h.y & 1u)))) == 0u) {
+        return 2;
+    }
+    if ((brick_masks[m + i / 32u] & (1u << (i % 32u))) == 0u) {
+        return 1;
+    }
+    return 0;
+}
+
+// The cell at voxel `v`. With the skips flag clear every empty cell is one voxel, or one mip
+// cell of a LOD-only chunk, whatever the hierarchy says about its neighbours.
 fn lookup(v: vec3<i32>) -> Cell {
+    let skips = (params.flags & FLAG_SKIPS) != 0u;
     let chunk = floor_div(v, 64);
     let rel = chunk - params.window_min;
     let w = params.window_size;
@@ -228,7 +271,10 @@ fn lookup(v: vec3<i32>) -> Cell {
     // and the range check above keeps every lookup inside the current window.
     let wr = ((chunk % w) + w) % w;
     let t = chunk_table[u32(wr.x + w.x * (wr.y + w.y * wr.z))];
-    if (t == ABSENT || (t & EMPTY_BIT) != 0u) {
+    if (t == ABSENT) {
+        return Cell(select(1, 64, skips), 0u, ABSENT, 0u);
+    }
+    if (skips && (t & EMPTY_BIT) != 0u) {
         return Cell(64, 0u, ABSENT, 0u);
     }
     // A full chunk is level 0: voxels in 8^3 bricks, 8 bricks to an edge. A LOD record holds
@@ -244,25 +290,25 @@ fn lookup(v: vec3<i32>) -> Cell {
     let base = (t & RECORD_MASK) * RECORD_WORDS;
     let c = (v - chunk * 64) >> vec3<u32>(level);
     let b = c / 8;
-    if (!group_occupied(base, level, b)) {
+    if (skips && !group_occupied(base, level, b)) {
         return Cell(16 * cell, 0u, ABSENT, 0u);
     }
     let entry = chunk_records[base + ENTRY_WORD + first + u32(b.x + e * (b.y + e * b.z))];
     if ((entry & FULL_BIT) == 0u) {
         if (entry == 0u) {
-            return Cell(8 * cell, 0u, ABSENT, 0u);
+            return Cell(select(cell, 8 * cell, skips), 0u, ABSENT, 0u);
         }
         return Cell(0, entry, ABSENT, 0u);
     }
     let slot = entry & SLOT_MASK;
     let l = c - b * 8;
-    let k = l / 2;
-    let bit = u32(k.x + 4 * k.y + 16 * k.z);
-    if ((params.flags & FLAG_MASKS) != 0u
-        && (brick_masks[slot * 2u + bit / 32u] & (1u << (bit % 32u))) == 0u) {
-        return Cell(2 * cell, 0u, ABSENT, 0u);
-    }
     let i = u32(l.x + 8 * (l.y + 8 * l.z));
+    if (skips && (params.flags & FLAG_MASKS) != 0u) {
+        let size = mask_skip(opaque_word(slot), vec3<u32>(l), i);
+        if (size != 0) {
+            return Cell(size * cell, 0u, ABSENT, 0u);
+        }
+    }
     var m = 0u;
     if ((entry & WIDE_BIT) != 0u) {
         // A wide brick: slots `slot` and `slot + 1` hold 512 u16 voxels.
@@ -286,6 +332,36 @@ fn lookup(v: vec3<i32>) -> Cell {
 // exactly on a voxel boundary belongs to the voxel below.
 fn voxel_at(p: vec3<f32>, d: vec3<f32>) -> vec3<i32> {
     return vec3<i32>(select(floor(p), ceil(p) - 1.0, d < vec3<f32>(0.0)));
+}
+
+// The voxel the ray `o + d t` is in after crossing the plane `face` of axis `k` at `t`, by
+// plane order. On axis `k` the coordinate is the voxel on the far side of `face`. On each
+// other axis `j` the ray has crossed every voxel plane `B` whose crossing
+// `t_j(B) = (B - o_j) inv_j` sorts before `(t, k)` in `(t, axis)` lexicographic order, and no
+// other: the order the exit test in `march` takes the planes in (nearest first, the lower
+// axis on a tie), so the result does not depend on the size of the cell the ray has left,
+// and a walk over any aligned empty cells enters the same voxels as the walk over single
+// voxels. The off-axis coordinates are estimated from the float position, which rounds and
+// may be contracted into an FMA, then moved by at most one plane each way: back one when the
+// plane into the estimated voxel is not crossed, forward one when the plane out of it is.
+// The planes are tested with the exit test's own expression, so the two agree bit for bit.
+// An axis the ray does not move along keeps its estimate.
+fn advance(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, t: f32, k: i32, face: i32) -> vec3<i32> {
+    var v = voxel_at(o + d * t, d);
+    let up = d > vec3<f32>(0.0);
+    let moving = d != vec3<f32>(0.0);
+    let step = select(vec3<i32>(-1), vec3<i32>(1), up);
+    // The plane the ray crosses into the estimated voxel, and the one it crosses out of it.
+    let into = select(v + 1, v, up);
+    let out = into + step;
+    let t_into = (vec3<f32>(into) - o) * inv;
+    let t_out = (vec3<f32>(out) - o) * inv;
+    let lower = vec3<i32>(0, 1, 2) < vec3<i32>(k);
+    let crossed_into = (t_into < vec3<f32>(t)) | ((t_into == vec3<f32>(t)) & lower);
+    let crossed_out = (t_out < vec3<f32>(t)) | ((t_out == vec3<f32>(t)) & lower);
+    v = select(v, v - step, moving & !crossed_into);
+    v = select(v, v + step, moving & crossed_out);
+    return select(v, vec3<i32>(select(face - 1, face, d[k] > 0.0)), axis_mask(k));
 }
 
 // Octahedral decoding of 6 + 6 bits into a unit vector.
@@ -369,10 +445,11 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
     var axis = -1;
     var v = voxel_at(o + d * t, d);
     if (t0 > 0.0) {
+        // Entering the window through its face on `axis`: the window's minimum plane on the
+        // way up, its maximum plane on the way down.
         axis = select(select(2, 1, tmin.y == t0), 0, tmin.x == t0);
-        let p = o + d * t;
-        let edge = i32(round(p[axis]));
-        v = select(v, vec3<i32>(select(edge - 1, edge, d[axis] > 0.0)), axis_mask(axis));
+        let face = select(bmax_i[axis], bmin_i[axis], d[axis] > 0.0);
+        v = advance(o, d, inv, t, axis, face);
     }
     v = clamp(v, bmin_i, bmax_i - vec3<i32>(1));
     let contour = contour_active();
@@ -401,6 +478,8 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
             // The ray passes the voxel outside its plane: walk on as through air.
             size = 1;
         }
+        // Leave the cell through its nearest face, the lower axis on a tie: the same
+        // `(t, axis)` order `advance` crosses the other axes' planes in.
         let cell_min = floor_div(v, size) * size;
         let edge = cell_min + select(vec3<i32>(0), vec3<i32>(size), d > vec3<f32>(0.0));
         let tk = select(vec3<f32>(BIG), (vec3<f32>(edge) - o) * inv, d != vec3<f32>(0.0));
@@ -408,8 +487,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
         if (tk.y < tk[k]) { k = 1; }
         if (tk.z < tk[k]) { k = 2; }
         t = tk[k];
-        v = voxel_at(o + d * t, d);
-        v = select(v, vec3<i32>(select(edge[k] - 1, edge[k], d[k] > 0.0)), axis_mask(k));
+        v = advance(o, d, inv, t, k, edge[k]);
         axis = k;
     }
     return miss;

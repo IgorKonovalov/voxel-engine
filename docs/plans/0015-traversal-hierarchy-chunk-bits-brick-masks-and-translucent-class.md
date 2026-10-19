@@ -524,50 +524,10 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
 |---|---|---|---|
 | 1: The steps view and the headless histogram, on today's walk | dev | done | 52d6a7b |
 | 2: Chunk bits, the chunk-level and 16³ skips | dev | done | 106998d |
-| 3: Full-resolution opaque masks | dev | stopped inside, uncommitted | |
+| 3: Full-resolution opaque masks | dev | done | committed with this row |
 | 4: A walk that re-derives state at boundaries | dev | not started | |
 | 5: The translucent class and the bounded accumulation walk | dev | not started | |
 | 6: Readings, budgets and the stats line | dev | not started | |
-
-> **Resume note (2026-10-19, delete when Phase 3 lands):** stopped inside Phase 3 a second
-> time, at the re-bless bullet's "stop and say so" clause. The 2026-10-19 amendment is
-> implemented and uncommitted in the main checkout on 0b24ebf: the plane-order exit
-> (`advance` in `march.wgsl`, the estimate corrected by at most one plane each way with the
-> exit test's own expression), a `LightParams::skips` switch (`FLAG_SKIPS`, bit 9) that
-> disables every skip, the grouped masks and `solid_bits()` from the first stop, the
-> `walk.rs` corner-tie ray (hits `(4, 3, 0)` through -x at 106 of 255 with skips on and off,
-> misses `(3, 4, 0)` both ways) and a skips-off step count (193 steps through three air
-> chunks), the `golden.rs` identity test (primary, headlamp and lod byte-identical with every
-> skip on, every skip off and the mask tests alone off, and against the golden files, so
-> `lod.png` joins the strict comparison), the `world_budget.rs` constants (512 + 72, 2624),
-> the README `--view steps` row, and `cargo fmt` on `walk.rs`. The identity holds: the three
-> scenes render the same bytes under all three switch settings on lavapipe (llvmpipe, Mesa
-> 26.2.2, LLVM 22.1.8), 3.9 s for the nine renders. Every other Phase 3 bullet holds.
-> **The re-bless is out of bounds.** Blessed once with the rule and diffed against
-> `git show 106998d:<path>` (raw RGBA, every byte): `primary.png` 94 differing pixels,
-> largest channel difference 61; `headlamp.png` 141, 84, 21 adjacent pairs (diagonal runs of
-> 1 to 2 of 255 along shadow edges, e.g. (223, 153) to (229, 159)); `lod.png` 68, 68;
-> `hud.png` 58, 50; `look_contour.png` 101, 127, 8 adjacent pairs; `look_detail.png` 120, 98,
-> 18 adjacent pairs; `look_gradient27.png` 96, 126, 7 adjacent pairs; `look_trilinear8.png`
-> 5, 98, none adjacent. Only `look_trilinear8.png` meets the bound of 8 isolated pixels, so
-> no PNG was blessed: the files are at their 106998d bytes and the golden tests fail against
-> the tree (12 of 380 nextest tests, all golden comparisons: `golden` 5, `hud_golden` 2,
-> `look` 5). Diagnosis: the float-position rule broke a near-tie by the rounding of
-> `o + d t`, the plane-order rule breaks it by the plane comparison, and the two disagree
-> about half the time at every near-tie, not only at a 4³ cell's exit (the earlier reading of
-> 1 to 2 pixels compared two float-position walks). The golden pose makes near-ties common:
-> the camera sits at a voxel centre looking along +x, so a pixel's ray has
-> `d_y / d_z = ((2 col - 319) / 320) (16 / 9) / ((2 row - 179) / 180)`, a ratio of small odd
-> integers for whole families of pixels (`col = 2 mod 3`, `row = 1 mod 3` give
-> `9 (2m - 105) / (2n - 59)` scaled; pixel (167, 43) has `-5 / 31` and meets a lattice edge
-> at 2.5 voxels along y and 15.5 along z), and the ray crosses an exact lattice edge within
-> the scene; the differing pixels sit on a 3-pixel grid in both axes. The identity test is
-> the property the amendment wanted; the isolated-pixel bound on the one-time re-bless is
-> the part that does not hold. Options: re-bless once without the bound, recording the
-> counts above (the identity holds the images from then on); move the golden pose off the
-> lattice (every golden changes anyway); or something else the architect names. Gate on the
-> tree: build, clippy `-D warnings`, fmt and doctests clean; nextest 368 passed, 12 failed
-> (the goldens), 4 skipped. The plan's readings are still not taken.
 
 ### Notes
 
@@ -589,8 +549,28 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
   not in this commit: the dev box was under load from other work, so every reading of the plan
   is taken after Phase 6, serially, from each phase's commit, and recorded in the close
   triggers.
-- Phase 2: `apps/flythrough/examples/world_budget.rs` still counts a 2560-byte record and an
-  8-byte mask.
+- Phase 2: its commit (106998d) touched `apps/flythrough/src/main.rs`, outside its file list:
+  the histogram line prints the block-max mean.
+- Phase 3: `apps/flythrough/examples/world_budget.rs` (outside the phase's files) counted a
+  2560-byte record and an 8-byte mask from 106998d until this commit, which sets 512 + 72 and
+  2624. `README.md`'s `--view steps` row names the block-max mean. `crates/vxe-render/src/light.rs`
+  (outside the phase's files) gains `LightParams::skips`, the comparison switch; `marcher.rs`
+  maps it to `FLAG_SKIPS` (bit 9). With the switch off every empty cell is one voxel (one mip
+  cell in a LOD-only chunk); `masks` off alone disables only the mask tests.
+- Phase 3: the plane-order exit is `advance` in `march.wgsl`: the float estimate corrected by
+  at most one plane each way, with the exit test's expression `(B - o) * inv` and the lower
+  axis winning a tie. The window entry for a ray starting outside it goes through the same
+  function.
+- Phase 3: the re-bless against 106998d (raw RGBA, every byte, lavapipe llvmpipe Mesa 26.2.2,
+  LLVM 22.1.8), as differing pixels / largest channel difference / adjacent differing pairs
+  (8-neighbourhood): `primary.png` 94 / 61 / 0; `headlamp.png` 141 / 84 / 21; `lod.png`
+  68 / 68 / 0; `hud.png` 58 / 50 / 0; `look_contour.png` 101 / 127 / 8; `look_detail.png`
+  120 / 98 / 18; `look_gradient27.png` 96 / 126 / 7; `look_trilinear8.png` 5 / 98 / 0. The
+  differing pixels lie on a 3-pixel grid in both axes; the adjacent pairs are diagonal runs of
+  1 to 2 of 255 along shadow edges. Blessed twice, the same bytes both times.
+- Phase 3: the identity test renders the three scenes nine times in 3.9 s on lavapipe; the
+  walk over single voxels stays under `MAX_STEPS` there. The level's mirror reads
+  232 436 992 B (`level_mirror.rs`), masks 27 619 776 B.
 
 ### Close triggers
 

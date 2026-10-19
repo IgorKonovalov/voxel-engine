@@ -82,6 +82,22 @@ impl Brick {
         }
     }
 
+    /// One bit per voxel, set when the voxel is not air: bit `i % 64` of word `i / 64` for
+    /// brick index `i`, so word `z` is layer `z` with bit `x + 8 y`.
+    pub fn solid_bits(&self) -> [u64; 8] {
+        match self {
+            Self::Uniform(AIR) => [0; 8],
+            Self::Uniform(_) => [u64::MAX; 8],
+            Self::Full(v) => {
+                let mut bits = [0u64; 8];
+                for (i, &m) in v.iter().enumerate() {
+                    bits[i / 64] |= u64::from(m != AIR) << (i % 64);
+                }
+                bits
+            }
+        }
+    }
+
     pub fn is_full(&self) -> bool {
         matches!(self, Self::Full(_))
     }
@@ -117,5 +133,27 @@ impl Brick {
                 spare.push(v);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn solid_bits_hold_one_bit_per_non_air_voxel_layer_by_layer() {
+        assert_eq!(Brick::Uniform(AIR).solid_bits(), [0; 8]);
+        assert_eq!(Brick::Uniform(3).solid_bits(), [u64::MAX; 8]);
+        // Voxels (1, 2, 0), (7, 7, 7) and (0, 4, 3): bits x + 8 y of layer z.
+        let b = Brick::from_fn(|l| match l {
+            [1, 2, 0] | [7, 7, 7] => 2,
+            [0, 4, 3] => 5,
+            _ => AIR,
+        });
+        let mut want = [0u64; 8];
+        want[0] = 1 << 17;
+        want[7] = 1 << 63;
+        want[3] = 1 << 32;
+        assert_eq!(b.solid_bits(), want);
     }
 }

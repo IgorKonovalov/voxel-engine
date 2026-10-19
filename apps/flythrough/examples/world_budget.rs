@@ -11,9 +11,10 @@
 //! worker per core, and waits until it is complete.
 //!
 //! Mirror bytes use the uploader's formula (ADR-0004): each `Full` brick or mip-brick takes a
-//! 512-byte slot of palette indices plus an 8-byte occupancy mask, each mirrored chunk (full or
-//! LOD-only) a 2560-byte record, each chunk-table entry 4 bytes (the window's `W^3` when
-//! streaming), and each material row 8 `f32`s. CPU bytes count a full chunk's slot array and
+//! 512-byte slot of palette indices plus 72 bytes of masks (a 64-byte opaque mask and two
+//! translucent words), each mirrored chunk (full or LOD-only) a 2624-byte record (16 words of
+//! brick bits, 512 entries, the palette), each chunk-table entry 4 bytes (the window's `W^3`
+//! when streaming), and each material row 8 `f32`s. CPU bytes count a full chunk's slot array and
 //! its `Full` bricks' voxels, and a LOD-only chunk's mip-brick slots and `Full` mip-bricks.
 
 use std::sync::Arc;
@@ -26,8 +27,8 @@ use vxe_world::{
 };
 
 /// Mirror bytes per `Full` brick or mip-brick, and per mirrored chunk's record.
-const SLOT_AND_MASK: usize = 512 + 8;
-const RECORD: usize = 2560;
+const SLOT_AND_MASK: usize = 512 + 72;
+const RECORD: usize = 2624;
 
 /// Width of the label column the figures are printed after.
 const LABEL: usize = 19;

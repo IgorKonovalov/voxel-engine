@@ -17,9 +17,15 @@ pub struct LightParams {
     /// Trace one shadow ray from each lit hit toward the lamp. Off only for tests and the
     /// fly-through's debug toggle.
     pub shadows: bool,
-    /// Skip empty 2 × 2 × 2 blocks of a full brick through its occupancy mask. Off only for
-    /// tests and debugging: the walk then steps every voxel of a full brick.
+    /// Skip the empty 4 × 4 × 4 and 2 × 2 × 2 blocks and the empty voxels of a full brick
+    /// through its opaque mask. Off only for tests and debugging: the walk then reads every
+    /// voxel of a full brick through the pool.
     pub masks: bool,
+    /// Skip every empty cell larger than a voxel: absent and empty chunks, clear brick groups,
+    /// uniform-air bricks and the masked blocks. Off only for tests: the walk then steps one
+    /// voxel (one mip cell of a LOD-only chunk) at a time, the comparison the hierarchy is
+    /// held byte-identical to.
+    pub skips: bool,
 }
 
 impl LightParams {
@@ -34,6 +40,7 @@ impl LightParams {
             outer: 0.70,
             shadows: false,
             masks: true,
+            skips: true,
         }
     }
 

@@ -128,11 +128,19 @@ With 8-bit palette indices (Plan 0002 Phase 4, ADR-0004) the level-size mirror r
 masks 8 B per brick, records 2560 B per chunk (512 entries and a 256-entry `u16` palette),
 table 4 B per chunk, from `apps/flythrough/tests/level_mirror.rs` on the dev box.
 
+With the traversal hierarchy (Plan 0015 Phases 2 and 3) the same level-size mirror reads
+232 436 992 B: pool 196 407 296 B as above, masks 72 B per `Full` brick (27 619 776 B: a
+64-byte opaque mask per slot in groups of eight, plus two translucent words), records 2624 B
+per chunk (16 words of brick bits, 512 entries, the palette), table 4 B per chunk, from the
+same test on the dev box (lavapipe).
+
 **Streamed residency (dev reference, Plan 0002 Phase 8, unbounded cave seed 1 around its spawn,
 hysteresis 1, `cargo run --release -p flythrough --example world_budget -- --stream
 R_FULL,R_LOD`, 16 workers, Ryzen 9 5900HS).** Mirror bytes at 8-bit palette indices (ADR-0004):
 512 + 8 B per `Full` brick or mip-brick, 2560 B per record for full and LOD-only chunks alike,
-plus the `W^3` chunk table. CPU bytes: full chunks' slot arrays and `Full` bricks, LOD-only
+plus the `W^3` chunk table. (Since Plan 0015 Phase 3 a slot carries 512 + 72 B and a record
+2624 B; the example counts the new figures, and the table below is re-read at Plan 0015
+Phase 6.) CPU bytes: full chunks' slot arrays and `Full` bricks, LOD-only
 chunks' mip-brick slots and `Full` mip-bricks. In every row about 18.5 to 18.8 % of a full
 chunk's bricks and about 39 % of the ring's mip-bricks are `Full`.
 

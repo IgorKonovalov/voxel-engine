@@ -52,6 +52,8 @@ pub const FLAG_DETAIL: u32 = 1 << 4;
 pub const VIEW_SHIFT: u32 = 5;
 /// `Params::flags` bit: the mirror holds attribute pages (`MirrorConfig::surface_attrs`).
 pub const FLAG_ATTR_PAGES: u32 = 1 << 8;
+/// `Params::flags` bit: skip empty cells larger than a voxel (`LightParams::skips`).
+pub const FLAG_SKIPS: u32 = 1 << 9;
 
 /// How the marcher finds the normal at a hit, and in `Contour` the hit itself.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -312,6 +314,7 @@ impl Marcher {
             cos_inner: light.inner.cos(),
             flags: if light.shadows { FLAG_SHADOWS } else { 0 }
                 | if light.masks { FLAG_MASKS } else { 0 }
+                | if light.skips { FLAG_SKIPS } else { 0 }
                 | self.look.flags()
                 | if world.surface_attrs() {
                     FLAG_ATTR_PAGES

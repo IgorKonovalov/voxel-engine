@@ -74,8 +74,17 @@ pub const MAX_SHARDS: u32 = 4;
 pub const OTHER_STORAGE_BUFFERS: u32 = 4;
 /// Bytes of one pool slot: a narrow brick's 512 palette indices, or half a wide brick.
 pub const SLOT_BYTES: u64 = BRICK_VOXELS as u64;
-/// Bytes of one brick's occupancy mask: 64 bits, low word first.
-pub const MASK_BYTES: u64 = 8;
+/// Pool slots per group of the mask buffer.
+pub const MASK_GROUP_SLOTS: u32 = 8;
+/// `u32` words of a slot's opaque mask: one bit per voxel, one 64-byte line.
+pub const OPAQUE_WORDS: usize = 16;
+/// `u32` words of a slot's translucent mask: one bit per 2³ block.
+pub const TRANSLUCENT_WORDS: usize = 2;
+/// `u32` words of one mask group: its eight slots' opaque masks, each on its own 64-byte line,
+/// then one line holding the eight slots' translucent masks.
+pub const MASK_GROUP_WORDS: u32 = MASK_GROUP_SLOTS * (OPAQUE_WORDS + TRANSLUCENT_WORDS) as u32;
+/// Bytes of one slot's masks, a group's bytes over its slots: 576 / 8.
+pub const MASK_BYTES: u64 = MASK_GROUP_WORDS as u64 * 4 / MASK_GROUP_SLOTS as u64;
 /// Entries in a palette, index 0 being air.
 pub const PALETTE_ENTRIES: usize = 256;
 /// `u32` words of brick bits at the head of a chunk record: bit `b` of word `b / 32` is set
@@ -133,6 +142,24 @@ pub fn attr_slot(s: u32) -> u32 {
     let p = s - s % POOL_PAGE_SLOTS;
     p + ATTR_PAGE_BRICK_SLOTS + 2 * (s - p)
 }
+
+/// The mask word where slot `s`'s opaque mask starts: word `i / 32` bit `i % 32` is voxel `i`
+/// of the brick (`x + 8 y + 64 z`), set when the voxel is not air. A multiple of 16 words, so
+/// the mask is one 64-byte line.
+pub fn opaque_mask_word(s: u32) -> u32 {
+    MASK_GROUP_WORDS * (s / MASK_GROUP_SLOTS) + OPAQUE_WORDS as u32 * (s % MASK_GROUP_SLOTS)
+}
+
+/// The mask word where slot `s`'s two translucent words start, in its group's ninth line: bit
+/// `bx + 4 by + 16 bz` is set when 2³ block `(bx, by, bz)` holds a translucent voxel.
+pub fn translucent_mask_word(s: u32) -> u32 {
+    MASK_GROUP_WORDS * (s / MASK_GROUP_SLOTS)
+        + MASK_GROUP_SLOTS * OPAQUE_WORDS as u32
+        + TRANSLUCENT_WORDS as u32 * (s % MASK_GROUP_SLOTS)
+}
+
+/// A slot's masks as staged: the opaque words, then the translucent words.
+type SlotMasks = [u32; OPAQUE_WORDS + TRANSLUCENT_WORDS];
 
 /// The kind of a pool page, and of the slots it hands out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -400,10 +427,12 @@ pub struct GpuWorld {
     pending_focus: ChunkCoord,
     bytes_written: u64,
     /// The run of consecutive pool slots staged for one write: its first slot, its voxels
-    /// and its masks. Kept across syncs so staging allocates only while it first grows.
+    /// and its masks, and the run's masks rearranged into group layout when written. Kept
+    /// across syncs so staging allocates only while it first grows.
     stage_start: u32,
     stage_voxels: Vec<u8>,
-    stage_masks: Vec<u32>,
+    stage_masks: Vec<SlotMasks>,
+    stage_groups: Vec<u32>,
     /// The run of consecutive records staged for one write.
     rec_stage_start: u32,
     rec_stage: Vec<u32>,
@@ -487,6 +516,7 @@ impl GpuWorld {
             stage_start: 0,
             stage_voxels: Vec::new(),
             stage_masks: Vec::new(),
+            stage_groups: Vec::new(),
             rec_stage_start: 0,
             rec_stage: Vec::new(),
             selected: Vec::new(),
@@ -524,8 +554,14 @@ impl GpuWorld {
         Self::storage_buffer(device, "brick_pool", u64::from(slots.max(1)) * SLOT_BYTES)
     }
 
+    /// A mask buffer of whole groups holding at least `slots` slots.
     fn create_masks(device: &wgpu::Device, slots: u32) -> wgpu::Buffer {
-        Self::storage_buffer(device, "brick_masks", u64::from(slots.max(1)) * MASK_BYTES)
+        let groups = slots.div_ceil(MASK_GROUP_SLOTS).max(1);
+        Self::storage_buffer(
+            device,
+            "brick_masks",
+            u64::from(groups * MASK_GROUP_WORDS) * 4,
+        )
     }
 
     fn create_records(device: &wgpu::Device, records: u32) -> wgpu::Buffer {
@@ -578,7 +614,8 @@ impl GpuWorld {
         self.shard_slots.iter().filter(|&&n| n > 0).count()
     }
 
-    /// Occupancy mask of each pool slot, `[slot][2 x u32]`.
+    /// The masks of every pool slot, in groups of eight slots: [`opaque_mask_word`] and
+    /// [`translucent_mask_word`] say where a slot's words lie.
     pub fn masks(&self) -> &wgpu::Buffer {
         &self.masks
     }
@@ -614,6 +651,12 @@ impl GpuWorld {
     /// Whether pool slot `s` lies in an attribute page.
     pub fn in_attr_page(&self, s: u32) -> bool {
         self.page_kind.get((s / POOL_PAGE_SLOTS) as usize) == Some(&Kind::Attr)
+    }
+
+    /// Bytes of the masks of the pool slots in use, attribute slots included: `MASK_BYTES` a
+    /// slot.
+    pub fn live_mask_bytes(&self) -> u64 {
+        (u64::from(self.live_slots()) + 2 * u64::from(self.live_attr_slots())) * MASK_BYTES
     }
 
     /// Bytes of the pool slots in use.
@@ -1281,7 +1324,6 @@ impl GpuWorld {
             self.entries[i] = u32::from(brick.get(0));
             return Ok(());
         };
-        let mask = brick.occupancy_mask();
         let s = match old_slot {
             Some((s, w)) if w == wide => s,
             _ => {
@@ -1296,19 +1338,25 @@ impl GpuWorld {
                 s
             }
         };
+        // The opaque bits are set in the pass that narrows the voxels.
+        let mut masks: SlotMasks = [0; OPAQUE_WORDS + TRANSLUCENT_WORDS];
         if wide {
+            for (i, &m) in v.iter().enumerate() {
+                masks[i / 32] |= u32::from(m != AIR) << (i % 32);
+            }
             let bytes: &[u8] = bytemuck::cast_slice(&v[..]);
             let (lo, hi) = bytes.split_at(SLOT_BYTES as usize);
-            self.stage(s, lo, mask, queue, st);
-            self.stage(s + 1, hi, 0, queue, st);
+            self.stage(s, lo, &masks, queue, st);
+            self.stage(s + 1, hi, &[0; OPAQUE_WORDS + TRANSLUCENT_WORDS], queue, st);
             st.bytes += 2 * (SLOT_BYTES + MASK_BYTES);
             self.entries[i] = FULL_BIT | WIDE_BIT | s;
         } else {
             let mut idx = [0u8; BRICK_VOXELS];
-            for (d, &m) in idx.iter_mut().zip(v.iter()) {
+            for (i, (d, &m)) in idx.iter_mut().zip(v.iter()).enumerate() {
                 *d = self.rev[usize::from(m)] as u8;
+                masks[i / 32] |= u32::from(m != AIR) << (i % 32);
             }
-            self.stage(s, &idx, mask, queue, st);
+            self.stage(s, &idx, &masks, queue, st);
             st.bytes += SLOT_BYTES + MASK_BYTES;
             self.entries[i] = FULL_BIT | s;
         }
@@ -1329,8 +1377,15 @@ impl GpuWorld {
 
     /// Appends slot `s` to the staged run, first writing the run out if `s` does not extend it
     /// or it is full.
-    fn stage(&mut self, s: u32, bytes: &[u8], mask: u64, queue: &wgpu::Queue, st: &mut SyncStats) {
-        let len = self.stage_masks.len() as u32 / 2;
+    fn stage(
+        &mut self,
+        s: u32,
+        bytes: &[u8],
+        masks: &SlotMasks,
+        queue: &wgpu::Queue,
+        st: &mut SyncStats,
+    ) {
+        let len = self.stage_masks.len() as u32;
         let boundary = s.is_multiple_of(self.layout.slots_per_shard);
         if len > 0 && (s != self.stage_start + len || len >= STAGE_SLOTS || boundary) {
             self.flush_stage(queue, st);
@@ -1339,8 +1394,7 @@ impl GpuWorld {
             self.stage_start = s;
         }
         self.stage_voxels.extend_from_slice(bytes);
-        self.stage_masks
-            .extend_from_slice(&[mask as u32, (mask >> 32) as u32]);
+        self.stage_masks.push(*masks);
     }
 
     /// Writes the staged run into the current pool and masks buffers and empties it. A pool
@@ -1350,7 +1404,6 @@ impl GpuWorld {
         if self.stage_masks.is_empty() {
             return;
         }
-        let s = u64::from(self.stage_start);
         let sps = self.layout.slots_per_shard;
         let shard = (self.stage_start / sps) as usize;
         queue.write_buffer(
@@ -1358,14 +1411,68 @@ impl GpuWorld {
             u64::from(self.stage_start % sps) * SLOT_BYTES,
             bytemuck::cast_slice(&self.stage_voxels),
         );
-        queue.write_buffer(
-            &self.masks,
-            s * MASK_BYTES,
-            bytemuck::cast_slice(&self.stage_masks),
-        );
-        st.writes += 2;
+        st.writes += 1;
+        self.write_masks(queue, st);
         self.stage_voxels.clear();
         self.stage_masks.clear();
+    }
+
+    /// Writes the staged run's masks: the groups it covers whole as one write of group
+    /// layout, and the slots of a group it covers in part as one write of their opaque lines
+    /// and one of their translucent words, so no write touches a slot outside the run.
+    fn write_masks(&mut self, queue: &wgpu::Queue, st: &mut SyncStats) {
+        let g = MASK_GROUP_SLOTS;
+        let start = self.stage_start;
+        let end = start + self.stage_masks.len() as u32;
+        let mut s = start;
+        while s < end {
+            let first = s % g;
+            let whole = if first == 0 { (end - s) / g } else { 0 };
+            if whole > 0 {
+                let groups = &mut self.stage_groups;
+                groups.clear();
+                for k in 0..whole {
+                    let slots = &self.stage_masks[(s - start + k * g) as usize..][..g as usize];
+                    for m in slots {
+                        groups.extend_from_slice(&m[..OPAQUE_WORDS]);
+                    }
+                    for m in slots {
+                        groups.extend_from_slice(&m[OPAQUE_WORDS..]);
+                    }
+                }
+                queue.write_buffer(
+                    &self.masks,
+                    u64::from(opaque_mask_word(s)) * 4,
+                    bytemuck::cast_slice(groups),
+                );
+                st.writes += 1;
+                s += whole * g;
+                continue;
+            }
+            let n = (g - first).min(end - s);
+            let slots = &self.stage_masks[(s - start) as usize..][..n as usize];
+            let groups = &mut self.stage_groups;
+            groups.clear();
+            for m in slots {
+                groups.extend_from_slice(&m[..OPAQUE_WORDS]);
+            }
+            let opaque = groups.len();
+            for m in slots {
+                groups.extend_from_slice(&m[OPAQUE_WORDS..]);
+            }
+            queue.write_buffer(
+                &self.masks,
+                u64::from(opaque_mask_word(s)) * 4,
+                bytemuck::cast_slice(&groups[..opaque]),
+            );
+            queue.write_buffer(
+                &self.masks,
+                u64::from(translucent_mask_word(s)) * 4,
+                bytemuck::cast_slice(&groups[opaque..]),
+            );
+            st.writes += 2;
+            s += n;
+        }
     }
 
     /// Appends record `rec`'s CPU entries to the staged run of records.

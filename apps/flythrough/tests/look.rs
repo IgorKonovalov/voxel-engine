@@ -572,7 +572,7 @@ fn material_rows_are_64_bytes() {
         .product::<u64>();
     assert_eq!(
         gpu.mirror_bytes(),
-        u64::from(gpu.live_slots()) * (512 + 8)
+        u64::from(gpu.live_slots()) * (512 + 72)
             + gpu.mirrored_chunks() as u64 * 2624
             + window * 4
             + rows * 64
