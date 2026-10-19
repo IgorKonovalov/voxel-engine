@@ -29,6 +29,12 @@
 > pixels against 106998d; Phases 4 and 5 inherit the identity; Phase 5's seal bullet becomes
 > an immutability test, there being no `seal` or `replace_material`; every reading of the plan
 > is taken after Phase 6, serially and unattended, from each phase's commit.
+> **Amended:** 2026-10-19, inside Phase 3 a second time, from its resume note: the one-time
+> re-bless has no pixel bound. The rule breaks every near-tie differently from the float
+> rounding, not only a 4³ cell's exit, and the golden pose sends whole families of pixel rays
+> through exact lattice edges, so the re-bless moves 58 to 141 pixels per image; the log
+> records each image's counts against 106998d, and bit-exactness rests on the skip identity
+> from then on (owner's call, 2026-10-19).
 
 ## TL;DR
 
@@ -120,7 +126,16 @@ window's range, WGSL has no portable 64-bit integer, and geometric exactness was
 claim; cell-size independence is, and float arithmetic gives it under the plane-order rule.
 The goldens re-bless once when the rule lands, because it breaks the same corner ties
 differently from the float position; from then on bit-exactness is held by the identity of
-the walk with every skip on and every skip off, which a tolerance never defended.
+the walk with every skip on and every skip off, which a tolerance never defended. The
+re-bless is larger than a handful of corner pixels (amended 2026-10-19, second time): the
+float rounding of `o + d t` and the plane comparison disagree about half the time at every
+near-tie along every ray, and the golden camera, at a voxel centre looking along +x, gives
+whole families of pixels a direction whose `d_y / d_z` is a ratio of small odd integers, so
+their rays cross exact lattice edges inside the scene. We keep that pose: it is the one that
+exercises near-ties, which the identity test is for. We rejected moving the pose off the
+lattice (every golden changes by more, the shadow-slab and look fixtures leave Phase 3's
+files, and near-ties only get rarer) and a widened numeric cap on the one-time diff (a number
+read off the re-bless itself, guarding nothing the identity does not).
 
 ## Architecture diagram
 
@@ -269,17 +284,19 @@ between phases. The architect reviews once at the end, in a fresh session.
     `[0, 4)²`, whose exit is a corner tie, and the 2³ block `[4, 6) × [2, 4)`; the voxel walk
     crosses a tie at every lattice corner on its way). With the lone voxel at `(3, 4, 0)`
     instead, the two walks again agree (both hit it, or both miss it and leave the window).
-  - **The goldens re-bless once, and only at isolated pixels** (amended 2026-10-19). After
-    the plane-order exit lands, every PNG under `apps/flythrough/tests/golden/` is re-blessed
-    on lavapipe (`VXE_BLESS=1`), and each re-blessed image differs from its file at 106998d
-    at isolated pixels only: no two differing pixels adjacent, 8-neighbourhood, and at most 8
-    differing pixels per image (dev's experiment read 1 or 2 per image before the rule). The
-    log lists each image's differing pixel coordinates and largest channel difference; the
-    close review re-derives them with `git show 106998d:<path>`. From this re-bless on, the
-    plan's remaining golden bullets are bit-exact against these files, and `lod.png` joins
-    the strict byte comparison against its file (today only `primary.png` and `headlamp.png`
-    are compared byte for byte in `golden.rs`; `lod.png` goes through `assert_golden`'s
-    0.1 % tolerance, so "bit-exact" for it has rested on a re-bless leaving git clean).
+  - **The goldens re-bless once** (amended 2026-10-19, twice). After the plane-order exit
+    lands, every PNG under `apps/flythrough/tests/golden/` is re-blessed on lavapipe
+    (`VXE_BLESS=1`), once, in the Phase 3 commit. There is no bound on the one-time diff: the
+    rule and the float rounding disagree at every near-tie, and the golden pose meets lattice
+    edges in whole pixel families (see `## Decision`). The log records, per image, against
+    its file at 106998d: the differing-pixel count, the largest channel difference and the
+    number of adjacent differing pairs (8-neighbourhood); the close review re-derives them
+    with `git show 106998d:<path>` and the rule in the tree. From this re-bless on, the plan's
+    remaining golden bullets are bit-exact against these files, held by the skip identity
+    above, and `lod.png` joins the strict byte comparison against its file (before, only
+    `primary.png` and `headlamp.png` were compared byte for byte in `golden.rs`; `lod.png`
+    went through `assert_golden`'s 0.1 % tolerance, so "bit-exact" for it rested on a
+    re-bless leaving git clean).
 
 ### Phase 4: A walk that re-derives chunk and brick state only at their boundaries
 - **Owner skill:** dev
