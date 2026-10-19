@@ -14,6 +14,12 @@ pub struct MaterialFlags(pub u32);
 impl MaterialFlags {
     /// `Carve` leaves voxels of this material in place.
     pub const INDESTRUCTIBLE: Self = Self(1);
+    /// The renderer's opaque walk passes through voxels of this material and composites them
+    /// at `Material::opacity`; every other reader (collision, the coarse grid, collapse, the
+    /// raycast) treats them as solid. The class is a table property, fixed for the world's
+    /// life: `World::materials` hands out a shared reference and nothing mutates the table
+    /// after `World::generate`.
+    pub const TRANSLUCENT: Self = Self(2);
 
     pub const fn empty() -> Self {
         Self(0)
@@ -52,10 +58,13 @@ pub struct Material {
     /// Procedural surface detail for the renderer: feature scale in voxels, strength in
     /// `[0, 1]`. Strength 0 is no detail.
     pub detail: [f32; 2],
+    /// The alpha the renderer composites a `TRANSLUCENT` voxel at, in `[0, 1]`; ignored
+    /// without the flag.
+    pub opacity: f32,
 }
 
 impl Material {
-    /// A grey, rough, non-emissive row with no flags and no detail.
+    /// A grey, rough, non-emissive row with no flags, no detail and opacity 1.
     pub fn named(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -67,7 +76,13 @@ impl Material {
             acoustic: [0.0; 3],
             payload: 0,
             detail: [0.0; 2],
+            opacity: 1.0,
         }
+    }
+
+    /// Whether the row is `TRANSLUCENT`.
+    pub fn is_translucent(&self) -> bool {
+        self.flags.contains(MaterialFlags::TRANSLUCENT)
     }
 }
 
@@ -125,5 +140,10 @@ impl MaterialTable {
     /// Whether `Carve` leaves voxels of `id` in place.
     pub fn is_indestructible(&self, id: MaterialId) -> bool {
         self.flags(id).contains(MaterialFlags::INDESTRUCTIBLE)
+    }
+
+    /// Whether the renderer composites voxels of `id` instead of stopping at them.
+    pub fn is_translucent(&self, id: MaterialId) -> bool {
+        self.flags(id).contains(MaterialFlags::TRANSLUCENT)
     }
 }

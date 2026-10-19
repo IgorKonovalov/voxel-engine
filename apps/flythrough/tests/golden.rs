@@ -241,6 +241,85 @@ fn headlamp_slab_casts_the_computed_shadow() {
     );
 }
 
+/// The cave's table plus a translucent red glass row (opacity 0.5).
+fn glass_table() -> (MaterialTable, MaterialId) {
+    let mut t = cave_materials();
+    let glass = t.push(Material {
+        albedo: [0.9, 0.1, 0.1],
+        flags: MaterialFlags::TRANSLUCENT,
+        opacity: 0.5,
+        ..Material::named("glass")
+    });
+    (t, glass)
+}
+
+/// The translucent scene: air over chunks `[0, 2)^3`, the rock wall at x `[44, 46)` and a
+/// glass slab at x `[36, 38)`, y and z `[56, 72)`, seen from `(8.5, 64.5, 64.5)` along +x
+/// under the headlamp. `with_glass` false leaves the slab out.
+fn translucent_scene(with_glass: bool) -> World {
+    let (table, glass) = glass_table();
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [2, 2, 2]),
+        &UniformSource(0),
+        &table,
+    );
+    fill_voxels(&world, [44, 0, 0], [46, 128, 128], ROCK);
+    if with_glass {
+        fill_voxels(&world, [36, 56, 56], [38, 72, 72], glass);
+    }
+    world
+}
+
+/// `translucent.png`: the glass slab composited over the wall, shaded under the headlamp. The
+/// slab tints the wall behind it red (the centre pixel's red channel leads its green) and
+/// changes a twentieth of the image or more against the same scene without it (the slab
+/// subtends about 23 % of the width and 41 % of the height); the file matches byte for byte.
+#[test]
+fn translucent_golden_composites_the_slab_over_the_wall() {
+    let camera = Camera {
+        position: [8.5, 64.5, 64.5].into(),
+        yaw: 0.0,
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    };
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let light = [LightParams::headlamp()];
+    let lod = LodParams::default();
+    let glass = render_with(
+        &device,
+        &queue,
+        &translucent_scene(true),
+        &camera,
+        &light,
+        lod,
+    );
+    let bare = render_with(
+        &device,
+        &queue,
+        &translucent_scene(false),
+        &camera,
+        &light,
+        lod,
+    );
+    assert_golden("translucent.png", &glass[0]);
+    if std::env::var("VXE_BLESS").as_deref() != Ok("1") {
+        let differing = differing_bytes(&glass[0], &read_png(&golden_path("translucent.png")).0);
+        assert_eq!(
+            differing, 0,
+            "translucent.png: {differing} bytes differ from the golden"
+        );
+    }
+    let centre = (HEIGHT / 2 * WIDTH + WIDTH / 2) as usize * 4;
+    let p = &glass[0][centre..centre + 3];
+    println!("centre pixel through the glass: {p:?}");
+    assert!(p[0] > p[1] + 16, "centre pixel {p:?} is not tinted red");
+    let f = fraction_differing(&glass[0], &bare[0], 8);
+    println!("the slab changes {:.2} % of pixels", f * 100.0);
+    assert!(f >= 0.05, "{:.2} %", f * 100.0);
+}
+
 /// `primary.png` and `headlamp.png` match byte for byte with the pool in one shard and split
 /// over two to four: the mirror's layout changes no pixel. One scene, one device.
 #[test]

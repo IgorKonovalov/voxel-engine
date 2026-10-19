@@ -159,7 +159,8 @@ Walking, the coarse grid and collapse run on the bounded level (`--level`) only.
 | `--render WxH` | Fix the marcher's resolution; the window scales it |
 | `--sync-budget MiB` | Bytes uploaded to the GPU mirror per frame |
 | `--look MODE` | Start in normal mode `face`, `trilinear8`, `gradient27` or `contour`, with attribute pages for contour and rock detail |
-| `--view VIEW` | Write `shaded` (default), `normals`, `hitmask` or `steps` (red: walk steps, green: pool reads per ray) to the target; with `--frames`, `steps` prints the last frame's mean and p99 steps per ray, the mean over 8 × 8 pixel blocks of each block's maximum steps, and the pool reads' mean and p99 |
+| `--view VIEW` | Write `shaded` (default), `normals`, `hitmask`, `steps` (red: walk steps, green: storage loads, blue: pool loads per ray) or `albedo` (the composited albedo, unlit) to the target; with `--frames`, `steps` prints the last frame's mean and p99 steps per ray, the mean over 8 × 8 pixel blocks of each block's maximum steps, and the loads' and pool loads' mean and p99 |
+| `--translucent-layers N` | Translucent voxels composited in front of the opaque hit, nearest first (default 4); 0 ignores them |
 | `--detail` | Start with procedural surface detail on |
 | `--rock-detail SCALE,STRENGTH` | Rock's detail feature scale in voxels and strength in [0, 1], under `--look` (default 4,0.3) |
 | `--save PATH` | With `--level`: write the session's log file to `PATH` on exit and print the world hash; refuses `P`, turns collapse off and does not combine with `--vault` |

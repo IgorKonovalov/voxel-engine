@@ -563,3 +563,37 @@ fn min_corner_is_total_at_the_i32_extremes() {
         VoxelCoord([i32::MIN.wrapping_sub(2), i32::MAX - 2, -2])
     );
 }
+
+/// A palette index mapped to a `TRANSLUCENT` row maps like any other: the prefab carries the
+/// id, and a stamp writes it into a world generated with that table, where every reader but
+/// the renderer's opaque walk sees it as solid.
+#[test]
+fn a_translucent_row_maps_and_stamps_like_any_other() {
+    use vxe_world::{ChunkExtent, Material, MaterialFlags, MaterialTable, UniformSource, World};
+    let mut table = MaterialTable::new();
+    let rock = table.push(Material::named("rock"));
+    let glass = table.push(Material {
+        flags: MaterialFlags::TRANSLUCENT,
+        opacity: 0.5,
+        ..Material::named("glass")
+    });
+    assert!(table.is_translucent(glass) && !table.is_translucent(rock));
+    let mut map = VoxMap::new();
+    map.set(1, Slot::Material(glass))
+        .set(2, Slot::Material(rock));
+    let p = map.to_prefab(&two_voxel_model()).unwrap();
+    assert_eq!(p.get([0, 0, 0]), Some(glass));
+    assert_eq!(p.get([2, 0, 0]), Some(rock));
+
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &UniformSource(AIR),
+        &table,
+    );
+    let r = world
+        .stamp(&p, VoxelCoord([10, 10, 10]), Rot::IDENTITY)
+        .unwrap();
+    assert_eq!(r.changed_from, vec![(AIR, 2)], "two cells leave air");
+    assert_eq!(world.material_at(VoxelCoord([10, 10, 10])), Some(glass));
+    assert_eq!(world.material_at(VoxelCoord([12, 10, 10])), Some(rock));
+}

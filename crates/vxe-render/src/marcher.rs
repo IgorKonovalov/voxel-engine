@@ -18,7 +18,9 @@ pub struct Params {
     pub cam_up: [f32; 3],
     pub _pad0: f32,
     pub cam_fwd: [f32; 3],
-    pub _pad1: f32,
+    /// Translucent voxels composited in front of the opaque hit, nearest first; 0 ignores
+    /// them.
+    pub translucent_layers: u32,
     pub window_min: [i32; 3],
     pub _pad2: i32,
     pub window_size: [i32; 3],
@@ -119,12 +121,22 @@ pub enum ViewMode {
     /// of the walk's loop (the hitting one included), green `min(loads, 255) / 255` for its
     /// 32-bit storage loads from the mirror (chunk table, record bits and entries, masks,
     /// pool, palette), blue `min(pool loads, 255) / 255` for the pool loads among them.
+    /// The opaque walk alone: the translucent walk does not run in this view.
     /// [`crate::readback::StepHistogram`] reads it back.
     Steps,
+    /// The composited albedo, unlit and linear: each translucent layer's `albedo × opacity`
+    /// front to back over the opaque hit's albedo; black on a miss.
+    Albedo,
 }
 
 impl ViewMode {
-    pub const ALL: [Self; 4] = [Self::Shaded, Self::Normals, Self::HitMask, Self::Steps];
+    pub const ALL: [Self; 5] = [
+        Self::Shaded,
+        Self::Normals,
+        Self::HitMask,
+        Self::Steps,
+        Self::Albedo,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -132,6 +144,7 @@ impl ViewMode {
             Self::Normals => "normals",
             Self::HitMask => "hitmask",
             Self::Steps => "steps",
+            Self::Albedo => "albedo",
         }
     }
 
@@ -140,13 +153,28 @@ impl ViewMode {
     }
 }
 
-/// The surface look: normal mode, procedural detail and view. The default is face normals,
-/// no detail, shaded.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The surface look: normal mode, procedural detail, view and translucent layers. The default
+/// is face normals, no detail, shaded, 4 layers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LookParams {
     pub normal_mode: NormalMode,
     pub detail: bool,
     pub view: ViewMode,
+    /// Translucent voxels composited in front of the opaque hit, nearest first; 0 ignores
+    /// them. The translucent walk runs only when the opaque walk read a brick entry flagged
+    /// translucent, so a scene without the class pays nothing.
+    pub translucent_layers: u32,
+}
+
+impl Default for LookParams {
+    fn default() -> Self {
+        Self {
+            normal_mode: NormalMode::default(),
+            detail: false,
+            view: ViewMode::default(),
+            translucent_layers: 4,
+        }
+    }
 }
 
 impl LookParams {
@@ -305,6 +333,7 @@ impl Marcher {
             aspect: w as f32 / h as f32,
             cam_up: up.to_array(),
             cam_fwd: fwd.to_array(),
+            translucent_layers: self.look.translucent_layers,
             window_min: e.min.0,
             window_size: e.size(),
             light_pos: (camera.position + right * light.offset_right - up * light.offset_down)

@@ -525,8 +525,8 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
 | 1: The steps view and the headless histogram, on today's walk | dev | done | 52d6a7b |
 | 2: Chunk bits, the chunk-level and 16³ skips | dev | done | 106998d |
 | 3: Full-resolution opaque masks | dev | done | 4cafd06 |
-| 4: A walk that re-derives state at boundaries | dev | done | committed with this row |
-| 5: The translucent class and the bounded accumulation walk | dev | not started | |
+| 4: A walk that re-derives state at boundaries | dev | done | e564f44 |
+| 5: The translucent class and the bounded accumulation walk | dev | done | committed with this row |
 | 6: Readings, budgets and the stats line | dev | not started | |
 
 ### Notes
@@ -589,6 +589,35 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
   along brick 0's own row of groups 5, the two uniform-air entries of the occupied group's
   bricks included, which the done-when's "1 table entry and at most 2 bits words" does not
   count. `nfr.md` §2 is written at Phase 6 with the readings, per the amendment.
+- Phase 5: brick entries gain `TRANSLUCENT_BIT` (bit 29, set when the brick holds a
+  translucent voxel or a uniform brick's material is one), so `SLOT_MASK` shrinks to 29 bits
+  (`gpu_world.rs`, `march.wgsl`, `attrib.wgsl`, the last outside the phase's files). The plan's
+  data shape keeps entries "as today"; the bit is how the opaque walk learns, from the entry it
+  loads anyway, that a translucent brick lay on the ray, so the second walk runs only then and
+  Phase 4's load counts stand. A uniform entry's material is its low 16 bits.
+- Phase 5: the opaque walk is `descend` (chunk, group, brick, shared with the translucent walk)
+  plus the mask tests and pool read; a translucent voxel is air to it, a uniform translucent
+  brick one empty 8³ cell, and with the mask tests off the material row's flag is read. The
+  translucent walk runs from the origin to the opaque hit's `t`, skips unflagged bricks whole
+  and a flagged brick's clear 2³ blocks from its two translucent words, and composites one
+  layer per voxel entered at `albedo × opacity` under the lamp's cone and distance term
+  (`lamp`, the terms of `shade` without the normal; `shade` itself is unchanged so the goldens
+  hold). The steps view measures the opaque walk alone.
+- Phase 5: `LookParams` loses its derived `Default` (`translucent_layers` 4); `ViewMode::Albedo`
+  composites unlit; `Params` takes `translucent_layers` in a former pad word.
+- Phase 5: the "costs the opaque walk nothing" bullet holds for pool reads (the blue channel:
+  1 with and without the red wall) and not for total loads or steps: the wall's brick is not
+  uniform air, so its 16³ group is occupied and the walk reads its entry and mask line and
+  steps its two empty 4³ blocks and the next brick's uniform-air entry (17 loads in 6 steps
+  against 11 in 4). `translucent.rs` pins all three.
+- Phase 5: `golden/translucent.png` (lavapipe, llvmpipe Mesa 26.2.2): air over `[0, 2)³`
+  chunks, the rock wall at x `[44, 46)` and a two-voxel glass slab at x `[36, 38)`, y and z
+  `[56, 72)`, from `(8.5, 64.5, 64.5)` along +x under the headlamp; the centre pixel reads
+  `[255, 124, 121]`, the slab changes 9.77 % of the pixels. Blessed once.
+- Phase 5: the immutability test is a `compile_fail` doctest on `World::materials` in
+  `crates/vxe-world/src/store.rs` (outside the phase's files, where the accessor lives);
+  `crates/vxe-assets/tests/vox.rs` maps and stamps a translucent row. `README.md` and the
+  `look.rs` look literals (outside the phase's files) take the new field.
 
 ### Close triggers
 

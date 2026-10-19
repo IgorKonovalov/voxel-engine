@@ -6,8 +6,8 @@
 //!
 //! `flythrough [--seed N] [--level] [--vault] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH]
-//! [--view VIEW] [--detail] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
-//! [--audio] [--audio-debug]`.
+//! [--view VIEW] [--detail] [--translucent-layers N] [--hud] [--save PATH] [--replay PATH]
+//! [--logic native|wasm[=PATH]] [--audio] [--audio-debug]`.
 //! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -18,9 +18,10 @@
 //! `trilinear8`, `gradient27`, `contour`) and gives the mirror attribute pages, so `N` can reach
 //! `contour` (without `--look` it skips it), and gives rock its procedural detail (`--rock-detail`
 //! sets rock's feature scale in voxels and strength, default `flythrough::ROCK_DETAIL`); `--view`
-//! starts in a view (`shaded`, `normals`, `hitmask`, `steps`; with `--frames`, `steps` prints the
-//! last frame's mean and p99 steps per ray on exit) and `--detail` with detail on. `N` cycles the
-//! normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
+//! starts in a view (`shaded`, `normals`, `hitmask`, `steps`, `albedo`; with `--frames`, `steps`
+//! prints the last frame's mean and p99 steps per ray on exit) and `--detail` with detail on;
+//! `--translucent-layers` sets how many translucent voxels are composited in front of the opaque
+//! hit (default 4, 0 ignores them). `N` cycles the normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
 //! inside the extent).
 //!
@@ -211,6 +212,8 @@ struct Args {
     /// `--rock-detail`: rock's feature scale (voxels) and strength under `--look`.
     rock_detail: [f32; 2],
     view: ViewMode,
+    /// `--translucent-layers`: translucent voxels composited in front of the opaque hit.
+    translucent_layers: u32,
     /// `--hud`: start with the stats HUD shown.
     hud: bool,
     /// `--save`: where the session's log file is written on exit.
@@ -293,6 +296,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         detail: false,
         rock_detail: flythrough::ROCK_DETAIL,
         view: ViewMode::Shaded,
+        translucent_layers: LookParams::default().translucent_layers,
         hud: false,
         save: None,
         replay: None,
@@ -329,8 +333,14 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--view" => {
                 let v = value()?;
                 args.view = ViewMode::from_name(&v).ok_or(format!(
-                    "--view takes shaded, normals, hitmask or steps, not {v}"
+                    "--view takes shaded, normals, hitmask, steps or albedo, not {v}"
                 ))?;
+            }
+            "--translucent-layers" => {
+                let v = value()?;
+                args.translucent_layers = v
+                    .parse()
+                    .map_err(|_| format!("--translucent-layers takes a count, not {v}"))?;
             }
             "--save" => args.save = Some(value()?.into()),
             "--replay" => args.replay = Some(value()?.into()),
@@ -2415,6 +2425,7 @@ impl App for Flythrough {
                     normal_mode: self.args.look.unwrap_or_default(),
                     detail: self.args.detail,
                     view: self.args.view,
+                    translucent_layers: self.args.translucent_layers,
                 },
                 dig_radius: DIG_RADIUS,
                 scroll: ScrollSteps::default(),
@@ -3183,7 +3194,7 @@ mod tests {
         let look = LookParams {
             normal_mode: NormalMode::Face,
             detail: true,
-            view: ViewMode::Shaded,
+            ..LookParams::default()
         };
         assert_eq!(
             look_line(&look, Some([4.0, 0.3])),

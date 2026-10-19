@@ -12,20 +12,24 @@
 //   2  storage  chunk_records  [record][656 x u32]: 16 words of brick bits (bit b of word
 //                              b / 32 set when entry b is not uniform air), 512 brick entries,
 //                              then the palette as 256 u16 (index 0 air). Entry bit 31 set:
-//                              pool slot in bits 0..30, bit 30 wide; clear: the uniform
-//                              material
+//                              pool slot in bits 0..29, bit 30 wide; clear: the uniform
+//                              material in bits 0..16; bit 29 set either way when the brick
+//                              holds a TRANSLUCENT voxel
 //   3  storage  chunk_table    [wrapped chunk]u32 record index in bits 0..29, bit 29 set when
 //                              the record's brick bits are all clear, bit 30 set for a LOD
 //                              record (entries 0..64 mip level 1, 64..72 level 2, 72 level 3);
 //                              0xFFFFFFFF when absent
 //   4  storage  materials      [id][4 x vec4]: albedo rgb + roughness, emission rgb + flag bits,
-//                              detail scale (voxels) + detail strength + 2 spare, 4 spare
+//                              detail scale (voxels) + detail strength + opacity + 1 spare,
+//                              4 spare
 //   5  storage texture         rgba8unorm output
 //   6  storage  brick_masks    [slot / 8][144 x u32], groups of eight slots: slot s's opaque
 //                              mask is words 144 (s / 8) + 16 (s % 8) .. + 16, one 64-byte
 //                              line, bit i % 32 of word i / 32 set when voxel i (x + 8 y +
-//                              64 z) of its brick is not air; its two translucent words follow
-//                              the eight opaque lines at 144 (s / 8) + 128 + 2 (s % 8)
+//                              64 z) of its brick is opaque (not air, not TRANSLUCENT); its two
+//                              translucent words follow the eight opaque lines at
+//                              144 (s / 8) + 128 + 2 (s % 8), bit bx + 4 by + 16 bz set when 2^3
+//                              block (bx, by, bz) holds a TRANSLUCENT voxel
 //   7  storage  brick_pool1    pool shard 1
 //   8  storage  brick_pool2    pool shard 2
 //   9  storage  brick_pool3    pool shard 3
@@ -60,6 +64,14 @@
 // the walk holds its chunk, bits words, brick entry and mask words (see `Walk`), so the
 // table is read on entering a chunk, the record entry on entering a brick, and the bits and
 // mask words when the ray leaves the row or slab they cover.
+//
+// Translucent voxels are air to that walk. When it has read an entry flagged translucent and
+// `translucent_layers` is not 0, a second walk runs from the ray origin to the opaque hit
+// (`translucent_march`): it skips the same empty cells, an unflagged brick as a whole, and a
+// flagged Full brick's clear 2^3 blocks from its two translucent words, and composites the
+// translucent voxels it enters front to back, each albedo times opacity under the lamp's cone
+// and distance term with no shadow ray, up to `translucent_layers` of them; what remains of
+// the transmittance carries the opaque hit's colour.
 
 struct Params {
     cam_pos: vec3<f32>,
@@ -69,7 +81,7 @@ struct Params {
     cam_up: vec3<f32>,
     _pad0: f32,
     cam_fwd: vec3<f32>,
-    _pad1: f32,
+    translucent_layers: u32,
     window_min: vec3<i32>,
     _pad2: i32,
     window_size: vec3<i32>,
@@ -104,7 +116,11 @@ const LOD_BIT: u32 = 0x40000000u;
 const EMPTY_BIT: u32 = 0x20000000u;
 const RECORD_MASK: u32 = 0x1FFFFFFFu;
 const WIDE_BIT: u32 = 0x40000000u;
-const SLOT_MASK: u32 = 0x3FFFFFFFu;
+const TRANSLUCENT_BIT: u32 = 0x20000000u;
+const SLOT_MASK: u32 = 0x1FFFFFFFu;
+const MATERIAL_MASK: u32 = 0xFFFFu;
+// MaterialFlags::TRANSLUCENT, in the material row's flag bits.
+const MATERIAL_TRANSLUCENT: u32 = 2u;
 // u32 words of a pool slot and of a chunk record, and the record words where the brick
 // entries and the palette start.
 const SLOT_WORDS: u32 = 128u;
@@ -133,6 +149,7 @@ const VIEW_SHADED: u32 = 0u;
 const VIEW_NORMALS: u32 = 1u;
 const VIEW_HITMASK: u32 = 2u;
 const VIEW_STEPS: u32 = 3u;
+const VIEW_ALBEDO: u32 = 4u;
 // Attribute pages: brick slots per page, slots per page, and the attribute of no plane.
 const PAGE_SLOTS: u32 = 4096u;
 const ATTR_PAGE_BRICK_SLOTS: u32 = 1364u;
@@ -183,6 +200,8 @@ struct Walk {
     // row of a brick (its x-slab of four layers and one y-half); ABSENT holds nothing.
     mask_word: u32,
     mask: vec4<u32>,
+    // Set when a brick entry read since the reset carries TRANSLUCENT_BIT.
+    saw_translucent: bool,
 };
 
 var<private> walk: Walk;
@@ -200,6 +219,7 @@ fn reset_walk() {
     walk.in_brick = false;
     walk.bits_word = ABSENT;
     walk.mask_word = ABSENT;
+    walk.saw_translucent = false;
 }
 
 // Word `word` of the brick in global pool slot `slot` (a wide brick's words run on into the
@@ -336,17 +356,33 @@ fn mask_skip(m: u32, l: vec3<u32>, i: u32) -> i32 {
     return 0;
 }
 
-// The cell at voxel `v`. With the skips flag clear every empty cell is one voxel, or one mip
-// cell of a LOD-only chunk, whatever the hierarchy says about its neighbours. The table is read
-// on entering a chunk and the record entry on entering a brick; a chunk outside the window
-// touches no state.
-fn lookup(v: vec3<i32>) -> Cell {
+// Where voxel `v` lies in the hierarchy. `size` > 0 is an empty cell of that edge: a chunk
+// outside the window, an absent or empty chunk, a clear 2 x 2 x 2 group of bricks or a
+// uniform-air brick, each scaled by the mip cell, or one cell with the skips flag clear.
+// Otherwise `entry` is the brick's record entry, `l` and `i` the voxel's position and index
+// in the brick, `cell` the mip cell's edge and `level` the mip level. The table is read on
+// entering a chunk and the record entry on entering a brick; a chunk outside the window
+// touches no state. An entry carrying TRANSLUCENT_BIT marks the walk.
+struct Descent {
+    size: i32,
+    entry: u32,
+    cell: i32,
+    level: u32,
+    l: vec3<u32>,
+    i: u32,
+};
+
+fn empty_descent(size: i32) -> Descent {
+    return Descent(size, 0u, 1, 0u, vec3<u32>(0u), 0u);
+}
+
+fn descend(v: vec3<i32>) -> Descent {
     let skips = (params.flags & FLAG_SKIPS) != 0u;
     let chunk = floor_div(v, 64);
     let rel = chunk - params.window_min;
     let w = params.window_size;
     if (any(rel < vec3<i32>(0)) || any(rel >= w)) {
-        return Cell(64, 0u, ABSENT, 0u);
+        return empty_descent(64);
     }
     if (!walk.in_chunk || any(chunk != walk.chunk)) {
         walk.in_chunk = true;
@@ -371,10 +407,10 @@ fn lookup(v: vec3<i32>) -> Cell {
     }
     let t = walk.entry;
     if (t == ABSENT) {
-        return Cell(select(1, 64, skips), 0u, ABSENT, 0u);
+        return empty_descent(select(1, 64, skips));
     }
     if (skips && (t & EMPTY_BIT) != 0u) {
-        return Cell(64, 0u, ABSENT, 0u);
+        return empty_descent(64);
     }
     let level = walk.level;
     let cell = 1 << level;
@@ -382,48 +418,117 @@ fn lookup(v: vec3<i32>) -> Cell {
     let c = (v - chunk * 64) >> vec3<u32>(level);
     let b = c / 8;
     if (skips && !group_occupied(b)) {
-        return Cell(16 * cell, 0u, ABSENT, 0u);
+        return empty_descent(16 * cell);
     }
     if (!walk.in_brick || any(b != walk.brick)) {
         walk.in_brick = true;
         walk.brick = b;
         walk.brick_entry =
             record_word(walk.base + ENTRY_WORD + walk.first + u32(b.x + e * (b.y + e * b.z)));
+        walk.saw_translucent = walk.saw_translucent || (walk.brick_entry & TRANSLUCENT_BIT) != 0u;
     }
     let entry = walk.brick_entry;
+    if (entry == 0u) {
+        return empty_descent(select(cell, 8 * cell, skips));
+    }
+    let l = c - b * 8;
+    return Descent(0, entry, cell, level, vec3<u32>(l), u32(l.x + 8 * (l.y + 8 * l.z)));
+}
+
+// The material of voxel `i` of the Full brick in pool slot `slot` with record entry `entry`:
+// a wide brick's u16 directly, a narrow brick's byte through the record's palette (index 0
+// is air and reads no palette word).
+fn voxel_material(slot: u32, entry: u32, i: u32) -> u32 {
+    if ((entry & WIDE_BIT) != 0u) {
+        // A wide brick: slots `slot` and `slot + 1` hold 512 u16 voxels.
+        let word = pool_word(slot, i / 2u);
+        return (word >> ((i & 1u) * 16u)) & 0xFFFFu;
+    }
+    // A narrow brick: one byte per voxel, an index into the record's palette; 0 is air.
+    let word = pool_word(slot, i / 4u);
+    let index = (word >> ((i & 3u) * 8u)) & 0xFFu;
+    if (index == 0u) {
+        return 0u;
+    }
+    let pair = record_word(walk.base + PALETTE_WORD + index / 2u);
+    return (pair >> ((index & 1u) * 16u)) & 0xFFFFu;
+}
+
+fn is_translucent(m: u32) -> bool {
+    return (bitcast<u32>(materials[m * 4u + 1u].w) & MATERIAL_TRANSLUCENT) != 0u;
+}
+
+// The cell the opaque walk finds at voxel `v`. A translucent voxel is air to it: a uniform
+// translucent brick is one empty 8^3 cell, a translucent voxel of a Full brick has no bit in
+// the opaque mask, and with the mask tests off its material is read and found translucent.
+fn lookup(v: vec3<i32>) -> Cell {
+    let dsc = descend(v);
+    if (dsc.size != 0) {
+        return Cell(dsc.size, 0u, ABSENT, 0u);
+    }
+    let skips = (params.flags & FLAG_SKIPS) != 0u;
+    let entry = dsc.entry;
+    let cell = dsc.cell;
     if ((entry & FULL_BIT) == 0u) {
-        if (entry == 0u) {
+        if ((entry & TRANSLUCENT_BIT) != 0u) {
             return Cell(select(cell, 8 * cell, skips), 0u, ABSENT, 0u);
         }
-        return Cell(0, entry, ABSENT, 0u);
+        return Cell(0, entry & MATERIAL_MASK, ABSENT, 0u);
     }
     let slot = entry & SLOT_MASK;
-    let l = c - b * 8;
-    let i = u32(l.x + 8 * (l.y + 8 * l.z));
-    if (skips && (params.flags & FLAG_MASKS) != 0u) {
-        let size = mask_skip(opaque_word(slot), vec3<u32>(l), i);
+    let masked = skips && (params.flags & FLAG_MASKS) != 0u;
+    if (masked) {
+        let size = mask_skip(opaque_word(slot), dsc.l, dsc.i);
         if (size != 0) {
             return Cell(size * cell, 0u, ABSENT, 0u);
         }
     }
-    var m = 0u;
-    if ((entry & WIDE_BIT) != 0u) {
-        // A wide brick: slots `slot` and `slot + 1` hold 512 u16 voxels.
-        let word = pool_word(slot, i / 2u);
-        m = (word >> ((i & 1u) * 16u)) & 0xFFFFu;
-    } else {
-        // A narrow brick: one byte per voxel, an index into the record's palette; 0 is air.
-        let word = pool_word(slot, i / 4u);
-        let index = (word >> ((i & 3u) * 8u)) & 0xFFu;
-        if (index != 0u) {
-            let pair = record_word(walk.base + PALETTE_WORD + index / 2u);
-            m = (pair >> ((index & 1u) * 16u)) & 0xFFFFu;
-        }
-    }
-    if (m == 0u) {
+    let m = voxel_material(slot, entry, dsc.i);
+    // With the masks on, a set bit is an opaque voxel; without them the class is read.
+    if (m == 0u || (!masked && is_translucent(m))) {
         return Cell(cell, 0u, ABSENT, 0u);
     }
-    return Cell(0, m, select(ABSENT, slot, level == 0u), i);
+    return Cell(0, m, select(ABSENT, slot, dsc.level == 0u), dsc.i);
+}
+
+// What the translucent walk finds at voxel `v`: `size` > 0 is a cell holding no translucent
+// voxel (the hierarchy's empty cells; an unflagged brick, uniform or Full, as 8^3; a flagged
+// Full brick's clear 2^3 block from its translucent words; an air or opaque voxel as one
+// cell), else `material` is the translucent voxel's. `cell` is the mip cell's edge.
+struct TCell {
+    size: i32,
+    material: u32,
+    cell: i32,
+};
+
+fn tlookup(v: vec3<i32>) -> TCell {
+    let dsc = descend(v);
+    if (dsc.size != 0) {
+        return TCell(dsc.size, 0u, dsc.cell);
+    }
+    let skips = (params.flags & FLAG_SKIPS) != 0u;
+    let entry = dsc.entry;
+    let cell = dsc.cell;
+    if ((entry & TRANSLUCENT_BIT) == 0u) {
+        return TCell(select(cell, 8 * cell, skips), 0u, cell);
+    }
+    if ((entry & FULL_BIT) == 0u) {
+        return TCell(0, entry & MATERIAL_MASK, cell);
+    }
+    let slot = entry & SLOT_MASK;
+    if (skips) {
+        let l = dsc.l;
+        let block = l.x / 2u + 4u * (l.y / 2u) + 16u * (l.z / 2u);
+        let tw = MASK_GROUP_WORDS * (slot / 8u) + 128u + 2u * (slot % 8u) + block / 32u;
+        if ((mask_word_at(tw) & (1u << (block % 32u))) == 0u) {
+            return TCell(2 * cell, 0u, cell);
+        }
+    }
+    let m = voxel_material(slot, entry, dsc.i);
+    if (m == 0u || !is_translucent(m)) {
+        return TCell(cell, 0u, cell);
+    }
+    return TCell(0, m, cell);
 }
 
 // The voxel holding `p` on a ray of direction `d`: on an axis the ray travels down, a position
@@ -591,6 +696,83 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
     }
     return miss;
 }
+
+// The lamp's irradiance at `p` before any surface term: intensity over squared distance inside
+// the cone, the terms `shade` applies to an opaque hit.
+fn lamp(p: vec3<f32>) -> f32 {
+    let to_light = params.light_pos - p;
+    let dist2 = max(dot(to_light, to_light), 1e-4);
+    let l = to_light * inverseSqrt(dist2);
+    let cone = smoothstep(params.cos_outer, params.cos_inner, dot(-l, params.light_dir));
+    return params.light_intensity * cone / dist2;
+}
+
+// The translucent walk: along `o + d t` for `0 <= t < t_end` (the opaque hit's `t`, or BIG on
+// a miss), the same DDA as `march` over `tlookup`'s cells, compositing the translucent voxels
+// it enters front to back, nearest first, up to `params.translucent_layers` of them. Returns
+// the accumulated colour, premultiplied, in xyz and the transmittance left for what lies
+// behind in w. A layer is albedo times opacity, under the lamp's cone and distance term when
+// `lit` and unlit otherwise; a thick volume contributes one layer per voxel entered.
+fn translucent_march(o: vec3<f32>, d: vec3<f32>, t_end: f32, lit: bool) -> vec4<f32> {
+    var acc = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    let bmin_i = params.window_min * 64;
+    let bmax_i = (params.window_min + params.window_size) * 64;
+    let bmin = vec3<f32>(bmin_i);
+    let bmax = vec3<f32>(bmax_i);
+    let inv = select(vec3<f32>(BIG), 1.0 / d, d != vec3<f32>(0.0));
+    let ta = (bmin - o) * inv;
+    let tb = (bmax - o) * inv;
+    let tmin = min(ta, tb);
+    let tmax = max(ta, tb);
+    let t0 = max(max(tmin.x, tmin.y), tmin.z);
+    let t1 = min(min(tmax.x, tmax.y), tmax.z);
+    if (t1 < max(t0, 0.0)) {
+        return acc;
+    }
+    reset_walk();
+    var t = max(t0, 0.0);
+    var v = voxel_at(o + d * t, d);
+    if (t0 > 0.0) {
+        let axis = select(select(2, 1, tmin.y == t0), 0, tmin.x == t0);
+        let face = select(bmax_i[axis], bmin_i[axis], d[axis] > 0.0);
+        v = advance(o, d, inv, t, axis, face);
+    }
+    v = clamp(v, bmin_i, bmax_i - vec3<i32>(1));
+    var layers = 0u;
+
+    for (var step = 0u; step < MAX_STEPS; step++) {
+        if (any(v < bmin_i) || any(v >= bmax_i) || t >= t_end) {
+            return acc;
+        }
+        let c = tlookup(v);
+        var size = c.size;
+        if (size == 0) {
+            let row = c.material * 4u;
+            let albedo = materials[row].xyz;
+            let opacity = clamp(materials[row + 2u].z, 0.0, 1.0);
+            var light = 1.0;
+            if (lit) {
+                light = lamp(o + d * t);
+            }
+            acc = vec4<f32>(acc.xyz + acc.w * opacity * albedo * light, acc.w * (1.0 - opacity));
+            layers += 1u;
+            if (layers >= params.translucent_layers) {
+                return acc;
+            }
+            size = c.cell;
+        }
+        let cell_min = floor_div(v, size) * size;
+        let edge = cell_min + select(vec3<i32>(0), vec3<i32>(size), d > vec3<f32>(0.0));
+        let tk = select(vec3<f32>(BIG), (vec3<f32>(edge) - o) * inv, d != vec3<f32>(0.0));
+        var k = 0;
+        if (tk.y < tk[k]) { k = 1; }
+        if (tk.z < tk[k]) { k = 2; }
+        t = tk[k];
+        v = advance(o, d, inv, t, k, edge[k]);
+    }
+    return acc;
+}
+
 
 fn normal_mode() -> u32 {
     return (params.flags >> NORMAL_SHIFT) & 3u;
@@ -784,6 +966,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     loads = 0u;
     pool_reads = 0u;
     let h = march(o, d, BIG);
+    // Read before the normal modes' lookups and the shadow ray's march touch the walk.
+    let translucent_seen = walk.saw_translucent && params.translucent_layers > 0u;
+    let t_end = select(BIG, h.t, h.found);
     let view = view_mode();
     if (view == VIEW_STEPS) {
         // The primary ray's cost: red its loop iterations, green its storage loads, blue the
@@ -794,6 +979,19 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     if (view == VIEW_HITMASK) {
         textureStore(target_tex, vec2<i32>(gid.xy), vec4<f32>(vec3<f32>(select(0.0, 1.0, h.found)), 1.0));
+        return;
+    }
+    if (view == VIEW_ALBEDO) {
+        // The composited albedo, unlit and linear.
+        var a = vec3<f32>(0.0);
+        if (h.found) {
+            a = materials[h.material * 4u].xyz;
+        }
+        if (translucent_seen) {
+            let acc = translucent_march(o, d, t_end, false);
+            a = acc.xyz + acc.w * a;
+        }
+        textureStore(target_tex, vec2<i32>(gid.xy), vec4<f32>(a, 1.0));
         return;
     }
     var c = vec3<f32>(0.0);
@@ -815,6 +1013,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             return;
         }
         c = shade(o, d, h, n, tint);
+    }
+    if (translucent_seen) {
+        let acc = translucent_march(o, d, t_end, true);
+        c = acc.xyz + acc.w * c;
     }
     // Display encoding: clamp, then an approximate sRGB transfer.
     c = pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));

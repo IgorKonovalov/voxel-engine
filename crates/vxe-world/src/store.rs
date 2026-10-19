@@ -324,6 +324,19 @@ impl World {
         self.extent
     }
 
+    /// The world's material table, shared and fixed for the world's life: no public path
+    /// reaches it mutably after `generate`, so a material's class (`TRANSLUCENT` and the rest
+    /// of its flags) cannot change under the renderer's mirror or an edit in flight.
+    ///
+    /// ```compile_fail
+    /// use vxe_world::*;
+    /// let world = World::generate(
+    ///     ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+    ///     &UniformSource(AIR),
+    ///     &MaterialTable::new(),
+    /// );
+    /// world.materials().push(Material::named("glass"));
+    /// ```
     pub fn materials(&self) -> &MaterialTable {
         &self.materials
     }

@@ -113,8 +113,14 @@ pub const ABSENT: u32 = u32::MAX;
 pub const FULL_BIT: u32 = 1 << 31;
 /// Chunk record entry bit, with `FULL_BIT`: the brick is wide, two slots of `u16` voxels.
 pub const WIDE_BIT: u32 = 1 << 30;
+/// Brick entry bit: the brick holds a `TRANSLUCENT` voxel (a uniform brick's material is one).
+/// The opaque walk reads it from the entry it loads anyway, so the translucent walk runs only
+/// for a ray that passed such a brick.
+pub const TRANSLUCENT_BIT: u32 = 1 << 29;
+/// The material of a uniform brick's entry.
+pub const MATERIAL_MASK: u32 = 0xFFFF;
 /// The pool slot in a `Full` entry.
-pub const SLOT_MASK: u32 = WIDE_BIT - 1;
+pub const SLOT_MASK: u32 = TRANSLUCENT_BIT - 1;
 /// Chunk table entry bit: the record is a LOD record.
 pub const LOD_BIT: u32 = 1 << 30;
 /// Chunk table entry bit: every entry of the record is uniform air, so its brick bits are
@@ -127,7 +133,7 @@ pub const LOD_LEVEL_ENTRY: [usize; MIP_LEVELS] = [0, 64, 72];
 /// `rev` value of a material not in the palette being built.
 const NO_INDEX: u16 = u16::MAX;
 /// `f32`s per material row: albedo rgb, roughness, emission rgb, flags as bits, detail scale
-/// and strength, 6 spare.
+/// and strength, opacity, 5 spare.
 pub const MATERIAL_FLOATS: usize = 16;
 /// Brick slots of an attribute page; the rest of the page holds their attributes, two slots
 /// per brick slot, and its last 4 slots are unused.
@@ -421,6 +427,8 @@ pub struct GpuWorld {
     attrib: Option<AttribPass>,
     /// Palette index of every material while one chunk is narrowed, else `NO_INDEX`.
     rev: Vec<u16>,
+    /// Whether each material is `TRANSLUCENT`, from the table at the first sync.
+    translucent: Vec<bool>,
     /// Chunks waiting for an upload, keyed by squared distance to `pending_focus`.
     pending: BTreeSet<(i64, ChunkCoord)>,
     pending_d2: HashMap<ChunkCoord, i64>,
@@ -509,6 +517,7 @@ impl GpuWorld {
             shell_chunks: HashSet::new(),
             attrib: None,
             rev: vec![NO_INDEX; 1 << 16],
+            translucent: vec![false; 1 << 16],
             pending: BTreeSet::new(),
             pending_d2: HashMap::new(),
             pending_focus: focus,
@@ -1025,6 +1034,9 @@ impl GpuWorld {
         self.grow_to(reach.min(limit), queue, &mut st)?;
         if !self.materials_written {
             self.write_materials(world.materials(), queue, &mut st);
+            for (id, m) in world.materials().rows().iter().enumerate() {
+                self.translucent[id] = m.is_translucent();
+            }
             self.materials_written = true;
         }
         let result = self.upload(queue, &mut st);
@@ -1321,7 +1333,13 @@ impl GpuWorld {
             if let Some(s) = old_slot {
                 self.free_slot(s);
             }
-            self.entries[i] = u32::from(brick.get(0));
+            let m = brick.get(0);
+            self.entries[i] = u32::from(m)
+                | if self.translucent[usize::from(m)] {
+                    TRANSLUCENT_BIT
+                } else {
+                    0
+                };
             return Ok(());
         };
         let s = match old_slot {
@@ -1338,27 +1356,43 @@ impl GpuWorld {
                 s
             }
         };
-        // The opaque bits are set in the pass that narrows the voxels.
+        // The bits are set in the pass that narrows the voxels: an opaque voxel sets its bit
+        // of the opaque mask, a translucent one its 2^3 block's bit (bx + 4 by + 16 bz) of the
+        // two translucent words, and flags the entry.
         let mut masks: SlotMasks = [0; OPAQUE_WORDS + TRANSLUCENT_WORDS];
+        let mut flag = 0;
+        let mut set_bits = |i: usize, m: MaterialId| {
+            if m == AIR {
+                return;
+            }
+            if self.translucent[usize::from(m)] {
+                let (x, y, z) = (i % 8, i / 8 % 8, i / 64);
+                let block = x / 2 + 4 * (y / 2) + 16 * (z / 2);
+                masks[OPAQUE_WORDS + block / 32] |= 1 << (block % 32);
+                flag = TRANSLUCENT_BIT;
+            } else {
+                masks[i / 32] |= 1 << (i % 32);
+            }
+        };
         if wide {
             for (i, &m) in v.iter().enumerate() {
-                masks[i / 32] |= u32::from(m != AIR) << (i % 32);
+                set_bits(i, m);
             }
             let bytes: &[u8] = bytemuck::cast_slice(&v[..]);
             let (lo, hi) = bytes.split_at(SLOT_BYTES as usize);
             self.stage(s, lo, &masks, queue, st);
             self.stage(s + 1, hi, &[0; OPAQUE_WORDS + TRANSLUCENT_WORDS], queue, st);
             st.bytes += 2 * (SLOT_BYTES + MASK_BYTES);
-            self.entries[i] = FULL_BIT | WIDE_BIT | s;
+            self.entries[i] = FULL_BIT | WIDE_BIT | flag | s;
         } else {
             let mut idx = [0u8; BRICK_VOXELS];
             for (i, (d, &m)) in idx.iter_mut().zip(v.iter()).enumerate() {
                 *d = self.rev[usize::from(m)] as u8;
-                masks[i / 32] |= u32::from(m != AIR) << (i % 32);
+                set_bits(i, m);
             }
             self.stage(s, &idx, &masks, queue, st);
             st.bytes += SLOT_BYTES + MASK_BYTES;
-            self.entries[i] = FULL_BIT | s;
+            self.entries[i] = FULL_BIT | flag | s;
         }
         st.bricks += 1;
         Ok(())
@@ -1547,7 +1581,7 @@ impl GpuWorld {
                     f32::from_bits(m.flags.0),
                     m.detail[0],
                     m.detail[1],
-                    0.0,
+                    m.opacity,
                     0.0,
                     0.0,
                     0.0,
