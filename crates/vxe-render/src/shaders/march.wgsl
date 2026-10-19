@@ -56,7 +56,10 @@
 // nearest face, the lower axis on a tie; the coordinate on the exit axis is set exactly from
 // the face, and each other coordinate follows plane order (see `advance`): the voxel entered
 // is a function of the plane crossings alone, never of the size of the cell left, so the
-// walk finds the same voxel through the same face with every skip on or off.
+// walk finds the same voxel through the same face with every skip on or off. Across steps
+// the walk holds its chunk, bits words, brick entry and mask words (see `Walk`), so the
+// table is read on entering a chunk, the record entry on entering a brick, and the bits and
+// mask words when the ray leaves the row or slab they cover.
 
 struct Params {
     cam_pos: vec3<f32>,
@@ -156,14 +159,53 @@ struct Hit {
     n: vec3<f32>,
 };
 
-// The walk's cost counters: loop iterations of `march` and `pool_word` calls since the last
-// reset. `main` resets them before the primary ray and reads them after it in the steps view.
+// The walk's state across the steps of one `march`: the chunk it is in with its table entry
+// decoded, the two brick bits words it last read, the brick it is in with its record entry,
+// and the four opaque mask words it last read. Each is re-read only when its key changes, so
+// per ray segment a level costs one read; what is held changes which loads are issued, never
+// what `lookup` answers. Entering a chunk drops the bits words and the brick; the mask words
+// are keyed by their global word index and stay until another slab is tested.
+struct Walk {
+    chunk: vec3<i32>,
+    in_chunk: bool,
+    // The table entry of `chunk`, and its decoded mip level, first entry and record base.
+    entry: u32,
+    level: u32,
+    first: u32,
+    base: u32,
+    // `bits.x` is record word `bits_word` and `bits.y` the word two on; ABSENT holds nothing.
+    bits_word: u32,
+    bits: vec2<u32>,
+    brick: vec3<i32>,
+    in_brick: bool,
+    brick_entry: u32,
+    // `mask` holds mask words `mask_word`, + 2, + 4 and + 6: the four words of one 4^3 block
+    // row of a brick (its x-slab of four layers and one y-half); ABSENT holds nothing.
+    mask_word: u32,
+    mask: vec4<u32>,
+};
+
+var<private> walk: Walk;
+
+// The walk's cost counters since the last reset: loop iterations of `march`, 32-bit storage
+// loads from the mirror (table, record bits and entries, masks, pool, palette), and the pool
+// loads among them. `main` resets them before the primary ray and reads them after it in the
+// steps view.
 var<private> walk_steps: u32;
+var<private> loads: u32;
 var<private> pool_reads: u32;
+
+fn reset_walk() {
+    walk.in_chunk = false;
+    walk.in_brick = false;
+    walk.bits_word = ABSENT;
+    walk.mask_word = ABSENT;
+}
 
 // Word `word` of the brick in global pool slot `slot` (a wide brick's words run on into the
 // next slot, which is in the same shard).
 fn pool_word(slot: u32, word: u32) -> u32 {
+    loads += 1u;
     pool_reads += 1u;
     let shard = slot / params.slots_per_shard;
     let i = (slot - shard * params.slots_per_shard) * SLOT_WORDS + word;
@@ -173,6 +215,16 @@ fn pool_word(slot: u32, word: u32) -> u32 {
         case 2u: { return brick_pool2[i]; }
         default: { return brick_pool3[i]; }
     }
+}
+
+fn record_word(w: u32) -> u32 {
+    loads += 1u;
+    return chunk_records[w];
+}
+
+fn mask_word_at(w: u32) -> u32 {
+    loads += 1u;
+    return brick_masks[w];
 }
 
 fn floor_div(a: vec3<i32>, b: i32) -> vec3<i32> {
@@ -203,24 +255,40 @@ fn lod_level(chunk: vec3<i32>) -> u32 {
     return 3u;
 }
 
-// Whether the 2 x 2 x 2 group of bricks holding brick `b` of the record at word `base`, walked
-// at `level`, has a brick that is not uniform air, from the record's brick bits. At level 0
-// brick (x, y, z) is bit x + 8 (y % 4) of word 2 z + y / 4, so a group's bits are two bytes
-// in each of two words; at level 1 (entries x + 4 y + 16 z) one word holds the group; at
-// level 2 the group is the whole level, entries 64..72; level 3 has no group.
-fn group_occupied(base: u32, level: u32, b: vec3<i32>) -> bool {
+// Whether the 2 x 2 x 2 group of bricks holding brick `b` of the walk's chunk has a brick that
+// is not uniform air, from the record's brick bits. At level 0 brick (x, y, z) is bit
+// x + 8 (y % 4) of word 2 z + y / 4, so a group's bits are two bytes in each of two words; at
+// level 1 (entries x + 4 y + 16 z) one word holds the group; at level 2 the group is the whole
+// level, entries 64..72; level 3 has no group. The words are read only when the group's first
+// word is not the one held, so the groups of a row along x share one read.
+fn group_occupied(b: vec3<i32>) -> bool {
     let g = vec3<u32>(b / 2);
-    switch level {
+    let base = walk.base;
+    switch walk.level {
         case 0u: {
             let w = base + 4u * g.z + g.y / 2u;
+            if (w != walk.bits_word) {
+                walk.bits_word = w;
+                walk.bits = vec2<u32>(record_word(w), record_word(w + 2u));
+            }
             let m = 0x0303u << (2u * g.x + 16u * (g.y & 1u));
-            return ((chunk_records[w] | chunk_records[w + 2u]) & m) != 0u;
+            return ((walk.bits.x | walk.bits.y) & m) != 0u;
         }
         case 1u: {
-            return (chunk_records[base + g.z] & (0x00330033u << (2u * g.x + 8u * g.y))) != 0u;
+            let w = base + g.z;
+            if (w != walk.bits_word) {
+                walk.bits_word = w;
+                walk.bits = vec2<u32>(record_word(w), 0u);
+            }
+            return (walk.bits.x & (0x00330033u << (2u * g.x + 8u * g.y))) != 0u;
         }
         case 2u: {
-            return (chunk_records[base + 2u] & 0xFFu) != 0u;
+            let w = base + 2u;
+            if (w != walk.bits_word) {
+                walk.bits_word = w;
+                walk.bits = vec2<u32>(record_word(w), 0u);
+            }
+            return (walk.bits.x & 0xFFu) != 0u;
         }
         default: {
             return true;
@@ -238,27 +306,40 @@ fn opaque_word(slot: u32) -> u32 {
 // Layer z is words 2 z (rows 0..4) and 2 z + 1 (rows 4..8), bit x + 8 (y % 4); a 4^3 block
 // (bx, by, bz) is the byte-wide nibbles 0x0F0F0F0F << 4 bx of words 2 (4 bz + k) + by, and a
 // 2^3 block (cx, cy, cz) the bits 0x0303 << (2 cx + 16 (cy % 2)) of words
-// 2 (2 cz + k) + cy / 2.
+// 2 (2 cz + k) + cy / 2. The four 4^3 words are held across steps, and the 2^3 block's two
+// words and the voxel's word are among them (layers 2 cz, 2 cz + 1 and z lie in the block's
+// four layers, with the same y-half), so a step inside the slab issues no mask load.
 fn mask_skip(m: u32, l: vec3<u32>, i: u32) -> i32 {
     let q = l / 4u;
     let w4 = m + 8u * q.z + q.y;
-    let any4 = brick_masks[w4] | brick_masks[w4 + 2u] | brick_masks[w4 + 4u] | brick_masks[w4 + 6u];
-    if ((any4 & (0x0F0F0F0Fu << (4u * q.x))) == 0u) {
+    if (w4 != walk.mask_word) {
+        walk.mask_word = w4;
+        walk.mask = vec4<u32>(
+            mask_word_at(w4),
+            mask_word_at(w4 + 2u),
+            mask_word_at(w4 + 4u),
+            mask_word_at(w4 + 6u),
+        );
+    }
+    let mk = walk.mask;
+    if (((mk.x | mk.y | mk.z | mk.w) & (0x0F0F0F0Fu << (4u * q.x))) == 0u) {
         return 4;
     }
     let h = l / 2u;
-    let w2 = m + 4u * h.z + h.y / 2u;
-    if (((brick_masks[w2] | brick_masks[w2 + 2u]) & (0x0303u << (2u * h.x + 16u * (h.y & 1u)))) == 0u) {
+    let j = 2u * ((l.z / 2u) & 1u);
+    if (((mk[j] | mk[j + 1u]) & (0x0303u << (2u * h.x + 16u * (h.y & 1u)))) == 0u) {
         return 2;
     }
-    if ((brick_masks[m + i / 32u] & (1u << (i % 32u))) == 0u) {
+    if ((mk[l.z & 3u] & (1u << (i % 32u))) == 0u) {
         return 1;
     }
     return 0;
 }
 
 // The cell at voxel `v`. With the skips flag clear every empty cell is one voxel, or one mip
-// cell of a LOD-only chunk, whatever the hierarchy says about its neighbours.
+// cell of a LOD-only chunk, whatever the hierarchy says about its neighbours. The table is read
+// on entering a chunk and the record entry on entering a brick; a chunk outside the window
+// touches no state.
 fn lookup(v: vec3<i32>) -> Cell {
     let skips = (params.flags & FLAG_SKIPS) != 0u;
     let chunk = floor_div(v, 64);
@@ -267,33 +348,49 @@ fn lookup(v: vec3<i32>) -> Cell {
     if (any(rel < vec3<i32>(0)) || any(rel >= w)) {
         return Cell(64, 0u, ABSENT, 0u);
     }
-    // Wrapped addressing: the table is indexed by the chunk coordinate modulo the window size,
-    // and the range check above keeps every lookup inside the current window.
-    let wr = ((chunk % w) + w) % w;
-    let t = chunk_table[u32(wr.x + w.x * (wr.y + w.y * wr.z))];
+    if (!walk.in_chunk || any(chunk != walk.chunk)) {
+        walk.in_chunk = true;
+        walk.chunk = chunk;
+        walk.in_brick = false;
+        walk.bits_word = ABSENT;
+        // Wrapped addressing: the table is indexed by the chunk coordinate modulo the window
+        // size, and the range check above keeps every lookup inside the current window.
+        let wr = ((chunk % w) + w) % w;
+        loads += 1u;
+        let t = chunk_table[u32(wr.x + w.x * (wr.y + w.y * wr.z))];
+        walk.entry = t;
+        // A full chunk is level 0: voxels in 8^3 bricks, 8 bricks to an edge. A LOD record
+        // holds level L's cells in 8^3 mip-bricks, 8 >> L to an edge, from entry 0, 64 or 72.
+        walk.level = 0u;
+        walk.first = 0u;
+        if (t != ABSENT && (t & LOD_BIT) != 0u) {
+            walk.level = lod_level(chunk);
+            walk.first = select(select(72u, 64u, walk.level == 2u), 0u, walk.level == 1u);
+        }
+        walk.base = (t & RECORD_MASK) * RECORD_WORDS;
+    }
+    let t = walk.entry;
     if (t == ABSENT) {
         return Cell(select(1, 64, skips), 0u, ABSENT, 0u);
     }
     if (skips && (t & EMPTY_BIT) != 0u) {
         return Cell(64, 0u, ABSENT, 0u);
     }
-    // A full chunk is level 0: voxels in 8^3 bricks, 8 bricks to an edge. A LOD record holds
-    // level L's cells in 8^3 mip-bricks, 8 >> L to an edge, from entry 0, 64 or 72.
-    var level = 0u;
-    var first = 0u;
-    if ((t & LOD_BIT) != 0u) {
-        level = lod_level(chunk);
-        first = select(select(72u, 64u, level == 2u), 0u, level == 1u);
-    }
+    let level = walk.level;
     let cell = 1 << level;
     let e = 8 >> level;
-    let base = (t & RECORD_MASK) * RECORD_WORDS;
     let c = (v - chunk * 64) >> vec3<u32>(level);
     let b = c / 8;
-    if (skips && !group_occupied(base, level, b)) {
+    if (skips && !group_occupied(b)) {
         return Cell(16 * cell, 0u, ABSENT, 0u);
     }
-    let entry = chunk_records[base + ENTRY_WORD + first + u32(b.x + e * (b.y + e * b.z))];
+    if (!walk.in_brick || any(b != walk.brick)) {
+        walk.in_brick = true;
+        walk.brick = b;
+        walk.brick_entry =
+            record_word(walk.base + ENTRY_WORD + walk.first + u32(b.x + e * (b.y + e * b.z)));
+    }
+    let entry = walk.brick_entry;
     if ((entry & FULL_BIT) == 0u) {
         if (entry == 0u) {
             return Cell(select(cell, 8 * cell, skips), 0u, ABSENT, 0u);
@@ -319,7 +416,7 @@ fn lookup(v: vec3<i32>) -> Cell {
         let word = pool_word(slot, i / 4u);
         let index = (word >> ((i & 3u) * 8u)) & 0xFFu;
         if (index != 0u) {
-            let pair = chunk_records[base + PALETTE_WORD + index / 2u];
+            let pair = record_word(walk.base + PALETTE_WORD + index / 2u);
             m = (pair >> ((index & 1u) * 16u)) & 0xFFFFu;
         }
     }
@@ -328,6 +425,7 @@ fn lookup(v: vec3<i32>) -> Cell {
     }
     return Cell(0, m, select(ABSENT, slot, level == 0u), i);
 }
+
 // The voxel holding `p` on a ray of direction `d`: on an axis the ray travels down, a position
 // exactly on a voxel boundary belongs to the voxel below.
 fn voxel_at(p: vec3<f32>, d: vec3<f32>) -> vec3<i32> {
@@ -441,6 +539,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
         return miss;
     }
 
+    reset_walk();
     var t = max(t0, 0.0);
     var axis = -1;
     var v = voxel_at(o + d * t, d);
@@ -682,14 +781,15 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
     let o = params.cam_pos;
     walk_steps = 0u;
+    loads = 0u;
     pool_reads = 0u;
     let h = march(o, d, BIG);
     let view = view_mode();
     if (view == VIEW_STEPS) {
-        // The primary ray's cost: red its loop iterations, green its pool reads, each
-        // clamped at 255. No shading, so no shadow ray.
-        let cost = vec2<f32>(vec2<u32>(min(walk_steps, 255u), min(pool_reads, 255u))) / 255.0;
-        textureStore(target_tex, vec2<i32>(gid.xy), vec4<f32>(cost, 0.0, 1.0));
+        // The primary ray's cost: red its loop iterations, green its storage loads, blue the
+        // pool loads among them, each clamped at 255. No shading, so no shadow ray.
+        let counts = vec3<u32>(min(walk_steps, 255u), min(loads, 255u), min(pool_reads, 255u));
+        textureStore(target_tex, vec2<i32>(gid.xy), vec4<f32>(vec3<f32>(counts) / 255.0, 1.0));
         return;
     }
     if (view == VIEW_HITMASK) {

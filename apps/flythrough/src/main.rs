@@ -2257,15 +2257,19 @@ impl Run {
 }
 
 /// The steps view's reading of one frame: `steps per ray (2073600 rays): mean 41.27, p99 133,
-/// block-max mean 88.10; pool reads mean 3.02, p99 18`. Counts clamp at 255 as the view does;
-/// the block-max mean is over 8 × 8 pixel blocks of each block's maximum steps.
+/// block-max mean 88.10; loads mean 12.40, p99 61; pool reads mean 3.02, p99 18`. Counts clamp
+/// at 255 as the view does; the block-max mean is over 8 × 8 pixel blocks of each block's
+/// maximum steps; loads are the ray's 32-bit storage loads from the mirror, pool reads the
+/// pool loads among them.
 fn steps_line(h: &StepHistogram) -> String {
     format!(
-        "steps per ray ({} rays): mean {:.2}, p99 {}, block-max mean {:.2}; pool reads mean {:.2}, p99 {}",
+        "steps per ray ({} rays): mean {:.2}, p99 {}, block-max mean {:.2}; loads mean {:.2}, p99 {}; pool reads mean {:.2}, p99 {}",
         h.rays(),
         h.mean_steps(),
         h.p99_steps(),
         h.block_max_mean(),
+        h.mean_loads(),
+        h.p99_loads(),
         h.mean_pool_reads(),
         h.p99_pool_reads()
     )

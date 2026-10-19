@@ -116,7 +116,9 @@ pub enum ViewMode {
     /// White where the primary ray hits, black elsewhere.
     HitMask,
     /// The primary ray's walk cost, linear: red `min(steps, 255) / 255` for the iterations
-    /// of the walk's loop (the hitting one included), green `min(pool reads, 255) / 255`.
+    /// of the walk's loop (the hitting one included), green `min(loads, 255) / 255` for its
+    /// 32-bit storage loads from the mirror (chunk table, record bits and entries, masks,
+    /// pool, palette), blue `min(pool loads, 255) / 255` for the pool loads among them.
     /// [`crate::readback::StepHistogram`] reads it back.
     Steps,
 }

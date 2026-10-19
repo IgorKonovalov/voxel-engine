@@ -68,13 +68,16 @@ fn map_and_copy<T>(device: &wgpu::Device, staging: &wgpu::Buffer, f: impl FnOnce
 }
 
 /// The walk cost a frame of the steps view (`ViewMode::Steps`) holds, from its `rgba8unorm`
-/// pixels: the histogram of steps per ray, and of pool reads per ray, each clamped at 255 as
-/// the view clamps them, and each 8 × 8 pixel block's largest step count.
+/// pixels: the histograms of steps, storage loads and pool loads per ray, each clamped at 255
+/// as the view clamps them, and each 8 × 8 pixel block's largest step count.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StepHistogram {
     /// `steps[n]` rays took `n` steps (`n = 255`: 255 or more).
     pub steps: [u64; 256],
-    /// `pool_reads[n]` rays read the pool `n` times.
+    /// `loads[n]` rays issued `n` 32-bit storage loads from the mirror (chunk table, record
+    /// bits and entries, masks, pool, palette).
+    pub loads: [u64; 256],
+    /// `pool_reads[n]` rays loaded `n` pool words, counted among `loads` too.
     pub pool_reads: [u64; 256],
     /// The sum over 8 × 8 pixel blocks (those at the right and bottom edges may be smaller) of
     /// each block's maximum steps, and the number of blocks.
@@ -88,17 +91,19 @@ pub const STEP_BLOCK: usize = 8;
 
 impl StepHistogram {
     /// The histograms of `pixels`, tightly packed RGBA bytes in rows of `width` pixels: red is
-    /// steps, green pool reads.
+    /// steps, green storage loads, blue pool loads.
     pub fn from_rgba8(pixels: &[u8], width: usize) -> Self {
         let mut h = Self {
             steps: [0; 256],
+            loads: [0; 256],
             pool_reads: [0; 256],
             block_max_sum: 0,
             blocks: 0,
         };
         for p in pixels.chunks_exact(4) {
             h.steps[usize::from(p[0])] += 1;
-            h.pool_reads[usize::from(p[1])] += 1;
+            h.loads[usize::from(p[1])] += 1;
+            h.pool_reads[usize::from(p[2])] += 1;
         }
         let width = width.max(1);
         let height = pixels.len() / 4 / width;
@@ -135,6 +140,15 @@ impl StepHistogram {
             return 0.0;
         }
         self.block_max_sum as f64 / self.blocks as f64
+    }
+
+    /// Mean storage loads per ray, a clamped ray counting 255; 0 with no rays.
+    pub fn mean_loads(&self) -> f64 {
+        mean(&self.loads)
+    }
+
+    pub fn p99_loads(&self) -> u32 {
+        percentile(&self.loads, 0.99)
     }
 
     pub fn mean_pool_reads(&self) -> f64 {
@@ -174,8 +188,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_histogram_reads_red_as_steps_and_green_as_pool_reads() {
-        // 100 rays: 98 of 10 steps, one of 20, one of 255; pool reads 1 each, one of 3.
+    fn the_histogram_reads_red_as_steps_green_as_loads_and_blue_as_pool_loads() {
+        // 100 rays: 98 of 10 steps, one of 20, one of 255; 7 loads each, one of 40; pool
+        // loads 1 each, one of 3.
         let mut px = Vec::new();
         for i in 0..100u32 {
             let steps = match i {
@@ -183,13 +198,21 @@ mod tests {
                 1 => 20,
                 _ => 10,
             };
-            px.extend_from_slice(&[steps, if i == 5 { 3 } else { 1 }, 0, 255]);
+            px.extend_from_slice(&[
+                steps,
+                if i == 2 { 40 } else { 7 },
+                if i == 5 { 3 } else { 1 },
+                255,
+            ]);
         }
         let h = StepHistogram::from_rgba8(&px, 100);
         assert_eq!(h.rays(), 100);
         assert_eq!(h.steps[10], 98);
         assert_eq!(h.mean_steps(), (98.0 * 10.0 + 20.0 + 255.0) / 100.0);
         assert_eq!(h.p99_steps(), 20);
+        assert_eq!(h.loads[7], 99);
+        assert_eq!(h.mean_loads(), 7.33);
+        assert_eq!(h.p99_loads(), 7);
         assert_eq!(h.mean_pool_reads(), 1.02);
         assert_eq!(h.p99_pool_reads(), 1);
         // One row of 100 pixels: 13 blocks, the first holding the 255 and the 20, the rest 10.

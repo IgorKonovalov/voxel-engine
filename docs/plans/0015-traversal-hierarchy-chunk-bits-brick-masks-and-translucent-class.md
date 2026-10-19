@@ -524,8 +524,8 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
 |---|---|---|---|
 | 1: The steps view and the headless histogram, on today's walk | dev | done | 52d6a7b |
 | 2: Chunk bits, the chunk-level and 16³ skips | dev | done | 106998d |
-| 3: Full-resolution opaque masks | dev | done | committed with this row |
-| 4: A walk that re-derives state at boundaries | dev | not started | |
+| 3: Full-resolution opaque masks | dev | done | 4cafd06 |
+| 4: A walk that re-derives state at boundaries | dev | done | committed with this row |
 | 5: The translucent class and the bounded accumulation walk | dev | not started | |
 | 6: Readings, budgets and the stats line | dev | not started | |
 
@@ -571,6 +571,24 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
 - Phase 3: the identity test renders the three scenes nine times in 3.9 s on lavapipe; the
   walk over single voxels stays under `MAX_STEPS` there. The level's mirror reads
   232 436 992 B (`level_mirror.rs`), masks 27 619 776 B.
+- Phase 4: the walk's state is a `var<private>` struct reset at the top of `march`: the chunk
+  with its decoded table entry, the two bits words with their first index, the brick with its
+  entry, and the four mask words of one 4³ slab (layers `4 bz..4 bz + 4`, one y-half) with
+  their first index. The 2³ and voxel tests read words of the held slab, so a step inside it
+  issues no mask load; the mask words are keyed by global word index and are not dropped on a
+  chunk change, the bits words and the brick are.
+- Phase 4: the steps view's green channel is every 32-bit storage load (table, record bits
+  and entries, masks, pool, palette) and its blue channel the pool loads among them, so the
+  Phase 3 pool-read bullets stay observable; `StepHistogram` gains `loads` (green) and reads
+  `pool_reads` from blue. `crates/vxe-render/src/readback.rs`, `marcher.rs` (the view's doc)
+  and `apps/flythrough/src/main.rs` (the histogram line prints loads mean and p99) are outside
+  the phase's files.
+- Phase 4: fixed-ray loads in `walk.rs` (lavapipe): three air chunks then rock 7 (4 table,
+  2 bits, 1 entry); the far-corner hit 10 (1 table, 2 bits, 1 entry, 4 mask words of one
+  line, 1 pool, 1 palette); the miss along a clear row of groups 3 (1 table, 2 bits); the miss
+  along brick 0's own row of groups 5, the two uniform-air entries of the occupied group's
+  bricks included, which the done-when's "1 table entry and at most 2 bits words" does not
+  count. `nfr.md` §2 is written at Phase 6 with the readings, per the amendment.
 
 ### Close triggers
 

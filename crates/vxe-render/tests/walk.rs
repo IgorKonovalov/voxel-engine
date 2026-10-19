@@ -54,11 +54,14 @@ fn world(chunks: [i32; 3], f: impl Fn([i32; 3]) -> MaterialId + Sync) -> World {
     World::generate(ChunkExtent::new([0, 0, 0], chunks), &Voxels(f), &table())
 }
 
-/// What the steps view reads for one ray: loop iterations and the green channel's count.
+/// What the steps view reads for one ray: loop iterations, 32-bit storage loads from the
+/// mirror (chunk table, record bits and entries, masks, pool, palette) and the pool loads
+/// among them.
 #[derive(Debug, PartialEq, Eq)]
 struct Cost {
     steps: u8,
-    reads: u8,
+    loads: u8,
+    pool: u8,
 }
 
 /// The steps view's pixel for the ray from `origin` along +x, the one pixel of a 1 × 1
@@ -77,7 +80,8 @@ fn cost(
     let px = pixel(device, queue, world, origin, 0.0, ViewMode::Steps, light);
     Cost {
         steps: px[0],
-        reads: px[1],
+        loads: px[1],
+        pool: px[2],
     }
 }
 
@@ -119,6 +123,8 @@ fn three_air_then_rock() -> World {
 /// From the centre of the first chunk's -x face, the +x ray skips each air chunk as one 64³
 /// cell on its table entry's `EMPTY_BIT` and hits the rock chunk's face on its 4th step,
 /// reading no pool (25 steps before the chunk skip: eight uniform-air bricks per air chunk).
+/// Its loads: one table entry per chunk (4), and in the rock chunk the two bits words of
+/// brick (0, 4, 4)'s 16³ group (record words 9 and 11) and its one record entry: 7.
 #[test]
 fn a_ray_through_three_air_chunks_takes_4_steps() {
     let Some((device, queue)) = device() else {
@@ -127,14 +133,19 @@ fn a_ray_through_three_air_chunks_takes_4_steps() {
     let w = three_air_then_rock();
     assert_eq!(
         cost_x(&device, &queue, &w, [0.0, 32.5, 32.5]),
-        Cost { steps: 4, reads: 0 }
+        Cost {
+            steps: 4,
+            loads: 4 + 2 + 1,
+            pool: 0
+        }
     );
 }
 
 /// As `three_air_then_rock`, with a floor of rock bricks (brick row y = 0) in the three air
 /// chunks: none of them is empty, but a +x ray at y = 32.5 runs through brick rows 4, in
 /// 16³ groups whose eight brick bits are clear, so it crosses each chunk in 4 steps and hits
-/// the rock chunk on its 13th.
+/// the rock chunk on its 13th. The four groups of a row along x share two bits words, so each
+/// air chunk costs its table entry and two bits words, and the rock chunk one entry more: 13.
 #[test]
 fn a_ray_above_a_floor_of_bricks_takes_4_steps_per_chunk() {
     let Some((device, queue)) = device() else {
@@ -148,14 +159,16 @@ fn a_ray_above_a_floor_of_bricks_takes_4_steps_per_chunk() {
         cost_x(&device, &queue, &w, [0.0, 32.5, 32.5]),
         Cost {
             steps: 3 * 4 + 1,
-            reads: 0
+            loads: 3 * 3 + 4,
+            pool: 0
         }
     );
 }
 
 /// With the skips flag clear the same ray steps every voxel of the three air chunks: 192
 /// steps, then the hit on the rock chunk's face, with no pool read (the rock chunk's bricks
-/// are uniform).
+/// are uniform). No bits word is read: the skips are off. Each chunk costs its table entry and
+/// one record entry per brick entered, eight along x in an air chunk and one in the rock: 29.
 #[test]
 fn without_skips_every_voxel_of_an_air_chunk_is_a_step() {
     let Some((device, queue)) = device() else {
@@ -170,7 +183,8 @@ fn without_skips_every_voxel_of_an_air_chunk_is_a_step() {
         cost(&device, &queue, &w, [0.0, 32.5, 32.5], light),
         Cost {
             steps: 3 * 64 + 1,
-            reads: 0
+            loads: 3 * (1 + 8) + 2,
+            pool: 0
         }
     );
 }
@@ -183,7 +197,9 @@ fn far_corner_voxel() -> World {
 
 /// The +x ray through the corner voxel crosses brick 0 from its -x face: the empty 4³ block,
 /// the empty 2³ block, the empty voxel (6, 7, 7) from the opaque line, then the hit, the only
-/// pool read.
+/// pool read. Its loads: 1 table entry, the 2 bits words of brick 0's group, 1 record entry,
+/// the 4 words of the slab (layers 4..8, rows 4..8) that the 4³, 2³ and voxel tests all read
+/// from, 1 pool word and 1 palette word: 10.
 #[test]
 fn a_hit_in_a_full_brick_reads_the_pool_once() {
     let Some((device, queue)) = device() else {
@@ -192,12 +208,17 @@ fn a_hit_in_a_full_brick_reads_the_pool_once() {
     let w = far_corner_voxel();
     assert_eq!(
         cost_x(&device, &queue, &w, [0.0, 7.5, 7.5]),
-        Cost { steps: 4, reads: 1 }
+        Cost {
+            steps: 4,
+            loads: 1 + 2 + 1 + 4 + 1 + 1,
+            pool: 1
+        }
     );
 }
 
 /// With the masks flag clear the same ray reads each of the brick's 8 voxels on its row
-/// through the pool, one step each.
+/// through the pool, one step each; only the hit voxel's palette index is non-zero, so the
+/// palette is read once: 1 table, 2 bits, 1 entry, 8 pool, 1 palette.
 #[test]
 fn without_masks_every_voxel_of_a_full_brick_is_read_through_the_pool() {
     let Some((device, queue)) = device() else {
@@ -210,13 +231,49 @@ fn without_masks_every_voxel_of_a_full_brick_is_read_through_the_pool() {
     };
     assert_eq!(
         cost(&device, &queue, &w, [0.0, 7.5, 7.5], light),
-        Cost { steps: 8, reads: 8 }
+        Cost {
+            steps: 8,
+            loads: 1 + 2 + 1 + 8 + 1,
+            pool: 8
+        }
+    );
+}
+
+/// A +x ray through the far-corner chunk that misses brick 0. At y = z = 20.5 it runs along a
+/// row of clear 16³ groups (bricks y = z = 2): one table entry and the row's two bits words,
+/// held across the four groups, then the step out of the window: 3 loads. At y = z = 12.5 it
+/// runs along brick 0's own row of groups (bricks y = z = 1): the first group holds brick 0,
+/// so its two bricks (0, 1, 1) and (1, 1, 1) are entered and their uniform-air entries read,
+/// then the three clear groups cost nothing more: 5 loads, 0 pool.
+#[test]
+fn a_ray_past_the_full_brick_reads_the_table_once_and_two_bits_words() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let w = far_corner_voxel();
+    assert_eq!(
+        cost_x(&device, &queue, &w, [0.0, 20.5, 20.5]),
+        Cost {
+            steps: 4 + 1,
+            loads: 1 + 2,
+            pool: 0
+        }
+    );
+    assert_eq!(
+        cost_x(&device, &queue, &w, [0.0, 12.5, 12.5]),
+        Cost {
+            steps: 2 + 3 + 1,
+            loads: 1 + 2 + 2,
+            pool: 0
+        }
     );
 }
 
 /// A `Full` brick of air but for the 2³ block at its origin: the +x ray at y = z = 7.5 misses
 /// it and reads no pool word. It takes two 4³ blocks, brick 1 (its 16³ group holds brick 0),
-/// three clear 16³ groups, and the step that leaves the window.
+/// three clear 16³ groups, and the step that leaves the window. Loads: 1 table, 2 bits (one
+/// row of groups), brick 0's entry, its slab's 4 mask words (both 4³ blocks lie in it), brick
+/// 1's entry: 9.
 #[test]
 fn a_ray_past_the_one_solid_block_of_a_full_brick_reads_no_pool() {
     let Some((device, queue)) = device() else {
@@ -228,7 +285,11 @@ fn a_ray_past_the_one_solid_block_of_a_full_brick_reads_no_pool() {
     );
     assert_eq!(
         cost_x(&device, &queue, &w, [0.0, 7.5, 7.5]),
-        Cost { steps: 7, reads: 0 }
+        Cost {
+            steps: 7,
+            loads: 1 + 2 + 1 + 4 + 1,
+            pool: 0
+        }
     );
 }
 
