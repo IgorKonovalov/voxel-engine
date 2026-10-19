@@ -276,7 +276,10 @@ between phases. The architect reviews once at the end, in a fresh session.
     differing pixels per image (dev's experiment read 1 or 2 per image before the rule). The
     log lists each image's differing pixel coordinates and largest channel difference; the
     close review re-derives them with `git show 106998d:<path>`. From this re-bless on, the
-    plan's remaining golden bullets are bit-exact against these files.
+    plan's remaining golden bullets are bit-exact against these files, and `lod.png` joins
+    the strict byte comparison against its file (today only `primary.png` and `headlamp.png`
+    are compared byte for byte in `golden.rs`; `lod.png` goes through `assert_golden`'s
+    0.1 % tolerance, so "bit-exact" for it has rested on a re-bless leaving git clean).
 
 ### Phase 4: A walk that re-derives chunk and brick state only at their boundaries
 - **Owner skill:** dev
