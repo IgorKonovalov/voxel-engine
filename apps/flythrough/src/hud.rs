@@ -314,6 +314,31 @@ pub struct HudStats {
     pub mode: Mode,
     /// What formatting the previous rows cost, in microseconds.
     pub format_us: u32,
+    /// The steps view's reading of the last frame, while that view is on.
+    pub steps: Option<StepsSample>,
+}
+
+/// What the steps view read for one frame: the mean, p99 and block-max mean of steps per
+/// ray, and the mean storage loads and pool loads per ray.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct StepsSample {
+    pub mean_steps: f32,
+    pub p99_steps: u32,
+    pub block_max_mean: f32,
+    pub mean_loads: f32,
+    pub mean_pool_reads: f32,
+}
+
+impl StepsSample {
+    pub fn from_histogram(h: &vxe_render::readback::StepHistogram) -> Self {
+        Self {
+            mean_steps: h.mean_steps() as f32,
+            p99_steps: h.p99_steps(),
+            block_max_mean: h.block_max_mean() as f32,
+            mean_loads: h.mean_loads() as f32,
+            mean_pool_reads: h.mean_pool_reads() as f32,
+        }
+    }
 }
 
 impl HudStats {
@@ -358,6 +383,7 @@ impl HudStats {
             chunk: [1, 1, 1],
             mode: Mode::Fly,
             format_us: 6,
+            steps: None,
         }
     }
 
@@ -473,6 +499,16 @@ impl HudStats {
             HudColour::White,
             format_args!("{mode} at {x:.1} {y:.1} {z:.1} (voxels), chunk {cx} {cy} {cz}"),
         )?;
+        if let Some(s) = self.steps {
+            row(
+                out,
+                HudColour::White,
+                format_args!(
+                    "steps per ray mean {:.2} p99 {} block-max mean {:.2}; loads mean {:.2}, pool {:.2}",
+                    s.mean_steps, s.p99_steps, s.block_max_mean, s.mean_loads, s.mean_pool_reads
+                ),
+            )?;
+        }
         row(
             out,
             HudColour::White,
@@ -682,6 +718,36 @@ mod tests {
         };
         spike.write_rows(&mut out, &mut colours);
         assert_eq!(colours[0], HudColour::Red, "a frame over 33.3 ms");
+    }
+
+    /// The steps row appears only with a steps sample, before the format row, and reads the
+    /// sample's five figures.
+    #[test]
+    fn the_steps_row_prints_the_last_frame_s_sample() {
+        let stats = HudStats {
+            steps: Some(StepsSample {
+                mean_steps: 15.55,
+                p99_steps: 84,
+                block_max_mean: 31.2,
+                mean_loads: 12.4,
+                mean_pool_reads: 2.45,
+            }),
+            ..HudStats::default()
+        };
+        let lines = stats.to_string();
+        let lines: Vec<&str> = lines.lines().collect();
+        assert_eq!(
+            lines[lines.len() - 2],
+            "steps per ray mean 15.55 p99 84 block-max mean 31.20; loads mean 12.40, pool 2.45"
+        );
+        assert!(lines[lines.len() - 1].starts_with("format "));
+        assert!(
+            !HudStats::default()
+                .to_string()
+                .lines()
+                .any(|l| l.starts_with("steps per ray")),
+            "no row without a sample"
+        );
     }
 
     /// The golden's fixture: twelve rows, the frame and upload rows yellow, the rest white.

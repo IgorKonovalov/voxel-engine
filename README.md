@@ -149,7 +149,7 @@ Walking, the coarse grid and collapse run on the bounded level (`--level`) only.
 | `--level` | The bounded level instead of the streamed cave |
 | `--walk` | With `--level`: start in walk mode |
 | `--seed N` | World seed (default 1) |
-| `--hud` | Start with the stats overlay shown |
+| `--hud` | Start with the stats overlay shown; with `--view steps` it adds a row with the last frame's mean, p99 and block-max mean steps per ray and the mean loads |
 | `--logic native\|wasm[=PATH]` | Run the dig logic natively (default) or as a component; `wasm` needs `--features wasm` |
 | `--vault` | Generate a 16-voxel room with an indestructible shell 10 m along +x from the spawn |
 | `--headless` | Run the same frames on an offscreen target, with no window |

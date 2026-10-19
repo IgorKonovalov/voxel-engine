@@ -86,6 +86,26 @@ Laptop GPU; taken while the machine's 1-minute load read between 3 and 5):** fac
 with detail; on the baseline (about two to three times slower) the level's contour reading
 projects to roughly 3.9 to 5.8 ms against the 3.0 ms line, a projection, not a reading.
 
+**Primary rays with the traversal hierarchy (dev reference, Plan 0015 Phase 6, the march of
+d3d2f1c, headless, timestamp queries, median of the last 30 frames, three runs each, NVIDIA
+GeForce RTX 3080 Laptop GPU, Ryzen 9 5900HS, 1-minute load 7 to 11 from the runs' own
+streaming workers and other work on the box):** the streamed cave's spawn
+(`flythrough --seed 1 --render 1920x1080 --frames 3000`, full residency after about 12 s)
+reads 1.932 to 1.981 ms over six runs, against 6.809 to 6.852 ms for the same view at
+52d6a7b before the hierarchy and the 3.0 ms line: the line is met on the dev reference. The
+level's spawn (`--level --seed 1 --render 1920x1080 --frames 300`) reads 1.450 to 1.463 ms
+against 1.822 ms. Both passes include the headlamp's shadow ray. The autopilot's flight
+(`--autopilot --headless --render 1920x1080`, 2830 frames) reads p50 1.569 ms, p99 21.174 ms,
+max 32.958 ms; its +x path flies through rock, so its p50 is not evidence for the line, and
+its p99 frames are the ones whose chunks are still arriving. The steps view
+(`--view steps`, no shadow ray) reads mean 10.98 steps, p99 53, block-max mean 11.67 and
+25.99 storage loads per ray at the streamed spawn, against 15.55 steps and p99 84 before; at
+the level's spawn 7.49 steps, p99 11, 18.79 loads, against 10.48 and 15. Per phase the
+streamed spawn read 6.97 ms with the chunk and group skips alone (106998d), 2.50 ms with the
+opaque masks and the plane-order exit (4cafd06), 1.86 ms with the walk's held state
+(e564f44) and 1.95 ms with the translucent class (d3d2f1c); the level 1.65, 1.69, 1.34 and
+1.45 ms. No baseline reading (§1).
+
 **Stats HUD (dev reference, Plan 0010, f91726f, headless `flythrough [--level] --seed 1
 --render 1920x1080 --frames 300 [--hud]`, three runs each, NVIDIA GeForce RTX 3080 Laptop GPU,
 Ryzen 9 5900HS):** a tool, not a frame stage, so it has no line in the table. The HUD pass
@@ -139,8 +159,8 @@ hysteresis 1, `cargo run --release -p flythrough --example world_budget -- --str
 R_FULL,R_LOD`, 16 workers, Ryzen 9 5900HS).** Mirror bytes at 8-bit palette indices (ADR-0004):
 512 + 8 B per `Full` brick or mip-brick, 2560 B per record for full and LOD-only chunks alike,
 plus the `W^3` chunk table. (Since Plan 0015 Phase 3 a slot carries 512 + 72 B and a record
-2624 B; the example counts the new figures, and the table below is re-read at Plan 0015
-Phase 6.) CPU bytes: full chunks' slot arrays and `Full` bricks, LOD-only
+2624 B; the example counts the new figures, the table below keeps the readings taken at the
+old ones, and the paragraph after it holds Plan 0015's.) CPU bytes: full chunks' slot arrays and `Full` bricks, LOD-only
 chunks' mip-brick slots and `Full` mip-bricks. In every row about 18.5 to 18.8 % of a full
 chunk's bricks and about 39 % of the ring's mip-bricks are `Full`.
 
@@ -152,6 +172,19 @@ chunk's bricks and about 39 % of the ring's mip-bricks are `Full`.
 | 12 | 20 | 7 153 | 26 248 | 1 486.2 | 355.9 | 436.0 | 792.2 |
 | 16 | 20 | 17 077 | 16 324 | 2 210.0 | 855.1 | 270.5 | 1 126.0 |
 | 16 | 24 | 17 077 | 40 700 | 2 915.9 | 855.1 | 673.9 | 1 529.5 |
+
+**With the traversal hierarchy (dev reference, Plan 0015 Phase 6, d3d2f1c, headless, NVIDIA
+GeForce RTX 3080 Laptop GPU, Ryzen 9 5900HS):** mirror bytes at 512 + 72 B per `Full` brick
+or mip-brick and 2624 B per record. The level (`--level --seed 1`) holds 232 436 992 B live
+and 238 303 552 B allocated (207 886 080 and 213 662 016 B at 106998d, before the masks grew).
+The streamed defaults at rest after full residency (`--seed 1 --frames 3000`, 17 077 full and
+40 700 LOD-only chunks) hold 1 786 641 644 B live and 1 865 490 412 B allocated
+(1 607 517 932 and 1 679 368 172 B at 106998d). The autopilot's flight
+(`--autopilot --headless --render 1920x1080`) peaks at 1 889 760 188 B live and
+2 714 672 620 B allocated, against Plan 0002's 1 672 823 572 B live and 2 431 425 836 B
+allocated: about 217 MB more live and 283 MB more allocated, under the 3 GB line; the
+residency latency wanted-to-mirrored reads p95 493 ms, max 1804 ms over 72 849 chunks
+(p95 472 ms, max 2362 ms at e564f44), against the 500 ms proposal.
 
 **Under motion (dev reference, Plan 0002 fix pass, 076b1c4, headless `flythrough --autopilot`,
 unbounded cave seed 1, r_full 16, r_lod 24, h 1, 15 workers, RTX 3080 Laptop GPU, NVIDIA

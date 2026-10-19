@@ -790,6 +790,8 @@ struct Hud {
     march_ms: Option<f32>,
     hud_ms: Option<f32>,
     cpu_ms: f32,
+    /// The last frame's steps view, read back while that view and the HUD are on.
+    steps: Option<hud::StepsSample>,
     format_us: u32,
     page_bytes: u64,
     /// Reused buffers: the rows' text, their colours, and the strip's samples.
@@ -811,6 +813,7 @@ impl Hud {
             march_ms: None,
             hud_ms: None,
             cpu_ms: 0.0,
+            steps: None,
             format_us: 0,
             page_bytes: hud::page_bytes(),
             text: String::new(),
@@ -1243,6 +1246,7 @@ impl Run {
             ..h.world
         };
         s.rss_bytes = h.rss_bytes;
+        s.steps = h.steps;
         s.camera = pos.to_array();
         s.chunk = voxel_of(pos).chunk().0;
         s.mode = mode;
@@ -2152,6 +2156,18 @@ impl Run {
         let hud = self.hud.visible;
         if self.hud.cadence.due(hud) {
             self.sample_world();
+        }
+        // The steps row reads the last frame's target back before this frame's march
+        // overwrites it: a blocking copy, paid only with the HUD and that view both on.
+        self.hud.steps = None;
+        if hud
+            && self.look.view == ViewMode::Steps
+            && let Some(gfx) = &self.gfx
+        {
+            let px = readback::read_rgba8(&gpu.device, &gpu.queue, gfx.marcher.target());
+            let width = gfx.marcher.target().width() as usize;
+            let h = StepHistogram::from_rgba8(&px, width);
+            self.hud.steps = Some(hud::StepsSample::from_histogram(&h));
         }
         if hud {
             self.update_hud(gpu);

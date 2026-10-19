@@ -526,8 +526,8 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
 | 2: Chunk bits, the chunk-level and 16³ skips | dev | done | 106998d |
 | 3: Full-resolution opaque masks | dev | done | 4cafd06 |
 | 4: A walk that re-derives state at boundaries | dev | done | e564f44 |
-| 5: The translucent class and the bounded accumulation walk | dev | done | committed with this row |
-| 6: Readings, budgets and the stats line | dev | not started | |
+| 5: The translucent class and the bounded accumulation walk | dev | done | d3d2f1c |
+| 6: Readings, budgets and the stats line | dev | done | committed with this row |
 
 ### Notes
 
@@ -618,6 +618,21 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
   `crates/vxe-world/src/store.rs` (outside the phase's files, where the accessor lives);
   `crates/vxe-assets/tests/vox.rs` maps and stamps a translucent row. `README.md` and the
   `look.rs` look literals (outside the phase's files) take the new field.
+- Phase 6: the HUD's steps row lives in `apps/flythrough/src/hud.rs` (`HudStats::steps`, a
+  `StepsSample`; outside the phase's files, where the rows are formatted) and is fed from
+  `main.rs` by a blocking readback of the previous frame's target on every frame that shows the
+  HUD in the steps view; `crates/vxe-render/src/hud.rs` is untouched (the overlay draws
+  whatever rows it is handed). Headless, `--level --seed 1 --render 320x180 --frames 5 --hud
+  --view steps` prints the row among the exit rows.
+- Phase 6: every reading of the plan was taken after Phase 5, serially, from each phase's
+  commit in a worktree (the script's log is in the session's scratchpad; the figures are in
+  the close triggers and `nfr.md` §2 and §3). Phase 1's block-max mean comes from 52d6a7b
+  with 106998d's `readback.rs` and `main.rs` changes applied. The box was not quiet: a
+  1-minute load of 5 to 11 throughout, from the runs' own streaming workers and from other
+  processes on the box (a Python process and a debugged game); the GPU timestamps were
+  repeatable across runs to about 0.03 ms even so, and the tip's march readings were repeated
+  once with the same result. The §3 residency table (`world_budget --stream`) was not re-read:
+  the done-when asks for the autopilot's peak, which is recorded.
 
 ### Close triggers
 
