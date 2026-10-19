@@ -507,29 +507,50 @@ for a block at `(cx, cy, cz)` in `0..4`: the two words `2 (2 cz + k) + (cy >= 2)
 |---|---|---|---|
 | 1: The steps view and the headless histogram, on today's walk | dev | done | 52d6a7b |
 | 2: Chunk bits, the chunk-level and 16³ skips | dev | done | 106998d |
-| 3: Full-resolution opaque masks | dev | not started | |
+| 3: Full-resolution opaque masks | dev | stopped inside, uncommitted | |
 | 4: A walk that re-derives state at boundaries | dev | not started | |
 | 5: The translucent class and the bounded accumulation walk | dev | not started | |
 | 6: Readings, budgets and the stats line | dev | not started | |
 
-> **Resume note (2026-10-18, delete when Phase 3 lands; answered by the 2026-10-19
-> amendment above):** stopped inside Phase 3 at 106998d, routed to `/architect` (owner's
-> call). Phase 3's grouped masks, `solid_bits()`, the
-> 4³ / 2³ / voxel tests and its tests are written and uncommitted in the main checkout
-> (`gpu_world.rs`, `march.wgsl`, `brick.rs`, `mirror.rs`, `walk.rs`, `level_mirror.rs`,
-> `look.rs`); every Phase 3 bullet holds except bit-exact goldens. Diagnosis: the 4³ skip
-> moves isolated pixels in every golden (`primary.png` and `headlamp.png` 2 pixels each,
-> (167, 43) and (198, 150); `lod.png`, `hud.png` (167, 43); `look_detail.png` 2), largest
-> channel differences 7 to 84 of 255. With the 4³ test disabled and the 2³ and voxel tests kept,
-> every golden re-blesses unchanged. A cell's exit puts the off-axis coordinates from the
-> float position, so a larger cell that leaves through a different plane near a corner tie
-> lands one voxel off where a smaller cell would not; Phase 2's 64³ and 16³ skips moved no
-> golden pixel on these scenes. Options raised: re-bless at Phase 3 with an isolated-pixel
-> test against the old goldens and log the bullet unmet as stated; drop the 4³ skip (the
-> "at most 4 steps inside the brick" bullet becomes 5); amend the plan. The plan's readings
-> (Phase 1 block-max at 52d6a7b plus the readback change, Phase 2's histograms, block-max and
-> march) are not taken yet: the dev box was under other load. Gate at 106998d: build,
-> nextest (372 passed, 4 skipped), doctests, clippy, fmt clean.
+> **Resume note (2026-10-19, delete when Phase 3 lands):** stopped inside Phase 3 a second
+> time, at the re-bless bullet's "stop and say so" clause. The 2026-10-19 amendment is
+> implemented and uncommitted in the main checkout on 0b24ebf: the plane-order exit
+> (`advance` in `march.wgsl`, the estimate corrected by at most one plane each way with the
+> exit test's own expression), a `LightParams::skips` switch (`FLAG_SKIPS`, bit 9) that
+> disables every skip, the grouped masks and `solid_bits()` from the first stop, the
+> `walk.rs` corner-tie ray (hits `(4, 3, 0)` through -x at 106 of 255 with skips on and off,
+> misses `(3, 4, 0)` both ways) and a skips-off step count (193 steps through three air
+> chunks), the `golden.rs` identity test (primary, headlamp and lod byte-identical with every
+> skip on, every skip off and the mask tests alone off, and against the golden files, so
+> `lod.png` joins the strict comparison), the `world_budget.rs` constants (512 + 72, 2624),
+> the README `--view steps` row, and `cargo fmt` on `walk.rs`. The identity holds: the three
+> scenes render the same bytes under all three switch settings on lavapipe (llvmpipe, Mesa
+> 26.2.2, LLVM 22.1.8), 3.9 s for the nine renders. Every other Phase 3 bullet holds.
+> **The re-bless is out of bounds.** Blessed once with the rule and diffed against
+> `git show 106998d:<path>` (raw RGBA, every byte): `primary.png` 94 differing pixels,
+> largest channel difference 61; `headlamp.png` 141, 84, 21 adjacent pairs (diagonal runs of
+> 1 to 2 of 255 along shadow edges, e.g. (223, 153) to (229, 159)); `lod.png` 68, 68;
+> `hud.png` 58, 50; `look_contour.png` 101, 127, 8 adjacent pairs; `look_detail.png` 120, 98,
+> 18 adjacent pairs; `look_gradient27.png` 96, 126, 7 adjacent pairs; `look_trilinear8.png`
+> 5, 98, none adjacent. Only `look_trilinear8.png` meets the bound of 8 isolated pixels, so
+> no PNG was blessed: the files are at their 106998d bytes and the golden tests fail against
+> the tree (12 of 380 nextest tests, all golden comparisons: `golden` 5, `hud_golden` 2,
+> `look` 5). Diagnosis: the float-position rule broke a near-tie by the rounding of
+> `o + d t`, the plane-order rule breaks it by the plane comparison, and the two disagree
+> about half the time at every near-tie, not only at a 4³ cell's exit (the earlier reading of
+> 1 to 2 pixels compared two float-position walks). The golden pose makes near-ties common:
+> the camera sits at a voxel centre looking along +x, so a pixel's ray has
+> `d_y / d_z = ((2 col - 319) / 320) (16 / 9) / ((2 row - 179) / 180)`, a ratio of small odd
+> integers for whole families of pixels (`col = 2 mod 3`, `row = 1 mod 3` give
+> `9 (2m - 105) / (2n - 59)` scaled; pixel (167, 43) has `-5 / 31` and meets a lattice edge
+> at 2.5 voxels along y and 15.5 along z), and the ray crosses an exact lattice edge within
+> the scene; the differing pixels sit on a 3-pixel grid in both axes. The identity test is
+> the property the amendment wanted; the isolated-pixel bound on the one-time re-bless is
+> the part that does not hold. Options: re-bless once without the bound, recording the
+> counts above (the identity holds the images from then on); move the golden pose off the
+> lattice (every golden changes anyway); or something else the architect names. Gate on the
+> tree: build, clippy `-D warnings`, fmt and doctests clean; nextest 368 passed, 12 failed
+> (the goldens), 4 skipped. The plan's readings are still not taken.
 
 ### Notes
 
