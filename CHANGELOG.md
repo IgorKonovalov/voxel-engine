@@ -6,6 +6,10 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-19
+
+Plan 0015 (a minor bump: public API added and changed). The marcher walks a hierarchy of occupancy bits: 512 brick bits head each chunk record and `EMPTY_BIT` in the chunk table skips an empty chunk on its table read alone; a 512-bit opaque mask per brick (72 B a slot, in groups of eight) gives the 4^3, 2^3 and voxel skips from one 64-byte line; the walk holds its chunk, bits words, brick entry and mask slab across steps. The streamed cave's spawn march falls from 6.8 to 1.95 ms on the dev box. A cell exit follows plane order, so the image is independent of every skip (`LightParams::skips` is the comparison switch; the goldens re-blessed once). The translucent class: `MaterialFlags::TRANSLUCENT`, `Material::opacity`, `TRANSLUCENT_BIT` in brick entries and a bounded second walk (`LookParams::translucent_layers`, default 4, `--translucent-layers`), with `ViewMode::Albedo`. A `steps` debug view (`ViewMode::Steps`, `readback::StepHistogram`, a HUD row). `Brick::solid_bits`. `gpu_world` layout constants change (`RECORD_WORDS` 656, `MASK_BYTES` 72, `SLOT_MASK` and the record index 29 bits).
+
 ## [0.13.0] - 2026-10-18
 
 Plan 0016 (a minor bump: public API added and changed). The character controller lifts a body an edit filled into to the nearest free pose (`MoveResult::lifted`) or reports it `embedded` (ADR-0005 Outcome addendum). A hosted logic that traps restarts from its seed up to `WasmConfig::max_restarts` (default 8) and reports `LogicError::Restarted` through `Logic::take_restart` and `TickReport::restart`, replacing fail-stop (ADR-0010 Outcome addendum). `World::remove_region` carries the rubble rounding remainder across columns, so a thin region leaves about a quarter of its volume as rubble. The fly-through banks fractional scroll so smooth-scrolling devices step the dig radius in 0.1 m steps. The HUD refreshes without allocating (`HudOverlay::set_lines`, `allocations`); `PassTimer::read_ms` drops its queue parameter.

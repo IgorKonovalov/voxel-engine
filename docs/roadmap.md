@@ -195,13 +195,16 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plan 0005 closed; Plan 0013 is the surface follow-up; Plan 0015 is the traversal hierarchy; the lighting plan next)
+### M2: Lighting that holds in the dark (in progress: Plans 0005 and 0015 closed; Plan 0013 is the surface follow-up; the lighting plan next)
 
-Plan 0015 (approved 2026-10-17, amended the same day) comes before the lighting plan: it
-gives the marcher a hierarchy of occupancy bits (chunk bits, 512-bit brick masks on aligned
-lines, a walk that reads one line per level) and the translucent material class, on today's
-pool, as the first step of ADR-0012. Every lighting pass casts rays through that walk, so its
-cost per ray is settled first. The traversal efficiency review of 2026-10-17 (the ESVO,
+Plan 0015 closed 2026-10-19 (v0.14.0): the marcher walks a hierarchy of occupancy bits
+(chunk bits with an empty bit in the table, 512-bit brick masks on aligned lines, a walk that
+holds its state and reads one line per level) and composites the translucent material class
+in a bounded second walk, on today's pool, as the first step of ADR-0012. The streamed
+spawn's march fell from 6.8 to 1.95 ms on the dev box against the 3.0 ms line, the level's
+from 1.8 to 1.45 ms, with no baseline reading; a cell exit follows plane order, so the image
+does not depend on the skips (ADR-0012's Outcome). Every lighting pass casts rays through
+that walk, so its cost per ray is settled first. The traversal efficiency review of 2026-10-17 (the ESVO,
 VoxelRT and wavefront sources in `references/voxel-optimizations.md`) found nothing in the
 literature that beats a bit hierarchy for an editable near field, and left two design inputs
 for the lighting plan, listed with its bullets below.

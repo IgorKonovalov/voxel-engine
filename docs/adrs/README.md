@@ -18,7 +18,7 @@ the status.
 | [0001](0001-rust-library-workspace-wgpu-compute-ray-marching.md) | Rust library workspace, wgpu compute ray marching, streaming brick-map world | accepted |
 | [0002](0002-brick-map-layout-and-per-chunk-locked-access.md) | Brick-map storage layout, GPU mirror, and per-chunk locked access | accepted; mirror clauses superseded by ADR-0004; attribute reservation settled by ADR-0011 |
 | [0003](0003-sphere-residency-with-lod-ring-and-edit-persistence.md) | Sphere residency with an LOD-only ring, edited-chunk persistence with disk spill | accepted |
-| [0004](0004-palette-narrowed-sharded-brick-pool.md) | Per-chunk 8-bit palette mirror and a brick pool sharded over fixed bindings | accepted |
+| [0004](0004-palette-narrowed-sharded-brick-pool.md) | Per-chunk 8-bit palette mirror and a brick pool sharded over fixed bindings | accepted; record head and masks changed by Plan 0015 under ADR-0012 (Outcome addendum) |
 | [0005](0005-vertical-cylinder-collision-by-integer-conservative-advancement.md) | Character collision as a vertical cylinder swept by integer conservative advancement | accepted |
 | [0006](0006-hrtf-source-and-audio-thread-model.md) | SADIE II HRTFs in a packed f32 format, time-domain FIR, mixer on the device callback | accepted |
 | [0007](0007-server-op-log-byte-channel-shared-and-owned-clients.md) | Server-owned op log replayed from seed, a byte channel, and a client that shares the world in solo play | accepted |

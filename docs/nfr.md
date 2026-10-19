@@ -73,7 +73,8 @@ reads 0.35 ms.
 last 30 of 300 frames), against the 3.0 ms line and against 1.95 ms from the bounded level's
 spawn at the same commit. The line stands (owner's ruling, 2026-10-16); a march-pass diagnosis
 spike runs before M2's lighting. The autopilot's flight reading (p50 0.46 ms) is not evidence
-for the line: its +x path flies through rock.
+for the line: its +x path flies through rock. Met at Plan 0015 (2026-10-19): the
+traversal-hierarchy paragraph below reads the same view at 1.93 to 1.98 ms.
 
 **Primary rays per surface-look mode (dev reference, Plan 0005 Phase 5, 37b22fa, headless
 `flythrough --level --seed 1 --render 1920x1080 --frames 300 --look MODE [--detail]` from the

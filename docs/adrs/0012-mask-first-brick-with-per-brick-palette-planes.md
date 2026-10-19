@@ -2,7 +2,7 @@
 
 > **Status:** accepted (2026-10-17)
 > **Date:** 2026-10-17
-> **Related plan(s):** [Plan 0015](../plans/0015-traversal-hierarchy-chunk-bits-brick-masks-and-translucent-class.md)
+> **Related plan(s):** [Plan 0015](../plans/done/0015-traversal-hierarchy-chunk-bits-brick-masks-and-translucent-class.md)
 > (the traversal hierarchy on today's pool), then a CPU-format plan and a mirror-slot plan,
 > drafted when Plan 0015 is reviewed.
 > **Supersedes in part, once accepted:** ADR-0002's CPU brick clause (`Full` as
@@ -161,3 +161,41 @@ Store a distance to the nearest solid voxel per voxel or per brick instead of oc
 bits. Fewer steps per ray, but every step reads a byte or more, the field changes for every
 voxel within its radius on each edit, and VoxelRT's comparison shows it losing to the masked
 brick map on bandwidth. Rejected.
+
+## Outcome
+
+Added 2026-10-19 at the Plan 0015 close (v0.14.0), from the plan's readings and its
+fresh-session review. The hierarchy on today's pool is in; the CPU format and the
+size-classed slot plans are still owed.
+
+- **The frame-time claim holds on the dev box.** The streamed cave's spawn march fell from
+  6.81 to 1.95 ms (headlamp shadow ray included) against the 3.0 ms line, the level's from
+  1.82 to 1.45 ms; the steps view reads a mean of 26 storage loads per ray at the streamed
+  spawn and 18.8 at the level's (`docs/nfr.md` section 2). Per phase, the chunk and group
+  skips alone moved the streamed spawn nowhere (6.97 ms), the opaque masks took it to 2.50,
+  the held walk state to 1.86, and the translucent class cost 0.1 ms. Step count was a
+  minority of the gap, as the plan's Phase 1 amendment recorded; cost per step was the rest.
+  No baseline or portable reading.
+- **The image is independent of the hierarchy.** A cell exit follows plane order, so the
+  walk with every skip on renders byte for byte what the walk over single voxels renders,
+  held by a test on the three opaque golden scenes and a corner-tie ray. The goldens were
+  re-blessed once when the rule landed (58 to 141 pixels per image), because the rule and
+  the float position break near-ties differently.
+- **Translucency costs nothing where it is absent, as written, and an entry and a mask line
+  where it is present.** The record's brick bits mark every brick that is not uniform air, so
+  a brick holding only translucent voxels is an occupied brick to the opaque walk: it reads
+  the brick's entry and one opaque line (all clear) and steps its two 4^3 blocks, and reads
+  no pool word. Plan 0015's "costs the opaque walk nothing" held for pool reads only. A
+  second, opaque-only bits word set in the record (64 B) would make such bricks free; the
+  slot plan decides whether the testbed's glass warrants it.
+- **The mask footprint on today's pool is 72 B a slot, every slot.** Each slot carries its
+  two translucent words whether or not it has the class. The size-classed slot keeps the
+  Decision's "no translucent mask where absent".
+- **The class is fixed by construction, not by a seal.** `vxe-world` has no `seal` and no
+  path that reaches the material table mutably after `World::generate`, pinned by a
+  `compile_fail` doctest on `World::materials`; the Negative consequence's "refuses to change
+  it after the table is sealed" is met by there being no path.
+- **A read count in the plan was wrong.** A ray along the row of 16^3 groups that holds a
+  `Full` brick reads the record entry of every brick it enters in the occupied group, two
+  uniform-air entries in the plan's fixture, not "one table entry and two bits words": an
+  occupied group is walked brick by brick. The test pins the real count.
