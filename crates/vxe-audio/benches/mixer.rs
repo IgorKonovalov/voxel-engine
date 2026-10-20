@@ -74,7 +74,7 @@ fn loaded_mixer() -> Mixer {
                 gain: 0.5,
                 cutoff_hz: 2_000.0 + 100.0 * i as f32,
                 taps,
-                tap_count: MAX_TAPS as u8,
+                send: 0.5,
             },
         ));
     }

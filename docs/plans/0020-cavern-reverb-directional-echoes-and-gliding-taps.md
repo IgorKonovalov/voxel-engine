@@ -1,6 +1,6 @@
 # 0020: Cavern reverb: a late tail sized by the room the listener sees, echoes from their walls, taps that glide, and the player's own voice in the cave
 
-> **Status:** approved (2026-10-17)
+> **Status:** in-progress
 > **Created:** 2026-10-17
 > **Milestone:** M4 in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0015](../adrs/0015-late-reverb-as-a-shared-fdn-from-a-listener-ray-fan.md) (the tail, the fan, the skin-depth rule, the direction buses), ADR-0006 (mixer on the callback, probes on the caller's thread)
@@ -417,7 +417,7 @@ re-read in Phase 7.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Taps keyed by direction that glide | dev | not started | |
+| 1: Taps keyed by direction that glide | dev | stopped: done-when 1 not met as stated, owner question (resume notes below) | committed with this row |
 | 2: Early echoes from their wall's direction | dev | not started | |
 | 3: The room fan | dev | not started | |
 | 4: The tail | dev | not started | |
@@ -425,7 +425,54 @@ re-read in Phase 7.
 | 6: The fly-through: rooms, toggles, the microphone and the readings | dev | not started | |
 | 7: Listening checks | human | not started | |
 
+### Resume notes (Phase 1, 2026-10-20; delete when Phase 1 lands)
+
+- **Where it stopped.** The Phase 1 code is in the tree: slot-indexed `AcousticTargets.taps`
+  (`tap_count` gone, `send` added), `reflections()` returning `[Option<Reflection>; 16]`,
+  `taps()` returning `[Tap; 16]`, the keep factor `reflection_keep(A) = (1 - A) ^ 0.2`, gliding
+  tap slots in `mixer.rs` (`render_tap`; `old_taps`, `fading` and the tap crossfade deleted),
+  `set_reflections` making every voice due so its silent taps go out at the next update.
+  `tests/walking.rs` is new; `tests/reflections.rs` is re-derived (1160-sample echo ratio
+  0.1810; rendered ratios 0.1272 and 0.7773, in the test name). The fly-through's `E` path
+  needed no change.
+- **The done-when that cannot be met.** `walking_past_a_hum_with_echoes_steps_neither_level_nor_phase`
+  (the plan's corridor, hum, walk and cadence) measures 5.1828 dB and 2.8656 rad against the
+  bounds 0.5 dB and 0.1 rad; at the parent commit d11d0cb it measured 6.9117 dB and 0.7593 rad.
+  Measured causes, from scratch tests not committed: (1) a mono render with ideal continuous
+  delays and gains (the probe evaluated every block, interpolated linearly per sample, analytic
+  sine, no HRIR, nothing that can click) of the same scene measures 5.2407 dB and 1.0492 rad;
+  (2) at the walk's start the corridor gives ten sounding slots whose gains sum to 0.689 against
+  the direct path's 0.124, so the output is a sum of phasors larger than the direct sound; (3)
+  each echo's phase moves `2 pi 440 (6 / 343) (256 / 48000) = 0.258` rad per block at 3 m/s,
+  ten times the plan's 0.026, so two such phasors beat at up to about 7.7 Hz and the per-block
+  level and phase near a null step by decibels and radians; (4) with the echoes off the same
+  walk measures 0.5323 dB and 0.0340 rad on the HRTF path (0.4593 dB and 0.0014 rad panned):
+  the direct path alone sits at the 0.5 dB bound (block RMS of a 440 Hz tone over 256 frames
+  plus the distance change). Panned with echoes on: 4.0344 dB and 3.7558 rad.
+- **The other Phase 1 done-whens.** The reflections-off fade (`switching_the_reflections_off_fades_the_echoes_out`)
+  measures a largest block-to-block RMS step of 0.4249 dB (0.7349 dB at the parent). The
+  1160-sample echo and the occlusion-multiplier tests pass with the keep factor 0.9312. The
+  fly-through walk (`--seed 1 --audio`) was not run: it opens the output device and a window,
+  which this lane may not; it moves to the owner's Phase 7 list.
+- **Owner question:** see the lane's report; options (a) amend the done-when (bound against the
+  ideal reference render, a per-slot continuity test, or an absorbent scene where the echoes
+  stay well under the direct path), (b) keep the bounds and record them unmet, (c) a new ADR
+  if the glide itself is in question.
+- **Gate at this commit:** `cargo build` 0; `cargo clippy --workspace --all-targets -- -D
+  warnings` 0; `cargo fmt --all --check` 0; `cargo test --doc --workspace` 0 (7 passed, 1
+  ignored); `cargo nextest run --workspace` (exclusive perf lock, load average 24.0) 389 run,
+  374 passed, 15 failed, 4 skipped: 14 are `vxe-script-wasm` tests failing for want of
+  `target/guests/` in this worktree (after `scripts/build-guests.sh` its 16 tests pass), and
+  one is `walking_past_a_hum_with_echoes_steps_neither_level_nor_phase`, the done-when above.
+
 ### Notes
+
+- `tests/mixer.rs` and `benches/mixer.rs` (not in Phase 1's Files touched) changed
+  mechanically for the removed `tap_count` (now `send`); no assertion changed.
+- `AcousticTargets.send` landed in Phase 1 (the only phase whose Files touched hold both
+  `voice.rs` and `acoustics.rs`); it is the occlusion multiplier, 1 by default.
+- A tap's gain follows the one-pole at block edges and moves linearly within a block (one
+  multiply per sample instead of a dependent chain); a silent slot takes a new delay at once.
 
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line

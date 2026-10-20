@@ -9,6 +9,8 @@ const MPV: f32 = 0.1;
 const FRAMES: usize = 4_800;
 /// The wall material's row: absorption 0.3 per metre, transmission 0.5.
 const W: MaterialId = 1;
+/// The amplitude the wall's face keeps: `(1 - 0.3) ^ 0.2`, one 10 cm skin in and out.
+const KEEP: f32 = 0.931_149_5;
 
 /// A world whose voxels come from a closure of the voxel coordinate.
 struct FnSource<F>(F);
@@ -125,28 +127,28 @@ fn the_x_ray_hits_the_face_and_gives_the_1160_sample_tap() {
         MPV,
     );
     // The +x ray enters the wall exactly at its face.
-    assert_eq!(hits[0].point, [50.0, 128.5, 128.5]);
-    assert!((hits[0].keep - 0.7).abs() < 1e-6);
-    let (taps, n) = taps(&hits, centre(LISTENER), centre(SOURCE), MPV, 1.0);
-    assert_eq!(n as usize, hits.len());
+    let hit = hits[0].expect("the +x ray hits the wall");
+    assert_eq!(hit.point, [50.0, 128.5, 128.5]);
+    assert!((hit.keep - KEEP).abs() < 1e-6, "keep {}", hit.keep);
+    assert!((reflection_keep(0.3) - 0.7f32.powf(0.2)).abs() < 1e-7);
+    let taps = taps(&hits, centre(LISTENER), centre(SOURCE), MPV, 1.0);
+    // A slot sounds exactly when its ray hits; the -x ray, pointing away from the wall, hits
+    // nothing.
+    for (t, h) in taps.iter().zip(&hits) {
+        assert_eq!(t.gain != 0.0, h.is_some(), "{t:?} for {h:?}");
+    }
+    assert_eq!(hits[15], None);
     let path = 4.95 + (4.95f32 * 4.95 + 4.0).sqrt();
     assert_eq!(taps[0].delay_frames, 1160);
-    assert!((taps[0].gain - 0.7 / path).abs() < 1e-6);
-    let delays: Vec<u32> = taps[..usize::from(n)]
-        .iter()
-        .map(|t| t.delay_frames)
-        .collect();
-    println!("tap delays {delays:?}");
+    assert!((taps[0].gain - KEEP / path).abs() < 1e-6);
+    let delays: Vec<u32> = taps.iter().map(|t| t.delay_frames).collect();
+    println!("tap delays by slot {delays:?}");
 }
 
 #[test]
 fn a_wall_4_95_m_away_echoes_1160_samples_after_the_direct_peak() {
     let (left, targets) = impulse_response(&world(|v| (50..60).contains(&v[0])));
-    println!(
-        "{} taps: {:?}",
-        targets.tap_count,
-        &targets.taps[..usize::from(targets.tap_count)]
-    );
+    println!("taps by slot: {:?}", targets.taps);
     let (direct_at, direct) = peak(&left, 0);
     // The HRIR spans 128 taps; past them the direct sound is silent.
     let (echo_at, echo) = peak(&left, direct_at + 128);
@@ -156,7 +158,7 @@ fn a_wall_4_95_m_away_echoes_1160_samples_after_the_direct_peak() {
         "direct peak {direct} at {direct_at}, echo {echo} at {echo_at}: delay {delay}, ratio {ratio}"
     );
     assert!(delay.abs_diff(1160) <= 2, "echo delay {delay} samples");
-    let expected = 0.7 * (1.0 / 10.2888) / (1.0 / 2.0);
+    let expected = KEEP * (1.0 / 10.2888) / (1.0 / 2.0);
     assert!(
         (ratio - expected).abs() <= 0.1 * expected,
         "echo over direct {ratio} vs {expected}"
@@ -166,7 +168,11 @@ fn a_wall_4_95_m_away_echoes_1160_samples_after_the_direct_peak() {
 #[test]
 fn without_the_wall_nothing_echoes() {
     let (left, targets) = impulse_response(&world(|_| false));
-    assert_eq!(targets.tap_count, 0);
+    assert!(
+        targets.taps.iter().all(|t| t.gain == 0.0),
+        "{:?}",
+        targets.taps
+    );
     let (direct_at, direct) = peak(&left, 0);
     let (_, rest) = peak(&left, direct_at + 128);
     println!("direct {direct} at {direct_at}, largest after the HRIR {rest}");
@@ -247,9 +253,10 @@ fn wall(x0: i32, x1: i32) -> impl Fn([i32; 3]) -> bool + Sync + Copy {
 }
 
 /// Every tap carries the source's occlusion multiplier. In Phase 3's two wall scenes the sent
-/// multiplier is Phase 3's figure, and each sent tap is that multiplier times the wall's
-/// `1 - A` over the reflected path `|L - H| + |H - S|` (at least 1 m), delayed by the path's
-/// excess over the direct one, all computed here in `f64` from each hit's point.
+/// multiplier is Phase 3's figure, and each sent tap is that multiplier times the wall's keep
+/// factor `(1 - A) ^ 0.2` over the reflected path `|L - H| + |H - S|` (at least 1 m), delayed
+/// by the path's excess over the direct one, all computed here in `f64` from each hit's point,
+/// in the slot of the hit's ray; every other slot is silent.
 #[test]
 fn every_tap_carries_the_source_occlusion_multiplier() {
     /// The wall row's absorption per metre.
@@ -274,23 +281,31 @@ fn every_tap_carries_the_source_occlusion_multiplier() {
             &reflection_directions(),
             MPV,
         );
+        assert_eq!(
+            sent.send, sent.gain,
+            "the tail's send is the occlusion multiplier"
+        );
         let direct = dist(l, s);
-        let expected: Vec<(u32, f64)> = hits
+        let keep = (1.0 - ABSORPTION).powf(0.2);
+        let expected: Vec<Option<(u32, f64)>> = hits
             .iter()
-            .filter_map(|h| {
+            .map(|h| {
+                let h = h.as_ref()?;
                 let path = dist(l, h.point) + dist(h.point, s);
                 let delay = ((path - direct) / 343.0 * 48_000.0).round();
                 (delay <= MAX_DELAY_FRAMES as f64).then(|| {
-                    let gain = f64::from(sent.gain) * (1.0 - ABSORPTION) / path.max(1.0);
+                    let gain = f64::from(sent.gain) * keep / path.max(1.0);
                     (delay as u32, gain)
                 })
             })
-            .take(MAX_TAPS)
             .collect();
-        assert!(!expected.is_empty(), "the wall gives taps");
-        assert_eq!(usize::from(sent.tap_count), expected.len());
+        assert!(expected.iter().any(Option::is_some), "the wall gives taps");
         let mut worst = 0.0f64;
-        for (t, &(delay, gain)) in sent.taps.iter().zip(&expected) {
+        for (t, e) in sent.taps.iter().zip(&expected) {
+            let Some((delay, gain)) = *e else {
+                assert_eq!(*t, Tap::default(), "wall [{x0}, {x1}): a silent slot");
+                continue;
+            };
             assert_eq!(t.delay_frames, delay, "wall [{x0}, {x1}): tap {t:?}");
             let rel = (f64::from(t.gain) - gain).abs() / gain;
             assert!(
@@ -300,22 +315,21 @@ fn every_tap_carries_the_source_occlusion_multiplier() {
             worst = worst.max(rel);
         }
         println!(
-            "wall [{x0}, {x1}): multiplier {}, {} taps, gains {:?}, worst relative {worst:e}",
+            "wall [{x0}, {x1}): multiplier {}, {} sounding slots, gains {:?}, worst relative \
+             {worst:e}",
             sent.gain,
-            sent.tap_count,
-            sent.taps[..usize::from(sent.tap_count)]
-                .iter()
-                .map(|t| t.gain)
-                .collect::<Vec<_>>()
+            expected.iter().flatten().count(),
+            sent.taps.iter().map(|t| t.gain).collect::<Vec<_>>()
         );
     }
 }
 
-/// Phase 3's two wall scenes with reflections on: the rendered ratios to the open scene.
-/// These are measured, not derived: they depend on where the sixteen rays hit the walls.
+/// Phase 3's two wall scenes with reflections on: the rendered ratios to the open scene, with
+/// each face keeping `(1 - A) ^ 0.2`. These are measured, not derived: they depend on where the
+/// sixteen rays hit the walls.
 #[test]
-fn the_occlusion_scenes_with_reflections_on_render_at_0_1136_and_0_6452() {
-    for ((x0, x1), freq, expected) in [((100, 150), 100.0, 0.1136), ((100, 105), 2000.0, 0.6452)] {
+fn the_occlusion_scenes_with_reflections_on_render_at_0_1272_and_0_7773() {
+    for ((x0, x1), freq, expected) in [((100, 150), 100.0, 0.1272), ((100, 105), 2000.0, 0.7773)] {
         let open = occluded_render(&world(|_| false), freq, true);
         let behind = occluded_render(&world(wall(x0, x1)), freq, true);
         let ratio = behind / open;
@@ -350,6 +364,6 @@ fn with_reflections_off_no_taps_are_sent() {
     let Command::SetAcoustics(_, t) = &sent[0] else {
         panic!("expected SetAcoustics, got {:?}", sent[0]);
     };
-    assert_eq!(t.tap_count, 0);
+    assert!(t.taps.iter().all(|t| t.gain == 0.0), "{:?}", t.taps);
     assert_eq!(acoustics.active_taps(), 0);
 }

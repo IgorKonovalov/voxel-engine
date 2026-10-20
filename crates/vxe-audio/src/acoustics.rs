@@ -26,18 +26,22 @@
 //! the world `x` axis ([`reflection_directions`]). A ray that enters a solid within
 //! [`REFLECTION_RANGE_METRES`] hits at `H`, the entry of its first solid run (`origin + dir *
 //! t0`, exact in fixed point), with that run's material `m`. Each hit gives every voice at `S`
-//! one tap ([`crate::Tap`]):
+//! the tap ([`crate::Tap`]) in the slot of its ray:
 //! - delay `(|L - H| + |H - S| - |L - S|) / 343 m/s`, the excess over the direct path, in whole
 //!   frames, since the mixer gives the direct path no propagation delay; a tap past
-//!   [`crate::MAX_DELAY_FRAMES`] is dropped;
-//! - gain `(1 - A(m)) / max(|L - H| + |H - S|, 1 m)` times the source's occlusion multiplier
+//!   [`crate::MAX_DELAY_FRAMES`] is left silent;
+//! - gain `keep(m) / max(|L - H| + |H - S|, 1 m)` times the source's occlusion multiplier
 //!   (the mean of its seven probe rays above). The leg from `H` to `S` is not traced: a source
 //!   occluded from the listener is taken as equally occluded from every reflector, so an echo
 //!   off the near face of a wall that hides the source is no louder than the source through it.
 //!
-//! The mixer feeds the taps, times the voice's own gain, into the voice's mono signal ahead of
-//! its HRIR, so echoes share the voice's direction (see `mixer.rs`). With reflections switched
-//! off ([`Acoustics::set_reflections`]) no ray is traced and every voice gets no taps.
+//! A face keeps `keep(m) = (1 - A(m)) ^ (2 * REFLECTION_SKIN_METRES / 1 m)` of the amplitude
+//! (ADR-0015): the wave enters one skin of the material and comes back out, absorbed per
+//! metre as a transmitted ray is.
+//!
+//! A slot whose ray hits nothing has gain 0. The mixer glides each slot from what it plays to
+//! its new target (see `mixer.rs`). With reflections switched off ([`Acoustics::set_reflections`])
+//! no ray is traced and every slot's gain is 0, so the echoes fade out.
 //!
 //! # Cadence
 //!
@@ -64,6 +68,18 @@ const SIDE_PROBE_METRES: f32 = 0.5;
 pub const REFLECTION_RANGE_METRES: f32 = 50.0;
 /// Reflection rays per listener.
 pub const REFLECTION_RAYS: usize = 16;
+/// The depth of material a reflection crosses on the way in, and again on the way out, for
+/// its keep factor.
+pub const REFLECTION_SKIN_METRES: f32 = 0.1;
+
+// One tap slot per reflection ray.
+const _: () = assert!(MAX_TAPS == REFLECTION_RAYS);
+
+/// The amplitude a face of a material with absorption `a` per metre keeps on reflection:
+/// `(1 - a) ^ (2 * REFLECTION_SKIN_METRES / 1 m)`.
+pub fn reflection_keep(a: f32) -> f32 {
+    (1.0 - a).clamp(0.0, 1.0).powf(2.0 * REFLECTION_SKIN_METRES)
+}
 
 /// The sixteen reflection directions: a Fibonacci sphere in world axes with its poles on `x`,
 /// `x_i = 1 - 2i / 15`, `r_i = sqrt(1 - x_i^2)`, `phi_i = i pi (3 - sqrt 5)`,
@@ -78,8 +94,8 @@ pub fn reflection_directions() -> [[f32; 3]; REFLECTION_RAYS] {
     })
 }
 
-/// A reflection ray's surface: where it entered the first solid (voxel units) and that solid's
-/// `1 - A`.
+/// A reflection ray's surface: where it entered the first solid (voxel units) and the
+/// amplitude its face keeps ([`reflection_keep`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Reflection {
     pub point: [f32; 3],
@@ -95,71 +111,62 @@ fn fixed_ray(from: [f32; 3], unit: [f32; 3]) -> (Fixed3, [i64; 3], f32) {
     (origin, dir, length(dir.map(|c| c as f32)))
 }
 
-/// The surfaces the reflection rays from `listener` (voxel units) hit within
-/// [`REFLECTION_RANGE_METRES`], in direction order; a ray that hits nothing is left out.
+/// The surface each reflection ray from `listener` (voxel units) hits within
+/// [`REFLECTION_RANGE_METRES`], by ray; `None` for a ray that hits nothing.
 pub fn reflections(
     world: &World,
     table: &MaterialTable,
     listener: [f32; 3],
     directions: &[[f32; 3]; REFLECTION_RAYS],
     metres_per_voxel: f32,
-) -> Vec<Reflection> {
+) -> [Option<Reflection>; REFLECTION_RAYS] {
     let one = FIXED_ONE as f64;
     let range = REFLECTION_RANGE_METRES / metres_per_voxel;
-    let mut hits = Vec::with_capacity(REFLECTION_RAYS);
-    for &d in directions {
+    directions.map(|d| {
         let (origin, dir, dir_len) = fixed_ray(listener, d);
         let max_t = (range * FIXED_ONE as f32 * FIXED_ONE as f32 / dir_len).round() as i64;
-        let Some(run) = world
+        let run = world
             .trace_materials(origin, dir, max_t)
             .into_iter()
-            .find(|r| r.material != AIR)
-        else {
-            continue;
-        };
+            .find(|r| r.material != AIR)?;
         // origin + dir * t0 / 256 in fixed units, then voxels.
         let point = std::array::from_fn(|k| {
             ((origin.0[k] as f64 + dir[k] as f64 * run.t0 as f64 / one) / one) as f32
         });
         let a = table.get(run.material).map_or(0.0, |m| m.acoustic[0]);
-        hits.push(Reflection {
+        Some(Reflection {
             point,
-            keep: (1.0 - a).clamp(0.0, 1.0),
-        });
-    }
-    hits
+            keep: reflection_keep(a),
+        })
+    })
 }
 
-/// The taps the `hits` give a voice at `source` heard at `listener` (voxel units), each gain
-/// scaled by the source's occlusion multiplier `occlusion_gain`, at most [`MAX_TAPS`]; taps
-/// past [`MAX_DELAY_FRAMES`] are dropped.
+/// The tap each of `hits` gives a voice at `source` heard at `listener` (voxel units), slot
+/// for slot, each gain scaled by the source's occlusion multiplier `occlusion_gain`. A slot
+/// without a hit, or whose delay is past [`MAX_DELAY_FRAMES`], is silent (gain 0, delay 0).
 pub fn taps(
-    hits: &[Reflection],
+    hits: &[Option<Reflection>; REFLECTION_RAYS],
     listener: [f32; 3],
     source: [f32; 3],
     metres_per_voxel: f32,
     occlusion_gain: f32,
-) -> ([Tap; MAX_TAPS], u8) {
-    let mut out = [Tap::default(); MAX_TAPS];
-    let mut n = 0;
+) -> [Tap; MAX_TAPS] {
     let direct = length(sub(source, listener)) * metres_per_voxel;
-    for h in hits {
-        if n == MAX_TAPS {
-            break;
-        }
+    hits.map(|h| {
+        let Some(h) = h else {
+            return Tap::default();
+        };
         let path =
             (length(sub(h.point, listener)) + length(sub(source, h.point))) * metres_per_voxel;
         let delay = ((path - direct).max(0.0) / SPEED_OF_SOUND * RATE as f32).round();
         if delay > MAX_DELAY_FRAMES as f32 {
-            continue;
+            return Tap::default();
         }
-        out[n] = Tap {
+        Tap {
             delay_frames: delay as u32,
             gain: h.keep / path.max(1.0) * occlusion_gain,
-        };
-        n += 1;
-    }
-    (out, n as u8)
+        }
+    })
 }
 
 /// Mixer blocks rendered so far, shared between the mixer and the game thread.
@@ -278,8 +285,12 @@ impl Acoustics {
     }
 
     /// Switches the early reflections on (the default) or off. Off, no reflection ray is
-    /// traced and every probe sends no taps; a voice keeps its old taps until its next probe.
+    /// traced and every probe sends silent taps, which the mixer fades out. A change makes
+    /// every voice due at the next [`Acoustics::update`].
     pub fn set_reflections(&mut self, on: bool) {
+        if on != self.reflections {
+            self.last.clear();
+        }
         self.reflections = on;
     }
 
@@ -293,7 +304,7 @@ impl Acoustics {
         self.probed
     }
 
-    /// Taps the voices carry as of their last probes.
+    /// Tap slots with a nonzero gain the voices carry as of their last probes.
     pub fn active_taps(&self) -> usize {
         self.last.values().map(|s| s.taps).sum()
     }
@@ -328,7 +339,7 @@ impl Acoustics {
                 continue;
             }
             let o = occlusion(world, table, listener.position, source, metres_per_voxel);
-            let (taps, tap_count) = if self.reflections {
+            let taps = if self.reflections {
                 let hits = hits.get_or_insert_with(|| {
                     reflections(
                         world,
@@ -340,7 +351,7 @@ impl Acoustics {
                 });
                 taps(hits, listener.position, source, metres_per_voxel, o.gain)
             } else {
-                ([Tap::default(); MAX_TAPS], 0)
+                [Tap::default(); MAX_TAPS]
             };
             send(Command::SetAcoustics(
                 id,
@@ -348,7 +359,7 @@ impl Acoustics {
                     gain: o.gain,
                     cutoff_hz: o.cutoff_hz,
                     taps,
-                    tap_count,
+                    send: o.gain,
                 },
             ));
             self.last.insert(
@@ -357,7 +368,7 @@ impl Acoustics {
                     source,
                     listener: listener.position,
                     block: now,
-                    taps: usize::from(tap_count),
+                    taps: taps.iter().filter(|t| t.gain != 0.0).count(),
                 },
             );
             self.probed += 1;

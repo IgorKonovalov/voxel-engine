@@ -32,12 +32,13 @@ mod output;
 mod voice;
 
 pub use acoustics::{
-    Acoustics, BlockClock, Occlusion, REFLECTION_RANGE_METRES, REFLECTION_RAYS, Reflection,
-    occlusion, reflection_directions, reflections, taps,
+    Acoustics, BlockClock, Occlusion, REFLECTION_RANGE_METRES, REFLECTION_RAYS,
+    REFLECTION_SKIN_METRES, Reflection, occlusion, reflection_directions, reflection_keep,
+    reflections, taps,
 };
 pub use command::{COMMAND_CAPACITY, Command};
 pub use hrtf::Hrtf;
-pub use mixer::{MAX_VOICES, Mixer};
+pub use mixer::{MAX_VOICES, Mixer, TAP_JUMP_FRAMES, TAP_SILENT, TAP_SLEW_FRAMES_PER_FRAME};
 pub use output::{Output, OutputStats};
 pub use voice::{
     AcousticTargets, MAX_DELAY_FRAMES, MAX_TAPS, OPEN_CUTOFF_HZ, PlayParams, Sound, Tap, VoiceId,

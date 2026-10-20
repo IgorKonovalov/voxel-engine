@@ -49,14 +49,14 @@ impl PlayParams {
     }
 }
 
-/// Taps a voice carries at most.
+/// Taps a voice carries: one slot per reflection direction ([`crate::REFLECTION_RAYS`]).
 pub const MAX_TAPS: usize = 16;
 /// The longest tap delay: 200 ms at [`crate::RATE`], the length of a voice's delay line.
 pub const MAX_DELAY_FRAMES: usize = 9_600;
 /// The cutoff of an unobstructed voice; at or above it the low-pass is bypassed.
 pub const OPEN_CUTOFF_HZ: f32 = 20_000.0;
 
-/// One delayed copy of a voice's signal: an early reflection.
+/// One delayed copy of a voice's signal: an early reflection. Gain 0 is a slot with no hit.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Tap {
     pub delay_frames: u32,
@@ -64,23 +64,45 @@ pub struct Tap {
 }
 
 /// What the world does to a voice, from [`crate::Acoustics`]: a gain multiplier and a low-pass
-/// cutoff for the direct path, and the reflection taps.
+/// cutoff for the direct path, the reflection taps and the send into the shared tail.
+///
+/// `taps` is slot-indexed: slot `i` is the reflection off the wall reflection ray `i` hits
+/// ([`crate::reflection_directions`]), so a slot keeps its meaning from one probe to the next
+/// and the mixer glides each slot to its new delay and gain instead of swapping the set.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AcousticTargets {
     pub gain: f32,
     pub cutoff_hz: f32,
     pub taps: [Tap; MAX_TAPS],
-    pub tap_count: u8,
+    /// The voice's send into the late tail: the occlusion multiplier.
+    pub send: f32,
 }
 
 impl Default for AcousticTargets {
-    /// Unobstructed: gain 1, cutoff [`OPEN_CUTOFF_HZ`], no taps.
+    /// Unobstructed: gain 1, cutoff [`OPEN_CUTOFF_HZ`], every tap silent, send 1.
     fn default() -> Self {
         Self {
             gain: 1.0,
             cutoff_hz: OPEN_CUTOFF_HZ,
             taps: [Tap::default(); MAX_TAPS],
-            tap_count: 0,
+            send: 1.0,
+        }
+    }
+}
+
+/// A tap slot as the mixer plays it now: the delay in frames (fractional while it glides) and
+/// the gain, both moving toward the slot's [`Tap`] target.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct TapState {
+    pub delay: f32,
+    pub gain: f32,
+}
+
+impl TapState {
+    pub fn at(t: Tap) -> Self {
+        Self {
+            delay: t.delay_frames.min(MAX_DELAY_FRAMES as u32) as f32,
+            gain: t.gain,
         }
     }
 }
@@ -100,11 +122,8 @@ pub(crate) struct Voice {
     pub pan: [f32; 2],
     /// The acoustics' targets for this voice.
     pub acoustic: AcousticTargets,
-    /// The taps the next block fades out from while [`Voice::fading`] (one block).
-    pub old_taps: [Tap; MAX_TAPS],
-    pub old_tap_count: u8,
-    /// The taps changed since the last block rendered.
-    pub fading: bool,
+    /// Each tap slot's delay and gain as played so far, gliding toward `acoustic.taps`.
+    pub taps: [TapState; MAX_TAPS],
     /// The voice's own gain, as smoothed so far, for the delay line's input.
     pub own_gain: f32,
     /// Where the next block goes in [`VoiceBuffers::echo`].
@@ -159,9 +178,7 @@ impl Voice {
             gain: 0.0,
             pan: [0.0; 2],
             acoustic: AcousticTargets::default(),
-            old_taps: [Tap::default(); MAX_TAPS],
-            old_tap_count: 0,
-            fading: false,
+            taps: [TapState::default(); MAX_TAPS],
             own_gain: 0.0,
             echo_pos: 0,
             lowpass_a: 1.0,
@@ -172,17 +189,14 @@ impl Voice {
         }
     }
 
-    /// The longest delay among the taps this voice plays now.
+    /// The longest delay, in whole frames rounded up, among the tap slots this voice plays now
+    /// or is moving toward.
     pub fn tap_tail(&self) -> usize {
-        let cur = &self.acoustic.taps[..usize::from(self.acoustic.tap_count)];
-        let old = &self.old_taps[..if self.fading {
-            usize::from(self.old_tap_count)
-        } else {
-            0
-        }];
-        cur.iter()
-            .chain(old)
-            .map(|t| t.delay_frames as usize)
+        self.taps
+            .iter()
+            .zip(&self.acoustic.taps)
+            .filter(|(s, t)| s.gain != 0.0 || t.gain != 0.0)
+            .map(|(s, t)| (s.delay.ceil() as usize).max(t.delay_frames as usize))
             .max()
             .unwrap_or(0)
             .min(MAX_DELAY_FRAMES)

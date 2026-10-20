@@ -9,10 +9,12 @@
 //!    sample; at [`OPEN_CUTOFF_HZ`] its target is 1, where the filter passes its input;
 //! 3. add the early reflections: the voice's samples times its own gain (smoothed like the
 //!    others, no distance gain; the acoustics fold the occlusion into each tap's gain) go into a
-//!    [`MAX_DELAY_FRAMES`] delay line, and each [`crate::Tap`] adds the line's sample
-//!    `delay_frames` back times the tap's gain. When the acoustics replace the taps, the next
-//!    block renders both sets and crossfades from old to new along the same raised cosine as a
-//!    direction change;
+//!    [`MAX_DELAY_FRAMES`] delay line, and each tap slot adds the line's sample its delay back
+//!    times its gain. A slot glides toward its [`crate::Tap`] target (see [`render_tap`]): the
+//!    delay moves at most [`TAP_SLEW_FRAMES_PER_FRAME`] per frame, read between ring samples by
+//!    linear interpolation, and the gain follows the one-pole smoother. A slot whose target
+//!    moved more than [`TAP_JUMP_FRAMES`] (its ray now hits another wall) fades below
+//!    [`TAP_SILENT`] first, then takes the new delay and fades in;
 //! 4. spatialise. On the HRTF path the samples run through the two 128-tap FIRs of the measured
 //!    direction nearest to the source (time-domain convolution over the voice's last `taps - 1`
 //!    inputs and this block). When the nearest direction changes between blocks, the block is
@@ -28,11 +30,19 @@ use std::sync::Arc;
 use crate::acoustics::BlockClock;
 use crate::command::Command;
 use crate::hrtf::Hrtf;
-use crate::voice::{MAX_DELAY_FRAMES, OPEN_CUTOFF_HZ, Tap, Voice, VoiceBuffers, VoiceId};
+use crate::voice::{MAX_DELAY_FRAMES, OPEN_CUTOFF_HZ, Tap, TapState, Voice, VoiceBuffers, VoiceId};
 use crate::{BLOCK, Listener, RATE, SMOOTHING_SECONDS, cross, dot, length, normalize_or, sub};
 
 /// Voices the mixer holds at once.
 pub const MAX_VOICES: usize = 64;
+/// The most a tap's delay moves toward its target per frame of audio: a pitch glide of at most
+/// 5 percent on that echo while its path changes.
+pub const TAP_SLEW_FRAMES_PER_FRAME: f32 = 0.05;
+/// A tap whose target delay is more than this far from its current delay (10 ms; its ray hit
+/// another wall) is faded out and back in at the new delay instead of gliding there.
+pub const TAP_JUMP_FRAMES: f32 = 480.0;
+/// A tap gain below this is silent: a jumping tap takes its new delay once its gain is below it.
+pub const TAP_SILENT: f32 = 1e-3;
 
 /// Mixes voices into interleaved stereo `f32` at [`RATE`].
 pub struct Mixer {
@@ -48,8 +58,8 @@ pub struct Mixer {
     input: Vec<f32>,
     /// The old and new FIR outputs of one voice for a crossfade, per ear.
     wet: [[Vec<f32>; 2]; 2],
-    /// One block of one voice's reflections, from its new taps and (while they fade) its old.
-    echo_mix: [Vec<f32>; 2],
+    /// One block of one voice's reflections.
+    echo: Vec<f32>,
     /// Voices that ended since the last [`Mixer::drain_finished`].
     finished: Vec<VoiceId>,
     /// Per-sample step of the one-pole smoother.
@@ -80,7 +90,7 @@ impl Mixer {
             dry: vec![0.0; BLOCK],
             input: vec![0.0; taps - 1 + BLOCK],
             wet: std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; BLOCK])),
-            echo_mix: std::array::from_fn(|_| vec![0.0; BLOCK]),
+            echo: vec![0.0; BLOCK],
             finished: Vec::with_capacity(MAX_VOICES),
             smooth_k: 1.0 - (-1.0 / (SMOOTHING_SECONDS * RATE as f32)).exp(),
             clock: BlockClock::default(),
@@ -140,20 +150,11 @@ impl Mixer {
             Command::SetListener(l) => self.listener = l,
             Command::SetAcoustics(id, targets) => {
                 if let Some(v) = self.voice_mut(id) {
-                    let count = usize::from(targets.tap_count.min(crate::MAX_TAPS as u8));
-                    let changed = count != usize::from(v.acoustic.tap_count)
-                        || targets.taps[..count] != v.acoustic.taps[..count];
-                    // A second change before the block renders keeps fading out from what
-                    // was last heard.
-                    if v.started && changed && !v.fading {
-                        v.old_taps = v.acoustic.taps;
-                        v.old_tap_count = v.acoustic.tap_count;
-                        v.fading = true;
-                    }
                     v.acoustic = targets;
-                    v.acoustic.tap_count = count as u8;
+                    // A fresh voice starts at its targets; a playing one glides to them.
                     if !v.started {
                         v.lowpass_a = lowpass_coefficient(targets.cutoff_hz);
+                        v.taps = targets.taps.map(TapState::at);
                     }
                 }
             }
@@ -244,22 +245,16 @@ impl Mixer {
             } else if let Some(&last) = dry.last() {
                 v.lowpass = last;
             }
-            let taps = &v.acoustic.taps[..usize::from(v.acoustic.tap_count)];
-            let ring = &v.buffers.echo;
-            let [mix_new, mix_old] = &mut self.echo_mix;
-            if v.fading {
-                let old = &v.old_taps[..usize::from(v.old_tap_count)];
-                let (a, b) = (&mut mix_old[..n], &mut mix_new[..n]);
-                tap_block(old, ring, echo_start, a);
-                tap_block(taps, ring, echo_start, b);
-                for (i, s) in dry.iter_mut().enumerate() {
-                    *s += a[i] + (b[i] - a[i]) * crossfade_weight(i, n);
-                }
-                v.fading = false;
-            } else if !taps.is_empty() {
-                let b = &mut mix_new[..n];
-                tap_block(taps, ring, echo_start, b);
-                for (s, &e) in dry.iter_mut().zip(b.iter()) {
+            // The gain smoother's decay over this block.
+            let decay = (1.0 - k).powi(n as i32);
+            let echo = &mut self.echo[..n];
+            echo.fill(0.0);
+            let mut any = false;
+            for (state, target) in v.taps.iter_mut().zip(&v.acoustic.taps) {
+                any |= render_tap(state, *target, &v.buffers.echo, echo_start, echo, decay);
+            }
+            if any {
+                for (s, &e) in dry.iter_mut().zip(echo.iter()) {
                     *s += e;
                 }
             }
@@ -348,28 +343,84 @@ fn crossfade_weight(i: usize, n: usize) -> f32 {
     0.5 - 0.5 * (std::f32::consts::PI * x).cos()
 }
 
-/// `out[i]` = the taps' sum at ring position `at + i`: each tap's gain times the sample
-/// `delay_frames` before it. `ring` is at least [`MAX_DELAY_FRAMES`] plus one block long and
-/// the block at `at` was written this block, so every delay up to [`MAX_DELAY_FRAMES`] reads a
-/// sample not yet overwritten. Each tap finds its read start once and adds over the block in
-/// at most two contiguous runs (split where the ring wraps), taps in order, so every output
-/// sample sums its taps in the same order as a per-sample loop would.
-fn tap_block(taps: &[Tap], ring: &[f32], at: usize, out: &mut [f32]) {
+/// Plays one tap slot over a block into `out`, moving `state` toward `target`, and returns
+/// whether it added anything. `ring` holds the voice's own-gained signal, at least
+/// [`MAX_DELAY_FRAMES`] plus one block long, with this block written at `at`, so every read up
+/// to [`MAX_DELAY_FRAMES`] back finds a sample not yet overwritten.
+///
+/// The delay moves toward the target by at most [`TAP_SLEW_FRAMES_PER_FRAME`] per frame,
+/// linearly across the block, and is read at its fractional position by linear interpolation
+/// between the two ring samples around it. While the target is more than [`TAP_JUMP_FRAMES`]
+/// away the delay holds and the gain heads for 0; a gain below [`TAP_SILENT`] takes a new
+/// delay at once. A silent target holds the delay where it is, so a lost hit fades out at its
+/// last delay. The gain follows the one-pole smoother of [`crate::SMOOTHING_SECONDS`] at block
+/// edges (`decay` is the smoother's factor over the block) and moves linearly between them;
+/// within `1e-7` of its target it settles on it. A settled slot reads whole-frame samples with
+/// a constant gain.
+fn render_tap(
+    state: &mut TapState,
+    target: Tap,
+    ring: &[f32],
+    at: usize,
+    out: &mut [f32],
+    decay: f32,
+) -> bool {
+    let n = out.len();
+    let target_delay = target.delay_frames.min(MAX_DELAY_FRAMES as u32) as f32;
+    if target.gain != 0.0 && state.delay != target_delay && state.gain.abs() < TAP_SILENT {
+        state.delay = target_delay;
+    }
+    let jumping = target.gain != 0.0 && (target_delay - state.delay).abs() > TAP_JUMP_FRAMES;
+    let (d0, g0) = (state.delay, state.gain);
+    let d1 = if jumping || target.gain == 0.0 {
+        d0
+    } else {
+        let reach = TAP_SLEW_FRAMES_PER_FRAME * n as f32;
+        d0 + (target_delay - d0).clamp(-reach, reach)
+    };
+    let gain_to = if jumping { 0.0 } else { target.gain };
+    let mut g1 = gain_to + (g0 - gain_to) * decay;
+    if (g1 - gain_to).abs() < 1e-7 {
+        g1 = gain_to;
+    }
+    state.delay = d1;
+    state.gain = g1;
+    if g0 == 0.0 && g1 == 0.0 {
+        return false;
+    }
     let len = ring.len();
-    out.fill(0.0);
-    for t in taps {
-        let d = (t.delay_frames as usize).min(MAX_DELAY_FRAMES);
+    let inv = 1.0 / n as f32;
+    if d0 == d1 && d0.fract() == 0.0 {
+        let d = d0 as usize;
         let start = (at + len - d) % len;
-        let first = (len - start).min(out.len());
+        let first = (len - start).min(n);
         let (a, b) = out.split_at_mut(first);
-        for (y, &x) in a.iter_mut().zip(&ring[start..start + first]) {
-            *y += t.gain * x;
+        let src = ring[start..start + first].iter().chain(&ring[..b.len()]);
+        if g0 == g1 {
+            for (y, &x) in a.iter_mut().chain(b.iter_mut()).zip(src) {
+                *y += g0 * x;
+            }
+        } else {
+            let step = (g1 - g0) * inv;
+            for (j, (y, &x)) in a.iter_mut().chain(b.iter_mut()).zip(src).enumerate() {
+                *y += (g0 + step * (j + 1) as f32) * x;
+            }
         }
-        let rest = b.len();
-        for (y, &x) in b.iter_mut().zip(&ring[..rest]) {
-            *y += t.gain * x;
+    } else {
+        let (dd, dg) = (f64::from(d1 - d0) / n as f64, (g1 - g0) * inv);
+        for (j, y) in out.iter_mut().enumerate() {
+            let d = f64::from(d0) + dd * (j + 1) as f64;
+            // The read position, made positive by a whole ring before the modulo.
+            let pos = (at + j + len) as f64 - d;
+            let base = pos.floor();
+            let frac = (pos - base) as f32;
+            let i0 = base as usize % len;
+            let i1 = (i0 + 1) % len;
+            let x = ring[i0] + (ring[i1] - ring[i0]) * frac;
+            *y += (g0 + dg * (j + 1) as f32) * x;
         }
     }
+    true
 }
 
 /// Independent partial sums in [`convolve`]: one dependent chain of `f32` adds runs at one add

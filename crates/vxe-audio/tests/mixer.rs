@@ -239,12 +239,12 @@ fn moving_taps(voice: u32, block: u32) -> AcousticTargets {
         gain: 0.8,
         cutoff_hz: 2_000.0,
         taps,
-        tap_count: MAX_TAPS as u8,
+        send: 0.8,
     }
 }
 
-/// While counting, every block turns the listener (every voice crossfades directions), replaces
-/// every voice's 16 taps (every voice crossfades its reflections), keeps the 2 kHz low-pass on,
+/// While counting, every block turns the listener (every voice crossfades directions), moves
+/// every voice's 16 tap targets (every voice's taps glide), keeps the 2 kHz low-pass on,
 /// and one block stops a voice and plays another into its pooled buffers.
 #[test]
 fn sixty_four_voices_render_a_block_without_allocating() {
