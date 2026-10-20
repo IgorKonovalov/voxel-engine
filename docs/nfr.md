@@ -311,6 +311,12 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   and 2.8504 ms. Overhead per 100 inputs: 49.5 µs, 8.0 µs and -237.2 µs (the last round's
   noise exceeds the difference). Under the 100 µs line in every round; the readings are noisy
   and want a quiet-box re-read.
+  **Close-review re-read (Plan 0018, c1ea275, same machine, exclusive perf lock, still not
+  quiet: 1-minute load 20.82 at the start and 13.60 at the end):** one round, through
+  `EchoLogic` 3.7783 ms (CI 3.7630 to 3.7943 ms), direct carves with grid updates 3.7716 ms (CI
+  3.7528 to 3.7914 ms), direct carves alone 2.4188 ms. The overhead is 6.7 µs per 100 inputs,
+  inside the overlapping intervals and consistent with the line. A quiet-box reading is still
+  owed.
 - **Component boundary (budgets since the Plan 0011 close):** a host call from a logic
   component (the `apply` import of a radius-1 m carve: the op's wire bytes out, the tagged
   answer back) costs at most 2 µs more than a native `Host::apply`; the fly-through's `Bench`

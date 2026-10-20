@@ -2,7 +2,7 @@
 
 > **Status:** accepted (2026-10-17)
 > **Date:** 2026-10-17
-> **Related plan(s):** [Plan 0018](../plans/0018-server-routed-stamp-drop-and-remove.md)
+> **Related plan(s):** [Plan 0018](../plans/done/0018-server-routed-stamp-drop-and-remove.md)
 
 ## Context
 
@@ -60,6 +60,15 @@ snapshot ADR-0007 anticipates.
   table, and every test that adds 60 to an expected length changes.
 - **A client must hold the prefab before the op arrives**; until M9 that is the
   application's duty, and a missing id is a desync, not a download.
+
+## Outcome (2026-10-20, Plan 0018 closed, v0.15.0)
+
+Shipped as decided. The stamp entry is 34 bytes. The 16³ vault adds `8 + 8 716` bytes to a
+save's header once, however often it is stamped. A flipped content byte is refused as
+`WireError::PrefabMismatch`. `PrefabRegistry` lives in `vxe-world`, so the server, the owned
+client and `LogFile.prefabs` share one type. `EditError::UnknownPrefab` takes wire error
+tag 3, which leaves tag 2 for Plan 0019's `OutOfRange`. An owned client that lacks a stamp's
+prefab reports a desync with `ours: None`. Format-1 files still decode, with an empty table.
 
 ## Alternatives considered
 
