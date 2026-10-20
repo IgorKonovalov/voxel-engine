@@ -306,7 +306,11 @@ impl Snapshot {
 struct Yield<'t> {
     below: u32,
     materials: &'t MaterialTable,
-    counts: HashMap<CellCoord, u32>,
+    /// Per cell reached, its solid count and whether one of its voxels has yielded.
+    counts: HashMap<CellCoord, (u32, bool)>,
+    /// The cells a voxel has yielded in, in the order they first did: the only cells a drop
+    /// can crush voxels of.
+    yielded: Vec<CellCoord>,
 }
 
 impl<'t> Yield<'t> {
@@ -315,6 +319,7 @@ impl<'t> Yield<'t> {
             below: u32::from(below),
             materials,
             counts: HashMap::new(),
+            yielded: Vec::new(),
         }
     }
 
@@ -323,11 +328,20 @@ impl<'t> Yield<'t> {
         if self.materials.is_indestructible(m) {
             return false;
         }
-        let n = *self
-            .counts
-            .entry(cell)
-            .or_insert_with(|| brick.solid_bits().iter().map(|w| w.count_ones()).sum());
-        n < self.below
+        // A uniform solid brick holds 512 solid voxels: no count to look up below that.
+        if matches!(brick, Brick::Uniform(_)) && self.below <= 512 {
+            return false;
+        }
+        let (n, seen) = self.counts.entry(cell).or_insert_with(|| {
+            let n = brick.solid_bits().iter().map(|w| w.count_ones()).sum();
+            (n, false)
+        });
+        let yields = *n < self.below;
+        if yields && !*seen {
+            *seen = true;
+            self.yielded.push(cell);
+        }
+        yields
     }
 }
 
@@ -700,24 +714,27 @@ impl RubbleStage {
 /// The `z` of the lowest voxel of each run of solid region voxels in a column's `parts`,
 /// bottom first: a solid voxel whose voxel below is not a solid region voxel (or lies in a
 /// cell outside the region).
-fn run_bottoms(parts: &[(i32, [MaterialId; 8])]) -> Vec<i32> {
-    let mut out = Vec::new();
+fn run_bottoms(parts: &[(i32, [MaterialId; 8])]) -> impl Iterator<Item = i32> + '_ {
     let mut below_solid = false;
     let mut prev_z: Option<i32> = None;
-    for (cz, col) in parts {
+    parts.iter().flat_map(move |(cz, col)| {
         if prev_z != Some(cz - 1) {
             below_solid = false;
         }
+        prev_z = Some(*cz);
+        // At most 4 runs start in 8 voxels; the array has room for 8.
+        let mut out = [0; 8];
+        let mut n = 0;
         for (lz, &m) in col.iter().enumerate() {
             let solid = m != AIR;
             if solid && !below_solid {
-                out.push(cz * BE + lz as i32);
+                out[n] = cz * BE + lz as i32;
+                n += 1;
             }
             below_solid = solid;
         }
-        prev_z = Some(*cz);
-    }
-    out
+        out.into_iter().take(n)
+    })
 }
 
 impl World {
@@ -827,34 +844,58 @@ impl World {
         let mut bounds = Bounds::default();
         let mut compose = Compose::<B>::new(&snap, &|_| false);
         let mut touched = BTreeSet::new();
-        if yields.is_some() {
-            // Every solid voxel outside the region in a swept span yields (the gap reached
-            // past it), so each is crushed; spans of two runs of one column may overlap.
+        if let Some(y) = yields.as_mut().filter(|y| !y.yielded.is_empty()) {
+            // Every solid voxel outside the region in a swept span yielded when the gap scan
+            // passed it, so it lies in a cell of `yielded`, and each is crushed. Per column, the
+            // spans of its runs (which may overlap) are merged, and each meets the yielded
+            // cells of its cell stack.
+            y.yielded.sort_unstable();
             let mut by_cell: BTreeMap<CellCoord, Vec<usize>> = BTreeMap::new();
-            let mut swept: Vec<i32> = Vec::new();
+            let mut spans: Vec<(i32, i32)> = Vec::new();
+            let mut stack: Option<[i32; 2]> = None;
+            let mut stack_cells: Vec<CellCoord> = Vec::new();
             for (xy, parts) in &columns {
-                let [x, y] = *xy;
-                swept.clear();
-                for z in run_bottoms(parts) {
-                    swept.extend(z - dropped..z);
+                let [x, y_] = *xy;
+                let here = [x.div_euclid(BE), y_.div_euclid(BE)];
+                if stack != Some(here) {
+                    stack = Some(here);
+                    stack_cells.clear();
+                    stack_cells.extend(
+                        y.yielded
+                            .iter()
+                            .filter(|c| [c.0[0], c.0[1]] == here)
+                            .copied(),
+                    );
                 }
-                swept.sort_unstable();
-                swept.dedup();
-                for &z in &swept {
-                    let v = [x, y, z];
-                    let cell = cell_of(v);
-                    if snap.bricks.contains_key(&CellKey(cell)) {
-                        continue;
+                if stack_cells.is_empty() {
+                    continue;
+                }
+                spans.clear();
+                for z in run_bottoms(parts) {
+                    let (lo, hi) = (z - dropped, z - 1);
+                    match spans.last_mut() {
+                        Some(last) if lo <= last.1 + 1 => last.1 = last.1.max(hi),
+                        _ => spans.push((lo, hi)),
                     }
-                    let m = reader
-                        .brick(cell)
-                        .expect("scanned resident")
-                        .get(index_of(v));
-                    if m != AIR {
-                        crushed.add(m, 1);
-                        bounds.add(v, v);
-                        touched.insert(VoxelCoord(v).chunk());
-                        by_cell.entry(cell).or_default().push(index_of(v));
+                }
+                for &cell in &stack_cells {
+                    let (clo, chi) = (cell.0[2] * BE, cell.0[2] * BE + BE - 1);
+                    for &(lo, hi) in &spans {
+                        let (from, to) = (lo.max(clo), hi.min(chi));
+                        if from > to {
+                            continue;
+                        }
+                        let brick = reader.brick(cell).expect("scanned resident");
+                        for z in from..=to {
+                            let v = [x, y_, z];
+                            let m = brick.get(index_of(v));
+                            if m != AIR {
+                                crushed.add(m, 1);
+                                bounds.add(v, v);
+                                touched.insert(VoxelCoord(v).chunk());
+                                by_cell.entry(cell).or_default().push(index_of(v));
+                            }
+                        }
                     }
                 }
             }
