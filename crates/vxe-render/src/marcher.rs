@@ -56,6 +56,9 @@ pub const VIEW_SHIFT: u32 = 5;
 pub const FLAG_ATTR_PAGES: u32 = 1 << 8;
 /// `Params::flags` bit: skip empty cells larger than a voxel (`LightParams::skips`).
 pub const FLAG_SKIPS: u32 = 1 << 9;
+/// `Params::flags` bit: the primary ray passes through solid until it has crossed real air
+/// (`LookParams::cutaway`).
+pub const FLAG_CUTAWAY: u32 = 1 << 10;
 
 /// How the marcher finds the normal at a hit, and in `Contour` the hit itself.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -153,8 +156,8 @@ impl ViewMode {
     }
 }
 
-/// The surface look: normal mode, procedural detail, view and translucent layers. The default
-/// is face normals, no detail, shaded, 4 layers.
+/// The surface look: normal mode, procedural detail, view, translucent layers and cutaway. The
+/// default is face normals, no detail, shaded, 4 layers, cutaway off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LookParams {
     pub normal_mode: NormalMode,
@@ -164,6 +167,14 @@ pub struct LookParams {
     /// them. The translucent walk runs only when the opaque walk read a brick entry flagged
     /// translucent, so a scene without the class pays nothing.
     pub translucent_layers: u32,
+    /// The cutaway view: the primary ray passes through solid voxels until it has entered an
+    /// empty cell of a resident chunk, then hits the next surface as usual. A chunk outside
+    /// the window or absent from the mirror is not air, so from outside the world each
+    /// cavern's far wall shows through the rock and rock with no cavern behind it is a miss.
+    /// A ray that starts in air walks as without it; shadow rays never pass. In the shaded view a hit is lit by a fixed
+    /// hemisphere light (`albedo × (0.3 + 0.7 × (0.5 + 0.5 n.z))`, world z up) with no lamp and
+    /// no shadow ray, and a miss is a flat grey-blue sky.
+    pub cutaway: bool,
 }
 
 impl Default for LookParams {
@@ -173,6 +184,7 @@ impl Default for LookParams {
             detail: false,
             view: ViewMode::default(),
             translucent_layers: 4,
+            cutaway: false,
         }
     }
 }
@@ -183,6 +195,7 @@ impl LookParams {
         (self.normal_mode as u32) << NORMAL_SHIFT
             | if self.detail { FLAG_DETAIL } else { 0 }
             | (self.view as u32) << VIEW_SHIFT
+            | if self.cutaway { FLAG_CUTAWAY } else { 0 }
     }
 }
 

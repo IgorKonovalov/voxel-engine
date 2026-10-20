@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0016.**
+**Next free number: 0020.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -22,7 +22,7 @@ the status.
 | [0005](0005-vertical-cylinder-collision-by-integer-conservative-advancement.md) | Character collision as a vertical cylinder swept by integer conservative advancement | accepted |
 | [0006](0006-hrtf-source-and-audio-thread-model.md) | SADIE II HRTFs in a packed f32 format, time-domain FIR, mixer on the device callback | accepted |
 | [0007](0007-server-op-log-byte-channel-shared-and-owned-clients.md) | Server-owned op log replayed from seed, a byte channel, and a client that shares the world in solo play | accepted |
-| [0008](0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) | Collapse as a capped support flood on the coarse grid and rigid vertical drop ops, not a rigid-body engine | accepted |
+| [0008](0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) | Collapse as a capped support flood on the coarse grid and rigid vertical drop ops, not a rigid-body engine | accepted; drop clause amended by ADR-0016 |
 | [0009](0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) | The testbed HUD is an embedded 8 × 8 bitmap font drawn in one overlay pass, with no UI library | accepted |
 | [0010](0010-game-logic-as-a-component-behind-a-logic-trait.md) | The game's server logic is a component behind a `Logic` trait, developed natively and shipped as WebAssembly; Lua is deferred | accepted |
 | [0011](0011-contour-planes-in-attribute-pages-with-procedural-detail.md) | Smooth surfaces from per-voxel contour planes in attribute pages of the brick pool, with procedural per-material detail | accepted; shadow rule built, footprint via the pressure rule by Plan 0013 (Outcome) |
@@ -30,6 +30,10 @@ the status.
 | [0013](0013-mirror-reserves-its-vram-budget-up-front.md) | The mirror reserves its VRAM budget up front and never reallocates | accepted |
 | [0014](0014-prefab-identity-in-the-op-log.md) | A stamp op names its prefab by content id, and a save carries the prefabs it names | accepted |
 | [0015](0015-late-reverb-as-a-shared-fdn-from-a-listener-ray-fan.md) | Late reverb is one listener-shared feedback delay network driven by a ray fan from the listener; early echoes render from their wall's direction | accepted |
+| [0016](0016-a-falling-region-crushes-the-sub-threshold-voxels-in-its-path.md) | A falling region crushes the sub-threshold voxels in its path | accepted (Plan 0022); amends ADR-0008's drop clause |
+| [0017](0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md) | The mirror's CPU work stays in the frame loop, bounded per frame, with narrowing on the stream workers | proposed (Plan 0023) |
+| [0018](0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md) | Direct light is one sample per pixel from a hit buffer, denoised by an SVGF-family filter whose history dies where the world was edited | proposed (Plan 0024) |
+| [0019](0019-gamepad-input-as-generic-axes-in-the-shell-fed-by-the-testbed.md) | Gamepad input is generic axes and pad buttons in the shell's `Input`, fed by the testbed's own gilrs | accepted |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

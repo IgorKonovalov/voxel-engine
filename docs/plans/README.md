@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0022** (ADRs are a separate sequence; next free there is **0016**).
+**Next free number: 0027** (ADRs are a separate sequence; next free there is **0020**).
 
 ## Active roster
 
@@ -11,6 +11,8 @@ state from `git log`. Completed plans move to `done/`.
 | Plan | Title | Status | Live constraint |
 |------|-------|--------|-----------------|
 | [0020](0020-cavern-reverb-directional-echoes-and-gliding-taps.md) | Cavern reverb: a late tail sized by the room the listener sees, echoes from their walls, taps that glide, and the player's own voice in the cave | in-progress | M4, ADR-0015. 13 owed: level by room size; 14 a listen. |
+| [0023](0023-render-thread-cpu-attribute-hitch-and-streaming-line.md) | The render thread's mirror CPU: profile a chunk crossing, then cut the attribute hitch and the streaming line with targeted fixes | approved | M2, before lighting; ADR-0017 (proposed). Dev starts when the 0020 or 0022 lane is at its human phase. |
+| [0024](0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md) | Direct light: a hit buffer, emissive voxels as light samples, one shadow ray per pixel, and an SVGF-family denoiser whose history dies in edit boxes | approved | M2, ADR-0018 (proposed). After Plan 0023; before the mirror-slot plan. |
 <!-- roster:end -->
 
 ## Recently closed
@@ -18,6 +20,9 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0022](done/0022-a-falling-region-crushes-sub-threshold-voxels.md) | A falling region crushes the sub-threshold voxels under it and piles them as rubble, and the logic tells a wedge from a refusal and a landing | 2026-10-20, v0.22.0 |
+| [0026](done/0026-gamepad-flight-generic-axes-in-the-shell-gilrs-in-the-testbed.md) | Gamepad flight for demos: generic axes and pad buttons in the shell's input, gilrs in the testbed only | 2026-10-20, v0.21.0 |
+| [0025](done/0025-cutaway-view-see-the-world-from-outside-its-rock.md) | The cutaway view: a camera in rock or outside the world sees through the hull to the first cavern's walls | 2026-10-20, v0.20.0 |
 | [0013](done/0013-contour-default-shadow-origin-and-streamed-footprint.md) | Contour as the fly-through's default: the shadow-ray origin, a streamed footprint under 3 GB, and a weaker rock detail | 2026-10-20, v0.19.0 |
 | [0021](done/0021-packed-cpu-brick-census-kernel-and-readers.md) | The packed CPU brick: a census and kernel bench, then masks, planes and a palette under every reader | 2026-10-20, v0.18.0 |
 | [0017](done/0017-mirror-budget-reservation-page-kinds-and-pressure.md) | The mirror reserves its budget: fixed buffers, empty pages that change kind, and a pressure signal the streamer follows | 2026-10-20, v0.17.0 |

@@ -349,6 +349,7 @@ fn the_carved_slab_drops_32_voxels_onto_the_floor() {
         DropResult {
             moved: vec![(3, 4608)],
             dropped: 32,
+            crushed: vec![],
             touched: vec![ChunkCoord([0, 0, 0])],
             aabb: Some((VoxelCoord([24, 24, 8]), VoxelCoord([47, 47, 47]))),
         }
@@ -482,17 +483,148 @@ fn a_solid_voxel_between_two_region_runs_wedges_the_piece() {
     assert_eq!(world.voxel_hash(), before);
 
     // Without the voxel both fall by the lower cell's gap of 4.
+    let without = direct(&[
+        ([0, 0, 0], [64, 64, 20], 3),
+        ([32, 32, 20], [40, 40, 28], 3),
+        ([32, 32, 36], [40, 40, 44], 3),
+    ]);
     let world = build(&parts);
     let r = world.drop_region(&cells, 64).unwrap();
     assert_eq!(r.dropped, 4);
     assert_eq!(r.moved, [(3, 1024)]);
+    assert_eq!(world.voxel_hash(), without);
+
+    // With a yield threshold of 64 the voxel's cell, holding 1, yields: the upper run sweeps
+    // z 36..=39 and crushes it, and the piece falls as if it were not there.
+    let world = build(&parts);
+    world
+        .apply(&box_op([32, 32, 39], [33, 33, 40], Mode::Fill(5)))
+        .unwrap();
+    let r = world.drop_region_through(&cells, 64, 64).unwrap();
+    assert_eq!(r.dropped, 4);
+    assert_eq!(r.moved, [(3, 1024)]);
+    assert_eq!(r.crushed, [(5, 1)]);
+    assert_eq!(world.voxel_hash(), without);
+}
+
+/// Fixture F after the two sliver carves: the whole pillar but its top layer, then half of
+/// that layer, leaving cell `(4, 4, 4)` with the 32 voxels `[32, 32, 39]..[36, 40, 40]`, half
+/// the threshold. Returns the world, its grid and the second carve's changes.
+fn sliver() -> (World, CoarseGrid, Vec<CellChange>) {
+    let world = fixture();
+    let mut grid = CoarseGrid::build(&world);
+    carve(&world, &mut grid, [32, 32, 8], [40, 40, 39]);
+    let changes = carve(&world, &mut grid, [36, 32, 39], [40, 40, 40]);
+    assert_eq!(
+        world.count_in_box([32, 32, 32], [39, 39, 39]).unwrap(),
+        [(AIR, 480), (3, 32)]
+    );
+    (world, grid, changes)
+}
+
+/// The slab rests on a sliver the query calls too weak to hold it: the query reports the
+/// slab, and `drop_region` stops at the sliver's first voxel, so the slab drops nothing.
+/// `drop_region_through` with the query's threshold passes through the sliver (its cell holds
+/// 32 of 64), crushes its 32 voxels and lands the slab on the floor: the slab's bottom is
+/// z 40, the sliver at z 39 yields, z 38 to 8 is air, and the floor's top at z 7 is in a cell
+/// of 512.
+#[test]
+fn a_slab_on_a_sliver_is_unsupported_and_falls_through_it() {
+    let (world, grid, changes) = sliver();
+    let regions = query(&world, &grid, params(), &changes);
+    assert_eq!(
+        regions,
+        [Region {
+            cells: slab_cells(),
+            counts: vec![(3, 4608)],
+            aabb: (VoxelCoord([24, 24, 40]), VoxelCoord([47, 47, 47])),
+        }]
+    );
+    let cells = &regions[0].cells;
+    let before = world.voxel_hash();
+    assert_eq!(world.drop_region(cells, 64).unwrap(), DropResult::default());
+    assert_eq!(
+        world.drop_region_through(cells, 64, 0).unwrap(),
+        DropResult::default()
+    );
+    assert_eq!(world.voxel_hash(), before);
+
+    let r = world.drop_region_through(cells, 64, 64).unwrap();
+    assert_eq!(
+        r,
+        DropResult {
+            moved: vec![(3, 4608)],
+            dropped: 32,
+            crushed: vec![(3, 32)],
+            touched: vec![ChunkCoord([0, 0, 0])],
+            aabb: Some((VoxelCoord([24, 24, 8]), VoxelCoord([47, 47, 47]))),
+        }
+    );
+    assert_eq!(r.edit_result().changed_from, [(3, 4640)]);
     assert_eq!(
         world.voxel_hash(),
-        direct(&[
-            ([0, 0, 0], [64, 64, 20], 3),
-            ([32, 32, 20], [40, 40, 28], 3),
-            ([32, 32, 36], [40, 40, 44], 3),
-        ])
+        direct(&[(FLOOR.0, FLOOR.1, 3), ([24, 24, 8], [48, 48, 16], 3)])
+    );
+}
+
+/// An `INDESTRUCTIBLE` sliver (material 4) does not yield: the slab cannot move.
+#[test]
+fn an_indestructible_sliver_does_not_yield() {
+    let world = fixture();
+    world
+        .apply(&box_op(PILLAR.0, PILLAR.1, Mode::Carve))
+        .unwrap();
+    world
+        .apply(&box_op([32, 32, 39], [36, 40, 40], Mode::Fill(4)))
+        .unwrap();
+    let before = world.voxel_hash();
+    assert_eq!(
+        world.drop_region_through(&slab_cells(), 64, 64).unwrap(),
+        DropResult::default()
+    );
+    assert_eq!(world.voxel_hash(), before);
+}
+
+/// The slab landed by the yielding drop, now `[24, 24, 8]..[48, 48, 16]` in cells
+/// `(3..=5, 3..=5, 1)`, takes a pile of 32 rubble voxels: `C` = 9 cells x 64 columns = 576,
+/// and the accumulator adds 32 a column, so every 18th column (indices 17, 35, ..., 575)
+/// takes one voxel, on the slab's top at z 15. The first is index 17, in stack `(3, 3)` at
+/// local y 2, x 1: `(25, 26, 16)`.
+#[test]
+fn a_pile_spreads_its_count_over_the_landed_slab() {
+    let (world, _, _) = sliver();
+    world.drop_region_through(&slab_cells(), 64, 64).unwrap();
+    let landed: Vec<CellCoord> = slab_cells()
+        .into_iter()
+        .map(|c| CellCoord([c.0[0], c.0[1], 1]))
+        .collect();
+    let before = world.voxel_hash();
+    assert_eq!(
+        world.pile_rubble(&landed, 5, 0, 64).unwrap(),
+        PileResult::default()
+    );
+    assert_eq!(world.voxel_hash(), before);
+
+    let r = world.pile_rubble(&landed, 5, 32, 64).unwrap();
+    assert_eq!(
+        r,
+        PileResult {
+            placed: 32,
+            touched: vec![ChunkCoord([0, 0, 0])],
+            aabb: Some((VoxelCoord([25, 24, 16]), VoxelCoord([47, 47, 16]))),
+        }
+    );
+    assert_eq!(r.edit_result().changed_from, [(AIR, 32)]);
+    // `count_in_box` counts air too: 576 voxels in the layer, 32 of them rubble.
+    assert_eq!(
+        world.count_in_box([24, 24, 16], [47, 47, 16]).unwrap(),
+        [(AIR, 544), (5, 32)]
+    );
+    assert_eq!(world.material_at([25, 26, 16]), Some(5));
+    assert_eq!(world.material_at([24, 26, 16]), Some(AIR));
+    assert_eq!(
+        world.count_in_box([24, 24, 8], [47, 47, 15]).unwrap(),
+        [(3, 4608)]
     );
 }
 
@@ -743,8 +875,52 @@ fn the_collapse_course_hashes_to_its_pinned_constant() {
     feed(&mut h, &rm.removed, &rm.touched, rm.aabb);
     feed_world(&mut h, &world);
 
+    // The drop by 10 and the removal alone, which the yield rule and the shared rubble stage
+    // leave as they were.
+    assert_eq!(h.0, 0x3178_0a15_61c1_3041, "first two parts {:#018x}", h.0);
+
+    // The sliver: carve the pillar but its top layer, then half of that layer, query, and
+    // drop the slab through the sliver a cell a tick; then pile the crushed volume on it.
+    let (world, grid, changes) = sliver();
+    feed_world(&mut h, &world);
+    let regions = query(&world, &grid, params(), &changes);
+    feed_regions(&mut h, &regions);
+    let mut cells = regions[0].cells.clone();
+    let mut falls = Vec::new();
+    let mut crushed = Vec::new();
+    loop {
+        let d = world.drop_region_through(&cells, 8, 64).unwrap();
+        h.write(&d.dropped.to_le_bytes());
+        feed(&mut h, &d.moved, &d.touched, d.aabb);
+        feed(&mut h, &d.crushed, &[], None);
+        feed_world(&mut h, &world);
+        falls.push(d.dropped);
+        crushed.push(d.crushed);
+        if d.dropped < 8 {
+            break;
+        }
+        for c in &mut cells {
+            c.0[2] -= 1;
+        }
+    }
+    assert_eq!(falls, [8, 8, 8, 8, 0]);
+    assert_eq!(
+        crushed,
+        [vec![(3, 32)], vec![], vec![], vec![], vec![]] as [Vec<(MaterialId, u32)>; 5]
+    );
+    assert!(cells.iter().all(|c| c.0[2] == 1));
+    let p = world.pile_rubble(&cells, 7, 32, 64).unwrap();
+    assert_eq!(p.placed, 32);
+    assert_eq!(
+        p.aabb,
+        Some((VoxelCoord([25, 24, 16]), VoxelCoord([47, 47, 16])))
+    );
+    h.write(&p.placed.to_le_bytes());
+    feed(&mut h, &[], &p.touched, p.aabb);
+    feed_world(&mut h, &world);
+
     // Blessed on the dev box (Linux); asserted on the Windows CI arm as well.
-    assert_eq!(h.0, 0x3178_0a15_61c1_3041, "course hash {:#018x}", h.0);
+    assert_eq!(h.0, 0xd223_d848_c8fc_ca0f, "course hash {:#018x}", h.0);
 }
 
 /// The cubes world of the edit tests, dressed by seeded edits so its bricks hold one to four
@@ -814,6 +990,82 @@ fn the_native_collapse_matches_the_decoded_one() {
     }
     println!("{moved} of 64 ops moved or removed voxels");
     assert!(moved >= 30, "{moved} ops did something");
+}
+
+/// `drop_region_through` with yield thresholds 0, 64 and 300, each followed by
+/// `pile_rubble` of 1, 100 or 5 000 voxels on the same cells, on 96 seeded regions of the
+/// dressed cubes world: the native path and the decoded one give equal results and equal
+/// bricks after every op. Before each drop the 24 voxels under the region's footprint are
+/// carved and three seeded boxes, 1 to 3 voxels thick, of materials 1 to 4 (4 is
+/// indestructible) are filled there, so the drops meet thin cells to crush and voxels that
+/// do not yield.
+#[test]
+fn the_native_yielding_drop_and_pile_match_the_decoded_ones() {
+    let (native, decoded) = (dressed_cubes(), dressed_cubes());
+    let mut rng = SplitMix64(0x0022_0002);
+    let (mut fell, mut crushed, mut placed) = (0, 0, 0);
+    for i in 0..96 {
+        let at = [0; 3].map(|_| rng.range(-14, 12) as i32);
+        let size = [0; 3].map(|_| rng.range(1, 3) as i32);
+        let mut cells = Vec::new();
+        for z in 0..size[2] {
+            for y in 0..size[1] {
+                for x in 0..size[0] {
+                    cells.push(CellCoord([at[0] + x, at[1] + y, at[2] + z]));
+                }
+            }
+        }
+        let (lo, hi) = (at.map(|v| v * 8), [0, 1, 2].map(|k| (at[k] + size[k]) * 8));
+        let mut prep = vec![box_op(
+            [lo[0], lo[1], lo[2] - 24],
+            [hi[0], hi[1], lo[2]],
+            Mode::Carve,
+        )];
+        for _ in 0..3 {
+            let x = rng.range(i64::from(lo[0]), i64::from(hi[0]) - 1) as i32;
+            let y = rng.range(i64::from(lo[1]), i64::from(hi[1]) - 1) as i32;
+            let z = lo[2] - rng.range(1, 24) as i32;
+            let e = [0; 3].map(|_| rng.range(1, 8) as i32);
+            let m = rng.range(1, 4) as MaterialId;
+            prep.push(box_op(
+                [x, y, z],
+                [
+                    (x + e[0]).min(hi[0]),
+                    (y + e[1]).min(hi[1]),
+                    z + e[2].min(3),
+                ],
+                Mode::Fill(m),
+            ));
+        }
+        for op in &prep {
+            assert_eq!(native.apply(op), decoded.apply(op), "op {i}: prep");
+        }
+        let drop = rng.range(1, 20) as i32;
+        let yield_below = [0, 64, 300][i % 3];
+        let a = native.drop_region_through(&cells, drop, yield_below);
+        let b = decoded.drop_region_through_decoded(&cells, drop, yield_below);
+        assert_eq!(
+            a, b,
+            "op {i}: drop {cells:?} by {drop} through {yield_below}"
+        );
+        fell += usize::from(a.as_ref().is_ok_and(|r| r.dropped > 0));
+        crushed += usize::from(a.as_ref().is_ok_and(|r| !r.crushed.is_empty()));
+        if yield_below == 0 {
+            assert!(a.is_ok_and(|r| r.crushed.is_empty()), "op {i}");
+        }
+        assert_same_bricks(&native, &decoded, &format!("after drop {i}"));
+
+        let count = [1, 100, 5000][i / 3 % 3];
+        let a = native.pile_rubble(&cells, 5, count, 24);
+        let b = decoded.pile_rubble_decoded(&cells, 5, count, 24);
+        assert_eq!(a, b, "op {i}: pile {count} on {cells:?}");
+        placed += usize::from(a.is_ok_and(|r| r.placed > 0));
+        assert_same_bricks(&native, &decoded, &format!("after pile {i}"));
+    }
+    println!("of 96: {fell} drops fell, {crushed} crushed, {placed} piles placed");
+    assert!(fell >= 50, "{fell} drops fell");
+    assert!(crushed >= 15, "{crushed} drops crushed");
+    assert!(placed >= 50, "{placed} piles placed");
 }
 
 /// `n` distinct cells: the slab's cells first, then cells counting up along x past them.

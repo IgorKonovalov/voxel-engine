@@ -9,12 +9,16 @@
 //! [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH] [--view VIEW] [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
-//! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]`.
+//! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
+//! [--pad on|off]`.
 //! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
-//! [`Autopilot`]); `--census` prints the world's brick census (`World::brick_census`) on exit,
+//! [`Autopilot`]); `--cutaway auto|on|off` sets the cutaway view's start state (default `auto`:
+//! on while the camera's voxel is neither air nor translucent, so a camera in rock or outside
+//! the world sees each cavern's far wall through the rock; `X` cycles the three, and the
+//! autopilot never changes it); `--census` prints the world's brick census (`World::brick_census`) on exit,
 //! after any bench; `--sync-budget` sets the mirror's upload bytes per frame; `--mirror-budget`
 //! sets the VRAM the mirror reserves for its pool, masks and records at startup (ADR-0013;
 //! default 3072 MiB streamed, and on the level what its bricks, the dig headroom and its chunks
@@ -65,10 +69,22 @@
 //! a wall with a standable top within 1.2 m, climbs it. On the bounded level the fly-through
 //! keeps a coarse grid and walkable map updated from every edit; `K` prints them.
 //!
+//! A gamepad (`--pad on`, the default in a window; never headless or under the autopilot) flies
+//! as the keys and mouse do: the left stick moves at a speed set by its deflection, the right
+//! stick looks, `L1`/`R1` sink and rise, `R3` latches boost, and walking `South` jumps; `R2`
+//! digs, `L2` fills, the D-pad's up and down step the dig radius, `North` toggles walking,
+//! `West` cycles the cutaway, `East` knocks and `Start` toggles the stats HUD. A machine where `gilrs` cannot start runs
+//! without a pad. The startup lines name the pad and its power or print `pad: none`; a pad
+//! plugged in later becomes the active one, and each connect and disconnect prints a line. The
+//! HUD shows the active pad's row.
+//!
 //! Collapse (bounded level, ADR-0008): after every dig the logic asks the server's coarse grid
 //! which regions lost their support, and the fly-through prints each as `unsupported: N cells,
-//! {material: count}`. Each region falls 8 voxels a tick, one tick a frame, until it lands
-//! (`landed after N ticks, fell M voxels`); `R` toggles removing it with rubble (a quarter of
+//! {material: count}`. Each region falls 8 voxels a tick, one tick a frame, through and
+//! crushing the cells too thin to hold it (ADR-0016), until it lands (`landed after N ticks,
+//! fell M voxels`, then `, crushed K voxels, P rubble` when it crushed any, piled on top of
+//! it). A region that cannot move prints `wedged: N cells, {material: count}, cannot fall`,
+//! and a refused drop `drop refused: ...`. `R` toggles removing it with rubble (a quarter of
 //! its volume) instead. `F1` adds the region count of the last dig's query.
 //!
 //! `--audio` opens the default output device, `H` plays a knock and `J` a looping hum at the point
@@ -99,27 +115,31 @@
 //! advances, so a fan completes 8 frames after the start or after a 1 m move.
 
 mod fly;
+mod pad;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use fly::{Fly, Walk};
+use fly::{CutawayMode, Fly, Walk};
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, RoomSource, VAULT_EDGE, vault};
 use flythrough::hud::{self, Cadence, EditLine, FrameStats, HudStats, WorldSample};
 use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB, REACH};
-use flythrough::logic::{DROP_VERB, REMOVE_VERB, STAMP_VERB, parse_region_line};
+use flythrough::logic::{
+    DROP_VERB, PILE_VERB, REMOVE_VERB, STAMP_VERB, parse_region_line, parse_wedged_line,
+};
 use flythrough::{
     LogicChoice, RESIDENCY, STREAM_MIRROR_BUDGET, ScrollSteps, cave_materials, chunk_ram,
     chunks_hash, level_mirror_budget, level_pool_slots, mips_ram, percentile,
 };
-use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
+use pad::Pad;
+use vxe_app::{App, Axis, Flow, Gpu, Input, KeyCode, MouseButton, PadButton, ShellConfig};
 use vxe_audio::{
     Acoustics, BlockClock, Command, Hrtf, MixSettings, Mixer, Output, PlayParams, ReverbSettings,
     RoomEstimate, RoomTargets, Sound, TailLines, VoiceId,
 };
-use vxe_net::{Client, Event, Logic, LogicError, MemChannel, Server};
+use vxe_net::{Client, DEFAULT_SUPPORT, Event, Logic, LogicError, MemChannel, Server};
 use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::readback::{self, StepHistogram};
@@ -131,7 +151,7 @@ use vxe_world::hash::mix64;
 use vxe_world::{
     CellChange, ChunkCoord, ChunkExtent, CoarseGrid, EditOp, EditResult, FIXED_ONE, Fixed3,
     LogFile, MaterialId, MaterialTable, Mode, OpResult, PersistConfig, Residency, StreamConfig,
-    Streamer, SupportParams, Tier, VoxelCoord, WalkableMap, WalkableParams, World,
+    Streamer, Tier, VoxelCoord, WalkableMap, WalkableParams, World,
 };
 
 /// Dig radius at start (0.5 m), its scroll step (0.1 m) and its range.
@@ -149,6 +169,22 @@ fn scroll_dig_radius(radius: i64, scroll: &mut ScrollSteps, delta: f32) -> Optio
         scroll.clear();
     }
     (r != radius).then_some(r)
+}
+
+/// A trigger presses (`R2` digs, `L2` fills) once pulled past this, and lets go under
+/// [`TRIGGER_RELEASE`], so a trigger resting near a threshold does not repeat.
+const TRIGGER_PRESS: f32 = 0.5;
+const TRIGGER_RELEASE: f32 = 0.3;
+
+/// Whether a trigger at `pull` presses this frame, with `held` its state since the last.
+fn trigger_pressed(held: &mut bool, pull: f32) -> bool {
+    if *held {
+        *held = pull >= TRIGGER_RELEASE;
+        false
+    } else {
+        *held = pull >= TRIGGER_PRESS;
+        *held
+    }
 }
 
 /// Radius of the right-click fill: 0.3 m.
@@ -181,14 +217,6 @@ const HUD_SCALE: u32 = 2;
 /// `world_stats_call_on_the_streamed_world_at_full_residency`), so its frame reaches at most
 /// the window's max and not its p99.
 const HUD_STATS_EVERY: u32 = 240;
-/// The support query the logic asks after a dig, set on the server: cells of at least 64
-/// solid voxels bear load, a flood gives up past 4096 cells, and the level's faces anchor
-/// (ADR-0008).
-const SUPPORT: SupportParams = SupportParams {
-    solid_min: 64,
-    max_region: 4096,
-    boundary_anchors: true,
-};
 /// Metres per voxel, for the audio mixer's distances.
 const METRES_PER_VOXEL: f32 = 0.1;
 /// The knock: 50 ms of seeded noise under an exponential decay of 10 ms time constant.
@@ -268,6 +296,11 @@ struct Args {
     mic: bool,
     /// `--echo-db`, `--tail-db`, `--predelay-ms`, `--tail-glide`, `--direct-delay`.
     mix: Mix,
+    /// `--cutaway`: the cutaway view's start state.
+    cutaway: CutawayMode,
+    /// `--pad on|off`: read a gamepad in a window (on by default); never headless or under
+    /// the autopilot.
+    pad: bool,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -288,6 +321,11 @@ fn walk_allowed(streaming: bool) -> Result<(), &'static str> {
 }
 
 impl Args {
+    /// Whether the run reads a gamepad: `--pad on` in a window, without the autopilot.
+    fn wants_pad(&self) -> bool {
+        self.pad && !self.headless && !self.autopilot
+    }
+
     /// The look the fly-through starts in.
     fn start_look(&self) -> LookParams {
         LookParams {
@@ -295,6 +333,7 @@ impl Args {
             detail: self.detail,
             view: self.view,
             translucent_layers: self.translucent_layers,
+            cutaway: false,
         }
     }
 
@@ -340,6 +379,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         absorption: CAVE_ACOUSTIC[0],
         mic: false,
         mix: Mix::default(),
+        cutaway: CutawayMode::Auto,
+        pad: true,
     };
     let mut detail_flag = false;
     let mut it = argv.into_iter();
@@ -393,6 +434,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .parse()
                     .map_err(|_| format!("--translucent-layers takes a count, not {v}"))?;
             }
+            "--cutaway" => {
+                let v = value()?;
+                args.cutaway = CutawayMode::from_name(&v)
+                    .ok_or(format!("--cutaway takes auto, on or off, not {v}"))?;
+            }
             "--save" => args.save = Some(value()?.into()),
             "--replay" => args.replay = Some(value()?.into()),
             "--logic" => args.logic = LogicChoice::parse(&value()?)?,
@@ -426,6 +472,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--mic" => {
                 args.mic = true;
                 args.audio = true;
+            }
+            "--pad" => {
+                args.pad = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("--pad takes on or off, not {v}")),
+                }
             }
             "--level" => args.level = true,
             "--detail" => detail_flag = true,
@@ -521,6 +574,7 @@ fn op_verb(verb: &str) -> Option<&'static str> {
         BENCH_VERB,
         STAMP_VERB,
         DROP_VERB,
+        PILE_VERB,
         REMOVE_VERB,
     ]
     .into_iter()
@@ -1419,6 +1473,16 @@ fn unsupported_line(table: &MaterialTable, line: &str) -> Option<String> {
     ))
 }
 
+/// The line for a logic's `wedged` line: `wedged: 9 cells, {rock: 4608}, cannot fall`; `None`
+/// for any other line. A `drop refused` line is already prose and prints as it is.
+fn wedged_terminal_line(table: &MaterialTable, line: &str) -> Option<String> {
+    let (cells, counts) = parse_wedged_line(line)?;
+    Some(format!(
+        "wedged: {cells} cells, {{{}}}, cannot fall",
+        counts_line(table, &counts)
+    ))
+}
+
 /// The line for an applied removal: `removed: {rock: 4608}, 1152 rubble`.
 fn removed_line(table: &MaterialTable, r: &vxe_world::RemoveResult) -> String {
     format!(
@@ -1449,7 +1513,8 @@ struct Net {
 
 impl Net {
     /// The server on `world` with `logic`, the vault registered on it and on the client (the
-    /// prefab `P` stamps, ADR-0014) and the collapse's [`SUPPORT`] set, and the shared client.
+    /// prefab `P` stamps, ADR-0014) and [`DEFAULT_SUPPORT`] set (the support query whose
+    /// threshold the logic's drops yield below), and the shared client.
     fn new(world: &Arc<World>, logic: Box<dyn Logic>, seed: u64) -> Self {
         let vault = Arc::new(vault());
         let mut prefabs = vxe_world::PrefabRegistry::new();
@@ -1457,7 +1522,7 @@ impl Net {
             .register(vault.clone())
             .expect("an empty registry takes the vault");
         let mut server = Server::with_prefabs(world.clone(), prefabs, logic, seed);
-        server.set_support(SUPPORT, &[]);
+        server.set_support(DEFAULT_SUPPORT, &[]);
         let (near, far) = MemChannel::pair();
         server.attach(far);
         let mut client = Client::shared(world.clone(), near);
@@ -1510,9 +1575,13 @@ struct Run {
     fly: Fly,
     light: LightParams,
     look: LookParams,
+    /// Sets `look.cutaway` each frame of interactive flight; `X` or the pad's `West` cycles it.
+    cutaway: CutawayMode,
     dig_radius: i64,
     /// Scroll banked toward the next dig-radius step.
     scroll: ScrollSteps,
+    /// `L2` and `R2` held, for their press edges.
+    triggers: [bool; 2],
     bench_runs: u64,
     frame: u32,
     gfx: Option<Gfx>,
@@ -1600,6 +1669,7 @@ impl Run {
         s.rss_bytes = h.rss_bytes;
         s.steps = h.steps;
         s.camera = pos.to_array();
+        s.cutaway = self.look.cutaway.then_some(self.cutaway.name());
         s.chunk = voxel_of(pos).chunk().0;
         s.mode = mode;
         s.format_us = h.format_us;
@@ -1765,7 +1835,10 @@ impl Run {
                             }
                             println!("{l}");
                         }
-                        None => println!("{line}"),
+                        None => match wedged_terminal_line(self.world.materials(), line) {
+                            Some(l) => println!("{l}"),
+                            None => println!("{line}"),
+                        },
                     }
                     continue;
                 };
@@ -1786,12 +1859,15 @@ impl Run {
                 }
                 if verb != BENCH_VERB {
                     match result {
-                        // A drop happens every tick a region falls: kept for the HUD only.
-                        Ok(r) if verb == DROP_VERB => {
+                        // A drop happens every tick a region falls, and a pile ends a fall the
+                        // logic's line reports: kept for the HUD only.
+                        Ok(r) if verb == DROP_VERB || verb == PILE_VERB => {
                             if r.aabb().is_some() {
                                 self.note_edit(verb, &r.edit_result(), ms);
                             }
                         }
+                        // The logic's `drop refused` or `pile refused` line reports it.
+                        Err(_) if verb == DROP_VERB || verb == PILE_VERB => {}
                         Ok(OpResult::Remove(r)) => {
                             println!("{}", removed_line(self.world.materials(), &r));
                             self.note_edit(verb, &r.edit_result(), ms);
@@ -2453,7 +2529,7 @@ impl Run {
         if self.frame > 0 {
             self.hud.frames.record(dt);
         }
-        if input.pressed(KeyCode::F2) {
+        if input.pressed(KeyCode::F2) || input.pad_pressed(PadButton::Start) {
             self.hud.visible = !self.hud.visible;
         }
         if self.frame == 0 {
@@ -2475,6 +2551,8 @@ impl Run {
                 None => self.fly.update(input, dt),
             }
             self.handle_input(input);
+            self.cutaway
+                .update(&mut self.look, &self.world, self.fly.camera.position);
         }
         self.audio_step();
         if let Some(n) = self.args.frames
@@ -2485,8 +2563,10 @@ impl Run {
         self.draw(gpu, surface, t0)
     }
 
-    /// The keys and buttons of interactive flight; the autopilot takes none of them, so a
-    /// stray click cannot change the world it measures.
+    /// The keys, buttons and pad buttons of interactive flight; the autopilot takes none of
+    /// them, so a stray click cannot change the world it measures. On a pad `R2` digs, `L2`
+    /// fills, the D-pad's up and down step the dig radius as a scroll line does, `North`
+    /// toggles walking, `West` cycles the cutaway as `X` does, and `East` knocks.
     fn handle_input(&mut self, input: &Input) {
         if input.pressed(KeyCode::KeyL) {
             self.light.shadows = !self.light.shadows;
@@ -2495,16 +2575,20 @@ impl Run {
                 if self.light.shadows { "on" } else { "off" }
             );
         }
-        if input.scroll() != 0.0
-            && let Some(r) = scroll_dig_radius(self.dig_radius, &mut self.scroll, input.scroll())
+        let scroll = input.scroll() + f32::from(u8::from(input.pad_pressed(PadButton::DpadUp)))
+            - f32::from(u8::from(input.pad_pressed(PadButton::DpadDown)));
+        if scroll != 0.0
+            && let Some(r) = scroll_dig_radius(self.dig_radius, &mut self.scroll, scroll)
         {
             self.dig_radius = r;
             println!("dig radius {:.1} m", r as f64 / (10 * FIXED_ONE) as f64);
         }
-        if input.clicked(MouseButton::Left) {
+        let r2 = trigger_pressed(&mut self.triggers[1], input.axis(Axis::TriggerR));
+        if input.clicked(MouseButton::Left) || r2 {
             self.dig();
         }
-        if input.clicked(MouseButton::Right) {
+        let l2 = trigger_pressed(&mut self.triggers[0], input.axis(Axis::TriggerL));
+        if input.clicked(MouseButton::Right) || l2 {
             self.fill();
         }
         if input.pressed(KeyCode::KeyB) {
@@ -2513,7 +2597,7 @@ impl Run {
         if input.pressed(KeyCode::KeyP) {
             self.stamp();
         }
-        if input.pressed(KeyCode::KeyG) {
+        if input.pressed(KeyCode::KeyG) || input.pad_pressed(PadButton::North) {
             self.toggle_walk();
         }
         if input.pressed(KeyCode::KeyK) {
@@ -2530,6 +2614,10 @@ impl Run {
             self.look.normal_mode = self.look.normal_mode.next(contour);
             println!("{}", look_line(&self.look, self.rock_detail()));
         }
+        if input.pressed(KeyCode::KeyX) || input.pad_pressed(PadButton::West) {
+            self.cutaway = self.cutaway.next();
+            println!("cutaway {}", self.cutaway.name());
+        }
         if input.pressed(KeyCode::KeyV) {
             self.look.detail = !self.look.detail;
             println!("{}", look_line(&self.look, self.rock_detail()));
@@ -2538,7 +2626,7 @@ impl Run {
             self.samples = Some(Samples::default());
         }
         if let Some(audio) = self.audio.as_mut() {
-            if input.pressed(KeyCode::KeyH) {
+            if input.pressed(KeyCode::KeyH) || input.pad_pressed(PadButton::East) {
                 audio.play("knock", PlayParams::at);
             }
             if input.pressed(KeyCode::KeyT) {
@@ -2975,6 +3063,9 @@ struct Flythrough {
     run: Option<Run>,
     audio: Option<Audio>,
     room_probe: Option<RoomProbe>,
+    /// The gamepad, `None` under `--pad off`, headless, the autopilot, or when `gilrs`
+    /// cannot start.
+    pad: Option<Pad>,
 }
 
 impl App for Flythrough {
@@ -3050,8 +3141,10 @@ impl App for Flythrough {
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
                 look: self.args.start_look(),
+                cutaway: self.args.cutaway,
                 dig_radius: DIG_RADIUS,
                 scroll: ScrollSteps::default(),
+                triggers: [false; 2],
                 bench_runs: 0,
                 frame: 0,
                 gfx: None,
@@ -3080,6 +3173,18 @@ impl App for Flythrough {
     fn resized(&mut self, gpu: &Gpu) {
         if let Some(run) = self.run.as_mut() {
             run.resized(gpu);
+        }
+    }
+
+    fn poll(&mut self, input: &mut Input) {
+        let Some(pad) = self.pad.as_mut() else {
+            return;
+        };
+        for line in pad.poll(input) {
+            println!("{line}");
+        }
+        if let Some(run) = self.run.as_mut() {
+            pad.write_row(run.hud.stats.pad.get_or_insert_with(Default::default));
         }
     }
 
@@ -3355,6 +3460,14 @@ fn main() {
     if args.audio || args.room_line {
         println!("{}", args.mix.line());
     }
+    let pad = if args.wants_pad() { Pad::open() } else { None };
+    if !headless && !args.autopilot {
+        println!(
+            "{}",
+            pad.as_ref()
+                .map_or_else(|| "pad: none".to_owned(), Pad::startup_line)
+        );
+    }
     let app = Flythrough {
         start,
         args,
@@ -3364,6 +3477,7 @@ fn main() {
         run: None,
         audio,
         room_probe,
+        pad,
     };
     let result = if headless {
         run_headless(app, size)
@@ -3465,6 +3579,10 @@ mod tests {
     fn a_shown_hud_allocates_nothing_after_its_first_frame() {
         let mut hud = Hud::new(true);
         hud.stats = HudStats::fixed();
+        hud.stats.pad = Some(hud::PadRow {
+            name: "PS5 Controller".to_owned(),
+            power: Some(hud::PadPower::Charging(5)),
+        });
         let mut per_frame = Vec::with_capacity(100);
         for frame in 0..100u32 {
             let before = counting::bytes();
@@ -3477,7 +3595,7 @@ mod tests {
         }
         assert!(per_frame[0] > 0, "the first frame grows the buffers");
         assert_eq!(per_frame[1..], [0; 99]);
-        assert_eq!(hud.text.lines().count(), 12);
+        assert_eq!(hud.text.lines().count(), 13);
         assert_eq!(hud.strip.len(), 100);
     }
     use flythrough::cave::SHELL;
@@ -3627,6 +3745,27 @@ mod tests {
             let e = wasm.err().expect("refused without the feature");
             assert!(e.contains("--features wasm"), "{e}");
         }
+    }
+
+    /// `--pad` takes `on` or `off`, defaults on, and refuses anything else; headless and
+    /// the autopilot never read a pad.
+    #[test]
+    fn pad_parses_on_and_off() {
+        let a = parse_args_from(argv(&[])).expect("no arguments parse");
+        assert!(a.pad && a.wants_pad());
+        let on = parse_args_from(argv(&["--pad", "on"])).expect("on parses");
+        assert!(on.pad);
+        let off = parse_args_from(argv(&["--pad", "off"])).expect("off parses");
+        assert!(!off.pad && !off.wants_pad());
+        let e = parse_args_from(argv(&["--pad", "x"]))
+            .err()
+            .expect("x refused");
+        assert_eq!(e, "--pad takes on or off, not x");
+        assert!(parse_args_from(argv(&["--pad"])).is_err());
+        let headless = parse_args_from(argv(&["--pad", "on", "--headless"])).unwrap();
+        assert!(!headless.wants_pad());
+        let pilot = parse_args_from(argv(&["--autopilot"])).unwrap();
+        assert!(!pilot.wants_pad());
     }
 
     /// Every failure and every restart of the logic prints a line; the stop prints once,
@@ -3907,6 +4046,166 @@ mod tests {
         assert_eq!(lines, ["stamped: no surface within 10 m"]);
     }
 
+    /// A fly-mode run on `world` with no window, GPU, stream or audio, its camera at the
+    /// origin voxel's centre looking along +x, the native logic on its server.
+    fn bare_run(world: World) -> Run {
+        let world = Arc::new(world);
+        let net = native_net(&world);
+        let args = parse_args_from(argv(&["--level"])).expect("--level parses");
+        let camera = Camera {
+            position: Vec3::splat(0.5),
+            yaw: 0.0,
+            pitch: 0.0,
+            vfov: 1.0,
+        };
+        Run {
+            start: now(),
+            world,
+            net: Some(net),
+            spawn: voxel_of(camera.position),
+            look: args.start_look(),
+            args,
+            fly: Fly::new(camera),
+            light: LightParams::headlamp(),
+            dig_radius: DIG_RADIUS,
+            scroll: ScrollSteps::default(),
+            triggers: [false; 2],
+            bench_runs: 0,
+            frame: 0,
+            gfx: None,
+            samples: None,
+            stream: None,
+            pilot: None,
+            walk: None,
+            coarse: None,
+            hud: Hud::new(false),
+            audio: None,
+            room_probe: None,
+            cutaway: CutawayMode::Auto,
+        }
+    }
+
+    /// Rock over chunks `[-1, 1)³` with a 16-voxel box carved around the origin.
+    fn carved_rock() -> World {
+        let world = World::generate(
+            ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
+            &vxe_world::UniformSource(ROCK),
+            &cave_materials(),
+        );
+        world
+            .apply(&EditOp::box_(
+                Fixed3([-8 * FIXED_ONE; 3]),
+                Fixed3([8 * FIXED_ONE; 3]),
+                Mode::Carve,
+            ))
+            .unwrap();
+        world
+    }
+
+    /// The edits one server tick of `run` applied.
+    fn tick_edits(run: &mut Run) -> Vec<EditResult> {
+        let net = run.net.as_mut().unwrap();
+        assert_eq!(net.server.tick().logic_error, None);
+        applied(&net.client.poll())
+            .into_iter()
+            .map(|r| match r {
+                OpResult::Edit(e) => e,
+                other => panic!("{other:?}"),
+            })
+            .collect()
+    }
+
+    /// `handle_input` digs on a left click and on `R2` pulled through `Input`'s setters
+    /// alike: the dig reaches the server, which carves the same rock from the wall ahead;
+    /// `R2` held on the next frame does not dig again, and released and pulled again does.
+    /// `L2` fills.
+    #[test]
+    fn r2_digs_as_the_left_click_does_and_l2_fills() {
+        let mut click = bare_run(carved_rock());
+        let mut input = Input::default();
+        input.button_down(MouseButton::Left);
+        click.handle_input(&input);
+        let by_click = tick_edits(&mut click);
+        let [r] = &by_click[..] else {
+            panic!("{by_click:?}")
+        };
+        assert_eq!(r.changed_from.len(), 1);
+        assert_eq!(r.changed_from[0].0, ROCK);
+        assert!(r.changed_from[0].1 > 0);
+
+        let mut pad = bare_run(carved_rock());
+        let mut input = Input::default();
+        input.set_axis(Axis::TriggerR, 1.0);
+        pad.handle_input(&input);
+        assert_eq!(tick_edits(&mut pad), by_click);
+        input.end_frame();
+        pad.handle_input(&input);
+        assert_eq!(tick_edits(&mut pad), [], "a held trigger digs once");
+        input.set_axis(Axis::TriggerR, 0.0);
+        pad.handle_input(&input);
+        input.set_axis(Axis::TriggerR, 0.8);
+        pad.handle_input(&input);
+        assert_eq!(tick_edits(&mut pad).len(), 1, "pulled again, it digs again");
+
+        let mut input = Input::default();
+        input.set_axis(Axis::TriggerL, 1.0);
+        pad.handle_input(&input);
+        let filled = tick_edits(&mut pad);
+        let [f] = &filled[..] else {
+            panic!("{filled:?}")
+        };
+        assert_eq!(f.changed_from.len(), 1);
+        assert_eq!(f.changed_from[0].0, 0, "the fill writes rock over air");
+    }
+
+    /// The D-pad steps the dig radius by a scroll line's step: up twice raises it from 0.5 m
+    /// to 0.7 m, down once lowers it to 0.6 m.
+    #[test]
+    fn the_dpad_steps_the_dig_radius() {
+        let mut run = bare_run(carved_rock());
+        let mut input = Input::default();
+        for _ in 0..2 {
+            input.pad_down(PadButton::DpadUp);
+            run.handle_input(&input);
+            input.end_frame();
+            input.pad_up(PadButton::DpadUp);
+        }
+        assert_eq!(run.dig_radius, DIG_RADIUS + 2 * DIG_STEP);
+        input.pad_down(PadButton::DpadDown);
+        run.handle_input(&input);
+        assert_eq!(run.dig_radius, DIG_RADIUS + DIG_STEP);
+    }
+
+    /// `X` and the pad's `West` (Square) cycle the cutaway alike: auto, on, off, auto.
+    #[test]
+    fn x_and_west_cycle_the_cutaway() {
+        for press in [
+            (|i: &mut Input| i.key_down(KeyCode::KeyX)) as fn(&mut Input),
+            |i: &mut Input| i.pad_down(PadButton::West),
+        ] {
+            let mut run = bare_run(carved_rock());
+            let mut input = Input::default();
+            let mut seen = Vec::new();
+            for _ in 0..3 {
+                press(&mut input);
+                run.handle_input(&input);
+                seen.push(run.cutaway);
+                input.end_frame();
+                input.key_up(KeyCode::KeyX);
+                input.pad_up(PadButton::West);
+            }
+            assert_eq!(seen, [CutawayMode::On, CutawayMode::Off, CutawayMode::Auto]);
+        }
+    }
+
+    #[test]
+    fn a_trigger_presses_past_half_and_lets_go_under_three_tenths() {
+        let mut held = false;
+        let pulls = [0.4, 0.5, 0.9, 0.35, 0.6, 0.25, 0.55];
+        let presses = pulls.map(|p| trigger_pressed(&mut held, p));
+        assert_eq!(presses, [false, true, false, false, false, false, true]);
+    }
+
     const PILLAR: ([i32; 3], [i32; 3]) = ([32, 32, 8], [40, 40, 40]);
 
     /// One chunk of air holding a rock floor, a pillar and a 3 x 3-cell ledge on it.
@@ -3927,6 +4226,231 @@ mod tests {
                 .unwrap();
         }
         world
+    }
+
+    /// [`ledge_world`] with the pillar's top cell cut to a 32-voxel sliver
+    /// `[32, 32, 39]..[36, 40, 40]` of `sliver` (the pillar stays full below z = 32), and an
+    /// 8-voxel rock lump `[18, 36, 42]..[20, 38, 44]` in cell `(2, 4, 5)`, beside the ledge
+    /// without touching it.
+    fn sliver_ledge_world(sliver: MaterialId) -> World {
+        let world = ledge_world();
+        let f = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
+        for (lo, hi, mode) in [
+            ([32, 32, 32], [40, 40, 40], Mode::Carve),
+            ([32, 32, 39], [36, 40, 40], Mode::Fill(sliver)),
+            ([18, 36, 42], [20, 38, 44], Mode::Fill(ROCK)),
+        ] {
+            world.apply(&EditOp::box_(f(lo), f(hi), mode)).unwrap();
+        }
+        world
+    }
+
+    /// A dig of radius 2 voxels from the centre of [`sliver_ledge_world`]'s lump: the ray
+    /// starts in rock, so the capsule is a sphere carving the lump's 8 voxels.
+    fn lump_dig() -> DigInput {
+        DigInput::Dig {
+            origin: Fixed3([19 * FIXED_ONE, 37 * FIXED_ONE, 43 * FIXED_ONE]),
+            dir: [FIXED_ONE, 0, 0],
+            radius: 2 * FIXED_ONE,
+        }
+    }
+
+    /// The query beside the ledge reports it (it rests on a cell of 32 voxels, half the
+    /// threshold), and it falls through the sliver: the slab's bottom is z 40, the sliver at
+    /// z 39 yields, z 38 to 32 is air and the pillar's full top cell holds z 31. Tick 1 drops 8
+    /// and crushes the 32 sliver voxels; tick 2 drops 0 onto the pillar, and the logic piles
+    /// the 32 as rubble on the landed slab: `C` = 576 columns, every 18th takes one voxel on
+    /// the slab's top at z 39, so all 32 are at z 40.
+    #[test]
+    fn a_ledge_on_a_sliver_falls_through_it_and_piles_what_it_crushed() {
+        let world = Arc::new(sliver_ledge_world(ROCK));
+        let mut net = native_net(&world);
+        let (lines, events) = net_tick(&mut net, &[lump_dig()]);
+        assert_eq!(lines, ["op carved", "region 9 1:4608"]);
+        let [OpResult::Edit(r)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
+        assert_eq!(r.changed_from, [(ROCK, 8)]);
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert_eq!(lines, ["op dropped"]);
+        let [OpResult::Drop(d)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
+        assert_eq!((d.dropped, d.crushed.as_slice()), (8, &[(ROCK, 32)][..]));
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert_eq!(
+            lines,
+            [
+                "op dropped",
+                "op piled",
+                "landed after 1 ticks, fell 8 voxels, crushed 32 voxels, 32 rubble"
+            ]
+        );
+        let [OpResult::Drop(d), OpResult::Pile(p)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
+        assert_eq!(d.dropped, 0);
+        assert_eq!(p.placed, 32);
+        assert_eq!(world.material_at([25, 26, 40]), Some(flythrough::RUBBLE));
+        assert_eq!(
+            world.count_in_box([24, 24, 32], [47, 47, 39]).unwrap(),
+            [(ROCK, 4608)]
+        );
+        // `count_in_box` counts air too: 576 voxels in the layer, 32 of them rubble.
+        assert_eq!(
+            world.count_in_box([24, 24, 40], [47, 47, 40]).unwrap(),
+            [(vxe_world::AIR, 544), (flythrough::RUBBLE, 32)]
+        );
+        let kinds: Vec<u8> = net
+            .server
+            .ops()
+            .entries()
+            .iter()
+            .filter(|e| e.op().is_some())
+            .map(|e| {
+                let mut out = Vec::new();
+                e.encode(&mut out);
+                out[12]
+            })
+            .collect();
+        assert_eq!(kinds, [1, 5, 5, 6]);
+        assert_eq!(*net.server.coarse(), CoarseGrid::build(&world));
+        // Nothing falls on.
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert!(
+            lines.is_empty() && events.is_empty(),
+            "{lines:?} {events:?}"
+        );
+    }
+
+    /// With the sliver made of the indestructible shell the ledge cannot move: its first tick
+    /// prints `wedged`, and the logic remembers it. A second lump dig beside it reports
+    /// nothing; a dig that takes voxels from the ledge reports it again with its new counts,
+    /// and it is wedged again.
+    #[test]
+    fn a_ledge_on_a_shell_sliver_is_wedged_and_reported_again_only_once_changed() {
+        let world = Arc::new(sliver_ledge_world(SHELL));
+        let table = world.materials().clone();
+        let mut net = native_net(&world);
+        let (lines, _) = net_tick(&mut net, &[lump_dig()]);
+        assert_eq!(lines, ["op carved", "region 9 1:4608"]);
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert_eq!(lines, ["op dropped", "wedged 9 1:4608"]);
+        assert_eq!(
+            wedged_terminal_line(&table, &lines[1]).as_deref(),
+            Some("wedged: 9 cells, {rock: 4608}, cannot fall")
+        );
+        let [OpResult::Drop(d)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
+        assert_eq!(d.dropped, 0);
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert!(
+            lines.is_empty() && events.is_empty(),
+            "{lines:?} {events:?}"
+        );
+
+        // A second lump in cell (6, 4, 5), beside the ledge, written past the server (its
+        // grid takes the cell back from the dig's aabb): dug, and the ledge the query reports
+        // is the remembered one.
+        let f = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
+        world
+            .apply(&EditOp::box_(
+                f([50, 36, 42]),
+                f([52, 38, 44]),
+                Mode::Fill(ROCK),
+            ))
+            .unwrap();
+        let second = DigInput::Dig {
+            origin: Fixed3([51 * FIXED_ONE, 37 * FIXED_ONE, 43 * FIXED_ONE]),
+            dir: [FIXED_ONE, 0, 0],
+            radius: 2 * FIXED_ONE,
+        };
+        let (lines, events) = net_tick(&mut net, &[second]);
+        assert_eq!(lines, ["op carved"]);
+        let [OpResult::Edit(r)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
+        assert_eq!(r.changed_from, [(ROCK, 8)]);
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert!(
+            lines.is_empty() && events.is_empty(),
+            "{lines:?} {events:?}"
+        );
+
+        // A dig into the ledge's corner changes its counts: reported, and wedged, again.
+        let corner = DigInput::Dig {
+            origin: Fixed3([25 * FIXED_ONE, 25 * FIXED_ONE, 46 * FIXED_ONE]),
+            dir: [FIXED_ONE, 0, 0],
+            radius: 2 * FIXED_ONE,
+        };
+        let (lines, events) = net_tick(&mut net, &[corner]);
+        let [OpResult::Edit(r)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
+        let left = 4608 - r.changed_from[0].1;
+        assert_eq!(
+            lines,
+            ["op carved".to_owned(), format!("region 9 1:{left}")]
+        );
+        let (lines, _) = net_tick(&mut net, &[]);
+        assert_eq!(
+            lines,
+            ["op dropped".to_owned(), format!("wedged 9 1:{left}")]
+        );
+    }
+
+    /// A ledge with no floor under it in the one-chunk world falls five ticks of 8, z 40 to 0;
+    /// on tick 6 the scan reaches chunk `[0, 0, -1]`, outside the extent, and the drop is
+    /// refused. It crushed nothing, so no pile follows, and no later tick drops it again.
+    #[test]
+    fn a_ledge_falling_out_of_the_world_is_refused_once() {
+        let world = Arc::new(World::generate(
+            ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+            &vxe_world::UniformSource(vxe_world::AIR),
+            &cave_materials(),
+        ));
+        let f = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
+        for (lo, hi) in [([24, 24, 40], [48, 48, 48]), ([18, 36, 42], [20, 38, 44])] {
+            world
+                .apply(&EditOp::box_(f(lo), f(hi), Mode::Fill(ROCK)))
+                .unwrap();
+        }
+        let mut net = native_net(&world);
+        let (lines, _) = net_tick(&mut net, &[lump_dig()]);
+        assert_eq!(lines, ["op carved", "region 9 1:4608"]);
+        for tick in 1..=5 {
+            let (lines, _) = net_tick(&mut net, &[]);
+            assert_eq!(lines, ["op dropped"], "tick {tick}");
+        }
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert_eq!(
+            lines,
+            [
+                "op dropped",
+                "drop refused: chunk [0, 0, -1] is not resident, after 5 ticks, fell 40 voxels"
+            ]
+        );
+        assert!(applied(&events).is_empty(), "{events:?}");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Refused {
+                    op: vxe_world::Op::Drop { .. },
+                    ..
+                }
+            )),
+            "{events:?}"
+        );
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert!(
+            lines.is_empty() && events.is_empty(),
+            "{lines:?} {events:?}"
+        );
+        assert_eq!(
+            world.count_in_box([24, 24, 0], [47, 47, 7]).unwrap(),
+            [(ROCK, 4608)]
+        );
     }
 
     /// A 1 m dig whose origin is inside the pillar, at its axis 16 voxels up: the ray starts
@@ -4051,6 +4575,28 @@ mod tests {
             );
             println!("dig {dir:?}: tick {:.3} ms; {lines:?}", ms_since(t));
         }
+    }
+
+    #[test]
+    fn cutaway_parses_auto_on_and_off() {
+        assert_eq!(
+            parse_args_from(argv(&[])).unwrap().cutaway,
+            CutawayMode::Auto
+        );
+        for (name, mode) in [
+            ("auto", CutawayMode::Auto),
+            ("on", CutawayMode::On),
+            ("off", CutawayMode::Off),
+        ] {
+            assert_eq!(
+                parse_args_from(argv(&["--cutaway", name])).unwrap().cutaway,
+                mode
+            );
+        }
+        assert_eq!(
+            parse_args_from(argv(&["--cutaway", "x"])).err().as_deref(),
+            Some("--cutaway takes auto, on or off, not x")
+        );
     }
 
     #[test]

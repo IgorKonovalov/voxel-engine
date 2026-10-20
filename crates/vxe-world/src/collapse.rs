@@ -1,7 +1,12 @@
-//! The collapse ops (ADR-0008): a rigid vertical drop of a region of cells, and its removal with
-//! rubble. Both take the region as cells (from [`crate::find_unsupported`] or the caller's own
-//! choice) and act on every solid voxel of those cells' bricks, except that the removal spares
-//! voxels of an `INDESTRUCTIBLE` material as `Mode::Carve` does.
+//! The collapse ops (ADR-0008): a rigid vertical drop of a region of cells, its removal with
+//! rubble, and a pile of rubble on it. Each takes the region as cells (from
+//! [`crate::find_unsupported`] or the caller's own choice) and acts on every solid voxel of
+//! those cells' bricks, except that the removal spares voxels of an `INDESTRUCTIBLE` material
+//! as `Mode::Carve` does.
+//!
+//! A drop may crush what it falls through (ADR-0016): with a yield threshold, a solid voxel
+//! outside the region whose cell holds fewer solid voxels than the threshold, and whose
+//! material is not `INDESTRUCTIBLE`, is passed through as if it were air and destroyed.
 //!
 //! An op first checks that every chunk holding a region cell is resident, then snapshots the
 //! region's bricks and scans the columns under them, failing with `NotResident` before anything
@@ -19,12 +24,12 @@ use crate::chunk::Chunk;
 use crate::coarse::CellCoord;
 use crate::coords::{BRICK_EDGE, ChunkCoord, VoxelCoord, index_in_brick};
 use crate::edit::{EditError, EditResult};
-use crate::material::{AIR, MaterialId};
+use crate::material::{AIR, MaterialId, MaterialTable};
 use crate::packed::{KernelMode, PackedStats};
 use crate::store::{World, read, write};
 use crate::support::{CellKey, CellMap};
 
-/// What [`World::drop_region`] did.
+/// What [`World::drop_region`] and [`World::drop_region_through`] did.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct DropResult {
     /// The region's solid voxels by material, ascending by material, when it moved; empty when
@@ -32,18 +37,28 @@ pub struct DropResult {
     pub moved: Vec<(MaterialId, u32)>,
     /// How far every voxel moved down, in voxels.
     pub dropped: i32,
-    /// Chunks holding a vacated or a landed voxel, ascending; empty when nothing moved.
+    /// Voxels outside the region that the fall destroyed, by material, ascending by material:
+    /// the yielding voxels in the span each region run swept. Empty when `dropped == 0` or the
+    /// yield threshold is 0.
+    pub crushed: Vec<(MaterialId, u32)>,
+    /// Chunks holding a vacated, a landed or a crushed voxel, ascending; empty when nothing
+    /// moved.
     pub touched: Vec<ChunkCoord>,
-    /// Inclusive bounds of the vacated and the landed voxels; `None` when nothing moved.
+    /// Inclusive bounds of the vacated, the landed and the crushed voxels; `None` when nothing
+    /// moved.
     pub aabb: Option<(VoxelCoord, VoxelCoord)>,
 }
 
 impl DropResult {
     /// The result in the edit-result vocabulary, for [`crate::CoarseGrid::update`]:
-    /// `changed_from` is `moved`, `touched` and `aabb` are the same.
+    /// `changed_from` is `moved` and `crushed` merged, `touched` and `aabb` are the same.
     pub fn edit_result(&self) -> EditResult {
+        let mut changed = Counts::default();
+        for &(m, n) in self.moved.iter().chain(&self.crushed) {
+            changed.add(m, n);
+        }
         EditResult {
-            changed_from: self.moved.clone(),
+            changed_from: changed.sorted(),
             touched: self.touched.clone(),
             aabb: self.aabb,
         }
@@ -69,6 +84,34 @@ impl RemoveResult {
     pub fn edit_result(&self) -> EditResult {
         EditResult {
             changed_from: self.removed.clone(),
+            touched: self.touched.clone(),
+            aabb: self.aabb,
+        }
+    }
+}
+
+/// What [`World::pile_rubble`] did.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct PileResult {
+    /// Rubble voxels written.
+    pub placed: u32,
+    /// Chunks holding a rubble voxel, ascending.
+    pub touched: Vec<ChunkCoord>,
+    /// Inclusive bounds of the rubble voxels; `None` when none was placed.
+    pub aabb: Option<(VoxelCoord, VoxelCoord)>,
+}
+
+impl PileResult {
+    /// The result in the edit-result vocabulary, for [`crate::CoarseGrid::update`]: every
+    /// rubble voxel was air, so `changed_from` is `[(AIR, placed)]` (empty when none was
+    /// placed); `touched` and `aabb` are the same.
+    pub fn edit_result(&self) -> EditResult {
+        EditResult {
+            changed_from: if self.placed > 0 {
+                vec![(AIR, self.placed)]
+            } else {
+                Vec::new()
+            },
             touched: self.touched.clone(),
             aabb: self.aabb,
         }
@@ -189,9 +232,11 @@ impl Snapshot {
     }
 
     /// Voxels below `z` (exclusive) in column `(x, y)` that are free to fall into, counted down
-    /// to the first solid voxel outside the region, at most `max`. A region voxel is free
-    /// unless `spare` holds for its material (a voxel the op leaves in place). Fails with the
-    /// chunk of the first non-resident voxel reached.
+    /// to the first solid voxel outside the region that does not yield, at most `max`. A
+    /// region voxel is free unless `spare` holds for its material (a voxel the op leaves in
+    /// place); a voxel outside the region is free when it is air or `yields` says it yields
+    /// (no voxel does when `yields` is `None`). Fails with the chunk of the first non-resident
+    /// voxel reached.
     fn gap_below(
         &self,
         reader: &mut Reader<'_>,
@@ -199,6 +244,7 @@ impl Snapshot {
         z: i32,
         max: i32,
         spare: &impl Fn(MaterialId) -> bool,
+        mut yields: Option<&mut Yield<'_>>,
     ) -> Result<i32, ChunkCoord> {
         let mut gap = 0;
         while gap < max {
@@ -225,12 +271,23 @@ impl Snapshot {
                 },
                 None => reader.brick(cell)?,
             };
+            let mut free = |m: MaterialId| {
+                m == AIR
+                    || yields
+                        .as_deref_mut()
+                        .is_some_and(|y| y.yields(cell, brick, m))
+            };
             match brick {
                 Brick::Uniform(AIR) => gap += span,
-                Brick::Uniform(_) => break,
+                Brick::Uniform(m) => {
+                    if !free(*m) {
+                        break;
+                    }
+                    gap += span;
+                }
                 full @ Brick::Full(_) => {
                     for k in 0..span {
-                        if full.get(index_of([x, y, top - k])) != AIR {
+                        if !free(full.get(index_of([x, y, top - k]))) {
                             return Ok(gap);
                         }
                         gap += 1;
@@ -239,6 +296,52 @@ impl Snapshot {
             }
         }
         Ok(gap)
+    }
+}
+
+/// A drop's yield rule (ADR-0016): a solid voxel outside the region yields when its cell
+/// holds fewer than `below` solid voxels and its material is not `INDESTRUCTIBLE`. A cell's
+/// count is its brick's solid-mask popcount, read when the op first reaches the cell and
+/// kept for the op, so the rule sees the world as the op found it.
+struct Yield<'t> {
+    below: u32,
+    materials: &'t MaterialTable,
+    /// Per cell reached, its solid count and whether one of its voxels has yielded.
+    counts: HashMap<CellCoord, (u32, bool)>,
+    /// The cells a voxel has yielded in, in the order they first did: the only cells a drop
+    /// can crush voxels of.
+    yielded: Vec<CellCoord>,
+}
+
+impl<'t> Yield<'t> {
+    fn new(below: u16, materials: &'t MaterialTable) -> Self {
+        Self {
+            below: u32::from(below),
+            materials,
+            counts: HashMap::new(),
+            yielded: Vec::new(),
+        }
+    }
+
+    /// Whether solid voxel material `m` of cell `cell`, whose brick is `brick`, yields.
+    fn yields(&mut self, cell: CellCoord, brick: &Brick, m: MaterialId) -> bool {
+        if self.materials.is_indestructible(m) {
+            return false;
+        }
+        // A uniform solid brick holds 512 solid voxels: no count to look up below that.
+        if matches!(brick, Brick::Uniform(_)) && self.below <= 512 {
+            return false;
+        }
+        let (n, seen) = self.counts.entry(cell).or_insert_with(|| {
+            let n = brick.solid_bits().iter().map(|w| w.count_ones()).sum();
+            (n, false)
+        });
+        let yields = *n < self.below;
+        if yields && !*seen {
+            *seen = true;
+            self.yielded.push(cell);
+        }
+        yields
     }
 }
 
@@ -312,6 +415,8 @@ trait Composed: Sized {
     fn place(&mut self, src: &Brick, layers: std::ops::Range<usize>, first: usize);
     /// Sets voxel `i` to `m`.
     fn set_voxel(&mut self, i: usize, m: MaterialId);
+    /// Sets the voxels at `indices` to air.
+    fn clear(&mut self, indices: &[usize]);
     fn into_brick(self) -> Brick;
 }
 
@@ -356,6 +461,14 @@ impl Composed for Brick {
         } else {
             self.modify(|v| v[i] = m);
         }
+    }
+
+    fn clear(&mut self, indices: &[usize]) {
+        self.modify(|v| {
+            for &i in indices {
+                v[i] = AIR;
+            }
+        });
     }
 
     fn into_brick(self) -> Brick {
@@ -418,6 +531,12 @@ impl Composed for RawBrick {
     fn set_voxel(&mut self, i: usize, m: MaterialId) {
         if self.get(i) != m {
             self.expand(&mut SpareArrays::new())[i] = m;
+        }
+    }
+
+    fn clear(&mut self, indices: &[usize]) {
+        for &i in indices {
+            self.set_voxel(i, AIR);
         }
     }
 
@@ -501,9 +620,127 @@ impl<B: Composed> Compose<B> {
     }
 }
 
+/// The rubble stage of [`World::remove_region`] and [`World::pile_rubble`]: one integer
+/// accumulator across the footprint's columns in their fixed order, a scan down each column
+/// to its ground, and the upward write of each column's share.
+struct RubbleStage {
+    rubble: MaterialId,
+    /// `(numerator, denominator)` of the share; nothing piles when the denominator is 0 or
+    /// `rubble` is air.
+    fraction: (u64, u64),
+    max_depth: i32,
+    /// Weight times the numerator not yet piled, below the denominator between columns.
+    acc: u64,
+    /// Per column with a share and ground: the lowest air voxel above the ground, and the
+    /// share.
+    piles: Vec<([i32; 3], i32)>,
+}
+
+impl RubbleStage {
+    fn new(rubble: MaterialId, fraction: (u32, u32), max_depth: i32) -> Self {
+        Self {
+            rubble,
+            fraction: (u64::from(fraction.0), u64::from(fraction.1)),
+            max_depth,
+            acc: 0,
+            piles: Vec::new(),
+        }
+    }
+
+    /// The next column `xy` of weight `n`: it adds `n` times the numerator to the accumulator
+    /// and takes `h`, the accumulator's whole multiples of the denominator. Its ground is the
+    /// first voxel below `z` (exclusive) that is solid once the op's carve is done (a region
+    /// voxel is free unless `spare` holds), within `max_depth`; a column with no ground within
+    /// reach loses its `h`, and the remainder still carries.
+    fn column(
+        &mut self,
+        snap: &Snapshot,
+        reader: &mut Reader<'_>,
+        xy: [i32; 2],
+        n: u64,
+        z: i32,
+        spare: &impl Fn(MaterialId) -> bool,
+    ) -> Result<(), EditError> {
+        let (num, den) = self.fraction;
+        let h = if den != 0 && self.rubble != AIR {
+            self.acc += n * num;
+            let h = self.acc / den;
+            self.acc -= h * den;
+            h
+        } else {
+            0
+        };
+        let gap = snap
+            .gap_below(reader, xy, z, self.max_depth, spare, None)
+            .map_err(EditError::NotResident)?;
+        if h > 0 && gap < self.max_depth {
+            let h = i32::try_from(h).unwrap_or(i32::MAX);
+            self.piles.push(([xy[0], xy[1], z - gap], h));
+        }
+        Ok(())
+    }
+
+    /// Writes each column's share upward from its lowest air voxel, fewer where the air (after
+    /// the carve) runs out, into `compose`; returns the voxels written.
+    fn write<B: Composed>(
+        self,
+        snap: &Snapshot,
+        reader: &mut Reader<'_>,
+        compose: &mut Compose<B>,
+        spare: &impl Fn(MaterialId) -> bool,
+        touched: &mut BTreeSet<ChunkCoord>,
+        bounds: &mut Bounds,
+    ) -> u32 {
+        let mut placed: u32 = 0;
+        for ([x, y, z0], h) in self.piles {
+            let mut top = None;
+            for z in z0..z0.saturating_add(h) {
+                if !snap.air_after_carve(reader, [x, y, z], spare) {
+                    break;
+                }
+                compose.set(reader, [x, y, z], self.rubble);
+                touched.insert(VoxelCoord([x, y, z]).chunk());
+                placed += 1;
+                top = Some(z);
+            }
+            if let Some(top) = top {
+                bounds.add([x, y, z0], [x, y, top]);
+            }
+        }
+        placed
+    }
+}
+
+/// The `z` of the lowest voxel of each run of solid region voxels in a column's `parts`,
+/// bottom first: a solid voxel whose voxel below is not a solid region voxel (or lies in a
+/// cell outside the region).
+fn run_bottoms(parts: &[(i32, [MaterialId; 8])]) -> impl Iterator<Item = i32> + '_ {
+    let mut below_solid = false;
+    let mut prev_z: Option<i32> = None;
+    parts.iter().flat_map(move |(cz, col)| {
+        if prev_z != Some(cz - 1) {
+            below_solid = false;
+        }
+        prev_z = Some(*cz);
+        // At most 4 runs start in 8 voxels; the array has room for 8.
+        let mut out = [0; 8];
+        let mut n = 0;
+        for (lz, &m) in col.iter().enumerate() {
+            let solid = m != AIR;
+            if solid && !below_solid {
+                out[n] = cz * BE + lz as i32;
+                n += 1;
+            }
+            below_solid = solid;
+        }
+        out.into_iter().take(n)
+    })
+}
+
 impl World {
     /// Moves the solid voxels of `cells`' bricks straight down, as one rigid piece, by the
-    /// smallest air gap under the region's columns, at most `max_drop`.
+    /// smallest air gap under the region's columns, at most `max_drop`:
+    /// [`World::drop_region_through`] with a yield threshold of 0, which crushes nothing.
     ///
     /// Per voxel column of the footprint, the gap is the run of air below the column's lowest
     /// region voxel down to the first solid voxel, capped at `max_drop`. A column whose region
@@ -523,7 +760,7 @@ impl World {
     /// Refused with `OutOfRange { what: RegionCells }`, changing nothing, when `cells` holds
     /// more than the world's `region_cells_max`.
     pub fn drop_region(&self, cells: &[CellCoord], max_drop: i32) -> Result<DropResult, EditError> {
-        self.drop_region_with::<Brick>(cells, max_drop)
+        self.drop_region_with::<Brick>(cells, max_drop, 0)
     }
 
     /// [`World::drop_region`] composed over decoded voxels, written id by id: the reference the
@@ -534,13 +771,50 @@ impl World {
         cells: &[CellCoord],
         max_drop: i32,
     ) -> Result<DropResult, EditError> {
-        self.drop_region_with::<RawBrick>(cells, max_drop)
+        self.drop_region_with::<RawBrick>(cells, max_drop, 0)
+    }
+
+    /// [`World::drop_region`] through the voxels that yield (ADR-0016): a solid voxel outside
+    /// the region yields when its cell held fewer than `yield_below` solid voxels when the op
+    /// started and its material is not `INDESTRUCTIBLE`.
+    ///
+    /// The gap scan passes through a yielding voxel as if it were air, and stops at a voxel of
+    /// a cell at or above the threshold, at an `INDESTRUCTIBLE` voxel and at a chunk that is not
+    /// resident, as [`World::drop_region`] does. Once the drop `dropped` is known, every
+    /// yielding voxel in the span a region run swept (in each column of the footprint, from
+    /// each run's lowest voxel down by `dropped`) is crushed: it becomes air, or the landed
+    /// region overwrites it. The crushed voxels are [`DropResult::crushed`], and `touched` and
+    /// `aabb` include them. A drop crushes at most `dropped` voxels per run.
+    ///
+    /// `yield_below == 0` yields nothing and is exactly [`World::drop_region`]. With
+    /// `yield_below` equal to the support query's `solid_min`, the drop agrees with the query:
+    /// a cell the query calls load-free does not stop it.
+    pub fn drop_region_through(
+        &self,
+        cells: &[CellCoord],
+        max_drop: i32,
+        yield_below: u16,
+    ) -> Result<DropResult, EditError> {
+        self.drop_region_with::<Brick>(cells, max_drop, yield_below)
+    }
+
+    /// [`World::drop_region_through`] composed over decoded voxels, written id by id: the
+    /// reference the native path is tested against.
+    #[doc(hidden)]
+    pub fn drop_region_through_decoded(
+        &self,
+        cells: &[CellCoord],
+        max_drop: i32,
+        yield_below: u16,
+    ) -> Result<DropResult, EditError> {
+        self.drop_region_with::<RawBrick>(cells, max_drop, yield_below)
     }
 
     fn drop_region_with<B: Composed>(
         &self,
         cells: &[CellCoord],
         max_drop: i32,
+        yield_below: u16,
     ) -> Result<DropResult, EditError> {
         self.limits().check_region(cells.len())?;
         let map = read(&self.store.chunks);
@@ -551,8 +825,10 @@ impl World {
         }
 
         let mut reader = Reader::new(&map);
+        let mut yields = (yield_below > 0).then(|| Yield::new(yield_below, &self.materials));
         let mut dropped = max_drop;
         for (xy, parts) in &columns {
+            // The bottom of each run of solid region voxels, as `run_bottoms` yields them.
             let mut below_solid = false;
             let mut prev_z: Option<i32> = None;
             for (cz, col) in parts {
@@ -564,7 +840,7 @@ impl World {
                     if solid && !below_solid {
                         let z = cz * BE + lz as i32;
                         let gap = snap
-                            .gap_below(&mut reader, *xy, z, max_drop, &|_| false)
+                            .gap_below(&mut reader, *xy, z, max_drop, &|_| false, yields.as_mut())
                             .map_err(EditError::NotResident)?;
                         dropped = dropped.min(gap);
                     }
@@ -578,9 +854,69 @@ impl World {
         }
 
         let mut moved = Counts::default();
+        let mut crushed = Counts::default();
         let mut bounds = Bounds::default();
         let mut compose = Compose::<B>::new(&snap, &|_| false);
         let mut touched = BTreeSet::new();
+        if let Some(y) = yields.as_mut().filter(|y| !y.yielded.is_empty()) {
+            // Every solid voxel outside the region in a swept span yielded when the gap scan
+            // passed it, so it lies in a cell of `yielded`, and each is crushed. Per column, the
+            // spans of its runs (which may overlap) are merged, and each meets the yielded
+            // cells of its cell stack.
+            y.yielded.sort_unstable();
+            let mut by_cell: BTreeMap<CellCoord, Vec<usize>> = BTreeMap::new();
+            let mut spans: Vec<(i32, i32)> = Vec::new();
+            let mut stack: Option<[i32; 2]> = None;
+            let mut stack_cells: Vec<CellCoord> = Vec::new();
+            for (xy, parts) in &columns {
+                let [x, y_] = *xy;
+                let here = [x.div_euclid(BE), y_.div_euclid(BE)];
+                if stack != Some(here) {
+                    stack = Some(here);
+                    stack_cells.clear();
+                    stack_cells.extend(
+                        y.yielded
+                            .iter()
+                            .filter(|c| [c.0[0], c.0[1]] == here)
+                            .copied(),
+                    );
+                }
+                if stack_cells.is_empty() {
+                    continue;
+                }
+                spans.clear();
+                for z in run_bottoms(parts) {
+                    let (lo, hi) = (z - dropped, z - 1);
+                    match spans.last_mut() {
+                        Some(last) if lo <= last.1 + 1 => last.1 = last.1.max(hi),
+                        _ => spans.push((lo, hi)),
+                    }
+                }
+                for &cell in &stack_cells {
+                    let (clo, chi) = (cell.0[2] * BE, cell.0[2] * BE + BE - 1);
+                    for &(lo, hi) in &spans {
+                        let (from, to) = (lo.max(clo), hi.min(chi));
+                        if from > to {
+                            continue;
+                        }
+                        let brick = reader.brick(cell).expect("scanned resident");
+                        for z in from..=to {
+                            let v = [x, y_, z];
+                            let m = brick.get(index_of(v));
+                            if m != AIR {
+                                crushed.add(m, 1);
+                                bounds.add(v, v);
+                                touched.insert(VoxelCoord(v).chunk());
+                                by_cell.entry(cell).or_default().push(index_of(v));
+                            }
+                        }
+                    }
+                }
+            }
+            for (cell, indices) in by_cell {
+                compose.brick(&mut reader, cell).clear(&indices);
+            }
+        }
         for (&[cx, cy], zs) in &snap.stacks {
             for &cz in zs {
                 let c = CellCoord([cx, cy, cz]);
@@ -639,6 +975,7 @@ impl World {
         Ok(DropResult {
             moved: moved.sorted(),
             dropped,
+            crushed: crushed.sorted(),
             touched: touched.into_iter().collect(),
             aabb: bounds.get(),
         })
@@ -704,10 +1041,7 @@ impl World {
 
         // Scan every column first, so a non-resident chunk fails the op before any write.
         let mut reader = Reader::new(&map);
-        let mut piles: Vec<([i32; 3], i32)> = Vec::new();
-        let whole = fraction.1 != 0 && rubble != AIR;
-        // Carved voxels times `fraction.0` not yet piled, below `fraction.1` between columns.
-        let mut acc: u64 = 0;
+        let mut stage = RubbleStage::new(rubble, fraction, max_depth);
         for (xy, parts) in &columns {
             let mut n: u64 = 0;
             let mut lowest: Option<i32> = None;
@@ -720,21 +1054,7 @@ impl World {
                 }
             }
             let Some(lowest) = lowest else { continue };
-            let h = if whole {
-                acc += n * u64::from(fraction.0);
-                let h = acc / u64::from(fraction.1);
-                acc -= h * u64::from(fraction.1);
-                h
-            } else {
-                0
-            };
-            let gap = snap
-                .gap_below(&mut reader, *xy, lowest, max_depth, &spare)
-                .map_err(EditError::NotResident)?;
-            if h > 0 && gap < max_depth {
-                let h = i32::try_from(h).unwrap_or(i32::MAX);
-                piles.push(([xy[0], xy[1], lowest - gap], h));
-            }
+            stage.column(&snap, &mut reader, *xy, n, lowest, &spare)?;
         }
 
         let mut compose = Compose::<B>::new(&snap, &spare);
@@ -774,27 +1094,104 @@ impl World {
                 touched.insert(c.split().0);
             }
         }
-        let mut placed: u32 = 0;
-        for ([x, y, z0], h) in piles {
-            let mut top = None;
-            for z in z0..z0.saturating_add(h) {
-                if !snap.air_after_carve(&mut reader, [x, y, z], &spare) {
-                    break;
-                }
-                compose.set(&mut reader, [x, y, z], rubble);
-                touched.insert(VoxelCoord([x, y, z]).chunk());
-                placed += 1;
-                top = Some(z);
-            }
-            if let Some(top) = top {
-                bounds.add([x, y, z0], [x, y, top]);
-            }
-        }
+        let placed = stage.write(
+            &snap,
+            &mut reader,
+            &mut compose,
+            &spare,
+            &mut touched,
+            &mut bounds,
+        );
         drop(reader);
         compose.commit(self, &map);
         drop(map);
         Ok(RemoveResult {
             removed: removed.sorted(),
+            placed,
+            touched: touched.into_iter().collect(),
+            aabb: bounds.get(),
+        })
+    }
+
+    /// Spreads `count` rubble voxels of material `rubble` over the footprint columns of
+    /// `cells`, on top of what the cells hold: [`World::remove_region`]'s rubble stage without
+    /// its carve.
+    ///
+    /// The `C` voxel columns of the footprint that hold a solid voxel of the named cells are
+    /// taken in `remove_region`'s order (cell stacks ascending by `(cx, cy)`, then local `y`,
+    /// then local `x`), each of weight 1 with the fraction `(count, C)`: one integer
+    /// accumulator adds `count` per column and the column takes `h` = the accumulator's whole
+    /// multiples of `C`, so the columns pile `count` voxels in all, less only what finds no
+    /// ground or no air. Each column scans down from the top voxel of its stack's highest named
+    /// cell, through air, to the first solid voxel within `max_depth`, and writes `h` rubble
+    /// voxels upward into air from the voxel above it. A column with no solid voxel within
+    /// `max_depth` loses its `h`; the remainder still carries. `count == 0`, or `rubble` air,
+    /// places nothing. Fails with `NotResident`, changing nothing, when a cell's chunk, or a
+    /// voxel a scan reaches, is not resident, and with `OutOfRange { what: RegionCells }` when
+    /// `cells` holds more than the world's `region_cells_max`.
+    pub fn pile_rubble(
+        &self,
+        cells: &[CellCoord],
+        rubble: MaterialId,
+        count: u32,
+        max_depth: i32,
+    ) -> Result<PileResult, EditError> {
+        self.pile_rubble_with::<Brick>(cells, rubble, count, max_depth)
+    }
+
+    /// [`World::pile_rubble`] composed over decoded voxels, written id by id: the reference
+    /// the native path is tested against.
+    #[doc(hidden)]
+    pub fn pile_rubble_decoded(
+        &self,
+        cells: &[CellCoord],
+        rubble: MaterialId,
+        count: u32,
+        max_depth: i32,
+    ) -> Result<PileResult, EditError> {
+        self.pile_rubble_with::<RawBrick>(cells, rubble, count, max_depth)
+    }
+
+    fn pile_rubble_with<B: Composed>(
+        &self,
+        cells: &[CellCoord],
+        rubble: MaterialId,
+        count: u32,
+        max_depth: i32,
+    ) -> Result<PileResult, EditError> {
+        self.limits().check_region(cells.len())?;
+        let map = read(&self.store.chunks);
+        let snap = Snapshot::take(&map, cells)?;
+        let columns = snap.columns();
+        if columns.is_empty() || count == 0 || rubble == AIR {
+            return Ok(PileResult::default());
+        }
+        // Nothing is carved: every solid voxel of the named cells stays.
+        let spare = |m: MaterialId| m != AIR;
+        let c = u32::try_from(columns.len()).expect("at most region_cells_max * 64 columns");
+
+        let mut reader = Reader::new(&map);
+        let mut stage = RubbleStage::new(rubble, (count, c), max_depth);
+        for (xy, parts) in &columns {
+            let (top_cell, _) = parts.last().expect("a column crosses a named cell");
+            stage.column(&snap, &mut reader, *xy, 1, (top_cell + 1) * BE, &spare)?;
+        }
+
+        let mut compose = Compose::<B>::new(&snap, &spare);
+        let mut bounds = Bounds::default();
+        let mut touched = BTreeSet::new();
+        let placed = stage.write(
+            &snap,
+            &mut reader,
+            &mut compose,
+            &spare,
+            &mut touched,
+            &mut bounds,
+        );
+        drop(reader);
+        compose.commit(self, &map);
+        drop(map);
+        Ok(PileResult {
             placed,
             touched: touched.into_iter().collect(),
             aabb: bounds.get(),

@@ -191,6 +191,7 @@ fn the_default_look_leaves_the_goldens_byte_for_byte() {
         detail: false,
         view: ViewMode::Shaded,
         translucent_layers: 4,
+        cutaway: false,
     };
     assert_eq!(default, LookParams::default());
     let world = carved_world();

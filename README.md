@@ -20,8 +20,8 @@ and entity model.
 
 > **Status: pre-alpha.** Milestones M1 (fly-through with digging), M3 (collision and a
 > character controller) and M5 (the simulation split and a WebAssembly logic host) have
-> shipped, with parts of M2, M6, M7 and M8. Spatial audio (M4) is implemented and awaits a
-> listening check. [`CHANGELOG.md`](CHANGELOG.md) says what has shipped,
+> shipped, with parts of M2, M6, M7 and M8. Spatial audio (M4) shipped its first slice,
+> heard and checked by the owner; its reverb slice is in flight. [`CHANGELOG.md`](CHANGELOG.md) says what has shipped,
 > [`docs/roadmap.md`](docs/roadmap.md) what comes next, and
 > [`docs/plans/README.md`](docs/plans/README.md) what is in flight.
 
@@ -47,9 +47,13 @@ and entity model.
   replica with desync detection; a session replays from seed plus log to the same hash.
   Game logic runs behind a trait, natively or as a sandboxed WebAssembly component with
   deterministic WASI, fuel and a memory cap, proven equal to the native build.
-- **A compute ray marcher** in WGSL over a sharded GPU mirror of the world, uploaded
-  incrementally from the dirty set, with a headlamp, a shadow ray, smoothed and per-voxel
-  contour normals, and a stats overlay with a frame-time strip.
+- **A compute ray marcher** in WGSL over a sharded GPU mirror of the world, reserved once
+  and uploaded incrementally from the dirty set, walking a hierarchy of occupancy bits, with
+  a headlamp, a shadow ray, per-voxel contour normals with procedural detail, a translucent
+  material class, and a stats overlay with a frame-time strip.
+- **Spatial audio:** a headless HRTF mixer on the device callback, with occlusion,
+  transmission and early reflections probed through the same voxels and the material
+  table's acoustic triple.
 - **The fly-through** testbed: fly or walk, dig, fill and stamp, watch unsupported rock fall,
   save and replay sessions, and print what each edit changed, plus headless benchmarks and
   golden images.
@@ -69,8 +73,8 @@ The figures behind these, met and missed, are in [`docs/nfr.md`](docs/nfr.md).
   acoustics and navigation without a second representation of the world.
 - **Scripting hosts.** WASM for deterministic server-side logic (shipped), Lua for client-side
   scripts, so a game's rules can be data rather than engine code.
-- **Spatial audio.** HRTF playback on the device callback, with occlusion and early reflections
-  traced through the same voxels.
+- **Spatial audio.** HRTF playback with occlusion and early reflections (shipped), then a late
+  reverb sized by the room the listener sees.
 
 The budgets these claims are held to (frame time, VRAM, edit cost, baseline hardware) are in
 [`docs/nfr.md`](docs/nfr.md). A figure there without a measurement is a guess and says so.
@@ -86,11 +90,12 @@ The budgets these claims are held to (frame time, VRAM, edit cost, baseline hard
 | [`crates/vxe-assets`](crates/vxe-assets) | `.vox` parsing and the palette-to-material map, producing `vxe-world` prefabs. |
 | [`crates/vxe-net`](crates/vxe-net) | The byte channel, the server tick with its op and input logs, the logic trait, shared and owned clients. |
 | [`crates/vxe-script-wasm`](crates/vxe-script-wasm) | The `wasmtime` host for logic components; `guests/` holds the test components. Not in the default build. |
+| [`crates/vxe-audio`](crates/vxe-audio) | `cpal` output, the HRTF mixer on the device callback, occlusion and early reflections through the material table; the HRIR pack under `assets/`. Depends on `vxe-world` only. |
 | [`apps/flythrough`](apps/flythrough) | The engine's own testbed binary; `logic/` is its dig logic, built natively or as a component. |
 | [`scripts/`](scripts) | Repository gates (doc links, comment hygiene, index rows) and the guest build script. |
 | [`docs/`](docs) | [Roadmap](docs/roadmap.md), [budgets](docs/nfr.md), [ADRs](docs/adrs/README.md), [plans](docs/plans/README.md). |
 
-Further crates (audio, Lua scripting, the network transport) are added one plan at a time; the
+Further crates (Lua scripting, the network transport) are added one plan at a time; the
 roadmap names them.
 
 ## Building
@@ -98,11 +103,11 @@ roadmap names them.
 The toolchain is pinned in [`rust-toolchain.toml`](rust-toolchain.toml); `rustup` installs it on
 first use. Linux and Windows are the supported platforms.
 
-On Linux, `winit` and `wgpu` need the X11/Wayland headers and a Vulkan driver. On Debian or
-Ubuntu:
+On Linux, `winit` and `wgpu` need the X11/Wayland headers and a Vulkan driver, and `cpal`
+needs the ALSA headers. On Debian or Ubuntu:
 
 ```sh
-sudo apt-get install pkg-config libxkbcommon-dev libwayland-dev mesa-vulkan-drivers
+sudo apt-get install pkg-config libxkbcommon-dev libwayland-dev mesa-vulkan-drivers libasound2-dev
 ```
 
 Then:
@@ -139,6 +144,8 @@ go through an in-process server, so every edit you see came back as a client eve
 | `G` | Toggle fly and walk mode (bounded level only); walking, `Space` jumps or climbs a ledge |
 | `K` | Print the coarse grid and walkable map |
 | `R` | Toggle what unsupported rock does after a dig: fall (default) or crumble into rubble |
+| `H`, `J`, `T` | With `--audio`: play a knock, a looping hum, or a looping pulse (a knock each second) at the point the last left click dug |
+| `E` | With `--audio`: toggle the early reflections |
 | `F1` | Sample the next frames and print frame-time readings |
 | `F2` | Toggle the stats overlay |
 | `Esc` | Quit |
@@ -168,11 +175,14 @@ Walking, the coarse grid and collapse run on the bounded level (`--level`) only.
 | `--detail` | Start with procedural surface detail on under `--look plain` (it is on in every other look) |
 | `--rock-detail SCALE,STRENGTH` | Rock's detail feature scale in voxels and strength in [0, 1], in every look but `plain` (default 4,0.1) |
 | `--save PATH` | With `--level`: write the session's log file to `PATH` on exit and print the world hash; stamps and collapse are in the log |
+| `--audio` | Open the default output device; `H`, `J`, `T` and `E` then work, and every frame probes the sounds' occlusion through the world. `FLYTHROUGH_HRIR=<pack>` loads another HRIR pack |
+| `--audio-debug` | `--audio` plus a line a second of the output callback's readings; on exit writes the last 60 s to `flythrough-audio-debug.wav` |
 | `--replay PATH` | With `--level`: re-simulate a saved session before the first frame and print its hash; add `--vault` for a session saved with it (the save does not record the room placed at generation) |
 
 The storage figures come from an example: `cargo run --release -p flythrough --example
 world_budget -- --chunks 20,20,8 --census` (the level) or `--stream 16,24 --census` (the streamed
-residency); `--veins N --census` prints the census of a synthetic world of `N - 1` materials.
+residency); `--veins N --census` prints the census of a synthetic world of `N - 1` materials,
+and `--surface` (with `--stream`) counts the contour-plane voxels.
 The bounded run also times the coarse grid and the per-chunk mip build. A `Full` brick is a
 packed mask, palette and bit planes (ADR-0012), so the level's bricks take 58 MiB of RAM and
 the streamed defaults' about 400 MiB ([`docs/nfr.md`](docs/nfr.md) section 3).
@@ -185,14 +195,18 @@ These are the gates CI runs on every push, on both Linux and Windows:
 
 ```sh
 scripts/build-guests.sh
+cargo build --workspace
 cargo nextest run --workspace
 cargo nextest run -p flythrough --features wasm
 cargo test --workspace --doc
 cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy -p flythrough --features wasm --all-targets -- -D warnings
 cargo fmt --all --check
 cargo deny check
+node --test ".claude/hooks/*.test.mjs"
 node scripts/check-doc-links.mjs
 node scripts/check-comment-hygiene.mjs
+node scripts/check-index-rows.mjs
 node scripts/check-index-rows.mjs --self-test
 ```
 

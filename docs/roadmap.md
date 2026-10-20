@@ -155,7 +155,9 @@ v0.4.1), which cut the `worst` bench from 4.6 to 3.56 ms on a quiet dev box with
 hash moved; the owner kept the 2 ms figure. Plan 0014 (closed 2026-10-17, v0.7.0) is the second pass: a brick-array pool, a sphere span walk and an analytic capsule row cut `worst` to 3.19-3.26 ms (3.03-3.05 ms with a warm pool) and `tool` from 8.05 to 6.78-6.80 ms. The §4 miss carries forward: the row write bounds the cost inside ADR-0002's representation, and the owner chose a representation: ADR-0012 (accepted 2026-10-17), whose CPU-format step is Plan 0021. Plan 0021 closed 2026-10-20 (v0.18.0): the planar edit kernel reads the warm worst case at 1.34 to 1.52 ms on the dev box (not quiet; 3.03 ms before) and the fly-through `B` line at 1.52 ms. The owner held the 2 ms figure on the dev box (2026-10-20), so the line is met there; there is no baseline-GPU reading. A quiet-box re-read the same day (2796062) did not reproduce those figures: `worst_warm` 1.79 ms, and the `B` line 2.06 to 2.09 ms, with an unchanged `vxe-world`. The owner raised the line to 2.2 ms on the dev box and planned one more optimization pass.
 
 **Next, before M2's lighting:** a streaming-CPU plan (incremental queue, residency sweep and
-window shift; narrowing and staging on workers), not drafted yet. The march-pass diagnosis this
+window shift; narrowing and staging on workers), drafted 2026-10-20 as
+[Plan 0023](plans/0023-render-thread-cpu-attribute-hitch-and-streaming-line.md) together with
+Plan 0013's attribute-hitch followup. The march-pass diagnosis this
 paragraph also asked for landed in Plan 0015 (the steps view, its headless histogram and the
 autopilot readings), which brought the streamed primary-ray line under 3.0 ms on the dev box.
 Plan 0002's Followups list the rest.
@@ -196,7 +198,7 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017 and 0021 closed; the lighting plan next)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017 and 0021 closed; Plan 0023 drafted; Plan 0024, the lighting plan, drafted)
 
 Plan 0015 closed 2026-10-19 (v0.14.0): the marcher walks a hierarchy of occupancy bits
 (chunk bits with an empty bit in the table, 512-bit brick masks on aligned lines, a walk that
@@ -221,9 +223,10 @@ palette and bit planes in five fixed classes (ADR-0012's CPU-format step), edits
 operations with popcount tallies, and the hot readers read masks natively. On the dev box,
 resident chunks at the streamed defaults fell from 3.24 to 0.44 GB, and peak RSS from 3.87 to
 about 1.0 GB. The mirror bytes did not move, and neither did any pinned hash. The
-size-classed mirror slot plan is next in ADR-0012's sequence. The residency p95 (611 ms
-against the 500 ms proposal, under load) stays open (owner, 2026-10-20): a quiet-box re-read
-is owed once the parallel lanes stop.
+size-classed mirror slot plan is next in ADR-0012's sequence. The residency p95 read 611 ms
+against the 500 ms proposal under load; the quiet-box re-read (2796062, `nfr.md` §5) reads
+381 ms in face mode, under the proposal, and 270 to 904 ms with the default contour look,
+which Plan 0023's attribute work owns.
 
 Plan 0013 closed 2026-10-20 (v0.19.0): contour with detail (rock `[4.0, 0.1]`) is the
 fly-through's default and `--look plain` keeps face mode. A plane hit's shadow ray leaves along
@@ -239,7 +242,18 @@ owed before the lighting plan the same day.
 
 Plan 0005 closed 2026-10-16 (v0.4.0): the surface-look spike measured four normal modes and
 procedural detail, and the owner chose per-voxel contour planes with weaker rock detail
-(ADR-0011); Plan 0013 made it the default. The lighting plan is not drafted yet.
+(ADR-0011); Plan 0013 made it the default.
+
+The lighting plan is [Plan 0024](plans/0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md)
+(drafted 2026-10-20, with ADR-0018): direct light and the denoiser only. A hit pass writes a
+per-pixel record, a light pass takes one sample per pixel (the headlamp, or an emissive voxel
+resampled from samples the mirror extracts at upload) with one shadow ray, a temporal pass
+reprojects by hit position and kills history inside the frame's edit boxes, and four a-trous
+iterations filter the rest; the frame renders a view list. Four mechanisms stay switchable
+until the owner has seen them: the coarse or full shadow walk, reservoir reuse or a flat
+list, edit-box or gradient history, half or full lighting resolution. It starts after Plan
+0023 closes and before ADR-0012's mirror-slot plan. Indirect light (one bounce, probes as
+the fallback) and the upscaler are the two plans after it.
 
 **Goal:** the consumer's P0 rendering bar. Few lights, emissive voxels, destruction, no ghosting.
 The quality reference is the Sibenik cathedral in Laine & Karras 2010, Figure 1. That image is
@@ -377,11 +391,12 @@ a cheap query.
 - `vxe-assets`: `.vox` import with material mapping. Done in Plan 0008 (v0.6.0).
 - `vxe-render`: instanced voxel volumes with transforms traced in the same pipeline (a small
   top-level structure of AABBs walked in compute), rigid-part rigs, consistent lighting and
-  shadows, emissive entities.
+  shadows, emissive entities. Plan 0024's temporal pass reprojects by hit position, so a
+  moving entity ghosts until this milestone's entities write motion vectors into it.
 - **Visible proof:** a golden image of an animated model casting a shadow on the world.
 - **ADRs expected:** entity representation.
 
-### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; debug views, the profiler across passes and the benchmark lane remain)
+### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views, the profiler across passes and the benchmark lane remain; Plan 0026 closed gamepad flight, v0.21.0)
 
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane
@@ -411,7 +426,11 @@ a cheap query.
   query's answer. Both are ordinary ops: they return per-material counts and the touched
   region, and replicate through M5's log as op kinds 3 and 4. Shipped in Plan 0009 as
   `World::drop_region` and `World::remove_region`, and logged since Plan 0018 (v0.15.0), where
-  the logic asks `Host::unsupported` and issues the drops or removals.
+  the logic asks `Host::unsupported` and issues the drops or removals. Since Plan 0022
+  (v0.22.0, ADR-0016) a drop takes a yield threshold (`World::drop_region_through`, op kind 5):
+  it passes through and crushes the non-indestructible voxels of cells under the query's
+  `solid_min`, so a region the query detaches falls instead of wedging on a sliver, and
+  `World::pile_rubble` (op kind 6) puts the crushed volume back as rubble on the landed piece.
 - **Stress (open; owner's call, 2026-10-17):** overhangs fail by span and weight, not only
   when the support query finds them disconnected. The owner's windowed test of v0.12.0
   found collapse rarely triggers in the cave, because a cell one eighth solid still bears

@@ -360,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "chatty-guest"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -863,7 +863,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "echo-guest"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -965,11 +965,12 @@ dependencies = [
 
 [[package]]
 name = "flythrough"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "criterion",
  "env_logger",
  "flythrough-logic",
+ "gilrs",
  "log",
  "png",
  "pollster",
@@ -984,7 +985,7 @@ dependencies = [
 
 [[package]]
 name = "flythrough-logic"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -1159,6 +1160,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "gilrs"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "902fb00d3f6398e635be22e5c837b303c501835cca7ac11a47bba138f7aafdd8"
+dependencies = [
+ "fnv",
+ "gilrs-core",
+ "log",
+ "uuid",
+ "vec_map",
+]
+
+[[package]]
+name = "gilrs-core"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc7f0ce6237abcc0523f2a5502b1e3fe5802daaae47ac14e166fe49551301ea9"
+dependencies = [
+ "inotify",
+ "js-sys",
+ "libc",
+ "libudev-sys",
+ "log",
+ "nix",
+ "objc2-core-foundation",
+ "objc2-io-kit",
+ "uuid",
+ "vec_map",
+ "wasm-bindgen",
+ "web-sys",
+ "windows",
+]
+
+[[package]]
 name = "gimli"
 version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1195,7 +1230,7 @@ dependencies = [
 
 [[package]]
 name = "greedy-guest"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -1250,7 +1285,7 @@ checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
 
 [[package]]
 name = "hog-guest"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -1376,6 +1411,26 @@ dependencies = [
  "hashbrown 0.17.1",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "inotify"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cc00ea907cab49550b7da656f80ebb97be1b997d931fbcd28d39734e17ce592"
+dependencies = [
+ "bitflags 2.13.2",
+ "inotify-sys",
+ "libc",
+]
+
+[[package]]
+name = "inotify-sys"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c033f80b2c113cdf91ab7a33faa9cbc014726dcad99880c8609af2a370edf37d"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -1547,6 +1602,16 @@ dependencies = [
  "libc",
  "plain",
  "redox_syscall 0.9.4",
+]
+
+[[package]]
+name = "libudev-sys"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c8469b4a23b962c1396b9b451dda50ef5b283e8dd309d69033475fa9b334324"
+dependencies = [
+ "libc",
+ "pkg-config",
 ]
 
 [[package]]
@@ -1727,6 +1792,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
 ]
 
 [[package]]
@@ -1964,6 +2041,17 @@ dependencies = [
  "block2 0.6.2",
  "libc",
  "objc2 0.6.5",
+ "objc2-core-foundation",
+]
+
+[[package]]
+name = "objc2-io-kit"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33fafba39597d6dc1fb709123dfa8289d39406734be322956a69f0931c73bb15"
+dependencies = [
+ "bitflags 2.13.2",
+ "libc",
  "objc2-core-foundation",
 ]
 
@@ -2290,7 +2378,7 @@ dependencies = [
 
 [[package]]
 name = "probe-guest"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "getrandom 0.4.3",
  "vxe-net",
@@ -2749,7 +2837,7 @@ dependencies = [
 
 [[package]]
 name = "spin-guest"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -2866,7 +2954,7 @@ dependencies = [
 
 [[package]]
 name = "timer-guest"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "vxe-net",
  "vxe-script-wasm",
@@ -3011,6 +3099,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
+name = "uuid"
+version = "1.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cc1186384beb7dd8eedea376413fd654937285ea6c9cfbb928dc3043ea4b606"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "vec_map"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1bddf1187be692e79c5ffeab891132dfb0f236ed36a43c7ed39f1165ee20191"
+
+[[package]]
 name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3018,7 +3122,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vxe-app"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "log",
  "pollster",
@@ -3028,14 +3132,14 @@ dependencies = [
 
 [[package]]
 name = "vxe-assets"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "vxe-world",
 ]
 
 [[package]]
 name = "vxe-audio"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "cpal",
  "criterion",
@@ -3045,7 +3149,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-net"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "criterion",
  "vxe-net",
@@ -3054,7 +3158,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-render"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "bytemuck",
  "glam",
@@ -3065,7 +3169,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-script-wasm"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "bytes",
  "criterion",
@@ -3081,7 +3185,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-sim"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "criterion",
  "vxe-world",
@@ -3089,7 +3193,7 @@ dependencies = [
 
 [[package]]
 name = "vxe-world"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "criterion",
 ]

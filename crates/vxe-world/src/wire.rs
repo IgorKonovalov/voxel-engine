@@ -11,6 +11,11 @@
 //! | 2    | stamp    | prefab id `u64`, origin `VoxelCoord`, rotation index `u8` (`Rot::all`) |
 //! | 3    | drop     | max drop `i32`, cell count `u32`, the cells                          |
 //! | 4    | remove   | rubble `u16`, fraction 2 × `u32`, max depth `i32`, cell count `u32`, the cells |
+//! | 5    | drop through | max drop `i32`, yield threshold `u16` (never 0), cell count `u32`, the cells |
+//! | 6    | pile     | rubble `u16`, count `u32`, max depth `i32`, cell count `u32`, the cells |
+//!
+//! A drop is kind 3 when its yield threshold is 0 and kind 5 otherwise, so each drop has one
+//! encoding: a kind-5 entry with a threshold of 0 is [`WireError::NonCanonical`].
 //!
 //! An edit's modes and shapes:
 //!
@@ -20,13 +25,13 @@
 //! | `Fill`    | material `u16`    | box       | min, max: 6 × i64       |
 //! | `Replace` | from, to: 2 × u16 | capsule   | a, b, radius: 7 × i64   |
 //!
-//! An op result is a kind `u8` ([`OP_EDIT`] for an edit's or a stamp's, [`OP_DROP`],
-//! [`OP_REMOVE`]) then the result ([`encode_op_result`]).
+//! An op result is a kind `u8` ([`OP_EDIT`] for an edit's or a stamp's, [`OP_DROP`] for
+//! either drop's, [`OP_REMOVE`], [`OP_PILE`]) then the result ([`encode_op_result`]).
 //!
 //! Tag value 0 is never assigned, so a zeroed buffer never decodes as a valid op.
 
 use crate::coarse::CellCoord;
-use crate::collapse::{DropResult, RemoveResult};
+use crate::collapse::{DropResult, PileResult, RemoveResult};
 use crate::coords::{ChunkCoord, VoxelCoord};
 use crate::edit::{EditError, EditOp, EditResult, Mode};
 use crate::fixed::Fixed3;
@@ -44,6 +49,11 @@ pub const OP_STAMP: u8 = 2;
 pub const OP_DROP: u8 = 3;
 /// Op kind of a region removal with rubble.
 pub const OP_REMOVE: u8 = 4;
+/// Op kind of a region drop through the cells under a yield threshold (ADR-0016); a drop
+/// with a threshold of 0 is [`OP_DROP`].
+pub const OP_DROP_THROUGH: u8 = 5;
+/// Op kind of a rubble pile on a region.
+pub const OP_PILE: u8 = 6;
 /// Kind of an op log boundary entry, which has no payload. It sits clear of the op kinds so
 /// later op kinds can be claimed below it.
 pub const KIND_BOUNDARY: u8 = 0x80;
@@ -88,6 +98,9 @@ pub enum WireError {
     /// A log file's prefab table holds content whose [`crate::Prefab::id`] is not the id
     /// the table gives it.
     PrefabMismatch { id: u64 },
+    /// An entry, starting at `at`, in an encoding the format leaves to another kind: a kind-5
+    /// drop whose yield threshold is 0, which only kind 3 encodes.
+    NonCanonical { at: usize },
     /// Reading or writing the underlying stream failed.
     Io(std::io::ErrorKind),
 }
@@ -106,6 +119,9 @@ impl std::fmt::Display for WireError {
                     f,
                     "the prefab table's content for id {id:#018x} does not hash to it"
                 )
+            }
+            Self::NonCanonical { at } => {
+                write!(f, "the entry at offset {at} has a shorter encoding")
             }
             Self::Io(k) => write!(f, "i/o error: {k}"),
         }
@@ -335,9 +351,23 @@ pub fn encode_op(out: &mut Vec<u8>, op: &Op) {
             put_i32x3(out, origin.0);
             out.push(rot.index());
         }
-        Op::Drop { cells, max_drop } => {
+        Op::Drop {
+            cells,
+            max_drop,
+            yield_below: 0,
+        } => {
             out.push(OP_DROP);
             out.extend_from_slice(&max_drop.to_le_bytes());
+            put_cells(out, cells);
+        }
+        Op::Drop {
+            cells,
+            max_drop,
+            yield_below,
+        } => {
+            out.push(OP_DROP_THROUGH);
+            out.extend_from_slice(&max_drop.to_le_bytes());
+            out.extend_from_slice(&yield_below.to_le_bytes());
             put_cells(out, cells);
         }
         Op::Remove {
@@ -350,6 +380,18 @@ pub fn encode_op(out: &mut Vec<u8>, op: &Op) {
             out.extend_from_slice(&rubble.to_le_bytes());
             out.extend_from_slice(&fraction.0.to_le_bytes());
             out.extend_from_slice(&fraction.1.to_le_bytes());
+            out.extend_from_slice(&max_depth.to_le_bytes());
+            put_cells(out, cells);
+        }
+        Op::Pile {
+            cells,
+            rubble,
+            count,
+            max_depth,
+        } => {
+            out.push(OP_PILE);
+            out.extend_from_slice(&rubble.to_le_bytes());
+            out.extend_from_slice(&count.to_le_bytes());
             out.extend_from_slice(&max_depth.to_le_bytes());
             put_cells(out, cells);
         }
@@ -391,7 +433,8 @@ fn encode_edit(out: &mut Vec<u8>, e: &EditOp) {
 }
 
 /// Reads one op as [`encode_op`] writes it. A rotation index past 23 is
-/// [`WireError::UnknownKind`].
+/// [`WireError::UnknownKind`]; a kind-5 drop with a yield threshold of 0 is
+/// [`WireError::NonCanonical`].
 pub fn decode_op(r: &mut Reader<'_>) -> Result<Op, WireError> {
     match r.u8()? {
         OP_EDIT => Ok(Op::Edit(decode_edit(r)?)),
@@ -411,6 +454,19 @@ pub fn decode_op(r: &mut Reader<'_>) -> Result<Op, WireError> {
             Ok(Op::Drop {
                 cells: read_cells(r)?,
                 max_drop,
+                yield_below: 0,
+            })
+        }
+        OP_DROP_THROUGH => {
+            let max_drop = r.i32()?;
+            let yield_below = r.u16()?;
+            if yield_below == 0 {
+                return Err(WireError::NonCanonical { at: r.entry() });
+            }
+            Ok(Op::Drop {
+                cells: read_cells(r)?,
+                max_drop,
+                yield_below,
             })
         }
         OP_REMOVE => {
@@ -421,6 +477,17 @@ pub fn decode_op(r: &mut Reader<'_>) -> Result<Op, WireError> {
                 cells: read_cells(r)?,
                 rubble,
                 fraction,
+                max_depth,
+            })
+        }
+        OP_PILE => {
+            let rubble = r.u16()?;
+            let count = r.u32()?;
+            let max_depth = r.i32()?;
+            Ok(Op::Pile {
+                cells: read_cells(r)?,
+                rubble,
+                count,
                 max_depth,
             })
         }
@@ -476,9 +543,10 @@ pub fn decode_result(r: &mut Reader<'_>) -> Result<EditResult, WireError> {
 }
 
 /// Appends an op result: its kind, then for [`OP_EDIT`] the edit result as
-/// [`encode_result`] writes it; for [`OP_DROP`] the moved counts, `dropped` as `i32`, then the
-/// touched chunks and the aabb; for [`OP_REMOVE`] the removed counts, `placed` as `u32`, then
-/// the touched chunks and the aabb. Counts, chunks and the aabb are encoded as in an edit
+/// [`encode_result`] writes it; for [`OP_DROP`] the moved counts, the crushed counts, `dropped`
+/// as `i32`, then the touched chunks and the aabb; for [`OP_REMOVE`] the removed counts,
+/// `placed` as `u32`, then the touched chunks and the aabb; for [`OP_PILE`] `placed` as `u32`,
+/// then the touched chunks and the aabb. Counts, chunks and the aabb are encoded as in an edit
 /// result.
 pub fn encode_op_result(out: &mut Vec<u8>, r: &OpResult) {
     match r {
@@ -489,6 +557,7 @@ pub fn encode_op_result(out: &mut Vec<u8>, r: &OpResult) {
         OpResult::Drop(d) => {
             out.push(OP_DROP);
             put_counts(out, &d.moved);
+            put_counts(out, &d.crushed);
             out.extend_from_slice(&d.dropped.to_le_bytes());
             put_extent(out, &d.touched, d.aabb);
         }
@@ -497,6 +566,11 @@ pub fn encode_op_result(out: &mut Vec<u8>, r: &OpResult) {
             put_counts(out, &m.removed);
             out.extend_from_slice(&m.placed.to_le_bytes());
             put_extent(out, &m.touched, m.aabb);
+        }
+        OpResult::Pile(p) => {
+            out.push(OP_PILE);
+            out.extend_from_slice(&p.placed.to_le_bytes());
+            put_extent(out, &p.touched, p.aabb);
         }
     }
 }
@@ -507,11 +581,13 @@ pub fn decode_op_result(r: &mut Reader<'_>) -> Result<OpResult, WireError> {
         OP_EDIT => Ok(OpResult::Edit(decode_result(r)?)),
         OP_DROP => {
             let moved = read_counts(r)?;
+            let crushed = read_counts(r)?;
             let dropped = r.i32()?;
             let (touched, aabb) = read_extent(r)?;
             Ok(OpResult::Drop(DropResult {
                 moved,
                 dropped,
+                crushed,
                 touched,
                 aabb,
             }))
@@ -522,6 +598,15 @@ pub fn decode_op_result(r: &mut Reader<'_>) -> Result<OpResult, WireError> {
             let (touched, aabb) = read_extent(r)?;
             Ok(OpResult::Remove(RemoveResult {
                 removed,
+                placed,
+                touched,
+                aabb,
+            }))
+        }
+        OP_PILE => {
+            let placed = r.u32()?;
+            let (touched, aabb) = read_extent(r)?;
+            Ok(OpResult::Pile(PileResult {
                 placed,
                 touched,
                 aabb,

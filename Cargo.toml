@@ -23,7 +23,7 @@ default-members = [
 [workspace.package]
 # Single source of truth for the engine version. Member crates inherit it via
 # `version.workspace = true`; bumped once per plan at the architect close.
-version = "0.19.0"
+version = "0.22.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/IgorKonovalov/voxel-engine"
@@ -51,6 +51,9 @@ criterion = { version = "=0.8.2", default-features = false, features = ["cargo_b
 env_logger = { version = "=0.11.11", default-features = false }
 # The probe component's entropy source: what a logic crate reaching for randomness would use.
 getrandom = { version = "=0.4.3", default-features = false }
+# The testbed's gamepad (ADR-0019): evdev through udev on Linux (links the system libudev),
+# Windows Gaming Input on Windows. Defaults kept: without them gilrs-core 0.6.8 does not compile.
+gilrs = "=0.11.2"
 glam = { version = "=0.34.1", features = ["bytemuck"] }
 log = "=0.4.34"
 png = "=0.18.1"
@@ -60,13 +63,13 @@ pollster = "=1.0.1"
 sofar = { version = "=0.4.0", default-features = false }
 # Engine crates other engine crates depend on. The exact version tracks
 # [workspace.package].version above; bump both together.
-vxe-assets = { path = "crates/vxe-assets", version = "=0.19.0" }
-vxe-audio = { path = "crates/vxe-audio", version = "=0.19.0" }
-vxe-net = { path = "crates/vxe-net", version = "=0.19.0" }
-vxe-sim = { path = "crates/vxe-sim", version = "=0.19.0" }
+vxe-assets = { path = "crates/vxe-assets", version = "=0.22.0" }
+vxe-audio = { path = "crates/vxe-audio", version = "=0.22.0" }
+vxe-net = { path = "crates/vxe-net", version = "=0.22.0" }
+vxe-sim = { path = "crates/vxe-sim", version = "=0.22.0" }
 # Without its default `host` feature, so a guest takes only the bindings (`guest`).
-vxe-script-wasm = { path = "crates/vxe-script-wasm", version = "=0.19.0", default-features = false }
-vxe-world = { path = "crates/vxe-world", version = "=0.19.0" }
+vxe-script-wasm = { path = "crates/vxe-script-wasm", version = "=0.22.0", default-features = false }
+vxe-world = { path = "crates/vxe-world", version = "=0.22.0" }
 # The WebAssembly host for the logic component (ADR-0010) and the guest bindings. The three
 # move together (wit-bindgen at the release on wasmtime's wasm-tools, 0.258): a bump is its
 # own commit, gated by the native-versus-component equality test.

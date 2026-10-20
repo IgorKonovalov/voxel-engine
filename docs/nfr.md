@@ -167,6 +167,16 @@ reads 14.85 ms on the streamed cave at full residency, so the fly-through sample
 240 frames while the HUD is shown. The streamed world's readings are logged in the plan, not
 gated.
 
+**The cutaway view from outside the level (dev reference, diagnostic, Plan 0025 Phase 2, the
+ignored test `cutaway_steps_from_outside_the_level_at_1080p`, `--level --seed 1`, camera 40 m
+outside the -x face at the centre looking +x, face normals, 1920x1080, NVIDIA GeForce RTX 3080
+Laptop GPU, exclusive perf lock, 1-minute load 8.7, not quiet):** a debug view, off whenever
+the camera is in air, so it has no line in the table. The steps view reads a mean of 49.53
+steps per ray, p99 170, with 2434 of 2 073 600 rays at the view's 255 clamp; with the cutaway
+off the same camera reads a mean of 0.91, p99 1. From 20 m out the cutaway read a mean of 58.74,
+p99 201 (load 21.3). A ray through the hull steps uniform bricks eight voxels at a time and the
+voxels of full bricks one at a time.
+
 No frame may stall on paging: work attributable to streaming on the render thread is capped at
 the streaming line above; the rest runs on background threads.
 
@@ -439,15 +449,30 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   fly-through, the query after a 0.5 m dig on the seed-1 level reads 492 to 619 µs over six
   digs (release build, 25b483d; no proposal). Every reading is under its proposal; the
   proposals stand as budgets.
+  **Yielding drop and rubble pile (proposals, Plan 0022, ADR-0016):** `drop_region_through` of
+  the 9-cell slab through a 32-voxel sliver under the slab's 100 µs; of the 4096-cell cube at
+  yield 64 under the cube's 20 ms; `pile_rubble` of 32 on the 9-cell slab under the removal's
+  200 µs (a pile is the removal's second half). **Readings (dev reference, AMD Ryzen 9 5900HS,
+  Linux, same bench, criterion medians, exclusive perf lock, at 7e42bbf, 1-minute load 2.2 to
+  6.8, three runs):** slab through the sliver 91.5 to 94.7 µs; yielding cube 7.4 to 10.6 ms;
+  pile 35.4 to 37.9 µs. In the same lock hold, paired with the pre-plan build (ec99160, load 4.5
+  to 9.1), the plan build reads within noise of or under it on every older arm:
+  `find_unsupported` 337 to 395 µs against 393; slab by 32 78 to 82 µs against 84 to 89; by 10
+  57 µs against 62 to 68; `remove_region` 154 to 160 µs against 153 to 161; cube by 64 7.4 to
+  8.7 ms against 10.2 to 11.0. Every reading is under its proposal; the proposals stand as
+  budgets.
 - **Logs (Plan 0007, Plan 0018):** an op log entry is 47 bytes for a sphere carve (65 for a box
   fill, 75 for a capsule replace), 34 for a stamp (whatever the prefab's size: it names the
   prefab by content id, ADR-0014), `21 + 12n` for a drop of `n` cells and `31 + 12n` for a
-  removal (49 173 bytes for a 4 096-cell drop); a boundary entry 13, an input entry 14 bytes
+  removal (49 173 bytes for a 4 096-cell drop), `23 + 12n` for a drop through sub-threshold
+  cells (kind 5, Plan 0022: 131 bytes for 9 cells, 49 175 for 4 096) and `27 + 12n` for a
+  rubble pile (kind 6: 135 bytes for 9 cells); a boundary entry 13, an input entry 14 bytes
   plus its payload. A log file adds a header of 60 fixed bytes, a 4-byte prefab count, and
   per prefab its stamps name an 8-byte id and its content (`12 + 2n` bytes for `n` voxels plus
   8 per 64 voxels of mask: 8 716 for the 16³ vault), once per prefab however often it is
   stamped. A falling region re-sends its cells every tick it drops (129 bytes a tick for a
-  9-cell slab). All asserted in `crates/vxe-world/tests/log.rs`.
+  9-cell slab, 131 as kind 5), and a fall that crushed anything adds one kind-6 pile entry at
+  its end. All asserted in `crates/vxe-world/tests/log.rs`.
 - **Replay throughput:** no budget; a reading only, bound by the edit cost above (the ops
   dominate, not the decode). **Reading (dev reference, AMD Ryzen 9 5900HS, Plan
   0007 Phase 6, exclusive perf lock, 1-minute load 1.45):** `cargo bench -p vxe-world --bench
@@ -623,9 +648,11 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   `crates/vxe-world/tests/stamp.rs` pins it at `0x7ee7_eeb7_0956_d069`, blessed on Linux; the
   stamp is integer-only, so the Windows arm must reproduce it.
 - The collapse course (`crates/vxe-world/tests/collapse.rs`, Plan 0009: a query, four per-tick
-  drops and a removal, hashing every result and the world after each step) pins
-  `0x3178_0a15_61c1_3041`, blessed on Linux. The Windows arm confirms it on the first CI run
-  after a push of `main`; the ops are integer-only, so a mismatch is a defect, fixed forward.
+  drops and a removal, hashing every result and the world after each step; Plan 0022 adds a
+  slab dropped through a sliver and its rubble pile) pins `0xd223_d848_c8fc_ca0f`, blessed on
+  Linux; the Windows arm confirms it on the first CI run after the owner pushes `main`. The
+  course's first two parts still hash to the earlier `0x3178_0a15_61c1_3041`. The ops are
+  integer-only, so a mismatch is a defect, fixed forward.
 - The op log (Plan 0007): the determinism vector's 24 ops encoded as an op log (1446 bytes)
   hash to `0x5ac8_737d_db0f_ccec` (`apps/flythrough/tests/determinism.rs`), and decoding and
   replaying that log reproduces the vector hash; `vxe-net`'s re-simulation tests hold a seeded
