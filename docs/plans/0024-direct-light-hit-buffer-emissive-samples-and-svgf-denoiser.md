@@ -301,12 +301,19 @@ changes it, with the count of changed pixels in the log.
   for the light-sample count, `--lighting`, `--shadow-walk`, `--sampler`, `--history` flags,
   the emission pulse key, and the autopilot printing the per-pass p50 and p99 over its flight
   plus the extraction's render-thread cost. The frame's VRAM goes in `Frame::frame_bytes`.
-- **Files touched:** `apps/flythrough/src/main.rs`, `hud.rs`, `fly.rs`, `README.md` of the app
-  if it lists keys, `docs/nfr.md` §3.
+  The `hero` example gains `--frames N` (default 64) so the accumulation and filter settle
+  before it writes its still, takes the lighting flags, and places an emissive ore vein in
+  view of the headlamp; the close re-shoots `docs/images/hero.png` with it.
+- **Files touched:** `apps/flythrough/src/main.rs`, `hud.rs`, `fly.rs`,
+  `apps/flythrough/examples/hero.rs`, the root `README.md` (flags, keys, the hero caption),
+  `docs/nfr.md` §3.
 - **Done when:** `flythrough --autopilot --headless --seed 1` prints p50 and p99 for hit,
   light, temporal, a-trous, composite and extraction, and `frame_bytes` at 1080p reads under
   300 MB (the projection in `## Budgets`); the parse test pins every new flag and its refusal
-  of an unknown value.
+  of an unknown value; `cargo run --release -p flythrough --example hero -- --frames 64`
+  writes a still of the dark cave lit by the headlamp and a glowing vein, and the README's
+  caption names the pose and flags that regenerate it (the owner's ask of 2026-10-20: a hero
+  worth looking at once the lighting is in).
 
 ### Phase 11: The owner's windowed check
 - **Owner skill:** human
