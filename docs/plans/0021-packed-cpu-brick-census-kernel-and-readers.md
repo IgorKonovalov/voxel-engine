@@ -465,7 +465,7 @@ header, world key, coordinate and FNV trailer are version 1's.
 | 5: Native paths for the hot readers | dev | done | 44ace94 |
 | 6: Collapse as layer shifts and palette remaps | dev | done | ce44fa1 |
 | 7: The mirror upload from planes, and spill version 2 | dev | done | 8440aa9 |
-| 8: Readings, budgets and the census after edits | dev | done | committed with this row |
+| 8: Readings, budgets and the census after edits | dev | done | abe0fc3 |
 
 ### Notes
 
@@ -586,9 +586,17 @@ header, world key, coordinate and FNV trailer are version 1's.
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
+- **What shipped:** feature
+- **Public API changed:** `Brick::Full` holds an opaque `Packed` (was `Box<[u16; 512]>`);
+  new `Brick::decode`, `modify`, `class`, `payload_bytes`, `for_each_solid_in`; `Packed`,
+  `PackedClass`, `PackedStats` (`World::packed_stats`), `BrickCensus`, `WorldCensus`
+  (`World::brick_census`); removed `World::reserve_brick_arrays`, `World::pool_len`,
+  `World::BRICK_ARRAY_POOL_CAP`; `SPILL_VERSION` 2 (version-1 files report
+  `SpillError::Version`); the fly-through's `--census` and `world_budget --census` / `--veins`;
+  `#[doc(hidden)]`: `World::apply_capturing`, `drop_region_decoded`, `remove_region_decoded`,
+  `RawBrick`, `RowWriter`, `PlanarWriter`, `CapturedBrickEdit`, `WriterResult`, `Packed`'s
+  bench constructors. Shader interfaces and mirror bytes unchanged.
+- **Budget readings:** dev box only (Ryzen 9 5900HS, RTX 3080 Laptop GPU); no baseline reading.
   - Phase 1, dev box (AMD Ryzen 9 5900HS, RTX 3080 Laptop), release, Phase 1 commit, exclusive
     perf lock. Census (no timing): `world_budget --chunks 20,20,8 --seed 1 --census`: 383 608
     `Full` bricks, bins 1: 275 466, 2: 107 325, 3-4: 817, rest 0; payload today 392 814 592 B,
@@ -649,12 +657,14 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     Census after the `B` bench (`flythrough --level --seed 1 --headless --bench 1 --frames 1
     --census`): 385 378 `Full`, bins 1: 277 246, 2: 107 315, 3-4: 817; `PackedStats {
     class_changes: 8, entries_removed: 49, renames: 0 }`; `B` 1.52 ms (load 11.5).
-- **Gate at the tip (992fdaa):** `cargo build --workspace --all-targets` 0; `cargo nextest run
-  --workspace` (after `scripts/build-guests.sh`, under the perf lock) 394 passed, 4 skipped,
-  exit 0; `cargo test --workspace --doc` 7 passed; clippy `-D warnings` 0; `fmt --check` 0;
-  `cargo deny check` 0; doc-links, comment-hygiene, index-rows OK.
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **Gate at the tip (abe0fc3):** `cargo build --workspace --all-targets` 0; clippy
+  `-D warnings` 0; `cargo fmt --all --check` 0; `scripts/build-guests.sh` 0; `cargo nextest run
+  --workspace` under the perf lock (load 9.45) 457 passed, 4 skipped, exit 0; `cargo nextest
+  run -p flythrough --features wasm` 101 passed, 3 skipped, exit 0; `cargo test --workspace
+  --doc` 7 passed; doc-links, comment hygiene and index rows OK. `cargo deny check` fails
+  `advisories` on RUSTSEC-2026-0378 and RUSTSEC-2026-0379 (wasmtime), with `Cargo.lock`
+  identical to main at 5ca4151, which fails the same check; bans, licenses and sources OK.
+- **Outstanding `human` phases:** none (Phase 2 answered go on 2026-10-20).
 
 ## Followups
 
