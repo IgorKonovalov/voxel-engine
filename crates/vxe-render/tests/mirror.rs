@@ -1625,3 +1625,174 @@ fn pressure_follows_the_records_when_they_run_out() {
     assert!(records > 0.9);
     assert!((f64::from(gpu.pressure()) - records).abs() < 1e-6);
 }
+
+/// A chunk as the store holds it.
+type SharedChunk = Arc<std::sync::RwLock<Chunk>>;
+
+/// A fixed window over chunks x = 0..10 (y = z = 0) of `Checker`, emptied of every chunk; the
+/// chunks are handed back to put in the store, and `Mixed` mips at the same coordinates.
+fn tier_world() -> (World, Vec<SharedChunk>, Vec<Arc<ChunkMips>>) {
+    let extent = ChunkExtent::new([0, 0, 0], [10, 1, 1]);
+    let world = World::generate(extent, &Checker, &numbered_table(2));
+    let mixed = World::generate(extent, &Mixed, &mixed_table());
+    let mut chunks = Vec::new();
+    let mut mips = Vec::new();
+    for x in 0..10 {
+        let c = ChunkCoord([x, 0, 0]);
+        chunks.push(world.store().remove(c).unwrap());
+        let m = mixed.store().get(c).unwrap();
+        mips.push(Arc::new(ChunkMips::build(&m.read().unwrap())));
+    }
+    (world, chunks, mips)
+}
+
+/// Makes chunk `x` of the tier world LOD-only with `mips`.
+fn to_lod(world: &World, x: i32, mips: &Arc<ChunkMips>) {
+    let c = ChunkCoord([x, 0, 0]);
+    world.store().remove(c);
+    world.insert_lod(c, mips.clone());
+}
+
+/// A demotion that frees its pages in the same sync fits a full pool, with attribute pages:
+/// three `Checker` chunks fill both reserved pages with attribute slots (512, 512, then 340 of
+/// page 0 and 172 of page 1); one sync demotes them to their own mips (a checkerboard's
+/// mip-bricks are uniform, so they take no slot) and adds a farther LOD-only chunk whose
+/// `Mixed` mips need plain slots. The demotions empty both pages first, so the plain slots
+/// come from a freed page. `pool_need` before it credited tier changes failed this sync with
+/// `PoolTooLarge` (a third page past a two-page reservation; the plan log records the run).
+#[test]
+fn a_demotion_that_empties_attribute_pages_fits_a_full_pool() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let (world, chunks, mixed) = tier_world();
+    for x in 0..3 {
+        world
+            .store()
+            .write_lock()
+            .insert(ChunkCoord([x, 0, 0]), chunks[x as usize].clone());
+    }
+    let mut gpu = GpuWorld::with_surface_attrs(
+        &device,
+        MirrorConfig {
+            budget_bytes: budget_for(2 * 4096, 10),
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        },
+    );
+    gpu.set_focus(VoxelCoord([1, 1, 1]));
+    gpu.sync(&world, &queue).unwrap();
+    assert_eq!(gpu.reserved_slots(), 2 * 4096);
+    assert_eq!(gpu.live_attr_slots(), 3 * 512);
+    assert_eq!(gpu.pages_issued(), 2);
+
+    for x in 0..3 {
+        let own = Arc::new(ChunkMips::build(&chunks[x as usize].read().unwrap()));
+        assert_eq!(own.full_bricks(), 0, "a checkerboard's mips are uniform");
+        to_lod(&world, x, &own);
+    }
+    world.insert_lod(ChunkCoord([3, 0, 0]), mixed[3].clone());
+    let need = mixed[3].full_bricks() as u32;
+    assert!(need > 0);
+    let st = gpu
+        .sync(&world, &queue)
+        .expect("the demotions free the pages first");
+    assert_eq!(st.chunks, 4);
+    assert_eq!(gpu.live_attr_slots(), 0);
+    assert_eq!(gpu.live_slots(), need);
+    assert_eq!(gpu.pages_issued(), 2);
+    let rb = Readback::new(&device, &queue, &gpu);
+    for x in 0..4 {
+        rb.assert_lod(&gpu, &world, ChunkCoord([x, 0, 0]));
+    }
+}
+
+/// The same without attribute pages: eight `Checker` chunks fill a one-page reservation;
+/// demoting them and adding a farther LOD-only chunk fits, its mip-bricks taking slots the
+/// first demotion frees. `pool_need` before it credited tier changes failed this sync with
+/// `PoolTooLarge` (4096 slots plus the new mips past 4096).
+#[test]
+fn a_plain_demotion_fits_a_full_pool() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let (world, chunks, mixed) = tier_world();
+    for x in 0..8 {
+        world
+            .store()
+            .write_lock()
+            .insert(ChunkCoord([x, 0, 0]), chunks[x as usize].clone());
+    }
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            budget_bytes: budget_for(4096, 10),
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        },
+    );
+    gpu.set_focus(VoxelCoord([1, 1, 1]));
+    gpu.sync(&world, &queue).unwrap();
+    assert_eq!(gpu.live_slots(), 4096);
+    assert_eq!(gpu.reserved_slots(), 4096);
+
+    for x in 0..8 {
+        let own = Arc::new(ChunkMips::build(&chunks[x as usize].read().unwrap()));
+        to_lod(&world, x, &own);
+    }
+    world.insert_lod(ChunkCoord([8, 0, 0]), mixed[8].clone());
+    let st = gpu
+        .sync(&world, &queue)
+        .expect("the first demotion frees slots first");
+    assert_eq!(st.chunks, 9);
+    assert_eq!(gpu.live_slots(), mixed[8].full_bricks() as u32);
+    let rb = Readback::new(&device, &queue, &gpu);
+    for x in 0..9 {
+        rb.assert_lod(&gpu, &world, ChunkCoord([x, 0, 0]));
+    }
+}
+
+/// A selection whose net need exceeds the reservation still fails before writing: a full
+/// one-page pool of eight `Checker` chunks, one of them demoted (freeing 512 slots) while two
+/// new full chunks need 1024.
+#[test]
+fn a_selection_past_the_reservation_net_of_its_frees_still_fails_untouched() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let (world, chunks, _) = tier_world();
+    for x in 0..8 {
+        world
+            .store()
+            .write_lock()
+            .insert(ChunkCoord([x, 0, 0]), chunks[x as usize].clone());
+    }
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            budget_bytes: budget_for(4096, 10),
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        },
+    );
+    gpu.set_focus(VoxelCoord([1, 1, 1]));
+    gpu.sync(&world, &queue).unwrap();
+    let own = Arc::new(ChunkMips::build(&chunks[0].read().unwrap()));
+    to_lod(&world, 0, &own);
+    for x in 8..10 {
+        world
+            .store()
+            .write_lock()
+            .insert(ChunkCoord([x, 0, 0]), chunks[x as usize].clone());
+    }
+    let (bytes, mirrored, live) = (gpu.bytes_written(), gpu.mirrored_chunks(), gpu.live_slots());
+    let err = gpu.sync(&world, &queue).unwrap_err();
+    assert_eq!(
+        err,
+        vxe_render::MirrorError::PoolTooLarge {
+            needed: (4096 + 512) * SLOT_BYTES,
+            limit: 4096 * SLOT_BYTES,
+        }
+    );
+    assert_eq!(gpu.bytes_written(), bytes);
+    assert_eq!(gpu.mirrored_chunks(), mirrored);
+    assert_eq!(gpu.live_slots(), live);
+    assert!(!gpu.is_lod(ChunkCoord([0, 0, 0])));
+}

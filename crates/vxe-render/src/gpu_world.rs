@@ -440,6 +440,8 @@ enum Src {
 struct Selected {
     coord: ChunkCoord,
     src: Src,
+    /// Brick slots its upload takes new, by page kind (two for a wide brick).
+    new: [u64; 2],
 }
 
 /// The bricks one record is written from, read in place.
@@ -1178,9 +1180,9 @@ impl GpuWorld {
             }
         }
 
-        let (new_slots, new_records) = self.select(world, &mut st);
+        let new_records = self.select(world, &mut st);
         let limit = u64::from(self.layout.reserved_slots);
-        let need = self.pool_need(new_slots);
+        let need = self.pool_need();
         if need > limit {
             return Err(MirrorError::PoolTooLarge {
                 needed: need * SLOT_BYTES,
@@ -1222,35 +1224,99 @@ impl GpuWorld {
         }
     }
 
-    /// For `new` more brick slots of each kind, the slots the pool must span once they are
-    /// placed, checked against the reservation before uploading: the pages handed out, plus
-    /// what the free pages cannot take of what each kind needs past its free slots and its
-    /// current page. Without attribute pages the overflow counts in slots, since it continues
-    /// the cursor's page; with them, in whole pages per kind.
-    fn pool_need(&self, new: [u64; 2]) -> u64 {
+    /// The slots the pool must span once the selected chunks are placed, checked against the
+    /// reservation before uploading. It replays `upload` in selection order: a chunk changing
+    /// tier first frees its old record's slots, credited to that kind's spare slots, or, for
+    /// a page those frees empty, as a free page less the page's spare slots; then the chunk's
+    /// new slots take spare slots of their kind, then free pages, then pages never handed out.
+    /// No free is credited before the chunk that makes it. Without attribute pages the pages
+    /// never handed out count in slots, since they continue the cursor's page; with them, in
+    /// whole pages.
+    fn pool_need(&self) -> u64 {
         let page = u64::from(POOL_PAGE_SLOTS);
         let high = u64::from(self.next_page) * page;
-        let free_pages = self.free_pages.len() as u64;
-        if !self.surface_attrs {
-            let a = &self.allocs[Kind::Plain as usize];
-            return high + new[0].saturating_sub(a.available() + free_pages * page);
+        let mut avail = [0, 1].map(|k| self.allocs[k].available());
+        let mut free_pages = self.free_pages.len() as u64;
+        let mut fresh = 0u64;
+        // Slots this selection frees per page so far.
+        let mut freed: HashMap<u32, u32> = HashMap::new();
+        for sel in &self.selected {
+            let lod = matches!(sel.src, Src::Lod(_));
+            if let Some(m) = self.mirrored.get(&sel.coord).filter(|m| m.lod != lod) {
+                let kind = self.kind_for(m.lod) as usize;
+                let base = m.record as usize * RECORD_WORDS;
+                for &e in &self.entries[base + ENTRY_WORD..base + PALETTE_WORD] {
+                    if e & FULL_BIT == 0 {
+                        continue;
+                    }
+                    let s = e & SLOT_MASK;
+                    let n = if e & WIDE_BIT != 0 { 2 } else { 1 };
+                    let p = s / POOL_PAGE_SLOTS;
+                    let f = freed.entry(p).or_insert(0);
+                    *f += n;
+                    if u32::from(self.page_live[p as usize]) == *f {
+                        // The page empties: its spare slots, and the ones credited from it
+                        // so far, leave the kind; the page becomes free for either kind.
+                        let credited = *f - n;
+                        avail[kind] = avail[kind]
+                            .saturating_sub(self.spare_in_page(kind, p) + u64::from(credited));
+                        free_pages += 1;
+                    } else {
+                        avail[kind] += u64::from(n);
+                    }
+                }
+            }
+            for (k, &n) in sel.new.iter().enumerate() {
+                let take = n.min(avail[k]);
+                avail[k] -= take;
+                let mut rest = n - take;
+                let bs = u64::from(if k == Kind::Attr as usize {
+                    ATTR_PAGE_BRICK_SLOTS
+                } else {
+                    POOL_PAGE_SLOTS
+                });
+                while rest > 0 {
+                    if free_pages > 0 {
+                        free_pages -= 1;
+                    } else if self.surface_attrs {
+                        fresh += page;
+                    } else {
+                        // Plain pages continue the cursor: count the slots, not the page.
+                        fresh += rest;
+                        break;
+                    }
+                    let used = rest.min(bs);
+                    avail[k] += bs - used;
+                    rest -= used;
+                }
+            }
         }
-        let pages: u64 = [Kind::Plain, Kind::Attr]
+        high + fresh
+    }
+
+    /// Spare brick slots of `kind` in page `p`: its free singles and pairs, and the rest of
+    /// the kind's current page when that is `p`.
+    fn spare_in_page(&self, kind: usize, p: u32) -> u64 {
+        let a = &self.allocs[kind];
+        let free = a.free.iter().filter(|&&s| s / POOL_PAGE_SLOTS == p).count() as u64;
+        let pairs = a
+            .free_pairs
             .iter()
-            .map(|&kind| {
-                let extra =
-                    new[kind as usize].saturating_sub(self.allocs[kind as usize].available());
-                extra.div_ceil(u64::from(kind.brick_slots()))
-            })
-            .sum();
-        high + pages.saturating_sub(free_pages) * page
+            .filter(|&&s| s / POOL_PAGE_SLOTS == p)
+            .count() as u64;
+        let cursor = if a.next < a.end && (a.end - 1) / POOL_PAGE_SLOTS == p {
+            u64::from(a.end - a.next)
+        } else {
+            0
+        };
+        free + 2 * pairs + cursor
     }
 
     /// Walks the pending set nearest first and picks chunks into `self.selected` until the
-    /// estimated bytes reach the budget. Returns the count of brick slots among them that
-    /// need a new slot, by page kind, and of chunks among them not mirrored yet, which need a
-    /// new record (a chunk changing tier frees its record before it takes one).
-    fn select(&mut self, world: &World, st: &mut SyncStats) -> ([u64; 2], u64) {
+    /// estimated bytes reach the budget, each with the brick slots of each page kind its
+    /// upload takes new. Returns the count of chunks among them not mirrored yet, which need
+    /// a new record (a chunk changing tier frees its record before it takes one).
+    fn select(&mut self, world: &World, st: &mut SyncStats) -> u64 {
         let budget = self.cfg.sync_budget_bytes;
         // Writes that happen whatever is chosen count against the budget first.
         let mut bytes = self.table_changed.len() as u64 * 4;
@@ -1278,6 +1344,7 @@ impl GpuWorld {
                     }
                 },
             };
+            let before_chunk = new_full;
             let mirrored = self.mirrored.get(&coord);
             // A record of the other tier is replaced whole.
             let (rec, wide) = match mirrored {
@@ -1323,7 +1390,12 @@ impl GpuWorld {
             }
             bytes += chunk_bytes;
             new_records += u64::from(mirrored.is_none());
-            self.selected.push(Selected { coord, src });
+            let before = before_chunk;
+            let mut new = [0u64; 2];
+            for k in 0..2 {
+                new[k] = new_full[k] - before[k];
+            }
+            self.selected.push(Selected { coord, src, new });
         }
         let mut stale = std::mem::take(&mut self.stale);
         for &c in &stale {
@@ -1331,7 +1403,7 @@ impl GpuWorld {
         }
         stale.clear();
         self.stale = stale;
-        (new_full, new_records)
+        new_records
     }
 
     /// Uploads the chunks `select` chose, stopping at the first failed allocation, and
@@ -1339,7 +1411,7 @@ impl GpuWorld {
     fn upload(&mut self, queue: &wgpu::Queue, st: &mut SyncStats) -> Result<(), MirrorError> {
         let mut selected = std::mem::take(&mut self.selected);
         let mut result = Ok(());
-        for Selected { coord, src } in selected.drain(..) {
+        for Selected { coord, src, .. } in selected.drain(..) {
             let lod = matches!(src, Src::Lod(_));
             if self.mirrored.get(&coord).is_some_and(|m| m.lod != lod) {
                 self.drop_record(coord);
