@@ -9,6 +9,6 @@
 pub mod input;
 pub mod shell;
 
-pub use input::{Input, KeyCode, MouseButton};
+pub use input::{Axis, Input, KeyCode, MouseButton, PadButton};
 pub use shell::{App, Flow, Gpu, ShellConfig, ShellError, run};
 pub use {wgpu, winit};

@@ -167,6 +167,16 @@ reads 14.85 ms on the streamed cave at full residency, so the fly-through sample
 240 frames while the HUD is shown. The streamed world's readings are logged in the plan, not
 gated.
 
+**The cutaway view from outside the level (dev reference, diagnostic, Plan 0025 Phase 2, the
+ignored test `cutaway_steps_from_outside_the_level_at_1080p`, `--level --seed 1`, camera 40 m
+outside the -x face at the centre looking +x, face normals, 1920x1080, NVIDIA GeForce RTX 3080
+Laptop GPU, exclusive perf lock, 1-minute load 8.7, not quiet):** a debug view, off whenever
+the camera is in air, so it has no line in the table. The steps view reads a mean of 49.53
+steps per ray, p99 170, with 2434 of 2 073 600 rays at the view's 255 clamp; with the cutaway
+off the same camera reads a mean of 0.91, p99 1. From 20 m out the cutaway read a mean of 58.74,
+p99 201 (load 21.3). A ray through the hull steps uniform bricks eight voxels at a time and the
+voxels of full bricks one at a time.
+
 No frame may stall on paging: work attributable to streaming on the render thread is capped at
 the streaming line above; the rest runs on background threads.
 

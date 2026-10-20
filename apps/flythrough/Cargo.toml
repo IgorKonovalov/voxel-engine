@@ -18,6 +18,7 @@ wasm = ["dep:vxe-script-wasm"]
 
 [dependencies]
 env_logger.workspace = true
+gilrs.workspace = true
 log.workspace = true
 vxe-world = { path = "../../crates/vxe-world" }
 vxe-net = { path = "../../crates/vxe-net" }
