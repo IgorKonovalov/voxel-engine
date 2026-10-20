@@ -1,25 +1,32 @@
 //! Region queries over resident chunks.
 
-use crate::coords::{BRICK_EDGE, CHUNK_EDGE, ChunkCoord, VoxelCoord, brick_slot, index_in_brick};
-use crate::material::MaterialId;
+use crate::brick::Brick;
+use crate::coords::{BRICK_EDGE, CHUNK_EDGE, ChunkCoord, VoxelCoord, brick_slot};
+use crate::edit::EditError;
+use crate::material::{AIR, MaterialId};
+use crate::packed::box_words;
 use crate::store::{World, read};
 
 /// Work a region query did, for callers that measure it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct QueryStats {
-    /// `Full` bricks whose voxel array was read. `Uniform` bricks are counted without a read.
+    /// `Full` bricks whose voxels were read (their mask and planes). `Uniform` bricks are
+    /// counted without a read.
     pub voxel_arrays_read: u64,
 }
 
 impl World {
     /// Voxels per material in the inclusive box `lo..=hi`, ascending by material. Voxels in
-    /// chunks that are not resident are not counted.
+    /// chunks that are not resident are not counted. Refused with
+    /// [`EditError::OutOfRange`] (`QueryAxis`, `QueryVolume`) when the box is larger than the
+    /// world's [`WorldLimits`](crate::WorldLimits) allow; a reversed box is empty.
     pub fn count_in_box(
         &self,
         lo: impl Into<VoxelCoord>,
         hi: impl Into<VoxelCoord>,
-    ) -> Vec<(MaterialId, u64)> {
-        self.count_in_box_with_stats(lo, hi).0
+    ) -> Result<Vec<(MaterialId, u64)>, EditError> {
+        self.count_in_box_with_stats(lo, hi)
+            .map(|(counts, _)| counts)
     }
 
     /// [`World::count_in_box`] plus the work it did.
@@ -27,12 +34,14 @@ impl World {
         &self,
         lo: impl Into<VoxelCoord>,
         hi: impl Into<VoxelCoord>,
-    ) -> (Vec<(MaterialId, u64)>, QueryStats) {
-        let (lo, hi) = (lo.into().0.map(i64::from), hi.into().0.map(i64::from));
+    ) -> Result<(Vec<(MaterialId, u64)>, QueryStats), EditError> {
+        let (lo, hi) = (lo.into().0, hi.into().0);
+        self.limits().check_query(lo, hi)?;
+        let (lo, hi) = (lo.map(i64::from), hi.map(i64::from));
         let mut counts: Vec<(MaterialId, u64)> = Vec::new();
         let mut stats = QueryStats::default();
         if (0..3).any(|k| lo[k] > hi[k]) {
-            return (counts, stats);
+            return Ok((counts, stats));
         }
         let mut add = |m: MaterialId, n: u64| match counts.iter_mut().find(|(k, _)| *k == m) {
             Some((_, c)) => *c += n,
@@ -69,14 +78,22 @@ impl World {
                                     continue;
                                 }
                                 stats.voxel_arrays_read += 1;
-                                for z in elo[2]..=ehi[2] {
-                                    for y in elo[1]..=ehi[1] {
-                                        for x in elo[0]..=ehi[0] {
-                                            let l = [x, y, z].map(|v| v.rem_euclid(be) as i32);
-                                            add(brick.get(index_in_brick(l)), 1);
-                                        }
-                                    }
+                                let Brick::Full(p) = brick else {
+                                    unreachable!("a Full brick")
+                                };
+                                // The box's voxel words: per-entry popcounts under them, and the
+                                // clear mask bits under them for air.
+                                let sel = box_words(
+                                    elo.map(|v| v.rem_euclid(be) as u8),
+                                    ehi.map(|v| v.rem_euclid(be) as u8),
+                                );
+                                let air: u32 = (0..8)
+                                    .map(|z| (sel[z] & !p.mask_word(z)).count_ones())
+                                    .sum();
+                                if air > 0 {
+                                    add(AIR, u64::from(air));
                                 }
+                                p.counts_under(&sel, &mut |m, n| add(m, u64::from(n)));
                             }
                         }
                     }
@@ -84,6 +101,6 @@ impl World {
             }
         }
         counts.sort_unstable();
-        (counts, stats)
+        Ok((counts, stats))
     }
 }

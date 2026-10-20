@@ -171,12 +171,6 @@ impl AttribPass {
         self.quant = quant;
     }
 
-    /// Drops the bind group, and with it the mirror buffers it holds; the next `encode`
-    /// rebuilds it.
-    pub fn release_bindings(&mut self) {
-        self.bind = None;
-    }
-
     /// The work buffer's capacity in items, 0 before first use.
     pub fn work_capacity(&self) -> usize {
         self.work.as_ref().map_or(0, |w| w.1)

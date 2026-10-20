@@ -199,8 +199,12 @@ Commit by explicit path, in this order:
 
 1. **Flip the plan's `Status:` to `done`**, adding the close date and the one-line verdict, and
    `git mv` it to `docs/plans/done/`.
-2. **Repair the links the move broke, in both directions.** Verify by running the checker:
-   `node scripts/check-doc-links.mjs` (exit 0 = every relative link resolves).
+2. **Repair the links the move broke, in both directions, and run the three doc gates**, each
+   to exit 0: `node scripts/check-doc-links.mjs` (every relative link resolves), then
+   `node scripts/check-comment-hygiene.mjs` (no relative link or plan-relative narration in a
+   `.rs` or `.wgsl` comment) and `node scripts/check-index-rows.mjs` plus its `--self-test`
+   (every row inside a `roster:begin` region is at most its cap). Run them again after steps 3
+   and 4 rewrite the indexes.
 3. **Accept paired ADRs** (`proposed` → `accepted`) and refresh `docs/adrs/README.md`.
 4. **Refresh `docs/plans/README.md`** (move the row to recently closed, bump the next free
    number), **`docs/roadmap.md`** (milestone status) and **`docs/nfr.md`** (readings replace

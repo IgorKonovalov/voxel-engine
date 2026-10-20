@@ -23,29 +23,61 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       # winit's Wayland and X11 backends need the xkbcommon and wayland headers;
-      # mesa-vulkan-drivers carries lavapipe, without which wgpu finds no adapter.
+      # mesa-vulkan-drivers carries lavapipe, without which wgpu finds no adapter;
+      # libasound2-dev is the ALSA library cpal's Linux backend links.
       - name: Install the Linux build packages
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pkg-config libxkbcommon-dev libwayland-dev mesa-vulkan-drivers
+            pkg-config libxkbcommon-dev libwayland-dev mesa-vulkan-drivers libasound2-dev
       # rustup on the runner auto-installs the toolchain pinned in rust-toolchain.toml.
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
+      # The logic components (ADR-0010) are built for wasm32-wasip2 before the tests that
+      # load them; the host's tests fail, not skip, when one is missing.
+      - run: rustup target add wasm32-wasip2
+      - name: Build the logic components
+        shell: bash
+        run: scripts/build-guests.sh
       - run: cargo build --workspace
       # `--no-tests=pass` keeps the skeleton green until Plan 0001 lands tests.
       # On Linux a missing lavapipe fails the golden tests instead of skipping them.
       - run: cargo nextest run --workspace --no-tests=pass
         env:
           VXE_REQUIRE_SOFTWARE_ADAPTER: ${{ runner.os == 'Linux' && '1' || '' }}
+      # The fly-through's `wasm` feature (off in the workspace build) hosts its logic
+      # component; its tests (`tests/component.rs`) need the feature and the built component.
+      - run: cargo nextest run -p flythrough --features wasm
+        env:
+          VXE_REQUIRE_SOFTWARE_ADAPTER: ${{ runner.os == 'Linux' && '1' || '' }}
       - run: cargo test --workspace --doc
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy -p flythrough --features wasm --all-targets -- -D warnings
+      # The logic components build for wasm32-wasip2 only, which the workspace clippy does
+      # not check: every guest crate under crates/vxe-script-wasm/guests/, and the
+      # fly-through's logic as a component.
+      - name: Clippy on the logic components
+        shell: bash
+        run: |
+          packages=()
+          for manifest in crates/vxe-script-wasm/guests/*/Cargo.toml; do
+            packages+=(-p "$(sed -n 's/^name *= *"\(.*\)"/\1/p' "$manifest" | head -n 1)")
+          done
+          cargo clippy "${packages[@]}" --target wasm32-wasip2 -- -D warnings
+          cargo clippy -p flythrough-logic --features component --target wasm32-wasip2 \
+            -- -D warnings
       - run: cargo fmt --all --check
       - name: Hook bite tests
         run: node --test ".claude/hooks/*.test.mjs"
       - name: Doc links
         run: node scripts/check-doc-links.mjs
+      - name: Comment hygiene
+        run: node scripts/check-comment-hygiene.mjs
+      - name: Index rows
+        run: node scripts/check-index-rows.mjs
+      - name: Index rows self-test
+        run: node scripts/check-index-rows.mjs --self-test
 
   deny:
     runs-on: ubuntu-latest

@@ -129,3 +129,15 @@ Added at acceptance, 2026-10-16, from Plan 0002's readings and its close review:
   decision.
 - **The LOD record shares the full record's stride.** About 99 MiB of LOD records at the
   defaults, under budget; a smaller stride stays open.
+
+### Outcome addendum, 2026-10-19 (Plan 0015 close, v0.14.0)
+
+Plan 0015, the first step of ADR-0012, changed this layout in two places while keeping the
+pool, the records and the shards. A chunk record is 2624 B: 16 words of brick bits ahead of
+its 512 entries, and the chunk table entry carries `EMPTY_BIT` (bit 29) when they are all
+clear, the record index keeping 29 bits; lavapipe's 128 MiB binding now holds 51 150
+records. The 8-byte 2^3 occupancy mask is 72 B a slot, in groups of eight slots: one 64-byte
+opaque line per slot and a ninth line holding the eight slots' translucent 2^3 words. A brick
+entry's bit 29 flags a translucent brick, so a pool slot index keeps 29 bits. The level's
+mirror reads 232.4 MB; the autopilot's flight peaks at 1.89 GB live and 2.71 GB allocated
+against the 3 GB line (`docs/nfr.md` section 3). The binding count stands at 8.

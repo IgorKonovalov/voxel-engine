@@ -1,8 +1,8 @@
 # ADR-0007: Server-owned op log replayed from seed, a byte channel, and a client that shares the world in solo play
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-17, at the Plan 0007 close)
 > **Date:** 2026-10-16
-> **Related plan(s):** [Plan 0007](../plans/0007-op-log-byte-channel-shared-and-owned-clients.md)
+> **Related plan(s):** [Plan 0007](../plans/done/0007-op-log-byte-channel-shared-and-owned-clients.md)
 
 ## Context
 
@@ -36,7 +36,10 @@ The server owns the authoritative `World` and an `OpLog` of `(tick, seq, op)` en
 op enters through `Server::submit`, which assigns the next `seq`, and is applied at the next
 `Server::tick` in `seq` order. An applied op is appended to the log and announced to every
 attached client as an `Applied` message carrying the op and its `EditResult`; a refused op
-(`NotResident`) is announced as `Refused` and not logged.
+(`NotResident`) is announced as `Refused` and not logged. A tick that drained directly
+submitted ops also logs a boundary entry after them, carrying the first seq left to the
+logic; replay skips it, and re-simulation uses it to apply the submitted ops and resume the
+seq count (added 2026-10-17 while proposed; Plan 0007's amendment names the alternatives).
 
 The channel is a trait of two byte queues (`send`, `try_recv`) with one in-memory
 implementation now; M9's QUIC transport is another implementation of the same trait. The
@@ -108,4 +111,23 @@ which is a different thing from replacing it.
 
 ## Outcome
 
-_(Added at acceptance if Plan 0007 falsifies something above.)_
+**2026-10-17, at the Plan 0007 close (v0.10.0).** The decision stands; the build refines it
+in these points:
+
+- **Logic ops apply immediately.** An op the `Logic` makes through `Host::apply` applies inside
+  the tick, in `seq` order, and returns its result to the logic at once. `Server::submit`
+  (queue, apply at the next tick) is only for ops the host side submits directly.
+- **A boundary entry** follows a tick's directly submitted ops: 13 bytes, `(tick, seq)`, the
+  seq being the first one left to the logic. Replay skips it; re-simulation applies the tick's
+  op entries below it, resumes the seq count after it, then runs the logic (Plan 0007's
+  amendment of 2026-10-17 names the alternatives).
+- **A refused op consumes a seq**, and is not logged, so the op log's seqs have gaps.
+  Decoding refuses a seq that does not ascend (`WireError::OutOfOrder`).
+- **The owned client compares only `Applied` results.** A `Refused` message passes through
+  without checking that the client's world refuses it too (M9).
+- **`Desync.ours` is the empty `EditResult`** when the client's world refused an op the
+  server applied.
+- **An `Event` message's payload length is a `u32`** (an `Input`'s is a `u16`).
+- **Streaming sessions are not saved.** The fly-through's `--save` and `--replay` require the
+  bounded level; the server owning the streamer's focus points stays the follow-up named in
+  Consequences.

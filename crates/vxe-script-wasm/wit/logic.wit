@@ -1,0 +1,50 @@
+// The boundary between the engine's server and a logic built as a component (ADR-0010).
+//
+// Compound values cross as `vxe_world::wire` bytes, the encoding the op log and the channel
+// use; scalars cross typed. A logic exports `init` and `tick` and sees the world only through
+// the `host` imports, which answer from the server's authoritative world during those calls.
+package vxe:logic@0.1.0;
+
+interface host {
+    /// A fixed-point position or direction: 1/256 voxel per unit.
+    record fixed3 { x: s64, y: s64, z: s64 }
+    /// A voxel coordinate.
+    record voxel { x: s32, y: s32, z: s32 }
+    /// The face of the hit voxel a ray entered through.
+    enum face { neg-x, pos-x, neg-y, pos-y, neg-z, pos-z }
+    /// A ray's first non-air voxel: `face` is none when the ray starts inside it, `t` the
+    /// ray parameter where it enters, rounded down.
+    record hit { voxel: voxel, face: option<face>, t: s64, material: u16 }
+    /// A coarse cell: one 8³-voxel brick, at voxel coordinates divided by 8, rounded down.
+    record cell { x: s32, y: s32, z: s32 }
+    /// A connected set of load-bearing cells that reaches no anchor: its cells ascending,
+    /// its solid voxels per material ascending by material, and the inclusive bounds of
+    /// those voxels.
+    record region { cells: list<cell>, counts: list<tuple<u16, u32>>, lo: voxel, hi: voxel }
+
+    /// Applies one op of any kind given in wire bytes. The answer is a tag byte, then the
+    /// wire bytes of the op result (tag 0: its kind byte, then the result) or of the error
+    /// (tag 1); tag 2, with no further bytes, when the op bytes do not decode.
+    apply: func(op: list<u8>) -> list<u8>;
+    /// The material of a voxel, or none when its chunk is not resident.
+    material-at: func(v: voxel) -> option<u16>;
+    /// The first non-air voxel along `origin + dir * t / 256`, `0 <= t <= max`.
+    raycast: func(origin: fixed3, dir: fixed3, max: s64) -> option<hit>;
+    /// Voxels per material in the inclusive box `lo..=hi`, ascending by material.
+    count-in-box: func(lo: voxel, hi: voxel) -> list<tuple<u16, u64>>;
+    /// The regions that lost their support after an edit that changed the cells `changed`,
+    /// over the server's coarse grid with the support parameters it is configured with.
+    unsupported: func(changed: list<cell>) -> list<region>;
+}
+
+world logic {
+    import host;
+
+    /// One client input: the client's index in attach order, and its opaque bytes.
+    record client-input { client: u32, bytes: list<u8> }
+
+    /// Called once before any tick.
+    export init: func(seed: u64);
+    /// Called once per server tick with the inputs consumed in it; returns the broadcast.
+    export tick: func(tick: u64, inputs: list<client-input>) -> list<u8>;
+}

@@ -1,0 +1,27 @@
+[package]
+name = "vxe-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Server-owned op log, a byte channel, the logic boundary, and shared and owned clients"
+
+[lints]
+workspace = true
+
+[features]
+# The test logics and fixtures in `test_logic`, for this crate's tests, the WebAssembly host's
+# tests and its guests.
+test-logic = []
+
+[dependencies]
+vxe-world.workspace = true
+
+[dev-dependencies]
+vxe-net = { workspace = true, features = ["test-logic"] }
+criterion.workspace = true
+
+[[bench]]
+name = "tick"
+harness = false

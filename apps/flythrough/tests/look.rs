@@ -26,6 +26,7 @@ fn look(normal_mode: NormalMode, view: ViewMode) -> LookParams {
         normal_mode,
         detail: false,
         view,
+        ..LookParams::default()
     }
 }
 
@@ -127,6 +128,7 @@ fn metrics_at(mode: NormalMode, detail: bool, quant: Option<AttribQuant>) -> Opt
         normal_mode: mode,
         detail,
         view,
+        ..LookParams::default()
     };
     let cavity = cavity_world_with(cavity_table);
     let mut rig = if let Some(q) = quant {
@@ -215,6 +217,7 @@ fn the_default_look_leaves_the_goldens_byte_for_byte() {
         normal_mode: NormalMode::Face,
         detail: false,
         view: ViewMode::Shaded,
+        translucent_layers: 4,
     };
     assert_eq!(default, LookParams::default());
     let world = carved_world();
@@ -478,6 +481,7 @@ fn detail_look(normal_mode: NormalMode, view: ViewMode) -> LookParams {
         normal_mode,
         detail: true,
         view,
+        ..LookParams::default()
     }
 }
 
@@ -619,8 +623,8 @@ fn material_rows_are_64_bytes() {
         .product::<u64>();
     assert_eq!(
         gpu.mirror_bytes(),
-        u64::from(gpu.live_slots()) * (512 + 8)
-            + gpu.mirrored_chunks() as u64 * 2560
+        u64::from(gpu.live_slots()) * (512 + 72)
+            + gpu.mirrored_chunks() as u64 * 2624
             + window * 4
             + rows * 64
     );

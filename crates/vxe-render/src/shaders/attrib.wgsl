@@ -56,9 +56,13 @@ const ABSENT: u32 = 0xFFFFFFFFu;
 const FULL_BIT: u32 = 0x80000000u;
 const LOD_BIT: u32 = 0x40000000u;
 const WIDE_BIT: u32 = 0x40000000u;
-const SLOT_MASK: u32 = 0x3FFFFFFFu;
+// Bit 29 of an entry flags a brick holding a translucent voxel; a slot takes bits 0..29.
+const SLOT_MASK: u32 = 0x1FFFFFFFu;
+const EMPTY_BIT: u32 = 0x20000000u;
+const RECORD_MASK: u32 = 0x1FFFFFFFu;
 const SLOT_WORDS: u32 = 128u;
-const RECORD_WORDS: u32 = 640u;
+const RECORD_WORDS: u32 = 656u;
+const ENTRY_WORD: u32 = 16u;
 const PAGE_SLOTS: u32 = 4096u;
 const ATTR_PAGE_BRICK_SLOTS: u32 = 1364u;
 const NO_PLANE: u32 = 0xFFFFu;
@@ -109,7 +113,7 @@ fn solid(v: vec3<i32>) -> bool {
     }
     let wr = ((chunk % w) + w) % w;
     let t = chunk_table[u32(wr.x + w.x * (wr.y + w.y * wr.z))];
-    if (t == ABSENT) {
+    if (t == ABSENT || (t & EMPTY_BIT) != 0u) {
         return false;
     }
     var level = 0u;
@@ -117,12 +121,14 @@ fn solid(v: vec3<i32>) -> bool {
         level = 1u;
     }
     let e = 8 >> level;
-    let base = (t & SLOT_MASK) * RECORD_WORDS;
+    let base = (t & RECORD_MASK) * RECORD_WORDS;
     let c = (v - chunk * 64) >> vec3<u32>(level);
     let b = c / 8;
-    let entry = chunk_records[base + u32(b.x + e * (b.y + e * b.z))];
+    let entry = chunk_records[base + ENTRY_WORD + u32(b.x + e * (b.y + e * b.z))];
     if ((entry & FULL_BIT) == 0u) {
-        return entry != 0u;
+        // A uniform brick: its material in the low 16 bits, a translucent one solid here as
+        // for every reader but the opaque walk.
+        return (entry & 0xFFFFu) != 0u;
     }
     let slot = entry & SLOT_MASK;
     let l = c - b * 8;

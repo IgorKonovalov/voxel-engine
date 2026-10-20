@@ -316,3 +316,103 @@ fn no_ok_edit_is_lost_to_a_racing_eviction() {
     }
     assert_eq!(chunks_hash(&world, &seven), chunks_hash(&reference, &seven));
 }
+
+/// Rewrites the FNV-1a trailer of spill bytes after a patch.
+fn reseal(bytes: &mut [u8]) {
+    let n = bytes.len() - 8;
+    let mut h = hash::Fnv1a::default();
+    h.write(&bytes[..n]);
+    bytes[n..].copy_from_slice(&h.finish().to_le_bytes());
+}
+
+/// Layers z 0..4 of `a`, the rest `b`.
+fn halves(a: MaterialId, b: MaterialId) -> Brick {
+    Brick::from_fn(|l| if l[2] < 4 { a } else { b })
+}
+
+/// A chunk of 512 two-material `Full` bricks (air and rock, the mask-only class) spills to
+/// 32 B of header, 512 x 73 B (a tag and 72 B of class words) and an 8 B trailer: 37 416 B,
+/// against 524 840 B (512 x 1025 B of raw ids) under version 1.
+#[test]
+fn a_two_material_chunk_spills_to_73_bytes_a_brick() {
+    let mut chunk = Chunk::default();
+    for slot in 0..CHUNK_BRICKS {
+        chunk.set_brick(slot, halves(3, AIR));
+    }
+    let bytes = encode_spill(ORIGIN, &chunk, 7);
+    assert_eq!(bytes.len(), 37_416);
+    assert_eq!(32 + 512 * (1 + 2 * 512) + 8, 524_840);
+    let (_, back) = decode_spill(&bytes, 7).unwrap();
+    assert_eq!(back.bricks(), chunk.bricks());
+}
+
+/// Every class round-trips: `Uniform`, one material, two, three, sixteen and twenty.
+#[test]
+fn every_class_round_trips_through_a_spill_file() {
+    let mut chunk = Chunk::default();
+    let bricks = [
+        Brick::Uniform(3),
+        halves(AIR, 3),
+        halves(2, 3),
+        Brick::from_fn(|l| (index_in_brick(l) % 3) as MaterialId + 1),
+        Brick::from_fn(|l| (index_in_brick(l) % 17) as MaterialId),
+        Brick::from_fn(|l| (index_in_brick(l) % 20) as MaterialId + 1),
+    ];
+    for (slot, b) in bricks.iter().enumerate() {
+        chunk.set_brick(slot, b.clone());
+    }
+    let classes: Vec<_> = bricks.iter().map(Brick::class).collect();
+    use vxe_world::packed::PackedClass::*;
+    assert_eq!(
+        classes,
+        [
+            None,
+            Some(Mask),
+            Some(Plane1),
+            Some(Plane2),
+            Some(Plane4),
+            Some(Wide)
+        ]
+    );
+    let bytes = encode_spill(ORIGIN, &chunk, 1);
+    let (_, back) = decode_spill(&bytes, 1).unwrap();
+    assert_eq!(back.bricks(), chunk.bricks());
+}
+
+/// A version-1 file reports `Version`; a palette out of order, or a plane bit under a clear
+/// mask bit, reports `Corrupt`.
+#[test]
+fn old_versions_and_non_canonical_boxes_are_refused() {
+    let mut chunk = Chunk::default();
+    chunk.set_brick(0, halves(2, 3));
+    let good = encode_spill(ORIGIN, &chunk, 1);
+    // Slot 0's tag at byte 32 (2: Plane1), its 17 words from byte 33: mask 0..8, plane
+    // 8..16, the palette in word 16.
+    assert_eq!(good[32], 2);
+    let word = |w: usize| 33 + 8 * w;
+
+    let mut v1 = good.clone();
+    v1[8..12].copy_from_slice(&1u32.to_le_bytes());
+    reseal(&mut v1);
+    assert_eq!(decode_spill(&v1, 1).err(), Some(SpillError::Version));
+
+    let mut order = good.clone();
+    let pal = word(16);
+    let (a, b) = (
+        order[pal..pal + 2].to_vec(),
+        order[pal + 2..pal + 4].to_vec(),
+    );
+    order[pal..pal + 2].copy_from_slice(&b);
+    order[pal + 2..pal + 4].copy_from_slice(&a);
+    reseal(&mut order);
+    assert_eq!(decode_spill(&order, 1).err(), Some(SpillError::Corrupt));
+
+    // Every voxel is solid in this brick; make layer 7 air in the mask but leave its plane
+    // bits set.
+    let mut stray = good.clone();
+    stray[word(7)..word(8)].copy_from_slice(&0u64.to_le_bytes());
+    reseal(&mut stray);
+    assert_eq!(decode_spill(&stray, 1).err(), Some(SpillError::Corrupt));
+
+    assert!(decode_spill(&good, 1).is_ok());
+}

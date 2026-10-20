@@ -1,14 +1,26 @@
 //! The fly-through's reusable parts: the cave world source its binary, tests and examples
-//! share, the streaming defaults, and the small measurement helpers its readings use. The
-//! engine ships no terrain; this cave is the testbed's own.
+//! share, its server logic (the `flythrough-logic` crate, as [`logic`]) and the choice of its
+//! native or hosted build, save replay, the streaming defaults, and the small measurement
+//! helpers its readings use. The engine ships no terrain; this cave is the testbed's own.
 
 pub mod cave;
+pub mod hud;
+pub use flythrough_logic as logic;
 
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use vxe_audio::Listener;
+use vxe_net::{Logic, Server};
+use vxe_render::Camera;
 use vxe_world::hash::Fnv1a;
 use vxe_world::{
-    BRICK_VOXELS, Chunk, ChunkCoord, ChunkMips, Material, MaterialFlags, MaterialTable, Residency,
-    World,
+    BRICK_VOXELS, Brick, Chunk, ChunkCoord, ChunkExtent, ChunkMips, LogFile, Material,
+    MaterialFlags, MaterialTable, OpLog, Residency, WireError, World,
 };
+
+use cave::CaveSource;
+use logic::DigLogic;
 
 /// The fly-through's residency defaults (Plan 0002): full detail to 16 chunks (102 m), mips
 /// to 24 (154 m), one chunk of hysteresis.
@@ -23,8 +35,64 @@ pub fn window_side(r: Residency) -> i32 {
     2 * (r.r_lod.max(r.r_full) + r.hysteresis) + 1
 }
 
-/// The cave's table: air, rock, ore, and the indestructible shell, at the ids `cave` uses.
-/// It lives here rather than in `cave.rs` so that file stays free of floating point.
+/// Mirror pressure under which the fly-through's full radius returns a chunk (ADR-0013). The
+/// streamed mirror's records are sized so their occupancy stays under it.
+pub const PRESSURE_LOW: f32 = 0.7;
+
+/// Records the streamed mirror reserves for residency `r`: the chunks one focus can keep,
+/// `chunks_in_ball(max(r_lod, r_full) + h)`, over [`PRESSURE_LOW`] (as `* 10 / 7`, rounded
+/// up), so the record term of the pressure stays under the restore line while the streamer
+/// keeps its radius. 93 239 at the defaults.
+pub fn stream_record_chunks(r: Residency) -> u64 {
+    let ball = vxe_world::chunks_in_ball(r.r_lod.max(r.r_full) + r.hysteresis);
+    (ball * 10).div_ceil(7)
+}
+
+/// The mirror budget of the streamed cave unless `--mirror-budget` sets one: the world line
+/// of `nfr.md` §3, 3 GiB, of which the residency's records take their share.
+pub const STREAM_MIRROR_BUDGET: u64 = vxe_render::gpu_world::DEFAULT_BUDGET_BYTES;
+
+/// Free pool slots beyond the bounded level's `Full` bricks, so digging has room: 64 Ki
+/// slots.
+pub const POOL_HEADROOM_BRICKS: u64 = 65_536;
+
+/// The pool slots the bounded level needs for `full_bricks` plus the headroom; with
+/// attribute pages (`attrs`), whole pages of `ATTR_PAGE_BRICK_SLOTS` bricks each.
+pub fn level_pool_slots(full_bricks: u64, attrs: bool) -> u64 {
+    use vxe_render::gpu_world::{ATTR_PAGE_BRICK_SLOTS, POOL_PAGE_SLOTS};
+    let bricks = full_bricks + POOL_HEADROOM_BRICKS;
+    if attrs {
+        bricks.div_ceil(u64::from(ATTR_PAGE_BRICK_SLOTS)) * u64::from(POOL_PAGE_SLOTS)
+    } else {
+        bricks
+    }
+}
+
+/// The mirror budget of the bounded level unless `--mirror-budget` sets one: the pool
+/// [`level_pool_slots`] needs and a record for each of its `chunks`, sized from the world it
+/// loads rather than the streamed default.
+pub fn level_mirror_budget(full_bricks: u64, chunks: u64, attrs: bool) -> u64 {
+    vxe_render::gpu_world::budget_for(level_pool_slots(full_bricks, attrs), chunks)
+}
+
+/// The audio listener for `camera`: its position (voxel units), its forward and its up. The
+/// mixer derives the listener's right as `forward x up`, which is the camera's right
+/// (`forward x Z`), so a source on the right of the screen plays on the right channel.
+pub fn listener(camera: &Camera) -> Listener {
+    let (forward, _, up) = camera.basis();
+    Listener {
+        position: camera.position.to_array(),
+        forward: forward.to_array(),
+        up: up.to_array(),
+    }
+}
+
+/// The rubble a collapsing region leaves when `R` has the fly-through's logic remove
+/// unsupported regions instead of dropping them. The cave never generates it.
+pub use logic::RUBBLE;
+
+/// The cave's table: air, rock, ore, the indestructible shell (at the ids `cave` uses), and
+/// [`RUBBLE`]. It lives here rather than in `cave.rs` so that file stays free of floating point.
 pub fn cave_materials() -> MaterialTable {
     let mut t = MaterialTable::new();
     let row = |name: &str, albedo: [f32; 3]| Material {
@@ -36,6 +104,7 @@ pub fn cave_materials() -> MaterialTable {
     let mut shell = row("shell", [0.12, 0.12, 0.14]);
     shell.flags = MaterialFlags::INDESTRUCTIBLE;
     assert_eq!(t.push(shell), cave::SHELL);
+    assert_eq!(t.push(row("rubble", [0.36, 0.33, 0.30])), RUBBLE);
     t
 }
 
@@ -85,18 +154,238 @@ pub fn chunks_hash(world: &World, coords: &[ChunkCoord]) -> Option<u64> {
     Some(h.finish())
 }
 
-/// RAM a resident full chunk holds: its slot array and the voxels of its `Full` bricks.
-pub fn chunk_ram(chunk: &Chunk) -> u64 {
-    let full = chunk.bricks().iter().filter(|b| b.is_full()).count();
-    (size_of::<Chunk>() + full * BRICK_VOXELS * 2) as u64
+impl CaveSource {
+    /// The cave's generation version, written into a save's header. A save made under
+    /// another version names other voxels and does not replay.
+    pub const VERSION: u32 = 1;
 }
 
-/// RAM a LOD-only chunk holds: its 73 mip-brick slots and the cells of its `Full` ones.
+/// Where `scripts/build-guests.sh` places the logic component, relative to the workspace root.
+pub const DEFAULT_COMPONENT: &str = "target/guests/flythrough-logic.wasm";
+
+/// Why `--logic wasm` is refused by a build without the `wasm` feature.
+pub const WASM_NEEDS_FEATURE: &str =
+    "--logic wasm needs a build with --features wasm (cargo run -p flythrough --features wasm)";
+
+/// Which build of [`DigLogic`] the server runs: `--logic native` or `--logic wasm[=path]`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum LogicChoice {
+    /// [`DigLogic`] linked into the binary.
+    #[default]
+    Native,
+    /// The `flythrough-logic` component at this path, hosted by `vxe-script-wasm`.
+    Wasm(PathBuf),
+}
+
+impl LogicChoice {
+    /// Parses `native`, `wasm` (the component at [`DEFAULT_COMPONENT`]) or `wasm=PATH`.
+    pub fn parse(v: &str) -> Result<Self, String> {
+        match v.split_once('=') {
+            None if v == "native" => Ok(Self::Native),
+            None if v == "wasm" => Ok(Self::Wasm(DEFAULT_COMPONENT.into())),
+            Some(("wasm", path)) if !path.is_empty() => Ok(Self::Wasm(path.into())),
+            _ => Err(format!("--logic takes native, wasm or wasm=PATH, not {v}")),
+        }
+    }
+
+    /// A fresh logic of this choice. For [`LogicChoice::Wasm`], loads and compiles the
+    /// component under the default `WasmConfig`; fails with the load error, or with
+    /// [`WASM_NEEDS_FEATURE`] in a build without the `wasm` feature.
+    pub fn load(&self) -> Result<Box<dyn Logic>, String> {
+        match self {
+            Self::Native => Ok(Box::new(DigLogic::default())),
+            Self::Wasm(path) => load_component(path),
+        }
+    }
+}
+
+impl std::fmt::Display for LogicChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Native => write!(f, "native"),
+            Self::Wasm(path) => write!(f, "wasm ({})", path.display()),
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+fn load_component(path: &Path) -> Result<Box<dyn Logic>, String> {
+    let config = vxe_script_wasm::WasmConfig::default();
+    match vxe_script_wasm::WasmLogic::load(path, &config) {
+        Ok(logic) => Ok(Box::new(logic)),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(not(feature = "wasm"))]
+fn load_component(_path: &Path) -> Result<Box<dyn Logic>, String> {
+    Err(WASM_NEEDS_FEATURE.to_owned())
+}
+
+/// How [`replay_file`] rebuilds a session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// Applies the op log.
+    Ops,
+    /// Re-simulates the input log through a fresh [`DigLogic`], with the op log for the
+    /// boundaries of directly submitted ops.
+    Inputs,
+}
+
+/// Why a save did not replay.
+#[derive(Debug)]
+pub enum ReplayError {
+    Io(std::io::Error),
+    Wire(WireError),
+    /// The save was written by another [`CaveSource::VERSION`].
+    SourceVersion {
+        file: u32,
+        ours: u32,
+    },
+    /// The save's extent is not the one the caller replays (the bounded level's, for the
+    /// binary); checked before anything is generated.
+    Extent {
+        file: ChunkExtent,
+    },
+}
+
+impl std::fmt::Display for ReplayError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "{e}"),
+            Self::Wire(e) => write!(f, "{e}"),
+            Self::SourceVersion { file, ours } => {
+                write!(f, "saved with cave version {file}, this build is {ours}")
+            }
+            Self::Extent { file } => write!(
+                f,
+                "saved over chunks {:?}..{:?}, not the level's extent",
+                file.min.0, file.max.0
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ReplayError {}
+
+/// Reads the save at `path` and rebuilds its world (see [`replay_log`]) with
+/// [`cave_materials`], refusing a save whose extent is not `extent`. Returns the world and
+/// its voxel hash.
+pub fn replay_file(
+    path: impl AsRef<std::path::Path>,
+    mode: Mode,
+    extent: ChunkExtent,
+) -> Result<(World, u64), ReplayError> {
+    replay_file_with(path, mode, extent, Box::new(DigLogic::default()))
+}
+
+/// [`replay_file`] with `logic` re-simulating the inputs under [`Mode::Inputs`] (unused under
+/// [`Mode::Ops`]): a fresh [`DigLogic`], native or hosted.
+pub fn replay_file_with(
+    path: impl AsRef<std::path::Path>,
+    mode: Mode,
+    extent: ChunkExtent,
+    logic: Box<dyn Logic>,
+) -> Result<(World, u64), ReplayError> {
+    let file = read_log_file(path)?;
+    let (world, _) = replay_log_with(&file, mode, extent, &cave_materials(), logic)?;
+    let hash = world.voxel_hash();
+    Ok((world, hash))
+}
+
+/// Reads and decodes the save at `path`.
+pub fn read_log_file(path: impl AsRef<std::path::Path>) -> Result<LogFile, ReplayError> {
+    let mut f = std::fs::File::open(path).map_err(ReplayError::Io)?;
+    LogFile::read_from(&mut f).map_err(ReplayError::Wire)
+}
+
+/// Rebuilds a save's world: the bounded cave of its seed over its extent, which must equal
+/// `extent` (so a corrupt header cannot ask for an unbounded world), generated with `table`,
+/// then its op log replayed ([`Mode::Ops`]) or its input log re-simulated through
+/// a fresh [`DigLogic`] seeded with the save's seed ([`Mode::Inputs`]). Returns the world and
+/// the op log it was rebuilt from: the save's, or the one re-simulation produced.
+pub fn replay_log(
+    file: &LogFile,
+    mode: Mode,
+    extent: ChunkExtent,
+    table: &MaterialTable,
+) -> Result<(World, OpLog), ReplayError> {
+    replay_log_with(file, mode, extent, table, Box::new(DigLogic::default()))
+}
+
+/// [`replay_log`] with `logic` re-simulating the inputs under [`Mode::Inputs`] (unused under
+/// [`Mode::Ops`]): a fresh [`DigLogic`], native or hosted, initialised with the save's seed.
+pub fn replay_log_with(
+    file: &LogFile,
+    mode: Mode,
+    extent: ChunkExtent,
+    table: &MaterialTable,
+    logic: Box<dyn Logic>,
+) -> Result<(World, OpLog), ReplayError> {
+    replay_log_on(file, mode, extent, table, logic, false)
+}
+
+/// [`replay_log_with`] on the cave generated with the `--vault` room when `vault` is set. The
+/// save's header does not record the room (its placement at generation is not an op), so a
+/// session saved with `--vault` replays to its world only with `vault` set.
+pub fn replay_log_on(
+    file: &LogFile,
+    mode: Mode,
+    extent: ChunkExtent,
+    table: &MaterialTable,
+    logic: Box<dyn Logic>,
+    vault: bool,
+) -> Result<(World, OpLog), ReplayError> {
+    if file.extent != extent {
+        return Err(ReplayError::Extent { file: file.extent });
+    }
+    if file.source_version != CaveSource::VERSION {
+        return Err(ReplayError::SourceVersion {
+            file: file.source_version,
+            ours: CaveSource::VERSION,
+        });
+    }
+    let source = CaveSource::new(file.seed, file.extent);
+    let world = if vault {
+        World::generate(file.extent, &source.with_vault(), table)
+    } else {
+        World::generate(file.extent, &source, table)
+    };
+    match mode {
+        Mode::Ops => {
+            world.replay(&file.ops, &file.prefabs);
+            Ok((world, file.ops.clone()))
+        }
+        Mode::Inputs => {
+            let world = Arc::new(world);
+            let ops = Server::resimulate(
+                world.clone(),
+                logic,
+                file.seed,
+                &file.prefabs,
+                &file.ops,
+                &file.inputs,
+            );
+            let world = Arc::into_inner(world).expect("the re-simulation's server is dropped");
+            Ok((world, ops))
+        }
+    }
+}
+
+/// RAM a resident full chunk holds: its slot array and the class boxes of its `Full` bricks.
+pub fn chunk_ram(chunk: &Chunk) -> u64 {
+    let payload: usize = chunk.bricks().iter().map(Brick::payload_bytes).sum();
+    (size_of::<Chunk>() + payload) as u64
+}
+
+/// RAM a LOD-only chunk holds: its 73 mip-brick slots and the class boxes of its `Full` ones.
 pub fn mips_ram(mips: &ChunkMips) -> u64 {
     let slots: usize = vxe_world::MIP_BRICKS.iter().sum();
-    (size_of::<ChunkMips>()
-        + slots * size_of::<vxe_world::Brick>()
-        + mips.full_bricks() * BRICK_VOXELS * 2) as u64
+    let payload: usize = (1..=vxe_world::MIP_LEVELS)
+        .flat_map(|n| mips.level(n))
+        .map(Brick::payload_bytes)
+        .sum();
+    (size_of::<ChunkMips>() + slots * size_of::<Brick>() + payload) as u64
 }
 
 /// The `p`-th percentile (0 to 100) of `v` by nearest rank; `NaN` when empty. Sorts `v`.
@@ -109,9 +398,50 @@ pub fn percentile(v: &mut [f64], p: f64) -> f64 {
     v[rank.clamp(1, v.len()) - 1]
 }
 
+/// Scroll lines banked into whole steps: smooth or touchpad scrolling delivers a fraction of
+/// a line per frame, which rounding per frame would turn into no step at all.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ScrollSteps {
+    carry: f32,
+}
+
+impl ScrollSteps {
+    /// Adds a frame's scroll in lines and returns the whole steps banked, rounded toward
+    /// zero; the fraction stays for the next frame.
+    pub fn add(&mut self, delta: f32) -> i64 {
+        self.carry += delta;
+        let steps = self.carry.trunc();
+        self.carry -= steps;
+        steps as i64
+    }
+
+    /// The fraction of a step banked.
+    pub fn carry(&self) -> f32 {
+        self.carry
+    }
+
+    /// Drops the banked fraction.
+    pub fn clear(&mut self) {
+        self.carry = 0.0;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scroll_steps_bank_fractions_and_step_toward_zero() {
+        let mut s = ScrollSteps::default();
+        let quarters: Vec<i64> = [0.25; 4].iter().map(|&d| s.add(d)).collect();
+        assert_eq!(quarters, [0, 0, 0, 1]);
+        assert_eq!(s.carry(), 0.0);
+        assert_eq!([s.add(0.3), s.add(-0.3)], [0, 0]);
+        assert_eq!(s.add(2.0), 2);
+        let mut s = ScrollSteps::default();
+        assert_eq!([s.add(-0.6), s.add(-0.6)], [0, -1]);
+        assert!((s.carry() + 0.2).abs() < 1e-6, "carry {}", s.carry());
+    }
 
     #[test]
     fn look_materials_puts_the_override_on_rock_only() {
@@ -141,6 +471,45 @@ mod tests {
         assert_eq!(percentile(&mut v, 100.0), 100.0);
         assert_eq!(percentile(&mut [3.0], 95.0), 3.0);
         assert!(percentile(&mut [], 50.0).is_nan());
+    }
+
+    #[test]
+    fn logic_choice_parses_native_wasm_and_a_path() {
+        assert_eq!(LogicChoice::parse("native"), Ok(LogicChoice::Native));
+        assert_eq!(
+            LogicChoice::parse("wasm"),
+            Ok(LogicChoice::Wasm(DEFAULT_COMPONENT.into()))
+        );
+        assert_eq!(
+            LogicChoice::parse("wasm=a/b.wasm"),
+            Ok(LogicChoice::Wasm("a/b.wasm".into()))
+        );
+        for bad in ["", "wasm=", "lua", "native=x"] {
+            assert!(LogicChoice::parse(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    /// Without the `wasm` feature a hosted logic is refused with a message naming it.
+    #[cfg(not(feature = "wasm"))]
+    #[test]
+    fn a_build_without_the_wasm_feature_refuses_the_component() {
+        let e = LogicChoice::Wasm(DEFAULT_COMPONENT.into())
+            .load()
+            .err()
+            .expect("refused");
+        assert!(e.contains("--features wasm"), "{e}");
+        assert!(LogicChoice::Native.load().is_ok());
+    }
+
+    #[test]
+    fn the_streamed_mirror_reserves_records_for_the_residency_ball_over_the_restore_line() {
+        assert_eq!(vxe_world::chunks_in_ball(25), 65_267);
+        let n = stream_record_chunks(RESIDENCY);
+        assert_eq!(n, 93_239);
+        assert_eq!(n * 2624, 244_659_136);
+        // The smallest count whose occupancy at the full ball stays at or under 0.7.
+        assert!(65_267 * 10 <= n * 7 && 65_267 * 10 > (n - 1) * 7);
+        assert!((PRESSURE_LOW - 0.7).abs() < f32::EPSILON);
     }
 
     #[test]

@@ -1,8 +1,8 @@
 # ADR-0006: SADIE II HRTFs in a packed f32 format, time-domain FIR, mixer on the device callback
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-17)
 > **Date:** 2026-10-16
-> **Related plan(s):** [Plan 0006](../plans/0006-spatial-audio-hrtf-mixer-and-occlusion.md)
+> **Related plan(s):** [Plan 0006](../plans/done/0006-spatial-audio-hrtf-mixer-and-occlusion.md)
 
 ## Context
 
@@ -72,6 +72,9 @@ perceptual layer; the consumer's gameplay noise model lives on M3's coarse grid,
   source steps between filters; the one-block crossfade hides the click, not the step. SADIE II's
   measurement grid is dense enough (a few degrees) that the step is small; the plan's moving
   source test bounds the discontinuity, and interpolation is a follow-up if the owner hears it.
+  (2026-10-16, Plan 0006's third amendment: with the pack on one window start, the owner's
+  recording while turning shows about 7 interaural level steps over 0.5 dB per second, which
+  is the measured case for that follow-up.)
 - **One head for everyone.** A generic dummy head localises worse than an individual HRTF for
   some listeners. Swapping the pack is a file change.
 - **48 kHz only.** The mixer runs at the pack's rate; a device that cannot open 48 kHz fails
@@ -113,4 +116,18 @@ while a mixer on the callback is the standard shape and is still testable headle
 
 ## Outcome
 
-_(Added at acceptance if Plan 0006 falsifies something above.)_
+Accepted 2026-10-17 at Plan 0006's close. The decision stands; four details measured
+differently from the body above:
+
+- **The pack's window.** Per-direction onset windows made the one-block crossfade a 5 ms phase
+  jump while turning (up to 1.8 rad of 440 Hz phase between ring neighbours); the packer now
+  starts every direction's 128 taps at one sample (62 for D2), and the clicks while turning
+  went with it. The "nearest-direction switching" consequence remains the stepping the owner
+  can still hear slowly; interpolation stays the followup.
+- **The crossfade shape.** A linear one-block crossfade kinked the output at every block edge
+  where the direction changed (227 times the static kink); it is a raised cosine.
+- **The probe cost.** `Acoustics::update` for 32 sources reads 1.03 ms on the dev box against
+  the 0.5 ms the plan proposed; the owner accepted about 1.0 ms as the ceiling (D2b).
+- **Where the remaining clicks came from.** The clicks heard while the listener walked were
+  the early-reflection tap swap, not the HRIR switching; ADR-0015 and Plan 0020 replace the
+  swap with taps that glide.

@@ -7,12 +7,15 @@
 //! Readers take short per-chunk read locks.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::chunk::Chunk;
 use crate::coords::{ChunkCoord, ChunkExtent, VoxelCoord};
+use crate::limits::WorldLimits;
 use crate::material::{MaterialId, MaterialTable};
 use crate::mips::ChunkMips;
+use crate::packed::PackedStats;
 use crate::source::WorldSource;
 
 /// Read guard that survives a poisoned lock. A chunk is structurally valid at every point an
@@ -159,9 +162,30 @@ pub struct World {
     lods: RwLock<HashMap<ChunkCoord, Arc<ChunkMips>>>,
     extent: ChunkExtent,
     pub(crate) materials: MaterialTable,
+    /// [`World::packed_stats`]: class changes, entry removals and renames, in that order.
+    packed: [AtomicU64; 3],
+    limits: WorldLimits,
 }
 
 impl World {
+    /// What the planar edit kernel has done to this world's bricks since it was made: summed
+    /// over every edit, read with relaxed ordering. A count of work, not a result.
+    pub fn packed_stats(&self) -> PackedStats {
+        let [c, e, r] = &self.packed;
+        PackedStats {
+            class_changes: c.load(Ordering::Relaxed),
+            entries_removed: e.load(Ordering::Relaxed),
+            renames: r.load(Ordering::Relaxed),
+        }
+    }
+
+    pub(crate) fn add_packed_stats(&self, st: &PackedStats) {
+        let [c, e, r] = &self.packed;
+        c.fetch_add(st.class_changes, Ordering::Relaxed);
+        e.fetch_add(st.entries_removed, Ordering::Relaxed);
+        r.fetch_add(st.renames, Ordering::Relaxed);
+    }
+
     /// An empty, unbounded world. Its [`World::extent`] is empty.
     pub fn new(table: &MaterialTable) -> Self {
         Self {
@@ -169,6 +193,8 @@ impl World {
             lods: RwLock::default(),
             extent: ChunkExtent::new([0, 0, 0], [0, 0, 0]),
             materials: table.clone(),
+            packed: Default::default(),
+            limits: WorldLimits::DEFAULT,
         }
     }
 
@@ -224,7 +250,22 @@ impl World {
             lods: RwLock::default(),
             extent,
             materials: table.clone(),
+            packed: Default::default(),
+            limits: WorldLimits::DEFAULT,
         }
+    }
+
+    /// The range of parameters this world's edits, rays, box queries and region ops accept;
+    /// [`WorldLimits::DEFAULT`] unless set by [`World::with_limits`].
+    pub fn limits(&self) -> WorldLimits {
+        self.limits
+    }
+
+    /// This world with `limits` in place of its own. Two worlds kept in step (a server's and
+    /// an owned client's) must hold the same limits, or they refuse different ops.
+    pub fn with_limits(mut self, limits: WorldLimits) -> Self {
+        self.limits = limits;
+        self
     }
 
     /// The extent generated up front; empty for a world made by [`World::new`].
@@ -232,6 +273,19 @@ impl World {
         self.extent
     }
 
+    /// The world's material table, shared and fixed for the world's life: no public path
+    /// reaches it mutably after `generate`, so a material's class (`TRANSLUCENT` and the rest
+    /// of its flags) cannot change under the renderer's mirror or an edit in flight.
+    ///
+    /// ```compile_fail
+    /// use vxe_world::*;
+    /// let world = World::generate(
+    ///     ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+    ///     &UniformSource(AIR),
+    ///     &MaterialTable::new(),
+    /// );
+    /// world.materials().push(Material::named("glass"));
+    /// ```
     pub fn materials(&self) -> &MaterialTable {
         &self.materials
     }

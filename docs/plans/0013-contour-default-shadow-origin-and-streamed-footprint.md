@@ -7,9 +7,17 @@
 > (the decision this plan finishes: the shadow-ray rule and the footprint are owed here),
 > [ADR-0004](../adrs/0004-palette-narrowed-sharded-brick-pool.md) (the shards, and the growth
 > rule that makes §3 a reading of allocated bytes), ADR-0003 (the residency radii). The
-> footprint choice gets its own ADR ("the footprint ADR" below), written by the architect at
-> Phase 4 under the next free number then.
+> footprint ADR is [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
+> (the final, surface-only form; "the footprint ADR" below), and
+> [ADR-0013](../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) sets how §3 is read.
 > **Prerequisite:** Plan 0005 closed (done). Independent of Plans 0003, 0004 and 0006.
+> Phase 5 also needs [Plan 0017](done/0017-mirror-budget-reservation-page-kinds-and-pressure.md)
+> merged into this plan's branch (the owner's call, 2026-10-18).
+> **Amended:** 2026-10-18, after Phase 3, from the owner's answers: Phase 4 is met by the
+> owner's pick of D at 14,24 (2026-10-17, `docs/decisions-pending.md` (answered and deleted; read it with `git show 880982c:docs/decisions-pending.md`) D1) and by ADR-0012,
+> accepted 2026-10-17, which records the footprint's final form (surface-only, a later plan);
+> Phase 5 builds D at 14,24 after Plan 0017 lands, its §3 check read as live bytes against
+> Plan 0017's reserved budget; Phase 6 may run before Phase 5.
 > **Source:** Plan 0005's "Follow-up items" (cited below as "follow-up N"): items 1 to 3, the
 > streamed attribute-pass reading of item 4, and items 5 to 7. Item 4's baseline readings and
 > item 8 are out of scope.
@@ -191,35 +199,47 @@ Shared conventions:
 - **What:** the owner picks a row of the Phase 3 table, after an on-screen look at the lossy
   rows (`--level --seed 1 --look contour --attrib-quant code8|block2`) if one is a contender;
   the architect then writes the footprint ADR from the table and the pick.
-- **Files touched:** this plan's `## Implementation log`; `docs/adrs/0012-*.md` and
-  `docs/adrs/README.md` (architect).
+- **Files touched:** this plan's `## Implementation log`.
 - **Done when:** the log names the chosen row and the owner's reason in one or two sentences,
   and the footprint ADR is accepted. Phase 5 does not start before both.
+- **Met (amendment, 2026-10-18):** the owner chose **D at 14,24** on 2026-10-17
+  (`docs/decisions-pending.md` D1): lossless, no layout change to undo later; the final
+  surface-only form (row A) comes with ADR-0012's mirror-slot plan. ADR-0012 is the footprint
+  ADR and was accepted 2026-10-17. `dev` writes the Phase 4 log row with this pick and reason
+  when the branch next merges main.
 
 ### Phase 5: The chosen footprint
 - **Owner skill:** dev
-- **What:** the layout or residency the footprint ADR records, replacing attribute pages as
-  built where it says so, with `AttribQuant` removed.
+- **Starts after:** Plan 0017 is merged to main and main is merged into this plan's branch.
+  Plan 0017 reserves the mirror's VRAM up front, so `allocated_bytes` equals the budget and
+  §3 is read as live bytes against it; without it the interim row reads 3.69 to 4.94 GB
+  allocated (Phase 3's two guesses) and cannot meet the first done-when.
+- **What:** D at 14,24: the fly-through's default residency becomes `r_full` 14, `r_lod` 24,
+  on today's attribute-page layout (1040 B per `Full` brick), with `AttribQuant` and its
+  `--attrib-quant` flag removed. ADR-0012's surface-only layout is not built here.
 - **Files touched:** `crates/vxe-render/src/{gpu_world.rs, attrib.rs, shaders/attrib.wgsl,
   shaders/march.wgsl}`, `crates/vxe-render/tests/mirror.rs`, `apps/flythrough/src/{lib.rs,
   main.rs}`, `apps/flythrough/tests/look.rs`, `docs/nfr.md`. The final list follows the
   footprint ADR.
 - **Done when:**
-  - The streamed run at the chosen residency completes its out-and-back flight with
-    `return: 2 chunks, hash match`, no wgpu error, and a peak `allocated_bytes` of at most
-    3 000 000 000 B (the §3 line, read on allocated bytes) on the RTX 3080 Laptop GPU; the log
-    records peak live and allocated bytes, and those at full residency.
+  - The streamed run at 14,24 with Plan 0017's default 3 GB budget completes its
+    out-and-back flight with `return: 2 chunks, hash match`, no wgpu error, zero
+    `PoolTooLarge` syncs and no radius change printed by Plan 0017's pressure rule (so the
+    radius held at 14 throughout), on the RTX 3080 Laptop GPU; the log records peak live
+    bytes, the budget, peak pressure, and live bytes at full residency.
   - `mirror.rs`'s layout tests assert the attribute bytes per brick as the footprint ADR's
     formula states them, and the level's live mirror at `--level --look contour` equals Plan 0002's
     207 681 088 B plus that formula summed over the level's 383 608 `Full` bricks, plus the
     128 B of 64-byte material rows (today: 1040 B each, 606 633 536 B in all).
-  - The look metrics equal the chosen row of the Phase 3 table; for a lossless choice
+  - The look metrics equal the D row of the Phase 3 table (7.41 degrees, 32 px), and
     `look_contour.png` stays byte for byte from Phase 1.
   - Phase 2's shell test and the face goldens pass unchanged.
 
 ### Phase 6: Rock detail on screen
 - **Owner skill:** human
 - **What:** the owner sets rock's detail strength by eye on the contour level (follow-up 3).
+  It reads nothing Phase 5 changes, so it may run on the branch before Phase 5 (amendment,
+  2026-10-18); Phase 7 still waits for both.
 - **Files touched:** this plan's `## Implementation log`.
 - **Done when:** after `cargo run --release -p flythrough -- --level --seed 1 --look contour
   --rock-detail 4,S` at `S` = 0.1, 0.15 and 0.2 (and at scale 8 if the owner asks), judged at
@@ -274,7 +294,7 @@ No new external dependency.
 
 | `nfr.md` figure | Expected effect | How the close measures it |
 |---|---|---|
-| §3 world VRAM (3 GB, read on allocated bytes) | From 4.10 GB allocated and out of memory to at most 3.0 GB allocated at the default. The attribute target is about 0.39 GB live, about 240 B per brick: arithmetic on two readings, a guess until Phase 5. Census guesses: B 0.85 GB live (does not fit alone), C about 0.21 GB, D at 12,24 about 0.71 GB of attributes on a smaller face mirror, A unknown until the census | Phase 5's streamed run, `allocated_bytes` |
+| §3 world VRAM (3 GB; after Plan 0017, live bytes against the reserved budget) | Amended 2026-10-18: D at 14,24 projects 2.56 GB live at full residency (Phase 3's census) inside Plan 0017's 3 GB reservation; the flight's peak live and pressure are unread until Phase 5. Original projection: from 4.10 GB allocated and out of memory to at most 3.0 GB allocated at the default. The attribute target is about 0.39 GB live, about 240 B per brick: arithmetic on two readings, a guess until Phase 5. Census guesses: B 0.85 GB live (does not fit alone), C about 0.21 GB, D at 12,24 about 0.71 GB of attributes on a smaller face mirror, A unknown until the census | Phase 5's streamed run: `mirror_bytes`, `pressure()`, radius changes |
 | §2 primary rays (3.0 ms, 1080p, baseline) | Contour with detail read 2.068 to 2.069 ms at the level on the dev box (Plan 0005); Phase 1 changes only the shadow origin, A adds a popcount per candidate voxel: under 0.1 ms is a guess | Phase 7, `--level --render 1920x1080 --frames 300` and the streamed spawn |
 | §2 streaming line (1.0 ms render-thread CPU, a recorded miss) | `attr_work` adds CPU on every frame a chunk arrives or leaves; unread | Phase 7, per-frame `attr_work` CPU, p50/p99/max |
 | Attribute pass (no `nfr.md` figure yet) | Proposal: under 1.0 ms of GPU per frame at p99 under motion at 10 m/s (a guess; Plan 0005 read 39.6 to 55.0 ms for the level's first fill and 0.020 ms for a 1 m carve) | Phase 7, timestamps around the pass |
@@ -287,7 +307,10 @@ The baseline GPU is not on hand; every figure is a dev-reference reading and say
   surface fraction nobody has measured; C is the smallest but loses detail at 2-voxel
   features; D gives up radius. The combination row exists for this; if even that misses, the
   phase records it and the owner chooses between a radius and the allocation growth rule
-  (ADR-0004's never-shrink buffers are the other half of the 2.43 GB face peak).
+  (ADR-0004's never-shrink buffers are the other half of the 2.43 GB face peak). Resolved
+  2026-10-18: D at 14,24 behind Plan 0017's reservation; the risk left is that the flight's
+  peak live at 14 passes Plan 0017's 0.9 pressure line and the rule drops the radius, which
+  Phase 5's first done-when catches.
 - **A needs variable-size storage.** A brick's plane count changes with every edit, so A means
   a sub-slot allocator inside the pool; the footprint ADR has to name its fragmentation and
   compaction behaviour, and Phase 5 grows accordingly.

@@ -71,7 +71,9 @@ impl ChunkMips {
                         }
                     }
                 }
-                Brick::Full(v) => {
+                Brick::Full(p) => {
+                    let mut v = [AIR; BRICK_VOXELS];
+                    p.decode(&mut v);
                     for z in 0..4 {
                         for y in 0..4 {
                             for x in 0..4 {

@@ -122,6 +122,16 @@ fn hash_result(h: &mut Fnv1a, r: &Result<EditResult, EditError>) {
                 h.write(&v.to_le_bytes());
             }
         }
+        Err(EditError::UnknownPrefab(id)) => {
+            h.write(&[3]);
+            h.write(&id.to_le_bytes());
+        }
+        Err(e @ EditError::OutOfRange { .. }) => {
+            let mut bytes = Vec::new();
+            vxe_world::wire::encode_error(&mut bytes, e);
+            h.write(&[4]);
+            h.write(&bytes);
+        }
     }
 }
 
@@ -164,6 +174,91 @@ fn determinism_vector() {
     let mips = world.mips_hash();
     println!("mips hash {mips:#018x}");
     assert_eq!(mips, 0x6cc1_4fda_4b7f_5188);
+}
+
+/// The vector's ops pushed to an op log (one per tick), the log's bytes.
+fn vector_log(world: &World) -> OpLog {
+    let mut log = OpLog::new();
+    for (tick, op) in ops(world).into_iter().enumerate() {
+        log.push(tick as u64, op);
+    }
+    log
+}
+
+/// The vector through the log: encoded, decoded and replayed on a fresh world, the results
+/// and voxels hash to the vector's constant, and the log's bytes hash to their own.
+#[test]
+fn determinism_vector_replays_from_its_log_bytes() {
+    let live = generate(0x5EED_0001);
+    let log = vector_log(&live);
+    assert_eq!(log.len(), 24);
+    let direct: Vec<_> = ops(&live).iter().map(|op| live.apply(op)).collect();
+
+    let bytes = log.encode();
+    let mut lh = Fnv1a::default();
+    lh.write(&bytes);
+    println!("op log bytes {} hash {:#018x}", bytes.len(), lh.finish());
+    // Blessed on Linux x86_64, asserted on every arm.
+    assert_eq!(lh.finish(), OP_LOG_HASH);
+
+    let decoded = OpLog::decode(&bytes).unwrap();
+    assert_eq!(decoded, log);
+    let world = generate(0x5EED_0001);
+    let mut h = Fnv1a::default();
+    h.write(&world.voxel_hash().to_le_bytes());
+    let results: Vec<_> = world
+        .replay(&decoded, &PrefabRegistry::new())
+        .into_iter()
+        .map(|r| r.map(|r| r.edit_result()))
+        .collect();
+    assert_eq!(results.len(), 24);
+    for r in &results {
+        hash_result(&mut h, r);
+    }
+    h.write(&world.voxel_hash().to_le_bytes());
+    assert_eq!(results, direct);
+    assert_eq!(
+        results[16],
+        Err(EditError::NotResident(ChunkCoord([4, 1, 1])))
+    );
+    assert_eq!(h.finish(), 0x2b6b_6a0d_1f9b_8d75);
+}
+
+/// The FNV-1a 64 of the vector's encoded op log (ticks 0 to 23, seqs 0 to 23, 1446 bytes).
+const OP_LOG_HASH: u64 = 0x5ac8_737d_db0f_ccec;
+
+/// Bytes of one op entry, counted from the op's shape and mode rather than the encoder.
+fn entry_len(op: &EditOp) -> usize {
+    let mode = match op.mode {
+        Mode::Carve => 0,
+        Mode::Fill(_) => 2,
+        Mode::Replace { .. } => 4,
+    };
+    let shape = match op.shape {
+        Shape::Sphere { .. } => 4 * 8,
+        Shape::Box_ { .. } => 6 * 8,
+        Shape::Capsule { .. } => 7 * 8,
+    };
+    8 + 4 + 1 + 1 + mode + 1 + shape
+}
+
+#[test]
+fn determinism_vector_log_file_round_trips() {
+    let world = generate(0x5EED_0001);
+    let file = LogFile {
+        seed: 0x5EED_0001,
+        source_version: 1,
+        extent: extent(),
+        ops: vector_log(&world),
+        inputs: InputLog::new(),
+        prefabs: PrefabRegistry::new(),
+    };
+    let mut bytes = Vec::new();
+    file.write_to(&mut bytes).unwrap();
+    let expected: usize = ops(&world).iter().map(entry_len).sum();
+    // The fixed header, then an empty prefab table's count.
+    assert_eq!(bytes.len(), 60 + 4 + expected);
+    assert_eq!(LogFile::read_from(&mut bytes.as_slice()), Ok(file));
 }
 
 #[test]

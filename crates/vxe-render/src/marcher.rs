@@ -18,7 +18,9 @@ pub struct Params {
     pub cam_up: [f32; 3],
     pub _pad0: f32,
     pub cam_fwd: [f32; 3],
-    pub _pad1: f32,
+    /// Translucent voxels composited in front of the opaque hit, nearest first; 0 ignores
+    /// them.
+    pub translucent_layers: u32,
     pub window_min: [i32; 3],
     pub _pad2: i32,
     pub window_size: [i32; 3],
@@ -48,10 +50,12 @@ pub const FLAG_MASKS: u32 = 2;
 pub const NORMAL_SHIFT: u32 = 2;
 /// `Params::flags` bit: perturb the shading with per-material procedural detail.
 pub const FLAG_DETAIL: u32 = 1 << 4;
-/// `Params::flags` bits 5..7: the [`ViewMode`].
+/// `Params::flags` bits 5..8: the [`ViewMode`].
 pub const VIEW_SHIFT: u32 = 5;
 /// `Params::flags` bit: the mirror holds attribute pages (`MirrorConfig::surface_attrs`).
-pub const FLAG_ATTR_PAGES: u32 = 1 << 7;
+pub const FLAG_ATTR_PAGES: u32 = 1 << 8;
+/// `Params::flags` bit: skip empty cells larger than a voxel (`LightParams::skips`).
+pub const FLAG_SKIPS: u32 = 1 << 9;
 
 /// How the marcher finds the normal at a hit, and in `Contour` the hit itself.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -113,16 +117,34 @@ pub enum ViewMode {
     Normals,
     /// White where the primary ray hits, black elsewhere.
     HitMask,
+    /// The primary ray's walk cost, linear: red `min(steps, 255) / 255` for the iterations
+    /// of the walk's loop (the hitting one included), green `min(loads, 255) / 255` for its
+    /// 32-bit storage loads from the mirror (chunk table, record bits and entries, masks,
+    /// pool, palette), blue `min(pool loads, 255) / 255` for the pool loads among them.
+    /// The opaque walk alone: the translucent walk does not run in this view.
+    /// [`crate::readback::StepHistogram`] reads it back.
+    Steps,
+    /// The composited albedo, unlit and linear: each translucent layer's `albedo × opacity`
+    /// front to back over the opaque hit's albedo; black on a miss.
+    Albedo,
 }
 
 impl ViewMode {
-    pub const ALL: [Self; 3] = [Self::Shaded, Self::Normals, Self::HitMask];
+    pub const ALL: [Self; 5] = [
+        Self::Shaded,
+        Self::Normals,
+        Self::HitMask,
+        Self::Steps,
+        Self::Albedo,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Shaded => "shaded",
             Self::Normals => "normals",
             Self::HitMask => "hitmask",
+            Self::Steps => "steps",
+            Self::Albedo => "albedo",
         }
     }
 
@@ -131,13 +153,28 @@ impl ViewMode {
     }
 }
 
-/// The surface look: normal mode, procedural detail and view. The default is face normals,
-/// no detail, shaded.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The surface look: normal mode, procedural detail, view and translucent layers. The default
+/// is face normals, no detail, shaded, 4 layers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LookParams {
     pub normal_mode: NormalMode,
     pub detail: bool,
     pub view: ViewMode,
+    /// Translucent voxels composited in front of the opaque hit, nearest first; 0 ignores
+    /// them. The translucent walk runs only when the opaque walk read a brick entry flagged
+    /// translucent, so a scene without the class pays nothing.
+    pub translucent_layers: u32,
+}
+
+impl Default for LookParams {
+    fn default() -> Self {
+        Self {
+            normal_mode: NormalMode::default(),
+            detail: false,
+            view: ViewMode::default(),
+            translucent_layers: 4,
+        }
+    }
 }
 
 impl LookParams {
@@ -296,6 +333,7 @@ impl Marcher {
             aspect: w as f32 / h as f32,
             cam_up: up.to_array(),
             cam_fwd: fwd.to_array(),
+            translucent_layers: self.look.translucent_layers,
             window_min: e.min.0,
             window_size: e.size(),
             light_pos: (camera.position + right * light.offset_right - up * light.offset_down)
@@ -307,6 +345,7 @@ impl Marcher {
             cos_inner: light.inner.cos(),
             flags: if light.shadows { FLAG_SHADOWS } else { 0 }
                 | if light.masks { FLAG_MASKS } else { 0 }
+                | if light.skips { FLAG_SKIPS } else { 0 }
                 | self.look.flags()
                 | if world.surface_attrs() {
                     FLAG_ATTR_PAGES
@@ -430,30 +469,57 @@ fn create_target(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Textur
     })
 }
 
-/// GPU duration of the march pass through two timestamp queries. Needs
-/// `Features::TIMESTAMP_QUERY` on the device.
-pub struct MarchTimer {
+/// Bytes one resolved timestamp occupies: a `u64` tick count.
+const QUERY_BYTES: u64 = 8;
+
+/// GPU duration of one pass through a two-timestamp query set: the pass writes its start and
+/// end, [`PassTimer::resolve`] copies them out after it, and [`PassTimer::read_ms`] maps them.
+///
+/// The resolve buffer (`QUERY_RESOLVE | COPY_SRC`) and the readback buffer (`COPY_DST |
+/// MAP_READ`) are separate because wgpu forbids one buffer carrying both usages. The
+/// timestamp period is read off the queue once, at construction.
+pub struct PassTimer {
     queries: wgpu::QuerySet,
     resolve: wgpu::Buffer,
+    readback: wgpu::Buffer,
+    /// Nanoseconds per timestamp tick.
+    period_ns: f32,
 }
 
-impl MarchTimer {
-    pub fn new(device: &wgpu::Device) -> Self {
-        let queries = device.create_query_set(&wgpu::QuerySetDescriptor {
-            label: Some("march timer"),
-            ty: wgpu::QueryType::Timestamp,
-            count: 2,
-        });
-        let resolve = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("march timer resolve"),
-            size: 2 * size_of::<u64>() as u64,
-            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        Self { queries, resolve }
+/// The march pass's timer; the march and the HUD are timed alike.
+pub type MarchTimer = PassTimer;
+
+impl PassTimer {
+    /// A timer, or `None` when the device lacks `Features::TIMESTAMP_QUERY` (the software
+    /// adapter among them), so a caller there gets no timer rather than a validation error.
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<Self> {
+        if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+            return None;
+        }
+        let bytes = 2 * QUERY_BYTES;
+        Some(Self {
+            queries: device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("pass timer"),
+                ty: wgpu::QueryType::Timestamp,
+                count: 2,
+            }),
+            resolve: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("pass timer resolve"),
+                size: bytes,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            }),
+            readback: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("pass timer readback"),
+                size: bytes,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            }),
+            period_ns: queue.get_timestamp_period(),
+        })
     }
 
-    /// The timestamp writes to pass to [`Marcher::encode`].
+    /// The timestamp writes for a compute pass, such as [`Marcher::encode`]'s.
     pub fn writes(&self) -> wgpu::ComputePassTimestampWrites<'_> {
         wgpu::ComputePassTimestampWrites {
             query_set: &self.queries,
@@ -462,17 +528,40 @@ impl MarchTimer {
         }
     }
 
-    /// Records the copy of both timestamps into the resolve buffer; call after the pass.
-    pub fn resolve(&self, encoder: &mut wgpu::CommandEncoder) {
-        encoder.resolve_query_set(&self.queries, 0..2, &self.resolve, 0);
+    /// The timestamp writes for a render pass, such as the HUD overlay's.
+    pub fn render_writes(&self) -> wgpu::RenderPassTimestampWrites<'_> {
+        wgpu::RenderPassTimestampWrites {
+            query_set: &self.queries,
+            beginning_of_pass_write_index: Some(0),
+            end_of_pass_write_index: Some(1),
+        }
     }
 
-    /// Milliseconds between the two timestamps of the last resolved pass. Blocks until the
-    /// GPU has finished it.
-    pub fn read_ms(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> f64 {
-        let bytes = crate::readback::read_buffer(device, queue, &self.resolve, 0, 16);
-        let t: &[u64] = bytemuck::cast_slice(&bytes);
-        let ticks = t[1].saturating_sub(t[0]);
-        ticks as f64 * f64::from(queue.get_timestamp_period()) / 1.0e6
+    /// Records the resolve of both timestamps and their copy to the readback buffer; call
+    /// after the timed pass, in the same or a later encoder.
+    pub fn resolve(&self, encoder: &mut wgpu::CommandEncoder) {
+        encoder.resolve_query_set(&self.queries, 0..2, &self.resolve, 0);
+        encoder.copy_buffer_to_buffer(&self.resolve, 0, &self.readback, 0, 2 * QUERY_BYTES);
+    }
+
+    /// Milliseconds between the two timestamps of the last resolved pass; zero when they are
+    /// out of order. Blocks until the GPU has finished the submission that resolved them.
+    pub fn read_ms(&self, device: &wgpu::Device) -> f64 {
+        self.readback.map_async(wgpu::MapMode::Read, .., |r| {
+            r.expect("timer readback maps");
+        });
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("device poll for the timer readback");
+        let ticks = {
+            let bytes = self
+                .readback
+                .get_mapped_range(..)
+                .expect("timer readback mapped");
+            let t: &[u64] = bytemuck::cast_slice(&bytes);
+            t[1].saturating_sub(t[0])
+        };
+        self.readback.unmap();
+        ticks as f64 * f64::from(self.period_ns) / 1.0e6
     }
 }

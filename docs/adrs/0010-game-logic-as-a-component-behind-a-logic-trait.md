@@ -1,8 +1,8 @@
 # ADR-0010: The game's server logic is a component behind a `Logic` trait, developed natively and shipped as WebAssembly; Lua is deferred
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-17, at the Plan 0011 close; fail-stop overturned 2026-10-18, see Outcome addendum)
 > **Date:** 2026-10-16
-> **Related plan(s):** [Plan 0007](../plans/0007-op-log-byte-channel-shared-and-owned-clients.md) (the trait and the server loop), [Plan 0011](../plans/0011-wasm-host-for-the-logic-component.md) (the host)
+> **Related plan(s):** [Plan 0007](../plans/done/0007-op-log-byte-channel-shared-and-owned-clients.md) (the trait and the server loop), [Plan 0011](../plans/done/0011-wasm-host-for-the-logic-component.md) (the host)
 > **Supersedes:** the founding interview's "WASM for deterministic server logic, Lua for client scripts" (`docs/roadmap.md`, API surface), in the part that concerns what the hosts are for
 
 ## Context
@@ -121,4 +121,78 @@ keeps the deterministic decisions in the logic and the voxel work in the host.
 
 ## Outcome
 
-_(Added at acceptance if Plan 0007 or Plan 0011 falsifies something above.)_
+**2026-10-17, at the Plan 0011 close (v0.11.0).** The decision stands: the echo logic and
+the fly-through's dig logic, native and as a component, give byte-equal op logs and equal
+world hashes on Linux (the Windows arm confirms it after a push). The build refines or
+corrects the text above in these points:
+
+- **A failed logic is stopped (fail-stop).** wasmtime does not enter a component instance
+  again after a trap, and the component model leaves a trapped instance's state undefined.
+  When a hosted logic fails a call (fuel, memory cap, any trap), the failure is reported once
+  and every later tick reports `LogicError::Stopped`; the server carries on without the
+  logic. Ops the logic applied before failing stay applied and logged. Rejected: (a) a fresh
+  instance and `init(seed)` again (the logic restarts while the world keeps its edits, and
+  `init`'s ops apply twice), (b) a fresh instance without `init` (the same, with the seed
+  lost), (d) restoring a snapshot taken before the tick (the component API exposes no state
+  copy, a guest `save`/`load` pair changes the WIT world, and the world has no undo).
+- **The WIT `hit` record mirrors `vxe_world::Hit`**: `{ voxel, face: option<face>, t,
+  material }`, not a normal and a distance.
+- **`LogicError` lives in `vxe-net`**, beside the trait, so the server can carry it:
+  `Logic::take_error` (provided, default `None`) is called after `init` and every `tick`,
+  `TickReport::logic_error` surfaces it, and `Server::init_error` returns `init`'s failure.
+- **The build split is by cargo features.** `vxe-script-wasm` has a default `host` feature
+  (`WasmLogic` on `wasmtime`) and a `guest` feature (the bindings and `export_logic!`); the
+  fly-through's `--logic wasm` sits behind its `wasm` feature, off by default, so the
+  everyday build compiles no `wasmtime`.
+- **The component has clocks and entropy, fixed by the tick, not none.** Both clocks read
+  `tick x frame_ns`; timers (`subscribe-duration`, `subscribe-instant`) are always ready, so
+  a sleep returns at once; `wasi:random` is a xorshift stream seeded from the logic's seed and
+  the tick, and `insecure-seed` (the standard library's `HashMap` keys) is fixed at
+  instantiation. "No wall clock, no entropy" above means none that varies between runs.
+- **A host call costs about 1.4 µs, not tens of nanoseconds** (an `apply` of a radius-1 m
+  carve over native, the tick's entry and the inputs' lowering included; `wasmtime` 49.0.3,
+  `nfr.md` §4). The budget is 2 µs per `apply` call; a 100-carve tick through the component
+  is 1.03× native.
+- **Host-call work is not metered by fuel.** Fuel counts the guest's instructions; a query
+  the host runs for it (a large `count_in_box`, a long raycast) costs the guest one call. A
+  known limit; bounding or metering it is a follow-up. A panic in a host import (the world
+  asserting on a shape the guest chose) becomes the logic's trap, not a server panic.
+- **Re-simulating a failure is exact only with the same component bytes, `WasmConfig` and
+  `wasmtime` version.** Fuel accounting can change between releases and the fuel per tick
+  moves the failing tick; the log file's header records none of them yet.
+
+### Outcome addendum, 2026-10-18 (Plan 0016 close, v0.13.0)
+
+**Fail-stop is overturned** (the owner's call, 2026-10-17): alternative (a) above, a fresh
+instance and `init(seed)` again, is taken, capped. A failed call is followed on the next tick
+by a fresh instance that runs `init` at tick 0's clock and random stream, then that tick;
+`WasmConfig::max_restarts` (default 8) caps the restarts, after which every tick reports
+`LogicError::Stopped` as before. Each restart surfaces as `LogicError::Restarted` through
+`Logic::take_restart` and `TickReport::restart`, beside the failure. Ops applied before the
+failure stay applied and logged; a restart, like the failure, re-simulates exactly from the
+log under the same component bytes, `WasmConfig` and `wasmtime` version. The hazard recorded
+under (a) stands: an `init` that applies ops applies them again on each restart; no test has
+such a guest yet (a Plan 0016 followup). One restart of `flythrough-logic` reads 26.9 to
+29.3 µs median (`docs/nfr.md` section 4).
+
+### Outcome addendum, 2026-10-20 (Plan 0019 close, v0.16.0)
+
+**Host-call work is charged to fuel**, replacing "not metered" above. `WorkRates` on
+`WasmConfig` (defaults: `per_call` 100, `per_voxel` 10, `per_step` 10, `per_byte` 1) sets the
+charge. Before any host work, the imports that take a list are charged `per_byte` for each byte
+of it: `apply` its op bytes, `unsupported` 12 per changed cell. After the call returns, every
+import is charged `per_call`, plus: `apply` `per_voxel` for each voxel in the op's bounds (an
+edit's shape bounds, a stamp's or a region op's changed bounds) and 64 `per_voxel` per chunk
+it touched; `raycast` `per_step` per step of its walk; `count_in_box` `per_voxel` per voxel
+counted; `unsupported` `per_step` per cell its query looked at. A refused or undecodable call is
+charged its bytes and `per_call`. A charge past the fuel left is the same `LogicError::Fuel`
+failure as an instruction overrun, so a greedy query ends the tick. Every charge comes from
+integer counts the world produces and is the same on every machine. The server's support query
+reads a `changed` list longer than one in-range edit can change (`(edit_axis_max / 8 + 1)^3`,
+2 146 689 cells at the defaults) as no regions. `vxe-world` refuses an out-of-range shape, ray,
+box query or region list with `EditError::OutOfRange` before any arithmetic, so a host import
+no longer panics on a shape the guest chose. Rejected: per-import extent caps alone (a cap says
+nothing about many small calls) and a wall-clock budget (the server path reads no clock). The
+rates, like the fuel per tick, are not in the log header yet, so a re-simulation is exact only
+under the same `WasmConfig`. The per-call cost re-read with the charge is in `docs/nfr.md`
+section 4.

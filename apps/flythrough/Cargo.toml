@@ -11,13 +11,32 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+# `--logic wasm`: hosts the logic component on `wasmtime` (`vxe-script-wasm`). Off by default,
+# so the everyday build does not compile `wasmtime`.
+wasm = ["dep:vxe-script-wasm"]
+
 [dependencies]
 env_logger.workspace = true
 log.workspace = true
 vxe-world = { path = "../../crates/vxe-world" }
+vxe-net = { path = "../../crates/vxe-net" }
+vxe-sim = { path = "../../crates/vxe-sim" }
 vxe-render = { path = "../../crates/vxe-render" }
 vxe-app = { path = "../../crates/vxe-app" }
+flythrough-logic = { path = "logic" }
+vxe-script-wasm = { workspace = true, features = ["host"], optional = true }
+vxe-audio = { path = "../../crates/vxe-audio" }
 
 [dev-dependencies]
+criterion.workspace = true
 png.workspace = true
 pollster.workspace = true
+
+[[test]]
+name = "component"
+required-features = ["wasm"]
+
+[[bench]]
+name = "acoustics"
+harness = false

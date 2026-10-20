@@ -18,3 +18,23 @@ criterion.workspace = true
 [[bench]]
 name = "edits"
 harness = false
+
+[[bench]]
+name = "coarse"
+harness = false
+
+[[bench]]
+name = "stamp"
+harness = false
+
+[[bench]]
+name = "collapse"
+harness = false
+
+[[bench]]
+name = "replay"
+harness = false
+
+[[bench]]
+name = "brick_kernel"
+harness = false

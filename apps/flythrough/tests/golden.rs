@@ -89,48 +89,81 @@ fn headlamp_shadows_only_remove_light() {
     );
 }
 
-#[test]
-fn masks_move_only_isolated_pixels() {
-    for (name, lit) in [
-        ("at_eye", LightParams::at_eye()),
-        ("headlamp", LightParams::headlamp()),
-    ] {
-        let unmasked = LightParams {
-            masks: false,
-            ..lit
-        };
-        let Some(images) = render(&carved_world(), &[lit, unmasked]) else {
-            return;
-        };
-        let differing = differing_pixels(&images[0], &images[1], 2);
-        println!(
-            "{name}: masks on and off differ at {} pixels by more than 2/255",
-            differing.len()
-        );
-        // The golden floor: 0.1 % of 57 600 pixels.
-        assert!(differing.len() <= 57, "{name}: {} pixels", differing.len());
-        // A skip past an occupied block opens a hole several pixels wide; a corner tie broken
-        // the other way moves one pixel.
-        for (i, &(c, r)) in differing.iter().enumerate() {
-            for &(c2, r2) in &differing[i + 1..] {
-                assert!(
-                    c.abs_diff(c2) > 1 || r.abs_diff(r2) > 1,
-                    "{name}: differing pixels ({c}, {r}) and ({c2}, {r2}) touch"
-                );
-            }
-        }
-    }
+/// Bytes at which `a` and `b` differ.
+fn differing_bytes(a: &[u8], b: &[u8]) -> usize {
+    assert_eq!(a.len(), b.len());
+    a.iter().zip(b).filter(|(x, y)| x != y).count()
 }
 
-/// Pixels (column, row) whose largest channel difference between `a` and `b` exceeds
-/// `tolerance`.
-fn differing_pixels(a: &[u8], b: &[u8], tolerance: u8) -> Vec<(u32, u32)> {
-    a.chunks(4)
-        .zip(b.chunks(4))
-        .enumerate()
-        .filter(|(_, (p, q))| (0..3).any(|k| p[k].abs_diff(q[k]) > tolerance))
-        .map(|(i, _)| (i as u32 % WIDTH, i as u32 / WIDTH))
-        .collect()
+/// The walk is independent of its skips: the `primary.png`, `headlamp.png` and `lod.png`
+/// scenes from their golden poses render byte-identically with every skip on, with every
+/// skip off (the walk over single voxels, which stays under `MAX_STEPS` on these windows of
+/// 384 voxels) and with the mask tests alone off, on one device, and the image with every
+/// skip on is the golden file's bytes, `lod.png` included.
+#[test]
+fn the_walk_renders_the_same_bytes_with_every_skip_on_or_off() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let bless = std::env::var("VXE_BLESS").as_deref() == Ok("1");
+    let carved = carved_world();
+    let lod = lod_scene();
+    let scenes = [
+        (
+            "primary.png",
+            &carved,
+            LightParams::at_eye(),
+            LodParams::default(),
+        ),
+        (
+            "headlamp.png",
+            &carved,
+            LightParams::headlamp(),
+            LodParams::default(),
+        ),
+        ("lod.png", &lod, LightParams::at_eye(), forced(1)),
+    ];
+    for (name, world, light, lod) in scenes {
+        let variants = [
+            ("every skip on", light),
+            (
+                "every skip off",
+                LightParams {
+                    skips: false,
+                    ..light
+                },
+            ),
+            (
+                "the mask tests off",
+                LightParams {
+                    masks: false,
+                    ..light
+                },
+            ),
+        ];
+        let images = render_with(
+            &device,
+            &queue,
+            world,
+            &scene_camera(),
+            &variants.map(|(_, light)| light),
+            lod,
+        );
+        for (i, (label, _)) in variants.iter().enumerate().skip(1) {
+            let differing = differing_bytes(&images[0], &images[i]);
+            assert_eq!(
+                differing, 0,
+                "{name} with {label}: {differing} bytes differ from every skip on"
+            );
+        }
+        if !bless {
+            let differing = differing_bytes(&images[0], &read_png(&golden_path(name)).0);
+            assert_eq!(
+                differing, 0,
+                "{name}: {differing} bytes differ from the golden"
+            );
+        }
+    }
 }
 
 /// Pixels of `plain` darker than `shadowed` in any channel.
@@ -206,6 +239,85 @@ fn headlamp_slab_casts_the_computed_shadow() {
         (820..=840).contains(&brighter),
         "{brighter} shadowed pixels, 830 computed"
     );
+}
+
+/// The cave's table plus a translucent red glass row (opacity 0.5).
+fn glass_table() -> (MaterialTable, MaterialId) {
+    let mut t = cave_materials();
+    let glass = t.push(Material {
+        albedo: [0.9, 0.1, 0.1],
+        flags: MaterialFlags::TRANSLUCENT,
+        opacity: 0.5,
+        ..Material::named("glass")
+    });
+    (t, glass)
+}
+
+/// The translucent scene: air over chunks `[0, 2)^3`, the rock wall at x `[44, 46)` and a
+/// glass slab at x `[36, 38)`, y and z `[56, 72)`, seen from `(8.5, 64.5, 64.5)` along +x
+/// under the headlamp. `with_glass` false leaves the slab out.
+fn translucent_scene(with_glass: bool) -> World {
+    let (table, glass) = glass_table();
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [2, 2, 2]),
+        &UniformSource(0),
+        &table,
+    );
+    fill_voxels(&world, [44, 0, 0], [46, 128, 128], ROCK);
+    if with_glass {
+        fill_voxels(&world, [36, 56, 56], [38, 72, 72], glass);
+    }
+    world
+}
+
+/// `translucent.png`: the glass slab composited over the wall, shaded under the headlamp. The
+/// slab tints the wall behind it red (the centre pixel's red channel leads its green) and
+/// changes a twentieth of the image or more against the same scene without it (the slab
+/// subtends about 23 % of the width and 41 % of the height); the file matches byte for byte.
+#[test]
+fn translucent_golden_composites_the_slab_over_the_wall() {
+    let camera = Camera {
+        position: [8.5, 64.5, 64.5].into(),
+        yaw: 0.0,
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    };
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let light = [LightParams::headlamp()];
+    let lod = LodParams::default();
+    let glass = render_with(
+        &device,
+        &queue,
+        &translucent_scene(true),
+        &camera,
+        &light,
+        lod,
+    );
+    let bare = render_with(
+        &device,
+        &queue,
+        &translucent_scene(false),
+        &camera,
+        &light,
+        lod,
+    );
+    assert_golden("translucent.png", &glass[0]);
+    if std::env::var("VXE_BLESS").as_deref() != Ok("1") {
+        let differing = differing_bytes(&glass[0], &read_png(&golden_path("translucent.png")).0);
+        assert_eq!(
+            differing, 0,
+            "translucent.png: {differing} bytes differ from the golden"
+        );
+    }
+    let centre = (HEIGHT / 2 * WIDTH + WIDTH / 2) as usize * 4;
+    let p = &glass[0][centre..centre + 3];
+    println!("centre pixel through the glass: {p:?}");
+    assert!(p[0] > p[1] + 16, "centre pixel {p:?} is not tinted red");
+    let f = fraction_differing(&glass[0], &bare[0], 8);
+    println!("the slab changes {:.2} % of pixels", f * 100.0);
+    assert!(f >= 0.05, "{:.2} %", f * 100.0);
 }
 
 /// `primary.png` and `headlamp.png` match byte for byte with the pool in one shard and split

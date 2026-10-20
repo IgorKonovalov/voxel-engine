@@ -1,0 +1,22 @@
+[package]
+name = "probe-guest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "A component that reports what it can observe of its environment"
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
+[dependencies]
+getrandom.workspace = true
+vxe-net.workspace = true
+vxe-script-wasm = { workspace = true, features = ["guest"] }

@@ -1,0 +1,22 @@
+[package]
+name = "greedy-guest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "A component that asks the host for large queries"
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
+[dependencies]
+vxe-net.workspace = true
+vxe-world.workspace = true
+vxe-script-wasm = { workspace = true, features = ["guest"] }
