@@ -444,7 +444,7 @@ fn set_radii_demotes_the_full_edge_and_promotes_it_back() {
     s.set_radii(1, 3);
     assert_eq!(s.config().residency.r_full, 1);
     // The focus has not moved: the polls alone demote.
-    let ev = s.wait_idle(&world);
+    let ev = settle(&mut s, &world, chunks_in_ball(3));
     assert!(ev.evicted.is_empty());
     let mut demoted = ev.demoted;
     demoted.sort_unstable();
@@ -458,7 +458,7 @@ fn set_radii_demotes_the_full_edge_and_promotes_it_back() {
 
     s.set_radii(2, 3);
     s.update(&world, &[focus]);
-    let ev = s.wait_idle(&world);
+    let ev = settle(&mut s, &world, chunks_in_ball(3));
     let mut promoted: Vec<ChunkCoord> = ev
         .loaded
         .iter()
@@ -472,4 +472,38 @@ fn set_radii_demotes_the_full_edge_and_promotes_it_back() {
     let after: Vec<u64> = edge.iter().map(|&c| chunks_hash(&world, &[c])).collect();
     assert_eq!(after, before);
     assert_eq!(world.material_at([160, 32, 32]), Some(AIR));
+}
+
+/// Polls until no job is queued or running, asserting after every poll that the resident
+/// chunks, full and LOD-only, number at most `bound`; returns the polls' events.
+fn settle(s: &mut Streamer, world: &World, bound: u64) -> StreamEvents {
+    let mut all = StreamEvents::default();
+    loop {
+        let ev = s.poll(world);
+        let resident = world.store().len() + world.lod_coords().len();
+        assert!(
+            resident as u64 <= bound,
+            "{resident} resident, bound {bound}"
+        );
+        all.loaded.extend(ev.loaded);
+        all.demoted.extend(ev.demoted);
+        all.evicted.extend(ev.evicted);
+        all.errors.extend(ev.errors);
+        let st = s.stats();
+        if st.in_flight == 0 && st.queued == 0 {
+            return all;
+        }
+        std::thread::yield_now();
+    }
+}
+
+/// The lattice balls the streamed mirror's record count is sized from.
+#[test]
+fn chunks_in_ball_counts_the_lattice_points() {
+    assert_eq!(chunks_in_ball(0), 1);
+    assert_eq!(chunks_in_ball(1), 7);
+    assert_eq!(chunks_in_ball(2), 33);
+    assert_eq!(chunks_in_ball(24), 57_777);
+    assert_eq!(chunks_in_ball(25), 65_267);
+    assert_eq!(chunks_in_ball(-1), 0);
 }

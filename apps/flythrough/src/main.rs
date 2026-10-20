@@ -15,8 +15,8 @@
 //! [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame; `--mirror-budget`
 //! sets the VRAM the mirror reserves for its pool, masks and records at startup (ADR-0013;
 //! default 3072 MiB streamed, and on the level what its bricks, the dig headroom and its chunks
-//! need), and while streaming the full radius follows the mirror's pressure (live bytes over
-//! the reservation): a chunk down after 30 frames above 0.9, a chunk up after 300 frames below
+//! need, with records for the residency's ball when streaming), and while streaming the full
+//! radius follows the mirror's pressure (the fuller of its pool slots and records): a chunk down after 30 frames above 0.9, a chunk up after 300 frames below
 //! 0.7, between 6 and the configured radius, each change printed and on the HUD;
 //! `--residency` sets the streamed radii (default `flythrough::RESIDENCY`, hysteresis 1);
 //! `--headless` runs the
@@ -868,12 +868,12 @@ impl Hud {
     }
 }
 
-/// Mirror pressure (live bytes over the reservation) above which the full radius falls by a
+/// Mirror pressure (`GpuWorld::pressure`, the fuller of pool slots and records) above which the full radius falls by a
 /// chunk once it has held for `PRESSURE_HIGH_FRAMES` frames, and below which it rises by one
 /// once it has held for `PRESSURE_LOW_FRAMES` (ADR-0013).
 const PRESSURE_HIGH: f32 = hud::PRESSURE_HIGH;
 const PRESSURE_HIGH_FRAMES: u32 = 30;
-const PRESSURE_LOW: f32 = 0.7;
+const PRESSURE_LOW: f32 = flythrough::PRESSURE_LOW;
 const PRESSURE_LOW_FRAMES: u32 = 300;
 /// The full radius the pressure rule never lowers below, in chunks.
 const R_FULL_FLOOR: i32 = 6;
@@ -1812,6 +1812,7 @@ impl Run {
             gpu,
             MirrorConfig {
                 sync_budget_bytes: self.args.sync_budget,
+                record_chunks: Some(flythrough::stream_record_chunks(self.args.residency)),
                 ..MirrorConfig::new(Window::Follow {
                     side: flythrough::window_side(self.args.residency),
                 })

@@ -20,14 +20,15 @@
 //!
 //! The budget lines are the smallest `--mirror-budget` (ADR-0013) that reserves this content
 //! at rest (`gpu_world::budget_for`): its slots in whole pages and a record for every chunk of
-//! the extent, or of the window's `W^3`. Face mode puts every brick in plain pages; contour
+//! the extent, or when streaming the records the fly-through reserves for the residency's ball
+//! (`flythrough::stream_record_chunks`). Face mode puts every brick in plain pages; contour
 //! puts full chunks' bricks in attribute pages of 1364 bricks each. Neither counts the
 //! streamer's hysteresis or the dig headroom.
 
 use std::sync::Arc;
 
 use flythrough::cave::CaveSource;
-use flythrough::{cave_materials, chunk_ram, mips_ram, window_side};
+use flythrough::{cave_materials, chunk_ram, mips_ram, stream_record_chunks, window_side};
 use vxe_render::gpu_world::{ATTR_PAGE_BRICK_SLOTS, MATERIAL_FLOATS, POOL_PAGE_SLOTS, budget_for};
 use vxe_world::{
     BRICK_VOXELS, Brick, CHUNK_BRICKS, ChunkExtent, CoarseGrid, PersistConfig, Residency,
@@ -210,7 +211,7 @@ fn streamed(seed: u64, r: Residency) {
         mirror_full,
         mirror_lod
     );
-    budget_lines(full_bricks as u64, mip_full as u64, (w * w * w) as u64);
+    budget_lines(full_bricks as u64, mip_full as u64, stream_record_chunks(r));
     println!("generation:        {secs:.3} s on {workers} workers");
     println!(
         "voxels/s/worker:   {:.3e}",

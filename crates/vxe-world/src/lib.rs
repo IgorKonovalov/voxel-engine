@@ -63,7 +63,9 @@ pub use raycast::{Face, Hit, Run};
 pub use shape::Shape;
 pub use source::{StampedSource, UniformSource, WorldSource};
 pub use store::{ChunkStore, StoreWriteGuard, World, WorldStats};
-pub use stream::{Residency, StreamConfig, StreamError, StreamEvents, StreamStats, Streamer, Tier};
+pub use stream::{
+    Residency, StreamConfig, StreamError, StreamEvents, StreamStats, Streamer, Tier, chunks_in_ball,
+};
 pub use support::{Anchors, Region, SupportParams, find_unsupported};
 pub use walkable::{WalkableMap, WalkableParams, WalkableStats};
 pub use wire::WireError;

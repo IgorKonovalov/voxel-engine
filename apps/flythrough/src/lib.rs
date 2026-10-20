@@ -35,8 +35,21 @@ pub fn window_side(r: Residency) -> i32 {
     2 * (r.r_lod.max(r.r_full) + r.hysteresis) + 1
 }
 
+/// Mirror pressure under which the fly-through's full radius returns a chunk (ADR-0013). The
+/// streamed mirror's records are sized so their occupancy stays under it.
+pub const PRESSURE_LOW: f32 = 0.7;
+
+/// Records the streamed mirror reserves for residency `r`: the chunks one focus can keep,
+/// `chunks_in_ball(max(r_lod, r_full) + h)`, over [`PRESSURE_LOW`] (as `* 10 / 7`, rounded
+/// up), so the record term of the pressure stays under the restore line while the streamer
+/// keeps its radius. 93 239 at the defaults.
+pub fn stream_record_chunks(r: Residency) -> u64 {
+    let ball = vxe_world::chunks_in_ball(r.r_lod.max(r.r_full) + r.hysteresis);
+    (ball * 10).div_ceil(7)
+}
+
 /// The mirror budget of the streamed cave unless `--mirror-budget` sets one: the world line
-/// of `nfr.md` §3, 3 GiB, of which the window's records take their share.
+/// of `nfr.md` §3, 3 GiB, of which the residency's records take their share.
 pub const STREAM_MIRROR_BUDGET: u64 = vxe_render::gpu_world::DEFAULT_BUDGET_BYTES;
 
 /// Free pool slots beyond the bounded level's `Full` bricks, so digging has room: 64 Ki
@@ -459,6 +472,17 @@ mod tests {
             .expect("refused");
         assert!(e.contains("--features wasm"), "{e}");
         assert!(LogicChoice::Native.load().is_ok());
+    }
+
+    #[test]
+    fn the_streamed_mirror_reserves_records_for_the_residency_ball_over_the_restore_line() {
+        assert_eq!(vxe_world::chunks_in_ball(25), 65_267);
+        let n = stream_record_chunks(RESIDENCY);
+        assert_eq!(n, 93_239);
+        assert_eq!(n * 2624, 244_659_136);
+        // The smallest count whose occupancy at the full ball stays at or under 0.7.
+        assert!(65_267 * 10 <= n * 7 && 65_267 * 10 > (n - 1) * 7);
+        assert!((PRESSURE_LOW - 0.7).abs() < f32::EPSILON);
     }
 
     #[test]

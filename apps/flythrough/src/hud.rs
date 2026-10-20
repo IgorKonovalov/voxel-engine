@@ -323,8 +323,8 @@ pub struct HudStats {
     pub pressure: Option<Pressure>,
 }
 
-/// The mirror's live bytes over its reservation, the reservation, and while streaming the
-/// full radius the pressure rule holds with the configured one.
+/// The mirror's pressure (the fuller of its pool slots and records), its reservation in bytes,
+/// and while streaming the full radius the pressure rule holds with the configured one.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Pressure {
     pub pressure: f32,

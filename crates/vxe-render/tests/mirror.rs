@@ -463,9 +463,20 @@ fn full_bricks(world: &World, coords: &[ChunkCoord]) -> u32 {
         .sum()
 }
 
-/// `pressure()` is live bytes over the reservation, within 1e-6, and between 0 and 1 here.
+/// The two terms of the pressure: slot occupancy (a brick in an attribute page counting its
+/// two attribute slots) and record occupancy.
+fn pressure_terms(gpu: &GpuWorld) -> (f64, f64) {
+    let slots = f64::from(gpu.live_slots()) + 2.0 * f64::from(gpu.live_attr_slots());
+    (
+        slots / f64::from(gpu.reserved_slots()),
+        gpu.mirrored_chunks() as f64 / f64::from(gpu.reserved_records()),
+    )
+}
+
+/// `pressure()` is the larger of its two terms within 1e-6, and between 0 and 1 here.
 fn assert_pressure(gpu: &GpuWorld) {
-    let want = gpu.mirror_bytes() as f64 / gpu.allocated_bytes() as f64;
+    let (slots, records) = pressure_terms(gpu);
+    let want = slots.max(records);
     let got = f64::from(gpu.pressure());
     assert!((got - want).abs() < 1e-6, "pressure {got} against {want}");
     assert!(want > 0.0 && want < 1.0, "{want}");
@@ -509,6 +520,7 @@ fn a_following_window_mirrors_the_streamed_residency() {
             sync_budget_bytes: u64::MAX,
             max_shard_slots: None,
             budget_bytes: SMALL_BUDGET,
+            record_chunks: None,
         },
     );
     // 343 records, then whole pages of what is left past the placeholders: 27 pages on one
@@ -1546,4 +1558,70 @@ fn an_empty_attribute_page_serves_plain_slots() {
         in_page_0 > 0,
         "the last bricks took page 0 back as an attribute page"
     );
+}
+
+/// Pressure on slots: a fixed window whose `Full` bricks fill more than 0.9 of a two-page
+/// reservation, with records far from full.
+#[test]
+fn pressure_follows_the_slots_when_they_run_out() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    // 15 chunks of 512 `Full` bricks: 7680 of 8192 slots.
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [5, 3, 1]),
+        &Checker,
+        &numbered_table(2),
+    );
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            budget_bytes: budget_for(8192, 40),
+            record_chunks: Some(40),
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        },
+    );
+    assert_eq!((gpu.reserved_slots(), gpu.reserved_records()), (8192, 40));
+    gpu.sync(&world, &queue).unwrap();
+    let (slots, records) = pressure_terms(&gpu);
+    assert_eq!(slots, 7680.0 / 8192.0);
+    assert!(slots > 0.9 && records < 0.5, "{slots} {records}");
+    assert_pressure(&gpu);
+    assert!((f64::from(gpu.pressure()) - slots).abs() < 1e-6);
+}
+
+/// Pressure on records: uniform chunks take no slot, and 37 of 40 records read past 0.9
+/// with slots at 0. A mirror given `record_chunks` reserves exactly that many, and its
+/// reservation is still the budget rounded down.
+#[test]
+fn pressure_follows_the_records_when_they_run_out() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let mut t = MaterialTable::new();
+    let rock = t.push(Material::named("rock"));
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [37, 1, 1]),
+        &UniformSource(rock),
+        &t,
+    );
+    let budget = budget_for(4096, 40);
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            budget_bytes: budget,
+            record_chunks: Some(40),
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        },
+    );
+    assert_eq!(gpu.reserved_records(), 40);
+    assert_eq!(gpu.allocated_bytes(), gpu.shard_layout().reserved_bytes());
+    assert!(gpu.allocated_bytes() <= budget);
+    assert!(budget - gpu.allocated_bytes() < PAGE_BYTES + PLACEHOLDER_BYTES);
+    gpu.sync(&world, &queue).unwrap();
+    let (slots, records) = pressure_terms(&gpu);
+    assert_eq!(slots, 0.0);
+    assert_eq!(records, 37.0 / 40.0);
+    assert!(records > 0.9);
+    assert!((f64::from(gpu.pressure()) - records).abs() < 1e-6);
 }

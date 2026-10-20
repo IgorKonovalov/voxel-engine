@@ -710,6 +710,34 @@ impl Drop for Streamer {
     }
 }
 
+/// Lattice chunks within `r` chunks of a focus chunk in the streamer's metric, `d2 <= r^2`:
+/// the most chunks one focus keeps resident after a poll when `r` is `r_lod + h`. 0 for a
+/// negative `r`.
+pub fn chunks_in_ball(r: i32) -> u64 {
+    if r < 0 {
+        return 0;
+    }
+    let r2 = i64::from(r) * i64::from(r);
+    let mut n = 0u64;
+    for x in -r..=r {
+        for y in -r..=r {
+            let rest = r2 - i64::from(x) * i64::from(x) - i64::from(y) * i64::from(y);
+            if rest >= 0 {
+                // z in [-z, z] with z the integer square root of `rest`.
+                let mut z = (rest as f64).sqrt() as i64;
+                while z * z > rest {
+                    z -= 1;
+                }
+                while (z + 1) * (z + 1) <= rest {
+                    z += 1;
+                }
+                n += 2 * z as u64 + 1;
+            }
+        }
+    }
+    n
+}
+
 fn d2(a: ChunkCoord, b: ChunkCoord) -> i64 {
     (0..3)
         .map(|k| (i64::from(a.0[k]) - i64::from(b.0[k])).pow(2))

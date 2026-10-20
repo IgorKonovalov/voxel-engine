@@ -301,6 +301,9 @@ pub struct MirrorConfig {
     /// device's limits ([`ShardLayout::with_budget`]). The chunk table and material rows are
     /// not part of it.
     pub budget_bytes: u64,
+    /// Chunk records to reserve; `None` reserves one for every chunk of the window. A
+    /// following window's residency is a ball, so a caller that knows it passes fewer.
+    pub record_chunks: Option<u64>,
 }
 
 impl MirrorConfig {
@@ -312,6 +315,7 @@ impl MirrorConfig {
             sync_budget_bytes: u64::MAX,
             max_shard_slots: None,
             budget_bytes: DEFAULT_BUDGET_BYTES,
+            record_chunks: None,
         }
     }
 }
@@ -571,7 +575,7 @@ impl GpuWorld {
             .map(|&v| v.max(1) as usize)
             .product::<usize>();
         let layout = ShardLayout::from_limits(&device.limits(), cfg.max_shard_slots)
-            .with_budget(cfg.budget_bytes, n as u64);
+            .with_budget(cfg.budget_bytes, cfg.record_chunks.unwrap_or(n as u64));
         let sps = u64::from(layout.slots_per_shard);
         let reserved = u64::from(layout.reserved_slots);
         let storage = wgpu::BufferUsages::STORAGE
@@ -900,11 +904,18 @@ impl GpuWorld {
             + self.records.size()
     }
 
-    /// The mirror's pressure: live bytes over the reservation, `mirror_bytes() /
-    /// allocated_bytes()`. The application decides what to do as it nears 1 (ADR-0013); a
-    /// sync that would pass the reservation fails instead of growing it.
+    /// The mirror's pressure, the larger of its two occupancies (ADR-0013): pool slots in
+    /// use, `(live_slots() + 2 live_attr_slots()) / reserved_slots()` (a brick in an attribute
+    /// page holds its two attribute slots too), and records in use, `mirrored_chunks() /
+    /// reserved_records()`. The application decides what to do as it nears 1; a sync that
+    /// would pass the reservation fails instead of growing it. With attribute pages the pool
+    /// can fail a little below 1, at each kind's partly filled page.
     pub fn pressure(&self) -> f32 {
-        (self.mirror_bytes() as f64 / self.allocated_bytes() as f64) as f32
+        let slots = u64::from(self.live_slots()) + 2 * u64::from(self.live_attr_slots());
+        let slot_term = slots as f64 / f64::from(self.layout.reserved_slots.max(1));
+        let record_term =
+            self.mirrored.len() as f64 / f64::from(self.layout.reserved_records.max(1));
+        slot_term.max(record_term) as f32
     }
 
     /// Records into `encoder` the attribute pass over what changed since the last call: every
