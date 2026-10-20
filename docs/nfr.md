@@ -323,9 +323,16 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   tick (100 carves) through the component costs under 2× native `DigLogic`. The per-call
   proposal was 1 µs, and the readings below missed it at 1.37 to 1.42 µs; the 2 µs budget was
   adopted at the close (an orchestrator call, overturnable by the owner). The empty component
-  tick (1.1 to 1.25 µs) is a reading, not a budget. Host-call work (the query or edit the host
-  runs for the guest) is not metered by fuel, and a cheap query's per-call cost is not read
-  yet; both are Plan 0011 follow-ups.
+  tick (1.1 to 1.25 µs) is a reading, not a budget. Host-call work is charged to fuel at the
+  configured rates (Plan 0019): after each import returns, the tick's fuel loses
+  `WorkRates::per_call` (default 100), plus `per_voxel` (10) for each voxel an `apply`'s op
+  bounds hold and 64 per chunk it touched, `per_step` (10) for each step of a `raycast`'s walk,
+  and `per_voxel` for each voxel a `count_in_box` counted; a refused call is charged
+  `per_call` only, and a charge past the fuel left is the same `Fuel` failure as an
+  instruction overrun. **Asserted:** a `count_in_box` over `1 024^3` resident voxels
+  (`10 x 2^30` fuel) fails the tick on fuel at the default `10^10`; 100 rays of `max_t = 2^22`
+  through an empty world are charged exactly `100 x (100 + 10 s)`. A cheap query's per-call
+  cost is not read yet.
   **Readings (dev reference, AMD Ryzen 9 5900HS, Linux, `wasmtime` 49.0.3, Plan 0011 Phase 4
   at 07a3be1 (70b40ec plus the bench), exclusive perf lock, 1-minute load 1.87 before and 1.66
   after two runs):** `cargo bench -p vxe-script-wasm --bench boundary`, each tick on a fresh
@@ -344,6 +351,13 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   a median of 26.9 and 29.3 µs over 50 restarts each (min 24.5, max 109.0 µs): a one-off
   release-build timing loop, not a committed bench, AMD Ryzen 9 5900HS, Linux, not quiet
   (load average 7.4 to 9.4), at 1d1b3aa plus Phase 2's working tree.
+  **Re-read with host-call charging (Plan 0019 Phase 2, AMD Ryzen 9 5900HS, Linux, `wasmtime`
+  49.0.3, exclusive perf lock, not quiet), paired with its parent:** parent c04bfd1 (1-minute
+  load 3.94 to 4.66): 100 carves through the echo component 2.4928 ms against native
+  `EchoLogic` 2.3589 ms, 1.339 µs per host call, empty component tick 1.092 µs, `Bench`
+  1.028×. With charging, 3445f30 (load 7.15 to 4.58): 2.4593 ms against 2.3306 ms, 1.287 µs
+  per host call, empty tick 0.974 µs, `Bench` 2.5510 against 2.4014 ms, 1.062×. The 2 µs
+  line holds; the charge's fuel read and write is inside the run-to-run noise.
 - **Parameter range (Plan 0019):** every edit, ray, box query and region op is checked
   against the world's `WorldLimits` before any arithmetic and refused with
   `EditError::OutOfRange` outside it, changing nothing. Defaults: coordinates and radii within

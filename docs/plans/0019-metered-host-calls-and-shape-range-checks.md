@@ -333,8 +333,8 @@ pub struct WorkRates { pub per_voxel: u64, pub per_step: u64, pub per_call: u64 
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: `WorldLimits` and `OutOfRange` | dev | done | 891b9fc (before the amendment), c04bfd1 |
-| 2: Fuel charged by work | dev | done | committed with this row |
-| 3: Readings and the lines | dev | not started | |
+| 2: Fuel charged by work | dev | done | 3445f30 |
+| 3: Readings and the lines | dev | done | committed with this row |
 
 ### Notes
 
