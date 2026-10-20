@@ -6,9 +6,10 @@
 //! default) loads that component and implements [`vxe_net::Logic`] for it. The two builds of
 //! one logic, driven by the same inputs, request the same ops.
 //!
-//! Compound values cross the boundary as [`vxe_world::wire`] bytes: an op goes out to the
-//! host's `apply`, and the answer comes back as a tag byte and the wire bytes of the result or
-//! the error ([`encode_answer`], [`decode_answer`]). Scalars cross typed.
+//! Compound values cross the boundary as [`vxe_world::wire`] bytes: an op of any kind goes
+//! out to the host's `apply`, and the answer comes back as a tag byte and the wire bytes of
+//! the op result or the error ([`encode_answer`], [`decode_answer`]). Scalars, and the support
+//! query's cells and regions, cross typed.
 //!
 //! The component observes nothing but its seed and its inputs (`wasi` module): its clocks
 //! read `tick × frame_ns`, its random streams restart from the seed and the tick, it has no
@@ -27,11 +28,11 @@ pub use host::{WasmConfig, WasmLogic};
 pub use vxe_net::LogicError;
 
 use vxe_world::wire::{
-    Reader, WireError, decode_error, decode_result, encode_error, encode_result,
+    Reader, WireError, decode_error, decode_op_result, encode_error, encode_op_result,
 };
-use vxe_world::{EditError, EditResult};
+use vxe_world::{EditError, OpResult};
 
-/// Tag of an `apply` answer that carries an [`EditResult`].
+/// Tag of an `apply` answer that carries an [`OpResult`].
 pub const ANSWER_APPLIED: u8 = 0;
 /// Tag of an `apply` answer that carries an [`EditError`].
 pub const ANSWER_REFUSED: u8 = 1;
@@ -39,12 +40,12 @@ pub const ANSWER_REFUSED: u8 = 1;
 pub const ANSWER_UNDECODABLE: u8 = 2;
 
 /// The bytes the host's `apply` returns for `outcome`.
-pub fn encode_answer(outcome: &Result<EditResult, EditError>) -> Vec<u8> {
+pub fn encode_answer(outcome: &Result<OpResult, EditError>) -> Vec<u8> {
     let mut out = Vec::new();
     match outcome {
         Ok(r) => {
             out.push(ANSWER_APPLIED);
-            encode_result(&mut out, r);
+            encode_op_result(&mut out, r);
         }
         Err(e) => {
             out.push(ANSWER_REFUSED);
@@ -56,10 +57,10 @@ pub fn encode_answer(outcome: &Result<EditResult, EditError>) -> Vec<u8> {
 
 /// Reads an `apply` answer. `Ok(None)` is [`ANSWER_UNDECODABLE`]; bytes after the answer are
 /// [`WireError::Trailing`].
-pub fn decode_answer(bytes: &[u8]) -> Result<Option<Result<EditResult, EditError>>, WireError> {
+pub fn decode_answer(bytes: &[u8]) -> Result<Option<Result<OpResult, EditError>>, WireError> {
     let mut r = Reader::new(bytes);
     let answer = match r.u8()? {
-        ANSWER_APPLIED => Some(Ok(decode_result(&mut r)?)),
+        ANSWER_APPLIED => Some(Ok(decode_op_result(&mut r)?)),
         ANSWER_REFUSED => Some(Err(decode_error(&mut r)?)),
         ANSWER_UNDECODABLE => None,
         k => return Err(WireError::UnknownKind(k)),

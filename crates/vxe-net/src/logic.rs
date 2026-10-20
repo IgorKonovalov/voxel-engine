@@ -4,7 +4,7 @@
 //! and a logic compiled as a component receives the host as imports. Inputs and the
 //! broadcast are opaque bytes the logic defines.
 
-use vxe_world::{EditError, EditOp, EditResult, Fixed3, Hit, MaterialId, VoxelCoord};
+use vxe_world::{CellCoord, EditError, Fixed3, Hit, MaterialId, Op, OpResult, Region, VoxelCoord};
 
 /// One client input, as the server hands it to the logic.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -78,15 +78,40 @@ impl std::error::Error for LogicError {}
 
 /// What the logic may do to and ask of the authoritative world.
 pub trait Host {
-    /// Applies an edit now. An applied op is logged and announced as applied; a refused one
-    /// is announced as refused and not logged. Either way the logic receives the outcome.
-    fn apply(&mut self, op: EditOp) -> Result<EditResult, EditError>;
+    /// Applies an op of any kind now. An applied op is logged and announced as applied; a
+    /// refused one is announced as refused and not logged. Either way the logic receives the
+    /// outcome.
+    fn apply(&mut self, op: Op) -> Result<OpResult, EditError>;
     /// The material of a voxel, or `None` when its chunk is not resident.
     fn material_at(&self, v: VoxelCoord) -> Option<MaterialId>;
     /// The first non-air voxel along `origin + dir * t / 256`, `0 <= t <= max`.
     fn raycast(&self, origin: Fixed3, dir: Fixed3, max: i64) -> Option<Hit>;
     /// Voxels per material in the inclusive box `lo..=hi`, ascending by material.
     fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)>;
+    /// The regions that lost their support after an edit that changed the cells `changed`
+    /// (`vxe_world::find_unsupported` over the server's coarse grid, with the support
+    /// parameters and anchors the server is configured with). A caller that knows only an
+    /// op's aabb passes [`cells_in`] of it.
+    fn unsupported(&self, changed: &[CellCoord]) -> Vec<Region>;
+}
+
+/// The cells (8³-voxel bricks) overlapping the inclusive voxel box `aabb`, ascending; none
+/// for `None`.
+pub fn cells_in(aabb: Option<(VoxelCoord, VoxelCoord)>) -> Vec<CellCoord> {
+    let Some((lo, hi)) = aabb else {
+        return Vec::new();
+    };
+    let e = vxe_world::BRICK_EDGE;
+    let (lo, hi) = (lo.0.map(|v| v.div_euclid(e)), hi.0.map(|v| v.div_euclid(e)));
+    let mut out = Vec::new();
+    for x in lo[0]..=hi[0] {
+        for y in lo[1]..=hi[1] {
+            for z in lo[2]..=hi[2] {
+                out.push(CellCoord([x, y, z]));
+            }
+        }
+    }
+    out
 }
 
 /// The game's server logic. Re-simulation reproduces a world only when the logic is a pure

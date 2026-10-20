@@ -122,6 +122,10 @@ fn hash_result(h: &mut Fnv1a, r: &Result<EditResult, EditError>) {
                 h.write(&v.to_le_bytes());
             }
         }
+        Err(EditError::UnknownPrefab(id)) => {
+            h.write(&[3]);
+            h.write(&id.to_le_bytes());
+        }
     }
 }
 
@@ -196,7 +200,11 @@ fn determinism_vector_replays_from_its_log_bytes() {
     let world = generate(0x5EED_0001);
     let mut h = Fnv1a::default();
     h.write(&world.voxel_hash().to_le_bytes());
-    let results = world.replay(&decoded);
+    let results: Vec<_> = world
+        .replay(&decoded, &PrefabRegistry::new())
+        .into_iter()
+        .map(|r| r.map(|r| r.edit_result()))
+        .collect();
     assert_eq!(results.len(), 24);
     for r in &results {
         hash_result(&mut h, r);
@@ -237,11 +245,13 @@ fn determinism_vector_log_file_round_trips() {
         extent: extent(),
         ops: vector_log(&world),
         inputs: InputLog::new(),
+        prefabs: PrefabRegistry::new(),
     };
     let mut bytes = Vec::new();
     file.write_to(&mut bytes).unwrap();
     let expected: usize = ops(&world).iter().map(entry_len).sum();
-    assert_eq!(bytes.len(), 60 + expected);
+    // The fixed header, then an empty prefab table's count.
+    assert_eq!(bytes.len(), 60 + 4 + expected);
     assert_eq!(LogFile::read_from(&mut bytes.as_slice()), Ok(file));
 }
 

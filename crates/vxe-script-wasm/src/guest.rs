@@ -8,7 +8,9 @@
 
 use vxe_net::{ClientInput, Host, Logic};
 use vxe_world::wire::encode_op;
-use vxe_world::{EditError, EditOp, EditResult, Face, Fixed3, Hit, MaterialId, Op, VoxelCoord};
+use vxe_world::{
+    CellCoord, EditError, Face, Fixed3, Hit, MaterialId, Op, OpResult, Region, VoxelCoord,
+};
 
 /// The generated bindings of the `logic` world.
 pub mod bindings {
@@ -49,9 +51,9 @@ fn face(f: wit::Face) -> Face {
 }
 
 impl Host for ImportHost {
-    fn apply(&mut self, op: EditOp) -> Result<EditResult, EditError> {
+    fn apply(&mut self, op: Op) -> Result<OpResult, EditError> {
         let mut bytes = Vec::new();
-        encode_op(&mut bytes, &Op::Edit(op));
+        encode_op(&mut bytes, &op);
         let answer = wit::apply(&bytes);
         // The host decodes what `encode_op` wrote and answers in `encode_answer`'s format;
         // anything else is a host bug, and the panic traps.
@@ -76,6 +78,32 @@ impl Host for ImportHost {
     fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
         wit::count_in_box(wit_voxel(lo), wit_voxel(hi))
     }
+
+    fn unsupported(&self, changed: &[CellCoord]) -> Vec<Region> {
+        let changed: Vec<wit::Cell> = changed
+            .iter()
+            .map(|c| {
+                let [x, y, z] = c.0;
+                wit::Cell { x, y, z }
+            })
+            .collect();
+        wit::unsupported(&changed)
+            .into_iter()
+            .map(|g| Region {
+                cells: g
+                    .cells
+                    .into_iter()
+                    .map(|c| CellCoord([c.x, c.y, c.z]))
+                    .collect(),
+                counts: g.counts,
+                aabb: (voxel(g.lo), voxel(g.hi)),
+            })
+            .collect()
+    }
+}
+
+fn voxel(v: wit::Voxel) -> VoxelCoord {
+    VoxelCoord([v.x, v.y, v.z])
 }
 
 /// The export's `init`: `logic.init` on the imports.

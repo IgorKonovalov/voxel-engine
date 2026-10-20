@@ -215,15 +215,34 @@ impl CoarseGrid {
         self.update_with_stats(world, result).0
     }
 
+    /// [`CoarseGrid::update`] over an aabb alone (any result's, such as
+    /// [`crate::OpResult::aabb`]); nothing when `aabb` is `None`.
+    pub fn update_aabb(
+        &mut self,
+        world: &World,
+        aabb: Option<(VoxelCoord, VoxelCoord)>,
+    ) -> Vec<CellChange> {
+        self.update_aabb_with_stats(world, aabb).0
+    }
+
     /// [`CoarseGrid::update`] plus the voxel arrays it read: one per `Full` brick recomputed.
     pub fn update_with_stats(
         &mut self,
         world: &World,
         result: &EditResult,
     ) -> (Vec<CellChange>, QueryStats) {
+        self.update_aabb_with_stats(world, result.aabb)
+    }
+
+    /// [`CoarseGrid::update_aabb`] plus the voxel arrays it read.
+    pub fn update_aabb_with_stats(
+        &mut self,
+        world: &World,
+        aabb: Option<(VoxelCoord, VoxelCoord)>,
+    ) -> (Vec<CellChange>, QueryStats) {
         let mut stats = QueryStats::default();
         let mut out = Vec::new();
-        let Some((lo, hi)) = result.aabb else {
+        let Some((lo, hi)) = aabb else {
             return (out, stats);
         };
         let (ce, be) = (CHUNK_EDGE, BRICK_EDGE);

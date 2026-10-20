@@ -42,8 +42,9 @@ and entity model.
   deterministic ops drop them as a rigid piece or turn them into rubble.
 - **Collision:** vertical-cylinder sweeps and a character controller with step-up, wall
   slide, gravity, jumping and ledge climbing, in integer math.
-- **The simulation split:** a server owns the world and an op log; clients are shared or own
-  a replica with desync detection; a session replays from seed plus log to the same hash.
+- **The simulation split:** a server owns the world and an op log of every edit, stamp, drop
+  and removal (a save carries the prefabs its stamps name); clients are shared or own a
+  replica with desync detection; a session replays from seed plus log to the same hash.
   Game logic runs behind a trait, natively or as a sandboxed WebAssembly component with
   deterministic WASI, fuel and a memory cap, proven equal to the native build.
 - **A compute ray marcher** in WGSL over a sharded GPU mirror of the world, uploaded
@@ -164,8 +165,8 @@ Walking, the coarse grid and collapse run on the bounded level (`--level`) only.
 | `--translucent-layers N` | Translucent voxels composited in front of the opaque hit, nearest first (default 4); 0 ignores them |
 | `--detail` | Start with procedural surface detail on |
 | `--rock-detail SCALE,STRENGTH` | Rock's detail feature scale in voxels and strength in [0, 1], under `--look` (default 4,0.3) |
-| `--save PATH` | With `--level`: write the session's log file to `PATH` on exit and print the world hash; refuses `P`, turns collapse off and does not combine with `--vault` |
-| `--replay PATH` | With `--level`: re-simulate a saved session before the first frame and print its hash; turns collapse off and does not combine with `--vault` |
+| `--save PATH` | With `--level`: write the session's log file to `PATH` on exit and print the world hash; stamps and collapse are in the log |
+| `--replay PATH` | With `--level`: re-simulate a saved session before the first frame and print its hash; add `--vault` for a session saved with it (the save does not record the room placed at generation) |
 
 The storage figures come from an example: `cargo run --release -p flythrough --example
 world_budget -- --chunks 20,20,8 --census` (the level) or `--stream 16,24 --census` (the streamed

@@ -1,7 +1,10 @@
 //! Tick overhead (`nfr.md` §4): 100 inputs, each a radius-1 m carve, sent by a shared client,
 //! drained in one tick through `EchoLogic` and announced to one poll, against the same 100
-//! carves applied directly. The difference is the server's overhead per 100 inputs. Each
-//! iteration starts from a fresh world, built untimed.
+//! carves applied directly, and against those carves each followed by the coarse grid update
+//! the server makes after every applied op. The tick minus the direct carves with their grid
+//! updates is the server's overhead per 100 inputs; the direct carves with grid updates minus
+//! the direct carves alone is the grid's cost on that path (`nfr.md` §8). Each iteration starts
+//! from a fresh world (and grid), built untimed.
 
 #[path = "../tests/support/mod.rs"]
 mod support;
@@ -12,6 +15,7 @@ use std::time::{Duration, Instant};
 use criterion::{Criterion, criterion_group, criterion_main};
 use support::*;
 use vxe_net::*;
+use vxe_world::CoarseGrid;
 
 #[allow(
     clippy::disallowed_methods,
@@ -74,6 +78,25 @@ fn tick(c: &mut Criterion) {
             total
         })
     });
+    group.bench_function(
+        "100 direct apply calls, each with its coarse grid update",
+        |b| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let world = solid3_world();
+                    let mut grid = CoarseGrid::build(&world);
+                    let t = now();
+                    for op in &carves {
+                        let r = world.apply(op).unwrap();
+                        std::hint::black_box(grid.update_aabb(&world, r.aabb));
+                    }
+                    total += since(t);
+                }
+                total
+            })
+        },
+    );
     group.finish();
 }
 

@@ -546,6 +546,11 @@ header, world key, coordinate and FNV trailer are version 1's.
 - Phase 6: the oracle runs on the cubes world dressed by 120 seeded edits (materials 1 to 4, 4
   indestructible), alternating drops and removes over 64 seeded cell boxes; 38 of the 64 ops
   moved or removed voxels (Phase 6 commit).
+- Merge of main at 58dc7e1 (Plan 0018, v0.15.0): only the fly-through conflicted. `main.rs`
+  takes main's frame loop, whose collapse falls run on the server, without its per-frame
+  `reserve_brick_arrays` call (the pool is retired); both import lists take main's names plus
+  `Brick` in `lib.rs`. `collapse.rs`, `stamp.rs`, `edit.rs`, `log.rs` and `wire.rs` merged
+  without a conflict (main changed only `edit.rs`, `log.rs` and `wire.rs` among them).
 
 ### Close triggers
 

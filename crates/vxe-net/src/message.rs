@@ -1,11 +1,11 @@
 //! Messages between server and clients, as bytes (ADR-0007).
 //!
-//! Each message is a tag `u8`, then its fields, little-endian, with ops, results and errors
-//! in `vxe_world::wire`'s encoding:
+//! Each message is a tag `u8`, then its fields, little-endian, with ops, op results and
+//! errors in `vxe_world::wire`'s encoding:
 //!
 //! | tag | message   | fields                                                    |
 //! |-----|-----------|-----------------------------------------------------------|
-//! | 1   | `Applied` | tick `u64`, seq `u32`, op, result                         |
+//! | 1   | `Applied` | tick `u64`, seq `u32`, op, op result                      |
 //! | 2   | `Refused` | tick `u64`, seq `u32`, op, error                          |
 //! | 3   | `Event`   | tick `u64`, len `u32`, `len` bytes                        |
 //! | 4   | `Input`   | len `u16`, `len` bytes                                    |
@@ -14,10 +14,10 @@
 //! engine sets; an input's is a `u16`, the input log's entry length.
 
 use vxe_world::wire::{
-    Reader, WireError, decode_error, decode_op, decode_result, encode_error, encode_op,
-    encode_result,
+    Reader, WireError, decode_error, decode_op, decode_op_result, encode_error, encode_op,
+    encode_op_result,
 };
-use vxe_world::{EditError, EditResult, Op};
+use vxe_world::{EditError, Op, OpResult};
 
 /// Tag of [`Message::Applied`].
 pub const MSG_APPLIED: u8 = 1;
@@ -35,7 +35,7 @@ pub enum Message {
         tick: u64,
         seq: u32,
         op: Op,
-        result: EditResult,
+        result: OpResult,
     },
     /// Server to client: the op with this seq was refused in this tick and changed nothing.
     Refused {
@@ -66,7 +66,7 @@ impl Message {
                 out.extend_from_slice(&tick.to_le_bytes());
                 out.extend_from_slice(&seq.to_le_bytes());
                 encode_op(&mut out, op);
-                encode_result(&mut out, result);
+                encode_op_result(&mut out, result);
             }
             Self::Refused {
                 tick,
@@ -105,7 +105,7 @@ impl Message {
                 tick: r.u64()?,
                 seq: r.u32()?,
                 op: decode_op(&mut r)?,
-                result: decode_result(&mut r)?,
+                result: decode_op_result(&mut r)?,
             },
             MSG_REFUSED => Self::Refused {
                 tick: r.u64()?,

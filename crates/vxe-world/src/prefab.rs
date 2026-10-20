@@ -5,9 +5,16 @@
 //! determinant +1. Rotating a prefab materialises a new prefab whose minimum corner is again
 //! at local `(0, 0, 0)`, so a stamp's origin is always the rotated volume's minimum corner.
 //! Everything here is integer arithmetic.
+//!
+//! A [`PrefabRegistry`] maps a prefab's content id to the prefab: a stamp op names its prefab
+//! by that id, and the server, the clients and a save's header resolve it there (ADR-0014).
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::hash::Fnv1a;
 use crate::material::{AIR, MaterialId};
+use crate::wire::{Reader, WireError};
 
 /// One of the 24 rotations of the cube: a signed permutation matrix with determinant +1.
 ///
@@ -89,6 +96,19 @@ impl Rot {
                 Self::from_rows(axis, [0, 1, 2].map(|k| bits >> k & 1 != 0))
             })
         })
+    }
+
+    /// This rotation's position in [`Rot::all`], 0 to 23: the wire's rotation index.
+    pub fn index(self) -> u8 {
+        let i = Self::all()
+            .position(|r| r == self)
+            .expect("every value of Rot is one of the 24 rotations");
+        i as u8
+    }
+
+    /// The rotation at position `i` of [`Rot::all`]; `None` from 24 on.
+    pub fn from_index(i: u8) -> Option<Self> {
+        Self::all().nth(usize::from(i))
     }
 
     /// The rotation that undoes this one: the transpose.
@@ -262,6 +282,49 @@ impl Prefab {
         h.finish()
     }
 
+    /// Bytes of [`Prefab::encode`]'s output: 12, then 2 per voxel and 8 per mask word.
+    pub fn encoded_len(&self) -> usize {
+        12 + 2 * self.voxels.len() + 8 * self.mask.len()
+    }
+
+    /// Appends the canonical bytes [`Prefab::id`] hashes: the size as three little-endian
+    /// `u32`, the voxels as little-endian `u16` (x fastest), the mask words as little-endian
+    /// `u64`.
+    pub fn encode(&self, out: &mut Vec<u8>) {
+        for s in self.size {
+            out.extend_from_slice(&s.to_le_bytes());
+        }
+        for v in &self.voxels {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        for w in &self.mask {
+            out.extend_from_slice(&w.to_le_bytes());
+        }
+    }
+
+    /// Reads a prefab as [`Prefab::encode`] writes it. A size whose voxels or mask would run
+    /// past the bytes is [`WireError::Truncated`]; the value is made canonical as by
+    /// [`Prefab::new`], so a caller that knows the id checks it against [`Prefab::id`].
+    pub fn decode(r: &mut Reader<'_>) -> Result<Self, WireError> {
+        let size = [r.u32()?, r.u32()?, r.u32()?];
+        let truncated = WireError::Truncated { at: r.entry() };
+        let n = size
+            .iter()
+            .try_fold(1usize, |n, &s| n.checked_mul(s as usize))
+            .ok_or(truncated)?;
+        let raw = r.take(n.checked_mul(2).ok_or(truncated)?)?;
+        let voxels = raw
+            .chunks_exact(2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        let raw = r.take(n.div_ceil(64) * 8)?;
+        let mask = raw
+            .chunks_exact(8)
+            .map(|b| u64::from_le_bytes(b.try_into().expect("chunks of 8")))
+            .collect();
+        Ok(Self::new(size, voxels, Some(mask)))
+    }
+
     /// This prefab turned by `rot` and moved back so its minimum corner is local
     /// `(0, 0, 0)`. Destination component `k` reads source axis `axis[k]`, mirrored across
     /// that axis when the row is negative.
@@ -307,5 +370,77 @@ impl Prefab {
             }
         }
         Self { size, voxels, mask }
+    }
+}
+
+/// Two different prefabs with one content id: the registry keeps the first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PrefabCollision {
+    pub id: u64,
+}
+
+impl std::fmt::Display for PrefabCollision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "another prefab is registered under id {:#018x}", self.id)
+    }
+}
+
+impl std::error::Error for PrefabCollision {}
+
+/// Prefabs by content id ([`Prefab::id`]), ascending by id. A stamp op names its prefab by
+/// id; whoever applies it resolves the id here (ADR-0014).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PrefabRegistry {
+    by_id: BTreeMap<u64, Arc<Prefab>>,
+}
+
+impl PrefabRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Registers `prefab` under its id and returns the id. Registering an equal prefab again
+    /// is a no-op; a different prefab with the same id is refused and the first one kept.
+    pub fn register(&mut self, prefab: Arc<Prefab>) -> Result<u64, PrefabCollision> {
+        let id = prefab.id();
+        match self.by_id.get(&id) {
+            Some(have) if **have != *prefab => Err(PrefabCollision { id }),
+            Some(_) => Ok(id),
+            None => {
+                self.by_id.insert(id, prefab);
+                Ok(id)
+            }
+        }
+    }
+
+    /// The prefab registered under `id`.
+    pub fn get(&self, id: u64) -> Option<&Arc<Prefab>> {
+        self.by_id.get(&id)
+    }
+
+    pub fn contains(&self, id: u64) -> bool {
+        self.by_id.contains_key(&id)
+    }
+
+    /// Every registered prefab with its id, ascending by id.
+    pub fn iter(&self) -> impl Iterator<Item = (u64, &Arc<Prefab>)> {
+        self.by_id.iter().map(|(&id, p)| (id, p))
+    }
+
+    pub fn len(&self) -> usize {
+        self.by_id.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.by_id.is_empty()
+    }
+
+    /// The registered prefabs whose ids are in `ids`; ids not registered are skipped.
+    pub fn subset(&self, ids: impl IntoIterator<Item = u64>) -> Self {
+        let by_id = ids
+            .into_iter()
+            .filter_map(|id| self.by_id.get(&id).map(|p| (id, p.clone())))
+            .collect();
+        Self { by_id }
     }
 }

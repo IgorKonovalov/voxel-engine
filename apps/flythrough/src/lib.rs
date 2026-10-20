@@ -16,7 +16,7 @@ use vxe_render::Camera;
 use vxe_world::hash::Fnv1a;
 use vxe_world::{
     BRICK_VOXELS, Brick, Chunk, ChunkCoord, ChunkExtent, ChunkMips, LogFile, Material,
-    MaterialFlags, MaterialId, MaterialTable, OpLog, Residency, WireError, World,
+    MaterialFlags, MaterialTable, OpLog, Residency, WireError, World,
 };
 
 use cave::CaveSource;
@@ -47,9 +47,9 @@ pub fn listener(camera: &Camera) -> Listener {
     }
 }
 
-/// The rubble a collapsing region leaves when `R` has the fly-through remove unsupported regions
-/// instead of dropping them. The cave never generates it.
-pub const RUBBLE: MaterialId = 4;
+/// The rubble a collapsing region leaves when `R` has the fly-through's logic remove
+/// unsupported regions instead of dropping them. The cave never generates it.
+pub use logic::RUBBLE;
 
 /// The cave's table: air, rock, ore, the indestructible shell (at the ids `cave` uses), and
 /// [`RUBBLE`]. It lives here rather than in `cave.rs` so that file stays free of floating point.
@@ -153,7 +153,7 @@ impl LogicChoice {
     /// [`WASM_NEEDS_FEATURE`] in a build without the `wasm` feature.
     pub fn load(&self) -> Result<Box<dyn Logic>, String> {
         match self {
-            Self::Native => Ok(Box::new(DigLogic)),
+            Self::Native => Ok(Box::new(DigLogic::default())),
             Self::Wasm(path) => load_component(path),
         }
     }
@@ -236,7 +236,7 @@ pub fn replay_file(
     mode: Mode,
     extent: ChunkExtent,
 ) -> Result<(World, u64), ReplayError> {
-    replay_file_with(path, mode, extent, Box::new(DigLogic))
+    replay_file_with(path, mode, extent, Box::new(DigLogic::default()))
 }
 
 /// [`replay_file`] with `logic` re-simulating the inputs under [`Mode::Inputs`] (unused under
@@ -270,7 +270,7 @@ pub fn replay_log(
     extent: ChunkExtent,
     table: &MaterialTable,
 ) -> Result<(World, OpLog), ReplayError> {
-    replay_log_with(file, mode, extent, table, Box::new(DigLogic))
+    replay_log_with(file, mode, extent, table, Box::new(DigLogic::default()))
 }
 
 /// [`replay_log`] with `logic` re-simulating the inputs under [`Mode::Inputs`] (unused under
@@ -282,6 +282,20 @@ pub fn replay_log_with(
     table: &MaterialTable,
     logic: Box<dyn Logic>,
 ) -> Result<(World, OpLog), ReplayError> {
+    replay_log_on(file, mode, extent, table, logic, false)
+}
+
+/// [`replay_log_with`] on the cave generated with the `--vault` room when `vault` is set. The
+/// save's header does not record the room (its placement at generation is not an op), so a
+/// session saved with `--vault` replays to its world only with `vault` set.
+pub fn replay_log_on(
+    file: &LogFile,
+    mode: Mode,
+    extent: ChunkExtent,
+    table: &MaterialTable,
+    logic: Box<dyn Logic>,
+    vault: bool,
+) -> Result<(World, OpLog), ReplayError> {
     if file.extent != extent {
         return Err(ReplayError::Extent { file: file.extent });
     }
@@ -292,15 +306,26 @@ pub fn replay_log_with(
         });
     }
     let source = CaveSource::new(file.seed, file.extent);
-    let world = World::generate(file.extent, &source, table);
+    let world = if vault {
+        World::generate(file.extent, &source.with_vault(), table)
+    } else {
+        World::generate(file.extent, &source, table)
+    };
     match mode {
         Mode::Ops => {
-            world.replay(&file.ops);
+            world.replay(&file.ops, &file.prefabs);
             Ok((world, file.ops.clone()))
         }
         Mode::Inputs => {
             let world = Arc::new(world);
-            let ops = Server::resimulate(world.clone(), logic, file.seed, &file.ops, &file.inputs);
+            let ops = Server::resimulate(
+                world.clone(),
+                logic,
+                file.seed,
+                &file.prefabs,
+                &file.ops,
+                &file.inputs,
+            );
             let world = Arc::into_inner(world).expect("the re-simulation's server is dropped");
             Ok((world, ops))
         }

@@ -18,15 +18,16 @@ use vxe_net::*;
 use vxe_script_wasm::{WasmConfig, WasmLogic};
 use vxe_world::hash::mix64;
 use vxe_world::{
-    EditError, EditOp, EditResult, Fixed3, Hit, MaterialId, Mode, Op, VoxelCoord, World,
+    CellCoord, EditError, EditOp, Fixed3, Hit, MaterialId, Mode, Op, OpResult, PrefabRegistry,
+    Region, VoxelCoord, World,
 };
 
 /// A host straight on a world, for calling a [`WasmLogic`] without a server.
 struct WorldHost<'a>(&'a World);
 
 impl Host for WorldHost<'_> {
-    fn apply(&mut self, op: EditOp) -> Result<EditResult, EditError> {
-        self.0.apply(&op)
+    fn apply(&mut self, op: Op) -> Result<OpResult, EditError> {
+        op.apply(self.0, &PrefabRegistry::new())
     }
 
     fn material_at(&self, v: VoxelCoord) -> Option<MaterialId> {
@@ -39,6 +40,11 @@ impl Host for WorldHost<'_> {
 
     fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
         self.0.count_in_box(lo, hi)
+    }
+
+    /// This host keeps no coarse grid; nothing here asks the support query.
+    fn unsupported(&self, _changed: &[CellCoord]) -> Vec<Region> {
+        Vec::new()
     }
 }
 
@@ -419,7 +425,7 @@ fn edits_applied_before_a_failure_stay_and_resimulate() {
         .ops()
         .entries()
         .iter()
-        .map(|e| (e.tick(), e.op().copied()))
+        .map(|e| (e.tick(), e.op().cloned()))
         .collect();
     assert_eq!(
         logged,
@@ -441,6 +447,7 @@ fn edits_applied_before_a_failure_stay_and_resimulate() {
         fresh.clone(),
         Box::new(logic),
         0,
+        &vxe_world::PrefabRegistry::new(),
         server.ops(),
         server.inputs(),
     );
@@ -518,7 +525,7 @@ fn stderr_never_fills_and_a_guest_panic_is_a_trap_with_its_message() {
 struct PanicHost;
 
 impl Host for PanicHost {
-    fn apply(&mut self, _op: EditOp) -> Result<EditResult, EditError> {
+    fn apply(&mut self, _op: Op) -> Result<OpResult, EditError> {
         panic!("host refuses");
     }
 
@@ -531,6 +538,10 @@ impl Host for PanicHost {
     }
 
     fn count_in_box(&self, _lo: VoxelCoord, _hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
+        Vec::new()
+    }
+
+    fn unsupported(&self, _changed: &[CellCoord]) -> Vec<Region> {
         Vec::new()
     }
 }
