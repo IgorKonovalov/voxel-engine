@@ -385,9 +385,9 @@ The baseline GPU is not on hand; every figure is a dev-reference reading and say
 |---|---|---|---|
 | 1: The shadow ray leaves the plane | dev | done: offset 0.5 voxel along the plane normal kept; only-with-shadows specks contour 52 (347 with, 301 without) against face 174 (1179, 1017), llvmpipe 320 x 180; contour metrics 7.41 degrees, 32 px; `look_contour.png` reblessed on llvmpipe (24.34 % of pixels differ from `headlamp.png` by more than 8/255), other goldens unchanged; look tests pin rock to `SPIKE_ROCK_DETAIL` | 82b19b8 |
 | 2: The attribute pass keeps its buffers, and the shell path is tested | dev | done: `AttribPass` keeps its uniform, a work buffer (next power of two, at least 256 items) and its bind group; 46 items x 1000 then 2777 read `buffer_builds() == 2`, capacity 256 then 4096, attribute bytes equal to a fresh mirror's pass; the shell test failed on its first state (east absent read `NO_PLANE`) until the chunk table was created filled with `ABSENT`; arrival and eviction halves pass with `attr_work` unchanged | 9ffa2a5 |
-| 3: The footprint census and the candidates | dev | done: `world_budget --stream R_FULL,R_LOD --surface`, `--residency`, `--attrib-quant`, `AttribQuant` (`None` writes the full attribute: layout and floor tests unchanged, contour metrics 7.41 degrees, 32 px); at 16,24 the census reads 1 640 292 bricks, x 1040 = 1 705 903 680 B against the 1 705 903 808 B rise (-0.000 %); table below | committed with this row |
-| 4: The owner's footprint call | human | done: D at 14,24, chosen 2026-10-17 (`docs/decisions-pending.md` D1): lossless, no layout change to undo later; the final surface-only form comes with ADR-0012's mirror-slot plan; ADR-0012 accepted 2026-10-17 | |
-| 5: The chosen footprint | dev | not started | |
+| 3: The footprint census and the candidates | dev | done: `world_budget --stream R_FULL,R_LOD --surface`, `--residency`, `--attrib-quant`, `AttribQuant` (`None` writes the full attribute: layout and floor tests unchanged, contour metrics 7.41 degrees, 32 px); at 16,24 the census reads 1 640 292 bricks, x 1040 = 1 705 903 680 B against the 1 705 903 808 B rise (-0.000 %); table below | d75a0af |
+| 4: The owner's footprint call | human | done: D at 14,24, chosen 2026-10-17 (`docs/decisions-pending.md` D1): lossless, no layout change to undo later; the final surface-only form comes with ADR-0012's mirror-slot plan; ADR-0012 accepted 2026-10-17; withdrawn 2026-10-20 at the Phase 5 stop for option (c), the footprint to ADR-0012's mirror-slot plan (amendment 688b3ed) | |
+| 5: The chosen footprint: retire the precision emulation, no new residency | dev | done: `AttribQuant`, `set_quant`, `set_attrib_quant`, `params.quant` and `--attrib-quant` removed (the grep finds nothing; `--attrib-quant none` exits 2 with `unknown argument --attrib-quant`); `RESIDENCY` and `STREAM_MIRROR_BUDGET` unchanged; contour 7.38 degrees, 32 px on llvmpipe; goldens byte for byte; `--level --headless --seed 1 --look contour --frames 3` reads 680 491 136 B live (RTX 3080 Laptop GPU, perf lock, load 3.47) | committed with this row |
 | 6: Rock detail on screen | human | done, ahead of Phase 5: `[4.0, 0.1]`; of `--rock-detail 4,S` at S = 0.1, 0.15, 0.2 and 0.3 (today's default) on `--level --seed 1 --look contour --detail`, the owner judged 0.1 best (2026-10-18) | |
 | 7: Contour plus detail as the default, and the streamed readings | dev | not started | |
 
@@ -445,25 +445,13 @@ each. Empty is fine.)_
   16,24 is under 3.0 GB in the x 1.93 column; at x 1.44, A, C and D at 12,24 are.
 - Phase 3: D at 12,24 measured 4 103 413 164 B peak allocated under motion against its
   2.83 GB guess (the same allocated figure as Plan 0005's 16,24 run at its out-of-memory stop).
-
-### Resume notes (delete when Phase 5 lands)
-
-- Main merged at af4dc02 (v0.18.0); full gate green there (nextest 461 passed, 3 skipped;
-  `-p flythrough --features wasm` 103 passed; clippy both ways, fmt, doctests, deny, doc
-  gates). Phase 5 stopped before any code, on its first done-when.
-- Probe at af4dc02: `flythrough --autopilot --headless --look contour --residency 14,24
-  --seed 1`, release, RTX 3080 Laptop GPU, exclusive perf lock, 1-minute load 2.46 before and
-  6.90 after. Reserved 3 220 387 776 B (5 095 424 slots, 93 239 records). Full residency at
-  r_full 14: 11 513 full and 46 264 LOD-only chunks, 2 864 309 692 B live, pressure 0.911
-  (over the 0.9 trigger). The rule went 14 to 13 to 12 (ticks 752, 782), back to 13 at 0.651
-  (tick 2059), and ended at 13. Peak 2 864 318 452 B live, peak live / budget 0.8894, peak
-  pressure 0.9114 (slots 0.9114, records 0.6504). 94 syncs with a deferral, none empty,
-  162 309 deferred chunks, at pressure 0.734 to 0.775, longest streak 4 syncs (1 open at the
-  end). `return: 2 chunks, hash match`, no wgpu error.
-- Open: the chosen residency 14,24 does not hold under the reservation (a slot costs 584 B
-  and an attribute brick 1168 B since Plan 0015's masks, against 520 and 1040 when D was
-  costed), and the 3 GiB reservation is 3 220 387 776 B allocated against the done-when's
-  3 000 000 000 B allocated line. Owner question pending.
+- Merge of main (af4dc02): `release_attrib_bindings` and `AttribPass::release_bindings`
+  removed with the grow paths they served; the branch's `--residency` dropped for main's;
+  `look_contour.png` reblessed on llvmpipe from the merged tree; the contour metric reads 7.38
+  degrees (7.41 before the merge). Resolutions are in the merge commit's body.
+- Phase 5 stopped at e574898 on its first done-when (14,24 read pressure 0.911 at full
+  residency and the rule lowered `r_full` to 12); the plan was amended at 688b3ed (option c).
+- Phase 5: `world_budget --surface` (Phase 3's census) stays; it never used `AttribQuant`.
 
 ### Close triggers
 

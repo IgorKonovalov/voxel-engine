@@ -218,6 +218,12 @@ allocated, over the 3 GB line, against Plan 0002's 1 675 304 748 B allocated in 
 run then stopped in its outbound flight on `wgpu error: Out of Memory` on the 8 GiB card, so
 no peak was read. A recorded miss: ADR-0011 keeps contour planes, and fitting this footprint
 under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2).
+Since Plan 0015's masks an attribute-page brick costs 1168 B more live (two 512 B attribute
+slots and their two 72 B mask entries). At the level (`flythrough --level --headless --seed 1
+--look contour --frames 3`, Plan 0013 Phase 5, RTX 3080 Laptop GPU, exclusive perf lock,
+1-minute load 3.47): 680 491 136 B live, the face level's 232 436 992 B plus 1168 x 383 608 =
+448 054 144 B, under a 797 779 456 B reservation. The layout is unchanged; surface-only
+attribute storage is ADR-0012's mirror-slot plan.
 
 **The reserved budget (dev reference, Plan 0017 Phase 4, ef37395, headless `flythrough
 --autopilot --headless`, unbounded cave seed 1, h 1, 15 workers, RTX 3080 Laptop GPU, Ryzen 9

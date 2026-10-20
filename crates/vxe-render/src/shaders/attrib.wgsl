@@ -24,13 +24,6 @@
 // boundaries count, a voxel in an absent chunk is air, one in a LOD-only chunk its level-1 mip
 // cell. The offset is (f - 0.5) * 3 voxels, f the solid fraction of the 27 voxels, clamped to
 // [-7/8, 7/8] and rounded to the nearest 1/8.
-//
-// `params.quant` emulates a smaller attribute in this same layout, for comparing footprints:
-// 0 writes the attribute above; 1 an 8-bit code (the octahedral normal on 3 + 3 bits, written
-// as 6-bit values 9 q, and the offset at the nearest of -3/8, -1/8, 1/8, 3/8 voxel); 2 one
-// plane per 2 x 2 x 2 block, which every solid voxel of a block holding a plane takes: the
-// normalised sum of the block's voxel normals, at the mean of their planes' offsets from the
-// block centre, re-expressed from each voxel's centre and coded as above.
 
 struct Params {
     window_min: vec3<i32>,
@@ -38,7 +31,7 @@ struct Params {
     window_size: vec3<i32>,
     items: u32,
     groups_x: u32,
-    quant: u32,
+    _pad0: u32,
     _pad1: u32,
     _pad2: u32,
 };
@@ -142,18 +135,13 @@ fn solid(v: vec3<i32>) -> bool {
     return ((word >> ((i & 3u) * 8u)) & 0xFFu) != 0u;
 }
 
-// The octahedral map of the unit vector `n`, each component in [0, 1].
-fn octahedral(n: vec3<f32>) -> vec2<f32> {
+// Octahedral encoding of the unit vector `n` into 6 + 6 bits.
+fn encode_octahedral(n: vec3<f32>) -> u32 {
     var p = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
     if (n.z < 0.0) {
         p = (1.0 - abs(p.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), p >= vec2<f32>(0.0));
     }
-    return clamp(p * 0.5 + 0.5, vec2<f32>(0.0), vec2<f32>(1.0));
-}
-
-// Octahedral encoding of the unit vector `n` into 6 + 6 bits.
-fn encode_octahedral(n: vec3<f32>) -> u32 {
-    let q = vec2<u32>(round(octahedral(n) * 63.0));
+    let q = vec2<u32>(round(clamp(p * 0.5 + 0.5, vec2<f32>(0.0), vec2<f32>(1.0)) * 63.0));
     return q.x | (q.y << 6u);
 }
 
@@ -162,19 +150,10 @@ fn occ_at(c: vec3<i32>) -> bool {
     return occ[u32(c.x) + BOX * (u32(c.y) + BOX * u32(c.z))] != 0u;
 }
 
-// A voxel's contour plane: its normal and its offset along it from the voxel centre, in
-// voxels; `has` is false for no plane.
-struct Plane {
-    has: bool,
-    n: vec3<f32>,
-    offset: f32,
-};
-
-// The plane of the voxel at box cell `c` (each component in 1..9).
-fn voxel_plane(c: vec3<i32>) -> Plane {
-    let none = Plane(false, vec3<f32>(0.0), 0.0);
+// The attribute of the voxel at box cell `c` (each component in 1..9).
+fn voxel_attr(c: vec3<i32>) -> u32 {
     if (!occ_at(c)) {
-        return none;
+        return NO_PLANE;
     }
     var g = vec3<f32>(0.0);
     var count = 0.0;
@@ -195,70 +174,13 @@ fn voxel_plane(c: vec3<i32>) -> Plane {
     }
     let l2 = dot(g, g);
     if (faces == 6u || l2 < 1e-12) {
-        return none;
+        return NO_PLANE;
     }
+    let n = -g * inverseSqrt(l2);
     let f = count / 27.0;
-    return Plane(true, -g * inverseSqrt(l2), (f - 0.5) * 3.0);
-}
-
-// The full attribute of a plane: 6 + 6-bit normal, offset clamped to [-7/8, 7/8] and rounded
-// to the nearest 1/8.
-fn encode_plane(n: vec3<f32>, offset: f32) -> u32 {
-    let o = clamp(offset, -0.875, 0.875);
-    let k = u32(round(o * 8.0) + 7.0);
+    let offset = clamp((f - 0.5) * 3.0, -0.875, 0.875);
+    let k = u32(round(offset * 8.0) + 7.0);
     return encode_octahedral(n) | (k << 12u);
-}
-
-// The 8-bit code of a plane, written in the full layout: 3 + 3-bit normal as 6-bit values
-// `9 q`, offset at the nearest of -3/8, -1/8, 1/8, 3/8 (codes 4, 6, 8, 10).
-fn encode_code8(n: vec3<f32>, offset: f32) -> u32 {
-    let q = vec2<u32>(round(octahedral(n) * 7.0)) * 9u;
-    let i = u32(clamp(round((offset * 8.0 + 3.0) / 2.0), 0.0, 3.0));
-    return q.x | (q.y << 6u) | ((4u + 2u * i) << 12u);
-}
-
-// The attribute of the voxel at box cell `c` (each component in 1..9) under one plane per
-// 2 x 2 x 2 block.
-fn block_attr(c: vec3<i32>) -> u32 {
-    if (!occ_at(c)) {
-        return NO_PLANE;
-    }
-    // The block's first voxel; box cell 1 is brick voxel 0, so blocks start at odd cells.
-    let b0 = ((c - vec3<i32>(1)) / 2) * 2 + vec3<i32>(1);
-    let centre = vec3<f32>(b0) + 1.0;
-    var ns = vec3<f32>(0.0);
-    var ds = 0.0;
-    var planes = 0.0;
-    for (var i = 0; i < 8; i++) {
-        let v = b0 + vec3<i32>(i & 1, (i >> 1) & 1, i >> 2);
-        let p = voxel_plane(v);
-        if (p.has) {
-            ns += p.n;
-            ds += p.offset + dot(p.n, vec3<f32>(v) + 0.5 - centre);
-            planes += 1.0;
-        }
-    }
-    let l2 = dot(ns, ns);
-    if (planes == 0.0 || l2 < 1e-12) {
-        return NO_PLANE;
-    }
-    let n = ns * inverseSqrt(l2);
-    return encode_plane(n, ds / planes - dot(n, vec3<f32>(c) + 0.5 - centre));
-}
-
-// The attribute of the voxel at box cell `c` (each component in 1..9) at `params.quant`.
-fn voxel_attr(c: vec3<i32>) -> u32 {
-    if (params.quant == 2u) {
-        return block_attr(c);
-    }
-    let p = voxel_plane(c);
-    if (!p.has) {
-        return NO_PLANE;
-    }
-    if (params.quant == 1u) {
-        return encode_code8(p.n, p.offset);
-    }
-    return encode_plane(p.n, p.offset);
 }
 
 @compute @workgroup_size(256, 1, 1)

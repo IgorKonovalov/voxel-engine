@@ -8,7 +8,7 @@
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH] [--view VIEW] [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
-//! [--audio] [--audio-debug] [--attrib-quant Q]`.
+//! [--audio] [--audio-debug]`.
 //! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -30,8 +30,7 @@
 //! starts in a view (`shaded`, `normals`, `hitmask`, `steps`, `albedo`; with `--frames`, `steps`
 //! prints the last frame's mean and p99 steps per ray on exit) and `--detail` with detail on;
 //! `--translucent-layers` sets how many translucent voxels are composited in front of the opaque
-//! hit (default 4, 0 ignores them); `--attrib-quant` (`none`, `code8`, `block2`, under `--look`)
-//! writes contour attributes at an emulated smaller precision. `N` cycles the normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
+//! hit (default 4, 0 ignores them). `N` cycles the normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
 //! inside the extent).
 //!
@@ -94,7 +93,6 @@ use flythrough::{
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
 use vxe_audio::{Acoustics, Hrtf, Mixer, Output, PlayParams, Sound, VoiceId};
 use vxe_net::{Client, Event, Logic, LogicError, MemChannel, Server};
-use vxe_render::attrib::AttribQuant;
 use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::readback::{self, StepHistogram};
@@ -219,8 +217,6 @@ struct Args {
     /// `--rock-detail`: rock's feature scale (voxels) and strength under `--look`.
     rock_detail: [f32; 2],
     view: ViewMode,
-    /// `--attrib-quant`: an emulated attribute precision, for comparing footprints.
-    attrib_quant: AttribQuant,
     /// `--translucent-layers`: translucent voxels composited in front of the opaque hit.
     translucent_layers: u32,
     /// `--hud`: start with the stats HUD shown.
@@ -277,7 +273,6 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         detail: false,
         rock_detail: flythrough::ROCK_DETAIL,
         view: ViewMode::Shaded,
-        attrib_quant: AttribQuant::None,
         translucent_layers: LookParams::default().translucent_layers,
         hud: false,
         census: false,
@@ -326,12 +321,6 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     "--view takes shaded, normals, hitmask, steps or albedo, not {v}"
                 ))?;
             }
-            "--attrib-quant" => {
-                let v = value()?;
-                args.attrib_quant = AttribQuant::from_name(&v).ok_or(format!(
-                    "--attrib-quant takes none, code8 or block2, not {v}"
-                ))?;
-            }
             "--translucent-layers" => {
                 let v = value()?;
                 args.translucent_layers = v
@@ -359,9 +348,6 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     }
     if args.rock_detail != flythrough::ROCK_DETAIL && args.look.is_none() {
         return Err("--rock-detail applies under --look".to_owned());
-    }
-    if args.attrib_quant != AttribQuant::None && args.look.is_none() {
-        return Err("--attrib-quant applies under --look".to_owned());
     }
     if args.autopilot && args.level {
         return Err("--autopilot streams; it does not take --level".to_owned());
@@ -1715,9 +1701,7 @@ impl Run {
         };
         let t = now();
         let mirror = if self.args.look.is_some() {
-            let mut mirror = GpuWorld::with_surface_attrs(&gpu.device, cfg);
-            mirror.set_attrib_quant(self.args.attrib_quant);
-            mirror
+            GpuWorld::with_surface_attrs(&gpu.device, cfg)
         } else {
             GpuWorld::with_config(&gpu.device, cfg)
         };
