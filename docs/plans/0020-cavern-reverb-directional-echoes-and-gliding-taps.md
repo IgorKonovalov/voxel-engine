@@ -15,6 +15,12 @@
 > bounds on moving sounds. Phase 6's tail key is `Y` (`R` toggles collapse rubble), its room
 > lines are read headlessly without `--audio`, and the `--mic` and fly-through walk checks that
 > need a device move to Phase 7.
+> **Amended:** 2026-10-20, inside Phase 4 (its code on d1fd30f), from the resume notes and the
+> owner's answer: the room-step bound (`K` at most twice the held render's) compared a beating
+> sum of tones with a single steady tone, so it measured the tail's crest, not clicks (2.0031
+> against 1.9998). It becomes a per-window bound of `K` by 1.25 times that window's own crest
+> factor, with a bite: one line's delay jumped by half a hum period must score at least four
+> times the bound.
 
 ## TL;DR
 
@@ -290,13 +296,38 @@ capitals are the plan's names for them.
     2.667, 8 and 24 m) and strictly increasing; the direct impulse's peak is within 1 percent of
     the render with the tail off.
   - A hum with the room stepped from `(8 m, 2.26 s)` to `(24 m, 6.77 s)`: no line's length
-    moves more than `0.02 x 256 = 5.12` frames in a block; over the 4 s after the step the
-    output's click index (Phase 1's `K`, per ear) is at most twice its largest value over 4 s
-    of the same render with the room held at `(8 m, 2.26 s)` (amended 2026-10-20: the gliding
-    lines shift each line's pitch by up to 2 percent, so the tail's components beat and a
-    per-block RMS step is not a click measure); every line is within one frame of its target
-    4 s after the step (the longest glides, lines 14 and 15, are about 3120 frames: about
-    1560 to 4680 and 1680 to the 4800 cap, 3.25 s at 0.02 per frame).
+    moves more than `0.02 x 256 = 5.12` frames in a block; every line is within one frame of
+    its target 4 s after the step (the longest glides, lines 14 and 15, are about 3120 frames:
+    about 1560 to 4680 and 1680 to the 4800 cap, 3.25 s at 0.02 per frame).
+  - **Click index against the window's own crest** (amended 2026-10-20; it replaces "at most
+    twice the held render's `K`"). For every 200 ms window of the 4 s after the step (Phase
+    1's windows, 9600 frames, hop 4800), per ear: `K_w <= 1.25 C_w`, where `K_w` is Phase 1's
+    click index and `C_w = max |x| / (sqrt(2) rms(x))` over the same window (a pure tone scores
+    1.00 on both). Why this and not the held render: the held render is one steady 440 Hz tone
+    (`K = 1`), while gliding lines shift the recirculating hum by up to 2 percent per pass, so
+    the output is a beating sum of tones whose `K` follows its envelope. The arithmetic: for
+    `x = sum a_k cos(w_k n + p_k)`, `x'' = -w^2 x + sum a_k (w^2 - w_k^2) cos(...)` (the
+    discrete `2 (1 - cos w)` differs from `w^2` by `w^2 / 12`, 0.03 percent), so
+    `K_w <= C_w + max_k |1 - (w_k / w)^2| x sum |a_k| / (sqrt(2) rms)`. Here the lines lengthen,
+    so recirculated components sit below 440 Hz and the second term shrinks `K` (measured
+    `K_w / C_w` at most 0.874: 2.003 against 2.293); 1.25 holds for components up to about
+    6 percent off 440 Hz with `sum |a_k|` up to twice the window's peak, either way. A click
+    cannot hide under it: a step `d` raises `K_w` by about `d / (w^2 sqrt(2) rms) = 213 d / rms`
+    (`w^2 = 0.003317`) and leaves `C_w` almost unchanged, so at the worst measured crest
+    (2.42, bound 3.03) a step above 1.4 percent of the window's rms fails. The held render's
+    `K` and every window's `K_w`, `C_w` and ratio are printed; if a window fails, `dev` stops
+    with the figures rather than loosening the multiple.
+  - **The bound bites.** The same render with line 15's read point jumped by 55 frames (half a
+    440 Hz period, so the jump's difference signal has about twice the line's amplitude) through
+    a `#[doc(hidden)]` hook beside `Mixer::reverb_lines`, at four instants 0.5, 1.5, 2.5 and
+    3.5 s after the step, each offset by a further 27 frames (a quarter period, so at least one
+    jump lands at least `sin(pi / 4) = 0.707` of the way from a zero crossing of the difference),
+    alternating `+55` and `-55`: the largest `K_w / (1.25 C_w)` over its windows and ears is at
+    least 4. The plan's arithmetic: the 8 m tail (energy 0.379) gives each of the 8 lines on an
+    ear a 440 Hz amplitude of about 0.11 against an output rms of about 0.42 with the hum at
+    2 m, so a jump scores about `2 x 0.11 x 0.707 / (0.004691 x 0.42) = 79` against a bound of
+    at most 3.03, a factor of about 26; 4 leaves room for a line that happens to be weak at
+    440 Hz. The factor is printed.
   - The mode-density floor holds: the sum of the line lengths for the 36 m cube
     (about 49 100 frames) exceeds `0.15 * T60 * f_s` (48 800); the test asserts the
     inequality for the three cubes.
