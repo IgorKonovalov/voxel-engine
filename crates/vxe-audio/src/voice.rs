@@ -126,6 +126,8 @@ pub(crate) struct Voice {
     pub taps: [TapState; MAX_TAPS],
     /// The voice's own gain, as smoothed so far, for the delay line's input.
     pub own_gain: f32,
+    /// The send into the late tail, as smoothed so far.
+    pub send: f32,
     /// Where the next block goes in [`VoiceBuffers::echo`].
     pub echo_pos: usize,
     /// The low-pass coefficient as smoothed so far, 1 when open (the acoustic gain smooths
@@ -180,6 +182,7 @@ impl Voice {
             acoustic: AcousticTargets::default(),
             taps: [TapState::default(); MAX_TAPS],
             own_gain: 0.0,
+            send: 0.0,
             echo_pos: 0,
             lowpass_a: 1.0,
             lowpass: 0.0,

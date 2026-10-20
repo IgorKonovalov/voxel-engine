@@ -23,6 +23,10 @@
 //!    the panning path a constant-power pan on the listener's right axis is smoothed like the
 //!    gain.
 //!
+//! Each voice also sends its own-gained signal times its smoothed [`crate::AcousticTargets`]
+//! `send` into the shared late tail (`reverb.rs`), whose two outputs add to the stereo out
+//! after the buses.
+//!
 //! After every voice, each of the sixteen buses that took input or still rings is spatialised
 //! the same way on the reflection direction `i` ([`crate::reflection_directions`], world axes)
 //! in the listener's frame, so every echo is heard from its wall's side (ADR-0015).
@@ -35,6 +39,7 @@ use std::sync::Arc;
 use crate::acoustics::{BlockClock, reflection_directions};
 use crate::command::Command;
 use crate::hrtf::Hrtf;
+use crate::reverb::{Reverb, ReverbLine, ReverbSettings};
 use crate::voice::{
     MAX_DELAY_FRAMES, MAX_TAPS, OPEN_CUTOFF_HZ, Tap, TapState, Voice, VoiceBuffers, VoiceId,
 };
@@ -80,6 +85,10 @@ pub struct Mixer {
     buses: [Bus; MAX_TAPS],
     /// The reflection directions in world axes, bus by bus.
     bus_dirs: [[f32; 3]; MAX_TAPS],
+    /// The late tail every voice sends into.
+    reverb: Reverb,
+    /// One block of the voices' summed sends.
+    sends: Vec<f32>,
     /// Voices that ended since the last [`Mixer::drain_finished`].
     finished: Vec<VoiceId>,
     /// Per-sample step of the one-pole smoother.
@@ -112,6 +121,8 @@ impl Mixer {
             wet: std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; BLOCK])),
             buses: std::array::from_fn(|_| Bus::new(taps)),
             bus_dirs: reflection_directions(),
+            reverb: Reverb::new(),
+            sends: vec![0.0; BLOCK],
             finished: Vec::with_capacity(MAX_VOICES),
             smooth_k: 1.0 - (-1.0 / (SMOOTHING_SECONDS * RATE as f32)).exp(),
             clock: BlockClock::default(),
@@ -148,6 +159,26 @@ impl Mixer {
         }))
     }
 
+    /// Sets how the late tail sounds beyond what the room gives it.
+    pub fn set_reverb_settings(&mut self, settings: ReverbSettings) {
+        self.reverb.set_settings(settings);
+    }
+
+    pub fn reverb_settings(&self) -> ReverbSettings {
+        self.reverb.settings()
+    }
+
+    /// The tail's lines, for tests: each line's current and target length.
+    #[doc(hidden)]
+    pub fn reverb_lines(&self) -> [ReverbLine; crate::REVERB_LINES] {
+        self.reverb.lines()
+    }
+
+    /// Bytes the tail's delay lines hold.
+    pub fn reverb_bytes(&self) -> usize {
+        Reverb::line_bytes()
+    }
+
     /// Whether `id` is still playing.
     pub fn is_playing(&self, id: VoiceId) -> bool {
         self.voices.iter().any(|v| v.id == id)
@@ -181,8 +212,7 @@ impl Mixer {
                 }
             }
             Command::SetListener(l) => self.listener = l,
-            // The late tail is not rendered yet.
-            Command::SetRoom(_) => {}
+            Command::SetRoom(room) => self.reverb.set_room(room),
             Command::SetAcoustics(id, targets) => {
                 if let Some(v) = self.voice_mut(id) {
                     v.acoustic = targets;
@@ -190,6 +220,7 @@ impl Mixer {
                     if !v.started {
                         v.lowpass_a = lowpass_coefficient(targets.cutoff_hz);
                         v.taps = targets.taps.map(TapState::at);
+                        v.send = targets.send;
                     }
                 }
             }
@@ -239,6 +270,7 @@ impl Mixer {
             if !v.started {
                 v.gain = target_gain;
                 v.own_gain = v.params.gain;
+                v.send = v.acoustic.send;
             }
             // The delay line takes the voice's own-gained signal before distance and occlusion.
             let echo_start = v.echo_pos;
@@ -249,12 +281,17 @@ impl Mixer {
                 let first = (len - echo_start).min(n);
                 let (head, wrap) = ring.split_at_mut(echo_start);
                 let runs = wrap[..first].iter_mut().chain(&mut head[..n - first]);
-                let mut og = v.own_gain;
-                for (r, &s) in runs.zip(dry.iter()) {
+                // The tail's send: the same own-gained signal times the smoothed send.
+                let (mut og, mut send) = (v.own_gain, v.send);
+                let send_to = v.acoustic.send;
+                for ((r, &s), t) in runs.zip(dry.iter()).zip(self.sends.iter_mut()) {
                     og += (v.params.gain - og) * k;
+                    send += (send_to - send) * k;
                     *r = s * og;
+                    *t += s * og * send;
                 }
                 v.own_gain = og;
+                v.send = send;
                 v.echo_pos = (echo_start + n) % len;
             }
             let mut g = v.gain;
@@ -320,6 +357,9 @@ impl Mixer {
             v.started = true;
         }
         self.render_buses(&frame, out);
+        let sends = &mut self.sends[..n];
+        self.reverb.render(sends, out);
+        sends.fill(0.0);
         let mut i = 0;
         while i < self.voices.len() {
             if self.voices[i].finished {

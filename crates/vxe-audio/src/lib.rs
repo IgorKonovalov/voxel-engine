@@ -29,6 +29,7 @@ mod command;
 mod hrtf;
 mod mixer;
 mod output;
+mod reverb;
 mod voice;
 
 pub use acoustics::{
@@ -43,6 +44,10 @@ pub use mixer::{
     MAX_VOICES, Mixer, TAP_JUMP_FRAMES, TAP_SILENT, TAP_SLEW_FRAMES_PER_FRAME, TapSlot,
 };
 pub use output::{Output, OutputStats};
+pub use reverb::{
+    REVERB_DELAY_SLEW_FRAMES_PER_FRAME, REVERB_LINES, REVERB_MAX_DELAY_FRAMES,
+    REVERB_MIN_DELAY_FRAMES, ReverbLine, ReverbSettings,
+};
 pub use voice::{
     AcousticTargets, MAX_DELAY_FRAMES, MAX_TAPS, OPEN_CUTOFF_HZ, PlayParams, Sound, Tap, VoiceId,
 };

@@ -1,5 +1,6 @@
 //! The mixer budget: one 256-frame block with 32 HRTF voices, each low-passed and carrying 16
-//! reflection taps into the 16 direction buses, with the listener still (every voice and bus on
+//! reflection taps into the 16 direction buses and a send into the late tail (a 12 m room's,
+//! 2.26 s), with the listener still (every voice and bus on
 //! one FIR pair) and turning (every voice and bus crossfading between two FIR pairs, the worst
 //! case). Prints the audio RAM the mixer and the pack hold. The `Acoustics::update` budget is the fly-through's `acoustics` bench, which
 //! owns the cave it probes.
@@ -78,6 +79,11 @@ fn loaded_mixer() -> Mixer {
             },
         ));
     }
+    mixer.apply(Command::SetRoom(RoomTargets {
+        t60_s: 2.26,
+        mean_free_path_m: 8.0,
+        energy: 0.379,
+    }));
     let mut out = vec![0.0f32; 2 * BLOCK];
     for _ in 0..200 {
         mixer.render(&mut out, BLOCK);
@@ -99,13 +105,14 @@ fn mixer_block(c: &mut Criterion) {
     println!(
         "audio RAM: pack {pack_bytes} B; delay line {delay_line} B per voice, {} B for the \
          {MAX_VOICES}-voice pool; buses {buses} B; tap slots {slots} B per voice, {} B for the \
-         pool",
+         pool; tail lines {} B",
         delay_line * MAX_VOICES,
-        slots * MAX_VOICES
+        slots * MAX_VOICES,
+        mixer.reverb_bytes()
     );
     let mut out = vec![0.0f32; 2 * BLOCK];
     c.bench_function(
-        "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, 16 buses",
+        "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, 16 buses, tail",
         |b| {
             b.iter(|| {
                 mixer.render(&mut out, BLOCK);
@@ -155,7 +162,7 @@ fn mixer_block_turning(c: &mut Criterion) {
     let mut k = 0usize;
     c.bench_function(
         "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, 16 buses, \
-         listener turning (every voice crossfades)",
+         tail, listener turning (every voice crossfades)",
         |b| {
             b.iter(|| {
                 k = (k + 1) % steps;
