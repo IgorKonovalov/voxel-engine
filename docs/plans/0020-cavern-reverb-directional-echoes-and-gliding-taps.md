@@ -39,6 +39,13 @@
 > -22.6 dB. Phase 11b raises the cap to cover every mean free path the fan can report.
 > **Owner decision, 2026-10-20:** fix first, then re-listen. All of Phase 12 waits for
 > Phase 11b.
+> **Amended:** 2026-10-20, after Phase 12's verdicts (log row 12, 5cc48d3). The echo gain each
+> room wanted fell as the room grew (+30, +15, +12, +6 dB from 4 m to 100 m) and only the 4 m
+> room wanted the tail lowered (-15 dB). Owner decisions: (1) the echo level **scales with room
+> size**, fitted to those picks, so Phase 13 is rewritten around a new mechanism, a room curve
+> keyed by the mean free path the mixer already receives, for both the echo gain and the tail
+> level; (2) the echo wobble while moving is **pinned now and fixed later**: a followup, not a
+> phase. The pre-delay, `Handover` and the direct delay (off) are pinned as heard.
 
 ## TL;DR
 
@@ -811,21 +818,130 @@ uncorrelated, a guess; read: -7.3 dB, -29.9 against -22.6). The clamp bites from
      knock playing: a burst or not; the log file shows the `SetRoom` lines around it.
   6. **Check 1 again, briefly:** walking past the hum with the chosen settings, no clicks.
 
-### Phase 13: Pin the chosen settings
+### Phase 13: Echo gain and tail level by room size, and the chosen settings pinned
+
+Rewritten 2026-10-20 after Phase 12 (owner: scale the echo level by room size, fitted to the
+picks). The picks were taken from each cube's centre, one per room, with the room line read
+beside them (`listening/p12-*.log`):
+
+| Run | Room line mfp (m) | Echoes (dB) | Tail (dB) | Criterion |
+|---|---|---|---|---|
+| `--room 4` | 2.666 | +30 (the range's top step) | -15 | the knock's direction holds |
+| `--room 12` | 7.999 | +15 | 0 | the knock's direction holds |
+| `--room 36` | 23.998 (24.07 in the run) | +12 | 0 | the knock's direction holds |
+| `--room 100 --mic` | 69.0 (63.6 to 71.1 in the run) | +6 | 0 | the voice returns late and strong |
+| `--room 12`, 2 m from a wall | about 8.0 | +9 | 0 | the slap is clear |
+
+**The input is the mean free path the mixer already holds.** `Command::SetRoom` carries
+`RoomTargets.mean_free_path_m` to the mixer on every completed fan, including while the tail is
+off (energy 0, mfp still set; the logs show both), so no new probe, command or thread is
+needed. Rejected: `T60` (clamped at 8 s from the 36 m room up, and it moves with absorption,
+which the picks did not vary); the volume (not in `RoomTargets`; the fan's `V` and the mfp rank
+the cubes the same); a per-voice key such as the echo's path length (the picks are one
+setting per room, heard over every tap at once).
+
+**The curve is piecewise linear in `log(mfp)` through the picks, flat outside them.** Knots
+(mfp in metres, dB), from the table: echoes `(2.67, +30)`, `(8.0, +15)`, `(24.0, +12)`,
+`(69.0, +6)`; tail `(2.67, -15)`, `(8.0, 0)`. Between two knots `(m_a, d_a)` and `(m_b, d_b)`,
+`d = d_a + (d_b - d_a) log(mfp / m_a) / log(m_b / m_a)`. Below the first knot the curve holds
+its first value, above the last its last. Rejected: a least-squares line in `log10(mfp)`. Over
+all four picks it reads `33.87 - 15.93 log10(mfp)` with residuals -2.9, +4.5, -0.1, -1.4 dB
+(12 m is 4.5 dB under its pick); over the three unclipped picks, `24.18 - 9.60 log10(mfp)`, it
+gives +20.1 dB at 4 m, 10 dB under the setting the owner heard there. A line fits no pick and
+puts the one clipped pick furthest off; the knots reproduce every pick exactly.
+
+**The 4 m pick is pinned as heard, not extrapolated.** It sat at the top step (+30 dB), so the
+owner may have wanted more, but the pair he judged was echoes +30 with the tail at -15, and a
+value above +30 has not been heard. The curve holds +30 below 2.67 m. The live trim (below)
+reaches +12 dB over the curve, so a later listen can go past it; a new pick replaces the knot.
+**The 2 m-from-a-wall pick is a floor, not a fifth knot:** its criterion was the least gain at
+which the slap is clear, at the same mfp as the centre pick, and the curve's +15 dB there meets
+it (a 2 m wall's taps are already louder by their shorter path). A room-size curve cannot also
+key on the listener's distance to a wall, and the owner asked for room size.
+
+**The tail level scales the same way,** from the same curve type with its own knots: -15 dB at
+2.67 m and below, 0 dB from 8.0 m up (-9.47 dB at 4.0 m). Only the 4 m room asked for it, and
+the 12 m knot is the nearest room heard at 0 dB; nothing between 4 and 12 m was heard, so the
+interpolation there is a guess, recorded as one.
 
 - **Owner skill:** dev
-- **What:** The values Phase 12 records become `MixSettings::default()` (echo gain, tail level,
-  pre-delay, tail lines, direct delay); a choice that depends on the room is pinned as the
-  owner states it (for example a pre-delay scaled by the mean free path), and if it needs a
-  mechanism Phases 8 to 11b do not have, `dev` stops and the architect amends. The fly-through's
-  flags keep working as overrides. Tests whose expected figures follow from the defaults are
-  re-derived and say so in their names.
-- **Files touched:** `crates/vxe-audio/src/{mixer.rs, reverb.rs}`, the affected
-  `crates/vxe-audio/tests/*.rs`, `apps/flythrough/src/main.rs`, `docs/plans/0020-...md` (log).
-- **Done when:** `MixSettings::default()` equals the recorded values (a test pins each); the
-  Phase 11 balance table is re-printed at the defaults and logged; the gate (build, nextest,
-  doctests, clippy, fmt, deny, the three doc scripts) exits 0; the three budget readings are
-  in the log with machine and commit.
+- **What:**
+  - **`RoomCurve`** in `vxe-audio`: up to `ROOM_CURVE_POINTS = 8` knots `(mfp_m, db)` in a fixed
+    array plus a count (no allocation; `Copy`, so it rides in `MixSettings` through
+    `Command::SetMix`). `RoomCurve::new(&[(f32, f32)]) -> Result<RoomCurve, AudioError>` rejects
+    zero or more than 8 knots, a non-finite value, an mfp at or below 0 and mfps that do not
+    strictly increase. `RoomCurve::flat(db)`. `RoomCurve::db_at(mfp_m) -> f32` as above; an
+    mfp that is not finite or is at or below 0 reads the **last** knot (the largest room's
+    value, so a degenerate room never asks for the loudest echoes). The curve knows no
+    gameplay: the knots are the engine's defaults, and a consumer passes its own.
+  - **`MixSettings`** gains `echo_by_room: RoomCurve` (default the echo knots above);
+    `ReverbSettings` gains `level_by_room: RoomCurve` (default the tail knots). `echo_gain` and
+    `ReverbSettings.level` stay, as trims multiplied on top, default 1.0.
+    `MixSettings::flat()` sets both curves to `RoomCurve::flat(0.0)` and is otherwise the
+    default: the echo and tail levels of Phases 1 to 12.
+  - **The mixer applies them.** The echo target is `echo_gain x 10^(echo_by_room.db_at(mfp)
+    / 20)`, recomputed on `SetMix` and on `SetRoom` (never per block), where `mfp` is the
+    latest `SetRoom`'s; before the first `SetRoom`, `mfp` reads as no room (the last knot). It
+    moves through the existing echo-gain one-pole, so a room change ramps the buses over
+    `SMOOTHING_SECONDS`. The tail's curve value multiplies `level` where `level` enters the
+    input gain `b` today (Phase 4's note), evaluated at the mfp of the room each network takes,
+    so a handover carries it with the room's own energy and the stored tail keeps the level it
+    was fed at; nothing new is smoothed.
+  - **Pinned as heard:** `predelay_s` 0, `lines` `TailLines::Handover`, `direct_delay` false.
+  - **The fly-through:** `[`, `]`, `-` and `=` step the trims by 3 dB, each from -24 to +12 dB;
+    `--echo-db` and `--tail-db` set the trims; a new `--flat-mix` flag starts from
+    `MixSettings::flat()`, so the Phase 12 runs replay with their absolute settings. The `mix:`
+    line becomes `mix: echoes <trim> dB (room <curve> dB at mfp <m> m), tail <trim> dB (room
+    <curve> dB), pre-delay <ms>, tail lines <mode>, direct delay <on|off>` (with `--flat-mix`,
+    `room flat`), printed again whenever a room changes the curve's value by 0.5 dB or more and
+    on `F1`.
+- **Files touched:** `crates/vxe-audio/src/{mixer.rs, reverb.rs, lib.rs}`, a new
+  `crates/vxe-audio/src/room_curve.rs`, `crates/vxe-audio/tests/{balance.rs, reverb.rs}`, the
+  affected `crates/vxe-audio/tests/*.rs`, `crates/vxe-audio/benches/mixer.rs`,
+  `apps/flythrough/src/main.rs`, `docs/plans/0020-...md` (log).
+- **Done when:**
+  - **The curve, unit tests in `room_curve.rs`.** The default echo curve reads +30, +15, +12 and
+    +6 dB at its knots exactly, and the tail curve -15 and 0. Between knots (within 0.01 dB):
+    echoes 24.475 dB and tail -9.475 dB at 4.0 m; echoes 13.107 at 16 m, 9.098 at 40 m and
+    6.283 at 65.648 m (the 100 m cube's centre fan); tail 0 at 16 m. Clamped: 30 and -15 at
+    1.0 m; 6 and 0 at 133.33 m (an all-miss fan). The last knot (6 and 0) for mfp 0, -1 and
+    NaN. `RoomCurve::new` rejects each malformed input listed above.
+  - **The defaults, pinned.** A test asserts `MixSettings::default()` field by field: echo trim
+    1.0, the four echo knots, direct delay off, tail trim 1.0, the two tail knots, pre-delay 0,
+    `Handover`, and `hf_ratio` and `max_t60_s` unchanged from Phase 11b.
+  - **The curve reaches the output, `tests/balance.rs`.** For the 4, 12, 36 and 100 m cubes,
+    listener at the centre, a unit impulse 2 m ahead, settings and room 0.5 s before it:
+    echoes alone at the defaults over echoes alone at `MixSettings::flat()` is
+    `10^(echo_by_room.db_at(mfp) / 10)` within 1 percent, `mfp` that cube's fan (expected
+    about +30, +15.0, +12.0 and +6.3 dB; printed). Tail alone, the same ratio against
+    `level_by_room` within 1 percent (expected -15, about 0, 0, 0 dB). The direct path's energy
+    is bit-identical between the two.
+  - **A room change ramps, it does not step.** Under a steady 440 Hz hum with echoes alone, a
+    `SetRoom` from the 12 m room (mfp 8.0) to the 36 m room (mfp 24.0) moves the buses' gain
+    from +15 to +12 dB: the per-window click index bound of Phase 4 (`K_w <= 1.25 C_w`) holds in
+    every window across the change, and 0.25 s after it the echoes' energy over the last
+    100 ms is `10^(-0.3)` of the energy before it within 2 percent (the room's tap pattern held
+    fixed, so only the gain moves). A `SetRoom` with mfp 0 after the 4 m room drops the echo
+    target to +6 dB, not +30.
+  - **Before any room:** a mixer that has received no `SetRoom` renders echoes at the last knot
+    (+6 dB over flat) within 1 percent.
+  - **Physics tests do not move.** Every test whose figures were derived before this phase
+    (`tests/{walking, motion, reentry, reverb, mixer, room}.rs`, the 1160-sample echo, the
+    Phase 11 balance-ratio and pre-delay cases) sets `MixSettings::flat()` and keeps its bound
+    and figures; one that cannot says so in the log with its old and new figure. The Phase 8
+    re-entry flight is run once more at the defaults and its two figures printed beside the
+    flat ones.
+  - **The fly-through, headless:** `--room 4 --headless --frames 60` prints `mix: echoes +0 dB
+    (room +30.0 dB at mfp 2.666 m), tail +0 dB (room -15.0 dB), ...`, and `--room 12`
+    `room +15.0 dB` and `room -0.0 dB` (or `+0.0`); `--flat-mix --echo-db 9` prints `room
+    flat` with the trim +9. A `main.rs` test checks the trims' clamps at -24 and +12.
+  - The balance table of Phase 11 re-printed at the defaults and logged, beside the flat one.
+  - The allocation count in `render` is still zero, with a `SetRoom` every block.
+  - `bench mixer` (dev box, release, exclusive perf lock, load average and top processes
+    stated): static and turning medians of three alternating runs against the parent's,
+    within 5 percent in the same session (the curve is evaluated per command, not per block).
+  - The gate (build, nextest, doctests, clippy, fmt, deny, the three doc scripts) exits 0; the
+    three budget readings are in the log with machine and commit.
 
 ## Data shapes
 
@@ -851,6 +967,9 @@ pub enum TailLines { Handover, Glide }
 pub struct ReverbSettings { pub hf_ratio: f32, pub level: f32, pub max_t60_s: f32, pub predelay_s: f32, pub lines: TailLines }
 pub struct MixSettings { pub echo_gain: f32, pub direct_delay: bool, pub reverb: ReverbSettings }
 // Command gains SetMix(MixSettings)
+// Phase 13 (amended 2026-10-20 after Phase 12)
+pub struct RoomCurve { knots: [(f32, f32); ROOM_CURVE_POINTS], len: u8 }   // (mfp m, dB), log-linear
+// MixSettings gains echo_by_room: RoomCurve; ReverbSettings gains level_by_room: RoomCurve
 ```
 
 Mixer-side state per voice: `[TapState { delay: f32, gain: f32 }; 16]` (128 B). Buses: 16 x
@@ -898,6 +1017,14 @@ re-read in Phase 7.
   none about 21 times a second. Phase 7 check 6 decides; spreading each step over the probe
   interval, or the alternative of a 50 ms crossfade of tap sets, stays available as a
   followup.
+- **Known issue, pinned as is (owner, 2026-10-20): echoes wobble while the listener moves.**
+  Phase 12 checks 4 and 6: no clicks, but with echoes on the sounds wobble under motion, and the
+  walk is "much cleaner without echo"; `Handover` against `Glide` and the direct delay made no
+  difference. Unverified leads: the taps' pitch glide (Phase 9's rate per probe interval), the
+  sixteen buses' per-block HRIR changes, and the beating of up to sixteen echoes against the
+  direct path at up to `2v / c`. Phase 13's room curve raises the echoes (+15 dB in a 12 m
+  room), so it makes the wobble louder, and its gain ramps on each room change add one more
+  candidate. Not fixed in this plan: the Followups carry it.
 - **Microphone latency.** The input period plus the output period (about 10 to 20 ms on
   PipeWire) delays every echo of the voice by the same, about 5 m of extra path. Compensation
   (subtracting the measured latency from the streamed voice's tap delays, floored at 0) is the
@@ -920,6 +1047,9 @@ re-read in Phase 7.
 - **Voice chat over the network as a positional source:** M9; the streamed voice of Phase 5 is
   the mechanism it will use.
 - **Latency compensation for the microphone echo:** the first followup, pending Phase 7.
+- **The echo wobble under motion** (Phase 12): pinned as heard, a followup.
+- **An echo level keyed by the listener's distance to a wall,** or by anything but the room's
+  mean free path: Phase 13's curve keys on room size only.
 
 ## Implementation log
 
@@ -1062,3 +1192,10 @@ re-read in Phase 7.
 - A source's own room and coupled rooms (second pass of the room model).
 - Multi-bounce segment statistics for the mean free path, if the cave walk finds the fan's
   star-shaped estimate wrong too often.
+- **The echo wobble while moving** (Phase 12 checks 4 and 6, owner 2026-10-20: pinned now,
+  fixed later). With echoes on, sounds wobble while the listener walks; without echoes the
+  walk is clean. A future plan measures it first, headlessly: the walk of `tests/walking.rs`
+  at the Phase 13 defaults, separating the taps' pitch glide, the buses' HRIR changes and the
+  echoes' beating against the direct path (leads in Risks), then fixes the one that measures.
+- A re-pick of the 4 m echo knot above +30 dB, if a later listen at the Phase 13 defaults asks
+  for more (the trim reaches +42 dB there); the tail between 4 and 12 m was never heard.

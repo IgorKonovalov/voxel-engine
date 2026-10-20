@@ -10,7 +10,7 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Status | Live constraint |
 |------|-------|--------|-----------------|
-| [0020](0020-cavern-reverb-directional-echoes-and-gliding-taps.md) | Cavern reverb: a late tail sized by the room the listener sees, echoes from their walls, taps that glide, and the player's own voice in the cave | in-progress | M4, ADR-0015. Phase 11b (tail line cap) owed, then the re-listen (12) and 13. |
+| [0020](0020-cavern-reverb-directional-echoes-and-gliding-taps.md) | Cavern reverb: a late tail sized by the room the listener sees, echoes from their walls, taps that glide, and the player's own voice in the cave | in-progress | M4, ADR-0015. Phase 13 owed: echo and tail level by room size. |
 <!-- roster:end -->
 
 ## Recently closed
