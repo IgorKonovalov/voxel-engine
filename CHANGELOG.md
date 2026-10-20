@@ -6,6 +6,10 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-20
+
+Plan 0018 (a minor bump: public API added and changed). Stamp, drop and remove are op kinds 2 to 4 (`Op::{Stamp, Drop, Remove}`, no longer `Copy`) with wire encodings, applied through `Server::submit`, `Host::apply(Op)` and the WIT `apply`, logged, and announced as `OpResult::{Edit, Drop, Remove}`, which the owned client checks. A stamp names its prefab by content id in a `PrefabRegistry` (ADR-0014). `LOG_FORMAT` 2 carries the stamped prefabs in the save's header, verified on decode (`WireError::PrefabMismatch`), and format 1 still reads. `EditError::UnknownPrefab` takes wire error tag 3. The server keeps a `CoarseGrid` current after every applied op and answers `Host::unsupported` (a WIT import too), configured by `Server::set_support`. The fly-through's `P` stamp and collapse run in `DigLogic` (`DigInput::{Stamp, Crumble}`), and `--save`/`--replay` no longer refuse them or `--vault`.
+
 ## [0.14.0] - 2026-10-19
 
 Plan 0015 (a minor bump: public API added and changed). The marcher walks a hierarchy of occupancy bits: 512 brick bits head each chunk record and `EMPTY_BIT` in the chunk table skips an empty chunk on its table read alone; a 512-bit opaque mask per brick (72 B a slot, in groups of eight) gives the 4^3, 2^3 and voxel skips from one 64-byte line; the walk holds its chunk, bits words, brick entry and mask slab across steps. The streamed cave's spawn march falls from 6.8 to 1.95 ms on the dev box. A cell exit follows plane order, so the image is independent of every skip (`LightParams::skips` is the comparison switch; the goldens re-blessed once). The translucent class: `MaterialFlags::TRANSLUCENT`, `Material::opacity`, `TRANSLUCENT_BIT` in brick entries and a bounded second walk (`LookParams::translucent_layers`, default 4, `--translucent-layers`), with `ViewMode::Albedo`. A `steps` debug view (`ViewMode::Steps`, `readback::StepHistogram`, a HUD row). `Brick::solid_bits`. `gpu_world` layout constants change (`RECORD_WORDS` 656, `MASK_BYTES` 72, `SLOT_MASK` and the record index 29 bits).

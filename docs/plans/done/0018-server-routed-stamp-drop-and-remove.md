@@ -1,12 +1,12 @@
 # 0018: Stamp, drop and remove as op kinds 2 to 4 through the server, the log and the logic host
 
-> **Status:** in-progress
+> **Status:** done (closed 2026-10-20, v0.15.0: a clean fresh-session review on c1ea275; every phase shipped and the gate is green at the tip. Stamp, drop and remove are logged ops end to end, and a saved session with a `P` stamp and a falling slab replays to its pinned hash. The hashes are blessed on Linux and the Windows arm waits for a push. The tick-overhead readings are noisy and need a quiet-box re-read. The owner's windowed check is still owed.)
 > **Created:** 2026-10-17
 > **Milestone:** M5 (the simulation split, completed for every op) and M8 (collapse through the log) in `docs/roadmap.md`
-> **Related ADRs:** [ADR-0014](../adrs/0014-prefab-identity-in-the-op-log.md) (proposed; how a
-> stamp names its prefab), [ADR-0007](../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md)
-> (the log and the clients), [ADR-0008](../adrs/0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md)
-> (collapse ops "replicate through the op log like any edit"), [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md)
+> **Related ADRs:** [ADR-0014](../../adrs/0014-prefab-identity-in-the-op-log.md) (proposed; how a
+> stamp names its prefab), [ADR-0007](../../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md)
+> (the log and the clients), [ADR-0008](../../adrs/0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md)
+> (collapse ops "replicate through the op log like any edit"), [ADR-0010](../../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md)
 > (ops cross the boundary as bytes; a support query import was anticipated).
 > **Prerequisite:** none; Plan 0016's restart change touches the same `vxe-net` report type,
 > so the second to merge resolves it.
@@ -384,4 +384,19 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
-- None at draft time.
+- From the close review (2026-10-20): `Server::resimulate` and the save carry no
+  `SupportParams` or explicit anchors, so a session whose server ran `set_support` with
+  anything but `DEFAULT_SUPPORT` re-simulates its logic's support queries under the default.
+  The fly-through is safe only because its `SUPPORT` equals `DEFAULT_SUPPORT` by value (two
+  constants). A save that records the support configuration, or a `resimulate` that takes it,
+  belongs to the next plan that touches the log format.
+- From the close review: a save made with `--vault` does not record the room, and replaying it
+  without `--vault` prints a different hash with no error. The generation flags belong in the
+  header beside the seed when the format next changes.
+- From the close review: the scripted Phase 4 session runs through the library on a server set
+  up like `Net::new`, not through the binary, which has no scripted-input flag. The binary's
+  `--save`/`--replay` path with `P` and collapse is covered only by the owner's windowed check.
+- Carried from the implementation log: the Windows arm for `SLAB_SESSION_HASH` and
+  `SESSION_HASH` (needs a push); a quiet-box re-read of the tick overhead; the server's grid is
+  not told of streamed chunks, so collapse stays on the level; cell lists are uncapped until
+  Plan 0019's `OutOfRange`.
