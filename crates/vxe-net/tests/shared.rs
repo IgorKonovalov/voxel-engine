@@ -18,14 +18,14 @@ fn message_sizes_are_the_documented_ones() {
         tick: 1,
         seq: 2,
         op: Op::Edit(origin_sphere(Mode::Carve)),
-        result: EditResult {
+        result: OpResult::Edit(EditResult {
             changed_from: vec![(3, 4169)],
             touched: vec![ChunkCoord([0, 0, 0])],
             aabb: Some((VoxelCoord([-10, -10, -10]), VoxelCoord([10, 10, 10]))),
-        },
+        }),
     };
-    // tag 1 + tick 8 + seq 4 + op 35 + (2 + 6) + (2 + 12) + (1 + 24).
-    assert_eq!(applied.encode().len(), 95);
+    // tag 1 + tick 8 + seq 4 + op 35 + result kind 1 + (2 + 6) + (2 + 12) + (1 + 24).
+    assert_eq!(applied.encode().len(), 96);
     for n in [0usize, 1, 40, 65535] {
         assert_eq!(
             Message::Input { bytes: vec![7; n] }.encode().len(),
@@ -41,8 +41,8 @@ fn every_message_tag_round_trips() {
         Message::Applied {
             tick: u64::MAX,
             seq: 9,
-            op,
-            result: EditResult::default(),
+            op: op.clone(),
+            result: OpResult::Edit(EditResult::default()),
         },
         Message::Refused {
             tick: 3,
@@ -122,7 +122,7 @@ fn one_tick_applies_submitted_ops_in_order_and_the_shared_client_sees_them() {
                 ..
             } => {
                 assert_eq!(*seq, i as u32);
-                assert_eq!(result.changed_from, want);
+                assert_eq!(result.edit_result().changed_from, want);
             }
             e => panic!("event {i}: {e:?}"),
         }
@@ -194,7 +194,7 @@ fn submissions_from_two_threads_are_logged_once_each_in_seq_order() {
                 op: Op::Edit(op),
                 ..
             } => (seq, op),
-            LogEntry::Boundary { .. } => panic!("boundary among the op entries: {e:?}"),
+            _ => panic!("not a submitted edit: {e:?}"),
         })
         .collect();
     assert_eq!(logged, submitted);

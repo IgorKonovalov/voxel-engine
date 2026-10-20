@@ -42,8 +42,9 @@ and entity model.
   deterministic ops drop them as a rigid piece or turn them into rubble.
 - **Collision:** vertical-cylinder sweeps and a character controller with step-up, wall
   slide, gravity, jumping and ledge climbing, in integer math.
-- **The simulation split:** a server owns the world and an op log; clients are shared or own
-  a replica with desync detection; a session replays from seed plus log to the same hash.
+- **The simulation split:** a server owns the world and an op log of every edit, stamp, drop
+  and removal (a save carries the prefabs its stamps name); clients are shared or own a
+  replica with desync detection; a session replays from seed plus log to the same hash.
   Game logic runs behind a trait, natively or as a sandboxed WebAssembly component with
   deterministic WASI, fuel and a memory cap, proven equal to the native build.
 - **A compute ray marcher** in WGSL over a sharded GPU mirror of the world, uploaded
@@ -131,7 +132,7 @@ go through an in-process server, so every edit you see came back as a client eve
 | Left / right click | Dig / fill at the crosshair; the edit result prints to the terminal |
 | Scroll | Change the dig radius |
 | `L` | Toggle the shadow ray |
-| `N` | Cycle the normal mode: face, trilinear8, gradient27, contour (contour only under `--look`) |
+| `N` | Cycle the normal mode: face, trilinear8, gradient27, contour (contour skipped under `--look plain`) |
 | `V` | Toggle procedural surface detail |
 | `B` | Run the carve benchmark in place |
 | `P` | Stamp a 16-voxel room with an indestructible shell at the crosshair |
@@ -156,15 +157,27 @@ Walking, the coarse grid and collapse run on the bounded level (`--level`) only.
 | `--frames N` | Exit after `N` frames, printing the `F1` readings over the last ones |
 | `--bench N` | Send `N` `B` benchmark inputs on the first frame |
 | `--autopilot` | Dig, fly 300 m out and back through the streamed cave, print streaming readings |
+| `--census` | Print the brick census on exit: `Full` bricks and mip-bricks by count of materials, and their payload bytes today, under the packed class ladder and under exact planes |
 | `--render WxH` | Fix the marcher's resolution; the window scales it |
 | `--sync-budget MiB` | Bytes uploaded to the GPU mirror per frame |
-| `--look MODE` | Start in normal mode `face`, `trilinear8`, `gradient27` or `contour`, with attribute pages for contour and rock detail |
+| `--mirror-budget MiB` | VRAM the GPU mirror reserves for its pool, masks and records at startup (default 3072 streamed; on `--level`, what the level needs plus dig headroom). While streaming, the full radius drops a chunk after 30 frames with the mirror's pressure (the fuller of its pool slots and records) over 0.9, and returns after 300 frames under 0.7, down to 6 |
+| `--residency R_FULL,R_LOD` | Streamed full and LOD radii in chunks, hysteresis 1 (default 16,24) |
+| `--look MODE` | Start in normal mode `face`, `trilinear8`, `gradient27` or `contour` (default), with attribute pages for contour and rock detail; `plain` starts in face mode without either, detail off |
 | `--view VIEW` | Write `shaded` (default), `normals`, `hitmask`, `steps` (red: walk steps, green: storage loads, blue: pool loads per ray) or `albedo` (the composited albedo, unlit) to the target; with `--frames`, `steps` prints the last frame's mean and p99 steps per ray, the mean over 8 × 8 pixel blocks of each block's maximum steps, and the loads' and pool loads' mean and p99 |
 | `--translucent-layers N` | Translucent voxels composited in front of the opaque hit, nearest first (default 4); 0 ignores them |
-| `--detail` | Start with procedural surface detail on |
-| `--rock-detail SCALE,STRENGTH` | Rock's detail feature scale in voxels and strength in [0, 1], under `--look` (default 4,0.3) |
-| `--save PATH` | With `--level`: write the session's log file to `PATH` on exit and print the world hash; refuses `P`, turns collapse off and does not combine with `--vault` |
-| `--replay PATH` | With `--level`: re-simulate a saved session before the first frame and print its hash; turns collapse off and does not combine with `--vault` |
+| `--detail` | Start with procedural surface detail on under `--look plain` (it is on in every other look) |
+| `--rock-detail SCALE,STRENGTH` | Rock's detail feature scale in voxels and strength in [0, 1], in every look but `plain` (default 4,0.1) |
+| `--save PATH` | With `--level`: write the session's log file to `PATH` on exit and print the world hash; stamps and collapse are in the log |
+| `--replay PATH` | With `--level`: re-simulate a saved session before the first frame and print its hash; add `--vault` for a session saved with it (the save does not record the room placed at generation) |
+
+The storage figures come from an example: `cargo run --release -p flythrough --example
+world_budget -- --chunks 20,20,8 --census` (the level) or `--stream 16,24 --census` (the streamed
+residency); `--veins N --census` prints the census of a synthetic world of `N - 1` materials.
+The bounded run also times the coarse grid and the per-chunk mip build. A `Full` brick is a
+packed mask, palette and bit planes (ADR-0012), so the level's bricks take 58 MiB of RAM and
+the streamed defaults' about 400 MiB ([`docs/nfr.md`](docs/nfr.md) section 3).
+`cargo bench -p vxe-world --bench brick_kernel` times the planar edit kernel against a row
+write on raw ids over the same brick-edits.
 
 ### Checks
 

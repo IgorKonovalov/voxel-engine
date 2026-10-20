@@ -1,49 +1,7 @@
 mod support;
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
-
 use support::*;
 use vxe_world::*;
-
-/// The system allocator, counting the allocations of brick-array size (`[u16; 512]`) made on
-/// a thread while that thread's `COUNTING` flag is set. Other tests' threads are not counted.
-struct CountingAlloc;
-
-thread_local! {
-    static COUNTING: Cell<bool> = const { Cell::new(false) };
-    static ARRAY_ALLOCS: Cell<u64> = const { Cell::new(0) };
-}
-
-// SAFETY: every call forwards to `System` with the same arguments; the counting touches only
-// const-initialised thread-locals, which never allocate. `alloc_zeroed` and `realloc` keep
-// their default bodies, which allocate through `alloc`, so they are counted too.
-unsafe impl GlobalAlloc for CountingAlloc {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if layout.size() == size_of::<[MaterialId; BRICK_VOXELS]>() && COUNTING.with(Cell::get) {
-            ARRAY_ALLOCS.with(|n| n.set(n.get() + 1));
-        }
-        // SAFETY: forwarded unchanged; the caller upholds `GlobalAlloc::alloc`'s contract.
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: `ptr` came from `System` with this layout.
-        unsafe { System.dealloc(ptr, layout) }
-    }
-}
-
-#[global_allocator]
-static ALLOC: CountingAlloc = CountingAlloc;
-
-/// Brick-array-sized allocations `f` makes on this thread.
-fn array_allocs_in<R>(f: impl FnOnce() -> R) -> (R, u64) {
-    ARRAY_ALLOCS.with(|n| n.set(0));
-    COUNTING.with(|c| c.set(true));
-    let r = f();
-    COUNTING.with(|c| c.set(false));
-    (r, ARRAY_ALLOCS.with(Cell::get))
-}
 
 fn sphere10(mode: Mode) -> EditOp {
     EditOp::sphere(centre_of_voxel([0, 0, 0]), 10 * FIXED_ONE, mode)
@@ -430,6 +388,20 @@ fn seeded_op(i: usize, rng: &mut SplitMix64) -> EditOp {
 /// `world`: each result or error, and every voxel in the op's bounds afterwards, equals what
 /// the brute-force reference says. Returns how many ops changed a voxel and how many failed on
 /// a non-resident chunk.
+/// Every brick of the `touched` chunks holds the bytes `Brick::from_voxels` gives its
+/// decoded voxels: the canonical form, so equal voxels are equal bricks.
+fn assert_canonical(world: &World, touched: &[ChunkCoord], op: usize) {
+    for &c in touched {
+        let chunk = world.store().get(c).expect("touched chunks are resident");
+        let chunk = chunk.read().unwrap();
+        for (slot, b) in chunk.bricks().iter().enumerate() {
+            let mut v = Box::new([AIR; BRICK_VOXELS]);
+            b.decode(&mut v);
+            assert_eq!(*b, Brick::from_voxels(v), "op {op}: {c:?} slot {slot}");
+        }
+    }
+}
+
 fn run_seeded_ops_against_the_reference(world: &World) -> (usize, usize) {
     let mut rng = SplitMix64(0x0003_0001);
     let mut changed = 0;
@@ -443,6 +415,9 @@ fn run_seeded_ops_against_the_reference(world: &World) -> (usize, usize) {
                 materials_in(world, lo, hi) == expected.after,
                 "op {i}: voxels differ from the reference after {op:?}"
             );
+        }
+        if let Ok(r) = &expected.result {
+            assert_canonical(world, &r.touched, i);
         }
         match &expected.result {
             Ok(r) if !r.changed_from.is_empty() => changed += 1,
@@ -582,59 +557,239 @@ fn ids_beyond_the_table_are_counted_like_the_reference() {
     assert!(beyond >= 30, "{beyond} counts of ids beyond the table");
 }
 
-/// 100 radius-10 carves at distinct seeded voxels within ±100 voxels of the origin.
-fn hundred_carves() -> Vec<EditOp> {
-    let mut rng = SplitMix64(0x0014_0002);
-    let mut at: Vec<[i64; 3]> = Vec::new();
-    while at.len() < 100 {
-        let v = [0; 3].map(|_| rng.range(-100, 100));
-        if !at.contains(&v) {
-            at.push(v);
+/// 2000 seeded ops on the cubes source over chunks `[-1, 1)^3`, mixing carve, fill of
+/// materials 1 to 3 and replace between them, so palette entries are inserted and removed at
+/// every position. After every op the result equals the reference's (`changed_from`, `aabb`,
+/// `touched`), the voxels in its bounds equal the reference's, and every brick of the touched
+/// chunks is canonical.
+#[test]
+fn the_planar_kernel_matches_the_reference_over_2000_mixed_ops() {
+    let world = World::generate(
+        ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
+        &CubesSource,
+        &test_table(),
+    );
+    let mut rng = SplitMix64(0x0021_0004);
+    let mut changed = 0;
+    for i in 0..2000 {
+        let c = [0; 3].map(|_| rng.range(-60, 59) * FIXED_ONE + rng.range(-128, 127));
+        let r = rng.range(FIXED_ONE, 7 * FIXED_ONE);
+        let m = |rng: &mut SplitMix64| rng.range(1, 3) as MaterialId;
+        let mode = match rng.range(0, 3) {
+            0 => Mode::Carve,
+            1 => Mode::Fill(m(&mut rng)),
+            _ => Mode::Replace {
+                from: m(&mut rng),
+                to: m(&mut rng),
+            },
+        };
+        let op = if rng.range(0, 3) == 0 {
+            let h = [0; 3].map(|_| rng.range(0, 6 * FIXED_ONE));
+            EditOp::box_(
+                Fixed3([0, 1, 2].map(|k| c[k] - h[k])),
+                Fixed3([0, 1, 2].map(|k| c[k] + h[k])),
+                mode,
+            )
+        } else {
+            EditOp::sphere(Fixed3(c), r, mode)
+        };
+        let expected = reference_apply(&world, &op);
+        assert_eq!(world.apply(&op), expected.result, "op {i}: {op:?}");
+        if let Some((lo, hi)) = expected.bounds {
+            assert!(
+                materials_in(&world, lo, hi) == expected.after,
+                "op {i}: voxels differ from the reference after {op:?}"
+            );
+        }
+        if let Ok(r) = &expected.result {
+            assert_canonical(&world, &r.touched, i);
+            changed += usize::from(!r.changed_from.is_empty());
         }
     }
-    at.into_iter()
-        .map(|v| {
-            let c = v.map(|c| c * FIXED_ONE + FIXED_HALF);
-            EditOp::sphere(Fixed3(c), 10 * FIXED_ONE, Mode::Carve)
-        })
-        .collect()
+    let st = world.packed_stats();
+    println!("{changed} of 2000 ops changed voxels; {st:?}");
+    assert!(changed >= 1000, "{changed} ops changed voxels");
+    assert!(
+        st.class_changes > 0 && st.entries_removed > 0 && st.renames > 0,
+        "{st:?}"
+    );
 }
 
-/// With the pool reserved, 100 radius-10 carves on the solid world expand bricks without one
-/// brick-array allocation, and give the same results as on a world with an empty pool.
-#[test]
-fn a_pooled_expand_allocates_nothing() {
-    let ops = hundred_carves();
-    let pooled = solid3_world();
-    pooled.reserve_brick_arrays(4096);
-    assert_eq!(pooled.pool_len(), 4096);
-    let (results, allocs) = array_allocs_in(|| {
-        ops.iter()
-            .map(|op| pooled.apply(op).unwrap())
-            .collect::<Vec<_>>()
-    });
-    let full = pooled.stats().full_bricks;
-    println!(
-        "{full} Full bricks after 100 carves; pool {} arrays",
-        pooled.pool_len()
-    );
-    assert_eq!(allocs, 0, "brick-array allocations with a reserved pool");
-    assert!(full >= 2000, "{full} bricks expanded");
-    assert_eq!(pooled.pool_len(), 4096 - full);
+/// The brick at slot 0 of a one-chunk world, and its palette.
+fn brick0(world: &World) -> (Option<vxe_world::packed::PackedClass>, Vec<MaterialId>) {
+    let chunk = world.store().get(ChunkCoord([0, 0, 0])).unwrap();
+    let chunk = chunk.read().unwrap();
+    let b = chunk.brick(0);
+    let palette = match b {
+        Brick::Full(p) => p.palette(),
+        Brick::Uniform(m) => vec![*m],
+    };
+    (b.class(), palette)
+}
 
-    // The same carves with an empty pool allocate one array per expansion and agree.
-    let cold = solid3_world();
-    assert_eq!(cold.pool_len(), 0);
-    let (cold_results, cold_allocs) = array_allocs_in(|| {
-        ops.iter()
-            .map(|op| cold.apply(op).unwrap())
-            .collect::<Vec<_>>()
-    });
-    assert_eq!(cold_results, results);
-    assert_eq!(world_hash(&cold), world_hash(&pooled));
-    // Every Full brick of the cold world was a fresh allocation.
-    assert!(
-        cold_allocs >= full as u64,
-        "{cold_allocs} allocations, {full} Full bricks"
+/// The voxel box `lo..=hi` as an op.
+fn voxel_box(lo: [i32; 3], hi: [i32; 3], mode: Mode) -> EditOp {
+    EditOp::box_(
+        Fixed3(lo.map(|v| i64::from(v) * FIXED_ONE)),
+        Fixed3(hi.map(|v| i64::from(v) * FIXED_ONE + FIXED_ONE - 1)),
+        mode,
+    )
+}
+
+/// A fill inserts a palette entry and grows the class, a replace whose `from` voxels all lie
+/// in the shape renames the entry with no plane written, and a carve of every voxel of an
+/// entry removes it and shrinks the class.
+#[test]
+fn entries_are_inserted_renamed_and_removed() {
+    let mut table = MaterialTable::new();
+    for i in 1..=7u16 {
+        table.push(Material::named(format!("m{i}")));
+    }
+    // Brick 0: layers z 0..4 of material 3, the rest air.
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &FnSource(|v: VoxelCoord| {
+            if v.0.iter().all(|&c| c < 8) && v.0[2] < 4 {
+                3
+            } else {
+                AIR
+            }
+        }),
+        &table,
     );
+    assert_eq!(
+        brick0(&world),
+        (Some(vxe_world::packed::PackedClass::Mask), vec![3])
+    );
+
+    // Fill 7 into layer 4: 64 air voxels.
+    let r = world
+        .apply(&voxel_box([0, 0, 4], [7, 7, 4], Mode::Fill(7)))
+        .unwrap();
+    assert_eq!(r.changed_from, [(AIR, 64)]);
+    assert_eq!(
+        brick0(&world),
+        (Some(vxe_world::packed::PackedClass::Plane1), vec![3, 7])
+    );
+    let s0 = world.packed_stats();
+    assert_eq!(s0.class_changes, 1);
+
+    // Replace 3 by 2 over the whole brick: a rename, the palette [2, 7].
+    let r = world
+        .apply(&voxel_box(
+            [0, 0, 0],
+            [7, 7, 7],
+            Mode::Replace { from: 3, to: 2 },
+        ))
+        .unwrap();
+    assert_eq!(r.changed_from, [(3, 256)]);
+    assert_eq!(
+        brick0(&world),
+        (Some(vxe_world::packed::PackedClass::Plane1), vec![2, 7])
+    );
+    let s1 = world.packed_stats();
+    assert_eq!(s1.renames - s0.renames, 1);
+    assert_eq!(s1.class_changes, s0.class_changes);
+
+    // Carve every 7: the entry goes and the brick is mask-only again.
+    let r = world
+        .apply(&voxel_box([0, 0, 4], [7, 7, 4], Mode::Carve))
+        .unwrap();
+    assert_eq!(r.changed_from, [(7, 64)]);
+    assert_eq!(
+        brick0(&world),
+        (Some(vxe_world::packed::PackedClass::Mask), vec![2])
+    );
+    let s2 = world.packed_stats();
+    assert_eq!(s2.entries_removed - s1.entries_removed, 1);
+    assert_eq!(s2.class_changes - s1.class_changes, 1);
+}
+
+/// A sphere of radius `i64::MAX` is refused before any arithmetic, in every build profile,
+/// and the world is unchanged.
+#[test]
+fn an_out_of_range_radius_is_refused_and_changes_nothing() {
+    let world = solid3_world();
+    let before = world_hash(&world);
+    assert_eq!(
+        world.apply(&EditOp::sphere(Fixed3([0; 3]), i64::MAX, Mode::Carve)),
+        Err(EditError::OutOfRange {
+            what: Field::Radius
+        })
+    );
+    assert_eq!(
+        world.apply(&EditOp::sphere(Fixed3([0; 3]), i64::MIN, Mode::Carve)),
+        Err(EditError::OutOfRange {
+            what: Field::Radius
+        })
+    );
+    assert_eq!(
+        world.apply(&EditOp::capsule(
+            Fixed3([0; 3]),
+            Fixed3([256, 0, i64::MAX]),
+            256,
+            Mode::Carve
+        )),
+        Err(EditError::OutOfRange { what: Field::Coord })
+    );
+    assert_eq!(
+        world.apply(&EditOp::box_(
+            Fixed3([0; 3]),
+            Fixed3([i64::MIN, 0, 0]),
+            Mode::Fill(2)
+        )),
+        Err(EditError::OutOfRange { what: Field::Coord })
+    );
+    // In range, but its voxel bounds span 2^23 + 1 voxels per axis.
+    assert_eq!(
+        world.apply(&EditOp::sphere(Fixed3([0; 3]), 1 << 30, Mode::Carve)),
+        Err(EditError::OutOfRange {
+            what: Field::EditExtent
+        })
+    );
+    assert_eq!(world_hash(&world), before);
+}
+
+/// An edit spanning `edit_axis_max` (1 024) voxels on an axis passes the check and reaches
+/// the residency walk; one voxel more is refused before it.
+#[test]
+fn the_edit_extent_is_checked_before_the_residency_walk() {
+    let world = World::new(&test_table());
+    let box_ = |x: i64| {
+        EditOp::box_(
+            Fixed3([0; 3]),
+            Fixed3([x, 1024 * 256, 1024 * 256]),
+            Mode::Carve,
+        )
+    };
+    assert!(
+        matches!(
+            world.apply(&box_(1024 * 256)),
+            Err(EditError::NotResident(_))
+        ),
+        "{:?}",
+        world.apply(&box_(1024 * 256))
+    );
+    assert_eq!(
+        world.apply(&box_(1025 * 256)),
+        Err(EditError::OutOfRange {
+            what: Field::EditExtent
+        })
+    );
+}
+
+/// A reversed box within range is not refused: it holds no centre and changes nothing.
+#[test]
+fn a_reversed_box_in_range_is_an_empty_edit() {
+    let world = solid3_world();
+    let before = world_hash(&world);
+    let r = world
+        .apply(&EditOp::box_(
+            Fixed3([10 * 256; 3]),
+            Fixed3([-10 * 256; 3]),
+            Mode::Carve,
+        ))
+        .unwrap();
+    assert_eq!(r, EditResult::default());
+    assert_eq!(world_hash(&world), before);
 }

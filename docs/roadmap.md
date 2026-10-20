@@ -152,7 +152,7 @@ streaming line (render-thread CPU p50 about 7 ms, p99 52 to 61 ms against 1.0 ms
 rays in the streamed world (6.69 ms at 1080p against 3.0 ms), both on the dev reference. The
 budgets stand. The §4 edit-cost miss carries forward from Plan 0001 to Plan 0003 (closed 2026-10-17,
 v0.4.1), which cut the `worst` bench from 4.6 to 3.56 ms on a quiet dev box with no result or
-hash moved; the owner kept the 2 ms figure. Plan 0014 (closed 2026-10-17, v0.7.0) is the second pass: a brick-array pool, a sphere span walk and an analytic capsule row cut `worst` to 3.19-3.26 ms (3.03-3.05 ms with a warm pool) and `tool` from 8.05 to 6.78-6.80 ms. The §4 miss carries forward: the row write bounds the cost inside ADR-0002's representation, and the owner chose a representation: ADR-0012 (accepted 2026-10-17), whose CPU-format step is Plan 0021.
+hash moved; the owner kept the 2 ms figure. Plan 0014 (closed 2026-10-17, v0.7.0) is the second pass: a brick-array pool, a sphere span walk and an analytic capsule row cut `worst` to 3.19-3.26 ms (3.03-3.05 ms with a warm pool) and `tool` from 8.05 to 6.78-6.80 ms. The §4 miss carries forward: the row write bounds the cost inside ADR-0002's representation, and the owner chose a representation: ADR-0012 (accepted 2026-10-17), whose CPU-format step is Plan 0021. Plan 0021 closed 2026-10-20 (v0.18.0): the planar edit kernel reads the warm worst case at 1.34 to 1.52 ms on the dev box (not quiet; 3.03 ms before) and the fly-through `B` line at 1.52 ms. The owner held the 2 ms figure on the dev box (2026-10-20), so the line is met there; there is no baseline-GPU reading. A quiet-box re-read the same day (2796062) did not reproduce those figures: `worst_warm` 1.79 ms, and the `B` line 2.06 to 2.09 ms, with an unchanged `vxe-world`. The owner raised the line to 2.2 ms on the dev box and planned one more optimization pass.
 
 **Next, before M2's lighting:** a streaming-CPU plan (incremental queue, residency sweep and
 window shift; narrowing and staging on workers), not drafted yet. The march-pass diagnosis this
@@ -196,7 +196,7 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005 and 0015 closed; Plan 0013 is the surface follow-up; the lighting plan next)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017 and 0021 closed; the lighting plan next)
 
 Plan 0015 closed 2026-10-19 (v0.14.0): the marcher walks a hierarchy of occupancy bits
 (chunk bits with an empty bit in the table, 512-bit brick masks on aligned lines, a walk that
@@ -210,14 +210,36 @@ VoxelRT and wavefront sources in `references/voxel-optimizations.md`) found noth
 literature that beats a bit hierarchy for an editable near field, and left two design inputs
 for the lighting plan, listed with its bullets below.
 
+Plan 0017 closed 2026-10-20 (v0.17.0): the mirror reserves its VRAM budget once (ADR-0013):
+no grow copies, empty pages shared by both kinds, records for the residency's ball, and a
+pressure rule that lowers `r_full` when the pool or records near full. A sync writes the
+nearest chunks that fit whole and defers the rest. `nfr.md` §3 reads live bytes against the
+reserved budget; contour at 16/24 settles at r_full 12 to 13 under 3 GB. Page fragmentation with attribute pages is its open followup.
+
+Plan 0021 closed 2026-10-20 (v0.18.0): a `Full` brick is a packed occupancy mask, an ascending
+palette and bit planes in five fixed classes (ADR-0012's CPU-format step), edits are word
+operations with popcount tallies, and the hot readers read masks natively. On the dev box,
+resident chunks at the streamed defaults fell from 3.24 to 0.44 GB, and peak RSS from 3.87 to
+about 1.0 GB. The mirror bytes did not move, and neither did any pinned hash. The
+size-classed mirror slot plan is next in ADR-0012's sequence. The residency p95 (611 ms
+against the 500 ms proposal, under load) stays open (owner, 2026-10-20): a quiet-box re-read
+is owed once the parallel lanes stop.
+
+Plan 0013 closed 2026-10-20 (v0.19.0): contour with detail (rock `[4.0, 0.1]`) is the
+fly-through's default and `--look plain` keeps face mode. A plane hit's shadow ray leaves along
+the plane normal (specks 52 against face mode's 169). The footprint is not reduced: the pressure
+rule holds the default at r_full 12 to 13 under 3 GB, and surface-only attribute storage is
+ADR-0012's mirror-slot plan (ADR-0011 Outcome). The default's march at the settled streamed
+spawn is 2.28 ms against face's 2.13. Its attribute pass under motion misses the plan's
+proposals: GPU p99 4.3 ms, and render-thread p99 139 to 167 ms, a visible hitch. These are
+diagnostic readings. The hitch is open and is owed before the lighting plan, with the
+streaming-CPU plan. A quiet-box re-read (2796062, 2026-10-20) confirmed it: render-thread p99
+138 to 180 ms, and the default flies 35 to 47 % fewer frames than plain. The owner confirmed it
+owed before the lighting plan the same day.
+
 Plan 0005 closed 2026-10-16 (v0.4.0): the surface-look spike measured four normal modes and
 procedural detail, and the owner chose per-voxel contour planes with weaker rock detail
-(ADR-0011). The fly-through's default stays face normals until a surface follow-up plan fixes
-contour's shadow-ray origin and fits its streamed footprint, which ran the 8 GiB dev card out
-of memory at the default radius; Plan 0005's "Follow-up items" list the work. Plan 0013
-(approved) is that follow-up: the shadow-ray origin, a footprint chosen by measurement and recorded
-in its own ADR, the owner's rock detail, then contour plus detail as the default. The lighting
-plan is not drafted yet.
+(ADR-0011); Plan 0013 made it the default. The lighting plan is not drafted yet.
 
 **Goal:** the consumer's P0 rendering bar. Few lights, emissive voxels, destruction, no ghosting.
 The quality reference is the Sibenik cathedral in Laine & Karras 2010, Figure 1. That image is
@@ -265,7 +287,7 @@ work), and the light (real-time GI standing in for the baked occlusion).
   carve, with a stated SSIM floor against the reference.
 - **Budgets:** the full frame at 1080p output on the baseline GPU.
 - **ADRs expected:** denoiser family; upscaler choice. Surface representation: ADR-0011; its
-  streamed footprint: ADR-0012 (final, surface-only); Plan 0013 builds the interim radius 14.
+  streamed footprint: ADR-0012 (final, surface-only); until then the pressure rule's radius.
 
 ### M3: Collision, character controller, coarse grids (Plan 0004; done 2026-10-17)
 
@@ -311,18 +333,26 @@ controller (ADR-0005's Outcome addendum). Plan 0009 (collapse) is unblocked.
 Plan 0007 closed 2026-10-17 (v0.10.0): `vxe-net` (byte channel, server tick, shared and
 owned clients with desync detection), `vxe-world`'s op and input logs, log file and wire, and
 the fly-through's digs, fills and bench through a server, saved and replayed under `--level`
-(ADR-0007, accepted). Followup from the close: op kinds 2 to 4 (stamp, drop, remove) in
-`Op`, the wire and `Host`, with the fly-through's stamp and collapse moving into `DigLogic`, so
-a saved session no longer refuses them; a stamp entry needs a prefab reference the log can
-name, likely an ADR. Plan 0016 (closed 2026-10-18, v0.13.0) replaced fail-stop with a capped
+(ADR-0007, accepted). Plan 0018 (closed 2026-10-20, v0.15.0) completed the split for
+every op: stamp, drop and remove are op kinds 2 to 4 through `submit`, the log, `Host::apply`
+and the owned client's check. A stamp names its prefab by content id and a save carries the
+prefabs it names (ADR-0014, `LOG_FORMAT` 2). The server keeps a coarse grid and answers
+`Host::unsupported`, and the fly-through's `P` and collapse run in `DigLogic`, saved and
+replayed. Plan 0016 (closed 2026-10-18, v0.13.0) replaced fail-stop with a capped
 restart from the seed (ADR-0010's Outcome addendum).
+Plan 0019 (closed 2026-10-20, v0.16.0) bounded and metered host-call work: `vxe-world`
+refuses out-of-range shapes, rays, box queries and region lists per world (`WorldLimits`,
+`EditError::OutOfRange`), and the host charges each import's work to the tick's fuel at
+`WorkRates`, list arguments by their bytes before any host work (ADR-0010's second Outcome
+addendum).
 
 Plan 0011 closed 2026-10-17 (v0.11.0): `vxe-script-wasm` hosts a logic component under
 deterministic WASI (clocks fixed to the tick, always-ready timers, seeded entropy), fuel per
 call and a total memory cap, and stops a logic after its first failed call (ADR-0010,
 accepted). The fly-through's dig logic (`flythrough-logic`) runs natively or, with
 `--features wasm` and `--logic wasm`, as a component, to the same hash. Followups from the
-close: bounded or metered host-call work, with `vxe-world` range checks on shapes; a component
+close: bounded or metered host-call work, with `vxe-world` range checks on shapes (done in
+Plan 0019); a component
 hash and the `WasmConfig` in the log header; batched query imports; a per-call measurement of
 a cheap query.
 
@@ -356,8 +386,8 @@ a cheap query.
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane
   (`criterion` for CPU, timestamp queries for GPU) with readings committed per named machine.
-- Follow-up: once Plan 0007 closes, the runtime stamp goes through `Server` as op kind 2
-  (reserved there), so a stamp is a logged, replayable op like an edit.
+- The runtime stamp is op kind 2 through `Server`, logged and replayed like an edit (Plan
+  0018, v0.15.0).
 
 ### M8: Volumetrics, debris and collapse (support query and collapse ops shipped in Plan 0009, v0.8.0; volumetrics, debris and the cosmetic rigid-body layer remain open, the last after M6)
 
@@ -379,9 +409,9 @@ a cheap query.
   bit-identical on both CI arms. A second op removes an unsupported region outright and fills
   the cells below with a rubble material. The game picks one per region from the support
   query's answer. Both are ordinary ops: they return per-material counts and the touched
-  region, and replicate through M5's log once they are wired as op kinds 3 and 4 (a
-  followup of Plan 0009). Shipped in Plan 0009 as `World::drop_region` and
-  `World::remove_region`.
+  region, and replicate through M5's log as op kinds 3 and 4. Shipped in Plan 0009 as
+  `World::drop_region` and `World::remove_region`, and logged since Plan 0018 (v0.15.0), where
+  the logic asks `Host::unsupported` and issues the drops or removals.
 - **Stress (open; owner's call, 2026-10-17):** overhangs fail by span and weight, not only
   when the support query finds them disconnected. The owner's windowed test of v0.12.0
   found collapse rarely triggers in the cave, because a cell one eighth solid still bears

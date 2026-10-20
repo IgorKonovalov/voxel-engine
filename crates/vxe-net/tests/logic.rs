@@ -24,11 +24,11 @@ struct Probe(Arc<std::sync::Mutex<Vec<String>>>);
 impl Logic for Probe {
     fn init(&mut self, host: &mut dyn Host, _seed: u64) {
         let mut out = self.0.lock().unwrap();
-        let r = host.apply(EditOp::sphere(
+        let r = host.apply(Op::Edit(EditOp::sphere(
             centre_of_voxel([0, 0, 0]),
             10 * FIXED_ONE,
             Mode::Carve,
-        ));
+        )));
         out.push(format!("{r:?}"));
         out.push(format!("{:?}", host.material_at(VoxelCoord([0, 0, 0]))));
         out.push(format!("{:?}", host.material_at(VoxelCoord([0, 0, 11]))));
@@ -61,7 +61,10 @@ fn host_queries_answer_from_the_server_world() {
         Mode::Carve,
     ));
     assert_eq!(r.as_ref().unwrap().changed_from, [(3, 4169)]);
-    let hit = reference.raycast(centre_of_voxel([0, 0, 0]), [256, 0, 0], 40 * 256);
+    let r = r.map(OpResult::Edit);
+    let hit = reference
+        .raycast(centre_of_voxel([0, 0, 0]), [256, 0, 0], 40 * 256)
+        .unwrap();
     assert_eq!(hit.unwrap().voxel, VoxelCoord([11, 0, 0]));
     let want = vec![
         format!("{r:?}"),
@@ -71,7 +74,9 @@ fn host_queries_answer_from_the_server_world() {
         format!("{hit:?}"),
         format!(
             "{:?}",
-            reference.count_in_box([-12, -12, -12], [12, 12, 12])
+            reference
+                .count_in_box([-12, -12, -12], [12, 12, 12])
+                .unwrap()
         ),
     ];
     assert_eq!(*seen.lock().unwrap(), want);
@@ -132,6 +137,7 @@ fn echo_logic_applies_inputs_in_order_and_resimulates_to_equal_bytes() {
         fresh.clone(),
         Box::new(EchoLogic),
         0,
+        &PrefabRegistry::new(),
         server.ops(),
         server.inputs(),
     );
@@ -185,6 +191,7 @@ fn seeded_logic_resimulates_from_its_seed_and_a_different_seed_differs() {
         same.clone(),
         Box::new(SeededLogic::default()),
         7,
+        &PrefabRegistry::new(),
         server.ops(),
         server.inputs(),
     );
@@ -196,6 +203,7 @@ fn seeded_logic_resimulates_from_its_seed_and_a_different_seed_differs() {
         other.clone(),
         Box::new(SeededLogic::default()),
         8,
+        &PrefabRegistry::new(),
         server.ops(),
         server.inputs(),
     );
@@ -255,7 +263,14 @@ fn a_refused_host_apply_is_announced_not_logged_and_returned_to_the_logic() {
 
     // Re-simulation reproduces the gap the refused op left.
     let fresh = Arc::new(solid3_world());
-    let ops = Server::resimulate(fresh, Box::new(EchoLogic), 0, server.ops(), server.inputs());
+    let ops = Server::resimulate(
+        fresh,
+        Box::new(EchoLogic),
+        0,
+        &PrefabRegistry::new(),
+        server.ops(),
+        server.inputs(),
+    );
     assert_eq!(ops.encode(), server.ops().encode());
 }
 
@@ -320,7 +335,7 @@ fn submitted_ops_interleave_with_the_logic_and_resimulate_to_equal_bytes() {
         .entries()
         .iter()
         .filter(|e| e.tick() == 3)
-        .copied()
+        .cloned()
         .collect();
     let seqs: Vec<(u32, bool)> = tick3.iter().map(|e| (e.seq(), e.op().is_some())).collect();
     let mut want: Vec<(u32, bool)> = vec![(30, true), (31, true), (33, true), (34, true)];
@@ -364,7 +379,7 @@ fn submitted_ops_interleave_with_the_logic_and_resimulate_to_equal_bytes() {
         .find_map(|e| match e {
             Event::Applied {
                 seq: 36, result, ..
-            } => Some(result.changed_from.clone()),
+            } => Some(result.edit_result().changed_from),
             _ => None,
         })
         .unwrap();
@@ -376,6 +391,7 @@ fn submitted_ops_interleave_with_the_logic_and_resimulate_to_equal_bytes() {
         fresh.clone(),
         Box::new(EchoLogic),
         0,
+        &PrefabRegistry::new(),
         server.ops(),
         server.inputs(),
     );
@@ -388,6 +404,7 @@ fn submitted_ops_interleave_with_the_logic_and_resimulate_to_equal_bytes() {
         fresh.clone(),
         Box::new(EchoLogic),
         0,
+        &PrefabRegistry::new(),
         &OpLog::new(),
         server.inputs(),
     );
@@ -400,11 +417,11 @@ struct InitThenEcho;
 impl Logic for InitThenEcho {
     fn init(&mut self, host: &mut dyn Host, _seed: u64) {
         for x in [-40, 40] {
-            host.apply(EditOp::sphere(
+            host.apply(Op::Edit(EditOp::sphere(
                 centre_of_voxel([x, 0, 0]),
                 METRE,
                 Mode::Carve,
-            ))
+            )))
             .unwrap();
         }
     }
@@ -453,6 +470,7 @@ fn submissions_at_tick_0_after_init_ops_and_a_refused_only_tick_resimulate() {
         fresh.clone(),
         Box::new(InitThenEcho),
         0,
+        &PrefabRegistry::new(),
         server.ops(),
         server.inputs(),
     );

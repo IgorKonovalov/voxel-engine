@@ -8,9 +8,9 @@ mod support;
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
 use flythrough::cave_materials;
 use vxe_render::gpu_world::{
-    ABSENT, BITS_WORDS, EMPTY_BIT, ENTRY_WORD, FULL_BIT, LOD_BIT, MASK_GROUP_WORDS, PALETTE_WORD,
-    RECORD_BYTES, RECORD_MASK, RECORD_WORDS, SLOT_BYTES, SLOT_MASK, opaque_mask_word,
-    translucent_mask_word,
+    ABSENT, BITS_WORDS, EMPTY_BIT, ENTRY_WORD, FULL_BIT, LOD_BIT, MASK_GROUP_WORDS, PAGE_BYTES,
+    PALETTE_WORD, PLACEHOLDER_BYTES, RECORD_BYTES, RECORD_MASK, RECORD_WORDS, SLOT_BYTES,
+    SLOT_MASK, opaque_mask_word, translucent_mask_word,
 };
 use vxe_render::{GpuWorld, MirrorConfig, Window, readback, wgpu};
 use vxe_world::*;
@@ -21,6 +21,17 @@ fn level() -> (World, CaveSource) {
         World::generate(source.extent, &source, &cave_materials()),
         source,
     )
+}
+
+/// The reservation the level's mirrors make: 256 MiB.
+const LEVEL_BUDGET: u64 = 256 << 20;
+
+/// A fixed window over the level's extent reserving [`LEVEL_BUDGET`].
+fn level_config(world: &World) -> MirrorConfig {
+    MirrorConfig {
+        budget_bytes: LEVEL_BUDGET,
+        ..MirrorConfig::new(Window::Fixed(world.extent()))
+    }
 }
 
 /// The software adapter with limits for the level's pool.
@@ -35,7 +46,7 @@ fn the_first_sync_issues_at_most_three_writes_per_chunk() {
     let Some((device, queue)) = device(&world) else {
         return;
     };
-    let mut gpu = GpuWorld::new(&device, world.extent());
+    let mut gpu = GpuWorld::with_config(&device, level_config(&world));
     gpu.set_focus(source.spawn());
     let st = gpu.sync(&world, &queue).unwrap();
     println!(
@@ -55,11 +66,25 @@ fn the_first_sync_issues_at_most_three_writes_per_chunk() {
     assert_eq!(gpu.wide_chunks(), 0);
     assert_eq!(RECORD_BYTES, 2624);
     assert!(gpu.records().size() >= 3200 * RECORD_BYTES);
+    let rows = cave_materials().len() as u64;
+    assert_eq!(gpu.materials().size(), rows * 64);
     assert_eq!(
         gpu.mirror_bytes(),
-        383_608 * (512 + 72) + 3200 * 2624 + 3200 * 4 + gpu.materials().size()
+        383_608 * (512 + 72) + 3200 * 2624 + 3200 * 4 + rows * 64
     );
-    println!("mirror bytes {}", gpu.mirror_bytes());
+    // The 256 MiB reservation holds it: the budget rounded down to whole pages after the
+    // extent's 3200 records, unchanged by the sync.
+    assert_eq!(gpu.reserved_records(), 3200);
+    assert_eq!(gpu.allocated_bytes(), gpu.shard_layout().reserved_bytes());
+    assert!(gpu.allocated_bytes() <= LEVEL_BUDGET);
+    assert!(LEVEL_BUDGET - gpu.allocated_bytes() < PAGE_BYTES + PLACEHOLDER_BYTES);
+    assert_eq!(st.buffers_created, 0);
+    assert_eq!(st.copies, 0);
+    println!(
+        "mirror bytes {} live, {} allocated",
+        gpu.mirror_bytes(),
+        gpu.allocated_bytes()
+    );
 }
 
 #[test]
@@ -79,6 +104,8 @@ fn every_budgeted_sync_writes_at_most_the_budget_plus_one_chunk() {
             window: Window::Fixed(world.extent()),
             sync_budget_bytes: BUDGET,
             max_shard_slots: None,
+            budget_bytes: LEVEL_BUDGET,
+            record_chunks: None,
         },
     );
     gpu.set_focus(source.spawn());
@@ -125,7 +152,7 @@ fn the_level_spreads_over_two_shards_on_the_software_adapter() {
     let Some((device, queue)) = device(&world) else {
         return;
     };
-    let mut gpu = GpuWorld::new(&device, world.extent());
+    let mut gpu = GpuWorld::with_config(&device, level_config(&world));
     let layout = gpu.shard_layout();
     println!("layout {layout:?}");
     assert_eq!(device.limits().max_storage_buffer_binding_size, 128 << 20);
@@ -195,7 +222,7 @@ fn the_level_s_brick_bits_and_empty_bits_match_its_bricks() {
     let Some((device, queue)) = device(&world) else {
         return;
     };
-    let mut gpu = GpuWorld::new(&device, world.extent());
+    let mut gpu = GpuWorld::with_config(&device, level_config(&world));
     gpu.set_focus(source.spawn());
     gpu.sync(&world, &queue).unwrap();
     let words = |b: &wgpu::Buffer| -> Vec<u32> {
@@ -240,7 +267,7 @@ fn the_level_s_opaque_masks_are_its_solid_bits() {
     let Some((device, queue)) = device(&world) else {
         return;
     };
-    let mut gpu = GpuWorld::new(&device, world.extent());
+    let mut gpu = GpuWorld::with_config(&device, level_config(&world));
     gpu.set_focus(source.spawn());
     gpu.sync(&world, &queue).unwrap();
     assert_eq!(gpu.live_mask_bytes(), 72 * 383_608);

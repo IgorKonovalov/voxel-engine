@@ -910,11 +910,10 @@ fn value_noise(p: vec3<f32>) -> vec4<f32> {
 const DETAIL_TILT: f32 = 4.0;
 
 // Procedural detail at world point `p` (voxels) on a surface of normal `n`: two octaves of
-// value noise at feature scale `scale` and `scale / 2`, weights 1 and 1/2. Returns the normal
-// tilted against the noise's tangential gradient (in feature units) times `strength` and
-// `DETAIL_TILT`, and the
-// albedo factor `1 + strength (2 v - 1)` for the noise value `v` in [0, 1). A pure function of
-// `p`, so a wall point shades the same from any camera.
+// value noise at feature scale `scale` and `scale / 2`, weights 1 and 1/2. It returns the
+// normal tilted against the noise's tangential gradient (in feature units) times `strength`
+// and `DETAIL_TILT`, and the albedo factor `1 + strength (2 v - 1)` for the noise value `v` in
+// [0, 1). It is a pure function of `p`, so a wall point shades the same from any camera.
 fn detail(p: vec3<f32>, n: vec3<f32>, scale: f32, strength: f32) -> vec4<f32> {
     let q = p / scale;
     let o1 = value_noise(q);
@@ -927,10 +926,22 @@ fn detail(p: vec3<f32>, n: vec3<f32>, scale: f32, strength: f32) -> vec4<f32> {
     return vec4<f32>(tilted, 1.0 + strength * (2.0 * v - 1.0));
 }
 
+// How far off the hit the shadow ray starts, in voxels, along `shadow_normal`.
+const SHADOW_OFFSET: f32 = 0.5;
+
+// The direction the shadow ray of hit `h` leaves along: the plane normal of a contour-plane
+// hit, whose point lies inside its voxel's cube, so that the face normal would start the ray
+// inside neighbouring rock; the face normal of any cube hit. The undetailed normal in both
+// cases: the offset is a robustness step out of the surface, not part of the look.
+fn shadow_normal(d: vec3<f32>, h: Hit) -> vec3<f32> {
+    if (h.plane) {
+        return h.n;
+    }
+    return face_normal(d, h);
+}
+
 fn shade(o: vec3<f32>, d: vec3<f32>, h: Hit, n: vec3<f32>, tint: f32) -> vec3<f32> {
-    // The shadow ray leaves along the face normal in every mode: it is a robustness offset
-    // out of the hit voxel, not part of the look.
-    let nf = face_normal(d, h);
+    let ns = shadow_normal(d, h);
     let p = o + d * h.t;
     let albedo = materials[h.material * 4u].xyz * tint;
     let to_light = params.light_pos - p;
@@ -939,10 +950,10 @@ fn shade(o: vec3<f32>, d: vec3<f32>, h: Hit, n: vec3<f32>, tint: f32) -> vec3<f3
     let ndl = max(dot(n, l), 0.0);
     let cone = smoothstep(params.cos_outer, params.cos_inner, dot(-l, params.light_dir));
     var lit = params.light_intensity * cone * ndl / dist2;
-    // One shadow ray, from half a voxel off the face toward the lamp; any rock before the lamp
-    // removes its light.
+    // One shadow ray, from `SHADOW_OFFSET` off the surface toward the lamp; any rock before
+    // the lamp removes its light.
     if ((params.flags & FLAG_SHADOWS) != 0u && lit > 0.0) {
-        let s = march(p + nf * 0.5, l, sqrt(dist2));
+        let s = march(p + ns * SHADOW_OFFSET, l, sqrt(dist2));
         if (s.found) {
             lit = 0.0;
         }

@@ -509,7 +509,10 @@ fn removing_the_slab_piles_a_quarter_of_it_as_rubble_on_the_floor() {
         Some((VoxelCoord([24, 24, 8]), VoxelCoord([47, 47, 47])))
     );
     // `count_in_box` takes inclusive bounds: the half-open box [24, 24, 8]..[48, 48, 10].
-    assert_eq!(world.count_in_box([24, 24, 8], [47, 47, 9]), [(7, 1152)]);
+    assert_eq!(
+        world.count_in_box([24, 24, 8], [47, 47, 9]).unwrap(),
+        [(7, 1152)]
+    );
     assert_eq!(
         world.voxel_hash(),
         direct(&[(FLOOR.0, FLOOR.1, 3), ([24, 24, 8], [48, 48, 10], 7)])
@@ -742,4 +745,128 @@ fn the_collapse_course_hashes_to_its_pinned_constant() {
 
     // Blessed on the dev box (Linux); asserted on the Windows CI arm as well.
     assert_eq!(h.0, 0x3178_0a15_61c1_3041, "course hash {:#018x}", h.0);
+}
+
+/// The cubes world of the edit tests, dressed by seeded edits so its bricks hold one to four
+/// materials (an indestructible 4 among them), built twice for the two paths.
+fn dressed_cubes() -> World {
+    let world = cubes_world();
+    let mut rng = SplitMix64(0x0021_0008);
+    for i in 0..120 {
+        let c = [0; 3].map(|_| rng.range(-100, 99) * FIXED_ONE);
+        let r = rng.range(2 * FIXED_ONE, 9 * FIXED_ONE);
+        let mode = match i % 4 {
+            0 => Mode::Carve,
+            1 => Mode::Fill(2),
+            2 => Mode::Replace { from: 1, to: 4 },
+            _ => Mode::Fill(3),
+        };
+        world.apply(&EditOp::sphere(Fixed3(c), r, mode)).unwrap();
+    }
+    world
+}
+
+fn assert_same_bricks(a: &World, b: &World, what: &str) {
+    assert_eq!(a.store().coords(), b.store().coords(), "{what}");
+    for c in a.store().coords() {
+        let x = a.store().get(c).unwrap();
+        let y = b.store().get(c).unwrap();
+        let (x, y) = (x.read().unwrap(), y.read().unwrap());
+        for slot in 0..CHUNK_BRICKS {
+            assert_eq!(x.brick(slot), y.brick(slot), "{what}: {c:?} slot {slot}");
+        }
+    }
+}
+
+/// `drop_region` and `remove_region` on 64 seeded regions of the dressed cubes world, each
+/// through the native path (layer words and palette merges) on one copy and through decoded
+/// voxels on another: equal results and equal bricks after every op.
+#[test]
+fn the_native_collapse_matches_the_decoded_one() {
+    let (native, decoded) = (dressed_cubes(), dressed_cubes());
+    assert_same_bricks(&native, &decoded, "before");
+    let mut rng = SplitMix64(0x0021_0009);
+    let mut moved = 0;
+    for i in 0..64 {
+        let at = [0; 3].map(|_| rng.range(-14, 12) as i32);
+        let size = [0; 3].map(|_| rng.range(1, 3) as i32);
+        let mut cells = Vec::new();
+        for z in 0..size[2] {
+            for y in 0..size[1] {
+                for x in 0..size[0] {
+                    cells.push(CellCoord([at[0] + x, at[1] + y, at[2] + z]));
+                }
+            }
+        }
+        if i % 2 == 0 {
+            let drop = rng.range(1, 20) as i32;
+            let a = native.drop_region(&cells, drop);
+            let b = decoded.drop_region_decoded(&cells, drop);
+            assert_eq!(a, b, "op {i}: drop {cells:?} by {drop}");
+            moved += usize::from(a.is_ok_and(|r| r.dropped > 0));
+        } else {
+            let a = native.remove_region(&cells, 5, (1, 4), 24);
+            let b = decoded.remove_region_decoded(&cells, 5, (1, 4), 24);
+            assert_eq!(a, b, "op {i}: remove {cells:?}");
+            moved += usize::from(a.is_ok_and(|r| !r.removed.is_empty()));
+        }
+        assert_same_bricks(&native, &decoded, &format!("after op {i}"));
+    }
+    println!("{moved} of 64 ops moved or removed voxels");
+    assert!(moved >= 30, "{moved} ops did something");
+}
+
+/// `n` distinct cells: the slab's cells first, then cells counting up along x past them.
+fn many_cells(n: usize) -> Vec<CellCoord> {
+    (0..n)
+        .map(|i| {
+            let i = i as i32;
+            CellCoord([i % 16, (i / 16) % 16, i / 256])
+        })
+        .collect()
+}
+
+/// A drop or a removal naming more than `region_cells_max` (4 096) cells is refused before
+/// any scan and changes nothing; 4 096 cells pass the check (and here fail on residency, the
+/// cells reaching past the fixture's one chunk).
+#[test]
+fn region_ops_over_the_cell_cap_are_refused() {
+    let world = fixture();
+    assert_eq!(world.limits().region_cells_max, 4096);
+    let before = world.voxel_hash();
+    let refused = Err(EditError::OutOfRange {
+        what: Field::RegionCells,
+    });
+    assert_eq!(world.drop_region(&many_cells(4097), 8), refused);
+    assert_eq!(
+        world.remove_region(&many_cells(4097), 5, (1, 4), 16),
+        refused.map(|_: DropResult| RemoveResult::default())
+    );
+    assert_eq!(world.voxel_hash(), before);
+    assert!(matches!(
+        world.drop_region(&many_cells(4096), 8),
+        Err(EditError::NotResident(_))
+    ));
+    assert!(matches!(
+        world.remove_region(&many_cells(4096), 5, (1, 4), 16),
+        Err(EditError::NotResident(_))
+    ));
+    assert_eq!(world.voxel_hash(), before);
+}
+
+/// The query's step count after the pillar carve. The 4 changed cells `(4, 4, 1..=4)` and
+/// their neighbours deduplicate to 22 candidates: the column `(4, 4, 0..=5)` (6) and the four
+/// side neighbours of each changed cell (16). Ascending, the first load-bearing one is the
+/// floor cell `(4, 4, 0)`, on the extent's face: its flood takes on 1 cell and is anchored.
+/// The next is the slab cell `(4, 4, 5)`, whose flood takes on the 9 slab cells and ends as
+/// the region. The rest are air or settled: `22 + 1 + 9 = 32`.
+#[test]
+fn the_support_query_counts_its_candidates_and_flood_cells() {
+    let (world, grid, changes) = carved();
+    assert_eq!(changes.len(), 4);
+    let (regions, steps) =
+        find_unsupported_with_stats(&world, &grid, &params(), &Anchors::default(), &changes);
+    assert_eq!(regions, query(&world, &grid, params(), &changes));
+    assert_eq!(regions[0].cells, slab_cells());
+    assert_eq!(steps, 32);
 }

@@ -154,3 +154,106 @@ fn capsule_row_span_equals_the_set_of_contained_centres() {
         "{parallel} parallel, {points} points"
     );
 }
+
+const LIMIT: i64 = 1 << 30;
+
+/// The documented range: inclusive at `±2^30` fixed units on every coordinate and radius,
+/// and `2^30` per axis of a capsule's `b - a`. The edit extent is lifted so the other checks
+/// show on their own.
+#[test]
+fn shapes_are_checked_against_the_documented_range() {
+    assert_eq!(WorldLimits::default(), WorldLimits::DEFAULT);
+    let limits = WorldLimits {
+        edit_axis_max: u32::MAX,
+        ..WorldLimits::DEFAULT
+    };
+    let o = Fixed3([0; 3]);
+    let refused = |what| Err(EditError::OutOfRange { what });
+
+    assert_eq!(Shape::Sphere { c: o, r: LIMIT }.check(&limits), Ok(()));
+    assert_eq!(
+        Shape::Sphere { c: o, r: LIMIT + 1 }.check(&limits),
+        refused(Field::Radius)
+    );
+    assert_eq!(
+        Shape::Sphere { c: o, r: i64::MAX }.check(&limits),
+        refused(Field::Radius)
+    );
+    assert_eq!(
+        Shape::Sphere {
+            c: Fixed3([0, LIMIT + 1, 0]),
+            r: 1
+        }
+        .check(&limits),
+        refused(Field::Coord)
+    );
+
+    let box_ = |min: [i64; 3], max: [i64; 3]| Shape::Box_ {
+        min: Fixed3(min),
+        max: Fixed3(max),
+    };
+    assert_eq!(box_([-LIMIT; 3], [LIMIT; 3]).check(&limits), Ok(()));
+    assert_eq!(
+        box_([0; 3], [i64::MIN, 0, 0]).check(&limits),
+        refused(Field::Coord)
+    );
+    // A reversed box is in range; it is empty, not refused.
+    assert_eq!(box_([LIMIT; 3], [-LIMIT; 3]).check(&limits), Ok(()));
+    assert_eq!(box_([LIMIT; 3], [-LIMIT; 3]).voxel_bounds(), None);
+
+    let capsule = |a: [i64; 3], b: [i64; 3], r| Shape::Capsule {
+        a: Fixed3(a),
+        b: Fixed3(b),
+        r,
+    };
+    let half = LIMIT / 2;
+    assert_eq!(capsule([-half; 3], [half; 3], LIMIT).check(&limits), Ok(()));
+    assert_eq!(
+        capsule([-LIMIT, 0, 0], [LIMIT, 0, 0], 256).check(&limits),
+        refused(Field::CapsuleLength)
+    );
+    assert_eq!(
+        capsule([0; 3], [0, 0, LIMIT + 1], 256).check(&limits),
+        refused(Field::Coord)
+    );
+    assert_eq!(
+        capsule([0; 3], [256; 3], LIMIT + 1).check(&limits),
+        refused(Field::Radius)
+    );
+
+    // Under the default limits the same in-range sphere is refused for its extent.
+    assert_eq!(
+        Shape::Sphere { c: o, r: LIMIT }.check(&WorldLimits::DEFAULT),
+        refused(Field::EditExtent)
+    );
+}
+
+/// The extreme accepted capsule (ends `[-2^29; 3]` and `[2^29; 3]`, radius `2^30`): the
+/// inside test and the row solver on the eight corner centres of its voxel bounds and on its
+/// midpoint run without `i128` overflow (this test panics on overflow in a debug build);
+/// the midpoint is inside and the corners are outside.
+#[test]
+fn the_extreme_accepted_capsule_does_not_overflow() {
+    let half = LIMIT / 2;
+    let shape = Shape::Capsule {
+        a: Fixed3([-half; 3]),
+        b: Fixed3([half; 3]),
+        r: LIMIT,
+    };
+    let limits = WorldLimits {
+        edit_axis_max: u32::MAX,
+        ..WorldLimits::DEFAULT
+    };
+    assert_eq!(shape.check(&limits), Ok(()));
+    let (lo, hi) = shape.voxel_bounds().unwrap();
+    let check = |v: [i64; 3], inside: bool| {
+        assert_eq!(shape.contains(v.map(centre)), inside, "{v:?}");
+        let span = shape.row_span(v[1], v[2], v[0], v[0]);
+        assert_eq!(span, inside.then_some((v[0], v[0])), "{v:?}");
+    };
+    for i in 0..8 {
+        let v = [0, 1, 2].map(|k| if i >> k & 1 == 0 { lo[k] } else { hi[k] });
+        check(v, false);
+    }
+    check([0, 1, 2].map(|k| (lo[k] + hi[k]).div_euclid(2)), true);
+}

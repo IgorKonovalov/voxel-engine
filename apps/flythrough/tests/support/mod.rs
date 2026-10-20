@@ -78,6 +78,7 @@ pub fn scene_carve(world: &World) -> EditOp {
     let o = centre_of_voxel(scene_source().spawn());
     let hit = world
         .raycast(o, [FIXED_ONE, 0, 0], 400 * FIXED_ONE)
+        .expect("the view ray is in range")
         .expect("the view ray meets rock inside the shell");
     EditOp::sphere(
         Fixed3([o.0[0] + hit.t, o.0[1], o.0[2]]),

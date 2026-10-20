@@ -13,7 +13,7 @@ use std::ptr::NonNull;
 
 use vxe_net::{ClientInput, Host, Logic, LogicError, TickOutput};
 use vxe_world::wire::{Reader, decode_op};
-use vxe_world::{Face, Fixed3, Op, VoxelCoord};
+use vxe_world::{CellCoord, EditError, Face, Fixed3, MaterialId, Op, OpResult, Region, VoxelCoord};
 use wasmtime::StoreContextMut;
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Engine, ResourceLimiter, Store, Trap};
@@ -44,6 +44,8 @@ pub struct WasmConfig {
     /// Fresh instances started after a failure before the logic stops for good; 0 is
     /// fail-stop.
     pub max_restarts: u32,
+    /// The fuel each host import is charged for the work it did.
+    pub rates: WorkRates,
 }
 
 impl Default for WasmConfig {
@@ -53,7 +55,96 @@ impl Default for WasmConfig {
             memory_bytes: 64 << 20,
             frame_ns: 16_666_667,
             max_restarts: 8,
+            rates: WorkRates::DEFAULT,
         }
+    }
+}
+
+/// The fuel a host import is charged, on top of the guest's own instructions.
+///
+/// Before any host work, the imports that take a list are charged `per_byte` for each byte
+/// of it: `apply` its op bytes, `unsupported` 12 per changed cell. After the call returns:
+/// every call `per_call`; `apply` also `per_voxel` for each voxel in the op's bounds (an
+/// edit's shape bounds, a stamp's or a region op's changed bounds) and `64 x per_voxel` for
+/// each chunk it touched; `raycast` `per_step` for each step of its walk; `count_in_box`
+/// `per_voxel` for each voxel it counted; `unsupported` `per_step` for each cell the support
+/// query looked at. A refused or undecodable call is charged its bytes and `per_call` only.
+/// The steps come from the lent host's stats (`Host::raycast_with_steps`,
+/// `Host::unsupported_with_steps`); a host that does not report them is charged none. A
+/// charge past the fuel left ends the call as [`LogicError::Fuel`], as an instruction
+/// overrun does. Every charge comes from integer counts the world produces, so it is the
+/// same on every machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorkRates {
+    pub per_voxel: u64,
+    pub per_step: u64,
+    pub per_call: u64,
+    pub per_byte: u64,
+}
+
+impl WorkRates {
+    /// 10 per voxel, 10 per step, 100 per call, 1 per argument byte.
+    pub const DEFAULT: Self = Self {
+        per_voxel: 10,
+        per_step: 10,
+        per_call: 100,
+        per_byte: 1,
+    };
+
+    /// No charge: the guest's instructions alone use fuel.
+    pub const ZERO: Self = Self {
+        per_voxel: 0,
+        per_step: 0,
+        per_call: 0,
+        per_byte: 0,
+    };
+
+    /// The charge for an `apply` of `op` that gave `result`.
+    pub fn apply_cost(&self, op: &Op, result: &Result<OpResult, EditError>) -> u64 {
+        let Ok(r) = result else {
+            return self.per_call;
+        };
+        let bounds = match op {
+            Op::Edit(e) => e.shape.voxel_bounds(),
+            _ => r
+                .aabb()
+                .map(|(lo, hi)| (lo.0.map(i64::from), hi.0.map(i64::from))),
+        };
+        let voxels = bounds.map_or(0, |(lo, hi)| {
+            (0..3)
+                .map(|k| hi[k].abs_diff(lo[k]).saturating_add(1))
+                .fold(1u64, u64::saturating_mul)
+        });
+        let chunks = r.edit_result().touched.len() as u64;
+        self.per_call.saturating_add(
+            self.per_voxel
+                .saturating_mul(voxels.saturating_add(chunks.saturating_mul(64))),
+        )
+    }
+
+    /// The charge, before any host work, for an argument list of `bytes` bytes.
+    pub fn bytes_cost(&self, bytes: usize) -> u64 {
+        self.per_byte
+            .saturating_mul(u64::try_from(bytes).unwrap_or(u64::MAX))
+    }
+
+    /// The charge for a `raycast` or an `unsupported` whose work took `steps`.
+    pub fn steps_cost(&self, steps: u64) -> u64 {
+        self.per_call
+            .saturating_add(self.per_step.saturating_mul(steps))
+    }
+
+    /// The charge for a `count_in_box` that returned `counts`.
+    pub fn count_cost(&self, counts: &[(MaterialId, u64)]) -> u64 {
+        let voxels = counts.iter().fold(0u64, |n, &(_, c)| n.saturating_add(c));
+        self.per_call
+            .saturating_add(self.per_voxel.saturating_mul(voxels))
+    }
+}
+
+impl Default for WorkRates {
+    fn default() -> Self {
+        Self::DEFAULT
     }
 }
 
@@ -150,6 +241,22 @@ fn fixed3(p: wit::Fixed3) -> Fixed3 {
     Fixed3([p.x, p.y, p.z])
 }
 
+fn wit_region(g: Region) -> wit::Region {
+    wit::Region {
+        cells: g
+            .cells
+            .into_iter()
+            .map(|c| {
+                let [x, y, z] = c.0;
+                wit::Cell { x, y, z }
+            })
+            .collect(),
+        counts: g.counts,
+        lo: wit_voxel(g.aabb.0),
+        hi: wit_voxel(g.aabb.1),
+    }
+}
+
 fn wit_face(f: Face) -> wit::Face {
     match f {
         Face::NegX => wit::Face::NegX,
@@ -161,10 +268,10 @@ fn wit_face(f: Face) -> wit::Face {
     }
 }
 
-/// Runs one host import's call. A panic in it (the world asserting on parameters the guest
-/// chose, such as a shape whose fixed-point math overflows) becomes an error, so the call
-/// traps and the logic stops instead of the panic unwinding through wasmtime into the
-/// server. The world refusing out-of-range shapes with an error is a vxe-world follow-up.
+/// Runs one host import's call. A panic in it (a bug in the host or the world; parameters
+/// out of the world's range are refused, not panicked on) becomes an error, so the call
+/// traps and the logic fails instead of the panic unwinding through wasmtime into the
+/// server.
 fn guarded<R>(call: impl FnOnce() -> wasmtime::Result<R>) -> wasmtime::Result<R> {
     match catch_unwind(AssertUnwindSafe(call)) {
         Ok(r) => r,
@@ -179,48 +286,103 @@ fn guarded<R>(call: impl FnOnce() -> wasmtime::Result<R>) -> wasmtime::Result<R>
     }
 }
 
-impl wit::Host for State {
-    fn apply(&mut self, op: Vec<u8>) -> wasmtime::Result<Vec<u8>> {
-        guarded(|| {
-            let host = self.host()?;
-            let mut r = Reader::new(&op);
-            let op = match decode_op(&mut r) {
-                Ok(op) if r.is_empty() => op,
-                _ => return Ok(vec![ANSWER_UNDECODABLE]),
-            };
-            let Op::Edit(op) = op;
-            Ok(encode_answer(&host.apply(op)))
-        })
-    }
+/// The `host` interface of the `logic` world, as the component imports it.
+const HOST_INTERFACE: &str = "vxe:logic/host@0.1.0";
 
-    fn material_at(&mut self, v: wit::Voxel) -> wasmtime::Result<Option<u16>> {
-        guarded(|| Ok(self.host()?.material_at(voxel(v))))
+/// Takes `cost` from the store's fuel; past the fuel left, the call ends as an out-of-fuel
+/// trap, as an instruction overrun does. A zero cost touches nothing.
+fn charge(store: &mut StoreContextMut<'_, State>, cost: u64) -> wasmtime::Result<()> {
+    if cost == 0 {
+        return Ok(());
     }
+    let left = store.get_fuel()?;
+    match left.checked_sub(cost) {
+        Some(left) => store.set_fuel(left),
+        None => {
+            store.set_fuel(0)?;
+            Err(Trap::OutOfFuel.into())
+        }
+    }
+}
 
-    fn raycast(
-        &mut self,
-        origin: wit::Fixed3,
-        dir: wit::Fixed3,
-        max: i64,
-    ) -> wasmtime::Result<Option<wit::Hit>> {
-        guarded(|| {
-            let hit = self.host()?.raycast(fixed3(origin), fixed3(dir), max);
-            Ok(hit.map(|h| wit::Hit {
+/// Registers the `host` imports. Each runs under [`guarded`] on the lent host, then is
+/// charged at `rates` for the work it did ([`WorkRates`]); the store's fuel is reachable
+/// from a `func_wrap` closure, not from a `bindgen` trait method.
+fn add_host(linker: &mut Linker<State>, rates: WorkRates) -> wasmtime::Result<()> {
+    let mut host = linker.instance(HOST_INTERFACE)?;
+    host.func_wrap(
+        "apply",
+        move |mut store: StoreContextMut<'_, State>, (op,): (Vec<u8>,)| {
+            charge(&mut store, rates.bytes_cost(op.len()))?;
+            let (answer, cost) = guarded(|| {
+                let host = store.data_mut().host()?;
+                let mut r = Reader::new(&op);
+                let op = match decode_op(&mut r) {
+                    Ok(op) if r.is_empty() => op,
+                    _ => return Ok((vec![ANSWER_UNDECODABLE], rates.per_call)),
+                };
+                let result = host.apply(op.clone());
+                Ok((encode_answer(&result), rates.apply_cost(&op, &result)))
+            })?;
+            charge(&mut store, cost)?;
+            Ok((answer,))
+        },
+    )?;
+    host.func_wrap(
+        "material-at",
+        move |mut store: StoreContextMut<'_, State>, (v,): (wit::Voxel,)| {
+            let m = guarded(|| Ok(store.data_mut().host()?.material_at(voxel(v))))?;
+            charge(&mut store, rates.per_call)?;
+            Ok((m,))
+        },
+    )?;
+    host.func_wrap(
+        "raycast",
+        move |mut store: StoreContextMut<'_, State>,
+              (origin, dir, max): (wit::Fixed3, wit::Fixed3, i64)| {
+            let (hit, steps) = guarded(|| {
+                Ok(store
+                    .data_mut()
+                    .host()?
+                    .raycast_with_steps(fixed3(origin), fixed3(dir), max))
+            })?;
+            charge(&mut store, rates.steps_cost(steps))?;
+            Ok((hit.map(|h| wit::Hit {
                 voxel: wit_voxel(h.voxel),
                 face: h.face.map(wit_face),
                 t: h.t,
                 material: h.material,
-            }))
-        })
-    }
-
-    fn count_in_box(
-        &mut self,
-        lo: wit::Voxel,
-        hi: wit::Voxel,
-    ) -> wasmtime::Result<Vec<(u16, u64)>> {
-        guarded(|| Ok(self.host()?.count_in_box(voxel(lo), voxel(hi))))
-    }
+            }),))
+        },
+    )?;
+    host.func_wrap(
+        "count-in-box",
+        move |mut store: StoreContextMut<'_, State>, (lo, hi): (wit::Voxel, wit::Voxel)| {
+            let counts =
+                guarded(|| Ok(store.data_mut().host()?.count_in_box(voxel(lo), voxel(hi))))?;
+            charge(&mut store, rates.count_cost(&counts))?;
+            Ok((counts,))
+        },
+    )?;
+    host.func_wrap(
+        "unsupported",
+        move |mut store: StoreContextMut<'_, State>, (changed,): (Vec<wit::Cell>,)| {
+            charge(
+                &mut store,
+                rates.bytes_cost(changed.len().saturating_mul(12)),
+            )?;
+            let (regions, steps) = guarded(|| {
+                let changed: Vec<CellCoord> = changed
+                    .into_iter()
+                    .map(|c| CellCoord([c.x, c.y, c.z]))
+                    .collect();
+                Ok(store.data_mut().host()?.unsupported_with_steps(&changed))
+            })?;
+            charge(&mut store, rates.steps_cost(steps))?;
+            Ok((regions.into_iter().map(wit_region).collect::<Vec<_>>(),))
+        },
+    )?;
+    Ok(())
 }
 
 /// The `wasi:clocks/monotonic-clock` instance `add_to_linker_sync` registers. A component
@@ -314,11 +476,7 @@ impl WasmLogic {
         let mut linker = Linker::<State>::new(&engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker).map_err(load)?;
         shadow_timers(&mut linker).map_err(load)?;
-        bindings::Logic::add_to_linker::<State, wasmtime::component::HasSelf<State>>(
-            &mut linker,
-            |s| s,
-        )
-        .map_err(load)?;
+        add_host(&mut linker, config.rates).map_err(load)?;
         let pre = linker.instantiate_pre(&component).map_err(load)?;
         let pre = bindings::LogicPre::new(pre).map_err(load)?;
         Ok(Self {
@@ -428,6 +586,14 @@ impl WasmLogic {
                 Err(e)
             }
         }
+    }
+
+    /// The fuel left in the live instance after its last call (`init` or `tick`), or `None`
+    /// when no instance is live (never initialised, or dropped after a failure). Fuel is
+    /// reset to `fuel_per_tick` before each call, so `fuel_per_tick` minus this is what the
+    /// last call used: the guest's instructions and the host imports' charges.
+    pub fn fuel_left(&self) -> Option<u64> {
+        self.live.as_ref().and_then(|l| l.store.get_fuel().ok())
     }
 
     /// The restart the last [`WasmLogic::try_tick`] made, if it made one, cleared by reading

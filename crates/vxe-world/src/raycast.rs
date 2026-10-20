@@ -5,15 +5,18 @@
 //! fractions `num / den` compared by cross-multiplication in `i128`; nothing is divided until
 //! the hit's `t` is reported, rounded down.
 //!
-//! The walk steps through cells of three sizes: a missing chunk is skipped as one 64³ cell, a
-//! `Uniform` air brick as one 8³ cell, and voxels of a `Full` brick one at a time. The first
-//! non-air voxel is the hit.
+//! The walk steps through cells of four sizes: a missing chunk is skipped as one 64³ cell, a
+//! `Uniform` air brick as one 8³ cell, a 2³ block of a `Full` brick whose mask bits are all
+//! clear as one 2³ cell (the CPU twin of the marcher's block skip), and the other voxels of a
+//! `Full` brick one at a time. The first non-air voxel is the hit. The DDA is exact, so a
+//! block's exit lands on the voxel boundary two voxel steps would reach.
 //!
 //! [`World::trace_materials`] walks the same cells through solids as well as air: a missing
-//! chunk is one 64³ cell of air, any `Uniform` brick one 8³ cell of its material, and it
-//! reports the runs of equal material the ray crosses.
+//! chunk is one 64³ cell of air, any `Uniform` brick one 8³ cell of its material, a clear 2³
+//! block one cell of air, and it reports the runs of equal material the ray crosses.
 
 use crate::coords::{BRICK_EDGE, CHUNK_EDGE, VoxelCoord};
+use crate::edit::EditError;
 use crate::fixed::{FIXED_ONE, Fixed3};
 use crate::material::{AIR, MaterialId};
 use crate::store::{World, read};
@@ -79,8 +82,31 @@ enum Cell {
 
 impl World {
     /// The first non-air voxel the ray `origin + dir * t / 256`, `0 <= t <= max_t`, enters.
-    pub fn raycast(&self, origin: Fixed3, dir: [i64; 3], max_t: i64) -> Option<Hit> {
-        self.raycast_exact(origin, dir, max_t).map(|h| h.hit)
+    /// Refused with [`EditError::OutOfRange`] when the origin or the ray's reach lies outside
+    /// the world's [`WorldLimits`](crate::WorldLimits) (`Coord`, `RayLength`).
+    pub fn raycast(
+        &self,
+        origin: Fixed3,
+        dir: [i64; 3],
+        max_t: i64,
+    ) -> Result<Option<Hit>, EditError> {
+        self.raycast_with_stats(origin, dir, max_t)
+            .map(|(hit, _)| hit)
+    }
+
+    /// [`World::raycast`] plus the steps its walk took: one per cell it looked at (a missing
+    /// chunk, a `Uniform` air brick, a clear 2³ block of a `Full` brick or a voxel), the hit's
+    /// cell included. Within the limits
+    /// an empty world's walk takes at most 258 steps along an axis and 772 on a diagonal.
+    pub fn raycast_with_stats(
+        &self,
+        origin: Fixed3,
+        dir: [i64; 3],
+        max_t: i64,
+    ) -> Result<(Option<Hit>, u64), EditError> {
+        self.limits().check_ray(origin, dir, max_t)?;
+        let (hit, steps) = self.raycast_walk(origin, dir, max_t);
+        Ok((hit.map(|h| h.hit), steps))
     }
 
     pub(crate) fn raycast_exact(
@@ -89,6 +115,12 @@ impl World {
         dir: [i64; 3],
         max_t: i64,
     ) -> Option<ExactHit> {
+        self.raycast_walk(origin, dir, max_t).0
+    }
+
+    /// The walk of [`World::raycast_exact`] and the cells it looked at.
+    fn raycast_walk(&self, origin: Fixed3, dir: [i64; 3], max_t: i64) -> (Option<ExactHit>, u64) {
+        let mut steps = 0;
         let o = origin.0.map(i128::from);
         let d = dir.map(i128::from);
         let one = i128::from(FIXED_ONE);
@@ -97,12 +129,13 @@ impl World {
         let mut face = None;
         loop {
             if num > i128::from(max_t) * den {
-                return None;
+                return (None, steps);
             }
             let v = voxel_at(o, d, num, den);
+            steps += 1;
             let size = match self.cell(v) {
                 Cell::Solid(material) => {
-                    return Some(ExactHit {
+                    let hit = ExactHit {
                         hit: Hit {
                             voxel: VoxelCoord(v.map(|c| c as i32)),
                             face,
@@ -111,7 +144,8 @@ impl World {
                         },
                         t_num: num,
                         t_den: den,
-                    });
+                    };
+                    return (Some(hit), steps);
                 }
                 Cell::Empty(size) => i128::from(size),
             };
@@ -131,7 +165,9 @@ impl World {
                     best = Some((n, m, k));
                 }
             }
-            let (n, m, k) = best?;
+            let Some((n, m, k)) = best else {
+                return (None, steps);
+            };
             (num, den) = (n, m);
             face = Some(Face::entered(k, dir[k]));
         }
@@ -200,7 +236,8 @@ impl World {
     }
 
     /// The material at `v` and the edge of the cell sharing it: a missing chunk (air), a
-    /// `Uniform` brick, or one voxel of a `Full` brick.
+    /// `Uniform` brick, a clear 2³ block of a `Full` brick (air), or one voxel of a `Full`
+    /// brick.
     fn material_cell(&self, v: [i64; 3]) -> (MaterialId, i64) {
         let [Ok(x), Ok(y), Ok(z)] = v.map(i32::try_from) else {
             return (AIR, i64::from(CHUNK_EDGE));
@@ -211,10 +248,12 @@ impl World {
         };
         let chunk = read(&chunk);
         let brick = chunk.brick(v.brick_slot());
-        if brick.is_full() {
-            (brick.get(v.index_in_brick()), 1)
-        } else {
+        if !brick.is_full() {
             (brick.get(0), i64::from(BRICK_EDGE))
+        } else if brick.block_clear(local(v)) {
+            (AIR, 2)
+        } else {
+            (brick.get(v.index_in_brick()), 1)
         }
     }
 
@@ -233,11 +272,19 @@ impl World {
         if !brick.is_full() && brick.get(0) == AIR {
             return Cell::Empty(i64::from(BRICK_EDGE));
         }
+        if brick.block_clear(local(v)) {
+            return Cell::Empty(2);
+        }
         match brick.get(v.index_in_brick()) {
             AIR => Cell::Empty(1),
             m => Cell::Solid(m),
         }
     }
+}
+
+/// `v`'s brick-local coordinate.
+fn local(v: VoxelCoord) -> [usize; 3] {
+    v.0.map(|c| c.rem_euclid(BRICK_EDGE) as usize)
 }
 
 /// The voxel the ray occupies just after parameter `num / den`: on an axis it travels down, a
@@ -264,4 +311,31 @@ pub(crate) fn point_at(origin: Fixed3, dir: [i64; 3], num: i128, den: i128) -> F
         let p = i128::from(origin.0[k]) * den * one + i128::from(dir[k]) * num;
         p.div_euclid(den * one) as i64
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fixed::centre_of_voxel;
+    use crate::material::MaterialTable;
+
+    /// The longest ray the default limits accept, from a voxel centre through a world with
+    /// nothing resident, steps through 64-voxel cells: at most 258 steps along an axis and
+    /// 772 on a diagonal.
+    #[test]
+    fn the_longest_ray_through_an_empty_world_is_bounded_in_steps() {
+        let world = World::new(&MaterialTable::new());
+        let max = 1 << 22;
+        let o = centre_of_voxel([5, -7, 3]);
+        for dir in [[256, 0, 0], [0, -256, 0], [0, 0, 256]] {
+            let (hit, steps) = world.raycast_with_stats(o, dir, max).unwrap();
+            assert_eq!(hit, None);
+            assert!((256..=258).contains(&steps), "{dir:?}: {steps} steps");
+        }
+        for dir in [[256; 3], [-256, 256, -256]] {
+            let (hit, steps) = world.raycast_with_stats(o, dir, max).unwrap();
+            assert_eq!(hit, None);
+            assert!((3 * 256..=772).contains(&steps), "{dir:?}: {steps} steps");
+        }
+    }
 }

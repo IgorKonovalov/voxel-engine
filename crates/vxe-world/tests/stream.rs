@@ -287,7 +287,7 @@ fn a_lod_ring_holds_26_mip_only_chunks_that_edits_and_queries_cannot_see() {
         assert_eq!(world.material_at(v), None, "{c:?}");
         let op = EditOp::sphere(centre_of_voxel(v), 2 * FIXED_ONE, Mode::Carve);
         assert_eq!(world.apply(&op), Err(EditError::NotResident(c)));
-        assert!(world.count_in_box(v, v).is_empty());
+        assert!(world.count_in_box(v, v).unwrap().is_empty());
     }
 }
 
@@ -341,10 +341,9 @@ fn full_bricks(world: &World) -> usize {
 }
 
 /// A streamer of the cave-like source with the 7 chunks within distance 1 of the origin
-/// resident (no LOD band), on a world whose pool holds `reserved` arrays.
-fn cave_residency(reserved: usize) -> (World, Streamer) {
+/// resident (no LOD band).
+fn cave_residency() -> (World, Streamer) {
     let world = World::new(&test_table());
-    world.reserve_brick_arrays(reserved);
     let mut s = Streamer::new(Arc::new(cave_like_source()), config(1, 1, 0, 2));
     s.update(&world, &[VoxelCoord([0, 0, 0])]);
     s.wait_idle(&world);
@@ -361,29 +360,10 @@ fn move_away(world: &World, s: &mut Streamer) -> Vec<ChunkCoord> {
     evicted
 }
 
-/// Evicted chunks that no one else holds give their `Full` bricks' arrays to the pool, up to
-/// its cap; chunks still held elsewhere give nothing and keep their bricks.
+/// An evicted chunk still held elsewhere keeps its bricks for its holder.
 #[test]
-fn an_evicted_chunk_returns_its_arrays() {
-    // Room in the pool: the pool grows by every evicted Full brick.
-    let (world, mut s) = cave_residency(0);
-    let f = full_bricks(&world);
-    assert!(f > 0 && f < World::BRICK_ARRAY_POOL_CAP, "{f} Full bricks");
-    assert_eq!(world.pool_len(), 0);
-    assert_eq!(move_away(&world, &mut s), ball([0, 0, 0], 1));
-    println!("{f} Full bricks evicted; pool {} arrays", world.pool_len());
-    assert_eq!(world.pool_len(), f);
-
-    // Ten arrays short of the cap: the pool grows by min(F, cap - len) = 10.
-    let cap = World::BRICK_ARRAY_POOL_CAP;
-    let (world, mut s) = cave_residency(cap - 10);
-    assert!(full_bricks(&world) > 10);
-    assert_eq!(world.pool_len(), cap - 10);
-    move_away(&world, &mut s);
-    assert_eq!(world.pool_len(), cap);
-
-    // Held elsewhere: nothing returns, and the holder still sees the chunk's bricks.
-    let (world, mut s) = cave_residency(0);
+fn an_evicted_chunk_held_elsewhere_keeps_its_bricks() {
+    let (world, mut s) = cave_residency();
     let held: Vec<_> = world
         .store()
         .coords()
@@ -392,7 +372,6 @@ fn an_evicted_chunk_returns_its_arrays() {
         .collect();
     let f = full_bricks(&world);
     move_away(&world, &mut s);
-    assert_eq!(world.pool_len(), 0);
     let mut still_full = 0;
     for (c, chunk) in &held {
         assert!(!world.store().contains(*c), "{c:?} still resident");
@@ -406,6 +385,102 @@ fn an_evicted_chunk_returns_its_arrays() {
             .count();
     }
     assert_eq!(still_full, f);
-    drop(held);
-    assert_eq!(world.pool_len(), 0);
+}
+
+/// Lowering `r_full` by one demotes the chunks at the old full edge to LOD-only within the
+/// next polls, at the same focus; raising it back promotes them, and an edited one among them
+/// comes back from persistence with the hash it had before the round trip.
+#[test]
+fn set_radii_demotes_the_full_edge_and_promotes_it_back() {
+    let world = World::new(&test_table());
+    let mut s = Streamer::new(Arc::new(UniformSource(3)), config(2, 3, 0, 4));
+    let focus = VoxelCoord([0, 0, 0]);
+    s.update(&world, &[focus]);
+    s.wait_idle(&world);
+    let full = ball([0, 0, 0], 4);
+    assert_eq!(world.store().coords(), full);
+    // The old edge: full at r_full 2, past r_full 1.
+    let edge: Vec<ChunkCoord> = full
+        .iter()
+        .copied()
+        .filter(|c| !ball([0, 0, 0], 1).contains(c))
+        .collect();
+    assert_eq!(edge.len(), 26);
+    let edited = ChunkCoord([2, 0, 0]);
+    assert!(edge.contains(&edited));
+    let r = world
+        .apply(&EditOp::sphere(
+            centre_of_voxel([160, 32, 32]),
+            10 * FIXED_ONE,
+            Mode::Carve,
+        ))
+        .unwrap();
+    assert_eq!(r.touched, [edited]);
+    let before: Vec<u64> = edge.iter().map(|&c| chunks_hash(&world, &[c])).collect();
+
+    s.set_radii(1, 3);
+    assert_eq!(s.config().residency.r_full, 1);
+    // The focus has not moved: the polls alone demote.
+    let ev = settle(&mut s, &world, chunks_in_ball(3));
+    assert!(ev.evicted.is_empty());
+    let mut demoted = ev.demoted;
+    demoted.sort_unstable();
+    assert_eq!(demoted, edge);
+    assert_eq!(world.store().coords(), ball([0, 0, 0], 1));
+    for &c in &edge {
+        assert_eq!(s.tier(c), Some(Tier::LodOnly), "{c:?}");
+        assert!(world.lod(c).is_some(), "{c:?}");
+    }
+    assert!(s.is_persisted(edited));
+
+    s.set_radii(2, 3);
+    s.update(&world, &[focus]);
+    let ev = settle(&mut s, &world, chunks_in_ball(3));
+    let mut promoted: Vec<ChunkCoord> = ev
+        .loaded
+        .iter()
+        .filter(|(_, t)| *t == Tier::Full)
+        .map(|&(c, _)| c)
+        .collect();
+    promoted.sort_unstable();
+    assert_eq!(promoted, edge);
+    assert_eq!(world.store().coords(), full);
+    assert!(!s.is_persisted(edited));
+    let after: Vec<u64> = edge.iter().map(|&c| chunks_hash(&world, &[c])).collect();
+    assert_eq!(after, before);
+    assert_eq!(world.material_at([160, 32, 32]), Some(AIR));
+}
+
+/// Polls until no job is queued or running, asserting after every poll that the resident
+/// chunks, full and LOD-only, number at most `bound`; returns the polls' events.
+fn settle(s: &mut Streamer, world: &World, bound: u64) -> StreamEvents {
+    let mut all = StreamEvents::default();
+    loop {
+        let ev = s.poll(world);
+        let resident = world.store().len() + world.lod_coords().len();
+        assert!(
+            resident as u64 <= bound,
+            "{resident} resident, bound {bound}"
+        );
+        all.loaded.extend(ev.loaded);
+        all.demoted.extend(ev.demoted);
+        all.evicted.extend(ev.evicted);
+        all.errors.extend(ev.errors);
+        let st = s.stats();
+        if st.in_flight == 0 && st.queued == 0 {
+            return all;
+        }
+        std::thread::yield_now();
+    }
+}
+
+/// The lattice balls the streamed mirror's record count is sized from.
+#[test]
+fn chunks_in_ball_counts_the_lattice_points() {
+    assert_eq!(chunks_in_ball(0), 1);
+    assert_eq!(chunks_in_ball(1), 7);
+    assert_eq!(chunks_in_ball(2), 33);
+    assert_eq!(chunks_in_ball(24), 57_777);
+    assert_eq!(chunks_in_ball(25), 65_267);
+    assert_eq!(chunks_in_ball(-1), 0);
 }

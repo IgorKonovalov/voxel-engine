@@ -4,8 +4,9 @@
 //! owns no unseeded randomness. The same edit operation applied to the same world produces
 //! identical voxels and identical edit results on every platform (CLAUDE.md, ADR-0001).
 //!
-//! Storage is a brick map (ADR-0002): `u16` voxels in 8³ bricks that are `Uniform` or `Full`,
-//! 64³ chunks behind per-chunk locks, edits applied in place in ascending chunk order.
+//! Storage is a brick map (ADR-0002): `u16` voxels in 8³ bricks that are `Uniform` or `Full`
+//! (a `Full` brick a packed occupancy mask, palette and bit planes, ADR-0012), 64³ chunks behind
+//! per-chunk locks, edits applied in place in ascending chunk order.
 //!
 //! ```
 //! use vxe_world::*;
@@ -18,6 +19,7 @@
 //! ```
 
 mod brick;
+mod census;
 mod chunk;
 mod coarse;
 mod collapse;
@@ -25,9 +27,12 @@ mod coords;
 mod edit;
 mod fixed;
 pub mod hash;
+mod limits;
 mod log;
 mod material;
 mod mips;
+#[doc(hidden)]
+pub mod packed;
 mod persist;
 mod prefab;
 mod query;
@@ -42,6 +47,9 @@ mod walkable;
 pub mod wire;
 
 pub use brick::Brick;
+#[doc(hidden)]
+pub use brick::RawBrick;
+pub use census::{BrickCensus, WorldCensus};
 pub use chunk::Chunk;
 pub use coarse::{CellChange, CellCoord, CoarseCell, CoarseGrid};
 pub use collapse::{DropResult, RemoveResult};
@@ -49,21 +57,28 @@ pub use coords::{
     BRICK_EDGE, BRICK_VOXELS, CHUNK_BRICKS, CHUNK_EDGE, CHUNK_EDGE_BRICKS, ChunkCoord, ChunkExtent,
     VoxelCoord, brick_of_slot, brick_slot, brick_slot_of_local, index_in_brick,
 };
+#[doc(hidden)]
+pub use edit::{CapturedBrickEdit, PlanarWriter, RowWriter, WriterResult};
 pub use edit::{EditError, EditOp, EditResult, Mode};
 pub use fixed::{FIXED_HALF, FIXED_ONE, Fixed3, centre_of_voxel};
+pub use limits::{Field, WorldLimits};
 pub use log::{
     InputEntry, InputLog, LOG_FORMAT, LOG_HEADER_BYTES, LOG_MAGIC, LogEntry, LogFile, Op, OpLog,
+    OpResult,
 };
 pub use material::{AIR, Material, MaterialFlags, MaterialId, MaterialTable};
 pub use mips::{ChunkMips, MIP_BRICKS, MIP_LEVELS, majority};
+pub use packed::PackedStats;
 pub use persist::{PersistConfig, SPILL_VERSION, SpillError, decode_spill, encode_spill};
-pub use prefab::{Prefab, Rot};
+pub use prefab::{Prefab, PrefabCollision, PrefabRegistry, Rot};
 pub use query::QueryStats;
 pub use raycast::{Face, Hit, Run};
 pub use shape::Shape;
 pub use source::{StampedSource, UniformSource, WorldSource};
 pub use store::{ChunkStore, StoreWriteGuard, World, WorldStats};
-pub use stream::{Residency, StreamConfig, StreamError, StreamEvents, StreamStats, Streamer, Tier};
-pub use support::{Anchors, Region, SupportParams, find_unsupported};
+pub use stream::{
+    Residency, StreamConfig, StreamError, StreamEvents, StreamStats, Streamer, Tier, chunks_in_ball,
+};
+pub use support::{Anchors, Region, SupportParams, find_unsupported, find_unsupported_with_stats};
 pub use walkable::{WalkableMap, WalkableParams, WalkableStats};
 pub use wire::WireError;

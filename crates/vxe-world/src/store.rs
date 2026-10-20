@@ -7,13 +7,15 @@
 //! Readers take short per-chunk read locks.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use crate::brick::{Brick, SpareArrays};
 use crate::chunk::Chunk;
-use crate::coords::{BRICK_VOXELS, CHUNK_BRICKS, ChunkCoord, ChunkExtent, VoxelCoord};
+use crate::coords::{ChunkCoord, ChunkExtent, VoxelCoord};
+use crate::limits::WorldLimits;
 use crate::material::{MaterialId, MaterialTable};
 use crate::mips::ChunkMips;
+use crate::packed::PackedStats;
 use crate::source::WorldSource;
 
 /// Read guard that survives a poisoned lock. A chunk is structurally valid at every point an
@@ -139,52 +141,6 @@ impl StoreWriteGuard<'_> {
     }
 }
 
-/// A bounded free list of boxed brick arrays, shared by every edit on a world. An edit takes
-/// a batch under one lock and gives back the unused rest and the arrays of the bricks it
-/// collapsed under a second; [`World::reserve_brick_arrays`] fills it off the edit path, and
-/// a chunk leaving residency gives back its `Full` bricks' arrays. The arrays it holds carry
-/// stale voxels: a taker overwrites all 512 before use. It never decides a result: an empty
-/// pool makes `expand` allocate.
-#[derive(Default)]
-pub(crate) struct BrickArrays(Mutex<SpareArrays>);
-
-impl std::fmt::Debug for BrickArrays {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "BrickArrays({})", lock(&self.0).len())
-    }
-}
-
-impl BrickArrays {
-    fn len(&self) -> usize {
-        lock(&self.0).len()
-    }
-
-    /// Up to `n` arrays, under one lock.
-    pub(crate) fn take(&self, n: usize) -> SpareArrays {
-        if n == 0 {
-            return Vec::new();
-        }
-        let mut pool = lock(&self.0);
-        let keep = pool.len().saturating_sub(n);
-        pool.split_off(keep)
-    }
-
-    /// Gives `arrays` back under one lock, up to [`World::BRICK_ARRAY_POOL_CAP`] in the pool;
-    /// the rest are freed after the lock is released.
-    pub(crate) fn give(&self, mut arrays: SpareArrays) {
-        if arrays.is_empty() {
-            return;
-        }
-        {
-            let mut pool = lock(&self.0);
-            let room = World::BRICK_ARRAY_POOL_CAP.saturating_sub(pool.len());
-            let n = room.min(arrays.len());
-            pool.extend(arrays.drain(..n));
-        }
-        drop(arrays);
-    }
-}
-
 /// Brick counts over the resident world.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct WorldStats {
@@ -206,50 +162,28 @@ pub struct World {
     lods: RwLock<HashMap<ChunkCoord, Arc<ChunkMips>>>,
     extent: ChunkExtent,
     pub(crate) materials: MaterialTable,
-    pub(crate) brick_arrays: BrickArrays,
+    /// [`World::packed_stats`]: class changes, entry removals and renames, in that order.
+    packed: [AtomicU64; 3],
+    limits: WorldLimits,
 }
 
 impl World {
-    /// The most brick arrays the pool holds: 8192 arrays of 512 `u16`, 8 MiB.
-    pub const BRICK_ARRAY_POOL_CAP: usize = 8192;
-
-    /// Tops the brick-array pool up to `min(n, BRICK_ARRAY_POOL_CAP)` arrays. The arrays are
-    /// allocated and written on the caller's thread outside the pool's lock, so their pages
-    /// are touched before an edit takes them; call it off the edit path (after a frame's
-    /// edits, or on a worker).
-    pub fn reserve_brick_arrays(&self, n: usize) {
-        let want = n.min(Self::BRICK_ARRAY_POOL_CAP);
-        let need = want.saturating_sub(self.brick_arrays.len());
-        if need == 0 {
-            return;
+    /// What the planar edit kernel has done to this world's bricks since it was made: summed
+    /// over every edit, read with relaxed ordering. A count of work, not a result.
+    pub fn packed_stats(&self) -> PackedStats {
+        let [c, e, r] = &self.packed;
+        PackedStats {
+            class_changes: c.load(Ordering::Relaxed),
+            entries_removed: e.load(Ordering::Relaxed),
+            renames: r.load(Ordering::Relaxed),
         }
-        // A non-zero fill, so the allocation is not a `calloc` that leaves fresh pages
-        // untouched.
-        let fresh: SpareArrays = (0..need)
-            .map(|_| Box::new([MaterialId::MAX; BRICK_VOXELS]))
-            .collect();
-        self.brick_arrays.give(fresh);
     }
 
-    /// Arrays in the brick-array pool.
-    pub fn pool_len(&self) -> usize {
-        self.brick_arrays.len()
-    }
-
-    /// Gives the arrays of `chunk`'s `Full` bricks to the pool when no one else holds the
-    /// chunk; a chunk held elsewhere is left to its last holder, which frees it.
-    pub(crate) fn recycle_chunk(&self, chunk: Arc<RwLock<Chunk>>) {
-        let Ok(chunk) = Arc::try_unwrap(chunk) else {
-            return;
-        };
-        let mut chunk = chunk.into_inner().unwrap_or_else(PoisonError::into_inner);
-        let mut arrays = Vec::new();
-        for slot in 0..CHUNK_BRICKS {
-            if let Brick::Full(v) = std::mem::take(chunk.brick_mut(slot)) {
-                arrays.push(v);
-            }
-        }
-        self.brick_arrays.give(arrays);
+    pub(crate) fn add_packed_stats(&self, st: &PackedStats) {
+        let [c, e, r] = &self.packed;
+        c.fetch_add(st.class_changes, Ordering::Relaxed);
+        e.fetch_add(st.entries_removed, Ordering::Relaxed);
+        r.fetch_add(st.renames, Ordering::Relaxed);
     }
 
     /// An empty, unbounded world. Its [`World::extent`] is empty.
@@ -259,7 +193,8 @@ impl World {
             lods: RwLock::default(),
             extent: ChunkExtent::new([0, 0, 0], [0, 0, 0]),
             materials: table.clone(),
-            brick_arrays: BrickArrays::default(),
+            packed: Default::default(),
+            limits: WorldLimits::DEFAULT,
         }
     }
 
@@ -315,8 +250,22 @@ impl World {
             lods: RwLock::default(),
             extent,
             materials: table.clone(),
-            brick_arrays: BrickArrays::default(),
+            packed: Default::default(),
+            limits: WorldLimits::DEFAULT,
         }
+    }
+
+    /// The range of parameters this world's edits, rays, box queries and region ops accept;
+    /// [`WorldLimits::DEFAULT`] unless set by [`World::with_limits`].
+    pub fn limits(&self) -> WorldLimits {
+        self.limits
+    }
+
+    /// This world with `limits` in place of its own. Two worlds kept in step (a server's and
+    /// an owned client's) must hold the same limits, or they refuse different ops.
+    pub fn with_limits(mut self, limits: WorldLimits) -> Self {
+        self.limits = limits;
+        self
     }
 
     /// The extent generated up front; empty for a world made by [`World::new`].

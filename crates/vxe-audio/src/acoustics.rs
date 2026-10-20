@@ -360,7 +360,8 @@ fn room_ray(
     let range = REFLECTION_RANGE_METRES / metres_per_voxel;
     let (origin, dir, dir_len) = fixed_ray(from, d);
     let max_t = (range * one * one / dir_len).round() as i64;
-    let Some(hit) = world.raycast(origin, dir, max_t) else {
+    // A ray the world refuses (outside its limits) counts as a miss.
+    let Some(hit) = world.raycast(origin, dir, max_t).ok().flatten() else {
         return (f64::from(REFLECTION_RANGE_METRES), 1.0, 1.0);
     };
     let r = hit.t as f64 * f64::from(dir_len) / f64::from(one * one) * f64::from(metres_per_voxel);

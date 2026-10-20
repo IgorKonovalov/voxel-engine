@@ -1,13 +1,16 @@
 # 0021: The packed CPU brick: a census and kernel bench, then masks, planes and a palette under every reader
 
-> **Status:** approved (2026-10-19)
+> **Status:** done (closed 2026-10-20, v0.18.0): the fresh-session review found no blocker or
+> major; every pinned hash and golden is unchanged and the packed format is under every reader.
+> Owner decisions (2026-10-20): the 2 ms edit line is held on the dev box and met there; the
+> residency p95 stays open, a quiet-box reading owed.
 > **Created:** 2026-10-19
 > **Milestone:** M2 in `docs/roadmap.md` (the RAM line; ADR-0012's second plan)
-> **Related ADRs:** [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
+> **Related ADRs:** [ADR-0012](../../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
 > (accepted; this plan is its CPU-format step and supersedes ADR-0002's `Full` clause in
 > code), ADR-0002 (chunk, locks and access model, which stand), ADR-0003 (the spill file,
 > whose version moves), ADR-0004 (the mirror bytes, which this plan leaves identical).
-> **Prerequisite:** [Plan 0015](done/0015-traversal-hierarchy-chunk-bits-brick-masks-and-translucent-class.md)
+> **Prerequisite:** [Plan 0015](0015-traversal-hierarchy-chunk-bits-brick-masks-and-translucent-class.md)
 > closed (v0.14.0). Touches `gpu_world.rs`, which Plans 0013 and 0017 also touch, and
 > `collapse.rs` and `stamp.rs`, which Plan 0018 also touches; whichever merges second resolves
 > the conflict. The third ADR-0012 plan (size-classed mirror slots) follows this one.
@@ -458,30 +461,213 @@ header, world key, coordinate and FNV trailer are version 1's.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The census and the kernel bench | dev | not started | |
-| 2: The owner reads the figures | human | not started | |
-| 3: `Packed` behind `Brick::Full`, every reader compiling | dev | not started | |
-| 4: The edit kernel as word operations | dev | not started | |
-| 5: Native paths for the hot readers | dev | not started | |
-| 6: Collapse as layer shifts and palette remaps | dev | not started | |
-| 7: The mirror upload from planes, and spill version 2 | dev | not started | |
-| 8: Readings, budgets and the census after edits | dev | not started | |
+| 1: The census and the kernel bench | dev | done | 992fdaa |
+| 2: The owner reads the figures | human | done (go, 2026-10-20) | 0a060c4 |
+| 3: `Packed` behind `Brick::Full`, every reader compiling | dev | done | 22fcade |
+| 4: The edit kernel as word operations | dev | done | 07d70fd |
+| 5: Native paths for the hot readers | dev | done | 44ace94 |
+| 6: Collapse as layer shifts and palette remaps | dev | done | ce44fa1 |
+| 7: The mirror upload from planes, and spill version 2 | dev | done | 8440aa9 |
+| 8: Readings, budgets and the census after edits | dev | done | abe0fc3 |
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: the fly-through command of the done-when never exits; it was run as
+  `flythrough --level --seed 1 --headless --bench 1 --frames 1 --census` (Phase 1 commit).
+- Phase 1: `--census` prints at exit only; the bins before the 100 carves are
+  `world_budget --chunks 20,20,8 --seed 1 --census` on the same seed and extent (Phase 1 commit).
+- Phase 1: the `--veins` source is written twice, in `world_budget.rs` and in
+  `crates/vxe-world/tests/census.rs`, which asserts the majority bin on 2x2x1 chunks (Phase 1 commit).
+- Phase 1: air in `--veins` is value noise of 16-voxel cells below -4600; read 33.50 % on the
+  level's extent (Phase 1 commit).
+- Phase 1: `brick_kernel` is a hand-rolled harness (median and minimum of 60 runs after 5
+  warmups, bricks and pool built untimed), not criterion (Phase 1 commit).
+- Phase 1: the bench's table adds an `ore` row (id 2) for the replace; the captured world and
+  ops are `worst_warm`'s (Phase 1 commit).
+- Phase 1: the capture holds the brick-edits that reach `write_rows`; a `Uniform` brick wholly
+  inside a carve takes `edit_brick`'s O(1) path and is neither captured nor timed (Phase 1
+  commit).
+- Phase 1: "today" times `write_rows` plus the collapse check, expanding into pooled, touched
+  arrays; "planar" times the shape words, the kernel and the canonical step, allocations
+  included (Phase 1 commit).
+- Phase 1: public additions beyond the plan's names: `WorldCensus`; `#[doc(hidden)]`
+  `World::apply_capturing`, `CapturedBrickEdit`, `RowWriter`, `PlanarWriter`, `WriterResult`
+  and the `packed` module (`Packed`, `PackedBrick`, `PackedClass`, `KernelMode`) (Phase 1
+  commit).
+- Phase 1: `world_budget --chunks` takes `A,B,C` as well as `AxBxC` (Phase 1 commit).
+- Phase 1: every timing was read under the exclusive perf lock while other lanes built: the
+  first two kernel runs at a 1-minute load of 13.9 and 19.2, the third (the figures Phase 2
+  reads) at 9.7; `worst_warm` read 4.89 ms and 2.60 ms in those windows against 3.03 ms
+  recorded quiet.
+- Phase 2, 2026-10-20: the owner ruled GO for Phases 3 to 8 on Phase 1's figures at 992fdaa
+  (load 9.69): projected resident payload + slots at the streamed defaults under the ladder
+  411 071 680 B (0.41 GB; today 3 053 411 776 B); planar 116.8 ns against today's 505.3 ns per
+  carve brick-edit (ratio 0.231); `decode` 0.249 / 0.362 / 0.596 us per Plane1 / Plane2 /
+  Plane4 brick. Pool: the allocation share is read against the 3.03 ms whole-edit worst case
+  (0.9 %), so Phase 3 retires the brick-array pool; Phase 8 rechecks the share against the new
+  edit time.
+- Phase 3: the pool's retirement reaches files outside the phase's list: `src/stream.rs`
+  (eviction drops instead of recycling), `tests/edits.rs` (`a_pooled_expand_allocates_nothing`
+  and its counting allocator removed; the canonical oracle added to the seeded-op runner),
+  `tests/stream.rs` (`an_evicted_chunk_returns_its_arrays` reduced to its held-elsewhere half),
+  `benches/edits.rs` (`*_warm` now build the same world as `worst` and `tool`) (Phase 3 commit).
+- Phase 3: `apps/flythrough/src/lib.rs` (`chunk_ram`, `mips_ram`) counts class sizes; it is
+  outside the phase's list (Phase 3 commit).
+- Phase 3: `RawBrick` (`#[doc(hidden)]`, uniform or 512 raw ids) added: collapse composes in it
+  and encodes on commit; the kernel bench's `RowWriter` reference write runs on it (Phase 3
+  commit).
+- Phase 3: `Packed` is a public opaque struct over a private class enum (a public variant's
+  field must be public); `Brick::from_voxels` keeps its `Box` argument (Phase 3 commit).
+- Phase 3: `crates/vxe-sim/tests/sweep.rs` builds its all-rock `Full` floor bricks through the
+  hidden `Packed::expand_uniform`, a non-canonical box (Phase 3 commit).
+- Phase 3: the fly-through's HUD passes 0 spare arrays and its `B` line drops the pool KiB;
+  `hud.rs`'s `cpu_bytes_estimate` still counts 1 KiB per `Full` brick (followup, not acted on).
+- Phase 3: `hash.rs` and `source.rs` unchanged (read through `get` and `set_brick`).
+- Phase 4: `PackedStats` carries a third count, `renames`, which the rename test reads; a class
+  change counts a box moving between classes, not a `Uniform` brick expanding or collapsing
+  (Phase 4 commit).
+- Phase 4: the 2000-op test reads 1047 ops changing voxels and `PackedStats { class_changes:
+  1168, entries_removed: 32, renames: 8 }`; its floor is 1000 changing ops (Phase 4 commit).
+- Phase 4: `lib.rs` re-exports `PackedStats`; it is outside the phase's list (Phase 4 commit).
+- Phase 4: `write_rows` stays in `edit.rs` for the kernel bench's `RowWriter` only (Phase 4
+  commit).
+- Phase 5: the counted raycast is `World::raycast_counted`; the test's 8-cell walk is a second
+  world with a solid voxel off the ray in each of the four 2^3 blocks, hitting at the same `t`
+  (1664) (Phase 5 commit).
+- Phase 5: `Brick::for_each_solid_in` (public) walks a box's mask bits for `vxe-sim`'s bodies;
+  `Packed::mask_word` and `Packed::counts_under` are the coarse and region paths (Phase 5
+  commit).
+- Phase 6: collapse composes through a trait over two brick forms: the packed `Brick` (native:
+  `keep_only` removes refused entries, `overlay_layers` merges palettes and writes layer words)
+  and `RawBrick` (decoded ids, the reference); `World::drop_region_decoded` and
+  `World::remove_region_decoded` (`#[doc(hidden)]`) run the reference for the oracle (Phase 6
+  commit).
+- Phase 6: the rubble remap keeps ids (a spared voxel keeps its material), so no entry is
+  renamed or re-sorted; a rubble voxel is written by the planar fill of one voxel when it is
+  air, else through `modify`; an overlay that would pass 16 materials, or meets a `Wide`
+  brick, writes decoded ids (Phase 6 commit).
+- Phase 6: the oracle runs on the cubes world dressed by 120 seeded edits (materials 1 to 4, 4
+  indestructible), alternating drops and removes over 64 seeded cell boxes; 38 of the 64 ops
+  moved or removed voxels (Phase 6 commit).
+- Merge of main at 58dc7e1 (Plan 0018, v0.15.0): only the fly-through conflicted. `main.rs`
+  takes main's frame loop, whose collapse falls run on the server, without its per-frame
+  `reserve_brick_arrays` call (the pool is retired); both import lists take main's names plus
+  `Brick` in `lib.rs`. `collapse.rs`, `stamp.rs`, `edit.rs`, `log.rs` and `wire.rs` merged
+  without a conflict (main changed only `edit.rs`, `log.rs` and `wire.rs` among them).
+- Merge of main at 5ca4151 (Plans 0017, 0019; v0.17.0): `raycast_counted` gave way to 0019's
+  `raycast_with_stats`, whose step count now includes clear 2^3 blocks (the skip test reads it);
+  `apply`, `drop_region` and `remove_region` check `WorldLimits` before the split into the
+  capturing, native and decoded paths; `count_in_box` keeps the popcount body inside 0019's
+  `Result`; the store holds `limits` and `packed_stats` and no pool; 0017's wide-palette scan in
+  `gpu_world.rs` decodes each `Full` brick; `world_budget --veins` raises the query limits for
+  its whole-extent air count as `--chunks` does; the fly-through drops main's per-frame
+  `reserve_brick_arrays` and `RESERVE_ARRAYS`.
+- Phase 7: `packed.rs` (outside the phase's list) gains `Packed::entry_matches`, `words`,
+  `wide_ids`, `from_parts` and `PackedClass::ALL` for the upload and the spill (Phase 7 commit).
+- Phase 7: the chunk palette still grows in first-appearance order, now from each entry's first
+  set match bit, so every mirror byte is as before; a narrow brick in a wide record and a brick
+  above 16 materials take the decoded path (Phase 7 commit).
+- Phase 7: spill decode also refuses a `Full` box that re-encodes differently (one material
+  over every voxel, which is a `Uniform` brick) (Phase 7 commit).
+- Phase 7: `apps/flythrough/tests/level_mirror.rs` is unchanged; the level's 232 436 992 B live
+  is read from the fly-through's first-sync line. The first sync is paired with the merge
+  ea8d0ad (Phase 3's decode path on 0017's allocator), not the Phase 3 tip, which predates
+  0017's upload path (Phase 7 commit).
+- Phase 8: `apps/flythrough/src/main.rs` prints `packed_stats` after the exit census and
+  `world_budget.rs` times the per-chunk mip build in its bounded run; both are outside the
+  phase's list (Phase 8 commit).
+- Phase 8: every reading was taken while other lanes built (1-minute load 8.4 to 24.1), with the
+  comparison builds (Phase 1 tip, main 5ca4151) alternated in the same window; no quiet-box
+  reading was taken.
+- Phase 8: the autopilot's residency latency p95 reads 611 and 658 ms, over the 500 ms proposal,
+  against main's 1031 ms in the same window.
+- Phase 8: the pool-share recheck the owner asked for reads 1.8 % of the 1.516 ms `worst_warm`
+  (27.9 us of expansions), under 5 %.
+- Followup, not acted on: `hud.rs`'s `cpu_bytes_estimate` still counts 1 KiB per `Full` brick.
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature
+- **Public API changed:** `Brick::Full` holds an opaque `Packed` (was `Box<[u16; 512]>`);
+  new `Brick::decode`, `modify`, `class`, `payload_bytes`, `for_each_solid_in`; `Packed`,
+  `PackedClass`, `PackedStats` (`World::packed_stats`), `BrickCensus`, `WorldCensus`
+  (`World::brick_census`); removed `World::reserve_brick_arrays`, `World::pool_len`,
+  `World::BRICK_ARRAY_POOL_CAP`; `SPILL_VERSION` 2 (version-1 files report
+  `SpillError::Version`); the fly-through's `--census` and `world_budget --census` / `--veins`;
+  `#[doc(hidden)]`: `World::apply_capturing`, `drop_region_decoded`, `remove_region_decoded`,
+  `RawBrick`, `RowWriter`, `PlanarWriter`, `CapturedBrickEdit`, `WriterResult`, `Packed`'s
+  bench constructors. Shader interfaces and mirror bytes unchanged.
+- **Budget readings:** dev box only (Ryzen 9 5900HS, RTX 3080 Laptop GPU); no baseline reading.
+  - Phase 1, dev box (AMD Ryzen 9 5900HS, RTX 3080 Laptop), release, Phase 1 commit, exclusive
+    perf lock. Census (no timing): `world_budget --chunks 20,20,8 --seed 1 --census`: 383 608
+    `Full` bricks, bins 1: 275 466, 2: 107 325, 3-4: 817, rest 0; payload today 392 814 592 B,
+    ladder 34 593 152 B, exact 35 578 286 B; slots 26 214 400 B. `--stream 16,24 --seed 1
+    --census` (17 077 full, 40 700 LOD-only chunks): bricks 1 640 292 `Full`, bins 1:
+    1 408 384, 2: 231 908, rest 0; mip-bricks 1 158 516 `Full`, bins 1: 1 044 719, 2: 113 797,
+    rest 0; payload + slots today 3 053 411 776 B, ladder 411 071 680 B, exact 417 360 706 B
+    (slots 187 432 384 B). `flythrough --level --seed 1 --headless --bench 1 --frames 1
+    --census` after the 100 carves: 385 378 `Full`, bins 1: 277 246, 2: 107 315, 3-4: 817;
+    ladder 34 719 952 B. `--veins 8 | 16 | 64 --census` (level extent, air 33.50 %): 5-16 bin
+    1 414 342 | 1 432 624 | 145 011 and 17-256 bin 0 | 0 | 1 294 530 of 1 503 724 `Full`;
+    ladder payload 511 653 744 | 514 793 248 | 1 385 968 792 B, exact 407 177 148 |
+    515 930 566 | 725 643 400 B. No translucent voxel in any of them.
+  - Phase 1 `cargo bench -p vxe-world --bench brick_kernel`, load 19.20: 2721 captured
+    brick-edits (before: Uniform 2495, Mask 226). Carve today 3.343 ms (min 1.999), 1228.6 ns
+    per brick-edit; planar 0.519 ms (min 0.450), 190.6 ns. Fill(rock) on the inverse today
+    2.319 ms, 852.1 ns; planar 0.352 ms, 129.3 ns. Replace rock to ore today 3.020 ms,
+    1109.8 ns; planar 0.676 ms, 248.3 ns (after: Plane1 2688, Mask 33). Decode Plane1 0.469,
+    Plane2 0.633, Plane4 1.090 us per brick (raw copy 0.014 us); 1000 get 5.56, 5.43, 6.25 us
+    (raw 1.11 us). Uniform to Mask expansion 23.9 ns with allocation (raw 1 KiB 509.0 ns);
+    Plane1 to Plane2 42.9 ns. Allocation share: 2495 x 23.9 ns = 59.5 us, 11.5 % of the
+    planar carve sum, 2.0 % of 3.03 ms. An earlier run at load 13.93: carve today 1097.3 ns,
+    planar 176.3 ns per brick-edit. `edits` `worst_warm` in the same window: 4.89 ms.
+  - Phase 1 `brick_kernel` rerun at 992fdaa, load 9.69 (the reading Phase 2 reads): carve
+    today 1.375 ms (min 1.326), 505.3 ns per brick-edit; planar 0.318 ms (min 0.309),
+    116.8 ns (ratio 0.231). Fill(rock) on the inverse today 0.934 ms, 343.4 ns; planar
+    0.306 ms, 112.5 ns. Replace today 1.153 ms, 423.9 ns; planar 0.428 ms, 157.4 ns. Decode
+    Plane1 0.249, Plane2 0.362, Plane4 0.596 us per brick (raw copy 0.008 us); 1000 get
+    2.50, 2.85, 3.08 us (raw 0.54 us). Expansion 11.2 ns (raw 1 KiB 295.9 ns); Plane1 to
+    Plane2 21.2 ns. Allocation share 28.1 us: 8.8 % of the planar carve sum, 0.9 % of
+    3.03 ms. `edits` `worst_warm` in the same window: 2.60 ms (2.55 to 2.64).
+  - Phase 4 `cargo bench -p vxe-world --bench edits` (filter `worst`), dev box, exclusive perf
+    lock, Phase 1 tip 992fdaa built from `git archive` beside this commit, run alternately:
+    load 24.10: Phase 1 `worst` 2.906 ms, `worst_warm` 2.864 ms; Phase 4 `worst` 1.743 ms,
+    `worst_warm` 1.485 ms. Load 17.59: Phase 1 `worst` 3.527 ms, `worst_warm` 2.811 ms; Phase 4
+    `worst` 1.356 ms, `worst_warm` 1.339 ms (load 13.41 after). At Phase 4 both cases build the
+    same pool-less world. Row-write share from Phase 1's kernel bench (load 9.69): today 1.375
+    ms less planar 0.318 ms = 1.057 ms.
+  - Phase 5, dev box, exclusive perf lock, Phase 4 tip 07d70fd built from `git archive` beside
+    this commit, run alternately (load 13.23 then 12.05, 8.27 after). `cargo bench -p
+    vxe-world --bench coarse`: 100 grid updates after radius-10 carves, Phase 4 2.787 ms,
+    Phase 5 150.4 us; 100 walkable updates 859.7 us, 754.5 us. `cargo bench -p vxe-sim
+    --bench controller`: 300 ticks of F6 835.2 us, 425.2 us; 1000 ticks 1.060 ms, 683.8 us;
+    60 staircase ticks 288.6 us, 84.3 us; 1000 sweeps of F2 32.27 ms, 21.21 ms (21.2 us per
+    sweep, beside Plan 0004's 26.3 us).
+  - Phase 6 `cargo bench -p vxe-world --bench collapse`, dev box, exclusive perf lock, Phase 5
+    tip 44ace94 built from `git archive` beside this commit, run in turn (load 12.04, then
+    6.81, 5.66 after): `find_unsupported` 294.9 / 299.6 us; slab drop by 32 57.8 / 71.3 us, by
+    10 53.2 / 46.9 us; slab remove with rubble 102.5 / 121.1 us; 4096-cell cube drop by 64
+    5.93 / 5.91 ms (the 20 ms proposal), by 60 7.73 / 6.74 ms, by 8 4.67 / 4.77 ms (Phase 5 /
+    Phase 6). A first Phase 6 build wrote rubble through `modify` and read the slab remove at
+    1.023 ms (load 6.20).
+  - Phase 7 first sync, `flythrough --level --seed 1 --headless --frames 1`, release, dev box,
+    exclusive perf lock, alternating with ea8d0ad (loads 10.97, 10.97; 11.69 after): ea8d0ad
+    582 and 590 ms, Phase 7 195 and 180 ms; both upload 232 436 992 B (383 608 bricks, 3200
+    chunks, 192 writes), 232 436 992 B live, 271 524 864 B allocated.
+  - Phase 8 readings are in `docs/nfr.md` sections 3, 4 and 5 with machine, commit and load.
+    Census after the `B` bench (`flythrough --level --seed 1 --headless --bench 1 --frames 1
+    --census`): 385 378 `Full`, bins 1: 277 246, 2: 107 315, 3-4: 817; `PackedStats {
+    class_changes: 8, entries_removed: 49, renames: 0 }`; `B` 1.52 ms (load 11.5).
+- **Gate at the tip (abe0fc3):** `cargo build --workspace --all-targets` 0; clippy
+  `-D warnings` 0; `cargo fmt --all --check` 0; `scripts/build-guests.sh` 0; `cargo nextest run
+  --workspace` under the perf lock (load 9.45) 457 passed, 4 skipped, exit 0; `cargo nextest
+  run -p flythrough --features wasm` 101 passed, 3 skipped, exit 0; `cargo test --workspace
+  --doc` 7 passed; doc-links, comment hygiene and index rows OK. `cargo deny check` fails
+  `advisories` on RUSTSEC-2026-0378 and RUSTSEC-2026-0379 (wasmtime), with `Cargo.lock`
+  identical to main at 5ca4151, which fails the same check; bans, licenses and sources OK.
+- **Outstanding `human` phases:** none (Phase 2 answered go on 2026-10-20).
 
 ## Followups
 
@@ -489,3 +675,37 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   the decode on the streaming workers.
 - Native stamp writes (a prefab's mask and palette merged by word), if a 64^3 stamp's
   reading moves against Plan 0008's 2.02 to 2.07 ms.
+
+## Close review (architect, 2026-10-20)
+
+Fresh-session review of `main...plan-0021` at 67eda17 (main 5ca4151 merged at ea8d0ad). The gate
+re-run at the tip on the dev box: build, clippy `-D warnings`, fmt, `scripts/build-guests.sh`,
+`cargo nextest run --workspace` under the exclusive perf lock (load 6.0) 457 passed, 4 skipped;
+doctests and the three doc gates green. `cargo deny` fails on RUSTSEC-2026-0378 and
+RUSTSEC-2026-0379 (wasmtime) identically on main; out of this plan's scope.
+
+- **No blocker or major.** No pinned constant or golden image moved in the diff. The kernel
+  oracle (4000 seeded brick-edits against a per-voxel reference), the 2000-op world oracle with
+  the canonical check after every op, the collapse oracle against the decoded path, the coarse
+  and region-count oracles and the mirror's staged-bytes test against narrowed voxels assert
+  what their done-whens claim. Plan 0017's allocator contract holds: the admit check
+  (`turns_wide`) reads the same material set through `first_appearance`, and the slot and mask
+  bytes per brick are unchanged.
+- **Minor:** the HUD's `cpu_bytes_estimate` still counts 1 KiB per `Full` brick, and
+  `WorldSample::pool_arrays` documents the removed `World::pool_len` (disclosed followup).
+- **Nits:** `edit_brick`'s doc in `edit.rs` still describes Phase 3's decode-write-encode path;
+  in `tests/edits.rs` the seeded-op runner's doc comment sits above `assert_canonical`; the
+  `Brick` invariant says a `Full` brick is built only by three calls, while the hidden
+  `Packed::expand_uniform` builds a non-canonical one for `vxe-sim`'s sweep test; the collapse
+  oracle's dressed world reaches four materials, so the over-16 and `Wide` overlay fallbacks
+  are not exercised by it (they write through `modify`, the decoded path).
+- **The 2 ms edit line (section 4):** held on the dev box (owner, 2026-10-20) and met there:
+  the warm worst case reads 1.34 to 1.52 ms under load. No baseline-GPU reading exists.
+- **Residency latency p95 (section 5):** 611 and 658 ms against the 500 ms proposal, read under
+  load 8 to 14 (main read 1031 ms in the same window). Open (owner, 2026-10-20): a quiet-box
+  re-read is owed once the parallel lanes stop. **Re-read 2026-10-20 at 2796062** (`nfr.md`
+  §4 and §5): face mode's p95 is 381 ms, under 500 ms, and contour's (270 to 904 ms) follows
+  mirror pressure. The warm worst case reads 1.79 ms and the `B` line 2.06 to 2.09 ms with an
+  unchanged `vxe-world`, so the owner raised the edit line to 2.2 ms on the dev box and
+  planned one more optimization pass.
+

@@ -41,42 +41,22 @@ impl CoarseCell {
                 solid: 512,
                 dominant: *m,
             },
-            Brick::Full(v) => {
+            Brick::Full(p) => {
                 stats.voxel_arrays_read += 1;
-                // Few materials meet in one brick; a short list beats a map.
-                let mut counts: Vec<(MaterialId, u16)> = Vec::new();
-                let mut run = (v[0], 0u16);
-                for &m in v.iter() {
-                    if m == run.0 {
-                        run.1 += 1;
-                        continue;
-                    }
-                    tally(&mut counts, run);
-                    run = (m, 1);
-                }
-                tally(&mut counts, run);
+                // The mask's popcount, and the entry with the most voxels (ascending ids, so
+                // a strictly larger count is needed to replace the best: ties keep the lower).
                 let mut cell = Self::default();
                 let mut best = 0;
-                for (m, n) in counts {
-                    if m == AIR {
-                        continue;
-                    }
-                    cell.solid += n;
-                    if n > best || (n == best && m < cell.dominant) {
+                p.counts_under(&[u64::MAX; 8], &mut |m, n| {
+                    cell.solid += n as u16;
+                    if n > best {
                         best = n;
                         cell.dominant = m;
                     }
-                }
+                });
                 cell
             }
         }
-    }
-}
-
-fn tally(counts: &mut Vec<(MaterialId, u16)>, (m, n): (MaterialId, u16)) {
-    match counts.iter_mut().find(|(k, _)| *k == m) {
-        Some((_, c)) => *c += n,
-        None => counts.push((m, n)),
     }
 }
 
@@ -235,15 +215,34 @@ impl CoarseGrid {
         self.update_with_stats(world, result).0
     }
 
+    /// [`CoarseGrid::update`] over an aabb alone (any result's, such as
+    /// [`crate::OpResult::aabb`]); nothing when `aabb` is `None`.
+    pub fn update_aabb(
+        &mut self,
+        world: &World,
+        aabb: Option<(VoxelCoord, VoxelCoord)>,
+    ) -> Vec<CellChange> {
+        self.update_aabb_with_stats(world, aabb).0
+    }
+
     /// [`CoarseGrid::update`] plus the voxel arrays it read: one per `Full` brick recomputed.
     pub fn update_with_stats(
         &mut self,
         world: &World,
         result: &EditResult,
     ) -> (Vec<CellChange>, QueryStats) {
+        self.update_aabb_with_stats(world, result.aabb)
+    }
+
+    /// [`CoarseGrid::update_aabb`] plus the voxel arrays it read.
+    pub fn update_aabb_with_stats(
+        &mut self,
+        world: &World,
+        aabb: Option<(VoxelCoord, VoxelCoord)>,
+    ) -> (Vec<CellChange>, QueryStats) {
         let mut stats = QueryStats::default();
         let mut out = Vec::new();
-        let Some((lo, hi)) = result.aabb else {
+        let Some((lo, hi)) = aabb else {
             return (out, stats);
         };
         let (ce, be) = (CHUNK_EDGE, BRICK_EDGE);
