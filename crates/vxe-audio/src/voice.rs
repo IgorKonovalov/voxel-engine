@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use crate::stream::StreamReader;
+
 /// Mono PCM at [`crate::RATE`], shared read-only between the game and the callback.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Sound(Arc<[f32]>);
@@ -36,15 +38,19 @@ pub struct PlayParams {
     /// Linear gain applied before distance and acoustics.
     pub gain: f32,
     pub looping: bool,
+    /// Whether the voice's direct path sounds. Off, only its early reflections and its send
+    /// into the tail do: a voice at the listener heard only as it comes back off the walls.
+    pub direct: bool,
 }
 
 impl PlayParams {
-    /// Gain 1, playing once, at `position`.
+    /// Gain 1, playing once, at `position`, its direct path on.
     pub fn at(position: [f32; 3]) -> Self {
         Self {
             position,
             gain: 1.0,
             looping: false,
+            direct: true,
         }
     }
 }
@@ -107,10 +113,17 @@ impl TapState {
     }
 }
 
+/// What a voice plays.
+pub(crate) enum Source {
+    Sound(Sound),
+    /// A stream, read a block at a time; it never ends by itself.
+    Stream(StreamReader),
+}
+
 /// One playing sound and its per-voice mixer state.
 pub(crate) struct Voice {
     pub id: VoiceId,
-    pub sound: Sound,
+    pub source: Source,
     pub params: PlayParams,
     /// Next sample of `sound` to play.
     pub cursor: usize,
@@ -169,11 +182,11 @@ impl VoiceBuffers {
 }
 
 impl Voice {
-    pub fn new(id: VoiceId, sound: Sound, params: PlayParams, mut buffers: VoiceBuffers) -> Self {
+    pub fn new(id: VoiceId, source: Source, params: PlayParams, mut buffers: VoiceBuffers) -> Self {
         buffers.clear();
         Self {
             id,
-            sound,
+            source,
             params,
             cursor: 0,
             finished: false,
@@ -205,11 +218,19 @@ impl Voice {
             .min(MAX_DELAY_FRAMES)
     }
 
-    /// Fills `out` with the voice's next samples, zeros past the end of a non-looping sound.
+    /// Fills `out` with the voice's next samples, zeros past the end of a non-looping sound or
+    /// where a stream has run dry.
     /// The voice finishes once `tail` zeros have followed the end, so a filter of `tail + 1`
     /// taps rings out before the voice is dropped.
     pub fn read(&mut self, out: &mut [f32], tail: usize) {
-        let src = self.sound.samples();
+        let sound = match &mut self.source {
+            Source::Sound(sound) => sound,
+            Source::Stream(stream) => {
+                stream.read(out);
+                return;
+            }
+        };
+        let src = sound.samples();
         if src.is_empty() && self.params.looping {
             out.fill(0.0);
             self.finished = true;

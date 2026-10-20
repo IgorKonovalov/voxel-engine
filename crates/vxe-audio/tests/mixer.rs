@@ -188,6 +188,7 @@ fn a_looping_voice_wraps_without_a_discontinuity() {
                 position: [10.0, 0.0, 0.0],
                 gain: 1.0,
                 looping,
+                direct: true,
             },
         ));
         let mut out = vec![0.0; 2 * 48_000];
@@ -256,6 +257,7 @@ fn sixty_four_voices_render_a_block_without_allocating() {
             position: [30.0 * a.cos(), 30.0 * a.sin(), 0.0],
             gain: 1.0,
             looping: true,
+            direct: true,
         }
     };
     for i in 0..64u32 {

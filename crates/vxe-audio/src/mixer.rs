@@ -41,7 +41,8 @@ use crate::command::Command;
 use crate::hrtf::Hrtf;
 use crate::reverb::{Reverb, ReverbLine, ReverbSettings};
 use crate::voice::{
-    MAX_DELAY_FRAMES, MAX_TAPS, OPEN_CUTOFF_HZ, Tap, TapState, Voice, VoiceBuffers, VoiceId,
+    MAX_DELAY_FRAMES, MAX_TAPS, OPEN_CUTOFF_HZ, PlayParams, Source, Tap, TapState, Voice,
+    VoiceBuffers, VoiceId,
 };
 use crate::{BLOCK, Listener, RATE, SMOOTHING_SECONDS, cross, dot, length, normalize_or, sub};
 
@@ -195,12 +196,9 @@ impl Mixer {
     /// dropped; a command naming a voice that is not playing does nothing.
     pub fn apply(&mut self, cmd: Command) {
         match cmd {
-            Command::Play(id, sound, params) => {
-                if !self.is_playing(id)
-                    && let Some(buffers) = self.spare.pop()
-                {
-                    self.voices.push(Voice::new(id, sound, params, buffers));
-                }
+            Command::Play(id, sound, params) => self.start(id, Source::Sound(sound), params),
+            Command::PlayStream(id, stream, params) => {
+                self.start(id, Source::Stream(stream), params)
             }
             Command::SetPosition(id, p) => {
                 if let Some(v) = self.voice_mut(id) {
@@ -231,6 +229,14 @@ impl Mixer {
                     }
                 }
             }
+        }
+    }
+
+    fn start(&mut self, id: VoiceId, source: Source, params: PlayParams) {
+        if !self.is_playing(id)
+            && let Some(buffers) = self.spare.pop()
+        {
+            self.voices.push(Voice::new(id, source, params, buffers));
         }
     }
 
@@ -301,6 +307,25 @@ impl Mixer {
                 v.send = send;
                 v.echo_pos = (echo_start + n) % len;
             }
+            // The gain smoother's decay over this block.
+            let decay = (1.0 - k).powi(n as i32);
+            for ((state, target), bus) in
+                v.taps.iter_mut().zip(&v.acoustic.taps).zip(&mut self.buses)
+            {
+                bus.live |= render_tap(
+                    state,
+                    *target,
+                    &v.buffers.echo,
+                    echo_start,
+                    &mut bus.block[..n],
+                    decay,
+                );
+            }
+            // A voice without its direct path is heard only through its taps and its send.
+            if !v.params.direct {
+                v.started = true;
+                continue;
+            }
             let mut g = v.gain;
             for s in dry.iter_mut() {
                 g += (target_gain - g) * k;
@@ -327,20 +352,6 @@ impl Mixer {
                 v.lowpass = y;
             } else if let Some(&last) = dry.last() {
                 v.lowpass = last;
-            }
-            // The gain smoother's decay over this block.
-            let decay = (1.0 - k).powi(n as i32);
-            for ((state, target), bus) in
-                v.taps.iter_mut().zip(&v.acoustic.taps).zip(&mut self.buses)
-            {
-                bus.live |= render_tap(
-                    state,
-                    *target,
-                    &v.buffers.echo,
-                    echo_start,
-                    &mut bus.block[..n],
-                    decay,
-                );
             }
             match &self.hrtf {
                 Some(hrtf) => {

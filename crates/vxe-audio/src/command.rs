@@ -6,6 +6,7 @@
 
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 
+use crate::stream::StreamReader;
 use crate::voice::{AcousticTargets, PlayParams, Sound, VoiceId};
 use crate::{AudioError, Listener};
 
@@ -23,10 +24,12 @@ pub struct RoomTargets {
     pub energy: f32,
 }
 
-/// One instruction for the mixer.
-#[derive(Clone, Debug, PartialEq)]
+/// One instruction for the mixer. Not `Clone`: a stream has one reader.
+#[derive(Debug, PartialEq)]
 pub enum Command {
     Play(VoiceId, Sound, PlayParams),
+    /// Plays a stream as a voice until stopped; an underrun plays silence.
+    PlayStream(VoiceId, StreamReader, PlayParams),
     SetPosition(VoiceId, [f32; 3]),
     SetGain(VoiceId, f32),
     Stop(VoiceId),

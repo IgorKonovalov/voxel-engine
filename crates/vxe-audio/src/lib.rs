@@ -27,9 +27,11 @@
 mod acoustics;
 mod command;
 mod hrtf;
+mod input;
 mod mixer;
 mod output;
 mod reverb;
+mod stream;
 mod voice;
 
 pub use acoustics::{
@@ -40,6 +42,7 @@ pub use acoustics::{
 };
 pub use command::{COMMAND_CAPACITY, Command, RoomTargets};
 pub use hrtf::Hrtf;
+pub use input::Input;
 pub use mixer::{
     MAX_VOICES, Mixer, TAP_JUMP_FRAMES, TAP_SILENT, TAP_SLEW_FRAMES_PER_FRAME, TapSlot,
 };
@@ -48,6 +51,7 @@ pub use reverb::{
     REVERB_DELAY_SLEW_FRAMES_PER_FRAME, REVERB_LINES, REVERB_MAX_DELAY_FRAMES,
     REVERB_MIN_DELAY_FRAMES, ReverbLine, ReverbSettings,
 };
+pub use stream::{STREAM_CAPACITY_FRAMES, Stream, StreamMonitor, StreamReader, StreamWriter};
 pub use voice::{
     AcousticTargets, MAX_DELAY_FRAMES, MAX_TAPS, OPEN_CUTOFF_HZ, PlayParams, Sound, Tap, VoiceId,
 };
@@ -85,7 +89,9 @@ impl Default for Listener {
 pub enum AudioError {
     /// The host has no default output device.
     NoDevice,
-    /// The device cannot open 48 kHz stereo `f32`; names what it offered.
+    /// The host has no default input device.
+    NoInputDevice,
+    /// The device cannot open 48 kHz `f32` (stereo for output); names what it offered.
     Format(String),
     /// The command channel is full; the command was not sent.
     Busy,
@@ -99,10 +105,11 @@ impl std::fmt::Display for AudioError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoDevice => write!(f, "no default output device"),
+            Self::NoInputDevice => write!(f, "no default input device"),
             Self::Format(offered) => {
                 write!(
                     f,
-                    "the device cannot open 48 kHz stereo f32; it offers {offered}"
+                    "the device cannot open 48 kHz f32 (stereo for output); it offers {offered}"
                 )
             }
             Self::Busy => write!(f, "the audio command channel is full"),
