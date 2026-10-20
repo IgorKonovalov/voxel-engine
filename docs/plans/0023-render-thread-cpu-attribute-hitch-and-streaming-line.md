@@ -464,8 +464,8 @@ normals for at most 250 ms". The pass's GPU time stays a recorded figure here. P
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Profile a crossing, and a headless repro | dev | done: `attr_work::build` over `MirrorView` (implemented by `GpuWorld`); unit tests read 1961 shell chunks, 956 968 shell visits, 0 items, and 797 chunks, 408 064 item calls, 408 064 items; `tests/mirror.rs` 37 of 37 on the fallback adapter, the new case's lengths `[1343, 34, 568, 34, 568, 46, 56, 0]` also read on an export of ae2e088; bench medians (exclusive perf lock, load 5.01): eviction frame 170.89 ms, promotion frame 6.332 ms; flights, profile, verdict and `sync` share in Notes | committed with this row |
-| 2: The shell visits only full neighbours | dev | not started | |
+| 1: Profile a crossing, and a headless repro | dev | done: `attr_work::build` over `MirrorView` (implemented by `GpuWorld`); unit tests read 1961 shell chunks, 956 968 shell visits, 0 items, and 797 chunks, 408 064 item calls, 408 064 items; `tests/mirror.rs` 37 of 37 on the fallback adapter, the new case's lengths `[1343, 34, 568, 34, 568, 46, 56, 0]` also read on an export of ae2e088; bench medians (exclusive perf lock, load 5.01): eviction frame 170.89 ms, promotion frame 6.332 ms; flights, profile, verdict and `sync` share in Notes | 730f7ed |
+| 2: The shell visits only full neighbours | dev | done: eviction case 50 986 neighbour lookups, 0 shell visits, 0 items; the Phase 1 builder kept as `tests::reference` (its eviction case still reads 956 968 visits); oracle over 64 seeds equal as sorted `(slot, origin)` sets, with and without the other two change sets, 32 046 shell-only items in total; `vxe-render` 66 of 66; bench medians (exclusive perf lock, load 13.71): eviction frame 1.399 ms (Phase 1: 170.89), promotion frame 7.493 ms (Phase 1: 6.332) | committed with this row |
 | 3: Capped attribute pass with carry-over | dev | not started | |
 | 4: Incremental queue, sweep and window shift | dev | not started | |
 | 5: Narrowing and staging on the workers | dev | not started | |
@@ -522,6 +522,8 @@ each. Empty is fine.)_
   `GpuWorld` gains `prepare_attrs`, `encode_attrs` and `attr_stats`; `update_attrs_timed`
   calls the first two. Outside Phase 1's file list: `Cargo.lock` (criterion) and
   `crates/vxe-render/tests/mirror.rs` (the case its done-when names).
+- **Phase 2.** `AttrWorkStats` gains `neighbour_lookups`; the fly-through's report lines do
+  not print it (`apps/flythrough` is outside Phase 2's file list). The bench is unchanged.
 
 ### Close triggers
 

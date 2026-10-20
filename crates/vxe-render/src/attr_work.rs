@@ -6,7 +6,9 @@
 //! - chunks whose record was written whole: every brick is taken;
 //! - re-uploaded bricks (world brick coordinates): each brick's 3 x 3 x 3 neighbourhood;
 //! - shell chunks, whose record was written new, dropped or replaced: the bricks within one
-//!   brick of the chunk's box that belong to other chunks.
+//!   brick of the chunk's box that belong to other chunks. Only a neighbour chunk mirrored
+//!   full can hold such a brick, so the shell costs one lookup per neighbour and visits only
+//!   the bricks of full neighbours that border the chunk.
 //!
 //! Each brick enters the list at most once. A brick of a chunk taken whole is not visited again
 //! by the other two sources.
@@ -38,7 +40,9 @@ pub struct AttrWorkStats {
     pub item_calls: u64,
     /// Brick visits from the re-uploaded bricks' neighbourhoods.
     pub dirty_visits: u64,
-    /// Brick visits from the shells.
+    /// Neighbour-chunk lookups from the shells, 26 per shell chunk.
+    pub neighbour_lookups: u64,
+    /// Brick visits from the shells: the bordering bricks of full neighbours.
     pub shell_visits: u64,
     /// Hash-table operations: the view's lookups and the deduplication's.
     pub lookups: u64,
@@ -126,6 +130,16 @@ impl<V: MirrorView> Visitor<'_, V> {
         if self.chunks.contains(&c) {
             return;
         }
+        self.visit_outside_whole(b, st, items);
+    }
+
+    /// [`Visitor::visit`] for a brick already known to lie outside the chunks taken whole.
+    fn visit_outside_whole(
+        &mut self,
+        b: [i32; 3],
+        st: &mut AttrWorkStats,
+        items: &mut Vec<AttribItem>,
+    ) {
         st.lookups += 1;
         if !self.seen.insert(b) {
             return;
@@ -157,7 +171,26 @@ fn dirty_pass<V: MirrorView>(
     }
 }
 
-/// The neighbours' bricks within one brick of each shell chunk's box.
+/// The 26 neighbour offsets of a chunk.
+const NEIGHBOURS: [[i32; 3]; 26] = {
+    let mut out = [[0; 3]; 26];
+    let mut n = 0;
+    let mut i = 0;
+    while i < 27 {
+        let d = [i % 3 - 1, i / 3 % 3 - 1, i / 9 - 1];
+        if d[0] != 0 || d[1] != 0 || d[2] != 0 {
+            out[n] = d;
+            n += 1;
+        }
+        i += 1;
+    }
+    out
+};
+
+/// The neighbours' bricks within one brick of each shell chunk's box: for each of the chunk's
+/// 26 neighbour chunks mirrored full, the bricks of that neighbour that border the chunk (64
+/// across a face, 8 along an edge, 1 at a corner). A neighbour that is not full, or that is
+/// taken whole, holds none of the list's bricks, so it costs one lookup.
 #[inline(never)]
 fn shell_pass<V: MirrorView>(
     v: &mut Visitor<'_, V>,
@@ -167,18 +200,30 @@ fn shell_pass<V: MirrorView>(
 ) {
     let e = CHUNK_EDGE_BRICKS;
     for &c in shells {
-        let lo = c.0.map(|v| v * e - 1);
-        let hi = c.0.map(|v| v * e + e);
-        for z in lo[2]..=hi[2] {
-            for y in lo[1]..=hi[1] {
-                for x in lo[0]..=hi[0] {
-                    let on_shell = [x, y, z]
-                        .iter()
-                        .enumerate()
-                        .any(|(k, &v)| v == lo[k] || v == hi[k]);
-                    if on_shell {
+        for d in NEIGHBOURS {
+            let n = ChunkCoord([0, 1, 2].map(|k| c.0[k] + d[k]));
+            st.neighbour_lookups += 1;
+            st.lookups += 1;
+            if !v.view.is_full_chunk(n) {
+                continue;
+            }
+            st.lookups += 1;
+            if v.chunks.contains(&n) {
+                continue;
+            }
+            // The bricks of `n` on the side facing `c`, per axis: its last layer when `c`
+            // lies below, its first when above, all of them when level.
+            let span = d.map(|dk| match dk {
+                -1 => e - 1..e,
+                1 => 0..1,
+                _ => 0..e,
+            });
+            for z in span[2].clone() {
+                for y in span[1].clone() {
+                    for x in span[0].clone() {
                         st.shell_visits += 1;
-                        v.visit([x, y, z], st, items);
+                        let b = [n.0[0] * e + x, n.0[1] * e + y, n.0[2] * e + z];
+                        v.visit_outside_whole(b, st, items);
                     }
                 }
             }
@@ -264,16 +309,29 @@ mod tests {
     }
 
     #[test]
-    fn an_eviction_frame_visits_every_shell_brick_and_lists_nothing() {
+    fn an_eviction_frame_looks_up_each_neighbour_once_and_visits_nothing() {
         let view = Synthetic::new();
         let shells = evicted();
         assert_eq!(shells.len(), 1961);
         let mut items = Vec::new();
         let st = build(&view, &HashSet::new(), &HashSet::new(), &shells, &mut items);
         assert_eq!(st.shell_chunks, 1961);
-        assert_eq!(st.shell_visits, 956_968);
-        assert_eq!(st.visits(), 1961 * 488);
+        assert_eq!(st.neighbour_lookups, 1961 * 26);
+        assert_eq!(st.neighbour_lookups, 50_986);
+        assert_eq!(st.shell_visits, 0);
+        assert_eq!(st.visits(), 0);
         assert_eq!(st.items, 0);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn the_volume_shell_visited_every_shell_brick_of_an_eviction_frame() {
+        let view = Synthetic::new();
+        let shells = evicted();
+        let mut items = Vec::new();
+        let visits = reference::build(&view, &HashSet::new(), &HashSet::new(), &shells, &mut items);
+        assert_eq!(visits, 1961 * 488);
+        assert_eq!(visits, 956_968);
         assert!(items.is_empty());
     }
 
@@ -288,5 +346,181 @@ mod tests {
         assert_eq!(st.items, 408_064);
         assert_eq!(items.len(), 408_064);
         assert_eq!(st.visits(), 0);
+    }
+
+    /// The volume-shell builder: every brick of a one-brick shell around each shell chunk,
+    /// 10^3 - 8^3 = 488 per chunk. The oracle the neighbour shell is held to.
+    mod reference {
+        use std::collections::HashSet;
+
+        use vxe_world::{BRICK_EDGE, CHUNK_BRICKS, CHUNK_EDGE_BRICKS, ChunkCoord, brick_of_slot};
+
+        use super::super::MirrorView;
+        use crate::attrib::AttribItem;
+
+        /// Appends the work list to `items`; returns the shell's brick visits.
+        pub fn build(
+            view: &impl MirrorView,
+            chunks: &HashSet<ChunkCoord>,
+            bricks: &HashSet<[i32; 3]>,
+            shells: &HashSet<ChunkCoord>,
+            items: &mut Vec<AttribItem>,
+        ) -> u64 {
+            let e = CHUNK_EDGE_BRICKS;
+            let item = |view: &dyn Fn([i32; 3]) -> Option<u32>, b: [i32; 3]| {
+                view(b).map(|slot| AttribItem {
+                    slot,
+                    origin: b.map(|v| v * BRICK_EDGE),
+                })
+            };
+            let slot = |b| view.full_slot(b);
+            for &c in chunks {
+                for i in 0..CHUNK_BRICKS {
+                    let b = brick_of_slot(i);
+                    items.extend(item(&slot, [0, 1, 2].map(|k| c.0[k] * e + b[k])));
+                }
+            }
+            let mut seen = HashSet::new();
+            let mut visit = |b: [i32; 3], items: &mut Vec<AttribItem>| {
+                let c = ChunkCoord(b.map(|v| v.div_euclid(e)));
+                if !chunks.contains(&c) && seen.insert(b) {
+                    items.extend(item(&slot, b));
+                }
+            };
+            for &b in bricks {
+                for z in -1..=1 {
+                    for y in -1..=1 {
+                        for x in -1..=1 {
+                            visit([b[0] + x, b[1] + y, b[2] + z], items);
+                        }
+                    }
+                }
+            }
+            let mut visits = 0;
+            for &c in shells {
+                let lo = c.0.map(|v| v * e - 1);
+                let hi = c.0.map(|v| v * e + e);
+                for z in lo[2]..=hi[2] {
+                    for y in lo[1]..=hi[1] {
+                        for x in lo[0]..=hi[0] {
+                            let p = [x, y, z];
+                            if (0..3).any(|k| p[k] == lo[k] || p[k] == hi[k]) {
+                                visits += 1;
+                                visit(p, items);
+                            }
+                        }
+                    }
+                }
+            }
+            visits
+        }
+    }
+
+    /// A seeded small view: a 6^3-chunk region with a mix of full, LOD-only and absent chunks,
+    /// and of `Full` and uniform bricks in the full ones. The view reads LOD-only and absent
+    /// chunks alike (not full), so only the full ones are stored.
+    struct Small {
+        /// Per full chunk, the slot of each `Full` brick (`None` for a uniform one).
+        full: HashMap<ChunkCoord, Vec<Option<u32>>>,
+    }
+
+    /// A splitmix stream.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            vxe_world::hash::mix64(self.0)
+        }
+
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    const SIDE: i32 = 6;
+
+    impl Small {
+        fn new(rng: &mut Rng) -> Self {
+            let mut full = HashMap::new();
+            let mut slot = 0;
+            for z in 0..SIDE {
+                for y in 0..SIDE {
+                    for x in 0..SIDE {
+                        let c = ChunkCoord([x, y, z]);
+                        // 0 absent, 1 LOD-only, 2 full.
+                        match rng.below(3) {
+                            0 | 1 => {}
+                            _ => {
+                                let bricks = (0..CHUNK_BRICKS)
+                                    .map(|_| {
+                                        (rng.below(2) == 0).then(|| {
+                                            slot += 1;
+                                            slot
+                                        })
+                                    })
+                                    .collect();
+                                full.insert(c, bricks);
+                            }
+                        }
+                    }
+                }
+            }
+            Self { full }
+        }
+    }
+
+    impl MirrorView for Small {
+        fn is_full_chunk(&self, c: ChunkCoord) -> bool {
+            self.full.contains_key(&c)
+        }
+
+        fn full_slot(&self, b: [i32; 3]) -> Option<u32> {
+            let e = CHUNK_EDGE_BRICKS;
+            let c = ChunkCoord(b.map(|v| v.div_euclid(e)));
+            self.full.get(&c)?[vxe_world::brick_slot(b.map(|v| v.rem_euclid(e)))]
+        }
+    }
+
+    fn sorted(items: &[AttribItem]) -> Vec<(u32, [i32; 3])> {
+        let mut v: Vec<_> = items.iter().map(|i| (i.slot, i.origin)).collect();
+        v.sort_unstable();
+        v
+    }
+
+    #[test]
+    fn the_neighbour_shell_lists_what_the_volume_shell_listed() {
+        let e = CHUNK_EDGE_BRICKS;
+        let mut shell_items = 0;
+        for seed in 0..64u64 {
+            let mut rng = Rng(seed);
+            let view = Small::new(&mut rng);
+            let any_chunk =
+                |rng: &mut Rng| ChunkCoord([0; 3].map(|_| rng.below(SIDE as u64 + 2) as i32 - 1));
+            let chunks: HashSet<ChunkCoord> =
+                (0..rng.below(4)).map(|_| any_chunk(&mut rng)).collect();
+            let bricks: HashSet<[i32; 3]> = (0..rng.below(40))
+                .map(|_| [0; 3].map(|_| rng.below((SIDE * e) as u64 + 2) as i32 - 1))
+                .collect();
+            let shells: HashSet<ChunkCoord> =
+                (0..rng.below(30)).map(|_| any_chunk(&mut rng)).collect();
+            let mut got = Vec::new();
+            build(&view, &chunks, &bricks, &shells, &mut got);
+            let mut want = Vec::new();
+            reference::build(&view, &chunks, &bricks, &shells, &mut want);
+            assert_eq!(sorted(&got), sorted(&want), "seed {seed}");
+            assert_eq!(got.len(), want.len(), "seed {seed}: a duplicate item");
+            // The shells alone, so the comparison covers the path this builder changed.
+            let none_c = HashSet::new();
+            let none_b = HashSet::new();
+            let mut got = Vec::new();
+            build(&view, &none_c, &none_b, &shells, &mut got);
+            let mut want = Vec::new();
+            reference::build(&view, &none_c, &none_b, &shells, &mut want);
+            assert_eq!(sorted(&got), sorted(&want), "seed {seed}, shells alone");
+            shell_items += got.len();
+        }
+        println!("shell-only items over 64 seeds: {shell_items}");
+        assert!(shell_items > 1000, "the shells listed {shell_items} items");
     }
 }
