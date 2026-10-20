@@ -280,9 +280,15 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   fly-through, the query after a 0.5 m dig on the seed-1 level reads 492 to 619 µs over six
   digs (release build, 25b483d; no proposal). Every reading is under its proposal; the
   proposals stand as budgets.
-- **Logs (Plan 0007):** an op log entry is 47 bytes for a sphere carve (65 for a box fill, 75
-  for a capsule replace), a boundary entry 13, an input entry 14 bytes plus its payload; a log
-  file adds a 60-byte header.
+- **Logs (Plan 0007, Plan 0018):** an op log entry is 47 bytes for a sphere carve (65 for a box
+  fill, 75 for a capsule replace), 34 for a stamp (whatever the prefab's size: it names the
+  prefab by content id, ADR-0014), `21 + 12n` for a drop of `n` cells and `31 + 12n` for a
+  removal (49 173 bytes for a 4 096-cell drop); a boundary entry 13, an input entry 14 bytes
+  plus its payload. A log file adds a header of 60 fixed bytes, a 4-byte prefab count, and
+  per prefab its stamps name an 8-byte id and its content (`12 + 2n` bytes for `n` voxels plus
+  8 per 64 voxels of mask: 8 716 for the 16³ vault), once per prefab however often it is
+  stamped. A falling region re-sends its cells every tick it drops (129 bytes a tick for a
+  9-cell slab). All asserted in `crates/vxe-world/tests/log.rs`.
 - **Replay throughput:** no budget; a reading only, bound by the edit cost above (the ops
   dominate, not the decode). **Reading (dev reference, AMD Ryzen 9 5900HS, Plan
   0007 Phase 6, exclusive perf lock, 1-minute load 1.45):** `cargo bench -p vxe-world --bench
@@ -295,6 +301,16 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   1-minute load 1.66):** `cargo bench -p vxe-net --bench tick`: 3.4706 ms (CI 3.4663 to
   3.4756 ms) through `EchoLogic` against 3.3859 ms (CI 3.3782 to 3.3990 ms) direct, an
   overhead of 84.7 µs per 100 inputs.
+  **Reading with the server's coarse grid (dev reference, AMD Ryzen 9 5900HS, Linux, Plan
+  0018 Phase 5, a9014d0 plus the phase's bench arm, exclusive perf lock but not quiet: other
+  worktrees building and testing, 1-minute load 14.46 falling to 6.50):** the server now
+  updates its coarse grid after every applied op, which is edit work, so the overhead is read
+  against the direct carves each followed by the same grid update. Three rounds, arms
+  alternated, criterion medians: through `EchoLogic` 4.3895, 3.9923 and 3.8381 ms; direct
+  carves with grid updates 4.3400, 3.9843 and 4.0753 ms; direct carves alone 2.8636, 2.4967
+  and 2.8504 ms. Overhead per 100 inputs: 49.5 µs, 8.0 µs and -237.2 µs (the last round's
+  noise exceeds the difference). Under the 100 µs line in every round; the readings are noisy
+  and want a quiet-box re-read.
 - **Component boundary (budgets since the Plan 0011 close):** a host call from a logic
   component (the `apply` import of a radius-1 m carve: the op's wire bytes out, the tagged
   answer back) costs at most 2 µs more than a native `Host::apply`; the fly-through's `Bench`
@@ -455,6 +471,13 @@ criterion median (low, high), exclusive perf lock, load average 1.7 to 2.3 at ea
   1.3544 ms (1.3528, 1.3560), **13.5 µs per update**. **Walkable update** from those changes:
   807.17 µs (805.83, 808.64), **8.1 µs per update**. Both under their lines. Plan 0003's
   `mixed` world was not on the branch; the bench runs on the solid world.
+- **Coarse grid update on the server path (Plan 0018 Phase 5):** the server updates its grid
+  over each applied op's aabb, in op order on the server thread. `cargo bench -p vxe-net
+  --bench tick` (100 radius-1 m carves on `solid3_world()` each followed by
+  `CoarseGrid::update_aabb`, against the carves alone), AMD Ryzen 9 5900HS, Linux, a9014d0
+  plus the phase's bench arm, exclusive perf lock, not quiet (1-minute load 14.46 falling to
+  6.50), three alternated rounds: 1.4764, 1.4876 and 1.2249 ms per 100, **12.2 to 14.9 µs per
+  update**, under the 50 µs line and beside the 13.5 µs above.
 - **Coarse grid RAM:** 6 553 600 B at the level (3200 chunks, `flythrough --level --seed 1`,
   fe50d6d). At 32 × 32 × 32 chunks it is 67 108 864 B by the same 2048 B per chunk
   (arithmetic, not read). Grid build at the level, one thread (`world_budget --chunks 20x20x8

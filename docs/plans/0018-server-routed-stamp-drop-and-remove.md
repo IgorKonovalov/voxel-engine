@@ -233,8 +233,8 @@ pub enum EditError { NotResident(ChunkCoord), UnknownPrefab(u64), /* Plan 0019 a
 | 1: Wire kinds 2 to 4 and the prefab table | dev | done | e1b17d3 |
 | 2: The server applies every kind | dev | done | 300874f |
 | 3: The host and the component | dev | done | 416e99c |
-| 4: The fly-through through the logic | dev | done | committed with this row |
-| 5: Readings | dev | not started | |
+| 4: The fly-through through the logic | dev | done | a9014d0 |
+| 5: Readings | dev | done | committed with this row |
 
 ### Notes
 
@@ -307,6 +307,10 @@ pub enum EditError { NotResident(ChunkCoord), UnknownPrefab(u64), /* Plan 0019 a
 - Phase 4: edits outside the phase's Files touched: `apps/flythrough/tests/component.rs` and
   `crates/vxe-script-wasm/benches/boundary.rs` (`DigLogic::default()`; `DigLogic` is no longer
   a unit struct). `RUBBLE` moved to the logic crate and `flythrough::RUBBLE` re-exports it.
+- Phase 5: the tick bench gained an arm, the direct carves each followed by
+  `CoarseGrid::update_aabb`; the overhead is read against it, since the server's grid update
+  is edit work. The readings were taken with other worktrees building and testing (1-minute
+  load 14.46 falling to 6.50), not on a quiet box.
 
 ### Close triggers
 
