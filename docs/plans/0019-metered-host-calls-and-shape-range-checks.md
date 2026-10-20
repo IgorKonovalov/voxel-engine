@@ -334,7 +334,7 @@ pub struct WorkRates { pub per_voxel: u64, pub per_step: u64, pub per_call: u64 
 |---|---|---|---|
 | 1: `WorldLimits` and `OutOfRange` | dev | done | 891b9fc (before the amendment), c04bfd1 |
 | 2: Fuel charged by work | dev | done | 3445f30 |
-| 3: Readings and the lines | dev | done | committed with this row |
+| 3: Readings and the lines | dev | done | 40d2b91 |
 
 ### Notes
 
@@ -363,19 +363,47 @@ pub struct WorkRates { pub per_voxel: u64, pub per_step: u64, pub per_call: u64 
   empty tick 1.0919 µs, `Bench` 2.9170 / 2.8378 ms = 1.028x; this phase (load 7.15 to 4.58):
   2.3306 ms, 2.4593 ms, 1.287 µs per call, empty tick 0.974 µs, `Bench` 2.5510 / 2.4014 ms =
   1.062x.
+- Followup noticed: the `unsupported` import runs a flood of up to `max_region` cells and is
+  charged `per_call` only.
+- Followup noticed: the `vxe-script-wasm` tests' module doc lists the guests and does not
+  name `greedy`.
+- Followup noticed: the `bindgen` `host` trait is generated and no longer implemented; the
+  imports' signatures are checked only when the component links.
 - Phase 1: `world_budget` sizes `query_axis_max` and `query_voxels_max` to its extent; run
   at the default 20x20x8 chunks it printed `air fraction: 29.31 %` (release, exclusive perf
   lock, 1-minute load 15.22).
 
 ### Close triggers
 
-_(Facts for the architect. No recommendations, and no suggested version bump.)_
-
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** `WorldLimits` per `World` (`limits`, `with_limits`) with the seven
+  defaults of the Decision; `Shape::check`; `EditError::OutOfRange { what: Field }`, wire
+  error tag 2 plus a field byte (`Field::ALL` index + 1, 8 fields); checks in `World::apply`,
+  `raycast`, `count_in_box(_with_stats)`, `drop_region`, `remove_region`;
+  `World::raycast_with_stats`; `WorkRates` on `WasmConfig` and the five `host` imports
+  charged through `func_wrap`; `WasmLogic::fuel_left`; `Host::raycast_with_steps`; the
+  `greedy` guest; `nfr.md` §4 range and charging lines.
+- **Public API changed:** `World::raycast` -> `Result<Option<Hit>, EditError>`;
+  `World::count_in_box` and `count_in_box_with_stats` -> `Result<_, EditError>`; new
+  `EditError::OutOfRange` variant (exhaustive matches break); `WasmConfig` gains `rates`
+  (struct literals break); `Host` gains a provided method; `vxe_world::{Field,
+  WorldLimits}` and `vxe_script_wasm::WorkRates` exported. The `Host` trait's and the WIT
+  world's query signatures are unchanged.
+- **Budget readings:** boundary bench paired with the parent, AMD Ryzen 9 5900HS, Linux,
+  exclusive perf lock, not quiet: 1.339 µs per host call at c04bfd1 (load 3.94 to 4.66),
+  1.287 µs at 3445f30 (load 7.15 to 4.58); `Bench` 1.028x and 1.062x. `world_budget` at
+  20x20x8 chunks printed its air count (29.31 %). Ray steps from a voxel centre at
+  `max_t = 2^22` through an empty world: 256 to 258 per axis, 768 to 772 diagonal.
+- **Gate at the tip (40d2b91 plus this block):** `scripts/build-guests.sh` exit 0; `cargo build
+  --workspace` ok; `cargo nextest run --workspace` 408 passed, 4 skipped; `cargo nextest
+  run -p flythrough --features wasm` 96 passed, 3 skipped (both under the exclusive perf lock,
+  1-minute load 14.94 before, 22.79 after); `cargo test --workspace --doc` 11 ok results, no
+  failure; `cargo test --release -p vxe-world` 149 passed, 0 failed; clippy (workspace and
+  `flythrough --features wasm`) clean; `cargo fmt --all --check` exit 0; `cargo deny check`
+  advisories, bans, licenses, sources ok (duplicate-version warnings only); hook tests 59/59;
+  doc links, comment hygiene, index rows and its self-test ok. The determinism vector,
+  `ECHO_HASH`, `SLAB_SESSION_HASH` and `SESSION_HASH` tests pass on Linux; the Windows arm
+  has not run.
+- **Outstanding `human` phases:** none.
 
 ## Followups
 
