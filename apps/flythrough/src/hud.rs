@@ -267,6 +267,48 @@ pub enum Mode {
     Walk,
 }
 
+/// A gamepad's power as `gilrs` reports it, the fly-through's own copy so the HUD names no
+/// gamepad library.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PadPower {
+    #[default]
+    Unknown,
+    Wired,
+    Discharging(u8),
+    Charging(u8),
+    Charged,
+}
+
+impl fmt::Display for PadPower {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PadPower::Unknown => f.write_str("power unknown"),
+            PadPower::Wired => f.write_str("wired"),
+            PadPower::Discharging(n) => write!(f, "battery {n}%"),
+            PadPower::Charging(n) => write!(f, "charging {n}%"),
+            PadPower::Charged => f.write_str("charged"),
+        }
+    }
+}
+
+/// The pad row: the active pad's name and power; an empty name reads `pad none`. The name
+/// is rewritten in place only when it changes, so a shown row allocates nothing per frame.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PadRow {
+    pub name: String,
+    pub power: Option<PadPower>,
+}
+
+impl fmt::Display for PadRow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (self.name.is_empty(), self.power) {
+            (true, _) => f.write_str("pad none"),
+            (false, Some(p)) => write!(f, "pad {}, {p}", self.name),
+            (false, None) => write!(f, "pad {}", self.name),
+        }
+    }
+}
+
 /// The last edit: its verb, the count changed per material name, the chunks it touched and
 /// its cost.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -321,6 +363,8 @@ pub struct HudStats {
     pub steps: Option<StepsSample>,
     /// The mirror's pressure against its reservation; `None` hides its row.
     pub pressure: Option<Pressure>,
+    /// The gamepad row; `None` (no pad source in this run) hides it.
+    pub pad: Option<PadRow>,
 }
 
 /// The mirror's pressure (the fuller of its pool slots and records), its reservation in bytes,
@@ -399,6 +443,7 @@ impl HudStats {
             format_us: 6,
             steps: None,
             pressure: None,
+            pad: None,
         }
     }
 
@@ -541,6 +586,9 @@ impl HudStats {
                     s.mean_steps, s.p99_steps, s.block_max_mean, s.mean_loads, s.mean_pool_reads
                 ),
             )?;
+        }
+        if let Some(p) = &self.pad {
+            row(out, HudColour::White, format_args!("{p}"))?;
         }
         row(
             out,
@@ -836,6 +884,23 @@ mod tests {
             .collect();
         assert_eq!(yellow, [0, 3]);
         assert!(colours.iter().all(|&c| c != HudColour::Red));
+    }
+
+    /// A pad row sits before the format row, and a run without a pad source shows none.
+    #[test]
+    fn the_pad_row_shows_before_the_format_row() {
+        let (mut out, mut colours) = (String::new(), Vec::new());
+        let mut s = HudStats::fixed();
+        s.pad = Some(PadRow {
+            name: "PS5 Controller".to_owned(),
+            power: Some(PadPower::Charging(5)),
+        });
+        s.write_rows(&mut out, &mut colours);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 13);
+        assert_eq!(lines[11], "pad PS5 Controller, charging 5%");
+        assert_eq!(lines[12], "format 6 us");
+        assert_eq!(colours[11], HudColour::White);
     }
 
     #[test]

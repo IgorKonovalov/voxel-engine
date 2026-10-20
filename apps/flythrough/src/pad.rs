@@ -3,8 +3,10 @@
 //! over SDL's controller names, which `gilrs` reports for a mapped pad: [`AXES`] for the
 //! sticks and the analog triggers, [`BUTTONS`] for the digital buttons.
 
-use gilrs::{EventType, GamepadId, Gilrs};
+use gilrs::{EventType, GamepadId, Gilrs, PowerInfo};
 use vxe_app::{Axis, Input, PadButton};
+
+use flythrough::hud::{PadPower, PadRow};
 
 /// A `gilrs` source and the `Input` axis it feeds. Sticks report y positive up, which is
 /// forward on the move stick and up on the look stick, so no row flips a sign. The analog
@@ -84,47 +86,178 @@ fn press(b: gilrs::Button, down: bool, input: &mut Input) {
     }
 }
 
-/// The gamepad source: `gilrs` and the pad whose events feed `Input`. The first pad
-/// connected at startup is active; with none, the first pad to send an event becomes it.
-pub struct Pad {
-    gilrs: Gilrs,
-    active: Option<GamepadId>,
+/// What `gilrs` reports of a pad's power, as the HUD shows it.
+pub fn power_of(p: PowerInfo) -> PadPower {
+    match p {
+        PowerInfo::Unknown => PadPower::Unknown,
+        PowerInfo::Wired => PadPower::Wired,
+        PowerInfo::Discharging(n) => PadPower::Discharging(n),
+        PowerInfo::Charging(n) => PadPower::Charging(n),
+        PowerInfo::Charged => PadPower::Charged,
+    }
 }
 
-impl Pad {
-    /// `gilrs` on this machine, or `None` when it cannot start (no udev, as in a container),
-    /// which the fly-through treats as no pad.
-    pub fn open() -> Option<Self> {
-        match Gilrs::new() {
-            Ok(gilrs) => {
-                let active = gilrs.gamepads().next().map(|(id, _)| id);
-                Some(Self { gilrs, active })
-            }
-            Err(e) => {
-                log::warn!("gamepad: gilrs did not start: {e}");
-                None
-            }
+/// The connected pads, oldest first, by an id the caller assigns; the newest is active. Kept
+/// apart from `gilrs` so connects and disconnects are tested without a device.
+#[derive(Debug, Default)]
+pub struct PadState {
+    pads: Vec<(usize, String)>,
+}
+
+impl PadState {
+    /// The active pad's id and name.
+    pub fn active(&self) -> Option<(usize, &str)> {
+        self.pads.last().map(|(id, n)| (*id, n.as_str()))
+    }
+
+    /// Pad `id` connected and is now active; the line to print, or `None` for an id already
+    /// connected.
+    pub fn connected(&mut self, id: usize, name: &str, power: PadPower) -> Option<String> {
+        if self.pads.iter().any(|(i, _)| *i == id) {
+            return None;
+        }
+        self.pads.push((id, name.to_owned()));
+        Some(format!("pad: {name} connected ({power})"))
+    }
+
+    /// Pad `id` disconnected; the line to print, naming the pad now active or `pad: none`,
+    /// or `None` for an id not connected.
+    pub fn disconnected(&mut self, id: usize) -> Option<String> {
+        let k = self.pads.iter().position(|(i, _)| *i == id)?;
+        let (_, name) = self.pads.remove(k);
+        Some(match self.active() {
+            Some((_, now)) => format!("pad: {name} disconnected; now {now}"),
+            None => format!("pad: {name} disconnected; pad: none"),
+        })
+    }
+
+    /// The startup line: the active pad and its power, or `pad: none`.
+    pub fn startup_line(&self, power: PadPower) -> String {
+        match self.active() {
+            Some((_, name)) => format!("pad: {name} ({power})"),
+            None => "pad: none".to_owned(),
         }
     }
 
-    /// Drains the events since the last call into `input`. Events of a pad other than the
-    /// active one are dropped; the active pad's disconnect zeroes its axes and buttons.
-    pub fn poll(&mut self, input: &mut Input) {
-        while let Some(ev) = self.gilrs.next_event() {
-            match ev.event {
-                EventType::Disconnected if self.active == Some(ev.id) => {
-                    self.active = None;
-                    input.release_pad();
+    /// The HUD row's values: the active pad's name and power, empty and `None` without one.
+    pub fn write_row(&self, power: PadPower, row: &mut PadRow) {
+        match self.active() {
+            Some((_, name)) => {
+                if row.name != name {
+                    row.name.clear();
+                    row.name.push_str(name);
                 }
-                EventType::Connected | EventType::Disconnected => {}
+                row.power = Some(power);
+            }
+            None => {
+                row.name.clear();
+                row.power = None;
+            }
+        }
+    }
+}
+
+/// Polls between two reads of the active pad's power (two seconds at 60 Hz); reading it
+/// opens sysfs files on Linux.
+const POWER_EVERY: u32 = 120;
+
+/// The gamepad source: `gilrs` and the pads it has connected. Only the active pad (the one
+/// connected last) feeds `Input`.
+pub struct Pad {
+    gilrs: Gilrs,
+    state: PadState,
+    /// The active pad's power, read every [`POWER_EVERY`] polls and on a connect.
+    power: PadPower,
+    polls: u32,
+}
+
+impl Pad {
+    /// `gilrs` on this machine with the pads already connected, or `None` when it cannot
+    /// start (no udev, as in a container), which the fly-through treats as no pad.
+    pub fn open() -> Option<Self> {
+        let gilrs = match Gilrs::new() {
+            Ok(g) => g,
+            Err(e) => {
+                log::warn!("gamepad: gilrs did not start: {e}");
+                return None;
+            }
+        };
+        let mut state = PadState::default();
+        for (id, g) in gilrs.gamepads() {
+            state.connected(usize::from(id), g.name(), power_of(g.power_info()));
+        }
+        let mut pad = Self {
+            gilrs,
+            state,
+            power: PadPower::Unknown,
+            polls: 0,
+        };
+        pad.read_power();
+        Some(pad)
+    }
+
+    /// The startup line: the active pad and its power, or `pad: none`.
+    pub fn startup_line(&self) -> String {
+        self.state.startup_line(self.power)
+    }
+
+    fn gamepad_id(&self, id: usize) -> Option<GamepadId> {
+        self.gilrs
+            .gamepads()
+            .map(|(g, _)| g)
+            .find(|&g| usize::from(g) == id)
+    }
+
+    fn read_power(&mut self) {
+        if let Some(id) = self.state.active().and_then(|(id, _)| self.gamepad_id(id)) {
+            self.power = power_of(self.gilrs.gamepad(id).power_info());
+        }
+    }
+
+    /// Drains the events since the last call into `input` and returns the lines a connect or
+    /// disconnect prints. Events of a pad other than the active one are dropped; a change of
+    /// active pad zeroes the axes and releases the buttons.
+    pub fn poll(&mut self, input: &mut Input) -> Vec<String> {
+        let mut lines = Vec::new();
+        while let Some(ev) = self.gilrs.next_event() {
+            let id = usize::from(ev.id);
+            match ev.event {
+                EventType::Connected => {
+                    let g = self.gilrs.gamepad(ev.id);
+                    let power = power_of(g.power_info());
+                    if let Some(line) = self.state.connected(id, g.name(), power) {
+                        self.power = power;
+                        input.release_pad();
+                        lines.push(line);
+                    }
+                }
+                EventType::Disconnected => {
+                    let was_active = self.state.active().map(|(a, _)| a) == Some(id);
+                    if let Some(line) = self.state.disconnected(id) {
+                        if was_active {
+                            input.release_pad();
+                            self.read_power();
+                        }
+                        lines.push(line);
+                    }
+                }
                 e => {
-                    let active = *self.active.get_or_insert(ev.id);
-                    if active == ev.id {
+                    if self.state.active().map(|(a, _)| a) == Some(id) {
                         apply(e, input);
                     }
                 }
             }
         }
+        self.polls = self.polls.wrapping_add(1);
+        if self.polls.is_multiple_of(POWER_EVERY) {
+            self.read_power();
+        }
+        lines
+    }
+
+    /// The HUD's pad row: the active pad's name and its last power reading.
+    pub fn write_row(&self, row: &mut PadRow) {
+        self.state.write_row(self.power, row);
     }
 }
 
@@ -132,7 +265,7 @@ impl Pad {
 mod tests {
     use super::*;
 
-    /// The plan's mapping, row by row: every `gilrs` axis and button it names feeds the
+    /// The DualSense mapping, row by row: every `gilrs` axis and button it names feeds the
     /// `Input` axis or pad button its table gives.
     #[test]
     fn the_tables_map_each_named_source() {
@@ -208,5 +341,79 @@ mod tests {
         );
         press(gilrs::Button::South, false, &mut input);
         assert!(!input.pad_held(PadButton::South));
+    }
+
+    /// Connects and disconnects swap the active pad and print one line each: the newest
+    /// pad is active, its disconnect hands back to the one before, the last one leaves
+    /// `pad: none`; a repeated connect or an unknown disconnect prints nothing. The HUD row
+    /// follows.
+    #[test]
+    fn connects_and_disconnects_swap_the_active_pad() {
+        let mut s = PadState::default();
+        let mut row = PadRow::default();
+        assert_eq!(s.startup_line(PadPower::Unknown), "pad: none");
+        s.write_row(PadPower::Unknown, &mut row);
+        assert_eq!(row.to_string(), "pad none");
+
+        let line = s.connected(3, "PS5 Controller", PadPower::Charging(5));
+        assert_eq!(
+            line.as_deref(),
+            Some("pad: PS5 Controller connected (charging 5%)")
+        );
+        assert_eq!(
+            s.connected(3, "PS5 Controller", PadPower::Charging(5)),
+            None
+        );
+        assert_eq!(
+            s.startup_line(PadPower::Charging(5)),
+            "pad: PS5 Controller (charging 5%)"
+        );
+        s.write_row(PadPower::Charging(5), &mut row);
+        assert_eq!(row.to_string(), "pad PS5 Controller, charging 5%");
+
+        let line = s.connected(7, "Xbox Controller", PadPower::Wired);
+        assert_eq!(
+            line.as_deref(),
+            Some("pad: Xbox Controller connected (wired)")
+        );
+        assert_eq!(s.active(), Some((7, "Xbox Controller")));
+        s.write_row(PadPower::Wired, &mut row);
+        assert_eq!(row.to_string(), "pad Xbox Controller, wired");
+
+        assert_eq!(
+            s.disconnected(7).as_deref(),
+            Some("pad: Xbox Controller disconnected; now PS5 Controller")
+        );
+        assert_eq!(s.active(), Some((3, "PS5 Controller")));
+        assert_eq!(s.disconnected(7), None);
+        assert_eq!(
+            s.disconnected(3).as_deref(),
+            Some("pad: PS5 Controller disconnected; pad: none")
+        );
+        assert_eq!(s.active(), None);
+        s.write_row(PadPower::Charged, &mut row);
+        assert_eq!(row.to_string(), "pad none");
+    }
+
+    #[test]
+    fn power_reads_as_the_hud_shows_it() {
+        let shown = [
+            PowerInfo::Unknown,
+            PowerInfo::Wired,
+            PowerInfo::Discharging(40),
+            PowerInfo::Charging(5),
+            PowerInfo::Charged,
+        ]
+        .map(|p| power_of(p).to_string());
+        assert_eq!(
+            shown,
+            [
+                "power unknown",
+                "wired",
+                "battery 40%",
+                "charging 5%",
+                "charged"
+            ]
+        );
     }
 }

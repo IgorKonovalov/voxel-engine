@@ -177,8 +177,8 @@ None. The poll drains a handful of events per frame; the HUD row costs nothing m
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Axes in the shell, sticks in the fly-through | dev | done | committed with this row |
-| 2: Buttons, hot-plug and the HUD | dev | not started | |
+| 1: Axes in the shell, sticks in the fly-through | dev | done | b59c980 |
+| 2: Buttons, hot-plug and the HUD | dev | done | committed with this row |
 
 ### Notes
 
@@ -191,6 +191,23 @@ None. The poll drains a handful of events per frame; the HUD row costs nothing m
   plan names a latch without saying what releases it.
 - Phase 1: the lock adds `objc2-io-kit` (gilrs-core's macOS backend) beside the crates the
   plan's context lists; no new duplicate in `cargo deny check`.
+- Phase 1: b59c980 carried a plan-relative comment in `pad.rs` that `check-comment-hygiene` did
+  not see while the file was untracked; reworded in the Phase 2 commit.
+- Phase 2: no left-click `handle_input` test existed to mirror; the new test drives a left click
+  and `R2` on two fresh runs and asserts the server applied the same `EditResult` for both.
+- Phase 2: `R2`/`L2` dig and fill on a press edge with hysteresis (press at 0.5 pull, release
+  under 0.3), held in `Run`; the D-pad adds one scroll line per press to the scroll delta.
+- Phase 2: Square (West) is not wired: Plan 0025's cutaway (`X`) is not on this branch.
+- Phase 2: the HUD's pad row is `HudStats::pad: Option<PadRow>`, `None` without a pad source, so
+  `HudStats::fixed()` (the HUD golden's fixture) keeps its twelve rows; the main.rs allocation
+  test sets a pad row and now counts 13 rows.
+- Phase 2: the newest connected pad is active; a disconnect of the active pad hands back to the
+  previous connected one. Power is read on connect and every 120 polls.
+- Phase 2: the startup line prints only in windowed, non-autopilot runs (`pad: none` under
+  `--pad off` or when gilrs fails).
+- Owner check (human, not run here): `cargo run --release -p flythrough -- --level` with the
+  DualSense on USB, then unplug and replug it; expected startup line `pad: PS5 Controller
+  (charging N%)`, a disconnect and a connect line, and the `pad` row on the HUD (`Options`).
 
 ### Close triggers
 
