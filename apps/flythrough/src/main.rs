@@ -878,6 +878,16 @@ const PRESSURE_LOW_FRAMES: u32 = 300;
 /// The full radius the pressure rule never lowers below, in chunks.
 const R_FULL_FLOOR: i32 = 6;
 
+/// The two terms of `GpuWorld::pressure`: pool-slot occupancy (two attribute slots with each
+/// brick in an attribute page) and record occupancy.
+fn pressure_terms(m: &GpuWorld) -> [f64; 2] {
+    let slots = f64::from(m.live_slots()) + 2.0 * f64::from(m.live_attr_slots());
+    [
+        slots / f64::from(m.reserved_slots().max(1)),
+        m.mirrored_chunks() as f64 / f64::from(m.reserved_records().max(1)),
+    ]
+}
+
 /// The fly-through's answer to mirror pressure: the full radius between a floor and the
 /// configured radius, a chunk down after `PRESSURE_HIGH_FRAMES` frames above
 /// `PRESSURE_HIGH`, a chunk up after `PRESSURE_LOW_FRAMES` frames below `PRESSURE_LOW`. A
@@ -1009,8 +1019,10 @@ struct Autopilot {
     latency_from: usize,
     peak_mirror: u64,
     peak_allocated: u64,
-    /// The highest mirror pressure over the flight.
+    /// The highest mirror pressure over the flight, and of each of its terms: pool-slot
+    /// and record occupancy.
     peak_pressure: f32,
+    peak_terms: [f64; 2],
     peak_resident: u64,
     peak_persisted: u64,
     generated_at_takeoff: u64,
@@ -2053,6 +2065,8 @@ impl Run {
         p.peak_mirror = p.peak_mirror.max(gfx.mirror.mirror_bytes());
         p.peak_allocated = p.peak_allocated.max(gfx.mirror.allocated_bytes());
         p.peak_pressure = p.peak_pressure.max(gfx.mirror.pressure());
+        let terms = pressure_terms(&gfx.mirror);
+        p.peak_terms = [0, 1].map(|k| p.peak_terms[k].max(terms[k]));
         p.peak_persisted = p
             .peak_persisted
             .max(stream.streamer.stats().persisted_ram_bytes);
@@ -2101,10 +2115,14 @@ impl Run {
             p.peak_persisted.max(st.persisted_ram_bytes)
         );
         println!(
-            "autopilot: mirror budget {} B, peak live / budget {:.4}, peak pressure {:.4}, {} radius changes (r_full {} of {}), {} syncs past the reservation",
+            "autopilot: mirror budget {} B ({} slots, {} records), peak live / budget {:.4}, peak pressure {:.4} (slots {:.4}, records {:.4}), {} radius changes (r_full {} of {}), {} syncs past the reservation",
             gfx.mirror.allocated_bytes(),
+            gfx.mirror.reserved_slots(),
+            gfx.mirror.reserved_records(),
             p.peak_mirror as f64 / gfx.mirror.allocated_bytes() as f64,
             p.peak_pressure,
+            p.peak_terms[0],
+            p.peak_terms[1],
             stream.radius_changes,
             stream.rule.r_full,
             r.r_full,
@@ -2592,6 +2610,7 @@ impl App for Flythrough {
                 peak_mirror: 0,
                 peak_allocated: 0,
                 peak_pressure: 0.0,
+                peak_terms: [0.0; 2],
                 peak_resident: 0,
                 peak_persisted: 0,
                 generated_at_takeoff: 0,
