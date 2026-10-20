@@ -56,16 +56,20 @@ fn corridor() -> World {
     })
 }
 
-/// One second of a 440 Hz sine of amplitude 0.3: 440 whole cycles, so it loops cleanly.
-fn hum() -> Sound {
+/// One second of a sine of `hz` (whole hertz, so it loops cleanly) and amplitude 0.3.
+fn hum(hz: f64) -> Sound {
     Sound::new(
         (0..RATE)
             .map(|n| {
-                0.3 * (std::f64::consts::TAU * HZ * f64::from(n) / f64::from(RATE)).sin() as f32
+                0.3 * (std::f64::consts::TAU * hz * f64::from(n) / f64::from(RATE)).sin() as f32
             })
             .collect::<Vec<_>>(),
     )
 }
+
+/// The fade test's hum: exactly two cycles per 256-frame block, so a steady tone's block RMS
+/// does not ripple from one block to the next (a 440 Hz tone's ripples by 0.4 dB).
+const FADE_HZ: f64 = 375.0;
 
 /// One channel of interleaved stereo.
 fn channel(out: &[f32], c: usize) -> Vec<f64> {
@@ -147,7 +151,7 @@ fn walk(world: &World) -> Walk {
     let id = VoiceId(1);
     mixer.apply(Command::Play(
         id,
-        hum(),
+        hum(HZ),
         PlayParams {
             looping: true,
             ..PlayParams::at(SOURCE)
@@ -362,7 +366,7 @@ fn walking_past_a_hum_glides_every_echo_and_clicks_no_more_than_an_ideal_render(
 }
 
 /// A wall of `CAVE` over voxel `x in [50, 60)` and the listener 4.95 m in front of it at voxel
-/// `(0.5, 128.5, 128.5)`, a 440 Hz hum 2 m to its left: 0.5 s with the echoes, then the
+/// `(0.5, 128.5, 128.5)`, a 375 Hz hum 2 m to its left: 0.5 s with the echoes, then the
 /// reflections switched off. The echo sum fades out over the smoother's 50 ms instead of
 /// vanishing at a block edge.
 #[test]
@@ -379,7 +383,7 @@ fn switching_the_reflections_off_fades_the_echoes_out() {
     let id = VoiceId(2);
     mixer.apply(Command::Play(
         id,
-        hum(),
+        hum(FADE_HZ),
         PlayParams {
             looping: true,
             ..PlayParams::at(source)
@@ -396,25 +400,26 @@ fn switching_the_reflections_off_fades_the_echoes_out() {
         );
     };
     update(&mut acoustics, &mut mixer);
-    let half = RATE as usize / 2;
+    // Whole blocks, so the measured blocks are the mixer's.
+    let half = 94 * BLOCK;
     let mut on = vec![0.0; 2 * half];
     mixer.render(&mut on, half);
     acoustics.set_reflections(false);
     update(&mut acoustics, &mut mixer);
     let mut off = vec![0.0; 2 * half];
     mixer.render(&mut off, half);
-    let both: Vec<f32> = on[2 * SETTLE..].iter().chain(&off).copied().collect();
+    let settle = SETTLE.div_ceil(BLOCK) * BLOCK;
+    let both: Vec<f32> = on[2 * settle..].iter().chain(&off).copied().collect();
     let step = worst_rms_step_db(&both);
-    let before = block_rms(&channel(&on, 0));
-    let after = block_rms(&channel(&off, 0));
-    let (b, a) = (before[before.len() - 1], after[after.len() - 1]);
-    println!(
-        "reflections off mid-hum: largest block-to-block RMS step {step:.4} dB; left RMS \
-         {b:.5} with the echoes, {a:.5} 0.5 s after switching them off"
-    );
-    assert!(
-        (20.0 * (b / a).log10()).abs() > 0.5,
-        "the echoes change the level: {b} against {a}"
-    );
+    let change = (0..2)
+        .map(|c| {
+            let (before, after) = (block_rms(&channel(&on, c)), block_rms(&channel(&off, c)));
+            let (b, a) = (before[before.len() - 1], after[after.len() - 1]);
+            println!("ear {c}: RMS {b:.5} with the echoes, {a:.5} 0.5 s after switching them off");
+            (20.0 * (b / a).log10()).abs()
+        })
+        .fold(0.0, f64::max);
+    println!("reflections off mid-hum: largest block-to-block RMS step {step:.4} dB");
+    assert!(change > 0.5, "the echoes change the level by {change} dB");
     assert!(step <= 0.5, "RMS step {step} dB");
 }

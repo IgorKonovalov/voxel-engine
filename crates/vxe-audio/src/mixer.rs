@@ -7,10 +7,10 @@
 //!    and low-pass them with a one-pole filter (`y += a (x - y)`, `a = 1 - exp(-2 pi fc / fs)`)
 //!    at the acoustic cutoff `fc`. The coefficient `a` moves through the same smoother every
 //!    sample; at [`OPEN_CUTOFF_HZ`] its target is 1, where the filter passes its input;
-//! 3. add the early reflections: the voice's samples times its own gain (smoothed like the
+//! 3. send the early reflections to the direction buses: the voice's samples times its own gain (smoothed like the
 //!    others, no distance gain; the acoustics fold the occlusion into each tap's gain) go into a
-//!    [`MAX_DELAY_FRAMES`] delay line, and each tap slot adds the line's sample its delay back
-//!    times its gain. A slot glides toward its [`crate::Tap`] target (see [`render_tap`]): the
+//!    [`MAX_DELAY_FRAMES`] delay line, and tap slot `i` adds the line's sample its delay back
+//!    times its gain into bus `i`. A slot glides toward its [`crate::Tap`] target (see [`render_tap`]): the
 //!    delay moves at most [`TAP_SLEW_FRAMES_PER_FRAME`] per frame, read between ring samples by
 //!    linear interpolation, and the gain follows the one-pole smoother. A slot whose target
 //!    moved more than [`TAP_JUMP_FRAMES`] (its ray now hits another wall) fades below
@@ -19,18 +19,25 @@
 //!    direction nearest to the source (time-domain convolution over the voice's last `taps - 1`
 //!    inputs and this block). When the nearest direction changes between blocks, the block is
 //!    filtered with both the old and the new FIRs and crossfaded from old to new over the
-//!    block along a raised cosine, so the switch neither steps nor kinks at the block edges. On the panning path a constant-power pan on the
-//!    listener's right axis is smoothed like the gain.
+//!    block along a raised cosine, so the switch neither steps nor kinks at the block edges. On
+//!    the panning path a constant-power pan on the listener's right axis is smoothed like the
+//!    gain.
+//!
+//! After every voice, each of the sixteen buses that took input or still rings is spatialised
+//! the same way on the reflection direction `i` ([`crate::reflection_directions`], world axes)
+//! in the listener's frame, so every echo is heard from its wall's side (ADR-0015).
 //!
 //! Nothing here allocates after construction: the voice list, the scratch and every voice's
 //! buffers come from pools sized once for [`MAX_VOICES`]; a `Play` beyond it is dropped.
 
 use std::sync::Arc;
 
-use crate::acoustics::BlockClock;
+use crate::acoustics::{BlockClock, reflection_directions};
 use crate::command::Command;
 use crate::hrtf::Hrtf;
-use crate::voice::{MAX_DELAY_FRAMES, OPEN_CUTOFF_HZ, Tap, TapState, Voice, VoiceBuffers, VoiceId};
+use crate::voice::{
+    MAX_DELAY_FRAMES, MAX_TAPS, OPEN_CUTOFF_HZ, Tap, TapState, Voice, VoiceBuffers, VoiceId,
+};
 use crate::{BLOCK, Listener, RATE, SMOOTHING_SECONDS, cross, dot, length, normalize_or, sub};
 
 /// Voices the mixer holds at once.
@@ -68,8 +75,11 @@ pub struct Mixer {
     input: Vec<f32>,
     /// The old and new FIR outputs of one voice for a crossfade, per ear.
     wet: [[Vec<f32>; 2]; 2],
-    /// One block of one voice's reflections.
-    echo: Vec<f32>,
+    /// The direction buses: one per reflection direction, every voice's tap slot `i` summed
+    /// into bus `i` and spatialised once on the bus's direction.
+    buses: [Bus; MAX_TAPS],
+    /// The reflection directions in world axes, bus by bus.
+    bus_dirs: [[f32; 3]; MAX_TAPS],
     /// Voices that ended since the last [`Mixer::drain_finished`].
     finished: Vec<VoiceId>,
     /// Per-sample step of the one-pole smoother.
@@ -100,7 +110,8 @@ impl Mixer {
             dry: vec![0.0; BLOCK],
             input: vec![0.0; taps - 1 + BLOCK],
             wet: std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; BLOCK])),
-            echo: vec![0.0; BLOCK],
+            buses: std::array::from_fn(|_| Bus::new(taps)),
+            bus_dirs: reflection_directions(),
             finished: Vec::with_capacity(MAX_VOICES),
             smooth_k: 1.0 - (-1.0 / (SMOOTHING_SECONDS * RATE as f32)).exp(),
             clock: BlockClock::default(),
@@ -217,7 +228,11 @@ impl Mixer {
             let target_gain = v.params.gain / d.max(1.0) * v.acoustic.gain;
             let dir = normalize_or(rel, [1.0, 0.0, 0.0]);
             let dry = &mut self.dry[..n];
-            let tail = v.tap_tail() + self.hrtf.as_ref().map_or(0, |h| h.taps() - 1);
+            // The taps read the delay line until their longest delay has passed; the direct
+            // path's FIR rings for its length. The buses ring out on their own.
+            let tail = v
+                .tap_tail()
+                .max(self.hrtf.as_ref().map_or(0, |h| h.taps() - 1));
             v.read(dry, tail);
             if !v.started {
                 v.gain = target_gain;
@@ -269,16 +284,17 @@ impl Mixer {
             }
             // The gain smoother's decay over this block.
             let decay = (1.0 - k).powi(n as i32);
-            let echo = &mut self.echo[..n];
-            echo.fill(0.0);
-            let mut any = false;
-            for (state, target) in v.taps.iter_mut().zip(&v.acoustic.taps) {
-                any |= render_tap(state, *target, &v.buffers.echo, echo_start, echo, decay);
-            }
-            if any {
-                for (s, &e) in dry.iter_mut().zip(echo.iter()) {
-                    *s += e;
-                }
+            for ((state, target), bus) in
+                v.taps.iter_mut().zip(&v.acoustic.taps).zip(&mut self.buses)
+            {
+                bus.live |= render_tap(
+                    state,
+                    *target,
+                    &v.buffers.echo,
+                    echo_start,
+                    &mut bus.block[..n],
+                    decay,
+                );
             }
             match &self.hrtf {
                 Some(hrtf) => {
@@ -288,48 +304,20 @@ impl Mixer {
                     }
                     let from = v.dir;
                     v.dir = to;
-                    let taps = hrtf.taps();
-                    let input = &mut self.input[..taps - 1 + n];
-                    input[..taps - 1].copy_from_slice(&v.buffers.history);
-                    input[taps - 1..].copy_from_slice(dry);
-                    let [new, old] = &mut self.wet;
-                    for (ear, y) in new.iter_mut().enumerate() {
-                        convolve(input, hrtf.reversed(to, ear), &mut y[..n]);
-                    }
-                    if from == to {
-                        for (i, f) in out.chunks_exact_mut(2).enumerate() {
-                            f[0] += new[0][i];
-                            f[1] += new[1][i];
-                        }
-                    } else {
-                        for (ear, y) in old.iter_mut().enumerate() {
-                            convolve(input, hrtf.reversed(from, ear), &mut y[..n]);
-                        }
-                        for (i, f) in out.chunks_exact_mut(2).enumerate() {
-                            let w = crossfade_weight(i, n);
-                            f[0] += old[0][i] + (new[0][i] - old[0][i]) * w;
-                            f[1] += old[1][i] + (new[1][i] - old[1][i]) * w;
-                        }
-                    }
-                    v.buffers.history.copy_from_slice(&input[n..]);
+                    let scratch = (&mut self.input, &mut self.wet);
+                    spatialise(hrtf, &mut v.buffers.history, dry, from, to, scratch, out);
                 }
                 None => {
                     let target = pan_gains(dir, d);
                     if !v.started {
                         v.pan = target;
                     }
-                    let [mut gl, mut gr] = v.pan;
-                    for (f, &s) in out.chunks_exact_mut(2).zip(dry.iter()) {
-                        gl += (target[0] - gl) * k;
-                        gr += (target[1] - gr) * k;
-                        f[0] += s * gl;
-                        f[1] += s * gr;
-                    }
-                    v.pan = [gl, gr];
+                    pan(&mut v.pan, target, k, dry, out);
                 }
             }
             v.started = true;
         }
+        self.render_buses(&frame, out);
         let mut i = 0;
         while i < self.voices.len() {
             if self.voices[i].finished {
@@ -343,6 +331,134 @@ impl Mixer {
             }
         }
     }
+}
+
+/// One direction bus: a block of summed tap output and its own spatialisation state.
+struct Bus {
+    /// This block's input, zeroed after each block it held anything.
+    block: Vec<f32>,
+    /// Some voice added into `block` this block.
+    live: bool,
+    /// HRTF path: the last `taps - 1` inputs, oldest first.
+    history: Vec<f32>,
+    /// `history` holds a nonzero sample, so the FIR still rings with no new input.
+    ringing: bool,
+    /// HRTF path: the measurement the last block was filtered with.
+    dir: usize,
+    /// Panning path: left and right gain as smoothed so far.
+    pan: [f32; 2],
+    /// Whether the bus has rendered; it starts at its direction instead of fading to it.
+    started: bool,
+}
+
+impl Bus {
+    fn new(taps: usize) -> Self {
+        Self {
+            block: vec![0.0; BLOCK],
+            live: false,
+            history: vec![0.0; taps - 1],
+            ringing: false,
+            dir: 0,
+            pan: [0.0; 2],
+            started: false,
+        }
+    }
+}
+
+impl Mixer {
+    /// Spatialises every bus that took input this block or still rings, each on the
+    /// measurement nearest to its reflection direction in the listener's frame, and adds it to
+    /// `out`. A bus whose nearest direction changed crossfades like a voice.
+    fn render_buses(&mut self, frame: &ListenerFrame, out: &mut [f32]) {
+        let n = out.len() / 2;
+        for (bus, &world_dir) in self.buses.iter_mut().zip(&self.bus_dirs) {
+            if !bus.live && !bus.ringing {
+                continue;
+            }
+            let dir = normalize_or(frame.local(world_dir), [1.0, 0.0, 0.0]);
+            let block = &mut bus.block[..n];
+            match &self.hrtf {
+                Some(hrtf) => {
+                    let to = hrtf.nearest(dir);
+                    if !bus.started {
+                        bus.dir = to;
+                    }
+                    let from = bus.dir;
+                    bus.dir = to;
+                    let scratch = (&mut self.input, &mut self.wet);
+                    spatialise(hrtf, &mut bus.history, block, from, to, scratch, out);
+                    bus.ringing = bus.history.iter().any(|&x| x != 0.0);
+                }
+                None => {
+                    let target = pan_gains(dir, 1.0);
+                    if !bus.started {
+                        bus.pan = target;
+                    }
+                    pan(&mut bus.pan, target, self.smooth_k, block, out);
+                }
+            }
+            bus.started = true;
+            if bus.live {
+                block.fill(0.0);
+                bus.live = false;
+            }
+        }
+    }
+}
+
+/// Filters `block` through measurement `to`'s two FIRs, continuing from `history` (the last
+/// `taps - 1` inputs, updated here), and adds the result to interleaved `out`. When `from`
+/// differs from `to` the block is filtered with both and crossfaded from old to new along
+/// [`crossfade_weight`]. `scratch` is the mixer's FIR input buffer and its two pairs of ear
+/// outputs.
+fn spatialise(
+    hrtf: &Hrtf,
+    history: &mut [f32],
+    block: &[f32],
+    from: usize,
+    to: usize,
+    scratch: (&mut Vec<f32>, &mut [[Vec<f32>; 2]; 2]),
+    out: &mut [f32],
+) {
+    let n = block.len();
+    let taps = hrtf.taps();
+    let (input, wet) = scratch;
+    let input = &mut input[..taps - 1 + n];
+    input[..taps - 1].copy_from_slice(history);
+    input[taps - 1..].copy_from_slice(block);
+    let [new, old] = wet;
+    for (ear, y) in new.iter_mut().enumerate() {
+        convolve(input, hrtf.reversed(to, ear), &mut y[..n]);
+    }
+    if from == to {
+        for (i, f) in out.chunks_exact_mut(2).enumerate() {
+            f[0] += new[0][i];
+            f[1] += new[1][i];
+        }
+    } else {
+        for (ear, y) in old.iter_mut().enumerate() {
+            convolve(input, hrtf.reversed(from, ear), &mut y[..n]);
+        }
+        for (i, f) in out.chunks_exact_mut(2).enumerate() {
+            let w = crossfade_weight(i, n);
+            f[0] += old[0][i] + (new[0][i] - old[0][i]) * w;
+            f[1] += old[1][i] + (new[1][i] - old[1][i]) * w;
+        }
+    }
+    history.copy_from_slice(&input[n..]);
+}
+
+/// Adds `block` to interleaved `out` through left and right gains `gains`, which move toward
+/// `target` through the one-pole of step `k` every sample.
+fn pan(gains: &mut [f32; 2], target: [f32; 2], k: f32, block: &[f32], out: &mut [f32]) {
+    let [mut gl, mut gr] = *gains;
+    for (f, &s) in out.chunks_exact_mut(2).zip(block) {
+        gl += (target[0] - gl) * k;
+        gr += (target[1] - gr) * k;
+        f[0] += s * gl;
+        f[1] += s * gr;
+    }
+    *gains = [gl, gr];
 }
 
 /// The one-pole low-pass coefficient `a = 1 - exp(-2 pi fc / fs)` of `y += a (x - y)` for

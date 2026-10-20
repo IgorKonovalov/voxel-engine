@@ -1,7 +1,7 @@
 //! The mixer budget: one 256-frame block with 32 HRTF voices, each low-passed and carrying 16
-//! reflection taps, with the listener still (every voice on one FIR pair) and turning (every
-//! voice crossfading between two FIR pairs, the worst case). Prints the audio RAM the mixer and
-//! the pack hold. The `Acoustics::update` budget is the fly-through's `acoustics` bench, which
+//! reflection taps into the 16 direction buses, with the listener still (every voice and bus on
+//! one FIR pair) and turning (every voice and bus crossfading between two FIR pairs, the worst
+//! case). Prints the audio RAM the mixer and the pack hold. The `Acoustics::update` budget is the fly-through's `acoustics` bench, which
 //! owns the cave it probes.
 
 use std::hint::black_box;
@@ -92,14 +92,20 @@ fn mixer_block(c: &mut Criterion) {
     // Every voice owns its history and a delay line of MAX_DELAY_FRAMES plus one block,
     // pooled for MAX_VOICES at construction.
     let delay_line = (MAX_DELAY_FRAMES + BLOCK) * 4;
+    // Each bus holds one block of input and the HRIR's history; each voice its 16 slot states.
+    let taps = mixer.hrtf().map_or(1, |h| h.taps());
+    let buses = MAX_TAPS * (BLOCK + taps - 1) * 4;
+    let slots = MAX_TAPS * 8;
     println!(
         "audio RAM: pack {pack_bytes} B; delay line {delay_line} B per voice, {} B for the \
-         {MAX_VOICES}-voice pool",
-        delay_line * MAX_VOICES
+         {MAX_VOICES}-voice pool; buses {buses} B; tap slots {slots} B per voice, {} B for the \
+         pool",
+        delay_line * MAX_VOICES,
+        slots * MAX_VOICES
     );
     let mut out = vec![0.0f32; 2 * BLOCK];
     c.bench_function(
-        "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each",
+        "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, 16 buses",
         |b| {
             b.iter(|| {
                 mixer.render(&mut out, BLOCK);
@@ -148,7 +154,7 @@ fn mixer_block_turning(c: &mut Criterion) {
     let mut out = vec![0.0f32; 2 * BLOCK];
     let mut k = 0usize;
     c.bench_function(
-        "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, \
+        "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, 16 buses, \
          listener turning (every voice crossfades)",
         |b| {
             b.iter(|| {
