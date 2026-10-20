@@ -1,6 +1,8 @@
 # 0019: Host calls charged by their work, and a world that refuses out-of-range shapes and queries
 
-> **Status:** in-progress
+> **Status:** done, closed 2026-10-20 (v0.16.0). Verdict: the world refuses every
+> out-of-range shape, ray, box and region list, and every host import is charged by its work,
+> the list-taking ones by their bytes before the host touches them; clean after one fix pass.
 > **Created:** 2026-10-17
 > **Amended:** 2026-10-20, owner-approved, after Phase 1 stopped on the questions in its resume
 > notes: `World::raycast` and `World::count_in_box` return `Result`, and their callers are in
@@ -8,8 +10,18 @@
 > only its `max_t`; a capsule's per-axis length is capped at `2^30`, derived below; an edit's
 > voxel bounds are capped at 1 024 per axis; `count_in_box` is charged by the voxels it
 > counts; the cap on drop and remove cell lists moves here from Plan 0018.
+> **Amended:** 2026-10-20, at the close review (an architect decision, approved by the owner's
+> go on the fix pass): the charging rule missed the two imports that take a guest-sized list.
+> `WorkRates` gains `per_byte` (default 1); `apply` is charged `per_byte` per op byte and
+> `unsupported` 12 `per_byte` per changed cell, both before any host work (decode, residency
+> walk, flood); `unsupported` is also charged `per_step` per cell its query looked at
+> (deduplicated candidates plus flood cells, `find_unsupported_with_stats`); and the server
+> reads a `changed` list longer than one in-range edit can change,
+> `(edit_axis_max / 8 + 1)^3` = 2 146 689 cells at the defaults, as no regions. A refused or
+> undecodable call is charged its bytes and `per_call`. The Decision below is otherwise
+> unchanged; fix commits 33cb203 and adfca8b.
 > **Milestone:** M5 in `docs/roadmap.md` (the logic host's safety) and M1's edit contract
-> **Related ADRs:** [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md)
+> **Related ADRs:** [ADR-0010](../../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md)
 > (its Outcome records that host-call work is unmetered), ADR-0002 (the edit contract: every
 > op returns what it changed, or an error).
 > **Prerequisite:** none; it adds an `EditError` variant and a wire error tag that Plan 0018
@@ -421,4 +433,22 @@ pub struct WorkRates { pub per_voxel: u64, pub per_step: u64, pub per_call: u64 
 
 ## Followups
 
-- None at draft time.
+- **Calibrate `WorkRates` against host time.** The rates are integer weights, not measured
+  nanoseconds. The close review's estimate: `unsupported` over K changed cells builds and
+  sorts `7 K` candidates and is charged `12 K` bytes plus 10 per deduplicated candidate, so
+  a list of distinct cells near the cap (about 15 M candidates sorted) may cost the host
+  roughly an order of magnitude more time per fuel unit than guest instructions. This is an
+  unmeasured estimate. A bench of host ns per charged unit for each import would settle it.
+- `Host::raycast_with_steps` and `Host::unsupported_with_steps` default to 0 steps, so a host
+  that does not override them charges rays and support queries `per_call` (and bytes) only.
+- The rates and the world's limits are not in the log header, the same gap as `WasmConfig`
+  (ADR-0010 Outcome).
+- The `vxe-script-wasm` tests' module doc does not name the `greedy` guest; the generated
+  `bindgen` `host` trait is no longer implemented, so the imports' signatures are checked
+  only when the component links.
+- The component's `unsupported` cap test runs on a test `Host` that repeats the server's cap
+  (`GridHost` in `crates/vxe-script-wasm/tests/determinism.rs`); the server's own cap is
+  asserted in `crates/vxe-net/src/server.rs`.
+- The boundary bench has no quiet-box pair: the close review's pair (40d2b91 against adfca8b,
+  `docs/nfr.md` section 4, load 6.8 to 8.3) resolves no difference the per-byte charge makes.
+- The Windows CI arm has not run this branch's determinism vector and session hashes.

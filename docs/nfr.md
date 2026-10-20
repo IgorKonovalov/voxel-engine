@@ -363,6 +363,15 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   1.028×. With charging, 3445f30 (load 7.15 to 4.58): 2.4593 ms against 2.3306 ms, 1.287 µs
   per host call, empty tick 0.974 µs, `Bench` 2.5510 against 2.4014 ms, 1.062×. The 2 µs
   line holds; the charge's fuel read and write is inside the run-to-run noise.
+  **Re-read with the per-byte charge (Plan 0019 close review, AMD Ryzen 9 5900HS, Linux,
+  exclusive perf lock, not quiet, paired):** parent 40d2b91 (1-minute load 8.17 to 8.26):
+  2.5902 ms against native 2.5167 ms, 0.74 µs per host call, empty tick 1.269 µs, `Bench`
+  2.9585 against 2.5515 ms, 1.160×. With `per_byte`, adfca8b (load 8.26 to 6.79): 2.7319 ms
+  against 2.7332 ms, under 0.1 µs per host call (the native arm read slower than the
+  component), empty tick 1.463 µs, `Bench` 2.6337 against 2.5813 ms, 1.020×. The load moved
+  the native arm by 0.22 ms between runs, more than the whole host-call cost, so this pair
+  resolves no difference the per-byte charge makes; the 2 µs line and the 2× `Bench` line hold
+  in both. A quiet-box pair is still owed.
 - **Parameter range (Plan 0019):** every edit, ray, box query and region op is checked
   against the world's `WorldLimits` before any arithmetic and refused with
   `EditError::OutOfRange` outside it, changing nothing. Defaults: coordinates and radii within

@@ -174,3 +174,25 @@ log under the same component bytes, `WasmConfig` and `wasmtime` version. The haz
 under (a) stands: an `init` that applies ops applies them again on each restart; no test has
 such a guest yet (a Plan 0016 followup). One restart of `flythrough-logic` reads 26.9 to
 29.3 µs median (`docs/nfr.md` section 4).
+
+### Outcome addendum, 2026-10-20 (Plan 0019 close, v0.16.0)
+
+**Host-call work is charged to fuel**, replacing "not metered" above. `WorkRates` on
+`WasmConfig` (defaults: `per_call` 100, `per_voxel` 10, `per_step` 10, `per_byte` 1) sets the
+charge. Before any host work, the imports that take a list are charged `per_byte` for each byte
+of it: `apply` its op bytes, `unsupported` 12 per changed cell. After the call returns, every
+import is charged `per_call`, plus: `apply` `per_voxel` for each voxel in the op's bounds (an
+edit's shape bounds, a stamp's or a region op's changed bounds) and 64 `per_voxel` per chunk
+it touched; `raycast` `per_step` per step of its walk; `count_in_box` `per_voxel` per voxel
+counted; `unsupported` `per_step` per cell its query looked at. A refused or undecodable call is
+charged its bytes and `per_call`. A charge past the fuel left is the same `LogicError::Fuel`
+failure as an instruction overrun, so a greedy query ends the tick. Every charge comes from
+integer counts the world produces and is the same on every machine. The server's support query
+reads a `changed` list longer than one in-range edit can change (`(edit_axis_max / 8 + 1)^3`,
+2 146 689 cells at the defaults) as no regions. `vxe-world` refuses an out-of-range shape, ray,
+box query or region list with `EditError::OutOfRange` before any arithmetic, so a host import
+no longer panics on a shape the guest chose. Rejected: per-import extent caps alone (a cap says
+nothing about many small calls) and a wall-clock budget (the server path reads no clock). The
+rates, like the fuel per tick, are not in the log header yet, so a re-simulation is exact only
+under the same `WasmConfig`. The per-call cost re-read with the charge is in `docs/nfr.md`
+section 4.

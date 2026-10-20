@@ -6,6 +6,10 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-20
+
+Plan 0019 (a minor bump: public API added and changed). `vxe-world` holds `WorldLimits` per world (`World::limits`, `World::with_limits`) and refuses an out-of-range shape, ray, box query, drop or removal with `EditError::OutOfRange { what: Field }` (wire error tag 2) before any arithmetic, changing nothing: coordinates and radii within 2^30 fixed units, a capsule's axis within 2^30, an edit's bounds within 1 024 voxels per axis, a ray's reach within 2^22 fixed units per axis, a box query within 1 024 voxels per axis and 2^30 voxels, a region list within 4 096 cells. `World::raycast`, `count_in_box` and `count_in_box_with_stats` return `Result`; `World::raycast_with_stats` and `find_unsupported_with_stats` report their steps. The `wasmtime` host charges each import's work to the tick's fuel at `WorkRates` on `WasmConfig` (per call, per voxel, per step, per argument byte, the bytes before any host work), so a greedy query ends the tick on fuel; `WasmLogic::fuel_left`; `Host::raycast_with_steps` and `Host::unsupported_with_steps` (provided); `vxe_net::max_changed_cells` caps the server's support query. ADR-0010 Outcome addendum.
+
 ## [0.15.0] - 2026-10-20
 
 Plan 0018 (a minor bump: public API added and changed). Stamp, drop and remove are op kinds 2 to 4 (`Op::{Stamp, Drop, Remove}`, no longer `Copy`) with wire encodings, applied through `Server::submit`, `Host::apply(Op)` and the WIT `apply`, logged, and announced as `OpResult::{Edit, Drop, Remove}`, which the owned client checks. A stamp names its prefab by content id in a `PrefabRegistry` (ADR-0014). `LOG_FORMAT` 2 carries the stamped prefabs in the save's header, verified on decode (`WireError::PrefabMismatch`), and format 1 still reads. `EditError::UnknownPrefab` takes wire error tag 3. The server keeps a `CoarseGrid` current after every applied op and answers `Host::unsupported` (a WIT import too), configured by `Server::set_support`. The fly-through's `P` stamp and collapse run in `DigLogic` (`DigInput::{Stamp, Crumble}`), and `--save`/`--replay` no longer refuse them or `--vault`.
