@@ -6,6 +6,15 @@
 > **Related ADRs:** [ADR-0015](../adrs/0015-late-reverb-as-a-shared-fdn-from-a-listener-ray-fan.md) (the tail, the fan, the skin-depth rule, the direction buses), ADR-0006 (mixer on the callback, probes on the caller's thread)
 > **Prerequisite:** Plan 0006 closed. Its open finding (clicks while the listener moves) transfers here as Phase 1; this plan changes the tap semantics Plan 0006's Phase 4 tests pin, so the close review of 0006 runs first, against the tree as it stands.
 > **References:** `docs/references/room-acoustics.md`
+> **Amended:** 2026-10-20, inside Phase 1 (its code on 919cb63), from the resume notes and the
+> owner's answers: Phase 1's walking done-when (0.5 dB and 0.1 rad per block) was unsatisfiable,
+> since an ideal click-free render of the same walk steps 5.24 dB and 1.05 rad, and its Doppler
+> figure was ten times low (0.258 rad per block, not 0.026). It becomes per-slot continuity,
+> ramped gains and a click index against an ideal reference render, with the bounds derived
+> from the probe cadence; Phases 2 and 4 inherit the click index in place of their RMS-step
+> bounds on moving sounds. Phase 6's tail key is `Y` (`R` toggles collapse rubble), its room
+> lines are read headlessly without `--audio`, and the `--mic` and fly-through walk checks that
+> need a device move to Phase 7.
 
 ## TL;DR
 
@@ -114,22 +123,62 @@ capitals are the plan's names for them.
   `set_reflections(false)` now sends all-zero gains, so the echoes fade out in 50 ms rather
   than swapping away. The keep factor of a reflection becomes
   `(1 - A) ^ (2 * REFLECTION_SKIN_METRES / 1 m)` with `REFLECTION_SKIN_METRES = 0.1`
-  (ADR-0015); `Reflection.keep` carries it.
+  (ADR-0015); `Reflection.keep` carries it. A `#[doc(hidden)]` readout of a voice's slot
+  states (delay, gain, target) serves the walking test.
 - **Files touched:** `crates/vxe-audio/src/{acoustics.rs, mixer.rs, voice.rs, lib.rs}`,
   `crates/vxe-audio/tests/reflections.rs` (re-derived figures), a new
   `crates/vxe-audio/tests/walking.rs`, `apps/flythrough/src/main.rs` (the `E` key path),
   `docs/plans/0020-...md` (log).
 - **Done when:**
   - `tests/walking.rs`: a corridor world (rock at `y >= 5 m` and `y <= -5 m` and at
-    `z <= -2 m`, cave row `A = 0.3, T = 0.5`), a 440 Hz hum at `(8 m, 1 m, 0)`, the listener
-    walking from `x = 0` to `x = 6 m` at 3 m/s facing `+x`, with `Acoustics::update` called
-    every 3 mixer blocks (16 ms of audio) with the advanced position, reflections on, HRTF
-    path. Over the rendered 2 s, after the first 100 ms: the largest block-to-block step of the
-    output's RMS (per 256-frame block, each ear) is at most 0.5 dB, and the largest per-block
-    step of the output's 440 Hz phase (the measure Plan 0006's fix pass used) is at most
-    0.1 rad. The bound covers the direct path's distance change (about 0.03 dB per block at
-    3 m/s) and the glide's Doppler (0.026 rad per block at 440 Hz). The log records the same
-    two figures measured at the parent commit, for the comparison.
+    `z <= -2 m`, cave row `A = 0.3, T = 0.5`), a 440 Hz hum (440 whole cycles per 1 s loop, so
+    its seam adds nothing) at `(8 m, 1 m, 0)`, the listener walking from `x = 0` to `x = 6 m`
+    at 3 m/s facing `+x`, with `Acoustics::update` called every 3 mixer blocks (16 ms of audio)
+    with the advanced position, reflections on, HRTF path, rendered for 2 s. **The arithmetic
+    the bounds follow from:**
+    - The listener moves `3 x 256 / 48000 = 0.016 m` per block. Every wall is parallel to the
+      walk, so each ray's hit distance is constant and its hit point moves with the listener:
+      a slot's excess path `|L - H| + |H - S| - |L - S|` changes by at most `2 v dt = 0.032 m`
+      per block, `0.032 x 48000 / 343 = 4.48` frames. That is each echo's Doppler: up to
+      `2v / c = 1.75` percent, 7.7 Hz at 440 Hz, its phase moving
+      `2 pi 440 x 0.032 / 343 = 0.258` rad per block against the direct path.
+    - A voice is re-probed only once the listener has moved more than `PROBE_MOVE_METRES =
+      0.1`: here every third update (0.144 m, 9 blocks). A slot's target therefore steps by up
+      to `2 x 0.144 x 139.9 = 40.3` frames per probe, and the glide covers that at
+      `TAP_SLEW_FRAMES_PER_FRAME x 256 = 12.8` frames per block within 4 blocks. The walk's
+      4.48 frames per block is the average; the per-block bound is the slew cap, because
+      targets arrive in steps. A swap moves the read point by the whole step at once.
+    - Why the level and phase steps of the output are not bounded: at the walk's start ten
+      sounding slots sum to a gain of 0.689 against the direct path's 0.124, so the output is a
+      sum of beating phasors; an ideal click-free render of this walk steps 5.24 dB and 1.05
+      rad per block (resume notes).
+
+    After the first 100 ms, read through the slot readout at every block edge:
+    - **Per-slot continuity.** No slot's delay moves more than 12.8 frames in a block (plus
+      `1e-3`). Every sounding slot's delay is within 42 frames of its ideal excess-path delay
+      (unrounded, at that block's listener position): 40.3 frames of walk between two probes
+      plus 1.5 frames for rounding the two targets. No slot changes wall, so no slot takes the
+      jump path: a sounding slot's gain never falls below `TAP_SILENT`.
+    - **Ramped gains.** At each block edge every slot's gain moves toward its target by at
+      most `1 - e^(-256 / (48000 x 0.05)) = 0.1012` of the distance (plus `1e-6`), and never
+      past it.
+    - **Click index against an ideal reference.** The reference is the same walk rendered mono
+      in the test with nothing that can click: the direct path and every slot evaluated at
+      each block edge from the exact walk position (unrounded delays), delays and gains
+      interpolated linearly per sample, an analytic 440 Hz sine. The click index `K` of a
+      signal `x`, per 200 ms window (9600 frames, hop 4800), is
+      `max |x[n+1] - 2 x[n] + x[n-1]| / (w^2 sqrt(2) rms(x))` with `w = 2 pi 440 / 48000`
+      rad per frame. A pure 440 Hz tone scores 1.00; a smooth sum of tones near 440 Hz scores
+      about its envelope's crest, a few; a step of size `d` scores at least
+      `d / (w^2 sqrt(2) rms)`, so one slot of gain 0.069 swapped by 20 frames (a step of about
+      0.075 at a window rms of about 0.18) scores about 90. Asserted: the mixer's largest `K`
+      over windows and ears is at most twice the reference's largest `K`. The test bites: the
+      reference re-rendered with each slot's delay held between the mixer's probe blocks and
+      stepped at them (a swap with no crossfade) scores at least four times that bound. Both
+      references' and the mixer's `K` are printed; if the mixer's exceeds the bound, `dev`
+      stops with the figures rather than loosening it.
+    - The log records the mixer's `K` at the parent commit d11d0cb (a scratch copy of the
+      test), for the comparison.
   - `tests/reflections.rs`: the 1160-sample echo test and the occlusion-multiplier test pass
     with their expected gains re-derived for the keep factor `0.7 ^ 0.2 = 0.9312` (the plan's
     arithmetic: the tap gain of the Phase 4 wall becomes `0.9312 / path` times the occlusion
@@ -137,8 +186,8 @@ capitals are the plan's names for them.
     new figures stated in the test names.
   - A test that sets reflections off mid-hum sees the echo sum fade out with no block-to-block
     output RMS step above 0.5 dB.
-  - The fly-through, `--seed 1 --audio`, `J` then walking toward, away from and across the hum:
-    the dev confirms no `stream errors` line; the owner's ear is Phase 7.
+  - The fly-through walk toward, away from and across the hum opens the output device and a
+    window, so it is Phase 7 check 1 (amended 2026-10-20), `stream errors` line included.
 
 ### Phase 2: Early echoes from their wall's direction
 
@@ -163,6 +212,9 @@ capitals are the plan's names for them.
     that of the front direction, so the test discriminates.
   - The 1160-sample echo of Phase 1 still peaks at the same frame, now in the bus of the `+x`
     ray.
+  - `tests/walking.rs` holds with the buses: its slot assertions are unchanged, and the
+    mixer's click index, per ear, is still at most twice the mono reference's (the listener
+    faces `+x` throughout, so no bus changes HRIR during the walk).
   - `bench mixer` reports the static and turning 32-voice figures with buses; proposal: at
     most 0.55 ms static and 1.0 ms turning on the dev box (today 0.36 and 0.67; the buses add
     `16 x 2 x 128 x 256 = 1 048 576` multiply-adds per block, half of the 32-voice FIR load).
@@ -237,9 +289,14 @@ capitals are the plan's names for them.
     within 20 percent of 0.75, 2.26 and 6.77 s (Eyring with `alpha = 0.1330`, mean free paths
     2.667, 8 and 24 m) and strictly increasing; the direct impulse's peak is within 1 percent of
     the render with the tail off.
-  - A hum with the room stepped from `(8 m, 2.26 s)` to `(24 m, 6.77 s)`: no block-to-block
-    output RMS step above 0.5 dB, and every line is within one frame of its target 4 s after
-    the step (the longest glide is about 3360 frames at 0.02 per frame).
+  - A hum with the room stepped from `(8 m, 2.26 s)` to `(24 m, 6.77 s)`: no line's length
+    moves more than `0.02 x 256 = 5.12` frames in a block; over the 4 s after the step the
+    output's click index (Phase 1's `K`, per ear) is at most twice its largest value over 4 s
+    of the same render with the room held at `(8 m, 2.26 s)` (amended 2026-10-20: the gliding
+    lines shift each line's pitch by up to 2 percent, so the tail's components beat and a
+    per-block RMS step is not a click measure); every line is within one frame of its target
+    4 s after the step (the longest glides, lines 14 and 15, are about 3120 frames: about
+    1560 to 4680 and 1680 to the 4800 cap, 3.25 s at 0.02 per frame).
   - The mode-density floor holds: the sum of the line lengths for the 36 m cube
     (about 49 100 frames) exceeds `0.15 * T60 * f_s` (48 800); the test asserts the
     inequality for the three cubes.
@@ -279,27 +336,35 @@ capitals are the plan's names for them.
 - **Owner skill:** dev
 - **What:** `--room <metres>` runs the fly-through in a closed cube of air of that edge inside
   rock (a `RoomSource` beside `CaveSource`, extent sized to the room plus 2 m of rock), the
-  listener spawned at its centre. `R` toggles the tail (`Acoustics::set_reverb`), `E` keeps
-  toggling the early taps. `--absorption <A>` overrides the cave row's `A` (default stays
-  0.3). `--mic` opens the input device, plays it as a streamed voice at the listener with
-  `direct: false`, prints the device, its period and a headphones warning, and the `F1` line
-  gains `mic: <device>, <n> frames dropped`. `F1` and `--audio-debug` print the room line:
-  `room: V <m3> S <m2> mfp <m> alpha <a> T60 <s> energy <dB>` whenever a fan completes. The
+  listener spawned at its centre. `Y` toggles the tail (`Acoustics::set_reverb`; amended
+  2026-10-20: `R` already toggles collapse rubble, and `Y` is free and sits by the other sound
+  keys `T`, `H` and `J`), `E` keeps toggling the early taps. `--absorption <A>` overrides the
+  cave row's `A` (default stays 0.3). `--mic` (implies `--audio`) opens the input device, plays it as a streamed
+  voice at the listener with `direct: false`, prints the device, its period and a headphones
+  warning, and the `F1` line gains `mic: <device>, <n> frames dropped`. `F1` and
+  `--audio-debug` print the room line:
+  `room: V <m3> S <m2> mfp <m> alpha <a> T60 <s> energy <dB>` whenever a fan completes.
+  `--room-line` (implied by `--room`) prints the room line whenever a fan completes and, without
+  `--audio`, runs `Acoustics` with no output device: its commands are dropped and its block
+  clock never advances, so a fan completes after 8 frames and restarts only on a 1 m move. The
   acoustics bench traces the fan; the mixer bench renders with buses and the tail. The readings
   go into `nfr.md` section 9 (dev box, quiet-box protocol of Plan 0006's close).
 - **Files touched:** `apps/flythrough/src/{main.rs, cave.rs, hud.rs}`,
   `apps/flythrough/benches/acoustics.rs`, `crates/vxe-audio/benches/mixer.rs`, `docs/nfr.md`.
 - **Done when:**
-  - `cargo run --release -p flythrough -- --room 12 --audio --headless --frames 600` prints a
-    room line whose `mfp` is within 4 percent of 8.0 m and `T60` within 4 percent of 2.26 s
-    (the fly-through's own table at `A = 0.3`).
+  - Every run below is headless and opens no audio device (amended 2026-10-20: `--audio`
+    opens the real output device even under `--headless`): `cargo run --release -p
+    flythrough -- --room 12 --headless --frames 600` prints a room line whose `mfp` is within
+    4 percent of 8.0 m and `T60` within 4 percent of 2.26 s (the fly-through's own table at
+    `A = 0.3`).
   - `--room 36 --headless --frames 600` prints `T60` within 4 percent of 6.77 s; `--room 4`
     within 5 percent of 0.75 s.
-  - `--seed 1 --audio --headless --frames 600` prints a room line (the spawn pocket: a 3 m
+  - `--seed 1 --room-line --headless --frames 600` prints a room line (the spawn pocket: a 3 m
     sphere has mean free path 4 m, so about 1.1 s if the pocket were closed; the value is
     recorded, not asserted, since the pocket opens into the cave).
-  - `--mic` on the dev box prints the input device and period and no `stream errors` line
-    over 60 s (headless is not possible for an input device; the dev runs it with the window).
+  - `Y` and `--mic` are wired, and `--mic` without a usable input device prints the
+    `AudioError` and runs on without it; the `--mic` device line and the 60 s with no
+    `stream errors` line need the window and the microphone, so they are Phase 7 check 5.
   - The three budget readings are in `nfr.md` with machine and commit.
 
 ### Phase 7: Listening checks
@@ -310,11 +375,11 @@ capitals are the plan's names for them.
   phases are committed and these are ready (batched, one notification).
 - **Done when:** Each check is a verdict in the log, pass or not, with what was heard:
   1. **No clicks while moving:** `cargo run --release -p flythrough -- --seed 1 --audio`, dig,
-     `J`, walk toward, away from, across and up and down past the hum with `E` on: no clicks.
-     Turning still has none.
+     `J`, walk toward, away from, across and up and down past the hum with `E` on: no clicks,
+     and no `stream errors` line. Turning still has none.
   2. **Bigger cavern, bigger echo:** `--room 4`, `--room 12`, `--room 36`, each with `T` (the
      looping knock) and a `J` note: the tail is audibly longer and louder from room to room, the
-     knock's slaps are audibly farther apart in the bigger rooms, `R` removes the tail and `E`
+     knock's slaps are audibly farther apart in the bigger rooms, `Y` removes the tail and `E`
      removes the slaps; `F1` reads about 0.75, 2.3 and 6.8 s.
   3. **Echoes from their walls:** `--room 12`, stand 2 m from a wall with the knock source on
      the far side of the room: the first slap comes from the near wall's side; turning the
@@ -325,8 +390,12 @@ capitals are the plan's names for them.
   5. **Your own voice:** `--room 36 --mic`, speak or clap: the voice returns off the walls and
      tails for seconds; `--room 4 --mic`: a short, tight room. Note whether the slap feels late
      (the device latency is printed; a compensation is the plan's first followup if it does).
+     The run prints the input device and its period, and no `stream errors` line over 60 s
+     (moved from Phase 6, 2026-10-20).
   6. **The Doppler glide:** walking fast past the hum with `E` on, is the echoes' pitch glide
-     heard, and if so, does it read as motion or as an artefact? A verdict either way.
+     heard, and if so, does it read as motion or as an artefact? While walking, each echo's
+     pitch runs at the 5 percent slew cap for a few blocks after each probe and then holds,
+     about 21 times a second at 3 m/s (Risks). A verdict either way.
 
 ## Data shapes
 
@@ -383,9 +452,17 @@ re-read in Phase 7.
   `alpha` floor of 0.02 caps `T60` at `0.04025 * mfp / 0.0202`, about 16 s for an 8 m room,
   clamped to `max_t60_s = 8`. A consumer who forgets acoustic rows gets an 8 s tail and a room
   line that says so.
-- **Doppler on the echoes.** Up to 1.7 percent at 3 m/s while the direct path has none. The
-  slew cap of 0.05 frames per frame bounds it at 5 percent in any case. Phase 7 check 6 decides;
-  the alternative (a 50 ms crossfade of tap sets) stays available as a followup.
+- **Doppler on the echoes.** An echo's excess path changes by up to `2v`, so at 3 m/s its
+  pitch moves by up to `2v / c = 1.75` percent (7.7 Hz at 440 Hz, 0.258 rad per 256-frame
+  block) while the direct path has none; echoes beat against the direct path and each other
+  at up to that rate, which is why Phase 1 bounds no output level or phase step (amended
+  2026-10-20; the plan said 0.026 rad). The probe cadence makes the glide a staircase: a voice
+  is re-probed after 0.1 m of listener movement (every 48 ms at 3 m/s), its targets step by up
+  to 40 frames, and the slots cover the step at the slew cap of 0.05 frames per frame, 5
+  percent, for about 3 blocks, then hold. The pitch therefore alternates between 5 percent and
+  none about 21 times a second. Phase 7 check 6 decides; spreading each step over the probe
+  interval, or the alternative of a 50 ms crossfade of tap sets, stays available as a
+  followup.
 - **Microphone latency.** The input period plus the output period (about 10 to 20 ms on
   PipeWire) delays every echo of the voice by the same, about 5 m of extra path. Compensation
   (subtracting the measured latency from the streamed voice's tap delays, floored at 0) is the
