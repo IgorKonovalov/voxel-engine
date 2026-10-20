@@ -17,20 +17,32 @@
 //!
 //! After every applied dig the logic asks the host which regions lost their support (over the
 //! cells of the dig's aabb, [`vxe_net::cells_in`]). In fall mode (the default) each region
-//! drops [`FALL_STEP`] voxels a tick, one `Drop` op per region per tick, until a drop moves it
-//! less than a whole step; in crumble mode (`Crumble` toggles it) the region is removed at
-//! once, a [`RUBBLE_FRACTION`] of it piled as [`RUBBLE`]. A tick runs the falls first, then
-//! its inputs in order.
+//! drops [`FALL_STEP`] voxels a tick, one `Drop` op per region per tick, through the cells
+//! under [`YIELD_BELOW`] solid voxels (ADR-0016), crushing what it passes, until a drop moves
+//! it less than a whole step; then, when the fall crushed anything, one `Pile` op puts the
+//! whole crushed volume back as [`RUBBLE`] on top of it. In crumble mode (`Crumble` toggles
+//! it) the region is removed at once, a [`RUBBLE_FRACTION`] of it piled as [`RUBBLE`]. A
+//! region that cannot move on its first tick is wedged, and a region whose drop is refused
+//! stops; either is remembered (at most [`STUCK_MAX`] of them, the oldest forgotten first) and
+//! not reported again until a dig changes its voxels. A tick runs the falls first, then its
+//! inputs in order.
 //!
 //! The broadcast is UTF-8 lines joined by `\n`. A line `op <verb>` stands for the tick's next
 //! op, applied or refused, in the order the client receives their announcements (`carved`
 //! for a dig, `filled` for a fill, `bench` for each of a bench's [`BENCH_CARVES`] carves,
-//! `stamped`, `dropped` for each tick's drop of a falling region, `removed`). A line
-//! `region <cells> <material>:<voxels> ...` reports one unsupported region the query found
-//! after the dig before it ([`region_line`], [`parse_region_line`]); any other line is a
-//! message to print as it is.
+//! `stamped`, `dropped` for each tick's drop of a falling region, `piled` for the rubble pile
+//! at the end of a fall that crushed voxels, `removed`). A line `region <cells>
+//! <material>:<voxels> ...` reports one unsupported region the query found after the dig
+//! before it ([`region_line`], [`parse_region_line`]); a line `wedged <cells>
+//! <material>:<voxels> ...` reports a region that cannot fall ([`wedged_line`],
+//! [`parse_wedged_line`]). A fall ends with `landed after N ticks, fell M voxels` or `drop
+//! refused: <error>, after N ticks, fell M voxels`, followed, when it crushed `K` voxels, by
+//! `, crushed K voxels, P rubble` (`P` the pile's placed voxels) or `, crushed K voxels, pile
+//! refused: <error>`. Any other line is a message to print as it is.
 
-use vxe_net::{ClientInput, Host, Logic, TickOutput, cells_in};
+use std::collections::VecDeque;
+
+use vxe_net::{ClientInput, DEFAULT_SUPPORT, Host, Logic, TickOutput, cells_in};
 use vxe_world::hash::mix64;
 use vxe_world::wire::{Reader, WireError, put_fixed3};
 use vxe_world::{
@@ -57,9 +69,17 @@ pub const STAMP_VERB: &str = "stamped";
 pub const DROP_VERB: &str = "dropped";
 /// The verb of a crumbling region's removal's `op` line.
 pub const REMOVE_VERB: &str = "removed";
+/// The verb of the rubble pile's `op` line at the end of a fall that crushed voxels.
+pub const PILE_VERB: &str = "piled";
 
 /// Voxels a falling region drops per tick: one cell, so it stays on the cell lattice.
 pub const FALL_STEP: i32 = BRICK_EDGE;
+/// A falling region passes through, and crushes, the voxels of cells holding fewer solid
+/// voxels than this: the support query's own threshold, so a cell the query calls load-free
+/// does not stop the fall. The fly-through sets [`DEFAULT_SUPPORT`] on its server.
+pub const YIELD_BELOW: u16 = DEFAULT_SUPPORT.solid_min;
+/// The wedged or refused regions the logic remembers, so as not to report them again.
+pub const STUCK_MAX: usize = 64;
 /// The material a removed region's rubble is made of (the fly-through's table row 4).
 pub const RUBBLE: MaterialId = 4;
 /// A removed region's rubble: a quarter of each column's volume, on ground within 6.4 m.
@@ -212,20 +232,41 @@ fn along(origin: Fixed3, dir: [i64; 3], t: i64) -> Fixed3 {
     Fixed3([0, 1, 2].map(|k| origin.0[k] + dir[k] * t / FIXED_ONE))
 }
 
-/// The line reporting an unsupported region: `region <cells>`, then `<material>:<voxels>` per
-/// material, ascending by material.
-pub fn region_line(region: &Region) -> String {
-    let mut line = format!("region {}", region.cells.len());
-    for (m, n) in &region.counts {
+/// `<verb> <cells>`, then `<material>:<voxels>` per material, ascending by material.
+fn cells_line(verb: &str, cells: usize, counts: &[(MaterialId, u32)]) -> String {
+    let mut line = format!("{verb} {cells}");
+    for (m, n) in counts {
         line.push_str(&format!(" {m}:{n}"));
     }
     line
 }
 
+/// The line reporting an unsupported region: `region <cells>`, then `<material>:<voxels>` per
+/// material, ascending by material.
+pub fn region_line(region: &Region) -> String {
+    cells_line("region", region.cells.len(), &region.counts)
+}
+
 /// The cell count and the per-material counts of a [`region_line`]; `None` for any other
 /// line.
 pub fn parse_region_line(line: &str) -> Option<(usize, Vec<(MaterialId, u32)>)> {
-    let mut words = line.strip_prefix("region ")?.split(' ');
+    parse_cells_line("region ", line)
+}
+
+/// The line reporting a region that cannot fall: [`region_line`]'s grammar with the verb
+/// `wedged`.
+pub fn wedged_line(cells: usize, counts: &[(MaterialId, u32)]) -> String {
+    cells_line("wedged", cells, counts)
+}
+
+/// The cell count and the per-material counts of a [`wedged_line`]; `None` for any other
+/// line.
+pub fn parse_wedged_line(line: &str) -> Option<(usize, Vec<(MaterialId, u32)>)> {
+    parse_cells_line("wedged ", line)
+}
+
+fn parse_cells_line(prefix: &str, line: &str) -> Option<(usize, Vec<(MaterialId, u32)>)> {
+    let mut words = line.strip_prefix(prefix)?.split(' ');
     let cells = words.next()?.parse().ok()?;
     let counts = words
         .map(|w| {
@@ -250,13 +291,40 @@ pub fn crumble_line(crumble: bool) -> &'static str {
     }
 }
 
-/// A region on its way down: its cells (one cell lower after each whole step), the ticks it
-/// moved on and the voxels it fell.
+/// The line that ends a refused fall: `drop refused: <error>, after N ticks, fell M voxels`.
+pub fn refused_line(error: &impl std::fmt::Display, ticks: u32, fell: i32) -> String {
+    format!("drop refused: {error}, after {ticks} ticks, fell {fell} voxels")
+}
+
+/// A region on its way down: its cells (one cell lower after each whole step), its voxels by
+/// material as the query reported them, the ticks it moved on, the voxels it fell and the
+/// voxels its drops crushed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Falling {
     cells: Vec<CellCoord>,
+    counts: Vec<(MaterialId, u32)>,
     ticks: u32,
     fell: i32,
+    crushed: u32,
+}
+
+/// The key a stuck region is remembered by: `mix64` folded over its cells and counts. A dig
+/// that changes the region's voxels changes its counts, and so its key.
+fn stuck_key(cells: &[CellCoord], counts: &[(MaterialId, u32)]) -> u64 {
+    let mut k = 0u64;
+    let mut add = |v: u64| k = mix64(k ^ v);
+    add(cells.len() as u64);
+    for c in cells {
+        for v in c.0 {
+            add(u64::from(v as u32));
+        }
+    }
+    add(counts.len() as u64);
+    for &(m, n) in counts {
+        add(u64::from(m));
+        add(u64::from(n));
+    }
+    k
 }
 
 /// The fly-through's logic: each input is one [`DigInput`]; undecodable inputs are ignored.
@@ -268,42 +336,102 @@ pub struct DigLogic {
     crumble: bool,
     /// Regions falling, in the order they were found.
     falling: Vec<Falling>,
+    /// Keys ([`stuck_key`]) of the regions that were wedged or refused, oldest first, at most
+    /// [`STUCK_MAX`].
+    stuck: VecDeque<u64>,
 }
 
 impl DigLogic {
     /// One tick of falling: every falling region drops by up to [`FALL_STEP`]. A drop of a
-    /// whole step moves the region's cells one cell down and it falls on; a shorter drop (or
-    /// none, or a refusal) means it has landed.
+    /// whole step moves the region's cells one cell down and it falls on. A shorter drop after
+    /// it has moved means it has landed; no drop at all on its first tick means it is wedged;
+    /// a refusal stops it. A landing, or a refusal after it moved, that crushed voxels piles
+    /// them as rubble on its cells.
     fn fall(&mut self, host: &mut dyn Host, lines: &mut Vec<String>) {
         for mut f in std::mem::take(&mut self.falling) {
             let r = host.apply(Op::Drop {
                 cells: f.cells.clone(),
                 max_drop: FALL_STEP,
-                yield_below: 0,
+                yield_below: YIELD_BELOW,
             });
             lines.push(format!("op {DROP_VERB}"));
-            let dropped = match r {
-                Ok(OpResult::Drop(d)) => d.dropped,
-                _ => 0,
+            let d = match r {
+                Ok(OpResult::Drop(d)) => d,
+                Ok(other) => unreachable!("a drop gives a drop result, not {other:?}"),
+                Err(e) => {
+                    let line = refused_line(&e, f.ticks, f.fell);
+                    let line = self.end_fall(host, &f, line, lines);
+                    lines.push(line);
+                    self.remember(&f);
+                    continue;
+                }
             };
-            if dropped > 0 {
-                f.ticks += 1;
-                f.fell += dropped;
+            if d.dropped == 0 && f.ticks == 0 {
+                lines.push(wedged_line(f.cells.len(), &f.counts));
+                self.remember(&f);
+                continue;
             }
-            if dropped == FALL_STEP {
+            f.crushed += d.crushed.iter().map(|c| c.1).sum::<u32>();
+            if d.dropped > 0 {
+                f.ticks += 1;
+                f.fell += d.dropped;
+            }
+            if d.dropped == FALL_STEP {
                 for c in &mut f.cells {
                     c.0[2] -= 1;
                 }
                 self.falling.push(f);
             } else {
-                lines.push(landed_line(f.ticks, f.fell));
+                let line = landed_line(f.ticks, f.fell);
+                let line = self.end_fall(host, &f, line, lines);
+                lines.push(line);
             }
+        }
+    }
+
+    /// The end of fall `f`, whose last line is `line`: when it moved and crushed voxels, piles
+    /// them on its cells, pushes `op piled`, and returns `line` with the crush and the pile
+    /// appended; otherwise `line` as it is.
+    fn end_fall(
+        &self,
+        host: &mut dyn Host,
+        f: &Falling,
+        line: String,
+        lines: &mut Vec<String>,
+    ) -> String {
+        if f.ticks == 0 || f.crushed == 0 {
+            return line;
+        }
+        let r = host.apply(Op::Pile {
+            cells: f.cells.clone(),
+            rubble: RUBBLE,
+            count: f.crushed,
+            max_depth: RUBBLE_DEPTH,
+        });
+        lines.push(format!("op {PILE_VERB}"));
+        match r {
+            Ok(r) => {
+                let placed = match r {
+                    OpResult::Pile(p) => p.placed,
+                    other => unreachable!("a pile gives a pile result, not {other:?}"),
+                };
+                format!("{line}, crushed {} voxels, {placed} rubble", f.crushed)
+            }
+            Err(e) => format!("{line}, crushed {} voxels, pile refused: {e}", f.crushed),
+        }
+    }
+
+    /// Remembers `f` as stuck, forgetting the oldest past [`STUCK_MAX`].
+    fn remember(&mut self, f: &Falling) {
+        self.stuck.push_back(stuck_key(&f.cells, &f.counts));
+        if self.stuck.len() > STUCK_MAX {
+            self.stuck.pop_front();
         }
     }
 
     /// After a dig that changed the voxels in `aabb`: asks the host which regions lost their
     /// support, reports each, and queues it to fall or removes it. A region overlapping one
-    /// already falling is that one, and is skipped.
+    /// already falling is that one, and is skipped; so is a remembered stuck one.
     fn collapse(
         &mut self,
         host: &mut dyn Host,
@@ -319,6 +447,12 @@ impl DigLogic {
             }) {
                 continue;
             }
+            if self
+                .stuck
+                .contains(&stuck_key(&region.cells, &region.counts))
+            {
+                continue;
+            }
             lines.push(region_line(&region));
             if self.crumble {
                 let _ = host.apply(Op::Remove {
@@ -331,8 +465,10 @@ impl DigLogic {
             } else {
                 self.falling.push(Falling {
                     cells: region.cells,
+                    counts: region.counts,
                     ticks: 0,
                     fell: 0,
+                    crushed: 0,
                 });
             }
         }

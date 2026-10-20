@@ -492,6 +492,20 @@ fn a_stamp_and_a_collapse_replay_from_the_save() {
                 n
             });
     assert_eq!(kinds, [5, 1, 9, 1, 0]);
+    // The logic's drops yield below the query's threshold: wire kind 5. The fall crosses no
+    // sliver, so it crushes nothing and no pile follows.
+    let drop_kinds: Vec<u8> = file
+        .ops
+        .entries()
+        .iter()
+        .filter(|e| matches!(e.op(), Some(Op::Drop { .. })))
+        .map(|e| {
+            let mut out = Vec::new();
+            e.encode(&mut out);
+            out[12]
+        })
+        .collect();
+    assert_eq!(drop_kinds, [5; 9]);
     // The header carries the vault the stamp names.
     assert_eq!(file.prefabs.len(), 1);
     assert_eq!(file.header_len(), 60 + 4 + 8 + 8_716);

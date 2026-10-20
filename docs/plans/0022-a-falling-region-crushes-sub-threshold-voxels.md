@@ -490,8 +490,8 @@ pub struct PileResult {
 |---|---|---|---|
 | 1: The repro, committed, pinning the bug | dev | done | 3a27fe0 |
 | 2: The yielding drop and the rubble pile in `vxe-world` | dev | done | 18702e8 |
-| 3: Op kinds 5 and 6 on the wire, through the server and in the log | dev | done | committed with this row |
-| 4: `DigLogic` tells a refusal, a wedge and a landing apart | dev | not started | |
+| 3: Op kinds 5 and 6 on the wire, through the server and in the log | dev | done | dfe3fc9 |
+| 4: `DigLogic` tells a refusal, a wedge and a landing apart | dev | done | committed with this row |
 | 5: Readings and the budget lines | dev | not started | |
 | 6: The owner's windowed check | human | not started | |
 
@@ -536,6 +536,22 @@ Phase 3 observations:
   asserted to log as kind 3 at `21 + 12 * 9` bytes each; the op-log bytes were not compared
   with a pre-plan capture.
 
+Phase 4 observations:
+- Sliver ledge (rock): tick 1 `["op dropped"]` (dropped 8, crushed `[(1, 32)]`); tick 2
+  `["op dropped", "op piled", "landed after 1 ticks, fell 8 voxels, crushed 32 voxels, 32
+  rubble"]`; `(25, 26, 40)` is rubble; the server log's op kinds are `[1, 5, 5, 6]`; the
+  server's grid equals `CoarseGrid::build`.
+- Shell sliver: `["op dropped", "wedged 9 1:4608"]`, terminal `wedged: 9 cells, {rock: 4608},
+  cannot fall`; the second lump dig gives `["op carved"]` and no op; a radius-2 dig at
+  `(25, 25, 46)` inside the ledge reports `region 9 1:<4608 - carved>` and is wedged again.
+- No floor: five ticks of `op dropped`, then `drop refused: chunk [0, 0, -1] is not resident,
+  after 5 ticks, fell 40 voxels`; no pile, nothing on later ticks.
+- `cutting_the_pillar_drops_the_ledge_a_cell_a_tick` and
+  `with_r_the_ledge_is_removed_leaving_a_quarter_as_rubble` pass unchanged.
+- `SESSION_HASH` `0x422b_7654_317b_145d` does not move (the scripted fall crosses no sliver);
+  its nine drops log as kind 5, its op-kind counts are `[5, 1, 9, 1, 0]` (no pile). The
+  `--logic wasm` session equals the native one byte for byte (guests rebuilt).
+
 ### Notes
 
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
@@ -558,6 +574,13 @@ each. Empty is fine.)_
 - Phase 3: the refusal of a kind-5 entry with threshold 0 is a new
   `WireError::NonCanonical { at }`.
 - Phase 3: `an_unknown_op_kind_is_reported` probes kind 7 where it probed 5.
+- Phase 4: the fly-through prints a `drop refused` line as the logic writes it (already
+  prose); only `wedged` lines are translated. Its own `dropped: refused, ...` and
+  `piled: refused, ...` prints are dropped, since the logic's line reports the refusal.
+- Phase 4: `count_in_box([24, 24, 40], [47, 47, 40])` is asserted as
+  `[(AIR, 544), (RUBBLE, 32)]`: `count_in_box` counts air.
+- Phase 4: the second lump of the shell test is written to the world directly, not through
+  the server, before its dig.
 - Phase 2: the level sweep finds 1 region where the plan's figures (from the wedged code)
   found 6; the 6 were one piece re-detached.
 
