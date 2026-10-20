@@ -60,27 +60,35 @@ impl Default for WasmConfig {
     }
 }
 
-/// The fuel a host import is charged after it returns, on top of the guest's own
-/// instructions: every call `per_call`; `apply` also `per_voxel` for each voxel in the op's
-/// bounds (an edit's shape bounds, a stamp's or a region op's changed bounds) and `64 x
-/// per_voxel` for each chunk it touched; `raycast` `per_step` for each step of its walk;
-/// `count_in_box` `per_voxel` for each voxel it counted. A refused or undecodable call is
-/// charged `per_call` only. A charge past the fuel left ends the call as
-/// [`LogicError::Fuel`], as an instruction overrun does. Every charge comes from integer
-/// counts the world produces, so it is the same on every machine.
+/// The fuel a host import is charged, on top of the guest's own instructions.
+///
+/// Before any host work, the imports that take a list are charged `per_byte` for each byte
+/// of it: `apply` its op bytes, `unsupported` 12 per changed cell. After the call returns:
+/// every call `per_call`; `apply` also `per_voxel` for each voxel in the op's bounds (an
+/// edit's shape bounds, a stamp's or a region op's changed bounds) and `64 x per_voxel` for
+/// each chunk it touched; `raycast` `per_step` for each step of its walk; `count_in_box`
+/// `per_voxel` for each voxel it counted; `unsupported` `per_step` for each cell the support
+/// query looked at. A refused or undecodable call is charged its bytes and `per_call` only.
+/// The steps come from the lent host's stats (`Host::raycast_with_steps`,
+/// `Host::unsupported_with_steps`); a host that does not report them is charged none. A
+/// charge past the fuel left ends the call as [`LogicError::Fuel`], as an instruction
+/// overrun does. Every charge comes from integer counts the world produces, so it is the
+/// same on every machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WorkRates {
     pub per_voxel: u64,
     pub per_step: u64,
     pub per_call: u64,
+    pub per_byte: u64,
 }
 
 impl WorkRates {
-    /// 10 per voxel, 10 per ray step, 100 per call.
+    /// 10 per voxel, 10 per step, 100 per call, 1 per argument byte.
     pub const DEFAULT: Self = Self {
         per_voxel: 10,
         per_step: 10,
         per_call: 100,
+        per_byte: 1,
     };
 
     /// No charge: the guest's instructions alone use fuel.
@@ -88,6 +96,7 @@ impl WorkRates {
         per_voxel: 0,
         per_step: 0,
         per_call: 0,
+        per_byte: 0,
     };
 
     /// The charge for an `apply` of `op` that gave `result`.
@@ -113,8 +122,14 @@ impl WorkRates {
         )
     }
 
-    /// The charge for a `raycast` whose walk took `steps`.
-    pub fn raycast_cost(&self, steps: u64) -> u64 {
+    /// The charge, before any host work, for an argument list of `bytes` bytes.
+    pub fn bytes_cost(&self, bytes: usize) -> u64 {
+        self.per_byte
+            .saturating_mul(u64::try_from(bytes).unwrap_or(u64::MAX))
+    }
+
+    /// The charge for a `raycast` or an `unsupported` whose work took `steps`.
+    pub fn steps_cost(&self, steps: u64) -> u64 {
         self.per_call
             .saturating_add(self.per_step.saturating_mul(steps))
     }
@@ -298,6 +313,7 @@ fn add_host(linker: &mut Linker<State>, rates: WorkRates) -> wasmtime::Result<()
     host.func_wrap(
         "apply",
         move |mut store: StoreContextMut<'_, State>, (op,): (Vec<u8>,)| {
+            charge(&mut store, rates.bytes_cost(op.len()))?;
             let (answer, cost) = guarded(|| {
                 let host = store.data_mut().host()?;
                 let mut r = Reader::new(&op);
@@ -330,7 +346,7 @@ fn add_host(linker: &mut Linker<State>, rates: WorkRates) -> wasmtime::Result<()
                     .host()?
                     .raycast_with_steps(fixed3(origin), fixed3(dir), max))
             })?;
-            charge(&mut store, rates.raycast_cost(steps))?;
+            charge(&mut store, rates.steps_cost(steps))?;
             Ok((hit.map(|h| wit::Hit {
                 voxel: wit_voxel(h.voxel),
                 face: h.face.map(wit_face),
@@ -351,14 +367,18 @@ fn add_host(linker: &mut Linker<State>, rates: WorkRates) -> wasmtime::Result<()
     host.func_wrap(
         "unsupported",
         move |mut store: StoreContextMut<'_, State>, (changed,): (Vec<wit::Cell>,)| {
-            let regions = guarded(|| {
+            charge(
+                &mut store,
+                rates.bytes_cost(changed.len().saturating_mul(12)),
+            )?;
+            let (regions, steps) = guarded(|| {
                 let changed: Vec<CellCoord> = changed
                     .into_iter()
                     .map(|c| CellCoord([c.x, c.y, c.z]))
                     .collect();
-                Ok(store.data_mut().host()?.unsupported(&changed))
+                Ok(store.data_mut().host()?.unsupported_with_steps(&changed))
             })?;
-            charge(&mut store, rates.per_call)?;
+            charge(&mut store, rates.steps_cost(steps))?;
             Ok((regions.into_iter().map(wit_region).collect::<Vec<_>>(),))
         },
     )?;

@@ -25,9 +25,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use vxe_world::{
-    Anchors, CellChange, CellCoord, CoarseGrid, EditError, Fixed3, Hit, InputLog, LogEntry,
-    MaterialId, Op, OpLog, OpResult, Prefab, PrefabCollision, PrefabRegistry, Region,
-    SupportParams, VoxelCoord, World, find_unsupported,
+    Anchors, BRICK_EDGE, CellChange, CellCoord, CoarseGrid, EditError, Fixed3, Hit, InputLog,
+    LogEntry, MaterialId, Op, OpLog, OpResult, Prefab, PrefabCollision, PrefabRegistry, Region,
+    SupportParams, VoxelCoord, World, find_unsupported_with_stats,
 };
 
 use crate::channel::{Channel, Endpoint};
@@ -180,6 +180,15 @@ impl Host for TickHost<'_> {
     }
 
     fn unsupported(&self, changed: &[CellCoord]) -> Vec<Region> {
+        self.unsupported_with_steps(changed).0
+    }
+
+    /// A `changed` list longer than one in-range edit can change (see
+    /// [`max_changed_cells`]) reads as no regions, and the query does not run.
+    fn unsupported_with_steps(&self, changed: &[CellCoord]) -> (Vec<Region>, u64) {
+        if changed.len() as u64 > max_changed_cells(self.world) {
+            return (Vec::new(), 0);
+        }
         // The query reads only each change's cell; the grid holds the cells' current state.
         let changes: Vec<CellChange> = changed
             .iter()
@@ -197,7 +206,7 @@ impl Host for TickHost<'_> {
         let anchors = Anchors {
             explicit: &self.support.anchors,
         };
-        find_unsupported(
+        find_unsupported_with_stats(
             self.world,
             self.coarse,
             &self.support.params,
@@ -205,6 +214,14 @@ impl Host for TickHost<'_> {
             &changes,
         )
     }
+}
+
+/// The most cells one edit within `world`'s limits can change: its voxel bounds span at most
+/// `edit_axis_max` voxels per axis, so at most `edit_axis_max / BRICK_EDGE + 1` cells per axis
+/// (129³ = 2 146 689 at the defaults).
+pub fn max_changed_cells(world: &World) -> u64 {
+    let per_axis = u64::from(world.limits().edit_axis_max / BRICK_EDGE.unsigned_abs()) + 1;
+    per_axis.saturating_mul(per_axis).saturating_mul(per_axis)
 }
 
 fn broadcast(clients: &[Endpoint], msg: &Message) {
@@ -633,5 +650,42 @@ mod tests {
         assert!(!client.desynced(), "{events:?}");
         assert_eq!(client.world().voxel_hash(), server.world().voxel_hash());
         assert_eq!(server.world().voxel_hash(), solid3_world().voxel_hash());
+    }
+
+    /// Asks the host's support query with `n` copies of one floor cell and records the
+    /// steps it reports.
+    struct AskSupport(u64, Arc<Mutex<Option<SupportAnswer>>>);
+
+    /// The query's regions and steps.
+    type SupportAnswer = (Vec<Region>, u64);
+
+    impl Logic for AskSupport {
+        fn init(&mut self, _: &mut dyn Host, _: u64) {}
+        fn tick(&mut self, host: &mut dyn Host, _: u64, _: &[ClientInput]) -> TickOutput {
+            let changed = vec![CellCoord([2, 2, 0]); self.0 as usize];
+            *self.1.lock().unwrap() = Some(host.unsupported_with_steps(&changed));
+            TickOutput::default()
+        }
+    }
+
+    /// The server's support query refuses a `changed` list longer than one in-range edit can
+    /// change, `(1 024 / 8 + 1)^3 = 2 146 689` cells at the default limits: one cell more
+    /// reads as no regions and no steps; at the cap the query runs.
+    #[test]
+    fn a_changed_list_past_the_cap_reads_as_no_regions() {
+        let world = Arc::new(crate::test_logic::slab_world());
+        let cap = max_changed_cells(&world);
+        assert_eq!(cap, 2_146_689);
+        for (n, runs) in [(cap + 1, false), (cap, true)] {
+            let seen = Arc::new(Mutex::new(None));
+            let mut server = Server::new(world.clone(), Box::new(AskSupport(n, seen.clone())), 0);
+            server.tick();
+            let (regions, steps) = seen.lock().unwrap().take().unwrap();
+            assert!(regions.is_empty());
+            // The cell and its six neighbours are 7 candidates; it and its four floor
+            // neighbours each start a flood that is anchored at once on the extent's bottom
+            // face (1 cell each); the cells below and above are outside the extent and air.
+            assert_eq!(steps, if runs { 7 + 5 } else { 0 }, "{n} cells");
+        }
     }
 }

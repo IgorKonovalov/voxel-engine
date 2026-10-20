@@ -784,3 +784,20 @@ fn region_ops_over_the_cell_cap_are_refused() {
     ));
     assert_eq!(world.voxel_hash(), before);
 }
+
+/// The query's step count after the pillar carve. The 4 changed cells `(4, 4, 1..=4)` and
+/// their neighbours deduplicate to 22 candidates: the column `(4, 4, 0..=5)` (6) and the four
+/// side neighbours of each changed cell (16). Ascending, the first load-bearing one is the
+/// floor cell `(4, 4, 0)`, on the extent's face: its flood takes on 1 cell and is anchored.
+/// The next is the slab cell `(4, 4, 5)`, whose flood takes on the 9 slab cells and ends as
+/// the region. The rest are air or settled: `22 + 1 + 9 = 32`.
+#[test]
+fn the_support_query_counts_its_candidates_and_flood_cells() {
+    let (world, grid, changes) = carved();
+    assert_eq!(changes.len(), 4);
+    let (regions, steps) =
+        find_unsupported_with_stats(&world, &grid, &params(), &Anchors::default(), &changes);
+    assert_eq!(regions, query(&world, &grid, params(), &changes));
+    assert_eq!(regions[0].cells, slab_cells());
+    assert_eq!(steps, 32);
+}

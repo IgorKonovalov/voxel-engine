@@ -39,4 +39,4 @@ pub use channel::{Channel, Endpoint, MemChannel};
 pub use client::{Client, ClientWorld, Event};
 pub use logic::{ClientInput, Host, Logic, LogicError, NoLogic, TickOutput, cells_in};
 pub use message::{MSG_APPLIED, MSG_EVENT, MSG_INPUT, MSG_REFUSED, Message};
-pub use server::{DEFAULT_SUPPORT, Server, TickReport};
+pub use server::{DEFAULT_SUPPORT, Server, TickReport, max_changed_cells};

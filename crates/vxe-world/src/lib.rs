@@ -67,6 +67,6 @@ pub use shape::Shape;
 pub use source::{StampedSource, UniformSource, WorldSource};
 pub use store::{ChunkStore, StoreWriteGuard, World, WorldStats};
 pub use stream::{Residency, StreamConfig, StreamError, StreamEvents, StreamStats, Streamer, Tier};
-pub use support::{Anchors, Region, SupportParams, find_unsupported};
+pub use support::{Anchors, Region, SupportParams, find_unsupported, find_unsupported_with_stats};
 pub use walkable::{WalkableMap, WalkableParams, WalkableStats};
 pub use wire::WireError;

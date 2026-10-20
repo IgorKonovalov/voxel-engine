@@ -99,6 +99,12 @@ pub trait Host {
     /// parameters and anchors the server is configured with). A caller that knows only an
     /// op's aabb passes [`cells_in`] of it.
     fn unsupported(&self, changed: &[CellCoord]) -> Vec<Region>;
+    /// [`Host::unsupported`] plus the cells the query looked at
+    /// (`vxe_world::find_unsupported_with_stats`), 0 when it did not run. A host that charges
+    /// a logic for its calls' work reads the count here. The default reports 0.
+    fn unsupported_with_steps(&self, changed: &[CellCoord]) -> (Vec<Region>, u64) {
+        (self.unsupported(changed), 0)
+    }
 }
 
 /// The cells (8³-voxel bricks) overlapping the inclusive voxel box `aabb`, ascending; none

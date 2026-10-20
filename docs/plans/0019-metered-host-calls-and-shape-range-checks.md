@@ -369,6 +369,15 @@ pub struct WorkRates { pub per_voxel: u64, pub per_step: u64, pub per_call: u64 
   name `greedy`.
 - Followup noticed: the `bindgen` `host` trait is generated and no longer implemented; the
   imports' signatures are checked only when the component links.
+- Review major 1 (list-taking imports metered by size), fix commit `fix(script): charge
+  apply and unsupported by their list bytes and the flood`: `WorkRates::per_byte` (1),
+  charged before the host decodes or floods; `find_unsupported_with_stats` and
+  `Host::unsupported_with_steps` (the server's `TickHost` overrides it) charge `per_step` per
+  candidate and flood cell; `vxe_net::max_changed_cells` caps the server's `changed` list at
+  `(edit_axis_max / 8 + 1)^3`. The 1 MiB `apply` loop test runs under `10^8` fuel, not the
+  default (a debug build lifts 10 GiB at the default); the cap is asserted both on the
+  server's host and through the component on a test host that applies the same cap, with a
+  256 MiB memory cap for the 2 146 690-cell list.
 - Phase 1: `world_budget` sizes `query_axis_max` and `query_voxels_max` to its extent; run
   at the default 20x20x8 chunks it printed `air fraction: 29.31 %` (release, exclusive perf
   lock, 1-minute load 15.22).

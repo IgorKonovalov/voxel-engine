@@ -324,15 +324,20 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   proposal was 1 µs, and the readings below missed it at 1.37 to 1.42 µs; the 2 µs budget was
   adopted at the close (an orchestrator call, overturnable by the owner). The empty component
   tick (1.1 to 1.25 µs) is a reading, not a budget. Host-call work is charged to fuel at the
-  configured rates (Plan 0019): after each import returns, the tick's fuel loses
-  `WorkRates::per_call` (default 100), plus `per_voxel` (10) for each voxel an `apply`'s op
-  bounds hold and 64 per chunk it touched, `per_step` (10) for each step of a `raycast`'s walk,
-  and `per_voxel` for each voxel a `count_in_box` counted; a refused call is charged
-  `per_call` only, and a charge past the fuel left is the same `Fuel` failure as an
-  instruction overrun. **Asserted:** a `count_in_box` over `1 024^3` resident voxels
-  (`10 x 2^30` fuel) fails the tick on fuel at the default `10^10`; 100 rays of `max_t = 2^22`
-  through an empty world are charged exactly `100 x (100 + 10 s)`. A cheap query's per-call
-  cost is not read yet.
+  configured rates (Plan 0019): before any host work, `apply` and `unsupported` are charged
+  `WorkRates::per_byte` (default 1) for each byte of their list argument (the op bytes; 12 per
+  changed cell); after each import returns, the tick's fuel loses `per_call` (100), plus
+  `per_voxel` (10) for each voxel an `apply`'s op bounds hold and 64 per chunk it touched,
+  `per_step` (10) for each step of a `raycast`'s walk and for each cell the `unsupported`
+  query looked at, and `per_voxel` for each voxel a `count_in_box` counted. A refused or
+  undecodable call is charged its bytes and `per_call` only, and a charge past the fuel left
+  is the same `Fuel` failure as an instruction overrun. The server's support query reads a
+  `changed` list longer than one in-range edit can change (`(edit_axis_max / 8 + 1)^3`,
+  2 146 689 cells at the defaults) as no regions. **Asserted:** a `count_in_box` over
+  `1 024^3` resident voxels (`10 x 2^30` fuel) fails the tick on fuel at the default `10^10`;
+  100 rays of `max_t = 2^22` through an empty world are charged exactly `100 x (100 + 10 s)`;
+  an undecodable 4 096-byte `apply` costs `100 + 4 096`; `unsupported` over `K` cells costs
+  `100 + 12 K + 10 s`. A cheap query's per-call cost is not read yet.
   **Readings (dev reference, AMD Ryzen 9 5900HS, Linux, `wasmtime` 49.0.3, Plan 0011 Phase 4
   at 07a3be1 (70b40ec plus the bench), exclusive perf lock, 1-minute load 1.87 before and 1.66
   after two runs):** `cargo bench -p vxe-script-wasm --bench boundary`, each tick on a fresh

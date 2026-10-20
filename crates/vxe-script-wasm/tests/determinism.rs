@@ -18,8 +18,9 @@ use vxe_net::*;
 use vxe_script_wasm::{WasmConfig, WasmLogic, WorkRates};
 use vxe_world::hash::mix64;
 use vxe_world::{
-    CellCoord, ChunkExtent, EditError, EditOp, Field, Fixed3, Hit, MaterialId, Mode, Op, OpResult,
-    PrefabRegistry, Region, UniformSource, VoxelCoord, World, centre_of_voxel,
+    Anchors, CellChange, CellCoord, ChunkExtent, CoarseGrid, EditError, EditOp, Field, Fixed3, Hit,
+    MaterialId, Mode, Op, OpResult, PrefabRegistry, Region, UniformSource, VoxelCoord, World,
+    centre_of_voxel, find_unsupported_with_stats,
 };
 
 /// A host straight on a world, for calling a [`WasmLogic`] without a server.
@@ -67,6 +68,7 @@ fn wasm_config_defaults() {
                 per_voxel: 10,
                 per_step: 10,
                 per_call: 100,
+                per_byte: 1,
             },
         }
     );
@@ -640,11 +642,85 @@ fn greedy_tick(
     config: &WasmConfig,
     input: ClientInput,
 ) -> (Result<TickOutput, LogicError>, Option<u64>) {
+    greedy_tick_on(&mut WorldHost(world), config, input)
+}
+
+/// [`greedy_tick`] on any host.
+fn greedy_tick_on(
+    host: &mut dyn Host,
+    config: &WasmConfig,
+    input: ClientInput,
+) -> (Result<TickOutput, LogicError>, Option<u64>) {
     let mut logic = WasmLogic::load(&guest("greedy"), &fail_stop(*config)).expect("greedy loads");
-    let mut host = WorldHost(world);
-    logic.try_init(&mut host, 0).expect("greedy's init returns");
-    let out = logic.try_tick(&mut host, 0, &[input]);
+    logic.try_init(host, 0).expect("greedy's init returns");
+    let out = logic.try_tick(host, 0, &[input]);
     (out, logic.fuel_left())
+}
+
+/// A host straight on a world with a coarse grid, answering the support query as the
+/// server's host does: `DEFAULT_SUPPORT`, no explicit anchors, a `changed` list past
+/// `max_changed_cells` read as no regions.
+struct GridHost<'a> {
+    world: WorldHost<'a>,
+    grid: CoarseGrid,
+}
+
+impl<'a> GridHost<'a> {
+    fn new(world: &'a World) -> Self {
+        Self {
+            world: WorldHost(world),
+            grid: CoarseGrid::build(world),
+        }
+    }
+}
+
+impl Host for GridHost<'_> {
+    fn apply(&mut self, op: Op) -> Result<OpResult, EditError> {
+        self.world.apply(op)
+    }
+
+    fn material_at(&self, v: VoxelCoord) -> Option<MaterialId> {
+        self.world.material_at(v)
+    }
+
+    fn raycast(&self, origin: Fixed3, dir: Fixed3, max: i64) -> Option<Hit> {
+        self.world.raycast(origin, dir, max)
+    }
+
+    fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
+        self.world.count_in_box(lo, hi)
+    }
+
+    fn unsupported(&self, changed: &[CellCoord]) -> Vec<Region> {
+        self.unsupported_with_steps(changed).0
+    }
+
+    fn unsupported_with_steps(&self, changed: &[CellCoord]) -> (Vec<Region>, u64) {
+        let world = self.world.0;
+        if changed.len() as u64 > max_changed_cells(world) {
+            return (Vec::new(), 0);
+        }
+        let changes: Vec<CellChange> = changed
+            .iter()
+            .map(|&c| {
+                let (chunk, slot) = c.split();
+                let now = self.grid.cell(chunk, slot).unwrap_or_default();
+                CellChange {
+                    chunk,
+                    slot: slot as u16,
+                    before: now,
+                    after: now,
+                }
+            })
+            .collect();
+        find_unsupported_with_stats(
+            world,
+            &self.grid,
+            &DEFAULT_SUPPORT,
+            &Anchors::default(),
+            &changes,
+        )
+    }
 }
 
 /// `count_in_box` is charged 10 fuel per voxel counted: `1 024^3` resident voxels cost
@@ -725,4 +801,139 @@ fn rays_are_charged_by_their_steps() {
     };
     let (out, _) = greedy_tick(&world, &tight_zero, rays_input(100, o, dir, max));
     assert!(out.is_ok(), "{out:?}");
+}
+
+/// A `greedy` input calling the `apply` import `n` times with `bytes` as the op.
+fn raw_apply_input(n: u32, bytes: &[u8]) -> ClientInput {
+    let mut out = vec![3];
+    out.extend_from_slice(&n.to_le_bytes());
+    out.extend_from_slice(bytes);
+    ClientInput {
+        client: 0,
+        bytes: out,
+    }
+}
+
+/// A `greedy` input calling the `apply` import `n` times with `len` bytes of `0xFF`.
+fn junk_apply_input(n: u32, len: u32) -> ClientInput {
+    let mut bytes = vec![4];
+    bytes.extend_from_slice(&n.to_le_bytes());
+    bytes.extend_from_slice(&len.to_le_bytes());
+    ClientInput { client: 0, bytes }
+}
+
+/// A `greedy` input asking `unsupported` over `cells`.
+fn unsupported_input(cells: &[CellCoord]) -> ClientInput {
+    let mut bytes = vec![5];
+    for c in cells {
+        for v in c.0 {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    ClientInput { client: 0, bytes }
+}
+
+/// The fuel `input` costs under the default rates beyond what it costs under
+/// `WorkRates::ZERO`, both ticks completing on `host`.
+fn charged(host: &mut dyn Host, input: &ClientInput) -> u64 {
+    charged_under(host, &WasmConfig::default(), input)
+}
+
+/// [`charged`] with `config`'s fuel and memory.
+fn charged_under(host: &mut dyn Host, config: &WasmConfig, input: &ClientInput) -> u64 {
+    let config = *config;
+    let zero = WasmConfig {
+        rates: WorkRates::ZERO,
+        ..config
+    };
+    let (out, left) = greedy_tick_on(host, &config, input.clone());
+    assert!(out.is_ok(), "{out:?}");
+    let (out, zero_left) = greedy_tick_on(host, &zero, input.clone());
+    assert!(out.is_ok(), "{out:?}");
+    zero_left.unwrap() - left.unwrap()
+}
+
+/// `apply`'s op bytes are charged one fuel each before the host decodes them: an
+/// undecodable op of 4 096 bytes costs `100 + 4 096`, and a drop of 4 097 cells, decoded and
+/// refused with `RegionCells`, costs `100 +` its encoded length.
+#[test]
+fn apply_is_charged_by_its_op_bytes() {
+    let world = solid3_world();
+    assert_eq!(
+        charged(&mut WorldHost(&world), &junk_apply_input(1, 4096)),
+        100 + 4096
+    );
+
+    let drop = Op::Drop {
+        cells: (0..4097)
+            .map(|i| CellCoord([i % 16, i / 16 % 16, i / 256]))
+            .collect(),
+        max_drop: 8,
+    };
+    let mut bytes = Vec::new();
+    vxe_world::wire::encode_op(&mut bytes, &drop);
+    assert_eq!(bytes.len(), 1 + 4 + 4 + 12 * 4097);
+    assert_eq!(
+        drop.apply(&world, &PrefabRegistry::new()),
+        Err(EditError::OutOfRange {
+            what: Field::RegionCells
+        })
+    );
+    let input = raw_apply_input(1, &bytes);
+    let (out, _) = greedy_tick(&world, &WasmConfig::default(), input.clone());
+    assert_eq!(out.unwrap().broadcast, [vxe_script_wasm::ANSWER_REFUSED]);
+    assert_eq!(
+        charged(&mut WorldHost(&world), &input),
+        100 + bytes.len() as u64
+    );
+}
+
+/// A guest calling `apply` with one 1 MiB undecodable buffer over and over pays `2^20 + 100`
+/// per call. Under `10^8` fuel (a hundredth of the default, so the debug build lifts 100 MiB
+/// rather than 10 GiB; the default covers at most 9 535 calls the same way) at most 95 calls
+/// fit: 90 complete, 200 end the tick on fuel.
+#[test]
+fn a_loop_of_large_undecodable_applies_runs_out_of_fuel() {
+    let world = solid3_world();
+    let config = WasmConfig {
+        fuel_per_tick: 100_000_000,
+        ..WasmConfig::default()
+    };
+    assert_eq!(config.fuel_per_tick / ((1 << 20) + 100), 95);
+    let (out, _) = greedy_tick(&world, &config, junk_apply_input(90, 1 << 20));
+    assert_eq!(out.unwrap().broadcast, 90u32.to_le_bytes());
+    let (out, _) = greedy_tick(&world, &config, junk_apply_input(200, 1 << 20));
+    assert_eq!(out, Err(LogicError::Fuel { tick: 0 }));
+}
+
+/// `unsupported` over `K` cells is charged `12 K` before the query and `100 + 10 s` after it,
+/// `s` the cells the query looked at; a list past `max_changed_cells` (129^3 at the default
+/// limits) reads as no regions and costs only `100 + 12 K`.
+#[test]
+fn unsupported_is_charged_by_its_cells_and_its_flood() {
+    let world = slab_world();
+    let mut host = GridHost::new(&world);
+    let cells = slab_cells(2, 5);
+    let (regions, s) = host.unsupported_with_steps(&cells);
+    assert!(regions.is_empty(), "{regions:?}");
+    assert!(s > cells.len() as u64, "{s} steps");
+    let k = cells.len() as u64;
+    assert_eq!(
+        charged(&mut host, &unsupported_input(&cells)),
+        100 + 12 * k + 10 * s
+    );
+
+    let cap = max_changed_cells(&world);
+    assert_eq!(cap, 129 * 129 * 129);
+    let over = vec![CellCoord([9, 3, 5]); cap as usize + 1];
+    assert_eq!(host.unsupported_with_steps(&over), (Vec::new(), 0));
+    // The 2 146 690-cell list and its input take about 50 MiB of guest memory.
+    let roomy = WasmConfig {
+        memory_bytes: 256 << 20,
+        ..WasmConfig::default()
+    };
+    assert_eq!(
+        charged_under(&mut host, &roomy, &unsupported_input(&over)),
+        100 + 12 * (cap + 1)
+    );
 }
