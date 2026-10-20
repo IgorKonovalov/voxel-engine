@@ -357,6 +357,8 @@ pub struct HudStats {
     pub camera: [f32; 3],
     pub chunk: [i32; 3],
     pub mode: Mode,
+    /// The cutaway mode's name while the cutaway view is on; `None` hides its row.
+    pub cutaway: Option<&'static str>,
     /// What formatting the previous rows cost, in microseconds.
     pub format_us: u32,
     /// The steps view's reading of the last frame, while that view is on.
@@ -440,6 +442,7 @@ impl HudStats {
             camera: [64.5, 64.5, 64.5],
             chunk: [1, 1, 1],
             mode: Mode::Fly,
+            cutaway: None,
             format_us: 6,
             steps: None,
             pressure: None,
@@ -577,6 +580,9 @@ impl HudStats {
             HudColour::White,
             format_args!("{mode} at {x:.1} {y:.1} {z:.1} (voxels), chunk {cx} {cy} {cz}"),
         )?;
+        if let Some(c) = self.cutaway {
+            row(out, HudColour::White, format_args!("cutaway ({c})"))?;
+        }
         if let Some(s) = self.steps {
             row(
                 out,
@@ -828,6 +834,29 @@ mod tests {
                 .lines()
                 .any(|l| l.starts_with("steps per ray")),
             "no row without a sample"
+        );
+    }
+
+    /// The cutaway row follows the camera row while the view is on, and is absent otherwise.
+    #[test]
+    fn the_cutaway_row_shows_while_the_view_is_on() {
+        let stats = HudStats {
+            cutaway: Some("auto"),
+            ..HudStats::default()
+        };
+        let text = stats.to_string();
+        let lines: Vec<&str> = text.lines().collect();
+        let i = lines
+            .iter()
+            .position(|l| l.starts_with("fly at "))
+            .expect("the camera row");
+        assert_eq!(lines[i + 1], "cutaway (auto)");
+        assert!(
+            !HudStats::default()
+                .to_string()
+                .lines()
+                .any(|l| l.starts_with("cutaway")),
+            "no row while the view is off"
         );
     }
 

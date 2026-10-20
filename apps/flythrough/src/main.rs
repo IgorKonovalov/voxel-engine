@@ -13,7 +13,10 @@
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
-//! [`Autopilot`]); `--census` prints the world's brick census (`World::brick_census`) on exit,
+//! [`Autopilot`]); `--cutaway auto|on|off` sets the cutaway view's start state (default `auto`:
+//! on while the camera's voxel is neither air nor translucent, so a camera in rock or outside
+//! the world sees each cavern's far wall through the rock; `X` cycles the three, and the
+//! autopilot never changes it); `--census` prints the world's brick census (`World::brick_census`) on exit,
 //! after any bench; `--sync-budget` sets the mirror's upload bytes per frame; `--mirror-budget`
 //! sets the VRAM the mirror reserves for its pool, masks and records at startup (ADR-0013;
 //! default 3072 MiB streamed, and on the level what its bricks, the dig headroom and its chunks
@@ -95,7 +98,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use fly::{Fly, Walk};
+use fly::{CutawayMode, Fly, Walk};
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, VAULT_EDGE, vault};
 use flythrough::hud::{self, Cadence, EditLine, FrameStats, HudStats, WorldSample};
 use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB, REACH};
@@ -262,6 +265,8 @@ struct Args {
     replay: Option<std::path::PathBuf>,
     /// `--logic`: the server's logic, native or the hosted component.
     logic: LogicChoice,
+    /// `--cutaway`: the cutaway view's start state.
+    cutaway: CutawayMode,
     /// `--pad on|off`: read a gamepad in a window (on by default); never headless or under
     /// the autopilot.
     pad: bool,
@@ -297,6 +302,7 @@ impl Args {
             detail: self.detail,
             view: self.view,
             translucent_layers: self.translucent_layers,
+            cutaway: false,
         }
     }
 
@@ -337,6 +343,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         save: None,
         replay: None,
         logic: LogicChoice::Native,
+        cutaway: CutawayMode::Auto,
         pad: true,
     };
     let mut detail_flag = false;
@@ -390,6 +397,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 args.translucent_layers = v
                     .parse()
                     .map_err(|_| format!("--translucent-layers takes a count, not {v}"))?;
+            }
+            "--cutaway" => {
+                let v = value()?;
+                args.cutaway = CutawayMode::from_name(&v)
+                    .ok_or(format!("--cutaway takes auto, on or off, not {v}"))?;
             }
             "--save" => args.save = Some(value()?.into()),
             "--replay" => args.replay = Some(value()?.into()),
@@ -1292,6 +1304,8 @@ struct Run {
     fly: Fly,
     light: LightParams,
     look: LookParams,
+    /// Sets `look.cutaway` each frame of interactive flight; `X` cycles it.
+    cutaway: CutawayMode,
     dig_radius: i64,
     /// Scroll banked toward the next dig-radius step.
     scroll: ScrollSteps,
@@ -1382,6 +1396,7 @@ impl Run {
         s.rss_bytes = h.rss_bytes;
         s.steps = h.steps;
         s.camera = pos.to_array();
+        s.cutaway = self.look.cutaway.then_some(self.cutaway.name());
         s.chunk = voxel_of(pos).chunk().0;
         s.mode = mode;
         s.format_us = h.format_us;
@@ -2241,6 +2256,8 @@ impl Run {
                 None => self.fly.update(input, dt),
             }
             self.handle_input(input);
+            self.cutaway
+                .update(&mut self.look, &self.world, self.fly.camera.position);
         }
         self.audio_step();
         if let Some(n) = self.args.frames
@@ -2301,6 +2318,10 @@ impl Run {
             let contour = self.gfx.as_ref().is_some_and(|g| g.mirror.surface_attrs());
             self.look.normal_mode = self.look.normal_mode.next(contour);
             println!("{}", look_line(&self.look, self.rock_detail()));
+        }
+        if input.pressed(KeyCode::KeyX) {
+            self.cutaway = self.cutaway.next();
+            println!("cutaway {}", self.cutaway.name());
         }
         if input.pressed(KeyCode::KeyV) {
             self.look.detail = !self.look.detail;
@@ -2723,6 +2744,7 @@ impl App for Flythrough {
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
                 look: self.args.start_look(),
+                cutaway: self.args.cutaway,
                 dig_radius: DIG_RADIUS,
                 scroll: ScrollSteps::default(),
                 triggers: [false; 2],
@@ -3568,6 +3590,7 @@ mod tests {
             coarse: None,
             hud: Hud::new(false),
             audio: None,
+            cutaway: CutawayMode::Auto,
         }
     }
 
@@ -3814,6 +3837,28 @@ mod tests {
             );
             println!("dig {dir:?}: tick {:.3} ms; {lines:?}", ms_since(t));
         }
+    }
+
+    #[test]
+    fn cutaway_parses_auto_on_and_off() {
+        assert_eq!(
+            parse_args_from(argv(&[])).unwrap().cutaway,
+            CutawayMode::Auto
+        );
+        for (name, mode) in [
+            ("auto", CutawayMode::Auto),
+            ("on", CutawayMode::On),
+            ("off", CutawayMode::Off),
+        ] {
+            assert_eq!(
+                parse_args_from(argv(&["--cutaway", name])).unwrap().cutaway,
+                mode
+            );
+        }
+        assert_eq!(
+            parse_args_from(argv(&["--cutaway", "x"])).err().as_deref(),
+            Some("--cutaway takes auto, on or off, not x")
+        );
     }
 
     #[test]
