@@ -488,8 +488,8 @@ pub struct PileResult {
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The repro, committed, pinning the bug | dev | done | committed with this row |
-| 2: The yielding drop and the rubble pile in `vxe-world` | dev | not started | |
+| 1: The repro, committed, pinning the bug | dev | done | 3a27fe0 |
+| 2: The yielding drop and the rubble pile in `vxe-world` | dev | done | committed with this row |
 | 3: Op kinds 5 and 6 on the wire, through the server and in the log | dev | not started | |
 | 4: `DigLogic` tells a refusal, a wedge and a landing apart | dev | not started | |
 | 5: Readings and the budget lines | dev | not started | |
@@ -504,11 +504,42 @@ Phase 1 observations:
   8.56 s, the first-region test 9.29 s (both mostly level generation). The sweep is under 10 s,
   so it is not `#[ignore]`d.
 
+Phase 2 observations:
+- Collapse course hash: `0x3178_0a15_61c1_3041` to `0xd223_d848_c8fc_ca0f` (blessed on Linux;
+  the Windows arm confirms it on the first CI run after the owner pushes `main`). The test
+  also asserts the hash after the first two parts (drop by 10, removal) still equals
+  `0x3178_0a15_61c1_3041`.
+- The sliver: `drop_region_through(&cells, 64, 64)` gives `dropped 32`, `moved [(3, 4608)]`,
+  `crushed [(3, 32)]`, touched `[0, 0, 0]`, aabb `[24, 24, 8]..=[47, 47, 47]`; the world hash
+  equals the floor plus `[24, 24, 8]..[48, 48, 16]`. The pile: `placed 32`, aabb
+  `[25, 24, 16]..=[47, 47, 16]`, `(25, 26, 16)` is rubble.
+- Level, first region (iteration 3 243): drops `[8, 8, 8, 8, 8, 8, 8, 8, 8, 0]` (72 voxels),
+  crushed 141, pile placed 141. The full sweep with falls finds **1** region (the first falls
+  away, so the later digs that re-detached it find nothing): 141 crushed, 141 placed, no first
+  drop of 0, none refused, no shell blocker met.
+- Native vs decoded, yielding drops and piles on 96 seeded regions: 77 drops fell, 29 crushed,
+  79 piles placed; results and bricks equal after every op.
+- `cargo bench -p vxe-world --bench collapse -- --test`: every arm's assertions pass
+  (exclusive perf lock, 1-minute load 10.0, not quiet). Readings are Phase 5.
+
 ### Notes
 
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 2: `crates/vxe-world/src/wire.rs` (the drop result decodes `crushed: Vec::new()`) and
+  `crates/vxe-world/tests/log.rs` (the field in a literal) are touched outside the phase's
+  files so the crate compiles; Phase 3 replaces the wire part.
+- Phase 2: the pile's `count_in_box([24, 24, 16], [47, 47, 16])` is asserted as
+  `[(AIR, 544), (5, 32)]`, not `[(5, 32)]`: `count_in_box` counts air.
+- Phase 2: the yielding native/decoded check is a new test
+  (`the_native_yielding_drop_and_pile_match_the_decoded_ones`, 96 regions, each prepared with a
+  carve under the footprint and three seeded thin boxes of materials 1 to 4) instead of an
+  extension of `the_native_collapse_matches_the_decoded_one`, which stays as it was; without
+  the preparation no drop on the dressed cubes crushed anything.
+- Phase 2: the level sweep finds 1 region where the plan's figures (from the wedged code)
+  found 6; the 6 were one piece re-detached.
 
 ### Close triggers
 

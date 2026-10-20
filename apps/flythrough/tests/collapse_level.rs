@@ -8,7 +8,7 @@
 //! the carve, and the query runs over its changes with the fly-through's support parameters.
 
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
-use flythrough::cave_materials;
+use flythrough::{RUBBLE, cave_materials};
 use vxe_world::*;
 
 /// Iterations of the full sweep.
@@ -88,15 +88,87 @@ impl Digs {
     }
 }
 
+impl Digs {
+    fn grid_ref(&self) -> &CoarseGrid {
+        &self.grid
+    }
+}
+
 fn voxels(r: &Region) -> u32 {
     r.counts.iter().map(|c| c.1).sum()
 }
 
+/// A region's fall as the fly-through's logic runs it: drops of up to [`FALL_STEP`] through
+/// cells under [`YIELD_BELOW`] solid voxels, the cells one cell lower after each whole step,
+/// until a drop moves it less; then, when it crushed anything, a pile of the whole crushed
+/// volume on its cells. The grid follows every op.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Fall {
+    /// Each drop's `dropped`.
+    drops: Vec<i32>,
+    /// The crushed voxels over all drops and materials.
+    crushed: u32,
+    /// The pile's `placed`, when there was one.
+    placed: Option<u32>,
+    /// The refusal that ended the fall, if any.
+    refused: Option<EditError>,
+}
+
+const FALL_STEP: i32 = BRICK_EDGE;
+const YIELD_BELOW: u16 = 64;
+const RUBBLE_DEPTH: i32 = 64;
+
+impl Digs {
+    fn fall(&mut self, region: &Region) -> Fall {
+        let mut cells = region.cells.clone();
+        let mut out = Fall::default();
+        loop {
+            match self
+                .world
+                .drop_region_through(&cells, FALL_STEP, YIELD_BELOW)
+            {
+                Ok(d) => {
+                    self.grid.update(&self.world, &d.edit_result());
+                    out.drops.push(d.dropped);
+                    out.crushed += d.crushed.iter().map(|c| c.1).sum::<u32>();
+                    if d.dropped < FALL_STEP {
+                        break;
+                    }
+                    for c in &mut cells {
+                        c.0[2] -= 1;
+                    }
+                }
+                Err(e) => {
+                    out.refused = Some(e);
+                    break;
+                }
+            }
+        }
+        if out.crushed > 0 {
+            let p = self
+                .world
+                .pile_rubble(&cells, RUBBLE, out.crushed, RUBBLE_DEPTH)
+                .expect("the pile scans the cells the fall just crossed");
+            self.grid.update(&self.world, &p.edit_result());
+            assert!(p.placed <= out.crushed, "{p:?}");
+            if p.placed < out.crushed {
+                println!(
+                    "a pile on {:?} placed {} of {}",
+                    cells[0], p.placed, out.crushed
+                );
+            }
+            out.placed = Some(p.placed);
+        }
+        out
+    }
+}
+
 /// The first region the digs detach: 4 cells, 501 voxels, at loop iteration 3 243. It rests
-/// on cells the query calls too weak to hold it, and `drop_region` stops at their voxels, so
-/// it drops nothing. Plan 0022 Phase 2 adds the yielding drop that moves it.
+/// on cells the query calls too weak to hold it: `drop_region` stops at their voxels, and
+/// `drop_region_through` with the query's threshold falls through them, crushing what it
+/// passes, until it lands on a cell that bears load.
 #[test]
-fn the_level_repro_finds_a_region_that_drops_nothing() {
+fn the_level_repro_finds_a_region_that_falls_through_slivers() {
     let mut digs = Digs::new();
     let (at, region) = (0..SWEEP)
         .find_map(|i| digs.step().into_iter().next().map(|r| (i, r)))
@@ -110,32 +182,48 @@ fn the_level_repro_finds_a_region_that_drops_nothing() {
     );
     let before = digs.world.voxel_hash();
     let d = digs.world.drop_region(&region.cells, BRICK_EDGE).unwrap();
-    assert_eq!(d.dropped, 0);
     assert_eq!(d, DropResult::default());
     assert_eq!(digs.world.voxel_hash(), before);
+
+    // Nine whole steps, 72 voxels, then a cell that bears load; the whole crushed volume
+    // fits on top of the landed piece.
+    let fall = digs.fall(&region);
+    assert_eq!(
+        fall,
+        Fall {
+            drops: vec![8, 8, 8, 8, 8, 8, 8, 8, 8, 0],
+            crushed: 141,
+            placed: Some(141),
+            refused: None,
+        }
+    );
+    assert_eq!(*digs.grid_ref(), CoarseGrid::build(&digs.world));
 }
 
-/// The whole sweep, every reported region dropped once by up to a cell: six regions, none
-/// moved, none refused. Plan 0022 Phase 2 adds the yielding drop that moves them.
+/// The whole sweep, every reported region falling as [`Digs::fall`] runs it: no region is
+/// wedged on its first drop and none is refused. The first region falls away, so the later
+/// digs that detached it again while it stayed wedged find nothing: one region in all.
 #[test]
-fn the_level_sweep_drops_no_region() {
+fn the_level_sweep_drops_every_region() {
     let mut digs = Digs::new();
-    let (mut regions, mut moved, mut refused) = (0, 0, 0);
+    let (mut regions, mut crushed, mut placed) = (0, 0, 0);
+    let mut falls = Vec::new();
     for _ in 0..SWEEP {
         for region in digs.step() {
             regions += 1;
-            match digs.world.drop_region(&region.cells, BRICK_EDGE) {
-                Ok(d) if d.dropped > 0 => {
-                    moved += 1;
-                    digs.grid.update_aabb(&digs.world, d.aabb);
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    refused += 1;
-                    println!("refused: {e}");
-                }
-            }
+            let fall = digs.fall(&region);
+            println!(
+                "{} cells, {} voxels: {fall:?}",
+                region.cells.len(),
+                voxels(&region)
+            );
+            crushed += fall.crushed;
+            placed += fall.placed.unwrap_or(0);
+            falls.push(fall);
         }
     }
-    assert_eq!((regions, moved, refused), (6, 0, 0));
+    println!("{regions} regions, {crushed} crushed, {placed} placed");
+    assert!(falls.iter().all(|f| f.refused.is_none()), "{falls:?}");
+    assert!(falls.iter().all(|f| f.drops[0] > 0), "{falls:?}");
+    assert_eq!((regions, crushed, placed), (1, 141, 141));
 }

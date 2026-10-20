@@ -264,6 +264,7 @@ fn every_tag_round_trips() {
         OpResult::Drop(DropResult {
             moved: vec![(1, 4608), (65535, 1)],
             dropped: 8,
+            crushed: Vec::new(),
             touched: extent.0.clone(),
             aabb: extent.1,
         }),

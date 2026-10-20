@@ -512,6 +512,7 @@ pub fn decode_op_result(r: &mut Reader<'_>) -> Result<OpResult, WireError> {
             Ok(OpResult::Drop(DropResult {
                 moved,
                 dropped,
+                crushed: Vec::new(),
                 touched,
                 aabb,
             }))
