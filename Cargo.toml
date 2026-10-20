@@ -70,8 +70,8 @@ vxe-world = { path = "crates/vxe-world", version = "=0.17.0" }
 # The WebAssembly host for the logic component (ADR-0010) and the guest bindings. The three
 # move together (wit-bindgen at the release on wasmtime's wasm-tools, 0.258): a bump is its
 # own commit, gated by the native-versus-component equality test.
-wasmtime = { version = "=49.0.3", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
-wasmtime-wasi = { version = "=49.0.3", default-features = false }
+wasmtime = { version = "=49.0.4", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
+wasmtime-wasi = { version = "=49.0.4", default-features = false }
 # The trait the WASI random interfaces take, at wasmtime-wasi's version.
 rand_core = { version = "=0.10.1", default-features = false }
 wit-bindgen = { version = "=0.61.1", default-features = false, features = ["macros", "realloc"] }
