@@ -540,6 +540,8 @@ re-read in Phase 7.
 - Fix pass, nit (`reverb.rs` read comment), committed with this line: the comment states a read of at least 1 frame (a target is at least 32; `jump` clamps to 1) and what the read takes at 1.
 - Fix pass, nit (`mixer.rs` module doc lines 10 and 13 over 100 columns), committed with this line: rewrapped.
 - Fix pass, nit (`benches/mixer.rs` doc line 5 over 100 columns), committed with this line: rewrapped.
+- Followup from the review, not acted on (m1): the walking test's click index does not separate the parent d11d0cb (1.997) from the gliding taps (2.326); left to the architect with Phase 7 check 1.
+- Followup from the review, not acted on (m3): an `Output::play_stream` that hands out a stream voice's id, so the fly-through need not reserve `VoiceId(u32::MAX)`.
 
 - `tests/mixer.rs` and `benches/mixer.rs` (not in Phase 1's Files touched) changed
   mechanically for the removed `tap_count` (now `send`); no assertion changed.
@@ -599,6 +601,7 @@ re-read in Phase 7.
     - Buses 24 512 B.
     - Tap state 8 192 B for 64 voices.
     - Stream ring 19 200 B.
+- **Gate at the fix pass (7dfb1dc):** the same commands, every one exit 0. Doctests: 7 passed, 1 ignored. `cargo nextest run --workspace` (after `scripts/build-guests.sh`; exclusive perf lock, load average 3.27): 409 run, 409 passed, 4 skipped.
 - **Gate at the tip (20acb91):**
 
   | Command | Result |
