@@ -144,7 +144,15 @@ fn boundary(c: &mut Criterion) {
     };
     group.bench_function("bench tick: native DigLogic", |b| {
         let mut tick = 0;
-        b.iter_custom(|iters| time_ticks(iters, &mut DigLogic, &mut tick, &bench, bench_ran));
+        b.iter_custom(|iters| {
+            time_ticks(
+                iters,
+                &mut DigLogic::default(),
+                &mut tick,
+                &bench,
+                bench_ran,
+            )
+        });
     });
     let mut dig = component("flythrough-logic");
     let mut dig_tick = 0;

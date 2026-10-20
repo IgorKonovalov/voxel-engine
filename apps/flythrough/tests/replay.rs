@@ -212,7 +212,7 @@ fn dig_inputs() -> Vec<DigInput> {
 fn twenty_digs_rebuild_to_the_same_hash_from_ops_and_from_inputs() {
     let world = Arc::new(generate());
     let fresh_hash = world.voxel_hash();
-    let mut server = Server::new(world.clone(), Box::new(DigLogic), SEED);
+    let mut server = Server::new(world.clone(), Box::new(DigLogic::default()), SEED);
     let (near, far) = MemChannel::pair();
     server.attach(far);
     let mut client = Client::shared(world.clone(), near);
@@ -305,7 +305,7 @@ fn inputs_round_trip_and_a_bench_applies_its_carves() {
     }
 
     let world = Arc::new(generate());
-    let mut server = Server::new(world.clone(), Box::new(DigLogic), SEED);
+    let mut server = Server::new(world.clone(), Box::new(DigLogic::default()), SEED);
     let (near, far) = MemChannel::pair();
     server.attach(far);
     let mut client = Client::shared(world, near);
@@ -323,4 +323,200 @@ fn inputs_round_trip_and_a_bench_applies_its_carves() {
     let text = String::from_utf8(bytes.clone()).unwrap();
     assert_eq!(text.lines().count(), BENCH_CARVES);
     assert!(text.lines().all(|l| l == "op bench"));
+}
+
+/// The level's extent, as `--level` generates it.
+fn level_extent() -> ChunkExtent {
+    ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS)
+}
+
+/// The seed of `--level --seed 1`.
+const LEVEL_SEED: u64 = 1;
+
+fn level() -> World {
+    World::generate(
+        level_extent(),
+        &CaveSource::new(LEVEL_SEED, level_extent()),
+        &cave_materials(),
+    )
+}
+
+/// The centre of a chamber the session digs in solid rock 100 voxels above and 32 along -x
+/// of the level's spawn: the box of 56 voxels around it holds rock and ore only.
+const CHAMBER: [i32; 3] = [608, 640, 352];
+
+/// The scripted session, one entry per tick, as the fly-through's keys would send it:
+///
+/// - tick 0: a dig from inside the rock at [`CHAMBER`], a sphere of radius 40;
+/// - tick 1: `P`, the vault stamped where the ray along +y meets the chamber's wall;
+/// - ticks 2 and 3: a ledge and the dig under it: a fill of radius 16 where the ray up meets
+///   the ceiling (z = 393), then a dig of radius 22 from 10 voxels above that point, inside
+///   the rock, which takes the blob's upper part and leaves its lower cap hanging free;
+/// - ticks 4 to 23: 20 ticks of falling;
+/// - tick 24: `R`;
+/// - ticks 25 and 26: the same on the -x wall (entered at x = 568), the second dig;
+/// - ticks 27 to 31: 5 ticks.
+fn session_ticks() -> Vec<Vec<DigInput>> {
+    let k = centre_of_voxel(CHAMBER);
+    let up = [0, 0, FIXED_ONE];
+    let west = [-FIXED_ONE, 0, 0];
+    let fill = |dir| DigInput::Fill {
+        origin: k,
+        dir,
+        radius: 16 * FIXED_ONE,
+        material: flythrough::cave::ROCK,
+    };
+    let cut = |origin, dir| DigInput::Dig {
+        origin,
+        dir,
+        radius: 22 * FIXED_ONE,
+    };
+    let mut ticks = vec![
+        vec![DigInput::Dig {
+            origin: k,
+            dir: up,
+            radius: 40 * FIXED_ONE,
+        }],
+        vec![DigInput::Stamp {
+            origin: k,
+            dir: [0, FIXED_ONE, 0],
+            prefab: flythrough::cave::vault().id(),
+        }],
+        vec![fill(up)],
+        vec![cut(Fixed3([k.0[0], k.0[1], 403 * FIXED_ONE]), up)],
+    ];
+    ticks.extend((0..20).map(|_| Vec::new()));
+    ticks.push(vec![DigInput::Crumble]);
+    ticks.push(vec![fill(west)]);
+    ticks.push(vec![cut(Fixed3([558 * FIXED_ONE, k.0[1], k.0[2]]), west)]);
+    ticks.extend((0..5).map(|_| Vec::new()));
+    ticks
+}
+
+/// The session on a fresh level through `logic`, on a server set up as the fly-through's
+/// (the vault registered, the default support), with the log file `--save` writes, and the
+/// logic's broadcast lines by tick.
+fn run_session(logic: Box<dyn vxe_net::Logic>) -> (World, LogFile, Vec<(usize, String)>) {
+    let world = Arc::new(level());
+    let mut prefabs = PrefabRegistry::new();
+    prefabs
+        .register(Arc::new(flythrough::cave::vault()))
+        .unwrap();
+    let mut server = Server::with_prefabs(world.clone(), prefabs, logic, LEVEL_SEED);
+    server.set_support(vxe_net::DEFAULT_SUPPORT, &[]);
+    let (near, far) = MemChannel::pair();
+    server.attach(far);
+    let mut client = Client::shared(world.clone(), near);
+    let mut lines = Vec::new();
+    for (tick, inputs) in session_ticks().iter().enumerate() {
+        for input in inputs {
+            client.send_input(input.encode());
+        }
+        let report = server.tick();
+        assert_eq!(report.logic_error, None, "tick {tick}");
+        for e in client.poll() {
+            if let Event::Logic { bytes, .. } = e {
+                for l in String::from_utf8(bytes).unwrap().lines() {
+                    lines.push((tick, l.to_owned()));
+                }
+            }
+        }
+    }
+    let file = LogFile {
+        seed: LEVEL_SEED,
+        source_version: CaveSource::VERSION,
+        extent: level_extent(),
+        ops: server.ops().clone(),
+        inputs: server.inputs().clone(),
+        prefabs: server.prefabs().subset(server.ops().prefab_ids()),
+    };
+    drop(server);
+    drop(client);
+    let world = Arc::into_inner(world).expect("the server and client are dropped");
+    (world, file, lines)
+}
+
+/// The world hash after the scripted session on the seed-1 level. Blessed on Linux x86_64,
+/// asserted on every arm.
+const SESSION_HASH: u64 = 0x422b_7654_317b_145d;
+
+/// A session with a `P` stamp, a ledge that falls, `R` and a ledge removed with rubble: every
+/// edit is an op in the log, and the save replays to the same world from its ops and from its
+/// inputs.
+#[test]
+fn a_stamp_and_a_collapse_replay_from_the_save() {
+    let (world, file, lines) = run_session(Box::new(DigLogic::default()));
+    let live = world.voxel_hash();
+    let at = |tick: usize| -> Vec<&str> {
+        lines
+            .iter()
+            .filter(|(t, _)| *t == tick)
+            .map(|(_, l)| l.as_str())
+            .collect()
+    };
+    assert_eq!(at(0), ["op carved"]);
+    assert_eq!(at(1), ["op stamped"]);
+    assert_eq!(at(3), ["op carved", "region 8 1:1248"]);
+    for tick in 4..12 {
+        assert_eq!(at(tick), ["op dropped"], "tick {tick}");
+    }
+    assert_eq!(
+        at(12),
+        ["op dropped", "landed after 8 ticks, fell 64 voxels"]
+    );
+    assert!((13..24).all(|t| at(t).is_empty()));
+    assert_eq!(at(24), ["collapse: remove unsupported regions with rubble"]);
+    assert_eq!(at(26), ["op carved", "region 12 1:1602", "op removed"]);
+    assert!((27..32).all(|t| at(t).is_empty()));
+
+    // Every edit is in the log: five edits, the stamp, nine drops and the removal.
+    let kinds =
+        file.ops
+            .entries()
+            .iter()
+            .filter_map(LogEntry::op)
+            .fold([0usize; 4], |mut n, op| {
+                n[match op {
+                    Op::Edit(_) => 0,
+                    Op::Stamp { .. } => 1,
+                    Op::Drop { .. } => 2,
+                    Op::Remove { .. } => 3,
+                }] += 1;
+                n
+            });
+    assert_eq!(kinds, [5, 1, 9, 1]);
+    // The header carries the vault the stamp names.
+    assert_eq!(file.prefabs.len(), 1);
+    assert_eq!(file.header_len(), 60 + 4 + 8 + 8_716);
+
+    let path = write(&file, "session.log");
+    let (_, by_ops) = replay_file(&path, Replay::Ops, level_extent()).unwrap();
+    let (_, by_inputs) = replay_file(&path, Replay::Inputs, level_extent()).unwrap();
+    assert_eq!(by_ops, live);
+    assert_eq!(by_inputs, live);
+    println!("session hash {live:#018x}");
+    assert_eq!(live, SESSION_HASH);
+}
+
+/// The same session through the logic component: the same save, byte for byte.
+#[cfg(feature = "wasm")]
+#[test]
+fn the_session_through_the_component_saves_the_same_bytes() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(flythrough::DEFAULT_COMPONENT);
+    assert!(
+        path.is_file(),
+        "{} is missing: run scripts/build-guests.sh first",
+        path.display()
+    );
+    let component = flythrough::LogicChoice::Wasm(path)
+        .load()
+        .expect("the flythrough-logic component loads");
+    let (world, file, lines) = run_session(component);
+    let (native_world, native_file, native_lines) = run_session(Box::new(DigLogic::default()));
+    assert_eq!(file.encode(), native_file.encode());
+    assert_eq!(lines, native_lines);
+    assert_eq!(world.voxel_hash(), native_world.voxel_hash());
+    assert_eq!(world.voxel_hash(), SESSION_HASH);
 }

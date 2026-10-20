@@ -232,8 +232,8 @@ pub enum EditError { NotResident(ChunkCoord), UnknownPrefab(u64), /* Plan 0019 a
 |---|---|---|---|
 | 1: Wire kinds 2 to 4 and the prefab table | dev | done | e1b17d3 |
 | 2: The server applies every kind | dev | done | 300874f |
-| 3: The host and the component | dev | done | committed with this row |
-| 4: The fly-through through the logic | dev | not started | |
+| 3: The host and the component | dev | done | 416e99c |
+| 4: The fly-through through the logic | dev | done | committed with this row |
 | 5: Readings | dev | not started | |
 
 ### Notes
@@ -278,6 +278,35 @@ pub enum EditError { NotResident(ChunkCoord), UnknownPrefab(u64), /* Plan 0019 a
   (the host's `unsupported`, `set_support`, exports), `src/test_logic.rs`, `tests/{logic,kinds}.rs`; `vxe-script-wasm` `benches/boundary.rs`,
   `tests/determinism.rs` (their hosts' `apply(Op)` and an empty `unsupported`);
   `apps/flythrough/logic/src/lib.rs` (`.into()` on its three `apply` calls).
+- Phase 4: the scripted session is driven through the library, not the binary: the binary
+  has no scripted-input flag, so `tests/replay.rs` runs the inputs through a server set up as
+  the fly-through's `Net` (the vault registered, `set_support`) on the seed-1 level, builds the
+  `LogFile` its `--save` writes, and replays it with `replay_file` from ops and from inputs;
+  `SESSION_HASH` `0x422b_7654_317b_145d` blessed on Linux x86_64, the Windows arm not yet run.
+  The `--logic wasm` variant is a `cfg(feature = "wasm")` test in the same file.
+- Phase 4: the session needs a ledge the level does not have at the spawn (the ray up from
+  the spawn meets no rock within 10 m), so it digs a radius-40 chamber in solid rock at
+  `(608, 640, 352)`, hangs a radius-16 fill from its ceiling and cuts it with a radius-22 dig
+  from inside the rock; the second dig does the same on the -x wall. 32 ticks: chamber, `P`,
+  fill, cut, 20 ticks, `R`, fill, cut, 5 ticks.
+- Phase 4: `DigInput::Stamp` carries the prefab id (57 bytes) and `DigInput::Crumble` (1 byte)
+  is `R`; the logic holds the collapse mode and the falling regions; a tick runs the falls,
+  then the inputs. The support query is asked over `cells_in(aabb)` of the dig, a superset of
+  the grid's changed cells the binary used before. The landed line counts ticks
+  (`landed after N ticks, fell M voxels`); `F1`'s collapse line gives the region count only
+  (the logic has no clock); the region line reaches the client as `region <cells> <m>:<n>` and
+  is printed with material names.
+- Phase 4: `--replay PATH --vault` regenerates the room (`flythrough::replay_log_on`); a save
+  made with `--vault` replays to its world only with it. Binary smoke on the RTX 3080 laptop,
+  release, exclusive perf lock, load 29.31: `--level --vault --seed 1 --headless --bench 1
+  --frames 20 --save` printed hash `0x26dddbc85e9c5c5c`; `--replay --vault` printed the same;
+  `--replay` without `--vault` printed `0x86ca427a47e8908c`.
+- Phase 4: the binary's own collapse tests became logic tests through `Net`: the ledge world's
+  pillar is cut by a radius-10 dig sphere (a dig cannot remove the whole pillar), so the
+  region is 10 cells, rock 5 024, and it falls 8, 8, 2 voxels; removed, it piles 1 256 rubble.
+- Phase 4: edits outside the phase's Files touched: `apps/flythrough/tests/component.rs` and
+  `crates/vxe-script-wasm/benches/boundary.rs` (`DigLogic::default()`; `DigLogic` is no longer
+  a unit struct). `RUBBLE` moved to the logic crate and `flythrough::RUBBLE` re-exports it.
 
 ### Close triggers
 
