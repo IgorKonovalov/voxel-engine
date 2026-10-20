@@ -1,8 +1,8 @@
 # ADR-0016: A falling region crushes the sub-threshold voxels in its path
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-20, at Plan 0022's close, v0.22.0)
 > **Date:** 2026-10-20
-> **Related plan(s):** [Plan 0022](../plans/0022-a-falling-region-crushes-sub-threshold-voxels.md)
+> **Related plan(s):** [Plan 0022](../plans/done/0022-a-falling-region-crushes-sub-threshold-voxels.md)
 > **Amends:** ADR-0008's drop clause ("translates a region's voxels straight down by the minimum
 > air gap under its columns"). The flood, the cap, the removal and the rejected alternatives of
 > ADR-0008 stand.

@@ -1,11 +1,11 @@
 # 0022: A falling region crushes the sub-threshold voxels under it and piles them as rubble, and the logic tells a wedge from a refusal and a landing
 
-> **Status:** in-progress (approved by the owner 2026-10-20; rubble: all the crushed volume, piled on the landed region)
+> **Status:** done (closed 2026-10-20, v0.22.0: a falling region now passes through and crushes the sub-threshold voxels the query calls load-free, piles them as rubble, and the logic tells a wedge, a refusal and a landing apart; approved by the owner 2026-10-20)
 > **Created:** 2026-10-20
 > **Milestone:** M8 (collapse) in `docs/roadmap.md`
-> **Related ADRs:** [ADR-0016](../adrs/0016-a-falling-region-crushes-the-sub-threshold-voxels-in-its-path.md) (the yield rule, crush over carry; proposed with this plan), [ADR-0008](../adrs/0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) (the flood and the drop it amends), [ADR-0007](../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (the log), [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (the logic boundary)
+> **Related ADRs:** [ADR-0016](../../adrs/0016-a-falling-region-crushes-the-sub-threshold-voxels-in-its-path.md) (the yield rule, crush over carry; proposed with this plan), [ADR-0008](../../adrs/0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) (the flood and the drop it amends), [ADR-0007](../../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (the log), [ADR-0010](../../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (the logic boundary)
 > **Source:** the owner's windowed check of Plan 0018 on 2026-10-20, recorded in
-> [Plan 0018's implementation log](done/0018-server-routed-stamp-drop-and-remove.md) at 84a3998,
+> [Plan 0018's implementation log](0018-server-routed-stamp-drop-and-remove.md) at 84a3998,
 > and the owner's choice (a) the same day.
 
 ## TL;DR
@@ -492,7 +492,7 @@ pub struct PileResult {
 | 2: The yielding drop and the rubble pile in `vxe-world` | dev | done | 18702e8 |
 | 3: Op kinds 5 and 6 on the wire, through the server and in the log | dev | done | dfe3fc9 |
 | 4: `DigLogic` tells a refusal, a wedge and a landing apart | dev | done | 120e94f |
-| 5: Readings and the budget lines | dev | done | committed with this row |
+| 5: Readings and the budget lines | dev | done | 4c1a2c1 (perf commits c6b56c4, 7e42bbf) |
 | 6: The owner's windowed check | human | done (owner, 2026-10-20) | |
 
 Phase 1 observations:
