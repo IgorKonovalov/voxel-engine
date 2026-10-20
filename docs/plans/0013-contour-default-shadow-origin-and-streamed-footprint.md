@@ -406,6 +406,25 @@ each. Empty is fine.)_
 - Phase 3: D at 12,24 measured 4 103 413 164 B peak allocated under motion against its
   2.83 GB guess (the same allocated figure as Plan 0005's 16,24 run at its out-of-memory stop).
 
+### Resume notes (delete when Phase 5 lands)
+
+- Main merged at af4dc02 (v0.18.0); full gate green there (nextest 461 passed, 3 skipped;
+  `-p flythrough --features wasm` 103 passed; clippy both ways, fmt, doctests, deny, doc
+  gates). Phase 5 stopped before any code, on its first done-when.
+- Probe at af4dc02: `flythrough --autopilot --headless --look contour --residency 14,24
+  --seed 1`, release, RTX 3080 Laptop GPU, exclusive perf lock, 1-minute load 2.46 before and
+  6.90 after. Reserved 3 220 387 776 B (5 095 424 slots, 93 239 records). Full residency at
+  r_full 14: 11 513 full and 46 264 LOD-only chunks, 2 864 309 692 B live, pressure 0.911
+  (over the 0.9 trigger). The rule went 14 to 13 to 12 (ticks 752, 782), back to 13 at 0.651
+  (tick 2059), and ended at 13. Peak 2 864 318 452 B live, peak live / budget 0.8894, peak
+  pressure 0.9114 (slots 0.9114, records 0.6504). 94 syncs with a deferral, none empty,
+  162 309 deferred chunks, at pressure 0.734 to 0.775, longest streak 4 syncs (1 open at the
+  end). `return: 2 chunks, hash match`, no wgpu error.
+- Open: the chosen residency 14,24 does not hold under the reservation (a slot costs 584 B
+  and an attribute brick 1168 B since Plan 0015's masks, against 520 and 1040 when D was
+  costed), and the 3 GiB reservation is 3 220 387 776 B allocated against the done-when's
+  3 000 000 000 B allocated line. Owner question pending.
+
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
