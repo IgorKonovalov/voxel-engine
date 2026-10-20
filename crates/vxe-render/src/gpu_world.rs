@@ -443,6 +443,8 @@ enum Src {
 struct Selected {
     coord: ChunkCoord,
     src: Src,
+    /// Brick slots of each page kind its upload takes new, narrow.
+    new: [u64; 2],
 }
 
 /// The pool and records as a sync's selection leaves them, replayed chunk by chunk in the
@@ -450,6 +452,9 @@ struct Selected {
 /// credited to that kind's spare slots, or, for a page those frees empty, as a free page less
 /// the page's spare slots. Then its new slots take spare slots of their kind, then free
 /// pages, then pages never handed out. No free is credited before the chunk that makes it.
+/// Once a kind has taken spare slots (its free lists or cursor), a later free of that kind is
+/// credited as a slot, never as an emptied page: the allocator hands just-freed slots back
+/// first, so an earlier allocation may sit on the page.
 struct Fit {
     /// Spare brick slots of each kind.
     avail: [u64; 2],
@@ -460,6 +465,8 @@ struct Fit {
     records: u64,
     /// Slots the placed chunks free, per page.
     freed: HashMap<u32, u32>,
+    /// Whether each kind has taken spare slots.
+    took: [bool; 2],
 }
 
 impl Fit {
@@ -470,6 +477,7 @@ impl Fit {
             fresh: 0,
             records: gw.mirrored.len() as u64,
             freed: HashMap::new(),
+            took: [false; 2],
         }
     }
 
@@ -492,6 +500,7 @@ impl Fit {
         }
         let page = u64::from(POOL_PAGE_SLOTS);
         let (mut avail, mut free_pages, mut fresh) = (self.avail, self.free_pages, self.fresh);
+        let mut took = self.took;
         let mut local: HashMap<u32, u32> = HashMap::new();
         if let Some((kind, rec)) = frees {
             let base = rec as usize * RECORD_WORDS;
@@ -505,7 +514,7 @@ impl Fit {
                 let f = local.entry(p).or_insert(0);
                 *f += n;
                 let total = *f + self.freed.get(&p).copied().unwrap_or(0);
-                if u32::from(gw.page_live[p as usize]) == total {
+                if !self.took[kind] && u32::from(gw.page_live[p as usize]) == total {
                     // The page empties: its spare slots, and the ones credited from it so
                     // far, leave the kind; the page becomes free for either kind.
                     let credited = total - n;
@@ -520,6 +529,7 @@ impl Fit {
         for (k, &n) in new.iter().enumerate() {
             let take = n.min(avail[k]);
             avail[k] -= take;
+            took[k] |= take > 0;
             let mut rest = n - take;
             let bs = u64::from(if k == Kind::Attr as usize {
                 ATTR_PAGE_BRICK_SLOTS
@@ -549,7 +559,7 @@ impl Fit {
                 limit: limit * SLOT_BYTES,
             });
         }
-        (self.avail, self.free_pages, self.fresh) = (avail, free_pages, fresh);
+        (self.avail, self.free_pages, self.fresh, self.took) = (avail, free_pages, fresh, took);
         for (p, n) in local {
             *self.freed.entry(p).or_insert(0) += n;
         }
@@ -1490,7 +1500,7 @@ impl GpuWorld {
             match fit.place(self, frees, new, mirrored.is_none()) {
                 Ok(()) => {
                     bytes += chunk_bytes;
-                    self.selected.push(Selected { coord, src });
+                    self.selected.push(Selected { coord, src, new });
                 }
                 Err(e) => {
                     st.deferred_chunks += 1;
@@ -1522,34 +1532,57 @@ impl GpuWorld {
         let mut selected = std::mem::take(&mut self.selected);
         let mut result = Ok(());
         let mut defer_rest = false;
-        for Selected { coord, src } in selected.drain(..) {
+        for Selected { coord, src, new } in selected.drain(..) {
             let lod = matches!(src, Src::Lod(_));
-            let demotion = lod && self.mirrored.get(&coord).is_some_and(|m| !m.lod);
+            let mirrored = self.mirrored.get(&coord);
+            let demotion = lod && mirrored.is_some_and(|m| !m.lod);
             if defer_rest && !demotion {
                 st.deferred_chunks += 1;
                 continue;
             }
-            if may_widen {
-                let pairs = match &src {
+            let frees = mirrored
+                .filter(|m| m.lod != lod)
+                .map(|m| (self.kind_for(m.lod) as usize, m.record));
+            let new_record = mirrored.is_none();
+            // A chunk turning wide takes a slot pair for every `Full` brick; its old narrow
+            // slots are freed only after their pairs are taken, so none is credited.
+            let pairs = if may_widen {
+                match &src {
                     Src::Full(chunk) => {
                         let ch = chunk.read().unwrap_or_else(PoisonError::into_inner);
                         self.turns_wide(coord, &Bricks::Chunk(&ch), false)
                     }
                     Src::Lod(mips) => self.turns_wide(coord, &Bricks::Mips(mips), true),
-                };
-                let room = self.pair_room(self.kind_for(lod));
-                if let Some(n) = pairs
-                    && 2 * n > room
-                {
+                }
+            } else {
+                None
+            };
+            let kind = self.kind_for(lod);
+            let mut need = new;
+            if let Some(n) = pairs {
+                need[kind as usize] = 2 * n;
+            }
+            // The backstop: this chunk alone against the allocator as it is now, which is
+            // exact, since a chunk's own frees precede its allocations. A chunk that does not
+            // fit is deferred whole, before anything of it is dropped or written.
+            let mut fit = Fit::new(self).place(self, frees, need, new_record);
+            if let Some(n) = pairs
+                && fit.is_ok()
+            {
+                let room = self.pair_room(kind);
+                if 2 * n > room {
                     let limit = u64::from(self.layout.reserved_slots);
-                    short.get_or_insert(MirrorError::PoolTooLarge {
+                    fit = Err(MirrorError::PoolTooLarge {
                         needed: (limit + 2 * n - room) * SLOT_BYTES,
                         limit: limit * SLOT_BYTES,
                     });
-                    st.deferred_chunks += 1;
-                    defer_rest = true;
-                    continue;
                 }
+            }
+            if let Err(e) = fit {
+                short.get_or_insert(e);
+                st.deferred_chunks += 1;
+                defer_rest = true;
+                continue;
             }
             if self.mirrored.get(&coord).is_some_and(|m| m.lod != lod) {
                 self.drop_record(coord);

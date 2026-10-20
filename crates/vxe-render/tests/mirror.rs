@@ -2119,4 +2119,127 @@ fn a_chunk_turning_wide_past_the_pool_is_deferred_whole() {
     assert_eq!(snapshot(&gpu), before);
     assert_eq!(gpu.pending_chunks(), 1);
     assert_eq!(gpu.live_slots(), 6 * 64 + 7 * 512);
+    let chunk = world.store().get(c).unwrap();
+    assert!(
+        chunk.read().unwrap().any_dirty(),
+        "the deferred chunk keeps its dirty bits"
+    );
+}
+
+/// A page the sync allocates into is not credited free by a later demotion's frees. Two
+/// attribute pages: x = 0 LOD-only with uniform mips, x = 1..4 full (page 0 full, page 1
+/// holding 172 of x = 3's slots, its cursor short of the page end). One sync promotes x = 0
+/// (512 attribute bricks onto page 1's cursor), demotes x = 3 (freeing its 172 on page 1,
+/// which x = 0's bricks keep live) and adds a LOD-only x = 4 whose `Mixed` mips need a plain
+/// page. Crediting page 1 as emptied would place x = 4 there and fail inside the upload; x = 4
+/// is deferred whole instead, and the sync is `Ok`.
+#[test]
+fn a_page_the_sync_allocated_into_is_not_credited_free() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let (world, chunks, mixed) = tier_world();
+    let own: Vec<Arc<ChunkMips>> = chunks
+        .iter()
+        .map(|c| Arc::new(ChunkMips::build(&c.read().unwrap())))
+        .collect();
+    world.insert_lod(ChunkCoord([0, 0, 0]), own[0].clone());
+    for x in 1..4 {
+        world
+            .store()
+            .write_lock()
+            .insert(ChunkCoord([x, 0, 0]), chunks[x as usize].clone());
+    }
+    let mut gpu = GpuWorld::with_surface_attrs(
+        &device,
+        MirrorConfig {
+            budget_bytes: budget_for(2 * 4096, 10),
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        },
+    );
+    gpu.set_focus(VoxelCoord([1, 1, 1]));
+    gpu.sync(&world, &queue).unwrap();
+    assert_eq!(gpu.live_attr_slots(), 3 * 512);
+    assert_eq!(gpu.pages_issued(), 2);
+
+    world.remove_lod(ChunkCoord([0, 0, 0]));
+    world
+        .store()
+        .write_lock()
+        .insert(ChunkCoord([0, 0, 0]), chunks[0].clone());
+    to_lod(&world, 3, &own[3]);
+    world.insert_lod(ChunkCoord([4, 0, 0]), mixed[4].clone());
+    assert!(mixed[4].full_bricks() > 0);
+    let st = gpu
+        .sync(&world, &queue)
+        .expect("x = 4 waits; the rest uploads");
+    assert_eq!((st.chunks, st.deferred_chunks), (2, 1));
+    assert!(!gpu.is_mirrored(ChunkCoord([4, 0, 0])));
+    assert_eq!(gpu.pending_chunks(), 1);
+    assert_eq!(gpu.live_attr_slots(), 3 * 512);
+    assert_eq!(gpu.live_slots(), 3 * 512);
+    let rb = Readback::new(&device, &queue, &gpu);
+    rb.assert_chunk(&gpu, &world, ChunkCoord([0, 0, 0]));
+    rb.assert_lod(&gpu, &world, ChunkCoord([3, 0, 0]));
+}
+
+/// The upload's backstop: a chunk turning wide takes the room the selection counted on for
+/// a later chunk. On a one-page pool with 512 spare slots, `Floor` chunk x = 0 gains 255
+/// materials inside its 64 `Full` bricks (no new brick, so the selection counts no slot for
+/// it) and a new `Checker` chunk x = 14 needs 512: the selection fits both. In the upload
+/// x = 0 turns wide (64 slot pairs from the spare, its 64 narrow slots freed after), which
+/// leaves 448; x = 14 is checked against the allocator as it then is and deferred whole.
+#[test]
+fn a_widening_chunk_defers_the_later_chunk_it_crowds_out() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    // x 0..8 `Floor` (64 `Full` bricks each), x 8..15 `Checker` (512 each).
+    struct Layout;
+    impl WorldSource for Layout {
+        fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+            if coord.0[0] < 8 {
+                Floor.chunk(coord, out);
+            } else {
+                Checker.chunk(coord, out);
+            }
+        }
+    }
+    let extent = ChunkExtent::new([0, 0, 0], [15, 1, 1]);
+    let world = World::generate(extent, &Layout, &numbered_table(300));
+    let late = ChunkCoord([14, 0, 0]);
+    let held = world.store().remove(late).unwrap();
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            budget_bytes: budget_for(4096, 15),
+            ..MirrorConfig::new(Window::Fixed(extent))
+        },
+    );
+    gpu.set_focus(VoxelCoord([1, 1, 1]));
+    gpu.sync(&world, &queue).unwrap();
+    assert_eq!(gpu.live_slots(), 8 * 64 + 6 * 512);
+    assert_eq!(gpu.live_slots(), 4096 - 512);
+
+    let c = ChunkCoord([0, 0, 0]);
+    for m in 2..=256u16 {
+        let k = i32::from(m);
+        // Air above the floor, inside the `Full` bricks of the bottom layer.
+        fill_voxel(&world, [k % 64, (k / 64) * 8 + 1, 5], m);
+    }
+    assert_eq!(full_bricks(&world, &[c]), 64);
+    world.store().write_lock().insert(late, held);
+    let st = gpu.sync(&world, &queue).expect("x = 0 uploads");
+    assert_eq!((st.chunks, st.deferred_chunks), (1, 1));
+    assert!(gpu.is_wide(c));
+    assert!(!gpu.is_mirrored(late));
+    assert_eq!(gpu.pending_chunks(), 1);
+    assert_eq!(gpu.live_slots(), 8 * 64 + 6 * 512 + 64);
+    let rb = Readback::new(&device, &queue, &gpu);
+    rb.assert_chunk(&gpu, &world, c);
+    let chunk = world.store().get(late).unwrap();
+    assert!(
+        chunk.read().unwrap().any_dirty(),
+        "the deferred chunk keeps its dirty bits"
+    );
 }
