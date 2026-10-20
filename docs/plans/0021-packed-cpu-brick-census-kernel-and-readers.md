@@ -459,7 +459,7 @@ header, world key, coordinate and FNV trailer are version 1's.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The census and the kernel bench | dev | done | 992fdaa |
-| 2: The owner reads the figures | human | not started | |
+| 2: The owner reads the figures | human | done (go, 2026-10-20) | committed with this row |
 | 3: `Packed` behind `Brick::Full`, every reader compiling | dev | not started | |
 | 4: The edit kernel as word operations | dev | not started | |
 | 5: Native paths for the hot readers | dev | not started | |
@@ -496,6 +496,13 @@ header, world key, coordinate and FNV trailer are version 1's.
   first two kernel runs at a 1-minute load of 13.9 and 19.2, the third (the figures Phase 2
   reads) at 9.7; `worst_warm` read 4.89 ms and 2.60 ms in those windows against 3.03 ms
   recorded quiet.
+- Phase 2, 2026-10-20: the owner ruled GO for Phases 3 to 8 on Phase 1's figures at 992fdaa
+  (load 9.69): projected resident payload + slots at the streamed defaults under the ladder
+  411 071 680 B (0.41 GB; today 3 053 411 776 B); planar 116.8 ns against today's 505.3 ns per
+  carve brick-edit (ratio 0.231); `decode` 0.249 / 0.362 / 0.596 us per Plane1 / Plane2 /
+  Plane4 brick. Pool: the allocation share is read against the 3.03 ms whole-edit worst case
+  (0.9 %), so Phase 3 retires the brick-array pool; Phase 8 rechecks the share against the new
+  edit time.
 
 ### Close triggers
 
