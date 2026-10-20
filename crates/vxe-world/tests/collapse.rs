@@ -496,6 +496,44 @@ fn a_solid_voxel_between_two_region_runs_wedges_the_piece() {
     );
 }
 
+/// Fixture F after the two sliver carves: the whole pillar but its top layer, then half of
+/// that layer, leaving cell `(4, 4, 4)` with the 32 voxels `[32, 32, 39]..[36, 40, 40]`, half
+/// the threshold. Returns the world, its grid and the second carve's changes.
+fn sliver() -> (World, CoarseGrid, Vec<CellChange>) {
+    let world = fixture();
+    let mut grid = CoarseGrid::build(&world);
+    carve(&world, &mut grid, [32, 32, 8], [40, 40, 39]);
+    let changes = carve(&world, &mut grid, [36, 32, 39], [40, 40, 40]);
+    assert_eq!(
+        world.count_in_box([32, 32, 32], [39, 39, 39]).unwrap(),
+        [(AIR, 480), (3, 32)]
+    );
+    (world, grid, changes)
+}
+
+/// The slab rests on a sliver the query calls too weak to hold it: the query reports the
+/// slab, and `drop_region` stops at the sliver's first voxel, so the slab drops nothing.
+/// Plan 0022 Phase 2 adds the yielding drop that moves it.
+#[test]
+fn a_slab_on_a_sliver_is_unsupported_and_wedged() {
+    let (world, grid, changes) = sliver();
+    let regions = query(&world, &grid, params(), &changes);
+    assert_eq!(
+        regions,
+        [Region {
+            cells: slab_cells(),
+            counts: vec![(3, 4608)],
+            aabb: (VoxelCoord([24, 24, 40]), VoxelCoord([47, 47, 47])),
+        }]
+    );
+    let before = world.voxel_hash();
+    assert_eq!(
+        world.drop_region(&regions[0].cells, 64).unwrap(),
+        DropResult::default()
+    );
+    assert_eq!(world.voxel_hash(), before);
+}
+
 #[test]
 fn removing_the_slab_piles_a_quarter_of_it_as_rubble_on_the_floor() {
     let (world, _, _) = carved();

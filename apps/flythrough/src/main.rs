@@ -3455,6 +3455,57 @@ mod tests {
         world
     }
 
+    /// [`ledge_world`] with the pillar's top cell cut to a 32-voxel sliver
+    /// `[32, 32, 39]..[36, 40, 40]` of `sliver` (the pillar stays full below z = 32), and an
+    /// 8-voxel rock lump `[18, 36, 42]..[20, 38, 44]` in cell `(2, 4, 5)`, beside the ledge
+    /// without touching it.
+    fn sliver_ledge_world(sliver: MaterialId) -> World {
+        let world = ledge_world();
+        let f = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
+        for (lo, hi, mode) in [
+            ([32, 32, 32], [40, 40, 40], Mode::Carve),
+            ([32, 32, 39], [36, 40, 40], Mode::Fill(sliver)),
+            ([18, 36, 42], [20, 38, 44], Mode::Fill(ROCK)),
+        ] {
+            world.apply(&EditOp::box_(f(lo), f(hi), mode)).unwrap();
+        }
+        world
+    }
+
+    /// A dig of radius 2 voxels from the centre of [`sliver_ledge_world`]'s lump: the ray
+    /// starts in rock, so the capsule is a sphere carving the lump's 8 voxels.
+    fn lump_dig() -> DigInput {
+        DigInput::Dig {
+            origin: Fixed3([19 * FIXED_ONE, 37 * FIXED_ONE, 43 * FIXED_ONE]),
+            dir: [FIXED_ONE, 0, 0],
+            radius: 2 * FIXED_ONE,
+        }
+    }
+
+    /// The query beside the ledge reports it (it rests on a cell of 32 voxels), and its drop
+    /// stops at the sliver: it lands after 0 ticks. Plan 0022 Phase 4 flips this expectation.
+    #[test]
+    fn a_ledge_on_a_sliver_is_reported_and_drops_nothing() {
+        let world = Arc::new(sliver_ledge_world(ROCK));
+        let mut net = native_net(&world);
+        let (lines, events) = net_tick(&mut net, &[lump_dig()]);
+        assert_eq!(lines, ["op carved", "region 9 1:4608"]);
+        let [OpResult::Edit(r)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
+        assert_eq!(r.changed_from, [(ROCK, 8)]);
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert_eq!(lines, ["op dropped", "landed after 0 ticks, fell 0 voxels"]);
+        let [OpResult::Drop(d)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
+        assert_eq!(d.dropped, 0);
+        assert_eq!(
+            world.count_in_box([24, 24, 40], [47, 47, 47]).unwrap(),
+            [(ROCK, 4608)]
+        );
+    }
+
     /// A 1 m dig whose origin is inside the pillar, at its axis 16 voxels up: the ray starts
     /// in rock, so the capsule is a sphere there, cutting the pillar through from z = 15 to
     /// z = 32 and leaving its top cell on the ledge.

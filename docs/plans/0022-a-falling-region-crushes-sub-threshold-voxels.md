@@ -1,6 +1,6 @@
 # 0022: A falling region crushes the sub-threshold voxels under it and piles them as rubble, and the logic tells a wedge from a refusal and a landing
 
-> **Status:** approved (owner, 2026-10-20; rubble: all the crushed volume, piled on the landed region)
+> **Status:** in-progress (approved by the owner 2026-10-20; rubble: all the crushed volume, piled on the landed region)
 > **Created:** 2026-10-20
 > **Milestone:** M8 (collapse) in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0016](../adrs/0016-a-falling-region-crushes-the-sub-threshold-voxels-in-its-path.md) (the yield rule, crush over carry; proposed with this plan), [ADR-0008](../adrs/0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) (the flood and the drop it amends), [ADR-0007](../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (the log), [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (the logic boundary)
@@ -488,12 +488,21 @@ pub struct PileResult {
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The repro, committed, pinning the bug | dev | not started | |
+| 1: The repro, committed, pinning the bug | dev | done | committed with this row |
 | 2: The yielding drop and the rubble pile in `vxe-world` | dev | not started | |
 | 3: Op kinds 5 and 6 on the wire, through the server and in the log | dev | not started | |
 | 4: `DigLogic` tells a refusal, a wedge and a landing apart | dev | not started | |
 | 5: Readings and the budget lines | dev | not started | |
 | 6: The owner's windowed check | human | not started | |
+
+Phase 1 observations:
+- The level repro in the tree matches the scratch repro: first region at loop iteration 3 243,
+  4 cells, 501 voxels, aabb `[553, 794, 80]..=[566, 803, 87]`, `dropped == 0`; the sweep counts
+  6 regions, 0 moved, 0 refused.
+- Runtimes under `cargo nextest run -p flythrough --test collapse_level` (dev profile with
+  flythrough at opt-level 2, dev box, no perf lock, 1-minute load 16.6, not quiet): the sweep
+  8.56 s, the first-region test 9.29 s (both mostly level generation). The sweep is under 10 s,
+  so it is not `#[ignore]`d.
 
 ### Notes
 
