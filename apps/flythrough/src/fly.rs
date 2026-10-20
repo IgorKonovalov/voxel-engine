@@ -3,10 +3,10 @@
 //! `vxe-sim` controller at a fixed 60 Hz tick and puts the camera at its eye.
 
 use vxe_app::{Input, KeyCode};
-use vxe_render::Camera;
 use vxe_render::glam::{Vec2, Vec3};
+use vxe_render::{Camera, LookParams};
 use vxe_sim::{CharacterController, CharacterState, ControllerParams, MoveInput, overlaps};
-use vxe_world::{FIXED_ONE, Fixed3, World};
+use vxe_world::{AIR, FIXED_ONE, Fixed3, World};
 
 /// Radians of turn per unit of relative mouse motion.
 const LOOK_PER_COUNT: f32 = 0.0025;
@@ -188,6 +188,59 @@ impl Walk {
     }
 }
 
+/// When the cutaway view is on (`LookParams::cutaway`): `Auto` while the camera's voxel is
+/// neither air nor translucent (rock, or not resident: outside the level or beyond the
+/// streamed window), or forced `On` or `Off`. `--cutaway` sets it and `X` cycles it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CutawayMode {
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
+impl CutawayMode {
+    pub const ALL: [Self; 3] = [Self::Auto, Self::On, Self::Off];
+
+    /// The lower-case name `--cutaway` parses and the fly-through prints.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::On => "on",
+            Self::Off => "off",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+
+    /// The next mode in `ALL` order, wrapping: auto, on, off.
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|&m| m == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+
+    /// Whether the cutaway is on for a camera at `position` (voxels) over `world`.
+    pub fn active(self, world: &World, position: Vec3) -> bool {
+        match self {
+            Self::On => true,
+            Self::Off => false,
+            Self::Auto => {
+                let v = position.floor().to_array().map(|c| c as i32);
+                world
+                    .material_at(v)
+                    .is_none_or(|m| m != AIR && !world.materials().is_translucent(m))
+            }
+        }
+    }
+
+    /// Sets `look.cutaway` for a camera at `position` over `world`; once a frame.
+    pub fn update(self, look: &mut LookParams, world: &World, position: Vec3) {
+        look.cutaway = self.active(world, position);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +252,38 @@ mod tests {
             pitch: 0.0,
             vfov: 1.0,
         })
+    }
+
+    /// In `Auto`, a camera in the level's rock turns the cutaway on after one update, and the
+    /// spawn pocket's air turns it off; outside the extent (not resident) it is on. `On` and
+    /// `Off` ignore the camera.
+    #[test]
+    fn auto_cutaway_follows_the_camera_voxel() {
+        use flythrough::cave::CaveSource;
+        let source = CaveSource::new(1, vxe_world::ChunkExtent::new([0, 0, 0], [4, 4, 2]));
+        let world = World::generate(source.extent, &source, &flythrough::cave_materials());
+        let pocket = Vec3::from_array(source.spawn().0.map(|v| v as f32 + 0.5));
+        // The shell: two voxels of indestructible rock inside each face of the extent.
+        let rock = Vec3::new(0.5, 0.5, 0.5);
+        let outside = Vec3::new(-200.0, 128.5, 64.5);
+        assert_ne!(world.material_at([0, 0, 0]), Some(AIR));
+        assert_eq!(world.material_at(source.spawn()), Some(AIR));
+        let mut look = LookParams::default();
+        assert!(!look.cutaway);
+        CutawayMode::Auto.update(&mut look, &world, rock);
+        assert!(look.cutaway, "in rock");
+        CutawayMode::Auto.update(&mut look, &world, pocket);
+        assert!(!look.cutaway, "in the spawn pocket");
+        CutawayMode::Auto.update(&mut look, &world, outside);
+        assert!(look.cutaway, "outside the extent");
+        CutawayMode::Off.update(&mut look, &world, rock);
+        assert!(!look.cutaway, "forced off in rock");
+        CutawayMode::On.update(&mut look, &world, pocket);
+        assert!(look.cutaway, "forced on in air");
+        assert_eq!(
+            CutawayMode::ALL.map(CutawayMode::next),
+            [CutawayMode::On, CutawayMode::Off, CutawayMode::Auto]
+        );
     }
 
     #[test]
