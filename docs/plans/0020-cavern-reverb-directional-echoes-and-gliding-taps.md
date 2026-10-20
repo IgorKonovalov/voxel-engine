@@ -538,6 +538,7 @@ re-read in Phase 7.
 - Fix pass, M1 (the tail sinks into subnormals), committed with this line: `reverb.rs` flushes the low-pass state and every value written into a line to exactly 0 below `FLUSH_BELOW = 1e-20` (400 dB under full scale, far above `f32::MIN_POSITIVE`), as a select in the per-sample loop, with no FPU mode set. New test `a_silent_tail_rings_out_to_zero_not_subnormals`: an impulse in a 0.75 s room, then 30 s of silence. Fixed: 0 subnormal samples in the last 10 s, last block exactly zero. Unfixed `reverb.rs` (4b1309d): 780 771 subnormal samples in the last 10 s, last block peak 8e-45. `bench mixer`, dev box, release, exclusive perf lock, load average 2.90 to 3.67 (top processes 19 %, 11 % and 6.6 % CPU): static 0.5492 ms (0.5147 to 0.5866), turning 0.8945 ms (0.8722 to 0.9180). An earlier reading at load average 15.2 (0.9957 ms and 1.8844 ms) is superseded.
 - Fix pass, nit (`main.rs` test doc comments), committed with this line: `collapse_is_off_under_save_and_replay` and `room_mic_and_absorption_parse` each carry their own doc comment.
 - Fix pass, nit (`reverb.rs` read comment), committed with this line: the comment states a read of at least 1 frame (a target is at least 32; `jump` clamps to 1) and what the read takes at 1.
+- Fix pass, nit (`mixer.rs` module doc lines 10 and 13 over 100 columns), committed with this line: rewrapped.
 
 - `tests/mixer.rs` and `benches/mixer.rs` (not in Phase 1's Files touched) changed
   mechanically for the removed `tap_count` (now `send`); no assertion changed.

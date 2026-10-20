@@ -7,10 +7,11 @@
 //!    and low-pass them with a one-pole filter (`y += a (x - y)`, `a = 1 - exp(-2 pi fc / fs)`)
 //!    at the acoustic cutoff `fc`. The coefficient `a` moves through the same smoother every
 //!    sample; at [`OPEN_CUTOFF_HZ`] its target is 1, where the filter passes its input;
-//! 3. send the early reflections to the direction buses: the voice's samples times its own gain (smoothed like the
-//!    others, no distance gain; the acoustics fold the occlusion into each tap's gain) go into a
-//!    [`MAX_DELAY_FRAMES`] delay line, and tap slot `i` adds the line's sample its delay back
-//!    times its gain into bus `i`. A slot glides toward its [`crate::Tap`] target (see [`render_tap`]): the
+//! 3. send the early reflections to the direction buses: the voice's samples times its own gain
+//!    (smoothed like the others, no distance gain; the acoustics fold the occlusion into each
+//!    tap's gain) go into a [`MAX_DELAY_FRAMES`] delay line, and tap slot `i` adds the line's
+//!    sample its delay back times its gain into bus `i`. A slot glides toward its
+//!    [`crate::Tap`] target (see [`render_tap`]): the
 //!    delay moves at most [`TAP_SLEW_FRAMES_PER_FRAME`] per frame, read between ring samples by
 //!    linear interpolation, and the gain follows the one-pole smoother. A slot whose target
 //!    moved more than [`TAP_JUMP_FRAMES`] (its ray now hits another wall) fades below
