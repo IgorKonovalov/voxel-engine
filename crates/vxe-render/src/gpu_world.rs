@@ -274,6 +274,9 @@ pub struct SyncStats {
     pub writes: u64,
     /// Chunks still waiting for an upload after this sync.
     pub pending_chunks: u64,
+    /// Chunks selected this sync but deferred for space; they stay pending. 0 when everything
+    /// fit.
+    pub deferred_chunks: u64,
     /// Pool, mask or record buffers this sync created: 0, since `new` reserves them all.
     pub buffers_created: u32,
     /// GPU buffer-to-buffer copies this sync issued: 0, since no buffer is ever replaced.
@@ -440,8 +443,119 @@ enum Src {
 struct Selected {
     coord: ChunkCoord,
     src: Src,
-    /// Brick slots its upload takes new, by page kind (two for a wide brick).
-    new: [u64; 2],
+}
+
+/// The pool and records as a sync's selection leaves them, replayed chunk by chunk in the
+/// order `upload` places them. A chunk changing tier first frees its old record's slots:
+/// credited to that kind's spare slots, or, for a page those frees empty, as a free page less
+/// the page's spare slots. Then its new slots take spare slots of their kind, then free
+/// pages, then pages never handed out. No free is credited before the chunk that makes it.
+struct Fit {
+    /// Spare brick slots of each kind.
+    avail: [u64; 2],
+    free_pages: u64,
+    /// Slots past the pages handed out: whole pages with attribute pages, else slots, since
+    /// a plain page never handed out continues the cursor's page.
+    fresh: u64,
+    records: u64,
+    /// Slots the placed chunks free, per page.
+    freed: HashMap<u32, u32>,
+}
+
+impl Fit {
+    fn new(gw: &GpuWorld) -> Self {
+        Self {
+            avail: [0, 1].map(|k| gw.allocs[k].available()),
+            free_pages: gw.free_pages.len() as u64,
+            fresh: 0,
+            records: gw.mirrored.len() as u64,
+            freed: HashMap::new(),
+        }
+    }
+
+    /// Places one chunk: `frees` (the kind and record of a tier change's old record), `new`
+    /// slots of each kind, and a new record when `new_record`. Changes nothing when the chunk
+    /// does not fit, and returns what it would have needed.
+    fn place(
+        &mut self,
+        gw: &GpuWorld,
+        frees: Option<(usize, u32)>,
+        new: [u64; 2],
+        new_record: bool,
+    ) -> Result<(), MirrorError> {
+        let reserved = u64::from(gw.layout.reserved_records);
+        if new_record && self.records + 1 > reserved {
+            return Err(MirrorError::RecordsTooLarge {
+                needed: (self.records + 1) * RECORD_BYTES,
+                limit: reserved * RECORD_BYTES,
+            });
+        }
+        let page = u64::from(POOL_PAGE_SLOTS);
+        let (mut avail, mut free_pages, mut fresh) = (self.avail, self.free_pages, self.fresh);
+        let mut local: HashMap<u32, u32> = HashMap::new();
+        if let Some((kind, rec)) = frees {
+            let base = rec as usize * RECORD_WORDS;
+            for &e in &gw.entries[base + ENTRY_WORD..base + PALETTE_WORD] {
+                if e & FULL_BIT == 0 {
+                    continue;
+                }
+                let s = e & SLOT_MASK;
+                let n = if e & WIDE_BIT != 0 { 2 } else { 1 };
+                let p = s / POOL_PAGE_SLOTS;
+                let f = local.entry(p).or_insert(0);
+                *f += n;
+                let total = *f + self.freed.get(&p).copied().unwrap_or(0);
+                if u32::from(gw.page_live[p as usize]) == total {
+                    // The page empties: its spare slots, and the ones credited from it so
+                    // far, leave the kind; the page becomes free for either kind.
+                    let credited = total - n;
+                    avail[kind] =
+                        avail[kind].saturating_sub(gw.spare_in_page(kind, p) + u64::from(credited));
+                    free_pages += 1;
+                } else {
+                    avail[kind] += u64::from(n);
+                }
+            }
+        }
+        for (k, &n) in new.iter().enumerate() {
+            let take = n.min(avail[k]);
+            avail[k] -= take;
+            let mut rest = n - take;
+            let bs = u64::from(if k == Kind::Attr as usize {
+                ATTR_PAGE_BRICK_SLOTS
+            } else {
+                POOL_PAGE_SLOTS
+            });
+            while rest > 0 {
+                if free_pages > 0 {
+                    free_pages -= 1;
+                } else if gw.surface_attrs {
+                    fresh += page;
+                } else {
+                    // Plain pages continue the cursor: count the slots, not the page.
+                    fresh += rest;
+                    break;
+                }
+                let used = rest.min(bs);
+                avail[k] += bs - used;
+                rest -= used;
+            }
+        }
+        let need = u64::from(gw.next_page) * page + fresh;
+        let limit = u64::from(gw.layout.reserved_slots);
+        if need > limit {
+            return Err(MirrorError::PoolTooLarge {
+                needed: need * SLOT_BYTES,
+                limit: limit * SLOT_BYTES,
+            });
+        }
+        (self.avail, self.free_pages, self.fresh) = (avail, free_pages, fresh);
+        for (p, n) in local {
+            *self.freed.entry(p).or_insert(0) += n;
+        }
+        self.records += u64::from(new_record);
+        Ok(())
+    }
 }
 
 /// The bricks one record is written from, read in place.
@@ -1168,9 +1282,12 @@ impl GpuWorld {
     /// Uploads what the pending chunks need, nearest the focus first, until the byte budget
     /// is spent, and clears their dirty bits. Takes one chunk lock at a time.
     ///
-    /// Fails with `PoolTooLarge`, writing nothing, when the chosen chunks' new `Full` bricks
-    /// would not fit the reserved slots, and with `RecordsTooLarge` when their new records
-    /// would not fit the reserved records.
+    /// Writes what fits the reservation, nearest first, and never part of a chunk (ADR-0013):
+    /// the first chunk whose slots or record do not fit is deferred, and so is every later
+    /// chunk except a demotion (a full chunk now LOD-only) that still fits. Deferred chunks
+    /// stay pending with their dirty bits and their mirrored record, and are counted in
+    /// `SyncStats::deferred_chunks`. A sync that defers chunks and uploads none fails with
+    /// `PoolTooLarge` or `RecordsTooLarge`, writing nothing.
     pub fn sync(&mut self, world: &World, queue: &wgpu::Queue) -> Result<SyncStats, MirrorError> {
         let mut st = SyncStats::default();
         self.reconcile_window(world);
@@ -1180,22 +1297,12 @@ impl GpuWorld {
             }
         }
 
-        let new_records = self.select(world, &mut st);
-        let limit = u64::from(self.layout.reserved_slots);
-        let need = self.pool_need();
-        if need > limit {
-            return Err(MirrorError::PoolTooLarge {
-                needed: need * SLOT_BYTES,
-                limit: limit * SLOT_BYTES,
-            });
-        }
-        let records = self.mirrored.len() as u64 + new_records;
-        let record_limit = u64::from(self.layout.reserved_records);
-        if records > record_limit {
-            return Err(MirrorError::RecordsTooLarge {
-                needed: records * RECORD_BYTES,
-                limit: record_limit * RECORD_BYTES,
-            });
+        let short = self.select(world, &mut st);
+        if self.selected.is_empty()
+            && let Some(e) = short
+        {
+            // An empty sync: the nearest chunk does not fit and no demotion behind it does.
+            return Err(e);
         }
 
         if !self.materials_written {
@@ -1205,14 +1312,21 @@ impl GpuWorld {
             }
             self.materials_written = true;
         }
-        let result = self.upload(queue, &mut st);
+        let may_widen = world.materials().len() > PALETTE_ENTRIES;
+        let mut short = short;
+        let result = self.upload(may_widen, &mut short, queue, &mut st);
         // Staged runs are written even after a failed allocation: their records name them.
         self.flush_stage(queue, &mut st);
         self.flush_records(queue, &mut st);
         self.flush_table(queue, &mut st);
         st.pending_chunks = self.pending.len() as u64;
         self.bytes_written += st.bytes;
-        result.map(|()| st)
+        result?;
+        match short {
+            // Every chosen chunk turned wide past the pool: an empty sync.
+            Some(e) if st.chunks == 0 => Err(e),
+            _ => Ok(st),
+        }
     }
 
     /// The page kind of a record's slots.
@@ -1224,74 +1338,47 @@ impl GpuWorld {
         }
     }
 
-    /// The slots the pool must span once the selected chunks are placed, checked against the
-    /// reservation before uploading. It replays `upload` in selection order: a chunk changing
-    /// tier first frees its old record's slots, credited to that kind's spare slots, or, for
-    /// a page those frees empty, as a free page less the page's spare slots; then the chunk's
-    /// new slots take spare slots of their kind, then free pages, then pages never handed out.
-    /// No free is credited before the chunk that makes it. Without attribute pages the pages
-    /// never handed out count in slots, since they continue the cursor's page; with them, in
-    /// whole pages.
-    fn pool_need(&self) -> u64 {
-        let page = u64::from(POOL_PAGE_SLOTS);
-        let high = u64::from(self.next_page) * page;
-        let mut avail = [0, 1].map(|k| self.allocs[k].available());
-        let mut free_pages = self.free_pages.len() as u64;
-        let mut fresh = 0u64;
-        // Slots this selection frees per page so far.
-        let mut freed: HashMap<u32, u32> = HashMap::new();
-        for sel in &self.selected {
-            let lod = matches!(sel.src, Src::Lod(_));
-            if let Some(m) = self.mirrored.get(&sel.coord).filter(|m| m.lod != lod) {
-                let kind = self.kind_for(m.lod) as usize;
-                let base = m.record as usize * RECORD_WORDS;
-                for &e in &self.entries[base + ENTRY_WORD..base + PALETTE_WORD] {
-                    if e & FULL_BIT == 0 {
-                        continue;
-                    }
-                    let s = e & SLOT_MASK;
-                    let n = if e & WIDE_BIT != 0 { 2 } else { 1 };
-                    let p = s / POOL_PAGE_SLOTS;
-                    let f = freed.entry(p).or_insert(0);
-                    *f += n;
-                    if u32::from(self.page_live[p as usize]) == *f {
-                        // The page empties: its spare slots, and the ones credited from it
-                        // so far, leave the kind; the page becomes free for either kind.
-                        let credited = *f - n;
-                        avail[kind] = avail[kind]
-                            .saturating_sub(self.spare_in_page(kind, p) + u64::from(credited));
-                        free_pages += 1;
-                    } else {
-                        avail[kind] += u64::from(n);
-                    }
-                }
+    /// The `Full` bricks of `bricks` when uploading them turns `coord`'s record wide (more
+    /// non-air materials than a palette holds): every one then takes a slot pair. `None` when
+    /// the record stays narrow or already is wide. Reads only; the upload's own scan builds
+    /// the palette.
+    fn turns_wide(&self, coord: ChunkCoord, bricks: &Bricks<'_>, lod: bool) -> Option<u64> {
+        let kept = self.mirrored.get(&coord).filter(|m| m.lod == lod);
+        if kept.is_some_and(|m| m.wide) {
+            return None;
+        }
+        let palette: HashSet<MaterialId> = match kept {
+            Some(m) => m.palette.iter().copied().collect(),
+            None => HashSet::from([AIR]),
+        };
+        let mut added = HashSet::new();
+        let mut full = 0u64;
+        for i in 0..bricks.len() {
+            let Brick::Full(v) = bricks.get(i) else {
+                continue;
+            };
+            full += 1;
+            if kept.is_some() && !bricks.is_dirty(i) {
+                continue;
             }
-            for (k, &n) in sel.new.iter().enumerate() {
-                let take = n.min(avail[k]);
-                avail[k] -= take;
-                let mut rest = n - take;
-                let bs = u64::from(if k == Kind::Attr as usize {
-                    ATTR_PAGE_BRICK_SLOTS
-                } else {
-                    POOL_PAGE_SLOTS
-                });
-                while rest > 0 {
-                    if free_pages > 0 {
-                        free_pages -= 1;
-                    } else if self.surface_attrs {
-                        fresh += page;
-                    } else {
-                        // Plain pages continue the cursor: count the slots, not the page.
-                        fresh += rest;
-                        break;
-                    }
-                    let used = rest.min(bs);
-                    avail[k] += bs - used;
-                    rest -= used;
+            for m in v.iter() {
+                if !palette.contains(m) {
+                    added.insert(*m);
                 }
             }
         }
-        high + fresh
+        (palette.len() + added.len() > PALETTE_ENTRIES).then_some(full)
+    }
+
+    /// Slots of `kind` that can still take slot pairs: free pairs, the rest of the kind's
+    /// current page, free pages and the pages the reservation has not handed out.
+    fn pair_room(&self, kind: Kind) -> u64 {
+        let a = &self.allocs[kind as usize];
+        let page = u64::from(POOL_PAGE_SLOTS);
+        let unissued = u64::from(self.layout.reserved_slots) / page - u64::from(self.next_page);
+        2 * a.free_pairs.len() as u64
+            + u64::from(a.end - a.next)
+            + (self.free_pages.len() as u64 + unissued) * u64::from(kind.brick_slots())
     }
 
     /// Spare brick slots of `kind` in page `p`: its free singles and pairs, and the rest of
@@ -1313,10 +1400,12 @@ impl GpuWorld {
     }
 
     /// Walks the pending set nearest first and picks chunks into `self.selected` until the
-    /// estimated bytes reach the budget, each with the brick slots of each page kind its
-    /// upload takes new. Returns the count of chunks among them not mirrored yet, which need
-    /// a new record (a chunk changing tier frees its record before it takes one).
-    fn select(&mut self, world: &World, st: &mut SyncStats) -> u64 {
+    /// estimated bytes reach the budget, replaying the fit as it goes ([`Fit`]): a chunk
+    /// changing tier is credited its old record's frees, then its new slots and record are
+    /// checked against what is left. The first chunk that does not fit is deferred, with every
+    /// later chunk but a demotion that fits; deferred chunks stay pending and do not count
+    /// against the budget. Returns the error of the first deferral, if any.
+    fn select(&mut self, world: &World, st: &mut SyncStats) -> Option<MirrorError> {
         let budget = self.cfg.sync_budget_bytes;
         // Writes that happen whatever is chosen count against the budget first.
         let mut bytes = self.table_changed.len() as u64 * 4;
@@ -1325,8 +1414,8 @@ impl GpuWorld {
         }
         self.selected.clear();
         self.stale.clear();
-        let mut new_full = [0u64; 2];
-        let mut new_records = 0u64;
+        let mut fit = Fit::new(self);
+        let mut short = None;
         let attr = self.kind_for(false) as usize;
         for &(_, coord) in &self.pending {
             if bytes >= budget && !self.selected.is_empty() {
@@ -1344,17 +1433,19 @@ impl GpuWorld {
                     }
                 },
             };
-            let before_chunk = new_full;
             let mirrored = self.mirrored.get(&coord);
+            let lod = matches!(src, Src::Lod(_));
             // A record of the other tier is replaced whole.
             let (rec, wide) = match mirrored {
-                Some(m) if m.lod == matches!(src, Src::Lod(_)) => (Some(m.record), m.wide),
+                Some(m) if m.lod == lod => (Some(m.record), m.wide),
                 _ => (None, false),
             };
-            // A chunk that turns wide during upload is estimated narrow here: its upload, and
-            // the slots it needs, can exceed this estimate (ADR-0004's rare path).
+            let demotion = mirrored.is_some_and(|m| !m.lod) && lod;
+            // A chunk that turns wide during upload is estimated narrow here; `upload`
+            // re-checks it before its first slot (ADR-0004's rare path).
             let (slots, slot_bytes) = if wide { (2, 2) } else { (1, 1) };
             let mut chunk_bytes = RECORD_BYTES + if rec.is_none() { 4 } else { 0 };
+            let mut new = [0u64; 2];
             match &src {
                 Src::Full(chunk) => {
                     let ch = chunk.read().unwrap_or_else(PoisonError::into_inner);
@@ -1372,7 +1463,7 @@ impl GpuWorld {
                                 self.entries[r as usize * RECORD_WORDS + ENTRY_WORD + slot]
                             });
                             if old & FULL_BIT == 0 {
-                                new_full[attr] += slots;
+                                new[attr] += slots;
                             }
                         }
                     }
@@ -1385,17 +1476,27 @@ impl GpuWorld {
                     }
                     let full = mips.full_bricks() as u64;
                     chunk_bytes += full * (SLOT_BYTES + MASK_BYTES);
-                    new_full[Kind::Plain as usize] += full;
+                    new[Kind::Plain as usize] += full;
                 }
             }
-            bytes += chunk_bytes;
-            new_records += u64::from(mirrored.is_none());
-            let before = before_chunk;
-            let mut new = [0u64; 2];
-            for k in 0..2 {
-                new[k] = new_full[k] - before[k];
+            // The frees of a tier change: the old record's slots, of the old record's kind.
+            let frees = mirrored
+                .filter(|m| m.lod != lod)
+                .map(|m| (self.kind_for(m.lod) as usize, m.record));
+            if short.is_some() && !demotion {
+                st.deferred_chunks += 1;
+                continue;
             }
-            self.selected.push(Selected { coord, src, new });
+            match fit.place(self, frees, new, mirrored.is_none()) {
+                Ok(()) => {
+                    bytes += chunk_bytes;
+                    self.selected.push(Selected { coord, src });
+                }
+                Err(e) => {
+                    st.deferred_chunks += 1;
+                    short.get_or_insert(e);
+                }
+            }
         }
         let mut stale = std::mem::take(&mut self.stale);
         for &c in &stale {
@@ -1403,16 +1504,53 @@ impl GpuWorld {
         }
         stale.clear();
         self.stale = stale;
-        new_records
+        short
     }
 
     /// Uploads the chunks `select` chose, stopping at the first failed allocation, and
-    /// empties `self.selected`.
-    fn upload(&mut self, queue: &wgpu::Queue, st: &mut SyncStats) -> Result<(), MirrorError> {
+    /// empties `self.selected`. When the table has more materials than a palette holds
+    /// (`may_widen`), a chunk about to turn wide is re-checked first: if its bricks do not fit
+    /// as slot pairs it is deferred whole, before anything of it is written or its old record
+    /// dropped, and so is every later chunk but a demotion.
+    fn upload(
+        &mut self,
+        may_widen: bool,
+        short: &mut Option<MirrorError>,
+        queue: &wgpu::Queue,
+        st: &mut SyncStats,
+    ) -> Result<(), MirrorError> {
         let mut selected = std::mem::take(&mut self.selected);
         let mut result = Ok(());
-        for Selected { coord, src, .. } in selected.drain(..) {
+        let mut defer_rest = false;
+        for Selected { coord, src } in selected.drain(..) {
             let lod = matches!(src, Src::Lod(_));
+            let demotion = lod && self.mirrored.get(&coord).is_some_and(|m| !m.lod);
+            if defer_rest && !demotion {
+                st.deferred_chunks += 1;
+                continue;
+            }
+            if may_widen {
+                let pairs = match &src {
+                    Src::Full(chunk) => {
+                        let ch = chunk.read().unwrap_or_else(PoisonError::into_inner);
+                        self.turns_wide(coord, &Bricks::Chunk(&ch), false)
+                    }
+                    Src::Lod(mips) => self.turns_wide(coord, &Bricks::Mips(mips), true),
+                };
+                let room = self.pair_room(self.kind_for(lod));
+                if let Some(n) = pairs
+                    && 2 * n > room
+                {
+                    let limit = u64::from(self.layout.reserved_slots);
+                    short.get_or_insert(MirrorError::PoolTooLarge {
+                        needed: (limit + 2 * n - room) * SLOT_BYTES,
+                        limit: limit * SLOT_BYTES,
+                    });
+                    st.deferred_chunks += 1;
+                    defer_rest = true;
+                    continue;
+                }
+            }
             if self.mirrored.get(&coord).is_some_and(|m| m.lod != lod) {
                 self.drop_record(coord);
             }

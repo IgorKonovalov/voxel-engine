@@ -941,10 +941,16 @@ impl RadiusRule {
     }
 }
 
-/// The pressure the failed syncs saw: the lowest and highest pressure and each term's range
-/// at a failure, the current run of consecutive failed syncs and the longest.
-#[derive(Clone, Copy, Debug, Default)]
-struct FailedSyncs {
+/// The mirror's deferrals (ADR-0013): a sync that defers a chunk, or an empty sync that
+/// uploads none, extends a deferral streak; a sync that defers nothing ends it. Keeps the
+/// deferred-chunk total (a chunk deferred in five syncs counts five), the syncs with a
+/// deferral and the empty ones among them, the lowest and highest pressure and terms at a
+/// deferral, and the current and longest streak in syncs, an open streak included.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Deferrals {
+    chunks: u64,
+    syncs: u64,
+    empty: u64,
     /// Lowest and highest: pressure, slot term, record term.
     low: [f64; 3],
     high: [f64; 3],
@@ -952,20 +958,26 @@ struct FailedSyncs {
     longest: u64,
 }
 
-impl FailedSyncs {
-    /// Notes one sync: a failure with the mirror's readings, or a success ending a streak.
-    fn note(&mut self, failed: Option<[f64; 3]>, first: bool) {
-        let Some(v) = failed else {
+impl Deferrals {
+    /// Notes one sync's `deferred` chunks, `empty` when it uploaded none, with the mirror's
+    /// pressure and terms `v`. Returns the length of a streak this sync ends.
+    fn note(&mut self, deferred: u64, empty: bool, v: [f64; 3]) -> Option<u64> {
+        if deferred == 0 && !empty {
+            let ended = (self.streak > 0).then_some(self.streak);
             self.streak = 0;
-            return;
-        };
-        if first {
+            return ended;
+        }
+        if self.syncs == 0 {
             (self.low, self.high) = (v, v);
         }
         self.low = [0, 1, 2].map(|k| self.low[k].min(v[k]));
         self.high = [0, 1, 2].map(|k| self.high[k].max(v[k]));
+        self.chunks += deferred;
+        self.syncs += 1;
+        self.empty += u64::from(empty);
         self.streak += 1;
         self.longest = self.longest.max(self.streak);
+        None
     }
 }
 
@@ -975,11 +987,8 @@ struct Stream {
     /// The full radius under mirror pressure, and the changes it made.
     rule: RadiusRule,
     radius_changes: u32,
-    /// Syncs that failed past the reservation; their chunks stay queued.
-    over_budget_syncs: u64,
-    /// What the failed syncs saw: pressure range and its terms' range, and the failing
-    /// streaks in consecutive frames.
-    failures: FailedSyncs,
+    /// Chunks the mirror deferred for space, and the streaks of syncs that deferred.
+    deferrals: Deferrals,
     /// Milliseconds since start at each `update` call, `tick_ms[t - 1]` for tick `t`.
     tick_ms: Vec<f64>,
     /// Chunks loaded full and not yet mirrored, with the tick that first wanted them.
@@ -1922,33 +1931,37 @@ impl Run {
         for e in &ev.errors {
             eprintln!("stream: {e:?}");
         }
-        // A sync past the reservation writes nothing and leaves its chunks queued; the
-        // pressure rule below lowers the radius until they fit.
-        match synced {
+        // A sync writes the nearest chunks that fit and defers the rest, which stay queued; an
+        // empty sync (nothing fit) is an error that wrote nothing. The pressure rule below
+        // lowers the radius until they fit.
+        let tick = stream.streamer.stats().ticks;
+        let (deferred, empty, error) = match synced {
             Ok(s) => {
                 self.hud.sync = (s, sync_ms);
-                stream.failures.note(None, false);
+                (s.deferred_chunks, false, None)
             }
-            Err(e) => {
-                let m = &gfx.mirror;
-                let [slots, records] = pressure_terms(m);
-                let first = stream.over_budget_syncs == 0;
-                if first {
-                    eprintln!(
-                        "mirror sync failed: {e}; retrying under the pressure rule (pressure {:.4}, slots {slots:.4}, records {records:.4}; {} plain free slots, {} spare slots, {} free pages, {} pages issued, r_full {})",
-                        m.pressure(),
-                        m.free_slots().len(),
-                        m.spare_slots(),
-                        m.free_pages().len(),
-                        m.pages_issued(),
-                        stream.rule.r_full
-                    );
-                }
-                stream
-                    .failures
-                    .note(Some([f64::from(m.pressure()), slots, records]), first);
-                stream.over_budget_syncs += 1;
-            }
+            Err(e) => (gfx.mirror.pending_chunks() as u64, true, Some(e)),
+        };
+        let m = &gfx.mirror;
+        let [slots, records] = pressure_terms(m);
+        if (deferred > 0 || empty) && stream.deferrals.syncs == 0 {
+            let what = error.map_or_else(|| "deferred chunks".to_owned(), |e| e.to_string());
+            eprintln!(
+                "mirror: {deferred} chunks wait for space ({what}) at tick {tick} (pressure {:.4}, slots {slots:.4}, records {records:.4}; {} plain free slots, {} spare slots, {} free pages, {} pages issued, r_full {})",
+                m.pressure(),
+                m.free_slots().len(),
+                m.spare_slots(),
+                m.free_pages().len(),
+                m.pages_issued(),
+                stream.rule.r_full
+            );
+        }
+        let ended =
+            stream
+                .deferrals
+                .note(deferred, empty, [f64::from(m.pressure()), slots, records]);
+        if let Some(n) = ended {
+            println!("mirror: deferral streak of {n} syncs ended at tick {tick}");
         }
         let pressure = gfx.mirror.pressure();
         if let Some(r_full) = stream.rule.step(pressure) {
@@ -1960,7 +1973,7 @@ impl Run {
             });
             stream.radius_changes += 1;
             println!(
-                "radius: r_full {} -> {r_full} at mirror pressure {pressure:.3} after {:.0} ms",
+                "radius: r_full {} -> {r_full} at mirror pressure {pressure:.3} after {:.0} ms (tick {tick})",
                 r.r_full,
                 ms_since(self.start)
             );
@@ -2163,7 +2176,7 @@ impl Run {
             p.peak_persisted.max(st.persisted_ram_bytes)
         );
         println!(
-            "autopilot: mirror budget {} B ({} slots, {} records), peak live / budget {:.4}, peak pressure {:.4} (slots {:.4}, records {:.4}), {} radius changes (r_full {} of {}), {} syncs past the reservation",
+            "autopilot: mirror budget {} B ({} slots, {} records), peak live / budget {:.4}, peak pressure {:.4} (slots {:.4}, records {:.4}), {} radius changes (r_full {} of {}), {} syncs with a deferral",
             gfx.mirror.allocated_bytes(),
             gfx.mirror.reserved_slots(),
             gfx.mirror.reserved_records(),
@@ -2174,20 +2187,23 @@ impl Run {
             stream.radius_changes,
             stream.rule.r_full,
             r.r_full,
-            stream.over_budget_syncs
+            stream.deferrals.syncs
         );
-        if stream.over_budget_syncs > 0 {
-            let f = stream.failures;
+        if stream.deferrals.syncs > 0 {
+            let f = stream.deferrals;
             println!(
-                "autopilot: failed syncs {}: pressure {:.4} to {:.4} (slots {:.4} to {:.4}, records {:.4} to {:.4}), longest run {} consecutive syncs",
-                stream.over_budget_syncs,
+                "autopilot: deferrals: {} chunks over {} syncs, {} of them empty; pressure {:.4} to {:.4} (slots {:.4} to {:.4}, records {:.4} to {:.4}); longest streak {} syncs ({} open at the end)",
+                f.chunks,
+                f.syncs,
+                f.empty,
                 f.low[0],
                 f.high[0],
                 f.low[1],
                 f.high[1],
                 f.low[2],
                 f.high[2],
-                f.longest
+                f.longest,
+                f.streak
             );
         }
         if p.gpu_ms.is_empty() {
@@ -2645,8 +2661,7 @@ impl App for Flythrough {
                         Some(Stream {
                             rule: RadiusRule::new(streamer.config().residency.r_full),
                             radius_changes: 0,
-                            over_budget_syncs: 0,
-                            failures: FailedSyncs::default(),
+                            deferrals: Deferrals::default(),
                             streamer,
                             tick_ms: Vec::new(),
                             awaiting: HashMap::new(),
@@ -3157,17 +3172,26 @@ mod tests {
         }
     }
 
-    /// Failed syncs keep the pressure range and the longest streak; a success ends a streak.
+    /// A deferral extends a streak, an empty sync counts, a sync with none ends it, and a
+    /// streak open at the end counts toward the longest.
     #[test]
-    fn failed_syncs_keep_their_range_and_longest_streak() {
-        let mut f = FailedSyncs::default();
-        f.note(Some([0.91, 0.91, 0.6]), true);
-        f.note(Some([0.95, 0.95, 0.5]), false);
-        f.note(None, false);
-        f.note(Some([0.88, 0.88, 0.7]), false);
-        assert_eq!(f.low, [0.88, 0.88, 0.5]);
-        assert_eq!(f.high, [0.95, 0.95, 0.7]);
-        assert_eq!((f.streak, f.longest), (1, 2));
+    fn deferral_streaks_count_empty_syncs_and_an_open_end() {
+        let mut d = Deferrals::default();
+        assert_eq!(d.note(3, false, [0.91, 0.91, 0.6]), None);
+        assert_eq!(d.note(5, true, [0.95, 0.95, 0.5]), None);
+        assert_eq!(d.note(0, false, [0.8, 0.8, 0.5]), Some(2));
+        assert_eq!(d.note(0, false, [0.8, 0.8, 0.5]), None);
+        for _ in 0..3 {
+            d.note(1, false, [0.92, 0.92, 0.7]);
+        }
+        assert_eq!((d.chunks, d.syncs, d.empty), (11, 5, 1));
+        assert_eq!(d.low, [0.91, 0.91, 0.5]);
+        assert_eq!(d.high, [0.95, 0.95, 0.7]);
+        assert_eq!(
+            (d.streak, d.longest),
+            (3, 3),
+            "the open streak is the longest"
+        );
     }
 
     #[test]
