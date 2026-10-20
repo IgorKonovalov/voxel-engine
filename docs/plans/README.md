@@ -15,7 +15,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0023](0023-render-thread-cpu-attribute-hitch-and-streaming-line.md) | The render thread's mirror CPU: profile a chunk crossing, then cut the attribute hitch and the streaming line with targeted fixes | approved | M2, before lighting; ADR-0017 (proposed). Dev starts when the 0020 or 0022 lane is at its human phase. |
 | [0024](0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md) | Direct light: a hit buffer, emissive voxels as light samples, one shadow ray per pixel, and an SVGF-family denoiser whose history dies in edit boxes | approved | M2, ADR-0018 (proposed). After Plan 0023; before the mirror-slot plan. |
 | [0025](0025-cutaway-view-see-the-world-from-outside-its-rock.md) | The cutaway view: a camera in rock or outside the world sees through the hull to the first cavern's walls | approved | M7 debug view, no ADR. Approved 2026-10-20; two dev phases, runs now in a worktree beside 0022. |
-| [0026](0026-gamepad-flight-generic-axes-in-the-shell-gilrs-in-the-testbed.md) | Gamepad flight for demos: generic axes and pad buttons in the shell's input, gilrs in the testbed only | draft | M7 tooling, ADR-0019 (proposed). Two dev phases; runs now in a worktree. |
+| [0026](0026-gamepad-flight-generic-axes-in-the-shell-gilrs-in-the-testbed.md) | Gamepad flight for demos: generic axes and pad buttons in the shell's input, gilrs in the testbed only | approved | M7 tooling, ADR-0019 (proposed). Approved 2026-10-20; two dev phases, runs now in a worktree. |
 <!-- roster:end -->
 
 ## Recently closed

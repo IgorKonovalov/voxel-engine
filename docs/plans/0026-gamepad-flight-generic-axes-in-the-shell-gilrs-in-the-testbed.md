@@ -1,6 +1,6 @@
 # 0026: Gamepad flight for demos: generic axes and pad buttons in the shell's input, gilrs in the testbed only
 
-> **Status:** draft
+> **Status:** approved (2026-10-20)
 > **Created:** 2026-10-20
 > **Milestone:** M7 in `docs/roadmap.md` (tooling); a testbed feature, no frame stage
 > **Related ADRs:** [ADR-0019](../adrs/0019-gamepad-input-as-generic-axes-in-the-shell-fed-by-the-testbed.md)
