@@ -57,6 +57,15 @@ pub enum PackedClass {
 }
 
 impl PackedClass {
+    /// The five classes, smallest first.
+    pub const ALL: [Self; 5] = [
+        Self::Mask,
+        Self::Plane1,
+        Self::Plane2,
+        Self::Plane4,
+        Self::Wide,
+    ];
+
     /// The class of a brick holding `n` non-air materials (`n` 0, a transient state inside
     /// an edit, is `Mask`).
     pub const fn of(n: usize) -> Self {
@@ -153,6 +162,59 @@ impl Packed {
     /// Whether the box is in canonical form (rules 1 to 3 above).
     pub fn is_canonical(&self) -> bool {
         self.0.is_canonical()
+    }
+
+    /// Each palette entry, ascending, with its match words (the voxels whose index is the
+    /// entry's, layer-major as [`shape_words`]); `None` for a `Wide` box, which has no palette.
+    pub fn entry_matches(&self) -> Option<Vec<(MaterialId, [u64; LAYERS])>> {
+        let (w, p) = self.0.planar()?;
+        Some(
+            (0..entries(w, p))
+                .map(|j| {
+                    (
+                        entry(w, p, j),
+                        std::array::from_fn(|z| match_word(w, p, j, z)),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    /// The box's `u64` words (mask, planes, palette) for a planar class; `None` for `Wide`.
+    pub fn words(&self) -> Option<&[u64]> {
+        self.0.planar().map(|(w, _)| w)
+    }
+
+    /// The raw ids of a `Wide` box; `None` for a planar class.
+    pub fn wide_ids(&self) -> Option<&[MaterialId; BRICK_VOXELS]> {
+        match &self.0 {
+            Repr::Wide(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// The box of `class` holding `words` (a planar class's word count) or, for `Wide`,
+    /// `ids`; `None` when the input does not have the class's length or is not in canonical
+    /// form (a palette out of order or with an unused entry, a plane bit under a clear mask
+    /// bit, an index past the palette, a class that is not its material count's).
+    pub fn from_parts(class: PackedClass, words: &[u64], ids: &[MaterialId]) -> Option<Self> {
+        let mut out = Repr::zeroed(class);
+        match &mut out {
+            Repr::Wide(v) => {
+                if ids.len() != BRICK_VOXELS {
+                    return None;
+                }
+                v.copy_from_slice(ids);
+            }
+            r => {
+                let (w, _) = r.planar_mut().expect("planar");
+                if words.len() != w.len() {
+                    return None;
+                }
+                w.copy_from_slice(words);
+            }
+        }
+        out.is_canonical().then_some(Self(out))
     }
 
     /// Layer `z` of the occupancy mask (bit `x + 8 y`).

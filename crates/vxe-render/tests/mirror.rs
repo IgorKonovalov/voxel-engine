@@ -8,7 +8,7 @@ use vxe_render::gpu_world::{
     ABSENT, ATTR_PAGE_BRICK_SLOTS, BITS_WORDS, EMPTY_BIT, ENTRY_WORD, FULL_BIT, LOD_BIT,
     LOD_LEVEL_ENTRY, MASK_BYTES, MASK_GROUP_SLOTS, MASK_GROUP_WORDS, NO_PLANE, PAGE_BYTES,
     PALETTE_WORD, PLACEHOLDER_BYTES, POOL_PAGE_SLOTS, RECORD_BYTES, RECORD_MASK, RECORD_WORDS,
-    SLOT_BYTES, SLOT_MASK, WIDE_BIT, attr_slot, budget_for, opaque_mask_word,
+    SLOT_BYTES, SLOT_MASK, TRANSLUCENT_BIT, WIDE_BIT, attr_slot, budget_for, opaque_mask_word,
     translucent_mask_word,
 };
 use vxe_render::{
@@ -2390,4 +2390,101 @@ fn an_already_wide_chunk_is_not_counted_free_singles() {
     );
     let rb = Readback::new(&device, &queue, &gpu);
     rb.assert_lod(&gpu, &world, c1);
+}
+
+/// Slots 0..256 of one chunk hold seeded bricks of 1 to 24 materials from ids 1 to 30, ids
+/// 25 to 30 translucent; the rest are air.
+struct Seeded256;
+
+impl WorldSource for Seeded256 {
+    fn chunk(&self, _: ChunkCoord, out: &mut Chunk) {
+        for slot in 0..256 {
+            let h = hash::hash3(0x0021_0701, [slot as i32, 0, 0]);
+            let n = 1 + h % 24;
+            let first = 1 + (h >> 8) % (31 - n);
+            let solid = (h >> 16) % 9;
+            let mut s = h;
+            out.set_brick(
+                slot,
+                Brick::from_fn(|_| {
+                    s = hash::mix64(s);
+                    if s % 8 < solid {
+                        (first + (s >> 8) % n) as MaterialId
+                    } else {
+                        AIR
+                    }
+                }),
+            );
+        }
+    }
+}
+
+/// For a chunk of 256 seeded bricks, translucent and above-16-material ones among them, the
+/// staged slot bytes decode to the voxels and the 72-byte masks equal those built by
+/// narrowing the decoded voxels: an opaque voxel's bit, a translucent voxel's 2^3 block bit.
+#[test]
+fn bricks_staged_from_planes_equal_the_narrowed_voxels() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let mut t = MaterialTable::new();
+    for i in 1..=30u16 {
+        let mut m = Material::named(format!("m{i}"));
+        if i >= 25 {
+            m.flags = MaterialFlags::TRANSLUCENT;
+        }
+        t.push(m);
+    }
+    let world = World::generate(ChunkExtent::new([0, 0, 0], [1, 1, 1]), &Seeded256, &t);
+    let mut gpu = GpuWorld::with_config(&device, small(Window::Fixed(world.extent())));
+    gpu.sync(&world, &queue).unwrap();
+    let rb = Readback::new(&device, &queue, &gpu);
+    let coord = ChunkCoord([0, 0, 0]);
+    let rec = rb.table[gpu.table_index(coord) as usize] & RECORD_MASK;
+    let chunk = world.store().get(coord).unwrap();
+    let chunk = chunk.read().unwrap();
+    let (mut translucent_bricks, mut over_16) = (0, 0);
+    for (slot, brick) in chunk.bricks().iter().enumerate().take(256) {
+        let Brick::Full(_) = brick else {
+            continue;
+        };
+        let mut v = [AIR; BRICK_VOXELS];
+        brick.decode(&mut v);
+        let e = rb.records[rec as usize * RECORD_WORDS + ENTRY_WORD + slot];
+        assert_eq!(e & WIDE_BIT, 0, "slot {slot}");
+        assert_eq!(rb.voxels(rec, e), &v[..], "slot {slot}");
+        let (mut opaque, mut glass) = ([0u64; 8], [0u32; 2]);
+        for (i, &m) in v.iter().enumerate() {
+            if m == AIR {
+                continue;
+            }
+            if t.flags(m).contains(MaterialFlags::TRANSLUCENT) {
+                let (x, y, z) = (i % 8, i / 8 % 8, i / 64);
+                let block = x / 2 + 4 * (y / 2) + 16 * (z / 2);
+                glass[block / 32] |= 1 << (block % 32);
+            } else {
+                opaque[i / 64] |= 1 << (i % 64);
+            }
+        }
+        let s = e & SLOT_MASK;
+        let o = opaque_mask_word(s) as usize;
+        assert_eq!(
+            layers(&rb.masks[o..o + 16]),
+            opaque,
+            "slot {slot} opaque mask"
+        );
+        let tw = translucent_mask_word(s) as usize;
+        assert_eq!(rb.masks[tw..tw + 2], glass, "slot {slot} translucent words");
+        assert_eq!(
+            e & TRANSLUCENT_BIT != 0,
+            glass != [0, 0],
+            "slot {slot} flag"
+        );
+        translucent_bricks += usize::from(glass != [0, 0]);
+        over_16 += usize::from(brick.class() == Some(vxe_world::packed::PackedClass::Wide));
+    }
+    assert!(
+        translucent_bricks > 20 && over_16 > 10,
+        "{translucent_bricks} {over_16}"
+    );
 }

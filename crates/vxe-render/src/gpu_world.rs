@@ -72,6 +72,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::PoisonError;
 
+use vxe_world::packed::Packed;
 use vxe_world::{
     AIR, BRICK_EDGE, BRICK_VOXELS, Brick, CHUNK_BRICKS, CHUNK_EDGE_BRICKS, ChunkCoord, ChunkExtent,
     ChunkMips, MIP_LEVELS, MaterialId, MaterialTable, StreamEvents, VoxelCoord, World,
@@ -1379,11 +1380,9 @@ impl GpuWorld {
             if kept.is_some() && !bricks.is_dirty(i) {
                 continue;
             }
-            let mut v = [AIR; BRICK_VOXELS];
-            p.decode(&mut v);
-            for m in &v {
-                if !palette.contains(m) {
-                    added.insert(*m);
+            for m in first_appearance(p) {
+                if !palette.contains(&m) {
+                    added.insert(m);
                 }
             }
         }
@@ -1660,10 +1659,8 @@ impl GpuWorld {
                 let Brick::Full(p) = bricks.get(i) else {
                     continue;
                 };
-                // Voxel order, so the chunk palette grows in first-appearance order.
-                let mut v = [AIR; BRICK_VOXELS];
-                p.decode(&mut v);
-                for m in v {
+                // The chunk palette grows in first-appearance order.
+                for m in first_appearance(p) {
                     if self.rev[usize::from(m)] == NO_INDEX {
                         if palette.len() == PALETTE_ENTRIES {
                             wide = true;
@@ -1775,9 +1772,6 @@ impl GpuWorld {
                 };
             return Ok(());
         };
-        // Narrowed from the decoded voxels.
-        let mut v = [AIR; BRICK_VOXELS];
-        p.decode(&mut v);
         let s = match old_slot {
             Some((s, w)) if w == wide => s,
             _ => {
@@ -1797,6 +1791,41 @@ impl GpuWorld {
         // two translucent words, and flags the entry.
         let mut masks: SlotMasks = [0; OPAQUE_WORDS + TRANSLUCENT_WORDS];
         let mut flag = 0;
+        let entries = p.entry_matches().filter(|_| !wide);
+        if let Some(entries) = entries {
+            // From the planes: each palette entry's chunk-palette index written over its
+            // match words, the opaque entries' match words as the opaque mask (the CPU's `u64`
+            // per layer is the GPU's two `u32` words), the translucent entries' voxels as their
+            // 2^3 blocks' bits.
+            let mut idx = [0u8; BRICK_VOXELS];
+            for (m, words) in &entries {
+                let r = self.rev[usize::from(*m)] as u8;
+                let translucent = self.translucent[usize::from(*m)];
+                for (z, &w) in words.iter().enumerate() {
+                    if !translucent {
+                        masks[2 * z] |= w as u32;
+                        masks[2 * z + 1] |= (w >> 32) as u32;
+                    }
+                    let mut bits = w;
+                    while bits != 0 {
+                        let b = bits.trailing_zeros() as usize;
+                        bits &= bits - 1;
+                        idx[64 * z + b] = r;
+                        if translucent {
+                            let (x, y) = (b % 8, b / 8);
+                            let block = x / 2 + 4 * (y / 2) + 16 * (z / 2);
+                            masks[OPAQUE_WORDS + block / 32] |= 1 << (block % 32);
+                            flag = TRANSLUCENT_BIT;
+                        }
+                    }
+                }
+            }
+            self.stage(s, &idx, &masks, queue, st);
+            st.bytes += SLOT_BYTES + MASK_BYTES;
+            self.entries[i] = FULL_BIT | flag | s;
+            st.bricks += 1;
+            return Ok(());
+        }
         let mut set_bits = |i: usize, m: MaterialId| {
             if m == AIR {
                 return;
@@ -1810,6 +1839,9 @@ impl GpuWorld {
                 masks[i / 32] |= 1 << (i % 32);
             }
         };
+        // A wide record, or a brick above 16 materials: narrowed from the decoded voxels.
+        let mut v = [AIR; BRICK_VOXELS];
+        p.decode(&mut v);
         if wide {
             for (i, &m) in v.iter().enumerate() {
                 set_bits(i, m);
@@ -2202,6 +2234,35 @@ fn box_difference(a: ChunkExtent, b: ChunkExtent) -> Vec<ChunkCoord> {
     out
 }
 
+/// A `Full` brick's non-air materials in the order their first voxels appear (ascending brick
+/// index): each palette entry's first set match bit, sorted; a `Wide` brick's decoded ids
+/// scanned in order.
+fn first_appearance(p: &Packed) -> Vec<MaterialId> {
+    match p.entry_matches() {
+        Some(entries) => {
+            let mut firsts: Vec<(usize, MaterialId)> = entries
+                .iter()
+                .map(|(m, words)| {
+                    let z = words.iter().position(|&w| w != 0).expect("a used entry");
+                    (64 * z + words[z].trailing_zeros() as usize, *m)
+                })
+                .collect();
+            firsts.sort_unstable();
+            firsts.into_iter().map(|(_, m)| m).collect()
+        }
+        None => {
+            let mut v = [AIR; BRICK_VOXELS];
+            p.decode(&mut v);
+            let mut out = Vec::new();
+            for m in v {
+                if m != AIR && !out.contains(&m) {
+                    out.push(m);
+                }
+            }
+            out
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

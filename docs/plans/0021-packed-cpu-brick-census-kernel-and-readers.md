@@ -463,8 +463,8 @@ header, world key, coordinate and FNV trailer are version 1's.
 | 3: `Packed` behind `Brick::Full`, every reader compiling | dev | done | 22fcade |
 | 4: The edit kernel as word operations | dev | done | 07d70fd |
 | 5: Native paths for the hot readers | dev | done | 44ace94 |
-| 6: Collapse as layer shifts and palette remaps | dev | done | committed with this row |
-| 7: The mirror upload from planes, and spill version 2 | dev | not started | |
+| 6: Collapse as layer shifts and palette remaps | dev | done | ce44fa1 |
+| 7: The mirror upload from planes, and spill version 2 | dev | done | committed with this row |
 | 8: Readings, budgets and the census after edits | dev | not started | |
 
 ### Notes
@@ -559,6 +559,17 @@ header, world key, coordinate and FNV trailer are version 1's.
   `gpu_world.rs` decodes each `Full` brick; `world_budget --veins` raises the query limits for
   its whole-extent air count as `--chunks` does; the fly-through drops main's per-frame
   `reserve_brick_arrays` and `RESERVE_ARRAYS`.
+- Phase 7: `packed.rs` (outside the phase's list) gains `Packed::entry_matches`, `words`,
+  `wide_ids`, `from_parts` and `PackedClass::ALL` for the upload and the spill (Phase 7 commit).
+- Phase 7: the chunk palette still grows in first-appearance order, now from each entry's first
+  set match bit, so every mirror byte is as before; a narrow brick in a wide record and a brick
+  above 16 materials take the decoded path (Phase 7 commit).
+- Phase 7: spill decode also refuses a `Full` box that re-encodes differently (one material
+  over every voxel, which is a `Uniform` brick) (Phase 7 commit).
+- Phase 7: `apps/flythrough/tests/level_mirror.rs` is unchanged; the level's 232 436 992 B live
+  is read from the fly-through's first-sync line. The first sync is paired with the merge
+  ea8d0ad (Phase 3's decode path on 0017's allocator), not the Phase 3 tip, which predates
+  0017's upload path (Phase 7 commit).
 
 ### Close triggers
 
@@ -619,6 +630,10 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     5.93 / 5.91 ms (the 20 ms proposal), by 60 7.73 / 6.74 ms, by 8 4.67 / 4.77 ms (Phase 5 /
     Phase 6). A first Phase 6 build wrote rubble through `modify` and read the slab remove at
     1.023 ms (load 6.20).
+  - Phase 7 first sync, `flythrough --level --seed 1 --headless --frames 1`, release, dev box,
+    exclusive perf lock, alternating with ea8d0ad (loads 10.97, 10.97; 11.69 after): ea8d0ad
+    582 and 590 ms, Phase 7 195 and 180 ms; both upload 232 436 992 B (383 608 bricks, 3200
+    chunks, 192 writes), 232 436 992 B live, 271 524 864 B allocated.
 - **Gate at the tip (992fdaa):** `cargo build --workspace --all-targets` 0; `cargo nextest run
   --workspace` (after `scripts/build-guests.sh`, under the perf lock) 394 passed, 4 skipped,
   exit 0; `cargo test --workspace --doc` 7 passed; clippy `-D warnings` 0; `fmt --check` 0;

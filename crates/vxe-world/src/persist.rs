@@ -9,9 +9,15 @@
 //! version   u32   SPILL_VERSION
 //! world key u64   caller-supplied, so a later world never reads an earlier world's files
 //! coord     3 x i32
-//! bricks    512 x (tag u8: 0 then a u16 material, or 1 then 512 u16 voxels x-fastest)
+//! bricks    512 x (tag u8, then the brick)
 //! trailer   u64   FNV-1a 64 over every byte before it
 //! ```
+//!
+//! A brick's tag is 0 for `Uniform`, followed by its `u16` material; 1 to 5 for a `Full`
+//! brick's packed class (`Mask`, `Plane1`, `Plane2`, `Plane4`, `Wide`; ADR-0012), followed by
+//! the class's `u64` words (72, 136, 200 or 352 B) or, for `Wide`, its 512 `u16` ids
+//! x-fastest. Decoding checks each box's canonical form and reports a non-canonical one as
+//! `Corrupt`.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -22,10 +28,11 @@ use crate::chunk::Chunk;
 use crate::coords::{BRICK_VOXELS, CHUNK_BRICKS, ChunkCoord};
 use crate::hash::Fnv1a;
 use crate::material::{AIR, MaterialId};
+use crate::packed::{Packed, PackedClass};
 
 const MAGIC: &[u8; 8] = b"VXECHNK\0";
 /// Format version of the spill file.
-pub const SPILL_VERSION: u32 = 1;
+pub const SPILL_VERSION: u32 = 2;
 const HEADER: usize = 8 + 4 + 8 + 12;
 
 /// Where edited chunks go when they leave residency.
@@ -79,11 +86,19 @@ pub fn encode_spill(coord: ChunkCoord, chunk: &Chunk, world_key: u64) -> Vec<u8>
                 out.extend_from_slice(&m.to_le_bytes());
             }
             Brick::Full(p) => {
-                let mut v = [AIR; BRICK_VOXELS];
-                p.decode(&mut v);
-                out.push(1);
-                for m in v.iter() {
-                    out.extend_from_slice(&m.to_le_bytes());
+                let tag = PackedClass::ALL
+                    .iter()
+                    .position(|&c| c == p.class())
+                    .expect("one of the five classes");
+                out.push(1 + tag as u8);
+                match (p.words(), p.wide_ids()) {
+                    (Some(w), _) => w
+                        .iter()
+                        .for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
+                    (None, Some(v)) => v
+                        .iter()
+                        .for_each(|m| out.extend_from_slice(&m.to_le_bytes())),
+                    (None, None) => unreachable!("a box is planar or wide"),
                 }
             }
         }
@@ -131,12 +146,29 @@ pub fn decode_spill(bytes: &[u8], world_key: u64) -> Result<(ChunkCoord, Chunk),
         at += 1;
         let brick = match tag {
             0 => Brick::Uniform(u16_at(&mut at)?),
-            1 => {
-                let mut v = Box::new([AIR; BRICK_VOXELS]);
-                for m in v.iter_mut() {
-                    *m = u16_at(&mut at)?;
+            1..=5 => {
+                let class = PackedClass::ALL[usize::from(tag) - 1];
+                let (mut words, mut ids) = (Vec::new(), Vec::new());
+                if class == PackedClass::Wide {
+                    for _ in 0..BRICK_VOXELS {
+                        ids.push(u16_at(&mut at)?);
+                    }
+                } else {
+                    for _ in 0..class.bytes() / 8 {
+                        let b = body.get(at..at + 8).ok_or(SpillError::Corrupt)?;
+                        words.push(u64::from_le_bytes(b.try_into().expect("8 bytes")));
+                        at += 8;
+                    }
                 }
-                Brick::from_voxels(v)
+                let p = Packed::from_parts(class, &words, &ids).ok_or(SpillError::Corrupt)?;
+                let b = Brick::Full(p);
+                // A box of one material over every voxel is a `Uniform` brick.
+                let mut v = Box::new([AIR; BRICK_VOXELS]);
+                b.decode(&mut v);
+                if Brick::from_voxels(v) != b {
+                    return Err(SpillError::Corrupt);
+                }
+                b
             }
             _ => return Err(SpillError::Corrupt),
         };
