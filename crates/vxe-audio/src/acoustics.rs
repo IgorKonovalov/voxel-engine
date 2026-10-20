@@ -24,8 +24,9 @@
 //!
 //! Sixteen rays leave the listener along a fixed Fibonacci sphere in world axes, its poles on
 //! the world `x` axis ([`reflection_directions`]). A ray that enters a solid within
-//! [`REFLECTION_RANGE_METRES`] hits at `H`, the entry of its first solid run (`origin + dir *
-//! t0`, exact in fixed point), with that run's material `m`. Each hit gives every voice at `S`
+//! [`REFLECTION_RANGE_METRES`] hits at `H`, the entry of its first solid voxel
+//! ([`World::raycast`], which stops there: `origin + dir * t`, exact in fixed point), with that
+//! voxel's material `m`. Each hit gives every voice at `S`
 //! the tap ([`crate::Tap`]) in the slot of its ray:
 //! - delay `(|L - H| + |H - S| - |L - S|) / 343 m/s`, the excess over the direct path, in whole
 //!   frames, since the mixer gives the direct path no propagation delay; a tap past
@@ -91,8 +92,8 @@ pub const PROBE_MOVE_METRES: f32 = 0.1;
 pub const PROBE_INTERVAL_SECONDS: f32 = 0.5;
 /// Offset of the six side probes from the source, in metres.
 const SIDE_PROBE_METRES: f32 = 0.5;
-/// How far a reflection ray looks for a surface.
-pub const REFLECTION_RANGE_METRES: f32 = 50.0;
+/// How far a reflection or room ray looks for a surface.
+pub const REFLECTION_RANGE_METRES: f32 = 100.0;
 /// Reflection rays per listener.
 pub const REFLECTION_RAYS: usize = 16;
 /// The depth of material a reflection crosses on the way in, and again on the way out, for
@@ -152,15 +153,13 @@ pub fn reflections(
     directions.map(|d| {
         let (origin, dir, dir_len) = fixed_ray(listener, d);
         let max_t = (range * FIXED_ONE as f32 * FIXED_ONE as f32 / dir_len).round() as i64;
-        let run = world
-            .trace_materials(origin, dir, max_t)
-            .into_iter()
-            .find(|r| r.material != AIR)?;
-        // origin + dir * t0 / 256 in fixed units, then voxels.
+        // A ray the world refuses (outside its limits) hits nothing.
+        let hit = world.raycast(origin, dir, max_t).ok().flatten()?;
+        // origin + dir * t / 256 in fixed units, then voxels.
         let point = std::array::from_fn(|k| {
-            ((origin.0[k] as f64 + dir[k] as f64 * run.t0 as f64 / one) / one) as f32
+            ((origin.0[k] as f64 + dir[k] as f64 * hit.t as f64 / one) / one) as f32
         });
-        let a = table.get(run.material).map_or(0.0, |m| m.acoustic[0]);
+        let a = table.get(hit.material).map_or(0.0, |m| m.acoustic[0]);
         Some(Reflection {
             point,
             keep: reflection_keep(a),

@@ -509,3 +509,179 @@ fn echoes_come_from_the_side_their_wall_is_on() {
         );
     }
 }
+
+/// Each reflection hit is the entry of the first solid run along its ray: the same point and
+/// keep as walking the whole ray through `World::trace_materials`, so the taps agree within
+/// one frame of delay and `1e-4` of gain. Over the occlusion scenes' walls and a box of walls
+/// around listeners at several points.
+#[test]
+fn reflection_hits_match_the_first_solid_run_of_the_ray() {
+    let one = FIXED_ONE as f64;
+    let boxed =
+        || world(|v| v.iter().any(|&c| !(20..236).contains(&c)) || (100..110).contains(&v[0]));
+    let scenes = [
+        (
+            world(wall(120, 130)),
+            centre(OCC_LISTENER),
+            centre(OCC_SOURCE),
+        ),
+        (
+            world(wall(60, 70)),
+            centre(OCC_LISTENER),
+            centre(OCC_SOURCE),
+        ),
+        (boxed(), [40.3, 77.7, 150.2], [90.0, 128.0, 60.5]),
+        (boxed(), [180.6, 30.1, 200.9], [130.5, 200.5, 128.5]),
+    ];
+    let (mut worst_d, mut worst_g) = (0u32, 0.0f32);
+    for (w, listener, source) in &scenes {
+        let hits = reflections(w, w.materials(), *listener, &reflection_directions(), MPV);
+        // The same rays, each walked to the range through every run.
+        let range = REFLECTION_RANGE_METRES / MPV;
+        let walked = reflection_directions().map(|d| {
+            let origin = Fixed3(listener.map(|c| (c * FIXED_ONE as f32).floor() as i64));
+            let dir = d.map(|c| (c * FIXED_ONE as f32).round() as i64);
+            let len = dir.map(|c| c as f32);
+            let len = (len[0] * len[0] + len[1] * len[1] + len[2] * len[2]).sqrt();
+            let max_t = (range * FIXED_ONE as f32 * FIXED_ONE as f32 / len).round() as i64;
+            let run = w
+                .trace_materials(origin, dir, max_t)
+                .into_iter()
+                .find(|r| r.material != AIR)?;
+            let point = std::array::from_fn(|k| {
+                ((origin.0[k] as f64 + dir[k] as f64 * run.t0 as f64 / one) / one) as f32
+            });
+            Some(Reflection { point, keep: KEEP })
+        });
+        let a = taps(&hits, *listener, *source, MPV, 1.0);
+        let b = taps(&walked, *listener, *source, MPV, 1.0);
+        for (i, (x, y)) in a.iter().zip(&b).enumerate() {
+            assert_eq!(
+                x.gain != 0.0,
+                y.gain != 0.0,
+                "slot {i}: {x:?} against {y:?}"
+            );
+            worst_d = worst_d.max(x.delay_frames.abs_diff(y.delay_frames));
+            worst_g = worst_g.max((x.gain - y.gain).abs());
+        }
+    }
+    println!(
+        "raycast against trace_materials: largest delay difference {worst_d} frames, gain \
+         {worst_g:e}"
+    );
+    assert!(worst_d <= 1, "delay differs by {worst_d} frames");
+    assert!(worst_g <= 1e-4, "gain differs by {worst_g}");
+}
+
+/// A closed cube of air of `edge` voxels, `[0, edge)³`, inside 2 m of `W`, air beyond: bricks
+/// wholly inside or outside stay uniform, so a 100 m cube generates quickly.
+struct ShellCube {
+    edge: i32,
+}
+
+impl ShellCube {
+    fn material(&self, v: [i32; 3]) -> MaterialId {
+        let inside = v.iter().all(|&c| (0..self.edge).contains(&c));
+        let shell = v.iter().all(|&c| (-20..self.edge + 20).contains(&c));
+        if shell && !inside { W } else { AIR }
+    }
+}
+
+impl WorldSource for ShellCube {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        let base = coord.min_voxel().0;
+        for slot in 0..CHUNK_BRICKS {
+            let b = brick_of_slot(slot);
+            let lo = [0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE);
+            let hi = lo.map(|c| c + BRICK_EDGE - 1);
+            let air = |lo: i32, hi: i32| lo >= 0 && hi < self.edge;
+            let brick = if (0..3).all(|k| air(lo[k], hi[k])) {
+                Brick::Uniform(AIR)
+            } else {
+                Brick::from_fn(|l| self.material([0, 1, 2].map(|k| lo[k] + l[k])))
+            };
+            out.set_brick(slot, brick);
+        }
+    }
+}
+
+/// The 100 m cube, voxels `[0, 1000)³`, in a 2 m shell of `W`.
+fn hundred_metre_cube() -> World {
+    let mut t = MaterialTable::new();
+    let mut w = Material::named("wall");
+    w.acoustic = [0.3, 0.5, 0.0];
+    assert_eq!(t.push(w), W);
+    World::generate(
+        ChunkExtent::new([-1, -1, -1], [17, 17, 17]),
+        &ShellCube { edge: 1000 },
+        &t,
+    )
+}
+
+/// A voice at the listener at the centre of the 100 m cube, its direct path off and the tail
+/// off: a unit impulse comes back first off the two axis walls 50 m away, 100 m of path,
+/// `100 / 343 x 48 000 = 13 994.2` frames later, inside the 600 ms delay line.
+#[test]
+fn a_100_m_cube_returns_the_voice_from_its_walls_after_13_994_frames() {
+    const LEN: usize = 16_000;
+    let cube = hundred_metre_cube();
+    let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    let at = [500.0, 500.0, 500.0];
+    let listener = Listener {
+        position: at,
+        ..Listener::default()
+    };
+    mixer.apply(Command::SetListener(listener));
+    let id = VoiceId(9);
+    mixer.apply(Command::Play(
+        id,
+        Sound::new(vec![1.0]),
+        PlayParams {
+            direct: false,
+            ..PlayParams::at(at)
+        },
+    ));
+    let mut acoustics = Acoustics::new(mixer.clock());
+    acoustics.set_reverb(false);
+    let mut targets = None;
+    acoustics.update(
+        &cube,
+        cube.materials(),
+        &listener,
+        &[(id, at)],
+        MPV,
+        &mut |cmd| {
+            if let Command::SetAcoustics(_, t) = &cmd {
+                targets = Some(*t);
+            }
+            mixer.apply(cmd);
+        },
+    );
+    let t = targets.expect("probed");
+    let mut out = vec![0.0; 2 * LEN];
+    mixer.render(&mut out, LEN);
+    let first = out
+        .chunks_exact(2)
+        .position(|f| f[0] != 0.0 || f[1] != 0.0)
+        .expect("the walls return the impulse");
+    let (peak_at, peak) = out
+        .chunks_exact(2)
+        .enumerate()
+        .map(|(i, f)| (i, f[0].abs().max(f[1].abs())))
+        .fold((0, 0.0f32), |m, x| if x.1 > m.1 { x } else { m });
+    let delays: Vec<u32> = t
+        .taps
+        .iter()
+        .filter(|t| t.gain != 0.0)
+        .map(|t| t.delay_frames)
+        .collect();
+    println!(
+        "100 m cube from the centre: tap delays {delays:?}; first nonzero sample at {first}, \
+         peak {peak:.5} at {peak_at}"
+    );
+    assert!(first >= 13_994, "first nonzero sample at {first}");
+    assert!(
+        (13_994..13_994 + 128).contains(&peak_at),
+        "peak at {peak_at}"
+    );
+}

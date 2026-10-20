@@ -236,3 +236,56 @@ fn switching_the_tail_resends_the_room() {
         .collect();
     assert_eq!(energies, [0.0, energy]);
 }
+
+/// A closed cube of air of `edge` voxels, `[0, edge)³`, inside 2 m of `CAVE`, air beyond: bricks
+/// wholly inside stay uniform air, so a 100 m cube generates quickly.
+struct ShellCube {
+    edge: i32,
+}
+
+impl WorldSource for ShellCube {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        let base = coord.min_voxel().0;
+        let edge = self.edge;
+        let material = |v: [i32; 3]| {
+            let inside = v.iter().all(|&c| (0..edge).contains(&c));
+            let shell = v.iter().all(|&c| (-20..edge + 20).contains(&c));
+            if shell && !inside { CAVE } else { AIR }
+        };
+        for slot in 0..CHUNK_BRICKS {
+            let b = brick_of_slot(slot);
+            let lo = [0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE);
+            let brick = if lo.iter().all(|&c| c >= 0 && c + BRICK_EDGE <= edge) {
+                Brick::Uniform(AIR)
+            } else {
+                Brick::from_fn(|l| material([0, 1, 2].map(|k| lo[k] + l[k])))
+            };
+            out.set_brick(slot, brick);
+        }
+    }
+}
+
+/// The 100 m cube from its centre: every room ray hits within the 100 m range (the corners are
+/// 86.6 m away), so the fan reads `V = 1e6 m^3`, Eyring's 18.8 s clamped to the 8 s cap, and the
+/// tail's energy `16 pi (1 - 0.1330) / (6e4 x 0.1330) = 5.46e-3` (-22.6 dB).
+#[test]
+fn a_100_m_cube_reads_its_volume_and_the_capped_decay() {
+    let mut t = MaterialTable::new();
+    let mut m = Material::named("cave");
+    m.acoustic = [0.3, 0.5, 0.0];
+    assert_eq!(t.push(m), CAVE);
+    let cube = World::generate(
+        ChunkExtent::new([-1, -1, -1], [17, 17, 17]),
+        &ShellCube { edge: 1000 },
+        &t,
+    );
+    let (acoustics, rooms) = fan(&cube, [500.0, 500.0, 500.0], 8);
+    let r = acoustics.room().expect("complete");
+    let alpha = 1.0 - 0.7f32.powf(0.4);
+    let energy = 16.0 * std::f32::consts::PI * (1.0 - alpha) / (6e4 * alpha);
+    println!("100 m cube from the centre: {r:?} (energy {energy:e})");
+    assert_eq!(rooms.len(), 1);
+    within(r.volume_m3, 1e6, 0.04, "volume");
+    assert_eq!(r.t60_s, MAX_T60_SECONDS);
+    within(r.energy, energy, 0.04, "energy");
+}

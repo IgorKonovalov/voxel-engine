@@ -57,8 +57,9 @@ impl PlayParams {
 
 /// Taps a voice carries: one slot per reflection direction ([`crate::REFLECTION_RAYS`]).
 pub const MAX_TAPS: usize = 16;
-/// The longest tap delay: 200 ms at [`crate::RATE`], the length of a voice's delay line.
-pub const MAX_DELAY_FRAMES: usize = 9_600;
+/// The longest tap delay: 600 ms at [`crate::RATE`] (205.8 m of excess path), the length of a
+/// voice's delay line.
+pub const MAX_DELAY_FRAMES: usize = 28_800;
 /// The cutoff of an unobstructed voice; at or above it the low-pass is bypassed.
 pub const OPEN_CUTOFF_HZ: f32 = 20_000.0;
 
@@ -97,11 +98,14 @@ impl Default for AcousticTargets {
 }
 
 /// A tap slot as the mixer plays it now: the delay in frames (fractional while it glides) and
-/// the gain, both moving toward the slot's [`Tap`] target.
+/// the gain, both moving toward the slot's [`Tap`] target, and the rate the delay glides at.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct TapState {
     pub delay: f32,
     pub gain: f32,
+    /// Frames of delay per frame of audio the slot glides at toward its target, set when the
+    /// target arrives.
+    pub rate: f32,
 }
 
 impl TapState {
@@ -109,6 +113,7 @@ impl TapState {
         Self {
             delay: t.delay_frames.min(MAX_DELAY_FRAMES as u32) as f32,
             gain: t.gain,
+            rate: 0.0,
         }
     }
 }
@@ -141,6 +146,8 @@ pub(crate) struct Voice {
     pub own_gain: f32,
     /// The send into the late tail, as smoothed so far.
     pub send: f32,
+    /// Frames rendered since the last [`AcousticTargets`] arrived.
+    pub since_acoustics: u32,
     /// Where the next block goes in [`VoiceBuffers::echo`].
     pub echo_pos: usize,
     /// The low-pass coefficient as smoothed so far, 1 when open (the acoustic gain smooths
@@ -196,6 +203,7 @@ impl Voice {
             taps: [TapState::default(); MAX_TAPS],
             own_gain: 0.0,
             send: 0.0,
+            since_acoustics: 0,
             echo_pos: 0,
             lowpass_a: 1.0,
             lowpass: 0.0,

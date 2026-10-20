@@ -11,9 +11,10 @@
 //!    (smoothed like the others, no distance gain; the acoustics fold the occlusion into each
 //!    tap's gain) go into a [`MAX_DELAY_FRAMES`] delay line, and tap slot `i` adds the line's
 //!    sample its delay back times its gain into bus `i`. A slot glides toward its
-//!    [`crate::Tap`] target (see [`render_tap`]): the
-//!    delay moves at most [`TAP_SLEW_FRAMES_PER_FRAME`] per frame, read between ring samples by
-//!    linear interpolation, and the gain follows the one-pole smoother. A slot whose target
+//!    [`crate::Tap`] target (see [`render_tap`]): the delay covers the step to a new target
+//!    over as many frames as passed since the voice's previous targets, at most
+//!    [`TAP_SLEW_FRAMES_PER_FRAME`] per frame, read between ring samples by linear
+//!    interpolation, and the gain follows the one-pole smoother. A slot whose target
 //!    moved more than [`TAP_JUMP_FRAMES`] (its ray now hits another wall) fades below
 //!    [`TAP_SILENT`] first, then takes the new delay and fades in;
 //! 4. spatialise. On the HRTF path the samples run through the two 128-tap FIRs of the measured
@@ -60,7 +61,9 @@ pub struct TapSlot {
 }
 
 /// The most a tap's delay moves toward its target per frame of audio: a pitch glide of at most
-/// 5 percent on that echo while its path changes.
+/// 5 percent on that echo while its path changes. Below it, a slot covers each new target's
+/// step over the frames that passed since the voice's previous targets: a listener probed
+/// every few blocks while walking moves each echo at the walk's own rate.
 pub const TAP_SLEW_FRAMES_PER_FRAME: f32 = 0.05;
 /// A tap whose target delay is more than this far from its current delay (10 ms; its ray hit
 /// another wall) is faded out and back in at the new delay instead of gliding there.
@@ -229,12 +232,20 @@ impl Mixer {
             Command::SetAcoustics(id, targets) => {
                 if let Some(v) = self.voice_mut(id) {
                     v.acoustic = targets;
-                    // A fresh voice starts at its targets; a playing one glides to them.
+                    // A fresh voice starts at its targets; a playing one glides to them, each
+                    // slot's step spread over the frames since the previous targets.
                     if !v.started {
                         v.lowpass_a = lowpass_coefficient(targets.cutoff_hz);
                         v.taps = targets.taps.map(TapState::at);
                         v.send = targets.send;
+                    } else {
+                        let frames = v.since_acoustics.max(BLOCK as u32) as f32;
+                        for (s, t) in v.taps.iter_mut().zip(&targets.taps) {
+                            let to = t.delay_frames.min(MAX_DELAY_FRAMES as u32) as f32;
+                            s.rate = ((to - s.delay).abs() / frames).min(TAP_SLEW_FRAMES_PER_FRAME);
+                        }
                     }
+                    v.since_acoustics = 0;
                 }
             }
         }
@@ -288,6 +299,7 @@ impl Mixer {
                 .tap_tail()
                 .max(self.hrtf.as_ref().map_or(0, |h| h.taps() - 1));
             v.read(dry, tail);
+            v.since_acoustics = v.since_acoustics.saturating_add(n as u32);
             if !v.started {
                 v.gain = target_gain;
                 v.own_gain = v.params.gain;
@@ -554,7 +566,8 @@ fn crossfade_weight(i: usize, n: usize) -> f32 {
 /// [`MAX_DELAY_FRAMES`] plus one block long, with this block written at `at`, so every read up
 /// to [`MAX_DELAY_FRAMES`] back finds a sample not yet overwritten.
 ///
-/// The delay moves toward the target by at most [`TAP_SLEW_FRAMES_PER_FRAME`] per frame,
+/// The delay moves toward the target by at most the slot's `rate` (itself at most
+/// [`TAP_SLEW_FRAMES_PER_FRAME`]) per frame,
 /// linearly across the block, and is read at its fractional position by linear interpolation
 /// between the two ring samples around it. While the target is more than [`TAP_JUMP_FRAMES`]
 /// away the delay holds and the gain heads for 0; a gain below [`TAP_SILENT`] takes a new
@@ -581,7 +594,7 @@ fn render_tap(
     let d1 = if jumping || target.gain == 0.0 {
         d0
     } else {
-        let reach = TAP_SLEW_FRAMES_PER_FRAME * n as f32;
+        let reach = state.rate * n as f32;
         d0 + (target_delay - d0).clamp(-reach, reach)
     };
     let gain_to = if jumping { 0.0 } else { target.gain };

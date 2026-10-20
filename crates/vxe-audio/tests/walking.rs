@@ -1,7 +1,7 @@
 //! A listener walking past a hum with the early reflections on: each echo's tap slot glides
-//! with the walk instead of stepping at every re-probe, so the output clicks no more than an
-//! ideal rendering of the same walk. Also the echoes fading out when the reflections are
-//! switched off.
+//! with the walk, at the walk's own rate, instead of stepping at every re-probe, so the output
+//! clicks no more than an ideal rendering of the same walk. Also the echoes fading out when the
+//! reflections are switched off.
 //!
 //! The output's level and phase are not bounded per block: the corridor's echoes sum to more
 //! than the direct sound and each one's phase moves up to 0.258 rad per block against it, so
@@ -123,15 +123,40 @@ fn click_index(x: &[f64], from: usize) -> f64 {
     worst
 }
 
-/// The walk's numbers: the hum at `(8 m, 1 m, 0)`, the listener from `x = 0` at 3 m/s facing
-/// `+x` for 2 s, moved and probed every 3 blocks.
+/// The walk's numbers: the hum at `(8 m, 1 m, 0)`, the listener facing `+x` for 2 s, moved and
+/// probed every 3 blocks.
 const SOURCE: [f32; 3] = [80.0, 10.0, 0.0];
-const SPEED_VOXELS: f32 = 30.0;
 const BLOCKS: usize = 2 * RATE as usize / BLOCK;
+/// Frames before the slot checks start: 200 ms.
+const SETTLE_SLOTS: usize = 9_600;
 
-/// The listener's position (voxel units) at block edge `e`.
-fn walk_position(e: usize) -> [f32; 3] {
-    [SPEED_VOXELS * (e * BLOCK) as f32 / RATE as f32, 0.0, 0.0]
+/// A walk along `x`: where it starts and how fast, voxel units and voxels per second.
+#[derive(Clone, Copy, Debug)]
+struct Pace {
+    start: f32,
+    speed: f32,
+}
+
+/// 3 m/s from `x = 0`.
+const WALK: Pace = Pace {
+    start: 0.0,
+    speed: 30.0,
+};
+/// The boost, 12 m/s from `x = -8 m`, so the 2 s end at 16 m inside the corridor.
+const BOOST: Pace = Pace {
+    start: -80.0,
+    speed: 120.0,
+};
+
+impl Pace {
+    /// The listener's position (voxel units) at block edge `e`.
+    fn at(self, e: usize) -> [f32; 3] {
+        [
+            self.start + self.speed * (e * BLOCK) as f32 / RATE as f32,
+            0.0,
+            0.0,
+        ]
+    }
 }
 
 /// What the walk rendered: the output, the blocks a probe arrived before, and every slot's
@@ -143,8 +168,9 @@ struct Walk {
     after: Vec<[TapSlot; MAX_TAPS]>,
 }
 
-/// The walk through `world`, HRTF path, reflections on, as a 60 Hz game would drive it.
-fn walk(world: &World) -> Walk {
+/// The walk through `world` at `pace`, HRTF path, reflections on, as a 60 Hz game would drive
+/// it.
+fn walk(world: &World, pace: Pace) -> Walk {
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
     let mut acoustics = Acoustics::new(mixer.clock());
     assert!(acoustics.reflections_on());
@@ -166,7 +192,7 @@ fn walk(world: &World) -> Walk {
     for (b, chunk) in w.out.chunks_mut(2 * BLOCK).enumerate() {
         if b % 3 == 0 {
             let listener = Listener {
-                position: walk_position(b),
+                position: pace.at(b),
                 ..Listener::default()
             };
             mixer.apply(Command::SetListener(listener));
@@ -249,45 +275,61 @@ type Ends = (
     [Option<(f64, f64)>; MAX_TAPS],
 );
 
+/// Per sounding slot after the first 200 ms of a walk at `pace`: the largest per-block delay
+/// change, the largest difference from the ideal delay's change over the same block, and the
+/// largest distance from the ideal delay; whether every sounding slot stayed above
+/// [`TAP_SILENT`]; and how many sounding slots had no ideal hit at a block's ends (skipped).
+fn slot_figures(
+    w: &Walk,
+    ideal: &[[Option<(f64, f64)>; MAX_TAPS]],
+) -> (f64, f64, f64, bool, usize) {
+    let (mut change, mut off_change, mut off, mut loud) = (0.0f64, 0.0f64, 0.0f64, true);
+    let mut unmatched = 0;
+    for b in SETTLE_SLOTS.div_ceil(BLOCK)..BLOCKS {
+        for (i, (s0, s1)) in w.before[b].iter().zip(&w.after[b]).enumerate() {
+            if s1.target.gain == 0.0 {
+                continue;
+            }
+            loud &= s1.gain >= TAP_SILENT;
+            let moved = f64::from(s1.delay) - f64::from(s0.delay);
+            change = change.max(moved.abs());
+            let (Some((d0, _)), Some((d1, _))) = (ideal[b][i], ideal[b + 1][i]) else {
+                unmatched += 1;
+                continue;
+            };
+            off_change = off_change.max((moved - (d1 - d0)).abs());
+            off = off.max((f64::from(s1.delay) - d1).abs());
+        }
+    }
+    (change, off_change, off, loud, unmatched)
+}
+
+/// **The arithmetic** (3 m/s): the physical rate is at most `2v / c x 256 = 4.48` frames per
+/// block, and a probe every 9 blocks steps a target by at most 40.3 frames, which spread over
+/// those 9 blocks is the same 4.48. So after the first 200 ms every sounding slot's per-block
+/// delay change is at most `1.25 x 4.48 = 5.6` frames, within 1.0 frame of the ideal delay's
+/// change over that block, and within `40.3 + 4.48 + 1.5 = 46` frames of the ideal delay (a
+/// probe's step behind, a block of walk, rounding).
 #[test]
 fn walking_past_a_hum_glides_every_echo_and_clicks_no_more_than_an_ideal_render() {
     let corridor = corridor();
-    let w = walk(&corridor);
-    let settle_block = SETTLE.div_ceil(BLOCK);
+    let w = walk(&corridor, WALK);
     let ideal: Vec<_> = (0..=BLOCKS)
-        .map(|e| ideal_slots(&corridor, walk_position(e)))
+        .map(|e| ideal_slots(&corridor, WALK.at(e)))
         .collect();
+    let (worst_change, worst_off_change, worst_off, loud, unmatched) = slot_figures(&w, &ideal);
+    let settle_block = SETTLE.div_ceil(BLOCK);
 
-    // Per-slot continuity, read at every block edge after the first 100 ms.
-    let max_glide = TAP_SLEW_FRAMES_PER_FRAME * BLOCK as f32;
-    let (mut worst_glide, mut worst_off) = (0.0f32, 0.0f64);
-    for b in settle_block..BLOCKS {
-        for (i, (s0, s1)) in w.before[b].iter().zip(&w.after[b]).enumerate() {
-            let glide = (s1.delay - s0.delay).abs();
-            worst_glide = worst_glide.max(glide);
-            assert!(
-                glide <= max_glide + 1e-3,
-                "block {b} slot {i}: delay {} -> {}",
-                s0.delay,
-                s1.delay
-            );
-            if s1.target.gain != 0.0 {
-                assert!(
-                    s1.gain >= TAP_SILENT,
-                    "block {b} slot {i}: a sounding slot fell silent ({})",
-                    s1.gain
-                );
-                let (d, _) = ideal[b + 1][i].expect("a sounding slot has an ideal hit");
-                let off = (f64::from(s1.delay) - d).abs();
-                worst_off = worst_off.max(off);
-                assert!(
-                    off <= 42.0,
-                    "block {b} slot {i}: delay {} against the ideal {d}",
-                    s1.delay
-                );
-            }
-        }
-    }
+    // At 12 m/s (2v / c = 7 percent, past the 5 percent cap) the slots fall behind: printed.
+    let boost = walk(&corridor, BOOST);
+    let boost_ideal: Vec<_> = (0..=BLOCKS)
+        .map(|e| ideal_slots(&corridor, BOOST.at(e)))
+        .collect();
+    let (_, _, boost_lag, _, _) = slot_figures(&boost, &boost_ideal);
+    println!(
+        "boost at 12 m/s: {} probes, largest distance behind the ideal delay {boost_lag:.2} frames",
+        boost.probes.len()
+    );
 
     // Ramped gains: toward the target by at most the one-pole's share of the distance.
     let share = 1.0 - (-(BLOCK as f32) / (RATE as f32 * SMOOTHING_SECONDS)).exp();
@@ -308,7 +350,7 @@ fn walking_past_a_hum_glides_every_echo_and_clicks_no_more_than_an_ideal_render(
     // The click index against an ideal render and a stepped one.
     let direct: Vec<f64> = (0..=BLOCKS)
         .map(|e| {
-            let p = walk_position(e);
+            let p = WALK.at(e);
             let d = [0, 1, 2]
                 .map(|k| f64::from(SOURCE[k] - p[k]))
                 .iter()
@@ -349,10 +391,25 @@ fn walking_past_a_hum_glides_every_echo_and_clicks_no_more_than_an_ideal_render(
         .map(|c| click_index(&channel(&w.out, c), SETTLE))
         .fold(0.0, f64::max);
     println!(
-        "walking at 3 m/s past a 440 Hz hum: {} probes; largest glide {worst_glide:.3} frames per \
-         block, largest distance from the ideal delay {worst_off:.2} frames; click index: mixer \
+        "walking at 3 m/s past a 440 Hz hum: {} probes; largest change {worst_change:.3} frames \
+         per block, largest difference from the ideal change {worst_off_change:.3} frames, \
+         largest distance from the ideal delay {worst_off:.2} frames; click index: mixer \
          {k_mixer:.3}, ideal reference {k_ref:.3}, stepped reference {k_stepped:.3}",
         w.probes.len()
+    );
+    assert!(loud, "a sounding slot fell below TAP_SILENT");
+    assert_eq!(unmatched, 0, "sounding slots without an ideal hit");
+    assert!(
+        worst_change <= 1.25 * 4.48,
+        "a slot moved {worst_change} frames in a block"
+    );
+    assert!(
+        worst_off_change <= 1.0,
+        "a slot's change differs from the ideal change by {worst_off_change} frames"
+    );
+    assert!(
+        worst_off <= 46.0,
+        "a slot is {worst_off} frames from its ideal delay"
     );
     assert!(
         k_stepped >= 4.0 * 2.0 * k_ref,
