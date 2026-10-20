@@ -528,9 +528,10 @@ re-read in Phase 7.
   2 m 2.003, 4 m 2.005). Ramping the line filters per sample instead of per block left it
   unchanged (2.0030).
 - **Owner question:** see the lane's report.
-- **Gate at this commit:** `cargo clippy --workspace --all-targets -- -D warnings` 0,
-  `cargo fmt --all --check` 0, `cargo nextest run -p vxe-audio` 45 run, 44 passed, 1 failed
-  (the bound above).
+- **Gate at d1fd30f:** `cargo build` 0; `cargo clippy --workspace --all-targets -- -D
+  warnings` 0; `cargo fmt --all --check` 0; `cargo test --doc --workspace` 0 (7 passed, 1
+  ignored); `cargo nextest run --workspace` after `scripts/build-guests.sh` (exclusive perf
+  lock, load average 5.85) 401 run, 400 passed, 1 failed (the bound above), 4 skipped.
 
 ### Notes
 
