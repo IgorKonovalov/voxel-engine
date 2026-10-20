@@ -1,7 +1,12 @@
-//! A listener walking past a hum with the early reflections on: the echoes glide with the walk
-//! instead of stepping at every re-probe, so neither the output's level nor its 440 Hz phase
-//! jumps from one 256-frame block to the next. Also the echoes fading out when the reflections
-//! are switched off.
+//! A listener walking past a hum with the early reflections on: each echo's tap slot glides
+//! with the walk instead of stepping at every re-probe, so the output clicks no more than an
+//! ideal rendering of the same walk. Also the echoes fading out when the reflections are
+//! switched off.
+//!
+//! The output's level and phase are not bounded per block: the corridor's echoes sum to more
+//! than the direct sound and each one's phase moves up to 0.258 rad per block against it, so
+//! even an ideal render beats by decibels from block to block. The click index [`click_index`]
+//! separates a beat from a step.
 
 use vxe_audio::*;
 use vxe_world::*;
@@ -9,7 +14,7 @@ use vxe_world::*;
 const MPV: f32 = 0.1;
 /// The cave row: absorption 0.3 per metre, transmission 0.5.
 const CAVE: MaterialId = 1;
-/// 440 Hz, the frequency the phase is read at.
+/// The hum's frequency.
 const HZ: f64 = 440.0;
 /// Frames before the measurements start: 100 ms.
 const SETTLE: usize = 4_800;
@@ -90,67 +95,52 @@ fn worst_rms_step_db(out: &[f32]) -> f64 {
         .fold(0.0, f64::max)
 }
 
-/// The phase difference of two complex values, wrapped into `[-pi, pi]`.
-fn phase_step(a: (f64, f64), b: (f64, f64)) -> f64 {
-    let d = b.1.atan2(b.0) - a.1.atan2(a.0);
-    (d + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
-}
-
-/// `ch` demodulated at 440 Hz over a sliding one-cycle window (109 frames): the unwrapped
-/// phase at every frame from the 109th on, so entry `k` is the window ending at frame
-/// `k + 108`.
-fn phase_440(ch: &[f64]) -> Vec<f64> {
+/// The click index of `x` over 200 ms windows (9600 frames, hop 4800) starting at `from`: per
+/// window, the largest `|x[n + 1] - 2 x[n] + x[n - 1]|` over `w^2 sqrt(2) rms` with `w` the hum's
+/// angular frequency per frame. A pure 440 Hz tone scores 1; a smooth sum of tones near 440 Hz
+/// about its envelope's crest; a step of size `d` at least `d / (w^2 sqrt(2) rms)`. The largest
+/// over the windows.
+fn click_index(x: &[f64], from: usize) -> f64 {
+    const WINDOW: usize = 9_600;
+    const HOP: usize = 4_800;
     let w = std::f64::consts::TAU * HZ / f64::from(RATE);
-    let cycle = 109usize;
-    let (mut re, mut im) = (0.0f64, 0.0f64);
-    let mut z = Vec::with_capacity(ch.len());
-    for n in 0..ch.len() {
-        let (s, c) = (w * n as f64).sin_cos();
-        re += ch[n] * c;
-        im -= ch[n] * s;
-        if n >= cycle {
-            let (s, c) = (w * (n - cycle) as f64).sin_cos();
-            re -= ch[n - cycle] * c;
-            im += ch[n - cycle] * s;
-            z.push((re, im));
-        }
+    let mut worst = 0.0f64;
+    let mut s = from;
+    while s + WINDOW <= x.len() {
+        let win = &x[s..s + WINDOW];
+        let rms = (win.iter().map(|v| v * v).sum::<f64>() / WINDOW as f64).sqrt();
+        let d2 = win
+            .windows(3)
+            .map(|t| (t[2] - 2.0 * t[1] + t[0]).abs())
+            .fold(0.0, f64::max);
+        worst = worst.max(d2 / (w * w * std::f64::consts::SQRT_2 * rms));
+        s += HOP;
     }
-    let mut acc = 0.0;
-    let mut phase = Vec::with_capacity(z.len());
-    for k in 0..z.len() {
-        if k > 0 {
-            acc += phase_step(z[k - 1], z[k]);
-        }
-        phase.push(acc);
-    }
-    phase
+    worst
 }
 
-/// The largest change of either channel's 440 Hz phase from one block end to the next.
-fn worst_phase_step(out: &[f32]) -> f64 {
-    (0..2)
-        .flat_map(|c| {
-            let phase = phase_440(&channel(out, c));
-            // The window ending at the last frame of each whole block.
-            let ends: Vec<f64> = (1..)
-                .map(|k| k * BLOCK - 110)
-                .take_while(|&i| i < phase.len())
-                .map(|i| phase[i])
-                .collect();
-            ends.windows(2)
-                .map(|w| (w[1] - w[0]).abs())
-                .collect::<Vec<_>>()
-        })
-        .fold(0.0, f64::max)
+/// The walk's numbers: the hum at `(8 m, 1 m, 0)`, the listener from `x = 0` at 3 m/s facing
+/// `+x` for 2 s, moved and probed every 3 blocks.
+const SOURCE: [f32; 3] = [80.0, 10.0, 0.0];
+const SPEED_VOXELS: f32 = 30.0;
+const BLOCKS: usize = 2 * RATE as usize / BLOCK;
+
+/// The listener's position (voxel units) at block edge `e`.
+fn walk_position(e: usize) -> [f32; 3] {
+    [SPEED_VOXELS * (e * BLOCK) as f32 / RATE as f32, 0.0, 0.0]
 }
 
-/// The hum at `(8 m, 1 m, 0)` heard by a listener facing `+x` who walks from `x = 0` to
-/// `x = 6 m` at 3 m/s through the corridor, HRTF path, reflections on. Every 3 blocks (16 ms
-/// of audio) the listener is moved and `Acoustics::update` runs, as a 60 Hz game would.
-fn walk(world: &World) -> Vec<f32> {
-    const SECONDS: f32 = 2.0;
-    const SPEED_VOXELS: f32 = 30.0;
-    let source = [80.0, 10.0, 0.0];
+/// What the walk rendered: the output, the blocks a probe arrived before, and every slot's
+/// state before and after each block.
+struct Walk {
+    out: Vec<f32>,
+    probes: Vec<usize>,
+    before: Vec<[TapSlot; MAX_TAPS]>,
+    after: Vec<[TapSlot; MAX_TAPS]>,
+}
+
+/// The walk through `world`, HRTF path, reflections on, as a 60 Hz game would drive it.
+fn walk(world: &World) -> Walk {
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
     let mut acoustics = Acoustics::new(mixer.clock());
     assert!(acoustics.reflections_on());
@@ -160,46 +150,215 @@ fn walk(world: &World) -> Vec<f32> {
         hum(),
         PlayParams {
             looping: true,
-            ..PlayParams::at(source)
+            ..PlayParams::at(SOURCE)
         },
     ));
-    let blocks = (SECONDS * RATE as f32) as usize / BLOCK;
-    let mut out = vec![0.0; 2 * blocks * BLOCK];
-    for (b, chunk) in out.chunks_mut(2 * BLOCK).enumerate() {
+    let mut w = Walk {
+        out: vec![0.0; 2 * BLOCKS * BLOCK],
+        probes: Vec::new(),
+        before: Vec::new(),
+        after: Vec::new(),
+    };
+    for (b, chunk) in w.out.chunks_mut(2 * BLOCK).enumerate() {
         if b % 3 == 0 {
-            let t = (b * BLOCK) as f32 / RATE as f32;
             let listener = Listener {
-                position: [SPEED_VOXELS * t, 0.0, 0.0],
+                position: walk_position(b),
                 ..Listener::default()
             };
             mixer.apply(Command::SetListener(listener));
+            let mut probed = false;
             acoustics.update(
                 world,
                 world.materials(),
                 &listener,
-                &[(id, source)],
+                &[(id, SOURCE)],
                 MPV,
-                &mut |cmd| mixer.apply(cmd),
+                &mut |cmd| {
+                    probed |= matches!(cmd, Command::SetAcoustics(..));
+                    mixer.apply(cmd);
+                },
             );
+            if probed {
+                w.probes.push(b);
+            }
         }
+        w.before.push(mixer.tap_slots(id).expect("playing"));
         mixer.render(chunk, BLOCK);
+        w.after.push(mixer.tap_slots(id).expect("playing"));
     }
-    out
+    w
 }
 
-#[test]
-fn walking_past_a_hum_with_echoes_steps_neither_level_nor_phase() {
-    let corridor = corridor();
-    let out = walk(&corridor);
-    let measured = &out[2 * SETTLE..];
-    let rms = worst_rms_step_db(measured);
-    let phase = worst_phase_step(measured);
-    println!(
-        "walking at 3 m/s past a 440 Hz hum, echoes on: largest block-to-block RMS step \
-         {rms:.4} dB, largest per-block 440 Hz phase step {phase:.4} rad"
+/// Per slot at a listener position: the unrounded excess-path delay in frames and the gain of
+/// its reflection, `None` for a ray that hits nothing or lies past the delay line.
+fn ideal_slots(world: &World, listener: [f32; 3]) -> [Option<(f64, f64)>; MAX_TAPS] {
+    let hits = reflections(
+        world,
+        world.materials(),
+        listener,
+        &reflection_directions(),
+        MPV,
     );
-    assert!(rms <= 0.5, "RMS step {rms} dB");
-    assert!(phase <= 0.1, "phase step {phase} rad");
+    let occ = f64::from(occlusion(world, world.materials(), listener, SOURCE, MPV).gain);
+    let dist = |a: [f32; 3], b: [f32; 3]| {
+        let d = [0, 1, 2].map(|k| f64::from(a[k]) - f64::from(b[k]));
+        (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() * f64::from(MPV)
+    };
+    let direct = dist(listener, SOURCE);
+    hits.map(|h| {
+        let h = h?;
+        let path = dist(listener, h.point) + dist(h.point, SOURCE);
+        let delay = (path - direct) / f64::from(SPEED_OF_SOUND) * f64::from(RATE);
+        (delay <= MAX_DELAY_FRAMES as f64).then(|| (delay, f64::from(h.keep) / path.max(1.0) * occ))
+    })
+}
+
+/// The walk rendered mono, an analytic 440 Hz sine of amplitude 0.3 through the direct path
+/// and every slot: block `b` runs from `ends(b).0` to `ends(b).1`, each slot's delay and gain
+/// and the direct gain (`direct[b]` to `direct[b + 1]`) interpolated linearly per sample.
+fn reference(direct: &[f64], ends: impl Fn(usize) -> Ends) -> Vec<f64> {
+    let w = std::f64::consts::TAU * HZ / f64::from(RATE);
+    let mut y = Vec::with_capacity(BLOCKS * BLOCK);
+    for b in 0..BLOCKS {
+        let (start, end) = ends(b);
+        for j in 0..BLOCK {
+            let f = j as f64 / BLOCK as f64;
+            let n = (b * BLOCK + j) as f64;
+            let gd = direct[b] + (direct[b + 1] - direct[b]) * f;
+            let mut v = gd * (w * n).sin();
+            for (s0, s1) in start.iter().zip(&end) {
+                // A slot that starts or stops sounding fades from or to its other end's delay.
+                let (d0, g0) = s0.unwrap_or((s1.map_or(0.0, |s| s.0), 0.0));
+                let (d1, g1) = s1.unwrap_or((d0, 0.0));
+                let d = d0 + (d1 - d0) * f;
+                v += (g0 + (g1 - g0) * f) * (w * (n - d)).sin();
+            }
+            y.push(0.3 * v);
+        }
+    }
+    y
+}
+
+/// A block's slots at its start and its end.
+type Ends = (
+    [Option<(f64, f64)>; MAX_TAPS],
+    [Option<(f64, f64)>; MAX_TAPS],
+);
+
+#[test]
+fn walking_past_a_hum_glides_every_echo_and_clicks_no_more_than_an_ideal_render() {
+    let corridor = corridor();
+    let w = walk(&corridor);
+    let settle_block = SETTLE.div_ceil(BLOCK);
+    let ideal: Vec<_> = (0..=BLOCKS)
+        .map(|e| ideal_slots(&corridor, walk_position(e)))
+        .collect();
+
+    // Per-slot continuity, read at every block edge after the first 100 ms.
+    let max_glide = TAP_SLEW_FRAMES_PER_FRAME * BLOCK as f32;
+    let (mut worst_glide, mut worst_off) = (0.0f32, 0.0f64);
+    for b in settle_block..BLOCKS {
+        for (i, (s0, s1)) in w.before[b].iter().zip(&w.after[b]).enumerate() {
+            let glide = (s1.delay - s0.delay).abs();
+            worst_glide = worst_glide.max(glide);
+            assert!(
+                glide <= max_glide + 1e-3,
+                "block {b} slot {i}: delay {} -> {}",
+                s0.delay,
+                s1.delay
+            );
+            if s1.target.gain != 0.0 {
+                assert!(
+                    s1.gain >= TAP_SILENT,
+                    "block {b} slot {i}: a sounding slot fell silent ({})",
+                    s1.gain
+                );
+                let (d, _) = ideal[b + 1][i].expect("a sounding slot has an ideal hit");
+                let off = (f64::from(s1.delay) - d).abs();
+                worst_off = worst_off.max(off);
+                assert!(
+                    off <= 42.0,
+                    "block {b} slot {i}: delay {} against the ideal {d}",
+                    s1.delay
+                );
+            }
+        }
+    }
+
+    // Ramped gains: toward the target by at most the one-pole's share of the distance.
+    let share = 1.0 - (-(BLOCK as f32) / (RATE as f32 * SMOOTHING_SECONDS)).exp();
+    for b in settle_block..BLOCKS {
+        for (i, (s0, s1)) in w.before[b].iter().zip(&w.after[b]).enumerate() {
+            let (g0, g1, t) = (s0.gain, s1.gain, s0.target.gain);
+            assert!(
+                (g1 - g0).abs() <= share * (t - g0).abs() + 1e-6,
+                "block {b} slot {i}: gain {g0} -> {g1}, target {t}"
+            );
+            assert!(
+                (t - g1) * (t - g0) >= -1e-12,
+                "block {b} slot {i}: gain {g0} -> {g1} passed its target {t}"
+            );
+        }
+    }
+
+    // The click index against an ideal render and a stepped one.
+    let direct: Vec<f64> = (0..=BLOCKS)
+        .map(|e| {
+            let p = walk_position(e);
+            let d = [0, 1, 2]
+                .map(|k| f64::from(SOURCE[k] - p[k]))
+                .iter()
+                .map(|c| c * c)
+                .sum::<f64>()
+                .sqrt()
+                * f64::from(MPV);
+            1.0 / d.max(1.0)
+        })
+        .collect();
+    // Nothing that can click: every slot at the exact walk position at each block edge.
+    let smooth = reference(&direct, |b| (ideal[b], ideal[b + 1]));
+    // A swap: each slot's delay held at its value at the last probe block, stepped at the next.
+    let mut held = ideal.clone();
+    let mut last = 0;
+    for (e, slots) in held.iter_mut().enumerate() {
+        if w.probes.contains(&e) {
+            last = e;
+        }
+        for (s, h) in slots.iter_mut().zip(&ideal[last]) {
+            if let (Some(s), Some(h)) = (s.as_mut(), h) {
+                s.0 = h.0;
+            }
+        }
+    }
+    let stepped = reference(&direct, |b| {
+        let mut end = ideal[b + 1];
+        for (s, h) in end.iter_mut().zip(&held[b]) {
+            if let (Some(s), Some(h)) = (s.as_mut(), h) {
+                s.0 = h.0;
+            }
+        }
+        (held[b], end)
+    });
+    let k_ref = click_index(&smooth, SETTLE);
+    let k_stepped = click_index(&stepped, SETTLE);
+    let k_mixer = (0..2)
+        .map(|c| click_index(&channel(&w.out, c), SETTLE))
+        .fold(0.0, f64::max);
+    println!(
+        "walking at 3 m/s past a 440 Hz hum: {} probes; largest glide {worst_glide:.3} frames per \
+         block, largest distance from the ideal delay {worst_off:.2} frames; click index: mixer \
+         {k_mixer:.3}, ideal reference {k_ref:.3}, stepped reference {k_stepped:.3}",
+        w.probes.len()
+    );
+    assert!(
+        k_stepped >= 4.0 * 2.0 * k_ref,
+        "the stepped reference {k_stepped} must score at least four times the bound {}",
+        2.0 * k_ref
+    );
+    assert!(
+        k_mixer <= 2.0 * k_ref,
+        "the mixer's click index {k_mixer} against twice the reference's {k_ref}"
+    );
 }
 
 /// A wall of `CAVE` over voxel `x in [50, 60)` and the listener 4.95 m in front of it at voxel

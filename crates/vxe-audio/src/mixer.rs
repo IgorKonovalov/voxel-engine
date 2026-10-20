@@ -35,6 +35,16 @@ use crate::{BLOCK, Listener, RATE, SMOOTHING_SECONDS, cross, dot, length, normal
 
 /// Voices the mixer holds at once.
 pub const MAX_VOICES: usize = 64;
+/// One tap slot as [`Mixer::tap_slots`] reads it.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TapSlot {
+    /// Frames, fractional while gliding.
+    pub delay: f32,
+    pub gain: f32,
+    pub target: Tap,
+}
+
 /// The most a tap's delay moves toward its target per frame of audio: a pitch glide of at most
 /// 5 percent on that echo while its path changes.
 pub const TAP_SLEW_FRAMES_PER_FRAME: f32 = 0.05;
@@ -113,6 +123,18 @@ impl Mixer {
     /// Voices playing, finished ones excluded.
     pub fn voice_count(&self) -> usize {
         self.voices.len()
+    }
+
+    /// The tap slots of voice `id` as played now, for tests: each slot's delay and gain and
+    /// the target it moves toward. `None` when `id` is not playing.
+    #[doc(hidden)]
+    pub fn tap_slots(&self, id: VoiceId) -> Option<[TapSlot; crate::MAX_TAPS]> {
+        let v = self.voices.iter().find(|v| v.id == id)?;
+        Some(std::array::from_fn(|i| TapSlot {
+            delay: v.taps[i].delay,
+            gain: v.taps[i].gain,
+            target: v.acoustic.taps[i],
+        }))
     }
 
     /// Whether `id` is still playing.

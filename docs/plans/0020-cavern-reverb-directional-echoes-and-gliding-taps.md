@@ -494,53 +494,13 @@ re-read in Phase 7.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Taps keyed by direction that glide | dev | stopped: done-when 1 not met as stated, owner question (resume notes below) | committed with this row |
+| 1: Taps keyed by direction that glide | dev | done. Code first at 919cb63 (stopped there on the unamended done-when: 5.1828 dB, 2.8656 rad; parent 6.9117 dB, 0.7593 rad; ideal render 5.2407 dB, 1.0492 rad). Walk: 42 probes, largest glide 12.800 frames per block, largest distance from the ideal delay 34.81 frames; click index mixer 2.027, ideal reference 1.883, stepped reference 272.854; mixer at parent d11d0cb (scratch copy) 1.997. Reflections-off fade: largest RMS step 0.4249 dB (parent 0.7349). 1160-sample echo ratio 0.1810; rendered ratios 0.1272 and 0.7773. `E` path unchanged. | committed with this row |
 | 2: Early echoes from their wall's direction | dev | not started | |
 | 3: The room fan | dev | not started | |
 | 4: The tail | dev | not started | |
 | 5: A streamed voice and the microphone | dev | not started | |
 | 6: The fly-through: rooms, toggles, the microphone and the readings | dev | not started | |
 | 7: Listening checks | human | not started | |
-
-### Resume notes (Phase 1, 2026-10-20; delete when Phase 1 lands)
-
-- **Where it stopped.** The Phase 1 code is in the tree: slot-indexed `AcousticTargets.taps`
-  (`tap_count` gone, `send` added), `reflections()` returning `[Option<Reflection>; 16]`,
-  `taps()` returning `[Tap; 16]`, the keep factor `reflection_keep(A) = (1 - A) ^ 0.2`, gliding
-  tap slots in `mixer.rs` (`render_tap`; `old_taps`, `fading` and the tap crossfade deleted),
-  `set_reflections` making every voice due so its silent taps go out at the next update.
-  `tests/walking.rs` is new; `tests/reflections.rs` is re-derived (1160-sample echo ratio
-  0.1810; rendered ratios 0.1272 and 0.7773, in the test name). The fly-through's `E` path
-  needed no change.
-- **The done-when that cannot be met.** `walking_past_a_hum_with_echoes_steps_neither_level_nor_phase`
-  (the plan's corridor, hum, walk and cadence) measures 5.1828 dB and 2.8656 rad against the
-  bounds 0.5 dB and 0.1 rad; at the parent commit d11d0cb it measured 6.9117 dB and 0.7593 rad.
-  Measured causes, from scratch tests not committed: (1) a mono render with ideal continuous
-  delays and gains (the probe evaluated every block, interpolated linearly per sample, analytic
-  sine, no HRIR, nothing that can click) of the same scene measures 5.2407 dB and 1.0492 rad;
-  (2) at the walk's start the corridor gives ten sounding slots whose gains sum to 0.689 against
-  the direct path's 0.124, so the output is a sum of phasors larger than the direct sound; (3)
-  each echo's phase moves `2 pi 440 (6 / 343) (256 / 48000) = 0.258` rad per block at 3 m/s,
-  ten times the plan's 0.026, so two such phasors beat at up to about 7.7 Hz and the per-block
-  level and phase near a null step by decibels and radians; (4) with the echoes off the same
-  walk measures 0.5323 dB and 0.0340 rad on the HRTF path (0.4593 dB and 0.0014 rad panned):
-  the direct path alone sits at the 0.5 dB bound (block RMS of a 440 Hz tone over 256 frames
-  plus the distance change). Panned with echoes on: 4.0344 dB and 3.7558 rad.
-- **The other Phase 1 done-whens.** The reflections-off fade (`switching_the_reflections_off_fades_the_echoes_out`)
-  measures a largest block-to-block RMS step of 0.4249 dB (0.7349 dB at the parent). The
-  1160-sample echo and the occlusion-multiplier tests pass with the keep factor 0.9312. The
-  fly-through walk (`--seed 1 --audio`) was not run: it opens the output device and a window,
-  which this lane may not; it moves to the owner's Phase 7 list.
-- **Owner question:** see the lane's report; options (a) amend the done-when (bound against the
-  ideal reference render, a per-slot continuity test, or an absorbent scene where the echoes
-  stay well under the direct path), (b) keep the bounds and record them unmet, (c) a new ADR
-  if the glide itself is in question.
-- **Gate at this commit:** `cargo build` 0; `cargo clippy --workspace --all-targets -- -D
-  warnings` 0; `cargo fmt --all --check` 0; `cargo test --doc --workspace` 0 (7 passed, 1
-  ignored); `cargo nextest run --workspace` (exclusive perf lock, load average 24.0) 389 run,
-  374 passed, 15 failed, 4 skipped: 14 are `vxe-script-wasm` tests failing for want of
-  `target/guests/` in this worktree (after `scripts/build-guests.sh` its 16 tests pass), and
-  one is `walking_past_a_hum_with_echoes_steps_neither_level_nor_phase`, the done-when above.
 
 ### Notes
 

@@ -38,7 +38,9 @@ pub use acoustics::{
 };
 pub use command::{COMMAND_CAPACITY, Command};
 pub use hrtf::Hrtf;
-pub use mixer::{MAX_VOICES, Mixer, TAP_JUMP_FRAMES, TAP_SILENT, TAP_SLEW_FRAMES_PER_FRAME};
+pub use mixer::{
+    MAX_VOICES, Mixer, TAP_JUMP_FRAMES, TAP_SILENT, TAP_SLEW_FRAMES_PER_FRAME, TapSlot,
+};
 pub use output::{Output, OutputStats};
 pub use voice::{
     AcousticTargets, MAX_DELAY_FRAMES, MAX_TAPS, OPEN_CUTOFF_HZ, PlayParams, Sound, Tap, VoiceId,
