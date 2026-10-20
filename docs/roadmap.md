@@ -210,6 +210,12 @@ VoxelRT and wavefront sources in `references/voxel-optimizations.md`) found noth
 literature that beats a bit hierarchy for an editable near field, and left two design inputs
 for the lighting plan, listed with its bullets below.
 
+Plan 0017 (implemented, awaiting its close review) makes the mirror reserve its VRAM budget
+once (ADR-0013): no grow copies, empty pages shared by both kinds, records for the residency's
+ball, and a pressure rule that lowers `r_full` when the pool or records near full. `nfr.md`
+§3 now reads live bytes against the reserved budget; contour at 16/24 settles at r_full 13
+under 3 GB, the input Plan 0013 Phase 5 waits for.
+
 Plan 0005 closed 2026-10-16 (v0.4.0): the surface-look spike measured four normal modes and
 procedural detail, and the owner chose per-voxel contour planes with weaker rock detail
 (ADR-0011). The fly-through's default stays face normals until a surface follow-up plan fixes

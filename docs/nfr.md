@@ -124,7 +124,7 @@ the streaming line above; the rest runs on background threads.
 
 | | Budget |
 |---|---|
-| World in VRAM at the full-detail radius (about 100 m) plus LOD to about 1 km | 3 GB |
+| World in VRAM at the full-detail radius (about 100 m) plus LOD to about 1 km: live bytes against the reserved budget | 3 GB |
 | World in RAM (resident chunks, edit persistence for paged-out chunks) | 4 GB |
 | Everything else in VRAM (frame targets, history, entities, upscaler) | 1.5 GB |
 
@@ -193,9 +193,10 @@ unbounded cave seed 1, r_full 16, r_lod 24, h 1, 15 workers, RTX 3080 Laptop GPU
 
 - **World VRAM:** the mirror peaked at 1 672 823 572 and 1 692 743 692 B by live accounting
   (`GpuWorld::mirror_bytes`) and at 2 431 425 836 B allocated (`GpuWorld::allocated_bytes`,
-  both runs), against the 3 GB line. The budget is read on allocated bytes: buffers grow by
-  half again and never shrink (ADR-0004 Outcome). At full residency, 1 603 820 012 B live and
-  1 675 304 748 B allocated.
+  both runs), against the 3 GB line, then read on allocated bytes (buffers grew by half
+  again and never shrank). At full residency, 1 603 820 012 B live and 1 675 304 748 B
+  allocated. Since Plan 0017 (ADR-0013) the line is read on live bytes against the reserved
+  budget; the readings below replace these allocated figures.
 - **World RAM:** resident chunks account for 3 242 091 312 and 3 239 741 232 B at peak (slot
   arrays, `Full` bricks and mips), and persisted RAM for 233 616 B. The process peak RSS
   (`VmHWM`, the whole fly-through, dev reference) reads 3 869 564 928 and 3 873 890 304 B,
@@ -214,6 +215,40 @@ allocated, over the 3 GB line, against Plan 0002's 1 675 304 748 B allocated in 
 run then stopped in its outbound flight on `wgpu error: Out of Memory` on the 8 GiB card, so
 no peak was read. A recorded miss: ADR-0011 keeps contour planes, and fitting this footprint
 under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2).
+
+**The reserved budget (dev reference, Plan 0017 Phase 4, ef37395, headless `flythrough
+--autopilot --headless`, unbounded cave seed 1, h 1, 15 workers, RTX 3080 Laptop GPU, Ryzen 9
+5900HS, exclusive perf lock, 1-minute load 10.6 to 23.2 from other builds on the box, two runs
+each).** The mirror reserves its pool, masks and records once at startup (`--mirror-budget`,
+default 3072 MiB) and never reallocates; `allocated_bytes` is the budget rounded down to whole
+pages and records. Records are reserved for the residency's ball over 0.7 (93 239 at 16/24,
+244 659 136 B; 72 690 at 14/22) instead of the window cube. Pressure is the larger of pool-slot
+and record occupancy; the fly-through lowers `r_full` a chunk after 30 frames above 0.9 and
+restores it after 300 frames under 0.7, down to 6. No run stopped on out-of-memory; every
+return hash matched.
+
+| run | split (slots, records) | full residency live | flight peak live / budget | peak pressure (slots, records) | radius changes, final r_full | syncs past the reservation | reserve, first frame |
+|---|---|---|---|---|---|---|---|
+| 16/24 face | 5 095 424, 93 239 | 1 786 641 644 B, 0.620 | 0.5844, 0.5667 | 0.6473 (0.5803, 0.6473); 0.6200 (0.5643, 0.6200) | none, 16 | 0, 0 | 83.1, 87.1 ms; 2669 (cold), 554 ms |
+| 16/24 contour | 5 095 424, 93 239 | 2 864 309 692 B at r_full 13, 0.911 | 0.8894, 0.8894 | 0.9114 (0.9114, 0.6358); 0.9114 (0.9114, 0.6197) | 5 each (16 to 12, back to 13), 13 | 548, 113 | 98.6, 109.9 ms; 559, 797 ms |
+| 14/22 face | 5 185 536, 72 690 | 1 312 177 076 B, 0.612 | 0.4339, 0.4179 | 0.6469 (0.4203, 0.6469); 0.6118 (0.4063, 0.6118) | none, 14 | 0, 0 | 82.2, 97.9 ms; 564, 1105 ms |
+| 14/22 contour | 5 185 536, 72 690 | 2 607 896 708 B, 0.822 | 0.9220, 0.9105 | 0.9455 (0.9455, 0.6284); 0.9345 (0.9345, 0.6327) | 3 (to 12, back to 13), 7 (to 10, back to 13); 13 | 22, 89 | 80.8, 92.9 ms; 516, 2135 ms (device 1924 ms) |
+
+Contour fits the 3 GB line at both radii only by the rule: at 16/24 it settles at r_full 13
+before full residency (11 513 full, 46 264 LOD-only chunks), at 14/22 it dips to 12 or 10 in
+the flight and returns to 13. With attribute pages the pool runs out while slot occupancy
+reads 0.91 to 0.95, below 1.0: those syncs fail before writing, leave their chunks queued and
+retry (the "syncs past the reservation" column), and the rule's next decrease clears them. A
+recorded finding, not a miss of the line: live bytes peak at 2.97 GB under 3 GB.
+
+**The pressure rule's gate (Plan 0017 Phase 3, same machine and flags, r_full 16, r_lod 24,
+no `--look`, `--mirror-budget 1930`: 3 043 328 slots and 93 239 records, 2 021 964 224 B,
+reserved in 63.0 and 70.7 ms).** Run 1 (06d1f17, load 24.1): `r_full` 16 to 15 to 14 at
+pressure 0.920 right after full residency, back to 15 at 0.676 in the flight; run 2 (ef37395,
+load 18.3): 16 to 15 at 0.920, back to 16 at 0.688. Both: 0 syncs past the reservation, peak
+pressure 0.9197 (slots 0.9197, records 0.6227 in run 2), peak live / budget 0.8836, return hash
+match, `r_full` never under 14. At 3072 MiB the same flight makes no change (peak pressure
+0.6363 and 0.6473, 0.6200).
 
 **Brick-array pool (Plan 0014).** The pool adds at most 8 MiB per world (`World::BRICK_ARRAY_POOL_CAP` 8192 arrays x 1 KiB); the fly-through holds a 4096-array reserve (2326 KiB pooled after the `B` bench, 5850218, dev reference).
 
@@ -400,6 +435,13 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   and at 12 134 and 11 697 ms at the fix-pass commit (076b1c4). The close review's cold run
   (ffc73e8) read device ready 1968 ms and first frame 2075 ms. These runs create no window or
   surface, so a windowed first frame adds that cost.
+  **Reading (Plan 0017, ef37395 and 3b9ea25, streaming seed 1 headless on the RTX 3080 Laptop
+  GPU, exclusive perf lock):** the mirror's one reservation at startup takes 63.0 to 109.9 ms
+  for 1930 to 3072 MiB (Phase 1's guess was under 50 ms; a probe put `create_buffer` near
+  18 ms per GiB, so the time follows the budget). First frame 516 to 1105 ms warm under
+  1-minute load 10.6 to 23.2 from other builds (2135 and 2669 ms with a cold device); Phase 1
+  read 414 to 513 ms at load 9.6 to 11.0 beside 367 and 375 ms on the base commit d11d0cb.
+  No quiet-box reading: every lane was building during these runs.
   **Level-size first sync after narrowing (Plan 0002 Phases 5 and 8, RTX 3080 Laptop GPU):**
   497 to 517 ms, up from Plan 0001's 349 to 357 ms for the `u16` mirror; the palette scan
   before indices are written. Accepted at the Plan 0002 close (owner, 2026-10-16); TTFF stays

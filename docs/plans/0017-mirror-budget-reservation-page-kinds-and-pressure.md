@@ -330,7 +330,7 @@ The split: `records = min(record_chunks (else window capacity) x RECORD_BYTES, b
 | 1: One reservation, no second buffer | dev | done | 3b9ea25 |
 | 2: Empty pages change kind | dev | done | cd90f89 |
 | 3: Pressure, and the streamer follows it | dev | done (stopped at fc98db0 on the 1024 MiB done-when; amended at 8f41540) | 06d1f17 |
-| 4: Readings and the budget line | dev | not started | |
+| 4: Readings and the budget line | dev | done | committed with this row |
 
 ### Notes
 
@@ -353,6 +353,8 @@ each. Empty is fine.)_
 - Phase 3: the HUD's pressure row appears only with a reading (`HudStats::pressure`), so `HudStats::fixed()` and the HUD golden are unchanged. (fc98db0)
 - Phase 3 (amended): `apps/flythrough/tests/level_mirror.rs`, outside the amended Files touched, gained `record_chunks: None` in its one `MirrorConfig` literal so it compiles. `flythrough::PRESSURE_LOW` and `stream_record_chunks` live in `lib.rs` (the count is `ceil(ball x 10 / 7)` in integers). `settle` in `tests/stream.rs` replaces `wait_idle` in the set_radii test so every poll's resident count is checked. (Phase 3 commit)
 - Between Phases 3 and 4, a commit outside any phase row: the autopilot's report line adds the reserved slots and records and the peak of each pressure term, which Phase 4's done-when reads; `main.rs` only. (the commit after 06d1f17)
+- Phase 4: with `--look contour` at the default 3072 MiB, every run failed some syncs past the reservation (548, 113 at 16/24; 22, 89 at 14/22) while slot occupancy read 0.911 to 0.946: the pool ran out of pages below 1.0. Those syncs wrote nothing, their chunks stayed queued, the rule's next decrease cleared them, and every flight finished with a matching hash. `pool_need` counts neither pages that empty during the same sync nor the free single slots of the other kind, so with two kinds it reports need before the slots are all used. Not acted on. (Phase 4 commit)
+- Phase 4: no first-frame reading on a quiet box: the 1-minute load stayed between 10.6 and 23.2 through every run because other lanes were building. (Phase 4 commit)
 - The resume notes the Amendment cites were deleted when Phase 3 landed; they read at fc98db0.
 - Phase 3 (amended): the first 1930 MiB run also raised `r_full` once, 14 to 15 at pressure 0.676, 15 s into the flight; it ended at 15. (Phase 3 commit)
 
