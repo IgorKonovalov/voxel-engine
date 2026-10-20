@@ -1,6 +1,6 @@
 # 0024: Direct light that holds in the dark: a hit buffer, emissive voxels as light samples, one shadow ray per pixel, and an SVGF-family denoiser whose history dies where the world was edited
 
-> **Status:** draft
+> **Status:** approved (2026-10-20)
 > **Created:** 2026-10-20
 > **Milestone:** M2 in `docs/roadmap.md` (the lighting plan; direct light and the denoiser only,
 > see "What this plan does NOT do")

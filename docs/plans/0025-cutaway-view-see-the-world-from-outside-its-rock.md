@@ -1,6 +1,6 @@
 # 0025: The cutaway view: a camera in rock or outside the world sees through the hull to the first cavern's walls
 
-> **Status:** draft
+> **Status:** approved (2026-10-20)
 > **Created:** 2026-10-20
 > **Milestone:** M7 in `docs/roadmap.md` (debug views); a tool, not a frame stage
 > **Related ADRs:** none (the rejected options are product choices for a debug view, named
