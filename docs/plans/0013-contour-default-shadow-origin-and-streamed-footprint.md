@@ -389,7 +389,7 @@ The baseline GPU is not on hand; every figure is a dev-reference reading and say
 | 4: The owner's footprint call | human | done: D at 14,24, chosen 2026-10-17 (`docs/decisions-pending.md` D1): lossless, no layout change to undo later; the final surface-only form comes with ADR-0012's mirror-slot plan; ADR-0012 accepted 2026-10-17; withdrawn 2026-10-20 at the Phase 5 stop for option (c), the footprint to ADR-0012's mirror-slot plan (amendment 688b3ed) | |
 | 5: The chosen footprint: retire the precision emulation, no new residency | dev | done: `AttribQuant`, `set_quant`, `set_attrib_quant`, `params.quant` and `--attrib-quant` removed (the grep finds nothing; `--attrib-quant none` exits 2 with `unknown argument --attrib-quant`); `RESIDENCY` and `STREAM_MIRROR_BUDGET` unchanged; contour 7.38 degrees, 32 px on llvmpipe; goldens byte for byte; `--level --headless --seed 1 --look contour --frames 3` reads 680 491 136 B live (RTX 3080 Laptop GPU, perf lock, load 3.47) | ffe07ee |
 | 6: Rock detail on screen | human | done, ahead of Phase 5: `[4.0, 0.1]`; of `--rock-detail 4,S` at S = 0.1, 0.15, 0.2 and 0.3 (today's default) on `--level --seed 1 --look contour --detail`, the owner judged 0.1 best (2026-10-18) | |
-| 7: Contour plus detail as the default, and the streamed readings | dev | done: `ROCK_DETAIL` `[4.0, 0.1]`; no flag prints `look contour, detail on (rock scale 4, strength 0.1), view shaded`; `--look plain` prints `look face, detail off, view shaded` and the level reads 232 436 992 B live; two default autopilot runs: hash match, no wgpu error, peak live 2 864 318 452 B, 0.8894 of the budget, `r_full` lowest 12, final 13, longest deferral streak 0 and 3, no empty sync; attribute pass GPU p99 4.30 to 4.31 ms, CPU p99 138.7 to 146.4 ms; 1080p march level 1.705 to 1.780 ms, streamed spawn 3.502 to 3.970 ms (diagnostic, load 11 to 13); readings in `nfr.md` §2 and §3 | committed with this row |
+| 7: Contour plus detail as the default, and the streamed readings | dev | done: `ROCK_DETAIL` `[4.0, 0.1]`; no flag prints `look contour, detail on (rock scale 4, strength 0.1), view shaded`; `--look plain` prints `look face, detail off, view shaded` and the level reads 232 436 992 B live; two default autopilot runs: hash match, no wgpu error, peak live 2 864 318 452 B, 0.8894 of the budget, `r_full` lowest 12, final 13, longest deferral streak 0 and 3, no empty sync; attribute pass GPU p99 4.30 to 4.31 ms, CPU p99 138.7 to 146.4 ms; 1080p march level 1.705 to 1.780 ms, streamed spawn 3.502 to 3.970 ms (diagnostic, load 11 to 13); readings in `nfr.md` §2 and §3 | 33b8fd6 |
 
 ### Footprint candidates (Phase 3)
 
@@ -471,11 +471,46 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** the shadow ray of a plane hit leaves along the plane normal, and the speck
+  test gates it (82b19b8); `AttribPass` keeps its uniform, work buffer and bind group, and the
+  shell recompute is tested (9ffa2a5); the plane-voxel census `world_budget --surface` and
+  the Phase 3 table (d75a0af); main merged (af4dc02); the precision emulation retired (ffe07ee);
+  contour with detail as the fly-through's default, rock `[4.0, 0.1]`, `--look plain`, and
+  the attribute pass timed under the autopilot (33b8fd6). No footprint layout or residency
+  change (amendment 688b3ed).
+- **Public API changed:** `vxe-render`: `AttribPass::{buffer_builds, work_capacity}`;
+  `AttribPass::encode` takes `&mut self` and a `&wgpu::Queue`; the GPU chunk table is created
+  filled with `ABSENT`. `AttribQuant` and `GpuWorld::set_attrib_quant` came and went on this
+  branch. `flythrough` lib: `ROCK_DETAIL` is `[4.0, 0.1]`. Fly-through CLI: contour, detail
+  and attribute pages by default, `--look plain`; `--detail` matters only under `plain`;
+  `--rock-detail` is refused under `plain`.
+- **Budget readings:** all on the NVIDIA GeForce RTX 3080 Laptop GPU and Ryzen 9 5900HS, under
+  the exclusive perf lock.
+  - Phase 5, the level with contour (`--level --headless --seed 1 --look contour --frames 3`,
+    ffe07ee's tree, load 3.47): 680 491 136 B live, 797 779 456 B reserved.
+  - Phase 7, the default autopilot (`--autopilot --headless --seed 1`, 33b8fd6's tree, load 3.62
+    to 8.04 for run 1 and 8.04 to 11.07 for run 2): 3 220 387 776 B reserved. Both runs went
+    `r_full` 16 to 15 to 14 to 13 (ticks 469, 499, 664), then 13 to 12 (tick 905), then back to
+    13 (ticks 2444 and 2088), so lowest 12 and final 13. Peak live 2 864 318 452 B, 0.8894 of
+    the budget; peak pressure 0.9114 (records 0.6513 and 0.6495). Deferrals: none in run 1;
+    run 2 had 10 syncs, 5032 chunks, at 0.755 to 0.763, none empty, longest streak 3. Both
+    returned a hash match with no wgpu error.
+  - Attribute pass over those flights: GPU p50 2.045 to 2.155, p99 4.303 to 4.312, max 4.760
+    to 4.815 ms; `update_attrs` CPU p50 3.689 to 3.834, p99 138.7 to 146.4, max 233.3 to
+    277.5 ms; work list p50 3584 to 4446, p99 5468 to 5469, max 7948 to 8051 bricks.
+  - 1080p march, default look, median of the last 30 of 300 frames, three runs, load 11.1 to
+    13.4 (diagnostic): level spawn 1.705, 1.760, 1.780 ms; streamed spawn 3.502, 3.547,
+    3.970 ms.
+  - `--look plain --level`: 232 436 992 B live, prints `look face, detail off, view shaded`.
+- **Gate at the tip (33b8fd6):** `scripts/build-guests.sh` exit 0; `cargo nextest run
+  --workspace --test-threads 4` exit 0, 461 run, 461 passed, 3 skipped (perf lock, load 12.88
+  at start); `cargo nextest run -p flythrough --features wasm` 103 passed, 2 skipped;
+  `cargo test --workspace --doc` 7 passed; both clippy runs (`-D warnings`), `cargo fmt --all
+  --check`, `cargo deny check`, doc links, comment hygiene, index rows (and self-test) and the
+  hook bite tests exit 0. The merge (af4dc02) passed the same gate (461 and 103 passed).
+- **Outstanding `human` phases:** none. The windowed look of the new default is the owner's:
+  `cargo run --release -p flythrough`, `cargo run --release -p flythrough -- --level` and
+  `cargo run --release -p flythrough -- --look plain`.
 
 ## Followups
 
