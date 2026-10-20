@@ -197,7 +197,9 @@ None. The poll drains a handful of events per frame; the HUD row costs nothing m
   and `R2` on two fresh runs and asserts the server applied the same `EditResult` for both.
 - Phase 2: `R2`/`L2` dig and fill on a press edge with hysteresis (press at 0.5 pull, release
   under 0.3), held in `Run`; the D-pad adds one scroll line per press to the scroll delta.
-- Phase 2: Square (West) is not wired: Plan 0025's cutaway (`X`) is not on this branch.
+- Phase 2: Square (West) was left unwired in 8af8501 while Plan 0025's cutaway was not on the
+  branch; after the merge of main (e5724a4) it cycles the cutaway as `X` does, in the commit
+  after the merge, with a test driving `X` and `West` through `handle_input`.
 - Phase 2: the HUD's pad row is `HudStats::pad: Option<PadRow>`, `None` without a pad source, so
   `HudStats::fixed()` (the HUD golden's fixture) keeps its twelve rows; the main.rs allocation
   test sets a pad row and now counts 13 rows.
@@ -219,15 +221,14 @@ None. The poll drains a handful of events per frame; the HUD row costs nothing m
   `HudStats::pad`. New workspace dependency `gilrs = "=0.11.2"` (fly-through only); CI's apt
   list adds `libudev-dev`.
 - **Budget readings:** none (no `nfr.md` figure touched).
-- **Gate at the tip:** run on the Phase 2 tree before its commit, Linux dev box (RTX 3080
-  laptop), CARGO_BUILD_JOBS=4, under the 6G memory scope. `cargo build` exit 0;
-  `cargo nextest run` (default members, exclusive perf lock, 1-min load 4.85 at start) exit 0,
-  453 passed, 3 skipped; `cargo test --doc` exit 0, 10 doctest binaries ok;
-  `cargo clippy --workspace --all-targets -- -D warnings` exit 0; `cargo fmt --all --check`
-  exit 0; `cargo deny check` exit 0 (advisories, bans, licenses, sources ok);
-  `check-comment-hygiene`, `check-doc-links`, `check-index-rows` OK; hook bite tests 59 pass,
-  0 fail. The only change after that gate run is the one-line comment reword in `pad.rs`'s
-  test. The Windows CI arm (gilrs's `wgi` backend) was not built here.
+- **Gate at the tip:** run on the tree of the Square commit (after the merge of main at
+  e5724a4, v0.20.0), Linux dev box (RTX 3080 laptop), CARGO_BUILD_JOBS=4, under the 6G memory
+  scope. `cargo build` exit 0; `cargo nextest run` (default members, exclusive perf lock, 1-min
+  load 7.15 at start) exit 0, 460 passed, 4 skipped; `cargo test --doc` exit 0, 10 doctest
+  binaries ok; `cargo clippy --workspace --all-targets -- -D warnings` exit 0;
+  `cargo fmt --all --check` exit 0; `cargo deny check` exit 0 (advisories, bans, licenses,
+  sources ok); `check-comment-hygiene`, `check-doc-links`, `check-index-rows` OK; hook bite
+  tests 59 pass, 0 fail. The Windows CI arm (gilrs's `wgi` backend) was not built here.
 - **Outstanding `human` phases:** none. The owner's sofa check with the DualSense (command in
   Notes) has not been run.
 

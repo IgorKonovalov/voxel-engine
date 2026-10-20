@@ -71,7 +71,7 @@
 //! as the keys and mouse do: the left stick moves at a speed set by its deflection, the right
 //! stick looks, `L1`/`R1` sink and rise, `R3` latches boost, and walking `South` jumps; `R2`
 //! digs, `L2` fills, the D-pad's up and down step the dig radius, `North` toggles walking,
-//! `East` knocks and `Start` toggles the stats HUD. A machine where `gilrs` cannot start runs
+//! `West` cycles the cutaway, `East` knocks and `Start` toggles the stats HUD. A machine where `gilrs` cannot start runs
 //! without a pad. The startup lines name the pad and its power or print `pad: none`; a pad
 //! plugged in later becomes the active one, and each connect and disconnect prints a line. The
 //! HUD shows the active pad's row.
@@ -1304,7 +1304,7 @@ struct Run {
     fly: Fly,
     light: LightParams,
     look: LookParams,
-    /// Sets `look.cutaway` each frame of interactive flight; `X` cycles it.
+    /// Sets `look.cutaway` each frame of interactive flight; `X` or the pad's `West` cycles it.
     cutaway: CutawayMode,
     dig_radius: i64,
     /// Scroll banked toward the next dig-radius step.
@@ -2271,7 +2271,7 @@ impl Run {
     /// The keys, buttons and pad buttons of interactive flight; the autopilot takes none of
     /// them, so a stray click cannot change the world it measures. On a pad `R2` digs, `L2`
     /// fills, the D-pad's up and down step the dig radius as a scroll line does, `North`
-    /// toggles walking and `East` knocks.
+    /// toggles walking, `West` cycles the cutaway as `X` does, and `East` knocks.
     fn handle_input(&mut self, input: &Input) {
         if input.pressed(KeyCode::KeyL) {
             self.light.shadows = !self.light.shadows;
@@ -2319,7 +2319,7 @@ impl Run {
             self.look.normal_mode = self.look.normal_mode.next(contour);
             println!("{}", look_line(&self.look, self.rock_detail()));
         }
-        if input.pressed(KeyCode::KeyX) {
+        if input.pressed(KeyCode::KeyX) || input.pad_pressed(PadButton::West) {
             self.cutaway = self.cutaway.next();
             println!("cutaway {}", self.cutaway.name());
         }
@@ -3683,6 +3683,28 @@ mod tests {
         input.pad_down(PadButton::DpadDown);
         run.handle_input(&input);
         assert_eq!(run.dig_radius, DIG_RADIUS + DIG_STEP);
+    }
+
+    /// `X` and the pad's `West` (Square) cycle the cutaway alike: auto, on, off, auto.
+    #[test]
+    fn x_and_west_cycle_the_cutaway() {
+        for press in [
+            (|i: &mut Input| i.key_down(KeyCode::KeyX)) as fn(&mut Input),
+            |i: &mut Input| i.pad_down(PadButton::West),
+        ] {
+            let mut run = bare_run(carved_rock());
+            let mut input = Input::default();
+            let mut seen = Vec::new();
+            for _ in 0..3 {
+                press(&mut input);
+                run.handle_input(&input);
+                seen.push(run.cutaway);
+                input.end_frame();
+                input.key_up(KeyCode::KeyX);
+                input.pad_up(PadButton::West);
+            }
+            assert_eq!(seen, [CutawayMode::On, CutawayMode::Off, CutawayMode::Auto]);
+        }
     }
 
     #[test]
