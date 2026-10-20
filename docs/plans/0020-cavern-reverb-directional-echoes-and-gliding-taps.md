@@ -530,7 +530,7 @@ re-read in Phase 7.
 | 3: The room fan | dev | done. 12 m cube from the centre: V 1702.2, S 854.0, mfp 7.973, alpha 0.13296, T60 2.249 s, energy 0.3838; from (8, 6.3, 5.8) m: V 1738.0, S 878.3, mfp 7.915, T60 2.233 s. 4 m cube 1.7 m off centre: mfp 2.613 (2.667). Open air: energy 3.27e-5, alpha 0.98. Cadence test: no SetRoom in calls 1 to 7, one at 8, none in 20 still calls, one within 8 after 1.1 m, a new fan at block 94. Seed-1 level spawn (acoustics bench): V 220.8, S 273.2, mfp 3.233, T60 0.912 s, energy 1.200. `bench acoustics` (dev box, release, exclusive perf lock, load average 5.56): 0.9517 ms; with `trace_materials` for the fan (first build) 1.18 to 1.19 ms against 0.81 to 0.89 ms with the fan disabled (load average 14.2). | 2fbd7b9 |
 | 4: The tail | dev | done. Code first at d1fd30f (stopped there on the unamended room-step bound: K 2.0031 and 1.7398 against twice the held render's 0.9999). Unit impulse at 1 m, room (2.26 s, 8 m, 0.379): Schroeder T60 2.039 s; tail energy from frame 128 0.3708 (-0.10 dB); echo density 100 ms 0.758 (left) 0.640 (right), 300 ms 1.067 and 1.014. Cubes 4, 12, 36 m: fitted T60 0.689, 2.030, 5.968 s (fan 0.752, 2.249, 6.748 s); direct peak equal with and without the tail; line sums 5468, 16 320, 48 820 against floors 5416, 16 194, 48 584. Room step: largest line move 5.120 frames per block, every line on target 4 s after; largest K_w / (1.25 C_w) 0.7616 (K_w / C_w 0.631 to 0.906); line 15 jumped 34.42; held render K 0.9999. Allocation count 0. Walk click index 2.326 with the tail live. `bench mixer` (dev box, release, exclusive perf lock, load average 5.81, d1fd30f): static 0.4955 ms, turning 0.8497 ms; tail lines 323 584 B. | 9167a05 |
 | 5: A streamed voice and the microphone | dev | done. A writer thread in 480-frame pieces against the same tone from a `Sound`: largest difference from the second block 0 (bit-identical). A 2400-frame underrun from frame 24 064: silent from the HRIR's end to the resuming block; left block RMS into the gap 0.13892, 0.04571, 0, out of it 0 then 0.12097. `direct: false`: all air renders every sample 0.0; with the left wall nothing before the first echo (frame 1494) and energy 11.91 after. Allocation count 0 with a stream, its taps and a completed room. `Input::open` not run (needs a device; Phase 7 check 5). | d7eb1f8 |
-| 6: The fly-through: rooms, toggles, the microphone and the readings | dev | done. Headless, no device, release, exclusive perf lock (load average 19.6): `--room 12` room line mfp 7.999 m, T60 2.257 s, energy -4.1 dB; `--room 36` T60 6.770 s (mfp 23.998); `--room 4` T60 0.752 s (mfp 2.666); `--seed 1 --room-line` V 7420.6 m3, S 1845.7 m2, mfp 16.082 m, T60 4.537 s, energy -7.5 dB. `Y` and `--mic` wired; `--mic` not run (device; Phase 7). Readings into `nfr.md` section 9 (see Close triggers). | committed with this row |
+| 6: The fly-through: rooms, toggles, the microphone and the readings | dev | done. Headless, no device, release, exclusive perf lock (load average 19.6): `--room 12` room line mfp 7.999 m, T60 2.257 s, energy -4.1 dB; `--room 36` T60 6.770 s (mfp 23.998); `--room 4` T60 0.752 s (mfp 2.666); `--seed 1 --room-line` V 7420.6 m3, S 1845.7 m2, mfp 16.082 m, T60 4.537 s, energy -7.5 dB. `Y` and `--mic` wired; `--mic` not run (device; Phase 7). Readings into `nfr.md` section 9 (see Close triggers). | 20acb91 |
 | 7: Listening checks | human | not started | |
 
 ### Notes
@@ -558,19 +558,53 @@ re-read in Phase 7.
 - A tap's gain follows the one-pole at block edges and moves linearly within a block (one
   multiply per sample instead of a dependent chain); a silent slot takes a new delay at once.
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
 
 ### Close triggers
 
-_(Facts for the architect. No recommendations, and no suggested version bump.)_
+- **What shipped:** feature.
+- **Public API changed:** `vxe-audio`:
+  - Changed:
+    - `AcousticTargets`: `tap_count` is gone; `taps` is slot-indexed; `send` is new.
+    - `reflections()` returns `[Option<Reflection>; 16]`.
+    - `taps()` returns `[Tap; 16]`.
+    - `Reflection.keep` is `(1 - A) ^ 0.2`.
+    - `PlayParams.direct` is new.
+    - `Command` gained `SetRoom` and `PlayStream` and lost `Clone`.
+    - `AudioError` gained `NoInputDevice`, and the `Format` message changed.
+  - New:
+    - `reflection_keep`, `REFLECTION_SKIN_METRES`.
+    - `TAP_SLEW_FRAMES_PER_FRAME`, `TAP_JUMP_FRAMES`, `TAP_SILENT`.
+    - `room_directions`, `RoomEstimate`, `RoomTargets`.
+    - `ROOM_RAYS`, `ROOM_RAYS_PER_UPDATE`, `ROOM_COS_FLOOR`, `ROOM_MOVE_METRES`, `ROOM_INTERVAL_SECONDS`, `MAX_T60_SECONDS`.
+    - `Acoustics::{set_reverb, reverb_on, room, last_room_rays}`.
+    - `ReverbSettings`, `ReverbLine`, `REVERB_LINES`, `REVERB_MAX_DELAY_FRAMES`, `REVERB_MIN_DELAY_FRAMES`, `REVERB_DELAY_SLEW_FRAMES_PER_FRAME`.
+    - `Mixer::{set_reverb_settings, reverb_settings, reverb_bytes}`.
+    - `Stream`, `StreamWriter`, `StreamReader`, `StreamMonitor`, `STREAM_CAPACITY_FRAMES`.
+    - `Input`.
+  - `#[doc(hidden)]`: `Mixer::{tap_slots, reverb_lines, jump_reverb_line}`, `TapSlot`.
+  - Fly-through flags: `--room`, `--room-line`, `--absorption`, `--mic`, and the `Y` key.
+- **Budget readings** (dev box, Ryzen 9 5900HS, release, exclusive perf lock):
+  - **Mixer, 32 voices with buses and tail** (code of d7eb1f8; load average 1.87, with other processes above 7 % CPU): static 0.5078 ms, turning 0.8786 ms.
+  - **Mixer, earlier readings:** 0.5500 and 0.8948 ms at 4dccd0f (buses only, load average 6.10); 0.4955 and 0.8497 ms at d1fd30f (load average 5.81).
+  - **`Acoustics::update`** with the fan: 0.8388 ms (load average 2.69 to 2.98) and 0.9517 ms at 2fbd7b9 (load average 5.56).
+  - **Audio RAM:**
+    - Tail lines 323 584 B.
+    - Buses 24 512 B.
+    - Tap state 8 192 B for 64 voices.
+    - Stream ring 19 200 B.
+- **Gate at the tip (20acb91):**
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+  | Command | Result |
+  |---|---|
+  | `cargo build` | exit 0 |
+  | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
+  | `cargo fmt --all --check` | exit 0 |
+  | `cargo test --doc --workspace` | exit 0; 7 passed, 1 ignored |
+  | `cargo deny check` | exit 0 |
+  | `scripts/check-comment-hygiene.mjs`, `check-doc-links.mjs`, `check-index-rows.mjs` | all OK |
+  | `cargo nextest run --workspace` (after `scripts/build-guests.sh`; exclusive perf lock, load average 3.48) | 408 run, 408 passed, 4 skipped |
+
+- **Outstanding `human` phases:** Phase 7 (listening checks 1 to 6, including the `--mic` device line and the 60 s with no `stream errors` line).
 
 ## Followups
 
