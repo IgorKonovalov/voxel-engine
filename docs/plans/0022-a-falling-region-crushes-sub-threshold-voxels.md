@@ -491,8 +491,8 @@ pub struct PileResult {
 | 1: The repro, committed, pinning the bug | dev | done | 3a27fe0 |
 | 2: The yielding drop and the rubble pile in `vxe-world` | dev | done | 18702e8 |
 | 3: Op kinds 5 and 6 on the wire, through the server and in the log | dev | done | dfe3fc9 |
-| 4: `DigLogic` tells a refusal, a wedge and a landing apart | dev | done | committed with this row |
-| 5: Readings and the budget lines | dev | not started | |
+| 4: `DigLogic` tells a refusal, a wedge and a landing apart | dev | done | 120e94f |
+| 5: Readings and the budget lines | dev | done | committed with this row |
 | 6: The owner's windowed check | human | not started | |
 
 Phase 1 observations:
@@ -552,6 +552,27 @@ Phase 4 observations:
   its nine drops log as kind 5, its op-kind counts are `[5, 1, 9, 1, 0]` (no pile). The
   `--logic wasm` session equals the native one byte for byte (guests rebuilt).
 
+Phase 5 observations:
+- Two perf commits before the readings, both in `crates/vxe-world/src/collapse.rs`: c6b56c4
+  (crush walks only the cells the gap scan saw yield; a uniform solid brick skips the count
+  cache; `run_bottoms` is an iterator): slab through the sliver 537 to 129-169 µs, yielding
+  cube 29.7 to 7.8-10.8 ms (exclusive perf lock, load about 20). 7e42bbf (the gap scan walks
+  runs with the inline loop again): plain slab drop 87-88 µs against the pre-plan 89-90 µs
+  (exclusive perf lock, load about 8).
+- `cargo bench -p vxe-world --bench collapse`, criterion medians, AMD Ryzen 9 5900HS, Linux,
+  at 7e42bbf, exclusive perf lock, three runs at 1-minute load 2.20, 6.84 and 5.81: slab
+  through the sliver 91.5 / 94.7 / 92.9 µs; yielding cube (yield 64) 7.44 / 10.56 / 7.47 ms;
+  pile 36.0 / 37.9 / 35.4 µs; `find_unsupported` 337 / 393 / 395 µs; slab by 32 77.7 / 79.1 /
+  82.1 µs; by 10 57.3 / 57.2 / 57.4 µs; `remove_region` 153.6 / 159.7 / 156.8 µs; cube by 64
+  7.49 / 8.69 / 7.45 ms; by 60 8.50 / 9.26 / 8.55 ms; by 8 5.57 / 6.08 / 6.42 ms.
+- The pre-plan build (ec99160) in the same lock hold, alternated with the last two runs above,
+  load 9.05 and 4.48: `find_unsupported` 393 / 393 µs; slab by 32 84.1 / 88.7 µs; by 10 61.7 /
+  67.9 µs; `remove_region` 153.5 / 161.3 µs; cube by 64 10.16 / 11.01 ms; by 60 11.47 / 13.14
+  ms; by 8 8.64 / 10.32 ms.
+- `docs/nfr.md` §4 carries the yielding drop and pile proposals and readings and the kind-5 and
+  kind-6 entry sizes; §6's collapse course line carries `0xd223_d848_c8fc_ca0f`. No session
+  hash moved, so no other §6 line changed.
+
 ### Notes
 
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
@@ -588,11 +609,26 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature
+- **Public API changed:** `vxe-world`: `World::drop_region_through`,
+  `World::drop_region_through_decoded`, `World::pile_rubble`, `World::pile_rubble_decoded`,
+  `PileResult` (with `edit_result`), `DropResult::crushed`, `Op::Drop { yield_below }`,
+  `Op::Pile`, `OpResult::Pile`, `OP_DROP_THROUGH` (5), `OP_PILE` (6),
+  `WireError::NonCanonical { at }`. `flythrough-logic`: `PILE_VERB`, `YIELD_BELOW`,
+  `STUCK_MAX`, `region_line`, `wedged_line`, `parse_wedged_line`, `refused_line`.
+- **Budget readings:** §4 collapse cost, AMD Ryzen 9 5900HS, Linux, criterion medians,
+  exclusive perf lock, 7e42bbf, 1-minute load 2.2 to 6.8: `drop_region_through` slab through a
+  sliver 91.5 to 94.7 µs (proposal 100 µs); cube at yield 64 7.4 to 10.6 ms (proposal 20 ms);
+  `pile_rubble` 35.4 to 37.9 µs (proposal 200 µs); older arms within the pre-plan build's
+  range or under it in the same lock hold (Phase 5 observations). §4 logs: kind 5 `23 + 12n`,
+  kind 6 `27 + 12n`, asserted in `crates/vxe-world/tests/log.rs`. §6: collapse course
+  `0x3178_0a15_61c1_3041` to `0xd223_d848_c8fc_ca0f`, blessed on Linux, Windows unconfirmed.
+- **Gate at the tip (7e42bbf code, this commit adds docs only):** `cargo build` 0;
+  `cargo nextest run` (exclusive perf lock, load 17.5) 0, 449 passed, 3 skipped;
+  `cargo test --doc --workspace` 0, 7 passed; `cargo clippy --workspace --all-targets -- -D
+  warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` 0; `check-doc-links.mjs`,
+  `check-comment-hygiene.mjs`, `check-index-rows.mjs` 0.
+- **Outstanding `human` phases:** Phase 6, the owner's windowed check.
 
 ## Followups
 
