@@ -539,6 +539,7 @@ re-read in Phase 7.
 - Fix pass, nit (`main.rs` test doc comments), committed with this line: `collapse_is_off_under_save_and_replay` and `room_mic_and_absorption_parse` each carry their own doc comment.
 - Fix pass, nit (`reverb.rs` read comment), committed with this line: the comment states a read of at least 1 frame (a target is at least 32; `jump` clamps to 1) and what the read takes at 1.
 - Fix pass, nit (`mixer.rs` module doc lines 10 and 13 over 100 columns), committed with this line: rewrapped.
+- Fix pass, nit (`benches/mixer.rs` doc line 5 over 100 columns), committed with this line: rewrapped.
 
 - `tests/mixer.rs` and `benches/mixer.rs` (not in Phase 1's Files touched) changed
   mechanically for the removed `tap_count` (now `send`); no assertion changed.

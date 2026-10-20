@@ -1,9 +1,9 @@
 //! The mixer budget: one 256-frame block with 32 HRTF voices, each low-passed and carrying 16
 //! reflection taps into the 16 direction buses and a send into the late tail (a 12 m room's,
-//! 2.26 s), with the listener still (every voice and bus on
-//! one FIR pair) and turning (every voice and bus crossfading between two FIR pairs, the worst
-//! case). Prints the audio RAM the mixer and the pack hold. The `Acoustics::update` budget is the fly-through's `acoustics` bench, which
-//! owns the cave it probes.
+//! 2.26 s), with the listener still (every voice and bus on one FIR pair) and turning (every
+//! voice and bus crossfading between two FIR pairs, the worst case). Prints the audio RAM the
+//! mixer and the pack hold. The `Acoustics::update` budget is the fly-through's `acoustics`
+//! bench, which owns the cave it probes.
 
 use std::hint::black_box;
 
