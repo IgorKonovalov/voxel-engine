@@ -111,3 +111,15 @@ Added 2026-10-20, from Plan 0017 Phase 3 (its Amendment of that date):
 - **The streamed mirror reserves records for the residency sphere**, sized so the record term
   stays under the restore line while the streamer keeps its radius, instead of a record for
   every chunk of the window cube. A mirror given no record count keeps the cube.
+
+Added 2026-10-20, from Plan 0017's review fix pass (its second Amendment of that date):
+
+- **A sync writes what fits, nearest first, never part of a chunk.** It no longer fails
+  before writing anything for the whole selection. The Decision's "fails with `PoolTooLarge` or
+  `RecordsTooLarge` before writing anything" now holds only for a sync whose nearest chunk
+  does not fit and no demotion behind it does. Otherwise it uploads the nearest-first chunks
+  that fit, after crediting their own tier-change frees, plus any demotion that fits. It
+  defers the rest, which stay queued. With attribute pages the pool ran out one page short
+  above the 0.9 trigger, while about 9 % of its slots sat spare in plain pages. Rejecting
+  the whole selection then hid every edit until the rule's decrease landed. The
+  reservation, the page kinds and the rule stand.

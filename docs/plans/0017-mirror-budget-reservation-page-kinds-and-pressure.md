@@ -135,14 +135,83 @@ to about 0.855, between the two lines, so `r_full` rests at 14 after two decreas
 the rule acting; it is a reading, not a proof. Peak live over budget at 1930, without the
 rule, would be 1 881 891 684 / 2 023 751 680 = 0.930.
 
+## Amendment 2026-10-20 (second): a sync writes what fits, nearest first
+
+The review fix pass re-read contour at the default 3072 MiB after `pool_need` began crediting
+tier-change frees (Implementation log, Resume notes). Two of four runs still failed syncs: 9 at
+16/24 (longest run 6) and 20 at 14/22 (longest run 20). Every failure came above the trigger
+(0.908 and 0.906) and each was exactly one page short. About 9 % of slots were spare, but
+almost all were free single slots in plain pages that each still hold a live mip-brick, so
+the attribute pages that promotions need could not use them. A failed sync rejected the whole
+selection, nearest and dug chunks included, so the mirror showed no edit until the rule's
+decrease cleared it. The owner chose a partial sync over a page-occupancy pressure term. The
+rule, its thresholds, the record sizing and `pressure()` are unchanged.
+
+**The contract.** A sync writes what fits, nearest first, and never part of a chunk.
+`select` walks the pending set nearest the focus first, as now, and replays the fit as it
+walks (`pool_need`'s replay moves into it). Each chunk's own tier-change frees are credited
+before its own allocations, as `pool_need` does at 7112269. Each chunk's need is then checked
+against what is left, in slots of its kind, free pages and pages never handed out, and in
+records. The first chunk that does not fit is **deferred**, and so is every later
+chunk, with one exception: a **demotion** (a mirrored full chunk whose source is now LOD-only)
+still uploads if it fits on the replayed state. Demotions are the radius rule's lever, and a
+deferred chunk near the focus (a dug one) must not block the frees the rule asked for behind
+it. A deferred chunk is not counted against `sync_budget_bytes`, so the walk reaches the
+demotions behind it. A deferred chunk stays in the pending set with its dirty bits, and
+keeps its mirrored record of either tier: a deferred promotion does not drop its LOD record.
+Deferral is decided before any write. A chunk that turns wide during upload (ADR-0004's rare
+path) has its doubled need re-checked before its first slot is taken. If it no longer fits,
+it is deferred whole, with every non-demotion after it. No staged run of a deferred chunk is
+flushed.
+
+**What is a failure.** A sync that uploads at least one chunk returns `Ok`, with
+`SyncStats::deferred_chunks` counting the chunks it deferred. A sync that defers chunks and
+uploads none returns `PoolTooLarge` or `RecordsTooLarge` as before, writing nothing (an
+**empty sync**). This happens when the nearest selected chunk does not fit and no demotion
+behind it does. The old whole-selection rejection, a sync that wrote nothing although its
+nearest chunk fitted, cannot happen. An empty sync is still expected at a full pool. Once a
+partial sync has spent the last attribute spare, the next sync's nearest pending chunk is
+the same stuck edge promotion until the rule's decrease makes it stale. So the bar below is
+on how fast deferrals clear, not on zero empty syncs.
+
+**What the fly-through reports.** A **deferral streak** is consecutive syncs that each defer
+at least one chunk; empty syncs count toward it. At each such sync it notes the pressure and
+its two terms (the fix pass's recording, now keyed on deferral). It prints the first
+deferral's pool readings as now. The autopilot report prints:
+- the deferred-chunk total (summed over syncs, so a chunk deferred five times counts five);
+- the syncs with a deferral and the empty syncs among them;
+- the pressure and term ranges at deferral;
+- the longest deferral streak in syncs, a streak still open at the flight's end included.
+
+The fly-through syncs once per frame, so syncs are frames.
+
+**The bar, and N.** A deferral needs a full pool, and every reading put that above the 0.9
+trigger. From a streak's first sync, the rule lowers `r_full` after at most
+`PRESSURE_HIGH_FRAMES` = 30 frames above 0.9 (fewer if pressure crossed earlier). With h = 1
+that first decrease can demote nothing (the first Amendment's 16 to 15, whose keep radius
+still holds the old ball), so the second lands by frame 60. Its demotions then reach the
+world in the next polls and the mirror in the sync after. The stuck edge promotions go stale
+at the same time, since their chunks are LOD-only in the world. One more rule period, 30
+frames, covers that landing, which is a guess the readings check. **N = 2 x 30 + 30 = 90
+syncs.** The fix pass's longest runs, 6 and 20, sit inside it. A streak longer than 90, or
+any deferral at pressure at or under 0.9 that does not clear within 90, is a stall the rule
+does not clear. The dev stops and hands back with the log readings (Phase 4).
+
+**Ownership.** The mirror contract, its tests and the fly-through's reporting are Phase 3's
+(the pressure loop, whose Files touched already hold `gpu_world.rs`, `mirror.rs` and
+`main.rs`). The readings are Phase 4's. Phase 1's done-when on a failing sync now holds for
+the empty sync only. Both phases keep their single `dev` tag. ADR-0013 carries a dated
+Outcome line.
+
 ## Architecture diagram
 
 ```mermaid
 flowchart LR
     subgraph vxe-render
         N[GpuWorld::new: budget] --> B[shards, masks, records at full size]
-        S[sync] -->|need > capacity| E[PoolTooLarge / RecordsTooLarge]
-        S --> A[alloc: free list, then free pages of any kind, then cursor]
+        S[sync] -->|nearest-first chunks that fit, and demotions| A
+        S -->|the rest stay queued| E[deferred, or PoolTooLarge when none fit]
+        A[alloc: free list, then free pages of any kind, then cursor]
         D[drop_record] --> A
         P[pressure = max of slot and record occupancy]
     end
@@ -177,7 +246,9 @@ flowchart LR
     `a_following_window_mirrors_the_streamed_residency` run.
   - A sync whose pool need exceeds the reservation fails with `PoolTooLarge { need,
     capacity }` before writing, as `a_world_past_four_shards_fails` asserts today with the
-    budget in place of the layout limit; records likewise.
+    budget in place of the layout limit; records likewise. (Amended 2026-10-20, second
+    Amendment: this now holds for an empty sync, one whose nearest selected chunk does not
+    fit and no demotion behind it does; a sync with a prefix that fits uploads it, Phase 3.)
   - On lavapipe the level test passes a 256 MiB budget and reads `live_pool_bytes() ==
     196 407 296` as today.
   - `--mirror-budget 3072` on the dev box creates the buffers in under 50 ms (a guess; the
@@ -213,6 +284,13 @@ flowchart LR
   `ceil(chunks_in_ball(max(r_lod, r_full) + h) / PRESSURE_LOW)` records; `world_budget`
   prints its budget lines with that record count; `README.md` lists `--residency`,
   `--mirror-budget` and the rule.
+  Amended 2026-10-20 (second Amendment), in the review fix pass: the partial sync. `select`
+  replays the fit as it walks and defers the first chunk that does not fit and every later
+  chunk except demotions that fit; deferral is decided before any write; a chunk turning wide
+  is re-checked before its first slot; `SyncStats::deferred_chunks`; a sync that uploads
+  nothing and defers something returns the existing errors untouched. The fly-through counts
+  deferrals, empty syncs and the longest deferral streak, and keeps the pressure ranges at
+  deferral, in place of the failed-sync counter.
 - **Files touched:** `crates/vxe-render/src/gpu_world.rs`, `crates/vxe-world/src/stream.rs`,
   `crates/vxe-world/src/lib.rs`, `apps/flythrough/src/main.rs`, `apps/flythrough/src/lib.rs`,
   `apps/flythrough/src/hud.rs`, `apps/flythrough/examples/world_budget.rs`,
@@ -235,6 +313,33 @@ flowchart LR
     radius decrease and none below 6, and reports peak pressure under 1.0 and peak live /
     budget under 0.95 (0.930 projected without the rule; the Amendment projects two decreases,
     to 14, a guess). The same run at 3072 prints no change.
+  - Partial sync (second Amendment), headless tests in `crates/vxe-render/tests/mirror.rs` on
+    lavapipe:
+    - **One page short.** With attribute pages, a pool filled to one page short of a selection
+      of promotions at increasing distance: the sync returns `Ok`, the nearest chunks upload
+      and read back to their voxels, the farthest are deferred (`deferred_chunks` equals their
+      count, `pending_chunks` includes them), and a following sync after a demotion frees a
+      page uploads them.
+    - **A dug chunk goes first.** A chunk at the focus, edited to gain `Full` bricks, is
+      selected with farther promotions on a pool that cannot take them all: the dug chunk
+      uploads and reads back to its edited voxels; only chunks farther than every uploaded
+      non-demotion are deferred.
+    - **A demotion is not blocked.** The nearest selected chunk does not fit, and a farther
+      demotion that frees an attribute page does fit: the demotion uploads and reads back to
+      its mips, and the near chunk is deferred and uploads in the next sync.
+    - **Nothing half-written.** After a partial sync, every deferred chunk's record entries,
+      palette and table entry read back as before the sync, a deferred promotion still reads
+      back to its mips, and its dirty bits are set. `live_slots()` equals the slots of the
+      uploaded chunks plus those before the sync, less their frees. A chunk that turns wide in
+      the sync, on a pool that can take it narrow but not wide, is deferred whole, and its
+      narrow record still reads back.
+    - **Empty sync.** A selection whose nearest chunk alone does not fit, with no demotion
+      behind it, fails with `PoolTooLarge` and leaves `bytes_written`, `mirrored_chunks` and
+      `live_slots` unchanged. The existing "fails and leaves the mirror untouched" tests are
+      rebuilt so the nearest chunk itself does not fit, or else assert the partial upload.
+    - The fly-through's streak bookkeeping test: a deferral extends a streak, a sync with
+      none ends it, an empty sync counts, and a streak open at the end counts toward the
+      longest.
 
 ### Phase 4: Readings and the budget line
 - **Owner skill:** dev
@@ -249,6 +354,19 @@ flowchart LR
     (one 12 % over Plan 0002's 457 ms) under build load 9.6 to 11.
   - Phase 3's `--mirror-budget 1930` run, twice: radius changes, the final `r_full`, peak
     pressure, failed syncs, recorded in §3 as the pressure rule's reading.
+  - Amended 2026-10-20 (second Amendment), in the review fix pass, after the partial sync:
+    `--autopilot --headless --look contour` at the default 3072 MiB, at 16/24 and at
+    `--residency 14,22`, two runs each, exclusive perf lock, 1-minute load stated. Each run
+    reads a longest deferral streak of at most **90 syncs** (N above), a streak open at the end included. Each run's return
+    hash matches, with no out-of-memory stop. The log records for each run the deferred-chunk
+    total, the syncs with a deferral and the empty syncs, the pressure and term ranges at
+    deferral, the longest streak, and the frames from each decrease to the end of its
+    streak. The face gate at `--mirror-budget 1930`, once, reads 0 deferred chunks, at least
+    one decrease and none below 6, peak pressure under 1.0, peak live / budget under 0.95, and
+    a matching hash. These replace §3's contour rows and the paragraph under them, with
+    machine and commit. A streak over 90, or a deferral at or under 0.9 that does not clear
+    within 90, is a stall: stop and hand back to the architect with those readings. Do not
+    widen N.
   - §7 records the reservation time as a reading in place of Phase 1's under-50 ms guess.
   - §3's line reads "live bytes against the reserved budget", with the readings replacing
     Plan 0002's allocated figures.
@@ -268,7 +386,13 @@ pub struct SyncStats {
     // ... as today
     pub buffers_created: u32, // 0 after `new`
     pub copies: u32,          // 0 after `new`
+    /// Chunks selected this sync but deferred for space; they stay pending (amended
+    /// 2026-10-20, second Amendment). 0 when everything fit.
+    pub deferred_chunks: u64,
 }
+// sync: Ok(stats) when it uploaded at least one chunk, whatever it deferred;
+// Err(PoolTooLarge | RecordsTooLarge) only when it deferred chunks and uploaded none,
+// having written nothing.
 impl GpuWorld {
     pub fn pressure(&self) -> f32; // max(slot occupancy, record occupancy)
     pub fn pages_issued(&self) -> u32;
@@ -278,6 +402,10 @@ impl GpuWorld {
 The split: `records = min(record_chunks (else window capacity) x RECORD_BYTES, binding limit)`;
 `pool = budget - records`, in whole pages, filling shard 0 to its limit, then 1, and so on; masks are
 `MASK_BYTES x pool slots`.
+
+The fly-through's deferral record (second Amendment) replaces the failed-sync counter with:
+deferred-chunk total, syncs with a deferral, empty syncs, the pressure and term ranges at
+deferral, and the current and longest deferral streak in syncs.
 
 ## Budgets
 
@@ -309,6 +437,21 @@ The split: `records = min(record_chunks (else window capacity) x RECORD_BYTES, b
   the frame of each change, and the window (724 to 759 pages) is re-derived, not widened.
 - **The record term is inert by sizing.** It stays under 0.7 only while the streamer keeps its
   radius around one focus; an application with several foci passes its own `record_chunks`.
+- **A deferral can outlive the rule (second Amendment).** The bound N = 90 rests on two
+  things. Deferrals need pressure above 0.9, every reading so far. And the rule's decreases
+  clear them, by staling the edge promotions and landing demotions. A fragmented pool that
+  runs out at or under 0.9 would defer with the rule never armed. The fix pass's
+  fragmentation was about 9 % of slots, against a 0.1 gap. If the readings show it, the
+  remedy the owner set aside, a page-occupancy term in `pressure()`, is the next plan's
+  question, not a widening of N.
+- **A dug chunk can wait behind a full pool.** Nearest first puts it ahead of every
+  non-demotion, but if it alone does not fit, it waits for the rule like any other. On screen
+  the edit shows late; the world's voxels and the op result are unaffected (render-side
+  only).
+- **The walk past a deferral.** Deferred chunks do not count against `sync_budget_bytes`, so
+  a sync at a full pool walks every pending chunk to find the demotions. The pending set is
+  bounded by the residency, and Phase 4's p99 frame reading covers the cost; if it shows,
+  bound the walk by count, not by skipping demotions.
 - **Determinism:** none; the mirror is render-side. `chunks_in_ball` is integer arithmetic.
 
 ## What this plan does NOT do
