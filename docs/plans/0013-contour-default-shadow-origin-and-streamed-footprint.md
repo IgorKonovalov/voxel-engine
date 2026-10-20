@@ -18,6 +18,12 @@
 > accepted 2026-10-17, which records the footprint's final form (surface-only, a later plan);
 > Phase 5 builds D at 14,24 after Plan 0017 lands, its §3 check read as live bytes against
 > Plan 0017's reserved budget; Phase 6 may run before Phase 5.
+> **Amended:** 2026-10-20, at the Phase 5 stop, from the owner's answer (option c): D at 14,24
+> is withdrawn. Phase 5 removes `AttribQuant` and its `--attrib-quant` flag and sets no new
+> residency; the attribute footprint moves to ADR-0012's mirror-slot plan (surface-only
+> storage). Phase 7 makes contour the default at the existing `RESIDENCY` (16/24), lets Plan
+> 0017's pressure rule set `r_full`, and reads §3 as live bytes against the reservation
+> (ADR-0013).
 > **Source:** Plan 0005's "Follow-up items" (cited below as "follow-up N"): items 1 to 3, the
 > streamed attribute-pass reading of item 4, and items 5 to 7. Item 4's baseline readings and
 > item 8 are out of scope.
@@ -33,6 +39,9 @@ from the owner's eye, and then makes contour plus detail the default. On the way
 attribute pass's per-call allocation, tests the shell recompute, and reads the attribute pass
 under motion. The first thing a reader sees is the speck test turned from a diagnostic into a
 gate: contour's only-with-shadows speck count drops from 372 to at most face mode's.
+Amended 2026-10-20: the footprint build is deferred to ADR-0012's mirror-slot plan; contour
+becomes the default at the existing residency, with Plan 0017's pressure rule keeping live
+bytes under the line by shortening the full-detail radius.
 
 ## Context & problem
 
@@ -207,33 +216,41 @@ Shared conventions:
   surface-only form (row A) comes with ADR-0012's mirror-slot plan. ADR-0012 is the footprint
   ADR and was accepted 2026-10-17. `dev` writes the Phase 4 log row with this pick and reason
   when the branch next merges main.
+- **Revised (amendment, 2026-10-20):** the owner withdrew D at 14,24 at the Phase 5 stop and
+  chose option (c): no new residency here, the footprint in ADR-0012's mirror-slot plan.
+  Since Plan 0015's masks a slot costs 584 B and an attribute brick 1168 B (520 and 1040 B
+  when D was costed), and the Phase 5 probe at 14,24 read pressure 0.911 at full residency,
+  over the 0.9 trigger, so the rule moved the radius anyway (the resume notes).
 
-### Phase 5: The chosen footprint
+### Phase 5: The chosen footprint: retire the precision emulation, no new residency
 - **Owner skill:** dev
-- **Starts after:** Plan 0017 is merged to main and main is merged into this plan's branch.
-  Plan 0017 reserves the mirror's VRAM up front, so `allocated_bytes` equals the budget and
-  §3 is read as live bytes against it; without it the interim row reads 3.69 to 4.94 GB
-  allocated (Phase 3's two guesses) and cannot meet the first done-when.
-- **What:** D at 14,24: the fly-through's default residency becomes `r_full` 14, `r_lod` 24,
-  on today's attribute-page layout (1040 B per `Full` brick), with `AttribQuant` and its
-  `--attrib-quant` flag removed. ADR-0012's surface-only layout is not built here.
-- **Files touched:** `crates/vxe-render/src/{gpu_world.rs, attrib.rs, shaders/attrib.wgsl,
-  shaders/march.wgsl}`, `crates/vxe-render/tests/mirror.rs`, `apps/flythrough/src/{lib.rs,
-  main.rs}`, `apps/flythrough/tests/look.rs`, `docs/nfr.md`. The final list follows the
-  footprint ADR.
+- **Starts after:** main is merged into this plan's branch (done at af4dc02, with Plans 0015,
+  0017 and 0021).
+- **What:** amended 2026-10-20 (option c). `AttribQuant`, `AttribPass::set_quant`,
+  `GpuWorld::set_attrib_quant`, the shader's `params.quant` branch and the fly-through's
+  `--attrib-quant` flag are removed; the full attribute (ADR-0011's `u16` per voxel in
+  attribute pages, 1168 B per `Full` brick of a full chunk since Plan 0015's masks) is the
+  only path. No residency, budget or layout changes: `flythrough::RESIDENCY` stays 16/24 with
+  hysteresis 1, and the footprint belongs to ADR-0012's mirror-slot plan.
+- **Files touched:** `crates/vxe-render/src/{attrib.rs, gpu_world.rs, shaders/attrib.wgsl}`,
+  `apps/flythrough/src/main.rs`, `apps/flythrough/tests/look.rs`, `docs/nfr.md`.
 - **Done when:**
-  - The streamed run at 14,24 with Plan 0017's default 3 GB budget completes its
-    out-and-back flight with `return: 2 chunks, hash match`, no wgpu error, zero
-    `PoolTooLarge` syncs and no radius change printed by Plan 0017's pressure rule (so the
-    radius held at 14 throughout), on the RTX 3080 Laptop GPU; the log records peak live
-    bytes, the budget, peak pressure, and live bytes at full residency.
-  - `mirror.rs`'s layout tests assert the attribute bytes per brick as the footprint ADR's
-    formula states them, and the level's live mirror at `--level --look contour` equals Plan 0002's
-    207 681 088 B plus that formula summed over the level's 383 608 `Full` bricks, plus the
-    128 B of 64-byte material rows (today: 1040 B each, 606 633 536 B in all).
-  - The look metrics equal the D row of the Phase 3 table (7.41 degrees, 32 px), and
-    `look_contour.png` stays byte for byte from Phase 1.
-  - Phase 2's shell test and the face goldens pass unchanged.
+  - `grep -rn "AttribQuant\|attrib_quant\|attrib-quant\|params.quant" crates apps README.md`
+    finds nothing; `contour_metrics_at_each_attribute_precision` is deleted (its lossless row
+    is the next bullet's test); `flythrough --attrib-quant none` exits with `unknown argument`;
+    `flythrough::RESIDENCY` and `STREAM_MIRROR_BUDGET` are unchanged.
+  - `contour_planes_cut_the_silhouette_and_normal_errors` passes and the log records its
+    readings on lavapipe: 7.38 degrees and 32 px, the figures re-derived on the merged tree
+    (Phase 1's 7.41 degrees predate the merge of main). `look_contour.png` stays byte for
+    byte, and so do the six goldens named under Shared conventions.
+  - Phase 2's shell test (`a_neighbour_chunk_arriving_and_leaving_recomputes_the_shell`) and
+    `mirror.rs`'s attribute-page tests pass unchanged, among them the assertion of
+    `2 * (SLOT_BYTES + MASK_BYTES)`, 1168 B, per attribute-page brick.
+  - The level's live mirror with contour (`flythrough --level --headless --seed 1 --look
+    contour --frames 3`, dev box) reads 680 491 136 B: the face level's 232 436 992 B
+    (`level_mirror.rs`, material rows included) plus 1168 x 383 608 = 448 054 144 B. The log
+    records the printed figure; §3's "Attribute pages" paragraph carries it as a reading with
+    machine and commit, beside Plan 0005's 1040 B and 606 633 408 B.
 
 ### Phase 6: Rock detail on screen
 - **Owner skill:** human
@@ -249,21 +266,37 @@ Shared conventions:
 ### Phase 7: Contour plus detail as the default, and the streamed readings
 - **Owner skill:** dev
 - **What:** `ROCK_DETAIL` takes the owner's pair; the fly-through starts in contour with detail
-  on and the attribute layout; the attribute pass is read under motion (follow-up 3 and the
-  streamed half of follow-up 4).
+  on and the attribute layout, at the existing `RESIDENCY` (16/24) and the default reservation;
+  Plan 0017's pressure rule sets `r_full` (amended 2026-10-20: no residency cap and no new
+  default radius). The attribute pass is read under motion (follow-up 3 and the streamed half
+  of follow-up 4).
 - **Files touched:** `apps/flythrough/src/{lib.rs, main.rs}`, `README.md` (the fly-through's
   flags), `docs/nfr.md`.
 - **Done when:**
   - `cargo run --release -p flythrough` with no flag prints `look contour, detail on (rock
     scale X, strength Y), view shaded` with the Phase 6 pair; `--look MODE` still picks the
     starting mode, and `--look plain` gives face mode without attribute data, so Plan 0002's
-    readings stay reproducible.
-  - The streamed run, now without `--look`, prints per frame the attribute pass's GPU time
-    (timestamps) and work-list length, and the render thread's CPU time in `attr_work`; the log
-    records p50, p99 and max of each over the flight, against the proposals under "Budgets".
+    and Plan 0017's face readings stay reproducible.
+  - The streamed run, now without `--look`, at the default `RESIDENCY` and the default 3 GiB
+    reservation, twice under the exclusive perf lock with the 1-minute load stated: each run
+    ends `return: 2 chunks, hash match` with no wgpu error and no out-of-memory stop; peak
+    live bytes stay under §3's 3 000 000 000 B and peak live over the budget under 0.95
+    (ADR-0013: allocated bytes equal the reservation by construction and are not the
+    reading); the longest deferral streak is at most 90 syncs with no empty sync (Plan
+    0017's stall bar). The rule acts as it will; the log records each radius change with its
+    tick and pressure, the lowest and the final `r_full`, and peak pressure with its slot and
+    record terms. Plan 0017's contour rows (the same mirror bytes) read 16 to 12 and peak live
+    0.8894 of the budget, about 2.86 GB. An `r_full` under 12 (76.8 m) in either run stops
+    the phase: hand back to the architect with the readings.
+  - The streamed run prints per frame the attribute pass's GPU time (timestamps) and
+    work-list length, and the render thread's CPU time in `attr_work`; the log records p50,
+    p99 and max of each over the flight, against the proposals under "Budgets".
   - The log records the 1080p march (median of the last 30 of 300 frames, three runs) of the
-    default look at the level's spawn and at the streamed spawn, and the streamed peak
-    allocated bytes at the default; `nfr.md` §2 and §3 carry them as dev-reference readings.
+    default look at the level's spawn and at the streamed spawn; `nfr.md` §2 carries them, and
+    §3 carries the streamed peak live, budget and settled `r_full` of the default look, all as
+    dev-reference readings. §3 states that the default look holds full detail to the radius
+    the rule settles at (76.8 to 83.2 m at Plan 0017's readings) against the line's "about
+    100 m" until ADR-0012's mirror-slot plan, and that `--look plain` holds 16 (102 m).
 
 ## Data shapes
 
@@ -294,7 +327,7 @@ No new external dependency.
 
 | `nfr.md` figure | Expected effect | How the close measures it |
 |---|---|---|
-| §3 world VRAM (3 GB; after Plan 0017, live bytes against the reserved budget) | Amended 2026-10-18: D at 14,24 projects 2.56 GB live at full residency (Phase 3's census) inside Plan 0017's 3 GB reservation; the flight's peak live and pressure are unread until Phase 5. Original projection: from 4.10 GB allocated and out of memory to at most 3.0 GB allocated at the default. The attribute target is about 0.39 GB live, about 240 B per brick: arithmetic on two readings, a guess until Phase 5. Census guesses: B 0.85 GB live (does not fit alone), C about 0.21 GB, D at 12,24 about 0.71 GB of attributes on a smaller face mirror, A unknown until the census | Phase 5's streamed run: `mirror_bytes`, `pressure()`, radius changes |
+| §3 world VRAM (3 GB; after Plan 0017, live bytes against the reserved budget) | Amended 2026-10-20: no layout or residency change in this plan. Contour at the default 16/24 under the 3 GiB reservation (3 220 387 776 B) read in Plan 0017 (b474737): peak live 0.8894 of the budget (about 2.86 GB), peak pressure 0.9114, `r_full` 16 to 12 by the rule (full detail 76.8 to 83.2 m against "about 100 m"). The level with contour: 680 491 136 B live (232 436 992 + 1168 x 383 608), Plan 0017 Phase 1's reading. The footprint that would hold `r_full` 16 (ADR-0012 row A, 220 385 388 B of attributes at 16,24 by Phase 3's census, before Plan 0015's masks; a census figure, not a reading) is the mirror-slot plan's | Phase 5's level reading; Phase 7's two streamed runs: `mirror_bytes`, `pressure()`, radius changes |
 | §2 primary rays (3.0 ms, 1080p, baseline) | Contour with detail read 2.068 to 2.069 ms at the level on the dev box (Plan 0005); Phase 1 changes only the shadow origin, A adds a popcount per candidate voxel: under 0.1 ms is a guess | Phase 7, `--level --render 1920x1080 --frames 300` and the streamed spawn |
 | §2 streaming line (1.0 ms render-thread CPU, a recorded miss) | `attr_work` adds CPU on every frame a chunk arrives or leaves; unread | Phase 7, per-frame `attr_work` CPU, p50/p99/max |
 | Attribute pass (no `nfr.md` figure yet) | Proposal: under 1.0 ms of GPU per frame at p99 under motion at 10 m/s (a guess; Plan 0005 read 39.6 to 55.0 ms for the level's first fill and 0.020 ms for a 1 m carve) | Phase 7, timestamps around the pass |
@@ -310,16 +343,23 @@ The baseline GPU is not on hand; every figure is a dev-reference reading and say
   (ADR-0004's never-shrink buffers are the other half of the 2.43 GB face peak). Resolved
   2026-10-18: D at 14,24 behind Plan 0017's reservation; the risk left is that the flight's
   peak live at 14 passes Plan 0017's 0.9 pressure line and the rule drops the radius, which
-  Phase 5's first done-when catches.
+  Phase 5's first done-when catches. Amended 2026-10-20: it did (pressure 0.911 at 14,24), and
+  the owner moved the footprint to ADR-0012's mirror-slot plan.
+- **The default look gives up full-detail radius.** With contour on by default the rule
+  settles at `r_full` 12 or 13 (76.8 to 83.2 m) where face mode holds 16 (102 m): §3's bytes
+  hold, its "about 100 m" does not, until the mirror-slot plan. Phase 7 states it in §3, and
+  an `r_full` under 12 stops the phase. Plan 0017's page-fragmentation deferrals (at pressure
+  under 0.9 with attribute pages) come with the default too; its 90-sync stall bar applies.
 - **A needs variable-size storage.** A brick's plane count changes with every edit, so A means
-  a sub-slot allocator inside the pool; the footprint ADR has to name its fragmentation and
-  compaction behaviour, and Phase 5 grows accordingly.
+  a sub-slot allocator inside the pool. Amended 2026-10-20: that allocator is ADR-0012's
+  mirror-slot plan's, not this plan's.
 - **The 0.5-voxel shadow offset** may still land in a neighbouring voxel's solid half-space at
   grazing angles. Phase 1's offset ladder bounds the search; a remaining speck excess goes to
   the owner's eye rather than to a larger offset that detaches shadows.
 - **Lavapipe and the level.** Four 128 MiB shards hold 349 184 attribute-page bricks against
   the level's 383 608, so level-size contour readings stay dev-box only unless the chosen
-  layout fits; Phase 5 records whether it now does.
+  layout fits. Amended 2026-10-20: no layout changes here, so they stay dev-box only (282
+  attribute pages, 1 155 072 slots, against four 128 MiB shards' 1 048 576).
 - **The default flips the fly-through's readings.** Plan 0002's figures were taken in face
   mode without attribute pages; `--look plain` keeps them reproducible, and the readings in
   `nfr.md` name their look.
@@ -439,3 +479,6 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 - Baseline-GPU readings of the default look (M2's close).
 - A least-squares plane fit and planes on mip cells, if the eye asks (Plan 0005 follow-up 8).
+- The contour attribute's footprint (amendment, 2026-10-20): surface-only attribute storage in
+  size-classed slots, so the default look holds `r_full` 16 under the 3 GB line. ADR-0012's
+  mirror-slot plan (not yet numbered; `docs/plans/README.md`).
