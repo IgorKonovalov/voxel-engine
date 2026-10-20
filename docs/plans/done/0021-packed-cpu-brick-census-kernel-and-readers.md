@@ -2,7 +2,8 @@
 
 > **Status:** done (closed 2026-10-20, v0.18.0): the fresh-session review found no blocker or
 > major; every pinned hash and golden is unchanged and the packed format is under every reader.
-> Two budget calls (the 2 ms edit line, the residency p95) are the owner's, pending.
+> Owner decisions (2026-10-20): the 2 ms edit line is held on the dev box and met there; the
+> residency p95 stays open, a quiet-box reading owed.
 > **Created:** 2026-10-19
 > **Milestone:** M2 in `docs/roadmap.md` (the RAM line; ADR-0012's second plan)
 > **Related ADRs:** [ADR-0012](../../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
@@ -698,7 +699,9 @@ RUSTSEC-2026-0379 (wasmtime) identically on main; out of this plan's scope.
   `Packed::expand_uniform` builds a non-canonical one for `vxe-sim`'s sweep test; the collapse
   oracle's dressed world reaches four materials, so the over-16 and `Wide` overlay fallbacks
   are not exercised by it (they write through `modify`, the decoded path).
-- **The 2 ms edit line (section 4):** dev box or baseline. Owner decision pending.
+- **The 2 ms edit line (section 4):** held on the dev box (owner, 2026-10-20) and met there:
+  the warm worst case reads 1.34 to 1.52 ms under load. No baseline-GPU reading exists.
 - **Residency latency p95 (section 5):** 611 and 658 ms against the 500 ms proposal, read under
-  load 8 to 14 (main read 1031 ms in the same window). Owner decision pending.
+  load 8 to 14 (main read 1031 ms in the same window). Open (owner, 2026-10-20): a quiet-box
+  re-read is owed once the parallel lanes stop.
 
