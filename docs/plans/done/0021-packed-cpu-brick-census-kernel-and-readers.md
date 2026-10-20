@@ -703,5 +703,9 @@ RUSTSEC-2026-0379 (wasmtime) identically on main; out of this plan's scope.
   the warm worst case reads 1.34 to 1.52 ms under load. No baseline-GPU reading exists.
 - **Residency latency p95 (section 5):** 611 and 658 ms against the 500 ms proposal, read under
   load 8 to 14 (main read 1031 ms in the same window). Open (owner, 2026-10-20): a quiet-box
-  re-read is owed once the parallel lanes stop.
+  re-read is owed once the parallel lanes stop. **Re-read 2026-10-20 at 2796062** (`nfr.md`
+  §4 and §5): face mode's p95 is 381 ms, under 500 ms, and contour's (270 to 904 ms) follows
+  mirror pressure. The warm worst case reads 1.79 ms and the `B` line 2.06 to 2.09 ms with an
+  unchanged `vxe-world`, so the owner raised the edit line to 2.2 ms on the dev box and
+  planned one more optimization pass.
 

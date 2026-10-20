@@ -126,6 +126,13 @@ there and is under the 3.0 ms line. With `--frames 300` in the same session, the
 11.0 to 11.9 ms against 3.3 to 4.5 ms. So the 3.5 to 4.0 ms readings are the fill, not the
 settled view.
 
+**The default look on a quiet box (dev reference, 2796062, same machine, exclusive perf lock,
+1-minute load 1.67 to 1.98 at each start, three runs each):** the level's spawn reads 1.432,
+1.438 and 1.472 ms; the streamed spawn at frame 300 reads 2.864, 2.865 and 2.862 ms, still
+mid-fill (1 640 292 full bricks, 1 867 584 964 B live; render-thread frame CPU 7.8 to 8.0 ms).
+Both are under the 3.0 ms line; the loaded readings above overstated them by 0.3 and 0.6 to
+1.1 ms.
+
 **The attribute pass under motion (dev reference, diagnostic, Plan 0013 Phase 7, same machine
 and lock, `flythrough --autopilot --headless --seed 1`, default contour, two runs at load 3.6
 to 11.1):** per frame of the flight, the work list reads p50 3584 to 4446, p99 5468 to 5469,
@@ -140,8 +147,15 @@ p99 167.477 ms and max 297.460 ms, with streaming CPU p99 43.2 ms, over 2730 fra
 had no attribute pass and read streaming CPU p99 40.7 ms over 3521 frames in the same 60 s
 flight. The attribute work list is a render-thread hitch of 100 ms or more on about 1 % of
 the frames in motion, and the default flies about a fifth fewer frames. It is owed before the
-lighting plan, beside the streaming-CPU plan. A quiet-box re-read of every Plan 0013 timing is
-owed once the parallel lanes stop.
+lighting plan, beside the streaming-CPU plan.
+**Quiet-box re-read (dev reference, 2796062, same machine, exclusive perf lock, each run started
+at a 1-minute load of 1.7 to 1.9, the 5-minute load 2.0 to 3.5 from the previous flight; runs
+alternated default, plain, default, plain):** the default flew 2211 and 2695 frames against
+plain's 4123 and 4155, 35 to 47 % fewer. `update_attrs` CPU p50 4.600 and 4.700 ms, p99
+179.598 and 138.104 ms, max 390.376 and 156.825 ms; the work list p50 4773 and 4462, p99 6777
+and 5509, max 11 477 and 7555 bricks (1717 and 1802 frames with work); the pass's GPU p50
+2.990 and 2.416 ms, p99 5.572 and 4.463 ms, max 9.074 and 5.049 ms. The hitch is not a load
+artifact. The followup stays owed before the lighting plan (owner, 2026-10-20).
 
 **Stats HUD (dev reference, Plan 0010, f91726f, headless `flythrough [--level] --seed 1
 --render 1920x1080 --frames 300 [--hud]`, three runs each, NVIDIA GeForce RTX 3080 Laptop GPU,
@@ -354,8 +368,9 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
 ## 4. Edits
 
 - **Cost:** 100 sphere carves of radius 1 m (exactly 4169 voxels each at 10 cm, the lattice
-  count on voxel centres; the continuous volume is about 4189) in one frame cost at most 2 ms
-  of CPU including result counting and dirty marking, and their upload (up to about 6400 bricks,
+  count on voxel centres; the continuous volume is about 4189) in one frame cost at most 2.2 ms
+  of CPU on the dev reference (raised from 2 ms by the owner on 2026-10-20 after the quiet-box
+  re-read below; one more optimization pass is planned) including result counting and dirty marking, and their upload (up to about 6400 bricks,
   6.4 MB, if every touched brick is non-uniform) fits in the streaming line of §2.
   **Readings (dev reference, AMD Ryzen 9 5900HS, Plan 0001):** `cargo bench -p vxe-world
   --bench edits` (100 radius-10 carves on a fresh solid world, every carve expanding uniform
@@ -395,6 +410,15 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   line is **met on the dev box**. The allocation share the retired pool covered: 2495
   expansions of 11.2 ns, 27.9 us, 1.8 % of the 1.516 ms `worst_warm`, under the 5 % that would
   have called for per-class pools.
+  **Quiet-box re-read (dev reference, AMD Ryzen 9 5900HS, on AC with the performance profile
+  and governor, 2796062, exclusive perf lock, 1-minute load 1.81 at the start):** `worst`
+  1.793 ms, `worst_warm` 1.794 ms, `mixed` 1.417 ms, `tool` 5.823 ms, `tool_warm` 5.821 ms.
+  Paired with 8440aa9 (the Plan 0021 Phase 8 tree; `vxe-world` is unchanged since),
+  alternated twice at load 1.76 to 2.27: `worst_warm` 1.785 and 1.789 ms on main against
+  1.783 and 1.783 ms, so the gap to the 1.34 to 1.52 ms above is machine state, not code, and
+  is unexplained. The fly-through `B` line reads **2.06, 2.07 and 2.09 ms**, over 2 ms and
+  under **2.2 ms, the line the owner set on 2026-10-20**. One more optimization pass is
+  planned; no baseline-GPU reading.
 - **Results** are returned synchronously with the edit, per material, exact.
 - **Stamp cost (proposals, Plan 0008):** a 16³ prefab stamp (the shelled box `Prefab::vault`)
   into solid rock costs under 100 µs, and a 64³ all-written prefab under 5 ms, both including
@@ -450,8 +474,12 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   quiet: 1-minute load 20.82 at the start and 13.60 at the end):** one round, through
   `EchoLogic` 3.7783 ms (CI 3.7630 to 3.7943 ms), direct carves with grid updates 3.7716 ms (CI
   3.7528 to 3.7914 ms), direct carves alone 2.4188 ms. The overhead is 6.7 µs per 100 inputs,
-  inside the overlapping intervals and consistent with the line. A quiet-box reading is still
-  owed.
+  inside the overlapping intervals and consistent with the line.
+  **Quiet-box reading (2796062, same machine, exclusive perf lock, 1-minute load 1.36 at the
+  start and 1.29 at the end):** through `EchoLogic` 2.0012 ms (CI 1.9990 to 2.0037 ms), direct
+  carves with grid updates 1.9072 ms (CI 1.9055 to 1.9089 ms), direct carves alone 1.7929 ms.
+  The overhead is **94.0 µs per 100 inputs**, under the 100 µs line with 6 µs to spare; the
+  loaded readings above understated it.
 - **Component boundary (budgets since the Plan 0011 close):** a host call from a logic
   component (the `apply` import of a radius-1 m carve: the op's wire bytes out, the tagged
   answer back) costs at most 2 µs more than a native `Host::apply`; the fly-through's `Bench`
@@ -506,7 +534,11 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   component), empty tick 1.463 µs, `Bench` 2.6337 against 2.5813 ms, 1.020×. The load moved
   the native arm by 0.22 ms between runs, more than the whole host-call cost, so this pair
   resolves no difference the per-byte charge makes; the 2 µs line and the 2× `Bench` line hold
-  in both. A quiet-box pair is still owed.
+  in both.
+  **Quiet-box reading (2796062, same machine, exclusive perf lock, 1-minute load 1.29 at the
+  start and 1.41 at the end, one run, not paired with a parent):** 100 carves through the echo
+  component 1.8005 ms against native `EchoLogic` 1.6445 ms, **1.56 µs per host call**; empty
+  component tick 1.007 µs; `Bench` 1.8380 against 1.7269 ms, **1.064×**. Both lines hold.
 - **Parameter range (Plan 0019):** every edit, ray, box query and region op is checked
   against the world's `WorldLimits` before any arithmetic and refused with
   `EditError::OutOfRange` outside it, changing nothing. Defaults: coordinates and radii within
@@ -556,13 +588,24 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   voxels/s/worker (load 10.1), beside Plan 0001's 1.03e8 and 1.12e8. The autopilot at load
   8.4 to 13.2: residency latency wanted-to-mirrored p95 611 ms, max 2449 ms over 72 614 chunks
   against main's 1031 ms and 6523 ms in the same window, both over the 500 ms proposal at this
-  load (Plan 0015's quiet reading was 493 ms; the figure stays **open**
-  (owner, 2026-10-20): **owed: a quiet-box re-read** once the parallel lanes stop); streaming CPU per frame p50 5.352 ms, p99
+  load (Plan 0015's quiet reading was 493 ms; the quiet-box re-read is below); streaming CPU per frame p50 5.352 ms, p99
   64.449 ms against 7.575 and 80.785 ms; march GPU p50 1.745 ms against 1.576 ms (Plan 0015's
   spawn march 1.95 ms). A second Phase 8 run (load 10.2 to 14.2) read p95 658 ms, max 2456 ms;
   CPU p50 5.227, p99 63.362 ms; march p50 1.636 ms. The per-chunk mip build, which decodes
   each `Full` brick, reads 0.202 ms per chunk on one thread over the level's 3200 chunks (no
   proposal).
+- **Quiet-box re-read under motion (dev reference, 2796062, Ryzen 9 5900HS, RTX 3080 Laptop
+  GPU, exclusive perf lock, `flythrough --autopilot --headless --seed 1`, each run started at
+  a 1-minute load of 1.7 to 1.9, alternated with `--look plain`):** with `--look plain` (face
+  mode, `r_full` 16 throughout) the residency latency p95 reads **381 and 381 ms**, max 574
+  and 518 ms over 73 193 and 73 124 chunks, under the 500 ms proposal; streaming CPU per frame
+  p50 4.993 and 4.966 ms, p99 32.840 and 32.640 ms. With the default contour look, p95 reads
+  904 and 270 ms, max 6014 and 2017 ms over 45 537 and 46 470 chunks; streaming CPU p50 4.740
+  and 4.505 ms, p99 65.300 and 35.261 ms. The contour run at 904 ms had 196 syncs with a
+  deferral (1531 chunks waiting for space at one tick) against 3 in the other, so the default
+  look's latency follows mirror pressure (r_full 16 to 12, ending 13; peak live 0.8894 of the
+  budget in both), the footprint ADR-0012's mirror-slot plan owns. The streaming line (1.0 ms)
+  stays a recorded miss.
 
 ## 6. Determinism and headless operation
 

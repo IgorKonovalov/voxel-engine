@@ -531,7 +531,9 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   pressure rule settled at. Under the default look it reads 2720 of 2730 frames, which tells
   nothing.
 - A quiet-box re-read of Phase 7's timings once the parallel lanes stop. Every one was taken
-  at a 1-minute load of 2 or more.
+  at a 1-minute load of 2 or more. **Done 2026-10-20 at 2796062** (`nfr.md` §2 and §5): the
+  level's march 1.43 to 1.47 ms, `update_attrs` p99 138 to 180 ms, pass GPU p99 4.5 to 5.6 ms.
+  The hitch holds on a quiet box, and the owner confirmed it owed before the lighting plan.
 
 ## Close review (architect, 2026-10-20)
 
