@@ -178,7 +178,7 @@ None. The poll drains a handful of events per frame; the HUD row costs nothing m
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: Axes in the shell, sticks in the fly-through | dev | done | b59c980 |
-| 2: Buttons, hot-plug and the HUD | dev | done | committed with this row |
+| 2: Buttons, hot-plug and the HUD | dev | done | 8af8501 |
 
 ### Notes
 
@@ -211,13 +211,25 @@ None. The poll drains a handful of events per frame; the HUD row costs nothing m
 
 ### Close triggers
 
-_(Facts for the architect. No recommendations, and no suggested version bump.)_
-
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature
+- **Public API changed:** `vxe_app::Axis`, `vxe_app::PadButton` (new, re-exported from the crate
+  root); `Input::{axis, pad_held, pad_pressed, set_axis, pad_down, pad_up, release_pad}`;
+  `App::poll(&mut self, &mut Input)` with a no-op default, called by the shell before each
+  `frame`. Fly-through: `--pad on|off`, `flythrough::hud::{PadPower, PadRow}`,
+  `HudStats::pad`. New workspace dependency `gilrs = "=0.11.2"` (fly-through only); CI's apt
+  list adds `libudev-dev`.
+- **Budget readings:** none (no `nfr.md` figure touched).
+- **Gate at the tip:** run on the Phase 2 tree before its commit, Linux dev box (RTX 3080
+  laptop), CARGO_BUILD_JOBS=4, under the 6G memory scope. `cargo build` exit 0;
+  `cargo nextest run` (default members, exclusive perf lock, 1-min load 4.85 at start) exit 0,
+  453 passed, 3 skipped; `cargo test --doc` exit 0, 10 doctest binaries ok;
+  `cargo clippy --workspace --all-targets -- -D warnings` exit 0; `cargo fmt --all --check`
+  exit 0; `cargo deny check` exit 0 (advisories, bans, licenses, sources ok);
+  `check-comment-hygiene`, `check-doc-links`, `check-index-rows` OK; hook bite tests 59 pass,
+  0 fail. The only change after that gate run is the one-line comment reword in `pad.rs`'s
+  test. The Windows CI arm (gilrs's `wgi` backend) was not built here.
+- **Outstanding `human` phases:** none. The owner's sofa check with the DualSense (command in
+  Notes) has not been run.
 
 ## Followups
 
