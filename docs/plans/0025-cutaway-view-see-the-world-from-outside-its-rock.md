@@ -1,6 +1,6 @@
 # 0025: The cutaway view: a camera in rock or outside the world sees through the hull to the first cavern's walls
 
-> **Status:** approved (2026-10-20)
+> **Status:** in-progress (2026-10-20)
 > **Created:** 2026-10-20
 > **Milestone:** M7 in `docs/roadmap.md` (debug views); a tool, not a frame stage
 > **Related ADRs:** none (the rejected options are product choices for a debug view, named
@@ -158,7 +158,7 @@ steps-view cost from outside the level on the dev box as a diagnostic.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The walk rule and its headless proof | dev | not started | |
+| 1: The walk rule and its headless proof | dev | done: `apps/flythrough/tests/cutaway.rs` on llvmpipe (exclusive perf lock, load 28.1, not quiet): camera (-100, 0.5, 0.5) centre normals [0, 128, 128], hitmask [255, 255, 255]; camera (-200, 0.5, 0.5) the same; (-200, 60.5, 0.5) hitmask [0, 0, 0]; cutaway off from (-200, 0.5, 0.5) centre normals [0, 128, 128], hitmask white, normals view 97.54 % of pixels differ from cutaway on. `the_default_look_leaves_the_goldens_byte_for_byte`, `attribute_pages_leave_the_face_goldens_byte_for_byte`, `goldens_match_bit_exactly_over_one_and_several_shards` pass; `-p flythrough -p vxe-render` 164 passed, 3 skipped (load 22.4, not quiet) | committed with this row |
 | 2: The dollhouse shading, the automatic trigger and the key | dev | not started | |
 
 ### Notes
@@ -166,6 +166,10 @@ steps-view cost from outside the level on the dev box as a diagnostic.
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: with cutaway off, the outside camera's centre pixel reads the same as with it on in both views ([0, 128, 128] and white: the hull's -x face and the far wall both face -x), so "differs from the cutaway reading" is asserted over the whole `normals` view (fraction of pixels differing by more than 2/255 > 0), the centre pixel's value set as stated.
+- Phase 1: `apps/flythrough/src/main.rs` (`start_look` sets `cutaway: false`) was touched for `LookParams`'s new field; not in the phase's file list.
+- Phase 1: the shader's per-cell field is `through`, since `pass` is a reserved WGSL word.
 
 ### Close triggers
 

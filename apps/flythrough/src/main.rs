@@ -262,6 +262,7 @@ impl Args {
             detail: self.detail,
             view: self.view,
             translucent_layers: self.translucent_layers,
+            cutaway: false,
         }
     }
 

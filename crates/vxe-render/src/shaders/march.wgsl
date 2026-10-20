@@ -4,7 +4,7 @@
 //   0  uniform  params         camera, mirror window, light, target size, flags (bit 0: shadow ray,
 //                              bit 1: occupancy masks, bits 2..4: normal mode, bit 4: detail,
 //                              bits 5..8: view, bit 8: the mirror has attribute pages, bit 9:
-//                              skip empty cells larger than a voxel)
+//                              skip empty cells larger than a voxel, bit 10: cutaway)
 //   1  storage  brick_pool0    shard 0 of the pool: [slot][128 x u32], four u8 palette indices
 //                              per word, x fastest; a wide brick is two slots, [256 x u32] of
 //                              u16 voxel pairs. Slot s is slot s % slots_per_shard of shard
@@ -72,6 +72,14 @@
 // translucent voxels it enters front to back, each albedo times opacity under the lamp's cone
 // and distance term with no shadow ray, up to `translucent_layers` of them; what remains of
 // the transmittance carries the opaque hit's colour.
+//
+// Cutaway (flag bit 10): the primary ray starts in a `passing` state that steps through solid
+// cells (a uniform solid brick as one 8^3 cell, scaled by the mip cell; a solid voxel of a Full
+// brick as one voxel) until it enters an empty cell of a resident chunk: an empty chunk, a
+// clear group of bricks, a uniform-air or uniform-translucent brick, a clear block or an empty
+// voxel of a Full brick. A chunk outside the window or absent from the table is not air, so a
+// ray that crosses rock from absent space to absent space misses. Once cleared, the walk is
+// the plain walk; a ray that starts in air clears it on its first cell. Shadow rays never pass.
 
 struct Params {
     cam_pos: vec3<f32>,
@@ -140,6 +148,7 @@ const VIEW_SHIFT: u32 = 5u;
 const VIEW_BITS: u32 = 7u;
 const FLAG_ATTR_PAGES: u32 = 256u;
 const FLAG_SKIPS: u32 = 512u;
+const FLAG_CUTAWAY: u32 = 1024u;
 // Normal modes (flags bits 2..4) and views (flags bits 5..8).
 const NORMAL_FACE: u32 = 0u;
 const NORMAL_TRILINEAR8: u32 = 1u;
@@ -157,12 +166,16 @@ const NO_PLANE: u32 = 0xFFFFu;
 
 // What the walk found at a voxel: `size` is the edge of the empty cell to skip, or 0 for a
 // solid voxel of `material`. A solid voxel of a full chunk's Full brick carries its brick's
-// pool slot and its index in the brick; any other cell carries ABSENT.
+// pool slot and its index in the brick; any other cell carries ABSENT. `through` is the edge of
+// the aligned solid cell a cutaway ray in its passing state steps through (0 for an empty
+// cell), and `air` is set for an empty cell of a resident chunk, the cell that ends passing.
 struct Cell {
     size: i32,
     material: u32,
     slot: u32,
     index: u32,
+    through: i32,
+    air: bool,
 };
 
 // `plane`: the hit is on a contour plane, `n` its normal.
@@ -362,7 +375,8 @@ fn mask_skip(m: u32, l: vec3<u32>, i: u32) -> i32 {
 // Otherwise `entry` is the brick's record entry, `l` and `i` the voxel's position and index
 // in the brick, `cell` the mip cell's edge and `level` the mip level. The table is read on
 // entering a chunk and the record entry on entering a brick; a chunk outside the window
-// touches no state. An entry carrying TRANSLUCENT_BIT marks the walk.
+// touches no state. An entry carrying TRANSLUCENT_BIT marks the walk. `resident` is clear for
+// a chunk outside the window or absent from the table.
 struct Descent {
     size: i32,
     entry: u32,
@@ -370,10 +384,15 @@ struct Descent {
     level: u32,
     l: vec3<u32>,
     i: u32,
+    resident: bool,
 };
 
 fn empty_descent(size: i32) -> Descent {
-    return Descent(size, 0u, 1, 0u, vec3<u32>(0u), 0u);
+    return Descent(size, 0u, 1, 0u, vec3<u32>(0u), 0u, true);
+}
+
+fn absent_descent(size: i32) -> Descent {
+    return Descent(size, 0u, 1, 0u, vec3<u32>(0u), 0u, false);
 }
 
 fn descend(v: vec3<i32>) -> Descent {
@@ -382,7 +401,7 @@ fn descend(v: vec3<i32>) -> Descent {
     let rel = chunk - params.window_min;
     let w = params.window_size;
     if (any(rel < vec3<i32>(0)) || any(rel >= w)) {
-        return empty_descent(64);
+        return absent_descent(64);
     }
     if (!walk.in_chunk || any(chunk != walk.chunk)) {
         walk.in_chunk = true;
@@ -407,7 +426,7 @@ fn descend(v: vec3<i32>) -> Descent {
     }
     let t = walk.entry;
     if (t == ABSENT) {
-        return empty_descent(select(1, 64, skips));
+        return absent_descent(select(1, 64, skips));
     }
     if (skips && (t & EMPTY_BIT) != 0u) {
         return empty_descent(64);
@@ -432,7 +451,7 @@ fn descend(v: vec3<i32>) -> Descent {
         return empty_descent(select(cell, 8 * cell, skips));
     }
     let l = c - b * 8;
-    return Descent(0, entry, cell, level, vec3<u32>(l), u32(l.x + 8 * (l.y + 8 * l.z)));
+    return Descent(0, entry, cell, level, vec3<u32>(l), u32(l.x + 8 * (l.y + 8 * l.z)), true);
 }
 
 // The material of voxel `i` of the Full brick in pool slot `slot` with record entry `entry`:
@@ -464,31 +483,32 @@ fn is_translucent(m: u32) -> bool {
 fn lookup(v: vec3<i32>) -> Cell {
     let dsc = descend(v);
     if (dsc.size != 0) {
-        return Cell(dsc.size, 0u, ABSENT, 0u);
+        return Cell(dsc.size, 0u, ABSENT, 0u, 0, dsc.resident);
     }
     let skips = (params.flags & FLAG_SKIPS) != 0u;
     let entry = dsc.entry;
     let cell = dsc.cell;
     if ((entry & FULL_BIT) == 0u) {
+        let brick = select(cell, 8 * cell, skips);
         if ((entry & TRANSLUCENT_BIT) != 0u) {
-            return Cell(select(cell, 8 * cell, skips), 0u, ABSENT, 0u);
+            return Cell(brick, 0u, ABSENT, 0u, 0, true);
         }
-        return Cell(0, entry & MATERIAL_MASK, ABSENT, 0u);
+        return Cell(0, entry & MATERIAL_MASK, ABSENT, 0u, brick, false);
     }
     let slot = entry & SLOT_MASK;
     let masked = skips && (params.flags & FLAG_MASKS) != 0u;
     if (masked) {
         let size = mask_skip(opaque_word(slot), dsc.l, dsc.i);
         if (size != 0) {
-            return Cell(size * cell, 0u, ABSENT, 0u);
+            return Cell(size * cell, 0u, ABSENT, 0u, 0, true);
         }
     }
     let m = voxel_material(slot, entry, dsc.i);
     // With the masks on, a set bit is an opaque voxel; without them the class is read.
     if (m == 0u || (!masked && is_translucent(m))) {
-        return Cell(cell, 0u, ABSENT, 0u);
+        return Cell(cell, 0u, ABSENT, 0u, 0, true);
     }
-    return Cell(0, m, select(ABSENT, slot, dsc.level == 0u), dsc.i);
+    return Cell(0, m, select(ABSENT, slot, dsc.level == 0u), dsc.i, cell, false);
 }
 
 // What the translucent walk finds at voxel `v`: `size` > 0 is a cell holding no translucent
@@ -626,8 +646,10 @@ fn contour_active() -> bool {
         && (params.flags & FLAG_ATTR_PAGES) != 0u;
 }
 
-// The first solid voxel along `o + d t` for `0 <= t <= t_limit`.
-fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
+// The first solid voxel along `o + d t` for `0 <= t <= t_limit`. With `cutaway` set the walk
+// starts passing: solid cells are stepped through until the first empty cell of a resident
+// chunk.
+fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
     var miss = Hit(false, vec3<i32>(0), -1, 0.0, 0u, false, vec3<f32>(0.0));
     let bmin_i = params.window_min * 64;
     let bmax_i = (params.window_min + params.window_size) * 64;
@@ -657,6 +679,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
     }
     v = clamp(v, bmin_i, bmax_i - vec3<i32>(1));
     let contour = contour_active();
+    var passing = cutaway;
 
     for (var step = 0u; step < MAX_STEPS; step++) {
         walk_steps += 1u;
@@ -668,6 +691,13 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32) -> Hit {
         }
         let c = lookup(v);
         var size = c.size;
+        if (passing) {
+            if (size == 0) {
+                size = c.through;
+            } else if (c.air) {
+                passing = false;
+            }
+        }
         if (size == 0) {
             if (!contour) {
                 return Hit(true, v, axis, t, c.material, false, vec3<f32>(0.0));
@@ -953,7 +983,7 @@ fn shade(o: vec3<f32>, d: vec3<f32>, h: Hit, n: vec3<f32>, tint: f32) -> vec3<f3
     // One shadow ray, from `SHADOW_OFFSET` off the surface toward the lamp; any rock before
     // the lamp removes its light.
     if ((params.flags & FLAG_SHADOWS) != 0u && lit > 0.0) {
-        let s = march(p + ns * SHADOW_OFFSET, l, sqrt(dist2));
+        let s = march(p + ns * SHADOW_OFFSET, l, sqrt(dist2), false);
         if (s.found) {
             lit = 0.0;
         }
@@ -976,7 +1006,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     walk_steps = 0u;
     loads = 0u;
     pool_reads = 0u;
-    let h = march(o, d, BIG);
+    let h = march(o, d, BIG, (params.flags & FLAG_CUTAWAY) != 0u);
     // Read before the normal modes' lookups and the shadow ray's march touch the walk.
     let translucent_seen = walk.saw_translucent && params.translucent_layers > 0u;
     let t_end = select(BIG, h.t, h.found);
