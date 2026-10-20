@@ -493,7 +493,7 @@ pub struct PileResult {
 | 3: Op kinds 5 and 6 on the wire, through the server and in the log | dev | done | dfe3fc9 |
 | 4: `DigLogic` tells a refusal, a wedge and a landing apart | dev | done | 120e94f |
 | 5: Readings and the budget lines | dev | done | committed with this row |
-| 6: The owner's windowed check | human | not started | |
+| 6: The owner's windowed check | human | done (owner, 2026-10-20) | |
 
 Phase 1 observations:
 - The level repro in the tree matches the scratch repro: first region at loop iteration 3 243,
@@ -572,6 +572,16 @@ Phase 5 observations:
 - `docs/nfr.md` §4 carries the yielding drop and pile proposals and readings and the kind-5 and
   kind-6 entry sizes; §6's collapse course line carries `0xd223_d848_c8fc_ca0f`. No session
   hash moved, so no other §6 line changed.
+
+Phase 6 observations (owner, 2026-10-20, `--level`, release, at 6c431cb, main merged in; stdout
+in `check-p6.log`):
+- 17 `unsupported: ...` regions, 17 `landed ...` lines, none refused or wedged. Examples:
+  `landed after 4 ticks, fell 26 voxels, crushed 159 voxels, 159 rubble`, `landed after 16
+  ticks, fell 121 voxels, crushed 17 voxels, 17 rubble`, `landed after 6 ticks, fell 45
+  voxels` (no crush, no pile). 14 of the 17 crushed; each pile equals its crush.
+- A later dig carved `rubble 30`. The owner: rubble shows on the landed pieces, `R` and a
+  crumble behave as before, "all works as intended".
+- Replay check not run.
 
 ### Notes
 
