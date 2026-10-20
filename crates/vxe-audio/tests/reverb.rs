@@ -288,30 +288,14 @@ fn bigger_cubes_decay_longer_and_hold_their_mode_density() {
     }
 }
 
-/// The click index of Phase 1's walking test: per 200 ms window (hop 100 ms), the largest
-/// second difference over `w^2 sqrt(2) rms`, `w` 440 Hz in radians per frame; the largest.
-fn click_index(x: &[f64]) -> f64 {
-    const WINDOW: usize = 9_600;
-    const HOP: usize = 4_800;
-    let w = std::f64::consts::TAU * 440.0 / FS;
-    let mut worst = 0.0f64;
-    let mut s = 0;
-    while s + WINDOW <= x.len() {
-        let win = &x[s..s + WINDOW];
-        let rms = (win.iter().map(|v| v * v).sum::<f64>() / WINDOW as f64).sqrt();
-        let d2 = win
-            .windows(3)
-            .map(|t| (t[2] - 2.0 * t[1] + t[0]).abs())
-            .fold(0.0, f64::max);
-        worst = worst.max(d2 / (w * w * std::f64::consts::SQRT_2 * rms));
-        s += HOP;
-    }
-    worst
-}
-
-/// A 440 Hz hum 2 m ahead in the room `(8 m, 2.26 s)` for 4 s, then `next` for 4 s more: the
-/// output of the second 4 s and every line's state at each block edge of it.
-fn hum_with_room_change(next: RoomTargets) -> (Vec<f32>, Vec<[ReverbLine; REVERB_LINES]>) {
+/// A 440 Hz hum 2 m ahead in the room `(8 m, 2.26 s)` for 4 s, then `next` for 4 s more,
+/// with line `line`'s read point moved by `delta` frames at each `(frame, line, delta)` of
+/// `jumps` (frames counted from the step): the output of the second 4 s and every line's state
+/// at each block edge of it.
+fn hum_with_room_change(
+    next: RoomTargets,
+    jumps: &[(usize, usize, f32)],
+) -> (Vec<f32>, Vec<[ReverbLine; REVERB_LINES]>) {
     let hum: Vec<f32> = (0..RATE)
         .map(|n| 0.3 * (std::f64::consts::TAU * 440.0 * f64::from(n) / FS).sin() as f32)
         .collect();
@@ -337,27 +321,97 @@ fn hum_with_room_change(next: RoomTargets) -> (Vec<f32>, Vec<[ReverbLine; REVERB
     m.apply(Command::SetRoom(next));
     let mut after = Vec::with_capacity(2 * blocks * BLOCK);
     let mut lines = vec![m.reverb_lines()];
-    for _ in 0..blocks {
-        m.render(&mut out, BLOCK);
-        after.extend_from_slice(&out);
+    for b in 0..blocks {
+        let start = b * BLOCK;
+        // A jump inside this block splits it there.
+        let mut at = start;
+        for &(frame, line, delta) in jumps
+            .iter()
+            .filter(|j| (start..start + BLOCK).contains(&j.0))
+        {
+            let n = frame - at;
+            if n > 0 {
+                m.render(&mut out, n);
+                after.extend_from_slice(&out[..2 * n]);
+            }
+            m.jump_reverb_line(line, delta);
+            at = frame;
+        }
+        let n = start + BLOCK - at;
+        m.render(&mut out, n);
+        after.extend_from_slice(&out[..2 * n]);
         lines.push(m.reverb_lines());
     }
     (after, lines)
 }
 
+/// Per 200 ms window (hop 100 ms) of one channel: the walking test's click index `K_w` (the
+/// largest second difference over `w^2 sqrt(2) rms`, `w` 440 Hz in radians per frame) and the
+/// crest factor `C_w = max |x| / (sqrt 2 rms)`. A pure tone scores 1 on both.
+fn windows_k_and_crest(x: &[f64]) -> Vec<(f64, f64)> {
+    const WINDOW: usize = 9_600;
+    const HOP: usize = 4_800;
+    let w = std::f64::consts::TAU * 440.0 / FS;
+    let mut v = Vec::new();
+    let mut s = 0;
+    while s + WINDOW <= x.len() {
+        let win = &x[s..s + WINDOW];
+        let rms = (win.iter().map(|v| v * v).sum::<f64>() / WINDOW as f64).sqrt();
+        let d2 = win
+            .windows(3)
+            .map(|t| (t[2] - 2.0 * t[1] + t[0]).abs())
+            .fold(0.0, f64::max);
+        let peak = win.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+        let root2_rms = std::f64::consts::SQRT_2 * rms;
+        v.push((d2 / (w * w * root2_rms), peak / root2_rms));
+        s += HOP;
+    }
+    v
+}
+
+fn ear(out: &[f32], c: usize) -> Vec<f64> {
+    out.iter()
+        .skip(c)
+        .step_by(2)
+        .map(|&x| f64::from(x))
+        .collect()
+}
+
+/// The largest `K_w / (1.25 C_w)` over the windows and ears of `out`, printing each window.
+fn worst_ratio(out: &[f32], what: &str) -> f64 {
+    let mut worst = 0.0f64;
+    for c in 0..2 {
+        let v = windows_k_and_crest(&ear(out, c));
+        let line: Vec<String> = v
+            .iter()
+            .map(|(k, cr)| format!("{k:.3}/{cr:.3}={:.3}", k / cr))
+            .collect();
+        println!("{what}, ear {c}, K_w/C_w per window: {}", line.join(" "));
+        worst = v
+            .iter()
+            .map(|(k, cr)| k / (1.25 * cr))
+            .fold(worst, f64::max);
+    }
+    worst
+}
+
+const BIG: RoomTargets = RoomTargets {
+    t60_s: 6.77,
+    mean_free_path_m: 24.0,
+    energy: 0.0421,
+};
+
 #[test]
 fn a_room_that_grows_under_a_hum_glides_its_lines() {
-    let big = RoomTargets {
-        t60_s: 6.77,
-        mean_free_path_m: 24.0,
-        energy: 0.0421,
-    };
-    let (out, lines) = hum_with_room_change(big);
-    let (held, _) = hum_with_room_change(RoomTargets {
-        t60_s: 2.26,
-        mean_free_path_m: 8.0,
-        energy: 0.379,
-    });
+    let (out, lines) = hum_with_room_change(BIG, &[]);
+    let (held, _) = hum_with_room_change(
+        RoomTargets {
+            t60_s: 2.26,
+            mean_free_path_m: 8.0,
+            energy: 0.379,
+        },
+        &[],
+    );
     let step = REVERB_DELAY_SLEW_FRAMES_PER_FRAME * BLOCK as f32;
     let mut worst = 0.0f32;
     for pair in lines.windows(2) {
@@ -370,36 +424,39 @@ fn a_room_that_grows_under_a_hum_glides_its_lines() {
         .iter()
         .map(|l| (l.length - l.target as f32).abs())
         .fold(0.0, f32::max);
-    let k = |o: &[f32], c: usize| {
-        click_index(
-            &o.iter()
-                .skip(c)
-                .step_by(2)
-                .map(|&x| f64::from(x))
-                .collect::<Vec<_>>(),
-        )
-    };
-    let (k_step, k_held) = (
-        (0..2).map(|c| k(&out, c)).collect::<Vec<_>>(),
-        (0..2).map(|c| k(&held, c)).collect::<Vec<_>>(),
-    );
+    let k_held: Vec<f64> = (0..2)
+        .map(|c| {
+            windows_k_and_crest(&ear(&held, c))
+                .iter()
+                .fold(0.0f64, |m, v| m.max(v.0))
+        })
+        .collect();
+    let ratio = worst_ratio(&out, "room stepped");
+    // The bite: line 15 jumped by half a 440 Hz period at 0.5, 1.5, 2.5 and 3.5 s, each a
+    // further quarter period on, alternating in sign.
+    let jumps: Vec<(usize, usize, f32)> = (0..4)
+        .map(|j| {
+            let frame = ((j as f64 + 0.5) * FS) as usize + 27 * j;
+            (frame, 15, if j % 2 == 0 { 55.0 } else { -55.0 })
+        })
+        .collect();
+    let (jumped, _) = hum_with_room_change(BIG, &jumps);
+    let bite = worst_ratio(&jumped, "line 15 jumped");
     println!(
         "room stepped to 24 m, 6.77 s: largest line move {worst:.3} frames per block, farthest \
-         from target after 4 s {far:.3}; click index per ear {k_step:?}, room held {k_held:?}"
+         from target after 4 s {far:.3}; held render K {k_held:?}; largest K_w / (1.25 C_w) \
+         {ratio:.4}; with line 15 jumped {bite:.3}"
     );
     assert!(
         worst <= step + 1e-3,
         "a line moved {worst} frames in a block"
     );
     assert!(far <= 1.0, "a line is {far} frames from its target");
-    for c in 0..2 {
-        assert!(
-            k_step[c] <= 2.0 * k_held[c],
-            "ear {c}: click index {} against twice {}",
-            k_step[c],
-            k_held[c]
-        );
-    }
+    assert!(ratio <= 1.0, "a window's K_w is {ratio} of 1.25 C_w");
+    assert!(
+        bite >= 4.0,
+        "the jumped render scores only {bite} of the bound"
+    );
 }
 
 /// Rendering with the tail on, its room changing every block, allocates nothing.

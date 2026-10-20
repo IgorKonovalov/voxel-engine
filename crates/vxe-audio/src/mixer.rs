@@ -174,6 +174,13 @@ impl Mixer {
         self.reverb.lines()
     }
 
+    /// Moves tail line `line`'s read point by `frames` at once, for tests that check a jump
+    /// is caught; the line then glides back to its target.
+    #[doc(hidden)]
+    pub fn jump_reverb_line(&mut self, line: usize, frames: f32) {
+        self.reverb.jump(line, frames);
+    }
+
     /// Bytes the tail's delay lines hold.
     pub fn reverb_bytes(&self) -> usize {
         Reverb::line_bytes()

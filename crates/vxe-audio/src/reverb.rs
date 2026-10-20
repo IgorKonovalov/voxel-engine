@@ -209,6 +209,11 @@ impl Reverb {
         }
     }
 
+    /// Moves line `i`'s current length by `frames` at once, within the ring.
+    pub fn jump(&mut self, i: usize, frames: f32) {
+        self.length[i] = (self.length[i] + frames).clamp(1.0, REVERB_MAX_DELAY_FRAMES as f32);
+    }
+
     /// Each line's current and target length.
     pub fn lines(&self) -> [ReverbLine; REVERB_LINES] {
         std::array::from_fn(|i| ReverbLine {

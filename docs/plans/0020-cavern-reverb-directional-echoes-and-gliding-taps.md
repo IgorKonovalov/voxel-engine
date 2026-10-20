@@ -528,41 +528,10 @@ re-read in Phase 7.
 | 1: Taps keyed by direction that glide | dev | done (d9736b9). Code first at 919cb63 (stopped there on the unamended done-when: 5.1828 dB, 2.8656 rad; parent 6.9117 dB, 0.7593 rad; ideal render 5.2407 dB, 1.0492 rad). Walk: 42 probes, largest glide 12.800 frames per block, largest distance from the ideal delay 34.81 frames; click index mixer 2.027, ideal reference 1.883, stepped reference 272.854; mixer at parent d11d0cb (scratch copy) 1.997. Reflections-off fade: largest RMS step 0.4249 dB (parent 0.7349). 1160-sample echo ratio 0.1810; rendered ratios 0.1272 and 0.7773. `E` path unchanged. | d9736b9 |
 | 2: Early echoes from their wall's direction | dev | done. Echo window left over right: wall left +10.53 dB, wall right -6.25 dB; direct burst -0.71 dB both, pack's front at 2 kHz -0.71 dB. 1160-sample echo peaks at frame 1205 = 1160 + 45 (the front response's left peak; direct at 38 with the left response); echo ratio 0.0998 against 0.9312/10.2888 x 2 x 0.2320/0.4209. Rendered ratios now 0.1369 and 0.6758. Walk: click index mixer 2.326 (ideal 1.883, stepped 272.854). Reflections-off fade 0.2155 dB. `bench mixer` (dev box, release, exclusive perf lock, load average 6.10): static 0.5500 ms, turning 0.8948 ms; RAM: buses 24 512 B, tap slots 8 192 B for 64 voices. Allocation test 0. | 4dccd0f |
 | 3: The room fan | dev | done. 12 m cube from the centre: V 1702.2, S 854.0, mfp 7.973, alpha 0.13296, T60 2.249 s, energy 0.3838; from (8, 6.3, 5.8) m: V 1738.0, S 878.3, mfp 7.915, T60 2.233 s. 4 m cube 1.7 m off centre: mfp 2.613 (2.667). Open air: energy 3.27e-5, alpha 0.98. Cadence test: no SetRoom in calls 1 to 7, one at 8, none in 20 still calls, one within 8 after 1.1 m, a new fan at block 94. Seed-1 level spawn (acoustics bench): V 220.8, S 273.2, mfp 3.233, T60 0.912 s, energy 1.200. `bench acoustics` (dev box, release, exclusive perf lock, load average 5.56): 0.9517 ms; with `trace_materials` for the fan (first build) 1.18 to 1.19 ms against 0.81 to 0.89 ms with the fan disabled (load average 14.2). | 2fbd7b9 |
-| 4: The tail | dev | stopped: the room-step click-index bound fails by 0.15 percent, owner question (resume notes below) | committed with this row |
+| 4: The tail | dev | done. Code first at d1fd30f (stopped there on the unamended room-step bound: K 2.0031 and 1.7398 against twice the held render's 0.9999). Unit impulse at 1 m, room (2.26 s, 8 m, 0.379): Schroeder T60 2.039 s; tail energy from frame 128 0.3708 (-0.10 dB); echo density 100 ms 0.758 (left) 0.640 (right), 300 ms 1.067 and 1.014. Cubes 4, 12, 36 m: fitted T60 0.689, 2.030, 5.968 s (fan 0.752, 2.249, 6.748 s); direct peak equal with and without the tail; line sums 5468, 16 320, 48 820 against floors 5416, 16 194, 48 584. Room step: largest line move 5.120 frames per block, every line on target 4 s after; largest K_w / (1.25 C_w) 0.7616 (K_w / C_w 0.631 to 0.906); line 15 jumped 34.42; held render K 0.9999. Allocation count 0. Walk click index 2.326 with the tail live. `bench mixer` (dev box, release, exclusive perf lock, load average 5.81, d1fd30f): static 0.4955 ms, turning 0.8497 ms; tail lines 323 584 B. | committed with this row |
 | 5: A streamed voice and the microphone | dev | not started | |
 | 6: The fly-through: rooms, toggles, the microphone and the readings | dev | not started | |
 | 7: Listening checks | human | not started | |
-
-### Resume notes (Phase 4, 2026-10-20; delete when Phase 4 lands)
-
-- **Where it stopped.** `reverb.rs` (16-line Householder FDN, per-line one-pole damping,
-  prime target lengths gliding at 0.02 frames per frame, per-block gains from the current
-  lengths and smoothed `T60`, input gain from the room's energy), the mixer's per-voice
-  smoothed send, `Mixer::set_reverb_settings`, `#[doc(hidden)] Mixer::reverb_lines`,
-  `tests/reverb.rs` and the mixer bench with the tail are in the tree.
-- **Measured, passing.** Unit impulse at 1 m, room `(2.26 s, 8 m, 0.379)`: Schroeder `T60`
-  2.039 s; tail energy from frame 128 0.3708 (-0.10 dB); normalized echo density 100 ms 0.758
-  (left) and 0.640 (right), 300 ms 1.067 and 1.014. Cubes, fitted `T60` 0.689, 2.030 and
-  5.968 s (Eyring 0.75, 2.26, 6.77; fan 0.752, 2.249, 6.748), direct peak equal with and
-  without the tail; line sums 5468, 16 320 and 48 820 against floors 5416, 16 194 and 48 584.
-  Room step: largest line move 5.120 frames per block, every line on its target 4 s after.
-  Allocation count 0 with the room changing every block. Walk (Phase 1 test, the tail now
-  live in it): click index 2.326. `bench mixer` (dev box, release, exclusive perf lock, load
-  average 5.81): static 0.4955 ms, turning 0.8497 ms; tail lines 323 584 B.
-- **The bound that fails.** `a_room_that_grows_under_a_hum_glides_its_lines`: over the 4 s
-  after the step the click index is 2.0031 (left) and 1.7398 (right) against twice the held
-  render's 0.9999 and 0.9999. The held render is one steady 440 Hz tone (`K = 1`); while the
-  lines glide each pass shifts the recirculating hum by up to 2 percent, so the output is a
-  beating sum of tones and `K` follows its envelope crest: in every 200 ms window `K` stayed
-  below `peak / (sqrt 2 rms)` (the window at 2.003 had a crest of 2.293; per window `K` 1.36 to
-  2.00, crest 1.58 to 2.42). The figure does not depend on the hum's distance (1 m 1.957,
-  2 m 2.003, 4 m 2.005). Ramping the line filters per sample instead of per block left it
-  unchanged (2.0030).
-- **Owner question:** see the lane's report.
-- **Gate at d1fd30f:** `cargo build` 0; `cargo clippy --workspace --all-targets -- -D
-  warnings` 0; `cargo fmt --all --check` 0; `cargo test --doc --workspace` 0 (7 passed, 1
-  ignored); `cargo nextest run --workspace` after `scripts/build-guests.sh` (exclusive perf
-  lock, load average 5.85) 401 run, 400 passed, 1 failed (the bound above), 4 skipped.
 
 ### Notes
 
@@ -573,6 +542,7 @@ re-read in Phase 7.
 - Phase 4: the input gain is `b^2 = 2 E level^2 / (N mean_w [G / (1 - G)])` (mean over 64 frequencies of the lines' mean damped loop gain), not the plan's `E (1 - mean g^2) / N`, which read 0.0783 against 0.379 (-6.85 dB): the plan's form leaves out the damping filters and the split of the lines between the ears.
 - Phase 4: the first room sets the lengths and decay at once but the input gain rises from 0 through the smoother: with an instant first gain the walk's click index read 20.89 when the first fan landed under the hum. The impulse tests play 0.5 s after the room arrives.
 - Phase 4: `voice.rs` (not in Phase 4's Files touched) gained the voice's smoothed send.
+- Phase 4: the jump hook is `#[doc(hidden)] Mixer::jump_reverb_line`; a jumped line glides back to its target.
 - Phase 3: the fan's rays use `World::raycast` (first solid voxel, its exact entry face; ties to the lowest axis) instead of `World::trace_materials` and the face recovered from the hit point: the full-range `trace_materials` walk measured 0.3 ms per slice.
 - Phase 3: `mixer.rs` (not in Phase 3's Files touched) gained an ignoring arm for `Command::SetRoom`; the decay time is clamped in `acoustics.rs` at `MAX_T60_SECONDS = 8`, since `ReverbSettings` arrives in Phase 4.
 - Phase 3: `set_reverb` resends the last estimate's targets (energy 0 when off) at the next update, besides completed fans carrying energy 0 while off.
