@@ -8,7 +8,7 @@
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH] [--view VIEW] [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
-//! [--audio] [--audio-debug]`.
+//! [--audio] [--audio-debug] [--pad on|off]`.
 //! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -64,6 +64,11 @@
 //! a wall with a standable top within 1.2 m, climbs it. On the bounded level the fly-through
 //! keeps a coarse grid and walkable map updated from every edit; `K` prints them.
 //!
+//! A gamepad (`--pad on`, the default in a window; never headless or under the autopilot) flies
+//! as the keys and mouse do: the left stick moves at a speed set by its deflection, the right
+//! stick looks, `L1`/`R1` sink and rise, `R3` latches boost, and walking `South` jumps. A
+//! machine where `gilrs` cannot start runs without a pad.
+//!
 //! Collapse (bounded level, ADR-0008): after every dig the logic asks the server's coarse grid
 //! which regions lost their support, and the fly-through prints each as `unsupported: N cells,
 //! {material: count}`. Each region falls 8 voxels a tick, one tick a frame, until it lands
@@ -79,6 +84,7 @@
 //! in the environment loads that HRIR pack instead of the shipped one.
 
 mod fly;
+mod pad;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -94,6 +100,7 @@ use flythrough::{
     LogicChoice, RESIDENCY, STREAM_MIRROR_BUDGET, ScrollSteps, cave_materials, chunk_ram,
     chunks_hash, level_mirror_budget, level_pool_slots, mips_ram, percentile,
 };
+use pad::Pad;
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
 use vxe_audio::{Acoustics, Hrtf, Mixer, Output, PlayParams, Sound, VoiceId};
 use vxe_net::{Client, Event, Logic, LogicError, MemChannel, Server};
@@ -235,6 +242,9 @@ struct Args {
     replay: Option<std::path::PathBuf>,
     /// `--logic`: the server's logic, native or the hosted component.
     logic: LogicChoice,
+    /// `--pad on|off`: read a gamepad in a window (on by default); never headless or under
+    /// the autopilot.
+    pad: bool,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -255,6 +265,11 @@ fn walk_allowed(streaming: bool) -> Result<(), &'static str> {
 }
 
 impl Args {
+    /// Whether the run reads a gamepad: `--pad on` in a window, without the autopilot.
+    fn wants_pad(&self) -> bool {
+        self.pad && !self.headless && !self.autopilot
+    }
+
     /// The look the fly-through starts in.
     fn start_look(&self) -> LookParams {
         LookParams {
@@ -302,6 +317,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         save: None,
         replay: None,
         logic: LogicChoice::Native,
+        pad: true,
     };
     let mut detail_flag = false;
     let mut it = argv.into_iter();
@@ -358,6 +374,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--save" => args.save = Some(value()?.into()),
             "--replay" => args.replay = Some(value()?.into()),
             "--logic" => args.logic = LogicChoice::parse(&value()?)?,
+            "--pad" => {
+                args.pad = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("--pad takes on or off, not {v}")),
+                }
+            }
             "--level" => args.level = true,
             "--detail" => detail_flag = true,
             "--autopilot" => args.autopilot = true,
@@ -2594,6 +2617,9 @@ struct Flythrough {
     pending: Option<Pending>,
     run: Option<Run>,
     audio: Option<Audio>,
+    /// The gamepad, `None` under `--pad off`, headless, the autopilot, or when `gilrs`
+    /// cannot start.
+    pad: Option<Pad>,
 }
 
 impl App for Flythrough {
@@ -2698,6 +2724,12 @@ impl App for Flythrough {
     fn resized(&mut self, gpu: &Gpu) {
         if let Some(run) = self.run.as_mut() {
             run.resized(gpu);
+        }
+    }
+
+    fn poll(&mut self, input: &mut Input) {
+        if let Some(pad) = self.pad.as_mut() {
+            pad.poll(input);
         }
     }
 
@@ -2952,6 +2984,7 @@ fn main() {
     } else {
         None
     };
+    let pad = if args.wants_pad() { Pad::open() } else { None };
     let app = Flythrough {
         start,
         args,
@@ -2960,6 +2993,7 @@ fn main() {
         pending: Some(pending),
         run: None,
         audio,
+        pad,
     };
     let result = if headless {
         run_headless(app, size)
@@ -3223,6 +3257,27 @@ mod tests {
             let e = wasm.err().expect("refused without the feature");
             assert!(e.contains("--features wasm"), "{e}");
         }
+    }
+
+    /// `--pad` takes `on` or `off`, defaults on, and refuses anything else; headless and
+    /// the autopilot never read a pad.
+    #[test]
+    fn pad_parses_on_and_off() {
+        let a = parse_args_from(argv(&[])).expect("no arguments parse");
+        assert!(a.pad && a.wants_pad());
+        let on = parse_args_from(argv(&["--pad", "on"])).expect("on parses");
+        assert!(on.pad);
+        let off = parse_args_from(argv(&["--pad", "off"])).expect("off parses");
+        assert!(!off.pad && !off.wants_pad());
+        let e = parse_args_from(argv(&["--pad", "x"]))
+            .err()
+            .expect("x refused");
+        assert_eq!(e, "--pad takes on or off, not x");
+        assert!(parse_args_from(argv(&["--pad"])).is_err());
+        let headless = parse_args_from(argv(&["--pad", "on", "--headless"])).unwrap();
+        assert!(!headless.wants_pad());
+        let pilot = parse_args_from(argv(&["--autopilot"])).unwrap();
+        assert!(!pilot.wants_pad());
     }
 
     /// Every failure and every restart of the logic prints a line; the stop prints once,

@@ -51,6 +51,9 @@ criterion = { version = "=0.8.2", default-features = false, features = ["cargo_b
 env_logger = { version = "=0.11.11", default-features = false }
 # The probe component's entropy source: what a logic crate reaching for randomness would use.
 getrandom = { version = "=0.4.3", default-features = false }
+# The testbed's gamepad (ADR-0019): evdev through udev on Linux (links the system libudev),
+# Windows Gaming Input on Windows. Defaults kept: without them gilrs-core 0.6.8 does not compile.
+gilrs = "=0.11.2"
 glam = { version = "=0.34.1", features = ["bytemuck"] }
 log = "=0.4.34"
 png = "=0.18.1"

@@ -1,6 +1,6 @@
 # 0026: Gamepad flight for demos: generic axes and pad buttons in the shell's input, gilrs in the testbed only
 
-> **Status:** approved (2026-10-20)
+> **Status:** in-progress
 > **Created:** 2026-10-20
 > **Milestone:** M7 in `docs/roadmap.md` (tooling); a testbed feature, no frame stage
 > **Related ADRs:** [ADR-0019](../adrs/0019-gamepad-input-as-generic-axes-in-the-shell-fed-by-the-testbed.md)
@@ -177,14 +177,20 @@ None. The poll drains a handful of events per frame; the HUD row costs nothing m
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Axes in the shell, sticks in the fly-through | dev | not started | |
+| 1: Axes in the shell, sticks in the fly-through | dev | done | committed with this row |
 | 2: Buttons, hot-plug and the HUD | dev | not started | |
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: `L2`/`R2` arrive from gilrs as `ButtonChanged(LeftTrigger2/RightTrigger2)` values, so
+  `pad.rs`'s axis table keys on an `AxisSource` (a gilrs axis or a gilrs button) rather than
+  `gilrs::Axis` alone.
+- Phase 1: `Input` gains `release_pad()` (zeroes the axes, releases the pad buttons), beyond the
+  plan's data shapes; `Pad::poll` calls it when the active pad disconnects.
+- Phase 1: the `R3` boost latch lets go when the move stick returns inside the dead zone; the
+  plan names a latch without saying what releases it.
+- Phase 1: the lock adds `objc2-io-kit` (gilrs-core's macOS backend) beside the crates the
+  plan's context lists; no new duplicate in `cargo deny check`.
 
 ### Close triggers
 

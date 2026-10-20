@@ -47,6 +47,13 @@ pub trait App {
         let _ = gpu;
     }
 
+    /// Called before every [`frame`](Self::frame) with the input the frame will see, so the
+    /// app can feed sources the shell does not read (a gamepad's axes and buttons). The
+    /// default does nothing.
+    fn poll(&mut self, input: &mut Input) {
+        let _ = input;
+    }
+
     /// Draws one frame into `surface` and submits the work; the shell presents afterwards.
     /// `dt` is the time since the previous frame in seconds.
     fn frame(&mut self, gpu: &Gpu, input: &Input, dt: f32, surface: &wgpu::TextureView) -> Flow;
@@ -257,6 +264,7 @@ impl<A: App> Shell<A> {
         let view = texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        self.app.poll(&mut self.input);
         let flow = self.app.frame(&state.gpu, &self.input, dt, &view);
         self.input.end_frame();
         state.window.pre_present_notify();
