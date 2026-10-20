@@ -3176,7 +3176,6 @@ mod tests {
         assert!(a.level && a.vault);
     }
 
-    /// Collapse edits outside the op log, so it is off while saving or replaying.
     /// `--room` takes metres and implies the room line; `--mic` implies `--audio`;
     /// `--absorption` is checked; a room builds its own world.
     #[test]
@@ -3195,6 +3194,7 @@ mod tests {
         assert!(parse_args_from(argv(&["--room", "4", "--walk"])).is_ok());
     }
 
+    /// Collapse edits outside the op log, so it is off while saving or replaying.
     #[test]
     fn collapse_is_off_under_save_and_replay() {
         assert_eq!(collapse_allowed(true), Err(COLLAPSE_NOT_LOGGED));
