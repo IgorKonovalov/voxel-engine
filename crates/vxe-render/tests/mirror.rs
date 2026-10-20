@@ -6,9 +6,10 @@ use std::sync::Arc;
 
 use vxe_render::gpu_world::{
     ABSENT, ATTR_PAGE_BRICK_SLOTS, BITS_WORDS, EMPTY_BIT, ENTRY_WORD, FULL_BIT, LOD_BIT,
-    LOD_LEVEL_ENTRY, MASK_BYTES, MASK_GROUP_SLOTS, MASK_GROUP_WORDS, NO_PLANE, PALETTE_WORD,
-    POOL_PAGE_SLOTS, RECORD_BYTES, RECORD_MASK, RECORD_WORDS, SLOT_BYTES, SLOT_MASK, WIDE_BIT,
-    attr_slot, opaque_mask_word, translucent_mask_word,
+    LOD_LEVEL_ENTRY, MASK_BYTES, MASK_GROUP_SLOTS, MASK_GROUP_WORDS, NO_PLANE, PAGE_BYTES,
+    PALETTE_WORD, PLACEHOLDER_BYTES, POOL_PAGE_SLOTS, RECORD_BYTES, RECORD_MASK, RECORD_WORDS,
+    SLOT_BYTES, SLOT_MASK, WIDE_BIT, attr_slot, budget_for, opaque_mask_word,
+    translucent_mask_word,
 };
 use vxe_render::{
     ATTRIB_WGSL, GpuWorld, MARCH_WGSL, MirrorConfig, ShardLayout, Window, readback, wgpu,
@@ -58,6 +59,17 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     Some(pollster::block_on(adapter.request_device(&desc)).expect("device"))
 }
 
+/// The budget the tests' mirrors reserve unless a test says otherwise: 64 MiB.
+const SMALL_BUDGET: u64 = 64 << 20;
+
+/// `window` with no sync budget and a 64 MiB reservation.
+fn small(window: Window) -> MirrorConfig {
+    MirrorConfig {
+        budget_bytes: SMALL_BUDGET,
+        ..MirrorConfig::new(window)
+    }
+}
+
 /// Material 1 below z = 3, air above: every brick at z in [0, 8) is `Full`.
 struct Floor;
 
@@ -89,19 +101,20 @@ fn sync_uploads_dirty_bricks_once() {
     // 4 chunks x 64 bricks in the z = 0 layer.
     assert_eq!(world.stats().full_bricks, 256);
 
-    let mut gpu = GpuWorld::new(&device, world.extent());
+    let mut gpu = GpuWorld::with_config(&device, small(Window::Fixed(world.extent())));
     let first = gpu.sync(&world, &queue).unwrap();
     assert_eq!(first.bricks, 256);
     assert_eq!(first.chunks, 4);
     assert_eq!(gpu.live_slots(), 256);
+    // One page handed out, of the reservation's pages.
     assert_eq!(gpu.pool_slots(), POOL_PAGE_SLOTS);
-    // Allocation is the buffers' sizes, and covers the live accounting.
+    assert!(gpu.reserved_slots() > POOL_PAGE_SLOTS);
+    // Allocation is the reserved buffers' sizes, and covers the live accounting.
     let allocated: u64 = (0..4).map(|k| gpu.pool_shard(k).size()).sum::<u64>()
         + gpu.masks().size()
-        + gpu.records().size()
-        + gpu.table().size()
-        + gpu.materials().size();
+        + gpu.records().size();
     assert_eq!(gpu.allocated_bytes(), allocated);
+    assert_eq!(gpu.allocated_bytes(), gpu.shard_layout().reserved_bytes());
     assert!(gpu.allocated_bytes() >= gpu.mirror_bytes());
     for c in world.store().coords() {
         assert!(!world.store().get(c).unwrap().read().unwrap().any_dirty());
@@ -221,7 +234,7 @@ fn a_collapsed_brick_frees_its_slot_for_the_next_expansion() {
         return;
     };
     let world = world();
-    let mut gpu = GpuWorld::new(&device, world.extent());
+    let mut gpu = GpuWorld::with_config(&device, small(Window::Fixed(world.extent())));
     gpu.sync(&world, &queue).unwrap();
     let slot0 = gpu.entry(ChunkCoord([0, 0, 0]), 0).unwrap() & !FULL_BIT;
 
@@ -286,7 +299,7 @@ fn an_edit_in_an_empty_chunk_toggles_its_empty_bit() {
     let mut t = MaterialTable::new();
     t.push(Material::named("floor"));
     let world = World::generate(ChunkExtent::new([0, 0, 0], [1, 1, 2]), &Floor, &t);
-    let mut gpu = GpuWorld::new(&device, world.extent());
+    let mut gpu = GpuWorld::with_config(&device, small(Window::Fixed(world.extent())));
     gpu.sync(&world, &queue).unwrap();
     let (floor, air) = (ChunkCoord([0, 0, 0]), ChunkCoord([0, 0, 1]));
     let rec = gpu.record_index(air).unwrap();
@@ -354,13 +367,25 @@ struct Readback {
 impl Readback {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &GpuWorld) -> Self {
         let all = |b: &wgpu::Buffer| readback::read_buffer(device, queue, b, 0, b.size());
+        // The reserved buffers are read as far as the pages handed out reach.
+        let slots = u64::from(gpu.pool_slots());
+        let sps = u64::from(gpu.shard_layout().slots_per_shard);
+        let shard = |k: usize| {
+            let n = slots.saturating_sub(k as u64 * sps).min(sps);
+            readback::read_buffer(device, queue, gpu.pool_shard(k), 0, n * SLOT_BYTES)
+        };
         Self {
             table: bytemuck::cast_slice(&all(gpu.table())).to_vec(),
             records: bytemuck::cast_slice(&all(gpu.records())).to_vec(),
-            pool: (0..gpu.shards_in_use().max(1))
-                .flat_map(|k| all(gpu.pool_shard(k)))
-                .collect(),
-            masks: bytemuck::cast_slice(&all(gpu.masks())).to_vec(),
+            pool: (0..gpu.shards_in_use()).flat_map(shard).collect(),
+            masks: bytemuck::cast_slice(&readback::read_buffer(
+                device,
+                queue,
+                gpu.masks(),
+                0,
+                slots * MASK_BYTES,
+            ))
+            .to_vec(),
         }
     }
     /// The voxels of the `Full` brick in record entry `e` of record `rec`, decoded as the
@@ -438,9 +463,19 @@ fn full_bricks(world: &World, coords: &[ChunkCoord]) -> u32 {
         .sum()
 }
 
+/// The buffers a mirror reserved: its four shards, masks and records.
+fn reserved_buffers(gpu: &GpuWorld) -> Vec<wgpu::Buffer> {
+    (0..4)
+        .map(|k| gpu.pool_shard(k).clone())
+        .chain([gpu.masks().clone(), gpu.records().clone()])
+        .collect()
+}
+
 /// The streamer's radius-2 scenario through a following window of side 7: after the move the
 /// mirror holds the 42 resident chunks, each decoding to its CPU voxels, and the evicted
-/// chunks' slots went to the free list.
+/// chunks' slots went to the free list. The 64 MiB reservation is made once: its bytes are
+/// the budget rounded down to whole pages and the window's 343 records, and no sync, eviction
+/// or window move creates, copies or resizes a buffer.
 #[test]
 fn a_following_window_mirrors_the_streamed_residency() {
     let Some((device, queue)) = device() else {
@@ -465,8 +500,20 @@ fn a_following_window_mirrors_the_streamed_residency() {
             window: Window::Follow { side: 7 },
             sync_budget_bytes: u64::MAX,
             max_shard_slots: None,
+            budget_bytes: SMALL_BUDGET,
         },
     );
+    // 343 records, then whole pages of what is left past the placeholders: 27 pages on one
+    // shard (lavapipe's 262 144 slots), the other three shards one-slot placeholders.
+    assert_eq!(gpu.reserved_records(), 343);
+    let pages = (SMALL_BUDGET - 343 * RECORD_BYTES - PLACEHOLDER_BYTES) / PAGE_BYTES;
+    assert_eq!(pages, 27);
+    assert_eq!(u64::from(gpu.reserved_slots()), pages * 4096);
+    let reserved = 343 * RECORD_BYTES + pages * PAGE_BYTES + 3 * SLOT_BYTES;
+    assert_eq!(gpu.allocated_bytes(), reserved);
+    assert!(SMALL_BUDGET - reserved < PAGE_BYTES + PLACEHOLDER_BYTES);
+    let buffers = reserved_buffers(&gpu);
+    let mut stats = Vec::new();
 
     let focus = VoxelCoord([0, 0, 0]);
     s.update(&world, &[focus]);
@@ -474,6 +521,8 @@ fn a_following_window_mirrors_the_streamed_residency() {
     gpu.apply_events(&ev);
     gpu.set_focus(focus);
     let st = gpu.sync(&world, &queue).unwrap();
+    stats.push(st);
+    assert_eq!(gpu.allocated_bytes(), reserved);
     assert_eq!(st.chunks, 33);
     assert_eq!(gpu.mirrored_chunks(), 33);
     let first = world.store().coords();
@@ -498,16 +547,26 @@ fn a_following_window_mirrors_the_streamed_residency() {
     assert!(!evicted_slots.is_empty());
     let (live_before, allocated_before) = (gpu.mirror_bytes(), gpu.allocated_bytes());
     gpu.apply_events(&ev);
-    // Eviction lowers the live accounting; the buffers never shrink.
+    // Eviction lowers the live accounting; the reservation stays.
     assert!(gpu.mirror_bytes() < live_before);
     assert_eq!(gpu.allocated_bytes(), allocated_before);
+    assert_eq!(gpu.allocated_bytes(), reserved);
     // Eviction returns exactly the evicted chunks' slots to the free list.
     let free: HashSet<u32> = gpu.free_slots().iter().copied().collect();
     assert_eq!(free, evicted_slots);
 
     gpu.set_focus(focus);
     let st = gpu.sync(&world, &queue).unwrap();
+    stats.push(st);
     assert_eq!(st.pending_chunks, 0);
+    // The window moved by three chunks; nothing was created, copied or resized.
+    assert_eq!(gpu.allocated_bytes(), reserved);
+    assert_eq!(reserved_buffers(&gpu), buffers);
+    assert!(
+        stats
+            .iter()
+            .all(|s| s.buffers_created == 0 && s.copies == 0)
+    );
     let resident = world.store().coords();
     assert_eq!(resident.len(), 42);
     assert_eq!(gpu.mirrored_chunks(), 42);
@@ -587,7 +646,7 @@ fn a_chunk_of_300_materials_is_wide_and_its_neighbour_narrow() {
         &numbered_table(300),
     );
     let (many, two) = (ChunkCoord([0, 0, 0]), ChunkCoord([1, 0, 0]));
-    let mut gpu = GpuWorld::new(&device, world.extent());
+    let mut gpu = GpuWorld::with_config(&device, small(Window::Fixed(world.extent())));
     gpu.sync(&world, &queue).unwrap();
 
     assert!(gpu.is_wide(many));
@@ -640,7 +699,7 @@ fn a_new_material_appends_to_the_palette_and_an_overflow_turns_the_chunk_wide() 
         &numbered_table(256),
     );
     let c = ChunkCoord([0, 0, 0]);
-    let mut gpu = GpuWorld::new(&device, world.extent());
+    let mut gpu = GpuWorld::with_config(&device, small(Window::Fixed(world.extent())));
     gpu.sync(&world, &queue).unwrap();
     assert_eq!(gpu.palette(c), Some(&[0, 1][..]));
     let floor_bricks = full_bricks(&world, &[c]);
@@ -781,6 +840,29 @@ fn records_past_the_binding_fail_and_leave_the_mirror_untouched() {
     );
     assert_eq!(gpu.mirrored_chunks(), 0);
     assert_eq!(gpu.bytes_written(), 0);
+
+    // A budget holding 1000 records, and no page, binds before the device does.
+    let budget = 1000 * RECORD_BYTES + PLACEHOLDER_BYTES;
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            budget_bytes: budget,
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        },
+    );
+    assert_eq!(gpu.reserved_records(), 1000);
+    assert_eq!(gpu.reserved_slots(), 0);
+    assert!(gpu.allocated_bytes() <= budget);
+    let err = gpu.sync(&world, &queue).unwrap_err();
+    assert_eq!(
+        err,
+        vxe_render::MirrorError::RecordsTooLarge {
+            needed: 1728 * RECORD_BYTES,
+            limit: 1000 * RECORD_BYTES,
+        }
+    );
+    assert_eq!(gpu.mirrored_chunks(), 0);
+    assert_eq!(gpu.bytes_written(), 0);
 }
 
 /// The mirror's sizing code names no backend, vendor or adapter: only limits decide.
@@ -855,6 +937,65 @@ fn a_world_past_four_shards_fails_and_leaves_the_mirror_untouched() {
     assert!(c.read().unwrap().any_dirty());
 }
 
+/// The same 36 chunks under a budget of four pages and their records, on uncapped shards:
+/// the budget is the limit, and the failed sync writes nothing.
+#[test]
+fn a_world_past_the_budget_fails_and_leaves_the_mirror_untouched() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [4, 3, 3]),
+        &Checker,
+        &numbered_table(2),
+    );
+    let budget = budget_for(16_384, 36);
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            budget_bytes: budget,
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        },
+    );
+    assert!(gpu.shard_layout().capacity() > 16_384);
+    assert_eq!(gpu.reserved_slots(), 16_384);
+    assert_eq!(gpu.reserved_records(), 36);
+    assert!(gpu.allocated_bytes() <= budget);
+    assert_eq!(gpu.allocated_bytes(), gpu.shard_layout().reserved_bytes());
+    let err = gpu.sync(&world, &queue).unwrap_err();
+    assert_eq!(
+        err,
+        vxe_render::MirrorError::PoolTooLarge {
+            needed: 18_432 * SLOT_BYTES,
+            limit: 16_384 * SLOT_BYTES,
+        }
+    );
+    assert_eq!(gpu.bytes_written(), 0);
+    assert_eq!(gpu.mirrored_chunks(), 0);
+    assert_eq!(gpu.live_slots(), 0);
+    assert_eq!(gpu.pool_slots(), 0);
+    assert!(gpu.free_slots().is_empty());
+    let c = world.store().get(ChunkCoord([0, 0, 0])).unwrap();
+    assert!(c.read().unwrap().any_dirty());
+
+    // Exactly the reservation fits: 32 chunks of 512 `Full` bricks take all 16 384 slots.
+    let fits = World::generate(
+        ChunkExtent::new([0, 0, 0], [4, 4, 2]),
+        &Checker,
+        &numbered_table(2),
+    );
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            budget_bytes: budget_for(16_384, 32),
+            ..MirrorConfig::new(Window::Fixed(fits.extent()))
+        },
+    );
+    let st = gpu.sync(&fits, &queue).unwrap();
+    assert_eq!(st.bricks, 16_384);
+    assert_eq!(gpu.pool_slots(), gpu.reserved_slots());
+}
+
 impl Readback {
     /// Asserts that `coord`'s table entry is a LOD record whose 73 entries decode to the
     /// world's mips for it; returns the slots its `Full` mip-bricks occupy.
@@ -903,7 +1044,7 @@ fn lod_records_decode_to_the_mips_and_demotion_frees_the_full_slots() {
             persist: PersistConfig::default(),
         },
     );
-    let mut gpu = GpuWorld::with_config(&device, MirrorConfig::new(Window::Follow { side: 7 }));
+    let mut gpu = GpuWorld::with_config(&device, small(Window::Follow { side: 7 }));
     let step = |s: &mut Streamer, gpu: &mut GpuWorld, focus: VoxelCoord| {
         s.update(&world, &[focus]);
         let ev = s.wait_idle(&world);
@@ -1059,8 +1200,7 @@ fn attribute_pages_hold_full_bricks_and_plain_pages_mip_bricks() {
 
     // The live accounting adds the attribute slots and their masks of each brick slot in an
     // attribute page, against the same world mirrored without attribute pages.
-    let mut plain =
-        GpuWorld::with_config(&device, MirrorConfig::new(Window::Fixed(world.extent())));
+    let mut plain = GpuWorld::with_config(&device, small(Window::Fixed(world.extent())));
     // Re-dirty nothing: a new mirror uploads every resident chunk on its first sync.
     plain.sync(&world, &queue).unwrap();
     assert_eq!(plain.live_slots(), gpu.live_slots());
@@ -1119,8 +1259,7 @@ fn the_attribute_pass_fills_the_floor_and_reaches_a_carve_s_neighbours() {
         return;
     };
     let world = world();
-    let mut gpu =
-        GpuWorld::with_surface_attrs(&device, MirrorConfig::new(Window::Fixed(world.extent())));
+    let mut gpu = GpuWorld::with_surface_attrs(&device, small(Window::Fixed(world.extent())));
     gpu.sync(&world, &queue).unwrap();
     assert_eq!(update_attrs(&device, &queue, &mut gpu), 256);
     assert_eq!(
@@ -1158,8 +1297,7 @@ fn the_attribute_pass_fills_the_floor_and_reaches_a_carve_s_neighbours() {
     assert_ne!(after, NO_PLANE);
 
     // A mirror built from scratch computes every attribute: the neighbour pass agrees.
-    let mut fresh =
-        GpuWorld::with_surface_attrs(&device, MirrorConfig::new(Window::Fixed(world.extent())));
+    let mut fresh = GpuWorld::with_surface_attrs(&device, small(Window::Fixed(world.extent())));
     fresh.sync(&world, &queue).unwrap();
     update_attrs(&device, &queue, &mut fresh);
     assert_eq!(after, attr_of(&device, &queue, &fresh, beside));

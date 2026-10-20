@@ -5,14 +5,17 @@
 //! within `r_full` chunks, mips out to `r_lod`. `--level` generates the bounded level instead.
 //!
 //! `flythrough [--seed N] [--level] [--vault] [--walk] [--render WxH] [--frames N] [--bench N]
-//! [--autopilot] [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH]
+//! [--autopilot] [--sync-budget MIB] [--mirror-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH]
 //! [--view VIEW] [--detail] [--translucent-layers N] [--hud] [--save PATH] [--replay PATH]
 //! [--logic native|wasm[=PATH]] [--audio] [--audio-debug]`.
 //! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
-//! [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame; `--headless` runs the
+//! [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame; `--mirror-budget`
+//! sets the VRAM the mirror reserves for its pool, masks and records at startup (ADR-0013;
+//! default 3072 MiB streamed, and on the level what its bricks, the dig headroom and its chunks
+//! need); `--headless` runs the
 //! same frames on an offscreen target with no window; `--walk` (with `--level`) starts in walk
 //! mode, the body spawned in the spawn pocket; `--look` starts in a normal mode (`face`,
 //! `trilinear8`, `gradient27`, `contour`) and gives the mirror attribute pages, so `N` can reach
@@ -76,8 +79,8 @@ use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, VAULT_EDGE, vault};
 use flythrough::hud::{self, Cadence, EditLine, FrameStats, HudStats, WorldSample};
 use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB, REACH};
 use flythrough::{
-    LogicChoice, RESIDENCY, RUBBLE, ScrollSteps, cave_materials, chunk_ram, chunks_hash, mips_ram,
-    percentile,
+    LogicChoice, RESIDENCY, RUBBLE, STREAM_MIRROR_BUDGET, ScrollSteps, cave_materials, chunk_ram,
+    chunks_hash, level_mirror_budget, level_pool_slots, mips_ram, percentile,
 };
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
 use vxe_audio::{Acoustics, Hrtf, Mixer, Output, PlayParams, Sound, VoiceId};
@@ -119,9 +122,6 @@ const FILL_RADIUS: i64 = 3 * FIXED_ONE;
 /// Brick arrays the world's pool is topped up to after each frame's edits and before the `B`
 /// bench: 2 Mi `u16` voxels (4 MiB), more than the bench's 100 carves expand.
 const RESERVE_ARRAYS: usize = 4096;
-/// Free pool slots requested beyond the bounded level's `Full` bricks, so digging can grow
-/// the pool: 64 Ki slots.
-const POOL_HEADROOM_BRICKS: u64 = 65_536;
 /// The pool size a streaming device's limits are requested for; capped at the adapter.
 const STREAM_POOL_BYTES: u64 = 2 << 30;
 /// Frames `F1` averages over.
@@ -202,6 +202,8 @@ struct Args {
     /// `--vault`: the cave generates with the vault room ahead of the spawn.
     vault: bool,
     sync_budget: u64,
+    /// `--mirror-budget`: the mirror's VRAM reservation in bytes.
+    mirror_budget: Option<u64>,
     audio: bool,
     /// `--audio-debug`: print the callback's readings and record its output.
     audio_debug: bool,
@@ -290,6 +292,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         walk: false,
         vault: false,
         sync_budget: SYNC_BUDGET_MIB << 20,
+        mirror_budget: None,
         audio: false,
         audio_debug: false,
         look: None,
@@ -322,6 +325,12 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .parse()
                     .map_err(|e| format!("--sync-budget: {e}"))?;
                 args.sync_budget = mib << 20;
+            }
+            "--mirror-budget" => {
+                let mib: u64 = value()?
+                    .parse()
+                    .map_err(|e| format!("--mirror-budget: {e}"))?;
+                args.mirror_budget = Some(mib << 20);
             }
             "--look" => {
                 let v = value()?;
@@ -1589,15 +1598,8 @@ impl Run {
         let pool = if self.stream.is_some() {
             STREAM_POOL_BYTES
         } else {
-            let bricks = self.world.stats().full_bricks as u64 + POOL_HEADROOM_BRICKS;
-            // With attribute pages each page holds `ATTR_PAGE_BRICK_SLOTS` bricks.
-            let slots = if self.args.look.is_some() {
-                bricks.div_ceil(u64::from(gpu_world::ATTR_PAGE_BRICK_SLOTS))
-                    * u64::from(gpu_world::POOL_PAGE_SLOTS)
-            } else {
-                bricks
-            };
-            slots * gpu_world::SLOT_BYTES
+            let full = self.world.stats().full_bricks as u64;
+            level_pool_slots(full, self.args.look.is_some()) * gpu_world::SLOT_BYTES
         };
         (
             adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
@@ -1655,18 +1657,61 @@ impl Run {
         self.gfx = Some(gfx);
     }
 
-    /// A mirror under `cfg`, with attribute pages when `--look` was given.
+    /// The mirror's VRAM budget: `--mirror-budget`, else the level's from its content and
+    /// extent, else the streamed default.
+    fn mirror_budget(&self) -> u64 {
+        self.args.mirror_budget.unwrap_or_else(|| {
+            if self.stream.is_some() {
+                STREAM_MIRROR_BUDGET
+            } else {
+                let chunks = self
+                    .world
+                    .extent()
+                    .size()
+                    .iter()
+                    .map(|&v| v as u64)
+                    .product();
+                let full = self.world.stats().full_bricks as u64;
+                level_mirror_budget(full, chunks, self.args.look.is_some())
+            }
+        })
+    }
+
+    /// A mirror under `cfg` reserving [`Run::mirror_budget`], with attribute pages when
+    /// `--look` was given. Prints what it reserved and how long creating its buffers took.
     fn new_mirror(&self, gpu: &Gpu, cfg: MirrorConfig) -> GpuWorld {
-        if self.args.look.is_some() {
+        let cfg = MirrorConfig {
+            budget_bytes: self.mirror_budget(),
+            ..cfg
+        };
+        let t = now();
+        let mirror = if self.args.look.is_some() {
             GpuWorld::with_surface_attrs(&gpu.device, cfg)
         } else {
             GpuWorld::with_config(&gpu.device, cfg)
-        }
+        };
+        let ms = ms_since(t);
+        let l = mirror.shard_layout();
+        println!(
+            "mirror: reserved {} B of a {} B budget ({} slots over {} shards, {} records) in {ms:.1} ms",
+            mirror.allocated_bytes(),
+            cfg.budget_bytes,
+            l.reserved_slots,
+            l.reserved_slots.div_ceil(l.slots_per_shard),
+            l.reserved_records
+        );
+        mirror
     }
 
     /// The streaming mirror, returned once the chunks within squared distance `NEAR_D2` of
     /// the spawn chunk are resident and mirrored full.
     fn init_stream(&mut self, gpu: &Gpu) -> GpuWorld {
+        // The workers start on the spawn's chunks before the mirror reserves its buffers,
+        // which takes the driver tens of milliseconds for a budget of gigabytes.
+        if let Some(stream) = self.stream.as_mut() {
+            stream.streamer.update(&self.world, &[self.spawn]);
+            stream.tick_ms.push(ms_since(self.start));
+        }
         let mut mirror = self.new_mirror(
             gpu,
             MirrorConfig {

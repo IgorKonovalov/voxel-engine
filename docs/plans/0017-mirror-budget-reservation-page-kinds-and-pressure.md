@@ -1,6 +1,6 @@
 # 0017: The mirror reserves its budget: fixed buffers, empty pages that change kind, and a pressure signal the streamer follows
 
-> **Status:** approved (2026-10-17)
+> **Status:** in-progress (2026-10-20)
 > **Created:** 2026-10-17
 > **Milestone:** M2 in `docs/roadmap.md` (the footprint work that lets Plan 0013's radius be chosen against content)
 > **Related ADRs:** [ADR-0013](../adrs/0013-mirror-reserves-its-vram-budget-up-front.md)
@@ -219,7 +219,7 @@ records`, in whole pages, filling shard 0 to its limit, then 1, and so on; masks
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: One reservation, no second buffer | dev | not started | |
+| 1: One reservation, no second buffer | dev | done | committed with this row |
 | 2: Empty pages change kind | dev | not started | |
 | 3: Pressure, and the streamer follows it | dev | not started | |
 | 4: Readings and the budget line | dev | not started | |
@@ -230,6 +230,13 @@ _(Deviations from the plan, with the commit, stated without justification. Done-
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
 
+- Phase 1: the budget covers the pool shards (placeholders included), masks and records; the chunk table and material rows are outside it, and `allocated_bytes()` now sums only those three kinds of buffer (it counted the table and materials before). `mirror_bytes()` counts the material rows written instead of the materials buffer's size. (Phase 1 commit)
+- Phase 1: the materials buffer is still created at the first sync, sized to the table (`look.rs` asserts its size equals the rows); `SyncStats::buffers_created` counts pool, mask and record buffers only. Both new `SyncStats` fields are zero by construction (no path creates or copies after `new`); the test also asserts the six reserved buffers are the same handles after the run. (Phase 1 commit)
+- Phase 1: `pool_slots()` is now the pages handed out (the high-water mark) rather than the buffer capacity, and `shards_in_use()` follows it; `reserved_slots()`, `reserved_records()`, `ShardLayout::{reserved_slots, reserved_records, with_budget, reserved_bytes}`, `budget_for`, `PAGE_BYTES`, `PLACEHOLDER_BYTES` and `DEFAULT_BUDGET_BYTES` are new. (Phase 1 commit)
+- Phase 1: `MirrorConfig::new` defaults the budget to 3 GiB clamped to the device, so tests outside Files touched (`golden.rs`, `look.rs`, `walk.rs`, `translucent.rs`, `hud_golden.rs`, `hero.rs`) reserve lavapipe's four 128 MiB shards; the mirror tests in Files touched pass 64 MiB, the level tests 256 MiB. (Phase 1 commit)
+- Phase 1: the fly-through's level default is `level_mirror_budget` (its `Full` bricks plus the 64 Ki dig headroom, in attribute pages under `--look`, and a record per extent chunk); the streamed default is 3 GiB with records for the window's `W^3`. `POOL_HEADROOM_BRICKS` moved from `main.rs` to `lib.rs`. `init_stream` now calls the streamer's first `update` before the mirror reserves, so generation overlaps the reservation. (Phase 1 commit)
+- Phase 1 done-when not met as stated: the 3072 MiB reservation took 69.6 to 86.0 ms against the 50 ms guess; the streamed first frame read 513, 447 and 414 ms against Plan 0002's 457 ms, one run 12 % over (see Close triggers). (Phase 1 commit)
+
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
@@ -237,6 +244,8 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **What shipped:**
 - **Public API changed:**
 - **Budget readings:**
+  - Phase 1, `flythrough --headless --frames 30 --mirror-budget 3072` (streamed, seed 1), NVIDIA GeForce RTX 3080 Laptop GPU, Ryzen 9 5900HS, release, exclusive perf lock, 1-minute load 9.60 to 10.97 (other lanes building): `mirror: reserved 3220946112 B of a 3221225472 B budget (4919296 slots over 2 shards, 132651 records)` in 82.3, 79.3 and 69.6 ms; device ready 380, 314, 300 ms; first frame 513, 447, 414 ms. Base d11d0cb alternated with it: first frame 1970 (cold, device 1910 ms), 375, 367 ms. Before the overlap in `init_stream` (load 15.96 to 16.60): reserved in 86.0 and 80.2 ms, first frame 570 and 526 ms against base 3521 (cold) and 446 ms. A throwaway probe on the same GPU (not committed): `create_buffer` of 256 MiB, 1 GiB, 2 GiB took 4.2, 18.2, 36.3 ms; `GpuWorld::with_config` at 3 GiB 51.2 to 53.6 ms.
+  - Phase 1, `flythrough --level --headless --frames 3`, same machine: `reserved 271524864 B of a 271526464 B budget (450560 slots over 2 shards, 3200 records) in 4.2 ms`, 232 436 992 B live; with `--look contour` `reserved 797779456 B of a 797780544 B budget (1351680 slots over 1 shards, 3200 records) in 49.9 ms`, 680 491 136 B live.
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 

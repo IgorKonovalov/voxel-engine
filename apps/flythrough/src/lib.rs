@@ -35,6 +35,33 @@ pub fn window_side(r: Residency) -> i32 {
     2 * (r.r_lod.max(r.r_full) + r.hysteresis) + 1
 }
 
+/// The mirror budget of the streamed cave unless `--mirror-budget` sets one: the world line
+/// of `nfr.md` §3, 3 GiB, of which the window's records take their share.
+pub const STREAM_MIRROR_BUDGET: u64 = vxe_render::gpu_world::DEFAULT_BUDGET_BYTES;
+
+/// Free pool slots beyond the bounded level's `Full` bricks, so digging has room: 64 Ki
+/// slots.
+pub const POOL_HEADROOM_BRICKS: u64 = 65_536;
+
+/// The pool slots the bounded level needs for `full_bricks` plus the headroom; with
+/// attribute pages (`attrs`), whole pages of `ATTR_PAGE_BRICK_SLOTS` bricks each.
+pub fn level_pool_slots(full_bricks: u64, attrs: bool) -> u64 {
+    use vxe_render::gpu_world::{ATTR_PAGE_BRICK_SLOTS, POOL_PAGE_SLOTS};
+    let bricks = full_bricks + POOL_HEADROOM_BRICKS;
+    if attrs {
+        bricks.div_ceil(u64::from(ATTR_PAGE_BRICK_SLOTS)) * u64::from(POOL_PAGE_SLOTS)
+    } else {
+        bricks
+    }
+}
+
+/// The mirror budget of the bounded level unless `--mirror-budget` sets one: the pool
+/// [`level_pool_slots`] needs and a record for each of its `chunks`, sized from the world it
+/// loads rather than the streamed default.
+pub fn level_mirror_budget(full_bricks: u64, chunks: u64, attrs: bool) -> u64 {
+    vxe_render::gpu_world::budget_for(level_pool_slots(full_bricks, attrs), chunks)
+}
+
 /// The audio listener for `camera`: its position (voxel units), its forward and its up. The
 /// mixer derives the listener's right as `forward x up`, which is the camera's right
 /// (`forward x Z`), so a source on the right of the screen plays on the right channel.

@@ -14,13 +14,21 @@
 //! 512-byte slot of palette indices plus 72 bytes of masks (a 64-byte opaque mask and two
 //! translucent words), each mirrored chunk (full or LOD-only) a 2624-byte record (16 words of
 //! brick bits, 512 entries, the palette), each chunk-table entry 4 bytes (the window's `W^3`
-//! when streaming), and each material row 8 `f32`s. CPU bytes count a full chunk's slot array and
-//! its `Full` bricks' voxels, and a LOD-only chunk's mip-brick slots and `Full` mip-bricks.
+//! when streaming), and each material row `MATERIAL_FLOATS` `f32`s. CPU bytes count a full
+//! chunk's slot array and its `Full` bricks' voxels, and a LOD-only chunk's mip-brick slots and
+//! `Full` mip-bricks.
+//!
+//! The budget lines are the smallest `--mirror-budget` (ADR-0013) that reserves this content
+//! at rest (`gpu_world::budget_for`): its slots in whole pages and a record for every chunk of
+//! the extent, or of the window's `W^3`. Face mode puts every brick in plain pages; contour
+//! puts full chunks' bricks in attribute pages of 1364 bricks each. Neither counts the
+//! streamer's hysteresis or the dig headroom.
 
 use std::sync::Arc;
 
 use flythrough::cave::CaveSource;
 use flythrough::{cave_materials, chunk_ram, mips_ram, window_side};
+use vxe_render::gpu_world::{ATTR_PAGE_BRICK_SLOTS, MATERIAL_FLOATS, POOL_PAGE_SLOTS, budget_for};
 use vxe_world::{
     BRICK_VOXELS, Brick, CHUNK_BRICKS, ChunkExtent, CoarseGrid, PersistConfig, Residency,
     StreamConfig, Streamer, World,
@@ -90,7 +98,8 @@ fn bounded(seed: u64, chunks: [i32; 3]) {
     let bricks = s.full_bricks + s.uniform_bricks;
     let slot_array = CHUNK_BRICKS * size_of::<Brick>();
     let cpu = s.full_bricks * BRICK_VOXELS * 2 + s.chunks * slot_array;
-    let mirror = s.full_bricks * SLOT_AND_MASK + s.chunks * (RECORD + 4) + table.len() * 8 * 4;
+    let mirror =
+        s.full_bricks * SLOT_AND_MASK + s.chunks * (RECORD + 4) + table.len() * MATERIAL_FLOATS * 4;
     let voxels = s.chunks as f64 * 64.0 * 64.0 * 64.0;
     let air = world.count_in_box(
         extent.min.min_voxel(),
@@ -118,6 +127,7 @@ fn bounded(seed: u64, chunks: [i32; 3]) {
         mirror,
         mib(mirror as u64)
     );
+    budget_lines(s.full_bricks as u64, 0, s.chunks as u64);
     println!("generation:        {:.3} s on {threads} threads", secs);
     println!("voxels/s/thread:   {:.3e}", voxels / secs / threads as f64);
     println!(
@@ -166,7 +176,7 @@ fn streamed(seed: u64, r: Residency) {
     let w = window_side(r) as usize;
     let mirror_full = full_bricks * SLOT_AND_MASK + st.resident_full * RECORD;
     let mirror_lod = mip_full * SLOT_AND_MASK + st.resident_lod * RECORD;
-    let mirror = mirror_full + mirror_lod + w * w * w * 4 + table.len() * 8 * 4;
+    let mirror = mirror_full + mirror_lod + w * w * w * 4 + table.len() * MATERIAL_FLOATS * 4;
     let generated = st.generated_chunks as f64 * 64.0 * 64.0 * 64.0;
 
     println!(
@@ -200,6 +210,7 @@ fn streamed(seed: u64, r: Residency) {
         mirror_full,
         mirror_lod
     );
+    budget_lines(full_bricks as u64, mip_full as u64, (w * w * w) as u64);
     println!("generation:        {secs:.3} s on {workers} workers");
     println!(
         "voxels/s/worker:   {:.3e}",
@@ -216,6 +227,17 @@ fn streamed(seed: u64, r: Residency) {
         mib(mirror_lod as u64),
         mib(mirror as u64)
     );
+}
+
+/// Prints the budget `full` bricks of full chunks and `mips` mip-bricks need with a record for
+/// each of `records` chunks, in face mode and in contour mode.
+fn budget_lines(full: u64, mips: u64, records: u64) {
+    let attr_slots = full.div_ceil(u64::from(ATTR_PAGE_BRICK_SLOTS)) * u64::from(POOL_PAGE_SLOTS);
+    let face = budget_for(full + mips, records);
+    // Plain and attribute pages are whole pages each.
+    let contour = budget_for(attr_slots, 0) + budget_for(mips, records) - budget_for(0, 0);
+    println!("budget (face):     {face} B ({:.1} MiB)", mib(face));
+    println!("budget (contour):  {contour} B ({:.1} MiB)", mib(contour));
 }
 
 fn mib(b: u64) -> f64 {
