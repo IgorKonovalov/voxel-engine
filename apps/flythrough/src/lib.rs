@@ -108,17 +108,18 @@ pub fn cave_materials() -> MaterialTable {
     t
 }
 
-/// Rock's procedural detail under `--look`: a 40 cm feature scale (4 voxels) at strength 0.3.
-pub const ROCK_DETAIL: [f32; 2] = [4.0, 0.3];
+/// Rock's procedural detail in every look but `--look plain`: a 40 cm feature scale (4 voxels)
+/// at strength 0.1.
+pub const ROCK_DETAIL: [f32; 2] = [4.0, 0.1];
 
 /// [`cave_materials`] with rock's detail set to [`ROCK_DETAIL`]: the table the fly-through
-/// uses under `--look`. Every other row keeps no detail.
+/// uses unless `--look plain`. Every other row keeps no detail.
 pub fn look_materials() -> MaterialTable {
     look_materials_with(ROCK_DETAIL)
 }
 
 /// [`cave_materials`] with rock's detail set to `rock_detail` (feature scale in voxels,
-/// strength): the table under `--look --rock-detail`. Every other row keeps no detail.
+/// strength): the table under `--rock-detail`. Every other row keeps no detail.
 pub fn look_materials_with(rock_detail: [f32; 2]) -> MaterialTable {
     let base = cave_materials();
     let mut t = MaterialTable::new();

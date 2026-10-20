@@ -387,9 +387,9 @@ The baseline GPU is not on hand; every figure is a dev-reference reading and say
 | 2: The attribute pass keeps its buffers, and the shell path is tested | dev | done: `AttribPass` keeps its uniform, a work buffer (next power of two, at least 256 items) and its bind group; 46 items x 1000 then 2777 read `buffer_builds() == 2`, capacity 256 then 4096, attribute bytes equal to a fresh mirror's pass; the shell test failed on its first state (east absent read `NO_PLANE`) until the chunk table was created filled with `ABSENT`; arrival and eviction halves pass with `attr_work` unchanged | 9ffa2a5 |
 | 3: The footprint census and the candidates | dev | done: `world_budget --stream R_FULL,R_LOD --surface`, `--residency`, `--attrib-quant`, `AttribQuant` (`None` writes the full attribute: layout and floor tests unchanged, contour metrics 7.41 degrees, 32 px); at 16,24 the census reads 1 640 292 bricks, x 1040 = 1 705 903 680 B against the 1 705 903 808 B rise (-0.000 %); table below | d75a0af |
 | 4: The owner's footprint call | human | done: D at 14,24, chosen 2026-10-17 (`docs/decisions-pending.md` D1): lossless, no layout change to undo later; the final surface-only form comes with ADR-0012's mirror-slot plan; ADR-0012 accepted 2026-10-17; withdrawn 2026-10-20 at the Phase 5 stop for option (c), the footprint to ADR-0012's mirror-slot plan (amendment 688b3ed) | |
-| 5: The chosen footprint: retire the precision emulation, no new residency | dev | done: `AttribQuant`, `set_quant`, `set_attrib_quant`, `params.quant` and `--attrib-quant` removed (the grep finds nothing; `--attrib-quant none` exits 2 with `unknown argument --attrib-quant`); `RESIDENCY` and `STREAM_MIRROR_BUDGET` unchanged; contour 7.38 degrees, 32 px on llvmpipe; goldens byte for byte; `--level --headless --seed 1 --look contour --frames 3` reads 680 491 136 B live (RTX 3080 Laptop GPU, perf lock, load 3.47) | committed with this row |
+| 5: The chosen footprint: retire the precision emulation, no new residency | dev | done: `AttribQuant`, `set_quant`, `set_attrib_quant`, `params.quant` and `--attrib-quant` removed (the grep finds nothing; `--attrib-quant none` exits 2 with `unknown argument --attrib-quant`); `RESIDENCY` and `STREAM_MIRROR_BUDGET` unchanged; contour 7.38 degrees, 32 px on llvmpipe; goldens byte for byte; `--level --headless --seed 1 --look contour --frames 3` reads 680 491 136 B live (RTX 3080 Laptop GPU, perf lock, load 3.47) | ffe07ee |
 | 6: Rock detail on screen | human | done, ahead of Phase 5: `[4.0, 0.1]`; of `--rock-detail 4,S` at S = 0.1, 0.15, 0.2 and 0.3 (today's default) on `--level --seed 1 --look contour --detail`, the owner judged 0.1 best (2026-10-18) | |
-| 7: Contour plus detail as the default, and the streamed readings | dev | not started | |
+| 7: Contour plus detail as the default, and the streamed readings | dev | done: `ROCK_DETAIL` `[4.0, 0.1]`; no flag prints `look contour, detail on (rock scale 4, strength 0.1), view shaded`; `--look plain` prints `look face, detail off, view shaded` and the level reads 232 436 992 B live; two default autopilot runs: hash match, no wgpu error, peak live 2 864 318 452 B, 0.8894 of the budget, `r_full` lowest 12, final 13, longest deferral streak 0 and 3, no empty sync; attribute pass GPU p99 4.30 to 4.31 ms, CPU p99 138.7 to 146.4 ms; 1080p march level 1.705 to 1.780 ms, streamed spawn 3.502 to 3.970 ms (diagnostic, load 11 to 13); readings in `nfr.md` §2 and §3 | committed with this row |
 
 ### Footprint candidates (Phase 3)
 
@@ -452,6 +452,20 @@ each. Empty is fine.)_
 - Phase 5 stopped at e574898 on its first done-when (14,24 read pressure 0.911 at full
   residency and the rule lowered `r_full` to 12); the plan was amended at 688b3ed (option c).
 - Phase 5: `world_budget --surface` (Phase 3's census) stays; it never used `AttribQuant`.
+- Phase 7: the attribute pass's per-frame readings are summarised (p50, p99, max over the
+  flight) in the autopilot's report rather than printed every frame. The CPU reading is the
+  render thread's time in `GpuWorld::update_attrs`, which builds the list (`attr_work`) and
+  records the pass; `attr_work` is private to `vxe-render`, outside Phase 7's Files touched.
+- Phase 7: every timing was taken at a 1-minute load of 2 or more (3.6 to 13.4, from other work
+  on the box), so by the shared conventions they are diagnostic, not readings; `nfr.md` says so.
+- Phase 7: `--detail` now matters only under `--look plain` (detail is on in every other look);
+  `--rock-detail` is refused under `--look plain`. A parse test in `main.rs` pins the default
+  line, `plain`, and `--attrib-quant` as an unknown argument.
+- Phase 7 followup, not acted on: the autopilot's unready-near count uses the configured
+  `r_full - 2` (14), not the radius the rule settled at, so it read 2939 of 2949 and 2678 of
+  2688 frames with contour by default.
+- Phase 7 followup, not acted on: the attribute pass misses its proposals under motion, GPU
+  p99 about 4.3 ms against 1.0 ms and CPU p99 about 140 ms on the render thread.
 
 ### Close triggers
 

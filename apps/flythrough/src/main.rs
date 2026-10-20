@@ -23,12 +23,16 @@
 //! `--residency` sets the streamed radii (default `flythrough::RESIDENCY`, hysteresis 1);
 //! `--headless` runs the
 //! same frames on an offscreen target with no window; `--walk` (with `--level`) starts in walk
-//! mode, the body spawned in the spawn pocket; `--look` starts in a normal mode (`face`,
-//! `trilinear8`, `gradient27`, `contour`) and gives the mirror attribute pages, so `N` can reach
-//! `contour` (without `--look` it skips it), and gives rock its procedural detail (`--rock-detail`
-//! sets rock's feature scale in voxels and strength, default `flythrough::ROCK_DETAIL`); `--view`
+//! mode, the body spawned in the spawn pocket. The fly-through starts in contour with detail on,
+//! the mirror holding attribute pages and rock its procedural detail (`--rock-detail` sets rock's
+//! feature scale in voxels and strength, default `flythrough::ROCK_DETAIL`), and prints that
+//! look first; `--look` picks the starting normal mode (`face`, `trilinear8`, `gradient27`,
+//! `contour`), and `--look plain` starts in face mode without attribute pages or rock detail,
+//! detail off (`N` then skips contour, `--detail` turns detail on), the look of Plan 0002's and
+//! Plan 0017's face readings. With attribute pages the autopilot's report adds the attribute
+//! pass's work list, CPU and GPU time over the flight. `--view`
 //! starts in a view (`shaded`, `normals`, `hitmask`, `steps`, `albedo`; with `--frames`, `steps`
-//! prints the last frame's mean and p99 steps per ray on exit) and `--detail` with detail on;
+//! prints the last frame's mean and p99 steps per ray on exit);
 //! `--translucent-layers` sets how many translucent voxels are composited in front of the opaque
 //! hit (default 4, 0 ignores them). `N` cycles the normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
@@ -210,9 +214,11 @@ struct Args {
     audio: bool,
     /// `--audio-debug`: print the callback's readings and record its output.
     audio_debug: bool,
-    /// `--look`: the starting normal mode.
+    /// `--look`: the starting normal mode, with attribute pages and rock detail; `None` for
+    /// `--look plain`, face mode without either. Contour by default.
     look: Option<NormalMode>,
-    /// `--detail`: start with procedural detail on.
+    /// Start with procedural detail on: by default, except under `--look plain`, where
+    /// `--detail` turns it on.
     detail: bool,
     /// `--rock-detail`: rock's feature scale (voxels) and strength under `--look`.
     rock_detail: [f32; 2],
@@ -248,6 +254,23 @@ fn walk_allowed(streaming: bool) -> Result<(), &'static str> {
     }
 }
 
+impl Args {
+    /// The look the fly-through starts in.
+    fn start_look(&self) -> LookParams {
+        LookParams {
+            normal_mode: self.look.unwrap_or_default(),
+            detail: self.detail,
+            view: self.view,
+            translucent_layers: self.translucent_layers,
+        }
+    }
+
+    /// Rock's detail pair, in every look but `--look plain`.
+    fn rock_detail(&self) -> Option<[f32; 2]> {
+        self.look.is_some().then_some(self.rock_detail)
+    }
+}
+
 fn parse_args() -> Result<Args, String> {
     parse_args_from(std::env::args().skip(1))
 }
@@ -269,7 +292,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         residency: RESIDENCY,
         audio: false,
         audio_debug: false,
-        look: None,
+        look: Some(NormalMode::Contour),
         detail: false,
         rock_detail: flythrough::ROCK_DETAIL,
         view: ViewMode::Shaded,
@@ -280,6 +303,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         replay: None,
         logic: LogicChoice::Native,
     };
+    let mut detail_flag = false;
     let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or(format!("{flag} needs a value"));
@@ -310,9 +334,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--look" => {
                 let v = value()?;
-                args.look = Some(NormalMode::from_name(&v).ok_or(format!(
-                    "--look takes face, trilinear8, gradient27 or contour, not {v}"
-                ))?);
+                args.look = if v == "plain" {
+                    None
+                } else {
+                    Some(NormalMode::from_name(&v).ok_or(format!(
+                        "--look takes plain, face, trilinear8, gradient27 or contour, not {v}"
+                    ))?)
+                };
             }
             "--rock-detail" => args.rock_detail = parse_rock_detail(&value()?)?,
             "--view" => {
@@ -331,7 +359,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--replay" => args.replay = Some(value()?.into()),
             "--logic" => args.logic = LogicChoice::parse(&value()?)?,
             "--level" => args.level = true,
-            "--detail" => args.detail = true,
+            "--detail" => detail_flag = true,
             "--autopilot" => args.autopilot = true,
             "--headless" => args.headless = true,
             "--walk" => args.walk = true,
@@ -346,8 +374,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             _ => return Err(format!("unknown argument {flag}")),
         }
     }
+    args.detail = detail_flag || args.look.is_some();
     if args.rock_detail != flythrough::ROCK_DETAIL && args.look.is_none() {
-        return Err("--rock-detail applies under --look".to_owned());
+        return Err("--rock-detail does not apply under --look plain".to_owned());
     }
     if args.autopilot && args.level {
         return Err("--autopilot streams; it does not take --level".to_owned());
@@ -1004,6 +1033,8 @@ struct Autopilot {
     unready_frames: u64,
     gpu_ms: Vec<f64>,
     cpu_ms: Vec<f64>,
+    /// The attribute pass over the flight, with attribute pages.
+    attr: AttrSamples,
     latency_from: usize,
     peak_mirror: u64,
     peak_allocated: u64,
@@ -1014,6 +1045,47 @@ struct Autopilot {
     peak_resident: u64,
     peak_persisted: u64,
     generated_at_takeoff: u64,
+}
+
+/// Per-frame readings of the attribute pass over the autopilot's flight: the work list's
+/// length and the render thread's CPU time in `update_attrs` every frame, and the pass's GPU
+/// time on the frames whose list is not empty.
+#[derive(Default)]
+struct AttrSamples {
+    items: Vec<f64>,
+    cpu_ms: Vec<f64>,
+    gpu_ms: Vec<f64>,
+}
+
+impl AttrSamples {
+    /// The report's lines: p50, p99 and max of each reading.
+    fn lines(&mut self) -> Vec<String> {
+        let stats = |v: &mut Vec<f64>| {
+            [50.0, 99.0, 100.0].map(|p| if v.is_empty() { 0.0 } else { percentile(v, p) })
+        };
+        let frames = self.items.len();
+        let busy = self.items.iter().filter(|&&n| n > 0.0).count();
+        let [i50, i99, imax] = stats(&mut self.items);
+        let [c50, c99, cmax] = stats(&mut self.cpu_ms);
+        let mut out = vec![
+            format!(
+                "autopilot: attribute work list: p50 {i50:.0}, p99 {i99:.0}, max {imax:.0} bricks over {frames} frames ({busy} with work)"
+            ),
+            format!(
+                "autopilot: attribute pass CPU (update_attrs, render thread): p50 {c50:.3} ms, p99 {c99:.3} ms, max {cmax:.3} ms over {frames} frames"
+            ),
+        ];
+        if self.gpu_ms.is_empty() {
+            out.push("autopilot: attribute pass GPU n/a (no TIMESTAMP_QUERY or no work)".into());
+        } else {
+            let n = self.gpu_ms.len();
+            let [g50, g99, gmax] = stats(&mut self.gpu_ms);
+            out.push(format!(
+                "autopilot: attribute pass GPU: p50 {g50:.3} ms, p99 {g99:.3} ms, max {gmax:.3} ms over the {n} frames with work"
+            ));
+        }
+        out
+    }
 }
 
 /// The bounded level's coarse grid and walkable map, updated from every edit the client is
@@ -1315,9 +1387,9 @@ impl Run {
         }
     }
 
-    /// Rock's detail pair when the table carries it (under `--look`).
+    /// Rock's detail pair when the table carries it (every look but `--look plain`).
     fn rock_detail(&self) -> Option<[f32; 2]> {
-        self.args.look.is_some().then_some(self.args.rock_detail)
+        self.args.rock_detail()
     }
 
     fn camera_ray(&self) -> (Fixed3, [i64; 3]) {
@@ -2079,6 +2151,11 @@ impl Run {
                 p.gpu_ms.len()
             );
         }
+        if !p.attr.items.is_empty() {
+            for line in p.attr.lines() {
+                println!("{line}");
+            }
+        }
         let generated = st.generated_chunks - p.generated_at_takeoff;
         let secs = 2.0 * PILOT_LEG_SECS + (now() - p.leg_start).as_secs_f64();
         println!(
@@ -2315,7 +2392,19 @@ impl Run {
         let mut enc = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        gfx.mirror.update_attrs(&mut enc);
+        // Under the autopilot's flight the attribute pass is timed: its GPU time when its
+        // work list is not empty, and the render thread's CPU time building the list and
+        // recording the pass.
+        let attr_timer = gfx.attr_timer.as_ref().filter(|_| flying);
+        let t_attr = now();
+        let attr_items = gfx
+            .mirror
+            .update_attrs_timed(&mut enc, attr_timer.map(MarchTimer::writes));
+        let attr_cpu_ms = ms_since(t_attr);
+        let attr_timer = attr_timer.filter(|_| attr_items > 0);
+        if let Some(t) = attr_timer {
+            t.resolve(&mut enc);
+        }
         gfx.marcher.encode(
             &gpu.device,
             &gpu.queue,
@@ -2351,12 +2440,21 @@ impl Run {
             println!("first frame after {:.0} ms", ms_since(self.start));
         }
         let gpu_ms = timer.map(|t| t.read_ms(&gpu.device));
+        let attr_gpu_ms = attr_timer.map(|t| t.read_ms(&gpu.device));
         let hud_ms = hud_timer.map(|t| t.read_ms(&gpu.device));
         self.hud.cpu_ms = cpu_ms as f32;
         self.hud.march_ms = gpu_ms.map(|v| v as f32);
         self.hud.hud_ms = hud_ms.map(|v| v as f32);
         if flying && let (Some(p), Some(ms)) = (self.pilot.as_mut(), gpu_ms) {
             p.gpu_ms.push(ms);
+        }
+        if flying
+            && gfx.mirror.surface_attrs()
+            && let Some(p) = self.pilot.as_mut()
+        {
+            p.attr.items.push(attr_items as f64);
+            p.attr.cpu_ms.push(attr_cpu_ms);
+            p.attr.gpu_ms.extend(attr_gpu_ms);
         }
         if let Some(s) = self.samples.as_mut() {
             s.cpu_ms.push(cpu_ms);
@@ -2536,6 +2634,7 @@ impl App for Flythrough {
                 unready_frames: 0,
                 gpu_ms: Vec::new(),
                 cpu_ms: Vec::new(),
+                attr: AttrSamples::default(),
                 latency_from: 0,
                 peak_mirror: 0,
                 peak_allocated: 0,
@@ -2569,12 +2668,7 @@ impl App for Flythrough {
                 args: self.args.clone(),
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
-                look: LookParams {
-                    normal_mode: self.args.look.unwrap_or_default(),
-                    detail: self.args.detail,
-                    view: self.args.view,
-                    translucent_layers: self.args.translucent_layers,
-                },
+                look: self.args.start_look(),
                 dig_radius: DIG_RADIUS,
                 scroll: ScrollSteps::default(),
                 bench_runs: 0,
@@ -2732,6 +2826,7 @@ fn main() {
             std::process::exit(1);
         }
     };
+    println!("{}", look_line(&args.start_look(), args.rock_detail()));
     let logic = load_logic(&args.logic);
     println!("logic: {}", args.logic);
 
@@ -3492,6 +3587,35 @@ mod tests {
         assert!(parse_rock_detail("0,0.3").is_err());
         assert!(parse_rock_detail("4,1.5").is_err());
         assert!(parse_rock_detail("4,x").is_err());
+    }
+
+    /// No flag starts in contour with detail on and rock's detail; `--look plain` starts in
+    /// face mode with neither, and `--detail` turns detail on there.
+    #[test]
+    fn the_default_look_is_contour_with_detail_and_plain_is_face() {
+        let a = parse_args_from(argv(&[])).unwrap();
+        assert_eq!(
+            look_line(&a.start_look(), a.rock_detail()),
+            "look contour, detail on (rock scale 4, strength 0.1), view shaded"
+        );
+        assert_eq!(flythrough::ROCK_DETAIL, [4.0, 0.1]);
+        let a = parse_args_from(argv(&["--look", "face"])).unwrap();
+        assert_eq!((a.look, a.detail), (Some(NormalMode::Face), true));
+        let a = parse_args_from(argv(&["--look", "plain"])).unwrap();
+        assert_eq!((a.look, a.detail, a.rock_detail()), (None, false, None));
+        assert_eq!(
+            look_line(&a.start_look(), a.rock_detail()),
+            "look face, detail off, view shaded"
+        );
+        let a = parse_args_from(argv(&["--look", "plain", "--detail"])).unwrap();
+        assert!(a.detail);
+        assert!(parse_args_from(argv(&["--look", "plain", "--rock-detail", "4,0.2"])).is_err());
+        assert_eq!(
+            parse_args_from(argv(&["--attrib-quant", "none"]))
+                .err()
+                .as_deref(),
+            Some("unknown argument --attrib-quant")
+        );
     }
 
     #[test]

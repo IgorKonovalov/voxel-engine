@@ -107,6 +107,25 @@ opaque masks and the plane-order exit (4cafd06), 1.86 ms with the walk's held st
 (e564f44) and 1.95 ms with the translucent class (d3d2f1c); the level 1.65, 1.69, 1.34 and
 1.45 ms. No baseline reading (§1).
 
+**The default look: contour with detail (dev reference, diagnostic, Plan 0013 Phase 7, the
+fly-through's default since that phase, rock detail 4, 0.1; headless, timestamps, median of the
+last 30 of 300 frames, three runs each, NVIDIA GeForce RTX 3080 Laptop GPU, Ryzen 9 5900HS,
+exclusive perf lock; diagnostic because the 1-minute load read 11.1 to 13.4 from other work on
+the box):** the level's spawn (`flythrough --level --headless --seed 1 --render 1920x1080
+--frames 300`) reads 1.705 to 1.780 ms; the streamed spawn (`flythrough --headless --seed 1
+--render 1920x1080 --frames 300`, 1 640 292 `Full` bricks mirrored by frame 300) reads 3.502
+to 3.970 ms, over the 3.0 ms line. `--look plain` keeps the face readings above reproducible.
+
+**The attribute pass under motion (dev reference, diagnostic, Plan 0013 Phase 7, same machine
+and lock, `flythrough --autopilot --headless --seed 1`, default contour, two runs at load 3.6
+to 11.1):** per frame of the flight, the work list reads p50 3584 to 4446, p99 5468 to 5469,
+max 7948 to 8051 bricks (1769 and 1776 of 2949 and 2688 frames with work); the pass's GPU time
+over the frames with work p50 2.045 to 2.155 ms, p99 4.303 to 4.312 ms, max 4.760 to 4.815 ms,
+against the plan's 1.0 ms p99 proposal; the render thread's CPU in `update_attrs` (the work
+list, `attr_work`, plus recording the pass) p50 3.689 to 3.834 ms, p99 138.7 to 146.4 ms, max
+233.3 to 277.5 ms, on top of the streaming line's `update + poll + sync` (p50 3.7 to 4.0 ms).
+Both are over their lines; no plan owns them yet.
+
 **Stats HUD (dev reference, Plan 0010, f91726f, headless `flythrough [--level] --seed 1
 --render 1920x1080 --frames 300 [--hud]`, three runs each, NVIDIA GeForce RTX 3080 Laptop GPU,
 Ryzen 9 5900HS):** a tool, not a frame stage, so it has no line in the table. The HUD pass
@@ -259,6 +278,21 @@ per-chunk check, the same runs read longest streaks of 1, 3, 2 and 6 syncs. Thes
 at the close tip (16e17a7, v0.17.0): the later fixes change only the wide path (more than 256
 materials) and syncs that write nothing, neither of which these runs reach. Deferring under
 the 0.9 trigger with attribute pages is page fragmentation, Plan 0017's open followup.
+
+**The default look (dev reference, Plan 0013 Phase 7, `flythrough --autopilot --headless
+--seed 1` with no `--look`, so contour with detail and attribute pages, r_full 16, r_lod 24, h 1,
+the 3072 MiB default reservation, same machine, exclusive perf lock, 1-minute load 3.6 to
+11.1, two runs).** Reserved 3 220 387 776 B (5 095 424 slots, 93 239 records). Both runs:
+`r_full` 16 to 15 to 14 to 13 at pressure 0.960, 0.982, 0.918 (ticks 469, 499, 664), full
+residency at r_full 13 with 2 864 309 692 B live, pressure 0.911, then 13 to 12 at 0.911
+(tick 905) and back to 13 at 0.669 and 0.651 (ticks 2444, 2088), ending at 13; lowest 12.
+Peak live 2 864 318 452 B, peak live / budget 0.8894, peak pressure 0.9114 (slots 0.9114,
+records 0.6513 and 0.6495). Run 1 deferred nothing; run 2 deferred 5032 chunks over 10 syncs
+at pressure 0.755 to 0.763, none empty, longest streak 3. Both returned `return: 2 chunks,
+hash match` with no wgpu error. The default look therefore holds full detail to the radius
+the rule settles at, 12 to 13 chunks (76.8 to 83.2 m), against this section's "about 100 m",
+until ADR-0012's mirror-slot plan stores the attribute for surface voxels only; `--look
+plain` holds 16 (102 m).
 
 **The pressure rule's gate (Plan 0017 Phase 3, same machine and flags, r_full 16, r_lod 24,
 no `--look`, `--mirror-budget 1930`: 3 043 328 slots and 93 239 records, 2 021 964 224 B,
