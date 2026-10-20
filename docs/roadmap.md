@@ -426,7 +426,11 @@ a cheap query.
   query's answer. Both are ordinary ops: they return per-material counts and the touched
   region, and replicate through M5's log as op kinds 3 and 4. Shipped in Plan 0009 as
   `World::drop_region` and `World::remove_region`, and logged since Plan 0018 (v0.15.0), where
-  the logic asks `Host::unsupported` and issues the drops or removals.
+  the logic asks `Host::unsupported` and issues the drops or removals. Since Plan 0022
+  (v0.22.0, ADR-0016) a drop takes a yield threshold (`World::drop_region_through`, op kind 5):
+  it passes through and crushes the non-indestructible voxels of cells under the query's
+  `solid_min`, so a region the query detaches falls instead of wedging on a sliver, and
+  `World::pile_rubble` (op kind 6) puts the crushed volume back as rubble on the landed piece.
 - **Stress (open; owner's call, 2026-10-17):** overhangs fail by span and weight, not only
   when the support query finds them disconnected. The owner's windowed test of v0.12.0
   found collapse rarely triggers in the cave, because a cell one eighth solid still bears

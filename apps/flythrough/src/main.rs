@@ -78,8 +78,11 @@
 //!
 //! Collapse (bounded level, ADR-0008): after every dig the logic asks the server's coarse grid
 //! which regions lost their support, and the fly-through prints each as `unsupported: N cells,
-//! {material: count}`. Each region falls 8 voxels a tick, one tick a frame, until it lands
-//! (`landed after N ticks, fell M voxels`); `R` toggles removing it with rubble (a quarter of
+//! {material: count}`. Each region falls 8 voxels a tick, one tick a frame, through and
+//! crushing the cells too thin to hold it (ADR-0016), until it lands (`landed after N ticks,
+//! fell M voxels`, then `, crushed K voxels, P rubble` when it crushed any, piled on top of
+//! it). A region that cannot move prints `wedged: N cells, {material: count}, cannot fall`,
+//! and a refused drop `drop refused: ...`. `R` toggles removing it with rubble (a quarter of
 //! its volume) instead. `F1` adds the region count of the last dig's query.
 //!
 //! `--audio` opens the default output device, `H` plays a knock and `J` a looping hum at the point
@@ -102,7 +105,9 @@ use fly::{CutawayMode, Fly, Walk};
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, VAULT_EDGE, vault};
 use flythrough::hud::{self, Cadence, EditLine, FrameStats, HudStats, WorldSample};
 use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB, REACH};
-use flythrough::logic::{DROP_VERB, REMOVE_VERB, STAMP_VERB, parse_region_line};
+use flythrough::logic::{
+    DROP_VERB, PILE_VERB, REMOVE_VERB, STAMP_VERB, parse_region_line, parse_wedged_line,
+};
 use flythrough::{
     LogicChoice, RESIDENCY, STREAM_MIRROR_BUDGET, ScrollSteps, cave_materials, chunk_ram,
     chunks_hash, level_mirror_budget, level_pool_slots, mips_ram, percentile,
@@ -110,7 +115,7 @@ use flythrough::{
 use pad::Pad;
 use vxe_app::{App, Axis, Flow, Gpu, Input, KeyCode, MouseButton, PadButton, ShellConfig};
 use vxe_audio::{Acoustics, Hrtf, Mixer, Output, PlayParams, Sound, VoiceId};
-use vxe_net::{Client, Event, Logic, LogicError, MemChannel, Server};
+use vxe_net::{Client, DEFAULT_SUPPORT, Event, Logic, LogicError, MemChannel, Server};
 use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::readback::{self, StepHistogram};
@@ -122,7 +127,7 @@ use vxe_world::hash::mix64;
 use vxe_world::{
     CellChange, ChunkCoord, ChunkExtent, CoarseGrid, EditOp, EditResult, FIXED_ONE, Fixed3,
     LogFile, MaterialId, MaterialTable, Mode, OpResult, PersistConfig, Residency, StreamConfig,
-    Streamer, SupportParams, Tier, VoxelCoord, WalkableMap, WalkableParams, World,
+    Streamer, Tier, VoxelCoord, WalkableMap, WalkableParams, World,
 };
 
 /// Dig radius at start (0.5 m), its scroll step (0.1 m) and its range.
@@ -188,14 +193,6 @@ const HUD_SCALE: u32 = 2;
 /// `world_stats_call_on_the_streamed_world_at_full_residency`), so its frame reaches at most
 /// the window's max and not its p99.
 const HUD_STATS_EVERY: u32 = 240;
-/// The support query the logic asks after a dig, set on the server: cells of at least 64
-/// solid voxels bear load, a flood gives up past 4096 cells, and the level's faces anchor
-/// (ADR-0008).
-const SUPPORT: SupportParams = SupportParams {
-    solid_min: 64,
-    max_region: 4096,
-    boundary_anchors: true,
-};
 /// Metres per voxel, for the audio mixer's distances.
 const METRES_PER_VOXEL: f32 = 0.1;
 /// The knock: 50 ms of seeded noise under an exponential decay of 10 ms time constant.
@@ -494,6 +491,7 @@ fn op_verb(verb: &str) -> Option<&'static str> {
         BENCH_VERB,
         STAMP_VERB,
         DROP_VERB,
+        PILE_VERB,
         REMOVE_VERB,
     ]
     .into_iter()
@@ -1213,6 +1211,16 @@ fn unsupported_line(table: &MaterialTable, line: &str) -> Option<String> {
     ))
 }
 
+/// The line for a logic's `wedged` line: `wedged: 9 cells, {rock: 4608}, cannot fall`; `None`
+/// for any other line. A `drop refused` line is already prose and prints as it is.
+fn wedged_terminal_line(table: &MaterialTable, line: &str) -> Option<String> {
+    let (cells, counts) = parse_wedged_line(line)?;
+    Some(format!(
+        "wedged: {cells} cells, {{{}}}, cannot fall",
+        counts_line(table, &counts)
+    ))
+}
+
 /// The line for an applied removal: `removed: {rock: 4608}, 1152 rubble`.
 fn removed_line(table: &MaterialTable, r: &vxe_world::RemoveResult) -> String {
     format!(
@@ -1243,7 +1251,8 @@ struct Net {
 
 impl Net {
     /// The server on `world` with `logic`, the vault registered on it and on the client (the
-    /// prefab `P` stamps, ADR-0014) and the collapse's [`SUPPORT`] set, and the shared client.
+    /// prefab `P` stamps, ADR-0014) and [`DEFAULT_SUPPORT`] set (the support query whose
+    /// threshold the logic's drops yield below), and the shared client.
     fn new(world: &Arc<World>, logic: Box<dyn Logic>, seed: u64) -> Self {
         let vault = Arc::new(vault());
         let mut prefabs = vxe_world::PrefabRegistry::new();
@@ -1251,7 +1260,7 @@ impl Net {
             .register(vault.clone())
             .expect("an empty registry takes the vault");
         let mut server = Server::with_prefabs(world.clone(), prefabs, logic, seed);
-        server.set_support(SUPPORT, &[]);
+        server.set_support(DEFAULT_SUPPORT, &[]);
         let (near, far) = MemChannel::pair();
         server.attach(far);
         let mut client = Client::shared(world.clone(), near);
@@ -1562,7 +1571,10 @@ impl Run {
                             }
                             println!("{l}");
                         }
-                        None => println!("{line}"),
+                        None => match wedged_terminal_line(self.world.materials(), line) {
+                            Some(l) => println!("{l}"),
+                            None => println!("{line}"),
+                        },
                     }
                     continue;
                 };
@@ -1583,12 +1595,15 @@ impl Run {
                 }
                 if verb != BENCH_VERB {
                     match result {
-                        // A drop happens every tick a region falls: kept for the HUD only.
-                        Ok(r) if verb == DROP_VERB => {
+                        // A drop happens every tick a region falls, and a pile ends a fall the
+                        // logic's line reports: kept for the HUD only.
+                        Ok(r) if verb == DROP_VERB || verb == PILE_VERB => {
                             if r.aabb().is_some() {
                                 self.note_edit(verb, &r.edit_result(), ms);
                             }
                         }
+                        // The logic's `drop refused` or `pile refused` line reports it.
+                        Err(_) if verb == DROP_VERB || verb == PILE_VERB => {}
                         Ok(OpResult::Remove(r)) => {
                             println!("{}", removed_line(self.world.materials(), &r));
                             self.note_edit(verb, &r.edit_result(), ms);
@@ -3735,6 +3750,231 @@ mod tests {
                 .unwrap();
         }
         world
+    }
+
+    /// [`ledge_world`] with the pillar's top cell cut to a 32-voxel sliver
+    /// `[32, 32, 39]..[36, 40, 40]` of `sliver` (the pillar stays full below z = 32), and an
+    /// 8-voxel rock lump `[18, 36, 42]..[20, 38, 44]` in cell `(2, 4, 5)`, beside the ledge
+    /// without touching it.
+    fn sliver_ledge_world(sliver: MaterialId) -> World {
+        let world = ledge_world();
+        let f = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
+        for (lo, hi, mode) in [
+            ([32, 32, 32], [40, 40, 40], Mode::Carve),
+            ([32, 32, 39], [36, 40, 40], Mode::Fill(sliver)),
+            ([18, 36, 42], [20, 38, 44], Mode::Fill(ROCK)),
+        ] {
+            world.apply(&EditOp::box_(f(lo), f(hi), mode)).unwrap();
+        }
+        world
+    }
+
+    /// A dig of radius 2 voxels from the centre of [`sliver_ledge_world`]'s lump: the ray
+    /// starts in rock, so the capsule is a sphere carving the lump's 8 voxels.
+    fn lump_dig() -> DigInput {
+        DigInput::Dig {
+            origin: Fixed3([19 * FIXED_ONE, 37 * FIXED_ONE, 43 * FIXED_ONE]),
+            dir: [FIXED_ONE, 0, 0],
+            radius: 2 * FIXED_ONE,
+        }
+    }
+
+    /// The query beside the ledge reports it (it rests on a cell of 32 voxels, half the
+    /// threshold), and it falls through the sliver: the slab's bottom is z 40, the sliver at
+    /// z 39 yields, z 38 to 32 is air and the pillar's full top cell holds z 31. Tick 1 drops 8
+    /// and crushes the 32 sliver voxels; tick 2 drops 0 onto the pillar, and the logic piles
+    /// the 32 as rubble on the landed slab: `C` = 576 columns, every 18th takes one voxel on
+    /// the slab's top at z 39, so all 32 are at z 40.
+    #[test]
+    fn a_ledge_on_a_sliver_falls_through_it_and_piles_what_it_crushed() {
+        let world = Arc::new(sliver_ledge_world(ROCK));
+        let mut net = native_net(&world);
+        let (lines, events) = net_tick(&mut net, &[lump_dig()]);
+        assert_eq!(lines, ["op carved", "region 9 1:4608"]);
+        let [OpResult::Edit(r)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
+        assert_eq!(r.changed_from, [(ROCK, 8)]);
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert_eq!(lines, ["op dropped"]);
+        let [OpResult::Drop(d)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
+        assert_eq!((d.dropped, d.crushed.as_slice()), (8, &[(ROCK, 32)][..]));
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert_eq!(
+            lines,
+            [
+                "op dropped",
+                "op piled",
+                "landed after 1 ticks, fell 8 voxels, crushed 32 voxels, 32 rubble"
+            ]
+        );
+        let [OpResult::Drop(d), OpResult::Pile(p)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
+        assert_eq!(d.dropped, 0);
+        assert_eq!(p.placed, 32);
+        assert_eq!(world.material_at([25, 26, 40]), Some(flythrough::RUBBLE));
+        assert_eq!(
+            world.count_in_box([24, 24, 32], [47, 47, 39]).unwrap(),
+            [(ROCK, 4608)]
+        );
+        // `count_in_box` counts air too: 576 voxels in the layer, 32 of them rubble.
+        assert_eq!(
+            world.count_in_box([24, 24, 40], [47, 47, 40]).unwrap(),
+            [(vxe_world::AIR, 544), (flythrough::RUBBLE, 32)]
+        );
+        let kinds: Vec<u8> = net
+            .server
+            .ops()
+            .entries()
+            .iter()
+            .filter(|e| e.op().is_some())
+            .map(|e| {
+                let mut out = Vec::new();
+                e.encode(&mut out);
+                out[12]
+            })
+            .collect();
+        assert_eq!(kinds, [1, 5, 5, 6]);
+        assert_eq!(*net.server.coarse(), CoarseGrid::build(&world));
+        // Nothing falls on.
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert!(
+            lines.is_empty() && events.is_empty(),
+            "{lines:?} {events:?}"
+        );
+    }
+
+    /// With the sliver made of the indestructible shell the ledge cannot move: its first tick
+    /// prints `wedged`, and the logic remembers it. A second lump dig beside it reports
+    /// nothing; a dig that takes voxels from the ledge reports it again with its new counts,
+    /// and it is wedged again.
+    #[test]
+    fn a_ledge_on_a_shell_sliver_is_wedged_and_reported_again_only_once_changed() {
+        let world = Arc::new(sliver_ledge_world(SHELL));
+        let table = world.materials().clone();
+        let mut net = native_net(&world);
+        let (lines, _) = net_tick(&mut net, &[lump_dig()]);
+        assert_eq!(lines, ["op carved", "region 9 1:4608"]);
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert_eq!(lines, ["op dropped", "wedged 9 1:4608"]);
+        assert_eq!(
+            wedged_terminal_line(&table, &lines[1]).as_deref(),
+            Some("wedged: 9 cells, {rock: 4608}, cannot fall")
+        );
+        let [OpResult::Drop(d)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
+        assert_eq!(d.dropped, 0);
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert!(
+            lines.is_empty() && events.is_empty(),
+            "{lines:?} {events:?}"
+        );
+
+        // A second lump in cell (6, 4, 5), beside the ledge, written past the server (its
+        // grid takes the cell back from the dig's aabb): dug, and the ledge the query reports
+        // is the remembered one.
+        let f = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
+        world
+            .apply(&EditOp::box_(
+                f([50, 36, 42]),
+                f([52, 38, 44]),
+                Mode::Fill(ROCK),
+            ))
+            .unwrap();
+        let second = DigInput::Dig {
+            origin: Fixed3([51 * FIXED_ONE, 37 * FIXED_ONE, 43 * FIXED_ONE]),
+            dir: [FIXED_ONE, 0, 0],
+            radius: 2 * FIXED_ONE,
+        };
+        let (lines, events) = net_tick(&mut net, &[second]);
+        assert_eq!(lines, ["op carved"]);
+        let [OpResult::Edit(r)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
+        assert_eq!(r.changed_from, [(ROCK, 8)]);
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert!(
+            lines.is_empty() && events.is_empty(),
+            "{lines:?} {events:?}"
+        );
+
+        // A dig into the ledge's corner changes its counts: reported, and wedged, again.
+        let corner = DigInput::Dig {
+            origin: Fixed3([25 * FIXED_ONE, 25 * FIXED_ONE, 46 * FIXED_ONE]),
+            dir: [FIXED_ONE, 0, 0],
+            radius: 2 * FIXED_ONE,
+        };
+        let (lines, events) = net_tick(&mut net, &[corner]);
+        let [OpResult::Edit(r)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
+        let left = 4608 - r.changed_from[0].1;
+        assert_eq!(
+            lines,
+            ["op carved".to_owned(), format!("region 9 1:{left}")]
+        );
+        let (lines, _) = net_tick(&mut net, &[]);
+        assert_eq!(
+            lines,
+            ["op dropped".to_owned(), format!("wedged 9 1:{left}")]
+        );
+    }
+
+    /// A ledge with no floor under it in the one-chunk world falls five ticks of 8, z 40 to 0;
+    /// on tick 6 the scan reaches chunk `[0, 0, -1]`, outside the extent, and the drop is
+    /// refused. It crushed nothing, so no pile follows, and no later tick drops it again.
+    #[test]
+    fn a_ledge_falling_out_of_the_world_is_refused_once() {
+        let world = Arc::new(World::generate(
+            ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+            &vxe_world::UniformSource(vxe_world::AIR),
+            &cave_materials(),
+        ));
+        let f = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
+        for (lo, hi) in [([24, 24, 40], [48, 48, 48]), ([18, 36, 42], [20, 38, 44])] {
+            world
+                .apply(&EditOp::box_(f(lo), f(hi), Mode::Fill(ROCK)))
+                .unwrap();
+        }
+        let mut net = native_net(&world);
+        let (lines, _) = net_tick(&mut net, &[lump_dig()]);
+        assert_eq!(lines, ["op carved", "region 9 1:4608"]);
+        for tick in 1..=5 {
+            let (lines, _) = net_tick(&mut net, &[]);
+            assert_eq!(lines, ["op dropped"], "tick {tick}");
+        }
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert_eq!(
+            lines,
+            [
+                "op dropped",
+                "drop refused: chunk [0, 0, -1] is not resident, after 5 ticks, fell 40 voxels"
+            ]
+        );
+        assert!(applied(&events).is_empty(), "{events:?}");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Refused {
+                    op: vxe_world::Op::Drop { .. },
+                    ..
+                }
+            )),
+            "{events:?}"
+        );
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert!(
+            lines.is_empty() && events.is_empty(),
+            "{lines:?} {events:?}"
+        );
+        assert_eq!(
+            world.count_in_box([24, 24, 0], [47, 47, 7]).unwrap(),
+            [(ROCK, 4608)]
+        );
     }
 
     /// A 1 m dig whose origin is inside the pillar, at its axis 16 voxels up: the ray starts

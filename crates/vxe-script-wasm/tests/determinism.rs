@@ -869,6 +869,7 @@ fn apply_is_charged_by_its_op_bytes() {
             .map(|i| CellCoord([i % 16, i / 16 % 16, i / 256]))
             .collect(),
         max_drop: 8,
+        yield_below: 0,
     };
     let mut bytes = Vec::new();
     vxe_world::wire::encode_op(&mut bytes, &drop);
@@ -982,6 +983,7 @@ fn apply_cost_charges_the_bounds_and_the_touched_chunks() {
     let drop = Op::Drop {
         cells: slab_cells(2, 5),
         max_drop: 8,
+        yield_below: 0,
     };
     let r = drop.apply(&world, &registry);
     let res = r.as_ref().unwrap();

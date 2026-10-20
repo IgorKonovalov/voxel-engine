@@ -1,6 +1,17 @@
 //! The op log, the input log and the log file: the world's history as bytes (ADR-0007).
 //!
-//! An op entry is `tick: u64`, `seq: u32`, then the op as `wire` encodes it. A boundary entry
+//! An op entry is `tick: u64`, `seq: u32`, then the op as `wire` encodes it. The collapse
+//! kinds' entries, for `n` cells:
+//!
+//! | kind | op                                | entry bytes |
+//! |------|-----------------------------------|-------------|
+//! | 3    | drop (yield threshold 0)          | `21 + 12n`  |
+//! | 4    | remove with rubble                | `31 + 12n`  |
+//! | 5    | drop through a yield threshold    | `23 + 12n`  |
+//! | 6    | rubble pile                       | `27 + 12n`  |
+//!
+//! A build that predates kinds 5 and 6 refuses an entry of either with
+//! [`WireError::UnknownKind`] at that entry, not at the header. A boundary entry
 //! is `tick: u64`, `seq: u32`, then the kind [`KIND_BOUNDARY`]: 13 bytes. An input entry
 //! is `tick: u64`, `client: u32`, `len: u16`, then `len` opaque bytes. A log encodes as its
 //! entries back to back with no count; the log file's header carries the counts.
@@ -28,7 +39,7 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 
 use crate::coarse::CellCoord;
-use crate::collapse::{DropResult, RemoveResult};
+use crate::collapse::{DropResult, PileResult, RemoveResult};
 use crate::coords::{ChunkCoord, ChunkExtent, VoxelCoord};
 use crate::edit::{EditError, EditOp, EditResult};
 use crate::material::MaterialId;
@@ -55,10 +66,14 @@ pub enum Op {
         origin: VoxelCoord,
         rot: Rot,
     },
-    /// A rigid drop of the cells' solid voxels by at most `max_drop` ([`World::drop_region`]).
+    /// A rigid drop of the cells' solid voxels by at most `max_drop`, through the voxels of
+    /// cells holding fewer than `yield_below` solid voxels ([`World::drop_region_through`];
+    /// `yield_below == 0` is [`World::drop_region`]). Wire kind 3 when `yield_below == 0`,
+    /// kind 5 otherwise.
     Drop {
         cells: Vec<CellCoord>,
         max_drop: i32,
+        yield_below: u16,
     },
     /// The cells' voxels carved, with `fraction` of them piled as `rubble` on the ground
     /// within `max_depth` below ([`World::remove_region`]).
@@ -66,6 +81,14 @@ pub enum Op {
         cells: Vec<CellCoord>,
         rubble: MaterialId,
         fraction: (u32, u32),
+        max_depth: i32,
+    },
+    /// `count` voxels of `rubble` spread over the cells' footprint columns, on the ground
+    /// within `max_depth` below the top of each ([`World::pile_rubble`]). Wire kind 6.
+    Pile {
+        cells: Vec<CellCoord>,
+        rubble: MaterialId,
+        count: u32,
         max_depth: i32,
     },
 }
@@ -86,9 +109,13 @@ impl Op {
                     .ok_or(EditError::UnknownPrefab(*prefab))?;
                 world.stamp(p, *origin, *rot).map(OpResult::Edit)
             }
-            Self::Drop { cells, max_drop } => {
-                world.drop_region(cells, *max_drop).map(OpResult::Drop)
-            }
+            Self::Drop {
+                cells,
+                max_drop,
+                yield_below,
+            } => world
+                .drop_region_through(cells, *max_drop, *yield_below)
+                .map(OpResult::Drop),
             Self::Remove {
                 cells,
                 rubble,
@@ -97,6 +124,14 @@ impl Op {
             } => world
                 .remove_region(cells, *rubble, *fraction, *max_depth)
                 .map(OpResult::Remove),
+            Self::Pile {
+                cells,
+                rubble,
+                count,
+                max_depth,
+            } => world
+                .pile_rubble(cells, *rubble, *count, *max_depth)
+                .map(OpResult::Pile),
         }
     }
 }
@@ -108,6 +143,7 @@ pub enum OpResult {
     Edit(EditResult),
     Drop(DropResult),
     Remove(RemoveResult),
+    Pile(PileResult),
 }
 
 impl OpResult {
@@ -118,6 +154,7 @@ impl OpResult {
             Self::Edit(e) => e.clone(),
             Self::Drop(d) => d.edit_result(),
             Self::Remove(r) => r.edit_result(),
+            Self::Pile(p) => p.edit_result(),
         }
     }
 
@@ -127,6 +164,7 @@ impl OpResult {
             Self::Edit(e) => e.aabb,
             Self::Drop(d) => d.aabb,
             Self::Remove(r) => r.aabb,
+            Self::Pile(p) => p.aabb,
         }
     }
 
