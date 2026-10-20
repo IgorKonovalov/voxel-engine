@@ -224,22 +224,27 @@ default 3072 MiB) and never reallocates; `allocated_bytes` is the budget rounded
 pages and records. Records are reserved for the residency's ball over 0.7 (93 239 at 16/24,
 244 659 136 B; 72 690 at 14/22) instead of the window cube. Pressure is the larger of pool-slot
 and record occupancy; the fly-through lowers `r_full` a chunk after 30 frames above 0.9 and
-restores it after 300 frames under 0.7, down to 6. No run stopped on out-of-memory; every
-return hash matched.
+restores it after 300 frames under 0.7, down to 6. A sync writes the nearest chunks that
+fit and defers the rest, which stay queued (ADR-0013 Outcome). No run stopped on
+out-of-memory; every return hash matched. The face rows are at ef37395; the contour rows were
+re-taken at 52cf84d, after the partial sync, at load 15.3 to 22.8.
 
-| run | split (slots, records) | full residency live | flight peak live / budget | peak pressure (slots, records) | radius changes, final r_full | syncs past the reservation | reserve, first frame |
+| run | split (slots, records) | full residency live | flight peak live / budget | peak pressure (slots, records) | radius changes, final r_full | deferrals: syncs (empty), chunks, longest streak | reserve, first frame |
 |---|---|---|---|---|---|---|---|
-| 16/24 face | 5 095 424, 93 239 | 1 786 641 644 B, 0.620 | 0.5844, 0.5667 | 0.6473 (0.5803, 0.6473); 0.6200 (0.5643, 0.6200) | none, 16 | 0, 0 | 83.1, 87.1 ms; 2669 (cold), 554 ms |
-| 16/24 contour | 5 095 424, 93 239 | 2 864 309 692 B at r_full 13, 0.911 | 0.8894, 0.8894 | 0.9114 (0.9114, 0.6358); 0.9114 (0.9114, 0.6197) | 5 each (16 to 12, back to 13), 13 | 548, 113 | 98.6, 109.9 ms; 559, 797 ms |
-| 14/22 face | 5 185 536, 72 690 | 1 312 177 076 B, 0.612 | 0.4339, 0.4179 | 0.6469 (0.4203, 0.6469); 0.6118 (0.4063, 0.6118) | none, 14 | 0, 0 | 82.2, 97.9 ms; 564, 1105 ms |
-| 14/22 contour | 5 185 536, 72 690 | 2 607 896 708 B, 0.822 | 0.9220, 0.9105 | 0.9455 (0.9455, 0.6284); 0.9345 (0.9345, 0.6327) | 3 (to 12, back to 13), 7 (to 10, back to 13); 13 | 22, 89 | 80.8, 92.9 ms; 516, 2135 ms (device 1924 ms) |
+| 16/24 face | 5 095 424, 93 239 | 1 786 641 644 B, 0.620 | 0.5844, 0.5667 | 0.6473 (0.5803, 0.6473); 0.6200 (0.5643, 0.6200) | none, 16 | none | 83.1, 87.1 ms; 2669 (cold), 554 ms |
+| 16/24 contour | 5 095 424, 93 239 | 2 864 309 692 B at r_full 13, 0.911 | 0.8894, 0.8894 | 0.9114 (0.9114, 0.6197); 0.9114 (0.9114, 0.6311) | 4 (16 to 12), ends 12; 5 (to 12, back to 13), ends 13 | 8 (0), 12 654, 1; 80 (0), 154 751, 3 | 85.2, 101.5 ms; 2280 (cold), 562 ms |
+| 14/22 face | 5 185 536, 72 690 | 1 312 177 076 B, 0.612 | 0.4339, 0.4179 | 0.6469 (0.4203, 0.6469); 0.6118 (0.4063, 0.6118) | none, 14 | none | 82.2, 97.9 ms; 564, 1105 ms |
+| 14/22 contour | 5 185 536, 72 690 | 2 607 896 708 B, 0.822 | 0.9035, 0.9018 | 0.9293 (0.9293, 0.6178); 0.9277 (0.9277, 0.6368) | 1 each (14 to 13), ends 13 | 7 (0), 12 332, 2; 22 (0), 13 902, 6 | 84.8, 79.4 ms; 614, 642 ms |
 
-Contour fits the 3 GB line at both radii only by the rule: at 16/24 it settles at r_full 13
-before full residency (11 513 full, 46 264 LOD-only chunks), at 14/22 it dips to 12 or 10 in
-the flight and returns to 13. With attribute pages the pool runs out while slot occupancy
-reads 0.91 to 0.95, below 1.0: those syncs fail before writing, leave their chunks queued and
-retry (the "syncs past the reservation" column), and the rule's next decrease clears them. A
-recorded finding, not a miss of the line: live bytes peak at 2.97 GB under 3 GB.
+Contour fits the 3 GB line at both radii only by the rule: at 16/24 it settles at r_full 12 or
+13 (11 513 full, 46 264 LOD-only chunks at full residency, r_full 13), at 14/22 it drops to 13
+in the flight. With attribute pages the pool runs out of pages while slots are spare in plain
+pages that each hold a live mip-brick. Those syncs upload what fits and defer the rest; no sync
+was empty and every deferral streak cleared within 6 syncs (the bar is 90). At 16/24 the
+deferrals came at pressure 0.814 to 0.855, under the 0.9 trigger, and cleared with no radius
+change; at 14/22 at 0.851 to 0.927, and the decrease at 0.925 and 0.918 landed in the streak's
+own frame or the next. A recorded finding, not a miss of the line: live bytes peak at 2.91 GB
+under 3 GB.
 
 **The pressure rule's gate (Plan 0017 Phase 3, same machine and flags, r_full 16, r_lod 24,
 no `--look`, `--mirror-budget 1930`: 3 043 328 slots and 93 239 records, 2 021 964 224 B,
@@ -247,8 +252,10 @@ reserved in 63.0 and 70.7 ms).** Run 1 (06d1f17, load 24.1): `r_full` 16 to 15 t
 pressure 0.920 right after full residency, back to 15 at 0.676 in the flight; run 2 (ef37395,
 load 18.3): 16 to 15 at 0.920, back to 16 at 0.688. Both: 0 syncs past the reservation, peak
 pressure 0.9197 (slots 0.9197, records 0.6227 in run 2), peak live / budget 0.8836, return hash
-match, `r_full` never under 14. At 3072 MiB the same flight makes no change (peak pressure
-0.6363 and 0.6473, 0.6200).
+match, `r_full` never under 14. Run 3 (52cf84d, partial sync, load 22.8 to 14.3): 16 to 15 to
+14 at 0.920, back to 15 at 0.610 and to 16 at 0.661; 0 deferred chunks, peak pressure 0.9197
+(slots 0.9197, records 0.6504), peak live / budget 0.8836, hash match. At 3072 MiB the same
+flight makes no change (peak pressure 0.6363 and 0.6473, 0.6200).
 
 **Brick-array pool (Plan 0014).** The pool adds at most 8 MiB per world (`World::BRICK_ARRAY_POOL_CAP` 8192 arrays x 1 KiB); the fly-through holds a 4096-array reserve (2326 KiB pooled after the `B` bench, 5850218, dev reference).
 
