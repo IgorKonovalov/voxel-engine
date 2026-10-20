@@ -181,6 +181,8 @@ impl Mixer {
                 }
             }
             Command::SetListener(l) => self.listener = l,
+            // The late tail is not rendered yet.
+            Command::SetRoom(_) => {}
             Command::SetAcoustics(id, targets) => {
                 if let Some(v) = self.voice_mut(id) {
                     v.acoustic = targets;

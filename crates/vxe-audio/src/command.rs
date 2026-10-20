@@ -12,6 +12,17 @@ use crate::{AudioError, Listener};
 /// Slots in the command channel.
 pub const COMMAND_CAPACITY: usize = 1024;
 
+/// The late tail's targets from a completed room fan (see `acoustics.rs`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RoomTargets {
+    /// Decay time to 60 dB down, seconds.
+    pub t60_s: f32,
+    /// `4V / S`, metres.
+    pub mean_free_path_m: f32,
+    /// The tail's energy relative to a unit-energy direct impulse; 0 silences it.
+    pub energy: f32,
+}
+
 /// One instruction for the mixer.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
@@ -21,6 +32,7 @@ pub enum Command {
     Stop(VoiceId),
     SetListener(Listener),
     SetAcoustics(VoiceId, AcousticTargets),
+    SetRoom(RoomTargets),
 }
 
 pub(crate) struct CommandSender(SyncSender<Command>);
