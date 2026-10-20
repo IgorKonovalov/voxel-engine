@@ -336,7 +336,9 @@ fn measure(
                         add(*m, 512);
                         widen(min, min.map(|v| v + be - 1));
                     }
-                    Brick::Full(v) => {
+                    Brick::Full(p) => {
+                        let mut v = [AIR; crate::coords::BRICK_VOXELS];
+                        p.decode(&mut v);
                         let (mut lo, mut hi) = ([be; 3], [-1; 3]);
                         for (idx, &m) in v.iter().enumerate() {
                             if m == AIR {

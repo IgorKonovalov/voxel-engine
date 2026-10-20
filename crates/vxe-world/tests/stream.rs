@@ -341,10 +341,9 @@ fn full_bricks(world: &World) -> usize {
 }
 
 /// A streamer of the cave-like source with the 7 chunks within distance 1 of the origin
-/// resident (no LOD band), on a world whose pool holds `reserved` arrays.
-fn cave_residency(reserved: usize) -> (World, Streamer) {
+/// resident (no LOD band).
+fn cave_residency() -> (World, Streamer) {
     let world = World::new(&test_table());
-    world.reserve_brick_arrays(reserved);
     let mut s = Streamer::new(Arc::new(cave_like_source()), config(1, 1, 0, 2));
     s.update(&world, &[VoxelCoord([0, 0, 0])]);
     s.wait_idle(&world);
@@ -361,29 +360,10 @@ fn move_away(world: &World, s: &mut Streamer) -> Vec<ChunkCoord> {
     evicted
 }
 
-/// Evicted chunks that no one else holds give their `Full` bricks' arrays to the pool, up to
-/// its cap; chunks still held elsewhere give nothing and keep their bricks.
+/// An evicted chunk still held elsewhere keeps its bricks for its holder.
 #[test]
-fn an_evicted_chunk_returns_its_arrays() {
-    // Room in the pool: the pool grows by every evicted Full brick.
-    let (world, mut s) = cave_residency(0);
-    let f = full_bricks(&world);
-    assert!(f > 0 && f < World::BRICK_ARRAY_POOL_CAP, "{f} Full bricks");
-    assert_eq!(world.pool_len(), 0);
-    assert_eq!(move_away(&world, &mut s), ball([0, 0, 0], 1));
-    println!("{f} Full bricks evicted; pool {} arrays", world.pool_len());
-    assert_eq!(world.pool_len(), f);
-
-    // Ten arrays short of the cap: the pool grows by min(F, cap - len) = 10.
-    let cap = World::BRICK_ARRAY_POOL_CAP;
-    let (world, mut s) = cave_residency(cap - 10);
-    assert!(full_bricks(&world) > 10);
-    assert_eq!(world.pool_len(), cap - 10);
-    move_away(&world, &mut s);
-    assert_eq!(world.pool_len(), cap);
-
-    // Held elsewhere: nothing returns, and the holder still sees the chunk's bricks.
-    let (world, mut s) = cave_residency(0);
+fn an_evicted_chunk_held_elsewhere_keeps_its_bricks() {
+    let (world, mut s) = cave_residency();
     let held: Vec<_> = world
         .store()
         .coords()
@@ -392,7 +372,6 @@ fn an_evicted_chunk_returns_its_arrays() {
         .collect();
     let f = full_bricks(&world);
     move_away(&world, &mut s);
-    assert_eq!(world.pool_len(), 0);
     let mut still_full = 0;
     for (c, chunk) in &held {
         assert!(!world.store().contains(*c), "{c:?} still resident");
@@ -406,6 +385,4 @@ fn an_evicted_chunk_returns_its_arrays() {
             .count();
     }
     assert_eq!(still_full, f);
-    drop(held);
-    assert_eq!(world.pool_len(), 0);
 }

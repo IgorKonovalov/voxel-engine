@@ -4,6 +4,7 @@ mod support;
 
 use support::*;
 use vxe_sim::*;
+use vxe_world::packed::Packed;
 use vxe_world::*;
 
 fn src_files() -> Vec<(String, String)> {
@@ -117,7 +118,9 @@ fn a_body_that_starts_overlapping_does_not_move() {
 }
 
 /// F1 with the floor bricks `z = -1` around the origin forced to `Full` bricks of equal
-/// values: the same voxels, read through voxel arrays.
+/// values: the same voxels, read through the `Full` path. A `Full` brick of one material is
+/// not canonical (it would be `Uniform`); the mask-only box with every bit set, which an edit
+/// holds for a moment before it carves, is the one way to build it.
 fn f1_expanded() -> World {
     let w = f1();
     for c in [[-1, -1, -1], [0, -1, -1], [-1, 0, -1], [0, 0, -1]] {
@@ -125,7 +128,7 @@ fn f1_expanded() -> World {
         let mut chunk = chunk.write().unwrap();
         for slot in 0..CHUNK_BRICKS {
             if brick_of_slot(slot)[2] == 7 {
-                chunk.set_brick(slot, Brick::Full(Box::new([ROCK; BRICK_VOXELS])));
+                chunk.set_brick(slot, Brick::Full(Packed::expand_uniform(ROCK)));
             }
         }
     }

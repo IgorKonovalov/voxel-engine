@@ -1227,10 +1227,13 @@ impl GpuWorld {
                 if !new && !bricks.is_dirty(i) {
                     continue;
                 }
-                let Brick::Full(v) = bricks.get(i) else {
+                let Brick::Full(p) = bricks.get(i) else {
                     continue;
                 };
-                for &m in v.iter() {
+                // Voxel order, so the chunk palette grows in first-appearance order.
+                let mut v = [AIR; BRICK_VOXELS];
+                p.decode(&mut v);
+                for m in v {
                     if self.rev[usize::from(m)] == NO_INDEX {
                         if palette.len() == PALETTE_ENTRIES {
                             wide = true;
@@ -1329,7 +1332,7 @@ impl GpuWorld {
     ) -> Result<(), MirrorError> {
         let old = self.entries[i];
         let old_slot = (old & FULL_BIT != 0).then_some((old & SLOT_MASK, old & WIDE_BIT != 0));
-        let Brick::Full(v) = brick else {
+        let Brick::Full(p) = brick else {
             if let Some(s) = old_slot {
                 self.free_slot(s);
             }
@@ -1342,6 +1345,9 @@ impl GpuWorld {
                 };
             return Ok(());
         };
+        // Narrowed from the decoded voxels.
+        let mut v = [AIR; BRICK_VOXELS];
+        p.decode(&mut v);
         let s = match old_slot {
             Some((s, w)) if w == wide => s,
             _ => {

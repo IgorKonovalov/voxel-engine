@@ -456,13 +456,10 @@ impl Streamer {
         events
     }
 
-    /// Hands a chunk leaving residency to persistence if it holds edits; otherwise its
-    /// `Full` bricks' arrays go to `world`'s pool when no one else holds it.
-    fn persist(&self, world: &World, coord: ChunkCoord, chunk: Arc<RwLock<Chunk>>) {
+    /// Hands a chunk leaving residency to persistence if it holds edits; otherwise drops it.
+    fn persist(&self, coord: ChunkCoord, chunk: Arc<RwLock<Chunk>>) {
         if read(&chunk).is_edited() {
             lock(&self.shared.persisted).insert(coord, chunk);
-        } else {
-            world.recycle_chunk(chunk);
         }
     }
 
@@ -490,7 +487,7 @@ impl Streamer {
                     // A chunk that left both bands while it loaded is dropped, or goes back
                     // to persistence if it holds edits.
                     if d > keep_lod2 {
-                        self.persist(world, coord, chunk);
+                        self.persist(coord, chunk);
                         requeue.push(coord);
                         continue;
                     }
@@ -595,10 +592,10 @@ impl Streamer {
         }
         // Outside the map lock: persisting reads each chunk's flag under its own lock.
         for (coord, chunk) in removed {
-            self.persist(world, coord, chunk);
+            self.persist(coord, chunk);
         }
         for (coord, chunk) in &demoting {
-            self.persist(world, *coord, chunk.clone());
+            self.persist(*coord, chunk.clone());
             // Neither in the store nor LOD-only until its mips arrive; the mirror keeps the
             // full chunk it has meanwhile.
             self.resident.remove(coord);

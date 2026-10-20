@@ -41,7 +41,9 @@ impl CoarseCell {
                 solid: 512,
                 dominant: *m,
             },
-            Brick::Full(v) => {
+            Brick::Full(p) => {
+                let mut v = [AIR; crate::coords::BRICK_VOXELS];
+                p.decode(&mut v);
                 stats.voxel_arrays_read += 1;
                 // Few materials meet in one brick; a short list beats a map.
                 let mut counts: Vec<(MaterialId, u16)> = Vec::new();

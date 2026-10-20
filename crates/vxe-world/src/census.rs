@@ -85,7 +85,9 @@ impl BrickCensus {
                 let solid = usize::from(*m != AIR);
                 (solid, solid * usize::from(translucent(*m)))
             }
-            Brick::Full(v) => {
+            Brick::Full(p) => {
+                let mut v = [AIR; crate::coords::BRICK_VOXELS];
+                p.decode(&mut v);
                 let ids = scratch.of(&v[..]);
                 let glass = ids.iter().filter(|&&m| translucent(m)).count();
                 let n = ids.len();

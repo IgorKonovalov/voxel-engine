@@ -78,7 +78,9 @@ pub fn encode_spill(coord: ChunkCoord, chunk: &Chunk, world_key: u64) -> Vec<u8>
                 out.push(0);
                 out.extend_from_slice(&m.to_le_bytes());
             }
-            Brick::Full(v) => {
+            Brick::Full(p) => {
+                let mut v = [AIR; BRICK_VOXELS];
+                p.decode(&mut v);
                 out.push(1);
                 for m in v.iter() {
                     out.extend_from_slice(&m.to_le_bytes());
@@ -148,10 +150,10 @@ pub fn decode_spill(bytes: &[u8], world_key: u64) -> Result<(ChunkCoord, Chunk),
 }
 
 /// Bytes a persisted chunk holds in RAM by this module's accounting: the slot array and the
-/// voxels of its `Full` bricks.
+/// class boxes of its `Full` bricks.
 pub(crate) fn chunk_bytes(chunk: &Chunk) -> u64 {
-    let full = chunk.bricks().iter().filter(|b| b.is_full()).count();
-    (size_of::<Chunk>() + full * BRICK_VOXELS * 2) as u64
+    let payload: usize = chunk.bricks().iter().map(Brick::payload_bytes).sum();
+    (size_of::<Chunk>() + payload) as u64
 }
 
 pub(crate) fn spill_path(dir: &Path, coord: ChunkCoord, seq: u64) -> PathBuf {

@@ -459,8 +459,8 @@ header, world key, coordinate and FNV trailer are version 1's.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The census and the kernel bench | dev | done | 992fdaa |
-| 2: The owner reads the figures | human | done (go, 2026-10-20) | committed with this row |
-| 3: `Packed` behind `Brick::Full`, every reader compiling | dev | not started | |
+| 2: The owner reads the figures | human | done (go, 2026-10-20) | 0a060c4 |
+| 3: `Packed` behind `Brick::Full`, every reader compiling | dev | done | committed with this row |
 | 4: The edit kernel as word operations | dev | not started | |
 | 5: Native paths for the hot readers | dev | not started | |
 | 6: Collapse as layer shifts and palette remaps | dev | not started | |
@@ -503,6 +503,23 @@ header, world key, coordinate and FNV trailer are version 1's.
   Plane4 brick. Pool: the allocation share is read against the 3.03 ms whole-edit worst case
   (0.9 %), so Phase 3 retires the brick-array pool; Phase 8 rechecks the share against the new
   edit time.
+- Phase 3: the pool's retirement reaches files outside the phase's list: `src/stream.rs`
+  (eviction drops instead of recycling), `tests/edits.rs` (`a_pooled_expand_allocates_nothing`
+  and its counting allocator removed; the canonical oracle added to the seeded-op runner),
+  `tests/stream.rs` (`an_evicted_chunk_returns_its_arrays` reduced to its held-elsewhere half),
+  `benches/edits.rs` (`*_warm` now build the same world as `worst` and `tool`) (Phase 3 commit).
+- Phase 3: `apps/flythrough/src/lib.rs` (`chunk_ram`, `mips_ram`) counts class sizes; it is
+  outside the phase's list (Phase 3 commit).
+- Phase 3: `RawBrick` (`#[doc(hidden)]`, uniform or 512 raw ids) added: collapse composes in it
+  and encodes on commit; the kernel bench's `RowWriter` reference write runs on it (Phase 3
+  commit).
+- Phase 3: `Packed` is a public opaque struct over a private class enum (a public variant's
+  field must be public); `Brick::from_voxels` keeps its `Box` argument (Phase 3 commit).
+- Phase 3: `crates/vxe-sim/tests/sweep.rs` builds its all-rock `Full` floor bricks through the
+  hidden `Packed::expand_uniform`, a non-canonical box (Phase 3 commit).
+- Phase 3: the fly-through's HUD passes 0 spare arrays and its `B` line drops the pool KiB;
+  `hud.rs`'s `cpu_bytes_estimate` still counts 1 KiB per `Full` brick (followup, not acted on).
+- Phase 3: `hash.rs` and `source.rs` unchanged (read through `get` and `set_brick`).
 
 ### Close triggers
 

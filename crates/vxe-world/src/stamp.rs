@@ -10,7 +10,7 @@
 //! write lock at a time in ascending order under the store map's read lock (ADR-0002,
 //! ADR-0003).
 
-use crate::brick::{Brick, SpareArrays};
+use crate::brick::Brick;
 use crate::chunk::Chunk;
 use crate::coords::{BRICK_EDGE, CHUNK_EDGE, ChunkCoord, VoxelCoord, brick_slot, index_in_brick};
 use crate::edit::{EditError, EditResult};
@@ -110,13 +110,8 @@ fn writes_any(prefab: &Prefab, origin: [i64; 3], lo: [i64; 3], hi: [i64; 3]) -> 
 
 /// Writes the masked voxels of `prefab` (already rotated, minimum corner at `origin`) that
 /// fall inside `lo..=hi`, a box within chunk `coord` and within the prefab's box. Marks
-/// changed slots dirty and collapses bricks that became uniform, pushing their arrays onto
-/// `spare`. Returns whether any voxel changed. A `Uniform` brick that must hold mixed voxels
-/// expands into an array from `spare`, or a new one when `spare` is empty.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the blit's inputs plus the caller's spare arrays"
-)]
+/// changed slots dirty; a brick is written through `Brick::modify`, so one that became
+/// uniform is stored `Uniform`. Returns whether any voxel changed.
 fn blit(
     chunk: &mut Chunk,
     coord: ChunkCoord,
@@ -125,7 +120,6 @@ fn blit(
     lo: [i64; 3],
     hi: [i64; 3],
     mut tally: Option<&mut Tally>,
-    spare: &mut SpareArrays,
 ) -> bool {
     let be = i64::from(BRICK_EDGE);
     let base = coord.min_voxel().0.map(i64::from);
@@ -162,35 +156,36 @@ fn blit(
                         continue;
                     }
                 }
-                let voxels = brick.expand(spare);
-                let mut changed = false;
-                for z in elo[2]..=ehi[2] {
-                    for y in elo[1]..=ehi[1] {
-                        let row =
-                            ((z - origin[2]) as usize * s[1] + (y - origin[1]) as usize) * s[0];
-                        let local = [0, (y - bmin[1]) as i32, (z - bmin[2]) as i32];
-                        let brow = index_in_brick(local);
-                        for x in elo[0]..=ehi[0] {
-                            let i = row + (x - origin[0]) as usize;
-                            if !prefab.written(i) {
-                                continue;
-                            }
-                            let new = prefab.raw(i);
-                            let cell = &mut voxels[brow + (x - bmin[0]) as usize];
-                            let old = *cell;
-                            if old == new {
-                                continue;
-                            }
-                            *cell = new;
-                            changed = true;
-                            if let Some(t) = tally.as_deref_mut() {
-                                t.count(old, [x as i32, y as i32, z as i32]);
+                let changed = brick.modify(|voxels| {
+                    let mut changed = false;
+                    for z in elo[2]..=ehi[2] {
+                        for y in elo[1]..=ehi[1] {
+                            let row =
+                                ((z - origin[2]) as usize * s[1] + (y - origin[1]) as usize) * s[0];
+                            let local = [0, (y - bmin[1]) as i32, (z - bmin[2]) as i32];
+                            let brow = index_in_brick(local);
+                            for x in elo[0]..=ehi[0] {
+                                let i = row + (x - origin[0]) as usize;
+                                if !prefab.written(i) {
+                                    continue;
+                                }
+                                let new = prefab.raw(i);
+                                let cell = &mut voxels[brow + (x - bmin[0]) as usize];
+                                let old = *cell;
+                                if old == new {
+                                    continue;
+                                }
+                                *cell = new;
+                                changed = true;
+                                if let Some(t) = tally.as_deref_mut() {
+                                    t.count(old, [x as i32, y as i32, z as i32]);
+                                }
                             }
                         }
                     }
-                }
+                    changed
+                });
                 if changed {
-                    brick.collapse(spare);
                     chunk.mark_dirty(slot);
                     changed_any = true;
                 }
@@ -215,17 +210,7 @@ pub(crate) fn blit_into(
     if (0..3).any(|k| clo[k] > chi[k]) {
         return false;
     }
-    // A source holds no world pool: expansions allocate, and collapsed arrays are freed.
-    blit(
-        chunk,
-        coord,
-        prefab,
-        lo,
-        clo,
-        chi,
-        None,
-        &mut SpareArrays::new(),
-    )
+    blit(chunk, coord, prefab, lo, clo, chi, None)
 }
 
 impl World {
@@ -268,27 +253,11 @@ impl World {
             }
         }
 
-        // One batch of pooled arrays for every brick the stamp may expand: at most the bricks
-        // its box overlaps.
-        let be = i64::from(BRICK_EDGE);
-        let bound = (0..3)
-            .map(|k| usize::try_from(hi[k].div_euclid(be) - lo[k].div_euclid(be) + 1).unwrap_or(0))
-            .fold(1usize, usize::saturating_mul);
-        let mut spare = self.brick_arrays.take(bound);
         let mut tally = Tally::new(self.materials.len());
         let mut touched = Vec::new();
         for (coord, clo, chi, chunk) in chunks {
             let mut chunk = write(chunk);
-            let changed = blit(
-                &mut chunk,
-                coord,
-                prefab,
-                o,
-                clo,
-                chi,
-                Some(&mut tally),
-                &mut spare,
-            );
+            let changed = blit(&mut chunk, coord, prefab, o, clo, chi, Some(&mut tally));
             if changed {
                 chunk.mark_edited();
                 self.store.mark_dirty(coord);
@@ -296,7 +265,6 @@ impl World {
             }
         }
         drop(map);
-        self.brick_arrays.give(spare);
         Ok(EditResult {
             changed_from: tally.changed_from(),
             touched,

@@ -61,3 +61,41 @@ fn the_mask_matches_brute_force_over_seeded_random_bricks() {
         assert_eq!(b.occupancy_mask(), brute_force_mask(&b), "brick {n}");
     }
 }
+
+#[test]
+fn a_brick_slot_is_sixteen_bytes() {
+    assert_eq!(size_of::<Brick>(), 16);
+}
+
+/// `Brick` equality agrees with decoded equality over 256 seeded pairs: half equal voxels
+/// built in two ways (directly and by a round trip through `modify`), half differing in one
+/// voxel, over bricks of 1 to 20 materials.
+#[test]
+fn brick_equality_is_voxel_equality() {
+    let mut rng = SplitMix64(0x0021_0003);
+    for i in 0..256 {
+        let materials = rng.range(1, 20) as u64;
+        let solid = rng.range(0, 8);
+        let mut v = Box::new([AIR; BRICK_VOXELS]);
+        for m in v.iter_mut() {
+            if rng.range(0, 8) < solid {
+                *m = 1 + rng.range(0, materials as i64 - 1) as MaterialId;
+            }
+        }
+        let a = Brick::from_voxels(v.clone());
+        let mut w = v.clone();
+        if i % 2 == 1 {
+            let at = rng.range(0, BRICK_VOXELS as i64 - 1) as usize;
+            w[at] = if w[at] == AIR { 1 } else { AIR };
+        }
+        let mut b = Brick::Uniform(AIR);
+        b.modify(|out| *out = *w);
+        let mut da = [AIR; BRICK_VOXELS];
+        let mut db = [AIR; BRICK_VOXELS];
+        a.decode(&mut da);
+        b.decode(&mut db);
+        assert_eq!(da, *v, "pair {i}");
+        assert_eq!(db, *w, "pair {i}");
+        assert_eq!(a == b, da == db, "pair {i}");
+    }
+}

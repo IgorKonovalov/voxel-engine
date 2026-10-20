@@ -2,10 +2,9 @@
 //! materials in ascending id, and bit planes that index the palette, in one of five fixed-size
 //! classes chosen by the count `n` of non-air materials.
 //!
-//! This module stands alone: [`crate::Brick`] does not hold a [`Packed`] yet. It carries the
-//! encoding, `decode` and `get`, and the planar edit kernel (carve, fill, replace as word
-//! operations with popcount tallies), so the kernel can be measured against the row write on
-//! the same brick-edits.
+//! [`crate::Brick::Full`] holds a [`Packed`]. This module carries the encoding, `decode` and
+//! `get`, and the planar edit kernel (carve, fill, replace as word operations with popcount
+//! tallies).
 //!
 //! Word layout of a planar class with `p` planes (`Wide` is 512 raw ids instead):
 //!
@@ -23,11 +22,12 @@
 //! 2. the palette is strictly ascending and every entry has at least one voxel;
 //! 3. a mask bit is set exactly when the voxel is not air, and plane bits are zero under a
 //!    clear mask bit;
-//! 4. a brick whose 512 voxels are equal is [`PackedBrick::Uniform`].
+//! 4. a brick whose 512 voxels are equal is [`crate::Brick::Uniform`].
 //!
 //! So equal voxels have equal bytes, and the derived equality is exact voxel equality. Every
 //! step is integer: shifts, masks and popcounts; nothing reads a clock or a hash map.
 
+use crate::brick::Brick;
 use crate::coords::BRICK_VOXELS;
 use crate::material::{AIR, MaterialId};
 
@@ -114,22 +114,70 @@ const fn words(p: usize, cap: usize) -> usize {
     LAYERS + LAYERS * p + cap.div_ceil(4)
 }
 
-/// A `Full` brick in one of the five classes. Holds no `Uniform` brick: see
-/// [`PackedBrick`].
+/// The payload of a `Full` brick in one of the five classes, opaque outside this module: its
+/// constructors keep the canonical form.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Packed {
+pub struct Packed(pub(crate) Repr);
+
+impl Packed {
+    /// The class of the box.
+    pub fn class(&self) -> PackedClass {
+        self.0.class()
+    }
+
+    /// Payload bytes of the box.
+    pub fn bytes(&self) -> usize {
+        self.0.bytes()
+    }
+
+    /// The palette entries, ascending; empty for `Wide`.
+    pub fn palette(&self) -> Vec<MaterialId> {
+        self.0.palette()
+    }
+
+    /// The occupancy mask, one `u64` per z-layer.
+    pub fn mask(&self) -> [u64; LAYERS] {
+        self.0.mask()
+    }
+
+    /// The material at brick index `i` (`x + 8 y + 64 z`).
+    pub fn get(&self, i: usize) -> MaterialId {
+        self.0.get(i)
+    }
+
+    /// Writes all 512 voxels into `out`.
+    pub fn decode(&self, out: &mut [MaterialId; BRICK_VOXELS]) {
+        self.0.decode(out)
+    }
+
+    /// Whether the box is in canonical form (rules 1 to 3 above).
+    pub fn is_canonical(&self) -> bool {
+        self.0.is_canonical()
+    }
+
+    /// The mask-only box of a `Uniform(m)` brick about to be edited (not canonical): for the
+    /// kernel bench's expansion figure.
+    #[doc(hidden)]
+    pub fn expand_uniform(m: MaterialId) -> Self {
+        Self(Repr::expand_uniform(m))
+    }
+
+    /// The box moved into a larger planar class (not canonical): for the kernel bench's class
+    /// change figure.
+    #[doc(hidden)]
+    pub fn reclass(&self, class: PackedClass) -> Self {
+        Self(self.0.reclass(class))
+    }
+}
+
+/// The five class boxes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Repr {
     Mask(Box<[u64; words(0, 1)]>),
     Plane1(Box<[u64; words(1, 2)]>),
     Plane2(Box<[u64; words(2, 4)]>),
     Plane4(Box<[u64; words(4, MAX_ENTRIES)]>),
     Wide(Box<[MaterialId; BRICK_VOXELS]>),
-}
-
-/// A brick as `Brick` will hold it: one material, or a packed box.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PackedBrick {
-    Uniform(MaterialId),
-    Full(Packed),
 }
 
 /// What a kernel call does to each old material.
@@ -193,7 +241,7 @@ pub fn bounds_of(changed: &[u64; LAYERS]) -> Option<([u8; 3], [u8; 3])> {
     ))
 }
 
-impl Packed {
+impl Repr {
     /// The class of this box.
     pub fn class(&self) -> PackedClass {
         match self {
@@ -421,9 +469,10 @@ fn distinct_non_air(v: &[MaterialId; BRICK_VOXELS]) -> usize {
     n
 }
 
-impl PackedBrick {
-    /// The canonical packed form of 512 voxels.
-    pub fn encode(v: &[MaterialId; BRICK_VOXELS]) -> Self {
+impl Brick {
+    /// The canonical form of 512 voxels: `Uniform` when they are all equal, else the class of
+    /// their count of non-air materials.
+    pub(crate) fn encode(v: &[MaterialId; BRICK_VOXELS]) -> Self {
         let first = v[0];
         if v.iter().all(|&m| m == first) {
             return Self::Uniform(first);
@@ -441,13 +490,13 @@ impl PackedBrick {
                 continue;
             }
             if n == MAX_ENTRIES {
-                return Self::Full(Packed::Wide(Box::new(*v)));
+                return Self::Full(Packed(Repr::Wide(Box::new(*v))));
             }
             pal[n] = m;
             n += 1;
         }
         pal[..n].sort_unstable();
-        let mut out = Packed::zeroed(PackedClass::of(n));
+        let mut out = Repr::zeroed(PackedClass::of(n));
         let (w, p) = out.planar_mut().expect("n <= 16 is planar");
         for (j, &m) in pal[..n].iter().enumerate() {
             set_entry(w, p, j, m);
@@ -467,45 +516,14 @@ impl PackedBrick {
                 w[LAYERS + LAYERS * k + z] |= ((last_j >> k & 1) as u64) << b;
             }
         }
-        Self::Full(out)
-    }
-
-    /// Writes all 512 voxels into `out`.
-    pub fn decode(&self, out: &mut [MaterialId; BRICK_VOXELS]) {
-        match self {
-            Self::Uniform(m) => out.fill(*m),
-            Self::Full(p) => p.decode(out),
-        }
-    }
-
-    /// The material at brick index `i`.
-    pub fn get(&self, i: usize) -> MaterialId {
-        match self {
-            Self::Uniform(m) => *m,
-            Self::Full(p) => p.get(i),
-        }
-    }
-
-    /// Payload bytes beyond the slot: the box's size, 0 for `Uniform`.
-    pub fn bytes(&self) -> usize {
-        match self {
-            Self::Uniform(_) => 0,
-            Self::Full(p) => p.bytes(),
-        }
-    }
-
-    /// The class of a `Full` brick.
-    pub fn class(&self) -> Option<PackedClass> {
-        match self {
-            Self::Uniform(_) => None,
-            Self::Full(p) => Some(p.class()),
-        }
+        Self::Full(Packed(out))
     }
 
     /// Applies `mode` to the voxels of `shape` (from [`shape_words`]) in place, counting each
     /// changed voxel under its old material through `count`, and leaves the brick canonical.
     /// Returns the brick-local bounds of the changed voxels, `None` when nothing changed.
-    pub fn edit(
+    #[doc(hidden)]
+    pub fn edit_planar(
         &mut self,
         mode: KernelMode<'_>,
         shape: &[u64; LAYERS],
@@ -516,13 +534,13 @@ impl PackedBrick {
             if shape.iter().all(|&w| w == 0) {
                 return None;
             }
-            *self = Self::Full(Packed::expand_uniform(m));
+            *self = Self::Full(Packed(Repr::expand_uniform(m)));
         }
-        let Self::Full(packed) = self else {
+        let Self::Full(Packed(packed)) = self else {
             unreachable!("expanded above")
         };
         let changed = match packed {
-            Packed::Wide(v) => wide_edit(v, mode, shape, count),
+            Repr::Wide(v) => wide_edit(v, mode, shape, count),
             _ => planar_edit(packed, mode, shape, count),
         };
         let bounds = bounds_of(&changed);
@@ -534,8 +552,10 @@ impl PackedBrick {
     /// or all one material; a `Wide` box is re-encoded when it may have fallen to 16 or fewer
     /// materials.
     fn canonicalize(&mut self) {
-        let Self::Full(packed) = self else { return };
-        if let Packed::Wide(v) = packed {
+        let Self::Full(Packed(packed)) = self else {
+            return;
+        };
+        if let Repr::Wide(v) = packed {
             *self = Self::encode(v);
             return;
         }
@@ -584,7 +604,7 @@ fn wide_edit(
 /// The planar kernel on a planar box; may move the box to a larger class (or to `Wide`) when
 /// a material is inserted. Returns the changed voxels' words.
 fn planar_edit(
-    packed: &mut Packed,
+    packed: &mut Repr,
     mode: KernelMode<'_>,
     shape: &[u64; LAYERS],
     count: &mut impl FnMut(MaterialId, u32),
@@ -607,7 +627,7 @@ fn planar_edit(
 /// Carve: `hit = mask & shape & OR(match_j : j carvable)`, a popcount per carvable entry,
 /// `mask &= !hit`, planes masked, emptied entries removed.
 fn carve(
-    packed: &mut Packed,
+    packed: &mut Repr,
     mode: KernelMode<'_>,
     shape: &[u64; LAYERS],
     count: &mut impl FnMut(MaterialId, u32),
@@ -682,7 +702,7 @@ fn carve(
 /// Fill: `f = !mask & shape`, the fill entry inserted if absent, `mask |= f`, the entry's
 /// index written into the planes under `f`.
 fn fill(
-    packed: &mut Packed,
+    packed: &mut Repr,
     m: MaterialId,
     shape: &[u64; LAYERS],
     count: &mut impl FnMut(MaterialId, u32),
@@ -701,7 +721,7 @@ fn fill(
     count(AIR, air);
     let Some(j) = index_or_insert(packed, m) else {
         // Above 16 materials: the raw path.
-        let Packed::Wide(v) = packed else {
+        let Repr::Wide(v) = packed else {
             unreachable!("index_or_insert widens")
         };
         for z in 0..LAYERS {
@@ -724,7 +744,7 @@ fn fill(
 /// otherwise `to`'s index written over `h` (or the voxels carved, for air) and `from`'s entry
 /// removed if emptied.
 fn replace(
-    packed: &mut Packed,
+    packed: &mut Repr,
     from: MaterialId,
     to: MaterialId,
     shape: &[u64; LAYERS],
@@ -772,7 +792,7 @@ fn replace(
         return h;
     }
     let Some(jt) = index_or_insert(packed, to) else {
-        let Packed::Wide(v) = packed else {
+        let Repr::Wide(v) = packed else {
             unreachable!("index_or_insert widens")
         };
         for z in 0..LAYERS {
@@ -816,7 +836,7 @@ fn write_index(w: &mut [u64], p: usize, j: usize, over: &[u64; LAYERS], fresh: b
 /// grows a class first if full, and every voxel at or above the insert position takes its
 /// index plus one by a bit-sliced add. `None` when the insert widens the box to raw ids
 /// (above 16 materials); the box is then `Wide`.
-fn index_or_insert(packed: &mut Packed, m: MaterialId) -> Option<usize> {
+fn index_or_insert(packed: &mut Repr, m: MaterialId) -> Option<usize> {
     let (w, p) = packed.planar().expect("planar");
     let n = entries(w, p);
     let mut q = n;
@@ -835,7 +855,7 @@ fn index_or_insert(packed: &mut Packed, m: MaterialId) -> Option<usize> {
         if class == PackedClass::Wide {
             let mut v = Box::new([AIR; BRICK_VOXELS]);
             packed.decode(&mut v);
-            *packed = Packed::Wide(v);
+            *packed = Repr::Wide(v);
             return None;
         }
         *packed = packed.reclass(class);
@@ -911,15 +931,15 @@ mod tests {
     }
 
     fn round_trip(v: &[MaterialId; BRICK_VOXELS]) {
-        let e = PackedBrick::encode(v);
+        let e = Brick::encode(v);
         let mut d = [0; BRICK_VOXELS];
         e.decode(&mut d);
         assert_eq!(&d, v);
-        assert_eq!(PackedBrick::encode(&d), e);
+        assert_eq!(Brick::encode(&d), e);
         for (i, &m) in v.iter().enumerate() {
             assert_eq!(e.get(i), m);
         }
-        if let PackedBrick::Full(p) = &e {
+        if let Brick::Full(p) = &e {
             assert!(p.is_canonical(), "{:?}", p.class());
             assert_eq!(p.mask(), {
                 let mut bits = [0u64; 8];
@@ -943,6 +963,7 @@ mod tests {
         .map(PackedClass::bytes);
         assert_eq!(sizes, [72, 136, 200, 352, 1024]);
         assert_eq!(size_of::<Packed>(), 16);
+        assert_eq!(size_of::<Brick>(), 16);
     }
 
     /// `decode(encode(v)) == v` and `encode(decode(encode(v))) == encode(v)` over 256 seeded
@@ -955,16 +976,13 @@ mod tests {
             let materials = 1 + (i * 299) / 255;
             let v = seeded_brick(0x5EED_0021 ^ i, solid, materials);
             round_trip(&v);
-            classes.insert(PackedBrick::encode(&v).class());
+            classes.insert(Brick::encode(&v).class());
         }
         // Every class is exercised; Uniform bricks are added by hand.
         assert_eq!(classes.len(), 5, "{classes:?}");
         for m in [AIR, 5] {
             round_trip(&[m; BRICK_VOXELS]);
-            assert_eq!(
-                PackedBrick::encode(&[m; BRICK_VOXELS]),
-                PackedBrick::Uniform(m)
-            );
+            assert_eq!(Brick::encode(&[m; BRICK_VOXELS]), Brick::Uniform(m));
         }
     }
 
@@ -1029,9 +1047,9 @@ mod tests {
                 }
             }
 
-            let mut b = PackedBrick::encode(&v);
+            let mut b = Brick::encode(&v);
             let mut counts = std::collections::BTreeMap::new();
-            let bounds = b.edit(mode, &shape, &mut |m, n| {
+            let bounds = b.edit_planar(mode, &shape, &mut |m, n| {
                 *counts.entry(m).or_insert(0u32) += n;
             });
             let mut got = [0; BRICK_VOXELS];
@@ -1039,8 +1057,8 @@ mod tests {
             assert_eq!(got, want, "case {case} {mode:?}");
             assert_eq!(counts, want_counts, "case {case} {mode:?}");
             assert_eq!(bounds, bounds_of(&changed), "case {case}");
-            assert_eq!(b, PackedBrick::encode(&want), "case {case} canonical");
-            if let PackedBrick::Full(p) = &b {
+            assert_eq!(b, Brick::encode(&want), "case {case} canonical");
+            if let Brick::Full(p) = &b {
                 assert!(p.is_canonical(), "case {case}");
             }
         }
@@ -1051,23 +1069,23 @@ mod tests {
         // {air, 3}: fill 7 into the top layer, then carve every 7.
         let mut v = [AIR; BRICK_VOXELS];
         v[..64].fill(3);
-        let mut b = PackedBrick::encode(&v);
+        let mut b = Brick::encode(&v);
         assert_eq!(b.class(), Some(PackedClass::Mask));
         let mut spans = [(1u8, 0u8); 64];
         for span in &mut spans[56..] {
             *span = (0, 7);
         }
         let mut counts = Vec::new();
-        b.edit(KernelMode::Fill(7), &shape_words(&spans), &mut |m, n| {
+        b.edit_planar(KernelMode::Fill(7), &shape_words(&spans), &mut |m, n| {
             counts.push((m, n))
         });
         assert_eq!(counts, [(AIR, 64)]);
         assert_eq!(b.class(), Some(PackedClass::Plane1));
-        let PackedBrick::Full(p) = &b else { panic!() };
+        let Brick::Full(p) = &b else { panic!() };
         assert_eq!(p.palette(), [3, 7]);
         let carves = [1u64 << 7];
         counts.clear();
-        b.edit(
+        b.edit_planar(
             KernelMode::Carve {
                 carves: &carves,
                 rows: 8,
@@ -1076,6 +1094,6 @@ mod tests {
             &mut |m, n| counts.push((m, n)),
         );
         assert_eq!(counts, [(7, 64)]);
-        assert_eq!(b, PackedBrick::encode(&v));
+        assert_eq!(b, Brick::encode(&v));
     }
 }

@@ -4,8 +4,9 @@
 //! owns no unseeded randomness. The same edit operation applied to the same world produces
 //! identical voxels and identical edit results on every platform (CLAUDE.md, ADR-0001).
 //!
-//! Storage is a brick map (ADR-0002): `u16` voxels in 8³ bricks that are `Uniform` or `Full`,
-//! 64³ chunks behind per-chunk locks, edits applied in place in ascending chunk order.
+//! Storage is a brick map (ADR-0002): `u16` voxels in 8³ bricks that are `Uniform` or `Full`
+//! (a `Full` brick a packed occupancy mask, palette and bit planes, ADR-0012), 64³ chunks behind
+//! per-chunk locks, edits applied in place in ascending chunk order.
 //!
 //! ```
 //! use vxe_world::*;
@@ -45,6 +46,8 @@ mod walkable;
 pub mod wire;
 
 pub use brick::Brick;
+#[doc(hidden)]
+pub use brick::RawBrick;
 pub use census::{BrickCensus, WorldCensus};
 pub use chunk::Chunk;
 pub use coarse::{CellChange, CellCoord, CoarseCell, CoarseGrid};

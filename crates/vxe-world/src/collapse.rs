@@ -14,7 +14,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 
-use crate::brick::{Brick, SpareArrays};
+use crate::brick::{Brick, RawBrick, SpareArrays};
 use crate::chunk::Chunk;
 use crate::coarse::CellCoord;
 use crate::coords::{BRICK_EDGE, ChunkCoord, VoxelCoord, index_in_brick};
@@ -114,7 +114,7 @@ impl<'m> Reader<'m> {
 
 /// The region's bricks as they were when the op started.
 struct Snapshot {
-    bricks: CellMap<Brick>,
+    bricks: CellMap<RawBrick>,
     /// Per cell column `(x, y)` of the footprint, ascending, the region's cells' `z`,
     /// ascending.
     stacks: BTreeMap<[i32; 2], Vec<i32>>,
@@ -142,14 +142,14 @@ impl Snapshot {
         let mut stacks: BTreeMap<[i32; 2], Vec<i32>> = BTreeMap::new();
         let mut reader = Reader::new(map);
         for &c in &cells {
-            let b = reader.brick(c).expect("residency checked above").clone();
+            let b = RawBrick::of(reader.brick(c).expect("residency checked above"));
             bricks.insert(CellKey(c), b);
             stacks.entry([c.0[0], c.0[1]]).or_default().push(c.0[2]);
         }
         Ok(Self { bricks, stacks })
     }
 
-    fn brick(&self, c: CellCoord) -> &Brick {
+    fn brick(&self, c: CellCoord) -> &RawBrick {
         &self.bricks[&CellKey(c)]
     }
 
@@ -198,12 +198,12 @@ impl Snapshot {
             let span = (top.rem_euclid(BE) + 1).min(max - gap);
             let brick = match self.bricks.get(&CellKey(cell)) {
                 Some(b) => match b {
-                    Brick::Uniform(m) if !spare(*m) => {
+                    RawBrick::Uniform(m) if !spare(*m) => {
                         gap += span;
                         continue;
                     }
-                    Brick::Uniform(_) => break,
-                    Brick::Full(v) => {
+                    RawBrick::Uniform(_) => break,
+                    RawBrick::Full(v) => {
                         for k in 0..span {
                             if spare(v[index_of([x, y, top - k])]) {
                                 return Ok(gap);
@@ -218,9 +218,9 @@ impl Snapshot {
             match brick {
                 Brick::Uniform(AIR) => gap += span,
                 Brick::Uniform(_) => break,
-                Brick::Full(v) => {
+                full @ Brick::Full(_) => {
                     for k in 0..span {
-                        if v[index_of([x, y, top - k])] != AIR {
+                        if full.get(index_of([x, y, top - k])) != AIR {
                             return Ok(gap);
                         }
                         gap += 1;
@@ -290,27 +290,26 @@ impl Bounds {
 
 /// The bricks an op will write, composed in memory: each starts as the world's brick (or, for
 /// a region cell, as its spared voxels in air, since every other solid voxel leaves) and takes
-/// voxel writes. Bricks it expands take arrays from `spare`, a batch of the world's pool, and
-/// bricks that collapse push theirs back onto it; [`Compose::commit`] hands the batch back.
+/// voxel writes, as raw ids. Bricks it expands take arrays from `spare`, its own free list,
+/// and bricks that collapse push theirs back onto it; [`Compose::commit`] encodes each brick.
 struct Compose {
-    bricks: CellMap<Brick>,
+    bricks: CellMap<RawBrick>,
     spare: SpareArrays,
 }
 
 impl Compose {
-    /// Every region cell, holding only the voxels `spare` keeps. `arrays` is a batch of the
-    /// world's brick-array pool (any length, empty included: an empty batch makes `expand`
-    /// allocate).
-    fn new(snap: &Snapshot, spare: &impl Fn(MaterialId) -> bool, mut arrays: SpareArrays) -> Self {
+    /// Every region cell, holding only the voxels `spare` keeps.
+    fn new(snap: &Snapshot, spare: &impl Fn(MaterialId) -> bool) -> Self {
+        let mut arrays = Vec::new();
         let kept = |m: MaterialId| if spare(m) { m } else { AIR };
         let bricks = snap
             .bricks
             .iter()
             .map(|(&k, b)| {
                 let b = match b {
-                    Brick::Uniform(m) => Brick::Uniform(kept(*m)),
-                    Brick::Full(v) => {
-                        let mut b = Brick::Full(Box::new(v.map(kept)));
+                    RawBrick::Uniform(m) => RawBrick::Uniform(kept(*m)),
+                    RawBrick::Full(v) => {
+                        let mut b = RawBrick::Full(Box::new(v.map(kept)));
                         b.collapse(&mut arrays);
                         b
                     }
@@ -327,20 +326,26 @@ impl Compose {
     /// The composed brick of `c` in `bricks`, read from the world on first use. It takes the
     /// map rather than `self` so a caller can expand the brick into `self.spare`.
     fn brick<'a>(
-        bricks: &'a mut CellMap<Brick>,
+        bricks: &'a mut CellMap<RawBrick>,
         reader: &mut Reader<'_>,
         c: CellCoord,
-    ) -> &'a mut Brick {
+    ) -> &'a mut RawBrick {
         bricks
             .entry(CellKey(c))
-            .or_insert_with(|| reader.brick(c).expect("scanned resident").clone())
+            .or_insert_with(|| RawBrick::of(reader.brick(c).expect("scanned resident")))
     }
 
     /// Writes the solid voxels of `src`, the brick of region cell `c`, `dropped` voxels lower.
     /// They land in at most two bricks: layers `r..8` of `src` (with `r = dropped mod 8`) in
     /// the cell `dropped / 8` below `c`, layers `0..r` in the cell under that. Each destination
     /// brick is looked up once and takes whole 64-voxel layers.
-    fn place_dropped(&mut self, reader: &mut Reader<'_>, c: CellCoord, src: &Brick, dropped: i32) {
+    fn place_dropped(
+        &mut self,
+        reader: &mut Reader<'_>,
+        c: CellCoord,
+        src: &RawBrick,
+        dropped: i32,
+    ) {
         const LAYER: usize = (BE * BE) as usize;
         let (q, r) = (dropped.div_euclid(BE), dropped.rem_euclid(BE));
         let [cx, cy, cz] = c.0;
@@ -356,11 +361,11 @@ impl Compose {
             let Self { bricks, spare } = self;
             let b = Self::brick(bricks, reader, to);
             match (src, &*b) {
-                (Brick::Uniform(m), Brick::Uniform(d)) if m == d => {}
-                (Brick::Uniform(m), _) => b.expand(spare)[at..at + span.len()].fill(*m),
-                (Brick::Full(v), _) => {
+                (RawBrick::Uniform(m), RawBrick::Uniform(d)) if m == d => {}
+                (RawBrick::Uniform(m), _) => b.expand(spare)[at..at + span.len()].fill(*m),
+                (RawBrick::Full(v), _) => {
                     let from = &v[span];
-                    if let Brick::Uniform(d) = *b
+                    if let RawBrick::Uniform(d) = *b
                         && from.iter().all(|&m| m == AIR || m == d)
                     {
                         continue;
@@ -384,16 +389,16 @@ impl Compose {
         }
     }
 
-    /// Writes every composed brick that differs from the world's, ascending by chunk, and
-    /// returns the batch of pool arrays, for the caller to give back once the map lock is
-    /// released.
-    fn commit(self, world: &World, map: &ChunkMap) -> SpareArrays {
-        let Self { bricks, mut spare } = self;
+    /// Writes every composed brick that differs from the world's, in canonical form, ascending
+    /// by chunk.
+    fn commit(self, world: &World, map: &ChunkMap) {
         let mut by_chunk: BTreeMap<ChunkCoord, Vec<(usize, Brick)>> = BTreeMap::new();
-        for (CellKey(c), mut b) in bricks {
-            b.collapse(&mut spare);
+        for (CellKey(c), b) in self.bricks {
             let (chunk, slot) = c.split();
-            by_chunk.entry(chunk).or_default().push((slot, b));
+            by_chunk
+                .entry(chunk)
+                .or_default()
+                .push((slot, b.into_brick()));
         }
         for (coord, bricks) in by_chunk {
             let mut chunk = write(&map[&coord]);
@@ -409,7 +414,6 @@ impl Compose {
                 world.store.mark_dirty(coord);
             }
         }
-        spare
     }
 }
 
@@ -468,17 +472,15 @@ impl World {
 
         let mut moved = Counts::default();
         let mut bounds = Bounds::default();
-        // Each region brick lands in at most two bricks, so at most two expands per cell.
-        let arrays = self.brick_arrays.take(2 * cells.len());
-        let mut compose = Compose::new(&snap, &|_| false, arrays);
+        let mut compose = Compose::new(&snap, &|_| false);
         let mut touched = BTreeSet::new();
         for (&[cx, cy], zs) in &snap.stacks {
             for &cz in zs {
                 let c = CellCoord([cx, cy, cz]);
                 let min = c.min_voxel().0;
                 match snap.brick(c) {
-                    Brick::Uniform(AIR) => {}
-                    Brick::Uniform(m) => {
+                    RawBrick::Uniform(AIR) => {}
+                    RawBrick::Uniform(m) => {
                         moved.add(*m, 512);
                         let hi = min.map(|v| v + BE - 1);
                         bounds.add([min[0], min[1], min[2] - dropped], hi);
@@ -488,14 +490,14 @@ impl World {
                         if dropped % BE == 0 {
                             let to = CellCoord([cx, cy, cz - dropped / BE]);
                             let b = Compose::brick(&mut compose.bricks, &mut reader, to);
-                            if *b == Brick::Uniform(AIR) {
-                                *b = Brick::Uniform(*m);
+                            if *b == RawBrick::Uniform(AIR) {
+                                *b = RawBrick::Uniform(*m);
                                 continue;
                             }
                         }
-                        compose.place_dropped(&mut reader, c, &Brick::Uniform(*m), dropped);
+                        compose.place_dropped(&mut reader, c, &RawBrick::Uniform(*m), dropped);
                     }
-                    Brick::Full(vox) => {
+                    RawBrick::Full(vox) => {
                         let (mut lo, mut hi) = ([BE; 3], [-1; 3]);
                         for (i, &m) in vox.iter().enumerate() {
                             if m == AIR {
@@ -520,9 +522,8 @@ impl World {
             }
         }
         drop(reader);
-        let arrays = compose.commit(self, &map);
+        compose.commit(self, &map);
         drop(map);
-        self.brick_arrays.give(arrays);
         Ok(DropResult {
             moved: moved.sorted(),
             dropped,
@@ -599,9 +600,7 @@ impl World {
             }
         }
 
-        // A batch sized to the region; rubble beyond it expands into fresh arrays.
-        let arrays = self.brick_arrays.take(cells.len());
-        let mut compose = Compose::new(&snap, &spare, arrays);
+        let mut compose = Compose::new(&snap, &spare);
         let mut removed = Counts::default();
         let mut bounds = Bounds::default();
         let mut touched = BTreeSet::new();
@@ -610,12 +609,12 @@ impl World {
                 let c = CellCoord([cx, cy, cz]);
                 let min = c.min_voxel().0;
                 let (lo, hi) = match snap.brick(c) {
-                    Brick::Uniform(m) if !carved(*m) => continue,
-                    Brick::Uniform(m) => {
+                    RawBrick::Uniform(m) if !carved(*m) => continue,
+                    RawBrick::Uniform(m) => {
                         removed.add(*m, 512);
                         ([0; 3], [BE - 1; 3])
                     }
-                    Brick::Full(vox) => {
+                    RawBrick::Full(vox) => {
                         let (mut lo, mut hi) = ([BE; 3], [-1; 3]);
                         for (i, &m) in vox.iter().enumerate() {
                             if carved(m) {
@@ -655,9 +654,8 @@ impl World {
             }
         }
         drop(reader);
-        let arrays = compose.commit(self, &map);
+        compose.commit(self, &map);
         drop(map);
-        self.brick_arrays.give(arrays);
         Ok(RemoveResult {
             removed: removed.sorted(),
             placed,

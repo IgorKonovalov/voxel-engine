@@ -403,7 +403,9 @@ impl Readback {
             let e = self.records[rec as usize * RECORD_WORDS + ENTRY_WORD + slot];
             match brick {
                 Brick::Uniform(m) => assert_eq!(e, u32::from(*m), "{coord:?} brick {slot}"),
-                Brick::Full(v) => {
+                Brick::Full(p) => {
+                    let mut v = [AIR; BRICK_VOXELS];
+                    p.decode(&mut v);
                     assert_ne!(e & FULL_BIT, 0, "{coord:?} brick {slot}");
                     assert_eq!(self.voxels(rec, e), &v[..], "{coord:?} brick {slot}");
                     let s = e & SLOT_MASK;
@@ -871,7 +873,9 @@ impl Readback {
                     [rec as usize * RECORD_WORDS + ENTRY_WORD + LOD_LEVEL_ENTRY[n - 1] + j];
                 match brick {
                     Brick::Uniform(m) => assert_eq!(e, u32::from(*m), "{coord:?} L{n} {j}"),
-                    Brick::Full(v) => {
+                    Brick::Full(p) => {
+                        let mut v = [AIR; BRICK_VOXELS];
+                        p.decode(&mut v);
                         assert_ne!(e & FULL_BIT, 0, "{coord:?} L{n} {j}");
                         assert_eq!(self.voxels(rec, e), &v[..], "{coord:?} L{n} {j}");
                         slots.push(e & SLOT_MASK);

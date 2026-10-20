@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 use std::hint::black_box;
 
 use vxe_world::hash::mix64;
-use vxe_world::packed::{PackedBrick, PackedClass, RowSpans};
+use vxe_world::packed::{Packed, PackedClass, RowSpans};
 use vxe_world::*;
 
 /// Timed runs per figure, after `WARMUP` untimed ones.
@@ -79,7 +79,6 @@ fn capture(table: &MaterialTable) -> Vec<CapturedBrickEdit> {
         &UniformSource(ROCK),
         table,
     );
-    world.reserve_brick_arrays(2500);
     let mut out = Vec::new();
     for v in seeded_voxels(0x5EED_0004) {
         let op = EditOp::sphere(centre_of_voxel(v), 10 * FIXED_ONE, Mode::Carve);
@@ -92,14 +91,11 @@ fn voxels(b: &Brick) -> [MaterialId; BRICK_VOXELS] {
     std::array::from_fn(|i| b.get(i))
 }
 
-fn packed(b: &Brick) -> PackedBrick {
-    match b {
-        Brick::Uniform(m) => PackedBrick::Uniform(*m),
-        Brick::Full(_) => PackedBrick::encode(&voxels(b)),
-    }
+fn raw_voxels(b: &RawBrick) -> [MaterialId; BRICK_VOXELS] {
+    std::array::from_fn(|i| b.get(i))
 }
 
-fn class_name(b: &PackedBrick) -> &'static str {
+fn class_name(b: &Brick) -> &'static str {
     match b.class() {
         None => "Uniform",
         Some(PackedClass::Mask) => "Mask",
@@ -110,7 +106,7 @@ fn class_name(b: &PackedBrick) -> &'static str {
     }
 }
 
-fn mix(bricks: impl Iterator<Item = PackedBrick>) -> String {
+fn mix(bricks: impl Iterator<Item = Brick>) -> String {
     let mut m: BTreeMap<&str, usize> = BTreeMap::new();
     for b in bricks {
         *m.entry(class_name(&b)).or_default() += 1;
@@ -123,33 +119,28 @@ fn mix(bricks: impl Iterator<Item = PackedBrick>) -> String {
 
 /// Every brick-edit through both writers alone: equal tallies, bounds and voxels, and the
 /// planar brick canonical. Returns the planar bricks after the edits.
-fn check(
-    name: &str,
-    mode: Mode,
-    table: &MaterialTable,
-    edits: &[(Brick, RowSpans)],
-) -> Vec<PackedBrick> {
+fn check(name: &str, mode: Mode, table: &MaterialTable, edits: &[(Brick, RowSpans)]) -> Vec<Brick> {
     let mut after = Vec::with_capacity(edits.len());
     for (i, (before, spans)) in edits.iter().enumerate() {
-        let mut today = before.clone();
+        let mut today = RawBrick::of(before);
         let mut w = RowWriter::new(mode, table);
         w.write(&mut today, spans);
         let (t_counts, t_bounds) = w.finish();
 
-        let mut planar = packed(before);
+        let mut planar = before.clone();
         let mut w = PlanarWriter::new(mode, table);
         w.write(&mut planar, spans);
         let (p_counts, p_bounds) = w.finish();
 
         let mut p_voxels = [AIR; BRICK_VOXELS];
         planar.decode(&mut p_voxels);
-        let t_voxels = voxels(&today);
+        let t_voxels = raw_voxels(&today);
         assert_eq!(p_counts, t_counts, "{name} brick-edit {i}: tallies");
         assert_eq!(p_bounds, t_bounds, "{name} brick-edit {i}: bounds");
         assert_eq!(p_voxels, t_voxels, "{name} brick-edit {i}: voxels");
         assert_eq!(
             planar,
-            PackedBrick::encode(&t_voxels),
+            Brick::from_voxels(Box::new(t_voxels)),
             "{name} brick-edit {i}: canonical"
         );
         after.push(planar);
@@ -187,14 +178,14 @@ fn writers(
     let uniform_before = edits.iter().filter(|(b, _)| !b.is_full()).count();
     println!(
         "{name}: {n} brick-edits; before {}; planar after {}",
-        mix(edits.iter().map(|(b, _)| packed(b))),
+        mix(edits.iter().map(|(b, _)| b.clone())),
         mix(after.into_iter())
     );
     let (today, today_min) = time(
         || {
             let mut w = RowWriter::new(mode, table);
             w.reserve(uniform_before);
-            let bricks: Vec<Brick> = edits.iter().map(|(b, _)| b.clone()).collect();
+            let bricks: Vec<RawBrick> = edits.iter().map(|(b, _)| RawBrick::of(b)).collect();
             (w, bricks)
         },
         |(w, bricks)| {
@@ -206,7 +197,7 @@ fn writers(
     let (planar, planar_min) = time(
         || {
             let w = PlanarWriter::new(mode, table);
-            let bricks: Vec<PackedBrick> = edits.iter().map(|(b, _)| packed(b)).collect();
+            let bricks: Vec<Brick> = edits.iter().map(|(b, _)| b.clone()).collect();
             (w, bricks)
         },
         |(w, bricks)| {
@@ -279,7 +270,7 @@ fn per_brick() -> f64 {
         gets / 1e3
     );
     for n in [2, 4, 16] {
-        let b = PackedBrick::encode(&brick_of(n, n));
+        let b = Brick::from_voxels(Box::new(brick_of(n, n)));
         let class = class_name(&b);
         let (dec, _) = time(
             || Box::new([AIR; BRICK_VOXELS]),
@@ -311,9 +302,7 @@ fn per_brick() -> f64 {
         || Vec::with_capacity(CALLS),
         |v| {
             for _ in 0..CALLS {
-                v.push(PackedBrick::Full(
-                    vxe_world::packed::Packed::expand_uniform(black_box(ROCK)),
-                ));
+                v.push(Brick::Full(Packed::expand_uniform(black_box(ROCK))));
             }
         },
     );
@@ -331,7 +320,7 @@ fn per_brick() -> f64 {
         expand / CALLS as f64,
         raw_alloc / CALLS as f64
     );
-    let PackedBrick::Full(one) = PackedBrick::encode(&brick_of(2, 5)) else {
+    let Brick::Full(one) = Brick::from_voxels(Box::new(brick_of(2, 5))) else {
         unreachable!("two materials")
     };
     assert_eq!(one.class(), PackedClass::Plane1);

@@ -15,8 +15,8 @@ use vxe_net::{Logic, Server};
 use vxe_render::Camera;
 use vxe_world::hash::Fnv1a;
 use vxe_world::{
-    BRICK_VOXELS, Chunk, ChunkCoord, ChunkExtent, ChunkMips, LogFile, Material, MaterialFlags,
-    MaterialId, MaterialTable, OpLog, Residency, WireError, World,
+    BRICK_VOXELS, Brick, Chunk, ChunkCoord, ChunkExtent, ChunkMips, LogFile, Material,
+    MaterialFlags, MaterialId, MaterialTable, OpLog, Residency, WireError, World,
 };
 
 use cave::CaveSource;
@@ -307,18 +307,20 @@ pub fn replay_log_with(
     }
 }
 
-/// RAM a resident full chunk holds: its slot array and the voxels of its `Full` bricks.
+/// RAM a resident full chunk holds: its slot array and the class boxes of its `Full` bricks.
 pub fn chunk_ram(chunk: &Chunk) -> u64 {
-    let full = chunk.bricks().iter().filter(|b| b.is_full()).count();
-    (size_of::<Chunk>() + full * BRICK_VOXELS * 2) as u64
+    let payload: usize = chunk.bricks().iter().map(Brick::payload_bytes).sum();
+    (size_of::<Chunk>() + payload) as u64
 }
 
-/// RAM a LOD-only chunk holds: its 73 mip-brick slots and the cells of its `Full` ones.
+/// RAM a LOD-only chunk holds: its 73 mip-brick slots and the class boxes of its `Full` ones.
 pub fn mips_ram(mips: &ChunkMips) -> u64 {
     let slots: usize = vxe_world::MIP_BRICKS.iter().sum();
-    (size_of::<ChunkMips>()
-        + slots * size_of::<vxe_world::Brick>()
-        + mips.full_bricks() * BRICK_VOXELS * 2) as u64
+    let payload: usize = (1..=vxe_world::MIP_LEVELS)
+        .flat_map(|n| mips.level(n))
+        .map(Brick::payload_bytes)
+        .sum();
+    (size_of::<ChunkMips>() + slots * size_of::<Brick>() + payload) as u64
 }
 
 /// The `p`-th percentile (0 to 100) of `v` by nearest rank; `NaN` when empty. Sorts `v`.

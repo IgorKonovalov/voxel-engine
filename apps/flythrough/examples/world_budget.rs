@@ -20,7 +20,8 @@
 //! translucent words), each mirrored chunk (full or LOD-only) a 2624-byte record (16 words of
 //! brick bits, 512 entries, the palette), each chunk-table entry 4 bytes (the window's `W^3`
 //! when streaming), and each material row 8 `f32`s. CPU bytes count a full chunk's slot array and
-//! its `Full` bricks' voxels, and a LOD-only chunk's mip-brick slots and `Full` mip-bricks.
+//! its `Full` bricks' class boxes, and a LOD-only chunk's mip-brick slots and `Full` mip-bricks'
+//! boxes.
 
 use std::sync::Arc;
 
@@ -28,9 +29,9 @@ use flythrough::cave::CaveSource;
 use flythrough::{cave_materials, chunk_ram, mips_ram, window_side};
 use vxe_world::hash::{ValueNoise, hash3};
 use vxe_world::{
-    AIR, BRICK_EDGE, BRICK_VOXELS, Brick, BrickCensus, CHUNK_BRICKS, Chunk, ChunkCoord,
-    ChunkExtent, CoarseGrid, Material, MaterialId, MaterialTable, PersistConfig, Residency,
-    StreamConfig, Streamer, World, WorldSource, brick_of_slot,
+    AIR, BRICK_EDGE, Brick, BrickCensus, CHUNK_BRICKS, Chunk, ChunkCoord, ChunkExtent, CoarseGrid,
+    Material, MaterialId, MaterialTable, PersistConfig, Residency, StreamConfig, Streamer, World,
+    WorldSource, brick_of_slot,
 };
 
 /// Mirror bytes per `Full` brick or mip-brick, and per mirrored chunk's record.
@@ -179,7 +180,17 @@ fn bounded(seed: u64, chunks: [i32; 3], census: bool) {
     let s = world.stats();
     let bricks = s.full_bricks + s.uniform_bricks;
     let slot_array = CHUNK_BRICKS * size_of::<Brick>();
-    let cpu = s.full_bricks * BRICK_VOXELS * 2 + s.chunks * slot_array;
+    let mut payload = 0usize;
+    for c in world.store().coords() {
+        let chunk = world.store().get(c).expect("resident");
+        let chunk = chunk.read().expect("chunk lock");
+        payload += chunk
+            .bricks()
+            .iter()
+            .map(Brick::payload_bytes)
+            .sum::<usize>();
+    }
+    let cpu = payload + s.chunks * slot_array;
     let mirror = s.full_bricks * SLOT_AND_MASK + s.chunks * (RECORD + 4) + table.len() * 8 * 4;
     let voxels = s.chunks as f64 * 64.0 * 64.0 * 64.0;
     let air = world.count_in_box(

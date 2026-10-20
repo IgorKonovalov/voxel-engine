@@ -1,49 +1,7 @@
 mod support;
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
-
 use support::*;
 use vxe_world::*;
-
-/// The system allocator, counting the allocations of brick-array size (`[u16; 512]`) made on
-/// a thread while that thread's `COUNTING` flag is set. Other tests' threads are not counted.
-struct CountingAlloc;
-
-thread_local! {
-    static COUNTING: Cell<bool> = const { Cell::new(false) };
-    static ARRAY_ALLOCS: Cell<u64> = const { Cell::new(0) };
-}
-
-// SAFETY: every call forwards to `System` with the same arguments; the counting touches only
-// const-initialised thread-locals, which never allocate. `alloc_zeroed` and `realloc` keep
-// their default bodies, which allocate through `alloc`, so they are counted too.
-unsafe impl GlobalAlloc for CountingAlloc {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if layout.size() == size_of::<[MaterialId; BRICK_VOXELS]>() && COUNTING.with(Cell::get) {
-            ARRAY_ALLOCS.with(|n| n.set(n.get() + 1));
-        }
-        // SAFETY: forwarded unchanged; the caller upholds `GlobalAlloc::alloc`'s contract.
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: `ptr` came from `System` with this layout.
-        unsafe { System.dealloc(ptr, layout) }
-    }
-}
-
-#[global_allocator]
-static ALLOC: CountingAlloc = CountingAlloc;
-
-/// Brick-array-sized allocations `f` makes on this thread.
-fn array_allocs_in<R>(f: impl FnOnce() -> R) -> (R, u64) {
-    ARRAY_ALLOCS.with(|n| n.set(0));
-    COUNTING.with(|c| c.set(true));
-    let r = f();
-    COUNTING.with(|c| c.set(false));
-    (r, ARRAY_ALLOCS.with(Cell::get))
-}
 
 fn sphere10(mode: Mode) -> EditOp {
     EditOp::sphere(centre_of_voxel([0, 0, 0]), 10 * FIXED_ONE, mode)
@@ -430,6 +388,20 @@ fn seeded_op(i: usize, rng: &mut SplitMix64) -> EditOp {
 /// `world`: each result or error, and every voxel in the op's bounds afterwards, equals what
 /// the brute-force reference says. Returns how many ops changed a voxel and how many failed on
 /// a non-resident chunk.
+/// Every brick of the `touched` chunks holds the bytes `Brick::from_voxels` gives its
+/// decoded voxels: the canonical form, so equal voxels are equal bricks.
+fn assert_canonical(world: &World, touched: &[ChunkCoord], op: usize) {
+    for &c in touched {
+        let chunk = world.store().get(c).expect("touched chunks are resident");
+        let chunk = chunk.read().unwrap();
+        for (slot, b) in chunk.bricks().iter().enumerate() {
+            let mut v = Box::new([AIR; BRICK_VOXELS]);
+            b.decode(&mut v);
+            assert_eq!(*b, Brick::from_voxels(v), "op {op}: {c:?} slot {slot}");
+        }
+    }
+}
+
 fn run_seeded_ops_against_the_reference(world: &World) -> (usize, usize) {
     let mut rng = SplitMix64(0x0003_0001);
     let mut changed = 0;
@@ -443,6 +415,9 @@ fn run_seeded_ops_against_the_reference(world: &World) -> (usize, usize) {
                 materials_in(world, lo, hi) == expected.after,
                 "op {i}: voxels differ from the reference after {op:?}"
             );
+        }
+        if let Ok(r) = &expected.result {
+            assert_canonical(world, &r.touched, i);
         }
         match &expected.result {
             Ok(r) if !r.changed_from.is_empty() => changed += 1,
@@ -580,61 +555,4 @@ fn ids_beyond_the_table_are_counted_like_the_reference() {
         beyond += r.changed_from.iter().filter(|(m, _)| *m >= 6).count();
     }
     assert!(beyond >= 30, "{beyond} counts of ids beyond the table");
-}
-
-/// 100 radius-10 carves at distinct seeded voxels within ±100 voxels of the origin.
-fn hundred_carves() -> Vec<EditOp> {
-    let mut rng = SplitMix64(0x0014_0002);
-    let mut at: Vec<[i64; 3]> = Vec::new();
-    while at.len() < 100 {
-        let v = [0; 3].map(|_| rng.range(-100, 100));
-        if !at.contains(&v) {
-            at.push(v);
-        }
-    }
-    at.into_iter()
-        .map(|v| {
-            let c = v.map(|c| c * FIXED_ONE + FIXED_HALF);
-            EditOp::sphere(Fixed3(c), 10 * FIXED_ONE, Mode::Carve)
-        })
-        .collect()
-}
-
-/// With the pool reserved, 100 radius-10 carves on the solid world expand bricks without one
-/// brick-array allocation, and give the same results as on a world with an empty pool.
-#[test]
-fn a_pooled_expand_allocates_nothing() {
-    let ops = hundred_carves();
-    let pooled = solid3_world();
-    pooled.reserve_brick_arrays(4096);
-    assert_eq!(pooled.pool_len(), 4096);
-    let (results, allocs) = array_allocs_in(|| {
-        ops.iter()
-            .map(|op| pooled.apply(op).unwrap())
-            .collect::<Vec<_>>()
-    });
-    let full = pooled.stats().full_bricks;
-    println!(
-        "{full} Full bricks after 100 carves; pool {} arrays",
-        pooled.pool_len()
-    );
-    assert_eq!(allocs, 0, "brick-array allocations with a reserved pool");
-    assert!(full >= 2000, "{full} bricks expanded");
-    assert_eq!(pooled.pool_len(), 4096 - full);
-
-    // The same carves with an empty pool allocate one array per expansion and agree.
-    let cold = solid3_world();
-    assert_eq!(cold.pool_len(), 0);
-    let (cold_results, cold_allocs) = array_allocs_in(|| {
-        ops.iter()
-            .map(|op| cold.apply(op).unwrap())
-            .collect::<Vec<_>>()
-    });
-    assert_eq!(cold_results, results);
-    assert_eq!(world_hash(&cold), world_hash(&pooled));
-    // Every Full brick of the cold world was a fresh allocation.
-    assert!(
-        cold_allocs >= full as u64,
-        "{cold_allocs} allocations, {full} Full bricks"
-    );
 }
