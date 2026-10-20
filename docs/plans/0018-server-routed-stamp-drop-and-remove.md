@@ -230,8 +230,8 @@ pub enum EditError { NotResident(ChunkCoord), UnknownPrefab(u64), /* Plan 0019 a
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Wire kinds 2 to 4 and the prefab table | dev | done | committed with this row |
-| 2: The server applies every kind | dev | not started | |
+| 1: Wire kinds 2 to 4 and the prefab table | dev | done | e1b17d3 |
+| 2: The server applies every kind | dev | done | committed with this row |
 | 3: The host and the component | dev | not started | |
 | 4: The fly-through through the logic | dev | not started | |
 | 5: Readings | dev | not started | |
@@ -250,6 +250,18 @@ pub enum EditError { NotResident(ChunkCoord), UnknownPrefab(u64), /* Plan 0019 a
   `apps/flythrough` `src/{lib,main}.rs`, `tests/component.rs` (`LogFile.prefabs`). The
   server and client pass an empty registry until Phase 2; the host and `EchoLogic` treat the
   new kinds as undecodable until Phase 3.
+- Phase 2: `Server::with_prefabs(world, prefabs, logic, seed)` registers prefabs before
+  `init`; `Server::resimulate` gained a `prefabs` argument (callers in
+  `vxe-script-wasm/tests/{equality,determinism}.rs` and `apps/flythrough/src/lib.rs` updated
+  outside the phase's Files touched, as are `apps/flythrough/src/main.rs` and
+  `tests/replay.rs`, which read `OpResult::edit_result()`); `Event::Desync.ours` is `Option<OpResult>` (`None` when
+  the client refused). The coarse grid's new entry point is `CoarseGrid::update_aabb`.
+- Phase 2: `Message::Applied` grew by the result's kind byte (96 bytes for the shared test's
+  carve, was 95); `tests/owned.rs`' desync assertion now names the client's own empty
+  `OpResult::Edit` where it compared against an empty `EditResult`.
+- Phase 2: the session test is `crates/vxe-net/tests/kinds.rs` on a 2³-chunk air world with a
+  floor and two slabs on pillars; `KINDS_HASH` `0x2077_5c41_d63d_17c5` blessed on Linux x86_64,
+  the Windows arm not yet run.
 
 ### Close triggers
 

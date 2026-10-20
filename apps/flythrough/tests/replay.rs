@@ -224,7 +224,7 @@ fn twenty_digs_rebuild_to_the_same_hash_from_ops_and_from_inputs() {
         server.tick();
         for e in client.poll() {
             if let Event::Applied { result, .. } = e {
-                assert!(!result.changed_from.is_empty(), "{result:?}");
+                assert!(!result.edit_result().changed_from.is_empty(), "{result:?}");
                 applied += 1;
             }
         }

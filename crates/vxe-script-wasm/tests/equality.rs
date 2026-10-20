@@ -60,6 +60,7 @@ fn echo_component_equals_native_echo_logic() {
         fresh.clone(),
         Box::new(echo_component()),
         0,
+        &vxe_world::PrefabRegistry::new(),
         wasm.ops(),
         wasm.inputs(),
     );

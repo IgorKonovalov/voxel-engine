@@ -110,7 +110,11 @@ fn a_result_that_differs_raises_desync_and_the_client_stops_applying() {
             ours,
             theirs,
         } => {
-            assert_eq!(*ours, EditResult::default());
+            // The client's world already lacks the fault sphere: its carve changed nothing.
+            assert_eq!(*ours, Some(OpResult::Edit(EditResult::default())));
+            let OpResult::Edit(theirs) = theirs else {
+                panic!("{theirs:?}")
+            };
             assert_eq!(theirs.changed_from.len(), 1);
             let (m, n) = theirs.changed_from[0];
             assert_eq!(m, 3);
@@ -156,7 +160,14 @@ fn an_op_the_owned_world_refuses_is_a_desync() {
     server.tick();
     let events = client.poll();
     assert!(
-        matches!(&events[0], Event::Desync { seq: 0, ours, .. } if *ours == EditResult::default()),
+        matches!(
+            &events[0],
+            Event::Desync {
+                seq: 0,
+                ours: None,
+                ..
+            }
+        ),
         "{events:?}"
     );
     assert!(client.desynced());

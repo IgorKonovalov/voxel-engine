@@ -1417,7 +1417,7 @@ impl Run {
                     continue;
                 };
                 let result = match ops.pop_front() {
-                    Some(Event::Applied { result, .. }) => Ok(result),
+                    Some(Event::Applied { result, .. }) => Ok(result.edit_result()),
                     Some(Event::Refused { error, .. }) => Err(error),
                     _ => continue,
                 };

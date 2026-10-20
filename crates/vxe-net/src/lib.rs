@@ -24,7 +24,7 @@
 //! server.submit(EditOp::sphere(centre_of_voxel([0, 0, 0]), 2 * FIXED_ONE, Mode::Carve));
 //! server.tick();
 //! let events = client.poll();
-//! assert!(matches!(&events[..], [Event::Applied { seq: 0, result, .. }] if result.changed_from == [(rock, 33)]));
+//! assert!(matches!(&events[..], [Event::Applied { seq: 0, result: OpResult::Edit(r), .. }] if r.changed_from == [(rock, 33)]));
 //! ```
 
 mod channel;

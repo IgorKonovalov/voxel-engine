@@ -300,7 +300,14 @@ pub fn replay_log_with(
         }
         Mode::Inputs => {
             let world = Arc::new(world);
-            let ops = Server::resimulate(world.clone(), logic, file.seed, &file.ops, &file.inputs);
+            let ops = Server::resimulate(
+                world.clone(),
+                logic,
+                file.seed,
+                &file.prefabs,
+                &file.ops,
+                &file.inputs,
+            );
             let world = Arc::into_inner(world).expect("the re-simulation's server is dropped");
             Ok((world, ops))
         }

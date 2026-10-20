@@ -441,6 +441,7 @@ fn edits_applied_before_a_failure_stay_and_resimulate() {
         fresh.clone(),
         Box::new(logic),
         0,
+        &vxe_world::PrefabRegistry::new(),
         server.ops(),
         server.inputs(),
     );

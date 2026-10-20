@@ -132,6 +132,7 @@ fn echo_logic_applies_inputs_in_order_and_resimulates_to_equal_bytes() {
         fresh.clone(),
         Box::new(EchoLogic),
         0,
+        &PrefabRegistry::new(),
         server.ops(),
         server.inputs(),
     );
@@ -185,6 +186,7 @@ fn seeded_logic_resimulates_from_its_seed_and_a_different_seed_differs() {
         same.clone(),
         Box::new(SeededLogic::default()),
         7,
+        &PrefabRegistry::new(),
         server.ops(),
         server.inputs(),
     );
@@ -196,6 +198,7 @@ fn seeded_logic_resimulates_from_its_seed_and_a_different_seed_differs() {
         other.clone(),
         Box::new(SeededLogic::default()),
         8,
+        &PrefabRegistry::new(),
         server.ops(),
         server.inputs(),
     );
@@ -255,7 +258,14 @@ fn a_refused_host_apply_is_announced_not_logged_and_returned_to_the_logic() {
 
     // Re-simulation reproduces the gap the refused op left.
     let fresh = Arc::new(solid3_world());
-    let ops = Server::resimulate(fresh, Box::new(EchoLogic), 0, server.ops(), server.inputs());
+    let ops = Server::resimulate(
+        fresh,
+        Box::new(EchoLogic),
+        0,
+        &PrefabRegistry::new(),
+        server.ops(),
+        server.inputs(),
+    );
     assert_eq!(ops.encode(), server.ops().encode());
 }
 
@@ -364,7 +374,7 @@ fn submitted_ops_interleave_with_the_logic_and_resimulate_to_equal_bytes() {
         .find_map(|e| match e {
             Event::Applied {
                 seq: 36, result, ..
-            } => Some(result.changed_from.clone()),
+            } => Some(result.edit_result().changed_from),
             _ => None,
         })
         .unwrap();
@@ -376,6 +386,7 @@ fn submitted_ops_interleave_with_the_logic_and_resimulate_to_equal_bytes() {
         fresh.clone(),
         Box::new(EchoLogic),
         0,
+        &PrefabRegistry::new(),
         server.ops(),
         server.inputs(),
     );
@@ -388,6 +399,7 @@ fn submitted_ops_interleave_with_the_logic_and_resimulate_to_equal_bytes() {
         fresh.clone(),
         Box::new(EchoLogic),
         0,
+        &PrefabRegistry::new(),
         &OpLog::new(),
         server.inputs(),
     );
@@ -453,6 +465,7 @@ fn submissions_at_tick_0_after_init_ops_and_a_refused_only_tick_resimulate() {
         fresh.clone(),
         Box::new(InitThenEcho),
         0,
+        &PrefabRegistry::new(),
         server.ops(),
         server.inputs(),
     );
