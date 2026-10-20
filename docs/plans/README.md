@@ -12,7 +12,6 @@ state from `git log`. Completed plans move to `done/`.
 |------|-------|--------|-----------------|
 | [0013](0013-contour-default-shadow-origin-and-streamed-footprint.md) | Contour as the fly-through's default: the shadow-ray origin, a streamed footprint under 3 GB, and a weaker rock detail | approved | Phases 1-4 and 6 done on branch `plan-0013`. Phases 5 and 7 continue once Plan 0017 (closed) is on main. |
 | [0020](0020-cavern-reverb-directional-echoes-and-gliding-taps.md) | Cavern reverb: a late tail sized by the room the listener sees, echoes from their walls, taps that glide, and the player's own voice in the cave | approved | M4, paired with ADR-0015. After Plan 0006 closes; takes over its moving-click finding. |
-| [0021](0021-packed-cpu-brick-census-kernel-and-readers.md) | The packed CPU brick: a census and kernel bench, then masks, planes and a palette under every reader | approved | ADR-0012's second plan. Phase 2 is the owner's gate on the census and bench. |
 <!-- roster:end -->
 
 ## Recently closed
@@ -20,6 +19,7 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0021](done/0021-packed-cpu-brick-census-kernel-and-readers.md) | The packed CPU brick: a census and kernel bench, then masks, planes and a palette under every reader | 2026-10-20, v0.18.0 |
 | [0017](done/0017-mirror-budget-reservation-page-kinds-and-pressure.md) | The mirror reserves its budget: fixed buffers, empty pages that change kind, and a pressure signal the streamer follows | 2026-10-20, v0.17.0 |
 | [0019](done/0019-metered-host-calls-and-shape-range-checks.md) | Host calls charged by their work, and a world that refuses out-of-range shapes and queries | 2026-10-20, v0.16.0 |
 | [0018](done/0018-server-routed-stamp-drop-and-remove.md) | Stamp, drop and remove as op kinds 2 to 4 through the server, the log and the logic host | 2026-10-20, v0.15.0 |

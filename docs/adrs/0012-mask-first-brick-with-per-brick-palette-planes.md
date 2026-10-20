@@ -199,3 +199,35 @@ size-classed slot plans are still owed.
   `Full` brick reads the record entry of every brick it enters in the occupied group, two
   uniform-air entries in the plan's fixture, not "one table entry and two bits words": an
   occupied group is walked brick by brick. The test pins the real count.
+
+Added 2026-10-20 at the Plan 0021 close (v0.18.0), from the plan's readings and its
+fresh-session review. The CPU format is in; the size-classed mirror slot plan is still owed.
+In code, this supersedes ADR-0002's `Full` clause: `Brick::Full` holds a packed box, not
+`Box<[u16; 512]>`.
+
+- **Three wordings are met in substance, not to the letter.** The palette is in ascending id,
+  not first-appearance order (both give equal voxels equal bytes, and ascending order never
+  reorders on a carve). The plane count follows a ladder of five fixed classes (72, 136, 200,
+  352 B, and 1024 B of raw ids above 16 materials), not `ceil(log2 n)` exactly, so that a slot
+  stays 16 B with no `unsafe`. A per-voxel `set` is a scoped `Brick::modify` over a decoded
+  scratch array, because a canonical per-voxel write would popcount every entry on every voxel.
+  The canonical rule holds, and `Brick` equality is voxel equality (an oracle test).
+- **Memory.** On the dev box (Ryzen 9 5900HS), resident chunks at the streamed defaults peak at
+  0.44 GB against 3.24 GB, and `VmHWM` at 0.97 to 1.01 GB against 3.87 GB. The level's bricks
+  take 58 MiB against 400 MiB. At rest, bricks hold one or two materials, with 817 of the
+  level's 383 608 holding three or four. The census arithmetic projected 0.41 GB. A spill file
+  of two-material bricks is 14 times smaller.
+- **Edits.** The word-operation kernel reads 117 against 505 ns per carve brick-edit. The warm
+  worst case reads 1.34 to 1.52 ms against 2.8 to 2.9 ms for the pre-format tree in the same
+  loaded window (the quiet reading before was 3.03 ms). The fly-through's `B` line reads
+  1.52 ms. Retiring the brick-array pool cost 1.8 % of that. None of these were read on a
+  quiet box. Whether the 2 ms line is held on the dev box or on the baseline is still the
+  owner's call.
+- **Random access, measured as the Negative consequence asked.** 1000 random `get` calls take
+  2.5 to 3.1 us against 0.54 us on raw ids, and `decode` takes 0.25 to 0.60 us per brick. The
+  hot readers (raycast with a CPU 2^3 block skip, the coarse cell, region counts and `vxe-sim`
+  bodies) read masks and popcounts natively. Mips, stamp and support decode to scratch; the
+  per-chunk mip build reads 0.20 ms.
+- **The mirror bytes did not move.** The upload maps palette entries to chunk-palette indices
+  from their match words. The level still reads 232 436 992 B live, the goldens are unchanged
+  byte for byte, and the first sync of the level fell from about 585 to about 190 ms.

@@ -202,6 +202,9 @@ unbounded cave seed 1, r_full 16, r_lod 24, h 1, 15 workers, RTX 3080 Laptop GPU
   (`VmHWM`, the whole fly-through, dev reference) reads 3 869 564 928 and 3 873 890 304 B,
   about 3.87 GB against the 4 GB line. RAM is the tightest margin at these defaults; they are
   revisited on the baseline card at M2.
+  Since Plan 0021 (ADR-0012's packed brick, closed 2026-10-20) the reading is 0.44 GB of
+  resident chunks and about 0.97 to 1.01 GB `VmHWM` on the dev box ("The packed brick" below);
+  it replaces these figures, and the 4 GB line holds with room.
 
 **Attribute pages (dev reference, Plan 0005, RTX 3080 Laptop GPU).** The contour attribute
 (`u16` per voxel) lives in attribute pages of the pool: 1040 B more live per `Full` brick of a
@@ -331,8 +334,8 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   10.4) `worst_warm` 1.516 ms and `worst` 1.538 ms; with the pool gone both cases build the
   same world. The fly-through `B` line (`--level --seed 1 --headless --bench 1 --frames 1`)
   reads 1.52 ms against Plan 0014's 2.98 to 3.04 ms. **Under the 2 ms line on the dev box**; no
-  baseline reading. Whether the 2 ms figure is held on the dev box or the baseline is the
-  owner's call (Plan 0021's close). The allocation share the retired pool covered: 2495
+  baseline reading. Whether the 2 ms figure is held on the dev box or the baseline: owner
+  decision pending (raised at Plan 0021's close, 2026-10-20). The allocation share the retired pool covered: 2495
   expansions of 11.2 ns, 27.9 us, 1.8 % of the 1.516 ms `worst_warm`, under the 5 % that would
   have called for per-class pools.
 - **Results** are returned synchronously with the edit, per material, exact.
@@ -496,7 +499,8 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   voxels/s/worker (load 10.1), beside Plan 0001's 1.03e8 and 1.12e8. The autopilot at load
   8.4 to 13.2: residency latency wanted-to-mirrored p95 611 ms, max 2449 ms over 72 614 chunks
   against main's 1031 ms and 6523 ms in the same window, both over the 500 ms proposal at this
-  load (Plan 0015's quiet reading was 493 ms); streaming CPU per frame p50 5.352 ms, p99
+  load (Plan 0015's quiet reading was 493 ms; whether this loaded reading meets the proposal
+  or a quiet-box reading is owed: owner decision pending, raised at Plan 0021's close); streaming CPU per frame p50 5.352 ms, p99
   64.449 ms against 7.575 and 80.785 ms; march GPU p50 1.745 ms against 1.576 ms (Plan 0015's
   spawn march 1.95 ms). A second Phase 8 run (load 10.2 to 14.2) read p95 658 ms, max 2456 ms;
   CPU p50 5.227, p99 63.362 ms; march p50 1.636 ms. The per-chunk mip build, which decodes

@@ -1,13 +1,15 @@
 # 0021: The packed CPU brick: a census and kernel bench, then masks, planes and a palette under every reader
 
-> **Status:** in-progress
+> **Status:** done (closed 2026-10-20, v0.18.0): the fresh-session review found no blocker or
+> major; every pinned hash and golden is unchanged and the packed format is under every reader.
+> Two budget calls (the 2 ms edit line, the residency p95) are the owner's, pending.
 > **Created:** 2026-10-19
 > **Milestone:** M2 in `docs/roadmap.md` (the RAM line; ADR-0012's second plan)
-> **Related ADRs:** [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
+> **Related ADRs:** [ADR-0012](../../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
 > (accepted; this plan is its CPU-format step and supersedes ADR-0002's `Full` clause in
 > code), ADR-0002 (chunk, locks and access model, which stand), ADR-0003 (the spill file,
 > whose version moves), ADR-0004 (the mirror bytes, which this plan leaves identical).
-> **Prerequisite:** [Plan 0015](done/0015-traversal-hierarchy-chunk-bits-brick-masks-and-translucent-class.md)
+> **Prerequisite:** [Plan 0015](0015-traversal-hierarchy-chunk-bits-brick-masks-and-translucent-class.md)
 > closed (v0.14.0). Touches `gpu_world.rs`, which Plans 0013 and 0017 also touch, and
 > `collapse.rs` and `stamp.rs`, which Plan 0018 also touches; whichever merges second resolves
 > the conflict. The third ADR-0012 plan (size-classed mirror slots) follows this one.
@@ -672,3 +674,31 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   the decode on the streaming workers.
 - Native stamp writes (a prefab's mask and palette merged by word), if a 64^3 stamp's
   reading moves against Plan 0008's 2.02 to 2.07 ms.
+
+## Close review (architect, 2026-10-20)
+
+Fresh-session review of `main...plan-0021` at 67eda17 (main 5ca4151 merged at ea8d0ad). The gate
+re-run at the tip on the dev box: build, clippy `-D warnings`, fmt, `scripts/build-guests.sh`,
+`cargo nextest run --workspace` under the exclusive perf lock (load 6.0) 457 passed, 4 skipped;
+doctests and the three doc gates green. `cargo deny` fails on RUSTSEC-2026-0378 and
+RUSTSEC-2026-0379 (wasmtime) identically on main; out of this plan's scope.
+
+- **No blocker or major.** No pinned constant or golden image moved in the diff. The kernel
+  oracle (4000 seeded brick-edits against a per-voxel reference), the 2000-op world oracle with
+  the canonical check after every op, the collapse oracle against the decoded path, the coarse
+  and region-count oracles and the mirror's staged-bytes test against narrowed voxels assert
+  what their done-whens claim. Plan 0017's allocator contract holds: the admit check
+  (`turns_wide`) reads the same material set through `first_appearance`, and the slot and mask
+  bytes per brick are unchanged.
+- **Minor:** the HUD's `cpu_bytes_estimate` still counts 1 KiB per `Full` brick, and
+  `WorldSample::pool_arrays` documents the removed `World::pool_len` (disclosed followup).
+- **Nits:** `edit_brick`'s doc in `edit.rs` still describes Phase 3's decode-write-encode path;
+  in `tests/edits.rs` the seeded-op runner's doc comment sits above `assert_canonical`; the
+  `Brick` invariant says a `Full` brick is built only by three calls, while the hidden
+  `Packed::expand_uniform` builds a non-canonical one for `vxe-sim`'s sweep test; the collapse
+  oracle's dressed world reaches four materials, so the over-16 and `Wide` overlay fallbacks
+  are not exercised by it (they write through `modify`, the decoded path).
+- **The 2 ms edit line (section 4):** dev box or baseline. Owner decision pending.
+- **Residency latency p95 (section 5):** 611 and 658 ms against the 500 ms proposal, read under
+  load 8 to 14 (main read 1031 ms in the same window). Owner decision pending.
+

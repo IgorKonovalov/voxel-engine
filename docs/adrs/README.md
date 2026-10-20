@@ -16,7 +16,7 @@ the status.
 | ADR  | Title | Status |
 |------|-------|--------|
 | [0001](0001-rust-library-workspace-wgpu-compute-ray-marching.md) | Rust library workspace, wgpu compute ray marching, streaming brick-map world | accepted |
-| [0002](0002-brick-map-layout-and-per-chunk-locked-access.md) | Brick-map storage layout, GPU mirror, and per-chunk locked access | accepted; mirror clauses superseded by ADR-0004; attribute reservation settled by ADR-0011 |
+| [0002](0002-brick-map-layout-and-per-chunk-locked-access.md) | Brick-map storage layout, GPU mirror, and per-chunk locked access | accepted; mirror clauses superseded by ADR-0004; attribute reservation settled by ADR-0011; `Full` clause superseded by ADR-0012 (Plan 0021) |
 | [0003](0003-sphere-residency-with-lod-ring-and-edit-persistence.md) | Sphere residency with an LOD-only ring, edited-chunk persistence with disk spill | accepted |
 | [0004](0004-palette-narrowed-sharded-brick-pool.md) | Per-chunk 8-bit palette mirror and a brick pool sharded over fixed bindings | accepted; record head and masks changed by Plan 0015 under ADR-0012 (Outcome addendum) |
 | [0005](0005-vertical-cylinder-collision-by-integer-conservative-advancement.md) | Character collision as a vertical cylinder swept by integer conservative advancement | accepted |
@@ -26,7 +26,7 @@ the status.
 | [0009](0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) | The testbed HUD is an embedded 8 × 8 bitmap font drawn in one overlay pass, with no UI library | accepted |
 | [0010](0010-game-logic-as-a-component-behind-a-logic-trait.md) | The game's server logic is a component behind a `Logic` trait, developed natively and shipped as WebAssembly; Lua is deferred | accepted |
 | [0011](0011-contour-planes-in-attribute-pages-with-procedural-detail.md) | Smooth surfaces from per-voxel contour planes in attribute pages of the brick pool, with procedural per-material detail | accepted |
-| [0012](0012-mask-first-brick-with-per-brick-palette-planes.md) | A brick is occupancy masks plus a per-brick palette in bit planes, the same bytes on the CPU and in the mirror | accepted |
+| [0012](0012-mask-first-brick-with-per-brick-palette-planes.md) | A brick is occupancy masks plus a per-brick palette in bit planes, the same bytes on the CPU and in the mirror | accepted; CPU format in by Plan 0021 (Outcome addendum) |
 | [0013](0013-mirror-reserves-its-vram-budget-up-front.md) | The mirror reserves its VRAM budget up front and never reallocates | accepted |
 | [0014](0014-prefab-identity-in-the-op-log.md) | A stamp op names its prefab by content id, and a save carries the prefabs it names | accepted |
 | [0015](0015-late-reverb-as-a-shared-fdn-from-a-listener-ray-fan.md) | Late reverb is one listener-shared feedback delay network driven by a ray fan from the listener; early echoes render from their wall's direction | accepted |
