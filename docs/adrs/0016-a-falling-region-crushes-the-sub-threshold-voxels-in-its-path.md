@@ -49,9 +49,25 @@ side channel. `yield_below == 0` yields nothing and is exactly today's drop. A c
 setting, a region the query has just reported moves at least one voxel unless an
 `INDESTRUCTIBLE` voxel or a non-resident chunk blocks one of its columns. The cell under the
 lowest region cell of any column is not load-bearing, or the flood would have taken it in, so
-it yields. On the wire, a drop with
-`yield_below == 0` keeps op kind 3, byte for byte. Any other value is the new op kind 5, which
-adds the threshold as a `u16`.
+it yields. On the wire, a drop with `yield_below == 0` keeps op kind 3, byte for byte. Any
+other value is the new op kind 5, which adds the threshold as a `u16`; `LOG_FORMAT` stays 2.
+
+**The crushed volume comes back as rubble, through a separate op.** `World::pile_rubble(cells,
+rubble, count, max_depth)`, op kind 6, spreads `count` rubble voxels over the footprint columns
+of `cells`. It uses `remove_region`'s rubble stage without the carve: the same fixed column
+order, the same integer accumulator (each column weighs 1, the fraction is `count` over the
+column count), and the same upward write into air from the first solid voxel at or below the
+top of each column's highest named cell. A caller that wants debris issues it when a fall
+ends. The fly-through's logic does so with the fall's whole crushed total. The drop itself
+stays a pure move-and-crush: its moved set equals the region, and any rubble it placed during a
+fall would sit above the piece, in cells the next tick does not name.
+
+### Owner decisions (2026-10-20)
+
+Crush, not carry. The crushed volume becomes rubble, piled at the end of a fall through the
+server and the log. Op kind 5 for a drop with a threshold, with `LOG_FORMAT` kept at 2. One
+shared threshold: the logic passes `vxe_net::DEFAULT_SUPPORT.solid_min`, which the fly-through
+also sets on its server.
 
 ## Consequences
 
@@ -59,23 +75,25 @@ adds the threshold as a `u16`.
 
 - The support query and the drop agree. A detached piece falls through the slivers it rests on
   and lands on the first cell that bears load, which is what the query said holds things up.
-- The result says what the drop destroyed (`crushed`), so the edit-result contract holds, and a
-  game that wants debris can pile the crushed volume as rubble itself.
+- The result says what the drop destroyed (`crushed`), so the edit-result contract holds, and
+  the pile op turns that volume back into rubble deterministically, through the log.
 - Bounded: a drop crushes at most `dropped` voxels per footprint column, all inside the bounds it
   already writes.
 - Saves stay compatible. Kind-3 entries decode to `yield_below: 0` and replay bit-identically.
 
 ### Negative
 
-- Volume is lost. A sliver under a falling slab disappears, which a careful eye may notice in the
-  cave. Rubble is the game's call, not the op's.
+- The crushed voxels' materials are lost: the pile is one rubble material, on top of the landed
+  piece rather than where the sliver was, and in a low passage it can run out of air and place
+  fewer than it was given (the result's `placed` says how many).
+- A fall that crushed anything costs one more logged op (kind 6, `27 + 12n` bytes).
 - The rule cuts a sliver per column, so a thin sheet that reaches past the footprint keeps its
   overhanging part, hanging in the air at the old height. The query does not report it: its cell
   is below the threshold. This is the same class of leftover as ADR-0008's "voxels left in cells
   below the threshold stay where they are".
 - Two wire kinds encode one op. Decoding refuses a kind-5 entry whose threshold is 0, so every
-  op has one encoding. A build older than this one refuses a save that holds a kind-5 entry with
-  `UnknownKind(5)` at that entry, not at the header (the log format stays 2).
+  op has one encoding. A build older than this one refuses a save that holds a kind-5 or kind-6
+  entry with `UnknownKind` at that entry, not at the header (the log format stays 2).
 - Pinned hashes move: the collapse course gains a crush step, and any saved session whose fall
   crosses a sliver lands lower. A session replayed by inputs on a newer logic can differ from its
   save, because a log names no logic version. That gap already existed.

@@ -1,4 +1,4 @@
-# 0022: A falling region crushes the sub-threshold voxels under it, and the logic tells a wedge from a refusal and a landing
+# 0022: A falling region crushes the sub-threshold voxels under it and piles them as rubble, and the logic tells a wedge from a refusal and a landing
 
 > **Status:** draft
 > **Created:** 2026-10-20
@@ -20,10 +20,12 @@ pass through and crush every non-`INDESTRUCTIBLE` voxel whose cell holds fewer t
 with a threshold is op kind 5; kind 3 keeps its bytes and meaning, so Plan 0018's saves replay
 unchanged. `DigLogic` passes the query's `solid_min` and tells three outcomes apart: a refusal
 (`drop refused: ...`), a region that cannot move (`wedged ...`, remembered so it is not reported
-again until it changes) and a landing. The first thing a reader sees is a committed test on the
+again until it changes) and a landing. When a fall ends having crushed anything, the logic
+piles the crushed volume as rubble on top of the landed piece through a new pile op (kind 6),
+which shares `remove_region`'s rubble stage. The first thing a reader sees is a committed test on the
 seed-1 level. Today it pins the bug: the first region the repro's digs detach (4 cells, 501
 voxels) drops 0. After Phase 2 the same region falls, and the test says how many voxels it
-crushed.
+crushed and how much rubble the pile puts back.
 
 ## Context & problem
 
@@ -63,6 +65,27 @@ air or is overwritten by the landed region. `yield_below == 0` is exactly today'
 max_drop, 0)`. The fly-through's logic passes `vxe_net::DEFAULT_SUPPORT.solid_min`, so its drops
 agree with the server's query.
 
+The crushed volume comes back as rubble. When a fall ends (a landing, or a refusal after at
+least one moving tick) with a non-zero crushed total, `DigLogic` issues `Op::Pile { cells,
+rubble: RUBBLE, count, max_depth: RUBBLE_DEPTH }` on the region's current cells, with `count`
+the crushed total over all materials (the whole volume, not a fraction). The op is
+`World::pile_rubble`. It is the second half of `remove_region` without the carve: the same
+footprint columns in the same fixed order, the same integer accumulator (each column weighs 1,
+the fraction is `(count, C)` for `C` columns holding a solid voxel of the named cells), and the
+same write of `h` rubble voxels upward into air from the first solid voxel at or below the top
+of the column's highest named cell, within `max_depth`. `remove_region` and `pile_rubble` share
+that stage in code. The pile op goes through the server and the log like any op, as kind 6.
+
+### Owner decisions (2026-10-20)
+
+1. **Crush, not carry**, as ADR-0016 records.
+2. **The crushed volume becomes rubble**, piled by `DigLogic` at the end of a fall through the
+   server and the log (the pile op above), in this plan, not as a followup.
+3. **Op kind 5 for a drop with a threshold, and `LOG_FORMAT` stays 2.**
+4. **One shared threshold:** the logic's `YIELD_BELOW` is `vxe_net::DEFAULT_SUPPORT.solid_min`,
+   and the fly-through uses `DEFAULT_SUPPORT` instead of its own `SUPPORT` const. No `Host`
+   call reports the server's parameters.
+
 We chose crush over carry because carried voxels would sit in cells the logic does not name on
 the next tick (it re-sends the region's cells one cell lower after each whole step). Carry would
 change the op's contract for a cosmetic gain. The owner rejected (b), adding the touching
@@ -88,7 +111,8 @@ sequenceDiagram
     else dropped == 0 on the first tick
         L->>L: "wedged ..." and remember (cells, counts)
     else dropped < 8
-        L->>L: "landed after N ticks, fell M voxels, crushed K voxels"
+        L->>H: apply(Op::Pile{cells, RUBBLE, count: K, RUBBLE_DEPTH}) when K > 0
+        L->>L: "landed after N ticks, fell M voxels, crushed K voxels, P rubble"
     else dropped == 8
         L->>L: cells one cell lower, fall on
     end
@@ -142,7 +166,7 @@ then `[36, 32, 39]..[40, 40, 40]` (32 voxels). They leave cell `(4, 4, 4)` holdi
     The query over its cells reports `region 9 1:4608`, and the next tick prints
     `landed after 0 ticks, fell 0 voxels`.
 
-### Phase 2: The yielding drop in `vxe-world`
+### Phase 2: The yielding drop and the rubble pile in `vxe-world`
 
 - **Owner skill:** dev
 - **What:** `World::drop_region_through(cells, max_drop, yield_below)` and its decoded
@@ -153,7 +177,16 @@ then `[36, 32, 39]..[40, 40, 40]` (32 voxels). They leave cell `(4, 4, 4)` holdi
   does not overwrite. `DropResult::edit_result` merges `moved` and `crushed` into
   `changed_from`, and `touched` and `aabb` include every crushed voxel, so
   `CoarseGrid::update` sees the cells that lost voxels. The module and method docs state the
-  rule. Phase 1's world and level tests flip, and the collapse course gains a crush.
+  rule. `World::pile_rubble(cells, rubble, count, max_depth) -> PileResult` (and
+  `pile_rubble_decoded`) factors `remove_region`'s rubble stage into a shared helper and calls
+  it without a carve. The footprint columns holding a solid voxel of the named cells (`C` of
+  them) are taken in `remove_region`'s order: cell stacks ascending by `(cx, cy)`, then local
+  `y`, then local `x`. The accumulator adds `count` per column and takes `h = acc / C`. Each
+  column scans down from the top voxel of its highest named cell through air to the first solid
+  voxel within `max_depth`, and writes `h` rubble voxels upward into air from there, fewer where
+  the air runs out. `remove_region`'s results and the collapse course's removal step stay
+  bit-identical. Phase 1's world and level tests flip, and the collapse course gains a crush and
+  a pile.
 - **Files touched:** `crates/vxe-world/src/collapse.rs`, `crates/vxe-world/src/lib.rs`
   (re-exports if any), `crates/vxe-world/tests/collapse.rs`,
   `apps/flythrough/tests/collapse_level.rs`, `crates/vxe-world/benches/collapse.rs`.
@@ -171,23 +204,40 @@ then `[36, 32, 39]..[40, 40, 40]` (32 voxels). They leave cell `(4, 4, 4)` holdi
     assertions. With `drop_region_through(&cells, 64, 64)`, the material-5 voxel at
     `[32, 32, 39]` (its cell holds 1) yields: `dropped: 4`, `moved: [(3, 1024)]`,
     `crushed: [(5, 1)]`, and the world equals the test's own "without the voxel" world.
+  - The pile, on the sliver after that drop (the slab now fills `[24, 24, 8]..[48, 48, 16]`,
+    cells `(3..=5, 3..=5, 1)`): `pile_rubble(&those_cells, 5, 32, 64)` returns `placed: 32`,
+    `touched: [ChunkCoord([0, 0, 0])]` and `aabb: Some(([25, 24, 16], [47, 47, 16]))`, and
+    `count_in_box([24, 24, 16], [47, 47, 16]) == [(5, 32)]`. The arithmetic: `C` = 9 cells
+    × 64 columns = 576, and 576 / 32 = 18, so every 18th column (indices 17, 35, ..., 575) takes
+    one voxel. Each lands on the slab's top at z 15, so all 32 are at z 16. The first is index
+    17, in stack `(3, 3)` at local y 2, x 1, which is `(25, 26, 16)`. `pile_rubble` with
+    `count` 0 places nothing and returns `PileResult::default()`.
   - The native path equals the decoded reference on `dressed_cubes` drops with `yield_below`
-    of 0, 64 and 300 (extend `the_native_collapse_matches_the_decoded_one`).
+    of 0, 64 and 300 (extend `the_native_collapse_matches_the_decoded_one`), and on piles of
+    counts 1, 100 and 5 000 over the same cells.
   - The collapse course gains a third part: the sliver, its query, then
     `drop_region_through(cells, 8, 64)` per tick with the cells one cell lower after each whole
     step. Falls `[8, 8, 8, 8, 0]`, `crushed` `[(3, 32)]` on the first drop only, every
-    `crushed` fed to the hash. The course hash moves from `0x3178_0a15_61c1_3041`. The new
+    `crushed` fed to the hash. Then `pile_rubble` of the landed cells `(3..=5, 3..=5, 1)` with
+    rubble 7, count 32 and depth 64 places 32 at z 16, the same columns as the pile above, with
+    its result fed to the hash. The course hash moves from `0x3178_0a15_61c1_3041`. The new
     value is blessed on Linux; the log records old and new.
   - The level tests flip. The first region at iteration 3 243 now drops `> 0` with
     `drop_region_through(&cells, 8, 64)` and crushes `> 0`, with the exact values pinned. The
     full sweep, every region falling tick by tick with `max_drop` 8 and `yield_below` 64 until
-    a drop is under 8, reports **no** region whose first drop is 0 and none refused. The region
-    count and the total crushed are pinned. If a region rests on a `shell` voxel, the test names
+    a drop is under 8, reports **no** region whose first drop is 0 and none refused. Each fall
+    that crushed anything ends with `pile_rubble(current cells, RUBBLE, crushed total, 64)`, as
+    the logic will. The first region's `crushed` and `placed` are pinned exactly, as are the
+    sweep's region count, total crushed and total placed. Every pile asserts `placed <=` its
+    count. The test prints any pile that places fewer, which happens where a ceiling is within
+    reach. These values come from the cave's geometry, so dev reads them once from the fixed
+    code and pins them; the architect cannot compute them ahead. If a region rests on a `shell` voxel, the test names
     it and asserts its first drop is 0 with an `INDESTRUCTIBLE` blocker, instead of failing.
   - Bench: a new arm `drop_region_through of the 9-cell slab through a 32-voxel sliver, 32
-    voxels` and a yielding twin (`yield_below` 64) of the 4 096-cell cube drop by 64.
+    voxels`, a yielding twin (`yield_below` 64) of the 4 096-cell cube drop by 64, and
+    `pile_rubble of 32 on the 9-cell slab`.
 
-### Phase 3: Op kind 5 on the wire, through the server and in the log
+### Phase 3: Op kinds 5 and 6 on the wire, through the server and in the log
 
 - **Owner skill:** dev
 - **What:** `Op::Drop` gains `yield_below: u16`. It encodes as kind 3 (unchanged bytes) when
@@ -200,7 +250,13 @@ then `[36, 32, 39]..[40, 40, 40]` (32 voxels). They leave cell `(4, 4, 4)` holdi
   `edit_result()`. `LOG_FORMAT` stays 2: op kinds are self-describing, and the header's layout
   does not change. The WIT does not change, since ops and results cross as wire bytes. Every
   `Op::Drop` construction site outside the logic passes `yield_below: 0`, which keeps its bytes
-  and its pinned hash. The module tables in `wire.rs` and `log.rs` list kind 5.
+  and its pinned hash. `Op::Pile { cells, rubble: MaterialId, count: u32, max_depth: i32 }` is
+  kind 6: `rubble u16`, `count u32`, `max_depth i32`, cell count `u32`, the cells. Its result
+  `OpResult::Pile(PileResult { placed, touched, aabb })` encodes under tag 6 as `placed u32`,
+  then the touched chunks and the aabb, as a removal's do. The server applies it through
+  `pile_rubble` and updates its grid. Cell lists of kinds 5 and 6 fall under the world's
+  `region_cells_max`, as kinds 3 and 4 do. The module tables in `wire.rs` and `log.rs` list
+  kinds 5 and 6.
 - **Files touched:** `crates/vxe-world/src/log.rs`, `crates/vxe-world/src/wire.rs`,
   `crates/vxe-world/tests/log.rs`, `crates/vxe-net/src/server.rs`,
   `crates/vxe-net/src/test_logic.rs`, `crates/vxe-net/tests/*.rs` as needed,
@@ -210,7 +266,8 @@ then `[36, 32, 39]..[40, 40, 40]` (32 voxels). They leave cell `(4, 4, 4)` holdi
   - `every_tag_round_trips` covers kind 5, including a 4 096-cell drop with `yield_below` 64.
     The entry size is asserted at `23 + 12n`: 12 for tick and seq, plus kind 1, `max_drop` 4,
     `yield_below` 2, count 4. That is 131 bytes for 9 cells and 49 175 for 4 096. Kind 3 stays
-    `21 + 12n`.
+    `21 + 12n`. Kind 6 round-trips at `27 + 12n` (12, plus kind 1, rubble 2, count 4, depth 4,
+    cell count 4): 135 bytes for 9 cells.
   - A kind-3 entry encoded by Plan 0018's layout (literal bytes in the test) decodes to
     `yield_below: 0` and re-encodes byte-identical. A kind-5 entry with `yield_below` 0 is
     refused.
@@ -220,8 +277,9 @@ then `[36, 32, 39]..[40, 40, 40]` (32 voxels). They leave cell `(4, 4, 4)` holdi
     move.
   - A server-routed kind-5 drop of the sliver's slab (`max_drop` 32, `yield_below` 64)
     reaches a shared client as `Applied(OpResult::Drop { dropped: 32, crushed: [(3, 32)], .. })`.
-    Replaying the server's log by ops gives the live world's hash, and the server's grid equals
-    `CoarseGrid::build` of the world.
+    It is followed by a kind-6 pile of 32 rubble on the landed cells, which reaches the client as
+    `Applied(OpResult::Pile { placed: 32, .. })`. Replaying the server's log by ops gives the
+    live world's hash, and the server's grid equals `CoarseGrid::build` of the world.
 
 ### Phase 4: `DigLogic` tells a refusal, a wedge and a landing apart, and forgets nothing it should not
 
@@ -237,8 +295,13 @@ then `[36, 32, 39]..[40, 40, 40]` (32 voxels). They leave cell `(4, 4, 4)` holdi
     - `Ok` with `dropped == 0` on the region's first tick: `wedged <cells> <material>:<voxels>
       ...` (the `region_line` grammar with the verb `wedged`), and the region is remembered.
     - `Ok` with `0 <= dropped < FALL_STEP` after at least one moving tick: the existing
-      `landed after N ticks, fell M voxels` line. It gains `, crushed K voxels` when the fall
-      crushed anything (`K` is the sum of `crushed` over its ticks).
+      `landed after N ticks, fell M voxels` line.
+    - At the end of a fall (a landing, or a refusal after at least one moving tick), when
+      `K`, the sum of `crushed` over its ticks and materials, is above 0, the logic applies
+      `Op::Pile { cells: f.cells, rubble: RUBBLE, count: K, max_depth: RUBBLE_DEPTH }` in the
+      same tick and prints `op piled`. The fall's last line then gains `, crushed K voxels, P
+      rubble`, where `P` is the pile's `placed`, or `, crushed K voxels, pile refused: <e>` if
+      the pile is refused.
   - `Falling` keeps the region's counts and the crushed total.
   - The memory of stuck regions is a FIFO of at most `STUCK_MAX = 64` keys, each `mix64` folded
     over the region's cells and counts. A wedged or refused region is pushed onto it.
@@ -256,9 +319,14 @@ then `[36, 32, 39]..[40, 40, 40]` (32 voxels). They leave cell `(4, 4, 4)` holdi
   - The Phase 1 logic test flips, on `sliver_ledge_world` after the lump dig. The arithmetic:
     the slab's bottom is z 40, the sliver at z 39 yields, z 38 to 32 is air, and the pillar's
     full top cell holds z 31. Tick 1 drops 8 and crushes the 32 sliver voxels. Tick 2 drops 0
-    onto the pillar and prints `op dropped`, then `landed after 1 ticks, fell 8 voxels, crushed
-    32 voxels`. Then `count_in_box([24, 24, 32], [47, 47, 39]) == [(ROCK, 4608)]`, and the
-    server's grid equals `CoarseGrid::build(&world)`.
+    onto the pillar and prints `op dropped`, `op piled`, then `landed after 1 ticks, fell 8
+    voxels, crushed 32 voxels, 32 rubble`. The pile: the landed cells are `(3..=5, 3..=5, 4)`,
+    so `C` = 576, every 18th column takes one voxel on the slab's top at z 39, and all 32 are at
+    z 40 (the same column pattern as Phase 2, the first at `(25, 26, 40)`). Then
+    `count_in_box([24, 24, 32], [47, 47, 39]) == [(ROCK, 4608)]`,
+    `count_in_box([24, 24, 40], [47, 47, 40]) == [(RUBBLE, 32)]`, the server's log holds four
+    ops (the dig, two drops of kind 5 and the pile of kind 6), and the server's grid equals
+    `CoarseGrid::build(&world)`.
   - The same world with the sliver made of `SHELL` (3): tick 1 prints `op dropped`, then
     `wedged 9 1:4608`. A dig of a second 8-voxel lump, `[50, 36, 42]..[52, 38, 44]` in cell
     `(6, 4, 5)`, reports nothing: its lines are
@@ -267,12 +335,13 @@ then `[36, 32, 39]..[40, 40, 40]` (32 voxels). They leave cell `(4, 4, 4)` holdi
   - A slab with no floor in the one-chunk world (`[24, 24, 40]..[48, 48, 48]` and the lump
     only) falls five ticks of 8, z 40 to 0. On tick 6 the scan reaches chunk `[0, 0, -1]`,
     which is outside the extent, and the logic prints `drop refused: chunk [0, 0, -1] is not
-    resident, after 5 ticks, fell 40 voxels`. No later tick re-issues the drop.
+    resident, after 5 ticks, fell 40 voxels`. Nothing was crushed, so no pile is issued. No
+    later tick re-issues the drop.
   - `cutting_the_pillar_drops_the_ledge_a_cell_a_tick` and its `R` twin pass unchanged: no
     sub-threshold cell is under that ledge.
   - `a_stamp_and_a_collapse_replay_from_the_save` passes with the ops now of kind 5. If the
-    scripted fall crosses a sliver, its `landed` line and `SESSION_HASH`
-    (`0x422b_7654_317b_145d`) move. The new values are blessed on Linux, and the log records old
+    scripted fall crosses a sliver, its `landed` line, its op-kind counts (a pile adds one op)
+    and `SESSION_HASH` (`0x422b_7654_317b_145d`) move. The new values are blessed on Linux, and the log records old
     and new with the reason. The `--logic wasm` session equals the native one byte for byte.
 - **Not here:** a `Host` call that reports the server's `SupportParams` (a WIT change); see
   Risks.
@@ -289,9 +358,10 @@ then `[36, 32, 39]..[40, 40, 40]` (32 voxels). They leave cell `(4, 4, 4)` holdi
     and the 1-minute load recorded, on the dev reference (AMD Ryzen 9 5900HS). Every existing
     arm reads within noise of its §4 reading, and the yield-0 path is the same code as today's.
     The new slab-through-sliver arm reads under the slab proposal of 100 µs. The yielding cube
-    drop reads under the 20 ms cube proposal.
+    drop reads under the 20 ms cube proposal. The pile arm reads under the removal proposal of
+    200 µs, a proposal this plan sets because a pile is the removal's second half.
   - §4's log line names kind 5 at `23 + 12n` (131 B a tick for a 9-cell region, 49 175 B for
-    4 096 cells). §6's collapse course line carries the new hash, marked "blessed on Linux; the
+    4 096 cells) and kind 6 at `27 + 12n` (135 B for 9 cells). §6's collapse course line carries the new hash, marked "blessed on Linux; the
     Windows arm confirms it on the first CI run after the owner pushes `main`", as does any
     session hash that moved.
 
@@ -300,7 +370,8 @@ then `[36, 32, 39]..[40, 40, 40]` (32 voxels). They leave cell `(4, 4, 4)` holdi
 - **Owner skill:** human
 - **What:** In `cargo run --release -p flythrough -- --level`, dig under a ledge until the
   terminal reports `unsupported: ...`. The piece falls over the next ticks and the terminal
-  prints `landed after N ticks, fell M voxels, crushed K voxels` with `M > 0`. `R` and a crumble
+  prints `landed after N ticks, fell M voxels, crushed K voxels, P rubble` with `M > 0`. Rubble
+  shows on top of the landed piece. `R` and a crumble
   still behave as before. Optionally run `--level --vault --save s.vxl` then `--replay s.vxl`
   with a fall in the session: the same hash. A save made before this plan (for example the
   owner's 2026-10-20 session, `0xada8a4f022567a9f`) replays by ops to its old hash.
@@ -327,6 +398,15 @@ pub enum Op {
     // ...
     /// Kind 3 when `yield_below == 0`, kind 5 otherwise.
     Drop { cells: Vec<CellCoord>, max_drop: i32, yield_below: u16 },
+    /// Kind 6: `count` rubble voxels spread over the cells' footprint columns
+    /// ([`World::pile_rubble`]).
+    Pile { cells: Vec<CellCoord>, rubble: MaterialId, count: u32, max_depth: i32 },
+}
+
+pub struct PileResult {
+    pub placed: u32,
+    pub touched: Vec<ChunkCoord>,
+    pub aabb: Option<(VoxelCoord, VoxelCoord)>,
 }
 ```
 
@@ -334,6 +414,7 @@ pub enum Op {
 |------|----|---------|-------------|
 | 3 | drop (Plan 0018, unchanged) | `max_drop i32`, count `u32`, cells | `21 + 12n` |
 | 5 | drop through sub-threshold cells | `max_drop i32`, `yield_below u16` (never 0), count `u32`, cells | `23 + 12n` |
+| 6 | rubble pile | `rubble u16`, `count u32`, `max_depth i32`, count `u32`, cells | `27 + 12n` |
 
 ## Budgets
 
@@ -342,15 +423,19 @@ pub enum Op {
   scan reaches, cached per op, plus at most `dropped` crushed voxels per footprint column, all
   inside bricks the op already composes. Expected effect: within noise for yield 0, a few
   percent for yield 64 (a guess). Measured in Phase 5 as above. `find_unsupported` is untouched.
-  The edit line (2.2 ms) is not touched: shape edits do not change.
+  The pile is `remove_region`'s rubble stage without the carve. This plan proposes it under
+  the removal's 200 µs for the 9-cell slab, and the close reads it. The edit line (2.2 ms) is
+  not touched: shape edits do not change.
 - **§4 Logs:** kind 5 `23 + 12n`, two bytes more than kind 3. A falling 9-cell region re-sends
-  131 bytes a tick instead of 129. Asserted in `crates/vxe-world/tests/log.rs`.
+  131 bytes a tick instead of 129. A fall that crushed anything adds one kind-6 entry of
+  `27 + 12n` (135 bytes for 9 cells) at its end. Asserted in `crates/vxe-world/tests/log.rs`.
 - **§6 Determinism:** the yield rule is integer: cell counts are popcounts, and spans and gaps
-  are `i32`. Columns are visited in the fixed `(x, y)` order the op already uses. The collapse
+  are `i32`. The pile's accumulator is the removal's, in `u64`. Columns are visited in the fixed `(x, y)` order the op already uses. The collapse
   course hash moves (Phase 2), and `SESSION_HASH` moves only if the scripted fall crosses a
   sliver (Phase 4). `SLAB_SESSION_HASH`, `OP_LOG_HASH`, `ECHO_HASH`, the stamp hash
   `0x7ee7_eeb7_0956_d069` and the mips hash must not move: a change to any of them is a
-  regression in the kind-3 path. Every reblessed value is blessed on Linux. The Windows arm
+  regression in the kind-3 path. The removal's results must not move either, since the pile
+  shares its rubble stage. Every reblessed value is blessed on Linux. The Windows arm
   confirms it on the first CI run after the owner pushes `main`. Plan 0018's Windows
   confirmations of `SLAB_SESSION_HASH` and `SESSION_HASH` are still outstanding, so that run
   confirms both plans.
@@ -361,18 +446,22 @@ pub enum Op {
   outside part, at its old height, in a sub-threshold cell the query never reports. This is
   ADR-0016's stated negative. The level sweep's pinned crushed totals make it visible. A
   followup could sweep such leftovers with `remove_region`; this plan does not.
-- **The logic's threshold is a constant, not the server's.** `YIELD_BELOW` equals
-  `DEFAULT_SUPPORT.solid_min`, and the fly-through now sets exactly that. A consumer that calls
-  `set_support` with another `solid_min` must pass the same value in its drops. A `Host` call
-  that returns the server's `SupportParams` would close this, but it is a WIT change, and it is
-  deferred until a second consumer needs it.
+- **The logic's threshold is a constant, not the server's** (owner decision 4). `YIELD_BELOW`
+  equals `DEFAULT_SUPPORT.solid_min`, and the fly-through now sets exactly that. A consumer
+  that calls `set_support` with another `solid_min` must pass the same value in its drops. A
+  `Host` call that returns the server's `SupportParams` would close this, but it is a WIT
+  change, and it is deferred until a second consumer needs it.
+- **Where the rubble goes.** The pile lands on top of the landed piece. In a low passage it can
+  run out of air, so `placed < count`, and the line says so. Putting the rubble beside the
+  piece, where the crushed sliver was, would need per-column crush data across ticks in the
+  logic. This plan does not do that; the owner can ask for it after the windowed check.
 - **Input replay of an old save.** Ops replay of a Plan 0018 save is bit-identical (kind 3
   means `yield_below` 0). Input replay re-runs today's logic, which issues kind-5 drops, so a
   saved session whose fall crossed a sliver replays by inputs to a different world. A log names
   no logic version; that gap predates this plan (see "does NOT do").
-- **Forward compatibility.** A pre-0022 build reading a save with a kind-5 entry fails with
-  `UnknownKind(5)` at that entry, not at the header. We keep `LOG_FORMAT` at 2 because the header
-  does not change. A format bump is the owner's call (see the closing questions).
+- **Forward compatibility.** A pre-0022 build reading a save with a kind-5 or kind-6 entry fails with
+  `UnknownKind(5)` or `UnknownKind(6)` at that entry, not at the header. `LOG_FORMAT` stays 2
+  because the header does not change (owner decision 3).
 - **Stuck memory by hash.** A 64-bit key collision would skip a genuinely new region. The
   probability is negligible at 64 entries, and the outcome is benign: the region stays where it
   is until a dig changes it.
@@ -383,9 +472,8 @@ pub enum Op {
 
 - Carry (push the yielding voxels down ahead of the region). ADR-0016 rejects it for now. It
   could return as a mode of the same yield rule.
-- Turn crushed volume into rubble. The result reports it, and a game may pile it. That is a
-  `DigLogic` followup if the owner wants debris.
-- Change the support query, `solid_min`, or `remove_region`.
+- Change the support query, `solid_min`, or what `remove_region` does (its rubble stage is
+  shared, not changed).
 - Record a logic version in the log header, or bump `LOG_FORMAT`.
 - Tell the server's grid about streamed chunks, so collapse works on the streamed cave (Plan
   0018's followup). Collapse stays on `--level`.
@@ -401,8 +489,8 @@ pub enum Op {
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The repro, committed, pinning the bug | dev | not started | |
-| 2: The yielding drop in `vxe-world` | dev | not started | |
-| 3: Op kind 5 on the wire, through the server and in the log | dev | not started | |
+| 2: The yielding drop and the rubble pile in `vxe-world` | dev | not started | |
+| 3: Op kinds 5 and 6 on the wire, through the server and in the log | dev | not started | |
 | 4: `DigLogic` tells a refusal, a wedge and a landing apart | dev | not started | |
 | 5: Readings and the budget lines | dev | not started | |
 | 6: The owner's windowed check | human | not started | |

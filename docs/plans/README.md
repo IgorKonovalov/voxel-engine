@@ -11,7 +11,7 @@ state from `git log`. Completed plans move to `done/`.
 | Plan | Title | Status | Live constraint |
 |------|-------|--------|-----------------|
 | [0020](0020-cavern-reverb-directional-echoes-and-gliding-taps.md) | Cavern reverb: a late tail sized by the room the listener sees, echoes from their walls, taps that glide, and the player's own voice in the cave | approved | M4, paired with ADR-0015. After Plan 0006 closes; takes over its moving-click finding. |
-| [0022](0022-a-falling-region-crushes-sub-threshold-voxels.md) | A falling region crushes the sub-threshold voxels under it, and the logic tells a wedge from a refusal and a landing | draft | M8, paired with ADR-0016 (proposed). Moves the collapse course hash; kind-3 saves replay unchanged. |
+| [0022](0022-a-falling-region-crushes-sub-threshold-voxels.md) | A falling region crushes the sub-threshold voxels under it and piles them as rubble, and the logic tells a wedge from a refusal and a landing | draft | M8, paired with ADR-0016 (proposed). Owner answers folded in 2026-10-20. |
 <!-- roster:end -->
 
 ## Recently closed
