@@ -129,7 +129,53 @@ impl Rooms {
     }
 }
 
+/// Prints the median time of the blocks that clear a tail network (a fade-out ending or a
+/// handover taking a network) against the median of the other blocks, over 40 room changes.
+/// Two passes over the same deterministic sequence: the first finds the clearing blocks (a
+/// network that held signal holds none after), the second times every block.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a bench times single blocks on the wall clock; nothing here is the deterministic world"
+)]
+fn clearing_block() {
+    const BLOCKS: usize = 40 * ROOM_BLOCKS;
+    let mut mixer = loaded_mixer(false);
+    let mut rooms = Rooms(200);
+    let mut out = vec![0.0f32; 2 * BLOCK];
+    let mut clears = vec![false; BLOCKS];
+    for c in clears.iter_mut() {
+        let before = mixer.reverb_networks().map(|n| n.holds_signal);
+        rooms.step(&mut mixer);
+        mixer.render(&mut out, BLOCK);
+        let after = mixer.reverb_networks().map(|n| n.holds_signal);
+        *c = before.iter().zip(&after).any(|(b, a)| *b && !*a);
+    }
+    let mut mixer = loaded_mixer(false);
+    let mut rooms = Rooms(200);
+    let (mut clearing, mut other) = (Vec::new(), Vec::new());
+    for &c in &clears {
+        rooms.step(&mut mixer);
+        let t = std::time::Instant::now();
+        mixer.render(&mut out, BLOCK);
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        black_box(&out);
+        if c { clearing.push(ms) } else { other.push(ms) }
+    }
+    let median = |v: &mut Vec<f64>| {
+        v.sort_by(f64::total_cmp);
+        v.get(v.len() / 2).copied().unwrap_or(f64::NAN)
+    };
+    println!(
+        "tail: {} blocks clear a network, median {:.4} ms; the other {} blocks, median {:.4} ms",
+        clearing.len(),
+        median(&mut clearing),
+        other.len(),
+        median(&mut other)
+    );
+}
+
 fn mixer_block(c: &mut Criterion) {
+    clearing_block();
     let mut mixer = loaded_mixer(false);
     let pack_bytes = mixer.hrtf().map_or(0, |h| h.heap_bytes());
     // Every voice owns its history and a delay line of MAX_DELAY_FRAMES plus one block,

@@ -9,7 +9,10 @@
 //!
 //! Line `i`'s target length is the mean free path's travel time times
 //! `spread_i = 0.5 * 3 ^ (i / 15)`, clamped to `[32, REVERB_MAX_DELAY_FRAMES]` and rounded to
-//! the nearest prime, so the lines share no common period.
+//! the nearest prime, so the lines share no common period. The cap covers every mean free path
+//! a room fan can report (`4V / S <= (4/3) x` the ray range), so no fan's room clamps a line;
+//! a larger one from a caller clamps to the largest prime under the cap. Lines that clamped to
+//! one length would carry equal signals, which the ears' alternating-sign sums cancel.
 //!
 //! # A change of room
 //!
@@ -81,8 +84,9 @@ pub const TAIL_HANDOVER_RATIO: f32 = 1.15;
 
 /// Delay lines in the network.
 pub const REVERB_LINES: usize = 16;
-/// The longest line: 100 ms.
-pub const REVERB_MAX_DELAY_FRAMES: usize = 4_800;
+/// The longest line: 583 ms, line 15's length at the largest mean free path a room fan can
+/// report (`1.5 x (4/3) x 100 m / 343 m/s x 48 000 = 27 988` frames).
+pub const REVERB_MAX_DELAY_FRAMES: usize = 28_000;
 /// The shortest line.
 pub const REVERB_MIN_DELAY_FRAMES: usize = 32;
 /// The most a line's length moves toward its target per frame of audio.
@@ -181,7 +185,17 @@ fn target_length(i: usize, mfp: f32) -> u32 {
         REVERB_MIN_DELAY_FRAMES as f32,
         REVERB_MAX_DELAY_FRAMES as f32,
     );
-    nearest_prime(frames.round() as u32).min(REVERB_MAX_DELAY_FRAMES as u32)
+    let p = nearest_prime(frames.round() as u32);
+    if p <= REVERB_MAX_DELAY_FRAMES as u32 {
+        p
+    } else {
+        largest_prime_at_most(REVERB_MAX_DELAY_FRAMES as u32)
+    }
+}
+
+/// The largest prime at or below `n` (`n >= 2`).
+fn largest_prime_at_most(n: u32) -> u32 {
+    (2..=n).rev().find(|&c| is_prime(c)).unwrap_or(2)
 }
 
 /// The loop gain `g` and low-pass pole `a` of a line of `m` frames for decay `t60` seconds:
@@ -733,11 +747,63 @@ mod tests {
     fn primes_and_lengths() {
         assert_eq!(nearest_prime(1120), 1117);
         assert_eq!(nearest_prime(4800), 4799);
+        assert_eq!(nearest_prime(28_000), 28_001);
+        assert_eq!(largest_prime_at_most(28_000), 27_997);
         assert_eq!(nearest_prime(32), 31);
         assert!(is_prime(target_length(0, 8.0)));
         // 8 m: 1119.5 frames of travel, half of it for line 0, one and a half for line 15.
         assert_eq!(target_length(0, 8.0), nearest_prime(560));
         assert_eq!(target_length(15, 8.0), nearest_prime(1679));
+    }
+
+    /// The cap covers line 15 at the largest mean free path a fan can report, `(4/3)` of the
+    /// ray range, so a longer range fails here instead of collapsing the tail.
+    #[test]
+    fn the_cap_covers_the_fans_bound() {
+        let bound = 1.5 * (4.0 / 3.0) * f64::from(crate::REFLECTION_RANGE_METRES)
+            / f64::from(SPEED_OF_SOUND)
+            * f64::from(RATE);
+        assert!(
+            REVERB_MAX_DELAY_FRAMES as f64 >= bound,
+            "{REVERB_MAX_DELAY_FRAMES} < {bound}"
+        );
+        let at_bound: Vec<u32> = (0..REVERB_LINES)
+            .map(|i| target_length(i, 133.334))
+            .collect();
+        println!("lines at mfp 133.334 m: {at_bound:?}");
+        assert!(at_bound.iter().all(|&m| is_prime(m)));
+        assert!(at_bound.windows(2).all(|w| w[0] < w[1]), "{at_bound:?}");
+        assert!(at_bound.iter().all(|&m| m < REVERB_MAX_DELAY_FRAMES as u32));
+        assert_eq!(at_bound[15], 27_983);
+        assert_eq!(target_length(15, 1000.0), 27_997);
+    }
+
+    /// Rooms whose lines never reached the old 4 800-frame cap keep their lengths; the 36 m
+    /// room's line 15 now takes its own length instead of the cap.
+    #[test]
+    fn small_rooms_keep_their_lengths() {
+        let lines = |mfp: f32| {
+            (0..REVERB_LINES)
+                .map(|i| target_length(i, mfp))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            lines(2.666),
+            [
+                191, 199, 211, 233, 251, 269, 293, 311, 337, 359, 389, 419, 449, 479, 521, 557
+            ]
+        );
+        assert_eq!(
+            lines(7.999),
+            [
+                557, 601, 647, 701, 751, 809, 863, 937, 1009, 1087, 1163, 1249, 1361, 1451, 1559,
+                1669
+            ]
+        );
+        let big = lines(23.998);
+        println!("lines at mfp 23.998 m: {big:?}");
+        assert!(big[..15].iter().all(|&m| m < 4_800));
+        assert_eq!(big[15], 5_039);
     }
 
     #[test]

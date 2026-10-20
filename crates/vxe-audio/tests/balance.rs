@@ -252,15 +252,78 @@ fn a_pre_delay_holds_the_tail_back_without_changing_it() {
     assert!(d.abs() <= 0.1, "energy {d} dB");
 }
 
+/// The room the fan reads from the centre of the cube of `edge` voxels, and the tail's lines a
+/// mixer takes from it.
+fn fan_room(world: &World, edge: i32) -> (RoomEstimate, [ReverbLine; REVERB_LINES]) {
+    let c = edge as f32 / 2.0;
+    let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    let listener = Listener {
+        position: [c, c, c],
+        ..Listener::default()
+    };
+    let mut acoustics = Acoustics::new(mixer.clock());
+    for _ in 0..ROOM_RAYS / ROOM_RAYS_PER_UPDATE {
+        acoustics.update(world, world.materials(), &listener, &[], MPV, &mut |cmd| {
+            mixer.apply(cmd)
+        });
+    }
+    (
+        acoustics.room().expect("the fan completed"),
+        mixer.reverb_lines(),
+    )
+}
+
+fn is_prime(n: u32) -> bool {
+    n >= 2
+        && (2..)
+            .take_while(|d| d * d <= n)
+            .all(|d| !n.is_multiple_of(d))
+}
+
+/// From the 100 m cube's centre (mean free path about 65.6 m) the tail's 16 lines are distinct
+/// primes, strictly increasing and under the cap: none clamps to a shared length.
+#[test]
+fn the_100_m_cube_gives_sixteen_distinct_lines() {
+    let world = cube(1000);
+    let (room, lines) = fan_room(&world, 1000);
+    let targets: Vec<u32> = lines.iter().map(|l| l.target).collect();
+    println!(
+        "100 m cube: mfp {:.3} m; line targets {targets:?} (under a 4 800-frame cap: 4 591 and \
+         fifteen 4 799)",
+        room.mean_free_path_m
+    );
+    assert!(targets.iter().all(|&m| is_prime(m)), "{targets:?}");
+    assert!(targets.windows(2).all(|w| w[0] < w[1]), "{targets:?}");
+    assert!(
+        targets
+            .iter()
+            .all(|&m| (m as usize) < REVERB_MAX_DELAY_FRAMES),
+        "{targets:?}"
+    );
+}
+
+/// Energy of one ear of interleaved `out`.
+fn ear_energy(out: &[f32], ear: usize) -> f64 {
+    out.iter()
+        .skip(ear)
+        .step_by(2)
+        .map(|&x| f64::from(x) * f64::from(x))
+        .sum()
+}
+
 /// The default balance, for the listener's reference: per cube, a unit impulse 2 m ahead,
 /// the direct path, the echoes (the buses alone) and the tail, each alone, in dB of energy,
-/// whole and over the first 80 ms after the direct sound.
+/// whole and over the first 80 ms after the direct sound. The tail's energy (both ears
+/// averaged) is within 1.0 dB of the room's own `energy` in every cube, the 100 m one
+/// included, and each ear's tail sounds.
 #[test]
 fn the_balance_table_at_the_defaults() {
     let mut rows = Vec::new();
+    let mut tails = Vec::new();
     for metres in [4, 12, 36, 100] {
         let edge = metres * 10;
         let world = cube(edge);
+        let (room, lines) = fan_room(&world, edge);
         let direct = impulse(&world, edge, MixSettings::default(), DIRECT, 0.1);
         let echoes = impulse(&world, edge, MixSettings::default(), ECHOES, 0.6);
         let seconds = match metres {
@@ -280,7 +343,27 @@ fn the_balance_table_at_the_defaults() {
         );
         rows.push(row);
         assert!(total(&direct) > 0.0 && total(&echoes) > 0.0 && total(&tail) > 0.0);
+        let (want, got) = (db(f64::from(room.energy)), db(total(&tail)));
+        let (left, right) = (ear_energy(&tail, 0), ear_energy(&tail, 1));
+        tails.push(format!(
+            "{metres} m: tail {got:+.2} dB against the room's {want:+.2} dB ({:+.2}); left \
+             {:+.2} dB, right {:+.2} dB, left - right {:+.2} dB; lines {:?}",
+            got - want,
+            db(left),
+            db(right),
+            db(left) - db(right),
+            lines.iter().map(|l| l.target).collect::<Vec<_>>()
+        ));
+        assert!(
+            right > 0.0 && left > 0.0,
+            "{metres} m: an ear's tail is silent"
+        );
+        assert!(
+            (got - want).abs() <= 1.0,
+            "{metres} m: tail {got:+.2} dB against {want:+.2} dB"
+        );
     }
+    println!("{}", tails.join("\n"));
     println!(
         "balance at the defaults, unit impulse 2 m ahead, dB of energy:\n| cube | direct | early \
          | tail | direct, 80 ms | early, 80 ms | tail, 80 ms |\n{}",
@@ -326,6 +409,14 @@ fn a_changing_balance_renders_without_allocating() {
     m.render(&mut out, BLOCK);
     COUNTING.with(|c| c.set(true));
     for b in 0..64 {
+        // A room every 8 blocks, alternating 8 m and 10 m: a handover clears a network.
+        if b % 8 == 0 {
+            m.apply(Command::SetRoom(RoomTargets {
+                t60_s: 2.0,
+                mean_free_path_m: if b % 16 == 0 { 10.0 } else { 8.0 },
+                energy: 0.4,
+            }));
+        }
         m.apply(Command::SetMix(MixSettings {
             echo_gain: 1.0 + b as f32 * 0.1,
             direct_delay: b % 2 == 0,
