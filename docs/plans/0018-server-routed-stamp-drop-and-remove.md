@@ -234,7 +234,7 @@ pub enum EditError { NotResident(ChunkCoord), UnknownPrefab(u64), /* Plan 0019 a
 | 2: The server applies every kind | dev | done | 300874f |
 | 3: The host and the component | dev | done | 416e99c |
 | 4: The fly-through through the logic | dev | done | a9014d0 |
-| 5: Readings | dev | done | committed with this row |
+| 5: Readings | dev | done | 3c679ee |
 
 ### Notes
 
@@ -311,16 +311,76 @@ pub enum EditError { NotResident(ChunkCoord), UnknownPrefab(u64), /* Plan 0019 a
   `CoarseGrid::update_aabb`; the overhead is read against it, since the server's grid update
   is edit work. The readings were taken with other worktrees building and testing (1-minute
   load 14.46 falling to 6.50), not on a quiet box.
+- Owed to the owner (the plan's windowed check, not a phase): `P`, a dig under a ledge, the
+  fall, `R` and a crumble by eye in `cargo run --release -p flythrough -- --level`, and
+  `--level --vault --save s.vxl` followed by `--level --vault --replay s.vxl` printing the
+  same hash.
+- Followup noticed: the Windows arm has not yet confirmed `SLAB_SESSION_HASH`
+  (`vxe-net` and `vxe-script-wasm` tests) or `SESSION_HASH` (`apps/flythrough/tests/replay.rs`).
+- Followup noticed: the server's grid is built once in `Server::with_prefabs` from the chunks
+  resident then and is not told of chunks streamed in or out, so on the streamed cave the
+  support query sees only unknown (anchored) chunks; the fly-through keeps collapse to the
+  level as before. On the level the fly-through now builds two grids (the server's and its
+  own for the walkable map).
+- Followup noticed: cell lists in drop and remove ops are not capped (Plan 0019's
+  `OutOfRange` is the plan's route); `EditError::UnknownPrefab` uses wire error tag 3 so
+  Plan 0019's `OutOfRange` keeps tag 2.
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** op kinds 2 to 4 (stamp by prefab content id, drop, remove) with wire
+  encodings and `u32` cell counts; `LOG_FORMAT` 2 with the prefab table, verified on decode,
+  format 1 still read; `OpResult` end to end (messages, owned-client check, the WIT answer);
+  `PrefabRegistry` on the server and the clients; the server's coarse grid updated after every
+  applied op; `Host::unsupported` and the WIT `unsupported` import; `EchoLogic` over every kind
+  and the support query; `DigLogic` with stamp and crumble inputs, the collapse and the falls;
+  the fly-through's `P`, `R` and collapse through the logic with the `--save`/`--replay`
+  gates removed and `--replay --vault`.
+- **Public API changed:** `vxe-world`: `Op` gains `Stamp`, `Drop`, `Remove` and is no longer
+  `Copy` (nor is `LogEntry`); `Op::apply(world, prefabs) -> Result<OpResult, EditError>`;
+  `OpResult`; `EditError::UnknownPrefab`; `PrefabRegistry`, `PrefabCollision`;
+  `Prefab::{encode, decode, encoded_len}`; `Rot::{index, from_index}`; `LogFile.prefabs`,
+  `LogFile::header_len`; `LOG_FORMAT` 2; `OpLog::prefab_ids`; `World::replay(log, prefabs)`
+  returns `OpResult`s; `CoarseGrid::{update_aabb, update_aabb_with_stats}`;
+  `wire::{OP_STAMP, OP_DROP, OP_REMOVE, ERROR_UNKNOWN_PREFAB, encode_op_result,
+  decode_op_result}` (the `OP_RESERVED_*` names are gone), `Reader::{entry, remaining}`,
+  `WireError::PrefabMismatch`. `vxe-net`: `Host::apply(Op) -> Result<OpResult, EditError>`,
+  `Host::unsupported`, `cells_in`, `DEFAULT_SUPPORT`, `Server::{with_prefabs,
+  register_prefab, prefabs, coarse, set_support}`, `Server::submit(impl Into<Op>)`,
+  `Server::resimulate` takes `prefabs`, `Message::Applied.result` and `Event::Applied.result`
+  are `OpResult`, `Event::Desync.ours` is `Option<OpResult>`, `Client::register_prefab`;
+  `test_logic` gains the slab fixtures, `ECHO_QUERY`, `ECHO_REGIONS`, `query_bytes`,
+  `encode_regions`, `decode_regions`, `op_bytes(impl Into<Op>)`. `vxe-script-wasm`: the WIT
+  `cell` and `region` records and the `unsupported` import; `encode_answer`/`decode_answer`
+  carry `OpResult`. `flythrough-logic`: `DigInput::{Stamp, Crumble}`, `DigLogic` is a
+  `Default` struct with state, `STAMP_VERB`, `DROP_VERB`, `REMOVE_VERB`, `FALL_STEP`,
+  `RUBBLE`, `RUBBLE_FRACTION`, `RUBBLE_DEPTH`, `region_line`, `parse_region_line`,
+  `landed_line`, `crumble_line`. `flythrough`: `replay_log_on`.
+- **Budget readings:** AMD Ryzen 9 5900HS laptop (RTX 3080 laptop), Linux, a9014d0 plus the
+  Phase 5 bench arm (3c679ee), `cargo bench -p vxe-net --bench tick`, exclusive perf lock,
+  not quiet (other worktrees building and testing; 1-minute load 14.46, 10.80, 8.37, 6.50 at
+  the rounds' starts and end), three alternated rounds, criterion medians: tick through
+  `EchoLogic` 4.3895 / 3.9923 / 3.8381 ms; direct carves with grid updates 4.3400 / 3.9843 /
+  4.0753 ms; direct carves 2.8636 / 2.4967 / 2.8504 ms. Overhead per 100 inputs 49.5 / 8.0 /
+  -237.2 µs (line 100 µs). Grid update on the server path 1.4764 / 1.4876 / 1.2249 ms per 100,
+  12.2 to 14.9 µs each (line 50 µs). Entry sizes asserted: stamp 34 B, drop `21 + 12n`,
+  remove `31 + 12n`, 4 096-cell drop 49 173 B, vault table entry 8 + 8 716 B; kind-1 sizes
+  47 / 65 / 75 and boundary 13 unchanged; `OP_LOG_HASH` `0x5ac8_737d_db0f_ccec` unchanged.
+  Binary smoke (release, RTX 3080 laptop, headless 320 x 180, exclusive perf lock, load
+  29.31): `--level --vault --seed 1 --bench 1 --frames 20 --save` hash `0x26dddbc85e9c5c5c`,
+  `--replay --vault` the same.
+- **Gate at the tip (3c679ee):** `scripts/build-guests.sh` 0; `cargo build --workspace` 0;
+  `cargo nextest run --workspace` (exclusive perf lock, `VXE_REQUIRE_SOFTWARE_ADAPTER=1`) 0,
+  394 passed, 4 skipped; `cargo nextest run -p flythrough --features wasm` 0, 96 passed, 3
+  skipped; `cargo test --workspace --doc` 0, 7 passed, 1 ignored; `cargo clippy --workspace
+  --all-targets -- -D warnings` 0; `cargo clippy -p flythrough --features wasm --all-targets
+  -- -D warnings` 0; clippy on the guests and `flythrough-logic --features component` for
+  `wasm32-wasip2` 0; `cargo fmt --all --check` 0; hook bite tests 0, 59 passed;
+  `check-doc-links` 0 (128 links); `check-comment-hygiene` 0; `check-index-rows` 0;
+  `cargo deny check` 0 (advisories, bans, licenses, sources ok).
+- **Outstanding `human` phases:** none in the plan; the windowed check in the Notes is owed.
 
 ## Followups
 
