@@ -4,11 +4,16 @@
 //! ```text
 //! cargo run --release -p flythrough --example world_budget -- --chunks 20x20x8 --seed 1
 //! cargo run --release -p flythrough --example world_budget -- --stream 16,24 --seed 1
+//! cargo run --release -p flythrough --example world_budget -- --veins 16 --census
 //! ```
 //!
-//! `--chunks` generates the bounded cave over an extent. `--stream R_FULL,R_LOD` builds the
-//! residency the fly-through streams around the unbounded cave's spawn (hysteresis 1), on one
-//! worker per core, and waits until it is complete.
+//! `--chunks` (`AxBxC` or `A,B,C`) generates the bounded cave over an extent. `--stream
+//! R_FULL,R_LOD` builds the residency the fly-through streams around the unbounded cave's
+//! spawn (hysteresis 1), on one worker per core, and waits until it is complete. `--census` adds the brick census
+//! (`World::brick_census`): the `Full` bricks and mip-bricks by count of non-air materials, and
+//! their payload bytes today, under the packed class ladder and under exact planes (ADR-0012).
+//! `--veins N` generates, over the `--chunks` extent, a synthetic world of `N - 1` materials in
+//! 2^3 cells with about a third of the voxels air, and prints its census.
 //!
 //! Mirror bytes use the uploader's formula (ADR-0004): each `Full` brick or mip-brick takes a
 //! 512-byte slot of palette indices plus 72 bytes of masks (a 64-byte opaque mask and two
@@ -21,9 +26,11 @@ use std::sync::Arc;
 
 use flythrough::cave::CaveSource;
 use flythrough::{cave_materials, chunk_ram, mips_ram, window_side};
+use vxe_world::hash::{ValueNoise, hash3};
 use vxe_world::{
-    BRICK_VOXELS, Brick, CHUNK_BRICKS, ChunkExtent, CoarseGrid, PersistConfig, Residency,
-    StreamConfig, Streamer, World,
+    AIR, BRICK_EDGE, BRICK_VOXELS, Brick, BrickCensus, CHUNK_BRICKS, Chunk, ChunkCoord,
+    ChunkExtent, CoarseGrid, Material, MaterialId, MaterialTable, PersistConfig, Residency,
+    StreamConfig, Streamer, World, WorldSource, brick_of_slot,
 };
 
 /// Mirror bytes per `Full` brick or mip-brick, and per mirrored chunk's record.
@@ -45,12 +52,22 @@ fn main() {
     let mut chunks = [20, 20, 8];
     let mut seed = 1u64;
     let mut stream = None;
+    let mut census = false;
+    let mut veins = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
+        if a == "--census" {
+            census = true;
+            continue;
+        }
         let v = args.next().unwrap_or_else(|| usage(&a));
         match a.as_str() {
+            "--veins" => {
+                let n: u64 = v.parse().unwrap_or_else(|_| usage(&v));
+                veins = Some(if n >= 2 { n } else { usage(&v) });
+            }
             "--chunks" => {
-                let parts: Vec<i32> = v.split('x').filter_map(|p| p.parse().ok()).collect();
+                let parts: Vec<i32> = v.split(['x', ',']).filter_map(|p| p.parse().ok()).collect();
                 chunks = parts.try_into().unwrap_or_else(|_| usage(&v));
             }
             "--seed" => seed = v.parse().unwrap_or_else(|_| usage(&v)),
@@ -66,13 +83,86 @@ fn main() {
             _ => usage(&a),
         }
     }
-    match stream {
-        Some(r) => streamed(seed, r),
-        None => bounded(seed, chunks),
+    match (veins, stream) {
+        (Some(n), _) => veined(seed, n, chunks),
+        (None, Some(r)) => streamed(seed, r, census),
+        (None, None) => bounded(seed, chunks, census),
     }
 }
 
-fn bounded(seed: u64, chunks: [i32; 3]) {
+/// `--veins N`: air where a seeded value noise of 16-voxel cells is below -4600 (about a third
+/// of the voxels), otherwise material `1 + hash3(seed, cell) % (N - 1)` per 2^3 cell. 64 cells
+/// drawing from `N - 1` ids give a solid brick about 7, 15 and 40 distinct materials at `N` 8,
+/// 16 and 64. `vxe-world`'s `tests/census.rs` holds the same source and asserts the majority
+/// bin.
+struct Veins {
+    seed: u64,
+    n: u64,
+    noise: ValueNoise,
+}
+
+impl WorldSource for Veins {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        let base = coord.min_voxel().0;
+        for slot in 0..CHUNK_BRICKS {
+            let b = brick_of_slot(slot);
+            out.set_brick(
+                slot,
+                Brick::from_fn(|l| {
+                    let v = [0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + l[k]);
+                    if self.noise.sample(v) < -4600 {
+                        AIR
+                    } else {
+                        (1 + hash3(self.seed, v.map(|c| c >> 1)) % (self.n - 1)) as MaterialId
+                    }
+                }),
+            );
+        }
+    }
+}
+
+fn veined(seed: u64, n: u64, chunks: [i32; 3]) {
+    let extent = ChunkExtent::new([0, 0, 0], chunks);
+    let mut table = MaterialTable::new();
+    for i in 1..n {
+        table.push(Material::named(format!("m{i}")));
+    }
+    let source = Veins {
+        seed,
+        n,
+        noise: ValueNoise::new(seed ^ 0xA1A1, 4),
+    };
+    let world = World::generate(extent, &source, &table);
+    let s = world.stats();
+    let air = world.count_in_box(
+        extent.min.min_voxel(),
+        vxe_world::VoxelCoord(extent.max.min_voxel().0.map(|v| v - 1)),
+    );
+    let air = air.iter().find(|(m, _)| *m == AIR).map_or(0, |&(_, n)| n);
+    println!(
+        "{:LABEL$}{}x{}x{} chunks, seed {seed}, {} materials",
+        "veins:",
+        chunks[0],
+        chunks[1],
+        chunks[2],
+        n - 1
+    );
+    println!(
+        "{:LABEL$}{} Full, {} Uniform",
+        "bricks:", s.full_bricks, s.uniform_bricks
+    );
+    println!(
+        "air fraction:      {:.2} %",
+        100.0 * air as f64 / (s.chunks as f64 * 64.0 * 64.0 * 64.0)
+    );
+    let census = world.brick_census();
+    println!("{census}");
+    if let Some(b) = census.bricks.majority_bin() {
+        println!("{:LABEL$}{}", "majority bin:", BrickCensus::BINS[b]);
+    }
+}
+
+fn bounded(seed: u64, chunks: [i32; 3], census: bool) {
     let extent = ChunkExtent::new([0, 0, 0], chunks);
     let source = CaveSource::new(seed, extent);
     let table = cave_materials();
@@ -127,9 +217,12 @@ fn bounded(seed: u64, chunks: [i32; 3]) {
         grid.bytes() / grid.len().max(1)
     );
     println!("coarse build:      {:.1} ms on 1 thread", grid_secs * 1e3);
+    if census {
+        println!("{}", world.brick_census());
+    }
 }
 
-fn streamed(seed: u64, r: Residency) {
+fn streamed(seed: u64, r: Residency, census: bool) {
     let source = CaveSource::unbounded(seed);
     let table = cave_materials();
     let workers = std::thread::available_parallelism().map_or(1, usize::from);
@@ -216,6 +309,9 @@ fn streamed(seed: u64, r: Residency) {
         mib(mirror_lod as u64),
         mib(mirror as u64)
     );
+    if census {
+        println!("{}", world.brick_census());
+    }
 }
 
 fn mib(b: u64) -> f64 {
@@ -224,7 +320,7 @@ fn mib(b: u64) -> f64 {
 
 fn usage(bad: &str) -> ! {
     eprintln!(
-        "bad argument {bad:?}; usage: world_budget [--chunks AxBxC | --stream R_FULL,R_LOD] [--seed N]"
+        "bad argument {bad:?}; usage: world_budget [--chunks AxBxC | --stream R_FULL,R_LOD | --veins N] [--seed N] [--census]"
     );
     std::process::exit(2)
 }

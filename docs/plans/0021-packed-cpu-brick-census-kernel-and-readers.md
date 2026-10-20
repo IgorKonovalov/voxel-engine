@@ -1,6 +1,6 @@
 # 0021: The packed CPU brick: a census and kernel bench, then masks, planes and a palette under every reader
 
-> **Status:** approved (2026-10-19)
+> **Status:** in-progress
 > **Created:** 2026-10-19
 > **Milestone:** M2 in `docs/roadmap.md` (the RAM line; ADR-0012's second plan)
 > **Related ADRs:** [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
@@ -458,7 +458,7 @@ header, world key, coordinate and FNV trailer are version 1's.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The census and the kernel bench | dev | not started | |
+| 1: The census and the kernel bench | dev | done | committed with this row |
 | 2: The owner reads the figures | human | not started | |
 | 3: `Packed` behind `Brick::Full`, every reader compiling | dev | not started | |
 | 4: The edit kernel as word operations | dev | not started | |
@@ -469,9 +469,32 @@ header, world key, coordinate and FNV trailer are version 1's.
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: the fly-through command of the done-when never exits; it was run as
+  `flythrough --level --seed 1 --headless --bench 1 --frames 1 --census` (Phase 1 commit).
+- Phase 1: `--census` prints at exit only; the bins before the 100 carves are
+  `world_budget --chunks 20,20,8 --seed 1 --census` on the same seed and extent (Phase 1 commit).
+- Phase 1: the `--veins` source is written twice, in `world_budget.rs` and in
+  `crates/vxe-world/tests/census.rs`, which asserts the majority bin on 2x2x1 chunks (Phase 1 commit).
+- Phase 1: air in `--veins` is value noise of 16-voxel cells below -4600; read 33.50 % on the
+  level's extent (Phase 1 commit).
+- Phase 1: `brick_kernel` is a hand-rolled harness (median and minimum of 60 runs after 5
+  warmups, bricks and pool built untimed), not criterion (Phase 1 commit).
+- Phase 1: the bench's table adds an `ore` row (id 2) for the replace; the captured world and
+  ops are `worst_warm`'s (Phase 1 commit).
+- Phase 1: the capture holds the brick-edits that reach `write_rows`; a `Uniform` brick wholly
+  inside a carve takes `edit_brick`'s O(1) path and is neither captured nor timed (Phase 1
+  commit).
+- Phase 1: "today" times `write_rows` plus the collapse check, expanding into pooled, touched
+  arrays; "planar" times the shape words, the kernel and the canonical step, allocations
+  included (Phase 1 commit).
+- Phase 1: public additions beyond the plan's names: `WorldCensus`; `#[doc(hidden)]`
+  `World::apply_capturing`, `CapturedBrickEdit`, `RowWriter`, `PlanarWriter`, `WriterResult`
+  and the `packed` module (`Packed`, `PackedBrick`, `PackedClass`, `KernelMode`) (Phase 1
+  commit).
+- Phase 1: `world_budget --chunks` takes `A,B,C` as well as `AxBxC` (Phase 1 commit).
+- Phase 1: every timing was read under the exclusive perf lock at a 1-minute load of 18.5 to
+  21.4 on 16 threads (other lanes building); `worst_warm` read 4.89 ms in the same window
+  against 3.03 ms recorded quiet.
 
 ### Close triggers
 
@@ -480,6 +503,29 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **What shipped:** feature / fix-only / docs-chore-only
 - **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
 - **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
+  - Phase 1, dev box (AMD Ryzen 9 5900HS, RTX 3080 Laptop), release, Phase 1 commit, exclusive
+    perf lock. Census (no timing): `world_budget --chunks 20,20,8 --seed 1 --census`: 383 608
+    `Full` bricks, bins 1: 275 466, 2: 107 325, 3-4: 817, rest 0; payload today 392 814 592 B,
+    ladder 34 593 152 B, exact 35 578 286 B; slots 26 214 400 B. `--stream 16,24 --seed 1
+    --census` (17 077 full, 40 700 LOD-only chunks): bricks 1 640 292 `Full`, bins 1:
+    1 408 384, 2: 231 908, rest 0; mip-bricks 1 158 516 `Full`, bins 1: 1 044 719, 2: 113 797,
+    rest 0; payload + slots today 3 053 411 776 B, ladder 411 071 680 B, exact 417 360 706 B
+    (slots 187 432 384 B). `flythrough --level --seed 1 --headless --bench 1 --frames 1
+    --census` after the 100 carves: 385 378 `Full`, bins 1: 277 246, 2: 107 315, 3-4: 817;
+    ladder 34 719 952 B. `--veins 8 | 16 | 64 --census` (level extent, air 33.50 %): 5-16 bin
+    1 414 342 | 1 432 624 | 145 011 and 17-256 bin 0 | 0 | 1 294 530 of 1 503 724 `Full`;
+    ladder payload 511 653 744 | 514 793 248 | 1 385 968 792 B, exact 407 177 148 |
+    515 930 566 | 725 643 400 B. No translucent voxel in any of them.
+  - Phase 1 `cargo bench -p vxe-world --bench brick_kernel`, load 19.20: 2721 captured
+    brick-edits (before: Uniform 2495, Mask 226). Carve today 3.343 ms (min 1.999), 1228.6 ns
+    per brick-edit; planar 0.519 ms (min 0.450), 190.6 ns. Fill(rock) on the inverse today
+    2.319 ms, 852.1 ns; planar 0.352 ms, 129.3 ns. Replace rock to ore today 3.020 ms,
+    1109.8 ns; planar 0.676 ms, 248.3 ns (after: Plane1 2688, Mask 33). Decode Plane1 0.469,
+    Plane2 0.633, Plane4 1.090 us per brick (raw copy 0.014 us); 1000 get 5.56, 5.43, 6.25 us
+    (raw 1.11 us). Uniform to Mask expansion 23.9 ns with allocation (raw 1 KiB 509.0 ns);
+    Plane1 to Plane2 42.9 ns. Allocation share: 2495 x 23.9 ns = 59.5 us, 11.5 % of the
+    planar carve sum, 2.0 % of 3.03 ms. An earlier run at load 13.93: carve today 1097.3 ns,
+    planar 176.3 ns per brick-edit. `edits` `worst_warm` in the same window: 4.89 ms.
 - **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
 - **Outstanding `human` phases:** which, or none
 

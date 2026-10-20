@@ -14,6 +14,7 @@ use crate::coords::{
 };
 use crate::fixed::{Fixed3, centre};
 use crate::material::{AIR, MaterialFlags, MaterialId, MaterialTable};
+use crate::packed::{KernelMode, PackedBrick, RowSpans, shape_words};
 use crate::raycast::point_at;
 use crate::shape::{Coverage, Shape, sphere_row_spans};
 use crate::store::{World, read, write};
@@ -124,6 +125,15 @@ impl TargetTable {
             Mode::Carve => Self::carve(table),
             Mode::Fill(m) => Self::Fill(m),
             Mode::Replace { from, to } => Self::Replace { from, to },
+        }
+    }
+
+    /// The planar kernel's view of the table.
+    fn kernel_mode(&self) -> KernelMode<'_> {
+        match *self {
+            Self::Carve { ref carves, rows } => KernelMode::Carve { carves, rows },
+            Self::Fill(m) => KernelMode::Fill(m),
+            Self::Replace { from, to } => KernelMode::Replace { from, to },
         }
     }
 
@@ -309,6 +319,25 @@ impl World {
     /// Applies `op` and reports what changed. Fails, changing nothing, when the shape reaches a
     /// chunk that is not resident.
     pub fn apply(&self, op: &EditOp) -> Result<EditResult, EditError> {
+        self.apply_with(op, &mut None)
+    }
+
+    /// [`World::apply`], and every brick-edit that reaches the row write pushed onto `out` in
+    /// op order: the brick before the op and its row spans. For the kernel bench.
+    #[doc(hidden)]
+    pub fn apply_capturing(
+        &self,
+        op: &EditOp,
+        out: &mut Vec<CapturedBrickEdit>,
+    ) -> Result<EditResult, EditError> {
+        self.apply_with(op, &mut Some(out))
+    }
+
+    fn apply_with(
+        &self,
+        op: &EditOp,
+        capture: &mut Option<&mut Vec<CapturedBrickEdit>>,
+    ) -> Result<EditResult, EditError> {
         let Some((lo, hi)) = op.shape.voxel_bounds() else {
             return Ok(EditResult::default());
         };
@@ -408,7 +437,9 @@ impl World {
                             elo,
                             ehi,
                         };
-                        if edit_brick(brick, &targets, edit, &mut rows, &mut spare, &mut tally) {
+                        if edit_brick(
+                            brick, &targets, edit, &mut rows, &mut spare, &mut tally, capture,
+                        ) {
                             chunk.mark_dirty(slot);
                             chunk_changed = true;
                         }
@@ -455,6 +486,7 @@ fn edit_brick(
     rows: &mut RowCache<'_>,
     spare: &mut SpareArrays,
     tally: &mut Tally,
+    capture: &mut Option<&mut Vec<CapturedBrickEdit>>,
 ) -> bool {
     let BrickEdit {
         cov,
@@ -497,6 +529,12 @@ fn edit_brick(
     if !any {
         return false;
     }
+    if let Some(out) = capture {
+        out.push(CapturedBrickEdit {
+            before: brick.clone(),
+            spans,
+        });
+    }
     let changed = match *targets {
         TargetTable::Carve {
             ref carves,
@@ -518,6 +556,115 @@ fn edit_brick(
         brick.collapse(spare);
     }
     changed
+}
+
+/// One brick-edit on the row-write path, as [`World::apply_capturing`] saw it: the brick
+/// before the op and the x span of each of its 64 rows (row `y + 8 z`, empty when
+/// `x0 > x1`).
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapturedBrickEdit {
+    pub before: Brick,
+    pub spans: RowSpans,
+}
+
+/// What a writer counted: `changed_from` (ascending by material) and the brick-local bounds
+/// of the changed voxels, `None` when nothing changed.
+#[doc(hidden)]
+pub type WriterResult = (Vec<(MaterialId, u32)>, Option<([i64; 3], [i64; 3])>);
+
+/// Today's brick write, as `apply` runs it once the spans are known: `write_rows` (which
+/// expands a `Uniform` brick into a pooled array), then the collapse check. For the kernel
+/// bench.
+#[doc(hidden)]
+pub struct RowWriter {
+    targets: TargetTable,
+    tally: Tally,
+    spare: SpareArrays,
+}
+
+impl RowWriter {
+    pub fn new(mode: Mode, table: &MaterialTable) -> Self {
+        Self {
+            targets: TargetTable::new(mode, table),
+            tally: Tally::new(table.len()),
+            spare: Vec::new(),
+        }
+    }
+
+    /// Pools `n` arrays, written so their pages are touched, as a warm world's pool is.
+    pub fn reserve(&mut self, n: usize) {
+        self.spare
+            .extend((0..n).map(|_| Box::new([MaterialId::MAX; BRICK_VOXELS])));
+    }
+
+    /// Writes `spans` into `brick`; returns whether a voxel changed.
+    pub fn write(&mut self, brick: &mut Brick, spans: &RowSpans) -> bool {
+        let (spare, tally) = (&mut self.spare, &mut self.tally);
+        let changed = match self.targets {
+            TargetTable::Carve { ref carves, rows } => write_rows(
+                brick,
+                [0; 3],
+                spans,
+                CarveBits { carves, rows },
+                spare,
+                tally,
+            ),
+            TargetTable::Fill(m) => write_rows(brick, [0; 3], spans, FillAir(m), spare, tally),
+            TargetTable::Replace { from, to } => {
+                write_rows(brick, [0; 3], spans, ReplaceOne { from, to }, spare, tally)
+            }
+        };
+        if changed {
+            brick.collapse(spare);
+        }
+        changed
+    }
+
+    pub fn finish(self) -> WriterResult {
+        finish(self.tally)
+    }
+}
+
+/// The planar kernel of `packed.rs` on a [`PackedBrick`]: the spans folded into eight shape
+/// words, then the word operations. For the kernel bench.
+#[doc(hidden)]
+pub struct PlanarWriter {
+    targets: TargetTable,
+    tally: Tally,
+}
+
+impl PlanarWriter {
+    pub fn new(mode: Mode, table: &MaterialTable) -> Self {
+        Self {
+            targets: TargetTable::new(mode, table),
+            tally: Tally::new(table.len()),
+        }
+    }
+
+    /// Writes `spans` into `brick`; returns whether a voxel changed.
+    pub fn write(&mut self, brick: &mut PackedBrick, spans: &RowSpans) -> bool {
+        let shape = shape_words(spans);
+        let tally = &mut self.tally;
+        match brick.edit(self.targets.kernel_mode(), &shape, &mut |m, n| {
+            tally.count(m, n)
+        }) {
+            Some((lo, hi)) => {
+                tally.bound(lo.map(i64::from), hi.map(i64::from));
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn finish(self) -> WriterResult {
+        finish(self.tally)
+    }
+}
+
+fn finish(tally: Tally) -> WriterResult {
+    let bounds = tally.any.then_some((tally.lo, tally.hi));
+    (tally.changed_from(), bounds)
 }
 
 /// The brick-local index (`0..8`) of voxel coordinate `v` in the brick starting at `min`.

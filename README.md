@@ -156,6 +156,7 @@ Walking, the coarse grid and collapse run on the bounded level (`--level`) only.
 | `--frames N` | Exit after `N` frames, printing the `F1` readings over the last ones |
 | `--bench N` | Send `N` `B` benchmark inputs on the first frame |
 | `--autopilot` | Dig, fly 300 m out and back through the streamed cave, print streaming readings |
+| `--census` | Print the brick census on exit: `Full` bricks and mip-bricks by count of materials, and their payload bytes today, under the packed class ladder and under exact planes |
 | `--render WxH` | Fix the marcher's resolution; the window scales it |
 | `--sync-budget MiB` | Bytes uploaded to the GPU mirror per frame |
 | `--look MODE` | Start in normal mode `face`, `trilinear8`, `gradient27` or `contour`, with attribute pages for contour and rock detail |
@@ -165,6 +166,12 @@ Walking, the coarse grid and collapse run on the bounded level (`--level`) only.
 | `--rock-detail SCALE,STRENGTH` | Rock's detail feature scale in voxels and strength in [0, 1], under `--look` (default 4,0.3) |
 | `--save PATH` | With `--level`: write the session's log file to `PATH` on exit and print the world hash; refuses `P`, turns collapse off and does not combine with `--vault` |
 | `--replay PATH` | With `--level`: re-simulate a saved session before the first frame and print its hash; turns collapse off and does not combine with `--vault` |
+
+The storage figures come from an example: `cargo run --release -p flythrough --example
+world_budget -- --chunks 20,20,8 --census` (the level) or `--stream 16,24 --census` (the streamed
+residency); `--veins N --census` prints the census of a synthetic world of `N - 1` materials.
+`cargo bench -p vxe-world --bench brick_kernel` times the packed brick's edit kernel against
+today's row write on the same brick-edits.
 
 ### Checks
 

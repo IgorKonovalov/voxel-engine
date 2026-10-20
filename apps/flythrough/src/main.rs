@@ -5,14 +5,15 @@
 //! within `r_full` chunks, mips out to `r_lod`. `--level` generates the bounded level instead.
 //!
 //! `flythrough [--seed N] [--level] [--vault] [--walk] [--render WxH] [--frames N] [--bench N]
-//! [--autopilot] [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH]
-//! [--view VIEW] [--detail] [--translucent-layers N] [--hud] [--save PATH] [--replay PATH]
-//! [--logic native|wasm[=PATH]] [--audio] [--audio-debug]`.
+//! [--autopilot] [--census] [--sync-budget MIB] [--headless] [--look MODE]
+//! [--rock-detail SCALE,STRENGTH] [--view VIEW] [--detail] [--translucent-layers N] [--hud]
+//! [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]] [--audio] [--audio-debug]`.
 //! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
-//! [`Autopilot`]); `--sync-budget` sets the mirror's upload bytes per frame; `--headless` runs the
+//! [`Autopilot`]); `--census` prints the world's brick census (`World::brick_census`) on exit,
+//! after any bench; `--sync-budget` sets the mirror's upload bytes per frame; `--headless` runs the
 //! same frames on an offscreen target with no window; `--walk` (with `--level`) starts in walk
 //! mode, the body spawned in the spawn pocket; `--look` starts in a normal mode (`face`,
 //! `trilinear8`, `gradient27`, `contour`) and gives the mirror attribute pages, so `N` can reach
@@ -216,6 +217,8 @@ struct Args {
     translucent_layers: u32,
     /// `--hud`: start with the stats HUD shown.
     hud: bool,
+    /// `--census`: print the brick census on exit.
+    census: bool,
     /// `--save`: where the session's log file is written on exit.
     save: Option<std::path::PathBuf>,
     /// `--replay`: the log file whose session is re-simulated before the first frame.
@@ -298,6 +301,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         view: ViewMode::Shaded,
         translucent_layers: LookParams::default().translucent_layers,
         hud: false,
+        census: false,
         save: None,
         replay: None,
         logic: LogicChoice::Native,
@@ -351,6 +355,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--headless" => args.headless = true,
             "--walk" => args.walk = true,
             "--hud" => args.hud = true,
+            "--census" => args.census = true,
             "--vault" => args.vault = true,
             "--audio" => args.audio = true,
             "--audio-debug" => {
@@ -2330,6 +2335,9 @@ impl Drop for Run {
     /// one, whose drop is free; the server and client held the other references).
     fn drop(&mut self) {
         self.save();
+        if self.args.census {
+            println!("{}", self.world.brick_census());
+        }
         // The server and client hold the world's other references and their logs; their
         // drop is cheap and is not a traced stage.
         drop(self.net.take());
@@ -2869,6 +2877,9 @@ mod tests {
                 Some(SAVE_NEEDS_LEVEL)
             );
         }
+        let a = parse_args_from(argv(&["--level", "--bench", "1", "--census"]))
+            .expect("--level --bench 1 --census parses");
+        assert!(a.census && a.bench == 1);
         let a = parse_args_from(argv(&["--level", "--bench", "1", "--save", "a.log"]))
             .expect("--level --bench 1 --save parses");
         assert_eq!(a.save.as_deref(), Some(std::path::Path::new("a.log")));

@@ -18,6 +18,7 @@
 //! ```
 
 mod brick;
+mod census;
 mod chunk;
 mod coarse;
 mod collapse;
@@ -28,6 +29,8 @@ pub mod hash;
 mod log;
 mod material;
 mod mips;
+#[doc(hidden)]
+pub mod packed;
 mod persist;
 mod prefab;
 mod query;
@@ -42,6 +45,7 @@ mod walkable;
 pub mod wire;
 
 pub use brick::Brick;
+pub use census::{BrickCensus, WorldCensus};
 pub use chunk::Chunk;
 pub use coarse::{CellChange, CellCoord, CoarseCell, CoarseGrid};
 pub use collapse::{DropResult, RemoveResult};
@@ -49,6 +53,8 @@ pub use coords::{
     BRICK_EDGE, BRICK_VOXELS, CHUNK_BRICKS, CHUNK_EDGE, CHUNK_EDGE_BRICKS, ChunkCoord, ChunkExtent,
     VoxelCoord, brick_of_slot, brick_slot, brick_slot_of_local, index_in_brick,
 };
+#[doc(hidden)]
+pub use edit::{CapturedBrickEdit, PlanarWriter, RowWriter, WriterResult};
 pub use edit::{EditError, EditOp, EditResult, Mode};
 pub use fixed::{FIXED_HALF, FIXED_ONE, Fixed3, centre_of_voxel};
 pub use log::{
