@@ -20,6 +20,7 @@ use crate::coarse::CellCoord;
 use crate::coords::{BRICK_EDGE, ChunkCoord, VoxelCoord, index_in_brick};
 use crate::edit::{EditError, EditResult};
 use crate::material::{AIR, MaterialId};
+use crate::packed::{KernelMode, PackedStats};
 use crate::store::{World, read, write};
 use crate::support::{CellKey, CellMap};
 
@@ -114,7 +115,10 @@ impl<'m> Reader<'m> {
 
 /// The region's bricks as they were when the op started.
 struct Snapshot {
+    /// Decoded, for the voxel scans.
     bricks: CellMap<RawBrick>,
+    /// As the world holds them, for the composed writes.
+    packed: CellMap<Brick>,
     /// Per cell column `(x, y)` of the footprint, ascending, the region's cells' `z`,
     /// ascending.
     stacks: BTreeMap<[i32; 2], Vec<i32>>,
@@ -139,14 +143,20 @@ impl Snapshot {
             return Err(EditError::NotResident(m));
         }
         let mut bricks = CellMap::default();
+        let mut packed = CellMap::default();
         let mut stacks: BTreeMap<[i32; 2], Vec<i32>> = BTreeMap::new();
         let mut reader = Reader::new(map);
         for &c in &cells {
-            let b = RawBrick::of(reader.brick(c).expect("residency checked above"));
-            bricks.insert(CellKey(c), b);
+            let b = reader.brick(c).expect("residency checked above").clone();
+            bricks.insert(CellKey(c), RawBrick::of(&b));
+            packed.insert(CellKey(c), b);
             stacks.entry([c.0[0], c.0[1]]).or_default().push(c.0[2]);
         }
-        Ok(Self { bricks, stacks })
+        Ok(Self {
+            bricks,
+            packed,
+            stacks,
+        })
     }
 
     fn brick(&self, c: CellCoord) -> &RawBrick {
@@ -288,105 +298,179 @@ impl Bounds {
     }
 }
 
-/// The bricks an op will write, composed in memory: each starts as the world's brick (or, for
-/// a region cell, as its spared voxels in air, since every other solid voxel leaves) and takes
-/// voxel writes, as raw ids. Bricks it expands take arrays from `spare`, its own free list,
-/// and bricks that collapse push theirs back onto it; [`Compose::commit`] encodes each brick.
-struct Compose {
-    bricks: CellMap<RawBrick>,
-    spare: SpareArrays,
+/// A brick as [`Compose`] holds it while an op writes it: the packed [`Brick`] itself (the
+/// native path: palette merges and layer words) or decoded [`RawBrick`] ids (the reference
+/// path, written voxel by voxel).
+trait Composed: Sized {
+    /// The world's brick.
+    fn of_world(b: &Brick) -> Self;
+    /// A region cell's brick holding only the voxels `spare` keeps.
+    fn kept(b: &Brick, spare: &impl Fn(MaterialId) -> bool) -> Self;
+    fn is_air(&self) -> bool;
+    fn set_uniform(&mut self, m: MaterialId);
+    /// Writes the non-air voxels of `src`'s z-layers `layers` into layers `first..`.
+    fn place(&mut self, src: &Brick, layers: std::ops::Range<usize>, first: usize);
+    /// Sets voxel `i` to `m`.
+    fn set_voxel(&mut self, i: usize, m: MaterialId);
+    fn into_brick(self) -> Brick;
 }
 
-impl Compose {
-    /// Every region cell, holding only the voxels `spare` keeps.
-    fn new(snap: &Snapshot, spare: &impl Fn(MaterialId) -> bool) -> Self {
-        let mut arrays = Vec::new();
-        let kept = |m: MaterialId| if spare(m) { m } else { AIR };
-        let bricks = snap
-            .bricks
-            .iter()
-            .map(|(&k, b)| {
-                let b = match b {
-                    RawBrick::Uniform(m) => RawBrick::Uniform(kept(*m)),
-                    RawBrick::Full(v) => {
-                        let mut b = RawBrick::Full(Box::new(v.map(kept)));
-                        b.collapse(&mut arrays);
-                        b
-                    }
-                };
-                (k, b)
-            })
-            .collect();
-        Self {
-            bricks,
-            spare: arrays,
+impl Composed for Brick {
+    fn of_world(b: &Brick) -> Self {
+        b.clone()
+    }
+
+    fn kept(b: &Brick, spare: &impl Fn(MaterialId) -> bool) -> Self {
+        let mut b = b.clone();
+        b.keep_only(spare);
+        b
+    }
+
+    fn is_air(&self) -> bool {
+        *self == Brick::Uniform(AIR)
+    }
+
+    fn set_uniform(&mut self, m: MaterialId) {
+        *self = Brick::Uniform(m);
+    }
+
+    fn place(&mut self, src: &Brick, layers: std::ops::Range<usize>, first: usize) {
+        self.overlay_layers(src, layers, first);
+    }
+
+    fn set_voxel(&mut self, i: usize, m: MaterialId) {
+        let old = self.get(i);
+        if old == m {
+            return;
+        }
+        if old == AIR {
+            // A fill of the one voxel: a mask bit and the entry's plane bits.
+            let mut shape = [0u64; 8];
+            shape[i / 64] = 1 << (i % 64);
+            self.edit_planar(
+                KernelMode::Fill(m),
+                &shape,
+                &mut |_, _| {},
+                &mut PackedStats::default(),
+            );
+        } else {
+            self.modify(|v| v[i] = m);
         }
     }
 
-    /// The composed brick of `c` in `bricks`, read from the world on first use. It takes the
-    /// map rather than `self` so a caller can expand the brick into `self.spare`.
-    fn brick<'a>(
-        bricks: &'a mut CellMap<RawBrick>,
-        reader: &mut Reader<'_>,
-        c: CellCoord,
-    ) -> &'a mut RawBrick {
-        bricks
-            .entry(CellKey(c))
-            .or_insert_with(|| RawBrick::of(reader.brick(c).expect("scanned resident")))
+    fn into_brick(self) -> Brick {
+        self
+    }
+}
+
+impl Composed for RawBrick {
+    fn of_world(b: &Brick) -> Self {
+        RawBrick::of(b)
     }
 
-    /// Writes the solid voxels of `src`, the brick of region cell `c`, `dropped` voxels lower.
-    /// They land in at most two bricks: layers `r..8` of `src` (with `r = dropped mod 8`) in
-    /// the cell `dropped / 8` below `c`, layers `0..r` in the cell under that. Each destination
-    /// brick is looked up once and takes whole 64-voxel layers.
-    fn place_dropped(
-        &mut self,
-        reader: &mut Reader<'_>,
-        c: CellCoord,
-        src: &RawBrick,
-        dropped: i32,
-    ) {
-        const LAYER: usize = (BE * BE) as usize;
-        let (q, r) = (dropped.div_euclid(BE), dropped.rem_euclid(BE));
-        let [cx, cy, cz] = c.0;
-        // (destination cell, source layers, destination layer of the first source layer)
-        let upper = (CellCoord([cx, cy, cz - q]), r..BE, 0);
-        let lower = (CellCoord([cx, cy, cz - q - 1]), 0..r, BE - r);
-        for (to, layers, first) in [upper, lower] {
-            if layers.is_empty() {
-                continue;
+    fn kept(b: &Brick, spare: &impl Fn(MaterialId) -> bool) -> Self {
+        let kept = |m: MaterialId| if spare(m) { m } else { AIR };
+        match RawBrick::of(b) {
+            RawBrick::Uniform(m) => RawBrick::Uniform(kept(m)),
+            RawBrick::Full(v) => {
+                let mut b = RawBrick::Full(Box::new(v.map(kept)));
+                b.collapse(&mut SpareArrays::new());
+                b
             }
-            let span = layers.start as usize * LAYER..layers.end as usize * LAYER;
-            let at = first as usize * LAYER;
-            let Self { bricks, spare } = self;
-            let b = Self::brick(bricks, reader, to);
-            match (src, &*b) {
-                (RawBrick::Uniform(m), RawBrick::Uniform(d)) if m == d => {}
-                (RawBrick::Uniform(m), _) => b.expand(spare)[at..at + span.len()].fill(*m),
-                (RawBrick::Full(v), _) => {
-                    let from = &v[span];
-                    if let RawBrick::Uniform(d) = *b
-                        && from.iter().all(|&m| m == AIR || m == d)
-                    {
-                        continue;
-                    }
-                    let dst = &mut b.expand(spare)[at..at + from.len()];
-                    for (d, &m) in dst.iter_mut().zip(from) {
-                        if m != AIR {
-                            *d = m;
-                        }
+        }
+    }
+
+    fn is_air(&self) -> bool {
+        *self == RawBrick::Uniform(AIR)
+    }
+
+    fn set_uniform(&mut self, m: MaterialId) {
+        *self = RawBrick::Uniform(m);
+    }
+
+    fn place(&mut self, src: &Brick, layers: std::ops::Range<usize>, first: usize) {
+        const LAYER: usize = (BE * BE) as usize;
+        let src = RawBrick::of(src);
+        let span = layers.start * LAYER..layers.end * LAYER;
+        let at = first * LAYER;
+        match (&src, &*self) {
+            (RawBrick::Uniform(m), RawBrick::Uniform(d)) if m == d => {}
+            (RawBrick::Uniform(m), _) => {
+                self.expand(&mut SpareArrays::new())[at..at + span.len()].fill(*m)
+            }
+            (RawBrick::Full(v), _) => {
+                let from = &v[span];
+                if let RawBrick::Uniform(d) = *self
+                    && from.iter().all(|&m| m == AIR || m == d)
+                {
+                    return;
+                }
+                let dst = &mut self.expand(&mut SpareArrays::new())[at..at + from.len()];
+                for (d, &m) in dst.iter_mut().zip(from) {
+                    if m != AIR {
+                        *d = m;
                     }
                 }
             }
         }
     }
 
-    fn set(&mut self, reader: &mut Reader<'_>, v: [i32; 3], m: MaterialId) {
-        let Self { bricks, spare } = self;
-        let b = Self::brick(bricks, reader, cell_of(v));
-        if b.get(index_of(v)) != m {
-            b.expand(spare)[index_of(v)] = m;
+    fn set_voxel(&mut self, i: usize, m: MaterialId) {
+        if self.get(i) != m {
+            self.expand(&mut SpareArrays::new())[i] = m;
         }
+    }
+
+    fn into_brick(self) -> Brick {
+        RawBrick::into_brick(self)
+    }
+}
+
+/// The bricks an op will write, composed in memory: each starts as the world's brick (or, for
+/// a region cell, as its spared voxels in air, since every other solid voxel leaves) and takes
+/// writes; [`Compose::commit`] stores each in canonical form.
+struct Compose<B> {
+    bricks: CellMap<B>,
+}
+
+impl<B: Composed> Compose<B> {
+    /// Every region cell, holding only the voxels `spare` keeps.
+    fn new(snap: &Snapshot, spare: &impl Fn(MaterialId) -> bool) -> Self {
+        let bricks = snap
+            .packed
+            .iter()
+            .map(|(&k, b)| (k, B::kept(b, spare)))
+            .collect();
+        Self { bricks }
+    }
+
+    /// The composed brick of `c`, read from the world on first use.
+    fn brick(&mut self, reader: &mut Reader<'_>, c: CellCoord) -> &mut B {
+        self.bricks
+            .entry(CellKey(c))
+            .or_insert_with(|| B::of_world(reader.brick(c).expect("scanned resident")))
+    }
+
+    /// Writes the solid voxels of `src`, the brick of region cell `c`, `dropped` voxels lower.
+    /// They land in at most two bricks: layers `r..8` of `src` (with `r = dropped mod 8`) in
+    /// the cell `dropped / 8` below `c`, layers `0..r` in the cell under that. Each destination
+    /// brick is looked up once and takes whole z-layers.
+    fn place_dropped(&mut self, reader: &mut Reader<'_>, c: CellCoord, src: &Brick, dropped: i32) {
+        let (q, r) = (dropped.div_euclid(BE), dropped.rem_euclid(BE));
+        let [cx, cy, cz] = c.0;
+        let (r, be) = (r as usize, BE as usize);
+        // (destination cell, source layers, destination layer of the first source layer)
+        let upper = (CellCoord([cx, cy, cz - q]), r..be, 0);
+        let lower = (CellCoord([cx, cy, cz - q - 1]), 0..r, be - r);
+        for (to, layers, first) in [upper, lower] {
+            if !layers.is_empty() {
+                self.brick(reader, to).place(src, layers, first);
+            }
+        }
+    }
+
+    fn set(&mut self, reader: &mut Reader<'_>, v: [i32; 3], m: MaterialId) {
+        self.brick(reader, cell_of(v)).set_voxel(index_of(v), m);
     }
 
     /// Writes every composed brick that differs from the world's, in canonical form, ascending
@@ -436,6 +520,25 @@ impl World {
     /// drop they straddle two cell layers, and the caller re-derives the cells (for example from
     /// a [`crate::CoarseGrid`] updated with [`DropResult::edit_result`]).
     pub fn drop_region(&self, cells: &[CellCoord], max_drop: i32) -> Result<DropResult, EditError> {
+        self.drop_region_with::<Brick>(cells, max_drop)
+    }
+
+    /// [`World::drop_region`] composed over decoded voxels, written id by id: the reference the
+    /// native path is tested against.
+    #[doc(hidden)]
+    pub fn drop_region_decoded(
+        &self,
+        cells: &[CellCoord],
+        max_drop: i32,
+    ) -> Result<DropResult, EditError> {
+        self.drop_region_with::<RawBrick>(cells, max_drop)
+    }
+
+    fn drop_region_with<B: Composed>(
+        &self,
+        cells: &[CellCoord],
+        max_drop: i32,
+    ) -> Result<DropResult, EditError> {
         let map = read(&self.store.chunks);
         let snap = Snapshot::take(&map, cells)?;
         let columns = snap.columns();
@@ -472,7 +575,7 @@ impl World {
 
         let mut moved = Counts::default();
         let mut bounds = Bounds::default();
-        let mut compose = Compose::new(&snap, &|_| false);
+        let mut compose = Compose::<B>::new(&snap, &|_| false);
         let mut touched = BTreeSet::new();
         for (&[cx, cy], zs) in &snap.stacks {
             for &cz in zs {
@@ -489,13 +592,13 @@ impl World {
                         touched.insert(VoxelCoord([min[0], min[1], hi[2] - dropped]).chunk());
                         if dropped % BE == 0 {
                             let to = CellCoord([cx, cy, cz - dropped / BE]);
-                            let b = Compose::brick(&mut compose.bricks, &mut reader, to);
-                            if *b == RawBrick::Uniform(AIR) {
-                                *b = RawBrick::Uniform(*m);
+                            let b = compose.brick(&mut reader, to);
+                            if b.is_air() {
+                                b.set_uniform(*m);
                                 continue;
                             }
                         }
-                        compose.place_dropped(&mut reader, c, &RawBrick::Uniform(*m), dropped);
+                        compose.place_dropped(&mut reader, c, &Brick::Uniform(*m), dropped);
                     }
                     RawBrick::Full(vox) => {
                         let (mut lo, mut hi) = ([BE; 3], [-1; 3]);
@@ -509,7 +612,12 @@ impl World {
                             hi = [0, 1, 2].map(|k| hi[k].max(l[k]));
                         }
                         if hi[0] >= 0 {
-                            compose.place_dropped(&mut reader, c, snap.brick(c), dropped);
+                            compose.place_dropped(
+                                &mut reader,
+                                c,
+                                &snap.packed[&CellKey(c)],
+                                dropped,
+                            );
                             let lo = [0, 1, 2].map(|k| min[k] + lo[k]);
                             let hi = [0, 1, 2].map(|k| min[k] + hi[k]);
                             bounds.add([lo[0], lo[1], lo[2] - dropped], hi);
@@ -550,6 +658,29 @@ impl World {
     /// carries. Fails with `NotResident`, changing nothing, when a cell's chunk, or a
     /// voxel a scan reaches, is not resident.
     pub fn remove_region(
+        &self,
+        cells: &[CellCoord],
+        rubble: MaterialId,
+        fraction: (u32, u32),
+        max_depth: i32,
+    ) -> Result<RemoveResult, EditError> {
+        self.remove_region_with::<Brick>(cells, rubble, fraction, max_depth)
+    }
+
+    /// [`World::remove_region`] composed over decoded voxels, written id by id: the reference
+    /// the native path is tested against.
+    #[doc(hidden)]
+    pub fn remove_region_decoded(
+        &self,
+        cells: &[CellCoord],
+        rubble: MaterialId,
+        fraction: (u32, u32),
+        max_depth: i32,
+    ) -> Result<RemoveResult, EditError> {
+        self.remove_region_with::<RawBrick>(cells, rubble, fraction, max_depth)
+    }
+
+    fn remove_region_with<B: Composed>(
         &self,
         cells: &[CellCoord],
         rubble: MaterialId,
@@ -600,7 +731,7 @@ impl World {
             }
         }
 
-        let mut compose = Compose::new(&snap, &spare);
+        let mut compose = Compose::<B>::new(&snap, &spare);
         let mut removed = Counts::default();
         let mut bounds = Bounds::default();
         let mut touched = BTreeSet::new();

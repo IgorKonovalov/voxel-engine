@@ -462,8 +462,8 @@ header, world key, coordinate and FNV trailer are version 1's.
 | 2: The owner reads the figures | human | done (go, 2026-10-20) | 0a060c4 |
 | 3: `Packed` behind `Brick::Full`, every reader compiling | dev | done | 22fcade |
 | 4: The edit kernel as word operations | dev | done | 07d70fd |
-| 5: Native paths for the hot readers | dev | done | committed with this row |
-| 6: Collapse as layer shifts and palette remaps | dev | not started | |
+| 5: Native paths for the hot readers | dev | done | 44ace94 |
+| 6: Collapse as layer shifts and palette remaps | dev | done | committed with this row |
 | 7: The mirror upload from planes, and spill version 2 | dev | not started | |
 | 8: Readings, budgets and the census after edits | dev | not started | |
 
@@ -534,6 +534,18 @@ header, world key, coordinate and FNV trailer are version 1's.
 - Phase 5: `Brick::for_each_solid_in` (public) walks a box's mask bits for `vxe-sim`'s bodies;
   `Packed::mask_word` and `Packed::counts_under` are the coarse and region paths (Phase 5
   commit).
+- Phase 6: collapse composes through a trait over two brick forms: the packed `Brick` (native:
+  `keep_only` removes refused entries, `overlay_layers` merges palettes and writes layer words)
+  and `RawBrick` (decoded ids, the reference); `World::drop_region_decoded` and
+  `World::remove_region_decoded` (`#[doc(hidden)]`) run the reference for the oracle (Phase 6
+  commit).
+- Phase 6: the rubble remap keeps ids (a spared voxel keeps its material), so no entry is
+  renamed or re-sorted; a rubble voxel is written by the planar fill of one voxel when it is
+  air, else through `modify`; an overlay that would pass 16 materials, or meets a `Wide`
+  brick, writes decoded ids (Phase 6 commit).
+- Phase 6: the oracle runs on the cubes world dressed by 120 seeded edits (materials 1 to 4, 4
+  indestructible), alternating drops and removes over 64 seeded cell boxes; 38 of the 64 ops
+  moved or removed voxels (Phase 6 commit).
 
 ### Close triggers
 
@@ -587,6 +599,13 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     --bench controller`: 300 ticks of F6 835.2 us, 425.2 us; 1000 ticks 1.060 ms, 683.8 us;
     60 staircase ticks 288.6 us, 84.3 us; 1000 sweeps of F2 32.27 ms, 21.21 ms (21.2 us per
     sweep, beside Plan 0004's 26.3 us).
+  - Phase 6 `cargo bench -p vxe-world --bench collapse`, dev box, exclusive perf lock, Phase 5
+    tip 44ace94 built from `git archive` beside this commit, run in turn (load 12.04, then
+    6.81, 5.66 after): `find_unsupported` 294.9 / 299.6 us; slab drop by 32 57.8 / 71.3 us, by
+    10 53.2 / 46.9 us; slab remove with rubble 102.5 / 121.1 us; 4096-cell cube drop by 64
+    5.93 / 5.91 ms (the 20 ms proposal), by 60 7.73 / 6.74 ms, by 8 4.67 / 4.77 ms (Phase 5 /
+    Phase 6). A first Phase 6 build wrote rubble through `modify` and read the slab remove at
+    1.023 ms (load 6.20).
 - **Gate at the tip (992fdaa):** `cargo build --workspace --all-targets` 0; `cargo nextest run
   --workspace` (after `scripts/build-guests.sh`, under the perf lock) 394 passed, 4 skipped,
   exit 0; `cargo test --workspace --doc` 7 passed; clippy `-D warnings` 0; `fmt --check` 0;

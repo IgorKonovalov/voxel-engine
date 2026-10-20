@@ -743,3 +743,72 @@ fn the_collapse_course_hashes_to_its_pinned_constant() {
     // Blessed on the dev box (Linux); asserted on the Windows CI arm as well.
     assert_eq!(h.0, 0x3178_0a15_61c1_3041, "course hash {:#018x}", h.0);
 }
+
+/// The cubes world of the edit tests, dressed by seeded edits so its bricks hold one to four
+/// materials (an indestructible 4 among them), built twice for the two paths.
+fn dressed_cubes() -> World {
+    let world = cubes_world();
+    let mut rng = SplitMix64(0x0021_0008);
+    for i in 0..120 {
+        let c = [0; 3].map(|_| rng.range(-100, 99) * FIXED_ONE);
+        let r = rng.range(2 * FIXED_ONE, 9 * FIXED_ONE);
+        let mode = match i % 4 {
+            0 => Mode::Carve,
+            1 => Mode::Fill(2),
+            2 => Mode::Replace { from: 1, to: 4 },
+            _ => Mode::Fill(3),
+        };
+        world.apply(&EditOp::sphere(Fixed3(c), r, mode)).unwrap();
+    }
+    world
+}
+
+fn assert_same_bricks(a: &World, b: &World, what: &str) {
+    assert_eq!(a.store().coords(), b.store().coords(), "{what}");
+    for c in a.store().coords() {
+        let x = a.store().get(c).unwrap();
+        let y = b.store().get(c).unwrap();
+        let (x, y) = (x.read().unwrap(), y.read().unwrap());
+        for slot in 0..CHUNK_BRICKS {
+            assert_eq!(x.brick(slot), y.brick(slot), "{what}: {c:?} slot {slot}");
+        }
+    }
+}
+
+/// `drop_region` and `remove_region` on 64 seeded regions of the dressed cubes world, each
+/// through the native path (layer words and palette merges) on one copy and through decoded
+/// voxels on another: equal results and equal bricks after every op.
+#[test]
+fn the_native_collapse_matches_the_decoded_one() {
+    let (native, decoded) = (dressed_cubes(), dressed_cubes());
+    assert_same_bricks(&native, &decoded, "before");
+    let mut rng = SplitMix64(0x0021_0009);
+    let mut moved = 0;
+    for i in 0..64 {
+        let at = [0; 3].map(|_| rng.range(-14, 12) as i32);
+        let size = [0; 3].map(|_| rng.range(1, 3) as i32);
+        let mut cells = Vec::new();
+        for z in 0..size[2] {
+            for y in 0..size[1] {
+                for x in 0..size[0] {
+                    cells.push(CellCoord([at[0] + x, at[1] + y, at[2] + z]));
+                }
+            }
+        }
+        if i % 2 == 0 {
+            let drop = rng.range(1, 20) as i32;
+            let a = native.drop_region(&cells, drop);
+            let b = decoded.drop_region_decoded(&cells, drop);
+            assert_eq!(a, b, "op {i}: drop {cells:?} by {drop}");
+            moved += usize::from(a.is_ok_and(|r| r.dropped > 0));
+        } else {
+            let a = native.remove_region(&cells, 5, (1, 4), 24);
+            let b = decoded.remove_region_decoded(&cells, 5, (1, 4), 24);
+            assert_eq!(a, b, "op {i}: remove {cells:?}");
+            moved += usize::from(a.is_ok_and(|r| !r.removed.is_empty()));
+        }
+        assert_same_bricks(&native, &decoded, &format!("after op {i}"));
+    }
+    println!("{moved} of 64 ops moved or removed voxels");
+    assert!(moved >= 30, "{moved} ops did something");
+}
