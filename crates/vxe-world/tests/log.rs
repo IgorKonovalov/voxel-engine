@@ -57,6 +57,25 @@ fn drop_op(n: usize) -> Op {
     Op::Drop {
         cells: cells(n),
         max_drop: 8,
+        yield_below: 0,
+    }
+}
+
+/// A drop through cells under 64 solid voxels: kind 5.
+fn through_op(n: usize) -> Op {
+    Op::Drop {
+        cells: cells(n),
+        max_drop: 8,
+        yield_below: 64,
+    }
+}
+
+fn pile_op(n: usize) -> Op {
+    Op::Pile {
+        cells: cells(n),
+        rubble: 4,
+        count: 141,
+        max_depth: 64,
     }
 }
 
@@ -82,8 +101,16 @@ fn entry_sizes_are_the_documented_ones() {
         assert_eq!(op_entry_bytes(0, 0, drop_op(n)).len(), 21 + 12 * n);
         // + kind 1 + rubble 2 + fraction 8 + max_depth 4 + count 4 + cells.
         assert_eq!(op_entry_bytes(0, 0, remove_op(n)).len(), 31 + 12 * n);
+        // + kind 1 + max_drop 4 + yield_below 2 + count 4 + cells.
+        assert_eq!(op_entry_bytes(0, 0, through_op(n)).len(), 23 + 12 * n);
+        // + kind 1 + rubble 2 + count 4 + max_depth 4 + cell count 4 + cells.
+        assert_eq!(op_entry_bytes(0, 0, pile_op(n)).len(), 27 + 12 * n);
     }
+    assert_eq!(op_entry_bytes(0, 0, drop_op(9)).len(), 129);
     assert_eq!(op_entry_bytes(0, 0, drop_op(4096)).len(), 49_173);
+    assert_eq!(op_entry_bytes(0, 0, through_op(9)).len(), 131);
+    assert_eq!(op_entry_bytes(0, 0, through_op(4096)).len(), 49_175);
+    assert_eq!(op_entry_bytes(0, 0, pile_op(9)).len(), 135);
     for n in [0usize, 1, 7, 300] {
         let mut out = Vec::new();
         InputEntry {
@@ -132,6 +159,20 @@ fn entry_bytes_are_little_endian_fields_in_order() {
     assert_eq!(&b[15..23], &[1, 0, 0, 0, 4, 0, 0, 0]);
     assert_eq!(&b[23..27], &64i32.to_le_bytes());
     assert_eq!(&b[27..31], &1u32.to_le_bytes());
+    let b = op_entry_bytes(1, 2, through_op(2));
+    assert_eq!(b[12], OP_DROP_THROUGH);
+    assert_eq!(OP_DROP_THROUGH, 5);
+    assert_eq!(&b[13..17], &8i32.to_le_bytes());
+    assert_eq!(&b[17..19], &64u16.to_le_bytes());
+    assert_eq!(&b[19..23], &2u32.to_le_bytes());
+    assert_eq!(&b[23..27], &(-8i32).to_le_bytes());
+    let b = op_entry_bytes(1, 2, pile_op(1));
+    assert_eq!(b[12], OP_PILE);
+    assert_eq!(OP_PILE, 6);
+    assert_eq!(&b[13..15], &4u16.to_le_bytes());
+    assert_eq!(&b[15..19], &141u32.to_le_bytes());
+    assert_eq!(&b[19..23], &64i32.to_le_bytes());
+    assert_eq!(&b[23..27], &1u32.to_le_bytes());
 
     let mut b = Vec::new();
     InputEntry {
@@ -147,7 +188,8 @@ fn entry_bytes_are_little_endian_fields_in_order() {
 }
 
 /// One value of every tag: each mode on each shape, a stamp at each rotation index, a drop
-/// and a removal (one of 4 096 cells), each op result kind, and each error.
+/// of each kind, a removal and a pile (one of 4 096 cells), each op result kind, and each
+/// error.
 #[test]
 fn every_tag_round_trips() {
     let modes = [
@@ -213,9 +255,22 @@ fn every_tag_round_trips() {
         })
         .collect();
     ops.extend([drop_op(0), drop_op(4096), remove_op(0), remove_op(4096)]);
+    ops.extend([through_op(0), through_op(4096), pile_op(0), pile_op(4096)]);
     ops.push(Op::Drop {
         cells: cells(3),
         max_drop: i32::MIN,
+        yield_below: 0,
+    });
+    ops.push(Op::Drop {
+        cells: cells(3),
+        max_drop: i32::MAX,
+        yield_below: u16::MAX,
+    });
+    ops.push(Op::Pile {
+        cells: cells(2),
+        rubble: u16::MAX,
+        count: u32::MAX,
+        max_depth: i32::MIN,
     });
     ops.push(Op::Remove {
         cells: cells(5),
@@ -226,6 +281,13 @@ fn every_tag_round_trips() {
     for op in ops {
         let mut out = Vec::new();
         encode_op(&mut out, &op);
+        let kind = match &op {
+            Op::Drop { yield_below: 0, .. } => OP_DROP,
+            Op::Drop { .. } => OP_DROP_THROUGH,
+            Op::Pile { .. } => OP_PILE,
+            _ => out[0],
+        };
+        assert_eq!(out[0], kind, "{op:?}");
         let mut r = Reader::new(&out);
         assert_eq!(decode_op(&mut r), Ok(op));
         assert!(r.is_empty());
@@ -268,6 +330,13 @@ fn every_tag_round_trips() {
             touched: extent.0.clone(),
             aabb: extent.1,
         }),
+        OpResult::Drop(DropResult {
+            moved: vec![(1, 4608)],
+            dropped: 32,
+            crushed: vec![(1, 32), (65535, u32::MAX)],
+            touched: extent.0.clone(),
+            aabb: extent.1,
+        }),
         OpResult::Remove(RemoveResult::default()),
         OpResult::Remove(RemoveResult {
             removed: vec![(1, 4608)],
@@ -275,8 +344,16 @@ fn every_tag_round_trips() {
             touched: extent.0.clone(),
             aabb: extent.1,
         }),
+        OpResult::Pile(PileResult::default()),
+        OpResult::Pile(PileResult {
+            placed: 32,
+            touched: extent.0.clone(),
+            aabb: extent.1,
+        }),
     ];
-    let kinds = [OP_EDIT, OP_EDIT, OP_DROP, OP_DROP, OP_REMOVE, OP_REMOVE];
+    let kinds = [
+        OP_EDIT, OP_EDIT, OP_DROP, OP_DROP, OP_DROP, OP_REMOVE, OP_REMOVE, OP_PILE, OP_PILE,
+    ];
     for (res, kind) in op_results.into_iter().zip(kinds) {
         let mut out = Vec::new();
         encode_op_result(&mut out, &res);
@@ -336,6 +413,55 @@ fn every_tag_round_trips() {
     assert_eq!(
         decode_error(&mut Reader::new(&[4, 0, 0, 0, 0])),
         Err(WireError::UnknownKind(4))
+    );
+}
+
+/// A kind-3 entry in the layout logs held before kind 5 existed, as literal bytes (tick 3,
+/// seq 1, max drop 8, one cell `[2, -1, 5]`): it decodes to a drop with no yield threshold
+/// and encodes back to the same bytes. The same drop as kind 5 with a threshold of 0 is
+/// refused: only kind 3 encodes it.
+#[test]
+fn a_kind_3_drop_keeps_its_bytes_and_a_kind_5_drop_of_threshold_0_is_refused() {
+    let bytes: Vec<u8> = [
+        &3u64.to_le_bytes()[..],
+        &1u32.to_le_bytes(),
+        &[3],
+        &8i32.to_le_bytes(),
+        &1u32.to_le_bytes(),
+        &2i32.to_le_bytes(),
+        &(-1i32).to_le_bytes(),
+        &5i32.to_le_bytes(),
+    ]
+    .concat();
+    assert_eq!(bytes.len(), 21 + 12);
+    let log = OpLog::decode(&bytes).unwrap();
+    let drop = Op::Drop {
+        cells: vec![CellCoord([2, -1, 5])],
+        max_drop: 8,
+        yield_below: 0,
+    };
+    assert_eq!(
+        log.entries(),
+        [LogEntry::Op {
+            tick: 3,
+            seq: 1,
+            op: drop
+        }]
+    );
+    assert_eq!(log.encode(), bytes);
+
+    let mut kind5: Vec<u8> = bytes[..12].to_vec();
+    kind5.push(OP_DROP_THROUGH);
+    kind5.extend_from_slice(&8i32.to_le_bytes());
+    kind5.extend_from_slice(&0u16.to_le_bytes());
+    kind5.extend_from_slice(&bytes[17..]);
+    assert_eq!(
+        OpLog::decode(&kind5),
+        Err(WireError::NonCanonical { at: 0 })
+    );
+    assert_eq!(
+        decode_op(&mut Reader::new(&kind5[12..])),
+        Err(WireError::NonCanonical { at: 0 })
     );
 }
 
@@ -529,7 +655,7 @@ fn a_cut_inside_an_entry_is_truncated_at_that_entry() {
 #[test]
 fn an_unknown_op_kind_is_reported() {
     let mut bytes = three_entry_log().encode();
-    for k in [0u8, 5, KIND_BOUNDARY - 1, 200] {
+    for k in [0u8, 7, KIND_BOUNDARY - 1, 200] {
         bytes[47 + 12] = k;
         assert_eq!(OpLog::decode(&bytes), Err(WireError::UnknownKind(k)));
     }

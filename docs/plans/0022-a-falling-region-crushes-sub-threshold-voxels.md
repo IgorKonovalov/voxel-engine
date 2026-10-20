@@ -489,8 +489,8 @@ pub struct PileResult {
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The repro, committed, pinning the bug | dev | done | 3a27fe0 |
-| 2: The yielding drop and the rubble pile in `vxe-world` | dev | done | committed with this row |
-| 3: Op kinds 5 and 6 on the wire, through the server and in the log | dev | not started | |
+| 2: The yielding drop and the rubble pile in `vxe-world` | dev | done | 18702e8 |
+| 3: Op kinds 5 and 6 on the wire, through the server and in the log | dev | done | committed with this row |
 | 4: `DigLogic` tells a refusal, a wedge and a landing apart | dev | not started | |
 | 5: Readings and the budget lines | dev | not started | |
 | 6: The owner's windowed check | human | not started | |
@@ -522,6 +522,20 @@ Phase 2 observations:
 - `cargo bench -p vxe-world --bench collapse -- --test`: every arm's assertions pass
   (exclusive perf lock, 1-minute load 10.0, not quiet). Readings are Phase 5.
 
+Phase 3 observations:
+- Entry sizes asserted: kind 3 `21 + 12n` (129 B for 9 cells, 49 173 for 4 096), kind 5
+  `23 + 12n` (131, 49 175), kind 6 `27 + 12n` (135). Through the server the kind-5 drop of the
+  sliver's slab announces `dropped 32`, `moved [(3, 4608)]`, `crushed [(3, 32)]`; the kind-6
+  pile announces `placed 32`; their op entries encode as `(5, 131)` and `(6, 135)`; replay by
+  ops equals the live hash; an owned client stays in step; the server's grid equals
+  `CoarseGrid::build`.
+- A literal Plan 0018-layout kind-3 entry decodes to `yield_below: 0` and re-encodes
+  byte-identical; a kind-5 entry with threshold 0 is `WireError::NonCanonical { at: 0 }`.
+- `SLAB_SESSION_HASH` `0x2077_5c41_d63d_17c5`, `OP_LOG_HASH` `0x5ac8_737d_db0f_ccec` and
+  `ECHO_HASH` `0x8f7d_4016_15d9_5c4d` pass unchanged. The slab session's four drops are
+  asserted to log as kind 3 at `21 + 12 * 9` bytes each; the op-log bytes were not compared
+  with a pre-plan capture.
+
 ### Notes
 
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
@@ -538,6 +552,12 @@ each. Empty is fine.)_
   carve under the footprint and three seeded thin boxes of materials 1 to 4) instead of an
   extension of `the_native_collapse_matches_the_decoded_one`, which stays as it was; without
   the preparation no drop on the dressed cubes crushed anything.
+- Phase 3: `apps/flythrough/logic/src/lib.rs` passes `yield_below: 0` and
+  `apps/flythrough/tests/replay.rs` counts `Op::Pile` (0) so the workspace compiles; Phase 4
+  changes both.
+- Phase 3: the refusal of a kind-5 entry with threshold 0 is a new
+  `WireError::NonCanonical { at }`.
+- Phase 3: `an_unknown_op_kind_is_reported` probes kind 7 where it probed 5.
 - Phase 2: the level sweep finds 1 region where the plan's figures (from the wedged code)
   found 6; the 6 were one piece re-detached.
 

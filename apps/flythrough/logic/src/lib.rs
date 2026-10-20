@@ -279,6 +279,7 @@ impl DigLogic {
             let r = host.apply(Op::Drop {
                 cells: f.cells.clone(),
                 max_drop: FALL_STEP,
+                yield_below: 0,
             });
             lines.push(format!("op {DROP_VERB}"));
             let dropped = match r {

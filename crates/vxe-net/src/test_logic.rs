@@ -262,6 +262,7 @@ pub fn slab_session(vault_id: u64) -> Vec<Op> {
         ops.push(Op::Drop {
             cells: slab_cells(2, 5 - k),
             max_drop: 8,
+            yield_below: 0,
         });
     }
     ops.push(Op::Edit(box_voxels(PILLAR_B.0, PILLAR_B.1, Mode::Carve)));

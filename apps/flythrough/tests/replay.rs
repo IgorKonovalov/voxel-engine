@@ -481,16 +481,17 @@ fn a_stamp_and_a_collapse_replay_from_the_save() {
             .entries()
             .iter()
             .filter_map(LogEntry::op)
-            .fold([0usize; 4], |mut n, op| {
+            .fold([0usize; 5], |mut n, op| {
                 n[match op {
                     Op::Edit(_) => 0,
                     Op::Stamp { .. } => 1,
                     Op::Drop { .. } => 2,
                     Op::Remove { .. } => 3,
+                    Op::Pile { .. } => 4,
                 }] += 1;
                 n
             });
-    assert_eq!(kinds, [5, 1, 9, 1]);
+    assert_eq!(kinds, [5, 1, 9, 1, 0]);
     // The header carries the vault the stamp names.
     assert_eq!(file.prefabs.len(), 1);
     assert_eq!(file.header_len(), 60 + 4 + 8 + 8_716);
