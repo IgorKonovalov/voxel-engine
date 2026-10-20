@@ -46,8 +46,12 @@ pub struct AttrWorkStats {
     pub shell_visits: u64,
     /// Hash-table operations: the view's lookups and the deduplication's.
     pub lookups: u64,
-    /// Items returned.
+    /// Items returned: by [`build`], the whole list; by [`build_split`], the two lists; by a
+    /// capped mirror's `prepare_attrs`, the compute items it took.
     pub items: u32,
+    /// Clear items: bricks written into a slot whose compute item waits (a capped mirror's
+    /// `prepare_attrs` only).
+    pub clears: u32,
 }
 
 impl AttrWorkStats {
@@ -82,6 +86,43 @@ pub fn build(
     dirty_pass(&mut v, bricks, &mut st, items);
     shell_pass(&mut v, shells, &mut st, items);
     st.items = (items.len() - start) as u32;
+    st
+}
+
+/// [`build`] for a capped pass, in two lists. `front` gets the re-uploaded bricks'
+/// neighbourhoods, every brick of them, those in chunks taken whole included, since that work
+/// is never deferred. `rest` gets the shells' bricks outside the chunks taken whole. The
+/// chunks taken whole are counted but not expanded: the caller queues them whole. Each list
+/// holds each brick once; a brick can be in both.
+pub fn build_split(
+    view: &impl MirrorView,
+    chunks: &HashSet<ChunkCoord>,
+    bricks: &HashSet<[i32; 3]>,
+    shells: &HashSet<ChunkCoord>,
+    front: &mut Vec<AttribItem>,
+    rest: &mut Vec<AttribItem>,
+) -> AttrWorkStats {
+    let (f0, r0) = (front.len(), rest.len());
+    let mut st = AttrWorkStats {
+        whole_chunks: chunks.len() as u32,
+        dirty_bricks: bricks.len() as u32,
+        shell_chunks: shells.len() as u32,
+        ..Default::default()
+    };
+    let none = HashSet::new();
+    let mut v = Visitor {
+        view,
+        chunks: &none,
+        seen: HashSet::new(),
+    };
+    dirty_pass(&mut v, bricks, &mut st, front);
+    let mut v = Visitor {
+        view,
+        chunks,
+        seen: HashSet::new(),
+    };
+    shell_pass(&mut v, shells, &mut st, rest);
+    st.items = (front.len() - f0 + rest.len() - r0) as u32;
     st
 }
 

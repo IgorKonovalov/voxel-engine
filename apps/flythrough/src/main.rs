@@ -745,6 +745,9 @@ struct Gfx {
     hud: HudOverlay,
     /// Times the HUD pass, with `TIMESTAMP_QUERY`.
     hud_timer: Option<PassTimer>,
+    /// The time of every `prepare_attrs` call, in milliseconds since the start, by call
+    /// number from 1; a call made outside the frame path takes the next frame's time.
+    attr_call_ms: Vec<f64>,
 }
 
 impl Gfx {
@@ -1069,14 +1072,46 @@ struct AttrSamples {
     /// Every frame whose `update_attrs` took over [`HITCH_MS`]: its flight frame, CPU
     /// milliseconds and counters.
     hitches: Vec<(usize, f64, AttrWorkStats)>,
+    /// How long the oldest waiting brick had waited when each call started, in milliseconds
+    /// (0 when none waited).
+    age_ms: Vec<f64>,
+    /// Clear items per call.
+    clears: Vec<f64>,
+    /// The attribute pass's work-buffer builds after the first flight frame and the last.
+    builds_first: Option<u32>,
+    builds_last: u32,
 }
+
+/// Before a `prepare_attrs` call at `now_ms`: stamps it and any earlier call not yet stamped
+/// with `now_ms` in `call_ms` (by call number from 1), and returns how long the oldest brick
+/// waiting in `mirror`'s carry-over queue has waited, 0 when none waits.
+fn stamp_attr_call(mirror: &GpuWorld, call_ms: &mut Vec<f64>, now_ms: f64) -> f64 {
+    let (calls, oldest) = mirror.attr_queue_age();
+    if call_ms.len() < calls as usize + 1 {
+        call_ms.resize(calls as usize + 1, now_ms);
+    }
+    oldest.map_or(0.0, |o| now_ms - call_ms[o as usize - 1])
+}
+
+/// Most bricks the streaming mirror's attribute pass computes per frame
+/// ([`MirrorConfig::attr_cap`]); the rest waits, reading face mode.
+const ATTR_CAP: usize = 8192;
 
 /// An `update_attrs` call longer than this is listed with its counters.
 const HITCH_MS: f64 = 16.0;
 
 impl AttrSamples {
     /// Records one flight frame's pass.
-    fn push(&mut self, st: AttrWorkStats, build_ms: f64, encode_ms: f64, gpu_ms: Option<f64>) {
+    fn push(
+        &mut self,
+        st: AttrWorkStats,
+        build_ms: f64,
+        encode_ms: f64,
+        gpu_ms: Option<f64>,
+        age_ms: f64,
+    ) {
+        self.age_ms.push(age_ms);
+        self.clears.push(f64::from(st.clears));
         let cpu = build_ms + encode_ms;
         if cpu > HITCH_MS {
             self.hitches.push((self.items.len(), cpu, st));
@@ -1113,6 +1148,19 @@ impl AttrSamples {
                 "autopilot: attribute pass CPU (update_attrs, render thread): p50 {c50:.3} ms, p99 {c99:.3} ms, max {cmax:.3} ms over {frames} frames"
             ),
         ];
+        let [a50, a99, amax] = stats(&mut self.age_ms);
+        out.push(format!(
+            "autopilot: attribute carry-over age (oldest waiting brick at the start of each update_attrs): p50 {a50:.1} ms, p99 {a99:.1} ms, max {amax:.1} ms (bar 250 ms)"
+        ));
+        let [l50, l99, lmax] = stats(&mut self.clears);
+        out.push(format!(
+            "autopilot: attribute clear items: p50 {l50:.0}, p99 {l99:.0}, max {lmax:.0}"
+        ));
+        out.push(format!(
+            "autopilot: attribute work buffer builds: {} after the first flight frame, {} at the end",
+            self.builds_first.unwrap_or(0),
+            self.builds_last
+        ));
         out.push(format!(
             "autopilot: attribute pass CPU split: list build p50 {b50:.3} ms, p99 {b99:.3} ms, max {bmax:.3} ms; pass recording p50 {e50:.3} ms, p99 {e99:.3} ms, max {emax:.3} ms"
         ));
@@ -1805,6 +1853,7 @@ impl Run {
             attr_timer,
             hud: HudOverlay::new(&gpu.device, gpu.surface_format, HUD_SCALE),
             hud_timer: PassTimer::new(&gpu.device, &gpu.queue),
+            attr_call_ms: Vec::new(),
         };
         if gfx.mirror.surface_attrs() {
             println!("{}", attr_line("initial fill", gfx.timed_attrs(gpu)));
@@ -1866,6 +1915,7 @@ impl Run {
             MirrorConfig {
                 sync_budget_bytes: self.args.sync_budget,
                 record_chunks: Some(flythrough::stream_record_chunks(self.args.residency)),
+                attr_cap: ATTR_CAP,
                 ..MirrorConfig::new(Window::Follow {
                     side: flythrough::window_side(self.args.residency),
                 })
@@ -2484,6 +2534,9 @@ impl Run {
         // work list is not empty, and the render thread's CPU time building the list and
         // recording the pass.
         let attr_timer = gfx.attr_timer.as_ref().filter(|_| flying);
+        // The age is read before the call takes from the queue: how long the oldest waiting
+        // brick has read face mode when this frame starts.
+        let attr_age_ms = stamp_attr_call(&gfx.mirror, &mut gfx.attr_call_ms, ms_since(self.start));
         let t_attr = now();
         let attr_stats = gfx.mirror.prepare_attrs();
         let attr_build_ms = ms_since(t_attr);
@@ -2543,8 +2596,16 @@ impl Run {
             && gfx.mirror.surface_attrs()
             && let Some(p) = self.pilot.as_mut()
         {
-            p.attr
-                .push(attr_stats, attr_build_ms, attr_encode_ms, attr_gpu_ms);
+            p.attr.push(
+                attr_stats,
+                attr_build_ms,
+                attr_encode_ms,
+                attr_gpu_ms,
+                attr_age_ms,
+            );
+            let builds = gfx.mirror.attr_buffer_builds();
+            p.attr.builds_first.get_or_insert(builds);
+            p.attr.builds_last = builds;
         }
         if let Some(s) = self.samples.as_mut() {
             s.cpu_ms.push(cpu_ms);

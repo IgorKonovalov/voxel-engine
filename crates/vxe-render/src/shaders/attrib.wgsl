@@ -11,7 +11,9 @@
 //   5  storage  chunk_records  as in march.wgsl
 //   6  storage  chunk_table    as in march.wgsl
 //   7  storage  attrib_work    [n][4 x u32]: brick slot (in an attribute page), brick origin
-//                              in voxels (x, y, z as i32 bits)
+//                              in voxels (x, y, z as i32 bits). Bit 31 of the slot word
+//                              marks a clear item: the brick's attribute is written all
+//                              "no plane" and nothing is computed
 //
 // The attribute of brick slot s in attribute page p = s - s % 4096 lives in the two slots
 // p + 1364 + 2 (s - p) and the one after: 512 u16, two per word, x fastest. A voxel's u16 is
@@ -59,6 +61,8 @@ const ENTRY_WORD: u32 = 16u;
 const PAGE_SLOTS: u32 = 4096u;
 const ATTR_PAGE_BRICK_SLOTS: u32 = 1364u;
 const NO_PLANE: u32 = 0xFFFFu;
+// Bit 31 of a work item's slot word: a clear item (`attrib::CLEAR_BIT`).
+const CLEAR_BIT: u32 = 0x80000000u;
 // Invocations per workgroup, one per pool word of a brick's attribute; must match
 // `attrib::WORKGROUP`.
 const WORKGROUP: u32 = 256u;
@@ -190,20 +194,27 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
         return;
     }
     let w = attrib_work[item];
-    let slot = w.x;
+    let clear = (w.x & CLEAR_BIT) != 0u;
+    let slot = w.x & ~CLEAR_BIT;
     let origin = bitcast<vec3<i32>>(w.yzw);
-    for (var j = li; j < BOX * BOX * BOX; j += WORKGROUP) {
-        let c = vec3<i32>(i32(j % BOX), i32((j / BOX) % BOX), i32(j / (BOX * BOX)));
-        occ[j] = select(0u, 1u, solid(origin + c - vec3<i32>(1)));
+    // A clear item skips the fill but not the barrier, which stays in uniform control flow.
+    if (!clear) {
+        for (var j = li; j < BOX * BOX * BOX; j += WORKGROUP) {
+            let c = vec3<i32>(i32(j % BOX), i32((j / BOX) % BOX), i32(j / (BOX * BOX)));
+            occ[j] = select(0u, 1u, solid(origin + c - vec3<i32>(1)));
+        }
     }
     workgroupBarrier();
     let page = slot - slot % PAGE_SLOTS;
     let attr_slot = page + ATTR_PAGE_BRICK_SLOTS + 2u * (slot - page);
-    var packed = 0u;
-    for (var h = 0u; h < 2u; h++) {
-        let i = 2u * li + h;
-        let l = vec3<i32>(i32(i % 8u), i32((i / 8u) % 8u), i32(i / 64u));
-        packed |= voxel_attr(l + vec3<i32>(1)) << (16u * h);
+    var packed = NO_PLANE | (NO_PLANE << 16u);
+    if (!clear) {
+        packed = 0u;
+        for (var h = 0u; h < 2u; h++) {
+            let i = 2u * li + h;
+            let l = vec3<i32>(i32(i % 8u), i32((i / 8u) % 8u), i32(i / 64u));
+            packed |= voxel_attr(l + vec3<i32>(1)) << (16u * h);
+        }
     }
     store_pool_word(attr_slot, li, packed);
 }

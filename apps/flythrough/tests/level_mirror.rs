@@ -106,6 +106,7 @@ fn every_budgeted_sync_writes_at_most_the_budget_plus_one_chunk() {
             max_shard_slots: None,
             budget_bytes: LEVEL_BUDGET,
             record_chunks: None,
+            attr_cap: usize::MAX,
         },
     );
     gpu.set_focus(source.spawn());
