@@ -6,12 +6,20 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
-## [0.16.0] - 2026-10-20
+## [0.17.0] - 2026-10-20
 
 Plan 0017 (a minor bump: public API added and changed; ADR-0013 accepted, superseding in part ADR-0004's growth Outcome). The mirror reserves its pool shards, masks and records once at creation from `MirrorConfig::budget_bytes` (default `DEFAULT_BUDGET_BYTES`, 3 GiB) and `MirrorConfig::record_chunks`, split by `ShardLayout::with_budget`, and never creates or copies a buffer again (`SyncStats::buffers_created` and `copies` read 0). An empty pool page serves either kind, plain or attribute. `GpuWorld::pressure` is the larger of pool-slot and record occupancy; the fly-through lowers `r_full` a chunk after 30 frames above `PRESSURE_HIGH` (0.9) and restores it after 300 under `PRESSURE_LOW` (0.7), through the new `Streamer::set_radii`. Added: `budget_for`, `PAGE_BYTES`, `PLACEHOLDER_BYTES`, `ShardLayout::reserved_slots`, `reserved_records` and `reserved_bytes`, `GpuWorld::reserved_slots`, `reserved_records`, `pages_issued`, `free_pages`, `spare_slots`, `MirrorError::RecordsTooLarge`, `SyncStats::deferred_chunks`, `vxe_world::chunks_in_ball`; the fly-through's `--mirror-budget` and `--residency` and a HUD pressure row.
 
 - **Changed meaning: `GpuWorld::allocated_bytes()`** is the reservation (the budget rounded down to whole pages and records), fixed from creation, not bytes grown on demand. The `nfr.md` §3 line is now read on live bytes (`mirror_bytes`) against it.
 - **Changed contract: `GpuWorld::sync`** writes the nearest pending chunks that fit the reservation, each whole, and defers the rest, which stay pending with their dirty bits (`SyncStats::deferred_chunks`). A chunk is never written in part. A demotion to LOD-only is never blocked by an earlier deferral. A sync that would write nothing returns `PoolTooLarge` or `RecordsTooLarge` and writes nothing, the material rows and queued table changes included; before, a sync past the pool grew it.
+
+## [0.16.0] - 2026-10-20
+
+Plan 0019 (a minor bump: public API added and changed). `vxe-world` holds `WorldLimits` per world (`World::limits`, `World::with_limits`) and refuses an out-of-range shape, ray, box query, drop or removal with `EditError::OutOfRange { what: Field }` (wire error tag 2) before any arithmetic, changing nothing: coordinates and radii within 2^30 fixed units, a capsule's axis within 2^30, an edit's bounds within 1 024 voxels per axis, a ray's reach within 2^22 fixed units per axis, a box query within 1 024 voxels per axis and 2^30 voxels, a region list within 4 096 cells. `World::raycast`, `count_in_box` and `count_in_box_with_stats` return `Result`; `World::raycast_with_stats` and `find_unsupported_with_stats` report their steps. The `wasmtime` host charges each import's work to the tick's fuel at `WorkRates` on `WasmConfig` (per call, per voxel, per step, per argument byte, the bytes before any host work), so a greedy query ends the tick on fuel; `WasmLogic::fuel_left`; `Host::raycast_with_steps` and `Host::unsupported_with_steps` (provided); `vxe_net::max_changed_cells` caps the server's support query. ADR-0010 Outcome addendum.
+
+## [0.15.0] - 2026-10-20
+
+Plan 0018 (a minor bump: public API added and changed). Stamp, drop and remove are op kinds 2 to 4 (`Op::{Stamp, Drop, Remove}`, no longer `Copy`) with wire encodings, applied through `Server::submit`, `Host::apply(Op)` and the WIT `apply`, logged, and announced as `OpResult::{Edit, Drop, Remove}`, which the owned client checks. A stamp names its prefab by content id in a `PrefabRegistry` (ADR-0014). `LOG_FORMAT` 2 carries the stamped prefabs in the save's header, verified on decode (`WireError::PrefabMismatch`), and format 1 still reads. `EditError::UnknownPrefab` takes wire error tag 3. The server keeps a `CoarseGrid` current after every applied op and answers `Host::unsupported` (a WIT import too), configured by `Server::set_support`. The fly-through's `P` stamp and collapse run in `DigLogic` (`DigInput::{Stamp, Crumble}`), and `--save`/`--replay` no longer refuse them or `--vault`.
 
 ## [0.14.0] - 2026-10-19
 

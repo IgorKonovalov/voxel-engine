@@ -1,8 +1,11 @@
 //! Edit shapes in fixed point and their integer inside tests.
 //!
 //! A voxel is inside a shape when its fixed-point centre is. Sphere and box compare squared
-//! distances in `i64`; the capsule multiplies two squared lengths and works in `i128`. Both
-//! stay exact for coordinates within ±2^30 fixed-point units (±4 M voxels) of each other.
+//! distances in `i64`; the capsule multiplies two squared lengths and works in `i128`. Sphere
+//! and box are exact for coordinates and radii within `±coord_max` of
+//! [`WorldLimits`](crate::WorldLimits); the capsule also needs each axis of `b - a` within
+//! `capsule_axis_max`. Both hold for points within the shape's voxel bounds; `contains` on a
+//! point far outside them is not covered. [`Shape::check`] enforces the range.
 
 use crate::fixed::{Fixed3, centre, first_centre_at_or_above, last_centre_at_or_below};
 

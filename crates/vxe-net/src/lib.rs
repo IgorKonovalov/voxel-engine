@@ -24,7 +24,7 @@
 //! server.submit(EditOp::sphere(centre_of_voxel([0, 0, 0]), 2 * FIXED_ONE, Mode::Carve));
 //! server.tick();
 //! let events = client.poll();
-//! assert!(matches!(&events[..], [Event::Applied { seq: 0, result, .. }] if result.changed_from == [(rock, 33)]));
+//! assert!(matches!(&events[..], [Event::Applied { seq: 0, result: OpResult::Edit(r), .. }] if r.changed_from == [(rock, 33)]));
 //! ```
 
 mod channel;
@@ -37,6 +37,6 @@ pub mod test_logic;
 
 pub use channel::{Channel, Endpoint, MemChannel};
 pub use client::{Client, ClientWorld, Event};
-pub use logic::{ClientInput, Host, Logic, LogicError, NoLogic, TickOutput};
+pub use logic::{ClientInput, Host, Logic, LogicError, NoLogic, TickOutput, cells_in};
 pub use message::{MSG_APPLIED, MSG_EVENT, MSG_INPUT, MSG_REFUSED, Message};
-pub use server::{Server, TickReport};
+pub use server::{DEFAULT_SUPPORT, Server, TickReport, max_changed_cells};

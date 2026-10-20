@@ -247,7 +247,7 @@ sync with no radius change; the 14/22 deferrals came at 0.855 to 0.944, after th
 13 (tick 796, first deferral at tick 807). Two of the four runs deferred nothing. A recorded
 finding, not a miss of the line: live bytes peak at 2.96 GB under 3 GB. At 52cf84d, before the
 per-chunk check, the same runs read longest streaks of 1, 3, 2 and 6 syncs. These readings stand
-at the close tip (16e17a7, v0.16.0): the later fixes change only the wide path (more than 256
+at the close tip (16e17a7, v0.17.0): the later fixes change only the wide path (more than 256
 materials) and syncs that write nothing, neither of which these runs reach. Deferring under
 the 0.9 trigger with attribute pages is page fragmentation, Plan 0017's open followup.
 
@@ -327,9 +327,15 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   fly-through, the query after a 0.5 m dig on the seed-1 level reads 492 to 619 µs over six
   digs (release build, 25b483d; no proposal). Every reading is under its proposal; the
   proposals stand as budgets.
-- **Logs (Plan 0007):** an op log entry is 47 bytes for a sphere carve (65 for a box fill, 75
-  for a capsule replace), a boundary entry 13, an input entry 14 bytes plus its payload; a log
-  file adds a 60-byte header.
+- **Logs (Plan 0007, Plan 0018):** an op log entry is 47 bytes for a sphere carve (65 for a box
+  fill, 75 for a capsule replace), 34 for a stamp (whatever the prefab's size: it names the
+  prefab by content id, ADR-0014), `21 + 12n` for a drop of `n` cells and `31 + 12n` for a
+  removal (49 173 bytes for a 4 096-cell drop); a boundary entry 13, an input entry 14 bytes
+  plus its payload. A log file adds a header of 60 fixed bytes, a 4-byte prefab count, and
+  per prefab its stamps name an 8-byte id and its content (`12 + 2n` bytes for `n` voxels plus
+  8 per 64 voxels of mask: 8 716 for the 16³ vault), once per prefab however often it is
+  stamped. A falling region re-sends its cells every tick it drops (129 bytes a tick for a
+  9-cell slab). All asserted in `crates/vxe-world/tests/log.rs`.
 - **Replay throughput:** no budget; a reading only, bound by the edit cost above (the ops
   dominate, not the decode). **Reading (dev reference, AMD Ryzen 9 5900HS, Plan
   0007 Phase 6, exclusive perf lock, 1-minute load 1.45):** `cargo bench -p vxe-world --bench
@@ -342,15 +348,43 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   1-minute load 1.66):** `cargo bench -p vxe-net --bench tick`: 3.4706 ms (CI 3.4663 to
   3.4756 ms) through `EchoLogic` against 3.3859 ms (CI 3.3782 to 3.3990 ms) direct, an
   overhead of 84.7 µs per 100 inputs.
+  **Reading with the server's coarse grid (dev reference, AMD Ryzen 9 5900HS, Linux, Plan
+  0018 Phase 5, a9014d0 plus the phase's bench arm, exclusive perf lock but not quiet: other
+  worktrees building and testing, 1-minute load 14.46 falling to 6.50):** the server now
+  updates its coarse grid after every applied op, which is edit work, so the overhead is read
+  against the direct carves each followed by the same grid update. Three rounds, arms
+  alternated, criterion medians: through `EchoLogic` 4.3895, 3.9923 and 3.8381 ms; direct
+  carves with grid updates 4.3400, 3.9843 and 4.0753 ms; direct carves alone 2.8636, 2.4967
+  and 2.8504 ms. Overhead per 100 inputs: 49.5 µs, 8.0 µs and -237.2 µs (the last round's
+  noise exceeds the difference). Under the 100 µs line in every round; the readings are noisy
+  and want a quiet-box re-read.
+  **Close-review re-read (Plan 0018, c1ea275, same machine, exclusive perf lock, still not
+  quiet: 1-minute load 20.82 at the start and 13.60 at the end):** one round, through
+  `EchoLogic` 3.7783 ms (CI 3.7630 to 3.7943 ms), direct carves with grid updates 3.7716 ms (CI
+  3.7528 to 3.7914 ms), direct carves alone 2.4188 ms. The overhead is 6.7 µs per 100 inputs,
+  inside the overlapping intervals and consistent with the line. A quiet-box reading is still
+  owed.
 - **Component boundary (budgets since the Plan 0011 close):** a host call from a logic
   component (the `apply` import of a radius-1 m carve: the op's wire bytes out, the tagged
   answer back) costs at most 2 µs more than a native `Host::apply`; the fly-through's `Bench`
   tick (100 carves) through the component costs under 2× native `DigLogic`. The per-call
   proposal was 1 µs, and the readings below missed it at 1.37 to 1.42 µs; the 2 µs budget was
   adopted at the close (an orchestrator call, overturnable by the owner). The empty component
-  tick (1.1 to 1.25 µs) is a reading, not a budget. Host-call work (the query or edit the host
-  runs for the guest) is not metered by fuel, and a cheap query's per-call cost is not read
-  yet; both are Plan 0011 follow-ups.
+  tick (1.1 to 1.25 µs) is a reading, not a budget. Host-call work is charged to fuel at the
+  configured rates (Plan 0019): before any host work, `apply` and `unsupported` are charged
+  `WorkRates::per_byte` (default 1) for each byte of their list argument (the op bytes; 12 per
+  changed cell); after each import returns, the tick's fuel loses `per_call` (100), plus
+  `per_voxel` (10) for each voxel an `apply`'s op bounds hold and 64 per chunk it touched,
+  `per_step` (10) for each step of a `raycast`'s walk and for each cell the `unsupported`
+  query looked at, and `per_voxel` for each voxel a `count_in_box` counted. A refused or
+  undecodable call is charged its bytes and `per_call` only, and a charge past the fuel left
+  is the same `Fuel` failure as an instruction overrun. The server's support query reads a
+  `changed` list longer than one in-range edit can change (`(edit_axis_max / 8 + 1)^3`,
+  2 146 689 cells at the defaults) as no regions. **Asserted:** a `count_in_box` over
+  `1 024^3` resident voxels (`10 x 2^30` fuel) fails the tick on fuel at the default `10^10`;
+  100 rays of `max_t = 2^22` through an empty world are charged exactly `100 x (100 + 10 s)`;
+  an undecodable 4 096-byte `apply` costs `100 + 4 096`; `unsupported` over `K` cells costs
+  `100 + 12 K + 10 s`. A cheap query's per-call cost is not read yet.
   **Readings (dev reference, AMD Ryzen 9 5900HS, Linux, `wasmtime` 49.0.3, Plan 0011 Phase 4
   at 07a3be1 (70b40ec plus the bench), exclusive perf lock, 1-minute load 1.87 before and 1.66
   after two runs):** `cargo bench -p vxe-script-wasm --bench boundary`, each tick on a fresh
@@ -369,6 +403,32 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   a median of 26.9 and 29.3 µs over 50 restarts each (min 24.5, max 109.0 µs): a one-off
   release-build timing loop, not a committed bench, AMD Ryzen 9 5900HS, Linux, not quiet
   (load average 7.4 to 9.4), at 1d1b3aa plus Phase 2's working tree.
+  **Re-read with host-call charging (Plan 0019 Phase 2, AMD Ryzen 9 5900HS, Linux, `wasmtime`
+  49.0.3, exclusive perf lock, not quiet), paired with its parent:** parent c04bfd1 (1-minute
+  load 3.94 to 4.66): 100 carves through the echo component 2.4928 ms against native
+  `EchoLogic` 2.3589 ms, 1.339 µs per host call, empty component tick 1.092 µs, `Bench`
+  1.028×. With charging, 3445f30 (load 7.15 to 4.58): 2.4593 ms against 2.3306 ms, 1.287 µs
+  per host call, empty tick 0.974 µs, `Bench` 2.5510 against 2.4014 ms, 1.062×. The 2 µs
+  line holds; the charge's fuel read and write is inside the run-to-run noise.
+  **Re-read with the per-byte charge (Plan 0019 close review, AMD Ryzen 9 5900HS, Linux,
+  exclusive perf lock, not quiet, paired):** parent 40d2b91 (1-minute load 8.17 to 8.26):
+  2.5902 ms against native 2.5167 ms, 0.74 µs per host call, empty tick 1.269 µs, `Bench`
+  2.9585 against 2.5515 ms, 1.160×. With `per_byte`, adfca8b (load 8.26 to 6.79): 2.7319 ms
+  against 2.7332 ms, under 0.1 µs per host call (the native arm read slower than the
+  component), empty tick 1.463 µs, `Bench` 2.6337 against 2.5813 ms, 1.020×. The load moved
+  the native arm by 0.22 ms between runs, more than the whole host-call cost, so this pair
+  resolves no difference the per-byte charge makes; the 2 µs line and the 2× `Bench` line hold
+  in both. A quiet-box pair is still owed.
+- **Parameter range (Plan 0019):** every edit, ray, box query and region op is checked
+  against the world's `WorldLimits` before any arithmetic and refused with
+  `EditError::OutOfRange` outside it, changing nothing. Defaults: coordinates and radii within
+  `±2^30` fixed units (±4 M voxels); a capsule's `b - a` within `2^30` per axis (the bound
+  that keeps its `i128` products exact); an edit's voxel bounds at most 1 024 per axis (at
+  most 4 913 chunk coordinates walked); a ray's reach `|dir[k]| x max_t / 256` at most `2^22`
+  fixed units per axis (at most 258 cell steps along an axis through empty chunks, 772 on a
+  diagonal); a box query at most 1 024 voxels per axis and `2^30` voxels; a drop or removal
+  at most 4 096 cells. A world built `with_limits` takes its own; a server and an owned client
+  hold the same limits or refuse different ops.
 - **Determinism:** the same op list on the same seed yields bit-identical voxels and results on
   Linux and Windows. CI asserts a fixed vector's hash on both arms. **Asserted:**
   `determinism_vector` passed on the Linux and Windows CI arms at 9565c5a and 1d61aba
@@ -509,6 +569,13 @@ criterion median (low, high), exclusive perf lock, load average 1.7 to 2.3 at ea
   1.3544 ms (1.3528, 1.3560), **13.5 µs per update**. **Walkable update** from those changes:
   807.17 µs (805.83, 808.64), **8.1 µs per update**. Both under their lines. Plan 0003's
   `mixed` world was not on the branch; the bench runs on the solid world.
+- **Coarse grid update on the server path (Plan 0018 Phase 5):** the server updates its grid
+  over each applied op's aabb, in op order on the server thread. `cargo bench -p vxe-net
+  --bench tick` (100 radius-1 m carves on `solid3_world()` each followed by
+  `CoarseGrid::update_aabb`, against the carves alone), AMD Ryzen 9 5900HS, Linux, a9014d0
+  plus the phase's bench arm, exclusive perf lock, not quiet (1-minute load 14.46 falling to
+  6.50), three alternated rounds: 1.4764, 1.4876 and 1.2249 ms per 100, **12.2 to 14.9 µs per
+  update**, under the 50 µs line and beside the 13.5 µs above.
 - **Coarse grid RAM:** 6 553 600 B at the level (3200 chunks, `flythrough --level --seed 1`,
   fe50d6d). At 32 × 32 × 32 chunks it is 67 108 864 B by the same 2048 B per chunk
   (arithmetic, not read). Grid build at the level, one thread (`world_budget --chunks 20x20x8

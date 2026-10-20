@@ -1,6 +1,6 @@
 # 0017: The mirror reserves its budget: fixed buffers, empty pages that change kind, and a pressure signal the streamer follows
 
-> **Status:** done (closed 2026-10-20, v0.16.0, fourth review at 16e17a7: the per-chunk admit check is exact for every need it admits; the reservation, page kinds and pressure rule land as planned)
+> **Status:** done (closed 2026-10-20, v0.17.0, fourth review at 16e17a7: the per-chunk admit check is exact for every need it admits; the reservation, page kinds and pressure rule land as planned)
 > **Created:** 2026-10-17
 > **Milestone:** M2 in `docs/roadmap.md` (the footprint work that lets Plan 0013's radius be chosen against content)
 > **Related ADRs:** [ADR-0013](../../adrs/0013-mirror-reserves-its-vram-budget-up-front.md)

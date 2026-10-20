@@ -29,14 +29,44 @@ fn capsule_replace() -> EditOp {
 }
 
 fn entry_bytes(tick: u64, seq: u32, op: EditOp) -> Vec<u8> {
+    op_entry_bytes(tick, seq, Op::Edit(op))
+}
+
+fn op_entry_bytes(tick: u64, seq: u32, op: Op) -> Vec<u8> {
     let mut out = Vec::new();
-    LogEntry::Op {
-        tick,
-        seq,
-        op: Op::Edit(op),
-    }
-    .encode(&mut out);
+    LogEntry::Op { tick, seq, op }.encode(&mut out);
     out
+}
+
+/// `n` distinct cells, x fastest over a 16-wide slab.
+fn cells(n: usize) -> Vec<CellCoord> {
+    (0..n as i32)
+        .map(|i| CellCoord([i % 16 - 8, (i / 16) % 16 - 8, i / 256 - 3]))
+        .collect()
+}
+
+fn stamp_op(prefab: u64) -> Op {
+    Op::Stamp {
+        prefab,
+        origin: VoxelCoord([32, -32, 7]),
+        rot: Rot::from_index(5).unwrap(),
+    }
+}
+
+fn drop_op(n: usize) -> Op {
+    Op::Drop {
+        cells: cells(n),
+        max_drop: 8,
+    }
+}
+
+fn remove_op(n: usize) -> Op {
+    Op::Remove {
+        cells: cells(n),
+        rubble: 4,
+        fraction: (1, 4),
+        max_depth: 64,
+    }
 }
 
 #[test]
@@ -45,6 +75,15 @@ fn entry_sizes_are_the_documented_ones() {
     assert_eq!(entry_bytes(0, 0, sphere_carve()).len(), 47);
     assert_eq!(entry_bytes(0, 0, box_fill()).len(), 65);
     assert_eq!(entry_bytes(0, 0, capsule_replace()).len(), 75);
+    // tick 8 + seq 4 + kind 1 + id 8 + origin 12 + rotation 1.
+    assert_eq!(op_entry_bytes(0, 0, stamp_op(7)).len(), 34);
+    for n in [0usize, 1, 9, 4096] {
+        // + kind 1 + max_drop 4 + count 4 + cells.
+        assert_eq!(op_entry_bytes(0, 0, drop_op(n)).len(), 21 + 12 * n);
+        // + kind 1 + rubble 2 + fraction 8 + max_depth 4 + count 4 + cells.
+        assert_eq!(op_entry_bytes(0, 0, remove_op(n)).len(), 31 + 12 * n);
+    }
+    assert_eq!(op_entry_bytes(0, 0, drop_op(4096)).len(), 49_173);
     for n in [0usize, 1, 7, 300] {
         let mut out = Vec::new();
         InputEntry {
@@ -75,6 +114,25 @@ fn entry_bytes_are_little_endian_fields_in_order() {
     let b = entry_bytes(1, 2, capsule_replace());
     assert_eq!(&b[13..19], &[MODE_REPLACE, 3, 0, 5, 0, SHAPE_CAPSULE]);
 
+    let b = op_entry_bytes(1, 2, stamp_op(0x0102_0304_0506_0708));
+    assert_eq!(b[12], OP_STAMP);
+    assert_eq!(&b[13..21], &0x0102_0304_0506_0708u64.to_le_bytes());
+    assert_eq!(&b[21..25], &32i32.to_le_bytes());
+    assert_eq!(&b[25..29], &(-32i32).to_le_bytes());
+    assert_eq!(&b[29..33], &7i32.to_le_bytes());
+    assert_eq!(b[33], 5);
+    let b = op_entry_bytes(1, 2, drop_op(2));
+    assert_eq!(b[12], OP_DROP);
+    assert_eq!(&b[13..17], &8i32.to_le_bytes());
+    assert_eq!(&b[17..21], &2u32.to_le_bytes());
+    assert_eq!(&b[21..25], &(-8i32).to_le_bytes());
+    let b = op_entry_bytes(1, 2, remove_op(1));
+    assert_eq!(b[12], OP_REMOVE);
+    assert_eq!(&b[13..15], &4u16.to_le_bytes());
+    assert_eq!(&b[15..23], &[1, 0, 0, 0, 4, 0, 0, 0]);
+    assert_eq!(&b[23..27], &64i32.to_le_bytes());
+    assert_eq!(&b[27..31], &1u32.to_le_bytes());
+
     let mut b = Vec::new();
     InputEntry {
         tick: 7,
@@ -88,8 +146,8 @@ fn entry_bytes_are_little_endian_fields_in_order() {
     );
 }
 
-/// One value of every tag: each mode on each shape, a result with and without an aabb, and
-/// the error.
+/// One value of every tag: each mode on each shape, a stamp at each rotation index, a drop
+/// and a removal (one of 4 096 cells), each op result kind, and each error.
 #[test]
 fn every_tag_round_trips() {
     let modes = [
@@ -147,12 +205,137 @@ fn every_tag_round_trips() {
         assert!(r.is_empty());
     }
 
+    let mut ops: Vec<Op> = (0..24)
+        .map(|i| Op::Stamp {
+            prefab: u64::MAX - i,
+            origin: VoxelCoord([i32::MIN, i32::MAX, -(i as i32)]),
+            rot: Rot::from_index(i as u8).unwrap(),
+        })
+        .collect();
+    ops.extend([drop_op(0), drop_op(4096), remove_op(0), remove_op(4096)]);
+    ops.push(Op::Drop {
+        cells: cells(3),
+        max_drop: i32::MIN,
+    });
+    ops.push(Op::Remove {
+        cells: cells(5),
+        rubble: u16::MAX,
+        fraction: (u32::MAX, 0),
+        max_depth: -1,
+    });
+    for op in ops {
+        let mut out = Vec::new();
+        encode_op(&mut out, &op);
+        let mut r = Reader::new(&out);
+        assert_eq!(decode_op(&mut r), Ok(op));
+        assert!(r.is_empty());
+    }
+    assert_eq!(Rot::from_index(23).map(Rot::index), Some(23));
+    assert_eq!(Rot::from_index(24), None);
+    // A rotation index past 23 is an unknown tag.
+    let mut out = Vec::new();
+    encode_op(&mut out, &stamp_op(1));
+    *out.last_mut().unwrap() = 24;
+    assert_eq!(
+        decode_op(&mut Reader::new(&out)),
+        Err(WireError::UnknownKind(24))
+    );
+    // A cell count past the bytes is truncated, not allocated.
+    let mut out = Vec::new();
+    encode_op(&mut out, &drop_op(1));
+    out[5..9].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert_eq!(
+        decode_op(&mut Reader::new(&out)),
+        Err(WireError::Truncated { at: 0 })
+    );
+
+    let extent = (
+        vec![ChunkCoord([-1, 0, 2])],
+        Some((VoxelCoord([-10, -9, -8]), VoxelCoord([10, 9, 8]))),
+    );
+    let op_results = [
+        OpResult::Edit(EditResult::default()),
+        OpResult::Edit(EditResult {
+            changed_from: vec![(3, 4169)],
+            touched: extent.0.clone(),
+            aabb: extent.1,
+        }),
+        OpResult::Drop(DropResult::default()),
+        OpResult::Drop(DropResult {
+            moved: vec![(1, 4608), (65535, 1)],
+            dropped: 8,
+            touched: extent.0.clone(),
+            aabb: extent.1,
+        }),
+        OpResult::Remove(RemoveResult::default()),
+        OpResult::Remove(RemoveResult {
+            removed: vec![(1, 4608)],
+            placed: 1152,
+            touched: extent.0.clone(),
+            aabb: extent.1,
+        }),
+    ];
+    let kinds = [OP_EDIT, OP_EDIT, OP_DROP, OP_DROP, OP_REMOVE, OP_REMOVE];
+    for (res, kind) in op_results.into_iter().zip(kinds) {
+        let mut out = Vec::new();
+        encode_op_result(&mut out, &res);
+        assert_eq!(out[0], kind);
+        let mut r = Reader::new(&out);
+        assert_eq!(decode_op_result(&mut r), Ok(res));
+        assert!(r.is_empty());
+    }
+    assert_eq!(
+        decode_op_result(&mut Reader::new(&[2])),
+        Err(WireError::UnknownKind(2))
+    );
+
     let err = EditError::NotResident(ChunkCoord([4, -1, 1]));
     let mut out = Vec::new();
     encode_error(&mut out, &err);
     assert_eq!(out[0], ERROR_NOT_RESIDENT);
     assert_eq!(out.len(), 13);
     assert_eq!(decode_error(&mut Reader::new(&out)), Ok(err));
+
+    let err = EditError::UnknownPrefab(0xDEAD_BEEF_0000_0001);
+    let mut out = Vec::new();
+    encode_error(&mut out, &err);
+    assert_eq!(out[0], ERROR_UNKNOWN_PREFAB);
+    assert_eq!(ERROR_UNKNOWN_PREFAB, 3);
+    assert_eq!(out.len(), 9);
+    assert_eq!(decode_error(&mut Reader::new(&out)), Ok(err));
+    for (i, what) in Field::ALL.into_iter().enumerate() {
+        let err = EditError::OutOfRange { what };
+        let mut out = Vec::new();
+        encode_error(&mut out, &err);
+        assert_eq!(out, [ERROR_OUT_OF_RANGE, i as u8 + 1]);
+        assert_eq!(decode_error(&mut Reader::new(&out)), Ok(err));
+    }
+    assert_eq!(ERROR_OUT_OF_RANGE, 2);
+    assert_eq!(
+        Field::ALL,
+        [
+            Field::Coord,
+            Field::Radius,
+            Field::CapsuleLength,
+            Field::EditExtent,
+            Field::RayLength,
+            Field::QueryAxis,
+            Field::QueryVolume,
+            Field::RegionCells,
+        ]
+    );
+    assert_eq!(
+        decode_error(&mut Reader::new(&[2, 0])),
+        Err(WireError::UnknownKind(0))
+    );
+    assert_eq!(
+        decode_error(&mut Reader::new(&[2, 9])),
+        Err(WireError::UnknownKind(9))
+    );
+    assert_eq!(
+        decode_error(&mut Reader::new(&[4, 0, 0, 0, 0])),
+        Err(WireError::UnknownKind(4))
+    );
 }
 
 fn three_entry_log() -> OpLog {
@@ -242,10 +425,11 @@ fn a_boundary_entry_is_13_bytes_and_round_trips() {
         extent: ChunkExtent::new([0, 0, 0], [1, 1, 1]),
         ops: log,
         inputs: InputLog::new(),
+        prefabs: PrefabRegistry::new(),
     };
     let mut bytes = Vec::new();
     f.write_to(&mut bytes).unwrap();
-    assert_eq!(bytes.len(), 60 + 47 + 65 + 13 + 75);
+    assert_eq!(bytes.len(), 64 + 47 + 65 + 13 + 75);
     assert_eq!(&bytes[44..52], &4u64.to_le_bytes());
     assert_eq!(LogFile::read_from(&mut bytes.as_slice()), Ok(f));
 }
@@ -258,7 +442,11 @@ fn replay_skips_boundaries() {
         .map(|op| direct.apply(op))
         .collect();
     let world = solid3_world();
-    let results = world.replay(&log_with_boundary());
+    let results = world.replay(&log_with_boundary(), &PrefabRegistry::new());
+    let results: Vec<_> = results
+        .into_iter()
+        .map(|r| r.map(|r| r.edit_result()))
+        .collect();
     assert_eq!(results, expected);
     assert_eq!(world_hash(&world), world_hash(&direct));
 }
@@ -280,7 +468,8 @@ fn record_refuses_a_seq_out_of_order() {
 }
 
 /// Bytes whose seqs do not strictly ascend decode to `OutOfOrder` at the offending entry's
-/// offset, through an op log and through a log file (offsets there count the 60-byte header),
+/// offset, through an op log and through a log file (offsets there count the 64-byte header
+/// with its empty prefab table),
 /// instead of reaching `record`'s panic.
 #[test]
 fn seqs_that_do_not_ascend_are_out_of_order() {
@@ -300,14 +489,15 @@ fn seqs_that_do_not_ascend_are_out_of_order() {
             extent: ChunkExtent::new([0, 0, 0], [1, 1, 1]),
             ops: OpLog::new(),
             inputs: InputLog::new(),
+            prefabs: PrefabRegistry::new(),
         }
         .encode();
-        assert_eq!(bytes.len(), 60);
+        assert_eq!(bytes.len(), 64);
         bytes[44..52].copy_from_slice(&2u64.to_le_bytes());
         bytes.extend(&ops);
         assert_eq!(
             LogFile::decode(&bytes),
-            Err(WireError::OutOfOrder { at: 60 + 47 }),
+            Err(WireError::OutOfOrder { at: 64 + 47 }),
             "file, seqs 5, {second}"
         );
     }
@@ -338,13 +528,7 @@ fn a_cut_inside_an_entry_is_truncated_at_that_entry() {
 #[test]
 fn an_unknown_op_kind_is_reported() {
     let mut bytes = three_entry_log().encode();
-    for k in [
-        0u8,
-        OP_RESERVED_STAMP,
-        OP_RESERVED_DROP,
-        OP_RESERVED_REMOVE,
-        200,
-    ] {
+    for k in [0u8, 5, KIND_BOUNDARY - 1, 200] {
         bytes[47 + 12] = k;
         assert_eq!(OpLog::decode(&bytes), Err(WireError::UnknownKind(k)));
     }
@@ -385,24 +569,138 @@ fn file() -> LogFile {
         extent: ChunkExtent::new([-2, -1, 0], [3, 4, 5]),
         ops: three_entry_log(),
         inputs,
+        prefabs: PrefabRegistry::new(),
     }
 }
 
 #[test]
-fn a_log_file_round_trips_with_a_60_byte_header() {
+fn a_log_file_round_trips_with_a_64_byte_header() {
     let f = file();
     let mut bytes = Vec::new();
     f.write_to(&mut bytes).unwrap();
-    assert_eq!(bytes.len(), 60 + 47 + 65 + 75 + 17);
+    assert_eq!(f.header_len(), 64);
+    assert_eq!(bytes.len(), 64 + 47 + 65 + 75 + 17);
     assert_eq!(&bytes[0..4], b"VXEL");
-    assert_eq!(&bytes[4..8], &1u32.to_le_bytes());
+    assert_eq!(&bytes[4..8], &2u32.to_le_bytes());
     assert_eq!(&bytes[8..16], &0x5EED_0001u64.to_le_bytes());
     assert_eq!(&bytes[16..20], &1u32.to_le_bytes());
     assert_eq!(&bytes[20..24], &(-2i32).to_le_bytes());
     assert_eq!(&bytes[40..44], &5i32.to_le_bytes());
     assert_eq!(&bytes[44..52], &3u64.to_le_bytes());
     assert_eq!(&bytes[52..60], &1u64.to_le_bytes());
+    assert_eq!(&bytes[60..64], &0u32.to_le_bytes());
     assert_eq!(LogFile::read_from(&mut bytes.as_slice()), Ok(f));
+}
+
+/// A save whose log stamps the 16³ vault: a 34-byte stamp entry, and a header of 60 fixed
+/// bytes, the table's count, the vault's id and its 8 716 bytes of content.
+fn vault_file() -> (LogFile, u64) {
+    let vault = std::sync::Arc::new(Prefab::vault(16, 4));
+    let mut all = PrefabRegistry::new();
+    let id = all.register(vault.clone()).unwrap();
+    // A second registered prefab the log does not name stays out of the table.
+    all.register(std::sync::Arc::new(Prefab::vault(4, 2)))
+        .unwrap();
+    let mut ops = OpLog::new();
+    ops.push(0, sphere_carve());
+    ops.push(1, stamp_op(id));
+    let prefabs = all.subset(ops.prefab_ids());
+    assert_eq!(prefabs.len(), 1);
+    let f = LogFile {
+        seed: 9,
+        source_version: 1,
+        extent: ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        ops,
+        inputs: InputLog::new(),
+        prefabs,
+    };
+    (f, id)
+}
+
+#[test]
+fn a_save_with_a_stamp_carries_its_prefab_in_the_header() {
+    let (f, id) = vault_file();
+    assert_eq!(Prefab::vault(16, 4).encoded_len(), 8_716);
+    let bytes = f.encode();
+    assert_eq!(f.header_len(), 60 + 4 + 8 + 8_716);
+    assert_eq!(bytes.len(), 60 + 4 + 8 + 8_716 + 47 + 34);
+    assert_eq!(&bytes[60..64], &1u32.to_le_bytes());
+    assert_eq!(&bytes[64..72], &id.to_le_bytes());
+    assert_eq!(&bytes[72..76], &16u32.to_le_bytes());
+    let back = LogFile::decode(&bytes).unwrap();
+    assert_eq!(back, f);
+    assert_eq!(back.prefabs.get(id).map(|p| p.id()), Some(id));
+
+    // One byte of the vault's content flipped (a voxel of its surface): refused, naming the
+    // id the table gave it.
+    let mut bad = bytes.clone();
+    bad[72 + 12 + 2 * 100] ^= 1;
+    assert_eq!(LogFile::decode(&bad), Err(WireError::PrefabMismatch { id }));
+    // A mask bit flipped: the voxel it clears changes the content too.
+    let mut bad = bytes.clone();
+    bad[72 + 12 + 2 * 4096] ^= 1;
+    assert_eq!(LogFile::decode(&bad), Err(WireError::PrefabMismatch { id }));
+}
+
+/// A format-1 file (the fixed header, no table) still decodes, with an empty table.
+#[test]
+fn a_format_1_file_still_decodes() {
+    let f = file();
+    let mut bytes = f.encode();
+    bytes[4..8].copy_from_slice(&1u32.to_le_bytes());
+    bytes.drain(60..64);
+    assert_eq!(bytes.len(), 60 + 47 + 65 + 75 + 17);
+    assert_eq!(LogFile::decode(&bytes), Ok(f));
+}
+
+/// Replay resolves a stamp in the table it is given; without the id it is refused, naming the
+/// id, and changes nothing.
+#[test]
+fn replay_resolves_stamps_in_the_table() {
+    let (f, id) = vault_file();
+    let direct = solid3_world();
+    let vault = Prefab::vault(16, 4);
+    let expected = [
+        direct.apply(&sphere_carve()),
+        direct.stamp(
+            &vault,
+            VoxelCoord([32, -32, 7]),
+            Rot::from_index(5).unwrap(),
+        ),
+    ];
+    let world = solid3_world();
+    let results = world.replay(&f.ops, &f.prefabs);
+    assert_eq!(results.len(), 2);
+    for (r, e) in results.iter().zip(&expected) {
+        assert_eq!(&r.clone().map(|r| r.edit_result()), e);
+    }
+    assert_eq!(world_hash(&world), world_hash(&direct));
+
+    let bare = solid3_world();
+    let results = bare.replay(&f.ops, &PrefabRegistry::new());
+    assert_eq!(results[1], Err(EditError::UnknownPrefab(id)));
+    let only_carve = solid3_world();
+    only_carve.apply(&sphere_carve()).unwrap();
+    assert_eq!(world_hash(&bare), world_hash(&only_carve));
+}
+
+/// The registry keeps the first prefab under an id; the same content again is a no-op.
+#[test]
+fn a_registry_refuses_a_second_content_under_one_id_only() {
+    let mut reg = PrefabRegistry::new();
+    let a = std::sync::Arc::new(Prefab::vault(16, 4));
+    let id = reg.register(a.clone()).unwrap();
+    assert_eq!(id, a.id());
+    assert_eq!(
+        reg.register(std::sync::Arc::new(Prefab::vault(16, 4))),
+        Ok(id)
+    );
+    assert_eq!(reg.len(), 1);
+    assert!(reg.contains(id));
+    assert_eq!(
+        PrefabCollision { id }.to_string(),
+        format!("another prefab is registered under id {id:#018x}")
+    );
 }
 
 #[test]
@@ -411,12 +709,14 @@ fn a_log_file_with_a_wrong_header_is_refused() {
     bytes[0] = b'X';
     assert_eq!(LogFile::decode(&bytes), Err(WireError::BadMagic));
 
-    let mut bytes = file().encode();
-    bytes[4..8].copy_from_slice(&2u32.to_le_bytes());
-    assert_eq!(
-        LogFile::decode(&bytes),
-        Err(WireError::UnsupportedFormat(2))
-    );
+    for format in [0u32, 3] {
+        let mut bytes = file().encode();
+        bytes[4..8].copy_from_slice(&format.to_le_bytes());
+        assert_eq!(
+            LogFile::decode(&bytes),
+            Err(WireError::UnsupportedFormat(format))
+        );
+    }
 
     let bytes = file().encode();
     assert_eq!(
@@ -426,7 +726,7 @@ fn a_log_file_with_a_wrong_header_is_refused() {
     // The input entry starts after the header and three op entries.
     assert_eq!(
         LogFile::decode(&bytes[..bytes.len() - 1]),
-        Err(WireError::Truncated { at: 60 + 187 })
+        Err(WireError::Truncated { at: 64 + 187 })
     );
     let mut long = bytes.clone();
     long.push(0);
@@ -457,7 +757,11 @@ fn replay_applies_in_seq_order_and_matches_direct_apply() {
     }
     let decoded = OpLog::decode(&log.encode()).unwrap();
     let world = solid3_world();
-    let results = world.replay(&decoded);
+    let results: Vec<_> = world
+        .replay(&decoded, &PrefabRegistry::new())
+        .into_iter()
+        .map(|r| r.map(|r| r.edit_result()))
+        .collect();
     assert_eq!(results, expected);
     assert_eq!(results[0].as_ref().unwrap().changed_from, [(3, 4169)]);
     assert_eq!(

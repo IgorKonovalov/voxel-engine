@@ -210,7 +210,7 @@ VoxelRT and wavefront sources in `references/voxel-optimizations.md`) found noth
 literature that beats a bit hierarchy for an editable near field, and left two design inputs
 for the lighting plan, listed with its bullets below.
 
-Plan 0017 closed 2026-10-20 (v0.16.0): the mirror reserves its VRAM budget once (ADR-0013):
+Plan 0017 closed 2026-10-20 (v0.17.0): the mirror reserves its VRAM budget once (ADR-0013):
 no grow copies, empty pages shared by both kinds, records for the residency's ball, and a
 pressure rule that lowers `r_full` when the pool or records near full. A sync writes the
 nearest chunks that fit whole and defers the rest. `nfr.md` §3 reads live bytes against the
@@ -318,18 +318,26 @@ controller (ADR-0005's Outcome addendum). Plan 0009 (collapse) is unblocked.
 Plan 0007 closed 2026-10-17 (v0.10.0): `vxe-net` (byte channel, server tick, shared and
 owned clients with desync detection), `vxe-world`'s op and input logs, log file and wire, and
 the fly-through's digs, fills and bench through a server, saved and replayed under `--level`
-(ADR-0007, accepted). Followup from the close: op kinds 2 to 4 (stamp, drop, remove) in
-`Op`, the wire and `Host`, with the fly-through's stamp and collapse moving into `DigLogic`, so
-a saved session no longer refuses them; a stamp entry needs a prefab reference the log can
-name, likely an ADR. Plan 0016 (closed 2026-10-18, v0.13.0) replaced fail-stop with a capped
+(ADR-0007, accepted). Plan 0018 (closed 2026-10-20, v0.15.0) completed the split for
+every op: stamp, drop and remove are op kinds 2 to 4 through `submit`, the log, `Host::apply`
+and the owned client's check. A stamp names its prefab by content id and a save carries the
+prefabs it names (ADR-0014, `LOG_FORMAT` 2). The server keeps a coarse grid and answers
+`Host::unsupported`, and the fly-through's `P` and collapse run in `DigLogic`, saved and
+replayed. Plan 0016 (closed 2026-10-18, v0.13.0) replaced fail-stop with a capped
 restart from the seed (ADR-0010's Outcome addendum).
+Plan 0019 (closed 2026-10-20, v0.16.0) bounded and metered host-call work: `vxe-world`
+refuses out-of-range shapes, rays, box queries and region lists per world (`WorldLimits`,
+`EditError::OutOfRange`), and the host charges each import's work to the tick's fuel at
+`WorkRates`, list arguments by their bytes before any host work (ADR-0010's second Outcome
+addendum).
 
 Plan 0011 closed 2026-10-17 (v0.11.0): `vxe-script-wasm` hosts a logic component under
 deterministic WASI (clocks fixed to the tick, always-ready timers, seeded entropy), fuel per
 call and a total memory cap, and stops a logic after its first failed call (ADR-0010,
 accepted). The fly-through's dig logic (`flythrough-logic`) runs natively or, with
 `--features wasm` and `--logic wasm`, as a component, to the same hash. Followups from the
-close: bounded or metered host-call work, with `vxe-world` range checks on shapes; a component
+close: bounded or metered host-call work, with `vxe-world` range checks on shapes (done in
+Plan 0019); a component
 hash and the `WasmConfig` in the log header; batched query imports; a per-call measurement of
 a cheap query.
 
@@ -363,8 +371,8 @@ a cheap query.
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane
   (`criterion` for CPU, timestamp queries for GPU) with readings committed per named machine.
-- Follow-up: once Plan 0007 closes, the runtime stamp goes through `Server` as op kind 2
-  (reserved there), so a stamp is a logged, replayable op like an edit.
+- The runtime stamp is op kind 2 through `Server`, logged and replayed like an edit (Plan
+  0018, v0.15.0).
 
 ### M8: Volumetrics, debris and collapse (support query and collapse ops shipped in Plan 0009, v0.8.0; volumetrics, debris and the cosmetic rigid-body layer remain open, the last after M6)
 
@@ -386,9 +394,9 @@ a cheap query.
   bit-identical on both CI arms. A second op removes an unsupported region outright and fills
   the cells below with a rubble material. The game picks one per region from the support
   query's answer. Both are ordinary ops: they return per-material counts and the touched
-  region, and replicate through M5's log once they are wired as op kinds 3 and 4 (a
-  followup of Plan 0009). Shipped in Plan 0009 as `World::drop_region` and
-  `World::remove_region`.
+  region, and replicate through M5's log as op kinds 3 and 4. Shipped in Plan 0009 as
+  `World::drop_region` and `World::remove_region`, and logged since Plan 0018 (v0.15.0), where
+  the logic asks `Host::unsupported` and issues the drops or removals.
 - **Stress (open; owner's call, 2026-10-17):** overhangs fail by span and weight, not only
   when the support query finds them disconnected. The owner's windowed test of v0.12.0
   found collapse rarely triggers in the cave, because a cell one eighth solid still bears

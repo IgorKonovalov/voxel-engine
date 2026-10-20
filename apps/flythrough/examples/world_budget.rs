@@ -31,8 +31,8 @@ use flythrough::cave::CaveSource;
 use flythrough::{cave_materials, chunk_ram, mips_ram, stream_record_chunks, window_side};
 use vxe_render::gpu_world::{ATTR_PAGE_BRICK_SLOTS, MATERIAL_FLOATS, POOL_PAGE_SLOTS, budget_for};
 use vxe_world::{
-    BRICK_VOXELS, Brick, CHUNK_BRICKS, ChunkExtent, CoarseGrid, PersistConfig, Residency,
-    StreamConfig, Streamer, World,
+    BRICK_VOXELS, Brick, CHUNK_BRICKS, CHUNK_EDGE, ChunkExtent, CoarseGrid, PersistConfig,
+    Residency, StreamConfig, Streamer, World, WorldLimits,
 };
 
 /// Mirror bytes per `Full` brick or mip-brick, and per mirrored chunk's record.
@@ -88,7 +88,14 @@ fn bounded(seed: u64, chunks: [i32; 3]) {
     let threads = std::thread::available_parallelism().map_or(1, usize::from);
 
     let start = now();
-    let world = World::generate_with_threads(extent, &source, &table, threads);
+    // The air count below spans the whole extent, wider than a default box query allows.
+    let size = chunks.map(|c| c.unsigned_abs() * CHUNK_EDGE.unsigned_abs());
+    let limits = WorldLimits {
+        query_axis_max: size.into_iter().max().unwrap_or(0),
+        query_voxels_max: size.iter().map(|&n| u64::from(n)).product(),
+        ..WorldLimits::DEFAULT
+    };
+    let world = World::generate_with_threads(extent, &source, &table, threads).with_limits(limits);
     let secs = (now() - start).as_secs_f64();
 
     let start = now();
@@ -102,10 +109,12 @@ fn bounded(seed: u64, chunks: [i32; 3]) {
     let mirror =
         s.full_bricks * SLOT_AND_MASK + s.chunks * (RECORD + 4) + table.len() * MATERIAL_FLOATS * 4;
     let voxels = s.chunks as f64 * 64.0 * 64.0 * 64.0;
-    let air = world.count_in_box(
-        extent.min.min_voxel(),
-        vxe_world::VoxelCoord(extent.max.min_voxel().0.map(|v| v - 1)),
-    );
+    let air = world
+        .count_in_box(
+            extent.min.min_voxel(),
+            vxe_world::VoxelCoord(extent.max.min_voxel().0.map(|v| v - 1)),
+        )
+        .expect("the world's limits hold its whole extent");
     let air = air.iter().find(|(m, _)| *m == 0).map_or(0, |&(_, n)| n);
 
     println!(

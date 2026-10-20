@@ -1,9 +1,18 @@
-//! The byte encoding of ops, edit results and errors, shared by the logs, the save file and
+//! The byte encoding of ops, op results and errors, shared by the logs, the save file and
 //! the server's messages (ADR-0007).
 //!
 //! Little-endian throughout, no padding, no alignment, no varints. A `Fixed3` is 3 × `i64`, a
-//! `ChunkCoord` and a `VoxelCoord` 3 × `i32`, a list count a `u16`. An op is its kind `u8`,
-//! its mode `u8` plus the mode's payload, then its shape `u8` plus the shape's payload:
+//! `ChunkCoord`, a `VoxelCoord` and a `CellCoord` 3 × `i32`, a result list count a `u16`, a
+//! cell list count a `u32`. An op is its kind `u8`, then the kind's payload:
+//!
+//! | kind | op       | payload                                                              |
+//! |------|----------|----------------------------------------------------------------------|
+//! | 1    | edit     | mode `u8` and the mode's payload, shape `u8` and the shape's payload |
+//! | 2    | stamp    | prefab id `u64`, origin `VoxelCoord`, rotation index `u8` (`Rot::all`) |
+//! | 3    | drop     | max drop `i32`, cell count `u32`, the cells                          |
+//! | 4    | remove   | rubble `u16`, fraction 2 × `u32`, max depth `i32`, cell count `u32`, the cells |
+//!
+//! An edit's modes and shapes:
 //!
 //! | mode      | payload           | shape     | payload                 |
 //! |-----------|-------------------|-----------|-------------------------|
@@ -11,21 +20,30 @@
 //! | `Fill`    | material `u16`    | box       | min, max: 6 × i64       |
 //! | `Replace` | from, to: 2 × u16 | capsule   | a, b, radius: 7 × i64   |
 //!
+//! An op result is a kind `u8` ([`OP_EDIT`] for an edit's or a stamp's, [`OP_DROP`],
+//! [`OP_REMOVE`]) then the result ([`encode_op_result`]).
+//!
 //! Tag value 0 is never assigned, so a zeroed buffer never decodes as a valid op.
 
+use crate::coarse::CellCoord;
+use crate::collapse::{DropResult, RemoveResult};
 use crate::coords::{ChunkCoord, VoxelCoord};
 use crate::edit::{EditError, EditOp, EditResult, Mode};
 use crate::fixed::Fixed3;
-use crate::log::Op;
+use crate::limits::Field;
+use crate::log::{Op, OpResult};
+use crate::material::MaterialId;
+use crate::prefab::Rot;
 use crate::shape::Shape;
 
 /// Op kind of an edit (shape plus mode).
 pub const OP_EDIT: u8 = 1;
-/// Op kinds reserved for the stamp op (Plan 0008) and the drop and remove ops (Plan 0009).
-/// Until a format claims them they decode as [`WireError::UnknownKind`].
-pub const OP_RESERVED_STAMP: u8 = 2;
-pub const OP_RESERVED_DROP: u8 = 3;
-pub const OP_RESERVED_REMOVE: u8 = 4;
+/// Op kind of a prefab stamp.
+pub const OP_STAMP: u8 = 2;
+/// Op kind of a region drop.
+pub const OP_DROP: u8 = 3;
+/// Op kind of a region removal with rubble.
+pub const OP_REMOVE: u8 = 4;
 /// Kind of an op log boundary entry, which has no payload. It sits clear of the op kinds so
 /// later op kinds can be claimed below it.
 pub const KIND_BOUNDARY: u8 = 0x80;
@@ -44,8 +62,13 @@ pub const SHAPE_BOX: u8 = 2;
 /// Shape tag of [`Shape::Capsule`].
 pub const SHAPE_CAPSULE: u8 = 3;
 
-/// Error tag of [`EditError::NotResident`].
+/// Error tag of [`EditError::NotResident`]: the chunk as 3 × `i32` follows.
 pub const ERROR_NOT_RESIDENT: u8 = 1;
+/// Error tag of [`EditError::OutOfRange`]: the field `u8` follows, its index in
+/// [`Field::ALL`] plus 1.
+pub const ERROR_OUT_OF_RANGE: u8 = 2;
+/// Error tag of [`EditError::UnknownPrefab`]: the id `u64` follows.
+pub const ERROR_UNKNOWN_PREFAB: u8 = 3;
 
 /// Why bytes did not decode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,6 +85,9 @@ pub enum WireError {
     Trailing { at: usize },
     /// An op log entry, starting at `at`, whose seq does not exceed the previous entry's.
     OutOfOrder { at: usize },
+    /// A log file's prefab table holds content whose [`crate::Prefab::id`] is not the id
+    /// the table gives it.
+    PrefabMismatch { id: u64 },
     /// Reading or writing the underlying stream failed.
     Io(std::io::ErrorKind),
 }
@@ -75,6 +101,12 @@ impl std::fmt::Display for WireError {
             Self::UnsupportedFormat(v) => write!(f, "unsupported log format {v}"),
             Self::Trailing { at } => write!(f, "unexpected bytes after the last entry at {at}"),
             Self::OutOfOrder { at } => write!(f, "op log seq out of order at offset {at}"),
+            Self::PrefabMismatch { id } => {
+                write!(
+                    f,
+                    "the prefab table's content for id {id:#018x} does not hash to it"
+                )
+            }
             Self::Io(k) => write!(f, "i/o error: {k}"),
         }
     }
@@ -110,6 +142,16 @@ impl<'a> Reader<'a> {
     /// Marks the current offset as the start of the next entry, for error reports.
     pub fn begin(&mut self) {
         self.entry = self.pos;
+    }
+
+    /// Byte offset of the entry being read, as [`Reader::begin`] set it.
+    pub fn entry(&self) -> usize {
+        self.entry
+    }
+
+    /// Bytes not yet read.
+    pub fn remaining(&self) -> usize {
+        self.bytes.len().saturating_sub(self.pos)
     }
 
     /// Byte offset of the next read.
@@ -202,10 +244,120 @@ fn put_count(out: &mut Vec<u8>, n: usize) {
     out.extend_from_slice(&n.to_le_bytes());
 }
 
-/// Appends the encoding of `op`: kind, mode and payload, shape and payload.
+/// Appends a cell list: its count as `u32`, then each cell as 3 × `i32`. Panics past
+/// `u32::MAX` cells.
+fn put_cells(out: &mut Vec<u8>, cells: &[CellCoord]) {
+    let n = u32::try_from(cells.len()).expect("wire cell lists fit u32");
+    out.extend_from_slice(&n.to_le_bytes());
+    for c in cells {
+        put_i32x3(out, c.0);
+    }
+}
+
+/// Reads a cell list as [`put_cells`] writes it. A count the bytes cannot hold is
+/// [`WireError::Truncated`] before anything is allocated for it.
+fn read_cells(r: &mut Reader<'_>) -> Result<Vec<CellCoord>, WireError> {
+    let n = r.u32()? as usize;
+    if n.saturating_mul(12) > r.remaining() {
+        return Err(WireError::Truncated { at: r.entry() });
+    }
+    let mut cells = Vec::with_capacity(n);
+    for _ in 0..n {
+        cells.push(CellCoord(r.i32x3()?));
+    }
+    Ok(cells)
+}
+
+fn put_counts(out: &mut Vec<u8>, counts: &[(MaterialId, u32)]) {
+    put_count(out, counts.len());
+    for &(m, n) in counts {
+        out.extend_from_slice(&m.to_le_bytes());
+        out.extend_from_slice(&n.to_le_bytes());
+    }
+}
+
+fn read_counts(r: &mut Reader<'_>) -> Result<Vec<(MaterialId, u32)>, WireError> {
+    let n = r.u16()?;
+    let mut counts = Vec::with_capacity(usize::from(n));
+    for _ in 0..n {
+        counts.push((r.u16()?, r.u32()?));
+    }
+    Ok(counts)
+}
+
+/// Appends the touched chunks and the aabb of a result: a `u16` count of chunk coordinates,
+/// then a presence `u8` and, when 1, the aabb as 6 × `i32`.
+fn put_extent(out: &mut Vec<u8>, touched: &[ChunkCoord], aabb: Option<(VoxelCoord, VoxelCoord)>) {
+    put_count(out, touched.len());
+    for c in touched {
+        put_i32x3(out, c.0);
+    }
+    match aabb {
+        None => out.push(0),
+        Some((lo, hi)) => {
+            out.push(1);
+            put_i32x3(out, lo.0);
+            put_i32x3(out, hi.0);
+        }
+    }
+}
+
+type Extent = (Vec<ChunkCoord>, Option<(VoxelCoord, VoxelCoord)>);
+
+fn read_extent(r: &mut Reader<'_>) -> Result<Extent, WireError> {
+    let n = r.u16()?;
+    let mut touched = Vec::with_capacity(usize::from(n));
+    for _ in 0..n {
+        touched.push(ChunkCoord(r.i32x3()?));
+    }
+    let aabb = match r.u8()? {
+        0 => None,
+        1 => Some((VoxelCoord(r.i32x3()?), VoxelCoord(r.i32x3()?))),
+        k => return Err(WireError::UnknownKind(k)),
+    };
+    Ok((touched, aabb))
+}
+
+/// Appends the encoding of `op`: its kind, then the kind's payload (see the module table).
 pub fn encode_op(out: &mut Vec<u8>, op: &Op) {
-    let Op::Edit(e) = op;
-    out.push(OP_EDIT);
+    match op {
+        Op::Edit(e) => {
+            out.push(OP_EDIT);
+            encode_edit(out, e);
+        }
+        Op::Stamp {
+            prefab,
+            origin,
+            rot,
+        } => {
+            out.push(OP_STAMP);
+            out.extend_from_slice(&prefab.to_le_bytes());
+            put_i32x3(out, origin.0);
+            out.push(rot.index());
+        }
+        Op::Drop { cells, max_drop } => {
+            out.push(OP_DROP);
+            out.extend_from_slice(&max_drop.to_le_bytes());
+            put_cells(out, cells);
+        }
+        Op::Remove {
+            cells,
+            rubble,
+            fraction,
+            max_depth,
+        } => {
+            out.push(OP_REMOVE);
+            out.extend_from_slice(&rubble.to_le_bytes());
+            out.extend_from_slice(&fraction.0.to_le_bytes());
+            out.extend_from_slice(&fraction.1.to_le_bytes());
+            out.extend_from_slice(&max_depth.to_le_bytes());
+            put_cells(out, cells);
+        }
+    }
+}
+
+/// An edit's mode and payload, then its shape and payload.
+fn encode_edit(out: &mut Vec<u8>, e: &EditOp) {
     match e.mode {
         Mode::Carve => out.push(MODE_CARVE),
         Mode::Fill(m) => {
@@ -238,12 +390,45 @@ pub fn encode_op(out: &mut Vec<u8>, op: &Op) {
     }
 }
 
-/// Reads one op as [`encode_op`] writes it.
+/// Reads one op as [`encode_op`] writes it. A rotation index past 23 is
+/// [`WireError::UnknownKind`].
 pub fn decode_op(r: &mut Reader<'_>) -> Result<Op, WireError> {
-    let kind = r.u8()?;
-    if kind != OP_EDIT {
-        return Err(WireError::UnknownKind(kind));
+    match r.u8()? {
+        OP_EDIT => Ok(Op::Edit(decode_edit(r)?)),
+        OP_STAMP => {
+            let prefab = r.u64()?;
+            let origin = VoxelCoord(r.i32x3()?);
+            let i = r.u8()?;
+            let rot = Rot::from_index(i).ok_or(WireError::UnknownKind(i))?;
+            Ok(Op::Stamp {
+                prefab,
+                origin,
+                rot,
+            })
+        }
+        OP_DROP => {
+            let max_drop = r.i32()?;
+            Ok(Op::Drop {
+                cells: read_cells(r)?,
+                max_drop,
+            })
+        }
+        OP_REMOVE => {
+            let rubble = r.u16()?;
+            let fraction = (r.u32()?, r.u32()?);
+            let max_depth = r.i32()?;
+            Ok(Op::Remove {
+                cells: read_cells(r)?,
+                rubble,
+                fraction,
+                max_depth,
+            })
+        }
+        k => Err(WireError::UnknownKind(k)),
     }
+}
+
+fn decode_edit(r: &mut Reader<'_>) -> Result<EditOp, WireError> {
     let mode = match r.u8()? {
         MODE_CARVE => Mode::Carve,
         MODE_FILL => Mode::Fill(r.u16()?),
@@ -269,48 +454,20 @@ pub fn decode_op(r: &mut Reader<'_>) -> Result<Op, WireError> {
         },
         k => return Err(WireError::UnknownKind(k)),
     };
-    Ok(Op::Edit(EditOp { shape, mode }))
+    Ok(EditOp { shape, mode })
 }
 
 /// Appends an edit result: a `u16` count of `(material u16, voxels u32)` pairs, a `u16` count
 /// of chunk coordinates, then a presence `u8` and, when 1, the aabb as 6 × `i32`.
 pub fn encode_result(out: &mut Vec<u8>, r: &EditResult) {
-    put_count(out, r.changed_from.len());
-    for &(m, n) in &r.changed_from {
-        out.extend_from_slice(&m.to_le_bytes());
-        out.extend_from_slice(&n.to_le_bytes());
-    }
-    put_count(out, r.touched.len());
-    for c in &r.touched {
-        put_i32x3(out, c.0);
-    }
-    match r.aabb {
-        None => out.push(0),
-        Some((lo, hi)) => {
-            out.push(1);
-            put_i32x3(out, lo.0);
-            put_i32x3(out, hi.0);
-        }
-    }
+    put_counts(out, &r.changed_from);
+    put_extent(out, &r.touched, r.aabb);
 }
 
 /// Reads one edit result as [`encode_result`] writes it.
 pub fn decode_result(r: &mut Reader<'_>) -> Result<EditResult, WireError> {
-    let n = r.u16()?;
-    let mut changed_from = Vec::with_capacity(usize::from(n));
-    for _ in 0..n {
-        changed_from.push((r.u16()?, r.u32()?));
-    }
-    let n = r.u16()?;
-    let mut touched = Vec::with_capacity(usize::from(n));
-    for _ in 0..n {
-        touched.push(ChunkCoord(r.i32x3()?));
-    }
-    let aabb = match r.u8()? {
-        0 => None,
-        1 => Some((VoxelCoord(r.i32x3()?), VoxelCoord(r.i32x3()?))),
-        k => return Err(WireError::UnknownKind(k)),
-    };
+    let changed_from = read_counts(r)?;
+    let (touched, aabb) = read_extent(r)?;
     Ok(EditResult {
         changed_from,
         touched,
@@ -318,12 +475,81 @@ pub fn decode_result(r: &mut Reader<'_>) -> Result<EditResult, WireError> {
     })
 }
 
-/// Appends an edit error: its tag, then the chunk as 3 × `i32`.
+/// Appends an op result: its kind, then for [`OP_EDIT`] the edit result as
+/// [`encode_result`] writes it; for [`OP_DROP`] the moved counts, `dropped` as `i32`, then the
+/// touched chunks and the aabb; for [`OP_REMOVE`] the removed counts, `placed` as `u32`, then
+/// the touched chunks and the aabb. Counts, chunks and the aabb are encoded as in an edit
+/// result.
+pub fn encode_op_result(out: &mut Vec<u8>, r: &OpResult) {
+    match r {
+        OpResult::Edit(e) => {
+            out.push(OP_EDIT);
+            encode_result(out, e);
+        }
+        OpResult::Drop(d) => {
+            out.push(OP_DROP);
+            put_counts(out, &d.moved);
+            out.extend_from_slice(&d.dropped.to_le_bytes());
+            put_extent(out, &d.touched, d.aabb);
+        }
+        OpResult::Remove(m) => {
+            out.push(OP_REMOVE);
+            put_counts(out, &m.removed);
+            out.extend_from_slice(&m.placed.to_le_bytes());
+            put_extent(out, &m.touched, m.aabb);
+        }
+    }
+}
+
+/// Reads one op result as [`encode_op_result`] writes it.
+pub fn decode_op_result(r: &mut Reader<'_>) -> Result<OpResult, WireError> {
+    match r.u8()? {
+        OP_EDIT => Ok(OpResult::Edit(decode_result(r)?)),
+        OP_DROP => {
+            let moved = read_counts(r)?;
+            let dropped = r.i32()?;
+            let (touched, aabb) = read_extent(r)?;
+            Ok(OpResult::Drop(DropResult {
+                moved,
+                dropped,
+                touched,
+                aabb,
+            }))
+        }
+        OP_REMOVE => {
+            let removed = read_counts(r)?;
+            let placed = r.u32()?;
+            let (touched, aabb) = read_extent(r)?;
+            Ok(OpResult::Remove(RemoveResult {
+                removed,
+                placed,
+                touched,
+                aabb,
+            }))
+        }
+        k => Err(WireError::UnknownKind(k)),
+    }
+}
+
+/// Appends an edit error: its tag, then the chunk as 3 × `i32`, the field as `u8` or the
+/// prefab id as `u64`.
 pub fn encode_error(out: &mut Vec<u8>, e: &EditError) {
     match e {
         EditError::NotResident(c) => {
             out.push(ERROR_NOT_RESIDENT);
             put_i32x3(out, c.0);
+        }
+        EditError::UnknownPrefab(id) => {
+            out.push(ERROR_UNKNOWN_PREFAB);
+            out.extend_from_slice(&id.to_le_bytes());
+        }
+        EditError::OutOfRange { what } => {
+            out.push(ERROR_OUT_OF_RANGE);
+            let i = Field::ALL
+                .iter()
+                .position(|f| f == what)
+                .expect("every field is listed");
+            out.push(i as u8 + 1);
         }
     }
 }
@@ -332,6 +558,15 @@ pub fn encode_error(out: &mut Vec<u8>, e: &EditError) {
 pub fn decode_error(r: &mut Reader<'_>) -> Result<EditError, WireError> {
     match r.u8()? {
         ERROR_NOT_RESIDENT => Ok(EditError::NotResident(ChunkCoord(r.i32x3()?))),
+        ERROR_UNKNOWN_PREFAB => Ok(EditError::UnknownPrefab(r.u64()?)),
+        ERROR_OUT_OF_RANGE => {
+            let k = r.u8()?;
+            let what = usize::from(k)
+                .checked_sub(1)
+                .and_then(|i| Field::ALL.get(i))
+                .ok_or(WireError::UnknownKind(k))?;
+            Ok(EditError::OutOfRange { what: *what })
+        }
         k => Err(WireError::UnknownKind(k)),
     }
 }

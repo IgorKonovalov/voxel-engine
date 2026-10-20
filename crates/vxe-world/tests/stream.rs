@@ -287,7 +287,7 @@ fn a_lod_ring_holds_26_mip_only_chunks_that_edits_and_queries_cannot_see() {
         assert_eq!(world.material_at(v), None, "{c:?}");
         let op = EditOp::sphere(centre_of_voxel(v), 2 * FIXED_ONE, Mode::Carve);
         assert_eq!(world.apply(&op), Err(EditError::NotResident(c)));
-        assert!(world.count_in_box(v, v).is_empty());
+        assert!(world.count_in_box(v, v).unwrap().is_empty());
     }
 }
 
