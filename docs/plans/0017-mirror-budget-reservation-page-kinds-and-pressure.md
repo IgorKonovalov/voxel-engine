@@ -23,8 +23,8 @@ The mirror's buffers grow by half again, copy themselves on the GPU when they do
 shrink, so allocated VRAM runs 1.44x to 1.93x above live bytes and the budget line is failed
 by content that fits. This plan makes the mirror reserve its budget once at creation and
 never create another buffer, lets an empty page serve either kind so attribute and plain
-slots share one high-water mark, and gives the application a pressure figure (live over
-budget) that the fly-through's streamer answers by lowering the full-detail radius a chunk
+slots share one high-water mark, and gives the application a pressure figure (the larger of
+pool-slot and record occupancy, amended 2026-10-20) that the fly-through's streamer answers by lowering the full-detail radius a chunk
 at a time. The first thing a reader sees is `allocated_bytes` equal to the budget from the
 first frame, and the autopilot's peak live at the interim radius 14 with contour under
 3 GB with no out-of-memory stop.
@@ -58,13 +58,82 @@ grow copies, a hitch source, disappear).
 record buffer by the adapter's limits and creates every buffer once; `grow_to` becomes a
 capacity check that fails the sync before any write, as `PoolTooLarge` and
 `RecordsTooLarge` do today. A page tracks its live slot count; at zero it returns to a
-free-page list that either kind draws from. `GpuWorld::pressure()` returns live over
-budget, and the fly-through's streamer lowers `r_full` by one chunk when pressure exceeds
+free-page list that either kind draws from. `GpuWorld::pressure()` returns the larger of
+pool-slot occupancy and record occupancy (amended 2026-10-20; it was live over budget), and
+the fly-through's streamer lowers `r_full` by one chunk when pressure exceeds
 0.9 for 30 consecutive frames and raises it by one when pressure has been under 0.7 for
 300 frames, between a floor of 6 and the configured radius. We rejected compaction (slots
 move, every record and attribute address with them, and the copy is itself a hitch), growth
 by exact need (hundreds of copies over a flight) and per-page buffers (binding arrays,
 rejected in ADR-0004); ADR-0013 records them.
+
+## Amendment 2026-10-20: records for the sphere, pressure on what runs out, a reachable budget
+
+Phase 3's third done-when failed (Implementation log, Resume notes): at `--mirror-budget 1024`
+the pool ran out before any radius change. Two causes. Phase 1 reserves a record for every
+chunk of the 51^3 window cube, 132 651 records or 348 076 224 B (32.4 % of 1 GiB), while
+57 777 are live at rest; pressure was live bytes over the whole reservation, so it peaked near
+0.78 and the 0.9 trigger never fired. And the rule moves only `r_full`: at its floor (6, 24)
+the LOD ring alone needs 1285.5 MiB at rest (`world_budget --stream 6,24`), so no budget near
+1 GiB is reachable. The owner chose the three changes below. The LOD radius never moves;
+ADR-0013 stands, with a dated Outcome on the pressure definition. Phase 3 re-opens Phase 1's
+record count (one `dev` phase, no new step), and Phase 4 reads the result.
+
+**1. Records for the residency sphere.** A record is `RECORD_BYTES` = 4 x (16 brick-bit
+words + 512 entries + 128 palette words) = 2624 B. The streamer evicts a chunk once
+`d2 > (r_lod + h)^2`, so after a poll one focus holds at most the lattice chunks of that
+ball: `chunks_in_ball(25)` = 65 267 at the defaults (at rest `chunks_in_ball(24)` = 57 777,
+which is `world_budget`'s 925 + 56 852). The streamed mirror reserves
+`ceil(chunks_in_ball(max(r_lod, r_full) + h) / PRESSURE_LOW)` = ceil(65 267 / 0.7) =
+**93 239 records, 244 659 136 B (233.3 MiB)**, against the cube's 348 076 224 B: 103 417 088 B
+less. The division by 0.7 keeps the record term below the rule's restore line whenever the
+streamer keeps its radius (0.620 at rest, at most 0.69999 in motion). Moving `r_full` does not
+change the record count (a LOD-only chunk holds a record too), so a record term that crossed
+0.7 would block every restore and one past 0.9 would walk `r_full` to its floor for nothing;
+with exactly 65 267 records it would read 0.885 at rest and reach 1.0 in motion. It reaches 1
+only when residency outgrows the sphere (several foci), which no radius rule cures, and
+`RecordsTooLarge` reports it. A mirror given no record count keeps the window's `W^3`, so
+the level and the tests are unchanged.
+
+**2. Pressure on what runs out.** `pressure() = max(slot occupancy, record occupancy)`, with
+slot occupancy `(live_slots() + 2 x live_attr_slots()) / reserved_slots()` (a brick in an
+attribute page holds its two attribute slots too) and record occupancy `mirrored_chunks() /
+reserved_records()`. Slot occupancy falls as bricks are freed, unlike the high-water mark
+`pool_slots()`. With attribute pages a pool can fail a little below 1.0 (each kind's partly
+filled page, four unused slots an attribute page); the 0.1 between trigger and exhaustion
+covers it. Live over budget stays a reported figure: it is not the trigger, and it counts the
+chunk table and material rows that lie outside the reservation (Phase 1's `allocated_bytes`
+note).
+
+**3. A budget the r_full-only rule can reach: `--mirror-budget 1930`.** A page is
+`PAGE_BYTES` = 4096 x (512 + 72) = 2 392 064 B. Live slots from `world_budget --stream R_FULL,R_LOD
+--seed 1` (face, h 1, at rest, this commit's tree) and the Phase 3 reading at 3072 MiB,
+against 743 pages (3 043 328 slots):
+
+| residency | what it stands for | live slots | slot occupancy |
+|---|---|---|---|
+| 6, 24 | the floor at rest | 1 709 813 | 0.562 |
+| 7, 25 | the floor in motion: everything its hysteresis keeps | 1 957 717 | 0.643 |
+| 15, 24 | `r_full` 14 with its hysteresis, at rest | 2 602 153 | 0.855 |
+| 16, 24 | the start at rest | 2 798 808 | 0.920 |
+| 16, 24 flight peak (measured, 3072 run) | the start in motion | 2 928 253 to 2 961 907 | 0.962 to 0.973 |
+| 17, 25 | the start in motion, everything kept (a bound) | 3 241 039 | 1.065 |
+
+The window: the rule must fire at the start, 2 798 808 / S > 0.9, so at most 759 pages; the
+pool must hold the measured start peak even if the rule were late, S >= 2 961 907, so at least
+724 pages; the floor must sit under the trigger with its hysteresis, S >= 1 957 717 / 0.9, at
+least 532 pages (implied). 743 pages sits mid-window. Budget = 743 x 2 392 064 + 93 239 x
+2624 + `PLACEHOLDER_BYTES` 2624 = 1 777 303 552 + 244 659 136 + 2624 = 2 021 965 312 B
+(1928.3 MiB); `--mirror-budget 1930` (2 023 751 680 B) reserves floor(1 779 089 920 / 2 392 064)
+= 743 pages. 2048 MiB reserves 795 pages, where the start reads 0.859 at rest and about 0.91
+only at the flight's peak, too briefly to promise the 30 frames: it does not reliably decrease.
+At 3072 MiB the split is 1244 pages and the measured peak reads 0.581, records at most 0.69999:
+no change. Projection, a guess from at-rest figures: 16 to 15 demotes nothing (the keep
+radius 16 still holds ball 16), 30 frames later 15 to 14 demotes the 16-shell and slots fall
+to about 0.855, between the two lines, so `r_full` rests at 14 after two decreases. The
+(17, 25) bound does not fit, so zero `PoolTooLarge` at 1930 rests on the measured peak and
+the rule acting; it is a reading, not a proof. Peak live over budget at 1930, without the
+rule, would be 1 881 891 684 / 2 023 751 680 = 0.930.
 
 ## Architecture diagram
 
@@ -75,7 +144,7 @@ flowchart LR
         S[sync] -->|need > capacity| E[PoolTooLarge / RecordsTooLarge]
         S --> A[alloc: free list, then free pages of any kind, then cursor]
         D[drop_record] --> A
-        P[pressure = live / budget]
+        P[pressure = max of slot and record occupancy]
     end
     subgraph apps/flythrough
         P --> R[radius rule: -1 at 0.9, +1 at 0.7]
@@ -93,6 +162,9 @@ flowchart LR
   the binding; the rest goes to pool pages across the shards in order; masks follow the
   pool); every buffer is created in `new`; `grow_to` only checks; `SyncStats` counts
   `buffers_created` and `copies`.
+- **Amended 2026-10-20:** the streamed mirror's record count ("a record per chunk of the
+  window's capacity") is re-done in Phase 3 (see the Amendment); this phase's done-whens stand
+  as written and were read against the window's `W^3`.
 - **Files touched:** `crates/vxe-render/src/gpu_world.rs`, `crates/vxe-render/tests/mirror.rs`,
   `apps/flythrough/tests/level_mirror.rs`, `apps/flythrough/src/main.rs` and `lib.rs`
   (the flag and the default sized from the world: the level's extent, or the radii),
@@ -134,18 +206,35 @@ flowchart LR
 - **What:** `GpuWorld::pressure() -> f32`; `Streamer::set_radii` if the radii are fixed at
   creation (they are read from `StreamConfig` at `stream.rs`; the plan assumes a setter is
   needed); the fly-through's rule above, printing each change and showing it on the HUD.
+  Amended 2026-10-20, re-opening Phase 1's record count: `pressure()` is the larger of slot
+  and record occupancy; `MirrorConfig::record_chunks: Option<u64>` (none keeps the window's
+  `W^3`); `vxe_world::chunks_in_ball(r)`, the lattice chunks with `d2 <= r^2` in the
+  streamer's metric; the fly-through's streamed mirror reserves
+  `ceil(chunks_in_ball(max(r_lod, r_full) + h) / PRESSURE_LOW)` records; `world_budget`
+  prints its budget lines with that record count; `README.md` lists `--residency`,
+  `--mirror-budget` and the rule.
 - **Files touched:** `crates/vxe-render/src/gpu_world.rs`, `crates/vxe-world/src/stream.rs`,
-  `apps/flythrough/src/main.rs`, `apps/flythrough/src/hud.rs`, `crates/vxe-render/tests/mirror.rs`,
-  `crates/vxe-world/tests/stream.rs`.
+  `crates/vxe-world/src/lib.rs`, `apps/flythrough/src/main.rs`, `apps/flythrough/src/lib.rs`,
+  `apps/flythrough/src/hud.rs`, `apps/flythrough/examples/world_budget.rs`,
+  `crates/vxe-render/tests/mirror.rs`, `crates/vxe-world/tests/stream.rs`, `README.md`.
 - **Done when:**
-  - `pressure()` equals `mirror_bytes() / allocated_bytes()` within `1e-6`.
+  - `pressure()` equals `max((live_slots() + 2 x live_attr_slots()) / reserved_slots(),
+    mirrored_chunks() / reserved_records())` within `1e-6`; one mirror test drives it past 0.9
+    on slots with records under 0.5, another on records with slots under 0.5.
+  - `chunks_in_ball(24) == 57_777` and `chunks_in_ball(25) == 65_267`; the fly-through's
+    record count at r_full 16, r_lod 24, h 1 is 93 239; a mirror given `record_chunks` reserves
+    exactly that many and `allocated_bytes()` still equals its budget rounded down.
   - `Streamer::set_radii(r_full - 1, r_lod)` demotes the chunks at the old edge to LOD-only
     within the next polls, and a later `set_radii` back promotes them; the hashes of their
     voxels after the round trip equal the originals (persistence, `tests/persist.rs`'s
-    helpers).
-  - Headless `flythrough --autopilot --mirror-budget 1024` finishes its flight with zero
-    `PoolTooLarge` syncs, prints at least one radius decrease, and ends with
-    `peak live / budget` under 0.95; the same run at 3072 prints no change.
+    helpers); in the same test the resident chunk count after every poll is at most
+    `chunks_in_ball(r_lod + h)`.
+  - Headless `flythrough --autopilot --mirror-budget 1930` (r_full 16, r_lod 24, h 1, seed 1,
+    no `--look`) prints a reservation of 3 043 328 slots and 93 239 records, finishes its
+    flight with zero `PoolTooLarge` and zero `RecordsTooLarge` syncs, prints at least one
+    radius decrease and none below 6, and reports peak pressure under 1.0 and peak live /
+    budget under 0.95 (0.930 projected without the rule; the Amendment projects two decreases,
+    to 14, a guess). The same run at 3072 prints no change.
 
 ### Phase 4: Readings and the budget line
 - **Owner skill:** dev
@@ -153,8 +242,14 @@ flowchart LR
 - **Files touched:** `docs/nfr.md`, `docs/roadmap.md`.
 - **Done when:**
   - `--autopilot --headless` at r_full 16 / r_lod 24 and at 14 / 22, each with and without
-    `--look contour`, dev box, two runs each: peak live, budget, peak pressure, radius
-    changes, first-frame time, and no OOM; recorded in §3 with machine and commit.
+    `--look contour`, dev box, two runs each: peak live, budget, the split (pages and
+    records), peak pressure with its slot and record terms, radius changes, the reservation
+    time, first-frame time, and no OOM; recorded in §3 with machine and commit. Timing runs
+    hold the perf lock and state the 1-minute load: Phase 1 read 414 to 513 ms first frames
+    (one 12 % over Plan 0002's 457 ms) under build load 9.6 to 11.
+  - Phase 3's `--mirror-budget 1930` run, twice: radius changes, the final `r_full`, peak
+    pressure, failed syncs, recorded in §3 as the pressure rule's reading.
+  - §7 records the reservation time as a reading in place of Phase 1's under-50 ms guess.
   - §3's line reads "live bytes against the reserved budget", with the readings replacing
     Plan 0002's allocated figures.
 
@@ -166,6 +261,8 @@ pub struct MirrorConfig {
     // ... as today
     /// VRAM reserved for pool shards, masks and records, split by the adapter's limits.
     pub budget_bytes: u64,
+    /// Records to reserve; `None` reserves the window's W^3 (amended 2026-10-20).
+    pub record_chunks: Option<u64>,
 }
 pub struct SyncStats {
     // ... as today
@@ -173,22 +270,27 @@ pub struct SyncStats {
     pub copies: u32,          // 0 after `new`
 }
 impl GpuWorld {
-    pub fn pressure(&self) -> f32; // mirror_bytes / allocated_bytes
+    pub fn pressure(&self) -> f32; // max(slot occupancy, record occupancy)
     pub fn pages_issued(&self) -> u32;
 }
 ```
 
-The split: `records = min(window capacity x RECORD_BYTES, binding limit)`; `pool = budget -
-records`, in whole pages, filling shard 0 to its limit, then 1, and so on; masks are
+The split: `records = min(record_chunks (else window capacity) x RECORD_BYTES, binding limit)`;
+`pool = budget - records`, in whole pages, filling shard 0 to its limit, then 1, and so on; masks are
 `MASK_BYTES x pool slots`.
 
 ## Budgets
 
 - **§3 world VRAM:** allocated equals the budget (3 GB by default); live is the reading.
   Projection for radius 14 with contour: 2.56 GB live at rest (D1's table), plus the
-  hysteresis transient, under 3 GB; the Phase 4 reading decides.
-- **§7 first frame:** one reservation of 3 GB at startup; a guess of under 50 ms, read in
-  Phase 1.
+  hysteresis transient, under 3 GB; the Phase 4 reading decides. From the 2026-10-20
+  amendment, records take 244 659 136 B of the budget at r_lod 24 (93 239, the sphere) rather
+  than 348 076 224 B (the cube), and pressure is the larger of slot and record occupancy; the
+  pressure rule's own reading is the Phase 3 run at 1930 MiB.
+- **§7 first frame:** one reservation of 3 GB at startup. Phase 1 read 69.6 to 86.0 ms on the
+  dev box under build load against a guess of under 50 ms; a throwaway probe put
+  `create_buffer` near 18 ms per GiB, so the time follows the budget, not the split. The
+  reading replaces the guess; Phase 4 re-reads it with the first frame.
 - **§2 streaming line:** the grow copies (up to about 2 GB each on the GPU) no longer occur;
   the autopilot's p99 frame is re-read in Phase 4 beside Plan 0002's 51.8 to 60.7 ms.
 
@@ -201,7 +303,13 @@ records`, in whole pages, filling shard 0 to its limit, then 1, and so on; masks
   page; a page is only re-kinded when empty, so no live brick moves.
 - **Streamer radii at runtime.** If `Streamer` cannot change radii without a rebuild, Phase
   3 adds the setter in `vxe-world`; the residency tests cover it.
-- **Determinism:** none; the mirror is render-side.
+- **The 1930 MiB gate rests on a measurement.** The bound on the start in motion (17, 25)
+  does not fit 743 pages; the gate holds because the measured flight peak does and the rule
+  acts within its first 60 frames. If a run fails it, the Phase 3 log records the peak and
+  the frame of each change, and the window (724 to 759 pages) is re-derived, not widened.
+- **The record term is inert by sizing.** It stays under 0.7 only while the streamer keeps its
+  radius around one focus; an application with several foci passes its own `record_chunks`.
+- **Determinism:** none; the mirror is render-side. `chunks_in_ball` is integer arithmetic.
 
 ## What this plan does NOT do
 

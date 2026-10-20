@@ -98,3 +98,16 @@ Allocate each 4096-slot page as its own buffer, so nothing is ever copied and pa
 released when empty. It needs storage-buffer binding arrays with non-uniform indexing, the
 native-only feature ADR-0004 rejected for the shards; a fixed set of 8 bindings cannot hold
 hundreds of pages. Rejected for the same reason.
+
+## Outcome
+
+Added 2026-10-20, from Plan 0017 Phase 3 (its Amendment of that date):
+
+- **Pressure is the larger of pool-slot occupancy and record occupancy, not live over
+  budget.** Live bytes over the whole reservation counted records reserved for chunks that are
+  never resident and could not reach the 0.9 trigger before the pool ran out. The thresholds
+  (lower at 0.9, restore under 0.7) and the rule's shape (`r_full` only, a chunk at a time)
+  stand; the LOD radius never moves.
+- **The streamed mirror reserves records for the residency sphere**, sized so the record term
+  stays under the restore line while the streamer keeps its radius, instead of a record for
+  every chunk of the window cube. A mirror given no record count keeps the cube.
