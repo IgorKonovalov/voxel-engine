@@ -55,7 +55,10 @@ fn noise() -> Sound {
 /// rendered past the start so the delay lines are full and the gains and filters settled.
 fn loaded_mixer(direct_delay: bool) -> Mixer {
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
-    mixer.set_direct_delay(direct_delay);
+    mixer.set_mix(MixSettings {
+        direct_delay,
+        ..MixSettings::default()
+    });
     let sound = noise();
     for (i, p) in sources([0.0; 3]).into_iter().enumerate() {
         let id = VoiceId(i as u32 + 1);
@@ -139,10 +142,11 @@ fn mixer_block(c: &mut Criterion) {
     println!(
         "audio RAM: pack {pack_bytes} B; delay line {delay_line} B per voice, {} B for the \
          {MAX_VOICES}-voice pool; buses {buses} B; tap slots {slots} B per voice, {} B for the \
-         pool; tail lines {} B (two networks)",
+         pool; tail lines {} B (two networks); pre-delay line {} B",
         delay_line * MAX_VOICES,
         slots * MAX_VOICES,
-        mixer.reverb_bytes()
+        mixer.reverb_bytes(),
+        mixer.predelay_bytes()
     );
     let mut out = vec![0.0f32; 2 * BLOCK];
     let mut rooms = Rooms(1);

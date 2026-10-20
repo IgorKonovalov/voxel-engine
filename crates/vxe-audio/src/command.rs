@@ -6,6 +6,7 @@
 
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 
+use crate::mixer::MixSettings;
 use crate::stream::StreamReader;
 use crate::voice::{AcousticTargets, PlayParams, Sound, VoiceId};
 use crate::{AudioError, Listener};
@@ -36,6 +37,8 @@ pub enum Command {
     SetListener(Listener),
     SetAcoustics(VoiceId, AcousticTargets),
     SetRoom(RoomTargets),
+    /// The balance: echo gain, direct delay, the tail's settings.
+    SetMix(MixSettings),
 }
 
 pub(crate) struct CommandSender(SyncSender<Command>);

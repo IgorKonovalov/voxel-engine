@@ -44,13 +44,13 @@ pub use command::{COMMAND_CAPACITY, Command, RoomTargets};
 pub use hrtf::Hrtf;
 pub use input::Input;
 pub use mixer::{
-    MAX_VOICES, Mixer, TAP_JUMP_FRAMES, TAP_SILENT, TAP_SLEW_FRAMES_PER_FRAME, TapSlot,
+    MAX_VOICES, MixSettings, Mixer, TAP_JUMP_FRAMES, TAP_SILENT, TAP_SLEW_FRAMES_PER_FRAME, TapSlot,
 };
 pub use output::{Output, OutputStats};
 pub use reverb::{
     REVERB_DELAY_SLEW_FRAMES_PER_FRAME, REVERB_LINES, REVERB_MAX_DELAY_FRAMES,
-    REVERB_MIN_DELAY_FRAMES, ReverbLine, ReverbNetwork, ReverbSettings, TAIL_HANDOVER_RATIO,
-    TailLines,
+    REVERB_MAX_PREDELAY_FRAMES, REVERB_MIN_DELAY_FRAMES, ReverbLine, ReverbNetwork, ReverbSettings,
+    TAIL_HANDOVER_RATIO, TailLines,
 };
 pub use stream::{STREAM_CAPACITY_FRAMES, Stream, StreamMonitor, StreamReader, StreamWriter};
 pub use voice::{

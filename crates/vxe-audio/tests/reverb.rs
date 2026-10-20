@@ -52,9 +52,12 @@ const MODES: [TailLines; 2] = [TailLines::Handover, TailLines::Glide];
 /// A mixer whose tail takes rooms as `lines` says.
 fn mixer(lines: TailLines) -> Mixer {
     let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
-    m.set_reverb_settings(ReverbSettings {
-        lines,
-        ..ReverbSettings::default()
+    m.set_mix(MixSettings {
+        reverb: ReverbSettings {
+            lines,
+            ..ReverbSettings::default()
+        },
+        ..MixSettings::default()
     });
     m
 }
@@ -482,6 +485,45 @@ fn a_room_that_grows_under_a_hum_glides_its_lines() {
         bite >= 4.0,
         "the jumped render scores only {bite} of the bound"
     );
+}
+
+/// A pre-delay stepped from 0 to 40 ms under a steady hum 2 m ahead in the 8 m room: the read
+/// crossfades from the old point to the new one, so no window's click index passes 1.25 times
+/// its crest.
+#[test]
+fn a_pre_delay_step_under_a_hum_does_not_click() {
+    let hum: Vec<f32> = (0..RATE)
+        .map(|n| 0.3 * (std::f64::consts::TAU * 440.0 * f64::from(n) / FS).sin() as f32)
+        .collect();
+    let mut m = mixer(TailLines::Handover);
+    m.apply(Command::SetRoom(RoomTargets {
+        t60_s: 2.26,
+        mean_free_path_m: 8.0,
+        energy: 0.379,
+    }));
+    m.apply(Command::Play(
+        VoiceId(1),
+        Sound::new(hum),
+        PlayParams {
+            looping: true,
+            ..PlayParams::at([20.0, 0.0, 0.0])
+        },
+    ));
+    let frames = 4 * RATE as usize;
+    let mut out = vec![0.0; 2 * frames];
+    m.render(&mut out, frames);
+    m.apply(Command::SetMix(MixSettings {
+        reverb: ReverbSettings {
+            predelay_s: 0.04,
+            ..ReverbSettings::default()
+        },
+        ..MixSettings::default()
+    }));
+    assert_eq!(m.mix().reverb.predelay_frames(), 1_920);
+    m.render(&mut out, frames);
+    let ratio = worst_ratio(&out, "pre-delay 0 to 40 ms");
+    println!("pre-delay stepped from 0 to 40 ms: largest K_w / (1.25 C_w) {ratio:.4}");
+    assert!(ratio <= 1.0, "a window's K_w is {ratio} of 1.25 C_w");
 }
 
 /// The fraction of `x`'s energy within 3 Hz of 440 Hz over 1 s Hann windows, hop 0.5 s: the

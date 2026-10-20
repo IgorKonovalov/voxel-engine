@@ -32,6 +32,14 @@
 //! from 0 through the smoother. A decay changed in place moves through the smoother; the loop
 //! gains follow the current lengths and the smoothed `T60` every block.
 //!
+//! # Pre-delay
+//!
+//! The voices' summed sends pass a mono line of [`REVERB_MAX_PREDELAY_FRAMES`] plus a block
+//! before the networks, read [`ReverbSettings::predelay_s`] back. A new pre-delay never glides
+//! (that would repitch the input): the read crossfades linearly from the old read point to the
+//! new one over [`crate::SMOOTHING_SECONDS`]; a change asked for while one crossfades waits for
+//! it to finish.
+//!
 //! # Level
 //!
 //! Every line takes the same input `b * x`, `x` the sum of the voices' sends. At frequency `w`
@@ -61,6 +69,11 @@ pub enum TailLines {
     /// One network whose lines glide to their new lengths.
     Glide,
 }
+
+/// The longest pre-delay: 200 ms.
+pub const REVERB_MAX_PREDELAY_FRAMES: usize = 9_600;
+/// The pre-delay line holds the longest pre-delay plus a block.
+const PRE_RING: usize = REVERB_MAX_PREDELAY_FRAMES + BLOCK;
 
 /// A room whose mean free path differs from the fed network's by more than this factor,
 /// either way, is handed to the other network ([`TailLines::Handover`]).
@@ -92,6 +105,17 @@ pub struct ReverbSettings {
     pub max_t60_s: f32,
     /// How a change of room reaches the lines.
     pub lines: TailLines,
+    /// Seconds the voices' sends wait before they enter the networks, 0 to 0.2.
+    pub predelay_s: f32,
+}
+
+impl ReverbSettings {
+    /// The pre-delay in whole frames, clamped to `[0, REVERB_MAX_PREDELAY_FRAMES]`.
+    pub fn predelay_frames(&self) -> usize {
+        (self.predelay_s.max(0.0) * RATE as f32)
+            .round()
+            .min(REVERB_MAX_PREDELAY_FRAMES as f32) as usize
+    }
 }
 
 impl Default for ReverbSettings {
@@ -101,6 +125,7 @@ impl Default for ReverbSettings {
             level: 1.0,
             max_t60_s: 8.0,
             lines: TailLines::Handover,
+            predelay_s: 0.0,
         }
     }
 }
@@ -466,6 +491,89 @@ pub(crate) struct Reverb {
     settings: ReverbSettings,
     /// `cos w` at the centre of each of the [`ENERGY_BANDS`] bands.
     band_cos: [f32; ENERGY_BANDS],
+    pre: PreDelay,
+}
+
+/// The pre-delay line and its crossfade between two read points (module comment).
+struct PreDelay {
+    ring: Vec<f32>,
+    write: usize,
+    /// The read point being left and the one being taken, frames back.
+    from: usize,
+    to: usize,
+    /// Crossfade progress from `from` to `to`, 0 to 1; 1 when done.
+    x: f32,
+    /// A pre-delay waiting for the crossfade in progress.
+    pending: Option<usize>,
+    /// One block of the delayed input.
+    out: Vec<f32>,
+}
+
+impl PreDelay {
+    fn new() -> Self {
+        Self {
+            ring: vec![0.0; PRE_RING],
+            write: 0,
+            from: 0,
+            to: 0,
+            x: 1.0,
+            pending: None,
+            out: vec![0.0; BLOCK],
+        }
+    }
+
+    /// Asks for a read point `frames` back.
+    fn set(&mut self, frames: usize) {
+        if self.x < 1.0 {
+            self.pending = (frames != self.to).then_some(frames);
+        } else if frames != self.to {
+            self.from = self.to;
+            self.to = frames;
+            self.x = 0.0;
+        }
+    }
+
+    /// Writes `input` into the line and returns it delayed.
+    fn process(&mut self, input: &[f32]) -> &[f32] {
+        let n = input.len();
+        if self.x >= 1.0 && self.pending.is_none() && self.to == 0 {
+            // No pre-delay: the line still records, so a later one has history to read.
+            for &v in input {
+                self.ring[self.write] = v;
+                self.write = if self.write + 1 == PRE_RING {
+                    0
+                } else {
+                    self.write + 1
+                };
+            }
+            self.out[..n].copy_from_slice(input);
+            return &self.out[..n];
+        }
+        let step = 1.0 / (SMOOTHING_SECONDS * RATE as f32);
+        let back = |w: usize, d: usize| if w >= d { w - d } else { w + PRE_RING - d };
+        for (j, &v) in input.iter().enumerate() {
+            self.ring[self.write] = v;
+            let a = self.ring[back(self.write, self.from)];
+            let b = self.ring[back(self.write, self.to)];
+            if self.x < 1.0 {
+                self.x = (self.x + step).min(1.0);
+            }
+            self.out[j] = a + (b - a) * self.x;
+            self.write = if self.write + 1 == PRE_RING {
+                0
+            } else {
+                self.write + 1
+            };
+            if self.x >= 1.0
+                && let Some(next) = self.pending.take()
+            {
+                self.from = self.to;
+                self.to = next;
+                self.x = 0.0;
+            }
+        }
+        &self.out[..n]
+    }
 }
 
 impl Reverb {
@@ -479,6 +587,7 @@ impl Reverb {
             band_cos: std::array::from_fn(|k| {
                 (std::f32::consts::PI * (k as f32 + 0.5) / ENERGY_BANDS as f32).cos()
             }),
+            pre: PreDelay::new(),
         }
     }
 
@@ -487,12 +596,14 @@ impl Reverb {
         2 * REVERB_LINES * RING * 4
     }
 
-    pub fn settings(&self) -> ReverbSettings {
-        self.settings
+    /// Bytes the pre-delay line holds.
+    pub fn predelay_bytes() -> usize {
+        PRE_RING * 4
     }
 
     pub fn set_settings(&mut self, settings: ReverbSettings) {
         self.settings = settings;
+        self.pre.set(settings.predelay_frames());
         for net in &mut self.nets {
             net.t60_target = net.t60_target.min(settings.max_t60_s);
         }
@@ -607,6 +718,7 @@ impl Reverb {
         let x1 = (x0 + n as f32 / (SMOOTHING_SECONDS * RATE as f32)).min(1.0);
         self.xfade = x1;
         let (w0, w1) = (self.weights(x0), self.weights(x1));
+        let input = self.pre.process(input);
         for (k, net) in self.nets.iter_mut().enumerate() {
             net.render(input, out, (w0[k], w1[k]), &self.settings, &self.band_cos);
         }

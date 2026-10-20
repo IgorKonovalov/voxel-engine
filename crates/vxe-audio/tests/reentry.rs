@@ -236,9 +236,12 @@ const INSIDE_ROCK: RoomTargets = RoomTargets {
 /// 3 s, the rock room for 0.5 s, the chamber's again for 3 s.
 fn rock_room_between_chambers(lines: TailLines) -> Vec<f32> {
     let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
-    m.set_reverb_settings(ReverbSettings {
-        lines,
-        ..ReverbSettings::default()
+    m.set_mix(MixSettings {
+        reverb: ReverbSettings {
+            lines,
+            ..ReverbSettings::default()
+        },
+        ..MixSettings::default()
     });
     m.apply(Command::SetRoom(CHAMBER));
     m.apply(Command::Play(

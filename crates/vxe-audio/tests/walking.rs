@@ -172,7 +172,10 @@ struct Walk {
 /// as a 60 Hz game would drive it.
 fn walk(world: &World, pace: Pace, delayed: bool) -> Walk {
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
-    mixer.set_direct_delay(delayed);
+    mixer.set_mix(MixSettings {
+        direct_delay: delayed,
+        ..MixSettings::default()
+    });
     let mut acoustics = Acoustics::new(mixer.clock());
     assert!(acoustics.reflections_on());
     let id = VoiceId(1);

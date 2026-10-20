@@ -25,7 +25,7 @@
 //!    the panning path a constant-power pan on the listener's right axis is smoothed like the
 //!    gain.
 //!
-//! With the direct delay on ([`Mixer::set_direct_delay`]) step 2 reads the voice's delay line
+//! With the direct delay on ([`MixSettings::direct_delay`]) step 2 reads the voice's delay line
 //! instead, `d / c` frames back (`d` the source's distance this block, at most
 //! [`MAX_DELAY_FRAMES`]) through the same fractional read, and every tap reads that much
 //! further back than its excess: the direct path and the echoes carry the Doppler of the
@@ -61,6 +61,30 @@ use crate::{
 
 /// Voices the mixer holds at once.
 pub const MAX_VOICES: usize = 64;
+
+/// The balance a listener sets over everything the acoustics give: applied by
+/// [`Mixer::set_mix`] or, on a running output, [`Command::SetMix`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MixSettings {
+    /// Amplitude scale of the early reflections, applied to the direction buses' input through
+    /// the one-pole smoother of [`crate::SMOOTHING_SECONDS`].
+    pub echo_gain: f32,
+    /// The direct path's propagation delay (module comment).
+    pub direct_delay: bool,
+    /// The late tail's settings.
+    pub reverb: ReverbSettings,
+}
+
+impl Default for MixSettings {
+    /// Echo gain 1, the direct delay off, the tail's defaults.
+    fn default() -> Self {
+        Self {
+            echo_gain: 1.0,
+            direct_delay: false,
+            reverb: ReverbSettings::default(),
+        }
+    }
+}
 /// One tap slot as [`Mixer::tap_slots`] reads it.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -111,8 +135,12 @@ pub struct Mixer {
     smooth_k: f32,
     /// Blocks rendered, for [`crate::Acoustics`]' cadence.
     clock: BlockClock,
-    /// The direct path's propagation delay is on.
-    direct_delay: bool,
+    /// The balance applied last.
+    mix: MixSettings,
+    /// The echo gain as smoothed so far, at the last block's end.
+    echo_gain: f32,
+    /// One block of the echo gain's ramp.
+    echo_ramp: Vec<f32>,
 }
 
 impl Mixer {
@@ -144,18 +172,21 @@ impl Mixer {
             finished: Vec::with_capacity(MAX_VOICES),
             smooth_k: 1.0 - (-1.0 / (SMOOTHING_SECONDS * RATE as f32)).exp(),
             clock: BlockClock::default(),
-            direct_delay: false,
+            mix: MixSettings::default(),
+            echo_gain: 1.0,
+            echo_ramp: vec![0.0; BLOCK],
         }
     }
 
-    /// Switches the direct path's propagation delay on or off (off by default; module comment).
-    pub fn set_direct_delay(&mut self, on: bool) {
-        self.direct_delay = on;
+    /// Sets the balance: the echo gain, the direct delay and the tail's settings.
+    pub fn set_mix(&mut self, mix: MixSettings) {
+        self.mix = mix;
+        self.reverb.set_settings(mix.reverb);
     }
 
-    /// Whether the direct path's propagation delay is on.
-    pub fn direct_delay(&self) -> bool {
-        self.direct_delay
+    /// The balance applied last.
+    pub fn mix(&self) -> MixSettings {
+        self.mix
     }
 
     /// The count of blocks this mixer has rendered, shared with whoever holds a clone.
@@ -188,15 +219,6 @@ impl Mixer {
         }))
     }
 
-    /// Sets how the late tail sounds beyond what the room gives it.
-    pub fn set_reverb_settings(&mut self, settings: ReverbSettings) {
-        self.reverb.set_settings(settings);
-    }
-
-    pub fn reverb_settings(&self) -> ReverbSettings {
-        self.reverb.settings()
-    }
-
     /// The fed tail network's lines, for tests: each line's current and target length.
     #[doc(hidden)]
     pub fn reverb_lines(&self) -> [ReverbLine; crate::REVERB_LINES] {
@@ -220,6 +242,11 @@ impl Mixer {
     /// Bytes the tail's delay lines hold, both networks.
     pub fn reverb_bytes(&self) -> usize {
         Reverb::line_bytes()
+    }
+
+    /// Bytes the tail's pre-delay line holds.
+    pub fn predelay_bytes(&self) -> usize {
+        Reverb::predelay_bytes()
     }
 
     /// Whether `id` is still playing.
@@ -253,6 +280,7 @@ impl Mixer {
             }
             Command::SetListener(l) => self.listener = l,
             Command::SetRoom(room) => self.reverb.set_room(room),
+            Command::SetMix(mix) => self.set_mix(mix),
             Command::SetAcoustics(id, targets) => {
                 if let Some(v) = self.voice_mut(id) {
                     v.acoustic = targets;
@@ -325,7 +353,7 @@ impl Mixer {
                 .max(self.hrtf.as_ref().map_or(0, |h| h.taps() - 1));
             v.read(dry, tail);
             v.since_acoustics = v.since_acoustics.saturating_add(n as u32);
-            let delay_to = if self.direct_delay {
+            let delay_to = if self.mix.direct_delay {
                 (d / SPEED_OF_SOUND * RATE as f32).min(MAX_DELAY_FRAMES as f32)
             } else {
                 0.0
@@ -505,12 +533,29 @@ impl Mixer {
     /// `out`. A bus whose nearest direction changed crossfades like a voice.
     fn render_buses(&mut self, frame: &ListenerFrame, out: &mut [f32]) {
         let n = out.len() / 2;
+        // The echo gain's one-pole over the block; exactly 1, it is not applied.
+        let (g0, to) = (self.echo_gain, self.mix.echo_gain);
+        let mut g = g0;
+        for r in &mut self.echo_ramp[..n] {
+            g += (to - g) * self.smooth_k;
+            *r = g;
+        }
+        if (g - to).abs() < 1e-7 {
+            g = to;
+        }
+        self.echo_gain = g;
+        let scaled = !(g0 == 1.0 && g == 1.0);
         for (bus, &world_dir) in self.buses.iter_mut().zip(&self.bus_dirs) {
             if !bus.live && !bus.ringing {
                 continue;
             }
             let dir = normalize_or(frame.local(world_dir), [1.0, 0.0, 0.0]);
             let block = &mut bus.block[..n];
+            if scaled && bus.live {
+                for (x, r) in block.iter_mut().zip(&self.echo_ramp) {
+                    *x *= r;
+                }
+            }
             match &self.hrtf {
                 Some(hrtf) => {
                     let to = hrtf.nearest(dir);

@@ -8,7 +8,8 @@
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH] [--view VIEW] [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
-//! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]`.
+//! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
+//! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]`.
 //! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -83,6 +84,14 @@
 //! (implies `--audio`) plays the default input device at the listener with its direct path
 //! off, so it is heard only off the walls and in the tail; wear headphones.
 //!
+//! The balance (`vxe_audio::MixSettings`) is live: `[` and `]` step the echo gain by 3 dB
+//! (-12 to +30 dB), `-` and `=` the tail level by 3 dB (-30 to +6 dB), `9` and `0` the tail's
+//! pre-delay by 10 ms (0 to 200 ms), `O` switches the tail's lines between handing over and
+//! gliding, and `U` switches the direct path's propagation delay. Each prints a line
+//! `mix: echoes .. dB, tail .. dB, pre-delay .. ms, tail lines .., direct delay ..`, which `F1`
+//! and the start (with `--audio` or `--room-line`) print too. `--echo-db`, `--tail-db`,
+//! `--predelay-ms`, `--tail-glide` and `--direct-delay` set the same at the start.
+//!
 //! `--room METRES` runs in a closed cube of air of that edge inside 2 m of rock, spawned at its
 //! centre, and implies `--room-line`: a line `room: V .. S .. mfp .. alpha .. T60 .. energy ..`
 //! whenever the listener's room fan completes (`F1` and `--audio-debug` print it too). Without
@@ -107,8 +116,8 @@ use flythrough::{
 };
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
 use vxe_audio::{
-    Acoustics, BlockClock, Command, Hrtf, Mixer, Output, PlayParams, RoomEstimate, RoomTargets,
-    Sound, VoiceId,
+    Acoustics, BlockClock, Command, Hrtf, MixSettings, Mixer, Output, PlayParams, ReverbSettings,
+    RoomEstimate, RoomTargets, Sound, TailLines, VoiceId,
 };
 use vxe_net::{Client, Event, Logic, LogicError, MemChannel, Server};
 use vxe_render::glam::Vec3;
@@ -257,6 +266,8 @@ struct Args {
     absorption: f32,
     /// `--mic`: play the default input device at the listener, heard off the walls.
     mic: bool,
+    /// `--echo-db`, `--tail-db`, `--predelay-ms`, `--tail-glide`, `--direct-delay`.
+    mix: Mix,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -328,6 +339,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         room_line: false,
         absorption: CAVE_ACOUSTIC[0],
         mic: false,
+        mix: Mix::default(),
     };
     let mut detail_flag = false;
     let mut it = argv.into_iter();
@@ -406,6 +418,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 args.absorption = a;
             }
             "--room-line" => args.room_line = true,
+            "--echo-db" => args.mix.echo_db = Mix::parse(flag.as_str(), &value()?)?,
+            "--tail-db" => args.mix.tail_db = Mix::parse(flag.as_str(), &value()?)?,
+            "--predelay-ms" => args.mix.predelay_ms = Mix::parse(flag.as_str(), &value()?)?,
+            "--tail-glide" => args.mix.glide = true,
+            "--direct-delay" => args.mix.direct_delay = true,
             "--mic" => {
                 args.mic = true;
                 args.audio = true;
@@ -620,6 +637,86 @@ fn room_sent_line(r: &RoomTargets) -> String {
     )
 }
 
+/// The balance the keys and flags set over the acoustics.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Mix {
+    /// The echo gain, dB.
+    echo_db: f32,
+    /// The tail level, dB.
+    tail_db: f32,
+    /// The tail's pre-delay, milliseconds.
+    predelay_ms: f32,
+    /// The tail's lines glide instead of handing over.
+    glide: bool,
+    /// The direct path's propagation delay.
+    direct_delay: bool,
+}
+
+impl Mix {
+    const ECHO_DB: std::ops::RangeInclusive<f32> = -12.0..=30.0;
+    const TAIL_DB: std::ops::RangeInclusive<f32> = -30.0..=6.0;
+    const PREDELAY_MS: std::ops::RangeInclusive<f32> = 0.0..=200.0;
+
+    /// The range of `flag`'s value.
+    fn range(flag: &str) -> std::ops::RangeInclusive<f32> {
+        match flag {
+            "--echo-db" => Self::ECHO_DB,
+            "--tail-db" => Self::TAIL_DB,
+            _ => Self::PREDELAY_MS,
+        }
+    }
+
+    /// `flag`'s value `v`, checked against its range.
+    fn parse(flag: &str, v: &str) -> Result<f32, String> {
+        let range = Self::range(flag);
+        v.parse::<f32>()
+            .ok()
+            .filter(|x| range.contains(x))
+            .ok_or_else(|| format!("{flag} takes {} to {}, not {v}", range.start(), range.end()))
+    }
+
+    /// Each value moved by its key's step and held in its range.
+    fn step(self, echo_db: f32, tail_db: f32, predelay_ms: f32) -> Self {
+        let clamp = |x: f32, r: std::ops::RangeInclusive<f32>| x.clamp(*r.start(), *r.end());
+        Self {
+            echo_db: clamp(self.echo_db + echo_db, Self::ECHO_DB),
+            tail_db: clamp(self.tail_db + tail_db, Self::TAIL_DB),
+            predelay_ms: clamp(self.predelay_ms + predelay_ms, Self::PREDELAY_MS),
+            ..self
+        }
+    }
+
+    fn settings(&self) -> MixSettings {
+        MixSettings {
+            echo_gain: 10f32.powf(self.echo_db / 20.0),
+            direct_delay: self.direct_delay,
+            reverb: ReverbSettings {
+                level: 10f32.powf(self.tail_db / 20.0),
+                predelay_s: self.predelay_ms / 1e3,
+                lines: if self.glide {
+                    TailLines::Glide
+                } else {
+                    TailLines::Handover
+                },
+                ..ReverbSettings::default()
+            },
+        }
+    }
+
+    /// `mix: echoes <dB>, tail <dB>, pre-delay <ms>, tail lines <mode>, direct delay <on|off>`.
+    fn line(&self) -> String {
+        format!(
+            "mix: echoes {:+.0} dB, tail {:+.0} dB, pre-delay {:.0} ms, tail lines {}, direct \
+             delay {}",
+            self.echo_db,
+            self.tail_db,
+            self.predelay_ms,
+            if self.glide { "glide" } else { "handover" },
+            if self.direct_delay { "on" } else { "off" }
+        )
+    }
+}
+
 /// The voice the microphone plays as. The output numbers its voices up from 0, so this one
 /// is never handed out in a session.
 const MIC_VOICE: VoiceId = VoiceId(u32::MAX);
@@ -691,6 +788,8 @@ struct Audio {
     mic: Option<Mic>,
     /// Fans discarded in a row so far (the listener inside a solid), for `--audio-debug`.
     discarded_run: u64,
+    /// The balance sent to the mixer.
+    mix: Mix,
 }
 
 /// An environment variable naming an HRIR pack to use instead of the shipped one, for
@@ -774,7 +873,7 @@ impl Audio {
     /// Opens the default device; prints why when it cannot. `debug` meters and records the
     /// callback; `absorption` is the cave row's; `mic` also opens the default input device and
     /// plays it at the listener with its direct path off; `room_line` prints each room.
-    fn open(debug: bool, absorption: f32, mic: bool, room_line: bool) -> Option<Self> {
+    fn open(debug: bool, absorption: f32, mic: bool, room_line: bool, mix: Mix) -> Option<Self> {
         let t = now();
         let hrtf = match std::env::var_os(HRIR_ENV) {
             Some(path) => match std::fs::read(&path)
@@ -804,7 +903,8 @@ impl Audio {
             hrtf.len(),
             hrtf.taps()
         );
-        let mixer = Mixer::new(hrtf, METRES_PER_VOXEL);
+        let mut mixer = Mixer::new(hrtf, METRES_PER_VOXEL);
+        mixer.set_mix(mix.settings());
         let acoustics = Acoustics::new(mixer.clock());
         match Output::open(mixer) {
             Ok(output) => {
@@ -835,6 +935,7 @@ impl Audio {
                     room_line,
                     mic,
                     discarded_run: 0,
+                    mix,
                 })
             }
             Err(e) => {
@@ -1815,6 +1916,7 @@ impl Run {
                 audio.acoustics.active_taps(),
                 audio.update_ms
             );
+            println!("{}", audio.mix.line());
             if let Some(mic) = &audio.mic {
                 println!(
                     "mic: {}, {} frames dropped",
@@ -2460,6 +2562,38 @@ impl Run {
                     looping: true,
                     ..PlayParams::at(p)
                 });
+            }
+            let steps = [
+                (KeyCode::BracketLeft, -3.0, 0.0, 0.0),
+                (KeyCode::BracketRight, 3.0, 0.0, 0.0),
+                (KeyCode::Minus, 0.0, -3.0, 0.0),
+                (KeyCode::Equal, 0.0, 3.0, 0.0),
+                (KeyCode::Digit9, 0.0, 0.0, -10.0),
+                (KeyCode::Digit0, 0.0, 0.0, 10.0),
+            ];
+            let mut mix = audio.mix;
+            let mut touched = false;
+            for (key, echo, tail, pre) in steps {
+                if input.pressed(key) {
+                    mix = mix.step(echo, tail, pre);
+                    touched = true;
+                }
+            }
+            if input.pressed(KeyCode::KeyO) {
+                mix.glide = !mix.glide;
+                touched = true;
+            }
+            if input.pressed(KeyCode::KeyU) {
+                mix.direct_delay = !mix.direct_delay;
+                touched = true;
+            }
+            if touched {
+                audio.mix = mix;
+                // A full channel drops it; the next key sends the whole balance again.
+                if let Err(e) = audio.output.send(Command::SetMix(mix.settings())) {
+                    println!("mix: {e}");
+                }
+                println!("{}", mix.line());
             }
         }
     }
@@ -3207,11 +3341,20 @@ fn main() {
     let size = args.render.unwrap_or([1280, 720]);
     let headless = args.headless;
     let audio = if args.audio {
-        Audio::open(args.audio_debug, args.absorption, args.mic, args.room_line)
+        Audio::open(
+            args.audio_debug,
+            args.absorption,
+            args.mic,
+            args.room_line,
+            args.mix,
+        )
     } else {
         None
     };
     let room_probe = (audio.is_none() && args.room_line).then(|| RoomProbe::new(args.absorption));
+    if args.audio || args.room_line {
+        println!("{}", args.mix.line());
+    }
     let app = Flythrough {
         start,
         args,
@@ -3554,6 +3697,58 @@ mod tests {
         assert!(parse_args_from(argv(&["--room", "0.5"])).is_err());
         assert!(parse_args_from(argv(&["--room", "12", "--level"])).is_err());
         assert!(parse_args_from(argv(&["--room", "4", "--walk"])).is_ok());
+    }
+
+    /// The balance flags parse within their ranges, set the mixer's settings and print the
+    /// mix line; the keys' steps stop at the ranges' ends.
+    #[test]
+    fn the_balance_flags_and_steps() {
+        let a = parse_args_from(argv(&[
+            "--room",
+            "12",
+            "--echo-db",
+            "6",
+            "--tail-db",
+            "-9",
+            "--predelay-ms",
+            "30",
+            "--tail-glide",
+            "--direct-delay",
+        ]))
+        .expect("parses");
+        assert_eq!(
+            a.mix.line(),
+            "mix: echoes +6 dB, tail -9 dB, pre-delay 30 ms, tail lines glide, direct delay on"
+        );
+        let s = a.mix.settings();
+        assert!((s.echo_gain - 1.9953).abs() < 1e-4);
+        assert!((s.reverb.level - 0.3548).abs() < 1e-4);
+        assert_eq!(s.reverb.predelay_frames(), 1_440);
+        assert_eq!(s.reverb.lines, TailLines::Glide);
+        assert!(s.direct_delay);
+        assert_eq!(
+            Mix::default().line(),
+            "mix: echoes +0 dB, tail +0 dB, pre-delay 0 ms, tail lines handover, direct delay off"
+        );
+        assert_eq!(Mix::default().settings(), MixSettings::default());
+        for bad in [
+            ["--echo-db", "31"],
+            ["--tail-db", "7"],
+            ["--predelay-ms", "-1"],
+            ["--predelay-ms", "x"],
+        ] {
+            assert!(parse_args_from(argv(&bad)).is_err(), "{bad:?}");
+        }
+        let top = Mix::default().step(40.0, 40.0, 400.0);
+        assert_eq!(
+            (top.echo_db, top.tail_db, top.predelay_ms),
+            (30.0, 6.0, 200.0)
+        );
+        let bottom = Mix::default().step(-40.0, -40.0, -10.0);
+        assert_eq!(
+            (bottom.echo_db, bottom.tail_db, bottom.predelay_ms),
+            (-12.0, -30.0, 0.0)
+        );
     }
 
     #[test]
