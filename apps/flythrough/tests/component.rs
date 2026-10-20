@@ -107,6 +107,7 @@ fn twenty_digs_replay_to_the_same_hash_natively_and_as_a_component() {
         extent: extent(),
         ops: native.ops().clone(),
         inputs: native.inputs().clone(),
+        prefabs: PrefabRegistry::new(),
     };
     let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("component-digs.log");
     let mut f = std::fs::File::create(&path).unwrap();

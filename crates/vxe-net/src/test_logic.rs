@@ -102,7 +102,7 @@ impl Logic for EchoLogic {
                     Ok(_) => ECHO_APPLIED,
                     Err(_) => ECHO_REFUSED,
                 },
-                Err(_) => ECHO_UNDECODABLE,
+                Ok(_) | Err(_) => ECHO_UNDECODABLE,
             };
             broadcast.push(outcome);
         }

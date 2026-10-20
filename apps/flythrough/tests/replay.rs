@@ -137,6 +137,10 @@ fn hash_result(h: &mut Fnv1a, r: &Result<EditResult, EditError>) {
                 h.write(&v.to_le_bytes());
             }
         }
+        Err(EditError::UnknownPrefab(id)) => {
+            h.write(&[3]);
+            h.write(&id.to_le_bytes());
+        }
     }
 }
 
@@ -147,6 +151,7 @@ fn file_of(ops: OpLog, inputs: InputLog) -> LogFile {
         extent: extent(),
         ops,
         inputs,
+        prefabs: PrefabRegistry::new(),
     }
 }
 

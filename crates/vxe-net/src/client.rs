@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use vxe_world::{EditError, EditResult, Op, World};
+use vxe_world::{EditError, EditResult, Op, PrefabRegistry, World};
 
 use crate::channel::{Channel, Endpoint};
 use crate::message::Message;
@@ -166,7 +166,10 @@ impl Client {
         if self.desynced {
             return None;
         }
-        match op.apply(world) {
+        match op
+            .apply(world, &PrefabRegistry::new())
+            .map(|r| r.edit_result())
+        {
             Ok(ours) => (ours != *theirs).then_some(ours),
             // The server applied what this world refuses: the worlds differ in residency.
             Err(_) => Some(EditResult::default()),

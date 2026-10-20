@@ -188,7 +188,9 @@ impl wit::Host for State {
                 Ok(op) if r.is_empty() => op,
                 _ => return Ok(vec![ANSWER_UNDECODABLE]),
             };
-            let Op::Edit(op) = op;
+            let Op::Edit(op) = op else {
+                return Ok(vec![ANSWER_UNDECODABLE]);
+            };
             Ok(encode_answer(&host.apply(op)))
         })
     }

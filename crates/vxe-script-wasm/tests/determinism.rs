@@ -419,7 +419,7 @@ fn edits_applied_before_a_failure_stay_and_resimulate() {
         .ops()
         .entries()
         .iter()
-        .map(|e| (e.tick(), e.op().copied()))
+        .map(|e| (e.tick(), e.op().cloned()))
         .collect();
     assert_eq!(
         logged,

@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use vxe_world::{
     EditError, EditOp, EditResult, Fixed3, Hit, InputLog, LogEntry, MaterialId, Op, OpLog,
-    VoxelCoord, World,
+    PrefabRegistry, VoxelCoord, World,
 };
 
 use crate::channel::{Channel, Endpoint};
@@ -85,15 +85,16 @@ struct TickHost<'a> {
 impl TickHost<'_> {
     /// Applies `op` under `seq`, logs it when it applied, and announces the outcome.
     fn apply_seq(&mut self, seq: u32, op: Op) -> Result<EditResult, EditError> {
-        let result = op.apply(self.world);
+        let result = op
+            .apply(self.world, &PrefabRegistry::new())
+            .map(|r| r.edit_result());
         let msg = match &result {
             Ok(r) => {
-                self.ops.record(self.tick, seq, op);
                 self.applied += 1;
                 Message::Applied {
                     tick: self.tick,
                     seq,
-                    op,
+                    op: op.clone(),
                     result: r.clone(),
                 }
             }
@@ -102,11 +103,14 @@ impl TickHost<'_> {
                 Message::Refused {
                     tick: self.tick,
                     seq,
-                    op,
+                    op: op.clone(),
                     error: *e,
                 }
             }
         };
+        if result.is_ok() {
+            self.ops.record(self.tick, seq, op);
+        }
         broadcast(self.clients, &msg);
         result
     }
@@ -310,15 +314,17 @@ impl Server {
                 j += 1;
             }
             let this_tick = &logged[start..j];
-            let boundary = this_tick.iter().find_map(|e| match *e {
-                LogEntry::Boundary { seq, .. } => Some(seq),
+            let boundary = this_tick.iter().find_map(|e| match e {
+                LogEntry::Boundary { seq, .. } => Some(*seq),
                 LogEntry::Op { .. } => None,
             });
             let mut pending = Vec::new();
             if let Some(b) = boundary {
                 let next = *server.next_seq.get_mut();
-                pending.extend(this_tick.iter().filter_map(|e| match *e {
-                    LogEntry::Op { seq, op, .. } if (next..b).contains(&seq) => Some((seq, op)),
+                pending.extend(this_tick.iter().filter_map(|e| match e {
+                    LogEntry::Op { seq, op, .. } if (next..b).contains(seq) => {
+                        Some((*seq, op.clone()))
+                    }
                     _ => None,
                 }));
                 *server.next_seq.get_mut() = b + 1;

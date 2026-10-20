@@ -50,12 +50,16 @@ pub struct EditResult {
 pub enum EditError {
     /// The shape reaches this chunk and it is not resident. Nothing was changed.
     NotResident(ChunkCoord),
+    /// A stamp names a prefab id that is not registered where it is applied (ADR-0014).
+    /// Nothing was changed.
+    UnknownPrefab(u64),
 }
 
 impl std::fmt::Display for EditError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotResident(c) => write!(f, "chunk {:?} is not resident", c.0),
+            Self::UnknownPrefab(id) => write!(f, "prefab {id:#018x} is not registered"),
         }
     }
 }

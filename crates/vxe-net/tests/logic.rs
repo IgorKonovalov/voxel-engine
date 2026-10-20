@@ -320,7 +320,7 @@ fn submitted_ops_interleave_with_the_logic_and_resimulate_to_equal_bytes() {
         .entries()
         .iter()
         .filter(|e| e.tick() == 3)
-        .copied()
+        .cloned()
         .collect();
     let seqs: Vec<(u32, bool)> = tick3.iter().map(|e| (e.seq(), e.op().is_some())).collect();
     let mut want: Vec<(u32, bool)> = vec![(30, true), (31, true), (33, true), (34, true)];

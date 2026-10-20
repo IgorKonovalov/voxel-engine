@@ -53,11 +53,12 @@ pub use edit::{EditError, EditOp, EditResult, Mode};
 pub use fixed::{FIXED_HALF, FIXED_ONE, Fixed3, centre_of_voxel};
 pub use log::{
     InputEntry, InputLog, LOG_FORMAT, LOG_HEADER_BYTES, LOG_MAGIC, LogEntry, LogFile, Op, OpLog,
+    OpResult,
 };
 pub use material::{AIR, Material, MaterialFlags, MaterialId, MaterialTable};
 pub use mips::{ChunkMips, MIP_BRICKS, MIP_LEVELS, majority};
 pub use persist::{PersistConfig, SPILL_VERSION, SpillError, decode_spill, encode_spill};
-pub use prefab::{Prefab, Rot};
+pub use prefab::{Prefab, PrefabCollision, PrefabRegistry, Rot};
 pub use query::QueryStats;
 pub use raycast::{Face, Hit, Run};
 pub use shape::Shape;

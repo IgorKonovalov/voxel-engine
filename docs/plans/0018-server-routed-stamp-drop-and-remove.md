@@ -1,6 +1,6 @@
 # 0018: Stamp, drop and remove as op kinds 2 to 4 through the server, the log and the logic host
 
-> **Status:** approved (2026-10-17)
+> **Status:** in-progress
 > **Created:** 2026-10-17
 > **Milestone:** M5 (the simulation split, completed for every op) and M8 (collapse through the log) in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0014](../adrs/0014-prefab-identity-in-the-op-log.md) (proposed; how a
@@ -230,7 +230,7 @@ pub enum EditError { NotResident(ChunkCoord), UnknownPrefab(u64), /* Plan 0019 a
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Wire kinds 2 to 4 and the prefab table | dev | not started | |
+| 1: Wire kinds 2 to 4 and the prefab table | dev | done | committed with this row |
 | 2: The server applies every kind | dev | not started | |
 | 3: The host and the component | dev | not started | |
 | 4: The fly-through through the logic | dev | not started | |
@@ -238,9 +238,18 @@ pub enum EditError { NotResident(ChunkCoord), UnknownPrefab(u64), /* Plan 0019 a
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: `EditError::UnknownPrefab`, its wire error tag (3; tag 2 left to Plan 0019's
+  `OutOfRange`) and `OpResult` with its wire encoding (`encode_op_result`, kind byte 1, 3 or 4)
+  landed here, in `crates/vxe-world/src/edit.rs` (not in any phase's Files touched) and `wire.rs`.
+- Phase 1: `PrefabRegistry` and `PrefabCollision` live in `vxe-world` (`prefab.rs`), so the
+  server, the clients and `LogFile.prefabs` share one type; `Op::apply` and `World::replay`
+  take a registry. `Op::Stamp.rot` is a `Rot`, its wire byte the `Rot::all` index.
+- Phase 1: compile-only edits outside the phase's Files touched: `vxe-net` `client.rs`,
+  `test_logic.rs`, `tests/{logic,shared}.rs`; `vxe-script-wasm` `src/host.rs`,
+  `tests/determinism.rs`; `vxe-world` `benches/replay.rs` (header 60 -> 64);
+  `apps/flythrough` `src/{lib,main}.rs`, `tests/component.rs` (`LogFile.prefabs`). The
+  server and client pass an empty registry until Phase 2; the host and `EchoLogic` treat the
+  new kinds as undecodable until Phase 3.
 
 ### Close triggers
 

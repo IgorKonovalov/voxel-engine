@@ -1507,6 +1507,7 @@ impl Run {
             extent: self.world.extent(),
             ops: net.server.ops().clone(),
             inputs: net.server.inputs().clone(),
+            prefabs: vxe_world::PrefabRegistry::new(),
         };
         println!("world hash 0x{:016x}", self.world.voxel_hash());
         let written = std::fs::File::create(path).and_then(|mut f| file.write_to(&mut f));

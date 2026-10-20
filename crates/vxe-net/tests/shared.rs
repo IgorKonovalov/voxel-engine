@@ -41,7 +41,7 @@ fn every_message_tag_round_trips() {
         Message::Applied {
             tick: u64::MAX,
             seq: 9,
-            op,
+            op: op.clone(),
             result: EditResult::default(),
         },
         Message::Refused {
@@ -194,7 +194,7 @@ fn submissions_from_two_threads_are_logged_once_each_in_seq_order() {
                 op: Op::Edit(op),
                 ..
             } => (seq, op),
-            LogEntry::Boundary { .. } => panic!("boundary among the op entries: {e:?}"),
+            _ => panic!("not a submitted edit: {e:?}"),
         })
         .collect();
     assert_eq!(logged, submitted);

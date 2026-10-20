@@ -295,7 +295,7 @@ pub fn replay_log_with(
     let world = World::generate(file.extent, &source, table);
     match mode {
         Mode::Ops => {
-            world.replay(&file.ops);
+            world.replay(&file.ops, &file.prefabs);
             Ok((world, file.ops.clone()))
         }
         Mode::Inputs => {
