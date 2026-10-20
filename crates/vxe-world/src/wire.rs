@@ -30,6 +30,7 @@ use crate::collapse::{DropResult, RemoveResult};
 use crate::coords::{ChunkCoord, VoxelCoord};
 use crate::edit::{EditError, EditOp, EditResult, Mode};
 use crate::fixed::Fixed3;
+use crate::limits::Field;
 use crate::log::{Op, OpResult};
 use crate::material::MaterialId;
 use crate::prefab::Rot;
@@ -63,8 +64,10 @@ pub const SHAPE_CAPSULE: u8 = 3;
 
 /// Error tag of [`EditError::NotResident`]: the chunk as 3 × `i32` follows.
 pub const ERROR_NOT_RESIDENT: u8 = 1;
-/// Error tag of [`EditError::UnknownPrefab`]: the id `u64` follows. Tag 2 is left to the
-/// out-of-range refusal of shapes and queries.
+/// Error tag of [`EditError::OutOfRange`]: the field `u8` follows, its index in
+/// [`Field::ALL`] plus 1.
+pub const ERROR_OUT_OF_RANGE: u8 = 2;
+/// Error tag of [`EditError::UnknownPrefab`]: the id `u64` follows.
 pub const ERROR_UNKNOWN_PREFAB: u8 = 3;
 
 /// Why bytes did not decode.
@@ -528,7 +531,8 @@ pub fn decode_op_result(r: &mut Reader<'_>) -> Result<OpResult, WireError> {
     }
 }
 
-/// Appends an edit error: its tag, then the chunk as 3 × `i32` or the prefab id as `u64`.
+/// Appends an edit error: its tag, then the chunk as 3 × `i32`, the field as `u8` or the
+/// prefab id as `u64`.
 pub fn encode_error(out: &mut Vec<u8>, e: &EditError) {
     match e {
         EditError::NotResident(c) => {
@@ -539,6 +543,14 @@ pub fn encode_error(out: &mut Vec<u8>, e: &EditError) {
             out.push(ERROR_UNKNOWN_PREFAB);
             out.extend_from_slice(&id.to_le_bytes());
         }
+        EditError::OutOfRange { what } => {
+            out.push(ERROR_OUT_OF_RANGE);
+            let i = Field::ALL
+                .iter()
+                .position(|f| f == what)
+                .expect("every field is listed");
+            out.push(i as u8 + 1);
+        }
     }
 }
 
@@ -547,6 +559,14 @@ pub fn decode_error(r: &mut Reader<'_>) -> Result<EditError, WireError> {
     match r.u8()? {
         ERROR_NOT_RESIDENT => Ok(EditError::NotResident(ChunkCoord(r.i32x3()?))),
         ERROR_UNKNOWN_PREFAB => Ok(EditError::UnknownPrefab(r.u64()?)),
+        ERROR_OUT_OF_RANGE => {
+            let k = r.u8()?;
+            let what = usize::from(k)
+                .checked_sub(1)
+                .and_then(|i| Field::ALL.get(i))
+                .ok_or(WireError::UnknownKind(k))?;
+            Ok(EditError::OutOfRange { what: *what })
+        }
         k => Err(WireError::UnknownKind(k)),
     }
 }

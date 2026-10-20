@@ -19,19 +19,27 @@
 //! 512-byte slot of palette indices plus 72 bytes of masks (a 64-byte opaque mask and two
 //! translucent words), each mirrored chunk (full or LOD-only) a 2624-byte record (16 words of
 //! brick bits, 512 entries, the palette), each chunk-table entry 4 bytes (the window's `W^3`
-//! when streaming), and each material row 8 `f32`s. CPU bytes count a full chunk's slot array and
-//! its `Full` bricks' class boxes, and a LOD-only chunk's mip-brick slots and `Full` mip-bricks'
-//! boxes.
+//! when streaming), and each material row `MATERIAL_FLOATS` `f32`s. CPU bytes count a full
+//! chunk's slot array and its `Full` bricks' class boxes, and a LOD-only chunk's mip-brick slots
+//! and `Full` mip-bricks' boxes.
+//!
+//! The budget lines are the smallest `--mirror-budget` (ADR-0013) that reserves this content
+//! at rest (`gpu_world::budget_for`): its slots in whole pages and a record for every chunk of
+//! the extent, or when streaming the records the fly-through reserves for the residency's ball
+//! (`flythrough::stream_record_chunks`). Face mode puts every brick in plain pages; contour
+//! puts full chunks' bricks in attribute pages of 1364 bricks each. Neither counts the
+//! streamer's hysteresis or the dig headroom.
 
 use std::sync::Arc;
 
 use flythrough::cave::CaveSource;
-use flythrough::{cave_materials, chunk_ram, mips_ram, window_side};
+use flythrough::{cave_materials, chunk_ram, mips_ram, stream_record_chunks, window_side};
+use vxe_render::gpu_world::{ATTR_PAGE_BRICK_SLOTS, MATERIAL_FLOATS, POOL_PAGE_SLOTS, budget_for};
 use vxe_world::hash::{ValueNoise, hash3};
 use vxe_world::{
-    AIR, BRICK_EDGE, Brick, BrickCensus, CHUNK_BRICKS, Chunk, ChunkCoord, ChunkExtent, CoarseGrid,
-    Material, MaterialId, MaterialTable, PersistConfig, Residency, StreamConfig, Streamer, World,
-    WorldSource, brick_of_slot,
+    AIR, BRICK_EDGE, Brick, BrickCensus, CHUNK_BRICKS, CHUNK_EDGE, Chunk, ChunkCoord, ChunkExtent,
+    CoarseGrid, Material, MaterialId, MaterialTable, PersistConfig, Residency, StreamConfig,
+    Streamer, World, WorldLimits, WorldSource, brick_of_slot,
 };
 
 /// Mirror bytes per `Full` brick or mip-brick, and per mirrored chunk's record.
@@ -133,12 +141,21 @@ fn veined(seed: u64, n: u64, chunks: [i32; 3]) {
         n,
         noise: ValueNoise::new(seed ^ 0xA1A1, 4),
     };
-    let world = World::generate(extent, &source, &table);
+    // The air count spans the whole extent, wider than a default box query allows.
+    let size = chunks.map(|c| c.unsigned_abs() * CHUNK_EDGE.unsigned_abs());
+    let limits = WorldLimits {
+        query_axis_max: size.into_iter().max().unwrap_or(0),
+        query_voxels_max: size.iter().map(|&n| u64::from(n)).product(),
+        ..WorldLimits::DEFAULT
+    };
+    let world = World::generate(extent, &source, &table).with_limits(limits);
     let s = world.stats();
-    let air = world.count_in_box(
-        extent.min.min_voxel(),
-        vxe_world::VoxelCoord(extent.max.min_voxel().0.map(|v| v - 1)),
-    );
+    let air = world
+        .count_in_box(
+            extent.min.min_voxel(),
+            vxe_world::VoxelCoord(extent.max.min_voxel().0.map(|v| v - 1)),
+        )
+        .expect("the world's limits hold its whole extent");
     let air = air.iter().find(|(m, _)| *m == AIR).map_or(0, |&(_, n)| n);
     println!(
         "{:LABEL$}{}x{}x{} chunks, seed {seed}, {} materials",
@@ -170,7 +187,14 @@ fn bounded(seed: u64, chunks: [i32; 3], census: bool) {
     let threads = std::thread::available_parallelism().map_or(1, usize::from);
 
     let start = now();
-    let world = World::generate_with_threads(extent, &source, &table, threads);
+    // The air count below spans the whole extent, wider than a default box query allows.
+    let size = chunks.map(|c| c.unsigned_abs() * CHUNK_EDGE.unsigned_abs());
+    let limits = WorldLimits {
+        query_axis_max: size.into_iter().max().unwrap_or(0),
+        query_voxels_max: size.iter().map(|&n| u64::from(n)).product(),
+        ..WorldLimits::DEFAULT
+    };
+    let world = World::generate_with_threads(extent, &source, &table, threads).with_limits(limits);
     let secs = (now() - start).as_secs_f64();
 
     let start = now();
@@ -191,12 +215,15 @@ fn bounded(seed: u64, chunks: [i32; 3], census: bool) {
             .sum::<usize>();
     }
     let cpu = payload + s.chunks * slot_array;
-    let mirror = s.full_bricks * SLOT_AND_MASK + s.chunks * (RECORD + 4) + table.len() * 8 * 4;
+    let mirror =
+        s.full_bricks * SLOT_AND_MASK + s.chunks * (RECORD + 4) + table.len() * MATERIAL_FLOATS * 4;
     let voxels = s.chunks as f64 * 64.0 * 64.0 * 64.0;
-    let air = world.count_in_box(
-        extent.min.min_voxel(),
-        vxe_world::VoxelCoord(extent.max.min_voxel().0.map(|v| v - 1)),
-    );
+    let air = world
+        .count_in_box(
+            extent.min.min_voxel(),
+            vxe_world::VoxelCoord(extent.max.min_voxel().0.map(|v| v - 1)),
+        )
+        .expect("the world's limits hold its whole extent");
     let air = air.iter().find(|(m, _)| *m == 0).map_or(0, |&(_, n)| n);
 
     println!(
@@ -219,6 +246,7 @@ fn bounded(seed: u64, chunks: [i32; 3], census: bool) {
         mirror,
         mib(mirror as u64)
     );
+    budget_lines(s.full_bricks as u64, 0, s.chunks as u64);
     println!("generation:        {:.3} s on {threads} threads", secs);
     println!("voxels/s/thread:   {:.3e}", voxels / secs / threads as f64);
     println!(
@@ -270,7 +298,7 @@ fn streamed(seed: u64, r: Residency, census: bool) {
     let w = window_side(r) as usize;
     let mirror_full = full_bricks * SLOT_AND_MASK + st.resident_full * RECORD;
     let mirror_lod = mip_full * SLOT_AND_MASK + st.resident_lod * RECORD;
-    let mirror = mirror_full + mirror_lod + w * w * w * 4 + table.len() * 8 * 4;
+    let mirror = mirror_full + mirror_lod + w * w * w * 4 + table.len() * MATERIAL_FLOATS * 4;
     let generated = st.generated_chunks as f64 * 64.0 * 64.0 * 64.0;
 
     println!(
@@ -304,6 +332,7 @@ fn streamed(seed: u64, r: Residency, census: bool) {
         mirror_full,
         mirror_lod
     );
+    budget_lines(full_bricks as u64, mip_full as u64, stream_record_chunks(r));
     println!("generation:        {secs:.3} s on {workers} workers");
     println!(
         "voxels/s/worker:   {:.3e}",
@@ -323,6 +352,17 @@ fn streamed(seed: u64, r: Residency, census: bool) {
     if census {
         println!("{}", world.brick_census());
     }
+}
+
+/// Prints the budget `full` bricks of full chunks and `mips` mip-bricks need with a record for
+/// each of `records` chunks, in face mode and in contour mode.
+fn budget_lines(full: u64, mips: u64, records: u64) {
+    let attr_slots = full.div_ceil(u64::from(ATTR_PAGE_BRICK_SLOTS)) * u64::from(POOL_PAGE_SLOTS);
+    let face = budget_for(full + mips, records);
+    // Plain and attribute pages are whole pages each.
+    let contour = budget_for(attr_slots, 0) + budget_for(mips, records) - budget_for(0, 0);
+    println!("budget (face):     {face} B ({:.1} MiB)", mib(face));
+    println!("budget (contour):  {contour} B ({:.1} MiB)", mib(contour));
 }
 
 fn mib(b: u64) -> f64 {

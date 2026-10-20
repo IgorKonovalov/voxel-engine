@@ -213,6 +213,20 @@ pub fn find_unsupported(
     anchors: &Anchors<'_>,
     changed: &[CellChange],
 ) -> Vec<Region> {
+    find_unsupported_with_stats(world, grid, params, anchors, changed).0
+}
+
+/// [`find_unsupported`] plus the cells the query looked at: the candidates after
+/// deduplication (each changed cell and its six neighbours) plus every cell a flood took on,
+/// its start included. Neighbours a flood looked up and passed over (not load-bearing) are
+/// not counted.
+pub fn find_unsupported_with_stats(
+    world: &World,
+    grid: &CoarseGrid,
+    params: &SupportParams,
+    anchors: &Anchors<'_>,
+    changed: &[CellChange],
+) -> (Vec<Region>, u64) {
     let mut cells = Cells::new(world, grid);
     let rules = AnchorRules::new(world, params, anchors);
     let cap = usize::try_from(params.max_region).unwrap_or(usize::MAX);
@@ -225,6 +239,7 @@ pub fn find_unsupported(
     }
     candidates.sort_unstable();
     candidates.dedup();
+    let mut steps = candidates.len() as u64;
 
     // Settled cells: `true` supported, `false` part of a returned region.
     let mut settled: CellMap<bool> = CellMap::default();
@@ -279,6 +294,7 @@ pub fn find_unsupported(
                 queue.push_back((n, ncell));
             }
         }
+        steps += order.len() as u64;
         for &c in &order {
             settled.insert(CellKey(c), supported);
         }
@@ -293,7 +309,7 @@ pub fn find_unsupported(
             });
         }
     }
-    out
+    (out, steps)
 }
 
 /// Per-material solid voxel counts (ascending by material) and the inclusive bounds of the

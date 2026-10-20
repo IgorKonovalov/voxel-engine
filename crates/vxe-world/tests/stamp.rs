@@ -167,13 +167,13 @@ fn vault_stamp_into_solid_rock_reports_exact_counts() {
 
     // The vault's own 16³ box (inclusive bounds 8..=23).
     assert_eq!(
-        world.count_in_box([8, 8, 8], [23, 23, 23]),
+        world.count_in_box([8, 8, 8], [23, 23, 23]).unwrap(),
         [(0, 2744), (4, 1352)]
     );
     // The box with inclusive upper corner 24 also holds the 17³ - 16³ = 817 rock voxels of
     // the layer just outside the vault.
     assert_eq!(
-        world.count_in_box([8, 8, 8], [24, 24, 24]),
+        world.count_in_box([8, 8, 8], [24, 24, 24]).unwrap(),
         [(0, 2744), (3, 817), (4, 1352)]
     );
     assert_eq!(world.material_at([8, 8, 8]), Some(4));
@@ -262,7 +262,7 @@ fn a_generated_placement_equals_the_runtime_stamp() {
     assert_eq!(one.material_at([8, 8, 8]), Some(4));
     assert_eq!(one.material_at([15, 15, 15]), Some(0));
     assert_eq!(
-        one.count_in_box([0, 0, 0], [63, 63, 63]),
+        one.count_in_box([0, 0, 0], [63, 63, 63]).unwrap(),
         [(0, 2744), (3, 262_144 - 4096), (4, 1352)]
     );
 

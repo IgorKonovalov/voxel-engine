@@ -551,6 +551,14 @@ header, world key, coordinate and FNV trailer are version 1's.
   `reserve_brick_arrays` call (the pool is retired); both import lists take main's names plus
   `Brick` in `lib.rs`. `collapse.rs`, `stamp.rs`, `edit.rs`, `log.rs` and `wire.rs` merged
   without a conflict (main changed only `edit.rs`, `log.rs` and `wire.rs` among them).
+- Merge of main at 5ca4151 (Plans 0017, 0019; v0.17.0): `raycast_counted` gave way to 0019's
+  `raycast_with_stats`, whose step count now includes clear 2^3 blocks (the skip test reads it);
+  `apply`, `drop_region` and `remove_region` check `WorldLimits` before the split into the
+  capturing, native and decoded paths; `count_in_box` keeps the popcount body inside 0019's
+  `Result`; the store holds `limits` and `packed_stats` and no pool; 0017's wide-palette scan in
+  `gpu_world.rs` decodes each `Full` brick; `world_budget --veins` raises the query limits for
+  its whole-extent air count as `--chunks` does; the fly-through drops main's per-frame
+  `reserve_brick_arrays` and `RESERVE_ARRAYS`.
 
 ### Close triggers
 

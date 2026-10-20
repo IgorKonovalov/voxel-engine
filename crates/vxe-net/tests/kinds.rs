@@ -102,11 +102,11 @@ fn every_kind_applies_through_the_server_and_replays() {
         (&[(ROCK, 4608)][..], 1152)
     );
     assert_eq!(
-        world.count_in_box([64, 16, 8], [87, 39, 15]),
+        world.count_in_box([64, 16, 8], [87, 39, 15]).unwrap(),
         [(ROCK, 4608)]
     );
     assert_eq!(
-        world.count_in_box([64, 80, 8], [87, 103, 9]),
+        world.count_in_box([64, 80, 8], [87, 103, 9]).unwrap(),
         [(RUBBLE, 1152)]
     );
     let OpResult::Edit(stamped) = &announced[0] else {

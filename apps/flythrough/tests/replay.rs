@@ -141,6 +141,12 @@ fn hash_result(h: &mut Fnv1a, r: &Result<EditResult, EditError>) {
             h.write(&[3]);
             h.write(&id.to_le_bytes());
         }
+        Err(e @ EditError::OutOfRange { .. }) => {
+            let mut bytes = Vec::new();
+            vxe_world::wire::encode_error(&mut bytes, e);
+            h.write(&[4]);
+            h.write(&bytes);
+        }
     }
 }
 

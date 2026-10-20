@@ -124,7 +124,7 @@ the streaming line above; the rest runs on background threads.
 
 | | Budget |
 |---|---|
-| World in VRAM at the full-detail radius (about 100 m) plus LOD to about 1 km | 3 GB |
+| World in VRAM at the full-detail radius (about 100 m) plus LOD to about 1 km: live bytes against the reserved budget | 3 GB |
 | World in RAM (resident chunks, edit persistence for paged-out chunks) | 4 GB |
 | Everything else in VRAM (frame targets, history, entities, upscaler) | 1.5 GB |
 
@@ -193,9 +193,10 @@ unbounded cave seed 1, r_full 16, r_lod 24, h 1, 15 workers, RTX 3080 Laptop GPU
 
 - **World VRAM:** the mirror peaked at 1 672 823 572 and 1 692 743 692 B by live accounting
   (`GpuWorld::mirror_bytes`) and at 2 431 425 836 B allocated (`GpuWorld::allocated_bytes`,
-  both runs), against the 3 GB line. The budget is read on allocated bytes: buffers grow by
-  half again and never shrink (ADR-0004 Outcome). At full residency, 1 603 820 012 B live and
-  1 675 304 748 B allocated.
+  both runs), against the 3 GB line, then read on allocated bytes (buffers grew by half
+  again and never shrank). At full residency, 1 603 820 012 B live and 1 675 304 748 B
+  allocated. Since Plan 0017 (ADR-0013) the line is read on live bytes against the reserved
+  budget; the readings below replace these allocated figures.
 - **World RAM:** resident chunks account for 3 242 091 312 and 3 239 741 232 B at peak (slot
   arrays, `Full` bricks and mips), and persisted RAM for 233 616 B. The process peak RSS
   (`VmHWM`, the whole fly-through, dev reference) reads 3 869 564 928 and 3 873 890 304 B,
@@ -214,6 +215,52 @@ allocated, over the 3 GB line, against Plan 0002's 1 675 304 748 B allocated in 
 run then stopped in its outbound flight on `wgpu error: Out of Memory` on the 8 GiB card, so
 no peak was read. A recorded miss: ADR-0011 keeps contour planes, and fitting this footprint
 under the 3 GB line is owed to the surface follow-up plan (Plan 0005 follow-up 2).
+
+**The reserved budget (dev reference, Plan 0017 Phase 4, ef37395, headless `flythrough
+--autopilot --headless`, unbounded cave seed 1, h 1, 15 workers, RTX 3080 Laptop GPU, Ryzen 9
+5900HS, exclusive perf lock, 1-minute load 10.6 to 23.2 from other builds on the box, two runs
+each).** The mirror reserves its pool, masks and records once at startup (`--mirror-budget`,
+default 3072 MiB) and never reallocates; `allocated_bytes` is the budget rounded down to whole
+pages and records. Records are reserved for the residency's ball over 0.7 (93 239 at 16/24,
+244 659 136 B; 72 690 at 14/22) instead of the window cube. Pressure is the larger of pool-slot
+and record occupancy; the fly-through lowers `r_full` a chunk after 30 frames above 0.9 and
+restores it after 300 frames under 0.7, down to 6. A sync writes the nearest chunks that
+fit and defers the rest, which stay queued (ADR-0013 Outcome). No run stopped on
+out-of-memory; every return hash matched. The face rows, every column, are at ef37395; the
+contour rows, every column including full residency, were re-taken at b474737 (the partial
+sync with its per-chunk check), at load 13.6 to 26.0.
+
+| run | split (slots, records) | full residency live | flight peak live / budget | peak pressure (slots, records) | radius changes, final r_full | deferrals: syncs (empty), chunks, longest streak | reserve, first frame |
+|---|---|---|---|---|---|---|---|
+| 16/24 face | 5 095 424, 93 239 | 1 786 641 644 B, 0.620 | 0.5844, 0.5667 | 0.6473 (0.5803, 0.6473); 0.6200 (0.5643, 0.6200) | none, 16 | none | 83.1, 87.1 ms; 2669 (cold), 554 ms |
+| 16/24 contour | 5 095 424, 93 239 | 2 864 309 692 B at r_full 13, 0.911 (both runs) | 0.8894, 0.8894 | 0.9114 (0.9114, 0.6197); 0.9114 (0.9114, 0.6197) | 4 each (16 to 12), ends 12 | 1 (0), 1605, 1; none | 100.6, 96.2 ms; 2330 (cold), 857 ms |
+| 14/22 face | 5 185 536, 72 690 | 1 312 177 076 B, 0.612 | 0.4339, 0.4179 | 0.6469 (0.4203, 0.6469); 0.6118 (0.4063, 0.6118) | none, 14 | none | 82.2, 97.9 ms; 564, 1105 ms |
+| 14/22 contour | 5 185 536, 72 690 | 2 607 896 708 B, 0.822 (both runs) | 0.8747, 0.9198 | 0.9020 (0.9020, 0.6118); 0.9442 (0.9442, 0.6327) | none, ends 14; 1 (14 to 13), ends 13 | none; 15 (0), 19 801, 3 | 105.4, 197.3 ms; 673, 1030 ms |
+
+Contour fits the 3 GB line at both radii only by the rule: at 16/24 it settles at r_full 12
+(11 513 full, 46 264 LOD-only chunks at full residency, r_full 13), at 14/22 it stays at 14 or
+drops to 13 in the flight. With attribute pages the pool runs out of pages while slots are
+spare in plain pages that each hold a live mip-brick. Those syncs upload what fits and defer
+the rest; no sync was empty and every deferral streak cleared within 3 syncs (the bar is 90).
+The one 16/24 deferral came at pressure 0.796, under the 0.9 trigger, and cleared in its own
+sync with no radius change; the 14/22 deferrals came at 0.855 to 0.944, after the decrease to
+13 (tick 796, first deferral at tick 807). Two of the four runs deferred nothing. A recorded
+finding, not a miss of the line: live bytes peak at 2.96 GB under 3 GB. At 52cf84d, before the
+per-chunk check, the same runs read longest streaks of 1, 3, 2 and 6 syncs. These readings stand
+at the close tip (16e17a7, v0.17.0): the later fixes change only the wide path (more than 256
+materials) and syncs that write nothing, neither of which these runs reach. Deferring under
+the 0.9 trigger with attribute pages is page fragmentation, Plan 0017's open followup.
+
+**The pressure rule's gate (Plan 0017 Phase 3, same machine and flags, r_full 16, r_lod 24,
+no `--look`, `--mirror-budget 1930`: 3 043 328 slots and 93 239 records, 2 021 964 224 B,
+reserved in 63.0 and 70.7 ms).** Run 1 (06d1f17, load 24.1): `r_full` 16 to 15 to 14 at
+pressure 0.920 right after full residency, back to 15 at 0.676 in the flight; run 2 (ef37395,
+load 18.3): 16 to 15 at 0.920, back to 16 at 0.688. Both: 0 syncs past the reservation, peak
+pressure 0.9197 (slots 0.9197, records 0.6227 in run 2), peak live / budget 0.8836, return hash
+match, `r_full` never under 14. Run 3 (b474737, partial sync with its per-chunk check, load 19.8 to
+14.9): 16 to 15 to 14 at 0.920, back to 15 at 0.604; 0 deferred chunks, peak pressure 0.9197
+(slots 0.9197, records 0.6488), peak live / budget 0.8836, hash match. At 3072 MiB the same
+flight makes no change (peak pressure 0.6363 and 0.6473, 0.6200).
 
 **Brick-array pool (Plan 0014).** The pool adds at most 8 MiB per world (`World::BRICK_ARRAY_POOL_CAP` 8192 arrays x 1 KiB); the fly-through holds a 4096-array reserve (2326 KiB pooled after the `B` bench, 5850218, dev reference).
 
@@ -323,9 +370,21 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   tick (100 carves) through the component costs under 2× native `DigLogic`. The per-call
   proposal was 1 µs, and the readings below missed it at 1.37 to 1.42 µs; the 2 µs budget was
   adopted at the close (an orchestrator call, overturnable by the owner). The empty component
-  tick (1.1 to 1.25 µs) is a reading, not a budget. Host-call work (the query or edit the host
-  runs for the guest) is not metered by fuel, and a cheap query's per-call cost is not read
-  yet; both are Plan 0011 follow-ups.
+  tick (1.1 to 1.25 µs) is a reading, not a budget. Host-call work is charged to fuel at the
+  configured rates (Plan 0019): before any host work, `apply` and `unsupported` are charged
+  `WorkRates::per_byte` (default 1) for each byte of their list argument (the op bytes; 12 per
+  changed cell); after each import returns, the tick's fuel loses `per_call` (100), plus
+  `per_voxel` (10) for each voxel an `apply`'s op bounds hold and 64 per chunk it touched,
+  `per_step` (10) for each step of a `raycast`'s walk and for each cell the `unsupported`
+  query looked at, and `per_voxel` for each voxel a `count_in_box` counted. A refused or
+  undecodable call is charged its bytes and `per_call` only, and a charge past the fuel left
+  is the same `Fuel` failure as an instruction overrun. The server's support query reads a
+  `changed` list longer than one in-range edit can change (`(edit_axis_max / 8 + 1)^3`,
+  2 146 689 cells at the defaults) as no regions. **Asserted:** a `count_in_box` over
+  `1 024^3` resident voxels (`10 x 2^30` fuel) fails the tick on fuel at the default `10^10`;
+  100 rays of `max_t = 2^22` through an empty world are charged exactly `100 x (100 + 10 s)`;
+  an undecodable 4 096-byte `apply` costs `100 + 4 096`; `unsupported` over `K` cells costs
+  `100 + 12 K + 10 s`. A cheap query's per-call cost is not read yet.
   **Readings (dev reference, AMD Ryzen 9 5900HS, Linux, `wasmtime` 49.0.3, Plan 0011 Phase 4
   at 07a3be1 (70b40ec plus the bench), exclusive perf lock, 1-minute load 1.87 before and 1.66
   after two runs):** `cargo bench -p vxe-script-wasm --bench boundary`, each tick on a fresh
@@ -344,6 +403,32 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   a median of 26.9 and 29.3 µs over 50 restarts each (min 24.5, max 109.0 µs): a one-off
   release-build timing loop, not a committed bench, AMD Ryzen 9 5900HS, Linux, not quiet
   (load average 7.4 to 9.4), at 1d1b3aa plus Phase 2's working tree.
+  **Re-read with host-call charging (Plan 0019 Phase 2, AMD Ryzen 9 5900HS, Linux, `wasmtime`
+  49.0.3, exclusive perf lock, not quiet), paired with its parent:** parent c04bfd1 (1-minute
+  load 3.94 to 4.66): 100 carves through the echo component 2.4928 ms against native
+  `EchoLogic` 2.3589 ms, 1.339 µs per host call, empty component tick 1.092 µs, `Bench`
+  1.028×. With charging, 3445f30 (load 7.15 to 4.58): 2.4593 ms against 2.3306 ms, 1.287 µs
+  per host call, empty tick 0.974 µs, `Bench` 2.5510 against 2.4014 ms, 1.062×. The 2 µs
+  line holds; the charge's fuel read and write is inside the run-to-run noise.
+  **Re-read with the per-byte charge (Plan 0019 close review, AMD Ryzen 9 5900HS, Linux,
+  exclusive perf lock, not quiet, paired):** parent 40d2b91 (1-minute load 8.17 to 8.26):
+  2.5902 ms against native 2.5167 ms, 0.74 µs per host call, empty tick 1.269 µs, `Bench`
+  2.9585 against 2.5515 ms, 1.160×. With `per_byte`, adfca8b (load 8.26 to 6.79): 2.7319 ms
+  against 2.7332 ms, under 0.1 µs per host call (the native arm read slower than the
+  component), empty tick 1.463 µs, `Bench` 2.6337 against 2.5813 ms, 1.020×. The load moved
+  the native arm by 0.22 ms between runs, more than the whole host-call cost, so this pair
+  resolves no difference the per-byte charge makes; the 2 µs line and the 2× `Bench` line hold
+  in both. A quiet-box pair is still owed.
+- **Parameter range (Plan 0019):** every edit, ray, box query and region op is checked
+  against the world's `WorldLimits` before any arithmetic and refused with
+  `EditError::OutOfRange` outside it, changing nothing. Defaults: coordinates and radii within
+  `±2^30` fixed units (±4 M voxels); a capsule's `b - a` within `2^30` per axis (the bound
+  that keeps its `i128` products exact); an edit's voxel bounds at most 1 024 per axis (at
+  most 4 913 chunk coordinates walked); a ray's reach `|dir[k]| x max_t / 256` at most `2^22`
+  fixed units per axis (at most 258 cell steps along an axis through empty chunks, 772 on a
+  diagonal); a box query at most 1 024 voxels per axis and `2^30` voxels; a drop or removal
+  at most 4 096 cells. A world built `with_limits` takes its own; a server and an owned client
+  hold the same limits or refuse different ops.
 - **Determinism:** the same op list on the same seed yields bit-identical voxels and results on
   Linux and Windows. CI asserts a fixed vector's hash on both arms. **Asserted:**
   `determinism_vector` passed on the Linux and Windows CI arms at 9565c5a and 1d61aba
@@ -422,6 +507,13 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   and at 12 134 and 11 697 ms at the fix-pass commit (076b1c4). The close review's cold run
   (ffc73e8) read device ready 1968 ms and first frame 2075 ms. These runs create no window or
   surface, so a windowed first frame adds that cost.
+  **Reading (Plan 0017, ef37395 and 3b9ea25, streaming seed 1 headless on the RTX 3080 Laptop
+  GPU, exclusive perf lock):** the mirror's one reservation at startup takes 63.0 to 109.9 ms
+  for 1930 to 3072 MiB (Phase 1's guess was under 50 ms; a probe put `create_buffer` near
+  18 ms per GiB, so the time follows the budget). First frame 516 to 1105 ms warm under
+  1-minute load 10.6 to 23.2 from other builds (2135 and 2669 ms with a cold device); Phase 1
+  read 414 to 513 ms at load 9.6 to 11.0 beside 367 and 375 ms on the base commit d11d0cb.
+  No quiet-box reading: every lane was building during these runs.
   **Level-size first sync after narrowing (Plan 0002 Phases 5 and 8, RTX 3080 Laptop GPU):**
   497 to 517 ms, up from Plan 0001's 349 to 357 ms for the `u16` mirror; the palette scan
   before indices are written. Accepted at the Plan 0002 close (owner, 2026-10-16); TTFF stays

@@ -5,15 +5,23 @@
 //! within `r_full` chunks, mips out to `r_lod`. `--level` generates the bounded level instead.
 //!
 //! `flythrough [--seed N] [--level] [--vault] [--walk] [--render WxH] [--frames N] [--bench N]
-//! [--autopilot] [--census] [--sync-budget MIB] [--headless] [--look MODE]
-//! [--rock-detail SCALE,STRENGTH] [--view VIEW] [--detail] [--translucent-layers N] [--hud]
-//! [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]] [--audio] [--audio-debug]`.
+//! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
+//! [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH] [--view VIEW] [--detail]
+//! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
+//! [--audio] [--audio-debug]`.
 //! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
 //! [`Autopilot`]); `--census` prints the world's brick census (`World::brick_census`) on exit,
-//! after any bench; `--sync-budget` sets the mirror's upload bytes per frame; `--headless` runs the
+//! after any bench; `--sync-budget` sets the mirror's upload bytes per frame; `--mirror-budget`
+//! sets the VRAM the mirror reserves for its pool, masks and records at startup (ADR-0013;
+//! default 3072 MiB streamed, and on the level what its bricks, the dig headroom and its chunks
+//! need, with records for the residency's ball when streaming), and while streaming the full
+//! radius follows the mirror's pressure (the fuller of its pool slots and records): a chunk down after 30 frames above 0.9, a chunk up after 300 frames below
+//! 0.7, between 6 and the configured radius, each change printed and on the HUD;
+//! `--residency` sets the streamed radii (default `flythrough::RESIDENCY`, hysteresis 1);
+//! `--headless` runs the
 //! same frames on an offscreen target with no window; `--walk` (with `--level`) starts in walk
 //! mode, the body spawned in the spawn pocket; `--look` starts in a normal mode (`face`,
 //! `trilinear8`, `gradient27`, `contour`) and gives the mirror attribute pages, so `N` can reach
@@ -79,8 +87,8 @@ use flythrough::hud::{self, Cadence, EditLine, FrameStats, HudStats, WorldSample
 use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB, REACH};
 use flythrough::logic::{DROP_VERB, REMOVE_VERB, STAMP_VERB, parse_region_line};
 use flythrough::{
-    LogicChoice, RESIDENCY, ScrollSteps, cave_materials, chunk_ram, chunks_hash, mips_ram,
-    percentile,
+    LogicChoice, RESIDENCY, STREAM_MIRROR_BUDGET, ScrollSteps, cave_materials, chunk_ram,
+    chunks_hash, level_mirror_budget, level_pool_slots, mips_ram, percentile,
 };
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
 use vxe_audio::{Acoustics, Hrtf, Mixer, Output, PlayParams, Sound, VoiceId};
@@ -95,8 +103,8 @@ use vxe_render::{
 use vxe_world::hash::mix64;
 use vxe_world::{
     CellChange, ChunkCoord, ChunkExtent, CoarseGrid, EditOp, EditResult, FIXED_ONE, Fixed3,
-    LogFile, MaterialId, MaterialTable, Mode, OpResult, PersistConfig, StreamConfig, Streamer,
-    SupportParams, Tier, VoxelCoord, WalkableMap, WalkableParams, World,
+    LogFile, MaterialId, MaterialTable, Mode, OpResult, PersistConfig, Residency, StreamConfig,
+    Streamer, SupportParams, Tier, VoxelCoord, WalkableMap, WalkableParams, World,
 };
 
 /// Dig radius at start (0.5 m), its scroll step (0.1 m) and its range.
@@ -118,9 +126,6 @@ fn scroll_dig_radius(radius: i64, scroll: &mut ScrollSteps, delta: f32) -> Optio
 
 /// Radius of the right-click fill: 0.3 m.
 const FILL_RADIUS: i64 = 3 * FIXED_ONE;
-/// Free pool slots requested beyond the bounded level's `Full` bricks, so digging can grow
-/// the pool: 64 Ki slots.
-const POOL_HEADROOM_BRICKS: u64 = 65_536;
 /// The pool size a streaming device's limits are requested for; capped at the adapter.
 const STREAM_POOL_BYTES: u64 = 2 << 30;
 /// Frames `F1` averages over.
@@ -197,6 +202,11 @@ struct Args {
     /// `--vault`: the cave generates with the vault room ahead of the spawn.
     vault: bool,
     sync_budget: u64,
+    /// `--mirror-budget`: the mirror's VRAM reservation in bytes.
+    mirror_budget: Option<u64>,
+    /// `--residency`: the streamed full and LOD radii in chunks, hysteresis as
+    /// [`RESIDENCY`]'s.
+    residency: Residency,
     audio: bool,
     /// `--audio-debug`: print the callback's readings and record its output.
     audio_debug: bool,
@@ -255,6 +265,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         walk: false,
         vault: false,
         sync_budget: SYNC_BUDGET_MIB << 20,
+        mirror_budget: None,
+        residency: RESIDENCY,
         audio: false,
         audio_debug: false,
         look: None,
@@ -288,6 +300,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .parse()
                     .map_err(|e| format!("--sync-budget: {e}"))?;
                 args.sync_budget = mib << 20;
+            }
+            "--residency" => args.residency = parse_residency(&value()?)?,
+            "--mirror-budget" => {
+                let mib: u64 = value()?
+                    .parse()
+                    .map_err(|e| format!("--mirror-budget: {e}"))?;
+                args.mirror_budget = Some(mib << 20);
             }
             "--look" => {
                 let v = value()?;
@@ -346,6 +365,23 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         return Err(flythrough::WASM_NEEDS_FEATURE.to_owned());
     }
     Ok(args)
+}
+
+/// `R_FULL,R_LOD`: radii in chunks with `1 <= R_FULL <= R_LOD`, hysteresis as
+/// [`RESIDENCY`]'s.
+fn parse_residency(v: &str) -> Result<Residency, String> {
+    let err = || format!("--residency takes R_FULL,R_LOD (e.g. 14,22), not {v}");
+    let (full, lod) = v.split_once(',').ok_or_else(err)?;
+    let parse = |s: &str| s.trim().parse::<i32>().map_err(|_| err());
+    let [r_full, r_lod] = [parse(full)?, parse(lod)?];
+    if r_full < 1 || r_lod < r_full {
+        return Err(err());
+    }
+    Ok(Residency {
+        r_full,
+        r_lod,
+        ..RESIDENCY
+    })
 }
 
 /// `SCALE,STRENGTH`: a feature scale in voxels above 0 and a strength in `[0, 1]`.
@@ -780,9 +816,127 @@ impl Hud {
     }
 }
 
+/// Mirror pressure (`GpuWorld::pressure`, the fuller of pool slots and records) above which the full radius falls by a
+/// chunk once it has held for `PRESSURE_HIGH_FRAMES` frames, and below which it rises by one
+/// once it has held for `PRESSURE_LOW_FRAMES` (ADR-0013).
+const PRESSURE_HIGH: f32 = hud::PRESSURE_HIGH;
+const PRESSURE_HIGH_FRAMES: u32 = 30;
+const PRESSURE_LOW: f32 = flythrough::PRESSURE_LOW;
+const PRESSURE_LOW_FRAMES: u32 = 300;
+/// The full radius the pressure rule never lowers below, in chunks.
+const R_FULL_FLOOR: i32 = 6;
+
+/// The two terms of `GpuWorld::pressure`: pool-slot occupancy (two attribute slots with each
+/// brick in an attribute page) and record occupancy.
+fn pressure_terms(m: &GpuWorld) -> [f64; 2] {
+    let slots = f64::from(m.live_slots()) + 2.0 * f64::from(m.live_attr_slots());
+    [
+        slots / f64::from(m.reserved_slots().max(1)),
+        m.mirrored_chunks() as f64 / f64::from(m.reserved_records().max(1)),
+    ]
+}
+
+/// The fly-through's answer to mirror pressure: the full radius between a floor and the
+/// configured radius, a chunk down after `PRESSURE_HIGH_FRAMES` frames above
+/// `PRESSURE_HIGH`, a chunk up after `PRESSURE_LOW_FRAMES` frames below `PRESSURE_LOW`. A
+/// change restarts both counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RadiusRule {
+    r_full: i32,
+    max: i32,
+    above: u32,
+    below: u32,
+}
+
+impl RadiusRule {
+    fn new(max: i32) -> Self {
+        Self {
+            r_full: max,
+            max,
+            above: 0,
+            below: 0,
+        }
+    }
+
+    /// The floor: `R_FULL_FLOOR`, or the configured radius when that is smaller.
+    fn floor(&self) -> i32 {
+        R_FULL_FLOOR.min(self.max)
+    }
+
+    /// Takes one frame's pressure; returns the new full radius when it changes.
+    fn step(&mut self, pressure: f32) -> Option<i32> {
+        self.above = if pressure > PRESSURE_HIGH {
+            self.above + 1
+        } else {
+            0
+        };
+        self.below = if pressure < PRESSURE_LOW {
+            self.below + 1
+        } else {
+            0
+        };
+        let r = if self.above >= PRESSURE_HIGH_FRAMES && self.r_full > self.floor() {
+            self.r_full - 1
+        } else if self.below >= PRESSURE_LOW_FRAMES && self.r_full < self.max {
+            self.r_full + 1
+        } else {
+            return None;
+        };
+        self.r_full = r;
+        self.above = 0;
+        self.below = 0;
+        Some(r)
+    }
+}
+
+/// The mirror's deferrals (ADR-0013): a sync that defers a chunk, or an empty sync that
+/// uploads none, extends a deferral streak; a sync that defers nothing ends it. Keeps the
+/// deferred-chunk total (a chunk deferred in five syncs counts five), the syncs with a
+/// deferral and the empty ones among them, the lowest and highest pressure and terms at a
+/// deferral, and the current and longest streak in syncs, an open streak included.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Deferrals {
+    chunks: u64,
+    syncs: u64,
+    empty: u64,
+    /// Lowest and highest: pressure, slot term, record term.
+    low: [f64; 3],
+    high: [f64; 3],
+    streak: u64,
+    longest: u64,
+}
+
+impl Deferrals {
+    /// Notes one sync's `deferred` chunks, `empty` when it uploaded none, with the mirror's
+    /// pressure and terms `v`. Returns the length of a streak this sync ends.
+    fn note(&mut self, deferred: u64, empty: bool, v: [f64; 3]) -> Option<u64> {
+        if deferred == 0 && !empty {
+            let ended = (self.streak > 0).then_some(self.streak);
+            self.streak = 0;
+            return ended;
+        }
+        if self.syncs == 0 {
+            (self.low, self.high) = (v, v);
+        }
+        self.low = [0, 1, 2].map(|k| self.low[k].min(v[k]));
+        self.high = [0, 1, 2].map(|k| self.high[k].max(v[k]));
+        self.chunks += deferred;
+        self.syncs += 1;
+        self.empty += u64::from(empty);
+        self.streak += 1;
+        self.longest = self.longest.max(self.streak);
+        None
+    }
+}
+
 /// The streaming state of the default mode.
 struct Stream {
     streamer: Streamer,
+    /// The full radius under mirror pressure, and the changes it made.
+    rule: RadiusRule,
+    radius_changes: u32,
+    /// Chunks the mirror deferred for space, and the streaks of syncs that deferred.
+    deferrals: Deferrals,
     /// Milliseconds since start at each `update` call, `tick_ms[t - 1]` for tick `t`.
     tick_ms: Vec<f64>,
     /// Chunks loaded full and not yet mirrored, with the tick that first wanted them.
@@ -853,6 +1007,10 @@ struct Autopilot {
     latency_from: usize,
     peak_mirror: u64,
     peak_allocated: u64,
+    /// The highest mirror pressure over the flight, and of each of its terms: pool-slot
+    /// and record occupancy.
+    peak_pressure: f32,
+    peak_terms: [f64; 2],
     peak_resident: u64,
     peak_persisted: u64,
     generated_at_takeoff: u64,
@@ -1074,6 +1232,11 @@ impl Run {
                 g.mirror.free_slots().len() as u32,
             )
         });
+        let pressure = self.gfx.as_ref().map(|g| hud::Pressure {
+            pressure: g.mirror.pressure(),
+            budget_bytes: g.mirror.allocated_bytes(),
+            r_full: self.stream.as_ref().map(|s| [s.rule.r_full, s.rule.max]),
+        });
         let pos = self.fly.camera.position;
         let mode = if self.walk.is_some() {
             hud::Mode::Walk
@@ -1094,6 +1257,7 @@ impl Run {
         s.mirror_bytes = mirror_bytes;
         s.pool_live = pool_live;
         s.pool_free = pool_free;
+        s.pressure = pressure;
         s.world = WorldSample {
             age_frames: h.cadence.age(),
             ..h.world
@@ -1183,6 +1347,8 @@ impl Run {
             let t = self
                 .world
                 .raycast(origin, dir, REACH)
+                .ok()
+                .flatten()
                 .map_or(REACH, |h| h.t);
             audio.dig_point = Some(
                 [0, 1, 2].map(|k| (origin.0[k] + dir[k] * t / FIXED_ONE) as f32 / FIXED_ONE as f32),
@@ -1447,15 +1613,8 @@ impl Run {
         let pool = if self.stream.is_some() {
             STREAM_POOL_BYTES
         } else {
-            let bricks = self.world.stats().full_bricks as u64 + POOL_HEADROOM_BRICKS;
-            // With attribute pages each page holds `ATTR_PAGE_BRICK_SLOTS` bricks.
-            let slots = if self.args.look.is_some() {
-                bricks.div_ceil(u64::from(gpu_world::ATTR_PAGE_BRICK_SLOTS))
-                    * u64::from(gpu_world::POOL_PAGE_SLOTS)
-            } else {
-                bricks
-            };
-            slots * gpu_world::SLOT_BYTES
+            let full = self.world.stats().full_bricks as u64;
+            level_pool_slots(full, self.args.look.is_some()) * gpu_world::SLOT_BYTES
         };
         (
             adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
@@ -1474,7 +1633,7 @@ impl Run {
         let mut marcher = Marcher::new(&gpu.device, w, h);
         let mirror = if self.stream.is_some() {
             marcher.set_lod(LodParams {
-                r_full: RESIDENCY.r_full,
+                r_full: self.args.residency.r_full,
                 forced_level: None,
             });
             self.init_stream(gpu)
@@ -1513,13 +1672,50 @@ impl Run {
         self.gfx = Some(gfx);
     }
 
-    /// A mirror under `cfg`, with attribute pages when `--look` was given.
+    /// The mirror's VRAM budget: `--mirror-budget`, else the level's from its content and
+    /// extent, else the streamed default.
+    fn mirror_budget(&self) -> u64 {
+        self.args.mirror_budget.unwrap_or_else(|| {
+            if self.stream.is_some() {
+                STREAM_MIRROR_BUDGET
+            } else {
+                let chunks = self
+                    .world
+                    .extent()
+                    .size()
+                    .iter()
+                    .map(|&v| v as u64)
+                    .product();
+                let full = self.world.stats().full_bricks as u64;
+                level_mirror_budget(full, chunks, self.args.look.is_some())
+            }
+        })
+    }
+
+    /// A mirror under `cfg` reserving [`Run::mirror_budget`], with attribute pages when
+    /// `--look` was given. Prints what it reserved and how long creating its buffers took.
     fn new_mirror(&self, gpu: &Gpu, cfg: MirrorConfig) -> GpuWorld {
-        if self.args.look.is_some() {
+        let cfg = MirrorConfig {
+            budget_bytes: self.mirror_budget(),
+            ..cfg
+        };
+        let t = now();
+        let mirror = if self.args.look.is_some() {
             GpuWorld::with_surface_attrs(&gpu.device, cfg)
         } else {
             GpuWorld::with_config(&gpu.device, cfg)
-        }
+        };
+        let ms = ms_since(t);
+        let l = mirror.shard_layout();
+        println!(
+            "mirror: reserved {} B of a {} B budget ({} slots over {} shards, {} records) in {ms:.1} ms",
+            mirror.allocated_bytes(),
+            cfg.budget_bytes,
+            l.reserved_slots,
+            l.reserved_slots.div_ceil(l.slots_per_shard),
+            l.reserved_records
+        );
+        mirror
     }
 
     /// The streaming mirror, returned once the chunks within squared distance `NEAR_D2` of
@@ -1529,8 +1725,9 @@ impl Run {
             gpu,
             MirrorConfig {
                 sync_budget_bytes: self.args.sync_budget,
+                record_chunks: Some(flythrough::stream_record_chunks(self.args.residency)),
                 ..MirrorConfig::new(Window::Follow {
-                    side: flythrough::window_side(RESIDENCY),
+                    side: flythrough::window_side(self.args.residency),
                 })
             },
         );
@@ -1595,8 +1792,53 @@ impl Run {
         for e in &ev.errors {
             eprintln!("stream: {e:?}");
         }
-        let synced = synced.map_err(|e| e.to_string())?;
-        self.hud.sync = (synced, sync_ms);
+        // A sync writes the nearest chunks that fit and defers the rest, which stay queued; an
+        // empty sync (nothing fit) is an error that wrote nothing. The pressure rule below
+        // lowers the radius until they fit.
+        let tick = stream.streamer.stats().ticks;
+        let (deferred, empty, error) = match synced {
+            Ok(s) => {
+                self.hud.sync = (s, sync_ms);
+                (s.deferred_chunks, false, None)
+            }
+            Err(e) => (gfx.mirror.pending_chunks() as u64, true, Some(e)),
+        };
+        let m = &gfx.mirror;
+        let [slots, records] = pressure_terms(m);
+        if (deferred > 0 || empty) && stream.deferrals.syncs == 0 {
+            let what = error.map_or_else(|| "deferred chunks".to_owned(), |e| e.to_string());
+            eprintln!(
+                "mirror: {deferred} chunks wait for space ({what}) at tick {tick} (pressure {:.4}, slots {slots:.4}, records {records:.4}; {} plain free slots, {} spare slots, {} free pages, {} pages issued, r_full {})",
+                m.pressure(),
+                m.free_slots().len(),
+                m.spare_slots(),
+                m.free_pages().len(),
+                m.pages_issued(),
+                stream.rule.r_full
+            );
+        }
+        let ended =
+            stream
+                .deferrals
+                .note(deferred, empty, [f64::from(m.pressure()), slots, records]);
+        if let Some(n) = ended {
+            println!("mirror: deferral streak of {n} syncs ended at tick {tick}");
+        }
+        let pressure = gfx.mirror.pressure();
+        if let Some(r_full) = stream.rule.step(pressure) {
+            let r = stream.streamer.config().residency;
+            stream.streamer.set_radii(r_full, r.r_lod);
+            gfx.marcher.set_lod(LodParams {
+                r_full,
+                forced_level: None,
+            });
+            stream.radius_changes += 1;
+            println!(
+                "radius: r_full {} -> {r_full} at mirror pressure {pressure:.3} after {:.0} ms (tick {tick})",
+                r.r_full,
+                ms_since(self.start)
+            );
+        }
         stream.track(&ev, &gfx.mirror);
         let st = stream.streamer.stats();
         if !stream.full_residency
@@ -1606,12 +1848,14 @@ impl Run {
         {
             stream.full_residency = true;
             println!(
-                "full residency after {:.0} ms: {} full, {} LOD-only chunks, mirror {} B live, {} B allocated",
+                "full residency after {:.0} ms: {} full, {} LOD-only chunks, mirror {} B live, {} B allocated, pressure {:.3}, r_full {}",
                 ms_since(self.start),
                 st.resident_full,
                 st.resident_lod,
                 gfx.mirror.mirror_bytes(),
-                gfx.mirror.allocated_bytes()
+                gfx.mirror.allocated_bytes(),
+                gfx.mirror.pressure(),
+                stream.rule.r_full
             );
         }
         Ok(())
@@ -1742,6 +1986,9 @@ impl Run {
         }
         p.peak_mirror = p.peak_mirror.max(gfx.mirror.mirror_bytes());
         p.peak_allocated = p.peak_allocated.max(gfx.mirror.allocated_bytes());
+        p.peak_pressure = p.peak_pressure.max(gfx.mirror.pressure());
+        let terms = pressure_terms(&gfx.mirror);
+        p.peak_terms = [0, 1].map(|k| p.peak_terms[k].max(terms[k]));
         p.peak_persisted = p
             .peak_persisted
             .max(stream.streamer.stats().persisted_ram_bytes);
@@ -1757,7 +2004,7 @@ impl Run {
         else {
             return;
         };
-        let r = RESIDENCY;
+        let r = self.args.residency;
         println!(
             "autopilot: unready-near frames {} of {} (chunks wanted full within {} of the camera's)",
             p.unready_frames,
@@ -1789,6 +2036,37 @@ impl Run {
             peak_rss_bytes().map_or_else(|| "n/a".to_owned(), |b| format!("{b} B")),
             p.peak_persisted.max(st.persisted_ram_bytes)
         );
+        println!(
+            "autopilot: mirror budget {} B ({} slots, {} records), peak live / budget {:.4}, peak pressure {:.4} (slots {:.4}, records {:.4}), {} radius changes (r_full {} of {}), {} syncs with a deferral",
+            gfx.mirror.allocated_bytes(),
+            gfx.mirror.reserved_slots(),
+            gfx.mirror.reserved_records(),
+            p.peak_mirror as f64 / gfx.mirror.allocated_bytes() as f64,
+            p.peak_pressure,
+            p.peak_terms[0],
+            p.peak_terms[1],
+            stream.radius_changes,
+            stream.rule.r_full,
+            r.r_full,
+            stream.deferrals.syncs
+        );
+        if stream.deferrals.syncs > 0 {
+            let f = stream.deferrals;
+            println!(
+                "autopilot: deferrals: {} chunks over {} syncs, {} of them empty; pressure {:.4} to {:.4} (slots {:.4} to {:.4}, records {:.4} to {:.4}); longest streak {} syncs ({} open at the end)",
+                f.chunks,
+                f.syncs,
+                f.empty,
+                f.low[0],
+                f.high[0],
+                f.low[1],
+                f.high[1],
+                f.low[2],
+                f.high[2],
+                f.longest,
+                f.streak
+            );
+        }
         if p.gpu_ms.is_empty() {
             println!("autopilot: march GPU n/a (no TIMESTAMP_QUERY)");
         } else {
@@ -2232,6 +2510,9 @@ impl App for Flythrough {
                     (
                         world,
                         Some(Stream {
+                            rule: RadiusRule::new(streamer.config().residency.r_full),
+                            radius_changes: 0,
+                            deferrals: Deferrals::default(),
                             streamer,
                             tick_ms: Vec::new(),
                             awaiting: HashMap::new(),
@@ -2249,7 +2530,7 @@ impl App for Flythrough {
                 origin: self.camera.position,
                 touched: Vec::new(),
                 hash: 0,
-                near: ball((RESIDENCY.r_full - 2).pow(2)),
+                near: ball((self.args.residency.r_full - 2).pow(2)),
                 flight_frames: 0,
                 unready_frames: 0,
                 gpu_ms: Vec::new(),
@@ -2257,6 +2538,8 @@ impl App for Flythrough {
                 latency_from: 0,
                 peak_mirror: 0,
                 peak_allocated: 0,
+                peak_pressure: 0.0,
+                peak_terms: [0.0; 2],
                 peak_resident: 0,
                 peak_persisted: 0,
                 generated_at_takeoff: 0,
@@ -2532,7 +2815,7 @@ fn main() {
             .max(1);
         let world = World::new(&materials(&args));
         let cfg = StreamConfig {
-            residency: RESIDENCY,
+            residency: args.residency,
             workers,
             persist: PersistConfig::default(),
         };
@@ -2549,10 +2832,10 @@ fn main() {
         streamer.update(&world, &[source.spawn()]);
         println!(
             "streaming seed {seed}: r_full {}, r_lod {}, h {}, {workers} workers, window {}",
-            RESIDENCY.r_full,
-            RESIDENCY.r_lod,
-            RESIDENCY.hysteresis,
-            flythrough::window_side(RESIDENCY)
+            args.residency.r_full,
+            args.residency.r_lod,
+            args.residency.hysteresis,
+            flythrough::window_side(args.residency)
         );
         (
             source.spawn(),
@@ -2704,6 +2987,96 @@ mod tests {
     }
 
     /// `--walk` and `G` refuse walk mode alike while streaming; the bounded level allows it.
+    /// The radius falls a chunk after 30 frames above 0.9, not before, and not below the
+    /// floor; it rises a chunk after 300 frames below 0.7, not past the configured radius; a
+    /// frame between the lines restarts both counts.
+    #[test]
+    fn the_radius_follows_the_pressure_between_its_floor_and_the_configured_radius() {
+        let mut r = RadiusRule::new(8);
+        for _ in 0..29 {
+            assert_eq!(r.step(0.95), None);
+        }
+        assert_eq!(r.step(0.95), Some(7));
+        assert_eq!(r.step(0.95), None, "the count restarts after a change");
+        for _ in 0..28 {
+            assert_eq!(r.step(0.95), None);
+        }
+        assert_eq!(r.step(0.95), Some(6));
+        for _ in 0..100 {
+            assert_eq!(r.step(1.0), None, "6 is the floor");
+        }
+        for _ in 0..299 {
+            assert_eq!(r.step(0.5), None);
+        }
+        assert_eq!(
+            r.step(0.8),
+            None,
+            "a frame between the lines restarts the count"
+        );
+        for _ in 0..299 {
+            assert_eq!(r.step(0.5), None);
+        }
+        assert_eq!(r.step(0.5), Some(7));
+        for _ in 0..299 {
+            assert_eq!(r.step(0.5), None);
+        }
+        assert_eq!(r.step(0.5), Some(8));
+        for _ in 0..1000 {
+            assert_eq!(r.step(0.0), None, "8 is the configured radius");
+        }
+        // A configured radius under the floor is its own floor.
+        let mut small = RadiusRule::new(4);
+        for _ in 0..100 {
+            assert_eq!(small.step(1.0), None);
+        }
+    }
+
+    /// A deferral extends a streak, an empty sync counts, a sync with none ends it, and a
+    /// streak open at the end counts toward the longest.
+    #[test]
+    fn deferral_streaks_count_empty_syncs_and_an_open_end() {
+        let mut d = Deferrals::default();
+        assert_eq!(d.note(3, false, [0.91, 0.91, 0.6]), None);
+        assert_eq!(d.note(5, true, [0.95, 0.95, 0.5]), None);
+        assert_eq!(d.note(0, false, [0.8, 0.8, 0.5]), Some(2));
+        assert_eq!(d.note(0, false, [0.8, 0.8, 0.5]), None);
+        for _ in 0..3 {
+            d.note(1, false, [0.92, 0.92, 0.7]);
+        }
+        assert_eq!((d.chunks, d.syncs, d.empty), (11, 5, 1));
+        assert_eq!(d.low, [0.91, 0.91, 0.5]);
+        assert_eq!(d.high, [0.95, 0.95, 0.7]);
+        assert_eq!(
+            (d.streak, d.longest),
+            (3, 3),
+            "the open streak is the longest"
+        );
+    }
+
+    #[test]
+    fn residency_parses_two_radii() {
+        let r = parse_args_from(argv(&["--residency", "14,22"]))
+            .unwrap()
+            .residency;
+        assert_eq!(
+            (r.r_full, r.r_lod, r.hysteresis),
+            (14, 22, RESIDENCY.hysteresis)
+        );
+        assert_eq!(parse_args_from(argv(&[])).unwrap().residency, RESIDENCY);
+        for bad in ["14", "0,4", "8,6", "a,b"] {
+            assert!(
+                parse_args_from(argv(&["--residency", bad])).is_err(),
+                "{bad}"
+            );
+        }
+        assert_eq!(
+            parse_args_from(argv(&["--mirror-budget", "1024"]))
+                .unwrap()
+                .mirror_budget,
+            Some(1 << 30)
+        );
+    }
+
     #[test]
     fn walk_mode_is_refused_while_streaming() {
         assert_eq!(
@@ -2928,11 +3301,11 @@ mod tests {
         assert_eq!(r.changed_from, vec![(ROCK, 4096)]);
         assert_eq!(r.touched, vec![ChunkCoord([0, 0, 0])]);
         assert_eq!(
-            world.count_in_box([8, 0, 0], [23, 15, 15]),
+            world.count_in_box([8, 0, 0], [23, 15, 15]).unwrap(),
             vec![(0, 2744), (SHELL, 1352)]
         );
         assert_eq!(
-            world.count_in_box([8, 0, 0], [24, 16, 16]),
+            world.count_in_box([8, 0, 0], [24, 16, 16]).unwrap(),
             vec![(0, 2744), (ROCK, 817), (SHELL, 1352)]
         );
         assert_eq!(
@@ -2946,7 +3319,7 @@ mod tests {
         // From inside rock at x = 51 the ray hits that voxel, and a vault there would reach
         // x = 66, past the resident x <= 63: refused, nothing written.
         let past = Fixed3([51 * FIXED_ONE + FIXED_ONE / 2, FIXED_ONE / 2, FIXED_ONE / 2]);
-        let before = world.count_in_box([-64; 3], [63; 3]);
+        let before = world.count_in_box([-64; 3], [63; 3]).unwrap();
         let (lines, events) = net_tick(&mut net, &[stamp(past)]);
         assert_eq!(lines, ["op stamped"]);
         assert!(
@@ -2957,7 +3330,7 @@ mod tests {
             )),
             "{events:?}"
         );
-        assert_eq!(world.count_in_box([-64; 3], [63; 3]), before);
+        assert_eq!(world.count_in_box([-64; 3], [63; 3]).unwrap(), before);
 
         let outside = Fixed3([200 * FIXED_ONE, 0, 0]);
         let (lines, _) = net_tick(&mut net, &[stamp(outside)]);
@@ -3037,7 +3410,7 @@ mod tests {
         );
         assert_eq!(net.server.ops().len(), 4);
         assert_eq!(
-            world.count_in_box([24, 24, 22], [47, 47, 29]),
+            world.count_in_box([24, 24, 22], [47, 47, 29]).unwrap(),
             [(ROCK, 4608)]
         );
         assert_eq!(*net.server.coarse(), CoarseGrid::build(&world));
@@ -3065,6 +3438,7 @@ mod tests {
         assert_eq!(
             world
                 .count_in_box([0, 0, 0], [63, 63, 63])
+                .unwrap()
                 .into_iter()
                 .find(|&(m, _)| m == flythrough::RUBBLE),
             Some((flythrough::RUBBLE, 1256))

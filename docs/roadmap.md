@@ -196,7 +196,7 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005 and 0015 closed; Plan 0013 is the surface follow-up; the lighting plan next)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0015 and 0017 closed; Plan 0013 is the surface follow-up; the lighting plan next)
 
 Plan 0015 closed 2026-10-19 (v0.14.0): the marcher walks a hierarchy of occupancy bits
 (chunk bits with an empty bit in the table, 512-bit brick masks on aligned lines, a walk that
@@ -209,6 +209,13 @@ that walk, so its cost per ray is settled first. The traversal efficiency review
 VoxelRT and wavefront sources in `references/voxel-optimizations.md`) found nothing in the
 literature that beats a bit hierarchy for an editable near field, and left two design inputs
 for the lighting plan, listed with its bullets below.
+
+Plan 0017 closed 2026-10-20 (v0.17.0): the mirror reserves its VRAM budget once (ADR-0013):
+no grow copies, empty pages shared by both kinds, records for the residency's ball, and a
+pressure rule that lowers `r_full` when the pool or records near full. A sync writes the
+nearest chunks that fit whole and defers the rest. `nfr.md` §3 reads live bytes against the
+reserved budget; contour at 16/24 settles at r_full 12 to 13 under 3 GB, the input Plan 0013
+Phase 5 waits for. Page fragmentation with attribute pages is its open followup.
 
 Plan 0005 closed 2026-10-16 (v0.4.0): the surface-look spike measured four normal modes and
 procedural detail, and the owner chose per-voxel contour planes with weaker rock detail
@@ -318,13 +325,19 @@ prefabs it names (ADR-0014, `LOG_FORMAT` 2). The server keeps a coarse grid and 
 `Host::unsupported`, and the fly-through's `P` and collapse run in `DigLogic`, saved and
 replayed. Plan 0016 (closed 2026-10-18, v0.13.0) replaced fail-stop with a capped
 restart from the seed (ADR-0010's Outcome addendum).
+Plan 0019 (closed 2026-10-20, v0.16.0) bounded and metered host-call work: `vxe-world`
+refuses out-of-range shapes, rays, box queries and region lists per world (`WorldLimits`,
+`EditError::OutOfRange`), and the host charges each import's work to the tick's fuel at
+`WorkRates`, list arguments by their bytes before any host work (ADR-0010's second Outcome
+addendum).
 
 Plan 0011 closed 2026-10-17 (v0.11.0): `vxe-script-wasm` hosts a logic component under
 deterministic WASI (clocks fixed to the tick, always-ready timers, seeded entropy), fuel per
 call and a total memory cap, and stops a logic after its first failed call (ADR-0010,
 accepted). The fly-through's dig logic (`flythrough-logic`) runs natively or, with
 `--features wasm` and `--logic wasm`, as a component, to the same hash. Followups from the
-close: bounded or metered host-call work, with `vxe-world` range checks on shapes; a component
+close: bounded or metered host-call work, with `vxe-world` range checks on shapes (done in
+Plan 0019); a component
 hash and the `WasmConfig` in the log header; batched query imports; a per-call measurement of
 a cheap query.
 

@@ -290,6 +290,22 @@ impl Streamer {
         &self.cfg
     }
 
+    /// Changes the full and LOD radii, keeping the hysteresis. The queue is rebuilt for the
+    /// current focus and the next `poll` sweeps residency: full chunks now past
+    /// `r_full + h` are demoted, chunks past `r_lod + h` evicted, and chunks now wanted at a
+    /// tier they lack are loaded, an edited one from persistence. A call with the current
+    /// radii changes nothing.
+    pub fn set_radii(&mut self, r_full: i32, r_lod: i32) {
+        let r = &mut self.cfg.residency;
+        if (r.r_full, r.r_lod) == (r_full, r_lod) {
+            return;
+        }
+        r.r_full = r_full;
+        r.r_lod = r_lod;
+        self.sweep = true;
+        self.rebuild_queue();
+    }
+
     /// Takes this tick's focus points. When the set of focus chunks differs from the last
     /// call's, the queue is rebuilt from the chunks now wanted and not resident at their
     /// tier, and the next `poll` sweeps for demotions and evictions.
@@ -689,6 +705,34 @@ impl Drop for Streamer {
             let _ = w.join();
         }
     }
+}
+
+/// Lattice chunks within `r` chunks of a focus chunk in the streamer's metric, `d2 <= r^2`:
+/// the most chunks one focus keeps resident after a poll when `r` is `r_lod + h`. 0 for a
+/// negative `r`.
+pub fn chunks_in_ball(r: i32) -> u64 {
+    if r < 0 {
+        return 0;
+    }
+    let r2 = i64::from(r) * i64::from(r);
+    let mut n = 0u64;
+    for x in -r..=r {
+        for y in -r..=r {
+            let rest = r2 - i64::from(x) * i64::from(x) - i64::from(y) * i64::from(y);
+            if rest >= 0 {
+                // z in [-z, z] with z the integer square root of `rest`.
+                let mut z = (rest as f64).sqrt() as i64;
+                while z * z > rest {
+                    z -= 1;
+                }
+                while (z + 1) * (z + 1) <= rest {
+                    z += 1;
+                }
+                n += 2 * z as u64 + 1;
+            }
+        }
+    }
+    n
 }
 
 fn d2(a: ChunkCoord, b: ChunkCoord) -> i64 {

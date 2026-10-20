@@ -160,6 +160,8 @@ Walking, the coarse grid and collapse run on the bounded level (`--level`) only.
 | `--census` | Print the brick census on exit: `Full` bricks and mip-bricks by count of materials, and their payload bytes today, under the packed class ladder and under exact planes |
 | `--render WxH` | Fix the marcher's resolution; the window scales it |
 | `--sync-budget MiB` | Bytes uploaded to the GPU mirror per frame |
+| `--mirror-budget MiB` | VRAM the GPU mirror reserves for its pool, masks and records at startup (default 3072 streamed; on `--level`, what the level needs plus dig headroom). While streaming, the full radius drops a chunk after 30 frames with the mirror's pressure (the fuller of its pool slots and records) over 0.9, and returns after 300 frames under 0.7, down to 6 |
+| `--residency R_FULL,R_LOD` | Streamed full and LOD radii in chunks, hysteresis 1 (default 16,24) |
 | `--look MODE` | Start in normal mode `face`, `trilinear8`, `gradient27` or `contour`, with attribute pages for contour and rock detail |
 | `--view VIEW` | Write `shaded` (default), `normals`, `hitmask`, `steps` (red: walk steps, green: storage loads, blue: pool loads per ray) or `albedo` (the composited albedo, unlit) to the target; with `--frames`, `steps` prints the last frame's mean and p99 steps per ray, the mean over 8 × 8 pixel blocks of each block's maximum steps, and the loads' and pool loads' mean and p99 |
 | `--translucent-layers N` | Translucent voxels composited in front of the opaque hit, nearest first (default 4); 0 ignores them |

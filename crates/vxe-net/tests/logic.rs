@@ -62,7 +62,9 @@ fn host_queries_answer_from_the_server_world() {
     ));
     assert_eq!(r.as_ref().unwrap().changed_from, [(3, 4169)]);
     let r = r.map(OpResult::Edit);
-    let hit = reference.raycast(centre_of_voxel([0, 0, 0]), [256, 0, 0], 40 * 256);
+    let hit = reference
+        .raycast(centre_of_voxel([0, 0, 0]), [256, 0, 0], 40 * 256)
+        .unwrap();
     assert_eq!(hit.unwrap().voxel, VoxelCoord([11, 0, 0]));
     let want = vec![
         format!("{r:?}"),
@@ -72,7 +74,9 @@ fn host_queries_answer_from_the_server_world() {
         format!("{hit:?}"),
         format!(
             "{:?}",
-            reference.count_in_box([-12, -12, -12], [12, 12, 12])
+            reference
+                .count_in_box([-12, -12, -12], [12, 12, 12])
+                .unwrap()
         ),
     ];
     assert_eq!(*seen.lock().unwrap(), want);

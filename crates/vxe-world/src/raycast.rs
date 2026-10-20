@@ -16,6 +16,7 @@
 //! block one cell of air, and it reports the runs of equal material the ray crosses.
 
 use crate::coords::{BRICK_EDGE, CHUNK_EDGE, VoxelCoord};
+use crate::edit::EditError;
 use crate::fixed::{FIXED_ONE, Fixed3};
 use crate::material::{AIR, MaterialId};
 use crate::store::{World, read};
@@ -81,15 +82,31 @@ enum Cell {
 
 impl World {
     /// The first non-air voxel the ray `origin + dir * t / 256`, `0 <= t <= max_t`, enters.
-    pub fn raycast(&self, origin: Fixed3, dir: [i64; 3], max_t: i64) -> Option<Hit> {
-        self.raycast_exact(origin, dir, max_t).map(|h| h.hit)
+    /// Refused with [`EditError::OutOfRange`] when the origin or the ray's reach lies outside
+    /// the world's [`WorldLimits`](crate::WorldLimits) (`Coord`, `RayLength`).
+    pub fn raycast(
+        &self,
+        origin: Fixed3,
+        dir: [i64; 3],
+        max_t: i64,
+    ) -> Result<Option<Hit>, EditError> {
+        self.raycast_with_stats(origin, dir, max_t)
+            .map(|(hit, _)| hit)
     }
 
-    /// [`World::raycast`] and the cells the walk visited, the hit's cell included.
-    pub fn raycast_counted(&self, origin: Fixed3, dir: [i64; 3], max_t: i64) -> (Option<Hit>, u32) {
-        let mut cells = 0;
-        let hit = self.raycast_walk(origin, dir, max_t, &mut cells);
-        (hit.map(|h| h.hit), cells)
+    /// [`World::raycast`] plus the steps its walk took: one per cell it looked at (a missing
+    /// chunk, a `Uniform` air brick, a clear 2³ block of a `Full` brick or a voxel), the hit's
+    /// cell included. Within the limits
+    /// an empty world's walk takes at most 258 steps along an axis and 772 on a diagonal.
+    pub fn raycast_with_stats(
+        &self,
+        origin: Fixed3,
+        dir: [i64; 3],
+        max_t: i64,
+    ) -> Result<(Option<Hit>, u64), EditError> {
+        self.limits().check_ray(origin, dir, max_t)?;
+        let (hit, steps) = self.raycast_walk(origin, dir, max_t);
+        Ok((hit.map(|h| h.hit), steps))
     }
 
     pub(crate) fn raycast_exact(
@@ -98,16 +115,12 @@ impl World {
         dir: [i64; 3],
         max_t: i64,
     ) -> Option<ExactHit> {
-        self.raycast_walk(origin, dir, max_t, &mut 0)
+        self.raycast_walk(origin, dir, max_t).0
     }
 
-    fn raycast_walk(
-        &self,
-        origin: Fixed3,
-        dir: [i64; 3],
-        max_t: i64,
-        cells: &mut u32,
-    ) -> Option<ExactHit> {
+    /// The walk of [`World::raycast_exact`] and the cells it looked at.
+    fn raycast_walk(&self, origin: Fixed3, dir: [i64; 3], max_t: i64) -> (Option<ExactHit>, u64) {
+        let mut steps = 0;
         let o = origin.0.map(i128::from);
         let d = dir.map(i128::from);
         let one = i128::from(FIXED_ONE);
@@ -116,13 +129,13 @@ impl World {
         let mut face = None;
         loop {
             if num > i128::from(max_t) * den {
-                return None;
+                return (None, steps);
             }
             let v = voxel_at(o, d, num, den);
-            *cells += 1;
+            steps += 1;
             let size = match self.cell(v) {
                 Cell::Solid(material) => {
-                    return Some(ExactHit {
+                    let hit = ExactHit {
                         hit: Hit {
                             voxel: VoxelCoord(v.map(|c| c as i32)),
                             face,
@@ -131,7 +144,8 @@ impl World {
                         },
                         t_num: num,
                         t_den: den,
-                    });
+                    };
+                    return (Some(hit), steps);
                 }
                 Cell::Empty(size) => i128::from(size),
             };
@@ -151,7 +165,9 @@ impl World {
                     best = Some((n, m, k));
                 }
             }
-            let (n, m, k) = best?;
+            let Some((n, m, k)) = best else {
+                return (None, steps);
+            };
             (num, den) = (n, m);
             face = Some(Face::entered(k, dir[k]));
         }
@@ -295,4 +311,31 @@ pub(crate) fn point_at(origin: Fixed3, dir: [i64; 3], num: i128, den: i128) -> F
         let p = i128::from(origin.0[k]) * den * one + i128::from(dir[k]) * num;
         p.div_euclid(den * one) as i64
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fixed::centre_of_voxel;
+    use crate::material::MaterialTable;
+
+    /// The longest ray the default limits accept, from a voxel centre through a world with
+    /// nothing resident, steps through 64-voxel cells: at most 258 steps along an axis and
+    /// 772 on a diagonal.
+    #[test]
+    fn the_longest_ray_through_an_empty_world_is_bounded_in_steps() {
+        let world = World::new(&MaterialTable::new());
+        let max = 1 << 22;
+        let o = centre_of_voxel([5, -7, 3]);
+        for dir in [[256, 0, 0], [0, -256, 0], [0, 0, 256]] {
+            let (hit, steps) = world.raycast_with_stats(o, dir, max).unwrap();
+            assert_eq!(hit, None);
+            assert!((256..=258).contains(&steps), "{dir:?}: {steps} steps");
+        }
+        for dir in [[256; 3], [-256, 256, -256]] {
+            let (hit, steps) = world.raycast_with_stats(o, dir, max).unwrap();
+            assert_eq!(hit, None);
+            assert!((3 * 256..=772).contains(&steps), "{dir:?}: {steps} steps");
+        }
+    }
 }

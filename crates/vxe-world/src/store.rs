@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGua
 
 use crate::chunk::Chunk;
 use crate::coords::{ChunkCoord, ChunkExtent, VoxelCoord};
+use crate::limits::WorldLimits;
 use crate::material::{MaterialId, MaterialTable};
 use crate::mips::ChunkMips;
 use crate::packed::PackedStats;
@@ -163,6 +164,7 @@ pub struct World {
     pub(crate) materials: MaterialTable,
     /// [`World::packed_stats`]: class changes, entry removals and renames, in that order.
     packed: [AtomicU64; 3],
+    limits: WorldLimits,
 }
 
 impl World {
@@ -192,6 +194,7 @@ impl World {
             extent: ChunkExtent::new([0, 0, 0], [0, 0, 0]),
             materials: table.clone(),
             packed: Default::default(),
+            limits: WorldLimits::DEFAULT,
         }
     }
 
@@ -248,7 +251,21 @@ impl World {
             extent,
             materials: table.clone(),
             packed: Default::default(),
+            limits: WorldLimits::DEFAULT,
         }
+    }
+
+    /// The range of parameters this world's edits, rays, box queries and region ops accept;
+    /// [`WorldLimits::DEFAULT`] unless set by [`World::with_limits`].
+    pub fn limits(&self) -> WorldLimits {
+        self.limits
+    }
+
+    /// This world with `limits` in place of its own. Two worlds kept in step (a server's and
+    /// an owned client's) must hold the same limits, or they refuse different ops.
+    pub fn with_limits(mut self, limits: WorldLimits) -> Self {
+        self.limits = limits;
+        self
     }
 
     /// The extent generated up front; empty for a world made by [`World::new`].
