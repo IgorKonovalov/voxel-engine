@@ -11,7 +11,7 @@
 > (the final, surface-only form; "the footprint ADR" below), and
 > [ADR-0013](../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) sets how §3 is read.
 > **Prerequisite:** Plan 0005 closed (done). Independent of Plans 0003, 0004 and 0006.
-> Phase 5 also needs [Plan 0017](0017-mirror-budget-reservation-page-kinds-and-pressure.md)
+> Phase 5 also needs [Plan 0017](done/0017-mirror-budget-reservation-page-kinds-and-pressure.md)
 > merged into this plan's branch (the owner's call, 2026-10-18).
 > **Amended:** 2026-10-18, after Phase 3, from the owner's answers: Phase 4 is met by the
 > owner's pick of D at 14,24 (2026-10-17, `docs/decisions-pending.md` (answered and deleted; read it with `git show 880982c:docs/decisions-pending.md`) D1) and by ADR-0012,

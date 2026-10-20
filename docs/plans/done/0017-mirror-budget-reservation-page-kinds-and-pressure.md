@@ -1,16 +1,16 @@
 # 0017: The mirror reserves its budget: fixed buffers, empty pages that change kind, and a pressure signal the streamer follows
 
-> **Status:** in-progress (2026-10-20)
+> **Status:** done (closed 2026-10-20, v0.16.0, fourth review at 16e17a7: the per-chunk admit check is exact for every need it admits; the reservation, page kinds and pressure rule land as planned)
 > **Created:** 2026-10-17
 > **Milestone:** M2 in `docs/roadmap.md` (the footprint work that lets Plan 0013's radius be chosen against content)
-> **Related ADRs:** [ADR-0013](../adrs/0013-mirror-reserves-its-vram-budget-up-front.md)
-> (proposed; this plan implements it), [ADR-0004](../adrs/0004-palette-narrowed-sharded-brick-pool.md)
+> **Related ADRs:** [ADR-0013](../../adrs/0013-mirror-reserves-its-vram-budget-up-front.md)
+> (accepted; this plan implements it), [ADR-0004](../../adrs/0004-palette-narrowed-sharded-brick-pool.md)
 > (whose growth Outcome it supersedes in part), ADR-0003 (the residency radii the pressure
 > rule moves).
 > **Prerequisite:** none. Touches `gpu_world.rs`, which Plans 0013 and 0015 also touch;
 > merge order resolves the conflicts. Best taken after Plan 0015 so the 72-byte mask slot is
 > reserved once.
-> **Unblocks:** [Plan 0013](0013-contour-default-shadow-origin-and-streamed-footprint.md)
+> **Unblocks:** [Plan 0013](../0013-contour-default-shadow-origin-and-streamed-footprint.md)
 > Phase 5, which waits for this plan (the owner's call, 2026-10-18). When this plan merges to
 > main, continue Plan 0013 on its branch: merge main into `plan-0013`, then Phases 5 and 7
 > (its human Phases 4 and 6 are done).
@@ -546,4 +546,18 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
-- None at draft time.
+- **Page fragmentation under attribute pages.** With `--look contour` the pool can defer chunks
+  under the 0.9 trigger (0.796 in a 16/24 run, `nfr.md` §3): attribute and plain slots sit spare in
+  partly filled pages of the other kind, and an attribute page holds 1364 bricks in 4096
+  slots. The streaks clear within 3 syncs (`nfr.md` §3), so it is a finding, not a miss. A
+  future mirror plan weighs compaction (moving a page's last live bricks so it frees), a
+  pressure term that counts each kind's spare in partly filled pages, or a lower trigger with
+  attribute pages, and measures deferrals per minute against the same autopilot runs.
+- **A tier change that turns wide is checked against pair room before its own frees.** In
+  `upload`, `pair_room` is read before the old record is dropped, so a demotion or promotion
+  whose new record is wide is not credited the pages its old record empties. It can only be
+  deferred when it would have fitted, never admitted when it does not; it needs a table of
+  more than 256 materials. Fold it into the fragmentation plan if that plan touches the check.
+- **`GpuWorld::pressure`'s doc still says a sync past the reservation "fails instead of
+  growing it".** Since the second Amendment a sync writes what fits and defers the rest; the
+  sentence wants that wording at the next touch of `gpu_world.rs`.

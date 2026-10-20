@@ -196,7 +196,7 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005 and 0015 closed; Plan 0013 is the surface follow-up; the lighting plan next)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0015 and 0017 closed; Plan 0013 is the surface follow-up; the lighting plan next)
 
 Plan 0015 closed 2026-10-19 (v0.14.0): the marcher walks a hierarchy of occupancy bits
 (chunk bits with an empty bit in the table, 512-bit brick masks on aligned lines, a walk that
@@ -210,11 +210,12 @@ VoxelRT and wavefront sources in `references/voxel-optimizations.md`) found noth
 literature that beats a bit hierarchy for an editable near field, and left two design inputs
 for the lighting plan, listed with its bullets below.
 
-Plan 0017 (implemented, awaiting its close review) makes the mirror reserve its VRAM budget
-once (ADR-0013): no grow copies, empty pages shared by both kinds, records for the residency's
-ball, and a pressure rule that lowers `r_full` when the pool or records near full. `nfr.md`
-§3 now reads live bytes against the reserved budget; contour at 16/24 settles at r_full 13
-under 3 GB, the input Plan 0013 Phase 5 waits for.
+Plan 0017 closed 2026-10-20 (v0.16.0): the mirror reserves its VRAM budget once (ADR-0013):
+no grow copies, empty pages shared by both kinds, records for the residency's ball, and a
+pressure rule that lowers `r_full` when the pool or records near full. A sync writes the
+nearest chunks that fit whole and defers the rest. `nfr.md` §3 reads live bytes against the
+reserved budget; contour at 16/24 settles at r_full 12 to 13 under 3 GB, the input Plan 0013
+Phase 5 waits for. Page fragmentation with attribute pages is its open followup.
 
 Plan 0005 closed 2026-10-16 (v0.4.0): the surface-look spike measured four normal modes and
 procedural detail, and the owner chose per-voxel contour planes with weaker rock detail

@@ -246,7 +246,10 @@ The one 16/24 deferral came at pressure 0.796, under the 0.9 trigger, and cleare
 sync with no radius change; the 14/22 deferrals came at 0.855 to 0.944, after the decrease to
 13 (tick 796, first deferral at tick 807). Two of the four runs deferred nothing. A recorded
 finding, not a miss of the line: live bytes peak at 2.96 GB under 3 GB. At 52cf84d, before the
-per-chunk check, the same runs read longest streaks of 1, 3, 2 and 6 syncs.
+per-chunk check, the same runs read longest streaks of 1, 3, 2 and 6 syncs. These readings stand
+at the close tip (16e17a7, v0.16.0): the later fixes change only the wide path (more than 256
+materials) and syncs that write nothing, neither of which these runs reach. Deferring under
+the 0.9 trigger with attribute pages is page fragmentation, Plan 0017's open followup.
 
 **The pressure rule's gate (Plan 0017 Phase 3, same machine and flags, r_full 16, r_lod 24,
 no `--look`, `--mirror-budget 1930`: 3 043 328 slots and 93 239 records, 2 021 964 224 B,
