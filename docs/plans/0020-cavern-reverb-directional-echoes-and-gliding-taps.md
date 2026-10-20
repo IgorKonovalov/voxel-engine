@@ -29,6 +29,10 @@
 > pre-delay made live settings (11), a re-listen (12, `human`) and the chosen values pinned (13).
 > Causes named below are hypotheses unless marked as read from the code. ADR-0015 carries a dated
 > Outcome; a superseding ADR follows at the close.
+> **Owner decisions, 2026-10-20, on the fix pass:** (1) the direct path's propagation delay
+> is built as a toggle (`U`, `--direct-delay`), off by default, and decided by ear in Phase 12;
+> (2) a room change hands the tail over between two networks with an input crossfade
+> (`TailLines::Handover`, the default), with the glide kept as the `O` toggle for comparison.
 
 ## TL;DR
 
