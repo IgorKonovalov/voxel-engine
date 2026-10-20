@@ -140,3 +140,32 @@ adds a dependent read per hit).
 The cheapest (detail adds about 0.1 ms) and no VRAM. The owner's eye rejected the cube look the
 spike was started to remove; detail alone reads "between noise and shadows" at 0.3 and cannot
 hide a stepped silhouette.
+
+## Outcome
+
+Added 2026-10-20 at the Plan 0013 close (v0.19.0), from the plan's readings and its
+fresh-session review. Contour with detail is the fly-through's default; `--look plain` keeps
+face mode without attribute pages.
+
+- **The shadow-ray rule holds.** A plane hit's shadow ray starts half a voxel off the hit
+  along the plane normal; a cube hit keeps the face normal. On the contour golden scene
+  (llvmpipe, 320 x 180) the only-with-shadows specks fell from 372 to 52 against face mode's
+  169, and a test gates contour at or below face.
+- **The footprint rule is met in bytes, not in radius.** The streamed footprint was not
+  reduced here: the owner moved surface-only attribute storage to ADR-0012's mirror-slot plan
+  (2026-10-20). Under ADR-0013's 3 GiB reservation the pressure rule lowers `r_full` from 16 to
+  12 and settles at 13; peak live is 2 864 318 452 B, under the 3 GB line, with no
+  out-of-memory stop on the 8 GiB card. Full detail reaches 76.8 to 83.2 m against `nfr.md`
+  §3's "about 100 m" until that plan.
+- **Rock detail is `[4.0, 0.1]`**, the owner's pick on screen.
+- **"Nearly free per frame" holds for the march, not for the attribute pass under motion.**
+  At the streamed spawn once residency settles, contour with detail reads 2.28 ms against face
+  mode's 2.13 ms (dev box, loaded, 3000 frames). But the attribute pass under the autopilot's
+  flight costs 2.0 ms of GPU at p50 and 4.3 ms at p99. On the render thread, building its work
+  list costs 3.7 ms at p50 and 139 to 167 ms at p99, which is a visible hitch. All of these are
+  diagnostic readings taken at a 1-minute load of 3.6 to 19 (`docs/nfr.md` §2). The work-list
+  cost is a followup; the decision stands.
+- **The attribute pass keeps its buffers.** The uniform, the work list (grown to powers of
+  two) and the bind group are kept between calls. The GPU chunk table is created filled with
+  `ABSENT`, so a boundary brick next to an absent chunk reads its plane. A headless test covers
+  the shell recompute when a neighbour arrives and leaves.

@@ -10,7 +10,7 @@
 > **Prerequisite:** none. Touches `gpu_world.rs`, which Plans 0013 and 0015 also touch;
 > merge order resolves the conflicts. Best taken after Plan 0015 so the 72-byte mask slot is
 > reserved once.
-> **Unblocks:** [Plan 0013](../0013-contour-default-shadow-origin-and-streamed-footprint.md)
+> **Unblocks:** [Plan 0013](0013-contour-default-shadow-origin-and-streamed-footprint.md)
 > Phase 5, which waits for this plan (the owner's call, 2026-10-18). When this plan merges to
 > main, continue Plan 0013 on its branch: merge main into `plan-0013`, then Phases 5 and 7
 > (its human Phases 4 and 6 are done).

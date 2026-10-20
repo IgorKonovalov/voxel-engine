@@ -196,7 +196,7 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0015, 0017 and 0021 closed; Plan 0013 is the surface follow-up; the lighting plan next)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017 and 0021 closed; the lighting plan next)
 
 Plan 0015 closed 2026-10-19 (v0.14.0): the marcher walks a hierarchy of occupancy bits
 (chunk bits with an empty bit in the table, 512-bit brick masks on aligned lines, a walk that
@@ -214,8 +214,7 @@ Plan 0017 closed 2026-10-20 (v0.17.0): the mirror reserves its VRAM budget once 
 no grow copies, empty pages shared by both kinds, records for the residency's ball, and a
 pressure rule that lowers `r_full` when the pool or records near full. A sync writes the
 nearest chunks that fit whole and defers the rest. `nfr.md` §3 reads live bytes against the
-reserved budget; contour at 16/24 settles at r_full 12 to 13 under 3 GB, the input Plan 0013
-Phase 5 waits for. Page fragmentation with attribute pages is its open followup.
+reserved budget; contour at 16/24 settles at r_full 12 to 13 under 3 GB. Page fragmentation with attribute pages is its open followup.
 
 Plan 0021 closed 2026-10-20 (v0.18.0): a `Full` brick is a packed occupancy mask, an ascending
 palette and bit planes in five fixed classes (ADR-0012's CPU-format step), edits are word
@@ -225,14 +224,19 @@ about 1.0 GB. The mirror bytes did not move, and neither did any pinned hash. Th
 size-classed mirror slot plan is next in ADR-0012's sequence. The residency p95 (611 ms
 against the 500 ms proposal, under load) is pending the owner.
 
+Plan 0013 closed 2026-10-20 (v0.19.0): contour with detail (rock `[4.0, 0.1]`) is the
+fly-through's default and `--look plain` keeps face mode. A plane hit's shadow ray leaves along
+the plane normal (specks 52 against face mode's 169). The footprint is not reduced: the pressure
+rule holds the default at r_full 12 to 13 under 3 GB, and surface-only attribute storage is
+ADR-0012's mirror-slot plan (ADR-0011 Outcome). The default's march at the settled streamed
+spawn is 2.28 ms against face's 2.13. Its attribute pass under motion misses the plan's
+proposals: GPU p99 4.3 ms, and render-thread p99 139 to 167 ms, a visible hitch. These are
+diagnostic readings. The hitch is open and is owed before the lighting plan, with the
+streaming-CPU plan.
+
 Plan 0005 closed 2026-10-16 (v0.4.0): the surface-look spike measured four normal modes and
 procedural detail, and the owner chose per-voxel contour planes with weaker rock detail
-(ADR-0011). The fly-through's default stays face normals until a surface follow-up plan fixes
-contour's shadow-ray origin and fits its streamed footprint, which ran the 8 GiB dev card out
-of memory at the default radius; Plan 0005's "Follow-up items" list the work. Plan 0013
-(approved) is that follow-up: the shadow-ray origin, a footprint chosen by measurement and recorded
-in its own ADR, the owner's rock detail, then contour plus detail as the default. The lighting
-plan is not drafted yet.
+(ADR-0011); Plan 0013 made it the default. The lighting plan is not drafted yet.
 
 **Goal:** the consumer's P0 rendering bar. Few lights, emissive voxels, destruction, no ghosting.
 The quality reference is the Sibenik cathedral in Laine & Karras 2010, Figure 1. That image is
@@ -280,7 +284,7 @@ work), and the light (real-time GI standing in for the baked occlusion).
   carve, with a stated SSIM floor against the reference.
 - **Budgets:** the full frame at 1080p output on the baseline GPU.
 - **ADRs expected:** denoiser family; upscaler choice. Surface representation: ADR-0011; its
-  streamed footprint: ADR-0012 (final, surface-only); Plan 0013 builds the interim radius 14.
+  streamed footprint: ADR-0012 (final, surface-only); until then the pressure rule's radius.
 
 ### M3: Collision, character controller, coarse grids (Plan 0004; done 2026-10-17)
 

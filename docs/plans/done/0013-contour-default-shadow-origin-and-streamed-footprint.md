@@ -1,17 +1,20 @@
 # 0013: Contour as the fly-through's default: the shadow-ray origin, a streamed footprint under 3 GB, and a weaker rock detail
 
-> **Status:** in-progress
+> **Status:** done (closed 2026-10-20, v0.19.0): the fresh-session review found no blocker or
+> major; contour with detail is the fly-through's default, its shadow ray leaves the plane, and
+> the pressure rule holds it under 3 GB at r_full 12 to 13. The attribute pass's render-thread
+> hitches under motion (p99 about 140 to 170 ms, a diagnostic reading) are an open followup.
 > **Created:** 2026-10-16
 > **Milestone:** M2 in `docs/roadmap.md` (the surface follow-up before the lighting plan)
-> **Related ADRs:** [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
+> **Related ADRs:** [ADR-0011](../../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
 > (the decision this plan finishes: the shadow-ray rule and the footprint are owed here),
-> [ADR-0004](../adrs/0004-palette-narrowed-sharded-brick-pool.md) (the shards, and the growth
+> [ADR-0004](../../adrs/0004-palette-narrowed-sharded-brick-pool.md) (the shards, and the growth
 > rule that makes §3 a reading of allocated bytes), ADR-0003 (the residency radii). The
-> footprint ADR is [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
+> footprint ADR is [ADR-0012](../../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
 > (the final, surface-only form; "the footprint ADR" below), and
-> [ADR-0013](../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) sets how §3 is read.
+> [ADR-0013](../../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) sets how §3 is read.
 > **Prerequisite:** Plan 0005 closed (done). Independent of Plans 0003, 0004 and 0006.
-> Phase 5 also needs [Plan 0017](done/0017-mirror-budget-reservation-page-kinds-and-pressure.md)
+> Phase 5 also needs [Plan 0017](0017-mirror-budget-reservation-page-kinds-and-pressure.md)
 > merged into this plan's branch (the owner's call, 2026-10-18).
 > **Amended:** 2026-10-18, after Phase 3, from the owner's answers: Phase 4 is met by the
 > owner's pick of D at 14,24 (2026-10-17, `docs/decisions-pending.md` (answered and deleted; read it with `git show 880982c:docs/decisions-pending.md`) D1) and by ADR-0012,
@@ -519,3 +522,49 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - The contour attribute's footprint (amendment, 2026-10-20): surface-only attribute storage in
   size-classed slots, so the default look holds `r_full` 16 under the 3 GB line. ADR-0012's
   mirror-slot plan (not yet numbered; `docs/plans/README.md`).
+- The attribute pass's render-thread cost under motion (close review, 2026-10-20). Paired
+  with `--look plain` under the autopilot, `update_attrs` reads p99 139 to 167 ms and max up
+  to 297 ms, a visible hitch, and GPU p99 4.3 ms against the 1.0 ms proposal. It is owed before
+  the lighting plan, beside the streaming-CPU plan: profile `attr_work`'s shell and chunk
+  enumeration, then bound the list per frame or build it off the render thread.
+- The autopilot's unready-near count uses the configured `r_full - 2`, not the radius the
+  pressure rule settled at. Under the default look it reads 2720 of 2730 frames, which tells
+  nothing.
+- A quiet-box re-read of Phase 7's timings once the parallel lanes stop. Every one was taken
+  at a 1-minute load of 2 or more.
+
+## Close review (architect, 2026-10-20)
+
+This is a fresh-session review of `main...plan-0013` at 91a3967, against the plan as amended
+at 688b3ed. Main e1371ba was merged at af4dc02. The gate was re-run at the tip on the dev box
+and is green: `scripts/build-guests.sh`, then `cargo nextest run --workspace` under the
+exclusive perf lock (load 5.0) with 461 passed and 3 skipped. `-p flythrough --features wasm`
+passed 103. Doctests, clippy `-D warnings` (with and without `wasm`), fmt, `cargo deny`, the
+three doc gates and the hook bite tests (59) are also green.
+
+- **No blocker or major.** The speck test now asserts that contour's only-with-shadows count
+  is at most face mode's, and that its render is `look_contour.png` byte for byte. The
+  buffer-builds test asserts 2 builds and a capacity of 4096, and that its attribute bytes
+  equal those of a mirror's own pass. The shell test reads the `+x` plane, then `NO_PLANE`,
+  then the `+x` plane. The default-look parse test pins the line, `plain` and the unknown
+  `--attrib-quant`. Phase 5's grep finds only that test.
+- **The merge resolutions hold.** `--residency` is main's alone. `release_attrib_bindings` is
+  safe to drop, because ADR-0013's reservation never replaces a bound buffer and the pass
+  still rebuilds its bind group if one changes. `look_contour.png` was changed on both sides
+  since the merge base 917810b (main at 4cafd06, the branch at 82b19b8), so the rebless on
+  llvmpipe is justified.
+- **Contour as the default is acceptable, and the hitch is the open cost.** No done-when and
+  no `nfr.md` line required these figures to be met at close. Phase 7 records the readings
+  against proposals. The attribute pass has no `nfr.md` line, and the streaming line is a
+  recorded miss that stands.
+  - **The march:** paired runs (`nfr.md` §2) show that the 3.5 to 4.0 ms streamed-spawn
+    readings are mid-fill. Once residency settles, the default reads 2.28 ms against plain's
+    2.13 ms, under the 3.0 ms line.
+  - **The hitch:** this is a real regression. Paired under the autopilot, `update_attrs`
+    adds a render-thread p99 of 167 ms to the default, and the default flies about a fifth
+    fewer frames than plain. It is a followup, owed before the lighting plan.
+- **Minor:** the autopilot's unready-near count uses the configured radius (Followups).
+- **Minor:** every Plan 0013 timing, and this review's, was taken at a load of 2 or more. A
+  quiet-box re-read is owed, as at Plan 0021's close.
+- **Nit:** Phase 7 summarises the per-frame readings in the autopilot's report instead of
+  printing them every frame. The log discloses it.

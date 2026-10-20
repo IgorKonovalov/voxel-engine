@@ -113,8 +113,18 @@ last 30 of 300 frames, three runs each, NVIDIA GeForce RTX 3080 Laptop GPU, Ryze
 exclusive perf lock; diagnostic because the 1-minute load read 11.1 to 13.4 from other work on
 the box):** the level's spawn (`flythrough --level --headless --seed 1 --render 1920x1080
 --frames 300`) reads 1.705 to 1.780 ms; the streamed spawn (`flythrough --headless --seed 1
---render 1920x1080 --frames 300`, 1 640 292 `Full` bricks mirrored by frame 300) reads 3.502
-to 3.970 ms, over the 3.0 ms line. `--look plain` keeps the face readings above reproducible.
+--render 1920x1080 --frames 300`) reads 3.502 to 3.970 ms, over the 3.0 ms line. Frame 300 is
+mid-fill, not full residency: the mirror then holds about 1.87 GB live of the settled 2.86 GB.
+`--look plain` keeps the face readings above reproducible.
+
+**The default look at the settled streamed spawn (dev reference, diagnostic, the Plan 0013 close
+review, 91a3967, same machine and lock, one run each at a 1-minute load of 12 to 19).** With
+`--frames 3000`, as in Plan 0015's reading, residency settles at r_full 12 to 13. The default
+reads 2.276 ms and `--look plain` reads 2.134 ms, so contour with detail costs about 0.14 ms
+there and is under the 3.0 ms line. With `--frames 300` in the same session, the default reads
+3.590 and 3.894 ms against plain's 2.298 ms, and the render thread's median frame CPU is
+11.0 to 11.9 ms against 3.3 to 4.5 ms. So the 3.5 to 4.0 ms readings are the fill, not the
+settled view.
 
 **The attribute pass under motion (dev reference, diagnostic, Plan 0013 Phase 7, same machine
 and lock, `flythrough --autopilot --headless --seed 1`, default contour, two runs at load 3.6
@@ -124,7 +134,14 @@ over the frames with work p50 2.045 to 2.155 ms, p99 4.303 to 4.312 ms, max 4.76
 against the plan's 1.0 ms p99 proposal; the render thread's CPU in `update_attrs` (the work
 list, `attr_work`, plus recording the pass) p50 3.689 to 3.834 ms, p99 138.7 to 146.4 ms, max
 233.3 to 277.5 ms, on top of the streaming line's `update + poll + sync` (p50 3.7 to 4.0 ms).
-Both are over their lines; no plan owns them yet.
+Both are over their lines; no plan owns them yet. The close review paired the default with
+`--look plain` (91a3967, load 12.2 to 13.6). The default read `update_attrs` CPU p50 3.786 ms,
+p99 167.477 ms and max 297.460 ms, with streaming CPU p99 43.2 ms, over 2730 frames. Plain
+had no attribute pass and read streaming CPU p99 40.7 ms over 3521 frames in the same 60 s
+flight. The attribute work list is a render-thread hitch of 100 ms or more on about 1 % of
+the frames in motion, and the default flies about a fifth fewer frames. It is owed before the
+lighting plan, beside the streaming-CPU plan. A quiet-box re-read of every Plan 0013 timing is
+owed once the parallel lanes stop.
 
 **Stats HUD (dev reference, Plan 0010, f91726f, headless `flythrough [--level] --seed 1
 --render 1920x1080 --frames 300 [--hud]`, three runs each, NVIDIA GeForce RTX 3080 Laptop GPU,
