@@ -98,14 +98,14 @@ reviews once at the end, in a fresh session.
 ### Phase 2: The dollhouse shading, the automatic trigger and the key
 - **Owner skill:** dev
 - **What:** in cutaway mode `shade` uses a hemisphere light, `albedo * (0.3 + 0.7 * (0.5 +
-  0.5 * n.y))` with detail applied as usual and no shadow ray or lamp, and a miss writes a
+  0.5 * n.z))` (world z up; owner, 2026-10-20) with detail applied as usual and no shadow ray or lamp, and a miss writes a
   flat sky colour. The fly-through reads the camera's voxel each frame through
   `World::material_at` and sets the flag unless the `X` key forced a state; `--cutaway` sets
   the start state; the HUD shows a `cutaway` row when active; the autopilot is unaffected.
 - **Files touched:** `march.wgsl`, `marcher.rs`, `apps/flythrough/src/main.rs`, `fly.rs`,
   `hud.rs`, `apps/flythrough/tests/golden.rs`, `docs/nfr.md` (a diagnostic reading).
 - **Done when:** a golden `cutaway_level.png` of the level (`--level --seed 1`) from a
-  camera 20 m outside the extent's -x face, looking +x at the centre, is blessed on lavapipe
+  camera 40 m outside the extent's -x face (moved from 20 m by the owner, 2026-10-20: 20 m reads 5.92 % sky; 40 m reads 24.12 % sky, 75.88 % lit rock), looking +x at the centre, is blessed on lavapipe
   and shows at least 20 % of its pixels as sky and at least 20 % as lit rock (colour bins,
   `bins_covering`); the parse test pins `--cutaway auto`, `on`, `off` and refuses `--cutaway
   x`; a headless test places the camera in rock and asserts the look's `cutaway` flag is set
