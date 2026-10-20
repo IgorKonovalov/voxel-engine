@@ -3,7 +3,9 @@
 //! listener still (every voice and bus on one FIR pair) and turning (every voice and bus
 //! crossfading between two FIR pairs, the worst case). The tail's room alternates every 0.33 s
 //! between an 8 m room (2.26 s) and a 10 m one (2.83 s), as a walk through a cave hands it
-//! rooms, so both of its networks run: one fed, the other ringing out or fading. Prints the audio RAM the
+//! rooms, so both of its networks run: one fed, the other ringing out or fading. Each case
+//! runs again with the direct path's propagation delay on (every voice and tap reading the
+//! delay line at the source's distance). Prints the audio RAM the
 //! mixer and the pack hold. The `Acoustics::update` budget is the fly-through's `acoustics`
 //! bench, which owns the cave it probes.
 
@@ -51,8 +53,9 @@ fn noise() -> Sound {
 
 /// A mixer at the origin with the 32 looping noise voices, each with 16 taps and a low-pass,
 /// rendered past the start so the delay lines are full and the gains and filters settled.
-fn loaded_mixer() -> Mixer {
+fn loaded_mixer(direct_delay: bool) -> Mixer {
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    mixer.set_direct_delay(direct_delay);
     let sound = noise();
     for (i, p) in sources([0.0; 3]).into_iter().enumerate() {
         let id = VoiceId(i as u32 + 1);
@@ -124,7 +127,7 @@ impl Rooms {
 }
 
 fn mixer_block(c: &mut Criterion) {
-    let mut mixer = loaded_mixer();
+    let mut mixer = loaded_mixer(false);
     let pack_bytes = mixer.hrtf().map_or(0, |h| h.heap_bytes());
     // Every voice owns its history and a delay line of MAX_DELAY_FRAMES plus one block,
     // pooled for MAX_VOICES at construction.
@@ -146,6 +149,18 @@ fn mixer_block(c: &mut Criterion) {
     c.bench_function(
         "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, 16 buses, tail \
          handing over",
+        |b| {
+            b.iter(|| {
+                rooms.step(&mut mixer);
+                mixer.render(&mut out, BLOCK);
+                black_box(&out);
+            })
+        },
+    );
+    let mut mixer = loaded_mixer(true);
+    c.bench_function(
+        "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, 16 buses, tail \
+         handing over, direct delay",
         |b| {
             b.iter(|| {
                 rooms.step(&mut mixer);
@@ -177,7 +192,13 @@ fn local(p: [f32; 3], yaw_deg: f32) -> [f32; 3] {
 }
 
 fn mixer_block_turning(c: &mut Criterion) {
-    let mut mixer = loaded_mixer();
+    for direct_delay in [false, true] {
+        mixer_block_turning_with(c, direct_delay);
+    }
+}
+
+fn mixer_block_turning_with(c: &mut Criterion, direct_delay: bool) {
+    let mut mixer = loaded_mixer(direct_delay);
     // Each step of YAW_STEP_DEG moves every voice to another measured direction, so every
     // block renders two FIR pairs per voice and crossfades them.
     let hrtf = mixer.hrtf().cloned().expect("the HRTF mixer");
@@ -195,19 +216,20 @@ fn mixer_block_turning(c: &mut Criterion) {
     let mut out = vec![0.0f32; 2 * BLOCK];
     let mut k = 0usize;
     let mut rooms = Rooms(1);
-    c.bench_function(
+    let name = format!(
         "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, 16 buses, \
-         tail handing over, listener turning (every voice crossfades)",
-        |b| {
-            b.iter(|| {
-                rooms.step(&mut mixer);
-                k = (k + 1) % steps;
-                mixer.apply(Command::SetListener(facing(k as f32 * YAW_STEP_DEG)));
-                mixer.render(&mut out, BLOCK);
-                black_box(&out);
-            })
-        },
+         tail handing over, listener turning (every voice crossfades){}",
+        if direct_delay { ", direct delay" } else { "" }
     );
+    c.bench_function(&name, |b| {
+        b.iter(|| {
+            rooms.step(&mut mixer);
+            k = (k + 1) % steps;
+            mixer.apply(Command::SetListener(facing(k as f32 * YAW_STEP_DEG)));
+            mixer.render(&mut out, BLOCK);
+            black_box(&out);
+        })
+    });
 }
 
 criterion_group!(benches, mixer_block, mixer_block_turning);

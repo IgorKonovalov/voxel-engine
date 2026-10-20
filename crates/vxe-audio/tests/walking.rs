@@ -168,10 +168,11 @@ struct Walk {
     after: Vec<[TapSlot; MAX_TAPS]>,
 }
 
-/// The walk through `world` at `pace`, HRTF path, reflections on, as a 60 Hz game would drive
-/// it.
-fn walk(world: &World, pace: Pace) -> Walk {
+/// The walk through `world` at `pace`, HRTF path, reflections on, the direct delay `delayed`,
+/// as a 60 Hz game would drive it.
+fn walk(world: &World, pace: Pace, delayed: bool) -> Walk {
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    mixer.set_direct_delay(delayed);
     let mut acoustics = Acoustics::new(mixer.clock());
     assert!(acoustics.reflections_on());
     let id = VoiceId(1);
@@ -269,6 +270,23 @@ fn reference(direct: &[f64], ends: impl Fn(usize) -> Ends) -> Vec<f64> {
     y
 }
 
+/// The direct path's distance gain `1 / max(d, 1 m)` at every block edge of the 3 m/s walk.
+fn direct_gains() -> Vec<f64> {
+    (0..=BLOCKS)
+        .map(|e| {
+            let p = WALK.at(e);
+            let d = [0, 1, 2]
+                .map(|k| f64::from(SOURCE[k] - p[k]))
+                .iter()
+                .map(|c| c * c)
+                .sum::<f64>()
+                .sqrt()
+                * f64::from(MPV);
+            1.0 / d.max(1.0)
+        })
+        .collect()
+}
+
 /// A block's slots at its start and its end.
 type Ends = (
     [Option<(f64, f64)>; MAX_TAPS],
@@ -313,7 +331,7 @@ fn slot_figures(
 #[test]
 fn walking_past_a_hum_glides_every_echo_and_clicks_no_more_than_an_ideal_render() {
     let corridor = corridor();
-    let w = walk(&corridor, WALK);
+    let w = walk(&corridor, WALK, false);
     let ideal: Vec<_> = (0..=BLOCKS)
         .map(|e| ideal_slots(&corridor, WALK.at(e)))
         .collect();
@@ -321,7 +339,7 @@ fn walking_past_a_hum_glides_every_echo_and_clicks_no_more_than_an_ideal_render(
     let settle_block = SETTLE.div_ceil(BLOCK);
 
     // At 12 m/s (2v / c = 7 percent, past the 5 percent cap) the slots fall behind: printed.
-    let boost = walk(&corridor, BOOST);
+    let boost = walk(&corridor, BOOST, false);
     let boost_ideal: Vec<_> = (0..=BLOCKS)
         .map(|e| ideal_slots(&corridor, BOOST.at(e)))
         .collect();
@@ -348,19 +366,7 @@ fn walking_past_a_hum_glides_every_echo_and_clicks_no_more_than_an_ideal_render(
     }
 
     // The click index against an ideal render and a stepped one.
-    let direct: Vec<f64> = (0..=BLOCKS)
-        .map(|e| {
-            let p = WALK.at(e);
-            let d = [0, 1, 2]
-                .map(|k| f64::from(SOURCE[k] - p[k]))
-                .iter()
-                .map(|c| c * c)
-                .sum::<f64>()
-                .sqrt()
-                * f64::from(MPV);
-            1.0 / d.max(1.0)
-        })
-        .collect();
+    let direct = direct_gains();
     // Nothing that can click: every slot at the exact walk position at each block edge.
     let smooth = reference(&direct, |b| (ideal[b], ideal[b + 1]));
     // A swap: each slot's delay held at its value at the last probe block, stepped at the next.
@@ -420,6 +426,30 @@ fn walking_past_a_hum_glides_every_echo_and_clicks_no_more_than_an_ideal_render(
         k_mixer <= 2.0 * k_ref,
         "the mixer's click index {k_mixer} against twice the reference's {k_ref}"
     );
+}
+
+/// The same walk with the direct path's propagation delay on: the direct path and every echo
+/// carry the walk's Doppler, and the output still clicks no more than twice the ideal
+/// reference (a 440 Hz render with no delay on the direct path; the Doppler moves the tone by
+/// under 1 percent, its click index by under 2 percent).
+#[test]
+fn walking_with_the_direct_delay_clicks_no_more_than_an_ideal_render() {
+    let corridor = corridor();
+    let w = walk(&corridor, WALK, true);
+    let ideal: Vec<_> = (0..=BLOCKS)
+        .map(|e| ideal_slots(&corridor, WALK.at(e)))
+        .collect();
+    let smooth = reference(&direct_gains(), |b| (ideal[b], ideal[b + 1]));
+    let k_ref = click_index(&smooth, SETTLE);
+    let k = [0, 1].map(|c| click_index(&channel(&w.out, c), SETTLE));
+    println!(
+        "walking at 3 m/s with the direct delay on: click index left {:.3}, right {:.3}, ideal \
+         reference {k_ref:.3}",
+        k[0], k[1]
+    );
+    for (c, k) in k.iter().enumerate() {
+        assert!(*k <= 2.0 * k_ref, "ear {c}: {k} against twice {k_ref}");
+    }
 }
 
 /// A wall of `CAVE` over voxel `x in [50, 60)` and the listener 4.95 m in front of it at voxel

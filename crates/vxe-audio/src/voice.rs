@@ -148,6 +148,12 @@ pub(crate) struct Voice {
     pub send: f32,
     /// Frames rendered since the last [`AcousticTargets`] arrived.
     pub since_acoustics: u32,
+    /// The direct path's propagation delay as smoothed so far, in frames; 0 with the direct
+    /// delay off. Every tap reads this much further back than its excess.
+    pub direct_delay: f32,
+    /// The direct path's distance gain times the acoustic gain as smoothed so far, for the
+    /// delayed direct path (read from the delay line, which carries the voice's own gain).
+    pub dist_gain: f32,
     /// Where the next block goes in [`VoiceBuffers::echo`].
     pub echo_pos: usize,
     /// The low-pass coefficient as smoothed so far, 1 when open (the acoustic gain smooths
@@ -204,6 +210,8 @@ impl Voice {
             own_gain: 0.0,
             send: 0.0,
             since_acoustics: 0,
+            direct_delay: 0.0,
+            dist_gain: 0.0,
             echo_pos: 0,
             lowpass_a: 1.0,
             lowpass: 0.0,
@@ -214,16 +222,17 @@ impl Voice {
     }
 
     /// The longest delay, in whole frames rounded up, among the tap slots this voice plays now
-    /// or is moving toward.
+    /// or is moving toward, plus the direct path's delay.
     pub fn tap_tail(&self) -> usize {
-        self.taps
+        let taps = self
+            .taps
             .iter()
             .zip(&self.acoustic.taps)
             .filter(|(s, t)| s.gain != 0.0 || t.gain != 0.0)
             .map(|(s, t)| (s.delay.ceil() as usize).max(t.delay_frames as usize))
             .max()
-            .unwrap_or(0)
-            .min(MAX_DELAY_FRAMES)
+            .unwrap_or(0);
+        (taps + self.direct_delay.ceil() as usize).min(MAX_DELAY_FRAMES)
     }
 
     /// Fills `out` with the voice's next samples, zeros past the end of a non-looping sound or

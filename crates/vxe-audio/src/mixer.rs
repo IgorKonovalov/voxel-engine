@@ -25,6 +25,15 @@
 //!    the panning path a constant-power pan on the listener's right axis is smoothed like the
 //!    gain.
 //!
+//! With the direct delay on ([`Mixer::set_direct_delay`]) step 2 reads the voice's delay line
+//! instead, `d / c` frames back (`d` the source's distance this block, at most
+//! [`MAX_DELAY_FRAMES`]) through the same fractional read, and every tap reads that much
+//! further back than its excess: the direct path and the echoes carry the Doppler of the
+//! listener's and the source's motion. The listener arrives once per game frame, so the delay
+//! moves toward `d / c` through the one-pole smoother of [`crate::SMOOTHING_SECONDS`], at
+//! most [`TAP_SLEW_FRAMES_PER_FRAME`] per frame. Switched off, the delay glides back to 0 the
+//! same way and the direct path then reads the voice's samples as before.
+//!
 //! Each voice also sends its own-gained signal times its smoothed [`crate::AcousticTargets`]
 //! `send` into the shared late tail (`reverb.rs`: two networks, one fed at a time), whose
 //! stereo outputs add to the out after the buses.
@@ -46,7 +55,9 @@ use crate::voice::{
     MAX_DELAY_FRAMES, MAX_TAPS, OPEN_CUTOFF_HZ, PlayParams, Source, Tap, TapState, Voice,
     VoiceBuffers, VoiceId,
 };
-use crate::{BLOCK, Listener, RATE, SMOOTHING_SECONDS, cross, dot, length, normalize_or, sub};
+use crate::{
+    BLOCK, Listener, RATE, SMOOTHING_SECONDS, SPEED_OF_SOUND, cross, dot, length, normalize_or, sub,
+};
 
 /// Voices the mixer holds at once.
 pub const MAX_VOICES: usize = 64;
@@ -100,6 +111,8 @@ pub struct Mixer {
     smooth_k: f32,
     /// Blocks rendered, for [`crate::Acoustics`]' cadence.
     clock: BlockClock,
+    /// The direct path's propagation delay is on.
+    direct_delay: bool,
 }
 
 impl Mixer {
@@ -131,7 +144,18 @@ impl Mixer {
             finished: Vec::with_capacity(MAX_VOICES),
             smooth_k: 1.0 - (-1.0 / (SMOOTHING_SECONDS * RATE as f32)).exp(),
             clock: BlockClock::default(),
+            direct_delay: false,
         }
+    }
+
+    /// Switches the direct path's propagation delay on or off (off by default; module comment).
+    pub fn set_direct_delay(&mut self, on: bool) {
+        self.direct_delay = on;
+    }
+
+    /// Whether the direct path's propagation delay is on.
+    pub fn direct_delay(&self) -> bool {
+        self.direct_delay
     }
 
     /// The count of blocks this mixer has rendered, shared with whoever holds a clone.
@@ -290,7 +314,8 @@ impl Mixer {
         for v in &mut self.voices {
             let rel = frame.local(sub(v.params.position, self.listener.position));
             let d = length(rel) * self.metres_per_voxel;
-            let target_gain = v.params.gain / d.max(1.0) * v.acoustic.gain;
+            let dist_gain = v.acoustic.gain / d.max(1.0);
+            let target_gain = v.params.gain * dist_gain;
             let dir = normalize_or(rel, [1.0, 0.0, 0.0]);
             let dry = &mut self.dry[..n];
             // The taps read the delay line until their longest delay has passed; the direct
@@ -300,10 +325,17 @@ impl Mixer {
                 .max(self.hrtf.as_ref().map_or(0, |h| h.taps() - 1));
             v.read(dry, tail);
             v.since_acoustics = v.since_acoustics.saturating_add(n as u32);
+            let delay_to = if self.direct_delay {
+                (d / SPEED_OF_SOUND * RATE as f32).min(MAX_DELAY_FRAMES as f32)
+            } else {
+                0.0
+            };
             if !v.started {
                 v.gain = target_gain;
+                v.dist_gain = dist_gain;
                 v.own_gain = v.params.gain;
                 v.send = v.acoustic.send;
+                v.direct_delay = delay_to;
             }
             // The delay line takes the voice's own-gained signal before distance and occlusion.
             let echo_start = v.echo_pos;
@@ -329,6 +361,15 @@ impl Mixer {
             }
             // The gain smoother's decay over this block.
             let decay = (1.0 - k).powi(n as i32);
+            // The direct delay: the smoother's share of the way to its target, at most the
+            // slew, linear across the block; back at 0 it settles there exactly.
+            let dd0 = v.direct_delay;
+            let reach = TAP_SLEW_FRAMES_PER_FRAME * n as f32;
+            let mut dd1 = dd0 + ((delay_to - dd0) * (1.0 - decay)).clamp(-reach, reach);
+            if delay_to == 0.0 && dd1 < 1e-3 {
+                dd1 = 0.0;
+            }
+            v.direct_delay = dd1;
             for ((state, target), bus) in
                 v.taps.iter_mut().zip(&v.acoustic.taps).zip(&mut self.buses)
             {
@@ -337,6 +378,7 @@ impl Mixer {
                     *target,
                     &v.buffers.echo,
                     echo_start,
+                    (dd0, dd1),
                     &mut bus.block[..n],
                     decay,
                 );
@@ -346,12 +388,24 @@ impl Mixer {
                 v.started = true;
                 continue;
             }
-            let mut g = v.gain;
-            for s in dry.iter_mut() {
-                g += (target_gain - g) * k;
-                *s *= g;
+            if dd0 == 0.0 && dd1 == 0.0 {
+                let mut g = v.gain;
+                for s in dry.iter_mut() {
+                    g += (target_gain - g) * k;
+                    *s *= g;
+                }
+                v.gain = g;
+                v.dist_gain = dist_gain + (v.dist_gain - dist_gain) * decay;
+            } else {
+                // The delay line carries the own gain; the distance and acoustic gain follow.
+                let mut g = v.dist_gain;
+                for_each_delayed(&v.buffers.echo, echo_start, (dd0, dd1), n, |j, x| {
+                    g += (dist_gain - g) * k;
+                    dry[j] = x * g;
+                });
+                v.dist_gain = g;
+                v.gain = target_gain + (v.gain - target_gain) * decay;
             }
-            v.gain = g;
             // The coefficient moves every sample, so neither a probe's new cutoff nor the step
             // into or out of the bypass (a = 1) changes the output's slope at a block edge.
             let target_a = lowpass_coefficient(v.acoustic.cutoff_hz);
@@ -561,10 +615,50 @@ fn crossfade_weight(i: usize, n: usize) -> f32 {
     0.5 - 0.5 * (std::f32::consts::PI * x).cos()
 }
 
+/// Calls `f(j, x)` for each frame `j` of an `n`-frame block, `x` the sample of `ring` read
+/// `d0 + (d1 - d0) (j + 1) / n` frames (fractional, at most [`MAX_DELAY_FRAMES`]) before
+/// position `at + j` by linear interpolation between the two ring samples around it. `at` is
+/// under a ring past the ring's start. The read position moves by `1 - (d1 - d0) / n` per
+/// frame, a step near 1 since a delay moves at most a few hundredths of a frame per frame,
+/// carried in 32.32 fixed point: no frame rounds a float or divides.
+#[inline]
+fn for_each_delayed(
+    ring: &[f32],
+    at: usize,
+    (d0, d1): (f32, f32),
+    n: usize,
+    mut f: impl FnMut(usize, f32),
+) {
+    const ONE: f64 = (1u64 << 32) as f64;
+    let len = ring.len();
+    let dd = f64::from(d1 - d0) / n as f64;
+    // Frame 0 reads at delay `d0 + dd`; a whole ring ahead keeps the position positive.
+    let pos0 = (at + len) as f64 - f64::from(d0) - dd;
+    let ring_fx = (len as u64) << 32;
+    let mut p = (pos0 * ONE) as u64;
+    while p >= ring_fx {
+        p -= ring_fx;
+    }
+    let step = ((1.0 - dd) * ONE) as u64;
+    let scale = 1.0 / ONE as f32;
+    for j in 0..n {
+        let i0 = (p >> 32) as usize;
+        let frac = (p & 0xffff_ffff) as f32 * scale;
+        let i1 = if i0 + 1 == len { 0 } else { i0 + 1 };
+        f(j, ring[i0] + (ring[i1] - ring[i0]) * frac);
+        p += step;
+        if p >= ring_fx {
+            p -= ring_fx;
+        }
+    }
+}
+
 /// Plays one tap slot over a block into `out`, moving `state` toward `target`, and returns
 /// whether it added anything. `ring` holds the voice's own-gained signal, at least
 /// [`MAX_DELAY_FRAMES`] plus one block long, with this block written at `at`, so every read up
-/// to [`MAX_DELAY_FRAMES`] back finds a sample not yet overwritten.
+/// to [`MAX_DELAY_FRAMES`] back finds a sample not yet overwritten. The slot reads `offset`
+/// (the direct path's delay at the block's start and end, linear between) further back than
+/// its own delay, the sum at most [`MAX_DELAY_FRAMES`].
 ///
 /// The delay moves toward the target by at most the slot's `rate` (itself at most
 /// [`TAP_SLEW_FRAMES_PER_FRAME`]) per frame,
@@ -581,6 +675,7 @@ fn render_tap(
     target: Tap,
     ring: &[f32],
     at: usize,
+    offset: (f32, f32),
     out: &mut [f32],
     decay: f32,
 ) -> bool {
@@ -609,6 +704,8 @@ fn render_tap(
     }
     let len = ring.len();
     let inv = 1.0 / n as f32;
+    let max = MAX_DELAY_FRAMES as f32;
+    let (d0, d1) = ((d0 + offset.0).min(max), (d1 + offset.1).min(max));
     if d0 == d1 && d0.fract() == 0.0 {
         let d = d0 as usize;
         let start = (at + len - d) % len;
@@ -626,18 +723,10 @@ fn render_tap(
             }
         }
     } else {
-        let (dd, dg) = (f64::from(d1 - d0) / n as f64, (g1 - g0) * inv);
-        for (j, y) in out.iter_mut().enumerate() {
-            let d = f64::from(d0) + dd * (j + 1) as f64;
-            // The read position, made positive by a whole ring before the modulo.
-            let pos = (at + j + len) as f64 - d;
-            let base = pos.floor();
-            let frac = (pos - base) as f32;
-            let i0 = base as usize % len;
-            let i1 = (i0 + 1) % len;
-            let x = ring[i0] + (ring[i1] - ring[i0]) * frac;
-            *y += (g0 + dg * (j + 1) as f32) * x;
-        }
+        let dg = (g1 - g0) * inv;
+        for_each_delayed(ring, at, (d0, d1), n, |j, x| {
+            out[j] += (g0 + dg * (j + 1) as f32) * x;
+        });
     }
     true
 }
