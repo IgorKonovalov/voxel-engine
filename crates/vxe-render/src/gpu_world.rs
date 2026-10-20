@@ -900,6 +900,13 @@ impl GpuWorld {
             + self.records.size()
     }
 
+    /// The mirror's pressure: live bytes over the reservation, `mirror_bytes() /
+    /// allocated_bytes()`. The application decides what to do as it nears 1 (ADR-0013); a
+    /// sync that would pass the reservation fails instead of growing it.
+    pub fn pressure(&self) -> f32 {
+        (self.mirror_bytes() as f64 / self.allocated_bytes() as f64) as f32
+    }
+
     /// Records into `encoder` the attribute pass over what changed since the last call: every
     /// `Full` brick of a full chunk that `sync` wrote, the bricks of full chunks among their 26
     /// neighbours, and the bricks of full chunks next to a chunk whose record was written new,

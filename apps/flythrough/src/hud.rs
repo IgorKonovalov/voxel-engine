@@ -23,6 +23,9 @@ pub const CEILING_MS: f32 = 33.3;
 const FRAME_LINE_MS: f32 = 1000.0 / 60.0;
 const MARCH_LINE_MS: f32 = 3.0;
 const UPLOAD_LINE_MS: f32 = 1.0;
+/// Mirror pressure above which the fly-through lowers its full radius (ADR-0013); the
+/// pressure row turns yellow past it.
+pub const PRESSURE_HIGH: f32 = 0.9;
 
 /// A rolling window of frame durations fed explicit deltas, holding no clock: fps, mean,
 /// median, p99 and max over the last [`RING`] frames, with no allocation per frame. Copied
@@ -316,6 +319,17 @@ pub struct HudStats {
     pub format_us: u32,
     /// The steps view's reading of the last frame, while that view is on.
     pub steps: Option<StepsSample>,
+    /// The mirror's pressure against its reservation; `None` hides its row.
+    pub pressure: Option<Pressure>,
+}
+
+/// The mirror's live bytes over its reservation, the reservation, and while streaming the
+/// full radius the pressure rule holds with the configured one.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Pressure {
+    pub pressure: f32,
+    pub budget_bytes: u64,
+    pub r_full: Option<[i32; 2]>,
 }
 
 /// What the steps view read for one frame: the mean, p99 and block-max mean of steps per
@@ -384,6 +398,7 @@ impl HudStats {
             mode: Mode::Fly,
             format_us: 6,
             steps: None,
+            pressure: None,
         }
     }
 
@@ -451,6 +466,24 @@ impl HudStats {
                 self.mirror_bytes, self.pool_live, self.pool_free
             ),
         )?;
+        if let Some(p) = self.pressure {
+            let colour = over(p.pressure, PRESSURE_HIGH);
+            match p.r_full {
+                Some([r, max]) => row(
+                    out,
+                    colour,
+                    format_args!(
+                        "mirror pressure {:.3} of {} B, r_full {r} of {max}",
+                        p.pressure, p.budget_bytes
+                    ),
+                )?,
+                None => row(
+                    out,
+                    colour,
+                    format_args!("mirror pressure {:.3} of {} B", p.pressure, p.budget_bytes),
+                )?,
+            }
+        }
         let w = self.world;
         match w.lod_chunks {
             Some(lod) => row(
@@ -748,6 +781,36 @@ mod tests {
                 .any(|l| l.starts_with("steps per ray")),
             "no row without a sample"
         );
+    }
+
+    /// The pressure row follows the mirror row when there is a reading: yellow past 0.9, and
+    /// with the full radius while streaming.
+    #[test]
+    fn a_pressure_reading_adds_its_row() {
+        let (mut out, mut colours) = (String::new(), Vec::new());
+        let mut s = HudStats::fixed();
+        s.pressure = Some(Pressure {
+            pressure: 0.921_875,
+            budget_bytes: 3 << 30,
+            r_full: Some([15, 16]),
+        });
+        s.write_rows(&mut out, &mut colours);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 13);
+        assert_eq!(
+            lines[5],
+            "mirror pressure 0.922 of 3221225472 B, r_full 15 of 16"
+        );
+        assert_eq!(colours[5], HudColour::Yellow);
+        s.pressure = Some(Pressure {
+            pressure: 0.25,
+            budget_bytes: 1 << 20,
+            r_full: None,
+        });
+        s.write_rows(&mut out, &mut colours);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[5], "mirror pressure 0.250 of 1048576 B");
+        assert_eq!(colours[5], HudColour::White);
     }
 
     /// The golden's fixture: twelve rows, the frame and upload rows yellow, the rest white.

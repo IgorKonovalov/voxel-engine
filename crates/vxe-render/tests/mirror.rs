@@ -463,6 +463,14 @@ fn full_bricks(world: &World, coords: &[ChunkCoord]) -> u32 {
         .sum()
 }
 
+/// `pressure()` is live bytes over the reservation, within 1e-6, and between 0 and 1 here.
+fn assert_pressure(gpu: &GpuWorld) {
+    let want = gpu.mirror_bytes() as f64 / gpu.allocated_bytes() as f64;
+    let got = f64::from(gpu.pressure());
+    assert!((got - want).abs() < 1e-6, "pressure {got} against {want}");
+    assert!(want > 0.0 && want < 1.0, "{want}");
+}
+
 /// The buffers a mirror reserved: its four shards, masks and records.
 fn reserved_buffers(gpu: &GpuWorld) -> Vec<wgpu::Buffer> {
     (0..4)
@@ -523,6 +531,7 @@ fn a_following_window_mirrors_the_streamed_residency() {
     let st = gpu.sync(&world, &queue).unwrap();
     stats.push(st);
     assert_eq!(gpu.allocated_bytes(), reserved);
+    assert_pressure(&gpu);
     assert_eq!(st.chunks, 33);
     assert_eq!(gpu.mirrored_chunks(), 33);
     let first = world.store().coords();
@@ -551,6 +560,7 @@ fn a_following_window_mirrors_the_streamed_residency() {
     assert!(gpu.mirror_bytes() < live_before);
     assert_eq!(gpu.allocated_bytes(), allocated_before);
     assert_eq!(gpu.allocated_bytes(), reserved);
+    assert_pressure(&gpu);
     // Eviction returns exactly the evicted chunks' slots: to the free list, or with a page
     // that emptied, to the free pages.
     let free: HashSet<u32> = gpu.free_slots().iter().copied().collect();
@@ -580,6 +590,7 @@ fn a_following_window_mirrors_the_streamed_residency() {
             .iter()
             .all(|s| s.buffers_created == 0 && s.copies == 0)
     );
+    assert_pressure(&gpu);
     let resident = world.store().coords();
     assert_eq!(resident.len(), 42);
     assert_eq!(gpu.mirrored_chunks(), 42);

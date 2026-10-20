@@ -409,3 +409,67 @@ fn an_evicted_chunk_returns_its_arrays() {
     drop(held);
     assert_eq!(world.pool_len(), 0);
 }
+
+/// Lowering `r_full` by one demotes the chunks at the old full edge to LOD-only within the
+/// next polls, at the same focus; raising it back promotes them, and an edited one among them
+/// comes back from persistence with the hash it had before the round trip.
+#[test]
+fn set_radii_demotes_the_full_edge_and_promotes_it_back() {
+    let world = World::new(&test_table());
+    let mut s = Streamer::new(Arc::new(UniformSource(3)), config(2, 3, 0, 4));
+    let focus = VoxelCoord([0, 0, 0]);
+    s.update(&world, &[focus]);
+    s.wait_idle(&world);
+    let full = ball([0, 0, 0], 4);
+    assert_eq!(world.store().coords(), full);
+    // The old edge: full at r_full 2, past r_full 1.
+    let edge: Vec<ChunkCoord> = full
+        .iter()
+        .copied()
+        .filter(|c| !ball([0, 0, 0], 1).contains(c))
+        .collect();
+    assert_eq!(edge.len(), 26);
+    let edited = ChunkCoord([2, 0, 0]);
+    assert!(edge.contains(&edited));
+    let r = world
+        .apply(&EditOp::sphere(
+            centre_of_voxel([160, 32, 32]),
+            10 * FIXED_ONE,
+            Mode::Carve,
+        ))
+        .unwrap();
+    assert_eq!(r.touched, [edited]);
+    let before: Vec<u64> = edge.iter().map(|&c| chunks_hash(&world, &[c])).collect();
+
+    s.set_radii(1, 3);
+    assert_eq!(s.config().residency.r_full, 1);
+    // The focus has not moved: the polls alone demote.
+    let ev = s.wait_idle(&world);
+    assert!(ev.evicted.is_empty());
+    let mut demoted = ev.demoted;
+    demoted.sort_unstable();
+    assert_eq!(demoted, edge);
+    assert_eq!(world.store().coords(), ball([0, 0, 0], 1));
+    for &c in &edge {
+        assert_eq!(s.tier(c), Some(Tier::LodOnly), "{c:?}");
+        assert!(world.lod(c).is_some(), "{c:?}");
+    }
+    assert!(s.is_persisted(edited));
+
+    s.set_radii(2, 3);
+    s.update(&world, &[focus]);
+    let ev = s.wait_idle(&world);
+    let mut promoted: Vec<ChunkCoord> = ev
+        .loaded
+        .iter()
+        .filter(|(_, t)| *t == Tier::Full)
+        .map(|&(c, _)| c)
+        .collect();
+    promoted.sort_unstable();
+    assert_eq!(promoted, edge);
+    assert_eq!(world.store().coords(), full);
+    assert!(!s.is_persisted(edited));
+    let after: Vec<u64> = edge.iter().map(|&c| chunks_hash(&world, &[c])).collect();
+    assert_eq!(after, before);
+    assert_eq!(world.material_at([160, 32, 32]), Some(AIR));
+}

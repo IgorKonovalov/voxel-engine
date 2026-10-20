@@ -220,8 +220,8 @@ records`, in whole pages, filling shard 0 to its limit, then 1, and so on; masks
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: One reservation, no second buffer | dev | done | 3b9ea25 |
-| 2: Empty pages change kind | dev | done | committed with this row |
-| 3: Pressure, and the streamer follows it | dev | not started | |
+| 2: Empty pages change kind | dev | done | cd90f89 |
+| 3: Pressure, and the streamer follows it | dev | stopped: the 1024 MiB done-when (see Resume notes) | committed with this row |
 | 4: Readings and the budget line | dev | not started | |
 
 ### Notes
@@ -234,11 +234,24 @@ each. Empty is fine.)_
 - Phase 1: the materials buffer is still created at the first sync, sized to the table (`look.rs` asserts its size equals the rows); `SyncStats::buffers_created` counts pool, mask and record buffers only. Both new `SyncStats` fields are zero by construction (no path creates or copies after `new`); the test also asserts the six reserved buffers are the same handles after the run. (Phase 1 commit)
 - Phase 1: `pool_slots()` is now the pages handed out (the high-water mark) rather than the buffer capacity, and `shards_in_use()` follows it; `reserved_slots()`, `reserved_records()`, `ShardLayout::{reserved_slots, reserved_records, with_budget, reserved_bytes}`, `budget_for`, `PAGE_BYTES`, `PLACEHOLDER_BYTES` and `DEFAULT_BUDGET_BYTES` are new. (Phase 1 commit)
 - Phase 1: `MirrorConfig::new` defaults the budget to 3 GiB clamped to the device, so tests outside Files touched (`golden.rs`, `look.rs`, `walk.rs`, `translucent.rs`, `hud_golden.rs`, `hero.rs`) reserve lavapipe's four 128 MiB shards; the mirror tests in Files touched pass 64 MiB, the level tests 256 MiB. (Phase 1 commit)
-- Phase 1: the fly-through's level default is `level_mirror_budget` (its `Full` bricks plus the 64 Ki dig headroom, in attribute pages under `--look`, and a record per extent chunk); the streamed default is 3 GiB with records for the window's `W^3`. `POOL_HEADROOM_BRICKS` moved from `main.rs` to `lib.rs`. `init_stream` now calls the streamer's first `update` before the mirror reserves, so generation overlaps the reservation. (Phase 1 commit)
+- Phase 1: the fly-through's level default is `level_mirror_budget` (its `Full` bricks plus the 64 Ki dig headroom, in attribute pages under `--look`, and a record per extent chunk); the streamed default is 3 GiB with records for the window's `W^3`. `POOL_HEADROOM_BRICKS` moved from `main.rs` to `lib.rs`. (Phase 1 commit)
+- Phase 1 added an `update` call at the top of `init_stream` described as overlapping generation with the reservation; `main` already starts the workers before the device opens, so the call was a no-op and the first-frame difference across those runs was load. Removed in the Phase 3 commit.
 - Phase 1 done-when not met as stated: the 3072 MiB reservation took 69.6 to 86.0 ms against the 50 ms guess; the streamed first frame read 513, 447 and 414 ms against Plan 0002's 457 ms, one run 12 % over (see Close triggers). (Phase 1 commit)
 - Phase 2: the churn bound counts "page slots" per kind as the brick slots a page of that kind hands out (1364 attribute, 4096 plain). The churn test drives the tiers by moving chunks between the store and `insert_lod` in a following window, not through a `Streamer`. It read 2 pages issued for peaks of 584 plain and 1343 attribute slots (bound 4); the old code was not run against it. (Phase 2 commit)
 - Phase 2: `pages_issued()`, `free_pages()` and `spare_slots()` are new; `a_following_window_mirrors_the_streamed_residency` and `lod_records_decode_to_the_mips_and_demotion_frees_the_full_slots` now accept an evicted slot in a free page, and assert `live_slots() + spare_slots() == pool_slots()`. `an_empty_attribute_page_serves_plain_slots` is a second test beside the churn one: page 0 goes attribute, free, plain, attribute with `pages_issued()` at 4. (Phase 2 commit)
 - Phase 2: a page re-kinded from plain to attribute keeps the stale masks of its former plain bricks in its attribute slots; nothing reads a mask there, and the fresh-mirror test that asserts those masks are zero still holds. (Phase 2 commit)
+- Phase 3: `--residency R_FULL,R_LOD` added to the fly-through (Phase 4's runs at 14/22 need it; the `plan-0013` branch adds a flag of the same name and form, so the merge will meet it twice). `README.md` is not in Phase 3's Files touched and does not list `--residency` or the pressure rule. (Phase 3 commit)
+- Phase 3: a streamed sync that fails past the reservation no longer ends the fly-through: it prints the first failure, counts them for the autopilot report, and leaves the chunks queued. (Phase 3 commit)
+- Phase 3: the HUD's pressure row appears only with a reading (`HudStats::pressure`), so `HudStats::fixed()` and the HUD golden are unchanged. (Phase 3 commit)
+
+### Resume notes
+
+_(Mid-plan; deleted when Phase 3 lands.)_
+
+- **Where it stopped.** Phase 3's code is in (`GpuWorld::pressure`, `Streamer::set_radii` with its residency test, the radius rule with its unit test, the HUD row, the autopilot's report line). Done-whens 1 and 2 hold. Done-when 3 does not: `flythrough --autopilot --headless --mirror-budget 1024` printed `mirror sync failed: brick pool needs 637025792 bytes; the reservation holds 635437056` before any radius change, never reached full residency, and was stopped by `timeout 600`. The 3072 run meets its half (0 changes, 0 failed syncs, peak live / budget 0.5843).
+- **Diagnosis.** (1) Phase 1's split reserves a record for every chunk of the 51^3 window cube: 132 651 records, 348 076 224 B, 32.4 % of a 1 GiB budget, while 57 777 records are live at rest. `pressure()` is live over the whole reservation (done-when 1), so it reads about 0.78 when the pool is full and the 0.9 trigger never fires. (2) The rule moves only `r_full`, and the LOD ring dominates: `world_budget --stream 6,24` (the floor) reads 925 full and 56 852 LOD-only chunks, 1 150 669 148 B live, and a smallest budget of 1 347 961 600 B (1285.5 MiB) at rest, above 1024 MiB with no hysteresis.
+- **Candidate fixes (owner or architect):** (a) a reachable budget in the done-when, about 2048 MiB or more, with pressure defined on what can run out (the pool's live slots over its reserved slots, or the larger of pool and record occupancy); (b) the rule lowers `r_lod` too once `r_full` is at its floor; (c) records reserved for the residency's sphere rather than the window cube.
+- **Gate at this commit:** `cargo nextest run --workspace` 394 run, 393 passed, 1 failed, 4 skipped: the rule test's own frame count, fixed after; `cargo nextest run -p flythrough --bin flythrough` then 26 passed, 2 skipped. Clippy and fmt clean, doctests pass.
 
 ### Close triggers
 
@@ -248,6 +261,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Public API changed:**
 - **Budget readings:**
   - Phase 1, `flythrough --headless --frames 30 --mirror-budget 3072` (streamed, seed 1), NVIDIA GeForce RTX 3080 Laptop GPU, Ryzen 9 5900HS, release, exclusive perf lock, 1-minute load 9.60 to 10.97 (other lanes building): `mirror: reserved 3220946112 B of a 3221225472 B budget (4919296 slots over 2 shards, 132651 records)` in 82.3, 79.3 and 69.6 ms; device ready 380, 314, 300 ms; first frame 513, 447, 414 ms. Base d11d0cb alternated with it: first frame 1970 (cold, device 1910 ms), 375, 367 ms. Before the overlap in `init_stream` (load 15.96 to 16.60): reserved in 86.0 and 80.2 ms, first frame 570 and 526 ms against base 3521 (cold) and 446 ms. A throwaway probe on the same GPU (not committed): `create_buffer` of 256 MiB, 1 GiB, 2 GiB took 4.2, 18.2, 36.3 ms; `GpuWorld::with_config` at 3 GiB 51.2 to 53.6 ms.
+  - Phase 3, `flythrough --autopilot --headless --mirror-budget 3072` (r_full 16, r_lod 24, h 1, 15 workers), RTX 3080 Laptop GPU, exclusive perf lock, 1-minute load 19.37 to 25.08: reserved in 85.4 ms; full residency after 10 263 ms at 1 786 641 644 B live, pressure 0.555; flight peak 1 881 891 684 B live, peak live / budget 0.5843, 0 radius changes, 0 syncs past the reservation; return hash match; march GPU p99 13.479 ms at 1280x720. With `--mirror-budget 1024` (load 14.26 to 6.10): reserved 1 072 873 152 B (1 241 088 slots, 132 651 records) in 20.9 ms, then the failed sync above and no full residency in 600 s.
   - Phase 1, `flythrough --level --headless --frames 3`, same machine: `reserved 271524864 B of a 271526464 B budget (450560 slots over 2 shards, 3200 records) in 4.2 ms`, 232 436 992 B live; with `--look contour` `reserved 797779456 B of a 797780544 B budget (1351680 slots over 1 shards, 3200 records) in 49.9 ms`, 680 491 136 B live.
 - **Gate at the tip:**
 - **Outstanding `human` phases:**

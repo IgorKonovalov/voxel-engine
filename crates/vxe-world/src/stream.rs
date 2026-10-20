@@ -290,6 +290,22 @@ impl Streamer {
         &self.cfg
     }
 
+    /// Changes the full and LOD radii, keeping the hysteresis. The queue is rebuilt for the
+    /// current focus and the next `poll` sweeps residency: full chunks now past
+    /// `r_full + h` are demoted, chunks past `r_lod + h` evicted, and chunks now wanted at a
+    /// tier they lack are loaded, an edited one from persistence. A call with the current
+    /// radii changes nothing.
+    pub fn set_radii(&mut self, r_full: i32, r_lod: i32) {
+        let r = &mut self.cfg.residency;
+        if (r.r_full, r.r_lod) == (r_full, r_lod) {
+            return;
+        }
+        r.r_full = r_full;
+        r.r_lod = r_lod;
+        self.sweep = true;
+        self.rebuild_queue();
+    }
+
     /// Takes this tick's focus points. When the set of focus chunks differs from the last
     /// call's, the queue is rebuilt from the chunks now wanted and not resident at their
     /// tier, and the next `poll` sweeps for demotions and evictions.
