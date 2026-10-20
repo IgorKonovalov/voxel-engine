@@ -1658,8 +1658,8 @@ fn to_lod(world: &World, x: i32, mips: &Arc<ChunkMips>) {
 /// page 0 and 172 of page 1); one sync demotes them to their own mips (a checkerboard's
 /// mip-bricks are uniform, so they take no slot) and adds a farther LOD-only chunk whose
 /// `Mixed` mips need plain slots. The demotions empty both pages first, so the plain slots
-/// come from a freed page. `pool_need` before it credited tier changes failed this sync with
-/// `PoolTooLarge` (a third page past a two-page reservation; the plan log records the run).
+/// come from a freed page. A pool check that credited no tier change's frees would ask for a
+/// third page past the two-page reservation and fail the sync with `PoolTooLarge`.
 #[test]
 fn a_demotion_that_empties_attribute_pages_fits_a_full_pool() {
     let Some((device, queue)) = device() else {
@@ -1708,7 +1708,7 @@ fn a_demotion_that_empties_attribute_pages_fits_a_full_pool() {
 
 /// The same without attribute pages: eight `Checker` chunks fill a one-page reservation;
 /// demoting them and adding a farther LOD-only chunk fits, its mip-bricks taking slots the
-/// first demotion frees. `pool_need` before it credited tier changes failed this sync with
+/// first demotion frees. A pool check that credited no tier change's frees would fail it with
 /// `PoolTooLarge` (4096 slots plus the new mips past 4096).
 #[test]
 fn a_plain_demotion_fits_a_full_pool() {

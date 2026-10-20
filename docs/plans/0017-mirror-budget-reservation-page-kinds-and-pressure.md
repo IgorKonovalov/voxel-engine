@@ -356,8 +356,25 @@ each. Empty is fine.)_
 - Phase 4: with `--look contour` at the default 3072 MiB, every run failed some syncs past the reservation (548, 113 at 16/24; 22, 89 at 14/22) while slot occupancy read 0.911 to 0.946: the pool ran out of pages below 1.0. Those syncs wrote nothing, their chunks stayed queued, the rule's next decrease cleared them, and every flight finished with a matching hash. `pool_need` counts neither pages that empty during the same sync nor the free single slots of the other kind, so with two kinds it reports need before the slots are all used. Not acted on. (Phase 4 commit)
 - Phase 4: no first-frame reading on a quiet box: the 1-minute load stayed between 10.6 and 23.2 through every run because other lanes were building. (Phase 4 commit)
 - Review fix, finding 1 (major, `pool_need` credits nothing for tier changes): `pool_need` now replays the selection in order, crediting each tier change's freed slots to its kind and each page those frees empty as a free page less its spare slots, before that chunk's own allocations; `select` records each chunk's new slots per kind. Tests `a_demotion_that_empties_attribute_pages_fits_a_full_pool`, `a_plain_demotion_fits_a_full_pool` and `a_selection_past_the_reservation_net_of_its_frees_still_fails_untouched`; run once against the old `pool_need` (gpu_world.rs stashed): the first two failed with `PoolTooLarge { needed: 6291456, limit: 4194304 }` and `{ needed: 2134528, limit: 2097152 }`, the third still failed but with `needed: 2621440` where the new count reads 2359296. (fix commit for finding 1)
+- Review fix, finding 2 (major, contour's failed syncs): the fly-through records the pressure and its two terms at each failed sync, prints at the first one each pool reading it has (plain free slots, spare slots, free pages, pages issued, `r_full`), and the autopilot report prints the count, the pressure and term ranges at failure and the longest run of consecutive failed syncs. Done-when not met: failed syncs remain (see Resume notes); `nfr.md` §3's contour rows are not replaced. (fix commit for finding 2)
+- Review fix, finding 1 follow-up: the two tier-change tests' comments state the old check's failure as a property of a check without the credit (comment-hygiene gate). (fix commit for finding 2)
 - The resume notes the Amendment cites were deleted when Phase 3 landed; they read at fc98db0.
 - Phase 3 (amended): the first 1930 MiB run also raised `r_full` once, 14 to 15 at pressure 0.676, 15 s into the flight; it ended at 15. (Phase 3 commit)
+
+### Resume notes
+
+_(Fix pass, 2026-10-20; deleted when finding 2 lands.)_
+
+- **Readings after both fixes** (7112269 plus the reporting change, `flythrough --autopilot --headless`, seed 1, 15 workers, RTX 3080 Laptop GPU, Ryzen 9 5900HS, exclusive perf lock, default 3072 MiB):
+  - Contour 16/24, run 1 (load 10.06 to 21.59): 0 failed syncs; `r_full` 16 to 12, ending at 13; peak pressure 0.9114 (slots 0.9114, records 0.6197).
+  - Contour 16/24, run 2 (load 16.78 to 14.81): **9 failed syncs**, pressure at failure 0.9083 to 0.9083 (slots 0.9083, records 0.1866), longest run 6 consecutive syncs. At the first failure: `brick pool needs 2610954240 bytes; the reservation holds 2608857088`, 461 468 free plain single slots, 462 491 spare slots of both kinds, 0 free pages, 1244 of 1244 pages issued, `r_full` 13. Then `r_full` 13 to 12 at 0.908.
+  - Contour 14/22, run 1 (load 21.59 to 16.78): 0 failed syncs, 0 radius changes, peak pressure 0.8975.
+  - Contour 14/22, run 2 (load 14.81 to 18.24): **20 failed syncs**, pressure at failure 0.9060 to 0.9060 (slots 0.9060, records 0.4231), longest run 20 consecutive syncs. At the first failure: `needs 2657091584 bytes; holds 2654994432`, 474 677 free plain single slots, 476 885 spare slots, 0 free pages, 1265 of 1265 pages issued, `r_full` 14. Then `r_full` 14 to 13 at 0.934.
+  - Face 1930 MiB gate (load 18.24 to 15.22): 0 failed syncs, `r_full` 16 to 15 to 14 at 0.920, back to 15 at 0.576; peak pressure 0.9197, peak live / budget 0.8836.
+  - Every return hash matched; no out-of-memory stop.
+- **Diagnosis.** Every failure came with pressure above 0.9 (0.906 and 0.908), so the rule did fire; no failure occurred at or below 0.9. The pool ran out of pages while about 9 % of its slots were spare. Almost all of those (461 468 and 474 677) were free single slots of plain pages. A page with even one live mip-brick stays plain, so those slots cannot serve the attribute pages the promotions need. The 2 097 152 B shortfall at each first failure is exactly one page.
+- **Question for the architect** (the remedies change the plan's contract): (a) a page-occupancy term in `pressure()`, pages holding a live slot over reserved pages, so the trigger sees the fragmentation; or (b) a sync that uploads the nearest-first prefix of the selection that fits, instead of failing the whole selection.
+- **Gate at this commit:** `cargo nextest run --workspace` 402 run, 402 passed, 4 skipped (perf lock, load 15.36); doctests 7 passed; clippy, fmt and `cargo deny check` clean; doc-links and comment-hygiene pass.
 
 ### Close triggers
 

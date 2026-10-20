@@ -941,6 +941,34 @@ impl RadiusRule {
     }
 }
 
+/// The pressure the failed syncs saw: the lowest and highest pressure and each term's range
+/// at a failure, the current run of consecutive failed syncs and the longest.
+#[derive(Clone, Copy, Debug, Default)]
+struct FailedSyncs {
+    /// Lowest and highest: pressure, slot term, record term.
+    low: [f64; 3],
+    high: [f64; 3],
+    streak: u64,
+    longest: u64,
+}
+
+impl FailedSyncs {
+    /// Notes one sync: a failure with the mirror's readings, or a success ending a streak.
+    fn note(&mut self, failed: Option<[f64; 3]>, first: bool) {
+        let Some(v) = failed else {
+            self.streak = 0;
+            return;
+        };
+        if first {
+            (self.low, self.high) = (v, v);
+        }
+        self.low = [0, 1, 2].map(|k| self.low[k].min(v[k]));
+        self.high = [0, 1, 2].map(|k| self.high[k].max(v[k]));
+        self.streak += 1;
+        self.longest = self.longest.max(self.streak);
+    }
+}
+
 /// The streaming state of the default mode.
 struct Stream {
     streamer: Streamer,
@@ -949,6 +977,9 @@ struct Stream {
     radius_changes: u32,
     /// Syncs that failed past the reservation; their chunks stay queued.
     over_budget_syncs: u64,
+    /// What the failed syncs saw: pressure range and its terms' range, and the failing
+    /// streaks in consecutive frames.
+    failures: FailedSyncs,
     /// Milliseconds since start at each `update` call, `tick_ms[t - 1]` for tick `t`.
     tick_ms: Vec<f64>,
     /// Chunks loaded full and not yet mirrored, with the tick that first wanted them.
@@ -1894,11 +1925,28 @@ impl Run {
         // A sync past the reservation writes nothing and leaves its chunks queued; the
         // pressure rule below lowers the radius until they fit.
         match synced {
-            Ok(s) => self.hud.sync = (s, sync_ms),
+            Ok(s) => {
+                self.hud.sync = (s, sync_ms);
+                stream.failures.note(None, false);
+            }
             Err(e) => {
-                if stream.over_budget_syncs == 0 {
-                    eprintln!("mirror sync failed: {e}; retrying under the pressure rule");
+                let m = &gfx.mirror;
+                let [slots, records] = pressure_terms(m);
+                let first = stream.over_budget_syncs == 0;
+                if first {
+                    eprintln!(
+                        "mirror sync failed: {e}; retrying under the pressure rule (pressure {:.4}, slots {slots:.4}, records {records:.4}; {} plain free slots, {} spare slots, {} free pages, {} pages issued, r_full {})",
+                        m.pressure(),
+                        m.free_slots().len(),
+                        m.spare_slots(),
+                        m.free_pages().len(),
+                        m.pages_issued(),
+                        stream.rule.r_full
+                    );
                 }
+                stream
+                    .failures
+                    .note(Some([f64::from(m.pressure()), slots, records]), first);
                 stream.over_budget_syncs += 1;
             }
         }
@@ -2128,6 +2176,20 @@ impl Run {
             r.r_full,
             stream.over_budget_syncs
         );
+        if stream.over_budget_syncs > 0 {
+            let f = stream.failures;
+            println!(
+                "autopilot: failed syncs {}: pressure {:.4} to {:.4} (slots {:.4} to {:.4}, records {:.4} to {:.4}), longest run {} consecutive syncs",
+                stream.over_budget_syncs,
+                f.low[0],
+                f.high[0],
+                f.low[1],
+                f.high[1],
+                f.low[2],
+                f.high[2],
+                f.longest
+            );
+        }
         if p.gpu_ms.is_empty() {
             println!("autopilot: march GPU n/a (no TIMESTAMP_QUERY)");
         } else {
@@ -2584,6 +2646,7 @@ impl App for Flythrough {
                             rule: RadiusRule::new(streamer.config().residency.r_full),
                             radius_changes: 0,
                             over_budget_syncs: 0,
+                            failures: FailedSyncs::default(),
                             streamer,
                             tick_ms: Vec::new(),
                             awaiting: HashMap::new(),
@@ -3092,6 +3155,19 @@ mod tests {
         for _ in 0..100 {
             assert_eq!(small.step(1.0), None);
         }
+    }
+
+    /// Failed syncs keep the pressure range and the longest streak; a success ends a streak.
+    #[test]
+    fn failed_syncs_keep_their_range_and_longest_streak() {
+        let mut f = FailedSyncs::default();
+        f.note(Some([0.91, 0.91, 0.6]), true);
+        f.note(Some([0.95, 0.95, 0.5]), false);
+        f.note(None, false);
+        f.note(Some([0.88, 0.88, 0.7]), false);
+        assert_eq!(f.low, [0.88, 0.88, 0.5]);
+        assert_eq!(f.high, [0.95, 0.95, 0.7]);
+        assert_eq!((f.streak, f.longest), (1, 2));
     }
 
     #[test]
