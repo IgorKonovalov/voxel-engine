@@ -1,8 +1,9 @@
 //! Flying out of a chamber through its rock shell and back in, with a hum playing: the output
 //! never rises more than 1.5 dB over the chamber's own steady level, neither the tail alone nor
-//! the full output. And the mixer alone handed the room a fan from inside rock used to give
-//! (`T60` 0.05 s, mean free path 0, energy 16) for 0.5 s between two of the chamber's: once
-//! the chamber's room is back, the tail settles to its steady level without overshooting it.
+//! the full output. And the mixer alone handed a room with no surface at the largest energy a
+//! room estimate allows (`T60` 0.05 s, mean free path 0, energy 16) for 0.5 s between two of
+//! the chamber's: once the chamber's room is back, the tail settles to its steady level without
+//! overshooting it.
 
 use vxe_audio::*;
 use vxe_world::*;
@@ -225,7 +226,7 @@ const CHAMBER: RoomTargets = RoomTargets {
     mean_free_path_m: 8.0,
     energy: 0.379,
 };
-/// What a fan traced from inside rock gave before such fans were discarded.
+/// A room with no surface: the shortest decay and the largest energy a room estimate allows.
 const INSIDE_ROCK: RoomTargets = RoomTargets {
     t60_s: 0.05,
     mean_free_path_m: 0.0,
