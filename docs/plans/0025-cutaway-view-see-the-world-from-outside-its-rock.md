@@ -159,7 +159,7 @@ steps-view cost from outside the level on the dev box as a diagnostic.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The walk rule and its headless proof | dev | done: `apps/flythrough/tests/cutaway.rs` on llvmpipe (exclusive perf lock, load 28.1, not quiet): camera (-100, 0.5, 0.5) centre normals [0, 128, 128], hitmask [255, 255, 255]; camera (-200, 0.5, 0.5) the same; (-200, 60.5, 0.5) hitmask [0, 0, 0]; cutaway off from (-200, 0.5, 0.5) centre normals [0, 128, 128], hitmask white, normals view 97.54 % of pixels differ from cutaway on. `the_default_look_leaves_the_goldens_byte_for_byte`, `attribute_pages_leave_the_face_goldens_byte_for_byte`, `goldens_match_bit_exactly_over_one_and_several_shards` pass; `-p flythrough -p vxe-render` 164 passed, 3 skipped (load 22.4, not quiet) | 1cbcc5b |
-| 2: The dollhouse shading, the automatic trigger and the key | dev | done in two commits (stopped at the golden camera, resumed after the owner's amendment 40d2328): `cutaway_parses_auto_on_and_off`, `auto_cutaway_follows_the_camera_voxel` (4 x 4 x 2-chunk seed-1 cave: shell voxel on, spawn pocket off, x = -200 on), `the_cutaway_row_shows_while_the_view_is_on` pass. `cutaway_level.png` blessed on llvmpipe from (-400, 640.5, 256.5), 320x180 (exclusive perf lock, load 8.7, not quiet): sky bin (4, 5, 5) 24.12 %, lit rock 75.88 %, misses 24.12 %, 2 bins covering 5 %; re-run against the golden 0.0000 % differ. Steps view, `cutaway_steps_from_outside_the_level_at_1080p`, RTX 3080 Laptop, 1920x1080, 40 m camera (same lock and load): cutaway on mean 49.53 p99 170, 2434 of 2073600 rays at the 255 clamp; off mean 0.91 p99 1; recorded under `nfr.md` §2 | 5a99b90; committed with this row |
+| 2: The dollhouse shading, the automatic trigger and the key | dev | done in two commits (stopped at the golden camera, resumed after the owner's amendment 40d2328): `cutaway_parses_auto_on_and_off`, `auto_cutaway_follows_the_camera_voxel` (4 x 4 x 2-chunk seed-1 cave: shell voxel on, spawn pocket off, x = -200 on), `the_cutaway_row_shows_while_the_view_is_on` pass. `cutaway_level.png` blessed on llvmpipe from (-400, 640.5, 256.5), 320x180 (exclusive perf lock, load 8.7, not quiet): sky bin (4, 5, 5) 24.12 %, lit rock 75.88 %, misses 24.12 %, 2 bins covering 5 %; re-run against the golden 0.0000 % differ. Steps view, `cutaway_steps_from_outside_the_level_at_1080p`, RTX 3080 Laptop, 1920x1080, 40 m camera (same lock and load): cutaway on mean 49.53 p99 170, 2434 of 2073600 rays at the 255 clamp; off mean 0.91 p99 1; recorded under `nfr.md` §2 | 5a99b90; 6fbcb0a |
 
 ### Notes
 
@@ -177,11 +177,11 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature
+- **Public API changed:** `vxe_render::marcher::FLAG_CUTAWAY` (`Params::flags` bit 10); `LookParams::cutaway: bool` (a new field, so exhaustive struct literals of `LookParams` break); `march.wgsl`'s `march` takes a `cutaway` argument, `Cell` gains `through` and `air`, `Descent` gains `resident`; the fly-through's `--cutaway auto|on|off`, the `X` key, the HUD's `cutaway (...)` row, `fly::CutawayMode`.
+- **Budget readings:** no `nfr.md` line moved. Added a §2 diagnostic: the cutaway steps view from 40 m outside the level, NVIDIA GeForce RTX 3080 Laptop GPU, 1920x1080, mean 49.53 steps per ray, p99 170 (6fbcb0a, exclusive perf lock, load 8.7, not quiet).
+- **Gate at the tip (6fbcb0a's tree):** `scripts/build-guests.sh` exit 0; `cargo nextest run --workspace` 467 passed, 4 skipped, exit 0 (exclusive perf lock, load 7.2, not quiet); `cargo nextest run -p flythrough --features wasm` 109 passed, 3 skipped, exit 0 (load 19.2, not quiet); `cargo test --doc --workspace` 7 passed; `cargo clippy --workspace --all-targets -- -D warnings` exit 0, and again with `--features flythrough/wasm`; `cargo fmt --all --check` exit 0; `cargo deny check` advisories, bans, licenses and sources ok; `check-doc-links` (158 links), `check-comment-hygiene`, `check-index-rows` exit 0; `node --test .claude/hooks/*.test.mjs` 59 passed.
+- **Outstanding `human` phases:** none
 
 ## Followups
 
