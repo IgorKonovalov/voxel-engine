@@ -299,8 +299,10 @@ impl Reverb {
             let mut sum = 0.0f32;
             for i in 0..REVERB_LINES {
                 let m = l0[i] + dl[i] * (j + 1) as f32;
-                // Read `m` frames behind the write position; `m` is at least 32, so the frame
-                // read was written in an earlier frame.
+                // Read `m` frames behind the write position. A target is at least 32 frames
+                // and a test's jump leaves at least 1, so the earlier of the two frames read
+                // was written in an earlier frame; at `m = 1` the later one is this frame's
+                // slot, still holding its old value, and takes weight 0.
                 let pos = (self.write + RING) as f32 - m;
                 let base = pos.floor();
                 let frac = pos - base;
