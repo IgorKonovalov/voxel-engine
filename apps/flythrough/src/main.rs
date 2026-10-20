@@ -8,7 +8,7 @@
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH] [--view VIEW] [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
-//! [--audio] [--audio-debug]`.
+//! [--audio] [--audio-debug] [--pad on|off]`.
 //! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -67,6 +67,15 @@
 //! a wall with a standable top within 1.2 m, climbs it. On the bounded level the fly-through
 //! keeps a coarse grid and walkable map updated from every edit; `K` prints them.
 //!
+//! A gamepad (`--pad on`, the default in a window; never headless or under the autopilot) flies
+//! as the keys and mouse do: the left stick moves at a speed set by its deflection, the right
+//! stick looks, `L1`/`R1` sink and rise, `R3` latches boost, and walking `South` jumps; `R2`
+//! digs, `L2` fills, the D-pad's up and down step the dig radius, `North` toggles walking,
+//! `West` cycles the cutaway, `East` knocks and `Start` toggles the stats HUD. A machine where `gilrs` cannot start runs
+//! without a pad. The startup lines name the pad and its power or print `pad: none`; a pad
+//! plugged in later becomes the active one, and each connect and disconnect prints a line. The
+//! HUD shows the active pad's row.
+//!
 //! Collapse (bounded level, ADR-0008): after every dig the logic asks the server's coarse grid
 //! which regions lost their support, and the fly-through prints each as `unsupported: N cells,
 //! {material: count}`. Each region falls 8 voxels a tick, one tick a frame, until it lands
@@ -82,6 +91,7 @@
 //! in the environment loads that HRIR pack instead of the shipped one.
 
 mod fly;
+mod pad;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -97,7 +107,8 @@ use flythrough::{
     LogicChoice, RESIDENCY, STREAM_MIRROR_BUDGET, ScrollSteps, cave_materials, chunk_ram,
     chunks_hash, level_mirror_budget, level_pool_slots, mips_ram, percentile,
 };
-use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
+use pad::Pad;
+use vxe_app::{App, Axis, Flow, Gpu, Input, KeyCode, MouseButton, PadButton, ShellConfig};
 use vxe_audio::{Acoustics, Hrtf, Mixer, Output, PlayParams, Sound, VoiceId};
 use vxe_net::{Client, Event, Logic, LogicError, MemChannel, Server};
 use vxe_render::glam::Vec3;
@@ -129,6 +140,22 @@ fn scroll_dig_radius(radius: i64, scroll: &mut ScrollSteps, delta: f32) -> Optio
         scroll.clear();
     }
     (r != radius).then_some(r)
+}
+
+/// A trigger presses (`R2` digs, `L2` fills) once pulled past this, and lets go under
+/// [`TRIGGER_RELEASE`], so a trigger resting near a threshold does not repeat.
+const TRIGGER_PRESS: f32 = 0.5;
+const TRIGGER_RELEASE: f32 = 0.3;
+
+/// Whether a trigger at `pull` presses this frame, with `held` its state since the last.
+fn trigger_pressed(held: &mut bool, pull: f32) -> bool {
+    if *held {
+        *held = pull >= TRIGGER_RELEASE;
+        false
+    } else {
+        *held = pull >= TRIGGER_PRESS;
+        *held
+    }
 }
 
 /// Radius of the right-click fill: 0.3 m.
@@ -240,6 +267,9 @@ struct Args {
     logic: LogicChoice,
     /// `--cutaway`: the cutaway view's start state.
     cutaway: CutawayMode,
+    /// `--pad on|off`: read a gamepad in a window (on by default); never headless or under
+    /// the autopilot.
+    pad: bool,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -260,6 +290,11 @@ fn walk_allowed(streaming: bool) -> Result<(), &'static str> {
 }
 
 impl Args {
+    /// Whether the run reads a gamepad: `--pad on` in a window, without the autopilot.
+    fn wants_pad(&self) -> bool {
+        self.pad && !self.headless && !self.autopilot
+    }
+
     /// The look the fly-through starts in.
     fn start_look(&self) -> LookParams {
         LookParams {
@@ -309,6 +344,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         replay: None,
         logic: LogicChoice::Native,
         cutaway: CutawayMode::Auto,
+        pad: true,
     };
     let mut detail_flag = false;
     let mut it = argv.into_iter();
@@ -370,6 +406,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--save" => args.save = Some(value()?.into()),
             "--replay" => args.replay = Some(value()?.into()),
             "--logic" => args.logic = LogicChoice::parse(&value()?)?,
+            "--pad" => {
+                args.pad = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("--pad takes on or off, not {v}")),
+                }
+            }
             "--level" => args.level = true,
             "--detail" => detail_flag = true,
             "--autopilot" => args.autopilot = true,
@@ -1261,11 +1304,13 @@ struct Run {
     fly: Fly,
     light: LightParams,
     look: LookParams,
-    /// Sets `look.cutaway` each frame of interactive flight; `X` cycles it.
+    /// Sets `look.cutaway` each frame of interactive flight; `X` or the pad's `West` cycles it.
     cutaway: CutawayMode,
     dig_radius: i64,
     /// Scroll banked toward the next dig-radius step.
     scroll: ScrollSteps,
+    /// `L2` and `R2` held, for their press edges.
+    triggers: [bool; 2],
     bench_runs: u64,
     frame: u32,
     gfx: Option<Gfx>,
@@ -2189,7 +2234,7 @@ impl Run {
         if self.frame > 0 {
             self.hud.frames.record(dt);
         }
-        if input.pressed(KeyCode::F2) {
+        if input.pressed(KeyCode::F2) || input.pad_pressed(PadButton::Start) {
             self.hud.visible = !self.hud.visible;
         }
         if self.frame == 0 {
@@ -2223,8 +2268,10 @@ impl Run {
         self.draw(gpu, surface, t0)
     }
 
-    /// The keys and buttons of interactive flight; the autopilot takes none of them, so a
-    /// stray click cannot change the world it measures.
+    /// The keys, buttons and pad buttons of interactive flight; the autopilot takes none of
+    /// them, so a stray click cannot change the world it measures. On a pad `R2` digs, `L2`
+    /// fills, the D-pad's up and down step the dig radius as a scroll line does, `North`
+    /// toggles walking, `West` cycles the cutaway as `X` does, and `East` knocks.
     fn handle_input(&mut self, input: &Input) {
         if input.pressed(KeyCode::KeyL) {
             self.light.shadows = !self.light.shadows;
@@ -2233,16 +2280,20 @@ impl Run {
                 if self.light.shadows { "on" } else { "off" }
             );
         }
-        if input.scroll() != 0.0
-            && let Some(r) = scroll_dig_radius(self.dig_radius, &mut self.scroll, input.scroll())
+        let scroll = input.scroll() + f32::from(u8::from(input.pad_pressed(PadButton::DpadUp)))
+            - f32::from(u8::from(input.pad_pressed(PadButton::DpadDown)));
+        if scroll != 0.0
+            && let Some(r) = scroll_dig_radius(self.dig_radius, &mut self.scroll, scroll)
         {
             self.dig_radius = r;
             println!("dig radius {:.1} m", r as f64 / (10 * FIXED_ONE) as f64);
         }
-        if input.clicked(MouseButton::Left) {
+        let r2 = trigger_pressed(&mut self.triggers[1], input.axis(Axis::TriggerR));
+        if input.clicked(MouseButton::Left) || r2 {
             self.dig();
         }
-        if input.clicked(MouseButton::Right) {
+        let l2 = trigger_pressed(&mut self.triggers[0], input.axis(Axis::TriggerL));
+        if input.clicked(MouseButton::Right) || l2 {
             self.fill();
         }
         if input.pressed(KeyCode::KeyB) {
@@ -2251,7 +2302,7 @@ impl Run {
         if input.pressed(KeyCode::KeyP) {
             self.stamp();
         }
-        if input.pressed(KeyCode::KeyG) {
+        if input.pressed(KeyCode::KeyG) || input.pad_pressed(PadButton::North) {
             self.toggle_walk();
         }
         if input.pressed(KeyCode::KeyK) {
@@ -2268,7 +2319,7 @@ impl Run {
             self.look.normal_mode = self.look.normal_mode.next(contour);
             println!("{}", look_line(&self.look, self.rock_detail()));
         }
-        if input.pressed(KeyCode::KeyX) {
+        if input.pressed(KeyCode::KeyX) || input.pad_pressed(PadButton::West) {
             self.cutaway = self.cutaway.next();
             println!("cutaway {}", self.cutaway.name());
         }
@@ -2280,7 +2331,7 @@ impl Run {
             self.samples = Some(Samples::default());
         }
         if let Some(audio) = self.audio.as_mut() {
-            if input.pressed(KeyCode::KeyH) {
+            if input.pressed(KeyCode::KeyH) || input.pad_pressed(PadButton::East) {
                 audio.play("knock", PlayParams::at);
             }
             if input.pressed(KeyCode::KeyT) {
@@ -2615,6 +2666,9 @@ struct Flythrough {
     pending: Option<Pending>,
     run: Option<Run>,
     audio: Option<Audio>,
+    /// The gamepad, `None` under `--pad off`, headless, the autopilot, or when `gilrs`
+    /// cannot start.
+    pad: Option<Pad>,
 }
 
 impl App for Flythrough {
@@ -2693,6 +2747,7 @@ impl App for Flythrough {
                 cutaway: self.args.cutaway,
                 dig_radius: DIG_RADIUS,
                 scroll: ScrollSteps::default(),
+                triggers: [false; 2],
                 bench_runs: 0,
                 frame: 0,
                 gfx: None,
@@ -2720,6 +2775,18 @@ impl App for Flythrough {
     fn resized(&mut self, gpu: &Gpu) {
         if let Some(run) = self.run.as_mut() {
             run.resized(gpu);
+        }
+    }
+
+    fn poll(&mut self, input: &mut Input) {
+        let Some(pad) = self.pad.as_mut() else {
+            return;
+        };
+        for line in pad.poll(input) {
+            println!("{line}");
+        }
+        if let Some(run) = self.run.as_mut() {
+            pad.write_row(run.hud.stats.pad.get_or_insert_with(Default::default));
         }
     }
 
@@ -2974,6 +3041,14 @@ fn main() {
     } else {
         None
     };
+    let pad = if args.wants_pad() { Pad::open() } else { None };
+    if !headless && !args.autopilot {
+        println!(
+            "{}",
+            pad.as_ref()
+                .map_or_else(|| "pad: none".to_owned(), Pad::startup_line)
+        );
+    }
     let app = Flythrough {
         start,
         args,
@@ -2982,6 +3057,7 @@ fn main() {
         pending: Some(pending),
         run: None,
         audio,
+        pad,
     };
     let result = if headless {
         run_headless(app, size)
@@ -3083,6 +3159,10 @@ mod tests {
     fn a_shown_hud_allocates_nothing_after_its_first_frame() {
         let mut hud = Hud::new(true);
         hud.stats = HudStats::fixed();
+        hud.stats.pad = Some(hud::PadRow {
+            name: "PS5 Controller".to_owned(),
+            power: Some(hud::PadPower::Charging(5)),
+        });
         let mut per_frame = Vec::with_capacity(100);
         for frame in 0..100u32 {
             let before = counting::bytes();
@@ -3095,7 +3175,7 @@ mod tests {
         }
         assert!(per_frame[0] > 0, "the first frame grows the buffers");
         assert_eq!(per_frame[1..], [0; 99]);
-        assert_eq!(hud.text.lines().count(), 12);
+        assert_eq!(hud.text.lines().count(), 13);
         assert_eq!(hud.strip.len(), 100);
     }
     use flythrough::cave::SHELL;
@@ -3245,6 +3325,27 @@ mod tests {
             let e = wasm.err().expect("refused without the feature");
             assert!(e.contains("--features wasm"), "{e}");
         }
+    }
+
+    /// `--pad` takes `on` or `off`, defaults on, and refuses anything else; headless and
+    /// the autopilot never read a pad.
+    #[test]
+    fn pad_parses_on_and_off() {
+        let a = parse_args_from(argv(&[])).expect("no arguments parse");
+        assert!(a.pad && a.wants_pad());
+        let on = parse_args_from(argv(&["--pad", "on"])).expect("on parses");
+        assert!(on.pad);
+        let off = parse_args_from(argv(&["--pad", "off"])).expect("off parses");
+        assert!(!off.pad && !off.wants_pad());
+        let e = parse_args_from(argv(&["--pad", "x"]))
+            .err()
+            .expect("x refused");
+        assert_eq!(e, "--pad takes on or off, not x");
+        assert!(parse_args_from(argv(&["--pad"])).is_err());
+        let headless = parse_args_from(argv(&["--pad", "on", "--headless"])).unwrap();
+        assert!(!headless.wants_pad());
+        let pilot = parse_args_from(argv(&["--autopilot"])).unwrap();
+        assert!(!pilot.wants_pad());
     }
 
     /// Every failure and every restart of the logic prints a line; the stop prints once,
@@ -3453,6 +3554,165 @@ mod tests {
         let outside = Fixed3([200 * FIXED_ONE, 0, 0]);
         let (lines, _) = net_tick(&mut net, &[stamp(outside)]);
         assert_eq!(lines, ["stamped: no surface within 10 m"]);
+    }
+
+    /// A fly-mode run on `world` with no window, GPU, stream or audio, its camera at the
+    /// origin voxel's centre looking along +x, the native logic on its server.
+    fn bare_run(world: World) -> Run {
+        let world = Arc::new(world);
+        let net = native_net(&world);
+        let args = parse_args_from(argv(&["--level"])).expect("--level parses");
+        let camera = Camera {
+            position: Vec3::splat(0.5),
+            yaw: 0.0,
+            pitch: 0.0,
+            vfov: 1.0,
+        };
+        Run {
+            start: now(),
+            world,
+            net: Some(net),
+            spawn: voxel_of(camera.position),
+            look: args.start_look(),
+            args,
+            fly: Fly::new(camera),
+            light: LightParams::headlamp(),
+            dig_radius: DIG_RADIUS,
+            scroll: ScrollSteps::default(),
+            triggers: [false; 2],
+            bench_runs: 0,
+            frame: 0,
+            gfx: None,
+            samples: None,
+            stream: None,
+            pilot: None,
+            walk: None,
+            coarse: None,
+            hud: Hud::new(false),
+            audio: None,
+            cutaway: CutawayMode::Auto,
+        }
+    }
+
+    /// Rock over chunks `[-1, 1)³` with a 16-voxel box carved around the origin.
+    fn carved_rock() -> World {
+        let world = World::generate(
+            ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
+            &vxe_world::UniformSource(ROCK),
+            &cave_materials(),
+        );
+        world
+            .apply(&EditOp::box_(
+                Fixed3([-8 * FIXED_ONE; 3]),
+                Fixed3([8 * FIXED_ONE; 3]),
+                Mode::Carve,
+            ))
+            .unwrap();
+        world
+    }
+
+    /// The edits one server tick of `run` applied.
+    fn tick_edits(run: &mut Run) -> Vec<EditResult> {
+        let net = run.net.as_mut().unwrap();
+        assert_eq!(net.server.tick().logic_error, None);
+        applied(&net.client.poll())
+            .into_iter()
+            .map(|r| match r {
+                OpResult::Edit(e) => e,
+                other => panic!("{other:?}"),
+            })
+            .collect()
+    }
+
+    /// `handle_input` digs on a left click and on `R2` pulled through `Input`'s setters
+    /// alike: the dig reaches the server, which carves the same rock from the wall ahead;
+    /// `R2` held on the next frame does not dig again, and released and pulled again does.
+    /// `L2` fills.
+    #[test]
+    fn r2_digs_as_the_left_click_does_and_l2_fills() {
+        let mut click = bare_run(carved_rock());
+        let mut input = Input::default();
+        input.button_down(MouseButton::Left);
+        click.handle_input(&input);
+        let by_click = tick_edits(&mut click);
+        let [r] = &by_click[..] else {
+            panic!("{by_click:?}")
+        };
+        assert_eq!(r.changed_from.len(), 1);
+        assert_eq!(r.changed_from[0].0, ROCK);
+        assert!(r.changed_from[0].1 > 0);
+
+        let mut pad = bare_run(carved_rock());
+        let mut input = Input::default();
+        input.set_axis(Axis::TriggerR, 1.0);
+        pad.handle_input(&input);
+        assert_eq!(tick_edits(&mut pad), by_click);
+        input.end_frame();
+        pad.handle_input(&input);
+        assert_eq!(tick_edits(&mut pad), [], "a held trigger digs once");
+        input.set_axis(Axis::TriggerR, 0.0);
+        pad.handle_input(&input);
+        input.set_axis(Axis::TriggerR, 0.8);
+        pad.handle_input(&input);
+        assert_eq!(tick_edits(&mut pad).len(), 1, "pulled again, it digs again");
+
+        let mut input = Input::default();
+        input.set_axis(Axis::TriggerL, 1.0);
+        pad.handle_input(&input);
+        let filled = tick_edits(&mut pad);
+        let [f] = &filled[..] else {
+            panic!("{filled:?}")
+        };
+        assert_eq!(f.changed_from.len(), 1);
+        assert_eq!(f.changed_from[0].0, 0, "the fill writes rock over air");
+    }
+
+    /// The D-pad steps the dig radius by a scroll line's step: up twice raises it from 0.5 m
+    /// to 0.7 m, down once lowers it to 0.6 m.
+    #[test]
+    fn the_dpad_steps_the_dig_radius() {
+        let mut run = bare_run(carved_rock());
+        let mut input = Input::default();
+        for _ in 0..2 {
+            input.pad_down(PadButton::DpadUp);
+            run.handle_input(&input);
+            input.end_frame();
+            input.pad_up(PadButton::DpadUp);
+        }
+        assert_eq!(run.dig_radius, DIG_RADIUS + 2 * DIG_STEP);
+        input.pad_down(PadButton::DpadDown);
+        run.handle_input(&input);
+        assert_eq!(run.dig_radius, DIG_RADIUS + DIG_STEP);
+    }
+
+    /// `X` and the pad's `West` (Square) cycle the cutaway alike: auto, on, off, auto.
+    #[test]
+    fn x_and_west_cycle_the_cutaway() {
+        for press in [
+            (|i: &mut Input| i.key_down(KeyCode::KeyX)) as fn(&mut Input),
+            |i: &mut Input| i.pad_down(PadButton::West),
+        ] {
+            let mut run = bare_run(carved_rock());
+            let mut input = Input::default();
+            let mut seen = Vec::new();
+            for _ in 0..3 {
+                press(&mut input);
+                run.handle_input(&input);
+                seen.push(run.cutaway);
+                input.end_frame();
+                input.key_up(KeyCode::KeyX);
+                input.pad_up(PadButton::West);
+            }
+            assert_eq!(seen, [CutawayMode::On, CutawayMode::Off, CutawayMode::Auto]);
+        }
+    }
+
+    #[test]
+    fn a_trigger_presses_past_half_and_lets_go_under_three_tenths() {
+        let mut held = false;
+        let pulls = [0.4, 0.5, 0.9, 0.35, 0.6, 0.25, 0.55];
+        let presses = pulls.map(|p| trigger_pressed(&mut held, p));
+        assert_eq!(presses, [false, true, false, false, false, false, true]);
     }
 
     const PILLAR: ([i32; 3], [i32; 3]) = ([32, 32, 8], [40, 40, 40]);

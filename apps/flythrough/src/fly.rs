@@ -1,8 +1,13 @@
-//! Free flight and walking: mouse look and WASD movement of a camera in voxel units, z up.
-//! Flight moves the camera freely; walking moves a character body through the world with the
-//! `vxe-sim` controller at a fixed 60 Hz tick and puts the camera at its eye.
+//! Free flight and walking: mouse look and WASD movement of a camera in voxel units, z up, or
+//! a gamepad's sticks through the same `Input`. Flight moves the camera freely; walking moves
+//! a character body through the world with the `vxe-sim` controller at a fixed 60 Hz tick and
+//! puts the camera at its eye.
+//!
+//! A stick passes a radial dead zone of [`DEAD_ZONE`] and a squared response: deflection `m`
+//! reads `((m - DEAD_ZONE) / (1 - DEAD_ZONE))^2` along the stick's direction, so the move
+//! stick sets the speed and the look stick the turn rate.
 
-use vxe_app::{Input, KeyCode};
+use vxe_app::{Axis, Input, KeyCode, PadButton};
 use vxe_render::glam::{Vec2, Vec3};
 use vxe_render::{Camera, LookParams};
 use vxe_sim::{CharacterController, CharacterState, ControllerParams, MoveInput, overlaps};
@@ -15,45 +20,92 @@ const PITCH_LIMIT: f32 = 1.55;
 /// Flight speed in voxels per second (3 m/s), and the factor `Shift` multiplies it by.
 const SPEED: f32 = 30.0;
 const BOOST: f32 = 4.0;
+/// A stick deflection under this reads 0.
+pub const DEAD_ZONE: f32 = 0.15;
+/// Radians per second the look stick turns at full deflection.
+const LOOK_RATE: f32 = 2.5;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Fly {
     pub camera: Camera,
+    /// `R3` latched boost; it lets go once the move stick returns inside the dead zone.
+    boost: bool,
 }
 
 impl Fly {
     pub fn new(camera: Camera) -> Self {
-        Self { camera }
+        Self {
+            camera,
+            boost: false,
+        }
     }
 
-    /// Turns by the frame's mouse motion and moves by the held keys over `dt` seconds:
-    /// `W`/`S` along the view, `A`/`D` sideways, `Space`/`C` up and down in world z.
+    /// Turns by the frame's mouse motion and look stick and moves over `dt` seconds by the
+    /// held keys and the move stick: `W`/`S` or the stick's y along the view, `A`/`D` or its x
+    /// sideways, `Space`/`C` or `R1`/`L1` up and down in world z. Keys move at [`SPEED`], the
+    /// stick at `SPEED` times its response; `Shift` held or `R3` latched multiplies by
+    /// [`BOOST`].
     pub fn update(&mut self, input: &Input, dt: f32) {
-        look(&mut self.camera, input);
+        look(&mut self.camera, input, dt);
+        if input.pad_pressed(PadButton::R3) {
+            self.boost = true;
+        } else if stick(input, Axis::MoveX, Axis::MoveY) == Vec2::ZERO {
+            self.boost = false;
+        }
         let c = &mut self.camera;
         let (forward, right, _) = c.basis();
-        let wish = forward * axis(input, KeyCode::KeyW, KeyCode::KeyS)
-            + right * axis(input, KeyCode::KeyD, KeyCode::KeyA)
-            + Vec3::Z * axis(input, KeyCode::Space, KeyCode::KeyC);
-        let speed = if input.held(KeyCode::ShiftLeft) {
+        let up = axis(input, KeyCode::Space, KeyCode::KeyC)
+            + f32::from(u8::from(input.pad_held(PadButton::R1)))
+            - f32::from(u8::from(input.pad_held(PadButton::L1)));
+        let wish = forward * move_axis(input, KeyCode::KeyW, KeyCode::KeyS, Axis::MoveY)
+            + right * move_axis(input, KeyCode::KeyD, KeyCode::KeyA, Axis::MoveX)
+            + Vec3::Z * up.clamp(-1.0, 1.0);
+        let speed = if input.held(KeyCode::ShiftLeft) || self.boost {
             SPEED * BOOST
         } else {
             SPEED
         };
-        c.position += wish.normalize_or_zero() * speed * dt;
+        c.position += wish.clamp_length_max(1.0) * speed * dt;
     }
 }
 
-/// Turns `camera` by the frame's mouse motion.
-fn look(camera: &mut Camera, input: &Input) {
+/// Turns `camera` by the frame's mouse motion and, over `dt` seconds, the look stick.
+fn look(camera: &mut Camera, input: &Input, dt: f32) {
     let [dx, dy] = input.mouse_delta();
-    camera.yaw -= dx as f32 * LOOK_PER_COUNT;
-    camera.pitch = (camera.pitch - dy as f32 * LOOK_PER_COUNT).clamp(-PITCH_LIMIT, PITCH_LIMIT);
+    let s = stick(input, Axis::LookX, Axis::LookY) * LOOK_RATE * dt;
+    camera.yaw -= dx as f32 * LOOK_PER_COUNT + s.x;
+    camera.pitch =
+        (camera.pitch - dy as f32 * LOOK_PER_COUNT + s.y).clamp(-PITCH_LIMIT, PITCH_LIMIT);
 }
 
 /// `+1`, `-1` or `0` from a pair of held keys.
 fn axis(input: &Input, plus: KeyCode, minus: KeyCode) -> f32 {
     f32::from(u8::from(input.held(plus))) - f32::from(u8::from(input.held(minus)))
+}
+
+/// The stick of `x` and `y` after the radial dead zone and the squared response; its length
+/// is at most 1.
+fn stick(input: &Input, x: Axis, y: Axis) -> Vec2 {
+    let v = Vec2::new(input.axis(x), input.axis(y));
+    let m = v.length();
+    if m <= DEAD_ZONE {
+        return Vec2::ZERO;
+    }
+    let r = ((m.min(1.0) - DEAD_ZONE) / (1.0 - DEAD_ZONE)).powi(2);
+    v / m * r
+}
+
+/// The key pair plus the stick component `a` (after the stick's dead zone and response),
+/// clamped to `[-1, 1]`.
+pub fn move_axis(input: &Input, plus: KeyCode, minus: KeyCode, a: Axis) -> f32 {
+    let s = match a {
+        Axis::MoveX => stick(input, Axis::MoveX, Axis::MoveY).x,
+        Axis::MoveY => stick(input, Axis::MoveX, Axis::MoveY).y,
+        Axis::LookX => stick(input, Axis::LookX, Axis::LookY).x,
+        Axis::LookY => stick(input, Axis::LookX, Axis::LookY).y,
+        Axis::TriggerL | Axis::TriggerR => input.axis(a),
+    };
+    (axis(input, plus, minus) + s).clamp(-1.0, 1.0)
 }
 
 /// Controller ticks per second; parameters below are per tick.
@@ -109,18 +161,18 @@ impl Walk {
         })
     }
 
-    /// The tick input from held keys: `W`/`S`/`A`/`D` walk along the camera's heading at
-    /// 3 m/s, `Space` jumps and, held against a wall with a standable top within 1.2 m,
-    /// climbs it.
+    /// The tick input from held keys and the move stick: `W`/`S`/`A`/`D` walk along the
+    /// camera's heading at 3 m/s, the stick at 3 m/s times its response; `Space` or `South`
+    /// jumps and, held against a wall with a standable top within 1.2 m, climbs it.
     pub fn input(input: &Input, camera: &Camera) -> MoveInput {
         let (forward, right, _) = camera.basis();
         let f = Vec2::new(forward.x, forward.y).normalize_or_zero();
         let r = Vec2::new(right.x, right.y).normalize_or_zero();
-        let w = (f * axis(input, KeyCode::KeyW, KeyCode::KeyS)
-            + r * axis(input, KeyCode::KeyD, KeyCode::KeyA))
-        .normalize_or_zero()
+        let w = (f * move_axis(input, KeyCode::KeyW, KeyCode::KeyS, Axis::MoveY)
+            + r * move_axis(input, KeyCode::KeyD, KeyCode::KeyA, Axis::MoveX))
+        .clamp_length_max(1.0)
             * WALK_WISH;
-        let space = input.held(KeyCode::Space);
+        let space = input.held(KeyCode::Space) || input.pad_held(PadButton::South);
         MoveInput {
             wish: [w.x.round() as i64, w.y.round() as i64],
             jump: space,
@@ -138,7 +190,7 @@ impl Walk {
         camera: &mut Camera,
         dt: f32,
     ) -> Vec<&'static str> {
-        look(camera, input);
+        look(camera, input, dt);
         self.pending += dt;
         let step = 1.0 / TICK_HZ;
         let mut ticks = 0;
@@ -293,6 +345,108 @@ mod tests {
         input.key_down(KeyCode::KeyW);
         f.update(&input, 0.5);
         assert!((f.camera.position - Vec3::new(15.0, 0.0, 0.0)).length() < 1e-4);
+    }
+
+    /// The camera's travel along +x (its heading at yaw 0) after one 0.1 s update.
+    fn fly_distance(f: &mut Fly, input: &Input) -> f32 {
+        let x0 = f.camera.position.x;
+        f.update(input, 0.1);
+        f.camera.position.x - x0
+    }
+
+    /// The move stick at full deflection moves as the key pair does, 3.0 voxels in 0.1 s;
+    /// inside the dead zone it moves nothing; at half deflection it moves
+    /// `3.0 x ((0.5 - 0.15) / 0.85)^2`; latched boost moves 12.0; `W` plus the stick clamps
+    /// to the key pair's 3.0.
+    #[test]
+    fn the_move_stick_sets_the_flight_speed_by_its_deflection() {
+        let at = |v: f32| {
+            let mut input = Input::default();
+            input.set_axis(Axis::MoveY, v);
+            fly_distance(&mut fly(), &input)
+        };
+        assert!((at(1.0) - 3.0).abs() < 1e-4, "{}", at(1.0));
+        assert_eq!(at(0.1), 0.0);
+        assert!((at(0.5) - 0.5086).abs() < 1e-3, "{}", at(0.5));
+
+        let mut f = fly();
+        let mut input = Input::default();
+        input.set_axis(Axis::MoveY, 1.0);
+        input.pad_down(PadButton::R3);
+        assert!((fly_distance(&mut f, &input) - 12.0).abs() < 1e-4);
+        input.end_frame();
+        assert!(
+            (fly_distance(&mut f, &input) - 12.0).abs() < 1e-4,
+            "latched"
+        );
+        input.set_axis(Axis::MoveY, 0.0);
+        assert_eq!(fly_distance(&mut f, &input), 0.0);
+        input.set_axis(Axis::MoveY, 1.0);
+        assert!(
+            (fly_distance(&mut f, &input) - 3.0).abs() < 1e-4,
+            "the latch let go in the dead zone"
+        );
+
+        let mut input = Input::default();
+        input.key_down(KeyCode::KeyW);
+        input.set_axis(Axis::MoveY, 1.0);
+        assert!((fly_distance(&mut fly(), &input) - 3.0).abs() < 1e-4);
+    }
+
+    /// `R1` rises and `L1` sinks at the key pair's speed.
+    #[test]
+    fn r1_and_l1_fly_up_and_down() {
+        let mut f = fly();
+        let mut input = Input::default();
+        input.pad_down(PadButton::R1);
+        f.update(&input, 0.1);
+        assert!((f.camera.position.z - 3.0).abs() < 1e-4);
+        input.pad_up(PadButton::R1);
+        input.pad_down(PadButton::L1);
+        f.update(&input, 0.2);
+        assert!((f.camera.position.z + 3.0).abs() < 1e-4);
+    }
+
+    /// The look stick at full deflection turns 2.5 rad/s, 0.25 rad in 0.1 s, rightward
+    /// (yaw falls, as the mouse turns right), and adds to the frame's mouse motion; up
+    /// raises the pitch.
+    #[test]
+    fn the_look_stick_turns_at_its_rate_and_adds_to_the_mouse() {
+        let mut f = fly();
+        let mut input = Input::default();
+        input.set_axis(Axis::LookX, 1.0);
+        f.update(&input, 0.1);
+        assert!((f.camera.yaw + 0.25).abs() < 1e-6, "{}", f.camera.yaw);
+
+        let mut f = fly();
+        input.add_mouse_delta(100.0, 0.0);
+        f.update(&input, 0.1);
+        assert!((f.camera.yaw + 0.25 + 100.0 * LOOK_PER_COUNT).abs() < 1e-6);
+
+        let mut f = fly();
+        let mut input = Input::default();
+        input.set_axis(Axis::LookY, 1.0);
+        f.update(&input, 0.1);
+        assert!((f.camera.pitch - 0.25).abs() < 1e-6);
+    }
+
+    /// `Walk::input` takes the stick as it takes the keys: `MoveY` 1.0 wishes what `W` held
+    /// does, and `South` held jumps and climbs as `Space` does.
+    #[test]
+    fn walk_input_takes_the_stick_and_south_like_w_and_space() {
+        let cam = camera_at(Vec3::ZERO, 0.0);
+        let mut keys = Input::default();
+        keys.key_down(KeyCode::KeyW);
+        let mut pad = Input::default();
+        pad.set_axis(Axis::MoveY, 1.0);
+        let k = Walk::input(&keys, &cam);
+        let p = Walk::input(&pad, &cam);
+        assert_eq!(k.wish, [128, 0]);
+        assert_eq!(p.wish, k.wish);
+        assert!(!p.jump);
+        pad.pad_down(PadButton::South);
+        let p = Walk::input(&pad, &cam);
+        assert!(p.jump && p.climb);
     }
 
     #[test]

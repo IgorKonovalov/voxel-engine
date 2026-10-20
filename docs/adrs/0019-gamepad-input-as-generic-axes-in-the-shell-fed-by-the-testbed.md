@@ -1,8 +1,8 @@
 # ADR-0019: Gamepad input is generic axes and pad buttons in the shell's `Input`, fed by the testbed's own gilrs
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-20)
 > **Date:** 2026-10-20
-> **Related plan(s):** [Plan 0026](../plans/0026-gamepad-flight-generic-axes-in-the-shell-gilrs-in-the-testbed.md)
+> **Related plan(s):** [Plan 0026](../plans/done/0026-gamepad-flight-generic-axes-in-the-shell-gilrs-in-the-testbed.md)
 
 ## Context
 
