@@ -498,3 +498,52 @@ fn the_tail_renders_without_allocating() {
     assert_eq!(ALLOCATIONS.with(Cell::get), 0);
     assert!(out.iter().all(|s| s.is_finite()));
 }
+
+/// A tail left to ring out in silence settles to exact zeros instead of sinking into
+/// subnormal floats, which cost every block far more than normal arithmetic: an impulse in a
+/// 0.75 s room, then 30 s of silence, the last 10 s all `0.0` or normal and the last block
+/// exactly zero.
+#[test]
+fn a_silent_tail_rings_out_to_zero_not_subnormals() {
+    let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    m.apply(Command::SetRoom(RoomTargets {
+        t60_s: 0.75,
+        mean_free_path_m: 2.667,
+        energy: 1.0,
+    }));
+    let mut out = vec![0.0; RATE as usize];
+    // The input gain fades in before the impulse.
+    m.render(&mut out, RATE as usize / 2);
+    m.apply(Command::Play(
+        VoiceId(1),
+        impulse(),
+        PlayParams::at([10.0, 0.0, 0.0]),
+    ));
+    let seconds = 30;
+    let mut subnormal = 0usize;
+    let mut last = Vec::new();
+    for s in 0..seconds {
+        m.render(&mut out, RATE as usize / 2);
+        let mut second = out.clone();
+        m.render(&mut out, RATE as usize / 2);
+        second.extend_from_slice(&out);
+        if s >= seconds - 10 {
+            subnormal += second
+                .iter()
+                .filter(|x| **x != 0.0 && !x.is_normal())
+                .count();
+        }
+        last = second;
+    }
+    let tail_block = &last[last.len() - 2 * BLOCK..];
+    println!(
+        "30 s of silence after an impulse in a 0.75 s room: {subnormal} subnormal samples in \
+         the last 10 s; last block peak {:e}",
+        tail_block.iter().fold(0.0f32, |p, x| p.max(x.abs()))
+    );
+    assert_eq!(subnormal, 0, "subnormal samples in the last 10 s");
+    assert!(
+        tail_block.iter().all(|&x| x == 0.0),
+        "the last block is zero"
+    );
+}

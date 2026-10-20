@@ -535,6 +535,8 @@ re-read in Phase 7.
 
 ### Notes
 
+- Fix pass, M1 (the tail sinks into subnormals), committed with this line: `reverb.rs` flushes the low-pass state and every value written into a line to exactly 0 below `FLUSH_BELOW = 1e-20` (400 dB under full scale, far above `f32::MIN_POSITIVE`), as a select in the per-sample loop, with no FPU mode set. New test `a_silent_tail_rings_out_to_zero_not_subnormals`: an impulse in a 0.75 s room, then 30 s of silence. Fixed: 0 subnormal samples in the last 10 s, last block exactly zero. Unfixed `reverb.rs` (4b1309d): 780 771 subnormal samples in the last 10 s, last block peak 8e-45. `bench mixer`, dev box, release, exclusive perf lock, load average 2.90 to 3.67 (top processes 19 %, 11 % and 6.6 % CPU): static 0.5492 ms (0.5147 to 0.5866), turning 0.8945 ms (0.8722 to 0.9180). An earlier reading at load average 15.2 (0.9957 ms and 1.8844 ms) is superseded.
+
 - `tests/mixer.rs` and `benches/mixer.rs` (not in Phase 1's Files touched) changed
   mechanically for the removed `tap_count` (now `send`); no assertion changed.
 - `AcousticTargets.send` landed in Phase 1 (the only phase whose Files touched hold both
@@ -584,6 +586,7 @@ re-read in Phase 7.
   - `#[doc(hidden)]`: `Mixer::{tap_slots, reverb_lines, jump_reverb_line}`, `TapSlot`.
   - Fly-through flags: `--room`, `--room-line`, `--absorption`, `--mic`, and the `Y` key.
 - **Budget readings** (dev box, Ryzen 9 5900HS, release, exclusive perf lock):
+  - **Mixer after the M1 fix** (load average 2.90 to 3.67): static 0.5492 ms, turning 0.8945 ms.
   - **Mixer, 32 voices with buses and tail** (code of d7eb1f8; load average 1.87, with other processes above 7 % CPU): static 0.5078 ms, turning 0.8786 ms.
   - **Mixer, earlier readings:** 0.5500 and 0.8948 ms at 4dccd0f (buses only, load average 6.10); 0.4955 and 0.8497 ms at d1fd30f (load average 5.81).
   - **`Acoustics::update`** with the fan: 0.8388 ms (load average 2.69 to 2.98) and 0.9517 ms at 2fbd7b9 (load average 5.56).

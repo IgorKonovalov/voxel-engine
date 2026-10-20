@@ -121,6 +121,21 @@ fn line_filter(m: f32, t60: f32, hf_ratio: f32) -> (f32, f32) {
     (g, a.clamp(0.0, 0.999))
 }
 
+/// Below this magnitude the network's state is set to exactly 0. Left alone, a tail ringing
+/// out in silence decays into subnormal floats and stays there (round-to-nearest holds the
+/// smallest subnormal under the low-pass pole), and subnormal arithmetic costs several times
+/// normal arithmetic on every sample of every later block. `1e-20` is 400 dB under full
+/// scale, far under audibility and far above `f32::MIN_POSITIVE` (about `1.2e-38`), so no
+/// product of a flushed value with a gain under 1 reaches the subnormal range either; the
+/// network rings out to exact zeros. Portable: no flush-to-zero mode of the FPU is set.
+const FLUSH_BELOW: f32 = 1e-20;
+
+/// `x`, or 0 when `|x| < FLUSH_BELOW`. A select, not a branch, in the compiled loop.
+#[inline]
+fn flush(x: f32) -> f32 {
+    if x.abs() < FLUSH_BELOW { 0.0 } else { x }
+}
+
 /// The network and its state, allocated once.
 pub(crate) struct Reverb {
     lines: [Vec<f32>; REVERB_LINES],
@@ -295,7 +310,7 @@ impl Reverb {
                 let raw = line[i0] + (line[i1] - line[i0]) * frac;
                 let t = (j + 1) as f32;
                 let (gain, pole) = (c0[i].0 + dc[i].0 * t, c0[i].1 + dc[i].1 * t);
-                let lp = gain * raw + pole * self.lowpass[i];
+                let lp = flush(gain * raw + pole * self.lowpass[i]);
                 self.lowpass[i] = lp;
                 y[i] = lp;
                 sum += lp;
@@ -312,7 +327,7 @@ impl Reverb {
             peak = peak.max(left.abs()).max(right.abs()).max(bx.abs());
             let feedback = 2.0 * sum / REVERB_LINES as f32;
             for (line, &yi) in self.lines.iter_mut().zip(&y) {
-                line[self.write] = yi - feedback + bx;
+                line[self.write] = flush(yi - feedback + bx);
             }
             self.write = (self.write + 1) % RING;
         }
