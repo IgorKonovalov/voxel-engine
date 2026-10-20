@@ -513,7 +513,9 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   hook bite tests exit 0. The merge (af4dc02) passed the same gate (461 and 103 passed).
 - **Outstanding `human` phases:** none. The windowed look of the new default is the owner's:
   `cargo run --release -p flythrough`, `cargo run --release -p flythrough -- --level` and
-  `cargo run --release -p flythrough -- --look plain`.
+  `cargo run --release -p flythrough -- --look plain`. **Done 2026-10-20 at 05aaa0b
+  (owner):** of the three, the owner likes `--level` with the default look most, and it is
+  smooth.
 
 ## Followups
 

@@ -314,7 +314,14 @@ pub enum EditError { NotResident(ChunkCoord), UnknownPrefab(u64), /* Plan 0019 a
 - Owed to the owner (the plan's windowed check, not a phase): `P`, a dig under a ledge, the
   fall, `R` and a crumble by eye in `cargo run --release -p flythrough -- --level`, and
   `--level --vault --save s.vxl` followed by `--level --vault --replay s.vxl` printing the
-  same hash.
+  same hash. **Done 2026-10-20 at 05aaa0b (owner):** `P` stamps; `R` crumbles (`removed:
+  {rock: 1882}, 192 rubble`); save and replay agree (176 inputs, 175 ops, `0xada8a4f022567a9f`
+  both). **The fall does not happen:** every unsupported region reports `landed after 0 ticks,
+  fell 0 voxels`. Not a Plan 0018 regression: since Plan 0009 the support query lets a cell
+  under `solid_min` (64) hold nothing up, while `drop_region` stops at any solid voxel below,
+  so a region resting on a sparse sliver is both unsupported and wedged (ADR-0008's Negative
+  section lists both halves). Owner's choice (2026-10-20): the falling region crushes or
+  carries the sub-threshold voxels below it; a fix plan with an ADR-0008 outcome is owed.
 - Followup noticed: the Windows arm has not yet confirmed `SLAB_SESSION_HASH`
   (`vxe-net` and `vxe-script-wasm` tests) or `SESSION_HASH` (`apps/flythrough/tests/replay.rs`).
 - Followup noticed: the server's grid is built once in `Server::with_prefabs` from the chunks
