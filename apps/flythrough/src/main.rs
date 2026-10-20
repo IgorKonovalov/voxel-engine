@@ -101,8 +101,9 @@ use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
-    Camera, GpuWorld, HudColour, HudOverlay, LightParams, LodParams, LookParams, MarchTimer,
-    Marcher, MirrorConfig, NormalMode, PassTimer, Presenter, SyncStats, ViewMode, Window, wgpu,
+    AttrWorkStats, Camera, GpuWorld, HudColour, HudOverlay, LightParams, LodParams, LookParams,
+    MarchTimer, Marcher, MirrorConfig, NormalMode, PassTimer, Presenter, SyncStats, ViewMode,
+    Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -974,6 +975,8 @@ struct Stream {
     latency_ms: Vec<f64>,
     /// Render-thread CPU of `update + poll + sync`, per frame.
     cpu_ms: Vec<f64>,
+    /// The last frame's `update`, `poll`, `apply_events` and `sync` CPU in milliseconds.
+    stages_ms: [f64; 4],
     full_residency: bool,
     workers: usize,
 }
@@ -1033,6 +1036,8 @@ struct Autopilot {
     unready_frames: u64,
     gpu_ms: Vec<f64>,
     cpu_ms: Vec<f64>,
+    /// The streaming CPU's stages per flight frame: `update`, `poll`, `apply_events`, `sync`.
+    stages_ms: [Vec<f64>; 4],
     /// The attribute pass over the flight, with attribute pages.
     attr: AttrSamples,
     latency_from: usize,
@@ -1055,6 +1060,37 @@ struct AttrSamples {
     items: Vec<f64>,
     cpu_ms: Vec<f64>,
     gpu_ms: Vec<f64>,
+    /// The CPU of `update_attrs`'s two halves: the list build and the pass recording.
+    build_ms: Vec<f64>,
+    encode_ms: Vec<f64>,
+    /// The builder's counters per frame: shell visits, dirty-brick visits, whole-chunk item
+    /// calls, hash lookups.
+    counters: [Vec<f64>; 4],
+    /// Every frame whose `update_attrs` took over [`HITCH_MS`]: its flight frame, CPU
+    /// milliseconds and counters.
+    hitches: Vec<(usize, f64, AttrWorkStats)>,
+}
+
+/// An `update_attrs` call longer than this is listed with its counters.
+const HITCH_MS: f64 = 16.0;
+
+impl AttrSamples {
+    /// Records one flight frame's pass.
+    fn push(&mut self, st: AttrWorkStats, build_ms: f64, encode_ms: f64, gpu_ms: Option<f64>) {
+        let cpu = build_ms + encode_ms;
+        if cpu > HITCH_MS {
+            self.hitches.push((self.items.len(), cpu, st));
+        }
+        self.items.push(f64::from(st.items));
+        self.cpu_ms.push(cpu);
+        self.build_ms.push(build_ms);
+        self.encode_ms.push(encode_ms);
+        let c = [st.shell_visits, st.dirty_visits, st.item_calls, st.lookups];
+        for (v, n) in self.counters.iter_mut().zip(c) {
+            v.push(n as f64);
+        }
+        self.gpu_ms.extend(gpu_ms);
+    }
 }
 
 impl AttrSamples {
@@ -1067,6 +1103,8 @@ impl AttrSamples {
         let busy = self.items.iter().filter(|&&n| n > 0.0).count();
         let [i50, i99, imax] = stats(&mut self.items);
         let [c50, c99, cmax] = stats(&mut self.cpu_ms);
+        let [b50, b99, bmax] = stats(&mut self.build_ms);
+        let [e50, e99, emax] = stats(&mut self.encode_ms);
         let mut out = vec![
             format!(
                 "autopilot: attribute work list: p50 {i50:.0}, p99 {i99:.0}, max {imax:.0} bricks over {frames} frames ({busy} with work)"
@@ -1075,6 +1113,36 @@ impl AttrSamples {
                 "autopilot: attribute pass CPU (update_attrs, render thread): p50 {c50:.3} ms, p99 {c99:.3} ms, max {cmax:.3} ms over {frames} frames"
             ),
         ];
+        out.push(format!(
+            "autopilot: attribute pass CPU split: list build p50 {b50:.3} ms, p99 {b99:.3} ms, max {bmax:.3} ms; pass recording p50 {e50:.3} ms, p99 {e99:.3} ms, max {emax:.3} ms"
+        ));
+        for (name, v) in [
+            "shell visits",
+            "dirty-brick visits",
+            "whole-chunk item calls",
+            "hash lookups",
+        ]
+        .iter()
+        .zip(&mut self.counters)
+        {
+            let [n50, n99, nmax] = stats(v);
+            out.push(format!(
+                "autopilot: attribute builder {name}: p50 {n50:.0}, p99 {n99:.0}, max {nmax:.0}"
+            ));
+        }
+        for (frame, ms, st) in &self.hitches {
+            out.push(format!(
+                "autopilot: attribute hitch at flight frame {frame}: {ms:.3} ms, {} whole chunks, {} dirty bricks, {} shell chunks, {} shell visits, {} dirty visits, {} item calls, {} lookups, {} items",
+                st.whole_chunks,
+                st.dirty_bricks,
+                st.shell_chunks,
+                st.shell_visits,
+                st.dirty_visits,
+                st.item_calls,
+                st.lookups,
+                st.items
+            ));
+        }
         if self.gpu_ms.is_empty() {
             out.push("autopilot: attribute pass GPU n/a (no TIMESTAMP_QUERY or no work)".into());
         } else {
@@ -1852,13 +1920,19 @@ impl Run {
         let cam = voxel_of(self.fly.camera.position);
         let t = now();
         stream.streamer.update(&self.world, &[cam]);
+        let update_ms = ms_since(t);
+        let tp = now();
         let ev = stream.streamer.poll(&self.world);
+        let poll_ms = ms_since(tp);
+        let ta = now();
         gfx.mirror.apply_events(&ev);
         gfx.mirror.set_focus(cam);
+        let apply_ms = ms_since(ta);
         let ts = now();
         let synced = gfx.mirror.sync(&self.world, &gpu.queue);
         let sync_ms = ms_since(ts);
         let cpu = ms_since(t);
+        stream.stages_ms = [update_ms, poll_ms, apply_ms, sync_ms];
         stream.tick_ms.push(ms_since(self.start));
         stream.cpu_ms.push(cpu);
         for e in &ev.errors {
@@ -2055,6 +2129,9 @@ impl Run {
         p.unready_frames += u64::from(unready);
         if let Some(&cpu) = stream.cpu_ms.last() {
             p.cpu_ms.push(cpu);
+            for (v, &ms) in p.stages_ms.iter_mut().zip(&stream.stages_ms) {
+                v.push(ms);
+            }
         }
         p.peak_mirror = p.peak_mirror.max(gfx.mirror.mirror_bytes());
         p.peak_allocated = p.peak_allocated.max(gfx.mirror.allocated_bytes());
@@ -2091,6 +2168,17 @@ impl Run {
             percentile(&mut cpu, 100.0),
             cpu.len()
         );
+        for (name, v) in ["update", "poll", "apply_events", "sync"]
+            .iter()
+            .zip(&mut p.stages_ms)
+        {
+            println!(
+                "autopilot: streaming stage {name}: p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms",
+                percentile(v, 50.0),
+                percentile(v, 99.0),
+                percentile(v, 100.0)
+            );
+        }
         let mut lat = stream.latency_ms[p.latency_from..].to_vec();
         println!(
             "autopilot: residency latency wanted to mirrored: p95 {:.0} ms, max {:.0} ms over {} chunks (proposal 500 ms)",
@@ -2397,10 +2485,13 @@ impl Run {
         // recording the pass.
         let attr_timer = gfx.attr_timer.as_ref().filter(|_| flying);
         let t_attr = now();
+        let attr_stats = gfx.mirror.prepare_attrs();
+        let attr_build_ms = ms_since(t_attr);
+        let t_encode = now();
         let attr_items = gfx
             .mirror
-            .update_attrs_timed(&mut enc, attr_timer.map(MarchTimer::writes));
-        let attr_cpu_ms = ms_since(t_attr);
+            .encode_attrs(&mut enc, attr_timer.map(MarchTimer::writes));
+        let attr_encode_ms = ms_since(t_encode);
         let attr_timer = attr_timer.filter(|_| attr_items > 0);
         if let Some(t) = attr_timer {
             t.resolve(&mut enc);
@@ -2452,9 +2543,8 @@ impl Run {
             && gfx.mirror.surface_attrs()
             && let Some(p) = self.pilot.as_mut()
         {
-            p.attr.items.push(attr_items as f64);
-            p.attr.cpu_ms.push(attr_cpu_ms);
-            p.attr.gpu_ms.extend(attr_gpu_ms);
+            p.attr
+                .push(attr_stats, attr_build_ms, attr_encode_ms, attr_gpu_ms);
         }
         if let Some(s) = self.samples.as_mut() {
             s.cpu_ms.push(cpu_ms);
@@ -2617,6 +2707,7 @@ impl App for Flythrough {
                             awaiting: HashMap::new(),
                             latency_ms: Vec::new(),
                             cpu_ms: Vec::new(),
+                            stages_ms: [0.0; 4],
                             full_residency: false,
                             workers,
                         }),
@@ -2634,6 +2725,7 @@ impl App for Flythrough {
                 unready_frames: 0,
                 gpu_ms: Vec::new(),
                 cpu_ms: Vec::new(),
+                stages_ms: Default::default(),
                 attr: AttrSamples::default(),
                 latency_from: 0,
                 peak_mirror: 0,

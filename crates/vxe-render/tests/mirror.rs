@@ -2645,3 +2645,78 @@ fn a_neighbour_chunk_arriving_and_leaving_recomputes_the_shell() {
     );
     plus_x(attr_of(&device, &queue, &gpu, v), "east evicted");
 }
+
+/// The work-list lengths `update_attrs` returns over a scene that exercises each change set:
+/// a first sync (chunks taken whole), tier churn (records written new and dropped, so shells),
+/// a carve (re-uploaded bricks and their neighbourhoods), an eviction (a shell alone) and a
+/// window shift. Pinned to the lengths the builder gave before it was factored out of
+/// `GpuWorld` (ae2e088); the lists are deduplicated sets, so their lengths do not depend on
+/// hash order.
+#[test]
+fn the_work_list_lengths_match_the_unfactored_builder() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [5, 2, 1]),
+        &Mixed,
+        &mixed_table(),
+    );
+    let churn: Vec<ChunkCoord> = world
+        .store()
+        .coords()
+        .into_iter()
+        .filter(|c| c.0[0] >= 3)
+        .collect();
+    let mips: HashMap<ChunkCoord, Arc<ChunkMips>> = churn
+        .iter()
+        .map(|&c| {
+            let chunk = world.store().get(c).unwrap();
+            (c, Arc::new(ChunkMips::build(&chunk.read().unwrap())))
+        })
+        .collect();
+    let mut gpu = GpuWorld::with_surface_attrs(&device, small(Window::Follow { side: 7 }));
+    gpu.set_focus(VoxelCoord([2 * 64 + 1, 64 + 1, 1]));
+    let mut lengths = Vec::new();
+    gpu.sync(&world, &queue).unwrap();
+    lengths.push(update_attrs(&device, &queue, &mut gpu));
+    let mut held = HashMap::new();
+    for round in 0..4 {
+        for &c in &churn {
+            if round % 2 == 0 {
+                held.insert(c, world.store().remove(c).unwrap());
+                world.insert_lod(c, mips[&c].clone());
+            } else {
+                world.remove_lod(c);
+                world
+                    .store()
+                    .write_lock()
+                    .insert(c, held.remove(&c).unwrap());
+            }
+        }
+        gpu.sync(&world, &queue).unwrap();
+        lengths.push(update_attrs(&device, &queue, &mut gpu));
+    }
+    world
+        .apply(&EditOp::sphere(
+            Fixed3([64 * FIXED_ONE, 60 * FIXED_ONE, 30 * FIXED_ONE]),
+            12 * FIXED_ONE,
+            Mode::Carve,
+        ))
+        .unwrap();
+    gpu.sync(&world, &queue).unwrap();
+    lengths.push(update_attrs(&device, &queue, &mut gpu));
+    let gone = ChunkCoord([2, 1, 0]);
+    world.store().remove(gone);
+    gpu.apply_events(&StreamEvents {
+        evicted: vec![gone],
+        ..Default::default()
+    });
+    gpu.sync(&world, &queue).unwrap();
+    lengths.push(update_attrs(&device, &queue, &mut gpu));
+    gpu.set_focus(VoxelCoord([3 * 64 + 1, 64 + 1, 1]));
+    gpu.sync(&world, &queue).unwrap();
+    lengths.push(update_attrs(&device, &queue, &mut gpu));
+    println!("work-list lengths {lengths:?}");
+    assert_eq!(lengths, [1343, 34, 568, 34, 568, 46, 56, 0]);
+}

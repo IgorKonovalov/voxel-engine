@@ -74,11 +74,12 @@ use std::sync::PoisonError;
 
 use vxe_world::packed::Packed;
 use vxe_world::{
-    AIR, BRICK_EDGE, BRICK_VOXELS, Brick, CHUNK_BRICKS, CHUNK_EDGE_BRICKS, ChunkCoord, ChunkExtent,
-    ChunkMips, MIP_LEVELS, MaterialId, MaterialTable, StreamEvents, VoxelCoord, World,
-    brick_of_slot, brick_slot,
+    AIR, BRICK_VOXELS, Brick, CHUNK_BRICKS, CHUNK_EDGE_BRICKS, ChunkCoord, ChunkExtent, ChunkMips,
+    MIP_LEVELS, MaterialId, MaterialTable, StreamEvents, VoxelCoord, World, brick_of_slot,
+    brick_slot,
 };
 
+use crate::attr_work::{self, AttrWorkStats, MirrorView};
 use crate::attrib::{AttribBindings, AttribItem, AttribPass};
 
 /// Pool slots per page: the unit the pool is reserved and handed out in, and the unit
@@ -652,6 +653,10 @@ pub struct GpuWorld {
     attr_bricks: HashSet<[i32; 3]>,
     shell_chunks: HashSet<ChunkCoord>,
     attrib: Option<AttribPass>,
+    /// The work list `prepare_attrs` built and `encode_attrs` records, kept for its capacity,
+    /// and the counters of its build.
+    attr_items: Vec<AttribItem>,
+    attr_stats: AttrWorkStats,
     /// The queue of the last `sync`, which writes the attribute pass's uniform and work list.
     queue: Option<wgpu::Queue>,
     /// Palette index of every material while one chunk is narrowed, else `NO_INDEX`.
@@ -753,6 +758,8 @@ impl GpuWorld {
             attr_bricks: HashSet::new(),
             shell_chunks: HashSet::new(),
             attrib: None,
+            attr_items: Vec::new(),
+            attr_stats: AttrWorkStats::default(),
             queue: None,
             rev: vec![NO_INDEX; 1 << 16],
             translucent: vec![false; 1 << 16],
@@ -1069,7 +1076,37 @@ impl GpuWorld {
         encoder: &mut wgpu::CommandEncoder,
         timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) -> usize {
-        let items = self.attr_work();
+        self.prepare_attrs();
+        self.encode_attrs(encoder, timestamps)
+    }
+
+    /// The first half of [`GpuWorld::update_attrs_timed`]: builds the work list from what
+    /// changed since the last one ([`attr_work::build`]) and clears the change sets. The list
+    /// waits for [`GpuWorld::encode_attrs`]; a second call before it replaces the list.
+    /// Returns the build's counters, also kept for [`GpuWorld::attr_stats`].
+    pub fn prepare_attrs(&mut self) -> AttrWorkStats {
+        let chunks = std::mem::take(&mut self.attr_chunks);
+        let bricks = std::mem::take(&mut self.attr_bricks);
+        let shells = std::mem::take(&mut self.shell_chunks);
+        let mut items = std::mem::take(&mut self.attr_items);
+        items.clear();
+        self.attr_stats = if self.surface_attrs {
+            attr_work::build(&*self, &chunks, &bricks, &shells, &mut items)
+        } else {
+            AttrWorkStats::default()
+        };
+        self.attr_items = items;
+        self.attr_stats
+    }
+
+    /// The second half of [`GpuWorld::update_attrs_timed`]: records the pass over the list
+    /// [`GpuWorld::prepare_attrs`] built, and empties it. Returns the bricks in the list.
+    pub fn encode_attrs(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
+    ) -> usize {
+        let n = self.attr_items.len();
         if let (Some(pass), Some(queue)) = (&mut self.attrib, &self.queue) {
             let e = ChunkExtent::new(
                 self.window_min,
@@ -1082,83 +1119,22 @@ impl GpuWorld {
                 window: (e.min.0, e.size()),
                 slots_per_shard: self.layout.slots_per_shard,
             };
-            pass.encode(&self.device, queue, encoder, &b, &items, timestamps);
+            pass.encode(
+                &self.device,
+                queue,
+                encoder,
+                &b,
+                &self.attr_items,
+                timestamps,
+            );
         }
-        items.len()
+        self.attr_items.clear();
+        n
     }
 
-    /// The attribute pass's work list from what changed since the last one, deduplicated,
-    /// and clears the change sets.
-    fn attr_work(&mut self) -> Vec<AttribItem> {
-        let chunks = std::mem::take(&mut self.attr_chunks);
-        let bricks = std::mem::take(&mut self.attr_bricks);
-        let shells = std::mem::take(&mut self.shell_chunks);
-        let mut items = Vec::new();
-        if !self.surface_attrs {
-            return items;
-        }
-        let e = CHUNK_EDGE_BRICKS;
-        for &c in &chunks {
-            for i in 0..CHUNK_BRICKS {
-                let b = brick_of_slot(i);
-                if let Some(item) = self.attr_item([0, 1, 2].map(|k| c.0[k] * e + b[k])) {
-                    items.push(item);
-                }
-            }
-        }
-        // Bricks outside the chunks taken whole, each once.
-        let mut seen = HashSet::new();
-        let mut visit = |gw: &Self, b: [i32; 3], items: &mut Vec<AttribItem>| {
-            let c = ChunkCoord(b.map(|v| v.div_euclid(e)));
-            if !chunks.contains(&c)
-                && seen.insert(b)
-                && let Some(item) = gw.attr_item(b)
-            {
-                items.push(item);
-            }
-        };
-        for &b in &bricks {
-            for z in -1..=1 {
-                for y in -1..=1 {
-                    for x in -1..=1 {
-                        visit(self, [b[0] + x, b[1] + y, b[2] + z], &mut items);
-                    }
-                }
-            }
-        }
-        // The neighbours' bricks within one brick of each shell chunk's box.
-        for &c in &shells {
-            let lo = c.0.map(|v| v * e - 1);
-            let hi = c.0.map(|v| v * e + e);
-            for z in lo[2]..=hi[2] {
-                for y in lo[1]..=hi[1] {
-                    for x in lo[0]..=hi[0] {
-                        let on_shell = [x, y, z]
-                            .iter()
-                            .enumerate()
-                            .any(|(k, &v)| v == lo[k] || v == hi[k]);
-                        if on_shell {
-                            visit(self, [x, y, z], &mut items);
-                        }
-                    }
-                }
-            }
-        }
-        items
-    }
-
-    /// The work-list entry of world brick `b`, if it is a `Full` brick of a mirrored full
-    /// chunk.
-    fn attr_item(&self, b: [i32; 3]) -> Option<AttribItem> {
-        let e = CHUNK_EDGE_BRICKS;
-        let c = ChunkCoord(b.map(|v| v.div_euclid(e)));
-        let m = self.mirrored.get(&c).filter(|m| !m.lod)?;
-        let local = b.map(|v| v.rem_euclid(e));
-        let entry = self.entries[m.record as usize * RECORD_WORDS + ENTRY_WORD + brick_slot(local)];
-        (entry & FULL_BIT != 0).then(|| AttribItem {
-            slot: entry & SLOT_MASK,
-            origin: b.map(|v| v * BRICK_EDGE),
-        })
+    /// The counters of the last work-list build.
+    pub fn attr_stats(&self) -> AttrWorkStats {
+        self.attr_stats
     }
 
     /// Drops the chunks `events` evicted from the mirror. Loaded chunks need nothing here:
@@ -2216,6 +2192,21 @@ impl GpuWorld {
         };
         self.make_live(s, true, kind);
         Ok(s)
+    }
+}
+
+impl MirrorView for GpuWorld {
+    fn is_full_chunk(&self, c: ChunkCoord) -> bool {
+        self.mirrored.get(&c).is_some_and(|m| !m.lod)
+    }
+
+    fn full_slot(&self, b: [i32; 3]) -> Option<u32> {
+        let e = CHUNK_EDGE_BRICKS;
+        let c = ChunkCoord(b.map(|v| v.div_euclid(e)));
+        let m = self.mirrored.get(&c).filter(|m| !m.lod)?;
+        let local = b.map(|v| v.rem_euclid(e));
+        let entry = self.entries[m.record as usize * RECORD_WORDS + ENTRY_WORD + brick_slot(local)];
+        (entry & FULL_BIT != 0).then_some(entry & SLOT_MASK)
     }
 }
 

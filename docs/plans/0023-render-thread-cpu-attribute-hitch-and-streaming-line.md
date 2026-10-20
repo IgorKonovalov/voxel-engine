@@ -1,6 +1,6 @@
 # 0023: The render thread's mirror CPU: profile a chunk crossing, then cut the attribute hitch and the streaming line with targeted fixes
 
-> **Status:** approved (owner, 2026-10-20; frame bar credited with the attribute pass's GPU time,
+> **Status:** in-progress (dev, 2026-10-20). Approved (owner, 2026-10-20; frame bar credited with the attribute pass's GPU time,
 > option (b)). The dev lane starts once the Plan 0020 or 0022 lane reaches its human phase.
 > **Created:** 2026-10-20
 > **Milestone:** M2 in `docs/roadmap.md` (owed before the lighting plan; it is the
@@ -464,7 +464,7 @@ normals for at most 250 ms". The pass's GPU time stays a recorded figure here. P
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Profile a crossing, and a headless repro | dev | not started | |
+| 1: Profile a crossing, and a headless repro | dev | done: `attr_work::build` over `MirrorView` (implemented by `GpuWorld`); unit tests read 1961 shell chunks, 956 968 shell visits, 0 items, and 797 chunks, 408 064 item calls, 408 064 items; `tests/mirror.rs` 37 of 37 on the fallback adapter, the new case's lengths `[1343, 34, 568, 34, 568, 46, 56, 0]` also read on an export of ae2e088; bench medians (exclusive perf lock, load 5.01): eviction frame 170.89 ms, promotion frame 6.332 ms; flights, profile, verdict and `sync` share in Notes | committed with this row |
 | 2: The shell visits only full neighbours | dev | not started | |
 | 3: Capped attribute pass with carry-over | dev | not started | |
 | 4: Incremental queue, sweep and window shift | dev | not started | |
@@ -477,6 +477,51 @@ normals for at most 250 ms". The pass's GPU time stays a recorded figure here. P
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- **Phase 1 flights (dev box, RTX 3080 laptop, Phase 1 tree on ae2e088, release with
+  line tables, exclusive perf lock).** Not quiet: other lanes were building, start loads 11.51
+  (default) and 5.00 (plain), after a 25 min wait for load under 2 timed out. Both `return:
+  2 chunks, hash match`.
+  - Default, 2270 flight frames. Streaming CPU p50 5.981, p99 51.692, max 83.681 ms; stages
+    (p50 / p99 / max ms) `update` 0.000 / 10.892 / 37.847, `poll` 0.003 / 15.037 / 27.344,
+    `apply_events` 0.000 / 6.724 / 8.945, `sync` 5.877 / 21.967 / 47.579. `update_attrs` p50
+    3.646, p99 119.140, max 380.954 ms; list build 3.521 / 119.139 / 380.913, recording 0.077 /
+    0.689 / 3.046. Counters p50 / p99 / max: shell visits 19 520 / 752 984 / 930 128, dirty
+    visits 0 / 0 / 675, item calls 16 896 / 21 504 / 23 552, lookups 76 816 / 2 116 960 /
+    2 632 770. Work list 4773 / 5745 / 7771. Attribute GPU 2.588 / 4.596 / 6.354 ms. Residency
+    p95 365 ms.
+  - The 85 default frames over 16 ms (17.955 to 380.954 ms): 94 to 1906 shell chunks, 45 872
+    to 930 128 shell visits, at most 40 chunks taken whole, at most 7332 items. The lowest
+    shell share of `visit` plus `attr_item` calls on them is 0.918.
+  - Plain, 2597 flight frames. Streaming CPU p50 7.262, p99 60.402, max 81.806 ms; stages
+    `update` 0.000 / 12.570 / 15.908, `poll` 0.159 / 18.436 / 24.866, `apply_events` 0.000 /
+    6.584 / 10.957, `sync` 6.821 / 23.507 / 51.514. Residency p95 509 ms.
+- **Phase 1 profile.** `perf record -F 999 -g --call-graph dwarf` on a third default flight
+  (start load 11.91, 2046 frames, `update_attrs` p99 148.202 ms, hash match): 607 903
+  samples, 13 chunks lost. The render thread is tid = pid (42 150 samples). Top 15 self
+  symbols, `perf report --no-children -g none --tid <pid> --percentage relative --sort sym`:
+  `attr_work::shell_pass` 24.98 %, `GpuWorld::upload_record` 9.13, `RandomState::hash_one<&ChunkCoord>`
+  5.55, `DefaultHasher::write` 4.74, `Streamer::stats` 4.15, `wgpu_core Queue::write_buffer`
+  3.89, `RawTable<[i32; 3]>::reserve_rehash` 3.57, `Packed::entry_matches` 2.14,
+  `attr_work::whole_pass` 2.04, `flythrough::mips_ram` 1.91, `World::lod` 1.79, `cfree` 1.55,
+  `GpuWorld::enqueue` 1.48, `GpuWorld::sync` 1.15, `Streamer::needs_job` 1.14.
+- **Phase 1 profile, deviation.** Dwarf unwinding gave a call chain for 8039 of the 42 150
+  render-thread samples, so the callers of the out-of-line hash symbols are not attributed.
+  `shell_pass`'s self time was split by source line instead (`--sort srcline`): hashbrown and
+  SipHash lines (`sse2.rs`, `equality.rs`, `map.rs`, `bitmask.rs`, `tag.rs`, `raw.rs`,
+  `sip.rs`) are about 61 % of it, `attr_work.rs` lines about 8 %.
+- **Phase 1 verdict: confirmed.** Shell share at least 0.918 on every default frame over 16 ms;
+  the builder's largest self time is `shell_pass`, 12 times `whole_pass`.
+- **Phase 1, `sync`'s largest share** (whole-flight self time, not a p50 split): narrowing.
+  `upload_record` is 9.13 % of the thread, 56.07 % of it at `gpu_world.rs:1799` and about
+  67 % at lines 1793 to 1801 (the plane-to-index bit loop of the inlined `upload_brick`); the
+  palette scan line 1648 is 3.02 % of it. Then `entry_matches` 2.14 %, `write_buffer` 3.89 %,
+  `enqueue` 1.48, `release_page` 0.23, `stage` 0.22, `flush_stage` 0.18.
+- **Phase 1 deviation.** `AttrWorkStats` counts `item_calls`, `dirty_visits` and
+  `shell_visits` separately (`visits()` sums the last two) in place of one `visits` field.
+  `GpuWorld` gains `prepare_attrs`, `encode_attrs` and `attr_stats`; `update_attrs_timed`
+  calls the first two. Outside Phase 1's file list: `Cargo.lock` (criterion) and
+  `crates/vxe-render/tests/mirror.rs` (the case its done-when names).
 
 ### Close triggers
 

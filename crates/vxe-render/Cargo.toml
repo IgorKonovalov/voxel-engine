@@ -18,3 +18,8 @@ wgpu.workspace = true
 
 [dev-dependencies]
 pollster.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "attr_work"
+harness = false
