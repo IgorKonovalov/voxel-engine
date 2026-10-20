@@ -231,8 +231,8 @@ pub enum EditError { NotResident(ChunkCoord), UnknownPrefab(u64), /* Plan 0019 a
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: Wire kinds 2 to 4 and the prefab table | dev | done | e1b17d3 |
-| 2: The server applies every kind | dev | done | committed with this row |
-| 3: The host and the component | dev | not started | |
+| 2: The server applies every kind | dev | done | 300874f |
+| 3: The host and the component | dev | done | committed with this row |
 | 4: The fly-through through the logic | dev | not started | |
 | 5: Readings | dev | not started | |
 
@@ -262,6 +262,22 @@ pub enum EditError { NotResident(ChunkCoord), UnknownPrefab(u64), /* Plan 0019 a
 - Phase 2: the session test is `crates/vxe-net/tests/kinds.rs` on a 2³-chunk air world with a
   floor and two slabs on pillars; `KINDS_HASH` `0x2077_5c41_d63d_17c5` blessed on Linux x86_64,
   the Windows arm not yet run.
+- Phase 3: `Host::unsupported(&[CellCoord]) -> Vec<Region>` builds the query's changes from
+  the given cells and the server's grid; `Server::set_support(params, anchors)` configures
+  it, starting from `vxe_net::DEFAULT_SUPPORT` (64, 4 096, boundary anchors on). A helper
+  `vxe_net::cells_in(aabb)` lists the cells of a result's aabb for a logic that has only that.
+- Phase 3: the slab world, the session and its hash moved to `vxe_net::test_logic`
+  (`slab_world`, `slab_session`, `SLAB_SESSION_HASH`, the hash `KINDS_HASH` was);
+  `EchoLogic` answers an input starting with `ECHO_QUERY` (0x40) with `ECHO_REGIONS` and the
+  regions. The second pinned hash of the equality test is `SLAB_SESSION_HASH`.
+- Phase 3: the "answer tag 1 with `UnknownPrefab(id)`" done-when is checked through the
+  component's `ECHO_REFUSED` outcome, the client's `Refused { UnknownPrefab(id) }`, no logic
+  error, and an `encode_answer`/`decode_answer` round trip; the raw answer bytes the guest
+  receives are not observed.
+- Phase 3: edits outside the phase's Files touched: `vxe-net` `src/server.rs` and `src/lib.rs`
+  (the host's `unsupported`, `set_support`, exports), `src/test_logic.rs`, `tests/{logic,kinds}.rs`; `vxe-script-wasm` `benches/boundary.rs`,
+  `tests/determinism.rs` (their hosts' `apply(Op)` and an empty `unsupported`);
+  `apps/flythrough/logic/src/lib.rs` (`.into()` on its three `apply` calls).
 
 ### Close triggers
 

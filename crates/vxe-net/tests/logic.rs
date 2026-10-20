@@ -24,11 +24,11 @@ struct Probe(Arc<std::sync::Mutex<Vec<String>>>);
 impl Logic for Probe {
     fn init(&mut self, host: &mut dyn Host, _seed: u64) {
         let mut out = self.0.lock().unwrap();
-        let r = host.apply(EditOp::sphere(
+        let r = host.apply(Op::Edit(EditOp::sphere(
             centre_of_voxel([0, 0, 0]),
             10 * FIXED_ONE,
             Mode::Carve,
-        ));
+        )));
         out.push(format!("{r:?}"));
         out.push(format!("{:?}", host.material_at(VoxelCoord([0, 0, 0]))));
         out.push(format!("{:?}", host.material_at(VoxelCoord([0, 0, 11]))));
@@ -61,6 +61,7 @@ fn host_queries_answer_from_the_server_world() {
         Mode::Carve,
     ));
     assert_eq!(r.as_ref().unwrap().changed_from, [(3, 4169)]);
+    let r = r.map(OpResult::Edit);
     let hit = reference.raycast(centre_of_voxel([0, 0, 0]), [256, 0, 0], 40 * 256);
     assert_eq!(hit.unwrap().voxel, VoxelCoord([11, 0, 0]));
     let want = vec![
@@ -412,11 +413,11 @@ struct InitThenEcho;
 impl Logic for InitThenEcho {
     fn init(&mut self, host: &mut dyn Host, _seed: u64) {
         for x in [-40, 40] {
-            host.apply(EditOp::sphere(
+            host.apply(Op::Edit(EditOp::sphere(
                 centre_of_voxel([x, 0, 0]),
                 METRE,
                 Mode::Carve,
-            ))
+            )))
             .unwrap();
         }
     }

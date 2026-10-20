@@ -25,13 +25,23 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use vxe_world::{
-    CoarseGrid, EditError, EditOp, EditResult, Fixed3, Hit, InputLog, LogEntry, MaterialId, Op,
-    OpLog, OpResult, Prefab, PrefabCollision, PrefabRegistry, VoxelCoord, World,
+    Anchors, CellChange, CellCoord, CoarseGrid, EditError, Fixed3, Hit, InputLog, LogEntry,
+    MaterialId, Op, OpLog, OpResult, Prefab, PrefabCollision, PrefabRegistry, Region,
+    SupportParams, VoxelCoord, World, find_unsupported,
 };
 
 use crate::channel::{Channel, Endpoint};
 use crate::logic::{ClientInput, Host, Logic, LogicError};
 use crate::message::Message;
+
+/// The support parameters a server starts with: a cell is load-bearing at 64 solid voxels
+/// (an eighth of its brick), a flood gives up past 4 096 cells, and the cells on the world
+/// extent's faces are anchors.
+pub const DEFAULT_SUPPORT: SupportParams = SupportParams {
+    solid_min: 64,
+    max_region: 4096,
+    boundary_anchors: true,
+};
 
 /// What one tick did.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -65,6 +75,23 @@ pub struct Server {
     init_error: Option<LogicError>,
     prefabs: PrefabRegistry,
     coarse: CoarseGrid,
+    support: Support,
+}
+
+/// The support query's configuration: its parameters and the explicit anchors, ascending.
+#[derive(Clone, Debug)]
+struct Support {
+    params: SupportParams,
+    anchors: Vec<CellCoord>,
+}
+
+impl Default for Support {
+    fn default() -> Self {
+        Self {
+            params: DEFAULT_SUPPORT,
+            anchors: Vec::new(),
+        }
+    }
 }
 
 impl std::fmt::Debug for Server {
@@ -83,6 +110,7 @@ struct TickHost<'a> {
     world: &'a World,
     prefabs: &'a PrefabRegistry,
     coarse: &'a mut CoarseGrid,
+    support: &'a Support,
     ops: &'a mut OpLog,
     clients: &'a [Endpoint],
     next_seq: &'a AtomicU32,
@@ -126,9 +154,9 @@ impl TickHost<'_> {
 }
 
 impl Host for TickHost<'_> {
-    fn apply(&mut self, op: EditOp) -> Result<EditResult, EditError> {
+    fn apply(&mut self, op: Op) -> Result<OpResult, EditError> {
         let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
-        self.apply_seq(seq, Op::Edit(op)).map(|r| r.edit_result())
+        self.apply_seq(seq, op)
     }
 
     fn material_at(&self, v: VoxelCoord) -> Option<MaterialId> {
@@ -141,6 +169,33 @@ impl Host for TickHost<'_> {
 
     fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
         self.world.count_in_box(lo, hi)
+    }
+
+    fn unsupported(&self, changed: &[CellCoord]) -> Vec<Region> {
+        // The query reads only each change's cell; the grid holds the cells' current state.
+        let changes: Vec<CellChange> = changed
+            .iter()
+            .map(|&c| {
+                let (chunk, slot) = c.split();
+                let now = self.coarse.cell(chunk, slot).unwrap_or_default();
+                CellChange {
+                    chunk,
+                    slot: slot as u16,
+                    before: now,
+                    after: now,
+                }
+            })
+            .collect();
+        let anchors = Anchors {
+            explicit: &self.support.anchors,
+        };
+        find_unsupported(
+            self.world,
+            self.coarse,
+            &self.support.params,
+            &anchors,
+            &changes,
+        )
     }
 }
 
@@ -172,11 +227,13 @@ impl Server {
         let mut ops = OpLog::new();
         let next_seq = AtomicU32::new(0);
         let mut coarse = CoarseGrid::build(&world);
+        let support = Support::default();
         {
             let mut host = TickHost {
                 world: &world,
                 prefabs: &prefabs,
                 coarse: &mut coarse,
+                support: &support,
                 ops: &mut ops,
                 clients: &[],
                 next_seq: &next_seq,
@@ -199,7 +256,18 @@ impl Server {
             init_error,
             prefabs,
             coarse,
+            support,
         }
+    }
+
+    /// Sets what the support query ([`Host::unsupported`]) holds as anchored: `params`, and
+    /// `anchors` on top of the anchors every query knows. Until called, the query runs with
+    /// [`DEFAULT_SUPPORT`] and no explicit anchors.
+    pub fn set_support(&mut self, params: SupportParams, anchors: &[CellCoord]) {
+        let mut anchors = anchors.to_vec();
+        anchors.sort_unstable();
+        anchors.dedup();
+        self.support = Support { params, anchors };
     }
 
     /// Registers `prefab` under its content id for stamp ops (ADR-0014) and returns the id;
@@ -278,6 +346,7 @@ impl Server {
             world: &self.world,
             prefabs: &self.prefabs,
             coarse: &mut self.coarse,
+            support: &self.support,
             ops: &mut self.ops,
             clients: &self.clients,
             next_seq: &self.next_seq,

@@ -23,7 +23,10 @@ use support::guest;
 use vxe_net::test_logic::*;
 use vxe_net::*;
 use vxe_script_wasm::{WasmConfig, WasmLogic};
-use vxe_world::{EditError, EditOp, EditResult, Fixed3, Hit, MaterialId, VoxelCoord, World};
+use vxe_world::{
+    CellCoord, EditError, Fixed3, Hit, MaterialId, Op, OpResult, PrefabRegistry, Region,
+    VoxelCoord, World,
+};
 
 #[allow(
     clippy::disallowed_methods,
@@ -38,8 +41,8 @@ fn now() -> Instant {
 struct WorldHost<'a>(&'a World);
 
 impl Host for WorldHost<'_> {
-    fn apply(&mut self, op: EditOp) -> Result<EditResult, EditError> {
-        self.0.apply(&op)
+    fn apply(&mut self, op: Op) -> Result<OpResult, EditError> {
+        op.apply(self.0, &PrefabRegistry::new())
     }
 
     fn material_at(&self, v: VoxelCoord) -> Option<MaterialId> {
@@ -52,6 +55,11 @@ impl Host for WorldHost<'_> {
 
     fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
         self.0.count_in_box(lo, hi)
+    }
+
+    /// This host keeps no coarse grid; nothing here asks the support query.
+    fn unsupported(&self, _changed: &[CellCoord]) -> Vec<Region> {
+        Vec::new()
     }
 }
 

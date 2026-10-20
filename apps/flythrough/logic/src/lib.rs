@@ -175,7 +175,7 @@ impl Logic for DigLogic {
                         .raycast(origin, Fixed3(dir), REACH)
                         .map_or(REACH, |h| h.t);
                     let end = along(origin, dir, t);
-                    let _ = host.apply(EditOp::capsule(origin, end, radius, Mode::Carve));
+                    let _ = host.apply(EditOp::capsule(origin, end, radius, Mode::Carve).into());
                     lines.push("op carved");
                 }
                 Ok(DigInput::Fill {
@@ -186,14 +186,14 @@ impl Logic for DigLogic {
                 }) => match host.raycast(origin, Fixed3(dir), REACH) {
                     Some(hit) => {
                         let at = along(origin, dir, hit.t);
-                        let _ = host.apply(EditOp::sphere(at, radius, Mode::Fill(material)));
+                        let _ = host.apply(EditOp::sphere(at, radius, Mode::Fill(material)).into());
                         lines.push("op filled");
                     }
                     None => lines.push("filled: no surface within 10 m"),
                 },
                 Ok(DigInput::Bench { origin, seed }) => {
                     for op in bench_ops(origin, seed) {
-                        let _ = host.apply(op);
+                        let _ = host.apply(op.into());
                         lines.push(BENCH_OP_LINE);
                     }
                 }

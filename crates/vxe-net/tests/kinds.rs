@@ -10,86 +10,16 @@ use support::*;
 use vxe_net::*;
 use vxe_world::*;
 
-/// A box op over the half-open voxel bounds `lo..hi`.
-fn box_voxels(lo: [i32; 3], hi: [i32; 3], mode: Mode) -> EditOp {
-    let f = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
-    EditOp::box_(f(lo), f(hi), mode)
-}
-
-const FLOOR: MaterialId = 3;
-const ROCK: MaterialId = 1;
-const SHELL: MaterialId = 2;
-const RUBBLE: MaterialId = 5;
-
-const PILLAR_A: ([i32; 3], [i32; 3]) = ([72, 24, 8], [80, 32, 40]);
-const PILLAR_B: ([i32; 3], [i32; 3]) = ([72, 88, 8], [80, 96, 40]);
-
-/// Air over chunks `[0, 2)³` (voxels `[0, 128)`), a floor 8 voxels deep, and two 3 x 3-cell
-/// slabs of rock 32 voxels above it, each on a one-cell pillar.
-fn slab_world() -> World {
-    let world = World::generate(
-        ChunkExtent::new([0, 0, 0], [2, 2, 2]),
-        &UniformSource(AIR),
-        &test_table(),
-    );
-    for (lo, hi, m) in [
-        ([0, 0, 0], [128, 128, 8], FLOOR),
-        (PILLAR_A.0, PILLAR_A.1, ROCK),
-        ([64, 16, 40], [88, 40, 48], ROCK),
-        (PILLAR_B.0, PILLAR_B.1, ROCK),
-        ([64, 80, 40], [88, 104, 48], ROCK),
-    ] {
-        world.apply(&box_voxels(lo, hi, Mode::Fill(m))).unwrap();
-    }
-    world
-}
-
-/// The 9 cells of a slab whose cells span `x` 8..=10, `y` from `y0` and `z` at `z`.
-fn slab_cells(y0: i32, z: i32) -> Vec<CellCoord> {
-    let mut cells = Vec::new();
-    for y in y0..y0 + 3 {
-        for x in 8..11 {
-            cells.push(CellCoord([x, y, z]));
-        }
-    }
-    cells.sort_unstable();
-    cells
-}
+const ROCK: MaterialId = SLAB_ROCK;
+const RUBBLE: MaterialId = SLAB_RUBBLE;
 
 fn vault() -> Arc<Prefab> {
-    Arc::new(Prefab::vault(16, SHELL))
+    slab_vault()
 }
 
-/// The session: one op a tick, submitted directly.
 fn session(vault_id: u64) -> Vec<Op> {
-    let mut ops = vec![
-        Op::Stamp {
-            prefab: vault_id,
-            origin: VoxelCoord([32, 32, 32]),
-            rot: Rot::IDENTITY,
-        },
-        Op::Edit(box_voxels(PILLAR_A.0, PILLAR_A.1, Mode::Carve)),
-    ];
-    // Each drop of a whole cell moves the slab's cells one cell down.
-    for k in 0..4 {
-        ops.push(Op::Drop {
-            cells: slab_cells(2, 5 - k),
-            max_drop: 8,
-        });
-    }
-    ops.push(Op::Edit(box_voxels(PILLAR_B.0, PILLAR_B.1, Mode::Carve)));
-    ops.push(Op::Remove {
-        cells: slab_cells(10, 5),
-        rubble: RUBBLE,
-        fraction: (1, 4),
-        max_depth: 64,
-    });
-    ops
+    slab_session(vault_id)
 }
-
-/// The world hash after the session, from `slab_world()`. Blessed on Linux x86_64, asserted
-/// on every arm.
-const KINDS_HASH: u64 = 0x2077_5c41_d63d_17c5;
 
 #[test]
 fn every_kind_applies_through_the_server_and_replays() {
@@ -244,7 +174,7 @@ fn every_kind_applies_through_the_server_and_replays() {
     assert_eq!(fresh.voxel_hash(), world.voxel_hash());
 
     println!("kinds hash {:#018x}", world.voxel_hash());
-    assert_eq!(world.voxel_hash(), KINDS_HASH);
+    assert_eq!(world.voxel_hash(), SLAB_SESSION_HASH);
 }
 
 /// A client registry that lacks the stamp's prefab refuses the op on its side: a desync.
