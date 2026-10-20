@@ -1,7 +1,7 @@
 //! The GPU mirror against a closure-source world: what `sync` uploads, what it frees, and
 //! that the buffers hold what the CPU accounting says.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use vxe_render::gpu_world::{
@@ -551,9 +551,22 @@ fn a_following_window_mirrors_the_streamed_residency() {
     assert!(gpu.mirror_bytes() < live_before);
     assert_eq!(gpu.allocated_bytes(), allocated_before);
     assert_eq!(gpu.allocated_bytes(), reserved);
-    // Eviction returns exactly the evicted chunks' slots to the free list.
+    // Eviction returns exactly the evicted chunks' slots: to the free list, or with a page
+    // that emptied, to the free pages.
     let free: HashSet<u32> = gpu.free_slots().iter().copied().collect();
-    assert_eq!(free, evicted_slots);
+    let free_pages: HashSet<u32> = gpu.free_pages().into_iter().collect();
+    let freed: HashSet<u32> = (0..gpu.pool_slots())
+        .filter(|s| free.contains(s) || free_pages.contains(&(s / POOL_PAGE_SLOTS)))
+        .collect();
+    assert!(
+        free.iter()
+            .all(|s| !free_pages.contains(&(s / POOL_PAGE_SLOTS)))
+    );
+    assert!(evicted_slots.is_subset(&freed));
+    assert_eq!(
+        u64::from(gpu.live_slots()) + gpu.spare_slots(),
+        u64::from(gpu.pool_slots())
+    );
 
     gpu.set_focus(focus);
     let st = gpu.sync(&world, &queue).unwrap();
@@ -582,11 +595,17 @@ fn a_following_window_mirrors_the_streamed_residency() {
     }
     assert_eq!(gpu.live_slots(), full_bricks(&world, &resident));
     assert_eq!(live.len() as u32, gpu.live_slots());
-    // Every evicted slot is either reused by a new chunk or still free; none leaked.
+    // No free slot is live, and every slot handed out is live or spare: none leaked.
     let free: HashSet<u32> = gpu.free_slots().iter().copied().collect();
-    for s in &evicted_slots {
-        assert!(live.contains(s) != free.contains(s), "slot {s}");
+    let free_pages: HashSet<u32> = gpu.free_pages().into_iter().collect();
+    for s in &live {
+        assert!(!free.contains(s), "slot {s}");
+        assert!(!free_pages.contains(&(s / POOL_PAGE_SLOTS)), "slot {s}");
     }
+    assert_eq!(
+        u64::from(gpu.live_slots()) + gpu.spare_slots(),
+        u64::from(gpu.pool_slots())
+    );
     // The evicted chunks' table entries are gone: their wrapped indices now hold new chunks
     // or nothing.
     for &c in &ev.evicted {
@@ -1090,12 +1109,19 @@ fn lod_records_decode_to_the_mips_and_demotion_frees_the_full_slots() {
         live.extend(rb.assert_lod(&gpu, &world, c));
     }
     assert_eq!(live.len() as u32, gpu.live_slots());
-    // Each slot the demoted chunk's full record held is free, or reused by a live record.
+    // Each slot the demoted chunk's full record held is free (alone or in a free page), or
+    // reused by a live record; every slot handed out is live or spare.
     let free: HashSet<u32> = gpu.free_slots().iter().copied().collect();
+    let free_pages: HashSet<u32> = gpu.free_pages().into_iter().collect();
+    let is_free = |s: &u32| free.contains(s) || free_pages.contains(&(s / POOL_PAGE_SLOTS));
     for slot in &full_slots {
-        assert!(free.contains(slot) != live.contains(slot), "slot {slot}");
+        assert!(is_free(slot) != live.contains(slot), "slot {slot}");
     }
-    assert!(full_slots.iter().any(|s| free.contains(s)));
+    assert!(full_slots.iter().any(is_free));
+    assert_eq!(
+        u64::from(gpu.live_slots()) + gpu.spare_slots(),
+        u64::from(gpu.pool_slots())
+    );
     let lod_full = world.lod(demoted).unwrap().full_bricks();
     assert!(
         lod_full < full_slots.len(),
@@ -1304,5 +1330,209 @@ fn the_attribute_pass_fills_the_floor_and_reaches_a_carve_s_neighbours() {
     assert_eq!(
         attr_of(&device, &queue, &gpu, [5, 3, 1]),
         attr_of(&device, &queue, &fresh, [5, 3, 1])
+    );
+}
+
+/// The bound on pages ever issued for the peak live brick slots of each kind: per kind, the
+/// pages its peak fills (1364 brick slots an attribute page, 4096 a plain one) and one more.
+fn page_bound(peak_plain: u32, peak_attr: u32) -> u32 {
+    peak_plain.div_ceil(POOL_PAGE_SLOTS) + 1 + peak_attr.div_ceil(ATTR_PAGE_BRICK_SLOTS) + 1
+}
+
+/// Kind churn in a following window: 8 chunks alternate 20 times between full with
+/// attributes and LOD-only, beside 2 chunks that stay full. The pages ever issued stay within
+/// the per-kind bound, the stable chunks' bricks never change slot, and after the churn every
+/// live brick and mip-brick decodes to its CPU voxels and the churned chunks' attributes equal
+/// a fresh mirror's.
+#[test]
+fn kind_churn_reuses_empty_pages_and_moves_no_live_brick() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [5, 2, 1]),
+        &Mixed,
+        &mixed_table(),
+    );
+    let (stable, churn): (Vec<ChunkCoord>, Vec<ChunkCoord>) = world
+        .store()
+        .coords()
+        .into_iter()
+        .partition(|c| c.0[0] == 0);
+    assert_eq!((stable.len(), churn.len()), (2, 8));
+    let mips: HashMap<ChunkCoord, Arc<ChunkMips>> = churn
+        .iter()
+        .map(|&c| {
+            let chunk = world.store().get(c).unwrap();
+            let mips = ChunkMips::build(&chunk.read().unwrap());
+            (c, Arc::new(mips))
+        })
+        .collect();
+    let mut gpu = GpuWorld::with_surface_attrs(&device, small(Window::Follow { side: 7 }));
+    gpu.set_focus(VoxelCoord([2 * 64 + 1, 64 + 1, 1]));
+    gpu.sync(&world, &queue).unwrap();
+    update_attrs(&device, &queue, &mut gpu);
+    let entries = |gpu: &GpuWorld| -> Vec<Option<u32>> {
+        stable
+            .iter()
+            .flat_map(|&c| (0..CHUNK_BRICKS).map(move |i| (c, i)))
+            .map(|(c, i)| gpu.entry(c, i))
+            .collect()
+    };
+    let stable_entries = entries(&gpu);
+    let mut peak = [0u32; 2];
+    let mut held = HashMap::new();
+    for round in 0..20 {
+        let lod = round % 2 == 0;
+        for &c in &churn {
+            if lod {
+                held.insert(c, world.store().remove(c).unwrap());
+                world.insert_lod(c, mips[&c].clone());
+            } else {
+                world.remove_lod(c);
+                world
+                    .store()
+                    .write_lock()
+                    .insert(c, held.remove(&c).unwrap());
+            }
+        }
+        let st = gpu.sync(&world, &queue).unwrap();
+        assert_eq!(st.pending_chunks, 0);
+        update_attrs(&device, &queue, &mut gpu);
+        for &c in &churn {
+            assert_eq!(gpu.is_lod(c), lod, "round {round} {c:?}");
+        }
+        let attr = gpu.live_attr_slots();
+        peak = [peak[0].max(gpu.live_slots() - attr), peak[1].max(attr)];
+        let bound = page_bound(peak[0], peak[1]);
+        assert!(
+            gpu.pages_issued() <= bound,
+            "round {round}: {} pages issued, bound {bound} for peaks {peak:?}",
+            gpu.pages_issued()
+        );
+        assert_eq!(entries(&gpu), stable_entries, "round {round}");
+    }
+    println!(
+        "{} pages issued for peaks {peak:?}, {} free",
+        gpu.pages_issued(),
+        gpu.free_pages().len()
+    );
+
+    let rb = Readback::new(&device, &queue, &gpu);
+    let mut live = HashSet::new();
+    for c in world.store().coords() {
+        for s in rb.assert_chunk(&gpu, &world, c) {
+            assert!(gpu.in_attr_page(s), "{c:?} slot {s}");
+            assert!(live.insert(s), "slot {s} held twice");
+        }
+    }
+    assert_eq!(live.len() as u32, gpu.live_slots());
+    let mut fresh = GpuWorld::with_surface_attrs(&device, small(Window::Follow { side: 7 }));
+    fresh.set_focus(VoxelCoord([2 * 64 + 1, 64 + 1, 1]));
+    fresh.sync(&world, &queue).unwrap();
+    update_attrs(&device, &queue, &mut fresh);
+    let mut compared = 0;
+    for &c in &churn {
+        let base = c.min_voxel().0;
+        for slot in (0..CHUNK_BRICKS).step_by(7) {
+            if gpu.entry(c, slot).is_some_and(|e| e & FULL_BIT != 0) {
+                let b = brick_of_slot(slot);
+                let v = [0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE + 3);
+                assert_eq!(
+                    attr_of(&device, &queue, &gpu, v),
+                    attr_of(&device, &queue, &fresh, v),
+                    "{c:?} voxel {v:?}"
+                );
+                compared += 1;
+            }
+        }
+    }
+    assert!(compared > 20, "{compared} attributes compared");
+}
+
+/// An attribute page whose bricks all leave becomes free and serves plain slots: 8 full
+/// chunks of `Full` bricks fill attribute pages 0 to 3; evicted, the 4 pages are free; mips
+/// at the same coordinates (from `Mixed`, whose mip-bricks are partly `Full`; a checkerboard's
+/// are uniform) then take plain slots from page 0 with no new page, and the full chunks coming
+/// back take pages 1 to 3, then page 0 again once the last chunk's mips leave it.
+#[test]
+fn an_empty_attribute_page_serves_plain_slots() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [4, 2, 1]),
+        &Checker,
+        &numbered_table(2),
+    );
+    let coords = world.store().coords();
+    assert_eq!(coords.len(), 8);
+    let mut gpu = GpuWorld::with_surface_attrs(&device, small(Window::Fixed(world.extent())));
+    gpu.sync(&world, &queue).unwrap();
+    assert_eq!(gpu.live_attr_slots(), 8 * 512);
+    assert_eq!(gpu.pages_issued(), 4);
+    assert!(gpu.free_pages().is_empty());
+
+    let mut held = Vec::new();
+    for &c in &coords {
+        held.push((c, world.store().remove(c).unwrap()));
+    }
+    gpu.apply_events(&StreamEvents {
+        evicted: coords.clone(),
+        ..StreamEvents::default()
+    });
+    gpu.sync(&world, &queue).unwrap();
+    assert_eq!(gpu.live_slots(), 0);
+    assert_eq!(gpu.free_pages(), [0, 1, 2, 3]);
+    assert_eq!(gpu.spare_slots(), 4 * u64::from(POOL_PAGE_SLOTS));
+
+    let mixed = World::generate(world.extent(), &Mixed, &mixed_table());
+    for &c in &coords {
+        let chunk = mixed.store().get(c).unwrap();
+        world.insert_lod(c, Arc::new(ChunkMips::build(&chunk.read().unwrap())));
+    }
+    gpu.sync(&world, &queue).unwrap();
+    let rb = Readback::new(&device, &queue, &gpu);
+    let mut mip_slots = 0;
+    for &c in &coords {
+        for s in rb.assert_lod(&gpu, &world, c) {
+            assert_eq!(s / POOL_PAGE_SLOTS, 0, "{c:?} mip slot {s}");
+            assert!(!gpu.in_attr_page(s));
+            mip_slots += 1;
+        }
+    }
+    assert!(mip_slots > 0);
+    assert_eq!(gpu.live_slots(), mip_slots);
+    assert_eq!(
+        gpu.pages_issued(),
+        4,
+        "no page past the four already issued"
+    );
+    assert_eq!(gpu.free_pages(), [1, 2, 3]);
+
+    for (c, chunk) in held {
+        world.remove_lod(c);
+        world.store().write_lock().insert(c, chunk);
+    }
+    gpu.sync(&world, &queue).unwrap();
+    assert_eq!(gpu.live_attr_slots(), 8 * 512);
+    assert_eq!(gpu.live_slots(), 8 * 512);
+    assert_eq!(
+        gpu.pages_issued(),
+        4,
+        "page 0 changed kind twice, no page was added"
+    );
+    assert!(gpu.free_pages().is_empty());
+    let rb = Readback::new(&device, &queue, &gpu);
+    let mut in_page_0 = 0;
+    for &c in &coords {
+        for s in rb.assert_chunk(&gpu, &world, c) {
+            assert!(gpu.in_attr_page(s), "{c:?} slot {s}");
+            in_page_0 += usize::from(s / POOL_PAGE_SLOTS == 0);
+        }
+    }
+    assert!(
+        in_page_0 > 0,
+        "the last bricks took page 0 back as an attribute page"
     );
 }

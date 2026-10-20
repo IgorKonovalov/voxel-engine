@@ -57,10 +57,17 @@
 //! *plain page* holds mip-bricks as above; an attribute page holds bricks of full chunks in its
 //! slots `0..ATTR_PAGE_BRICK_SLOTS`, and brick slot `i` of the page owns the two slots
 //! `ATTR_PAGE_BRICK_SLOTS + 2i` and the one after, which hold its 512 `u16` attributes
-//! ([`attr_slot`]). Each kind has its own free lists, and a page never changes kind. The CPU
-//! never writes an attribute slot: [`GpuWorld::update_attrs`] fills them on the GPU
-//! (`attrib.wgsl`) for the bricks `sync` wrote and their neighbours. Without attribute pages
-//! every page is plain, and the allocator hands out slots exactly as a single plain kind.
+//! ([`attr_slot`]). Each kind has its own cursor and free lists. The CPU never writes an
+//! attribute slot: [`GpuWorld::update_attrs`] fills them on the GPU (`attrib.wgsl`) for the
+//! bricks `sync` wrote and their neighbours, so a brick placed in a page is always followed by
+//! its attribute. Without attribute pages every page is plain, and the allocator hands out
+//! slots exactly as a single plain kind.
+//!
+//! A page is of one kind while it holds a live slot. Each page counts its live brick slots
+//! (two for a wide brick); a page whose count falls to zero leaves its kind's free lists and
+//! cursor and joins the free pages, and a kind that needs a page takes the lowest free page,
+//! of either former kind, before one never handed out. So plain and attribute slots share one
+//! high-water mark, and no live brick ever moves: a page changes kind only while it is empty.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::PoisonError;
@@ -206,8 +213,9 @@ struct SlotAlloc {
     /// The next never-used slot of the current page, and the end of the page's brick slots.
     next: u32,
     end: u32,
-    /// Slots the cursor has moved past, skipped ones included.
-    issued: u32,
+    /// Brick slots of this kind holding a brick, two for a wide brick.
+    live: u32,
+    /// Free single slots in pages of this kind that still hold a live slot.
     free: Vec<u32>,
     /// First slots of free slot pairs, from wide bricks.
     free_pairs: Vec<u32>,
@@ -215,7 +223,7 @@ struct SlotAlloc {
 
 impl SlotAlloc {
     fn live(&self) -> u32 {
-        self.issued - self.free.len() as u32 - 2 * self.free_pairs.len() as u32
+        self.live
     }
 
     /// Brick slots this kind can hand out without a new page.
@@ -498,8 +506,13 @@ pub struct GpuWorld {
     surface_attrs: bool,
     /// The allocator of each page kind, indexed by `Kind`.
     allocs: [SlotAlloc; 2],
-    /// The kind of every page handed out, and the next page never handed out.
-    page_kind: Vec<Kind>,
+    /// The kind of every page handed out, `None` while it is free, and its live brick slots
+    /// (two for a wide brick).
+    page_kind: Vec<Option<Kind>>,
+    page_live: Vec<u16>,
+    /// Pages handed out whose live slots fell to zero, taken lowest first by either kind.
+    free_pages: BTreeSet<u32>,
+    /// The next page never handed out: the pool's high-water mark in pages.
     next_page: u32,
     /// What changed since the last `update_attrs`: chunks whose every brick needs its
     /// attribute, bricks (world brick coordinates) whose 3 x 3 x 3 neighbourhood does, and
@@ -596,6 +609,8 @@ impl GpuWorld {
             surface_attrs: false,
             allocs: Default::default(),
             page_kind: Vec::new(),
+            page_live: Vec::new(),
+            free_pages: BTreeSet::new(),
             next_page: 0,
             attr_chunks: HashSet::new(),
             attr_bricks: HashSet::new(),
@@ -759,7 +774,26 @@ impl GpuWorld {
 
     /// Whether pool slot `s` lies in an attribute page.
     pub fn in_attr_page(&self, s: u32) -> bool {
-        self.page_kind.get((s / POOL_PAGE_SLOTS) as usize) == Some(&Kind::Attr)
+        self.page_kind.get((s / POOL_PAGE_SLOTS) as usize) == Some(&Some(Kind::Attr))
+    }
+
+    /// Pages ever handed out from the reservation, free ones included: the pool's high-water
+    /// mark in pages.
+    pub fn pages_issued(&self) -> u32 {
+        self.next_page
+    }
+
+    /// Pages handed out whose live slots fell to zero, ascending: free for either kind.
+    pub fn free_pages(&self) -> Vec<u32> {
+        self.free_pages.iter().copied().collect()
+    }
+
+    /// Brick slots the mirror can hand out before it takes a page never handed out: each
+    /// kind's free slots and the rest of its current page, and every slot of the free pages.
+    /// Without attribute pages, `live_slots() + spare_slots() == pool_slots()`.
+    pub fn spare_slots(&self) -> u64 {
+        self.allocs.iter().map(SlotAlloc::available).sum::<u64>()
+            + self.free_pages.len() as u64 * u64::from(POOL_PAGE_SLOTS)
     }
 
     /// Bytes of the masks of the pool slots in use, attribute slots included: `MASK_BYTES` a
@@ -999,24 +1033,40 @@ impl GpuWorld {
             self.shell_chunks.insert(coord);
         }
         // A record's slots are all of one kind.
-        let a = &mut self.allocs[self.kind_for(lod) as usize];
+        let kind = self.kind_for(lod);
         let base = rec as usize * RECORD_WORDS;
         let mut slots = Vec::new();
-        for &e in &self.entries[base + ENTRY_WORD..base + PALETTE_WORD] {
+        let mut pairs = Vec::new();
+        let mut emptied = Vec::new();
+        for i in base + ENTRY_WORD..base + PALETTE_WORD {
+            let e = self.entries[i];
             if e & FULL_BIT == 0 {
                 continue;
             }
-            if e & WIDE_BIT != 0 {
-                a.free_pairs.push(e & SLOT_MASK);
+            let (s, wide) = (e & SLOT_MASK, e & WIDE_BIT != 0);
+            if self.unlive(s, wide) {
+                emptied.push(s / POOL_PAGE_SLOTS);
+            }
+            if wide {
+                pairs.push(s);
             } else {
-                slots.push(e & SLOT_MASK);
+                slots.push(s);
             }
         }
         self.entries[base..base + RECORD_WORDS].fill(0);
-        // Pushed highest first, so the next allocations pop them in ascending order and the
-        // chunk that reuses them is written in long runs.
+        for p in emptied {
+            self.release_page(p);
+        }
+        // Slots of a released page are not listed. The rest are pushed highest first, so the
+        // next allocations pop them in ascending order and the chunk that reuses them is
+        // written in long runs.
+        let held = |gw: &Self, s: &u32| gw.page_kind[(s / POOL_PAGE_SLOTS) as usize].is_some();
+        slots.retain(|s| held(self, s));
+        pairs.retain(|s| held(self, s));
         slots.sort_unstable_by(|a, b| b.cmp(a));
+        let a = &mut self.allocs[kind as usize];
         a.free.extend(slots);
+        a.free_pairs.extend(pairs);
         self.free_records.push(rec);
         if self.in_window(coord) {
             let i = self.table_index(coord);
@@ -1155,22 +1205,27 @@ impl GpuWorld {
     }
 
     /// For `new` more brick slots of each kind, the slots the pool must span once they are
-    /// placed, checked against the reservation before uploading. Without attribute pages,
-    /// the next never-used slot plus the new ones the free list cannot take; with them, the
-    /// pages handed out plus the new pages each kind needs past its free slots and its current
-    /// page.
+    /// placed, checked against the reservation before uploading: the pages handed out, plus
+    /// what the free pages cannot take of what each kind needs past its free slots and its
+    /// current page. Without attribute pages the overflow counts in slots, since it continues
+    /// the cursor's page; with them, in whole pages per kind.
     fn pool_need(&self, new: [u64; 2]) -> u64 {
+        let page = u64::from(POOL_PAGE_SLOTS);
+        let high = u64::from(self.next_page) * page;
+        let free_pages = self.free_pages.len() as u64;
         if !self.surface_attrs {
             let a = &self.allocs[Kind::Plain as usize];
-            return u64::from(a.next) + new[0].saturating_sub(a.free.len() as u64);
+            return high + new[0].saturating_sub(a.available() + free_pages * page);
         }
-        let mut pages = u64::from(self.next_page);
-        for kind in [Kind::Plain, Kind::Attr] {
-            let a = &self.allocs[kind as usize];
-            let extra = new[kind as usize].saturating_sub(a.available());
-            pages += extra.div_ceil(u64::from(kind.brick_slots()));
-        }
-        pages * u64::from(POOL_PAGE_SLOTS)
+        let pages: u64 = [Kind::Plain, Kind::Attr]
+            .iter()
+            .map(|&kind| {
+                let extra =
+                    new[kind as usize].saturating_sub(self.allocs[kind as usize].available());
+                extra.div_ceil(u64::from(kind.brick_slots()))
+            })
+            .sum();
+        high + pages.saturating_sub(free_pages) * page
     }
 
     /// Walks the pending set nearest first and picks chunks into `self.selected` until the
@@ -1491,15 +1546,54 @@ impl GpuWorld {
         Ok(())
     }
 
-    /// Returns a slot, or a wide brick's slot pair, to the free list of its page's kind.
+    /// Returns a slot, or a wide brick's slot pair, to the free list of its page's kind, or
+    /// releases the page when it held the page's last live slot.
     fn free_slot(&mut self, (s, wide): (u32, bool)) {
-        let kind = self.page_kind[(s / POOL_PAGE_SLOTS) as usize];
+        let p = s / POOL_PAGE_SLOTS;
+        let kind = self.page_kind[p as usize].expect("a live slot's page has a kind");
+        if self.unlive(s, wide) {
+            self.release_page(p);
+            return;
+        }
         let a = &mut self.allocs[kind as usize];
         if wide {
             a.free_pairs.push(s);
         } else {
             a.free.push(s);
         }
+    }
+
+    /// Takes slot `s` (two slots from `s` when `wide`) off its page's and its kind's live
+    /// counts; true when the page holds no live slot after it.
+    fn unlive(&mut self, s: u32, wide: bool) -> bool {
+        let p = (s / POOL_PAGE_SLOTS) as usize;
+        let kind = self.page_kind[p].expect("a live slot's page has a kind");
+        let n = if wide { 2 } else { 1 };
+        self.page_live[p] -= n;
+        self.allocs[kind as usize].live -= u32::from(n);
+        self.page_live[p] == 0
+    }
+
+    /// Adds slot `s` (two from `s` when `wide`) to its page's and its kind's live counts.
+    fn make_live(&mut self, s: u32, wide: bool, kind: Kind) {
+        let n = if wide { 2 } else { 1 };
+        self.page_live[(s / POOL_PAGE_SLOTS) as usize] += n;
+        self.allocs[kind as usize].live += u32::from(n);
+    }
+
+    /// Frees page `p`, which holds no live slot: its slots leave its kind's free lists, the
+    /// kind's cursor leaves it, and it joins the free pages.
+    fn release_page(&mut self, p: u32) {
+        let kind = self.page_kind[p as usize]
+            .take()
+            .expect("a page released once");
+        let a = &mut self.allocs[kind as usize];
+        a.free.retain(|&s| s / POOL_PAGE_SLOTS != p);
+        a.free_pairs.retain(|&s| s / POOL_PAGE_SLOTS != p);
+        if a.next < a.end && (a.end - 1) / POOL_PAGE_SLOTS == p {
+            a.next = a.end;
+        }
+        self.free_pages.insert(p);
     }
 
     /// Appends slot `s` to the staged run, first writing the run out if `s` does not extend it
@@ -1709,25 +1803,33 @@ impl GpuWorld {
         Ok(self.next_record - 1)
     }
 
-    /// Moves `kind`'s cursor onto the next page never handed out, or fails with
-    /// `PoolTooLarge` when that page lies past the reservation. A page right after the
-    /// current one continues it; otherwise the current page's unused brick slots go to the
-    /// free list.
+    /// Moves `kind`'s cursor onto a page: the lowest free page, of either former kind, else
+    /// the next page never handed out, failing with `PoolTooLarge` when that one lies past
+    /// the reservation. A page right after the cursor's end continues it; otherwise the
+    /// current page's unused brick slots go to the free list.
     fn take_page(&mut self, kind: Kind) -> Result<(), MirrorError> {
-        let p = self.next_page * POOL_PAGE_SLOTS;
-        let limit = u64::from(self.layout.reserved_slots);
-        if u64::from(p) + u64::from(POOL_PAGE_SLOTS) > limit {
-            return Err(MirrorError::PoolTooLarge {
-                needed: (u64::from(p) + u64::from(POOL_PAGE_SLOTS)) * SLOT_BYTES,
-                limit: limit * SLOT_BYTES,
-            });
-        }
-        self.next_page += 1;
-        self.page_kind.push(kind);
+        let page = match self.free_pages.pop_first() {
+            Some(page) => page,
+            None => {
+                let end = u64::from(self.next_page + 1) * u64::from(POOL_PAGE_SLOTS);
+                let limit = u64::from(self.layout.reserved_slots);
+                if end > limit {
+                    return Err(MirrorError::PoolTooLarge {
+                        needed: end * SLOT_BYTES,
+                        limit: limit * SLOT_BYTES,
+                    });
+                }
+                self.page_kind.push(None);
+                self.page_live.push(0);
+                self.next_page += 1;
+                self.next_page - 1
+            }
+        };
+        self.page_kind[page as usize] = Some(kind);
+        let p = page * POOL_PAGE_SLOTS;
         let a = &mut self.allocs[kind as usize];
         if p != a.end {
             a.free.extend((a.next..a.end).rev());
-            a.issued += a.end - a.next;
             a.next = p;
         }
         a.end = p + kind.brick_slots();
@@ -1735,40 +1837,45 @@ impl GpuWorld {
     }
 
     fn alloc(&mut self, kind: Kind) -> Result<u32, MirrorError> {
-        if let Some(s) = self.allocs[kind as usize].free.pop() {
-            return Ok(s);
-        }
-        if self.allocs[kind as usize].next >= self.allocs[kind as usize].end {
-            self.take_page(kind)?;
-        }
-        let a = &mut self.allocs[kind as usize];
-        let s = a.next;
-        a.next += 1;
-        a.issued += 1;
+        let s = match self.allocs[kind as usize].free.pop() {
+            Some(s) => s,
+            None => {
+                if self.allocs[kind as usize].next >= self.allocs[kind as usize].end {
+                    self.take_page(kind)?;
+                }
+                let a = &mut self.allocs[kind as usize];
+                a.next += 1;
+                a.next - 1
+            }
+        };
+        self.make_live(s, false, kind);
         Ok(s)
     }
 
     /// Two adjacent slots starting on an even slot, for a wide brick. An odd next slot is
     /// skipped onto the single free list.
     fn alloc_pair(&mut self, kind: Kind) -> Result<u32, MirrorError> {
-        if let Some(s) = self.allocs[kind as usize].free_pairs.pop() {
-            return Ok(s);
-        }
-        let a = &self.allocs[kind as usize];
-        // Pages and their brick-slot counts are even, so a pair never straddles a page end
-        // unless the next page continues this one.
-        if a.next + a.next % 2 + 2 > a.end {
-            self.take_page(kind)?;
-        }
-        let a = &mut self.allocs[kind as usize];
-        let next = a.next;
-        let start = next + next % 2;
-        if start != next {
-            a.free.push(next);
-        }
-        a.issued += start + 2 - next;
-        a.next = start + 2;
-        Ok(start)
+        let s = match self.allocs[kind as usize].free_pairs.pop() {
+            Some(s) => s,
+            None => {
+                let a = &self.allocs[kind as usize];
+                // Pages and their brick-slot counts are even, so a pair never straddles a
+                // page end unless the next page continues this one.
+                if a.next + a.next % 2 + 2 > a.end {
+                    self.take_page(kind)?;
+                }
+                let a = &mut self.allocs[kind as usize];
+                let next = a.next;
+                let start = next + next % 2;
+                if start != next {
+                    a.free.push(next);
+                }
+                a.next = start + 2;
+                start
+            }
+        };
+        self.make_live(s, true, kind);
+        Ok(s)
     }
 }
 
