@@ -344,6 +344,16 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   a median of 26.9 and 29.3 µs over 50 restarts each (min 24.5, max 109.0 µs): a one-off
   release-build timing loop, not a committed bench, AMD Ryzen 9 5900HS, Linux, not quiet
   (load average 7.4 to 9.4), at 1d1b3aa plus Phase 2's working tree.
+- **Parameter range (Plan 0019):** every edit, ray, box query and region op is checked
+  against the world's `WorldLimits` before any arithmetic and refused with
+  `EditError::OutOfRange` outside it, changing nothing. Defaults: coordinates and radii within
+  `±2^30` fixed units (±4 M voxels); a capsule's `b - a` within `2^30` per axis (the bound
+  that keeps its `i128` products exact); an edit's voxel bounds at most 1 024 per axis (at
+  most 4 913 chunk coordinates walked); a ray's reach `|dir[k]| x max_t / 256` at most `2^22`
+  fixed units per axis (at most 258 cell steps along an axis through empty chunks, 772 on a
+  diagonal); a box query at most 1 024 voxels per axis and `2^30` voxels; a drop or removal
+  at most 4 096 cells. A world built `with_limits` takes its own; a server and an owned client
+  hold the same limits or refuse different ops.
 - **Determinism:** the same op list on the same seed yields bit-identical voxels and results on
   Linux and Windows. CI asserts a fixed vector's hash on both arms. **Asserted:**
   `determinism_vector` passed on the Linux and Windows CI arms at 9565c5a and 1d61aba

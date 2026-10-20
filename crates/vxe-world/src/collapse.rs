@@ -431,7 +431,11 @@ impl World {
     /// piece's voxels lie in its cells shifted down by `dropped / BRICK_EDGE`; after any other
     /// drop they straddle two cell layers, and the caller re-derives the cells (for example from
     /// a [`crate::CoarseGrid`] updated with [`DropResult::edit_result`]).
+    ///
+    /// Refused with `OutOfRange { what: RegionCells }`, changing nothing, when `cells` holds
+    /// more than the world's `region_cells_max`.
     pub fn drop_region(&self, cells: &[CellCoord], max_drop: i32) -> Result<DropResult, EditError> {
+        self.limits().check_region(cells.len())?;
         let map = read(&self.store.chunks);
         let snap = Snapshot::take(&map, cells)?;
         let columns = snap.columns();
@@ -547,7 +551,8 @@ impl World {
     /// are written upward from it, fewer where the air above it (after the carve) runs out. A
     /// column with no solid voxel within `max_depth` loses its `h`; the remainder still
     /// carries. Fails with `NotResident`, changing nothing, when a cell's chunk, or a
-    /// voxel a scan reaches, is not resident.
+    /// voxel a scan reaches, is not resident, and with `OutOfRange { what: RegionCells }`
+    /// when `cells` holds more than the world's `region_cells_max`.
     pub fn remove_region(
         &self,
         cells: &[CellCoord],
@@ -555,6 +560,7 @@ impl World {
         fraction: (u32, u32),
         max_depth: i32,
     ) -> Result<RemoveResult, EditError> {
+        self.limits().check_region(cells.len())?;
         let map = read(&self.store.chunks);
         let snap = Snapshot::take(&map, cells)?;
         let columns = snap.columns();

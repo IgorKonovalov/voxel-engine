@@ -13,7 +13,7 @@ use crate::coords::{
     BRICK_EDGE, BRICK_VOXELS, CHUNK_EDGE, CHUNK_EDGE_BRICKS, ChunkCoord, VoxelCoord, brick_slot,
 };
 use crate::fixed::{Fixed3, centre};
-use crate::limits::{Field, WorldLimits};
+use crate::limits::Field;
 use crate::material::{AIR, MaterialFlags, MaterialId, MaterialTable};
 use crate::raycast::point_at;
 use crate::shape::{Coverage, Shape, sphere_row_spans};
@@ -54,7 +54,8 @@ pub enum EditError {
     /// A stamp names a prefab id that is not registered where it is applied (ADR-0014).
     /// Nothing was changed.
     UnknownPrefab(u64),
-    /// A shape, ray or box query parameter lies outside the world's [`WorldLimits`].
+    /// A shape, ray, box query or region parameter lies outside the world's
+    /// [`WorldLimits`](crate::WorldLimits).
     /// Nothing was changed.
     OutOfRange { what: Field },
 }
@@ -311,7 +312,8 @@ fn centres(lo: [i64; 3], hi: [i64; 3]) -> ([i64; 3], [i64; 3]) {
 }
 
 /// A voxel or chunk coordinate of a checked shape as `i32`. Within the limits every such
-/// coordinate fits (`±2^30` fixed units is `±2^22` voxels), so the clamp never moves one.
+/// coordinate fits (`±2^30` fixed units plus a radius of as much is `±2^23` voxels), so the
+/// clamp never moves one.
 fn to_i32(v: [i64; 3]) -> [i32; 3] {
     v.map(|c| {
         debug_assert!(i32::try_from(c).is_ok(), "coordinate {c} beyond i32");
@@ -321,10 +323,11 @@ fn to_i32(v: [i64; 3]) -> [i32; 3] {
 
 impl World {
     /// Applies `op` and reports what changed. Fails, changing nothing, when a parameter of the
-    /// shape lies outside the [`WorldLimits`] ([`EditError::OutOfRange`]) or the shape reaches
-    /// a chunk that is not resident.
+    /// shape lies outside the world's [`WorldLimits`](crate::WorldLimits)
+    /// ([`EditError::OutOfRange`]: coordinates, radius, capsule length, or voxel bounds wider
+    /// than `edit_axis_max`) or the shape reaches a chunk that is not resident.
     pub fn apply(&self, op: &EditOp) -> Result<EditResult, EditError> {
-        op.shape.check(&WorldLimits::DEFAULT)?;
+        op.shape.check(&self.limits())?;
         let Some((lo, hi)) = op.shape.voxel_bounds() else {
             return Ok(EditResult::default());
         };

@@ -674,7 +674,42 @@ fn an_out_of_range_radius_is_refused_and_changes_nothing() {
         )),
         Err(EditError::OutOfRange { what: Field::Coord })
     );
+    // In range, but its voxel bounds span 2^23 + 1 voxels per axis.
+    assert_eq!(
+        world.apply(&EditOp::sphere(Fixed3([0; 3]), 1 << 30, Mode::Carve)),
+        Err(EditError::OutOfRange {
+            what: Field::EditExtent
+        })
+    );
     assert_eq!(world_hash(&world), before);
+}
+
+/// An edit spanning `edit_axis_max` (1 024) voxels on an axis passes the check and reaches
+/// the residency walk; one voxel more is refused before it.
+#[test]
+fn the_edit_extent_is_checked_before_the_residency_walk() {
+    let world = World::new(&test_table());
+    let box_ = |x: i64| {
+        EditOp::box_(
+            Fixed3([0; 3]),
+            Fixed3([x, 1024 * 256, 1024 * 256]),
+            Mode::Carve,
+        )
+    };
+    assert!(
+        matches!(
+            world.apply(&box_(1024 * 256)),
+            Err(EditError::NotResident(_))
+        ),
+        "{:?}",
+        world.apply(&box_(1024 * 256))
+    );
+    assert_eq!(
+        world.apply(&box_(1025 * 256)),
+        Err(EditError::OutOfRange {
+            what: Field::EditExtent
+        })
+    );
 }
 
 /// A reversed box within range is not refused: it holds no centre and changes nothing.

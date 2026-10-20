@@ -312,12 +312,25 @@ fn every_tag_round_trips() {
     }
     assert_eq!(ERROR_OUT_OF_RANGE, 2);
     assert_eq!(
+        Field::ALL,
+        [
+            Field::Coord,
+            Field::Radius,
+            Field::CapsuleLength,
+            Field::EditExtent,
+            Field::RayLength,
+            Field::QueryAxis,
+            Field::QueryVolume,
+            Field::RegionCells,
+        ]
+    );
+    assert_eq!(
         decode_error(&mut Reader::new(&[2, 0])),
         Err(WireError::UnknownKind(0))
     );
     assert_eq!(
-        decode_error(&mut Reader::new(&[2, 7])),
-        Err(WireError::UnknownKind(7))
+        decode_error(&mut Reader::new(&[2, 9])),
+        Err(WireError::UnknownKind(9))
     );
     assert_eq!(
         decode_error(&mut Reader::new(&[4, 0, 0, 0, 0])),

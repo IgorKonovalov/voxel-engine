@@ -1181,6 +1181,8 @@ impl Run {
             let t = self
                 .world
                 .raycast(origin, dir, REACH)
+                .ok()
+                .flatten()
                 .map_or(REACH, |h| h.t);
             audio.dig_point = Some(
                 [0, 1, 2].map(|k| (origin.0[k] + dir[k] * t / FIXED_ONE) as f32 / FIXED_ONE as f32),
@@ -2923,11 +2925,11 @@ mod tests {
         assert_eq!(r.changed_from, vec![(ROCK, 4096)]);
         assert_eq!(r.touched, vec![ChunkCoord([0, 0, 0])]);
         assert_eq!(
-            world.count_in_box([8, 0, 0], [23, 15, 15]),
+            world.count_in_box([8, 0, 0], [23, 15, 15]).unwrap(),
             vec![(0, 2744), (SHELL, 1352)]
         );
         assert_eq!(
-            world.count_in_box([8, 0, 0], [24, 16, 16]),
+            world.count_in_box([8, 0, 0], [24, 16, 16]).unwrap(),
             vec![(0, 2744), (ROCK, 817), (SHELL, 1352)]
         );
         assert_eq!(
@@ -2941,7 +2943,7 @@ mod tests {
         // From inside rock at x = 51 the ray hits that voxel, and a vault there would reach
         // x = 66, past the resident x <= 63: refused, nothing written.
         let past = Fixed3([51 * FIXED_ONE + FIXED_ONE / 2, FIXED_ONE / 2, FIXED_ONE / 2]);
-        let before = world.count_in_box([-64; 3], [63; 3]);
+        let before = world.count_in_box([-64; 3], [63; 3]).unwrap();
         let (lines, events) = net_tick(&mut net, &[stamp(past)]);
         assert_eq!(lines, ["op stamped"]);
         assert!(
@@ -2952,7 +2954,7 @@ mod tests {
             )),
             "{events:?}"
         );
-        assert_eq!(world.count_in_box([-64; 3], [63; 3]), before);
+        assert_eq!(world.count_in_box([-64; 3], [63; 3]).unwrap(), before);
 
         let outside = Fixed3([200 * FIXED_ONE, 0, 0]);
         let (lines, _) = net_tick(&mut net, &[stamp(outside)]);
@@ -3032,7 +3034,7 @@ mod tests {
         );
         assert_eq!(net.server.ops().len(), 4);
         assert_eq!(
-            world.count_in_box([24, 24, 22], [47, 47, 29]),
+            world.count_in_box([24, 24, 22], [47, 47, 29]).unwrap(),
             [(ROCK, 4608)]
         );
         assert_eq!(*net.server.coarse(), CoarseGrid::build(&world));
@@ -3060,6 +3062,7 @@ mod tests {
         assert_eq!(
             world
                 .count_in_box([0, 0, 0], [63, 63, 63])
+                .unwrap()
                 .into_iter()
                 .find(|&(m, _)| m == flythrough::RUBBLE),
             Some((flythrough::RUBBLE, 1256))

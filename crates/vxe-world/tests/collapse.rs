@@ -509,7 +509,10 @@ fn removing_the_slab_piles_a_quarter_of_it_as_rubble_on_the_floor() {
         Some((VoxelCoord([24, 24, 8]), VoxelCoord([47, 47, 47])))
     );
     // `count_in_box` takes inclusive bounds: the half-open box [24, 24, 8]..[48, 48, 10].
-    assert_eq!(world.count_in_box([24, 24, 8], [47, 47, 9]), [(7, 1152)]);
+    assert_eq!(
+        world.count_in_box([24, 24, 8], [47, 47, 9]).unwrap(),
+        [(7, 1152)]
+    );
     assert_eq!(
         world.voxel_hash(),
         direct(&[(FLOOR.0, FLOOR.1, 3), ([24, 24, 8], [48, 48, 10], 7)])
@@ -742,4 +745,42 @@ fn the_collapse_course_hashes_to_its_pinned_constant() {
 
     // Blessed on the dev box (Linux); asserted on the Windows CI arm as well.
     assert_eq!(h.0, 0x3178_0a15_61c1_3041, "course hash {:#018x}", h.0);
+}
+
+/// `n` distinct cells: the slab's cells first, then cells counting up along x past them.
+fn many_cells(n: usize) -> Vec<CellCoord> {
+    (0..n)
+        .map(|i| {
+            let i = i as i32;
+            CellCoord([i % 16, (i / 16) % 16, i / 256])
+        })
+        .collect()
+}
+
+/// A drop or a removal naming more than `region_cells_max` (4 096) cells is refused before
+/// any scan and changes nothing; 4 096 cells pass the check (and here fail on residency, the
+/// cells reaching past the fixture's one chunk).
+#[test]
+fn region_ops_over_the_cell_cap_are_refused() {
+    let world = fixture();
+    assert_eq!(world.limits().region_cells_max, 4096);
+    let before = world.voxel_hash();
+    let refused = Err(EditError::OutOfRange {
+        what: Field::RegionCells,
+    });
+    assert_eq!(world.drop_region(&many_cells(4097), 8), refused);
+    assert_eq!(
+        world.remove_region(&many_cells(4097), 5, (1, 4), 16),
+        refused.map(|_: DropResult| RemoveResult::default())
+    );
+    assert_eq!(world.voxel_hash(), before);
+    assert!(matches!(
+        world.drop_region(&many_cells(4096), 8),
+        Err(EditError::NotResident(_))
+    ));
+    assert!(matches!(
+        world.remove_region(&many_cells(4096), 5, (1, 4), 16),
+        Err(EditError::NotResident(_))
+    ));
+    assert_eq!(world.voxel_hash(), before);
 }

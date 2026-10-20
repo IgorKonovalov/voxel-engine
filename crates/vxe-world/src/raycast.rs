@@ -14,6 +14,7 @@
 //! reports the runs of equal material the ray crosses.
 
 use crate::coords::{BRICK_EDGE, CHUNK_EDGE, VoxelCoord};
+use crate::edit::EditError;
 use crate::fixed::{FIXED_ONE, Fixed3};
 use crate::material::{AIR, MaterialId};
 use crate::store::{World, read};
@@ -79,8 +80,16 @@ enum Cell {
 
 impl World {
     /// The first non-air voxel the ray `origin + dir * t / 256`, `0 <= t <= max_t`, enters.
-    pub fn raycast(&self, origin: Fixed3, dir: [i64; 3], max_t: i64) -> Option<Hit> {
-        self.raycast_exact(origin, dir, max_t).map(|h| h.hit)
+    /// Refused with [`EditError::OutOfRange`] when the origin or the ray's reach lies outside
+    /// the world's [`WorldLimits`](crate::WorldLimits) (`Coord`, `RayLength`).
+    pub fn raycast(
+        &self,
+        origin: Fixed3,
+        dir: [i64; 3],
+        max_t: i64,
+    ) -> Result<Option<Hit>, EditError> {
+        self.limits().check_ray(origin, dir, max_t)?;
+        Ok(self.raycast_exact(origin, dir, max_t).map(|h| h.hit))
     }
 
     pub(crate) fn raycast_exact(

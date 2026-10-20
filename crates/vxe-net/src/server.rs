@@ -163,12 +163,14 @@ impl Host for TickHost<'_> {
         self.world.material_at(v)
     }
 
+    /// A ray the world refuses as out of range reads as no hit.
     fn raycast(&self, origin: Fixed3, dir: Fixed3, max: i64) -> Option<Hit> {
-        self.world.raycast(origin, dir.0, max)
+        self.world.raycast(origin, dir.0, max).ok().flatten()
     }
 
+    /// A box the world refuses as out of range reads as an empty count.
     fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
-        self.world.count_in_box(lo, hi)
+        self.world.count_in_box(lo, hi).unwrap_or_default()
     }
 
     fn unsupported(&self, changed: &[CellCoord]) -> Vec<Region> {
@@ -474,8 +476,9 @@ mod tests {
     use super::*;
     use crate::channel::MemChannel;
     use crate::client::{Client, Event};
+    use crate::logic::TickOutput;
     use crate::test_logic::{EchoLogic, seeded_carves, solid3_world};
-    use vxe_world::{EditOp, Field, Mode};
+    use vxe_world::{EditOp, Field, Mode, centre_of_voxel};
 
     /// A sphere whose radius is past the world's limits.
     fn out_of_range() -> Op {
@@ -552,5 +555,77 @@ mod tests {
         );
         assert_eq!(rebuilt.entries(), server.ops().entries());
         assert_eq!(world.voxel_hash(), server.world().voxel_hash());
+    }
+
+    /// Asks the host, at tick 0, for a ray and a box the world refuses, and records the
+    /// answers.
+    struct AskOutOfRange(Arc<Mutex<Option<Answers>>>);
+
+    /// The ray's and the count's answers.
+    type Answers = (Option<Hit>, Vec<(MaterialId, u64)>);
+
+    impl Logic for AskOutOfRange {
+        fn init(&mut self, _: &mut dyn Host, _: u64) {}
+        fn tick(&mut self, host: &mut dyn Host, _: u64, _: &[ClientInput]) -> TickOutput {
+            let o = centre_of_voxel([0, 0, 0]);
+            let ray = host.raycast(o, Fixed3([256, 0, 0]), (1 << 22) + 1);
+            let count = host.count_in_box(VoxelCoord([0; 3]), VoxelCoord([1024, 0, 0]));
+            *self.0.lock().unwrap() = Some((ray, count));
+            TickOutput::default()
+        }
+    }
+
+    /// Through the server's `Host` a refused ray reads as no hit and a refused box as an
+    /// empty count, though the same in-range ray meets rock at once.
+    #[test]
+    fn refused_queries_read_as_no_hit_and_an_empty_count() {
+        let world = Arc::new(solid3_world());
+        let o = centre_of_voxel([0, 0, 0]);
+        assert!(world.raycast(o, [256, 0, 0], 1 << 22).unwrap().is_some());
+        assert!(world.raycast(o, [256, 0, 0], (1 << 22) + 1).is_err());
+        let seen = Arc::new(Mutex::new(None));
+        let mut server = Server::new(world, Box::new(AskOutOfRange(seen.clone())), 0);
+        server.tick();
+        assert_eq!(*seen.lock().unwrap(), Some((None, Vec::new())));
+    }
+
+    /// A drop and a removal of 4 097 cells are refused on the server, announced as refused,
+    /// and an owned client stays in step.
+    #[test]
+    fn region_ops_over_the_cell_cap_are_refused_on_the_server_and_an_owned_client() {
+        let cells: Vec<CellCoord> = (0..4097)
+            .map(|i| CellCoord([i % 16 - 8, (i / 16) % 16 - 8, i / 256 - 8]))
+            .collect();
+        let mut server = Server::new(Arc::new(solid3_world()), Box::new(EchoLogic), 0);
+        let (near, far) = MemChannel::pair();
+        server.attach(far);
+        let mut client = Client::owned(solid3_world(), near);
+        server.submit(Op::Drop {
+            cells: cells.clone(),
+            max_drop: 8,
+        });
+        server.submit(Op::Remove {
+            cells,
+            rubble: 3,
+            fraction: (1, 4),
+            max_depth: 16,
+        });
+        let report = server.tick();
+        assert_eq!((report.applied, report.refused), (0, 2), "{report:?}");
+        let events = client.poll();
+        let refused: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Refused { error, .. } => Some(*error),
+                _ => None,
+            })
+            .collect();
+        let cap = EditError::OutOfRange {
+            what: Field::RegionCells,
+        };
+        assert_eq!(refused, [cap, cap]);
+        assert!(!client.desynced(), "{events:?}");
+        assert_eq!(client.world().voxel_hash(), server.world().voxel_hash());
+        assert_eq!(server.world().voxel_hash(), solid3_world().voxel_hash());
     }
 }

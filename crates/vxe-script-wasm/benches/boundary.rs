@@ -50,11 +50,11 @@ impl Host for WorldHost<'_> {
     }
 
     fn raycast(&self, origin: Fixed3, dir: Fixed3, max: i64) -> Option<Hit> {
-        self.0.raycast(origin, dir.0, max)
+        self.0.raycast(origin, dir.0, max).ok().flatten()
     }
 
     fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
-        self.0.count_in_box(lo, hi)
+        self.0.count_in_box(lo, hi).unwrap_or_default()
     }
 
     /// This host keeps no coarse grid; nothing here asks the support query.

@@ -332,41 +332,23 @@ pub struct WorkRates { pub per_voxel: u64, pub per_step: u64, pub per_call: u64 
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `WorldLimits` and `OutOfRange` | dev | partial: stopped on a plan question (resume notes below) | committed with this row |
+| 1: `WorldLimits` and `OutOfRange` | dev | done | 891b9fc (before the amendment), committed with this row |
 | 2: Fuel charged by work | dev | not started | |
 | 3: Readings and the lines | dev | not started | |
 
-### Resume notes (Phase 1, stopped on a plan question)
-
-- **Landed:** `WorldLimits` (`DEFAULT`: `coord_max` 2^30, `ray_max_t` 2^22, 1 024 per axis,
-  2^30 voxels) and `Field` in `crates/vxe-world/src/limits.rs`; `Shape::check`;
-  `EditError::OutOfRange { what: Field }`, wire error tag 2 with a field byte (index in
-  `Field::ALL` plus 1); `World::apply` checks against `WorldLimits::DEFAULT` first;
-  `to_i32` keeps its clamp under a `debug_assert`. Tests: `tests/shapes.rs`
-  `shapes_are_checked_against_the_documented_range`, `tests/edits.rs`
-  `an_out_of_range_radius_is_refused_and_changes_nothing` and
-  `a_reversed_box_in_range_is_an_empty_edit`, `tests/log.rs` `every_tag_round_trips` (the
-  error tags), `vxe-net` `server::tests::an_out_of_range_op_is_refused_on_the_server_and_an_owned_client`.
-- **Edits outside Phase 1's Files touched:** `apps/flythrough/tests/{determinism,replay}.rs`
-  (`hash_result` gains the `OutOfRange` arm; no vector op is refused);
-  `crates/vxe-script-wasm/tests/determinism.rs` (Phase 2's file: the overflow test now
-  asserts a refusal with `OutOfRange { Radius }`, no trap, in every profile).
-- **Not done, pending the owner's answer:** `World::raycast` and `World::count_in_box`
-  refusals (their signatures return `Option`/`Vec`; refusing needs `Result`, whose callers
-  lie outside Files touched); the limits as per-world configuration (`World` is defined in
-  `store.rs`, outside Files touched); the ray done-whens (`max_t` 2^22 + 1, the 258-step
-  bound) and the query done-whens (1 025 per axis, `1 024^3` with `voxel_arrays_read`).
-- **Gate at this commit:** `cargo build --workspace --all-targets`; `cargo nextest run
-  --workspace` 398 passed, 4 skipped (exclusive perf lock, 1-minute load 19.18); `cargo
-  test --release -p vxe-world` all passed; `cargo test --workspace --doc` passed; clippy
-  (workspace, `vxe-script-wasm`, `flythrough --features wasm`) clean; `cargo nextest run -p
-  flythrough --features wasm` 96 passed, 3 skipped; fmt, comment hygiene and doc links clean.
-
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: the first commit (891b9fc) was made against the unamended plan; the amended
+  phase finished on top of it. The `nfr.md` §4 range line is a new bullet ("Parameter
+  range") beside the component boundary.
+- Phase 1: `WorldLimits` gained `check_ray`, `check_query` and `check_region` as public
+  methods beside `Shape::check`. `Shape::check` checks the edit extent after the other
+  fields; a shape with no voxel bounds passes it.
+- Phase 1: the 4 096-cell region done-when is checked on the collapse fixture, where 4 096
+  distinct cells reach past its one chunk and fail `NotResident` (not `OutOfRange`).
+- Phase 1: `world_budget` sizes `query_axis_max` and `query_voxels_max` to its extent; run
+  at the default 20x20x8 chunks it printed `air fraction: 29.31 %` (release, exclusive perf
+  lock, 1-minute load 15.22).
 
 ### Close triggers
 
