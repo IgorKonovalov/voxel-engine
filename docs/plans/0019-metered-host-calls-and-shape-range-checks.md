@@ -378,6 +378,11 @@ pub struct WorkRates { pub per_voxel: u64, pub per_step: u64, pub per_call: u64 
   default (a debug build lifts 10 GiB at the default); the cap is asserted both on the
   server's host and through the component on a test host that applies the same cap, with a
   256 MiB memory cap for the 2 146 690-cell list.
+- Review minor 1 (`apply_cost` untested), fix commit `fix(script): pin apply_cost on an
+  edit, a stamp, a drop and refusals`: `apply_cost_charges_the_bounds_and_the_touched_chunks`
+  in `crates/vxe-script-wasm/tests/determinism.rs` asserts 6 500 (a 512-voxel carve over 2
+  chunks), 42 340 (the 16^3 vault over 2 chunks), 92 900 (the slab's 9 216-voxel drop in 1
+  chunk) and 100 for `NotResident` and `OutOfRange`.
 - Phase 1: `world_budget` sizes `query_axis_max` and `query_voxels_max` to its extent; run
   at the default 20x20x8 chunks it printed `air fraction: 29.31 %` (release, exclusive perf
   lock, 1-minute load 15.22).

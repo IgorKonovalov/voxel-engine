@@ -937,3 +937,74 @@ fn unsupported_is_charged_by_its_cells_and_its_flood() {
         100 + 12 * (cap + 1)
     );
 }
+
+/// `WorkRates::apply_cost` at the default rates: `100 + 10 x (bounds voxels + 64 x touched
+/// chunks)` for an applied op, an edit's bounds being its shape's and a stamp's or a drop's
+/// its result's aabb; `100` alone for a refusal.
+#[test]
+fn apply_cost_charges_the_bounds_and_the_touched_chunks() {
+    let rates = WorkRates::DEFAULT;
+    let registry = PrefabRegistry::new();
+
+    // A carve of the box [60, 68) x [0, 8) x [0, 8): 512 voxels across chunks x = 0 and 1.
+    let world = solid3_world();
+    let carve = Op::Edit(box_voxels([60, 0, 0], [68, 8, 8], Mode::Carve));
+    let r = carve.apply(&world, &registry);
+    assert_eq!(r.as_ref().unwrap().edit_result().touched.len(), 2);
+    assert_eq!(rates.apply_cost(&carve, &r), 100 + 10 * (512 + 64 * 2));
+
+    // A stamp of the 16^3 vault into air at [100, 100, 56]: its aabb is the vault's 4 096
+    // voxels, across chunks z = 0 and 1.
+    let world = slab_world();
+    let mut prefabs = PrefabRegistry::new();
+    let vault = prefabs.register(slab_vault()).unwrap();
+    let stamp = Op::Stamp {
+        prefab: vault,
+        origin: VoxelCoord([100, 100, 56]),
+        rot: vxe_world::Rot::all().next().unwrap(),
+    };
+    let r = stamp.apply(&world, &prefabs);
+    let res = r.as_ref().unwrap();
+    assert_eq!(
+        res.aabb(),
+        Some((VoxelCoord([100, 100, 56]), VoxelCoord([115, 115, 71])))
+    );
+    assert_eq!(res.edit_result().touched.len(), 2);
+    assert_eq!(rates.apply_cost(&stamp, &r), 100 + 10 * (4096 + 64 * 2));
+
+    // With pillar A carved, the slab over it [64, 88) x [16, 40) x [40, 48) drops by its
+    // `max_drop` of 8: the changed voxels span z 32..=47, 24 x 24 x 16 = 9 216 voxels, all in
+    // chunk (1, 0, 0).
+    let world = slab_world();
+    Op::Edit(box_voxels(PILLAR_A.0, PILLAR_A.1, Mode::Carve))
+        .apply(&world, &registry)
+        .unwrap();
+    let drop = Op::Drop {
+        cells: slab_cells(2, 5),
+        max_drop: 8,
+    };
+    let r = drop.apply(&world, &registry);
+    let res = r.as_ref().unwrap();
+    assert_eq!(
+        res.aabb(),
+        Some((VoxelCoord([64, 16, 32]), VoxelCoord([87, 39, 47])))
+    );
+    assert_eq!(res.edit_result().touched.len(), 1);
+    assert_eq!(rates.apply_cost(&drop, &r), 100 + 10 * (9216 + 64));
+
+    // Refusals: per_call only.
+    let world = solid3_world();
+    let outside = Op::Edit(box_voxels([200, 0, 0], [208, 8, 8], Mode::Carve));
+    let r = outside.apply(&world, &registry);
+    assert!(matches!(r, Err(EditError::NotResident(_))), "{r:?}");
+    assert_eq!(rates.apply_cost(&outside, &r), 100);
+    let huge = Op::Edit(EditOp::sphere(Fixed3([0; 3]), i64::MAX, Mode::Carve));
+    let r = huge.apply(&world, &registry);
+    assert_eq!(
+        r,
+        Err(EditError::OutOfRange {
+            what: Field::Radius
+        })
+    );
+    assert_eq!(rates.apply_cost(&huge, &r), 100);
+}
