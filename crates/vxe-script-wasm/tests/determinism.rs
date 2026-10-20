@@ -15,11 +15,11 @@ use std::time::{Duration, Instant};
 use support::guest;
 use vxe_net::test_logic::*;
 use vxe_net::*;
-use vxe_script_wasm::{WasmConfig, WasmLogic};
+use vxe_script_wasm::{WasmConfig, WasmLogic, WorkRates};
 use vxe_world::hash::mix64;
 use vxe_world::{
-    CellCoord, EditError, EditOp, Field, Fixed3, Hit, MaterialId, Mode, Op, OpResult,
-    PrefabRegistry, Region, VoxelCoord, World,
+    CellCoord, ChunkExtent, EditError, EditOp, Field, Fixed3, Hit, MaterialId, Mode, Op, OpResult,
+    PrefabRegistry, Region, UniformSource, VoxelCoord, World, centre_of_voxel,
 };
 
 /// A host straight on a world, for calling a [`WasmLogic`] without a server.
@@ -36,6 +36,12 @@ impl Host for WorldHost<'_> {
 
     fn raycast(&self, origin: Fixed3, dir: Fixed3, max: i64) -> Option<Hit> {
         self.0.raycast(origin, dir.0, max).ok().flatten()
+    }
+
+    fn raycast_with_steps(&self, origin: Fixed3, dir: Fixed3, max: i64) -> (Option<Hit>, u64) {
+        self.0
+            .raycast_with_stats(origin, dir.0, max)
+            .unwrap_or((None, 0))
     }
 
     fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
@@ -57,8 +63,14 @@ fn wasm_config_defaults() {
             memory_bytes: 64 << 20,
             frame_ns: 16_666_667,
             max_restarts: 8,
+            rates: WorkRates {
+                per_voxel: 10,
+                per_step: 10,
+                per_call: 100,
+            },
         }
     );
+    assert_eq!(WorkRates::default(), WorkRates::DEFAULT);
 }
 
 /// `config` with no restarts: the fail-stop host.
@@ -172,6 +184,7 @@ const SPIN_FUEL: WasmConfig = WasmConfig {
     memory_bytes: 64 << 20,
     frame_ns: 16_666_667,
     max_restarts: 8,
+    rates: WorkRates::DEFAULT,
 };
 
 #[test]
@@ -600,4 +613,116 @@ fn an_overflowing_shape_from_a_component_is_refused_not_a_trap() {
         }]
     );
     assert_eq!(server.world().voxel_hash(), solid3_world().voxel_hash());
+}
+
+/// A `greedy` input asking `count_in_box` over the inclusive box `lo..=hi`.
+fn count_input(lo: [i32; 3], hi: [i32; 3]) -> ClientInput {
+    let mut bytes = vec![1];
+    for v in lo.iter().chain(&hi) {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    ClientInput { client: 0, bytes }
+}
+
+/// A `greedy` input casting `n` rays `origin + dir * t / 256`, `t <= max`.
+fn rays_input(n: u32, origin: Fixed3, dir: [i64; 3], max: i64) -> ClientInput {
+    let mut bytes = vec![2];
+    bytes.extend_from_slice(&n.to_le_bytes());
+    for v in origin.0.iter().chain(&dir).chain([&max]) {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    ClientInput { client: 0, bytes }
+}
+
+/// One `greedy` tick on `world` under `config`: its outcome and the fuel left after it.
+fn greedy_tick(
+    world: &World,
+    config: &WasmConfig,
+    input: ClientInput,
+) -> (Result<TickOutput, LogicError>, Option<u64>) {
+    let mut logic = WasmLogic::load(&guest("greedy"), &fail_stop(*config)).expect("greedy loads");
+    let mut host = WorldHost(world);
+    logic.try_init(&mut host, 0).expect("greedy's init returns");
+    let out = logic.try_tick(&mut host, 0, &[input]);
+    (out, logic.fuel_left())
+}
+
+/// `count_in_box` is charged 10 fuel per voxel counted: `1 024^3` resident voxels cost
+/// `10 x 2^30`, past the default `10^10` per tick, and the tick traps on fuel; `64^3` costs
+/// `10 x 2^18 + 100` and completes, as does `1 024^3` over a world with nothing resident.
+#[test]
+fn a_greedy_count_in_box_runs_out_of_fuel() {
+    let config = WasmConfig::default();
+    assert!(10 * (1u64 << 30) > config.fuel_per_tick);
+    let solid = World::generate(
+        ChunkExtent::new([0, 0, 0], [16, 16, 16]),
+        &UniformSource(3),
+        &test_table(),
+    );
+    let (out, _) = greedy_tick(&solid, &config, count_input([0; 3], [1023; 3]));
+    assert_eq!(out, Err(LogicError::Fuel { tick: 0 }));
+
+    let (out, left) = greedy_tick(&solid, &config, count_input([0; 3], [63; 3]));
+    assert_eq!(out.unwrap().broadcast, (1u64 << 18).to_le_bytes());
+    let (zero, zero_left) = greedy_tick(
+        &solid,
+        &WasmConfig {
+            rates: WorkRates::ZERO,
+            ..config
+        },
+        count_input([0; 3], [63; 3]),
+    );
+    assert!(zero.is_ok());
+    assert_eq!(zero_left.unwrap() - left.unwrap(), 10 * (1 << 18) + 100);
+
+    let empty = World::new(&test_table());
+    let (out, _) = greedy_tick(&empty, &config, count_input([0; 3], [1023; 3]));
+    assert_eq!(out.unwrap().broadcast, 0u64.to_le_bytes());
+}
+
+/// 100 rays of `max_t = 2^22` through an empty world are charged `100 + 10 s` each, `s` the
+/// steps `raycast_with_stats` reports; with fuel for the guest's own instructions plus half
+/// that charge, the tick traps on fuel. A refused ray is charged `per_call` only, and under
+/// `WorkRates::ZERO` nothing is charged at all.
+#[test]
+fn rays_are_charged_by_their_steps() {
+    let world = World::new(&test_table());
+    let o = centre_of_voxel([0, 0, 0]);
+    let (dir, max) = ([256, 0, 0], 1i64 << 22);
+    let (hit, s) = world.raycast_with_stats(o, dir, max).unwrap();
+    assert_eq!(hit, None);
+    assert!((256..=258).contains(&s), "{s} steps");
+    let config = WasmConfig::default();
+    let zero = WasmConfig {
+        rates: WorkRates::ZERO,
+        ..config
+    };
+    let left = |config: &WasmConfig, max: i64| {
+        let (out, left) = greedy_tick(&world, config, rays_input(100, o, dir, max));
+        assert_eq!(out.unwrap().broadcast, 0u32.to_le_bytes());
+        left.unwrap()
+    };
+    let charge = 100 * (100 + 10 * s);
+    let zero_long = left(&zero, max);
+    assert_eq!(zero_long - left(&config, max), charge);
+
+    // Refused rays: one `per_call` each, and the guest's own work is the same as for the
+    // long rays, so under ZERO the two runs use equal fuel.
+    let zero_refused = left(&zero, max + 1);
+    assert_eq!(zero_refused, zero_long);
+    assert_eq!(zero_refused - left(&config, max + 1), 100 * 100);
+
+    let used = config.fuel_per_tick - zero_long;
+    let tight = WasmConfig {
+        fuel_per_tick: used + charge / 2,
+        ..config
+    };
+    let (out, _) = greedy_tick(&world, &tight, rays_input(100, o, dir, max));
+    assert_eq!(out, Err(LogicError::Fuel { tick: 0 }));
+    let tight_zero = WasmConfig {
+        rates: WorkRates::ZERO,
+        ..tight
+    };
+    let (out, _) = greedy_tick(&world, &tight_zero, rays_input(100, o, dir, max));
+    assert!(out.is_ok(), "{out:?}");
 }

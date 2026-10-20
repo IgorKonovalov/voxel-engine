@@ -53,6 +53,12 @@ impl Host for WorldHost<'_> {
         self.0.raycast(origin, dir.0, max).ok().flatten()
     }
 
+    fn raycast_with_steps(&self, origin: Fixed3, dir: Fixed3, max: i64) -> (Option<Hit>, u64) {
+        self.0
+            .raycast_with_stats(origin, dir.0, max)
+            .unwrap_or((None, 0))
+    }
+
     fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
         self.0.count_in_box(lo, hi).unwrap_or_default()
     }

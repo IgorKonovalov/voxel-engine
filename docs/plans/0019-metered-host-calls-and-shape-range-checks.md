@@ -332,8 +332,8 @@ pub struct WorkRates { pub per_voxel: u64, pub per_step: u64, pub per_call: u64 
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `WorldLimits` and `OutOfRange` | dev | done | 891b9fc (before the amendment), committed with this row |
-| 2: Fuel charged by work | dev | not started | |
+| 1: `WorldLimits` and `OutOfRange` | dev | done | 891b9fc (before the amendment), c04bfd1 |
+| 2: Fuel charged by work | dev | done | committed with this row |
 | 3: Readings and the lines | dev | not started | |
 
 ### Notes
@@ -346,6 +346,23 @@ pub struct WorkRates { pub per_voxel: u64, pub per_step: u64, pub per_call: u64 
   fields; a shape with no voxel bounds passes it.
 - Phase 1: the 4 096-cell region done-when is checked on the collapse fixture, where 4 096
   distinct cells reach past its one chunk and fail `NotResident` (not `OutOfRange`).
+- Phase 2: the five `host` imports (`unsupported` included) are registered through
+  `func_wrap` in place of the `bindgen` trait impl; `unsupported` is charged `per_call` only.
+- Phase 2: `apply` of a stamp, drop or removal is charged by its result's aabb volume (an
+  edit's by its shape's voxel bounds), plus 64 voxels per touched chunk.
+- Phase 2: `Host::raycast_with_steps` (provided, default 0 steps) carries the steps; the
+  server's `TickHost` overrides it in `crates/vxe-net/src/server.rs`, and `WorkRates` is
+  re-exported from `crates/vxe-script-wasm/src/lib.rs`, both outside the phase's Files
+  touched. The new `greedy` guest added a `Cargo.lock` entry.
+- Phase 2: `raycast_with_stats` returns `(Option<Hit>, u64)`, the steps as a bare count.
+  Steps measured from a voxel centre at `max_t = 2^22`: 256 to 258 along an axis, 768 to
+  772 on a diagonal (`raycast::tests`); the charged-ray test reads `s` from the world.
+- Phase 2 bench (`cargo bench -p vxe-script-wasm --bench boundary`, AMD Ryzen 9 5900HS,
+  Linux, exclusive perf lock, not quiet), criterion medians: parent c04bfd1 (1-minute load
+  3.94 to 4.66): native `EchoLogic` 2.3589 ms, echo component 2.4928 ms, 1.339 µs per call,
+  empty tick 1.0919 µs, `Bench` 2.9170 / 2.8378 ms = 1.028x; this phase (load 7.15 to 4.58):
+  2.3306 ms, 2.4593 ms, 1.287 µs per call, empty tick 0.974 µs, `Bench` 2.5510 / 2.4014 ms =
+  1.062x.
 - Phase 1: `world_budget` sizes `query_axis_max` and `query_voxels_max` to its extent; run
   at the default 20x20x8 chunks it printed `air fraction: 29.31 %` (release, exclusive perf
   lock, 1-minute load 15.22).

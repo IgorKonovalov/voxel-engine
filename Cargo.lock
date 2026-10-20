@@ -1194,6 +1194,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "greedy-guest"
+version = "0.15.0"
+dependencies = [
+ "vxe-net",
+ "vxe-script-wasm",
+ "vxe-world",
+]
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

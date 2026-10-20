@@ -168,6 +168,12 @@ impl Host for TickHost<'_> {
         self.world.raycast(origin, dir.0, max).ok().flatten()
     }
 
+    fn raycast_with_steps(&self, origin: Fixed3, dir: Fixed3, max: i64) -> (Option<Hit>, u64) {
+        self.world
+            .raycast_with_stats(origin, dir.0, max)
+            .unwrap_or((None, 0))
+    }
+
     /// A box the world refuses as out of range reads as an empty count.
     fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
         self.world.count_in_box(lo, hi).unwrap_or_default()
