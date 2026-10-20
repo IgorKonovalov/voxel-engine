@@ -262,7 +262,24 @@ match, `r_full` never under 14. Run 3 (b474737, partial sync with its per-chunk 
 (slots 0.9197, records 0.6488), peak live / budget 0.8836, hash match. At 3072 MiB the same
 flight makes no change (peak pressure 0.6363 and 0.6473, 0.6200).
 
-**Brick-array pool (Plan 0014).** The pool adds at most 8 MiB per world (`World::BRICK_ARRAY_POOL_CAP` 8192 arrays x 1 KiB); the fly-through holds a 4096-array reserve (2326 KiB pooled after the `B` bench, 5850218, dev reference).
+**Brick-array pool (Plan 0014, retired by Plan 0021).** The pool added at most 8 MiB per world (8192 arrays x 1 KiB); the fly-through held a 4096-array reserve (2326 KiB pooled after the `B` bench, 5850218, dev reference). Plan 0021 retired it: a `Full` brick's box is 72 to 352 B and is allocated on the edit path (11.2 ns per expansion; below).
+
+**The packed brick (dev reference, Plan 0021 Phase 8, ADR-0012, Ryzen 9 5900HS, RTX 3080
+Laptop GPU, 8440aa9 with Phase 8's two printouts, exclusive perf lock, 1-minute load 8.4 to
+14.2 from other lanes' builds).** A `Full` brick is a mask, an ascending palette and bit
+planes in one of five classes (72, 136, 200, 352 or 1024 B by material count), behind the
+same 16-byte slot. The autopilot (`flythrough --autopilot --headless --render 1920x1080`,
+streamed defaults, alternated with main at 5ca4151 in the same window): **resident chunks peak
+at 441 596 664 B and the process `VmHWM` at 965 971 968 B**, against 3 242 091 312 B and
+3 886 219 264 B for main (Plan 0002's 3.24 GB and 3.87 GB), under the 4 GB line; a second
+Phase 8 run read 441 555 208 B and 1 009 381 376 B. `world_budget` CPU bytes: the level
+60 807 552 B (58.0 MiB, against 399.6 MiB in the table above), the streamed defaults
+415 231 624 B (396.0 MiB: full 274 067 464, LOD 141 164 160, against 2915.9 MiB). The census
+at rest (`--census`): the level's 383 608 `Full` bricks hold 1 material (275 466), 2 (107 325)
+or 3 to 4 (817); the streamed defaults' 1 640 292 `Full` bricks and 1 158 516 `Full`
+mip-bricks hold 1 or 2. Mirror bytes are unchanged by construction: the level reads
+232 436 992 B live.
+
 
 **Stats HUD (arithmetic, Plan 0010; ADR-0009).** The overlay holds about 130 KiB of VRAM
 under "everything else": a 128 KiB cell buffer at the 256 x 128 cap layout (`u32` per cell),
@@ -307,6 +324,17 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   after each frame's edits), so a frame's expansions take pooled arrays instead of
   allocating. Both readings miss the 2 ms budget; the 2 ms figure is unchanged, and the
   remaining cost is the row write bounded by the brick representation (Plan 0014's close). The decision awaits the owner (a representation ADR versus a measured cap).
+  **Reading at the Plan 0021 tip (dev reference, AMD Ryzen 9 5900HS, ADR-0012's planar edit
+  kernel, exclusive perf lock, not quiet):** `worst_warm` 1.339 ms against 2.811 ms for the
+  Plan 0021 Phase 1 tip 992fdaa alternated in the same window (load 17.6; 1.485 against
+  2.864 ms at load 24.1); `worst` 1.356 against 3.527 ms. At the Phase 8 tree (8440aa9, load
+  10.4) `worst_warm` 1.516 ms and `worst` 1.538 ms; with the pool gone both cases build the
+  same world. The fly-through `B` line (`--level --seed 1 --headless --bench 1 --frames 1`)
+  reads 1.52 ms against Plan 0014's 2.98 to 3.04 ms. **Under the 2 ms line on the dev box**; no
+  baseline reading. Whether the 2 ms figure is held on the dev box or the baseline is the
+  owner's call (Plan 0021's close). The allocation share the retired pool covered: 2495
+  expansions of 11.2 ns, 27.9 us, 1.8 % of the 1.516 ms `worst_warm`, under the 5 % that would
+  have called for per-class pools.
 - **Results** are returned synchronously with the edit, per material, exact.
 - **Stamp cost (proposals, Plan 0008):** a 16³ prefab stamp (the shelled box `Prefab::vault`)
   into solid rock costs under 100 µs, and a 64³ all-written prefab under 5 ms, both including
@@ -461,6 +489,19 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   73 000 chunks loaded full: p95 462 and 455 ms, max 1779 and 2359 ms. Generation under
   streaming: 6.95e7 voxels/s/worker over the flight (both tiers, 15 workers beside the render
   thread), against 1.23e8 to 1.34e8 headless in `world_budget --stream`.
+- **With the packed brick (dev reference, Plan 0021 Phase 8, 8440aa9 with Phase 8's two
+  printouts, Ryzen 9 5900HS, RTX 3080 Laptop GPU, exclusive perf lock, not quiet, alternated
+  with main at 5ca4151):** generation encodes each `Full` brick. `world_budget --chunks
+  20,20,8` reads 1.254e8 voxels/s/thread (load 10.1) and `--stream 16,24` 1.344e8
+  voxels/s/worker (load 10.1), beside Plan 0001's 1.03e8 and 1.12e8. The autopilot at load
+  8.4 to 13.2: residency latency wanted-to-mirrored p95 611 ms, max 2449 ms over 72 614 chunks
+  against main's 1031 ms and 6523 ms in the same window, both over the 500 ms proposal at this
+  load (Plan 0015's quiet reading was 493 ms); streaming CPU per frame p50 5.352 ms, p99
+  64.449 ms against 7.575 and 80.785 ms; march GPU p50 1.745 ms against 1.576 ms (Plan 0015's
+  spawn march 1.95 ms). A second Phase 8 run (load 10.2 to 14.2) read p95 658 ms, max 2456 ms;
+  CPU p50 5.227, p99 63.362 ms; march p50 1.636 ms. The per-chunk mip build, which decodes
+  each `Full` brick, reads 0.202 ms per chunk on one thread over the level's 3200 chunks (no
+  proposal).
 
 ## 6. Determinism and headless operation
 

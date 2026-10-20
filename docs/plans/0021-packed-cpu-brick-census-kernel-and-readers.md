@@ -464,8 +464,8 @@ header, world key, coordinate and FNV trailer are version 1's.
 | 4: The edit kernel as word operations | dev | done | 07d70fd |
 | 5: Native paths for the hot readers | dev | done | 44ace94 |
 | 6: Collapse as layer shifts and palette remaps | dev | done | ce44fa1 |
-| 7: The mirror upload from planes, and spill version 2 | dev | done | committed with this row |
-| 8: Readings, budgets and the census after edits | dev | not started | |
+| 7: The mirror upload from planes, and spill version 2 | dev | done | 8440aa9 |
+| 8: Readings, budgets and the census after edits | dev | done | committed with this row |
 
 ### Notes
 
@@ -570,6 +570,17 @@ header, world key, coordinate and FNV trailer are version 1's.
   is read from the fly-through's first-sync line. The first sync is paired with the merge
   ea8d0ad (Phase 3's decode path on 0017's allocator), not the Phase 3 tip, which predates
   0017's upload path (Phase 7 commit).
+- Phase 8: `apps/flythrough/src/main.rs` prints `packed_stats` after the exit census and
+  `world_budget.rs` times the per-chunk mip build in its bounded run; both are outside the
+  phase's list (Phase 8 commit).
+- Phase 8: every reading was taken while other lanes built (1-minute load 8.4 to 24.1), with the
+  comparison builds (Phase 1 tip, main 5ca4151) alternated in the same window; no quiet-box
+  reading was taken.
+- Phase 8: the autopilot's residency latency p95 reads 611 and 658 ms, over the 500 ms proposal,
+  against main's 1031 ms in the same window.
+- Phase 8: the pool-share recheck the owner asked for reads 1.8 % of the 1.516 ms `worst_warm`
+  (27.9 us of expansions), under 5 %.
+- Followup, not acted on: `hud.rs`'s `cpu_bytes_estimate` still counts 1 KiB per `Full` brick.
 
 ### Close triggers
 
@@ -634,6 +645,10 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     exclusive perf lock, alternating with ea8d0ad (loads 10.97, 10.97; 11.69 after): ea8d0ad
     582 and 590 ms, Phase 7 195 and 180 ms; both upload 232 436 992 B (383 608 bricks, 3200
     chunks, 192 writes), 232 436 992 B live, 271 524 864 B allocated.
+  - Phase 8 readings are in `docs/nfr.md` sections 3, 4 and 5 with machine, commit and load.
+    Census after the `B` bench (`flythrough --level --seed 1 --headless --bench 1 --frames 1
+    --census`): 385 378 `Full`, bins 1: 277 246, 2: 107 315, 3-4: 817; `PackedStats {
+    class_changes: 8, entries_removed: 49, renames: 0 }`; `B` 1.52 ms (load 11.5).
 - **Gate at the tip (992fdaa):** `cargo build --workspace --all-targets` 0; `cargo nextest run
   --workspace` (after `scripts/build-guests.sh`, under the perf lock) 394 passed, 4 skipped,
   exit 0; `cargo test --workspace --doc` 7 passed; clippy `-D warnings` 0; `fmt --check` 0;

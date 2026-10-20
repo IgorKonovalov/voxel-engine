@@ -173,8 +173,11 @@ Walking, the coarse grid and collapse run on the bounded level (`--level`) only.
 The storage figures come from an example: `cargo run --release -p flythrough --example
 world_budget -- --chunks 20,20,8 --census` (the level) or `--stream 16,24 --census` (the streamed
 residency); `--veins N --census` prints the census of a synthetic world of `N - 1` materials.
-`cargo bench -p vxe-world --bench brick_kernel` times the packed brick's edit kernel against
-today's row write on the same brick-edits.
+The bounded run also times the coarse grid and the per-chunk mip build. A `Full` brick is a
+packed mask, palette and bit planes (ADR-0012), so the level's bricks take 58 MiB of RAM and
+the streamed defaults' about 400 MiB ([`docs/nfr.md`](docs/nfr.md) section 3).
+`cargo bench -p vxe-world --bench brick_kernel` times the planar edit kernel against a row
+write on raw ids over the same brick-edits.
 
 ### Checks
 

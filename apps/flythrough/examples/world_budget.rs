@@ -38,8 +38,8 @@ use vxe_render::gpu_world::{ATTR_PAGE_BRICK_SLOTS, MATERIAL_FLOATS, POOL_PAGE_SL
 use vxe_world::hash::{ValueNoise, hash3};
 use vxe_world::{
     AIR, BRICK_EDGE, Brick, BrickCensus, CHUNK_BRICKS, CHUNK_EDGE, Chunk, ChunkCoord, ChunkExtent,
-    CoarseGrid, Material, MaterialId, MaterialTable, PersistConfig, Residency, StreamConfig,
-    Streamer, World, WorldLimits, WorldSource, brick_of_slot,
+    ChunkMips, CoarseGrid, Material, MaterialId, MaterialTable, PersistConfig, Residency,
+    StreamConfig, Streamer, World, WorldLimits, WorldSource, brick_of_slot,
 };
 
 /// Mirror bytes per `Full` brick or mip-brick, and per mirrored chunk's record.
@@ -256,6 +256,19 @@ fn bounded(seed: u64, chunks: [i32; 3], census: bool) {
         grid.bytes() / grid.len().max(1)
     );
     println!("coarse build:      {:.1} ms on 1 thread", grid_secs * 1e3);
+    // The mip build reads each `Full` brick through `decode`: timed per chunk, one thread.
+    let start = now();
+    for c in world.store().coords() {
+        let chunk = world.store().get(c).expect("resident");
+        let chunk = chunk.read().expect("chunk lock");
+        std::hint::black_box(ChunkMips::build(&chunk));
+    }
+    let mips_secs = (now() - start).as_secs_f64();
+    println!(
+        "mip build:         {:.3} ms per chunk on 1 thread ({} chunks)",
+        mips_secs * 1e3 / s.chunks as f64,
+        s.chunks
+    );
     if census {
         println!("{}", world.brick_census());
     }

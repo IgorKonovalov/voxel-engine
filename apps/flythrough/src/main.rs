@@ -2455,6 +2455,7 @@ impl Drop for Run {
         self.save();
         if self.args.census {
             println!("{}", self.world.brick_census());
+            println!("packed: {:?}", self.world.packed_stats());
         }
         // The server and client hold the world's other references and their logs; their
         // drop is cheap and is not a traced stage.
