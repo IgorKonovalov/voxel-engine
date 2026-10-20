@@ -6,6 +6,12 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-20
+
+Plan 0025 (a minor bump: public API added and one struct literal broken; no ADR). The cutaway view: with `LookParams::cutaway` (`Params::flags` bit 10, `vxe_render::marcher::FLAG_CUTAWAY`) the primary ray passes through solid until it has entered an empty cell of a resident chunk, then hits the next surface as usual, so a camera in rock or outside the world sees each cavern's far wall through the hull and rock with nothing behind it is a miss. Hits are shaded by a fixed hemisphere light (world z up) with no lamp or shadow ray, and a miss is a flat grey-blue sky. The fly-through turns it on while the camera's voxel is neither air nor translucent (`fly::CutawayMode`); `X` cycles auto, on and off, `--cutaway auto|on|off` sets the start state, and the HUD shows a `cutaway` row while it is on. New golden `cutaway_level.png`. A debug view, off in air, so no `nfr.md` line moves; the steps view from 40 m outside the level reads a mean of 49.53 steps per ray, p99 170, on the dev box (diagnostic under §2).
+
+- **BREAKING: `LookParams` gains `cutaway: bool`.** An exhaustive struct literal adds `cutaway: false`, or uses `..LookParams::default()`.
+
 ## [0.19.0] - 2026-10-20
 
 Plan 0013 (a minor bump: public API changed and added; ADR-0011 Outcome addendum). The fly-through starts in contour with procedural detail on and attribute pages in the mirror, with rock at `[4.0, 0.1]` (`flythrough::ROCK_DETAIL`). `--look plain` starts in face mode without attribute pages or rock detail, the look of the earlier face readings. A contour-plane hit's shadow ray starts half a voxel off the hit along the plane normal, not the face normal, so contour's only-with-shadows specks on the golden scene fall from 372 to 52, under face mode's 169 (`look_contour.png` reblessed). `AttribPass` keeps its uniform, a work buffer grown to powers of two and its bind group between calls (`AttribPass::buffer_builds`, `work_capacity`). The GPU chunk table is created filled with `ABSENT`. The autopilot reports the attribute pass's work list, render-thread CPU and GPU time over its flight, and `world_budget --surface` counts plane voxels. No footprint or residency change: under the 3 GiB reservation the pressure rule holds the default at `r_full` 12 to 13, peak live 2.86 GB. On the dev box, under load, the attribute pass's render-thread cost under motion reads p99 139 to 167 ms, a visible hitch, and is an open followup.

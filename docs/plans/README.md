@@ -14,7 +14,6 @@ state from `git log`. Completed plans move to `done/`.
 | [0022](0022-a-falling-region-crushes-sub-threshold-voxels.md) | A falling region crushes the sub-threshold voxels under it and piles them as rubble, and the logic tells a wedge from a refusal and a landing | approved | M8, paired with ADR-0016 (proposed). Approved 2026-10-20; dev lane in a worktree. |
 | [0023](0023-render-thread-cpu-attribute-hitch-and-streaming-line.md) | The render thread's mirror CPU: profile a chunk crossing, then cut the attribute hitch and the streaming line with targeted fixes | approved | M2, before lighting; ADR-0017 (proposed). Dev starts when the 0020 or 0022 lane is at its human phase. |
 | [0024](0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md) | Direct light: a hit buffer, emissive voxels as light samples, one shadow ray per pixel, and an SVGF-family denoiser whose history dies in edit boxes | approved | M2, ADR-0018 (proposed). After Plan 0023; before the mirror-slot plan. |
-| [0025](0025-cutaway-view-see-the-world-from-outside-its-rock.md) | The cutaway view: a camera in rock or outside the world sees through the hull to the first cavern's walls | approved | M7 debug view, no ADR. Approved 2026-10-20; two dev phases, runs now in a worktree beside 0022. |
 <!-- roster:end -->
 
 ## Recently closed
@@ -22,6 +21,7 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0025](done/0025-cutaway-view-see-the-world-from-outside-its-rock.md) | The cutaway view: a camera in rock or outside the world sees through the hull to the first cavern's walls | 2026-10-20, v0.20.0 |
 | [0013](done/0013-contour-default-shadow-origin-and-streamed-footprint.md) | Contour as the fly-through's default: the shadow-ray origin, a streamed footprint under 3 GB, and a weaker rock detail | 2026-10-20, v0.19.0 |
 | [0021](done/0021-packed-cpu-brick-census-kernel-and-readers.md) | The packed CPU brick: a census and kernel bench, then masks, planes and a palette under every reader | 2026-10-20, v0.18.0 |
 | [0017](done/0017-mirror-budget-reservation-page-kinds-and-pressure.md) | The mirror reserves its budget: fixed buffers, empty pages that change kind, and a pressure signal the streamer follows | 2026-10-20, v0.17.0 |

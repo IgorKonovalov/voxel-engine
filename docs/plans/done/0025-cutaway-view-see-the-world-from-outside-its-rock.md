@@ -1,6 +1,7 @@
 # 0025: The cutaway view: a camera in rock or outside the world sees through the hull to the first cavern's walls
 
-> **Status:** in-progress (2026-10-20)
+> **Status:** done (closed 2026-10-20, v0.20.0): clean close; both phases match their
+> done-whens, the outside-camera centre-pixel check asserted over the whole view as disclosed.
 > **Created:** 2026-10-20
 > **Milestone:** M7 in `docs/roadmap.md` (debug views); a tool, not a frame stage
 > **Related ADRs:** none (the rejected options are product choices for a debug view, named
