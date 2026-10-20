@@ -1,5 +1,6 @@
 //! The late tail: its decay time and energy against the room it is given, the cubes the fan
-//! measures, a room that changes under a hum, and no allocation while it runs.
+//! measures, a room that changes under a hum (gliding lines, and two networks handing over
+//! without moving a line that holds signal), and no allocation while it runs.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -46,6 +47,17 @@ static ALLOC: Counting = Counting;
 const MPV: f32 = 0.1;
 const CAVE: MaterialId = 1;
 const FS: f64 = RATE as f64;
+const MODES: [TailLines; 2] = [TailLines::Handover, TailLines::Glide];
+
+/// A mixer whose tail takes rooms as `lines` says.
+fn mixer(lines: TailLines) -> Mixer {
+    let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    m.set_reverb_settings(ReverbSettings {
+        lines,
+        ..ReverbSettings::default()
+    });
+    m
+}
 
 /// A world whose voxels come from a closure of the voxel coordinate.
 struct FnSource<F>(F);
@@ -144,8 +156,8 @@ fn echo_density(out: &[f32], ear: usize, t: f64) -> f64 {
 /// A unit impulse at `(1 m, 0, 0)`, no acoustics, the room `room` given straight to the mixer
 /// 0.5 s before (the tail's input gain fades in from 0 over its 50 ms smoother): `seconds` of
 /// output from the impulse on.
-fn impulse_in_room(room: Option<RoomTargets>, seconds: f64) -> Vec<f32> {
-    let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+fn impulse_in_room(lines: TailLines, room: Option<RoomTargets>, seconds: f64) -> Vec<f32> {
+    let mut m = mixer(lines);
     if let Some(r) = room {
         m.apply(Command::SetRoom(r));
     }
@@ -169,37 +181,48 @@ fn the_tail_decays_in_its_t60_with_its_energy() {
         mean_free_path_m: 8.0,
         energy: 0.379,
     };
-    let out = impulse_in_room(Some(room), 4.0);
-    let e = frame_energy(&out);
-    let t60 = schroeder_t60(&e);
-    let tail: f64 = e[128..].iter().sum();
-    let db = 10.0 * (tail / 0.379).log10();
-    let dens: Vec<String> = [0.1, 0.3]
-        .iter()
-        .flat_map(|&t| (0..2).map(move |ear| (t, ear)))
-        .map(|(t, ear)| {
-            format!(
-                "{:.0} ms ear {ear} {:.3}",
-                t * 1e3,
-                echo_density(&out, ear, t)
-            )
-        })
-        .collect();
-    println!(
-        "tail: T60 {t60:.3} s (2.26), energy from frame 128 {tail:.4} (0.379, {db:+.2} dB); \
-         echo density {}",
-        dens.join(", ")
-    );
-    assert!((t60 - 2.26).abs() <= 0.1 * 2.26, "T60 {t60}");
-    assert!(db.abs() <= 2.0, "tail energy {tail} is {db} dB from 0.379");
+    for mode in MODES {
+        let out = impulse_in_room(mode, Some(room), 4.0);
+        let e = frame_energy(&out);
+        let t60 = schroeder_t60(&e);
+        let tail: f64 = e[128..].iter().sum();
+        let db = 10.0 * (tail / 0.379).log10();
+        let dens: Vec<String> = [0.1, 0.3]
+            .iter()
+            .flat_map(|&t| (0..2).map(move |ear| (t, ear)))
+            .map(|(t, ear)| {
+                format!(
+                    "{:.0} ms ear {ear} {:.3}",
+                    t * 1e3,
+                    echo_density(&out, ear, t)
+                )
+            })
+            .collect();
+        println!(
+            "{mode:?}: tail T60 {t60:.3} s (2.26), energy from frame 128 {tail:.4} (0.379, \
+         {db:+.2} dB); echo density {}",
+            dens.join(", ")
+        );
+        assert!((t60 - 2.26).abs() <= 0.1 * 2.26, "{mode:?}: T60 {t60}");
+        assert!(
+            db.abs() <= 2.0,
+            "{mode:?}: tail energy {tail} is {db} dB from 0.379"
+        );
+    }
 }
 
 /// A unit impulse 2 m ahead of a listener at the centre of a closed cube of `edge` voxels,
 /// played 0.5 s after the fan completed and probed once, reflections on, the tail `on` or off:
 /// the output from the impulse on and the room the fan read.
-fn cube_impulse(world: &World, edge: i32, on: bool, seconds: f64) -> (Vec<f32>, RoomEstimate) {
+fn cube_impulse(
+    lines: TailLines,
+    world: &World,
+    edge: i32,
+    on: bool,
+    seconds: f64,
+) -> (Vec<f32>, RoomEstimate) {
     let c = edge as f32 / 2.0;
-    let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    let mut mixer = mixer(lines);
     let listener = Listener {
         position: [c, c, c],
         ..Listener::default()
@@ -243,55 +266,57 @@ fn peak(out: &[f32]) -> f32 {
 
 #[test]
 fn bigger_cubes_decay_longer_and_hold_their_mode_density() {
-    let mut last = 0.0;
-    for (edge, expected) in [(40, 0.75f64), (120, 2.26), (360, 6.77)] {
-        let world = cube(edge);
-        let seconds = (expected * 1.3).max(1.5);
-        let (out, room) = cube_impulse(&world, edge, true, seconds);
-        let (dry, _) = cube_impulse(&world, edge, false, 0.2);
-        let t60 = schroeder_t60(&frame_energy(&out));
-        // The direct impulse: the HRIR's 128 frames, before the shortest line (at least 187
-        // frames here) returns anything.
-        let (p_on, p_off) = (peak(&out[..2 * 128]), peak(&dry[..2 * 128]));
-        println!(
-            "{} m cube: fan T60 {:.3} s, mfp {:.3} m, energy {:.4}; fitted T60 {t60:.3} s \
-             (Eyring {expected}); direct peak {p_on} with the tail, {p_off} without",
-            edge / 10,
-            room.t60_s,
-            room.mean_free_path_m,
-            room.energy
-        );
-        assert!(
-            (t60 - expected).abs() <= 0.2 * expected,
-            "{edge}: T60 {t60}"
-        );
-        assert!(t60 > last, "{edge}: T60 {t60} after {last}");
-        last = t60;
-        assert!(
-            (p_on - p_off).abs() <= 0.01 * p_off,
-            "{edge}: direct peak {p_on} against {p_off}"
-        );
-        // The mode-density floor: the lines' total length against 0.15 T60 f_s.
-        let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
-        m.apply(Command::SetRoom(RoomTargets {
-            t60_s: room.t60_s,
-            mean_free_path_m: room.mean_free_path_m,
-            energy: room.energy,
-        }));
-        let total: u32 = m.reverb_lines().iter().map(|l| l.target).sum();
-        let floor = 0.15 * f64::from(room.t60_s) * FS;
-        println!(
-            "{} m cube: line lengths sum {total}, floor {floor:.0}",
-            edge / 10
-        );
-        assert!(f64::from(total) > floor, "{edge}: {total} against {floor}");
+    for mode in MODES {
+        let mut last = 0.0;
+        for (edge, expected) in [(40, 0.75f64), (120, 2.26), (360, 6.77)] {
+            let world = cube(edge);
+            let seconds = (expected * 1.3).max(1.5);
+            let (out, room) = cube_impulse(mode, &world, edge, true, seconds);
+            let (dry, _) = cube_impulse(mode, &world, edge, false, 0.2);
+            let t60 = schroeder_t60(&frame_energy(&out));
+            // The direct impulse: the HRIR's 128 frames, before the shortest line (at least 187
+            // frames here) returns anything.
+            let (p_on, p_off) = (peak(&out[..2 * 128]), peak(&dry[..2 * 128]));
+            println!(
+                "{mode:?}, {} m cube: fan T60 {:.3} s, mfp {:.3} m, energy {:.4}; fitted T60 \
+             {t60:.3} s (Eyring {expected}); direct peak {p_on} with the tail, {p_off} without",
+                edge / 10,
+                room.t60_s,
+                room.mean_free_path_m,
+                room.energy
+            );
+            assert!(
+                (t60 - expected).abs() <= 0.2 * expected,
+                "{edge}: T60 {t60}"
+            );
+            assert!(t60 > last, "{edge}: T60 {t60} after {last}");
+            last = t60;
+            assert!(
+                (p_on - p_off).abs() <= 0.01 * p_off,
+                "{edge}: direct peak {p_on} against {p_off}"
+            );
+            // The mode-density floor: the lines' total length against 0.15 T60 f_s.
+            let mut m = mixer(mode);
+            m.apply(Command::SetRoom(RoomTargets {
+                t60_s: room.t60_s,
+                mean_free_path_m: room.mean_free_path_m,
+                energy: room.energy,
+            }));
+            let total: u32 = m.reverb_lines().iter().map(|l| l.target).sum();
+            let floor = 0.15 * f64::from(room.t60_s) * FS;
+            println!(
+                "{} m cube: line lengths sum {total}, floor {floor:.0}",
+                edge / 10
+            );
+            assert!(f64::from(total) > floor, "{edge}: {total} against {floor}");
+        }
     }
 }
 
-/// A 440 Hz hum 2 m ahead in the room `(8 m, 2.26 s)` for 4 s, then `next` for 4 s more,
-/// with line `line`'s read point moved by `delta` frames at each `(frame, line, delta)` of
-/// `jumps` (frames counted from the step): the output of the second 4 s and every line's state
-/// at each block edge of it.
+/// With gliding lines: a 440 Hz hum 2 m ahead in the room `(8 m, 2.26 s)` for 4 s, then
+/// `next` for 4 s more, with line `line`'s read point moved by `delta` frames at each
+/// `(frame, line, delta)` of `jumps` (frames counted from the step): the output of the second
+/// 4 s and every line's state at each block edge of it.
 fn hum_with_room_change(
     next: RoomTargets,
     jumps: &[(usize, usize, f32)],
@@ -299,7 +324,7 @@ fn hum_with_room_change(
     let hum: Vec<f32> = (0..RATE)
         .map(|n| 0.3 * (std::f64::consts::TAU * 440.0 * f64::from(n) / FS).sin() as f32)
         .collect();
-    let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    let mut m = mixer(TailLines::Glide);
     m.apply(Command::SetRoom(RoomTargets {
         t60_s: 2.26,
         mean_free_path_m: 8.0,
@@ -459,7 +484,123 @@ fn a_room_that_grows_under_a_hum_glides_its_lines() {
     );
 }
 
-/// Rendering with the tail on, its room changing every block, allocates nothing.
+/// The fraction of `x`'s energy within 3 Hz of 440 Hz over 1 s Hann windows, hop 0.5 s: the
+/// DFT bins 437 to 443 Hz (1 Hz apart at 48 000 frames), both signs, over Parseval's total.
+fn energy_near_440(x: &[f64]) -> f64 {
+    let n = RATE as usize;
+    let hann: Vec<f64> = (0..n)
+        .map(|i| 0.5 - 0.5 * (std::f64::consts::TAU * i as f64 / n as f64).cos())
+        .collect();
+    let (mut band, mut total) = (0.0f64, 0.0f64);
+    let mut s = 0;
+    while s + n <= x.len() {
+        let w: Vec<f64> = x[s..s + n].iter().zip(&hann).map(|(a, h)| a * h).collect();
+        total += n as f64 * w.iter().map(|v| v * v).sum::<f64>();
+        for k in 437..=443 {
+            let step = std::f64::consts::TAU * k as f64 / n as f64;
+            let (mut re, mut im) = (0.0, 0.0);
+            for (i, v) in w.iter().enumerate() {
+                let (sin, cos) = (step * i as f64).sin_cos();
+                re += v * cos;
+                im -= v * sin;
+            }
+            band += 2.0 * (re * re + im * im);
+        }
+        s += n / 2;
+    }
+    band / total
+}
+
+/// A hum 2 m away heard only through the tail, the room alternating every 0.33 s for 4 s
+/// between `(2.26 s, 8 m, 0.379)` and `(2.83 s, 10 m, 0.243)`, as a walk through a cave hands
+/// it rooms (10 / 8 = 1.25, past the handover ratio): the output, and both networks at every
+/// block edge.
+fn hum_through_alternating_rooms(lines: TailLines) -> (Vec<f32>, Vec<[ReverbNetwork; 2]>) {
+    const ROOMS: [RoomTargets; 2] = [
+        RoomTargets {
+            t60_s: 2.26,
+            mean_free_path_m: 8.0,
+            energy: 0.379,
+        },
+        RoomTargets {
+            t60_s: 2.83,
+            mean_free_path_m: 10.0,
+            energy: 0.243,
+        },
+    ];
+    let hum: Vec<f32> = (0..RATE)
+        .map(|n| 0.3 * (std::f64::consts::TAU * 440.0 * f64::from(n) / FS).sin() as f32)
+        .collect();
+    let mut m = mixer(lines);
+    m.apply(Command::SetRoom(ROOMS[0]));
+    m.apply(Command::Play(
+        VoiceId(1),
+        Sound::new(hum),
+        PlayParams {
+            looping: true,
+            direct: false,
+            ..PlayParams::at([20.0, 0.0, 0.0])
+        },
+    ));
+    let blocks = 4 * RATE as usize / BLOCK;
+    let mut out = vec![0.0; 2 * blocks * BLOCK];
+    let mut nets = vec![m.reverb_networks()];
+    let mut room = 0;
+    for (b, chunk) in out.chunks_mut(2 * BLOCK).enumerate() {
+        let r = ((b * BLOCK) as f64 / FS / 0.33) as usize % 2;
+        if r != room {
+            room = r;
+            m.apply(Command::SetRoom(ROOMS[r]));
+        }
+        m.render(chunk, BLOCK);
+        nets.push(m.reverb_networks());
+    }
+    (out, nets)
+}
+
+/// Handing over between two networks never moves a line that holds signal, so the tail of a
+/// hum stays at the hum's pitch; gliding lines shift it on every pass.
+#[test]
+fn a_walk_through_rooms_hands_the_tail_over_without_repitching_it() {
+    let (out, nets) = hum_through_alternating_rooms(TailLines::Handover);
+    let mut handovers = 0;
+    let mut moves = 0;
+    for (e, pair) in nets.windows(2).enumerate() {
+        handovers += usize::from(pair[0][0].fed != pair[1][0].fed);
+        for (k, (before, after)) in pair[0].iter().zip(&pair[1]).enumerate() {
+            let moved = before
+                .lines
+                .iter()
+                .zip(&after.lines)
+                .any(|(a, b)| a.length != b.length);
+            if moved {
+                moves += 1;
+                assert!(
+                    !before.holds_signal,
+                    "block {e}: network {k}'s lines moved while it held signal"
+                );
+            }
+        }
+    }
+    let last2 = (2 * RATE) as usize;
+    let frac = |out: &[f32]| {
+        (0..2)
+            .map(|c| energy_near_440(&ear(&out[out.len() - 2 * last2..], c)))
+            .sum::<f64>()
+            / 2.0
+    };
+    let (glide, _) = hum_through_alternating_rooms(TailLines::Glide);
+    let (h, g) = (frac(&out), frac(&glide));
+    println!(
+        "rooms alternating 8 m / 10 m every 0.33 s: {handovers} handovers, {moves} length \
+         changes, each on a silent network; energy within 3 Hz of 440 Hz over the last 2 s: \
+         Handover {h:.4}, Glide {g:.4}"
+    );
+    assert!(handovers >= 10, "{handovers} handovers");
+}
+
+/// Rendering with the tail on, its room changing every block (a handover at nearly every
+/// one), allocates nothing.
 #[test]
 fn the_tail_renders_without_allocating() {
     let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);

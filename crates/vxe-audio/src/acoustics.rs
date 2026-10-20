@@ -57,9 +57,13 @@
 //!   `[0.02, 0.98]`;
 //! - mean free path `4V / S`, Eyring's `T60 = 0.161 V / (-S ln(1 - alpha))` clamped to
 //!   `[0.05 s, MAX_T60_SECONDS]`, and the tail's energy against a unit-energy direct impulse,
-//!   `min(16 pi (1 - alpha) / (S alpha), 16)`.
+//!   `min(16 pi (1 - alpha) / (S alpha), 16)`. A fan whose rays all miss (open air) or that
+//!   measures no surface (`S = 0`) gives energy 0: there is no room to ring.
 //!
-//! A completed fan sends [`Command::SetRoom`] and is readable as [`Acoustics::room`].
+//! A completed fan sends [`Command::SetRoom`] and is readable as [`Acoustics::room`]. A fan due
+//! while the listener's own voxel is solid (a camera flying through rock) is discarded before
+//! any ray: every ray would hit at `t = 0`. Nothing is sent, [`Acoustics::room`] keeps the last
+//! estimate, and the next update tries again.
 //!
 //! # Cadence
 //!
@@ -316,9 +320,9 @@ pub struct RoomEstimate {
 }
 
 impl RoomEstimate {
-    /// The estimate from a fan's sums over `n` rays: `sum r^3`, `sum r^2 / cos` and the
-    /// absorption sum `sum (r^2 / cos) (1 - keep^2)`, metres.
-    fn from_sums(n: usize, r3: f64, w: f64, wa: f64) -> Self {
+    /// The estimate from a fan's sums over `n` rays, `hits` of which hit a surface: `sum r^3`,
+    /// `sum r^2 / cos` and the absorption sum `sum (r^2 / cos) (1 - keep^2)`, metres.
+    fn from_sums(n: usize, hits: usize, r3: f64, w: f64, wa: f64) -> Self {
         let n = n as f64;
         let four_pi = 4.0 * std::f64::consts::PI;
         let v = four_pi / (3.0 * n) * r3;
@@ -330,10 +334,10 @@ impl RoomEstimate {
         } else {
             0.0
         };
-        let energy = if s > 0.0 {
+        let energy = if s > 0.0 && hits > 0 {
             (16.0 * std::f64::consts::PI * (1.0 - alpha) / (s * alpha)).min(16.0)
         } else {
-            16.0
+            0.0
         };
         Self {
             volume_m3: v as f32,
@@ -347,22 +351,22 @@ impl RoomEstimate {
 }
 
 /// One room ray from `from` (voxel units) along unit `d`: its hit distance in metres, the
-/// `cos` of its incidence on the face it entered (floored), and the face's energy absorption.
-/// A miss is a fully absorbing face at the range, square on.
+/// `cos` of its incidence on the face it entered (floored), the face's energy absorption, and
+/// whether it hit. A miss is a fully absorbing face at the range, square on.
 fn room_ray(
     world: &World,
     table: &MaterialTable,
     from: [f32; 3],
     d: [f32; 3],
     metres_per_voxel: f32,
-) -> (f64, f64, f64) {
+) -> (f64, f64, f64, bool) {
     let one = FIXED_ONE as f32;
     let range = REFLECTION_RANGE_METRES / metres_per_voxel;
     let (origin, dir, dir_len) = fixed_ray(from, d);
     let max_t = (range * one * one / dir_len).round() as i64;
     // A ray the world refuses (outside its limits) counts as a miss.
     let Some(hit) = world.raycast(origin, dir, max_t).ok().flatten() else {
-        return (f64::from(REFLECTION_RANGE_METRES), 1.0, 1.0);
+        return (f64::from(REFLECTION_RANGE_METRES), 1.0, 1.0, false);
     };
     let r = hit.t as f64 * f64::from(dir_len) / f64::from(one * one) * f64::from(metres_per_voxel);
     // The face the ray entered, exact from the walk; a ray that starts inside a solid takes
@@ -376,13 +380,14 @@ fn room_ray(
     let cos = (dir[axis].abs() as f32 / dir_len).max(ROOM_COS_FLOOR);
     let a = table.get(hit.material).map_or(0.0, |m| m.acoustic[0]);
     let keep = reflection_keep(a);
-    (r, f64::from(cos), f64::from(1.0 - keep * keep))
+    (r, f64::from(cos), f64::from(1.0 - keep * keep), true)
 }
 
 /// A room fan in progress: where it began, how many rays are done and their sums.
 struct Fan {
     origin: [f32; 3],
     next: usize,
+    hits: usize,
     r3: f64,
     w: f64,
     wa: f64,
@@ -414,6 +419,7 @@ pub struct Acoustics {
     /// The room targets must go out again at the next update (the tail was switched).
     resend_room: bool,
     room_rays: usize,
+    discarded: u64,
 }
 
 impl Acoustics {
@@ -432,6 +438,7 @@ impl Acoustics {
             reverb: true,
             resend_room: false,
             room_rays: 0,
+            discarded: 0,
         }
     }
 
@@ -450,6 +457,12 @@ impl Acoustics {
     /// The room as the last complete fan saw it; `None` before the first completes.
     pub fn room(&self) -> Option<RoomEstimate> {
         self.room
+    }
+
+    /// Fans discarded so far because the listener's voxel was solid when they were due.
+    #[doc(hidden)]
+    pub fn discarded_fans(&self) -> u64 {
+        self.discarded
     }
 
     /// Room rays traced by the last [`Acoustics::update`].
@@ -491,10 +504,16 @@ impl Acoustics {
             let due = self.fan_began.is_none_or(|(at, block)| {
                 length(sub(listener, at)) > moved || now.saturating_sub(block) >= interval
             });
-            if due {
+            // From inside a solid every ray hits at once: no room to measure.
+            let voxel = listener.map(|c| c.floor() as i32);
+            let solid = world.material_at(voxel).is_some_and(|m| m != AIR);
+            if due && solid {
+                self.discarded += 1;
+            } else if due {
                 self.fan = Some(Fan {
                     origin: listener,
                     next: 0,
+                    hits: 0,
                     r3: 0.0,
                     w: 0.0,
                     wa: 0.0,
@@ -505,7 +524,8 @@ impl Acoustics {
         if let Some(fan) = self.fan.as_mut() {
             let end = (fan.next + ROOM_RAYS_PER_UPDATE).min(ROOM_RAYS);
             for &d in &self.room_dirs[fan.next..end] {
-                let (r, cos, absorb) = room_ray(world, table, fan.origin, d, metres_per_voxel);
+                let (r, cos, absorb, hit) = room_ray(world, table, fan.origin, d, metres_per_voxel);
+                fan.hits += usize::from(hit);
                 let w = r * r / cos;
                 fan.r3 += r * r * r;
                 fan.w += w;
@@ -514,7 +534,7 @@ impl Acoustics {
             self.room_rays = end - fan.next;
             fan.next = end;
             if end == ROOM_RAYS {
-                let room = RoomEstimate::from_sums(ROOM_RAYS, fan.r3, fan.w, fan.wa);
+                let room = RoomEstimate::from_sums(ROOM_RAYS, fan.hits, fan.r3, fan.w, fan.wa);
                 self.fan = None;
                 self.room = Some(room);
                 self.resend_room = false;

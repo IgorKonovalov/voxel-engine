@@ -74,7 +74,9 @@
 //! the last left click dug; every frame probes their occlusion through the world. `T` plays a
 //! looping pulse (a knock each second) there, to hear the echoes in its gaps; `E` toggles the
 //! early reflections. `--audio-debug` is
-//! `--audio` plus a line a second of the output callback's readings, and on exit writes the last
+//! `--audio` plus a line a second of the output callback's readings, a `room sent: T60 .. mfp ..
+//! energy ..` line for every room the tail is sent, a line when room fans start being discarded
+//! (the listener inside a solid) and one when they stop, and on exit writes the last
 //! 60 s the callback handed the device to `flythrough-audio-debug.wav`. `FLYTHROUGH_HRIR=<pack>`
 //! in the environment loads that HRIR pack instead of the shipped one. `Y` toggles the late
 //! tail. `--absorption A` sets the cave row's absorption per metre (default 0.3). `--mic`
@@ -105,7 +107,8 @@ use flythrough::{
 };
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
 use vxe_audio::{
-    Acoustics, BlockClock, Command, Hrtf, Mixer, Output, PlayParams, RoomEstimate, Sound, VoiceId,
+    Acoustics, BlockClock, Command, Hrtf, Mixer, Output, PlayParams, RoomEstimate, RoomTargets,
+    Sound, VoiceId,
 };
 use vxe_net::{Client, Event, Logic, LogicError, MemChannel, Server};
 use vxe_render::glam::Vec3;
@@ -606,6 +609,17 @@ fn room_line(r: &RoomEstimate) -> String {
     )
 }
 
+/// `--audio-debug`'s line for each room sent to the mixer:
+/// `room sent: T60 <s> mfp <m> energy <dB>`.
+fn room_sent_line(r: &RoomTargets) -> String {
+    format!(
+        "room sent: T60 {:.3} s mfp {:.3} m energy {:+.1} dB",
+        r.t60_s,
+        r.mean_free_path_m,
+        10.0 * r.energy.max(1e-12).log10()
+    )
+}
+
 /// The voice the microphone plays as. The output numbers its voices up from 0, so this one
 /// is never handed out in a session.
 const MIC_VOICE: VoiceId = VoiceId(u32::MAX);
@@ -675,6 +689,8 @@ struct Audio {
     /// `--room-line`: print the room line whenever a fan completes.
     room_line: bool,
     mic: Option<Mic>,
+    /// Fans discarded in a row so far (the listener inside a solid), for `--audio-debug`.
+    discarded_run: u64,
 }
 
 /// An environment variable naming an HRIR pack to use instead of the shipped one, for
@@ -818,6 +834,7 @@ impl Audio {
                     update_ms: 0.0,
                     room_line,
                     mic,
+                    discarded_run: 0,
                 })
             }
             Err(e) => {
@@ -2520,6 +2537,8 @@ impl Run {
         let output = &audio.output;
         let t = now();
         let mut completed = false;
+        let debug = audio.debug;
+        let discarded = audio.acoustics.discarded_fans();
         audio.acoustics.update(
             &self.world,
             &audio.table,
@@ -2528,11 +2547,31 @@ impl Run {
             METRES_PER_VOXEL,
             // A full channel drops these targets; the voice is probed again within 500 ms.
             &mut |cmd| {
-                completed |= matches!(cmd, Command::SetRoom(_));
+                if let Command::SetRoom(r) = &cmd {
+                    completed = true;
+                    if debug {
+                        println!("{}", room_sent_line(r));
+                    }
+                }
                 let _ = output.send(cmd);
             },
         );
         audio.update_ms = ms_since(t);
+        let now_discarded = audio.acoustics.discarded_fans();
+        if debug {
+            if now_discarded > discarded && audio.discarded_run == 0 {
+                println!("room: fan discarded, the listener is inside a solid");
+            }
+            if now_discarded > discarded {
+                audio.discarded_run += now_discarded - discarded;
+            } else if audio.discarded_run > 0 {
+                println!(
+                    "room: out of the solid after {} discarded fans",
+                    audio.discarded_run
+                );
+                audio.discarded_run = 0;
+            }
+        }
         if completed
             && (audio.room_line || audio.debug)
             && let Some(r) = audio.acoustics.room()

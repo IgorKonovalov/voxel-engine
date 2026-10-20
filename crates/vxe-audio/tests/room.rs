@@ -114,16 +114,47 @@ fn a_4_m_cube_off_centre_reads_its_mean_free_path() {
     );
 }
 
-/// Open air: every ray misses, so the fan reads a 50 m sphere of fully absorbing faces, its
-/// absorption clamped to 0.98, and a tail more than 40 dB down.
+/// Open air: every ray misses, so the fan reads a sphere of fully absorbing faces at the
+/// range, its absorption clamped to 0.98, and no tail at all: energy exactly 0.
 #[test]
-fn open_air_gives_a_negligible_tail() {
+fn open_air_gives_no_tail() {
     let air = world([-1, -1, -1], [1, 1, 1], |_| false);
-    let (acoustics, _) = fan(&air, [0.0, 0.0, 0.0], 8);
+    let (acoustics, rooms) = fan(&air, [0.0, 0.0, 0.0], 8);
     let r = acoustics.room().expect("complete");
     println!("open air: {r:?}");
     assert_eq!(r.absorption, 0.98);
-    assert!(r.energy <= 1e-4, "energy {}", r.energy);
+    assert_eq!(r.energy, 0.0);
+    assert_eq!(rooms[0].energy, 0.0);
+}
+
+/// A listener inside a solid block: a fan due there is discarded, so no `SetRoom` goes out over
+/// 16 calls and the estimate from the chamber stands.
+#[test]
+fn a_listener_inside_a_solid_sends_no_room() {
+    let room = cube(120);
+    let (mut acoustics, rooms) = fan(&room, [60.0, 60.0, 60.0], 8);
+    assert_eq!(rooms.len(), 1);
+    let before = acoustics.room().expect("complete");
+    assert_eq!(acoustics.discarded_fans(), 0);
+    // 1.5 m into the rock beyond the face at x = 0: more than a fan's move away.
+    let listener = Listener {
+        position: [-15.0, 60.0, 60.0],
+        ..Listener::default()
+    };
+    let mut sent = 0;
+    for _ in 0..16 {
+        acoustics.update(&room, room.materials(), &listener, &[], MPV, &mut |cmd| {
+            sent += usize::from(matches!(cmd, Command::SetRoom(_)));
+        });
+        assert_eq!(acoustics.last_room_rays(), 0);
+    }
+    println!(
+        "inside a solid: {sent} rooms sent over 16 calls, {} fans discarded",
+        acoustics.discarded_fans()
+    );
+    assert_eq!(sent, 0);
+    assert_eq!(acoustics.room(), Some(before));
+    assert!(acoustics.discarded_fans() > 0);
 }
 
 /// No `SetRoom` before the first fan completes (8 calls of 16 rays), none while the listener

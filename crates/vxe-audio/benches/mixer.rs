@@ -1,7 +1,9 @@
 //! The mixer budget: one 256-frame block with 32 HRTF voices, each low-passed and carrying 16
-//! reflection taps into the 16 direction buses and a send into the late tail (a 12 m room's,
-//! 2.26 s), with the listener still (every voice and bus on one FIR pair) and turning (every
-//! voice and bus crossfading between two FIR pairs, the worst case). Prints the audio RAM the
+//! reflection taps into the 16 direction buses and a send into the late tail, with the
+//! listener still (every voice and bus on one FIR pair) and turning (every voice and bus
+//! crossfading between two FIR pairs, the worst case). The tail's room alternates every 0.33 s
+//! between an 8 m room (2.26 s) and a 10 m one (2.83 s), as a walk through a cave hands it
+//! rooms, so both of its networks run: one fed, the other ringing out or fading. Prints the audio RAM the
 //! mixer and the pack hold. The `Acoustics::update` budget is the fly-through's `acoustics`
 //! bench, which owns the cave it probes.
 
@@ -79,17 +81,46 @@ fn loaded_mixer() -> Mixer {
             },
         ));
     }
-    mixer.apply(Command::SetRoom(RoomTargets {
-        t60_s: 2.26,
-        mean_free_path_m: 8.0,
-        energy: 0.379,
-    }));
     let mut out = vec![0.0f32; 2 * BLOCK];
+    let mut rooms = Rooms(0);
     for _ in 0..200 {
+        rooms.step(&mut mixer);
         mixer.render(&mut out, BLOCK);
     }
     assert_eq!(mixer.voice_count(), SOURCES);
+    assert!(
+        mixer.reverb_networks().iter().all(|n| n.holds_signal),
+        "both tail networks run"
+    );
     mixer
+}
+
+/// The two rooms the tail alternates between.
+const ROOMS: [RoomTargets; 2] = [
+    RoomTargets {
+        t60_s: 2.26,
+        mean_free_path_m: 8.0,
+        energy: 0.379,
+    },
+    RoomTargets {
+        t60_s: 2.83,
+        mean_free_path_m: 10.0,
+        energy: 0.243,
+    },
+];
+/// Blocks between room changes: 0.33 s.
+const ROOM_BLOCKS: usize = 62;
+
+/// Blocks rendered; sends the next room every [`ROOM_BLOCKS`].
+struct Rooms(usize);
+
+impl Rooms {
+    fn step(&mut self, mixer: &mut Mixer) {
+        if self.0.is_multiple_of(ROOM_BLOCKS) {
+            mixer.apply(Command::SetRoom(ROOMS[self.0 / ROOM_BLOCKS % 2]));
+        }
+        self.0 += 1;
+    }
 }
 
 fn mixer_block(c: &mut Criterion) {
@@ -105,16 +136,19 @@ fn mixer_block(c: &mut Criterion) {
     println!(
         "audio RAM: pack {pack_bytes} B; delay line {delay_line} B per voice, {} B for the \
          {MAX_VOICES}-voice pool; buses {buses} B; tap slots {slots} B per voice, {} B for the \
-         pool; tail lines {} B",
+         pool; tail lines {} B (two networks)",
         delay_line * MAX_VOICES,
         slots * MAX_VOICES,
         mixer.reverb_bytes()
     );
     let mut out = vec![0.0f32; 2 * BLOCK];
+    let mut rooms = Rooms(1);
     c.bench_function(
-        "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, 16 buses, tail",
+        "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, 16 buses, tail \
+         handing over",
         |b| {
             b.iter(|| {
+                rooms.step(&mut mixer);
                 mixer.render(&mut out, BLOCK);
                 black_box(&out);
             })
@@ -160,11 +194,13 @@ fn mixer_block_turning(c: &mut Criterion) {
     }
     let mut out = vec![0.0f32; 2 * BLOCK];
     let mut k = 0usize;
+    let mut rooms = Rooms(1);
     c.bench_function(
         "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, 16 buses, \
-         tail, listener turning (every voice crossfades)",
+         tail handing over, listener turning (every voice crossfades)",
         |b| {
             b.iter(|| {
+                rooms.step(&mut mixer);
                 k = (k + 1) % steps;
                 mixer.apply(Command::SetListener(facing(k as f32 * YAW_STEP_DEG)));
                 mixer.render(&mut out, BLOCK);

@@ -25,8 +25,8 @@
 //!    gain.
 //!
 //! Each voice also sends its own-gained signal times its smoothed [`crate::AcousticTargets`]
-//! `send` into the shared late tail (`reverb.rs`), whose two outputs add to the stereo out
-//! after the buses.
+//! `send` into the shared late tail (`reverb.rs`: two networks, one fed at a time), whose
+//! stereo outputs add to the out after the buses.
 //!
 //! After every voice, each of the sixteen buses that took input or still rings is spatialised
 //! the same way on the reflection direction `i` ([`crate::reflection_directions`], world axes)
@@ -40,7 +40,7 @@ use std::sync::Arc;
 use crate::acoustics::{BlockClock, reflection_directions};
 use crate::command::Command;
 use crate::hrtf::Hrtf;
-use crate::reverb::{Reverb, ReverbLine, ReverbSettings};
+use crate::reverb::{Reverb, ReverbLine, ReverbNetwork, ReverbSettings};
 use crate::voice::{
     MAX_DELAY_FRAMES, MAX_TAPS, OPEN_CUTOFF_HZ, PlayParams, Source, Tap, TapState, Voice,
     VoiceBuffers, VoiceId,
@@ -170,20 +170,27 @@ impl Mixer {
         self.reverb.settings()
     }
 
-    /// The tail's lines, for tests: each line's current and target length.
+    /// The fed tail network's lines, for tests: each line's current and target length.
     #[doc(hidden)]
     pub fn reverb_lines(&self) -> [ReverbLine; crate::REVERB_LINES] {
         self.reverb.lines()
     }
 
-    /// Moves tail line `line`'s read point by `frames` at once, for tests that check a jump
-    /// is caught; the line then glides back to its target.
+    /// Both tail networks, for tests: lines, whether each holds signal, which is fed and
+    /// their input weights.
+    #[doc(hidden)]
+    pub fn reverb_networks(&self) -> [ReverbNetwork; 2] {
+        self.reverb.networks()
+    }
+
+    /// Moves the fed tail network's line `line` read point by `frames` at once, for tests that
+    /// check a jump is caught; the line then glides back to its target.
     #[doc(hidden)]
     pub fn jump_reverb_line(&mut self, line: usize, frames: f32) {
         self.reverb.jump(line, frames);
     }
 
-    /// Bytes the tail's delay lines hold.
+    /// Bytes the tail's delay lines hold, both networks.
     pub fn reverb_bytes(&self) -> usize {
         Reverb::line_bytes()
     }
