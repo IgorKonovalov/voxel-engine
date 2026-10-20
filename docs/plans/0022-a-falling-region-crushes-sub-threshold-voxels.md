@@ -1,6 +1,6 @@
 # 0022: A falling region crushes the sub-threshold voxels under it and piles them as rubble, and the logic tells a wedge from a refusal and a landing
 
-> **Status:** draft
+> **Status:** approved (owner, 2026-10-20; rubble: all the crushed volume, piled on the landed region)
 > **Created:** 2026-10-20
 > **Milestone:** M8 (collapse) in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0016](../adrs/0016-a-falling-region-crushes-the-sub-threshold-voxels-in-its-path.md) (the yield rule, crush over carry; proposed with this plan), [ADR-0008](../adrs/0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) (the flood and the drop it amends), [ADR-0007](../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (the log), [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (the logic boundary)
