@@ -577,10 +577,10 @@ fn seed_1_level() -> World {
     World::generate(source.extent, &source, &cave_materials())
 }
 
-/// 20 m (200 voxels) outside the level's -x face, level with its centre, looking +x.
+/// 40 m (400 voxels) outside the level's -x face, level with its centre, looking +x.
 fn outside_level_camera() -> Camera {
     let c = flythrough::cave::LEVEL_CHUNKS.map(|n| (n * 64) as f32 / 2.0 + 0.5);
-    camera_looking_x([-200.0, c[1], c[2]])
+    camera_looking_x([-400.0, c[1], c[2]])
 }
 
 /// The cutaway look: face normals, no detail, shaded.
@@ -589,6 +589,64 @@ fn cutaway_look() -> vxe_render::LookParams {
         cutaway: true,
         ..vxe_render::LookParams::default()
     }
+}
+
+/// The level from outside its -x face in the cutaway view: the far walls of the caverns
+/// behind the hull under the hemisphere light, against the flat sky where rock has no cavern
+/// behind it. The sky's colour bin covers at least 20 % of the pixels, and at least 20 % are
+/// lit rock (outside that bin and not black).
+#[test]
+fn cutaway_level_golden_shows_sky_and_lit_rock() {
+    let world = seed_1_level();
+    let full = world.stats().full_bricks as u64;
+    let Some((device, queue)) = software_device(full * vxe_render::gpu_world::SLOT_BYTES) else {
+        return;
+    };
+    let cfg = MirrorConfig {
+        budget_bytes: 256 << 20,
+        ..MirrorConfig::new(Window::Fixed(world.extent()))
+    };
+    let mut rig = LookRig::on(device, queue, &world, Some(cfg));
+    let img = rig.render(
+        &outside_level_camera(),
+        &LightParams::headlamp(),
+        cutaway_look(),
+    );
+    assert_golden("cutaway_level.png", &img);
+
+    // The sky is the colour of a miss: read it off the hit mask.
+    let mask = rig.render(
+        &outside_level_camera(),
+        &LightParams::headlamp(),
+        vxe_render::LookParams {
+            view: vxe_render::ViewMode::HitMask,
+            ..cutaway_look()
+        },
+    );
+    let bin = |p: &[u8]| (p[0] >> 5, p[1] >> 5, p[2] >> 5);
+    let miss = img
+        .chunks(4)
+        .zip(mask.chunks(4))
+        .find(|(_, m)| m[0] == 0)
+        .map(|(p, _)| bin(p))
+        .expect("a pixel misses");
+    let n = (img.len() / 4) as f64;
+    let sky = img.chunks(4).filter(|p| bin(p) == miss).count() as f64 / n;
+    let lit = img
+        .chunks(4)
+        .filter(|p| bin(p) != miss && p[..3].iter().any(|&c| c >= 32))
+        .count() as f64
+        / n;
+    let misses = mask.chunks(4).filter(|m| m[0] == 0).count() as f64 / n;
+    println!(
+        "cutaway_level.png: sky bin {miss:?} {:.2} %, lit rock {:.2} %, misses {:.2} %, bins covering 5 %: {}",
+        sky * 100.0,
+        lit * 100.0,
+        misses * 100.0,
+        bins_covering(&img, 0.05)
+    );
+    assert!(sky >= 0.20, "sky {:.2} %", sky * 100.0);
+    assert!(lit >= 0.20, "lit rock {:.2} %", lit * 100.0);
 }
 
 /// The steps view from the outside camera at 1920 x 1080 on the high-performance adapter:
