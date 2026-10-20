@@ -13,6 +13,7 @@ use crate::coords::{
     BRICK_EDGE, BRICK_VOXELS, CHUNK_EDGE, CHUNK_EDGE_BRICKS, ChunkCoord, VoxelCoord, brick_slot,
 };
 use crate::fixed::{Fixed3, centre};
+use crate::limits::{Field, WorldLimits};
 use crate::material::{AIR, MaterialFlags, MaterialId, MaterialTable};
 use crate::raycast::point_at;
 use crate::shape::{Coverage, Shape, sphere_row_spans};
@@ -53,6 +54,9 @@ pub enum EditError {
     /// A stamp names a prefab id that is not registered where it is applied (ADR-0014).
     /// Nothing was changed.
     UnknownPrefab(u64),
+    /// A shape, ray or box query parameter lies outside the world's [`WorldLimits`].
+    /// Nothing was changed.
+    OutOfRange { what: Field },
 }
 
 impl std::fmt::Display for EditError {
@@ -60,6 +64,7 @@ impl std::fmt::Display for EditError {
         match self {
             Self::NotResident(c) => write!(f, "chunk {:?} is not resident", c.0),
             Self::UnknownPrefab(id) => write!(f, "prefab {id:#018x} is not registered"),
+            Self::OutOfRange { what } => write!(f, "{what} out of range"),
         }
     }
 }
@@ -305,14 +310,21 @@ fn centres(lo: [i64; 3], hi: [i64; 3]) -> ([i64; 3], [i64; 3]) {
     (lo.map(centre), hi.map(centre))
 }
 
+/// A voxel or chunk coordinate of a checked shape as `i32`. Within the limits every such
+/// coordinate fits (`±2^30` fixed units is `±2^22` voxels), so the clamp never moves one.
 fn to_i32(v: [i64; 3]) -> [i32; 3] {
-    v.map(|c| c.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32)
+    v.map(|c| {
+        debug_assert!(i32::try_from(c).is_ok(), "coordinate {c} beyond i32");
+        c.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+    })
 }
 
 impl World {
-    /// Applies `op` and reports what changed. Fails, changing nothing, when the shape reaches a
-    /// chunk that is not resident.
+    /// Applies `op` and reports what changed. Fails, changing nothing, when a parameter of the
+    /// shape lies outside the [`WorldLimits`] ([`EditError::OutOfRange`]) or the shape reaches
+    /// a chunk that is not resident.
     pub fn apply(&self, op: &EditOp) -> Result<EditResult, EditError> {
+        op.shape.check(&WorldLimits::DEFAULT)?;
         let Some((lo, hi)) = op.shape.voxel_bounds() else {
             return Ok(EditResult::default());
         };

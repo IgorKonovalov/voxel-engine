@@ -154,3 +154,66 @@ fn capsule_row_span_equals_the_set_of_contained_centres() {
         "{parallel} parallel, {points} points"
     );
 }
+
+const LIMIT: i64 = 1 << 30;
+
+/// The documented range is inclusive at `±2^30` fixed units on every coordinate and radius.
+#[test]
+fn shapes_are_checked_against_the_documented_range() {
+    let limits = WorldLimits::default();
+    assert_eq!(limits, WorldLimits::DEFAULT);
+    assert_eq!(limits.coord_max, LIMIT);
+    let o = Fixed3([0; 3]);
+    let radius = Err(EditError::OutOfRange {
+        what: Field::Radius,
+    });
+    let coord = Err(EditError::OutOfRange { what: Field::Coord });
+
+    assert_eq!(Shape::Sphere { c: o, r: LIMIT }.check(&limits), Ok(()));
+    assert_eq!(Shape::Sphere { c: o, r: LIMIT + 1 }.check(&limits), radius);
+    assert_eq!(
+        Shape::Sphere {
+            c: o,
+            r: -LIMIT - 1
+        }
+        .check(&limits),
+        radius
+    );
+    assert_eq!(Shape::Sphere { c: o, r: i64::MAX }.check(&limits), radius);
+    assert_eq!(
+        Shape::Sphere {
+            c: Fixed3([0, LIMIT + 1, 0]),
+            r: 1
+        }
+        .check(&limits),
+        coord
+    );
+
+    let box_ = |min: [i64; 3], max: [i64; 3]| Shape::Box_ {
+        min: Fixed3(min),
+        max: Fixed3(max),
+    };
+    assert_eq!(box_([-LIMIT; 3], [LIMIT; 3]).check(&limits), Ok(()));
+    assert_eq!(box_([0; 3], [i64::MIN, 0, 0]).check(&limits), coord);
+    assert_eq!(box_([i64::MIN, 0, 0], [0; 3]).check(&limits), coord);
+    assert_eq!(box_([0; 3], [0, 0, LIMIT + 1]).check(&limits), coord);
+    // A reversed box is in range; it is empty, not refused.
+    assert_eq!(box_([LIMIT; 3], [-LIMIT; 3]).check(&limits), Ok(()));
+    assert_eq!(box_([LIMIT; 3], [-LIMIT; 3]).voxel_bounds(), None);
+
+    let capsule = |a: [i64; 3], b: [i64; 3], r| Shape::Capsule {
+        a: Fixed3(a),
+        b: Fixed3(b),
+        r,
+    };
+    assert_eq!(capsule([-LIMIT; 3], [LIMIT; 3], 256).check(&limits), Ok(()));
+    assert_eq!(
+        capsule([-LIMIT; 3], [LIMIT, LIMIT, LIMIT + 1], 256).check(&limits),
+        coord
+    );
+    assert_eq!(
+        capsule([-LIMIT - 1, 0, 0], [LIMIT, 0, 0], 256).check(&limits),
+        coord
+    );
+    assert_eq!(capsule([0; 3], [256; 3], LIMIT + 1).check(&limits), radius);
+}

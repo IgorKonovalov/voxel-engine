@@ -25,6 +25,7 @@ mod coords;
 mod edit;
 mod fixed;
 pub mod hash;
+mod limits;
 mod log;
 mod material;
 mod mips;
@@ -51,6 +52,7 @@ pub use coords::{
 };
 pub use edit::{EditError, EditOp, EditResult, Mode};
 pub use fixed::{FIXED_HALF, FIXED_ONE, Fixed3, centre_of_voxel};
+pub use limits::{Field, WorldLimits};
 pub use log::{
     InputEntry, InputLog, LOG_FORMAT, LOG_HEADER_BYTES, LOG_MAGIC, LogEntry, LogFile, Op, OpLog,
     OpResult,

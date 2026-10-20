@@ -18,8 +18,8 @@ use vxe_net::*;
 use vxe_script_wasm::{WasmConfig, WasmLogic};
 use vxe_world::hash::mix64;
 use vxe_world::{
-    CellCoord, EditError, EditOp, Fixed3, Hit, MaterialId, Mode, Op, OpResult, PrefabRegistry,
-    Region, VoxelCoord, World,
+    CellCoord, EditError, EditOp, Field, Fixed3, Hit, MaterialId, Mode, Op, OpResult,
+    PrefabRegistry, Region, VoxelCoord, World,
 };
 
 /// A host straight on a world, for calling a [`WasmLogic`] without a server.
@@ -571,21 +571,33 @@ fn a_host_import_that_panics_traps_and_stops_the_logic() {
     );
 }
 
-/// In a build with overflow checks, a sphere of radius `i64::MAX` panics in the world's
-/// fixed-point math; through a component it is the logic's trap, and the server runs on.
-#[cfg(debug_assertions)]
+/// A sphere of radius `i64::MAX` from a component is refused by the world with
+/// `OutOfRange` before any fixed-point math, in every build profile: no trap, the logic
+/// carries on, and the world is unchanged.
 #[test]
-fn an_overflowing_shape_from_a_component_is_a_trap_not_a_server_panic() {
-    let (mut server, client) = session("echo", &WasmConfig::default(), 0);
+fn an_overflowing_shape_from_a_component_is_refused_not_a_trap() {
+    let (mut server, mut client) = session("echo", &WasmConfig::default(), 0);
     client.send_input(op_bytes(EditOp::sphere(
         Fixed3([0; 3]),
         i64::MAX,
         Mode::Carve,
     )));
     let report = server.tick();
-    assert!(
-        matches!(report.logic_error, Some(LogicError::Trap { tick: 0, .. })),
-        "{report:?}"
+    assert_eq!(report.logic_error, None, "{report:?}");
+    assert_eq!((report.applied, report.refused), (0, 1), "{report:?}");
+    let refused: Vec<_> = client
+        .poll()
+        .into_iter()
+        .filter_map(|e| match e {
+            Event::Refused { error, .. } => Some(error),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        refused,
+        [EditError::OutOfRange {
+            what: Field::Radius
+        }]
     );
     assert_eq!(server.world().voxel_hash(), solid3_world().voxel_hash());
 }

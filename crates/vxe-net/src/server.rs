@@ -468,3 +468,89 @@ impl Server {
         self.tick
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::channel::MemChannel;
+    use crate::client::{Client, Event};
+    use crate::test_logic::{EchoLogic, seeded_carves, solid3_world};
+    use vxe_world::{EditOp, Field, Mode};
+
+    /// A sphere whose radius is past the world's limits.
+    fn out_of_range() -> Op {
+        Op::Edit(EditOp::sphere(Fixed3([0; 3]), (1 << 30) + 1, Mode::Carve))
+    }
+
+    /// An out-of-range op between two in-range carves is refused on the server and announced
+    /// as refused; an owned client stays in step and the op is not logged. Replaying a log
+    /// that holds it anyway refuses it again on the world, and re-simulating that log on a
+    /// fresh server gives the live log and the live world.
+    #[test]
+    fn an_out_of_range_op_is_refused_on_the_server_and_an_owned_client() {
+        let carves = seeded_carves(0x0019, 2);
+        let mut server = Server::new(Arc::new(solid3_world()), Box::new(EchoLogic), 0);
+        let (near, far) = MemChannel::pair();
+        server.attach(far);
+        let mut client = Client::owned(solid3_world(), near);
+        server.submit(carves[0]);
+        server.submit(out_of_range());
+        server.submit(carves[1]);
+        let report = server.tick();
+        assert_eq!((report.applied, report.refused), (2, 1), "{report:?}");
+        let events = client.poll();
+        let refused: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Refused { seq, error, .. } => Some((*seq, *error)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            refused,
+            [(
+                1,
+                EditError::OutOfRange {
+                    what: Field::Radius
+                }
+            )]
+        );
+        assert!(!client.desynced(), "{events:?}");
+        assert!(!events.iter().any(|e| matches!(e, Event::Desync { .. })));
+        assert_eq!(client.world().voxel_hash(), server.world().voxel_hash());
+        let logged: Vec<u32> = server
+            .ops()
+            .entries()
+            .iter()
+            .filter(|e| e.op().is_some())
+            .map(LogEntry::seq)
+            .collect();
+        assert_eq!(logged, [0, 2]);
+
+        // A log holding the out-of-range op under its seq, as a submitted op of tick 0.
+        let mut log = OpLog::new();
+        log.record(0, 0, carves[0]);
+        log.record(0, 1, out_of_range());
+        log.record(0, 2, carves[1]);
+        log.record_boundary(0, 3);
+        let replayed = solid3_world().replay(&log, &PrefabRegistry::new());
+        assert!(replayed[0].is_ok() && replayed[2].is_ok(), "{replayed:?}");
+        assert_eq!(
+            replayed[1],
+            Err(EditError::OutOfRange {
+                what: Field::Radius
+            })
+        );
+        let world = Arc::new(solid3_world());
+        let rebuilt = Server::resimulate(
+            world.clone(),
+            Box::new(EchoLogic),
+            0,
+            &PrefabRegistry::new(),
+            &log,
+            &InputLog::new(),
+        );
+        assert_eq!(rebuilt.entries(), server.ops().entries());
+        assert_eq!(world.voxel_hash(), server.world().voxel_hash());
+    }
+}

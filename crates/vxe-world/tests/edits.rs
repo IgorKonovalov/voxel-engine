@@ -638,3 +638,57 @@ fn a_pooled_expand_allocates_nothing() {
         "{cold_allocs} allocations, {full} Full bricks"
     );
 }
+
+/// A sphere of radius `i64::MAX` is refused before any arithmetic, in every build profile,
+/// and the world is unchanged.
+#[test]
+fn an_out_of_range_radius_is_refused_and_changes_nothing() {
+    let world = solid3_world();
+    let before = world_hash(&world);
+    assert_eq!(
+        world.apply(&EditOp::sphere(Fixed3([0; 3]), i64::MAX, Mode::Carve)),
+        Err(EditError::OutOfRange {
+            what: Field::Radius
+        })
+    );
+    assert_eq!(
+        world.apply(&EditOp::sphere(Fixed3([0; 3]), i64::MIN, Mode::Carve)),
+        Err(EditError::OutOfRange {
+            what: Field::Radius
+        })
+    );
+    assert_eq!(
+        world.apply(&EditOp::capsule(
+            Fixed3([0; 3]),
+            Fixed3([256, 0, i64::MAX]),
+            256,
+            Mode::Carve
+        )),
+        Err(EditError::OutOfRange { what: Field::Coord })
+    );
+    assert_eq!(
+        world.apply(&EditOp::box_(
+            Fixed3([0; 3]),
+            Fixed3([i64::MIN, 0, 0]),
+            Mode::Fill(2)
+        )),
+        Err(EditError::OutOfRange { what: Field::Coord })
+    );
+    assert_eq!(world_hash(&world), before);
+}
+
+/// A reversed box within range is not refused: it holds no centre and changes nothing.
+#[test]
+fn a_reversed_box_in_range_is_an_empty_edit() {
+    let world = solid3_world();
+    let before = world_hash(&world);
+    let r = world
+        .apply(&EditOp::box_(
+            Fixed3([10 * 256; 3]),
+            Fixed3([-10 * 256; 3]),
+            Mode::Carve,
+        ))
+        .unwrap();
+    assert_eq!(r, EditResult::default());
+    assert_eq!(world_hash(&world), before);
+}

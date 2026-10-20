@@ -303,9 +303,25 @@ fn every_tag_round_trips() {
     assert_eq!(ERROR_UNKNOWN_PREFAB, 3);
     assert_eq!(out.len(), 9);
     assert_eq!(decode_error(&mut Reader::new(&out)), Ok(err));
+    for (i, what) in Field::ALL.into_iter().enumerate() {
+        let err = EditError::OutOfRange { what };
+        let mut out = Vec::new();
+        encode_error(&mut out, &err);
+        assert_eq!(out, [ERROR_OUT_OF_RANGE, i as u8 + 1]);
+        assert_eq!(decode_error(&mut Reader::new(&out)), Ok(err));
+    }
+    assert_eq!(ERROR_OUT_OF_RANGE, 2);
     assert_eq!(
-        decode_error(&mut Reader::new(&[2, 0, 0, 0, 0])),
-        Err(WireError::UnknownKind(2))
+        decode_error(&mut Reader::new(&[2, 0])),
+        Err(WireError::UnknownKind(0))
+    );
+    assert_eq!(
+        decode_error(&mut Reader::new(&[2, 7])),
+        Err(WireError::UnknownKind(7))
+    );
+    assert_eq!(
+        decode_error(&mut Reader::new(&[4, 0, 0, 0, 0])),
+        Err(WireError::UnknownKind(4))
     );
 }
 
