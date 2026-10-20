@@ -7,7 +7,8 @@
 //! `flythrough [--seed N] [--level] [--vault] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--sync-budget MIB] [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH]
 //! [--view VIEW] [--detail] [--translucent-layers N] [--hud] [--save PATH] [--replay PATH]
-//! [--logic native|wasm[=PATH]] [--audio] [--audio-debug]`.
+//! [--logic native|wasm[=PATH]] [--audio] [--audio-debug] [--room METRES] [--room-line]
+//! [--absorption A] [--mic]`.
 //! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -62,7 +63,16 @@
 //! early reflections. `--audio-debug` is
 //! `--audio` plus a line a second of the output callback's readings, and on exit writes the last
 //! 60 s the callback handed the device to `flythrough-audio-debug.wav`. `FLYTHROUGH_HRIR=<pack>`
-//! in the environment loads that HRIR pack instead of the shipped one.
+//! in the environment loads that HRIR pack instead of the shipped one. `Y` toggles the late
+//! tail. `--absorption A` sets the cave row's absorption per metre (default 0.3). `--mic`
+//! (implies `--audio`) plays the default input device at the listener with its direct path
+//! off, so it is heard only off the walls and in the tail; wear headphones.
+//!
+//! `--room METRES` runs in a closed cube of air of that edge inside 2 m of rock, spawned at its
+//! centre, and implies `--room-line`: a line `room: V .. S .. mfp .. alpha .. T60 .. energy ..`
+//! whenever the listener's room fan completes (`F1` and `--audio-debug` print it too). Without
+//! `--audio`, `--room-line` runs the room fan with no output device: its block clock never
+//! advances, so a fan completes 8 frames after the start or after a 1 m move.
 
 mod fly;
 
@@ -72,7 +82,7 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use fly::{Fly, Walk};
-use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, VAULT_EDGE, vault};
+use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, RoomSource, VAULT_EDGE, vault};
 use flythrough::hud::{self, Cadence, EditLine, FrameStats, HudStats, WorldSample};
 use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB, REACH};
 use flythrough::{
@@ -80,7 +90,9 @@ use flythrough::{
     percentile,
 };
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
-use vxe_audio::{Acoustics, Hrtf, Mixer, Output, PlayParams, Sound, VoiceId};
+use vxe_audio::{
+    Acoustics, BlockClock, Command, Hrtf, Mixer, Output, PlayParams, RoomEstimate, Sound, VoiceId,
+};
 use vxe_net::{Client, Event, Logic, LogicError, MemChannel, Server};
 use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
@@ -222,6 +234,14 @@ struct Args {
     replay: Option<std::path::PathBuf>,
     /// `--logic`: the server's logic, native or the hosted component.
     logic: LogicChoice,
+    /// `--room`: the edge, in voxels, of the closed cube of air the fly-through runs in.
+    room: Option<i32>,
+    /// `--room-line`: print the room line whenever a fan completes (implied by `--room`).
+    room_line: bool,
+    /// `--absorption`: the cave row's absorption per metre.
+    absorption: f32,
+    /// `--mic`: play the default input device at the listener, heard off the walls.
+    mic: bool,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -301,6 +321,10 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         save: None,
         replay: None,
         logic: LogicChoice::Native,
+        room: None,
+        room_line: false,
+        absorption: CAVE_ACOUSTIC[0],
+        mic: false,
     };
     let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
@@ -345,6 +369,32 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--save" => args.save = Some(value()?.into()),
             "--replay" => args.replay = Some(value()?.into()),
             "--logic" => args.logic = LogicChoice::parse(&value()?)?,
+            "--room" => {
+                let v = value()?;
+                let m: f32 = v
+                    .parse()
+                    .map_err(|_| format!("--room takes an edge in metres, not {v}"))?;
+                if !(1.0..=100.0).contains(&m) {
+                    return Err(format!("--room takes 1 to 100 metres, not {v}"));
+                }
+                args.room = Some((m / METRES_PER_VOXEL).round() as i32);
+                args.room_line = true;
+            }
+            "--absorption" => {
+                let v = value()?;
+                let a: f32 = v
+                    .parse()
+                    .map_err(|_| format!("--absorption takes a value in [0, 1], not {v}"))?;
+                if !(0.0..=1.0).contains(&a) {
+                    return Err(format!("--absorption takes a value in [0, 1], not {v}"));
+                }
+                args.absorption = a;
+            }
+            "--room-line" => args.room_line = true,
+            "--mic" => {
+                args.mic = true;
+                args.audio = true;
+            }
             "--level" => args.level = true,
             "--detail" => args.detail = true,
             "--autopilot" => args.autopilot = true,
@@ -366,8 +416,21 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     if args.autopilot && args.level {
         return Err("--autopilot streams; it does not take --level".to_owned());
     }
+    if args.room.is_some()
+        && (args.level
+            || args.autopilot
+            || args.vault
+            || args.save.is_some()
+            || args.replay.is_some())
+    {
+        return Err(
+            "--room builds its own world; it does not take --level, --autopilot, --vault, \
+             --save or --replay"
+                .to_owned(),
+        );
+    }
     if args.walk {
-        walk_allowed(!args.level).map_err(|e| format!("--walk: {e}"))?;
+        walk_allowed(!args.level && args.room.is_none()).map_err(|e| format!("--walk: {e}"))?;
     }
     if (args.save.is_some() || args.replay.is_some()) && !args.level {
         return Err(SAVE_NEEDS_LEVEL.to_owned());
@@ -506,16 +569,57 @@ fn knock_samples() -> Vec<f32> {
     samples
 }
 
-/// The cave's material table with [`CAVE_ACOUSTIC`] on every row but air.
-fn acoustic_table() -> MaterialTable {
+/// The cave's material table with [`CAVE_ACOUSTIC`] on every row but air, its absorption
+/// replaced by `absorption` (`--absorption`).
+fn acoustic_table(absorption: f32) -> MaterialTable {
     let mut t = MaterialTable::new();
     for row in cave_materials().rows().iter().skip(1) {
         t.push(vxe_world::Material {
-            acoustic: CAVE_ACOUSTIC,
+            acoustic: [absorption, CAVE_ACOUSTIC[1], CAVE_ACOUSTIC[2]],
             ..row.clone()
         });
     }
     t
+}
+
+/// The room line: `room: V <m3> S <m2> mfp <m> alpha <a> T60 <s> energy <dB>`.
+fn room_line(r: &RoomEstimate) -> String {
+    format!(
+        "room: V {:.1} m3 S {:.1} m2 mfp {:.3} m alpha {:.4} T60 {:.3} s energy {:+.1} dB",
+        r.volume_m3,
+        r.surface_m2,
+        r.mean_free_path_m,
+        r.absorption,
+        r.t60_s,
+        10.0 * r.energy.max(1e-12).log10()
+    )
+}
+
+/// The voice the microphone plays as. The output numbers its voices up from 0, so this one
+/// is never handed out in a session.
+const MIC_VOICE: VoiceId = VoiceId(u32::MAX);
+
+/// `--mic`: the input stream and whether its period has been printed.
+struct Mic {
+    input: vxe_audio::Input,
+    period_printed: bool,
+    stream_errors: u64,
+}
+
+/// `--room-line` without an output device: the room fan on a block clock that never
+/// advances, its commands dropped.
+struct RoomProbe {
+    acoustics: Acoustics,
+    table: MaterialTable,
+}
+
+impl RoomProbe {
+    fn new(absorption: f32) -> Self {
+        Self {
+            acoustics: Acoustics::new(BlockClock::default()),
+            table: acoustic_table(absorption),
+        }
+    }
 }
 
 /// One second of a `J` hum at `hz`.
@@ -557,6 +661,9 @@ struct Audio {
     callback_max_ms: f32,
     /// Wall time of the last `Acoustics::update`, in milliseconds.
     update_ms: f64,
+    /// `--room-line`: print the room line whenever a fan completes.
+    room_line: bool,
+    mic: Option<Mic>,
 }
 
 /// An environment variable naming an HRIR pack to use instead of the shipped one, for
@@ -638,8 +745,9 @@ impl Audio {
     }
 
     /// Opens the default device; prints why when it cannot. `debug` meters and records the
-    /// callback.
-    fn open(debug: bool) -> Option<Self> {
+    /// callback; `absorption` is the cave row's; `mic` also opens the default input device and
+    /// plays it at the listener with its direct path off; `room_line` prints each room.
+    fn open(debug: bool, absorption: f32, mic: bool, room_line: bool) -> Option<Self> {
         let t = now();
         let hrtf = match std::env::var_os(HRIR_ENV) {
             Some(path) => match std::fs::read(&path)
@@ -677,6 +785,11 @@ impl Audio {
                 if debug {
                     output.record(AUDIO_DEBUG_SECONDS);
                 }
+                let mic = if mic { open_mic(&output) } else { None };
+                let mut voices = Vec::new();
+                if mic.is_some() {
+                    voices.push((MIC_VOICE, [0.0; 3]));
+                }
                 Some(Self {
                     output,
                     knock: knock(),
@@ -685,19 +798,50 @@ impl Audio {
                     next_hum: 0,
                     dig_point: None,
                     acoustics,
-                    table: acoustic_table(),
-                    voices: Vec::new(),
+                    table: acoustic_table(absorption),
+                    voices,
                     stream_errors: 0,
                     debug,
                     stats_at: now(),
                     callback_max_ms: 0.0,
                     update_ms: 0.0,
+                    room_line,
+                    mic,
                 })
             }
             Err(e) => {
                 println!("audio: off, {e}");
                 None
             }
+        }
+    }
+}
+
+/// Opens the default input device into a stream played at the listener with its direct path
+/// off; prints the device, or why it could not.
+fn open_mic(output: &Output) -> Option<Mic> {
+    println!("mic: wear headphones: from speakers the microphone hears the tail and feeds it back");
+    let (writer, reader) = vxe_audio::Stream::new();
+    match vxe_audio::Input::open(writer) {
+        Ok(input) => {
+            println!("mic: {}", input.device());
+            let params = PlayParams {
+                direct: false,
+                ..PlayParams::at([0.0; 3])
+            };
+            if let Err(e) = output.send(Command::PlayStream(MIC_VOICE, reader, params)) {
+                println!("mic: off, {e}");
+                return None;
+            }
+            Some(Mic {
+                input,
+                period_printed: false,
+                stream_errors: 0,
+            })
+        }
+        Err(e) => {
+            println!("mic: off, {e}");
+            None
         }
     }
 }
@@ -1168,6 +1312,8 @@ struct Run {
     coarse: Option<Coarse>,
     hud: Hud,
     audio: Option<Audio>,
+    /// `--room-line` without an output device.
+    room_probe: Option<RoomProbe>,
 }
 
 impl Run {
@@ -1557,6 +1703,21 @@ impl Run {
                 audio.acoustics.active_taps(),
                 audio.update_ms
             );
+            if let Some(mic) = &audio.mic {
+                println!(
+                    "mic: {}, {} frames dropped",
+                    mic.input.device(),
+                    mic.input.dropped_frames()
+                );
+            }
+        }
+        let room = self
+            .audio
+            .as_ref()
+            .and_then(|a| a.acoustics.room())
+            .or_else(|| self.room_probe.as_ref().and_then(|p| p.acoustics.room()));
+        if let Some(r) = room {
+            println!("{}", room_line(&r));
         }
         if let Some(c) = &self.coarse {
             println!("{}", c.query_line());
@@ -2073,6 +2234,11 @@ impl Run {
                 audio.acoustics.set_reflections(on);
                 println!("echoes {}", if on { "on" } else { "off" });
             }
+            if input.pressed(KeyCode::KeyY) {
+                let on = !audio.acoustics.reverb_on();
+                audio.acoustics.set_reverb(on);
+                println!("tail {}", if on { "on" } else { "off" });
+            }
             if input.pressed(KeyCode::KeyJ) {
                 audio.play("hum", |p| PlayParams {
                     looping: true,
@@ -2084,10 +2250,24 @@ impl Run {
 
     /// Sends the camera to the mixer as its listener and probes the voices' occlusion.
     fn audio_step(&mut self) {
+        let listener = flythrough::listener(&self.fly.camera);
         let Some(audio) = self.audio.as_mut() else {
+            if let Some(p) = self.room_probe.as_mut() {
+                let mut completed = false;
+                p.acoustics.update(
+                    &self.world,
+                    &p.table,
+                    &listener,
+                    &[],
+                    METRES_PER_VOXEL,
+                    &mut |cmd| completed |= matches!(cmd, Command::SetRoom(_)),
+                );
+                if completed && let Some(r) = p.acoustics.room() {
+                    println!("{}", room_line(&r));
+                }
+            }
             return;
         };
-        let listener = flythrough::listener(&self.fly.camera);
         // A full channel drops this frame's listener; the next frame sends a fresh one.
         let _ = audio.output.set_listener(listener);
         let errors = audio.output.stream_errors();
@@ -2118,8 +2298,29 @@ impl Run {
         for id in audio.output.finished() {
             audio.voices.retain(|(v, _)| *v != id);
         }
+        if let Some(mic) = audio.mic.as_mut() {
+            // The microphone's voice stands at the listener.
+            let _ = audio.output.set_position(MIC_VOICE, listener.position);
+            if let Some(v) = audio.voices.iter_mut().find(|(v, _)| *v == MIC_VOICE) {
+                v.1 = listener.position;
+            }
+            let period = mic.input.period_frames();
+            if !mic.period_printed && period > 0 {
+                println!(
+                    "mic: period {period} frames ({:.1} ms)",
+                    period as f32 * 1e3 / vxe_audio::RATE as f32
+                );
+                mic.period_printed = true;
+            }
+            let errors = mic.input.stream_errors();
+            if errors > mic.stream_errors {
+                println!("mic: {errors} stream errors so far");
+                mic.stream_errors = errors;
+            }
+        }
         let output = &audio.output;
         let t = now();
+        let mut completed = false;
         audio.acoustics.update(
             &self.world,
             &audio.table,
@@ -2128,10 +2329,17 @@ impl Run {
             METRES_PER_VOXEL,
             // A full channel drops these targets; the voice is probed again within 500 ms.
             &mut |cmd| {
+                completed |= matches!(cmd, Command::SetRoom(_));
                 let _ = output.send(cmd);
             },
         );
         audio.update_ms = ms_since(t);
+        if completed
+            && (audio.room_line || audio.debug)
+            && let Some(r) = audio.acoustics.room()
+        {
+            println!("{}", room_line(&r));
+        }
     }
 
     /// Ticks the server, then streams, syncs, marches and presents one frame begun at `t0`.
@@ -2369,6 +2577,7 @@ struct Flythrough {
     pending: Option<Pending>,
     run: Option<Run>,
     audio: Option<Audio>,
+    room_probe: Option<RoomProbe>,
 }
 
 impl App for Flythrough {
@@ -2455,6 +2664,7 @@ impl App for Flythrough {
                 coarse,
                 hud: Hud::new(self.args.hud),
                 audio: self.audio.take(),
+                room_probe: self.room_probe.take(),
             });
         }
         match self.run.as_mut() {
@@ -2643,6 +2853,17 @@ fn main() {
             world
         });
         (source.spawn(), Pending::Level(generation))
+    } else if let Some(edge) = args.room {
+        let source = RoomSource::new(edge);
+        let table = materials(&args);
+        println!(
+            "room: a closed {:.1} m cube of air in 2 m of rock, {:?} chunks",
+            edge as f32 * METRES_PER_VOXEL,
+            source.extent.max.0
+        );
+        let generation =
+            std::thread::spawn(move || World::generate(source.extent, &source, &table));
+        (source.spawn(), Pending::Level(generation))
     } else if args.level {
         let source = CaveSource::new(seed, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
         if args.vault {
@@ -2713,10 +2934,11 @@ fn main() {
     let size = args.render.unwrap_or([1280, 720]);
     let headless = args.headless;
     let audio = if args.audio {
-        Audio::open(args.audio_debug)
+        Audio::open(args.audio_debug, args.absorption, args.mic, args.room_line)
     } else {
         None
     };
+    let room_probe = (audio.is_none() && args.room_line).then(|| RoomProbe::new(args.absorption));
     let app = Flythrough {
         start,
         args,
@@ -2725,6 +2947,7 @@ fn main() {
         pending: Some(pending),
         run: None,
         audio,
+        room_probe,
     };
     let result = if headless {
         run_headless(app, size)
@@ -2954,6 +3177,24 @@ mod tests {
     }
 
     /// Collapse edits outside the op log, so it is off while saving or replaying.
+    /// `--room` takes metres and implies the room line; `--mic` implies `--audio`;
+    /// `--absorption` is checked; a room builds its own world.
+    #[test]
+    fn room_mic_and_absorption_parse() {
+        let a = parse_args_from(argv(&["--room", "12"])).expect("--room 12 parses");
+        assert_eq!(a.room, Some(120));
+        assert!(a.room_line && !a.audio);
+        assert_eq!(a.absorption, CAVE_ACOUSTIC[0]);
+        let a = parse_args_from(argv(&["--mic", "--absorption", "0.5", "--room-line"]))
+            .expect("parses");
+        assert!(a.mic && a.audio && a.room_line);
+        assert_eq!(a.absorption, 0.5);
+        assert!(parse_args_from(argv(&["--absorption", "1.5"])).is_err());
+        assert!(parse_args_from(argv(&["--room", "0.5"])).is_err());
+        assert!(parse_args_from(argv(&["--room", "12", "--level"])).is_err());
+        assert!(parse_args_from(argv(&["--room", "4", "--walk"])).is_ok());
+    }
+
     #[test]
     fn collapse_is_off_under_save_and_replay() {
         assert_eq!(collapse_allowed(true), Err(COLLAPSE_NOT_LOGGED));

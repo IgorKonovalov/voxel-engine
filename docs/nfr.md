@@ -494,12 +494,21 @@ plan's Close triggers as superseded figures.
 - **Determinism:** `World::trace_materials` is integer and its 500-ray hash is pinned in
   `crates/vxe-world/tests/queries.rs` on both arms; nothing else in `vxe-audio` is
   deterministic by contract (§6).
-- **Plan 0020 proposals (the late tail, sixteen direction buses, the room fan; dev box, to be
-  read at its close):** mixer block, 32 HRTF voices, static, at most 0.6 ms (today 0.3619 ms;
-  the buses are 1 048 576 multiply-adds per block, about half the 32-voice FIR load) and
-  turning at most 1.0 ms (today 0.6667 ms); `Acoustics::update`, 32 sources, at most 1.1 ms
-  with a 16-ray fan slice in the call (today 1.0294 ms); audio RAM plus 323 584 B for the tail's
-  lines, about 24.5 KB for the buses, 8 KB of tap state and 19.2 KB per streamed voice.
+- **Plan 0020 (the late tail, sixteen direction buses, the room fan, gliding taps).**
+  Proposals: mixer block, 32 HRTF voices, static at most 0.6 ms and turning at most 1.0 ms;
+  `Acoustics::update`, 32 sources with a 16-ray fan slice, at most 1.1 ms. **Readings, dev box,
+  release, exclusive perf lock, vxe-audio and both benches as at d7eb1f8, 2026-10-20; the box
+  was not quiet (1-minute load average 1.87 to 2.98, and other processes above 7 % CPU: one at
+  86 %, two at 37 %), so they read high against the protocol above:** mixer static 0.5078 ms
+  (0.5004 to 0.5162), turning 0.8786 ms (0.8700 to 0.8887) (`cargo bench -p vxe-audio --bench
+  mixer`, 32 voices with 16 taps each into the buses, the 12 m room's tail running);
+  `Acoustics::update` 0.8388 ms (0.8327 to 0.8463) (`cargo bench -p flythrough --bench
+  acoustics`, the fan's first slice in every call; the fan's rays stop at the first solid
+  voxel). Audio RAM printed by the mixer bench: the tail's lines 323 584 B, the buses 24 512 B,
+  tap state 128 B per voice (8 192 B for the 64-voice pool); a streamed voice's ring 19 200 B.
+  Room estimates the fly-through prints headlessly (`--room N --headless --frames 600`, no
+  device): 12 m mfp 7.999 m and T60 2.257 s, 36 m T60 6.770 s, 4 m T60 0.752 s; the seed-1
+  streaming spawn mfp 16.082 m, T60 4.537 s, energy -7.5 dB.
 
 ## 10. Not goals (for now)
 
