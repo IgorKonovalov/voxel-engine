@@ -136,4 +136,23 @@ triple and can be superseded by a wider row later without changing the mixer.
 
 ## Outcome
 
-_(Added at acceptance if implementation falsifies something above.)_
+**2026-10-20, Plan 0020 Phase 7 listening (owner, headset).** The decision's structure (one
+shared network, a fan at the listener, direction buses, the skin-depth rule) held: the tail
+follows the cave's spaces and the small room reads right. Four things it recorded did not
+survive the ear, and the body above stands as written:
+
+- **The tail's level as Kuttruff's room constant against a unit direct impulse** puts the
+  critical distance at 0.5 to 5 m in the test rooms (1.6 m at 12 m), and with the tail on a
+  source's direction is lost. The level, and a pre-delay before the tail, become settings
+  chosen by listening (Plan 0020 Phases 11 to 13).
+- **Echoes at the image source's `keep / path`** are too quiet against that tail, and a large
+  room's return is cut by the 200 ms echo line and the 50 m ray range (Phase 9 lengthens both).
+- **"Open air gets a tail more than 40 dB down"** becomes exactly no tail, and a fan from inside
+  a solid, which the body did not consider, gave the loudest tail (energy 16); it is discarded
+  (Phase 8).
+- **Gliding lengths, tail and taps.** The taps' glide reached the ear as a staircase at the 5
+  percent cap, heard as an artefact; a glide of the tail's recirculating lines is suspected of
+  the same (a hypothesis Phase 8 measures, with a handover between two networks as the
+  alternative).
+
+A superseding ADR records the settled mechanisms at Plan 0020's close, after the re-listen.

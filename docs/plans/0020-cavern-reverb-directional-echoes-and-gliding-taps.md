@@ -21,6 +21,14 @@
 > against 1.9998). It becomes a per-window bound of `K` by 1.25 times that window's own crest
 > factor, with a bite: one line's delay jumped by half a hum period must score at least four
 > times the bound.
+> **Amended:** 2026-10-20, after Phase 7's verdicts (log row at 2daa388): checks 2, 3, 5 (large
+> room) and 6 fail, and a burst was heard on re-entering a chamber. Phases 8 to 13 are the
+> listening fix pass: the room estimate's edge cases and a tail that never repitches or bursts
+> (8), echoes that glide at the walk's own rate and reach a 100 m room (9), the direct path under
+> motion measured and an optional propagation delay (10), the echo and tail levels and a tail
+> pre-delay made live settings (11), a re-listen (12, `human`) and the chosen values pinned (13).
+> Causes named below are hypotheses unless marked as read from the code. ADR-0015 carries a dated
+> Outcome; a superseding ADR follows at the close.
 
 ## TL;DR
 
@@ -428,6 +436,290 @@ capitals are the plan's names for them.
      pitch runs at the 5 percent slew cap for a few blocks after each probe and then holds,
      about 21 times a second at 3 m/s (Risks). A verdict either way.
 
+### The listening fix pass (Phases 8 to 13, amended 2026-10-20)
+
+What the code says, read for this amendment (facts, not hypotheses):
+
+- **The tail's level** is the diffuse-field figure `16 pi (1 - alpha) / (S alpha)` against a
+  unit-energy direct impulse at 1 m, the same at every source distance. With the cave row
+  (`alpha = 0.1330`) it is +5.3 dB in the 4 m cube, -4.2 dB at 12 m, -13.8 dB at 36 m and
+  -22.6 dB at 100 m, so the direct sound (falling 6 dB per doubling from 1 m) equals the tail
+  at 0.54, 1.62, 4.87 and 13.5 m. Past that critical distance the decorrelated tail carries
+  more energy than the direct path, which matches check 2.
+- **The echo level** is `keep / path`, the image source's spreading: a slap off a wall 50 m away
+  is `0.9312 / 100`, -40.6 dB against 1 m. Echoes and tail share no level control;
+  `ReverbSettings.level` scales the tail and is reachable only through `Mixer`, not through a
+  `Command`, so the fly-through cannot change it while running.
+- **The reach.** A voice's echo line is `MAX_DELAY_FRAMES = 9600` (200 ms, 68.6 m of excess
+  path; a tap past it is silent), and reflection and room rays stop at
+  `REFLECTION_RANGE_METRES = 50`. In `--room 100` from the centre the walls are at 50 to 86.6 m:
+  most room rays miss, so the fan reads near open air, and the axis echo (excess 100 m,
+  13 994 frames, 292 ms) is past the line. `--room 100` cannot be re-listened as built.
+- **The direct path has no propagation delay** (`mixer.rs`: the taps' delays are the excess over
+  it), so it has no Doppler; it is the HRIR nearest to the source per block (one-block
+  raised-cosine crossfade on a change), the smoothed `1 / max(d, 1 m)` gain times the occlusion
+  multiplier, and a one-pole low-pass whose cutoff follows the probed solid thickness.
+- **Tail lengths glide** at up to 0.02 frames per frame on every room change (`reverb.rs`), and
+  a recirculating signal is shifted on every pass through a gliding line; a fan completes every
+  metre or 0.5 s, so in a cave the lines glide most of the time.
+- **A fan from inside a solid** (the fly-through flies through rock): every ray hits at `t = 0`,
+  so `S = 0` and `from_sums` returns `energy = 16` (+12 dB), `T60 = 0.05 s` and mean free path 0.
+  An all-miss fan (open air) gives `S = 4 pi 50^2` and energy `3.3e-5`, not 0. The burst lead in
+  the log names the `S = 0` branch; the code confirms that branch exists and that only a fan
+  begun in a solid reaches it (outside the cave extent `World::raycast` reads missing chunks as
+  air, so open air misses).
+- **The tail's input gain** `b` is recomputed every block from the smoothed `T60` and the
+  current lengths and then smoothed itself, while the loop gains follow the smoothed `T60`
+  directly; energy already in the lines keeps the level it was fed at.
+
+Hypotheses this pass tests (none verified by listening or measurement):
+
+- **H1, the burst:** crossing the cave's shell gives fans with energy 16 and `T60` 0.05 s; on
+  re-entry the stored tail and a `b` that lags the rising `T60` overshoot the chamber's steady
+  level, and every voice's taps and occlusion re-open in the same 50 ms. Phase 8 tests it.
+- **H2, "a Doppler with no pitch" with echoes off:** the gliding tail lines repitch the tail
+  while walking through a cave (each pass shifts it by up to 2 percent); and/or the direct
+  path's HRIR switches or occlusion cutoff sweep; and/or the absence of any Doppler on the direct
+  path while the level and direction sweep as in a pass-by. Phases 8 and 10 separate them.
+- **H3, "walking feels very fast":** the echoes' delay runs at the 5 percent slew cap for a few
+  blocks after each probe and then holds, a staircase whose pitch is up to 2.9 times the
+  physical `2v / c = 1.75` percent at 3 m/s. Phase 9 tests it.
+
+### Phase 8: The room estimate's edge cases and a tail that neither repitches nor bursts
+
+- **Owner skill:** dev
+- **What:**
+  - `RoomEstimate`: a fan whose rays all miss gives `energy = 0` exactly; `S == 0` gives
+    `energy = 0` (not 16). A fan begun with the listener's voxel solid is discarded: no
+    `SetRoom`, `room()` unchanged, a `#[doc(hidden)]` count of discarded fans.
+  - The tail hands over instead of gliding (`TailLines::Handover`, the default): the mixer owns
+    two networks. A room whose mean free path differs from the fed network's by more than
+    `TAIL_HANDOVER_RATIO = 1.15` (either way) sets the other, silent network's lengths at
+    once, and the input crossfades to it over `SMOOTHING_SECONDS`; the old network keeps its
+    lengths and rings out at its own decay with no input. A room within the ratio updates the
+    fed network's decay and energy in place, its lengths unchanged. If a handover is due while
+    the old network still rings, the ringing one fades to silence over 50 ms first, then is
+    cleared and takes the new lengths. `TailLines::Glide` keeps today's gliding lengths, for
+    comparison by ear (Phase 11's key); the mode is `ReverbSettings.lines`.
+  - On any in-place change of decay, the input gain and the loop gains move so that the tail's
+    output energy never overshoots the new steady state (the dev picks the mechanism, for
+    example `b` from the larger of the current and target `T60` while the decay rises).
+  - `--audio-debug` prints every `SetRoom` the fly-through sends (the room line, energy in dB)
+    and every discarded fan, so the re-test's stdout shows what the tail was asked for.
+- **Files touched:** `crates/vxe-audio/src/{acoustics.rs, reverb.rs, mixer.rs, lib.rs}`,
+  `crates/vxe-audio/tests/{room.rs, reverb.rs}`, a new `crates/vxe-audio/tests/reentry.rs`,
+  `crates/vxe-audio/benches/mixer.rs`, `apps/flythrough/src/main.rs`, `docs/plans/0020-...md`
+  (log).
+- **Done when:**
+  - `tests/room.rs`: an all-air world gives `energy == 0.0`; a listener inside a solid block
+    sends no `SetRoom` over 16 calls, `room()` keeps the previous estimate, and the discarded
+    count is nonzero. The cube figures of Phase 3 hold unchanged.
+  - `tests/reentry.rs` (the burst, end to end). World: the 12 m cube of air (voxels
+    `[0, 120)^3`, cave row `A = 0.3, T = 0.5`) inside a rock shell 2 m thick, air beyond it. A
+    440 Hz hum at `(8, 6, 6) m`, gain 1. The listener holds at `(6, 6, 6) m` for 3 s, flies
+    `+x` at 12 m/s (the fly-through's boost speed) to `(20, 6, 6) m` (through the shell,
+    `x` in `[12, 14] m`), holds 1 s, flies back at 12 m/s and holds 3 s, `Acoustics::update`
+    every 3 blocks with the listener's position (as `tests/walking.rs` does). Two renders:
+    (a) reflections off, `direct: false`, so the output is the tail alone; (b) reflections on,
+    direct on, the full output. Per render, `R_ss` is the largest 50 ms window RMS (both ears)
+    over the last second of the first hold. Asserted: every 50 ms window from the start of the
+    first flight to the end has RMS at most `R_ss x 10^(1.5 / 20)` (1.5 dB over the chamber's
+    own steady level), in both renders. Printed: the largest window in dB against `R_ss`, the
+    `SetRoom` sequence (energy, `T60`, mean free path) and the discarded fans.
+  - **The bite, and a stop rule.** The same test against the parent tree's `acoustics.rs` and
+    `reverb.rs` (a scratch copy, as Phase 1 did) is run and its figures logged. If the parent
+    passes the 1.5 dB bound, H1 is not what the owner heard: `dev` logs it, keeps the test, adds
+    a mixer-only case (the rooms `(2.26 s, 8 m, 0.379)`, then `(0.05 s, 0 m, 16)` for 0.5 s,
+    then `(2.26 s, 8 m, 0.379)` again, the hum steady) under the same bound, and the Phase 12
+    stdout capture is the next evidence.
+  - `tests/reverb.rs`, **no repitch.** A hum 2 m away, `direct: false`, reflections off, the
+    room alternating between `(2.26 s, 8 m, 0.379)` and `(2.83 s, 10 m, 0.243)` every 0.33 s for
+    4 s (a walk through a cave: 10 / 8 = 1.25, past the handover ratio). In `Handover` mode,
+    through the `#[doc(hidden)]` line readout extended to both networks: no line's length
+    changes while its network holds any nonzero sample. Printed for both modes: the fraction of
+    the tail's energy within 3 Hz of 440 Hz over the last 2 s (Hann window, 1 s, hop 0.5 s).
+    The plan's expectation, a guess: near 1 for `Handover`, far lower for `Glide`; if `Glide`
+    is not lower, H2's tail branch is falsified and the log says so.
+  - The Phase 4 tests run in both modes where they apply: the decay fits, the energy within
+    2 dB, the direct peak and the mode-density floor in both; the room-step glide and the
+    line-jump bite in `Glide` only.
+  - `bench mixer`: static at most 0.6 ms and turning at most 1.0 ms on the dev box with both
+    networks running (a handover in progress); RAM printed (two networks, 647 168 B).
+  - The allocation count in `render` is still zero.
+
+### Phase 9: Echoes that glide at the walk's own rate and reach a 100 m room
+
+- **Owner skill:** dev
+- **What:**
+  - **Rate.** A tap slot's delay moves toward its target at
+    `(target - delay) / max(blocks since the voice's previous SetAcoustics, 1)` frames per
+    block, capped at `TAP_SLEW_FRAMES_PER_FRAME x 256`, instead of always at the cap: a probe's
+    step is spread over the interval the walk took to make it, so the echo's pitch runs at the
+    walk's own rate instead of alternating between 5 percent and none. The jump path and the
+    gain smoother are unchanged.
+  - **Reach.** `MAX_DELAY_FRAMES` becomes 28 800 (600 ms, 205.8 m of excess path) and
+    `REFLECTION_RANGE_METRES` 100 m, for reflection and room rays both. In `--room 100` from the
+    centre every room ray hits (the corners are 86.6 m away) and the farthest single bounce is
+    `2 x 86.6 = 173.2` m, 24 238 frames, inside the line. `reflections()` moves from
+    `World::trace_materials` (which walks the whole range) to `World::raycast` (first solid voxel
+    and its entry), as the fan did in Phase 3, so a doubled range costs nothing on a hit.
+- **Files touched:** `crates/vxe-audio/src/{acoustics.rs, mixer.rs, voice.rs}`,
+  `crates/vxe-audio/tests/{walking.rs, reflections.rs, room.rs}`,
+  `apps/flythrough/benches/acoustics.rs`, `crates/vxe-audio/benches/mixer.rs`,
+  `docs/plans/0020-...md` (log).
+- **Done when:**
+  - `tests/walking.rs`, the Phase 1 walk (3 m/s, `Acoustics::update` every 3 blocks, a probe
+    every 9 blocks, a target step of at most 40.3 frames). **The arithmetic:** the physical rate
+    is at most `2v / c x 256 = 4.48` frames per block; spread over 9 blocks a 40.3-frame step is
+    4.48 frames per block. After the first 200 ms, every sounding slot's per-block delay change
+    is at most `1.25 x 4.48 = 5.6` frames (today's cap is 12.8, which the parent reaches: the
+    bite) and differs from the ideal excess-path delay's change over the same block by at most
+    1.0 frame; every sounding slot stays within 46 frames of its ideal delay (one step of 40.3
+    behind, plus one block of walk, 4.48, plus 1.5 for rounding). The click index bound of
+    Phase 2 holds. Printed: the largest per-block change and the largest deviation from the
+    ideal change, mixer and parent.
+  - A 12 m/s walk (the boost speed, physical rate `2v / c = 7.0` percent, past the 5 percent
+    cap) is printed, not bounded: the largest lag behind the ideal delay over a 2 s walk.
+  - `tests/reflections.rs`: the existing figures hold within one frame of delay and `1e-4` of
+    gain with `raycast`. New: a 100 m cube (voxels `[0, 1000)^3`), a voice at the listener at
+    the centre with `direct: false`, tail off, a unit impulse: the first nonzero sample of the
+    output is at or after frame 13 994 (`100 m / 343 m/s x 48 000 = 13 994.2`) and the output's
+    peak lies within 13 994 plus the HRIR length (128 frames); the parent renders silence here
+    (the bite).
+  - `tests/room.rs`: the 100 m cube from the centre reads `V` within 4 percent of `1e6 m^3` and
+    `T60` at the 8 s cap (Eyring gives 18.8 s), energy within 4 percent of `5.46e-3`
+    (-22.6 dB); an all-air world still reads energy 0.
+  - `bench acoustics` (32 sources, fan active): at most 1.1 ms on the dev box. `bench mixer`
+    static and turning within Phase 8's figures. RAM printed: echo lines
+    `64 x (28 800 + 256) x 4 = 7 438 336` B for the pool (was 2 523 136, +4.9 MB; `nfr.md`'s
+    "200 ms delay lines" proposal becomes 600 ms at the close).
+
+### Phase 10: The direct path under motion
+
+- **Owner skill:** dev
+- **What:** `Mixer::set_direct_delay(bool)` (default off until Phase 13; Phase 11 folds it into
+  `MixSettings.direct_delay`). On, the direct
+  path is read from the voice's echo line at `d / c` frames (`d` the source's distance this
+  block, capped at `MAX_DELAY_FRAMES`) through the fractional read the taps use, and every tap
+  reads at its excess plus that same delay, so the direct path and every echo carry the
+  physical Doppler of the listener's and the source's motion. The target delay follows the
+  positions the mixer already has per block; since the listener arrives once per game frame
+  (every 3 blocks at 60 Hz), the delay is smoothed (proposal: the one-pole of
+  `SMOOTHING_SECONDS` on the target, capped at the tap slew) so a frame's position step does
+  not become a pitch staircase. A voice with `direct: false` at the listener has `d = 0`. Off,
+  the direct path is today's.
+- **Files touched:** `crates/vxe-audio/src/{mixer.rs, voice.rs, lib.rs}`, a new
+  `crates/vxe-audio/tests/motion.rs`, `crates/vxe-audio/benches/mixer.rs`,
+  `docs/plans/0020-...md` (log).
+- **Done when:** `tests/motion.rs`, an all-air world, a 440 Hz hum at `(0, 1 m, 0)`, the
+  listener walking from `x = -6 m` to `x = 6 m` at 3 m/s facing `+x`, its position sent every
+  3 blocks, reflections and tail off, HRTF path. Each ear's frequency per block is read by
+  demodulating at 440 Hz, averaging over the block and differencing the unwrapped phase.
+  **The arithmetic:** a listener moving at `v` toward a fixed source hears `f (1 + v_r / c)`
+  with `v_r` the approach speed, `3 x 6 / sqrt(37) = 2.96` m/s at the walk's ends, so 443.80 Hz
+  coming and 436.20 Hz going; the head's interaural delay changes at most
+  `(0.0875 m / 343 m/s) x 2 x (v / 1 m)`, which moves an ear's phase by at most 0.67 Hz at
+  440 Hz.
+  - Off: every block's frequency, each ear, from 100 ms on, is within 2.2 Hz (0.5 percent) of
+    440 Hz. If it is not, the HRIR switching or the gain and cutoff path is implicated and
+    `dev` stops with the per-block figures (the block, the HRIR index change, the gain and
+    cutoff) rather than loosening the bound.
+  - On: every block's frequency is within 1.0 Hz of `440 (1 + v_r / c)` at that block's
+    position (0.67 Hz of interaural delay and 0.33 Hz for the smoothing and the 3-block
+    position steps); the readings at the walk's ends are printed against 443.80 and 436.20 Hz.
+    The off render fails this bound by at least 3 Hz at the ends (the bite).
+  - The same walk in the Phase 1 corridor: every `SetAcoustics` sent carries gain 1 and the
+    open cutoff (nothing crosses the direct or side rays there), so in an unobstructed walk the
+    direct path's only changes are distance, direction and (on) delay. Printed only, for
+    the log: the per-probe occlusion gain and cutoff along the fly-through's seed-1 spawn
+    pocket to its first chamber, through `apps/flythrough/benches/acoustics.rs`'s world, so the
+    cave's own probe changes under a walk are on record.
+  - `tests/walking.rs` with `direct_delay` on: the click index bound of Phase 2 holds.
+  - `bench mixer` static and turning within Phase 8's figures with `direct_delay` on.
+
+### Phase 11: Echo level, tail level and tail pre-delay as live settings
+
+- **Owner skill:** dev
+- **What:** `MixSettings { echo_gain: f32, direct_delay: bool, reverb: ReverbSettings }`,
+  applied by `Mixer::set_mix` and `Command::SetMix` (so a running output can change it), in
+  place of `Mixer::set_reverb_settings` and `Mixer::set_direct_delay`. The
+  echo gain scales the buses' input through the one-pole smoother. `ReverbSettings` gains
+  `predelay_s` (0 to 0.2 s, a mono input line of 9 600 frames plus a block, 39 424 B; a change
+  crossfades between the old and the new read point over `SMOOTHING_SECONDS`, so it never
+  glides or clicks). The fly-through binds, each printing one
+  `mix:` line (`echoes <dB>, tail <dB>, pre-delay <ms>, tail lines <mode>, direct delay
+  <on|off>`) and adding it to `F1`:
+  - `[` and `]`: echo gain down and up by 3 dB (from -12 to +30 dB);
+  - `-` and `=`: tail level down and up by 3 dB (from -30 to +6 dB);
+  - `9` and `0`: pre-delay down and up by 10 ms (0 to 200 ms);
+  - `O`: tail lines `Handover` or `Glide`; `U`: direct delay on or off.
+  Flags `--echo-db`, `--tail-db`, `--predelay-ms`, `--tail-glide` and `--direct-delay` set the
+  same at start, so a chosen balance can be replayed. (Free keys checked against `main.rs` and
+  `fly.rs` at 2daa388.)
+- **Files touched:** `crates/vxe-audio/src/{mixer.rs, reverb.rs, command.rs, lib.rs}`,
+  `crates/vxe-audio/tests/reverb.rs`, a new `crates/vxe-audio/tests/balance.rs`,
+  `apps/flythrough/src/main.rs`, `docs/plans/0020-...md` (log).
+- **Done when:**
+  - `tests/balance.rs`, the 12 m cube, listener at the centre, a unit impulse 2 m ahead, each
+    setting applied 0.5 s before the impulse. Echoes alone (`direct: false`, tail off): echo
+    gain +6 dB multiplies the output energy by `10^0.6 = 3.98` within 1 percent. Tail alone
+    (`direct: false`, reflections off): tail level -6 dB multiplies it by `10^-0.6 = 0.251`
+    within 1 percent. Changing one leaves the other's render bit-identical.
+  - Pre-delay 40 ms (1 920 frames), tail alone: every sample before frame `1 920 + 31` (the
+    shortest prime line) is exactly 0, and the tail's energy is within 0.1 dB of the
+    no-pre-delay render's.
+  - A pre-delay step from 0 to 40 ms under a steady hum: the Phase 4 crest-relative click index
+    bound (`K_w <= 1.25 C_w`) holds in every window.
+  - **The balance table, printed and logged** (the owner's reference for Phase 12): for the 4,
+    12, 36 and 100 m cubes at default settings, with a source 2 m ahead, the direct, early (the
+    buses alone) and tail energies of a unit impulse in dB, and the energy of each in the first
+    80 ms after the direct sound.
+  - `Command::SetMix` reaches the mixer in the fly-through: `--room 12 --headless --frames 60`
+    with `--echo-db 6 --tail-db -9 --predelay-ms 30` prints the `mix:` line with those values.
+  - The allocation count in `render` is still zero.
+
+### Phase 12: Re-listening
+
+- **Owner skill:** human
+- **What:** The owner listens as in Phase 7 (headset swapped, `--audio-debug`), with stdout
+  captured: every run is `cargo run --release -p flythrough -- <flags> --audio-debug 2>&1 | tee
+  listening/<check>.log`, so the `SetRoom`, `mix:` and `stream errors` lines are on file beside
+  the recording. `dev` sends one push notification when Phases 8 to 11 are committed.
+- **Done when:** each item is a verdict in the log, with the settings chosen:
+  1. **Direction with the tail (check 2 again):** `--room 4`, `--room 12`, `--room 36`, knock
+     and note. Step the tail level (`-`, `=`) and the pre-delay (`9`, `0`) until the knock's
+     direction holds with the tail on; record the tail level and pre-delay per room, and
+     whether one setting serves all three.
+  2. **Echoes against the tail (check 3 again):** `--room 12`, 2 m from a wall, knock across the
+     room: step the echo gain (`[`, `]`) until the slap is clear; the slap's side is judged.
+  3. **The large room's return (check 5 again):** `--room 100 --mic` from the centre (the axis
+     walls' return at 292 ms, the corners' at up to 505 ms): does the voice come back late and
+     strong, then tail? Record the echo gain and tail level that make it; then `--room 4 --mic`
+     at the same settings still reads as a short, tight room (or record the conflict). The
+     input device line, its period, and no `stream errors` line over 60 s.
+  4. **Motion (check 6 again):** `--seed 1`, walking (3 m/s) and boosting (12 m/s) past the hum
+     with echoes on, then off: `O` between `Handover` and `Glide`, `U` direct delay on and off.
+     Which combination reads as motion and which as an artefact.
+  5. **Re-entry:** fly out through the cave's shell and back into a chamber with the hum and a
+     knock playing: a burst or not; the log file shows the `SetRoom` lines around it.
+  6. **Check 1 again, briefly:** walking past the hum with the chosen settings, no clicks.
+
+### Phase 13: Pin the chosen settings
+
+- **Owner skill:** dev
+- **What:** The values Phase 12 records become `MixSettings::default()` (echo gain, tail level,
+  pre-delay, tail lines, direct delay); a choice that depends on the room is pinned as the
+  owner states it (for example a pre-delay scaled by the mean free path), and if it needs a
+  mechanism Phases 8 to 11 do not have, `dev` stops and the architect amends. The fly-through's
+  flags keep working as overrides. Tests whose expected figures follow from the defaults are
+  re-derived and say so in their names.
+- **Files touched:** `crates/vxe-audio/src/{mixer.rs, reverb.rs}`, the affected
+  `crates/vxe-audio/tests/*.rs`, `apps/flythrough/src/main.rs`, `docs/plans/0020-...md` (log).
+- **Done when:** `MixSettings::default()` equals the recorded values (a test pins each); the
+  Phase 11 balance table is re-printed at the defaults and logged; the gate (build, nextest,
+  doctests, clippy, fmt, deny, the three doc scripts) exits 0; the three budget readings are
+  in the log with machine and commit.
+
 ## Data shapes
 
 ```rust
@@ -447,6 +739,11 @@ pub struct RoomTargets { pub t60_s: f32, pub mean_free_path_m: f32, pub energy: 
 pub struct ReverbSettings { pub hf_ratio: f32, pub level: f32, pub max_t60_s: f32 }
 pub enum Command { /* as today, plus */ SetRoom(RoomTargets), PlayStream(VoiceId, StreamReader, PlayParams) }
 pub struct PlayParams { pub position: [f32; 3], pub gain: f32, pub looping: bool, pub direct: bool }
+// Phases 8 to 11 (amended 2026-10-20)
+pub enum TailLines { Handover, Glide }
+pub struct ReverbSettings { pub hf_ratio: f32, pub level: f32, pub max_t60_s: f32, pub predelay_s: f32, pub lines: TailLines }
+pub struct MixSettings { pub echo_gain: f32, pub direct_delay: bool, pub reverb: ReverbSettings }
+// Command gains SetMix(MixSettings)
 ```
 
 Mixer-side state per voice: `[TapState { delay: f32, gain: f32 }; 16]` (128 B). Buses: 16 x
@@ -460,7 +757,7 @@ one block of scratch plus 16 x `taps - 1` frames of history (about 24.5 KB). Rev
 | Mixer block, 32 HRTF voices, static | 0.3619 ms | at most 0.6 ms (buses `1.05 M` MACs, about +0.17 ms; tail about 30 k flops; gliding taps about +10 percent on the tap work) | `cargo bench -p vxe-audio --bench mixer` |
 | Mixer block, 32 voices, turning 90 degrees per block | 0.6667 ms | at most 1.0 ms (every bus may crossfade in the same block, +0.17 ms more). Fallback if over: 8 buses of two rays each, an amendment | same bench |
 | `Acoustics::update`, 32 sources, all due | 1.0294 ms | at most 1.1 ms with a fan slice (16 rays, about 0.07 ms); the slice runs only while a fan is in progress | `cargo bench -p flythrough --bench acoustics` |
-| Audio RAM | pack 3 194 204 B, delay lines 2 523 136 B for 64 voices | + 323 584 B tail, about 24.5 KB buses, 8 KB tap state, 19.2 KB per stream | printed by the mixer bench |
+| Audio RAM | pack 3 194 204 B, delay lines 2 523 136 B for 64 voices | + 323 584 B tail, about 24.5 KB buses, 8 KB tap state, 19.2 KB per stream. Amended 2026-10-20: + 323 584 B second network (Phase 8), delay lines 7 438 336 B for 600 ms (Phase 9, +4.9 MB), + 39 424 B pre-delay (Phase 11) | printed by the mixer bench |
 | Baseline CPU | not on hand | the 1.0 ms callback proposal stands | dev reference until the baseline exists |
 
 The GPU and the frame are untouched. The fly-through's `F1` callback maximum with 8 voices is
@@ -511,7 +808,8 @@ re-read in Phase 7.
   triple; `hf_ratio` is the only spectral control.
 - **HRTF direction interpolation, a device-rate resampler, a probe worker thread:** ADR-0006's
   followups, untouched.
-- **Air absorption with distance, Doppler on the direct path, source directivity.**
+- **Air absorption with distance, source directivity.** Doppler on the direct path is an
+  option from Phase 10 (amended 2026-10-20), off unless Phase 13 pins the owner's choice.
 - **Voice chat over the network as a positional source:** M9; the streamed voice of Phase 5 is
   the mechanism it will use.
 - **Latency compensation for the microphone echo:** the first followup, pending Phase 7.
