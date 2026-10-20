@@ -1,9 +1,9 @@
 # 0026: Gamepad flight for demos: generic axes and pad buttons in the shell's input, gilrs in the testbed only
 
-> **Status:** in-progress
+> **Status:** done (closed 2026-10-20, v0.21.0): clean close review; both phases match the plan, the gate is green, the owner's DualSense check is batched with the other live checks
 > **Created:** 2026-10-20
 > **Milestone:** M7 in `docs/roadmap.md` (tooling); a testbed feature, no frame stage
-> **Related ADRs:** [ADR-0019](../adrs/0019-gamepad-input-as-generic-axes-in-the-shell-fed-by-the-testbed.md)
+> **Related ADRs:** [ADR-0019](../../adrs/0019-gamepad-input-as-generic-axes-in-the-shell-fed-by-the-testbed.md)
 > (proposed with this plan: where the gamepad dependency lives)
 > **Source:** the owner's request of 2026-10-20 (a DualSense on USB for demos), the probe of
 > the same day (gilrs 0.11.2 reports it as "PS5 Controller" with SDL mappings on this box,
