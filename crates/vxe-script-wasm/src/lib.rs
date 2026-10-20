@@ -24,7 +24,7 @@ mod host;
 mod wasi;
 
 #[cfg(feature = "host")]
-pub use host::{WasmConfig, WasmLogic};
+pub use host::{WasmConfig, WasmLogic, WorkRates};
 pub use vxe_net::LogicError;
 
 use vxe_world::wire::{

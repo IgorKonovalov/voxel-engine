@@ -86,6 +86,12 @@ pub trait Host {
     fn material_at(&self, v: VoxelCoord) -> Option<MaterialId>;
     /// The first non-air voxel along `origin + dir * t / 256`, `0 <= t <= max`.
     fn raycast(&self, origin: Fixed3, dir: Fixed3, max: i64) -> Option<Hit>;
+    /// [`Host::raycast`] plus the steps the world's walk took
+    /// (`vxe_world::World::raycast_with_stats`), 0 for a ray the world refused. A host that
+    /// charges a logic for its calls' work reads the steps here. The default reports 0.
+    fn raycast_with_steps(&self, origin: Fixed3, dir: Fixed3, max: i64) -> (Option<Hit>, u64) {
+        (self.raycast(origin, dir, max), 0)
+    }
     /// Voxels per material in the inclusive box `lo..=hi`, ascending by material.
     fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)>;
     /// The regions that lost their support after an edit that changed the cells `changed`
@@ -93,6 +99,12 @@ pub trait Host {
     /// parameters and anchors the server is configured with). A caller that knows only an
     /// op's aabb passes [`cells_in`] of it.
     fn unsupported(&self, changed: &[CellCoord]) -> Vec<Region>;
+    /// [`Host::unsupported`] plus the cells the query looked at
+    /// (`vxe_world::find_unsupported_with_stats`), 0 when it did not run. A host that charges
+    /// a logic for its calls' work reads the count here. The default reports 0.
+    fn unsupported_with_steps(&self, changed: &[CellCoord]) -> (Vec<Region>, u64) {
+        (self.unsupported(changed), 0)
+    }
 }
 
 /// The cells (8³-voxel bricks) overlapping the inclusive voxel box `aabb`, ascending; none

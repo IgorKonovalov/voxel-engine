@@ -1,6 +1,7 @@
 //! Region queries over resident chunks.
 
 use crate::coords::{BRICK_EDGE, CHUNK_EDGE, ChunkCoord, VoxelCoord, brick_slot, index_in_brick};
+use crate::edit::EditError;
 use crate::material::MaterialId;
 use crate::store::{World, read};
 
@@ -13,13 +14,16 @@ pub struct QueryStats {
 
 impl World {
     /// Voxels per material in the inclusive box `lo..=hi`, ascending by material. Voxels in
-    /// chunks that are not resident are not counted.
+    /// chunks that are not resident are not counted. Refused with
+    /// [`EditError::OutOfRange`] (`QueryAxis`, `QueryVolume`) when the box is larger than the
+    /// world's [`WorldLimits`](crate::WorldLimits) allow; a reversed box is empty.
     pub fn count_in_box(
         &self,
         lo: impl Into<VoxelCoord>,
         hi: impl Into<VoxelCoord>,
-    ) -> Vec<(MaterialId, u64)> {
-        self.count_in_box_with_stats(lo, hi).0
+    ) -> Result<Vec<(MaterialId, u64)>, EditError> {
+        self.count_in_box_with_stats(lo, hi)
+            .map(|(counts, _)| counts)
     }
 
     /// [`World::count_in_box`] plus the work it did.
@@ -27,12 +31,14 @@ impl World {
         &self,
         lo: impl Into<VoxelCoord>,
         hi: impl Into<VoxelCoord>,
-    ) -> (Vec<(MaterialId, u64)>, QueryStats) {
-        let (lo, hi) = (lo.into().0.map(i64::from), hi.into().0.map(i64::from));
+    ) -> Result<(Vec<(MaterialId, u64)>, QueryStats), EditError> {
+        let (lo, hi) = (lo.into().0, hi.into().0);
+        self.limits().check_query(lo, hi)?;
+        let (lo, hi) = (lo.map(i64::from), hi.map(i64::from));
         let mut counts: Vec<(MaterialId, u64)> = Vec::new();
         let mut stats = QueryStats::default();
         if (0..3).any(|k| lo[k] > hi[k]) {
-            return (counts, stats);
+            return Ok((counts, stats));
         }
         let mut add = |m: MaterialId, n: u64| match counts.iter_mut().find(|(k, _)| *k == m) {
             Some((_, c)) => *c += n,
@@ -84,6 +90,6 @@ impl World {
             }
         }
         counts.sort_unstable();
-        (counts, stats)
+        Ok((counts, stats))
     }
 }

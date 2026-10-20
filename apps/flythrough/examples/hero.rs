@@ -79,6 +79,7 @@ fn main() -> Result<(), String> {
         let o = centre_of_voxel(eye);
         let hit = world
             .raycast(o, dir.0, 400 * FIXED_ONE)
+            .map_err(|e| format!("the view ray is refused: {e}"))?
             .ok_or("the view ray meets no rock within 40 m")?;
         let t = hit.t + args.carve * FIXED_ONE / 2;
         let centre = Fixed3([0, 1, 2].map(|k| o.0[k] + dir.0[k] * t / FIXED_ONE));

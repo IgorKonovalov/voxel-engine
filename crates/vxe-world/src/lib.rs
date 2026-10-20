@@ -25,6 +25,7 @@ mod coords;
 mod edit;
 mod fixed;
 pub mod hash;
+mod limits;
 mod log;
 mod material;
 mod mips;
@@ -51,6 +52,7 @@ pub use coords::{
 };
 pub use edit::{EditError, EditOp, EditResult, Mode};
 pub use fixed::{FIXED_HALF, FIXED_ONE, Fixed3, centre_of_voxel};
+pub use limits::{Field, WorldLimits};
 pub use log::{
     InputEntry, InputLog, LOG_FORMAT, LOG_HEADER_BYTES, LOG_MAGIC, LogEntry, LogFile, Op, OpLog,
     OpResult,
@@ -65,6 +67,6 @@ pub use shape::Shape;
 pub use source::{StampedSource, UniformSource, WorldSource};
 pub use store::{ChunkStore, StoreWriteGuard, World, WorldStats};
 pub use stream::{Residency, StreamConfig, StreamError, StreamEvents, StreamStats, Streamer, Tier};
-pub use support::{Anchors, Region, SupportParams, find_unsupported};
+pub use support::{Anchors, Region, SupportParams, find_unsupported, find_unsupported_with_stats};
 pub use walkable::{WalkableMap, WalkableParams, WalkableStats};
 pub use wire::WireError;
