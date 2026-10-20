@@ -453,7 +453,7 @@ capitals are the plan's names for them.
      pitch runs at the 5 percent slew cap for a few blocks after each probe and then holds,
      about 21 times a second at 3 m/s (Risks). A verdict either way.
 
-### The listening fix pass (Phases 8 to 13 with 11b, amended 2026-10-20)
+### The listening fix pass (Phases 8 to 14 with 11b, amended 2026-10-20)
 
 What the code says, read for this amendment (facts, not hypotheses):
 
@@ -942,6 +942,32 @@ interpolation there is a guess, recorded as one.
     within 5 percent in the same session (the curve is evaluated per command, not per block).
   - The gate (build, nextest, doctests, clippy, fmt, deny, the three doc scripts) exits 0; the
     three budget readings are in the log with machine and commit.
+
+### Phase 14: Confirmation listen at the room-curve defaults
+
+Added 2026-10-20 (owner: yes, batched into the next live session with Plan 0023's windowed
+flight). Phase 13's curve sets levels at room sizes nobody picked, between the cubes and in
+every cave chamber; this listen checks them by ear before the close.
+
+- **Owner skill:** human
+- **What:** Headset, `--audio-debug`, stdout captured as in Phase 12: every run is
+  `target/release/flythrough <flags> --audio-debug 2>&1 | tee listening/p14-<check>.log`, at
+  the defaults (no `--echo-db`, `--tail-db` or `--flat-mix`). The trims (`[`, `]`, `-`, `=`)
+  are the escape hatch: if a run sounds wrong, step them until it is right and the final
+  `mix:` line in the log is the record. `dev` sends one push notification when Phase 13 is
+  committed, batched with Plan 0023's live check.
+- **Done when:** each item is a verdict in the log with the final `mix:` line (trim and curve
+  value) of its run:
+  1. **`--room 4`** and **`--room 12`**, knock and note from the centre: the knock's direction
+     holds at trims 0, as at the Phase 12 picks; or the trims that make it, per room.
+  2. **The cave, `--seed 1`:** walk from the spawn pocket through at least one chamber and one
+     tunnel with the hum and knock playing: do the echo and tail levels follow the space
+     without a level jump at room changes (the `mix:` lines show each curve change of 0.5 dB
+     or more)? A chamber where the trims had to move is named with its room line's mfp.
+  3. The echo wobble is not judged here (a followup); a verdict that it got worse at the new
+     echo level is recorded if heard.
+  A nonzero trim in any verdict goes to the architect as a re-fit of the knots (a followup or
+  an amendment), not a change by `dev`.
 
 ## Data shapes
 
