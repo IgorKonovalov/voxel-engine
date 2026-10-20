@@ -8,7 +8,7 @@
 > op returns what it changed, or an error).
 > **Prerequisite:** none; it adds an `EditError` variant and a wire error tag that Plan 0018
 > also touches, so the second to merge resolves it.
-> **Source:** `docs/decisions-pending.md` D7 item 2; Plan 0011 Followups ("bounded or metered
+> **Source:** `docs/decisions-pending.md` (answered and deleted; read it with `git show 880982c:docs/decisions-pending.md`) D7 item 2; Plan 0011 Followups ("bounded or metered
 > host-call work" and "`vxe-world` range checks on shapes").
 
 ## TL;DR

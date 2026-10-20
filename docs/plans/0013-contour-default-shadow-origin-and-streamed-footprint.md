@@ -14,7 +14,7 @@
 > Phase 5 also needs [Plan 0017](0017-mirror-budget-reservation-page-kinds-and-pressure.md)
 > merged into this plan's branch (the owner's call, 2026-10-18).
 > **Amended:** 2026-10-18, after Phase 3, from the owner's answers: Phase 4 is met by the
-> owner's pick of D at 14,24 (2026-10-17, `docs/decisions-pending.md` D1) and by ADR-0012,
+> owner's pick of D at 14,24 (2026-10-17, `docs/decisions-pending.md` (answered and deleted; read it with `git show 880982c:docs/decisions-pending.md`) D1) and by ADR-0012,
 > accepted 2026-10-17, which records the footprint's final form (surface-only, a later plan);
 > Phase 5 builds D at 14,24 after Plan 0017 lands, its §3 check read as live bytes against
 > Plan 0017's reserved budget; Phase 6 may run before Phase 5.

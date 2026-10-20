@@ -10,7 +10,7 @@
 > (ops cross the boundary as bytes; a support query import was anticipated).
 > **Prerequisite:** none; Plan 0016's restart change touches the same `vxe-net` report type,
 > so the second to merge resolves it.
-> **Source:** `docs/decisions-pending.md` D7 item 1; Plan 0008's followup (stamp as kind 2);
+> **Source:** `docs/decisions-pending.md` (answered and deleted; read it with `git show 880982c:docs/decisions-pending.md`) D7 item 1; Plan 0008's followup (stamp as kind 2);
 > Plan 0009's followup (drop and remove as kinds 3 and 4); Plan 0007's gating of `--vault`,
 > `P` and collapse under `--save`.
 

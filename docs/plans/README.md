@@ -10,7 +10,7 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Status | Live constraint |
 |------|-------|--------|-----------------|
-| [0013](0013-contour-default-shadow-origin-and-streamed-footprint.md) | Contour as the fly-through's default: the shadow-ray origin, a streamed footprint under 3 GB, and a weaker rock detail | approved | Phase 4 met (D at 14). Phase 5 waits for Plan 0017; Phase 6 (human) may go first. |
+| [0013](0013-contour-default-shadow-origin-and-streamed-footprint.md) | Contour as the fly-through's default: the shadow-ray origin, a streamed footprint under 3 GB, and a weaker rock detail | approved | Phases 1-4 and 6 done on branch `plan-0013`, whose log is current. Phases 5 and 7 wait for Plan 0017 on main. |
 | [0017](0017-mirror-budget-reservation-page-kinds-and-pressure.md) | The mirror reserves its budget: fixed buffers, empty pages that change kind, and a pressure signal the streamer follows | approved | Paired with ADR-0013. Best after Plan 0015. |
 | [0018](0018-server-routed-stamp-drop-and-remove.md) | Stamp, drop and remove as op kinds 2 to 4 through the server, the log and the logic host | approved | Paired with ADR-0014; `LOG_FORMAT` 2. |
 | [0019](0019-metered-host-calls-and-shape-range-checks.md) | Host calls charged by their work, and a world that refuses out-of-range shapes and queries | approved | Shares an `EditError` variant with Plan 0018. |

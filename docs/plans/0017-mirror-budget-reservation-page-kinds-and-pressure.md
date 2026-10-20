@@ -14,7 +14,7 @@
 > Phase 5, which waits for this plan (the owner's call, 2026-10-18). When this plan merges to
 > main, continue Plan 0013 on its branch: merge main into `plan-0013`, then Phases 5 and 7
 > (its human Phases 4 and 6 are done).
-> **Source:** `docs/decisions-pending.md` D1 and D7 item 4; ADR-0004's Outcome; `nfr.md` §3's
+> **Source:** `docs/decisions-pending.md` (answered and deleted; read it with `git show 880982c:docs/decisions-pending.md`) D1 and D7 item 4; ADR-0004's Outcome; `nfr.md` §3's
 > two recorded misses.
 
 ## TL;DR

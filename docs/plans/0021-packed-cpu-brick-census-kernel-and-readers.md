@@ -11,7 +11,7 @@
 > closed (v0.14.0). Touches `gpu_world.rs`, which Plans 0013 and 0017 also touch, and
 > `collapse.rs` and `stamp.rs`, which Plan 0018 also touches; whichever merges second resolves
 > the conflict. The third ADR-0012 plan (size-classed mirror slots) follows this one.
-> **Source:** ADR-0012's Decision and Outcome; `docs/decisions-pending.md` D3 and D3a (the
+> **Source:** ADR-0012's Decision and Outcome; `docs/decisions-pending.md` (answered and deleted; read it with `git show 880982c:docs/decisions-pending.md`) D3 and D3a (the
 > census and kernel spike this plan's Phase 1 is); the interview of 2026-10-19.
 
 ## TL;DR

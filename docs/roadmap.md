@@ -152,11 +152,12 @@ streaming line (render-thread CPU p50 about 7 ms, p99 52 to 61 ms against 1.0 ms
 rays in the streamed world (6.69 ms at 1080p against 3.0 ms), both on the dev reference. The
 budgets stand. The §4 edit-cost miss carries forward from Plan 0001 to Plan 0003 (closed 2026-10-17,
 v0.4.1), which cut the `worst` bench from 4.6 to 3.56 ms on a quiet dev box with no result or
-hash moved; the owner kept the 2 ms figure. Plan 0014 (closed 2026-10-17, v0.7.0) is the second pass: a brick-array pool, a sphere span walk and an analytic capsule row cut `worst` to 3.19-3.26 ms (3.03-3.05 ms with a warm pool) and `tool` from 8.05 to 6.78-6.80 ms. The §4 miss carries forward: the row write bounds the cost inside ADR-0002's representation, and the decision between a representation ADR and a measured §4 cap awaits the owner.
+hash moved; the owner kept the 2 ms figure. Plan 0014 (closed 2026-10-17, v0.7.0) is the second pass: a brick-array pool, a sphere span walk and an analytic capsule row cut `worst` to 3.19-3.26 ms (3.03-3.05 ms with a warm pool) and `tool` from 8.05 to 6.78-6.80 ms. The §4 miss carries forward: the row write bounds the cost inside ADR-0002's representation, and the owner chose a representation: ADR-0012 (accepted 2026-10-17), whose CPU-format step is Plan 0021.
 
 **Next, before M2's lighting:** a streaming-CPU plan (incremental queue, residency sweep and
-window shift; narrowing and staging on workers) and a march-pass diagnosis spike (step counts,
-the 4096-step cap, LOD radii; an autopilot path through open cave). Neither is drafted yet.
+window shift; narrowing and staging on workers), not drafted yet. The march-pass diagnosis this
+paragraph also asked for landed in Plan 0015 (the steps view, its headless histogram and the
+autopilot readings), which brought the streamed primary-ray line under 3.0 ms on the dev box.
 Plan 0002's Followups list the rest.
 
 **Goal:** a window showing a ray-marched, streaming voxel cave lit by a headlamp. You fly, carve
@@ -214,7 +215,7 @@ procedural detail, and the owner chose per-voxel contour planes with weaker rock
 (ADR-0011). The fly-through's default stays face normals until a surface follow-up plan fixes
 contour's shadow-ray origin and fits its streamed footprint, which ran the 8 GiB dev card out
 of memory at the default radius; Plan 0005's "Follow-up items" list the work. Plan 0013
-(draft) is that follow-up: the shadow-ray origin, a footprint chosen by measurement and recorded
+(approved) is that follow-up: the shadow-ray origin, a footprint chosen by measurement and recorded
 in its own ADR, the owner's rock detail, then contour plus detail as the default. The lighting
 plan is not drafted yet.
 
