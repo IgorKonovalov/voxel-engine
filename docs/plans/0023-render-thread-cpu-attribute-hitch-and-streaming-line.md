@@ -1,6 +1,7 @@
 # 0023: The render thread's mirror CPU: profile a chunk crossing, then cut the attribute hitch and the streaming line with targeted fixes
 
-> **Status:** draft
+> **Status:** approved (owner, 2026-10-20; frame bar credited with the attribute pass's GPU time,
+> option (b)). The dev lane starts once the Plan 0020 or 0022 lane reaches its human phase.
 > **Created:** 2026-10-20
 > **Milestone:** M2 in `docs/roadmap.md` (owed before the lighting plan; it is the
 > "streaming-CPU plan" the roadmap's M1 notes name, merged with the Plan 0013 attribute-hitch
@@ -338,10 +339,23 @@ The flights are `flythrough --autopilot --headless --seed 1`, alternated with
 - **Done when:** every bar below reads true in both pairs. A bar that misses is logged as a
   miss with its numbers, not re-run until it passes.
   - `update_attrs` CPU p99 under 4 ms in both default runs (today 138 to 180 ms).
-  - Each default run flies at least 95 % of its paired plain run's frames (today 2211 against
-    4123 and 2695 against 4155; the bar is 3917 and 3948 frames if plain reads the same
-    again). See Risks: the attribute pass's GPU time may hold this bar out of reach of CPU
-    work alone.
+  - **The GPU-credited frame bar (owner, 2026-10-20).** Each default run's frame count, after
+    crediting the attribute pass's GPU time, is at least 95 % of its paired plain run's raw
+    count. The bar judges only the render thread's CPU. The credit is computed from the
+    flight's own readings:
+    - `T` is the default run's flight wall time in ms, from the first to the last flight
+      frame's timestamp (the `Out` and `Back` legs, the frames `pilot_sample` counts).
+    - `G` is the sum over the same frames of the attribute pass's GPU time in ms, from its
+      timestamp queries (`p.attr.gpu_ms`, frames with work only, the others adding 0).
+    - `F_d` and `F_p` are the default's and plain's flight frame counts.
+    - The credited count is `F_d* = F_d × T / (T - G)`: the frames the default would fly if
+      those GPU milliseconds were not spent. The bar is `F_d* >= 0.95 × F_p`.
+    - A worked example with invented numbers: `T` = 60 000 ms, `G` = 6000 ms and `F_d` = 3600
+      give `F_d*` = 3600 × 60 000 / 54 000 = 4000. Against plain's 4123 the bar is 3917, so
+      4000 passes. The raw 3600 would not have passed.
+    - The autopilot prints `T`, `G`, `F_d` and `F_d*` in one line, and the log records raw
+      `F_d` against `F_p` too. The raw gap and `G` are the attribute pass's GPU cost, recorded
+      for a later plan (Followups).
   - Streaming CPU (`update + poll + sync`, as `stream_step` times it) p50 under 1.0 ms in all
     four runs, and its max under 16 ms in all four. Its p99 is recorded and does not gate.
   - Plain's residency latency p95 at or under 381 ms in both plain runs.
@@ -391,7 +405,7 @@ marked inside `slot` (illustrative: bit 31; slots fit in 29 bits).
 |---|---|---|---|
 | §2 streaming line, 1.0 ms | p50 4.5 to 5.0 ms, p99 33 to 65 ms, max 41 to 108 ms | p50 under 1.0 ms; max under 16 ms; p99 recorded | Phase 6, `stream_step`'s timing, four flights |
 | §2 attribute pass, render-thread CPU (**no line yet; proposed here**) | p50 4.6 to 4.7 ms, p99 138 to 180 ms | p99 under 4 ms; carry-over age at most 250 ms | Phase 6, default flights |
-| §2 frame rate in motion (diagnostic) | default 2211 and 2695 frames against plain's 4123 and 4155 | default at least 95 % of plain | Phase 6 pairs |
+| §2 frame rate in motion (diagnostic) | default 2211 and 2695 frames against plain's 4123 and 4155 | GPU-credited default `F_d*` at least 95 % of plain; raw counts and `G` recorded | Phase 6 pairs |
 | §5 residency latency, 500 ms p95 proposal | plain p95 381 and 381 ms | plain p95 at most 381 ms | Phase 6 plain flights |
 | §5 edits persist across eviction | `return: 2 chunks, hash match` | unchanged | every flight |
 | §3 memory | mirror reservation fixed (ADR-0013); RAM per §3 | unchanged; prepared results at most 64 MiB of RAM, the work buffer 196 720 B | Phase 5 peak prepared bytes, Phase 6 peak resident RAM line |
@@ -403,16 +417,13 @@ normals for at most 250 ms". The pass's GPU time stays a recorded figure here. P
 
 ## Risks & open questions
 
-- **The 5 % frame bar may be out of reach of CPU work.** During flight the autopilot reads its
-  timestamp queries back synchronously every frame (`MarchTimer::read_ms` waits on the device).
-  So a flight frame costs its CPU plus its GPU. Plain flies at about 14.5 ms a frame (60 s over
-  4123 frames). The bar allows the default about 0.77 ms more per frame (3917 frames).
-  The attribute pass's GPU reads p50 2.4 to 3.0 ms on 67 to 78 % of the default's frames
-  (1717 of 2211, 1802 of 2695), roughly 1.6 to 2.3 ms per frame on average. Capping only
-  spreads that work, because the bricks per second are set by the flight speed. That alone
-  could cost the default about 10 to 14 % of plain's frames with zero CPU cost. The carry-over
-  queue's deduplication of bricks re-queued by consecutive neighbour promotions may recover
-  some of it, but how much is unknown. **Owner question, asked with this draft.**
+- **Why the frame bar is credited.** During flight the autopilot reads its timestamp queries
+  back synchronously every frame (`MarchTimer::read_ms` waits on the device), so a flight frame
+  costs its CPU plus its GPU. The attribute pass's GPU work per second is set by the flight
+  speed, and capping only spreads it. At today's p50 of 2.4 to 3.0 ms on 67 to 78 % of the
+  default's frames, it alone could cost about 10 to 14 % of plain's frames. The owner chose
+  (2026-10-20) to credit it, so the bar measures this plan's subject. The GPU cost is recorded
+  and owed to a later plan.
 - **Refuted hypothesis.** The stop rule covers it: Phase 1 hands back, and nothing later
   starts.
 - **Prepared-result staleness** is the correctness risk of Phase 5. The byte-equality test and
