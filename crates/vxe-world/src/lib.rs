@@ -65,6 +65,7 @@ pub use log::{
 };
 pub use material::{AIR, Material, MaterialFlags, MaterialId, MaterialTable};
 pub use mips::{ChunkMips, MIP_BRICKS, MIP_LEVELS, majority};
+pub use packed::PackedStats;
 pub use persist::{PersistConfig, SPILL_VERSION, SpillError, decode_spill, encode_spill};
 pub use prefab::{Prefab, Rot};
 pub use query::QueryStats;

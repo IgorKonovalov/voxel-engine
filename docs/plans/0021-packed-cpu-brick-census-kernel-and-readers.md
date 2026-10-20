@@ -460,8 +460,8 @@ header, world key, coordinate and FNV trailer are version 1's.
 |---|---|---|---|
 | 1: The census and the kernel bench | dev | done | 992fdaa |
 | 2: The owner reads the figures | human | done (go, 2026-10-20) | 0a060c4 |
-| 3: `Packed` behind `Brick::Full`, every reader compiling | dev | done | committed with this row |
-| 4: The edit kernel as word operations | dev | not started | |
+| 3: `Packed` behind `Brick::Full`, every reader compiling | dev | done | 22fcade |
+| 4: The edit kernel as word operations | dev | done | committed with this row |
 | 5: Native paths for the hot readers | dev | not started | |
 | 6: Collapse as layer shifts and palette remaps | dev | not started | |
 | 7: The mirror upload from planes, and spill version 2 | dev | not started | |
@@ -520,6 +520,14 @@ header, world key, coordinate and FNV trailer are version 1's.
 - Phase 3: the fly-through's HUD passes 0 spare arrays and its `B` line drops the pool KiB;
   `hud.rs`'s `cpu_bytes_estimate` still counts 1 KiB per `Full` brick (followup, not acted on).
 - Phase 3: `hash.rs` and `source.rs` unchanged (read through `get` and `set_brick`).
+- Phase 4: `PackedStats` carries a third count, `renames`, which the rename test reads; a class
+  change counts a box moving between classes, not a `Uniform` brick expanding or collapsing
+  (Phase 4 commit).
+- Phase 4: the 2000-op test reads 1047 ops changing voxels and `PackedStats { class_changes:
+  1168, entries_removed: 32, renames: 8 }`; its floor is 1000 changing ops (Phase 4 commit).
+- Phase 4: `lib.rs` re-exports `PackedStats`; it is outside the phase's list (Phase 4 commit).
+- Phase 4: `write_rows` stays in `edit.rs` for the kernel bench's `RowWriter` only (Phase 4
+  commit).
 
 ### Close triggers
 
@@ -559,6 +567,13 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     2.50, 2.85, 3.08 us (raw 0.54 us). Expansion 11.2 ns (raw 1 KiB 295.9 ns); Plane1 to
     Plane2 21.2 ns. Allocation share 28.1 us: 8.8 % of the planar carve sum, 0.9 % of
     3.03 ms. `edits` `worst_warm` in the same window: 2.60 ms (2.55 to 2.64).
+  - Phase 4 `cargo bench -p vxe-world --bench edits` (filter `worst`), dev box, exclusive perf
+    lock, Phase 1 tip 992fdaa built from `git archive` beside this commit, run alternately:
+    load 24.10: Phase 1 `worst` 2.906 ms, `worst_warm` 2.864 ms; Phase 4 `worst` 1.743 ms,
+    `worst_warm` 1.485 ms. Load 17.59: Phase 1 `worst` 3.527 ms, `worst_warm` 2.811 ms; Phase 4
+    `worst` 1.356 ms, `worst_warm` 1.339 ms (load 13.41 after). At Phase 4 both cases build the
+    same pool-less world. Row-write share from Phase 1's kernel bench (load 9.69): today 1.375
+    ms less planar 0.318 ms = 1.057 ms.
 - **Gate at the tip (992fdaa):** `cargo build --workspace --all-targets` 0; `cargo nextest run
   --workspace` (after `scripts/build-guests.sh`, under the perf lock) 394 passed, 4 skipped,
   exit 0; `cargo test --workspace --doc` 7 passed; clippy `-D warnings` 0; `fmt --check` 0;

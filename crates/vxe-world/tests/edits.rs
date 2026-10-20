@@ -556,3 +556,151 @@ fn ids_beyond_the_table_are_counted_like_the_reference() {
     }
     assert!(beyond >= 30, "{beyond} counts of ids beyond the table");
 }
+
+/// 2000 seeded ops on the cubes source over chunks `[-1, 1)^3`, mixing carve, fill of
+/// materials 1 to 3 and replace between them, so palette entries are inserted and removed at
+/// every position. After every op the result equals the reference's (`changed_from`, `aabb`,
+/// `touched`), the voxels in its bounds equal the reference's, and every brick of the touched
+/// chunks is canonical.
+#[test]
+fn the_planar_kernel_matches_the_reference_over_2000_mixed_ops() {
+    let world = World::generate(
+        ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
+        &CubesSource,
+        &test_table(),
+    );
+    let mut rng = SplitMix64(0x0021_0004);
+    let mut changed = 0;
+    for i in 0..2000 {
+        let c = [0; 3].map(|_| rng.range(-60, 59) * FIXED_ONE + rng.range(-128, 127));
+        let r = rng.range(FIXED_ONE, 7 * FIXED_ONE);
+        let m = |rng: &mut SplitMix64| rng.range(1, 3) as MaterialId;
+        let mode = match rng.range(0, 3) {
+            0 => Mode::Carve,
+            1 => Mode::Fill(m(&mut rng)),
+            _ => Mode::Replace {
+                from: m(&mut rng),
+                to: m(&mut rng),
+            },
+        };
+        let op = if rng.range(0, 3) == 0 {
+            let h = [0; 3].map(|_| rng.range(0, 6 * FIXED_ONE));
+            EditOp::box_(
+                Fixed3([0, 1, 2].map(|k| c[k] - h[k])),
+                Fixed3([0, 1, 2].map(|k| c[k] + h[k])),
+                mode,
+            )
+        } else {
+            EditOp::sphere(Fixed3(c), r, mode)
+        };
+        let expected = reference_apply(&world, &op);
+        assert_eq!(world.apply(&op), expected.result, "op {i}: {op:?}");
+        if let Some((lo, hi)) = expected.bounds {
+            assert!(
+                materials_in(&world, lo, hi) == expected.after,
+                "op {i}: voxels differ from the reference after {op:?}"
+            );
+        }
+        if let Ok(r) = &expected.result {
+            assert_canonical(&world, &r.touched, i);
+            changed += usize::from(!r.changed_from.is_empty());
+        }
+    }
+    let st = world.packed_stats();
+    println!("{changed} of 2000 ops changed voxels; {st:?}");
+    assert!(changed >= 1000, "{changed} ops changed voxels");
+    assert!(
+        st.class_changes > 0 && st.entries_removed > 0 && st.renames > 0,
+        "{st:?}"
+    );
+}
+
+/// The brick at slot 0 of a one-chunk world, and its palette.
+fn brick0(world: &World) -> (Option<vxe_world::packed::PackedClass>, Vec<MaterialId>) {
+    let chunk = world.store().get(ChunkCoord([0, 0, 0])).unwrap();
+    let chunk = chunk.read().unwrap();
+    let b = chunk.brick(0);
+    let palette = match b {
+        Brick::Full(p) => p.palette(),
+        Brick::Uniform(m) => vec![*m],
+    };
+    (b.class(), palette)
+}
+
+/// The voxel box `lo..=hi` as an op.
+fn voxel_box(lo: [i32; 3], hi: [i32; 3], mode: Mode) -> EditOp {
+    EditOp::box_(
+        Fixed3(lo.map(|v| i64::from(v) * FIXED_ONE)),
+        Fixed3(hi.map(|v| i64::from(v) * FIXED_ONE + FIXED_ONE - 1)),
+        mode,
+    )
+}
+
+/// A fill inserts a palette entry and grows the class, a replace whose `from` voxels all lie
+/// in the shape renames the entry with no plane written, and a carve of every voxel of an
+/// entry removes it and shrinks the class.
+#[test]
+fn entries_are_inserted_renamed_and_removed() {
+    let mut table = MaterialTable::new();
+    for i in 1..=7u16 {
+        table.push(Material::named(format!("m{i}")));
+    }
+    // Brick 0: layers z 0..4 of material 3, the rest air.
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &FnSource(|v: VoxelCoord| {
+            if v.0.iter().all(|&c| c < 8) && v.0[2] < 4 {
+                3
+            } else {
+                AIR
+            }
+        }),
+        &table,
+    );
+    assert_eq!(
+        brick0(&world),
+        (Some(vxe_world::packed::PackedClass::Mask), vec![3])
+    );
+
+    // Fill 7 into layer 4: 64 air voxels.
+    let r = world
+        .apply(&voxel_box([0, 0, 4], [7, 7, 4], Mode::Fill(7)))
+        .unwrap();
+    assert_eq!(r.changed_from, [(AIR, 64)]);
+    assert_eq!(
+        brick0(&world),
+        (Some(vxe_world::packed::PackedClass::Plane1), vec![3, 7])
+    );
+    let s0 = world.packed_stats();
+    assert_eq!(s0.class_changes, 1);
+
+    // Replace 3 by 2 over the whole brick: a rename, the palette [2, 7].
+    let r = world
+        .apply(&voxel_box(
+            [0, 0, 0],
+            [7, 7, 7],
+            Mode::Replace { from: 3, to: 2 },
+        ))
+        .unwrap();
+    assert_eq!(r.changed_from, [(3, 256)]);
+    assert_eq!(
+        brick0(&world),
+        (Some(vxe_world::packed::PackedClass::Plane1), vec![2, 7])
+    );
+    let s1 = world.packed_stats();
+    assert_eq!(s1.renames - s0.renames, 1);
+    assert_eq!(s1.class_changes, s0.class_changes);
+
+    // Carve every 7: the entry goes and the brick is mask-only again.
+    let r = world
+        .apply(&voxel_box([0, 0, 4], [7, 7, 4], Mode::Carve))
+        .unwrap();
+    assert_eq!(r.changed_from, [(7, 64)]);
+    assert_eq!(
+        brick0(&world),
+        (Some(vxe_world::packed::PackedClass::Mask), vec![2])
+    );
+    let s2 = world.packed_stats();
+    assert_eq!(s2.entries_removed - s1.entries_removed, 1);
+    assert_eq!(s2.class_changes - s1.class_changes, 1);
+}

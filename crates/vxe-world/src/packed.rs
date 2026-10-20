@@ -180,6 +180,20 @@ pub(crate) enum Repr {
     Wide(Box<[MaterialId; BRICK_VOXELS]>),
 }
 
+/// What the planar kernel did to the boxes, summed over calls. Not part of any result: a
+/// count of work, for tests and readings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PackedStats {
+    /// A `Full` brick's box moved to another class (grown for an insert, shrunk after a
+    /// removal, widened to or narrowed from raw ids). Expanding a `Uniform` brick and
+    /// collapsing to one are not counted.
+    pub class_changes: u64,
+    /// Palette entries removed because their last voxel changed.
+    pub entries_removed: u64,
+    /// Replaces done by renaming one palette entry, with no plane written.
+    pub renames: u64,
+}
+
 /// What a kernel call does to each old material.
 #[derive(Clone, Copy, Debug)]
 pub enum KernelMode<'a> {
@@ -528,6 +542,7 @@ impl Brick {
         mode: KernelMode<'_>,
         shape: &[u64; LAYERS],
         count: &mut impl FnMut(MaterialId, u32),
+        st: &mut PackedStats,
     ) -> Option<([u8; 3], [u8; 3])> {
         if let Self::Uniform(m) = *self {
             mode.target(m)?;
@@ -541,22 +556,25 @@ impl Brick {
         };
         let changed = match packed {
             Repr::Wide(v) => wide_edit(v, mode, shape, count),
-            _ => planar_edit(packed, mode, shape, count),
+            _ => planar_edit(packed, mode, shape, count, st),
         };
         let bounds = bounds_of(&changed);
-        self.canonicalize();
+        self.canonicalize(st);
         bounds
     }
 
     /// Moves a `Full` brick to the class of its palette, or to `Uniform` when it is all air
     /// or all one material; a `Wide` box is re-encoded when it may have fallen to 16 or fewer
     /// materials.
-    fn canonicalize(&mut self) {
+    fn canonicalize(&mut self, st: &mut PackedStats) {
         let Self::Full(Packed(packed)) = self else {
             return;
         };
         if let Repr::Wide(v) = packed {
             *self = Self::encode(v);
+            if self.class().is_some_and(|c| c != PackedClass::Wide) {
+                st.class_changes += 1;
+            }
             return;
         }
         let (w, p) = packed.planar().expect("planar");
@@ -572,6 +590,7 @@ impl Brick {
         let class = PackedClass::of(n);
         if class != packed.class() {
             *packed = packed.reclass(class);
+            st.class_changes += 1;
         }
     }
 }
@@ -608,17 +627,18 @@ fn planar_edit(
     mode: KernelMode<'_>,
     shape: &[u64; LAYERS],
     count: &mut impl FnMut(MaterialId, u32),
+    st: &mut PackedStats,
 ) -> [u64; LAYERS] {
     match mode {
-        KernelMode::Carve { .. } => carve(packed, mode, shape, count),
-        KernelMode::Fill(m) => fill(packed, m, shape, count),
+        KernelMode::Carve { .. } => carve(packed, mode, shape, count, st),
+        KernelMode::Fill(m) => fill(packed, m, shape, count, st),
         KernelMode::Replace { from, to } => {
             if from == to {
                 [0; LAYERS]
             } else if from == AIR {
-                fill(packed, to, shape, count)
+                fill(packed, to, shape, count, st)
             } else {
-                replace(packed, from, to, shape, count)
+                replace(packed, from, to, shape, count, st)
             }
         }
     }
@@ -631,6 +651,7 @@ fn carve(
     mode: KernelMode<'_>,
     shape: &[u64; LAYERS],
     count: &mut impl FnMut(MaterialId, u32),
+    st: &mut PackedStats,
 ) -> [u64; LAYERS] {
     let (w, p) = packed.planar_mut().expect("planar");
     let n = entries(w, p);
@@ -695,7 +716,7 @@ fn carve(
             w[LAYERS + LAYERS * k + z] &= w[z];
         }
     }
-    remove_entries(w, p, emptied);
+    remove_entries(w, p, emptied, st);
     hit
 }
 
@@ -706,6 +727,7 @@ fn fill(
     m: MaterialId,
     shape: &[u64; LAYERS],
     count: &mut impl FnMut(MaterialId, u32),
+    st: &mut PackedStats,
 ) -> [u64; LAYERS] {
     if m == AIR {
         return [0; LAYERS];
@@ -719,7 +741,7 @@ fn fill(
         return f;
     }
     count(AIR, air);
-    let Some(j) = index_or_insert(packed, m) else {
+    let Some(j) = index_or_insert(packed, m, st) else {
         // Above 16 materials: the raw path.
         let Repr::Wide(v) = packed else {
             unreachable!("index_or_insert widens")
@@ -749,6 +771,7 @@ fn replace(
     to: MaterialId,
     shape: &[u64; LAYERS],
     count: &mut impl FnMut(MaterialId, u32),
+    st: &mut PackedStats,
 ) -> [u64; LAYERS] {
     let (w, p) = packed.planar().expect("planar");
     let n = entries(w, p);
@@ -777,7 +800,7 @@ fn replace(
             }
         }
         if every {
-            remove_entries(w, p, 1 << jf);
+            remove_entries(w, p, 1 << jf, st);
         }
         return h;
     }
@@ -789,9 +812,10 @@ fn replace(
     {
         let (w, p) = packed.planar_mut().expect("planar");
         set_entry(w, p, jf, to);
+        st.renames += 1;
         return h;
     }
-    let Some(jt) = index_or_insert(packed, to) else {
+    let Some(jt) = index_or_insert(packed, to, st) else {
         let Repr::Wide(v) = packed else {
             unreachable!("index_or_insert widens")
         };
@@ -811,7 +835,7 @@ fn replace(
         let jf = (0..entries(w, p))
             .find(|&j| entry(w, p, j) == from)
             .expect("from is still an entry");
-        remove_entries(w, p, 1 << jf);
+        remove_entries(w, p, 1 << jf, st);
     }
     h
 }
@@ -836,7 +860,7 @@ fn write_index(w: &mut [u64], p: usize, j: usize, over: &[u64; LAYERS], fresh: b
 /// grows a class first if full, and every voxel at or above the insert position takes its
 /// index plus one by a bit-sliced add. `None` when the insert widens the box to raw ids
 /// (above 16 materials); the box is then `Wide`.
-fn index_or_insert(packed: &mut Repr, m: MaterialId) -> Option<usize> {
+fn index_or_insert(packed: &mut Repr, m: MaterialId, st: &mut PackedStats) -> Option<usize> {
     let (w, p) = packed.planar().expect("planar");
     let n = entries(w, p);
     let mut q = n;
@@ -852,6 +876,7 @@ fn index_or_insert(packed: &mut Repr, m: MaterialId) -> Option<usize> {
     }
     if n == packed.class().capacity() {
         let class = packed.class().grown();
+        st.class_changes += 1;
         if class == PackedClass::Wide {
             let mut v = Box::new([AIR; BRICK_VOXELS]);
             packed.decode(&mut v);
@@ -885,7 +910,7 @@ fn index_or_insert(packed: &mut Repr, m: MaterialId) -> Option<usize> {
 /// Removes the entries whose bits are set in `which` (each with no voxel left), highest
 /// first: every voxel above a removed entry takes its index minus one by a bit-sliced
 /// subtract, and the palette closes the gap.
-fn remove_entries(w: &mut [u64], p: usize, which: u32) {
+fn remove_entries(w: &mut [u64], p: usize, which: u32, st: &mut PackedStats) {
     let mut which = which;
     while which != 0 {
         let q = 31 - which.leading_zeros() as usize;
@@ -908,6 +933,7 @@ fn remove_entries(w: &mut [u64], p: usize, which: u32) {
             set_entry(w, p, j, e);
         }
         set_entry(w, p, n - 1, AIR);
+        st.entries_removed += 1;
     }
 }
 
@@ -1049,9 +1075,14 @@ mod tests {
 
             let mut b = Brick::encode(&v);
             let mut counts = std::collections::BTreeMap::new();
-            let bounds = b.edit_planar(mode, &shape, &mut |m, n| {
-                *counts.entry(m).or_insert(0u32) += n;
-            });
+            let bounds = b.edit_planar(
+                mode,
+                &shape,
+                &mut |m, n| {
+                    *counts.entry(m).or_insert(0u32) += n;
+                },
+                &mut PackedStats::default(),
+            );
             let mut got = [0; BRICK_VOXELS];
             b.decode(&mut got);
             assert_eq!(got, want, "case {case} {mode:?}");
@@ -1076,9 +1107,13 @@ mod tests {
             *span = (0, 7);
         }
         let mut counts = Vec::new();
-        b.edit_planar(KernelMode::Fill(7), &shape_words(&spans), &mut |m, n| {
-            counts.push((m, n))
-        });
+        let mut st = PackedStats::default();
+        b.edit_planar(
+            KernelMode::Fill(7),
+            &shape_words(&spans),
+            &mut |m, n| counts.push((m, n)),
+            &mut st,
+        );
         assert_eq!(counts, [(AIR, 64)]);
         assert_eq!(b.class(), Some(PackedClass::Plane1));
         let Brick::Full(p) = &b else { panic!() };
@@ -1092,6 +1127,15 @@ mod tests {
             },
             &shape_words(&[(0, 7); 64]),
             &mut |m, n| counts.push((m, n)),
+            &mut st,
+        );
+        assert_eq!(
+            st,
+            PackedStats {
+                class_changes: 2,
+                entries_removed: 1,
+                renames: 0
+            }
         );
         assert_eq!(counts, [(7, 64)]);
         assert_eq!(b, Brick::encode(&v));

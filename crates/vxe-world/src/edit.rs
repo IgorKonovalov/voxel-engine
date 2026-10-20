@@ -14,7 +14,7 @@ use crate::coords::{
 };
 use crate::fixed::{Fixed3, centre};
 use crate::material::{AIR, MaterialFlags, MaterialId, MaterialTable};
-use crate::packed::{KernelMode, RowSpans, shape_words};
+use crate::packed::{KernelMode, PackedStats, RowSpans, shape_words};
 use crate::raycast::point_at;
 use crate::shape::{Coverage, Shape, sphere_row_spans};
 use crate::store::{World, read, write};
@@ -396,6 +396,7 @@ impl World {
         let be = i64::from(BRICK_EDGE);
         let targets = TargetTable::new(op.mode, &self.materials);
         let mut tally = Tally::new(self.materials.len());
+        let mut stats = PackedStats::default();
         let mut touched = Vec::new();
         for (coord, vlo, vhi, chunk) in chunks {
             let mut chunk = write(chunk);
@@ -450,7 +451,9 @@ impl World {
                             elo,
                             ehi,
                         };
-                        if edit_brick(brick, &targets, edit, &mut rows, &mut tally, capture) {
+                        if edit_brick(
+                            brick, &targets, edit, &mut rows, &mut tally, &mut stats, capture,
+                        ) {
                             chunk.mark_dirty(slot);
                             chunk_changed = true;
                         }
@@ -465,6 +468,7 @@ impl World {
         }
 
         drop(map);
+        self.add_packed_stats(&stats);
         let aabb = tally
             .any
             .then(|| (VoxelCoord(to_i32(tally.lo)), VoxelCoord(to_i32(tally.hi))));
@@ -495,6 +499,7 @@ fn edit_brick(
     edit: BrickEdit,
     rows: &mut RowCache<'_>,
     tally: &mut Tally,
+    stats: &mut PackedStats,
     capture: &mut Option<&mut Vec<CapturedBrickEdit>>,
 ) -> bool {
     let BrickEdit {
@@ -544,7 +549,23 @@ fn edit_brick(
             spans,
         });
     }
-    brick.modify(|v| targets.write_rows(v, bmin, &spans, tally))
+    let shape = shape_words(&spans);
+    let bounds = brick.edit_planar(
+        targets.kernel_mode(),
+        &shape,
+        &mut |m, n| tally.count(m, n),
+        stats,
+    );
+    match bounds {
+        Some((lo, hi)) => {
+            tally.bound(
+                [0, 1, 2].map(|k| bmin[k] + i64::from(lo[k])),
+                [0, 1, 2].map(|k| bmin[k] + i64::from(hi[k])),
+            );
+            true
+        }
+        None => false,
+    }
 }
 
 /// One brick-edit on the row-write path, as [`World::apply_capturing`] saw it: the brick
@@ -613,6 +634,7 @@ impl RowWriter {
 pub struct PlanarWriter {
     targets: TargetTable,
     tally: Tally,
+    stats: PackedStats,
 }
 
 impl PlanarWriter {
@@ -620,6 +642,7 @@ impl PlanarWriter {
         Self {
             targets: TargetTable::new(mode, table),
             tally: Tally::new(table.len()),
+            stats: PackedStats::default(),
         }
     }
 
@@ -627,9 +650,12 @@ impl PlanarWriter {
     pub fn write(&mut self, brick: &mut Brick, spans: &RowSpans) -> bool {
         let shape = shape_words(spans);
         let tally = &mut self.tally;
-        match brick.edit_planar(self.targets.kernel_mode(), &shape, &mut |m, n| {
-            tally.count(m, n)
-        }) {
+        match brick.edit_planar(
+            self.targets.kernel_mode(),
+            &shape,
+            &mut |m, n| tally.count(m, n),
+            &mut self.stats,
+        ) {
             Some((lo, hi)) => {
                 tally.bound(lo.map(i64::from), hi.map(i64::from));
                 true

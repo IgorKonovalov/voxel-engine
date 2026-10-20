@@ -7,12 +7,14 @@
 //! Readers take short per-chunk read locks.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::chunk::Chunk;
 use crate::coords::{ChunkCoord, ChunkExtent, VoxelCoord};
 use crate::material::{MaterialId, MaterialTable};
 use crate::mips::ChunkMips;
+use crate::packed::PackedStats;
 use crate::source::WorldSource;
 
 /// Read guard that survives a poisoned lock. A chunk is structurally valid at every point an
@@ -159,9 +161,29 @@ pub struct World {
     lods: RwLock<HashMap<ChunkCoord, Arc<ChunkMips>>>,
     extent: ChunkExtent,
     pub(crate) materials: MaterialTable,
+    /// [`World::packed_stats`]: class changes, entry removals and renames, in that order.
+    packed: [AtomicU64; 3],
 }
 
 impl World {
+    /// What the planar edit kernel has done to this world's bricks since it was made: summed
+    /// over every edit, read with relaxed ordering. A count of work, not a result.
+    pub fn packed_stats(&self) -> PackedStats {
+        let [c, e, r] = &self.packed;
+        PackedStats {
+            class_changes: c.load(Ordering::Relaxed),
+            entries_removed: e.load(Ordering::Relaxed),
+            renames: r.load(Ordering::Relaxed),
+        }
+    }
+
+    pub(crate) fn add_packed_stats(&self, st: &PackedStats) {
+        let [c, e, r] = &self.packed;
+        c.fetch_add(st.class_changes, Ordering::Relaxed);
+        e.fetch_add(st.entries_removed, Ordering::Relaxed);
+        r.fetch_add(st.renames, Ordering::Relaxed);
+    }
+
     /// An empty, unbounded world. Its [`World::extent`] is empty.
     pub fn new(table: &MaterialTable) -> Self {
         Self {
@@ -169,6 +191,7 @@ impl World {
             lods: RwLock::default(),
             extent: ChunkExtent::new([0, 0, 0], [0, 0, 0]),
             materials: table.clone(),
+            packed: Default::default(),
         }
     }
 
@@ -224,6 +247,7 @@ impl World {
             lods: RwLock::default(),
             extent,
             materials: table.clone(),
+            packed: Default::default(),
         }
     }
 
