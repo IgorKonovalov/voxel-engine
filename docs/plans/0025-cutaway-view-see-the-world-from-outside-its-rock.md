@@ -158,8 +158,8 @@ steps-view cost from outside the level on the dev box as a diagnostic.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The walk rule and its headless proof | dev | done: `apps/flythrough/tests/cutaway.rs` on llvmpipe (exclusive perf lock, load 28.1, not quiet): camera (-100, 0.5, 0.5) centre normals [0, 128, 128], hitmask [255, 255, 255]; camera (-200, 0.5, 0.5) the same; (-200, 60.5, 0.5) hitmask [0, 0, 0]; cutaway off from (-200, 0.5, 0.5) centre normals [0, 128, 128], hitmask white, normals view 97.54 % of pixels differ from cutaway on. `the_default_look_leaves_the_goldens_byte_for_byte`, `attribute_pages_leave_the_face_goldens_byte_for_byte`, `goldens_match_bit_exactly_over_one_and_several_shards` pass; `-p flythrough -p vxe-render` 164 passed, 3 skipped (load 22.4, not quiet) | committed with this row |
-| 2: The dollhouse shading, the automatic trigger and the key | dev | not started | |
+| 1: The walk rule and its headless proof | dev | done: `apps/flythrough/tests/cutaway.rs` on llvmpipe (exclusive perf lock, load 28.1, not quiet): camera (-100, 0.5, 0.5) centre normals [0, 128, 128], hitmask [255, 255, 255]; camera (-200, 0.5, 0.5) the same; (-200, 60.5, 0.5) hitmask [0, 0, 0]; cutaway off from (-200, 0.5, 0.5) centre normals [0, 128, 128], hitmask white, normals view 97.54 % of pixels differ from cutaway on. `the_default_look_leaves_the_goldens_byte_for_byte`, `attribute_pages_leave_the_face_goldens_byte_for_byte`, `goldens_match_bit_exactly_over_one_and_several_shards` pass; `-p flythrough -p vxe-render` 164 passed, 3 skipped (load 22.4, not quiet) | 1cbcc5b |
+| 2: The dollhouse shading, the automatic trigger and the key | dev | stopped: the golden done-when is not met at the stated camera (see Resume notes); shading, trigger, key, `--cutaway`, HUD row landed. `cutaway_parses_auto_on_and_off`, `auto_cutaway_follows_the_camera_voxel` (4 x 4 x 2-chunk seed-1 cave: shell voxel on, spawn pocket off, x = -200 on), `the_cutaway_row_shows_while_the_view_is_on` pass; `-p flythrough -p vxe-render` 167 passed, 4 skipped (exclusive perf lock, load 10.9, not quiet). Steps view from the 20 m camera, RTX 3080 Laptop, 1920x1080, `cutaway_steps_from_outside_the_level_at_1080p` (exclusive perf lock, load 21.3, not quiet): cutaway off mean 1.00 p99 1; on mean 58.74 p99 201, 4813 of 2073600 rays at the 255 clamp | committed with this row |
 
 ### Notes
 
@@ -170,6 +170,15 @@ each. Empty is fine.)_
 - Phase 1: with cutaway off, the outside camera's centre pixel reads the same as with it on in both views ([0, 128, 128] and white: the hull's -x face and the far wall both face -x), so "differs from the cutaway reading" is asserted over the whole `normals` view (fraction of pixels differing by more than 2/255 > 0), the centre pixel's value set as stated.
 - Phase 1: `apps/flythrough/src/main.rs` (`start_look` sets `cutaway: false`) was touched for `LookParams`'s new field; not in the phase's file list.
 - Phase 1: the shader's per-cell field is `through`, since `pass` is a reserved WGSL word.
+- Phase 2: the hemisphere term uses `n.z` (world z up, as `fly.rs` and the cave are), not the plan's `n.y`.
+- Phase 2: `nfr.md` §2 diagnostic not written yet; the reading is in the phase row, pending the golden camera question.
+
+### Resume notes
+
+- Done-when not met: `cutaway_level.png` from 20 m outside the -x face of `--level --seed 1` (camera (-200, 640.5, 256.5) looking +x, 320x180, llvmpipe, exclusive perf lock, load 15.1): sky bin (4, 5, 5) 5.92 % of pixels, lit rock 94.08 %, misses 5.92 %. At 70 degrees vfov every ray from 20 m enters the level's face, so sky is only rock with no cavern on the ray's 1280 voxels; at most 0.23 % of rays reach 255 steps in the 1080p steps reading, so the misses are not step exhaustion.
+- Same test with the camera farther out (same run): 40 m sky 24.12 % / lit rock 75.88 %; 60 m 56.17 % / 43.83 %; 100 m 83.47 % / 16.53 %.
+- The golden test and its renders are kept outside git at `target/plan-0025-resume/` in this worktree; the golden test, `cutaway_level.png` and the `nfr.md` §2 line land once the camera distance (or the floor) is decided.
+- Gate at this commit's tree: `scripts/build-guests.sh` 0; `cargo nextest run --workspace` 466 passed, 4 skipped (exclusive perf lock, load 19.7, not quiet); `-p flythrough --features wasm` 108 passed, 3 skipped; doctests 7 passed; clippy `-D warnings` with and without `flythrough/wasm` 0; fmt 0; deny 0; doc links, comment hygiene, index rows 0; hook bite tests 59 passed.
 
 ### Close triggers
 

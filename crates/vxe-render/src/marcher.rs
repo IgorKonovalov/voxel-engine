@@ -171,7 +171,9 @@ pub struct LookParams {
     /// empty cell of a resident chunk, then hits the next surface as usual. A chunk outside
     /// the window or absent from the mirror is not air, so from outside the world each
     /// cavern's far wall shows through the rock and rock with no cavern behind it is a miss.
-    /// A ray that starts in air walks as without it. Shadow rays never pass.
+    /// A ray that starts in air walks as without it; shadow rays never pass. In the shaded view a hit is lit by a fixed
+    /// hemisphere light (`albedo × (0.3 + 0.7 × (0.5 + 0.5 n.z))`, world z up) with no lamp and
+    /// no shadow ray, and a miss is a flat grey-blue sky.
     pub cutaway: bool,
 }
 

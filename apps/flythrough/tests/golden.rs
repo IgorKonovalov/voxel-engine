@@ -567,3 +567,79 @@ impl WorldSource for Columns {
         }
     }
 }
+
+/// The level the fly-through generates with `--level --seed 1`.
+fn seed_1_level() -> World {
+    let source = flythrough::cave::CaveSource::new(
+        1,
+        ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
+    );
+    World::generate(source.extent, &source, &cave_materials())
+}
+
+/// 20 m (200 voxels) outside the level's -x face, level with its centre, looking +x.
+fn outside_level_camera() -> Camera {
+    let c = flythrough::cave::LEVEL_CHUNKS.map(|n| (n * 64) as f32 / 2.0 + 0.5);
+    camera_looking_x([-200.0, c[1], c[2]])
+}
+
+/// The cutaway look: face normals, no detail, shaded.
+fn cutaway_look() -> vxe_render::LookParams {
+    vxe_render::LookParams {
+        cutaway: true,
+        ..vxe_render::LookParams::default()
+    }
+}
+
+/// The steps view from the outside camera at 1920 x 1080 on the high-performance adapter:
+/// mean and p99 steps per ray (red channel, clamped at 255). A reading, not a check: run with
+/// `--ignored` on the machine being measured.
+#[test]
+#[ignore = "a diagnostic reading on the high-performance adapter; run by hand with --ignored"]
+fn cutaway_steps_from_outside_the_level_at_1080p() {
+    let world = seed_1_level();
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        ..Default::default()
+    }))
+    .expect("an adapter");
+    let pool_bytes = world.stats().full_bricks as u64 * vxe_render::gpu_world::SLOT_BYTES;
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_limits: vxe_render::limits_for(&adapter, pool_bytes),
+        ..Default::default()
+    }))
+    .expect("a device");
+    let cfg = MirrorConfig {
+        budget_bytes: 256 << 20,
+        ..MirrorConfig::new(Window::Fixed(world.extent()))
+    };
+    let mut gpu = GpuWorld::with_config(&device, cfg);
+    gpu.sync(&world, &queue).expect("mirror fits the adapter");
+    let (w, h) = (1920, 1080);
+    let mut marcher = Marcher::new(&device, w, h);
+    for cutaway in [false, true] {
+        marcher.set_look(vxe_render::LookParams {
+            view: vxe_render::ViewMode::Steps,
+            cutaway,
+            ..cutaway_look()
+        });
+        marcher.render(
+            &device,
+            &queue,
+            &gpu,
+            &outside_level_camera(),
+            &LightParams::headlamp(),
+        );
+        let px = readback::read_rgba8(&device, &queue, marcher.target());
+        let hist = readback::StepHistogram::from_rgba8(&px, w as usize);
+        let saturated = px.chunks(4).filter(|p| p[0] == 255).count();
+        println!(
+            "{} at {w}x{h}, cutaway {cutaway}: steps per ray mean {:.2} p99 {}, rays at the 255 clamp {saturated} of {}",
+            adapter.get_info().name,
+            hist.mean_steps(),
+            hist.p99_steps(),
+            w * h
+        );
+    }
+}

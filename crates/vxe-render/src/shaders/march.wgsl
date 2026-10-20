@@ -80,6 +80,8 @@
 // voxel of a Full brick. A chunk outside the window or absent from the table is not air, so a
 // ray that crosses rock from absent space to absent space misses. Once cleared, the walk is
 // the plain walk; a ray that starts in air clears it on its first cell. Shadow rays never pass.
+// With the flag set a hit is shaded by a fixed hemisphere light, `albedo (0.3 + 0.7 (0.5 + 0.5
+// n.z))` with world z up, with no lamp and no shadow ray, and a miss is the flat `CUTAWAY_SKY`.
 
 struct Params {
     cam_pos: vec3<f32>,
@@ -970,10 +972,17 @@ fn shadow_normal(d: vec3<f32>, h: Hit) -> vec3<f32> {
     return face_normal(d, h);
 }
 
+// The cutaway view's miss colour, linear: a flat grey-blue the rooms read against.
+const CUTAWAY_SKY: vec3<f32> = vec3<f32>(0.30, 0.38, 0.50);
+
 fn shade(o: vec3<f32>, d: vec3<f32>, h: Hit, n: vec3<f32>, tint: f32) -> vec3<f32> {
+    let albedo = materials[h.material * 4u].xyz * tint;
+    if ((params.flags & FLAG_CUTAWAY) != 0u) {
+        // A fixed hemisphere light, sky above (world z up): no lamp reaches these walls.
+        return albedo * (0.3 + 0.7 * (0.5 + 0.5 * n.z));
+    }
     let ns = shadow_normal(d, h);
     let p = o + d * h.t;
-    let albedo = materials[h.material * 4u].xyz * tint;
     let to_light = params.light_pos - p;
     let dist2 = max(dot(to_light, to_light), 1e-4);
     let l = to_light * inverseSqrt(dist2);
@@ -1036,6 +1045,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     var c = vec3<f32>(0.0);
+    if (!h.found && (params.flags & FLAG_CUTAWAY) != 0u) {
+        c = CUTAWAY_SKY;
+    }
     if (h.found) {
         var n = surface_normal(o, d, h);
         var tint = 1.0;
