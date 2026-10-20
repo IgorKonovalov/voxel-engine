@@ -5,13 +5,15 @@
 //! fractions `num / den` compared by cross-multiplication in `i128`; nothing is divided until
 //! the hit's `t` is reported, rounded down.
 //!
-//! The walk steps through cells of three sizes: a missing chunk is skipped as one 64³ cell, a
-//! `Uniform` air brick as one 8³ cell, and voxels of a `Full` brick one at a time. The first
-//! non-air voxel is the hit.
+//! The walk steps through cells of four sizes: a missing chunk is skipped as one 64³ cell, a
+//! `Uniform` air brick as one 8³ cell, a 2³ block of a `Full` brick whose mask bits are all
+//! clear as one 2³ cell (the CPU twin of the marcher's block skip), and the other voxels of a
+//! `Full` brick one at a time. The first non-air voxel is the hit. The DDA is exact, so a
+//! block's exit lands on the voxel boundary two voxel steps would reach.
 //!
 //! [`World::trace_materials`] walks the same cells through solids as well as air: a missing
-//! chunk is one 64³ cell of air, any `Uniform` brick one 8³ cell of its material, and it
-//! reports the runs of equal material the ray crosses.
+//! chunk is one 64³ cell of air, any `Uniform` brick one 8³ cell of its material, a clear 2³
+//! block one cell of air, and it reports the runs of equal material the ray crosses.
 
 use crate::coords::{BRICK_EDGE, CHUNK_EDGE, VoxelCoord};
 use crate::fixed::{FIXED_ONE, Fixed3};
@@ -83,11 +85,28 @@ impl World {
         self.raycast_exact(origin, dir, max_t).map(|h| h.hit)
     }
 
+    /// [`World::raycast`] and the cells the walk visited, the hit's cell included.
+    pub fn raycast_counted(&self, origin: Fixed3, dir: [i64; 3], max_t: i64) -> (Option<Hit>, u32) {
+        let mut cells = 0;
+        let hit = self.raycast_walk(origin, dir, max_t, &mut cells);
+        (hit.map(|h| h.hit), cells)
+    }
+
     pub(crate) fn raycast_exact(
         &self,
         origin: Fixed3,
         dir: [i64; 3],
         max_t: i64,
+    ) -> Option<ExactHit> {
+        self.raycast_walk(origin, dir, max_t, &mut 0)
+    }
+
+    fn raycast_walk(
+        &self,
+        origin: Fixed3,
+        dir: [i64; 3],
+        max_t: i64,
+        cells: &mut u32,
     ) -> Option<ExactHit> {
         let o = origin.0.map(i128::from);
         let d = dir.map(i128::from);
@@ -100,6 +119,7 @@ impl World {
                 return None;
             }
             let v = voxel_at(o, d, num, den);
+            *cells += 1;
             let size = match self.cell(v) {
                 Cell::Solid(material) => {
                     return Some(ExactHit {
@@ -200,7 +220,8 @@ impl World {
     }
 
     /// The material at `v` and the edge of the cell sharing it: a missing chunk (air), a
-    /// `Uniform` brick, or one voxel of a `Full` brick.
+    /// `Uniform` brick, a clear 2³ block of a `Full` brick (air), or one voxel of a `Full`
+    /// brick.
     fn material_cell(&self, v: [i64; 3]) -> (MaterialId, i64) {
         let [Ok(x), Ok(y), Ok(z)] = v.map(i32::try_from) else {
             return (AIR, i64::from(CHUNK_EDGE));
@@ -211,10 +232,12 @@ impl World {
         };
         let chunk = read(&chunk);
         let brick = chunk.brick(v.brick_slot());
-        if brick.is_full() {
-            (brick.get(v.index_in_brick()), 1)
-        } else {
+        if !brick.is_full() {
             (brick.get(0), i64::from(BRICK_EDGE))
+        } else if brick.block_clear(local(v)) {
+            (AIR, 2)
+        } else {
+            (brick.get(v.index_in_brick()), 1)
         }
     }
 
@@ -233,11 +256,19 @@ impl World {
         if !brick.is_full() && brick.get(0) == AIR {
             return Cell::Empty(i64::from(BRICK_EDGE));
         }
+        if brick.block_clear(local(v)) {
+            return Cell::Empty(2);
+        }
         match brick.get(v.index_in_brick()) {
             AIR => Cell::Empty(1),
             m => Cell::Solid(m),
         }
     }
+}
+
+/// `v`'s brick-local coordinate.
+fn local(v: VoxelCoord) -> [usize; 3] {
+    v.0.map(|c| c.rem_euclid(BRICK_EDGE) as usize)
 }
 
 /// The voxel the ray occupies just after parameter `num / den`: on an axis it travels down, a

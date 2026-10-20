@@ -42,43 +42,21 @@ impl CoarseCell {
                 dominant: *m,
             },
             Brick::Full(p) => {
-                let mut v = [AIR; crate::coords::BRICK_VOXELS];
-                p.decode(&mut v);
                 stats.voxel_arrays_read += 1;
-                // Few materials meet in one brick; a short list beats a map.
-                let mut counts: Vec<(MaterialId, u16)> = Vec::new();
-                let mut run = (v[0], 0u16);
-                for &m in v.iter() {
-                    if m == run.0 {
-                        run.1 += 1;
-                        continue;
-                    }
-                    tally(&mut counts, run);
-                    run = (m, 1);
-                }
-                tally(&mut counts, run);
+                // The mask's popcount, and the entry with the most voxels (ascending ids, so
+                // a strictly larger count is needed to replace the best: ties keep the lower).
                 let mut cell = Self::default();
                 let mut best = 0;
-                for (m, n) in counts {
-                    if m == AIR {
-                        continue;
-                    }
-                    cell.solid += n;
-                    if n > best || (n == best && m < cell.dominant) {
+                p.counts_under(&[u64::MAX; 8], &mut |m, n| {
+                    cell.solid += n as u16;
+                    if n > best {
                         best = n;
                         cell.dominant = m;
                     }
-                }
+                });
                 cell
             }
         }
-    }
-}
-
-fn tally(counts: &mut Vec<(MaterialId, u16)>, (m, n): (MaterialId, u16)) {
-    match counts.iter_mut().find(|(k, _)| *k == m) {
-        Some((_, c)) => *c += n,
-        None => counts.push((m, n)),
     }
 }
 

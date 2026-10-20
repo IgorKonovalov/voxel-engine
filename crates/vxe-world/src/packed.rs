@@ -155,6 +155,56 @@ impl Packed {
         self.0.is_canonical()
     }
 
+    /// Layer `z` of the occupancy mask (bit `x + 8 y`).
+    pub fn mask_word(&self, z: usize) -> u64 {
+        match &self.0 {
+            Repr::Wide(v) => (0..64).fold(0, |w, b| w | u64::from(v[64 * z + b] != AIR) << b),
+            r => r.planar().expect("planar").0[z],
+        }
+    }
+
+    /// Calls `f(material, n)` with the count `n > 0` of each non-air material among the
+    /// voxels whose bit is set in `sel` (layer-major words, as [`shape_words`]), once per
+    /// material, ascending: one popcount per palette entry and layer; a `Wide` box tallies
+    /// its ids under `sel`.
+    pub fn counts_under(&self, sel: &[u64; LAYERS], f: &mut impl FnMut(MaterialId, u32)) {
+        match &self.0 {
+            Repr::Wide(v) => {
+                let mut counts: Vec<(MaterialId, u32)> = Vec::new();
+                for (z, &w) in sel.iter().enumerate() {
+                    let mut bits = w;
+                    while bits != 0 {
+                        let b = bits.trailing_zeros() as usize;
+                        bits &= bits - 1;
+                        let m = v[64 * z + b];
+                        if m == AIR {
+                            continue;
+                        }
+                        match counts.iter_mut().find(|(k, _)| *k == m) {
+                            Some((_, n)) => *n += 1,
+                            None => counts.push((m, 1)),
+                        }
+                    }
+                }
+                counts.sort_unstable();
+                for (m, n) in counts {
+                    f(m, n);
+                }
+            }
+            r => {
+                let (w, p) = r.planar().expect("planar");
+                for j in 0..entries(w, p) {
+                    let n: u32 = (0..LAYERS)
+                        .map(|z| (match_word(w, p, j, z) & sel[z]).count_ones())
+                        .sum();
+                    if n > 0 {
+                        f(entry(w, p, j), n);
+                    }
+                }
+            }
+        }
+    }
+
     /// The mask-only box of a `Uniform(m)` brick about to be edited (not canonical): for the
     /// kernel bench's expansion figure.
     #[doc(hidden)]
@@ -232,6 +282,22 @@ pub fn shape_words(spans: &RowSpans) -> [u64; LAYERS] {
         }
     }
     w
+}
+
+/// The words of the brick-local box `lo..=hi` (components in `0..8`, inclusive).
+pub fn box_words(lo: [u8; 3], hi: [u8; 3]) -> [u64; LAYERS] {
+    let row = (0xFFu64 >> (7 - (hi[0] - lo[0]))) << lo[0];
+    let mut layer = 0u64;
+    for y in lo[1]..=hi[1] {
+        layer |= row << (8 * y);
+    }
+    std::array::from_fn(|z| {
+        if (lo[2]..=hi[2]).contains(&(z as u8)) {
+            layer
+        } else {
+            0
+        }
+    })
 }
 
 /// The brick-local bounds `(lo, hi)` of the set bits of `changed`, or `None` when none is
@@ -484,6 +550,53 @@ fn distinct_non_air(v: &[MaterialId; BRICK_VOXELS]) -> usize {
 }
 
 impl Brick {
+    /// Calls `f(i, m)` for every non-air voxel of the brick-local box `lo..=hi` (inclusive,
+    /// components in `0..8`), `i` its brick index and `m` its material, in index order (z,
+    /// then y, then x): a `Full` brick walks the set bits of its mask under the box's words.
+    pub fn for_each_solid_in(
+        &self,
+        lo: [u8; 3],
+        hi: [u8; 3],
+        mut f: impl FnMut(usize, MaterialId),
+    ) {
+        let sel = box_words(lo, hi);
+        match self {
+            Self::Uniform(AIR) => {}
+            Self::Uniform(m) => {
+                for (z, &w) in sel.iter().enumerate() {
+                    let mut bits = w;
+                    while bits != 0 {
+                        let b = bits.trailing_zeros() as usize;
+                        bits &= bits - 1;
+                        f(64 * z + b, *m);
+                    }
+                }
+            }
+            Self::Full(p) => {
+                for (z, &w) in sel.iter().enumerate() {
+                    let mut bits = w & p.mask_word(z);
+                    while bits != 0 {
+                        let b = bits.trailing_zeros() as usize;
+                        bits &= bits - 1;
+                        f(64 * z + b, p.get(64 * z + b));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether the 2^3 block holding brick-local voxel `(x, y, z)` of a `Full` brick has no
+    /// non-air voxel: two mask words under `0x0303 << (2 (x / 2) + 16 (y / 2))`. `false` for a
+    /// `Uniform` brick.
+    pub(crate) fn block_clear(&self, [x, y, z]: [usize; 3]) -> bool {
+        let Self::Full(p) = self else {
+            return false;
+        };
+        let sel = 0x0303u64 << (2 * (x / 2) + 16 * (y / 2));
+        let z0 = z & !1;
+        (p.mask_word(z0) | p.mask_word(z0 + 1)) & sel == 0
+    }
+
     /// The canonical form of 512 voxels: `Uniform` when they are all equal, else the class of
     /// their count of non-air materials.
     pub(crate) fn encode(v: &[MaterialId; BRICK_VOXELS]) -> Self {

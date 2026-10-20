@@ -461,8 +461,8 @@ header, world key, coordinate and FNV trailer are version 1's.
 | 1: The census and the kernel bench | dev | done | 992fdaa |
 | 2: The owner reads the figures | human | done (go, 2026-10-20) | 0a060c4 |
 | 3: `Packed` behind `Brick::Full`, every reader compiling | dev | done | 22fcade |
-| 4: The edit kernel as word operations | dev | done | committed with this row |
-| 5: Native paths for the hot readers | dev | not started | |
+| 4: The edit kernel as word operations | dev | done | 07d70fd |
+| 5: Native paths for the hot readers | dev | done | committed with this row |
 | 6: Collapse as layer shifts and palette remaps | dev | not started | |
 | 7: The mirror upload from planes, and spill version 2 | dev | not started | |
 | 8: Readings, budgets and the census after edits | dev | not started | |
@@ -528,6 +528,12 @@ header, world key, coordinate and FNV trailer are version 1's.
 - Phase 4: `lib.rs` re-exports `PackedStats`; it is outside the phase's list (Phase 4 commit).
 - Phase 4: `write_rows` stays in `edit.rs` for the kernel bench's `RowWriter` only (Phase 4
   commit).
+- Phase 5: the counted raycast is `World::raycast_counted`; the test's 8-cell walk is a second
+  world with a solid voxel off the ray in each of the four 2^3 blocks, hitting at the same `t`
+  (1664) (Phase 5 commit).
+- Phase 5: `Brick::for_each_solid_in` (public) walks a box's mask bits for `vxe-sim`'s bodies;
+  `Packed::mask_word` and `Packed::counts_under` are the coarse and region paths (Phase 5
+  commit).
 
 ### Close triggers
 
@@ -574,6 +580,13 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     `worst` 1.356 ms, `worst_warm` 1.339 ms (load 13.41 after). At Phase 4 both cases build the
     same pool-less world. Row-write share from Phase 1's kernel bench (load 9.69): today 1.375
     ms less planar 0.318 ms = 1.057 ms.
+  - Phase 5, dev box, exclusive perf lock, Phase 4 tip 07d70fd built from `git archive` beside
+    this commit, run alternately (load 13.23 then 12.05, 8.27 after). `cargo bench -p
+    vxe-world --bench coarse`: 100 grid updates after radius-10 carves, Phase 4 2.787 ms,
+    Phase 5 150.4 us; 100 walkable updates 859.7 us, 754.5 us. `cargo bench -p vxe-sim
+    --bench controller`: 300 ticks of F6 835.2 us, 425.2 us; 1000 ticks 1.060 ms, 683.8 us;
+    60 staircase ticks 288.6 us, 84.3 us; 1000 sweeps of F2 32.27 ms, 21.21 ms (21.2 us per
+    sweep, beside Plan 0004's 26.3 us).
 - **Gate at the tip (992fdaa):** `cargo build --workspace --all-targets` 0; `cargo nextest run
   --workspace` (after `scripts/build-guests.sh`, under the perf lock) 394 passed, 4 skipped,
   exit 0; `cargo test --workspace --doc` 7 passed; clippy `-D warnings` 0; `fmt --check` 0;

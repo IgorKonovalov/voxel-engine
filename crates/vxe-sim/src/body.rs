@@ -7,7 +7,7 @@ use std::sync::{PoisonError, RwLock, RwLockReadGuard};
 
 use vxe_world::{
     AIR, BRICK_EDGE, Brick, CHUNK_EDGE, ChunkCoord, FIXED_ONE, Fixed3, MaterialId, QueryStats,
-    VoxelCoord, World, brick_slot, index_in_brick,
+    VoxelCoord, World, brick_slot,
 };
 
 /// A vertical cylinder: its axis is the vertical line through `foot`, it occupies `z` in
@@ -275,25 +275,22 @@ pub(crate) fn collect(
                                 }),
                                 full @ Brick::Full(_) => {
                                     stats.voxel_arrays_read += 1;
-                                    let elo = [0, 1, 2].map(|k| vlo[k].max(bv[k]));
-                                    let ehi = [0, 1, 2].map(|k| vhi[k].min(bv[k] + be - 1));
-                                    for z in elo[2]..=ehi[2] {
-                                        for y in elo[1]..=ehi[1] {
-                                            for x in elo[0]..=ehi[0] {
-                                                let l = [x - bv[0], y - bv[1], z - bv[2]];
-                                                let m =
-                                                    full.get(index_in_brick(l.map(|v| v as i32)));
-                                                if m != AIR {
-                                                    let v = [x, y, z];
-                                                    out.push(SolidBox {
-                                                        min: v.map(|v| v * one),
-                                                        max: v.map(|v| (v + 1) * one),
-                                                        material: m,
-                                                    });
-                                                }
-                                            }
-                                        }
-                                    }
+                                    let elo = [0, 1, 2].map(|k| vlo[k].max(bv[k]) - bv[k]);
+                                    let ehi = [0, 1, 2].map(|k| vhi[k].min(bv[k] + be - 1) - bv[k]);
+                                    // The mask's set bits under the box, in z, y, x order.
+                                    full.for_each_solid_in(
+                                        elo.map(|v| v as u8),
+                                        ehi.map(|v| v as u8),
+                                        |i, m| {
+                                            let l = [i % 8, i / 8 % 8, i / 64].map(|v| v as i64);
+                                            let v = [0, 1, 2].map(|k| bv[k] + l[k]);
+                                            out.push(SolidBox {
+                                                min: v.map(|v| v * one),
+                                                max: v.map(|v| (v + 1) * one),
+                                                material: m,
+                                            });
+                                        },
+                                    );
                                 }
                             }
                         }

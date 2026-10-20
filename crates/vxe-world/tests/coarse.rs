@@ -180,3 +180,57 @@ fn loading_every_chunk_equals_building_and_eviction_drops_cells() {
     g.chunk_loaded(&world, c);
     assert_eq!(g, built);
 }
+
+/// The cell by today's rule from the decoded voxels: the non-air count, and the most frequent
+/// non-air material with the lower id on a tie.
+fn decoded_cell(b: &Brick) -> CoarseCell {
+    let mut v = [AIR; BRICK_VOXELS];
+    b.decode(&mut v);
+    let mut counts = std::collections::BTreeMap::<MaterialId, u16>::new();
+    for m in v {
+        if m != AIR {
+            *counts.entry(m).or_default() += 1;
+        }
+    }
+    let mut cell = CoarseCell::default();
+    let mut best = 0;
+    for (m, n) in counts {
+        cell.solid += n;
+        if n > best {
+            best = n;
+            cell.dominant = m;
+        }
+    }
+    cell
+}
+
+/// `CoarseCell::of` from popcounts equals the decoded rule on the census chunk's six kinds of
+/// brick and on 256 seeded bricks of 1 to 20 materials, ties included.
+#[test]
+fn the_cell_from_popcounts_equals_the_decoded_rule() {
+    let half = |a: MaterialId, b: MaterialId| Brick::from_fn(|l| if l[2] < 4 { a } else { b });
+    let six = [
+        Brick::Uniform(1),
+        half(AIR, 1),
+        half(1, 2),
+        Brick::from_fn(|l| 4 + (index_in_brick(l) % 17) as MaterialId),
+        half(1, 3),
+        half(AIR, 3),
+    ];
+    for (i, b) in six.iter().enumerate() {
+        assert_eq!(CoarseCell::of(b), decoded_cell(b), "slot {i}");
+    }
+    let mut rng = SplitMix64(0x0021_0007);
+    for i in 0..256 {
+        let materials = rng.range(1, 20);
+        let solid = rng.range(0, 8);
+        let b = Brick::from_fn(|_| {
+            if rng.range(0, 7) < solid {
+                1 + rng.range(0, materials - 1) as MaterialId
+            } else {
+                AIR
+            }
+        });
+        assert_eq!(CoarseCell::of(&b), decoded_cell(&b), "brick {i}");
+    }
+}

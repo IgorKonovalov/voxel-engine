@@ -291,3 +291,88 @@ fn trace_materials_list_is_pinned() {
     // Blessed on Linux x86_64; a change here is a change in trace_materials results.
     assert_eq!(h.0, 0xbae9_1463_c336_8745);
 }
+
+/// A one-chunk world whose brick 0 is `Full` with `solid` voxels of material 2, every other
+/// brick `Uniform(AIR)`.
+fn one_brick_world(solid: &[[i32; 3]]) -> World {
+    let solid = solid.to_vec();
+    World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &FnSource(move |v: VoxelCoord| if solid.contains(&v.0) { 2 } else { AIR }),
+        &test_table(),
+    )
+}
+
+/// The walk skips a clear 2^3 block of a `Full` brick as one cell: from the centre of voxel
+/// `(0, 0, 0)` along +x to the only solid voxel `(7, 0, 0)` it visits three clear blocks,
+/// then voxels 6 and 7, five cells; with a solid voxel off the ray in each block (so no block
+/// is clear) it visits the eight voxels one by one. Both hit `(7, 0, 0)` at the same `t`.
+#[test]
+fn a_clear_block_is_one_cell_of_the_walk() {
+    let origin = centre_of_voxel([0, 0, 0]);
+    let dir = [256, 0, 0];
+    let skip = one_brick_world(&[[7, 0, 0]]);
+    let (hit, cells) = skip.raycast_counted(origin, dir, 64 * 256);
+    let hit = hit.expect("a hit");
+    assert_eq!(hit.voxel, VoxelCoord([7, 0, 0]));
+    assert_eq!(hit.t, 1664);
+    assert_eq!(cells, 5);
+
+    let single = one_brick_world(&[[7, 0, 0], [0, 1, 0], [2, 1, 0], [4, 1, 0], [6, 1, 0]]);
+    let (hit2, cells2) = single.raycast_counted(origin, dir, 64 * 256);
+    assert_eq!(hit2, Some(hit));
+    assert_eq!(cells2, 8);
+    assert_eq!(
+        skip.trace_materials(origin, dir, 1700),
+        single.trace_materials(origin, dir, 1700)
+    );
+}
+
+/// `count_in_box` over boxes that cut a brick holding `{air, 3, 7}` counts by popcounts what
+/// the voxels count, over 256 seeded boxes, and still counts one `Full` brick read.
+#[test]
+fn region_counts_by_popcount_equal_the_voxel_counts() {
+    let mut table = test_table();
+    table.push(Material::named("m6"));
+    table.push(Material::named("m7"));
+    let cell = |v: [i32; 3]| -> MaterialId {
+        match hash::hash3(0x0021_0005, v) % 3 {
+            0 => AIR,
+            1 => 3,
+            _ => 7,
+        }
+    };
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &FnSource(move |v: VoxelCoord| {
+            if v.0.iter().all(|&c| c < 8) {
+                cell(v.0)
+            } else {
+                AIR
+            }
+        }),
+        &table,
+    );
+    let mut rng = SplitMix64(0x0021_0006);
+    for i in 0..256 {
+        let a = [0; 3].map(|_| rng.range(0, 7) as i32);
+        let b = [0; 3].map(|_| rng.range(0, 7) as i32);
+        let lo = [0, 1, 2].map(|k| a[k].min(b[k]));
+        let hi = [0, 1, 2].map(|k| a[k].max(b[k]));
+        let mut want = std::collections::BTreeMap::<MaterialId, u64>::new();
+        for z in lo[2]..=hi[2] {
+            for y in lo[1]..=hi[1] {
+                for x in lo[0]..=hi[0] {
+                    *want.entry(cell([x, y, z])).or_default() += 1;
+                }
+            }
+        }
+        let (got, stats) = world.count_in_box_with_stats(lo, hi);
+        assert_eq!(
+            got,
+            want.into_iter().collect::<Vec<_>>(),
+            "box {i}: {lo:?}..={hi:?}"
+        );
+        assert_eq!(stats.voxel_arrays_read, 1, "box {i}");
+    }
+}

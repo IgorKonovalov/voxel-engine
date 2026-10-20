@@ -1,13 +1,16 @@
 //! Region queries over resident chunks.
 
-use crate::coords::{BRICK_EDGE, CHUNK_EDGE, ChunkCoord, VoxelCoord, brick_slot, index_in_brick};
-use crate::material::MaterialId;
+use crate::brick::Brick;
+use crate::coords::{BRICK_EDGE, CHUNK_EDGE, ChunkCoord, VoxelCoord, brick_slot};
+use crate::material::{AIR, MaterialId};
+use crate::packed::box_words;
 use crate::store::{World, read};
 
 /// Work a region query did, for callers that measure it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct QueryStats {
-    /// `Full` bricks whose voxel array was read. `Uniform` bricks are counted without a read.
+    /// `Full` bricks whose voxels were read (their mask and planes). `Uniform` bricks are
+    /// counted without a read.
     pub voxel_arrays_read: u64,
 }
 
@@ -69,14 +72,22 @@ impl World {
                                     continue;
                                 }
                                 stats.voxel_arrays_read += 1;
-                                for z in elo[2]..=ehi[2] {
-                                    for y in elo[1]..=ehi[1] {
-                                        for x in elo[0]..=ehi[0] {
-                                            let l = [x, y, z].map(|v| v.rem_euclid(be) as i32);
-                                            add(brick.get(index_in_brick(l)), 1);
-                                        }
-                                    }
+                                let Brick::Full(p) = brick else {
+                                    unreachable!("a Full brick")
+                                };
+                                // The box's voxel words: per-entry popcounts under them, and the
+                                // clear mask bits under them for air.
+                                let sel = box_words(
+                                    elo.map(|v| v.rem_euclid(be) as u8),
+                                    ehi.map(|v| v.rem_euclid(be) as u8),
+                                );
+                                let air: u32 = (0..8)
+                                    .map(|z| (sel[z] & !p.mask_word(z)).count_ones())
+                                    .sum();
+                                if air > 0 {
+                                    add(AIR, u64::from(air));
                                 }
+                                p.counts_under(&sel, &mut |m, n| add(m, u64::from(n)));
                             }
                         }
                     }
