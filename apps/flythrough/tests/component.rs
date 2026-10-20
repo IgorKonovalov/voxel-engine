@@ -90,7 +90,7 @@ fn drive(logic: Box<dyn Logic>, ticks: &[Vec<DigInput>]) -> (Server, Vec<Event>)
 #[test]
 fn twenty_digs_replay_to_the_same_hash_natively_and_as_a_component() {
     let ticks: Vec<Vec<DigInput>> = dig_inputs().chunks(4).map(<[_]>::to_vec).collect();
-    let (native, native_events) = drive(Box::new(DigLogic), &ticks);
+    let (native, native_events) = drive(Box::new(DigLogic::default()), &ticks);
     assert_eq!(native.ops().len(), 20);
     let live = native.world().voxel_hash();
     assert_ne!(live, generate().voxel_hash());
@@ -107,13 +107,19 @@ fn twenty_digs_replay_to_the_same_hash_natively_and_as_a_component() {
         extent: extent(),
         ops: native.ops().clone(),
         inputs: native.inputs().clone(),
+        prefabs: PrefabRegistry::new(),
     };
     let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("component-digs.log");
     let mut f = std::fs::File::create(&path).unwrap();
     file.write_to(&mut f).unwrap();
 
-    let (_, by_native) =
-        replay_file_with(&path, Replay::Inputs, extent(), Box::new(DigLogic)).unwrap();
+    let (_, by_native) = replay_file_with(
+        &path,
+        Replay::Inputs,
+        extent(),
+        Box::new(DigLogic::default()),
+    )
+    .unwrap();
     let (_, by_component) = replay_file_with(&path, Replay::Inputs, extent(), component()).unwrap();
     assert_eq!(by_native, live);
     assert_eq!(by_component, live);
@@ -125,7 +131,7 @@ fn a_bench_applies_the_same_ops_natively_and_as_a_component() {
         origin: [128, 128, 128],
         seed: 9,
     }]];
-    let (native, native_events) = drive(Box::new(DigLogic), &ticks);
+    let (native, native_events) = drive(Box::new(DigLogic::default()), &ticks);
     let (wasm, wasm_events) = drive(component(), &ticks);
     assert_eq!(native.ops().len(), BENCH_CARVES);
     assert_eq!(wasm.ops().encode(), native.ops().encode());

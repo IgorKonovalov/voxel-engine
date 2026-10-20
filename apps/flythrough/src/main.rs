@@ -28,8 +28,9 @@
 //! `P` stamps that 16-voxel room at runtime, unrotated, with its minimum corner at the voxel
 //! the dig ray hits, and prints what it changed like a dig does.
 //!
-//! Every edit goes through the simulation split (ADR-0007, ADR-0010): digs, fills and the bench are
-//! inputs a shared client sends to a server running `flythrough::logic::DigLogic` (`--logic
+//! Every edit goes through the simulation split (ADR-0007, ADR-0010): digs, fills, stamps, the
+//! bench and `R` are inputs a shared client sends to a server running
+//! `flythrough::logic::DigLogic` (`--logic
 //! native`, the default) or the same logic as a component hosted on `wasmtime` (`--logic wasm`,
 //! from `target/guests/flythrough-logic.wasm`, or `--logic wasm=PATH`; needs a build with
 //! `--features wasm`, and `scripts/build-guests.sh` builds the component). The fly-through prints
@@ -38,23 +39,23 @@
 //! One server tick runs per frame before the mirror sync, and the printed edit lines come from the
 //! client's events. With `--level`, `--save` writes the session's log file on exit and prints the
 //! world's hash; `--replay` rebuilds a saved session's world by re-simulating its inputs before the
-//! first frame and prints the same hash. Two edits bypass the split: `P` stamps the server's world
-//! directly, so it is refused under `--save` (a stamp is not in the op log), and the autopilot's
-//! carve (streaming only) applies to the world directly.
-//! Collapse's falls and crumbles also edit the world outside the op log, so under `--save` and
-//! `--replay` the support query does not run and `R` is refused.
-//! `--vault` does not combine with `--save` or `--replay`: the log file does not record it.
+//! first frame and prints the same hash. Everything the session changes is in the log: digs,
+//! fills, the bench, `P`'s stamps (the save's header carries the room's content, ADR-0014) and
+//! the collapse's drops and removals. Only the autopilot's carve (streaming only) applies to the
+//! world directly. `--vault` combines with both, but the room placed at generation is not an
+//! op and the save does not record it: a session saved with `--vault` replays to its world
+//! with `--replay PATH --vault`.
 //!
 //! Keys: `G` toggles fly and walk mode (on the bounded level only; streaming refuses it, as it
 //! refuses `--walk`); in walk mode `W A S D` walk at 3 m/s and `Space` jumps, or, held against
 //! a wall with a standable top within 1.2 m, climbs it. On the bounded level the fly-through
 //! keeps a coarse grid and walkable map updated from every edit; `K` prints them.
 //!
-//! Collapse (bounded level, ADR-0008): after every dig the fly-through asks the grid which
-//! regions lost their support and prints each as `unsupported: N cells, {material: count}`.
-//! Each region falls 8 voxels a frame until it lands (`landed after N frames, fell M voxels`);
-//! `R` toggles removing it with rubble (a quarter of its volume) instead. `F1` adds the last
-//! query's time and region count.
+//! Collapse (bounded level, ADR-0008): after every dig the logic asks the server's coarse grid
+//! which regions lost their support, and the fly-through prints each as `unsupported: N cells,
+//! {material: count}`. Each region falls 8 voxels a tick, one tick a frame, until it lands
+//! (`landed after N ticks, fell M voxels`); `R` toggles removing it with rubble (a quarter of
+//! its volume) instead. `F1` adds the region count of the last dig's query.
 //!
 //! `--audio` opens the default output device, `H` plays a knock and `J` a looping hum at the point
 //! the last left click dug; every frame probes their occlusion through the world. `T` plays a
@@ -75,8 +76,9 @@ use fly::{Fly, Walk};
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, VAULT_EDGE, vault};
 use flythrough::hud::{self, Cadence, EditLine, FrameStats, HudStats, WorldSample};
 use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB, REACH};
+use flythrough::logic::{DROP_VERB, REMOVE_VERB, STAMP_VERB, parse_region_line};
 use flythrough::{
-    LogicChoice, RESIDENCY, RUBBLE, ScrollSteps, cave_materials, chunk_ram, chunks_hash, mips_ram,
+    LogicChoice, RESIDENCY, ScrollSteps, cave_materials, chunk_ram, chunks_hash, mips_ram,
     percentile,
 };
 use vxe_app::{App, Flow, Gpu, Input, KeyCode, MouseButton, ShellConfig};
@@ -91,10 +93,9 @@ use vxe_render::{
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
-    Anchors, BRICK_VOXELS, CellChange, CellCoord, ChunkCoord, ChunkExtent, CoarseGrid, EditError,
-    EditOp, EditResult, FIXED_ONE, Fixed3, LogFile, MaterialId, MaterialTable, Mode, PersistConfig,
-    Rot, StreamConfig, Streamer, SupportParams, Tier, VoxelCoord, WalkableMap, WalkableParams,
-    World, find_unsupported,
+    BRICK_VOXELS, CellChange, ChunkCoord, ChunkExtent, CoarseGrid, EditOp, EditResult, FIXED_ONE,
+    Fixed3, LogFile, MaterialId, MaterialTable, Mode, OpResult, PersistConfig, StreamConfig,
+    Streamer, SupportParams, Tier, VoxelCoord, WalkableMap, WalkableParams, World,
 };
 
 /// Dig radius at start (0.5 m), its scroll step (0.1 m) and its range.
@@ -150,18 +151,14 @@ const HUD_SCALE: u32 = 2;
 /// `world_stats_call_on_the_streamed_world_at_full_residency`), so its frame reaches at most
 /// the window's max and not its p99.
 const HUD_STATS_EVERY: u32 = 240;
-/// The support query after a dig: cells of at least 64 solid voxels bear load, a flood gives
-/// up past 4096 cells, and the level's faces anchor (ADR-0008).
+/// The support query the logic asks after a dig, set on the server: cells of at least 64
+/// solid voxels bear load, a flood gives up past 4096 cells, and the level's faces anchor
+/// (ADR-0008).
 const SUPPORT: SupportParams = SupportParams {
     solid_min: 64,
     max_region: 4096,
     boundary_anchors: true,
 };
-/// Voxels a falling region drops per frame: one cell, so it stays on the cell lattice.
-const FALL_PER_FRAME: i32 = 8;
-/// A removed region's rubble: a quarter of each column's volume, on ground within 6.4 m.
-const RUBBLE_FRACTION: (u32, u32) = (1, 4);
-const RUBBLE_DEPTH: i32 = 64;
 /// Metres per voxel, for the audio mixer's distances.
 const METRES_PER_VOXEL: f32 = 0.1;
 /// The knock: 50 ms of seeded noise under an exponential decay of 10 ms time constant.
@@ -231,38 +228,6 @@ const WALK_NEEDS_LEVEL: &str =
 /// Why `--save` and `--replay` are refused while streaming: a replay regenerates a bounded
 /// world, and a streaming session's residency is not in its log.
 const SAVE_NEEDS_LEVEL: &str = "--save and --replay need --level (replay rebuilds a bounded world)";
-
-/// Why `--vault` is refused with `--save` and `--replay`: a log file's header records the seed
-/// and the extent, so a replay would rebuild the cave without the vault.
-const SAVE_EXCLUDES_VAULT: &str =
-    "--save and --replay do not combine with --vault (the log does not record the vault)";
-
-/// Why `P` stamps nothing under `--save`: a stamp applies to the world outside the op log, so
-/// the saved session would replay to a different world.
-const STAMP_NOT_LOGGED: &str = "a stamp is not in the op log (--save)";
-
-/// `P` is available unless the session is being saved.
-fn stamp_allowed(saving: bool) -> Result<(), &'static str> {
-    if saving {
-        Err(STAMP_NOT_LOGGED)
-    } else {
-        Ok(())
-    }
-}
-
-/// Why collapse is off under `--save` and `--replay`: its falls and crumbles edit the world
-/// outside the op log, so a saved session would replay to a different world.
-const COLLAPSE_NOT_LOGGED: &str = "collapse is not in the op log (--save, --replay)";
-
-/// Collapse (the support query after a dig, falls, `R`) runs unless the session is saved or
-/// replayed.
-fn collapse_allowed(logged: bool) -> Result<(), &'static str> {
-    if logged {
-        Err(COLLAPSE_NOT_LOGGED)
-    } else {
-        Ok(())
-    }
-}
 
 /// Walk mode is available only on the bounded level.
 fn walk_allowed(streaming: bool) -> Result<(), &'static str> {
@@ -375,9 +340,6 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     if args.save.is_some() && args.replay.is_some() {
         return Err("--save and --replay do not combine".to_owned());
     }
-    if (args.save.is_some() || args.replay.is_some()) && args.vault {
-        return Err(SAVE_EXCLUDES_VAULT.to_owned());
-    }
     if matches!(args.logic, LogicChoice::Wasm(_)) && !cfg!(feature = "wasm") {
         return Err(flythrough::WASM_NEEDS_FEATURE.to_owned());
     }
@@ -404,9 +366,16 @@ fn parse_rock_detail(v: &str) -> Result<[f32; 2], String> {
 /// The verb of a `DigLogic` `op` line, as the `'static` the edit lines and the HUD hold;
 /// `None` for a line that is not one of its verbs.
 fn op_verb(verb: &str) -> Option<&'static str> {
-    [DIG_VERB, FILL_VERB, BENCH_VERB]
-        .into_iter()
-        .find(|&v| v == verb)
+    [
+        DIG_VERB,
+        FILL_VERB,
+        BENCH_VERB,
+        STAMP_VERB,
+        DROP_VERB,
+        REMOVE_VERB,
+    ]
+    .into_iter()
+    .find(|&v| v == verb)
 }
 
 /// One printed line per edit: `carved: rock 1234, ore 12 (3 chunks, 0.21 ms)`.
@@ -425,30 +394,6 @@ fn edit_record(verb: &'static str, r: &EditResult, table: &MaterialTable, ms: f6
             .collect(),
         chunks: r.touched.len() as u32,
         ms: ms as f32,
-    }
-}
-
-/// `P`'s edit: the vault stamped unrotated with its minimum corner at the first solid voxel
-/// the ray enters within [`REACH`]; `None` when it enters none.
-fn stamp_at_aim(
-    world: &World,
-    origin: Fixed3,
-    dir: [i64; 3],
-) -> Option<Result<EditResult, EditError>> {
-    let hit = world.raycast(origin, dir, REACH)?;
-    Some(world.stamp(&vault(), hit.voxel, Rot::IDENTITY))
-}
-
-/// The `P` line: [`edit_line`] on success, the refusal, or the miss.
-fn stamp_line(
-    out: &Option<Result<EditResult, EditError>>,
-    table: &MaterialTable,
-    ms: f64,
-) -> String {
-    match out {
-        None => "stamped: no surface within 10 m".to_owned(),
-        Some(Ok(r)) => edit_line("stamped", r, table, ms),
-        Some(Err(e)) => format!("stamped: refused, {e}"),
     }
 }
 
@@ -911,29 +856,15 @@ struct Autopilot {
     generated_at_takeoff: u64,
 }
 
-/// The bounded level's coarse grid and walkable map, updated from every edit, and the regions
-/// falling after a dig.
+/// The bounded level's coarse grid and walkable map, updated from every edit the client is
+/// told of, and what the last dig's support query found.
 struct Coarse {
     grid: CoarseGrid,
     map: WalkableMap,
     /// Cells the last edit changed, and the grid plus walkable update time in microseconds.
     last: Option<(usize, f64)>,
-    /// Regions falling, in the order they were found.
-    falling: Vec<Falling>,
-    /// `R`: remove unsupported regions with rubble instead of dropping them.
-    crumble: bool,
-    /// The last support query's time in microseconds and the regions it found.
-    query: Option<(f64, usize)>,
-    /// The last drop or removal: its verb, result and time in milliseconds, for the HUD.
-    last_edit: Option<(&'static str, EditResult, f64)>,
-}
-
-/// A region on its way down: its cells (moved one cell down per full-step frame), the frames
-/// it moved on and the voxels it fell.
-struct Falling {
-    cells: Vec<CellCoord>,
-    frames: u32,
-    fell: i32,
+    /// Regions the logic reported after the last applied dig.
+    query: Option<usize>,
 }
 
 impl Coarse {
@@ -952,10 +883,7 @@ impl Coarse {
             grid,
             map,
             last: None,
-            falling: Vec::new(),
-            crumble: false,
             query: None,
-            last_edit: None,
         }
     }
 
@@ -979,109 +907,32 @@ impl Coarse {
         }
     }
 
-    /// After a dig that changed `changes`: queries the support, prints each unsupported region
-    /// and either queues it to fall or removes it with rubble. A region overlapping one already
-    /// falling is that one, and is skipped.
-    fn collapse(&mut self, world: &World, changes: &[CellChange]) -> Vec<String> {
-        let t = now();
-        let regions = find_unsupported(world, &self.grid, &SUPPORT, &Anchors::default(), changes);
-        self.query = Some((ms_since(t) * 1e3, regions.len()));
-        let table = world.materials();
-        let mut lines = Vec::new();
-        for region in regions {
-            if self.falling.iter().any(|f| {
-                region
-                    .cells
-                    .iter()
-                    .any(|c| f.cells.binary_search(c).is_ok())
-            }) {
-                continue;
-            }
-            lines.push(format!(
-                "unsupported: {} cells, {{{}}}",
-                region.cells.len(),
-                counts_line(table, &region.counts)
-            ));
-            if self.crumble {
-                let t = now();
-                match world.remove_region(&region.cells, RUBBLE, RUBBLE_FRACTION, RUBBLE_DEPTH) {
-                    Ok(r) => {
-                        let ms = ms_since(t);
-                        lines.push(format!(
-                            "removed: {{{}}}, {} rubble",
-                            counts_line(table, &r.removed),
-                            r.placed
-                        ));
-                        let e = r.edit_result();
-                        self.update(world, &e);
-                        self.last_edit = Some(("removed", e, ms));
-                    }
-                    Err(e) => lines.push(format!("removed: refused, {e}")),
-                }
-            } else {
-                self.falling.push(Falling {
-                    cells: region.cells,
-                    frames: 0,
-                    fell: 0,
-                });
-            }
-        }
-        lines
-    }
-
-    /// One frame of falling: every falling region drops by up to [`FALL_PER_FRAME`]. A drop
-    /// of a whole step moves the region's cells one cell down and it falls on; a shorter drop
-    /// (or none) means a column met solid ground, so the next drop would be zero, and the
-    /// region has landed.
-    fn fall(&mut self, world: &World) -> Vec<String> {
-        let mut lines = Vec::new();
-        for mut f in std::mem::take(&mut self.falling) {
-            let t = now();
-            match world.drop_region(&f.cells, FALL_PER_FRAME) {
-                Ok(r) => {
-                    if r.dropped > 0 {
-                        let ms = ms_since(t);
-                        f.frames += 1;
-                        f.fell += r.dropped;
-                        let e = r.edit_result();
-                        self.update(world, &e);
-                        self.last_edit = Some(("dropped", e, ms));
-                    }
-                    if r.dropped == FALL_PER_FRAME {
-                        for c in &mut f.cells {
-                            c.0[2] -= 1;
-                        }
-                        self.falling.push(f);
-                    } else {
-                        lines.push(format!(
-                            "landed after {} frames, fell {} voxels",
-                            f.frames, f.fell
-                        ));
-                    }
-                }
-                Err(e) => lines.push(format!("fall: refused, {e}")),
-            }
-        }
-        lines
-    }
-
-    /// The `R` toggle.
-    fn toggle_crumble(&mut self) -> String {
-        self.crumble = !self.crumble;
-        if self.crumble {
-            "collapse: remove unsupported regions with rubble".to_owned()
-        } else {
-            "collapse: drop unsupported regions".to_owned()
-        }
-    }
-
     /// The `F1` collapse line.
     fn query_line(&self) -> String {
         match self.query {
-            Some((us, n)) => format!("collapse: last query {us:.0} us, {n} regions"),
+            Some(n) => format!("collapse: last dig's query found {n} regions"),
             None => "collapse: no query yet".to_owned(),
         }
     }
+}
+
+/// The line for a logic's `region` line: `unsupported: 9 cells, {rock: 4608}`; `None` for any
+/// other line.
+fn unsupported_line(table: &MaterialTable, line: &str) -> Option<String> {
+    let (cells, counts) = parse_region_line(line)?;
+    Some(format!(
+        "unsupported: {cells} cells, {{{}}}",
+        counts_line(table, &counts)
+    ))
+}
+
+/// The line for an applied removal: `removed: {rock: 4608}, 1152 rubble`.
+fn removed_line(table: &MaterialTable, r: &vxe_world::RemoveResult) -> String {
+    format!(
+        "removed: {{{}}}, {} rubble",
+        counts_line(table, &r.removed),
+        r.placed
+    )
 }
 
 /// `rock: 4608, ore: 12`: per-material counts by name.
@@ -1104,13 +955,25 @@ struct Net {
 }
 
 impl Net {
+    /// The server on `world` with `logic`, the vault registered on it and on the client (the
+    /// prefab `P` stamps, ADR-0014) and the collapse's [`SUPPORT`] set, and the shared client.
     fn new(world: &Arc<World>, logic: Box<dyn Logic>, seed: u64) -> Self {
-        let mut server = Server::new(world.clone(), logic, seed);
+        let vault = Arc::new(vault());
+        let mut prefabs = vxe_world::PrefabRegistry::new();
+        prefabs
+            .register(vault.clone())
+            .expect("an empty registry takes the vault");
+        let mut server = Server::with_prefabs(world.clone(), prefabs, logic, seed);
+        server.set_support(SUPPORT, &[]);
         let (near, far) = MemChannel::pair();
         server.attach(far);
+        let mut client = Client::shared(world.clone(), near);
+        client
+            .register_prefab(vault)
+            .expect("an empty registry takes the vault");
         let mut net = Self {
             server,
-            client: Client::shared(world.clone(), near),
+            client,
             stop_printed: false,
         };
         if let Some(e) = net.server.init_error().cloned()
@@ -1171,11 +1034,6 @@ struct Run {
 }
 
 impl Run {
-    /// Whether this session's edits go to or come from a log file.
-    fn logged(&self) -> bool {
-        self.args.save.is_some() || self.args.replay.is_some()
-    }
-
     /// Prints the edit's line and keeps it for the HUD.
     fn record_edit(&mut self, verb: &'static str, r: &EditResult, ms: f64) {
         println!("{}", self.note_edit(verb, r, ms));
@@ -1188,13 +1046,6 @@ impl Run {
             .stats
             .last_edit
             .insert(edit_record(verb, r, self.world.materials(), ms))
-    }
-
-    /// Hands the HUD the collapse's last drop or removal, if it made one since the last call.
-    fn note_collapse_edit(&mut self) {
-        if let Some((verb, r, ms)) = self.coarse.as_mut().and_then(|c| c.last_edit.take()) {
-            self.note_edit(verb, &r, ms);
-        }
     }
 
     /// Samples the world's counts for the HUD: `World::stats`, and `Streamer::stats` for the
@@ -1264,12 +1115,11 @@ impl Run {
         gfx.hud.set_samples(&gpu.queue, &h.strip, hud::CEILING_MS);
     }
 
-    /// Keeps the coarse grid current with `r`; returns its changed cells (none while
+    /// Keeps the coarse grid and the walkable map current with `r` (nothing while
     /// streaming).
-    fn edited(&mut self, r: &EditResult) -> Vec<CellChange> {
-        match self.coarse.as_mut() {
-            Some(c) => c.update(&self.world, r),
-            None => Vec::new(),
+    fn edited(&mut self, r: &EditResult) {
+        if let Some(c) = self.coarse.as_mut() {
+            c.update(&self.world, r);
         }
     }
 
@@ -1343,24 +1193,15 @@ impl Run {
         });
     }
 
-    /// `P`: the vault at the aim point, stamped on the server's world directly and then through
-    /// the same post-edit path as a dig; refused under `--save`.
+    /// `P`: a stamp input, the vault (registered on the server by its content id) at the
+    /// first solid voxel the camera ray enters.
     fn stamp(&mut self) {
-        if let Err(e) = stamp_allowed(self.args.save.is_some()) {
-            println!("stamped: refused, {e}");
-            return;
-        }
         let (origin, dir) = self.camera_ray();
-        let t = now();
-        let out = stamp_at_aim(&self.world, origin, dir);
-        let ms = ms_since(t);
-        match &out {
-            Some(Ok(r)) => {
-                self.record_edit("stamped", r, ms);
-                self.edited(r);
-            }
-            _ => println!("{}", stamp_line(&out, self.world.materials(), ms)),
-        }
+        self.send(DigInput::Stamp {
+            origin,
+            dir,
+            prefab: vault().id(),
+        });
     }
 
     /// Right click: a fill where the camera ray hits.
@@ -1388,8 +1229,9 @@ impl Run {
         self.send(DigInput::Bench { origin, seed });
     }
 
-    /// The frame's server tick, timed, then the client's events: one printed line per dig
-    /// or fill and per bench, the coarse grid updated from every applied result. A tick that
+    /// The frame's server tick, timed, then the client's events: one printed line per dig,
+    /// fill, stamp, removal and bench, the logic's other lines (the unsupported regions with
+    /// material names), the coarse grid updated from every applied result. A tick that
     /// finished a bench syncs the mirror at once and prints the bench line.
     fn tick(&mut self, gpu: &Gpu) {
         let Some(net) = self.net.as_mut() else { return };
@@ -1413,7 +1255,15 @@ impl Run {
             };
             for line in String::from_utf8_lossy(&bytes).lines() {
                 let Some(verb) = line.strip_prefix("op ").and_then(op_verb) else {
-                    println!("{line}");
+                    match unsupported_line(self.world.materials(), line) {
+                        Some(l) => {
+                            if let Some(c) = self.coarse.as_mut() {
+                                c.query = Some(c.query.map_or(1, |n| n + 1));
+                            }
+                            println!("{l}");
+                        }
+                        None => println!("{line}"),
+                    }
                     continue;
                 };
                 let result = match ops.pop_front() {
@@ -1421,28 +1271,34 @@ impl Run {
                     Some(Event::Refused { error, .. }) => Err(error),
                     _ => continue,
                 };
-                let changes = match &result {
-                    Ok(r) => Some(self.edited(r)),
-                    Err(_) => None,
-                };
+                if let Ok(r) = &result {
+                    self.edited(&r.edit_result());
+                }
+                if verb == DIG_VERB
+                    && result.is_ok()
+                    && let Some(c) = self.coarse.as_mut()
+                {
+                    // The region lines that follow this dig's are what its query found.
+                    c.query = Some(0);
+                }
                 if verb != BENCH_VERB {
                     match result {
-                        Ok(r) => self.record_edit(verb, &r, ms),
-                        Err(e) => println!("{verb}: refused, {e}"),
-                    }
-                    // An applied dig queries the support over the cells it changed.
-                    if verb == DIG_VERB
-                        && collapse_allowed(self.logged()).is_ok()
-                        && let Some(changes) = changes
-                        && let Some(c) = self.coarse.as_mut()
-                    {
-                        for line in c.collapse(&self.world, &changes) {
-                            println!("{line}");
+                        // A drop happens every tick a region falls: kept for the HUD only.
+                        Ok(r) if verb == DROP_VERB => {
+                            if r.aabb().is_some() {
+                                self.note_edit(verb, &r.edit_result(), ms);
+                            }
                         }
-                        self.note_collapse_edit();
+                        Ok(OpResult::Remove(r)) => {
+                            println!("{}", removed_line(self.world.materials(), &r));
+                            self.note_edit(verb, &r.edit_result(), ms);
+                        }
+                        Ok(r) => self.record_edit(verb, &r.edit_result(), ms),
+                        Err(e) => println!("{verb}: refused, {e}"),
                     }
                     continue;
                 }
+                let result = result.map(|r| r.edit_result());
                 match result {
                     Ok(r) => {
                         for (m, n) in r.changed_from {
@@ -1507,6 +1363,7 @@ impl Run {
             extent: self.world.extent(),
             ops: net.server.ops().clone(),
             inputs: net.server.inputs().clone(),
+            prefabs: net.server.prefabs().subset(net.server.ops().prefab_ids()),
         };
         println!("world hash 0x{:016x}", self.world.voxel_hash());
         let written = std::fs::File::create(path).and_then(|mut f| file.write_to(&mut f));
@@ -1984,16 +1841,7 @@ impl Run {
             }
             self.handle_input(input);
         }
-        if collapse_allowed(self.logged()).is_ok()
-            && let Some(c) = self.coarse.as_mut()
-        {
-            for line in c.fall(&self.world) {
-                println!("{line}");
-            }
-        }
-        self.note_collapse_edit();
-        // Off the edit path, after every edit of the frame (falls included): the next frame's
-        // edits take touched arrays from the pool.
+        // Off the edit path: the next frame's edits take touched arrays from the pool.
         self.world.reserve_brick_arrays(RESERVE_ARRAYS);
         self.audio_step();
         if let Some(n) = self.args.frames
@@ -2039,10 +1887,8 @@ impl Run {
             println!("{}", self.coarse_line());
         }
         if input.pressed(KeyCode::KeyR) {
-            let logged = self.logged();
-            match self.coarse.as_mut() {
-                Some(_) if let Err(e) = collapse_allowed(logged) => println!("collapse: off, {e}"),
-                Some(c) => println!("{}", c.toggle_crumble()),
+            match self.coarse {
+                Some(_) => self.send(DigInput::Crumble),
                 None => println!("collapse: not kept while streaming"),
             }
         }
@@ -2617,13 +2463,21 @@ fn main() {
         args.seed = file.seed;
         let table = materials(&args);
         let source = CaveSource::new(file.seed, file.extent);
+        let with_vault = args.vault;
+        if with_vault {
+            println!(
+                "vault: {VAULT_EDGE}^3 shell room at {:?}",
+                source.vault_origin().0
+            );
+        }
         let generation = std::thread::spawn(move || {
-            let (world, ops) = match flythrough::replay_log_with(
+            let (world, ops) = match flythrough::replay_log_on(
                 &file,
                 flythrough::Mode::Inputs,
                 ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS),
                 &table,
                 replay_logic,
+                with_vault,
             ) {
                 Ok(r) => r,
                 Err(e) => {
@@ -2938,33 +2792,15 @@ mod tests {
         );
     }
 
-    /// The log file does not record the vault, so `--vault` refuses `--save` and `--replay`.
+    /// Every edit is in the log now, so `--vault` combines with `--save` and `--replay` (the
+    /// room placed at generation is not an op; `--replay` takes `--vault` to regenerate it).
     #[test]
-    fn vault_does_not_combine_with_save_or_replay() {
+    fn vault_combines_with_save_and_replay() {
         for flag in ["--save", "--replay"] {
-            assert_eq!(
-                parse_args_from(argv(&["--level", "--vault", flag, "a.log"]))
-                    .err()
-                    .as_deref(),
-                Some(SAVE_EXCLUDES_VAULT)
-            );
+            let a = parse_args_from(argv(&["--level", "--vault", flag, "a.log"]))
+                .unwrap_or_else(|e| panic!("--level --vault {flag} parses: {e}"));
+            assert!(a.level && a.vault);
         }
-        let a = parse_args_from(argv(&["--level", "--vault"])).expect("--level --vault parses");
-        assert!(a.level && a.vault);
-    }
-
-    /// Collapse edits outside the op log, so it is off while saving or replaying.
-    #[test]
-    fn collapse_is_off_under_save_and_replay() {
-        assert_eq!(collapse_allowed(true), Err(COLLAPSE_NOT_LOGGED));
-        assert_eq!(collapse_allowed(false), Ok(()));
-    }
-
-    /// A stamp is not in the op log, so `P` is refused while saving and allowed otherwise.
-    #[test]
-    fn p_is_refused_under_save() {
-        assert_eq!(stamp_allowed(true), Err(STAMP_NOT_LOGGED));
-        assert_eq!(stamp_allowed(false), Ok(()));
     }
 
     #[test]
@@ -3019,17 +2855,52 @@ mod tests {
         )));
     }
 
+    /// One server tick of `net` on `inputs`, sent by its client: the logic's broadcast lines
+    /// and every event the client polled.
+    fn net_tick(net: &mut Net, inputs: &[DigInput]) -> (Vec<String>, Vec<Event>) {
+        for i in inputs {
+            net.client.send_input(i.encode());
+        }
+        let report = net.server.tick();
+        assert_eq!(report.logic_error, None);
+        let events = net.client.poll();
+        let lines = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Logic { bytes, .. } => Some(String::from_utf8(bytes.clone()).unwrap()),
+                _ => None,
+            })
+            .flat_map(|t| t.lines().map(str::to_owned).collect::<Vec<_>>())
+            .collect();
+        (lines, events)
+    }
+
+    /// The results of the applied ops among `events`, in order.
+    fn applied(events: &[Event]) -> Vec<OpResult> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Applied { result, .. } => Some(result.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn native_net(world: &Arc<World>) -> Net {
+        Net::new(world, Box::new(flythrough::logic::DigLogic::default()), 1)
+    }
+
     /// `P` headless: from inside a carved 16-voxel box in solid rock, the ray along +x enters
-    /// rock at x = 8 and the vault lands there; aimed so the vault crosses the extent's edge it
-    /// is refused; aimed out of the world it misses.
+    /// rock at x = 8 and the vault lands there, stamped by the logic through the server; aimed
+    /// so the vault crosses the extent's edge it is refused; aimed out of the world it misses.
     #[test]
     fn p_stamps_the_vault_at_the_aim_point() {
         let table = cave_materials();
-        let world = World::generate(
+        let world = Arc::new(World::generate(
             ChunkExtent::new([-1, -1, -1], [1, 1, 1]),
             &vxe_world::UniformSource(ROCK),
             &table,
-        );
+        ));
         world
             .apply(&EditOp::box_(
                 Fixed3([-8 * FIXED_ONE; 3]),
@@ -3037,9 +2908,18 @@ mod tests {
                 Mode::Carve,
             ))
             .unwrap();
+        let mut net = native_net(&world);
+        let stamp = |origin| DigInput::Stamp {
+            origin,
+            dir: [FIXED_ONE, 0, 0],
+            prefab: vault().id(),
+        };
         let centre = Fixed3([FIXED_ONE / 2; 3]);
-        let out = stamp_at_aim(&world, centre, [FIXED_ONE, 0, 0]);
-        let r = out.as_ref().unwrap().as_ref().unwrap();
+        let (lines, events) = net_tick(&mut net, &[stamp(centre)]);
+        assert_eq!(lines, ["op stamped"]);
+        let [OpResult::Edit(r)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
         assert_eq!(r.changed_from, vec![(ROCK, 4096)]);
         assert_eq!(r.touched, vec![ChunkCoord([0, 0, 0])]);
         assert_eq!(
@@ -3051,34 +2931,32 @@ mod tests {
             vec![(0, 2744), (ROCK, 817), (SHELL, 1352)]
         );
         assert_eq!(
-            stamp_line(&out, &table, 0.5),
+            edit_line(STAMP_VERB, r, &table, 0.5),
             "stamped: rock 4096 (1 chunks, 0.50 ms)"
+        );
+        assert!(
+            matches!(&net.server.ops().entries()[0], vxe_world::LogEntry::Op { op: vxe_world::Op::Stamp { prefab, .. }, .. } if *prefab == vault().id())
         );
 
         // From inside rock at x = 51 the ray hits that voxel, and a vault there would reach
         // x = 66, past the resident x <= 63: refused, nothing written.
         let past = Fixed3([51 * FIXED_ONE + FIXED_ONE / 2, FIXED_ONE / 2, FIXED_ONE / 2]);
         let before = world.count_in_box([-64; 3], [63; 3]);
-        let out = stamp_at_aim(&world, past, [FIXED_ONE, 0, 0]);
-        assert_eq!(
-            stamp_line(&out, &table, 0.0),
-            "stamped: refused, chunk [1, 0, 0] is not resident"
+        let (lines, events) = net_tick(&mut net, &[stamp(past)]);
+        assert_eq!(lines, ["op stamped"]);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::Refused { error, .. }
+                    if error.to_string() == "chunk [1, 0, 0] is not resident"
+            )),
+            "{events:?}"
         );
         assert_eq!(world.count_in_box([-64; 3], [63; 3]), before);
 
         let outside = Fixed3([200 * FIXED_ONE, 0, 0]);
-        let out = stamp_at_aim(&world, outside, [FIXED_ONE, 0, 0]);
-        assert!(out.is_none());
-        assert_eq!(
-            stamp_line(&out, &table, 0.0),
-            "stamped: no surface within 10 m"
-        );
-    }
-
-    /// A box op over the half-open voxel bounds `lo..hi`.
-    fn box_voxels(lo: [i32; 3], hi: [i32; 3], mode: Mode) -> EditOp {
-        let f = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
-        EditOp::box_(f(lo), f(hi), mode)
+        let (lines, _) = net_tick(&mut net, &[stamp(outside)]);
+        assert_eq!(lines, ["stamped: no surface within 10 m"]);
     }
 
     const PILLAR: ([i32; 3], [i32; 3]) = ([32, 32, 8], [40, 40, 40]);
@@ -3095,83 +2973,114 @@ mod tests {
             PILLAR,
             ([24, 24, 40], [48, 48, 48]),
         ] {
-            world.apply(&box_voxels(lo, hi, Mode::Fill(ROCK))).unwrap();
+            let f = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
+            world
+                .apply(&EditOp::box_(f(lo), f(hi), Mode::Fill(ROCK)))
+                .unwrap();
         }
         world
     }
 
-    /// The dig's collapse, scripted: digging out the pillar reports the ledge, which falls 8
-    /// voxels a frame for 4 frames and lands on the floor.
-    #[test]
-    fn digging_out_the_pillar_drops_the_ledge_8_voxels_a_frame() {
-        let world = ledge_world();
-        let mut c = Coarse::build(&world);
-        let r = world
-            .apply(&box_voxels(PILLAR.0, PILLAR.1, Mode::Carve))
-            .unwrap();
-        let changes = c.update(&world, &r);
-        assert_eq!(
-            c.collapse(&world, &changes),
-            ["unsupported: 9 cells, {rock: 4608}"]
-        );
-        assert_eq!(c.query.map(|(_, n)| n), Some(1));
-        assert!(c.query_line().starts_with("collapse: last query "));
-        for frame in 1..=4 {
-            assert_eq!(c.fall(&world), Vec::<String>::new(), "frame {frame}");
-            assert_eq!(c.falling[0].fell, 8 * frame);
+    /// A 1 m dig whose origin is inside the pillar, at its axis 16 voxels up: the ray starts
+    /// in rock, so the capsule is a sphere there, cutting the pillar through from z = 15 to
+    /// z = 32 and leaving its top cell on the ledge.
+    fn pillar_cut() -> DigInput {
+        DigInput::Dig {
+            origin: Fixed3([36 * FIXED_ONE, 36 * FIXED_ONE, 24 * FIXED_ONE]),
+            dir: [FIXED_ONE, 0, 0],
+            radius: 10 * FIXED_ONE,
         }
-        assert_eq!(c.fall(&world), ["landed after 4 frames, fell 32 voxels"]);
-        assert!(c.falling.is_empty());
-        assert_eq!(
-            world.count_in_box([24, 24, 8], [47, 47, 15]),
-            [(ROCK, 4608)]
-        );
-        assert_eq!(
-            world.count_in_box([24, 24, 16], [47, 47, 47]),
-            [(vxe_world::AIR, 18_432)]
-        );
-        assert_eq!(c.grid, CoarseGrid::build(&world));
     }
 
-    /// `R`: the ledge is removed instead, a quarter of it piled as rubble on the floor.
+    /// The dig's collapse, scripted through the logic: cutting the pillar reports the ledge
+    /// with the pillar's top, which falls a cell a tick and lands on the pillar's stump; every
+    /// drop is an op in the log, and the server's grid follows the world.
+    #[test]
+    fn cutting_the_pillar_drops_the_ledge_a_cell_a_tick() {
+        let world = Arc::new(ledge_world());
+        let table = world.materials().clone();
+        let mut net = native_net(&world);
+        let (lines, events) = net_tick(&mut net, &[pillar_cut()]);
+        assert_eq!(lines, ["op carved", "region 10 1:5024"]);
+        assert_eq!(
+            unsupported_line(&table, &lines[1]).as_deref(),
+            Some("unsupported: 10 cells, {rock: 5024}")
+        );
+        assert_eq!(applied(&events).len(), 1);
+        let mut dropped = Vec::new();
+        for tick in 1..=3 {
+            let (lines, events) = net_tick(&mut net, &[]);
+            let [OpResult::Drop(d)] = &applied(&events)[..] else {
+                panic!("tick {tick}: {events:?}");
+            };
+            dropped.push(d.dropped);
+            if tick < 3 {
+                assert_eq!(lines, ["op dropped"], "tick {tick}");
+            } else {
+                assert_eq!(
+                    lines,
+                    ["op dropped", "landed after 3 ticks, fell 18 voxels"]
+                );
+            }
+        }
+        assert_eq!(dropped, [8, 8, 2]);
+        // Nothing falls on.
+        let (lines, events) = net_tick(&mut net, &[]);
+        assert!(
+            lines.is_empty() && events.is_empty(),
+            "{lines:?} {events:?}"
+        );
+        assert_eq!(net.server.ops().len(), 4);
+        assert_eq!(
+            world.count_in_box([24, 24, 22], [47, 47, 29]),
+            [(ROCK, 4608)]
+        );
+        assert_eq!(*net.server.coarse(), CoarseGrid::build(&world));
+    }
+
+    /// `R`: the ledge is removed instead, a quarter of it piled as rubble.
     #[test]
     fn with_r_the_ledge_is_removed_leaving_a_quarter_as_rubble() {
-        let world = ledge_world();
-        let mut c = Coarse::build(&world);
+        let world = Arc::new(ledge_world());
+        let table = world.materials().clone();
+        let mut net = native_net(&world);
+        let (lines, _) = net_tick(&mut net, &[DigInput::Crumble]);
+        assert_eq!(lines, ["collapse: remove unsupported regions with rubble"]);
+        let (lines, events) = net_tick(&mut net, &[pillar_cut()]);
+        assert_eq!(lines, ["op carved", "region 10 1:5024", "op removed"]);
+        let [_, OpResult::Remove(r)] = &applied(&events)[..] else {
+            panic!("{events:?}");
+        };
+        assert_eq!(r.removed, [(ROCK, 5024)]);
+        assert_eq!(r.placed, 5024 / 4);
         assert_eq!(
-            c.toggle_crumble(),
-            "collapse: remove unsupported regions with rubble"
+            removed_line(&table, r),
+            "removed: {rock: 5024}, 1256 rubble"
         );
-        let r = world
-            .apply(&box_voxels(PILLAR.0, PILLAR.1, Mode::Carve))
-            .unwrap();
-        let changes = c.update(&world, &r);
         assert_eq!(
-            c.collapse(&world, &changes),
-            [
-                "unsupported: 9 cells, {rock: 4608}",
-                "removed: {rock: 4608}, 1152 rubble"
-            ]
+            world
+                .count_in_box([0, 0, 0], [63, 63, 63])
+                .into_iter()
+                .find(|&(m, _)| m == flythrough::RUBBLE),
+            Some((flythrough::RUBBLE, 1256))
         );
-        assert!(c.falling.is_empty());
-        assert_eq!(
-            world.count_in_box([24, 24, 8], [47, 47, 9]),
-            [(RUBBLE, 1152)]
-        );
-        assert_eq!(c.grid, CoarseGrid::build(&world));
-        assert_eq!(c.toggle_crumble(), "collapse: drop unsupported regions");
+        // Nothing falls after a removal.
+        let (lines, _) = net_tick(&mut net, &[]);
+        assert!(lines.is_empty(), "{lines:?}");
+        assert_eq!(*net.server.coarse(), CoarseGrid::build(&world));
+        let (lines, _) = net_tick(&mut net, &[DigInput::Crumble]);
+        assert_eq!(lines, ["collapse: drop unsupported regions"]);
     }
 
     /// The support query after digs from the spawn of the seed-1 level, one along each axis
-    /// at the default radius, printed. Generating the level takes minutes unoptimized; run
-    /// with `cargo test --release -p flythrough -- --ignored --nocapture
-    /// a_dig_in_the_level_prints_the_query_time`.
+    /// at the default radius, through the logic, printed. Run with `cargo test --release -p
+    /// flythrough -- --ignored --nocapture a_dig_in_the_level_prints_the_query`.
     #[test]
     #[ignore = "a reading on the generated level, run in release"]
-    fn a_dig_in_the_level_prints_the_query_time() {
+    fn a_dig_in_the_level_prints_the_query() {
         let source = CaveSource::new(1, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
-        let world = World::generate(source.extent, &source, &cave_materials());
-        let mut c = Coarse::build(&world);
+        let world = Arc::new(World::generate(source.extent, &source, &cave_materials()));
+        let mut net = native_net(&world);
         let origin = vxe_world::centre_of_voxel(source.spawn());
         let f = FIXED_ONE;
         for dir in [
@@ -3182,16 +3091,16 @@ mod tests {
             [0, 0, f],
             [0, 0, -f],
         ] {
-            let op = EditOp::tool_along_ray(&world, origin, dir, REACH, DIG_RADIUS, Mode::Carve);
-            let r = world.apply(&op).unwrap();
-            let changes = c.update(&world, &r);
-            let lines = c.collapse(&world, &changes);
-            println!(
-                "dig {dir:?}: {} voxels, {} changed cells; {}; {lines:?}",
-                r.changed_from.iter().map(|(_, n)| n).sum::<u32>(),
-                changes.len(),
-                c.query_line()
+            let t = now();
+            let (lines, _) = net_tick(
+                &mut net,
+                &[DigInput::Dig {
+                    origin,
+                    dir,
+                    radius: DIG_RADIUS,
+                }],
             );
+            println!("dig {dir:?}: tick {:.3} ms; {lines:?}", ms_since(t));
         }
     }
 

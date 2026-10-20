@@ -42,6 +42,7 @@ fn log_file() -> LogFile {
         extent: extent(),
         ops,
         inputs: InputLog::new(),
+        prefabs: PrefabRegistry::new(),
     }
 }
 
@@ -57,7 +58,11 @@ fn timed<T>(f: impl FnOnce() -> T) -> (T, Duration) {
 
 fn replay(c: &mut Criterion) {
     let bytes = log_file().encode();
-    assert_eq!(bytes.len(), 60 + 470_000, "47 bytes per sphere carve entry");
+    assert_eq!(
+        bytes.len(),
+        60 + 4 + 470_000,
+        "a 64-byte header with an empty prefab table, 47 bytes per sphere carve entry"
+    );
     println!(
         "replay: log file {} bytes, {CARVES} op entries",
         bytes.len()
@@ -74,7 +79,7 @@ fn replay(c: &mut Criterion) {
                     let world = solid_world();
                     let (results, dt) = timed(|| {
                         let file = LogFile::decode(&bytes).unwrap();
-                        world.replay(&file.ops)
+                        world.replay(&file.ops, &file.prefabs)
                     });
                     assert_eq!(results.len(), CARVES);
                     assert!(results.iter().all(Result::is_ok));

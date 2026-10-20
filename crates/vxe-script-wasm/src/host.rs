@@ -13,7 +13,7 @@ use std::ptr::NonNull;
 
 use vxe_net::{ClientInput, Host, Logic, LogicError, TickOutput};
 use vxe_world::wire::{Reader, decode_op};
-use vxe_world::{Face, Fixed3, Op, VoxelCoord};
+use vxe_world::{CellCoord, Face, Fixed3, Region, VoxelCoord};
 use wasmtime::StoreContextMut;
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Engine, ResourceLimiter, Store, Trap};
@@ -150,6 +150,22 @@ fn fixed3(p: wit::Fixed3) -> Fixed3 {
     Fixed3([p.x, p.y, p.z])
 }
 
+fn wit_region(g: Region) -> wit::Region {
+    wit::Region {
+        cells: g
+            .cells
+            .into_iter()
+            .map(|c| {
+                let [x, y, z] = c.0;
+                wit::Cell { x, y, z }
+            })
+            .collect(),
+        counts: g.counts,
+        lo: wit_voxel(g.aabb.0),
+        hi: wit_voxel(g.aabb.1),
+    }
+}
+
 fn wit_face(f: Face) -> wit::Face {
     match f {
         Face::NegX => wit::Face::NegX,
@@ -188,7 +204,6 @@ impl wit::Host for State {
                 Ok(op) if r.is_empty() => op,
                 _ => return Ok(vec![ANSWER_UNDECODABLE]),
             };
-            let Op::Edit(op) = op;
             Ok(encode_answer(&host.apply(op)))
         })
     }
@@ -220,6 +235,17 @@ impl wit::Host for State {
         hi: wit::Voxel,
     ) -> wasmtime::Result<Vec<(u16, u64)>> {
         guarded(|| Ok(self.host()?.count_in_box(voxel(lo), voxel(hi))))
+    }
+
+    fn unsupported(&mut self, changed: Vec<wit::Cell>) -> wasmtime::Result<Vec<wit::Region>> {
+        guarded(|| {
+            let changed: Vec<CellCoord> = changed
+                .into_iter()
+                .map(|c| CellCoord([c.x, c.y, c.z]))
+                .collect();
+            let regions = self.host()?.unsupported(&changed);
+            Ok(regions.into_iter().map(wit_region).collect())
+        })
     }
 }
 
