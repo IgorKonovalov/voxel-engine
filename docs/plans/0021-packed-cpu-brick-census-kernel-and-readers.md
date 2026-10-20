@@ -458,7 +458,7 @@ header, world key, coordinate and FNV trailer are version 1's.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The census and the kernel bench | dev | done | committed with this row |
+| 1: The census and the kernel bench | dev | done | 992fdaa |
 | 2: The owner reads the figures | human | not started | |
 | 3: `Packed` behind `Brick::Full`, every reader compiling | dev | not started | |
 | 4: The edit kernel as word operations | dev | not started | |
@@ -492,9 +492,10 @@ header, world key, coordinate and FNV trailer are version 1's.
   and the `packed` module (`Packed`, `PackedBrick`, `PackedClass`, `KernelMode`) (Phase 1
   commit).
 - Phase 1: `world_budget --chunks` takes `A,B,C` as well as `AxBxC` (Phase 1 commit).
-- Phase 1: every timing was read under the exclusive perf lock at a 1-minute load of 18.5 to
-  21.4 on 16 threads (other lanes building); `worst_warm` read 4.89 ms in the same window
-  against 3.03 ms recorded quiet.
+- Phase 1: every timing was read under the exclusive perf lock while other lanes built: the
+  first two kernel runs at a 1-minute load of 13.9 and 19.2, the third (the figures Phase 2
+  reads) at 9.7; `worst_warm` read 4.89 ms and 2.60 ms in those windows against 3.03 ms
+  recorded quiet.
 
 ### Close triggers
 
@@ -526,6 +527,18 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
     Plane1 to Plane2 42.9 ns. Allocation share: 2495 x 23.9 ns = 59.5 us, 11.5 % of the
     planar carve sum, 2.0 % of 3.03 ms. An earlier run at load 13.93: carve today 1097.3 ns,
     planar 176.3 ns per brick-edit. `edits` `worst_warm` in the same window: 4.89 ms.
+  - Phase 1 `brick_kernel` rerun at 992fdaa, load 9.69 (the reading Phase 2 reads): carve
+    today 1.375 ms (min 1.326), 505.3 ns per brick-edit; planar 0.318 ms (min 0.309),
+    116.8 ns (ratio 0.231). Fill(rock) on the inverse today 0.934 ms, 343.4 ns; planar
+    0.306 ms, 112.5 ns. Replace today 1.153 ms, 423.9 ns; planar 0.428 ms, 157.4 ns. Decode
+    Plane1 0.249, Plane2 0.362, Plane4 0.596 us per brick (raw copy 0.008 us); 1000 get
+    2.50, 2.85, 3.08 us (raw 0.54 us). Expansion 11.2 ns (raw 1 KiB 295.9 ns); Plane1 to
+    Plane2 21.2 ns. Allocation share 28.1 us: 8.8 % of the planar carve sum, 0.9 % of
+    3.03 ms. `edits` `worst_warm` in the same window: 2.60 ms (2.55 to 2.64).
+- **Gate at the tip (992fdaa):** `cargo build --workspace --all-targets` 0; `cargo nextest run
+  --workspace` (after `scripts/build-guests.sh`, under the perf lock) 394 passed, 4 skipped,
+  exit 0; `cargo test --workspace --doc` 7 passed; clippy `-D warnings` 0; `fmt --check` 0;
+  `cargo deny check` 0; doc-links, comment-hygiene, index-rows OK.
 - **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
 - **Outstanding `human` phases:** which, or none
 
