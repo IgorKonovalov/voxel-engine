@@ -828,11 +828,25 @@ impl World {
         let mut yields = (yield_below > 0).then(|| Yield::new(yield_below, &self.materials));
         let mut dropped = max_drop;
         for (xy, parts) in &columns {
-            for z in run_bottoms(parts) {
-                let gap = snap
-                    .gap_below(&mut reader, *xy, z, max_drop, &|_| false, yields.as_mut())
-                    .map_err(EditError::NotResident)?;
-                dropped = dropped.min(gap);
+            // The bottom of each run of solid region voxels, as `run_bottoms` yields them.
+            let mut below_solid = false;
+            let mut prev_z: Option<i32> = None;
+            for (cz, col) in parts {
+                if prev_z != Some(cz - 1) {
+                    below_solid = false;
+                }
+                for (lz, &m) in col.iter().enumerate() {
+                    let solid = m != AIR;
+                    if solid && !below_solid {
+                        let z = cz * BE + lz as i32;
+                        let gap = snap
+                            .gap_below(&mut reader, *xy, z, max_drop, &|_| false, yields.as_mut())
+                            .map_err(EditError::NotResident)?;
+                        dropped = dropped.min(gap);
+                    }
+                    below_solid = solid;
+                }
+                prev_z = Some(*cz);
             }
         }
         if dropped == 0 {
