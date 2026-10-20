@@ -1316,27 +1316,35 @@ impl GpuWorld {
         }
 
         if !self.materials_written {
-            self.write_materials(world.materials(), queue, &mut st);
+            // The flags are read while narrowing; the rows are written below, once a sync
+            // writes anything.
             for (id, m) in world.materials().rows().iter().enumerate() {
                 self.translucent[id] = m.is_translucent();
             }
-            self.materials_written = true;
         }
         let may_widen = world.materials().len() > PALETTE_ENTRIES;
         let mut short = short;
         let result = self.upload(may_widen, &mut short, queue, &mut st);
+        if result.is_ok()
+            && st.chunks == 0
+            && let Some(e) = short
+        {
+            // The upload's check deferred every chosen chunk before writing any of it: an
+            // empty sync. Queued table changes and the material rows wait for the next sync
+            // that writes.
+            return Err(e);
+        }
+        if !self.materials_written {
+            self.write_materials(world.materials(), queue, &mut st);
+            self.materials_written = true;
+        }
         // Staged runs are written even after a failed allocation: their records name them.
         self.flush_stage(queue, &mut st);
         self.flush_records(queue, &mut st);
         self.flush_table(queue, &mut st);
         st.pending_chunks = self.pending.len() as u64;
         self.bytes_written += st.bytes;
-        result?;
-        match short {
-            // Every chosen chunk turned wide past the pool: an empty sync.
-            Some(e) if st.chunks == 0 => Err(e),
-            _ => Ok(st),
-        }
+        result.map(|()| st)
     }
 
     /// The page kind of a record's slots.

@@ -2110,7 +2110,9 @@ fn a_chunk_turning_wide_past_the_pool_is_deferred_whole() {
         2 * full > 128,
         "{full} bricks as pairs past the 128 spare slots"
     );
+    let written = gpu.bytes_written();
     let st = gpu.sync(&world, &queue).unwrap_err();
+    assert_eq!(gpu.bytes_written(), written, "an empty sync writes nothing");
     assert!(
         matches!(st, vxe_render::MirrorError::PoolTooLarge { .. }),
         "{st:?}"
