@@ -2243,3 +2243,145 @@ fn a_widening_chunk_defers_the_later_chunk_it_crowds_out() {
         "the deferred chunk keeps its dirty bits"
     );
 }
+
+/// `ManyAndTwo`'s 300-material chunk at x = 0, `Checker` elsewhere.
+struct WideThenChecker;
+
+impl WorldSource for WideThenChecker {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        if coord.0[0] == 0 {
+            ManyAndTwo.chunk(coord, out);
+        } else {
+            Checker.chunk(coord, out);
+        }
+    }
+}
+
+/// Free pairs serve narrow bricks. One plain page: wide x = 0 (512 bricks, 1024 slots) and
+/// x = 1..6 `Checker` (2560) leave the cursor 512 short of the page end. One sync demotes
+/// x = 0 to uniform mips, which returns its 512 pairs to the free pair list, and adds
+/// `Checker` x = 6 and x = 7 (1024 narrow slots). x = 6 takes the cursor's 512 and x = 7
+/// splits 256 pairs; nothing is deferred, and no chunk fails part-way.
+#[test]
+fn free_pairs_serve_narrow_bricks() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let extent = ChunkExtent::new([0, 0, 0], [8, 1, 1]);
+    let world = World::generate(extent, &WideThenChecker, &numbered_table(300));
+    let (c0, c6, c7) = (
+        ChunkCoord([0, 0, 0]),
+        ChunkCoord([6, 0, 0]),
+        ChunkCoord([7, 0, 0]),
+    );
+    let held6 = world.store().remove(c6).unwrap();
+    let held7 = world.store().remove(c7).unwrap();
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            budget_bytes: budget_for(4096, 8),
+            ..MirrorConfig::new(Window::Fixed(extent))
+        },
+    );
+    gpu.set_focus(VoxelCoord([1, 1, 1]));
+    gpu.sync(&world, &queue).unwrap();
+    assert!(gpu.is_wide(c0));
+    assert_eq!(gpu.live_slots(), 1024 + 5 * 512);
+
+    let checker = World::generate(extent, &Checker, &numbered_table(2));
+    let mips = Arc::new(ChunkMips::build(
+        &checker.store().get(c0).unwrap().read().unwrap(),
+    ));
+    assert_eq!(mips.full_bricks(), 0);
+    world.store().remove(c0);
+    world.insert_lod(c0, mips);
+    world.store().write_lock().insert(c6, held6);
+    world.store().write_lock().insert(c7, held7);
+    let st = gpu.sync(&world, &queue).expect("every chunk fits whole");
+    assert_eq!(
+        (st.chunks, st.deferred_chunks, st.pending_chunks),
+        (3, 0, 0)
+    );
+    assert_eq!(gpu.live_slots(), 7 * 512);
+    assert_eq!(gpu.pages_issued(), 1);
+    let rb = Readback::new(&device, &queue, &gpu);
+    rb.assert_lod(&gpu, &world, c0);
+    for x in 1..8 {
+        rb.assert_chunk(&gpu, &world, ChunkCoord([x, 0, 0]));
+    }
+}
+
+/// An already-wide chunk's new bricks need pairs, not singles. One plain page: `Floor` x = 0
+/// made wide by 255 materials (64 bricks, 128 slots) and x = 1..8 `Checker` (3584) leave a
+/// 384-slot cursor. One sync demotes x = 1 (focus) to uniform mips, freeing 512 singles, and
+/// fills one voxel in 250 air bricks of x = 0, which then needs 250 pairs (500 slots). Pair
+/// room is the cursor's 384: x = 0 is deferred whole, its record unchanged, and the sync is
+/// `Ok` with the demotion written.
+#[test]
+fn an_already_wide_chunk_is_not_counted_free_singles() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let extent = ChunkExtent::new([0, 0, 0], [8, 1, 1]);
+    let world = World::generate(extent, &FloorAndChecker, &numbered_table(300));
+    let (c0, c1) = (ChunkCoord([0, 0, 0]), ChunkCoord([1, 0, 0]));
+    for m in 2..=256u16 {
+        let k = i32::from(m);
+        fill_voxel(&world, [k % 64, (k / 64) * 8 + 1, 5], m);
+    }
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            budget_bytes: budget_for(4096, 8),
+            ..MirrorConfig::new(Window::Fixed(extent))
+        },
+    );
+    gpu.set_focus(VoxelCoord([65, 1, 1]));
+    gpu.sync(&world, &queue).unwrap();
+    assert!(gpu.is_wide(c0));
+    assert_eq!(gpu.live_slots(), 128 + 7 * 512);
+    let snapshot = |gpu: &GpuWorld| {
+        let rb = Readback::new(&device, &queue, gpu);
+        let rec = gpu.record_index(c0).unwrap();
+        let voxels: Vec<Vec<u16>> = (0..CHUNK_BRICKS)
+            .filter_map(|i| gpu.entry(c0, i).filter(|e| e & FULL_BIT != 0))
+            .map(|e| rb.voxels(rec, e))
+            .collect();
+        (record_and_entry(&rb, gpu, c0), voxels)
+    };
+    let before = snapshot(&gpu);
+
+    let checker = World::generate(extent, &Checker, &numbered_table(2));
+    let mips = Arc::new(ChunkMips::build(
+        &checker.store().get(c1).unwrap().read().unwrap(),
+    ));
+    world.store().remove(c1);
+    world.insert_lod(c1, mips);
+    let mut n = 0;
+    'fill: for bz in 1..8 {
+        for by in 0..8 {
+            for bx in 0..8 {
+                if n == 250 {
+                    break 'fill;
+                }
+                fill_voxel(&world, [bx * 8, by * 8, bz * 8], 1);
+                n += 1;
+            }
+        }
+    }
+    assert_eq!(full_bricks(&world, &[c0]), 64 + 250);
+    let st = gpu.sync(&world, &queue).expect("the demotion uploads");
+    assert_eq!(
+        (st.chunks, st.deferred_chunks, st.pending_chunks),
+        (1, 1, 1)
+    );
+    assert_eq!(gpu.live_slots(), 128 + 6 * 512);
+    assert_eq!(snapshot(&gpu), before);
+    let chunk = world.store().get(c0).unwrap();
+    assert!(
+        chunk.read().unwrap().any_dirty(),
+        "the deferred chunk keeps its dirty bits"
+    );
+    let rb = Readback::new(&device, &queue, &gpu);
+    rb.assert_lod(&gpu, &world, c1);
+}

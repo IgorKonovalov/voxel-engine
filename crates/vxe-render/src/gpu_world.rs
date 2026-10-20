@@ -1386,8 +1386,11 @@ impl GpuWorld {
         let a = &self.allocs[kind as usize];
         let page = u64::from(POOL_PAGE_SLOTS);
         let unissued = u64::from(self.layout.reserved_slots) / page - u64::from(self.next_page);
+        // `alloc_pair` skips an odd cursor slot; pages and their brick slots are even.
+        let start = a.next + a.next % 2;
+        let cursor = u64::from(a.end.saturating_sub(start)) / 2 * 2;
         2 * a.free_pairs.len() as u64
-            + u64::from(a.end - a.next)
+            + cursor
             + (self.free_pages.len() as u64 + unissued) * u64::from(kind.brick_slots())
     }
 
@@ -1562,9 +1565,17 @@ impl GpuWorld {
             if let Some(n) = pairs {
                 need[kind as usize] = 2 * n;
             }
-            // The backstop: this chunk alone against the allocator as it is now, which is
-            // exact, since a chunk's own frees precede its allocations. A chunk that does not
-            // fit is deferred whole, before anything of it is dropped or written.
+            // An already-wide record's new bricks take pairs too (`select` counts two slots
+            // each).
+            let kept_wide = mirrored.is_some_and(|m| m.lod == lod && m.wide);
+            let pairs = pairs.or(kept_wide.then(|| new[kind as usize] / 2));
+            // The backstop: this chunk alone against the allocator as it is now. It must be
+            // exact for every need it admits, so that no admitted chunk fails part-way: the
+            // state is exact since a chunk's own frees precede its allocations, every slot
+            // `Fit` counts serves a narrow brick (`alloc` splits free pairs), and a wide need
+            // is checked against pair room only (free pairs, the even-aligned cursor, free
+            // and unissued pages), never free singles. A chunk that does not fit is deferred
+            // whole, before anything of it is dropped or written.
             let mut fit = Fit::new(self).place(self, frees, need, new_record);
             if let Some(n) = pairs
                 && fit.is_ok()
@@ -2097,17 +2108,24 @@ impl GpuWorld {
         Ok(())
     }
 
+    /// One slot: a free single, else the cursor, else half of a free pair (the other half
+    /// becomes a single), else a new page. So every slot `SlotAlloc::available` counts can
+    /// serve a narrow brick.
     fn alloc(&mut self, kind: Kind) -> Result<u32, MirrorError> {
-        let s = match self.allocs[kind as usize].free.pop() {
-            Some(s) => s,
-            None => {
-                if self.allocs[kind as usize].next >= self.allocs[kind as usize].end {
-                    self.take_page(kind)?;
-                }
-                let a = &mut self.allocs[kind as usize];
-                a.next += 1;
-                a.next - 1
-            }
+        let a = &mut self.allocs[kind as usize];
+        let s = if let Some(s) = a.free.pop() {
+            s
+        } else if a.next < a.end {
+            a.next += 1;
+            a.next - 1
+        } else if let Some(s) = a.free_pairs.pop() {
+            a.free.push(s + 1);
+            s
+        } else {
+            self.take_page(kind)?;
+            let a = &mut self.allocs[kind as usize];
+            a.next += 1;
+            a.next - 1
         };
         self.make_live(s, false, kind);
         Ok(s)
