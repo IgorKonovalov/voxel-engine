@@ -1,12 +1,16 @@
 # 0031: Edit cost, third pass: a profile of the planar path, then its largest shares, to put the `B` line back under 2 ms
 
-> **Status:** approved (2026-10-21)
+> **Status:** done (closed 2026-10-21, v0.25.0). Verdict: closed clean; the quiet-box `B`
+> line reads 0.99 to 1.00 ms and `worst_warm` 0.77 ms (8dad5ca), every pinned hash unchanged,
+> and §4's line returns to 2.0 ms on the dev box (the owner, 2026-10-21). Phase 2 took a lever
+> off the list (shape words from the spans) under Phase 1's added-lever clause; Phase 3 missed
+> its own fall (6 to 8 % against 24 %), disclosed and absorbed by the Phase 4 bars.
 > **Created:** 2026-10-21
 > **Milestone:** M1's edit-cost line in `docs/roadmap.md` (`nfr.md` §4; the "one more
 > optimization pass" the owner planned on 2026-10-20 when the line was raised to 2.2 ms)
-> **Related ADRs:** [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
+> **Related ADRs:** [ADR-0012](../../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
 > (the planar kernel this plan profiles around; its format does not change),
-> [ADR-0002](../adrs/0002-brick-map-layout-and-per-chunk-locked-access.md) (the per-chunk
+> [ADR-0002](../../adrs/0002-brick-map-layout-and-per-chunk-locked-access.md) (the per-chunk
 > locks and the dirty set the op path takes)
 > **Source:** `nfr.md` §4's quiet-box re-read at 2796062 (`worst` 1.79 ms, the `B` line 2.06
 > to 2.09 ms against the original 2 ms); Plan 0021's kernel readings (117 ns per carve
@@ -203,27 +207,140 @@ No GPU figure moves; nothing here runs on an adapter.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The stage table and the profile | dev | not started | |
-| 2: The first lever | dev | not started | |
-| 3: The second lever | dev | not started | |
-| 4: The quiet-box readings and the line | dev | not started | |
+| 1: The stage table and the profile | dev | done | a49c6a1 |
+| 2: The first lever | dev | done | f3e2623 |
+| 3: The second lever | dev | done | 8dad5ca |
+| 4: The quiet-box readings and the line | dev | done | 6107041 |
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: the stages are timed in place, not in a copy of the op path: `apply_with` takes a
+  `Stamps` sink, `NoStages` (empty, inlined) in the default build and `EditStages` under
+  `edit-stages` through `#[doc(hidden)] World::apply_staged` (Phase 1 commit).
+- Phase 1: the clock reads carry `#[allow(clippy::disallowed_methods, reason = ...)]` on the
+  feature-gated code; `clippy.toml` is unchanged (Phase 1 commit).
+- Phase 1: files beyond the list: `packed.rs` (`edit_planar` split into
+  `edit_planar_uncanonical` and a `pub(crate)` `canonicalize`, so the two time apart) and
+  `lib.rs` (the feature-gated `EditStages` re-export) (Phase 1 commit).
+- Phase 1: ten stages, not eight: `lock` (the chunk write lock) and `clip` (the per-brick span
+  array clipped from the brick row's) split out; the kernel's per-material counts land in
+  `kernel` (Phase 1 commit).
+- Phase 1: the `net` column subtracts one clock read (22 to 26 ns, read up front) per stage
+  interval from `raw` (Phase 1 commit).
+- Phase 1 stage table (`cargo bench -p vxe-world --bench edits --features edit-stages --
+  '^(stages|worst)$'`, Ryzen 9 5900HS, Phase 1 tree on ae58f0c, exclusive perf lock, NOT
+  quiet: 1-minute load 15.6 to 12.9, `java` 214 %, `game.exe` 76 %, two other lanes), us per
+  100 ops, net, two runs: scan 13.6 / 15.1, lock 3.2 / 3.3, spans 411.0 / 433.3, coverage
+  91.0 / 92.3, clip 513.7 / 543.0, words 229.1 / 242.3, kernel 169.3 / 182.9, canon 26.8 /
+  26.0, tally 36.3 / 35.2, result 3.2 / 3.4; sum 1497.1 / 1576.8 against `worst` medians
+  1.4958 / 1.6066 ms in the same runs (raw sums 1950.3 / 2052.0) (Phase 1 commit).
+- Phase 1: earlier runs at load 7.9 to 18 (nine stages, then ten): net sum 2339.7 us against
+  `worst` 2.4070 ms; 2967.3 us against 2.7157 ms (Phase 1 commit).
+- Phase 1 profile (`perf record -F 2999` of `worst_warm` under `--profile-time 10`, bench
+  profile with `debug = line-tables-only`, load 16 to 18, 220752 samples; the world's
+  generation is in the samples): `World::apply_with` 69.91 %, `Arc<RwLock<Chunk>>::drop_slow`
+  2.15, `Shape::coverage` 2.07, the generation closure 1.90, `packed::bounds_of` 1.47, `cfree`
+  1.24, unresolved 0xa4fbe 0.94, 0x176545 0.92, `Brick::canonicalize` 0.77, `__libc_calloc`
+  0.77, 0x17653b 0.71, 0x176540 0.67, 0x17654a 0.61, `int_sqrt::u64` 0.55, 0x176524 0.51.
+  Top lines: `edit.rs` 656 (`if let Brick::Uniform` on the brick's first touch) 5.07 %,
+  `cmp.rs:1916` 5.07, `edit.rs` 872 (`RowCache::span`'s return) 4.81, `cmp.rs:0` 3.72,
+  `packed.rs` 341 (`shape_words`) 3.49, `edit.rs` 867 (`RowCache::span`'s solved bit) 3.47,
+  `edit.rs` 683 (the clip's span store) 3.44 (Phase 1 commit).
+- Phase 1: the two largest stages are `clip` (34 % of the net sum) and `spans` (27 %); `words`
+  is third (15 %). `clip` maps to no lever of the list: its lever is the shape words built
+  straight from the brick row's spans per brick (no 64-entry span array, no per-row cache
+  lookup), which also removes `words`' `shape_words`. `spans` maps to lever 1. Phase 2 takes
+  the `clip` lever and Phase 3 lever 1 (Phase 1 commit).
+- Phase 1: the spans stage already solves each `(y, z)` row once per chunk (the brick row's
+  cache covers its 64 rows for every brick); lever 1 removes only the repeat per chunk along
+  `x` (215 chunk locks over 100 ops) and the walk restarts per brick row (Phase 1 commit).
+- Phase 2: the lever is Phase 1's `clip` lever, not lever 1: `RowCache` solves every row of
+  its brick row up front for every shape (the sphere as before, the box and capsule by
+  `row_span` over the same window instead of at first use) and builds each brick's shape
+  words from its 64 spans branch-free (`RowCache::words`); an `Inside` brick takes
+  `box_words`; the captured spans are read back from the words (`spans_of`) (Phase 2 commit).
+- Phase 2: `shape.rs` and `benches/edits.rs` are unchanged; full workspace nextest 555 passed, 4 skipped (Phase 2 commit).
+- Phase 2: the capture test pins 2721 brick-edits and spans hash `0x7a19_1902_796c_af86`,
+  read on the Phase 1 tree a49c6a1 and unchanged after (Phase 2 commit).
+- Phase 2 paired reading (Ryzen 9 5900HS, exclusive perf lock, alternated a49c6a1 / Phase 2
+  twice, `--features edit-stages`, NOT quiet: load 11.7 falling to 8.3, `game.exe` 96 %,
+  `gdb` 70 %, other lanes): `worst_warm` 2.1642 / 1.0899 ms, then 1.5200 / 0.9633 ms (-37 %
+  in the second pair); net stage sums 2048.6 / 1120.4 us, 1648.4 / 1013.9 us; second pair
+  `clip` 563.8 to 283.3 us, `words` 250.6 to 22.4 us, `spans` 449.3 to 375.5 us, `kernel`
+  190.2 to 164.5 us. Phase 1's `clip` share was 34 % (Phase 2 commit).
+- Phase 3: the lever is lever 1 (Phase 1's second-largest stage, `spans`), not lever 3 or 4:
+  `OpRows` holds every `(y, z)` row span of the op's bounds over their whole `x` extent, the
+  sphere's walked once per op by `sphere_row_spans`, another shape's solved by `row_span` at
+  first use; each brick's words read it directly (`OpRows::words`), and the brick-row
+  `RowCache` is gone. Lever 2 (coverage from the spans) is not taken (Phase 3 commit).
+- Phase 3: `shape.rs` is touched, outside the phase's list: `sphere_row_spans` writes
+  `out[(y - ylo) + ny (z - zlo)]` over any extent, and `walked_spans_equal_solved_spans` also
+  walks each sphere's whole bounds in one call (Phase 3 commit).
+- Phase 3: a first cut that kept the per-brick-row copy from `OpRows` read no gain against
+  f3e2623 (`worst_warm` 0.9023 / 0.8786 ms, 0.9104 / 0.9374 ms, load 18.0 to 8.6); it was
+  replaced before the commit (Phase 3 commit).
+- Phase 3 paired reading (Ryzen 9 5900HS, exclusive perf lock, alternated f3e2623 / Phase 3
+  twice, `--features edit-stages`, NOT quiet: load 8.6 falling to 7.1, `game.exe` 88 %, two
+  `python3` near 90 %): `worst_warm` 0.9547 / 0.8810 ms, then 0.9281 / 0.8726 ms (-6.0 % in
+  the second pair); second pair `spans` 373.9 to 216.1 us, `clip` 281.0 to 349.7 us, net sums
+  1009.8 / 903.0 us (Phase 3 commit).
+- Phase 3 done-when not met as stated: `worst_warm` fell 6 to 8 %, under Phase 1's `spans`
+  share (27 %) less 3 %. The stage was the per-row visit of each brick row's rows, which each
+  brick still makes; one walk per op removes only the repeat per chunk along `x` and the
+  brick-row copy (Phase 3 commit).
+- Phase 3: full workspace nextest 555 passed, 4 skipped (Phase 3 commit).
+- Phase 4: the readings are added to `nfr.md` §4's cost, replay and tick bullets beside the
+  earlier ones, not in place of them; the §4 line (2.2 ms) is unchanged, at the
+  orchestrator's instruction, for the owner's decision (Phase 4 commit).
+- Phase 4: 2796062's tree read 1.32 ms `worst` and a 1.49 to 1.54 ms `B` line in this window,
+  against 1.79 ms and 2.06 to 2.09 ms at `nfr.md`'s re-read (Phase 4 commit).
+- Phase 4: two runs were aborted by the pre-run check (a `kworker` at 63 %, `chromium` at
+  78 %, an `omarchy` script at 100 %, each gone within seconds) and rerun; the script waits
+  for the 1-minute load to fall under 2 before each run (Phase 4 commit).
+- Followup noticed: the `tool` case (3.58 ms) carries the capsule's lazy `row_span` solves in
+  `clip`; no stage table was read for it.
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature (a feature-gated stage timer and bench arm) and two perf changes
+  to the op path.
+- **Public API changed:** none in the default build. Under feature `edit-stages`:
+  `#[doc(hidden)] World::apply_staged` and `#[doc(hidden)] EditStages`. New cargo feature
+  `edit-stages` on `vxe-world`.
+- **Budget readings** (dev reference, AMD Ryzen 9 5900HS, on AC, performance profile and
+  governor, 8dad5ca, exclusive perf lock, 1-minute load 0.48 to 1.98 and no process above
+  7 % CPU before each run, three runs alternated with 2796062, criterion medians):
+  - §4 `worst_warm` 0.765 / 0.775 / 0.776 ms (2796062: 1.316 / 1.319 / 1.338); `worst`
+    0.766 / 0.774 / 0.774 ms (1.318 / 1.316 / 1.337).
+  - §4 fly-through `B` line 1.00 / 0.99 / 0.99 ms (2796062: 1.49 / 1.49 / 1.54).
+  - §4 `mixed` 0.622 / 0.628 / 0.630 ms (1.044 / 1.047 / 1.055); `tool` 3.585 / 3.578 /
+    3.590 ms (4.282 / 4.194 / 4.217); `tool_warm` 3.585 / 3.586 / 3.590 ms (4.284 / 4.195 /
+    4.219).
+  - Replay 61.29 / 61.29 / 61.20 ms (103.16 / 102.64 / 103.19).
+  - Tick overhead 70.3 / 63.3 / 69.1 us per 100 inputs (64.7 / 63.5 / 70.4); grid updates
+    77.2 / 84.6 / 73.0 us (88.9 / 86.0 / 78.3).
+  - The Phase 4 bars: the `B` line under 2.0 ms and `worst_warm` at most 1.6 ms in three
+    runs each are met; the §4 line is 2.2 ms and unchanged. Owner question: does §4's line
+    return to 2.0 ms on the dev box?
+- **Gate at the tip:** `cargo build` exit 0; `cargo nextest run --workspace` (after
+  `scripts/build-guests.sh`) 555 passed, 4 skipped, exit 0 at 8dad5ca; `cargo test --doc
+  --workspace` exit 0 at Phase 1; `cargo clippy --workspace --all-targets -- -D warnings`
+  and `cargo clippy -p vxe-world --all-targets --features edit-stages -- -D warnings` exit 0;
+  `cargo fmt --all --check` exit 0; `cargo deny check` exit 0 (advisories, bans, licenses,
+  sources ok); `check-doc-links` 200 links resolve, `check-comment-hygiene` OK,
+  `check-index-rows` OK.
+- **Outstanding `human` phases:** none.
 
 ## Followups
 
-- The remaining levers of the list, if Phase 4 misses the line with two.
+- The remaining levers of the list, if Phase 4 misses the line with two. Phase 4 met it;
+  levers 2 to 4 stay untaken and unmeasured.
+- Close review (2026-10-21): the comment above `edit_brick`'s shape-word build
+  (`crates/vxe-world/src/edit.rs`, "the brick row's spans") still names Phase 2's per-brick-row
+  cache; after Phase 3 the spans are the op's. A nit for the next `vxe-world` pass.
+- Close review: no CI job builds or lints `vxe-world` with `--features edit-stages`, so the
+  stage timer can rot unseen until the next profile. A one-line clippy arm in `ci.yml` covers it.
+- The `tool` case (3.58 ms) has no stage table; the capsule's lazy `row_span` solves land in
+  `clip`. Read one before any capsule-cost work.

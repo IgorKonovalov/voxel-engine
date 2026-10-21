@@ -15,7 +15,7 @@ use crate::coords::{
 use crate::fixed::{Fixed3, centre};
 use crate::limits::Field;
 use crate::material::{AIR, MaterialFlags, MaterialId, MaterialTable};
-use crate::packed::{KernelMode, PackedStats, RowSpans, shape_words};
+use crate::packed::{KernelMode, PackedStats, RowSpans, box_words, shape_words};
 use crate::raycast::point_at;
 use crate::shape::{Coverage, Shape, sphere_row_spans};
 use crate::store::{World, read, write};
@@ -350,13 +350,109 @@ fn to_i32(v: [i64; 3]) -> [i32; 3] {
     })
 }
 
+/// The op path's stages, in the order an op meets them. A stage's time runs from the previous
+/// stamp to the stamp that names it, so every nanosecond between an op's first and last stamp
+/// lands in exactly one stage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Stage {
+    /// The shape check, the bounds, the residency scan and the per-op tables.
+    Scan,
+    /// One chunk's write lock.
+    Lock,
+    /// The op's row spans (`OpRows::new`; a shape other than the sphere solves its rows in
+    /// `Clip`, at their first use).
+    Spans,
+    /// A brick row's coverage tests, and a brick's edit box and slot.
+    Coverage,
+    /// A brick's shape words from the op's row spans clipped to the brick.
+    Clip,
+    /// The empty-brick test on the shape words, and the capture when one is asked for.
+    Words,
+    /// The planar kernel, with its per-material counts into the tally.
+    Kernel,
+    /// The brick moved to its canonical class.
+    Canon,
+    /// The changed bounds, the dirty marks and the touched list.
+    Tally,
+    /// The result: the sorted `changed_from`, the aabb, the stats.
+    Result,
+}
+
+/// A stamp sink threaded through the op path. The default build passes [`NoStages`], whose
+/// stamps are empty and inline away, so the op path reads no clock.
+pub(crate) trait Stamps {
+    fn begin(&mut self) {}
+    fn at(&mut self, _stage: Stage) {}
+}
+
+/// The default build's sink: no clock, no state.
+pub(crate) struct NoStages;
+
+impl Stamps for NoStages {}
+
+/// The summed wall time per [`Stage`] over every op applied through [`World::apply_staged`]
+/// (feature `edit-stages`, for the edit bench only; the default build has no clock in this
+/// crate). `ns[s]` is indexed by the stage's position in [`EditStages::NAMES`]; `stamps`
+/// counts the clock reads, one per stage interval, so a caller can subtract the clock's own
+/// cost.
+#[cfg(feature = "edit-stages")]
+#[derive(Clone, Debug, Default)]
+pub struct EditStages {
+    pub ns: [u64; 10],
+    pub stamps: [u64; 10],
+    last: Option<std::time::Instant>,
+}
+
+#[cfg(feature = "edit-stages")]
+impl EditStages {
+    pub const NAMES: [&'static str; 10] = [
+        "scan", "lock", "spans", "coverage", "clip", "words", "kernel", "canon", "tally", "result",
+    ];
+}
+
+#[cfg(feature = "edit-stages")]
+impl Stamps for EditStages {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "feature edit-stages only: the bench's stage timer, never in the default build"
+    )]
+    fn begin(&mut self) {
+        self.last = Some(std::time::Instant::now());
+    }
+
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "feature edit-stages only: the bench's stage timer, never in the default build"
+    )]
+    fn at(&mut self, stage: Stage) {
+        let now = std::time::Instant::now();
+        if let Some(last) = self.last {
+            let i = stage as usize;
+            self.ns[i] += u64::try_from((now - last).as_nanos()).unwrap_or(u64::MAX);
+            self.stamps[i] += 1;
+        }
+        self.last = Some(now);
+    }
+}
+
 impl World {
     /// Applies `op` and reports what changed. Fails, changing nothing, when a parameter of the
     /// shape lies outside the world's [`WorldLimits`](crate::WorldLimits)
     /// ([`EditError::OutOfRange`]: coordinates, radius, capsule length, or voxel bounds wider
     /// than `edit_axis_max`) or the shape reaches a chunk that is not resident.
     pub fn apply(&self, op: &EditOp) -> Result<EditResult, EditError> {
-        self.apply_with(op, &mut None)
+        self.apply_with(op, &mut None, &mut NoStages)
+    }
+
+    /// [`World::apply`] with each stage's wall time added to `stages`. For the edit bench.
+    #[cfg(feature = "edit-stages")]
+    #[doc(hidden)]
+    pub fn apply_staged(
+        &self,
+        op: &EditOp,
+        stages: &mut EditStages,
+    ) -> Result<EditResult, EditError> {
+        self.apply_with(op, &mut None, stages)
     }
 
     /// [`World::apply`], and every brick-edit that reaches the row write pushed onto `out` in
@@ -367,14 +463,16 @@ impl World {
         op: &EditOp,
         out: &mut Vec<CapturedBrickEdit>,
     ) -> Result<EditResult, EditError> {
-        self.apply_with(op, &mut Some(out))
+        self.apply_with(op, &mut Some(out), &mut NoStages)
     }
 
-    fn apply_with(
+    fn apply_with<S: Stamps>(
         &self,
         op: &EditOp,
         capture: &mut Option<&mut Vec<CapturedBrickEdit>>,
+        st: &mut S,
     ) -> Result<EditResult, EditError> {
+        st.begin();
         op.shape.check(&self.limits())?;
         let Some((lo, hi)) = op.shape.voxel_bounds() else {
             return Ok(EditResult::default());
@@ -417,8 +515,12 @@ impl World {
         let mut tally = Tally::new(self.materials.len());
         let mut stats = PackedStats::default();
         let mut touched = Vec::new();
+        st.at(Stage::Scan);
+        let mut op_rows = OpRows::new(&op.shape, lo, hi);
+        st.at(Stage::Spans);
         for (coord, vlo, vhi, chunk) in chunks {
             let mut chunk = write(chunk);
+            st.at(Stage::Lock);
             let base = coord.min_voxel().0.map(i64::from);
             let blo = [0, 1, 2].map(|k| (vlo[k] - base[k]) / be);
             let bhi = [0, 1, 2].map(|k| (vhi[k] - base[k]) / be);
@@ -426,10 +528,8 @@ impl World {
             let mut covs = [Coverage::Outside; CHUNK_EDGE_BRICKS as usize];
             for bz in blo[2]..=bhi[2] {
                 for by in blo[1]..=bhi[1] {
-                    // One brick row (fixed `by`, `bz`): the bricks share their `y`, `z` voxel
-                    // rows, so each row's span is solved once over the x window of the row's
-                    // `Partial` bricks and clipped per brick.
-                    let mut window: Option<(i64, i64)> = None;
+                    // One brick row (fixed `by`, `bz`): every brick's coverage first, then
+                    // the bricks it reaches.
                     for bx in blo[0]..=bhi[0] {
                         let bmin = [0, 1, 2].map(|k| base[k] + [bx, by, bz][k] * be);
                         let elo = [0, 1, 2].map(|k| bmin[k].max(vlo[k]));
@@ -437,22 +537,7 @@ impl World {
                         let (a, c) = centres(elo, ehi);
                         let cov = op.shape.coverage(a, c);
                         covs[bx as usize] = cov;
-                        if cov == Coverage::Partial {
-                            window = Some(match window {
-                                Some((x0, _)) => (x0, ehi[0]),
-                                None => (elo[0], ehi[0]),
-                            });
-                        }
                     }
-                    let ys = (
-                        (base[1] + by * be).max(vlo[1]),
-                        (base[1] + by * be + be - 1).min(vhi[1]),
-                    );
-                    let zs = (
-                        (base[2] + bz * be).max(vlo[2]),
-                        (base[2] + bz * be + be - 1).min(vhi[2]),
-                    );
-                    let mut rows = RowCache::new(&op.shape, window, ys, zs);
                     for bx in blo[0]..=bhi[0] {
                         let cov = covs[bx as usize];
                         if cov == Coverage::Outside {
@@ -470,12 +555,17 @@ impl World {
                             elo,
                             ehi,
                         };
-                        if edit_brick(
-                            brick, &targets, edit, &mut rows, &mut tally, &mut stats, capture,
-                        ) {
+                        let cx = BrickCx {
+                            targets: &targets,
+                            tally: &mut tally,
+                            stats: &mut stats,
+                            capture,
+                        };
+                        if edit_brick(brick, edit, &mut op_rows, cx, st) {
                             chunk.mark_dirty(slot);
                             chunk_changed = true;
                         }
+                        st.at(Stage::Tally);
                     }
                 }
             }
@@ -484,6 +574,8 @@ impl World {
                 self.store.mark_dirty(coord);
                 touched.push(coord);
             }
+            drop(chunk);
+            st.at(Stage::Tally);
         }
 
         drop(map);
@@ -491,12 +583,22 @@ impl World {
         let aabb = tally
             .any
             .then(|| (VoxelCoord(to_i32(tally.lo)), VoxelCoord(to_i32(tally.hi))));
-        Ok(EditResult {
+        let result = EditResult {
             changed_from: tally.changed_from(),
             touched,
             aabb,
-        })
+        };
+        st.at(Stage::Result);
+        Ok(result)
     }
+}
+
+/// The per-op state an [`edit_brick`] call writes through.
+struct BrickCx<'a, 'c> {
+    targets: &'a TargetTable,
+    tally: &'a mut Tally,
+    stats: &'a mut PackedStats,
+    capture: &'a mut Option<&'c mut Vec<CapturedBrickEdit>>,
 }
 
 /// Where an op meets one brick: the brick's coverage, its minimum voxel, and the voxels
@@ -511,16 +613,22 @@ struct BrickEdit {
 
 /// Applies the op to the voxels `elo..=ehi` of the brick whose minimum voxel is `bmin`.
 /// Returns whether any voxel changed. The brick is decoded, written row by row and encoded
-/// again in canonical form.
-fn edit_brick(
+/// again in canonical form. Stamps `Coverage` through `Canon` on `st`; the caller stamps the
+/// tally that follows.
+fn edit_brick<S: Stamps>(
     brick: &mut Brick,
-    targets: &TargetTable,
     edit: BrickEdit,
-    rows: &mut RowCache<'_>,
-    tally: &mut Tally,
-    stats: &mut PackedStats,
-    capture: &mut Option<&mut Vec<CapturedBrickEdit>>,
+    rows: &mut OpRows<'_>,
+    cx: BrickCx<'_, '_>,
+    st: &mut S,
 ) -> bool {
+    let BrickCx {
+        targets,
+        tally,
+        stats,
+        capture,
+    } = cx;
+    st.at(Stage::Coverage);
     let BrickEdit {
         cov,
         bmin,
@@ -535,46 +643,42 @@ fn edit_brick(
         if whole && cov == Coverage::Inside {
             *brick = Brick::Uniform(n);
             tally.count(m, BRICK_VOXELS as u32);
+            st.at(Stage::Kernel);
             tally.bound(elo, ehi);
             return true;
         }
     }
 
-    // The span of every row of the edit box, in brick-local `x`, clipped to the box; rows
-    // with no inside centre are empty (`x0 > x1`).
-    let mut spans = [(1u8, 0u8); BRICK_EDGE as usize * BRICK_EDGE as usize];
-    let mut any = false;
-    for z in elo[2]..=ehi[2] {
-        for y in elo[1]..=ehi[1] {
-            let (x0, x1) = if cov == Coverage::Inside {
-                (elo[0], ehi[0])
-            } else {
-                let (x0, x1) = rows.span(y, z);
-                (x0.max(elo[0]), x1.min(ehi[0]))
-            };
-            if x0 <= x1 {
-                let r = local(y, bmin[1]) + BRICK_EDGE as usize * local(z, bmin[2]);
-                spans[r] = ((x0 - bmin[0]) as u8, (x1 - bmin[0]) as u8);
-                any = true;
-            }
-        }
-    }
-    if !any {
+    // The edit's voxels of this brick as eight shape words: the whole edit box when the brick
+    // is `Inside`, else the brick row's spans clipped to the brick's `x` extent. Either way
+    // no bit lies outside the edit box `elo..=ehi`.
+    let shape = if cov == Coverage::Inside {
+        let lo = [0, 1, 2].map(|k| (elo[k] - bmin[k]) as u8);
+        let hi = [0, 1, 2].map(|k| (ehi[k] - bmin[k]) as u8);
+        box_words(lo, hi)
+    } else {
+        rows.words(bmin, elo, ehi)
+    };
+    st.at(Stage::Clip);
+    if shape.iter().all(|&w| w == 0) {
         return false;
     }
     if let Some(out) = capture {
         out.push(CapturedBrickEdit {
             before: brick.clone(),
-            spans,
+            spans: spans_of(&shape),
         });
     }
-    let shape = shape_words(&spans);
-    let bounds = brick.edit_planar(
+    st.at(Stage::Words);
+    let bounds = brick.edit_planar_uncanonical(
         targets.kernel_mode(),
         &shape,
         &mut |m, n| tally.count(m, n),
         stats,
     );
+    st.at(Stage::Kernel);
+    brick.canonicalize(stats);
+    st.at(Stage::Canon);
     match bounds {
         Some((lo, hi)) => {
             tally.bound(
@@ -693,53 +797,101 @@ fn finish(tally: Tally) -> WriterResult {
     (tally.changed_from(), bounds)
 }
 
-/// The brick-local index (`0..8`) of voxel coordinate `v` in the brick starting at `min`.
-fn local(v: i64, min: i64) -> usize {
-    (v - min) as usize
-}
-
-/// The spans of one brick row's voxel rows (fixed `y`, `z`) over the x window of the brick
-/// row's `Partial` bricks, kept for every brick of the brick row and indexed by `y` and `z`
-/// modulo the brick edge. A sphere's are all walked up front by [`sphere_row_spans`]; another
-/// shape's are solved by [`Shape::row_span`] at their first use.
-struct RowCache<'a> {
+/// The span of every voxel row `(y, z)` of one op's voxel bounds `lo..=hi`, over the bounds'
+/// whole `x` extent, each solved at most once per op: a sphere's all walked up front by
+/// [`sphere_row_spans`], another shape's solved by [`Shape::row_span`] at its first use.
+/// Row `(y, z)` is entry `(y - lo.y) + ny (z - lo.z)`, empty as `(1, 0)`. A row's span is
+/// the same whichever chunk or brick asks: the inside centres of a row are one interval
+/// within the bounds, and each brick clips it to its own `x` extent.
+struct OpRows<'a> {
     shape: &'a Shape,
-    /// The x window of the brick row's `Partial` bricks; `None` when it has none.
-    window: Option<(i64, i64)>,
-    /// Bit `y % 8 + 8 (z % 8)` set when that row's span is solved.
-    solved: u64,
-    span: [(i64, i64); BRICK_EDGE as usize * BRICK_EDGE as usize],
+    lo: [i64; 3],
+    hi: [i64; 3],
+    ny: i64,
+    span: Vec<(i64, i64)>,
+    /// Bit `i % 64` of word `i / 64` set when entry `i` is solved; empty when every entry
+    /// is (the sphere).
+    solved: Vec<u64>,
 }
 
-impl<'a> RowCache<'a> {
-    /// The cache of the brick row whose rows are `ys` by `zs` (the edit box's `y` and `z`
-    /// extents, the same for every brick of the row).
-    fn new(shape: &'a Shape, window: Option<(i64, i64)>, ys: (i64, i64), zs: (i64, i64)) -> Self {
-        let mut cache = Self {
-            shape,
-            window,
-            solved: 0,
-            span: [(1, 0); BRICK_EDGE as usize * BRICK_EDGE as usize],
+impl<'a> OpRows<'a> {
+    fn new(shape: &'a Shape, lo: [i64; 3], hi: [i64; 3]) -> Self {
+        let ny = hi[1] - lo[1] + 1;
+        let n = (ny * (hi[2] - lo[2] + 1)) as usize;
+        let mut span = vec![(1, 0); n];
+        let solved = if let Shape::Sphere { c, r } = *shape {
+            sphere_row_spans(
+                c,
+                r,
+                (lo[1], hi[1]),
+                (lo[2], hi[2]),
+                (lo[0], hi[0]),
+                &mut span,
+            );
+            Vec::new()
+        } else {
+            vec![0; n.div_ceil(64)]
         };
-        if let (&Shape::Sphere { c, r }, Some(window)) = (shape, window) {
-            sphere_row_spans(c, r, ys, zs, window, &mut cache.span);
-            cache.solved = u64::MAX;
+        Self {
+            shape,
+            lo,
+            hi,
+            ny,
+            span,
+            solved,
         }
-        cache
     }
 
-    /// The inclusive span of row `(y, z)` within the window, empty (`x0 > x1`) when no centre
-    /// is inside. Called only for rows of a `Partial` brick, so the window is set.
+    /// The span of row `(y, z)`, a row of the bounds.
     fn span(&mut self, y: i64, z: i64) -> (i64, i64) {
-        let be = i64::from(BRICK_EDGE);
-        let r = (y.rem_euclid(be) + be * z.rem_euclid(be)) as usize;
-        if self.solved >> r & 1 == 0 {
-            let (lo, hi) = self.window.expect("a Partial brick sets the window");
-            self.span[r] = self.shape.row_span(y, z, lo, hi).unwrap_or((1, 0));
-            self.solved |= 1 << r;
+        let i = ((y - self.lo[1]) + self.ny * (z - self.lo[2])) as usize;
+        if let Some(word) = self.solved.get_mut(i / 64)
+            && *word >> (i % 64) & 1 == 0
+        {
+            *word |= 1 << (i % 64);
+            self.span[i] = self
+                .shape
+                .row_span(y, z, self.lo[0], self.hi[0])
+                .unwrap_or((1, 0));
         }
-        self.span[r]
+        self.span[i]
     }
+
+    /// The shape words of the brick whose minimum voxel is `bmin` over its edit box
+    /// `elo..=ehi` (rows of the bounds): each row's span clipped to the brick's `x` extent,
+    /// bit `x + 8 y` (brick-local) of word `z`; rows outside the box are empty. Branch-free per
+    /// row: the clipped span is the bits below `x1 + 1 - bmin.x` less the bits below
+    /// `x0 - bmin.x`, both clamped to `0..=8`; an empty span `(1, 0)` has equal bounds and sets
+    /// nothing.
+    fn words(&mut self, bmin: [i64; 3], elo: [i64; 3], ehi: [i64; 3]) -> [u64; 8] {
+        const ONES: [u64; 9] = [0, 1, 3, 7, 15, 31, 63, 127, 255];
+        let be = i64::from(BRICK_EDGE);
+        let mut w = [0u64; 8];
+        for z in elo[2]..=ehi[2] {
+            let mut layer = 0u64;
+            for y in elo[1]..=ehi[1] {
+                let (a, b) = self.span(y, z);
+                let lo = (a - bmin[0]).clamp(0, be) as usize;
+                let hi = (b + 1 - bmin[0]).clamp(0, be) as usize;
+                layer |= (ONES[hi] & !ONES[lo]) << (8 * (y - bmin[1]));
+            }
+            w[(z - bmin[2]) as usize] = layer;
+        }
+        w
+    }
+}
+
+/// The row spans of eight shape words whose rows are each one contiguous run (as every
+/// shape's are): row `y + 8 z` is the run in byte `y` of word `z`, `(1, 0)` when it is empty.
+fn spans_of(shape: &[u64; 8]) -> RowSpans {
+    std::array::from_fn(|r| {
+        let byte = (shape[r / 8] >> (8 * (r % 8))) as u8;
+        if byte == 0 {
+            (1, 0)
+        } else {
+            (byte.trailing_zeros() as u8, 7 - byte.leading_zeros() as u8)
+        }
+    })
 }
 
 /// Writes every row span of `spans` (brick-local, row `y + 8 z`, empty when `x0 > x1`) into
