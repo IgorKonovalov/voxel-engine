@@ -1,6 +1,6 @@
 # 0030: A temporal upscaler of our own: jittered rays, reprojection by hit position, and a sharpening pass
 
-> **Status:** draft
+> **Status:** approved (2026-10-21)
 > **Created:** 2026-10-21
 > **Milestone:** M2 in `docs/roadmap.md` (the upscaler plan; `nfr.md` §2's "with the upscaler
 > allowed, internal resolution between 720p and 1080p")

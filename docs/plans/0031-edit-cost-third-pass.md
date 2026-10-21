@@ -1,6 +1,6 @@
 # 0031: Edit cost, third pass: a profile of the planar path, then its largest shares, to put the `B` line back under 2 ms
 
-> **Status:** draft
+> **Status:** approved (2026-10-21)
 > **Created:** 2026-10-21
 > **Milestone:** M1's edit-cost line in `docs/roadmap.md` (`nfr.md` §4; the "one more
 > optimization pass" the owner planned on 2026-10-20 when the line was raised to 2.2 ms)

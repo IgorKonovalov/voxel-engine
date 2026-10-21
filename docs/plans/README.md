@@ -11,11 +11,11 @@ state from `git log`. Completed plans move to `done/`.
 | Plan | Title | Status | Live constraint |
 |------|-------|--------|-----------------|
 | [0024](0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md) | Direct light: a hit buffer, emissive voxels as light samples, one shadow ray per pixel, and an SVGF-family denoiser whose history dies in edit boxes | approved | M2, ADR-0018 (proposed). After Plan 0023; before Plan 0028. |
-| [0027](0027-mirror-uploads-through-a-staging-belt.md) | Mirror uploads through a staging belt and copy commands: the streaming line's copies | draft | M2, ADR-0022 (proposed). Independent of Plan 0024; the second to merge rebases the frame loop. |
-| [0028](0028-size-classed-mirror-slots-and-surface-only-attributes.md) | Size-classed mirror slots: the packed brick's bytes in the pool, no chunk palette, contour attributes for surface voxels only | draft | M2, ADR-0012's third step. After Plans 0024 and 0027. |
-| [0029](0029-indirect-light-probe-volume.md) | Indirect light from a probe volume that scrolls with the camera | draft | M2, ADR-0023 (proposed). After Plan 0024. |
-| [0030](0030-temporal-upscaler.md) | A temporal upscaler of our own: jittered rays, reprojection by hit position, and a sharpening pass | draft | M2, ADR-0024 (proposed). After Plan 0024; independent of Plan 0029. |
-| [0031](0031-edit-cost-third-pass.md) | Edit cost, third pass: a profile of the planar path, then its largest shares, to put the `B` line back under 2 ms | draft | `nfr.md` section 4. Independent; `vxe-world` and its bench. |
+| [0027](0027-mirror-uploads-through-a-staging-belt.md) | Mirror uploads through a staging belt and copy commands: the streaming line's copies | approved | M2, ADR-0022 (proposed). Independent of Plan 0024; the second to merge rebases the frame loop. |
+| [0028](0028-size-classed-mirror-slots-and-surface-only-attributes.md) | Size-classed mirror slots: the packed brick's bytes in the pool, no chunk palette, contour attributes for surface voxels only | approved | M2, ADR-0012's third step. After Plans 0024 and 0027. |
+| [0029](0029-indirect-light-probe-volume.md) | Indirect light from a probe volume that scrolls with the camera | approved | M2, ADR-0023 (proposed). After Plan 0024. |
+| [0030](0030-temporal-upscaler.md) | A temporal upscaler of our own: jittered rays, reprojection by hit position, and a sharpening pass | approved | M2, ADR-0024 (proposed). After Plan 0024; independent of Plan 0029. |
+| [0031](0031-edit-cost-third-pass.md) | Edit cost, third pass: a profile of the planar path, then its largest shares, to put the `B` line back under 2 ms | approved | `nfr.md` section 4. Independent; `vxe-world` and its bench. |
 <!-- roster:end -->
 
 ## Recently closed

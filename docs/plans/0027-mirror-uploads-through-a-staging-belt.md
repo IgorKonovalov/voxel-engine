@@ -1,6 +1,6 @@
 # 0027: Mirror uploads through a staging belt and copy commands: the streaming line's copies
 
-> **Status:** draft
+> **Status:** approved (2026-10-21)
 > **Created:** 2026-10-21
 > **Milestone:** M2 in `docs/roadmap.md` (the streaming line, `nfr.md` §2, a recorded miss
 > since Plan 0002; this is the plan ADR-0017's Outcome asked for)

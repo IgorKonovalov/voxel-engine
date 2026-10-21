@@ -1,6 +1,6 @@
 # 0028: Size-classed mirror slots: the packed brick's own bytes in the pool, no chunk palette, and contour attributes for surface voxels only
 
-> **Status:** draft
+> **Status:** approved (2026-10-21)
 > **Created:** 2026-10-21
 > **Milestone:** M2 in `docs/roadmap.md` (ADR-0012's third and last step; the contour
 > footprint ADR-0011 and Plan 0013 owe; `nfr.md` §3)

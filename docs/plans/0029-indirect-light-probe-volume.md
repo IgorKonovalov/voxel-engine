@@ -1,6 +1,6 @@
 # 0029: Indirect light from a probe volume that scrolls with the camera
 
-> **Status:** draft
+> **Status:** approved (2026-10-21)
 > **Created:** 2026-10-21
 > **Milestone:** M2 in `docs/roadmap.md` (the indirect-light plan after Plan 0024; "indirect
 > light from probes in both tiers", the floor decision of 2026-10-17)
