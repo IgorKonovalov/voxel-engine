@@ -50,7 +50,10 @@
 //! `--light-radius N` sets the chunks around the camera whose emitters light the frame
 //! (default 4); `--sampler reuse` adds last frame's reservoirs (ReSTIR) to the candidates;
 //! `--history gradient` also shortens history where A-SVGF's gradient sees the light change;
-//! `--lighting half` runs the lighting passes at half resolution on each edge.
+//! `--lighting half` runs the lighting passes at half resolution on each edge. In a window
+//! `F3` toggles the shadow walk, `F4` the sampler, `F5` the history killer, `F6` the lighting
+//! resolution and `F7` the lamp, each printing the lighting modes; with the stats HUD shown,
+//! two rows read every frame pass's GPU time and the light samples with those modes.
 //! `N` cycles the normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
 //! inside the extent).
@@ -1294,8 +1297,10 @@ struct Hud {
     /// The rows' values, refreshed in place on every shown frame. Its `last_edit` is the only
     /// copy of the last edit, so a frame clones nothing.
     stats: HudStats,
-    /// Last frame's pass readings, shown on the next frame's rows.
+    /// Last frame's pass readings, shown on the next frame's rows: the frame's total and
+    /// each pass's, `FRAME_PASSES` in order.
     march_ms: Option<f32>,
+    pass_ms: Option<Vec<f64>>,
     hud_ms: Option<f32>,
     cpu_ms: f32,
     /// The last frame's steps view, read back while that view and the HUD are on.
@@ -1319,6 +1324,7 @@ impl Hud {
             sync: (SyncStats::default(), 0.0),
             stats: HudStats::default(),
             march_ms: None,
+            pass_ms: None,
             hud_ms: None,
             cpu_ms: 0.0,
             steps: None,
@@ -1546,6 +1552,8 @@ struct Autopilot {
     /// samples in the mirror, its ranges evicted and refused, and the longest wait of a chunk
     /// inside the light radius, in milliseconds.
     light_ms: Vec<f64>,
+    /// Each frame pass's GPU time per flight frame, `FRAME_PASSES` in order.
+    pass_ms: Vec<Vec<f64>>,
     peak_light: u64,
     light_evicted: u64,
     light_refused: u64,
@@ -1886,6 +1894,8 @@ struct Run {
     light: LightParams,
     /// `M`: the ore's emission scale pulses (`ORE_PULSE`) instead of holding at 1.
     pulse: bool,
+    /// `F6`: the lighting resolution to switch to on the next frame (it needs the device).
+    pending_resolution: Option<LightingResolution>,
     look: LookParams,
     /// Sets `look.cutaway` each frame of interactive flight; `X` or the pad's `West` cycles it.
     cutaway: CutawayMode,
@@ -1953,6 +1963,18 @@ impl Run {
             budget_bytes: g.mirror.allocated_bytes(),
             r_full: self.stream.as_ref().map(|s| [s.rule.r_full, s.rule.max]),
         });
+        let lighting = self.gfx.as_ref().and_then(|g| {
+            let passes = self.hud.pass_ms.as_ref()?;
+            Some(hud::LightingRow {
+                passes: FRAME_PASSES
+                    .iter()
+                    .zip(passes)
+                    .map(|(&n, &ms)| (n, ms as f32))
+                    .collect(),
+                light_samples: g.mirror.light_samples(),
+                modes: lighting_modes(&g.frame),
+            })
+        });
         let pos = self.fly.camera.position;
         let mode = if self.walk.is_some() {
             hud::Mode::Walk
@@ -1985,6 +2007,7 @@ impl Run {
         s.chunk = voxel_of(pos).chunk().0;
         s.mode = mode;
         s.format_us = h.format_us;
+        s.lighting = lighting;
     }
 
     /// Formats this frame's rows and strip into the overlay, timing the formatting. Allocates
@@ -2934,7 +2957,21 @@ impl Run {
                 percentile(&mut p.gpu_ms, 100.0),
                 p.gpu_ms.len()
             );
+            for (name, v) in FRAME_PASSES.iter().zip(&mut p.pass_ms) {
+                println!(
+                    "autopilot: pass {name}: p50 {:.3} ms, p99 {:.3} ms",
+                    percentile(v, 50.0),
+                    percentile(v, 99.0)
+                );
+            }
         }
+        println!(
+            "autopilot: frame targets {} B at {}x{} ({} lighting)",
+            gfx.frame.frame_bytes(),
+            gfx.frame.target().width(),
+            gfx.frame.target().height(),
+            gfx.frame.resolution().name()
+        );
         if !p.attr.items.is_empty() {
             for line in p.attr.lines() {
                 println!("{line}");
@@ -2997,6 +3034,40 @@ impl Run {
     /// fills, the D-pad's up and down step the dig radius as a scroll line does, `North`
     /// toggles walking, `West` cycles the cutaway as `X` does, and `East` knocks.
     fn handle_input(&mut self, input: &Input) {
+        if let Some(gfx) = self.gfx.as_mut() {
+            let mut l = gfx.frame.lighting();
+            let mut changed = true;
+            if input.pressed(KeyCode::F3) {
+                l.shadow_walk = match l.shadow_walk {
+                    ShadowWalk::Full => ShadowWalk::Coarse,
+                    ShadowWalk::Coarse => ShadowWalk::Full,
+                };
+            } else if input.pressed(KeyCode::F4) {
+                l.sampler = match l.sampler {
+                    Sampler::List => Sampler::Reuse,
+                    Sampler::Reuse => Sampler::List,
+                };
+            } else if input.pressed(KeyCode::F5) {
+                l.history = match l.history {
+                    HistoryKill::Edits => HistoryKill::Gradient,
+                    HistoryKill::Gradient => HistoryKill::Edits,
+                };
+            } else if input.pressed(KeyCode::F7) {
+                l.lamp = !l.lamp;
+            } else if input.pressed(KeyCode::F6) {
+                self.pending_resolution = Some(match gfx.frame.resolution() {
+                    LightingResolution::Full => LightingResolution::Half,
+                    LightingResolution::Half => LightingResolution::Full,
+                });
+                changed = false;
+            } else {
+                changed = false;
+            }
+            if changed {
+                gfx.frame.set_lighting(l);
+                println!("{}", lighting_modes(&gfx.frame));
+            }
+        }
         if input.pressed(KeyCode::KeyM) {
             self.pulse = !self.pulse;
             println!(
@@ -3296,6 +3367,10 @@ impl Run {
         let Some(gfx) = self.gfx.as_mut() else {
             return Flow::Exit;
         };
+        if let Some(r) = self.pending_resolution.take() {
+            gfx.frame.set_resolution(&gpu.device, r);
+            println!("{}", lighting_modes(&gfx.frame));
+        }
         gfx.frame.set_look(self.look);
         let scale = if self.pulse {
             ore_pulse(ms_since(self.start))
@@ -3373,9 +3448,16 @@ impl Run {
         let hud_ms = hud_timer.map(|t| t.read_ms(&gpu.device));
         self.hud.cpu_ms = cpu_ms as f32;
         self.hud.march_ms = gpu_ms.map(|v| v as f32);
+        self.hud.pass_ms.clone_from(&pass_ms);
         self.hud.hud_ms = hud_ms.map(|v| v as f32);
         if flying && let (Some(p), Some(ms)) = (self.pilot.as_mut(), gpu_ms) {
             p.gpu_ms.push(ms);
+            if let Some(passes) = &pass_ms {
+                p.pass_ms.resize(passes.len(), Vec::new());
+                for (v, &ms) in p.pass_ms.iter_mut().zip(passes) {
+                    v.push(ms);
+                }
+            }
         }
         if flying
             && gfx.mirror.surface_attrs()
@@ -3467,6 +3549,22 @@ fn shadow_steps_line(texels: &[[f32; 4]], walk: ShadowWalk) -> String {
         mean(1),
         percentile(&mut loads, 99.0),
         mean(2)
+    )
+}
+
+/// The lighting modes in words: `lighting full, shadow walk full, sampler list, history
+/// edits, lamp on, filter on`.
+fn lighting_modes(frame: &Frame) -> String {
+    let l = frame.lighting();
+    let on = |b: bool| if b { "on" } else { "off" };
+    format!(
+        "lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, filter {}",
+        frame.resolution().name(),
+        l.shadow_walk.name(),
+        l.sampler.name(),
+        l.history.name(),
+        on(l.lamp),
+        on(l.filter)
     )
 }
 
@@ -3619,6 +3717,7 @@ impl App for Flythrough {
                 cpu_ms: Vec::new(),
                 stages_ms: Default::default(),
                 light_ms: Vec::new(),
+                pass_ms: Vec::new(),
                 peak_light: 0,
                 light_evicted: 0,
                 light_refused: 0,
@@ -3658,6 +3757,7 @@ impl App for Flythrough {
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
                 pulse: false,
+                pending_resolution: None,
                 look: self.args.start_look(),
                 cutaway: self.args.cutaway,
                 dig_radius: DIG_RADIUS,
@@ -4647,6 +4747,7 @@ mod tests {
             fly: Fly::new(camera),
             light: LightParams::headlamp(),
             pulse: false,
+            pending_resolution: None,
             dig_radius: DIG_RADIUS,
             scroll: ScrollSteps::default(),
             triggers: [false; 2],
@@ -5177,6 +5278,65 @@ mod tests {
             parse_args_from(argv(&["--cutaway", "x"])).err().as_deref(),
             Some("--cutaway takes auto, on or off, not x")
         );
+    }
+
+    /// Every lighting flag parses its values and refuses an unknown one.
+    #[test]
+    fn lighting_flags_parse_and_refuse_unknown_values() {
+        let parse = |a: &[&str]| parse_args_from(argv(a));
+        let a = parse(&["--emissive-ore", "off", "--lamp", "off", "--filter", "off"]).unwrap();
+        assert!(!a.emissive_ore && !a.lamp && !a.filter);
+        let a = parse(&[
+            "--shadow-walk",
+            "coarse",
+            "--sampler",
+            "reuse",
+            "--history",
+            "gradient",
+            "--lighting",
+            "half",
+            "--light-radius",
+            "6",
+        ])
+        .unwrap();
+        assert_eq!(a.shadow_walk, ShadowWalk::Coarse);
+        assert_eq!(a.sampler, Sampler::Reuse);
+        assert_eq!(a.history, HistoryKill::Gradient);
+        assert_eq!(a.lighting, LightingResolution::Half);
+        assert_eq!(a.light_radius, 6);
+        let d = parse(&[]).unwrap();
+        assert!(d.emissive_ore && d.lamp && d.filter);
+        assert_eq!(
+            (
+                d.shadow_walk,
+                d.sampler,
+                d.history,
+                d.lighting,
+                d.light_radius
+            ),
+            (
+                ShadowWalk::Full,
+                Sampler::List,
+                HistoryKill::Edits,
+                LightingResolution::Full,
+                4
+            )
+        );
+        for (flag, err) in [
+            ("--emissive-ore", "--emissive-ore takes on or off, not x"),
+            ("--lamp", "--lamp takes on or off, not x"),
+            ("--filter", "--filter takes on or off, not x"),
+            ("--shadow-walk", "--shadow-walk takes full or coarse, not x"),
+            ("--sampler", "--sampler takes list or reuse, not x"),
+            ("--history", "--history takes edits or gradient, not x"),
+            ("--lighting", "--lighting takes full or half, not x"),
+            (
+                "--light-radius",
+                "--light-radius takes 0 to 64 chunks, not x",
+            ),
+        ] {
+            assert_eq!(parse(&[flag, "x"]).err().as_deref(), Some(err), "{flag}");
+        }
     }
 
     #[test]

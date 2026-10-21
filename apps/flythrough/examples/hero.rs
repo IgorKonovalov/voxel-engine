@@ -1,13 +1,22 @@
-//! Renders one still of the bounded level under the headlamp, for the README.
+//! Renders one still of the bounded level under the headlamp and its glowing ore, for the
+//! README.
 //!
 //! `cargo run --release -p flythrough --example hero -- [--seed N] [--size WxH] [--yaw DEG]
-//! [--pitch DEG] [--at X,Y,Z] [--carve R] [--out PATH]`. `--at` is a voxel coordinate (the
-//! level's spawn by default); `--carve R` digs a sphere of radius `R` voxels where the view ray
-//! meets rock before the frame is drawn. Runs on the high-performance adapter with no window.
+//! [--pitch DEG] [--at X,Y,Z] [--carve R] [--out PATH] [--frames N] [--lighting full|half]
+//! [--shadow-walk full|coarse] [--sampler list|reuse] [--history edits|gradient]
+//! [--lamp on|off] [--filter on|off] [--exposure E]`. `--at` is a voxel coordinate (the level's spawn by
+//! default); `--carve R` digs a sphere of radius `R` voxels where the view ray meets rock
+//! before the frame is drawn. The look is the fly-through's default (contour planes, rock's
+//! detail); the ore glows (`flythrough::ORE_EMISSION`); the still is the
+//! last of `--frames` frames (default 64) from the same pose, so the accumulation and the
+//! filter settle; the lighting flags are the fly-through's. Runs on the high-performance
+//! adapter with no window.
 
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
-use flythrough::cave_materials;
-use vxe_render::{Camera, Frame, GpuWorld, LightParams, readback, wgpu};
+use vxe_render::{
+    Camera, Frame, GpuWorld, HistoryKill, LightParams, Lighting, LightingResolution, Sampler,
+    ShadowWalk, readback, wgpu,
+};
 use vxe_world::*;
 
 struct Args {
@@ -18,6 +27,9 @@ struct Args {
     at: Option<[i32; 3]>,
     carve: i64,
     out: String,
+    frames: u32,
+    resolution: LightingResolution,
+    lighting: Lighting,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -29,6 +41,14 @@ fn parse_args() -> Result<Args, String> {
         at: None,
         carve: 0,
         out: "docs/images/hero.png".to_owned(),
+        frames: 64,
+        resolution: LightingResolution::Full,
+        lighting: Lighting::default(),
+    };
+    let on_off = |flag: &str, v: &str| match v {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        _ => Err(format!("{flag} takes on or off, not {v}")),
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -55,6 +75,26 @@ fn parse_args() -> Result<Args, String> {
             }
             "--carve" => args.carve = v.parse().map_err(|e| bad(&e))?,
             "--out" => args.out = v,
+            "--frames" => args.frames = v.parse().map_err(|e| bad(&e))?,
+            "--lighting" => {
+                args.resolution = LightingResolution::from_name(&v)
+                    .ok_or(format!("--lighting takes full or half, not {v}"))?;
+            }
+            "--shadow-walk" => {
+                args.lighting.shadow_walk = ShadowWalk::from_name(&v)
+                    .ok_or(format!("--shadow-walk takes full or coarse, not {v}"))?;
+            }
+            "--sampler" => {
+                args.lighting.sampler = Sampler::from_name(&v)
+                    .ok_or(format!("--sampler takes list or reuse, not {v}"))?;
+            }
+            "--history" => {
+                args.lighting.history = HistoryKill::from_name(&v)
+                    .ok_or(format!("--history takes edits or gradient, not {v}"))?;
+            }
+            "--lamp" => args.lighting.lamp = on_off(&flag, &v)?,
+            "--filter" => args.lighting.filter = on_off(&flag, &v)?,
+            "--exposure" => args.lighting.exposure = v.parse().map_err(|e| bad(&e))?,
             _ => return Err(format!("unknown argument {flag}")),
         }
     }
@@ -64,7 +104,11 @@ fn parse_args() -> Result<Args, String> {
 fn main() -> Result<(), String> {
     let args = parse_args()?;
     let source = CaveSource::new(args.seed, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
-    let world = World::generate(source.extent, &source, &cave_materials());
+    let world = World::generate(
+        source.extent,
+        &source,
+        &flythrough::with_emissive_ore(&flythrough::look_materials()),
+    );
     let eye = VoxelCoord(args.at.unwrap_or(source.spawn().0));
     let camera = Camera {
         position: eye.0.map(|v| v as f32 + 0.5).into(),
@@ -104,13 +148,38 @@ fn main() -> Result<(), String> {
     }))
     .map_err(|e| format!("no device: {e}"))?;
 
-    let mut gpu = GpuWorld::new(&device, world.extent());
-    gpu.sync(&world, &queue)
-        .map_err(|e| format!("mirror: {e:?}"))?;
+    // The fly-through's default look: contour planes with rock's procedural detail.
+    let mut gpu = GpuWorld::with_surface_attrs(
+        &device,
+        vxe_render::MirrorConfig::new(vxe_render::Window::Fixed(world.extent())),
+    );
+    // The light radius around the eye; its ranges take a few syncs of the sample budget.
+    gpu.set_focus(eye);
+    for _ in 0..8 {
+        gpu.sync(&world, &queue)
+            .map_err(|e| format!("mirror: {e:?}"))?;
+        let mut enc = device.create_command_encoder(&Default::default());
+        gpu.update_attrs(&mut enc);
+        queue.submit([enc.finish()]);
+    }
     let [w, h] = args.size;
-    let frame = Frame::new(&device, w, h);
-    frame.render(&device, &queue, &gpu, &camera, &LightParams::headlamp());
+    let mut frame = Frame::new(&device, w, h);
+    frame.set_lighting(args.lighting);
+    frame.set_look(vxe_render::LookParams {
+        normal_mode: vxe_render::NormalMode::Contour,
+        detail: true,
+        ..vxe_render::LookParams::default()
+    });
+    frame.set_resolution(&device, args.resolution);
+    for _ in 0..args.frames.max(1) {
+        frame.step(&device, &queue, &gpu, &camera, &LightParams::headlamp());
+    }
     let rgba = readback::read_rgba8(&device, &queue, frame.target());
+    println!(
+        "{} frames, {} light samples in reach",
+        args.frames.max(1),
+        gpu.light_samples()
+    );
 
     let file = std::fs::File::create(&args.out).map_err(|e| format!("{}: {e}", args.out))?;
     let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w, h);

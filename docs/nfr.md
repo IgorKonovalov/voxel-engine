@@ -310,6 +310,15 @@ The world figure rests on the uniform-brick assumption in `roadmap.md` (under 10
 non-uniform at full detail). When exceeded, far chunks drop to LOD-only residency rather than
 the frame dropping.
 
+**The frame's targets (Plan 0024 Phase 11, `Frame::frame_bytes` printed by `flythrough
+--autopilot --headless --seed 1 --render 1920x1080`):** 308 736 000 B with full-resolution
+lighting and 195 379 200 B at half resolution, against the 1.5 GB line; the light-sample buffer
+adds 16 MiB plus its 16 KiB candidate table (2^20 samples of 16 B), the blue noise 16 KiB and
+the emission scale 256 KiB. Per pixel at full resolution: the hit buffer twice (48 B), the
+translucent layers 8 B, the irradiance 8 B, the accumulation and moments twice (32 B), the
+filter's pair 16 B, the reservoirs twice (32 B), the output 4 B, and the gradient strata 8 B
+per 9 pixels. The plan's projection was about 276 MB.
+
 **Readings (dev reference, 2026-10-16, Plan 0001 Phase 4 commit, `flythrough` cave seed 1,
 `cargo run --release -p flythrough --example world_budget`):**
 

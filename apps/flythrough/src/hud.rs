@@ -23,6 +23,9 @@ pub const CEILING_MS: f32 = 33.3;
 const FRAME_LINE_MS: f32 = 1000.0 / 60.0;
 const MARCH_LINE_MS: f32 = 3.0;
 const UPLOAD_LINE_MS: f32 = 1.0;
+/// `nfr.md` §2's lighting and denoise lines.
+const LIGHTING_LINE_MS: f32 = 6.0;
+const DENOISE_LINE_MS: f32 = 3.0;
 /// Mirror pressure above which the fly-through lowers its full radius (ADR-0013); the
 /// pressure row turns yellow past it.
 pub const PRESSURE_HIGH: f32 = 0.9;
@@ -367,6 +370,17 @@ pub struct HudStats {
     pub pressure: Option<Pressure>,
     /// The gamepad row; `None` (no pad source in this run) hides it.
     pub pad: Option<PadRow>,
+    /// The frame's passes and light samples; `None` hides their two rows.
+    pub lighting: Option<LightingRow>,
+}
+
+/// The frame passes' GPU times (name and milliseconds, in pass order), the light samples the
+/// mirror holds, and the lighting modes in words.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LightingRow {
+    pub passes: Vec<(&'static str, f32)>,
+    pub light_samples: u64,
+    pub modes: String,
 }
 
 /// The mirror's pressure (the fuller of its pool slots and records), its reservation in bytes,
@@ -447,6 +461,7 @@ impl HudStats {
             steps: None,
             pressure: None,
             pad: None,
+            lighting: None,
         }
     }
 
@@ -498,6 +513,35 @@ impl HudStats {
                 .map_or(HudColour::White, |v| over(v, MARCH_LINE_MS)),
             format_args!("gpu march {}  hud {}", Ms(self.march_ms), Ms(self.hud_ms)),
         )?;
+        if let Some(l) = &self.lighting {
+            // Yellow when light and temporal exceed the lighting line or the filter the
+            // denoise line.
+            let ms = |name: &str| {
+                l.passes
+                    .iter()
+                    .filter(|(n, _)| *n == name)
+                    .map(|&(_, v)| v)
+                    .sum::<f32>()
+            };
+            let colour = if ms("light") + ms("temporal") > LIGHTING_LINE_MS
+                || ms("atrous") > DENOISE_LINE_MS
+            {
+                HudColour::Yellow
+            } else {
+                HudColour::White
+            };
+            out.write_str("gpu")?;
+            for (name, v) in &l.passes {
+                write!(out, " {name} {v:.2}")?;
+            }
+            out.write_str(" ms")?;
+            row(out, colour, format_args!(""))?;
+            row(
+                out,
+                HudColour::White,
+                format_args!("lights {} samples; {}", l.light_samples, l.modes),
+            )?;
+        }
         row(
             out,
             over(self.upload_ms, UPLOAD_LINE_MS),
@@ -913,6 +957,41 @@ mod tests {
             .collect();
         assert_eq!(yellow, [0, 3]);
         assert!(colours.iter().all(|&c| c != HudColour::Red));
+    }
+
+    /// The lighting rows follow the march row: every pass's time, yellow when light and
+    /// temporal pass the 6.0 ms line or the filter the 3.0 ms one, then the light samples and
+    /// the modes.
+    #[test]
+    fn the_lighting_rows_follow_the_march_row() {
+        let (mut out, mut colours) = (String::new(), Vec::new());
+        let mut s = HudStats::fixed();
+        s.lighting = Some(LightingRow {
+            passes: vec![
+                ("hit", 1.25),
+                ("light", 4.5),
+                ("temporal", 0.5),
+                ("atrous", 2.5),
+            ],
+            light_samples: 18_522,
+            modes: "lighting full".to_owned(),
+        });
+        s.write_rows(&mut out, &mut colours);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 14);
+        assert_eq!(
+            lines[3],
+            "gpu hit 1.25 light 4.50 temporal 0.50 atrous 2.50 ms"
+        );
+        assert_eq!(lines[4], "lights 18522 samples; lighting full");
+        assert_eq!(colours[3], HudColour::White);
+        s.lighting.as_mut().unwrap().passes[1].1 = 6.0;
+        s.write_rows(&mut out, &mut colours);
+        assert_eq!(
+            colours[3],
+            HudColour::Yellow,
+            "light + temporal over 6.0 ms"
+        );
     }
 
     /// A pad row sits before the format row, and a run without a pad source shows none.

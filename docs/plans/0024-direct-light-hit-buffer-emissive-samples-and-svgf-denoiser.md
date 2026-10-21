@@ -576,8 +576,8 @@ such.
 | 7: Near-emitter candidates and bounded light extraction | dev | done for bars 1 and 2; bars 3 and 4 waiting for quiet (Notes) | 3a71e15 |
 | 8: Reservoir reuse against the flat list | dev | done | 0975e2b |
 | 9: A-SVGF's gradient as the other history killer | dev | done | e74c9e5 |
-| 10: The half-resolution tier | dev | done; the 3.0 ms a-trous bar waiting for quiet (Notes) | committed with this row |
-| 11: The fly-through's switches, HUD rows and autopilot readings | dev | not started | |
+| 10: The half-resolution tier | dev | done; the 3.0 ms a-trous bar waiting for quiet (Notes) | 3c2de1d |
+| 11: The fly-through's switches, HUD rows and autopilot readings | dev | done; `frame_bytes` at 1080p over 300 MB (Notes) | committed with this row |
 | 12: The owner's windowed check | human | not started | |
 
 ### Notes
@@ -721,6 +721,21 @@ each. Empty is fine.)_
   `max(n.n', 0)^32 exp(-plane distance)`. `Frame::set_resolution` replaces the lighting
   targets and drops the history; `--lighting full|half` added here. The 3.0 ms a-trous bar at
   half resolution read 1.1 to 1.2 ms on the loaded box; the quiet reading is owed.
+- Phase 11: the toggle keys are `F3` (shadow walk), `F4` (sampler), `F5` (history killer),
+  `F6` (lighting resolution, applied on the next frame since it needs the device) and `F7`
+  (lamp): the letters free of the fly-through's bindings (`C` is down) ran out. The HUD gains
+  two rows after the march row, shown once a timed frame has run: every pass's GPU time,
+  yellow over the lighting or denoise line, and the light samples with the modes; the
+  `hud.png` fixture has none, so its golden is unchanged. `fly.rs` was not touched.
+- Phase 11 done-when not met: `frame_bytes` at 1080p reads 308 736 000 B with full-resolution
+  lighting against the 300 MB projection (195 379 200 B at half); the extra over the plan's
+  276 MB table is the translucent layers and the light pass's raw irradiance (8 B each, not in
+  the table) and the gradient strata.
+- Phase 11: the hero example draws with the fly-through's default look (contour, rock detail),
+  the ore emissive, the light radius around the eye and `--exposure` (the still uses 0.08:
+  the lamp's 1200 intensity saturates near walls under ACES at 1.0); `--frames`,
+  `--lighting`, `--shadow-walk`, `--sampler`, `--history`, `--lamp`, `--filter` as the
+  fly-through's.
 
 Phase 1 observations: hitmask and normals of the three scenes byte-identical to ae58f0c; the
 identity-tone-mapped carve's largest channel difference from ae58f0c's is 0/255; the
@@ -755,6 +770,13 @@ edit-box mode had 0.1 % at frame 9, 67.1 % at 11, all at 22.
 Phase 10 observations: `dark_cave_half.png` blessed; its mean absolute difference from
 `dark_cave.png` is 2.716, 1.775 and 0.920 of 255 (red, green, blue). Both tiers' passes:
 `docs/nfr.md` §2, "Both lighting tiers at 1080p output".
+
+Phase 11 observations: over the autopilot's flight at 1920 x 1080 (load 2.6) the passes read
+p50 / p99 hit 0.226 / 2.851, light 1.646 / 11.863, temporal 0.281 / 0.468, a-trous 5.234 /
+6.263, composite 0.253 / 0.276 ms; extraction p50 0.173, p99 2.928 ms; `frame_bytes`
+308 736 000 B; at half resolution (load 4.3) light 0.417 / 2.861, temporal 0.076 / 0.133,
+a-trous 1.276 / 1.539 ms and 195 379 200 B. `docs/images/hero.png` re-shot at voxel
+(148, 280, 484), yaw 135, pitch -10, exposure 0.08, 64 frames.
 
 Phase 6 observations: `dark_cave.png` re-blessed after 32 accumulated frames (34 273 pixels
 changed, 32 137 by more than 2/255), 29 103 of 57 600 pixels at 16/255 or more; with the ore
