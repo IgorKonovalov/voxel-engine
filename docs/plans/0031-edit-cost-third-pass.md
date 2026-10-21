@@ -205,8 +205,8 @@ No GPU figure moves; nothing here runs on an adapter.
 |---|---|---|---|
 | 1: The stage table and the profile | dev | done | a49c6a1 |
 | 2: The first lever | dev | done | f3e2623 |
-| 3: The second lever | dev | done | committed with this row |
-| 4: The quiet-box readings and the line | dev | not started | |
+| 3: The second lever | dev | done | 8dad5ca |
+| 4: The quiet-box readings and the line | dev | waiting for a quiet box | |
 
 ### Notes
 
@@ -284,6 +284,11 @@ No GPU figure moves; nothing here runs on an adapter.
   share (27 %) less 3 %. The stage was the per-row visit of each brick row's rows, which each
   brick still makes; one walk per op removes only the repeat per chunk along `x` and the
   brick-row copy (Phase 3 commit).
+- Resume (Phase 4, delete when it lands): stopped for a quiet box; the box read load 7 to 18
+  with other lanes through Phases 1 to 3. The 2796062 tree is built under
+  `target/pair/2796062` (edits, replay, tick benches, release fly-through). Loaded
+  single-shot `B` lines at load 14 to 15, alternated: 2796062 1.69, 1.73, 1.64 ms; 8dad5ca
+  1.22, 1.11, 2.00 ms; carve counts equal (rock 340502, ore 126).
 - Phase 3: full workspace nextest 555 passed, 4 skipped (Phase 3 commit).
 
 ### Close triggers
