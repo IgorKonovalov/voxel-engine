@@ -85,6 +85,11 @@ ignored.
 
 - **Every feature has a headless test.** The world crate is tested without a GPU; render tests
   use the software adapter and skip, with a printed reason, where none exists.
+- **Every runtime toggle a plan adds to the testbed shows its mode in the window.** A key-bound
+  mode, look or debug switch puts its current state on screen, at least as a brief notice on
+  change, visible without the stats HUD; stdout is invisible in a fullscreen window. The plan
+  gives it a behavioural done-when (a HUD golden, or a test that the banner text changes).
+  First instance: Plan 0024 Phase 14.
 - **An assertion states the plan's claim with its exact value**, or a property with a stated
   tolerance. `is_ok()`, `is_some()` and "did not panic" are not assertions of behavior.
 - **A test never pins live, growing data** (the material table of the fly-through, the shader

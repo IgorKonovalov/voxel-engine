@@ -96,6 +96,8 @@ specific. Vague plans get ignored.
 - **A `## Budgets` section names the `nfr.md` figures touched and how the close measures them.**
 - **Headless proof is mandatory.** Every plan names at least one test that runs without a window.
   A render plan also names its golden image and the SSIM or pixel floor.
+- **A testbed toggle shows its mode in the window**, with a behavioural done-when
+  (`references/best-practices.md`, Tests).
 - **Name what the plan does NOT do.** Tempting bundles go there, with a pointer to a milestone.
 
 If the plan contains a revisitable tradeoff (a storage layout, a denoiser family, a dependency,
