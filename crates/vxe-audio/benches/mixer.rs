@@ -1,8 +1,13 @@
 //! The mixer budget: one 256-frame block with 32 HRTF voices, each low-passed and carrying 16
-//! reflection taps, with the listener still (every voice on one FIR pair) and turning (every
-//! voice crossfading between two FIR pairs, the worst case). Prints the audio RAM the mixer and
-//! the pack hold. The `Acoustics::update` budget is the fly-through's `acoustics` bench, which
-//! owns the cave it probes.
+//! reflection taps into the 16 direction buses and a send into the late tail, with the
+//! listener still (every voice and bus on one FIR pair) and turning (every voice and bus
+//! crossfading between two FIR pairs, the worst case). The tail's room alternates every 0.33 s
+//! between an 8 m room (2.26 s) and a 10 m one (2.83 s), as a walk through a cave hands it
+//! rooms, so both of its networks run: one fed, the other ringing out or fading. Each case
+//! runs again with the direct path's propagation delay on (every voice and tap reading the
+//! delay line at the source's distance). Prints the audio RAM the
+//! mixer and the pack hold. The `Acoustics::update` budget is the fly-through's `acoustics`
+//! bench, which owns the cave it probes.
 
 use std::hint::black_box;
 
@@ -48,8 +53,12 @@ fn noise() -> Sound {
 
 /// A mixer at the origin with the 32 looping noise voices, each with 16 taps and a low-pass,
 /// rendered past the start so the delay lines are full and the gains and filters settled.
-fn loaded_mixer() -> Mixer {
+fn loaded_mixer(direct_delay: bool) -> Mixer {
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    mixer.set_mix(MixSettings {
+        direct_delay,
+        ..MixSettings::default()
+    });
     let sound = noise();
     for (i, p) in sources([0.0; 3]).into_iter().enumerate() {
         let id = VoiceId(i as u32 + 1);
@@ -74,34 +83,137 @@ fn loaded_mixer() -> Mixer {
                 gain: 0.5,
                 cutoff_hz: 2_000.0 + 100.0 * i as f32,
                 taps,
-                tap_count: MAX_TAPS as u8,
+                send: 0.5,
             },
         ));
     }
     let mut out = vec![0.0f32; 2 * BLOCK];
+    let mut rooms = Rooms(0);
     for _ in 0..200 {
+        rooms.step(&mut mixer);
         mixer.render(&mut out, BLOCK);
     }
     assert_eq!(mixer.voice_count(), SOURCES);
+    assert!(
+        mixer.reverb_networks().iter().all(|n| n.holds_signal),
+        "both tail networks run"
+    );
     mixer
 }
 
+/// The two rooms the tail alternates between.
+const ROOMS: [RoomTargets; 2] = [
+    RoomTargets {
+        t60_s: 2.26,
+        mean_free_path_m: 8.0,
+        energy: 0.379,
+    },
+    RoomTargets {
+        t60_s: 2.83,
+        mean_free_path_m: 10.0,
+        energy: 0.243,
+    },
+];
+/// Blocks between room changes: 0.33 s.
+const ROOM_BLOCKS: usize = 62;
+
+/// Blocks rendered; sends the next room every [`ROOM_BLOCKS`].
+struct Rooms(usize);
+
+impl Rooms {
+    fn step(&mut self, mixer: &mut Mixer) {
+        if self.0.is_multiple_of(ROOM_BLOCKS) {
+            mixer.apply(Command::SetRoom(ROOMS[self.0 / ROOM_BLOCKS % 2]));
+        }
+        self.0 += 1;
+    }
+}
+
+/// Prints the median time of the blocks that clear a tail network (a fade-out ending or a
+/// handover taking a network) against the median of the other blocks, over 40 room changes.
+/// Two passes over the same deterministic sequence: the first finds the clearing blocks (a
+/// network that held signal holds none after), the second times every block.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a bench times single blocks on the wall clock; nothing here is the deterministic world"
+)]
+fn clearing_block() {
+    const BLOCKS: usize = 40 * ROOM_BLOCKS;
+    let mut mixer = loaded_mixer(false);
+    let mut rooms = Rooms(200);
+    let mut out = vec![0.0f32; 2 * BLOCK];
+    let mut clears = vec![false; BLOCKS];
+    for c in clears.iter_mut() {
+        let before = mixer.reverb_networks().map(|n| n.holds_signal);
+        rooms.step(&mut mixer);
+        mixer.render(&mut out, BLOCK);
+        let after = mixer.reverb_networks().map(|n| n.holds_signal);
+        *c = before.iter().zip(&after).any(|(b, a)| *b && !*a);
+    }
+    let mut mixer = loaded_mixer(false);
+    let mut rooms = Rooms(200);
+    let (mut clearing, mut other) = (Vec::new(), Vec::new());
+    for &c in &clears {
+        rooms.step(&mut mixer);
+        let t = std::time::Instant::now();
+        mixer.render(&mut out, BLOCK);
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        black_box(&out);
+        if c { clearing.push(ms) } else { other.push(ms) }
+    }
+    let median = |v: &mut Vec<f64>| {
+        v.sort_by(f64::total_cmp);
+        v.get(v.len() / 2).copied().unwrap_or(f64::NAN)
+    };
+    println!(
+        "tail: {} blocks clear a network, median {:.4} ms; the other {} blocks, median {:.4} ms",
+        clearing.len(),
+        median(&mut clearing),
+        other.len(),
+        median(&mut other)
+    );
+}
+
 fn mixer_block(c: &mut Criterion) {
-    let mut mixer = loaded_mixer();
+    clearing_block();
+    let mut mixer = loaded_mixer(false);
     let pack_bytes = mixer.hrtf().map_or(0, |h| h.heap_bytes());
     // Every voice owns its history and a delay line of MAX_DELAY_FRAMES plus one block,
     // pooled for MAX_VOICES at construction.
     let delay_line = (MAX_DELAY_FRAMES + BLOCK) * 4;
+    // Each bus holds one block of input and the HRIR's history; each voice its 16 slot states.
+    let taps = mixer.hrtf().map_or(1, |h| h.taps());
+    let buses = MAX_TAPS * (BLOCK + taps - 1) * 4;
+    let slots = MAX_TAPS * 8;
     println!(
         "audio RAM: pack {pack_bytes} B; delay line {delay_line} B per voice, {} B for the \
-         {MAX_VOICES}-voice pool",
-        delay_line * MAX_VOICES
+         {MAX_VOICES}-voice pool; buses {buses} B; tap slots {slots} B per voice, {} B for the \
+         pool; tail lines {} B (two networks); pre-delay line {} B",
+        delay_line * MAX_VOICES,
+        slots * MAX_VOICES,
+        mixer.reverb_bytes(),
+        mixer.predelay_bytes()
     );
     let mut out = vec![0.0f32; 2 * BLOCK];
+    let mut rooms = Rooms(1);
     c.bench_function(
-        "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each",
+        "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, 16 buses, tail \
+         handing over",
         |b| {
             b.iter(|| {
+                rooms.step(&mut mixer);
+                mixer.render(&mut out, BLOCK);
+                black_box(&out);
+            })
+        },
+    );
+    let mut mixer = loaded_mixer(true);
+    c.bench_function(
+        "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, 16 buses, tail \
+         handing over, direct delay",
+        |b| {
+            b.iter(|| {
+                rooms.step(&mut mixer);
                 mixer.render(&mut out, BLOCK);
                 black_box(&out);
             })
@@ -130,7 +242,13 @@ fn local(p: [f32; 3], yaw_deg: f32) -> [f32; 3] {
 }
 
 fn mixer_block_turning(c: &mut Criterion) {
-    let mut mixer = loaded_mixer();
+    for direct_delay in [false, true] {
+        mixer_block_turning_with(c, direct_delay);
+    }
+}
+
+fn mixer_block_turning_with(c: &mut Criterion, direct_delay: bool) {
+    let mut mixer = loaded_mixer(direct_delay);
     // Each step of YAW_STEP_DEG moves every voice to another measured direction, so every
     // block renders two FIR pairs per voice and crossfades them.
     let hrtf = mixer.hrtf().cloned().expect("the HRTF mixer");
@@ -147,18 +265,21 @@ fn mixer_block_turning(c: &mut Criterion) {
     }
     let mut out = vec![0.0f32; 2 * BLOCK];
     let mut k = 0usize;
-    c.bench_function(
-        "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, \
-         listener turning (every voice crossfades)",
-        |b| {
-            b.iter(|| {
-                k = (k + 1) % steps;
-                mixer.apply(Command::SetListener(facing(k as f32 * YAW_STEP_DEG)));
-                mixer.render(&mut out, BLOCK);
-                black_box(&out);
-            })
-        },
+    let mut rooms = Rooms(1);
+    let name = format!(
+        "mixer: one 256-frame block, 32 HRTF voices, low-pass and 16 taps each, 16 buses, \
+         tail handing over, listener turning (every voice crossfades){}",
+        if direct_delay { ", direct delay" } else { "" }
     );
+    c.bench_function(&name, |b| {
+        b.iter(|| {
+            rooms.step(&mut mixer);
+            k = (k + 1) % steps;
+            mixer.apply(Command::SetListener(facing(k as f32 * YAW_STEP_DEG)));
+            mixer.render(&mut out, BLOCK);
+            black_box(&out);
+        })
+    });
 }
 
 criterion_group!(benches, mixer_block, mixer_block_turning);

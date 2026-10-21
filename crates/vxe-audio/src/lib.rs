@@ -27,18 +27,34 @@
 mod acoustics;
 mod command;
 mod hrtf;
+mod input;
 mod mixer;
 mod output;
+mod reverb;
+mod room_curve;
+mod stream;
 mod voice;
 
 pub use acoustics::{
-    Acoustics, BlockClock, Occlusion, REFLECTION_RANGE_METRES, REFLECTION_RAYS, Reflection,
-    occlusion, reflection_directions, reflections, taps,
+    Acoustics, BlockClock, MAX_T60_SECONDS, Occlusion, REFLECTION_RANGE_METRES, REFLECTION_RAYS,
+    REFLECTION_SKIN_METRES, ROOM_COS_FLOOR, ROOM_INTERVAL_SECONDS, ROOM_MOVE_METRES, ROOM_RAYS,
+    ROOM_RAYS_PER_UPDATE, Reflection, RoomEstimate, occlusion, reflection_directions,
+    reflection_keep, reflections, room_directions, taps,
 };
-pub use command::{COMMAND_CAPACITY, Command};
+pub use command::{COMMAND_CAPACITY, Command, RoomTargets};
 pub use hrtf::Hrtf;
-pub use mixer::{MAX_VOICES, Mixer};
+pub use input::Input;
+pub use mixer::{
+    MAX_VOICES, MixSettings, Mixer, TAP_JUMP_FRAMES, TAP_SILENT, TAP_SLEW_FRAMES_PER_FRAME, TapSlot,
+};
 pub use output::{Output, OutputStats};
+pub use reverb::{
+    REVERB_DELAY_SLEW_FRAMES_PER_FRAME, REVERB_LINES, REVERB_MAX_DELAY_FRAMES,
+    REVERB_MAX_PREDELAY_FRAMES, REVERB_MIN_DELAY_FRAMES, ReverbLine, ReverbNetwork, ReverbSettings,
+    TAIL_HANDOVER_RATIO, TailLines,
+};
+pub use room_curve::{ROOM_CURVE_POINTS, RoomCurve};
+pub use stream::{STREAM_CAPACITY_FRAMES, Stream, StreamMonitor, StreamReader, StreamWriter};
 pub use voice::{
     AcousticTargets, MAX_DELAY_FRAMES, MAX_TAPS, OPEN_CUTOFF_HZ, PlayParams, Sound, Tap, VoiceId,
 };
@@ -76,12 +92,16 @@ impl Default for Listener {
 pub enum AudioError {
     /// The host has no default output device.
     NoDevice,
-    /// The device cannot open 48 kHz stereo `f32`; names what it offered.
+    /// The host has no default input device.
+    NoInputDevice,
+    /// The device cannot open 48 kHz `f32` (stereo for output); names what it offered.
     Format(String),
     /// The command channel is full; the command was not sent.
     Busy,
     /// An HRIR pack failed validation.
     Pack(&'static str),
+    /// A [`RoomCurve`]'s knots are malformed; names how.
+    Curve(&'static str),
     /// The backend failed to build, start or keep the stream.
     Stream(String),
 }
@@ -90,14 +110,16 @@ impl std::fmt::Display for AudioError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoDevice => write!(f, "no default output device"),
+            Self::NoInputDevice => write!(f, "no default input device"),
             Self::Format(offered) => {
                 write!(
                     f,
-                    "the device cannot open 48 kHz stereo f32; it offers {offered}"
+                    "the device cannot open 48 kHz f32 (stereo for output); it offers {offered}"
                 )
             }
             Self::Busy => write!(f, "the audio command channel is full"),
             Self::Pack(why) => write!(f, "bad HRIR pack: {why}"),
+            Self::Curve(why) => write!(f, "bad room curve: {why}"),
             Self::Stream(why) => write!(f, "audio stream: {why}"),
         }
     }

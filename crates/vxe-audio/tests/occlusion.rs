@@ -86,6 +86,7 @@ fn tail_rms(out: &[f32]) -> f32 {
 /// reflections off, so the render is the direct path alone.
 fn render(world: &World, freq: f32) -> f32 {
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    mixer.set_mix(MixSettings::flat());
     let listener = Listener {
         position: centre(LISTENER),
         ..Listener::default()
@@ -174,6 +175,7 @@ fn a_pillar_covering_three_rays_gives_0_6074() {
 fn probes_follow_movement_and_the_500_ms_cadence() {
     let world = world(wall(100, 150));
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    mixer.set_mix(MixSettings::flat());
     let mut acoustics = Acoustics::new(mixer.clock());
     let mut listener = Listener {
         position: centre(LISTENER),

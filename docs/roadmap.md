@@ -337,7 +337,7 @@ controller (ADR-0005's Outcome addendum). Plan 0009 (collapse) is unblocked.
   under its feet changes the coarse grid cell and emits one notification.
 - **Visible proof:** walking instead of flying in the fly-through.
 
-### M4: Spatial audio (Plan 0006 done 2026-10-17, v0.12.0; Plan 0020 approved for the reverb)
+### M4: Spatial audio (Plans 0006, v0.12.0, and 0020, v0.24.0, done)
 
 - `vxe-audio`: output through `cpal`, a mixer, HRTF spatialization, occlusion and transmission
   by ray probes through the material table's acoustic triple, early reflections from ray probes,
@@ -354,7 +354,9 @@ controller (ADR-0005's Outcome addendum). Plan 0009 (collapse) is unblocked.
   glide instead of swapping (the moving-listener clicks), and a streamed voice so a microphone
   can be heard echoing in the cave. Headless proof: three closed cubes of 4, 12 and 36 m give
   Schroeder-measured decay times within 20 percent of 0.75, 2.26 and 6.77 s and in that order.
-  Heard proof: the owner's `--room` checks and the cave walk.
+  Heard proof: the owner's `--room` checks and the cave walk. Closed 2026-10-21 (v0.24.0): the
+  physical levels lost to the ear, so echo and tail levels follow listening-fitted curves of the
+  room's mean free path and a room change hands the tail to a second network (ADR-0021).
 
 ### M5: Simulation split and the logic component (done: Plans 0007, v0.10.0, and 0011, v0.11.0)
 

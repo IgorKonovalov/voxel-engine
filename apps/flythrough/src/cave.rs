@@ -232,6 +232,67 @@ impl CaveSource {
     }
 }
 
+/// Voxels of rock around a [`RoomSource`]'s air: 2 m at 10 cm.
+pub const ROOM_ROCK: i32 = 20;
+
+/// `--room`: a closed cube of air `edge` voxels on a side inside [`ROOM_ROCK`] voxels of
+/// [`ROCK`] on every side, the extent the smallest whole number of chunks holding both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RoomSource {
+    pub edge: i32,
+    pub extent: ChunkExtent,
+}
+
+impl RoomSource {
+    pub fn new(edge: i32) -> Self {
+        let edge = edge.max(1);
+        let chunks = (edge + 2 * ROOM_ROCK + CHUNK_EDGE - 1) / CHUNK_EDGE;
+        Self {
+            edge,
+            extent: ChunkExtent::new([0, 0, 0], [chunks; 3]),
+        }
+    }
+
+    /// The air's centre voxel.
+    pub fn spawn(&self) -> VoxelCoord {
+        VoxelCoord([ROOM_ROCK + self.edge / 2; 3])
+    }
+
+    /// Whether voxel coordinate `c` lies inside the air on one axis.
+    fn inside(&self, c: i32) -> bool {
+        (ROOM_ROCK..ROOM_ROCK + self.edge).contains(&c)
+    }
+
+    pub fn material(&self, p: [i32; 3]) -> MaterialId {
+        if p.iter().all(|&c| self.inside(c)) {
+            AIR
+        } else {
+            ROCK
+        }
+    }
+}
+
+impl WorldSource for RoomSource {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        let base = coord.min_voxel().0;
+        for slot in 0..CHUNK_BRICKS {
+            let b = brick_of_slot(slot);
+            let lo = [0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE);
+            let hi = lo.map(|v| v + BRICK_EDGE - 1);
+            // A brick wholly inside the air on every axis is air; one wholly outside on any
+            // axis is rock.
+            let brick = if (0..3).all(|k| self.inside(lo[k]) && self.inside(hi[k])) {
+                Brick::Uniform(AIR)
+            } else if (0..3).any(|k| hi[k] < ROOM_ROCK || lo[k] >= ROOM_ROCK + self.edge) {
+                Brick::Uniform(ROCK)
+            } else {
+                Brick::from_fn(|l| self.material([0, 1, 2].map(|k| lo[k] + l[k])))
+            };
+            out.set_brick(slot, brick);
+        }
+    }
+}
+
 impl WorldSource for CaveSource {
     fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
         let base = coord.min_voxel().0;
@@ -344,6 +405,31 @@ mod tests {
             CaveSource::unbounded(1).vault_origin(),
             VoxelCoord([132, 32, 32])
         );
+    }
+
+    #[test]
+    fn a_room_is_a_closed_cube_of_air_in_two_metres_of_rock() {
+        let r = RoomSource::new(120);
+        // 120 + 40 voxels fit in 3 chunks.
+        assert_eq!(r.extent, ChunkExtent::new([0, 0, 0], [3, 3, 3]));
+        assert_eq!(r.spawn(), VoxelCoord([80, 80, 80]));
+        assert_eq!(r.material([20, 20, 20]), AIR);
+        assert_eq!(r.material([139, 139, 139]), AIR);
+        assert_eq!(r.material([19, 80, 80]), ROCK);
+        assert_eq!(r.material([140, 80, 80]), ROCK);
+        // The brick early-outs agree with the voxels.
+        for c in [[0, 0, 0], [0, 1, 1], [1, 1, 1], [2, 2, 2], [1, 2, 0]] {
+            let coord = ChunkCoord(c);
+            let mut chunk = Chunk::default();
+            r.chunk(coord, &mut chunk);
+            let base = coord.min_voxel().0;
+            for slot in 0..CHUNK_BRICKS {
+                let b = brick_of_slot(slot);
+                let lo = [0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE);
+                let slow = Brick::from_fn(|l| r.material([0, 1, 2].map(|k| lo[k] + l[k])));
+                assert_eq!(*chunk.brick(slot), slow, "brick {lo:?}");
+            }
+        }
     }
 
     #[test]

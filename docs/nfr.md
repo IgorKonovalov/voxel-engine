@@ -789,6 +789,16 @@ dev reference: Ryzen 9 5900HS laptop, release, the quiet-box protocol of Plan 00
 44a1582's tree unless stated. Readings taken under a load average of 9 to 21 are in the
 plan's Close triggers as superseded figures.
 
+**Paired mixer readings (ADR-0020, 2026-10-21).** A plan's *relative* bound on `cargo bench -p
+vxe-audio --bench mixer` (within N percent of the parent's) is read with both builds compiled
+with `RUSTFLAGS="-C llvm-args=-align-loops=64"` and `CARGO_TARGET_DIR=target/aligned`. Each build
+gets three alternating runs in one exclusive perf-lock hold, with the 1-minute load and the top
+processes stated, and each case's median of the three criterion medians is compared. The
+default-flag pair may be logged beside it, but it does not decide the bound: the placement of
+the FIR loop alone moved the static case by 5.8 percent in Plan 0020 Phase 13. The *absolute*
+mixer figures below are read on the default build, the code that ships, under the quiet-box
+protocol above. Other benches keep default-flag paired readings unless their plan adopts this.
+
 - **Mixer callback, 32 HRTF voices, one 256-frame block:** 1.0 ms on the baseline CPU
   (proposal; 32 x 2 x 128 x 256 = 2.1 million multiply-adds plus filters and taps).
   **Reading (`cargo bench -p vxe-audio --bench mixer`, 32 voices of looping noise, each
@@ -814,12 +824,31 @@ plan's Close triggers as superseded figures.
 - **Determinism:** `World::trace_materials` is integer and its 500-ray hash is pinned in
   `crates/vxe-world/tests/queries.rs` on both arms; nothing else in `vxe-audio` is
   deterministic by contract (§6).
-- **Plan 0020 proposals (the late tail, sixteen direction buses, the room fan; dev box, to be
-  read at its close):** mixer block, 32 HRTF voices, static, at most 0.6 ms (today 0.3619 ms;
-  the buses are 1 048 576 multiply-adds per block, about half the 32-voice FIR load) and
-  turning at most 1.0 ms (today 0.6667 ms); `Acoustics::update`, 32 sources, at most 1.1 ms
-  with a 16-ray fan slice in the call (today 1.0294 ms); audio RAM plus 323 584 B for the tail's
-  lines, about 24.5 KB for the buses, 8 KB of tap state and 19.2 KB per streamed voice.
+- **Plan 0020 (the late tail, sixteen direction buses, the room fan, gliding taps; closed
+  2026-10-21, v0.24.0).** Proposals: mixer block, 32 HRTF voices, static at most 0.6 ms and
+  turning at most 1.0 ms; `Acoustics::update`, 32 sources with a 16-ray fan slice, at most
+  1.1 ms. **Readings at the close (recorded misses, accepted by the owner 2026-10-21; a
+  quiet-box re-read is a followup, then a mixer optimisation if it stays over):** the shipped
+  code (Phase 13, c85bac5), default build, dev box, release, exclusive perf lock, median of
+  three runs at load average 4.6 to 9.3 with other processes near 100 % CPU: mixer static
+  0.6897 ms, turning 1.1441 ms; with the direct delay on, 0.8011 and 1.2577 ms. The same code
+  aligned (ADR-0020, load 3.2 to 5.5): 0.657 and 1.110 ms. `Acoustics::update` at Phase 9's
+  rays (100 m range, load 13.6 to 9.8): 0.7370 ms. Audio RAM printed by the mixer bench: echo
+  lines 116 224 B per voice (7 438 336 B for the 64-voice pool, 600 ms), two tail networks
+  3 616 768 B, the pre-delay line 39 424 B, buses 24 512 B, tap slots 8 192 B. **Earlier
+  readings, dev box,
+  release, exclusive perf lock, vxe-audio and both benches as at d7eb1f8, 2026-10-20; the box
+  was not quiet (1-minute load average 1.87 to 2.98, and other processes above 7 % CPU: one at
+  86 %, two at 37 %), so they read high against the protocol above:** mixer static 0.5078 ms
+  (0.5004 to 0.5162), turning 0.8786 ms (0.8700 to 0.8887) (`cargo bench -p vxe-audio --bench
+  mixer`, 32 voices with 16 taps each into the buses, the 12 m room's tail running);
+  `Acoustics::update` 0.8388 ms (0.8327 to 0.8463) (`cargo bench -p flythrough --bench
+  acoustics`, the fan's first slice in every call; the fan's rays stop at the first solid
+  voxel). Audio RAM printed by the mixer bench: the tail's lines 323 584 B, the buses 24 512 B,
+  tap state 128 B per voice (8 192 B for the 64-voice pool); a streamed voice's ring 19 200 B.
+  Room estimates the fly-through prints headlessly (`--room N --headless --frames 600`, no
+  device): 12 m mfp 7.999 m and T60 2.257 s, 36 m T60 6.770 s, 4 m T60 0.752 s; the seed-1
+  streaming spawn mfp 16.082 m, T60 4.537 s, energy -7.5 dB.
 
 ## 10. Not goals (for now)
 

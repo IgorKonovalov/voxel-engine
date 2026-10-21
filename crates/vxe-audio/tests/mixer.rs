@@ -71,9 +71,17 @@ fn tail_rms(out: &[f32]) -> [f32; 2] {
     })
 }
 
+/// `m` with both room curves flat.
+fn flat(mut m: Mixer) -> Mixer {
+    m.set_mix(MixSettings::flat());
+    m
+}
+
 /// The HRTF path's mixer over the shipped pack.
 fn mixer() -> Mixer {
-    Mixer::new(Hrtf::sadie2_d2(), MPV)
+    let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    m.set_mix(MixSettings::flat());
+    m
 }
 
 /// `|H(freq)|` of measurement `i`'s left and right impulse responses: the gain a steady tone
@@ -146,7 +154,7 @@ fn distance_gain_in_front() {
 #[test]
 fn the_panner_at_centre_gives_each_channel_half_the_power() {
     let centre = 0.5 / SQRT_2 * (1.0 / SQRT_2);
-    for (c, rms) in render_at(Mixer::panning(MPV), [10.0, 0.0, 0.0])
+    for (c, rms) in render_at(flat(Mixer::panning(MPV)), [10.0, 0.0, 0.0])
         .iter()
         .enumerate()
     {
@@ -157,7 +165,7 @@ fn the_panner_at_centre_gives_each_channel_half_the_power() {
 #[test]
 fn a_source_on_the_right_is_20_db_louder_on_the_right_when_panned() {
     // Facing +x with +z up, the listener's right is -y.
-    let [l, r] = render_at(Mixer::panning(MPV), [0.0, -10.0, 0.0]);
+    let [l, r] = render_at(flat(Mixer::panning(MPV)), [0.0, -10.0, 0.0]);
     let db = 20.0 * (r / l.max(1e-12)).log10();
     assert!(db >= 20.0, "right over left {db} dB (left {l}, right {r})");
 }
@@ -188,6 +196,7 @@ fn a_looping_voice_wraps_without_a_discontinuity() {
                 position: [10.0, 0.0, 0.0],
                 gain: 1.0,
                 looping,
+                direct: true,
             },
         ));
         let mut out = vec![0.0; 2 * 48_000];
@@ -239,12 +248,12 @@ fn moving_taps(voice: u32, block: u32) -> AcousticTargets {
         gain: 0.8,
         cutoff_hz: 2_000.0,
         taps,
-        tap_count: MAX_TAPS as u8,
+        send: 0.8,
     }
 }
 
-/// While counting, every block turns the listener (every voice crossfades directions), replaces
-/// every voice's 16 taps (every voice crossfades its reflections), keeps the 2 kHz low-pass on,
+/// While counting, every block turns the listener (every voice crossfades directions), moves
+/// every voice's 16 tap targets (every voice's taps glide), keeps the 2 kHz low-pass on,
 /// and one block stops a voice and plays another into its pooled buffers.
 #[test]
 fn sixty_four_voices_render_a_block_without_allocating() {
@@ -256,6 +265,7 @@ fn sixty_four_voices_render_a_block_without_allocating() {
             position: [30.0 * a.cos(), 30.0 * a.sin(), 0.0],
             gain: 1.0,
             looping: true,
+            direct: true,
         }
     };
     for i in 0..64u32 {

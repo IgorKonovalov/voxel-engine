@@ -8,7 +8,9 @@
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH] [--view VIEW] [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
-//! [--audio] [--audio-debug] [--pad on|off]`.
+//! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
+//! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
+//! [--flat-mix] [--pad on|off]`.
 //! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -89,9 +91,33 @@
 //! the last left click dug; every frame probes their occlusion through the world. `T` plays a
 //! looping pulse (a knock each second) there, to hear the echoes in its gaps; `E` toggles the
 //! early reflections. `--audio-debug` is
-//! `--audio` plus a line a second of the output callback's readings, and on exit writes the last
+//! `--audio` plus a line a second of the output callback's readings, a `room sent: T60 .. mfp ..
+//! energy ..` line for every room the tail is sent, a line when room fans start being discarded
+//! (the listener inside a solid) and one when they stop, and on exit writes the last
 //! 60 s the callback handed the device to `flythrough-audio-debug.wav`. `FLYTHROUGH_HRIR=<pack>`
-//! in the environment loads that HRIR pack instead of the shipped one.
+//! in the environment loads that HRIR pack instead of the shipped one. `Y` toggles the late
+//! tail. `--absorption A` sets the cave row's absorption per metre (default 0.3). `--mic`
+//! (implies `--audio`) plays the default input device at the listener with its direct path
+//! off, so it is heard only off the walls and in the tail; wear headphones.
+//!
+//! The balance (`vxe_audio::MixSettings`) is live. The mixer sets the echo and tail levels by
+//! the room's mean free path through its default room curves; `[` and `]` step a trim on the
+//! echoes by 3 dB, `-` and `=` one on the tail (each -24 to +12 dB), `9` and `0` the tail's
+//! pre-delay by 10 ms (0 to 200 ms), `O` switches the tail's lines between handing over and
+//! gliding, and `U` switches the direct path's propagation delay. Each prints a line
+//! `mix: echoes <trim> dB (room <curve> dB at mfp <m> m), tail <trim> dB (room <curve> dB),
+//! pre-delay .. ms, tail lines .., direct delay ..`, which `F1`, the start (with `--audio` or
+//! `--room-line`) and every room that moves a curve by 0.5 dB or more print too.
+//! `--echo-db`, `--tail-db`, `--predelay-ms`, `--tail-glide` and `--direct-delay` set the same
+//! at the start. `--flat-mix` sets both curves flat at 0 dB (the line reads `room flat`) and
+//! the trims' ranges to -12 to +30 dB for the echoes and -30 to +6 dB for the tail, the
+//! absolute levels of a balance picked before the curves.
+//!
+//! `--room METRES` runs in a closed cube of air of that edge inside 2 m of rock, spawned at its
+//! centre, and implies `--room-line`: a line `room: V .. S .. mfp .. alpha .. T60 .. energy ..`
+//! whenever the listener's room fan completes (`F1` and `--audio-debug` print it too). Without
+//! `--audio`, `--room-line` runs the room fan with no output device: its block clock never
+//! advances, so a fan completes 8 frames after the start or after a 1 m move.
 
 mod fly;
 mod pad;
@@ -102,7 +128,7 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use fly::{CutawayMode, Fly, Walk};
-use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, VAULT_EDGE, vault};
+use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, RoomSource, VAULT_EDGE, vault};
 use flythrough::hud::{self, Cadence, EditLine, FrameStats, HudStats, WorldSample};
 use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB, REACH};
 use flythrough::logic::{
@@ -114,7 +140,10 @@ use flythrough::{
 };
 use pad::Pad;
 use vxe_app::{App, Axis, Flow, Gpu, Input, KeyCode, MouseButton, PadButton, ShellConfig};
-use vxe_audio::{Acoustics, Hrtf, Mixer, Output, PlayParams, Sound, VoiceId};
+use vxe_audio::{
+    Acoustics, BlockClock, Command, Hrtf, MixSettings, Mixer, Output, PlayParams, ReverbSettings,
+    RoomEstimate, RoomTargets, Sound, TailLines, VoiceId,
+};
 use vxe_net::{Client, DEFAULT_SUPPORT, Event, Logic, LogicError, MemChannel, Server};
 use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
@@ -263,6 +292,16 @@ struct Args {
     replay: Option<std::path::PathBuf>,
     /// `--logic`: the server's logic, native or the hosted component.
     logic: LogicChoice,
+    /// `--room`: the edge, in voxels, of the closed cube of air the fly-through runs in.
+    room: Option<i32>,
+    /// `--room-line`: print the room line whenever a fan completes (implied by `--room`).
+    room_line: bool,
+    /// `--absorption`: the cave row's absorption per metre.
+    absorption: f32,
+    /// `--mic`: play the default input device at the listener, heard off the walls.
+    mic: bool,
+    /// `--echo-db`, `--tail-db`, `--predelay-ms`, `--tail-glide`, `--direct-delay`.
+    mix: Mix,
     /// `--cutaway`: the cutaway view's start state.
     cutaway: CutawayMode,
     /// `--pad on|off`: read a gamepad in a window (on by default); never headless or under
@@ -341,6 +380,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         save: None,
         replay: None,
         logic: LogicChoice::Native,
+        room: None,
+        room_line: false,
+        absorption: CAVE_ACOUSTIC[0],
+        mic: false,
+        mix: Mix::default(),
         cutaway: CutawayMode::Auto,
         pad: true,
     };
@@ -404,6 +448,38 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--save" => args.save = Some(value()?.into()),
             "--replay" => args.replay = Some(value()?.into()),
             "--logic" => args.logic = LogicChoice::parse(&value()?)?,
+            "--room" => {
+                let v = value()?;
+                let m: f32 = v
+                    .parse()
+                    .map_err(|_| format!("--room takes an edge in metres, not {v}"))?;
+                if !(1.0..=100.0).contains(&m) {
+                    return Err(format!("--room takes 1 to 100 metres, not {v}"));
+                }
+                args.room = Some((m / METRES_PER_VOXEL).round() as i32);
+                args.room_line = true;
+            }
+            "--absorption" => {
+                let v = value()?;
+                let a: f32 = v
+                    .parse()
+                    .map_err(|_| format!("--absorption takes a value in [0, 1], not {v}"))?;
+                if !(0.0..=1.0).contains(&a) {
+                    return Err(format!("--absorption takes a value in [0, 1], not {v}"));
+                }
+                args.absorption = a;
+            }
+            "--room-line" => args.room_line = true,
+            "--echo-db" => args.mix.echo_db = Mix::parse(flag.as_str(), &value()?)?,
+            "--tail-db" => args.mix.tail_db = Mix::parse(flag.as_str(), &value()?)?,
+            "--predelay-ms" => args.mix.predelay_ms = Mix::parse(flag.as_str(), &value()?)?,
+            "--tail-glide" => args.mix.glide = true,
+            "--flat-mix" => args.mix.flat = true,
+            "--direct-delay" => args.mix.direct_delay = true,
+            "--mic" => {
+                args.mic = true;
+                args.audio = true;
+            }
             "--pad" => {
                 args.pad = match value()?.as_str() {
                     "on" => true,
@@ -434,8 +510,21 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     if args.autopilot && args.level {
         return Err("--autopilot streams; it does not take --level".to_owned());
     }
+    if args.room.is_some()
+        && (args.level
+            || args.autopilot
+            || args.vault
+            || args.save.is_some()
+            || args.replay.is_some())
+    {
+        return Err(
+            "--room builds its own world; it does not take --level, --autopilot, --vault, \
+             --save or --replay"
+                .to_owned(),
+        );
+    }
     if args.walk {
-        walk_allowed(!args.level).map_err(|e| format!("--walk: {e}"))?;
+        walk_allowed(!args.level && args.room.is_none()).map_err(|e| format!("--walk: {e}"))?;
     }
     if (args.save.is_some() || args.replay.is_some()) && !args.level {
         return Err(SAVE_NEEDS_LEVEL.to_owned());
@@ -446,6 +535,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     if matches!(args.logic, LogicChoice::Wasm(_)) && !cfg!(feature = "wasm") {
         return Err(flythrough::WASM_NEEDS_FEATURE.to_owned());
     }
+    args.mix.check()?;
     Ok(args)
 }
 
@@ -572,16 +662,229 @@ fn knock_samples() -> Vec<f32> {
     samples
 }
 
-/// The cave's material table with [`CAVE_ACOUSTIC`] on every row but air.
-fn acoustic_table() -> MaterialTable {
+/// The cave's material table with [`CAVE_ACOUSTIC`] on every row but air, its absorption
+/// replaced by `absorption` (`--absorption`).
+fn acoustic_table(absorption: f32) -> MaterialTable {
     let mut t = MaterialTable::new();
     for row in cave_materials().rows().iter().skip(1) {
         t.push(vxe_world::Material {
-            acoustic: CAVE_ACOUSTIC,
+            acoustic: [absorption, CAVE_ACOUSTIC[1], CAVE_ACOUSTIC[2]],
             ..row.clone()
         });
     }
     t
+}
+
+/// The room line: `room: V <m3> S <m2> mfp <m> alpha <a> T60 <s> energy <dB>`.
+fn room_line(r: &RoomEstimate) -> String {
+    format!(
+        "room: V {:.1} m3 S {:.1} m2 mfp {:.3} m alpha {:.4} T60 {:.3} s energy {:+.1} dB",
+        r.volume_m3,
+        r.surface_m2,
+        r.mean_free_path_m,
+        r.absorption,
+        r.t60_s,
+        10.0 * r.energy.max(1e-12).log10()
+    )
+}
+
+/// `--audio-debug`'s line for each room sent to the mixer:
+/// `room sent: T60 <s> mfp <m> energy <dB>`.
+fn room_sent_line(r: &RoomTargets) -> String {
+    format!(
+        "room sent: T60 {:.3} s mfp {:.3} m energy {:+.1} dB",
+        r.t60_s,
+        r.mean_free_path_m,
+        10.0 * r.energy.max(1e-12).log10()
+    )
+}
+
+/// The balance the keys and flags set over the acoustics: trims over the mixer's room curves
+/// (or, with `--flat-mix`, over flat curves), and the room the curves read.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Mix {
+    /// The echo trim, dB.
+    echo_db: f32,
+    /// The tail trim, dB.
+    tail_db: f32,
+    /// The tail's pre-delay, milliseconds.
+    predelay_ms: f32,
+    /// The tail's lines glide instead of handing over.
+    glide: bool,
+    /// The direct path's propagation delay.
+    direct_delay: bool,
+    /// `--flat-mix`: the trims over [`MixSettings::flat`] instead of the room curves.
+    flat: bool,
+    /// The mean free path of the latest room sent, metres.
+    room: Option<f32>,
+    /// The room the last printed curve values were read at.
+    printed_room: Option<f32>,
+}
+
+impl Mix {
+    /// The trims' range over the room curves.
+    const TRIM_DB: std::ops::RangeInclusive<f32> = -24.0..=12.0;
+    /// With `--flat-mix` the absolute ranges, so a flat balance replays as it was heard.
+    const FLAT_ECHO_DB: std::ops::RangeInclusive<f32> = -12.0..=30.0;
+    const FLAT_TAIL_DB: std::ops::RangeInclusive<f32> = -30.0..=6.0;
+    const PREDELAY_MS: std::ops::RangeInclusive<f32> = 0.0..=200.0;
+    /// A room that moves either curve by this much prints the mix line again.
+    const REPRINT_DB: f32 = 0.5;
+
+    fn echo_range(&self) -> std::ops::RangeInclusive<f32> {
+        if self.flat {
+            Self::FLAT_ECHO_DB
+        } else {
+            Self::TRIM_DB
+        }
+    }
+
+    fn tail_range(&self) -> std::ops::RangeInclusive<f32> {
+        if self.flat {
+            Self::FLAT_TAIL_DB
+        } else {
+            Self::TRIM_DB
+        }
+    }
+
+    /// `flag`'s value `v` as a finite number; [`Mix::check`] holds it to its range once every
+    /// flag is read.
+    fn parse(flag: &str, v: &str) -> Result<f32, String> {
+        v.parse::<f32>()
+            .ok()
+            .filter(|x| x.is_finite())
+            .ok_or_else(|| format!("{flag} takes a number, not {v}"))
+    }
+
+    /// Each flag's value within its range for this mix's mode.
+    fn check(&self) -> Result<(), String> {
+        for (flag, v, r) in [
+            ("--echo-db", self.echo_db, self.echo_range()),
+            ("--tail-db", self.tail_db, self.tail_range()),
+            ("--predelay-ms", self.predelay_ms, Self::PREDELAY_MS),
+        ] {
+            if !r.contains(&v) {
+                return Err(format!(
+                    "{flag} takes {} to {}, not {v}",
+                    r.start(),
+                    r.end()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Each value moved by its key's step and held in its range.
+    fn step(self, echo_db: f32, tail_db: f32, predelay_ms: f32) -> Self {
+        let clamp = |x: f32, r: std::ops::RangeInclusive<f32>| x.clamp(*r.start(), *r.end());
+        Self {
+            echo_db: clamp(self.echo_db + echo_db, self.echo_range()),
+            tail_db: clamp(self.tail_db + tail_db, self.tail_range()),
+            predelay_ms: clamp(self.predelay_ms + predelay_ms, Self::PREDELAY_MS),
+            ..self
+        }
+    }
+
+    fn settings(&self) -> MixSettings {
+        let base = if self.flat {
+            MixSettings::flat()
+        } else {
+            MixSettings::default()
+        };
+        MixSettings {
+            echo_gain: 10f32.powf(self.echo_db / 20.0),
+            direct_delay: self.direct_delay,
+            reverb: ReverbSettings {
+                level: 10f32.powf(self.tail_db / 20.0),
+                predelay_s: self.predelay_ms / 1e3,
+                lines: if self.glide {
+                    TailLines::Glide
+                } else {
+                    TailLines::Handover
+                },
+                ..base.reverb
+            },
+            ..base
+        }
+    }
+
+    /// The echo and tail curves' values at `room` (no room reads the curves' last knot).
+    fn curve_db(&self, room: Option<f32>) -> (f32, f32) {
+        let s = self.settings();
+        let mfp = room.unwrap_or(f32::NAN);
+        (s.echo_by_room.db_at(mfp), s.reverb.level_by_room.db_at(mfp))
+    }
+
+    /// Takes the mean free path of a room sent to the mixer; true when either curve moved by
+    /// [`Mix::REPRINT_DB`] or more since the last printed line (which this then becomes).
+    fn take_room(&mut self, mfp: f32) -> bool {
+        self.room = Some(mfp);
+        if self.flat {
+            return false;
+        }
+        let (e0, t0) = self.curve_db(self.printed_room);
+        let (e1, t1) = self.curve_db(self.room);
+        let moved = (e1 - e0).abs() >= Self::REPRINT_DB || (t1 - t0).abs() >= Self::REPRINT_DB;
+        if moved {
+            self.printed_room = self.room;
+        }
+        moved
+    }
+
+    /// `mix: echoes <trim> dB (room <curve> dB at mfp <m> m), tail <trim> dB (room <curve> dB),
+    /// pre-delay <ms>, tail lines <mode>, direct delay <on|off>`; `room flat` with
+    /// `--flat-mix`, and `before any room` until a room arrives.
+    fn line(&self) -> String {
+        let (echo_room, tail_room) = if self.flat {
+            ("room flat".to_owned(), "room flat".to_owned())
+        } else {
+            let (e, t) = self.curve_db(self.room);
+            let at = self.room.map_or_else(
+                || "before any room".to_owned(),
+                |m| format!("at mfp {m:.3} m"),
+            );
+            (format!("room {e:+.1} dB {at}"), format!("room {t:+.1} dB"))
+        };
+        format!(
+            "mix: echoes {:+.0} dB ({echo_room}), tail {:+.0} dB ({tail_room}), pre-delay {:.0} \
+             ms, tail lines {}, direct delay {}",
+            self.echo_db,
+            self.tail_db,
+            self.predelay_ms,
+            if self.glide { "glide" } else { "handover" },
+            if self.direct_delay { "on" } else { "off" }
+        )
+    }
+}
+
+/// The voice the microphone plays as. The output numbers its voices up from 0, so this one
+/// is never handed out in a session.
+const MIC_VOICE: VoiceId = VoiceId(u32::MAX);
+
+/// `--mic`: the input stream and whether its period has been printed.
+struct Mic {
+    input: vxe_audio::Input,
+    period_printed: bool,
+    stream_errors: u64,
+}
+
+/// `--room-line` without an output device: the room fan on a block clock that never
+/// advances, its commands dropped.
+struct RoomProbe {
+    acoustics: Acoustics,
+    table: MaterialTable,
+    /// The balance a mixer would take, for the mix line's room curves.
+    mix: Mix,
+}
+
+impl RoomProbe {
+    fn new(absorption: f32, mix: Mix) -> Self {
+        Self {
+            acoustics: Acoustics::new(BlockClock::default()),
+            table: acoustic_table(absorption),
+            mix,
+        }
+    }
 }
 
 /// One second of a `J` hum at `hz`.
@@ -623,6 +926,13 @@ struct Audio {
     callback_max_ms: f32,
     /// Wall time of the last `Acoustics::update`, in milliseconds.
     update_ms: f64,
+    /// `--room-line`: print the room line whenever a fan completes.
+    room_line: bool,
+    mic: Option<Mic>,
+    /// Fans discarded in a row so far (the listener inside a solid), for `--audio-debug`.
+    discarded_run: u64,
+    /// The balance sent to the mixer.
+    mix: Mix,
 }
 
 /// An environment variable naming an HRIR pack to use instead of the shipped one, for
@@ -704,8 +1014,9 @@ impl Audio {
     }
 
     /// Opens the default device; prints why when it cannot. `debug` meters and records the
-    /// callback.
-    fn open(debug: bool) -> Option<Self> {
+    /// callback; `absorption` is the cave row's; `mic` also opens the default input device and
+    /// plays it at the listener with its direct path off; `room_line` prints each room.
+    fn open(debug: bool, absorption: f32, mic: bool, room_line: bool, mix: Mix) -> Option<Self> {
         let t = now();
         let hrtf = match std::env::var_os(HRIR_ENV) {
             Some(path) => match std::fs::read(&path)
@@ -735,13 +1046,19 @@ impl Audio {
             hrtf.len(),
             hrtf.taps()
         );
-        let mixer = Mixer::new(hrtf, METRES_PER_VOXEL);
+        let mut mixer = Mixer::new(hrtf, METRES_PER_VOXEL);
+        mixer.set_mix(mix.settings());
         let acoustics = Acoustics::new(mixer.clock());
         match Output::open(mixer) {
             Ok(output) => {
                 println!("audio: {}", output.device());
                 if debug {
                     output.record(AUDIO_DEBUG_SECONDS);
+                }
+                let mic = if mic { open_mic(&output) } else { None };
+                let mut voices = Vec::new();
+                if mic.is_some() {
+                    voices.push((MIC_VOICE, [0.0; 3]));
                 }
                 Some(Self {
                     output,
@@ -751,19 +1068,52 @@ impl Audio {
                     next_hum: 0,
                     dig_point: None,
                     acoustics,
-                    table: acoustic_table(),
-                    voices: Vec::new(),
+                    table: acoustic_table(absorption),
+                    voices,
                     stream_errors: 0,
                     debug,
                     stats_at: now(),
                     callback_max_ms: 0.0,
                     update_ms: 0.0,
+                    room_line,
+                    mic,
+                    discarded_run: 0,
+                    mix,
                 })
             }
             Err(e) => {
                 println!("audio: off, {e}");
                 None
             }
+        }
+    }
+}
+
+/// Opens the default input device into a stream played at the listener with its direct path
+/// off; prints the device, or why it could not.
+fn open_mic(output: &Output) -> Option<Mic> {
+    println!("mic: wear headphones: from speakers the microphone hears the tail and feeds it back");
+    let (writer, reader) = vxe_audio::Stream::new();
+    match vxe_audio::Input::open(writer) {
+        Ok(input) => {
+            println!("mic: {}", input.device());
+            let params = PlayParams {
+                direct: false,
+                ..PlayParams::at([0.0; 3])
+            };
+            if let Err(e) = output.send(Command::PlayStream(MIC_VOICE, reader, params)) {
+                println!("mic: off, {e}");
+                return None;
+            }
+            Some(Mic {
+                input,
+                period_printed: false,
+                stream_errors: 0,
+            })
+        }
+        Err(e) => {
+            println!("mic: off, {e}");
+            None
         }
     }
 }
@@ -1449,6 +1799,8 @@ struct Run {
     coarse: Option<Coarse>,
     hud: Hud,
     audio: Option<Audio>,
+    /// `--room-line` without an output device.
+    room_probe: Option<RoomProbe>,
 }
 
 impl Run {
@@ -1846,6 +2198,25 @@ impl Run {
                 audio.acoustics.active_taps(),
                 audio.update_ms
             );
+            println!("{}", audio.mix.line());
+            if let Some(mic) = &audio.mic {
+                println!(
+                    "mic: {}, {} frames dropped",
+                    mic.input.device(),
+                    mic.input.dropped_frames()
+                );
+            }
+        }
+        let room = self
+            .audio
+            .as_ref()
+            .and_then(|a| a.acoustics.room())
+            .or_else(|| self.room_probe.as_ref().and_then(|p| p.acoustics.room()));
+        if let Some(r) = room {
+            println!("{}", room_line(&r));
+        }
+        if let Some(p) = &self.room_probe {
+            println!("{}", p.mix.line());
         }
         if let Some(c) = &self.coarse {
             println!("{}", c.query_line());
@@ -2516,21 +2887,75 @@ impl Run {
                 audio.acoustics.set_reflections(on);
                 println!("echoes {}", if on { "on" } else { "off" });
             }
+            if input.pressed(KeyCode::KeyY) {
+                let on = !audio.acoustics.reverb_on();
+                audio.acoustics.set_reverb(on);
+                println!("tail {}", if on { "on" } else { "off" });
+            }
             if input.pressed(KeyCode::KeyJ) {
                 audio.play("hum", |p| PlayParams {
                     looping: true,
                     ..PlayParams::at(p)
                 });
             }
+            let steps = [
+                (KeyCode::BracketLeft, -3.0, 0.0, 0.0),
+                (KeyCode::BracketRight, 3.0, 0.0, 0.0),
+                (KeyCode::Minus, 0.0, -3.0, 0.0),
+                (KeyCode::Equal, 0.0, 3.0, 0.0),
+                (KeyCode::Digit9, 0.0, 0.0, -10.0),
+                (KeyCode::Digit0, 0.0, 0.0, 10.0),
+            ];
+            let mut mix = audio.mix;
+            let mut touched = false;
+            for (key, echo, tail, pre) in steps {
+                if input.pressed(key) {
+                    mix = mix.step(echo, tail, pre);
+                    touched = true;
+                }
+            }
+            if input.pressed(KeyCode::KeyO) {
+                mix.glide = !mix.glide;
+                touched = true;
+            }
+            if input.pressed(KeyCode::KeyU) {
+                mix.direct_delay = !mix.direct_delay;
+                touched = true;
+            }
+            if touched {
+                audio.mix = mix;
+                // A full channel drops it; the next key sends the whole balance again.
+                if let Err(e) = audio.output.send(Command::SetMix(mix.settings())) {
+                    println!("mix: {e}");
+                }
+                println!("{}", mix.line());
+            }
         }
     }
 
     /// Sends the camera to the mixer as its listener and probes the voices' occlusion.
     fn audio_step(&mut self) {
+        let listener = flythrough::listener(&self.fly.camera);
         let Some(audio) = self.audio.as_mut() else {
+            if let Some(p) = self.room_probe.as_mut() {
+                let mut completed = false;
+                p.acoustics.update(
+                    &self.world,
+                    &p.table,
+                    &listener,
+                    &[],
+                    METRES_PER_VOXEL,
+                    &mut |cmd| completed |= matches!(cmd, Command::SetRoom(_)),
+                );
+                if completed && let Some(r) = p.acoustics.room() {
+                    println!("{}", room_line(&r));
+                    if p.mix.take_room(r.mean_free_path_m) {
+                        println!("{}", p.mix.line());
+                    }
+                }
+            }
             return;
         };
-        let listener = flythrough::listener(&self.fly.camera);
         // A full channel drops this frame's listener; the next frame sends a fresh one.
         let _ = audio.output.set_listener(listener);
         let errors = audio.output.stream_errors();
@@ -2561,8 +2986,32 @@ impl Run {
         for id in audio.output.finished() {
             audio.voices.retain(|(v, _)| *v != id);
         }
+        if let Some(mic) = audio.mic.as_mut() {
+            // The microphone's voice stands at the listener.
+            let _ = audio.output.set_position(MIC_VOICE, listener.position);
+            if let Some(v) = audio.voices.iter_mut().find(|(v, _)| *v == MIC_VOICE) {
+                v.1 = listener.position;
+            }
+            let period = mic.input.period_frames();
+            if !mic.period_printed && period > 0 {
+                println!(
+                    "mic: period {period} frames ({:.1} ms)",
+                    period as f32 * 1e3 / vxe_audio::RATE as f32
+                );
+                mic.period_printed = true;
+            }
+            let errors = mic.input.stream_errors();
+            if errors > mic.stream_errors {
+                println!("mic: {errors} stream errors so far");
+                mic.stream_errors = errors;
+            }
+        }
         let output = &audio.output;
         let t = now();
+        let mut completed = false;
+        let mut sent_mfp = None;
+        let debug = audio.debug;
+        let discarded = audio.acoustics.discarded_fans();
         audio.acoustics.update(
             &self.world,
             &audio.table,
@@ -2571,10 +3020,43 @@ impl Run {
             METRES_PER_VOXEL,
             // A full channel drops these targets; the voice is probed again within 500 ms.
             &mut |cmd| {
+                if let Command::SetRoom(r) = &cmd {
+                    completed = true;
+                    sent_mfp = Some(r.mean_free_path_m);
+                    if debug {
+                        println!("{}", room_sent_line(r));
+                    }
+                }
                 let _ = output.send(cmd);
             },
         );
         audio.update_ms = ms_since(t);
+        if let Some(mfp) = sent_mfp
+            && audio.mix.take_room(mfp)
+        {
+            println!("{}", audio.mix.line());
+        }
+        let now_discarded = audio.acoustics.discarded_fans();
+        if debug {
+            if now_discarded > discarded && audio.discarded_run == 0 {
+                println!("room: fan discarded, the listener is inside a solid");
+            }
+            if now_discarded > discarded {
+                audio.discarded_run += now_discarded - discarded;
+            } else if audio.discarded_run > 0 {
+                println!(
+                    "room: out of the solid after {} discarded fans",
+                    audio.discarded_run
+                );
+                audio.discarded_run = 0;
+            }
+        }
+        if completed
+            && (audio.room_line || audio.debug)
+            && let Some(r) = audio.acoustics.room()
+        {
+            println!("{}", room_line(&r));
+        }
     }
 
     /// Ticks the server, then streams, syncs, marches and presents one frame begun at `t0`.
@@ -2850,6 +3332,7 @@ struct Flythrough {
     pending: Option<Pending>,
     run: Option<Run>,
     audio: Option<Audio>,
+    room_probe: Option<RoomProbe>,
     /// The gamepad, `None` under `--pad off`, headless, the autopilot, or when `gilrs`
     /// cannot start.
     pad: Option<Pad>,
@@ -2945,6 +3428,7 @@ impl App for Flythrough {
                 coarse,
                 hud: Hud::new(self.args.hud),
                 audio: self.audio.take(),
+                room_probe: self.room_probe.take(),
             });
         }
         match self.run.as_mut() {
@@ -3154,6 +3638,17 @@ fn main() {
             world
         });
         (source.spawn(), Pending::Level(generation))
+    } else if let Some(edge) = args.room {
+        let source = RoomSource::new(edge);
+        let table = materials(&args);
+        println!(
+            "room: a closed {:.1} m cube of air in 2 m of rock, {:?} chunks",
+            edge as f32 * METRES_PER_VOXEL,
+            source.extent.max.0
+        );
+        let generation =
+            std::thread::spawn(move || World::generate(source.extent, &source, &table));
+        (source.spawn(), Pending::Level(generation))
     } else if args.level {
         let source = CaveSource::new(seed, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
         if args.vault {
@@ -3224,10 +3719,21 @@ fn main() {
     let size = args.render.unwrap_or([1280, 720]);
     let headless = args.headless;
     let audio = if args.audio {
-        Audio::open(args.audio_debug)
+        Audio::open(
+            args.audio_debug,
+            args.absorption,
+            args.mic,
+            args.room_line,
+            args.mix,
+        )
     } else {
         None
     };
+    let room_probe =
+        (audio.is_none() && args.room_line).then(|| RoomProbe::new(args.absorption, args.mix));
+    if args.audio || args.room_line {
+        println!("{}", args.mix.line());
+    }
     let pad = if args.wants_pad() { Pad::open() } else { None };
     if !headless && !args.autopilot {
         println!(
@@ -3244,6 +3750,7 @@ fn main() {
         pending: Some(pending),
         run: None,
         audio,
+        room_probe,
         pad,
     };
     let result = if headless {
@@ -3587,6 +4094,131 @@ mod tests {
         }
     }
 
+    /// `--room` takes metres and implies the room line; `--mic` implies `--audio`;
+    /// `--absorption` is checked; a room builds its own world.
+    #[test]
+    fn room_mic_and_absorption_parse() {
+        let a = parse_args_from(argv(&["--room", "12"])).expect("--room 12 parses");
+        assert_eq!(a.room, Some(120));
+        assert!(a.room_line && !a.audio);
+        assert_eq!(a.absorption, CAVE_ACOUSTIC[0]);
+        let a = parse_args_from(argv(&["--mic", "--absorption", "0.5", "--room-line"]))
+            .expect("parses");
+        assert!(a.mic && a.audio && a.room_line);
+        assert_eq!(a.absorption, 0.5);
+        assert!(parse_args_from(argv(&["--absorption", "1.5"])).is_err());
+        assert!(parse_args_from(argv(&["--room", "0.5"])).is_err());
+        assert!(parse_args_from(argv(&["--room", "12", "--level"])).is_err());
+        assert!(parse_args_from(argv(&["--room", "4", "--walk"])).is_ok());
+    }
+
+    /// The balance flags parse within their ranges, set the mixer's settings and print the
+    /// mix line; the keys' steps stop at the ranges' ends (the trims at -24 and +12 dB over
+    /// the room curves, the absolute ranges under `--flat-mix`).
+    #[test]
+    fn the_balance_flags_and_steps() {
+        let a = parse_args_from(argv(&[
+            "--room",
+            "12",
+            "--echo-db",
+            "6",
+            "--tail-db",
+            "-9",
+            "--predelay-ms",
+            "30",
+            "--tail-glide",
+            "--direct-delay",
+        ]))
+        .expect("parses");
+        assert_eq!(
+            a.mix.line(),
+            "mix: echoes +6 dB (room +6.0 dB before any room), tail -9 dB (room +0.0 dB), \
+             pre-delay 30 ms, tail lines glide, direct delay on"
+        );
+        let s = a.mix.settings();
+        assert!((s.echo_gain - 1.9953).abs() < 1e-4);
+        assert!((s.reverb.level - 0.3548).abs() < 1e-4);
+        assert_eq!(s.reverb.predelay_frames(), 1_440);
+        assert_eq!(s.reverb.lines, TailLines::Glide);
+        assert!(s.direct_delay);
+        assert_eq!(s.echo_by_room, MixSettings::default().echo_by_room);
+        assert_eq!(Mix::default().settings(), MixSettings::default());
+
+        let flat = parse_args_from(argv(&["--flat-mix", "--echo-db", "9"])).expect("parses");
+        assert_eq!(
+            flat.mix.line(),
+            "mix: echoes +9 dB (room flat), tail +0 dB (room flat), pre-delay 0 ms, tail lines \
+             handover, direct delay off"
+        );
+        assert_eq!(
+            flat.mix.settings(),
+            MixSettings {
+                echo_gain: 10f32.powf(9.0 / 20.0),
+                ..MixSettings::flat()
+            }
+        );
+        // The Phase 12 picks replay under --flat-mix; over the curves the trims stop at +12.
+        assert!(parse_args_from(argv(&["--flat-mix", "--echo-db", "30"])).is_ok());
+        assert!(parse_args_from(argv(&["--echo-db", "30", "--flat-mix"])).is_ok());
+        for bad in [
+            &["--echo-db", "13"][..],
+            &["--tail-db", "-25"],
+            &["--echo-db", "-25"],
+            &["--tail-db", "13"],
+            &["--flat-mix", "--echo-db", "31"],
+            &["--flat-mix", "--tail-db", "7"],
+            &["--predelay-ms", "-1"],
+            &["--predelay-ms", "x"],
+            &["--echo-db", "inf"],
+        ] {
+            assert!(parse_args_from(argv(bad)).is_err(), "{bad:?}");
+        }
+        let top = Mix::default().step(40.0, 40.0, 400.0);
+        assert_eq!(
+            (top.echo_db, top.tail_db, top.predelay_ms),
+            (12.0, 12.0, 200.0)
+        );
+        let bottom = Mix::default().step(-40.0, -40.0, -10.0);
+        assert_eq!(
+            (bottom.echo_db, bottom.tail_db, bottom.predelay_ms),
+            (-24.0, -24.0, 0.0)
+        );
+        let flat_top = flat.mix.step(40.0, 40.0, 0.0);
+        assert_eq!((flat_top.echo_db, flat_top.tail_db), (30.0, 6.0));
+        let flat_bottom = flat.mix.step(-40.0, -40.0, 0.0);
+        assert_eq!((flat_bottom.echo_db, flat_bottom.tail_db), (-12.0, -30.0));
+    }
+
+    /// A room prints the mix line again when it moves either curve by 0.5 dB or more since the
+    /// last printed line; under `--flat-mix` never.
+    #[test]
+    fn a_room_reprints_the_mix_line_when_a_curve_moves() {
+        let mut mix = Mix::default();
+        assert!(
+            mix.take_room(2.666),
+            "no room (+6 dB) to the 4 m room (+30 dB)"
+        );
+        assert_eq!(
+            mix.line(),
+            "mix: echoes +0 dB (room +30.0 dB at mfp 2.666 m), tail +0 dB (room -15.0 dB), \
+             pre-delay 0 ms, tail lines handover, direct delay off"
+        );
+        assert!(!mix.take_room(2.6), "both curves hold below the first knot");
+        assert!(mix.take_room(7.999));
+        assert!((mix.curve_db(mix.room).0 - 15.0).abs() < 0.01);
+        assert!(!mix.take_room(8.1), "+15.0 to +14.9 dB");
+        assert!(
+            mix.take_room(10.0),
+            "+15.0 to +14.4 dB since the printed line"
+        );
+        let mut flat = Mix {
+            flat: true,
+            ..Mix::default()
+        };
+        assert!(!flat.take_room(2.666));
+        assert_eq!(flat.room, Some(2.666));
+    }
+
     #[test]
     fn an_edit_prints_one_line_with_material_names() {
         let r = EditResult {
@@ -3777,6 +4409,7 @@ mod tests {
             coarse: None,
             hud: Hud::new(false),
             audio: None,
+            room_probe: None,
             cutaway: CutawayMode::Auto,
         }
     }

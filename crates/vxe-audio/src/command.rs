@@ -6,21 +6,39 @@
 
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 
+use crate::mixer::MixSettings;
+use crate::stream::StreamReader;
 use crate::voice::{AcousticTargets, PlayParams, Sound, VoiceId};
 use crate::{AudioError, Listener};
 
 /// Slots in the command channel.
 pub const COMMAND_CAPACITY: usize = 1024;
 
-/// One instruction for the mixer.
-#[derive(Clone, Debug, PartialEq)]
+/// The late tail's targets from a completed room fan (see `acoustics.rs`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RoomTargets {
+    /// Decay time to 60 dB down, seconds.
+    pub t60_s: f32,
+    /// `4V / S`, metres.
+    pub mean_free_path_m: f32,
+    /// The tail's energy relative to a unit-energy direct impulse; 0 silences it.
+    pub energy: f32,
+}
+
+/// One instruction for the mixer. Not `Clone`: a stream has one reader.
+#[derive(Debug, PartialEq)]
 pub enum Command {
     Play(VoiceId, Sound, PlayParams),
+    /// Plays a stream as a voice until stopped; an underrun plays silence.
+    PlayStream(VoiceId, StreamReader, PlayParams),
     SetPosition(VoiceId, [f32; 3]),
     SetGain(VoiceId, f32),
     Stop(VoiceId),
     SetListener(Listener),
     SetAcoustics(VoiceId, AcousticTargets),
+    SetRoom(RoomTargets),
+    /// The balance: echo gain, direct delay, the tail's settings.
+    SetMix(MixSettings),
 }
 
 pub(crate) struct CommandSender(SyncSender<Command>);
