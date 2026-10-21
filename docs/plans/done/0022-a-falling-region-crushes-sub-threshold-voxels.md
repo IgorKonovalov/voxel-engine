@@ -1,11 +1,11 @@
 # 0022: A falling region crushes the sub-threshold voxels under it and piles them as rubble, and the logic tells a wedge from a refusal and a landing
 
-> **Status:** approved (owner, 2026-10-20; rubble: all the crushed volume, piled on the landed region)
+> **Status:** done (closed 2026-10-20, v0.22.0: a falling region now passes through and crushes the sub-threshold voxels the query calls load-free, piles them as rubble, and the logic tells a wedge, a refusal and a landing apart; approved by the owner 2026-10-20)
 > **Created:** 2026-10-20
 > **Milestone:** M8 (collapse) in `docs/roadmap.md`
-> **Related ADRs:** [ADR-0016](../adrs/0016-a-falling-region-crushes-the-sub-threshold-voxels-in-its-path.md) (the yield rule, crush over carry; proposed with this plan), [ADR-0008](../adrs/0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) (the flood and the drop it amends), [ADR-0007](../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (the log), [ADR-0010](../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (the logic boundary)
+> **Related ADRs:** [ADR-0016](../../adrs/0016-a-falling-region-crushes-the-sub-threshold-voxels-in-its-path.md) (the yield rule, crush over carry; proposed with this plan), [ADR-0008](../../adrs/0008-collapse-as-capped-support-flood-and-rigid-vertical-drop.md) (the flood and the drop it amends), [ADR-0007](../../adrs/0007-server-op-log-byte-channel-shared-and-owned-clients.md) (the log), [ADR-0010](../../adrs/0010-game-logic-as-a-component-behind-a-logic-trait.md) (the logic boundary)
 > **Source:** the owner's windowed check of Plan 0018 on 2026-10-20, recorded in
-> [Plan 0018's implementation log](done/0018-server-routed-stamp-drop-and-remove.md) at 84a3998,
+> [Plan 0018's implementation log](0018-server-routed-stamp-drop-and-remove.md) at 84a3998,
 > and the owner's choice (a) the same day.
 
 ## TL;DR
@@ -488,12 +488,100 @@ pub struct PileResult {
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The repro, committed, pinning the bug | dev | not started | |
-| 2: The yielding drop and the rubble pile in `vxe-world` | dev | not started | |
-| 3: Op kinds 5 and 6 on the wire, through the server and in the log | dev | not started | |
-| 4: `DigLogic` tells a refusal, a wedge and a landing apart | dev | not started | |
-| 5: Readings and the budget lines | dev | not started | |
-| 6: The owner's windowed check | human | not started | |
+| 1: The repro, committed, pinning the bug | dev | done | 3a27fe0 |
+| 2: The yielding drop and the rubble pile in `vxe-world` | dev | done | 18702e8 |
+| 3: Op kinds 5 and 6 on the wire, through the server and in the log | dev | done | dfe3fc9 |
+| 4: `DigLogic` tells a refusal, a wedge and a landing apart | dev | done | 120e94f |
+| 5: Readings and the budget lines | dev | done | 4c1a2c1 (perf commits c6b56c4, 7e42bbf) |
+| 6: The owner's windowed check | human | done (owner, 2026-10-20) | |
+
+Phase 1 observations:
+- The level repro in the tree matches the scratch repro: first region at loop iteration 3 243,
+  4 cells, 501 voxels, aabb `[553, 794, 80]..=[566, 803, 87]`, `dropped == 0`; the sweep counts
+  6 regions, 0 moved, 0 refused.
+- Runtimes under `cargo nextest run -p flythrough --test collapse_level` (dev profile with
+  flythrough at opt-level 2, dev box, no perf lock, 1-minute load 16.6, not quiet): the sweep
+  8.56 s, the first-region test 9.29 s (both mostly level generation). The sweep is under 10 s,
+  so it is not `#[ignore]`d.
+
+Phase 2 observations:
+- Collapse course hash: `0x3178_0a15_61c1_3041` to `0xd223_d848_c8fc_ca0f` (blessed on Linux;
+  the Windows arm confirms it on the first CI run after the owner pushes `main`). The test
+  also asserts the hash after the first two parts (drop by 10, removal) still equals
+  `0x3178_0a15_61c1_3041`.
+- The sliver: `drop_region_through(&cells, 64, 64)` gives `dropped 32`, `moved [(3, 4608)]`,
+  `crushed [(3, 32)]`, touched `[0, 0, 0]`, aabb `[24, 24, 8]..=[47, 47, 47]`; the world hash
+  equals the floor plus `[24, 24, 8]..[48, 48, 16]`. The pile: `placed 32`, aabb
+  `[25, 24, 16]..=[47, 47, 16]`, `(25, 26, 16)` is rubble.
+- Level, first region (iteration 3 243): drops `[8, 8, 8, 8, 8, 8, 8, 8, 8, 0]` (72 voxels),
+  crushed 141, pile placed 141. The full sweep with falls finds **1** region (the first falls
+  away, so the later digs that re-detached it find nothing): 141 crushed, 141 placed, no first
+  drop of 0, none refused, no shell blocker met.
+- Native vs decoded, yielding drops and piles on 96 seeded regions: 77 drops fell, 29 crushed,
+  79 piles placed; results and bricks equal after every op.
+- `cargo bench -p vxe-world --bench collapse -- --test`: every arm's assertions pass
+  (exclusive perf lock, 1-minute load 10.0, not quiet). Readings are Phase 5.
+
+Phase 3 observations:
+- Entry sizes asserted: kind 3 `21 + 12n` (129 B for 9 cells, 49 173 for 4 096), kind 5
+  `23 + 12n` (131, 49 175), kind 6 `27 + 12n` (135). Through the server the kind-5 drop of the
+  sliver's slab announces `dropped 32`, `moved [(3, 4608)]`, `crushed [(3, 32)]`; the kind-6
+  pile announces `placed 32`; their op entries encode as `(5, 131)` and `(6, 135)`; replay by
+  ops equals the live hash; an owned client stays in step; the server's grid equals
+  `CoarseGrid::build`.
+- A literal Plan 0018-layout kind-3 entry decodes to `yield_below: 0` and re-encodes
+  byte-identical; a kind-5 entry with threshold 0 is `WireError::NonCanonical { at: 0 }`.
+- `SLAB_SESSION_HASH` `0x2077_5c41_d63d_17c5`, `OP_LOG_HASH` `0x5ac8_737d_db0f_ccec` and
+  `ECHO_HASH` `0x8f7d_4016_15d9_5c4d` pass unchanged. The slab session's four drops are
+  asserted to log as kind 3 at `21 + 12 * 9` bytes each; the op-log bytes were not compared
+  with a pre-plan capture.
+
+Phase 4 observations:
+- Sliver ledge (rock): tick 1 `["op dropped"]` (dropped 8, crushed `[(1, 32)]`); tick 2
+  `["op dropped", "op piled", "landed after 1 ticks, fell 8 voxels, crushed 32 voxels, 32
+  rubble"]`; `(25, 26, 40)` is rubble; the server log's op kinds are `[1, 5, 5, 6]`; the
+  server's grid equals `CoarseGrid::build`.
+- Shell sliver: `["op dropped", "wedged 9 1:4608"]`, terminal `wedged: 9 cells, {rock: 4608},
+  cannot fall`; the second lump dig gives `["op carved"]` and no op; a radius-2 dig at
+  `(25, 25, 46)` inside the ledge reports `region 9 1:<4608 - carved>` and is wedged again.
+- No floor: five ticks of `op dropped`, then `drop refused: chunk [0, 0, -1] is not resident,
+  after 5 ticks, fell 40 voxels`; no pile, nothing on later ticks.
+- `cutting_the_pillar_drops_the_ledge_a_cell_a_tick` and
+  `with_r_the_ledge_is_removed_leaving_a_quarter_as_rubble` pass unchanged.
+- `SESSION_HASH` `0x422b_7654_317b_145d` does not move (the scripted fall crosses no sliver);
+  its nine drops log as kind 5, its op-kind counts are `[5, 1, 9, 1, 0]` (no pile). The
+  `--logic wasm` session equals the native one byte for byte (guests rebuilt).
+
+Phase 5 observations:
+- Two perf commits before the readings, both in `crates/vxe-world/src/collapse.rs`: c6b56c4
+  (crush walks only the cells the gap scan saw yield; a uniform solid brick skips the count
+  cache; `run_bottoms` is an iterator): slab through the sliver 537 to 129-169 µs, yielding
+  cube 29.7 to 7.8-10.8 ms (exclusive perf lock, load about 20). 7e42bbf (the gap scan walks
+  runs with the inline loop again): plain slab drop 87-88 µs against the pre-plan 89-90 µs
+  (exclusive perf lock, load about 8).
+- `cargo bench -p vxe-world --bench collapse`, criterion medians, AMD Ryzen 9 5900HS, Linux,
+  at 7e42bbf, exclusive perf lock, three runs at 1-minute load 2.20, 6.84 and 5.81: slab
+  through the sliver 91.5 / 94.7 / 92.9 µs; yielding cube (yield 64) 7.44 / 10.56 / 7.47 ms;
+  pile 36.0 / 37.9 / 35.4 µs; `find_unsupported` 337 / 393 / 395 µs; slab by 32 77.7 / 79.1 /
+  82.1 µs; by 10 57.3 / 57.2 / 57.4 µs; `remove_region` 153.6 / 159.7 / 156.8 µs; cube by 64
+  7.49 / 8.69 / 7.45 ms; by 60 8.50 / 9.26 / 8.55 ms; by 8 5.57 / 6.08 / 6.42 ms.
+- The pre-plan build (ec99160) in the same lock hold, alternated with the last two runs above,
+  load 9.05 and 4.48: `find_unsupported` 393 / 393 µs; slab by 32 84.1 / 88.7 µs; by 10 61.7 /
+  67.9 µs; `remove_region` 153.5 / 161.3 µs; cube by 64 10.16 / 11.01 ms; by 60 11.47 / 13.14
+  ms; by 8 8.64 / 10.32 ms.
+- `docs/nfr.md` §4 carries the yielding drop and pile proposals and readings and the kind-5 and
+  kind-6 entry sizes; §6's collapse course line carries `0xd223_d848_c8fc_ca0f`. No session
+  hash moved, so no other §6 line changed.
+
+Phase 6 observations (owner, 2026-10-20, `--level`, release, at 6c431cb, main merged in; stdout
+in `check-p6.log`):
+- 17 `unsupported: ...` regions, 17 `landed ...` lines, none refused or wedged. Examples:
+  `landed after 4 ticks, fell 26 voxels, crushed 159 voxels, 159 rubble`, `landed after 16
+  ticks, fell 121 voxels, crushed 17 voxels, 17 rubble`, `landed after 6 ticks, fell 45
+  voxels` (no crush, no pile). 14 of the 17 crushed; each pile equals its crush.
+- A later dig carved `rubble 30`. The owner: rubble shows on the landed pieces, `R` and a
+  crumble behave as before, "all works as intended".
+- Replay check not run.
 
 ### Notes
 
@@ -501,15 +589,56 @@ _(Deviations from the plan, with the commit, stated without justification. Done-
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
 
+- Phase 2: `crates/vxe-world/src/wire.rs` (the drop result decodes `crushed: Vec::new()`) and
+  `crates/vxe-world/tests/log.rs` (the field in a literal) are touched outside the phase's
+  files so the crate compiles; Phase 3 replaces the wire part.
+- Phase 2: the pile's `count_in_box([24, 24, 16], [47, 47, 16])` is asserted as
+  `[(AIR, 544), (5, 32)]`, not `[(5, 32)]`: `count_in_box` counts air.
+- Phase 2: the yielding native/decoded check is a new test
+  (`the_native_yielding_drop_and_pile_match_the_decoded_ones`, 96 regions, each prepared with a
+  carve under the footprint and three seeded thin boxes of materials 1 to 4) instead of an
+  extension of `the_native_collapse_matches_the_decoded_one`, which stays as it was; without
+  the preparation no drop on the dressed cubes crushed anything.
+- Phase 3: `apps/flythrough/logic/src/lib.rs` passes `yield_below: 0` and
+  `apps/flythrough/tests/replay.rs` counts `Op::Pile` (0) so the workspace compiles; Phase 4
+  changes both.
+- Phase 3: the refusal of a kind-5 entry with threshold 0 is a new
+  `WireError::NonCanonical { at }`.
+- Phase 3: `an_unknown_op_kind_is_reported` probes kind 7 where it probed 5.
+- Phase 4: the fly-through prints a `drop refused` line as the logic writes it (already
+  prose); only `wedged` lines are translated. Its own `dropped: refused, ...` and
+  `piled: refused, ...` prints are dropped, since the logic's line reports the refusal.
+- Phase 4: `count_in_box([24, 24, 40], [47, 47, 40])` is asserted as
+  `[(AIR, 544), (RUBBLE, 32)]`: `count_in_box` counts air.
+- Phase 4: the second lump of the shell test is written to the world directly, not through
+  the server, before its dig.
+- Phase 2: the level sweep finds 1 region where the plan's figures (from the wedged code)
+  found 6; the 6 were one piece re-detached.
+
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature
+- **Public API changed:** `vxe-world`: `World::drop_region_through`,
+  `World::drop_region_through_decoded`, `World::pile_rubble`, `World::pile_rubble_decoded`,
+  `PileResult` (with `edit_result`), `DropResult::crushed`, `Op::Drop { yield_below }`,
+  `Op::Pile`, `OpResult::Pile`, `OP_DROP_THROUGH` (5), `OP_PILE` (6),
+  `WireError::NonCanonical { at }`. `flythrough-logic`: `PILE_VERB`, `YIELD_BELOW`,
+  `STUCK_MAX`, `region_line`, `wedged_line`, `parse_wedged_line`, `refused_line`.
+- **Budget readings:** §4 collapse cost, AMD Ryzen 9 5900HS, Linux, criterion medians,
+  exclusive perf lock, 7e42bbf, 1-minute load 2.2 to 6.8: `drop_region_through` slab through a
+  sliver 91.5 to 94.7 µs (proposal 100 µs); cube at yield 64 7.4 to 10.6 ms (proposal 20 ms);
+  `pile_rubble` 35.4 to 37.9 µs (proposal 200 µs); older arms within the pre-plan build's
+  range or under it in the same lock hold (Phase 5 observations). §4 logs: kind 5 `23 + 12n`,
+  kind 6 `27 + 12n`, asserted in `crates/vxe-world/tests/log.rs`. §6: collapse course
+  `0x3178_0a15_61c1_3041` to `0xd223_d848_c8fc_ca0f`, blessed on Linux, Windows unconfirmed.
+- **Gate at the tip (7e42bbf code, this commit adds docs only):** `cargo build` 0;
+  `cargo nextest run` (exclusive perf lock, load 17.5) 0, 449 passed, 3 skipped;
+  `cargo test --doc --workspace` 0, 7 passed; `cargo clippy --workspace --all-targets -- -D
+  warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` 0; `check-doc-links.mjs`,
+  `check-comment-hygiene.mjs`, `check-index-rows.mjs` 0.
+- **Outstanding `human` phases:** Phase 6, the owner's windowed check.
 
 ## Followups
 

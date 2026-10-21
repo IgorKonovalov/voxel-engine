@@ -1,6 +1,7 @@
 # 0025: The cutaway view: a camera in rock or outside the world sees through the hull to the first cavern's walls
 
-> **Status:** approved (2026-10-20)
+> **Status:** done (closed 2026-10-20, v0.20.0): clean close; both phases match their
+> done-whens, the outside-camera centre-pixel check asserted over the whole view as disclosed.
 > **Created:** 2026-10-20
 > **Milestone:** M7 in `docs/roadmap.md` (debug views); a tool, not a frame stage
 > **Related ADRs:** none (the rejected options are product choices for a debug view, named
@@ -98,14 +99,14 @@ reviews once at the end, in a fresh session.
 ### Phase 2: The dollhouse shading, the automatic trigger and the key
 - **Owner skill:** dev
 - **What:** in cutaway mode `shade` uses a hemisphere light, `albedo * (0.3 + 0.7 * (0.5 +
-  0.5 * n.y))` with detail applied as usual and no shadow ray or lamp, and a miss writes a
+  0.5 * n.z))` (world z up; owner, 2026-10-20) with detail applied as usual and no shadow ray or lamp, and a miss writes a
   flat sky colour. The fly-through reads the camera's voxel each frame through
   `World::material_at` and sets the flag unless the `X` key forced a state; `--cutaway` sets
   the start state; the HUD shows a `cutaway` row when active; the autopilot is unaffected.
 - **Files touched:** `march.wgsl`, `marcher.rs`, `apps/flythrough/src/main.rs`, `fly.rs`,
   `hud.rs`, `apps/flythrough/tests/golden.rs`, `docs/nfr.md` (a diagnostic reading).
 - **Done when:** a golden `cutaway_level.png` of the level (`--level --seed 1`) from a
-  camera 20 m outside the extent's -x face, looking +x at the centre, is blessed on lavapipe
+  camera 40 m outside the extent's -x face (moved from 20 m by the owner, 2026-10-20: 20 m reads 5.92 % sky; 40 m reads 24.12 % sky, 75.88 % lit rock), looking +x at the centre, is blessed on lavapipe
   and shows at least 20 % of its pixels as sky and at least 20 % as lit rock (colour bins,
   `bins_covering`); the parse test pins `--cutaway auto`, `on`, `off` and refuses `--cutaway
   x`; a headless test places the camera in rock and asserts the look's `cutaway` flag is set
@@ -158,8 +159,8 @@ steps-view cost from outside the level on the dev box as a diagnostic.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The walk rule and its headless proof | dev | not started | |
-| 2: The dollhouse shading, the automatic trigger and the key | dev | not started | |
+| 1: The walk rule and its headless proof | dev | done: `apps/flythrough/tests/cutaway.rs` on llvmpipe (exclusive perf lock, load 28.1, not quiet): camera (-100, 0.5, 0.5) centre normals [0, 128, 128], hitmask [255, 255, 255]; camera (-200, 0.5, 0.5) the same; (-200, 60.5, 0.5) hitmask [0, 0, 0]; cutaway off from (-200, 0.5, 0.5) centre normals [0, 128, 128], hitmask white, normals view 97.54 % of pixels differ from cutaway on. `the_default_look_leaves_the_goldens_byte_for_byte`, `attribute_pages_leave_the_face_goldens_byte_for_byte`, `goldens_match_bit_exactly_over_one_and_several_shards` pass; `-p flythrough -p vxe-render` 164 passed, 3 skipped (load 22.4, not quiet) | 1cbcc5b |
+| 2: The dollhouse shading, the automatic trigger and the key | dev | done in two commits (stopped at the golden camera, resumed after the owner's amendment 40d2328): `cutaway_parses_auto_on_and_off`, `auto_cutaway_follows_the_camera_voxel` (4 x 4 x 2-chunk seed-1 cave: shell voxel on, spawn pocket off, x = -200 on), `the_cutaway_row_shows_while_the_view_is_on` pass. `cutaway_level.png` blessed on llvmpipe from (-400, 640.5, 256.5), 320x180 (exclusive perf lock, load 8.7, not quiet): sky bin (4, 5, 5) 24.12 %, lit rock 75.88 %, misses 24.12 %, 2 bins covering 5 %; re-run against the golden 0.0000 % differ. Steps view, `cutaway_steps_from_outside_the_level_at_1080p`, RTX 3080 Laptop, 1920x1080, 40 m camera (same lock and load): cutaway on mean 49.53 p99 170, 2434 of 2073600 rays at the 255 clamp; off mean 0.91 p99 1; recorded under `nfr.md` §2 | 5a99b90; 6fbcb0a |
 
 ### Notes
 
@@ -167,15 +168,21 @@ _(Deviations from the plan, with the commit, stated without justification. Done-
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
 
+- Phase 1: with cutaway off, the outside camera's centre pixel reads the same as with it on in both views ([0, 128, 128] and white: the hull's -x face and the far wall both face -x), so "differs from the cutaway reading" is asserted over the whole `normals` view (fraction of pixels differing by more than 2/255 > 0), the centre pixel's value set as stated.
+- Phase 1: `apps/flythrough/src/main.rs` (`start_look` sets `cutaway: false`) was touched for `LookParams`'s new field; not in the phase's file list.
+- Phase 1: the shader's per-cell field is `through`, since `pass` is a reserved WGSL word.
+- Phase 2: the hemisphere term uses `n.z` (world z up), as amended by the owner (40d2328).
+- Phase 2, history: at the original 20 m camera (-200, 640.5, 256.5) `cutaway_level.png` read sky 5.92 %, lit rock 94.08 % (llvmpipe, exclusive perf lock, load 15.1); 40 m 24.12 % / 75.88 %, 60 m 56.17 % / 43.83 %, 100 m 83.47 % / 16.53 %. The 20 m steps reading (RTX 3080 Laptop, 1920x1080, load 21.3): mean 58.74, p99 201, 4813 rays at the 255 clamp. The owner moved the camera to 40 m (40d2328); 5a99b90 landed without the golden.
+
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature
+- **Public API changed:** `vxe_render::marcher::FLAG_CUTAWAY` (`Params::flags` bit 10); `LookParams::cutaway: bool` (a new field, so exhaustive struct literals of `LookParams` break); `march.wgsl`'s `march` takes a `cutaway` argument, `Cell` gains `through` and `air`, `Descent` gains `resident`; the fly-through's `--cutaway auto|on|off`, the `X` key, the HUD's `cutaway (...)` row, `fly::CutawayMode`.
+- **Budget readings:** no `nfr.md` line moved. Added a §2 diagnostic: the cutaway steps view from 40 m outside the level, NVIDIA GeForce RTX 3080 Laptop GPU, 1920x1080, mean 49.53 steps per ray, p99 170 (6fbcb0a, exclusive perf lock, load 8.7, not quiet).
+- **Gate at the tip (6fbcb0a's tree):** `scripts/build-guests.sh` exit 0; `cargo nextest run --workspace` 467 passed, 4 skipped, exit 0 (exclusive perf lock, load 7.2, not quiet); `cargo nextest run -p flythrough --features wasm` 109 passed, 3 skipped, exit 0 (load 19.2, not quiet); `cargo test --doc --workspace` 7 passed; `cargo clippy --workspace --all-targets -- -D warnings` exit 0, and again with `--features flythrough/wasm`; `cargo fmt --all --check` exit 0; `cargo deny check` advisories, bans, licenses and sources ok; `check-doc-links` (158 links), `check-comment-hygiene`, `check-index-rows` exit 0; `node --test .claude/hooks/*.test.mjs` 59 passed.
+- **Outstanding `human` phases:** none
 
 ## Followups
 

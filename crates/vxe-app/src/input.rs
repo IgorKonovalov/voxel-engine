@@ -1,11 +1,79 @@
 //! Per-frame input state: keys held, keys and buttons pressed since the last frame, relative
-//! mouse motion and scroll. The shell feeds it from `winit` events and clears the per-frame
-//! parts after each frame; tests drive it through the same methods.
+//! mouse motion and scroll, and a gamepad's analog axes and buttons. The shell feeds the keys
+//! and mouse from `winit` events and clears the per-frame parts after each frame; the axes and
+//! pad buttons name no gamepad library, and an app feeds them from its own in
+//! [`App::poll`](crate::App::poll) (ADR-0019). Tests drive all of it through the same methods.
 
 use std::collections::HashSet;
 
 pub use winit::event::MouseButton;
 pub use winit::keyboard::KeyCode;
+
+/// A gamepad's analog axes. Sticks read `[-1, 1]` with x positive right and y positive up
+/// (forward on the move stick); triggers read `[0, 1]`, 1 fully pulled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Axis {
+    MoveX,
+    MoveY,
+    LookX,
+    LookY,
+    TriggerL,
+    TriggerR,
+}
+
+impl Axis {
+    pub const ALL: [Axis; 6] = [
+        Axis::MoveX,
+        Axis::MoveY,
+        Axis::LookX,
+        Axis::LookY,
+        Axis::TriggerL,
+        Axis::TriggerR,
+    ];
+}
+
+/// A gamepad's digital buttons, by position: `South` is the bottom face button (Cross on a
+/// DualSense, A on an Xbox pad), `L3`/`R3` the stick clicks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PadButton {
+    South,
+    East,
+    West,
+    North,
+    L1,
+    R1,
+    L3,
+    R3,
+    DpadUp,
+    DpadDown,
+    DpadLeft,
+    DpadRight,
+    Start,
+    Select,
+}
+
+impl PadButton {
+    pub const ALL: [PadButton; 14] = [
+        PadButton::South,
+        PadButton::East,
+        PadButton::West,
+        PadButton::North,
+        PadButton::L1,
+        PadButton::R1,
+        PadButton::L3,
+        PadButton::R3,
+        PadButton::DpadUp,
+        PadButton::DpadDown,
+        PadButton::DpadLeft,
+        PadButton::DpadRight,
+        PadButton::Start,
+        PadButton::Select,
+    ];
+
+    fn bit(self) -> u16 {
+        1 << self as u16
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct Input {
@@ -14,6 +82,11 @@ pub struct Input {
     clicked: Vec<MouseButton>,
     mouse_delta: [f64; 2],
     scroll: f32,
+    /// Indexed by `Axis as usize`; persists across frames like a held key.
+    axes: [f32; 6],
+    /// Bit sets over `PadButton::bit`.
+    pad_held: u16,
+    pad_pressed: u16,
 }
 
 impl Input {
@@ -42,6 +115,54 @@ impl Input {
         self.scroll
     }
 
+    /// The axis's last value: `[-1, 1]` for a stick, `[0, 1]` for a trigger, 0 until set.
+    /// It persists across frames until the next [`set_axis`](Self::set_axis).
+    pub fn axis(&self, axis: Axis) -> f32 {
+        self.axes[axis as usize]
+    }
+
+    /// `button` is down now.
+    pub fn pad_held(&self, button: PadButton) -> bool {
+        self.pad_held & button.bit() != 0
+    }
+
+    /// `button` went down since the last frame.
+    pub fn pad_pressed(&self, button: PadButton) -> bool {
+        self.pad_pressed & button.bit() != 0
+    }
+
+    /// Sets the axis, clamped to its range (`[-1, 1]`, or `[0, 1]` for a trigger); NaN reads
+    /// as 0.
+    pub fn set_axis(&mut self, axis: Axis, value: f32) {
+        let lo = match axis {
+            Axis::TriggerL | Axis::TriggerR => 0.0,
+            _ => -1.0,
+        };
+        self.axes[axis as usize] = if value.is_nan() {
+            0.0
+        } else {
+            value.clamp(lo, 1.0)
+        };
+    }
+
+    /// `button` went down; a button already held does not press again.
+    pub fn pad_down(&mut self, button: PadButton) {
+        if !self.pad_held(button) {
+            self.pad_held |= button.bit();
+            self.pad_pressed |= button.bit();
+        }
+    }
+
+    pub fn pad_up(&mut self, button: PadButton) {
+        self.pad_held &= !button.bit();
+    }
+
+    /// Zeroes every axis and releases every pad button, for when the pad goes away.
+    pub fn release_pad(&mut self) {
+        self.axes = [0.0; 6];
+        self.pad_held = 0;
+    }
+
     pub fn key_down(&mut self, key: KeyCode) {
         if self.held.insert(key) {
             self.pressed.push(key);
@@ -65,14 +186,17 @@ impl Input {
         self.scroll += lines;
     }
 
-    /// Releases every held key, for when the window loses focus and key-up events stop.
+    /// Releases every held key, for when the window loses focus and key-up events stop. The
+    /// pad's state is the app's to keep, since its events do not depend on focus.
     pub fn release_all(&mut self) {
         self.held.clear();
     }
 
-    /// Clears what happened during the frame; held keys stay held.
+    /// Clears what happened during the frame; held keys and pad buttons stay held and the
+    /// axes keep their values.
     pub fn end_frame(&mut self) {
         self.pressed.clear();
+        self.pad_pressed = 0;
         self.clicked.clear();
         self.mouse_delta = [0.0; 2];
         self.scroll = 0.0;
@@ -110,5 +234,49 @@ mod tests {
         assert_eq!(i.mouse_delta(), [0.0, 0.0]);
         assert_eq!(i.scroll(), 0.0);
         assert!(!i.clicked(MouseButton::Left));
+    }
+
+    #[test]
+    fn axes_persist_across_frames_and_pad_presses_last_one() {
+        let mut i = Input::default();
+        i.set_axis(Axis::MoveY, 0.5);
+        i.set_axis(Axis::LookX, -3.0);
+        i.set_axis(Axis::TriggerR, -0.5);
+        i.pad_down(PadButton::South);
+        assert_eq!(i.axis(Axis::MoveY), 0.5);
+        assert_eq!(i.axis(Axis::LookX), -1.0, "clamped to the stick's range");
+        assert_eq!(
+            i.axis(Axis::TriggerR),
+            0.0,
+            "clamped to the trigger's range"
+        );
+        assert_eq!(i.axis(Axis::MoveX), 0.0);
+        assert!(i.pad_pressed(PadButton::South) && i.pad_held(PadButton::South));
+        assert!(!i.pad_held(PadButton::East));
+        i.end_frame();
+        assert_eq!(i.axis(Axis::MoveY), 0.5);
+        assert!(!i.pad_pressed(PadButton::South) && i.pad_held(PadButton::South));
+        i.pad_down(PadButton::South);
+        assert!(
+            !i.pad_pressed(PadButton::South),
+            "a held button does not press again"
+        );
+        i.pad_up(PadButton::South);
+        assert!(!i.pad_held(PadButton::South));
+        i.release_all();
+        assert_eq!(i.axis(Axis::MoveY), 0.5, "focus loss leaves the pad alone");
+        i.pad_down(PadButton::R3);
+        i.release_pad();
+        assert_eq!(i.axis(Axis::MoveY), 0.0);
+        assert!(!i.pad_held(PadButton::R3));
+    }
+
+    #[test]
+    fn every_pad_button_has_its_own_bit() {
+        let mut i = Input::default();
+        for (k, b) in PadButton::ALL.into_iter().enumerate() {
+            i.pad_down(b);
+            assert_eq!(i.pad_held.count_ones() as usize, k + 1, "{b:?}");
+        }
     }
 }

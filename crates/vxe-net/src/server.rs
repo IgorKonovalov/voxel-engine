@@ -626,6 +626,7 @@ mod tests {
         server.submit(Op::Drop {
             cells: cells.clone(),
             max_drop: 8,
+            yield_below: 0,
         });
         server.submit(Op::Remove {
             cells,

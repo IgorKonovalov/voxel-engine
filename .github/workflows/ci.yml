@@ -24,13 +24,14 @@ jobs:
       - uses: actions/checkout@v5
       # winit's Wayland and X11 backends need the xkbcommon and wayland headers;
       # mesa-vulkan-drivers carries lavapipe, without which wgpu finds no adapter;
-      # libasound2-dev is the ALSA library cpal's Linux backend links.
+      # libasound2-dev is the ALSA library cpal's Linux backend links; libudev-dev is the
+      # udev library gilrs links for the fly-through's gamepad.
       - name: Install the Linux build packages
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pkg-config libxkbcommon-dev libwayland-dev mesa-vulkan-drivers libasound2-dev
+            pkg-config libxkbcommon-dev libwayland-dev mesa-vulkan-drivers libasound2-dev libudev-dev
       # rustup on the runner auto-installs the toolchain pinned in rust-toolchain.toml.
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest

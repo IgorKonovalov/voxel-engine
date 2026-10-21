@@ -1,9 +1,9 @@
 # 0026: Gamepad flight for demos: generic axes and pad buttons in the shell's input, gilrs in the testbed only
 
-> **Status:** draft
+> **Status:** done (closed 2026-10-20, v0.21.0): clean close review; both phases match the plan, the gate is green, the owner's DualSense check is batched with the other live checks
 > **Created:** 2026-10-20
 > **Milestone:** M7 in `docs/roadmap.md` (tooling); a testbed feature, no frame stage
-> **Related ADRs:** [ADR-0019](../adrs/0019-gamepad-input-as-generic-axes-in-the-shell-fed-by-the-testbed.md)
+> **Related ADRs:** [ADR-0019](../../adrs/0019-gamepad-input-as-generic-axes-in-the-shell-fed-by-the-testbed.md)
 > (proposed with this plan: where the gamepad dependency lives)
 > **Source:** the owner's request of 2026-10-20 (a DualSense on USB for demos), the probe of
 > the same day (gilrs 0.11.2 reports it as "PS5 Controller" with SDL mappings on this box,
@@ -177,24 +177,60 @@ None. The poll drains a handful of events per frame; the HUD row costs nothing m
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Axes in the shell, sticks in the fly-through | dev | not started | |
-| 2: Buttons, hot-plug and the HUD | dev | not started | |
+| 1: Axes in the shell, sticks in the fly-through | dev | done | b59c980 |
+| 2: Buttons, hot-plug and the HUD | dev | done | 8af8501 |
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: `L2`/`R2` arrive from gilrs as `ButtonChanged(LeftTrigger2/RightTrigger2)` values, so
+  `pad.rs`'s axis table keys on an `AxisSource` (a gilrs axis or a gilrs button) rather than
+  `gilrs::Axis` alone.
+- Phase 1: `Input` gains `release_pad()` (zeroes the axes, releases the pad buttons), beyond the
+  plan's data shapes; `Pad::poll` calls it when the active pad disconnects.
+- Phase 1: the `R3` boost latch lets go when the move stick returns inside the dead zone; the
+  plan names a latch without saying what releases it.
+- Phase 1: the lock adds `objc2-io-kit` (gilrs-core's macOS backend) beside the crates the
+  plan's context lists; no new duplicate in `cargo deny check`.
+- Phase 1: b59c980 carried a plan-relative comment in `pad.rs` that `check-comment-hygiene` did
+  not see while the file was untracked; reworded in the Phase 2 commit.
+- Phase 2: no left-click `handle_input` test existed to mirror; the new test drives a left click
+  and `R2` on two fresh runs and asserts the server applied the same `EditResult` for both.
+- Phase 2: `R2`/`L2` dig and fill on a press edge with hysteresis (press at 0.5 pull, release
+  under 0.3), held in `Run`; the D-pad adds one scroll line per press to the scroll delta.
+- Phase 2: Square (West) was left unwired in 8af8501 while Plan 0025's cutaway was not on the
+  branch; after the merge of main (e5724a4) it cycles the cutaway as `X` does, in the commit
+  after the merge, with a test driving `X` and `West` through `handle_input`.
+- Phase 2: the HUD's pad row is `HudStats::pad: Option<PadRow>`, `None` without a pad source, so
+  `HudStats::fixed()` (the HUD golden's fixture) keeps its twelve rows; the main.rs allocation
+  test sets a pad row and now counts 13 rows.
+- Phase 2: the newest connected pad is active; a disconnect of the active pad hands back to the
+  previous connected one. Power is read on connect and every 120 polls.
+- Phase 2: the startup line prints only in windowed, non-autopilot runs (`pad: none` under
+  `--pad off` or when gilrs fails).
+- Owner check (human, not run here): `cargo run --release -p flythrough -- --level` with the
+  DualSense on USB, then unplug and replug it; expected startup line `pad: PS5 Controller
+  (charging N%)`, a disconnect and a connect line, and the `pad` row on the HUD (`Options`).
 
 ### Close triggers
 
-_(Facts for the architect. No recommendations, and no suggested version bump.)_
-
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature
+- **Public API changed:** `vxe_app::Axis`, `vxe_app::PadButton` (new, re-exported from the crate
+  root); `Input::{axis, pad_held, pad_pressed, set_axis, pad_down, pad_up, release_pad}`;
+  `App::poll(&mut self, &mut Input)` with a no-op default, called by the shell before each
+  `frame`. Fly-through: `--pad on|off`, `flythrough::hud::{PadPower, PadRow}`,
+  `HudStats::pad`. New workspace dependency `gilrs = "=0.11.2"` (fly-through only); CI's apt
+  list adds `libudev-dev`.
+- **Budget readings:** none (no `nfr.md` figure touched).
+- **Gate at the tip:** run on the tree of the Square commit (after the merge of main at
+  e5724a4, v0.20.0), Linux dev box (RTX 3080 laptop), CARGO_BUILD_JOBS=4, under the 6G memory
+  scope. `cargo build` exit 0; `cargo nextest run` (default members, exclusive perf lock, 1-min
+  load 7.15 at start) exit 0, 460 passed, 4 skipped; `cargo test --doc` exit 0, 10 doctest
+  binaries ok; `cargo clippy --workspace --all-targets -- -D warnings` exit 0;
+  `cargo fmt --all --check` exit 0; `cargo deny check` exit 0 (advisories, bans, licenses,
+  sources ok); `check-comment-hygiene`, `check-doc-links`, `check-index-rows` OK; hook bite
+  tests 59 pass, 0 fail. The Windows CI arm (gilrs's `wgi` backend) was not built here.
+- **Outstanding `human` phases:** none. The owner's sofa check with the DualSense (command in
+  Notes) has not been run.
 
 ## Followups
 

@@ -434,3 +434,19 @@ impl LookRig {
         readback::read_rgba8(&self.device, &self.queue, self.marcher.target())
     }
 }
+
+/// At `position` (voxels) looking +x, 70 degrees vertical field of view.
+pub fn camera_looking_x(position: [f32; 3]) -> Camera {
+    Camera {
+        position: position.into(),
+        yaw: 0.0,
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    }
+}
+
+/// The RGB bytes of the centre pixel `(WIDTH / 2, HEIGHT / 2)` of a `WIDTH` x `HEIGHT` image.
+pub fn centre_pixel(rgba: &[u8]) -> [u8; 3] {
+    let i = ((HEIGHT / 2) * WIDTH + WIDTH / 2) as usize * 4;
+    [rgba[i], rgba[i + 1], rgba[i + 2]]
+}
