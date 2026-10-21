@@ -58,8 +58,9 @@ fn read_samples(
 /// A 4 x 4 x 4 cube of an emissive material at voxels 2..6 of brick 0 of one air chunk holds
 /// 56 samples after a sync (64 voxels less the 8 interior ones), each a cube voxel with its
 /// outward faces; carving the corner voxel (2, 2, 2) leaves 55; replacing the material by its
-/// non-emissive twin leaves 0; and after the chunk leaves the mirror its range is free and
-/// zeroed and `light_samples` reads 0.
+/// non-emissive twin leaves 0 (its range zeroed), and replacing it back refills a range that
+/// reads back the samples, never the zeroes; and after the chunk leaves the mirror its range is
+/// free and zeroed and `light_samples` reads 0.
 #[test]
 fn an_emissive_cube_holds_its_exposed_voxels_as_samples() {
     let Some((device, queue)) = software_device(64 << 20) else {
@@ -79,7 +80,7 @@ fn an_emissive_cube_holds_its_exposed_voxels_as_samples() {
         &device,
         MirrorConfig::new(Window::Fixed(ChunkExtent::new([0, 0, 0], [1, 1, 1]))),
     );
-    let st = gpu.sync(&world, &queue).unwrap();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
     println!(
         "cube: {} samples, {} bricks scanned, {} us",
         gpu.light_samples(),
@@ -103,8 +104,16 @@ fn an_emissive_cube_holds_its_exposed_voxels_as_samples() {
     }
 
     world.apply(&box_op([2; 3], [3; 3], Mode::Carve)).unwrap();
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.light_samples(), 55);
+    // The old range was zeroed and the new one written in the same sync's encoder, in that
+    // order: the samples read back, none of them zero.
+    let rewritten = gpu.light_range(coord).expect("the chunk has a range");
+    let samples = read_samples(&device, &queue, &gpu, rewritten);
+    assert!(
+        samples.iter().all(|s| s.material() == glow),
+        "a sample reads zero"
+    );
 
     world
         .apply(&box_op(
@@ -116,7 +125,7 @@ fn an_emissive_cube_holds_its_exposed_voxels_as_samples() {
             },
         ))
         .unwrap();
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.light_samples(), 0);
     assert_eq!(gpu.light_range(coord), None);
 
@@ -131,16 +140,22 @@ fn an_emissive_cube_holds_its_exposed_voxels_as_samples() {
             },
         ))
         .unwrap();
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     let range = gpu.light_range(coord).expect("the chunk has a range again");
     assert_eq!(range.1, 55);
+    // A range zeroed by one sync and refilled by a later one reads back the new samples.
+    let refilled = read_samples(&device, &queue, &gpu, range);
+    assert!(
+        refilled.iter().all(|s| s.material() == glow),
+        "a sample reads zero"
+    );
     gpu.apply_events(&StreamEvents {
         evicted: vec![coord],
         ..StreamEvents::default()
     });
     assert_eq!(gpu.light_samples(), 0);
     assert_eq!(gpu.light_range(coord), None);
-    let _ = gpu.sync(&world, &queue);
+    let _ = gpu.sync_now(&world, &device, &queue);
     assert_eq!(
         gpu.light_span(),
         0,
@@ -194,7 +209,7 @@ fn a_chunk_over_the_cap_keeps_every_kth_sample() {
             ..MirrorConfig::new(Window::Fixed(extent))
         },
     );
-    uncapped.sync(&world, &queue).unwrap();
+    uncapped.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(uncapped.light_samples(), 10_000);
     let all = read_samples(&device, &queue, &uncapped, (0, 10_000));
 
@@ -206,7 +221,7 @@ fn a_chunk_over_the_cap_keeps_every_kth_sample() {
             ..MirrorConfig::new(Window::Fixed(extent))
         },
     );
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.light_samples(), 5000);
     let kept = read_samples(&device, &queue, &gpu, (0, 5000));
     let every_second: Vec<LightSample> = all.iter().step_by(2).copied().collect();
@@ -249,7 +264,7 @@ fn an_emissive_ceiling_gives_the_analytic_irradiance_at_the_floor_centre() {
     let (table, glow, _) = glow_table();
     let world = ceiling_box(&table, glow);
     let mut gpu = GpuWorld::new(&device, world.extent());
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     println!(
         "{} light samples over a span of {}",
         gpu.light_samples(),
@@ -389,7 +404,7 @@ fn history_dies_in_the_edit_box_and_ages_elsewhere() {
         ))
         .unwrap();
     let aabb = r.aabb.expect("the carve removes rock");
-    rig.gpu.sync(&world, &rig.queue).unwrap();
+    rig.gpu.sync_now(&world, &rig.device, &rig.queue).unwrap();
     rig.frame.invalidate(aabb.0.0, aabb.1.0);
     for (k, (inside_age, outside_age)) in [(0.0, 16.0), (1.0, 17.0)].into_iter().enumerate() {
         rig.frame
@@ -438,7 +453,7 @@ fn reprojection_holds_across_a_sideways_step_and_a_material_change_resets() {
             Mode::Replace { from: 3, to: 4 },
         ))
         .unwrap();
-    rig.gpu.sync(&world, &rig.queue).unwrap();
+    rig.gpu.sync_now(&world, &rig.device, &rig.queue).unwrap();
     let (_, right, _) = camera.basis();
     camera.position += right;
     rig.frame
@@ -546,7 +561,7 @@ fn the_candidate_table_favours_near_emitters_without_bias() {
     let world = box_and_far_wall(&table, glow);
     let mut gpu = GpuWorld::with_config(&device, MirrorConfig::new(Window::Fixed(world.extent())));
     gpu.set_focus(VoxelCoord([32, 32, 25]));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     let chunks: Vec<_> = gpu.light_chunks().collect();
     println!("light chunks: {chunks:?}");
     assert_eq!(gpu.light_samples(), 400 + 4096);
@@ -627,14 +642,14 @@ fn light_ranges_follow_the_radius_and_evict_the_farthest() {
     };
     let at = |x: i32| VoxelCoord([x * 64 + 32, 32, 32]);
     gpu.set_focus(at(7));
-    let st = gpu.sync(&world, &queue).unwrap();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(ranged(&gpu), [7]);
     assert_eq!(st.light_oldest_wait, 0);
-    let st = gpu.sync(&world, &queue).unwrap();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(ranged(&gpu), [6, 7]);
     assert_eq!(st.light_oldest_wait, 1, "chunk 5 has waited one sync");
     assert_eq!(gpu.light_samples(), 4096);
-    let st2 = gpu.sync(&world, &queue).unwrap();
+    let st2 = gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(ranged(&gpu), [6, 7]);
     assert_eq!(
         st2.light_refused, 1,
@@ -645,20 +660,20 @@ fn light_ranges_follow_the_radius_and_evict_the_farthest() {
     gpu.set_focus(at(4));
     let mut evicted = 0;
     for _ in 0..4 {
-        evicted += gpu.sync(&world, &queue).unwrap().light_evicted;
+        evicted += gpu.sync_now(&world, &device, &queue).unwrap().light_evicted;
     }
     assert_eq!(ranged(&gpu), [3, 4]);
     assert_eq!(evicted, 2, "7, then 6");
 
     gpu.set_focus(at(0));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     let r = ranged(&gpu);
     println!("from chunk 0, one sync: {r:?}");
     assert!(!r.contains(&4), "chunk 4 lies beyond the radius plus one");
     // One chunk per sync, nearest first: chunk 0 had its range on that sync, chunk 1 (one
     // nearer chunk waiting before it) has it on the next, evicting chunk 3.
     assert!(r.contains(&0), "{r:?}");
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(ranged(&gpu), [0, 1]);
 }
 
@@ -781,7 +796,7 @@ fn lamp_cave(history: vxe_render::HistoryKill) -> Option<(LookRig, vxe_render::C
     let mut rig = LookRig::new(&world, None)?;
     rig.gpu.set_focus(VoxelCoord([264, 120, 376]));
     for _ in 0..4 {
-        rig.gpu.sync(&world, &rig.queue).unwrap();
+        rig.gpu.sync_now(&world, &rig.device, &rig.queue).unwrap();
     }
     rig.frame.set_lighting(vxe_render::Lighting {
         history,

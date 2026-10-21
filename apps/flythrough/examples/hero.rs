@@ -156,9 +156,9 @@ fn main() -> Result<(), String> {
     // The light radius around the eye; its ranges take a few syncs of the sample budget.
     gpu.set_focus(eye);
     for _ in 0..8 {
-        gpu.sync(&world, &queue)
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        gpu.sync(&world, &queue, &mut enc)
             .map_err(|e| format!("mirror: {e:?}"))?;
-        let mut enc = device.create_command_encoder(&Default::default());
         gpu.update_attrs(&mut enc);
         queue.submit([enc.finish()]);
     }

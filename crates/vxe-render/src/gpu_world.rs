@@ -285,6 +285,13 @@ const STAGE_SLOTS: u32 = POOL_PAGE_SLOTS;
 const STAGE_RECORDS: u32 = 2048;
 /// Changed table entries closer than this many entries are written in one run.
 const TABLE_GAP: u32 = 64;
+/// Bytes of one staging-belt chunk (ADR-0022): above a 2 MiB sync budget plus a frame's
+/// records, so a budgeted sync normally fills one chunk.
+pub const BELT_CHUNK_BYTES: u64 = 4 << 20;
+/// Chunks the belt keeps across syncs. A sync that leaves it holding more (an unbudgeted
+/// first sync of a large world) replaces it with an empty one, so the chunks of that burst
+/// are released once their copies complete.
+pub const BELT_KEEP_CHUNKS: usize = 3;
 /// Chunk table entry of a chunk with no record.
 pub const ABSENT: u32 = u32::MAX;
 /// Chunk record entry bit: set, the low bits are a pool slot; clear, they are a material.
@@ -430,7 +437,7 @@ pub struct SyncStats {
     pub light_evicted: u64,
     pub light_refused: u64,
     pub light_oldest_wait: u64,
-    /// Bytes handed to the queue.
+    /// Bytes copied into the mirror's buffers.
     pub bytes: u64,
     /// `Full` bricks written.
     pub bricks: u64,
@@ -438,7 +445,7 @@ pub struct SyncStats {
     pub chunks: u64,
     /// Chunks examined: the pending chunks looked at, uploaded or not.
     pub chunks_visited: u64,
-    /// Queue writes and copy commands issued.
+    /// Staged runs written: one belt copy command each.
     pub writes: u64,
     /// Chunks still waiting for an upload after this sync.
     pub pending_chunks: u64,
@@ -447,7 +454,8 @@ pub struct SyncStats {
     pub deferred_chunks: u64,
     /// Pool, mask or record buffers this sync created: 0, since `new` reserves them all.
     pub buffers_created: u32,
-    /// GPU buffer-to-buffer copies this sync issued: 0, since no buffer is ever replaced.
+    /// Copies between mirror buffers this sync issued: 0, since no buffer is ever replaced
+    /// (the belt's copies are counted in `writes`).
     pub copies: u32,
 }
 
@@ -885,6 +893,7 @@ pub struct GpuWorld {
     pending_d2: HashMap<ChunkCoord, i64>,
     pending_focus: ChunkCoord,
     bytes_written: u64,
+    belt: Belt,
     /// The run of consecutive pool slots staged for one write: its first slot, its voxels
     /// and its masks, and the run's masks rearranged into group layout when written. Kept
     /// across syncs so staging allocates only while it first grows.
@@ -899,6 +908,68 @@ pub struct GpuWorld {
     /// each `select` and kept for their capacity.
     selected: Vec<Selected>,
     stale: Vec<ChunkCoord>,
+}
+
+/// The mirror's staging belt: `wgpu`'s mapped chunks sub-allocated per staged run, each run
+/// copied to its destination by a command recorded into the sync's encoder (ADR-0022).
+struct Belt {
+    device: wgpu::Device,
+    belt: wgpu::util::StagingBelt,
+    /// Every chunk buffer the current belt has handed out a slice of: the belt never drops a
+    /// chunk, so this is its chunk count, active, closed, in flight and free.
+    chunks: Vec<wgpu::Buffer>,
+    /// Times the belt was replaced for holding more than [`BELT_KEEP_CHUNKS`].
+    trims: u64,
+}
+
+impl Belt {
+    fn new(device: &wgpu::Device) -> Self {
+        Self {
+            device: device.clone(),
+            belt: wgpu::util::StagingBelt::new(device.clone(), BELT_CHUNK_BYTES),
+            chunks: Vec::new(),
+            trims: 0,
+        }
+    }
+
+    /// Copies `bytes` into a belt slice and records the slice's copy to `target` at `offset`.
+    /// `offset` and the length are multiples of `COPY_BUFFER_ALIGNMENT`, as every mirror run
+    /// is (whole `u32` words).
+    fn write(
+        &mut self,
+        enc: &mut wgpu::CommandEncoder,
+        target: &wgpu::Buffer,
+        offset: u64,
+        bytes: &[u8],
+    ) {
+        let Some(size) = wgpu::BufferSize::new(bytes.len() as u64) else {
+            return;
+        };
+        let align = wgpu::BufferSize::new(wgpu::COPY_BUFFER_ALIGNMENT).expect("non-zero");
+        let slice = self.belt.allocate(size, align);
+        let chunk = slice.buffer();
+        if !self.chunks.contains(chunk) {
+            self.chunks.push(chunk.clone());
+        }
+        enc.copy_buffer_to_buffer(chunk, slice.offset(), target, offset, size.get());
+        slice
+            .get_mapped_range_mut()
+            .expect("a fresh belt slice is mapped")
+            .copy_from_slice(bytes);
+    }
+
+    /// Closes the chunks written since the last call; they are re-mapped for the belt once
+    /// `enc`'s submission completes and the device is polled. Then, past
+    /// [`BELT_KEEP_CHUNKS`], replaces the belt: the old one's free chunks drop now and its
+    /// in-flight ones when their copies complete.
+    fn finish(&mut self, enc: &wgpu::CommandEncoder) {
+        self.belt.finish_and_recall_on_submit(enc);
+        if self.chunks.len() > BELT_KEEP_CHUNKS {
+            self.belt = wgpu::util::StagingBelt::new(self.device.clone(), BELT_CHUNK_BYTES);
+            self.chunks.clear();
+            self.trims += 1;
+        }
+    }
 }
 
 impl GpuWorld {
@@ -1007,6 +1078,7 @@ impl GpuWorld {
             pending_d2: HashMap::new(),
             pending_focus: focus,
             bytes_written: 0,
+            belt: Belt::new(device),
             stage_start: 0,
             stage_voxels: Vec::new(),
             stage_masks: Vec::new(),
@@ -1230,6 +1302,19 @@ impl GpuWorld {
         self.bytes_written
     }
 
+    /// The staging belt's chunks, active, closed, in flight and free, each
+    /// [`BELT_CHUNK_BYTES`] (or one run's size, past it): host memory held mapped for the
+    /// mirror's uploads.
+    pub fn belt_chunks(&self) -> usize {
+        self.belt.chunks.len()
+    }
+
+    /// Times a sync left the belt holding more than [`BELT_KEEP_CHUNKS`] chunks and replaced
+    /// it.
+    pub fn belt_trims(&self) -> u64 {
+        self.belt.trims
+    }
+
     /// Chunks holding a record.
     pub fn mirrored_chunks(&self) -> usize {
         self.mirrored.len()
@@ -1312,7 +1397,8 @@ impl GpuWorld {
     /// dropped or replaced. Under [`MirrorConfig::attr_cap`] part of that waits for later
     /// calls ([`GpuWorld::prepare_attrs`]). Returns the items in the work list, compute and
     /// clear; 0 records nothing, and so does a mirror without attribute pages. The pass reads
-    /// the pool, records and table as the queue holds them when `encoder` is submitted.
+    /// the pool, records and table as earlier submissions and the `sync` copies recorded
+    /// ahead of it in `encoder` leave them.
     pub fn update_attrs(&mut self, encoder: &mut wgpu::CommandEncoder) -> usize {
         self.update_attrs_timed(encoder, None)
     }
@@ -1668,13 +1754,35 @@ impl GpuWorld {
     /// stay pending with their dirty bits and their mirrored record, and are counted in
     /// `SyncStats::deferred_chunks`. A sync that defers chunks and uploads none fails with
     /// `PoolTooLarge` or `RecordsTooLarge`, writing nothing.
-    pub fn sync(&mut self, world: &World, queue: &wgpu::Queue) -> Result<SyncStats, MirrorError> {
+    ///
+    /// Every write is a staging-belt copy recorded into `encoder` (ADR-0022), which the
+    /// caller submits before anything reads the mirror: the frame's own encoder ahead of the
+    /// attribute pass and the march, or one of its own outside a frame. A sync whose encoder
+    /// is never submitted keeps its belt chunks. `queue` is kept for the attribute pass's
+    /// own writes.
+    pub fn sync(
+        &mut self,
+        world: &World,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> Result<SyncStats, MirrorError> {
+        let result = self.sync_into(world, queue, encoder);
+        self.belt.finish(encoder);
+        result
+    }
+
+    fn sync_into(
+        &mut self,
+        world: &World,
+        queue: &wgpu::Queue,
+        enc: &mut wgpu::CommandEncoder,
+    ) -> Result<SyncStats, MirrorError> {
         let mut st = SyncStats::default();
         if self.attrib.is_some() && self.queue.is_none() {
             self.queue = Some(queue.clone());
         }
         self.reconcile_window(world);
-        self.flush_dropped_lights(queue);
+        self.flush_dropped_lights(enc);
         for c in world.store().take_dirty() {
             if self.in_window(c) {
                 self.enqueue(c);
@@ -1702,7 +1810,7 @@ impl GpuWorld {
         }
         let may_widen = world.materials().len() > PALETTE_ENTRIES;
         let mut short = short;
-        let result = self.upload(may_widen, &mut short, queue, &mut st);
+        let result = self.upload(may_widen, &mut short, enc, &mut st);
         if result.is_ok()
             && st.chunks == 0
             && let Some(e) = short
@@ -1713,16 +1821,16 @@ impl GpuWorld {
             return Err(e);
         }
         if !self.materials_written {
-            self.write_materials(world.materials(), queue, &mut st);
+            self.write_materials(world.materials(), enc, &mut st);
             self.materials_written = true;
         }
         let t = stopwatch();
-        self.place_lights(queue, &mut st);
+        self.place_lights(enc, &mut st);
         st.light_us += micros_since(t);
         // Staged runs are written even after a failed allocation: their records name them.
-        self.flush_stage(queue, &mut st);
-        self.flush_records(queue, &mut st);
-        self.flush_table(queue, &mut st);
+        self.flush_stage(enc, &mut st);
+        self.flush_records(enc, &mut st);
+        self.flush_table(enc, &mut st);
         st.pending_chunks = self.pending.len() as u64;
         self.bytes_written += st.bytes;
         result.map(|()| st)
@@ -1918,7 +2026,7 @@ impl GpuWorld {
         &mut self,
         may_widen: bool,
         short: &mut Option<MirrorError>,
-        queue: &wgpu::Queue,
+        enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) -> Result<(), MirrorError> {
         let mut selected = std::mem::take(&mut self.selected);
@@ -1990,13 +2098,13 @@ impl GpuWorld {
             result = match src {
                 Src::Full(chunk) => {
                     let mut ch = chunk.write().unwrap_or_else(PoisonError::into_inner);
-                    let r = self.upload_record(coord, Bricks::Chunk(&ch), false, queue, st);
+                    let r = self.upload_record(coord, Bricks::Chunk(&ch), false, enc, st);
                     if r.is_ok() {
                         ch.clear_dirty();
                     }
                     r
                 }
-                Src::Lod(mips) => self.upload_record(coord, Bricks::Mips(&mips), true, queue, st),
+                Src::Lod(mips) => self.upload_record(coord, Bricks::Mips(&mips), true, enc, st),
             };
             if result.is_err() {
                 break;
@@ -2015,7 +2123,7 @@ impl GpuWorld {
         coord: ChunkCoord,
         bricks: Bricks<'_>,
         lod: bool,
-        queue: &wgpu::Queue,
+        enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) -> Result<(), MirrorError> {
         let (rec, mut palette, was_wide, new) = match self.mirrored.remove(&coord) {
@@ -2083,7 +2191,7 @@ impl GpuWorld {
                 self.attr_bricks
                     .insert([0, 1, 2].map(|k| coord.0[k] * CHUNK_EDGE_BRICKS + b[k]));
             }
-            result = self.upload_brick(base + ENTRY_WORD + i, bricks.get(i), wide, kind, queue, st);
+            result = self.upload_brick(base + ENTRY_WORD + i, bricks.get(i), wide, kind, enc, st);
             if result.is_err() {
                 break;
             }
@@ -2139,7 +2247,7 @@ impl GpuWorld {
                 lod,
             },
         );
-        self.stage_record(rec, queue, st);
+        self.stage_record(rec, enc, st);
         st.bytes += RECORD_BYTES;
         // A re-synced record can turn empty or stop being so: its table entry follows it.
         let t = self.table_index(coord) as usize;
@@ -2176,7 +2284,7 @@ impl GpuWorld {
         brick: &Brick,
         wide: bool,
         kind: Kind,
-        queue: &wgpu::Queue,
+        enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) -> Result<(), MirrorError> {
         let old = self.entries[i];
@@ -2242,7 +2350,7 @@ impl GpuWorld {
                     }
                 }
             }
-            self.stage(s, &idx, &masks, queue, st);
+            self.stage(s, &idx, &masks, enc, st);
             st.bytes += SLOT_BYTES + MASK_BYTES;
             self.entries[i] = FULL_BIT | flag | s;
             st.bricks += 1;
@@ -2270,8 +2378,8 @@ impl GpuWorld {
             }
             let bytes: &[u8] = bytemuck::cast_slice(&v[..]);
             let (lo, hi) = bytes.split_at(SLOT_BYTES as usize);
-            self.stage(s, lo, &masks, queue, st);
-            self.stage(s + 1, hi, &[0; OPAQUE_WORDS + TRANSLUCENT_WORDS], queue, st);
+            self.stage(s, lo, &masks, enc, st);
+            self.stage(s + 1, hi, &[0; OPAQUE_WORDS + TRANSLUCENT_WORDS], enc, st);
             st.bytes += 2 * (SLOT_BYTES + MASK_BYTES);
             self.entries[i] = FULL_BIT | WIDE_BIT | flag | s;
         } else {
@@ -2280,7 +2388,7 @@ impl GpuWorld {
                 *d = self.rev[usize::from(m)] as u8;
                 set_bits(i, m);
             }
-            self.stage(s, &idx, &masks, queue, st);
+            self.stage(s, &idx, &masks, enc, st);
             st.bytes += SLOT_BYTES + MASK_BYTES;
             self.entries[i] = FULL_BIT | flag | s;
         }
@@ -2334,7 +2442,7 @@ impl GpuWorld {
     /// `light_radius` whose lists changed or that holds no range is written, nearest first,
     /// until the sync's sample budget is spent (each chunk at most once; the rest wait for the
     /// next sync). A chunk the buffer cannot fit evicts the farthest range beyond itself.
-    fn place_lights(&mut self, queue: &wgpu::Queue, st: &mut SyncStats) {
+    fn place_lights(&mut self, enc: &mut wgpu::CommandEncoder, st: &mut SyncStats) {
         self.light_syncs += 1;
         let r = i64::from(self.cfg.light_radius);
         let f = self.focus;
@@ -2346,7 +2454,7 @@ impl GpuWorld {
             .map(|(c, _)| *c)
             .collect();
         for c in far {
-            self.release_lights(c, queue);
+            self.release_lights(c, enc);
         }
         let mut wanted: Vec<(i64, ChunkCoord)> = self
             .lights
@@ -2363,7 +2471,7 @@ impl GpuWorld {
                 self.light_wait.entry(c).or_insert(self.light_syncs);
                 continue;
             }
-            written += self.write_chunk_lights(c, d, queue, st);
+            written += self.write_chunk_lights(c, d, enc, st);
             self.light_dirty.remove(&c);
             self.light_wait.remove(&c);
         }
@@ -2385,10 +2493,10 @@ impl GpuWorld {
         &mut self,
         coord: ChunkCoord,
         d2: i64,
-        queue: &wgpu::Queue,
+        enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) -> u64 {
-        self.release_lights(coord, queue);
+        self.release_lights(coord, enc);
         let Some(l) = self.lights.get(&coord) else {
             return 0;
         };
@@ -2420,7 +2528,7 @@ impl GpuWorld {
                 .max();
             match victim {
                 Some((_, _, v)) => {
-                    self.release_lights(v, queue);
+                    self.release_lights(v, enc);
                     self.light_wait.entry(v).or_insert(self.light_syncs);
                     st.light_evicted += 1;
                 }
@@ -2431,7 +2539,8 @@ impl GpuWorld {
             st.light_refused += 1;
             return 0;
         };
-        queue.write_buffer(
+        self.belt.write(
+            enc,
             &self.light_buf,
             u64::from(start) * LIGHT_SAMPLE_BYTES,
             bytemuck::cast_slice(&samples),
@@ -2448,10 +2557,10 @@ impl GpuWorld {
     }
 
     /// Zeroes and frees `coord`'s range, keeping its lists.
-    fn release_lights(&mut self, coord: ChunkCoord, queue: &wgpu::Queue) {
+    fn release_lights(&mut self, coord: ChunkCoord, enc: &mut wgpu::CommandEncoder) {
         if let Some(r) = self.lights.get_mut(&coord).and_then(|l| l.range.take()) {
             self.light_live -= u64::from(r.1);
-            self.zero_light_range(r, queue);
+            self.zero_light_range(r, enc);
             self.free_light_range(r);
         }
     }
@@ -2489,18 +2598,21 @@ impl GpuWorld {
     }
 
     /// Zeroes and frees the ranges `drop_lights` set aside.
-    fn flush_dropped_lights(&mut self, queue: &wgpu::Queue) {
+    fn flush_dropped_lights(&mut self, enc: &mut wgpu::CommandEncoder) {
         for r in std::mem::take(&mut self.light_dropped) {
-            self.zero_light_range(r, queue);
+            self.zero_light_range(r, enc);
             self.free_light_range(r);
         }
     }
 
-    fn zero_light_range(&self, (start, len): (u32, u32), queue: &wgpu::Queue) {
-        queue.write_buffer(
+    /// Zeroes a range of the light-sample buffer in the sync's encoder, ordered with its belt
+    /// copies (a queue write would run before every command buffer of the submission and
+    /// could zero a range a later copy refilled).
+    fn zero_light_range(&self, (start, len): (u32, u32), enc: &mut wgpu::CommandEncoder) {
+        enc.clear_buffer(
             &self.light_buf,
             u64::from(start) * LIGHT_SAMPLE_BYTES,
-            &vec![0u8; len as usize * LIGHT_SAMPLE_BYTES as usize],
+            Some(u64::from(len) * LIGHT_SAMPLE_BYTES),
         );
     }
 
@@ -2621,13 +2733,13 @@ impl GpuWorld {
         s: u32,
         bytes: &[u8],
         masks: &SlotMasks,
-        queue: &wgpu::Queue,
+        enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) {
         let len = self.stage_masks.len() as u32;
         let boundary = s.is_multiple_of(self.layout.slots_per_shard);
         if len > 0 && (s != self.stage_start + len || len >= STAGE_SLOTS || boundary) {
-            self.flush_stage(queue, st);
+            self.flush_stage(enc, st);
         }
         if self.stage_masks.is_empty() {
             self.stage_start = s;
@@ -2637,19 +2749,20 @@ impl GpuWorld {
     }
 
     /// Writes the staged run into its pool shard and the masks buffer, and empties it.
-    fn flush_stage(&mut self, queue: &wgpu::Queue, st: &mut SyncStats) {
+    fn flush_stage(&mut self, enc: &mut wgpu::CommandEncoder, st: &mut SyncStats) {
         if self.stage_masks.is_empty() {
             return;
         }
         let sps = self.layout.slots_per_shard;
         let shard = (self.stage_start / sps) as usize;
-        queue.write_buffer(
+        self.belt.write(
+            enc,
             &self.shards[shard],
             u64::from(self.stage_start % sps) * SLOT_BYTES,
             bytemuck::cast_slice(&self.stage_voxels),
         );
         st.writes += 1;
-        self.write_masks(queue, st);
+        self.write_masks(enc, st);
         self.stage_voxels.clear();
         self.stage_masks.clear();
     }
@@ -2657,7 +2770,7 @@ impl GpuWorld {
     /// Writes the staged run's masks: the groups it covers whole as one write of group
     /// layout, and the slots of a group it covers in part as one write of their opaque lines
     /// and one of their translucent words, so no write touches a slot outside the run.
-    fn write_masks(&mut self, queue: &wgpu::Queue, st: &mut SyncStats) {
+    fn write_masks(&mut self, enc: &mut wgpu::CommandEncoder, st: &mut SyncStats) {
         let g = MASK_GROUP_SLOTS;
         let start = self.stage_start;
         let end = start + self.stage_masks.len() as u32;
@@ -2677,7 +2790,8 @@ impl GpuWorld {
                         groups.extend_from_slice(&m[OPAQUE_WORDS..]);
                     }
                 }
-                queue.write_buffer(
+                self.belt.write(
+                    enc,
                     &self.masks,
                     u64::from(opaque_mask_word(s)) * 4,
                     bytemuck::cast_slice(groups),
@@ -2697,12 +2811,14 @@ impl GpuWorld {
             for m in slots {
                 groups.extend_from_slice(&m[OPAQUE_WORDS..]);
             }
-            queue.write_buffer(
+            self.belt.write(
+                enc,
                 &self.masks,
                 u64::from(opaque_mask_word(s)) * 4,
                 bytemuck::cast_slice(&groups[..opaque]),
             );
-            queue.write_buffer(
+            self.belt.write(
+                enc,
                 &self.masks,
                 u64::from(translucent_mask_word(s)) * 4,
                 bytemuck::cast_slice(&groups[opaque..]),
@@ -2713,10 +2829,10 @@ impl GpuWorld {
     }
 
     /// Appends record `rec`'s CPU entries to the staged run of records.
-    fn stage_record(&mut self, rec: u32, queue: &wgpu::Queue, st: &mut SyncStats) {
+    fn stage_record(&mut self, rec: u32, enc: &mut wgpu::CommandEncoder, st: &mut SyncStats) {
         let len = (self.rec_stage.len() / RECORD_WORDS) as u32;
         if len > 0 && (rec != self.rec_stage_start + len || len >= STAGE_RECORDS) {
-            self.flush_records(queue, st);
+            self.flush_records(enc, st);
         }
         if self.rec_stage.is_empty() {
             self.rec_stage_start = rec;
@@ -2726,11 +2842,12 @@ impl GpuWorld {
             .extend_from_slice(&self.entries[base..base + RECORD_WORDS]);
     }
 
-    fn flush_records(&mut self, queue: &wgpu::Queue, st: &mut SyncStats) {
+    fn flush_records(&mut self, enc: &mut wgpu::CommandEncoder, st: &mut SyncStats) {
         if self.rec_stage.is_empty() {
             return;
         }
-        queue.write_buffer(
+        self.belt.write(
+            enc,
             &self.records,
             u64::from(self.rec_stage_start) * RECORD_BYTES,
             bytemuck::cast_slice(&self.rec_stage),
@@ -2740,7 +2857,7 @@ impl GpuWorld {
     }
 
     /// Writes the changed table entries in runs; entries closer than `TABLE_GAP` share a run.
-    fn flush_table(&mut self, queue: &wgpu::Queue, st: &mut SyncStats) {
+    fn flush_table(&mut self, enc: &mut wgpu::CommandEncoder, st: &mut SyncStats) {
         if self.table_changed.is_empty() {
             return;
         }
@@ -2751,24 +2868,40 @@ impl GpuWorld {
         let mut end = idx[0];
         for &i in &idx[1..] {
             if i - end > TABLE_GAP {
-                self.write_table_run(start, end, queue, st);
+                self.write_table_run(start, end, enc, st);
                 start = i;
             }
             end = i;
         }
-        self.write_table_run(start, end, queue, st);
+        self.write_table_run(start, end, enc, st);
         idx.clear();
         self.table_changed = idx;
     }
 
-    fn write_table_run(&self, start: u32, end: u32, queue: &wgpu::Queue, st: &mut SyncStats) {
+    fn write_table_run(
+        &mut self,
+        start: u32,
+        end: u32,
+        enc: &mut wgpu::CommandEncoder,
+        st: &mut SyncStats,
+    ) {
         let run = &self.table_cpu[start as usize..=end as usize];
-        queue.write_buffer(&self.table, u64::from(start) * 4, bytemuck::cast_slice(run));
+        self.belt.write(
+            enc,
+            &self.table,
+            u64::from(start) * 4,
+            bytemuck::cast_slice(run),
+        );
         st.writes += 1;
         st.bytes += run.len() as u64 * 4;
     }
 
-    fn write_materials(&mut self, table: &MaterialTable, queue: &wgpu::Queue, st: &mut SyncStats) {
+    fn write_materials(
+        &mut self,
+        table: &MaterialTable,
+        enc: &mut wgpu::CommandEncoder,
+        st: &mut SyncStats,
+    ) {
         let rows: Vec<[f32; MATERIAL_FLOATS]> = table
             .rows()
             .iter()
@@ -2799,7 +2932,7 @@ impl GpuWorld {
         }
         self.material_rows = rows.len() as u64;
         let bytes: &[u8] = bytemuck::cast_slice(&rows);
-        queue.write_buffer(&self.materials, 0, bytes);
+        self.belt.write(enc, &self.materials, 0, bytes);
         st.writes += 1;
         st.bytes += bytes.len() as u64;
     }

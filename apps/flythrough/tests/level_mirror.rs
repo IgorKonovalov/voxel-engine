@@ -7,10 +7,11 @@ mod support;
 
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
 use flythrough::cave_materials;
+use support::SyncNow;
 use vxe_render::gpu_world::{
-    ABSENT, BITS_WORDS, EMPTY_BIT, ENTRY_WORD, FULL_BIT, LOD_BIT, MASK_GROUP_WORDS, PAGE_BYTES,
-    PALETTE_WORD, PLACEHOLDER_BYTES, RECORD_BYTES, RECORD_MASK, RECORD_WORDS, SLOT_BYTES,
-    SLOT_MASK, opaque_mask_word, translucent_mask_word,
+    ABSENT, BELT_CHUNK_BYTES, BELT_KEEP_CHUNKS, BITS_WORDS, EMPTY_BIT, ENTRY_WORD, FULL_BIT,
+    LOD_BIT, MASK_GROUP_WORDS, PAGE_BYTES, PALETTE_WORD, PLACEHOLDER_BYTES, RECORD_BYTES,
+    RECORD_MASK, RECORD_WORDS, SLOT_BYTES, SLOT_MASK, opaque_mask_word, translucent_mask_word,
 };
 use vxe_render::{GpuWorld, MirrorConfig, Window, readback, wgpu};
 use vxe_world::*;
@@ -48,7 +49,7 @@ fn the_first_sync_issues_at_most_three_writes_per_chunk() {
     };
     let mut gpu = GpuWorld::with_config(&device, level_config(&world));
     gpu.set_focus(source.spawn());
-    let st = gpu.sync(&world, &queue).unwrap();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
     println!(
         "first sync: {} writes, {} chunks, {} bricks, {} B",
         st.writes, st.chunks, st.bricks, st.bytes
@@ -80,6 +81,9 @@ fn the_first_sync_issues_at_most_three_writes_per_chunk() {
     assert!(LEVEL_BUDGET - gpu.allocated_bytes() < PAGE_BYTES + PLACEHOLDER_BYTES);
     assert_eq!(st.buffers_created, 0);
     assert_eq!(st.copies, 0);
+    // The unbudgeted sync took more belt chunks than the belt keeps, so it was replaced.
+    assert_eq!(gpu.belt_trims(), 1);
+    assert_eq!(gpu.belt_chunks(), 0);
     println!(
         "mirror bytes {} live, {} allocated",
         gpu.mirror_bytes(),
@@ -115,7 +119,7 @@ fn every_budgeted_sync_writes_at_most_the_budget_plus_one_chunk() {
     let mut syncs = 0;
     let mut largest = 0;
     loop {
-        let st = gpu.sync(&world, &queue).unwrap();
+        let st = gpu.sync_now(&world, &device, &queue).unwrap();
         syncs += 1;
         largest = largest.max(st.bytes);
         assert!(
@@ -134,6 +138,75 @@ fn every_budgeted_sync_writes_at_most_the_budget_plus_one_chunk() {
     println!("{syncs} syncs, largest {largest} B");
     assert_eq!(gpu.mirrored_chunks(), 3200);
     assert!(syncs > 1);
+}
+
+/// The mirror's buffers, read back: each in-use shard up to the pool's high-water mark, the
+/// masks, the records and the table.
+fn mirror_bytes(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &GpuWorld) -> Vec<Vec<u8>> {
+    let sps = u64::from(gpu.shard_layout().slots_per_shard);
+    let pool = u64::from(gpu.pool_slots());
+    let mut out: Vec<Vec<u8>> = (0..gpu.shards_in_use())
+        .map(|k| {
+            let slots = (pool - k as u64 * sps).min(sps);
+            readback::read_buffer(device, queue, gpu.pool_shard(k), 0, slots * SLOT_BYTES)
+        })
+        .collect();
+    for b in [gpu.masks(), gpu.records(), gpu.table()] {
+        out.push(readback::read_buffer(device, queue, b, 0, b.size()));
+    }
+    out
+}
+
+/// A 16 MiB sync budget makes each of the level's syncs stage several belt chunks' worth;
+/// the mirror they build reads back byte for byte as the one unbudgeted sync builds.
+#[test]
+fn syncs_past_one_belt_chunk_build_the_same_mirror() {
+    const BUDGET: u64 = 16 << 20;
+    let (world, source) = level();
+    let Some((device, queue)) = device(&world) else {
+        return;
+    };
+    let mut whole = GpuWorld::with_config(&device, level_config(&world));
+    whole.set_focus(source.spawn());
+    whole.sync_now(&world, &device, &queue).unwrap();
+    let expected = mirror_bytes(&device, &queue, &whole);
+    drop(whole);
+
+    // A second world: the first one's dirty bits were taken by the unbudgeted sync.
+    let (world, _) = level();
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            sync_budget_bytes: BUDGET,
+            ..level_config(&world)
+        },
+    );
+    gpu.set_focus(source.spawn());
+    let mut syncs = 0;
+    loop {
+        let st = gpu.sync_now(&world, &device, &queue).unwrap();
+        syncs += 1;
+        if st.pending_chunks > 0 {
+            assert!(
+                st.bytes > BELT_CHUNK_BYTES,
+                "sync {syncs} wrote {} B",
+                st.bytes
+            );
+        }
+        assert!(gpu.belt_chunks() <= BELT_KEEP_CHUNKS, "sync {syncs}");
+        if st.pending_chunks == 0 {
+            break;
+        }
+        assert!(syncs < 100);
+    }
+    println!("{syncs} syncs, {} belt trims", gpu.belt_trims());
+    assert!(syncs > 1);
+    assert_eq!(gpu.mirrored_chunks(), 3200);
+    let got = mirror_bytes(&device, &queue, &gpu);
+    assert_eq!(got.len(), expected.len());
+    for (k, (g, e)) in got.iter().zip(&expected).enumerate() {
+        assert!(g == e, "buffer {k} differs");
+    }
 }
 
 /// SplitMix64: a seeded, platform-independent stream for test inputs.
@@ -161,7 +234,7 @@ fn the_level_spreads_over_two_shards_on_the_software_adapter() {
     assert_eq!(layout.slots_per_shard, 262_144);
     assert_eq!(layout.shards, 4);
     gpu.set_focus(source.spawn());
-    gpu.sync(&world, &queue)
+    gpu.sync_now(&world, &device, &queue)
         .expect("no PoolTooLarge over four shards");
     assert_eq!(gpu.live_slots(), 383_608);
     assert_eq!(gpu.shards_in_use(), 2);
@@ -226,7 +299,7 @@ fn the_level_s_brick_bits_and_empty_bits_match_its_bricks() {
     };
     let mut gpu = GpuWorld::with_config(&device, level_config(&world));
     gpu.set_focus(source.spawn());
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     let words = |b: &wgpu::Buffer| -> Vec<u32> {
         readback::read_buffer(&device, &queue, b, 0, b.size())
             .chunks_exact(4)
@@ -271,7 +344,7 @@ fn the_level_s_opaque_masks_are_its_solid_bits() {
     };
     let mut gpu = GpuWorld::with_config(&device, level_config(&world));
     gpu.set_focus(source.spawn());
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.live_mask_bytes(), 72 * 383_608);
     assert_eq!(gpu.live_mask_bytes(), 27_619_776);
     let groups = u64::from(MASK_GROUP_WORDS) * 4;

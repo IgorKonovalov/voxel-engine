@@ -90,7 +90,9 @@ fn pixel(
     layers: u32,
 ) -> [u8; 4] {
     let mut gpu = GpuWorld::new(device, world.extent());
-    gpu.sync(world, queue).expect("sync");
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    gpu.sync(world, queue, &mut enc).expect("sync");
+    queue.submit([enc.finish()]);
     let mut frame = Frame::new(device, 1, 1);
     // The identity tone map: the expected values below are `pow(clamp(c), 1 / 2.2)`.
     frame.set_lighting(Lighting {

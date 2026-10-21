@@ -6,11 +6,39 @@ use std::path::PathBuf;
 
 use flythrough::cave::CaveSource;
 use flythrough::cave_materials;
-use vxe_render::{Camera, wgpu};
+use vxe_render::{Camera, MirrorError, SyncStats, wgpu};
 use vxe_world::*;
 
 pub const WIDTH: u32 = 320;
 pub const HEIGHT: u32 = 180;
+
+/// A sync outside a frame: records into an encoder of its own, submits it and waits for the
+/// copies, so the belt's chunks come back before the next sync.
+pub trait SyncNow {
+    fn sync_now(
+        &mut self,
+        world: &World,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<SyncStats, MirrorError>;
+}
+
+impl SyncNow for GpuWorld {
+    fn sync_now(
+        &mut self,
+        world: &World,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<SyncStats, MirrorError> {
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let r = self.sync(world, queue, &mut enc);
+        queue.submit([enc.finish()]);
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("device poll after a sync");
+        r
+    }
+}
 
 /// A device on the software Vulkan adapter (lavapipe), or `None` with a printed skip when the
 /// machine has none. Goldens are blessed on lavapipe, so no other adapter stands in for it.
@@ -416,7 +444,8 @@ impl LookRig {
         let cfg =
             cfg.unwrap_or_else(|| MirrorConfig::new(vxe_render::Window::Fixed(world.extent())));
         let mut gpu = GpuWorld::with_config(&device, cfg);
-        gpu.sync(world, &queue).expect("mirror fits the adapter");
+        gpu.sync_now(world, &device, &queue)
+            .expect("mirror fits the adapter");
         let frame = Frame::new(&device, WIDTH, HEIGHT);
         Self {
             device,

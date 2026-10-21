@@ -42,7 +42,8 @@ fn render(hud: bool) -> Option<Frame> {
     let full = world.stats().full_bricks as u64;
     let (device, queue) = software_device((full + 4096) * 512)?;
     let mut gpu = GpuWorld::new(&device, world.extent());
-    gpu.sync(&world, &queue).expect("mirror fits the adapter");
+    gpu.sync_now(&world, &device, &queue)
+        .expect("mirror fits the adapter");
     let marcher = vxe_render::Frame::new(&device, WIDTH, HEIGHT);
     marcher.render(
         &device,
