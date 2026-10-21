@@ -153,8 +153,13 @@ struct Params {
     exposure: f32,
     light_span: u32,
     candidates: u32,
+    // The slot of light_samples where the frame's candidate table starts (light.wgsl).
+    light_table_base: u32,
     // Bit 0: the previous frame's hit buffer and history are valid.
     history: u32,
+    _pad5: u32,
+    _pad6: u32,
+    _pad7: u32,
     // The views of the previous frame, for reprojection.
     prev_views: array<View, 2>,
 };
@@ -223,6 +228,7 @@ const NO_PLANE: u32 = 0xFFFFu;
 const LIGHTING_LAMP: u32 = 1u;
 const LIGHTING_COARSE_SHADOW: u32 = 2u;
 const LIGHTING_IDENTITY_TONE_MAP: u32 = 64u;
+const LIGHTING_UNIFORM_DRAW: u32 = 128u;
 // Hit record flags.
 const HIT_FOUND: u32 = 1u;
 const HIT_PLANE: u32 = 2u;

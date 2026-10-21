@@ -866,6 +866,15 @@ fn settled_dark_cave(table: &MaterialTable) -> Option<(World, LookRig)> {
         lamp: false,
         ..vxe_render::Lighting::default()
     });
+    // The light radius around the camera, its ranges written over the syncs the budget needs.
+    rig.gpu.set_focus(VoxelCoord(
+        vein_camera().position.to_array().map(|c| c.floor() as i32),
+    ));
+    for _ in 0..4 {
+        rig.gpu
+            .sync(&world, &rig.queue)
+            .expect("mirror fits the adapter");
+    }
     for _ in 0..SETTLE_FRAMES {
         rig.frame.step(
             &rig.device,

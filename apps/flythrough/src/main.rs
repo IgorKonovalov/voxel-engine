@@ -11,7 +11,7 @@
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
 //! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off]
-//! [--shadow-walk full|coarse] [--filter on|off]`.
+//! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N]`.
 //! `--render` fixes the frame's internal resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -45,7 +45,9 @@
 //! samples); `M` pulses its emission scale; `--lamp off` turns the headlamp off;
 //! `--shadow-walk coarse` sends every shadow ray through the coarse walk (2^3 blocks of the
 //! masks; with `--view steps` and `--frames`, the exit prints the lamp shadow rays' cost too);
-//! `--filter off` shows the light pass's raw irradiance, unaccumulated and unfiltered.
+//! `--filter off` shows the light pass's raw irradiance, unaccumulated and unfiltered;
+//! `--light-radius N` sets the chunks around the camera whose emitters light the frame
+//! (default 4).
 //! `N` cycles the normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
 //! inside the extent).
@@ -322,6 +324,8 @@ struct Args {
     shadow_walk: ShadowWalk,
     /// `--filter on|off`: the a-trous filter runs (on by default).
     filter: bool,
+    /// `--light-radius N`: chunks around the camera whose emitters light the frame.
+    light_radius: i32,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -406,6 +410,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         lamp: true,
         shadow_walk: ShadowWalk::Full,
         filter: true,
+        light_radius: vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
     };
     let mut detail_flag = false;
     let mut it = argv.into_iter();
@@ -510,6 +515,14 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 let v = value()?;
                 args.shadow_walk = ShadowWalk::from_name(&v)
                     .ok_or(format!("--shadow-walk takes full or coarse, not {v}"))?;
+            }
+            "--light-radius" => {
+                let v = value()?;
+                args.light_radius = v
+                    .parse()
+                    .ok()
+                    .filter(|r| (0..=64).contains(r))
+                    .ok_or(format!("--light-radius takes 0 to 64 chunks, not {v}"))?;
             }
             "--filter" => {
                 args.filter = match value()?.as_str() {
@@ -1433,8 +1446,12 @@ struct Stream {
     /// The last frame's `update`, `poll`, `apply_events` and `sync` CPU in milliseconds.
     stages_ms: [f64; 4],
     /// The last frame's light extraction inside `sync` (`SyncStats::light_us`), in
-    /// milliseconds.
+    /// milliseconds, its ranges evicted and refused, and how long the oldest chunk inside the
+    /// light radius has waited for its range, in milliseconds.
     light_ms: f64,
+    light_evicted: u64,
+    light_refused: u64,
+    light_wait_ms: f64,
     full_residency: bool,
     workers: usize,
 }
@@ -1498,8 +1515,14 @@ struct Autopilot {
     cpu_ms: Vec<f64>,
     /// The streaming CPU's stages per flight frame: `update`, `poll`, `apply_events`, `sync`.
     stages_ms: [Vec<f64>; 4],
-    /// The light extraction inside `sync`, per flight frame.
+    /// The light extraction inside `sync`, per flight frame; the flight's peak of light
+    /// samples in the mirror, its ranges evicted and refused, and the longest wait of a chunk
+    /// inside the light radius, in milliseconds.
     light_ms: Vec<f64>,
+    peak_light: u64,
+    light_evicted: u64,
+    light_refused: u64,
+    light_wait_ms: f64,
     /// The attribute pass over the flight, with attribute pages.
     attr: AttrSamples,
     latency_from: usize,
@@ -2409,6 +2432,7 @@ impl Run {
     fn new_mirror(&self, gpu: &Gpu, cfg: MirrorConfig) -> GpuWorld {
         let cfg = MirrorConfig {
             budget_bytes: self.mirror_budget(),
+            light_radius: self.args.light_radius,
             ..cfg
         };
         let t = now();
@@ -2541,6 +2565,16 @@ impl Run {
             Ok(s) => {
                 self.hud.sync = (s, sync_ms);
                 stream.light_ms = s.light_us as f64 / 1e3;
+                stream.light_evicted = s.light_evicted;
+                stream.light_refused = s.light_refused;
+                // The oldest wait in syncs, one sync per tick, as the time since that tick.
+                let n = stream.tick_ms.len();
+                let w = s.light_oldest_wait as usize;
+                stream.light_wait_ms = if w > 0 && w < n {
+                    stream.tick_ms[n - 1] - stream.tick_ms[n - 1 - w]
+                } else {
+                    0.0
+                };
                 (s.deferred_chunks, false, None)
             }
             Err(e) => (gfx.mirror.pending_chunks() as u64, true, Some(e)),
@@ -2737,6 +2771,10 @@ impl Run {
                 v.push(ms);
             }
             p.light_ms.push(stream.light_ms);
+            p.light_evicted += stream.light_evicted;
+            p.light_refused += stream.light_refused;
+            p.light_wait_ms = p.light_wait_ms.max(stream.light_wait_ms);
+            p.peak_light = p.peak_light.max(gfx.mirror.light_samples());
         }
         p.peak_mirror = p.peak_mirror.max(gfx.mirror.mirror_bytes());
         p.peak_allocated = p.peak_allocated.max(gfx.mirror.allocated_bytes());
@@ -2796,12 +2834,16 @@ impl Run {
             );
         }
         println!(
-            "autopilot: light extraction in sync: p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms over {} frames; {} light samples in the mirror",
+            "autopilot: light extraction in sync: p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms over {} frames; light samples peak {}, now {}; ranges evicted {}, refused {}; longest wait for a range inside the radius {:.0} ms",
             percentile(&mut p.light_ms, 50.0),
             percentile(&mut p.light_ms, 99.0),
             percentile(&mut p.light_ms, 100.0),
             p.light_ms.len(),
-            gfx.mirror.light_samples()
+            p.peak_light,
+            gfx.mirror.light_samples(),
+            p.light_evicted,
+            p.light_refused,
+            p.light_wait_ms
         );
         let mut lat = stream.latency_ms[p.latency_from..].to_vec();
         println!(
@@ -3185,6 +3227,8 @@ impl Run {
                 return Flow::Exit;
             }
         } else if let Some(gfx) = self.gfx.as_mut() {
+            // The light radius follows the camera on the bounded level too.
+            gfx.mirror.set_focus(voxel_of(self.fly.camera.position));
             let t = now();
             match gfx.mirror.sync(&self.world, &gpu.queue) {
                 Ok(s) => self.hud.sync = (s, ms_since(t)),
@@ -3522,6 +3566,9 @@ impl App for Flythrough {
                             cpu_ms: Vec::new(),
                             stages_ms: [0.0; 4],
                             light_ms: 0.0,
+                            light_evicted: 0,
+                            light_refused: 0,
+                            light_wait_ms: 0.0,
                             full_residency: false,
                             workers,
                         }),
@@ -3542,6 +3589,10 @@ impl App for Flythrough {
                 cpu_ms: Vec::new(),
                 stages_ms: Default::default(),
                 light_ms: Vec::new(),
+                peak_light: 0,
+                light_evicted: 0,
+                light_refused: 0,
+                light_wait_ms: 0.0,
                 attr: AttrSamples::default(),
                 latency_from: 0,
                 peak_mirror: 0,

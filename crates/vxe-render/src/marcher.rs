@@ -5,6 +5,7 @@ use crate::camera::{Camera, View};
 use crate::gpu_world::GpuWorld;
 use crate::light::LightParams;
 use crate::{ATROUS_WGSL, COMPOSITE_WGSL, LIGHT_WGSL, MARCH_WGSL, TEMPORAL_WGSL};
+use vxe_world::ChunkCoord;
 
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
 pub const WORKGROUP: u32 = 8;
@@ -52,9 +53,12 @@ pub struct Params {
     pub light_span: u32,
     /// Emissive candidates per pixel ([`Lighting::candidates`]).
     pub candidates: u32,
+    /// The slot of the light-sample buffer where the frame's candidate table starts.
+    pub light_table_base: u32,
     /// Bit 0: the previous frame's hit buffer and history are valid (set by
     /// [`Frame::encode`]).
     pub history: u32,
+    pub _pad5: [u32; 3],
     /// The previous frame's views, for reprojection (set by [`Frame::encode`]).
     pub prev_views: [View; MAX_VIEWS],
 }
@@ -65,6 +69,9 @@ pub const LIGHTING_LAMP: u32 = 1;
 pub const LIGHTING_COARSE_SHADOW: u32 = 1 << 1;
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
 pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
+/// `Params::lighting` bit: candidates are drawn uniformly over the buffer
+/// ([`CandidateDraw::Uniform`]).
+pub const LIGHTING_UNIFORM_DRAW: u32 = 1 << 7;
 /// `Params::lighting` bit: the composite's tone map is the identity clamp.
 pub const LIGHTING_IDENTITY_TONE_MAP: u32 = 1 << 6;
 
@@ -283,6 +290,17 @@ impl ShadowWalk {
     }
 }
 
+/// Where the light pass draws its emissive candidates from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CandidateDraw {
+    /// The frame's table of emitter chunks near the camera, by power over squared distance
+    /// (ADR-0025).
+    #[default]
+    Table,
+    /// Uniformly over the whole light-sample buffer; for tests.
+    Uniform,
+}
+
 /// The frame's lighting knobs beside the lamp's own ([`LightParams`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Lighting {
@@ -296,6 +314,7 @@ pub struct Lighting {
     pub shadow_walk: ShadowWalk,
     /// The a-trous filter runs; off, the composite shows the light pass's raw irradiance.
     pub filter: bool,
+    pub draw: CandidateDraw,
 }
 
 impl Default for Lighting {
@@ -307,6 +326,7 @@ impl Default for Lighting {
             candidates: 8,
             shadow_walk: ShadowWalk::default(),
             filter: true,
+            draw: CandidateDraw::default(),
         }
     }
 }
@@ -325,6 +345,11 @@ impl Lighting {
                 0
             }
             | if self.filter { 0 } else { LIGHTING_FILTER_OFF }
+            | if self.draw == CandidateDraw::Uniform {
+                LIGHTING_UNIFORM_DRAW
+            } else {
+                0
+            }
     }
 }
 
@@ -419,6 +444,61 @@ struct History {
     /// arrived.
     edits: Vec<[[i32; 3]; 2]>,
     overflow: bool,
+}
+
+/// Entries the candidate table holds at most.
+pub const LIGHT_TABLE_ENTRIES: usize = 1024;
+
+/// The light pass's candidate table as written past the light-sample reservation
+/// (`GpuWorld::light_table_base`): a header slot `count, total (f32 bits), 0, 0`, then per
+/// entry `start, len`, the cumulative weight (f32 bits) and a pad.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct LightTableUniform {
+    count: u32,
+    total: f32,
+    _pad: [u32; 2],
+    chunks: [[u32; 4]; LIGHT_TABLE_ENTRIES],
+}
+
+/// The candidate table for a camera at `eye` over `world`: the chunks holding a range within
+/// the light radius of the camera's chunk (squared chunk distance), the nearest
+/// [`LIGHT_TABLE_ENTRIES`] of them, in chunk-coordinate order, each weighing its power over
+/// `max(d^2, 64^2)`, `d` the eye's distance in voxels to the chunk's box.
+fn light_table(world: &GpuWorld, eye: [f32; 3]) -> LightTableUniform {
+    let r = i64::from(world.light_radius());
+    let cam = eye.map(|v| (v / 64.0).floor() as i32);
+    let mut near: Vec<(i64, ChunkCoord, u32, u32, f32)> = world
+        .light_chunks()
+        .map(|(c, start, len, power)| {
+            let d2: i64 = (0..3).map(|k| i64::from(c.0[k] - cam[k]).pow(2)).sum();
+            (d2, c, start, len, power)
+        })
+        .filter(|&(d2, ..)| d2 <= r * r)
+        .collect();
+    near.sort_unstable_by_key(|&(d2, c, ..)| (d2, c.0));
+    near.truncate(LIGHT_TABLE_ENTRIES);
+    near.sort_unstable_by_key(|&(_, c, ..)| c.0);
+    let mut t = LightTableUniform {
+        count: near.len() as u32,
+        total: 0.0,
+        _pad: [0; 2],
+        chunks: [[0; 4]; LIGHT_TABLE_ENTRIES],
+    };
+    let mut cdf = 0.0f32;
+    for (i, &(_, c, start, len, power)) in near.iter().enumerate() {
+        let d2: f32 = (0..3)
+            .map(|k| {
+                let lo = c.0[k] as f32 * 64.0;
+                let gap = (lo - eye[k]).max(eye[k] - (lo + 64.0)).max(0.0);
+                gap * gap
+            })
+            .sum();
+        cdf += power / d2.max(64.0 * 64.0);
+        t.chunks[i] = [start, len, cdf.to_bits(), 0];
+    }
+    t.total = cdf;
+    t
 }
 
 /// The temporal pass's edit boxes, field for field with `Edits` in `temporal.wgsl`.
@@ -918,6 +998,7 @@ impl Frame {
             lod1_r2: (2 * self.lod.r_full).pow(2),
             lod2_r2: (4 * self.lod.r_full).pow(2),
             exposure: self.lighting.exposure,
+            light_table_base: world.light_table_base(),
             light_span: world.light_span(),
             candidates: self.lighting.candidates,
             frame: self.frame,
@@ -983,6 +1064,13 @@ impl Frame {
         }
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&p));
         queue.write_buffer(&self.edits, 0, bytemuck::bytes_of(&edits));
+        let table = light_table(world, p.views[0].origin);
+        let used = (1 + table.count as usize) * 16;
+        queue.write_buffer(
+            world.light_buffer(),
+            u64::from(world.light_table_base()) * crate::gpu_world::LIGHT_SAMPLE_BYTES,
+            &bytemuck::bytes_of(&table)[..used],
+        );
         if !self
             .blue_noise_written
             .swap(true, std::sync::atomic::Ordering::Relaxed)

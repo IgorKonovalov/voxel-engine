@@ -206,6 +206,20 @@ streamed spawn 11.19 steps, 24.02 loads (p99 127), 0.16 pool reads full, and 10.
 23.02 loads (p99 93), 0.09 pool reads coarse. A lamp shadow ray is short (the lamp sits
 beside the eye), so its loads barely move.
 
+**Light candidates from the near-emitter table and bounded extraction (dev reference,
+indicative, Plan 0024 Phase 7, RTX 3080 Laptop GPU, exclusive perf lock, NOT quiet: 1-minute
+load 2.9 to 8.7; light radius 4, the ore emissive, the lamp on, 8 candidates; one run each;
+the quiet-box readings are owed):** the light pass reads at the level's spawn 9.420 ms (full
+walk) and 8.293 ms (coarse) with the table in a 16 KiB uniform, and 7.448 ms (full) with the
+table moved into the light-sample buffer; the streamed spawn (`--frames 3000`) 13.249 ms (full)
+and 11.311 ms (coarse) with the uniform table. With one candidate the level reads 4.644 ms
+(4.178 ms with the lamp off), so the emissive shadow ray is about 3.5 ms and each further
+candidate about 0.4 ms. Over the autopilot's flight (`--autopilot --headless --seed 1`) the
+light-sample peak is 18 522 (15 915 at the end), with 0 ranges evicted, 0 refused and 0 ms of
+wait inside the radius; extraction in `sync` reads p50 0.160 ms, p99 2.422 ms, max 6.408 ms
+(load 3.5) and p50 0.142, p99 3.628, max 9.992 ms (load 4.6), against 13.3 and 48.9 ms at
+Phase 2.
+
 **Denoise: the temporal pass and four a-trous iterations (dev reference, Plan 0024 Phase 6,
 RTX 3080 Laptop GPU, exclusive perf lock, 1-minute load 4.2 to 4.6; the default look with the
 ore emissive, median of the last 30 frames, 1920 x 1080 full-resolution lighting):** the

@@ -22,8 +22,8 @@ pub use gpu_world::{GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncStats,
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
 pub use marcher::{
-    FRAME_PASSES, Frame, Lighting, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer,
-    Marcher, NormalMode, PassTimer, ShadowWalk, ToneMap, ViewMode,
+    CandidateDraw, FRAME_PASSES, Frame, Lighting, LodParams, LookParams, MAX_EDITS, MAX_VIEWS,
+    MarchTimer, Marcher, NormalMode, PassTimer, ShadowWalk, ToneMap, ViewMode,
 };
 pub use present::Presenter;
 pub use {glam, wgpu};

@@ -469,3 +469,195 @@ fn reprojection_holds_across_a_sideways_step_and_a_material_change_resets() {
     assert!(changed > 0);
     assert!(share >= 0.95, "{:.2} %", share * 100.0);
 }
+
+/// Phase 3's closed box in chunk 0 of a rock row of chunks `[0, 5)` along x, plus a flat
+/// `glow` wall of 64 x 64 voxels at x = 257 (chunk 4, whose box lies 224 voxels from the
+/// camera, inside the light radius; one voxel in from the chunk's face, so its -x faces
+/// against rock are not counted exposed) facing +x into air, hidden from the box by rock.
+fn box_and_far_wall(table: &MaterialTable, glow: MaterialId) -> World {
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [5, 1, 1]),
+        &UniformSource(flythrough::cave::ROCK),
+        table,
+    );
+    world
+        .apply(&box_op([22, 22, 20], [42, 42, 30], Mode::Carve))
+        .unwrap();
+    let ceiling = Mode::Replace {
+        from: flythrough::cave::ROCK,
+        to: glow,
+    };
+    world
+        .apply(&box_op([22, 22, 30], [42, 42, 31], ceiling))
+        .unwrap();
+    world
+        .apply(&box_op([258, 0, 0], [320, 64, 64], Mode::Carve))
+        .unwrap();
+    world
+        .apply(&box_op([257, 0, 0], [258, 64, 64], ceiling))
+        .unwrap();
+    world
+}
+
+/// The floor centre's irradiance over 64 frames, one read per frame, lamp off, no filter.
+fn floor_centre_series(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    gpu: &GpuWorld,
+    draw: vxe_render::CandidateDraw,
+) -> Vec<f64> {
+    let camera = vxe_render::Camera {
+        position: [32.0, 32.0, 29.0].into(),
+        yaw: 0.0,
+        pitch: -std::f32::consts::FRAC_PI_2,
+        vfov: 0.5,
+    };
+    let mut frame = vxe_render::Frame::new(device, 1, 1);
+    frame.set_lighting(vxe_render::Lighting {
+        lamp: false,
+        draw,
+        ..vxe_render::Lighting::default()
+    });
+    (0..64)
+        .map(|i| {
+            frame.set_frame_index(i);
+            frame.render(
+                device,
+                queue,
+                gpu,
+                &camera,
+                &vxe_render::LightParams::headlamp(),
+            );
+            f64::from(readback::read_rgba16f(device, queue, frame.irradiance())[0][0])
+        })
+        .collect()
+}
+
+/// Near emitters win, unbiased inside the radius: with a far emissive wall of 4096 samples
+/// in the light radius beside the box's 400-sample ceiling, the floor centre's mean over 64
+/// frames is within 5 % of 1.741, and one frame's relative RMSE against 1.741 is at most half
+/// of the uniform draw's on the same scene.
+#[test]
+fn the_candidate_table_favours_near_emitters_without_bias() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let (table, glow, _) = glow_table();
+    let world = box_and_far_wall(&table, glow);
+    let mut gpu = GpuWorld::with_config(&device, MirrorConfig::new(Window::Fixed(world.extent())));
+    gpu.set_focus(VoxelCoord([32, 32, 25]));
+    gpu.sync(&world, &queue).unwrap();
+    let chunks: Vec<_> = gpu.light_chunks().collect();
+    println!("light chunks: {chunks:?}");
+    assert_eq!(gpu.light_samples(), 400 + 4096);
+    let analytic = std::f64::consts::PI * 4.0 * 0.13853;
+    let stats = |v: &[f64]| {
+        let mean = v.iter().sum::<f64>() / v.len() as f64;
+        let rmse = (v.iter().map(|x| (x - analytic).powi(2)).sum::<f64>() / v.len() as f64).sqrt()
+            / analytic;
+        (mean, rmse)
+    };
+    let (mean, rmse) = stats(&floor_centre_series(
+        &device,
+        &queue,
+        &gpu,
+        vxe_render::CandidateDraw::Table,
+    ));
+    let (umean, urmse) = stats(&floor_centre_series(
+        &device,
+        &queue,
+        &gpu,
+        vxe_render::CandidateDraw::Uniform,
+    ));
+    println!(
+        "table: mean {mean:.4} ({:+.2} %), relative RMSE {rmse:.4}; uniform: mean {umean:.4}, relative RMSE {urmse:.4}; ratio {:.3}",
+        (mean / analytic - 1.0) * 100.0,
+        rmse / urmse
+    );
+    assert!((mean / analytic - 1.0).abs() <= 0.05, "{mean:.4}");
+    assert!(rmse <= 0.5 * urmse, "{rmse:.4} against {urmse:.4}");
+}
+
+/// Eight chunks in a row along x, each with 2048 exposed emissive voxels (the z = 0 layer's
+/// half y < 32).
+struct HalfLayers(MaterialId);
+
+impl WorldSource for HalfLayers {
+    fn chunk(&self, _coord: ChunkCoord, out: &mut Chunk) {
+        for slot in 0..CHUNK_BRICKS {
+            let b = brick_of_slot(slot);
+            out.set_brick(
+                slot,
+                Brick::from_fn(|l| {
+                    let v = [0, 1, 2].map(|k| b[k] * BRICK_EDGE + l[k]);
+                    if v[2] == 0 && v[1] < 32 { self.0 } else { AIR }
+                }),
+            );
+        }
+    }
+}
+
+/// The pool stays bounded and nothing is dropped silently: a mirror reserving 4096 samples
+/// over eight chunks of 2048, light radius 2. From chunk 7 the two nearest chunks hold their
+/// samples in full and the third is refused; moving to chunk 4 evicts the farthest ranges
+/// first (7, then 6) for 4 and 3; moving to chunk 0 releases chunk 4 (beyond the radius plus
+/// one) on that sync; and with a budget of one chunk per sync, chunks 0 and 1 have their
+/// ranges on the first and second syncs, nearest first.
+#[test]
+fn light_ranges_follow_the_radius_and_evict_the_farthest() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let (table, glow, _) = glow_table();
+    let extent = ChunkExtent::new([0, 0, 0], [8, 1, 1]);
+    let world = World::generate(extent, &HalfLayers(glow), &table);
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            light_samples: 4096,
+            light_radius: 2,
+            light_sync_samples: 2048,
+            ..MirrorConfig::new(Window::Fixed(extent))
+        },
+    );
+    let ranged = |gpu: &GpuWorld| {
+        let mut v: Vec<i32> = gpu.light_chunks().map(|(c, ..)| c.0[0]).collect();
+        v.sort_unstable();
+        v
+    };
+    let at = |x: i32| VoxelCoord([x * 64 + 32, 32, 32]);
+    gpu.set_focus(at(7));
+    let st = gpu.sync(&world, &queue).unwrap();
+    assert_eq!(ranged(&gpu), [7]);
+    assert_eq!(st.light_oldest_wait, 0);
+    let st = gpu.sync(&world, &queue).unwrap();
+    assert_eq!(ranged(&gpu), [6, 7]);
+    assert_eq!(st.light_oldest_wait, 1, "chunk 5 has waited one sync");
+    assert_eq!(gpu.light_samples(), 4096);
+    let st2 = gpu.sync(&world, &queue).unwrap();
+    assert_eq!(ranged(&gpu), [6, 7]);
+    assert_eq!(
+        st2.light_refused, 1,
+        "chunk 5 is refused: nothing farther to evict"
+    );
+    let _ = st;
+
+    gpu.set_focus(at(4));
+    let mut evicted = 0;
+    for _ in 0..4 {
+        evicted += gpu.sync(&world, &queue).unwrap().light_evicted;
+    }
+    assert_eq!(ranged(&gpu), [3, 4]);
+    assert_eq!(evicted, 2, "7, then 6");
+
+    gpu.set_focus(at(0));
+    gpu.sync(&world, &queue).unwrap();
+    let r = ranged(&gpu);
+    println!("from chunk 0, one sync: {r:?}");
+    assert!(!r.contains(&4), "chunk 4 lies beyond the radius plus one");
+    // One chunk per sync, nearest first: chunk 0 had its range on that sync, chunk 1 (one
+    // nearer chunk waiting before it) has it on the next, evicting chunk 3.
+    assert!(r.contains(&0), "{r:?}");
+    gpu.sync(&world, &queue).unwrap();
+    assert_eq!(ranged(&gpu), [0, 1]);
+}

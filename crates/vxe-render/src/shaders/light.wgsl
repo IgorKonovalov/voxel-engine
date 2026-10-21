@@ -21,10 +21,12 @@
 // along the shadow normal toward the lamp.
 //
 // The emissive estimate is resampled importance sampling over `params.candidates`
-// candidates. Each draws a sample uniformly from the `params.light_span` of the light-sample
-// buffer (a hole, material 0, weighs nothing), one of its exposed faces that face the hit
-// uniformly, and a uniform point x on that unit face: source density 1 / (span * faces) per
-// unit area. Its target is the unshadowed contribution `lum(Le * scale) cos_hit cos_face /
+// candidates. Each draws a chunk from the candidate table with probability w / W (binary
+// search over the cumulative weights) and a sample uniformly in its range, or with
+// Params.lighting bit 7 (tests) a sample uniformly from the `params.light_span` of the buffer
+// (a hole, material 0, weighs nothing); then one of the sample's exposed faces that face the
+// hit uniformly, and a uniform point x on that unit face: source density
+// `(w / W) / len / faces` (or `1 / (span * faces)`) per unit area. Its target is the unshadowed contribution `lum(Le * scale) cos_hit cos_face /
 // d^2`, and one candidate is kept with probability proportional to target over source
 // density. One shadow ray to the kept point; unoccluded, the estimate of E is
 // `Le / lum(Le) * (sum of weights) / candidates`, unbiased for the irradiance from every
@@ -42,10 +44,19 @@
 @group(2) @binding(1) var hit_info_in: texture_2d<u32>;
 @group(2) @binding(2) var irradiance_out: texture_storage_2d<rgba16float, write>;
 
+// The frame's candidate table (ADR-0025), in light_samples from `params.light_table_base`:
+// a header slot (count, total weight as f32 bits), then per entry the start and length of an
+// emitter chunk's range and the cumulative weight up to and including it (f32 bits), in
+// chunk-coordinate order, for the chunks within the light radius of the camera.
+fn table_slot(i: u32) -> vec4<u32> {
+    return bitcast<vec4<u32>>(light_samples[params.light_table_base + i]);
+}
+
 // The largest finite f16.
 const HALF_MAX: f32 = 65504.0;
-// Random dimensions per emissive candidate: sample, face, two for the point, the keep test.
-const CANDIDATE_DIMS: u32 = 5u;
+// Random dimensions per emissive candidate: chunk or sample, face, two for the point, the keep
+// test, the sample within the chunk.
+const CANDIDATE_DIMS: u32 = 6u;
 
 @compute @workgroup_size(8, 8, 1)
 fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -146,9 +157,48 @@ struct Candidate {
 // nothing.
 fn candidate(px: vec2<u32>, j: u32, p: vec3<f32>, n: vec3<f32>) -> Candidate {
     var none = Candidate(vec3<f32>(0.0), vec3<f32>(0.0), 0.0);
-    let span = params.light_span;
     let dim = 2u + CANDIDATE_DIMS * j;
-    let idx = min(u32(rand(px, dim) * f32(span)), span - 1u);
+    // The sample and the inverse of its source probability.
+    var idx = 0u;
+    var inv_pdf = 0.0;
+    if ((params.lighting & LIGHTING_UNIFORM_DRAW) != 0u) {
+        let span = params.light_span;
+        if (span == 0u) {
+            return none;
+        }
+        idx = min(u32(rand(px, dim) * f32(span)), span - 1u);
+        inv_pdf = f32(span);
+    } else {
+        let head = table_slot(0u);
+        let count = head.x;
+        let total = bitcast<f32>(head.y);
+        if (count == 0u || total <= 0.0) {
+            return none;
+        }
+        // The first chunk whose cumulative weight exceeds u.
+        let u = rand(px, dim) * total;
+        var lo = 0u;
+        var hi = count - 1u;
+        while (lo < hi) {
+            let mid = (lo + hi) / 2u;
+            if (bitcast<f32>(table_slot(1u + mid).z) > u) {
+                hi = mid;
+            } else {
+                lo = mid + 1u;
+            }
+        }
+        let e = table_slot(1u + lo);
+        var prev = 0.0;
+        if (lo > 0u) {
+            prev = bitcast<f32>(table_slot(lo).z);
+        }
+        let w = bitcast<f32>(e.z) - prev;
+        if (w <= 0.0 || e.y == 0u) {
+            return none;
+        }
+        idx = e.x + min(u32(rand(px, dim + 5u) * f32(e.y)), e.y - 1u);
+        inv_pdf = total / w * f32(e.y);
+    }
     let s = light_samples[idx];
     let m = u32(s.w) & 0xFFFFu;
     if (m == 0u) {
@@ -189,13 +239,13 @@ fn candidate(px: vec2<u32>, j: u32, p: vec3<f32>, n: vec3<f32>) -> Candidate {
     let cos_face = max(dot(face_dir(f), -dir), 0.0);
     let le = emission_of(m);
     let target_pdf = luminance(le) * cos_hit * cos_face / d2;
-    return Candidate(x, le, target_pdf * f32(span) * f32(count));
+    return Candidate(x, le, target_pdf * inv_pdf * f32(count));
 }
 
 // The irradiance at `p` (shading normal `n`, shadow normal `ns`) from one emissive face
 // point chosen by resampling `params.candidates` candidates, with one shadow ray.
 fn emissive_irradiance(px: vec2<u32>, p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> vec3<f32> {
-    if (params.light_span == 0u || params.candidates == 0u) {
+    if (params.candidates == 0u) {
         return vec3<f32>(0.0);
     }
     var w_sum = 0.0;

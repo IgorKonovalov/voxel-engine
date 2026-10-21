@@ -572,8 +572,8 @@ such.
 | 3: The light pass: one sample, one shadow ray, the dark cave | dev | done | 7ee7bd6 |
 | 4: The coarse shadow walk | dev | done | a414473 |
 | 5: Temporal accumulation, and history that dies in an edit box | dev | done | 1a907f7 |
-| 6: The a-trous filter and the composite, and the carve that does not ghost | dev | done at the amended bars, bar 1 second clause missed (Notes) | 5f08a2e, committed with this row |
-| 7: Near-emitter candidates and bounded light extraction | dev | not started | |
+| 6: The a-trous filter and the composite, and the carve that does not ghost | dev | done at the amended bars, bar 1 second clause missed (Notes) | 5f08a2e, 907841f |
+| 7: Near-emitter candidates and bounded light extraction | dev | done for bars 1 and 2; bars 3 and 4 waiting for quiet (Notes) | committed with this row |
 | 8: Reservoir reuse against the flat list | dev | not started | |
 | 9: A-SVGF's gradient as the other history killer | dev | not started | |
 | 10: The half-resolution tier | dev | not started | |
@@ -668,8 +668,27 @@ each. Empty is fine.)_
   2646 of the 3558 counted over the test's two rigs lie 3 or more voxels behind the removed
   surface (rock revealed behind it) and 2332 were at 8/255 or less before (dark). The test
   prints the count instead of asserting it. Bar 2 holds: 2 of 28 980 far pixels over 8/255;
-  the flushed control 780 of 28 980. Full-resolution a-trous at 1080p reads 4.56 to 4.73 ms
+  the flushed control 780 of 28 980. Under Phase 7's draw (re-blessed `dark_cave.png`, 56 578
+  pixels changed, 28 422 by more than 2/255): 12 486 in the box, 0 not at age 0; 654 of 7580
+  removed-surface pixels within 2/255; far 5 of 31 680, the control 8340 of 31 680. Full-resolution a-trous at 1080p reads 4.56 to 4.73 ms
   (`docs/nfr.md` §2, "Denoise"); its 3.0 ms bar is Phase 10's.
+- Phase 7: the candidate table lives in 1025 sample-sized slots past the light-sample
+  reservation (`GpuWorld::light_table_base`), written by `Frame` each frame, not a 16 KiB
+  uniform: dynamically indexed per pixel, the uniform read 9.42 ms against 7.45 ms in the
+  buffer at the level (loaded box). Exposure now reads across brick faces inside the chunk
+  (only a chunk's face counts as exposed), and a written brick rescans its six in-chunk
+  neighbours; under Phase 2's rule every brick-face voxel counted, which made a buried wall
+  of the bar-1 scene read 2.06 faces per voxel. The bar-1 wall sits at x = 257, one voxel in
+  from chunk 4's face, so its rock-facing faces are not counted. The light radius uses squared
+  chunk distance; the fly-through sets the mirror's focus to the camera on the level too.
+  `SyncStats` gains `light_evicted`, `light_refused`, `light_oldest_wait` (syncs; the
+  autopilot converts to ms by the tick times). `CandidateDraw::Uniform` is the test-only draw.
+- Phase 7 bars 1 and 2: the table's 64-frame mean is 1.7914 (+2.91 %), relative RMSE 0.3953
+  against the uniform draw's 1.1403 (ratio 0.347); the bounded-pool test holds; the
+  autopilot's light-sample peak is 18 522 with 0 refused. Bars 3 and 4 are waiting for the
+  quiet box; the loaded readings (`docs/nfr.md` §2, "Light candidates from the near-emitter
+  table") are over both: extraction p99 2.4 to 3.6 ms, max 6.4 to 10.0 ms; light pass 7.4 to
+  13.2 ms.
 
 Phase 1 observations: hitmask and normals of the three scenes byte-identical to ae58f0c; the
 identity-tone-mapped carve's largest channel difference from ae58f0c's is 0/255; the
