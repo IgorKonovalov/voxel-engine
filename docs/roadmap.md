@@ -50,6 +50,7 @@ plan that implements them (see [`adrs/README.md`](adrs/README.md)).
 | VR readiness (added 2026-10-16) | PC VR is a possible later target, so the renderer keeps three doors open from M2 on: a view is an asymmetric frustum (origin, basis, four tangent half-angles) and the frame renders N views, not one camera with a symmetric field of view; lighting is view-independent or shareable across views where the cost is equal; presentation is decoupled from the window surface. Actual VR support (OpenXR, 90 Hz, two eyes) is an unscheduled milestone with its own hardware floor, never a promise on the baseline GPU. See "Unscheduled: PC VR" below | building OpenXR support now; standalone headsets (mobile GPU, Android); treating VR as a mode of the baseline budget |
 | Physics (added 2026-10-16) | **voxel dynamics, not a rigid-body engine.** Collapse is emergent and authoritative: `vxe-world` answers which region lost its connection to the anchor after an edit, and deterministic ops decide what the world looks like afterwards. Fall damage is a controller event. Debris and falling pieces may be animated client-side by a rigid-body library as a cosmetic layer that never writes to the world. Revises M8 and the consumer's "scripted collapse only" wording | a general physics engine (`rapier`) in the authoritative world; scripted-only collapse; no collapse at all |
 | Floor, profiles and scene scale (added 2026-10-17) | the GTX 1660-class floor of `nfr.md` §1 stays the 60 fps gate at 1080p with an upscaler; a named **portable profile** (Switch-2-class: about 1.7 to 3 TFLOPS, 68 to 102 GB/s, 9 GB shared) is a target of the quality settings (internal resolution, full-detail radius, translucent layers, lighting tier), at 720p and 30 to 60 fps; 120 fps is welcome where a fast machine reaches it through a performance profile, not a gate. Lighting has two tiers: direct light by one shadow ray per light at half resolution with blur and temporal reprojection on the floor, ReSTIR direct lighting where the budget allows, and indirect light from probes in both. Glass, water and lava are translucent voxels in the brick map; mist, smoke and fire are a separate coarse volume. Open-sky and kilometre-scale scenes are in scope, so the far-field clipmap is a scheduled plan, not a maybe. The brick representation that serves all of this is ADR-0012 | Switch 1 (about 0.4 TFLOPS, 25.6 GB/s shared, no public graphics API for `wgpu`); raising the floor to the dev laptop; 120 fps as a budget; media as voxels in the brick map |
+| Baseline card (added 2026-10-21) | the GTX 1660-class card is **not acquired**. The floor stays the gate on paper, read as a projection from two readings taken on the dev box: the NVIDIA card (the dev reference) and the AMD Cezanne iGPU on RADV, named in `nfr.md` §1 as the **slow adapter** (about the portable profile's class, below the floor's). From Plan 0028 on, every render plan's close takes its GPU readings on both adapters and labels each by its adapter | buying or borrowing a GTX 1660 before M2 closes; projections from the NVIDIA card alone |
 
 ## The first consumer's needs, mapped
 
@@ -152,7 +153,7 @@ streaming line (render-thread CPU p50 about 7 ms, p99 52 to 61 ms against 1.0 ms
 rays in the streamed world (6.69 ms at 1080p against 3.0 ms), both on the dev reference. The
 budgets stand. The §4 edit-cost miss carries forward from Plan 0001 to Plan 0003 (closed 2026-10-17,
 v0.4.1), which cut the `worst` bench from 4.6 to 3.56 ms on a quiet dev box with no result or
-hash moved; the owner kept the 2 ms figure. Plan 0014 (closed 2026-10-17, v0.7.0) is the second pass: a brick-array pool, a sphere span walk and an analytic capsule row cut `worst` to 3.19-3.26 ms (3.03-3.05 ms with a warm pool) and `tool` from 8.05 to 6.78-6.80 ms. The §4 miss carries forward: the row write bounds the cost inside ADR-0002's representation, and the owner chose a representation: ADR-0012 (accepted 2026-10-17), whose CPU-format step is Plan 0021. Plan 0021 closed 2026-10-20 (v0.18.0): the planar edit kernel reads the warm worst case at 1.34 to 1.52 ms on the dev box (not quiet; 3.03 ms before) and the fly-through `B` line at 1.52 ms. The owner held the 2 ms figure on the dev box (2026-10-20), so the line is met there; there is no baseline-GPU reading. A quiet-box re-read the same day (2796062) did not reproduce those figures: `worst_warm` 1.79 ms, and the `B` line 2.06 to 2.09 ms, with an unchanged `vxe-world`. The owner raised the line to 2.2 ms on the dev box and planned one more optimization pass.
+hash moved; the owner kept the 2 ms figure. Plan 0014 (closed 2026-10-17, v0.7.0) is the second pass: a brick-array pool, a sphere span walk and an analytic capsule row cut `worst` to 3.19-3.26 ms (3.03-3.05 ms with a warm pool) and `tool` from 8.05 to 6.78-6.80 ms. The §4 miss carries forward: the row write bounds the cost inside ADR-0002's representation, and the owner chose a representation: ADR-0012 (accepted 2026-10-17), whose CPU-format step is Plan 0021. Plan 0021 closed 2026-10-20 (v0.18.0): the planar edit kernel reads the warm worst case at 1.34 to 1.52 ms on the dev box (not quiet; 3.03 ms before) and the fly-through `B` line at 1.52 ms. The owner held the 2 ms figure on the dev box (2026-10-20), so the line is met there; there is no baseline-GPU reading. A quiet-box re-read the same day (2796062) did not reproduce those figures: `worst_warm` 1.79 ms, and the `B` line 2.06 to 2.09 ms, with an unchanged `vxe-world`. The owner raised the line to 2.2 ms on the dev box and planned one more optimization pass, drafted 2026-10-21 as [Plan 0031](plans/0031-edit-cost-third-pass.md).
 
 **Next, before M2's lighting:** a streaming-CPU plan (incremental queue, residency sweep and
 window shift; narrowing and staging on workers), drafted 2026-10-20 as
@@ -198,7 +199,7 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021 and 0023 closed; Plan 0024, the lighting plan, drafted)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021 and 0023 closed; Plan 0024, the lighting plan, approved; Plans 0027 to 0030 drafted 2026-10-21)
 
 Plan 0023 closed 2026-10-21 (v0.23.0, ADR-0017 accepted with an Outcome): the attribute
 work list's shell looks up neighbour chunks instead of visiting a 488-brick volume, the pass is
@@ -266,8 +267,16 @@ iterations filter the rest; the frame renders a view list. Four mechanisms stay 
 until the owner has seen them: the coarse or full shadow walk, reservoir reuse or a flat
 list, edit-box or gradient history, half or full lighting resolution. It starts after Plan
 0023 closes and before ADR-0012's mirror-slot plan; the streaming line's upload-copy ADR and
-plan follow it (owner, 2026-10-21). Indirect light (one bounce, probes as
-the fallback) and the upscaler are the two plans after it.
+plan follow it (owner, 2026-10-21). The plans around it were drafted on 2026-10-21:
+[Plan 0027](plans/0027-mirror-uploads-through-a-staging-belt.md) (ADR-0022, the streaming
+line's copies through a staging belt; independent of Plan 0024),
+[Plan 0028](plans/0028-size-classed-mirror-slots-and-surface-only-attributes.md) (ADR-0012's
+mirror-slot step, after Plans 0024 and 0027),
+[Plan 0029](plans/0029-indirect-light-probe-volume.md) (ADR-0023: indirect light from a probe
+volume that scrolls with the camera, the owner's choice over a per-pixel bounce) and
+[Plan 0030](plans/0030-temporal-upscaler.md) (ADR-0024: a temporal upscaler of our own over
+an FSR 2 port). [Plan 0031](plans/0031-edit-cost-third-pass.md) is the edit-cost pass M1's
+paragraph names.
 
 **Goal:** the consumer's P0 rendering bar. Few lights, emissive voxels, destruction, no ghosting.
 The quality reference is the Sibenik cathedral in Laine & Karras 2010, Figure 1. That image is
@@ -313,7 +322,8 @@ work), and the light (real-time GI standing in for the baked occlusion).
   tolerance; a carve invalidates exactly the touched history region.
 - **Visible proof:** golden images of a dark cave with one emissive vein, before and after a
   carve, with a stated SSIM floor against the reference.
-- **Budgets:** the full frame at 1080p output on the baseline GPU.
+- **Budgets:** the full frame at 1080p output on the dev box's two adapters (`nfr.md` §1); the
+  floor is a projection from them.
 - **ADRs expected:** denoiser family; upscaler choice. Surface representation: ADR-0011; its
   streamed footprint: ADR-0012 (final, surface-only); until then the pressure rule's radius.
 
@@ -499,7 +509,9 @@ VR-readiness decision keeps open stay open, and so the cost is on paper before a
 ## Risks
 
 - **Denoising sparse light (M2)** is the quality risk. Mitigation: a measurable bar (golden
-  SSIM, analytic irradiance) from the start, and the baseline GPU in hand before M2 closes.
+  SSIM, analytic irradiance) from the start, and the slow adapter's readings at every render
+  plan's close (`nfr.md` §1); the baseline card is not acquired (decisions table, 2026-10-21),
+  so the floor stays a projection.
 - **Streaming complexity before the first pixel (M1).** Mitigation: the fly-through's source is
   trivial noise; paging is tested headless with a tiny radius.
 - **VRAM at the full-detail radius** rests on a uniformity assumption, and the mips can cost

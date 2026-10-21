@@ -1,0 +1,259 @@
+# 0027: Mirror uploads through a staging belt and copy commands: the streaming line's copies
+
+> **Status:** draft
+> **Created:** 2026-10-21
+> **Milestone:** M2 in `docs/roadmap.md` (the streaming line, `nfr.md` §2, a recorded miss
+> since Plan 0002; this is the plan ADR-0017's Outcome asked for)
+> **Related ADRs:** [ADR-0022](../adrs/0022-mirror-uploads-through-a-staging-belt-and-copy-commands.md)
+> (proposed with this plan), [ADR-0017](../adrs/0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md)
+> (the frame loop's shape, which stands; its Outcome names this plan),
+> [ADR-0013](../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) (the reservation and
+> deferral rules `sync` keeps)
+> **Source:** Plan 0023's Phase 5 entry profile and its Followups; the owner's call of
+> 2026-10-21 (the copies get their own ADR and plan after Plan 0024, apart from the
+> mirror-slot plan); the owner's choice of the belt (2026-10-21).
+> **Starts:** independent of Plan 0024 (it touches `gpu_world.rs` and the frame loop's
+> encoder order, not the march or the light passes); whichever of the two merges second
+> rebases its `apps/flythrough/src/main.rs` frame-loop hunk.
+
+## TL;DR
+
+`GpuWorld::sync` stops calling `Queue::write_buffer`. It writes each staged run into a slice
+of a persistently mapped staging belt and records a `copy_buffer_to_buffer` into the frame's
+command encoder, which the caller submits as it does today. The bytes, the order of effects,
+the selection and the deferral rules are unchanged; what goes is the fresh staging
+allocation and its first-touch page faults on every call, which Plan 0023's profile put at
+41.8 % of `sync`. The first thing a reader sees is the mirror tests passing byte for byte
+through the belt, then the quiet-box streaming line read again with the copies gone, and a
+windowed run that prints its frame-time summary at exit.
+
+## Context & problem
+
+The streaming line (`nfr.md` §2: 1.0 ms of render-thread CPU per frame) misses at p50 4.9
+to 5.0 ms in plain flight after Plan 0023, with `sync` as nearly all of it. The profile's
+shares inside `sync`: `Queue::write_buffer` 41.8 %, `upload_record` self 33.6 % (narrowing),
+palette scans 8.8 %, `sync` self 5.7 %, `enqueue` 4.8 %. `write_buffer`'s samples are its own
+self time and unresolved `libc`, not driver work: the mirror already coalesces runs
+(`stage`, `stage_record`, `flush_table`), so each call is large, and the cost is the staging
+allocation `wgpu-core` makes per call and the page faults of touching it. ADR-0022 says why a
+belt and not the alternatives.
+
+The consumer requirement is `project-context.md`'s World row (stacked levels generated in the
+background while the current one plays) and the Rendering row's stable image: a frame that
+spends 5 ms of CPU on uploads is a frame the floor cannot afford. The `nfr.md` figures
+touched are §2's streaming line and §3's RAM (the belt's mapped chunks).
+
+## Decision
+
+We give `GpuWorld` a `wgpu::util::StagingBelt` with 4 MiB chunks and make `sync` take the
+frame's `CommandEncoder` (ADR-0022). Every run that `flush_stage`, `write_masks`,
+`flush_records`, `flush_table` and `write_materials` write today becomes a belt write plus a
+copy command; `sync` ends with `finish_and_recall_on_submit(encoder)`. The frame loop creates
+its encoder before `sync` and submits it after the HUD as now, so the copies precede the
+attribute pass and the march in the same submission. Syncs outside a frame (the bench's
+immediate sync, the level's first sync, tests) record into an encoder of their own and
+submit it. We rejected `write_buffer_with` (keeps the per-call allocation), worker-side
+narrowing as the next step (attacks the other share) and a mapped ring of our own (the belt
+is that ring with `wgpu`'s own recall); ADR-0022 has the reasons.
+
+## Architecture diagram
+
+```mermaid
+flowchart LR
+    subgraph world [vxe-world]
+        W[World chunks\ntake_dirty]
+    end
+    subgraph render [vxe-render]
+        S[GpuWorld::sync\nselect, upload_record,\nstage runs] --> B[(StagingBelt\nmapped 4 MiB chunks)]
+        S --> E[frame CommandEncoder\ncopy_buffer_to_buffer x runs]
+        B --> E
+        E --> P[(pool shards, masks,\nrecords, table)]
+        S -. finish_and_recall_on_submit .-> E
+    end
+    subgraph app [apps/flythrough]
+        F[frame: encoder created,\nsync, update_attrs, march,\nHUD, submit]
+    end
+    W --> S
+    F --> S
+    E --> F
+```
+
+## Implementation phases
+
+Each phase ships as its own commit. `dev` implements all phases in one session with no review
+between phases. The architect reviews once at the end, in a fresh session. Phase 1 is the
+walking skeleton.
+
+### Phase 1: The belt under `sync`, byte for byte
+- **Owner skill:** dev
+- **What:** `GpuWorld` owns a `StagingBelt` (chunk size `BELT_CHUNK_BYTES = 4 MiB`, usages
+  `COPY_SRC`). `sync(&mut self, world, queue, encoder: &mut wgpu::CommandEncoder)` replaces
+  every `queue.write_buffer` in `flush_stage`, `write_masks`, `flush_records`,
+  `write_table_run` and `write_materials` with a belt write into a slice and a
+  `copy_buffer_to_buffer` into `encoder`, and ends with `finish_and_recall_on_submit`.
+  `SyncStats.writes` counts copy commands as it counted writes. `GpuWorld::belt_chunks()`
+  reports the belt's chunk count (active, closed and free). The `queue` parameter stays
+  for `update_attrs`'s uniform. A `sync_now(world, device, queue)` helper in the mirror
+  tests' support module creates an encoder, syncs, submits and polls to completion. The
+  fly-through's frame loop creates its encoder before `sync`; its bench sync, first-level
+  sync and `--frames` paths make and submit their own encoder. `world_budget` and
+  `level_mirror` follow.
+- **Files touched:** `crates/vxe-render/src/gpu_world.rs`, `crates/vxe-render/src/lib.rs`,
+  `crates/vxe-render/tests/mirror.rs`, `crates/vxe-render/tests/translucent.rs`,
+  `crates/vxe-render/tests/walk.rs` (where they sync), `apps/flythrough/src/main.rs`,
+  `apps/flythrough/tests/level_mirror.rs`, `apps/flythrough/tests/support/mod.rs`,
+  `apps/flythrough/examples/world_budget.rs` (if it syncs), `apps/flythrough/examples/hero.rs`.
+- **Done when:** every test in `crates/vxe-render/tests/mirror.rs` passes through
+  `sync_now` with no assertion changed; the staged-bytes test (a brick's slot bytes against
+  its narrowed voxels, from Plan 0021) reads the pool back through `readback.rs` after a belt
+  sync and finds the same bytes it found through `write_buffer`; the level's first sync still
+  reads 232 436 992 B live (`level_mirror.rs`); every golden under `apps/flythrough/tests/golden/`
+  renders byte for byte (the march reads the same bytes); after a 60 s headless autopilot
+  flight at the defaults, `belt_chunks()` reads at most 3, and after 300 frames of
+  `--level --frames 300` at most 2; a sync that stages more than one chunk's worth in one
+  frame (a test with a 16 MiB sync budget on the level's first sync) completes and reads
+  the same bytes.
+
+### Phase 2: The streaming line, re-read
+- **Owner skill:** dev
+- **What:** the Phase 1 binary and the pre-plan binary (`git archive` of the merge base,
+  built beside it) fly the autopilot alternately on a quiet box, plain and default, under
+  `nfr.md` §9's quiet-box protocol; a `perf record --call-graph fp` of one plain flight of the
+  Phase 1 binary attributes `sync`'s samples as Plan 0023's Phase 5 profile did. Readings go
+  in `nfr.md` §2 under the streaming line and in the Implementation log.
+- **Files touched:** `docs/nfr.md`, this plan's log.
+- **Done when:** in plain flight, `sync` p50 reads at most 3.0 ms (from 4.9 to 5.0 ms, the
+  arithmetic of removing the 41.8 % share) and `update + poll + sync` p50 at most 3.2 ms, in
+  both runs; `Queue::write_buffer` is absent from the profile and the belt's own symbols plus
+  `copy_buffer_to_buffer` recording together read under 5 % of `sync`; the default look's
+  `update_attrs` p99 and carry-over age, the residency p95 and the return hash are within
+  Plan 0023's Phase 6 readings (no regression: hash match, carry-over age max 0 ms at the
+  8192 cap, residency p95 under 500 ms); `sync` max and p99 are recorded against the 16 ms
+  frame with no bar (the bursts are `poll` and `apply_events`, not the copies). The 1.0 ms
+  line stays a recorded miss, now with narrowing as its largest share, which the plan's log
+  states with the profile's number.
+
+### Phase 3: The windowed frame-time summary and the autopilot's ring
+- **Owner skill:** dev
+- **What:** a windowed run prints at exit the p50, p99 and max of the render thread's frame
+  CPU, of `update + poll + sync`, and of the march's GPU time (when the timer is on), over the
+  run, the summary Plan 0023's Followups owe. The autopilot's unready-near counter recomputes
+  its ring when the pressure rule changes `r_full` (the same Followups), so the default
+  look's count carries a signal.
+- **Files touched:** `apps/flythrough/src/main.rs`, `apps/flythrough/src/fly.rs` (if the
+  timers live there), the root `README.md` (the exit summary, one line).
+- **Done when:** `flythrough --level --seed 1 --frames 300` (headless) prints a `frames:`
+  summary line whose three p50 values are each within 10 % of the HUD's medians over the same
+  run read by the existing stats path; a headless autopilot run at the default look reports an
+  unready-near count under 10 % of its frames once residency settles (today 5894 of 5904,
+  which the stale ring produced), and the test that drives the autopilot's counters pins the
+  recompute on a `set_radii` call.
+
+### Phase 4: The owner's windowed flight
+- **Owner skill:** human
+- **What:** the owner flies the default look at 2530 x 1378 with sustained fast passes, as in
+  Plan 0023 Phase 7, and reads the exit summary. The expected outcome is no visible change
+  and a frame-CPU p50 lower than before; the deferral streaks and the 40 fps saturation are
+  Plan 0028's, not this plan's.
+- **Files touched:** this plan's log.
+- **Done when:** the owner has recorded the summary's three p50 and p99 values and a verdict
+  in the Implementation log.
+
+## Data shapes
+
+```rust
+// illustrative: the belt in GpuWorld
+pub const BELT_CHUNK_BYTES: u64 = 4 << 20;
+pub struct GpuWorld {
+    // ...
+    belt: wgpu::util::StagingBelt,
+}
+impl GpuWorld {
+    pub fn sync(
+        &mut self, world: &World, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder,
+    ) -> Result<SyncStats, MirrorError>;
+    pub fn belt_chunks(&self) -> usize;
+}
+
+// illustrative: one staged run becomes
+// let mut view = self.belt.write_buffer(encoder, &self.shards[shard], offset, size, device);
+// view.copy_from_slice(bytes);
+```
+
+RAM: two or three 4 MiB mapped chunks per mirror (8 to 12 MiB), counted under §3's RAM line
+and reported by `belt_chunks()`. VRAM: the chunks are host-visible buffers, not pool bytes;
+they are not part of the ADR-0013 reservation.
+
+## Budgets
+
+| `nfr.md` figure | line | projection (dev box) | how the close measures it |
+|---|---|---|---|
+| §2 Streaming, upload, light extraction | 1.0 ms | `sync` p50 from 4.9 to 5.0 ms to about 2.9 ms (the 41.8 % share removed), still a miss; narrowing is then the largest share | Phase 2: quiet-box autopilot, plain and default, paired with the pre-plan binary; the `perf` profile |
+| §2 the frame bar of Plan 0023 (GPU-credited frames flown) | the default flies at least as many frames as plain | unchanged or better | the same runs |
+| §3 World in RAM | 4 GB | +8 to 12 MiB of mapped belt chunks | `belt_chunks()` times the chunk size, printed by the autopilot |
+| §5 residency latency | 500 ms p95 | unchanged | the same runs |
+
+No reading on the slow adapter: this plan moves CPU work, not GPU work; the iGPU reading of
+the frame is Plan 0028's and Plan 0024's.
+
+## Risks & open questions
+
+- **Recall depends on submission and polling.** A belt chunk returns to the free list when the
+  submission that copied from it completes and the device is polled; the windowed loop polls
+  through its present and submit, the headless tests through `sync_now`. A caller that syncs
+  without submitting grows the belt (ADR-0022's negative consequence); `belt_chunks()` pins
+  it in Phase 1.
+- **Encoder order.** The copies must be recorded before the attribute pass and the march in
+  the same encoder; Phase 1 moves the frame loop's `create_command_encoder` above `sync`. A
+  sync that fails with an empty selection records nothing.
+- **Lavapipe.** The belt's `map_async` callbacks run on `device.poll`; the tests' helper
+  polls with `PollType::wait_indefinitely()` as `readback.rs` does.
+- **Determinism.** Nothing in `vxe-world` changes; the mirror's bytes are the same, held by
+  the staged-bytes test and the goldens.
+- **Threading.** `sync` still runs on the render thread; the belt is owned by `GpuWorld` and
+  touched by no other thread.
+
+## What this plan does NOT do
+
+- **Narrowing on the stream workers** (ADR-0017's hook): after Plan 0028 removes most of the
+  narrowing, what is left is re-profiled; the hook is the step after, if the line still
+  misses.
+- **The mirror's byte layout, the attribute pages, the pressure rule:** Plan 0028.
+- **Light extraction** (Plan 0024 Phase 2 adds it to `sync` and to this line).
+- **The level's first-sync palette scan** (about 190 ms since Plan 0021): the belt applies
+  to it, and Phase 2 records the first-sync time, without a bar.
+- **A VRAM query from the adapter**, a resize of the belt's chunk size at runtime.
+
+## Implementation log
+
+> Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
+> above are the contract. This section records what happened.** Observations, never conclusions:
+> no pass list, no self-assessment. Deviations and unmet done-whens are **always** disclosed.
+> Keep it shorter than `## Implementation phases`.
+
+| phase | owner | state | commit |
+|---|---|---|---|
+| 1: The belt under `sync`, byte for byte | dev | not started | |
+| 2: The streaming line, re-read | dev | not started | |
+| 3: The windowed frame-time summary and the autopilot's ring | dev | not started | |
+| 4: The owner's windowed flight | human | not started | |
+
+### Notes
+
+_(Deviations from the plan, with the commit, stated without justification. Done-whens not
+satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
+each. Empty is fine.)_
+
+### Close triggers
+
+_(Facts for the architect. No recommendations, and no suggested version bump.)_
+
+- **What shipped:** feature / fix-only / docs-chore-only
+- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
+- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
+- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
+- **Outstanding `human` phases:** which, or none
+
+## Followups
+
+- Narrowing on the stream workers (ADR-0017's hook), if the line still misses after Plan 0028.

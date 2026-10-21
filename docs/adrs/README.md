@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0022.**
+**Next free number: 0025.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -31,11 +31,14 @@ the status.
 | [0014](0014-prefab-identity-in-the-op-log.md) | A stamp op names its prefab by content id, and a save carries the prefabs it names | accepted |
 | [0015](0015-late-reverb-as-a-shared-fdn-from-a-listener-ray-fan.md) | Late reverb is one listener-shared feedback delay network driven by a ray fan from the listener; early echoes render from their wall's direction | accepted; level and room-change clauses superseded by ADR-0021 |
 | [0016](0016-a-falling-region-crushes-the-sub-threshold-voxels-in-its-path.md) | A falling region crushes the sub-threshold voxels in its path | accepted (Plan 0022); amends ADR-0008's drop clause |
-| [0017](0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md) | The mirror's CPU work stays in the frame loop, bounded per frame, with narrowing on the stream workers | accepted; worker narrowing not built (Outcome) |
+| [0017](0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md) | The mirror's CPU work stays in the frame loop, bounded per frame, with narrowing on the stream workers | accepted; worker narrowing not built (Outcome); Alternative B's ring taken up by ADR-0022 |
 | [0018](0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md) | Direct light is one sample per pixel from a hit buffer, denoised by an SVGF-family filter whose history dies where the world was edited | proposed (Plan 0024) |
 | [0019](0019-gamepad-input-as-generic-axes-in-the-shell-fed-by-the-testbed.md) | Gamepad input is generic axes and pad buttons in the shell's `Input`, fed by the testbed's own gilrs | accepted |
 | [0020](0020-paired-mixer-bench-bounds-read-with-loops-aligned.md) | A paired mixer-bench bound is read with both builds' loops aligned to 64 bytes | accepted |
 | [0021](0021-echo-and-tail-levels-by-room-size-curves-and-a-tail-handed-between-two-networks.md) | Echo and tail levels follow listening-fitted curves of the room's mean free path, and a room change hands the tail to a second network | accepted (Plan 0020) |
+| [0022](0022-mirror-uploads-through-a-staging-belt-and-copy-commands.md) | Mirror uploads go through a persistently mapped staging belt and copy commands, not `Queue::write_buffer` | proposed (Plan 0027); supersedes ADR-0017's Alternative B rejection in part |
+| [0023](0023-indirect-light-from-a-scrolling-probe-volume.md) | Indirect light comes from a scrolling volume of irradiance probes around the camera, refreshed by a few rays per probe per frame and gathered with visibility weights | proposed (Plan 0029) |
+| [0024](0024-own-temporal-upscaler-on-the-hit-buffer.md) | The upscaler is a temporal upscaler of our own, driven by jittered rays and the hit buffer, with a sharpening pass | proposed (Plan 0030) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

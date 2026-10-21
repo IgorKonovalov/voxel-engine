@@ -9,22 +9,27 @@ Written 2026-10-16. Readings are added under the figure they measure, each namin
 
 ## 1. Hardware
 
-| | Baseline (the floor) | Dev reference | Portable profile (a quality profile, not a gate) |
-|---|---|---|---|
-| GPU | 2019 mid-range desktop: GTX 1660 / RX 5600 class, 6 GB VRAM, Vulkan 1.2, no RT hardware | NVIDIA RTX 3080 Laptop, 8 GB, driver 610 | Switch-2 class: about 1.7 to 3 TFLOPS, 68 to 102 GB/s, published figures; no device on hand |
-| CPU | 4 cores / 8 threads | 16 threads (AMD, Cezanne) | 8 ARM cores class |
-| RAM | 16 GB | 30 GB | 9 GB shared by CPU and GPU |
-| OS | Linux (Vulkan), Windows (Vulkan or DX12 through wgpu) | Arch Linux, Wayland | none targeted; the profile is held on a PC of that class |
+| | Baseline (the floor) | Dev reference | Slow adapter (on hand) | Portable profile (a quality profile, not a gate) |
+|---|---|---|---|---|
+| GPU | 2019 mid-range desktop: GTX 1660 / RX 5600 class, 6 GB VRAM, Vulkan 1.2, no RT hardware | NVIDIA RTX 3080 Laptop, 8 GB, driver 610 | the dev box's AMD Cezanne iGPU (Radeon Vega, RADV on Mesa, Vulkan 1.4): about 2 TFLOPS, DDR4 shared with the CPU, below the floor's class | Switch-2 class: about 1.7 to 3 TFLOPS, 68 to 102 GB/s, published figures; no device on hand |
+| CPU | 4 cores / 8 threads | 16 threads (AMD, Cezanne) | the same | 8 ARM cores class |
+| RAM | 16 GB | 30 GB | the same, shared with the GPU | 9 GB shared by CPU and GPU |
+| OS | Linux (Vulkan), Windows (Vulkan or DX12 through wgpu) | Arch Linux, Wayland | the same | none targeted; the profile is held on a PC of that class |
 
-A perf figure measured only on the dev reference is labelled as such. The baseline card is to be
-acquired or borrowed before M2 closes; until then the baseline numbers are projections.
+A perf figure is labelled by the adapter it was read on. **The baseline card is not acquired
+(owner, 2026-10-21; `roadmap.md`, "Baseline card")**: the floor's figures stay projections,
+bracketed by two readings on the dev box, the NVIDIA card above the floor and the slow adapter
+below it. From Plan 0028 on, every render plan's close takes its GPU readings on both adapters
+(the fly-through's `--adapter` flag, Plan 0028 Phase 4). A figure read on the NVIDIA card alone
+is labelled "dev reference" as before.
 
 The portable profile (owner, 2026-10-17; `roadmap.md`, "Floor, profiles and scene scale") is
 a named setting of the quality knobs (internal resolution, full-detail radius, translucent
-layers, lighting tier) at 720p output and 30 to 60 fps. It has no reading until a machine of
-that class is on hand; until then its figure is the storage reads per ray that Plan 0015
-counts, against about three uncached 64-byte lines per ray at 720p and 60 fps with three rays
-a pixel (arithmetic from the published bandwidth).
+layers, lighting tier) at 720p output and 30 to 60 fps. No machine of that class is on hand;
+the slow adapter above is the nearest thing to it and its readings stand in, labelled as the
+slow adapter's, beside the storage reads per ray that Plan 0015 counts, against about three
+uncached 64-byte lines per ray at 720p and 60 fps with three rays a pixel (arithmetic from
+the published bandwidth).
 
 ## 2. Frame budget
 
