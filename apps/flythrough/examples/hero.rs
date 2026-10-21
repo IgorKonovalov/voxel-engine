@@ -4,7 +4,7 @@
 //! `cargo run --release -p flythrough --example hero -- [--seed N] [--size WxH] [--yaw DEG]
 //! [--pitch DEG] [--at X,Y,Z] [--carve R] [--out PATH] [--frames N] [--lighting full|half]
 //! [--shadow-walk full|coarse] [--sampler list|reuse] [--history edits|gradient]
-//! [--lamp on|off] [--filter on|off] [--exposure E]`. `--at` is a voxel coordinate (the level's spawn by
+//! [--lamp on|off] [--filter on|off] [--exposure E] [--emissive-history N]`. `--at` is a voxel coordinate (the level's spawn by
 //! default); `--carve R` digs a sphere of radius `R` voxels where the view ray meets rock
 //! before the frame is drawn. The look is the fly-through's default (contour planes, rock's
 //! detail); the ore glows (`flythrough::ORE_EMISSION`); the still is the
@@ -95,6 +95,9 @@ fn parse_args() -> Result<Args, String> {
             "--lamp" => args.lighting.lamp = on_off(&flag, &v)?,
             "--filter" => args.lighting.filter = on_off(&flag, &v)?,
             "--exposure" => args.lighting.exposure = v.parse().map_err(|e| bad(&e))?,
+            "--emissive-history" => {
+                args.lighting.emissive_history = v.parse().map_err(|e| bad(&e))?;
+            }
             _ => return Err(format!("unknown argument {flag}")),
         }
     }

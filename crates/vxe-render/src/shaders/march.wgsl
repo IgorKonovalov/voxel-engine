@@ -169,7 +169,8 @@ struct Params {
     light_scale: u32,
     light_offset: u32,
     prev_light_offset: u32,
-    _pad8: u32,
+    // The emissive part's history length in frames (`Lighting::emissive_history`).
+    emissive_history: f32,
     _pad9: u32,
     _pad10: u32,
 };
@@ -239,6 +240,8 @@ const LIGHTING_LAMP: u32 = 1u;
 const LIGHTING_COARSE_SHADOW: u32 = 2u;
 const LIGHTING_REUSE: u32 = 4u;
 const LIGHTING_GRADIENT: u32 = 8u;
+const LIGHTING_FILTER_OFF: u32 = 32u;
+const LIGHTING_EMISSION_CHANGED: u32 = 256u;
 const LIGHTING_IDENTITY_TONE_MAP: u32 = 64u;
 const LIGHTING_UNIFORM_DRAW: u32 = 128u;
 // Hit record flags.

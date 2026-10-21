@@ -981,7 +981,7 @@ fn carve_reading(
     table: &MaterialTable,
     flush: bool,
 ) -> CarveReading {
-    let r = world.apply(carve).unwrap();
+    let r = world.apply(carve).expect("the carve applies");
     let aabb = r.aabb.expect("the carve removes rock");
     rig.gpu.sync_now(world, &rig.device, &rig.queue).unwrap();
     let boxes = if flush { vxe_render::MAX_EDITS + 1 } else { 1 };
@@ -1085,7 +1085,13 @@ fn dark_cave_golden_is_lit_by_its_ore_alone() {
     let pos = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
     let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let target = (0..pos.len())
-        .filter(|&i| info[i][3] & 1 == 1 && info[i][2] == ROCK && (15.0..25.0).contains(&pos[i][3]))
+        .filter(|&i| {
+            // The radius-6 sphere stays inside the scene's 384-voxel extent.
+            info[i][3] & 1 == 1
+                && info[i][2] == ROCK
+                && (15.0..25.0).contains(&pos[i][3])
+                && pos[i][..3].iter().all(|c| (7.0..377.0).contains(c))
+        })
         .max_by_key(|&i| u32::from(before[4 * i]) + u32::from(before[4 * i + 1]))
         .expect("a lit rock pixel");
     let at = pos[target];

@@ -880,6 +880,19 @@ fn the_gradient_drops_light_that_left_the_cone_within_two_frames() {
             share.join(" ")
         );
         assert!(!left.is_empty());
+        if history == vxe_render::HistoryKill::Edits {
+            // No slower than plain accumulation at 0.2: two thirds by frame 11, all by 22.
+            let at11 = left
+                .iter()
+                .filter(|&&i| after[10][i] < 0.1 * before[i])
+                .count();
+            assert!(
+                at11 * 100 >= 67 * left.len(),
+                "{at11} of {} at frame 11",
+                left.len()
+            );
+            assert!(k <= 22, "edits: {k} frames");
+        }
         frames_to_drop.push(k);
     }
     assert!(
@@ -887,4 +900,169 @@ fn the_gradient_drops_light_that_left_the_cone_within_two_frames() {
         "gradient: {} frames",
         frames_to_drop[0]
     );
+}
+
+/// The dark cave's golden pose with the lamp off and the filter on, at `resolution` with
+/// `sampler`, settled over 64 still frames; then 32 more composited frames read back. Returns
+/// the mean over hit pixels and the 31 consecutive pairs of the largest channel difference,
+/// and the share of (pixel, pair) values above 4/255.
+fn still_vein_flicker(
+    resolution: vxe_render::LightingResolution,
+    sampler: vxe_render::Sampler,
+) -> Option<(f64, f64)> {
+    let source = scene_source();
+    let world = World::generate(
+        source.extent,
+        &source,
+        &flythrough::with_emissive_ore(&cave_materials()),
+    );
+    world.apply(&scene_carve(&world)).unwrap();
+    let mut rig = LookRig::new(&world, None)?;
+    rig.gpu.set_focus(VoxelCoord([264, 120, 376]));
+    for _ in 0..4 {
+        rig.gpu.sync_now(&world, &rig.device, &rig.queue).unwrap();
+    }
+    rig.frame.set_resolution(&rig.device, resolution);
+    rig.frame.set_lighting(vxe_render::Lighting {
+        lamp: false,
+        sampler,
+        ..vxe_render::Lighting::default()
+    });
+    let camera = vxe_render::Camera {
+        position: [264.5, 120.5, 376.5].into(),
+        yaw: 15f32.to_radians(),
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    };
+    let light = vxe_render::LightParams::headlamp();
+    for _ in 0..64 {
+        rig.frame
+            .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+    }
+    let mut frames = Vec::new();
+    let mut hits = Vec::new();
+    for _ in 0..32 {
+        rig.frame
+            .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+        frames.push(readback::read_rgba8(
+            &rig.device,
+            &rig.queue,
+            rig.frame.target(),
+        ));
+        if hits.is_empty() {
+            hits = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records())
+                .iter()
+                .map(|r| r[3] & 1 == 1)
+                .collect();
+        }
+    }
+    let (mut sum, mut over, mut n) = (0.0f64, 0usize, 0usize);
+    for pair in frames.windows(2) {
+        for (i, &hit) in hits.iter().enumerate() {
+            if !hit {
+                continue;
+            }
+            let d = (0..3)
+                .map(|k| pair[0][4 * i + k].abs_diff(pair[1][4 * i + k]))
+                .max()
+                .unwrap_or(0);
+            sum += f64::from(d);
+            over += usize::from(d > 4);
+            n += 1;
+        }
+    }
+    Some((sum / n as f64, over as f64 / n as f64))
+}
+
+/// The vein holds still: on the dark cave's golden pose with the lamp off and the filter on, a
+/// still camera's composited frames change in each of full and half resolution, with the flat
+/// list and with reuse, by a mean of at most a quarter of the single-history renderer's
+/// (a59199d) reading of the same configuration, with at most 0.1 % of (pixel, pair) values
+/// above 4/255; half with reuse reads no higher than that renderer's full with reuse. Full
+/// with reuse misses its quarter (Plan 0024's log): its mean is printed, not asserted.
+#[test]
+fn static_emissive_light_holds_still() {
+    use vxe_render::LightingResolution::{Full, Half};
+    use vxe_render::Sampler::{List, Reuse};
+    // a59199d's readings: mean step and share above 4/255.
+    let base = [
+        ((Full, List), 0.6617),
+        ((Full, Reuse), 0.5655),
+        ((Half, List), 0.9759),
+        ((Half, Reuse), 1.0420),
+    ];
+    let mut means = Vec::new();
+    for ((res, sampler), before) in base {
+        let Some((mean, over)) = still_vein_flicker(res, sampler) else {
+            return;
+        };
+        println!(
+            "flicker {} {}: mean {mean:.4}/255 (a59199d {before:.4}, ratio {:.3}), share over 4/255 {:.4} %",
+            res.name(),
+            sampler.name(),
+            mean / before,
+            over * 100.0
+        );
+        means.push((res, sampler, mean, before, over));
+    }
+    for &(res, sampler, mean, before, over) in &means {
+        let what = format!("{} {}", res.name(), sampler.name());
+        assert!(over <= 0.001, "{what}: {:.4} % over 4/255", over * 100.0);
+        if (res, sampler) != (Full, Reuse) {
+            assert!(
+                mean <= before / 4.0,
+                "{what}: {mean:.4} against {:.4}",
+                before / 4.0
+            );
+        }
+    }
+    assert!(means[3].2 <= 0.5655, "half reuse {:.4}", means[3].2);
+}
+
+/// An emission-scale step from 1.0 to 0.25 on Phase 3's emissive-ceiling box, the filter off,
+/// in the edit-box mode: the floor centre's accumulated irradiance has under 10 % of the change
+/// left after 11 frames, as plain accumulation at 0.2 (0.8^11 = 0.086).
+#[test]
+fn an_emission_step_settles_within_eleven_frames() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let (table, glow, _) = glow_table();
+    let world = ceiling_box(&table, glow);
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    let camera = vxe_render::Camera {
+        position: [32.0, 32.0, 29.0].into(),
+        yaw: 0.0,
+        pitch: -std::f32::consts::FRAC_PI_2,
+        vfov: 0.5,
+    };
+    let mut frame = vxe_render::Frame::new(&device, 1, 1);
+    frame.set_lighting(vxe_render::Lighting {
+        lamp: false,
+        filter: false,
+        ..vxe_render::Lighting::default()
+    });
+    let light = vxe_render::LightParams::headlamp();
+    let read = |frame: &vxe_render::Frame| {
+        f64::from(readback::read_rgba16f(&device, &queue, frame.accumulated())[0][0])
+    };
+    for _ in 0..96 {
+        frame.step(&device, &queue, &gpu, &camera, &light);
+    }
+    let before = read(&frame);
+    frame.set_emission_scale(&queue, glow, 0.25);
+    let target = 0.25 * before;
+    let mut series = Vec::new();
+    for _ in 0..11 {
+        frame.step(&device, &queue, &gpu, &camera, &light);
+        series.push(read(&frame));
+    }
+    println!(
+        "emission step: before {before:.4}, target {target:.4}, after 1..11 frames {series:.4?}"
+    );
+    // Within 10 % of the step: what is left of the change after 11 frames.
+    let left = (series[10] - target).abs() / (before - target);
+    println!("emission step: {left:.3} of the change left after 11 frames");
+    assert!(left <= 0.1, "{left:.3}");
 }

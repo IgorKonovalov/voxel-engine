@@ -69,7 +69,8 @@ fn gradient(@builtin(global_invocation_id) gid: vec3<u32>) {
                     }
                 }
             }
-            let old = luminance(textureLoad(grad_prev_light, qi, 0).xyz);
+            let prev_light = textureLoad(grad_prev_light, qi, 0);
+            let old = luminance(prev_light.xyz) + prev_light.w;
             let lambda = abs(e - old) / max(max(e, old), 1e-4);
             out = vec4<f32>(lambda, e, old, 0.0);
         }

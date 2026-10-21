@@ -68,7 +68,9 @@ pub struct Params {
     pub light_scale: u32,
     pub light_offset: u32,
     pub prev_light_offset: u32,
-    pub _pad8: [u32; 3],
+    /// The emissive part's history length in frames ([`Lighting::emissive_history`]).
+    pub emissive_history: f32,
+    pub _pad8: [u32; 2],
 }
 
 /// `Params::lighting` bit: the headlamp lights the frame.
@@ -80,6 +82,15 @@ pub const LIGHTING_REUSE: u32 = 1 << 2;
 /// `Params::lighting` bit: the temporal pass also shortens history by A-SVGF's gradient
 /// ([`History::Gradient`]).
 pub const LIGHTING_GRADIENT: u32 = 1 << 3;
+/// The emissive part's history in frames, by default.
+pub const DEFAULT_EMISSIVE_HISTORY: u32 = 32;
+/// Frames after an emission-scale change (the frame of the change too) during which the
+/// emissive part blends at no less
+/// than the lamp's 0.2 (`0.8^11 = 0.086`: a step settles within 10 % in them).
+pub const EMISSION_CHANGE_FRAMES: u32 = 11;
+/// `Params::lighting` bit: an emission scale changed within the last
+/// [`EMISSION_CHANGE_FRAMES`] frames.
+pub const LIGHTING_EMISSION_CHANGED: u32 = 1 << 8;
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
 pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
 /// `Params::lighting` bit: candidates are drawn uniformly over the buffer
@@ -362,7 +373,7 @@ pub enum LightingResolution {
     #[default]
     Full,
     /// Half of it on each edge, on a hit buffer sampled from the full one (one pixel of each
-    /// 2 x 2, cycling over the four per frame); the composite upsamples by depth and normal.
+    /// 2 x 2, the lower-left one every frame); the composite upsamples by depth and normal.
     Half,
 }
 
@@ -389,8 +400,9 @@ impl LightingResolution {
     }
 }
 
-/// The sampled pixel of each 2 x 2 at half resolution, by frame index modulo 4 (x, y).
-const HALF_OFFSETS: [[u32; 2]; 4] = [[0, 1], [1, 0], [1, 1], [0, 0]];
+/// The sampled pixel of each 2 x 2 at half resolution (x, y): the lower-left, the same every
+/// frame, so a still camera's upsampled image holds still.
+const HALF_OFFSET: [u32; 2] = [0, 1];
 
 /// Where the light pass draws its emissive candidates from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -419,6 +431,9 @@ pub struct Lighting {
     pub draw: CandidateDraw,
     pub sampler: Sampler,
     pub history: HistoryKill,
+    /// Frames of history the emissive part of the irradiance blends over at least (static
+    /// light holds still); the lamp's part keeps alpha 0.2.
+    pub emissive_history: u32,
 }
 
 impl Default for Lighting {
@@ -433,6 +448,7 @@ impl Default for Lighting {
             draw: CandidateDraw::default(),
             sampler: Sampler::default(),
             history: HistoryKill::default(),
+            emissive_history: DEFAULT_EMISSIVE_HISTORY,
         }
     }
 }
@@ -538,6 +554,8 @@ pub struct Frame {
     blue_noise_written: std::sync::atomic::AtomicBool,
     /// The frame index the random numbers are seeded with.
     frame: u32,
+    /// The frame index of the last emission-scale change.
+    emission_changed_at: Option<u32>,
     /// The copy of the double-buffered targets the next `encode` writes.
     cur: usize,
     resolution: LightingResolution,
@@ -955,6 +973,7 @@ impl Frame {
             }),
             blue_noise_written: std::sync::atomic::AtomicBool::new(false),
             frame: 0,
+            emission_changed_at: None,
             cur: 0,
             downsample_layout,
             downsample,
@@ -1030,6 +1049,7 @@ impl Frame {
         let i = usize::from(material);
         if self.emission_cpu[i] != scale {
             self.emission_cpu[i] = scale;
+            self.emission_changed_at = Some(self.frame);
             queue.write_buffer(
                 &self.emission_scale,
                 i as u64 * 4,
@@ -1176,7 +1196,6 @@ impl Frame {
             views: vs,
             view_count: views.len() as u32,
             translucent_layers: self.look.translucent_layers,
-            lighting: self.lighting.flags(),
             window_min: e.min.0,
             window_size: e.size(),
             light_pos: (camera.position + right * light.offset_right - up * light.offset_down)
@@ -1200,6 +1219,16 @@ impl Frame {
             lod1_r2: (2 * self.lod.r_full).pow(2),
             lod2_r2: (4 * self.lod.r_full).pow(2),
             exposure: self.lighting.exposure,
+            emissive_history: self.lighting.emissive_history as f32,
+            lighting: self.lighting.flags()
+                | if self
+                    .emission_changed_at
+                    .is_some_and(|f| self.frame.wrapping_sub(f) <= EMISSION_CHANGE_FRAMES)
+                {
+                    LIGHTING_EMISSION_CHANGED
+                } else {
+                    0
+                },
             light_table_base: world.light_table_base(),
             light_span: world.light_span(),
             candidates: self.lighting.candidates,
@@ -1207,7 +1236,7 @@ impl Frame {
             light_size: self.targets.light_size(),
             light_scale: self.targets.scale,
             light_offset: if self.targets.scale > 1 {
-                let [x, y] = HALF_OFFSETS[(self.frame % 4) as usize];
+                let [x, y] = HALF_OFFSET;
                 x | y << 8
             } else {
                 0

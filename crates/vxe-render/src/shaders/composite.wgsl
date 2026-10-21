@@ -31,13 +31,23 @@
 @group(2) @binding(5) var light_pos_in: texture_2d<f32>;
 @group(2) @binding(6) var light_info_in: texture_2d<u32>;
 
+// The irradiance of lighting pixel `q`: the filter's rgb, or with the filter off the light
+// pass's emissive rgb plus its lamp's white a.
+fn irradiance_at(q: vec2<i32>) -> vec3<f32> {
+    let v = textureLoad(irradiance_in, q, 0);
+    if ((params.lighting & LIGHTING_FILTER_OFF) != 0u) {
+        return v.xyz + vec3<f32>(v.w);
+    }
+    return v.xyz;
+}
+
 // The irradiance at full-resolution pixel `px` (hit `rec`): the lighting grid's own texel at
 // full resolution; at half resolution the four lighting pixels around it, bilinear weights
 // times `max(n.n', 0)^32 exp(-plane distance)` against the full-resolution hit, or the
 // nearest hit tap when every weight vanishes.
 fn lit_at(px: vec2<i32>, rec: HitRecord) -> vec3<f32> {
     if (params.light_scale == 1u) {
-        return textureLoad(irradiance_in, px, 0).xyz;
+        return irradiance_at(px);
     }
     let o = vec2<f32>(unpack_offset(params.light_offset));
     let c = (vec2<f32>(px) - o) / f32(params.light_scale);
@@ -65,7 +75,7 @@ fn lit_at(px: vec2<i32>, rec: HitRecord) -> vec3<f32> {
         cosn *= cosn;
         cosn *= cosn;
         let w = bil * cosn * exp(-abs(dot(rec.n, other.p - rec.p)));
-        let e = textureLoad(irradiance_in, tap, 0).xyz;
+        let e = irradiance_at(tap);
         sum += w * e;
         w_sum += w;
         if (bil > nearest_w) {

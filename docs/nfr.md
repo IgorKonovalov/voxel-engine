@@ -234,6 +234,13 @@ gradient pass (one re-shaded pixel, two shadow rays, per 3 x 3 stratum) reads 0.
 level's spawn and 1.277 ms at the streamed spawn at 1080p; the a-trous pass reads 5.795 and
 5.566 ms in that mode, its ages kept shorter.
 
+**The temporal pass with two histories (dev reference, indicative, Plan 0024 Phase 13, RTX
+3080 Laptop GPU, exclusive perf lock, 1-minute load 4.0 to 6.8, not quiet; the default look,
+ore emissive, lamp on, one run each):** the temporal pass (the emissive part on a 32-frame
+history, the lamp's on 0.2) reads 0.508 and 0.505 ms at full resolution and 0.137 and
+0.135 ms at half (level, streamed spawn) at 1080p, against Phase 13's 1.0 and 0.3 ms bars; the
+quiet reading is owed. `Frame::frame_bytes` is unchanged at 308 736 000 B.
+
 **Quiet-box readings of Plan 0024's owed bars (dev reference, d367d8f's release binary,
 RTX 3080 Laptop GPU, Ryzen 9 5900HS, exclusive perf lock, each run started at a 1-minute load
 of 0.18 to 1.87 with no other process above 7 % CPU; 1080p, the default look, the ore

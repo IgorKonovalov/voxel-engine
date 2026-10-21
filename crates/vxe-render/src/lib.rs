@@ -24,8 +24,8 @@ pub use gpu_world::{
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
 pub use marcher::{
-    CandidateDraw, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, Lighting,
-    LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
+    CandidateDraw, DEFAULT_EMISSIVE_HISTORY, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill,
+    Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
     NormalMode, PassTimer, Sampler, ShadowWalk, ToneMap, ViewMode,
 };
 pub use present::Presenter;

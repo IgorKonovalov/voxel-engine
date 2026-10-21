@@ -732,6 +732,25 @@ such.
 | 10: The half-resolution tier | dev | done; the 3.0 ms a-trous bar met | 3c2de1d |
 | 11: The fly-through's switches, HUD rows and autopilot readings | dev | done; `frame_bytes` at 1080p over 300 MB (Notes) | 1b896b3 |
 | 12: The owner's windowed check | human | done (live session 4, 2026-10-21; observations below) | none (docs) |
+| 13: Static emissive light holds still (close review fix) | dev | done; bar 1's quarter missed for full with reuse; bar 4 waiting for quiet (Notes) | committed with this row |
+| 14: The mode on screen, and the defaults (close review fix) | dev | not started | |
+| 15: The owner's windowed re-check (close review) | human | not started | |
+
+Phase 13 observations (merge a59199d is the base): the base's flicker (mean step / share
+above 4/255) read full list 0.6617 / 1.1052 %, full reuse 0.5655 / 1.1490 %, half list
+0.9759 / 3.0944 %, half reuse 1.0420 / 4.4029 %; after the change full list 0.1537 /
+0.0013 %, full reuse 0.1563 / 0.0015 %, half list 0.1830 / 0.0097 %, half reuse 0.1647 /
+0.0027 % (ratios 0.232, 0.276, 0.188, 0.158). The cone turn in the edit-box mode reads 67.1 %
+under 10 % at frame 11 and all by frame 21; the gradient mode all within 2 frames. The
+emission step from 1.0 to 0.25 leaves 0.072 of the change after 11 frames. Phase 6 under the
+change: 12 486 in the box, 0 not at age 0; 676 of 7541 removed-surface pixels within 2/255;
+far 0 of 31 680, the flushed control 9633. Phase 10's mean absolute difference 2.085, 1.361,
+0.693. Re-blessed (changed / by more than 2/255, of 57 600): dark_cave 33 514 / 9142,
+dark_cave_half 33 705 / 10 051, and from the irradiance's split f16 rounding with no pixel over
+2/255: primary 799, headlamp 853, lod 875, translucent 243, look_contour 742, look_detail 247,
+look_gradient27 696, look_trilinear8 616, hud 554. Loaded indicative cost (load 4.0 to 6.8,
+not quiet): temporal 0.508 / 0.505 ms at full and 0.137 / 0.135 ms at half (level /
+streamed); `frame_bytes` unchanged at 308 736 000 B (no target added).
 
 ### Notes
 
@@ -896,6 +915,24 @@ each. Empty is fine.)_
   the lamp's 1200 intensity saturates near walls under ACES at 1.0); `--frames`,
   `--lighting`, `--shadow-walk`, `--sampler`, `--history`, `--lamp`, `--filter` as the
   fly-through's.
+- Merge a59199d (main at e8f347a, Plan 0027): the light-sample writes go through the staging
+  belt in the sync's encoder and ranges are zeroed with `clear_buffer` there; the emissive cube
+  test reads back a range refilled in the same sync and one refilled a sync later.
+- Phase 13: the light pass stores the emissive irradiance in rgb and the lamp's (white) in
+  alpha; the temporal pass keeps both in the accumulation texture, so no target is added. The
+  emissive part blends at `max(1 / (age + 1), 1 / H)`, H from `Params::emissive_history`. The
+  moments blend between the two paces by the lamp's share of the history's luminance, not at
+  0.2 as before: at 0.2 the variance steering the filter kept the image moving (full list
+  0.204). The emission-change boost holds for the frame of the change and the 11 after it
+  (`EMISSION_CHANGE_FRAMES`), not one frame: a single frame at 0.2 leaves a step 58 % unsettled
+  after 11. The half tier now samples the lower-left pixel of each 2 x 2 every frame, not a
+  cycle of the four: the cycle moved the upsampled image of a still camera (half list 0.475
+  with it). The dark-cave carve now picks its target inside the scene's extent.
+- Phase 13 bars not met as stated: bar 1's quarter for full with reuse reads 0.1563 against
+  0.1414 (the other three and every share hold; the test prints that mean instead of
+  asserting it); bar 2's emission step is read as under 10 % of the change left (0.072),
+  since at 0.2 a 4:1 step is 26 % above its new value after 11 frames; bar 4 is waiting for
+  the quiet box.
 
 Phase 1 observations: hitmask and normals of the three scenes byte-identical to ae58f0c; the
 identity-tone-mapped carve's largest channel difference from ae58f0c's is 0/255; the

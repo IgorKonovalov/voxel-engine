@@ -17,10 +17,10 @@
 //                                        of its f32) in bits 0..16, the
 //                                        effective sample count M bits 16..24, the face bits
 //                                        24..27 and a valid bit 27
-//   2  storage texture   irradiance_out  rgba16float: rgb the irradiance E at the hit (light
+//   2  storage texture   irradiance_out  rgba16float: the irradiance E at the hit (light
 //                                        per unit area arriving over the hemisphere of the
-//                                        shading normal), a the luminance of its emissive
-//                                        part; 0 on a miss. In the steps view the lamp shadow
+//                                        shading normal), its emissive part in rgb and the
+//                                        lamp's (white) in a; 0 on a miss. In the steps view the lamp shadow
 //                                        ray's counters instead (see `shade`)
 //
 // The headlamp (Params.lighting bit 0) is a point light: E = PI * intensity * cone *
@@ -111,13 +111,14 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
                 e = vec3<f32>(PI * lamp_lit(rec.p, n, ns));
             }
             emissive = emissive_irradiance(gid.xy, rec, n, ns);
-            e += emissive;
         }
     }
+    // The emissive part in rgb, the lamp's (white, or the cutaway's hemisphere) in a: the
+    // temporal pass keeps them on histories of different lengths.
     textureStore(
         irradiance_out,
         px,
-        vec4<f32>(min(e, vec3<f32>(HALF_MAX)), min(luminance(emissive), HALF_MAX)),
+        vec4<f32>(min(emissive, vec3<f32>(HALF_MAX)), min(e.x, HALF_MAX)),
     );
 }
 

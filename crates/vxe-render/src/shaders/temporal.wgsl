@@ -11,7 +11,8 @@
 //   4  texture_2d<f32>   irradiance_in   this frame's irradiance from the light pass
 //   5  texture_2d<f32>   prev_accum_in   last frame's accumulated irradiance
 //   6  texture_2d<f32>   prev_moments_in last frame's moments: luminance, its square, age
-//   7  storage texture   accum_out       rgba16float: the accumulated irradiance, rgb
+//   7  storage texture   accum_out       rgba16float: the accumulated irradiance, the
+//                                        emissive part in rgb, the lamp's (white) in a
 //   8  storage texture   moments_out     rgba16float: first and second moments of the
 //                                        irradiance's luminance, then the age: frames of
 //                                        history reused, 0 after a reset
@@ -29,8 +30,10 @@
 // moments and age are blended by their bilinear weights; with none accepted, with no
 // history (`Params.history` bit 0 clear), or with the hit inside an edit box dilated by
 // one voxel, the pixel resets: age 0, accumulation this frame's sample. Otherwise the age is
-// the taps' age plus one, capped at AGE_MAX, and the new sample is blended in at
-// `max(ALPHA, 1 / (age + 1))`, the moments alike.
+// the taps' age plus one, capped at AGE_MAX. The lamp's part and the moments blend the new
+// sample in at `max(ALPHA, 1 / (age + 1))`; the emissive part, static light, at
+// `max(1 / (age + 1), 1 / Params.emissive_history)`, and at no less than ALPHA while
+// Params.lighting bit 8 says an emission scale changed within the last frames.
 
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 @group(2) @binding(1) var hit_info_in: texture_2d<u32>;
@@ -106,8 +109,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let px = vec2<i32>(gid.xy);
     let rec = unpack_hit(textureLoad(hit_pos_in, px, 0), textureLoad(hit_info_in, px, 0));
-    let sample = textureLoad(irradiance_in, px, 0).xyz;
-    let l = luminance(sample);
+    // The emissive irradiance in rgb, the lamp's (white) in a.
+    let sample = textureLoad(irradiance_in, px, 0);
+    let l = luminance(sample.xyz) + sample.w;
     var accum = sample;
     var moments = vec2<f32>(l, l * l);
     var age = 0.0;
@@ -118,7 +122,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         let base = vec2<i32>(floor(q));
         let f = q - floor(q);
         var w_sum = 0.0;
-        var h = vec3<f32>(0.0);
+        var h = vec4<f32>(0.0);
         var m = vec3<f32>(0.0);
         let tol = HISTORY_DIST + HISTORY_DIST_PER_T * rec.t;
         for (var i = 0; i < 4; i++) {
@@ -136,24 +140,35 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             let wy = select(1.0 - f.y, f.y, o.y == 1);
             let w = wx * wy;
             w_sum += w;
-            h += w * textureLoad(prev_accum_in, tap, 0).xyz;
+            h += w * textureLoad(prev_accum_in, tap, 0);
             m += w * textureLoad(prev_moments_in, tap, 0).xyz;
         }
         if (w_sum > 1e-3) {
             h /= w_sum;
             m /= w_sum;
             age = min(floor(m.z + 0.5) + 1.0, AGE_MAX);
+            // The lamp's part keeps a short history; static emissive light a long one.
             var a = max(ALPHA, 1.0 / (age + 1.0));
+            var a_emissive = max(1.0 / (age + 1.0), 1.0 / max(params.emissive_history, 1.0));
+            if ((params.lighting & LIGHTING_EMISSION_CHANGED) != 0u) {
+                // An emission scale changed within the last frames: emissive light follows
+                // as fast as the lamp's.
+                a_emissive = max(a_emissive, ALPHA);
+            }
             if ((params.lighting & LIGHTING_GRADIENT) != 0u) {
                 // Where the light changed, the new sample weighs as much as the change.
                 let lambda = clamp(GRADIENT_GAIN * gradient_at(q + 0.5), 0.0, 1.0);
                 a = max(a, lambda);
+                a_emissive = max(a_emissive, lambda);
                 age = floor(age * (1.0 - lambda));
             }
-            accum = mix(h, sample, a);
-            moments = mix(m.xy, vec2<f32>(l, l * l), a);
+            accum = vec4<f32>(mix(h.xyz, sample.xyz, a_emissive), mix(h.w, sample.w, a));
+            // The moments follow each part at its own pace, by the lamp's share of the
+            // history's luminance.
+            let lamp_share = h.w / max(luminance(h.xyz) + h.w, 1e-6);
+            moments = mix(m.xy, vec2<f32>(l, l * l), mix(a_emissive, a, lamp_share));
         }
     }
-    textureStore(accum_out, px, vec4<f32>(accum, 0.0));
+    textureStore(accum_out, px, accum);
     textureStore(moments_out, px, vec4<f32>(moments, age, 0.0));
 }

@@ -75,7 +75,9 @@ fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let px = vec2<i32>(gid.xy);
-    let c = textureLoad(src_in, px, 0).xyz;
+    // The accumulation's emissive rgb plus its lamp's white a: the filter's irradiance.
+    let acc = textureLoad(src_in, px, 0);
+    let c = acc.xyz + vec3<f32>(acc.w);
     let m = textureLoad(moments_in, px, 0).xyz;
     let rec = load_hit(px);
     var v = max(m.y - m.x * m.x, 0.0);

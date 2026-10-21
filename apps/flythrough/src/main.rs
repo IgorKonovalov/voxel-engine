@@ -12,7 +12,7 @@
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
 //! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]
-//! [--history edits|gradient] [--lighting full|half]`.
+//! [--history edits|gradient] [--lighting full|half] [--emissive-history N]`.
 //! `--render` fixes the frame's internal resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -50,7 +50,9 @@
 //! `--light-radius N` sets the chunks around the camera whose emitters light the frame
 //! (default 4); `--sampler reuse` adds last frame's reservoirs (ReSTIR) to the candidates;
 //! `--history gradient` also shortens history where A-SVGF's gradient sees the light change;
-//! `--lighting half` runs the lighting passes at half resolution on each edge. In a window
+//! `--lighting half` runs the lighting passes at half resolution on each edge;
+//! `--emissive-history N` sets the frames static emissive light accumulates over (default 32;
+//! the lamp's light keeps a short history). In a window
 //! `F3` toggles the shadow walk, `F4` the sampler, `F5` the history killer, `F6` the lighting
 //! resolution and `F7` the lamp, each printing the lighting modes; with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
@@ -339,6 +341,8 @@ struct Args {
     history: HistoryKill,
     /// `--lighting full|half`: the lighting passes' resolution.
     lighting: LightingResolution,
+    /// `--emissive-history N`: frames the emissive light's history blends over at least.
+    emissive_history: u32,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -427,6 +431,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         sampler: Sampler::List,
         history: HistoryKill::Edits,
         lighting: LightingResolution::Full,
+        emissive_history: vxe_render::DEFAULT_EMISSIVE_HISTORY,
     };
     let mut detail_flag = false;
     let mut it = argv.into_iter();
@@ -531,6 +536,16 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 let v = value()?;
                 args.shadow_walk = ShadowWalk::from_name(&v)
                     .ok_or(format!("--shadow-walk takes full or coarse, not {v}"))?;
+            }
+            "--emissive-history" => {
+                let v = value()?;
+                args.emissive_history =
+                    v.parse()
+                        .ok()
+                        .filter(|n| (1..=4096).contains(n))
+                        .ok_or(format!(
+                            "--emissive-history takes 1 to 4096 frames, not {v}"
+                        ))?;
             }
             "--lighting" => {
                 let v = value()?;
@@ -2513,6 +2528,7 @@ impl Run {
             filter: self.args.filter,
             sampler: self.args.sampler,
             history: self.args.history,
+            emissive_history: self.args.emissive_history,
             ..Lighting::default()
         });
         frame.set_resolution(&gpu.device, self.args.lighting);
@@ -5503,6 +5519,10 @@ mod tests {
             (
                 "--light-radius",
                 "--light-radius takes 0 to 64 chunks, not x",
+            ),
+            (
+                "--emissive-history",
+                "--emissive-history takes 1 to 4096 frames, not x",
             ),
         ] {
             assert_eq!(parse(&[flag, "x"]).err().as_deref(), Some(err), "{flag}");
