@@ -732,8 +732,8 @@ such.
 | 10: The half-resolution tier | dev | done; the 3.0 ms a-trous bar met | 3c2de1d |
 | 11: The fly-through's switches, HUD rows and autopilot readings | dev | done; `frame_bytes` at 1080p over 300 MB (Notes) | 1b896b3 |
 | 12: The owner's windowed check | human | done (live session 4, 2026-10-21; observations below) | none (docs) |
-| 13: Static emissive light holds still (close review fix) | dev | done; bar 1's quarter missed for full with reuse; bar 4 waiting for quiet (Notes) | committed with this row |
-| 14: The mode on screen, and the defaults (close review fix) | dev | not started | |
+| 13: Static emissive light holds still (close review fix) | dev | done; bar 1's quarter missed for full with reuse; bar 4 waiting for quiet (Notes) | 152d1f1 |
+| 14: The mode on screen, and the defaults (close review fix) | dev | in progress (resume notes) | 390d1fe (checkpoint) |
 | 15: The owner's windowed re-check (close review) | human | not started | |
 
 Phase 13 observations (merge a59199d is the base): the base's flicker (mean step / share
@@ -1009,6 +1009,21 @@ than 16 pixels from the box's projection, 2 of them changed by more than 8/255, 
 headlamp 24 929 / 3872, lod 24 431 / 3465, translucent 13 733 / 353, cutaway_level 224 / 0,
 look_contour 27 259 / 3643, look_detail 32 898 / 21 073, look_gradient27 27 651 / 3593,
 look_trilinear8 25 639 / 3071, hud 15 831 / 2109.
+
+### Resume notes (2026-10-21, delete when Phase 14 lands)
+
+- Done at 390d1fe (checkpoint): `hud::Modes` with the banner (start and every `F3` to `F7`
+  and `M` change, 3 s by the frame loop's clock, wrapped to 40 columns, yellow, under the HUD
+  rows or alone with `F2` off); defaults `LightingResolution::Half`, `Sampler::Reuse` in
+  `Lighting`, `Frame`, the fly-through and the hero; `full_px` clamps to the target; the walk
+  and look tests pin full resolution; `mode_banner.png` blessed; the banner and parse tests.
+- Left: re-bless `dark_cave.png` and `dark_cave_half.png` at the new sampler default (with
+  counts); look at `the_gradient_drops_light_that_left_the_cone_within_two_frames`, which
+  fails under the reuse default; README (keys, banner, defaults); the quiet-box bar 4
+  readings (loaded indicative first); re-shoot `docs/images/hero.png` at the defaults; fill
+  `### Close triggers`; full gate (`--test-threads 2` under the 6G cap).
+- Gate at 390d1fe: clippy and fmt clean; `cargo nextest run --workspace --test-threads 2`
+  579 run, 576 passed, the three above failed.
 
 ### Close triggers
 
