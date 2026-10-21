@@ -1,6 +1,6 @@
 # 0031: Edit cost, third pass: a profile of the planar path, then its largest shares, to put the `B` line back under 2 ms
 
-> **Status:** approved (2026-10-21)
+> **Status:** in-progress (2026-10-21)
 > **Created:** 2026-10-21
 > **Milestone:** M1's edit-cost line in `docs/roadmap.md` (`nfr.md` §4; the "one more
 > optimization pass" the owner planned on 2026-10-20 when the line was raised to 2.2 ms)
@@ -203,16 +203,53 @@ No GPU figure moves; nothing here runs on an adapter.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The stage table and the profile | dev | not started | |
+| 1: The stage table and the profile | dev | done | committed with this row |
 | 2: The first lever | dev | not started | |
 | 3: The second lever | dev | not started | |
 | 4: The quiet-box readings and the line | dev | not started | |
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: the stages are timed in place, not in a copy of the op path: `apply_with` takes a
+  `Stamps` sink, `NoStages` (empty, inlined) in the default build and `EditStages` under
+  `edit-stages` through `#[doc(hidden)] World::apply_staged` (Phase 1 commit).
+- Phase 1: the clock reads carry `#[allow(clippy::disallowed_methods, reason = ...)]` on the
+  feature-gated code; `clippy.toml` is unchanged (Phase 1 commit).
+- Phase 1: files beyond the list: `packed.rs` (`edit_planar` split into
+  `edit_planar_uncanonical` and a `pub(crate)` `canonicalize`, so the two time apart) and
+  `lib.rs` (the feature-gated `EditStages` re-export) (Phase 1 commit).
+- Phase 1: ten stages, not eight: `lock` (the chunk write lock) and `clip` (the per-brick span
+  array clipped from the brick row's) split out; the kernel's per-material counts land in
+  `kernel` (Phase 1 commit).
+- Phase 1: the `net` column subtracts one clock read (22 to 26 ns, read up front) per stage
+  interval from `raw` (Phase 1 commit).
+- Phase 1 stage table (`cargo bench -p vxe-world --bench edits --features edit-stages --
+  '^(stages|worst)$'`, Ryzen 9 5900HS, Phase 1 tree on ae58f0c, exclusive perf lock, NOT
+  quiet: 1-minute load 15.6 to 12.9, `java` 214 %, `game.exe` 76 %, two other lanes), us per
+  100 ops, net, two runs: scan 13.6 / 15.1, lock 3.2 / 3.3, spans 411.0 / 433.3, coverage
+  91.0 / 92.3, clip 513.7 / 543.0, words 229.1 / 242.3, kernel 169.3 / 182.9, canon 26.8 /
+  26.0, tally 36.3 / 35.2, result 3.2 / 3.4; sum 1497.1 / 1576.8 against `worst` medians
+  1.4958 / 1.6066 ms in the same runs (raw sums 1950.3 / 2052.0) (Phase 1 commit).
+- Phase 1: earlier runs at load 7.9 to 18 (nine stages, then ten): net sum 2339.7 us against
+  `worst` 2.4070 ms; 2967.3 us against 2.7157 ms (Phase 1 commit).
+- Phase 1 profile (`perf record -F 2999` of `worst_warm` under `--profile-time 10`, bench
+  profile with `debug = line-tables-only`, load 16 to 18, 220752 samples; the world's
+  generation is in the samples): `World::apply_with` 69.91 %, `Arc<RwLock<Chunk>>::drop_slow`
+  2.15, `Shape::coverage` 2.07, the generation closure 1.90, `packed::bounds_of` 1.47, `cfree`
+  1.24, unresolved 0xa4fbe 0.94, 0x176545 0.92, `Brick::canonicalize` 0.77, `__libc_calloc`
+  0.77, 0x17653b 0.71, 0x176540 0.67, 0x17654a 0.61, `int_sqrt::u64` 0.55, 0x176524 0.51.
+  Top lines: `edit.rs` 656 (`if let Brick::Uniform` on the brick's first touch) 5.07 %,
+  `cmp.rs:1916` 5.07, `edit.rs` 872 (`RowCache::span`'s return) 4.81, `cmp.rs:0` 3.72,
+  `packed.rs` 341 (`shape_words`) 3.49, `edit.rs` 867 (`RowCache::span`'s solved bit) 3.47,
+  `edit.rs` 683 (the clip's span store) 3.44 (Phase 1 commit).
+- Phase 1: the two largest stages are `clip` (34 % of the net sum) and `spans` (27 %); `words`
+  is third (15 %). `clip` maps to no lever of the list: its lever is the shape words built
+  straight from the brick row's spans per brick (no 64-entry span array, no per-row cache
+  lookup), which also removes `words`' `shape_words`. `spans` maps to lever 1. Phase 2 takes
+  the `clip` lever and Phase 3 lever 1 (Phase 1 commit).
+- Phase 1: the spans stage already solves each `(y, z)` row once per chunk (the brick row's
+  cache covers its 64 rows for every brick); lever 1 removes only the repeat per chunk along
+  `x` (215 chunk locks over 100 ops) and the walk restarts per brick row (Phase 1 commit).
 
 ### Close triggers
 

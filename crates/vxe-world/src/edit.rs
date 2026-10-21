@@ -350,13 +350,108 @@ fn to_i32(v: [i64; 3]) -> [i32; 3] {
     })
 }
 
+/// The op path's stages, in the order an op meets them. A stage's time runs from the previous
+/// stamp to the stamp that names it, so every nanosecond between an op's first and last stamp
+/// lands in exactly one stage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Stage {
+    /// The shape check, the bounds, the residency scan and the per-op tables.
+    Scan,
+    /// One chunk's write lock.
+    Lock,
+    /// A brick row's span solve (`RowCache::new`).
+    Spans,
+    /// A brick row's coverage tests, and a brick's edit box and slot.
+    Coverage,
+    /// A brick's span array clipped from the brick row's spans.
+    Clip,
+    /// The span array folded into eight shape words.
+    Words,
+    /// The planar kernel, with its per-material counts into the tally.
+    Kernel,
+    /// The brick moved to its canonical class.
+    Canon,
+    /// The changed bounds, the dirty marks and the touched list.
+    Tally,
+    /// The result: the sorted `changed_from`, the aabb, the stats.
+    Result,
+}
+
+/// A stamp sink threaded through the op path. The default build passes [`NoStages`], whose
+/// stamps are empty and inline away, so the op path reads no clock.
+pub(crate) trait Stamps {
+    fn begin(&mut self) {}
+    fn at(&mut self, _stage: Stage) {}
+}
+
+/// The default build's sink: no clock, no state.
+pub(crate) struct NoStages;
+
+impl Stamps for NoStages {}
+
+/// The summed wall time per [`Stage`] over every op applied through [`World::apply_staged`]
+/// (feature `edit-stages`, for the edit bench only; the default build has no clock in this
+/// crate). `ns[s]` is indexed by the stage's position in [`EditStages::NAMES`]; `stamps`
+/// counts the clock reads, one per stage interval, so a caller can subtract the clock's own
+/// cost.
+#[cfg(feature = "edit-stages")]
+#[derive(Clone, Debug, Default)]
+pub struct EditStages {
+    pub ns: [u64; 10],
+    pub stamps: [u64; 10],
+    last: Option<std::time::Instant>,
+}
+
+#[cfg(feature = "edit-stages")]
+impl EditStages {
+    pub const NAMES: [&'static str; 10] = [
+        "scan", "lock", "spans", "coverage", "clip", "words", "kernel", "canon", "tally", "result",
+    ];
+}
+
+#[cfg(feature = "edit-stages")]
+impl Stamps for EditStages {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "feature edit-stages only: the bench's stage timer, never in the default build"
+    )]
+    fn begin(&mut self) {
+        self.last = Some(std::time::Instant::now());
+    }
+
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "feature edit-stages only: the bench's stage timer, never in the default build"
+    )]
+    fn at(&mut self, stage: Stage) {
+        let now = std::time::Instant::now();
+        if let Some(last) = self.last {
+            let i = stage as usize;
+            self.ns[i] += u64::try_from((now - last).as_nanos()).unwrap_or(u64::MAX);
+            self.stamps[i] += 1;
+        }
+        self.last = Some(now);
+    }
+}
+
 impl World {
     /// Applies `op` and reports what changed. Fails, changing nothing, when a parameter of the
     /// shape lies outside the world's [`WorldLimits`](crate::WorldLimits)
     /// ([`EditError::OutOfRange`]: coordinates, radius, capsule length, or voxel bounds wider
     /// than `edit_axis_max`) or the shape reaches a chunk that is not resident.
     pub fn apply(&self, op: &EditOp) -> Result<EditResult, EditError> {
-        self.apply_with(op, &mut None)
+        self.apply_with(op, &mut None, &mut NoStages)
+    }
+
+    /// [`World::apply`] with each stage's wall time added to `stages`. For the edit bench.
+    #[cfg(feature = "edit-stages")]
+    #[doc(hidden)]
+    pub fn apply_staged(
+        &self,
+        op: &EditOp,
+        stages: &mut EditStages,
+    ) -> Result<EditResult, EditError> {
+        self.apply_with(op, &mut None, stages)
     }
 
     /// [`World::apply`], and every brick-edit that reaches the row write pushed onto `out` in
@@ -367,14 +462,16 @@ impl World {
         op: &EditOp,
         out: &mut Vec<CapturedBrickEdit>,
     ) -> Result<EditResult, EditError> {
-        self.apply_with(op, &mut Some(out))
+        self.apply_with(op, &mut Some(out), &mut NoStages)
     }
 
-    fn apply_with(
+    fn apply_with<S: Stamps>(
         &self,
         op: &EditOp,
         capture: &mut Option<&mut Vec<CapturedBrickEdit>>,
+        st: &mut S,
     ) -> Result<EditResult, EditError> {
+        st.begin();
         op.shape.check(&self.limits())?;
         let Some((lo, hi)) = op.shape.voxel_bounds() else {
             return Ok(EditResult::default());
@@ -417,8 +514,10 @@ impl World {
         let mut tally = Tally::new(self.materials.len());
         let mut stats = PackedStats::default();
         let mut touched = Vec::new();
+        st.at(Stage::Scan);
         for (coord, vlo, vhi, chunk) in chunks {
             let mut chunk = write(chunk);
+            st.at(Stage::Lock);
             let base = coord.min_voxel().0.map(i64::from);
             let blo = [0, 1, 2].map(|k| (vlo[k] - base[k]) / be);
             let bhi = [0, 1, 2].map(|k| (vhi[k] - base[k]) / be);
@@ -452,7 +551,9 @@ impl World {
                         (base[2] + bz * be).max(vlo[2]),
                         (base[2] + bz * be + be - 1).min(vhi[2]),
                     );
+                    st.at(Stage::Coverage);
                     let mut rows = RowCache::new(&op.shape, window, ys, zs);
+                    st.at(Stage::Spans);
                     for bx in blo[0]..=bhi[0] {
                         let cov = covs[bx as usize];
                         if cov == Coverage::Outside {
@@ -470,12 +571,17 @@ impl World {
                             elo,
                             ehi,
                         };
-                        if edit_brick(
-                            brick, &targets, edit, &mut rows, &mut tally, &mut stats, capture,
-                        ) {
+                        let cx = BrickCx {
+                            targets: &targets,
+                            tally: &mut tally,
+                            stats: &mut stats,
+                            capture,
+                        };
+                        if edit_brick(brick, edit, &mut rows, cx, st) {
                             chunk.mark_dirty(slot);
                             chunk_changed = true;
                         }
+                        st.at(Stage::Tally);
                     }
                 }
             }
@@ -484,6 +590,8 @@ impl World {
                 self.store.mark_dirty(coord);
                 touched.push(coord);
             }
+            drop(chunk);
+            st.at(Stage::Tally);
         }
 
         drop(map);
@@ -491,12 +599,22 @@ impl World {
         let aabb = tally
             .any
             .then(|| (VoxelCoord(to_i32(tally.lo)), VoxelCoord(to_i32(tally.hi))));
-        Ok(EditResult {
+        let result = EditResult {
             changed_from: tally.changed_from(),
             touched,
             aabb,
-        })
+        };
+        st.at(Stage::Result);
+        Ok(result)
     }
+}
+
+/// The per-op state an [`edit_brick`] call writes through.
+struct BrickCx<'a, 'c> {
+    targets: &'a TargetTable,
+    tally: &'a mut Tally,
+    stats: &'a mut PackedStats,
+    capture: &'a mut Option<&'c mut Vec<CapturedBrickEdit>>,
 }
 
 /// Where an op meets one brick: the brick's coverage, its minimum voxel, and the voxels
@@ -511,16 +629,22 @@ struct BrickEdit {
 
 /// Applies the op to the voxels `elo..=ehi` of the brick whose minimum voxel is `bmin`.
 /// Returns whether any voxel changed. The brick is decoded, written row by row and encoded
-/// again in canonical form.
-fn edit_brick(
+/// again in canonical form. Stamps `Coverage` through `Canon` on `st`; the caller stamps the
+/// tally that follows.
+fn edit_brick<S: Stamps>(
     brick: &mut Brick,
-    targets: &TargetTable,
     edit: BrickEdit,
     rows: &mut RowCache<'_>,
-    tally: &mut Tally,
-    stats: &mut PackedStats,
-    capture: &mut Option<&mut Vec<CapturedBrickEdit>>,
+    cx: BrickCx<'_, '_>,
+    st: &mut S,
 ) -> bool {
+    let BrickCx {
+        targets,
+        tally,
+        stats,
+        capture,
+    } = cx;
+    st.at(Stage::Coverage);
     let BrickEdit {
         cov,
         bmin,
@@ -535,6 +659,7 @@ fn edit_brick(
         if whole && cov == Coverage::Inside {
             *brick = Brick::Uniform(n);
             tally.count(m, BRICK_VOXELS as u32);
+            st.at(Stage::Kernel);
             tally.bound(elo, ehi);
             return true;
         }
@@ -559,6 +684,7 @@ fn edit_brick(
             }
         }
     }
+    st.at(Stage::Clip);
     if !any {
         return false;
     }
@@ -569,12 +695,16 @@ fn edit_brick(
         });
     }
     let shape = shape_words(&spans);
-    let bounds = brick.edit_planar(
+    st.at(Stage::Words);
+    let bounds = brick.edit_planar_uncanonical(
         targets.kernel_mode(),
         &shape,
         &mut |m, n| tally.count(m, n),
         stats,
     );
+    st.at(Stage::Kernel);
+    brick.canonicalize(stats);
+    st.at(Stage::Canon);
     match bounds {
         Some((lo, hi)) => {
             tally.bound(
