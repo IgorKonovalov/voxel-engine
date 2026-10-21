@@ -577,7 +577,7 @@ such.
 | 8: Reservoir reuse against the flat list | dev | done | 0975e2b |
 | 9: A-SVGF's gradient as the other history killer | dev | done | e74c9e5 |
 | 10: The half-resolution tier | dev | done; the 3.0 ms a-trous bar waiting for quiet (Notes) | 3c2de1d |
-| 11: The fly-through's switches, HUD rows and autopilot readings | dev | done; `frame_bytes` at 1080p over 300 MB (Notes) | committed with this row |
+| 11: The fly-through's switches, HUD rows and autopilot readings | dev | done; `frame_bytes` at 1080p over 300 MB (Notes) | 1b896b3 |
 | 12: The owner's windowed check | human | not started | |
 
 ### Notes
@@ -787,6 +787,20 @@ than 16 pixels from the box's projection, 2 of them changed by more than 8/255, 
 headlamp 24 929 / 3872, lod 24 431 / 3465, translucent 13 733 / 353, cutaway_level 224 / 0,
 look_contour 27 259 / 3643, look_detail 32 898 / 21 073, look_gradient27 27 651 / 3593,
 look_trilinear8 25 639 / 3071, hud 15 831 / 2109.
+
+### Resume notes (2026-10-21, delete when the quiet readings and Phase 12 land)
+
+- Owed on a quiet box (exclusive perf lock, 1-minute load under 2 at each start): Phase 7
+  bar 3 (`flythrough --autopilot --headless --seed 1`: extraction p99 under 1.0 ms, max under
+  3.0 ms, no wait over 250 ms inside the radius) and bar 4 (light pass under 4.0 ms at 1080p
+  at `--level --frames 300` and the streamed `--frames 3000`, each `--shadow-walk`, three runs
+  each); Phase 10's a-trous bar (`--lighting half` at both spawns, under 3.0 ms). Loaded
+  readings so far: extraction p99 2.2 to 3.6 ms, light 7.4 to 13.2 ms full, a-trous 1.1 to
+  1.2 ms half.
+- Phase 12 is the owner's windowed check.
+- Gate at 1b896b3: build, `cargo nextest run --workspace` (571 passed, 4 skipped), doctests,
+  clippy `-D warnings`, `cargo fmt --check`, `cargo deny check`, comment hygiene and doc
+  links clean.
 
 ### Close triggers
 
