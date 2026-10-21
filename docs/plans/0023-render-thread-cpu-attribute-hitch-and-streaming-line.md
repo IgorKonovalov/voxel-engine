@@ -467,8 +467,8 @@ normals for at most 250 ms". The pass's GPU time stays a recorded figure here. P
 | 1: Profile a crossing, and a headless repro | dev | done: `attr_work::build` over `MirrorView` (implemented by `GpuWorld`); unit tests read 1961 shell chunks, 956 968 shell visits, 0 items, and 797 chunks, 408 064 item calls, 408 064 items; `tests/mirror.rs` 37 of 37 on the fallback adapter, the new case's lengths `[1343, 34, 568, 34, 568, 46, 56, 0]` also read on an export of ae2e088; bench medians (exclusive perf lock, load 5.01): eviction frame 170.89 ms, promotion frame 6.332 ms; flights, profile, verdict and `sync` share in Notes | 730f7ed |
 | 2: The shell visits only full neighbours | dev | done: eviction case 50 986 neighbour lookups, 0 shell visits, 0 items; the Phase 1 builder kept as `tests::reference` (its eviction case still reads 956 968 visits); oracle over 64 seeds equal as sorted `(slot, origin)` sets, with and without the other two change sets, 32 046 shell-only items in total; `vxe-render` 66 of 66; bench medians (exclusive perf lock, load 13.71): eviction frame 1.399 ms (Phase 1: 170.89), promotion frame 7.493 ms (Phase 1: 6.332) | 2f66b83 |
 | 3: Capped attribute pass with carry-over | dev | done: `MirrorConfig::attr_cap` (`new` leaves it `usize::MAX`; the fly-through's streaming mirror sets 8192); clear items flagged by `attrib::CLEAR_BIT` (bit 31); lavapipe cases at cap 64 on the 2 x 2 x 1 floor: K = 256, first call 64 compute and 192 clear items, the 192 waiting bricks read all `0xFF`, 4 = ceil(256 / 64) calls, then attribute bytes equal the uncapped mirror's; a carve with 192 waiting has the carved brick and its `Full` neighbours in the next list; a brick freed while waiting, its slot taken by the brick above, ends equal to the uncapped mirror; `vxe-render` 69 of 69, workspace 469 of 469; one default flight (load 14.60, not a reading): `buffer builds: 1 after the first flight frame, 1 at the end`, hash match | 7aabc21 |
-| 4: Incremental queue, sweep and window shift | dev | done: the 300-step walk (r_full 3, r_lod 5, h 1; 295 unit steps over all 26 directions, jumps at 60, 120, 180, 240, `set_radii(2, 4)` at 150) ran 295 queue and 294 sweep oracle checks, equal to the full rebuild and scan; dropping the entering-full shell or the keep-full sweep shell fails it; `the_window_slab_finds_the_chunks_the_key_filter_finds` over 50 shifts; workspace 471 of 471; flights at the tip's code (exclusive perf lock, not quiet): `update` max default 4.749 ms (Phase 1: 37.847), plain 2.350 (15.908); `poll` max default 48.503 (27.344), plain 24.389 (24.866); readings in Notes | committed with this row |
-| 5: Narrowing and staging on the workers | dev | not started | |
+| 4: Incremental queue, sweep and window shift | dev | done: the 300-step walk (r_full 3, r_lod 5, h 1; 295 unit steps over all 26 directions, jumps at 60, 120, 180, 240, `set_radii(2, 4)` at 150) ran 295 queue and 294 sweep oracle checks, equal to the full rebuild and scan; dropping the entering-full shell or the keep-full sweep shell fails it; `the_window_slab_finds_the_chunks_the_key_filter_finds` over 50 shifts; workspace 471 of 471; flights at the tip's code (exclusive perf lock, not quiet): `update` max default 4.749 ms (Phase 1: 37.847), plain 2.350 (15.908); `poll` max default 48.503 (27.344), plain 24.389 (24.866); readings in Notes | b6414e8 |
+| 5: Narrowing and staging on the workers | dev | stopped at the entry condition: on the plain profile at b6414e8, `queue.write_buffer` is 41.8 % of the render thread's samples under `GpuWorld::sync`, narrowing (palette scan, `upload_brick`, `stage`) at most 43.0 % and about 38 % by source line; nothing implemented; profile in Notes | committed with this row |
 | 6: Readings against the bars | dev | not started | |
 | 7: The owner's windowed flight | human | not started | |
 
@@ -551,6 +551,29 @@ each. Empty is fine.)_
   `oracle_checks` are public and `#[doc(hidden)]`. The window shift uses the slab when it
   holds no more chunks than the mirror holds keys, else filters the keys, in
   `leaving_window`.
+- **Phase 5 entry profile (dev box, b6414e8 code, exclusive perf lock, not quiet: start
+  load 3.28 after a 5 min wait for under 2).** One plain flight of a release build with line
+  tables and `-C force-frame-pointers=yes` (`CARGO_TARGET_DIR=target/fp`), under `perf record
+  -F 999 --call-graph fp`: 682 871 samples, 2903 frames, hash match, streaming CPU p50 6.076,
+  p99 37.410, max 65.248 ms, `sync` p50 5.965 ms, residency p95 467 ms. The render thread
+  (tid = pid) has 38 525 samples, 16 839 of them under `GpuWorld::sync`. Each is put on the
+  frame nearest its leaf among: `Queue::write_buffer` 41.8 %; `upload_record` self 33.6 %;
+  `entry_matches`, `first_appearance` 8.8 %; `sync` self 5.7 %; `enqueue` 4.8 %; the fit check
+  2.6 %; `drop_record` 1.1 %; `stage` 0.6 %; `flush_stage` outside `write_buffer` 0.6 %;
+  `unqueue` 0.5 %. `upload_record`'s self time by source line: 71.94 % in `upload_brick`'s
+  lines, 2.38 % in the palette scan, 12.85 % in `core` and `std` lines, 10 % in other
+  `gpu_world.rs` lines.
+- **Phase 5, `write_buffer`.** Its samples under `sync`: 53.8 % its own self time, 24.5 %
+  unresolved `libc`, 2.6 % `gpu_allocator` free-list, 2.5 % the NVIDIA driver, the rest
+  `wgpu_hal` buffer creation, mapping and transitions under 2 % each. Callers: `flush_stage`
+  6558 samples, `sync` (inlined record and table flushes) 248, `upload_record` 227.
+- **Phase 5, deviations.** The entry profile used frame pointers, not `--call-graph dwarf`: a
+  dwarf profile of a plain flight at the same code (start load 4.22, 649 160 samples) gave a
+  call chain for 8964 of the render thread's 36 845 samples, and for 40 of the 5003 whose
+  leaf is in `libc`. The shares are of the whole flight's samples, not of `sync`'s p50 frame.
+- **Followups noticed.** In the plain dwarf profile, `flythrough::Run::draw` is 16.65 % of
+  the render thread's self time, 67 % of it at hashbrown's `equality.rs:157`, and
+  `Streamer::stats` is 5.80 %. Neither is in this plan's scope.
 
 ### Close triggers
 
