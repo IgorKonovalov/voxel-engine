@@ -534,6 +534,8 @@ fn a_following_window_mirrors_the_streamed_residency() {
             budget_bytes: SMALL_BUDGET,
             record_chunks: None,
             attr_cap: usize::MAX,
+            light_samples: vxe_render::gpu_world::DEFAULT_LIGHT_SAMPLES,
+            light_chunk_cap: vxe_render::gpu_world::DEFAULT_LIGHT_CHUNK_CAP,
         },
     );
     // 343 records, then whole pages of what is left past the placeholders: 27 pages on one

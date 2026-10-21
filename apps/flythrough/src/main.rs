@@ -307,6 +307,8 @@ struct Args {
     /// `--pad on|off`: read a gamepad in a window (on by default); never headless or under
     /// the autopilot.
     pad: bool,
+    /// `--emissive-ore on|off`: the ore row emits `flythrough::ORE_EMISSION` (on by default).
+    emissive_ore: bool,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -387,6 +389,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         mix: Mix::default(),
         cutaway: CutawayMode::Auto,
         pad: true,
+        emissive_ore: true,
     };
     let mut detail_flag = false;
     let mut it = argv.into_iter();
@@ -485,6 +488,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     "on" => true,
                     "off" => false,
                     v => return Err(format!("--pad takes on or off, not {v}")),
+                }
+            }
+            "--emissive-ore" => {
+                args.emissive_ore = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("--emissive-ore takes on or off, not {v}")),
                 }
             }
             "--level" => args.level = true,
@@ -1387,6 +1397,9 @@ struct Stream {
     cpu_ms: Vec<f64>,
     /// The last frame's `update`, `poll`, `apply_events` and `sync` CPU in milliseconds.
     stages_ms: [f64; 4],
+    /// The last frame's light extraction inside `sync` (`SyncStats::light_us`), in
+    /// milliseconds.
+    light_ms: f64,
     full_residency: bool,
     workers: usize,
 }
@@ -1450,6 +1463,8 @@ struct Autopilot {
     cpu_ms: Vec<f64>,
     /// The streaming CPU's stages per flight frame: `update`, `poll`, `apply_events`, `sync`.
     stages_ms: [Vec<f64>; 4],
+    /// The light extraction inside `sync`, per flight frame.
+    light_ms: Vec<f64>,
     /// The attribute pass over the flight, with attribute pages.
     attr: AttrSamples,
     latency_from: usize,
@@ -1784,6 +1799,8 @@ struct Run {
     args: Args,
     fly: Fly,
     light: LightParams,
+    /// `M`: the ore's emission scale pulses (`ORE_PULSE`) instead of holding at 1.
+    pulse: bool,
     look: LookParams,
     /// Sets `look.cutaway` each frame of interactive flight; `X` or the pad's `West` cycles it.
     cutaway: CutawayMode,
@@ -2290,14 +2307,17 @@ impl Run {
             let t = now();
             match mirror.sync(&self.world, &gpu.queue) {
                 Ok(s) => println!(
-                    "mirror: uploaded {} B ({} bricks, {} chunks, {} writes) in {:.0} ms; mirror {} B live, {} B allocated",
+                    "mirror: uploaded {} B ({} bricks, {} chunks, {} writes) in {:.0} ms; mirror {} B live, {} B allocated; lights: {} samples from {} bricks in {:.3} ms",
                     s.bytes,
                     s.bricks,
                     s.chunks,
                     s.writes,
                     ms_since(t),
                     mirror.mirror_bytes(),
-                    mirror.allocated_bytes()
+                    mirror.allocated_bytes(),
+                    s.light_samples,
+                    s.light_bricks,
+                    s.light_us as f64 / 1e3
                 ),
                 Err(e) => eprintln!("mirror sync failed: {e}"),
             }
@@ -2388,14 +2408,26 @@ impl Run {
             .map(|o| ChunkCoord([0, 1, 2].map(|k| spawn.0[k] + o[k])))
             .collect();
         mirror.set_focus(self.spawn);
+        // The light extraction of the first sync that scanned a brick, and of all of them.
+        let mut first_light: Option<SyncStats> = None;
+        let (mut light_us, mut syncs) = (0u64, 0u32);
         loop {
             stream.streamer.update(&self.world, &[self.spawn]);
             stream.tick_ms.push(ms_since(self.start));
             let ev = stream.streamer.poll(&self.world);
             mirror.apply_events(&ev);
-            if let Err(e) = mirror.sync(&self.world, &gpu.queue) {
-                eprintln!("mirror sync failed: {e}");
-                break;
+            match mirror.sync(&self.world, &gpu.queue) {
+                Ok(s) => {
+                    syncs += 1;
+                    light_us += s.light_us;
+                    if s.light_bricks > 0 {
+                        first_light.get_or_insert(s);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("mirror sync failed: {e}");
+                    break;
+                }
             }
             stream.track(&ev, &mirror);
             if near
@@ -2405,6 +2437,16 @@ impl Run {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        if let Some(s) = first_light {
+            println!(
+                "lights: first sync with bricks extracted {} samples from {} bricks in {:.3} ms; {syncs} syncs to near residency spent {:.3} ms, {} samples live",
+                s.light_samples,
+                s.light_bricks,
+                s.light_us as f64 / 1e3,
+                light_us as f64 / 1e3,
+                mirror.light_samples()
+            );
         }
         println!(
             "near residency ({} chunks resident and mirrored) after {:.0} ms",
@@ -2453,6 +2495,7 @@ impl Run {
         let (deferred, empty, error) = match synced {
             Ok(s) => {
                 self.hud.sync = (s, sync_ms);
+                stream.light_ms = s.light_us as f64 / 1e3;
                 (s.deferred_chunks, false, None)
             }
             Err(e) => (gfx.mirror.pending_chunks() as u64, true, Some(e)),
@@ -2645,6 +2688,7 @@ impl Run {
             for (v, &ms) in p.stages_ms.iter_mut().zip(&stream.stages_ms) {
                 v.push(ms);
             }
+            p.light_ms.push(stream.light_ms);
         }
         p.peak_mirror = p.peak_mirror.max(gfx.mirror.mirror_bytes());
         p.peak_allocated = p.peak_allocated.max(gfx.mirror.allocated_bytes());
@@ -2703,6 +2747,14 @@ impl Run {
                 percentile(v, 100.0)
             );
         }
+        println!(
+            "autopilot: light extraction in sync: p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms over {} frames; {} light samples in the mirror",
+            percentile(&mut p.light_ms, 50.0),
+            percentile(&mut p.light_ms, 99.0),
+            percentile(&mut p.light_ms, 100.0),
+            p.light_ms.len(),
+            gfx.mirror.light_samples()
+        );
         let mut lat = stream.latency_ms[p.latency_from..].to_vec();
         println!(
             "autopilot: residency latency wanted to mirrored: p95 {:.0} ms, max {:.0} ms over {} chunks (proposal 500 ms)",
@@ -2825,6 +2877,13 @@ impl Run {
     /// fills, the D-pad's up and down step the dig radius as a scroll line does, `North`
     /// toggles walking, `West` cycles the cutaway as `X` does, and `East` knocks.
     fn handle_input(&mut self, input: &Input) {
+        if input.pressed(KeyCode::KeyM) {
+            self.pulse = !self.pulse;
+            println!(
+                "ore emission {}",
+                if self.pulse { "pulsing" } else { "steady" }
+            );
+        }
         if input.pressed(KeyCode::KeyL) {
             self.light.shadows = !self.light.shadows;
             println!(
@@ -3116,6 +3175,13 @@ impl Run {
             return Flow::Exit;
         };
         gfx.frame.set_look(self.look);
+        let scale = if self.pulse {
+            ore_pulse(ms_since(self.start))
+        } else {
+            1.0
+        };
+        gfx.frame
+            .set_emission_scale(&gpu.queue, flythrough::cave::ORE, scale);
         let params = gfx.frame.params(&gfx.mirror, &self.fly.camera, &self.light);
         let timer = gfx
             .timer
@@ -3256,6 +3322,12 @@ impl Run {
     }
 }
 
+/// The ore's emission scale `ms` milliseconds into the run while `M` pulses it: between 0.25
+/// and 1.75, one cycle every 1.5 s.
+fn ore_pulse(ms: f64) -> f32 {
+    (1.0 + 0.75 * (ms / 1500.0 * std::f64::consts::TAU).sin()) as f32
+}
+
 /// The steps view's reading of one frame: `steps per ray (2073600 rays): mean 41.27, p99 133,
 /// block-max mean 88.10; loads mean 12.40, p99 61; pool reads mean 3.02, p99 18`. Counts clamp
 /// at 255 as the view does; the block-max mean is over 8 × 8 pixel blocks of each block's
@@ -3375,6 +3447,7 @@ impl App for Flythrough {
                             latency_ms: Vec::new(),
                             cpu_ms: Vec::new(),
                             stages_ms: [0.0; 4],
+                            light_ms: 0.0,
                             full_residency: false,
                             workers,
                         }),
@@ -3394,6 +3467,7 @@ impl App for Flythrough {
                 gpu_ms: Vec::new(),
                 cpu_ms: Vec::new(),
                 stages_ms: Default::default(),
+                light_ms: Vec::new(),
                 attr: AttrSamples::default(),
                 latency_from: 0,
                 peak_mirror: 0,
@@ -3428,6 +3502,7 @@ impl App for Flythrough {
                 args: self.args.clone(),
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
+                pulse: false,
                 look: self.args.start_look(),
                 cutaway: self.args.cutaway,
                 dig_radius: DIG_RADIUS,
@@ -3569,12 +3644,17 @@ fn pollster_block_on<F: std::future::Future>(f: F) -> F::Output {
 }
 
 /// The cave's material table; under `--look`, with rock's procedural detail at
-/// `--rock-detail`.
+/// `--rock-detail`; the ore emissive unless `--emissive-ore off`.
 fn materials(args: &Args) -> MaterialTable {
-    if args.look.is_some() {
+    let table = if args.look.is_some() {
         flythrough::look_materials_with(args.rock_detail)
     } else {
         cave_materials()
+    };
+    if args.emissive_ore {
+        flythrough::with_emissive_ore(&table)
+    } else {
+        table
     }
 }
 
@@ -4411,6 +4491,7 @@ mod tests {
             args,
             fly: Fly::new(camera),
             light: LightParams::headlamp(),
+            pulse: false,
             dig_radius: DIG_RADIUS,
             scroll: ScrollSteps::default(),
             triggers: [false; 2],

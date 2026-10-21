@@ -193,6 +193,18 @@ cut `update`'s max from 37.8 to under 3.2 ms. What remains is `sync`, led by
 `Queue::write_buffer` (41.8 % of its samples) ahead of narrowing (about 38 %); ADR-0017's
 Outcome names the next step.
 
+**Light extraction inside `sync` (dev reference, Plan 0024 Phase 2, RTX 3080 Laptop GPU,
+Ryzen 9 5900HS, exclusive perf lock, 1-minute load 8.3 to 9.0 from other work, not quiet; the
+ore emissive, `SyncStats::light_us`, the render thread's time scanning written `Full` bricks
+for exposed emissive voxels and rewriting the chunks' sample ranges):** the streamed spawn's
+first sync (`flythrough --headless --seed 1`) extracted 4545 samples from 3527 bricks in 0.718
+and 3.253 ms (two runs). Over the autopilot's flight (`flythrough --autopilot --headless --seed
+1`, 1885 frames) it read p50 0.602 ms, p99 13.327 ms, max 48.906 ms per frame, on top of the
+streaming line's `update + poll + sync` (p50 8.534 ms, p99 94.288 ms in the same run); the
+mirror then held 997 740 samples of the 1 048 576 reserved. The level's one upload of 383 608
+bricks extracted 417 388 samples in 25.901 ms (0.175 ms with `--emissive-ore off`). The
+plan's projection was under 0.1 ms per sync; the readings are over it.
+
 **Stats HUD (dev reference, Plan 0010, f91726f, headless `flythrough [--level] --seed 1
 --render 1920x1080 --frames 300 [--hud]`, three runs each, NVIDIA GeForce RTX 3080 Laptop GPU,
 Ryzen 9 5900HS):** a tool, not a frame stage, so it has no line in the table. The HUD pass

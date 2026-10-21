@@ -314,7 +314,13 @@ pub struct Frame {
     lod: LodParams,
     look: LookParams,
     lighting: Lighting,
+    /// The per-material emission scale, an `f32` per material id, 1.0 unless set.
+    emission_scale: wgpu::Buffer,
+    emission_cpu: Vec<f32>,
 }
+
+/// Material ids the emission-scale buffer covers: every `u16`.
+const EMISSION_ROWS: usize = 1 << 16;
 
 impl Frame {
     /// A frame drawing into a `width` × `height` target.
@@ -403,7 +409,39 @@ impl Frame {
             lod: LodParams::default(),
             look: LookParams::default(),
             lighting: Lighting::default(),
+            emission_scale: wgpu::util::DeviceExt::create_buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("emission scale"),
+                    contents: bytemuck::cast_slice(&vec![1.0f32; EMISSION_ROWS]),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                },
+            ),
+            emission_cpu: vec![1.0; EMISSION_ROWS],
         }
+    }
+
+    /// Scales material `material`'s emission by `scale` from the next frame on: a visual
+    /// knob that leaves the world untouched (an authoritative change is a `Replace` op).
+    pub fn set_emission_scale(&mut self, queue: &wgpu::Queue, material: u16, scale: f32) {
+        let i = usize::from(material);
+        if self.emission_cpu[i] != scale {
+            self.emission_cpu[i] = scale;
+            queue.write_buffer(
+                &self.emission_scale,
+                i as u64 * 4,
+                bytemuck::bytes_of(&scale),
+            );
+        }
+    }
+
+    pub fn emission_scale(&self, material: u16) -> f32 {
+        self.emission_cpu[usize::from(material)]
+    }
+
+    /// The emission-scale buffer, an `f32` per material id.
+    pub fn emission_scales(&self) -> &wgpu::Buffer {
+        &self.emission_scale
     }
 
     /// Sets how LOD-only chunks pick their mip level.

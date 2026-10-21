@@ -68,8 +68,18 @@
 //! cursor and joins the free pages, and a kind that needs a page takes the lowest free page,
 //! of either former kind, before one never handed out. So plain and attribute slots share one
 //! high-water mark, and no live brick ever moves: a page changes kind only while it is empty.
+//!
+//! Every `Full` brick of a full chunk that `sync` writes and whose voxels hold a material with
+//! non-zero emission is scanned for its *exposed* emissive voxels: an opaque voxel of such a
+//! material with at least one of its six neighbours inside the brick not opaque, or on the
+//! brick's face. Each becomes a [`LightSample`] (its world voxel and the faces it shows) in a
+//! light-sample buffer reserved once at creation ([`MirrorConfig::light_samples`], ADR-0013's
+//! rule). A chunk's samples are one contiguous range of that buffer, rebuilt from its bricks'
+//! lists whenever its record is written and freed with the record; a chunk above
+//! [`MirrorConfig::light_chunk_cap`] keeps every `k`-th sample by index, `k` the least that
+//! fits. Freed ranges are zeroed, so a sample of material 0 is a hole the light pass skips.
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::PoisonError;
 
 use vxe_world::packed::Packed;
@@ -81,6 +91,120 @@ use vxe_world::{
 
 use crate::attr_work::{self, AttrWorkStats, MirrorView};
 use crate::attrib::{AttribBindings, AttribItem, AttribPass, CLEAR_BIT};
+
+/// Light samples [`MirrorConfig::new`] reserves, and the samples one chunk keeps at most.
+pub const DEFAULT_LIGHT_SAMPLES: u32 = 1 << 20;
+pub const DEFAULT_LIGHT_CHUNK_CAP: u32 = 8192;
+
+/// One exposed emissive voxel in the light-sample buffer, 16 bytes: its world voxel
+/// coordinate, then its material in bits 0..16 and the faces it shows in bits 16..22 (bit
+/// `16 + 2 k` the face toward -k, the next toward +k). Material 0 is no sample.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct LightSample {
+    pub voxel: [i32; 3],
+    pub material_faces: u32,
+}
+
+impl LightSample {
+    pub fn material(&self) -> MaterialId {
+        (self.material_faces & 0xFFFF) as MaterialId
+    }
+
+    /// The faces the voxel shows: bit `2 k` toward -k, bit `2 k + 1` toward +k.
+    pub fn faces(&self) -> u32 {
+        self.material_faces >> 16
+    }
+}
+
+/// Bytes of one [`LightSample`].
+pub const LIGHT_SAMPLE_BYTES: u64 = 16;
+
+/// The exposed emissive voxels of `Full` brick `brick` at brick slot `slot` of chunk `coord`,
+/// in voxel-index order (x fastest); `emissive` and `opaque` are by material id.
+pub fn exposed_emitters(
+    coord: ChunkCoord,
+    slot: usize,
+    brick: &Brick,
+    emissive: &[bool],
+    opaque: &[bool],
+) -> Vec<LightSample> {
+    let Brick::Full(p) = brick else {
+        return Vec::new();
+    };
+    if !first_appearance(p)
+        .iter()
+        .any(|&m| emissive[usize::from(m)])
+    {
+        return Vec::new();
+    }
+    let mut v = [AIR; BRICK_VOXELS];
+    p.decode(&mut v);
+    let b = brick_of_slot(slot);
+    let base = [0, 1, 2].map(|k| coord.0[k] * CHUNK_EDGE_BRICKS * BRICK_EDGE + b[k] * BRICK_EDGE);
+    let e = BRICK_EDGE as usize;
+    let mut out = Vec::new();
+    for (i, &m) in v.iter().enumerate() {
+        if !emissive[usize::from(m)] || !opaque[usize::from(m)] {
+            continue;
+        }
+        let l = [i % e, i / e % e, i / (e * e)];
+        let mut faces = 0u32;
+        for k in 0..3 {
+            let stride = [1, e, e * e][k];
+            if l[k] == 0 || !opaque[usize::from(v[i - stride])] {
+                faces |= 1 << (2 * k);
+            }
+            if l[k] == e - 1 || !opaque[usize::from(v[i + stride])] {
+                faces |= 1 << (2 * k + 1);
+            }
+        }
+        if faces != 0 {
+            out.push(LightSample {
+                voxel: [0, 1, 2].map(|k| base[k] + l[k] as i32),
+                material_faces: u32::from(m) | faces << 16,
+            });
+        }
+    }
+    out
+}
+
+/// The render thread's light-extraction timer (`SyncStats::light_us`); no simulation reads it.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the render thread times its light extraction for the streaming line's readings"
+)]
+fn stopwatch() -> std::time::Instant {
+    std::time::Instant::now()
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the render thread times its light extraction for the streaming line's readings"
+)]
+fn micros_since(t: std::time::Instant) -> u64 {
+    t.elapsed().as_micros() as u64
+}
+
+/// `samples` thinned to at most `cap` by keeping every `k`-th by index, `k` the least that
+/// fits.
+pub fn thin_samples(samples: Vec<LightSample>, cap: u32) -> Vec<LightSample> {
+    let n = samples.len();
+    let cap = cap.max(1) as usize;
+    if n <= cap {
+        return samples;
+    }
+    let k = n.div_ceil(cap);
+    samples.into_iter().step_by(k).collect()
+}
+
+/// A chunk's light samples: each emissive brick's list by brick slot, and its range of the
+/// light-sample buffer.
+#[derive(Default)]
+struct ChunkLights {
+    bricks: BTreeMap<u16, Vec<LightSample>>,
+    range: Option<(u32, u32)>,
+}
 
 /// Pool slots per page: the unit the pool is reserved and handed out in, and the unit
 /// `slots_per_shard` is a multiple of.
@@ -264,6 +388,11 @@ impl std::error::Error for MirrorError {}
 /// What one `sync` did.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SyncStats {
+    /// `Full` bricks scanned for exposed emissive voxels, light samples written, and the
+    /// render thread's time in that scan and the ranges' rebuild, in microseconds.
+    pub light_bricks: u64,
+    pub light_samples: u64,
+    pub light_us: u64,
     /// Bytes handed to the queue.
     pub bytes: u64,
     /// `Full` bricks written.
@@ -312,6 +441,10 @@ pub struct MirrorConfig {
     /// Most bricks one attribute pass computes from its carry-over queue
     /// ([`GpuWorld::prepare_attrs`]); `usize::MAX` for no cap.
     pub attr_cap: usize,
+    /// Light samples the light-sample buffer holds, reserved at creation.
+    pub light_samples: u32,
+    /// Most light samples one chunk keeps.
+    pub light_chunk_cap: u32,
 }
 
 impl MirrorConfig {
@@ -325,6 +458,8 @@ impl MirrorConfig {
             budget_bytes: DEFAULT_BUDGET_BYTES,
             record_chunks: None,
             attr_cap: usize::MAX,
+            light_samples: DEFAULT_LIGHT_SAMPLES,
+            light_chunk_cap: DEFAULT_LIGHT_CHUNK_CAP,
         }
     }
 }
@@ -681,6 +816,19 @@ pub struct GpuWorld {
     rev: Vec<u16>,
     /// Whether each material is `TRANSLUCENT`, from the table at the first sync.
     translucent: Vec<bool>,
+    /// Whether each material has non-zero emission, from the table at the first sync.
+    emissive: Vec<bool>,
+    /// The light-sample buffer, its free ranges (start to length) below `light_high`, the
+    /// first sample never handed out, and each chunk's samples.
+    light_buf: wgpu::Buffer,
+    light_free: BTreeMap<u32, u32>,
+    light_high: u32,
+    lights: HashMap<ChunkCoord, ChunkLights>,
+    light_live: u64,
+    /// Ranges of chunks dropped outside a sync, zeroed and freed at the next one.
+    light_dropped: Vec<(u32, u32)>,
+    /// Whether each material is opaque (neither air nor `TRANSLUCENT`).
+    opaque: Vec<bool>,
     /// Chunks waiting for an upload, keyed by squared distance to `pending_focus`.
     pending: BTreeSet<(i64, ChunkCoord)>,
     pending_d2: HashMap<ChunkCoord, i64>,
@@ -788,6 +936,18 @@ impl GpuWorld {
             queue: None,
             rev: vec![NO_INDEX; 1 << 16],
             translucent: vec![false; 1 << 16],
+            emissive: vec![false; 1 << 16],
+            light_buf: Self::storage_buffer(
+                device,
+                "light_samples",
+                u64::from(cfg.light_samples) * LIGHT_SAMPLE_BYTES,
+            ),
+            light_free: BTreeMap::new(),
+            light_high: 0,
+            lights: HashMap::new(),
+            light_live: 0,
+            light_dropped: Vec::new(),
+            opaque: vec![false; 1 << 16],
             pending: BTreeSet::new(),
             pending_d2: HashMap::new(),
             pending_focus: focus,
@@ -1330,6 +1490,7 @@ impl GpuWorld {
         if self.surface_attrs {
             self.shell_chunks.insert(coord);
         }
+        self.drop_lights(coord);
         // A record's slots are all of one kind.
         let kind = self.kind_for(lod);
         let base = rec as usize * RECORD_WORDS;
@@ -1458,6 +1619,7 @@ impl GpuWorld {
             self.queue = Some(queue.clone());
         }
         self.reconcile_window(world);
+        self.flush_dropped_lights(queue);
         for c in world.store().take_dirty() {
             if self.in_window(c) {
                 self.enqueue(c);
@@ -1477,6 +1639,8 @@ impl GpuWorld {
             // writes anything.
             for (id, m) in world.materials().rows().iter().enumerate() {
                 self.translucent[id] = m.is_translucent();
+                self.emissive[id] = m.emission.iter().any(|&e| e > 0.0);
+                self.opaque[id] = id != usize::from(AIR) && !m.is_translucent();
             }
         }
         let may_widen = world.materials().len() > PALETTE_ENTRIES;
@@ -1830,6 +1994,10 @@ impl GpuWorld {
         }
         let every = new || wide != was_wide;
         let kind = self.kind_for(lod);
+        let mut light_us = 0u64;
+        if every && let Some(l) = self.lights.get_mut(&coord) {
+            l.bricks.clear();
+        }
         if self.surface_attrs {
             if every || lod {
                 self.shell_chunks.insert(coord);
@@ -1852,12 +2020,23 @@ impl GpuWorld {
             if result.is_err() {
                 break;
             }
+            if !lod {
+                let t = stopwatch();
+                self.note_lights(coord, i, bricks.get(i), st);
+                light_us += micros_since(t);
+            }
             if self.surface_attrs && !lod && self.entries[base + ENTRY_WORD + i] & FULL_BIT != 0 {
                 let b = brick_of_slot(i);
                 self.attr_written
                     .insert([0, 1, 2].map(|k| coord.0[k] * CHUNK_EDGE_BRICKS + b[k]));
             }
         }
+        if !lod {
+            let t = stopwatch();
+            self.rebuild_lights(coord, queue, st);
+            light_us += micros_since(t);
+        }
+        st.light_us += light_us;
         for &m in &palette {
             self.rev[usize::from(m)] = NO_INDEX;
         }
@@ -2025,6 +2204,158 @@ impl GpuWorld {
         }
         st.bricks += 1;
         Ok(())
+    }
+
+    /// Replaces brick `slot` of `coord`'s light lists with its exposed emissive voxels.
+    fn note_lights(&mut self, coord: ChunkCoord, slot: usize, brick: &Brick, st: &mut SyncStats) {
+        let found = if brick.is_full() {
+            st.light_bricks += 1;
+            let opaque: &[bool] = &self.opaque;
+            exposed_emitters(coord, slot, brick, &self.emissive, opaque)
+        } else {
+            Vec::new()
+        };
+        match self.lights.get_mut(&coord) {
+            Some(l) => {
+                if found.is_empty() {
+                    l.bricks.remove(&(slot as u16));
+                } else {
+                    l.bricks.insert(slot as u16, found);
+                }
+            }
+            None if !found.is_empty() => {
+                let mut l = ChunkLights::default();
+                l.bricks.insert(slot as u16, found);
+                self.lights.insert(coord, l);
+            }
+            None => {}
+        }
+    }
+
+    /// Rewrites `coord`'s range of the light-sample buffer from its bricks' lists: the old
+    /// range zeroed and freed, the samples (thinned to the cap) written into a new one. A
+    /// chunk whose samples do not fit in the buffer keeps none.
+    fn rebuild_lights(&mut self, coord: ChunkCoord, queue: &wgpu::Queue, st: &mut SyncStats) {
+        let Some(l) = self.lights.get_mut(&coord) else {
+            return;
+        };
+        let old = l.range.take();
+        let all: Vec<LightSample> = l.bricks.values().flatten().copied().collect();
+        let empty = l.bricks.is_empty();
+        if empty {
+            self.lights.remove(&coord);
+        }
+        if let Some(r) = old {
+            self.light_live -= u64::from(r.1);
+            self.zero_light_range(r, queue);
+            self.free_light_range(r);
+        }
+        let samples = thin_samples(all, self.cfg.light_chunk_cap);
+        if samples.is_empty() {
+            return;
+        }
+        let n = samples.len() as u32;
+        let Some(start) = self.alloc_light_range(n) else {
+            return;
+        };
+        queue.write_buffer(
+            &self.light_buf,
+            u64::from(start) * LIGHT_SAMPLE_BYTES,
+            bytemuck::cast_slice(&samples),
+        );
+        st.writes += 1;
+        st.bytes += u64::from(n) * LIGHT_SAMPLE_BYTES;
+        st.light_samples += u64::from(n);
+        self.light_live += u64::from(n);
+        if let Some(l) = self.lights.get_mut(&coord) {
+            l.range = Some((start, n));
+        }
+    }
+
+    /// Forgets `coord`'s light samples; their range is zeroed and freed on the next sync.
+    fn drop_lights(&mut self, coord: ChunkCoord) {
+        if let Some(l) = self.lights.remove(&coord)
+            && let Some(r) = l.range
+        {
+            self.light_live -= u64::from(r.1);
+            self.light_dropped.push(r);
+        }
+    }
+
+    /// Zeroes and frees the ranges `drop_lights` set aside.
+    fn flush_dropped_lights(&mut self, queue: &wgpu::Queue) {
+        for r in std::mem::take(&mut self.light_dropped) {
+            self.zero_light_range(r, queue);
+            self.free_light_range(r);
+        }
+    }
+
+    fn zero_light_range(&self, (start, len): (u32, u32), queue: &wgpu::Queue) {
+        queue.write_buffer(
+            &self.light_buf,
+            u64::from(start) * LIGHT_SAMPLE_BYTES,
+            &vec![0u8; len as usize * LIGHT_SAMPLE_BYTES as usize],
+        );
+    }
+
+    /// The start of a free run of `n` samples: the lowest free range that holds it, else the
+    /// samples above the high-water mark; `None` when the buffer has no such run.
+    fn alloc_light_range(&mut self, n: u32) -> Option<u32> {
+        if let Some((&start, &len)) = self.light_free.iter().find(|&(_, &len)| len >= n) {
+            self.light_free.remove(&start);
+            if len > n {
+                self.light_free.insert(start + n, len - n);
+            }
+            return Some(start);
+        }
+        let start = self.light_high;
+        if u64::from(start) + u64::from(n) > u64::from(self.cfg.light_samples) {
+            return None;
+        }
+        self.light_high += n;
+        Some(start)
+    }
+
+    /// Returns a range to the free ranges, merged with its neighbours; a free range that
+    /// reaches the high-water mark lowers it instead.
+    fn free_light_range(&mut self, (mut start, mut len): (u32, u32)) {
+        if let Some((&s, &l)) = self.light_free.range(..start).next_back()
+            && s + l == start
+        {
+            self.light_free.remove(&s);
+            start = s;
+            len += l;
+        }
+        if let Some(&l) = self.light_free.get(&(start + len)) {
+            self.light_free.remove(&(start + len));
+            len += l;
+        }
+        if start + len == self.light_high {
+            self.light_high = start;
+        } else {
+            self.light_free.insert(start, len);
+        }
+    }
+
+    /// The light-sample buffer: [`LightSample`]s, holes of material 0 between the chunks'
+    /// ranges.
+    pub fn light_buffer(&self) -> &wgpu::Buffer {
+        &self.light_buf
+    }
+
+    /// Light samples live in the buffer: the sum of the chunks' ranges.
+    pub fn light_samples(&self) -> u64 {
+        self.light_live
+    }
+
+    /// The samples from 0 to the high-water mark: what a uniform draw over the buffer covers.
+    pub fn light_span(&self) -> u32 {
+        self.light_high
+    }
+
+    /// `coord`'s range of the light-sample buffer, start and length.
+    pub fn light_range(&self, coord: ChunkCoord) -> Option<(u32, u32)> {
+        self.lights.get(&coord).and_then(|l| l.range)
     }
 
     /// Returns a slot, or a wide brick's slot pair, to the free list of its page's kind, or

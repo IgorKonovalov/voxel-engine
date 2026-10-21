@@ -107,6 +107,7 @@ fn every_budgeted_sync_writes_at_most_the_budget_plus_one_chunk() {
             budget_bytes: LEVEL_BUDGET,
             record_chunks: None,
             attr_cap: usize::MAX,
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
         },
     );
     gpu.set_focus(source.spawn());

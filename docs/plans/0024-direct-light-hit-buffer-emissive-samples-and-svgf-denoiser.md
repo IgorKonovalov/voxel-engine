@@ -442,8 +442,8 @@ such.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The hit buffer, a view list, and today's image through four passes | dev | done | committed with this row |
-| 2: Emissive voxels become light samples at upload | dev | not started | |
+| 1: The hit buffer, a view list, and today's image through four passes | dev | done | 8df37d2 |
+| 2: Emissive voxels become light samples at upload | dev | done | committed with this row |
 | 3: The light pass: one sample, one shadow ray, the dark cave | dev | not started | |
 | 4: The coarse shadow walk | dev | not started | |
 | 5: Temporal accumulation, and history that dies in an edit box | dev | not started | |
@@ -480,6 +480,18 @@ each. Empty is fine.)_
 - Phase 1: the "three opaque golden scenes" are read as the carve scene, its LOD ring at
   level 1, and the slab-and-wall occluder scene; their pre-split hitmask and normals views are
   frozen as `tests/golden/split_*.png` and ae58f0c's `primary.png` as `primary_pre_split.png`.
+- Phase 2: a light sample is 16 bytes (world voxel `i32 x 3`, material and six face bits), not
+  the 8-byte `LightSample` of `## Data shapes`: a chunk-local index needs 18 bits and no
+  record-to-chunk-origin buffer exists. 2^20 samples reserve 16 MiB.
+- Phase 2: only `Full` bricks are scanned, as the phase says; a uniform emissive brick yields
+  no sample.
+- Phase 2: the ore emission and `--emissive-ore` live in `apps/flythrough/src/lib.rs`
+  (`ORE_EMISSION`, `with_emissive_ore`), not `cave.rs`, which holds no floating point. The
+  pulse key is `M` (0.25 to 1.75, a 1.5 s cycle). `SyncStats` gains `light_bricks`,
+  `light_samples`, `light_us`; `MirrorConfig` gains `light_samples`, `light_chunk_cap`
+  (`tests/level_mirror.rs` and `crates/vxe-render/tests/mirror.rs` touched for the literals).
+- Phase 2: the extraction reads over the plan's 0.1 ms projection (`docs/nfr.md` §2, "Light
+  extraction inside `sync`"); the autopilot's flight ends with 997 740 of 1 048 576 samples.
 
 Phase 1 observations: hitmask and normals of the three scenes byte-identical to ae58f0c; the
 identity-tone-mapped carve's largest channel difference from ae58f0c's is 0/255; the
