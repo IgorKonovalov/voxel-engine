@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0025.**
+**Next free number: 0026.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -39,6 +39,7 @@ the status.
 | [0022](0022-mirror-uploads-through-a-staging-belt-and-copy-commands.md) | Mirror uploads go through a persistently mapped staging belt and copy commands, not `Queue::write_buffer` | proposed (Plan 0027); supersedes ADR-0017's Alternative B rejection in part |
 | [0023](0023-indirect-light-from-a-scrolling-probe-volume.md) | Indirect light comes from a scrolling volume of irradiance probes around the camera, refreshed by a few rays per probe per frame and gathered with visibility weights | proposed (Plan 0029) |
 | [0024](0024-own-temporal-upscaler-on-the-hit-buffer.md) | The upscaler is a temporal upscaler of our own, driven by jittered rays and the hit buffer, with a sharpening pass | proposed (Plan 0030) |
+| [0025](0025-light-candidates-from-a-power-over-distance-table-of-near-emitter-chunks.md) | Light candidates come from a power-over-distance table of the emitter chunks near the camera, and only those chunks hold light samples on the GPU | proposed (Plan 0024) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

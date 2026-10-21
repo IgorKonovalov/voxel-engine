@@ -108,5 +108,5 @@ pyramid is a storage decision that belongs to the indirect-light plan if it want
 
 ## Outcome
 
-_(Added at acceptance: the owner's choice per mode pair from Plan 0024's Phase 11, and the
+_(Added at acceptance: the owner's choice per mode pair from Plan 0024's Phase 12, and the
 measured lines.)_

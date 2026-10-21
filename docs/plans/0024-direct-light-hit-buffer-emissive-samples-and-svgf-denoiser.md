@@ -2,10 +2,15 @@
 
 > **Status:** in-progress (2026-10-21)
 > **Created:** 2026-10-20
+> **Amended:** 2026-10-21 by the owner's ruling at the Phase 6 stop: Phase 6's bars rewritten,
+> a new Phase 7 (near-emitter candidates and bounded light extraction) inserted before reservoir
+> reuse, later phases renumbered (see "Amendment of 2026-10-21" below)
 > **Milestone:** M2 in `docs/roadmap.md` (the lighting plan; direct light and the denoiser only,
 > see "What this plan does NOT do")
 > **Related ADRs:** [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (proposed with this plan: the lighting family and the rejected ones),
+> [ADR-0025](../adrs/0025-light-candidates-from-a-power-over-distance-table-of-near-emitter-chunks.md)
+> (proposed with the amendment of 2026-10-21: where a candidate's light sample comes from),
 > [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md) (the
 > plane hit and its shadow-ray origin, which the hit buffer carries),
 > [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md) (the masks the
@@ -87,7 +92,9 @@ else. The light pass estimates direct irradiance at each hit from one light samp
 headlamp by next-event estimation, and one emissive voxel by resampled importance sampling
 over `M` candidates from the light-sample buffer, with temporal and spatial reservoir reuse
 (ReSTIR, Bitterli 2020) as a mode and the plain candidate list (Teardown's recipe with `K`
-samples) as the other. One shadow ray per pixel per frame, through the full walk or a coarse
+samples) as the other. Candidates come from a per-frame table of the emitter chunks within a
+light radius of the camera, weighted by power over squared distance, and only those chunks hold
+light samples on the GPU (ADR-0025, added by the amendment of 2026-10-21). One shadow ray per pixel per frame, through the full walk or a coarse
 walk that treats any 2^3 block with a set bit as solid. The temporal pass reprojects by hit
 position through the previous view (the world does not move; only the camera and the edits
 do), accumulates irradiance and its moments, and resets history in every pixel whose hit lies
@@ -102,6 +109,35 @@ streamed world at our surface density, and a lagging headlamp), a clustered ligh
 blur and no reservoirs as the only sampler (no answer for a vein of thousands of emitters; it
 survives here as the flat-list mode), and NRD-style recurrent blur as the filter (a port of a
 larger design before we have measured the simpler one). The reasons are in ADR-0018.
+
+## Amendment of 2026-10-21
+
+Dev stopped at Phase 6 (Implementation log, Notes) with three bars unmet and two earlier
+readings over their lines. The owner ruled, and this amendment carries the ruling:
+
+- **Phase 6's no-ghost bar** counted pixels that are right to come back to their old value:
+  the ore's own emission, which carries no history, and rim surfaces the carve left standing.
+  It now asks that every pixel in the dilated box reads age 0 (the mechanism) and that the
+  pixels whose non-emissive surface the carve removed all change (the effect).
+- **Phase 6's far-field bar** asked that no pixel move more than 8/255, while a static frame
+  already moves up to 53/255 at its worst pixel. It is now a p99.9 bar against the previous
+  frame, with a control that flushes all history and must fail it. The alternative, comparing
+  against the same frame index rendered without the carve, does not isolate the carve: the
+  carve changes the light-sample buffer, which re-maps every pixel's candidate draws, and the
+  newly exposed ore changes the far light legitimately, so the twin differs by one frame's
+  sampling noise everywhere anyway. The p99.9 form is the golden harness's own (0.1 % of
+  pixels) and is behavioral: a history flush or a box that leaks moves far more than 0.1 %.
+- **Phase 6's 3.0 ms filter bar** moves to Phase 10 at half resolution, as `## Risks` allows;
+  Phase 6 records the full-resolution reading.
+- **A new Phase 7** fixes the light pass's far candidates (5.3 to 12.2 ms against the 6.0 ms
+  line, Phase 4's reading) and the extraction's hitch and filling pool (p99 13.3 ms; 997 740 of
+  1 048 576 samples at the flight's end, Phase 2's reading) before reservoir reuse builds on
+  the sampler. ADR-0025 records the candidate source and the rejected alternatives. The old
+  Phases 7 to 11 are now 8 to 12.
+
+Phase 6 counts as done against the amended bars once dev re-reads them at the tip. Dev's log
+entries above the amendment are left as written; their phase numbers from 7 up are the old
+ones.
 
 ## Architecture diagram
 
@@ -246,19 +282,94 @@ changes it, with the count of changed pixels in the log.
   shows the raw frame.
 - **Files touched:** new `atrous.wgsl`, `composite.wgsl`, `marcher.rs`,
   `apps/flythrough/src/main.rs`, `tests/golden.rs`, `tests/lights.rs`.
-- **Done when:** the dark-cave golden with the vein is blessed after 32 accumulated frames
-  and, in the same test, the frame right after a radius-6 carve through the vein's wall shows
-  no pixel inside the carve's dilated `aabb` within 2/255 of its pre-carve value (no stale
-  light survives), while pixels farther than 16 pixels from the box's projection differ by no
-  more than 8/255 from the previous frame. The filter pass reads under 3.0 ms at 1080p on the
-  dev box with all four iterations (the §2 denoise line, as a dev-box reading).
+- **Done when** (amended 2026-10-21): the dark-cave golden with the vein is blessed after 32
+  accumulated frames, and in the same test, on the frame right after a radius-6 carve through
+  the vein's wall:
+  1. **No stale light in the box.** Every hit pixel inside the carve's `aabb` dilated by one
+     voxel reads age 0, and every pixel whose pre-carve hit voxel lay inside the carved sphere
+     and whose pre-carve material has zero emission differs from its pre-carve value by more
+     than 2/255 in at least one channel. Not counted: pixels showing an emissive material
+     (their emission is added in the composite and carries no history) and rim surfaces the
+     carve left standing (the filter rightly brings their fresh estimate back to the converged
+     value).
+  2. **Nothing disturbed far from it.** Of the pixels farther than 16 pixels from the box's
+     projection, at most 0.1 % (p99.9) differ from the previous frame by more than 8/255. A
+     control in the same test, the same carve with every pixel's history flushed
+     (`Frame::invalidate` past its 64 boxes), exceeds that bar, so the bar bites on the defect
+     it guards against (history killed outside the box). Both counts go in the log.
 
-### Phase 7: Reservoir reuse against the flat list
+  The filter pass (variance and four iterations) at 1080p full-resolution lighting is read on
+  the dev box and recorded in `nfr.md` §2; its 3.0 ms bar is taken at half resolution in
+  Phase 10, as `## Risks` allows.
+
+### Phase 7: Near-emitter candidates and bounded light extraction
+- **Owner skill:** dev
+- **What:** ADR-0025. The mirror keeps each full chunk's exposed-emitter lists on the CPU as
+  today and adds the chunk's power (the sum over its samples of the material's emitted
+  luminance times the sample's exposed face count, without the render-side scale). A chunk
+  holds a range of the light-sample buffer only while it lies within `light_radius` chunks of
+  the focus chunk (`MirrorConfig::light_radius`, default 4, a guess the close reads) and
+  releases it beyond `light_radius + 1`. Ranges are written nearest first under a per-sync
+  sample budget (`MirrorConfig::light_sync_samples`, default 16 384 samples, 256 KiB, a
+  guess), each chunk at most once per sync however many of its bricks the sync wrote, the rest
+  carried over; a chunk the buffer cannot fit evicts the farthest range instead of losing its
+  light, and `SyncStats` counts `light_evicted`, `light_refused` (a chunk left without a range
+  because nothing farther could be evicted) and the oldest carried-over chunk's age. Each frame
+  `Frame` builds a table of the chunks within `light_radius` of the camera that hold a range,
+  in chunk-coordinate order: `(start, len, cumulative weight)` with weight
+  `power / max(d^2, 64^2)`, `d` the camera's distance to the chunk's box in voxels, at most
+  1024 entries in a 16 KiB uniform (a radius-4 ball holds at most 257 chunks). A candidate
+  draws a chunk by binary search over the weights and a sample uniformly in its range, and its
+  resampling weight uses that source pdf, `(w / W) / len`, in place of `1 / span`. The uniform
+  draw over the buffer stays as a test-only setting. `--light-radius N` in the fly-through.
+- **Files touched:** `crates/vxe-render/src/gpu_world.rs` (residency by radius, the budget,
+  eviction, the power, the counters), `marcher.rs` (the table and its uniform), `light.wgsl`,
+  `apps/flythrough/src/main.rs`, `tests/lights.rs`, `crates/vxe-render/tests/mirror.rs`,
+  `tests/golden.rs` (the dark-cave goldens re-blessed for the new noise, with the counts in the
+  log), `docs/nfr.md`.
+- **Done when:**
+  1. **Near emitters win, unbiased inside the radius** (headless, lavapipe): Phase 3's closed
+     box, inside one chunk, gains a flat emissive wall of the ceiling's material outside it, 64 x 64 voxels (4096
+     samples, one exposed face each) in one chunk whose box lies 192 to 256 voxels from the
+     camera (inside the radius, so in the table) and hidden from the box's floor by its walls.
+     The floor-centre irradiance averaged over 64 frames (lamp off, filters off) is within 5 %
+     of 1.741, and one frame's relative RMSE against 1.741 over those 64 frames is at most half
+     of the uniform draw's on the same scene (the ratio in the log). Arithmetic for the margin
+     (a projection): the uniform draw puts 400 / 4496 = 8.9 % of the candidates on the
+     ceiling's 400 samples; the table weighs the ceiling's chunk 400 / 64^2 = 0.098 against
+     the wall's at most 4096 / 192^2 = 0.111, so about 47 % of the draws; with 8 candidates the
+     count of ceiling candidates alone has a relative spread of about 1.13 against 0.38.
+  2. **The pool stays bounded and nothing is dropped** (headless): a mirror reserving 4096
+     samples, fed chunks whose samples total more, holds the nearest chunks' samples in full
+     and evicts the farthest first; a chunk moved beyond `light_radius + 1` has no range on
+     the next sync, and one moved inside it has its range within the syncs its budget allows.
+     Over `flythrough --autopilot --headless --seed 1` the peak of `light_samples()` stays
+     under 262 144 (a quarter of the reservation; the flight's 997 740 filled the whole
+     `r_full` 12 to 16 window, and a radius-4 ball is `(4/12)^3` to `(4/16)^3` of it, about
+     15 600 to 37 000 at that density) with `light_refused` 0.
+  3. **Extraction stops hitching** (quiet box): over the same flight `SyncStats::light_us`
+     reads p99 under 1.0 ms and max under 3.0 ms per frame (against 13.3 and 48.9 ms; the
+     §2 streaming line is 1.0 ms for everything in it, so this is the share extraction may
+     take, not the line met), and no chunk inside the radius waits longer than 250 ms for its
+     range (the deferral bound Plan 0023 set for the attribute pass).
+  4. **The light pass under its line** (quiet box): with the ore emissive, the lamp on and the
+     default 8 candidates, the light pass reads under 4.0 ms at 1080p at the level's spawn
+     (`--level --frames 300`) and the settled streamed spawn (`--frames 3000`), with each
+     shadow walk, median of the last 30 frames, three runs each (against 5.3 to 12.2 ms).
+     Light plus temporal (0.5 ms) then leaves about 1.5 ms of the 6.0 ms lighting line for
+     Phase 8's reuse.
+
+  Phase 3's analytic box, Phase 5's age tests and Phase 6's two bars still hold under the new
+  draw. The quiet box means the exclusive perf lock and a 1-minute load under 2 at each start,
+  as `nfr.md` §2's quiet readings; 1 and 2 need no quiet box.
+
+### Phase 8: Reservoir reuse against the flat list
 - **Owner skill:** dev
 - **What:** the light pass's sampler gains temporal reuse (the reprojected pixel's reservoir,
   capped at 20 x `M` effective samples) and spatial reuse (5 neighbours in a 30-pixel radius,
   depth and normal tested), with the shadow ray on the final sample only. The flat list is the
-  same code with reuse off and `K = M` candidates.
+  same code with reuse off and `K = M` candidates. Both draw their candidates from Phase 7's
+  table.
 - **Files touched:** `light.wgsl`, `marcher.rs`, `apps/flythrough/src/main.rs`,
   `tests/lights.rs`, `docs/nfr.md`.
 - **Done when:** on the box-with-vein scene at 320 x 180 on lavapipe, the relative RMSE of one
@@ -267,7 +378,7 @@ changes it, with the count of changed pixels in the log.
   not a threshold). The light pass's time with each sampler at the streamed spawn goes in
   `nfr.md`.
 
-### Phase 8: A-SVGF's gradient as the other history killer
+### Phase 9: A-SVGF's gradient as the other history killer
 - **Owner skill:** dev
 - **What:** one pixel per 3 x 3 stratum re-shades last frame's sample at last frame's hit with
   this frame's lights and the same random numbers; the difference, filtered over the strata,
@@ -280,7 +391,7 @@ changes it, with the count of changed pixels in the log.
   frames in gradient mode, where plain accumulation at alpha 0.2 needs 11 (0.8^11 = 0.086);
   the gradient pass's time at 1080p goes in `nfr.md`.
 
-### Phase 9: The half-resolution tier
+### Phase 10: The half-resolution tier
 - **Owner skill:** dev
 - **What:** the light, temporal, a-trous and gradient passes run at half the internal
   resolution on a half-size hit buffer sampled from the full one (the lower-left of each
@@ -293,14 +404,18 @@ changes it, with the count of changed pixels in the log.
   difference from the full-resolution golden is under 6/255 per channel; the frame's passes
   at 1080p in both tiers, with each of the other three toggles in its default, are read at the
   streamed spawn and the level on the dev box and recorded in `nfr.md` §2 against the lighting
-  and denoise lines.
+  and denoise lines. Phase 6's filter bar, moved here by the amendment of 2026-10-21: with
+  half-resolution lighting at 1080p output the a-trous pass (variance and four iterations)
+  reads under 3.0 ms at both spawns on a quiet box (Phase 6 read 4.56 to 4.73 ms at full
+  resolution; a quarter of the pixels projects to about 1.2 ms, a projection).
 
-### Phase 10: The fly-through's switches, HUD rows and autopilot readings
+### Phase 11: The fly-through's switches, HUD rows and autopilot readings
 - **Owner skill:** dev
 - **What:** keys for the four toggles and the lamp, HUD rows for every pass's GPU time and
   for the light-sample count, `--lighting`, `--shadow-walk`, `--sampler`, `--history` flags,
   the emission pulse key, and the autopilot printing the per-pass p50 and p99 over its flight
-  plus the extraction's render-thread cost. The frame's VRAM goes in `Frame::frame_bytes`.
+  plus the extraction's render-thread cost, the peak light-sample count and Phase 7's
+  `light_evicted` and `light_refused`. The frame's VRAM goes in `Frame::frame_bytes`.
   The `hero` example gains `--frames N` (default 64) so the accumulation and filter settle
   before it writes its still, takes the lighting flags, and places an emissive ore vein in
   view of the headlamp; the close re-shoots `docs/images/hero.png` with it.
@@ -315,7 +430,7 @@ changes it, with the count of changed pixels in the log.
   caption names the pose and flags that regenerate it (the owner's ask of 2026-10-20: a hero
   worth looking at once the lighting is in).
 
-### Phase 11: The owner's windowed check
+### Phase 12: The owner's windowed check
 - **Owner skill:** human
 - **What:** the owner flies the dark cave with the lamp on and off, digs through the vein's
   wall, and tries each toggle, on the dev box. The decision per toggle is recorded in the
@@ -350,6 +465,11 @@ pub struct LightSample {
     pub material: u16,
 }
 // per chunk: a range (start, len) in the buffer; freed with the record
+// (Phase 7: held only within light_radius + 1 of the focus chunk, evicted farthest first)
+
+// illustrative (Phase 7, ADR-0025): the per-frame candidate table, a 16 KiB uniform
+struct LightChunk { start: u32, len: u32, cdf: f32, _pad: u32 }  // cdf: cumulative weight
+// weight = power / max(d^2, 64^2); entries in chunk-coordinate order, at most 1024
 
 // illustrative: the frame's modes, bits of LightingParams.flags
 // bit 0 lamp, bit 1 coarse shadow walk, bit 2 reservoir reuse, bit 3 gradient history,
@@ -378,10 +498,10 @@ the last to a quarter: about 125 MB.
 | `nfr.md` figure | line | projection (dev box, 1080p, full-res lighting) | how the close measures it |
 |---|---|---|---|
 | §2 Primary rays | 3.0 ms | the hit pass, under the march's 1.43 to 1.95 ms (shadow ray gone) | `flythrough --headless --seed 1 --render 1920x1080 --frames 3000` and `--level ... --frames 300`, median of the last 30, three runs, per-pass timestamps |
-| §2 Lighting | 6.0 ms | light pass 1.5 to 2.5 ms (one shadow ray plus resampling), temporal 0.3 ms; half-res 0.5 to 0.8 ms | same runs, each toggle combination of Phases 4, 7, 8, 9 |
-| §2 Denoise | 3.0 ms | four a-trous iterations 1.2 to 2.0 ms, gradient 0.3 ms | same runs |
+| §2 Lighting | 6.0 ms | light pass 1.5 to 2.5 ms (one shadow ray plus resampling), temporal 0.3 ms; half-res 0.5 to 0.8 ms. Read at Phase 4: 5.3 to 12.2 ms with uniform candidates; Phase 7's bar is under 4.0 ms | same runs, each toggle combination of Phases 4, 8, 9, 10 |
+| §2 Denoise | 3.0 ms | four a-trous iterations 1.2 to 2.0 ms, gradient 0.3 ms. Read at Phase 6: 4.56 to 4.73 ms at full resolution; the bar is taken at half resolution (Phase 10) | same runs |
 | §2 Upscale, tone map, post | 1.5 ms | composite 0.2 ms (no upscaler in this plan) | same runs |
-| §2 Streaming, upload, light extraction | 1.0 ms | extraction under 0.1 ms per sync at the streamed defaults (a popcount per emissive brick) | the autopilot's render-thread timers |
+| §2 Streaming, upload, light extraction | 1.0 ms | extraction under 0.1 ms per sync at the streamed defaults (a popcount per emissive brick). Read at Phase 2: p99 13.3 ms over the flight; Phase 7's bar is p99 under 1.0 ms, max under 3.0 ms | the autopilot's render-thread timers |
 | §3 Everything else in VRAM | 1.5 GB | about 276 MB (table above) | `Frame::frame_bytes` printed by the autopilot |
 
 Projected baseline (two to three times the dev box): full-resolution lighting plus denoise
@@ -399,7 +519,7 @@ such.
   floor's default and the close says so.
 - **Sparse light is the quality risk** (roadmap, Risks). The analytic box (Phase 3), the age
   test (Phase 5) and the no-ghost test (Phase 6) are the measurable bar; the owner's eye
-  (Phase 11) is the final one.
+  (Phase 12) is the final one.
 - **Reprojection by hit position** has no motion vectors, so a moving entity (M6) will ghost
   until entities write their own; this plan's world is static but for edits, and the roadmap's
   M6 paragraph gets a note.
@@ -408,7 +528,12 @@ such.
   Nothing here touches `vxe-world`.
 - **The light-sample cap** (8192 per chunk, 2^20 total) is a guess; a cave with more emissive
   surface than that subsamples deterministically and the HUD shows the count. The close reads
-  the fly-through's vein count against it.
+  the fly-through's vein count against it. Since Phase 7 the total holds only the chunks within
+  the light radius, and a full buffer evicts the farthest range.
+- **The light radius** (4 chunks, 25.6 m) is a guess and a bias: an emitter beyond it lights
+  nothing, and the table's weights are camera-centred, so a far pixel lit by a far emitter is
+  noisier than a near one (ADR-0025's Negative). The owner's eye (Phase 12) and the showcase
+  cavern (Followups) judge it; per-hit bins are ADR-0025's next step if it reads noisy.
 - **Translucent voxels** are composited unlit by emissive samples and uninvalidated by history
   (they are added in the composite, after the filter). Glass that glows is M8's media plan.
 - **Threading.** Extraction runs inside `sync` on the render thread, within the streaming line
@@ -448,11 +573,12 @@ such.
 | 4: The coarse shadow walk | dev | done | a414473 |
 | 5: Temporal accumulation, and history that dies in an edit box | dev | done | 1a907f7 |
 | 6: The a-trous filter and the composite, and the carve that does not ghost | dev | blocked: done-when not met as stated (Notes) | 5f08a2e |
-| 7: Reservoir reuse against the flat list | dev | not started | |
-| 8: A-SVGF's gradient as the other history killer | dev | not started | |
-| 9: The half-resolution tier | dev | not started | |
-| 10: The fly-through's switches, HUD rows and autopilot readings | dev | not started | |
-| 11: The owner's windowed check | human | not started | |
+| 7: Near-emitter candidates and bounded light extraction | dev | not started | |
+| 8: Reservoir reuse against the flat list | dev | not started | |
+| 9: A-SVGF's gradient as the other history killer | dev | not started | |
+| 10: The half-resolution tier | dev | not started | |
+| 11: The fly-through's switches, HUD rows and autopilot readings | dev | not started | |
+| 12: The owner's windowed check | human | not started | |
 
 ### Notes
 
