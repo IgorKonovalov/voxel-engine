@@ -207,7 +207,9 @@ the residency sweep and the window shift are incremental. The contour look's ren
 hitch fell from p99 138 to 180 ms to 5.5 to 6.0 ms against a 4 ms line (a recorded miss), and
 the default now flies more frames than plain. The streaming line stays a recorded miss at p50
 about 5 ms in plain flight; its largest share is the `write_buffer` copies, so narrowing on the
-workers was skipped and the copies need their own ADR (ADR-0017's Outcome). In the owner's
+workers was skipped and the copies need their own ADR (ADR-0017's Outcome). The owner accepted the close with its four
+misses as followups (2026-10-21) and ordered the copies' own ADR and plan after Plan 0024, apart
+from ADR-0012's mirror-slot plan. In the owner's
 windowed flight the frame rate fell to about 40 fps on sustained fast passes with the mirror
 at its budget; the mirror-slot plan owns that footprint.
 
@@ -263,7 +265,8 @@ reprojects by hit position and kills history inside the frame's edit boxes, and 
 iterations filter the rest; the frame renders a view list. Four mechanisms stay switchable
 until the owner has seen them: the coarse or full shadow walk, reservoir reuse or a flat
 list, edit-box or gradient history, half or full lighting resolution. It starts after Plan
-0023 closes and before ADR-0012's mirror-slot plan. Indirect light (one bounce, probes as
+0023 closes and before ADR-0012's mirror-slot plan; the streaming line's upload-copy ADR and
+plan follow it (owner, 2026-10-21). Indirect light (one bounce, probes as
 the fallback) and the upscaler are the two plans after it.
 
 **Goal:** the consumer's P0 rendering bar. Few lights, emissive voxels, destruction, no ghosting.

@@ -671,13 +671,17 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
+Owner, 2026-10-21: the close is accepted with the four missed bars as the followups below.
+
 - The attribute pass's GPU cost against Plan 0013's 1.0 ms proposal (unowned). The quiet
   Phase 6 reading is p99 2.8 to 3.1 ms, max 3.2 to 3.5 ms.
 - **The streaming line's upload copies** (unowned, recorded miss). With the attribute hitch
   gone, plain still reads streaming p50 4.9 to 5.0 ms and max 38 to 60 ms against 1.0 and
   16 ms. The Phase 5 entry profile puts `Queue::write_buffer` (41.8 %) ahead of narrowing
   (about 38 %), which is the case ADR-0017's Outcome names: the rejected staging ring
-  (Alternative B) comes back as a new ADR, not as Phase 5 as written.
+  (Alternative B) comes back as a new ADR, not as Phase 5 as written. Owner, 2026-10-21:
+  the copies get their own ADR and plan, after Plan 0024 and not folded into ADR-0012's
+  mirror-slot plan.
 - **`attr_cap` tuning** (diagnostic, for the plan that next touches the attribute pass). No
   flight engaged the cap: the work list's max was 7381 to 7673 against 8192, and the carry-over
   age read 0 ms. The residual `update_attrs` p99 (5.5 to 6.0 ms against 4 ms) is the list build
