@@ -575,8 +575,8 @@ such.
 | 6: The a-trous filter and the composite, and the carve that does not ghost | dev | done at the amended bars, bar 1 second clause missed (Notes) | 5f08a2e, 907841f |
 | 7: Near-emitter candidates and bounded light extraction | dev | done for bars 1 and 2; bars 3 and 4 waiting for quiet (Notes) | 3a71e15 |
 | 8: Reservoir reuse against the flat list | dev | done | 0975e2b |
-| 9: A-SVGF's gradient as the other history killer | dev | done | committed with this row |
-| 10: The half-resolution tier | dev | not started | |
+| 9: A-SVGF's gradient as the other history killer | dev | done | e74c9e5 |
+| 10: The half-resolution tier | dev | done; the 3.0 ms a-trous bar waiting for quiet (Notes) | committed with this row |
 | 11: The fly-through's switches, HUD rows and autopilot readings | dev | not started | |
 | 12: The owner's windowed check | human | not started | |
 
@@ -711,6 +711,16 @@ each. Empty is fine.)_
   the camera's forward. The bar is read on the filtered irradiance: on the accumulated one,
   8 % of the pixels that left the cone read a fresh one-frame estimate above 10 % of their
   lit value after the reset. `--history edits|gradient` added here.
+- Phase 10: the half tier samples one full pixel of each 2 x 2 by a cycle over the four per
+  frame ((0, 1), (1, 0), (1, 1), (0, 0)), not the lower-left alone; a `downsample` entry in
+  `composite.wgsl` copies them into the lighting grid's own hit buffer, timed within the hit
+  pass. The lighting passes take the grid's size, scale and offsets from `Params`, map a
+  lighting pixel to its full one for its ray and reproject last frame's full pixel onto last
+  frame's grid; the spatial reuse radius stays 30 lighting pixels. The composite upsamples
+  from the four grid pixels around a full pixel by bilinear weight times
+  `max(n.n', 0)^32 exp(-plane distance)`. `Frame::set_resolution` replaces the lighting
+  targets and drops the history; `--lighting full|half` added here. The 3.0 ms a-trous bar at
+  half resolution read 1.1 to 1.2 ms on the loaded box; the quiet reading is owed.
 
 Phase 1 observations: hitmask and normals of the three scenes byte-identical to ae58f0c; the
 identity-tone-mapped carve's largest channel difference from ae58f0c's is 0/255; the
@@ -741,6 +751,10 @@ list's 1.7238 over 384 frames and 16 pixels.
 Phase 9 observations: after the cone turned 30 degrees, of 11 655 pixels that left it the
 gradient mode had 99.8 % under 10 % of their lit value after one frame and all after two; the
 edit-box mode had 0.1 % at frame 9, 67.1 % at 11, all at 22.
+
+Phase 10 observations: `dark_cave_half.png` blessed; its mean absolute difference from
+`dark_cave.png` is 2.716, 1.775 and 0.920 of 255 (red, green, blue). Both tiers' passes:
+`docs/nfr.md` §2, "Both lighting tiers at 1080p output".
 
 Phase 6 observations: `dark_cave.png` re-blessed after 32 accumulated frames (34 273 pixels
 changed, 32 137 by more than 2/255), 29 103 of 57 600 pixels at 16/255 or more; with the ore

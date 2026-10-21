@@ -73,7 +73,7 @@ const CANDIDATE_DIMS: u32 = 6u;
 @compute @workgroup_size(8, 8, 1)
 fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
     let view = view_mode();
-    if (gid.x >= params.size.x || gid.y >= params.size.y || (view != VIEW_SHADED && view != VIEW_STEPS)) {
+    if (gid.x >= params.light_size.x || gid.y >= params.light_size.y || (view != VIEW_SHADED && view != VIEW_STEPS)) {
         return;
     }
     let px = vec2<i32>(gid.xy);
@@ -84,7 +84,7 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
         // a = 0 where no ray is cast.
         var counts = vec4<f32>(0.0);
         if (rec.found && (params.flags & FLAG_CUTAWAY) == 0u) {
-            let ray = pixel_ray(gid.xy);
+            let ray = pixel_ray(full_px(gid.xy));
             let to_light = params.light_pos - rec.p;
             let dist = max(length(to_light), 1e-2);
             walk_steps = 0u;
@@ -101,7 +101,7 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
     // No reservoir unless `emissive_irradiance` writes one below.
     textureStore(reservoir_out, px, vec4<u32>(0u));
     if (rec.found) {
-        let ray = pixel_ray(gid.xy);
+        let ray = pixel_ray(full_px(gid.xy));
         let n = surface_detail(rec).xyz;
         if ((params.flags & FLAG_CUTAWAY) != 0u) {
             e = vec3<f32>(PI * (0.3 + 0.7 * (0.5 + 0.5 * n.z)));
@@ -326,7 +326,7 @@ fn reuse(r: ptr<function, Reservoir>, q: vec2<i32>, p: vec3<f32>, n: vec3<f32>, 
 // Whether last frame's hit at `q` is this hit's surface: hit, the same material, a normal
 // within 0.9 in cosine and within a voxel of its tangent plane.
 fn same_surface(q: vec2<i32>, rec: HitRecord) -> bool {
-    if (any(q < vec2<i32>(0)) || any(q >= vec2<i32>(params.size))) {
+    if (!on_light_grid(q)) {
         return false;
     }
     let prev = unpack_hit(textureLoad(prev_pos_in, q, 0), textureLoad(prev_info_in, q, 0));
@@ -348,8 +348,9 @@ fn emissive_irradiance(px: vec2<u32>, rec: HitRecord, n: vec3<f32>, ns: vec3<f32
         merge(&r, c.x, c.face, c.le, c.target_pdf, c.weight, 1.0, rand(px, 2u + CANDIDATE_DIMS * j + 4u));
     }
     if ((params.lighting & LIGHTING_REUSE) != 0u && (params.history & 1u) != 0u) {
-        let v = params.prev_views[view_of(px)];
-        let q = project_prev(v, p);
+        let v = params.prev_views[view_of(full_px(px))];
+        let full = project_prev(v, p);
+        let q = select(prev_light_grid(full), full, full.x < 0.0);
         let centre = vec2<i32>(floor(q));
         if (q.x >= 0.0 && same_surface(centre, rec)) {
             reuse(&r, centre, p, n, rand(px, REUSE_DIMS));

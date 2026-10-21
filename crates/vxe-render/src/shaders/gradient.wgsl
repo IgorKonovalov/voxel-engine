@@ -31,18 +31,18 @@ const STRATUM: u32 = 3u;
 
 @compute @workgroup_size(8, 8, 1)
 fn gradient(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let strata = (params.size + vec2<u32>(STRATUM - 1u)) / STRATUM;
+    let strata = (params.light_size + vec2<u32>(STRATUM - 1u)) / STRATUM;
     if (gid.x >= strata.x || gid.y >= strata.y) {
         return;
     }
     var out = vec4<f32>(0.0);
     let h = hash_u32(gid.x * 73856093u ^ gid.y * 19349663u ^ params.frame * 83492791u);
     let q = gid.xy * STRATUM + vec2<u32>(h % STRATUM, (h / STRATUM) % STRATUM);
-    if ((params.history & 1u) != 0u && all(q < params.size)) {
+    if ((params.history & 1u) != 0u && all(q < params.light_size)) {
         let qi = vec2<i32>(q);
         let rec = unpack_hit(textureLoad(grad_prev_pos, qi, 0), textureLoad(grad_prev_info, qi, 0));
         if (rec.found && (params.flags & FLAG_CUTAWAY) == 0u) {
-            let v = params.prev_views[view_of(q)];
+            let v = params.prev_views[view_of(q * params.light_scale + unpack_offset(params.prev_light_offset))];
             let d = normalize(rec.p - v.origin);
             let n = surface_detail(rec).xyz;
             let ns = shadow_normal_of(rec, d);

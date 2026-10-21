@@ -860,8 +860,17 @@ const SETTLE_FRAMES: u32 = 32;
 /// The carved scene's rig under `table`, the lamp off, after [`SETTLE_FRAMES`] frames from
 /// [`vein_camera`] with history; `None` without a software adapter.
 fn settled_dark_cave(table: &MaterialTable) -> Option<(World, LookRig)> {
+    settled_dark_cave_at(table, vxe_render::LightingResolution::Full)
+}
+
+/// [`settled_dark_cave`] with the lighting passes at `resolution`.
+fn settled_dark_cave_at(
+    table: &MaterialTable,
+    resolution: vxe_render::LightingResolution,
+) -> Option<(World, LookRig)> {
     let world = carved_world_under(table);
     let mut rig = LookRig::new(&world, None)?;
+    rig.frame.set_resolution(&rig.device, resolution);
     rig.frame.set_lighting(vxe_render::Lighting {
         lamp: false,
         ..vxe_render::Lighting::default()
@@ -1232,4 +1241,32 @@ fn the_coarse_shadow_walk_closes_a_one_voxel_hole() {
         "the full walk lights no pixel through the hole"
     );
     assert_eq!(coarse_lit, 0);
+}
+
+/// `dark_cave_half.png`: the dark cave with the lighting passes at half resolution, after 32
+/// accumulated frames; its mean absolute difference from `dark_cave.png` is under 6/255 in
+/// every channel.
+#[test]
+fn half_resolution_dark_cave_golden_stays_near_the_full_one() {
+    let table = flythrough::with_emissive_ore(&cave_materials());
+    let Some((_, rig)) = settled_dark_cave_at(&table, vxe_render::LightingResolution::Half) else {
+        return;
+    };
+    let half = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    assert_golden("dark_cave_half.png", &half);
+    let (full, _, _) = read_png(&golden_path("dark_cave.png"));
+    let n = (WIDTH * HEIGHT) as f64;
+    let mad: Vec<f64> = (0..3)
+        .map(|k| {
+            half.chunks(4)
+                .zip(full.chunks(4))
+                .map(|(a, b)| f64::from(a[k].abs_diff(b[k])))
+                .sum::<f64>()
+                / n
+        })
+        .collect();
+    println!(
+        "dark_cave_half.png: mean absolute difference from dark_cave.png per channel {mad:.3?} (of 255)"
+    );
+    assert!(mad.iter().all(|&d| d < 6.0), "{mad:?}");
 }

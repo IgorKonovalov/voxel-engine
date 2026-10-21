@@ -162,6 +162,16 @@ struct Params {
     _pad7: u32,
     // The views of the previous frame, for reprojection.
     prev_views: array<View, 2>,
+    // The lighting grid: its size, the full-resolution pixels per lighting pixel on an edge
+    // (1 or 2), and this and last frame's offsets of the sampled pixel in each 2 x 2 (x in
+    // bits 0..8, y in bits 8..16).
+    light_size: vec2<u32>,
+    light_scale: u32,
+    light_offset: u32,
+    prev_light_offset: u32,
+    _pad8: u32,
+    _pad9: u32,
+    _pad10: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -1063,6 +1073,28 @@ fn shadow_normal(d: vec3<f32>, h: Hit) -> vec3<f32> {
 
 // The cutaway view's miss colour, linear: a flat grey-blue the rooms read against.
 const CUTAWAY_SKY: vec3<f32> = vec3<f32>(0.30, 0.38, 0.50);
+
+// A packed lighting-grid offset (x in bits 0..8, y in 8..16).
+fn unpack_offset(o: u32) -> vec2<u32> {
+    return vec2<u32>(o & 0xFFu, (o >> 8u) & 0xFFu);
+}
+
+// The full-resolution pixel lighting pixel `lp` samples this frame.
+fn full_px(lp: vec2<u32>) -> vec2<u32> {
+    return lp * params.light_scale + unpack_offset(params.light_offset);
+}
+
+// A fractional full-resolution pixel position of last frame (centres at + 0.5) on last
+// frame's lighting grid, centres at + 0.5.
+fn prev_light_grid(q: vec2<f32>) -> vec2<f32> {
+    let o = vec2<f32>(unpack_offset(params.prev_light_offset));
+    return (q - 0.5 - o) / f32(params.light_scale) + 0.5;
+}
+
+// Whether lighting pixel `q` lies on the lighting grid.
+fn on_light_grid(q: vec2<i32>) -> bool {
+    return all(q >= vec2<i32>(0)) && all(q < vec2<i32>(params.light_size));
+}
 
 // The ray of one pixel.
 struct Ray {

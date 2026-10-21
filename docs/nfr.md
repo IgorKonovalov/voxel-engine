@@ -234,6 +234,25 @@ gradient pass (one re-shaded pixel, two shadow rays, per 3 x 3 stratum) reads 0.
 level's spawn and 1.277 ms at the streamed spawn at 1080p; the a-trous pass reads 5.795 and
 5.566 ms in that mode, its ages kept shorter.
 
+**Both lighting tiers at 1080p output (dev reference, indicative, Plan 0024 Phase 10, RTX
+3080 Laptop GPU, exclusive perf lock, 1-minute load 2.2 to 6.1 with the owner using the
+machine, so not quiet; defaults otherwise: full shadow walk, the flat list, edit-box
+history, the filter on, the ore emissive, the lamp on; one run each, median of the last 30
+frames):**
+
+| pass (ms) | level, full | level, half | streamed, full | streamed, half |
+|---|---|---|---|---|
+| hit | 1.263 | 1.332 | 1.833 | 1.861 |
+| light | 7.519 | 1.876 | 11.535 | 2.878 |
+| temporal | 0.509 | 0.137 | 0.551 | 0.135 |
+| a-trous (variance + 4) | 4.726 | 1.168 | 4.538 | 1.106 |
+| composite | 0.255 | 0.310 | 0.277 | 0.295 |
+| frame | 14.261 | 4.818 | 18.745 | 6.280 |
+
+Against the lines: lighting (light + temporal) 2.0 and 3.0 ms at half resolution under 6.0,
+8.0 and 12.1 ms at full over it; denoise (a-trous) 1.1 to 1.2 ms at half under 3.0, 4.5 to
+4.7 ms at full over it. The quiet-box reading of the half tier's a-trous bar is owed.
+
 **Denoise: the temporal pass and four a-trous iterations (dev reference, Plan 0024 Phase 6,
 RTX 3080 Laptop GPU, exclusive perf lock, 1-minute load 4.2 to 4.6; the default look with the
 ore emissive, median of the last 30 frames, 1920 x 1080 full-resolution lighting):** the

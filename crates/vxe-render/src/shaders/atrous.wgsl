@@ -47,7 +47,7 @@ fn load_hit(q: vec2<i32>) -> HitRecord {
 }
 
 fn inside(q: vec2<i32>) -> bool {
-    return all(q >= vec2<i32>(0)) && all(q < vec2<i32>(params.size));
+    return on_light_grid(q);
 }
 
 // The geometric edge weight between hit `a` and hit `b`: the distance of `b` from `a`'s
@@ -71,7 +71,7 @@ fn edge_weight(a: HitRecord, b: HitRecord) -> f32 {
 
 @compute @workgroup_size(8, 8, 1)
 fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= params.size.x || gid.y >= params.size.y) {
+    if (gid.x >= params.light_size.x || gid.y >= params.light_size.y) {
         return;
     }
     let px = vec2<i32>(gid.xy);
@@ -112,7 +112,7 @@ const KERNEL = array<f32, 5>(0.0625, 0.25, 0.375, 0.25, 0.0625);
 
 @compute @workgroup_size(8, 8, 1)
 fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= params.size.x || gid.y >= params.size.y) {
+    if (gid.x >= params.light_size.x || gid.y >= params.light_size.y) {
         return;
     }
     let px = vec2<i32>(gid.xy);

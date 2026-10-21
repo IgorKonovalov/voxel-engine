@@ -61,6 +61,14 @@ pub struct Params {
     pub _pad5: [u32; 3],
     /// The previous frame's views, for reprojection (set by [`Frame::encode`]).
     pub prev_views: [View; MAX_VIEWS],
+    /// The lighting grid's size, full-resolution pixels per lighting pixel on an edge, and
+    /// this and last frame's sampled pixel of each 2 x 2 (x in bits 0..8, y in 8..16; the
+    /// last set by [`Frame::encode`]).
+    pub light_size: [u32; 2],
+    pub light_scale: u32,
+    pub light_offset: u32,
+    pub prev_light_offset: u32,
+    pub _pad8: [u32; 3],
 }
 
 /// `Params::lighting` bit: the headlamp lights the frame.
@@ -347,6 +355,43 @@ impl HistoryKill {
     }
 }
 
+/// The resolution the light, gradient, temporal and a-trous passes run at.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LightingResolution {
+    /// The internal resolution.
+    #[default]
+    Full,
+    /// Half of it on each edge, on a hit buffer sampled from the full one (one pixel of each
+    /// 2 x 2, cycling over the four per frame); the composite upsamples by depth and normal.
+    Half,
+}
+
+impl LightingResolution {
+    pub const ALL: [Self; 2] = [Self::Full, Self::Half];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Half => "half",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+
+    /// Full-resolution pixels per lighting pixel on an edge.
+    pub fn scale(self) -> u32 {
+        match self {
+            Self::Full => 1,
+            Self::Half => 2,
+        }
+    }
+}
+
+/// The sampled pixel of each 2 x 2 at half resolution, by frame index modulo 4 (x, y).
+const HALF_OFFSETS: [[u32; 2]; 4] = [[0, 1], [1, 0], [1, 1], [0, 0]];
+
 /// Where the light pass draws its emissive candidates from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CandidateDraw {
@@ -495,6 +540,9 @@ pub struct Frame {
     frame: u32,
     /// The copy of the double-buffered targets the next `encode` writes.
     cur: usize,
+    resolution: LightingResolution,
+    downsample_layout: wgpu::BindGroupLayout,
+    downsample: wgpu::ComputePipeline,
     history: std::sync::Mutex<History>,
 }
 
@@ -513,6 +561,9 @@ struct History {
     /// The views of the last `encode` with history, and whether one ran since `advance`.
     last_views: [View; MAX_VIEWS],
     encoded: bool,
+    /// The lighting grid's offset of the previous frame and of the last encode.
+    prev_offset: u32,
+    last_offset: u32,
     /// The edit boxes collected for the next `encode`, and whether more than `MAX_EDITS`
     /// arrived.
     edits: Vec<[[i32; 3]; 2]>,
@@ -779,6 +830,23 @@ impl Frame {
             &[Some(&world_layout), None, None, Some(&gradient_layout)],
             "gradient",
         );
+        let downsample_layout = io_layout(
+            device,
+            "downsample",
+            &[
+                Io::Float,
+                Io::Uint,
+                Io::Store(wgpu::TextureFormat::Rgba32Float),
+                Io::Store(wgpu::TextureFormat::Rgba16Uint),
+            ],
+        );
+        let downsample = compute_pipeline(
+            device,
+            "downsample",
+            format!("{MARCH_WGSL}\n{COMPOSITE_WGSL}"),
+            &[Some(&world_layout), None, None, Some(&downsample_layout)],
+            "downsample",
+        );
         let (variance_layout, variance) = pass(
             "variance",
             ATROUS_WGSL,
@@ -823,6 +891,8 @@ impl Frame {
                 Io::Float,
                 Io::Float,
                 Io::Store(wgpu::TextureFormat::Rgba8Unorm),
+                Io::Float,
+                Io::Uint,
             ],
         );
         let params = device.create_buffer(&wgpu::BufferDescriptor {
@@ -855,7 +925,8 @@ impl Frame {
             composite,
             params,
             edits,
-            targets: Targets::new(device, width, height),
+            targets: Targets::new(device, width, height, 1),
+            resolution: LightingResolution::Full,
             lod: LodParams::default(),
             look: LookParams::default(),
             lighting: Lighting::default(),
@@ -885,6 +956,8 @@ impl Frame {
             blue_noise_written: std::sync::atomic::AtomicBool::new(false),
             frame: 0,
             cur: 0,
+            downsample_layout,
+            downsample,
             history: std::sync::Mutex::new(History::default()),
         }
     }
@@ -911,6 +984,7 @@ impl Frame {
         self.frame = self.frame.wrapping_add(1);
         let h = self.history();
         h.prev_views = h.last_views;
+        h.prev_offset = h.last_offset;
         h.valid = h.encoded;
         h.encoded = false;
         self.cur ^= 1;
@@ -1053,8 +1127,23 @@ impl Frame {
     /// Replaces the targets with ones of `width` × `height` and drops the history; the
     /// pipelines are kept.
     pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
-        self.targets = Targets::new(device, width, height);
+        self.targets = Targets::new(device, width, height, self.resolution.scale());
         self.reset_history();
+    }
+
+    /// Runs the lighting passes at `resolution`; the lighting targets are replaced and the
+    /// history dropped when it changes.
+    pub fn set_resolution(&mut self, device: &wgpu::Device, resolution: LightingResolution) {
+        if resolution != self.resolution {
+            self.resolution = resolution;
+            let (w, h) = (self.targets.width, self.targets.height);
+            self.targets = Targets::new(device, w, h, resolution.scale());
+            self.reset_history();
+        }
+    }
+
+    pub fn resolution(&self) -> LightingResolution {
+        self.resolution
     }
 
     /// The uniform block for `camera` over `world`, lit by `light`: one view filling the
@@ -1115,6 +1204,14 @@ impl Frame {
             light_span: world.light_span(),
             candidates: self.lighting.candidates,
             frame: self.frame,
+            light_size: self.targets.light_size(),
+            light_scale: self.targets.scale,
+            light_offset: if self.targets.scale > 1 {
+                let [x, y] = HALF_OFFSETS[(self.frame % 4) as usize];
+                x | y << 8
+            } else {
+                0
+            },
             ..Params::default()
         }
     }
@@ -1162,6 +1259,8 @@ impl Frame {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             p.prev_views = h.prev_views;
+            p.prev_light_offset = h.prev_offset;
+            h.last_offset = params.light_offset;
             p.history = u32::from(h.valid && !h.overflow);
             for (i, [min, max]) in h.edits.iter().enumerate() {
                 edits.boxes[2 * i] = [min[0], min[1], min[2], 0];
@@ -1232,15 +1331,26 @@ impl Frame {
                 Res::Tex(&t.layer),
             ],
         );
+        let half = t.half_pos.is_some();
+        let downsample_bind = bind_io(
+            device,
+            &self.downsample_layout,
+            &[
+                Res::Tex(&t.hit_pos[c]),
+                Res::Tex(&t.hit_info[c]),
+                Res::Tex(t.lit_pos(c)),
+                Res::Tex(t.lit_info(c)),
+            ],
+        );
         let light_bind = bind_io(
             device,
             &self.light_layout,
             &[
-                Res::Tex(&t.hit_pos[c]),
-                Res::Tex(&t.hit_info[c]),
+                Res::Tex(t.lit_pos(c)),
+                Res::Tex(t.lit_info(c)),
                 Res::Tex(&t.irradiance),
-                Res::Tex(&t.hit_pos[q]),
-                Res::Tex(&t.hit_info[q]),
+                Res::Tex(t.lit_pos(q)),
+                Res::Tex(t.lit_info(q)),
                 Res::Tex(&t.reservoir[q]),
                 Res::Tex(&t.reservoir[c]),
             ],
@@ -1249,10 +1359,10 @@ impl Frame {
             device,
             &self.temporal_layout,
             &[
-                Res::Tex(&t.hit_pos[c]),
-                Res::Tex(&t.hit_info[c]),
-                Res::Tex(&t.hit_pos[q]),
-                Res::Tex(&t.hit_info[q]),
+                Res::Tex(t.lit_pos(c)),
+                Res::Tex(t.lit_info(c)),
+                Res::Tex(t.lit_pos(q)),
+                Res::Tex(t.lit_info(q)),
                 Res::Tex(&t.irradiance),
                 Res::Tex(&t.accum[q]),
                 Res::Tex(&t.moments[q]),
@@ -1269,8 +1379,8 @@ impl Frame {
             device,
             &self.variance_layout,
             &[
-                Res::Tex(&t.hit_pos[c]),
-                Res::Tex(&t.hit_info[c]),
+                Res::Tex(t.lit_pos(c)),
+                Res::Tex(t.lit_info(c)),
                 Res::Tex(&t.accum[c]),
                 Res::Tex(&t.moments[c]),
                 Res::Tex(&t.filter[0]),
@@ -1283,8 +1393,8 @@ impl Frame {
                     &self.atrous_layout,
                     &[0, 1, 2, 5, 6],
                     &[
-                        Res::Tex(&t.hit_pos[c]),
-                        Res::Tex(&t.hit_info[c]),
+                        Res::Tex(t.lit_pos(c)),
+                        Res::Tex(t.lit_info(c)),
                         Res::Tex(&t.filter[i % 2]),
                         Res::Tex(&t.filter[(i + 1) % 2]),
                         Res::Buf(&self.steps[i]),
@@ -1306,14 +1416,16 @@ impl Frame {
                 Res::Tex(&t.layer),
                 Res::Tex(lit),
                 Res::Tex(&t.output),
+                Res::Tex(t.lit_pos(c)),
+                Res::Tex(t.lit_info(c)),
             ],
         );
         let gradient_bind = bind_io(
             device,
             &self.gradient_layout,
             &[
-                Res::Tex(&t.hit_pos[q]),
-                Res::Tex(&t.hit_info[q]),
+                Res::Tex(t.lit_pos(q)),
+                Res::Tex(t.lit_info(q)),
                 Res::Tex(&t.irradiance),
                 Res::Tex(&t.reservoir[q]),
                 Res::Tex(&t.strata),
@@ -1321,32 +1433,43 @@ impl Frame {
         );
         let gradient_on =
             self.lighting.history == HistoryKill::Gradient && self.look.view == ViewMode::Shaded;
-        let groups = [t.width.div_ceil(WORKGROUP), t.height.div_ceil(WORKGROUP)];
+        let full = [t.width.div_ceil(WORKGROUP), t.height.div_ceil(WORKGROUP)];
+        let lw = t.light_size().map(|n| n.div_ceil(WORKGROUP));
         let strata = [t.strata.width(), t.strata.height()].map(|n| n.div_ceil(WORKGROUP));
-        let mut atrous: Vec<(&wgpu::ComputePipeline, &wgpu::BindGroup)> = Vec::new();
-        if filtering {
-            atrous.push((&self.variance, &variance_bind));
-            atrous.extend(atrous_binds.iter().map(|b| (&self.atrous, b)));
+        // Each pass's dispatches: pipeline, group-2 or -3 bind group and its index, workgroups.
+        type Dispatch<'a> = (
+            &'a wgpu::ComputePipeline,
+            &'a wgpu::BindGroup,
+            u32,
+            [u32; 2],
+        );
+        let mut hit: Vec<Dispatch<'_>> = vec![(&self.hit.pipeline, &hit_bind, 1, full)];
+        if half {
+            hit.push((&self.downsample, &downsample_bind, 3, lw));
         }
-        let mut gradient: Vec<(&wgpu::ComputePipeline, &wgpu::BindGroup)> = Vec::new();
+        let mut gradient: Vec<Dispatch<'_>> = Vec::new();
         if gradient_on {
-            gradient.push((&self.gradient, &gradient_bind));
+            gradient.push((&self.gradient, &gradient_bind, 3, strata));
         }
-        type Dispatches<'a> = Vec<(&'a wgpu::ComputePipeline, &'a wgpu::BindGroup)>;
-        let passes: [(Dispatches<'_>, u32, [u32; 2]); 6] = [
-            (vec![(&self.hit.pipeline, &hit_bind)], 1, groups),
-            (gradient, 3, strata),
-            (vec![(&self.light, &light_bind)], 2, groups),
-            (vec![(&self.temporal, &temporal_bind)], 2, groups),
-            (atrous, 2, groups),
-            (vec![(&self.composite, &composite_bind)], 2, groups),
+        let mut atrous: Vec<Dispatch<'_>> = Vec::new();
+        if filtering {
+            atrous.push((&self.variance, &variance_bind, 2, lw));
+            atrous.extend(atrous_binds.iter().map(|b| (&self.atrous, b, 2, lw)));
+        }
+        let passes: [Vec<Dispatch<'_>>; 6] = [
+            hit,
+            gradient,
+            vec![(&self.light, &light_bind, 2, lw)],
+            vec![(&self.temporal, &temporal_bind, 2, lw)],
+            atrous,
+            vec![(&self.composite, &composite_bind, 2, full)],
         ];
-        for (i, (dispatches, group, groups)) in passes.into_iter().enumerate() {
+        for (i, dispatches) in passes.into_iter().enumerate() {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(FRAME_PASSES[i]),
                 timestamp_writes: timer.map(|t| t.writes_at(i as u32)),
             });
-            for (pipeline, bind) in dispatches {
+            for (pipeline, bind, group, groups) in dispatches {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &world_bind, &[]);
                 pass.set_bind_group(group, bind, &[]);
@@ -1405,19 +1528,27 @@ pub const FRAME_PASSES: [&str; 6] = [
 /// The gradient pass's stratum edge in pixels; `STRATUM` in `gradient.wgsl`.
 pub const GRADIENT_STRATUM: u32 = 3;
 
-/// The frame's targets at one internal resolution; the hit buffer and the history twice,
-/// indexed by `Frame::cur`.
+/// The frame's targets: the hit buffer, the translucent layers and the output at the internal
+/// resolution, and the lighting passes' targets on the lighting grid, the same at full
+/// resolution and half of it on each edge at half resolution (with its own hit buffer, sampled
+/// from the full one). The hit buffers and the history are kept twice, indexed by
+/// `Frame::cur`.
 struct Targets {
     width: u32,
     height: u32,
+    /// Full-resolution pixels per lighting pixel on an edge: 1 or 2.
+    scale: u32,
     /// The hit buffer: position + t (rgba32float), and octahedral normal, material and flags
     /// (rgba16uint).
     hit_pos: [wgpu::Texture; 2],
     hit_info: [wgpu::Texture; 2],
+    /// The lighting grid's hit buffer at half resolution.
+    half_pos: Option<[wgpu::Texture; 2]>,
+    half_info: Option<[wgpu::Texture; 2]>,
     /// The translucent layers in front of each hit (rgba16float), or the steps view's
     /// counters.
     layer: wgpu::Texture,
-    /// The light pass's irradiance (rgba16float).
+    /// The light pass's irradiance (rgba16float), on the lighting grid.
     irradiance: wgpu::Texture,
     /// The temporal pass's accumulated irradiance and moments (rgba16float).
     accum: [wgpu::Texture; 2],
@@ -1426,14 +1557,14 @@ struct Targets {
     filter: [wgpu::Texture; 2],
     /// The light pass's reservoirs (rgba32uint), this frame's and the last.
     reservoir: [wgpu::Texture; 2],
-    /// The gradient pass's strata, one texel per 3 x 3 pixels (rgba16float).
+    /// The gradient pass's strata, one texel per 3 x 3 lighting pixels (rgba16float).
     strata: wgpu::Texture,
     /// The composite's display-encoded output (rgba8unorm).
     output: wgpu::Texture,
 }
 
 impl Targets {
-    fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+    fn new(device: &wgpu::Device, width: u32, height: u32, scale: u32) -> Self {
         let sized = |label, format, width, height| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -1452,34 +1583,57 @@ impl Targets {
                 view_formats: &[],
             })
         };
+        let (lw, lh) = (width.div_ceil(scale), height.div_ceil(scale));
         let tex = |label, format| sized(label, format, width, height);
+        let lit = |label, format| sized(label, format, lw, lh);
         use wgpu::TextureFormat::{Rgba8Unorm, Rgba16Float, Rgba16Uint, Rgba32Float, Rgba32Uint};
+        let half = scale > 1;
         Self {
             width,
             height,
+            scale,
             hit_pos: [0, 1].map(|_| tex("hit pos", Rgba32Float)),
             hit_info: [0, 1].map(|_| tex("hit info", Rgba16Uint)),
+            half_pos: half.then(|| [0, 1].map(|_| lit("half hit pos", Rgba32Float))),
+            half_info: half.then(|| [0, 1].map(|_| lit("half hit info", Rgba16Uint))),
             layer: tex("layer", Rgba16Float),
-            irradiance: tex("irradiance", Rgba16Float),
-            accum: [0, 1].map(|_| tex("accumulated irradiance", Rgba16Float)),
-            moments: [0, 1].map(|_| tex("moments", Rgba16Float)),
-            filter: [0, 1].map(|_| tex("filter", Rgba16Float)),
-            reservoir: [0, 1].map(|_| tex("reservoir", Rgba32Uint)),
+            irradiance: lit("irradiance", Rgba16Float),
+            accum: [0, 1].map(|_| lit("accumulated irradiance", Rgba16Float)),
+            moments: [0, 1].map(|_| lit("moments", Rgba16Float)),
+            filter: [0, 1].map(|_| lit("filter", Rgba16Float)),
+            reservoir: [0, 1].map(|_| lit("reservoir", Rgba32Uint)),
             strata: sized(
                 "gradient strata",
                 Rgba16Float,
-                width.div_ceil(GRADIENT_STRATUM),
-                height.div_ceil(GRADIENT_STRATUM),
+                lw.div_ceil(GRADIENT_STRATUM),
+                lh.div_ceil(GRADIENT_STRATUM),
             ),
             output: tex("frame target", Rgba8Unorm),
         }
     }
 
+    /// The lighting grid's size.
+    fn light_size(&self) -> [u32; 2] {
+        [self.irradiance.width(), self.irradiance.height()]
+    }
+
+    /// The lighting grid's hit positions and records, copy `i`.
+    fn lit_pos(&self, i: usize) -> &wgpu::Texture {
+        self.half_pos.as_ref().map_or(&self.hit_pos[i], |h| &h[i])
+    }
+
+    fn lit_info(&self, i: usize) -> &wgpu::Texture {
+        self.half_info.as_ref().map_or(&self.hit_info[i], |h| &h[i])
+    }
+
     /// Bytes the targets occupy.
     fn bytes(&self) -> u64 {
         let px = u64::from(self.width) * u64::from(self.height);
+        let [lw, lh] = self.light_size();
+        let lpx = u64::from(lw) * u64::from(lh);
+        let half = if self.scale > 1 { 2 * (16 + 8) } else { 0 };
         let strata = u64::from(self.strata.width()) * u64::from(self.strata.height());
-        px * (2 * (16 + 8) + 8 + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16 + 4) + strata * 8
+        px * (2 * (16 + 8) + 8 + 4) + lpx * (half + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16) + strata * 8
     }
 }
 

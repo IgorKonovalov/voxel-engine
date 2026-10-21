@@ -12,7 +12,7 @@
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
 //! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]
-//! [--history edits|gradient]`.
+//! [--history edits|gradient] [--lighting full|half]`.
 //! `--render` fixes the frame's internal resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -49,7 +49,8 @@
 //! `--filter off` shows the light pass's raw irradiance, unaccumulated and unfiltered;
 //! `--light-radius N` sets the chunks around the camera whose emitters light the frame
 //! (default 4); `--sampler reuse` adds last frame's reservoirs (ReSTIR) to the candidates;
-//! `--history gradient` also shortens history where A-SVGF's gradient sees the light change.
+//! `--history gradient` also shortens history where A-SVGF's gradient sees the light change;
+//! `--lighting half` runs the lighting passes at half resolution on each edge.
 //! `N` cycles the normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
 //! inside the extent).
@@ -161,8 +162,8 @@ use vxe_render::gpu_world;
 use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
     AttrWorkStats, Camera, FRAME_PASSES, Frame, GpuWorld, HistoryKill, HudColour, HudOverlay,
-    LightParams, Lighting, LodParams, LookParams, MarchTimer, MirrorConfig, NormalMode, PassTimer,
-    Presenter, Sampler, ShadowWalk, SyncStats, ViewMode, Window, wgpu,
+    LightParams, Lighting, LightingResolution, LodParams, LookParams, MarchTimer, MirrorConfig,
+    NormalMode, PassTimer, Presenter, Sampler, ShadowWalk, SyncStats, ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -332,6 +333,8 @@ struct Args {
     sampler: Sampler,
     /// `--history edits|gradient`: what kills the temporal history.
     history: HistoryKill,
+    /// `--lighting full|half`: the lighting passes' resolution.
+    lighting: LightingResolution,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -419,6 +422,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         light_radius: vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
         sampler: Sampler::List,
         history: HistoryKill::Edits,
+        lighting: LightingResolution::Full,
     };
     let mut detail_flag = false;
     let mut it = argv.into_iter();
@@ -523,6 +527,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 let v = value()?;
                 args.shadow_walk = ShadowWalk::from_name(&v)
                     .ok_or(format!("--shadow-walk takes full or coarse, not {v}"))?;
+            }
+            "--lighting" => {
+                let v = value()?;
+                args.lighting = LightingResolution::from_name(&v)
+                    .ok_or(format!("--lighting takes full or half, not {v}"))?;
             }
             "--history" => {
                 let v = value()?;
@@ -2382,6 +2391,7 @@ impl Run {
             history: self.args.history,
             ..Lighting::default()
         });
+        frame.set_resolution(&gpu.device, self.args.lighting);
         let mirror = if self.stream.is_some() {
             frame.set_lod(LodParams {
                 r_full: self.args.residency.r_full,

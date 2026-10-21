@@ -101,7 +101,7 @@ fn in_edit(p: vec3<f32>) -> bool {
 
 @compute @workgroup_size(8, 8, 1)
 fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= params.size.x || gid.y >= params.size.y) {
+    if (gid.x >= params.light_size.x || gid.y >= params.light_size.y) {
         return;
     }
     let px = vec2<i32>(gid.xy);
@@ -112,8 +112,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     var moments = vec2<f32>(l, l * l);
     var age = 0.0;
     if (rec.found && (params.history & 1u) != 0u && !in_edit(rec.p)) {
-        let v = params.prev_views[view_of(gid.xy)];
-        let q = project_prev(v, rec.p) - 0.5;
+        let v = params.prev_views[view_of(full_px(gid.xy))];
+        let full = project_prev(v, rec.p);
+        let q = select(prev_light_grid(full), full, full.x < 0.0) - 0.5;
         let base = vec2<i32>(floor(q));
         let f = q - floor(q);
         var w_sum = 0.0;
@@ -123,7 +124,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         for (var i = 0; i < 4; i++) {
             let o = vec2<i32>(i & 1, i >> 1);
             let tap = base + o;
-            if (any(tap < vec2<i32>(0)) || any(tap >= vec2<i32>(params.size))) {
+            if (!on_light_grid(tap)) {
                 continue;
             }
             let prev = unpack_hit(textureLoad(prev_pos_in, tap, 0), textureLoad(prev_info_in, tap, 0));
