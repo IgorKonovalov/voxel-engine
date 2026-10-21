@@ -10,6 +10,10 @@
 //! - `worst_warm` and `tool_warm`: `worst` and `tool` under a second name. The world keeps no
 //!   brick-array pool to reserve; the names pair these readings with the recorded ones.
 //!
+//! - `stages` (feature `edit-stages` only): the `worst` ops through `World::apply_staged`; it
+//!   prints the summed time per stage of the op path per 100 ops, raw and less the clock's own
+//!   cost (one clock read per stage interval, its cost read once up front).
+//!
 //! The `expand` group splits what `Brick::expand` costs per 1000 arrays: the allocation on
 //! fresh heap, the allocator's hot path, the 1 KiB fill, and the allocation on heap that was
 //! touched before.
@@ -201,9 +205,74 @@ fn solid_world_warm() -> World {
     solid_world()
 }
 
+/// The mean cost of one `Instant::now`, in ns, over a million reads.
+#[cfg(feature = "edit-stages")]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the bench's stage timer calibration; feature edit-stages only"
+)]
+fn clock_ns() -> f64 {
+    const N: u32 = 1_000_000;
+    let t = std::time::Instant::now();
+    for _ in 0..N {
+        std::hint::black_box(std::time::Instant::now());
+    }
+    t.elapsed().as_nanos() as f64 / f64::from(N)
+}
+
+/// The `worst` ops through the staged op path. Criterion times the instrumented run; the
+/// table printed after it is the stages' sum per 100 ops over every run criterion made.
+#[cfg(feature = "edit-stages")]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the bench's stage timer; feature edit-stages only"
+)]
+fn stages(c: &mut Criterion, ops: &[EditOp]) {
+    let clock = clock_ns();
+    let mut sum = EditStages::default();
+    let mut runs = 0u64;
+    c.bench_function("stages", |b| {
+        b.iter_custom(|iters| {
+            let mut total = std::time::Duration::ZERO;
+            for _ in 0..iters {
+                let world = solid_world();
+                let t = std::time::Instant::now();
+                for op in ops {
+                    std::hint::black_box(world.apply_staged(op, &mut sum).unwrap());
+                }
+                total += t.elapsed();
+                runs += 1;
+                drop(world);
+            }
+            total
+        })
+    });
+    if runs == 0 {
+        return;
+    }
+    let per = |ns: u64| ns as f64 / runs as f64 / 1000.0;
+    let (mut raw, mut net) = (0.0, 0.0);
+    println!("stages per 100 ops over {runs} runs; one clock read {clock:.1} ns");
+    println!(
+        "{:>10} {:>10} {:>10} {:>10}",
+        "stage", "raw us", "net us", "stamps"
+    );
+    for (i, name) in EditStages::NAMES.iter().enumerate() {
+        let r = per(sum.ns[i]);
+        let stamps = sum.stamps[i] as f64 / runs as f64;
+        let n = r - stamps * clock / 1000.0;
+        raw += r;
+        net += n;
+        println!("{name:>10} {r:>10.1} {n:>10.1} {stamps:>10.0}");
+    }
+    println!("{:>10} {raw:>10.1} {net:>10.1}", "sum");
+}
+
 fn edits(c: &mut Criterion) {
     let spheres = sphere_ops();
     let tools = tool_ops();
+    #[cfg(feature = "edit-stages")]
+    stages(c, &spheres);
     run(c, "worst", solid_world, &spheres);
     run(c, "worst_warm", solid_world_warm, &spheres);
     run(c, "mixed", mixed_world, &spheres);

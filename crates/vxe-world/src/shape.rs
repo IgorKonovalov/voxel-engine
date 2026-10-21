@@ -195,32 +195,29 @@ fn dist2(a: [i64; 3], b: [i64; 3]) -> i64 {
     (0..3).map(|k| (a[k] - b[k]) * (a[k] - b[k])).sum()
 }
 
-/// The spans of a sphere's voxel rows `y` in `ylo..=yhi`, `z` in `zlo..=zhi` (one brick row:
-/// at most 8 of each, with distinct `y % 8` and `z % 8`), clipped to `x_lo..=x_hi`, written to
-/// `out[y % 8 + 8 (z % 8)]` and empty as `(1, 0)`.
+/// The spans of a sphere's voxel rows `y` in `ylo..=yhi`, `z` in `zlo..=zhi`, clipped to
+/// `x_lo..=x_hi`, written to `out[(y - ylo) + ny (z - zlo)]` (`ny = yhi - ylo + 1`; `out`
+/// holds at least `ny` times the `z` count) and empty as `(1, 0)`.
 ///
 /// A row's span is the set of `x` with `(256 x + 128 - cx)² <= rem`, where
 /// `rem = r² - dy² - dz²`; it is an interval about `cx` that grows with `rem`. The rows are
-/// visited `z` ascending, `y` ascending within each `z` (`edit_brick`'s order), and each is
+/// visited `z` ascending, `y` ascending within each `z`, and each is
 /// walked from a neighbouring row's unclipped span (the previous row at the same `z`, or the
 /// first row of the previous `z`): when `rem` grew, each end steps outward while the next
 /// centre is inside; when it shrank, each end steps inward while its centre is outside. Every
 /// step is one squared-distance comparison, so the walked span is exactly the span `isqrt`
-/// solves. A row with no neighbouring span is solved with `isqrt` when it is the brick row's
-/// first row or its span may be long, and otherwise walked outward from the centre nearest
+/// solves. A row with no neighbouring span is solved with `isqrt` when it is the first row
+/// or its span may be long, and otherwise walked outward from the centre nearest
 /// `cx` (it is near the surface, so its span is short).
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one brick row's extent on two axes, the window, and the output"
-)]
 pub(crate) fn sphere_row_spans(
     c: Fixed3,
     r: i64,
     (ylo, yhi): (i64, i64),
     (zlo, zhi): (i64, i64),
     (x_lo, x_hi): (i64, i64),
-    out: &mut [(i64, i64); 64],
+    out: &mut [(i64, i64)],
 ) {
+    let ny = yhi - ylo + 1;
     let [cx, cy, cz] = c.0;
     let r2 = r * r;
     // The nearest-centre start: the voxel whose centre is at or below `cx`, and the next.
@@ -266,8 +263,7 @@ pub(crate) fn sphere_row_spans(
             }
             prev = row;
             let (lo, hi) = (lo.max(x_lo), hi.min(x_hi));
-            out[(y.rem_euclid(8) + 8 * z.rem_euclid(8)) as usize] =
-                if lo <= hi { (lo, hi) } else { (1, 0) };
+            out[((y - ylo) + ny * (z - zlo)) as usize] = if lo <= hi { (lo, hi) } else { (1, 0) };
         }
     }
 }
@@ -476,9 +472,10 @@ mod tests {
 
     /// For 200 seeded spheres (radius 1 to 40 voxels, centres anywhere in fixed point within
     /// ±64 voxels, a quarter of them on a voxel centre with a whole-voxel radius so poles and
-    /// other centres fall exactly on the surface), every voxel row of every brick row, walked
-    /// by `sphere_row_spans` in `edit_brick`'s order (`z` then `y` ascending over the brick
-    /// row's part of the bounds), gives exactly the `isqrt` span of `row_span`.
+    /// other centres fall exactly on the surface), every voxel row walked by
+    /// `sphere_row_spans` (`z` then `y` ascending), both over each brick row's part of the
+    /// bounds and over the whole bounds in one walk, gives exactly the `isqrt` span of
+    /// `row_span`.
     #[test]
     fn walked_spans_equal_solved_spans() {
         let mut state = 0x0014_0003;
@@ -497,28 +494,34 @@ mod tests {
             // would cut it.
             let x_lo = lo[0] + range(&mut state, 0, 3) * i64::from(i % 3 == 1);
             let x_hi = hi[0] - range(&mut state, 0, 3) * i64::from(i % 3 == 2);
-            for bz in lo[2].div_euclid(8)..=hi[2].div_euclid(8) {
-                for by in lo[1].div_euclid(8)..=hi[1].div_euclid(8) {
-                    let ys = ((by * 8).max(lo[1]), (by * 8 + 7).min(hi[1]));
-                    let zs = ((bz * 8).max(lo[2]), (bz * 8 + 7).min(hi[2]));
-                    let mut out = [(i64::MIN, i64::MIN); 64];
-                    sphere_row_spans(Fixed3(c), r, ys, zs, (x_lo, x_hi), &mut out);
-                    for z in zs.0..=zs.1 {
-                        for y in ys.0..=ys.1 {
-                            let (a, b) = out[(y.rem_euclid(8) + 8 * z.rem_euclid(8)) as usize];
-                            let walked = (a <= b).then_some((a, b));
-                            assert_eq!(
-                                walked,
-                                shape.row_span(y, z, x_lo, x_hi),
-                                "sphere {i} {shape:?} row {y} {z} x {x_lo}..={x_hi}"
-                            );
-                            rows += 1;
-                            spans += usize::from(walked.is_some());
-                            let rem = r * r - (centre(y) - c[1]).pow(2) - (centre(z) - c[2]).pow(2);
-                            boundary += usize::from(
-                                rem >= 0 && (x_lo..=x_hi).any(|x| (centre(x) - c[0]).pow(2) == rem),
-                            );
-                        }
+            let whole = ((lo[1], hi[1]), (lo[2], hi[2]));
+            let bricks = (lo[2].div_euclid(8)..=hi[2].div_euclid(8)).flat_map(|bz| {
+                (lo[1].div_euclid(8)..=hi[1].div_euclid(8)).map(move |by| {
+                    (
+                        ((by * 8).max(lo[1]), (by * 8 + 7).min(hi[1])),
+                        ((bz * 8).max(lo[2]), (bz * 8 + 7).min(hi[2])),
+                    )
+                })
+            });
+            for (ys, zs) in std::iter::once(whole).chain(bricks) {
+                let ny = ys.1 - ys.0 + 1;
+                let mut out = vec![(i64::MIN, i64::MIN); (ny * (zs.1 - zs.0 + 1)) as usize];
+                sphere_row_spans(Fixed3(c), r, ys, zs, (x_lo, x_hi), &mut out);
+                for z in zs.0..=zs.1 {
+                    for y in ys.0..=ys.1 {
+                        let (a, b) = out[((y - ys.0) + ny * (z - zs.0)) as usize];
+                        let walked = (a <= b).then_some((a, b));
+                        assert_eq!(
+                            walked,
+                            shape.row_span(y, z, x_lo, x_hi),
+                            "sphere {i} {shape:?} row {y} {z} x {x_lo}..={x_hi}"
+                        );
+                        rows += 1;
+                        spans += usize::from(walked.is_some());
+                        let rem = r * r - (centre(y) - c[1]).pow(2) - (centre(z) - c[2]).pow(2);
+                        boundary += usize::from(
+                            rem >= 0 && (x_lo..=x_hi).any(|x| (centre(x) - c[0]).pow(2) == rem),
+                        );
                     }
                 }
             }

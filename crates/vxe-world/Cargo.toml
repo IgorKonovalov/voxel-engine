@@ -10,6 +10,11 @@ description = "placeholder; see docs/roadmap.md"
 [lints]
 workspace = true
 
+[features]
+# The edit bench's stage timer (`World::apply_staged`, `EditStages`): the only clock reads in
+# this crate. Off by default; `cargo bench -p vxe-world --bench edits --features edit-stages`.
+edit-stages = []
+
 [dependencies]
 
 [dev-dependencies]
