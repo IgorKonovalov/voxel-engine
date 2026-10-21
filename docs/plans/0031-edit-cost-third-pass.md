@@ -203,8 +203,8 @@ No GPU figure moves; nothing here runs on an adapter.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The stage table and the profile | dev | done | committed with this row |
-| 2: The first lever | dev | not started | |
+| 1: The stage table and the profile | dev | done | a49c6a1 |
+| 2: The first lever | dev | done | committed with this row |
 | 3: The second lever | dev | not started | |
 | 4: The quiet-box readings and the line | dev | not started | |
 
@@ -250,6 +250,20 @@ No GPU figure moves; nothing here runs on an adapter.
 - Phase 1: the spans stage already solves each `(y, z)` row once per chunk (the brick row's
   cache covers its 64 rows for every brick); lever 1 removes only the repeat per chunk along
   `x` (215 chunk locks over 100 ops) and the walk restarts per brick row (Phase 1 commit).
+- Phase 2: the lever is Phase 1's `clip` lever, not lever 1: `RowCache` solves every row of
+  its brick row up front for every shape (the sphere as before, the box and capsule by
+  `row_span` over the same window instead of at first use) and builds each brick's shape
+  words from its 64 spans branch-free (`RowCache::words`); an `Inside` brick takes
+  `box_words`; the captured spans are read back from the words (`spans_of`) (Phase 2 commit).
+- Phase 2: `shape.rs` and `benches/edits.rs` are unchanged; full workspace nextest 555 passed, 4 skipped (Phase 2 commit).
+- Phase 2: the capture test pins 2721 brick-edits and spans hash `0x7a19_1902_796c_af86`,
+  read on the Phase 1 tree a49c6a1 and unchanged after (Phase 2 commit).
+- Phase 2 paired reading (Ryzen 9 5900HS, exclusive perf lock, alternated a49c6a1 / Phase 2
+  twice, `--features edit-stages`, NOT quiet: load 11.7 falling to 8.3, `game.exe` 96 %,
+  `gdb` 70 %, other lanes): `worst_warm` 2.1642 / 1.0899 ms, then 1.5200 / 0.9633 ms (-37 %
+  in the second pair); net stage sums 2048.6 / 1120.4 us, 1648.4 / 1013.9 us; second pair
+  `clip` 563.8 to 283.3 us, `words` 250.6 to 22.4 us, `spans` 449.3 to 375.5 us, `kernel`
+  190.2 to 164.5 us. Phase 1's `clip` share was 34 % (Phase 2 commit).
 
 ### Close triggers
 
