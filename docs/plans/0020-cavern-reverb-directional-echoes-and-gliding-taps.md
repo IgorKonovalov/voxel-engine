@@ -1277,3 +1277,9 @@ re-read in Phase 7.
   2.030, 5.977 s against 0.752, 2.249, 6.748 s): calibrate the per-line gains or state the gap.
 - `Output::play_stream` that hands out a stream voice's id, so the fly-through need not reserve
   `VoiceId(u32::MAX)` (review m3, 2026-10-20).
+- **The quiet-box mixer reading** (owner, 2026-10-21, at the close): the absolute figures are
+  recorded from a loaded box (default build 0.6897 ms static, 1.1441 ms turning, load 4.6 to
+  9.3; aligned build 0.657 and 1.110 ms, load 3.2 to 5.5), over the 0.6 and 1.0 ms proposals.
+  The owner accepted them to close. A reading on the default build under `nfr.md` section 9's
+  quiet-box protocol follows; if it stays over, a plan optimises the mixer (the 8-bus fallback
+  is not the first choice, since the direction buses passed the listening).
