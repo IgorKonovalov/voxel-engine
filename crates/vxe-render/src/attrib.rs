@@ -8,7 +8,12 @@ pub const WORKGROUP: u32 = 256;
 /// Most workgroups along one dispatch dimension (the WebGPU default limit).
 const MAX_GROUPS_X: u32 = 65_535;
 
-/// One work-list entry: a brick slot in an attribute page and the brick's origin in voxels.
+/// Set in [`AttribItem::slot`] for a clear item: the pass writes "no plane" (`0xFFFF`) over
+/// the brick's attribute and computes nothing. Slots fit in 29 bits.
+pub const CLEAR_BIT: u32 = 1 << 31;
+
+/// One work-list entry: a brick slot in an attribute page and the brick's origin in voxels;
+/// [`CLEAR_BIT`] set in `slot` makes it a clear item.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct AttribItem {
@@ -39,8 +44,8 @@ pub struct AttribBindings<'a> {
     pub slots_per_shard: u32,
 }
 
-/// The pass, with the buffers it keeps between calls: its uniform, its work list (grown on
-/// demand, never shrunk) and the bind group over them and the mirror's buffers.
+/// The pass, with the buffers it keeps between calls: its uniform, its work list (sized by
+/// [`AttribPass::reserve`] or grown on demand, never shrunk) and the bind group over them and the mirror's buffers.
 pub struct AttribPass {
     pipeline: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
@@ -51,6 +56,8 @@ pub struct AttribPass {
     /// table); rebuilt when the work buffer or one of those is replaced.
     bind: Option<(wgpu::BindGroup, [wgpu::Buffer; 6])>,
     builds: u32,
+    /// Items the first work buffer holds at least; 0 sizes it by the first list.
+    reserve: usize,
 }
 
 /// Fewest items a work buffer holds.
@@ -113,7 +120,14 @@ impl AttribPass {
             work: None,
             bind: None,
             builds: 0,
+            reserve: 0,
         }
+    }
+
+    /// Sizes the work buffer, when it is first built, for at least `items` items, so a caller
+    /// whose lists are bounded builds it once. A list longer than the buffer still grows it.
+    pub fn reserve(&mut self, items: usize) {
+        self.reserve = items;
     }
 
     /// Work buffers built so far: the first at first use, then one each time a list outgrew
@@ -158,7 +172,11 @@ impl AttribPass {
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&params));
         if self.work_capacity() < items.len() {
-            let cap = items.len().next_power_of_two().max(MIN_WORK_ITEMS);
+            let cap = if items.len() <= self.reserve {
+                self.reserve
+            } else {
+                items.len().next_power_of_two().max(MIN_WORK_ITEMS)
+            };
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("attrib_work"),
                 size: (cap * size_of::<AttribItem>()) as u64,

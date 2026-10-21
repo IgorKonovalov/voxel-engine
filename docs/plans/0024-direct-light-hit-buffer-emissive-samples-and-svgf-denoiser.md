@@ -17,7 +17,7 @@
 > switchable until seen; sequenced after Plan 0023 and before ADR-0012's mirror-slot plan;
 > family A with C inside), the two M2 design inputs (the traversal review of 2026-10-17 and
 > `docs/references/voxel-optimizations.md`), `docs/nfr.md` §2 and §3.
-> **Starts after:** [Plan 0023](0023-render-thread-cpu-attribute-hitch-and-streaming-line.md)
+> **Starts after:** [Plan 0023](done/0023-render-thread-cpu-attribute-hitch-and-streaming-line.md)
 > closes (the attribute hitch and the streaming line; this plan adds light extraction to that
 > line and must not be measured under the hitch). ADR-0012's mirror-slot plan (surface-only
 > attributes in size-classed slots) comes **after** this plan: this plan changes what the march

@@ -1,12 +1,15 @@
 # 0023: The render thread's mirror CPU: profile a chunk crossing, then cut the attribute hitch and the streaming line with targeted fixes
 
-> **Status:** approved (owner, 2026-10-20; frame bar credited with the attribute pass's GPU time,
-> option (b)). The dev lane starts once the Plan 0020 or 0022 lane reaches its human phase.
+> **Status:** done (closed 2026-10-21, v0.23.0). Verdict: clean close with four recorded misses;
+> the hitch is cut (`update_attrs` p99 138 to 180 ms down to 5.5 to 6.0 ms, the default flies
+> more frames than plain), the streaming line stays a recorded miss, and Phase 5 was skipped by
+> the owner. Approved (owner, 2026-10-20; frame bar credited with the attribute pass's GPU
+> time, option (b)).
 > **Created:** 2026-10-20
 > **Milestone:** M2 in `docs/roadmap.md` (owed before the lighting plan; it is the
 > "streaming-CPU plan" the roadmap's M1 notes name, merged with the Plan 0013 attribute-hitch
 > followup)
-> **Related ADRs:** [ADR-0017](../adrs/0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md) (the frame loop keeps its shape: bounded, incremental, narrowing on the stream workers; proposed with this plan), [ADR-0013](../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) (the reservation and deferral rules `sync` keeps), [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md) (the attribute pages and "no plane"), [ADR-0003](../adrs/0003-sphere-residency-with-lod-ring-and-edit-persistence.md) (residency bands), [ADR-0004](../adrs/0004-palette-narrowed-sharded-brick-pool.md) and [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md) (the narrowing the workers take over)
+> **Related ADRs:** [ADR-0017](../../adrs/0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md) (the frame loop keeps its shape: bounded, incremental, narrowing on the stream workers; proposed with this plan), [ADR-0013](../../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) (the reservation and deferral rules `sync` keeps), [ADR-0011](../../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md) (the attribute pages and "no plane"), [ADR-0003](../../adrs/0003-sphere-residency-with-lod-ring-and-edit-persistence.md) (residency bands), [ADR-0004](../../adrs/0004-palette-narrowed-sharded-brick-pool.md) and [ADR-0012](../../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md) (the narrowing the workers take over)
 > **Source:** the owner's interview answers, 2026-10-20 (scope, approach, the 250 ms lag, both
 > bars), Plan 0002's Followups (the streaming-CPU plan) and Plan 0013's close (the attribute
 > hitch).
@@ -464,13 +467,13 @@ normals for at most 250 ms". The pass's GPU time stays a recorded figure here. P
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Profile a crossing, and a headless repro | dev | not started | |
-| 2: The shell visits only full neighbours | dev | not started | |
-| 3: Capped attribute pass with carry-over | dev | not started | |
-| 4: Incremental queue, sweep and window shift | dev | not started | |
-| 5: Narrowing and staging on the workers | dev | not started | |
-| 6: Readings against the bars | dev | not started | |
-| 7: The owner's windowed flight | human | not started | |
+| 1: Profile a crossing, and a headless repro | dev | done: `attr_work::build` over `MirrorView` (implemented by `GpuWorld`); unit tests read 1961 shell chunks, 956 968 shell visits, 0 items, and 797 chunks, 408 064 item calls, 408 064 items; `tests/mirror.rs` 37 of 37 on the fallback adapter, the new case's lengths `[1343, 34, 568, 34, 568, 46, 56, 0]` also read on an export of ae2e088; bench medians (exclusive perf lock, load 5.01): eviction frame 170.89 ms, promotion frame 6.332 ms; flights, profile, verdict and `sync` share in Notes | 730f7ed |
+| 2: The shell visits only full neighbours | dev | done: eviction case 50 986 neighbour lookups, 0 shell visits, 0 items; the Phase 1 builder kept as `tests::reference` (its eviction case still reads 956 968 visits); oracle over 64 seeds equal as sorted `(slot, origin)` sets, with and without the other two change sets, 32 046 shell-only items in total; `vxe-render` 66 of 66; bench medians (exclusive perf lock, load 13.71): eviction frame 1.399 ms (Phase 1: 170.89), promotion frame 7.493 ms (Phase 1: 6.332) | 2f66b83 |
+| 3: Capped attribute pass with carry-over | dev | done: `MirrorConfig::attr_cap` (`new` leaves it `usize::MAX`; the fly-through's streaming mirror sets 8192); clear items flagged by `attrib::CLEAR_BIT` (bit 31); lavapipe cases at cap 64 on the 2 x 2 x 1 floor: K = 256, first call 64 compute and 192 clear items, the 192 waiting bricks read all `0xFF`, 4 = ceil(256 / 64) calls, then attribute bytes equal the uncapped mirror's; a carve with 192 waiting has the carved brick and its `Full` neighbours in the next list; a brick freed while waiting, its slot taken by the brick above, ends equal to the uncapped mirror; `vxe-render` 69 of 69, workspace 469 of 469; one default flight (load 14.60, not a reading): `buffer builds: 1 after the first flight frame, 1 at the end`, hash match | 7aabc21 |
+| 4: Incremental queue, sweep and window shift | dev | done: the 300-step walk (r_full 3, r_lod 5, h 1; 295 unit steps over all 26 directions, jumps at 60, 120, 180, 240, `set_radii(2, 4)` at 150) ran 295 queue and 294 sweep oracle checks, equal to the full rebuild and scan; dropping the entering-full shell or the keep-full sweep shell fails it; `the_window_slab_finds_the_chunks_the_key_filter_finds` over 50 shifts; workspace 471 of 471; flights at the tip's code (exclusive perf lock, not quiet): `update` max default 4.749 ms (Phase 1: 37.847), plain 2.350 (15.908); `poll` max default 48.503 (27.344), plain 24.389 (24.866); readings in Notes | b6414e8 |
+| 5: Narrowing and staging on the workers | dev | skipped (owner, 2026-10-21): write_buffer 41.8 % led narrowing ~38 % | 8f2847d (entry profile) |
+| 6: Readings against the bars | dev | done: four flights, default, plain, default, plain, each started at a 1-minute load under 2 under the exclusive perf lock; met: the GPU-credited frame bar, carry-over age, hash match; missed: `update_attrs` p99, streaming p50 (3 of 4 runs), streaming max (4 of 4), plain residency p95 (2 of 2); readings in Close triggers. Quiet re-read (owner's request, 2026-10-21; nothing above 5 % CPU at any start): the same bars met and missed, streaming p50 missed in the 2 plain runs only, plain p95 403 and 385 ms | committed with this row |
+| 7: The owner's windowed flight | human | done (owner, 2026-10-21, session 3, `target/release/flythrough --seed 1`, default look (contour), 2530x1378, stdout in `check-p7.log`): warm-up around the spawn, then sustained fast passes across chunk boundaries both ways and a third direction, then carves. Hitch: "mostly gone", no stalls felt; the frame rate dropped to about 40 fps during the fast passes (owner's read of the display; the log has no per-frame timings). Face-mode lag on newly streamed rock: "non existent", no visible delay. Carves: contour in the same frame. Log: frame line at start cpu 4.159 ms, gpu march 6.803 ms; mirror reserved 3 220 387 776 B of a 3 221 225 472 B budget; `mirror: ... wait for space (deferred chunks)` with deferral streaks up to 161 syncs during the flight; 85 `bench:` carve lines, 0 refused. | |
 
 ### Notes
 
@@ -478,16 +481,221 @@ _(Deviations from the plan, with the commit, stated without justification. Done-
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
 
+- **Phase 1 flights (dev box, RTX 3080 laptop, Phase 1 tree on ae2e088, release with
+  line tables, exclusive perf lock).** Not quiet: other lanes were building, start loads 11.51
+  (default) and 5.00 (plain), after a 25 min wait for load under 2 timed out. Both `return:
+  2 chunks, hash match`.
+  - Default, 2270 flight frames. Streaming CPU p50 5.981, p99 51.692, max 83.681 ms; stages
+    (p50 / p99 / max ms) `update` 0.000 / 10.892 / 37.847, `poll` 0.003 / 15.037 / 27.344,
+    `apply_events` 0.000 / 6.724 / 8.945, `sync` 5.877 / 21.967 / 47.579. `update_attrs` p50
+    3.646, p99 119.140, max 380.954 ms; list build 3.521 / 119.139 / 380.913, recording 0.077 /
+    0.689 / 3.046. Counters p50 / p99 / max: shell visits 19 520 / 752 984 / 930 128, dirty
+    visits 0 / 0 / 675, item calls 16 896 / 21 504 / 23 552, lookups 76 816 / 2 116 960 /
+    2 632 770. Work list 4773 / 5745 / 7771. Attribute GPU 2.588 / 4.596 / 6.354 ms. Residency
+    p95 365 ms.
+  - The 85 default frames over 16 ms (17.955 to 380.954 ms): 94 to 1906 shell chunks, 45 872
+    to 930 128 shell visits, at most 40 chunks taken whole, at most 7332 items. The lowest
+    shell share of `visit` plus `attr_item` calls on them is 0.918.
+  - Plain, 2597 flight frames. Streaming CPU p50 7.262, p99 60.402, max 81.806 ms; stages
+    `update` 0.000 / 12.570 / 15.908, `poll` 0.159 / 18.436 / 24.866, `apply_events` 0.000 /
+    6.584 / 10.957, `sync` 6.821 / 23.507 / 51.514. Residency p95 509 ms.
+- **Phase 1 profile.** `perf record -F 999 -g --call-graph dwarf` on a third default flight
+  (start load 11.91, 2046 frames, `update_attrs` p99 148.202 ms, hash match): 607 903
+  samples, 13 chunks lost. The render thread is tid = pid (42 150 samples). Top 15 self
+  symbols, `perf report --no-children -g none --tid <pid> --percentage relative --sort sym`:
+  `attr_work::shell_pass` 24.98 %, `GpuWorld::upload_record` 9.13, `RandomState::hash_one<&ChunkCoord>`
+  5.55, `DefaultHasher::write` 4.74, `Streamer::stats` 4.15, `wgpu_core Queue::write_buffer`
+  3.89, `RawTable<[i32; 3]>::reserve_rehash` 3.57, `Packed::entry_matches` 2.14,
+  `attr_work::whole_pass` 2.04, `flythrough::mips_ram` 1.91, `World::lod` 1.79, `cfree` 1.55,
+  `GpuWorld::enqueue` 1.48, `GpuWorld::sync` 1.15, `Streamer::needs_job` 1.14.
+- **Phase 1 profile, deviation.** Dwarf unwinding gave a call chain for 8039 of the 42 150
+  render-thread samples, so the callers of the out-of-line hash symbols are not attributed.
+  `shell_pass`'s self time was split by source line instead (`--sort srcline`): hashbrown and
+  SipHash lines (`sse2.rs`, `equality.rs`, `map.rs`, `bitmask.rs`, `tag.rs`, `raw.rs`,
+  `sip.rs`) are about 61 % of it, `attr_work.rs` lines about 8 %.
+- **Phase 1 verdict: confirmed.** Shell share at least 0.918 on every default frame over 16 ms;
+  the builder's largest self time is `shell_pass`, 12 times `whole_pass`.
+- **Phase 1, `sync`'s largest share** (whole-flight self time, not a p50 split): narrowing.
+  `upload_record` is 9.13 % of the thread, 56.07 % of it at `gpu_world.rs:1799` and about
+  67 % at lines 1793 to 1801 (the plane-to-index bit loop of the inlined `upload_brick`); the
+  palette scan line 1648 is 3.02 % of it. Then `entry_matches` 2.14 %, `write_buffer` 3.89 %,
+  `enqueue` 1.48, `release_page` 0.23, `stage` 0.22, `flush_stage` 0.18.
+- **Phase 1 deviation.** `AttrWorkStats` counts `item_calls`, `dirty_visits` and
+  `shell_visits` separately (`visits()` sums the last two) in place of one `visits` field.
+  `GpuWorld` gains `prepare_attrs`, `encode_attrs` and `attr_stats`; `update_attrs_timed`
+  calls the first two. Outside Phase 1's file list: `Cargo.lock` (criterion) and
+  `crates/vxe-render/tests/mirror.rs` (the case its done-when names).
+- **Phase 2.** `AttrWorkStats` gains `neighbour_lookups`; the fly-through's report lines do
+  not print it (`apps/flythrough` is outside Phase 2's file list). The bench is unchanged.
+- **Phase 3.** The re-uploaded bricks' neighbourhoods count toward `attr_cap`; the queue
+  supplies the rest, so a list exceeds the cap only when they alone do. A brick's shell entry
+  queues as a brick, a chunk written whole as its coordinate; the list deduplicates within one
+  call, not across the queue (a brick can be computed twice). `attr_cap` is set on the
+  streaming mirror only; the level mirror is uncapped. The carry-over age is read before each
+  `prepare_attrs` (how long the oldest waiting entry has waited) through
+  `GpuWorld::attr_queue_age`. New API: `attr_work::build_split`, `AttrWorkStats::clears`,
+  `GpuWorld::attr_list`, `attr_queue_age`, `attr_buffer_builds`, `AttribPass::reserve`.
+  Outside the file list: `apps/flythrough/tests/level_mirror.rs` (its `MirrorConfig` literal
+  gains `attr_cap`).
+- **Phase 4 flights (dev box, binary of the Phase 4 tree, exclusive perf lock).** Default:
+  start load 7.80, 1904 frames, hash match; streaming CPU p50 9.302, p99 85.750, max 137.326
+  ms; stages (p50 / p99 / max) `update` 0.001 / 2.758 / 4.749, `poll` 0.219 / 35.455 /
+  48.503, `apply_events` 0.000 / 11.256 / 21.378, `sync` 8.505 / 44.296 / 95.871; residency
+  p95 1763 ms; `update_attrs` p50 4.730, p99 33.136, max 78.045 ms; carry-over age p99 69.5,
+  max 121.8 ms. Plain: start load 5.29, 3247 frames, hash match; streaming CPU p50 5.061, p99
+  35.678, max 72.147 ms; `update` 0.000 / 1.219 / 2.350, `poll` 0.002 / 12.585 / 24.389,
+  `apply_events` 0.000 / 5.246 / 10.291, `sync` 4.994 / 18.122 / 43.043; residency p95 460 ms.
+- **Default residency p95 across this plan's default flights** (none gated): 365 (Phase 1),
+  548 (Phase 1 perf run), 1049 (Phase 3), 1763 ms (Phase 4); syncs with a deferral 72, 112,
+  226, 200.
+- **Phase 4.** The incremental sweep also covers several unit steps between two polls when
+  their sum is a unit step; otherwise it scans. A chunk inserted outside its band joins a
+  recheck set the next sweep visits. Test hooks `Streamer::set_incremental_oracle` and
+  `oracle_checks` are public and `#[doc(hidden)]`. The window shift uses the slab when it
+  holds no more chunks than the mirror holds keys, else filters the keys, in
+  `leaving_window`.
+- **Phase 5 entry profile (dev box, b6414e8 code, exclusive perf lock, not quiet: start
+  load 3.28 after a 5 min wait for under 2).** One plain flight of a release build with line
+  tables and `-C force-frame-pointers=yes` (`CARGO_TARGET_DIR=target/fp`), under `perf record
+  -F 999 --call-graph fp`: 682 871 samples, 2903 frames, hash match, streaming CPU p50 6.076,
+  p99 37.410, max 65.248 ms, `sync` p50 5.965 ms, residency p95 467 ms. The render thread
+  (tid = pid) has 38 525 samples, 16 839 of them under `GpuWorld::sync`. Each is put on the
+  frame nearest its leaf among: `Queue::write_buffer` 41.8 %; `upload_record` self 33.6 %;
+  `entry_matches`, `first_appearance` 8.8 %; `sync` self 5.7 %; `enqueue` 4.8 %; the fit check
+  2.6 %; `drop_record` 1.1 %; `stage` 0.6 %; `flush_stage` outside `write_buffer` 0.6 %;
+  `unqueue` 0.5 %. `upload_record`'s self time by source line: 71.94 % in `upload_brick`'s
+  lines, 2.38 % in the palette scan, 12.85 % in `core` and `std` lines, 10 % in other
+  `gpu_world.rs` lines.
+- **Phase 5, `write_buffer`.** Its samples under `sync`: 53.8 % its own self time, 24.5 %
+  unresolved `libc`, 2.6 % `gpu_allocator` free-list, 2.5 % the NVIDIA driver, the rest
+  `wgpu_hal` buffer creation, mapping and transitions under 2 % each. Callers: `flush_stage`
+  6558 samples, `sync` (inlined record and table flushes) 248, `upload_record` 227.
+- **Phase 5, deviations.** The entry profile used frame pointers, not `--call-graph dwarf`: a
+  dwarf profile of a plain flight at the same code (start load 4.22, 649 160 samples) gave a
+  call chain for 8964 of the render thread's 36 845 samples, and for 40 of the 5003 whose
+  leaf is in `libc`. The shares are of the whole flight's samples, not of `sync`'s p50 frame.
+- **Phase 5 decision (owner, 2026-10-21):** option (a), skip Phase 5 and run Phase 6 on the
+  Phase 4 code. Nothing of Phase 5 is implemented.
+- **Phase 6 deviation.** The autopilot's `frame bar` line (`T`, `G`, `F_d`, `F_d*`) is new in
+  `apps/flythrough/src/main.rs`, outside Phase 6's file list; it lands in the Phase 6 commit.
+- **Phase 6 quiet-box protocol.** Every start read a 1-minute load under 2, but another
+  process was above 7 % CPU at each start (`ps` lifetime averages: python3 97.3 and 81.1 %,
+  then game.exe 88.6 to 90.6 %). End loads read 7.34 to 10.01.
+- **Phase 6, the default look's residency.** Both default runs lowered `r_full` to 12 of 16
+  under mirror pressure (4 radius changes, peak pressure 0.9114) and mirrored about 39 900
+  chunks, against plain's 73 000 at `r_full` 16; the default flew 5904 and 6616 frames against
+  plain's 3054 and 3442, and 5894 of 5904 and 6606 of 6616 of its frames read unready-near.
+- **Phase 6 re-reads (2026-10-21, after the owner stopped python3 and game.exe; same binary).**
+  A first set of four (start loads 1.20, 1.98, 1.92, 1.72) ran while Telegram held 57 to 70 %
+  of one core in `top` (8 % in `ps`'s lifetime average). It read plain p95 490 and 488 ms and
+  2743 frames in each plain run. Then two single plain flights, with Telegram at 5.9 % and
+  then idle: the Phase 1 binary (ae2e088 plus counters) read p95 383 ms over 4000 frames
+  (start load 1.71), the tip's 389 ms over 4191 (start load 1.86). The quiet set followed
+  (start loads 1.56, 1.69, 1.60, 1.83; `top` showed nothing above 5 % at each start; end
+  loads 6.41 to 7.36). Its readings are in Close triggers.
+- **Phase 6, the default look against the baseline.** Every default run here lowered `r_full`
+  under mirror pressure: to 12 in the first set and the quiet set, to 13 in the
+  Telegram-perturbed set. Plan 0013's default runs at the baseline also lowered it (lowest
+  12, final 13). The default mirrors about 40 000 chunks, plain about 73 000.
+- **Phase 6, the cap.** In both default runs the work list's max (7669, 7673) stayed under
+  `attr_cap` 8192: no brick waited, no clear item was issued.
+- **Followups noticed.** In the plain dwarf profile, `flythrough::Run::draw` is 16.65 % of
+  the render thread's self time, 67 % of it at hashbrown's `equality.rs:157`, and
+  `Streamer::stats` is 5.80 %. Neither is in this plan's scope.
+
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature. Phases 1 to 4 and 6; Phase 5 skipped by the owner.
+- **Public API changed:**
+  - `vxe-render`: new module `attr_work` (`MirrorView`, `AttrWorkStats`, `build`,
+    `build_split`), re-exported `AttrWorkStats` and `MirrorView`;
+    `MirrorConfig::attr_cap` (new field, `usize::MAX` in `new`); `GpuWorld::prepare_attrs`,
+    `encode_attrs`, `attr_stats`, `attr_list`, `attr_queue_age`, `attr_buffer_builds`;
+    `update_attrs` returns compute plus clear items; `attrib::CLEAR_BIT`,
+    `AttribPass::reserve`.
+  - Shader interface: `attrib.wgsl`'s work item, bit 31 of the slot word marks a clear item.
+  - `vxe-world`: `Streamer::set_incremental_oracle` and `oracle_checks`, `#[doc(hidden)]`.
+- **Budget readings** (dev box, the RTX 3080 laptop; code of the Phase 6 commit, built as
+  8f2847d plus the `frame bar` line; `flythrough --autopilot --headless --seed 1`, plain with
+  `--look plain`; exclusive perf lock; start loads 1.82, 1.87, 1.95, 1.98 in run order D1,
+  P1, D2, P2):
+  - `nfr.md` §2 streaming line, 1.0 ms: p50 D1 1.862, P1 5.513, D2 0.006, P2 4.977 ms
+    (bar met in D2 only); p99 20.974, 42.670, 18.370, 33.217 ms (recorded); max 57.809,
+    70.856, 47.993, 61.588 ms (bar 16 ms, missed in all four). Stages (p50 / p99 / max ms):
+    `sync` D1 1.209 / 14.041 / 26.307, P1 5.348 / 19.708 / 40.618, D2 0.004 / 13.433 / 24.826,
+    P2 4.939 / 17.299 / 36.880; `poll` max 21.905, 30.548, 18.844, 22.200; `update` max
+    1.787, 3.178, 2.021, 2.787.
+  - §2 attribute pass, render-thread CPU (proposed line): `update_attrs` p99 D1 8.235, D2
+    7.356 ms (bar 4 ms, missed by 4.235 and 3.356 ms); max 16.134, 14.553 ms; list build p99
+    8.056, 7.063 ms. Carry-over age max 0.0 and 0.0 ms (bar 250 ms, met).
+  - §2 frame rate, GPU-credited (bar `F_d* >= 0.95 F_p`): D1 `T` 59 990.8 ms, `G` 2543.5 ms,
+    `F_d` 5904, `F_d*` 6165.4 against P1's 3054 (bar 2901.3, met); D2 `T` 60 012.0, `G`
+    2369.5, `F_d` 6616, `F_d*` 6888.0 against P2's 3442 (bar 3269.9, met). Raw `F_d` against
+    `F_p`: 5904 / 3054, 6616 / 3442.
+  - Attribute pass GPU (recorded): p50 / p99 / max D1 1.683 / 3.580 / 4.118 ms over 1537
+    frames with work, D2 1.418 / 3.299 / 3.867 ms over 1536. Work list p50 / p99 / max D1
+    0 / 5348 / 7669, D2 0 / 5325 / 7673 bricks.
+  - §5 residency latency, plain p95 (bar at most 381 ms): P1 466, P2 452 ms (missed by 85 and
+    71 ms); default D1 274, D2 247 ms.
+  - §5 edits persist across eviction: `return: 2 chunks, hash match` in all four.
+  - **Quiet re-read**, same binary, runs D1, P1, D2, P2 at start loads 1.56, 1.69, 1.60,
+    1.83 (nothing above 5 % CPU in `top`). Streaming p50 0.006, 4.896, 0.006, 5.020 ms; p99
+    12.346, 23.888, 12.897, 24.311 ms; max 27.738, 60.302, 22.241, 38.653 ms. `update_attrs`
+    p99 D1 5.528, D2 6.024 ms (bar 4 ms; over by 1.528 and 2.024); max 14.596, 13.727 ms.
+    Frame bar: D1 `T` 60 001.4, `G` 2051.3, `F_d` 9775, `F_d*` 10 121.0 against P1's 4111
+    (bar 3905.5); D2 `T` 60 021.8, `G` 2099.8, `F_d` 9563, `F_d*` 9909.7 against P2's 4159
+    (bar 3951.1). Plain residency p95 403, 385 ms (bar 381 ms; over by 22 and 4); default
+    188, 191 ms. Carry-over age max 0.0 and 0.0 ms. Attribute GPU p50 / p99 / max D1 1.276 /
+    2.823 / 3.202, D2 1.247 / 3.138 / 3.455 ms; work list max 7381, 7606. Peak RSS 906 141 696,
+    984 469 504, 941 666 304, 1 030 320 128 B. Hash match in all four. Default `r_full` 12 of
+    16 (4 radius changes) in both.
+  - **Telegram-perturbed re-read**, start loads 1.20, 1.98, 1.92, 1.72, Telegram 57 to 70 %
+    of one core: streaming p50 5.437, 5.415, 5.674, 5.510 ms, max 87.710, 75.296, 85.464,
+    79.647 ms; `update_attrs` p99 8.763, 8.990 ms; `F_d*` 3583.2 and 3426.0 against plain's
+    2743 and 2743; plain p95 490, 488 ms; carry-over age 0; hash match in all four.
+  - **Plain p95 with no other load:** the Phase 1 binary (ae2e088 plus counters) 383 ms over
+    4000 frames; the tip 389 ms over 4191 frames, then 403 and 385 ms in the quiet set.
+  - §3 memory: process peak RSS D1 993 742 848, P1 1 020 108 800, D2 965 152 768, P2
+    974 503 936 B; peak mirror live 2 864 318 452 B (default), 1 890 675 580 B (plain) of
+    3 220 387 776 B allocated; the attribute work buffer is built once (1 after the first
+    flight frame, 1 at the end, both default runs). Prepared results: none (Phase 5 skipped).
+- **Gate at the tip** (Phase 6 tree, before its commit): `cargo build --workspace` 0;
+  `cargo nextest run --workspace` 0, 471 passed, 3 skipped (after `scripts/build-guests.sh`);
+  `cargo test --doc --workspace` 0, 7 passed; `cargo clippy --workspace --all-targets -- -D
+  warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` 0 (advisories, bans,
+  licenses, sources ok; one unmatched `MPL-2.0` allowance warning); `check-doc-links`,
+  `check-comment-hygiene`, `check-index-rows` 0; hook tests 59 of 59.
+- **Outstanding `human` phases:** none (Phase 7 flown 2026-10-21).
 
 ## Followups
 
-- The attribute pass's GPU cost against Plan 0013's 1.0 ms proposal (unowned).
+Owner, 2026-10-21: the close is accepted with the four missed bars as the followups below.
+
+- The attribute pass's GPU cost against Plan 0013's 1.0 ms proposal (unowned). The quiet
+  Phase 6 reading is p99 2.8 to 3.1 ms, max 3.2 to 3.5 ms.
+- **The streaming line's upload copies** (unowned, recorded miss). With the attribute hitch
+  gone, plain still reads streaming p50 4.9 to 5.0 ms and max 38 to 60 ms against 1.0 and
+  16 ms. The Phase 5 entry profile puts `Queue::write_buffer` (41.8 %) ahead of narrowing
+  (about 38 %), which is the case ADR-0017's Outcome names: the rejected staging ring
+  (Alternative B) comes back as a new ADR, not as Phase 5 as written. Owner, 2026-10-21:
+  the copies get their own ADR and plan, after Plan 0024 and not folded into ADR-0012's
+  mirror-slot plan.
+- **`attr_cap` tuning** (diagnostic, for the plan that next touches the attribute pass). No
+  flight engaged the cap: the work list's max was 7381 to 7673 against 8192, and the carry-over
+  age read 0 ms. The residual `update_attrs` p99 (5.5 to 6.0 ms against 4 ms) is the list build
+  under the cap. Measure a cap of 4096 and lower against that p99 and the 250 ms carry-over age.
+- **The windowed frame rate under fast flight** (owner, Phase 7). The owner read about 40 fps
+  during sustained fast passes at 2530x1378 with the mirror at its 3 GiB budget (`r_full` 13)
+  and deferral streaks of up to 2015 syncs (`check-p7.log`, not committed; the Implementation
+  log's "up to 161" is the last streak, not the longest). No per-frame timing reached stdout,
+  so the drop is not attributed. The fly-through owes a windowed frame-time summary (p50, p99
+  and max of CPU and march GPU, printed at exit); ADR-0012's mirror-slot plan owns the
+  saturation.
+- **The autopilot's unready-near counter** uses `r_full - 2` from the start. Once mirror
+  pressure lowers `r_full` to 12, almost every default frame counts as unready (5894 of 5904),
+  so the counter carries no signal for the default look. Recompute the ring on a radius change.
+- **Plain residency p95** reads 385 to 403 ms against this plan's 381 ms bar, and the pre-plan
+  binary read 383 ms in the same conditions: the bar was set at one reading, inside the noise.
+  `nfr.md` §5 keeps the 500 ms proposal, which every quiet plain run meets.

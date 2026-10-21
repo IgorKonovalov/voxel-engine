@@ -3,7 +3,7 @@
 
 mod support;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::TryRecvError;
 use std::sync::{Arc, Barrier, mpsc};
@@ -483,4 +483,52 @@ fn chunks_in_ball_counts_the_lattice_points() {
     assert_eq!(chunks_in_ball(24), 57_777);
     assert_eq!(chunks_in_ball(25), 65_267);
     assert_eq!(chunks_in_ball(-1), 0);
+}
+
+/// A seeded 300-step walk of one focus: unit steps in all 26 directions, a 10-chunk jump
+/// every 60 steps, and new radii at step 150. With the incremental oracle on, every
+/// incremental queue update is compared, job for job with its in-flight and wanted-since
+/// state, with a full rebuild from the same state, and every incremental sweep's evictions
+/// and demotions with a full scan of residency; a difference panics.
+#[test]
+fn the_incremental_queue_and_sweep_equal_the_full_rebuild_over_a_walk() {
+    let world = World::new(&test_table());
+    let mut s = Streamer::new(Arc::new(UniformSource(3)), config(3, 5, 1, 2));
+    s.set_incremental_oracle(true);
+    let mut rng = SplitMix64(0x0023_0004);
+    let steps: Vec<[i32; 3]> = (0..27)
+        .map(|i| [i % 3 - 1, i / 3 % 3 - 1, i / 9 - 1])
+        .filter(|d| *d != [0; 3])
+        .collect();
+    assert_eq!(steps.len(), 26);
+    let mut at = [0i32; 3];
+    let mut unit = 0;
+    let mut seen = HashSet::new();
+    for step in 0..300 {
+        if step > 0 && step % 60 == 0 {
+            at[0] += 10;
+        } else if step > 0 {
+            let d = steps[rng.range(0, 25) as usize];
+            seen.insert(d);
+            at = [0, 1, 2].map(|k| at[k] + d[k]);
+            unit += 1;
+        }
+        if step == 150 {
+            s.set_radii(2, 4);
+        }
+        s.update(&world, &[VoxelCoord(at.map(|v| v * 64 + 5))]);
+        s.poll(&world);
+        if step % 7 == 0 {
+            s.wait_idle(&world);
+        }
+    }
+    s.wait_idle(&world);
+    let (queues, sweeps) = s.oracle_checks();
+    println!(
+        "{unit} unit steps, {} directions; {queues} queue and {sweeps} sweep checks",
+        seen.len()
+    );
+    assert_eq!(seen.len(), 26);
+    assert_eq!(queues, unit);
+    assert!(sweeps > 100, "{sweeps} incremental sweeps");
 }

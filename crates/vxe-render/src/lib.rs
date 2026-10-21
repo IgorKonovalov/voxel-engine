@@ -5,6 +5,7 @@
 //! [`GpuWorld`] mirrors a `vxe_world::World` into the ADR-0002 buffers; [`Marcher`] draws it
 //! and [`Presenter`] puts the result on a surface; [`HudOverlay`] draws text over it.
 
+pub mod attr_work;
 pub mod attrib;
 pub mod camera;
 pub mod font8x8;
@@ -15,6 +16,7 @@ pub mod marcher;
 pub mod present;
 pub mod readback;
 
+pub use attr_work::{AttrWorkStats, MirrorView};
 pub use camera::Camera;
 pub use gpu_world::{GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncStats, Window};
 pub use hud::{HudColour, HudOverlay};
