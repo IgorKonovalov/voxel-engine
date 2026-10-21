@@ -1423,13 +1423,13 @@ impl GpuWorld {
         }
         let old = self.window();
         let new = ChunkExtent::new(new_min, [0, 1, 2].map(|k| new_min[k] + self.window_size[k]));
-        let leaving: Vec<ChunkCoord> = self
-            .mirrored
-            .keys()
-            .chain(self.pending_d2.keys())
-            .copied()
-            .filter(|&c| !new.contains(c))
-            .collect();
+        let leaving = leaving_window(
+            old,
+            new,
+            self.mirrored.len() + self.pending_d2.len(),
+            |c| self.mirrored.contains_key(&c) || self.pending_d2.contains_key(&c),
+            || self.mirrored.keys().chain(self.pending_d2.keys()).copied(),
+        );
         // Dropped while the window is still the old one, so their table entries are cleared;
         // the entering chunks wrap onto the same entries.
         for c in leaving {
@@ -2397,6 +2397,36 @@ fn d2(a: ChunkCoord, b: ChunkCoord) -> i64 {
         .sum()
 }
 
+/// The chunks held (`held(c)`) that leave the window when it moves from `old` to `new`. Every
+/// held chunk lies in `old`. When the slab `old - new` has no more chunks than the `count`
+/// held, it is looked up chunk by chunk; otherwise the held chunks (`keys`, possibly with
+/// repeats) are filtered. Either way the result holds each leaving chunk once.
+fn leaving_window<K: Iterator<Item = ChunkCoord>>(
+    old: ChunkExtent,
+    new: ChunkExtent,
+    count: usize,
+    held: impl Fn(ChunkCoord) -> bool,
+    keys: impl FnOnce() -> K,
+) -> Vec<ChunkCoord> {
+    let overlap: i64 = (0..3)
+        .map(|k| {
+            let lo = old.min.0[k].max(new.min.0[k]);
+            let hi = old.max.0[k].min(new.max.0[k]);
+            i64::from((hi - lo).max(0))
+        })
+        .product();
+    let volume: i64 = old.size().iter().map(|&v| i64::from(v)).product();
+    if (volume - overlap) as u64 <= count as u64 {
+        box_difference(old, new)
+            .into_iter()
+            .filter(|&c| held(c))
+            .collect()
+    } else {
+        let set: HashSet<ChunkCoord> = keys().filter(|&c| !new.contains(c)).collect();
+        set.into_iter().collect()
+    }
+}
+
 /// The chunks of `a` that are not in `b`.
 fn box_difference(a: ChunkExtent, b: ChunkExtent) -> Vec<ChunkCoord> {
     let inside = |k: usize, v: i32| v >= b.min.0[k] && v < b.max.0[k];
@@ -2451,6 +2481,86 @@ fn first_appearance(p: &Packed) -> Vec<MaterialId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 50 seeded shifts of -2..=2 chunks per axis of a 7-chunk window holding a seeded mix
+    /// of mirrored and pending chunks: the slab lookup leaves the chunks the filter over every
+    /// held key leaves, and clears the same wrapped table entries.
+    #[test]
+    fn the_window_slab_finds_the_chunks_the_key_filter_finds() {
+        let side = 7;
+        let mut z = 0x0023_0004_u64;
+        let mut next = |n: u64| {
+            z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            vxe_world::hash::mix64(z) % n
+        };
+        let wrap = |c: ChunkCoord| {
+            let r = c.0.map(|v| v.rem_euclid(side) as usize);
+            r[0] + 7 * (r[1] + 7 * r[2])
+        };
+        let mut min = [0i32; 3];
+        let mut slab_used = 0;
+        for shift in 0..50 {
+            let old = ChunkExtent::new(min, min.map(|v| v + side));
+            let mut mirrored = HashSet::new();
+            let mut pending = HashSet::new();
+            for x in old.min.0[0]..old.max.0[0] {
+                for y in old.min.0[1]..old.max.0[1] {
+                    for zz in old.min.0[2]..old.max.0[2] {
+                        let c = ChunkCoord([x, y, zz]);
+                        match next(4) {
+                            0 => {}
+                            1 => {
+                                mirrored.insert(c);
+                            }
+                            2 => {
+                                pending.insert(c);
+                            }
+                            _ => {
+                                mirrored.insert(c);
+                                pending.insert(c);
+                            }
+                        }
+                    }
+                }
+            }
+            let d = [0; 3].map(|_| next(5) as i32 - 2);
+            min = [0, 1, 2].map(|k| min[k] + d[k]);
+            let new = ChunkExtent::new(min, min.map(|v| v + side));
+            let count = mirrored.len() + pending.len();
+            let got = leaving_window(
+                old,
+                new,
+                count,
+                |c| mirrored.contains(&c) || pending.contains(&c),
+                || mirrored.iter().chain(pending.iter()).copied(),
+            );
+            let slab = box_difference(old, new).len();
+            if slab <= count {
+                slab_used += 1;
+            }
+            let got_set: HashSet<ChunkCoord> = got.iter().copied().collect();
+            assert_eq!(got.len(), got_set.len(), "shift {shift}: a repeat");
+            let want: HashSet<ChunkCoord> = mirrored
+                .iter()
+                .chain(pending.iter())
+                .copied()
+                .filter(|&c| !new.contains(c))
+                .collect();
+            assert_eq!(got_set, want, "shift {shift} by {d:?}");
+            let table = |leave: &HashSet<ChunkCoord>| {
+                let mut t = vec![None; 343];
+                for &c in mirrored.iter().chain(pending.iter()) {
+                    t[wrap(c)] = Some(c);
+                }
+                for &c in leave {
+                    t[wrap(c)] = None;
+                }
+                t
+            };
+            assert_eq!(table(&got_set), table(&want), "shift {shift}");
+        }
+        assert!(slab_used >= 25, "the slab path ran {slab_used} of 50 times");
+    }
 
     #[test]
     fn box_difference_is_the_entering_slab() {

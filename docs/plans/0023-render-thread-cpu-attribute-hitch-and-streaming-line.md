@@ -466,8 +466,8 @@ normals for at most 250 ms". The pass's GPU time stays a recorded figure here. P
 |---|---|---|---|
 | 1: Profile a crossing, and a headless repro | dev | done: `attr_work::build` over `MirrorView` (implemented by `GpuWorld`); unit tests read 1961 shell chunks, 956 968 shell visits, 0 items, and 797 chunks, 408 064 item calls, 408 064 items; `tests/mirror.rs` 37 of 37 on the fallback adapter, the new case's lengths `[1343, 34, 568, 34, 568, 46, 56, 0]` also read on an export of ae2e088; bench medians (exclusive perf lock, load 5.01): eviction frame 170.89 ms, promotion frame 6.332 ms; flights, profile, verdict and `sync` share in Notes | 730f7ed |
 | 2: The shell visits only full neighbours | dev | done: eviction case 50 986 neighbour lookups, 0 shell visits, 0 items; the Phase 1 builder kept as `tests::reference` (its eviction case still reads 956 968 visits); oracle over 64 seeds equal as sorted `(slot, origin)` sets, with and without the other two change sets, 32 046 shell-only items in total; `vxe-render` 66 of 66; bench medians (exclusive perf lock, load 13.71): eviction frame 1.399 ms (Phase 1: 170.89), promotion frame 7.493 ms (Phase 1: 6.332) | 2f66b83 |
-| 3: Capped attribute pass with carry-over | dev | done: `MirrorConfig::attr_cap` (`new` leaves it `usize::MAX`; the fly-through's streaming mirror sets 8192); clear items flagged by `attrib::CLEAR_BIT` (bit 31); lavapipe cases at cap 64 on the 2 x 2 x 1 floor: K = 256, first call 64 compute and 192 clear items, the 192 waiting bricks read all `0xFF`, 4 = ceil(256 / 64) calls, then attribute bytes equal the uncapped mirror's; a carve with 192 waiting has the carved brick and its `Full` neighbours in the next list; a brick freed while waiting, its slot taken by the brick above, ends equal to the uncapped mirror; `vxe-render` 69 of 69, workspace 469 of 469; one default flight (load 14.60, not a reading): `buffer builds: 1 after the first flight frame, 1 at the end`, hash match | committed with this row |
-| 4: Incremental queue, sweep and window shift | dev | not started | |
+| 3: Capped attribute pass with carry-over | dev | done: `MirrorConfig::attr_cap` (`new` leaves it `usize::MAX`; the fly-through's streaming mirror sets 8192); clear items flagged by `attrib::CLEAR_BIT` (bit 31); lavapipe cases at cap 64 on the 2 x 2 x 1 floor: K = 256, first call 64 compute and 192 clear items, the 192 waiting bricks read all `0xFF`, 4 = ceil(256 / 64) calls, then attribute bytes equal the uncapped mirror's; a carve with 192 waiting has the carved brick and its `Full` neighbours in the next list; a brick freed while waiting, its slot taken by the brick above, ends equal to the uncapped mirror; `vxe-render` 69 of 69, workspace 469 of 469; one default flight (load 14.60, not a reading): `buffer builds: 1 after the first flight frame, 1 at the end`, hash match | 7aabc21 |
+| 4: Incremental queue, sweep and window shift | dev | done: the 300-step walk (r_full 3, r_lod 5, h 1; 295 unit steps over all 26 directions, jumps at 60, 120, 180, 240, `set_radii(2, 4)` at 150) ran 295 queue and 294 sweep oracle checks, equal to the full rebuild and scan; dropping the entering-full shell or the keep-full sweep shell fails it; `the_window_slab_finds_the_chunks_the_key_filter_finds` over 50 shifts; workspace 471 of 471; flights at the tip's code (exclusive perf lock, not quiet): `update` max default 4.749 ms (Phase 1: 37.847), plain 2.350 (15.908); `poll` max default 48.503 (27.344), plain 24.389 (24.866); readings in Notes | committed with this row |
 | 5: Narrowing and staging on the workers | dev | not started | |
 | 6: Readings against the bars | dev | not started | |
 | 7: The owner's windowed flight | human | not started | |
@@ -534,6 +534,23 @@ each. Empty is fine.)_
   `GpuWorld::attr_list`, `attr_queue_age`, `attr_buffer_builds`, `AttribPass::reserve`.
   Outside the file list: `apps/flythrough/tests/level_mirror.rs` (its `MirrorConfig` literal
   gains `attr_cap`).
+- **Phase 4 flights (dev box, binary of the Phase 4 tree, exclusive perf lock).** Default:
+  start load 7.80, 1904 frames, hash match; streaming CPU p50 9.302, p99 85.750, max 137.326
+  ms; stages (p50 / p99 / max) `update` 0.001 / 2.758 / 4.749, `poll` 0.219 / 35.455 /
+  48.503, `apply_events` 0.000 / 11.256 / 21.378, `sync` 8.505 / 44.296 / 95.871; residency
+  p95 1763 ms; `update_attrs` p50 4.730, p99 33.136, max 78.045 ms; carry-over age p99 69.5,
+  max 121.8 ms. Plain: start load 5.29, 3247 frames, hash match; streaming CPU p50 5.061, p99
+  35.678, max 72.147 ms; `update` 0.000 / 1.219 / 2.350, `poll` 0.002 / 12.585 / 24.389,
+  `apply_events` 0.000 / 5.246 / 10.291, `sync` 4.994 / 18.122 / 43.043; residency p95 460 ms.
+- **Default residency p95 across this plan's default flights** (none gated): 365 (Phase 1),
+  548 (Phase 1 perf run), 1049 (Phase 3), 1763 ms (Phase 4); syncs with a deferral 72, 112,
+  226, 200.
+- **Phase 4.** The incremental sweep also covers several unit steps between two polls when
+  their sum is a unit step; otherwise it scans. A chunk inserted outside its band joins a
+  recheck set the next sweep visits. Test hooks `Streamer::set_incremental_oracle` and
+  `oracle_checks` are public and `#[doc(hidden)]`. The window shift uses the slab when it
+  holds no more chunks than the mirror holds keys, else filters the keys, in
+  `leaving_window`.
 
 ### Close triggers
 
