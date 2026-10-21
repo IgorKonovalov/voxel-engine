@@ -1,13 +1,20 @@
 # 0027: Mirror uploads through a staging belt and copy commands: the streaming line's copies
 
-> **Status:** in-progress: every phase implemented; awaiting the close review (2026-10-21)
+> **Status:** done (closed 2026-10-21, v0.26.0). Verdict: closed with two recorded misses;
+> `Queue::write_buffer` is gone from `sync`, the quiet-box plain `sync` p50 reads 1.40 to
+> 1.66 ms (3.28 to 3.69 ms before, bar 3.0) and every mirror byte is unchanged (readback
+> equality, goldens, level census). The belt's own share (25.4 % of `sync` against under 5 %,
+> the write into mapped memory) is a miss the owner accepted; Phase 3's frame-CPU p50 sits
+> outside 10 % of the 30-frame median in 2 of 8 runs, a sampling-window difference. The
+> owner's windowed 30 fps (against Plan 0023's eyeballed 40) is not attributed to the belt and
+> goes to Plan 0028's windowed reading (Followups).
 > **Created:** 2026-10-21
 > **Milestone:** M2 in `docs/roadmap.md` (the streaming line, `nfr.md` §2, a recorded miss
 > since Plan 0002; this is the plan ADR-0017's Outcome asked for)
-> **Related ADRs:** [ADR-0022](../adrs/0022-mirror-uploads-through-a-staging-belt-and-copy-commands.md)
-> (proposed with this plan), [ADR-0017](../adrs/0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md)
+> **Related ADRs:** [ADR-0022](../../adrs/0022-mirror-uploads-through-a-staging-belt-and-copy-commands.md)
+> (proposed with this plan), [ADR-0017](../../adrs/0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md)
 > (the frame loop's shape, which stands; its Outcome names this plan),
-> [ADR-0013](../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) (the reservation and
+> [ADR-0013](../../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) (the reservation and
 > deferral rules `sync` keeps)
 > **Source:** Plan 0023's Phase 5 entry profile and its Followups; the owner's call of
 > 2026-10-21 (the copies get their own ADR and plan after Plan 0024, apart from the
@@ -363,3 +370,26 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 ## Followups
 
 - Narrowing on the stream workers (ADR-0017's hook), if the line still misses after Plan 0028.
+- Close review (2026-10-21): the belt's 25.4 % (`BufferViewMut::drop` after the copy into the
+  mapped chunk). Stage the narrowed voxels straight into the belt slice, or read the chunks'
+  memory type, in Plan 0028 or after it (`nfr.md` §2).
+- Close review: the windowed frame rate. The owner read about 30 fps at 2560x1440 against
+  Plan 0023 Phase 7's about 40 at 2530x1378, but the 40 was read off the display with no
+  summary, and in this flight the march timer was on for 4326 of 5245 frames, where
+  `MarchTimer::read_ms` waits for the whole submission after the submit, so CPU and GPU ran
+  serially. The two flights are not comparable, and nothing in the headless pairs points at
+  the belt (plain `sync` p50 halved, the default flew more frames). Plan 0028's windowed
+  reading flies once with the overlay hidden and once shown, and reads the `frames:` line of
+  each. If the serial wait itself is wanted out of the windowed figure, a timer that reads
+  the previous frame's query is a small `vxe-render` change for the plan that next touches
+  the HUD.
+- Close review: the windowed `update + poll + sync` p50 read 4.43 ms against the headless
+  plain 1.72 to 1.99 ms, with the mirror at its 3 GiB budget and 47 deferral streaks: Plan
+  0028's footprint, read again there.
+- Close review: one streaming step of about 0.9 s (frame CPU max 888.6 ms, `update + poll +
+  sync` max 885.4 ms) in the windowed flight is unattributed. The stage split of
+  `stream.stages_ms` printed with the `frames:` max would place it.
+- Close review, nit: in `apps/flythrough/src/main.rs`'s tests, the line "`--walk` and `G`
+  refuse walk mode alike while streaming" (orphaned before this plan) now heads
+  `the_unready_ring_is_recomputed_on_set_radii`'s doc comment; it belongs above
+  `walk_mode_is_refused_while_streaming`.

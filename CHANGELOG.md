@@ -6,6 +6,13 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-21
+
+Plan 0027 (a minor bump: public API broken and added; ADR-0022 accepted with an Outcome). Mirror uploads through a staging belt. `GpuWorld::sync` takes the frame's `CommandEncoder` and writes every staged run (pool slots, masks, records, table runs, material rows) into a `wgpu::util::StagingBelt` slice of 4 MiB chunks with a `copy_buffer_to_buffer` recorded into that encoder, recalled on submit; `Queue::write_buffer` is gone from `sync`. The mirror's bytes are unchanged (readback equality under a 16 MiB budget, every golden byte for byte). A sync that leaves the belt holding more than `BELT_KEEP_CHUNKS` (3) chunks replaces it, so an unbudgeted first sync's burst is released. On a quiet dev box plain `sync` p50 reads 1.40 to 1.66 ms (3.28 to 3.69 ms before); `nfr.md` section 2's 1.0 ms line and the plan's under-5 % bar for the belt's own share (25.4 %) stay recorded misses, accepted by the owner. The fly-through prints a `frames:` line at every exit (p50, p99 and max of frame CPU, `update + poll + sync` and march GPU), a `staging belt` line on the autopilot and `--frames` exits, and its autopilot's unready-near ring follows `r_full`.
+
+- **Changed: `GpuWorld::sync(world, queue, encoder)`**; the caller submits the encoder before anything reads the mirror. `SyncStats::writes` counts belt copy commands.
+- **Added: `GpuWorld::belt_chunks`, `GpuWorld::belt_trims`, `BELT_CHUNK_BYTES` (re-exported at the crate root) and `gpu_world::BELT_KEEP_CHUNKS`.**
+
 ## [0.25.0] - 2026-10-21
 
 Plan 0031 (a minor bump: a new cargo feature; no default-build API change). Edit cost, third pass. `World::apply` builds each brick's eight shape words straight from the op's row spans, solved once per op (`OpRows`: a sphere's rows walked by `sphere_row_spans` over the op's whole bounds, another shape's solved at first use), instead of a per-brick 64-entry span array and `shape_words`; an `Inside` brick takes `box_words`. Voxels, results and every pinned hash are unchanged, and a new test pins the `worst` ops' 2721 captured brick-edits and their spans hash. The feature `edit-stages` on `vxe-world` adds a stage timer (`World::apply_staged`, `EditStages`, both doc-hidden) and the edit bench's `stages` arm; the default build reads no clock. On a quiet dev box `worst_warm` reads 0.77 ms (1.32 ms for the previous tree in the same window) and the fly-through `B` line 0.99 to 1.00 ms, and `nfr.md` section 4's edit-cost line returns to 2.0 ms on the dev box.
