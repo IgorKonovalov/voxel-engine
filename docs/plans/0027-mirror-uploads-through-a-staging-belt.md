@@ -284,6 +284,31 @@ each. Empty is fine.)_
   first locked instruction after `copy_from_slice` into the mapped chunk); 355 (2.4 %) in
   `copy_buffer_to_buffer` recording. The memcpy itself has almost no samples of its own.
   Not met as stated.
+- Phase 2, quiet re-read (owner's option (c), 2026-10-21): same binaries, exclusive perf lock,
+  memory cap; before each run a gate held until the 1-minute load was under 2 and no process
+  but the `claude` sessions was above 7 % CPU over 3 s (start loads 0.26 to 1.91, top other
+  process 0.7 to 2.3 %); alternated base, p1 per look, three rounds.
+  | reading | base (3 runs) | p1 (3 runs) | bar |
+  |---|---|---|---|
+  | plain `sync` p50 | 3.344, 3.278, 3.687 ms | 1.397, 1.662, 1.439 ms | at most 3.0 ms |
+  | plain `update + poll + sync` p50 | 3.395, 3.325, 3.783 ms | 1.831, 1.994, 1.715 ms | at most 3.2 ms |
+  | plain `sync` p99 / max | 8.940 / 15.080, 8.701 / 19.998, 12.353 / 35.615 ms | 5.941 / 8.786, 6.346 / 8.842, 6.087 / 9.607 ms | none |
+  | plain frames flown | 5696, 5805, 5280 | 8296, 8183, 8299 | none |
+  | plain residency p95 | 329, 327, 393 ms | 261, 258, 262 ms | under 500 ms |
+  | default `update_attrs` p99 | 3.971, 4.047, 3.916 ms | 3.727, 3.700, 3.609 ms | within Plan 0023 Phase 6 (5.528, 6.024) |
+  | default carry-over age max | 0, 0, 0 ms | 0, 0, 0 ms | 0 ms |
+  | default residency p95 | 151, 147, 150 ms | 129, 131, 129 ms | under 500 ms |
+  | default frames flown | 15 735, 15 282, 15 585 | 19 273, 19 730, 19 851 | at least plain's |
+  | return hash | match x6 | match x6 | match |
+  | belt peak chunks | n/a | plain 2, default 1; 0 trims | at most 3 |
+- Phase 2, quiet profile re-take (gate start load 1.48, frame-pointer build of 843c5a3, one
+  plain flight, 8383 frames, hash match, `sync` p50 1.102 ms): render thread 43 876 samples,
+  14 739 under `sync`; `upload_record`/`upload_brick` 43.2 %, the belt 25.4 %,
+  `entry_matches`/`first_appearance` 9.9 %, flushes and `write_masks` 6.4 %, the fit check
+  4.8 %, `select` 3.2 %, `sync` self 3.2 %, `drop_record` 1.8 %, `stage` 0.9 %, `unqueue`
+  0.7 %, `enqueue` 0.6 %; `Queue::write_buffer` no samples. The belt's 3749: 3027 (20.5 %) in
+  `BufferViewMut::drop`, 339 (2.3 %) in `copy_buffer_to_buffer` recording. The under-5 % bar is
+  not met.
 - Resume note (delete when Phase 3 lands): Phase 3 is written and held uncommitted as
   `target/p27/phase3.patch` in this worktree (`git apply` it): a `frames:` line at every
   run's exit from `RunTimes` in the HUD state, and a `NearRing` the autopilot recomputes from
