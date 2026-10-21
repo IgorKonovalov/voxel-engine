@@ -572,7 +572,7 @@ such.
 | 3: The light pass: one sample, one shadow ray, the dark cave | dev | done | 7ee7bd6 |
 | 4: The coarse shadow walk | dev | done | a414473 |
 | 5: Temporal accumulation, and history that dies in an edit box | dev | done | 1a907f7 |
-| 6: The a-trous filter and the composite, and the carve that does not ghost | dev | blocked: done-when not met as stated (Notes) | 5f08a2e |
+| 6: The a-trous filter and the composite, and the carve that does not ghost | dev | done at the amended bars, bar 1 second clause missed (Notes) | 5f08a2e, committed with this row |
 | 7: Near-emitter candidates and bounded light extraction | dev | not started | |
 | 8: Reservoir reuse against the flat list | dev | not started | |
 | 9: A-SVGF's gradient as the other history killer | dev | not started | |
@@ -662,15 +662,14 @@ each. Empty is fine.)_
   214/255 (after the clamp: p99 3/255, max 53/255). The lamp-geometry checks
   (`headlamp_shadows_only_remove_light`'s darker-pixel count, the slab band, the asymmetric
   view, the identity tone map) run with the filter off; their goldens are blessed filtered.
-- Phase 6 done-when not met as stated: (1) "no pixel inside the carve's dilated aabb within
-  2/255 of its pre-carve value": 6147 of 19 056 such pixels are within 2/255; 3615 of them (at
-  the first reading) show the ore's own emission, which no history carries, and others are
-  rim surfaces the carve left in place, whose fresh one-frame estimate the filter brings back
-  to the converged value. Counting only pixels whose pre-carve hit lay inside the carved
-  sphere, 2025 of 11 198 stay within 2/255. (2) "farther than 16 pixels ... no more than
-  8/255": 2 of 28 980 pixels exceed it (12 to 15/255 over three readings); a static frame with
-  no carve changes up to 53/255 at its worst pixel. (3) "The filter pass reads under 3.0 ms":
-  4.56 to 4.73 ms (`docs/nfr.md` §2, "Denoise").
+- Phase 6 at the amended bars: bar 1's age clause holds (19 056 hit pixels in the dilated box,
+  0 not at age 0); its second clause is missed: of 8110 pixels whose non-emissive pre-carve
+  hit voxel the carve removed, 1779 stay within 2/255. All 1779 show rock before and after,
+  2646 of the 3558 counted over the test's two rigs lie 3 or more voxels behind the removed
+  surface (rock revealed behind it) and 2332 were at 8/255 or less before (dark). The test
+  prints the count instead of asserting it. Bar 2 holds: 2 of 28 980 far pixels over 8/255;
+  the flushed control 780 of 28 980. Full-resolution a-trous at 1080p reads 4.56 to 4.73 ms
+  (`docs/nfr.md` §2, "Denoise"); its 3.0 ms bar is Phase 10's.
 
 Phase 1 observations: hitmask and normals of the three scenes byte-identical to ae58f0c; the
 identity-tone-mapped carve's largest channel difference from ae58f0c's is 0/255; the
@@ -702,19 +701,6 @@ than 16 pixels from the box's projection, 2 of them changed by more than 8/255, 
 headlamp 24 929 / 3872, lod 24 431 / 3465, translucent 13 733 / 353, cutaway_level 224 / 0,
 look_contour 27 259 / 3643, look_detail 32 898 / 21 073, look_gradient27 27 651 / 3593,
 look_trilinear8 25 639 / 3071, hud 15 831 / 2109.
-
-### Resume notes (2026-10-21, delete when Phase 6 lands)
-
-- Stopped at Phase 6 on its done-when (Notes, "Phase 6 done-when not met as stated"); the
-  owner's ruling on the three bars is owed before Phase 7.
-- Candidate fixes: for the no-ghost bar, count only pixels whose surface the carve removed and
-  whose material emits nothing, or test instead that every pixel in the dilated box reads age
-  0 and matches a history-free frame of the same index; for the far bar, compare against the
-  same frame without the carve; for the 3.0 ms bar, a 16-byte guide texture per pixel (relative
-  position and normal) instead of the 24-byte hit record per tap, or the half-resolution tier
-  (Phase 9, the plan's Risks fallback).
-- Gate at 5f08a2e: build, `cargo nextest run --workspace` (564 passed, 4 skipped), clippy
-  `-D warnings`, `cargo fmt --check`, comment hygiene and doc links all clean.
 
 ### Close triggers
 

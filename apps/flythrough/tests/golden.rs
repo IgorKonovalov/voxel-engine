@@ -912,12 +912,125 @@ fn box_projection(camera: &Camera, (min, max): (VoxelCoord, VoxelCoord)) -> [f32
     r
 }
 
+/// What the frame right after a carve shows: hit pixels in the dilated box and those not at
+/// age 0; pixels whose pre-carve hit voxel (non-emissive) the carve removed and those within
+/// 2/255 of their pre-carve value; pixels farther than 16 pixels from the box's projection
+/// and those changed by more than 8/255.
+struct CarveReading {
+    in_box: usize,
+    in_box_aged: usize,
+    removed: usize,
+    removed_stale: usize,
+    far: usize,
+    far_over: usize,
+}
+
+/// The unit normal a hit record's snorm16 octahedral pair encodes.
+fn octa16_decode(u: u16, v: u16) -> [f32; 3] {
+    let p = [u as i16 as f32 / 32767.0, v as i16 as f32 / 32767.0];
+    let mut n = [p[0], p[1], 1.0 - p[0].abs() - p[1].abs()];
+    if n[2] < 0.0 {
+        let s = |x: f32| if x >= 0.0 { 1.0 } else { -1.0 };
+        n = [
+            (1.0 - n[1].abs()) * s(n[0]),
+            (1.0 - n[0].abs()) * s(n[1]),
+            n[2],
+        ];
+    }
+    let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+    n.map(|c| c / l)
+}
+
+/// Applies `carve` to `world`, syncs `rig`, tells the frame its box (or, with `flush`, more
+/// boxes than a frame takes, flushing all history), steps one frame and reads it against the
+/// pre-carve image `before`, hit positions `pos` and records `info`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the carve, the rig and the pre-carve frame"
+)]
+fn carve_reading(
+    world: &World,
+    rig: &mut LookRig,
+    carve: &EditOp,
+    before: &[u8],
+    pos: &[[f32; 4]],
+    info: &[[u16; 4]],
+    table: &MaterialTable,
+    flush: bool,
+) -> CarveReading {
+    let r = world.apply(carve).unwrap();
+    let aabb = r.aabb.expect("the carve removes rock");
+    rig.gpu.sync(world, &rig.queue).unwrap();
+    let boxes = if flush { vxe_render::MAX_EDITS + 1 } else { 1 };
+    for _ in 0..boxes {
+        rig.frame.invalidate(aabb.0.0, aabb.1.0);
+    }
+    let camera = vein_camera();
+    rig.frame.step(
+        &rig.device,
+        &rig.queue,
+        &rig.gpu,
+        &camera,
+        &LightParams::headlamp(),
+    );
+    let after = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let now = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let age = readback::read_rgba16f(&rig.device, &rig.queue, rig.frame.moments());
+    let rect = box_projection(&camera, aabb);
+    let mut out = CarveReading {
+        in_box: 0,
+        in_box_aged: 0,
+        removed: 0,
+        removed_stale: 0,
+        far: 0,
+        far_over: 0,
+    };
+    let in_box = |p: [f32; 4]| {
+        p[3] < 1e30
+            && (0..3).all(|k| p[k] >= (aabb.0.0[k] - 1) as f32 && p[k] <= (aabb.1.0[k] + 2) as f32)
+    };
+    for i in 0..now.len() {
+        let diff = (0..3)
+            .map(|k| after[4 * i + k].abs_diff(before[4 * i + k]))
+            .max()
+            .unwrap_or(0);
+        if in_box(now[i]) {
+            out.in_box += 1;
+            out.in_box_aged += usize::from(age[i][2] != 0.0);
+        }
+        let emits = table
+            .get(info[i][2])
+            .is_some_and(|m| m.emission.iter().any(|&e| e > 0.0));
+        if info[i][3] & 1 == 1 && !emits {
+            let n = octa16_decode(info[i][0], info[i][1]);
+            let v = VoxelCoord([0, 1, 2].map(|k| (pos[i][k] - 0.01 * n[k]).floor() as i32));
+            if world.material_at(v) == Some(AIR) {
+                out.removed += 1;
+                out.removed_stale += usize::from(diff <= 2);
+            }
+        }
+        let (col, row) = (
+            (i as u32 % WIDTH) as f32 + 0.5,
+            (i as u32 / WIDTH) as f32 + 0.5,
+        );
+        let dx = (rect[0] - col).max(col - rect[2]).max(0.0);
+        let dy = (rect[1] - row).max(row - rect[3]).max(0.0);
+        if dx.max(dy) > 16.0 {
+            out.far += 1;
+            out.far_over += usize::from(diff > 8);
+        }
+    }
+    out
+}
+
 /// `dark_cave.png`: the carved scene from a pose facing an ore vein, the lamp off, lit only by
 /// the ore, after 32 accumulated frames. With the ore's emission off the same view is black
-/// in every pixel. A radius-6 carve into the wall the vein lights (its brightest rock pixel
-/// 15 to 25 voxels away) is followed by one frame, and the test prints how many pixels whose
-/// hit lies in the carve's dilated `aabb` stay within 2/255 of their value before it, and the
-/// largest change farther than 16 pixels from the box's projection.
+/// in every pixel. On the frame right after a radius-6 carve into the wall the vein lights (its
+/// brightest rock pixel 15 to 25 voxels away), every hit pixel in the carve's dilated `aabb`
+/// reads age 0 (the test also prints how many pixels whose non-emissive pre-carve hit voxel
+/// the carve removed stay within 2/255 of their pre-carve value), and at most 0.1 % of the pixels farther than
+/// 16 pixels from the box's projection change by more than 8/255; the same carve with all
+/// history flushed exceeds that bar.
 #[test]
 fn dark_cave_golden_is_lit_by_its_ore_alone() {
     let Some((world, mut rig)) =
@@ -944,8 +1057,8 @@ fn dark_cave_golden_is_lit_by_its_ore_alone() {
     );
 
     // The carve at the brightest rock pixel 15 to 25 voxels away, and the frame right after
-    // it.
-    let camera = vein_camera();
+    // it; the control makes the same carve on a second settled rig with every pixel's history
+    // flushed.
     let pos = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
     let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
     let target = (0..pos.len())
@@ -954,65 +1067,52 @@ fn dark_cave_golden_is_lit_by_its_ore_alone() {
         .expect("a lit rock pixel");
     let at = pos[target];
     println!(
-        "carve at pixel ({}, {}), {:?}, t {:.1}, colour {:?}",
+        "carve at pixel ({}, {}), {:?}, t {:.1}",
         target as u32 % WIDTH,
         target as u32 / WIDTH,
         &at[..3],
-        at[3],
-        &before[4 * target..4 * target + 3]
+        at[3]
     );
-    let r = world
-        .apply(&EditOp::sphere(
-            Fixed3([0, 1, 2].map(|k| (at[k] * FIXED_ONE as f32) as i64)),
-            6 * FIXED_ONE,
-            Mode::Carve,
-        ))
-        .unwrap();
-    let aabb = r.aabb.expect("the carve removes rock");
-    rig.gpu.sync(&world, &rig.queue).unwrap();
-    rig.frame.invalidate(aabb.0.0, aabb.1.0);
-    rig.frame.step(
-        &rig.device,
-        &rig.queue,
-        &rig.gpu,
-        &camera,
-        &LightParams::headlamp(),
+    let carve = EditOp::sphere(
+        Fixed3([0, 1, 2].map(|k| (at[k] * FIXED_ONE as f32) as i64)),
+        6 * FIXED_ONE,
+        Mode::Carve,
     );
-    let after = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
-    let pos = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
-    let rect = box_projection(&camera, aabb);
-    let (mut inside, mut stale, mut far, mut worst, mut far_over) = (0, 0, 0, 0u8, 0);
-    for (i, p) in pos.iter().enumerate() {
-        let (col, row) = (
-            (i as u32 % WIDTH) as f32 + 0.5,
-            (i as u32 / WIDTH) as f32 + 0.5,
-        );
-        let diff = (0..3)
-            .map(|k| after[4 * i + k].abs_diff(before[4 * i + k]))
-            .max()
-            .unwrap_or(0);
-        let in_box = p[3] < 1e30
-            && (0..3).all(|k| p[k] >= (aabb.0.0[k] - 1) as f32 && p[k] <= (aabb.1.0[k] + 2) as f32);
-        if in_box {
-            inside += 1;
-            stale += usize::from(diff <= 2);
-        }
-        let dx = (rect[0] - col).max(col - rect[2]).max(0.0);
-        let dy = (rect[1] - row).max(row - rect[3]).max(0.0);
-        if dx.max(dy) > 16.0 {
-            far += 1;
-            worst = worst.max(diff);
-            far_over += usize::from(diff > 8);
-        }
-    }
+    let table = flythrough::with_emissive_ore(&cave_materials());
+    let reading = carve_reading(
+        &world, &mut rig, &carve, &before, &pos, &info, &table, false,
+    );
+    let (cworld, mut control) = settled_dark_cave(&table).unwrap();
+    let control = carve_reading(
+        &cworld,
+        &mut control,
+        &carve,
+        &before,
+        &pos,
+        &info,
+        &table,
+        true,
+    );
     println!(
-        "carve: {inside} pixels hit inside the dilated box, {stale} within 2/255 of before; {far} pixels farther than 16 px from its projection {rect:?}, largest change {worst}/255"
+        "carve: {} hit pixels in the dilated box, {} not at age 0; {} pixels whose non-emissive pre-carve voxel was carved, {} within 2/255 of before; far: {} of {} over 8/255 (control, history flushed: {} of {})",
+        reading.in_box,
+        reading.in_box_aged,
+        reading.removed,
+        reading.removed_stale,
+        reading.far_over,
+        reading.far,
+        control.far_over,
+        control.far
     );
-    assert!(inside > 0);
-    // Readings, not checks: the stated bars (no pixel in the box within 2/255 of before, at
-    // most 8/255 of change beyond 16 pixels) are not met here; Plan 0024's log records why.
-    println!(
-        "carve readings: {stale} of {inside} in the box within 2/255, {far_over} far pixels over 8/255"
+    assert!(reading.in_box > 0 && reading.removed > 0);
+    assert_eq!(reading.in_box_aged, 0, "pixels in the box kept history");
+    // `removed_stale` is a reading: rock revealed behind the removed rock, most of it as dark,
+    // reads within 2/255 of it in about a fifth of those pixels (Plan 0024's log).
+    let bar = |r: &CarveReading| r.far_over * 1000 <= r.far;
+    assert!(bar(&reading), "the carve disturbs pixels far from it");
+    assert!(
+        !bar(&control),
+        "the flushed control meets the far bar, which then bites on nothing"
     );
 
     let (_, off) = settled_dark_cave(&cave_materials()).unwrap();
