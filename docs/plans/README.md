@@ -15,7 +15,6 @@ state from `git log`. Completed plans move to `done/`.
 | [0028](0028-size-classed-mirror-slots-and-surface-only-attributes.md) | Size-classed mirror slots: the packed brick's bytes in the pool, no chunk palette, contour attributes for surface voxels only | approved | M2, ADR-0012's third step. After Plans 0024 and 0027. |
 | [0029](0029-indirect-light-probe-volume.md) | Indirect light from a probe volume that scrolls with the camera | approved | M2, ADR-0023 (proposed). After Plan 0024. |
 | [0030](0030-temporal-upscaler.md) | A temporal upscaler of our own: jittered rays, reprojection by hit position, and a sharpening pass | approved | M2, ADR-0024 (proposed). After Plan 0024; independent of Plan 0029. |
-| [0031](0031-edit-cost-third-pass.md) | Edit cost, third pass: a profile of the planar path, then its largest shares, to put the `B` line back under 2 ms | approved | `nfr.md` section 4. Independent; `vxe-world` and its bench. |
 <!-- roster:end -->
 
 ## Recently closed
@@ -23,6 +22,7 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0031](done/0031-edit-cost-third-pass.md) | Edit cost, third pass: a stage profile, shape words from the spans and one span solve per op; the `B` line at 1.0 ms, the line back to 2.0 ms | 2026-10-21, v0.25.0 |
 | [0020](done/0020-cavern-reverb-directional-echoes-and-gliding-taps.md) | Cavern reverb: a late tail sized by the room the listener sees, echoes from their walls, taps that glide, and the player's own voice in the cave | 2026-10-21, v0.24.0 |
 | [0023](done/0023-render-thread-cpu-attribute-hitch-and-streaming-line.md) | The render thread's mirror CPU: the attribute hitch cut with a narrowed shell and a capped pass, an incremental stream queue; the streaming line still missed | 2026-10-21, v0.23.0 |
 | [0022](done/0022-a-falling-region-crushes-sub-threshold-voxels.md) | A falling region crushes the sub-threshold voxels under it and piles them as rubble, and the logic tells a wedge from a refusal and a landing | 2026-10-20, v0.22.0 |

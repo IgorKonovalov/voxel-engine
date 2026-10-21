@@ -153,7 +153,7 @@ streaming line (render-thread CPU p50 about 7 ms, p99 52 to 61 ms against 1.0 ms
 rays in the streamed world (6.69 ms at 1080p against 3.0 ms), both on the dev reference. The
 budgets stand. The §4 edit-cost miss carries forward from Plan 0001 to Plan 0003 (closed 2026-10-17,
 v0.4.1), which cut the `worst` bench from 4.6 to 3.56 ms on a quiet dev box with no result or
-hash moved; the owner kept the 2 ms figure. Plan 0014 (closed 2026-10-17, v0.7.0) is the second pass: a brick-array pool, a sphere span walk and an analytic capsule row cut `worst` to 3.19-3.26 ms (3.03-3.05 ms with a warm pool) and `tool` from 8.05 to 6.78-6.80 ms. The §4 miss carries forward: the row write bounds the cost inside ADR-0002's representation, and the owner chose a representation: ADR-0012 (accepted 2026-10-17), whose CPU-format step is Plan 0021. Plan 0021 closed 2026-10-20 (v0.18.0): the planar edit kernel reads the warm worst case at 1.34 to 1.52 ms on the dev box (not quiet; 3.03 ms before) and the fly-through `B` line at 1.52 ms. The owner held the 2 ms figure on the dev box (2026-10-20), so the line is met there; there is no baseline-GPU reading. A quiet-box re-read the same day (2796062) did not reproduce those figures: `worst_warm` 1.79 ms, and the `B` line 2.06 to 2.09 ms, with an unchanged `vxe-world`. The owner raised the line to 2.2 ms on the dev box and planned one more optimization pass, drafted 2026-10-21 as [Plan 0031](plans/0031-edit-cost-third-pass.md).
+hash moved; the owner kept the 2 ms figure. Plan 0014 (closed 2026-10-17, v0.7.0) is the second pass: a brick-array pool, a sphere span walk and an analytic capsule row cut `worst` to 3.19-3.26 ms (3.03-3.05 ms with a warm pool) and `tool` from 8.05 to 6.78-6.80 ms. The §4 miss carries forward: the row write bounds the cost inside ADR-0002's representation, and the owner chose a representation: ADR-0012 (accepted 2026-10-17), whose CPU-format step is Plan 0021. Plan 0021 closed 2026-10-20 (v0.18.0): the planar edit kernel reads the warm worst case at 1.34 to 1.52 ms on the dev box (not quiet; 3.03 ms before) and the fly-through `B` line at 1.52 ms. The owner held the 2 ms figure on the dev box (2026-10-20), so the line is met there; there is no baseline-GPU reading. A quiet-box re-read the same day (2796062) did not reproduce those figures: `worst_warm` 1.79 ms, and the `B` line 2.06 to 2.09 ms, with an unchanged `vxe-world`. The owner raised the line to 2.2 ms on the dev box and planned one more optimization pass: [Plan 0031](plans/done/0031-edit-cost-third-pass.md) (closed 2026-10-21, v0.25.0) builds each brick's shape words straight from row spans solved once per op, and on a quiet dev box reads `worst_warm` 0.77 ms and the `B` line 0.99 to 1.00 ms (8dad5ca), so the owner returned the line to 2.0 ms on the dev box, met there; there is no baseline-GPU reading.
 
 **Next, before M2's lighting:** a streaming-CPU plan (incremental queue, residency sweep and
 window shift; narrowing and staging on workers), drafted 2026-10-20 as
@@ -275,8 +275,7 @@ mirror-slot step, after Plans 0024 and 0027),
 [Plan 0029](plans/0029-indirect-light-probe-volume.md) (ADR-0023: indirect light from a probe
 volume that scrolls with the camera, the owner's choice over a per-pixel bounce) and
 [Plan 0030](plans/0030-temporal-upscaler.md) (ADR-0024: a temporal upscaler of our own over
-an FSR 2 port). [Plan 0031](plans/0031-edit-cost-third-pass.md) is the edit-cost pass M1's
-paragraph names.
+an FSR 2 port). The edit-cost pass M1's paragraph names, Plan 0031, closed 2026-10-21.
 
 **Goal:** the consumer's P0 rendering bar. Few lights, emissive voxels, destruction, no ghosting.
 The quality reference is the Sibenik cathedral in Laine & Karras 2010, Figure 1. That image is

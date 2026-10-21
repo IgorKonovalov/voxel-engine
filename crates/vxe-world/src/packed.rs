@@ -871,6 +871,21 @@ impl Brick {
         count: &mut impl FnMut(MaterialId, u32),
         st: &mut PackedStats,
     ) -> Option<([u8; 3], [u8; 3])> {
+        let bounds = self.edit_planar_uncanonical(mode, shape, count, st);
+        self.canonicalize(st);
+        bounds
+    }
+
+    /// [`Brick::edit_planar`] without the closing [`Brick::canonicalize`]: the brick may be
+    /// left non-canonical, and the caller canonicalizes it before anyone else reads it. The op
+    /// path's stage timer reads the two halves apart.
+    pub(crate) fn edit_planar_uncanonical(
+        &mut self,
+        mode: KernelMode<'_>,
+        shape: &[u64; LAYERS],
+        count: &mut impl FnMut(MaterialId, u32),
+        st: &mut PackedStats,
+    ) -> Option<([u8; 3], [u8; 3])> {
         if let Self::Uniform(m) = *self {
             mode.target(m)?;
             if shape.iter().all(|&w| w == 0) {
@@ -885,15 +900,13 @@ impl Brick {
             Repr::Wide(v) => wide_edit(v, mode, shape, count),
             _ => planar_edit(packed, mode, shape, count, st),
         };
-        let bounds = bounds_of(&changed);
-        self.canonicalize(st);
-        bounds
+        bounds_of(&changed)
     }
 
     /// Moves a `Full` brick to the class of its palette, or to `Uniform` when it is all air
     /// or all one material; a `Wide` box is re-encoded when it may have fallen to 16 or fewer
     /// materials.
-    fn canonicalize(&mut self, st: &mut PackedStats) {
+    pub(crate) fn canonicalize(&mut self, st: &mut PackedStats) {
         let Self::Full(Packed(packed)) = self else {
             return;
         };

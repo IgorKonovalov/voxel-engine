@@ -793,3 +793,53 @@ fn a_reversed_box_in_range_is_an_empty_edit() {
     assert_eq!(r, EditResult::default());
     assert_eq!(world_hash(&world), before);
 }
+
+/// The edit bench's `worst` ops: 100 radius-10 carves at distinct seeded voxels within ±100
+/// of the origin, on a solid world over chunks `[-2, 2)^3`.
+fn worst_ops() -> Vec<EditOp> {
+    let mut out: Vec<[i32; 3]> = Vec::new();
+    let mut state = 0x5EED_0004u64;
+    while out.len() < 100 {
+        let v = [0; 3].map(|_| {
+            state = vxe_world::hash::mix64(state);
+            (state % 201) as i32 - 100
+        });
+        if !out.contains(&v) {
+            out.push(v);
+        }
+    }
+    out.into_iter()
+        .map(|v| EditOp::sphere(centre_of_voxel(v), 10 * FIXED_ONE, Mode::Carve))
+        .collect()
+}
+
+/// Every brick-edit of the `worst` ops that reaches the row write, in op order, with its 64
+/// row spans: the count and the hash of the spans are pinned, so a change to how the op path
+/// solves or clips spans that moves a single row shows here.
+#[test]
+fn the_worst_ops_capture_the_pinned_row_spans() {
+    let mut table = MaterialTable::new();
+    let rock = table.push(Material::named("rock"));
+    let world = World::generate(
+        ChunkExtent::new([-2, -2, -2], [2, 2, 2]),
+        &UniformSource(rock),
+        &table,
+    );
+    let mut captured = Vec::new();
+    for op in worst_ops() {
+        world.apply_capturing(&op, &mut captured).unwrap();
+    }
+    let mut h = Fnv1a::default();
+    for edit in &captured {
+        for &(x0, x1) in &edit.spans {
+            h.write(&[x0, x1]);
+        }
+    }
+    assert_eq!(
+        (captured.len(), h.0),
+        (2721, 0x7a19_1902_796c_af86),
+        "captured {} brick-edits, spans hash {:#018x}",
+        captured.len(),
+        h.0
+    );
+}
