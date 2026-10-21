@@ -138,6 +138,16 @@ mid-fill (1 640 292 full bricks, 1 867 584 964 B live; render-thread frame CPU 7
 Both are under the 3.0 ms line; the loaded readings above overstated them by 0.3 and 0.6 to
 1.1 ms.
 
+**The hit pass, split from the shading (dev reference, Plan 0024 Phase 1, same machine,
+exclusive perf lock, 1-minute load 7.3 to 8.0 from other work on the box, not quiet; the
+default look, `flythrough --level --headless --seed 1 --render 1920x1080 --frames 300`, three
+runs of each binary alternated):** the hit pass reads 1.235 to 1.236 ms against 1.733 to 1.753
+ms for the single-pass march (ae58f0c) in the same session; the shadow ray is now the light
+pass's, 0.712 to 0.718 ms, and the composite reads 0.255 ms, so the frame's three passes sum to
+2.202 to 2.210 ms. On the dev box's AMD iGPU (RADV, `RADV_DEBUG=shaderstats`) the hit kernel
+uses 112 SGPRs and 64 VGPRs with no spills, 4 waves per SIMD; the single-pass march used 112
+SGPRs (9 spilled) and 84 VGPRs, 3 waves per SIMD.
+
 **The attribute pass under motion (dev reference, diagnostic, Plan 0013 Phase 7, same machine
 and lock, `flythrough --autopilot --headless --seed 1`, default contour, two runs at load 3.6
 to 11.1):** per frame of the flight, the work list reads p50 3584 to 4446, p99 5468 to 5469,

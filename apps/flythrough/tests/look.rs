@@ -7,7 +7,7 @@ mod support;
 use support::*;
 use vxe_render::gpu_world::{ATTR_PAGE_BRICK_SLOTS, POOL_PAGE_SLOTS, SLOT_BYTES};
 use vxe_render::{
-    GpuWorld, LightParams, LookParams, Marcher, MirrorConfig, NormalMode, ViewMode, Window, wgpu,
+    Frame, GpuWorld, LightParams, LookParams, MirrorConfig, NormalMode, ViewMode, Window, wgpu,
 };
 use vxe_world::World;
 
@@ -56,12 +56,12 @@ fn attr_rig_on(
         world.stats().full_bricks,
         "every Full brick has its attribute"
     );
-    let marcher = Marcher::new(&device, WIDTH, HEIGHT);
+    let frame = Frame::new(&device, WIDTH, HEIGHT);
     LookRig {
         device,
         queue,
         gpu,
-        marcher,
+        frame,
     }
 }
 
@@ -209,7 +209,7 @@ fn the_default_look_leaves_the_goldens_byte_for_byte() {
     }
     let lod = lod_scene();
     let mut rig = LookRig::on(rig.device, rig.queue, &lod, None);
-    rig.marcher.set_lod(lod_forced_1());
+    rig.frame.set_lod(lod_forced_1());
     let img = rig.render(&scene_camera(), &LightParams::at_eye(), default);
     let golden = read_png(&golden_path("lod.png")).0;
     let differing = img.iter().zip(&golden).filter(|(a, b)| a != b).count();
@@ -335,7 +335,7 @@ fn attribute_pages_leave_the_face_goldens_byte_for_byte() {
                 assert_eq!(shards, 1);
             }
             if forced {
-                rig.marcher.set_lod(lod_forced_1());
+                rig.frame.set_lod(lod_forced_1());
             }
             for (name, light) in goldens {
                 let img = rig.render(&scene_camera(), light, face);
@@ -495,7 +495,7 @@ fn zero_strength_detail_leaves_the_goldens_byte_for_byte() {
     }
     let lod = lod_scene();
     let mut rig = LookRig::on(rig.device, rig.queue, &lod, None);
-    rig.marcher.set_lod(lod_forced_1());
+    rig.frame.set_lod(lod_forced_1());
     let img = rig.render(&scene_camera(), &LightParams::at_eye(), on);
     let golden = read_png(&golden_path("lod.png")).0;
     let differing = img.iter().zip(&golden).filter(|(a, b)| a != b).count();

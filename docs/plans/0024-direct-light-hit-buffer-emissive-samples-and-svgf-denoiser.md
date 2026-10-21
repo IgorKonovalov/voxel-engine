@@ -1,6 +1,6 @@
 # 0024: Direct light that holds in the dark: a hit buffer, emissive voxels as light samples, one shadow ray per pixel, and an SVGF-family denoiser whose history dies where the world was edited
 
-> **Status:** approved (2026-10-20)
+> **Status:** in-progress (2026-10-21)
 > **Created:** 2026-10-20
 > **Milestone:** M2 in `docs/roadmap.md` (the lighting plan; direct light and the denoiser only,
 > see "What this plan does NOT do")
@@ -442,7 +442,7 @@ such.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The hit buffer, a view list, and today's image through four passes | dev | not started | |
+| 1: The hit buffer, a view list, and today's image through four passes | dev | done | committed with this row |
 | 2: Emissive voxels become light samples at upload | dev | not started | |
 | 3: The light pass: one sample, one shadow ray, the dark cave | dev | not started | |
 | 4: The coarse shadow walk | dev | not started | |
@@ -459,6 +459,36 @@ such.
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: the frame is three passes (hit, light, composite), not four; the "four passes" of the
+  phase title have no fourth pass in the phase's What.
+- Phase 1: files touched outside the list: `apps/flythrough/examples/hero.rs`,
+  `apps/flythrough/tests/hud_golden.rs`, `crates/vxe-render/tests/{walk,translucent,mirror,shader_portability}.rs`
+  (the `Marcher` to `Frame` rename, the identity tone map in the walk and translucent pixel
+  helpers, the validation of each frame shader compiled after `march.wgsl`).
+- Phase 1: the hit buffer stores the shading normal before detail; the light pass and the
+  composite re-run the detail noise from it. The entry face's axis is a flag field (bits 3..5)
+  so the shadow ray's offset normal is recovered.
+- Phase 1: a third hit-pass target, `layer` (rgba16float, 8 B per pixel), holds the translucent
+  layers in front of the hit (the steps view's counters in that view); the `## Data shapes`
+  table has no row for it.
+- Phase 1: `View` carries `aspect` and two CPU-rounded ratios beside the four tangents
+  (96 bytes), so a symmetric view rounds as the single-pass march did and an asymmetric
+  sub-view takes bit-identical rays.
+- Phase 1: the light pass writes irradiance `E = PI x lit` and the composite shades
+  `albedo x E / PI`; the default tone map is the ACES fit (Narkowicz 2015) before `pow(1/2.2)`.
+- Phase 1: the "three opaque golden scenes" are read as the carve scene, its LOD ring at
+  level 1, and the slab-and-wall occluder scene; their pre-split hitmask and normals views are
+  frozen as `tests/golden/split_*.png` and ae58f0c's `primary.png` as `primary_pre_split.png`.
+
+Phase 1 observations: hitmask and normals of the three scenes byte-identical to ae58f0c; the
+identity-tone-mapped carve's largest channel difference from ae58f0c's is 0/255; the
+asymmetric half view's is 0/255. Re-blessed on lavapipe (pixels changed / by more than 2/255,
+of 57 600): primary 33 724 / 32 432, headlamp 34 095 / 32 847, lod 33 731 / 32 464,
+translucent 33 683 / 32 933, cutaway_level 57 600 / 57 600, look_contour 34 175 / 33 107,
+look_detail 32 178 / 30 934, look_gradient27 34 011 / 32 946, look_trilinear8 33 722 / 32 595,
+hud 23 870 / 22 289. Timings and register counts: `docs/nfr.md` §2, "The hit pass, split from
+the shading".
 
 ### Close triggers
 

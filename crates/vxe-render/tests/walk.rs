@@ -3,7 +3,8 @@
 //! every `t` of the walk is exact.
 
 use vxe_render::{
-    Camera, GpuWorld, LightParams, LookParams, Marcher, ViewMode, glam::Vec3, readback, wgpu,
+    Camera, Frame, GpuWorld, LightParams, Lighting, LookParams, ToneMap, ViewMode, glam::Vec3,
+    readback, wgpu,
 };
 use vxe_world::*;
 
@@ -99,8 +100,13 @@ fn pixel(
 ) -> [u8; 4] {
     let mut gpu = GpuWorld::new(device, world.extent());
     gpu.sync(world, queue).expect("sync");
-    let mut marcher = Marcher::new(device, 1, 1);
-    marcher.set_look(LookParams {
+    let mut frame = Frame::new(device, 1, 1);
+    // The identity tone map: the expected values below are `pow(clamp(c), 1 / 2.2)`.
+    frame.set_lighting(Lighting {
+        tone_map: ToneMap::Identity,
+        ..Lighting::default()
+    });
+    frame.set_look(LookParams {
         view,
         ..LookParams::default()
     });
@@ -110,8 +116,8 @@ fn pixel(
         pitch: 0.0,
         vfov: 1.0,
     };
-    marcher.render(device, queue, &gpu, &camera, &light);
-    let px = readback::read_rgba8(device, queue, marcher.target());
+    frame.render(device, queue, &gpu, &camera, &light);
+    let px = readback::read_rgba8(device, queue, frame.target());
     [px[0], px[1], px[2], px[3]]
 }
 

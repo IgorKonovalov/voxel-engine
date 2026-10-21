@@ -7,7 +7,7 @@
 
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
 use flythrough::cave_materials;
-use vxe_render::{Camera, GpuWorld, LightParams, Marcher, readback, wgpu};
+use vxe_render::{Camera, Frame, GpuWorld, LightParams, readback, wgpu};
 use vxe_world::*;
 
 struct Args {
@@ -108,9 +108,9 @@ fn main() -> Result<(), String> {
     gpu.sync(&world, &queue)
         .map_err(|e| format!("mirror: {e:?}"))?;
     let [w, h] = args.size;
-    let marcher = Marcher::new(&device, w, h);
-    marcher.render(&device, &queue, &gpu, &camera, &LightParams::headlamp());
-    let rgba = readback::read_rgba8(&device, &queue, marcher.target());
+    let frame = Frame::new(&device, w, h);
+    frame.render(&device, &queue, &gpu, &camera, &LightParams::headlamp());
+    let rgba = readback::read_rgba8(&device, &queue, frame.target());
 
     let file = std::fs::File::create(&args.out).map_err(|e| format!("{}: {e}", args.out))?;
     let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w, h);

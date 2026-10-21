@@ -9,7 +9,7 @@ mod support;
 
 use flythrough::hud::{CEILING_MS, HudStats, RING};
 use support::*;
-use vxe_render::{GpuWorld, HudColour, HudOverlay, LightParams, Marcher, readback, wgpu};
+use vxe_render::{GpuWorld, HudColour, HudOverlay, LightParams, readback, wgpu};
 
 /// Glyph cells are 8 pixels; the overlay is drawn at scale 1.
 const CELL: u32 = 8;
@@ -43,7 +43,7 @@ fn render(hud: bool) -> Option<Frame> {
     let (device, queue) = software_device((full + 4096) * 512)?;
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync(&world, &queue).expect("mirror fits the adapter");
-    let marcher = Marcher::new(&device, WIDTH, HEIGHT);
+    let marcher = vxe_render::Frame::new(&device, WIDTH, HEIGHT);
     marcher.render(
         &device,
         &queue,

@@ -11,7 +11,7 @@
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
 //! [--flat-mix] [--pad on|off]`.
-//! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
+//! `--render` fixes the frame's internal resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
@@ -149,9 +149,9 @@ use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
-    AttrWorkStats, Camera, GpuWorld, HudColour, HudOverlay, LightParams, LodParams, LookParams,
-    MarchTimer, Marcher, MirrorConfig, NormalMode, PassTimer, Presenter, SyncStats, ViewMode,
-    Window, wgpu,
+    AttrWorkStats, Camera, FRAME_PASSES, Frame, GpuWorld, HudColour, HudOverlay, LightParams,
+    LodParams, LookParams, MarchTimer, MirrorConfig, NormalMode, PassTimer, Presenter, SyncStats,
+    ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -1140,9 +1140,10 @@ fn ball(r2: i32) -> Vec<[i32; 3]> {
 
 struct Gfx {
     mirror: GpuWorld,
-    marcher: Marcher,
+    frame: Frame,
     presenter: Presenter,
-    timer: Option<MarchTimer>,
+    /// Times the frame's passes, `FRAME_PASSES` in order.
+    timer: Option<PassTimer>,
     /// Times the attribute pass, with attribute pages and `TIMESTAMP_QUERY`.
     attr_timer: Option<MarchTimer>,
     hud: HudOverlay,
@@ -1184,7 +1185,10 @@ fn attr_line(what: &str, (n, ms): (usize, Option<f64>)) -> String {
 #[derive(Default)]
 struct Samples {
     cpu_ms: Vec<f64>,
+    /// The frame's GPU time: the sum of its passes.
     gpu_ms: Vec<f64>,
+    /// Each pass's GPU time, `FRAME_PASSES` in order.
+    pass_ms: Vec<Vec<f64>>,
     /// The HUD pass's GPU time, on frames that draw it.
     hud_ms: Vec<f64>,
 }
@@ -2166,14 +2170,20 @@ impl Run {
         let Samples {
             mut cpu_ms,
             mut gpu_ms,
+            mut pass_ms,
             mut hud_ms,
         } = samples;
         let Some(gfx) = &self.gfx else { return };
-        let [w, h] = [gfx.marcher.target().width(), gfx.marcher.target().height()];
+        let [w, h] = [gfx.frame.target().width(), gfx.frame.target().height()];
         let gpu = if gpu_ms.is_empty() {
             "n/a (no TIMESTAMP_QUERY)".to_owned()
         } else {
-            format!("{:.3} ms", median(&mut gpu_ms))
+            let passes: Vec<String> = FRAME_PASSES
+                .iter()
+                .zip(pass_ms.iter_mut())
+                .map(|(name, ms)| format!("{name} {:.3}", median(ms)))
+                .collect();
+            format!("{:.3} ms ({} ms)", median(&mut gpu_ms), passes.join(", "))
         };
         let hud = if hud_ms.is_empty() {
             String::new()
@@ -2181,7 +2191,7 @@ impl Run {
             format!(", gpu hud {:.4} ms", median(&mut hud_ms))
         };
         println!(
-            "frame ({w}x{h}, median of {}, {}): cpu {:.3} ms, gpu march {gpu}{hud}; full bricks {}, mirror {} B live, {} B allocated",
+            "frame ({w}x{h}, median of {}, {}): cpu {:.3} ms, gpu frame {gpu}{hud}; full bricks {}, mirror {} B live, {} B allocated",
             cpu_ms.len(),
             look_line(&self.look, self.rock_detail()),
             median(&mut cpu_ms),
@@ -2260,15 +2270,15 @@ impl Run {
 
     fn init(&mut self, gpu: &Gpu) {
         let [w, h] = self.args.render.unwrap_or(gpu.size);
-        let timer = MarchTimer::new(&gpu.device, &gpu.queue);
+        let timer = PassTimer::with_passes(&gpu.device, &gpu.queue, FRAME_PASSES.len() as u32);
         println!("device ready after {:.0} ms", ms_since(self.start));
         let attr_timer = self
             .args
             .look
             .and_then(|_| MarchTimer::new(&gpu.device, &gpu.queue));
-        let mut marcher = Marcher::new(&gpu.device, w, h);
+        let mut frame = Frame::new(&gpu.device, w, h);
         let mirror = if self.stream.is_some() {
-            marcher.set_lod(LodParams {
+            frame.set_lod(LodParams {
                 r_full: self.args.residency.r_full,
                 forced_level: None,
             });
@@ -2295,7 +2305,7 @@ impl Run {
         };
         let mut gfx = Gfx {
             mirror,
-            marcher,
+            frame,
             presenter: Presenter::new(&gpu.device, gpu.surface_format),
             timer,
             attr_timer,
@@ -2406,7 +2416,7 @@ impl Run {
 
     fn resized(&mut self, gpu: &Gpu) {
         if let (Some(gfx), None) = (self.gfx.as_mut(), self.args.render) {
-            gfx.marcher.resize(&gpu.device, gpu.size[0], gpu.size[1]);
+            gfx.frame.resize(&gpu.device, gpu.size[0], gpu.size[1]);
         }
     }
 
@@ -2472,7 +2482,7 @@ impl Run {
         if let Some(r_full) = stream.rule.step(pressure) {
             let r = stream.streamer.config().residency;
             stream.streamer.set_radii(r_full, r.r_lod);
-            gfx.marcher.set_lod(LodParams {
+            gfx.frame.set_lod(LodParams {
                 r_full,
                 forced_level: None,
             });
@@ -2744,7 +2754,7 @@ impl Run {
         if p.gpu_ms.is_empty() {
             println!("autopilot: march GPU n/a (no TIMESTAMP_QUERY)");
         } else {
-            let [w, h] = [gfx.marcher.target().width(), gfx.marcher.target().height()];
+            let [w, h] = [gfx.frame.target().width(), gfx.frame.target().height()];
             println!(
                 "autopilot: march GPU at {w}x{h} over the flight: p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms over {} frames",
                 percentile(&mut p.gpu_ms, 50.0),
@@ -3089,8 +3099,8 @@ impl Run {
             && self.look.view == ViewMode::Steps
             && let Some(gfx) = &self.gfx
         {
-            let px = readback::read_rgba8(&gpu.device, &gpu.queue, gfx.marcher.target());
-            let width = gfx.marcher.target().width() as usize;
+            let px = readback::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
+            let width = gfx.frame.target().width() as usize;
             let h = StepHistogram::from_rgba8(&px, width);
             self.hud.steps = Some(hud::StepsSample::from_histogram(&h));
         }
@@ -3105,10 +3115,8 @@ impl Run {
         let Some(gfx) = self.gfx.as_mut() else {
             return Flow::Exit;
         };
-        gfx.marcher.set_look(self.look);
-        let params = gfx
-            .marcher
-            .params(&gfx.mirror, &self.fly.camera, &self.light);
+        gfx.frame.set_look(self.look);
+        let params = gfx.frame.params(&gfx.mirror, &self.fly.camera, &self.light);
         let timer = gfx
             .timer
             .as_ref()
@@ -3136,19 +3144,19 @@ impl Run {
         if let Some(t) = attr_timer {
             t.resolve(&mut enc);
         }
-        gfx.marcher.encode(
+        gfx.frame.encode(
             &gpu.device,
             &gpu.queue,
             &mut enc,
             &gfx.mirror,
             &params,
-            timer.map(MarchTimer::writes),
+            timer,
         );
         if let Some(t) = timer {
             t.resolve(&mut enc);
         }
         gfx.presenter
-            .encode(&gpu.device, &mut enc, gfx.marcher.target(), surface);
+            .encode(&gpu.device, &mut enc, gfx.frame.target(), surface);
         if hud {
             let [w, h] = gpu.size;
             gfx.hud.encode_timed(
@@ -3170,7 +3178,8 @@ impl Run {
             let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
             println!("first frame after {:.0} ms", ms_since(self.start));
         }
-        let gpu_ms = timer.map(|t| t.read_ms(&gpu.device));
+        let pass_ms = timer.map(|t| t.read_all_ms(&gpu.device));
+        let gpu_ms = pass_ms.as_ref().map(|p| p.iter().sum::<f64>());
         let attr_gpu_ms = attr_timer.map(|t| t.read_ms(&gpu.device));
         let hud_ms = hud_timer.map(|t| t.read_ms(&gpu.device));
         self.hud.cpu_ms = cpu_ms as f32;
@@ -3199,6 +3208,12 @@ impl Run {
             if let Some(ms) = gpu_ms {
                 s.gpu_ms.push(ms);
             }
+            if let Some(p) = &pass_ms {
+                s.pass_ms.resize(p.len(), Vec::new());
+                for (v, &ms) in s.pass_ms.iter_mut().zip(p) {
+                    v.push(ms);
+                }
+            }
             if let Some(ms) = hud_ms {
                 s.hud_ms.push(ms);
             }
@@ -3226,8 +3241,8 @@ impl Run {
             if self.look.view == ViewMode::Steps
                 && let Some(gfx) = &self.gfx
             {
-                let px = readback::read_rgba8(&gpu.device, &gpu.queue, gfx.marcher.target());
-                let width = gfx.marcher.target().width() as usize;
+                let px = readback::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
+                let width = gfx.frame.target().width() as usize;
                 println!("{}", steps_line(&StepHistogram::from_rgba8(&px, width)));
             }
             self.sample_world();

@@ -2,8 +2,8 @@
 //! through `wgpu` (ADR-0001). Shaders are WGSL under `src/shaders/`. Nothing here branches
 //! on the graphics backend.
 //!
-//! [`GpuWorld`] mirrors a `vxe_world::World` into the ADR-0002 buffers; [`Marcher`] draws it
-//! and [`Presenter`] puts the result on a surface; [`HudOverlay`] draws text over it.
+//! [`GpuWorld`] mirrors a `vxe_world::World` into the ADR-0002 buffers; [`Frame`] draws it
+//! (its hit pass is the [`Marcher`]) and [`Presenter`] puts the result on a surface; [`HudOverlay`] draws text over it.
 
 pub mod attr_work;
 pub mod attrib;
@@ -17,16 +17,24 @@ pub mod present;
 pub mod readback;
 
 pub use attr_work::{AttrWorkStats, MirrorView};
-pub use camera::Camera;
+pub use camera::{Camera, View};
 pub use gpu_world::{GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncStats, Window};
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
-pub use marcher::{LodParams, LookParams, MarchTimer, Marcher, NormalMode, PassTimer, ViewMode};
+pub use marcher::{
+    FRAME_PASSES, Frame, Lighting, LodParams, LookParams, MAX_VIEWS, MarchTimer, Marcher,
+    NormalMode, PassTimer, ToneMap, ViewMode,
+};
 pub use present::Presenter;
 pub use {glam, wgpu};
 
-/// The source of the primary-ray shader, for headless validation.
+/// The source of the hit pass, whose walk and helpers the other frame shaders are compiled
+/// after; for headless validation.
 pub const MARCH_WGSL: &str = include_str!("shaders/march.wgsl");
+/// The light pass, compiled after [`MARCH_WGSL`].
+pub const LIGHT_WGSL: &str = include_str!("shaders/light.wgsl");
+/// The composite pass, compiled after [`MARCH_WGSL`].
+pub const COMPOSITE_WGSL: &str = include_str!("shaders/composite.wgsl");
 /// The source of the contour-attribute pass, for headless validation.
 pub const ATTRIB_WGSL: &str = include_str!("shaders/attrib.wgsl");
 

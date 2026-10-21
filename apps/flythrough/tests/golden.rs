@@ -7,7 +7,7 @@ use flythrough::cave_materials;
 use support::*;
 use vxe_render::gpu_world::POOL_PAGE_SLOTS;
 use vxe_render::{
-    Camera, GpuWorld, LightParams, LodParams, Marcher, MirrorConfig, Window, readback, wgpu,
+    Camera, Frame, GpuWorld, LightParams, LodParams, MirrorConfig, Window, readback, wgpu,
 };
 use vxe_world::*;
 
@@ -22,13 +22,13 @@ fn render_from(world: &World, camera: &Camera, lights: &[LightParams]) -> Option
     let (device, queue) = software_device((full + 4096) * 512)?;
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync(world, &queue).expect("mirror fits the adapter");
-    let marcher = Marcher::new(&device, WIDTH, HEIGHT);
+    let frame = Frame::new(&device, WIDTH, HEIGHT);
     Some(
         lights
             .iter()
             .map(|light| {
-                marcher.render(&device, &queue, &gpu, camera, light);
-                readback::read_rgba8(&device, &queue, marcher.target())
+                frame.render(&device, &queue, &gpu, camera, light);
+                readback::read_rgba8(&device, &queue, frame.target())
             })
             .collect(),
     )
@@ -340,7 +340,7 @@ fn goldens_match_bit_exactly_over_one_and_several_shards() {
         ("headlamp.png", LightParams::headlamp()),
     ]
     .map(|(name, light)| (name, light, read_png(&golden_path(name)).0));
-    let marcher = Marcher::new(&device, WIDTH, HEIGHT);
+    let frame = Frame::new(&device, WIDTH, HEIGHT);
     for max_shard_slots in [None, Some(cap as u32)] {
         let mut gpu = GpuWorld::with_config(
             &device,
@@ -358,8 +358,8 @@ fn goldens_match_bit_exactly_over_one_and_several_shards() {
             assert_eq!(shards, 1);
         }
         for (name, light, golden) in &goldens {
-            marcher.render(&device, &queue, &gpu, &scene_camera(), light);
-            let img = readback::read_rgba8(&device, &queue, marcher.target());
+            frame.render(&device, &queue, &gpu, &scene_camera(), light);
+            let img = readback::read_rgba8(&device, &queue, frame.target());
             let differing = img.iter().zip(golden).filter(|(a, b)| a != b).count();
             assert_eq!(
                 differing, 0,
@@ -392,13 +392,13 @@ fn render_with(
 ) -> Vec<Vec<u8>> {
     let mut gpu = GpuWorld::new(device, world.extent());
     gpu.sync(world, queue).expect("mirror fits the adapter");
-    let mut marcher = Marcher::new(device, WIDTH, HEIGHT);
-    marcher.set_lod(lod);
+    let mut frame = Frame::new(device, WIDTH, HEIGHT);
+    frame.set_lod(lod);
     lights
         .iter()
         .map(|light| {
-            marcher.render(device, queue, &gpu, camera, light);
-            readback::read_rgba8(device, queue, marcher.target())
+            frame.render(device, queue, &gpu, camera, light);
+            readback::read_rgba8(device, queue, frame.target())
         })
         .collect()
 }
@@ -495,7 +495,7 @@ fn lod_golden_walks_the_ring_at_level_1() {
     assert!(f >= 0.01, "{:.2} %", f * 100.0);
 }
 
-/// Without a forced level the marcher picks level 1 within `(2 r_full)^2` of the camera's
+/// Without a forced level the frame picks level 1 within `(2 r_full)^2` of the camera's
 /// chunk, level 2 within `(4 r_full)^2`, else 3. In the golden scene every chunk lies within
 /// squared distance 27 of the camera's: with r_full = 3 the image equals forced level 1, with
 /// r_full = 0 forced level 3. A chunk at squared distance 9 with r_full = 1 is walked at
@@ -675,21 +675,21 @@ fn cutaway_steps_from_outside_the_level_at_1080p() {
     let mut gpu = GpuWorld::with_config(&device, cfg);
     gpu.sync(&world, &queue).expect("mirror fits the adapter");
     let (w, h) = (1920, 1080);
-    let mut marcher = Marcher::new(&device, w, h);
+    let mut frame = Frame::new(&device, w, h);
     for cutaway in [false, true] {
-        marcher.set_look(vxe_render::LookParams {
+        frame.set_look(vxe_render::LookParams {
             view: vxe_render::ViewMode::Steps,
             cutaway,
             ..cutaway_look()
         });
-        marcher.render(
+        frame.render(
             &device,
             &queue,
             &gpu,
             &outside_level_camera(),
             &LightParams::headlamp(),
         );
-        let px = readback::read_rgba8(&device, &queue, marcher.target());
+        let px = readback::read_rgba8(&device, &queue, frame.target());
         let hist = readback::StepHistogram::from_rgba8(&px, w as usize);
         let saturated = px.chunks(4).filter(|p| p[0] == 255).count();
         println!(
@@ -700,4 +700,110 @@ fn cutaway_steps_from_outside_the_level_at_1080p() {
             w * h
         );
     }
+}
+
+/// The hit buffer's hitmask and normals views render, byte for byte, what the single-pass
+/// march rendered at ae58f0c on the three opaque scenes (the carved golden scene, its LOD
+/// ring at level 1, the slab-and-wall occluder scene): the `split_*.png` files, never
+/// re-blessed.
+#[test]
+fn hit_buffer_views_match_the_single_pass_march() {
+    let carved = carved_world();
+    let lod = lod_scene();
+    let occluder = occluder_world();
+    let scenes: [(&str, &World, Camera, Option<LodParams>); 3] = [
+        ("carve", &carved, scene_camera(), None),
+        ("lod", &lod, scene_camera(), Some(lod_forced_1())),
+        ("occluder", &occluder, occluder_camera(), None),
+    ];
+    for (scene, world, camera, lod) in scenes {
+        let Some(mut rig) = LookRig::new(world, None) else {
+            return;
+        };
+        if let Some(lod) = lod {
+            rig.frame.set_lod(lod);
+        }
+        for view in [vxe_render::ViewMode::HitMask, vxe_render::ViewMode::Normals] {
+            let look = vxe_render::LookParams {
+                view,
+                ..vxe_render::LookParams::default()
+            };
+            let img = rig.render(&camera, &LightParams::headlamp(), look);
+            let name = format!("split_{}_{scene}.png", view.name());
+            let differing = differing_bytes(&img, &read_png(&golden_path(&name)).0);
+            println!("{name}: {differing} bytes differ");
+            assert_eq!(differing, 0, "{name}: {differing} bytes differ");
+        }
+    }
+}
+
+/// With exposure 1 and the identity tone map the composite is the march's former display
+/// encoding, so the carve golden matches the single-pass march's (`primary_pre_split.png`,
+/// ae58f0c's `primary.png`) within 2/255 in every pixel: the split moved no light.
+#[test]
+fn the_identity_tone_map_reproduces_the_single_pass_carve() {
+    let Some(mut rig) = LookRig::new(&carved_world(), None) else {
+        return;
+    };
+    rig.frame.set_lighting(vxe_render::Lighting {
+        exposure: 1.0,
+        tone_map: vxe_render::ToneMap::Identity,
+    });
+    let img = rig.render(
+        &scene_camera(),
+        &LightParams::at_eye(),
+        vxe_render::LookParams::default(),
+    );
+    let (old, _, _) = read_png(&golden_path("primary_pre_split.png"));
+    let worst = img
+        .chunks(4)
+        .zip(old.chunks(4))
+        .map(|(p, q)| (0..3).map(|k| p[k].abs_diff(q[k])).max().unwrap_or(0))
+        .max()
+        .unwrap_or(0);
+    println!("largest channel difference from the single-pass carve: {worst}/255");
+    assert!(worst <= 2, "{worst}/255");
+}
+
+/// An asymmetric view with tangents (left `t`, right 0, up and down `t_y`) over 160 x 180
+/// pixels renders the left half of the symmetric 320 x 180 view, `t = t_y 320 / 180`, with no
+/// pixel differing by more than 2/255.
+#[test]
+fn an_asymmetric_view_renders_the_left_half_of_the_symmetric_one() {
+    let world = carved_world();
+    let full = world.stats().full_bricks as u64;
+    let Some((device, queue)) = software_device((full + 4096) * 512) else {
+        return;
+    };
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.sync(&world, &queue).expect("mirror fits the adapter");
+    let camera = scene_camera();
+    let light = LightParams::headlamp();
+    let whole = Frame::new(&device, WIDTH, HEIGHT);
+    whole.render(&device, &queue, &gpu, &camera, &light);
+    let whole_px = readback::read_rgba8(&device, &queue, whole.target());
+
+    let half_w = WIDTH / 2;
+    let half = Frame::new(&device, half_w, HEIGHT);
+    let ty = (camera.vfov * 0.5).tan();
+    let t = ty * (WIDTH as f32 / HEIGHT as f32);
+    let aspect = WIDTH as f32 / HEIGHT as f32;
+    let view =
+        vxe_render::View::with_tangents(&camera, [t, 0.0, ty, ty], aspect, [0, 0, half_w, HEIGHT]);
+    let params = half.params_for(&gpu, &[view], &camera, &light);
+    half.submit(&device, &queue, &gpu, &params);
+    let half_px = readback::read_rgba8(&device, &queue, half.target());
+
+    let mut worst = 0;
+    for row in 0..HEIGHT as usize {
+        for col in 0..half_w as usize {
+            let a = &half_px[(row * half_w as usize + col) * 4..][..3];
+            let b = &whole_px[(row * WIDTH as usize + col) * 4..][..3];
+            worst = worst.max((0..3).map(|k| a[k].abs_diff(b[k])).max().unwrap_or(0));
+        }
+    }
+    let lit = half_px.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
+    println!("asymmetric half: largest channel difference {worst}/255, {lit} lit pixels");
+    assert!(lit > (half_w * HEIGHT / 4) as usize, "{lit} lit pixels");
+    assert!(worst <= 2, "{worst}/255");
 }

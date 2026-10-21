@@ -13,20 +13,29 @@ use vxe_render::gpu_world::{
     translucent_mask_word,
 };
 use vxe_render::{
-    ATTRIB_WGSL, GpuWorld, MARCH_WGSL, MirrorConfig, ShardLayout, Window, readback, wgpu,
+    ATTRIB_WGSL, COMPOSITE_WGSL, GpuWorld, LIGHT_WGSL, MARCH_WGSL, MirrorConfig, ShardLayout,
+    Window, readback, wgpu,
 };
 use vxe_world::*;
 
-/// The shader parses and validates headless, without a device.
+/// The frame's shaders parse and validate headless, without a device: the hit pass alone and
+/// each pass compiled after it.
 #[test]
 fn march_wgsl_validates() {
-    let module = wgpu::naga::front::wgsl::parse_str(MARCH_WGSL).expect("march.wgsl parses");
-    wgpu::naga::valid::Validator::new(
-        wgpu::naga::valid::ValidationFlags::all(),
-        wgpu::naga::valid::Capabilities::default(),
-    )
-    .validate(&module)
-    .expect("march.wgsl validates");
+    for (name, source) in [
+        ("march.wgsl", MARCH_WGSL.to_owned()),
+        ("light.wgsl", format!("{MARCH_WGSL}\n{LIGHT_WGSL}")),
+        ("composite.wgsl", format!("{MARCH_WGSL}\n{COMPOSITE_WGSL}")),
+    ] {
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|e| panic!("{name} parses: {}", e.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{name} validates: {e:?}"));
+    }
 }
 
 /// The attribute pass's shader parses and validates headless.
