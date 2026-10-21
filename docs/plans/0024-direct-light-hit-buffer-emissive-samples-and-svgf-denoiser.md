@@ -445,8 +445,8 @@ such.
 | 1: The hit buffer, a view list, and today's image through four passes | dev | done | 8df37d2 |
 | 2: Emissive voxels become light samples at upload | dev | done | c3c83b0 |
 | 3: The light pass: one sample, one shadow ray, the dark cave | dev | done | 7ee7bd6 |
-| 4: The coarse shadow walk | dev | done | committed with this row |
-| 5: Temporal accumulation, and history that dies in an edit box | dev | not started | |
+| 4: The coarse shadow walk | dev | done | a414473 |
+| 5: Temporal accumulation, and history that dies in an edit box | dev | done | committed with this row |
 | 6: The a-trous filter and the composite, and the carve that does not ghost | dev | not started | |
 | 7: Reservoir reuse against the flat list | dev | not started | |
 | 8: A-SVGF's gradient as the other history killer | dev | not started | |
@@ -517,6 +517,16 @@ each. Empty is fine.)_
   lighting line (`docs/nfr.md` §2, "The light pass by shadow walk"); uniform candidates over
   the whole buffer pick far emitters. Followup noticed: a spatial structure over the light
   samples (per-chunk or near-first candidates) is not in this plan.
+- Phase 5: reprojection takes the four bilinear taps of the projected position, each accepted
+  on the same material, a normal within 0.8 in cosine and a position within `0.5 + 0.03 t`
+  voxels; the age is the accepted taps' weighted age plus one, the blend
+  `max(0.2, 1 / (age + 1))`. History is kept per frame loop: `Frame::encode` keeps it and
+  `Frame::advance` swaps the double-buffered hit buffer and history; `Frame::render` draws one
+  frame alone without it (every existing golden is such a frame, so none changed);
+  `Frame::step` is advance-then-encode for tests. The edit boxes are a 2 KiB uniform. `fly.rs`
+  was not touched: the fly-through invalidates from `Run::edited`, which every applied op of
+  the client's events passes through, and from the autopilot's direct carve.
+  `readback::read_rgba32f` and `read_rgba16u` added.
 
 Phase 1 observations: hitmask and normals of the three scenes byte-identical to ae58f0c; the
 identity-tone-mapped carve's largest channel difference from ae58f0c's is 0/255; the
@@ -533,6 +543,11 @@ at 16/255 or more, and 0 non-black pixels with the ore's emission off.
 
 Phase 4 observations: the slab without a hole darkens 823 pixels in either walk; through the
 edge-row hole the full walk lights 45 pixels and the coarse walk 0 of them.
+
+Phase 5 observations: after 16 static frames and the radius-4 carve, 1296 hit pixels in the
+dilated box read age 0 and 56 304 outside read 16; the next frame 1 and 17. After a one-voxel
+sideways step 54 133 of 55 268 unchanged-material pixels keep history (97.95 %) and all 2332
+pixels whose material a `Replace` changed read 0.
 
 ### Close triggers
 

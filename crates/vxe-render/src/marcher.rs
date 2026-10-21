@@ -4,7 +4,7 @@
 use crate::camera::{Camera, View};
 use crate::gpu_world::GpuWorld;
 use crate::light::LightParams;
-use crate::{COMPOSITE_WGSL, LIGHT_WGSL, MARCH_WGSL};
+use crate::{COMPOSITE_WGSL, LIGHT_WGSL, MARCH_WGSL, TEMPORAL_WGSL};
 
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
 pub const WORKGROUP: u32 = 8;
@@ -52,7 +52,11 @@ pub struct Params {
     pub light_span: u32,
     /// Emissive candidates per pixel ([`Lighting::candidates`]).
     pub candidates: u32,
-    pub _pad4: u32,
+    /// Bit 0: the previous frame's hit buffer and history are valid (set by
+    /// [`Frame::encode`]).
+    pub history: u32,
+    /// The previous frame's views, for reprojection (set by [`Frame::encode`]).
+    pub prev_views: [View; MAX_VIEWS],
 }
 
 /// `Params::lighting` bit: the headlamp lights the frame.
@@ -348,17 +352,25 @@ impl Marcher {
     }
 }
 
-/// One frame of the renderer: the hit pass ([`Marcher`]), the light pass and the composite,
-/// with their targets at one internal resolution. [`Frame::target`] is the `rgba8unorm`
-/// image the presenter draws.
+/// One frame of the renderer: the hit pass ([`Marcher`]), the light pass, the temporal pass
+/// and the composite, with their targets at one internal resolution. [`Frame::target`] is the
+/// `rgba8unorm` image the presenter draws.
+///
+/// The hit buffer and the history are kept twice, this frame's and the last: [`Frame::encode`]
+/// writes one copy and reads the other, and [`Frame::advance`] swaps them. History holds while
+/// frames are encoded with `encode` and advanced; [`Frame::render`] draws one frame alone,
+/// with no history.
 pub struct Frame {
     world_layout: wgpu::BindGroupLayout,
     hit: Marcher,
     light_layout: wgpu::BindGroupLayout,
     light: wgpu::ComputePipeline,
+    temporal_layout: wgpu::BindGroupLayout,
+    temporal: wgpu::ComputePipeline,
     composite_layout: wgpu::BindGroupLayout,
     composite: wgpu::ComputePipeline,
     params: wgpu::Buffer,
+    edits: wgpu::Buffer,
     targets: Targets,
     lod: LodParams,
     look: LookParams,
@@ -371,6 +383,36 @@ pub struct Frame {
     blue_noise_written: std::sync::atomic::AtomicBool,
     /// The frame index the random numbers are seeded with.
     frame: u32,
+    /// The copy of the double-buffered targets the next `encode` writes.
+    cur: usize,
+    history: std::sync::Mutex<History>,
+}
+
+/// Edit boxes one frame takes; one more flushes all history.
+pub const MAX_EDITS: usize = 64;
+
+/// What the next frame's temporal pass reads of the past.
+#[derive(Default)]
+struct History {
+    /// The previous frame's views, and whether its hit buffer and history are valid.
+    prev_views: [View; MAX_VIEWS],
+    valid: bool,
+    /// The views of the last `encode` with history, and whether one ran since `advance`.
+    last_views: [View; MAX_VIEWS],
+    encoded: bool,
+    /// The edit boxes collected for the next `encode`, and whether more than `MAX_EDITS`
+    /// arrived.
+    edits: Vec<[[i32; 3]; 2]>,
+    overflow: bool,
+}
+
+/// The temporal pass's edit boxes, field for field with `Edits` in `temporal.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct EditsUniform {
+    count: u32,
+    _pad: [u32; 3],
+    boxes: [[i32; 4]; 2 * MAX_EDITS],
 }
 
 /// The 128 x 128 blue-noise ranks (`assets/blue_noise_128.r8`, made by
@@ -379,6 +421,86 @@ const BLUE_NOISE: &[u8; 128 * 128] = include_bytes!("../assets/blue_noise_128.r8
 
 /// Material ids the emission-scale buffer covers: every `u16`.
 const EMISSION_ROWS: usize = 1 << 16;
+
+/// A group-2 binding of a frame pass.
+#[derive(Clone, Copy)]
+enum Io {
+    /// A `texture_2d<f32>` read with `textureLoad`.
+    Float,
+    /// A `texture_2d<u32>`.
+    Uint,
+    /// A write-only storage texture of this format.
+    Store(wgpu::TextureFormat),
+    /// A uniform buffer.
+    Uniform,
+}
+
+fn io_layout(device: &wgpu::Device, label: &str, io: &[Io]) -> wgpu::BindGroupLayout {
+    let entries: Vec<wgpu::BindGroupLayoutEntry> = io
+        .iter()
+        .enumerate()
+        .map(|(i, &k)| {
+            let b = i as u32;
+            match k {
+                Io::Float => sampled_texture(b, FLOAT),
+                Io::Uint => sampled_texture(b, UINT),
+                Io::Store(f) => storage_texture(b, f),
+                Io::Uniform => wgpu::BindGroupLayoutEntry {
+                    binding: b,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            }
+        })
+        .collect();
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries: &entries,
+    })
+}
+
+/// One binding of a pass's group-2 bind group.
+enum Res<'a> {
+    Tex(&'a wgpu::Texture),
+    Buf(&'a wgpu::Buffer),
+}
+
+fn bind_io(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    res: &[Res<'_>],
+) -> wgpu::BindGroup {
+    let views: Vec<Option<wgpu::TextureView>> = res
+        .iter()
+        .map(|r| match r {
+            Res::Tex(t) => Some(view(t)),
+            Res::Buf(_) => None,
+        })
+        .collect();
+    let entries: Vec<wgpu::BindGroupEntry<'_>> = res
+        .iter()
+        .zip(&views)
+        .enumerate()
+        .map(|(i, (r, v))| wgpu::BindGroupEntry {
+            binding: i as u32,
+            resource: match (r, v) {
+                (Res::Buf(b), _) => b.as_entire_binding(),
+                (_, Some(v)) => wgpu::BindingResource::TextureView(v),
+                (Res::Tex(_), None) => unreachable!("a texture binding has its view"),
+            },
+        })
+        .collect();
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout,
+        entries: &entries,
+    })
+}
 
 impl Frame {
     /// A frame drawing into a `width` × `height` target.
@@ -420,41 +542,57 @@ impl Frame {
             ],
         });
         let hit = Marcher::new(device, &world_layout);
-        let light_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("light io"),
-            entries: &[
-                sampled_texture(0, FLOAT),
-                sampled_texture(1, UINT),
-                storage_texture(2, wgpu::TextureFormat::Rgba16Float),
+        let f16 = Io::Store(wgpu::TextureFormat::Rgba16Float);
+        let pass = |label: &str, source: &str, entry: &str, io: &[Io]| {
+            let layout = io_layout(device, label, io);
+            let pipeline = compute_pipeline(
+                device,
+                label,
+                format!("{MARCH_WGSL}\n{source}"),
+                &[Some(&world_layout), None, Some(&layout)],
+                entry,
+            );
+            (layout, pipeline)
+        };
+        let (light_layout, light) = pass("light", LIGHT_WGSL, "shade", &[Io::Float, Io::Uint, f16]);
+        let (temporal_layout, temporal) = pass(
+            "temporal",
+            TEMPORAL_WGSL,
+            "temporal",
+            &[
+                Io::Float,
+                Io::Uint,
+                Io::Float,
+                Io::Uint,
+                Io::Float,
+                Io::Float,
+                Io::Float,
+                f16,
+                f16,
+                Io::Uniform,
             ],
-        });
-        let light = compute_pipeline(
-            device,
-            "light",
-            format!("{MARCH_WGSL}\n{LIGHT_WGSL}"),
-            &[Some(&world_layout), None, Some(&light_layout)],
-            "shade",
         );
-        let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("composite io"),
-            entries: &[
-                sampled_texture(0, FLOAT),
-                sampled_texture(1, UINT),
-                sampled_texture(2, FLOAT),
-                sampled_texture(3, FLOAT),
-                storage_texture(4, wgpu::TextureFormat::Rgba8Unorm),
+        let (composite_layout, composite) = pass(
+            "composite",
+            COMPOSITE_WGSL,
+            "composite",
+            &[
+                Io::Float,
+                Io::Uint,
+                Io::Float,
+                Io::Float,
+                Io::Store(wgpu::TextureFormat::Rgba8Unorm),
             ],
-        });
-        let composite = compute_pipeline(
-            device,
-            "composite",
-            format!("{MARCH_WGSL}\n{COMPOSITE_WGSL}"),
-            &[Some(&world_layout), None, Some(&composite_layout)],
-            "composite",
         );
         let params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("frame params"),
             size: size_of::<Params>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let edits = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("edit boxes"),
+            size: size_of::<EditsUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -463,9 +601,12 @@ impl Frame {
             hit,
             light_layout,
             light,
+            temporal_layout,
+            temporal,
             composite_layout,
             composite,
             params,
+            edits,
             targets: Targets::new(device, width, height),
             lod: LodParams::default(),
             look: LookParams::default(),
@@ -495,6 +636,8 @@ impl Frame {
             }),
             blue_noise_written: std::sync::atomic::AtomicBool::new(false),
             frame: 0,
+            cur: 0,
+            history: std::sync::Mutex::new(History::default()),
         }
     }
 
@@ -507,9 +650,56 @@ impl Frame {
         self.frame = frame;
     }
 
-    /// Moves to the next frame index; call once per rendered frame.
+    fn history(&mut self) -> &mut History {
+        self.history
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Ends the frame last encoded: the next frame index, its hit buffer and history become
+    /// the previous frame's, and the double-buffered targets swap. Call once per frame, after
+    /// [`Frame::encode`].
     pub fn advance(&mut self) {
         self.frame = self.frame.wrapping_add(1);
+        let h = self.history();
+        h.prev_views = h.last_views;
+        h.valid = h.encoded;
+        h.encoded = false;
+        self.cur ^= 1;
+    }
+
+    /// Kills the history of every pixel whose hit lies in the voxels `min ..= max` dilated by
+    /// one voxel, in the next encoded frame: an edit's `EditResult::aabb`. More than
+    /// [`MAX_EDITS`] boxes in one frame flush all history.
+    pub fn invalidate(&mut self, min: [i32; 3], max: [i32; 3]) {
+        let h = self.history();
+        if h.edits.len() == MAX_EDITS {
+            h.overflow = true;
+        } else {
+            h.edits.push([min, max]);
+        }
+    }
+
+    /// Drops all history: the next encoded frame starts every pixel afresh.
+    pub fn reset_history(&mut self) {
+        self.history().valid = false;
+    }
+
+    /// Encodes and submits one frame of `camera` over `world` with history, after advancing
+    /// from the frame before: what a frame loop does, for tests and tools.
+    pub fn step(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        world: &GpuWorld,
+        camera: &Camera,
+        light: &LightParams,
+    ) {
+        self.advance();
+        let params = self.params(world, camera, light);
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        self.encode(device, queue, &mut enc, world, &params, None);
+        queue.submit([enc.finish()]);
     }
 
     /// Scales material `material`'s emission by `scale` from the next frame on: a visual
@@ -553,7 +743,7 @@ impl Frame {
         self.look
     }
 
-    /// Sets exposure and tone map.
+    /// Sets exposure, tone map, lamp, candidates and shadow walk.
     pub fn set_lighting(&mut self, lighting: Lighting) {
         self.lighting = lighting;
     }
@@ -567,22 +757,32 @@ impl Frame {
         &self.targets.output
     }
 
-    /// The hit buffer's position texture (rgba32float: world position in voxels, then `t`,
-    /// `3e38` on a miss).
+    /// The hit buffer's position texture the next or last encode writes (rgba32float: world
+    /// position in voxels, then `t`, `3e38` on a miss).
     pub fn hit_positions(&self) -> &wgpu::Texture {
-        &self.targets.hit_pos
+        &self.targets.hit_pos[self.cur]
     }
 
     /// The hit buffer's record texture (rgba16uint: octahedral normal u and v as snorm16
     /// bits, material id, flags: bit 0 hit, bit 1 contour-plane hit, bit 2 translucent layers
     /// in front, bits 3..5 the entry face's axis plus one, 0 for none).
     pub fn hit_records(&self) -> &wgpu::Texture {
-        &self.targets.hit_info
+        &self.targets.hit_info[self.cur]
     }
 
-    /// The light pass's irradiance (rgba16float, rgb).
+    /// The light pass's irradiance (rgba16float: rgb, then the emissive part's luminance).
     pub fn irradiance(&self) -> &wgpu::Texture {
         &self.targets.irradiance
+    }
+
+    /// The temporal pass's accumulated irradiance (rgba16float, rgb).
+    pub fn accumulated(&self) -> &wgpu::Texture {
+        &self.targets.accum[self.cur]
+    }
+
+    /// The temporal pass's moments (rgba16float: luminance, its square, the age in frames).
+    pub fn moments(&self) -> &wgpu::Texture {
+        &self.targets.moments[self.cur]
     }
 
     /// Bytes the frame's targets occupy.
@@ -590,9 +790,11 @@ impl Frame {
         self.targets.bytes()
     }
 
-    /// Replaces the targets with ones of `width` × `height`; the pipelines are kept.
+    /// Replaces the targets with ones of `width` × `height` and drops the history; the
+    /// pipelines are kept.
     pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
         self.targets = Targets::new(device, width, height);
+        self.reset_history();
     }
 
     /// The uniform block for `camera` over `world`, lit by `light`: one view filling the
@@ -604,6 +806,7 @@ impl Frame {
 
     /// The uniform block for `views` (at most [`MAX_VIEWS`]; a pixel outside every rectangle
     /// takes the first) over `world`, lit by `light` placed relative to `camera`.
+    /// [`Frame::encode`] fills in the history fields.
     pub fn params_for(
         &self,
         world: &GpuWorld,
@@ -655,7 +858,9 @@ impl Frame {
         }
     }
 
-    /// Records the frame's passes over `world` into `encoder`. With `timer` (of at least
+    /// Records the frame's passes over `world` into `encoder`, with history: the temporal
+    /// pass reads the previous frame's hit buffer and history unless they are invalid, and
+    /// takes the edit boxes collected since the last encode. With `timer` (of at least
     /// `FRAME_PASSES.len()` passes) pass `i` writes its start and end into timestamps `2 i`
     /// and `2 i + 1`; the caller resolves them.
     pub fn encode(
@@ -667,7 +872,50 @@ impl Frame {
         params: &Params,
         timer: Option<&PassTimer>,
     ) {
-        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(params));
+        self.encode_with(device, queue, encoder, world, params, timer, true);
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "encode's arguments plus whether the frame keeps history"
+    )]
+    fn encode_with(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        world: &GpuWorld,
+        params: &Params,
+        timer: Option<&PassTimer>,
+        keep_history: bool,
+    ) {
+        let mut p = *params;
+        let mut edits = EditsUniform {
+            count: 0,
+            _pad: [0; 3],
+            boxes: [[0; 4]; 2 * MAX_EDITS],
+        };
+        if keep_history {
+            let mut h = self
+                .history
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            p.prev_views = h.prev_views;
+            p.history = u32::from(h.valid && !h.overflow);
+            for (i, [min, max]) in h.edits.iter().enumerate() {
+                edits.boxes[2 * i] = [min[0], min[1], min[2], 0];
+                edits.boxes[2 * i + 1] = [max[0], max[1], max[2], 0];
+            }
+            edits.count = h.edits.len() as u32;
+            h.edits.clear();
+            h.overflow = false;
+            h.last_views = params.views;
+            h.encoded = true;
+        } else {
+            p.history = 0;
+        }
+        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&p));
+        queue.write_buffer(&self.edits, 0, bytemuck::bytes_of(&edits));
         if !self
             .blue_noise_written
             .swap(true, std::sync::atomic::Ordering::Relaxed)
@@ -706,24 +954,57 @@ impl Frame {
                 },
             ],
         });
-        let (pos, info, layer, irr, out) = (
-            view(&t.hit_pos),
-            view(&t.hit_info),
-            view(&t.layer),
-            view(&t.irradiance),
-            view(&t.output),
+        let (c, q) = (self.cur, self.cur ^ 1);
+        let hit_bind = bind_io(
+            device,
+            &self.hit.out_layout,
+            &[
+                Res::Tex(&t.hit_pos[c]),
+                Res::Tex(&t.hit_info[c]),
+                Res::Tex(&t.layer),
+            ],
         );
-        let hit_bind = bind_views(device, &self.hit.out_layout, &[&pos, &info, &layer]);
-        let light_bind = bind_views(device, &self.light_layout, &[&pos, &info, &irr]);
-        let composite_bind = bind_views(
+        let light_bind = bind_io(
+            device,
+            &self.light_layout,
+            &[
+                Res::Tex(&t.hit_pos[c]),
+                Res::Tex(&t.hit_info[c]),
+                Res::Tex(&t.irradiance),
+            ],
+        );
+        let temporal_bind = bind_io(
+            device,
+            &self.temporal_layout,
+            &[
+                Res::Tex(&t.hit_pos[c]),
+                Res::Tex(&t.hit_info[c]),
+                Res::Tex(&t.hit_pos[q]),
+                Res::Tex(&t.hit_info[q]),
+                Res::Tex(&t.irradiance),
+                Res::Tex(&t.accum[q]),
+                Res::Tex(&t.moments[q]),
+                Res::Tex(&t.accum[c]),
+                Res::Tex(&t.moments[c]),
+                Res::Buf(&self.edits),
+            ],
+        );
+        let composite_bind = bind_io(
             device,
             &self.composite_layout,
-            &[&pos, &info, &layer, &irr, &out],
+            &[
+                Res::Tex(&t.hit_pos[c]),
+                Res::Tex(&t.hit_info[c]),
+                Res::Tex(&t.layer),
+                Res::Tex(&t.accum[c]),
+                Res::Tex(&t.output),
+            ],
         );
         let groups = [t.width.div_ceil(WORKGROUP), t.height.div_ceil(WORKGROUP)];
-        let passes: [(&wgpu::ComputePipeline, &wgpu::BindGroup, u32); 3] = [
+        let passes: [(&wgpu::ComputePipeline, &wgpu::BindGroup, u32); 4] = [
             (&self.hit.pipeline, &hit_bind, 1),
             (&self.light, &light_bind, 2),
+            (&self.temporal, &temporal_bind, 2),
             (&self.composite, &composite_bind, 2),
         ];
         for (i, (pipeline, bind, group)) in passes.into_iter().enumerate() {
@@ -738,7 +1019,8 @@ impl Frame {
         }
     }
 
-    /// Renders `camera` over `world` lit by `light`, and submits the work.
+    /// Renders `camera` over `world` lit by `light` as one frame alone, with no history,
+    /// and submits the work; the frame loop's history is left as it was.
     pub fn render(
         &self,
         device: &wgpu::Device,
@@ -751,7 +1033,8 @@ impl Frame {
         self.submit(device, queue, world, &params);
     }
 
-    /// Renders the frame `params` describes over `world`, and submits the work.
+    /// Renders the frame `params` describes over `world` alone, with no history, and submits
+    /// the work.
     pub fn submit(
         &self,
         device: &wgpu::Device,
@@ -760,7 +1043,7 @@ impl Frame {
         params: &Params,
     ) {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        self.encode(device, queue, &mut enc, world, params, None);
+        self.encode_with(device, queue, &mut enc, world, params, None, false);
         queue.submit([enc.finish()]);
     }
 }
@@ -772,51 +1055,34 @@ fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_>
     }
 }
 
-/// A bind group of `views` at bindings `0..views.len()` of `layout`.
-fn bind_views(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    views: &[&wgpu::TextureView],
-) -> wgpu::BindGroup {
-    let entries: Vec<wgpu::BindGroupEntry<'_>> = views
-        .iter()
-        .enumerate()
-        .map(|(i, v)| wgpu::BindGroupEntry {
-            binding: i as u32,
-            resource: wgpu::BindingResource::TextureView(v),
-        })
-        .collect();
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout,
-        entries: &entries,
-    })
-}
-
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
-pub const FRAME_PASSES: [&str; 3] = ["hit", "light", "composite"];
+pub const FRAME_PASSES: [&str; 4] = ["hit", "light", "temporal", "composite"];
 
-/// The frame's targets at one internal resolution.
+/// The frame's targets at one internal resolution; the hit buffer and the history twice,
+/// indexed by `Frame::cur`.
 struct Targets {
     width: u32,
     height: u32,
     /// The hit buffer: position + t (rgba32float), and octahedral normal, material and flags
     /// (rgba16uint).
-    hit_pos: wgpu::Texture,
-    hit_info: wgpu::Texture,
+    hit_pos: [wgpu::Texture; 2],
+    hit_info: [wgpu::Texture; 2],
     /// The translucent layers in front of each hit (rgba16float), or the steps view's
     /// counters.
     layer: wgpu::Texture,
     /// The light pass's irradiance (rgba16float).
     irradiance: wgpu::Texture,
+    /// The temporal pass's accumulated irradiance and moments (rgba16float).
+    accum: [wgpu::Texture; 2],
+    moments: [wgpu::Texture; 2],
     /// The composite's display-encoded output (rgba8unorm).
     output: wgpu::Texture,
 }
 
 impl Targets {
     fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
-        let tex = |label, format, extra| {
+        let tex = |label, format| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
@@ -830,27 +1096,28 @@ impl Targets {
                 format,
                 usage: wgpu::TextureUsages::STORAGE_BINDING
                     | wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_SRC
-                    | extra,
+                    | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             })
         };
-        let none = wgpu::TextureUsages::empty();
+        use wgpu::TextureFormat::{Rgba8Unorm, Rgba16Float, Rgba16Uint, Rgba32Float};
         Self {
             width,
             height,
-            hit_pos: tex("hit pos", wgpu::TextureFormat::Rgba32Float, none),
-            hit_info: tex("hit info", wgpu::TextureFormat::Rgba16Uint, none),
-            layer: tex("layer", wgpu::TextureFormat::Rgba16Float, none),
-            irradiance: tex("irradiance", wgpu::TextureFormat::Rgba16Float, none),
-            output: tex("frame target", wgpu::TextureFormat::Rgba8Unorm, none),
+            hit_pos: [0, 1].map(|_| tex("hit pos", Rgba32Float)),
+            hit_info: [0, 1].map(|_| tex("hit info", Rgba16Uint)),
+            layer: tex("layer", Rgba16Float),
+            irradiance: tex("irradiance", Rgba16Float),
+            accum: [0, 1].map(|_| tex("accumulated irradiance", Rgba16Float)),
+            moments: [0, 1].map(|_| tex("moments", Rgba16Float)),
+            output: tex("frame target", Rgba8Unorm),
         }
     }
 
     /// Bytes the targets occupy.
     fn bytes(&self) -> u64 {
         let px = u64::from(self.width) * u64::from(self.height);
-        px * (16 + 8 + 8 + 8 + 4)
+        px * (2 * (16 + 8) + 8 + 8 + 2 * 8 + 2 * 8 + 4)
     }
 }
 

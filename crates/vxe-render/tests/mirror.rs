@@ -14,7 +14,7 @@ use vxe_render::gpu_world::{
 };
 use vxe_render::{
     ATTRIB_WGSL, COMPOSITE_WGSL, GpuWorld, LIGHT_WGSL, MARCH_WGSL, MirrorConfig, ShardLayout,
-    Window, readback, wgpu,
+    TEMPORAL_WGSL, Window, readback, wgpu,
 };
 use vxe_world::*;
 
@@ -26,6 +26,7 @@ fn march_wgsl_validates() {
         ("march.wgsl", MARCH_WGSL.to_owned()),
         ("light.wgsl", format!("{MARCH_WGSL}\n{LIGHT_WGSL}")),
         ("composite.wgsl", format!("{MARCH_WGSL}\n{COMPOSITE_WGSL}")),
+        ("temporal.wgsl", format!("{MARCH_WGSL}\n{TEMPORAL_WGSL}")),
     ] {
         let module = wgpu::naga::front::wgsl::parse_str(&source)
             .unwrap_or_else(|e| panic!("{name} parses: {}", e.emit_to_string(&source)));

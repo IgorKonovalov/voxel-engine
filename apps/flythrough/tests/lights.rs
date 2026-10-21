@@ -338,3 +338,134 @@ fn hit_pos_buffer(
     queue.submit([enc.finish()]);
     buf
 }
+
+/// The hit positions, records and ages of `frame`'s last encoded frame.
+struct FrameRead {
+    pos: Vec<[f32; 4]>,
+    info: Vec<[u16; 4]>,
+    age: Vec<f32>,
+}
+
+fn read_frame(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    frame: &vxe_render::Frame,
+) -> FrameRead {
+    FrameRead {
+        pos: readback::read_rgba32f(device, queue, frame.hit_positions()),
+        info: readback::read_rgba16u(device, queue, frame.hit_records()),
+        age: readback::read_rgba16f(device, queue, frame.moments())
+            .iter()
+            .map(|m| m[2])
+            .collect(),
+    }
+}
+
+/// Whether `p` lies in the voxels `min ..= max` dilated by one voxel, faces included.
+fn in_dilated(p: [f32; 4], (min, max): (VoxelCoord, VoxelCoord)) -> bool {
+    (0..3).all(|k| p[k] >= (min.0[k] - 1) as f32 && p[k] <= (max.0[k] + 2) as f32)
+}
+
+/// A static camera over the cavity for 16 frames, then a radius-4 carve where the view
+/// axis meets the wall: the age reads 0 in every pixel whose hit lies in the carve's `aabb`
+/// dilated by one voxel and 16 in every other hit pixel; one more frame reads 1 and 17.
+#[test]
+fn history_dies_in_the_edit_box_and_ages_elsewhere() {
+    let world = cavity_world();
+    let Some(mut rig) = LookRig::new(&world, None) else {
+        return;
+    };
+    let camera = cavity_camera();
+    let light = vxe_render::LightParams::headlamp();
+    for _ in 0..16 {
+        rig.frame
+            .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+    }
+    let r = world
+        .apply(&EditOp::sphere(
+            centre_of_voxel([40, 0, 0]),
+            4 * FIXED_ONE,
+            Mode::Carve,
+        ))
+        .unwrap();
+    let aabb = r.aabb.expect("the carve removes rock");
+    rig.gpu.sync(&world, &rig.queue).unwrap();
+    rig.frame.invalidate(aabb.0.0, aabb.1.0);
+    for (k, (inside_age, outside_age)) in [(0.0, 16.0), (1.0, 17.0)].into_iter().enumerate() {
+        rig.frame
+            .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+        let f = read_frame(&rig.device, &rig.queue, &rig.frame);
+        let (mut inside, mut outside) = (0, 0);
+        for i in 0..f.pos.len() {
+            if f.info[i][3] & 1 == 0 {
+                continue;
+            }
+            let want = if in_dilated(f.pos[i], aabb) {
+                inside += 1;
+                inside_age
+            } else {
+                outside += 1;
+                outside_age
+            };
+            assert_eq!(f.age[i], want, "pixel {i} at {:?}", f.pos[i]);
+        }
+        println!(
+            "frame {}: {inside} hit pixels in the dilated box at age {inside_age}, {outside} outside at {outside_age}",
+            17 + k
+        );
+        assert!(inside > 0 && outside > 0);
+    }
+}
+
+/// A camera that moves one voxel sideways between two frames keeps age 1 or more in at least
+/// 95 % of the pixels that hit the cavity's unchanged material, and every pixel whose hit
+/// changed material (a `Replace` the frame is not told of) reads 0.
+#[test]
+fn reprojection_holds_across_a_sideways_step_and_a_material_change_resets() {
+    let world = cavity_world();
+    let Some(mut rig) = LookRig::new(&world, None) else {
+        return;
+    };
+    let light = vxe_render::LightParams::headlamp();
+    let mut camera = cavity_camera();
+    rig.frame
+        .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+    // Material 3 becomes 4 in a slab of the wall ahead, left of the axis.
+    world
+        .apply(&EditOp::box_(
+            Fixed3([30 * FIXED_ONE, 2 * FIXED_ONE, -10 * FIXED_ONE]),
+            Fixed3([64 * FIXED_ONE, 12 * FIXED_ONE, 10 * FIXED_ONE]),
+            Mode::Replace { from: 3, to: 4 },
+        ))
+        .unwrap();
+    rig.gpu.sync(&world, &rig.queue).unwrap();
+    let (_, right, _) = camera.basis();
+    camera.position += right;
+    rig.frame
+        .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+    let f = read_frame(&rig.device, &rig.queue, &rig.frame);
+    let (mut same, mut kept, mut changed) = (0, 0, 0);
+    for i in 0..f.pos.len() {
+        if f.info[i][3] & 1 == 0 {
+            continue;
+        }
+        match f.info[i][2] {
+            3 => {
+                same += 1;
+                kept += usize::from(f.age[i] >= 1.0);
+            }
+            4 => {
+                changed += 1;
+                assert_eq!(f.age[i], 0.0, "pixel {i} changed material");
+            }
+            m => panic!("material {m}"),
+        }
+    }
+    let share = kept as f64 / same as f64;
+    println!(
+        "sideways step: {kept} of {same} unchanged pixels keep history ({:.2} %), {changed} changed pixels reset",
+        share * 100.0
+    );
+    assert!(changed > 0);
+    assert!(share >= 0.95, "{:.2} %", share * 100.0);
+}

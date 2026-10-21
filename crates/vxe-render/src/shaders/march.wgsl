@@ -153,7 +153,10 @@ struct Params {
     exposure: f32,
     light_span: u32,
     candidates: u32,
-    _pad4: u32,
+    // Bit 0: the previous frame's hit buffer and history are valid.
+    history: u32,
+    // The views of the previous frame, for reprojection.
+    prev_views: array<View, 2>,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;

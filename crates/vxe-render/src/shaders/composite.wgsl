@@ -8,7 +8,8 @@
 //   2  texture_2d<f32>   layer_in        the hit pass's rgba16float translucent layers
 //                                        (premultiplied colour, transmittance), or in the
 //                                        steps view its walk counters
-//   3  texture_2d<f32>   irradiance_in   the irradiance at each hit, rgb
+//   3  texture_2d<f32>   irradiance_in   the irradiance at each hit, rgb: the temporal
+//                                        pass's accumulation
 //   4  storage texture   target_tex      rgba8unorm output
 //
 // Per view: `shaded` is the Lambertian `albedo * tint * E / PI` of a hit plus its material's

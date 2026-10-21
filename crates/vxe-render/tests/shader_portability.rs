@@ -18,6 +18,10 @@ fn shaders() -> Vec<(&'static str, String)> {
             format!("{MARCH}\n{}", include_str!("../src/shaders/composite.wgsl")),
         ),
         (
+            "temporal.wgsl",
+            format!("{MARCH}\n{}", include_str!("../src/shaders/temporal.wgsl")),
+        ),
+        (
             "attrib.wgsl",
             include_str!("../src/shaders/attrib.wgsl").to_owned(),
         ),

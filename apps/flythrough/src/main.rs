@@ -1943,6 +1943,10 @@ impl Run {
         if let Some(c) = self.coarse.as_mut() {
             c.update(&self.world, r);
         }
+        // The frame's history dies wherever the world changed.
+        if let (Some(gfx), Some((min, max))) = (self.gfx.as_mut(), r.aabb) {
+            gfx.frame.invalidate(min.0, max.0);
+        }
     }
 
     /// `G`: walk mode with the body under the camera, or back to flight.
@@ -2617,6 +2621,9 @@ impl Run {
                             edit_line("carved", &r, self.world.materials(), 0.0)
                         );
                         p.touched = r.touched.clone();
+                        if let (Some(gfx), Some((min, max))) = (self.gfx.as_mut(), r.aabb) {
+                            gfx.frame.invalidate(min.0, max.0);
+                        }
                     }
                     Err(e) => println!("autopilot: carve refused, {e}"),
                 }
