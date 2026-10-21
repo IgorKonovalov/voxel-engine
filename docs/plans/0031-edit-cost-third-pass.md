@@ -204,8 +204,8 @@ No GPU figure moves; nothing here runs on an adapter.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The stage table and the profile | dev | done | a49c6a1 |
-| 2: The first lever | dev | done | committed with this row |
-| 3: The second lever | dev | not started | |
+| 2: The first lever | dev | done | f3e2623 |
+| 3: The second lever | dev | done | committed with this row |
 | 4: The quiet-box readings and the line | dev | not started | |
 
 ### Notes
@@ -264,6 +264,27 @@ No GPU figure moves; nothing here runs on an adapter.
   in the second pair); net stage sums 2048.6 / 1120.4 us, 1648.4 / 1013.9 us; second pair
   `clip` 563.8 to 283.3 us, `words` 250.6 to 22.4 us, `spans` 449.3 to 375.5 us, `kernel`
   190.2 to 164.5 us. Phase 1's `clip` share was 34 % (Phase 2 commit).
+- Phase 3: the lever is lever 1 (Phase 1's second-largest stage, `spans`), not lever 3 or 4:
+  `OpRows` holds every `(y, z)` row span of the op's bounds over their whole `x` extent, the
+  sphere's walked once per op by `sphere_row_spans`, another shape's solved by `row_span` at
+  first use; each brick's words read it directly (`OpRows::words`), and the brick-row
+  `RowCache` is gone. Lever 2 (coverage from the spans) is not taken (Phase 3 commit).
+- Phase 3: `shape.rs` is touched, outside the phase's list: `sphere_row_spans` writes
+  `out[(y - ylo) + ny (z - zlo)]` over any extent, and `walked_spans_equal_solved_spans` also
+  walks each sphere's whole bounds in one call (Phase 3 commit).
+- Phase 3: a first cut that kept the per-brick-row copy from `OpRows` read no gain against
+  f3e2623 (`worst_warm` 0.9023 / 0.8786 ms, 0.9104 / 0.9374 ms, load 18.0 to 8.6); it was
+  replaced before the commit (Phase 3 commit).
+- Phase 3 paired reading (Ryzen 9 5900HS, exclusive perf lock, alternated f3e2623 / Phase 3
+  twice, `--features edit-stages`, NOT quiet: load 8.6 falling to 7.1, `game.exe` 88 %, two
+  `python3` near 90 %): `worst_warm` 0.9547 / 0.8810 ms, then 0.9281 / 0.8726 ms (-6.0 % in
+  the second pair); second pair `spans` 373.9 to 216.1 us, `clip` 281.0 to 349.7 us, net sums
+  1009.8 / 903.0 us (Phase 3 commit).
+- Phase 3 done-when not met as stated: `worst_warm` fell 6 to 8 %, under Phase 1's `spans`
+  share (27 %) less 3 %. The stage was the per-row visit of each brick row's rows, which each
+  brick still makes; one walk per op removes only the repeat per chunk along `x` and the
+  brick-row copy (Phase 3 commit).
+- Phase 3: full workspace nextest 555 passed, 4 skipped (Phase 3 commit).
 
 ### Close triggers
 
