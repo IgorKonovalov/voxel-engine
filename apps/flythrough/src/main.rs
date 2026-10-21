@@ -1189,6 +1189,55 @@ struct Samples {
     hud_ms: Vec<f64>,
 }
 
+/// Every frame's render-thread CPU, its `update + poll + sync` (the sync alone without
+/// streaming) and, on frames the march timer is on, the march's GPU time, over the whole run:
+/// the `frames:` line printed at exit.
+#[derive(Default)]
+struct RunTimes {
+    cpu_ms: Vec<f64>,
+    stream_ms: Vec<f64>,
+    gpu_ms: Vec<f64>,
+}
+
+impl RunTimes {
+    fn push(&mut self, cpu_ms: f64, stream_ms: Option<f64>, gpu_ms: Option<f64>) {
+        self.cpu_ms.push(cpu_ms);
+        self.stream_ms.extend(stream_ms);
+        self.gpu_ms.extend(gpu_ms);
+    }
+
+    /// p50, p99 and max of each series, `None` before the first frame.
+    fn line(&self) -> Option<String> {
+        if self.cpu_ms.is_empty() {
+            return None;
+        }
+        let stats = |v: &[f64]| {
+            let mut v = v.to_vec();
+            format!(
+                "p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms",
+                percentile(&mut v, 50.0),
+                percentile(&mut v, 99.0),
+                percentile(&mut v, 100.0)
+            )
+        };
+        let gpu = if self.gpu_ms.is_empty() {
+            "n/a (timer off)".to_owned()
+        } else {
+            format!(
+                "{} over {} timed frames",
+                stats(&self.gpu_ms),
+                self.gpu_ms.len()
+            )
+        };
+        Some(format!(
+            "frames: {} frames; frame CPU {}; update + poll + sync {}; march GPU {gpu}",
+            self.cpu_ms.len(),
+            stats(&self.cpu_ms),
+            stats(&self.stream_ms)
+        ))
+    }
+}
+
 /// The stats HUD's state. The frame-time ring and the last sync and edit are kept on every
 /// frame; the world's counts are sampled at the cadence, and the rows formatted, only while
 /// the HUD is shown.
@@ -1217,6 +1266,8 @@ struct Hud {
     text: String,
     colours: Vec<HudColour>,
     strip: Vec<f32>,
+    /// The whole run's frame times, shown or not.
+    run: RunTimes,
 }
 
 impl Hud {
@@ -1238,6 +1289,7 @@ impl Hud {
             text: String::new(),
             colours: Vec::new(),
             strip: Vec::with_capacity(hud::RING),
+            run: RunTimes::default(),
         }
     }
 
@@ -1437,7 +1489,7 @@ struct Autopilot {
     origin: Vec3,
     touched: Vec<ChunkCoord>,
     hash: u64,
-    near: Vec<[i32; 3]>,
+    near: NearRing,
     flight_frames: u64,
     /// The first and last flight frame's time, in milliseconds since the start.
     flight_span_ms: Option<(f64, f64)>,
@@ -1460,6 +1512,40 @@ struct Autopilot {
     /// The most staging-belt chunks the mirror held over the flight.
     peak_belt: usize,
     generated_at_takeoff: u64,
+}
+
+/// The chunk offsets the unready-near count checks: every offset within `r_full - 2` chunks,
+/// recomputed when the streamer's `r_full` changes (the pressure rule's `set_radii`).
+struct NearRing {
+    r_full: i32,
+    offsets: Vec<[i32; 3]>,
+    recomputes: u32,
+}
+
+impl NearRing {
+    fn new(r_full: i32) -> Self {
+        Self {
+            r_full,
+            offsets: ball((r_full - 2).max(0).pow(2)),
+            recomputes: 0,
+        }
+    }
+
+    /// Recomputes the offsets when `r_full` differs from the ring's.
+    fn follow(&mut self, r_full: i32) {
+        if r_full != self.r_full {
+            let recomputes = self.recomputes + 1;
+            *self = Self::new(r_full);
+            self.recomputes = recomputes;
+        }
+    }
+
+    /// Whether any chunk of the ring around `cam` is not `ready`.
+    fn unready(&self, cam: ChunkCoord, ready: impl Fn(ChunkCoord) -> bool) -> bool {
+        self.offsets
+            .iter()
+            .any(|o| !ready(ChunkCoord([0, 1, 2].map(|k| cam.0[k] + o[k]))))
+    }
 }
 
 /// Per-frame readings of the attribute pass over the autopilot's flight: the work list's
@@ -2649,11 +2735,11 @@ impl Run {
                 .map_or((now_ms, now_ms), |(a, _)| (a, now_ms)),
         );
         let cam = voxel_of(self.fly.camera.position).chunk();
-        let unready = p.near.iter().any(|o| {
-            let c = ChunkCoord([0, 1, 2].map(|k| cam.0[k] + o[k]));
-            !(stream.streamer.tier(c) == Some(Tier::Full)
+        p.near.follow(stream.streamer.config().residency.r_full);
+        let unready = p.near.unready(cam, |c| {
+            stream.streamer.tier(c) == Some(Tier::Full)
                 && gfx.mirror.is_mirrored(c)
-                && !gfx.mirror.is_lod(c))
+                && !gfx.mirror.is_lod(c)
         });
         p.unready_frames += u64::from(unready);
         if let Some(&cpu) = stream.cpu_ms.last() {
@@ -2696,10 +2782,11 @@ impl Run {
             p.flight_frames
         );
         println!(
-            "autopilot: unready-near frames {} of {} (chunks wanted full within {} of the camera's)",
+            "autopilot: unready-near frames {} of {} (chunks wanted full within r_full - 2 of the camera's, {} at the end; {} ring recomputes)",
             p.unready_frames,
             p.flight_frames,
-            r.r_full - 2
+            p.near.r_full - 2,
+            p.near.recomputes
         );
         let mut cpu = p.cpu_ms.clone();
         println!(
@@ -3099,15 +3186,21 @@ impl Run {
         let mut enc = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let mut stream_ms = None;
         if self.stream.is_some() {
             if let Err(e) = self.stream_step(gpu, &mut enc) {
                 eprintln!("mirror sync failed: {e}");
                 return Flow::Exit;
             }
+            stream_ms = self.stream.as_ref().and_then(|s| s.cpu_ms.last().copied());
         } else if let Some(gfx) = self.gfx.as_mut() {
             let t = now();
             match gfx.mirror.sync(&self.world, &gpu.queue, &mut enc) {
-                Ok(s) => self.hud.sync = (s, ms_since(t)),
+                Ok(s) => {
+                    let ms = ms_since(t);
+                    self.hud.sync = (s, ms);
+                    stream_ms = Some(ms);
+                }
                 Err(e) => {
                     eprintln!("mirror sync failed: {e}");
                     return Flow::Exit;
@@ -3207,6 +3300,7 @@ impl Run {
         let gpu_ms = timer.map(|t| t.read_ms(&gpu.device));
         let attr_gpu_ms = attr_timer.map(|t| t.read_ms(&gpu.device));
         let hud_ms = hud_timer.map(|t| t.read_ms(&gpu.device));
+        self.hud.run.push(cpu_ms, stream_ms, gpu_ms);
         self.hud.cpu_ms = cpu_ms as f32;
         self.hud.march_ms = gpu_ms.map(|v| v as f32);
         self.hud.hud_ms = hud_ms.map(|v| v as f32);
@@ -3326,6 +3420,9 @@ impl Drop for Run {
     /// one, whose drop is free; the server and client held the other references).
     fn drop(&mut self) {
         self.save();
+        if let Some(line) = self.hud.run.line() {
+            println!("{line}");
+        }
         if self.args.census {
             println!("{}", self.world.brick_census());
             println!("packed: {:?}", self.world.packed_stats());
@@ -3409,7 +3506,7 @@ impl App for Flythrough {
                 origin: self.camera.position,
                 touched: Vec::new(),
                 hash: 0,
-                near: ball((self.args.residency.r_full - 2).pow(2)),
+                near: NearRing::new(self.args.residency.r_full),
                 flight_frames: 0,
                 flight_span_ms: None,
                 unready_frames: 0,
@@ -3917,6 +4014,40 @@ mod tests {
     }
 
     /// `--walk` and `G` refuse walk mode alike while streaming; the bounded level allows it.
+    /// The unready-near ring follows the streamer's `r_full`: with chunks within 10 of the
+    /// camera ready, the ring at the default 16 (offsets within 14) finds one unready; after the
+    /// pressure rule's `set_radii` lowers `r_full` to 12, the recomputed ring (within 10) finds
+    /// none, and a repeated radius recomputes nothing.
+    #[test]
+    fn the_unready_ring_is_recomputed_on_set_radii() {
+        let mut streamer = Streamer::new(
+            Arc::new(CaveSource::unbounded(1)),
+            StreamConfig {
+                residency: RESIDENCY,
+                workers: 1,
+                persist: PersistConfig::default(),
+            },
+        );
+        let mut ring = NearRing::new(streamer.config().residency.r_full);
+        assert_eq!(ring.offsets, ball(14 * 14));
+        let cam = ChunkCoord([3, -2, 5]);
+        let ready = |c: ChunkCoord| {
+            (0..3)
+                .map(|k| i64::from(c.0[k] - cam.0[k]).pow(2))
+                .sum::<i64>()
+                <= 100
+        };
+        assert!(ring.unready(cam, ready));
+        streamer.set_radii(12, RESIDENCY.r_lod);
+        ring.follow(streamer.config().residency.r_full);
+        assert_eq!(ring.recomputes, 1);
+        assert_eq!(ring.r_full, 12);
+        assert_eq!(ring.offsets, ball(10 * 10));
+        assert!(!ring.unready(cam, ready));
+        ring.follow(streamer.config().residency.r_full);
+        assert_eq!(ring.recomputes, 1);
+    }
+
     /// The radius falls a chunk after 30 frames above 0.9, not before, and not below the
     /// floor; it rises a chunk after 300 frames below 0.7, not past the configured radius; a
     /// frame between the lines restarts both counts.

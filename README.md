@@ -150,7 +150,10 @@ go through an in-process server, so every edit you see came back as a client eve
 | `F2` | Toggle the stats overlay |
 | `Esc` | Quit |
 
-Walking, the coarse grid and collapse run on the bounded level (`--level`) only.
+Walking, the coarse grid and collapse run on the bounded level (`--level`) only. Every run
+prints a `frames:` line at exit: p50, p99 and max of the frame's render-thread CPU, of
+`update + poll + sync`, and of the march's GPU time on the frames it was timed (the overlay
+shown, `F1`, the autopilot's flight).
 
 | Flag | Does |
 |------|------|

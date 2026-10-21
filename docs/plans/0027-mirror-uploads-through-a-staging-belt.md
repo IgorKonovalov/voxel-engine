@@ -234,8 +234,8 @@ the frame is Plan 0028's and Plan 0024's.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The belt under `sync`, byte for byte | dev | done: `mirror.rs` 41 tests through `sync_now` (new: `submitted_syncs_reuse_one_belt_chunk`); staged-bytes test reads back through the belt; level first sync 232 436 992 B live, 1132 writes; all 10 goldens re-blessed with no byte change (`VXE_BLESS=1`, `git status` clean); new `syncs_past_one_belt_chunk_build_the_same_mirror` (16 MiB budget, every buffer equal to the unbudgeted mirror's); `belt_chunks()` peak 1 over a headless autopilot flight (2346 frames, load 13), 0 after `--level --frames 300` (1 trim at the first sync) | 843c5a3 |
-| 2: The streaming line, re-read | dev | done with a disclosed miss: quiet re-read meets both p50 bars (plain `sync` 1.397 to 1.662 ms, `update + poll + sync` 1.715 to 1.994 ms); the belt reads 25.4 % of `sync` against under 5 %, recorded as a miss (owner's option (a), 2026-10-21); readings in `nfr.md` §2 | committed with this row |
-| 3: The windowed frame-time summary and the autopilot's ring | dev | not started | |
+| 2: The streaming line, re-read | dev | done with a disclosed miss: quiet re-read meets both p50 bars (plain `sync` 1.397 to 1.662 ms, `update + poll + sync` 1.715 to 1.994 ms); the belt reads 25.4 % of `sync` against under 5 %, recorded as a miss (owner's option (a), 2026-10-21); readings in `nfr.md` §2 | 1533cc7, 6bd1c41, 598fb17 |
+| 3: The windowed frame-time summary and the autopilot's ring | dev | done: `--level --headless --seed 1 --frames 300`, 8 runs (5 at load 15 to 18, 3 at 1.2 to 1.4, exclusive perf lock): frame CPU p50 0.082, 0.070, 0.065, 0.067, 0.068, 0.067, 0.067, 0.079 ms against the `frame` line's median of the last 30 0.071, 0.070, 0.073, 0.074, 0.073, 0.075, 0.072, 0.074 ms; march GPU p50 equal to that median in all 8; `update + poll + sync` p50 0.001 ms against the HUD's 0.001 ms; default autopilot unready-near 0 of 7965 (load 13.4) and 0 of 10 963 (load 1.2), 2 ring recomputes each, hash match; `the_unready_ring_is_recomputed_on_set_radii` | committed with this row |
 | 4: The owner's windowed flight | human | not started | |
 
 ### Notes
@@ -309,15 +309,14 @@ each. Empty is fine.)_
   0.7 %, `enqueue` 0.6 %; `Queue::write_buffer` no samples. The belt's 3749: 3027 (20.5 %) in
   `BufferViewMut::drop`, 339 (2.3 %) in `copy_buffer_to_buffer` recording. The under-5 % bar is
   not met.
-- Resume note (delete when Phase 3 lands): Phase 3 is written and held uncommitted as
-  `target/p27/phase3.patch` in this worktree (`git apply` it): a `frames:` line at every
-  run's exit from `RunTimes` in the HUD state, and a `NearRing` the autopilot recomputes from
-  the streamer's `r_full`, pinned by `the_unready_ring_is_recomputed_on_set_radii`. Its
-  readings at load 13 to 18: five `--level --headless --seed 1 --frames 300` runs, frame CPU
-  p50 0.082, 0.070, 0.065, 0.067, 0.068 ms against the `frame` line's median of the last 30
-  of 0.071, 0.070, 0.073, 0.074, 0.073 ms (two of five outside 10 %; the last 30 are the
-  timed frames); march GPU p50 equal to the median in all five; one default autopilot flight,
-  unready-near 0 of 7965 frames, 2 ring recomputes.
+- Phase 3: the `frames:` line is printed from `Drop for Run`, so every run prints it at exit,
+  windowed or headless; the series live in the HUD state (`Hud::run`). The ring follows the
+  streamer's configured `r_full` each flight frame rather than a call beside `set_radii`; the
+  test drives `Streamer::set_radii` and the ring.
+- Phase 3, frame CPU against the existing path: the existing median covers the last 30 frames
+  of a `--frames` run, which are the ones the march timer resolves and reads back; the
+  `frames:` p50 covers all 300. Two of eight runs read outside 10 % (0.082 against 0.071 ms,
+  0.065 against 0.073 ms), one at -10.7 %. Not met as stated in those runs.
 
 ### Close triggers
 
