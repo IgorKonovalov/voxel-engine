@@ -21,7 +21,8 @@ fn render_from(world: &World, camera: &Camera, lights: &[LightParams]) -> Option
     let full = world.stats().full_bricks as u64;
     let (device, queue) = software_device((full + 4096) * 512)?;
     let mut gpu = GpuWorld::new(&device, world.extent());
-    gpu.sync(world, &queue).expect("mirror fits the adapter");
+    gpu.sync_now(world, &device, &queue)
+        .expect("mirror fits the adapter");
     let marcher = Marcher::new(&device, WIDTH, HEIGHT);
     Some(
         lights
@@ -349,7 +350,8 @@ fn goldens_match_bit_exactly_over_one_and_several_shards() {
                 ..MirrorConfig::new(Window::Fixed(world.extent()))
             },
         );
-        gpu.sync(&world, &queue).expect("mirror fits the adapter");
+        gpu.sync_now(&world, &device, &queue)
+            .expect("mirror fits the adapter");
         let shards = gpu.shards_in_use();
         println!("max_shard_slots {max_shard_slots:?}: {full} slots over {shards} shards");
         if max_shard_slots.is_some() {
@@ -391,7 +393,8 @@ fn render_with(
     lod: LodParams,
 ) -> Vec<Vec<u8>> {
     let mut gpu = GpuWorld::new(device, world.extent());
-    gpu.sync(world, queue).expect("mirror fits the adapter");
+    gpu.sync_now(world, device, queue)
+        .expect("mirror fits the adapter");
     let mut marcher = Marcher::new(device, WIDTH, HEIGHT);
     marcher.set_lod(lod);
     lights
@@ -673,7 +676,8 @@ fn cutaway_steps_from_outside_the_level_at_1080p() {
         ..MirrorConfig::new(Window::Fixed(world.extent()))
     };
     let mut gpu = GpuWorld::with_config(&device, cfg);
-    gpu.sync(&world, &queue).expect("mirror fits the adapter");
+    gpu.sync_now(&world, &device, &queue)
+        .expect("mirror fits the adapter");
     let (w, h) = (1920, 1080);
     let mut marcher = Marcher::new(&device, w, h);
     for cutaway in [false, true] {

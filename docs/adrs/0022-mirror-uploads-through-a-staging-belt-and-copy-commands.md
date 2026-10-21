@@ -1,8 +1,8 @@
 # ADR-0022: Mirror uploads go through a persistently mapped staging belt and copy commands, not `Queue::write_buffer`
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-21, at Plan 0027's close; Outcome below)
 > **Date:** 2026-10-21
-> **Related plan(s):** [Plan 0027](../plans/0027-mirror-uploads-through-a-staging-belt.md)
+> **Related plan(s):** [Plan 0027](../plans/done/0027-mirror-uploads-through-a-staging-belt.md)
 > **Supersedes in part, once accepted:** ADR-0017's rejection of its Alternative B, for the
 > staging-ring half of that alternative only. The GPU-built work list stays rejected, and
 > ADR-0017's frame-loop shape, single mirror owner and per-frame caps stand.
@@ -106,4 +106,22 @@ under ADR-0001's no-vendor-path rule and ADR-0004's binding model.
 
 ## Outcome
 
-_(Added at acceptance, from Plan 0027's readings.)_
+2026-10-21, from Plan 0027's readings (dev reference, RTX 3080 Laptop GPU, Ryzen 9 5900HS,
+quiet box, 843c5a3 paired with the pre-plan ae58f0c, three runs each).
+
+- **The decision held.** `Queue::write_buffer` has no samples under `sync`; plain `sync` p50
+  fell from 3.28 to 3.69 ms to 1.40 to 1.66 ms and `update + poll + sync` p50 from 3.33 to
+  3.78 ms to 1.72 to 1.99 ms, with `sync` max from 15.1 to 35.6 ms to 8.8 to 9.6 ms. The mirror's
+  bytes are unchanged: a 16 MiB-budget build reads back equal to the unbudgeted one buffer
+  for buffer, and every golden renders byte for byte. The 1.0 ms line of `nfr.md` §2 stays a
+  recorded miss, led by narrowing (43.2 % of `sync`).
+- **"One memcpy into mapped memory" is not free.** The belt reads 25.4 % of `sync`, most of
+  it (20.5 %) at the first locked instruction after the copy into the mapped chunk
+  (`BufferViewMut::drop`), against the plan's under-5 % bar: a recorded miss the owner
+  accepted. The per-call allocation is gone; the cost of writing into mapped memory remains.
+  Staging the narrowed voxels straight into the slice, or the chunks' memory type, is the
+  next look (Plan 0028 or after).
+- **The chunk count needed a cap the Decision did not name.** An unbudgeted first sync of the
+  bounded level takes about 56 chunks; the mirror replaces the belt when a sync leaves it
+  holding more than three (`BELT_KEEP_CHUNKS`), so the burst's chunks drop once their copies
+  complete. In flight the belt holds one or two chunks (4 to 8 MiB).

@@ -149,9 +149,9 @@ use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
-    AttrWorkStats, Camera, GpuWorld, HudColour, HudOverlay, LightParams, LodParams, LookParams,
-    MarchTimer, Marcher, MirrorConfig, NormalMode, PassTimer, Presenter, SyncStats, ViewMode,
-    Window, wgpu,
+    AttrWorkStats, BELT_CHUNK_BYTES, Camera, GpuWorld, HudColour, HudOverlay, LightParams,
+    LodParams, LookParams, MarchTimer, Marcher, MirrorConfig, NormalMode, PassTimer, Presenter,
+    SyncStats, ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -1189,6 +1189,55 @@ struct Samples {
     hud_ms: Vec<f64>,
 }
 
+/// Every frame's render-thread CPU, its `update + poll + sync` (the sync alone without
+/// streaming) and, on frames the march timer is on, the march's GPU time, over the whole run:
+/// the `frames:` line printed at exit.
+#[derive(Default)]
+struct RunTimes {
+    cpu_ms: Vec<f64>,
+    stream_ms: Vec<f64>,
+    gpu_ms: Vec<f64>,
+}
+
+impl RunTimes {
+    fn push(&mut self, cpu_ms: f64, stream_ms: Option<f64>, gpu_ms: Option<f64>) {
+        self.cpu_ms.push(cpu_ms);
+        self.stream_ms.extend(stream_ms);
+        self.gpu_ms.extend(gpu_ms);
+    }
+
+    /// p50, p99 and max of each series, `None` before the first frame.
+    fn line(&self) -> Option<String> {
+        if self.cpu_ms.is_empty() {
+            return None;
+        }
+        let stats = |v: &[f64]| {
+            let mut v = v.to_vec();
+            format!(
+                "p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms",
+                percentile(&mut v, 50.0),
+                percentile(&mut v, 99.0),
+                percentile(&mut v, 100.0)
+            )
+        };
+        let gpu = if self.gpu_ms.is_empty() {
+            "n/a (timer off)".to_owned()
+        } else {
+            format!(
+                "{} over {} timed frames",
+                stats(&self.gpu_ms),
+                self.gpu_ms.len()
+            )
+        };
+        Some(format!(
+            "frames: {} frames; frame CPU {}; update + poll + sync {}; march GPU {gpu}",
+            self.cpu_ms.len(),
+            stats(&self.cpu_ms),
+            stats(&self.stream_ms)
+        ))
+    }
+}
+
 /// The stats HUD's state. The frame-time ring and the last sync and edit are kept on every
 /// frame; the world's counts are sampled at the cadence, and the rows formatted, only while
 /// the HUD is shown.
@@ -1217,6 +1266,8 @@ struct Hud {
     text: String,
     colours: Vec<HudColour>,
     strip: Vec<f32>,
+    /// The whole run's frame times, shown or not.
+    run: RunTimes,
 }
 
 impl Hud {
@@ -1238,6 +1289,7 @@ impl Hud {
             text: String::new(),
             colours: Vec::new(),
             strip: Vec::with_capacity(hud::RING),
+            run: RunTimes::default(),
         }
     }
 
@@ -1437,7 +1489,7 @@ struct Autopilot {
     origin: Vec3,
     touched: Vec<ChunkCoord>,
     hash: u64,
-    near: Vec<[i32; 3]>,
+    near: NearRing,
     flight_frames: u64,
     /// The first and last flight frame's time, in milliseconds since the start.
     flight_span_ms: Option<(f64, f64)>,
@@ -1457,7 +1509,43 @@ struct Autopilot {
     peak_terms: [f64; 2],
     peak_resident: u64,
     peak_persisted: u64,
+    /// The most staging-belt chunks the mirror held over the flight.
+    peak_belt: usize,
     generated_at_takeoff: u64,
+}
+
+/// The chunk offsets the unready-near count checks: every offset within `r_full - 2` chunks,
+/// recomputed when the streamer's `r_full` changes (the pressure rule's `set_radii`).
+struct NearRing {
+    r_full: i32,
+    offsets: Vec<[i32; 3]>,
+    recomputes: u32,
+}
+
+impl NearRing {
+    fn new(r_full: i32) -> Self {
+        Self {
+            r_full,
+            offsets: ball((r_full - 2).max(0).pow(2)),
+            recomputes: 0,
+        }
+    }
+
+    /// Recomputes the offsets when `r_full` differs from the ring's.
+    fn follow(&mut self, r_full: i32) {
+        if r_full != self.r_full {
+            let recomputes = self.recomputes + 1;
+            *self = Self::new(r_full);
+            self.recomputes = recomputes;
+        }
+    }
+
+    /// Whether any chunk of the ring around `cam` is not `ready`.
+    fn unready(&self, cam: ChunkCoord, ready: impl Fn(ChunkCoord) -> bool) -> bool {
+        self.offsets
+            .iter()
+            .any(|o| !ready(ChunkCoord([0, 1, 2].map(|k| cam.0[k] + o[k]))))
+    }
 }
 
 /// Per-frame readings of the attribute pass over the autopilot's flight: the work list's
@@ -1485,6 +1573,17 @@ struct AttrSamples {
     /// The attribute pass's work-buffer builds after the first flight frame and the last.
     builds_first: Option<u32>,
     builds_last: u32,
+}
+
+/// The mirror's staging belt: its chunks, the host bytes they map at the chunk size, and how
+/// often a burst replaced it.
+fn belt_line(mirror: &GpuWorld) -> String {
+    let n = mirror.belt_chunks();
+    format!(
+        "staging belt {n} chunks ({} B mapped), {} trims",
+        n as u64 * BELT_CHUNK_BYTES,
+        mirror.belt_trims()
+    )
 }
 
 /// Before a `prepare_attrs` call at `now_ms`: stamps it and any earlier call not yet stamped
@@ -2116,17 +2215,18 @@ impl Run {
     fn bench_sync(&mut self, gpu: &Gpu, carves: usize, refused: usize, edit_ms: f64) {
         let Some(gfx) = self.gfx.as_mut() else { return };
         let t = now();
-        match gfx.mirror.sync(&self.world, &gpu.queue) {
+        let mut enc = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let synced = gfx.mirror.sync(&self.world, &gpu.queue, &mut enc);
+        let sync_ms = ms_since(t);
+        gpu.queue.submit([enc.finish()]);
+        match synced {
             Ok(s) => println!(
                 "bench: {carves} carves of radius 1 m within 10 m ({refused} refused): \
                  edits {edit_ms:.2} ms CPU; sync uploaded {} B ({} bricks, \
                  {} chunks, {} visited, {} writes) in {:.2} ms",
-                s.bytes,
-                s.bricks,
-                s.chunks,
-                s.chunks_visited,
-                s.writes,
-                ms_since(t)
+                s.bytes, s.bricks, s.chunks, s.chunks_visited, s.writes, sync_ms
             ),
             Err(e) => println!("bench: sync failed, {e}"),
         }
@@ -2278,14 +2378,20 @@ impl Run {
                 self.new_mirror(gpu, MirrorConfig::new(Window::Fixed(self.world.extent())));
             mirror.set_focus(self.spawn);
             let t = now();
-            match mirror.sync(&self.world, &gpu.queue) {
+            let mut enc = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            let synced = mirror.sync(&self.world, &gpu.queue, &mut enc);
+            let sync_ms = ms_since(t);
+            gpu.queue.submit([enc.finish()]);
+            match synced {
                 Ok(s) => println!(
                     "mirror: uploaded {} B ({} bricks, {} chunks, {} writes) in {:.0} ms; mirror {} B live, {} B allocated",
                     s.bytes,
                     s.bricks,
                     s.chunks,
                     s.writes,
-                    ms_since(t),
+                    sync_ms,
                     mirror.mirror_bytes(),
                     mirror.allocated_bytes()
                 ),
@@ -2383,7 +2489,12 @@ impl Run {
             stream.tick_ms.push(ms_since(self.start));
             let ev = stream.streamer.poll(&self.world);
             mirror.apply_events(&ev);
-            if let Err(e) = mirror.sync(&self.world, &gpu.queue) {
+            let mut enc = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            let synced = mirror.sync(&self.world, &gpu.queue, &mut enc);
+            gpu.queue.submit([enc.finish()]);
+            if let Err(e) = synced {
                 eprintln!("mirror sync failed: {e}");
                 break;
             }
@@ -2410,8 +2521,9 @@ impl Run {
         }
     }
 
-    /// One frame of streaming: update, poll, apply events and sync, timed together.
-    fn stream_step(&mut self, gpu: &Gpu) -> Result<(), String> {
+    /// One frame of streaming: update, poll, apply events and sync into the frame's `enc`,
+    /// timed together.
+    fn stream_step(&mut self, gpu: &Gpu, enc: &mut wgpu::CommandEncoder) -> Result<(), String> {
         let (Some(stream), Some(gfx)) = (self.stream.as_mut(), self.gfx.as_mut()) else {
             return Ok(());
         };
@@ -2427,7 +2539,7 @@ impl Run {
         gfx.mirror.set_focus(cam);
         let apply_ms = ms_since(ta);
         let ts = now();
-        let synced = gfx.mirror.sync(&self.world, &gpu.queue);
+        let synced = gfx.mirror.sync(&self.world, &gpu.queue, enc);
         let sync_ms = ms_since(ts);
         let cpu = ms_since(t);
         stream.stages_ms = [update_ms, poll_ms, apply_ms, sync_ms];
@@ -2623,11 +2735,11 @@ impl Run {
                 .map_or((now_ms, now_ms), |(a, _)| (a, now_ms)),
         );
         let cam = voxel_of(self.fly.camera.position).chunk();
-        let unready = p.near.iter().any(|o| {
-            let c = ChunkCoord([0, 1, 2].map(|k| cam.0[k] + o[k]));
-            !(stream.streamer.tier(c) == Some(Tier::Full)
+        p.near.follow(stream.streamer.config().residency.r_full);
+        let unready = p.near.unready(cam, |c| {
+            stream.streamer.tier(c) == Some(Tier::Full)
                 && gfx.mirror.is_mirrored(c)
-                && !gfx.mirror.is_lod(c))
+                && !gfx.mirror.is_lod(c)
         });
         p.unready_frames += u64::from(unready);
         if let Some(&cpu) = stream.cpu_ms.last() {
@@ -2639,6 +2751,7 @@ impl Run {
         p.peak_mirror = p.peak_mirror.max(gfx.mirror.mirror_bytes());
         p.peak_allocated = p.peak_allocated.max(gfx.mirror.allocated_bytes());
         p.peak_pressure = p.peak_pressure.max(gfx.mirror.pressure());
+        p.peak_belt = p.peak_belt.max(gfx.mirror.belt_chunks());
         let terms = pressure_terms(&gfx.mirror);
         p.peak_terms = [0, 1].map(|k| p.peak_terms[k].max(terms[k]));
         p.peak_persisted = p
@@ -2669,10 +2782,11 @@ impl Run {
             p.flight_frames
         );
         println!(
-            "autopilot: unready-near frames {} of {} (chunks wanted full within {} of the camera's)",
+            "autopilot: unready-near frames {} of {} (chunks wanted full within r_full - 2 of the camera's, {} at the end; {} ring recomputes)",
             p.unready_frames,
             p.flight_frames,
-            r.r_full - 2
+            p.near.r_full - 2,
+            p.near.recomputes
         );
         let mut cpu = p.cpu_ms.clone();
         println!(
@@ -2699,6 +2813,11 @@ impl Run {
             percentile(&mut lat, 95.0),
             percentile(&mut lat, 100.0),
             lat.len()
+        );
+        println!(
+            "autopilot: {}; peak {} chunks over the flight",
+            belt_line(&gfx.mirror),
+            p.peak_belt
         );
         let st = stream.streamer.stats();
         println!(
@@ -3062,15 +3181,26 @@ impl Run {
     /// Ticks the server, then streams, syncs, marches and presents one frame begun at `t0`.
     fn draw(&mut self, gpu: &Gpu, surface: &wgpu::TextureView, t0: Instant) -> Flow {
         self.tick(gpu);
+        // The sync's copies are recorded first, so the attribute pass and the march read
+        // them in the same submission.
+        let mut enc = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let mut stream_ms = None;
         if self.stream.is_some() {
-            if let Err(e) = self.stream_step(gpu) {
+            if let Err(e) = self.stream_step(gpu, &mut enc) {
                 eprintln!("mirror sync failed: {e}");
                 return Flow::Exit;
             }
+            stream_ms = self.stream.as_ref().and_then(|s| s.cpu_ms.last().copied());
         } else if let Some(gfx) = self.gfx.as_mut() {
             let t = now();
-            match gfx.mirror.sync(&self.world, &gpu.queue) {
-                Ok(s) => self.hud.sync = (s, ms_since(t)),
+            match gfx.mirror.sync(&self.world, &gpu.queue, &mut enc) {
+                Ok(s) => {
+                    let ms = ms_since(t);
+                    self.hud.sync = (s, ms);
+                    stream_ms = Some(ms);
+                }
                 Err(e) => {
                     eprintln!("mirror sync failed: {e}");
                     return Flow::Exit;
@@ -3114,9 +3244,6 @@ impl Run {
             .as_ref()
             .filter(|_| self.samples.is_some() || flying || hud);
         let hud_timer = gfx.hud_timer.as_ref().filter(|_| hud);
-        let mut enc = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         // Under the autopilot's flight the attribute pass is timed: its GPU time when its
         // work list is not empty, and the render thread's CPU time building the list and
         // recording the pass.
@@ -3173,6 +3300,7 @@ impl Run {
         let gpu_ms = timer.map(|t| t.read_ms(&gpu.device));
         let attr_gpu_ms = attr_timer.map(|t| t.read_ms(&gpu.device));
         let hud_ms = hud_timer.map(|t| t.read_ms(&gpu.device));
+        self.hud.run.push(cpu_ms, stream_ms, gpu_ms);
         self.hud.cpu_ms = cpu_ms as f32;
         self.hud.march_ms = gpu_ms.map(|v| v as f32);
         self.hud.hud_ms = hud_ms.map(|v| v as f32);
@@ -3229,6 +3357,9 @@ impl Run {
                 let px = readback::read_rgba8(&gpu.device, &gpu.queue, gfx.marcher.target());
                 let width = gfx.marcher.target().width() as usize;
                 println!("{}", steps_line(&StepHistogram::from_rgba8(&px, width)));
+            }
+            if let Some(gfx) = &self.gfx {
+                println!("mirror: {}", belt_line(&gfx.mirror));
             }
             self.sample_world();
             self.refresh_hud_stats();
@@ -3289,6 +3420,9 @@ impl Drop for Run {
     /// one, whose drop is free; the server and client held the other references).
     fn drop(&mut self) {
         self.save();
+        if let Some(line) = self.hud.run.line() {
+            println!("{line}");
+        }
         if self.args.census {
             println!("{}", self.world.brick_census());
             println!("packed: {:?}", self.world.packed_stats());
@@ -3372,10 +3506,11 @@ impl App for Flythrough {
                 origin: self.camera.position,
                 touched: Vec::new(),
                 hash: 0,
-                near: ball((self.args.residency.r_full - 2).pow(2)),
+                near: NearRing::new(self.args.residency.r_full),
                 flight_frames: 0,
                 flight_span_ms: None,
                 unready_frames: 0,
+                peak_belt: 0,
                 gpu_ms: Vec::new(),
                 cpu_ms: Vec::new(),
                 stages_ms: Default::default(),
@@ -3879,6 +4014,40 @@ mod tests {
     }
 
     /// `--walk` and `G` refuse walk mode alike while streaming; the bounded level allows it.
+    /// The unready-near ring follows the streamer's `r_full`: with chunks within 10 of the
+    /// camera ready, the ring at the default 16 (offsets within 14) finds one unready; after the
+    /// pressure rule's `set_radii` lowers `r_full` to 12, the recomputed ring (within 10) finds
+    /// none, and a repeated radius recomputes nothing.
+    #[test]
+    fn the_unready_ring_is_recomputed_on_set_radii() {
+        let mut streamer = Streamer::new(
+            Arc::new(CaveSource::unbounded(1)),
+            StreamConfig {
+                residency: RESIDENCY,
+                workers: 1,
+                persist: PersistConfig::default(),
+            },
+        );
+        let mut ring = NearRing::new(streamer.config().residency.r_full);
+        assert_eq!(ring.offsets, ball(14 * 14));
+        let cam = ChunkCoord([3, -2, 5]);
+        let ready = |c: ChunkCoord| {
+            (0..3)
+                .map(|k| i64::from(c.0[k] - cam.0[k]).pow(2))
+                .sum::<i64>()
+                <= 100
+        };
+        assert!(ring.unready(cam, ready));
+        streamer.set_radii(12, RESIDENCY.r_lod);
+        ring.follow(streamer.config().residency.r_full);
+        assert_eq!(ring.recomputes, 1);
+        assert_eq!(ring.r_full, 12);
+        assert_eq!(ring.offsets, ball(10 * 10));
+        assert!(!ring.unready(cam, ready));
+        ring.follow(streamer.config().residency.r_full);
+        assert_eq!(ring.recomputes, 1);
+    }
+
     /// The radius falls a chunk after 30 frames above 0.9, not before, and not below the
     /// floor; it rises a chunk after 300 frames below 0.7, not past the configured radius; a
     /// frame between the lines restarts both counts.

@@ -199,7 +199,7 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021 and 0023 closed; Plan 0024, the lighting plan, approved; Plans 0027 to 0030 drafted 2026-10-21)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023 and 0027 closed; Plan 0024, the lighting plan, approved; Plans 0028 to 0030 drafted 2026-10-21)
 
 Plan 0023 closed 2026-10-21 (v0.23.0, ADR-0017 accepted with an Outcome): the attribute
 work list's shell looks up neighbour chunks instead of visiting a 488-brick volume, the pass is
@@ -213,6 +213,14 @@ misses as followups (2026-10-21) and ordered the copies' own ADR and plan after 
 from ADR-0012's mirror-slot plan. In the owner's
 windowed flight the frame rate fell to about 40 fps on sustained fast passes with the mirror
 at its budget; the mirror-slot plan owns that footprint.
+Plan 0027 closed 2026-10-21 (v0.26.0, ADR-0022 accepted with an Outcome): the mirror's
+uploads go through a staging belt and copy commands in the frame's encoder, `write_buffer`
+is gone from `sync`, and on a quiet dev box plain `sync` p50 reads 1.40 to 1.66 ms (3.28 to
+3.69 ms before) with every mirror byte unchanged. The 1.0 ms line stays a recorded miss, now
+led by narrowing; the belt's own 25.4 % share is a second miss the owner accepted. The
+fly-through prints a `frames:` summary at exit; the owner's windowed flight read about 30 fps
+with the overlay's timer serializing CPU and GPU, which Plan 0028's windowed flight reads
+again with the overlay hidden.
 
 Plan 0015 closed 2026-10-19 (v0.14.0): the marcher walks a hierarchy of occupancy bits
 (chunk bits with an empty bit in the table, 512-bit brick masks on aligned lines, a walk that
@@ -268,8 +276,8 @@ until the owner has seen them: the coarse or full shadow walk, reservoir reuse o
 list, edit-box or gradient history, half or full lighting resolution. It starts after Plan
 0023 closes and before ADR-0012's mirror-slot plan; the streaming line's upload-copy ADR and
 plan follow it (owner, 2026-10-21). The plans around it were drafted on 2026-10-21:
-[Plan 0027](plans/0027-mirror-uploads-through-a-staging-belt.md) (ADR-0022, the streaming
-line's copies through a staging belt; independent of Plan 0024),
+[Plan 0027](plans/done/0027-mirror-uploads-through-a-staging-belt.md) (ADR-0022, the streaming
+line's copies through a staging belt; closed 2026-10-21),
 [Plan 0028](plans/0028-size-classed-mirror-slots-and-surface-only-attributes.md) (ADR-0012's
 mirror-slot step, after Plans 0024 and 0027),
 [Plan 0029](plans/0029-indirect-light-probe-volume.md) (ADR-0023: indirect light from a probe

@@ -233,6 +233,11 @@ plan touches must render byte for byte; a re-bless is a deviation to disclose, n
 - **What:** the default look at 2530 x 1378, sustained fast passes across chunk boundaries,
   the exit summary read; the expected outcome is full detail to 102 m, no deferral streaks
   and a frame-time summary the owner compares with Plan 0023 Phase 7's about 40 fps.
+  Amended at Plan 0027's close (2026-10-21): the first measured baseline is Plan 0027 Phase
+  4's `frames:` line (frame CPU p50 10.2 ms, `update + poll + sync` p50 4.4 ms, march GPU p50
+  6.6 ms, about 30 fps at 2560x1440 with the overlay shown); the 40 fps was read off the
+  display. The flight is flown twice, overlay hidden and overlay shown, because a shown
+  overlay turns the march timer on and its readback serializes CPU and GPU.
 - **Files touched:** this plan's log.
 - **Done when:** the owner has recorded the summary and a verdict on the 40 fps saturation
   in the Implementation log.
