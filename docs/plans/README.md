@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0027** (ADRs are a separate sequence; next free there is **0021**).
+**Next free number: 0027** (ADRs are a separate sequence; next free there is **0022**).
 
 ## Active roster
 

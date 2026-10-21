@@ -3,7 +3,7 @@
 > **Status:** in-progress
 > **Created:** 2026-10-17
 > **Milestone:** M4 in `docs/roadmap.md`
-> **Related ADRs:** [ADR-0015](../adrs/0015-late-reverb-as-a-shared-fdn-from-a-listener-ray-fan.md) (the tail, the fan, the skin-depth rule, the direction buses), ADR-0006 (mixer on the callback, probes on the caller's thread), [ADR-0020](../adrs/0020-paired-mixer-bench-bounds-read-with-loops-aligned.md) (paired mixer-bench bounds read with loops aligned)
+> **Related ADRs:** [ADR-0015](../adrs/0015-late-reverb-as-a-shared-fdn-from-a-listener-ray-fan.md) (the tail, the fan, the skin-depth rule, the direction buses), ADR-0006 (mixer on the callback, probes on the caller's thread), [ADR-0020](../adrs/0020-paired-mixer-bench-bounds-read-with-loops-aligned.md) (paired mixer-bench bounds read with loops aligned), [ADR-0021](../adrs/0021-echo-and-tail-levels-by-room-size-curves-and-a-tail-handed-between-two-networks.md) (the room curves and the tail's handover; supersedes ADR-0015's level and room-change clauses)
 > **Prerequisite:** Plan 0006 closed. Its open finding (clicks while the listener moves) transfers here as Phase 1; this plan changes the tap semantics Plan 0006's Phase 4 tests pin, so the close review of 0006 runs first, against the tree as it stands.
 > **References:** `docs/references/room-acoustics.md`
 > **Amended:** 2026-10-20, inside Phase 1 (its code on 919cb63), from the resume notes and the
@@ -1252,7 +1252,8 @@ re-read in Phase 7.
 
 ## Followups
 
-- Microphone echo latency compensation, if Phase 7 check 5 hears the slap late.
+- Microphone echo latency compensation, if a listen hears the voice's return late. Not
+  triggered so far: Phase 12 check 3 heard the 100 m room's return as "quite natural".
 - A source's own room and coupled rooms (second pass of the room model).
 - Multi-bounce segment statistics for the mean free path, if the cave walk finds the fan's
   star-shaped estimate wrong too often.
@@ -1263,3 +1264,16 @@ re-read in Phase 7.
   echoes' beating against the direct path (leads in Risks), then fixes the one that measures.
 - A re-pick of the 4 m echo knot above +30 dB, if a later listen at the Phase 13 defaults asks
   for more (the trim reaches +42 dB there); the tail between 4 and 12 m was never heard.
+- **A re-pick of the 12 m echo knot** (Phase 14, owner 2026-10-21): at `--room 12` the owner
+  preferred the echo trim at -3 dB over the curve's +14.9 dB at mfp 8.194 m, about +12 dB where
+  Phase 12 picked +15 in the same room. The knot is not changed at the close: the two picks are
+  one 3 dB step apart, a day apart, and the Phase 14 cave walk held at trim 0 on the same
+  segment of the curve (+13.1 to +14.6 dB at mfp 9.2 to 16.1 m). A later listen A/Bs `(8.0, +15)`
+  against `(8.0, +12)` with `--echo-db -3`, at `--room 12` and on the cave walk, and the knot
+  moves only if both prefer it. `the_defaults_are_pinned` and the balance figures move with it.
+- One owner for the decay cap: `ReverbSettings::max_t60_s` above 8 s has no effect, because
+  `Acoustics` clamps `T60` at `MAX_T60_SECONDS` (8 s) before the mixer sees it.
+- The tail's fitted `T60` reads 8 to 12 percent under the fan's (cubes 4, 12, 36 m: 0.689,
+  2.030, 5.977 s against 0.752, 2.249, 6.748 s): calibrate the per-line gains or state the gap.
+- `Output::play_stream` that hands out a stream voice's id, so the fly-through need not reserve
+  `VoiceId(u32::MAX)` (review m3, 2026-10-20).
