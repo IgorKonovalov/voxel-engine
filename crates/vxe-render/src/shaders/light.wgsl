@@ -9,6 +9,14 @@
 // Bindings, group 2:
 //   0  texture_2d<f32>   hit_pos_in      the hit pass's rgba32float position + t
 //   1  texture_2d<u32>   hit_info_in     the hit pass's rgba16uint normal, material, flags
+//   3  texture_2d<f32>   prev_pos_in     last frame's hit positions
+//   4  texture_2d<u32>   prev_info_in    last frame's hit records
+//   5  texture_2d<u32>   prev_reservoir_in  last frame's reservoirs
+//   6  storage texture   reservoir_out   rgba32uint: this frame's reservoir: the kept point x
+//                                        (three f32), then W as bfloat16 (the top 16 bits
+//                                        of its f32) in bits 0..16, the
+//                                        effective sample count M bits 16..24, the face bits
+//                                        24..27 and a valid bit 27
 //   2  storage texture   irradiance_out  rgba16float: rgb the irradiance E at the hit (light
 //                                        per unit area arriving over the hemisphere of the
 //                                        shading normal), a the luminance of its emissive
@@ -43,6 +51,10 @@
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 @group(2) @binding(1) var hit_info_in: texture_2d<u32>;
 @group(2) @binding(2) var irradiance_out: texture_storage_2d<rgba16float, write>;
+@group(2) @binding(3) var prev_pos_in: texture_2d<f32>;
+@group(2) @binding(4) var prev_info_in: texture_2d<u32>;
+@group(2) @binding(5) var prev_reservoir_in: texture_2d<u32>;
+@group(2) @binding(6) var reservoir_out: texture_storage_2d<rgba32uint, write>;
 
 // The frame's candidate table (ADR-0025), in light_samples from `params.light_table_base`:
 // a header slot (count, total weight as f32 bits), then per entry the start and length of an
@@ -86,6 +98,8 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     var e = vec3<f32>(0.0);
     var emissive = vec3<f32>(0.0);
+    // No reservoir unless `emissive_irradiance` writes one below.
+    textureStore(reservoir_out, px, vec4<u32>(0u));
     if (rec.found) {
         let ray = pixel_ray(gid.xy);
         let n = surface_detail(rec).xyz;
@@ -96,7 +110,7 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
             if ((params.lighting & LIGHTING_LAMP) != 0u) {
                 e = vec3<f32>(PI * lamp_lit(rec.p, n, ns));
             }
-            emissive = emissive_irradiance(gid.xy, rec.p, n, ns);
+            emissive = emissive_irradiance(gid.xy, rec, n, ns);
             e += emissive;
         }
     }
@@ -151,12 +165,15 @@ struct Candidate {
     x: vec3<f32>,
     le: vec3<f32>,
     weight: f32,
+    face: u32,
+    // The unshadowed contribution's luminance at the hit (the resampling target).
+    target_pdf: f32,
 };
 
 // Candidate `j` for the hit at `p` with shading normal `n`; weight 0 when it contributes
 // nothing.
 fn candidate(px: vec2<u32>, j: u32, p: vec3<f32>, n: vec3<f32>) -> Candidate {
-    var none = Candidate(vec3<f32>(0.0), vec3<f32>(0.0), 0.0);
+    var none = Candidate(vec3<f32>(0.0), vec3<f32>(0.0), 0.0, 0u, 0.0);
     let dim = 2u + CANDIDATE_DIMS * j;
     // The sample and the inverse of its source probability.
     var idx = 0u;
@@ -239,44 +256,146 @@ fn candidate(px: vec2<u32>, j: u32, p: vec3<f32>, n: vec3<f32>) -> Candidate {
     let cos_face = max(dot(face_dir(f), -dir), 0.0);
     let le = emission_of(m);
     let target_pdf = luminance(le) * cos_hit * cos_face / d2;
-    return Candidate(x, le, target_pdf * inv_pdf * f32(count));
+    return Candidate(x, le, target_pdf * inv_pdf * f32(count), f, target_pdf);
 }
 
-// The irradiance at `p` (shading normal `n`, shadow normal `ns`) from one emissive face
-// point chosen by resampling `params.candidates` candidates, with one shadow ray.
-fn emissive_irradiance(px: vec2<u32>, p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> vec3<f32> {
-    if (params.candidates == 0u) {
-        return vec3<f32>(0.0);
+// The resampling target of emitter point `x` on face `face` of radiance `le` at the hit `p`
+// with shading normal `n`: the unshadowed contribution's luminance.
+fn target_at(p: vec3<f32>, n: vec3<f32>, x: vec3<f32>, face: u32, le: vec3<f32>) -> f32 {
+    let to = x - p;
+    let d2 = max(dot(to, to), 1e-4);
+    let dir = to * inverseSqrt(d2);
+    let cos_hit = max(dot(n, dir), 0.0);
+    let cos_face = max(dot(face_dir(face), -dir), 0.0);
+    return luminance(le) * cos_hit * cos_face / d2;
+}
+
+// A weighted reservoir over emitter points: the kept point, its face and radiance, its
+// target at this pixel, the weights' sum and the effective sample count M.
+struct Reservoir {
+    x: vec3<f32>,
+    face: u32,
+    le: vec3<f32>,
+    target_pdf: f32,
+    w_sum: f32,
+    m: f32,
+};
+
+// Streams a point of weight `w` and `m` samples into `r`, keeping it with probability
+// `w / w_sum` by the random number `u`.
+fn merge(r: ptr<function, Reservoir>, x: vec3<f32>, face: u32, le: vec3<f32>, target_pdf: f32, w: f32, m: f32, u: f32) {
+    (*r).w_sum += w;
+    (*r).m += m;
+    if (w > 0.0 && u * (*r).w_sum < w) {
+        (*r).x = x;
+        (*r).face = face;
+        (*r).le = le;
+        (*r).target_pdf = target_pdf;
     }
-    var w_sum = 0.0;
-    var kept = Candidate(vec3<f32>(0.0), vec3<f32>(0.0), 0.0);
+}
+
+// Reservoirs reuse at most this many times the frame's candidates from the past.
+const REUSE_M_CAP: f32 = 20.0;
+// Spatial neighbours, their radius in pixels, and the random dimensions reuse starts at.
+const SPATIAL_TAPS: u32 = 5u;
+const SPATIAL_RADIUS: f32 = 30.0;
+const REUSE_DIMS: u32 = 1000u;
+
+// A stored reservoir of last frame's pixel `q`, re-targeted at this frame's hit `p` (normal
+// `n`) and streamed into `r` with M capped; `false` when `q`'s reservoir is empty.
+fn reuse(r: ptr<function, Reservoir>, q: vec2<i32>, p: vec3<f32>, n: vec3<f32>, u: f32) -> bool {
+    let stored = textureLoad(prev_reservoir_in, q, 0);
+    if ((stored.w & 0x8000000u) == 0u) {
+        return false;
+    }
+    let x = bitcast<vec3<f32>>(stored.xyz);
+    let w_big = bitcast<f32>((stored.w & 0xFFFFu) << 16u);
+    let m = min(f32((stored.w >> 16u) & 0xFFu), REUSE_M_CAP * f32(params.candidates));
+    let face = (stored.w >> 24u) & 7u;
+    // The emitter voxel lies behind the point's face: its material gives the radiance now.
+    let c = lookup(vec3<i32>(floor(x - 0.5 * face_dir(face))));
+    var le = vec3<f32>(0.0);
+    if (c.size == 0) {
+        le = emission_of(c.material);
+    }
+    let t = target_at(p, n, x, face, le);
+    merge(r, x, face, le, t, t * w_big * m, m, u);
+    return true;
+}
+
+// Whether last frame's hit at `q` is this hit's surface: hit, the same material, a normal
+// within 0.9 in cosine and within a voxel of its tangent plane.
+fn same_surface(q: vec2<i32>, rec: HitRecord) -> bool {
+    if (any(q < vec2<i32>(0)) || any(q >= vec2<i32>(params.size))) {
+        return false;
+    }
+    let prev = unpack_hit(textureLoad(prev_pos_in, q, 0), textureLoad(prev_info_in, q, 0));
+    return prev.found && prev.material == rec.material && dot(prev.n, rec.n) > 0.9
+        && abs(dot(rec.n, prev.p - rec.p)) < 1.0;
+}
+
+// The irradiance at hit `rec` (shading normal `n`, shadow normal `ns`) from one emissive face
+// point chosen by resampling `params.candidates` candidates, and with Params.lighting bit 2
+// (reservoir reuse, ReSTIR, Bitterli 2020) also last frame's reservoir at the reprojected
+// pixel and SPATIAL_TAPS of its neighbours within SPATIAL_RADIUS, each on the same surface,
+// re-targeted at this hit and capped at REUSE_M_CAP times the candidates; one shadow ray to
+// the kept point. Writes this pixel's reservoir.
+fn emissive_irradiance(px: vec2<u32>, rec: HitRecord, n: vec3<f32>, ns: vec3<f32>) -> vec3<f32> {
+    let p = rec.p;
+    var r = Reservoir(vec3<f32>(0.0), 0u, vec3<f32>(0.0), 0.0, 0.0, 0.0);
     for (var j = 0u; j < params.candidates; j++) {
         let c = candidate(px, j, p, n);
-        if (c.weight <= 0.0) {
-            continue;
+        merge(&r, c.x, c.face, c.le, c.target_pdf, c.weight, 1.0, rand(px, 2u + CANDIDATE_DIMS * j + 4u));
+    }
+    if ((params.lighting & LIGHTING_REUSE) != 0u && (params.history & 1u) != 0u) {
+        let v = params.prev_views[view_of(px)];
+        let q = project_prev(v, p);
+        let centre = vec2<i32>(floor(q));
+        if (q.x >= 0.0 && same_surface(centre, rec)) {
+            reuse(&r, centre, p, n, rand(px, REUSE_DIMS));
         }
-        w_sum += c.weight;
-        if (rand(px, 2u + CANDIDATE_DIMS * j + 4u) * w_sum < c.weight) {
-            kept = c;
+        for (var k = 0u; k < SPATIAL_TAPS; k++) {
+            let a = rand(px, REUSE_DIMS + 1u + 3u * k) * 2.0 * PI;
+            let d = SPATIAL_RADIUS * sqrt(rand(px, REUSE_DIMS + 2u + 3u * k));
+            let tap = vec2<i32>(floor(q + d * vec2<f32>(cos(a), sin(a))));
+            if (q.x >= 0.0 && same_surface(tap, rec)) {
+                reuse(&r, tap, p, n, rand(px, REUSE_DIMS + 3u + 3u * k));
+            }
         }
     }
-    if (kept.weight <= 0.0) {
-        return vec3<f32>(0.0);
+    // The stored count is capped at REUSE_M_CAP times the candidates, the weights scaled
+    // with it so W stays.
+    let cap = REUSE_M_CAP * f32(params.candidates);
+    if (r.m > cap) {
+        r.w_sum *= cap / r.m;
+        r.m = cap;
     }
-    let o = p + ns * SHADOW_OFFSET;
-    let to = kept.x - o;
-    let dist = length(to);
-    // Stop short of the face itself, which the ray reaches from its air side.
-    if (shadowed(o, to / dist, dist - 1e-3)) {
-        return vec3<f32>(0.0);
+    var stored = vec4<u32>(0u);
+    var e = vec3<f32>(0.0);
+    if (r.w_sum > 0.0 && r.target_pdf > 0.0 && r.m > 0.0) {
+        // The estimate's luminance is `target * W = w_sum / M`.
+        let w_big = r.w_sum / (r.m * r.target_pdf);
+        // W as bfloat16, the top half of its f32 bits rounded to nearest: a truncation would
+        // bias every reused W low, and temporal reuse compounds it frame after frame.
+        let packed = ((bitcast<u32>(w_big) + 0x8000u) >> 16u)
+            | (u32(min(r.m, 255.0)) << 16u) | (r.face << 24u) | 0x8000000u;
+        stored = vec4<u32>(bitcast<vec3<u32>>(r.x), packed);
+        let o = p + ns * SHADOW_OFFSET;
+        let to = r.x - o;
+        let dist = length(to);
+        // Stop short of the face itself, which the ray reaches from its air side.
+        if (!shadowed(o, to / dist, dist - 1e-3)) {
+            // A candidate on a face next to the hit has a tiny d^2 and a huge weight, a
+            // firefly the history would carry for many frames. No surface receives more than
+            // `PI L` from emitters of radiance L filling its hemisphere, so the estimate is
+            // clamped at FIREFLY_CLAMP times that bound for the kept emitter: biased dark only
+            // where one sample overshoots the physical maximum.
+            let l = min(r.w_sum / r.m, FIREFLY_CLAMP * PI * luminance(r.le));
+            e = r.le / luminance(r.le) * l;
+        }
     }
-    // The estimate's luminance is `w_sum / candidates`; a candidate on a face next to the hit
-    // has a tiny d^2 and a huge weight, a firefly the history would carry for many frames.
-    // No surface receives more than `PI L` from emitters of radiance L filling its
-    // hemisphere, so the estimate is clamped at FIREFLY_CLAMP times that bound for the kept
-    // emitter: biased dark only where one sample overshoots the physical maximum.
-    let e = min(w_sum / f32(params.candidates), FIREFLY_CLAMP * PI * luminance(kept.le));
-    return kept.le / luminance(kept.le) * e;
+    textureStore(reservoir_out, vec2<i32>(px), stored);
+    return e;
 }
 
 // The emissive estimate's ceiling, in units of `PI lum(Le)` of the kept emitter.

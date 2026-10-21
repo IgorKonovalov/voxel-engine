@@ -661,3 +661,109 @@ fn light_ranges_follow_the_radius_and_evict_the_farthest() {
     gpu.sync(&world, &queue).unwrap();
     assert_eq!(ranged(&gpu), [0, 1]);
 }
+
+/// Phase 3's closed box (interior x and y `[22, 42)`, z `[20, 30)`, rock all round) with a
+/// vein in its +y wall instead of an emissive ceiling: a staircase band of `glow` in the rock
+/// layer y = 42, x `[24, 40)`, two voxels tall rising one voxel every four, seen from inside
+/// the box looking +x with the lamp off, no filter.
+fn vein_rig(sampler: vxe_render::Sampler) -> Option<(LookRig, vxe_render::Camera, MaterialId)> {
+    let (table, glow, _) = glow_table();
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &UniformSource(flythrough::cave::ROCK),
+        &table,
+    );
+    world
+        .apply(&box_op([22, 22, 20], [42, 42, 30], Mode::Carve))
+        .unwrap();
+    for x in 24..40 {
+        let z = 22 + (x - 24) / 4;
+        world
+            .apply(&box_op(
+                [x, 42, z],
+                [x + 1, 43, z + 2],
+                Mode::Replace {
+                    from: flythrough::cave::ROCK,
+                    to: glow,
+                },
+            ))
+            .unwrap();
+    }
+    let mut rig = LookRig::new(&world, None)?;
+    rig.frame.set_lighting(vxe_render::Lighting {
+        lamp: false,
+        filter: false,
+        sampler,
+        ..vxe_render::Lighting::default()
+    });
+    let camera = vxe_render::Camera {
+        position: [23.0, 28.0, 25.0].into(),
+        yaw: 0.35,
+        pitch: -0.2,
+        vfov: 70f32.to_radians(),
+    };
+    Some((rig, camera, glow))
+}
+
+/// The luminance of each pixel of `frame`'s raw irradiance.
+fn irradiance_lum(rig: &LookRig) -> Vec<f64> {
+    readback::read_rgba16f(&rig.device, &rig.queue, rig.frame.irradiance())
+        .iter()
+        .map(|e| 0.2126 * f64::from(e[0]) + 0.7152 * f64::from(e[1]) + 0.0722 * f64::from(e[2]))
+        .collect()
+}
+
+/// Reservoir reuse against the flat list on the box with a vein at 320 x 180: one frame's
+/// relative RMSE of the irradiance (over the hit pixels that do not show the vein, whose own
+/// faces light each other at contact) against a 1024-frame average of the flat list is lower
+/// with reuse on (after 16 frames of history) than with it off, at one shadow ray per pixel.
+#[test]
+fn reservoir_reuse_lowers_one_frames_error() {
+    let Some((list, camera, glow)) = vein_rig(vxe_render::Sampler::List) else {
+        return;
+    };
+    let light = vxe_render::LightParams::headlamp();
+    let mut list = list;
+    let mut reference = vec![0.0f64; (WIDTH * HEIGHT) as usize];
+    let frames = 1024;
+    for i in 0..frames {
+        list.frame.set_frame_index(i);
+        list.frame
+            .render(&list.device, &list.queue, &list.gpu, &camera, &light);
+        for (r, v) in reference.iter_mut().zip(irradiance_lum(&list)) {
+            *r += v / f64::from(frames);
+        }
+    }
+    let info = readback::read_rgba16u(&list.device, &list.queue, list.frame.hit_records());
+    let lit: Vec<usize> = (0..info.len())
+        .filter(|&i| info[i][3] & 1 == 1 && info[i][2] != glow)
+        .collect();
+    let mean_ref = lit.iter().map(|&i| reference[i]).sum::<f64>() / lit.len() as f64;
+    let rel_rmse = |x: &[f64]| {
+        (lit.iter()
+            .map(|&i| (x[i] - reference[i]).powi(2))
+            .sum::<f64>()
+            / lit.len() as f64)
+            .sqrt()
+            / mean_ref
+    };
+    list.frame.set_frame_index(frames + 16);
+    list.frame
+        .render(&list.device, &list.queue, &list.gpu, &camera, &light);
+    let off = rel_rmse(&irradiance_lum(&list));
+
+    let (mut reuse, _, _) = vein_rig(vxe_render::Sampler::Reuse).unwrap();
+    reuse.frame.set_frame_index(frames);
+    for _ in 0..=16 {
+        reuse
+            .frame
+            .step(&reuse.device, &reuse.queue, &reuse.gpu, &camera, &light);
+    }
+    let on = rel_rmse(&irradiance_lum(&reuse));
+    println!(
+        "reference mean irradiance {mean_ref:.4} over {frames} frames and {} pixels; one frame's relative RMSE: list {off:.4}, reuse {on:.4}, ratio {:.3}",
+        lit.len(),
+        on / off
+    );
+    assert!(on < off, "{on:.4} against {off:.4}");
+}

@@ -107,6 +107,18 @@ pub fn read_rgba32f(
         .collect()
 }
 
+/// The pixels of an `rgba32uint` texture, rows top to bottom.
+pub fn read_texels_u32(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+) -> Vec<[u32; 4]> {
+    read_texels(device, queue, texture, 16)
+        .chunks(16)
+        .map(|p| [0, 1, 2, 3].map(|k| u32::from_le_bytes(p[4 * k..4 * k + 4].try_into().unwrap())))
+        .collect()
+}
+
 /// The pixels of an `rgba16uint` texture, rows top to bottom.
 pub fn read_rgba16u(
     device: &wgpu::Device,

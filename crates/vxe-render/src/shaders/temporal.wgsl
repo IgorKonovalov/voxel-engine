@@ -67,21 +67,6 @@ fn in_edit(p: vec3<f32>) -> bool {
     return false;
 }
 
-// `p` projected through previous view `v` to a fractional pixel of the target (pixel
-// centres at integer + 0.5); a negative x when it lies behind the view.
-fn project_prev(v: View, p: vec3<f32>) -> vec2<f32> {
-    let dir = p - v.origin;
-    let z = dot(dir, v.fwd);
-    if (z <= 1e-4) {
-        return vec2<f32>(-1.0);
-    }
-    let x = dot(dir, v.right) / z;
-    let y = dot(dir, v.up) / z;
-    let u = (x + v.tan_left) / (v.tan_left + v.tan_right);
-    let w = (v.tan_up - y) / (v.tan_up + v.tan_down);
-    return vec2<f32>(v.rect.xy) + vec2<f32>(u, w) * vec2<f32>(v.rect.zw);
-}
-
 @compute @workgroup_size(8, 8, 1)
 fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= params.size.x || gid.y >= params.size.y) {

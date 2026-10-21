@@ -11,7 +11,7 @@
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
 //! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off]
-//! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N]`.
+//! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]`.
 //! `--render` fixes the frame's internal resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -47,7 +47,7 @@
 //! masks; with `--view steps` and `--frames`, the exit prints the lamp shadow rays' cost too);
 //! `--filter off` shows the light pass's raw irradiance, unaccumulated and unfiltered;
 //! `--light-radius N` sets the chunks around the camera whose emitters light the frame
-//! (default 4).
+//! (default 4); `--sampler reuse` adds last frame's reservoirs (ReSTIR) to the candidates.
 //! `N` cycles the normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
 //! inside the extent).
@@ -160,7 +160,7 @@ use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
     AttrWorkStats, Camera, FRAME_PASSES, Frame, GpuWorld, HudColour, HudOverlay, LightParams,
     Lighting, LodParams, LookParams, MarchTimer, MirrorConfig, NormalMode, PassTimer, Presenter,
-    ShadowWalk, SyncStats, ViewMode, Window, wgpu,
+    Sampler, ShadowWalk, SyncStats, ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -326,6 +326,8 @@ struct Args {
     filter: bool,
     /// `--light-radius N`: chunks around the camera whose emitters light the frame.
     light_radius: i32,
+    /// `--sampler list|reuse`: the light pass's emissive sampler.
+    sampler: Sampler,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -411,6 +413,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         shadow_walk: ShadowWalk::Full,
         filter: true,
         light_radius: vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
+        sampler: Sampler::List,
     };
     let mut detail_flag = false;
     let mut it = argv.into_iter();
@@ -515,6 +518,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 let v = value()?;
                 args.shadow_walk = ShadowWalk::from_name(&v)
                     .ok_or(format!("--shadow-walk takes full or coarse, not {v}"))?;
+            }
+            "--sampler" => {
+                let v = value()?;
+                args.sampler = Sampler::from_name(&v)
+                    .ok_or(format!("--sampler takes list or reuse, not {v}"))?;
             }
             "--light-radius" => {
                 let v = value()?;
@@ -2360,6 +2368,7 @@ impl Run {
             lamp: self.args.lamp,
             shadow_walk: self.args.shadow_walk,
             filter: self.args.filter,
+            sampler: self.args.sampler,
             ..Lighting::default()
         });
         let mirror = if self.stream.is_some() {

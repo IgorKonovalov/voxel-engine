@@ -227,6 +227,7 @@ const NO_PLANE: u32 = 0xFFFFu;
 // Params.lighting bits.
 const LIGHTING_LAMP: u32 = 1u;
 const LIGHTING_COARSE_SHADOW: u32 = 2u;
+const LIGHTING_REUSE: u32 = 4u;
 const LIGHTING_IDENTITY_TONE_MAP: u32 = 64u;
 const LIGHTING_UNIFORM_DRAW: u32 = 128u;
 // Hit record flags.
@@ -1170,6 +1171,21 @@ fn shadow_normal_of(rec: HitRecord, d: vec3<f32>) -> vec3<f32> {
         return -d;
     }
     return select(vec3<f32>(0.0), vec3<f32>(-sign(d[rec.axis])), axis_mask(rec.axis));
+}
+
+// `p` projected through previous view `v` to a fractional pixel of the target (pixel
+// centres at integer + 0.5); a negative x when it lies behind the view.
+fn project_prev(v: View, p: vec3<f32>) -> vec2<f32> {
+    let dir = p - v.origin;
+    let z = dot(dir, v.fwd);
+    if (z <= 1e-4) {
+        return vec2<f32>(-1.0);
+    }
+    let x = dot(dir, v.right) / z;
+    let y = dot(dir, v.up) / z;
+    let u = (x + v.tan_left) / (v.tan_left + v.tan_right);
+    let w = (v.tan_up - y) / (v.tan_up + v.tan_down);
+    return vec2<f32>(v.rect.xy) + vec2<f32>(u, w) * vec2<f32>(v.rect.zw);
 }
 
 // A 32-bit integer hash (Wellons' lowbias32).

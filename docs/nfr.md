@@ -220,6 +220,13 @@ wait inside the radius; extraction in `sync` reads p50 0.160 ms, p99 2.422 ms, m
 (load 3.5) and p50 0.142, p99 3.628, max 9.992 ms (load 4.6), against 13.3 and 48.9 ms at
 Phase 2.
 
+**The light pass by sampler (dev reference, indicative, Plan 0024 Phase 8, RTX 3080 Laptop
+GPU, exclusive perf lock, 1-minute load 1.3 to 3.2 but the owner using the machine, so not
+quiet; ore emissive, lamp on, 8 candidates, full shadow walk, one run each):** at the
+streamed spawn (`--frames 3000`) the flat list reads 11.618 ms and reservoir reuse 14.183 ms;
+at the level's spawn (`--level --frames 300`) 8.330 and 10.905 ms. Reuse adds about 2.6 ms:
+its six re-targeted reservoirs each look their emitter's material up through the walk.
+
 **Denoise: the temporal pass and four a-trous iterations (dev reference, Plan 0024 Phase 6,
 RTX 3080 Laptop GPU, exclusive perf lock, 1-minute load 4.2 to 4.6; the default look with the
 ore emissive, median of the last 30 frames, 1920 x 1080 full-resolution lighting):** the

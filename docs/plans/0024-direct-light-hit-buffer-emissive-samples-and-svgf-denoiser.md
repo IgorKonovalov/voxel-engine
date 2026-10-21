@@ -573,8 +573,8 @@ such.
 | 4: The coarse shadow walk | dev | done | a414473 |
 | 5: Temporal accumulation, and history that dies in an edit box | dev | done | 1a907f7 |
 | 6: The a-trous filter and the composite, and the carve that does not ghost | dev | done at the amended bars, bar 1 second clause missed (Notes) | 5f08a2e, 907841f |
-| 7: Near-emitter candidates and bounded light extraction | dev | done for bars 1 and 2; bars 3 and 4 waiting for quiet (Notes) | committed with this row |
-| 8: Reservoir reuse against the flat list | dev | not started | |
+| 7: Near-emitter candidates and bounded light extraction | dev | done for bars 1 and 2; bars 3 and 4 waiting for quiet (Notes) | 3a71e15 |
+| 8: Reservoir reuse against the flat list | dev | done | committed with this row |
 | 9: A-SVGF's gradient as the other history killer | dev | not started | |
 | 10: The half-resolution tier | dev | not started | |
 | 11: The fly-through's switches, HUD rows and autopilot readings | dev | not started | |
@@ -689,6 +689,17 @@ each. Empty is fine.)_
   quiet box; the loaded readings (`docs/nfr.md` §2, "Light candidates from the near-emitter
   table") are over both: extraction p99 2.4 to 3.6 ms, max 6.4 to 10.0 ms; light pass 7.4 to
   13.2 ms.
+- Phase 8: the reservoir (rgba32uint, two copies) holds the kept point, W as bfloat16 rounded
+  to nearest (truncation biased reuse low frame after frame), M (capped at 20 x candidates
+  after merging, the weights scaled with it) and the face; a reused reservoir's emitter
+  radiance is looked up through the walk at the voxel behind its face. Temporal reuse takes
+  the reprojected pixel, spatial reuse five taps within 30 pixels of it from last frame's
+  reservoirs (not this frame's), each on the same surface (material, normal within 0.9, a
+  voxel of the tangent plane); one pass. The "box-with-vein" scene is Phase 3's box with a
+  staircase vein in its +y wall, and the RMSE counts the hit pixels not showing the vein: on
+  the dark cave's vein the ore's own faces, lit by neighbouring ore at contact, dominate both
+  errors (list 4.40, reuse 4.38 to 4.50 relative RMSE). `--sampler list|reuse` added here;
+  the default stays the list.
 
 Phase 1 observations: hitmask and normals of the three scenes byte-identical to ae58f0c; the
 identity-tone-mapped carve's largest channel difference from ae58f0c's is 0/255; the

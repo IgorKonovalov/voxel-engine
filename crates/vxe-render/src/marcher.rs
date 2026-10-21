@@ -67,6 +67,8 @@ pub struct Params {
 pub const LIGHTING_LAMP: u32 = 1;
 /// `Params::lighting` bit: shadow rays take the coarse walk ([`ShadowWalk::Coarse`]).
 pub const LIGHTING_COARSE_SHADOW: u32 = 1 << 1;
+/// `Params::lighting` bit: the light pass reuses last frame's reservoirs ([`Sampler::Reuse`]).
+pub const LIGHTING_REUSE: u32 = 1 << 2;
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
 pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
 /// `Params::lighting` bit: candidates are drawn uniformly over the buffer
@@ -290,6 +292,32 @@ impl ShadowWalk {
     }
 }
 
+/// How the light pass picks its emissive sample.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Sampler {
+    /// Resampling over the frame's candidates alone (the flat list).
+    #[default]
+    List,
+    /// The candidates plus last frame's reservoirs at the reprojected pixel and five
+    /// neighbours within 30 pixels (ReSTIR).
+    Reuse,
+}
+
+impl Sampler {
+    pub const ALL: [Self; 2] = [Self::List, Self::Reuse];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::List => "list",
+            Self::Reuse => "reuse",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+}
+
 /// Where the light pass draws its emissive candidates from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CandidateDraw {
@@ -315,6 +343,7 @@ pub struct Lighting {
     /// The a-trous filter runs; off, the composite shows the light pass's raw irradiance.
     pub filter: bool,
     pub draw: CandidateDraw,
+    pub sampler: Sampler,
 }
 
 impl Default for Lighting {
@@ -327,6 +356,7 @@ impl Default for Lighting {
             shadow_walk: ShadowWalk::default(),
             filter: true,
             draw: CandidateDraw::default(),
+            sampler: Sampler::default(),
         }
     }
 }
@@ -345,6 +375,11 @@ impl Lighting {
                 0
             }
             | if self.filter { 0 } else { LIGHTING_FILTER_OFF }
+            | if self.sampler == Sampler::Reuse {
+                LIGHTING_REUSE
+            } else {
+                0
+            }
             | if self.draw == CandidateDraw::Uniform {
                 LIGHTING_UNIFORM_DRAW
             } else {
@@ -662,7 +697,20 @@ impl Frame {
             );
             (layout, pipeline)
         };
-        let (light_layout, light) = pass("light", LIGHT_WGSL, "shade", &[Io::Float, Io::Uint, f16]);
+        let (light_layout, light) = pass(
+            "light",
+            LIGHT_WGSL,
+            "shade",
+            &[
+                Io::Float,
+                Io::Uint,
+                f16,
+                Io::Float,
+                Io::Uint,
+                Io::Uint,
+                Io::Store(wgpu::TextureFormat::Rgba32Uint),
+            ],
+        );
         let (temporal_layout, temporal) = pass(
             "temporal",
             TEMPORAL_WGSL,
@@ -922,6 +970,12 @@ impl Frame {
         &self.targets.irradiance
     }
 
+    /// The light pass's reservoirs the next or last encode writes (rgba32uint: the kept
+    /// point, then W, M, the face and a valid bit; see `light.wgsl`).
+    pub fn reservoirs(&self) -> &wgpu::Texture {
+        &self.targets.reservoir[self.cur]
+    }
+
     /// The temporal pass's accumulated irradiance (rgba16float, rgb).
     pub fn accumulated(&self) -> &wgpu::Texture {
         &self.targets.accum[self.cur]
@@ -1126,6 +1180,10 @@ impl Frame {
                 Res::Tex(&t.hit_pos[c]),
                 Res::Tex(&t.hit_info[c]),
                 Res::Tex(&t.irradiance),
+                Res::Tex(&t.hit_pos[q]),
+                Res::Tex(&t.hit_info[q]),
+                Res::Tex(&t.reservoir[q]),
+                Res::Tex(&t.reservoir[c]),
             ],
         );
         let temporal_bind = bind_io(
@@ -1276,6 +1334,8 @@ struct Targets {
     moments: [wgpu::Texture; 2],
     /// The filter's ping-pong pair (rgba16float: irradiance rgb, variance a).
     filter: [wgpu::Texture; 2],
+    /// The light pass's reservoirs (rgba32uint), this frame's and the last.
+    reservoir: [wgpu::Texture; 2],
     /// The composite's display-encoded output (rgba8unorm).
     output: wgpu::Texture,
 }
@@ -1300,7 +1360,7 @@ impl Targets {
                 view_formats: &[],
             })
         };
-        use wgpu::TextureFormat::{Rgba8Unorm, Rgba16Float, Rgba16Uint, Rgba32Float};
+        use wgpu::TextureFormat::{Rgba8Unorm, Rgba16Float, Rgba16Uint, Rgba32Float, Rgba32Uint};
         Self {
             width,
             height,
@@ -1311,6 +1371,7 @@ impl Targets {
             accum: [0, 1].map(|_| tex("accumulated irradiance", Rgba16Float)),
             moments: [0, 1].map(|_| tex("moments", Rgba16Float)),
             filter: [0, 1].map(|_| tex("filter", Rgba16Float)),
+            reservoir: [0, 1].map(|_| tex("reservoir", Rgba32Uint)),
             output: tex("frame target", Rgba8Unorm),
         }
     }
@@ -1318,7 +1379,7 @@ impl Targets {
     /// Bytes the targets occupy.
     fn bytes(&self) -> u64 {
         let px = u64::from(self.width) * u64::from(self.height);
-        px * (2 * (16 + 8) + 8 + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 4)
+        px * (2 * (16 + 8) + 8 + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16 + 4)
     }
 }
 
