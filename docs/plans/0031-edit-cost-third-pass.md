@@ -206,7 +206,7 @@ No GPU figure moves; nothing here runs on an adapter.
 | 1: The stage table and the profile | dev | done | a49c6a1 |
 | 2: The first lever | dev | done | f3e2623 |
 | 3: The second lever | dev | done | 8dad5ca |
-| 4: The quiet-box readings and the line | dev | done | committed with this row |
+| 4: The quiet-box readings and the line | dev | done | 6107041 |
 
 ### Notes
 
