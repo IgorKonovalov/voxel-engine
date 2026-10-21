@@ -1,12 +1,15 @@
 # 0023: The render thread's mirror CPU: profile a chunk crossing, then cut the attribute hitch and the streaming line with targeted fixes
 
-> **Status:** in-progress (dev, 2026-10-20). Approved (owner, 2026-10-20; frame bar credited with the attribute pass's GPU time,
-> option (b)). The dev lane starts once the Plan 0020 or 0022 lane reaches its human phase.
+> **Status:** done (closed 2026-10-21, v0.23.0). Verdict: clean close with four recorded misses;
+> the hitch is cut (`update_attrs` p99 138 to 180 ms down to 5.5 to 6.0 ms, the default flies
+> more frames than plain), the streaming line stays a recorded miss, and Phase 5 was skipped by
+> the owner. Approved (owner, 2026-10-20; frame bar credited with the attribute pass's GPU
+> time, option (b)).
 > **Created:** 2026-10-20
 > **Milestone:** M2 in `docs/roadmap.md` (owed before the lighting plan; it is the
 > "streaming-CPU plan" the roadmap's M1 notes name, merged with the Plan 0013 attribute-hitch
 > followup)
-> **Related ADRs:** [ADR-0017](../adrs/0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md) (the frame loop keeps its shape: bounded, incremental, narrowing on the stream workers; proposed with this plan), [ADR-0013](../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) (the reservation and deferral rules `sync` keeps), [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md) (the attribute pages and "no plane"), [ADR-0003](../adrs/0003-sphere-residency-with-lod-ring-and-edit-persistence.md) (residency bands), [ADR-0004](../adrs/0004-palette-narrowed-sharded-brick-pool.md) and [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md) (the narrowing the workers take over)
+> **Related ADRs:** [ADR-0017](../../adrs/0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md) (the frame loop keeps its shape: bounded, incremental, narrowing on the stream workers; proposed with this plan), [ADR-0013](../../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) (the reservation and deferral rules `sync` keeps), [ADR-0011](../../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md) (the attribute pages and "no plane"), [ADR-0003](../../adrs/0003-sphere-residency-with-lod-ring-and-edit-persistence.md) (residency bands), [ADR-0004](../../adrs/0004-palette-narrowed-sharded-brick-pool.md) and [ADR-0012](../../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md) (the narrowing the workers take over)
 > **Source:** the owner's interview answers, 2026-10-20 (scope, approach, the 250 ms lag, both
 > bars), Plan 0002's Followups (the streaming-CPU plan) and Plan 0013's close (the attribute
 > hitch).
@@ -668,4 +671,27 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
-- The attribute pass's GPU cost against Plan 0013's 1.0 ms proposal (unowned).
+- The attribute pass's GPU cost against Plan 0013's 1.0 ms proposal (unowned). The quiet
+  Phase 6 reading is p99 2.8 to 3.1 ms, max 3.2 to 3.5 ms.
+- **The streaming line's upload copies** (unowned, recorded miss). With the attribute hitch
+  gone, plain still reads streaming p50 4.9 to 5.0 ms and max 38 to 60 ms against 1.0 and
+  16 ms. The Phase 5 entry profile puts `Queue::write_buffer` (41.8 %) ahead of narrowing
+  (about 38 %), which is the case ADR-0017's Outcome names: the rejected staging ring
+  (Alternative B) comes back as a new ADR, not as Phase 5 as written.
+- **`attr_cap` tuning** (diagnostic, for the plan that next touches the attribute pass). No
+  flight engaged the cap: the work list's max was 7381 to 7673 against 8192, and the carry-over
+  age read 0 ms. The residual `update_attrs` p99 (5.5 to 6.0 ms against 4 ms) is the list build
+  under the cap. Measure a cap of 4096 and lower against that p99 and the 250 ms carry-over age.
+- **The windowed frame rate under fast flight** (owner, Phase 7). The owner read about 40 fps
+  during sustained fast passes at 2530x1378 with the mirror at its 3 GiB budget (`r_full` 13)
+  and deferral streaks of up to 2015 syncs (`check-p7.log`, not committed; the Implementation
+  log's "up to 161" is the last streak, not the longest). No per-frame timing reached stdout,
+  so the drop is not attributed. The fly-through owes a windowed frame-time summary (p50, p99
+  and max of CPU and march GPU, printed at exit); ADR-0012's mirror-slot plan owns the
+  saturation.
+- **The autopilot's unready-near counter** uses `r_full - 2` from the start. Once mirror
+  pressure lowers `r_full` to 12, almost every default frame counts as unready (5894 of 5904),
+  so the counter carries no signal for the default look. Recompute the ring on a radius change.
+- **Plain residency p95** reads 385 to 403 ms against this plan's 381 ms bar, and the pre-plan
+  binary read 383 ms in the same conditions: the bar was set at one reading, inside the noise.
+  `nfr.md` §5 keeps the 500 ms proposal, which every quiet plain run meets.

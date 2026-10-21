@@ -157,6 +157,27 @@ and 5509, max 11 477 and 7555 bricks (1717 and 1802 frames with work); the pass'
 2.990 and 2.416 ms, p99 5.572 and 4.463 ms, max 9.074 and 5.049 ms. The hitch is not a load
 artifact. The followup stays owed before the lighting plan (owner, 2026-10-20).
 
+**Mirror attribute pass (contour look), render-thread CPU: p99 under 4 ms on the dev reference,
+deferred work visible as face-mode normals for at most 250 ms** (budget, Plan 0023, ADR-0017;
+dev reference only). **Reading: a recorded miss (Plan 0023 Phase 6 quiet re-read, the Phase 6
+binary at a4889e4's code, RTX 3080 Laptop GPU, Ryzen 9 5900HS, exclusive perf lock, start loads
+1.56 to 1.83 with nothing above 5 % CPU, `flythrough --autopilot --headless --seed 1`
+alternated with `--look plain`):** `update_attrs` p99 5.528 and 6.024 ms, max 14.596 and
+13.727 ms (138 to 180 ms before); carry-over age max 0 ms, since no flight's work list (max
+7381 and 7606 bricks) reached the 8192 cap. The default flew 9775 and 9563 frames against
+plain's 4111 and 4159 (before: 35 to 47 % fewer), with `r_full` lowered to 12 under mirror
+pressure. The pass's GPU time is not this line: p50 1.25 to 1.28 ms, p99 2.82 to 3.14 ms, max
+3.20 to 3.46 ms, still over Plan 0013's 1.0 ms p99 proposal, unowned. In the owner's windowed
+flight (2026-10-21) the hitch was "mostly gone" and new rock showed no face-mode lag.
+
+**Streaming line after Plan 0023 (same runs): still a recorded miss.** `update + poll + sync`
+p50 4.896 and 5.020 ms in plain (0.006 ms in the default runs, which mirror about 40 000 chunks
+at `r_full` 12 against plain's 73 000), p99 12.3 to 24.3 ms, max 22.2 to 60.3 ms against the
+1.0 ms line (before: p50 4.5 to 5.0, p99 33 to 65, max 41 to 108 ms). The incremental queue
+cut `update`'s max from 37.8 to under 3.2 ms. What remains is `sync`, led by
+`Queue::write_buffer` (41.8 % of its samples) ahead of narrowing (about 38 %); ADR-0017's
+Outcome names the next step.
+
 **Stats HUD (dev reference, Plan 0010, f91726f, headless `flythrough [--level] --seed 1
 --render 1920x1080 --frames 300 [--hud]`, three runs each, NVIDIA GeForce RTX 3080 Laptop GPU,
 Ryzen 9 5900HS):** a tool, not a frame stage, so it has no line in the table. The HUD pass
@@ -606,6 +627,12 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   look's latency follows mirror pressure (r_full 16 to 12, ending 13; peak live 0.8894 of the
   budget in both), the footprint ADR-0012's mirror-slot plan owns. The streaming line (1.0 ms)
   stays a recorded miss.
+- **After Plan 0023 (same machine and protocol, quiet re-read, 2026-10-21):** plain p95 403
+  and 385 ms over the flight, under the 500 ms proposal (the plan's 381 ms bar, set at one
+  pre-plan reading, missed by 22 and 4 ms; the pre-plan binary read 383 ms in the same
+  session). The default reads 188 and 191 ms. In the owner's windowed default flight the mirror
+  sat at its 3 GiB budget with `r_full` 13 and deferral streaks of up to 2015 syncs, which
+  ADR-0012's mirror-slot plan owns.
 
 ## 6. Determinism and headless operation
 

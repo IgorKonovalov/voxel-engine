@@ -156,7 +156,7 @@ hash moved; the owner kept the 2 ms figure. Plan 0014 (closed 2026-10-17, v0.7.0
 
 **Next, before M2's lighting:** a streaming-CPU plan (incremental queue, residency sweep and
 window shift; narrowing and staging on workers), drafted 2026-10-20 as
-[Plan 0023](plans/0023-render-thread-cpu-attribute-hitch-and-streaming-line.md) together with
+[Plan 0023](plans/done/0023-render-thread-cpu-attribute-hitch-and-streaming-line.md) together with
 Plan 0013's attribute-hitch followup. The march-pass diagnosis this
 paragraph also asked for landed in Plan 0015 (the steps view, its headless histogram and the
 autopilot readings), which brought the streamed primary-ray line under 3.0 ms on the dev box.
@@ -198,7 +198,18 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017 and 0021 closed; Plan 0023 drafted; Plan 0024, the lighting plan, drafted)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021 and 0023 closed; Plan 0024, the lighting plan, drafted)
+
+Plan 0023 closed 2026-10-21 (v0.23.0, ADR-0017 accepted with an Outcome): the attribute
+work list's shell looks up neighbour chunks instead of visiting a 488-brick volume, the pass is
+capped with a carry-over queue whose waiting bricks read "no plane", and the stream queue,
+the residency sweep and the window shift are incremental. The contour look's render-thread
+hitch fell from p99 138 to 180 ms to 5.5 to 6.0 ms against a 4 ms line (a recorded miss), and
+the default now flies more frames than plain. The streaming line stays a recorded miss at p50
+about 5 ms in plain flight; its largest share is the `write_buffer` copies, so narrowing on the
+workers was skipped and the copies need their own ADR (ADR-0017's Outcome). In the owner's
+windowed flight the frame rate fell to about 40 fps on sustained fast passes with the mirror
+at its budget; the mirror-slot plan owns that footprint.
 
 Plan 0015 closed 2026-10-19 (v0.14.0): the marcher walks a hierarchy of occupancy bits
 (chunk bits with an empty bit in the table, 512-bit brick masks on aligned lines, a walk that
