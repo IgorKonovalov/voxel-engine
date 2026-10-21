@@ -18,7 +18,9 @@ pub mod readback;
 
 pub use attr_work::{AttrWorkStats, MirrorView};
 pub use camera::Camera;
-pub use gpu_world::{GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncStats, Window};
+pub use gpu_world::{
+    BELT_CHUNK_BYTES, GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncStats, Window,
+};
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
 pub use marcher::{LodParams, LookParams, MarchTimer, Marcher, NormalMode, PassTimer, ViewMode};

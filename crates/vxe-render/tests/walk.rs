@@ -98,7 +98,9 @@ fn pixel(
     light: LightParams,
 ) -> [u8; 4] {
     let mut gpu = GpuWorld::new(device, world.extent());
-    gpu.sync(world, queue).expect("sync");
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    gpu.sync(world, queue, &mut enc).expect("sync");
+    queue.submit([enc.finish()]);
     let mut marcher = Marcher::new(device, 1, 1);
     marcher.set_look(LookParams {
         view,

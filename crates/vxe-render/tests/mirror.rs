@@ -60,6 +60,34 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     Some(pollster::block_on(adapter.request_device(&desc)).expect("device"))
 }
 
+/// A sync outside a frame: records into an encoder of its own, submits it and waits for the
+/// copies, so the belt's chunks come back before the next sync.
+trait SyncNow {
+    fn sync_now(
+        &mut self,
+        world: &World,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<vxe_render::SyncStats, vxe_render::MirrorError>;
+}
+
+impl SyncNow for GpuWorld {
+    fn sync_now(
+        &mut self,
+        world: &World,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<vxe_render::SyncStats, vxe_render::MirrorError> {
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let r = self.sync(world, queue, &mut enc);
+        queue.submit([enc.finish()]);
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("device poll after a sync");
+        r
+    }
+}
+
 /// The budget the tests' mirrors reserve unless a test says otherwise: 64 MiB.
 const SMALL_BUDGET: u64 = 64 << 20;
 
@@ -103,7 +131,7 @@ fn sync_uploads_dirty_bricks_once() {
     assert_eq!(world.stats().full_bricks, 256);
 
     let mut gpu = GpuWorld::with_config(&device, small(Window::Fixed(world.extent())));
-    let first = gpu.sync(&world, &queue).unwrap();
+    let first = gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(first.bricks, 256);
     assert_eq!(first.chunks, 4);
     assert_eq!(gpu.live_slots(), 256);
@@ -124,7 +152,7 @@ fn sync_uploads_dirty_bricks_once() {
     // The dirty-chunk set is empty: an idle sync visits no chunk and writes nothing.
     assert_eq!(world.store().dirty_len(), 0);
     let before = gpu.bytes_written();
-    let second = gpu.sync(&world, &queue).unwrap();
+    let second = gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(second.bytes, 0);
     assert_eq!(second.chunks_visited, 0);
     assert_eq!(second.writes, 0);
@@ -236,7 +264,7 @@ fn a_collapsed_brick_frees_its_slot_for_the_next_expansion() {
     };
     let world = world();
     let mut gpu = GpuWorld::with_config(&device, small(Window::Fixed(world.extent())));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     let slot0 = gpu.entry(ChunkCoord([0, 0, 0]), 0).unwrap() & !FULL_BIT;
 
     // Carve the floor voxels of brick [0, 8)^3: it collapses to air.
@@ -248,7 +276,7 @@ fn a_collapsed_brick_frees_its_slot_for_the_next_expansion() {
         ))
         .unwrap();
     assert_eq!(r.changed_from, [(1, 192)]);
-    let s = gpu.sync(&world, &queue).unwrap();
+    let s = gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(s.bricks, 0);
     assert_eq!(gpu.entry(ChunkCoord([0, 0, 0]), 0), Some(0));
     assert_eq!(gpu.free_slots(), [slot0]);
@@ -264,7 +292,7 @@ fn a_collapsed_brick_frees_its_slot_for_the_next_expansion() {
         ))
         .unwrap();
     assert_eq!(r.changed_from, [(0, 1)]);
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(
         gpu.entry(ChunkCoord([1, 0, 0]), target),
         Some(FULL_BIT | slot0)
@@ -301,7 +329,7 @@ fn an_edit_in_an_empty_chunk_toggles_its_empty_bit() {
     t.push(Material::named("floor"));
     let world = World::generate(ChunkExtent::new([0, 0, 0], [1, 1, 2]), &Floor, &t);
     let mut gpu = GpuWorld::with_config(&device, small(Window::Fixed(world.extent())));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     let (floor, air) = (ChunkCoord([0, 0, 0]), ChunkCoord([0, 0, 1]));
     let rec = gpu.record_index(air).unwrap();
     assert_eq!(table_entry(&device, &queue, &gpu, air), rec | EMPTY_BIT);
@@ -311,7 +339,7 @@ fn an_edit_in_an_empty_chunk_toggles_its_empty_bit() {
     );
 
     fill_voxel(&world, [5, 6, 70], 1);
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(table_entry(&device, &queue, &gpu, air), rec);
 
     let r = world
@@ -322,7 +350,7 @@ fn an_edit_in_an_empty_chunk_toggles_its_empty_bit() {
         ))
         .unwrap();
     assert_eq!(r.changed_from, [(1, 1)]);
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(table_entry(&device, &queue, &gpu, air), rec | EMPTY_BIT);
     assert_eq!(gpu.record_index(air), Some(rec));
 }
@@ -544,7 +572,7 @@ fn a_following_window_mirrors_the_streamed_residency() {
     let ev = s.wait_idle(&world);
     gpu.apply_events(&ev);
     gpu.set_focus(focus);
-    let st = gpu.sync(&world, &queue).unwrap();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
     stats.push(st);
     assert_eq!(gpu.allocated_bytes(), reserved);
     assert_pressure(&gpu);
@@ -595,7 +623,7 @@ fn a_following_window_mirrors_the_streamed_residency() {
     );
 
     gpu.set_focus(focus);
-    let st = gpu.sync(&world, &queue).unwrap();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
     stats.push(st);
     assert_eq!(st.pending_chunks, 0);
     // The window moved by three chunks; nothing was created, copied or resized.
@@ -693,7 +721,7 @@ fn a_chunk_of_300_materials_is_wide_and_its_neighbour_narrow() {
     );
     let (many, two) = (ChunkCoord([0, 0, 0]), ChunkCoord([1, 0, 0]));
     let mut gpu = GpuWorld::with_config(&device, small(Window::Fixed(world.extent())));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
 
     assert!(gpu.is_wide(many));
     assert!(!gpu.is_wide(two));
@@ -734,6 +762,37 @@ fn fill_voxel(world: &World, v: [i32; 3], m: MaterialId) {
     assert_eq!(r.changed_from, [(0, 1)], "fill at {v:?}");
 }
 
+/// Syncs whose encoders are submitted and waited for reuse one belt chunk; syncs recorded
+/// before any of them is submitted each take a chunk of their own.
+#[test]
+fn submitted_syncs_reuse_one_belt_chunk() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = world();
+    let mut gpu = GpuWorld::with_config(&device, small(Window::Fixed(world.extent())));
+    assert_eq!(gpu.belt_chunks(), 0);
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    assert_eq!(gpu.belt_chunks(), 1);
+    for x in 0..8 {
+        fill_voxel(&world, [x * 3, 1, 3], 1);
+        let st = gpu.sync_now(&world, &device, &queue).unwrap();
+        assert_eq!(st.bricks, 1, "edit {x}");
+        assert_eq!(gpu.belt_chunks(), 1, "edit {x}");
+    }
+    let mut encs = Vec::new();
+    for x in 0..2 {
+        fill_voxel(&world, [x * 3, 5, 3], 1);
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        gpu.sync(&world, &queue, &mut enc).unwrap();
+        encs.push(enc.finish());
+    }
+    assert_eq!(gpu.belt_chunks(), 2);
+    queue.submit(encs);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    assert_eq!(gpu.belt_trims(), 0);
+}
+
 #[test]
 fn a_new_material_appends_to_the_palette_and_an_overflow_turns_the_chunk_wide() {
     let Some((device, queue)) = device() else {
@@ -746,7 +805,7 @@ fn a_new_material_appends_to_the_palette_and_an_overflow_turns_the_chunk_wide() 
     );
     let c = ChunkCoord([0, 0, 0]);
     let mut gpu = GpuWorld::with_config(&device, small(Window::Fixed(world.extent())));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.palette(c), Some(&[0, 1][..]));
     let floor_bricks = full_bricks(&world, &[c]);
     assert_eq!(floor_bricks, 64);
@@ -760,7 +819,7 @@ fn a_new_material_appends_to_the_palette_and_an_overflow_turns_the_chunk_wide() 
         ))
         .unwrap();
     assert_eq!(r.changed_from, [(0, 16 * 8 * 2)]);
-    let st = gpu.sync(&world, &queue).unwrap();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(st.chunks, 1);
     assert_eq!(st.bricks, 2, "only the two touched bricks are rewritten");
     assert_eq!(gpu.palette(c), Some(&[0, 1, 2][..]));
@@ -773,14 +832,14 @@ fn a_new_material_appends_to_the_palette_and_an_overflow_turns_the_chunk_wide() 
         let k = i32::from(m);
         fill_voxel(&world, [k % 64, k / 64 * 8, 9], m);
     }
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.palette(c).unwrap().len(), 256);
     assert!(!gpu.is_wide(c));
     let full_before = full_bricks(&world, &[c]);
 
     // One more material: the chunk turns wide and every Full brick is uploaded again.
     fill_voxel(&world, [5, 40, 20], 256);
-    let st = gpu.sync(&world, &queue).unwrap();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
     assert!(gpu.is_wide(c));
     let full = full_bricks(&world, &[c]);
     assert_eq!(full, full_before + 1);
@@ -880,6 +939,7 @@ fn records_past_the_binding_fail_and_leave_the_mirror_untouched() {
     partial_then_empty(
         &mut gpu,
         &world,
+        &device,
         &queue,
         1598,
         130,
@@ -904,6 +964,7 @@ fn records_past_the_binding_fail_and_leave_the_mirror_untouched() {
     partial_then_empty(
         &mut gpu,
         &world,
+        &device,
         &queue,
         1000,
         728,
@@ -920,12 +981,13 @@ fn records_past_the_binding_fail_and_leave_the_mirror_untouched() {
 fn partial_then_empty(
     gpu: &mut GpuWorld,
     world: &World,
+    device: &wgpu::Device,
     queue: &wgpu::Queue,
     uploaded: usize,
     deferred: u64,
     err: vxe_render::MirrorError,
 ) {
-    let st = gpu.sync(world, queue).unwrap();
+    let st = gpu.sync_now(world, device, queue).unwrap();
     assert_eq!(gpu.mirrored_chunks(), uploaded);
     assert_eq!(st.chunks, uploaded as u64);
     assert_eq!(st.deferred_chunks, deferred);
@@ -947,7 +1009,7 @@ fn partial_then_empty(
         }
     }
     let (bytes, live) = (gpu.bytes_written(), gpu.live_slots());
-    assert_eq!(gpu.sync(world, queue).unwrap_err(), err);
+    assert_eq!(gpu.sync_now(world, device, queue).unwrap_err(), err);
     assert_eq!(gpu.bytes_written(), bytes);
     assert_eq!(gpu.mirrored_chunks(), uploaded);
     assert_eq!(gpu.live_slots(), live);
@@ -1011,6 +1073,7 @@ fn a_world_past_four_shards_fails_and_leaves_the_mirror_untouched() {
     partial_then_empty(
         &mut gpu,
         &world,
+        &device,
         &queue,
         32,
         4,
@@ -1052,6 +1115,7 @@ fn a_world_past_the_budget_fails_and_leaves_the_mirror_untouched() {
     partial_then_empty(
         &mut gpu,
         &world,
+        &device,
         &queue,
         32,
         4,
@@ -1074,7 +1138,7 @@ fn a_world_past_the_budget_fails_and_leaves_the_mirror_untouched() {
             ..MirrorConfig::new(Window::Fixed(fits.extent()))
         },
     );
-    let st = gpu.sync(&fits, &queue).unwrap();
+    let st = gpu.sync_now(&fits, &device, &queue).unwrap();
     assert_eq!(st.bricks, 16_384);
     assert_eq!(gpu.pool_slots(), gpu.reserved_slots());
 }
@@ -1135,7 +1199,7 @@ fn lod_records_decode_to_the_mips_and_demotion_frees_the_full_slots() {
         let ev = s.wait_idle(&world);
         gpu.apply_events(&ev);
         gpu.set_focus(focus);
-        gpu.sync(&world, &queue).unwrap();
+        gpu.sync_now(&world, &device, &queue).unwrap();
         ev
     };
     step(&mut s, &mut gpu, VoxelCoord([0, 0, 0]));
@@ -1235,7 +1299,7 @@ fn attribute_pages_hold_full_bricks_and_plain_pages_mip_bricks() {
         ..MirrorConfig::new(Window::Fixed(world.extent()))
     };
     let mut gpu = GpuWorld::with_surface_attrs(&device, cfg);
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert!(gpu.surface_attrs());
     assert!(gpu.is_wide(ChunkCoord([0, 0, 0])));
     assert!(gpu.is_lod(lod));
@@ -1294,7 +1358,7 @@ fn attribute_pages_hold_full_bricks_and_plain_pages_mip_bricks() {
     // attribute page, against the same world mirrored without attribute pages.
     let mut plain = GpuWorld::with_config(&device, small(Window::Fixed(world.extent())));
     // Re-dirty nothing: a new mirror uploads every resident chunk on its first sync.
-    plain.sync(&world, &queue).unwrap();
+    plain.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(plain.live_slots(), gpu.live_slots());
     assert_eq!(
         gpu.mirror_bytes() - plain.mirror_bytes(),
@@ -1352,7 +1416,7 @@ fn the_attribute_pass_fills_the_floor_and_reaches_a_carve_s_neighbours() {
     };
     let world = world();
     let mut gpu = GpuWorld::with_surface_attrs(&device, small(Window::Fixed(world.extent())));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(update_attrs(&device, &queue, &mut gpu), 256);
     assert_eq!(
         update_attrs(&device, &queue, &mut gpu),
@@ -1380,7 +1444,7 @@ fn the_attribute_pass_fills_the_floor_and_reaches_a_carve_s_neighbours() {
         ))
         .unwrap();
     assert_eq!(r.changed_from, [(1, 2 * 8 * 3)]);
-    let s = gpu.sync(&world, &queue).unwrap();
+    let s = gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(s.bricks, 1, "only the carved brick is written");
     // The carved brick and its 26 neighbours: those in the mirror that are Full.
     let n = update_attrs(&device, &queue, &mut gpu);
@@ -1390,7 +1454,7 @@ fn the_attribute_pass_fills_the_floor_and_reaches_a_carve_s_neighbours() {
 
     // A mirror built from scratch computes every attribute: the neighbour pass agrees.
     let mut fresh = GpuWorld::with_surface_attrs(&device, small(Window::Fixed(world.extent())));
-    fresh.sync(&world, &queue).unwrap();
+    fresh.sync_now(&world, &device, &queue).unwrap();
     update_attrs(&device, &queue, &mut fresh);
     assert_eq!(after, attr_of(&device, &queue, &fresh, beside));
     assert_eq!(
@@ -1436,7 +1500,7 @@ fn kind_churn_reuses_empty_pages_and_moves_no_live_brick() {
         .collect();
     let mut gpu = GpuWorld::with_surface_attrs(&device, small(Window::Follow { side: 7 }));
     gpu.set_focus(VoxelCoord([2 * 64 + 1, 64 + 1, 1]));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     update_attrs(&device, &queue, &mut gpu);
     let entries = |gpu: &GpuWorld| -> Vec<Option<u32>> {
         stable
@@ -1462,7 +1526,7 @@ fn kind_churn_reuses_empty_pages_and_moves_no_live_brick() {
                     .insert(c, held.remove(&c).unwrap());
             }
         }
-        let st = gpu.sync(&world, &queue).unwrap();
+        let st = gpu.sync_now(&world, &device, &queue).unwrap();
         assert_eq!(st.pending_chunks, 0);
         update_attrs(&device, &queue, &mut gpu);
         for &c in &churn {
@@ -1495,7 +1559,7 @@ fn kind_churn_reuses_empty_pages_and_moves_no_live_brick() {
     assert_eq!(live.len() as u32, gpu.live_slots());
     let mut fresh = GpuWorld::with_surface_attrs(&device, small(Window::Follow { side: 7 }));
     fresh.set_focus(VoxelCoord([2 * 64 + 1, 64 + 1, 1]));
-    fresh.sync(&world, &queue).unwrap();
+    fresh.sync_now(&world, &device, &queue).unwrap();
     update_attrs(&device, &queue, &mut fresh);
     let mut compared = 0;
     for &c in &churn {
@@ -1534,7 +1598,7 @@ fn an_empty_attribute_page_serves_plain_slots() {
     let coords = world.store().coords();
     assert_eq!(coords.len(), 8);
     let mut gpu = GpuWorld::with_surface_attrs(&device, small(Window::Fixed(world.extent())));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.live_attr_slots(), 8 * 512);
     assert_eq!(gpu.pages_issued(), 4);
     assert!(gpu.free_pages().is_empty());
@@ -1547,7 +1611,7 @@ fn an_empty_attribute_page_serves_plain_slots() {
         evicted: coords.clone(),
         ..StreamEvents::default()
     });
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.live_slots(), 0);
     assert_eq!(gpu.free_pages(), [0, 1, 2, 3]);
     assert_eq!(gpu.spare_slots(), 4 * u64::from(POOL_PAGE_SLOTS));
@@ -1557,7 +1621,7 @@ fn an_empty_attribute_page_serves_plain_slots() {
         let chunk = mixed.store().get(c).unwrap();
         world.insert_lod(c, Arc::new(ChunkMips::build(&chunk.read().unwrap())));
     }
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     let rb = Readback::new(&device, &queue, &gpu);
     let mut mip_slots = 0;
     for &c in &coords {
@@ -1580,7 +1644,7 @@ fn an_empty_attribute_page_serves_plain_slots() {
         world.remove_lod(c);
         world.store().write_lock().insert(c, chunk);
     }
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.live_attr_slots(), 8 * 512);
     assert_eq!(gpu.live_slots(), 8 * 512);
     assert_eq!(
@@ -1625,7 +1689,7 @@ fn pressure_follows_the_slots_when_they_run_out() {
         },
     );
     assert_eq!((gpu.reserved_slots(), gpu.reserved_records()), (8192, 40));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     let (slots, records) = pressure_terms(&gpu);
     assert_eq!(slots, 7680.0 / 8192.0);
     assert!(slots > 0.9 && records < 0.5, "{slots} {records}");
@@ -1661,7 +1725,7 @@ fn pressure_follows_the_records_when_they_run_out() {
     assert_eq!(gpu.allocated_bytes(), gpu.shard_layout().reserved_bytes());
     assert!(gpu.allocated_bytes() <= budget);
     assert!(budget - gpu.allocated_bytes() < PAGE_BYTES + PLACEHOLDER_BYTES);
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     let (slots, records) = pressure_terms(&gpu);
     assert_eq!(slots, 0.0);
     assert_eq!(records, 37.0 / 40.0);
@@ -1723,7 +1787,7 @@ fn a_demotion_that_empties_attribute_pages_fits_a_full_pool() {
         },
     );
     gpu.set_focus(VoxelCoord([1, 1, 1]));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.reserved_slots(), 2 * 4096);
     assert_eq!(gpu.live_attr_slots(), 3 * 512);
     assert_eq!(gpu.pages_issued(), 2);
@@ -1737,7 +1801,7 @@ fn a_demotion_that_empties_attribute_pages_fits_a_full_pool() {
     let need = mixed[3].full_bricks() as u32;
     assert!(need > 0);
     let st = gpu
-        .sync(&world, &queue)
+        .sync_now(&world, &device, &queue)
         .expect("the demotions free the pages first");
     assert_eq!(st.chunks, 4);
     assert_eq!(gpu.live_attr_slots(), 0);
@@ -1773,7 +1837,7 @@ fn a_plain_demotion_fits_a_full_pool() {
         },
     );
     gpu.set_focus(VoxelCoord([1, 1, 1]));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.live_slots(), 4096);
     assert_eq!(gpu.reserved_slots(), 4096);
 
@@ -1783,7 +1847,7 @@ fn a_plain_demotion_fits_a_full_pool() {
     }
     world.insert_lod(ChunkCoord([8, 0, 0]), mixed[8].clone());
     let st = gpu
-        .sync(&world, &queue)
+        .sync_now(&world, &device, &queue)
         .expect("the first demotion frees slots first");
     assert_eq!(st.chunks, 9);
     assert_eq!(gpu.live_slots(), mixed[8].full_bricks() as u32);
@@ -1818,7 +1882,7 @@ fn a_selection_past_the_reservation_net_of_its_frees_still_fails_untouched() {
         },
     );
     gpu.set_focus(VoxelCoord([1, 1, 1]));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     let own = Arc::new(ChunkMips::build(&chunks[0].read().unwrap()));
     to_lod(&world, 0, &own);
     for x in 8..10 {
@@ -1827,7 +1891,7 @@ fn a_selection_past_the_reservation_net_of_its_frees_still_fails_untouched() {
             .write_lock()
             .insert(ChunkCoord([x, 0, 0]), chunks[x as usize].clone());
     }
-    let st = gpu.sync(&world, &queue).unwrap();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(
         (st.chunks, st.deferred_chunks, st.pending_chunks),
         (2, 1, 1)
@@ -1837,7 +1901,7 @@ fn a_selection_past_the_reservation_net_of_its_frees_still_fails_untouched() {
     assert!(!gpu.is_mirrored(ChunkCoord([9, 0, 0])));
     assert_eq!(gpu.live_slots(), 4096);
     let (bytes, mirrored, live) = (gpu.bytes_written(), gpu.mirrored_chunks(), gpu.live_slots());
-    let err = gpu.sync(&world, &queue).unwrap_err();
+    let err = gpu.sync_now(&world, &device, &queue).unwrap_err();
     assert_eq!(
         err,
         vxe_render::MirrorError::PoolTooLarge {
@@ -1882,7 +1946,7 @@ fn one_page_short_uploads_the_nearest_and_defers_the_rest_untouched() {
         },
     );
     gpu.set_focus(VoxelCoord([1, 1, 1]));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.pages_issued(), 1);
     let mips_before = gpu.live_slots();
     let rb = Readback::new(&device, &queue, &gpu);
@@ -1898,7 +1962,7 @@ fn one_page_short_uploads_the_nearest_and_defers_the_rest_untouched() {
             .write_lock()
             .insert(c, chunks[x as usize].clone());
     }
-    let st = gpu.sync(&world, &queue).unwrap();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(st.chunks, 5);
     assert_eq!(st.deferred_chunks, 3);
     assert_eq!(st.pending_chunks, 3);
@@ -1925,7 +1989,7 @@ fn one_page_short_uploads_the_nearest_and_defers_the_rest_untouched() {
         let own = Arc::new(ChunkMips::build(&chunks[x as usize].read().unwrap()));
         to_lod(&world, x, &own);
     }
-    let st = gpu.sync(&world, &queue).unwrap();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(st.deferred_chunks, 0);
     assert_eq!(st.pending_chunks, 0);
     let rb = Readback::new(&device, &queue, &gpu);
@@ -1977,7 +2041,7 @@ fn a_dug_chunk_uploads_ahead_of_farther_promotions() {
         },
     );
     gpu.set_focus(VoxelCoord([1, 1, 1]));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.live_slots(), 64 + 4 * 512);
 
     let r = world
@@ -1992,7 +2056,7 @@ fn a_dug_chunk_uploads_ahead_of_farther_promotions() {
         world.remove_lod(c);
         world.store().write_lock().insert(c, chunk);
     }
-    let st = gpu.sync(&world, &queue).unwrap();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
     // 4096 - 2112 = 1984 spare: 2 dug bricks, then three promotions of 512 (1536).
     assert_eq!(st.chunks, 4);
     assert_eq!(st.deferred_chunks, 2);
@@ -2036,7 +2100,7 @@ fn a_demotion_behind_a_deferred_chunk_still_uploads() {
         },
     );
     gpu.set_focus(VoxelCoord([1, 1, 1]));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.live_attr_slots(), 5 * 512);
     assert_eq!(gpu.pages_issued(), 2);
 
@@ -2048,14 +2112,14 @@ fn a_demotion_behind_a_deferred_chunk_still_uploads() {
     for x in 4..6 {
         to_lod(&world, x, &own[x as usize]);
     }
-    let st = gpu.sync(&world, &queue).unwrap();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!((st.chunks, st.deferred_chunks), (2, 1));
     assert!(gpu.is_lod(ChunkCoord([0, 0, 0])), "the promotion waits");
     let rb = Readback::new(&device, &queue, &gpu);
     for x in 4..6 {
         rb.assert_lod(&gpu, &world, ChunkCoord([x, 0, 0]));
     }
-    let st = gpu.sync(&world, &queue).unwrap();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!((st.chunks, st.deferred_chunks), (1, 0));
     let rb = Readback::new(&device, &queue, &gpu);
     rb.assert_chunk(&gpu, &world, ChunkCoord([0, 0, 0]));
@@ -2091,7 +2155,7 @@ fn a_chunk_turning_wide_past_the_pool_is_deferred_whole() {
     );
     let c = ChunkCoord([0, 0, 0]);
     gpu.set_focus(VoxelCoord([1, 1, 1]));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.live_slots(), 6 * 64 + 7 * 512);
     let snapshot = |gpu: &GpuWorld| {
         let rb = Readback::new(&device, &queue, gpu);
@@ -2117,7 +2181,7 @@ fn a_chunk_turning_wide_past_the_pool_is_deferred_whole() {
         "{full} bricks as pairs past the 128 spare slots"
     );
     let written = gpu.bytes_written();
-    let st = gpu.sync(&world, &queue).unwrap_err();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap_err();
     assert_eq!(gpu.bytes_written(), written, "an empty sync writes nothing");
     assert!(
         matches!(st, vxe_render::MirrorError::PoolTooLarge { .. }),
@@ -2166,7 +2230,7 @@ fn a_page_the_sync_allocated_into_is_not_credited_free() {
         },
     );
     gpu.set_focus(VoxelCoord([1, 1, 1]));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.live_attr_slots(), 3 * 512);
     assert_eq!(gpu.pages_issued(), 2);
 
@@ -2179,7 +2243,7 @@ fn a_page_the_sync_allocated_into_is_not_credited_free() {
     world.insert_lod(ChunkCoord([4, 0, 0]), mixed[4].clone());
     assert!(mixed[4].full_bricks() > 0);
     let st = gpu
-        .sync(&world, &queue)
+        .sync_now(&world, &device, &queue)
         .expect("x = 4 waits; the rest uploads");
     assert_eq!((st.chunks, st.deferred_chunks), (2, 1));
     assert!(!gpu.is_mirrored(ChunkCoord([4, 0, 0])));
@@ -2225,7 +2289,7 @@ fn a_widening_chunk_defers_the_later_chunk_it_crowds_out() {
         },
     );
     gpu.set_focus(VoxelCoord([1, 1, 1]));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(gpu.live_slots(), 8 * 64 + 6 * 512);
     assert_eq!(gpu.live_slots(), 4096 - 512);
 
@@ -2237,7 +2301,9 @@ fn a_widening_chunk_defers_the_later_chunk_it_crowds_out() {
     }
     assert_eq!(full_bricks(&world, &[c]), 64);
     world.store().write_lock().insert(late, held);
-    let st = gpu.sync(&world, &queue).expect("x = 0 uploads");
+    let st = gpu
+        .sync_now(&world, &device, &queue)
+        .expect("x = 0 uploads");
     assert_eq!((st.chunks, st.deferred_chunks), (1, 1));
     assert!(gpu.is_wide(c));
     assert!(!gpu.is_mirrored(late));
@@ -2292,7 +2358,7 @@ fn free_pairs_serve_narrow_bricks() {
         },
     );
     gpu.set_focus(VoxelCoord([1, 1, 1]));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert!(gpu.is_wide(c0));
     assert_eq!(gpu.live_slots(), 1024 + 5 * 512);
 
@@ -2305,7 +2371,9 @@ fn free_pairs_serve_narrow_bricks() {
     world.insert_lod(c0, mips);
     world.store().write_lock().insert(c6, held6);
     world.store().write_lock().insert(c7, held7);
-    let st = gpu.sync(&world, &queue).expect("every chunk fits whole");
+    let st = gpu
+        .sync_now(&world, &device, &queue)
+        .expect("every chunk fits whole");
     assert_eq!(
         (st.chunks, st.deferred_chunks, st.pending_chunks),
         (3, 0, 0)
@@ -2345,7 +2413,7 @@ fn an_already_wide_chunk_is_not_counted_free_singles() {
         },
     );
     gpu.set_focus(VoxelCoord([65, 1, 1]));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert!(gpu.is_wide(c0));
     assert_eq!(gpu.live_slots(), 128 + 7 * 512);
     let snapshot = |gpu: &GpuWorld| {
@@ -2378,7 +2446,9 @@ fn an_already_wide_chunk_is_not_counted_free_singles() {
         }
     }
     assert_eq!(full_bricks(&world, &[c0]), 64 + 250);
-    let st = gpu.sync(&world, &queue).expect("the demotion uploads");
+    let st = gpu
+        .sync_now(&world, &device, &queue)
+        .expect("the demotion uploads");
     assert_eq!(
         (st.chunks, st.deferred_chunks, st.pending_chunks),
         (1, 1, 1)
@@ -2439,7 +2509,7 @@ fn bricks_staged_from_planes_equal_the_narrowed_voxels() {
     }
     let world = World::generate(ChunkExtent::new([0, 0, 0], [1, 1, 1]), &Seeded256, &t);
     let mut gpu = GpuWorld::with_config(&device, small(Window::Fixed(world.extent())));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     let rb = Readback::new(&device, &queue, &gpu);
     let coord = ChunkCoord([0, 0, 0]);
     let rec = rb.table[gpu.table_index(coord) as usize] & RECORD_MASK;
@@ -2524,7 +2594,7 @@ fn the_attribute_pass_keeps_its_work_buffer_until_a_list_outgrows_it() {
     let world = world();
     let cfg = || small(Window::Fixed(world.extent()));
     let mut gpu = GpuWorld::with_surface_attrs(&device, cfg());
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     let items = all_items(&gpu, &world);
     assert_eq!(items.len(), 256);
     let e = gpu.window();
@@ -2553,7 +2623,7 @@ fn the_attribute_pass_keeps_its_work_buffer_until_a_list_outgrows_it() {
 
     // The same attribute bytes as a mirror whose own pass filled every brick once.
     let mut fresh = GpuWorld::with_surface_attrs(&device, cfg());
-    fresh.sync(&world, &queue).unwrap();
+    fresh.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(update_attrs(&device, &queue, &mut fresh), 256);
     let attrs = |g: &GpuWorld| {
         let sps = g.shard_layout().slots_per_shard;
@@ -2613,12 +2683,12 @@ fn a_neighbour_chunk_arriving_and_leaving_recomputes_the_shell() {
         assert!(n[0] > 0.9, "{when}: normal {n:?}");
     };
 
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(update_attrs(&device, &queue, &mut gpu), 1);
     plus_x(attr_of(&device, &queue, &gpu, v), "east absent");
 
     world.store().insert(east, Chunk::uniform(1));
-    let st = gpu.sync(&world, &queue).unwrap();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(st.chunks, 1);
     assert!(gpu.is_mirrored(east));
     assert_eq!(
@@ -2637,7 +2707,7 @@ fn a_neighbour_chunk_arriving_and_leaving_recomputes_the_shell() {
         evicted: vec![east],
         ..Default::default()
     });
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert!(!gpu.is_mirrored(east));
     assert_eq!(
         update_attrs(&device, &queue, &mut gpu),
@@ -2679,7 +2749,7 @@ fn the_work_list_lengths_match_the_unfactored_builder() {
     let mut gpu = GpuWorld::with_surface_attrs(&device, small(Window::Follow { side: 7 }));
     gpu.set_focus(VoxelCoord([2 * 64 + 1, 64 + 1, 1]));
     let mut lengths = Vec::new();
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     lengths.push(update_attrs(&device, &queue, &mut gpu));
     let mut held = HashMap::new();
     for round in 0..4 {
@@ -2695,7 +2765,7 @@ fn the_work_list_lengths_match_the_unfactored_builder() {
                     .insert(c, held.remove(&c).unwrap());
             }
         }
-        gpu.sync(&world, &queue).unwrap();
+        gpu.sync_now(&world, &device, &queue).unwrap();
         lengths.push(update_attrs(&device, &queue, &mut gpu));
     }
     world
@@ -2705,7 +2775,7 @@ fn the_work_list_lengths_match_the_unfactored_builder() {
             Mode::Carve,
         ))
         .unwrap();
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     lengths.push(update_attrs(&device, &queue, &mut gpu));
     let gone = ChunkCoord([2, 1, 0]);
     world.store().remove(gone);
@@ -2713,10 +2783,10 @@ fn the_work_list_lengths_match_the_unfactored_builder() {
         evicted: vec![gone],
         ..Default::default()
     });
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     lengths.push(update_attrs(&device, &queue, &mut gpu));
     gpu.set_focus(VoxelCoord([3 * 64 + 1, 64 + 1, 1]));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     lengths.push(update_attrs(&device, &queue, &mut gpu));
     println!("work-list lengths {lengths:?}");
     assert_eq!(lengths, [1343, 34, 568, 34, 568, 46, 56, 0]);
@@ -2794,7 +2864,7 @@ fn uncapped_attrs(
     world: &World,
 ) -> HashMap<[i32; 3], Vec<u8>> {
     let mut gpu = GpuWorld::with_surface_attrs(device, small(Window::Fixed(world.extent())));
-    gpu.sync(world, queue).unwrap();
+    gpu.sync_now(world, device, queue).unwrap();
     update_attrs(device, queue, &mut gpu);
     attr_bytes(device, queue, &gpu, world)
 }
@@ -2817,7 +2887,7 @@ fn a_capped_pass_clears_what_waits_and_converges_on_the_uncapped_mirror() {
     };
     let world = world();
     let mut gpu = GpuWorld::with_surface_attrs(&device, capped(Window::Fixed(world.extent()), 64));
-    let s = gpu.sync(&world, &queue).unwrap();
+    let s = gpu.sync_now(&world, &device, &queue).unwrap();
     let k = s.bricks as usize;
     println!("first sync wrote K = {k} Full bricks");
     assert!(k > 64);
@@ -2855,7 +2925,7 @@ fn a_carve_is_computed_in_the_next_pass_ahead_of_the_queue() {
     };
     let world = world();
     let mut gpu = GpuWorld::with_surface_attrs(&device, capped(Window::Fixed(world.extent()), 64));
-    let k = gpu.sync(&world, &queue).unwrap().bricks as usize;
+    let k = gpu.sync_now(&world, &device, &queue).unwrap().bricks as usize;
     attr_pass(&device, &queue, &mut gpu);
     assert!(k - 64 > 64, "{} bricks wait", k - 64);
     world
@@ -2875,7 +2945,7 @@ fn a_carve_is_computed_in_the_next_pass_ahead_of_the_queue() {
         }
     }
     assert_eq!(reuploaded, [[0, 0, 0]]);
-    let s = gpu.sync(&world, &queue).unwrap();
+    let s = gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(s.bricks, 1);
     let (computes, _) = attr_pass(&device, &queue, &mut gpu);
     let computed: HashSet<[i32; 3]> = computes.iter().map(brick_of).collect();
@@ -2911,7 +2981,7 @@ fn a_slot_reused_while_its_old_brick_waits_ends_with_the_new_brick_s_attributes(
     };
     let world = world();
     let mut gpu = GpuWorld::with_surface_attrs(&device, capped(Window::Fixed(world.extent()), 64));
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     let (_, clears) = attr_pass(&device, &queue, &mut gpu);
     // A waiting floor brick A (z brick 0), and the air brick B above it in the same chunk.
     let a = clears
@@ -2951,7 +3021,7 @@ fn a_slot_reused_while_its_old_brick_waits_ends_with_the_new_brick_s_attributes(
             Mode::Fill(1),
         ))
         .unwrap();
-    gpu.sync(&world, &queue).unwrap();
+    gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(entry(&gpu, a) & FULL_BIT, 0, "A is uniform");
     assert_eq!(entry(&gpu, b) & SLOT_MASK, a_slot, "B took A's slot");
     drain_attrs(&device, &queue, &mut gpu);

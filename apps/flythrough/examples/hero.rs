@@ -105,8 +105,10 @@ fn main() -> Result<(), String> {
     .map_err(|e| format!("no device: {e}"))?;
 
     let mut gpu = GpuWorld::new(&device, world.extent());
-    gpu.sync(&world, &queue)
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    gpu.sync(&world, &queue, &mut enc)
         .map_err(|e| format!("mirror: {e:?}"))?;
+    queue.submit([enc.finish()]);
     let [w, h] = args.size;
     let marcher = Marcher::new(&device, w, h);
     marcher.render(&device, &queue, &gpu, &camera, &LightParams::headlamp());

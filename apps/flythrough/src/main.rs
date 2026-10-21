@@ -149,9 +149,9 @@ use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
-    AttrWorkStats, Camera, GpuWorld, HudColour, HudOverlay, LightParams, LodParams, LookParams,
-    MarchTimer, Marcher, MirrorConfig, NormalMode, PassTimer, Presenter, SyncStats, ViewMode,
-    Window, wgpu,
+    AttrWorkStats, BELT_CHUNK_BYTES, Camera, GpuWorld, HudColour, HudOverlay, LightParams,
+    LodParams, LookParams, MarchTimer, Marcher, MirrorConfig, NormalMode, PassTimer, Presenter,
+    SyncStats, ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -1457,6 +1457,8 @@ struct Autopilot {
     peak_terms: [f64; 2],
     peak_resident: u64,
     peak_persisted: u64,
+    /// The most staging-belt chunks the mirror held over the flight.
+    peak_belt: usize,
     generated_at_takeoff: u64,
 }
 
@@ -1485,6 +1487,17 @@ struct AttrSamples {
     /// The attribute pass's work-buffer builds after the first flight frame and the last.
     builds_first: Option<u32>,
     builds_last: u32,
+}
+
+/// The mirror's staging belt: its chunks, the host bytes they map at the chunk size, and how
+/// often a burst replaced it.
+fn belt_line(mirror: &GpuWorld) -> String {
+    let n = mirror.belt_chunks();
+    format!(
+        "staging belt {n} chunks ({} B mapped), {} trims",
+        n as u64 * BELT_CHUNK_BYTES,
+        mirror.belt_trims()
+    )
 }
 
 /// Before a `prepare_attrs` call at `now_ms`: stamps it and any earlier call not yet stamped
@@ -2116,17 +2129,18 @@ impl Run {
     fn bench_sync(&mut self, gpu: &Gpu, carves: usize, refused: usize, edit_ms: f64) {
         let Some(gfx) = self.gfx.as_mut() else { return };
         let t = now();
-        match gfx.mirror.sync(&self.world, &gpu.queue) {
+        let mut enc = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let synced = gfx.mirror.sync(&self.world, &gpu.queue, &mut enc);
+        let sync_ms = ms_since(t);
+        gpu.queue.submit([enc.finish()]);
+        match synced {
             Ok(s) => println!(
                 "bench: {carves} carves of radius 1 m within 10 m ({refused} refused): \
                  edits {edit_ms:.2} ms CPU; sync uploaded {} B ({} bricks, \
                  {} chunks, {} visited, {} writes) in {:.2} ms",
-                s.bytes,
-                s.bricks,
-                s.chunks,
-                s.chunks_visited,
-                s.writes,
-                ms_since(t)
+                s.bytes, s.bricks, s.chunks, s.chunks_visited, s.writes, sync_ms
             ),
             Err(e) => println!("bench: sync failed, {e}"),
         }
@@ -2278,14 +2292,20 @@ impl Run {
                 self.new_mirror(gpu, MirrorConfig::new(Window::Fixed(self.world.extent())));
             mirror.set_focus(self.spawn);
             let t = now();
-            match mirror.sync(&self.world, &gpu.queue) {
+            let mut enc = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            let synced = mirror.sync(&self.world, &gpu.queue, &mut enc);
+            let sync_ms = ms_since(t);
+            gpu.queue.submit([enc.finish()]);
+            match synced {
                 Ok(s) => println!(
                     "mirror: uploaded {} B ({} bricks, {} chunks, {} writes) in {:.0} ms; mirror {} B live, {} B allocated",
                     s.bytes,
                     s.bricks,
                     s.chunks,
                     s.writes,
-                    ms_since(t),
+                    sync_ms,
                     mirror.mirror_bytes(),
                     mirror.allocated_bytes()
                 ),
@@ -2383,7 +2403,12 @@ impl Run {
             stream.tick_ms.push(ms_since(self.start));
             let ev = stream.streamer.poll(&self.world);
             mirror.apply_events(&ev);
-            if let Err(e) = mirror.sync(&self.world, &gpu.queue) {
+            let mut enc = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            let synced = mirror.sync(&self.world, &gpu.queue, &mut enc);
+            gpu.queue.submit([enc.finish()]);
+            if let Err(e) = synced {
                 eprintln!("mirror sync failed: {e}");
                 break;
             }
@@ -2410,8 +2435,9 @@ impl Run {
         }
     }
 
-    /// One frame of streaming: update, poll, apply events and sync, timed together.
-    fn stream_step(&mut self, gpu: &Gpu) -> Result<(), String> {
+    /// One frame of streaming: update, poll, apply events and sync into the frame's `enc`,
+    /// timed together.
+    fn stream_step(&mut self, gpu: &Gpu, enc: &mut wgpu::CommandEncoder) -> Result<(), String> {
         let (Some(stream), Some(gfx)) = (self.stream.as_mut(), self.gfx.as_mut()) else {
             return Ok(());
         };
@@ -2427,7 +2453,7 @@ impl Run {
         gfx.mirror.set_focus(cam);
         let apply_ms = ms_since(ta);
         let ts = now();
-        let synced = gfx.mirror.sync(&self.world, &gpu.queue);
+        let synced = gfx.mirror.sync(&self.world, &gpu.queue, enc);
         let sync_ms = ms_since(ts);
         let cpu = ms_since(t);
         stream.stages_ms = [update_ms, poll_ms, apply_ms, sync_ms];
@@ -2639,6 +2665,7 @@ impl Run {
         p.peak_mirror = p.peak_mirror.max(gfx.mirror.mirror_bytes());
         p.peak_allocated = p.peak_allocated.max(gfx.mirror.allocated_bytes());
         p.peak_pressure = p.peak_pressure.max(gfx.mirror.pressure());
+        p.peak_belt = p.peak_belt.max(gfx.mirror.belt_chunks());
         let terms = pressure_terms(&gfx.mirror);
         p.peak_terms = [0, 1].map(|k| p.peak_terms[k].max(terms[k]));
         p.peak_persisted = p
@@ -2699,6 +2726,11 @@ impl Run {
             percentile(&mut lat, 95.0),
             percentile(&mut lat, 100.0),
             lat.len()
+        );
+        println!(
+            "autopilot: {}; peak {} chunks over the flight",
+            belt_line(&gfx.mirror),
+            p.peak_belt
         );
         let st = stream.streamer.stats();
         println!(
@@ -3062,14 +3094,19 @@ impl Run {
     /// Ticks the server, then streams, syncs, marches and presents one frame begun at `t0`.
     fn draw(&mut self, gpu: &Gpu, surface: &wgpu::TextureView, t0: Instant) -> Flow {
         self.tick(gpu);
+        // The sync's copies are recorded first, so the attribute pass and the march read
+        // them in the same submission.
+        let mut enc = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         if self.stream.is_some() {
-            if let Err(e) = self.stream_step(gpu) {
+            if let Err(e) = self.stream_step(gpu, &mut enc) {
                 eprintln!("mirror sync failed: {e}");
                 return Flow::Exit;
             }
         } else if let Some(gfx) = self.gfx.as_mut() {
             let t = now();
-            match gfx.mirror.sync(&self.world, &gpu.queue) {
+            match gfx.mirror.sync(&self.world, &gpu.queue, &mut enc) {
                 Ok(s) => self.hud.sync = (s, ms_since(t)),
                 Err(e) => {
                     eprintln!("mirror sync failed: {e}");
@@ -3114,9 +3151,6 @@ impl Run {
             .as_ref()
             .filter(|_| self.samples.is_some() || flying || hud);
         let hud_timer = gfx.hud_timer.as_ref().filter(|_| hud);
-        let mut enc = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         // Under the autopilot's flight the attribute pass is timed: its GPU time when its
         // work list is not empty, and the render thread's CPU time building the list and
         // recording the pass.
@@ -3229,6 +3263,9 @@ impl Run {
                 let px = readback::read_rgba8(&gpu.device, &gpu.queue, gfx.marcher.target());
                 let width = gfx.marcher.target().width() as usize;
                 println!("{}", steps_line(&StepHistogram::from_rgba8(&px, width)));
+            }
+            if let Some(gfx) = &self.gfx {
+                println!("mirror: {}", belt_line(&gfx.mirror));
             }
             self.sample_world();
             self.refresh_hud_stats();
@@ -3376,6 +3413,7 @@ impl App for Flythrough {
                 flight_frames: 0,
                 flight_span_ms: None,
                 unready_frames: 0,
+                peak_belt: 0,
                 gpu_ms: Vec::new(),
                 cpu_ms: Vec::new(),
                 stages_ms: Default::default(),

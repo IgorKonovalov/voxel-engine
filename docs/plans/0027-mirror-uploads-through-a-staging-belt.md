@@ -1,6 +1,6 @@
 # 0027: Mirror uploads through a staging belt and copy commands: the streaming line's copies
 
-> **Status:** approved (2026-10-21)
+> **Status:** in-progress (2026-10-21)
 > **Created:** 2026-10-21
 > **Milestone:** M2 in `docs/roadmap.md` (the streaming line, `nfr.md` §2, a recorded miss
 > since Plan 0002; this is the plan ADR-0017's Outcome asked for)
@@ -233,7 +233,7 @@ the frame is Plan 0028's and Plan 0024's.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The belt under `sync`, byte for byte | dev | not started | |
+| 1: The belt under `sync`, byte for byte | dev | done: `mirror.rs` 41 tests through `sync_now` (new: `submitted_syncs_reuse_one_belt_chunk`); staged-bytes test reads back through the belt; level first sync 232 436 992 B live, 1132 writes; all 10 goldens re-blessed with no byte change (`VXE_BLESS=1`, `git status` clean); new `syncs_past_one_belt_chunk_build_the_same_mirror` (16 MiB budget, every buffer equal to the unbudgeted mirror's); `belt_chunks()` peak 1 over a headless autopilot flight (2346 frames, load 13), 0 after `--level --frames 300` (1 trim at the first sync) | committed with this row |
 | 2: The streaming line, re-read | dev | not started | |
 | 3: The windowed frame-time summary and the autopilot's ring | dev | not started | |
 | 4: The owner's windowed flight | human | not started | |
@@ -243,6 +243,19 @@ the frame is Plan 0028's and Plan 0024's.
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: the belt is replaced when a sync leaves it holding more than `BELT_KEEP_CHUNKS = 3`
+  chunks (`GpuWorld::belt_trims()` counts it); without it the level's unbudgeted first sync
+  keeps about 56 mapped chunks for the mirror's life.
+- Phase 1: `belt_chunks()` counts the distinct chunk buffers the belt has handed out (the belt
+  exposes no count); `Belt::write` uses `StagingBelt::allocate` plus its own
+  `copy_buffer_to_buffer`, which is what `StagingBelt::write_buffer` does.
+- Phase 1: `crates/vxe-render/tests` has no support module; `sync_now` is a `SyncNow` trait in
+  `mirror.rs` and in `apps/flythrough/tests/support/mod.rs`; `translucent.rs` and `walk.rs`
+  submit their one sync inline.
+- Phase 1: files outside `Files touched` changed for the new `sync` signature:
+  `apps/flythrough/tests/golden.rs`, `hud_golden.rs`, `look.rs` (call sites only).
+- Phase 1: the autopilot and the `--frames` exit print a `staging belt` line.
 
 ### Close triggers
 

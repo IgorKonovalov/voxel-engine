@@ -47,7 +47,8 @@ fn attr_rig_on(
         ..MirrorConfig::new(Window::Fixed(world.extent()))
     };
     let mut gpu = GpuWorld::with_surface_attrs(&device, cfg);
-    gpu.sync(world, &queue).expect("mirror fits the adapter");
+    gpu.sync_now(world, &device, &queue)
+        .expect("mirror fits the adapter");
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     let bricks = gpu.update_attrs(&mut enc);
     queue.submit([enc.finish()]);
