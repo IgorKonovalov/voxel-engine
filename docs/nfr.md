@@ -193,6 +193,19 @@ cut `update`'s max from 37.8 to under 3.2 ms. What remains is `sync`, led by
 `Queue::write_buffer` (41.8 % of its samples) ahead of narrowing (about 38 %); ADR-0017's
 Outcome names the next step.
 
+**The light pass by shadow walk (dev reference, Plan 0024 Phase 4, RTX 3080 Laptop GPU,
+exclusive perf lock, 1-minute load 6.3 to 8.1, not quiet; the default look with the ore
+emissive and the lamp on, one run each, median of the last 30 frames):** the level's spawn
+(`--level --frames 300`) reads 6.640 ms with the full walk and 5.329 ms with the coarse walk;
+the streamed spawn (`--frames 3000`) 12.200 and 9.168 ms, against the 6.0 ms lighting line.
+The time is the emissive shadow ray's: candidates drawn uniformly from the whole buffer (the
+level's 417 388 samples) keep far emitters, so the ray is long. The steps view's lamp shadow
+ray (`--view steps --frames 300`, every hit's ray toward the lamp, lit or not) reads at the
+level 7.34 steps, 16.18 loads (p99 27) and 0.05 pool reads per ray in either walk; at the
+streamed spawn 11.19 steps, 24.02 loads (p99 127), 0.16 pool reads full, and 10.64 steps,
+23.02 loads (p99 93), 0.09 pool reads coarse. A lamp shadow ray is short (the lamp sits
+beside the eye), so its loads barely move.
+
 **Light extraction inside `sync` (dev reference, Plan 0024 Phase 2, RTX 3080 Laptop GPU,
 Ryzen 9 5900HS, exclusive perf lock, 1-minute load 8.3 to 9.0 from other work, not quiet; the
 ore emissive, `SyncStats::light_us`, the render thread's time scanning written `Full` bricks

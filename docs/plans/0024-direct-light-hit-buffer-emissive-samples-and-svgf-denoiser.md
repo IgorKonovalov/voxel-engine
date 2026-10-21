@@ -444,8 +444,8 @@ such.
 |---|---|---|---|
 | 1: The hit buffer, a view list, and today's image through four passes | dev | done | 8df37d2 |
 | 2: Emissive voxels become light samples at upload | dev | done | c3c83b0 |
-| 3: The light pass: one sample, one shadow ray, the dark cave | dev | done | committed with this row |
-| 4: The coarse shadow walk | dev | not started | |
+| 3: The light pass: one sample, one shadow ray, the dark cave | dev | done | 7ee7bd6 |
+| 4: The coarse shadow walk | dev | done | committed with this row |
 | 5: Temporal accumulation, and history that dies in an edit box | dev | not started | |
 | 6: The a-trous filter and the composite, and the carve that does not ghost | dev | not started | |
 | 7: Reservoir reuse against the flat list | dev | not started | |
@@ -507,6 +507,17 @@ each. Empty is fine.)_
 - Phase 3: with the level's 417 388 samples the light pass reads 6.684 ms at 1080p (2.223 ms
   frame with `--emissive-ore off`), one run, RTX 3080 Laptop GPU, exclusive perf lock, load
   12.6.
+- Phase 4: the coarse walk leaves the first and last 3.5 voxels of a shadow ray to the full
+  walk (a 2^3 block's diagonal is 3.46), else the block a ray starts in or aims at shadows it.
+  The hole of the done-when is in the slab's edge row (y 67, z 62): an interior hole's light
+  lands on wall the slab hides from the camera beside the lamp, so no interior hole lights a
+  visible pixel in either walk. `--shadow-walk` is added here; with `--view steps` the light
+  pass writes the lamp shadow ray's counters and the exit prints them.
+- Phase 4: the light pass reads 5.3 to 12.2 ms at 1080p with the ore emissive, over the 6.0 ms
+  lighting line (`docs/nfr.md` §2, "The light pass by shadow walk"); uniform candidates over
+  the whole buffer pick far emitters. Followup noticed: a spatial structure over the light
+  samples (per-chunk or near-first candidates) is not in this plan.
+
 Phase 1 observations: hitmask and normals of the three scenes byte-identical to ae58f0c; the
 identity-tone-mapped carve's largest channel difference from ae58f0c's is 0/255; the
 asymmetric half view's is 0/255. Re-blessed on lavapipe (pixels changed / by more than 2/255,
@@ -519,6 +530,9 @@ the shading".
 Phase 3 observations: the box's floor-centre irradiance over 64 frames reads 1.7388 against
 1.7408 (-0.11 %), 400 samples; `dark_cave.png` has 23 691 samples and 23 842 of 57 600 pixels
 at 16/255 or more, and 0 non-black pixels with the ore's emission off.
+
+Phase 4 observations: the slab without a hole darkens 823 pixels in either walk; through the
+edge-row hole the full walk lights 45 pixels and the coarse walk 0 of them.
 
 ### Close triggers
 

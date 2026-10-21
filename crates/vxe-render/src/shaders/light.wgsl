@@ -12,7 +12,8 @@
 //   2  storage texture   irradiance_out  rgba16float: rgb the irradiance E at the hit (light
 //                                        per unit area arriving over the hemisphere of the
 //                                        shading normal), a the luminance of its emissive
-//                                        part; 0 on a miss
+//                                        part; 0 on a miss. In the steps view the lamp shadow
+//                                        ray's counters instead (see `shade`)
 //
 // The headlamp (Params.lighting bit 0) is a point light: E = PI * intensity * cone *
 // max(n.l, 0) / dist^2, so that the composite's Lambertian `albedo * E / PI` is the former
@@ -31,8 +32,10 @@
 // candidate j.
 //
 // In the cutaway view a hit takes the hemisphere term `PI (0.3 + 0.7 (0.5 + 0.5 n.z))`
-// instead, with no lamp, no emission and no shadow ray. Only the shaded view reads this
-// pass's output, so every other view skips it.
+// instead, with no lamp, no emission and no shadow ray. Every shadow ray takes the frame's
+// shadow walk (`shadowed`): the full walk, or the coarse walk that treats any 2^3 block with a
+// set opaque bit as solid. Only the shaded view reads this pass's irradiance; the steps view
+// reads its shadow-ray counters; every other view skips the pass.
 
 @group(0) @binding(10) var<storage, read> light_samples: array<vec4<i32>>;
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
@@ -46,11 +49,30 @@ const CANDIDATE_DIMS: u32 = 5u;
 
 @compute @workgroup_size(8, 8, 1)
 fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= params.size.x || gid.y >= params.size.y || view_mode() != VIEW_SHADED) {
+    let view = view_mode();
+    if (gid.x >= params.size.x || gid.y >= params.size.y || (view != VIEW_SHADED && view != VIEW_STEPS)) {
         return;
     }
     let px = vec2<i32>(gid.xy);
     let rec = unpack_hit(textureLoad(hit_pos_in, px, 0), textureLoad(hit_info_in, px, 0));
+    if (view == VIEW_STEPS) {
+        // The cost of each hit's shadow ray toward the lamp, lit or not, in the frame's
+        // shadow walk: its loop iterations, storage loads and pool loads (unclamped), a = 1;
+        // a = 0 where no ray is cast.
+        var counts = vec4<f32>(0.0);
+        if (rec.found && (params.flags & FLAG_CUTAWAY) == 0u) {
+            let ray = pixel_ray(gid.xy);
+            let to_light = params.light_pos - rec.p;
+            let dist = max(length(to_light), 1e-2);
+            walk_steps = 0u;
+            loads = 0u;
+            pool_reads = 0u;
+            shadowed(rec.p + shadow_normal_of(rec, ray.d) * SHADOW_OFFSET, to_light / dist, dist);
+            counts = vec4<f32>(f32(walk_steps), f32(loads), f32(pool_reads), 1.0);
+        }
+        textureStore(irradiance_out, px, counts);
+        return;
+    }
     var e = vec3<f32>(0.0);
     var emissive = vec3<f32>(0.0);
     if (rec.found) {
@@ -84,12 +106,27 @@ fn lamp_lit(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> f32 {
     let cone = smoothstep(params.cos_outer, params.cos_inner, dot(-l, params.light_dir));
     var lit = params.light_intensity * cone * ndl / dist2;
     if ((params.flags & FLAG_SHADOWS) != 0u && lit > 0.0) {
-        let s = march(p + ns * SHADOW_OFFSET, l, sqrt(dist2), false);
-        if (s.found) {
+        if (shadowed(p + ns * SHADOW_OFFSET, l, sqrt(dist2))) {
             lit = 0.0;
         }
     }
     return lit;
+}
+
+// The walk a shadow ray leaves to the full walk at each end under the coarse mode, in voxels:
+// more than a 2^3 block's diagonal (2 sqrt 3), so the blocks of the surface it leaves and of
+// the face it aims at do not stop it.
+const COARSE_MARGIN: f32 = 3.5;
+
+// Whether rock lies on `o + d t` for `0 <= t <= len`: the full walk, or with
+// `Params.lighting` bit 1 the coarse walk between COARSE_MARGIN of either end.
+fn shadowed(o: vec3<f32>, d: vec3<f32>, len: f32) -> bool {
+    if ((params.lighting & LIGHTING_COARSE_SHADOW) != 0u) {
+        coarse_span = vec2<f32>(COARSE_MARGIN, len - COARSE_MARGIN);
+    }
+    let s = march(o, d, len, false);
+    coarse_span = vec2<f32>(BIG, -BIG);
+    return s.found;
 }
 
 // The unit normal of face `f` (2 k toward -k, 2 k + 1 toward +k).
@@ -180,8 +217,7 @@ fn emissive_irradiance(px: vec2<u32>, p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>)
     let to = kept.x - o;
     let dist = length(to);
     // Stop short of the face itself, which the ray reaches from its air side.
-    let s = march(o, to / dist, dist - 1e-3, false);
-    if (s.found) {
+    if (shadowed(o, to / dist, dist - 1e-3)) {
         return vec3<f32>(0.0);
     }
     return kept.le / luminance(kept.le) * w_sum / f32(params.candidates);

@@ -23,7 +23,7 @@ pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
 pub use marcher::{
     FRAME_PASSES, Frame, Lighting, LodParams, LookParams, MAX_VIEWS, MarchTimer, Marcher,
-    NormalMode, PassTimer, ToneMap, ViewMode,
+    NormalMode, PassTimer, ShadowWalk, ToneMap, ViewMode,
 };
 pub use present::Presenter;
 pub use {glam, wgpu};

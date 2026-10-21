@@ -877,3 +877,103 @@ fn dark_cave_golden_is_lit_by_its_ore_alone() {
         "{lit_off} pixels are not black with the ore dark"
     );
 }
+
+/// The slab scene of `headlamp_slab_casts_the_computed_shadow`, with a one-voxel hole through
+/// the slab along x at `(y, z)` when given.
+fn slab_world(hole: Option<[i64; 2]>) -> World {
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [2, 2, 2]),
+        &UniformSource(0),
+        &cave_materials(),
+    );
+    fill_voxels(&world, [44, 0, 0], [46, 128, 128], ROCK);
+    fill_voxels(&world, [28, 56, 56], [30, 68, 68], ROCK);
+    if let Some([y, z]) = hole {
+        let op = EditOp::box_(
+            Fixed3([28 * FIXED_ONE, y * FIXED_ONE, z * FIXED_ONE]),
+            Fixed3([30 * FIXED_ONE, (y + 1) * FIXED_ONE, (z + 1) * FIXED_ONE]),
+            Mode::Carve,
+        );
+        world.apply(&op).expect("the slab is resident");
+    }
+    world
+}
+
+/// The slab scene's renders under the headlamp in `walk`, shadows on and off.
+fn slab_renders(world: &World, walk: vxe_render::ShadowWalk) -> Option<[Vec<u8>; 2]> {
+    let mut rig = LookRig::new(world, None)?;
+    rig.frame.set_lighting(vxe_render::Lighting {
+        shadow_walk: walk,
+        ..vxe_render::Lighting::default()
+    });
+    let camera = occluder_camera();
+    let lit = LightParams::headlamp();
+    let look = vxe_render::LookParams::default();
+    let shadowed = rig.render(&camera, &lit, look);
+    let plain = rig.render(
+        &camera,
+        &LightParams {
+            shadows: false,
+            ..lit
+        },
+        look,
+    );
+    Some([shadowed, plain])
+}
+
+/// Pixels darker than the unshadowed render by more than 8/255 in some channel.
+fn darkened(shadowed: &[u8], plain: &[u8]) -> usize {
+    shadowed
+        .chunks(4)
+        .zip(plain.chunks(4))
+        .filter(|(s, p)| (0..3).any(|k| p[k] > s[k].saturating_add(8)))
+        .count()
+}
+
+/// The coarse shadow walk treats any 2^3 block with a set bit as solid: through a one-voxel
+/// hole along x in the slab's edge row (y 67, z 62) the full walk lights wall pixels the
+/// hole-less slab shadows (the same surface seen in both, so the unshadowed renders agree
+/// there), and the coarse walk lights none of them; on the slab without a hole the coarse
+/// walk darkens at least as many pixels as the full walk. An interior hole's light lands on
+/// wall the slab hides from the camera beside the lamp.
+#[test]
+fn the_coarse_shadow_walk_closes_a_one_voxel_hole() {
+    use vxe_render::ShadowWalk::{Coarse, Full};
+    let Some([full_solid, plain]) = slab_renders(&slab_world(None), Full) else {
+        return;
+    };
+    let [coarse_solid, _] = slab_renders(&slab_world(None), Coarse).unwrap();
+    let (dark_full, dark_coarse) = (
+        darkened(&full_solid, &plain),
+        darkened(&coarse_solid, &plain),
+    );
+    println!("slab: full walk darkens {dark_full} pixels, coarse walk {dark_coarse}");
+    assert!(dark_full > 0);
+    assert!(dark_coarse >= dark_full, "{dark_coarse} < {dark_full}");
+
+    let hole = slab_world(Some([67, 62]));
+    let [full_hole, plain_hole] = slab_renders(&hole, Full).unwrap();
+    let [coarse_hole, _] = slab_renders(&hole, Coarse).unwrap();
+    // Pixels the hole lets the lamp reach in the full walk.
+    let through: Vec<usize> = (0..full_hole.len() / 4)
+        .filter(|&i| {
+            plain_hole[4 * i..4 * i + 3] == plain[4 * i..4 * i + 3]
+                && (0..3).any(|k| full_hole[4 * i + k] > full_solid[4 * i + k].saturating_add(8))
+        })
+        .collect();
+    let coarse_lit = through
+        .iter()
+        .filter(|&&i| {
+            (0..3).any(|k| coarse_hole[4 * i + k] > full_solid[4 * i + k].saturating_add(2))
+        })
+        .count();
+    println!(
+        "hole: the full walk lights {} pixels through it, the coarse walk {coarse_lit} of them",
+        through.len()
+    );
+    assert!(
+        !through.is_empty(),
+        "the full walk lights no pixel through the hole"
+    );
+    assert_eq!(coarse_lit, 0);
+}

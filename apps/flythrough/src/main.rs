@@ -10,7 +10,8 @@
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
-//! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off]`.
+//! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off]
+//! [--shadow-walk full|coarse]`.
 //! `--render` fixes the frame's internal resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -41,7 +42,9 @@
 //! `--translucent-layers` sets how many translucent voxels are composited in front of the opaque
 //! hit (default 4, 0 ignores them). `--emissive-ore off` keeps the ore dark (by default it
 //! glows, `flythrough::ORE_EMISSION`, and lights the cave through the light pass's emissive
-//! samples); `M` pulses its emission scale; `--lamp off` turns the headlamp off.
+//! samples); `M` pulses its emission scale; `--lamp off` turns the headlamp off;
+//! `--shadow-walk coarse` sends every shadow ray through the coarse walk (2^3 blocks of the
+//! masks; with `--view steps` and `--frames`, the exit prints the lamp shadow rays' cost too).
 //! `N` cycles the normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
 //! inside the extent).
@@ -154,7 +157,7 @@ use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
     AttrWorkStats, Camera, FRAME_PASSES, Frame, GpuWorld, HudColour, HudOverlay, LightParams,
     Lighting, LodParams, LookParams, MarchTimer, MirrorConfig, NormalMode, PassTimer, Presenter,
-    SyncStats, ViewMode, Window, wgpu,
+    ShadowWalk, SyncStats, ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -314,6 +317,8 @@ struct Args {
     emissive_ore: bool,
     /// `--lamp on|off`: the headlamp lights the frame (on by default).
     lamp: bool,
+    /// `--shadow-walk full|coarse`: the walk shadow rays take.
+    shadow_walk: ShadowWalk,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -396,6 +401,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         pad: true,
         emissive_ore: true,
         lamp: true,
+        shadow_walk: ShadowWalk::Full,
     };
     let mut detail_flag = false;
     let mut it = argv.into_iter();
@@ -495,6 +501,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     "off" => false,
                     v => return Err(format!("--pad takes on or off, not {v}")),
                 }
+            }
+            "--shadow-walk" => {
+                let v = value()?;
+                args.shadow_walk = ShadowWalk::from_name(&v)
+                    .ok_or(format!("--shadow-walk takes full or coarse, not {v}"))?;
             }
             "--lamp" => {
                 args.lamp = match value()?.as_str() {
@@ -2309,6 +2320,7 @@ impl Run {
         let mut frame = Frame::new(&gpu.device, w, h);
         frame.set_lighting(Lighting {
             lamp: self.args.lamp,
+            shadow_walk: self.args.shadow_walk,
             ..Lighting::default()
         });
         let mirror = if self.stream.is_some() {
@@ -3328,6 +3340,12 @@ impl Run {
                 let px = readback::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
                 let width = gfx.frame.target().width() as usize;
                 println!("{}", steps_line(&StepHistogram::from_rgba8(&px, width)));
+                let shadow =
+                    readback::read_rgba16f(&gpu.device, &gpu.queue, gfx.frame.irradiance());
+                println!(
+                    "{}",
+                    shadow_steps_line(&shadow, gfx.frame.lighting().shadow_walk)
+                );
             }
             self.sample_world();
             self.refresh_hud_stats();
@@ -3338,6 +3356,25 @@ impl Run {
         }
         Flow::Continue
     }
+}
+
+/// The steps view's reading of the lamp shadow rays, from the light pass's counters (one
+/// texel per hit, alpha 1): `shadow rays (full walk, 1 234 567 rays): steps mean 8.12, loads
+/// mean 20.31, p99 64, pool reads mean 3.10`.
+fn shadow_steps_line(texels: &[[f32; 4]], walk: ShadowWalk) -> String {
+    let rays: Vec<&[f32; 4]> = texels.iter().filter(|t| t[3] > 0.5).collect();
+    let n = rays.len().max(1) as f64;
+    let mean = |k: usize| rays.iter().map(|t| f64::from(t[k])).sum::<f64>() / n;
+    let mut loads: Vec<f64> = rays.iter().map(|t| f64::from(t[1])).collect();
+    format!(
+        "shadow rays ({} walk, {} rays): steps mean {:.2}, loads mean {:.2}, p99 {:.0}, pool reads mean {:.2}",
+        walk.name(),
+        rays.len(),
+        mean(0),
+        mean(1),
+        percentile(&mut loads, 99.0),
+        mean(2)
+    )
 }
 
 /// The ore's emission scale `ms` milliseconds into the run while `M` pulses it: between 0.25

@@ -218,6 +218,7 @@ const ATTR_PAGE_BRICK_SLOTS: u32 = 1364u;
 const NO_PLANE: u32 = 0xFFFFu;
 // Params.lighting bits.
 const LIGHTING_LAMP: u32 = 1u;
+const LIGHTING_COARSE_SHADOW: u32 = 2u;
 const LIGHTING_IDENTITY_TONE_MAP: u32 = 64u;
 // Hit record flags.
 const HIT_FOUND: u32 = 1u;
@@ -280,6 +281,12 @@ struct Walk {
 };
 
 var<private> walk: Walk;
+
+// The stretch of the ray parameter over which `march` takes the coarse shadow walk's cells
+// (`lookup_walk`); empty (BIG, -BIG) for the full walk. The light pass sets it around a
+// shadow ray, leaving the first and last COARSE_MARGIN voxels to the full walk so the
+// blocks the ray starts and ends in do not shadow it.
+var<private> coarse_span: vec2<f32> = vec2<f32>(3.0e38, -3.0e38);
 
 // The walk's cost counters since the last reset: loop iterations of `march`, 32-bit storage
 // loads from the mirror (table, record bits and entries, masks, pool, palette), and the pool
@@ -543,6 +550,14 @@ fn is_translucent(m: u32) -> bool {
 // translucent brick is one empty 8^3 cell, a translucent voxel of a Full brick has no bit in
 // the opaque mask, and with the mask tests off its material is read and found translucent.
 fn lookup(v: vec3<i32>) -> Cell {
+    return lookup_walk(v, false);
+}
+
+// `lookup`, or with `coarse` the coarse shadow walk's cell: a Full brick's voxel in a 2^3
+// block with a set opaque bit is solid without a pool read (the block's other voxels too),
+// so the walk reads chunk bits, brick bits and one mask line per brick and never a voxel.
+// Without the masks flag the coarse walk is the full one.
+fn lookup_walk(v: vec3<i32>, coarse: bool) -> Cell {
     let dsc = descend(v);
     if (dsc.size != 0) {
         return Cell(dsc.size, 0u, ABSENT, 0u, 0, dsc.resident);
@@ -561,6 +576,9 @@ fn lookup(v: vec3<i32>) -> Cell {
     let masked = skips && (params.flags & FLAG_MASKS) != 0u;
     if (masked) {
         let size = mask_skip(opaque_word(slot), dsc.l, dsc.i);
+        if (coarse && size < 2) {
+            return Cell(0, 0u, ABSENT, 0u, cell, false);
+        }
         if (size != 0) {
             return Cell(size * cell, 0u, ABSENT, 0u, 0, true);
         }
@@ -751,7 +769,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
         if (t > t_limit) {
             return miss;
         }
-        let c = lookup(v);
+        let c = lookup_walk(v, t >= coarse_span.x && t <= coarse_span.y);
         var size = c.size;
         if (passing) {
             if (size == 0) {

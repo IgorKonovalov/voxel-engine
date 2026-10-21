@@ -57,6 +57,8 @@ pub struct Params {
 
 /// `Params::lighting` bit: the headlamp lights the frame.
 pub const LIGHTING_LAMP: u32 = 1;
+/// `Params::lighting` bit: shadow rays take the coarse walk ([`ShadowWalk::Coarse`]).
+pub const LIGHTING_COARSE_SHADOW: u32 = 1 << 1;
 /// `Params::lighting` bit: the composite's tone map is the identity clamp.
 pub const LIGHTING_IDENTITY_TONE_MAP: u32 = 1 << 6;
 
@@ -248,6 +250,33 @@ pub enum ToneMap {
     Identity,
 }
 
+/// The walk a shadow ray takes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ShadowWalk {
+    /// Every voxel, as the primary ray.
+    #[default]
+    Full,
+    /// Any 2^3 block of the opaque masks with a set bit is solid: chunk bits, brick bits and
+    /// one mask line per brick, never a voxel or the pool. The first and last 3.5 voxels of
+    /// the ray take the full walk.
+    Coarse,
+}
+
+impl ShadowWalk {
+    pub const ALL: [Self; 2] = [Self::Full, Self::Coarse];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Coarse => "coarse",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+}
+
 /// The frame's lighting knobs beside the lamp's own ([`LightParams`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Lighting {
@@ -258,6 +287,7 @@ pub struct Lighting {
     pub lamp: bool,
     /// Emissive candidates the light pass resamples per pixel; 0 turns emissive light off.
     pub candidates: u32,
+    pub shadow_walk: ShadowWalk,
 }
 
 impl Default for Lighting {
@@ -267,6 +297,7 @@ impl Default for Lighting {
             tone_map: ToneMap::default(),
             lamp: true,
             candidates: 8,
+            shadow_walk: ShadowWalk::default(),
         }
     }
 }
@@ -279,6 +310,11 @@ impl Lighting {
         } else {
             0
         }) | if self.lamp { LIGHTING_LAMP } else { 0 }
+            | if self.shadow_walk == ShadowWalk::Coarse {
+                LIGHTING_COARSE_SHADOW
+            } else {
+                0
+            }
     }
 }
 
