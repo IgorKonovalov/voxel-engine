@@ -1,10 +1,12 @@
 # 0024: Direct light that holds in the dark: a hit buffer, emissive voxels as light samples, one shadow ray per pixel, and an SVGF-family denoiser whose history dies where the world was edited
 
-> **Status:** in-progress: every phase implemented; awaiting the close review (2026-10-21)
+> **Status:** in-progress: the close review of 2026-10-21 returned fix Phases 13 to 15 (see
+> "Close review of 2026-10-21" below); not closed
 > **Created:** 2026-10-20
 > **Amended:** 2026-10-21 by the owner's ruling at the Phase 6 stop: Phase 6's bars rewritten,
 > a new Phase 7 (near-emitter candidates and bounded light extraction) inserted before reservoir
-> reuse, later phases renumbered (see "Amendment of 2026-10-21" below)
+> reuse, later phases renumbered (see "Amendment of 2026-10-21" below). Amended again
+> 2026-10-21 by the close review: Phases 13 to 15 added
 > **Milestone:** M2 in `docs/roadmap.md` (the lighting plan; direct light and the denoiser only,
 > see "What this plan does NOT do")
 > **Related ADRs:** [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
@@ -138,6 +140,70 @@ readings over their lines. The owner ruled, and this amendment carries the rulin
 Phase 6 counts as done against the amended bars once dev re-reads them at the tip. Dev's log
 entries above the amendment are left as written; their phase numbers from 7 up are the old
 ones.
+
+## Close review of 2026-10-21
+
+The plan does not close yet. The mechanism is sound and its tests defend their claims, but the
+owner's eye (Phase 12, the bar `## Risks` names as final) found the glowing vein's light
+unstable on a still camera, and a requirement unmet. Phases 13 to 15 fix those; the review's
+rulings on each disclosed miss follow.
+
+**Blocks the close, fixed by Phase 13.** Static emissive light shimmers in shadow while
+nothing moves, worst at half resolution and with the flat list. The cause is in
+`temporal.wgsl`: the blend never falls below `ALPHA = 0.2`, so a still pixel averages about
+nine frames of a one-sample estimate forever, and an emitter's shadow ray is a coin flip per
+frame in a penumbra. The consumer's bar is lights that "look good and stay stable"
+(`## Context & problem`). Edit boxes and the gradient already kill history where the world or
+the light changed (ADR-0018), which is what lets a still pixel keep a long history. The
+headlamp is a point light whose shadow ray carries no sampling noise, so its part needs no
+long history and must not lag the camera it rides on.
+
+**Blocks the close, fixed by Phase 14.** The owner can't tell which mode is on: the mode line
+reaches stdout, and the window shows it only in the stats HUD's row behind `F2`. The owner's
+requirement, for this plan and every later one, is that the window shows the current mode or
+at least the change. Phase 12 also asked that the defaults change to the owner's picks, and
+only `F4` (reuse) has been picked.
+
+**Blocks the close, Phase 15.** Phase 12's done-when needs a choice or "keep both" for each
+toggle. `F3`, `F5` and `F6` have none. The owner re-flies after Phases 13 and 14.
+
+**Accepted as recorded misses, no fix phase:**
+
+- **Phase 6 bar 1, second clause** (654 of 7580 removed-surface pixels within 2/255 under
+  Phase 7's draw). The clause assumed that a surface revealed behind a removed one differs from
+  it, but dark rock revealed behind dark rock reads the same. The clause's mechanism, age 0 in
+  every pixel of the dilated box, is asserted and holds. The test prints the count, and that
+  is how it stays.
+- **Phase 7 bar 4 at full resolution** (light pass 5.7 to 11.5 ms against 4.0). Full-resolution
+  lighting plus the a-trous at full reads 12 to 16 ms on the dev box, which projects to 24 to
+  48 ms on the baseline. `## Budgets` already makes half resolution the floor tier, and at half
+  the light pass reads 1.85 to 2.92 ms, under the bar. The bar is met at the half tier and
+  missed at full, and `nfr.md` §2 says so. Which tier is the default is the owner's call
+  (Phase 15), not this miss's.
+- **Phase 7 bar 3** (extraction p99 2.26 ms, max 6.69 ms, against 1.0 and 3.0; quiet box). It's
+  a render-thread CPU cost inside the streaming line, and the owner saw no hitch in the streamed
+  flight ("3 is all good"). `## Risks` (Threading) already names the remedy, which is to
+  extract on the stream workers beside the decode. That moves work across threads, and it
+  belongs with ADR-0012's mirror-slot plan (Plan 0028), which rewrites what the workers hand
+  the mirror. It goes to Followups with the readings, not to a fix phase here.
+- **Phase 11 `frame_bytes`** (308.7 MB at full, 195.4 MB at half, against a 300 MB
+  projection). The table left out three targets, and the §3 line it draws on is 1.5 GB. The
+  reading replaces the projection in `nfr.md` §3 at the close.
+
+**Not defects:**
+
+- **The coarse shadow walk reads darker.** That is its contract. Any 2^3 block with a set bit
+  is solid, so a ray that grazes rock within a block is shadowed (Teardown's trade, ADR-0018).
+  The owner saw no gain in quality, and it is no cheaper than the half tier's full walk.
+  Phase 14 makes the full walk the default and keeps coarse as a switch.
+- **`F5` shows no difference on a still camera.** That is expected. The two history killers
+  differ only when the light changes without an edit: the `M` pulse, or a lamp that turns.
+  Phase 15 tests `F5` that way.
+
+**The default lighting tier** is a decision for the owner, framed in the review's report. The
+review recommends half resolution, provided Phase 13 gives it a still image. The plan's
+budgets assume half as the floor, and full resolution doesn't fit the frame on the baseline.
+Phase 14 implements the default the owner picks, and Phase 15 confirms it by eye.
 
 ## Architecture diagram
 
@@ -437,6 +503,93 @@ changes it, with the count of changed pixels in the log.
   Implementation log and ADR-0018's Outcome; the defaults change to the choice.
 - **Files touched:** this plan's log, `docs/adrs/0018-...md` at the close.
 - **Done when:** the owner has recorded a choice, or "keep both", for each of the four toggles.
+
+### Phase 13: Static emissive light holds still (close review fix)
+- **Owner skill:** dev
+- **What:** the temporal pass gives the emissive part a long history and leaves the lamp's
+  part short. The light pass writes the lamp's irradiance and the emissive estimate apart; how
+  they are stored is dev's call, and any added target goes into `frame_bytes`. The emissive
+  part blends at `max(1 / (age + 1), 1 / H)`, where `H` is `Lighting::emissive_history`
+  (default 32 frames, a guess Phase 15 judges), `--emissive-history N` in the fly-through and the
+  hero. The lamp's part keeps today's `max(0.2, 1 / (age + 1))`. Edit boxes still reset both, and
+  the gradient mode still raises both blends. In the edit-box mode, a frame whose emission scale
+  for any material differs from the previous frame's blends the emissive part at no less than
+  0.2, so the `M` pulse lags no more than it does today. The variance the a-trous reads comes
+  from the moments as today. Measure first: before changing anything, record the base
+  commit's flicker readings (below) in the log.
+- **Files touched:** `light.wgsl`, `temporal.wgsl`, `atrous.wgsl` and `composite.wgsl` if the
+  split reaches them, `marcher.rs`, `apps/flythrough/src/main.rs`,
+  `apps/flythrough/examples/hero.rs`, `tests/lights.rs`, `tests/golden.rs`, `docs/nfr.md`.
+- **Done when** (headless, lavapipe, 320 x 180):
+  1. **The vein holds still.** On the dark cave's golden pose with the lamp off, the filter on
+     and a still camera, settle 64 frames, then read 32 composited `rgba8` frames. Take each
+     hit pixel's largest channel difference between consecutive frames (31 pairs). Read four
+     configurations: full and half, each with the list and with reuse. In every one, the mean
+     over pixels and pairs is at most a quarter of the base commit's reading of the same
+     configuration, and at most 0.1 % of (pixel, pair) values exceed 4/255. Half with reuse
+     reads a mean no higher than the base commit's full with reuse, which is the configuration
+     the owner judged stillest. All eight means go in the log. The arithmetic for "a quarter":
+     an exponential average's frame-to-frame step scales with its blend, and 1/32 against 0.2
+     is about a sixth.
+  2. **Nothing lags that moved.** The Phase 9 cone turn in the edit-box mode reads no slower
+     than at the base commit: at least 67 % of the pixels that left the cone are under 10 %
+     of their lit value at frame 11, and all of them by frame 22. The gradient mode still takes
+     all of them within 2 frames. On Phase 3's emissive-ceiling box with the filter off, an
+     emission-scale step from 1.0 to 0.25 in the edit-box mode brings the floor centre's
+     accumulated irradiance within 10 % of its new value within 11 frames.
+  3. **The earlier bars still hold:** Phase 3's analytic box, Phase 5's age tests, Phase 6's
+     two amended bars (age 0 in the box; far pixels p99.9 with the flushed control failing),
+     Phase 7 bars 1 and 2, Phase 8's reuse ratio, and Phase 10's mean absolute difference under
+     6/255 after re-blessing `dark_cave.png` and `dark_cave_half.png`, with the changed counts
+     in the log.
+  4. **The cost** (quiet box, dev box, 1080p): the temporal pass reads under 0.3 ms at half and
+     under 1.0 ms at full, at both spawns. `frame_bytes` reads under 345 MB at full, which is
+     308.7 MB plus one rgba16float pair (33.2 MB), with any added target listed in the log.
+
+### Phase 14: The mode on screen, and the defaults (close review fix)
+- **Owner skill:** dev
+- **What:** the window shows the lighting mode without the stats HUD. For 3 s after start,
+  and for 3 s after any change made by `F3` to `F7`, by `M` or by `F6`'s applied resolution, the
+  text overlay draws a one-line banner: `lighting_modes`, plus the pulse state and the emissive
+  history. The banner is visible with `F2` off and sits where it hides none of the HUD rows
+  when `F2` is on. The banner's clock is the frame loop's time, so a headless test can drive
+  it. The defaults change to the owner's picks: sampler `reuse` (`F4`, Phase 12), shadow walk
+  `full` (Phase 12: coarse is darker and gains nothing), and the lighting tier the owner picks
+  at this review. History stays `edits` until Phase 15. The `Lighting` and `Frame` defaults,
+  the fly-through's flags and the hero's flags all move together. Every golden that the new
+  defaults change is re-blessed, with the counts in the log. Also fill in the plan's
+  `### Close triggers` block, which is still the template's.
+- **Files touched:** `apps/flythrough/src/main.rs`, `hud.rs`, `apps/flythrough/tests/hud_golden.rs`
+  (and a new golden), `crates/vxe-render/src/marcher.rs` (defaults), `apps/flythrough/examples/hero.rs`,
+  `tests/golden.rs`, the root `README.md` (keys, the banner, the defaults), `docs/nfr.md`.
+- **Done when:**
+  1. A headless HUD golden, `mode_banner.png`, shows the banner with the stats HUD off.
+  2. A test drives the frame clock and asserts four things: each of `F3` to `F7` and `M`
+     changes the banner's text to the new mode, the banner reads empty 3 s after the last
+     change, and it is shown again on the next change.
+  3. A parse test pins the new defaults. With no lighting flags, the fly-through starts with
+     sampler `reuse`, shadow walk `full`, history `edits` and the chosen tier, and prints them.
+  4. Quiet box, 1080p, the defaults, median of the last 30 frames, three runs: the light pass
+     reads under 4.0 ms at the level's spawn and the settled streamed spawn (Phase 7 bar 4 at
+     the default). The light pass plus temporal reads under the 6.0 ms lighting line, and the
+     a-trous under the 3.0 ms denoise line. The readings replace the flat-list ones in `nfr.md` §2.
+     If the owner picks full resolution, these bars are read and recorded as missed, not
+     waived.
+  5. `docs/images/hero.png` is re-shot at the defaults, and the README's caption names its
+     flags.
+
+### Phase 15: The owner's windowed re-check (close review)
+- **Owner skill:** human
+- **What:** the owner flies the level with the lamp off at the defaults. They hold the camera
+  still in front of a vein, then turn on `M` and toggle `F5` while it pulses (the gradient
+  mode drops the old light faster). They dig through a vein's wall, toggle `F3` and `F6`
+  while watching the banner, and try `--emissive-history` at 16, 32 and 64.
+- **Files touched:** this plan's log, then ADR-0018's Outcome at the close.
+- **Done when:** the owner has recorded whether a vein's light holds still on a still camera
+  at the default tier. They have also recorded a choice, or "keep both", for `F3` (shadow
+  walk), `F5` (history killer) and `F6` (tier), and a value for the emissive history. If the
+  light still shimmers, the owner says whether the plan closes with that as a followup or
+  goes back to `dev`.
 
 ## Data shapes
 
@@ -835,6 +988,10 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - The indirect-light plan (one bounce into this denoiser, probes as the fallback).
 - The upscaler plan (FSR 2 port or a TAA upscaler; ADR).
 - Motion vectors for entities in the temporal pass (M6).
+- Light extraction off the render thread (close review, 2026-10-21): Phase 7 bar 3 read p99
+  2.255 ms and max 6.693 ms on the quiet box, against 1.0 and 3.0. The fix is to extract
+  exposed emitters on the stream workers beside the decode, with Plan 0028, which rewrites what
+  the workers hand the mirror.
 - Deliberate flicker as a material emission property (owner, 2026-10-21, live session 4):
   fire and embers flicker by design, so static veins can stay steady.
 - A showcase cave for the hero and demos (owner, 2026-10-20, for later): a large cavern
