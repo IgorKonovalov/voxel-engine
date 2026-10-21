@@ -1,6 +1,6 @@
 # 0027: Mirror uploads through a staging belt and copy commands: the streaming line's copies
 
-> **Status:** in-progress (2026-10-21)
+> **Status:** in-progress: every phase implemented; awaiting the close review (2026-10-21)
 > **Created:** 2026-10-21
 > **Milestone:** M2 in `docs/roadmap.md` (the streaming line, `nfr.md` §2, a recorded miss
 > since Plan 0002; this is the plan ADR-0017's Outcome asked for)
@@ -235,8 +235,8 @@ the frame is Plan 0028's and Plan 0024's.
 |---|---|---|---|
 | 1: The belt under `sync`, byte for byte | dev | done: `mirror.rs` 41 tests through `sync_now` (new: `submitted_syncs_reuse_one_belt_chunk`); staged-bytes test reads back through the belt; level first sync 232 436 992 B live, 1132 writes; all 10 goldens re-blessed with no byte change (`VXE_BLESS=1`, `git status` clean); new `syncs_past_one_belt_chunk_build_the_same_mirror` (16 MiB budget, every buffer equal to the unbudgeted mirror's); `belt_chunks()` peak 1 over a headless autopilot flight (2346 frames, load 13), 0 after `--level --frames 300` (1 trim at the first sync) | 843c5a3 |
 | 2: The streaming line, re-read | dev | done with a disclosed miss: quiet re-read meets both p50 bars (plain `sync` 1.397 to 1.662 ms, `update + poll + sync` 1.715 to 1.994 ms); the belt reads 25.4 % of `sync` against under 5 %, recorded as a miss (owner's option (a), 2026-10-21); readings in `nfr.md` §2 | 1533cc7, 6bd1c41, 598fb17 |
-| 3: The windowed frame-time summary and the autopilot's ring | dev | done: `--level --headless --seed 1 --frames 300`, 8 runs (5 at load 15 to 18, 3 at 1.2 to 1.4, exclusive perf lock): frame CPU p50 0.082, 0.070, 0.065, 0.067, 0.068, 0.067, 0.067, 0.079 ms against the `frame` line's median of the last 30 0.071, 0.070, 0.073, 0.074, 0.073, 0.075, 0.072, 0.074 ms; march GPU p50 equal to that median in all 8; `update + poll + sync` p50 0.001 ms against the HUD's 0.001 ms; default autopilot unready-near 0 of 7965 (load 13.4) and 0 of 10 963 (load 1.2), 2 ring recomputes each, hash match; `the_unready_ring_is_recomputed_on_set_radii` | committed with this row |
-| 4: The owner's windowed flight | human | not started | |
+| 3: The windowed frame-time summary and the autopilot's ring | dev | done: `--level --headless --seed 1 --frames 300`, 8 runs (5 at load 15 to 18, 3 at 1.2 to 1.4, exclusive perf lock): frame CPU p50 0.082, 0.070, 0.065, 0.067, 0.068, 0.067, 0.067, 0.079 ms against the `frame` line's median of the last 30 0.071, 0.070, 0.073, 0.074, 0.073, 0.075, 0.072, 0.074 ms; march GPU p50 equal to that median in all 8; `update + poll + sync` p50 0.001 ms against the HUD's 0.001 ms; default autopilot unready-near 0 of 7965 (load 13.4) and 0 of 10 963 (load 1.2), 2 ring recomputes each, hash match; `the_unready_ring_is_recomputed_on_set_radii` | b4b524d |
+| 4: The owner's windowed flight | human | done (owner, 2026-10-21 19:11, live session 4, `./target/release/flythrough --seed 1` from this worktree at b4b524d, default look, 2560x1440, stdout in `plan-0024/live/session4-20261021-1911.log`, first section): verdict "flight 1 went fine but fps were around 30": no visible change, no hitches. `frames: 5245 frames; frame CPU p50 10.223 ms, p99 53.354 ms, max 888.607 ms; update + poll + sync p50 4.432 ms, p99 36.548 ms, max 885.390 ms; march GPU p50 6.571 ms, p99 25.926 ms, max 63.062 ms over 4326 timed frames` | committed with this row |
 
 ### Notes
 
@@ -318,15 +318,47 @@ each. Empty is fine.)_
   `frames:` p50 covers all 300. Two of eight runs read outside 10 % (0.082 against 0.071 ms,
   0.065 against 0.073 ms), one at -10.7 %. Not met as stated in those runs.
 
+- Phase 4: about 30 fps on the fast passes, against about 40 fps in Plan 0023 Phase 7 (at
+  2530x1378; this flight rendered 2560x1440, 5.7 % more pixels).
+- Phase 4, observations on why the `frames:` p50s (10.2 ms CPU plus 6.6 ms march GPU) do not
+  add up to 33 ms: frame CPU runs from the frame's start to its submit and leaves out
+  `get_current_texture` and `present` in `vxe-app`'s shell (`AutoNoVsync`, no vsync wait, but
+  acquire blocks while the swapchain's images are in flight); on the 4326 timed frames (stats
+  overlay shown) `MarchTimer::read_ms` waits on `device.poll(wait_indefinitely)` after the
+  submit, outside frame CPU, so CPU and GPU serialize and the whole submission's GPU time is
+  paid, of which the march is one pass (the attribute pass, the presenter at 2560x1440 and the
+  HUD are not in the GPU figure); the 47 `B` benches each synced 23 to 27 ms; the mirror sat
+  at its 3 GiB budget with 47 deferral streaks (up to 150 syncs) and `r_full` moving 12 to 16,
+  Plan 0028's territory. The second `F1` line read cpu 24.737 ms, gpu march 8.488 ms.
+- Phase 4: frame CPU max 888.607 ms with `update + poll + sync` max 885.390 ms in the same
+  run: one streaming step of about 0.9 s, which the log does not attribute further.
+
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature.
+- **Public API changed:** `GpuWorld::sync(world, queue, encoder: &mut wgpu::CommandEncoder)`
+  (the encoder is new; every caller changed); `GpuWorld::belt_chunks()`,
+  `GpuWorld::belt_trims()`; `vxe_render::gpu_world::BELT_CHUNK_BYTES` (re-exported at the
+  crate root) and `BELT_KEEP_CHUNKS`; `SyncStats::writes` now counts belt copy commands. The
+  fly-through prints a `staging belt` line (autopilot, `--frames` exit) and a `frames:` line
+  at every exit.
+- **Budget readings:** dev reference, RTX 3080 Laptop GPU, Ryzen 9 5900HS, release. §2
+  streaming line (quiet box, exclusive perf lock, 843c5a3 against ae58f0c, three paired runs):
+  plain `sync` p50 1.397 to 1.662 ms (bar 3.0), `update + poll + sync` p50 1.715 to 1.994 ms
+  (bar 3.2), against the 1.0 ms line still a miss; belt 25.4 % of `sync` against under 5 %, a
+  recorded miss (owner, 2026-10-21). §3 RAM: belt peak 2 chunks (8 MiB) plain, 1 chunk (4 MiB)
+  default, 0 trims. §5 residency p95: plain 258 to 262 ms, default 129 to 131 ms (500 ms).
+  Default look: `update_attrs` p99 3.61 to 3.73 ms, carry-over age max 0 ms, hash match.
+  Windowed (owner, b4b524d, 2560x1440): frame CPU p50 10.223 ms, p99 53.354 ms; `update +
+  poll + sync` p50 4.432 ms; march GPU p50 6.571 ms; about 30 fps.
+- **Gate at the tip (b4b524d code; later commits docs only):** `cargo build --workspace
+  --all-targets` 0; `cargo nextest run` 534 passed, 4 skipped, 0; `cargo test --doc
+  --workspace` 0 failures; `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo
+  fmt --all --check` 0; `cargo deny check` ok; `check-comment-hygiene`, `check-doc-links`,
+  `check-index-rows` OK.
+- **Outstanding `human` phases:** none.
 
 ## Followups
 
