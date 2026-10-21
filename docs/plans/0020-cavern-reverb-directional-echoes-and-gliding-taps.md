@@ -3,7 +3,7 @@
 > **Status:** in-progress
 > **Created:** 2026-10-17
 > **Milestone:** M4 in `docs/roadmap.md`
-> **Related ADRs:** [ADR-0015](../adrs/0015-late-reverb-as-a-shared-fdn-from-a-listener-ray-fan.md) (the tail, the fan, the skin-depth rule, the direction buses), ADR-0006 (mixer on the callback, probes on the caller's thread)
+> **Related ADRs:** [ADR-0015](../adrs/0015-late-reverb-as-a-shared-fdn-from-a-listener-ray-fan.md) (the tail, the fan, the skin-depth rule, the direction buses), ADR-0006 (mixer on the callback, probes on the caller's thread), [ADR-0020](../adrs/0020-paired-mixer-bench-bounds-read-with-loops-aligned.md) (paired mixer-bench bounds read with loops aligned)
 > **Prerequisite:** Plan 0006 closed. Its open finding (clicks while the listener moves) transfers here as Phase 1; this plan changes the tap semantics Plan 0006's Phase 4 tests pin, so the close review of 0006 runs first, against the tree as it stands.
 > **References:** `docs/references/room-acoustics.md`
 > **Amended:** 2026-10-20, inside Phase 1 (its code on 919cb63), from the resume notes and the
@@ -46,6 +46,13 @@
 > keyed by the mean free path the mixer already receives, for both the echo gain and the tail
 > level; (2) the echo wobble while moving is **pinned now and fixed later**: a followup, not a
 > phase. The pre-delay, `Handover` and the direct delay (off) are pinned as heard.
+> **Amended:** 2026-10-21, after Phase 13 (c85bac5), from the log's Notes and the owner's
+> decision ("amend the bench protocol"): Phase 13's paired `bench mixer` bound read +5.80 percent
+> static with no new work in the block, and the gap vanished with loops aligned in both builds,
+> so it was the FIR loop's placement. ADR-0020 makes a paired mixer bound an aligned-build
+> reading; Phase 13's bench done-when now says so. Dev's aligned readings in the Notes are two
+> runs per tree without load or the direct-delay cases, so a re-read under the new protocol is
+> owed before Phase 14. The absolute 0.6 and 1.0 ms figures stay default-build readings.
 
 ## TL;DR
 
@@ -938,8 +945,26 @@ interpolation there is a guess, recorded as one.
   - The balance table of Phase 11 re-printed at the defaults and logged, beside the flat one.
   - The allocation count in `render` is still zero, with a `SetRoom` every block.
   - `bench mixer` (dev box, release, exclusive perf lock, load average and top processes
-    stated): static and turning medians of three alternating runs against the parent's,
-    within 5 percent in the same session (the curve is evaluated per command, not per block).
+    stated), read under ADR-0020 (amended 2026-10-21): both trees built with
+    `RUSTFLAGS="-C llvm-args=-align-loops=64"` into `target/aligned`, three alternating runs,
+    each case's median of the three criterion medians (static, static with the direct delay,
+    turning, turning with the direct delay) within 5 percent of the parent 83cbf6f's in the
+    same lock hold (the curve is evaluated per command, not per block). The default-flag
+    reading already in the Close triggers stays there as information. The re-read, from this
+    worktree (the parent goes in a scratch worktree under the ignored `target/`):
+
+    ```sh
+    cd /home/igor/Work/voxel-engine/.claude/worktrees/plan-0020
+    git worktree add --detach target/parent-83cbf6f 83cbf6f   # skip if it exists
+    export CARGO_BUILD_JOBS=4 RUSTFLAGS="-C llvm-args=-align-loops=64" CARGO_TARGET_DIR=target/aligned
+    for t in . target/parent-83cbf6f; do (cd $t && systemd-run --user --scope --quiet \
+      -p MemoryMax=6G -p MemorySwapMax=1G -- cargo bench -p vxe-audio --bench mixer --no-run); done
+    flock /home/igor/Work/voxel-engine/.git/vxe-perf.lock systemd-run --user --scope --quiet \
+      -p MemoryMax=6G -p MemorySwapMax=1G -- sh -c 'for i in 1 2 3; do \
+      for t in target/parent-83cbf6f .; do uptime; top -bn1 -o %CPU | sed -n 8,11p; \
+      (cd $t && cargo bench -p vxe-audio --bench mixer); done; done' 2>&1 | tee target/aligned-mixer.log
+    git worktree remove target/parent-83cbf6f
+    ```
   - The gate (build, nextest, doctests, clippy, fmt, deny, the three doc scripts) exits 0; the
     three budget readings are in the log with machine and commit.
 

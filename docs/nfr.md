@@ -762,6 +762,16 @@ dev reference: Ryzen 9 5900HS laptop, release, the quiet-box protocol of Plan 00
 44a1582's tree unless stated. Readings taken under a load average of 9 to 21 are in the
 plan's Close triggers as superseded figures.
 
+**Paired mixer readings (ADR-0020, 2026-10-21).** A plan's *relative* bound on `cargo bench -p
+vxe-audio --bench mixer` (within N percent of the parent's) is read with both builds compiled
+with `RUSTFLAGS="-C llvm-args=-align-loops=64"` and `CARGO_TARGET_DIR=target/aligned`. Each build
+gets three alternating runs in one exclusive perf-lock hold, with the 1-minute load and the top
+processes stated, and each case's median of the three criterion medians is compared. The
+default-flag pair may be logged beside it, but it does not decide the bound: the placement of
+the FIR loop alone moved the static case by 5.8 percent in Plan 0020 Phase 13. The *absolute*
+mixer figures below are read on the default build, the code that ships, under the quiet-box
+protocol above. Other benches keep default-flag paired readings unless their plan adopts this.
+
 - **Mixer callback, 32 HRTF voices, one 256-frame block:** 1.0 ms on the baseline CPU
   (proposal; 32 x 2 x 128 x 256 = 2.1 million multiply-adds plus filters and taps).
   **Reading (`cargo bench -p vxe-audio --bench mixer`, 32 voices of looping noise, each

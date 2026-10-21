@@ -3,14 +3,14 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0027** (ADRs are a separate sequence; next free there is **0020**).
+**Next free number: 0027** (ADRs are a separate sequence; next free there is **0021**).
 
 ## Active roster
 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Status | Live constraint |
 |------|-------|--------|-----------------|
-| [0020](0020-cavern-reverb-directional-echoes-and-gliding-taps.md) | Cavern reverb: a late tail sized by the room the listener sees, echoes from their walls, taps that glide, and the player's own voice in the cave | in-progress | M4, ADR-0015. 13 owed: level by room size; 14 a listen. |
+| [0020](0020-cavern-reverb-directional-echoes-and-gliding-taps.md) | Cavern reverb: a late tail sized by the room the listener sees, echoes from their walls, taps that glide, and the player's own voice in the cave | in-progress | M4, ADR-0015. 13 done; aligned `bench mixer` re-read owed (ADR-0020). 14 a listen. |
 | [0023](0023-render-thread-cpu-attribute-hitch-and-streaming-line.md) | The render thread's mirror CPU: profile a chunk crossing, then cut the attribute hitch and the streaming line with targeted fixes | approved | M2, before lighting; ADR-0017 (proposed). Dev starts when the 0020 or 0022 lane is at its human phase. |
 | [0024](0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md) | Direct light: a hit buffer, emissive voxels as light samples, one shadow ray per pixel, and an SVGF-family denoiser whose history dies in edit boxes | approved | M2, ADR-0018 (proposed). After Plan 0023; before the mirror-slot plan. |
 <!-- roster:end -->
