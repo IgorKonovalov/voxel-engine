@@ -10,7 +10,9 @@
 //!
 //! The caller drives everything: [`Streamer::update`] takes the focus points and, when a
 //! focus chunk moved, rebuilds the job queue; [`Streamer::poll`] inserts finished chunks and
-//! performs demotions and evictions. The queue is ordered by tier (full loads and promotions
+//! performs demotions and evictions. When a single focus moves one chunk step (each axis by
+//! at most one), the queue and the sweep are updated from the shells the step moves across
+//! instead of rebuilt; the result is the rebuild's, job for job. The queue is ordered by tier (full loads and promotions
 //! first), then `d2`, then coordinate, so the nearest chunks load first and ties fall to
 //! coordinate order. A queued job whose chunk stops being wanted is dropped at the next
 //! rebuild. Nothing here reads a clock: latency is counted in `update` calls.
@@ -156,6 +158,7 @@ struct Key {
     coord: ChunkCoord,
 }
 
+#[derive(Clone)]
 struct Job {
     key: Key,
 }
@@ -223,6 +226,9 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// A cached shell: a ball's squared radius, the focus step and whether the shell enters it.
+type ShellKey = (i64, [i32; 3], bool);
+
 /// Keeps a [`World`] resident around focus points; see the module docs.
 pub struct Streamer {
     cfg: StreamConfig,
@@ -243,6 +249,19 @@ pub struct Streamer {
     load_failed: HashSet<ChunkCoord>,
     /// The tick at which each chunk with a full load was first wanted full.
     wanted_since: HashMap<ChunkCoord, u64>,
+    /// The next sweep scans all of residency: set by a jump, several focus points, the first
+    /// update and `set_radii`. Otherwise a sweep visits the shells the single focus moved
+    /// across since `swept_focus`, plus `recheck`.
+    sweep_full: bool,
+    swept_focus: Option<ChunkCoord>,
+    /// Chunks inserted outside their band since the last sweep, which the next one checks.
+    recheck: HashSet<ChunkCoord>,
+    /// The offsets, from the new focus chunk, of a ball's entering or leaving shell for one
+    /// focus step: by squared radius, step and `entering`.
+    shells: HashMap<ShellKey, Arc<Vec<[i32; 3]>>>,
+    /// Checks every incremental queue update and sweep against the full rebuild and scan.
+    oracle: bool,
+    oracle_checks: (u64, u64),
     tick: u64,
     generated: u64,
     restored: u64,
@@ -280,6 +299,12 @@ impl Streamer {
             spill_failed: HashSet::new(),
             load_failed: HashSet::new(),
             wanted_since: HashMap::new(),
+            sweep_full: true,
+            swept_focus: None,
+            recheck: HashSet::new(),
+            shells: HashMap::new(),
+            oracle: false,
+            oracle_checks: (0, 0),
             tick: 0,
             generated: 0,
             restored: 0,
@@ -303,7 +328,22 @@ impl Streamer {
         r.r_full = r_full;
         r.r_lod = r_lod;
         self.sweep = true;
+        self.sweep_full = true;
         self.rebuild_queue();
+    }
+
+    /// Test support: when on, every incremental queue update and sweep is recomputed the full
+    /// way from the same state, and a difference panics. [`Streamer::oracle_checks`] counts
+    /// the checks.
+    #[doc(hidden)]
+    pub fn set_incremental_oracle(&mut self, on: bool) {
+        self.oracle = on;
+    }
+
+    /// Test support: the incremental queue updates and sweeps checked so far.
+    #[doc(hidden)]
+    pub fn oracle_checks(&self) -> (u64, u64) {
+        self.oracle_checks
     }
 
     /// Takes this tick's focus points. When the set of focus chunks differs from the last
@@ -317,9 +357,126 @@ impl Streamer {
         if chunks == self.focus {
             return;
         }
+        let step = match (self.focus.as_slice(), chunks.as_slice()) {
+            ([a], [b]) => Some([0, 1, 2].map(|k| b.0[k] - a.0[k])).filter(|d| unit_step(*d)),
+            _ => None,
+        };
         self.focus = chunks;
         self.sweep = true;
-        self.rebuild_queue();
+        match step {
+            Some(d) => self.shift_queue(d),
+            None => {
+                self.sweep_full = true;
+                self.rebuild_queue();
+            }
+        }
+    }
+
+    /// The offsets from the new focus chunk of the chunks entering (`entering`) or leaving
+    /// the ball of squared radius `r2` when the focus steps by `d`: entering, `|o|^2 <= r2 <
+    /// |o + d|^2`; leaving, `|o + d|^2 <= r2 < |o|^2`.
+    fn shell(&mut self, r2: i64, d: [i32; 3], entering: bool) -> Arc<Vec<[i32; 3]>> {
+        self.shells
+            .entry((r2, d, entering))
+            .or_insert_with(|| {
+                let r = (r2.max(0) as f64).sqrt() as i32 + 2;
+                let len2 = |o: [i32; 3]| o.iter().map(|&v| i64::from(v).pow(2)).sum::<i64>();
+                let mut out = Vec::new();
+                for x in -r..=r {
+                    for y in -r..=r {
+                        for z in -r..=r {
+                            let o = [x, y, z];
+                            let (now, was) = (len2(o), len2([x + d[0], y + d[1], z + d[2]]));
+                            let hit = if entering {
+                                now <= r2 && was > r2
+                            } else {
+                                was <= r2 && now > r2
+                            };
+                            if hit {
+                                out.push(o);
+                            }
+                        }
+                    }
+                }
+                Arc::new(out)
+            })
+            .clone()
+    }
+
+    /// The queue after a one-step move of the single focus by `d`: [`Streamer::rebuild_queue`]'s
+    /// result, from the chunks whose want could change. Those are the queued jobs (re-keyed or
+    /// dropped), the chunks entering the LOD ball, and those entering or leaving the full
+    /// ball; every other wanted chunk keeps its tier and has a job, or needs none.
+    fn shift_queue(&mut self, d: [i32; 3]) {
+        let shared = self.shared.clone();
+        let mut q = lock(&shared.queue);
+        if self.oracle {
+            let before = (
+                q.jobs.clone(),
+                self.in_flight.clone(),
+                self.wanted_since.clone(),
+            );
+            self.shift_jobs(&mut q, d);
+            let shifted = (
+                q.jobs.clone(),
+                self.in_flight.clone(),
+                self.wanted_since.clone(),
+            );
+            (q.jobs, self.in_flight, self.wanted_since) = before;
+            self.rebuild_jobs(&mut q);
+            let keys = |jobs: &[Job]| jobs.iter().map(|j| j.key).collect::<Vec<_>>();
+            assert_eq!(keys(&shifted.0), keys(&q.jobs), "incremental queue");
+            assert_eq!(shifted.1, self.in_flight, "incremental in-flight set");
+            assert_eq!(shifted.2, self.wanted_since, "incremental wanted_since");
+            self.oracle_checks.0 += 1;
+        } else {
+            self.shift_jobs(&mut q, d);
+        }
+        drop(q);
+        self.shared.wake.notify_all();
+    }
+
+    fn shift_jobs(&mut self, q: &mut Queue, d: [i32; 3]) {
+        let f = self.focus[0];
+        let (full2, lod2) = (self.cfg.residency.full2(), self.cfg.residency.lod2());
+        let at = |o: &[i32; 3]| ChunkCoord([0, 1, 2].map(|k| f.0[k] + o[k]));
+        let mut eval: HashSet<ChunkCoord> = HashSet::new();
+        for job in q.jobs.drain(..) {
+            self.in_flight.remove(&job.key.coord);
+            eval.insert(job.key.coord);
+        }
+        let leaving_full = self.shell(full2, d, false);
+        for o in leaving_full.iter() {
+            self.wanted_since.remove(&at(o));
+            eval.insert(at(o));
+        }
+        for o in self.shell(lod2, d, true).iter() {
+            eval.insert(at(o));
+        }
+        for o in self.shell(full2, d, true).iter() {
+            eval.insert(at(o));
+        }
+        let mut jobs = Vec::new();
+        for c in eval {
+            let Some(tier) = self.wanted_tier(c) else {
+                continue;
+            };
+            let key = Key {
+                tier,
+                d2: self.d2(c),
+                coord: c,
+            };
+            if !self.needs_job(&key) {
+                continue;
+            }
+            if tier == Tier::Full {
+                self.wanted_since.entry(c).or_insert(self.tick);
+            }
+            self.in_flight.insert(c, tier);
+            jobs.push(Job { key });
+        }
+        jobs.sort_unstable_by_key(|j| std::cmp::Reverse(j.key));
+        q.jobs = jobs;
     }
 
     /// Smallest squared chunk distance from `c` to a focus chunk; `i64::MAX` with no focus.
@@ -391,8 +548,15 @@ impl Streamer {
     }
 
     fn rebuild_queue(&mut self) {
+        let shared = self.shared.clone();
+        let mut q = lock(&shared.queue);
+        self.rebuild_jobs(&mut q);
+        drop(q);
+        self.shared.wake.notify_all();
+    }
+
+    fn rebuild_jobs(&mut self, q: &mut Queue) {
         let wanted = self.wanted();
-        let mut q = lock(&self.shared.queue);
         // Jobs still queued are not running: forget them, then queue what is wanted now.
         for job in q.jobs.drain(..) {
             self.in_flight.remove(&job.key.coord);
@@ -415,8 +579,6 @@ impl Streamer {
         self.wanted_since.retain(|c, _| still_wanted.contains(c));
         jobs.reverse();
         q.jobs = jobs;
-        drop(q);
-        self.shared.wake.notify_all();
     }
 
     /// Queues a load for `c` if the current focus wants it at a tier it lacks; for chunks
@@ -484,6 +646,7 @@ impl Streamer {
         let keep_full2 = self.cfg.residency.keep_full2();
         let keep_lod2 = self.cfg.residency.keep_lod2();
         let mut inserts: Vec<(ChunkCoord, Arc<RwLock<Chunk>>)> = Vec::new();
+        let mut outside = Vec::new();
         let mut requeue = Vec::new();
         for d in done {
             match d {
@@ -510,6 +673,7 @@ impl Streamer {
                     // Past the full band it is inserted anyway; the sweep demotes it.
                     if d > keep_full2 {
                         self.sweep = true;
+                        outside.push(coord);
                     }
                     inserts.push((coord, chunk));
                     ev.loaded.push((coord, Tier::Full));
@@ -568,17 +732,10 @@ impl Streamer {
         let mut demote = Vec::new();
         if self.sweep {
             self.sweep = false;
-            for (&c, &tier) in &self.resident {
-                let d = self.d2(c);
-                if d > keep_lod2 {
-                    evict.push((c, tier));
-                } else if tier == Tier::Full && d > keep_full2 {
-                    demote.push(c);
-                }
-            }
-            evict.sort_unstable();
-            demote.sort_unstable();
+            (evict, demote) = self.sweep_lists();
         }
+        // Checked by the next sweep, which a full scan would find them in.
+        self.recheck.extend(outside);
         // Chunks inserted now that the sweep found outside their bands are left for the next
         // sweep; none is both inserted and removed in one poll.
         let mut removed = Vec::new();
@@ -638,6 +795,73 @@ impl Streamer {
         }
         ev.evicted.extend(evict.into_iter().map(|(c, _)| c));
         ev
+    }
+
+    /// The sweep's evictions and demotions, each sorted. A sweep after one-step moves of a
+    /// single focus visits the chunks that crossed out of the keep balls since the last sweep
+    /// and those inserted outside their band since: every other resident chunk is inside its
+    /// band, as the last sweep left it.
+    fn sweep_lists(&mut self) -> (Vec<(ChunkCoord, Tier)>, Vec<ChunkCoord>) {
+        let keep_full2 = self.cfg.residency.keep_full2();
+        let keep_lod2 = self.cfg.residency.keep_lod2();
+        let step = match (self.focus.as_slice(), self.swept_focus) {
+            ([f], Some(g)) if !self.sweep_full => {
+                Some((*f, [0, 1, 2].map(|k| f.0[k] - g.0[k]))).filter(|(_, d)| unit_step(*d))
+            }
+            _ => None,
+        };
+        let classify =
+            |s: &Self, c: ChunkCoord, tier: Tier, evict: &mut Vec<_>, demote: &mut Vec<_>| {
+                let d = s.d2(c);
+                if d > keep_lod2 {
+                    evict.push((c, tier));
+                } else if tier == Tier::Full && d > keep_full2 {
+                    demote.push(c);
+                }
+            };
+        let full_scan = |s: &Self| {
+            let (mut evict, mut demote) = (Vec::new(), Vec::new());
+            for (&c, &tier) in &s.resident {
+                classify(s, c, tier, &mut evict, &mut demote);
+            }
+            evict.sort_unstable();
+            demote.sort_unstable();
+            (evict, demote)
+        };
+        let lists = match step {
+            Some((f, d)) => {
+                let mut visit: HashSet<ChunkCoord> = std::mem::take(&mut self.recheck);
+                if d != [0; 3] {
+                    for r2 in [keep_lod2, keep_full2] {
+                        for o in self.shell(r2, d, false).iter() {
+                            visit.insert(ChunkCoord([0, 1, 2].map(|k| f.0[k] + o[k])));
+                        }
+                    }
+                }
+                let (mut evict, mut demote) = (Vec::new(), Vec::new());
+                for c in visit {
+                    if let Some(&tier) = self.resident.get(&c) {
+                        classify(self, c, tier, &mut evict, &mut demote);
+                    }
+                }
+                evict.sort_unstable();
+                demote.sort_unstable();
+                if self.oracle {
+                    let full = full_scan(self);
+                    assert_eq!((&evict, &demote), (&full.0, &full.1), "incremental sweep");
+                    self.oracle_checks.1 += 1;
+                }
+                (evict, demote)
+            }
+            None => full_scan(self),
+        };
+        self.recheck.clear();
+        self.sweep_full = false;
+        self.swept_focus = match self.focus.as_slice() {
+            [f] => Some(*f),
+            _ => None,
+        };
+        lists
     }
 
     /// Spill writes that bring persisted RAM under the cap, oldest entries first, skipping
@@ -733,6 +957,11 @@ pub fn chunks_in_ball(r: i32) -> u64 {
         }
     }
     n
+}
+
+/// Whether `d` moves each axis by at most one chunk.
+fn unit_step(d: [i32; 3]) -> bool {
+    d.iter().all(|v| v.abs() <= 1)
 }
 
 fn d2(a: ChunkCoord, b: ChunkCoord) -> i64 {

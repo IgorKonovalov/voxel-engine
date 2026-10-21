@@ -1,8 +1,8 @@
 # ADR-0017: The mirror's CPU work stays in the frame loop, bounded per frame, with narrowing on the stream workers
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-21, at the Plan 0023 close; see Outcome)
 > **Date:** 2026-10-20
-> **Related plan(s):** [Plan 0023](../plans/0023-render-thread-cpu-attribute-hitch-and-streaming-line.md)
+> **Related plan(s):** [Plan 0023](../plans/done/0023-render-thread-cpu-attribute-hitch-and-streaming-line.md)
 
 ## Context
 
@@ -94,4 +94,17 @@ a new synchronisation surface on every backend for a copy that has not been prof
 
 ## Outcome
 
-_(Added only at acceptance if implementation falsified something above.)_
+_(2026-10-21, Plan 0023 close.)_ Three of the four bullets shipped as decided: the shell visits
+only full neighbours' border bricks, the attribute pass is capped with a carry-over queue and
+"no plane" clear items, and the stream queue, the sweep and the window shift are incremental.
+The attribute hitch fell from p99 138 to 180 ms to 5.5 to 6.0 ms of render-thread CPU on the
+quiet dev box, and the default look flies more frames than plain.
+
+The fourth bullet, narrowing on the stream workers, was not built. The plan's entry profile
+(plain flight, frame-pointer call graphs) put `Queue::write_buffer` at 41.8 % of `sync`'s
+samples, ahead of narrowing at about 38 %, and the owner skipped the phase. That is the case
+the Negative consequences name: the render thread's `write_buffer` copies alone keep the
+streaming line at p50 4.9 to 5.0 ms in plain flight against 1.0 ms. The frame-loop shape and
+the single mirror owner stand. The worker hook stays a valid option for narrowing, but the
+next step on the streaming line is the copies, which is Alternative B's staging ring. Taking
+it needs a new ADR that supersedes this one's rejection of Alternative B.

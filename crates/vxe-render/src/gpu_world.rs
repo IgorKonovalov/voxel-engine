@@ -69,7 +69,7 @@
 //! of either former kind, before one never handed out. So plain and attribute slots share one
 //! high-water mark, and no live brick ever moves: a page changes kind only while it is empty.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::PoisonError;
 
 use vxe_world::packed::Packed;
@@ -79,7 +79,8 @@ use vxe_world::{
     brick_of_slot, brick_slot,
 };
 
-use crate::attrib::{AttribBindings, AttribItem, AttribPass};
+use crate::attr_work::{self, AttrWorkStats, MirrorView};
+use crate::attrib::{AttribBindings, AttribItem, AttribPass, CLEAR_BIT};
 
 /// Pool slots per page: the unit the pool is reserved and handed out in, and the unit
 /// `slots_per_shard` is a multiple of.
@@ -308,10 +309,13 @@ pub struct MirrorConfig {
     /// Chunk records to reserve; `None` reserves one for every chunk of the window. A
     /// following window's residency is a ball, so a caller that knows it passes fewer.
     pub record_chunks: Option<u64>,
+    /// Most bricks one attribute pass computes from its carry-over queue
+    /// ([`GpuWorld::prepare_attrs`]); `usize::MAX` for no cap.
+    pub attr_cap: usize,
 }
 
 impl MirrorConfig {
-    /// A window with no sync budget, no shard cap and the default budget,
+    /// A window with no sync budget, no shard cap, no attribute cap and the default budget,
     /// [`DEFAULT_BUDGET_BYTES`], clamped to what the device can bind.
     pub fn new(window: Window) -> Self {
         Self {
@@ -320,6 +324,7 @@ impl MirrorConfig {
             max_shard_slots: None,
             budget_bytes: DEFAULT_BUDGET_BYTES,
             record_chunks: None,
+            attr_cap: usize::MAX,
         }
     }
 }
@@ -652,6 +657,24 @@ pub struct GpuWorld {
     attr_bricks: HashSet<[i32; 3]>,
     shell_chunks: HashSet<ChunkCoord>,
     attrib: Option<AttribPass>,
+    /// The work list `prepare_attrs` built and `encode_attrs` records, kept for its capacity,
+    /// and the counters of its build.
+    attr_items: Vec<AttribItem>,
+    attr_stats: AttrWorkStats,
+    /// The attribute carry-over queue, oldest first, each entry with the `prepare_attrs` call
+    /// that queued it; the chunk part-way expanded, its next brick slot and its call; and
+    /// what the queue holds, for deduplication.
+    attr_queue: VecDeque<(AttrWait, u64)>,
+    attr_cursor: Option<(ChunkCoord, usize, u64)>,
+    queued_chunks: HashSet<ChunkCoord>,
+    queued_bricks: HashSet<[i32; 3]>,
+    /// `Full` bricks of full chunks written into a slot since the last `prepare_attrs`: the
+    /// ones whose compute item does not run in that call get a clear item.
+    attr_written: HashSet<[i32; 3]>,
+    /// The bricks of the current list, compute and front items, for deduplication.
+    attr_taken: HashSet<[i32; 3]>,
+    /// `prepare_attrs` calls so far.
+    attr_calls: u64,
     /// The queue of the last `sync`, which writes the attribute pass's uniform and work list.
     queue: Option<wgpu::Queue>,
     /// Palette index of every material while one chunk is narrowed, else `NO_INDEX`.
@@ -753,6 +776,15 @@ impl GpuWorld {
             attr_bricks: HashSet::new(),
             shell_chunks: HashSet::new(),
             attrib: None,
+            attr_items: Vec::new(),
+            attr_stats: AttrWorkStats::default(),
+            attr_queue: VecDeque::new(),
+            attr_cursor: None,
+            queued_chunks: HashSet::new(),
+            queued_bricks: HashSet::new(),
+            attr_written: HashSet::new(),
+            attr_taken: HashSet::new(),
+            attr_calls: 0,
             queue: None,
             rev: vec![NO_INDEX; 1 << 16],
             translucent: vec![false; 1 << 16],
@@ -776,7 +808,14 @@ impl GpuWorld {
     pub fn with_surface_attrs(device: &wgpu::Device, cfg: MirrorConfig) -> Self {
         let mut m = Self::with_config(device, cfg);
         m.surface_attrs = true;
-        m.attrib = Some(AttribPass::new(device));
+        let mut pass = AttribPass::new(device);
+        if cfg.attr_cap != usize::MAX && cfg.sync_budget_bytes != u64::MAX {
+            // A capped list: the cap, then a clear item for every brick one sync writes, its
+            // budget's worth of narrow slots and the one chunk it may finish past it.
+            let bricks = cfg.sync_budget_bytes / (SLOT_BYTES + MASK_BYTES) + CHUNK_BRICKS as u64;
+            pass.reserve(cfg.attr_cap.saturating_add(bricks as usize));
+        }
+        m.attrib = Some(pass);
         m
     }
 
@@ -1055,9 +1094,10 @@ impl GpuWorld {
     /// Records into `encoder` the attribute pass over what changed since the last call: every
     /// `Full` brick of a full chunk that `sync` wrote, the bricks of full chunks among their 26
     /// neighbours, and the bricks of full chunks next to a chunk whose record was written new,
-    /// dropped or replaced. Returns the bricks in the work list; 0 records nothing, and so
-    /// does a mirror without attribute pages. The pass reads the pool, records and table as
-    /// the queue holds them when `encoder` is submitted.
+    /// dropped or replaced. Under [`MirrorConfig::attr_cap`] part of that waits for later
+    /// calls ([`GpuWorld::prepare_attrs`]). Returns the items in the work list, compute and
+    /// clear; 0 records nothing, and so does a mirror without attribute pages. The pass reads
+    /// the pool, records and table as the queue holds them when `encoder` is submitted.
     pub fn update_attrs(&mut self, encoder: &mut wgpu::CommandEncoder) -> usize {
         self.update_attrs_timed(encoder, None)
     }
@@ -1069,7 +1109,171 @@ impl GpuWorld {
         encoder: &mut wgpu::CommandEncoder,
         timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) -> usize {
-        let items = self.attr_work();
+        self.prepare_attrs();
+        self.encode_attrs(encoder, timestamps)
+    }
+
+    /// The first half of [`GpuWorld::update_attrs_timed`]: builds the work list from what
+    /// changed since the last one and clears the change sets. The list waits for
+    /// [`GpuWorld::encode_attrs`]; a second call before it replaces the list. Returns the
+    /// build's counters, also kept for [`GpuWorld::attr_stats`].
+    ///
+    /// The list, in order:
+    /// - the re-uploaded bricks and their 26 neighbours, never deferred;
+    /// - bricks from the carry-over queue, oldest first, until the list holds
+    ///   [`MirrorConfig::attr_cap`] compute items. Chunks written whole are queued as their
+    ///   coordinate and expanded as they are taken, the shells' bricks one by one. A queued
+    ///   brick is resolved to its slot when it is taken, and skipped when its chunk is no
+    ///   longer mirrored full or it is not `Full`;
+    /// - a clear item for every brick `sync` wrote into a slot since the last call that is
+    ///   not computed in this one, so the brick reads "no plane" (face mode) until its turn
+    ///   instead of the attribute its slot held before.
+    ///
+    /// Each brick is listed once per call.
+    pub fn prepare_attrs(&mut self) -> AttrWorkStats {
+        self.attr_calls += 1;
+        let call = self.attr_calls;
+        let chunks = std::mem::take(&mut self.attr_chunks);
+        let bricks = std::mem::take(&mut self.attr_bricks);
+        let shells = std::mem::take(&mut self.shell_chunks);
+        let written = std::mem::take(&mut self.attr_written);
+        let mut items = std::mem::take(&mut self.attr_items);
+        let mut taken = std::mem::take(&mut self.attr_taken);
+        items.clear();
+        taken.clear();
+        if !self.surface_attrs {
+            self.attr_items = items;
+            self.attr_taken = taken;
+            self.attr_stats = AttrWorkStats::default();
+            return self.attr_stats;
+        }
+        let mut front = Vec::new();
+        let mut rest = Vec::new();
+        let mut st =
+            attr_work::build_split(&*self, &chunks, &bricks, &shells, &mut front, &mut rest);
+        for &c in &chunks {
+            if self.queued_chunks.insert(c) {
+                self.attr_queue.push_back((AttrWait::Chunk(c), call));
+            }
+        }
+        for it in &rest {
+            let b = it.origin.map(|v| v.div_euclid(BRICK_EDGE));
+            if self.queued_bricks.insert(b) {
+                self.attr_queue.push_back((AttrWait::Brick(b), call));
+            }
+        }
+        for it in front {
+            if taken.insert(it.origin.map(|v| v.div_euclid(BRICK_EDGE))) {
+                items.push(it);
+            }
+        }
+        let cap = self.cfg.attr_cap;
+        let e = CHUNK_EDGE_BRICKS;
+        while items.len() < cap {
+            if let Some((c, mut i, since)) = self.attr_cursor.take() {
+                if !self.is_full_chunk(c) {
+                    continue;
+                }
+                while i < CHUNK_BRICKS && items.len() < cap {
+                    let l = brick_of_slot(i);
+                    let b = [0, 1, 2].map(|k| c.0[k] * e + l[k]);
+                    i += 1;
+                    st.item_calls += 1;
+                    if !taken.contains(&b)
+                        && let Some(slot) = self.full_slot(b)
+                    {
+                        taken.insert(b);
+                        items.push(AttribItem {
+                            slot,
+                            origin: b.map(|v| v * BRICK_EDGE),
+                        });
+                    }
+                }
+                // Past the bricks with nothing to compute, so a cursor waits only on work.
+                while i < CHUNK_BRICKS {
+                    let l = brick_of_slot(i);
+                    let b = [0, 1, 2].map(|k| c.0[k] * e + l[k]);
+                    if !taken.contains(&b) && self.full_slot(b).is_some() {
+                        break;
+                    }
+                    i += 1;
+                }
+                if i < CHUNK_BRICKS {
+                    self.attr_cursor = Some((c, i, since));
+                }
+                continue;
+            }
+            let Some((wait, since)) = self.attr_queue.pop_front() else {
+                break;
+            };
+            match wait {
+                AttrWait::Chunk(c) => {
+                    self.queued_chunks.remove(&c);
+                    self.attr_cursor = Some((c, 0, since));
+                }
+                AttrWait::Brick(b) => {
+                    self.queued_bricks.remove(&b);
+                    if !taken.contains(&b)
+                        && let Some(slot) = self.full_slot(b)
+                    {
+                        taken.insert(b);
+                        items.push(AttribItem {
+                            slot,
+                            origin: b.map(|v| v * BRICK_EDGE),
+                        });
+                    }
+                }
+            }
+        }
+        st.items = items.len() as u32;
+        for b in written {
+            if !taken.contains(&b)
+                && let Some(slot) = self.full_slot(b)
+            {
+                items.push(AttribItem {
+                    slot: slot | CLEAR_BIT,
+                    origin: b.map(|v| v * BRICK_EDGE),
+                });
+                st.clears += 1;
+            }
+        }
+        self.attr_items = items;
+        self.attr_taken = taken;
+        self.attr_stats = st;
+        st
+    }
+
+    /// The list [`GpuWorld::prepare_attrs`] built, until [`GpuWorld::encode_attrs`] records
+    /// it: compute items, then clear items ([`CLEAR_BIT`]).
+    pub fn attr_list(&self) -> &[AttribItem] {
+        &self.attr_items
+    }
+
+    /// `prepare_attrs` calls so far, and the call that queued the oldest brick still waiting
+    /// in the carry-over queue (`None` when it is empty). A brick waits `calls - oldest`
+    /// calls.
+    pub fn attr_queue_age(&self) -> (u64, Option<u64>) {
+        let oldest = self
+            .attr_cursor
+            .map(|c| c.2)
+            .or_else(|| self.attr_queue.front().map(|w| w.1));
+        (self.attr_calls, oldest)
+    }
+
+    /// The attribute pass's work buffers built so far ([`AttribPass::buffer_builds`]); 0
+    /// without attribute pages.
+    pub fn attr_buffer_builds(&self) -> u32 {
+        self.attrib.as_ref().map_or(0, AttribPass::buffer_builds)
+    }
+
+    /// The second half of [`GpuWorld::update_attrs_timed`]: records the pass over the list
+    /// [`GpuWorld::prepare_attrs`] built, and empties it. Returns the items in the list.
+    pub fn encode_attrs(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
+    ) -> usize {
+        let n = self.attr_items.len();
         if let (Some(pass), Some(queue)) = (&mut self.attrib, &self.queue) {
             let e = ChunkExtent::new(
                 self.window_min,
@@ -1082,83 +1286,22 @@ impl GpuWorld {
                 window: (e.min.0, e.size()),
                 slots_per_shard: self.layout.slots_per_shard,
             };
-            pass.encode(&self.device, queue, encoder, &b, &items, timestamps);
+            pass.encode(
+                &self.device,
+                queue,
+                encoder,
+                &b,
+                &self.attr_items,
+                timestamps,
+            );
         }
-        items.len()
+        self.attr_items.clear();
+        n
     }
 
-    /// The attribute pass's work list from what changed since the last one, deduplicated,
-    /// and clears the change sets.
-    fn attr_work(&mut self) -> Vec<AttribItem> {
-        let chunks = std::mem::take(&mut self.attr_chunks);
-        let bricks = std::mem::take(&mut self.attr_bricks);
-        let shells = std::mem::take(&mut self.shell_chunks);
-        let mut items = Vec::new();
-        if !self.surface_attrs {
-            return items;
-        }
-        let e = CHUNK_EDGE_BRICKS;
-        for &c in &chunks {
-            for i in 0..CHUNK_BRICKS {
-                let b = brick_of_slot(i);
-                if let Some(item) = self.attr_item([0, 1, 2].map(|k| c.0[k] * e + b[k])) {
-                    items.push(item);
-                }
-            }
-        }
-        // Bricks outside the chunks taken whole, each once.
-        let mut seen = HashSet::new();
-        let mut visit = |gw: &Self, b: [i32; 3], items: &mut Vec<AttribItem>| {
-            let c = ChunkCoord(b.map(|v| v.div_euclid(e)));
-            if !chunks.contains(&c)
-                && seen.insert(b)
-                && let Some(item) = gw.attr_item(b)
-            {
-                items.push(item);
-            }
-        };
-        for &b in &bricks {
-            for z in -1..=1 {
-                for y in -1..=1 {
-                    for x in -1..=1 {
-                        visit(self, [b[0] + x, b[1] + y, b[2] + z], &mut items);
-                    }
-                }
-            }
-        }
-        // The neighbours' bricks within one brick of each shell chunk's box.
-        for &c in &shells {
-            let lo = c.0.map(|v| v * e - 1);
-            let hi = c.0.map(|v| v * e + e);
-            for z in lo[2]..=hi[2] {
-                for y in lo[1]..=hi[1] {
-                    for x in lo[0]..=hi[0] {
-                        let on_shell = [x, y, z]
-                            .iter()
-                            .enumerate()
-                            .any(|(k, &v)| v == lo[k] || v == hi[k]);
-                        if on_shell {
-                            visit(self, [x, y, z], &mut items);
-                        }
-                    }
-                }
-            }
-        }
-        items
-    }
-
-    /// The work-list entry of world brick `b`, if it is a `Full` brick of a mirrored full
-    /// chunk.
-    fn attr_item(&self, b: [i32; 3]) -> Option<AttribItem> {
-        let e = CHUNK_EDGE_BRICKS;
-        let c = ChunkCoord(b.map(|v| v.div_euclid(e)));
-        let m = self.mirrored.get(&c).filter(|m| !m.lod)?;
-        let local = b.map(|v| v.rem_euclid(e));
-        let entry = self.entries[m.record as usize * RECORD_WORDS + ENTRY_WORD + brick_slot(local)];
-        (entry & FULL_BIT != 0).then(|| AttribItem {
-            slot: entry & SLOT_MASK,
-            origin: b.map(|v| v * BRICK_EDGE),
-        })
+    /// The counters of the last work-list build.
+    pub fn attr_stats(&self) -> AttrWorkStats {
+        self.attr_stats
     }
 
     /// Drops the chunks `events` evicted from the mirror. Loaded chunks need nothing here:
@@ -1280,13 +1423,13 @@ impl GpuWorld {
         }
         let old = self.window();
         let new = ChunkExtent::new(new_min, [0, 1, 2].map(|k| new_min[k] + self.window_size[k]));
-        let leaving: Vec<ChunkCoord> = self
-            .mirrored
-            .keys()
-            .chain(self.pending_d2.keys())
-            .copied()
-            .filter(|&c| !new.contains(c))
-            .collect();
+        let leaving = leaving_window(
+            old,
+            new,
+            self.mirrored.len() + self.pending_d2.len(),
+            |c| self.mirrored.contains_key(&c) || self.pending_d2.contains_key(&c),
+            || self.mirrored.keys().chain(self.pending_d2.keys()).copied(),
+        );
         // Dropped while the window is still the old one, so their table entries are cleared;
         // the entering chunks wrap onto the same entries.
         for c in leaving {
@@ -1708,6 +1851,11 @@ impl GpuWorld {
             result = self.upload_brick(base + ENTRY_WORD + i, bricks.get(i), wide, kind, queue, st);
             if result.is_err() {
                 break;
+            }
+            if self.surface_attrs && !lod && self.entries[base + ENTRY_WORD + i] & FULL_BIT != 0 {
+                let b = brick_of_slot(i);
+                self.attr_written
+                    .insert([0, 1, 2].map(|k| coord.0[k] * CHUNK_EDGE_BRICKS + b[k]));
             }
         }
         for &m in &palette {
@@ -2219,10 +2367,64 @@ impl GpuWorld {
     }
 }
 
+/// An entry of the attribute carry-over queue.
+#[derive(Clone, Copy, Debug)]
+enum AttrWait {
+    /// Every brick of a chunk written whole.
+    Chunk(ChunkCoord),
+    /// One brick, in world brick coordinates.
+    Brick([i32; 3]),
+}
+
+impl MirrorView for GpuWorld {
+    fn is_full_chunk(&self, c: ChunkCoord) -> bool {
+        self.mirrored.get(&c).is_some_and(|m| !m.lod)
+    }
+
+    fn full_slot(&self, b: [i32; 3]) -> Option<u32> {
+        let e = CHUNK_EDGE_BRICKS;
+        let c = ChunkCoord(b.map(|v| v.div_euclid(e)));
+        let m = self.mirrored.get(&c).filter(|m| !m.lod)?;
+        let local = b.map(|v| v.rem_euclid(e));
+        let entry = self.entries[m.record as usize * RECORD_WORDS + ENTRY_WORD + brick_slot(local)];
+        (entry & FULL_BIT != 0).then_some(entry & SLOT_MASK)
+    }
+}
+
 fn d2(a: ChunkCoord, b: ChunkCoord) -> i64 {
     (0..3)
         .map(|k| (i64::from(a.0[k]) - i64::from(b.0[k])).pow(2))
         .sum()
+}
+
+/// The chunks held (`held(c)`) that leave the window when it moves from `old` to `new`. Every
+/// held chunk lies in `old`. When the slab `old - new` has no more chunks than the `count`
+/// held, it is looked up chunk by chunk; otherwise the held chunks (`keys`, possibly with
+/// repeats) are filtered. Either way the result holds each leaving chunk once.
+fn leaving_window<K: Iterator<Item = ChunkCoord>>(
+    old: ChunkExtent,
+    new: ChunkExtent,
+    count: usize,
+    held: impl Fn(ChunkCoord) -> bool,
+    keys: impl FnOnce() -> K,
+) -> Vec<ChunkCoord> {
+    let overlap: i64 = (0..3)
+        .map(|k| {
+            let lo = old.min.0[k].max(new.min.0[k]);
+            let hi = old.max.0[k].min(new.max.0[k]);
+            i64::from((hi - lo).max(0))
+        })
+        .product();
+    let volume: i64 = old.size().iter().map(|&v| i64::from(v)).product();
+    if (volume - overlap) as u64 <= count as u64 {
+        box_difference(old, new)
+            .into_iter()
+            .filter(|&c| held(c))
+            .collect()
+    } else {
+        let set: HashSet<ChunkCoord> = keys().filter(|&c| !new.contains(c)).collect();
+        set.into_iter().collect()
+    }
 }
 
 /// The chunks of `a` that are not in `b`.
@@ -2279,6 +2481,86 @@ fn first_appearance(p: &Packed) -> Vec<MaterialId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 50 seeded shifts of -2..=2 chunks per axis of a 7-chunk window holding a seeded mix
+    /// of mirrored and pending chunks: the slab lookup leaves the chunks the filter over every
+    /// held key leaves, and clears the same wrapped table entries.
+    #[test]
+    fn the_window_slab_finds_the_chunks_the_key_filter_finds() {
+        let side = 7;
+        let mut z = 0x0023_0004_u64;
+        let mut next = |n: u64| {
+            z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            vxe_world::hash::mix64(z) % n
+        };
+        let wrap = |c: ChunkCoord| {
+            let r = c.0.map(|v| v.rem_euclid(side) as usize);
+            r[0] + 7 * (r[1] + 7 * r[2])
+        };
+        let mut min = [0i32; 3];
+        let mut slab_used = 0;
+        for shift in 0..50 {
+            let old = ChunkExtent::new(min, min.map(|v| v + side));
+            let mut mirrored = HashSet::new();
+            let mut pending = HashSet::new();
+            for x in old.min.0[0]..old.max.0[0] {
+                for y in old.min.0[1]..old.max.0[1] {
+                    for zz in old.min.0[2]..old.max.0[2] {
+                        let c = ChunkCoord([x, y, zz]);
+                        match next(4) {
+                            0 => {}
+                            1 => {
+                                mirrored.insert(c);
+                            }
+                            2 => {
+                                pending.insert(c);
+                            }
+                            _ => {
+                                mirrored.insert(c);
+                                pending.insert(c);
+                            }
+                        }
+                    }
+                }
+            }
+            let d = [0; 3].map(|_| next(5) as i32 - 2);
+            min = [0, 1, 2].map(|k| min[k] + d[k]);
+            let new = ChunkExtent::new(min, min.map(|v| v + side));
+            let count = mirrored.len() + pending.len();
+            let got = leaving_window(
+                old,
+                new,
+                count,
+                |c| mirrored.contains(&c) || pending.contains(&c),
+                || mirrored.iter().chain(pending.iter()).copied(),
+            );
+            let slab = box_difference(old, new).len();
+            if slab <= count {
+                slab_used += 1;
+            }
+            let got_set: HashSet<ChunkCoord> = got.iter().copied().collect();
+            assert_eq!(got.len(), got_set.len(), "shift {shift}: a repeat");
+            let want: HashSet<ChunkCoord> = mirrored
+                .iter()
+                .chain(pending.iter())
+                .copied()
+                .filter(|&c| !new.contains(c))
+                .collect();
+            assert_eq!(got_set, want, "shift {shift} by {d:?}");
+            let table = |leave: &HashSet<ChunkCoord>| {
+                let mut t = vec![None; 343];
+                for &c in mirrored.iter().chain(pending.iter()) {
+                    t[wrap(c)] = Some(c);
+                }
+                for &c in leave {
+                    t[wrap(c)] = None;
+                }
+                t
+            };
+            assert_eq!(table(&got_set), table(&want), "shift {shift}");
+        }
+        assert!(slab_used >= 25, "the slab path ran {slab_used} of 50 times");
+    }
 
     #[test]
     fn box_difference_is_the_entering_slab() {

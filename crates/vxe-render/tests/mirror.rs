@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use vxe_render::attrib::{AttribBindings, AttribItem, AttribPass};
+use vxe_render::attrib::{AttribBindings, AttribItem, AttribPass, CLEAR_BIT};
 use vxe_render::gpu_world::{
     ABSENT, ATTR_PAGE_BRICK_SLOTS, BITS_WORDS, EMPTY_BIT, ENTRY_WORD, FULL_BIT, LOD_BIT,
     LOD_LEVEL_ENTRY, MASK_BYTES, MASK_GROUP_SLOTS, MASK_GROUP_WORDS, NO_PLANE, PAGE_BYTES,
@@ -524,6 +524,7 @@ fn a_following_window_mirrors_the_streamed_residency() {
             max_shard_slots: None,
             budget_bytes: SMALL_BUDGET,
             record_chunks: None,
+            attr_cap: usize::MAX,
         },
     );
     // 343 records, then whole pages of what is left past the placeholders: 27 pages on one
@@ -2644,4 +2645,318 @@ fn a_neighbour_chunk_arriving_and_leaving_recomputes_the_shell() {
         "the shell brick"
     );
     plus_x(attr_of(&device, &queue, &gpu, v), "east evicted");
+}
+
+/// The work-list lengths `update_attrs` returns over a scene that exercises each change set:
+/// a first sync (chunks taken whole), tier churn (records written new and dropped, so shells),
+/// a carve (re-uploaded bricks and their neighbourhoods), an eviction (a shell alone) and a
+/// window shift. Pinned to the lengths the builder gave before it was factored out of
+/// `GpuWorld` (ae2e088); the lists are deduplicated sets, so their lengths do not depend on
+/// hash order.
+#[test]
+fn the_work_list_lengths_match_the_unfactored_builder() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [5, 2, 1]),
+        &Mixed,
+        &mixed_table(),
+    );
+    let churn: Vec<ChunkCoord> = world
+        .store()
+        .coords()
+        .into_iter()
+        .filter(|c| c.0[0] >= 3)
+        .collect();
+    let mips: HashMap<ChunkCoord, Arc<ChunkMips>> = churn
+        .iter()
+        .map(|&c| {
+            let chunk = world.store().get(c).unwrap();
+            (c, Arc::new(ChunkMips::build(&chunk.read().unwrap())))
+        })
+        .collect();
+    let mut gpu = GpuWorld::with_surface_attrs(&device, small(Window::Follow { side: 7 }));
+    gpu.set_focus(VoxelCoord([2 * 64 + 1, 64 + 1, 1]));
+    let mut lengths = Vec::new();
+    gpu.sync(&world, &queue).unwrap();
+    lengths.push(update_attrs(&device, &queue, &mut gpu));
+    let mut held = HashMap::new();
+    for round in 0..4 {
+        for &c in &churn {
+            if round % 2 == 0 {
+                held.insert(c, world.store().remove(c).unwrap());
+                world.insert_lod(c, mips[&c].clone());
+            } else {
+                world.remove_lod(c);
+                world
+                    .store()
+                    .write_lock()
+                    .insert(c, held.remove(&c).unwrap());
+            }
+        }
+        gpu.sync(&world, &queue).unwrap();
+        lengths.push(update_attrs(&device, &queue, &mut gpu));
+    }
+    world
+        .apply(&EditOp::sphere(
+            Fixed3([64 * FIXED_ONE, 60 * FIXED_ONE, 30 * FIXED_ONE]),
+            12 * FIXED_ONE,
+            Mode::Carve,
+        ))
+        .unwrap();
+    gpu.sync(&world, &queue).unwrap();
+    lengths.push(update_attrs(&device, &queue, &mut gpu));
+    let gone = ChunkCoord([2, 1, 0]);
+    world.store().remove(gone);
+    gpu.apply_events(&StreamEvents {
+        evicted: vec![gone],
+        ..Default::default()
+    });
+    gpu.sync(&world, &queue).unwrap();
+    lengths.push(update_attrs(&device, &queue, &mut gpu));
+    gpu.set_focus(VoxelCoord([3 * 64 + 1, 64 + 1, 1]));
+    gpu.sync(&world, &queue).unwrap();
+    lengths.push(update_attrs(&device, &queue, &mut gpu));
+    println!("work-list lengths {lengths:?}");
+    assert_eq!(lengths, [1343, 34, 568, 34, 568, 46, 56, 0]);
+}
+
+/// [`small`] with the attribute pass capped at `cap` compute items per call.
+fn capped(window: Window, cap: usize) -> MirrorConfig {
+    MirrorConfig {
+        attr_cap: cap,
+        ..small(window)
+    }
+}
+
+/// Runs one attribute pass and waits for it; returns its compute items and its clear items.
+fn attr_pass(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &mut GpuWorld,
+) -> (Vec<AttribItem>, Vec<AttribItem>) {
+    gpu.prepare_attrs();
+    let (clears, computes): (Vec<AttribItem>, Vec<AttribItem>) = gpu
+        .attr_list()
+        .iter()
+        .partition(|it| it.slot & CLEAR_BIT != 0);
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    gpu.encode_attrs(&mut enc, None);
+    queue.submit([enc.finish()]);
+    (computes, clears)
+}
+
+/// The world brick of a work item.
+fn brick_of(it: &AttribItem) -> [i32; 3] {
+    it.origin.map(|v| v.div_euclid(8))
+}
+
+/// The two attribute slots' bytes of every `Full` brick of every mirrored full chunk of
+/// `world`, by world brick coordinate.
+fn attr_bytes(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &GpuWorld,
+    world: &World,
+) -> HashMap<[i32; 3], Vec<u8>> {
+    let sps = gpu.shard_layout().slots_per_shard;
+    let mut shards: HashMap<u32, Vec<u8>> = HashMap::new();
+    let mut out = HashMap::new();
+    for c in world.store().coords() {
+        if !gpu.is_mirrored(c) || gpu.is_lod(c) {
+            continue;
+        }
+        for i in 0..CHUNK_BRICKS {
+            let Some(e) = gpu.entry(c, i).filter(|e| e & FULL_BIT != 0) else {
+                continue;
+            };
+            let a = attr_slot(e & SLOT_MASK);
+            let k = a / sps;
+            let shard = shards.entry(k).or_insert_with(|| {
+                let b = gpu.pool_shard(k as usize);
+                readback::read_buffer(device, queue, b, 0, b.size())
+            });
+            let at = (u64::from(a % sps) * SLOT_BYTES) as usize;
+            let l = brick_of_slot(i);
+            let b = [0, 1, 2].map(|k| c.0[k] * 8 + l[k]);
+            out.insert(b, shard[at..at + 2 * SLOT_BYTES as usize].to_vec());
+        }
+    }
+    out
+}
+
+/// An uncapped mirror of `world` after one sync and one pass: the reference a capped mirror
+/// converges on.
+fn uncapped_attrs(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    world: &World,
+) -> HashMap<[i32; 3], Vec<u8>> {
+    let mut gpu = GpuWorld::with_surface_attrs(device, small(Window::Fixed(world.extent())));
+    gpu.sync(world, queue).unwrap();
+    update_attrs(device, queue, &mut gpu);
+    attr_bytes(device, queue, &gpu, world)
+}
+
+/// Runs passes until the carry-over queue is empty; returns how many ran.
+fn drain_attrs(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &mut GpuWorld) -> usize {
+    let mut calls = 0;
+    while gpu.attr_queue_age().1.is_some() {
+        attr_pass(device, queue, gpu);
+        calls += 1;
+        assert!(calls < 1000, "the queue does not drain");
+    }
+    calls
+}
+
+#[test]
+fn a_capped_pass_clears_what_waits_and_converges_on_the_uncapped_mirror() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = world();
+    let mut gpu = GpuWorld::with_surface_attrs(&device, capped(Window::Fixed(world.extent()), 64));
+    let s = gpu.sync(&world, &queue).unwrap();
+    let k = s.bricks as usize;
+    println!("first sync wrote K = {k} Full bricks");
+    assert!(k > 64);
+    let (computes, clears) = attr_pass(&device, &queue, &mut gpu);
+    assert_eq!(computes.len(), 64);
+    assert_eq!(gpu.attr_stats().items, 64);
+    assert_eq!(clears.len(), k - 64);
+    assert_eq!(gpu.attr_stats().clears as usize, k - 64);
+    let computed: HashSet<[i32; 3]> = computes.iter().map(brick_of).collect();
+    let attrs = attr_bytes(&device, &queue, &gpu, &world);
+    assert_eq!(attrs.len(), k);
+    let mut waiting = 0;
+    for (b, bytes) in &attrs {
+        if !computed.contains(b) {
+            waiting += 1;
+            assert!(
+                bytes.iter().all(|&x| x == 0xFF),
+                "brick {b:?} reads a plane"
+            );
+        }
+    }
+    assert_eq!(waiting, k - 64);
+    let calls = 1 + drain_attrs(&device, &queue, &mut gpu);
+    assert_eq!(calls, k.div_ceil(64));
+    assert_eq!(
+        attr_bytes(&device, &queue, &gpu, &world),
+        uncapped_attrs(&device, &queue, &world)
+    );
+}
+
+#[test]
+fn a_carve_is_computed_in_the_next_pass_ahead_of_the_queue() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = world();
+    let mut gpu = GpuWorld::with_surface_attrs(&device, capped(Window::Fixed(world.extent()), 64));
+    let k = gpu.sync(&world, &queue).unwrap().bricks as usize;
+    attr_pass(&device, &queue, &mut gpu);
+    assert!(k - 64 > 64, "{} bricks wait", k - 64);
+    world
+        .apply(&EditOp::box_(
+            Fixed3([6 * FIXED_ONE, 0, 0]),
+            Fixed3([8 * FIXED_ONE, 8 * FIXED_ONE, 3 * FIXED_ONE]),
+            Mode::Carve,
+        ))
+        .unwrap();
+    // The bricks the next sync re-uploads, and their 26 neighbours.
+    let mut reuploaded = Vec::new();
+    for c in world.store().coords() {
+        let chunk = world.store().get(c).unwrap();
+        for i in chunk.read().unwrap().dirty_slots() {
+            let l = brick_of_slot(i);
+            reuploaded.push([0, 1, 2].map(|k| c.0[k] * 8 + l[k]));
+        }
+    }
+    assert_eq!(reuploaded, [[0, 0, 0]]);
+    let s = gpu.sync(&world, &queue).unwrap();
+    assert_eq!(s.bricks, 1);
+    let (computes, _) = attr_pass(&device, &queue, &mut gpu);
+    let computed: HashSet<[i32; 3]> = computes.iter().map(brick_of).collect();
+    for b in &reuploaded {
+        for d in [-1, 0, 1] {
+            for e in [-1, 0, 1] {
+                for f in [-1, 0, 1] {
+                    let n = [b[0] + d, b[1] + e, b[2] + f];
+                    let v = VoxelCoord(n.map(|x| x * 8));
+                    let full = gpu.is_mirrored(v.chunk())
+                        && gpu
+                            .entry(v.chunk(), v.brick_slot())
+                            .is_some_and(|e| e & FULL_BIT != 0);
+                    if full {
+                        assert!(computed.contains(&n), "{n:?} waits");
+                    }
+                }
+            }
+        }
+    }
+    assert!(computed.contains(&[0, 0, 0]));
+    drain_attrs(&device, &queue, &mut gpu);
+    assert_eq!(
+        attr_bytes(&device, &queue, &gpu, &world),
+        uncapped_attrs(&device, &queue, &world)
+    );
+}
+
+#[test]
+fn a_slot_reused_while_its_old_brick_waits_ends_with_the_new_brick_s_attributes() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = world();
+    let mut gpu = GpuWorld::with_surface_attrs(&device, capped(Window::Fixed(world.extent()), 64));
+    gpu.sync(&world, &queue).unwrap();
+    let (_, clears) = attr_pass(&device, &queue, &mut gpu);
+    // A waiting floor brick A (z brick 0), and the air brick B above it in the same chunk.
+    let a = clears
+        .iter()
+        .map(brick_of)
+        .filter(|b| b[2] == 0)
+        .min()
+        .expect("a floor brick waits");
+    let b = [a[0], a[1], 1];
+    let entry = |gpu: &GpuWorld, br: [i32; 3]| {
+        let v = VoxelCoord(br.map(|x| x * 8));
+        gpu.entry(v.chunk(), v.brick_slot()).unwrap()
+    };
+    let a_slot = entry(&gpu, a) & SLOT_MASK;
+    assert_eq!(entry(&gpu, b) & FULL_BIT, 0, "B starts uniform air");
+    let lo = a.map(|x| i64::from(x) * 8 * FIXED_ONE);
+    // A filled solid turns uniform and frees its slot; B gains a floor and takes a slot.
+    world
+        .apply(&EditOp::box_(
+            Fixed3(lo),
+            Fixed3([
+                lo[0] + 8 * FIXED_ONE,
+                lo[1] + 8 * FIXED_ONE,
+                lo[2] + 8 * FIXED_ONE,
+            ]),
+            Mode::Fill(1),
+        ))
+        .unwrap();
+    world
+        .apply(&EditOp::box_(
+            Fixed3([lo[0], lo[1], lo[2] + 8 * FIXED_ONE]),
+            Fixed3([
+                lo[0] + 8 * FIXED_ONE,
+                lo[1] + 8 * FIXED_ONE,
+                lo[2] + 10 * FIXED_ONE,
+            ]),
+            Mode::Fill(1),
+        ))
+        .unwrap();
+    gpu.sync(&world, &queue).unwrap();
+    assert_eq!(entry(&gpu, a) & FULL_BIT, 0, "A is uniform");
+    assert_eq!(entry(&gpu, b) & SLOT_MASK, a_slot, "B took A's slot");
+    drain_attrs(&device, &queue, &mut gpu);
+    let got = attr_bytes(&device, &queue, &gpu, &world);
+    let want = uncapped_attrs(&device, &queue, &world);
+    assert_eq!(got[&b], want[&b]);
+    assert_eq!(got, want);
 }
