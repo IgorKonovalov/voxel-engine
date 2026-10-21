@@ -1,12 +1,16 @@
 # 0031: Edit cost, third pass: a profile of the planar path, then its largest shares, to put the `B` line back under 2 ms
 
-> **Status:** in-progress (2026-10-21): every phase implemented; awaiting the close review
+> **Status:** done (closed 2026-10-21, v0.25.0). Verdict: closed clean; the quiet-box `B`
+> line reads 0.99 to 1.00 ms and `worst_warm` 0.77 ms (8dad5ca), every pinned hash unchanged,
+> and §4's line returns to 2.0 ms on the dev box (the owner, 2026-10-21). Phase 2 took a lever
+> off the list (shape words from the spans) under Phase 1's added-lever clause; Phase 3 missed
+> its own fall (6 to 8 % against 24 %), disclosed and absorbed by the Phase 4 bars.
 > **Created:** 2026-10-21
 > **Milestone:** M1's edit-cost line in `docs/roadmap.md` (`nfr.md` §4; the "one more
 > optimization pass" the owner planned on 2026-10-20 when the line was raised to 2.2 ms)
-> **Related ADRs:** [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
+> **Related ADRs:** [ADR-0012](../../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
 > (the planar kernel this plan profiles around; its format does not change),
-> [ADR-0002](../adrs/0002-brick-map-layout-and-per-chunk-locked-access.md) (the per-chunk
+> [ADR-0002](../../adrs/0002-brick-map-layout-and-per-chunk-locked-access.md) (the per-chunk
 > locks and the dirty set the op path takes)
 > **Source:** `nfr.md` §4's quiet-box re-read at 2796062 (`worst` 1.79 ms, the `B` line 2.06
 > to 2.09 ms against the original 2 ms); Plan 0021's kernel readings (117 ns per carve
@@ -331,4 +335,12 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
-- The remaining levers of the list, if Phase 4 misses the line with two.
+- The remaining levers of the list, if Phase 4 misses the line with two. Phase 4 met it;
+  levers 2 to 4 stay untaken and unmeasured.
+- Close review (2026-10-21): the comment above `edit_brick`'s shape-word build
+  (`crates/vxe-world/src/edit.rs`, "the brick row's spans") still names Phase 2's per-brick-row
+  cache; after Phase 3 the spans are the op's. A nit for the next `vxe-world` pass.
+- Close review: no CI job builds or lints `vxe-world` with `--features edit-stages`, so the
+  stage timer can rot unseen until the next profile. A one-line clippy arm in `ci.yml` covers it.
+- The `tool` case (3.58 ms) has no stage table; the capsule's lazy `row_span` solves land in
+  `clip`. Read one before any capsule-cost work.

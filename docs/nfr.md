@@ -404,9 +404,10 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
 ## 4. Edits
 
 - **Cost:** 100 sphere carves of radius 1 m (exactly 4169 voxels each at 10 cm, the lattice
-  count on voxel centres; the continuous volume is about 4189) in one frame cost at most 2.2 ms
-  of CPU on the dev reference (raised from 2 ms by the owner on 2026-10-20 after the quiet-box
-  re-read below; one more optimization pass is planned) including result counting and dirty marking, and their upload (up to about 6400 bricks,
+  count on voxel centres; the continuous volume is about 4189) in one frame cost at most 2.0 ms
+  of CPU on the dev reference (raised to 2.2 ms by the owner on 2026-10-20 after the quiet-box
+  re-read below, and returned to 2.0 ms on 2026-10-21 after Plan 0031's quiet-box reading;
+  **met on the dev box**, no baseline-GPU reading) including result counting and dirty marking, and their upload (up to about 6400 bricks,
   6.4 MB, if every touched brick is non-uniform) fits in the streaming line of §2.
   **Readings (dev reference, AMD Ryzen 9 5900HS, Plan 0001):** `cargo bench -p vxe-world
   --bench edits` (100 radius-10 carves on a fresh solid world, every carve expanding uniform
@@ -467,8 +468,9 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   2796062 in the same window, the same carve counts on both. 2796062 read 1.79 ms `worst`
   and a 2.06 to 2.09 ms `B` line at the re-read above; the gap to its 1.32 and 1.49 to 1.54
   ms here is machine state, not code. The planar kernel is unchanged; the op path builds each
-  brick's shape words straight from row spans solved once per op (Plan 0031). The line above
-  is unchanged; the owner decides it after this reading. No baseline-GPU reading.
+  brick's shape words straight from row spans solved once per op (Plan 0031). On this reading
+  the owner returned the line to **2.0 ms on the dev box** (2026-10-21): the `B` line meets it
+  with about 1 ms to spare. No baseline-GPU reading.
 - **Results** are returned synchronously with the edit, per material, exact.
 - **Stamp cost (proposals, Plan 0008):** a 16³ prefab stamp (the shelled box `Prefab::vault`)
   into solid rock costs under 100 µs, and a 64³ all-written prefab under 5 ms, both including
