@@ -469,7 +469,7 @@ normals for at most 250 ms". The pass's GPU time stays a recorded figure here. P
 | 3: Capped attribute pass with carry-over | dev | done: `MirrorConfig::attr_cap` (`new` leaves it `usize::MAX`; the fly-through's streaming mirror sets 8192); clear items flagged by `attrib::CLEAR_BIT` (bit 31); lavapipe cases at cap 64 on the 2 x 2 x 1 floor: K = 256, first call 64 compute and 192 clear items, the 192 waiting bricks read all `0xFF`, 4 = ceil(256 / 64) calls, then attribute bytes equal the uncapped mirror's; a carve with 192 waiting has the carved brick and its `Full` neighbours in the next list; a brick freed while waiting, its slot taken by the brick above, ends equal to the uncapped mirror; `vxe-render` 69 of 69, workspace 469 of 469; one default flight (load 14.60, not a reading): `buffer builds: 1 after the first flight frame, 1 at the end`, hash match | 7aabc21 |
 | 4: Incremental queue, sweep and window shift | dev | done: the 300-step walk (r_full 3, r_lod 5, h 1; 295 unit steps over all 26 directions, jumps at 60, 120, 180, 240, `set_radii(2, 4)` at 150) ran 295 queue and 294 sweep oracle checks, equal to the full rebuild and scan; dropping the entering-full shell or the keep-full sweep shell fails it; `the_window_slab_finds_the_chunks_the_key_filter_finds` over 50 shifts; workspace 471 of 471; flights at the tip's code (exclusive perf lock, not quiet): `update` max default 4.749 ms (Phase 1: 37.847), plain 2.350 (15.908); `poll` max default 48.503 (27.344), plain 24.389 (24.866); readings in Notes | b6414e8 |
 | 5: Narrowing and staging on the workers | dev | skipped (owner, 2026-10-21): write_buffer 41.8 % led narrowing ~38 % | 8f2847d (entry profile) |
-| 6: Readings against the bars | dev | done: four flights, default, plain, default, plain, each started at a 1-minute load under 2 under the exclusive perf lock; met: the GPU-credited frame bar, carry-over age, hash match; missed: `update_attrs` p99, streaming p50 (3 of 4 runs), streaming max (4 of 4), plain residency p95 (2 of 2); readings in Close triggers | committed with this row |
+| 6: Readings against the bars | dev | done: four flights, default, plain, default, plain, each started at a 1-minute load under 2 under the exclusive perf lock; met: the GPU-credited frame bar, carry-over age, hash match; missed: `update_attrs` p99, streaming p50 (3 of 4 runs), streaming max (4 of 4), plain residency p95 (2 of 2); readings in Close triggers. Quiet re-read (owner's request, 2026-10-21; nothing above 5 % CPU at any start): the same bars met and missed, streaming p50 missed in the 2 plain runs only, plain p95 403 and 385 ms | committed with this row |
 | 7: The owner's windowed flight | human | not started | |
 
 ### Notes
@@ -582,6 +582,18 @@ each. Empty is fine.)_
   under mirror pressure (4 radius changes, peak pressure 0.9114) and mirrored about 39 900
   chunks, against plain's 73 000 at `r_full` 16; the default flew 5904 and 6616 frames against
   plain's 3054 and 3442, and 5894 of 5904 and 6606 of 6616 of its frames read unready-near.
+- **Phase 6 re-reads (2026-10-21, after the owner stopped python3 and game.exe; same binary).**
+  A first set of four (start loads 1.20, 1.98, 1.92, 1.72) ran while Telegram held 57 to 70 %
+  of one core in `top` (8 % in `ps`'s lifetime average). It read plain p95 490 and 488 ms and
+  2743 frames in each plain run. Then two single plain flights, with Telegram at 5.9 % and
+  then idle: the Phase 1 binary (ae2e088 plus counters) read p95 383 ms over 4000 frames
+  (start load 1.71), the tip's 389 ms over 4191 (start load 1.86). The quiet set followed
+  (start loads 1.56, 1.69, 1.60, 1.83; `top` showed nothing above 5 % at each start; end
+  loads 6.41 to 7.36). Its readings are in Close triggers.
+- **Phase 6, the default look against the baseline.** Every default run here lowered `r_full`
+  under mirror pressure: to 12 in the first set and the quiet set, to 13 in the
+  Telegram-perturbed set. Plan 0013's default runs at the baseline also lowered it (lowest
+  12, final 13). The default mirrors about 40 000 chunks, plain about 73 000.
 - **Phase 6, the cap.** In both default runs the work list's max (7669, 7673) stayed under
   `attr_cap` 8192: no brick waited, no clear item was issued.
 - **Followups noticed.** In the plain dwarf profile, `flythrough::Run::draw` is 16.65 % of
@@ -625,6 +637,23 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   - §5 residency latency, plain p95 (bar at most 381 ms): P1 466, P2 452 ms (missed by 85 and
     71 ms); default D1 274, D2 247 ms.
   - §5 edits persist across eviction: `return: 2 chunks, hash match` in all four.
+  - **Quiet re-read**, same binary, runs D1, P1, D2, P2 at start loads 1.56, 1.69, 1.60,
+    1.83 (nothing above 5 % CPU in `top`). Streaming p50 0.006, 4.896, 0.006, 5.020 ms; p99
+    12.346, 23.888, 12.897, 24.311 ms; max 27.738, 60.302, 22.241, 38.653 ms. `update_attrs`
+    p99 D1 5.528, D2 6.024 ms (bar 4 ms; over by 1.528 and 2.024); max 14.596, 13.727 ms.
+    Frame bar: D1 `T` 60 001.4, `G` 2051.3, `F_d` 9775, `F_d*` 10 121.0 against P1's 4111
+    (bar 3905.5); D2 `T` 60 021.8, `G` 2099.8, `F_d` 9563, `F_d*` 9909.7 against P2's 4159
+    (bar 3951.1). Plain residency p95 403, 385 ms (bar 381 ms; over by 22 and 4); default
+    188, 191 ms. Carry-over age max 0.0 and 0.0 ms. Attribute GPU p50 / p99 / max D1 1.276 /
+    2.823 / 3.202, D2 1.247 / 3.138 / 3.455 ms; work list max 7381, 7606. Peak RSS 906 141 696,
+    984 469 504, 941 666 304, 1 030 320 128 B. Hash match in all four. Default `r_full` 12 of
+    16 (4 radius changes) in both.
+  - **Telegram-perturbed re-read**, start loads 1.20, 1.98, 1.92, 1.72, Telegram 57 to 70 %
+    of one core: streaming p50 5.437, 5.415, 5.674, 5.510 ms, max 87.710, 75.296, 85.464,
+    79.647 ms; `update_attrs` p99 8.763, 8.990 ms; `F_d*` 3583.2 and 3426.0 against plain's
+    2743 and 2743; plain p95 490, 488 ms; carry-over age 0; hash match in all four.
+  - **Plain p95 with no other load:** the Phase 1 binary (ae2e088 plus counters) 383 ms over
+    4000 frames; the tip 389 ms over 4191 frames, then 403 and 385 ms in the quiet set.
   - §3 memory: process peak RSS D1 993 742 848, P1 1 020 108 800, D2 965 152 768, P2
     974 503 936 B; peak mirror live 2 864 318 452 B (default), 1 890 675 580 B (plain) of
     3 220 387 776 B allocated; the attribute work buffer is built once (1 after the first
