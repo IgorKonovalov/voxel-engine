@@ -233,8 +233,8 @@ the frame is Plan 0028's and Plan 0024's.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The belt under `sync`, byte for byte | dev | done: `mirror.rs` 41 tests through `sync_now` (new: `submitted_syncs_reuse_one_belt_chunk`); staged-bytes test reads back through the belt; level first sync 232 436 992 B live, 1132 writes; all 10 goldens re-blessed with no byte change (`VXE_BLESS=1`, `git status` clean); new `syncs_past_one_belt_chunk_build_the_same_mirror` (16 MiB budget, every buffer equal to the unbudgeted mirror's); `belt_chunks()` peak 1 over a headless autopilot flight (2346 frames, load 13), 0 after `--level --frames 300` (1 trim at the first sync) | committed with this row |
-| 2: The streaming line, re-read | dev | not started | |
+| 1: The belt under `sync`, byte for byte | dev | done: `mirror.rs` 41 tests through `sync_now` (new: `submitted_syncs_reuse_one_belt_chunk`); staged-bytes test reads back through the belt; level first sync 232 436 992 B live, 1132 writes; all 10 goldens re-blessed with no byte change (`VXE_BLESS=1`, `git status` clean); new `syncs_past_one_belt_chunk_build_the_same_mirror` (16 MiB budget, every buffer equal to the unbudgeted mirror's); `belt_chunks()` peak 1 over a headless autopilot flight (2346 frames, load 13), 0 after `--level --frames 300` (1 trim at the first sync) | 843c5a3 |
+| 2: The streaming line, re-read | dev | stopped: the profile done-when unmet (below); `nfr.md` not written; owner question open | committed with this row |
 | 3: The windowed frame-time summary and the autopilot's ring | dev | not started | |
 | 4: The owner's windowed flight | human | not started | |
 
@@ -256,6 +256,43 @@ each. Empty is fine.)_
 - Phase 1: files outside `Files touched` changed for the new `sync` signature:
   `apps/flythrough/tests/golden.rs`, `hud_golden.rs`, `look.rs` (call sites only).
 - Phase 1: the autopilot and the `--frames` exit print a `staging belt` line.
+- Phase 2: the box was not quiet. Every run held the exclusive perf lock at a 1-minute load of
+  12.1 to 17.4, with other projects' processes (a game under Wine, gdb, python) at 25 to 92 %
+  CPU for the whole session. Binaries: `fly-base` (`git archive` of ae58f0c), `fly-p1`
+  (843c5a3), both release; RTX 3080 Laptop GPU, Ryzen 9 5900HS; `flythrough --autopilot
+  --headless --seed 1 [--look plain]`, alternated base, p1 per look, two rounds.
+- Phase 2, plain: base `sync` p50 4.469 and 4.405 ms, `update + poll + sync` p50 4.498 and
+  4.428 ms over 3429 and 3453 frames; p1 `sync` p50 3.200 and 2.902 ms (bar 3.0),
+  `update + poll + sync` p50 3.254 and 2.968 ms (bar 3.2) over 4493 and 4943 frames. p1
+  `sync` p99 9.202 and 8.852 ms, max 15.452 and 16.832 ms (base p99 16.231 and 17.020, max
+  32.086 and 36.041). Residency p95 364 and 364 ms (base 420, 430); hash match in all four;
+  belt peak 2 chunks, 0 trims.
+- Phase 2, default: base flew 9428 and 7796 frames, p1 13 029 and 13 223; `update_attrs` p99
+  base 7.717 and 8.107 ms, p1 7.699 and 7.650 ms (Plan 0023 Phase 6 quiet: 5.528, 6.024);
+  carry-over age max 0 ms in all four; residency p95 base 226 and 247 ms, p1 197 and 190 ms;
+  hash match in all four; `r_full` 12 at the end in all four; belt peak 1 chunk, 0 trims.
+- Phase 2, profile: `perf record -F 999 --call-graph fp` of one plain flight of a
+  frame-pointer build of 843c5a3 (`CARGO_TARGET_DIR=target/fp`, line tables), load 17.4: 4717
+  frames, hash match, `sync` p50 3.111 ms. Render thread 38 121 samples, 14 896 under
+  `GpuWorld::sync`; nearest-leaf attribution: `upload_record`/`upload_brick` 39.2 %, the belt
+  28.9 %, `entry_matches`/`first_appearance` 10.5 %, flushes and `write_masks` outside the
+  belt 6.8 %, the fit check 4.1 %, `select`/`reconcile_window` 3.3 %, `sync` self 2.6 %,
+  `drop_record` 1.8 %, `enqueue` 1.3 %, `stage` 0.8 %, `unqueue` 0.6 %.
+  `Queue::write_buffer` has no samples.
+- Phase 2, the belt's share (done-when: under 5 %): 4306 samples, 28.9 % of `sync`. 3575 of
+  them (24.0 %) sit in `BufferViewMut::drop` (its `MapContext` lock and sub-range remove, the
+  first locked instruction after `copy_from_slice` into the mapped chunk); 355 (2.4 %) in
+  `copy_buffer_to_buffer` recording. The memcpy itself has almost no samples of its own.
+  Not met as stated.
+- Resume note (delete when Phase 3 lands): Phase 3 is written and held uncommitted as
+  `target/p27/phase3.patch` in this worktree (`git apply` it): a `frames:` line at every
+  run's exit from `RunTimes` in the HUD state, and a `NearRing` the autopilot recomputes from
+  the streamer's `r_full`, pinned by `the_unready_ring_is_recomputed_on_set_radii`. Its
+  readings at load 13 to 18: five `--level --headless --seed 1 --frames 300` runs, frame CPU
+  p50 0.082, 0.070, 0.065, 0.067, 0.068 ms against the `frame` line's median of the last 30
+  of 0.071, 0.070, 0.073, 0.074, 0.073 ms (two of five outside 10 %; the last 30 are the
+  timed frames); march GPU p50 equal to the median in all five; one default autopilot flight,
+  unready-near 0 of 7965 frames, 2 ring recomputes.
 
 ### Close triggers
 
