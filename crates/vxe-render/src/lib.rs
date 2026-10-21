@@ -22,8 +22,9 @@ pub use gpu_world::{GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncStats,
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
 pub use marcher::{
-    CandidateDraw, FRAME_PASSES, Frame, Lighting, LodParams, LookParams, MAX_EDITS, MAX_VIEWS,
-    MarchTimer, Marcher, NormalMode, PassTimer, Sampler, ShadowWalk, ToneMap, ViewMode,
+    CandidateDraw, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, Lighting, LodParams,
+    LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher, NormalMode, PassTimer, Sampler,
+    ShadowWalk, ToneMap, ViewMode,
 };
 pub use present::Presenter;
 pub use {glam, wgpu};
@@ -33,6 +34,8 @@ pub use {glam, wgpu};
 pub const MARCH_WGSL: &str = include_str!("shaders/march.wgsl");
 /// The light pass, compiled after [`MARCH_WGSL`].
 pub const LIGHT_WGSL: &str = include_str!("shaders/light.wgsl");
+/// The gradient pass, compiled after [`MARCH_WGSL`] and [`LIGHT_WGSL`].
+pub const GRADIENT_WGSL: &str = include_str!("shaders/gradient.wgsl");
 /// The temporal pass, compiled after [`MARCH_WGSL`].
 pub const TEMPORAL_WGSL: &str = include_str!("shaders/temporal.wgsl");
 /// The variance estimate and the a-trous filter, compiled after [`MARCH_WGSL`].

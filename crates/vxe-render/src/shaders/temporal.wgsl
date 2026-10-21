@@ -16,6 +16,11 @@
 //                                        irradiance's luminance, then the age: frames of
 //                                        history reused, 0 after a reset
 //   9  uniform           edits           the frame's edit boxes (see `Edits`)
+//  10  texture_2d<f32>   strata_in       the gradient pass's strata (gradient.wgsl), read in
+//                                        the gradient mode (Params.lighting bit 3): the
+//                                        blend weight rises to twice the lambda averaged over
+//                                        the 3 x 3 strata around the reprojected pixel's
+//                                        (clamped to 1), and the age falls by that fraction
 //
 // A hit is projected through the previous frame's view of the same index to a fractional
 // pixel; each of its four bilinear taps is accepted when that pixel hit, with the same
@@ -47,6 +52,33 @@ struct Edits {
 };
 
 @group(2) @binding(9) var<uniform> edits: Edits;
+@group(2) @binding(10) var strata_in: texture_2d<f32>;
+
+// The gradient's gain: lambda = |new - old| / max(new, old) reads 0.9 where light fell to a
+// tenth, and a blend at 0.9 would keep a tenth of the old light; twice lambda, clamped, takes
+// such a pixel to its new light at once.
+const GRADIENT_GAIN: f32 = 2.0;
+// Strata edge in pixels; gradient.wgsl's STRATUM.
+const GRADIENT_STRATUM: f32 = 3.0;
+
+// The gradient pass's lambda at fractional pixel `q` of last frame, averaged over the 3 x 3
+// strata around its stratum.
+fn gradient_at(q: vec2<f32>) -> f32 {
+    let s = vec2<i32>(floor(q / GRADIENT_STRATUM));
+    let n = vec2<i32>(textureDimensions(strata_in));
+    var sum = 0.0;
+    var count = 0.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let t = s + vec2<i32>(x, y);
+            if (all(t >= vec2<i32>(0)) && all(t < n)) {
+                sum += textureLoad(strata_in, t, 0).x;
+                count += 1.0;
+            }
+        }
+    }
+    return sum / max(count, 1.0);
+}
 
 const ALPHA: f32 = 0.2;
 const AGE_MAX: f32 = 2047.0;
@@ -110,7 +142,13 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             h /= w_sum;
             m /= w_sum;
             age = min(floor(m.z + 0.5) + 1.0, AGE_MAX);
-            let a = max(ALPHA, 1.0 / (age + 1.0));
+            var a = max(ALPHA, 1.0 / (age + 1.0));
+            if ((params.lighting & LIGHTING_GRADIENT) != 0u) {
+                // Where the light changed, the new sample weighs as much as the change.
+                let lambda = clamp(GRADIENT_GAIN * gradient_at(q + 0.5), 0.0, 1.0);
+                a = max(a, lambda);
+                age = floor(age * (1.0 - lambda));
+            }
             accum = mix(h, sample, a);
             moments = mix(m.xy, vec2<f32>(l, l * l), a);
         }

@@ -228,6 +228,7 @@ const NO_PLANE: u32 = 0xFFFFu;
 const LIGHTING_LAMP: u32 = 1u;
 const LIGHTING_COARSE_SHADOW: u32 = 2u;
 const LIGHTING_REUSE: u32 = 4u;
+const LIGHTING_GRADIENT: u32 = 8u;
 const LIGHTING_IDENTITY_TONE_MAP: u32 = 64u;
 const LIGHTING_UNIFORM_DRAW: u32 = 128u;
 // Hit record flags.

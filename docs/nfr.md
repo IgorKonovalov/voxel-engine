@@ -227,6 +227,13 @@ streamed spawn (`--frames 3000`) the flat list reads 11.618 ms and reservoir reu
 at the level's spawn (`--level --frames 300`) 8.330 and 10.905 ms. Reuse adds about 2.6 ms:
 its six re-targeted reservoirs each look their emitter's material up through the walk.
 
+**The gradient pass (dev reference, indicative, Plan 0024 Phase 9, RTX 3080 Laptop GPU,
+exclusive perf lock, 1-minute load 2.1 to 2.3 with the owner using the machine, so not
+quiet; `--history gradient`, the default look, ore emissive, lamp on, one run each):** the
+gradient pass (one re-shaded pixel, two shadow rays, per 3 x 3 stratum) reads 0.755 ms at the
+level's spawn and 1.277 ms at the streamed spawn at 1080p; the a-trous pass reads 5.795 and
+5.566 ms in that mode, its ages kept shorter.
+
 **Denoise: the temporal pass and four a-trous iterations (dev reference, Plan 0024 Phase 6,
 RTX 3080 Laptop GPU, exclusive perf lock, 1-minute load 4.2 to 4.6; the default look with the
 ore emissive, median of the last 30 frames, 1920 x 1080 full-resolution lighting):** the

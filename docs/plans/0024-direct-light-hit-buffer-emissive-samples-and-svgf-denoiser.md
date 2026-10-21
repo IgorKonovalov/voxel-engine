@@ -574,8 +574,8 @@ such.
 | 5: Temporal accumulation, and history that dies in an edit box | dev | done | 1a907f7 |
 | 6: The a-trous filter and the composite, and the carve that does not ghost | dev | done at the amended bars, bar 1 second clause missed (Notes) | 5f08a2e, 907841f |
 | 7: Near-emitter candidates and bounded light extraction | dev | done for bars 1 and 2; bars 3 and 4 waiting for quiet (Notes) | 3a71e15 |
-| 8: Reservoir reuse against the flat list | dev | done | committed with this row |
-| 9: A-SVGF's gradient as the other history killer | dev | not started | |
+| 8: Reservoir reuse against the flat list | dev | done | 0975e2b |
+| 9: A-SVGF's gradient as the other history killer | dev | done | committed with this row |
 | 10: The half-resolution tier | dev | not started | |
 | 11: The fly-through's switches, HUD rows and autopilot readings | dev | not started | |
 | 12: The owner's windowed check | human | not started | |
@@ -700,6 +700,17 @@ each. Empty is fine.)_
   the dark cave's vein the ore's own faces, lit by neighbouring ore at contact, dominate both
   errors (list 4.40, reuse 4.38 to 4.50 relative RMSE). `--sampler list|reuse` added here;
   the default stays the list.
+- Phase 9: the gradient pass runs before the light pass (the irradiance texture still holds
+  last frame's), one pixel per 3 x 3 stratum of last frame's pixels by a hash of the stratum
+  and the frame; it re-shades last frame's hit with this frame's lamp and last frame's
+  reservoir sample (its current radiance and visibility under last frame's W), so with the
+  flat list too it needs no random numbers. The temporal pass raises its blend weight to
+  `min(1, 2 lambda)`, lambda averaged over the 3 x 3 strata around the reprojected pixel's,
+  and lowers the age by that fraction; the gain of 2 is not in the plan (at gain 1 a pixel
+  whose light fell to a tenth keeps a tenth). `LightParams::turn` turns the lamp's cone from
+  the camera's forward. The bar is read on the filtered irradiance: on the accumulated one,
+  8 % of the pixels that left the cone read a fresh one-frame estimate above 10 % of their
+  lit value after the reset. `--history edits|gradient` added here.
 
 Phase 1 observations: hitmask and normals of the three scenes byte-identical to ae58f0c; the
 identity-tone-mapped carve's largest channel difference from ae58f0c's is 0/255; the
@@ -721,6 +732,15 @@ Phase 5 observations: after 16 static frames and the radius-4 carve, 1296 hit pi
 dilated box read age 0 and 56 304 outside read 16; the next frame 1 and 17. After a one-voxel
 sideways step 54 133 of 55 268 unchanged-material pixels keep history (97.95 %) and all 2332
 pixels whose material a `Replace` changed read 0.
+
+Phase 8 observations: on the box with a vein, one frame's relative RMSE against a 1024-frame
+flat-list average over 55 140 pixels reads 0.4101 with the list and 0.2855 with reuse (ratio
+0.696). On the emissive-ceiling box, reuse reads a floor-centre mean of 1.6970 against the
+list's 1.7238 over 384 frames and 16 pixels.
+
+Phase 9 observations: after the cone turned 30 degrees, of 11 655 pixels that left it the
+gradient mode had 99.8 % under 10 % of their lit value after one frame and all after two; the
+edit-box mode had 0.1 % at frame 9, 67.1 % at 11, all at 22.
 
 Phase 6 observations: `dark_cave.png` re-blessed after 32 accumulated frames (34 273 pixels
 changed, 32 137 by more than 2/255), 29 103 of 57 600 pixels at 16/255 or more; with the ore

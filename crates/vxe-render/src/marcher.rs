@@ -4,7 +4,7 @@
 use crate::camera::{Camera, View};
 use crate::gpu_world::GpuWorld;
 use crate::light::LightParams;
-use crate::{ATROUS_WGSL, COMPOSITE_WGSL, LIGHT_WGSL, MARCH_WGSL, TEMPORAL_WGSL};
+use crate::{ATROUS_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, LIGHT_WGSL, MARCH_WGSL, TEMPORAL_WGSL};
 use vxe_world::ChunkCoord;
 
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
@@ -69,6 +69,9 @@ pub const LIGHTING_LAMP: u32 = 1;
 pub const LIGHTING_COARSE_SHADOW: u32 = 1 << 1;
 /// `Params::lighting` bit: the light pass reuses last frame's reservoirs ([`Sampler::Reuse`]).
 pub const LIGHTING_REUSE: u32 = 1 << 2;
+/// `Params::lighting` bit: the temporal pass also shortens history by A-SVGF's gradient
+/// ([`History::Gradient`]).
+pub const LIGHTING_GRADIENT: u32 = 1 << 3;
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
 pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
 /// `Params::lighting` bit: candidates are drawn uniformly over the buffer
@@ -318,6 +321,32 @@ impl Sampler {
     }
 }
 
+/// What kills the temporal pass's history.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HistoryKill {
+    /// The frame's edit boxes alone.
+    #[default]
+    Edits,
+    /// The edit boxes and A-SVGF's gradient: where re-shading last frame's sample with this
+    /// frame's lights changes it, accumulation shortens.
+    Gradient,
+}
+
+impl HistoryKill {
+    pub const ALL: [Self; 2] = [Self::Edits, Self::Gradient];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Edits => "edits",
+            Self::Gradient => "gradient",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+}
+
 /// Where the light pass draws its emissive candidates from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CandidateDraw {
@@ -344,6 +373,7 @@ pub struct Lighting {
     pub filter: bool,
     pub draw: CandidateDraw,
     pub sampler: Sampler,
+    pub history: HistoryKill,
 }
 
 impl Default for Lighting {
@@ -357,6 +387,7 @@ impl Default for Lighting {
             filter: true,
             draw: CandidateDraw::default(),
             sampler: Sampler::default(),
+            history: HistoryKill::default(),
         }
     }
 }
@@ -375,6 +406,11 @@ impl Lighting {
                 0
             }
             | if self.filter { 0 } else { LIGHTING_FILTER_OFF }
+            | if self.history == HistoryKill::Gradient {
+                LIGHTING_GRADIENT
+            } else {
+                0
+            }
             | if self.sampler == Sampler::Reuse {
                 LIGHTING_REUSE
             } else {
@@ -433,6 +469,8 @@ pub struct Frame {
     light: wgpu::ComputePipeline,
     temporal_layout: wgpu::BindGroupLayout,
     temporal: wgpu::ComputePipeline,
+    gradient_layout: wgpu::BindGroupLayout,
+    gradient: wgpu::ComputePipeline,
     variance_layout: wgpu::BindGroupLayout,
     variance: wgpu::ComputePipeline,
     atrous_layout: wgpu::BindGroupLayout,
@@ -726,7 +764,20 @@ impl Frame {
                 f16,
                 f16,
                 Io::Uniform,
+                Io::Float,
             ],
+        );
+        let gradient_layout = io_layout(
+            device,
+            "gradient",
+            &[Io::Float, Io::Uint, Io::Float, Io::Uint, f16],
+        );
+        let gradient = compute_pipeline(
+            device,
+            "gradient",
+            format!("{MARCH_WGSL}\n{LIGHT_WGSL}\n{GRADIENT_WGSL}"),
+            &[Some(&world_layout), None, None, Some(&gradient_layout)],
+            "gradient",
         );
         let (variance_layout, variance) = pass(
             "variance",
@@ -793,6 +844,8 @@ impl Frame {
             light,
             temporal_layout,
             temporal,
+            gradient_layout,
+            gradient,
             variance_layout,
             variance,
             atrous_layout,
@@ -981,6 +1034,12 @@ impl Frame {
         &self.targets.accum[self.cur]
     }
 
+    /// The filter's output, the irradiance the composite shades with when the filter runs
+    /// (rgba16float: irradiance rgb, variance a).
+    pub fn filtered(&self) -> &wgpu::Texture {
+        &self.targets.filter[ATROUS_ITERATIONS % 2]
+    }
+
     /// The temporal pass's moments (rgba16float: luminance, its square, the age in frames).
     pub fn moments(&self) -> &wgpu::Texture {
         &self.targets.moments[self.cur]
@@ -1034,7 +1093,7 @@ impl Frame {
             light_pos: (camera.position + right * light.offset_right - up * light.offset_down)
                 .to_array(),
             light_intensity: light.intensity,
-            light_dir: fwd.to_array(),
+            light_dir: (fwd * light.turn.cos() + right * light.turn.sin()).to_array(),
             cos_outer: light.outer.cos(),
             size: [self.targets.width, self.targets.height],
             cos_inner: light.inner.cos(),
@@ -1200,6 +1259,7 @@ impl Frame {
                 Res::Tex(&t.accum[c]),
                 Res::Tex(&t.moments[c]),
                 Res::Buf(&self.edits),
+                Res::Tex(&t.strata),
             ],
         );
         // The filter runs in the shaded view unless switched off; the variance pass writes
@@ -1248,20 +1308,40 @@ impl Frame {
                 Res::Tex(&t.output),
             ],
         );
+        let gradient_bind = bind_io(
+            device,
+            &self.gradient_layout,
+            &[
+                Res::Tex(&t.hit_pos[q]),
+                Res::Tex(&t.hit_info[q]),
+                Res::Tex(&t.irradiance),
+                Res::Tex(&t.reservoir[q]),
+                Res::Tex(&t.strata),
+            ],
+        );
+        let gradient_on =
+            self.lighting.history == HistoryKill::Gradient && self.look.view == ViewMode::Shaded;
         let groups = [t.width.div_ceil(WORKGROUP), t.height.div_ceil(WORKGROUP)];
+        let strata = [t.strata.width(), t.strata.height()].map(|n| n.div_ceil(WORKGROUP));
         let mut atrous: Vec<(&wgpu::ComputePipeline, &wgpu::BindGroup)> = Vec::new();
         if filtering {
             atrous.push((&self.variance, &variance_bind));
             atrous.extend(atrous_binds.iter().map(|b| (&self.atrous, b)));
         }
-        let passes: [(Vec<(&wgpu::ComputePipeline, &wgpu::BindGroup)>, u32); 5] = [
-            (vec![(&self.hit.pipeline, &hit_bind)], 1),
-            (vec![(&self.light, &light_bind)], 2),
-            (vec![(&self.temporal, &temporal_bind)], 2),
-            (atrous, 2),
-            (vec![(&self.composite, &composite_bind)], 2),
+        let mut gradient: Vec<(&wgpu::ComputePipeline, &wgpu::BindGroup)> = Vec::new();
+        if gradient_on {
+            gradient.push((&self.gradient, &gradient_bind));
+        }
+        type Dispatches<'a> = Vec<(&'a wgpu::ComputePipeline, &'a wgpu::BindGroup)>;
+        let passes: [(Dispatches<'_>, u32, [u32; 2]); 6] = [
+            (vec![(&self.hit.pipeline, &hit_bind)], 1, groups),
+            (gradient, 3, strata),
+            (vec![(&self.light, &light_bind)], 2, groups),
+            (vec![(&self.temporal, &temporal_bind)], 2, groups),
+            (atrous, 2, groups),
+            (vec![(&self.composite, &composite_bind)], 2, groups),
         ];
-        for (i, (dispatches, group)) in passes.into_iter().enumerate() {
+        for (i, (dispatches, group, groups)) in passes.into_iter().enumerate() {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(FRAME_PASSES[i]),
                 timestamp_writes: timer.map(|t| t.writes_at(i as u32)),
@@ -1313,7 +1393,17 @@ fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_>
 
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
-pub const FRAME_PASSES: [&str; 5] = ["hit", "light", "temporal", "atrous", "composite"];
+pub const FRAME_PASSES: [&str; 6] = [
+    "hit",
+    "gradient",
+    "light",
+    "temporal",
+    "atrous",
+    "composite",
+];
+
+/// The gradient pass's stratum edge in pixels; `STRATUM` in `gradient.wgsl`.
+pub const GRADIENT_STRATUM: u32 = 3;
 
 /// The frame's targets at one internal resolution; the hit buffer and the history twice,
 /// indexed by `Frame::cur`.
@@ -1336,13 +1426,15 @@ struct Targets {
     filter: [wgpu::Texture; 2],
     /// The light pass's reservoirs (rgba32uint), this frame's and the last.
     reservoir: [wgpu::Texture; 2],
+    /// The gradient pass's strata, one texel per 3 x 3 pixels (rgba16float).
+    strata: wgpu::Texture,
     /// The composite's display-encoded output (rgba8unorm).
     output: wgpu::Texture,
 }
 
 impl Targets {
     fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
-        let tex = |label, format| {
+        let sized = |label, format, width, height| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
@@ -1360,6 +1452,7 @@ impl Targets {
                 view_formats: &[],
             })
         };
+        let tex = |label, format| sized(label, format, width, height);
         use wgpu::TextureFormat::{Rgba8Unorm, Rgba16Float, Rgba16Uint, Rgba32Float, Rgba32Uint};
         Self {
             width,
@@ -1372,6 +1465,12 @@ impl Targets {
             moments: [0, 1].map(|_| tex("moments", Rgba16Float)),
             filter: [0, 1].map(|_| tex("filter", Rgba16Float)),
             reservoir: [0, 1].map(|_| tex("reservoir", Rgba32Uint)),
+            strata: sized(
+                "gradient strata",
+                Rgba16Float,
+                width.div_ceil(GRADIENT_STRATUM),
+                height.div_ceil(GRADIENT_STRATUM),
+            ),
             output: tex("frame target", Rgba8Unorm),
         }
     }
@@ -1379,7 +1478,8 @@ impl Targets {
     /// Bytes the targets occupy.
     fn bytes(&self) -> u64 {
         let px = u64::from(self.width) * u64::from(self.height);
-        px * (2 * (16 + 8) + 8 + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16 + 4)
+        let strata = u64::from(self.strata.width()) * u64::from(self.strata.height());
+        px * (2 * (16 + 8) + 8 + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16 + 4) + strata * 8
     }
 }
 

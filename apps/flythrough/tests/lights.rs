@@ -767,3 +767,109 @@ fn reservoir_reuse_lowers_one_frames_error() {
     );
     assert!(on < off, "{on:.4} against {off:.4}");
 }
+
+/// The dark cave of `golden.rs` (the golden scene with its carve, the ore emissive, the pose
+/// facing a vein) with the lamp on and `history`, settled over 32 frames.
+fn lamp_cave(history: vxe_render::HistoryKill) -> Option<(LookRig, vxe_render::Camera)> {
+    let source = scene_source();
+    let world = World::generate(
+        source.extent,
+        &source,
+        &flythrough::with_emissive_ore(&cave_materials()),
+    );
+    world.apply(&scene_carve(&world)).unwrap();
+    let mut rig = LookRig::new(&world, None)?;
+    rig.gpu.set_focus(VoxelCoord([264, 120, 376]));
+    for _ in 0..4 {
+        rig.gpu.sync(&world, &rig.queue).unwrap();
+    }
+    rig.frame.set_lighting(vxe_render::Lighting {
+        history,
+        ..vxe_render::Lighting::default()
+    });
+    let camera = vxe_render::Camera {
+        position: [264.5, 120.5, 376.5].into(),
+        yaw: 15f32.to_radians(),
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    };
+    for _ in 0..32 {
+        rig.frame.step(
+            &rig.device,
+            &rig.queue,
+            &rig.gpu,
+            &camera,
+            &vxe_render::LightParams::headlamp(),
+        );
+    }
+    Some((rig, camera))
+}
+
+/// The luminance of `frame`'s filtered irradiance per pixel: what the composite shades with.
+fn accumulated_lum(rig: &LookRig) -> Vec<f64> {
+    readback::read_rgba16f(&rig.device, &rig.queue, rig.frame.filtered())
+        .iter()
+        .map(|e| 0.2126 * f64::from(e[0]) + 0.7152 * f64::from(e[1]) + 0.0722 * f64::from(e[2]))
+        .collect()
+}
+
+/// A static camera in the dark cave and the headlamp's cone turned 30 degrees in one frame:
+/// in the gradient mode every pixel that left the cone (its filtered irradiance at 0.5 or
+/// more before, under 5 % of that 40 frames after) falls under 10 % of its lit value within 2
+/// frames, where plain accumulation at alpha 0.2 needs about 11 (0.8^11 = 0.086); the frames
+/// each mode takes go in the log.
+#[test]
+fn the_gradient_drops_light_that_left_the_cone_within_two_frames() {
+    let turned = vxe_render::LightParams {
+        turn: 30f32.to_radians(),
+        ..vxe_render::LightParams::headlamp()
+    };
+    let mut frames_to_drop = Vec::new();
+    for history in [
+        vxe_render::HistoryKill::Gradient,
+        vxe_render::HistoryKill::Edits,
+    ] {
+        let Some((mut rig, camera)) = lamp_cave(history) else {
+            return;
+        };
+        let before = accumulated_lum(&rig);
+        let mut after = Vec::new();
+        for _ in 0..40 {
+            rig.frame
+                .step(&rig.device, &rig.queue, &rig.gpu, &camera, &turned);
+            after.push(accumulated_lum(&rig));
+        }
+        let settled = &after[39];
+        let left: Vec<usize> = (0..before.len())
+            .filter(|&i| before[i] >= 0.5 && settled[i] < 0.05 * before[i])
+            .collect();
+        // The first frame after the turn by which every such pixel reads under 10 % of before.
+        let k = (0..40)
+            .find(|&k| left.iter().all(|&i| after[k][i] < 0.1 * before[i]))
+            .map_or(41, |k| k + 1);
+        println!(
+            "{history:?}: {} pixels left the cone; all under 10 % after {k} frames",
+            left.len()
+        );
+        let share: Vec<String> = (0..12)
+            .map(|k| {
+                let n = left
+                    .iter()
+                    .filter(|&&i| after[k][i] < 0.1 * before[i])
+                    .count();
+                format!("{:.3}", n as f64 / left.len() as f64)
+            })
+            .collect();
+        println!(
+            "{history:?}: share under 10 % after 1..12 frames: {}",
+            share.join(" ")
+        );
+        assert!(!left.is_empty());
+        frames_to_drop.push(k);
+    }
+    assert!(
+        frames_to_drop[0] <= 2,
+        "gradient: {} frames",
+        frames_to_drop[0]
+    );
+}

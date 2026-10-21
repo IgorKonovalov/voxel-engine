@@ -26,6 +26,14 @@ fn shaders() -> Vec<(&'static str, String)> {
             format!("{MARCH}\n{}", include_str!("../src/shaders/atrous.wgsl")),
         ),
         (
+            "gradient.wgsl",
+            format!(
+                "{MARCH}\n{}\n{}",
+                include_str!("../src/shaders/light.wgsl"),
+                include_str!("../src/shaders/gradient.wgsl")
+            ),
+        ),
+        (
             "attrib.wgsl",
             include_str!("../src/shaders/attrib.wgsl").to_owned(),
         ),
