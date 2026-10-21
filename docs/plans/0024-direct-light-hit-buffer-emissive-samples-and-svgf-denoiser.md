@@ -573,10 +573,10 @@ such.
 | 4: The coarse shadow walk | dev | done | a414473 |
 | 5: Temporal accumulation, and history that dies in an edit box | dev | done | 1a907f7 |
 | 6: The a-trous filter and the composite, and the carve that does not ghost | dev | done at the amended bars, bar 1 second clause missed (Notes) | 5f08a2e, 907841f |
-| 7: Near-emitter candidates and bounded light extraction | dev | done for bars 1 and 2; bars 3 and 4 waiting for quiet (Notes) | 3a71e15 |
+| 7: Near-emitter candidates and bounded light extraction | dev | done; bar 3 missed (p99, max), bar 4 missed at full resolution (Notes) | 3a71e15 |
 | 8: Reservoir reuse against the flat list | dev | done | 0975e2b |
 | 9: A-SVGF's gradient as the other history killer | dev | done | e74c9e5 |
-| 10: The half-resolution tier | dev | done; the 3.0 ms a-trous bar waiting for quiet (Notes) | 3c2de1d |
+| 10: The half-resolution tier | dev | done; the 3.0 ms a-trous bar met | 3c2de1d |
 | 11: The fly-through's switches, HUD rows and autopilot readings | dev | done; `frame_bytes` at 1080p over 300 MB (Notes) | 1b896b3 |
 | 12: The owner's windowed check | human | not started | |
 
@@ -683,6 +683,13 @@ each. Empty is fine.)_
   chunk distance; the fly-through sets the mirror's focus to the camera on the level too.
   `SyncStats` gains `light_evicted`, `light_refused`, `light_oldest_wait` (syncs; the
   autopilot converts to ms by the tick times). `CandidateDraw::Uniform` is the test-only draw.
+- Phase 7 bars 3 and 4 on the quiet box (d367d8f's binary, `docs/nfr.md` §2, "Quiet-box
+  readings of Plan 0024's owed bars"): extraction p99 2.255 ms and max 6.693 ms over the
+  flight, missed against 1.0 and 3.0 ms (the wait inside the radius 0 ms, met); the light
+  pass at 1080p 7.495 to 8.240 ms (level, full walk), 5.713 to 6.051 (level, coarse), 11.450
+  to 11.539 (streamed, full), 8.765 to 8.989 (streamed, coarse), missed against 4.0 ms; at
+  half resolution 1.845 to 1.873 (level) and 2.897 to 2.915 ms (streamed). Phase 10's half
+  a-trous 1.108 to 1.169 ms, met against 3.0 ms.
 - Phase 7 bars 1 and 2: the table's 64-frame mean is 1.7914 (+2.91 %), relative RMSE 0.3953
   against the uniform draw's 1.1403 (ratio 0.347); the bounded-pool test holds; the
   autopilot's light-sample peak is 18 522 with 0 refused. Bars 3 and 4 are waiting for the
@@ -788,15 +795,8 @@ headlamp 24 929 / 3872, lod 24 431 / 3465, translucent 13 733 / 353, cutaway_lev
 look_contour 27 259 / 3643, look_detail 32 898 / 21 073, look_gradient27 27 651 / 3593,
 look_trilinear8 25 639 / 3071, hud 15 831 / 2109.
 
-### Resume notes (2026-10-21, delete when the quiet readings and Phase 12 land)
+### Resume notes (2026-10-21, delete when Phase 12 lands)
 
-- Owed on a quiet box (exclusive perf lock, 1-minute load under 2 at each start): Phase 7
-  bar 3 (`flythrough --autopilot --headless --seed 1`: extraction p99 under 1.0 ms, max under
-  3.0 ms, no wait over 250 ms inside the radius) and bar 4 (light pass under 4.0 ms at 1080p
-  at `--level --frames 300` and the streamed `--frames 3000`, each `--shadow-walk`, three runs
-  each); Phase 10's a-trous bar (`--lighting half` at both spawns, under 3.0 ms). Loaded
-  readings so far: extraction p99 2.2 to 3.6 ms, light 7.4 to 13.2 ms full, a-trous 1.1 to
-  1.2 ms half.
 - Phase 12 is the owner's windowed check.
 - Gate at 1b896b3: build, `cargo nextest run --workspace` (571 passed, 4 skipped), doctests,
   clippy `-D warnings`, `cargo fmt --check`, `cargo deny check`, comment hygiene and doc

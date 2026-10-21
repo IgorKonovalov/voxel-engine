@@ -234,6 +234,24 @@ gradient pass (one re-shaded pixel, two shadow rays, per 3 x 3 stratum) reads 0.
 level's spawn and 1.277 ms at the streamed spawn at 1080p; the a-trous pass reads 5.795 and
 5.566 ms in that mode, its ages kept shorter.
 
+**Quiet-box readings of Plan 0024's owed bars (dev reference, d367d8f's release binary,
+RTX 3080 Laptop GPU, Ryzen 9 5900HS, exclusive perf lock, each run started at a 1-minute load
+of 0.18 to 1.87 with no other process above 7 % CPU; 1080p, the default look, the ore
+emissive, the lamp on, the flat list, edit-box history, the filter on):**
+
+| bar | line | readings | |
+|---|---|---|---|
+| Light extraction over the autopilot's flight (`--autopilot --headless --seed 1`, 4568 frames) | p99 under 1.0 ms, max under 3.0 ms, no wait over 250 ms | p50 0.156, p99 2.255, max 6.693 ms; longest wait 0 ms; peak 18 522 samples, 0 evicted, 0 refused | missed (p99, max); met (wait) |
+| Light pass, level (`--level --frames 300`), full walk | under 4.0 ms | 8.164, 8.240, 7.495 ms | missed |
+| Light pass, level, coarse walk | under 4.0 ms | 6.050, 6.051, 5.713 ms | missed |
+| Light pass, streamed (`--frames 3000`), full walk | under 4.0 ms | 11.539, 11.450, 11.534 ms | missed |
+| Light pass, streamed, coarse walk | under 4.0 ms | 8.901, 8.765, 8.989 ms | missed |
+| Light pass at `--lighting half`, level / streamed (full walk) | under 4.0 ms (read beside the bar) | 1.873, 1.845, 1.861 / 2.901, 2.915, 2.897 ms | under it |
+| A-trous at `--lighting half`, level / streamed | under 3.0 ms | 1.169, 1.151, 1.157 / 1.108, 1.121, 1.113 ms | met |
+
+The third coarse run at the level read an a-trous of 11.608 ms and a temporal of 1.041 ms
+against 4.7 and 0.5 ms in its neighbours; its light reading is kept as read.
+
 **Both lighting tiers at 1080p output (dev reference, indicative, Plan 0024 Phase 10, RTX
 3080 Laptop GPU, exclusive perf lock, 1-minute load 2.2 to 6.1 with the owner using the
 machine, so not quiet; defaults otherwise: full shadow walk, the flat list, edit-box
