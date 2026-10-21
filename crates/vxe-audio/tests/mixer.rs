@@ -71,9 +71,17 @@ fn tail_rms(out: &[f32]) -> [f32; 2] {
     })
 }
 
+/// `m` with both room curves flat.
+fn flat(mut m: Mixer) -> Mixer {
+    m.set_mix(MixSettings::flat());
+    m
+}
+
 /// The HRTF path's mixer over the shipped pack.
 fn mixer() -> Mixer {
-    Mixer::new(Hrtf::sadie2_d2(), MPV)
+    let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    m.set_mix(MixSettings::flat());
+    m
 }
 
 /// `|H(freq)|` of measurement `i`'s left and right impulse responses: the gain a steady tone
@@ -146,7 +154,7 @@ fn distance_gain_in_front() {
 #[test]
 fn the_panner_at_centre_gives_each_channel_half_the_power() {
     let centre = 0.5 / SQRT_2 * (1.0 / SQRT_2);
-    for (c, rms) in render_at(Mixer::panning(MPV), [10.0, 0.0, 0.0])
+    for (c, rms) in render_at(flat(Mixer::panning(MPV)), [10.0, 0.0, 0.0])
         .iter()
         .enumerate()
     {
@@ -157,7 +165,7 @@ fn the_panner_at_centre_gives_each_channel_half_the_power() {
 #[test]
 fn a_source_on_the_right_is_20_db_louder_on_the_right_when_panned() {
     // Facing +x with +z up, the listener's right is -y.
-    let [l, r] = render_at(Mixer::panning(MPV), [0.0, -10.0, 0.0]);
+    let [l, r] = render_at(flat(Mixer::panning(MPV)), [0.0, -10.0, 0.0]);
     let db = 20.0 * (r / l.max(1e-12)).log10();
     assert!(db >= 20.0, "right over left {db} dB (left {l}, right {r})");
 }

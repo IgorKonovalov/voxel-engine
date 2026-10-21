@@ -31,6 +31,7 @@ mod input;
 mod mixer;
 mod output;
 mod reverb;
+mod room_curve;
 mod stream;
 mod voice;
 
@@ -52,6 +53,7 @@ pub use reverb::{
     REVERB_MAX_PREDELAY_FRAMES, REVERB_MIN_DELAY_FRAMES, ReverbLine, ReverbNetwork, ReverbSettings,
     TAIL_HANDOVER_RATIO, TailLines,
 };
+pub use room_curve::{ROOM_CURVE_POINTS, RoomCurve};
 pub use stream::{STREAM_CAPACITY_FRAMES, Stream, StreamMonitor, StreamReader, StreamWriter};
 pub use voice::{
     AcousticTargets, MAX_DELAY_FRAMES, MAX_TAPS, OPEN_CUTOFF_HZ, PlayParams, Sound, Tap, VoiceId,
@@ -98,6 +100,8 @@ pub enum AudioError {
     Busy,
     /// An HRIR pack failed validation.
     Pack(&'static str),
+    /// A [`RoomCurve`]'s knots are malformed; names how.
+    Curve(&'static str),
     /// The backend failed to build, start or keep the stream.
     Stream(String),
 }
@@ -115,6 +119,7 @@ impl std::fmt::Display for AudioError {
             }
             Self::Busy => write!(f, "the audio command channel is full"),
             Self::Pack(why) => write!(f, "bad HRIR pack: {why}"),
+            Self::Curve(why) => write!(f, "bad room curve: {why}"),
             Self::Stream(why) => write!(f, "audio stream: {why}"),
         }
     }

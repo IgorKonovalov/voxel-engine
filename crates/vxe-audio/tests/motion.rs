@@ -77,7 +77,7 @@ fn walk(world: &World, delayed: bool) -> (Vec<f32>, Vec<AcousticTargets>) {
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
     mixer.set_mix(MixSettings {
         direct_delay: delayed,
-        ..MixSettings::default()
+        ..MixSettings::flat()
     });
     let mut acoustics = Acoustics::new(mixer.clock());
     acoustics.set_reflections(false);

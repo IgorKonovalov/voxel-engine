@@ -174,7 +174,7 @@ fn walk(world: &World, pace: Pace, delayed: bool) -> Walk {
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
     mixer.set_mix(MixSettings {
         direct_delay: delayed,
-        ..MixSettings::default()
+        ..MixSettings::flat()
     });
     let mut acoustics = Acoustics::new(mixer.clock());
     assert!(acoustics.reflections_on());
@@ -468,6 +468,7 @@ fn switching_the_reflections_off_fades_the_echoes_out() {
     };
     let source = [0.5, 148.5, 128.5];
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    mixer.set_mix(MixSettings::flat());
     mixer.apply(Command::SetListener(listener));
     let mut acoustics = Acoustics::new(mixer.clock());
     let id = VoiceId(2);

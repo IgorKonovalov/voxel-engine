@@ -55,9 +55,9 @@ fn mixer(lines: TailLines) -> Mixer {
     m.set_mix(MixSettings {
         reverb: ReverbSettings {
             lines,
-            ..ReverbSettings::default()
+            ..MixSettings::flat().reverb
         },
-        ..MixSettings::default()
+        ..MixSettings::flat()
     });
     m
 }
@@ -515,9 +515,9 @@ fn a_pre_delay_step_under_a_hum_does_not_click() {
     m.apply(Command::SetMix(MixSettings {
         reverb: ReverbSettings {
             predelay_s: 0.04,
-            ..ReverbSettings::default()
+            ..MixSettings::flat().reverb
         },
-        ..MixSettings::default()
+        ..MixSettings::flat()
     }));
     assert_eq!(m.mix().reverb.predelay_frames(), 1_920);
     m.render(&mut out, frames);
@@ -646,6 +646,7 @@ fn a_walk_through_rooms_hands_the_tail_over_without_repitching_it() {
 #[test]
 fn the_tail_renders_without_allocating() {
     let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    m.set_mix(MixSettings::flat());
     let hum = Sound::new(
         (0..4800)
             .map(|n| (n as f32 * 0.05).sin())
@@ -689,6 +690,7 @@ fn the_tail_renders_without_allocating() {
 #[test]
 fn a_silent_tail_rings_out_to_zero_not_subnormals() {
     let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    m.set_mix(MixSettings::flat());
     m.apply(Command::SetRoom(RoomTargets {
         t60_s: 0.75,
         mean_free_path_m: 2.667,

@@ -124,6 +124,7 @@ fn at_azimuth(deg: f32, distance_m: f32) -> [f32; 3] {
 /// 0.5 s of a 2 kHz tone of amplitude 0.5 at azimuth `deg`, 2 m.
 fn render_2k(deg: f32) -> Vec<f32> {
     let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    m.set_mix(MixSettings::flat());
     m.apply(Command::Play(
         VoiceId(1),
         tone(2000.0, 0.5, FRAMES),
@@ -176,6 +177,7 @@ fn a_moving_source_switches_filters_without_a_click() {
     let static_step = max_step(&render_2k(0.0));
     let blocks = RATE as usize / BLOCK + 1;
     let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    m.set_mix(MixSettings::flat());
     m.apply(Command::Play(
         VoiceId(1),
         tone(2000.0, 0.5, blocks * BLOCK),
@@ -239,6 +241,7 @@ fn render_hum(
     listener_at: impl Fn(f32) -> Listener,
 ) -> Vec<f32> {
     let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    m.set_mix(MixSettings::flat());
     m.apply(Command::Play(
         VoiceId(1),
         clean_hum(),
@@ -324,6 +327,7 @@ fn probe_updates_add_no_kinks() {
         ("cutoff 19000 <-> 13333", (1.0, 19_000.0), (1.0, 13_333.0)),
     ] {
         let mut m = Mixer::new(Hrtf::sadie2_d2(), MPV);
+        m.set_mix(MixSettings::flat());
         m.apply(Command::Play(
             VoiceId(1),
             clean_hum(),

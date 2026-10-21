@@ -92,6 +92,7 @@ fn streamed(samples: Vec<f32>, frames: usize, gap: Option<std::ops::Range<usize>
         })
     };
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    mixer.set_mix(MixSettings::flat());
     mixer.apply(Command::PlayStream(
         VoiceId(1),
         reader,
@@ -119,6 +120,7 @@ fn streamed(samples: Vec<f32>, frames: usize, gap: Option<std::ops::Range<usize>
 /// The same samples played from a `Sound`.
 fn from_sound(samples: Vec<f32>, frames: usize) -> Vec<f32> {
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    mixer.set_mix(MixSettings::flat());
     mixer.apply(Command::Play(
         VoiceId(1),
         Sound::new(samples),
@@ -234,6 +236,7 @@ fn undirected_burst(world: &World) -> (Vec<f32>, usize) {
         .collect();
     assert_eq!(writer.push(&burst), 0);
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    mixer.set_mix(MixSettings::flat());
     let listener = Listener::default();
     mixer.apply(Command::SetListener(listener));
     let at = listener.position;
@@ -296,6 +299,7 @@ fn a_stream_renders_without_allocating() {
     let walled = world_around(|v| v[1] >= 50);
     let (mut writer, reader) = Stream::new();
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    mixer.set_mix(MixSettings::flat());
     let listener = Listener::default();
     mixer.apply(Command::PlayStream(
         VoiceId(3),

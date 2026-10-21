@@ -55,6 +55,7 @@ const SOURCE: [i32; 3] = [0, 148, 128];
 /// block.
 fn impulse_response(world: &World) -> (Vec<f32>, AcousticTargets) {
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    mixer.set_mix(MixSettings::flat());
     let listener = Listener {
         position: centre(LISTENER),
         ..Listener::default()
@@ -237,6 +238,7 @@ fn occluded_render(world: &World, freq: f32, on: bool) -> f32 {
     const LEN: usize = 24_000;
     const TAIL: usize = 4_800;
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    mixer.set_mix(MixSettings::flat());
     let listener = Listener {
         position: centre(OCC_LISTENER),
         ..Listener::default()
@@ -434,6 +436,7 @@ fn burst_with_wall(solid: impl Fn([i32; 3]) -> bool + Sync) -> (Vec<f32>, usize)
     const LEN: usize = 14_400;
     let walled = world_around(solid);
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    mixer.set_mix(MixSettings::flat());
     let listener = Listener::default();
     mixer.apply(Command::SetListener(listener));
     let id = VoiceId(5);
@@ -626,6 +629,7 @@ fn a_100_m_cube_returns_the_voice_from_its_walls_after_13_994_frames() {
     const LEN: usize = 16_000;
     let cube = hundred_metre_cube();
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    mixer.set_mix(MixSettings::flat());
     let at = [500.0, 500.0, 500.0];
     let listener = Listener {
         position: at,

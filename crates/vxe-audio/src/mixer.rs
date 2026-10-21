@@ -51,6 +51,7 @@ use crate::acoustics::{BlockClock, reflection_directions};
 use crate::command::Command;
 use crate::hrtf::Hrtf;
 use crate::reverb::{Reverb, ReverbLine, ReverbNetwork, ReverbSettings};
+use crate::room_curve::{ECHO_KNOTS, RoomCurve, curve_of};
 use crate::voice::{
     MAX_DELAY_FRAMES, MAX_TAPS, OPEN_CUTOFF_HZ, PlayParams, Source, Tap, TapState, Voice,
     VoiceBuffers, VoiceId,
@@ -64,11 +65,18 @@ pub const MAX_VOICES: usize = 64;
 
 /// The balance a listener sets over everything the acoustics give: applied by
 /// [`Mixer::set_mix`] or, on a running output, [`Command::SetMix`].
+///
+/// The early reflections' amplitude is `echo_gain` times `10^(echo_by_room.db_at(mfp) / 20)`,
+/// `mfp` the mean free path of the latest [`Command::SetRoom`] (no room before the first,
+/// which the curve reads as its last knot). The mixer recomputes it on [`Command::SetMix`] and
+/// on `SetRoom`, never per block, and moves the buses' input to it through the one-pole
+/// smoother of [`crate::SMOOTHING_SECONDS`], so a room change ramps the echoes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MixSettings {
-    /// Amplitude scale of the early reflections, applied to the direction buses' input through
-    /// the one-pole smoother of [`crate::SMOOTHING_SECONDS`].
+    /// Amplitude trim of the early reflections, on top of `echo_by_room`.
     pub echo_gain: f32,
+    /// The early reflections' level in dB by the room's mean free path.
+    pub echo_by_room: RoomCurve,
     /// The direct path's propagation delay (module comment).
     pub direct_delay: bool,
     /// The late tail's settings.
@@ -76,13 +84,34 @@ pub struct MixSettings {
 }
 
 impl Default for MixSettings {
-    /// Echo gain 1, the direct delay off, the tail's defaults.
+    /// Echo trim 1 over the default echo curve (`(2.67 m, +30 dB)`, `(8.0, +15)`,
+    /// `(24.0, +12)`, `(69.0, +6)`), the direct delay off, the tail's defaults (trim 1 over
+    /// `(2.67 m, -15 dB)`, `(8.0, 0)`, no pre-delay, [`crate::TailLines::Handover`]).
     fn default() -> Self {
         Self {
             echo_gain: 1.0,
+            echo_by_room: curve_of(&ECHO_KNOTS),
             direct_delay: false,
             reverb: ReverbSettings::default(),
         }
+    }
+}
+
+impl MixSettings {
+    /// The defaults with both room curves flat at 0 dB: echoes and tail at the levels the
+    /// acoustics give, scaled by the trims alone.
+    pub fn flat() -> Self {
+        let mut mix = Self {
+            echo_by_room: RoomCurve::flat(0.0),
+            ..Self::default()
+        };
+        mix.reverb.level_by_room = RoomCurve::flat(0.0);
+        mix
+    }
+
+    /// The echoes' amplitude at mean free path `mfp_m`: the trim times the curve's factor.
+    pub fn echo_amplitude(&self, mfp_m: f32) -> f32 {
+        self.echo_gain * self.echo_by_room.gain_at(mfp_m)
     }
 }
 /// One tap slot as [`Mixer::tap_slots`] reads it.
@@ -137,6 +166,10 @@ pub struct Mixer {
     clock: BlockClock,
     /// The balance applied last.
     mix: MixSettings,
+    /// The mean free path of the latest `SetRoom`; NaN before the first.
+    room_mfp: f32,
+    /// The echoes' amplitude the smoother moves toward ([`MixSettings`]).
+    echo_target: f32,
     /// The echo gain as smoothed so far, at the last block's end.
     echo_gain: f32,
     /// One block of the echo gain's ramp.
@@ -173,15 +206,27 @@ impl Mixer {
             smooth_k: 1.0 - (-1.0 / (SMOOTHING_SECONDS * RATE as f32)).exp(),
             clock: BlockClock::default(),
             mix: MixSettings::default(),
-            echo_gain: 1.0,
+            room_mfp: f32::NAN,
+            echo_target: MixSettings::default().echo_amplitude(f32::NAN),
+            echo_gain: MixSettings::default().echo_amplitude(f32::NAN),
             echo_ramp: vec![0.0; BLOCK],
         }
     }
 
-    /// Sets the balance: the echo gain, the direct delay and the tail's settings.
+    /// Sets the balance: the echo trim and curve, the direct delay and the tail's settings.
+    /// Before the first block the echoes start at their new amplitude; after it they ramp.
     pub fn set_mix(&mut self, mix: MixSettings) {
         self.mix = mix;
         self.reverb.set_settings(mix.reverb);
+        self.retarget_echoes();
+    }
+
+    /// Recomputes the echoes' target from the mix and the latest room.
+    fn retarget_echoes(&mut self) {
+        self.echo_target = self.mix.echo_amplitude(self.room_mfp);
+        if self.clock.blocks() == 0 {
+            self.echo_gain = self.echo_target;
+        }
     }
 
     /// The balance applied last.
@@ -279,7 +324,11 @@ impl Mixer {
                 }
             }
             Command::SetListener(l) => self.listener = l,
-            Command::SetRoom(room) => self.reverb.set_room(room),
+            Command::SetRoom(room) => {
+                self.room_mfp = room.mean_free_path_m;
+                self.retarget_echoes();
+                self.reverb.set_room(room);
+            }
             Command::SetMix(mix) => self.set_mix(mix),
             Command::SetAcoustics(id, targets) => {
                 if let Some(v) = self.voice_mut(id) {
@@ -534,7 +583,7 @@ impl Mixer {
     fn render_buses(&mut self, frame: &ListenerFrame, out: &mut [f32]) {
         let n = out.len() / 2;
         // The echo gain's one-pole over the block; exactly 1, it is not applied.
-        let (g0, to) = (self.echo_gain, self.mix.echo_gain);
+        let (g0, to) = (self.echo_gain, self.echo_target);
         let mut g = g0;
         for r in &mut self.echo_ramp[..n] {
             g += (to - g) * self.smooth_k;

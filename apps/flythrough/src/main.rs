@@ -10,7 +10,7 @@
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
-//! [--pad on|off]`.
+//! [--flat-mix] [--pad on|off]`.
 //! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -100,13 +100,18 @@
 //! (implies `--audio`) plays the default input device at the listener with its direct path
 //! off, so it is heard only off the walls and in the tail; wear headphones.
 //!
-//! The balance (`vxe_audio::MixSettings`) is live: `[` and `]` step the echo gain by 3 dB
-//! (-12 to +30 dB), `-` and `=` the tail level by 3 dB (-30 to +6 dB), `9` and `0` the tail's
+//! The balance (`vxe_audio::MixSettings`) is live. The mixer sets the echo and tail levels by
+//! the room's mean free path through its default room curves; `[` and `]` step a trim on the
+//! echoes by 3 dB, `-` and `=` one on the tail (each -24 to +12 dB), `9` and `0` the tail's
 //! pre-delay by 10 ms (0 to 200 ms), `O` switches the tail's lines between handing over and
 //! gliding, and `U` switches the direct path's propagation delay. Each prints a line
-//! `mix: echoes .. dB, tail .. dB, pre-delay .. ms, tail lines .., direct delay ..`, which `F1`
-//! and the start (with `--audio` or `--room-line`) print too. `--echo-db`, `--tail-db`,
-//! `--predelay-ms`, `--tail-glide` and `--direct-delay` set the same at the start.
+//! `mix: echoes <trim> dB (room <curve> dB at mfp <m> m), tail <trim> dB (room <curve> dB),
+//! pre-delay .. ms, tail lines .., direct delay ..`, which `F1`, the start (with `--audio` or
+//! `--room-line`) and every room that moves a curve by 0.5 dB or more print too.
+//! `--echo-db`, `--tail-db`, `--predelay-ms`, `--tail-glide` and `--direct-delay` set the same
+//! at the start. `--flat-mix` sets both curves flat at 0 dB (the line reads `room flat`) and
+//! the trims' ranges to -12 to +30 dB for the echoes and -30 to +6 dB for the tail, the
+//! absolute levels of a balance picked before the curves.
 //!
 //! `--room METRES` runs in a closed cube of air of that edge inside 2 m of rock, spawned at its
 //! centre, and implies `--room-line`: a line `room: V .. S .. mfp .. alpha .. T60 .. energy ..`
@@ -468,6 +473,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--tail-db" => args.mix.tail_db = Mix::parse(flag.as_str(), &value()?)?,
             "--predelay-ms" => args.mix.predelay_ms = Mix::parse(flag.as_str(), &value()?)?,
             "--tail-glide" => args.mix.glide = true,
+            "--flat-mix" => args.mix.flat = true,
             "--direct-delay" => args.mix.direct_delay = true,
             "--mic" => {
                 args.mic = true;
@@ -528,6 +534,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     if matches!(args.logic, LogicChoice::Wasm(_)) && !cfg!(feature = "wasm") {
         return Err(flythrough::WASM_NEEDS_FEATURE.to_owned());
     }
+    args.mix.check()?;
     Ok(args)
 }
 
@@ -691,12 +698,13 @@ fn room_sent_line(r: &RoomTargets) -> String {
     )
 }
 
-/// The balance the keys and flags set over the acoustics.
+/// The balance the keys and flags set over the acoustics: trims over the mixer's room curves
+/// (or, with `--flat-mix`, over flat curves), and the room the curves read.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Mix {
-    /// The echo gain, dB.
+    /// The echo trim, dB.
     echo_db: f32,
-    /// The tail level, dB.
+    /// The tail trim, dB.
     tail_db: f32,
     /// The tail's pre-delay, milliseconds.
     predelay_ms: f32,
@@ -704,43 +712,84 @@ struct Mix {
     glide: bool,
     /// The direct path's propagation delay.
     direct_delay: bool,
+    /// `--flat-mix`: the trims over [`MixSettings::flat`] instead of the room curves.
+    flat: bool,
+    /// The mean free path of the latest room sent, metres.
+    room: Option<f32>,
+    /// The room the last printed curve values were read at.
+    printed_room: Option<f32>,
 }
 
 impl Mix {
-    const ECHO_DB: std::ops::RangeInclusive<f32> = -12.0..=30.0;
-    const TAIL_DB: std::ops::RangeInclusive<f32> = -30.0..=6.0;
+    /// The trims' range over the room curves.
+    const TRIM_DB: std::ops::RangeInclusive<f32> = -24.0..=12.0;
+    /// With `--flat-mix` the absolute ranges, so a flat balance replays as it was heard.
+    const FLAT_ECHO_DB: std::ops::RangeInclusive<f32> = -12.0..=30.0;
+    const FLAT_TAIL_DB: std::ops::RangeInclusive<f32> = -30.0..=6.0;
     const PREDELAY_MS: std::ops::RangeInclusive<f32> = 0.0..=200.0;
+    /// A room that moves either curve by this much prints the mix line again.
+    const REPRINT_DB: f32 = 0.5;
 
-    /// The range of `flag`'s value.
-    fn range(flag: &str) -> std::ops::RangeInclusive<f32> {
-        match flag {
-            "--echo-db" => Self::ECHO_DB,
-            "--tail-db" => Self::TAIL_DB,
-            _ => Self::PREDELAY_MS,
+    fn echo_range(&self) -> std::ops::RangeInclusive<f32> {
+        if self.flat {
+            Self::FLAT_ECHO_DB
+        } else {
+            Self::TRIM_DB
         }
     }
 
-    /// `flag`'s value `v`, checked against its range.
+    fn tail_range(&self) -> std::ops::RangeInclusive<f32> {
+        if self.flat {
+            Self::FLAT_TAIL_DB
+        } else {
+            Self::TRIM_DB
+        }
+    }
+
+    /// `flag`'s value `v` as a finite number; [`Mix::check`] holds it to its range once every
+    /// flag is read.
     fn parse(flag: &str, v: &str) -> Result<f32, String> {
-        let range = Self::range(flag);
         v.parse::<f32>()
             .ok()
-            .filter(|x| range.contains(x))
-            .ok_or_else(|| format!("{flag} takes {} to {}, not {v}", range.start(), range.end()))
+            .filter(|x| x.is_finite())
+            .ok_or_else(|| format!("{flag} takes a number, not {v}"))
+    }
+
+    /// Each flag's value within its range for this mix's mode.
+    fn check(&self) -> Result<(), String> {
+        for (flag, v, r) in [
+            ("--echo-db", self.echo_db, self.echo_range()),
+            ("--tail-db", self.tail_db, self.tail_range()),
+            ("--predelay-ms", self.predelay_ms, Self::PREDELAY_MS),
+        ] {
+            if !r.contains(&v) {
+                return Err(format!(
+                    "{flag} takes {} to {}, not {v}",
+                    r.start(),
+                    r.end()
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Each value moved by its key's step and held in its range.
     fn step(self, echo_db: f32, tail_db: f32, predelay_ms: f32) -> Self {
         let clamp = |x: f32, r: std::ops::RangeInclusive<f32>| x.clamp(*r.start(), *r.end());
         Self {
-            echo_db: clamp(self.echo_db + echo_db, Self::ECHO_DB),
-            tail_db: clamp(self.tail_db + tail_db, Self::TAIL_DB),
+            echo_db: clamp(self.echo_db + echo_db, self.echo_range()),
+            tail_db: clamp(self.tail_db + tail_db, self.tail_range()),
             predelay_ms: clamp(self.predelay_ms + predelay_ms, Self::PREDELAY_MS),
             ..self
         }
     }
 
     fn settings(&self) -> MixSettings {
+        let base = if self.flat {
+            MixSettings::flat()
+        } else {
+            MixSettings::default()
+        };
         MixSettings {
             echo_gain: 10f32.powf(self.echo_db / 20.0),
             direct_delay: self.direct_delay,
@@ -752,16 +801,52 @@ impl Mix {
                 } else {
                     TailLines::Handover
                 },
-                ..ReverbSettings::default()
+                ..base.reverb
             },
+            ..base
         }
     }
 
-    /// `mix: echoes <dB>, tail <dB>, pre-delay <ms>, tail lines <mode>, direct delay <on|off>`.
+    /// The echo and tail curves' values at `room` (no room reads the curves' last knot).
+    fn curve_db(&self, room: Option<f32>) -> (f32, f32) {
+        let s = self.settings();
+        let mfp = room.unwrap_or(f32::NAN);
+        (s.echo_by_room.db_at(mfp), s.reverb.level_by_room.db_at(mfp))
+    }
+
+    /// Takes the mean free path of a room sent to the mixer; true when either curve moved by
+    /// [`Mix::REPRINT_DB`] or more since the last printed line (which this then becomes).
+    fn take_room(&mut self, mfp: f32) -> bool {
+        self.room = Some(mfp);
+        if self.flat {
+            return false;
+        }
+        let (e0, t0) = self.curve_db(self.printed_room);
+        let (e1, t1) = self.curve_db(self.room);
+        let moved = (e1 - e0).abs() >= Self::REPRINT_DB || (t1 - t0).abs() >= Self::REPRINT_DB;
+        if moved {
+            self.printed_room = self.room;
+        }
+        moved
+    }
+
+    /// `mix: echoes <trim> dB (room <curve> dB at mfp <m> m), tail <trim> dB (room <curve> dB),
+    /// pre-delay <ms>, tail lines <mode>, direct delay <on|off>`; `room flat` with
+    /// `--flat-mix`, and `before any room` until a room arrives.
     fn line(&self) -> String {
+        let (echo_room, tail_room) = if self.flat {
+            ("room flat".to_owned(), "room flat".to_owned())
+        } else {
+            let (e, t) = self.curve_db(self.room);
+            let at = self.room.map_or_else(
+                || "before any room".to_owned(),
+                |m| format!("at mfp {m:.3} m"),
+            );
+            (format!("room {e:+.1} dB {at}"), format!("room {t:+.1} dB"))
+        };
         format!(
-            "mix: echoes {:+.0} dB, tail {:+.0} dB, pre-delay {:.0} ms, tail lines {}, direct \
-             delay {}",
+            "mix: echoes {:+.0} dB ({echo_room}), tail {:+.0} dB ({tail_room}), pre-delay {:.0} \
+             ms, tail lines {}, direct delay {}",
             self.echo_db,
             self.tail_db,
             self.predelay_ms,
@@ -787,13 +872,16 @@ struct Mic {
 struct RoomProbe {
     acoustics: Acoustics,
     table: MaterialTable,
+    /// The balance a mixer would take, for the mix line's room curves.
+    mix: Mix,
 }
 
 impl RoomProbe {
-    fn new(absorption: f32) -> Self {
+    fn new(absorption: f32, mix: Mix) -> Self {
         Self {
             acoustics: Acoustics::new(BlockClock::default()),
             table: acoustic_table(absorption),
+            mix,
         }
     }
 }
@@ -2009,6 +2097,9 @@ impl Run {
         if let Some(r) = room {
             println!("{}", room_line(&r));
         }
+        if let Some(p) = &self.room_probe {
+            println!("{}", p.mix.line());
+        }
         if let Some(c) = &self.coarse {
             println!("{}", c.query_line());
         }
@@ -2702,6 +2793,9 @@ impl Run {
                 );
                 if completed && let Some(r) = p.acoustics.room() {
                     println!("{}", room_line(&r));
+                    if p.mix.take_room(r.mean_free_path_m) {
+                        println!("{}", p.mix.line());
+                    }
                 }
             }
             return;
@@ -2759,6 +2853,7 @@ impl Run {
         let output = &audio.output;
         let t = now();
         let mut completed = false;
+        let mut sent_mfp = None;
         let debug = audio.debug;
         let discarded = audio.acoustics.discarded_fans();
         audio.acoustics.update(
@@ -2771,6 +2866,7 @@ impl Run {
             &mut |cmd| {
                 if let Command::SetRoom(r) = &cmd {
                     completed = true;
+                    sent_mfp = Some(r.mean_free_path_m);
                     if debug {
                         println!("{}", room_sent_line(r));
                     }
@@ -2779,6 +2875,11 @@ impl Run {
             },
         );
         audio.update_ms = ms_since(t);
+        if let Some(mfp) = sent_mfp
+            && audio.mix.take_room(mfp)
+        {
+            println!("{}", audio.mix.line());
+        }
         let now_discarded = audio.acoustics.discarded_fans();
         if debug {
             if now_discarded > discarded && audio.discarded_run == 0 {
@@ -3456,7 +3557,8 @@ fn main() {
     } else {
         None
     };
-    let room_probe = (audio.is_none() && args.room_line).then(|| RoomProbe::new(args.absorption));
+    let room_probe =
+        (audio.is_none() && args.room_line).then(|| RoomProbe::new(args.absorption, args.mix));
     if args.audio || args.room_line {
         println!("{}", args.mix.line());
     }
@@ -3839,7 +3941,8 @@ mod tests {
     }
 
     /// The balance flags parse within their ranges, set the mixer's settings and print the
-    /// mix line; the keys' steps stop at the ranges' ends.
+    /// mix line; the keys' steps stop at the ranges' ends (the trims at -24 and +12 dB over
+    /// the room curves, the absolute ranges under `--flat-mix`).
     #[test]
     fn the_balance_flags_and_steps() {
         let a = parse_args_from(argv(&[
@@ -3857,7 +3960,8 @@ mod tests {
         .expect("parses");
         assert_eq!(
             a.mix.line(),
-            "mix: echoes +6 dB, tail -9 dB, pre-delay 30 ms, tail lines glide, direct delay on"
+            "mix: echoes +6 dB (room +6.0 dB before any room), tail -9 dB (room +0.0 dB), \
+             pre-delay 30 ms, tail lines glide, direct delay on"
         );
         let s = a.mix.settings();
         assert!((s.echo_gain - 1.9953).abs() < 1e-4);
@@ -3865,29 +3969,82 @@ mod tests {
         assert_eq!(s.reverb.predelay_frames(), 1_440);
         assert_eq!(s.reverb.lines, TailLines::Glide);
         assert!(s.direct_delay);
-        assert_eq!(
-            Mix::default().line(),
-            "mix: echoes +0 dB, tail +0 dB, pre-delay 0 ms, tail lines handover, direct delay off"
-        );
+        assert_eq!(s.echo_by_room, MixSettings::default().echo_by_room);
         assert_eq!(Mix::default().settings(), MixSettings::default());
+
+        let flat = parse_args_from(argv(&["--flat-mix", "--echo-db", "9"])).expect("parses");
+        assert_eq!(
+            flat.mix.line(),
+            "mix: echoes +9 dB (room flat), tail +0 dB (room flat), pre-delay 0 ms, tail lines \
+             handover, direct delay off"
+        );
+        assert_eq!(
+            flat.mix.settings(),
+            MixSettings {
+                echo_gain: 10f32.powf(9.0 / 20.0),
+                ..MixSettings::flat()
+            }
+        );
+        // The Phase 12 picks replay under --flat-mix; over the curves the trims stop at +12.
+        assert!(parse_args_from(argv(&["--flat-mix", "--echo-db", "30"])).is_ok());
+        assert!(parse_args_from(argv(&["--echo-db", "30", "--flat-mix"])).is_ok());
         for bad in [
-            ["--echo-db", "31"],
-            ["--tail-db", "7"],
-            ["--predelay-ms", "-1"],
-            ["--predelay-ms", "x"],
+            &["--echo-db", "13"][..],
+            &["--tail-db", "-25"],
+            &["--echo-db", "-25"],
+            &["--tail-db", "13"],
+            &["--flat-mix", "--echo-db", "31"],
+            &["--flat-mix", "--tail-db", "7"],
+            &["--predelay-ms", "-1"],
+            &["--predelay-ms", "x"],
+            &["--echo-db", "inf"],
         ] {
-            assert!(parse_args_from(argv(&bad)).is_err(), "{bad:?}");
+            assert!(parse_args_from(argv(bad)).is_err(), "{bad:?}");
         }
         let top = Mix::default().step(40.0, 40.0, 400.0);
         assert_eq!(
             (top.echo_db, top.tail_db, top.predelay_ms),
-            (30.0, 6.0, 200.0)
+            (12.0, 12.0, 200.0)
         );
         let bottom = Mix::default().step(-40.0, -40.0, -10.0);
         assert_eq!(
             (bottom.echo_db, bottom.tail_db, bottom.predelay_ms),
-            (-12.0, -30.0, 0.0)
+            (-24.0, -24.0, 0.0)
         );
+        let flat_top = flat.mix.step(40.0, 40.0, 0.0);
+        assert_eq!((flat_top.echo_db, flat_top.tail_db), (30.0, 6.0));
+        let flat_bottom = flat.mix.step(-40.0, -40.0, 0.0);
+        assert_eq!((flat_bottom.echo_db, flat_bottom.tail_db), (-12.0, -30.0));
+    }
+
+    /// A room prints the mix line again when it moves either curve by 0.5 dB or more since the
+    /// last printed line; under `--flat-mix` never.
+    #[test]
+    fn a_room_reprints_the_mix_line_when_a_curve_moves() {
+        let mut mix = Mix::default();
+        assert!(
+            mix.take_room(2.666),
+            "no room (+6 dB) to the 4 m room (+30 dB)"
+        );
+        assert_eq!(
+            mix.line(),
+            "mix: echoes +0 dB (room +30.0 dB at mfp 2.666 m), tail +0 dB (room -15.0 dB), \
+             pre-delay 0 ms, tail lines handover, direct delay off"
+        );
+        assert!(!mix.take_room(2.6), "both curves hold below the first knot");
+        assert!(mix.take_room(7.999));
+        assert!((mix.curve_db(mix.room).0 - 15.0).abs() < 0.01);
+        assert!(!mix.take_room(8.1), "+15.0 to +14.9 dB");
+        assert!(
+            mix.take_room(10.0),
+            "+15.0 to +14.4 dB since the printed line"
+        );
+        let mut flat = Mix {
+            flat: true,
+            ..Mix::default()
+        };
+        assert!(!flat.take_room(2.666));
+        assert_eq!(flat.room, Some(2.666));
     }
 
     #[test]

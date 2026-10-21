@@ -51,7 +51,11 @@
 //! `N b^2 G (1 + G + G^2 + ...) = N b^2 G / (1 - G)` in the filtered line outputs at `w`. Each
 //! ear takes half the lines (disjoint halves, alternating signs, so the ears decorrelate), so
 //! `b^2 = 2 E / (N mean_w [G / (1 - G)])`, the mean over [`ENERGY_BANDS`] frequencies spread
-//! evenly to Nyquist, gives each ear the tail energy `E` the room asks for.
+//! evenly to Nyquist, gives each ear the tail energy `E` the room asks for. `E` is the room's
+//! energy times `level^2`, `level` the [`ReverbSettings::level`] trim times
+//! [`ReverbSettings::level_by_room`] at the mean free path of the room that network took last;
+//! a handover's new network carries its own room's level, and what a network already holds
+//! keeps the level it was fed at.
 //!
 //! The steady output for a steady input is `b^2` times a loop factor that grows with `T60`.
 //! So that a change in place never overshoots the new steady level, `b` is computed from the
@@ -60,6 +64,7 @@
 //! smoother but down to its target within the block.
 
 use crate::command::RoomTargets;
+use crate::room_curve::{RoomCurve, TAIL_KNOTS, curve_of};
 use crate::{BLOCK, RATE, SMOOTHING_SECONDS, SPEED_OF_SOUND};
 
 /// How a change of room reaches the tail's lines (module comment).
@@ -103,8 +108,11 @@ const RING: usize = REVERB_MAX_DELAY_FRAMES + BLOCK;
 pub struct ReverbSettings {
     /// The decay time at 4 kHz as a fraction of the decay time at DC.
     pub hf_ratio: f32,
-    /// Amplitude scale of the whole tail.
+    /// Amplitude scale of the whole tail, a trim on top of `level_by_room`.
     pub level: f32,
+    /// The tail's level in dB by the mean free path of the room a network takes; it multiplies
+    /// `level` where the level enters the network's input gain.
+    pub level_by_room: RoomCurve,
     /// The longest decay time the tail takes.
     pub max_t60_s: f32,
     /// How a change of room reaches the lines.
@@ -127,6 +135,7 @@ impl Default for ReverbSettings {
         Self {
             hf_ratio: 0.5,
             level: 1.0,
+            level_by_room: curve_of(&TAIL_KNOTS),
             max_t60_s: 8.0,
             lines: TailLines::Handover,
             predelay_s: 0.0,
@@ -247,6 +256,10 @@ struct Network {
     target: [u32; REVERB_LINES],
     /// The mean free path the targets were set for.
     mfp: f32,
+    /// The mean free path of the room taken last, as it arrived.
+    room_mfp: f32,
+    /// `level_by_room` at `room_mfp`, as an amplitude factor.
+    room_level: f32,
     /// Each line's low-pass state.
     lowpass: [f32; REVERB_LINES],
     /// Each line's filter at the end of the last block, `(g (1 - a), a)`, which this block's
@@ -277,6 +290,8 @@ impl Network {
             length: [REVERB_MIN_DELAY_FRAMES as f32; REVERB_LINES],
             target: [REVERB_MIN_DELAY_FRAMES as u32; REVERB_LINES],
             mfp: 0.0,
+            room_mfp: f32::NAN,
+            room_level: 1.0,
             lowpass: [0.0; REVERB_LINES],
             coef: [(0.0, 0.0); REVERB_LINES],
             t60: 1.0,
@@ -307,6 +322,7 @@ impl Network {
             *t = target_length(i, mfp);
         }
         self.mfp = mfp;
+        self.take_room_level(room.mean_free_path_m, settings);
         self.length = self.target.map(|t| t as f32);
         self.t60_target = room.t60_s.clamp(0.05, settings.max_t60_s);
         self.t60 = self.t60_target;
@@ -330,6 +346,7 @@ impl Network {
             }
             self.mfp = mfp;
         }
+        self.take_room_level(room.mean_free_path_m, settings);
         let t60 = room.t60_s.clamp(0.05, settings.max_t60_s);
         let energy = room.energy.max(0.0);
         // A longer decay with less energy: the stored tail, fed at the old level, would ring
@@ -350,6 +367,12 @@ impl Network {
         self.active |= self.energy > 0.0;
     }
 
+    /// Records the room's mean free path and the tail curve's level there.
+    fn take_room_level(&mut self, mfp: f32, settings: &ReverbSettings) {
+        self.room_mfp = mfp;
+        self.room_level = settings.level_by_room.gain_at(mfp);
+    }
+
     /// Whether any line or filter state is nonzero.
     fn holds_signal(&self) -> bool {
         self.lowpass.iter().any(|&x| x != 0.0)
@@ -357,9 +380,11 @@ impl Network {
     }
 
     /// `b` for the network's energy at decay `t60` and its current lengths:
-    /// `b^2 = 2 E level^2 / (N mean_w [G / (1 - G)])` (module comment).
+    /// `b^2 = 2 E level^2 / (N mean_w [G / (1 - G)])` (module comment), `level` the trim
+    /// times the room curve's factor at the network's room.
     fn input_gain(&self, t60: f32, settings: &ReverbSettings, band_cos: &[f32]) -> f32 {
-        let e = self.energy * settings.level * settings.level;
+        let level = settings.level * self.room_level;
+        let e = self.energy * level * level;
         if e <= 0.0 {
             return 0.0;
         }
@@ -620,6 +645,7 @@ impl Reverb {
         self.pre.set(settings.predelay_frames());
         for net in &mut self.nets {
             net.t60_target = net.t60_target.min(settings.max_t60_s);
+            net.take_room_level(net.room_mfp, &settings);
         }
     }
 

@@ -95,10 +95,12 @@ fn total_seconds() -> f64 {
     HOLD + FLIGHT + OUTSIDE + FLIGHT + HOLD
 }
 
-/// One render of the flight: `full` plays the direct path and the reflections, otherwise the
-/// output is the tail alone. Returns the output and the rooms sent, with their block.
-fn fly(world: &World, full: bool) -> (Vec<f32>, Vec<(usize, RoomTargets)>, u64) {
+/// One render of the flight at `mix`: `full` plays the direct path and the reflections,
+/// otherwise the output is the tail alone. Returns the output and the rooms sent, with their
+/// block.
+fn fly(world: &World, full: bool, mix: MixSettings) -> (Vec<f32>, Vec<(usize, RoomTargets)>, u64) {
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    mixer.set_mix(mix);
     let mut acoustics = Acoustics::new(mixer.clock());
     acoustics.set_reflections(full);
     let id = VoiceId(1);
@@ -205,12 +207,23 @@ fn worst_over_steady(
 fn flying_out_through_the_shell_and_back_never_bursts() {
     let world = chamber();
     let flight = (HOLD * FS) as usize;
-    let (tail, rooms, discarded) = fly(&world, false);
+    let flat = MixSettings::flat();
+    let (tail, rooms, discarded) = fly(&world, false, flat);
     let (tail_db, _) = worst_over_steady(&tail, flight, flight, &rooms, "tail alone");
     println!("tail alone: {discarded} fans discarded");
-    let (full, rooms, discarded) = fly(&world, true);
+    let (full, rooms, discarded) = fly(&world, true, flat);
     let (full_db, _) = worst_over_steady(&full, flight, flight, &rooms, "full output");
     println!("full output: {discarded} fans discarded");
+    // The same flight at the default room curves, printed beside the flat figures.
+    let at = MixSettings::default();
+    let (tail_d, rooms, _) = fly(&world, false, at);
+    let (tail_d_db, _) = worst_over_steady(&tail_d, flight, flight, &rooms, "defaults, tail");
+    let (full_d, rooms, _) = fly(&world, true, at);
+    let (full_d_db, _) = worst_over_steady(&full_d, flight, flight, &rooms, "defaults, full");
+    println!(
+        "over steady: tail alone {tail_db:+.2} dB flat, {tail_d_db:+.2} dB at the defaults; \
+         full output {full_db:+.2} dB flat, {full_d_db:+.2} dB at the defaults"
+    );
     assert!(
         tail_db <= BOUND_DB,
         "tail alone {tail_db:+.2} dB over steady"
@@ -239,9 +252,9 @@ fn rock_room_between_chambers(lines: TailLines) -> Vec<f32> {
     m.set_mix(MixSettings {
         reverb: ReverbSettings {
             lines,
-            ..ReverbSettings::default()
+            ..MixSettings::flat().reverb
         },
-        ..MixSettings::default()
+        ..MixSettings::flat()
     });
     m.apply(Command::SetRoom(CHAMBER));
     m.apply(Command::Play(

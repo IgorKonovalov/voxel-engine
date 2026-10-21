@@ -164,6 +164,7 @@ fn a_listener_inside_a_solid_sends_no_room() {
 fn the_fan_follows_its_cadence() {
     let room = cube(120);
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
+    mixer.set_mix(MixSettings::flat());
     let mut acoustics = Acoustics::new(mixer.clock());
     let mut listener = Listener {
         position: [60.0, 60.0, 60.0],
