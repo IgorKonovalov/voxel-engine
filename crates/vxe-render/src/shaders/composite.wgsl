@@ -11,7 +11,8 @@
 //   3  texture_2d<f32>   irradiance_in   the irradiance at each hit, rgb
 //   4  storage texture   target_tex      rgba8unorm output
 //
-// Per view: `shaded` is the Lambertian `albedo * tint * E / PI` of a hit (the cutaway's flat
+// Per view: `shaded` is the Lambertian `albedo * tint * E / PI` of a hit plus its material's
+// emission under the frame's scale (none in the cutaway view; the cutaway's flat
 // sky on a miss in that view, else black), the translucent layers composited over it, times
 // `params.exposure`, tone mapped (`Lighting::tone_map`: ACES or the identity clamp) and
 // display-encoded by `pow(c, 1 / 2.2)`; `normals` writes a hit's shading normal as
@@ -78,6 +79,9 @@ fn composite(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         let albedo = materials[rec.material * 4u].xyz * st.w;
         c = albedo * textureLoad(irradiance_in, px, 0).xyz * (1.0 / PI);
+        if ((params.flags & FLAG_CUTAWAY) == 0u) {
+            c += emission_of(rec.material);
+        }
     }
     if (rec.translucent) {
         c = layer.xyz + layer.w * c;

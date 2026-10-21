@@ -41,8 +41,8 @@ pub const ATTRIB_WGSL: &str = include_str!("shaders/attrib.wgsl");
 /// Limits to request from `adapter`: the defaults, with the storage-binding and buffer-size
 /// limits raised toward what a brick pool of `pool_bytes` needs in one shard, capped at what
 /// the adapter offers; a pool past the cap spreads over more shards (`ShardLayout`). The
-/// storage buffers per stage stay at the WebGPU default of 8: four pool shards and the four
-/// other bindings.
+/// storage buffers per stage are raised to 10: four pool shards and the six other bindings
+/// (`OTHER_STORAGE_BUFFERS`).
 pub fn limits_for(adapter: &wgpu::Adapter, pool_bytes: u64) -> wgpu::Limits {
     let offered = adapter.limits();
     let mut l = wgpu::Limits::default();

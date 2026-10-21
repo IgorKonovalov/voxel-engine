@@ -748,6 +748,7 @@ fn the_identity_tone_map_reproduces_the_single_pass_carve() {
     rig.frame.set_lighting(vxe_render::Lighting {
         exposure: 1.0,
         tone_map: vxe_render::ToneMap::Identity,
+        ..vxe_render::Lighting::default()
     });
     let img = rig.render(
         &scene_camera(),
@@ -806,4 +807,73 @@ fn an_asymmetric_view_renders_the_left_half_of_the_symmetric_one() {
     println!("asymmetric half: largest channel difference {worst}/255, {lit} lit pixels");
     assert!(lit > (half_w * HEIGHT / 4) as usize, "{lit} lit pixels");
     assert!(worst <= 2, "{worst}/255");
+}
+
+/// The golden scene with its carve under `table`.
+fn carved_world_under(table: &MaterialTable) -> World {
+    let source = scene_source();
+    let world = World::generate(source.extent, &source, table);
+    let r = world.apply(&scene_carve(&world)).unwrap();
+    assert!(!r.changed_from.is_empty(), "the carve removes rock");
+    world
+}
+
+/// A pose in the golden scene facing an ore vein: voxel (264, 120, 376), 15 degrees of yaw
+/// (found by casting rays from a 16-voxel grid of air voxels for the most ore within 60
+/// voxels and a 70-degree cone).
+fn vein_camera() -> Camera {
+    Camera {
+        position: [264.5, 120.5, 376.5].into(),
+        yaw: 15f32.to_radians(),
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    }
+}
+
+/// The carved scene from [`vein_camera`] with the lamp off, one frame (frame index 0), no
+/// filter, under `table`.
+fn dark_cave(table: &MaterialTable) -> Option<(Vec<u8>, u64)> {
+    let world = carved_world_under(table);
+    let mut rig = LookRig::new(&world, None)?;
+    rig.frame.set_lighting(vxe_render::Lighting {
+        lamp: false,
+        ..vxe_render::Lighting::default()
+    });
+    let img = rig.render(
+        &vein_camera(),
+        &LightParams::headlamp(),
+        vxe_render::LookParams::default(),
+    );
+    Some((img, rig.gpu.light_samples()))
+}
+
+/// `dark_cave.png`: the carved scene with the lamp off, lit only by its emissive ore. With the
+/// ore's emission off the same view is black in every pixel.
+#[test]
+fn dark_cave_golden_is_lit_by_its_ore_alone() {
+    let Some((lit, samples)) = dark_cave(&flythrough::with_emissive_ore(&cave_materials())) else {
+        return;
+    };
+    assert_golden("dark_cave.png", &lit);
+    let bright = lit
+        .chunks(4)
+        .filter(|p| p[..3].iter().any(|&c| c >= 16))
+        .count();
+    println!(
+        "dark_cave.png: {samples} light samples, {bright} of {} pixels at 16/255 or more, bins covering 1 %: {}",
+        WIDTH * HEIGHT,
+        bins_covering(&lit, 0.01)
+    );
+    assert!(samples > 0);
+    assert!(
+        bright > (WIDTH * HEIGHT / 20) as usize,
+        "{bright} lit pixels"
+    );
+    let (off, samples) = dark_cave(&cave_materials()).unwrap();
+    assert_eq!(samples, 0);
+    let lit_off = off.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
+    assert_eq!(
+        lit_off, 0,
+        "{lit_off} pixels are not black with the ore dark"
+    );
 }

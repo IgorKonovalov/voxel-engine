@@ -47,9 +47,16 @@ pub struct Params {
     pub lod2_r2: i32,
     /// Radiance is multiplied by this before the tone map.
     pub exposure: f32,
-    pub _pad4: [f32; 3],
+    /// Light samples from 0 to the buffer's high-water mark, which the light pass draws
+    /// candidates from ([`GpuWorld::light_span`]).
+    pub light_span: u32,
+    /// Emissive candidates per pixel ([`Lighting::candidates`]).
+    pub candidates: u32,
+    pub _pad4: u32,
 }
 
+/// `Params::lighting` bit: the headlamp lights the frame.
+pub const LIGHTING_LAMP: u32 = 1;
 /// `Params::lighting` bit: the composite's tone map is the identity clamp.
 pub const LIGHTING_IDENTITY_TONE_MAP: u32 = 1 << 6;
 
@@ -241,12 +248,16 @@ pub enum ToneMap {
     Identity,
 }
 
-/// The frame's lighting knobs that are not the lamp's: exposure and tone map.
+/// The frame's lighting knobs beside the lamp's own ([`LightParams`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Lighting {
     /// Radiance is multiplied by this before the tone map.
     pub exposure: f32,
     pub tone_map: ToneMap,
+    /// The headlamp lights the frame; off leaves emissive light alone.
+    pub lamp: bool,
+    /// Emissive candidates the light pass resamples per pixel; 0 turns emissive light off.
+    pub candidates: u32,
 }
 
 impl Default for Lighting {
@@ -254,6 +265,8 @@ impl Default for Lighting {
         Self {
             exposure: 1.0,
             tone_map: ToneMap::default(),
+            lamp: true,
+            candidates: 8,
         }
     }
 }
@@ -261,11 +274,11 @@ impl Default for Lighting {
 impl Lighting {
     /// The bits of `Params::lighting`.
     pub fn flags(&self) -> u32 {
-        if self.tone_map == ToneMap::Identity {
+        (if self.tone_map == ToneMap::Identity {
             LIGHTING_IDENTITY_TONE_MAP
         } else {
             0
-        }
+        }) | if self.lamp { LIGHTING_LAMP } else { 0 }
     }
 }
 
@@ -317,7 +330,16 @@ pub struct Frame {
     /// The per-material emission scale, an `f32` per material id, 1.0 unless set.
     emission_scale: wgpu::Buffer,
     emission_cpu: Vec<f32>,
+    /// The blue-noise texture, uploaded by the first `encode`.
+    blue_noise: wgpu::Texture,
+    blue_noise_written: std::sync::atomic::AtomicBool,
+    /// The frame index the random numbers are seeded with.
+    frame: u32,
 }
+
+/// The 128 x 128 blue-noise ranks (`assets/blue_noise_128.r8`, made by
+/// `assets/blue_noise_128.py`: void and cluster, Ulichney 1993), one byte per texel, row-major.
+const BLUE_NOISE: &[u8; 128 * 128] = include_bytes!("../assets/blue_noise_128.r8");
 
 /// Material ids the emission-scale buffer covers: every `u16`.
 const EMISSION_ROWS: usize = 1 << 16;
@@ -356,6 +378,9 @@ impl Frame {
                 storage(7),
                 storage(8),
                 storage(9),
+                storage(10),
+                storage(11),
+                sampled_texture(12, FLOAT),
             ],
         });
         let hit = Marcher::new(device, &world_layout);
@@ -418,7 +443,37 @@ impl Frame {
                 },
             ),
             emission_cpu: vec![1.0; EMISSION_ROWS],
+            blue_noise: device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("blue noise"),
+                size: wgpu::Extent3d {
+                    width: 128,
+                    height: 128,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            }),
+            blue_noise_written: std::sync::atomic::AtomicBool::new(false),
+            frame: 0,
         }
+    }
+
+    /// The frame index the next `params` seeds its random numbers with.
+    pub fn frame_index(&self) -> u32 {
+        self.frame
+    }
+
+    pub fn set_frame_index(&mut self, frame: u32) {
+        self.frame = frame;
+    }
+
+    /// Moves to the next frame index; call once per rendered frame.
+    pub fn advance(&mut self) {
+        self.frame = self.frame.wrapping_add(1);
     }
 
     /// Scales material `material`'s emission by `scale` from the next frame on: a visual
@@ -557,6 +612,9 @@ impl Frame {
             lod1_r2: (2 * self.lod.r_full).pow(2),
             lod2_r2: (4 * self.lod.r_full).pow(2),
             exposure: self.lighting.exposure,
+            light_span: world.light_span(),
+            candidates: self.lighting.candidates,
+            frame: self.frame,
             ..Params::default()
         }
     }
@@ -574,6 +632,22 @@ impl Frame {
         timer: Option<&PassTimer>,
     ) {
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(params));
+        if !self
+            .blue_noise_written
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            queue.write_texture(
+                self.blue_noise.as_image_copy(),
+                BLUE_NOISE,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(128),
+                    rows_per_image: Some(128),
+                },
+                self.blue_noise.size(),
+            );
+        }
+        let noise = view(&self.blue_noise);
         let t = &self.targets;
         let world_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("world"),
@@ -588,6 +662,12 @@ impl Frame {
                 buffer_entry(3, world.table()),
                 buffer_entry(4, world.materials()),
                 buffer_entry(6, world.masks()),
+                buffer_entry(10, world.light_buffer()),
+                buffer_entry(11, &self.emission_scale),
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: wgpu::BindingResource::TextureView(&noise),
+                },
             ],
         });
         let (pos, info, layer, irr, out) = (

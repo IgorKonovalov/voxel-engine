@@ -211,9 +211,9 @@ struct ChunkLights {
 pub const POOL_PAGE_SLOTS: u32 = 4096;
 /// Most storage buffers the pool is sharded over.
 pub const MAX_SHARDS: u32 = 4;
-/// Storage buffers the marcher binds besides the pool shards: masks, records, table,
-/// materials.
-pub const OTHER_STORAGE_BUFFERS: u32 = 4;
+/// Storage buffers the frame's passes bind besides the pool shards: masks, records, table,
+/// materials, light samples and the emission scale.
+pub const OTHER_STORAGE_BUFFERS: u32 = 6;
 /// Bytes of one pool slot: a narrow brick's 512 palette indices, or half a wide brick.
 pub const SLOT_BYTES: u64 = BRICK_VOXELS as u64;
 /// Pool slots per group of the mask buffer.

@@ -212,3 +212,129 @@ fn a_chunk_over_the_cap_keeps_every_kth_sample() {
     let every_second: Vec<LightSample> = all.iter().step_by(2).copied().collect();
     assert_eq!(kept, every_second);
 }
+
+/// One chunk of rock with a closed box of air, interior x and y `[22, 42)`, z `[20, 30)`,
+/// whose whole ceiling (the layer z = 30 above the interior) is `glow`.
+fn ceiling_box(table: &MaterialTable, glow: MaterialId) -> World {
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &UniformSource(flythrough::cave::ROCK),
+        table,
+    );
+    world
+        .apply(&box_op([22, 22, 20], [42, 42, 30], Mode::Carve))
+        .unwrap();
+    world
+        .apply(&box_op(
+            [22, 22, 30],
+            [42, 42, 31],
+            Mode::Replace {
+                from: flythrough::cave::ROCK,
+                to: glow,
+            },
+        ))
+        .unwrap();
+    world
+}
+
+/// The closed box lit by its emissive ceiling (emission `[1, 1, 1]`), the lamp off and no
+/// filter: the irradiance at the floor's centre, averaged over 64 frames read back one by one,
+/// is within 5 % of `E = PI L F = 1.741`, the form factor of a point at the centre of a
+/// 2h x 2h rectangle at distance h being `4 x 0.13853 = 0.5541`.
+#[test]
+fn an_emissive_ceiling_gives_the_analytic_irradiance_at_the_floor_centre() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let (table, glow, _) = glow_table();
+    let world = ceiling_box(&table, glow);
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.sync(&world, &queue).unwrap();
+    println!(
+        "{} light samples over a span of {}",
+        gpu.light_samples(),
+        gpu.light_span()
+    );
+    // A 1 x 1 target: the pixel's ray is the camera's axis, straight down at (32, 32, 20).
+    let camera = vxe_render::Camera {
+        position: [32.0, 32.0, 29.0].into(),
+        yaw: 0.0,
+        pitch: -std::f32::consts::FRAC_PI_2,
+        vfov: 0.5,
+    };
+    let mut frame = vxe_render::Frame::new(&device, 1, 1);
+    frame.set_lighting(vxe_render::Lighting {
+        lamp: false,
+        ..vxe_render::Lighting::default()
+    });
+    let light = vxe_render::LightParams::headlamp();
+    let mut sum = 0.0f64;
+    let mut readings = Vec::new();
+    for i in 0..64 {
+        frame.set_frame_index(i);
+        frame.render(&device, &queue, &gpu, &camera, &light);
+        let hit = readback::read_buffer(
+            &device,
+            &queue,
+            &hit_pos_buffer(&device, &queue, &frame),
+            0,
+            16,
+        );
+        if i == 0 {
+            let p: Vec<f32> = hit
+                .chunks(4)
+                .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+                .collect();
+            println!("hit at {:?}", &p[..3]);
+            assert!(
+                (p[2] - 20.0).abs() < 1e-3 && (p[0] - 32.0).abs() < 1e-3,
+                "{p:?}"
+            );
+        }
+        let e = readback::read_rgba16f(&device, &queue, frame.irradiance())[0];
+        assert!(
+            (e[0] - e[1]).abs() < 1e-3 && (e[1] - e[2]).abs() < 1e-3,
+            "{e:?}"
+        );
+        readings.push(e[0]);
+        sum += f64::from(e[0]);
+    }
+    let mean = sum / 64.0;
+    let analytic = std::f64::consts::PI * 4.0 * 0.13853;
+    println!(
+        "floor centre irradiance over 64 frames: mean {mean:.4} against {analytic:.4} ({:+.2} %); first frames {:?}",
+        (mean / analytic - 1.0) * 100.0,
+        &readings[..8]
+    );
+    assert!((mean / analytic - 1.0).abs() <= 0.05, "{mean:.4}");
+}
+
+/// The hit buffer's position texture copied into a buffer of one texel (the target is 1 x 1).
+fn hit_pos_buffer(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    frame: &vxe_render::Frame,
+) -> vxe_render::wgpu::Buffer {
+    use vxe_render::wgpu;
+    let buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: 256,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let mut enc = device.create_command_encoder(&Default::default());
+    enc.copy_texture_to_buffer(
+        frame.hit_positions().as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buf,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(256),
+                rows_per_image: Some(1),
+            },
+        },
+        frame.hit_positions().size(),
+    );
+    queue.submit([enc.finish()]);
+    buf
+}

@@ -35,6 +35,12 @@
 //   7  storage  brick_pool1    pool shard 1
 //   8  storage  brick_pool2    pool shard 2
 //   9  storage  brick_pool3    pool shard 3
+//  10  storage  light_samples  [sample]vec4<i32>: an exposed emissive voxel's world coordinate,
+//                              then its material (bits 0..16) and the faces it shows (bit
+//                              16 + 2 k toward -k, the next toward +k); material 0 is a hole.
+//                              Declared by light.wgsl
+//  11  storage  emission_scale [material]f32, the frame's emission scale
+//  12  texture  blue_noise     128 x 128 r8unorm blue noise (void and cluster)
 //
 // Bindings, group 1 (the hit pass's outputs, the hit buffer):
 //   0  storage texture  hit_pos_out    rgba32float: the hit's world position (voxels) and t;
@@ -145,9 +151,9 @@ struct Params {
     lod1_r2: i32,
     lod2_r2: i32,
     exposure: f32,
-    _pad4: f32,
-    _pad5: f32,
-    _pad6: f32,
+    light_span: u32,
+    candidates: u32,
+    _pad4: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -159,6 +165,8 @@ struct Params {
 @group(0) @binding(7) var<storage, read> brick_pool1: array<u32>;
 @group(0) @binding(8) var<storage, read> brick_pool2: array<u32>;
 @group(0) @binding(9) var<storage, read> brick_pool3: array<u32>;
+@group(0) @binding(11) var<storage, read> emission_scale: array<f32>;
+@group(0) @binding(12) var blue_noise: texture_2d<f32>;
 @group(1) @binding(0) var hit_pos_out: texture_storage_2d<rgba32float, write>;
 @group(1) @binding(1) var hit_info_out: texture_storage_2d<rgba16uint, write>;
 @group(1) @binding(2) var layer_out: texture_storage_2d<rgba16float, write>;
@@ -209,6 +217,7 @@ const PAGE_SLOTS: u32 = 4096u;
 const ATTR_PAGE_BRICK_SLOTS: u32 = 1364u;
 const NO_PLANE: u32 = 0xFFFFu;
 // Params.lighting bits.
+const LIGHTING_LAMP: u32 = 1u;
 const LIGHTING_IDENTITY_TONE_MAP: u32 = 64u;
 // Hit record flags.
 const HIT_FOUND: u32 = 1u;
@@ -1134,6 +1143,39 @@ fn shadow_normal_of(rec: HitRecord, d: vec3<f32>) -> vec3<f32> {
         return -d;
     }
     return select(vec3<f32>(0.0), vec3<f32>(-sign(d[rec.axis])), axis_mask(rec.axis));
+}
+
+// A 32-bit integer hash (Wellons' lowbias32).
+fn hash_u32(x: u32) -> u32 {
+    var h = x;
+    h ^= h >> 16u;
+    h *= 0x7feb352du;
+    h ^= h >> 15u;
+    h *= 0x846ca68bu;
+    h ^= h >> 16u;
+    return h;
+}
+
+// Random number `dim` of pixel `px` in this frame, in [0, 1). The blue-noise texel at `px`
+// shifted by an offset hashed from `dim` (blue in space), plus a Weyl rotation by the frame
+// times a per-dimension multiple of the golden ratio in 32-bit fixed point (low-discrepancy
+// in time). A function of (pixel, frame, dim) alone, so a frame is deterministic on one
+// adapter.
+fn rand(px: vec2<u32>, dim: u32) -> f32 {
+    let h = hash_u32(dim * 0x9E3779B9u + 0x632BE5ABu);
+    let at = (px + vec2<u32>(h & 127u, (h >> 7u) & 127u)) & vec2<u32>(127u);
+    let texel = u32(textureLoad(blue_noise, vec2<i32>(at), 0).x * 255.0 + 0.5);
+    let v = (texel << 24u) + params.frame * (0x9E3779B9u * (dim + 1u)) + ((h >> 14u) & 0xFFFFFFu);
+    return f32(v >> 8u) / 16777216.0;
+}
+
+fn luminance(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+// A material's emitted radiance under the frame's emission scale.
+fn emission_of(m: u32) -> vec3<f32> {
+    return materials[m * 4u + 1u].xyz * emission_scale[m];
 }
 
 @compute @workgroup_size(8, 8, 1)
