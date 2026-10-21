@@ -1,6 +1,6 @@
 # 0031: Edit cost, third pass: a profile of the planar path, then its largest shares, to put the `B` line back under 2 ms
 
-> **Status:** in-progress (2026-10-21)
+> **Status:** in-progress (2026-10-21): every phase implemented; awaiting the close review
 > **Created:** 2026-10-21
 > **Milestone:** M1's edit-cost line in `docs/roadmap.md` (`nfr.md` §4; the "one more
 > optimization pass" the owner planned on 2026-10-20 when the line was raised to 2.2 ms)
@@ -206,7 +206,7 @@ No GPU figure moves; nothing here runs on an adapter.
 | 1: The stage table and the profile | dev | done | a49c6a1 |
 | 2: The first lever | dev | done | f3e2623 |
 | 3: The second lever | dev | done | 8dad5ca |
-| 4: The quiet-box readings and the line | dev | waiting for a quiet box | |
+| 4: The quiet-box readings and the line | dev | done | committed with this row |
 
 ### Notes
 
@@ -284,22 +284,50 @@ No GPU figure moves; nothing here runs on an adapter.
   share (27 %) less 3 %. The stage was the per-row visit of each brick row's rows, which each
   brick still makes; one walk per op removes only the repeat per chunk along `x` and the
   brick-row copy (Phase 3 commit).
-- Resume (Phase 4, delete when it lands): stopped for a quiet box; the box read load 7 to 18
-  with other lanes through Phases 1 to 3. The 2796062 tree is built under
-  `target/pair/2796062` (edits, replay, tick benches, release fly-through). Loaded
-  single-shot `B` lines at load 14 to 15, alternated: 2796062 1.69, 1.73, 1.64 ms; 8dad5ca
-  1.22, 1.11, 2.00 ms; carve counts equal (rock 340502, ore 126).
 - Phase 3: full workspace nextest 555 passed, 4 skipped (Phase 3 commit).
+- Phase 4: the readings are added to `nfr.md` §4's cost, replay and tick bullets beside the
+  earlier ones, not in place of them; the §4 line (2.2 ms) is unchanged, at the
+  orchestrator's instruction, for the owner's decision (Phase 4 commit).
+- Phase 4: 2796062's tree read 1.32 ms `worst` and a 1.49 to 1.54 ms `B` line in this window,
+  against 1.79 ms and 2.06 to 2.09 ms at `nfr.md`'s re-read (Phase 4 commit).
+- Phase 4: two runs were aborted by the pre-run check (a `kworker` at 63 %, `chromium` at
+  78 %, an `omarchy` script at 100 %, each gone within seconds) and rerun; the script waits
+  for the 1-minute load to fall under 2 before each run (Phase 4 commit).
+- Followup noticed: the `tool` case (3.58 ms) carries the capsule's lazy `row_span` solves in
+  `clip`; no stage table was read for it.
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature (a feature-gated stage timer and bench arm) and two perf changes
+  to the op path.
+- **Public API changed:** none in the default build. Under feature `edit-stages`:
+  `#[doc(hidden)] World::apply_staged` and `#[doc(hidden)] EditStages`. New cargo feature
+  `edit-stages` on `vxe-world`.
+- **Budget readings** (dev reference, AMD Ryzen 9 5900HS, on AC, performance profile and
+  governor, 8dad5ca, exclusive perf lock, 1-minute load 0.48 to 1.98 and no process above
+  7 % CPU before each run, three runs alternated with 2796062, criterion medians):
+  - §4 `worst_warm` 0.765 / 0.775 / 0.776 ms (2796062: 1.316 / 1.319 / 1.338); `worst`
+    0.766 / 0.774 / 0.774 ms (1.318 / 1.316 / 1.337).
+  - §4 fly-through `B` line 1.00 / 0.99 / 0.99 ms (2796062: 1.49 / 1.49 / 1.54).
+  - §4 `mixed` 0.622 / 0.628 / 0.630 ms (1.044 / 1.047 / 1.055); `tool` 3.585 / 3.578 /
+    3.590 ms (4.282 / 4.194 / 4.217); `tool_warm` 3.585 / 3.586 / 3.590 ms (4.284 / 4.195 /
+    4.219).
+  - Replay 61.29 / 61.29 / 61.20 ms (103.16 / 102.64 / 103.19).
+  - Tick overhead 70.3 / 63.3 / 69.1 us per 100 inputs (64.7 / 63.5 / 70.4); grid updates
+    77.2 / 84.6 / 73.0 us (88.9 / 86.0 / 78.3).
+  - The Phase 4 bars: the `B` line under 2.0 ms and `worst_warm` at most 1.6 ms in three
+    runs each are met; the §4 line is 2.2 ms and unchanged. Owner question: does §4's line
+    return to 2.0 ms on the dev box?
+- **Gate at the tip:** `cargo build` exit 0; `cargo nextest run --workspace` (after
+  `scripts/build-guests.sh`) 555 passed, 4 skipped, exit 0 at 8dad5ca; `cargo test --doc
+  --workspace` exit 0 at Phase 1; `cargo clippy --workspace --all-targets -- -D warnings`
+  and `cargo clippy -p vxe-world --all-targets --features edit-stages -- -D warnings` exit 0;
+  `cargo fmt --all --check` exit 0; `cargo deny check` exit 0 (advisories, bans, licenses,
+  sources ok); `check-doc-links` 200 links resolve, `check-comment-hygiene` OK,
+  `check-index-rows` OK.
+- **Outstanding `human` phases:** none.
 
 ## Followups
 

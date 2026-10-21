@@ -455,6 +455,20 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   is unexplained. The fly-through `B` line reads **2.06, 2.07 and 2.09 ms**, over 2 ms and
   under **2.2 ms, the line the owner set on 2026-10-20**. One more optimization pass is
   planned; no baseline-GPU reading.
+  **Quiet-box reading at the Plan 0031 tip (dev reference, AMD Ryzen 9 5900HS, on AC with the
+  performance profile and governor, 8dad5ca, exclusive perf lock, 1-minute load 0.48 to 1.98
+  and no other process above 7 % CPU before every run, three runs alternated with 2796062's
+  tree, criterion medians):** `worst` 0.766, 0.774 and 0.774 ms against 1.318, 1.316 and
+  1.337 ms; `worst_warm` 0.765, 0.775 and 0.776 ms against 1.316, 1.319 and 1.338 ms;
+  `mixed` 0.622, 0.628 and 0.630 ms against 1.044, 1.047 and 1.055 ms; `tool` 3.585, 3.578
+  and 3.590 ms against 4.282, 4.194 and 4.217 ms; `tool_warm` 3.585, 3.586 and 3.590 ms
+  against 4.284, 4.195 and 4.219 ms. The fly-through `B` line (`--level --seed 1 --headless
+  --bench 1 --frames 1`) reads **1.00, 0.99 and 0.99 ms** against 1.49, 1.49 and 1.54 ms for
+  2796062 in the same window, the same carve counts on both. 2796062 read 1.79 ms `worst`
+  and a 2.06 to 2.09 ms `B` line at the re-read above; the gap to its 1.32 and 1.49 to 1.54
+  ms here is machine state, not code. The planar kernel is unchanged; the op path builds each
+  brick's shape words straight from row spans solved once per op (Plan 0031). The line above
+  is unchanged; the owner decides it after this reading. No baseline-GPU reading.
 - **Results** are returned synchronously with the edit, per material, exact.
 - **Stamp cost (proposals, Plan 0008):** a 16³ prefab stamp (the shelled box `Prefab::vault`)
   into solid rock costs under 100 µs, and a 64³ all-written prefab under 5 ms, both including
@@ -504,6 +518,9 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   0007 Phase 6, exclusive perf lock, 1-minute load 1.45):** `cargo bench -p vxe-world --bench
   replay`, decode plus replay of a 470 060-byte log file of 10 000 radius-1 m carves on a
   solid 4³-chunk world: 279.07 ms (CI 278.48 to 279.70 ms), about 35 800 ops per second.
+  **Quiet-box reading at the Plan 0031 tip (8dad5ca, same machine and protocol as §4's Plan
+  0031 reading, three runs alternated with 2796062):** 61.29, 61.29 and 61.20 ms (about
+  163 000 ops per second) against 103.16, 102.64 and 103.19 ms.
 - **Tick overhead:** 100 inputs through one server tick and one shared-client poll cost at
   most 100 µs more than applying the same 100 ops directly (budget since the Plan 0007 close,
   backed by the reading below).
@@ -531,6 +548,13 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   carves with grid updates 1.9072 ms (CI 1.9055 to 1.9089 ms), direct carves alone 1.7929 ms.
   The overhead is **94.0 µs per 100 inputs**, under the 100 µs line with 6 µs to spare; the
   loaded readings above understated it.
+  **Quiet-box reading at the Plan 0031 tip (8dad5ca, same machine and protocol as §4's Plan
+  0031 reading, three runs alternated with 2796062):** through `EchoLogic` 0.9284, 0.9280 and
+  0.9264 ms; direct carves with grid updates 0.8581, 0.8647 and 0.8573 ms; direct carves alone
+  0.7809, 0.7801 and 0.7843 ms. The overhead is **70.3, 63.3 and 69.1 µs per 100 inputs**
+  against 64.7, 63.5 and 70.4 µs for 2796062 in the same window (1.4913 / 1.4266 / 1.3377,
+  1.4821 / 1.4186 / 1.3326 and 1.4871 / 1.4167 / 1.3384 ms); the grid updates 77.2, 84.6 and
+  73.0 µs against 88.9, 86.0 and 78.3 µs.
 - **Component boundary (budgets since the Plan 0011 close):** a host call from a logic
   component (the `apply` import of a radius-1 m carve: the op's wire bytes out, the tagged
   answer back) costs at most 2 µs more than a native `Host::apply`; the fly-through's `Bench`
