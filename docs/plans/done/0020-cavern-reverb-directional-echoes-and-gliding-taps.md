@@ -1,9 +1,12 @@
 # 0020: Cavern reverb: a late tail sized by the room the listener sees, echoes from their walls, taps that glide, and the player's own voice in the cave
 
-> **Status:** in-progress
+> **Status:** done (closed 2026-10-21, v0.24.0). Verdict: closed with one recorded miss, the
+> mixer's absolute budget (loaded-box readings 0.6897 ms static and 1.1441 ms turning against 0.6
+> and 1.0 ms, accepted by the owner; a quiet-box reading is a followup); the levels and the tail's
+> handover settled by ear and recorded in ADR-0021; the 12 m echo knot re-pick is a followup.
 > **Created:** 2026-10-17
 > **Milestone:** M4 in `docs/roadmap.md`
-> **Related ADRs:** [ADR-0015](../adrs/0015-late-reverb-as-a-shared-fdn-from-a-listener-ray-fan.md) (the tail, the fan, the skin-depth rule, the direction buses), ADR-0006 (mixer on the callback, probes on the caller's thread), [ADR-0020](../adrs/0020-paired-mixer-bench-bounds-read-with-loops-aligned.md) (paired mixer-bench bounds read with loops aligned), [ADR-0021](../adrs/0021-echo-and-tail-levels-by-room-size-curves-and-a-tail-handed-between-two-networks.md) (the room curves and the tail's handover; supersedes ADR-0015's level and room-change clauses)
+> **Related ADRs:** [ADR-0015](../../adrs/0015-late-reverb-as-a-shared-fdn-from-a-listener-ray-fan.md) (the tail, the fan, the skin-depth rule, the direction buses), ADR-0006 (mixer on the callback, probes on the caller's thread), [ADR-0020](../../adrs/0020-paired-mixer-bench-bounds-read-with-loops-aligned.md) (paired mixer-bench bounds read with loops aligned), [ADR-0021](../../adrs/0021-echo-and-tail-levels-by-room-size-curves-and-a-tail-handed-between-two-networks.md) (the room curves and the tail's handover; supersedes ADR-0015's level and room-change clauses)
 > **Prerequisite:** Plan 0006 closed. Its open finding (clicks while the listener moves) transfers here as Phase 1; this plan changes the tap semantics Plan 0006's Phase 4 tests pin, so the close review of 0006 runs first, against the tree as it stands.
 > **References:** `docs/references/room-acoustics.md`
 > **Amended:** 2026-10-20, inside Phase 1 (its code on 919cb63), from the resume notes and the

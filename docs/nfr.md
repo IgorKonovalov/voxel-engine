@@ -824,9 +824,19 @@ protocol above. Other benches keep default-flag paired readings unless their pla
 - **Determinism:** `World::trace_materials` is integer and its 500-ray hash is pinned in
   `crates/vxe-world/tests/queries.rs` on both arms; nothing else in `vxe-audio` is
   deterministic by contract (§6).
-- **Plan 0020 (the late tail, sixteen direction buses, the room fan, gliding taps).**
-  Proposals: mixer block, 32 HRTF voices, static at most 0.6 ms and turning at most 1.0 ms;
-  `Acoustics::update`, 32 sources with a 16-ray fan slice, at most 1.1 ms. **Readings, dev box,
+- **Plan 0020 (the late tail, sixteen direction buses, the room fan, gliding taps; closed
+  2026-10-21, v0.24.0).** Proposals: mixer block, 32 HRTF voices, static at most 0.6 ms and
+  turning at most 1.0 ms; `Acoustics::update`, 32 sources with a 16-ray fan slice, at most
+  1.1 ms. **Readings at the close (recorded misses, accepted by the owner 2026-10-21; a
+  quiet-box re-read is a followup, then a mixer optimisation if it stays over):** the shipped
+  code (Phase 13, c85bac5), default build, dev box, release, exclusive perf lock, median of
+  three runs at load average 4.6 to 9.3 with other processes near 100 % CPU: mixer static
+  0.6897 ms, turning 1.1441 ms; with the direct delay on, 0.8011 and 1.2577 ms. The same code
+  aligned (ADR-0020, load 3.2 to 5.5): 0.657 and 1.110 ms. `Acoustics::update` at Phase 9's
+  rays (100 m range, load 13.6 to 9.8): 0.7370 ms. Audio RAM printed by the mixer bench: echo
+  lines 116 224 B per voice (7 438 336 B for the 64-voice pool, 600 ms), two tail networks
+  3 616 768 B, the pre-delay line 39 424 B, buses 24 512 B, tap slots 8 192 B. **Earlier
+  readings, dev box,
   release, exclusive perf lock, vxe-audio and both benches as at d7eb1f8, 2026-10-20; the box
   was not quiet (1-minute load average 1.87 to 2.98, and other processes above 7 % CPU: one at
   86 %, two at 37 %), so they read high against the protocol above:** mixer static 0.5078 ms

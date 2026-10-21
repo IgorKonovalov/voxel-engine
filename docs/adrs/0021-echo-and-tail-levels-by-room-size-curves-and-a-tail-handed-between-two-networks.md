@@ -1,8 +1,8 @@
 # ADR-0021: Echo and tail levels follow listening-fitted curves of the room's mean free path, and a room change hands the tail to a second network
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-21)
 > **Date:** 2026-10-21
-> **Related plan(s):** [Plan 0020](../plans/0020-cavern-reverb-directional-echoes-and-gliding-taps.md) Phases 7 to 14
+> **Related plan(s):** [Plan 0020](../plans/done/0020-cavern-reverb-directional-echoes-and-gliding-taps.md) Phases 7 to 14
 > **Supersedes in part:** ADR-0015's level clauses (the tail's energy as Kuttruff's room
 > constant against a unit direct impulse, the echoes at `keep / path` alone) and its
 > room-change clause (one network whose lines glide). ADR-0015's structure stands: one shared

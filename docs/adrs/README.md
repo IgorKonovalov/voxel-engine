@@ -29,13 +29,13 @@ the status.
 | [0012](0012-mask-first-brick-with-per-brick-palette-planes.md) | A brick is occupancy masks plus a per-brick palette in bit planes, the same bytes on the CPU and in the mirror | accepted; CPU format in by Plan 0021 (Outcome addendum) |
 | [0013](0013-mirror-reserves-its-vram-budget-up-front.md) | The mirror reserves its VRAM budget up front and never reallocates | accepted |
 | [0014](0014-prefab-identity-in-the-op-log.md) | A stamp op names its prefab by content id, and a save carries the prefabs it names | accepted |
-| [0015](0015-late-reverb-as-a-shared-fdn-from-a-listener-ray-fan.md) | Late reverb is one listener-shared feedback delay network driven by a ray fan from the listener; early echoes render from their wall's direction | accepted |
+| [0015](0015-late-reverb-as-a-shared-fdn-from-a-listener-ray-fan.md) | Late reverb is one listener-shared feedback delay network driven by a ray fan from the listener; early echoes render from their wall's direction | accepted; level and room-change clauses superseded by ADR-0021 |
 | [0016](0016-a-falling-region-crushes-the-sub-threshold-voxels-in-its-path.md) | A falling region crushes the sub-threshold voxels in its path | accepted (Plan 0022); amends ADR-0008's drop clause |
 | [0017](0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md) | The mirror's CPU work stays in the frame loop, bounded per frame, with narrowing on the stream workers | accepted; worker narrowing not built (Outcome) |
 | [0018](0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md) | Direct light is one sample per pixel from a hit buffer, denoised by an SVGF-family filter whose history dies where the world was edited | proposed (Plan 0024) |
 | [0019](0019-gamepad-input-as-generic-axes-in-the-shell-fed-by-the-testbed.md) | Gamepad input is generic axes and pad buttons in the shell's `Input`, fed by the testbed's own gilrs | accepted |
 | [0020](0020-paired-mixer-bench-bounds-read-with-loops-aligned.md) | A paired mixer-bench bound is read with both builds' loops aligned to 64 bytes | accepted |
-| [0021](0021-echo-and-tail-levels-by-room-size-curves-and-a-tail-handed-between-two-networks.md) | Echo and tail levels follow listening-fitted curves of the room's mean free path, and a room change hands the tail to a second network | proposed (Plan 0020) |
+| [0021](0021-echo-and-tail-levels-by-room-size-curves-and-a-tail-handed-between-two-networks.md) | Echo and tail levels follow listening-fitted curves of the room's mean free path, and a room change hands the tail to a second network | accepted (Plan 0020) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

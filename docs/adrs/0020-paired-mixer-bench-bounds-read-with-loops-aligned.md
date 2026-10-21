@@ -2,7 +2,7 @@
 
 > **Status:** accepted
 > **Date:** 2026-10-21
-> **Related plan(s):** [Plan 0020](../plans/0020-cavern-reverb-directional-echoes-and-gliding-taps.md) Phase 13 (the bound that raised it)
+> **Related plan(s):** [Plan 0020](../plans/done/0020-cavern-reverb-directional-echoes-and-gliding-taps.md) Phase 13 (the bound that raised it)
 
 ## Context
 
