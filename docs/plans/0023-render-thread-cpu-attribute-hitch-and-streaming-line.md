@@ -468,8 +468,8 @@ normals for at most 250 ms". The pass's GPU time stays a recorded figure here. P
 | 2: The shell visits only full neighbours | dev | done: eviction case 50 986 neighbour lookups, 0 shell visits, 0 items; the Phase 1 builder kept as `tests::reference` (its eviction case still reads 956 968 visits); oracle over 64 seeds equal as sorted `(slot, origin)` sets, with and without the other two change sets, 32 046 shell-only items in total; `vxe-render` 66 of 66; bench medians (exclusive perf lock, load 13.71): eviction frame 1.399 ms (Phase 1: 170.89), promotion frame 7.493 ms (Phase 1: 6.332) | 2f66b83 |
 | 3: Capped attribute pass with carry-over | dev | done: `MirrorConfig::attr_cap` (`new` leaves it `usize::MAX`; the fly-through's streaming mirror sets 8192); clear items flagged by `attrib::CLEAR_BIT` (bit 31); lavapipe cases at cap 64 on the 2 x 2 x 1 floor: K = 256, first call 64 compute and 192 clear items, the 192 waiting bricks read all `0xFF`, 4 = ceil(256 / 64) calls, then attribute bytes equal the uncapped mirror's; a carve with 192 waiting has the carved brick and its `Full` neighbours in the next list; a brick freed while waiting, its slot taken by the brick above, ends equal to the uncapped mirror; `vxe-render` 69 of 69, workspace 469 of 469; one default flight (load 14.60, not a reading): `buffer builds: 1 after the first flight frame, 1 at the end`, hash match | 7aabc21 |
 | 4: Incremental queue, sweep and window shift | dev | done: the 300-step walk (r_full 3, r_lod 5, h 1; 295 unit steps over all 26 directions, jumps at 60, 120, 180, 240, `set_radii(2, 4)` at 150) ran 295 queue and 294 sweep oracle checks, equal to the full rebuild and scan; dropping the entering-full shell or the keep-full sweep shell fails it; `the_window_slab_finds_the_chunks_the_key_filter_finds` over 50 shifts; workspace 471 of 471; flights at the tip's code (exclusive perf lock, not quiet): `update` max default 4.749 ms (Phase 1: 37.847), plain 2.350 (15.908); `poll` max default 48.503 (27.344), plain 24.389 (24.866); readings in Notes | b6414e8 |
-| 5: Narrowing and staging on the workers | dev | stopped at the entry condition: on the plain profile at b6414e8, `queue.write_buffer` is 41.8 % of the render thread's samples under `GpuWorld::sync`, narrowing (palette scan, `upload_brick`, `stage`) at most 43.0 % and about 38 % by source line; nothing implemented; profile in Notes | committed with this row |
-| 6: Readings against the bars | dev | not started | |
+| 5: Narrowing and staging on the workers | dev | skipped (owner, 2026-10-21): write_buffer 41.8 % led narrowing ~38 % | 8f2847d (entry profile) |
+| 6: Readings against the bars | dev | done: four flights, default, plain, default, plain, each started at a 1-minute load under 2 under the exclusive perf lock; met: the GPU-credited frame bar, carry-over age, hash match; missed: `update_attrs` p99, streaming p50 (3 of 4 runs), streaming max (4 of 4), plain residency p95 (2 of 2); readings in Close triggers | committed with this row |
 | 7: The owner's windowed flight | human | not started | |
 
 ### Notes
@@ -571,6 +571,19 @@ each. Empty is fine.)_
   dwarf profile of a plain flight at the same code (start load 4.22, 649 160 samples) gave a
   call chain for 8964 of the render thread's 36 845 samples, and for 40 of the 5003 whose
   leaf is in `libc`. The shares are of the whole flight's samples, not of `sync`'s p50 frame.
+- **Phase 5 decision (owner, 2026-10-21):** option (a), skip Phase 5 and run Phase 6 on the
+  Phase 4 code. Nothing of Phase 5 is implemented.
+- **Phase 6 deviation.** The autopilot's `frame bar` line (`T`, `G`, `F_d`, `F_d*`) is new in
+  `apps/flythrough/src/main.rs`, outside Phase 6's file list; it lands in the Phase 6 commit.
+- **Phase 6 quiet-box protocol.** Every start read a 1-minute load under 2, but another
+  process was above 7 % CPU at each start (`ps` lifetime averages: python3 97.3 and 81.1 %,
+  then game.exe 88.6 to 90.6 %). End loads read 7.34 to 10.01.
+- **Phase 6, the default look's residency.** Both default runs lowered `r_full` to 12 of 16
+  under mirror pressure (4 radius changes, peak pressure 0.9114) and mirrored about 39 900
+  chunks, against plain's 73 000 at `r_full` 16; the default flew 5904 and 6616 frames against
+  plain's 3054 and 3442, and 5894 of 5904 and 6606 of 6616 of its frames read unready-near.
+- **Phase 6, the cap.** In both default runs the work list's max (7669, 7673) stayed under
+  `attr_cap` 8192: no brick waited, no clear item was issued.
 - **Followups noticed.** In the plain dwarf profile, `flythrough::Run::draw` is 16.65 % of
   the render thread's self time, 67 % of it at hashbrown's `equality.rs:157`, and
   `Streamer::stats` is 5.80 %. Neither is in this plan's scope.
@@ -579,11 +592,50 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature. Phases 1 to 4 and 6; Phase 5 skipped by the owner.
+- **Public API changed:**
+  - `vxe-render`: new module `attr_work` (`MirrorView`, `AttrWorkStats`, `build`,
+    `build_split`), re-exported `AttrWorkStats` and `MirrorView`;
+    `MirrorConfig::attr_cap` (new field, `usize::MAX` in `new`); `GpuWorld::prepare_attrs`,
+    `encode_attrs`, `attr_stats`, `attr_list`, `attr_queue_age`, `attr_buffer_builds`;
+    `update_attrs` returns compute plus clear items; `attrib::CLEAR_BIT`,
+    `AttribPass::reserve`.
+  - Shader interface: `attrib.wgsl`'s work item, bit 31 of the slot word marks a clear item.
+  - `vxe-world`: `Streamer::set_incremental_oracle` and `oracle_checks`, `#[doc(hidden)]`.
+- **Budget readings** (dev box, the RTX 3080 laptop; code of the Phase 6 commit, built as
+  8f2847d plus the `frame bar` line; `flythrough --autopilot --headless --seed 1`, plain with
+  `--look plain`; exclusive perf lock; start loads 1.82, 1.87, 1.95, 1.98 in run order D1,
+  P1, D2, P2):
+  - `nfr.md` §2 streaming line, 1.0 ms: p50 D1 1.862, P1 5.513, D2 0.006, P2 4.977 ms
+    (bar met in D2 only); p99 20.974, 42.670, 18.370, 33.217 ms (recorded); max 57.809,
+    70.856, 47.993, 61.588 ms (bar 16 ms, missed in all four). Stages (p50 / p99 / max ms):
+    `sync` D1 1.209 / 14.041 / 26.307, P1 5.348 / 19.708 / 40.618, D2 0.004 / 13.433 / 24.826,
+    P2 4.939 / 17.299 / 36.880; `poll` max 21.905, 30.548, 18.844, 22.200; `update` max
+    1.787, 3.178, 2.021, 2.787.
+  - §2 attribute pass, render-thread CPU (proposed line): `update_attrs` p99 D1 8.235, D2
+    7.356 ms (bar 4 ms, missed by 4.235 and 3.356 ms); max 16.134, 14.553 ms; list build p99
+    8.056, 7.063 ms. Carry-over age max 0.0 and 0.0 ms (bar 250 ms, met).
+  - §2 frame rate, GPU-credited (bar `F_d* >= 0.95 F_p`): D1 `T` 59 990.8 ms, `G` 2543.5 ms,
+    `F_d` 5904, `F_d*` 6165.4 against P1's 3054 (bar 2901.3, met); D2 `T` 60 012.0, `G`
+    2369.5, `F_d` 6616, `F_d*` 6888.0 against P2's 3442 (bar 3269.9, met). Raw `F_d` against
+    `F_p`: 5904 / 3054, 6616 / 3442.
+  - Attribute pass GPU (recorded): p50 / p99 / max D1 1.683 / 3.580 / 4.118 ms over 1537
+    frames with work, D2 1.418 / 3.299 / 3.867 ms over 1536. Work list p50 / p99 / max D1
+    0 / 5348 / 7669, D2 0 / 5325 / 7673 bricks.
+  - §5 residency latency, plain p95 (bar at most 381 ms): P1 466, P2 452 ms (missed by 85 and
+    71 ms); default D1 274, D2 247 ms.
+  - §5 edits persist across eviction: `return: 2 chunks, hash match` in all four.
+  - §3 memory: process peak RSS D1 993 742 848, P1 1 020 108 800, D2 965 152 768, P2
+    974 503 936 B; peak mirror live 2 864 318 452 B (default), 1 890 675 580 B (plain) of
+    3 220 387 776 B allocated; the attribute work buffer is built once (1 after the first
+    flight frame, 1 at the end, both default runs). Prepared results: none (Phase 5 skipped).
+- **Gate at the tip** (Phase 6 tree, before its commit): `cargo build --workspace` 0;
+  `cargo nextest run --workspace` 0, 471 passed, 3 skipped (after `scripts/build-guests.sh`);
+  `cargo test --doc --workspace` 0, 7 passed; `cargo clippy --workspace --all-targets -- -D
+  warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` 0 (advisories, bans,
+  licenses, sources ok; one unmatched `MPL-2.0` allowance warning); `check-doc-links`,
+  `check-comment-hygiene`, `check-index-rows` 0; hook tests 59 of 59.
+- **Outstanding `human` phases:** Phase 7, the owner's windowed flight.
 
 ## Followups
 

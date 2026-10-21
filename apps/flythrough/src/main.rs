@@ -1036,6 +1036,8 @@ struct Autopilot {
     hash: u64,
     near: Vec<[i32; 3]>,
     flight_frames: u64,
+    /// The first and last flight frame's time, in milliseconds since the start.
+    flight_span_ms: Option<(f64, f64)>,
     unready_frames: u64,
     gpu_ms: Vec<f64>,
     cpu_ms: Vec<f64>,
@@ -2163,12 +2165,17 @@ impl Run {
         } else {
             None
         };
+        let now_ms = ms_since(self.start);
         let (Some(p), Some(stream), Some(gfx)) =
             (self.pilot.as_mut(), self.stream.as_ref(), self.gfx.as_ref())
         else {
             return;
         };
         p.flight_frames += 1;
+        p.flight_span_ms = Some(
+            p.flight_span_ms
+                .map_or((now_ms, now_ms), |(a, _)| (a, now_ms)),
+        );
         let cam = voxel_of(self.fly.camera.position).chunk();
         let unready = p.near.iter().any(|o| {
             let c = ChunkCoord([0, 1, 2].map(|k| cam.0[k] + o[k]));
@@ -2204,6 +2211,17 @@ impl Run {
             return;
         };
         let r = self.args.residency;
+        // The frame bar's credit: the flight's frames had the attribute pass's GPU time not
+        // been spent, `F_d* = F_d T / (T - G)`, `T` the first to last flight frame and `G` the
+        // pass's GPU milliseconds over the same frames.
+        let t = p.flight_span_ms.map_or(0.0, |(a, b)| b - a);
+        let g: f64 = p.attr.gpu_ms.iter().sum();
+        let f = p.flight_frames as f64;
+        let credited = if t > g { f * t / (t - g) } else { f };
+        println!(
+            "autopilot: frame bar: T {t:.1} ms, G {g:.1} ms, F_d {} frames, F_d* {credited:.1}",
+            p.flight_frames
+        );
         println!(
             "autopilot: unready-near frames {} of {} (chunks wanted full within {} of the camera's)",
             p.unready_frames,
@@ -2783,6 +2801,7 @@ impl App for Flythrough {
                 hash: 0,
                 near: ball((self.args.residency.r_full - 2).pow(2)),
                 flight_frames: 0,
+                flight_span_ms: None,
                 unready_frames: 0,
                 gpu_ms: Vec::new(),
                 cpu_ms: Vec::new(),
