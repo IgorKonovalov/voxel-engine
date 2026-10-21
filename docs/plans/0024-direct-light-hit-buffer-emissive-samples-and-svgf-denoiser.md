@@ -447,7 +447,7 @@ such.
 | 3: The light pass: one sample, one shadow ray, the dark cave | dev | done | 7ee7bd6 |
 | 4: The coarse shadow walk | dev | done | a414473 |
 | 5: Temporal accumulation, and history that dies in an edit box | dev | done | 1a907f7 |
-| 6: The a-trous filter and the composite, and the carve that does not ghost | dev | blocked: done-when not met as stated (Notes) | committed with this row |
+| 6: The a-trous filter and the composite, and the carve that does not ghost | dev | blocked: done-when not met as stated (Notes) | 5f08a2e |
 | 7: Reservoir reuse against the flat list | dev | not started | |
 | 8: A-SVGF's gradient as the other history killer | dev | not started | |
 | 9: The half-resolution tier | dev | not started | |
@@ -576,6 +576,19 @@ than 16 pixels from the box's projection, 2 of them changed by more than 8/255, 
 headlamp 24 929 / 3872, lod 24 431 / 3465, translucent 13 733 / 353, cutaway_level 224 / 0,
 look_contour 27 259 / 3643, look_detail 32 898 / 21 073, look_gradient27 27 651 / 3593,
 look_trilinear8 25 639 / 3071, hud 15 831 / 2109.
+
+### Resume notes (2026-10-21, delete when Phase 6 lands)
+
+- Stopped at Phase 6 on its done-when (Notes, "Phase 6 done-when not met as stated"); the
+  owner's ruling on the three bars is owed before Phase 7.
+- Candidate fixes: for the no-ghost bar, count only pixels whose surface the carve removed and
+  whose material emits nothing, or test instead that every pixel in the dilated box reads age
+  0 and matches a history-free frame of the same index; for the far bar, compare against the
+  same frame without the carve; for the 3.0 ms bar, a 16-byte guide texture per pixel (relative
+  position and normal) instead of the 24-byte hit record per tap, or the half-resolution tier
+  (Phase 9, the plan's Risks fallback).
+- Gate at 5f08a2e: build, `cargo nextest run --workspace` (564 passed, 4 skipped), clippy
+  `-D warnings`, `cargo fmt --check`, comment hygiene and doc links all clean.
 
 ### Close triggers
 
