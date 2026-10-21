@@ -206,6 +206,16 @@ streamed spawn 11.19 steps, 24.02 loads (p99 127), 0.16 pool reads full, and 10.
 23.02 loads (p99 93), 0.09 pool reads coarse. A lamp shadow ray is short (the lamp sits
 beside the eye), so its loads barely move.
 
+**Denoise: the temporal pass and four a-trous iterations (dev reference, Plan 0024 Phase 6,
+RTX 3080 Laptop GPU, exclusive perf lock, 1-minute load 4.2 to 4.6; the default look with the
+ore emissive, median of the last 30 frames, 1920 x 1080 full-resolution lighting):** the
+a-trous pass (the variance estimate and four 5 x 5 iterations) reads 4.662, 4.712 and 4.726 ms
+at the level's spawn (`--level --frames 300`, three runs) and 4.558 ms at the streamed spawn
+(`--frames 3000`), over the 3.0 ms denoise line; the temporal pass reads 0.506 to 0.548 ms.
+The plan's projection was 1.2 to 2.0 ms for the iterations. Replacing the normal weight's
+`pow(x, 128)` by seven squarings moved the reading by less than run-to-run spread (4.673 ms),
+so the passes are bound by their texture loads (24 bytes of hit record per tap).
+
 **Light extraction inside `sync` (dev reference, Plan 0024 Phase 2, RTX 3080 Laptop GPU,
 Ryzen 9 5900HS, exclusive perf lock, 1-minute load 8.3 to 9.0 from other work, not quiet; the
 ore emissive, `SyncStats::light_us`, the render thread's time scanning written `Full` bricks

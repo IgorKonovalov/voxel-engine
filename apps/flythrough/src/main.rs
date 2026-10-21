@@ -11,7 +11,7 @@
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
 //! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off]
-//! [--shadow-walk full|coarse]`.
+//! [--shadow-walk full|coarse] [--filter on|off]`.
 //! `--render` fixes the frame's internal resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -44,7 +44,8 @@
 //! glows, `flythrough::ORE_EMISSION`, and lights the cave through the light pass's emissive
 //! samples); `M` pulses its emission scale; `--lamp off` turns the headlamp off;
 //! `--shadow-walk coarse` sends every shadow ray through the coarse walk (2^3 blocks of the
-//! masks; with `--view steps` and `--frames`, the exit prints the lamp shadow rays' cost too).
+//! masks; with `--view steps` and `--frames`, the exit prints the lamp shadow rays' cost too);
+//! `--filter off` shows the light pass's raw irradiance, unaccumulated and unfiltered.
 //! `N` cycles the normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
 //! inside the extent).
@@ -319,6 +320,8 @@ struct Args {
     lamp: bool,
     /// `--shadow-walk full|coarse`: the walk shadow rays take.
     shadow_walk: ShadowWalk,
+    /// `--filter on|off`: the a-trous filter runs (on by default).
+    filter: bool,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -402,6 +405,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         emissive_ore: true,
         lamp: true,
         shadow_walk: ShadowWalk::Full,
+        filter: true,
     };
     let mut detail_flag = false;
     let mut it = argv.into_iter();
@@ -506,6 +510,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 let v = value()?;
                 args.shadow_walk = ShadowWalk::from_name(&v)
                     .ok_or(format!("--shadow-walk takes full or coarse, not {v}"))?;
+            }
+            "--filter" => {
+                args.filter = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("--filter takes on or off, not {v}")),
+                }
             }
             "--lamp" => {
                 args.lamp = match value()?.as_str() {
@@ -2325,6 +2336,7 @@ impl Run {
         frame.set_lighting(Lighting {
             lamp: self.args.lamp,
             shadow_walk: self.args.shadow_walk,
+            filter: self.args.filter,
             ..Lighting::default()
         });
         let mirror = if self.stream.is_some() {

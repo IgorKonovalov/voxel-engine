@@ -35,6 +35,8 @@ pub const MARCH_WGSL: &str = include_str!("shaders/march.wgsl");
 pub const LIGHT_WGSL: &str = include_str!("shaders/light.wgsl");
 /// The temporal pass, compiled after [`MARCH_WGSL`].
 pub const TEMPORAL_WGSL: &str = include_str!("shaders/temporal.wgsl");
+/// The variance estimate and the a-trous filter, compiled after [`MARCH_WGSL`].
+pub const ATROUS_WGSL: &str = include_str!("shaders/atrous.wgsl");
 /// The composite pass, compiled after [`MARCH_WGSL`].
 pub const COMPOSITE_WGSL: &str = include_str!("shaders/composite.wgsl");
 /// The source of the contour-attribute pass, for headless validation.

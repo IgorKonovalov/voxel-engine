@@ -4,7 +4,7 @@
 use crate::camera::{Camera, View};
 use crate::gpu_world::GpuWorld;
 use crate::light::LightParams;
-use crate::{COMPOSITE_WGSL, LIGHT_WGSL, MARCH_WGSL, TEMPORAL_WGSL};
+use crate::{ATROUS_WGSL, COMPOSITE_WGSL, LIGHT_WGSL, MARCH_WGSL, TEMPORAL_WGSL};
 
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
 pub const WORKGROUP: u32 = 8;
@@ -63,6 +63,8 @@ pub struct Params {
 pub const LIGHTING_LAMP: u32 = 1;
 /// `Params::lighting` bit: shadow rays take the coarse walk ([`ShadowWalk::Coarse`]).
 pub const LIGHTING_COARSE_SHADOW: u32 = 1 << 1;
+/// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
+pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
 /// `Params::lighting` bit: the composite's tone map is the identity clamp.
 pub const LIGHTING_IDENTITY_TONE_MAP: u32 = 1 << 6;
 
@@ -292,6 +294,8 @@ pub struct Lighting {
     /// Emissive candidates the light pass resamples per pixel; 0 turns emissive light off.
     pub candidates: u32,
     pub shadow_walk: ShadowWalk,
+    /// The a-trous filter runs; off, the composite shows the light pass's raw irradiance.
+    pub filter: bool,
 }
 
 impl Default for Lighting {
@@ -302,6 +306,7 @@ impl Default for Lighting {
             lamp: true,
             candidates: 8,
             shadow_walk: ShadowWalk::default(),
+            filter: true,
         }
     }
 }
@@ -319,6 +324,7 @@ impl Lighting {
             } else {
                 0
             }
+            | if self.filter { 0 } else { LIGHTING_FILTER_OFF }
     }
 }
 
@@ -367,6 +373,12 @@ pub struct Frame {
     light: wgpu::ComputePipeline,
     temporal_layout: wgpu::BindGroupLayout,
     temporal: wgpu::ComputePipeline,
+    variance_layout: wgpu::BindGroupLayout,
+    variance: wgpu::ComputePipeline,
+    atrous_layout: wgpu::BindGroupLayout,
+    atrous: wgpu::ComputePipeline,
+    /// The a-trous iterations' strides, one uniform each.
+    steps: [wgpu::Buffer; ATROUS_ITERATIONS],
     composite_layout: wgpu::BindGroupLayout,
     composite: wgpu::ComputePipeline,
     params: wgpu::Buffer,
@@ -387,6 +399,9 @@ pub struct Frame {
     cur: usize,
     history: std::sync::Mutex<History>,
 }
+
+/// A-trous iterations per frame, at strides 1, 2, 4, 8.
+pub const ATROUS_ITERATIONS: usize = 4;
 
 /// Edit boxes one frame takes; one more flushes all history.
 pub const MAX_EDITS: usize = 64;
@@ -436,26 +451,28 @@ enum Io {
 }
 
 fn io_layout(device: &wgpu::Device, label: &str, io: &[Io]) -> wgpu::BindGroupLayout {
+    let at: Vec<(u32, Io)> = io.iter().enumerate().map(|(i, &k)| (i as u32, k)).collect();
+    io_layout_at(device, label, &at)
+}
+
+/// A group-2 layout of `io` at explicit binding numbers.
+fn io_layout_at(device: &wgpu::Device, label: &str, io: &[(u32, Io)]) -> wgpu::BindGroupLayout {
     let entries: Vec<wgpu::BindGroupLayoutEntry> = io
         .iter()
-        .enumerate()
-        .map(|(i, &k)| {
-            let b = i as u32;
-            match k {
-                Io::Float => sampled_texture(b, FLOAT),
-                Io::Uint => sampled_texture(b, UINT),
-                Io::Store(f) => storage_texture(b, f),
-                Io::Uniform => wgpu::BindGroupLayoutEntry {
-                    binding: b,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
+        .map(|&(b, k)| match k {
+            Io::Float => sampled_texture(b, FLOAT),
+            Io::Uint => sampled_texture(b, UINT),
+            Io::Store(f) => storage_texture(b, f),
+            Io::Uniform => wgpu::BindGroupLayoutEntry {
+                binding: b,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
                 },
-            }
+                count: None,
+            },
         })
         .collect();
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -475,6 +492,17 @@ fn bind_io(
     layout: &wgpu::BindGroupLayout,
     res: &[Res<'_>],
 ) -> wgpu::BindGroup {
+    let at: Vec<u32> = (0..res.len() as u32).collect();
+    bind_io_at(device, layout, &at, res)
+}
+
+/// A group-2 bind group of `res` at the binding numbers `at`.
+fn bind_io_at(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    at: &[u32],
+    res: &[Res<'_>],
+) -> wgpu::BindGroup {
     let views: Vec<Option<wgpu::TextureView>> = res
         .iter()
         .map(|r| match r {
@@ -485,9 +513,9 @@ fn bind_io(
     let entries: Vec<wgpu::BindGroupEntry<'_>> = res
         .iter()
         .zip(&views)
-        .enumerate()
-        .map(|(i, (r, v))| wgpu::BindGroupEntry {
-            binding: i as u32,
+        .zip(at)
+        .map(|((r, v), &binding)| wgpu::BindGroupEntry {
+            binding,
             resource: match (r, v) {
                 (Res::Buf(b), _) => b.as_entire_binding(),
                 (_, Some(v)) => wgpu::BindingResource::TextureView(v),
@@ -572,6 +600,40 @@ impl Frame {
                 Io::Uniform,
             ],
         );
+        let (variance_layout, variance) = pass(
+            "variance",
+            ATROUS_WGSL,
+            "variance",
+            &[Io::Float, Io::Uint, Io::Float, Io::Float, f16],
+        );
+        let atrous_layout = io_layout_at(
+            device,
+            "atrous",
+            &[
+                (0, Io::Float),
+                (1, Io::Uint),
+                (2, Io::Float),
+                (5, f16),
+                (6, Io::Uniform),
+            ],
+        );
+        let atrous = compute_pipeline(
+            device,
+            "atrous",
+            format!("{MARCH_WGSL}\n{ATROUS_WGSL}"),
+            &[Some(&world_layout), None, Some(&atrous_layout)],
+            "atrous",
+        );
+        let steps = [0, 1, 2, 3].map(|i| {
+            wgpu::util::DeviceExt::create_buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("atrous step"),
+                    contents: bytemuck::cast_slice(&[1u32 << i, 0, 0, 0]),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                },
+            )
+        });
         let (composite_layout, composite) = pass(
             "composite",
             COMPOSITE_WGSL,
@@ -603,6 +665,11 @@ impl Frame {
             light,
             temporal_layout,
             temporal,
+            variance_layout,
+            variance,
+            atrous_layout,
+            atrous,
+            steps,
             composite_layout,
             composite,
             params,
@@ -989,6 +1056,41 @@ impl Frame {
                 Res::Buf(&self.edits),
             ],
         );
+        // The filter runs in the shaded view unless switched off; the variance pass writes
+        // `filter[0]` and the iterations ping-pong, ending in `filter[0]`.
+        let filtering = self.lighting.filter && self.look.view == ViewMode::Shaded;
+        let variance_bind = bind_io(
+            device,
+            &self.variance_layout,
+            &[
+                Res::Tex(&t.hit_pos[c]),
+                Res::Tex(&t.hit_info[c]),
+                Res::Tex(&t.accum[c]),
+                Res::Tex(&t.moments[c]),
+                Res::Tex(&t.filter[0]),
+            ],
+        );
+        let atrous_binds: Vec<wgpu::BindGroup> = (0..ATROUS_ITERATIONS)
+            .map(|i| {
+                bind_io_at(
+                    device,
+                    &self.atrous_layout,
+                    &[0, 1, 2, 5, 6],
+                    &[
+                        Res::Tex(&t.hit_pos[c]),
+                        Res::Tex(&t.hit_info[c]),
+                        Res::Tex(&t.filter[i % 2]),
+                        Res::Tex(&t.filter[(i + 1) % 2]),
+                        Res::Buf(&self.steps[i]),
+                    ],
+                )
+            })
+            .collect();
+        let lit = if filtering {
+            &t.filter[ATROUS_ITERATIONS % 2]
+        } else {
+            &t.irradiance
+        };
         let composite_bind = bind_io(
             device,
             &self.composite_layout,
@@ -996,26 +1098,34 @@ impl Frame {
                 Res::Tex(&t.hit_pos[c]),
                 Res::Tex(&t.hit_info[c]),
                 Res::Tex(&t.layer),
-                Res::Tex(&t.accum[c]),
+                Res::Tex(lit),
                 Res::Tex(&t.output),
             ],
         );
         let groups = [t.width.div_ceil(WORKGROUP), t.height.div_ceil(WORKGROUP)];
-        let passes: [(&wgpu::ComputePipeline, &wgpu::BindGroup, u32); 4] = [
-            (&self.hit.pipeline, &hit_bind, 1),
-            (&self.light, &light_bind, 2),
-            (&self.temporal, &temporal_bind, 2),
-            (&self.composite, &composite_bind, 2),
+        let mut atrous: Vec<(&wgpu::ComputePipeline, &wgpu::BindGroup)> = Vec::new();
+        if filtering {
+            atrous.push((&self.variance, &variance_bind));
+            atrous.extend(atrous_binds.iter().map(|b| (&self.atrous, b)));
+        }
+        let passes: [(Vec<(&wgpu::ComputePipeline, &wgpu::BindGroup)>, u32); 5] = [
+            (vec![(&self.hit.pipeline, &hit_bind)], 1),
+            (vec![(&self.light, &light_bind)], 2),
+            (vec![(&self.temporal, &temporal_bind)], 2),
+            (atrous, 2),
+            (vec![(&self.composite, &composite_bind)], 2),
         ];
-        for (i, (pipeline, bind, group)) in passes.into_iter().enumerate() {
+        for (i, (dispatches, group)) in passes.into_iter().enumerate() {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(FRAME_PASSES[i]),
                 timestamp_writes: timer.map(|t| t.writes_at(i as u32)),
             });
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &world_bind, &[]);
-            pass.set_bind_group(group, bind, &[]);
-            pass.dispatch_workgroups(groups[0], groups[1], 1);
+            for (pipeline, bind) in dispatches {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &world_bind, &[]);
+                pass.set_bind_group(group, bind, &[]);
+                pass.dispatch_workgroups(groups[0], groups[1], 1);
+            }
         }
     }
 
@@ -1057,7 +1167,7 @@ fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_>
 
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
-pub const FRAME_PASSES: [&str; 4] = ["hit", "light", "temporal", "composite"];
+pub const FRAME_PASSES: [&str; 5] = ["hit", "light", "temporal", "atrous", "composite"];
 
 /// The frame's targets at one internal resolution; the hit buffer and the history twice,
 /// indexed by `Frame::cur`.
@@ -1076,6 +1186,8 @@ struct Targets {
     /// The temporal pass's accumulated irradiance and moments (rgba16float).
     accum: [wgpu::Texture; 2],
     moments: [wgpu::Texture; 2],
+    /// The filter's ping-pong pair (rgba16float: irradiance rgb, variance a).
+    filter: [wgpu::Texture; 2],
     /// The composite's display-encoded output (rgba8unorm).
     output: wgpu::Texture,
 }
@@ -1110,6 +1222,7 @@ impl Targets {
             irradiance: tex("irradiance", Rgba16Float),
             accum: [0, 1].map(|_| tex("accumulated irradiance", Rgba16Float)),
             moments: [0, 1].map(|_| tex("moments", Rgba16Float)),
+            filter: [0, 1].map(|_| tex("filter", Rgba16Float)),
             output: tex("frame target", Rgba8Unorm),
         }
     }
@@ -1117,7 +1230,7 @@ impl Targets {
     /// Bytes the targets occupy.
     fn bytes(&self) -> u64 {
         let px = u64::from(self.width) * u64::from(self.height);
-        px * (2 * (16 + 8) + 8 + 8 + 2 * 8 + 2 * 8 + 4)
+        px * (2 * (16 + 8) + 8 + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 4)
     }
 }
 

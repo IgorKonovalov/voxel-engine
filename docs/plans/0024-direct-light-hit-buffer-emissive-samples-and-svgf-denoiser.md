@@ -446,8 +446,8 @@ such.
 | 2: Emissive voxels become light samples at upload | dev | done | c3c83b0 |
 | 3: The light pass: one sample, one shadow ray, the dark cave | dev | done | 7ee7bd6 |
 | 4: The coarse shadow walk | dev | done | a414473 |
-| 5: Temporal accumulation, and history that dies in an edit box | dev | done | committed with this row |
-| 6: The a-trous filter and the composite, and the carve that does not ghost | dev | not started | |
+| 5: Temporal accumulation, and history that dies in an edit box | dev | done | 1a907f7 |
+| 6: The a-trous filter and the composite, and the carve that does not ghost | dev | blocked: done-when not met as stated (Notes) | committed with this row |
 | 7: Reservoir reuse against the flat list | dev | not started | |
 | 8: A-SVGF's gradient as the other history killer | dev | not started | |
 | 9: The half-resolution tier | dev | not started | |
@@ -527,6 +527,24 @@ each. Empty is fine.)_
   was not touched: the fly-through invalidates from `Run::edited`, which every applied op of
   the client's events passes through, and from the autopilot's direct carve.
   `readback::read_rgba32f` and `read_rgba16u` added.
+- Phase 6: the filter is a variance pass (moments, or 7 x 7 spatial moments below 4 frames
+  of age) and four 5 x 5 B3-spline iterations at strides 1, 2, 4, 8 weighted by plane
+  distance (sigma 1 voxel), `max(n.n', 0)^128` and luminance over `4 sqrt(var)` (var 3 x 3
+  blurred); all in one timed pass `atrous`. `--filter off` shows the light pass's raw
+  irradiance. The light pass clamps the emissive estimate's luminance at `2 PI lum(Le)`: a
+  candidate on a face beside the hit read up to 1884 and flickered static frames by up to
+  214/255 (after the clamp: p99 3/255, max 53/255). The lamp-geometry checks
+  (`headlamp_shadows_only_remove_light`'s darker-pixel count, the slab band, the asymmetric
+  view, the identity tone map) run with the filter off; their goldens are blessed filtered.
+- Phase 6 done-when not met as stated: (1) "no pixel inside the carve's dilated aabb within
+  2/255 of its pre-carve value": 6147 of 19 056 such pixels are within 2/255; 3615 of them (at
+  the first reading) show the ore's own emission, which no history carries, and others are
+  rim surfaces the carve left in place, whose fresh one-frame estimate the filter brings back
+  to the converged value. Counting only pixels whose pre-carve hit lay inside the carved
+  sphere, 2025 of 11 198 stay within 2/255. (2) "farther than 16 pixels ... no more than
+  8/255": 2 of 28 980 pixels exceed it (12 to 15/255 over three readings); a static frame with
+  no carve changes up to 53/255 at its worst pixel. (3) "The filter pass reads under 3.0 ms":
+  4.56 to 4.73 ms (`docs/nfr.md` §2, "Denoise").
 
 Phase 1 observations: hitmask and normals of the three scenes byte-identical to ae58f0c; the
 identity-tone-mapped carve's largest channel difference from ae58f0c's is 0/255; the
@@ -548,6 +566,16 @@ Phase 5 observations: after 16 static frames and the radius-4 carve, 1296 hit pi
 dilated box read age 0 and 56 304 outside read 16; the next frame 1 and 17. After a one-voxel
 sideways step 54 133 of 55 268 unchanged-material pixels keep history (97.95 %) and all 2332
 pixels whose material a `Replace` changed read 0.
+
+Phase 6 observations: `dark_cave.png` re-blessed after 32 accumulated frames (34 273 pixels
+changed, 32 137 by more than 2/255), 29 103 of 57 600 pixels at 16/255 or more; with the ore
+dark every pixel is black. The frame after the radius-6 carve: 19 056 pixels hit in the
+dilated box, 6147 of them within 2/255 of their pre-carve value; 28 980 pixels lie farther
+than 16 pixels from the box's projection, 2 of them changed by more than 8/255, the largest
+15/255. Re-blessed for the filter (changed / by more than 2/255): primary 23 958 / 3184,
+headlamp 24 929 / 3872, lod 24 431 / 3465, translucent 13 733 / 353, cutaway_level 224 / 0,
+look_contour 27 259 / 3643, look_detail 32 898 / 21 073, look_gradient27 27 651 / 3593,
+look_trilinear8 25 639 / 3071, hud 15 831 / 2109.
 
 ### Close triggers
 

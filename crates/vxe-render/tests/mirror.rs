@@ -13,8 +13,8 @@ use vxe_render::gpu_world::{
     translucent_mask_word,
 };
 use vxe_render::{
-    ATTRIB_WGSL, COMPOSITE_WGSL, GpuWorld, LIGHT_WGSL, MARCH_WGSL, MirrorConfig, ShardLayout,
-    TEMPORAL_WGSL, Window, readback, wgpu,
+    ATROUS_WGSL, ATTRIB_WGSL, COMPOSITE_WGSL, GpuWorld, LIGHT_WGSL, MARCH_WGSL, MirrorConfig,
+    ShardLayout, TEMPORAL_WGSL, Window, readback, wgpu,
 };
 use vxe_world::*;
 
@@ -27,6 +27,7 @@ fn march_wgsl_validates() {
         ("light.wgsl", format!("{MARCH_WGSL}\n{LIGHT_WGSL}")),
         ("composite.wgsl", format!("{MARCH_WGSL}\n{COMPOSITE_WGSL}")),
         ("temporal.wgsl", format!("{MARCH_WGSL}\n{TEMPORAL_WGSL}")),
+        ("atrous.wgsl", format!("{MARCH_WGSL}\n{ATROUS_WGSL}")),
     ] {
         let module = wgpu::naga::front::wgsl::parse_str(&source)
             .unwrap_or_else(|e| panic!("{name} parses: {}", e.emit_to_string(&source)));

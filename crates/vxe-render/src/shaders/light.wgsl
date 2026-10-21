@@ -28,7 +28,7 @@
 // d^2`, and one candidate is kept with probability proportional to target over source
 // density. One shadow ray to the kept point; unoccluded, the estimate of E is
 // `Le / lum(Le) * (sum of weights) / candidates`, unbiased for the irradiance from every
-// exposed emissive face. Random numbers come from `rand` with dimensions 2 + 5 j .. for
+// exposed emissive face but for a clamp of its luminance at `2 PI lum(Le)` (FIREFLY_CLAMP). Random numbers come from `rand` with dimensions 2 + 5 j .. for
 // candidate j.
 //
 // In the cutaway view a hit takes the hemisphere term `PI (0.3 + 0.7 (0.5 + 0.5 n.z))`
@@ -220,5 +220,14 @@ fn emissive_irradiance(px: vec2<u32>, p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>)
     if (shadowed(o, to / dist, dist - 1e-3)) {
         return vec3<f32>(0.0);
     }
-    return kept.le / luminance(kept.le) * w_sum / f32(params.candidates);
+    // The estimate's luminance is `w_sum / candidates`; a candidate on a face next to the hit
+    // has a tiny d^2 and a huge weight, a firefly the history would carry for many frames.
+    // No surface receives more than `PI L` from emitters of radiance L filling its
+    // hemisphere, so the estimate is clamped at FIREFLY_CLAMP times that bound for the kept
+    // emitter: biased dark only where one sample overshoots the physical maximum.
+    let e = min(w_sum / f32(params.candidates), FIREFLY_CLAMP * PI * luminance(kept.le));
+    return kept.le / luminance(kept.le) * e;
 }
+
+// The emissive estimate's ceiling, in units of `PI lum(Le)` of the kept emitter.
+const FIREFLY_CLAMP: f32 = 2.0;
