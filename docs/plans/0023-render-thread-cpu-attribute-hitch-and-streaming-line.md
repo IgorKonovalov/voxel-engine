@@ -470,7 +470,7 @@ normals for at most 250 ms". The pass's GPU time stays a recorded figure here. P
 | 4: Incremental queue, sweep and window shift | dev | done: the 300-step walk (r_full 3, r_lod 5, h 1; 295 unit steps over all 26 directions, jumps at 60, 120, 180, 240, `set_radii(2, 4)` at 150) ran 295 queue and 294 sweep oracle checks, equal to the full rebuild and scan; dropping the entering-full shell or the keep-full sweep shell fails it; `the_window_slab_finds_the_chunks_the_key_filter_finds` over 50 shifts; workspace 471 of 471; flights at the tip's code (exclusive perf lock, not quiet): `update` max default 4.749 ms (Phase 1: 37.847), plain 2.350 (15.908); `poll` max default 48.503 (27.344), plain 24.389 (24.866); readings in Notes | b6414e8 |
 | 5: Narrowing and staging on the workers | dev | skipped (owner, 2026-10-21): write_buffer 41.8 % led narrowing ~38 % | 8f2847d (entry profile) |
 | 6: Readings against the bars | dev | done: four flights, default, plain, default, plain, each started at a 1-minute load under 2 under the exclusive perf lock; met: the GPU-credited frame bar, carry-over age, hash match; missed: `update_attrs` p99, streaming p50 (3 of 4 runs), streaming max (4 of 4), plain residency p95 (2 of 2); readings in Close triggers. Quiet re-read (owner's request, 2026-10-21; nothing above 5 % CPU at any start): the same bars met and missed, streaming p50 missed in the 2 plain runs only, plain p95 403 and 385 ms | committed with this row |
-| 7: The owner's windowed flight | human | not started | |
+| 7: The owner's windowed flight | human | done (owner, 2026-10-21, session 3, `target/release/flythrough --seed 1`, default look (contour), 2530x1378, stdout in `check-p7.log`): warm-up around the spawn, then sustained fast passes across chunk boundaries both ways and a third direction, then carves. Hitch: "mostly gone", no stalls felt; the frame rate dropped to about 40 fps during the fast passes (owner's read of the display; the log has no per-frame timings). Face-mode lag on newly streamed rock: "non existent", no visible delay. Carves: contour in the same frame. Log: frame line at start cpu 4.159 ms, gpu march 6.803 ms; mirror reserved 3 220 387 776 B of a 3 221 225 472 B budget; `mirror: ... wait for space (deferred chunks)` with deferral streaks up to 161 syncs during the flight; 85 `bench:` carve lines, 0 refused. | |
 
 ### Notes
 
@@ -664,7 +664,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` 0 (advisories, bans,
   licenses, sources ok; one unmatched `MPL-2.0` allowance warning); `check-doc-links`,
   `check-comment-hygiene`, `check-index-rows` 0; hook tests 59 of 59.
-- **Outstanding `human` phases:** Phase 7, the owner's windowed flight.
+- **Outstanding `human` phases:** none (Phase 7 flown 2026-10-21).
 
 ## Followups
 
