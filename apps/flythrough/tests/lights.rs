@@ -278,6 +278,7 @@ fn an_emissive_ceiling_gives_the_analytic_irradiance_at_the_floor_centre() {
         vfov: 0.5,
     };
     let mut frame = vxe_render::Frame::new(&device, 1, 1);
+    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
     frame.set_lighting(vxe_render::Lighting {
         lamp: false,
         ..vxe_render::Lighting::default()
@@ -528,6 +529,7 @@ fn floor_centre_series(
         vfov: 0.5,
     };
     let mut frame = vxe_render::Frame::new(device, 1, 1);
+    frame.set_resolution(device, vxe_render::LightingResolution::Full);
     frame.set_lighting(vxe_render::Lighting {
         lamp: false,
         draw,
@@ -1038,6 +1040,7 @@ fn an_emission_step_settles_within_eleven_frames() {
         vfov: 0.5,
     };
     let mut frame = vxe_render::Frame::new(&device, 1, 1);
+    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
     frame.set_lighting(vxe_render::Lighting {
         lamp: false,
         filter: false,

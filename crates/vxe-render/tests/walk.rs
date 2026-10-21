@@ -103,6 +103,7 @@ fn pixel(
     gpu.sync(world, queue, &mut enc).expect("sync");
     queue.submit([enc.finish()]);
     let mut frame = Frame::new(device, 1, 1);
+    frame.set_resolution(device, vxe_render::LightingResolution::Full);
     // The identity tone map: the expected values below are `pow(clamp(c), 1 / 2.2)`.
     frame.set_lighting(Lighting {
         tone_map: ToneMap::Identity,

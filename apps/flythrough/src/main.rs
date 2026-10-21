@@ -368,6 +368,19 @@ impl Args {
         self.pad && !self.headless && !self.autopilot
     }
 
+    /// The lighting the fly-through starts in, from its flags.
+    fn start_lighting(&self) -> Lighting {
+        Lighting {
+            lamp: self.lamp,
+            shadow_walk: self.shadow_walk,
+            filter: self.filter,
+            sampler: self.sampler,
+            history: self.history,
+            emissive_history: self.emissive_history,
+            ..Lighting::default()
+        }
+    }
+
     /// The look the fly-through starts in.
     fn start_look(&self) -> LookParams {
         LookParams {
@@ -428,9 +441,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         shadow_walk: ShadowWalk::Full,
         filter: true,
         light_radius: vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
-        sampler: Sampler::List,
-        history: HistoryKill::Edits,
-        lighting: LightingResolution::Full,
+        sampler: Sampler::default(),
+        history: HistoryKill::default(),
+        lighting: LightingResolution::default(),
         emissive_history: vxe_render::DEFAULT_EMISSIVE_HISTORY,
     };
     let mut detail_flag = false;
@@ -2007,10 +2020,9 @@ struct Run {
     args: Args,
     fly: Fly,
     light: LightParams,
-    /// `M`: the ore's emission scale pulses (`ORE_PULSE`) instead of holding at 1.
-    pulse: bool,
-    /// `F6`: the lighting resolution to switch to on the next frame (it needs the device).
-    pending_resolution: Option<LightingResolution>,
+    /// The lighting modes `F3` to `F7` and `M` switch, and the banner naming them; the frame
+    /// takes them at the start of each frame (`F6`'s resolution needs the device).
+    modes: hud::Modes,
     look: LookParams,
     /// Sets `look.cutaway` each frame of interactive flight; `X` or the pad's `West` cycles it.
     cutaway: CutawayMode,
@@ -2087,7 +2099,7 @@ impl Run {
                     .map(|(&n, &ms)| (n, ms as f32))
                     .collect(),
                 light_samples: g.mirror.light_samples(),
-                modes: lighting_modes(&g.frame),
+                modes: self.modes.line(),
             })
         });
         let pos = self.fly.camera.position;
@@ -2129,8 +2141,17 @@ impl Run {
     /// nothing once the buffers have grown to the rows' size.
     fn update_hud(&mut self, gpu: &Gpu) {
         self.refresh_hud_stats();
+        let banner = self.modes.banner(ms_since(self.start));
         let h = &mut self.hud;
         h.format_rows();
+        // The mode banner goes under the rows, hiding none of them.
+        if let Some(b) = banner {
+            for line in b.lines() {
+                h.text.push_str(line);
+                h.text.push('\n');
+                h.colours.push(HudColour::Yellow);
+            }
+        }
         let Some(gfx) = self.gfx.as_mut() else { return };
         gfx.hud.set_lines(&gpu.queue, &h.text, &h.colours);
         gfx.hud.set_samples(&gpu.queue, &h.strip, hud::CEILING_MS);
@@ -2522,16 +2543,9 @@ impl Run {
             .look
             .and_then(|_| MarchTimer::new(&gpu.device, &gpu.queue));
         let mut frame = Frame::new(&gpu.device, w, h);
-        frame.set_lighting(Lighting {
-            lamp: self.args.lamp,
-            shadow_walk: self.args.shadow_walk,
-            filter: self.args.filter,
-            sampler: self.args.sampler,
-            history: self.args.history,
-            emissive_history: self.args.emissive_history,
-            ..Lighting::default()
-        });
-        frame.set_resolution(&gpu.device, self.args.lighting);
+        frame.set_lighting(self.modes.lighting);
+        frame.set_resolution(&gpu.device, self.modes.resolution);
+        println!("{}", self.modes.line());
         let mirror = if self.stream.is_some() {
             frame.set_lod(LodParams {
                 r_full: self.args.residency.r_full,
@@ -3170,46 +3184,18 @@ impl Run {
     /// fills, the D-pad's up and down step the dig radius as a scroll line does, `North`
     /// toggles walking, `West` cycles the cutaway as `X` does, and `East` knocks.
     fn handle_input(&mut self, input: &Input) {
-        if let Some(gfx) = self.gfx.as_mut() {
-            let mut l = gfx.frame.lighting();
-            let mut changed = true;
-            if input.pressed(KeyCode::F3) {
-                l.shadow_walk = match l.shadow_walk {
-                    ShadowWalk::Full => ShadowWalk::Coarse,
-                    ShadowWalk::Coarse => ShadowWalk::Full,
-                };
-            } else if input.pressed(KeyCode::F4) {
-                l.sampler = match l.sampler {
-                    Sampler::List => Sampler::Reuse,
-                    Sampler::Reuse => Sampler::List,
-                };
-            } else if input.pressed(KeyCode::F5) {
-                l.history = match l.history {
-                    HistoryKill::Edits => HistoryKill::Gradient,
-                    HistoryKill::Gradient => HistoryKill::Edits,
-                };
-            } else if input.pressed(KeyCode::F7) {
-                l.lamp = !l.lamp;
-            } else if input.pressed(KeyCode::F6) {
-                self.pending_resolution = Some(match gfx.frame.resolution() {
-                    LightingResolution::Full => LightingResolution::Half,
-                    LightingResolution::Half => LightingResolution::Full,
-                });
-                changed = false;
-            } else {
-                changed = false;
+        for (key, mode) in [
+            (KeyCode::F3, hud::ModeKey::ShadowWalk),
+            (KeyCode::F4, hud::ModeKey::Sampler),
+            (KeyCode::F5, hud::ModeKey::History),
+            (KeyCode::F6, hud::ModeKey::Resolution),
+            (KeyCode::F7, hud::ModeKey::Lamp),
+            (KeyCode::KeyM, hud::ModeKey::Pulse),
+        ] {
+            if input.pressed(key) {
+                self.modes.press(mode, ms_since(self.start));
+                println!("{}", self.modes.line());
             }
-            if changed {
-                gfx.frame.set_lighting(l);
-                println!("{}", lighting_modes(&gfx.frame));
-            }
-        }
-        if input.pressed(KeyCode::KeyM) {
-            self.pulse = !self.pulse;
-            println!(
-                "ore emission {}",
-                if self.pulse { "pulsing" } else { "steady" }
-            );
         }
         if input.pressed(KeyCode::KeyL) {
             self.light.shadows = !self.light.shadows;
@@ -3503,8 +3489,16 @@ impl Run {
             let h = StepHistogram::from_rgba8(&px, width);
             self.hud.steps = Some(hud::StepsSample::from_histogram(&h));
         }
+        // With the stats HUD off the overlay draws the mode banner alone while it shows.
+        let banner = (!hud)
+            .then(|| self.modes.banner(ms_since(self.start)))
+            .flatten();
         if hud {
             self.update_hud(gpu);
+        } else if let (Some(b), Some(gfx)) = (&banner, self.gfx.as_mut()) {
+            gfx.hud
+                .set_lines(&gpu.queue, b, &[HudColour::Yellow; hud::BANNER_ROWS]);
+            gfx.hud.set_samples(&gpu.queue, &[], 0.0);
         }
         let flying = self
             .pilot
@@ -3514,12 +3508,10 @@ impl Run {
         let Some(gfx) = self.gfx.as_mut() else {
             return Flow::Exit;
         };
-        if let Some(r) = self.pending_resolution.take() {
-            gfx.frame.set_resolution(&gpu.device, r);
-            println!("{}", lighting_modes(&gfx.frame));
-        }
+        gfx.frame.set_lighting(self.modes.lighting);
+        gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
         gfx.frame.set_look(self.look);
-        let scale = if self.pulse {
+        let scale = if self.modes.pulse {
             ore_pulse(ms_since(self.start))
         } else {
             1.0
@@ -3565,7 +3557,7 @@ impl Run {
         gfx.frame.advance();
         gfx.presenter
             .encode(&gpu.device, &mut enc, gfx.frame.target(), surface);
-        if hud {
+        if hud || banner.is_some() {
             let [w, h] = gpu.size;
             gfx.hud.encode_timed(
                 &mut enc,
@@ -3697,22 +3689,6 @@ fn shadow_steps_line(texels: &[[f32; 4]], walk: ShadowWalk) -> String {
         mean(1),
         percentile(&mut loads, 99.0),
         mean(2)
-    )
-}
-
-/// The lighting modes in words: `lighting full, shadow walk full, sampler list, history
-/// edits, lamp on, filter on`.
-fn lighting_modes(frame: &Frame) -> String {
-    let l = frame.lighting();
-    let on = |b: bool| if b { "on" } else { "off" };
-    format!(
-        "lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, filter {}",
-        frame.resolution().name(),
-        l.shadow_walk.name(),
-        l.sampler.name(),
-        l.history.name(),
-        on(l.lamp),
-        on(l.filter)
     )
 }
 
@@ -3908,8 +3884,7 @@ impl App for Flythrough {
                 args: self.args.clone(),
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
-                pulse: false,
-                pending_resolution: None,
+                modes: hud::Modes::new(self.args.start_lighting(), self.args.lighting, 0.0),
                 look: self.args.start_look(),
                 cutaway: self.args.cutaway,
                 dig_radius: DIG_RADIUS,
@@ -4917,6 +4892,7 @@ mod tests {
         let world = Arc::new(world);
         let net = native_net(&world);
         let args = parse_args_from(argv(&["--level"])).expect("--level parses");
+        let modes = hud::Modes::new(args.start_lighting(), args.lighting, 0.0);
         let camera = Camera {
             position: Vec3::splat(0.5),
             yaw: 0.0,
@@ -4932,8 +4908,7 @@ mod tests {
             args,
             fly: Fly::new(camera),
             light: LightParams::headlamp(),
-            pulse: false,
-            pending_resolution: None,
+            modes,
             dig_radius: DIG_RADIUS,
             scroll: ScrollSteps::default(),
             triggers: [false; 2],
@@ -5476,19 +5451,19 @@ mod tests {
             "--shadow-walk",
             "coarse",
             "--sampler",
-            "reuse",
+            "list",
             "--history",
             "gradient",
             "--lighting",
-            "half",
+            "full",
             "--light-radius",
             "6",
         ])
         .unwrap();
         assert_eq!(a.shadow_walk, ShadowWalk::Coarse);
-        assert_eq!(a.sampler, Sampler::Reuse);
+        assert_eq!(a.sampler, Sampler::List);
         assert_eq!(a.history, HistoryKill::Gradient);
-        assert_eq!(a.lighting, LightingResolution::Half);
+        assert_eq!(a.lighting, LightingResolution::Full);
         assert_eq!(a.light_radius, 6);
         let d = parse(&[]).unwrap();
         assert!(d.emissive_ore && d.lamp && d.filter);
@@ -5502,11 +5477,16 @@ mod tests {
             ),
             (
                 ShadowWalk::Full,
-                Sampler::List,
+                Sampler::Reuse,
                 HistoryKill::Edits,
-                LightingResolution::Full,
+                LightingResolution::Half,
                 4
             )
+        );
+        // The line the fly-through prints at the start with no lighting flags.
+        assert_eq!(
+            hud::Modes::new(d.start_lighting(), d.lighting, 0.0).line(),
+            "lighting half, shadow walk full, sampler reuse, history edits, lamp on, filter on, ore pulse off, emissive history 32"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),

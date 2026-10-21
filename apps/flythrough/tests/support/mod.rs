@@ -446,7 +446,9 @@ impl LookRig {
         let mut gpu = GpuWorld::with_config(&device, cfg);
         gpu.sync_now(world, &device, &queue)
             .expect("mirror fits the adapter");
-        let frame = Frame::new(&device, WIDTH, HEIGHT);
+        let mut frame = Frame::new(&device, WIDTH, HEIGHT);
+        // The walk and the look at full resolution: lighting at half would blur them.
+        frame.set_resolution(&device, vxe_render::LightingResolution::Full);
         Self {
             device,
             queue,

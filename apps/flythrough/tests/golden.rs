@@ -35,6 +35,7 @@ fn render_lit(
     gpu.sync_now(world, &device, &queue)
         .expect("mirror fits the adapter");
     let mut frame = Frame::new(&device, WIDTH, HEIGHT);
+    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
     frame.set_lighting(vxe_render::Lighting {
         filter,
         ..vxe_render::Lighting::default()
@@ -356,7 +357,8 @@ fn goldens_match_bit_exactly_over_one_and_several_shards() {
         ("headlamp.png", LightParams::headlamp()),
     ]
     .map(|(name, light)| (name, light, read_png(&golden_path(name)).0));
-    let frame = Frame::new(&device, WIDTH, HEIGHT);
+    let mut frame = Frame::new(&device, WIDTH, HEIGHT);
+    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
     for max_shard_slots in [None, Some(cap as u32)] {
         let mut gpu = GpuWorld::with_config(
             &device,
@@ -411,6 +413,7 @@ fn render_with(
     gpu.sync_now(world, device, queue)
         .expect("mirror fits the adapter");
     let mut frame = Frame::new(device, WIDTH, HEIGHT);
+    frame.set_resolution(device, vxe_render::LightingResolution::Full);
     frame.set_lod(lod);
     lights
         .iter()
@@ -695,6 +698,7 @@ fn cutaway_steps_from_outside_the_level_at_1080p() {
         .expect("mirror fits the adapter");
     let (w, h) = (1920, 1080);
     let mut frame = Frame::new(&device, w, h);
+    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
     for cutaway in [false, true] {
         frame.set_look(vxe_render::LookParams {
             view: vxe_render::ViewMode::Steps,
@@ -808,12 +812,14 @@ fn an_asymmetric_view_renders_the_left_half_of_the_symmetric_one() {
         ..vxe_render::Lighting::default()
     };
     let mut whole = Frame::new(&device, WIDTH, HEIGHT);
+    whole.set_resolution(&device, vxe_render::LightingResolution::Full);
     whole.set_lighting(unfiltered);
     whole.render(&device, &queue, &gpu, &camera, &light);
     let whole_px = readback::read_rgba8(&device, &queue, whole.target());
 
     let half_w = WIDTH / 2;
     let mut half = Frame::new(&device, half_w, HEIGHT);
+    half.set_resolution(&device, vxe_render::LightingResolution::Full);
     half.set_lighting(unfiltered);
     let ty = (camera.vfov * 0.5).tan();
     let t = ty * (WIDTH as f32 / HEIGHT as f32);

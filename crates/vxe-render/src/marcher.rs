@@ -318,10 +318,10 @@ impl ShadowWalk {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Sampler {
     /// Resampling over the frame's candidates alone (the flat list).
-    #[default]
     List,
     /// The candidates plus last frame's reservoirs at the reprojected pixel and five
-    /// neighbours within 30 pixels (ReSTIR).
+    /// neighbours within 30 pixels (ReSTIR); the default.
+    #[default]
     Reuse,
 }
 
@@ -370,10 +370,11 @@ impl HistoryKill {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LightingResolution {
     /// The internal resolution.
-    #[default]
     Full,
-    /// Half of it on each edge, on a hit buffer sampled from the full one (one pixel of each
+    /// Half of it on each edge (the default: the only tier under the lighting line on the dev
+    /// box), on a hit buffer sampled from the full one (one pixel of each
     /// 2 x 2, the lower-left one every frame); the composite upsamples by depth and normal.
+    #[default]
     Half,
 }
 
@@ -943,8 +944,8 @@ impl Frame {
             composite,
             params,
             edits,
-            targets: Targets::new(device, width, height, 1),
-            resolution: LightingResolution::Full,
+            targets: Targets::new(device, width, height, LightingResolution::default().scale()),
+            resolution: LightingResolution::default(),
             lod: LodParams::default(),
             look: LookParams::default(),
             lighting: Lighting::default(),

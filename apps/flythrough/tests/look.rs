@@ -57,7 +57,9 @@ fn attr_rig_on(
         world.stats().full_bricks,
         "every Full brick has its attribute"
     );
-    let frame = Frame::new(&device, WIDTH, HEIGHT);
+    let mut frame = Frame::new(&device, WIDTH, HEIGHT);
+    // The walk and the look at full resolution: lighting at half would blur them.
+    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
     LookRig {
         device,
         queue,

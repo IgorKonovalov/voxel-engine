@@ -42,7 +42,7 @@ fn parse_args() -> Result<Args, String> {
         carve: 0,
         out: "docs/images/hero.png".to_owned(),
         frames: 64,
-        resolution: LightingResolution::Full,
+        resolution: LightingResolution::default(),
         lighting: Lighting::default(),
     };
     let on_off = |flag: &str, v: &str| match v {

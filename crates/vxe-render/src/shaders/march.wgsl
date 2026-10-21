@@ -1082,9 +1082,9 @@ fn unpack_offset(o: u32) -> vec2<u32> {
     return vec2<u32>(o & 0xFFu, (o >> 8u) & 0xFFu);
 }
 
-// The full-resolution pixel lighting pixel `lp` samples this frame.
+// The full-resolution pixel lighting pixel `lp` samples this frame, inside the target.
 fn full_px(lp: vec2<u32>) -> vec2<u32> {
-    return lp * params.light_scale + unpack_offset(params.light_offset);
+    return min(lp * params.light_scale + unpack_offset(params.light_offset), params.size - vec2<u32>(1u));
 }
 
 // A fractional full-resolution pixel position of last frame (centres at + 0.5) on last
