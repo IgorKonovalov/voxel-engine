@@ -183,6 +183,25 @@ cut `update`'s max from 37.8 to under 3.2 ms. What remains is `sync`, led by
 `Queue::write_buffer` (41.8 % of its samples) ahead of narrowing (about 38 %); ADR-0017's
 Outcome names the next step.
 
+**Streaming line after Plan 0027 (the staging belt, ADR-0022): still a recorded miss of the
+1.0 ms line; the plan's own p50 bars are met.** Dev reference, RTX 3080 Laptop GPU, Ryzen 9
+5900HS, exclusive perf lock, quiet box (each run started at a 1-minute load under 2 with no
+other process above 7 % CPU), `flythrough --autopilot --headless --seed 1 [--look plain]`, the
+pre-plan binary (ae58f0c) alternated with the belt binary (843c5a3), three runs each. Plain:
+`sync` p50 1.397 to 1.662 ms (pre-plan 3.278 to 3.687 ms; bar 3.0 ms), `update + poll + sync`
+p50 1.715 to 1.994 ms (pre-plan 3.325 to 3.783 ms; bar 3.2 ms), `sync` p99 5.9 to 6.3 ms and
+max 8.8 to 9.6 ms (pre-plan 8.7 to 12.4 and 15.1 to 35.6 ms); residency p95 258 to 262 ms.
+Default: `update_attrs` p99 3.61 to 3.73 ms, carry-over age max 0 ms, residency p95 129 to
+131 ms, and the return hash matches in every run. The belt holds 1 to 2 chunks of 4 MiB
+(4 to 8 MiB of mapped RAM, §3). A frame-pointer profile of one quiet plain flight puts
+`Queue::write_buffer` at no samples and splits `sync` into narrowing (`upload_record`) 43.2 %,
+the belt 25.4 %, palette scans 9.9 %, flushes 6.4 %, the fit check 4.8 %, the rest under 4 %
+each. **The belt's share is a recorded miss against Plan 0027's under-5 % bar (owner,
+2026-10-21):** 20.5 % of `sync` lands at the first locked instruction after the copy into the
+mapped chunk and 2.3 % in recording the copies, so it is the cost of writing the bytes into
+mapped memory, not of allocating it. Followup, for Plan 0028 or after it: stage the narrowed
+voxels straight into the belt slice, or look into the memory type of the belt's chunks.
+
 **Stats HUD (dev reference, Plan 0010, f91726f, headless `flythrough [--level] --seed 1
 --render 1920x1080 --frames 300 [--hud]`, three runs each, NVIDIA GeForce RTX 3080 Laptop GPU,
 Ryzen 9 5900HS):** a tool, not a frame stage, so it has no line in the table. The HUD pass

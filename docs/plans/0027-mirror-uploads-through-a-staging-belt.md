@@ -234,7 +234,7 @@ the frame is Plan 0028's and Plan 0024's.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The belt under `sync`, byte for byte | dev | done: `mirror.rs` 41 tests through `sync_now` (new: `submitted_syncs_reuse_one_belt_chunk`); staged-bytes test reads back through the belt; level first sync 232 436 992 B live, 1132 writes; all 10 goldens re-blessed with no byte change (`VXE_BLESS=1`, `git status` clean); new `syncs_past_one_belt_chunk_build_the_same_mirror` (16 MiB budget, every buffer equal to the unbudgeted mirror's); `belt_chunks()` peak 1 over a headless autopilot flight (2346 frames, load 13), 0 after `--level --frames 300` (1 trim at the first sync) | 843c5a3 |
-| 2: The streaming line, re-read | dev | stopped: the profile done-when unmet (below); `nfr.md` not written; owner question open | committed with this row |
+| 2: The streaming line, re-read | dev | done with a disclosed miss: quiet re-read meets both p50 bars (plain `sync` 1.397 to 1.662 ms, `update + poll + sync` 1.715 to 1.994 ms); the belt reads 25.4 % of `sync` against under 5 %, recorded as a miss (owner's option (a), 2026-10-21); readings in `nfr.md` §2 | committed with this row |
 | 3: The windowed frame-time summary and the autopilot's ring | dev | not started | |
 | 4: The owner's windowed flight | human | not started | |
 
