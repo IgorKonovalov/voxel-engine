@@ -734,6 +734,18 @@ one mask bit per voxel: a 16³ prefab is 8 KiB + 512 B, a 64³ one 512 KiB + 32 
 `.vox` model is capped at 256³ per axis (`MAX_MODEL_EDGE`), so the largest `to_prefab`
 allocation is about 50 MiB including its index buffer. `StampedSource` holds one rotated copy
 of the prefab per placement, so its RAM grows with the placement count, not the prefab count.
+**Reading (Plan 0042 Phase 4, 1474e59, `--castle`, release, RTX 3080 Laptop GPU, Ryzen 9
+5900HS, exclusive perf lock, 1-minute load 2.4 to 13.0, so loaded and indicative):** the
+generated castle keeps 21 of its 27 tiles (600 x 600 x 500 voxels split at 256): its prefabs
+hold 343 566 464 B (the sum of `2n + 8 ceil(n / 64)` over the kept tiles), of which the
+castle's listed voxels are 13 154 879 (about 3.5 % of the 2 B per voxel; the rest is the
+air in each tile's box). The encoded `.vox` is 52 623 529 B. Process peak RSS (`VmHWM`,
+streamed seed 1, headless, `--frames 3000`, 1280 x 720) is 1 242 440 to 1 331 404 kB
+with the castle against 949 184 to 986 124 kB without it, three runs each: about 260 to 350
+MiB more, the prefabs' 328 MiB plus the build's transients. Chunk generation over the 990
+chunks the castle meets (`examples/castle_gen`, single thread, three runs, load 9.1 to 6.3):
+mean 423.5 to 427.9 us and p99 2258 to 2380 us per chunk with the castle, against 186.2 to
+188.6 us and 1650 to 1710 us for the hall alone.
 
 ## 4. Edits
 
@@ -1082,7 +1094,18 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   497 to 517 ms, up from Plan 0001's 349 to 357 ms for the `u16` mirror; the palette scan
   before indices are written. Accepted at the Plan 0002 close (owner, 2026-10-16); TTFF stays
   under 3 s.
-- An incremental `cargo build` of a one-crate change under 10 s on the dev reference; the
+  **Reading (Plan 0042 Phase 4, 1474e59, `--castle`, streaming seed 1 headless, release, RTX
+  3080 Laptop GPU, exclusive perf lock, 1-minute load 2.4 to 13.0, loaded):** the castle's
+  build runs before the first chunk, single-threaded but for the tiles: generate 86 to 138 ms
+  (tiles on the machine's threads), encode 30 to 44 ms, parse 43 to 64 ms, map (palette to
+  prefabs) 405 to 492 ms, place (`StampedSource::new`, a rotated copy per prefab) 37 to 82 ms,
+  about 0.7 s in all over 18 runs. First frame 1087 to 2638 ms with the castle (1105 to 1303
+  ms at the gate shot) against 510 to 559 ms without it; full residency (17 077 full, 40 700
+  LOD-only chunks) at 8735 to 11 200 ms with it against 9343 to 9396 ms without. The census
+  at full residency: 1 547 872 `Full` bricks with the castle (its materials in 295 bricks of
+  3 to 4 materials and 407 with glass) against 1 640 292 without, the hall replacing cave
+  surface; mirror 841 816 812 B live against 871 679 852 B.
+ of a one-crate change under 10 s on the dev reference; the
   everyday loop does not compile crates a plan does not touch (`default-members`).
   **Reading (Plan 0011 Phase 4, dev reference, AMD Ryzen 9 5900HS, `CARGO_BUILD_JOBS=3`,
   exclusive perf lock, 1-minute load 1.99 to 1.91):** default-members `cargo build` after a

@@ -305,8 +305,8 @@ pub fn castle_source(file: &VoxFile) -> StampedSource<HallSource>;
 |---|---|---|---|
 | 1: A wall, a tower and the gate through the whole path | dev | done: `vxe_assets::encode` + `encode_rotation` (new `write.rs`), round-trip tests (three-model scene, all 24 rotations, single model); `castle.rs` generates the gate wall, the (60, 60) corner tower and the gatehouse into 4 non-empty tiles (3 013 543 voxels listed, 12 055 856 B `.vox`); `HallSource` in `cave.rs`; `--castle`, `--castle-out`; banner row `castle`. Headless `--castle --frames 60` on the RTX 3080 Laptop: generate 110 ms, encode 8 ms, parse 10 ms, map 128 ms, place 12 ms, prefabs 103 612 416 B. The window check is owed to Phase 5 | 430a2c4 |
 | 2: The whole castle, the dungeon, the materials and the determinism vector | dev | done: four curtain walls, four corner towers, gatehouse, keep (nave, rib vault, shafts, buttresses, lancets, west door and leaves, rose window, roof, west tower and spire, a torch per bay), stair house, dungeon (stair of 48 steps, corridor, cross corridor, 8 barred cells, crypt on 9 pillars, lining, torches). 21 of 27 tiles list voxels and are kept; prefab bytes 343 566 464 (sum of `2n + 8 ceil(n/64)` over the kept tiles, asserted against `Prefab::len`). Pinned: `.vox` FNV-1a 0x35a8_89ee_81c4_17e9 (52 623 529 B), voxel hash of the 990 castle chunks 0xa2f6_f292_88e1_04e3. Window check owed to Phase 5 | 0057070 |
-| 3: Named shots, the banner and the golden | dev | done: `CastleShot` (gate, nave, window, dungeon) with integer poses; `--castle-shot NAME`; key `I` cycles the shots, banner `castle <shot>`; every eye has 10 voxels of air along each axis both ways (headless test); `castle_gate.png` blessed on llvmpipe (Mesa 26.2.5), 0.0000 % differing on the re-run, from a 5 x 9 x 5-chunk world built from the 6 tiles meeting it, process peak RSS 777 871 360 B (dev box, not the CI runner). The key press in a window is owed to Phase 5 | committed with this row |
-| 4: The readings | dev | not started | |
+| 3: Named shots, the banner and the golden | dev | done: `CastleShot` (gate, nave, window, dungeon) with integer poses; `--castle-shot NAME`; key `I` cycles the shots, banner `castle <shot>`; every eye has 10 voxels of air along each axis both ways (headless test); `castle_gate.png` blessed on llvmpipe (Mesa 26.2.5), 0.0000 % differing on the re-run, from a 5 x 9 x 5-chunk world built from the 6 tiles meeting it, process peak RSS 777 871 360 B (dev box, not the CI runner). The key press in a window is owed to Phase 5 | 1474e59 |
+| 4: The readings | dev | done: `examples/castle_gen`; readings below and in `nfr.md` §3 Prefabs and §7, release builds at 1474e59, three runs each, RTX 3080 Laptop (`--adapter NVIDIA`) and AMD Cezanne iGPU on RADV (`--adapter AMD`), exclusive perf lock per run, 1-minute load 2.4 to 13.0 (loaded, indicative) | committed with this row |
 | 5: The owner flies the castle | human | not started | |
 
 ### Notes
@@ -340,7 +340,28 @@ pub fn castle_source(file: &VoxFile) -> StampedSource<HallSource>;
 
 - **What shipped:**
 - **Public API changed:**
-- **Budget readings:**
+- **Budget readings:** (1474e59, release, Ryzen 9 5900HS, exclusive perf lock per run,
+  1-minute load 2.4 to 13.0: loaded, indicative)
+  - Prefab RAM: 343 566 464 B, 21 of 27 tiles kept (printed by `--castle`, asserted in
+    `tests/castle.rs`).
+  - `.vox` size: 52 623 529 B, 13 154 879 voxels listed.
+  - Build stages, 18 runs: generate 86 to 138 ms, encode 30 to 44 ms, parse 43 to 64 ms, map
+    405 to 492 ms, place 37 to 82 ms.
+  - Process peak RSS (`VmHWM`, seed 1, headless, `--frames 3000`, 1280 x 720, NVIDIA):
+    1 242 440 / 1 242 952 / 1 331 404 kB with `--castle`, 949 184 / 985 400 / 986 124 kB
+    without.
+  - Chunk generation, 990 castle chunks (`castle_gen`, one thread): castle mean 423.5 /
+    424.7 / 427.9 us, p99 2258 / 2286 / 2380 us; hall alone mean 186.2 / 186.6 / 188.6 us,
+    p99 1650 / 1652 / 1710 us.
+  - Time to full residency: 8735 / 8780 / 11 200 ms with `--castle`, 9343 / 9357 / 9396 ms
+    without; first frame 1124 to 1517 ms against 510 to 559 ms.
+  - Census at full residency: 1 547 872 `Full` bricks (295 of 3 to 4 materials, 407 with
+    glass) and mirror 841 816 812 B live with `--castle`; 1 640 292 and 871 679 852 B without.
+  - Frame time, `--castle-shot NAME --headless --render 1920x1080 --frames 300`, median of the
+    last 30 (taken while the residency still streams in, CPU 6.6 to 12.3 ms), GPU frame:
+    NVIDIA gate 7.19 / 7.49 / 7.99 ms, nave 7.27 / 7.61 / 8.05 ms, window 7.16 / 7.22 / 7.23
+    ms, dungeon 7.05 / 7.06 / 7.08 ms; AMD iGPU gate 51.18 / 51.18 / 51.53 ms. At 1280 x 720
+    after 3000 frames: 2.80 to 2.83 ms with `--castle`, 2.48 to 2.53 ms without (NVIDIA).
 - **Gate at the tip:**
 - **Outstanding `human` phases:**
 
