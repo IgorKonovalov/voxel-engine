@@ -1326,40 +1326,26 @@ fn zz_tune() {
         width: 1.0,
         history_fetch: HistoryFetch::CatmullRom,
         blend: Blend::Nearness,
-        alpha: 0.1,
+        ..Upscaler::default()
     };
     let which = std::env::var("TUNE").unwrap_or_default();
     let mut variants = vec![];
-    for w in [0.6f32, 0.8, 1.0] {
+    let base = Upscaler {
+        width: 0.6,
+        alpha_moving: 0.1,
+        clip_gamma: 1.0,
+        ..base
+    };
+    for am in [0.35f32, 0.5] {
         variants.push((
-            format!("gauss {w} cr nearness"),
-            Upscaler { width: w, ..base },
+            format!("g0.6 am{am} lanczos fetch"),
+            Upscaler {
+                alpha_moving: am,
+                history_fetch: HistoryFetch::Lanczos2,
+                ..base
+            },
         ));
     }
-    variants.push((
-        "gauss 0.8 cr fixed".into(),
-        Upscaler {
-            width: 0.8,
-            blend: Blend::Fixed,
-            ..base
-        },
-    ));
-    variants.push((
-        "bh 0.8 cr nearness".into(),
-        Upscaler {
-            width: 0.8,
-            reconstruction: Reconstruction::BlackmanHarris,
-            ..base
-        },
-    ));
-    variants.push((
-        "gauss 0.8 bilinear nearness".into(),
-        Upscaler {
-            width: 0.8,
-            history_fetch: HistoryFetch::Bilinear,
-            ..base
-        },
-    ));
     for (label, u) in variants {
         if !which.is_empty() && !label.contains(&which) {
             continue;

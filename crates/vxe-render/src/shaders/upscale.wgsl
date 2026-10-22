@@ -71,8 +71,10 @@ struct UpTuning {
     still_clip: u32,
     width: f32,
     alpha: f32,
-    _pad0: f32,
-    _pad1: f32,
+    // `alpha` where the history moved by CLIP_STILL output pixels or more.
+    alpha_moving: f32,
+    // The clip box: the 3 x 3's YCoCg mean plus and minus `clip_gamma` deviations.
+    clip_gamma: f32,
 };
 
 @group(2) @binding(8) var<uniform> up_tuning: UpTuning;
@@ -83,8 +85,8 @@ const RECON_GAUSSIAN: u32 = 2u;
 const RECON_BLACKMAN_HARRIS: u32 = 3u;
 const FETCH_NEAREST: u32 = 1u;
 const FETCH_CATMULL_ROM: u32 = 2u;
+const FETCH_LANCZOS2: u32 = 3u;
 const BLEND_NEARNESS: u32 = 1u;
-const CLIP_GAMMA: f32 = 1.0;
 const CLIP_STILL: f32 = 0.01;
 // temporal.wgsl's HISTORY_COS, HISTORY_DIST and HISTORY_DIST_PER_T.
 const UP_HISTORY_COS: f32 = 0.8;
@@ -171,7 +173,7 @@ fn history_at(h: vec2<f32>) -> vec3<f32> {
     if (up_tuning.fetch == FETCH_NEAREST) {
         return hist_texel(vec2<i32>(floor(h)));
     }
-    if (up_tuning.fetch == FETCH_CATMULL_ROM) {
+    if (up_tuning.fetch == FETCH_CATMULL_ROM || up_tuning.fetch == FETCH_LANCZOS2) {
         // Catmull-Rom weights of the texels at offsets -1, 0, 1, 2 for fraction f.
         let w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
         let w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
@@ -179,6 +181,21 @@ fn history_at(h: vec2<f32>) -> vec3<f32> {
         let w3 = f * f * (-0.5 + 0.5 * f);
         var wx = array<f32, 4>(w0.x, w1.x, w2.x, w3.x);
         var wy = array<f32, 4>(w0.y, w1.y, w2.y, w3.y);
+        if (up_tuning.fetch == FETCH_LANCZOS2) {
+            // Lanczos-2 at the texels' offsets -1 - f, -f, 1 - f, 2 - f, normalised.
+            var sx = 0.0;
+            var sy = 0.0;
+            for (var i = 0; i < 4; i++) {
+                wx[i] = lanczos2(f32(i - 1) - f.x);
+                wy[i] = lanczos2(f32(i - 1) - f.y);
+                sx += wx[i];
+                sy += wy[i];
+            }
+            for (var i = 0; i < 4; i++) {
+                wx[i] /= sx;
+                wy[i] /= sy;
+            }
+        }
         var sum = vec3<f32>(0.0);
         for (var y = 0; y < 4; y++) {
             var row = vec3<f32>(0.0);
@@ -300,8 +317,8 @@ fn upscale(@builtin(global_invocation_id) gid: vec3<u32>) {
                     // which one frame's 3 x 3 does not span. What changes under a still
                     // camera without moving the history is an edit (rejected above) or light.
                     let still = length(h - (vec2<f32>(gid.xy) + 0.5)) < CLIP_STILL;
-                    let b_lo = select(max(lo, mean - CLIP_GAMMA * sigma), vec3<f32>(-1e9), still);
-                    let b_hi = select(min(hi, mean + CLIP_GAMMA * sigma), vec3<f32>(1e9), still);
+                    let b_lo = select(max(lo, mean - up_tuning.clip_gamma * sigma), vec3<f32>(-1e9), still);
+                    let b_hi = select(min(hi, mean + up_tuning.clip_gamma * sigma), vec3<f32>(1e9), still);
                     let mid = 0.5 * (b_lo + b_hi);
                     let ext = 0.5 * (b_hi - b_lo) + vec3<f32>(1e-5);
                     var hy = to_ycocg(history_at(h)) - mid;
@@ -310,7 +327,7 @@ fn upscale(@builtin(global_invocation_id) gid: vec3<u32>) {
                     if (m > 1.0) {
                         hy /= m;
                     }
-                    alpha = up_tuning.alpha;
+                    alpha = select(up_tuning.alpha_moving, up_tuning.alpha, still);
                     if (up_tuning.blend == BLEND_NEARNESS) {
                         alpha *= w_near;
                     }

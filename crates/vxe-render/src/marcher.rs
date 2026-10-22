@@ -512,6 +512,8 @@ pub enum HistoryFetch {
     Nearest,
     /// Catmull-Rom over the 4 x 4 texels around the position, held non-negative.
     CatmullRom,
+    /// Lanczos-2 over the 4 x 4 texels, normalised, held non-negative.
+    Lanczos2,
 }
 
 /// The current colour's share of the upscale pass's blend where history is kept.
@@ -532,8 +534,13 @@ pub struct Upscaler {
     pub width: f32,
     pub history_fetch: HistoryFetch,
     pub blend: Blend,
-    /// The current colour's weight in the blend (see [`Blend`]).
+    /// The current colour's weight in the blend (see [`Blend`]) where the history held still.
     pub alpha: f32,
+    /// [`Upscaler::alpha`] where the history moved by 0.01 output pixels or more.
+    pub alpha_moving: f32,
+    /// The clip box around the 3 x 3 samples' YCoCg mean, in standard deviations (inside
+    /// their minimum and maximum).
+    pub clip_gamma: f32,
 }
 
 impl Default for Upscaler {
@@ -544,6 +551,8 @@ impl Default for Upscaler {
             history_fetch: HistoryFetch::Bilinear,
             blend: Blend::Fixed,
             alpha: 0.1,
+            alpha_moving: 0.1,
+            clip_gamma: 1.0,
         }
     }
 }
@@ -558,7 +567,8 @@ struct UpscaleUniform {
     still_clip: u32,
     width: f32,
     alpha: f32,
-    _pad: [f32; 2],
+    alpha_moving: f32,
+    clip_gamma: f32,
 }
 
 impl Upscaler {
@@ -574,6 +584,7 @@ impl Upscaler {
                 HistoryFetch::Bilinear => 0,
                 HistoryFetch::Nearest => 1,
                 HistoryFetch::CatmullRom => 2,
+                HistoryFetch::Lanczos2 => 3,
             },
             blend: match self.blend {
                 Blend::Fixed => 0,
@@ -582,7 +593,8 @@ impl Upscaler {
             still_clip: 0,
             width: self.width,
             alpha: self.alpha,
-            _pad: [0.0; 2],
+            alpha_moving: self.alpha_moving,
+            clip_gamma: self.clip_gamma,
         }
     }
 }
