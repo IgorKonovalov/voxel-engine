@@ -174,8 +174,8 @@ struct Params {
     prev_light_offset: u32,
     // The emissive part's history length in frames (`Lighting::emissive_history`).
     emissive_history: f32,
-    _pad9: u32,
-    _pad10: u32,
+    // The size of the frame's image (the upscale pass's output); `size` without the upscaler.
+    output_size: vec2<u32>,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;

@@ -7,6 +7,9 @@ use crate::light::LightParams;
 use crate::{ATROUS_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, LIGHT_WGSL, MARCH_WGSL, TEMPORAL_WGSL};
 use vxe_world::ChunkCoord;
 
+/// The upscale pass and its resolve, compiled after [`MARCH_WGSL`].
+pub const UPSCALE_WGSL: &str = include_str!("shaders/upscale.wgsl");
+
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
 pub const WORKGROUP: u32 = 8;
 
@@ -70,7 +73,8 @@ pub struct Params {
     pub prev_light_offset: u32,
     /// The emissive part's history length in frames ([`Lighting::emissive_history`]).
     pub emissive_history: f32,
-    pub _pad8: [u32; 2],
+    /// The size of the frame's image: the output size with the upscaler, else `size`.
+    pub output_size: [u32; 2],
 }
 
 /// `Params::lighting` bit: the headlamp lights the frame.
@@ -627,6 +631,10 @@ pub struct Frame {
     resolution: LightingResolution,
     downsample_layout: wgpu::BindGroupLayout,
     downsample: wgpu::ComputePipeline,
+    upscale_layout: wgpu::BindGroupLayout,
+    upscale: wgpu::ComputePipeline,
+    resolve_layout: wgpu::BindGroupLayout,
+    resolve: wgpu::ComputePipeline,
     history: std::sync::Mutex<History>,
     /// The output size the frame's image is presented at; the targets are at the internal
     /// size.
@@ -657,6 +665,9 @@ struct History {
     /// arrived.
     edits: Vec<[[i32; 3]; 2]>,
     overflow: bool,
+    /// The view mode changed since the last encode: the upscaler's history holds another
+    /// view's image.
+    view_changed: bool,
 }
 
 /// Entries the candidate table holds at most.
@@ -976,6 +987,33 @@ impl Frame {
                 },
             )
         });
+        let (upscale_layout, upscale) = pass(
+            "upscale",
+            UPSCALE_WGSL,
+            "upscale",
+            &[
+                Io::Float,
+                Io::Uint,
+                Io::Float,
+                Io::Float,
+                Io::Uint,
+                Io::Float,
+                f16,
+                Io::Uniform,
+            ],
+        );
+        let resolve_layout = io_layout(
+            device,
+            "resolve",
+            &[Io::Float, Io::Store(wgpu::TextureFormat::Rgba8Unorm)],
+        );
+        let resolve = compute_pipeline(
+            device,
+            "resolve",
+            format!("{MARCH_WGSL}\n{UPSCALE_WGSL}"),
+            &[Some(&world_layout), None, None, Some(&resolve_layout)],
+            "resolve",
+        );
         let (composite_layout, composite) = pass(
             "composite",
             COMPOSITE_WGSL,
@@ -1020,7 +1058,13 @@ impl Frame {
             composite,
             params,
             edits,
-            targets: Targets::new(device, width, height, LightingResolution::default().scale()),
+            targets: Targets::new(
+                device,
+                width,
+                height,
+                LightingResolution::default().scale(),
+                (internal != output).then_some(output),
+            ),
             resolution: LightingResolution::default(),
             lod: LodParams::default(),
             look: LookParams::default(),
@@ -1054,6 +1098,10 @@ impl Frame {
             cur: 0,
             downsample_layout,
             downsample,
+            upscale_layout,
+            upscale,
+            resolve_layout,
+            resolve,
             history: std::sync::Mutex::new(History::default()),
             output,
             jitter: false,
@@ -1071,9 +1119,20 @@ impl Frame {
     }
 
     /// Jitters every view's rays by [`jitter_at`] of the frame index (off by default: each
-    /// ray through its pixel's centre).
-    pub fn set_jitter(&mut self, on: bool) {
-        self.jitter = on;
+    /// ray through its pixel's centre). The upscaler runs when the frame jitters or the
+    /// internal size differs from the output size, so turning the jitter on or off at equal
+    /// sizes replaces the targets and drops the history.
+    pub fn set_jitter(&mut self, device: &wgpu::Device, on: bool) {
+        if on != self.jitter {
+            self.jitter = on;
+            self.set_sizes(device, self.internal_size(), self.output);
+        }
+    }
+
+    /// Whether the upscale pass runs: the frame jitters or renders below its output size.
+    /// Without it the composite's image is the frame's, byte for byte.
+    pub fn upscaling(&self) -> bool {
+        self.jitter || self.internal_size() != self.output
     }
 
     pub fn jitter(&self) -> bool {
@@ -1175,8 +1234,12 @@ impl Frame {
         self.lod
     }
 
-    /// Sets the surface look: normal mode, detail and view.
+    /// Sets the surface look: normal mode, detail and view. A change of view drops the
+    /// upscaler's history (not the lighting's).
     pub fn set_look(&mut self, look: LookParams) {
+        if look.view != self.look.view {
+            self.history().view_changed = true;
+        }
         self.look = look;
     }
 
@@ -1193,9 +1256,18 @@ impl Frame {
         self.lighting
     }
 
-    /// The composite's `rgba8unorm` output.
+    /// The frame's `rgba8unorm` image: the composite's output, or with the upscaler (see
+    /// [`Frame::upscaling`]) the upscaled image at the output size. With the upscaler the
+    /// composite writes the internal image into its top-left pixels and the upscale pass's
+    /// resolve overwrites the whole of it.
     pub fn target(&self) -> &wgpu::Texture {
         &self.targets.output
+    }
+
+    /// The upscaler's history the next or last encode writes (rgba16float at the output size:
+    /// the upscaled image, display-encoded rgb), or `None` without the upscaler.
+    pub fn upscale_history(&self) -> Option<&wgpu::Texture> {
+        self.targets.history.as_ref().map(|h| &h[self.cur])
     }
 
     /// The hit buffer's position texture the next or last encode writes (rgba32float: world
@@ -1252,8 +1324,15 @@ impl Frame {
     /// Replaces the targets with ones of `internal` pixels for an image presented at
     /// `output` pixels and drops the history; the pipelines are kept.
     pub fn set_sizes(&mut self, device: &wgpu::Device, internal: [u32; 2], output: [u32; 2]) {
-        self.targets = Targets::new(device, internal[0], internal[1], self.resolution.scale());
         self.output = output;
+        let upscaled = (self.jitter || internal != output).then_some(output);
+        self.targets = Targets::new(
+            device,
+            internal[0],
+            internal[1],
+            self.resolution.scale(),
+            upscaled,
+        );
         self.reset_history();
     }
 
@@ -1262,9 +1341,7 @@ impl Frame {
     pub fn set_resolution(&mut self, device: &wgpu::Device, resolution: LightingResolution) {
         if resolution != self.resolution {
             self.resolution = resolution;
-            let (w, h) = (self.targets.width, self.targets.height);
-            self.targets = Targets::new(device, w, h, resolution.scale());
-            self.reset_history();
+            self.set_sizes(device, self.internal_size(), self.output);
         }
     }
 
@@ -1335,6 +1412,11 @@ impl Frame {
             lod2_r2: (4 * self.lod.r_full).pow(2),
             exposure: self.lighting.exposure,
             emissive_history: self.lighting.emissive_history as f32,
+            output_size: if self.upscaling() {
+                self.output
+            } else {
+                [self.targets.width, self.targets.height]
+            },
             lighting: self.lighting.flags()
                 | if self
                     .emission_changed_at
@@ -1406,6 +1488,9 @@ impl Frame {
             p.prev_light_offset = h.prev_offset;
             h.last_offset = params.light_offset;
             p.history = u32::from(h.valid && !h.overflow);
+            // Bit 1: the upscaler's history holds this view's image.
+            p.history |= u32::from(h.valid && !h.overflow && !h.view_changed) << 1;
+            h.view_changed = false;
             for (i, [min, max]) in h.edits.iter().enumerate() {
                 edits.boxes[2 * i] = [min[0], min[1], min[2], 0];
                 edits.boxes[2 * i + 1] = [max[0], max[1], max[2], 0];
@@ -1575,6 +1660,29 @@ impl Frame {
                 Res::Tex(&t.strata),
             ],
         );
+        let upscale_bind = t.history.as_ref().map(|hist| {
+            bind_io(
+                device,
+                &self.upscale_layout,
+                &[
+                    Res::Tex(&t.hit_pos[c]),
+                    Res::Tex(&t.hit_info[c]),
+                    Res::Tex(&t.output),
+                    Res::Tex(&t.hit_pos[q]),
+                    Res::Tex(&t.hit_info[q]),
+                    Res::Tex(&hist[q]),
+                    Res::Tex(&hist[c]),
+                    Res::Buf(&self.edits),
+                ],
+            )
+        });
+        let resolve_bind = t.history.as_ref().map(|hist| {
+            bind_io(
+                device,
+                &self.resolve_layout,
+                &[Res::Tex(&hist[c]), Res::Tex(&t.output)],
+            )
+        });
         let gradient_on =
             self.lighting.history == HistoryKill::Gradient && self.look.view == ViewMode::Shaded;
         let full = [t.width.div_ceil(WORKGROUP), t.height.div_ceil(WORKGROUP)];
@@ -1600,13 +1708,20 @@ impl Frame {
             atrous.push((&self.variance, &variance_bind, 2, lw));
             atrous.extend(atrous_binds.iter().map(|b| (&self.atrous, b, 2, lw)));
         }
-        let passes: [Vec<Dispatch<'_>>; 6] = [
+        let mut upscale: Vec<Dispatch<'_>> = Vec::new();
+        if let (Some(u), Some(r)) = (&upscale_bind, &resolve_bind) {
+            let out = self.output.map(|n| n.div_ceil(WORKGROUP));
+            upscale.push((&self.upscale, u, 2, out));
+            upscale.push((&self.resolve, r, 3, out));
+        }
+        let passes: [Vec<Dispatch<'_>>; 7] = [
             hit,
             gradient,
             vec![(&self.light, &light_bind, 2, lw)],
             vec![(&self.temporal, &temporal_bind, 2, lw)],
             atrous,
             vec![(&self.composite, &composite_bind, 2, full)],
+            upscale,
         ];
         for (i, dispatches) in passes.into_iter().enumerate() {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1660,13 +1775,14 @@ fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_>
 
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
-pub const FRAME_PASSES: [&str; 6] = [
+pub const FRAME_PASSES: [&str; 7] = [
     "hit",
     "gradient",
     "light",
     "temporal",
     "atrous",
     "composite",
+    "upscale",
 ];
 
 /// The gradient pass's stratum edge in pixels; `STRATUM` in `gradient.wgsl`.
@@ -1703,12 +1819,24 @@ struct Targets {
     reservoir: [wgpu::Texture; 2],
     /// The gradient pass's strata, one texel per 3 x 3 lighting pixels (rgba16float).
     strata: wgpu::Texture,
-    /// The composite's display-encoded output (rgba8unorm).
+    /// The frame's display-encoded image (rgba8unorm): the composite's output at the
+    /// internal size, or with the upscaler at the output size, the composite's image in its
+    /// top-left pixels until the resolve overwrites it.
     output: wgpu::Texture,
+    /// The upscaler's history at the output size (rgba16float), this frame's and the last.
+    history: Option<[wgpu::Texture; 2]>,
 }
 
 impl Targets {
-    fn new(device: &wgpu::Device, width: u32, height: u32, scale: u32) -> Self {
+    /// The targets at the internal size `width` x `height`, with the upscaler's at
+    /// `upscaled` when it runs.
+    fn new(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        scale: u32,
+        upscaled: Option<[u32; 2]>,
+    ) -> Self {
         let sized = |label, format, width, height| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -1752,7 +1880,12 @@ impl Targets {
                 lw.div_ceil(GRADIENT_STRATUM),
                 lh.div_ceil(GRADIENT_STRATUM),
             ),
-            output: tex("frame target", Rgba8Unorm),
+            output: match upscaled {
+                Some([w, h]) => sized("frame target", Rgba8Unorm, w, h),
+                None => tex("frame target", Rgba8Unorm),
+            },
+            history: upscaled
+                .map(|[w, h]| [0, 1].map(|_| sized("upscale history", Rgba16Float, w, h))),
         }
     }
 
@@ -1777,7 +1910,15 @@ impl Targets {
         let lpx = u64::from(lw) * u64::from(lh);
         let half = if self.scale > 1 { 2 * (16 + 8) } else { 0 };
         let strata = u64::from(self.strata.width()) * u64::from(self.strata.height());
-        px * (2 * (16 + 8) + 8 + 4) + lpx * (half + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16) + strata * 8
+        let output = u64::from(self.output.width()) * u64::from(self.output.height());
+        let history = self.history.as_ref().map_or(0, |h| {
+            2 * 8 * u64::from(h[0].width()) * u64::from(h[0].height())
+        });
+        px * (2 * (16 + 8) + 8)
+            + output * 4
+            + history
+            + lpx * (half + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16)
+            + strata * 8
     }
 }
 
@@ -1995,6 +2136,21 @@ mod tests {
             let mean = phases.iter().map(|p| p[k]).sum::<f32>() / JITTER_PHASES as f32;
             assert!(mean.abs() <= 1.0 / 16.0, "axis {k}: mean {mean}");
         }
+    }
+
+    /// The upscale pass and its resolve parse and validate headless, compiled after the hit
+    /// pass.
+    #[test]
+    fn upscale_wgsl_validates_through_naga() {
+        let source = format!("{}\n{}", crate::MARCH_WGSL, super::UPSCALE_WGSL);
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|e| panic!("upscale.wgsl parses: {}", e.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("upscale.wgsl validates: {e:?}"));
     }
 
     #[test]

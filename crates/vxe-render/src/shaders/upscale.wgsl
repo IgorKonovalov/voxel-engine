@@ -1,0 +1,238 @@
+// The upscale pass (ADR-0024): a temporal upscaler from the composite's internal pixels to the
+// output size, one invocation per output pixel. Compiled after march.wgsl, whose bindings
+// (group 0), views, hit-record helpers and reprojection it uses.
+//
+// Bindings, group 2 of `upscale`:
+//   0  texture_2d<f32>   up_pos_in       this frame's hit positions (internal size)
+//   1  texture_2d<u32>   up_info_in      this frame's hit records
+//   2  texture_2d<f32>   up_colour_in    the composite's display-encoded colour, the internal
+//                                        image in its top-left `params.size` pixels
+//   3  texture_2d<f32>   up_prev_pos_in  last frame's hit positions
+//   4  texture_2d<u32>   up_prev_info_in last frame's hit records
+//   5  texture_2d<f32>   up_prev_hist_in last frame's history (output size)
+//   6  storage texture   up_hist_out     rgba16float: this frame's history, the upscaled
+//                                        image, display-encoded rgb, and in a the weight
+//                                        of the current colour (UPSCALE_ALPHA, or 1 without
+//                                        history)
+//   7  uniform           up_edits        the frame's edit boxes (temporal.wgsl's `Edits`)
+//
+// Coordinates: internal pixel `i` spans `[i, i + 1)` and this frame's sample of it lies at
+// `i + 0.5 + jitter`; output pixel `o`'s centre is at internal `(o + 0.5) size / output_size`.
+//
+// Per output pixel, in the shaded view: the nearest internal sample's hit `rec` (the internal
+// pixel whose jittered sample lies nearest the centre). The current colour is the Lanczos-2
+// weighted mean of the internal samples within 2 output pixels (the kernel at each sample's
+// jittered position, distances in output pixels), clamped to the range of the 3 x 3
+// samples around the nearest. History is taken when `Params.history` bit 1 says it is valid,
+// `rec` hit outside every edit box dilated by one voxel, and last frame's hit buffer agrees
+// with `rec` at one of the 3 x 3 pixels around where `rec.p` reprojects through the previous
+// view: a hit, the same material, a normal within UP_HISTORY_COS, a position within
+// `UP_HISTORY_DIST + UP_HISTORY_DIST_PER_T t` voxels (temporal.wgsl's thresholds). The history is read bilinearly where the output
+// centre moved with the sample's motion, clipped toward the centre of the YCoCg box of the 3 x
+// 3 samples (their mean plus and minus CLIP_GAMMA standard deviations, inside their minimum
+// and maximum), and blended with the current colour at UPSCALE_ALPHA; a pixel without history
+// takes the current colour (alpha 1). Every other view takes the nearest sample's colour
+// unblended.
+//
+// Bindings, group 3 of `resolve`, which writes the output image from the history:
+//   0  texture_2d<f32>   resolve_in      the history `upscale` wrote
+//   1  storage texture   resolve_out     rgba8unorm: the frame's image (output size)
+
+@group(2) @binding(0) var up_pos_in: texture_2d<f32>;
+@group(2) @binding(1) var up_info_in: texture_2d<u32>;
+@group(2) @binding(2) var up_colour_in: texture_2d<f32>;
+@group(2) @binding(3) var up_prev_pos_in: texture_2d<f32>;
+@group(2) @binding(4) var up_prev_info_in: texture_2d<u32>;
+@group(2) @binding(5) var up_prev_hist_in: texture_2d<f32>;
+@group(2) @binding(6) var up_hist_out: texture_storage_2d<rgba16float, write>;
+
+// temporal.wgsl's `Edits`: up to MAX_EDITS boxes, box i from `boxes[2 i]` to `boxes[2 i + 1]`.
+struct UpEdits {
+    count: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+    boxes: array<vec4<i32>, 128>,
+};
+
+@group(2) @binding(7) var<uniform> up_edits: UpEdits;
+
+@group(3) @binding(0) var resolve_in: texture_2d<f32>;
+@group(3) @binding(1) var resolve_out: texture_storage_2d<rgba8unorm, write>;
+
+const UPSCALE_ALPHA: f32 = 0.1;
+const CLIP_GAMMA: f32 = 1.0;
+// temporal.wgsl's HISTORY_COS, HISTORY_DIST and HISTORY_DIST_PER_T.
+const UP_HISTORY_COS: f32 = 0.8;
+const UP_HISTORY_DIST: f32 = 0.5;
+const UP_HISTORY_DIST_PER_T: f32 = 0.03;
+
+// Whether `p` lies inside an edit box dilated by one voxel, faces included.
+fn up_in_edit(p: vec3<f32>) -> bool {
+    for (var i = 0u; i < up_edits.count; i++) {
+        let lo = vec3<f32>(up_edits.boxes[2u * i].xyz - 1);
+        let hi = vec3<f32>(up_edits.boxes[2u * i + 1u].xyz + 2);
+        if (all(p >= lo) && all(p <= hi)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The Lanczos-2 kernel, `sinc(x) sinc(x / 2)` on `|x| < 2`.
+fn lanczos2(x: f32) -> f32 {
+    let a = PI * abs(x);
+    if (a < 1e-4) {
+        return 1.0;
+    }
+    if (abs(x) >= 2.0) {
+        return 0.0;
+    }
+    return 2.0 * sin(a) * sin(0.5 * a) / (a * a);
+}
+
+fn to_ycocg(c: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        0.25 * c.x + 0.5 * c.y + 0.25 * c.z,
+        0.5 * c.x - 0.5 * c.z,
+        -0.25 * c.x + 0.5 * c.y - 0.25 * c.z,
+    );
+}
+
+fn from_ycocg(c: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z);
+}
+
+// Last frame's history at continuous output position `h` (pixel centres at + 0.5), bilinear,
+// clamped to the edge.
+fn history_at(h: vec2<f32>) -> vec3<f32> {
+    let n = vec2<i32>(params.output_size) - vec2<i32>(1);
+    let q = h - 0.5;
+    let b = vec2<i32>(floor(q));
+    let f = q - floor(q);
+    let t00 = textureLoad(up_prev_hist_in, clamp(b, vec2<i32>(0), n), 0).xyz;
+    let t10 = textureLoad(up_prev_hist_in, clamp(b + vec2<i32>(1, 0), vec2<i32>(0), n), 0).xyz;
+    let t01 = textureLoad(up_prev_hist_in, clamp(b + vec2<i32>(0, 1), vec2<i32>(0), n), 0).xyz;
+    let t11 = textureLoad(up_prev_hist_in, clamp(b + vec2<i32>(1, 1), vec2<i32>(0), n), 0).xyz;
+    return mix(mix(t00, t10, f.x), mix(t01, t11, f.x), f.y);
+}
+
+// Whether last frame saw `rec`'s surface around internal pixel `k`: any of the 3 x 3 pixels
+// around it hit with `rec`'s material, a normal within UP_HISTORY_COS and a position within
+// the distance tolerance. A jittered sample beside a face's edge reprojects onto the
+// neighbouring face as often as onto its own, so one pixel alone would reject every edge.
+fn prev_surface_seen(k: vec2<i32>, rec: HitRecord) -> bool {
+    let last = vec2<i32>(params.size) - vec2<i32>(1);
+    let tol = UP_HISTORY_DIST + UP_HISTORY_DIST_PER_T * rec.t;
+    for (var dy = -1; dy <= 1; dy++) {
+        for (var dx = -1; dx <= 1; dx++) {
+            let tap = k + vec2<i32>(dx, dy);
+            if (any(tap < vec2<i32>(0)) || any(tap > last)) {
+                continue;
+            }
+            let prev = unpack_hit(textureLoad(up_prev_pos_in, tap, 0), textureLoad(up_prev_info_in, tap, 0));
+            if (prev.found && prev.material == rec.material && dot(prev.n, rec.n) >= UP_HISTORY_COS
+                && distance(prev.p, rec.p) <= tol) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn upscale(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x >= params.output_size.x || gid.y >= params.output_size.y) {
+        return;
+    }
+    let o = vec2<i32>(gid.xy);
+    let size = vec2<i32>(params.size);
+    let last = size - vec2<i32>(1);
+    // Internal pixels per output pixel, on each edge.
+    let ratio = vec2<f32>(params.size) / vec2<f32>(params.output_size);
+    let centre = (vec2<f32>(gid.xy) + 0.5) * ratio;
+    let vi = view_of(vec2<u32>(clamp(vec2<i32>(floor(centre)), vec2<i32>(0), last)));
+    let v = params.views[vi];
+    let near = clamp(vec2<i32>(floor(centre - v.jitter)), vec2<i32>(0), last);
+    if (view_mode() != VIEW_SHADED) {
+        textureStore(up_hist_out, o, vec4<f32>(textureLoad(up_colour_in, near, 0).xyz, 1.0));
+        return;
+    }
+    let rec = unpack_hit(textureLoad(up_pos_in, near, 0), textureLoad(up_info_in, near, 0));
+    var sum = vec3<f32>(0.0);
+    var w_sum = 0.0;
+    var lo_rgb = vec3<f32>(1e9);
+    var hi_rgb = vec3<f32>(-1e9);
+    var lo = vec3<f32>(1e9);
+    var hi = vec3<f32>(-1e9);
+    var m1 = vec3<f32>(0.0);
+    var m2 = vec3<f32>(0.0);
+    var n = 0.0;
+    for (var dy = -2; dy <= 2; dy++) {
+        for (var dx = -2; dx <= 2; dx++) {
+            let tap = near + vec2<i32>(dx, dy);
+            if (any(tap < vec2<i32>(0)) || any(tap > last)) {
+                continue;
+            }
+            let c = textureLoad(up_colour_in, tap, 0).xyz;
+            let d = (vec2<f32>(tap) + 0.5 + v.jitter - centre) / ratio;
+            let w = lanczos2(d.x) * lanczos2(d.y);
+            sum += w * c;
+            w_sum += w;
+            if (abs(dx) <= 1 && abs(dy) <= 1) {
+                let y = to_ycocg(c);
+                lo_rgb = min(lo_rgb, c);
+                hi_rgb = max(hi_rgb, c);
+                lo = min(lo, y);
+                hi = max(hi, y);
+                m1 += y;
+                m2 += y * y;
+                n += 1.0;
+            }
+        }
+    }
+    var current = textureLoad(up_colour_in, near, 0).xyz;
+    if (w_sum > 1e-3) {
+        current = clamp(sum / w_sum, lo_rgb, hi_rgb);
+    }
+    var result = current;
+    var alpha = 1.0;
+    if ((params.history & 2u) != 0u && rec.found && !up_in_edit(rec.p)) {
+        let pv = params.prev_views[vi];
+        let y = project_prev(pv, rec.p);
+        let k = vec2<i32>(floor(y));
+        if (y.x >= 0.0 && all(k >= vec2<i32>(0)) && all(k <= last)) {
+            if (prev_surface_seen(k, rec)) {
+                // The sample's motion in unjittered internal pixels moves the output centre.
+                let moved = centre + (y + pv.jitter) - (vec2<f32>(near) + 0.5 + v.jitter);
+                let h = moved / ratio;
+                if (all(h >= vec2<f32>(0.0)) && all(h <= vec2<f32>(params.output_size))) {
+                    let mean = m1 / n;
+                    let sigma = sqrt(max(m2 / n - mean * mean, vec3<f32>(0.0)));
+                    let b_lo = max(lo, mean - CLIP_GAMMA * sigma);
+                    let b_hi = min(hi, mean + CLIP_GAMMA * sigma);
+                    let mid = 0.5 * (b_lo + b_hi);
+                    let ext = 0.5 * (b_hi - b_lo) + vec3<f32>(1e-5);
+                    var hy = to_ycocg(history_at(h)) - mid;
+                    let u = abs(hy / ext);
+                    let m = max(u.x, max(u.y, u.z));
+                    if (m > 1.0) {
+                        hy /= m;
+                    }
+                    alpha = UPSCALE_ALPHA;
+                    result = mix(from_ycocg(mid + hy), current, alpha);
+                }
+            }
+        }
+    }
+    textureStore(up_hist_out, o, vec4<f32>(result, alpha));
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn resolve(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x >= params.output_size.x || gid.y >= params.output_size.y) {
+        return;
+    }
+    let o = vec2<i32>(gid.xy);
+    textureStore(resolve_out, o, vec4<f32>(textureLoad(resolve_in, o, 0).xyz, 1.0));
+}

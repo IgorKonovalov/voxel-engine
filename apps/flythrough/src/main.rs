@@ -2570,7 +2570,7 @@ impl Run {
             self.args.internal_scale.internal(output),
             output,
         );
-        frame.set_jitter(self.args.jitter);
+        frame.set_jitter(&gpu.device, self.args.jitter);
         frame.set_lighting(self.modes.lighting);
         frame.set_resolution(&gpu.device, self.modes.resolution);
         println!("{}", self.modes.line());
