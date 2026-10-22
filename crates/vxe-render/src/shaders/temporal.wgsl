@@ -23,11 +23,14 @@
 //                                        the 3 x 3 strata around the reprojected pixel's
 //                                        (clamped to 1), and the age falls by that fraction
 //
-// A hit is projected through the previous frame's view of the same index to a fractional
-// pixel; each of its four bilinear taps is accepted when that pixel hit, with the same
-// material, a normal within HISTORY_COS of this one, and a position within
-// `HISTORY_DIST + HISTORY_DIST_PER_T t` voxels of this hit. The accepted taps' history,
-// moments and age are blended by their bilinear weights; with none accepted, with no
+// A hit is reprojected through the previous frame's view of the same index to a fractional
+// pixel as if both frames' rays went through their pixels' centres (`reproject_centred`: a
+// still camera maps each pixel onto itself whatever the jitter); each of its four bilinear
+// taps is accepted when that pixel hit, with the same material, a normal within HISTORY_COS
+// of this one, and a position within `HISTORY_DIST + HISTORY_DIST_PER_T t` voxels of this
+// hit. The accepted taps' history, moments and age are blended by their bilinear weights;
+// with none accepted, the accepted pixel of the 3 x 3 around the nearest whose position lies
+// nearest this hit's is taken alone; with none of those either, with no
 // history (`Params.history` bit 0 clear), or with the hit inside an edit box dilated by
 // one voxel, the pixel resets: age 0, accumulation this frame's sample. Otherwise the age is
 // the taps' age plus one, capped at AGE_MAX. The lamp's part and the moments blend the new
@@ -116,8 +119,8 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     var moments = vec2<f32>(l, l * l);
     var age = 0.0;
     if (rec.found && (params.history & 1u) != 0u && !in_edit(rec.p)) {
-        let v = params.prev_views[view_of(full_px(gid.xy))];
-        let full = project_prev(v, rec.p);
+        let vi = view_of(full_px(gid.xy));
+        let full = reproject_centred(params.prev_views[vi], params.views[vi].jitter, rec.p);
         let q = select(prev_light_grid(full), full, full.x < 0.0) - 0.5;
         let base = vec2<i32>(floor(q));
         let f = q - floor(q);
@@ -142,6 +145,28 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             w_sum += w;
             h += w * textureLoad(prev_accum_in, tap, 0);
             m += w * textureLoad(prev_moments_in, tap, 0).xyz;
+        }
+        if (w_sum <= 1e-3) {
+            // No bilinear tap agrees: the best-agreeing pixel of the 3 x 3 around the nearest
+            // (the nearest position), so a jittered hit beside a face's edge finds its face.
+            let near = vec2<i32>(floor(q + 0.5));
+            var best = tol;
+            for (var i = 0; i < 9; i++) {
+                let tap = near + vec2<i32>(i % 3 - 1, i / 3 - 1);
+                if (!on_light_grid(tap)) {
+                    continue;
+                }
+                let prev = unpack_hit(textureLoad(prev_pos_in, tap, 0), textureLoad(prev_info_in, tap, 0));
+                let d = distance(prev.p, rec.p);
+                if (!prev.found || prev.material != rec.material || dot(prev.n, rec.n) < HISTORY_COS
+                    || d > best) {
+                    continue;
+                }
+                best = d;
+                w_sum = 1.0;
+                h = textureLoad(prev_accum_in, tap, 0);
+                m = textureLoad(prev_moments_in, tap, 0).xyz;
+            }
         }
         if (w_sum > 1e-3) {
             h /= w_sum;

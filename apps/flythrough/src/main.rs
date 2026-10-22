@@ -12,10 +12,16 @@
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
 //! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]
-//! [--history edits|gradient] [--lighting full|half] [--emissive-history N]`.
-//! `--render` fixes the frame's internal resolution (the window scales it); `--frames` exits after N
-//! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
-//! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
+//! [--history edits|gradient] [--lighting full|half] [--emissive-history N]
+//! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S]`.
+//! `--render` fixes the frame's output resolution (the window scales it); `--internal-scale`
+//! renders at the output size divided by it on each edge (default 1: no upscaler); `--jitter
+//! on` moves every primary ray by the Halton (2, 3) sub-pixel jitter of the frame (default off:
+//! through its pixel's centre), which the upscaler accumulates; the upscaler runs when the
+//! scale is above 1 or the jitter is on (`--internal-scale 1.5 --jitter on` is the performance
+//! option); `--sharpen S` sets the upscaler's RCAS sharpening, 0 to 1 (default 0.5, 0 off);
+//! `--frames` exits after N frames, printing the `F1` readings over the last ones and the
+//! stats HUD's rows; `--hud` starts with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
 //! [`Autopilot`]); `--cutaway auto|on|off` sets the cutaway view's start state (default `auto`:
 //! on while the camera's voxel is neither air nor translucent, so a camera in rock or outside
@@ -168,8 +174,8 @@ use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
     AttrWorkStats, BELT_CHUNK_BYTES, Camera, FRAME_PASSES, Frame, GpuWorld, HistoryKill, HudColour,
     HudOverlay, LightParams, Lighting, LightingResolution, LodParams, LookParams, MarchTimer,
-    MirrorConfig, NormalMode, PassTimer, Presenter, Sampler, ShadowWalk, SyncStats, ViewMode,
-    Window, wgpu,
+    MirrorConfig, NormalMode, PassTimer, Presenter, RenderScale, Sampler, ShadowWalk, SyncStats,
+    ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -343,7 +349,25 @@ struct Args {
     lighting: LightingResolution,
     /// `--emissive-history N`: frames the emissive light's history blends over at least.
     emissive_history: u32,
+    /// `--internal-scale 1|1.5|2`: the output size over the internal size, on each edge.
+    internal_scale: RenderScale,
+    /// `--jitter on|off`: the primary rays move by the frame's sub-pixel jitter (on by
+    /// default).
+    jitter: bool,
+    /// `--sharpen S`: the upscaler's sharpening strength, 0 to 1.
+    sharpen: f32,
 }
+
+/// The internal scale by default (`--internal-scale`): the output size, with the jitter off
+/// the frame runs no upscaler. `--internal-scale 1.5 --jitter on` is the performance option:
+/// 720p for 1080p, about half the frame's GPU time on both adapters of `nfr.md` §1.
+const DEFAULT_SCALE: RenderScale = RenderScale::One;
+
+/// The jitter by default (`--jitter`): off.
+const DEFAULT_JITTER: bool = false;
+
+/// The upscaler's sharpening strength by default (`--sharpen`).
+const DEFAULT_SHARPEN: f32 = 0.5;
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
 const WALK_NEEDS_LEVEL: &str =
@@ -445,6 +469,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         history: HistoryKill::default(),
         lighting: LightingResolution::default(),
         emissive_history: vxe_render::DEFAULT_EMISSIVE_HISTORY,
+        internal_scale: DEFAULT_SCALE,
+        jitter: DEFAULT_JITTER,
+        sharpen: DEFAULT_SHARPEN,
     };
     let mut detail_flag = false;
     let mut it = argv.into_iter();
@@ -559,6 +586,26 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                         .ok_or(format!(
                             "--emissive-history takes 1 to 4096 frames, not {v}"
                         ))?;
+            }
+            "--internal-scale" => {
+                let v = value()?;
+                args.internal_scale = RenderScale::from_name(&v)
+                    .ok_or(format!("--internal-scale takes 1, 1.5 or 2, not {v}"))?;
+            }
+            "--sharpen" => {
+                let v = value()?;
+                args.sharpen = v
+                    .parse()
+                    .ok()
+                    .filter(|s: &f32| (0.0..=1.0).contains(s))
+                    .ok_or(format!("--sharpen takes 0 to 1, not {v}"))?;
+            }
+            "--jitter" => {
+                args.jitter = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("--jitter takes on or off, not {v}")),
+                }
             }
             "--lighting" => {
                 let v = value()?;
@@ -2100,6 +2147,10 @@ impl Run {
                     .collect(),
                 light_samples: g.mirror.light_samples(),
                 modes: self.modes.line(),
+                upscale: g
+                    .frame
+                    .upscaling()
+                    .then(|| [g.frame.internal_size(), g.frame.output_size()]),
             })
         });
         let pos = self.fly.camera.position;
@@ -2441,6 +2492,7 @@ impl Run {
         } = samples;
         let Some(gfx) = &self.gfx else { return };
         let [w, h] = [gfx.frame.target().width(), gfx.frame.target().height()];
+        let [iw, ih] = gfx.frame.internal_size();
         let gpu = if gpu_ms.is_empty() {
             "n/a (no TIMESTAMP_QUERY)".to_owned()
         } else {
@@ -2457,10 +2509,11 @@ impl Run {
             format!(", gpu hud {:.4} ms", median(&mut hud_ms))
         };
         println!(
-            "frame ({w}x{h}, median of {}, {}): cpu {:.3} ms, gpu frame {gpu}{hud}; full bricks {}, mirror {} B live, {} B allocated",
+            "frame ({w}x{h} from {iw}x{ih}, median of {}, {}): cpu {:.3} ms, gpu frame {gpu}{hud}; frame targets {} B; full bricks {}, mirror {} B live, {} B allocated",
             cpu_ms.len(),
             look_line(&self.look, self.rock_detail()),
             median(&mut cpu_ms),
+            gfx.frame.frame_bytes(),
             self.world.stats().full_bricks,
             gfx.mirror.mirror_bytes(),
             gfx.mirror.allocated_bytes()
@@ -2535,14 +2588,20 @@ impl Run {
     }
 
     fn init(&mut self, gpu: &Gpu) {
-        let [w, h] = self.args.render.unwrap_or(gpu.size);
+        let output = self.args.render.unwrap_or(gpu.size);
         let timer = PassTimer::with_passes(&gpu.device, &gpu.queue, FRAME_PASSES.len() as u32);
         println!("device ready after {:.0} ms", ms_since(self.start));
         let attr_timer = self
             .args
             .look
             .and_then(|_| MarchTimer::new(&gpu.device, &gpu.queue));
-        let mut frame = Frame::new(&gpu.device, w, h);
+        let mut frame = Frame::with_sizes(
+            &gpu.device,
+            self.args.internal_scale.internal(output),
+            output,
+        );
+        frame.set_jitter(&gpu.device, self.args.jitter);
+        frame.set_sharpness(&gpu.queue, self.args.sharpen);
         frame.set_lighting(self.modes.lighting);
         frame.set_resolution(&gpu.device, self.modes.resolution);
         println!("{}", self.modes.line());
@@ -2722,7 +2781,11 @@ impl Run {
 
     fn resized(&mut self, gpu: &Gpu) {
         if let (Some(gfx), None) = (self.gfx.as_mut(), self.args.render) {
-            gfx.frame.resize(&gpu.device, gpu.size[0], gpu.size[1]);
+            gfx.frame.set_sizes(
+                &gpu.device,
+                self.args.internal_scale.internal(gpu.size),
+                gpu.size,
+            );
         }
     }
 
@@ -3115,8 +3178,9 @@ impl Run {
                 );
             }
         }
+        let [iw, ih] = gfx.frame.internal_size();
         println!(
-            "autopilot: frame targets {} B at {}x{} ({} lighting)",
+            "autopilot: frame targets {} B at {}x{} from {iw}x{ih} ({} lighting)",
             gfx.frame.frame_bytes(),
             gfx.frame.target().width(),
             gfx.frame.target().height(),
@@ -5506,6 +5570,52 @@ mod tests {
             ),
         ] {
             assert_eq!(parse(&[flag, "x"]).err().as_deref(), Some(err), "{flag}");
+        }
+    }
+
+    /// `--internal-scale`, `--jitter` and `--sharpen` parse their values, default to 1, off
+    /// and 0.5, and refuse an unknown value.
+    #[test]
+    fn internal_scale_and_jitter_parse_and_refuse_unknown_values() {
+        let parse = |a: &[&str]| parse_args_from(argv(a));
+        let d = parse(&[]).unwrap();
+        assert_eq!((d.internal_scale, d.jitter), (RenderScale::One, false));
+        assert_eq!(d.sharpen, 0.5);
+        assert_eq!(parse(&["--sharpen", "0"]).unwrap().sharpen, 0.0);
+        assert_eq!(parse(&["--sharpen", "0.8"]).unwrap().sharpen, 0.8);
+        for (name, scale) in [
+            ("1", RenderScale::One),
+            ("1.5", RenderScale::OneHalf),
+            ("2", RenderScale::Two),
+        ] {
+            let a = parse(&["--internal-scale", name, "--jitter", "on"]).unwrap();
+            assert_eq!((a.internal_scale, a.jitter), (scale, true));
+        }
+        assert!(!parse(&["--jitter", "off"]).unwrap().jitter);
+        assert!(parse(&["--jitter", "on"]).unwrap().jitter);
+        assert_eq!(
+            RenderScale::OneHalf.internal([1920, 1080]),
+            [1280, 720],
+            "1.5 renders 720p for 1080p"
+        );
+        assert_eq!(RenderScale::OneHalf.internal([384, 216]), [256, 144]);
+        assert_eq!(RenderScale::Two.internal([1920, 1080]), [960, 540]);
+        for (flag, v, err) in [
+            (
+                "--internal-scale",
+                "3",
+                "--internal-scale takes 1, 1.5 or 2, not 3",
+            ),
+            (
+                "--internal-scale",
+                "1.0",
+                "--internal-scale takes 1, 1.5 or 2, not 1.0",
+            ),
+            ("--jitter", "x", "--jitter takes on or off, not x"),
+            ("--sharpen", "1.5", "--sharpen takes 0 to 1, not 1.5"),
+            ("--sharpen", "x", "--sharpen takes 0 to 1, not x"),
+        ] {
+            assert_eq!(parse(&[flag, v]).err().as_deref(), Some(err), "{flag} {v}");
         }
     }
 

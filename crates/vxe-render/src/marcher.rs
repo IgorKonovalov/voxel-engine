@@ -7,6 +7,11 @@ use crate::light::LightParams;
 use crate::{ATROUS_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, LIGHT_WGSL, MARCH_WGSL, TEMPORAL_WGSL};
 use vxe_world::ChunkCoord;
 
+/// The upscale pass, compiled after [`MARCH_WGSL`].
+pub const UPSCALE_WGSL: &str = include_str!("shaders/upscale.wgsl");
+/// The sharpening pass (RCAS), compiled after [`MARCH_WGSL`].
+pub const SHARPEN_WGSL: &str = include_str!("shaders/sharpen.wgsl");
+
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
 pub const WORKGROUP: u32 = 8;
 
@@ -70,7 +75,8 @@ pub struct Params {
     pub prev_light_offset: u32,
     /// The emissive part's history length in frames ([`Lighting::emissive_history`]).
     pub emissive_history: f32,
-    pub _pad8: [u32; 2],
+    /// The size of the frame's image: the output size with the upscaler, else `size`.
+    pub output_size: [u32; 2],
 }
 
 /// `Params::lighting` bit: the headlamp lights the frame.
@@ -416,6 +422,336 @@ pub enum CandidateDraw {
     Uniform,
 }
 
+/// The ratio of the output size to the internal size the frame renders at, on each edge.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RenderScale {
+    /// The internal size is the output size.
+    #[default]
+    One,
+    /// Two internal pixels per three output pixels on an edge (720p for 1080p): 44 % of the
+    /// output's pixels.
+    OneHalf,
+    /// One internal pixel per two output pixels on an edge: 25 % of the output's pixels.
+    Two,
+}
+
+impl RenderScale {
+    pub const ALL: [Self; 3] = [Self::One, Self::OneHalf, Self::Two];
+
+    /// The name the fly-through prints and parses.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::One => "1",
+            Self::OneHalf => "1.5",
+            Self::Two => "2",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+
+    /// The internal size for an `output`-sized image: each edge divided by the scale and
+    /// rounded to the nearest pixel, at least 1.
+    pub fn internal(self, output: [u32; 2]) -> [u32; 2] {
+        output.map(|n| {
+            match self {
+                Self::One => n,
+                Self::OneHalf => (2 * n + 1) / 3,
+                Self::Two => n.div_ceil(2),
+            }
+            .max(1)
+        })
+    }
+}
+
+/// Phases of the jitter sequence: frame `f` takes phase `f % JITTER_PHASES`.
+pub const JITTER_PHASES: u32 = 16;
+
+/// The radical inverse of `i` in base `b`: element `i` of the Halton sequence of that base.
+fn halton(mut i: u32, b: u32) -> f32 {
+    let (mut f, mut r) = (1.0f32, 0.0f32);
+    while i > 0 {
+        f /= b as f32;
+        r += f * (i % b) as f32;
+        i /= b;
+    }
+    r
+}
+
+/// The sub-pixel jitter of frame `frame`, in internal pixels: elements `1 ..= 16` of the
+/// Halton (2, 3) sequence by `frame % JITTER_PHASES`, centred on zero, each component in
+/// `(-0.5, 0.5)`.
+pub fn jitter_at(frame: u32) -> [f32; 2] {
+    let i = frame % JITTER_PHASES + 1;
+    [halton(i, 2) - 0.5, halton(i, 3) - 0.5]
+}
+
+/// How the upscale pass reconstructs this frame's colour at an output pixel from the internal
+/// samples around it; `d` is a sample's distance from the output pixel's centre, in output
+/// pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reconstruction {
+    /// The Lanczos-2 weighted mean of the 5 x 5 samples around the nearest.
+    Lanczos2,
+    /// The nearest sample alone.
+    Nearest,
+    /// `exp(-2.29 (d / width)^2)` over the 3 x 3 samples around the nearest: at width 1,
+    /// Karis's Gaussian fit of a Blackman-Harris window of width 3.3 ("High Quality Temporal
+    /// Supersampling", 2014).
+    Gaussian,
+    /// The 4-term Blackman-Harris window of radius `1.65 width` over the 3 x 3.
+    BlackmanHarris,
+}
+
+/// How the upscale pass reads last frame's history at the reprojected position.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryFetch {
+    Bilinear,
+    /// The texel the position falls in.
+    Nearest,
+    /// Catmull-Rom over the 4 x 4 texels around the position, held non-negative.
+    CatmullRom,
+    /// Lanczos-2 over the 4 x 4 texels, normalised, held non-negative.
+    Lanczos2,
+}
+
+/// The current colour's share of the upscale pass's blend where history is kept.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Blend {
+    /// [`Upscaler::alpha`].
+    Fixed,
+    /// [`Upscaler::alpha`] times the nearest sample's kernel weight over the kernel's peak: a
+    /// sample far from the output pixel's centre counts for less.
+    Nearness,
+    /// As [`Blend::Nearness`], divided by the nearest sample's mean kernel weight at the
+    /// frame's scale (its sample uniform over one internal pixel around the centre), at most 1:
+    /// the current colour's mean share stays [`Upscaler::alpha`].
+    MeanNearness,
+}
+
+/// Whether the upscale pass clips a still pixel's history (one that moved less than 0.01
+/// output pixels), which is otherwise the unclipped average of the jittered samples.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StillClip {
+    /// Never.
+    Never,
+    /// Where the light at the hit changed: the lamp's unshadowed term moved past
+    /// [`Upscaler::change_rel`] and [`Upscaler::change_abs`] since the lamp of
+    /// [`Upscaler::change_frames`] frames before, or an emission scale changed within
+    /// [`EMISSION_CHANGE_FRAMES`]. Such a pixel is clipped and blended as a moving one.
+    LightChange,
+    /// Always, as a moving pixel.
+    Always,
+}
+
+/// The upscale pass's reconstruction, history fetch and blend ([`Frame::set_upscaler`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Upscaler {
+    pub reconstruction: Reconstruction,
+    /// The width of [`Reconstruction::Gaussian`] and [`Reconstruction::BlackmanHarris`].
+    pub width: f32,
+    pub history_fetch: HistoryFetch,
+    pub blend: Blend,
+    /// The current colour's weight in the blend (see [`Blend`]) where the history held still.
+    pub alpha: f32,
+    /// [`Upscaler::alpha`] where the history moved by 0.01 output pixels or more.
+    pub alpha_moving: f32,
+    /// The clip box around the 3 x 3 samples' YCoCg mean, in standard deviations (inside
+    /// their minimum and maximum).
+    pub clip_gamma: f32,
+    pub still_clip: StillClip,
+    /// A light change: the lamp's term moved by more than this share of the larger of the two
+    /// ([`StillClip::LightChange`]).
+    pub change_rel: f32,
+    /// ... and by more than this, in the lamp's irradiance units.
+    pub change_abs: f32,
+    /// The frames between the lamps compared, 1 to [`LAMP_FRAMES`].
+    pub change_frames: u32,
+}
+
+/// Frames of lamp parameters the frame keeps for [`Upscaler::change_frames`].
+pub const LAMP_FRAMES: usize = 32;
+
+impl Default for Upscaler {
+    /// The Gaussian of width 0.6 over the 3 x 3, the Catmull-Rom fetch and the
+    /// nearness-weighted blend, normalised to a mean share of 0.1 still and 0.2 in motion
+    /// (ADR-0024).
+    fn default() -> Self {
+        Self {
+            reconstruction: Reconstruction::Gaussian,
+            width: 0.6,
+            history_fetch: HistoryFetch::CatmullRom,
+            blend: Blend::MeanNearness,
+            alpha: 0.1,
+            alpha_moving: 0.2,
+            clip_gamma: 1.0,
+            still_clip: StillClip::LightChange,
+            change_rel: 0.1,
+            change_abs: 0.01,
+            change_frames: 24,
+        }
+    }
+}
+
+impl Upscaler {
+    /// The first upscaler's settings: Lanczos-2 over the 5 x 5, a bilinear fetch, and the
+    /// current colour at 0.1 everywhere. Kept for comparisons.
+    pub fn lanczos() -> Self {
+        Self {
+            reconstruction: Reconstruction::Lanczos2,
+            width: 1.0,
+            history_fetch: HistoryFetch::Bilinear,
+            blend: Blend::Fixed,
+            alpha: 0.1,
+            alpha_moving: 0.1,
+            clip_gamma: 1.0,
+            still_clip: StillClip::Never,
+            change_rel: 0.1,
+            change_abs: 0.01,
+            change_frames: 12,
+        }
+    }
+}
+
+/// `UpTuning` in `upscale.wgsl`, field for field.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct UpscaleUniform {
+    reconstruction: u32,
+    fetch: u32,
+    blend: u32,
+    still_clip: u32,
+    width: f32,
+    alpha: f32,
+    alpha_moving: f32,
+    clip_gamma: f32,
+    w_mean: f32,
+    change_rel: f32,
+    change_abs: f32,
+    old_on: u32,
+    old_pos: [f32; 3],
+    old_intensity: f32,
+    old_dir: [f32; 3],
+    old_cos_outer: f32,
+    old_cos_inner: f32,
+    _pad: [f32; 3],
+}
+
+/// One frame's lamp, as `Params` carries it.
+#[derive(Clone, Copy, Debug, Default)]
+struct Lamp {
+    on: bool,
+    pos: [f32; 3],
+    intensity: f32,
+    dir: [f32; 3],
+    cos_outer: f32,
+    cos_inner: f32,
+}
+
+impl Lamp {
+    fn of(p: &Params) -> Self {
+        Self {
+            on: p.lighting & LIGHTING_LAMP != 0,
+            pos: p.light_pos,
+            intensity: p.light_intensity,
+            dir: p.light_dir,
+            cos_outer: p.cos_outer,
+            cos_inner: p.cos_inner,
+        }
+    }
+}
+
+impl Upscaler {
+    /// The reconstruction kernel at offset `(x, y)` output pixels, 1 at the centre
+    /// (`up_kernel` in `upscale.wgsl`).
+    fn kernel(&self, x: f32, y: f32) -> f32 {
+        let lanczos2 = |x: f32| {
+            let a = std::f32::consts::PI * x.abs();
+            if a < 1e-4 {
+                1.0
+            } else if x.abs() >= 2.0 {
+                0.0
+            } else {
+                2.0 * a.sin() * (0.5 * a).sin() / (a * a)
+            }
+        };
+        match self.reconstruction {
+            Reconstruction::Lanczos2 => lanczos2(x) * lanczos2(y),
+            Reconstruction::Nearest => 1.0,
+            Reconstruction::Gaussian => (-2.29 * (x * x + y * y) / (self.width * self.width)).exp(),
+            Reconstruction::BlackmanHarris => {
+                let r = 1.65 * self.width;
+                let d = (x * x + y * y).sqrt();
+                if d >= r {
+                    0.0
+                } else {
+                    let t = std::f32::consts::PI * d / r;
+                    0.35875
+                        + 0.48829 * t.cos()
+                        + 0.14128 * (2.0 * t).cos()
+                        + 0.01168 * (3.0 * t).cos()
+                }
+            }
+        }
+    }
+
+    /// The nearest sample's mean kernel weight at `scale` output pixels per internal pixel:
+    /// its offset uniform over the internal pixel around the output centre, a 32 x 32 grid.
+    fn mean_weight(&self, scale: f32) -> f32 {
+        const N: usize = 32;
+        let at = |i: usize| ((i as f32 + 0.5) / N as f32 - 0.5) * scale;
+        let mut sum = 0.0;
+        for j in 0..N {
+            for i in 0..N {
+                sum += self.kernel(at(i), at(j));
+            }
+        }
+        sum / (N * N) as f32
+    }
+
+    fn uniform(&self, scale: f32, old: Lamp) -> UpscaleUniform {
+        UpscaleUniform {
+            reconstruction: match self.reconstruction {
+                Reconstruction::Lanczos2 => 0,
+                Reconstruction::Nearest => 1,
+                Reconstruction::Gaussian => 2,
+                Reconstruction::BlackmanHarris => 3,
+            },
+            fetch: match self.history_fetch {
+                HistoryFetch::Bilinear => 0,
+                HistoryFetch::Nearest => 1,
+                HistoryFetch::CatmullRom => 2,
+                HistoryFetch::Lanczos2 => 3,
+            },
+            blend: match self.blend {
+                Blend::Fixed => 0,
+                Blend::Nearness => 1,
+                Blend::MeanNearness => 2,
+            },
+            still_clip: match self.still_clip {
+                StillClip::Never => 0,
+                StillClip::LightChange => 1,
+                StillClip::Always => 2,
+            },
+            width: self.width,
+            alpha: self.alpha,
+            alpha_moving: self.alpha_moving,
+            clip_gamma: self.clip_gamma,
+            w_mean: self.mean_weight(scale),
+            change_rel: self.change_rel,
+            change_abs: self.change_abs,
+            old_on: u32::from(old.on),
+            old_pos: old.pos,
+            old_intensity: old.intensity,
+            old_dir: old.dir,
+            old_cos_outer: old.cos_outer,
+            old_cos_inner: old.cos_inner,
+            _pad: [0.0; 3],
+        }
+    }
+}
+
 /// The frame's lighting knobs beside the lamp's own ([`LightParams`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Lighting {
@@ -562,7 +898,22 @@ pub struct Frame {
     resolution: LightingResolution,
     downsample_layout: wgpu::BindGroupLayout,
     downsample: wgpu::ComputePipeline,
+    upscale_layout: wgpu::BindGroupLayout,
+    upscale: wgpu::ComputePipeline,
+    sharpen_layout: wgpu::BindGroupLayout,
+    sharpen: wgpu::ComputePipeline,
+    /// The sharpening pass's `con` (`Sharpen` in `sharpen.wgsl`).
+    sharpen_params: wgpu::Buffer,
+    sharpness: f32,
+    /// The upscale pass's tuning (`UpTuning` in `upscale.wgsl`).
+    upscale_params: wgpu::Buffer,
+    upscaler: Upscaler,
     history: std::sync::Mutex<History>,
+    /// The output size the frame's image is presented at; the targets are at the internal
+    /// size.
+    output: [u32; 2],
+    /// The views' rays are jittered by [`jitter_at`] of the frame index.
+    jitter: bool,
 }
 
 /// A-trous iterations per frame, at strides 1, 2, 4, 8.
@@ -587,6 +938,11 @@ struct History {
     /// arrived.
     edits: Vec<[[i32; 3]; 2]>,
     overflow: bool,
+    /// The view mode changed since the last encode: the upscaler's history holds another
+    /// view's image.
+    view_changed: bool,
+    /// The lamps of the last encodes with history, newest last, at most [`LAMP_FRAMES`].
+    lamps: std::collections::VecDeque<Lamp>,
 }
 
 /// Entries the candidate table holds at most.
@@ -754,8 +1110,14 @@ fn bind_io_at(
 }
 
 impl Frame {
-    /// A frame drawing into a `width` × `height` target.
+    /// A frame drawing into a `width` × `height` target, presented at that size.
     pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        Self::with_sizes(device, [width, height], [width, height])
+    }
+
+    /// A frame rendering at `internal` pixels for an image presented at `output` pixels.
+    pub fn with_sizes(device: &wgpu::Device, internal: [u32; 2], output: [u32; 2]) -> Self {
+        let [width, height] = internal;
         let storage = |binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -900,6 +1262,38 @@ impl Frame {
                 },
             )
         });
+        let (upscale_layout, upscale) = pass(
+            "upscale",
+            UPSCALE_WGSL,
+            "upscale",
+            &[
+                Io::Float,
+                Io::Uint,
+                Io::Float,
+                Io::Float,
+                Io::Uint,
+                Io::Float,
+                f16,
+                Io::Uniform,
+                Io::Uniform,
+            ],
+        );
+        let sharpen_layout = io_layout(
+            device,
+            "sharpen",
+            &[
+                Io::Float,
+                Io::Store(wgpu::TextureFormat::Rgba8Unorm),
+                Io::Uniform,
+            ],
+        );
+        let sharpen = compute_pipeline(
+            device,
+            "sharpen",
+            format!("{MARCH_WGSL}\n{SHARPEN_WGSL}"),
+            &[Some(&world_layout), None, None, Some(&sharpen_layout)],
+            "sharpen_main",
+        );
         let (composite_layout, composite) = pass(
             "composite",
             COMPOSITE_WGSL,
@@ -944,7 +1338,13 @@ impl Frame {
             composite,
             params,
             edits,
-            targets: Targets::new(device, width, height, LightingResolution::default().scale()),
+            targets: Targets::new(
+                device,
+                width,
+                height,
+                LightingResolution::default().scale(),
+                (internal != output).then_some(output),
+            ),
             resolution: LightingResolution::default(),
             lod: LodParams::default(),
             look: LookParams::default(),
@@ -978,8 +1378,95 @@ impl Frame {
             cur: 0,
             downsample_layout,
             downsample,
+            upscale_layout,
+            upscale,
+            sharpen_layout,
+            sharpen,
+            sharpen_params: wgpu::util::DeviceExt::create_buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("sharpen"),
+                    contents: bytemuck::cast_slice(&[0.0f32; 4]),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                },
+            ),
+            sharpness: 0.0,
+            upscale_params: wgpu::util::DeviceExt::create_buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("upscale tuning"),
+                    contents: bytemuck::bytes_of(
+                        &Upscaler::default().uniform(1.0, Lamp::default()),
+                    ),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                },
+            ),
+            upscaler: Upscaler::default(),
             history: std::sync::Mutex::new(History::default()),
+            output,
+            jitter: false,
         }
+    }
+
+    /// The size the hit pass and the lighting passes render at.
+    pub fn internal_size(&self) -> [u32; 2] {
+        [self.targets.width, self.targets.height]
+    }
+
+    /// The size the frame's image is presented at.
+    pub fn output_size(&self) -> [u32; 2] {
+        self.output
+    }
+
+    /// Jitters every view's rays by [`jitter_at`] of the frame index (off by default: each
+    /// ray through its pixel's centre). The upscaler runs when the frame jitters or the
+    /// internal size differs from the output size, so turning the jitter on or off at equal
+    /// sizes replaces the targets and drops the history.
+    pub fn set_jitter(&mut self, device: &wgpu::Device, on: bool) {
+        if on != self.jitter {
+            self.jitter = on;
+            self.set_sizes(device, self.internal_size(), self.output);
+        }
+    }
+
+    /// Sets the sharpening pass's strength in `0..=1` (clamped): 0 (the default) writes the
+    /// upscale pass's output unchanged, 1 is RCAS at full strength (0 stops), and between them
+    /// `2 (1 - s)` stops (`con = 2^-stops`). It runs with the upscaler.
+    pub fn set_sharpness(&mut self, queue: &wgpu::Queue, sharpness: f32) {
+        self.sharpness = sharpness.clamp(0.0, 1.0);
+        let con = if self.sharpness > 0.0 {
+            (-2.0 * (1.0 - self.sharpness)).exp2()
+        } else {
+            0.0
+        };
+        queue.write_buffer(
+            &self.sharpen_params,
+            0,
+            bytemuck::cast_slice(&[con, 0.0, 0.0, 0.0]),
+        );
+    }
+
+    pub fn sharpness(&self) -> f32 {
+        self.sharpness
+    }
+
+    /// Sets the upscale pass's reconstruction, history fetch and blend from the next frame on.
+    pub fn set_upscaler(&mut self, upscaler: Upscaler) {
+        self.upscaler = upscaler;
+    }
+
+    pub fn upscaler(&self) -> Upscaler {
+        self.upscaler
+    }
+
+    /// Whether the upscale pass runs: the frame jitters or renders below its output size.
+    /// Without it the composite's image is the frame's, byte for byte.
+    pub fn upscaling(&self) -> bool {
+        self.jitter || self.internal_size() != self.output
+    }
+
+    pub fn jitter(&self) -> bool {
+        self.jitter
     }
 
     /// The frame index the next `params` seeds its random numbers with.
@@ -1077,8 +1564,12 @@ impl Frame {
         self.lod
     }
 
-    /// Sets the surface look: normal mode, detail and view.
+    /// Sets the surface look: normal mode, detail and view. A change of view drops the
+    /// upscaler's history (not the lighting's).
     pub fn set_look(&mut self, look: LookParams) {
+        if look.view != self.look.view {
+            self.history().view_changed = true;
+        }
         self.look = look;
     }
 
@@ -1095,9 +1586,18 @@ impl Frame {
         self.lighting
     }
 
-    /// The composite's `rgba8unorm` output.
+    /// The frame's `rgba8unorm` image: the composite's output, or with the upscaler (see
+    /// [`Frame::upscaling`]) the upscaled image at the output size. With the upscaler the
+    /// composite writes the internal image into its top-left pixels and the upscale pass's
+    /// sharpening pass overwrites the whole of it.
     pub fn target(&self) -> &wgpu::Texture {
         &self.targets.output
+    }
+
+    /// The upscaler's history the next or last encode writes (rgba16float at the output size:
+    /// the upscaled image, display-encoded rgb), or `None` without the upscaler.
+    pub fn upscale_history(&self) -> Option<&wgpu::Texture> {
+        self.targets.history.as_ref().map(|h| &h[self.cur])
     }
 
     /// The hit buffer's position texture the next or last encode writes (rgba32float: world
@@ -1145,10 +1645,24 @@ impl Frame {
         self.targets.bytes()
     }
 
-    /// Replaces the targets with ones of `width` × `height` and drops the history; the
-    /// pipelines are kept.
+    /// Replaces the targets with ones of `width` × `height`, presented at that size, and
+    /// drops the history; the pipelines are kept.
     pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
-        self.targets = Targets::new(device, width, height, self.resolution.scale());
+        self.set_sizes(device, [width, height], [width, height]);
+    }
+
+    /// Replaces the targets with ones of `internal` pixels for an image presented at
+    /// `output` pixels and drops the history; the pipelines are kept.
+    pub fn set_sizes(&mut self, device: &wgpu::Device, internal: [u32; 2], output: [u32; 2]) {
+        self.output = output;
+        let upscaled = (self.jitter || internal != output).then_some(output);
+        self.targets = Targets::new(
+            device,
+            internal[0],
+            internal[1],
+            self.resolution.scale(),
+            upscaled,
+        );
         self.reset_history();
     }
 
@@ -1157,9 +1671,7 @@ impl Frame {
     pub fn set_resolution(&mut self, device: &wgpu::Device, resolution: LightingResolution) {
         if resolution != self.resolution {
             self.resolution = resolution;
-            let (w, h) = (self.targets.width, self.targets.height);
-            self.targets = Targets::new(device, w, h, resolution.scale());
-            self.reset_history();
+            self.set_sizes(device, self.internal_size(), self.output);
         }
     }
 
@@ -1175,8 +1687,9 @@ impl Frame {
     }
 
     /// The uniform block for `views` (at most [`MAX_VIEWS`]; a pixel outside every rectangle
-    /// takes the first) over `world`, lit by `light` placed relative to `camera`.
-    /// [`Frame::encode`] fills in the history fields.
+    /// takes the first) over `world`, lit by `light` placed relative to `camera`. Each view's
+    /// jitter is the frame's ([`Frame::set_jitter`]). [`Frame::encode`] fills in the history
+    /// fields.
     pub fn params_for(
         &self,
         world: &GpuWorld,
@@ -1192,6 +1705,14 @@ impl Frame {
         let (fwd, right, up) = camera.basis();
         let mut vs = [View::default(); MAX_VIEWS];
         vs[..views.len()].copy_from_slice(views);
+        let jitter = if self.jitter {
+            jitter_at(self.frame)
+        } else {
+            [0.0; 2]
+        };
+        for v in &mut vs[..views.len()] {
+            v.jitter = jitter;
+        }
         let e = world.window();
         Params {
             views: vs,
@@ -1221,6 +1742,11 @@ impl Frame {
             lod2_r2: (4 * self.lod.r_full).pow(2),
             exposure: self.lighting.exposure,
             emissive_history: self.lighting.emissive_history as f32,
+            output_size: if self.upscaling() {
+                self.output
+            } else {
+                [self.targets.width, self.targets.height]
+            },
             lighting: self.lighting.flags()
                 | if self
                     .emission_changed_at
@@ -1283,6 +1809,7 @@ impl Frame {
             _pad: [0; 3],
             boxes: [[0; 4]; 2 * MAX_EDITS],
         };
+        let mut old_lamp = Lamp::of(params);
         if keep_history {
             let mut h = self
                 .history
@@ -1292,6 +1819,9 @@ impl Frame {
             p.prev_light_offset = h.prev_offset;
             h.last_offset = params.light_offset;
             p.history = u32::from(h.valid && !h.overflow);
+            // Bit 1: the upscaler's history holds this view's image.
+            p.history |= u32::from(h.valid && !h.overflow && !h.view_changed) << 1;
+            h.view_changed = false;
             for (i, [min, max]) in h.edits.iter().enumerate() {
                 edits.boxes[2 * i] = [min[0], min[1], min[2], 0];
                 edits.boxes[2 * i + 1] = [max[0], max[1], max[2], 0];
@@ -1301,11 +1831,30 @@ impl Frame {
             h.overflow = false;
             h.last_views = params.views;
             h.encoded = true;
+            let back = (self.upscaler.change_frames.max(1) as usize).min(LAMP_FRAMES);
+            old_lamp = h
+                .lamps
+                .len()
+                .checked_sub(back)
+                .and_then(|i| h.lamps.get(i))
+                .or(h.lamps.front())
+                .copied()
+                .unwrap_or_else(|| Lamp::of(params));
+            if h.lamps.len() == LAMP_FRAMES {
+                h.lamps.pop_front();
+            }
+            h.lamps.push_back(Lamp::of(params));
         } else {
             p.history = 0;
         }
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&p));
         queue.write_buffer(&self.edits, 0, bytemuck::bytes_of(&edits));
+        let scale = self.output[0] as f32 / self.targets.width as f32;
+        queue.write_buffer(
+            &self.upscale_params,
+            0,
+            bytemuck::bytes_of(&self.upscaler.uniform(scale, old_lamp)),
+        );
         let table = light_table(world, p.views[0].origin);
         let used = (1 + table.count as usize) * 16;
         queue.write_buffer(
@@ -1461,6 +2010,34 @@ impl Frame {
                 Res::Tex(&t.strata),
             ],
         );
+        let upscale_bind = t.history.as_ref().map(|hist| {
+            bind_io(
+                device,
+                &self.upscale_layout,
+                &[
+                    Res::Tex(&t.hit_pos[c]),
+                    Res::Tex(&t.hit_info[c]),
+                    Res::Tex(&t.output),
+                    Res::Tex(&t.hit_pos[q]),
+                    Res::Tex(&t.hit_info[q]),
+                    Res::Tex(&hist[q]),
+                    Res::Tex(&hist[c]),
+                    Res::Buf(&self.edits),
+                    Res::Buf(&self.upscale_params),
+                ],
+            )
+        });
+        let sharpen_bind = t.history.as_ref().map(|hist| {
+            bind_io(
+                device,
+                &self.sharpen_layout,
+                &[
+                    Res::Tex(&hist[c]),
+                    Res::Tex(&t.output),
+                    Res::Buf(&self.sharpen_params),
+                ],
+            )
+        });
         let gradient_on =
             self.lighting.history == HistoryKill::Gradient && self.look.view == ViewMode::Shaded;
         let full = [t.width.div_ceil(WORKGROUP), t.height.div_ceil(WORKGROUP)];
@@ -1486,13 +2063,22 @@ impl Frame {
             atrous.push((&self.variance, &variance_bind, 2, lw));
             atrous.extend(atrous_binds.iter().map(|b| (&self.atrous, b, 2, lw)));
         }
-        let passes: [Vec<Dispatch<'_>>; 6] = [
+        let mut upscale: Vec<Dispatch<'_>> = Vec::new();
+        let mut sharpen: Vec<Dispatch<'_>> = Vec::new();
+        if let (Some(u), Some(r)) = (&upscale_bind, &sharpen_bind) {
+            let out = self.output.map(|n| n.div_ceil(WORKGROUP));
+            upscale.push((&self.upscale, u, 2, out));
+            sharpen.push((&self.sharpen, r, 3, out));
+        }
+        let passes: [Vec<Dispatch<'_>>; 8] = [
             hit,
             gradient,
             vec![(&self.light, &light_bind, 2, lw)],
             vec![(&self.temporal, &temporal_bind, 2, lw)],
             atrous,
             vec![(&self.composite, &composite_bind, 2, full)],
+            upscale,
+            sharpen,
         ];
         for (i, dispatches) in passes.into_iter().enumerate() {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1546,13 +2132,15 @@ fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_>
 
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
-pub const FRAME_PASSES: [&str; 6] = [
+pub const FRAME_PASSES: [&str; 8] = [
     "hit",
     "gradient",
     "light",
     "temporal",
     "atrous",
     "composite",
+    "upscale",
+    "sharpen",
 ];
 
 /// The gradient pass's stratum edge in pixels; `STRATUM` in `gradient.wgsl`.
@@ -1589,12 +2177,24 @@ struct Targets {
     reservoir: [wgpu::Texture; 2],
     /// The gradient pass's strata, one texel per 3 x 3 lighting pixels (rgba16float).
     strata: wgpu::Texture,
-    /// The composite's display-encoded output (rgba8unorm).
+    /// The frame's display-encoded image (rgba8unorm): the composite's output at the
+    /// internal size, or with the upscaler at the output size, the composite's image in its
+    /// top-left pixels until the sharpening pass overwrites it.
     output: wgpu::Texture,
+    /// The upscaler's history at the output size (rgba16float), this frame's and the last.
+    history: Option<[wgpu::Texture; 2]>,
 }
 
 impl Targets {
-    fn new(device: &wgpu::Device, width: u32, height: u32, scale: u32) -> Self {
+    /// The targets at the internal size `width` x `height`, with the upscaler's at
+    /// `upscaled` when it runs.
+    fn new(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        scale: u32,
+        upscaled: Option<[u32; 2]>,
+    ) -> Self {
         let sized = |label, format, width, height| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -1638,7 +2238,12 @@ impl Targets {
                 lw.div_ceil(GRADIENT_STRATUM),
                 lh.div_ceil(GRADIENT_STRATUM),
             ),
-            output: tex("frame target", Rgba8Unorm),
+            output: match upscaled {
+                Some([w, h]) => sized("frame target", Rgba8Unorm, w, h),
+                None => tex("frame target", Rgba8Unorm),
+            },
+            history: upscaled
+                .map(|[w, h]| [0, 1].map(|_| sized("upscale history", Rgba16Float, w, h))),
         }
     }
 
@@ -1663,7 +2268,15 @@ impl Targets {
         let lpx = u64::from(lw) * u64::from(lh);
         let half = if self.scale > 1 { 2 * (16 + 8) } else { 0 };
         let strata = u64::from(self.strata.width()) * u64::from(self.strata.height());
-        px * (2 * (16 + 8) + 8 + 4) + lpx * (half + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16) + strata * 8
+        let output = u64::from(self.output.width()) * u64::from(self.output.height());
+        let history = self.history.as_ref().map_or(0, |h| {
+            2 * 8 * u64::from(h[0].width()) * u64::from(h[0].height())
+        });
+        px * (2 * (16 + 8) + 8)
+            + output * 4
+            + history
+            + lpx * (half + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16)
+            + strata * 8
     }
 }
 
@@ -1859,5 +2472,66 @@ impl PassTimer {
             .into_iter()
             .map(|t| t as f64 * f64::from(self.period_ns) / 1.0e6)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{JITTER_PHASES, RenderScale, jitter_at};
+
+    /// The jitter's sixteen phases are distinct points of `(-0.5, 0.5)^2` that repeat with
+    /// period 16 and average to within 1/16 of zero on each axis (-0.029 and -0.037).
+    #[test]
+    fn the_jitter_cycles_sixteen_distinct_centred_offsets() {
+        let phases: Vec<[f32; 2]> = (0..JITTER_PHASES).map(jitter_at).collect();
+        for (i, p) in phases.iter().enumerate() {
+            assert!(p.iter().all(|c| c.abs() < 0.5), "phase {i}: {p:?}");
+            assert_eq!(jitter_at(i as u32 + JITTER_PHASES), *p);
+            assert!(phases[..i].iter().all(|q| q != p), "phase {i} repeats");
+        }
+        assert_eq!(phases[0], [0.0, 1.0 / 3.0 - 0.5]);
+        for k in 0..2 {
+            let mean = phases.iter().map(|p| p[k]).sum::<f32>() / JITTER_PHASES as f32;
+            assert!(mean.abs() <= 1.0 / 16.0, "axis {k}: mean {mean}");
+        }
+    }
+
+    /// The upscale pass parses and validates headless, compiled after the hit
+    /// pass.
+    #[test]
+    fn upscale_wgsl_validates_through_naga() {
+        let source = format!("{}\n{}", crate::MARCH_WGSL, super::UPSCALE_WGSL);
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|e| panic!("upscale.wgsl parses: {}", e.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("upscale.wgsl validates: {e:?}"));
+    }
+
+    /// The sharpening pass parses and validates headless, compiled after the hit pass.
+    #[test]
+    fn sharpen_wgsl_validates_through_naga() {
+        let source = format!("{}\n{}", crate::MARCH_WGSL, super::SHARPEN_WGSL);
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|e| panic!("sharpen.wgsl parses: {}", e.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("sharpen.wgsl validates: {e:?}"));
+    }
+
+    #[test]
+    fn the_internal_size_rounds_the_output_over_the_scale() {
+        assert_eq!(RenderScale::One.internal([2530, 1378]), [2530, 1378]);
+        assert_eq!(RenderScale::OneHalf.internal([2530, 1378]), [1687, 919]);
+        assert_eq!(RenderScale::Two.internal([385, 1]), [193, 1]);
+        for s in RenderScale::ALL {
+            assert_eq!(RenderScale::from_name(s.name()), Some(s));
+        }
     }
 }

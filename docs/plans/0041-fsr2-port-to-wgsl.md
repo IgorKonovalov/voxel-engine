@@ -12,7 +12,7 @@
 > (wgpu and WGSL, no vendor path, no backend branch).
 > [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (the hit buffer and the edit boxes).
-> **Source:** the owner's decision of 2026-10-22, after [Plan 0030](0030-temporal-upscaler.md)'s
+> **Source:** the owner's decision of 2026-10-22, after [Plan 0030](done/0030-temporal-upscaler.md)'s
 > Phase 9 check: Plan 0030 closes with Plan 0024's frame as the default and its upscaler
 > opt-in, and the FSR 2 port (ADR-0024's Alternative A) is the next plan.
 > **Starts after:** Plan 0030 merges. This plan builds on its internal size, jitter,

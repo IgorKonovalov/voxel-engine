@@ -138,6 +138,45 @@ mid-fill (1 640 292 full bricks, 1 867 584 964 B live; render-thread frame CPU 7
 Both are under the 3.0 ms line; the loaded readings above overstated them by 0.3 and 0.6 to
 1.1 ms.
 
+**The upscaler at 1080p output (dev reference, Plan 0030 Phase 5, render code at 11a5bc9,
+the release `flythrough --headless --level --render 1920x1080 --frames 300` from the spawn
+pose, median of the last 30 frames, three runs each, exclusive perf lock, 1-minute load 4.7 to
+10.4 from other lanes' builds: loaded, indicative):** on the NVIDIA GeForce RTX 3080 Laptop GPU (Vulkan, driver
+615.78.08), scale 1.5 (1280 x 720 internal): frame 3.053 to 3.103 ms, hit 0.600 to 0.610,
+light 0.878 to 0.900, temporal 0.070 to 0.074, a-trous 0.541 to 0.549, composite 0.142 to
+0.145, upscale 0.729 to 0.748, sharpen 0.076 to 0.081; scale 1 (jitter on, the upscaler
+accumulating at 1080p): frame 5.980 to 6.038, hit 1.375 to 1.389, light 2.049 to 2.070,
+temporal 0.139 to 0.140, a-trous 1.204 to 1.218, composite 0.324 to 0.327, upscale 0.811 to
+0.820, sharpen 0.078 to 0.079; scale 1 with the jitter off (no upscaler, one run): 5.210. On the
+slow adapter, the AMD Radeon Graphics of the Ryzen 9 5900HS (RADV RENOIR, Mesa 26.2.5,
+selected with `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json
+__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json`): scale 1.5 frame
+20.149 to 20.876 ms (hit 4.074 to 4.158, light 6.690 to 6.892, temporal 0.495 to 0.571,
+a-trous 2.323 to 2.408, composite 1.116 to 1.265, upscale 4.786 to 4.872, sharpen 0.647 to
+0.731); scale 1 frame 38.658 to 40.955 (hit 8.950 to 9.164, light 14.966 to 15.527, upscale
+5.171 to 5.549, sharpen 0.640 to 0.748); scale 1 with the jitter off 32.704 (one run). The
+upscale line holds on the dev box (upscale, sharpen and composite 0.95 to 0.97 ms at scale
+1.5); on the iGPU the upscale pass alone reads 4.8 ms.
+
+**The upscaler after its rework (Plan 0030 Phase 8, render code at 12c6c57: the 3 x 3
+Gaussian, the Catmull-Rom history fetch, the light-change clip; same command, pose, machines
+and adapter selection as Phase 5, exclusive perf lock, 1-minute load 3.9 to 4.5 on the NVIDIA
+runs and 2.3 to 3.6 on the RADV runs, loaded, indicative):** NVIDIA, scale 1.5: frame 2.727 to
+2.780 ms, hit 0.570 to 0.578, light 0.832 to 0.850, temporal 0.069, a-trous 0.508 to 0.521,
+composite 0.136 to 0.138, upscale 0.544 to 0.556, sharpen 0.075 to 0.076; scale 1 (jitter
+on): frame 5.294 to 5.546, hit 1.257 to 1.317, light 1.857 to 1.952, temporal 0.137 to 0.138,
+a-trous 1.099 to 1.150, composite 0.297 to 0.309, upscale 0.573 to 0.596, sharpen 0.075 to
+0.076. RADV, scale 1.5: frame 18.797 to 18.865 ms (hit 4.078 to 4.126, light 6.729 to 6.755,
+temporal 0.492 to 0.503, a-trous 2.332 to 2.343, composite 1.126 to 1.134, upscale 3.216 to
+3.232, sharpen 0.645 to 0.652); scale 1 frame 38.011 to 38.246 (hit 8.934 to 8.945, light
+15.000 to 15.116, upscale 4.145 to 4.191, sharpen 0.646 to 0.653). Upscale, sharpen and
+composite read 0.755 to 0.770 ms on the dev box at scale 1.5; on the iGPU the upscale pass
+alone reads 3.2 ms.
+
+The default frame stays Plan 0024's (scale 1, jitter off, no upscaler; the owner's ruling at
+Plan 0030's close, ADR-0024's Outcome); the readings above are the opt-in performance setting
+(`--internal-scale 1.5 --jitter on`). An FSR 2 port (ADR-0034, proposed) is read against them.
+
 **The hit pass, split from the shading (dev reference, Plan 0024 Phase 1, same machine,
 exclusive perf lock, 1-minute load 7.3 to 8.0 from other work on the box, not quiet; the
 default look, `flythrough --level --headless --seed 1 --render 1920x1080 --frames 300`, three
@@ -397,6 +436,14 @@ the emission scale 256 KiB. Per pixel at full resolution: the hit buffer twice (
 translucent layers 8 B, the irradiance 8 B, the accumulation and moments twice (32 B), the
 filter's pair 16 B, the reservoirs twice (32 B), the output 4 B, and the gradient strata 8 B
 per 9 pixels. The plan's projection was about 276 MB.
+
+**The frame's targets with the upscaler (Plan 0030 Phase 5, `Frame::frame_bytes`, 1080p
+output):** 124 621 440 B at scale 1.5 (1280 x 720 internal): the 86 835 840 B of Plan 0024's
+frame at 1280 x 720, plus the composite's `rgba8` target grown to the output size (4 608 000
+B) and two output-size `rgba16float` histories (33 177 600 B); 228 556 800 B at scale 1 with
+the jitter on (195 379 200 B of the frame plus the histories); 195 379 200 B at scale 1 with
+the jitter off, as before. Plan 0030 Phase 8 (12c6c57): unchanged at 124 621 440 B at scale
+1.5; the light-change clip adds no target (the upscale pass's settings are a 96 B uniform).
 
 **Readings (dev reference, 2026-10-16, Plan 0001 Phase 4 commit, `flythrough` cave seed 1,
 `cargo run --release -p flythrough --example world_budget`):**

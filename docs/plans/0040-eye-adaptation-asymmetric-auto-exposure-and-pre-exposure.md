@@ -22,7 +22,7 @@
 > against main at 3b690bb (Plan 0024 merged: `Lighting::exposure: f32`, `composite.wgsl`'s
 > `display`, `temporal.wgsl`, `atrous.wgsl`, `gradient.wgsl`) and Plan 0029's branch at b51538a
 > (`probe_gather.wgsl`, the composite's `indirect_in`). The names dev finds in the tree win. It
-> is independent of [Plan 0030](0030-temporal-upscaler.md). If Plan 0030 has merged when this
+> is independent of [Plan 0030](done/0030-temporal-upscaler.md). If Plan 0030 has merged when this
 > plan starts, Phase 3 also adds the upscaler's exposure rule. If not, Plan 0030's lane adds it
 > on rebase (the rule is in Phase 3).
 > **Plan 0032 needs an amendment** (the orchestrator makes it). Its Phase 4 shrinks to using
