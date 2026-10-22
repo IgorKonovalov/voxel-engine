@@ -4,7 +4,7 @@
 //! By default the cave is unbounded and streams around the camera (ADR-0003): full detail
 //! within `r_full` chunks, mips out to `r_lod`. `--level` generates the bounded level instead.
 //!
-//! `flythrough [--seed N] [--level] [--vault] [--walk] [--render WxH] [--frames N] [--bench N]
+//! `flythrough [--seed N] [--level] [--vault] [--castle] [--castle-out PATH] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH] [--view VIEW] [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
@@ -66,6 +66,13 @@
 //! `N` cycles the normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
 //! inside the extent).
+//!
+//! `--castle` (the streamed cave only; not with `--level`, `--vault` or `--room`) builds a
+//! gothic castle at startup as a multi-model `.vox` scene (`flythrough::castle`), parses it
+//! back, maps its palette to the castle's material rows and stamps it at generation into a
+//! hall of air over a rock plinth, the gate facing the spawn. It prints each stage's time and
+//! the prefabs' bytes, and the banner names it. `--castle-out PATH` (implies `--castle`) also
+//! writes the generated `.vox` to `PATH`.
 //!
 //! `P` stamps that 16-voxel room at runtime, unrotated, with its minimum corner at the voxel
 //! the dig ray hits, and prints what it changed like a dig does.
@@ -152,6 +159,7 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use fly::{CutawayMode, Fly, Walk};
+use flythrough::castle;
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, RoomSource, VAULT_EDGE, vault};
 use flythrough::hud::{self, Cadence, EditLine, FrameStats, HudStats, WorldSample};
 use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB, REACH};
@@ -289,6 +297,10 @@ struct Args {
     walk: bool,
     /// `--vault`: the cave generates with the vault room ahead of the spawn.
     vault: bool,
+    /// `--castle`: the streamed cave generates with the castle in its hall.
+    castle: bool,
+    /// `--castle-out PATH`: where to write the generated `.vox`.
+    castle_out: Option<std::path::PathBuf>,
     sync_budget: u64,
     /// `--mirror-budget`: the mirror's VRAM reservation in bytes.
     mirror_budget: Option<u64>,
@@ -442,6 +454,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         adapter: None,
         walk: false,
         vault: false,
+        castle: false,
+        castle_out: None,
         sync_budget: SYNC_BUDGET_MIB << 20,
         mirror_budget: None,
         residency: RESIDENCY,
@@ -664,6 +678,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--hud" => args.hud = true,
             "--census" => args.census = true,
             "--vault" => args.vault = true,
+            "--castle" => args.castle = true,
+            "--castle-out" => {
+                args.castle = true;
+                args.castle_out = Some(value()?.into());
+            }
             "--audio" => args.audio = true,
             "--audio-debug" => {
                 args.audio = true;
@@ -689,6 +708,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         return Err(
             "--room builds its own world; it does not take --level, --autopilot, --vault, \
              --save or --replay"
+                .to_owned(),
+        );
+    }
+    if args.castle && (args.level || args.vault || args.room.is_some()) {
+        return Err(
+            "--castle stands in the streamed cave; it does not take --level (too short for \
+             it), --vault (inside its box) or --room"
                 .to_owned(),
         );
     }
@@ -2093,6 +2119,9 @@ struct Run {
     /// The lighting modes `F3` to `F7` and `M` switch, and the banner naming them; the frame
     /// takes them at the start of each frame (`F6`'s resolution needs the device).
     modes: hud::Modes,
+    /// The scene's banner row (`castle`) and when it was last shown, by the frame loop's
+    /// clock; `None` without one.
+    scene: Option<(String, f64)>,
     look: LookParams,
     /// Sets `look.cutaway` each frame of interactive flight; `X` or the pad's `West` cycles it.
     cutaway: CutawayMode,
@@ -2211,11 +2240,28 @@ impl Run {
         s.lighting = lighting;
     }
 
+    /// The banner at the frame loop's clock: the scene's row while it shows (for
+    /// `hud::BANNER_MS` after it was last shown), over the modes' banner.
+    fn banner(&self) -> Option<String> {
+        let now = ms_since(self.start);
+        let modes = self.modes.banner(now);
+        let scene = self
+            .scene
+            .as_ref()
+            .filter(|(_, at)| now - at < hud::BANNER_MS)
+            .map(|(s, _)| s.as_str());
+        match (scene, modes) {
+            (Some(s), Some(m)) => Some(format!("{s}\n{m}")),
+            (Some(s), None) => Some(s.to_owned()),
+            (None, m) => m,
+        }
+    }
+
     /// Formats this frame's rows and strip into the overlay, timing the formatting. Allocates
     /// nothing once the buffers have grown to the rows' size.
     fn update_hud(&mut self, gpu: &Gpu) {
         self.refresh_hud_stats();
-        let banner = self.modes.banner(ms_since(self.start));
+        let banner = self.banner();
         let h = &mut self.hud;
         h.format_rows();
         // The mode banner goes under the rows, hiding none of them.
@@ -3576,14 +3622,12 @@ impl Run {
             self.hud.steps = Some(hud::StepsSample::from_histogram(&h));
         }
         // With the stats HUD off the overlay draws the mode banner alone while it shows.
-        let banner = (!hud)
-            .then(|| self.modes.banner(ms_since(self.start)))
-            .flatten();
+        let banner = (!hud).then(|| self.banner()).flatten();
         if hud {
             self.update_hud(gpu);
         } else if let (Some(b), Some(gfx)) = (&banner, self.gfx.as_mut()) {
             gfx.hud
-                .set_lines(&gpu.queue, b, &[HudColour::Yellow; hud::BANNER_ROWS]);
+                .set_lines(&gpu.queue, b, &[HudColour::Yellow; hud::BANNER_ROWS + 1]);
             gfx.hud.set_samples(&gpu.queue, &[], 0.0);
         }
         let flying = self
@@ -3971,6 +4015,10 @@ impl App for Flythrough {
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
                 modes: hud::Modes::new(self.args.start_lighting(), self.args.lighting, 0.0),
+                scene: self
+                    .args
+                    .castle
+                    .then(|| ("castle".to_owned(), ms_since(self.start))),
                 look: self.args.start_look(),
                 cutaway: self.args.cutaway,
                 dig_radius: DIG_RADIUS,
@@ -4132,11 +4180,70 @@ fn materials(args: &Args) -> MaterialTable {
     } else {
         cave_materials()
     };
-    if args.emissive_ore {
+    let table = if args.emissive_ore {
         flythrough::with_emissive_ore(&table)
     } else {
         table
+    };
+    if args.castle {
+        flythrough::castle_materials(&table)
+    } else {
+        table
     }
+}
+
+/// `--castle`'s source over the cave of `seed`: the castle generated, encoded (and written to
+/// `--castle-out`), parsed, mapped and placed, each stage's time printed, then the prefabs'
+/// bytes.
+fn castle_source(
+    seed: u64,
+    out: Option<&std::path::Path>,
+) -> vxe_world::StampedSource<flythrough::cave::HallSource> {
+    let t = now();
+    let file = castle::castle_vox();
+    let listed: usize = file.models.iter().map(|m| m.voxels.len()).sum();
+    println!(
+        "castle: generated {} tiles, {listed} voxels listed, in {:.0} ms",
+        file.models.len(),
+        ms_since(t)
+    );
+    let t = now();
+    let bytes = vxe_assets::encode(&file);
+    drop(file);
+    println!(
+        "castle: encoded {} bytes of .vox in {:.0} ms",
+        bytes.len(),
+        ms_since(t)
+    );
+    if let Some(path) = out {
+        match std::fs::write(path, &bytes) {
+            Ok(()) => println!("castle: wrote {}", path.display()),
+            Err(e) => eprintln!("flythrough: --castle-out {}: {e}", path.display()),
+        }
+    }
+    let t = now();
+    let file = vxe_assets::VoxFile::parse(&bytes).unwrap_or_else(|e| {
+        eprintln!("flythrough: the generated castle does not parse: {e}");
+        std::process::exit(1);
+    });
+    drop(bytes);
+    println!("castle: parsed in {:.0} ms", ms_since(t));
+    let t = now();
+    let placements = castle::castle_prefabs(&file).unwrap_or_else(|e| {
+        eprintln!("flythrough: the castle's palette map: {e}");
+        std::process::exit(1);
+    });
+    drop(file);
+    let bytes = castle::prefab_bytes(placements.iter().map(|(p, _, _)| &**p));
+    println!(
+        "castle: mapped {} prefabs, {bytes} bytes, in {:.0} ms",
+        placements.len(),
+        ms_since(t)
+    );
+    let t = now();
+    let source = castle::castle_source(seed, placements);
+    println!("castle: placed in {:.0} ms", ms_since(t));
+    source
 }
 
 fn main() {
@@ -4262,7 +4369,12 @@ fn main() {
             workers,
             persist: PersistConfig::default(),
         };
-        let mut streamer = if args.vault {
+        let mut streamer = if args.castle {
+            Streamer::new(
+                Arc::new(castle_source(seed, args.castle_out.as_deref())),
+                cfg,
+            )
+        } else if args.vault {
             println!(
                 "vault: {VAULT_EDGE}^3 shell room at {:?}",
                 source.vault_origin().0
@@ -4699,6 +4811,21 @@ mod tests {
         );
     }
 
+    /// `--castle` streams: the bounded level is too short for it, the vault's origin is
+    /// inside its box, and `--room` builds its own world. `--castle-out` implies it.
+    #[test]
+    fn castle_refuses_the_level_the_vault_and_the_room() {
+        assert!(parse_args_from(argv(&["--castle"])).unwrap().castle);
+        for other in [&["--level"][..], &["--vault"], &["--room", "12"]] {
+            let mut a = vec!["--castle"];
+            a.extend_from_slice(other);
+            assert!(parse_args_from(argv(&a)).is_err(), "{a:?}");
+        }
+        let a = parse_args_from(argv(&["--castle-out", "c.vox"])).unwrap();
+        assert!(a.castle);
+        assert_eq!(a.castle_out.as_deref(), Some(std::path::Path::new("c.vox")));
+    }
+
     /// Every edit is in the log now, so `--vault` combines with `--save` and `--replay` (the
     /// room placed at generation is not an op; `--replay` takes `--vault` to regenerate it).
     #[test]
@@ -5014,6 +5141,7 @@ mod tests {
             fly: Fly::new(camera),
             light: LightParams::headlamp(),
             modes,
+            scene: None,
             dig_radius: DIG_RADIUS,
             scroll: ScrollSteps::default(),
             triggers: [false; 2],

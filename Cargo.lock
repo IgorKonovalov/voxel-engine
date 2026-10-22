@@ -975,6 +975,7 @@ dependencies = [
  "png",
  "pollster",
  "vxe-app",
+ "vxe-assets",
  "vxe-audio",
  "vxe-net",
  "vxe-render",

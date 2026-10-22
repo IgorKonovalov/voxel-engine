@@ -1,6 +1,6 @@
 # 0042: A generated gothic castle with a dungeon, imported as a .vox scene and stamped at generation
 
-> **Status:** approved (2026-10-22)
+> **Status:** in-progress (2026-10-22)
 > **Created:** 2026-10-22
 > **Milestone:** M7 in `docs/roadmap.md` (prefab stamping at authored-building scale; testbed
 > content plus a `.vox` writer in `vxe-assets`)
@@ -303,13 +303,26 @@ pub fn castle_source(file: &VoxFile) -> StampedSource<HallSource>;
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: A wall, a tower and the gate through the whole path | dev | not started | |
+| 1: A wall, a tower and the gate through the whole path | dev | done: `vxe_assets::encode` + `encode_rotation` (new `write.rs`), round-trip tests (three-model scene, all 24 rotations, single model); `castle.rs` generates the gate wall, the (60, 60) corner tower and the gatehouse into 4 non-empty tiles (3 013 543 voxels listed, 12 055 856 B `.vox`); `HallSource` in `cave.rs`; `--castle`, `--castle-out`; banner row `castle`. Headless `--castle --frames 60` on the RTX 3080 Laptop: generate 110 ms, encode 8 ms, parse 10 ms, map 128 ms, place 12 ms, prefabs 103 612 416 B. The window check is owed to Phase 5 | committed with this row |
 | 2: The whole castle, the dungeon, the materials and the determinism vector | dev | not started | |
 | 3: Named shots, the banner and the golden | dev | not started | |
 | 4: The readings | dev | not started | |
 | 5: The owner flies the castle | human | not started | |
 
 ### Notes
+
+- Camera convention read from `vxe_render::Camera::basis`: yaw 0 looks along +x, so the plan's
+  layout is used unturned (no `Rot` applied).
+- `apps/flythrough/Cargo.toml` gains a path dependency on `vxe-assets` (not in Phase 1's
+  Files touched; the testbed had none) and `Cargo.lock` follows.
+- The castle's seven material rows (`flythrough::castle_materials`, ids 5..=11) landed in
+  Phase 1, since the skeleton's stone count needs the stone row.
+- The banner row is composed in `main.rs` (`Run::banner`, a `scene` field) rather than in
+  `hud.rs`, which no phase lists; it shows for `hud::BANNER_MS` from the run's start.
+- Tiles that list no voxel are left out of the `.vox` (and so are not kept as prefabs).
+- Phase 1's gate ran without the workspace-wide nextest pass (the shared GPU lock was held by
+  other lanes): vxe-assets and flythrough lib, bin, `castle` and `determinism` tests, 93 passed;
+  doctests, clippy and fmt clean. The full pass runs at the tip.
 
 ### Close triggers
 
