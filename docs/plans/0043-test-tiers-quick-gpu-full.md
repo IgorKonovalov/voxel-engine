@@ -259,8 +259,8 @@ All on the dev box, named with its commit. `docs/nfr.md` section 7 (startup and 
 |---|---|---|---|
 | 1: three profiles that split the suite exactly | dev | done | 28da8b7 |
 | 2: a gate that keeps the gpu list true | dev | done | bbee61d |
-| 3: CI runs the full tier and the wasm step runs only what needs wasm | dev | done locally; CI run pending | committed with this row |
-| 4: the skills and lane rules name the tiers | dev | not started | |
+| 3: CI runs the full tier and the wasm step runs only what needs wasm | dev | done locally; CI run pending | 56b3569 |
+| 4: the skills and lane rules name the tiers | dev | done | committed with this row |
 
 ### Notes
 
@@ -285,6 +285,11 @@ All on the dev box, named with its commit. `docs/nfr.md` section 7 (startup and 
 - Phase 3: the workspace step drops `--no-tests=pass` with its comment. Done-when not met in
   the lane: the first CI run and the Linux job's wall time need the branch on GitHub, and the
   lane does not push. Both are owed by the first CI run after the merge into main.
+- Phase 4: lane rule 1's merge-main-into-a-lane gate (from `87e4b67`) now names
+  `--profile full --no-fail-fast` under the perf lock; the orchestrate skill's merged-tree gate
+  the same. `CLAUDE.md`'s `scripts/` map gains `check-test-tiers.mjs`. The dev skill's phase
+  gate and close name `--workspace`, so the quick tier covers `vxe-script-wasm` as the full
+  suite does.
 
 ### Close triggers
 
@@ -315,6 +320,10 @@ All on the dev box, named with its commit. `docs/nfr.md` section 7 (startup and 
   `--profile full` lists 2; `tests/component.rs` has 2 `#[test]`. The step run locally: exit 0,
   2 passed. `ci.yml` parses as YAML. CI run and Linux job time against run 39808788735's 981 s:
   not read (no push from the lane).
+- Phase 4: `grep -rn 'nextest run' .claude/skills CLAUDE.md`: 8 lines, each naming a
+  `--profile` or saying the bare run is the default full suite (dev SKILL.md:74). Hook bite
+  tests: 59 pass, 0 fail. Doc links 305 resolve; comment hygiene OK; index rows OK; index-rows
+  self-test 9/9.
 
 ## Followups
 
