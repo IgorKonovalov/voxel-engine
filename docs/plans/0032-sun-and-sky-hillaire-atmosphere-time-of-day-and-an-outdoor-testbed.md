@@ -15,7 +15,7 @@
 > time of day is a parameter the game sets; Hillaire 2020 with per-frame LUTs; the sun's shadow
 > is one per-pixel ray continued into the far field later; every toggle shows its mode in the
 > window; readings on both adapters.
-> **Starts after:** [Plan 0024](0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md)
+> **Starts after:** [Plan 0024](done/0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md)
 > and [Plan 0029](0029-indirect-light-probe-volume.md) close. This plan is drafted against Plan
 > 0024's branch as of 2b08d42 (`Frame`, `Lighting`, `light.wgsl`, `temporal.wgsl`,
 > `composite.wgsl`, the mode banner of its Phase 14) and Plan 0029's drafted names

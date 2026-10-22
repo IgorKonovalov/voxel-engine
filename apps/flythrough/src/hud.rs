@@ -23,6 +23,9 @@ pub const CEILING_MS: f32 = 33.3;
 const FRAME_LINE_MS: f32 = 1000.0 / 60.0;
 const MARCH_LINE_MS: f32 = 3.0;
 const UPLOAD_LINE_MS: f32 = 1.0;
+/// `nfr.md` §2's lighting and denoise lines.
+const LIGHTING_LINE_MS: f32 = 6.0;
+const DENOISE_LINE_MS: f32 = 3.0;
 /// Mirror pressure above which the fly-through lowers its full radius (ADR-0013); the
 /// pressure row turns yellow past it.
 pub const PRESSURE_HIGH: f32 = 0.9;
@@ -367,6 +370,17 @@ pub struct HudStats {
     pub pressure: Option<Pressure>,
     /// The gamepad row; `None` (no pad source in this run) hides it.
     pub pad: Option<PadRow>,
+    /// The frame's passes and light samples; `None` hides their two rows.
+    pub lighting: Option<LightingRow>,
+}
+
+/// The frame passes' GPU times (name and milliseconds, in pass order), the light samples the
+/// mirror holds, and the lighting modes in words.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LightingRow {
+    pub passes: Vec<(&'static str, f32)>,
+    pub light_samples: u64,
+    pub modes: String,
 }
 
 /// The mirror's pressure (the fuller of its pool slots and records), its reservation in bytes,
@@ -447,6 +461,7 @@ impl HudStats {
             steps: None,
             pressure: None,
             pad: None,
+            lighting: None,
         }
     }
 
@@ -498,6 +513,35 @@ impl HudStats {
                 .map_or(HudColour::White, |v| over(v, MARCH_LINE_MS)),
             format_args!("gpu march {}  hud {}", Ms(self.march_ms), Ms(self.hud_ms)),
         )?;
+        if let Some(l) = &self.lighting {
+            // Yellow when light and temporal exceed the lighting line or the filter the
+            // denoise line.
+            let ms = |name: &str| {
+                l.passes
+                    .iter()
+                    .filter(|(n, _)| *n == name)
+                    .map(|&(_, v)| v)
+                    .sum::<f32>()
+            };
+            let colour = if ms("light") + ms("temporal") > LIGHTING_LINE_MS
+                || ms("atrous") > DENOISE_LINE_MS
+            {
+                HudColour::Yellow
+            } else {
+                HudColour::White
+            };
+            out.write_str("gpu")?;
+            for (name, v) in &l.passes {
+                write!(out, " {name} {v:.2}")?;
+            }
+            out.write_str(" ms")?;
+            row(out, colour, format_args!(""))?;
+            row(
+                out,
+                HudColour::White,
+                format_args!("lights {} samples; {}", l.light_samples, l.modes),
+            )?;
+        }
         row(
             out,
             over(self.upload_ms, UPLOAD_LINE_MS),
@@ -915,6 +959,41 @@ mod tests {
         assert!(colours.iter().all(|&c| c != HudColour::Red));
     }
 
+    /// The lighting rows follow the march row: every pass's time, yellow when light and
+    /// temporal pass the 6.0 ms line or the filter the 3.0 ms one, then the light samples and
+    /// the modes.
+    #[test]
+    fn the_lighting_rows_follow_the_march_row() {
+        let (mut out, mut colours) = (String::new(), Vec::new());
+        let mut s = HudStats::fixed();
+        s.lighting = Some(LightingRow {
+            passes: vec![
+                ("hit", 1.25),
+                ("light", 4.5),
+                ("temporal", 0.5),
+                ("atrous", 2.5),
+            ],
+            light_samples: 18_522,
+            modes: "lighting full".to_owned(),
+        });
+        s.write_rows(&mut out, &mut colours);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 14);
+        assert_eq!(
+            lines[3],
+            "gpu hit 1.25 light 4.50 temporal 0.50 atrous 2.50 ms"
+        );
+        assert_eq!(lines[4], "lights 18522 samples; lighting full");
+        assert_eq!(colours[3], HudColour::White);
+        s.lighting.as_mut().unwrap().passes[1].1 = 6.0;
+        s.write_rows(&mut out, &mut colours);
+        assert_eq!(
+            colours[3],
+            HudColour::Yellow,
+            "light + temporal over 6.0 ms"
+        );
+    }
+
     /// A pad row sits before the format row, and a run without a pad source shows none.
     #[test]
     fn the_pad_row_shows_before_the_format_row() {
@@ -939,5 +1018,196 @@ mod tests {
             assert!(page.is_power_of_two() && page >= 4096, "page {page}");
             assert!(rss_bytes(page).is_some_and(|b| b > 0));
         }
+    }
+}
+
+/// How long the mode banner shows after the start or a change, in milliseconds.
+pub const BANNER_MS: f64 = 3000.0;
+/// The banner's widest row in characters: it fits a 1280-pixel window at the HUD's scale 2
+/// (80 cells) and the golden's 320 pixels at scale 1 (40 cells).
+pub const BANNER_COLS: usize = 40;
+/// Rows the banner wraps into at most.
+pub const BANNER_ROWS: usize = 6;
+
+/// A key that changes the lighting mode: `F3` to `F7` and `M`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModeKey {
+    /// `F3`: full or coarse shadow walk.
+    ShadowWalk,
+    /// `F4`: the flat list or reservoir reuse.
+    Sampler,
+    /// `F5`: edit boxes, or edit boxes and the gradient.
+    History,
+    /// `F6`: full or half lighting resolution.
+    Resolution,
+    /// `F7`: the headlamp.
+    Lamp,
+    /// `M`: the ore's emission pulse.
+    Pulse,
+}
+
+impl ModeKey {
+    pub const ALL: [Self; 6] = [
+        Self::ShadowWalk,
+        Self::Sampler,
+        Self::History,
+        Self::Resolution,
+        Self::Lamp,
+        Self::Pulse,
+    ];
+}
+
+/// The lighting modes the window's keys switch, and the banner that names them: shown for
+/// [`BANNER_MS`] after the start and after every change, by the frame loop's clock (`now_ms`),
+/// so a test drives it without a window.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Modes {
+    pub lighting: vxe_render::Lighting,
+    pub resolution: vxe_render::LightingResolution,
+    /// The ore's emission scale pulses.
+    pub pulse: bool,
+    banner_at: f64,
+}
+
+impl Modes {
+    /// The modes at the start, the banner shown from `now_ms`.
+    pub fn new(
+        lighting: vxe_render::Lighting,
+        resolution: vxe_render::LightingResolution,
+        now_ms: f64,
+    ) -> Self {
+        Self {
+            lighting,
+            resolution,
+            pulse: false,
+            banner_at: now_ms,
+        }
+    }
+
+    /// Switches the mode `key` changes and shows the banner from `now_ms`.
+    pub fn press(&mut self, key: ModeKey, now_ms: f64) {
+        use vxe_render::{HistoryKill, LightingResolution, Sampler, ShadowWalk};
+        let l = &mut self.lighting;
+        match key {
+            ModeKey::ShadowWalk => {
+                l.shadow_walk = match l.shadow_walk {
+                    ShadowWalk::Full => ShadowWalk::Coarse,
+                    ShadowWalk::Coarse => ShadowWalk::Full,
+                }
+            }
+            ModeKey::Sampler => {
+                l.sampler = match l.sampler {
+                    Sampler::List => Sampler::Reuse,
+                    Sampler::Reuse => Sampler::List,
+                }
+            }
+            ModeKey::History => {
+                l.history = match l.history {
+                    HistoryKill::Edits => HistoryKill::Gradient,
+                    HistoryKill::Gradient => HistoryKill::Edits,
+                }
+            }
+            ModeKey::Resolution => {
+                self.resolution = match self.resolution {
+                    LightingResolution::Full => LightingResolution::Half,
+                    LightingResolution::Half => LightingResolution::Full,
+                }
+            }
+            ModeKey::Lamp => l.lamp = !l.lamp,
+            ModeKey::Pulse => self.pulse = !self.pulse,
+        }
+        self.banner_at = now_ms;
+    }
+
+    /// The modes in words: `lighting half, shadow walk coarse, sampler reuse, history edits,
+    /// lamp on, filter on, ore pulse off, emissive history 32`.
+    pub fn line(&self) -> String {
+        let l = &self.lighting;
+        let on = |b: bool| if b { "on" } else { "off" };
+        format!(
+            "lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, filter {}, ore pulse {}, emissive history {}",
+            self.resolution.name(),
+            l.shadow_walk.name(),
+            l.sampler.name(),
+            l.history.name(),
+            on(l.lamp),
+            on(l.filter),
+            on(self.pulse),
+            l.emissive_history
+        )
+    }
+
+    /// The banner at `now_ms`: the modes' line within [`BANNER_MS`] of the start or the last
+    /// change, wrapped at its commas into rows of at most [`BANNER_COLS`] characters, one per
+    /// text line; else `None`.
+    pub fn banner(&self, now_ms: f64) -> Option<String> {
+        (now_ms - self.banner_at < BANNER_MS).then(|| {
+            let mut out = String::new();
+            let mut row = String::new();
+            for part in self.line().split(", ") {
+                if !row.is_empty() && row.len() + 2 + part.len() > BANNER_COLS {
+                    out.push_str(&row);
+                    out.push('\n');
+                    row.clear();
+                }
+                if !row.is_empty() {
+                    row.push_str(", ");
+                }
+                row.push_str(part);
+            }
+            out.push_str(&row);
+            out
+        })
+    }
+}
+
+#[cfg(test)]
+mod mode_tests {
+    use super::*;
+
+    /// Each of `F3` to `F7` and `M` changes the banner's text to the new mode; the banner is
+    /// empty 3 s after the last change and shows again on the next one.
+    #[test]
+    fn the_banner_names_each_change_and_fades_after_three_seconds() {
+        let mut m = Modes::new(
+            vxe_render::Lighting::default(),
+            vxe_render::LightingResolution::default(),
+            0.0,
+        );
+        let start = m.banner(0.0).expect("the banner shows at the start");
+        assert_eq!(
+            start,
+            "lighting half, shadow walk coarse\nsampler reuse, history edits, lamp on\nfilter on, ore pulse off\nemissive history 32"
+        );
+        assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
+        let mut t = 1000.0;
+        let mut last = start;
+        for (key, word) in [
+            (ModeKey::ShadowWalk, "shadow walk full"),
+            (ModeKey::Sampler, "sampler list"),
+            (ModeKey::History, "history gradient"),
+            (ModeKey::Resolution, "lighting full"),
+            (ModeKey::Lamp, "lamp off"),
+            (ModeKey::Pulse, "ore pulse on"),
+        ] {
+            m.press(key, t);
+            let now = m.banner(t).expect("a change shows the banner");
+            assert_ne!(now, last, "{key:?} changes the text");
+            assert!(now.contains(word), "{key:?}: {now}");
+            last = now;
+            t += 500.0;
+        }
+        let changed = t - 500.0;
+        assert!(m.banner(changed + BANNER_MS - 1.0).is_some());
+        assert_eq!(
+            m.banner(changed + BANNER_MS),
+            None,
+            "empty 3 s after the last change"
+        );
+        m.press(ModeKey::Lamp, changed + 10_000.0);
+        let again = m
+            .banner(changed + 10_000.0)
+            .expect("the next change shows it again");
+        assert!(again.contains("lamp on"), "{again}");
     }
 }

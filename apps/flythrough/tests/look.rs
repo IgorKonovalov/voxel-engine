@@ -7,7 +7,7 @@ mod support;
 use support::*;
 use vxe_render::gpu_world::{ATTR_PAGE_BRICK_SLOTS, POOL_PAGE_SLOTS, SLOT_BYTES};
 use vxe_render::{
-    GpuWorld, LightParams, LookParams, Marcher, MirrorConfig, NormalMode, ViewMode, Window, wgpu,
+    Frame, GpuWorld, LightParams, LookParams, MirrorConfig, NormalMode, ViewMode, Window, wgpu,
 };
 use vxe_world::World;
 
@@ -57,12 +57,14 @@ fn attr_rig_on(
         world.stats().full_bricks,
         "every Full brick has its attribute"
     );
-    let marcher = Marcher::new(&device, WIDTH, HEIGHT);
+    let mut frame = Frame::new(&device, WIDTH, HEIGHT);
+    // The walk and the look at full resolution: lighting at half would blur them.
+    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
     LookRig {
         device,
         queue,
         gpu,
-        marcher,
+        frame,
     }
 }
 
@@ -210,7 +212,7 @@ fn the_default_look_leaves_the_goldens_byte_for_byte() {
     }
     let lod = lod_scene();
     let mut rig = LookRig::on(rig.device, rig.queue, &lod, None);
-    rig.marcher.set_lod(lod_forced_1());
+    rig.frame.set_lod(lod_forced_1());
     let img = rig.render(&scene_camera(), &LightParams::at_eye(), default);
     let golden = read_png(&golden_path("lod.png")).0;
     let differing = img.iter().zip(&golden).filter(|(a, b)| a != b).count();
@@ -336,7 +338,7 @@ fn attribute_pages_leave_the_face_goldens_byte_for_byte() {
                 assert_eq!(shards, 1);
             }
             if forced {
-                rig.marcher.set_lod(lod_forced_1());
+                rig.frame.set_lod(lod_forced_1());
             }
             for (name, light) in goldens {
                 let img = rig.render(&scene_camera(), light, face);
@@ -417,6 +419,26 @@ fn contour_dark_specks_with_and_without_shadows() {
         shadows: false,
         ..LightParams::headlamp()
     };
+    if std::env::var("VXE_BLESS").as_deref() != Ok("1") {
+        // The golden is drawn at the default walk.
+        let on_img = rig.render(
+            &scene_camera(),
+            &LightParams::headlamp(),
+            look(NormalMode::Contour, ViewMode::Shaded),
+        );
+        let golden = read_png(&golden_path("look_contour.png")).0;
+        let differing = on_img.iter().zip(&golden).filter(|(a, b)| a != b).count();
+        assert_eq!(
+            differing, 0,
+            "the shadows-on render is look_contour.png: {differing} bytes differ"
+        );
+    }
+    // The full walk: the claim is the shadow ray's origin, and the coarse walk's own darkening
+    // of grazing rays (any 2^3 block with rock is solid) confounds it.
+    rig.frame.set_lighting(vxe_render::Lighting {
+        shadow_walk: vxe_render::ShadowWalk::Full,
+        ..rig.frame.lighting()
+    });
     let mut only_with = Vec::new();
     for mode in [NormalMode::Contour, NormalMode::Face] {
         let render = |rig: &mut LookRig, light: &LightParams| {
@@ -424,14 +446,6 @@ fn contour_dark_specks_with_and_without_shadows() {
         };
         let on_img = render(&mut rig, &LightParams::headlamp());
         let off_img = render(&mut rig, &off);
-        if mode == NormalMode::Contour && std::env::var("VXE_BLESS").as_deref() != Ok("1") {
-            let golden = read_png(&golden_path("look_contour.png")).0;
-            let differing = on_img.iter().zip(&golden).filter(|(a, b)| a != b).count();
-            assert_eq!(
-                differing, 0,
-                "the shadows-on render is look_contour.png: {differing} bytes differ"
-            );
-        }
         let on = dark_specks(&on_img);
         let off = dark_specks(&off_img);
         let only_on = on.iter().filter(|i| off.binary_search(i).is_err()).count();
@@ -496,7 +510,7 @@ fn zero_strength_detail_leaves_the_goldens_byte_for_byte() {
     }
     let lod = lod_scene();
     let mut rig = LookRig::on(rig.device, rig.queue, &lod, None);
-    rig.marcher.set_lod(lod_forced_1());
+    rig.frame.set_lod(lod_forced_1());
     let img = rig.render(&scene_camera(), &LightParams::at_eye(), on);
     let golden = read_png(&golden_path("lod.png")).0;
     let differing = img.iter().zip(&golden).filter(|(a, b)| a != b).count();

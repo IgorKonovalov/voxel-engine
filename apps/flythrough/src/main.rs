@@ -10,8 +10,10 @@
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
-//! [--flat-mix] [--pad on|off]`.
-//! `--render` fixes the marcher's resolution (the window scales it); `--frames` exits after N
+//! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off]
+//! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]
+//! [--history edits|gradient] [--lighting full|half] [--emissive-history N]`.
+//! `--render` fixes the frame's internal resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
@@ -39,7 +41,22 @@
 //! starts in a view (`shaded`, `normals`, `hitmask`, `steps`, `albedo`; with `--frames`, `steps`
 //! prints the last frame's mean and p99 steps per ray on exit);
 //! `--translucent-layers` sets how many translucent voxels are composited in front of the opaque
-//! hit (default 4, 0 ignores them). `N` cycles the normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
+//! hit (default 4, 0 ignores them). `--emissive-ore off` keeps the ore dark (by default it
+//! glows, `flythrough::ORE_EMISSION`, and lights the cave through the light pass's emissive
+//! samples); `M` pulses its emission scale; `--lamp off` turns the headlamp off;
+//! `--shadow-walk coarse` sends every shadow ray through the coarse walk (2^3 blocks of the
+//! masks; with `--view steps` and `--frames`, the exit prints the lamp shadow rays' cost too);
+//! `--filter off` shows the light pass's raw irradiance, unaccumulated and unfiltered;
+//! `--light-radius N` sets the chunks around the camera whose emitters light the frame
+//! (default 4); `--sampler reuse` adds last frame's reservoirs (ReSTIR) to the candidates;
+//! `--history gradient` also shortens history where A-SVGF's gradient sees the light change;
+//! `--lighting half` runs the lighting passes at half resolution on each edge;
+//! `--emissive-history N` sets the frames static emissive light accumulates over (default 32;
+//! the lamp's light keeps a short history). In a window
+//! `F3` toggles the shadow walk, `F4` the sampler, `F5` the history killer, `F6` the lighting
+//! resolution and `F7` the lamp, each printing the lighting modes; with the stats HUD shown,
+//! two rows read every frame pass's GPU time and the light samples with those modes.
+//! `N` cycles the normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
 //! inside the extent).
 //!
@@ -149,9 +166,10 @@ use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
-    AttrWorkStats, BELT_CHUNK_BYTES, Camera, GpuWorld, HudColour, HudOverlay, LightParams,
-    LodParams, LookParams, MarchTimer, Marcher, MirrorConfig, NormalMode, PassTimer, Presenter,
-    SyncStats, ViewMode, Window, wgpu,
+    AttrWorkStats, BELT_CHUNK_BYTES, Camera, FRAME_PASSES, Frame, GpuWorld, HistoryKill, HudColour,
+    HudOverlay, LightParams, Lighting, LightingResolution, LodParams, LookParams, MarchTimer,
+    MirrorConfig, NormalMode, PassTimer, Presenter, Sampler, ShadowWalk, SyncStats, ViewMode,
+    Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -307,6 +325,24 @@ struct Args {
     /// `--pad on|off`: read a gamepad in a window (on by default); never headless or under
     /// the autopilot.
     pad: bool,
+    /// `--emissive-ore on|off`: the ore row emits `flythrough::ORE_EMISSION` (on by default).
+    emissive_ore: bool,
+    /// `--lamp on|off`: the headlamp lights the frame (on by default).
+    lamp: bool,
+    /// `--shadow-walk full|coarse`: the walk shadow rays take.
+    shadow_walk: ShadowWalk,
+    /// `--filter on|off`: the a-trous filter runs (on by default).
+    filter: bool,
+    /// `--light-radius N`: chunks around the camera whose emitters light the frame.
+    light_radius: i32,
+    /// `--sampler list|reuse`: the light pass's emissive sampler.
+    sampler: Sampler,
+    /// `--history edits|gradient`: what kills the temporal history.
+    history: HistoryKill,
+    /// `--lighting full|half`: the lighting passes' resolution.
+    lighting: LightingResolution,
+    /// `--emissive-history N`: frames the emissive light's history blends over at least.
+    emissive_history: u32,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -330,6 +366,19 @@ impl Args {
     /// Whether the run reads a gamepad: `--pad on` in a window, without the autopilot.
     fn wants_pad(&self) -> bool {
         self.pad && !self.headless && !self.autopilot
+    }
+
+    /// The lighting the fly-through starts in, from its flags.
+    fn start_lighting(&self) -> Lighting {
+        Lighting {
+            lamp: self.lamp,
+            shadow_walk: self.shadow_walk,
+            filter: self.filter,
+            sampler: self.sampler,
+            history: self.history,
+            emissive_history: self.emissive_history,
+            ..Lighting::default()
+        }
     }
 
     /// The look the fly-through starts in.
@@ -387,6 +436,15 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         mix: Mix::default(),
         cutaway: CutawayMode::Auto,
         pad: true,
+        emissive_ore: true,
+        lamp: true,
+        shadow_walk: ShadowWalk::default(),
+        filter: true,
+        light_radius: vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
+        sampler: Sampler::default(),
+        history: HistoryKill::default(),
+        lighting: LightingResolution::default(),
+        emissive_history: vxe_render::DEFAULT_EMISSIVE_HISTORY,
     };
     let mut detail_flag = false;
     let mut it = argv.into_iter();
@@ -485,6 +543,65 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     "on" => true,
                     "off" => false,
                     v => return Err(format!("--pad takes on or off, not {v}")),
+                }
+            }
+            "--shadow-walk" => {
+                let v = value()?;
+                args.shadow_walk = ShadowWalk::from_name(&v)
+                    .ok_or(format!("--shadow-walk takes full or coarse, not {v}"))?;
+            }
+            "--emissive-history" => {
+                let v = value()?;
+                args.emissive_history =
+                    v.parse()
+                        .ok()
+                        .filter(|n| (1..=4096).contains(n))
+                        .ok_or(format!(
+                            "--emissive-history takes 1 to 4096 frames, not {v}"
+                        ))?;
+            }
+            "--lighting" => {
+                let v = value()?;
+                args.lighting = LightingResolution::from_name(&v)
+                    .ok_or(format!("--lighting takes full or half, not {v}"))?;
+            }
+            "--history" => {
+                let v = value()?;
+                args.history = HistoryKill::from_name(&v)
+                    .ok_or(format!("--history takes edits or gradient, not {v}"))?;
+            }
+            "--sampler" => {
+                let v = value()?;
+                args.sampler = Sampler::from_name(&v)
+                    .ok_or(format!("--sampler takes list or reuse, not {v}"))?;
+            }
+            "--light-radius" => {
+                let v = value()?;
+                args.light_radius = v
+                    .parse()
+                    .ok()
+                    .filter(|r| (0..=64).contains(r))
+                    .ok_or(format!("--light-radius takes 0 to 64 chunks, not {v}"))?;
+            }
+            "--filter" => {
+                args.filter = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("--filter takes on or off, not {v}")),
+                }
+            }
+            "--lamp" => {
+                args.lamp = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("--lamp takes on or off, not {v}")),
+                }
+            }
+            "--emissive-ore" => {
+                args.emissive_ore = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("--emissive-ore takes on or off, not {v}")),
                 }
             }
             "--level" => args.level = true,
@@ -1140,9 +1257,10 @@ fn ball(r2: i32) -> Vec<[i32; 3]> {
 
 struct Gfx {
     mirror: GpuWorld,
-    marcher: Marcher,
+    frame: Frame,
     presenter: Presenter,
-    timer: Option<MarchTimer>,
+    /// Times the frame's passes, `FRAME_PASSES` in order.
+    timer: Option<PassTimer>,
     /// Times the attribute pass, with attribute pages and `TIMESTAMP_QUERY`.
     attr_timer: Option<MarchTimer>,
     hud: HudOverlay,
@@ -1184,7 +1302,10 @@ fn attr_line(what: &str, (n, ms): (usize, Option<f64>)) -> String {
 #[derive(Default)]
 struct Samples {
     cpu_ms: Vec<f64>,
+    /// The frame's GPU time: the sum of its passes.
     gpu_ms: Vec<f64>,
+    /// Each pass's GPU time, `FRAME_PASSES` in order.
+    pass_ms: Vec<Vec<f64>>,
     /// The HUD pass's GPU time, on frames that draw it.
     hud_ms: Vec<f64>,
 }
@@ -1254,8 +1375,10 @@ struct Hud {
     /// The rows' values, refreshed in place on every shown frame. Its `last_edit` is the only
     /// copy of the last edit, so a frame clones nothing.
     stats: HudStats,
-    /// Last frame's pass readings, shown on the next frame's rows.
+    /// Last frame's pass readings, shown on the next frame's rows: the frame's total and
+    /// each pass's, `FRAME_PASSES` in order.
     march_ms: Option<f32>,
+    pass_ms: Option<Vec<f64>>,
     hud_ms: Option<f32>,
     cpu_ms: f32,
     /// The last frame's steps view, read back while that view and the HUD are on.
@@ -1281,6 +1404,7 @@ impl Hud {
             sync: (SyncStats::default(), 0.0),
             stats: HudStats::default(),
             march_ms: None,
+            pass_ms: None,
             hud_ms: None,
             cpu_ms: 0.0,
             steps: None,
@@ -1435,6 +1559,13 @@ struct Stream {
     cpu_ms: Vec<f64>,
     /// The last frame's `update`, `poll`, `apply_events` and `sync` CPU in milliseconds.
     stages_ms: [f64; 4],
+    /// The last frame's light extraction inside `sync` (`SyncStats::light_us`), in
+    /// milliseconds, its ranges evicted and refused, and how long the oldest chunk inside the
+    /// light radius has waited for its range, in milliseconds.
+    light_ms: f64,
+    light_evicted: u64,
+    light_refused: u64,
+    light_wait_ms: f64,
     full_residency: bool,
     workers: usize,
 }
@@ -1498,6 +1629,16 @@ struct Autopilot {
     cpu_ms: Vec<f64>,
     /// The streaming CPU's stages per flight frame: `update`, `poll`, `apply_events`, `sync`.
     stages_ms: [Vec<f64>; 4],
+    /// The light extraction inside `sync`, per flight frame; the flight's peak of light
+    /// samples in the mirror, its ranges evicted and refused, and the longest wait of a chunk
+    /// inside the light radius, in milliseconds.
+    light_ms: Vec<f64>,
+    /// Each frame pass's GPU time per flight frame, `FRAME_PASSES` in order.
+    pass_ms: Vec<Vec<f64>>,
+    peak_light: u64,
+    light_evicted: u64,
+    light_refused: u64,
+    light_wait_ms: f64,
     /// The attribute pass over the flight, with attribute pages.
     attr: AttrSamples,
     latency_from: usize,
@@ -1879,6 +2020,9 @@ struct Run {
     args: Args,
     fly: Fly,
     light: LightParams,
+    /// The lighting modes `F3` to `F7` and `M` switch, and the banner naming them; the frame
+    /// takes them at the start of each frame (`F6`'s resolution needs the device).
+    modes: hud::Modes,
     look: LookParams,
     /// Sets `look.cutaway` each frame of interactive flight; `X` or the pad's `West` cycles it.
     cutaway: CutawayMode,
@@ -1946,6 +2090,18 @@ impl Run {
             budget_bytes: g.mirror.allocated_bytes(),
             r_full: self.stream.as_ref().map(|s| [s.rule.r_full, s.rule.max]),
         });
+        let lighting = self.gfx.as_ref().and_then(|g| {
+            let passes = self.hud.pass_ms.as_ref()?;
+            Some(hud::LightingRow {
+                passes: FRAME_PASSES
+                    .iter()
+                    .zip(passes)
+                    .map(|(&n, &ms)| (n, ms as f32))
+                    .collect(),
+                light_samples: g.mirror.light_samples(),
+                modes: self.modes.line(),
+            })
+        });
         let pos = self.fly.camera.position;
         let mode = if self.walk.is_some() {
             hud::Mode::Walk
@@ -1978,14 +2134,24 @@ impl Run {
         s.chunk = voxel_of(pos).chunk().0;
         s.mode = mode;
         s.format_us = h.format_us;
+        s.lighting = lighting;
     }
 
     /// Formats this frame's rows and strip into the overlay, timing the formatting. Allocates
     /// nothing once the buffers have grown to the rows' size.
     fn update_hud(&mut self, gpu: &Gpu) {
         self.refresh_hud_stats();
+        let banner = self.modes.banner(ms_since(self.start));
         let h = &mut self.hud;
         h.format_rows();
+        // The mode banner goes under the rows, hiding none of them.
+        if let Some(b) = banner {
+            for line in b.lines() {
+                h.text.push_str(line);
+                h.text.push('\n');
+                h.colours.push(HudColour::Yellow);
+            }
+        }
         let Some(gfx) = self.gfx.as_mut() else { return };
         gfx.hud.set_lines(&gpu.queue, &h.text, &h.colours);
         gfx.hud.set_samples(&gpu.queue, &h.strip, hud::CEILING_MS);
@@ -1996,6 +2162,10 @@ impl Run {
     fn edited(&mut self, r: &EditResult) {
         if let Some(c) = self.coarse.as_mut() {
             c.update(&self.world, r);
+        }
+        // The frame's history dies wherever the world changed.
+        if let (Some(gfx), Some((min, max))) = (self.gfx.as_mut(), r.aabb) {
+            gfx.frame.invalidate(min.0, max.0);
         }
     }
 
@@ -2266,14 +2436,20 @@ impl Run {
         let Samples {
             mut cpu_ms,
             mut gpu_ms,
+            mut pass_ms,
             mut hud_ms,
         } = samples;
         let Some(gfx) = &self.gfx else { return };
-        let [w, h] = [gfx.marcher.target().width(), gfx.marcher.target().height()];
+        let [w, h] = [gfx.frame.target().width(), gfx.frame.target().height()];
         let gpu = if gpu_ms.is_empty() {
             "n/a (no TIMESTAMP_QUERY)".to_owned()
         } else {
-            format!("{:.3} ms", median(&mut gpu_ms))
+            let passes: Vec<String> = FRAME_PASSES
+                .iter()
+                .zip(pass_ms.iter_mut())
+                .map(|(name, ms)| format!("{name} {:.3}", median(ms)))
+                .collect();
+            format!("{:.3} ms ({} ms)", median(&mut gpu_ms), passes.join(", "))
         };
         let hud = if hud_ms.is_empty() {
             String::new()
@@ -2281,7 +2457,7 @@ impl Run {
             format!(", gpu hud {:.4} ms", median(&mut hud_ms))
         };
         println!(
-            "frame ({w}x{h}, median of {}, {}): cpu {:.3} ms, gpu march {gpu}{hud}; full bricks {}, mirror {} B live, {} B allocated",
+            "frame ({w}x{h}, median of {}, {}): cpu {:.3} ms, gpu frame {gpu}{hud}; full bricks {}, mirror {} B live, {} B allocated",
             cpu_ms.len(),
             look_line(&self.look, self.rock_detail()),
             median(&mut cpu_ms),
@@ -2360,15 +2536,18 @@ impl Run {
 
     fn init(&mut self, gpu: &Gpu) {
         let [w, h] = self.args.render.unwrap_or(gpu.size);
-        let timer = MarchTimer::new(&gpu.device, &gpu.queue);
+        let timer = PassTimer::with_passes(&gpu.device, &gpu.queue, FRAME_PASSES.len() as u32);
         println!("device ready after {:.0} ms", ms_since(self.start));
         let attr_timer = self
             .args
             .look
             .and_then(|_| MarchTimer::new(&gpu.device, &gpu.queue));
-        let mut marcher = Marcher::new(&gpu.device, w, h);
+        let mut frame = Frame::new(&gpu.device, w, h);
+        frame.set_lighting(self.modes.lighting);
+        frame.set_resolution(&gpu.device, self.modes.resolution);
+        println!("{}", self.modes.line());
         let mirror = if self.stream.is_some() {
-            marcher.set_lod(LodParams {
+            frame.set_lod(LodParams {
                 r_full: self.args.residency.r_full,
                 forced_level: None,
             });
@@ -2386,14 +2565,17 @@ impl Run {
             gpu.queue.submit([enc.finish()]);
             match synced {
                 Ok(s) => println!(
-                    "mirror: uploaded {} B ({} bricks, {} chunks, {} writes) in {:.0} ms; mirror {} B live, {} B allocated",
+                    "mirror: uploaded {} B ({} bricks, {} chunks, {} writes) in {:.0} ms; mirror {} B live, {} B allocated; lights: {} samples from {} bricks in {:.3} ms",
                     s.bytes,
                     s.bricks,
                     s.chunks,
                     s.writes,
                     sync_ms,
                     mirror.mirror_bytes(),
-                    mirror.allocated_bytes()
+                    mirror.allocated_bytes(),
+                    s.light_samples,
+                    s.light_bricks,
+                    s.light_us as f64 / 1e3
                 ),
                 Err(e) => eprintln!("mirror sync failed: {e}"),
             }
@@ -2401,7 +2583,7 @@ impl Run {
         };
         let mut gfx = Gfx {
             mirror,
-            marcher,
+            frame,
             presenter: Presenter::new(&gpu.device, gpu.surface_format),
             timer,
             attr_timer,
@@ -2440,6 +2622,7 @@ impl Run {
     fn new_mirror(&self, gpu: &Gpu, cfg: MirrorConfig) -> GpuWorld {
         let cfg = MirrorConfig {
             budget_bytes: self.mirror_budget(),
+            light_radius: self.args.light_radius,
             ..cfg
         };
         let t = now();
@@ -2484,6 +2667,9 @@ impl Run {
             .map(|o| ChunkCoord([0, 1, 2].map(|k| spawn.0[k] + o[k])))
             .collect();
         mirror.set_focus(self.spawn);
+        // The light extraction of the first sync that scanned a brick, and of all of them.
+        let mut first_light: Option<SyncStats> = None;
+        let (mut light_us, mut syncs) = (0u64, 0u32);
         loop {
             stream.streamer.update(&self.world, &[self.spawn]);
             stream.tick_ms.push(ms_since(self.start));
@@ -2494,9 +2680,18 @@ impl Run {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
             let synced = mirror.sync(&self.world, &gpu.queue, &mut enc);
             gpu.queue.submit([enc.finish()]);
-            if let Err(e) = synced {
-                eprintln!("mirror sync failed: {e}");
-                break;
+            match synced {
+                Ok(s) => {
+                    syncs += 1;
+                    light_us += s.light_us;
+                    if s.light_bricks > 0 {
+                        first_light.get_or_insert(s);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("mirror sync failed: {e}");
+                    break;
+                }
             }
             stream.track(&ev, &mirror);
             if near
@@ -2506,6 +2701,16 @@ impl Run {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        if let Some(s) = first_light {
+            println!(
+                "lights: first sync with bricks extracted {} samples from {} bricks in {:.3} ms; {syncs} syncs to near residency spent {:.3} ms, {} samples live",
+                s.light_samples,
+                s.light_bricks,
+                s.light_us as f64 / 1e3,
+                light_us as f64 / 1e3,
+                mirror.light_samples()
+            );
         }
         println!(
             "near residency ({} chunks resident and mirrored) after {:.0} ms",
@@ -2517,7 +2722,7 @@ impl Run {
 
     fn resized(&mut self, gpu: &Gpu) {
         if let (Some(gfx), None) = (self.gfx.as_mut(), self.args.render) {
-            gfx.marcher.resize(&gpu.device, gpu.size[0], gpu.size[1]);
+            gfx.frame.resize(&gpu.device, gpu.size[0], gpu.size[1]);
         }
     }
 
@@ -2555,6 +2760,17 @@ impl Run {
         let (deferred, empty, error) = match synced {
             Ok(s) => {
                 self.hud.sync = (s, sync_ms);
+                stream.light_ms = s.light_us as f64 / 1e3;
+                stream.light_evicted = s.light_evicted;
+                stream.light_refused = s.light_refused;
+                // The oldest wait in syncs, one sync per tick, as the time since that tick.
+                let n = stream.tick_ms.len();
+                let w = s.light_oldest_wait as usize;
+                stream.light_wait_ms = if w > 0 && w < n {
+                    stream.tick_ms[n - 1] - stream.tick_ms[n - 1 - w]
+                } else {
+                    0.0
+                };
                 (s.deferred_chunks, false, None)
             }
             Err(e) => (gfx.mirror.pending_chunks() as u64, true, Some(e)),
@@ -2584,7 +2800,7 @@ impl Run {
         if let Some(r_full) = stream.rule.step(pressure) {
             let r = stream.streamer.config().residency;
             stream.streamer.set_radii(r_full, r.r_lod);
-            gfx.marcher.set_lod(LodParams {
+            gfx.frame.set_lod(LodParams {
                 r_full,
                 forced_level: None,
             });
@@ -2647,6 +2863,9 @@ impl Run {
                             edit_line("carved", &r, self.world.materials(), 0.0)
                         );
                         p.touched = r.touched.clone();
+                        if let (Some(gfx), Some((min, max))) = (self.gfx.as_mut(), r.aabb) {
+                            gfx.frame.invalidate(min.0, max.0);
+                        }
                     }
                     Err(e) => println!("autopilot: carve refused, {e}"),
                 }
@@ -2747,6 +2966,11 @@ impl Run {
             for (v, &ms) in p.stages_ms.iter_mut().zip(&stream.stages_ms) {
                 v.push(ms);
             }
+            p.light_ms.push(stream.light_ms);
+            p.light_evicted += stream.light_evicted;
+            p.light_refused += stream.light_refused;
+            p.light_wait_ms = p.light_wait_ms.max(stream.light_wait_ms);
+            p.peak_light = p.peak_light.max(gfx.mirror.light_samples());
         }
         p.peak_mirror = p.peak_mirror.max(gfx.mirror.mirror_bytes());
         p.peak_allocated = p.peak_allocated.max(gfx.mirror.allocated_bytes());
@@ -2807,6 +3031,18 @@ impl Run {
                 percentile(v, 100.0)
             );
         }
+        println!(
+            "autopilot: light extraction in sync: p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms over {} frames; light samples peak {}, now {}; ranges evicted {}, refused {}; longest wait for a range inside the radius {:.0} ms",
+            percentile(&mut p.light_ms, 50.0),
+            percentile(&mut p.light_ms, 99.0),
+            percentile(&mut p.light_ms, 100.0),
+            p.light_ms.len(),
+            p.peak_light,
+            gfx.mirror.light_samples(),
+            p.light_evicted,
+            p.light_refused,
+            p.light_wait_ms
+        );
         let mut lat = stream.latency_ms[p.latency_from..].to_vec();
         println!(
             "autopilot: residency latency wanted to mirrored: p95 {:.0} ms, max {:.0} ms over {} chunks (proposal 500 ms)",
@@ -2863,7 +3099,7 @@ impl Run {
         if p.gpu_ms.is_empty() {
             println!("autopilot: march GPU n/a (no TIMESTAMP_QUERY)");
         } else {
-            let [w, h] = [gfx.marcher.target().width(), gfx.marcher.target().height()];
+            let [w, h] = [gfx.frame.target().width(), gfx.frame.target().height()];
             println!(
                 "autopilot: march GPU at {w}x{h} over the flight: p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms over {} frames",
                 percentile(&mut p.gpu_ms, 50.0),
@@ -2871,7 +3107,21 @@ impl Run {
                 percentile(&mut p.gpu_ms, 100.0),
                 p.gpu_ms.len()
             );
+            for (name, v) in FRAME_PASSES.iter().zip(&mut p.pass_ms) {
+                println!(
+                    "autopilot: pass {name}: p50 {:.3} ms, p99 {:.3} ms",
+                    percentile(v, 50.0),
+                    percentile(v, 99.0)
+                );
+            }
         }
+        println!(
+            "autopilot: frame targets {} B at {}x{} ({} lighting)",
+            gfx.frame.frame_bytes(),
+            gfx.frame.target().width(),
+            gfx.frame.target().height(),
+            gfx.frame.resolution().name()
+        );
         if !p.attr.items.is_empty() {
             for line in p.attr.lines() {
                 println!("{line}");
@@ -2934,6 +3184,19 @@ impl Run {
     /// fills, the D-pad's up and down step the dig radius as a scroll line does, `North`
     /// toggles walking, `West` cycles the cutaway as `X` does, and `East` knocks.
     fn handle_input(&mut self, input: &Input) {
+        for (key, mode) in [
+            (KeyCode::F3, hud::ModeKey::ShadowWalk),
+            (KeyCode::F4, hud::ModeKey::Sampler),
+            (KeyCode::F5, hud::ModeKey::History),
+            (KeyCode::F6, hud::ModeKey::Resolution),
+            (KeyCode::F7, hud::ModeKey::Lamp),
+            (KeyCode::KeyM, hud::ModeKey::Pulse),
+        ] {
+            if input.pressed(key) {
+                self.modes.press(mode, ms_since(self.start));
+                println!("{}", self.modes.line());
+            }
+        }
         if input.pressed(KeyCode::KeyL) {
             self.light.shadows = !self.light.shadows;
             println!(
@@ -3194,6 +3457,8 @@ impl Run {
             }
             stream_ms = self.stream.as_ref().and_then(|s| s.cpu_ms.last().copied());
         } else if let Some(gfx) = self.gfx.as_mut() {
+            // The light radius follows the camera on the bounded level too.
+            gfx.mirror.set_focus(voxel_of(self.fly.camera.position));
             let t = now();
             match gfx.mirror.sync(&self.world, &gpu.queue, &mut enc) {
                 Ok(s) => {
@@ -3219,13 +3484,21 @@ impl Run {
             && self.look.view == ViewMode::Steps
             && let Some(gfx) = &self.gfx
         {
-            let px = readback::read_rgba8(&gpu.device, &gpu.queue, gfx.marcher.target());
-            let width = gfx.marcher.target().width() as usize;
+            let px = readback::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
+            let width = gfx.frame.target().width() as usize;
             let h = StepHistogram::from_rgba8(&px, width);
             self.hud.steps = Some(hud::StepsSample::from_histogram(&h));
         }
+        // With the stats HUD off the overlay draws the mode banner alone while it shows.
+        let banner = (!hud)
+            .then(|| self.modes.banner(ms_since(self.start)))
+            .flatten();
         if hud {
             self.update_hud(gpu);
+        } else if let (Some(b), Some(gfx)) = (&banner, self.gfx.as_mut()) {
+            gfx.hud
+                .set_lines(&gpu.queue, b, &[HudColour::Yellow; hud::BANNER_ROWS]);
+            gfx.hud.set_samples(&gpu.queue, &[], 0.0);
         }
         let flying = self
             .pilot
@@ -3235,10 +3508,17 @@ impl Run {
         let Some(gfx) = self.gfx.as_mut() else {
             return Flow::Exit;
         };
-        gfx.marcher.set_look(self.look);
-        let params = gfx
-            .marcher
-            .params(&gfx.mirror, &self.fly.camera, &self.light);
+        gfx.frame.set_lighting(self.modes.lighting);
+        gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
+        gfx.frame.set_look(self.look);
+        let scale = if self.modes.pulse {
+            ore_pulse(ms_since(self.start))
+        } else {
+            1.0
+        };
+        gfx.frame
+            .set_emission_scale(&gpu.queue, flythrough::cave::ORE, scale);
+        let params = gfx.frame.params(&gfx.mirror, &self.fly.camera, &self.light);
         let timer = gfx
             .timer
             .as_ref()
@@ -3263,20 +3543,21 @@ impl Run {
         if let Some(t) = attr_timer {
             t.resolve(&mut enc);
         }
-        gfx.marcher.encode(
+        gfx.frame.encode(
             &gpu.device,
             &gpu.queue,
             &mut enc,
             &gfx.mirror,
             &params,
-            timer.map(MarchTimer::writes),
+            timer,
         );
         if let Some(t) = timer {
             t.resolve(&mut enc);
         }
+        gfx.frame.advance();
         gfx.presenter
-            .encode(&gpu.device, &mut enc, gfx.marcher.target(), surface);
-        if hud {
+            .encode(&gpu.device, &mut enc, gfx.frame.target(), surface);
+        if hud || banner.is_some() {
             let [w, h] = gpu.size;
             gfx.hud.encode_timed(
                 &mut enc,
@@ -3297,15 +3578,23 @@ impl Run {
             let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
             println!("first frame after {:.0} ms", ms_since(self.start));
         }
-        let gpu_ms = timer.map(|t| t.read_ms(&gpu.device));
+        let pass_ms = timer.map(|t| t.read_all_ms(&gpu.device));
+        let gpu_ms = pass_ms.as_ref().map(|p| p.iter().sum::<f64>());
         let attr_gpu_ms = attr_timer.map(|t| t.read_ms(&gpu.device));
         let hud_ms = hud_timer.map(|t| t.read_ms(&gpu.device));
         self.hud.run.push(cpu_ms, stream_ms, gpu_ms);
         self.hud.cpu_ms = cpu_ms as f32;
         self.hud.march_ms = gpu_ms.map(|v| v as f32);
+        self.hud.pass_ms.clone_from(&pass_ms);
         self.hud.hud_ms = hud_ms.map(|v| v as f32);
         if flying && let (Some(p), Some(ms)) = (self.pilot.as_mut(), gpu_ms) {
             p.gpu_ms.push(ms);
+            if let Some(passes) = &pass_ms {
+                p.pass_ms.resize(passes.len(), Vec::new());
+                for (v, &ms) in p.pass_ms.iter_mut().zip(passes) {
+                    v.push(ms);
+                }
+            }
         }
         if flying
             && gfx.mirror.surface_attrs()
@@ -3326,6 +3615,12 @@ impl Run {
             s.cpu_ms.push(cpu_ms);
             if let Some(ms) = gpu_ms {
                 s.gpu_ms.push(ms);
+            }
+            if let Some(p) = &pass_ms {
+                s.pass_ms.resize(p.len(), Vec::new());
+                for (v, &ms) in s.pass_ms.iter_mut().zip(p) {
+                    v.push(ms);
+                }
             }
             if let Some(ms) = hud_ms {
                 s.hud_ms.push(ms);
@@ -3354,9 +3649,15 @@ impl Run {
             if self.look.view == ViewMode::Steps
                 && let Some(gfx) = &self.gfx
             {
-                let px = readback::read_rgba8(&gpu.device, &gpu.queue, gfx.marcher.target());
-                let width = gfx.marcher.target().width() as usize;
+                let px = readback::read_rgba8(&gpu.device, &gpu.queue, gfx.frame.target());
+                let width = gfx.frame.target().width() as usize;
                 println!("{}", steps_line(&StepHistogram::from_rgba8(&px, width)));
+                let shadow =
+                    readback::read_rgba16f(&gpu.device, &gpu.queue, gfx.frame.irradiance());
+                println!(
+                    "{}",
+                    shadow_steps_line(&shadow, gfx.frame.lighting().shadow_walk)
+                );
             }
             if let Some(gfx) = &self.gfx {
                 println!("mirror: {}", belt_line(&gfx.mirror));
@@ -3370,6 +3671,31 @@ impl Run {
         }
         Flow::Continue
     }
+}
+
+/// The steps view's reading of the lamp shadow rays, from the light pass's counters (one
+/// texel per hit, alpha 1): `shadow rays (full walk, 1 234 567 rays): steps mean 8.12, loads
+/// mean 20.31, p99 64, pool reads mean 3.10`.
+fn shadow_steps_line(texels: &[[f32; 4]], walk: ShadowWalk) -> String {
+    let rays: Vec<&[f32; 4]> = texels.iter().filter(|t| t[3] > 0.5).collect();
+    let n = rays.len().max(1) as f64;
+    let mean = |k: usize| rays.iter().map(|t| f64::from(t[k])).sum::<f64>() / n;
+    let mut loads: Vec<f64> = rays.iter().map(|t| f64::from(t[1])).collect();
+    format!(
+        "shadow rays ({} walk, {} rays): steps mean {:.2}, loads mean {:.2}, p99 {:.0}, pool reads mean {:.2}",
+        walk.name(),
+        rays.len(),
+        mean(0),
+        mean(1),
+        percentile(&mut loads, 99.0),
+        mean(2)
+    )
+}
+
+/// The ore's emission scale `ms` milliseconds into the run while `M` pulses it: between 0.25
+/// and 1.75, one cycle every 1.5 s.
+fn ore_pulse(ms: f64) -> f32 {
+    (1.0 + 0.75 * (ms / 1500.0 * std::f64::consts::TAU).sin()) as f32
 }
 
 /// The steps view's reading of one frame: `steps per ray (2073600 rays): mean 41.27, p99 133,
@@ -3494,6 +3820,10 @@ impl App for Flythrough {
                             latency_ms: Vec::new(),
                             cpu_ms: Vec::new(),
                             stages_ms: [0.0; 4],
+                            light_ms: 0.0,
+                            light_evicted: 0,
+                            light_refused: 0,
+                            light_wait_ms: 0.0,
                             full_residency: false,
                             workers,
                         }),
@@ -3514,6 +3844,12 @@ impl App for Flythrough {
                 gpu_ms: Vec::new(),
                 cpu_ms: Vec::new(),
                 stages_ms: Default::default(),
+                light_ms: Vec::new(),
+                pass_ms: Vec::new(),
+                peak_light: 0,
+                light_evicted: 0,
+                light_refused: 0,
+                light_wait_ms: 0.0,
                 attr: AttrSamples::default(),
                 latency_from: 0,
                 peak_mirror: 0,
@@ -3548,6 +3884,7 @@ impl App for Flythrough {
                 args: self.args.clone(),
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
+                modes: hud::Modes::new(self.args.start_lighting(), self.args.lighting, 0.0),
                 look: self.args.start_look(),
                 cutaway: self.args.cutaway,
                 dig_radius: DIG_RADIUS,
@@ -3689,12 +4026,17 @@ fn pollster_block_on<F: std::future::Future>(f: F) -> F::Output {
 }
 
 /// The cave's material table; under `--look`, with rock's procedural detail at
-/// `--rock-detail`.
+/// `--rock-detail`; the ore emissive unless `--emissive-ore off`.
 fn materials(args: &Args) -> MaterialTable {
-    if args.look.is_some() {
+    let table = if args.look.is_some() {
         flythrough::look_materials_with(args.rock_detail)
     } else {
         cave_materials()
+    };
+    if args.emissive_ore {
+        flythrough::with_emissive_ore(&table)
+    } else {
+        table
     }
 }
 
@@ -4550,6 +4892,7 @@ mod tests {
         let world = Arc::new(world);
         let net = native_net(&world);
         let args = parse_args_from(argv(&["--level"])).expect("--level parses");
+        let modes = hud::Modes::new(args.start_lighting(), args.lighting, 0.0);
         let camera = Camera {
             position: Vec3::splat(0.5),
             yaw: 0.0,
@@ -4565,6 +4908,7 @@ mod tests {
             args,
             fly: Fly::new(camera),
             light: LightParams::headlamp(),
+            modes,
             dig_radius: DIG_RADIUS,
             scroll: ScrollSteps::default(),
             triggers: [false; 2],
@@ -5095,6 +5439,74 @@ mod tests {
             parse_args_from(argv(&["--cutaway", "x"])).err().as_deref(),
             Some("--cutaway takes auto, on or off, not x")
         );
+    }
+
+    /// Every lighting flag parses its values and refuses an unknown one.
+    #[test]
+    fn lighting_flags_parse_and_refuse_unknown_values() {
+        let parse = |a: &[&str]| parse_args_from(argv(a));
+        let a = parse(&["--emissive-ore", "off", "--lamp", "off", "--filter", "off"]).unwrap();
+        assert!(!a.emissive_ore && !a.lamp && !a.filter);
+        let a = parse(&[
+            "--shadow-walk",
+            "coarse",
+            "--sampler",
+            "list",
+            "--history",
+            "gradient",
+            "--lighting",
+            "full",
+            "--light-radius",
+            "6",
+        ])
+        .unwrap();
+        assert_eq!(a.shadow_walk, ShadowWalk::Coarse);
+        assert_eq!(a.sampler, Sampler::List);
+        assert_eq!(a.history, HistoryKill::Gradient);
+        assert_eq!(a.lighting, LightingResolution::Full);
+        assert_eq!(a.light_radius, 6);
+        let d = parse(&[]).unwrap();
+        assert!(d.emissive_ore && d.lamp && d.filter);
+        assert_eq!(
+            (
+                d.shadow_walk,
+                d.sampler,
+                d.history,
+                d.lighting,
+                d.light_radius
+            ),
+            (
+                ShadowWalk::Coarse,
+                Sampler::Reuse,
+                HistoryKill::Edits,
+                LightingResolution::Half,
+                4
+            )
+        );
+        // The line the fly-through prints at the start with no lighting flags.
+        assert_eq!(
+            hud::Modes::new(d.start_lighting(), d.lighting, 0.0).line(),
+            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, filter on, ore pulse off, emissive history 32"
+        );
+        for (flag, err) in [
+            ("--emissive-ore", "--emissive-ore takes on or off, not x"),
+            ("--lamp", "--lamp takes on or off, not x"),
+            ("--filter", "--filter takes on or off, not x"),
+            ("--shadow-walk", "--shadow-walk takes full or coarse, not x"),
+            ("--sampler", "--sampler takes list or reuse, not x"),
+            ("--history", "--history takes edits or gradient, not x"),
+            ("--lighting", "--lighting takes full or half, not x"),
+            (
+                "--light-radius",
+                "--light-radius takes 0 to 64 chunks, not x",
+            ),
+            (
+                "--emissive-history",
+                "--emissive-history takes 1 to 4096 frames, not x",
+            ),
+        ] {
+            assert_eq!(parse(&[flag, "x"]).err().as_deref(), Some(err), "{flag}");
+        }
     }
 
     #[test]

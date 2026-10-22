@@ -9,7 +9,7 @@ mod support;
 
 use flythrough::hud::{CEILING_MS, HudStats, RING};
 use support::*;
-use vxe_render::{GpuWorld, HudColour, HudOverlay, LightParams, Marcher, readback, wgpu};
+use vxe_render::{GpuWorld, HudColour, HudOverlay, LightParams, readback, wgpu};
 
 /// Glyph cells are 8 pixels; the overlay is drawn at scale 1.
 const CELL: u32 = 8;
@@ -38,13 +38,20 @@ struct Frame {
 }
 
 fn render(hud: bool) -> Option<Frame> {
+    render_overlay(hud, None)
+}
+
+/// [`render`], or with `banner` the overlay drawing that one line alone, yellow, with no
+/// strip: the fly-through's mode banner with the stats HUD off.
+fn render_overlay(hud: bool, banner: Option<&str>) -> Option<Frame> {
     let world = carved_world();
     let full = world.stats().full_bricks as u64;
     let (device, queue) = software_device((full + 4096) * 512)?;
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync_now(&world, &device, &queue)
         .expect("mirror fits the adapter");
-    let marcher = Marcher::new(&device, WIDTH, HEIGHT);
+    let mut marcher = vxe_render::Frame::new(&device, WIDTH, HEIGHT);
+    marcher.set_resolution(&device, vxe_render::LightingResolution::Full);
     marcher.render(
         &device,
         &queue,
@@ -81,6 +88,14 @@ fn render(hud: bool) -> Option<Frame> {
         .collect();
     overlay.set_rows(&queue, &rows);
     overlay.set_samples(&queue, &fixed_strip(), CEILING_MS);
+    if let Some(b) = banner {
+        overlay.set_lines(
+            &queue,
+            b,
+            &[HudColour::Yellow; flythrough::hud::BANNER_ROWS],
+        );
+        overlay.set_samples(&queue, &[], 0.0);
+    }
 
     let mut encoder = device.create_command_encoder(&Default::default());
     encoder.copy_texture_to_texture(
@@ -88,7 +103,7 @@ fn render(hud: bool) -> Option<Frame> {
         target.as_image_copy(),
         size,
     );
-    if hud {
+    if hud || banner.is_some() {
         let view = target.create_view(&Default::default());
         overlay.encode(&mut encoder, &view, WIDTH, HEIGHT);
     }
@@ -168,4 +183,44 @@ fn hud_off_is_the_primary_golden_byte_for_byte() {
         0,
         "copied target"
     );
+}
+
+/// `mode_banner.png`: the mode banner the fly-through draws for 3 s after the start and after
+/// every mode change, with the stats HUD off: the start's modes over the carved view, wrapped
+/// into rows. Only the banner's rows (and their one-pixel shadow) differ from the march target.
+#[test]
+fn mode_banner_golden_shows_the_modes_with_the_hud_off() {
+    let line = flythrough::hud::Modes::new(
+        vxe_render::Lighting::default(),
+        vxe_render::LightingResolution::default(),
+        0.0,
+    )
+    .banner(0.0)
+    .expect("the banner shows at the start");
+    let Some(frame) = render_overlay(false, Some(&line)) else {
+        return;
+    };
+    let img = &frame.composed;
+    let path = golden_path("mode_banner.png");
+    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+        write_png(&path, img, WIDTH, HEIGHT);
+        println!("blessed {path:?}");
+    } else {
+        let differing = differing_bytes(img, &read_png(&path).0);
+        assert_eq!(differing, 0, "mode_banner.png: {differing} bytes differ");
+    }
+    let rows = line.lines().count() as u32;
+    let mut changed = 0;
+    for (i, (p, q)) in img.chunks(4).zip(frame.march.chunks(4)).enumerate() {
+        let y = i as u32 / WIDTH;
+        if p != q {
+            changed += 1;
+            assert!(
+                y <= rows * CELL,
+                "pixel at row {y} outside the banner's rows changed"
+            );
+        }
+    }
+    println!("{line}: {changed} pixels drawn");
+    assert!(changed > 0);
 }

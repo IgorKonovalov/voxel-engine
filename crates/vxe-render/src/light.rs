@@ -26,6 +26,8 @@ pub struct LightParams {
     /// voxel (one mip cell of a LOD-only chunk) at a time, the comparison the hierarchy is
     /// held byte-identical to.
     pub skips: bool,
+    /// The lamp's cone turned from the camera's forward toward its right, in radians.
+    pub turn: f32,
 }
 
 impl LightParams {
@@ -41,6 +43,7 @@ impl LightParams {
             shadows: false,
             masks: true,
             skips: true,
+            turn: 0.0,
         }
     }
 

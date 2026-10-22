@@ -200,8 +200,15 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023 and 0027 closed; Plan 0024, the lighting plan, approved; Plans 0028 to 0030 drafted 2026-10-21)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024 and 0027 closed; Plans 0028 to 0030 drafted 2026-10-21)
 
+Plan 0024, the lighting plan, closed 2026-10-22 (v0.27.0, ADR-0018 and ADR-0025 accepted with
+Outcomes): a hit pass, a light pass with one emissive sample resampled from a near-emitter
+table and one shadow ray, a temporal pass whose history dies in edit boxes (the emissive part
+on a 32-frame history, the lamp's short), four a-trous iterations and a composite. The owner's
+defaults are half-resolution lighting, the coarse shadow walk, reservoir reuse and edit-box
+history; the other modes stay. On the dev box the defaults read under the lighting and denoise
+lines; full resolution misses both, and light extraction stays a recorded miss for Plan 0028.
 Plan 0023 closed 2026-10-21 (v0.23.0, ADR-0017 accepted with an Outcome): the attribute
 work list's shell looks up neighbour chunks instead of visiting a 488-brick volume, the pass is
 capped with a carry-over queue whose waiting bricks read "no plane", and the stream queue,
@@ -267,7 +274,7 @@ Plan 0005 closed 2026-10-16 (v0.4.0): the surface-look spike measured four norma
 procedural detail, and the owner chose per-voxel contour planes with weaker rock detail
 (ADR-0011); Plan 0013 made it the default.
 
-The lighting plan is [Plan 0024](plans/0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md)
+The lighting plan is [Plan 0024](plans/done/0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md)
 (drafted 2026-10-20, with ADR-0018): direct light and the denoiser only. A hit pass writes a
 per-pixel record, a light pass takes one sample per pixel (the headlamp, or an emissive voxel
 resampled from samples the mirror extracts at upload) with one shadow ray, a temporal pass

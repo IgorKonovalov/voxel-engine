@@ -108,6 +108,23 @@ pub fn cave_materials() -> MaterialTable {
     t
 }
 
+/// The ore's emission under `--emissive-ore on`: an orange glow, radiance per channel.
+pub const ORE_EMISSION: [f32; 3] = [1.6, 0.9, 0.35];
+
+/// `table` with the ore row emitting [`ORE_EMISSION`]: the fly-through's table unless
+/// `--emissive-ore off`.
+pub fn with_emissive_ore(table: &MaterialTable) -> MaterialTable {
+    let mut t = MaterialTable::new();
+    for (id, row) in table.rows().iter().enumerate().skip(1) {
+        let mut m = row.clone();
+        if id == usize::from(cave::ORE) {
+            m.emission = ORE_EMISSION;
+        }
+        assert_eq!(usize::from(t.push(m)), id);
+    }
+    t
+}
+
 /// Rock's procedural detail in every look but `--look plain`: a 40 cm feature scale (4 voxels)
 /// at strength 0.1.
 pub const ROCK_DETAIL: [f32; 2] = [4.0, 0.1];

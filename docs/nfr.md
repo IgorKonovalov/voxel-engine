@@ -138,6 +138,16 @@ mid-fill (1 640 292 full bricks, 1 867 584 964 B live; render-thread frame CPU 7
 Both are under the 3.0 ms line; the loaded readings above overstated them by 0.3 and 0.6 to
 1.1 ms.
 
+**The hit pass, split from the shading (dev reference, Plan 0024 Phase 1, same machine,
+exclusive perf lock, 1-minute load 7.3 to 8.0 from other work on the box, not quiet; the
+default look, `flythrough --level --headless --seed 1 --render 1920x1080 --frames 300`, three
+runs of each binary alternated):** the hit pass reads 1.235 to 1.236 ms against 1.733 to 1.753
+ms for the single-pass march (ae58f0c) in the same session; the shadow ray is now the light
+pass's, 0.712 to 0.718 ms, and the composite reads 0.255 ms, so the frame's three passes sum to
+2.202 to 2.210 ms. On the dev box's AMD iGPU (RADV, `RADV_DEBUG=shaderstats`) the hit kernel
+uses 112 SGPRs and 64 VGPRs with no spills, 4 waves per SIMD; the single-pass march used 112
+SGPRs (9 spilled) and 84 VGPRs, 3 waves per SIMD.
+
 **The attribute pass under motion (dev reference, diagnostic, Plan 0013 Phase 7, same machine
 and lock, `flythrough --autopilot --headless --seed 1`, default contour, two runs at load 3.6
 to 11.1):** per frame of the flight, the work list reads p50 3584 to 4446, p99 5468 to 5469,
@@ -182,6 +192,143 @@ at `r_full` 12 against plain's 73 000), p99 12.3 to 24.3 ms, max 22.2 to 60.3 ms
 cut `update`'s max from 37.8 to under 3.2 ms. What remains is `sync`, led by
 `Queue::write_buffer` (41.8 % of its samples) ahead of narrowing (about 38 %); ADR-0017's
 Outcome names the next step.
+
+**The light pass by shadow walk (dev reference, Plan 0024 Phase 4, RTX 3080 Laptop GPU,
+exclusive perf lock, 1-minute load 6.3 to 8.1, not quiet; the default look with the ore
+emissive and the lamp on, one run each, median of the last 30 frames):** the level's spawn
+(`--level --frames 300`) reads 6.640 ms with the full walk and 5.329 ms with the coarse walk;
+the streamed spawn (`--frames 3000`) 12.200 and 9.168 ms, against the 6.0 ms lighting line.
+The time is the emissive shadow ray's: candidates drawn uniformly from the whole buffer (the
+level's 417 388 samples) keep far emitters, so the ray is long. The steps view's lamp shadow
+ray (`--view steps --frames 300`, every hit's ray toward the lamp, lit or not) reads at the
+level 7.34 steps, 16.18 loads (p99 27) and 0.05 pool reads per ray in either walk; at the
+streamed spawn 11.19 steps, 24.02 loads (p99 127), 0.16 pool reads full, and 10.64 steps,
+23.02 loads (p99 93), 0.09 pool reads coarse. A lamp shadow ray is short (the lamp sits
+beside the eye), so its loads barely move.
+
+**Light candidates from the near-emitter table and bounded extraction (dev reference,
+indicative, Plan 0024 Phase 7, RTX 3080 Laptop GPU, exclusive perf lock, NOT quiet: 1-minute
+load 2.9 to 8.7; light radius 4, the ore emissive, the lamp on, 8 candidates; one run each;
+the quiet-box readings at the defaults are in "Quiet-box readings at the lighting defaults"
+below):** the light pass reads at the level's spawn 9.420 ms (full
+walk) and 8.293 ms (coarse) with the table in a 16 KiB uniform, and 7.448 ms (full) with the
+table moved into the light-sample buffer; the streamed spawn (`--frames 3000`) 13.249 ms (full)
+and 11.311 ms (coarse) with the uniform table. With one candidate the level reads 4.644 ms
+(4.178 ms with the lamp off), so the emissive shadow ray is about 3.5 ms and each further
+candidate about 0.4 ms. Over the autopilot's flight (`--autopilot --headless --seed 1`) the
+light-sample peak is 18 522 (15 915 at the end), with 0 ranges evicted, 0 refused and 0 ms of
+wait inside the radius; extraction in `sync` reads p50 0.160 ms, p99 2.422 ms, max 6.408 ms
+(load 3.5) and p50 0.142, p99 3.628, max 9.992 ms (load 4.6), against 13.3 and 48.9 ms at
+Phase 2.
+
+**The light pass by sampler (dev reference, indicative, Plan 0024 Phase 8, RTX 3080 Laptop
+GPU, exclusive perf lock, 1-minute load 1.3 to 3.2 but the owner using the machine, so not
+quiet; ore emissive, lamp on, 8 candidates, full shadow walk, one run each):** at the
+streamed spawn (`--frames 3000`) the flat list reads 11.618 ms and reservoir reuse 14.183 ms;
+at the level's spawn (`--level --frames 300`) 8.330 and 10.905 ms. Reuse adds about 2.6 ms:
+its six re-targeted reservoirs each look their emitter's material up through the walk.
+
+**The gradient pass (dev reference, indicative, Plan 0024 Phase 9, RTX 3080 Laptop GPU,
+exclusive perf lock, 1-minute load 2.1 to 2.3 with the owner using the machine, so not
+quiet; `--history gradient`, the default look, ore emissive, lamp on, one run each):** the
+gradient pass (one re-shaded pixel, two shadow rays, per 3 x 3 stratum) reads 0.755 ms at the
+level's spawn and 1.277 ms at the streamed spawn at 1080p; the a-trous pass reads 5.795 and
+5.566 ms in that mode, its ages kept shorter.
+
+**The temporal pass with two histories (dev reference, indicative, Plan 0024 Phase 13, RTX
+3080 Laptop GPU, exclusive perf lock, 1-minute load 4.0 to 6.8, not quiet; the default look,
+ore emissive, lamp on, one run each):** the temporal pass (the emissive part on a 32-frame
+history, the lamp's on 0.2) reads 0.508 and 0.505 ms at full resolution and 0.137 and
+0.135 ms at half (level, streamed spawn) at 1080p, against Phase 13's 1.0 and 0.3 ms bars; the
+quiet readings are in "Quiet-box readings at the lighting defaults" above. `Frame::frame_bytes`
+is unchanged at 308 736 000 B.
+
+**Quiet-box readings at the lighting defaults (dev reference, Plan 0024 Phase 14, the release
+binary of e9a8e6a's tree, RTX 3080 Laptop GPU, Ryzen 9 5900HS, 2026-10-22, exclusive perf
+lock, each run started at a 1-minute load of 0.83 to 1.98 with no other process above 8 % CPU;
+1920 x 1080, the default look, the ore emissive, the lamp on, full shadow walk, reservoir
+reuse, edit-box history, a 32-frame emissive history, the filter on; median of the last 30
+frames, three runs; `--level --frames 300` and the streamed spawn `--frames 3000`):**
+
+| pass (ms) | level, half (default) | streamed, half (default) | level, full | streamed, full |
+|---|---|---|---|---|
+| light | 2.335, 2.441, 2.430 | 3.315, 3.355, 3.340 | 10.528, 10.915, 11.028 | 14.413, 14.526, 14.436 |
+| temporal | 0.135, 0.137, 0.136 | 0.134, 0.134, 0.145 | 0.557, 0.559, 0.558 | 0.553, 0.553, 0.554 |
+| light + temporal | 2.470, 2.578, 2.566 | 3.449, 3.489, 3.485 | 11.085, 11.474, 11.586 | 14.966, 15.079, 14.990 |
+| a-trous (variance + 4) | 1.141, 1.197, 1.192 | 1.102, 1.119, 1.114 | 4.983, 5.147, 5.269 | 4.960, 4.960, 4.960 |
+| hit | 1.343, 1.402, 1.390 | 1.906, 1.928, 1.916 | 1.377, 1.438, 1.457 | 2.034, 1.993, 2.015 |
+| composite | 0.316, 0.329, 0.326 | 0.304, 0.308, 0.312 | 0.278, 0.282, 0.279 | 0.256, 0.278, 0.278 |
+
+At the default (half) tier the light pass is under its 4.0 ms bar, light plus temporal under the
+6.0 ms lighting line and the a-trous under the 3.0 ms denoise line at both spawns; the temporal
+pass is under 0.3 ms at half and 1.0 ms at full. Full resolution misses the light bar and both
+lines. The loads at the streamed full runs' starts: 1.31, 0.83, 1.48 (two earlier runs started
+at 2.30 and 2.36 were re-read). These replace the flat-list readings of d367d8f (light at half
+1.845 to 1.873 level, 2.897 to 2.915 ms streamed; reuse adds about 0.5 ms at half).
+
+Light extraction over the autopilot's flight at the defaults (`--autopilot --headless --seed
+1`, 1280 x 720, 6868 frames, load 0.90 at the start): p50 0.150, p99 2.210, max 6.123 ms,
+against Phase 7's p99 1.0 and max 3.0 ms (missed, as d367d8f's p99 2.255 and max 6.693 ms);
+longest wait inside the radius 0 ms; peak 18 522 samples, 0 evicted, 0 refused.
+`Frame::frame_bytes` at 1080p is unchanged: 195 379 200 B at half, 308 736 000 B at full.
+
+**The coarse shadow walk as the default (dev reference, Plan 0024 after Phase 15, the release
+binary of the plan's closing tree, RTX 3080 Laptop GPU, 2026-10-22, exclusive perf lock, each
+run started at a 1-minute load of 1.77 to 1.98 with other sessions' background load; 1080p,
+the defaults: half lighting, coarse shadow walk, reservoir reuse, edit-box history; median of
+the last 30 frames, three runs):**
+
+| pass (ms) | level | streamed |
+|---|---|---|
+| light | 1.972, 1.996, 1.994 | 2.810, 2.650, 2.686 |
+| temporal | 0.135, 0.136, 0.135 | 0.135, 0.134, 0.135 |
+| light + temporal | 2.107, 2.132, 2.129 | 2.945, 2.784, 2.821 |
+| a-trous (variance + 4) | 1.140, 1.150, 1.154 | 1.147, 1.093, 1.103 |
+
+Under the 4.0 ms light bar, the 6.0 ms lighting line and the 3.0 ms denoise line at both
+spawns; the coarse walk takes 0.4 to 0.6 ms off the full walk's light pass at half.
+
+**Both lighting tiers at 1080p output (dev reference, indicative, Plan 0024 Phase 10, RTX
+3080 Laptop GPU, exclusive perf lock, 1-minute load 2.2 to 6.1 with the owner using the
+machine, so not quiet; defaults otherwise: full shadow walk, the flat list, edit-box
+history, the filter on, the ore emissive, the lamp on; one run each, median of the last 30
+frames):**
+
+| pass (ms) | level, full | level, half | streamed, full | streamed, half |
+|---|---|---|---|---|
+| hit | 1.263 | 1.332 | 1.833 | 1.861 |
+| light | 7.519 | 1.876 | 11.535 | 2.878 |
+| temporal | 0.509 | 0.137 | 0.551 | 0.135 |
+| a-trous (variance + 4) | 4.726 | 1.168 | 4.538 | 1.106 |
+| composite | 0.255 | 0.310 | 0.277 | 0.295 |
+| frame | 14.261 | 4.818 | 18.745 | 6.280 |
+
+Against the lines: lighting (light + temporal) 2.0 and 3.0 ms at half resolution under 6.0,
+8.0 and 12.1 ms at full over it; denoise (a-trous) 1.1 to 1.2 ms at half under 3.0, 4.5 to
+4.7 ms at full over it. The quiet-box readings are in "Quiet-box readings at the lighting
+defaults" above.
+
+**Denoise: the temporal pass and four a-trous iterations (dev reference, Plan 0024 Phase 6,
+RTX 3080 Laptop GPU, exclusive perf lock, 1-minute load 4.2 to 4.6; the default look with the
+ore emissive, median of the last 30 frames, 1920 x 1080 full-resolution lighting):** the
+a-trous pass (the variance estimate and four 5 x 5 iterations) reads 4.662, 4.712 and 4.726 ms
+at the level's spawn (`--level --frames 300`, three runs) and 4.558 ms at the streamed spawn
+(`--frames 3000`), over the 3.0 ms denoise line; the temporal pass reads 0.506 to 0.548 ms.
+The plan's projection was 1.2 to 2.0 ms for the iterations. Replacing the normal weight's
+`pow(x, 128)` by seven squarings moved the reading by less than run-to-run spread (4.673 ms),
+so the passes are bound by their texture loads (24 bytes of hit record per tap).
+
+**Light extraction inside `sync` (dev reference, Plan 0024 Phase 2, RTX 3080 Laptop GPU,
+Ryzen 9 5900HS, exclusive perf lock, 1-minute load 8.3 to 9.0 from other work, not quiet; the
+ore emissive, `SyncStats::light_us`, the render thread's time scanning written `Full` bricks
+for exposed emissive voxels and rewriting the chunks' sample ranges):** the streamed spawn's
+first sync (`flythrough --headless --seed 1`) extracted 4545 samples from 3527 bricks in 0.718
+and 3.253 ms (two runs). Over the autopilot's flight (`flythrough --autopilot --headless --seed
+1`, 1885 frames) it read p50 0.602 ms, p99 13.327 ms, max 48.906 ms per frame, on top of the
+streaming line's `update + poll + sync` (p50 8.534 ms, p99 94.288 ms in the same run); the
+mirror then held 997 740 samples of the 1 048 576 reserved. The level's one upload of 383 608
+bricks extracted 417 388 samples in 25.901 ms (0.175 ms with `--emissive-ore off`). The
+plan's projection was under 0.1 ms per sync; the readings are over it.
 
 **Streaming line after Plan 0027 (the staging belt, ADR-0022): still a recorded miss of the
 1.0 ms line; the plan's own p50 bars are met.** Dev reference, RTX 3080 Laptop GPU, Ryzen 9
@@ -241,6 +388,15 @@ the streaming line above; the rest runs on background threads.
 The world figure rests on the uniform-brick assumption in `roadmap.md` (under 10 % of bricks
 non-uniform at full detail). When exceeded, far chunks drop to LOD-only residency rather than
 the frame dropping.
+
+**The frame's targets (Plan 0024 Phase 11, `Frame::frame_bytes` printed by `flythrough
+--autopilot --headless --seed 1 --render 1920x1080`):** 308 736 000 B with full-resolution
+lighting and 195 379 200 B at half resolution, against the 1.5 GB line; the light-sample buffer
+adds 16 MiB plus its 16 KiB candidate table (2^20 samples of 16 B), the blue noise 16 KiB and
+the emission scale 256 KiB. Per pixel at full resolution: the hit buffer twice (48 B), the
+translucent layers 8 B, the irradiance 8 B, the accumulation and moments twice (32 B), the
+filter's pair 16 B, the reservoirs twice (32 B), the output 4 B, and the gradient strata 8 B
+per 9 pixels. The plan's projection was about 276 MB.
 
 **Readings (dev reference, 2026-10-16, Plan 0001 Phase 4 commit, `flythrough` cave seed 1,
 `cargo run --release -p flythrough --example world_budget`):**

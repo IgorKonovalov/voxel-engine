@@ -3,12 +3,50 @@
 
 use vxe_render::wgpu::naga::{self, Block, Expression, Statement, TypeInner};
 
-const SHADERS: [(&str, &str); 4] = [
-    ("march.wgsl", include_str!("../src/shaders/march.wgsl")),
-    ("attrib.wgsl", include_str!("../src/shaders/attrib.wgsl")),
-    ("present.wgsl", include_str!("../src/shaders/present.wgsl")),
-    ("hud.wgsl", include_str!("../src/shaders/hud.wgsl")),
-];
+const MARCH: &str = include_str!("../src/shaders/march.wgsl");
+
+/// Every shader the renderer compiles, the frame's passes each after `march.wgsl`.
+fn shaders() -> Vec<(&'static str, String)> {
+    vec![
+        ("march.wgsl", MARCH.to_owned()),
+        (
+            "light.wgsl",
+            format!("{MARCH}\n{}", include_str!("../src/shaders/light.wgsl")),
+        ),
+        (
+            "composite.wgsl",
+            format!("{MARCH}\n{}", include_str!("../src/shaders/composite.wgsl")),
+        ),
+        (
+            "temporal.wgsl",
+            format!("{MARCH}\n{}", include_str!("../src/shaders/temporal.wgsl")),
+        ),
+        (
+            "atrous.wgsl",
+            format!("{MARCH}\n{}", include_str!("../src/shaders/atrous.wgsl")),
+        ),
+        (
+            "gradient.wgsl",
+            format!(
+                "{MARCH}\n{}\n{}",
+                include_str!("../src/shaders/light.wgsl"),
+                include_str!("../src/shaders/gradient.wgsl")
+            ),
+        ),
+        (
+            "attrib.wgsl",
+            include_str!("../src/shaders/attrib.wgsl").to_owned(),
+        ),
+        (
+            "present.wgsl",
+            include_str!("../src/shaders/present.wgsl").to_owned(),
+        ),
+        (
+            "hud.wgsl",
+            include_str!("../src/shaders/hud.wgsl").to_owned(),
+        ),
+    ]
+}
 
 /// FXC, the D3D12 HLSL compiler, rejects a store to a vector component chosen at run time
 /// (`v[k] = x`) with "array reference cannot be used as an l-value; not natively
@@ -16,8 +54,9 @@ const SHADERS: [(&str, &str); 4] = [
 #[test]
 fn no_shader_stores_through_a_runtime_vector_index() {
     let mut offenders = Vec::new();
-    for (name, source) in SHADERS {
-        let module = naga::front::wgsl::parse_str(source).unwrap_or_else(|e| panic!("{name}: {e}"));
+    for (name, source) in shaders() {
+        let module =
+            naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| panic!("{name}: {e}"));
         let info = naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::default(),

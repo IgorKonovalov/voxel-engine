@@ -1,10 +1,13 @@
-// Primary-ray marcher over the brick-map mirror (ADR-0002, ADR-0004), one invocation per pixel.
+// The hit pass over the brick-map mirror (ADR-0002, ADR-0004, ADR-0018), one invocation per
+// pixel: the primary ray's walk and a hit record per pixel, no lighting. light.wgsl and
+// composite.wgsl are compiled after this file and share its bindings, walk and helpers.
 //
-// Bindings, group 0:
-//   0  uniform  params         camera, mirror window, light, target size, flags (bit 0: shadow ray,
+// Bindings, group 0 (every pass of the frame):
+//   0  uniform  params         views, mirror window, light, target size, flags (bit 0: shadow ray,
 //                              bit 1: occupancy masks, bits 2..4: normal mode, bit 4: detail,
 //                              bits 5..8: view, bit 8: the mirror has attribute pages, bit 9:
-//                              skip empty cells larger than a voxel, bit 10: cutaway)
+//                              skip empty cells larger than a voxel, bit 10: cutaway), the
+//                              lighting flags and exposure
 //   1  storage  brick_pool0    shard 0 of the pool: [slot][128 x u32], four u8 palette indices
 //                              per word, x fastest; a wide brick is two slots, [256 x u32] of
 //                              u16 voxel pairs. Slot s is slot s % slots_per_shard of shard
@@ -22,7 +25,6 @@
 //   4  storage  materials      [id][4 x vec4]: albedo rgb + roughness, emission rgb + flag bits,
 //                              detail scale (voxels) + detail strength + opacity + 1 spare,
 //                              4 spare
-//   5  storage texture         rgba8unorm output
 //   6  storage  brick_masks    [slot / 8][144 x u32], groups of eight slots: slot s's opaque
 //                              mask is words 144 (s / 8) + 16 (s % 8) .. + 16, one 64-byte
 //                              line, bit i % 32 of word i / 32 set when voxel i (x + 8 y +
@@ -33,6 +35,31 @@
 //   7  storage  brick_pool1    pool shard 1
 //   8  storage  brick_pool2    pool shard 2
 //   9  storage  brick_pool3    pool shard 3
+//  10  storage  light_samples  [sample]vec4<i32>: an exposed emissive voxel's world coordinate,
+//                              then its material (bits 0..16) and the faces it shows (bit
+//                              16 + 2 k toward -k, the next toward +k); material 0 is a hole.
+//                              Declared by light.wgsl
+//  11  storage  emission_scale [material]f32, the frame's emission scale
+//  12  texture  blue_noise     128 x 128 r8unorm blue noise (void and cluster)
+//
+// Bindings, group 1 (the hit pass's outputs, the hit buffer):
+//   0  storage texture  hit_pos_out    rgba32float: the hit's world position (voxels) and t;
+//                                      (0, 0, 0, BIG) on a miss
+//   1  storage texture  hit_info_out   rgba16uint: the shading normal before detail as two
+//                                      snorm16 octahedral coordinates (exact for the six axis
+//                                      normals), the material id, and flags: bit 0 hit, bit 1
+//                                      contour-plane hit, bit 2 translucent layers in front,
+//                                      bits 3..5 the entry face's axis plus one (0: the ray
+//                                      started inside rock)
+//   2  storage texture  layer_out      rgba16float: the translucent layers in front of the hit
+//                                      (premultiplied colour, transmittance), lit by the lamp's
+//                                      cone and distance term except in the albedo view; in the
+//                                      steps view the primary ray's counters instead
+//
+// A pixel takes the first view whose rectangle holds it (the first when none does). Its ray
+// runs from the view's origin along `fwd + right x - up y`, x and y moving linearly across the
+// rectangle from minus the left tangent to the right one and from the up tangent to minus the
+// down one.
 //
 // With attribute pages (flag bit 8), a full chunk's Full brick in slot s of the page
 // p = s - s % 4096 has its 512 u16 contour attributes in slots p + 1364 + 2 (s - p) and the
@@ -83,15 +110,31 @@
 // With the flag set a hit is shaded by a fixed hemisphere light, `albedo (0.3 + 0.7 (0.5 + 0.5
 // n.z))` with world z up, with no lamp and no shadow ray, and a miss is the flat `CUTAWAY_SKY`.
 
-struct Params {
-    cam_pos: vec3<f32>,
-    tan_half_fov: f32,
-    cam_right: vec3<f32>,
+struct View {
+    origin: vec3<f32>,
+    tan_left: f32,
+    right: vec3<f32>,
+    tan_right: f32,
+    up: vec3<f32>,
+    tan_up: f32,
+    fwd: vec3<f32>,
+    tan_down: f32,
+    rect: vec4<u32>,
     aspect: f32,
-    cam_up: vec3<f32>,
+    // (L + R) / unit and L / unit, rounded once on the CPU.
+    unit_scale: f32,
+    unit_offset: f32,
     _pad0: f32,
-    cam_fwd: vec3<f32>,
+};
+
+const MAX_VIEWS: u32 = 2u;
+
+struct Params {
+    views: array<View, 2>,
+    view_count: u32,
     translucent_layers: u32,
+    frame: u32,
+    lighting: u32,
     window_min: vec3<i32>,
     _pad2: i32,
     window_size: vec3<i32>,
@@ -107,6 +150,29 @@ struct Params {
     forced_level: u32,
     lod1_r2: i32,
     lod2_r2: i32,
+    exposure: f32,
+    light_span: u32,
+    candidates: u32,
+    // The slot of light_samples where the frame's candidate table starts (light.wgsl).
+    light_table_base: u32,
+    // Bit 0: the previous frame's hit buffer and history are valid.
+    history: u32,
+    _pad5: u32,
+    _pad6: u32,
+    _pad7: u32,
+    // The views of the previous frame, for reprojection.
+    prev_views: array<View, 2>,
+    // The lighting grid: its size, the full-resolution pixels per lighting pixel on an edge
+    // (1 or 2), and this and last frame's offsets of the sampled pixel in each 2 x 2 (x in
+    // bits 0..8, y in bits 8..16).
+    light_size: vec2<u32>,
+    light_scale: u32,
+    light_offset: u32,
+    prev_light_offset: u32,
+    // The emissive part's history length in frames (`Lighting::emissive_history`).
+    emissive_history: f32,
+    _pad9: u32,
+    _pad10: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -114,11 +180,15 @@ struct Params {
 @group(0) @binding(2) var<storage, read> chunk_records: array<u32>;
 @group(0) @binding(3) var<storage, read> chunk_table: array<u32>;
 @group(0) @binding(4) var<storage, read> materials: array<vec4<f32>>;
-@group(0) @binding(5) var target_tex: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(6) var<storage, read> brick_masks: array<u32>;
 @group(0) @binding(7) var<storage, read> brick_pool1: array<u32>;
 @group(0) @binding(8) var<storage, read> brick_pool2: array<u32>;
 @group(0) @binding(9) var<storage, read> brick_pool3: array<u32>;
+@group(0) @binding(11) var<storage, read> emission_scale: array<f32>;
+@group(0) @binding(12) var blue_noise: texture_2d<f32>;
+@group(1) @binding(0) var hit_pos_out: texture_storage_2d<rgba32float, write>;
+@group(1) @binding(1) var hit_info_out: texture_storage_2d<rgba16uint, write>;
+@group(1) @binding(2) var layer_out: texture_storage_2d<rgba16float, write>;
 
 const ABSENT: u32 = 0xFFFFFFFFu;
 const FULL_BIT: u32 = 0x80000000u;
@@ -165,6 +235,21 @@ const VIEW_ALBEDO: u32 = 4u;
 const PAGE_SLOTS: u32 = 4096u;
 const ATTR_PAGE_BRICK_SLOTS: u32 = 1364u;
 const NO_PLANE: u32 = 0xFFFFu;
+// Params.lighting bits.
+const LIGHTING_LAMP: u32 = 1u;
+const LIGHTING_COARSE_SHADOW: u32 = 2u;
+const LIGHTING_REUSE: u32 = 4u;
+const LIGHTING_GRADIENT: u32 = 8u;
+const LIGHTING_FILTER_OFF: u32 = 32u;
+const LIGHTING_EMISSION_CHANGED: u32 = 256u;
+const LIGHTING_IDENTITY_TONE_MAP: u32 = 64u;
+const LIGHTING_UNIFORM_DRAW: u32 = 128u;
+// Hit record flags.
+const HIT_FOUND: u32 = 1u;
+const HIT_PLANE: u32 = 2u;
+const HIT_TRANSLUCENT: u32 = 4u;
+const HIT_AXIS_SHIFT: u32 = 3u;
+const PI: f32 = 3.14159265358979;
 
 // What the walk found at a voxel: `size` is the edge of the empty cell to skip, or 0 for a
 // solid voxel of `material`. A solid voxel of a full chunk's Full brick carries its brick's
@@ -220,6 +305,12 @@ struct Walk {
 };
 
 var<private> walk: Walk;
+
+// The stretch of the ray parameter over which `march` takes the coarse shadow walk's cells
+// (`lookup_walk`); empty (BIG, -BIG) for the full walk. The light pass sets it around a
+// shadow ray, leaving the first and last COARSE_MARGIN voxels to the full walk so the
+// blocks the ray starts and ends in do not shadow it.
+var<private> coarse_span: vec2<f32> = vec2<f32>(3.0e38, -3.0e38);
 
 // The walk's cost counters since the last reset: loop iterations of `march`, 32-bit storage
 // loads from the mirror (table, record bits and entries, masks, pool, palette), and the pool
@@ -279,7 +370,7 @@ fn lod_level(chunk: vec3<i32>) -> u32 {
     if (params.forced_level != 0u) {
         return params.forced_level;
     }
-    let d = chunk - floor_div(vec3<i32>(floor(params.cam_pos)), 64);
+    let d = chunk - floor_div(vec3<i32>(floor(params.views[0].origin)), 64);
     let d2 = dot(d, d);
     if (d2 <= params.lod1_r2) {
         return 1u;
@@ -483,6 +574,14 @@ fn is_translucent(m: u32) -> bool {
 // translucent brick is one empty 8^3 cell, a translucent voxel of a Full brick has no bit in
 // the opaque mask, and with the mask tests off its material is read and found translucent.
 fn lookup(v: vec3<i32>) -> Cell {
+    return lookup_walk(v, false);
+}
+
+// `lookup`, or with `coarse` the coarse shadow walk's cell: a Full brick's voxel in a 2^3
+// block with a set opaque bit is solid without a pool read (the block's other voxels too),
+// so the walk reads chunk bits, brick bits and one mask line per brick and never a voxel.
+// Without the masks flag the coarse walk is the full one.
+fn lookup_walk(v: vec3<i32>, coarse: bool) -> Cell {
     let dsc = descend(v);
     if (dsc.size != 0) {
         return Cell(dsc.size, 0u, ABSENT, 0u, 0, dsc.resident);
@@ -501,6 +600,9 @@ fn lookup(v: vec3<i32>) -> Cell {
     let masked = skips && (params.flags & FLAG_MASKS) != 0u;
     if (masked) {
         let size = mask_skip(opaque_word(slot), dsc.l, dsc.i);
+        if (coarse && size < 2) {
+            return Cell(0, 0u, ABSENT, 0u, cell, false);
+        }
         if (size != 0) {
             return Cell(size * cell, 0u, ABSENT, 0u, 0, true);
         }
@@ -691,7 +793,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
         if (t > t_limit) {
             return miss;
         }
-        let c = lookup(v);
+        let c = lookup_walk(v, t >= coarse_span.x && t <= coarse_span.y);
         var size = c.size;
         if (passing) {
             if (size == 0) {
@@ -975,29 +1077,184 @@ fn shadow_normal(d: vec3<f32>, h: Hit) -> vec3<f32> {
 // The cutaway view's miss colour, linear: a flat grey-blue the rooms read against.
 const CUTAWAY_SKY: vec3<f32> = vec3<f32>(0.30, 0.38, 0.50);
 
-fn shade(o: vec3<f32>, d: vec3<f32>, h: Hit, n: vec3<f32>, tint: f32) -> vec3<f32> {
-    let albedo = materials[h.material * 4u].xyz * tint;
-    if ((params.flags & FLAG_CUTAWAY) != 0u) {
-        // A fixed hemisphere light, sky above (world z up): no lamp reaches these walls.
-        return albedo * (0.3 + 0.7 * (0.5 + 0.5 * n.z));
-    }
-    let ns = shadow_normal(d, h);
-    let p = o + d * h.t;
-    let to_light = params.light_pos - p;
-    let dist2 = max(dot(to_light, to_light), 1e-4);
-    let l = to_light * inverseSqrt(dist2);
-    let ndl = max(dot(n, l), 0.0);
-    let cone = smoothstep(params.cos_outer, params.cos_inner, dot(-l, params.light_dir));
-    var lit = params.light_intensity * cone * ndl / dist2;
-    // One shadow ray, from `SHADOW_OFFSET` off the surface toward the lamp; any rock before
-    // the lamp removes its light.
-    if ((params.flags & FLAG_SHADOWS) != 0u && lit > 0.0) {
-        let s = march(p + ns * SHADOW_OFFSET, l, sqrt(dist2), false);
-        if (s.found) {
-            lit = 0.0;
+// A packed lighting-grid offset (x in bits 0..8, y in 8..16).
+fn unpack_offset(o: u32) -> vec2<u32> {
+    return vec2<u32>(o & 0xFFu, (o >> 8u) & 0xFFu);
+}
+
+// The full-resolution pixel lighting pixel `lp` samples this frame, inside the target.
+fn full_px(lp: vec2<u32>) -> vec2<u32> {
+    return min(lp * params.light_scale + unpack_offset(params.light_offset), params.size - vec2<u32>(1u));
+}
+
+// A fractional full-resolution pixel position of last frame (centres at + 0.5) on last
+// frame's lighting grid, centres at + 0.5.
+fn prev_light_grid(q: vec2<f32>) -> vec2<f32> {
+    let o = vec2<f32>(unpack_offset(params.prev_light_offset));
+    return (q - 0.5 - o) / f32(params.light_scale) + 0.5;
+}
+
+// Whether lighting pixel `q` lies on the lighting grid.
+fn on_light_grid(q: vec2<i32>) -> bool {
+    return all(q >= vec2<i32>(0)) && all(q < vec2<i32>(params.light_size));
+}
+
+// The ray of one pixel.
+struct Ray {
+    o: vec3<f32>,
+    d: vec3<f32>,
+};
+
+// The index of the first view whose rectangle holds pixel `px`, 0 when none does.
+fn view_of(px: vec2<u32>) -> u32 {
+    for (var i = 0u; i < min(params.view_count, MAX_VIEWS); i++) {
+        let r = params.views[i].rect;
+        if (all(px >= r.xy) && all(px < r.xy + r.zw)) {
+            return i;
         }
     }
-    return albedo * lit;
+    return 0u;
+}
+
+// The primary ray of pixel `px` through the centre of the pixel, in its view. Horizontal
+// tangents are taken in units of `unit = hv aspect` (hv the mean vertical tangent): with
+// `u = (px - x + 0.5) / w`, `x = ((u (L + R) / unit - L / unit) hv) aspect`, the two ratios
+// rounded on the CPU (`View::unit_scale`, `unit_offset`). A symmetric
+// view of `View::of_camera` has the factors 2 and 1 exactly, so it rounds as
+// `((2 u - 1) tan) aspect`; two views of one aspect whose rectangles cover the same pixels of
+// the same frustum (a view and its left half over half the pixels) take bit-identical rays.
+fn pixel_ray(px: vec2<u32>) -> Ray {
+    let v = params.views[view_of(px)];
+    let u = (vec2<f32>(px - v.rect.xy) + 0.5) / vec2<f32>(v.rect.zw);
+    let hv = (v.tan_up + v.tan_down) * 0.5;
+    let cv = (v.tan_up - v.tan_down) * 0.5;
+    let nx = u.x * v.unit_scale - v.unit_offset;
+    let ny = u.y * 2.0 - 1.0;
+    let d = normalize(v.fwd + v.right * (nx * hv * v.aspect) - v.up * (ny * hv - cv));
+    return Ray(v.origin, d);
+}
+
+// Octahedral encoding of unit `n` into two snorm16 values (as u16 bits). The six axis
+// normals encode to -1, 0 and 1 exactly, so they decode exactly.
+fn octa16_encode(n: vec3<f32>) -> vec2<u32> {
+    var p = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
+    if (n.z < 0.0) {
+        let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), p >= vec2<f32>(0.0));
+        p = (1.0 - abs(p.yx)) * s;
+    }
+    let q = vec2<i32>(round(clamp(p, vec2<f32>(-1.0), vec2<f32>(1.0)) * 32767.0));
+    return bitcast<vec2<u32>>(q) & vec2<u32>(0xFFFFu);
+}
+
+fn octa16_decode(e: vec2<u32>) -> vec3<f32> {
+    let q = bitcast<vec2<i32>>(e << vec2<u32>(16u)) >> vec2<u32>(16u);
+    let p = vec2<f32>(q) / 32767.0;
+    var n = vec3<f32>(p, 1.0 - abs(p.x) - abs(p.y));
+    if (n.z < 0.0) {
+        let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0));
+        n = vec3<f32>((1.0 - abs(n.yx)) * s, n.z);
+    }
+    return normalize(n);
+}
+
+// One pixel's hit record, decoded from the hit buffer: `n` is the shading normal before
+// detail, `axis` the entry face's axis (-1: the ray started inside rock).
+struct HitRecord {
+    found: bool,
+    plane: bool,
+    translucent: bool,
+    axis: i32,
+    material: u32,
+    p: vec3<f32>,
+    t: f32,
+    n: vec3<f32>,
+};
+
+fn unpack_hit(pos: vec4<f32>, info: vec4<u32>) -> HitRecord {
+    let flags = info.w;
+    return HitRecord(
+        (flags & HIT_FOUND) != 0u,
+        (flags & HIT_PLANE) != 0u,
+        (flags & HIT_TRANSLUCENT) != 0u,
+        i32((flags >> HIT_AXIS_SHIFT) & 3u) - 1,
+        info.z,
+        pos.xyz,
+        pos.w,
+        octa16_decode(info.xy),
+    );
+}
+
+// The detailed shading normal of a hit in xyz and its albedo factor in w: the hit's normal
+// and 1 without the detail flag or with a material of detail strength 0.
+fn surface_detail(rec: HitRecord) -> vec4<f32> {
+    if ((params.flags & FLAG_DETAIL) != 0u) {
+        // Exactly no change at strength 0.
+        let row = materials[rec.material * 4u + 2u];
+        if (row.y > 0.0) {
+            return detail(rec.p, rec.n, row.x, row.y);
+        }
+    }
+    return vec4<f32>(rec.n, 1.0);
+}
+
+// The shadow normal of a hit seen along `d` (see `shadow_normal`): the plane normal of a
+// contour-plane hit, else the entry face's normal, `-d` for a ray that started inside rock.
+fn shadow_normal_of(rec: HitRecord, d: vec3<f32>) -> vec3<f32> {
+    if (rec.plane) {
+        return rec.n;
+    }
+    if (rec.axis < 0) {
+        return -d;
+    }
+    return select(vec3<f32>(0.0), vec3<f32>(-sign(d[rec.axis])), axis_mask(rec.axis));
+}
+
+// `p` projected through previous view `v` to a fractional pixel of the target (pixel
+// centres at integer + 0.5); a negative x when it lies behind the view.
+fn project_prev(v: View, p: vec3<f32>) -> vec2<f32> {
+    let dir = p - v.origin;
+    let z = dot(dir, v.fwd);
+    if (z <= 1e-4) {
+        return vec2<f32>(-1.0);
+    }
+    let x = dot(dir, v.right) / z;
+    let y = dot(dir, v.up) / z;
+    let u = (x + v.tan_left) / (v.tan_left + v.tan_right);
+    let w = (v.tan_up - y) / (v.tan_up + v.tan_down);
+    return vec2<f32>(v.rect.xy) + vec2<f32>(u, w) * vec2<f32>(v.rect.zw);
+}
+
+// A 32-bit integer hash (Wellons' lowbias32).
+fn hash_u32(x: u32) -> u32 {
+    var h = x;
+    h ^= h >> 16u;
+    h *= 0x7feb352du;
+    h ^= h >> 15u;
+    h *= 0x846ca68bu;
+    h ^= h >> 16u;
+    return h;
+}
+
+// Random number `dim` of pixel `px` in this frame, in [0, 1). The blue-noise texel at `px`
+// shifted by an offset hashed from `dim` (blue in space), plus a Weyl rotation by the frame
+// times a per-dimension multiple of the golden ratio in 32-bit fixed point (low-discrepancy
+// in time). A function of (pixel, frame, dim) alone, so a frame is deterministic on one
+// adapter.
+fn rand(px: vec2<u32>, dim: u32) -> f32 {
+    let h = hash_u32(dim * 0x9E3779B9u + 0x632BE5ABu);
+    let at = (px + vec2<u32>(h & 127u, (h >> 7u) & 127u)) & vec2<u32>(127u);
+    let texel = u32(textureLoad(blue_noise, vec2<i32>(at), 0).x * 255.0 + 0.5);
+    let v = (texel << 24u) + params.frame * (0x9E3779B9u * (dim + 1u)) + ((h >> 14u) & 0xFFFFFFu);
+    return f32(v >> 8u) / 16777216.0;
+}
+
+fn luminance(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+// A material's emitted radiance under the frame's emission scale.
+fn emission_of(m: u32) -> vec3<f32> {
+    return materials[m * 4u + 1u].xyz * emission_scale[m];
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -1005,73 +1262,37 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= params.size.x || gid.y >= params.size.y) {
         return;
     }
-    let ndc = (vec2<f32>(gid.xy) + 0.5) / vec2<f32>(params.size) * 2.0 - 1.0;
-    let d = normalize(
-        params.cam_fwd
-        + params.cam_right * (ndc.x * params.tan_half_fov * params.aspect)
-        - params.cam_up * (ndc.y * params.tan_half_fov)
-    );
-    let o = params.cam_pos;
+    let ray = pixel_ray(gid.xy);
+    let o = ray.o;
+    let d = ray.d;
     walk_steps = 0u;
     loads = 0u;
     pool_reads = 0u;
     let h = march(o, d, BIG, (params.flags & FLAG_CUTAWAY) != 0u);
-    // Read before the normal modes' lookups and the shadow ray's march touch the walk.
+    // Read before the normal modes' lookups touch the walk and the counters.
     let translucent_seen = walk.saw_translucent && params.translucent_layers > 0u;
+    let counts = vec3<u32>(min(walk_steps, 255u), min(loads, 255u), min(pool_reads, 255u));
     let t_end = select(BIG, h.t, h.found);
     let view = view_mode();
-    if (view == VIEW_STEPS) {
-        // The primary ray's cost: red its loop iterations, green its storage loads, blue the
-        // pool loads among them, each clamped at 255. No shading, so no shadow ray.
-        let counts = vec3<u32>(min(walk_steps, 255u), min(loads, 255u), min(pool_reads, 255u));
-        textureStore(target_tex, vec2<i32>(gid.xy), vec4<f32>(vec3<f32>(counts) / 255.0, 1.0));
-        return;
-    }
-    if (view == VIEW_HITMASK) {
-        textureStore(target_tex, vec2<i32>(gid.xy), vec4<f32>(vec3<f32>(select(0.0, 1.0, h.found)), 1.0));
-        return;
-    }
-    if (view == VIEW_ALBEDO) {
-        // The composited albedo, unlit and linear.
-        var a = vec3<f32>(0.0);
-        if (h.found) {
-            a = materials[h.material * 4u].xyz;
-        }
-        if (translucent_seen) {
-            let acc = translucent_march(o, d, t_end, false);
-            a = acc.xyz + acc.w * a;
-        }
-        textureStore(target_tex, vec2<i32>(gid.xy), vec4<f32>(a, 1.0));
-        return;
-    }
-    var c = vec3<f32>(0.0);
-    if (!h.found && (params.flags & FLAG_CUTAWAY) != 0u) {
-        c = CUTAWAY_SKY;
-    }
+    let px = vec2<i32>(gid.xy);
+    var pos = vec4<f32>(0.0, 0.0, 0.0, BIG);
+    var info = vec4<u32>(0u);
     if (h.found) {
-        var n = surface_normal(o, d, h);
-        var tint = 1.0;
-        if ((params.flags & FLAG_DETAIL) != 0u) {
-            // Exactly no change at strength 0.
-            let row = materials[h.material * 4u + 2u];
-            if (row.y > 0.0) {
-                let dt = detail(o + d * h.t, n, row.x, row.y);
-                n = dt.xyz;
-                tint = dt.w;
-            }
-        }
-        if (view == VIEW_NORMALS) {
-            // The normal itself, linear: n * 0.5 + 0.5 per channel.
-            textureStore(target_tex, vec2<i32>(gid.xy), vec4<f32>(n * 0.5 + 0.5, 1.0));
-            return;
-        }
-        c = shade(o, d, h, n, tint);
+        let n = surface_normal(o, d, h);
+        let flags = HIT_FOUND | select(0u, HIT_PLANE, h.plane) | (u32(h.axis + 1) << HIT_AXIS_SHIFT);
+        pos = vec4<f32>(o + d * h.t, h.t);
+        info = vec4<u32>(octa16_encode(n), h.material, flags);
     }
-    if (translucent_seen) {
-        let acc = translucent_march(o, d, t_end, true);
-        c = acc.xyz + acc.w * c;
+    var layer = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    if (view == VIEW_STEPS) {
+        // The primary ray's cost: its loop iterations, its storage loads and the pool loads
+        // among them, each clamped at 255. No translucent walk in this view.
+        layer = vec4<f32>(vec3<f32>(counts), 1.0);
+    } else if (translucent_seen) {
+        info.w |= HIT_TRANSLUCENT;
+        layer = translucent_march(o, d, t_end, view != VIEW_ALBEDO);
     }
-    // Display encoding: clamp, then an approximate sRGB transfer.
-    c = pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
-    textureStore(target_tex, vec2<i32>(gid.xy), vec4<f32>(c, 1.0));
+    textureStore(hit_pos_out, px, pos);
+    textureStore(hit_info_out, px, info);
+    textureStore(layer_out, px, layer);
 }

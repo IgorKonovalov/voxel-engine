@@ -7,7 +7,8 @@ use flythrough::cave_materials;
 use support::*;
 use vxe_render::gpu_world::POOL_PAGE_SLOTS;
 use vxe_render::{
-    Camera, GpuWorld, LightParams, LodParams, Marcher, MirrorConfig, Window, readback, wgpu,
+    Camera, Frame, GpuWorld, LightParams, LodParams, MirrorConfig, ShadowWalk, Window, readback,
+    wgpu,
 };
 use vxe_world::*;
 
@@ -18,18 +19,34 @@ fn render(world: &World, lights: &[LightParams]) -> Option<Vec<Vec<u8>>> {
 
 /// `world` from `camera` under each of `lights`, on one device.
 fn render_from(world: &World, camera: &Camera, lights: &[LightParams]) -> Option<Vec<Vec<u8>>> {
+    render_lit(world, camera, lights, true)
+}
+
+/// [`render_from`] with the spatial filter on or off: the lamp's shadow geometry is checked
+/// unfiltered, since the filter spreads irradiance across a shadow's edge.
+fn render_lit(
+    world: &World,
+    camera: &Camera,
+    lights: &[LightParams],
+    filter: bool,
+) -> Option<Vec<Vec<u8>>> {
     let full = world.stats().full_bricks as u64;
     let (device, queue) = software_device((full + 4096) * 512)?;
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync_now(world, &device, &queue)
         .expect("mirror fits the adapter");
-    let marcher = Marcher::new(&device, WIDTH, HEIGHT);
+    let mut frame = Frame::new(&device, WIDTH, HEIGHT);
+    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
+    frame.set_lighting(vxe_render::Lighting {
+        filter,
+        ..vxe_render::Lighting::default()
+    });
     Some(
         lights
             .iter()
             .map(|light| {
-                marcher.render(&device, &queue, &gpu, camera, light);
-                readback::read_rgba8(&device, &queue, marcher.target())
+                frame.render(&device, &queue, &gpu, camera, light);
+                readback::read_rgba8(&device, &queue, frame.target())
             })
             .collect(),
     )
@@ -75,13 +92,13 @@ fn headlamp_shadows_only_remove_light() {
     let Some(images) = render(&carved_world(), &[lit, unshadowed]) else {
         return;
     };
+    assert_golden("headlamp.png", &images[0]);
+    let images = render_lit(&carved_world(), &scene_camera(), &[lit, unshadowed], false).unwrap();
     let (shadowed, plain) = (&images[0], &images[1]);
-    assert_golden("headlamp.png", shadowed);
-
     assert_eq!(
         darker_pixels(shadowed, plain),
         0,
-        "pixels darker without shadows"
+        "pixels darker without shadows, unfiltered"
     );
     let f = fraction_differing(plain, shadowed, 8);
     println!(
@@ -142,13 +159,16 @@ fn the_walk_renders_the_same_bytes_with_every_skip_on_or_off() {
                 },
             ),
         ];
-        let images = render_with(
+        // The full walk: the coarse walk is defined on the mask blocks the skips read, so
+        // turning them off changes what it treats as solid, which is not the skips' claim.
+        let images = render_walk(
             &device,
             &queue,
             world,
             &scene_camera(),
             &variants.map(|(_, light)| light),
             lod,
+            ShadowWalk::Full,
         );
         for (i, (label, _)) in variants.iter().enumerate().skip(1) {
             let differing = differing_bytes(&images[0], &images[i]);
@@ -158,7 +178,9 @@ fn the_walk_renders_the_same_bytes_with_every_skip_on_or_off() {
             );
         }
         if !bless {
-            let differing = differing_bytes(&images[0], &read_png(&golden_path(name)).0);
+            // The golden is drawn at the default walk.
+            let image = &render_with(&device, &queue, world, &scene_camera(), &[light], lod)[0];
+            let differing = differing_bytes(image, &read_png(&golden_path(name)).0);
             assert_eq!(
                 differing, 0,
                 "{name}: {differing} bytes differ from the golden"
@@ -209,7 +231,7 @@ fn headlamp_slab_casts_the_computed_shadow() {
         shadows: false,
         ..lit
     };
-    let Some(images) = render_from(&world, &camera, &[lit, unshadowed]) else {
+    let Some(images) = render_lit(&world, &camera, &[lit, unshadowed], false) else {
         return;
     };
     let (shadowed, plain) = (&images[0], &images[1]);
@@ -341,7 +363,8 @@ fn goldens_match_bit_exactly_over_one_and_several_shards() {
         ("headlamp.png", LightParams::headlamp()),
     ]
     .map(|(name, light)| (name, light, read_png(&golden_path(name)).0));
-    let marcher = Marcher::new(&device, WIDTH, HEIGHT);
+    let mut frame = Frame::new(&device, WIDTH, HEIGHT);
+    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
     for max_shard_slots in [None, Some(cap as u32)] {
         let mut gpu = GpuWorld::with_config(
             &device,
@@ -360,8 +383,8 @@ fn goldens_match_bit_exactly_over_one_and_several_shards() {
             assert_eq!(shards, 1);
         }
         for (name, light, golden) in &goldens {
-            marcher.render(&device, &queue, &gpu, &scene_camera(), light);
-            let img = readback::read_rgba8(&device, &queue, marcher.target());
+            frame.render(&device, &queue, &gpu, &scene_camera(), light);
+            let img = readback::read_rgba8(&device, &queue, frame.target());
             let differing = img.iter().zip(golden).filter(|(a, b)| a != b).count();
             assert_eq!(
                 differing, 0,
@@ -392,16 +415,42 @@ fn render_with(
     lights: &[LightParams],
     lod: LodParams,
 ) -> Vec<Vec<u8>> {
+    render_walk(
+        device,
+        queue,
+        world,
+        camera,
+        lights,
+        lod,
+        ShadowWalk::default(),
+    )
+}
+
+/// [`render_with`] with shadow rays taking `walk`.
+fn render_walk(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    world: &World,
+    camera: &Camera,
+    lights: &[LightParams],
+    lod: LodParams,
+    walk: ShadowWalk,
+) -> Vec<Vec<u8>> {
     let mut gpu = GpuWorld::new(device, world.extent());
     gpu.sync_now(world, device, queue)
         .expect("mirror fits the adapter");
-    let mut marcher = Marcher::new(device, WIDTH, HEIGHT);
-    marcher.set_lod(lod);
+    let mut frame = Frame::new(device, WIDTH, HEIGHT);
+    frame.set_resolution(device, vxe_render::LightingResolution::Full);
+    frame.set_lighting(vxe_render::Lighting {
+        shadow_walk: walk,
+        ..frame.lighting()
+    });
+    frame.set_lod(lod);
     lights
         .iter()
         .map(|light| {
-            marcher.render(device, queue, &gpu, camera, light);
-            readback::read_rgba8(device, queue, marcher.target())
+            frame.render(device, queue, &gpu, camera, light);
+            readback::read_rgba8(device, queue, frame.target())
         })
         .collect()
 }
@@ -498,7 +547,7 @@ fn lod_golden_walks_the_ring_at_level_1() {
     assert!(f >= 0.01, "{:.2} %", f * 100.0);
 }
 
-/// Without a forced level the marcher picks level 1 within `(2 r_full)^2` of the camera's
+/// Without a forced level the frame picks level 1 within `(2 r_full)^2` of the camera's
 /// chunk, level 2 within `(4 r_full)^2`, else 3. In the golden scene every chunk lies within
 /// squared distance 27 of the camera's: with r_full = 3 the image equals forced level 1, with
 /// r_full = 0 forced level 3. A chunk at squared distance 9 with r_full = 1 is walked at
@@ -679,21 +728,22 @@ fn cutaway_steps_from_outside_the_level_at_1080p() {
     gpu.sync_now(&world, &device, &queue)
         .expect("mirror fits the adapter");
     let (w, h) = (1920, 1080);
-    let mut marcher = Marcher::new(&device, w, h);
+    let mut frame = Frame::new(&device, w, h);
+    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
     for cutaway in [false, true] {
-        marcher.set_look(vxe_render::LookParams {
+        frame.set_look(vxe_render::LookParams {
             view: vxe_render::ViewMode::Steps,
             cutaway,
             ..cutaway_look()
         });
-        marcher.render(
+        frame.render(
             &device,
             &queue,
             &gpu,
             &outside_level_camera(),
             &LightParams::headlamp(),
         );
-        let px = readback::read_rgba8(&device, &queue, marcher.target());
+        let px = readback::read_rgba8(&device, &queue, frame.target());
         let hist = readback::StepHistogram::from_rgba8(&px, w as usize);
         let saturated = px.chunks(4).filter(|p| p[0] == 255).count();
         println!(
@@ -704,4 +754,567 @@ fn cutaway_steps_from_outside_the_level_at_1080p() {
             w * h
         );
     }
+}
+
+/// The hit buffer's hitmask and normals views render, byte for byte, what the single-pass
+/// march rendered at ae58f0c on the three opaque scenes (the carved golden scene, its LOD
+/// ring at level 1, the slab-and-wall occluder scene): the `split_*.png` files, never
+/// re-blessed.
+#[test]
+fn hit_buffer_views_match_the_single_pass_march() {
+    let carved = carved_world();
+    let lod = lod_scene();
+    let occluder = occluder_world();
+    let scenes: [(&str, &World, Camera, Option<LodParams>); 3] = [
+        ("carve", &carved, scene_camera(), None),
+        ("lod", &lod, scene_camera(), Some(lod_forced_1())),
+        ("occluder", &occluder, occluder_camera(), None),
+    ];
+    for (scene, world, camera, lod) in scenes {
+        let Some(mut rig) = LookRig::new(world, None) else {
+            return;
+        };
+        if let Some(lod) = lod {
+            rig.frame.set_lod(lod);
+        }
+        for view in [vxe_render::ViewMode::HitMask, vxe_render::ViewMode::Normals] {
+            let look = vxe_render::LookParams {
+                view,
+                ..vxe_render::LookParams::default()
+            };
+            let img = rig.render(&camera, &LightParams::headlamp(), look);
+            let name = format!("split_{}_{scene}.png", view.name());
+            let differing = differing_bytes(&img, &read_png(&golden_path(&name)).0);
+            println!("{name}: {differing} bytes differ");
+            assert_eq!(differing, 0, "{name}: {differing} bytes differ");
+        }
+    }
+}
+
+/// With exposure 1, the identity tone map and the filter off the composite is the march's
+/// former display
+/// encoding, so the carve golden matches the single-pass march's (`primary_pre_split.png`,
+/// ae58f0c's `primary.png`) within 2/255 in every pixel: the split moved no light.
+#[test]
+fn the_identity_tone_map_reproduces_the_single_pass_carve() {
+    let Some(mut rig) = LookRig::new(&carved_world(), None) else {
+        return;
+    };
+    rig.frame.set_lighting(vxe_render::Lighting {
+        exposure: 1.0,
+        tone_map: vxe_render::ToneMap::Identity,
+        filter: false,
+        ..vxe_render::Lighting::default()
+    });
+    let img = rig.render(
+        &scene_camera(),
+        &LightParams::at_eye(),
+        vxe_render::LookParams::default(),
+    );
+    let (old, _, _) = read_png(&golden_path("primary_pre_split.png"));
+    let worst = img
+        .chunks(4)
+        .zip(old.chunks(4))
+        .map(|(p, q)| (0..3).map(|k| p[k].abs_diff(q[k])).max().unwrap_or(0))
+        .max()
+        .unwrap_or(0);
+    println!("largest channel difference from the single-pass carve: {worst}/255");
+    assert!(worst <= 2, "{worst}/255");
+}
+
+/// An asymmetric view with tangents (left `t`, right 0, up and down `t_y`) over 160 x 180
+/// pixels renders the left half of the symmetric 320 x 180 view, `t = t_y 320 / 180`, with no
+/// pixel differing by more than 2/255.
+#[test]
+fn an_asymmetric_view_renders_the_left_half_of_the_symmetric_one() {
+    let world = carved_world();
+    let full = world.stats().full_bricks as u64;
+    let Some((device, queue)) = software_device((full + 4096) * 512) else {
+        return;
+    };
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.sync_now(&world, &device, &queue)
+        .expect("mirror fits the adapter");
+    let camera = scene_camera();
+    let light = LightParams::headlamp();
+    // Unfiltered: the filter's neighbourhoods differ along the half view's right edge.
+    let unfiltered = vxe_render::Lighting {
+        filter: false,
+        ..vxe_render::Lighting::default()
+    };
+    let mut whole = Frame::new(&device, WIDTH, HEIGHT);
+    whole.set_resolution(&device, vxe_render::LightingResolution::Full);
+    whole.set_lighting(unfiltered);
+    whole.render(&device, &queue, &gpu, &camera, &light);
+    let whole_px = readback::read_rgba8(&device, &queue, whole.target());
+
+    let half_w = WIDTH / 2;
+    let mut half = Frame::new(&device, half_w, HEIGHT);
+    half.set_resolution(&device, vxe_render::LightingResolution::Full);
+    half.set_lighting(unfiltered);
+    let ty = (camera.vfov * 0.5).tan();
+    let t = ty * (WIDTH as f32 / HEIGHT as f32);
+    let aspect = WIDTH as f32 / HEIGHT as f32;
+    let view =
+        vxe_render::View::with_tangents(&camera, [t, 0.0, ty, ty], aspect, [0, 0, half_w, HEIGHT]);
+    let params = half.params_for(&gpu, &[view], &camera, &light);
+    half.submit(&device, &queue, &gpu, &params);
+    let half_px = readback::read_rgba8(&device, &queue, half.target());
+
+    let mut worst = 0;
+    for row in 0..HEIGHT as usize {
+        for col in 0..half_w as usize {
+            let a = &half_px[(row * half_w as usize + col) * 4..][..3];
+            let b = &whole_px[(row * WIDTH as usize + col) * 4..][..3];
+            worst = worst.max((0..3).map(|k| a[k].abs_diff(b[k])).max().unwrap_or(0));
+        }
+    }
+    let lit = half_px.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
+    println!("asymmetric half: largest channel difference {worst}/255, {lit} lit pixels");
+    assert!(lit > (half_w * HEIGHT / 4) as usize, "{lit} lit pixels");
+    assert!(worst <= 2, "{worst}/255");
+}
+
+/// The golden scene with its carve under `table`.
+fn carved_world_under(table: &MaterialTable) -> World {
+    let source = scene_source();
+    let world = World::generate(source.extent, &source, table);
+    let r = world.apply(&scene_carve(&world)).unwrap();
+    assert!(!r.changed_from.is_empty(), "the carve removes rock");
+    world
+}
+
+/// A pose in the golden scene facing an ore vein: voxel (264, 120, 376), 15 degrees of yaw
+/// (found by casting rays from a 16-voxel grid of air voxels for the most ore within 60
+/// voxels and a 70-degree cone).
+fn vein_camera() -> Camera {
+    Camera {
+        position: [264.5, 120.5, 376.5].into(),
+        yaw: 15f32.to_radians(),
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    }
+}
+
+/// Frames the dark cave accumulates before its golden.
+const SETTLE_FRAMES: u32 = 32;
+
+/// The carved scene's rig under `table`, the lamp off, after [`SETTLE_FRAMES`] frames from
+/// [`vein_camera`] with history; `None` without a software adapter.
+fn settled_dark_cave(table: &MaterialTable) -> Option<(World, LookRig)> {
+    settled_dark_cave_at(table, vxe_render::LightingResolution::Full)
+}
+
+/// [`settled_dark_cave`] with the lighting passes at `resolution`.
+fn settled_dark_cave_at(
+    table: &MaterialTable,
+    resolution: vxe_render::LightingResolution,
+) -> Option<(World, LookRig)> {
+    let world = carved_world_under(table);
+    let mut rig = LookRig::new(&world, None)?;
+    rig.frame.set_resolution(&rig.device, resolution);
+    rig.frame.set_lighting(vxe_render::Lighting {
+        lamp: false,
+        ..vxe_render::Lighting::default()
+    });
+    // The light radius around the camera, its ranges written over the syncs the budget needs.
+    rig.gpu.set_focus(VoxelCoord(
+        vein_camera().position.to_array().map(|c| c.floor() as i32),
+    ));
+    for _ in 0..4 {
+        rig.gpu
+            .sync_now(&world, &rig.device, &rig.queue)
+            .expect("mirror fits the adapter");
+    }
+    for _ in 0..SETTLE_FRAMES {
+        rig.frame.step(
+            &rig.device,
+            &rig.queue,
+            &rig.gpu,
+            &vein_camera(),
+            &LightParams::headlamp(),
+        );
+    }
+    Some((world, rig))
+}
+
+/// The pixel rectangle (`col0, row0, col1, row1`) the voxels `min ..= max` dilated by one
+/// voxel project to from `camera` in a `WIDTH` x `HEIGHT` target.
+fn box_projection(camera: &Camera, (min, max): (VoxelCoord, VoxelCoord)) -> [f32; 4] {
+    let (fwd, right, up) = camera.basis();
+    let tan = (camera.vfov * 0.5).tan();
+    let aspect = WIDTH as f32 / HEIGHT as f32;
+    let mut r = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+    for c in 0..8 {
+        let corner = vxe_render::glam::Vec3::new(
+            if c & 1 == 0 {
+                min.0[0] - 1
+            } else {
+                max.0[0] + 2
+            } as f32,
+            if c & 2 == 0 {
+                min.0[1] - 1
+            } else {
+                max.0[1] + 2
+            } as f32,
+            if c & 4 == 0 {
+                min.0[2] - 1
+            } else {
+                max.0[2] + 2
+            } as f32,
+        );
+        let d = corner - camera.position;
+        let z = d.dot(fwd).max(1e-3);
+        let col = (d.dot(right) / z / (tan * aspect) + 1.0) * 0.5 * WIDTH as f32;
+        let row = (1.0 - d.dot(up) / z / tan) * 0.5 * HEIGHT as f32;
+        r = [r[0].min(col), r[1].min(row), r[2].max(col), r[3].max(row)];
+    }
+    r
+}
+
+/// What the frame right after a carve shows: hit pixels in the dilated box and those not at
+/// age 0; pixels whose pre-carve hit voxel (non-emissive) the carve removed and those within
+/// 2/255 of their pre-carve value; pixels farther than 16 pixels from the box's projection
+/// and those changed by more than 8/255.
+struct CarveReading {
+    in_box: usize,
+    in_box_aged: usize,
+    removed: usize,
+    removed_stale: usize,
+    far: usize,
+    far_over: usize,
+}
+
+/// The unit normal a hit record's snorm16 octahedral pair encodes.
+fn octa16_decode(u: u16, v: u16) -> [f32; 3] {
+    let p = [u as i16 as f32 / 32767.0, v as i16 as f32 / 32767.0];
+    let mut n = [p[0], p[1], 1.0 - p[0].abs() - p[1].abs()];
+    if n[2] < 0.0 {
+        let s = |x: f32| if x >= 0.0 { 1.0 } else { -1.0 };
+        n = [
+            (1.0 - n[1].abs()) * s(n[0]),
+            (1.0 - n[0].abs()) * s(n[1]),
+            n[2],
+        ];
+    }
+    let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+    n.map(|c| c / l)
+}
+
+/// Applies `carve` to `world`, syncs `rig`, tells the frame its box (or, with `flush`, more
+/// boxes than a frame takes, flushing all history), steps one frame and reads it against the
+/// pre-carve image `before`, hit positions `pos` and records `info`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the carve, the rig and the pre-carve frame"
+)]
+fn carve_reading(
+    world: &World,
+    rig: &mut LookRig,
+    carve: &EditOp,
+    before: &[u8],
+    pos: &[[f32; 4]],
+    info: &[[u16; 4]],
+    table: &MaterialTable,
+    flush: bool,
+) -> CarveReading {
+    let r = world.apply(carve).expect("the carve applies");
+    let aabb = r.aabb.expect("the carve removes rock");
+    rig.gpu.sync_now(world, &rig.device, &rig.queue).unwrap();
+    let boxes = if flush { vxe_render::MAX_EDITS + 1 } else { 1 };
+    for _ in 0..boxes {
+        rig.frame.invalidate(aabb.0.0, aabb.1.0);
+    }
+    let camera = vein_camera();
+    rig.frame.step(
+        &rig.device,
+        &rig.queue,
+        &rig.gpu,
+        &camera,
+        &LightParams::headlamp(),
+    );
+    let after = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let now = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let age = readback::read_rgba16f(&rig.device, &rig.queue, rig.frame.moments());
+    let rect = box_projection(&camera, aabb);
+    let mut out = CarveReading {
+        in_box: 0,
+        in_box_aged: 0,
+        removed: 0,
+        removed_stale: 0,
+        far: 0,
+        far_over: 0,
+    };
+    let in_box = |p: [f32; 4]| {
+        p[3] < 1e30
+            && (0..3).all(|k| p[k] >= (aabb.0.0[k] - 1) as f32 && p[k] <= (aabb.1.0[k] + 2) as f32)
+    };
+    for i in 0..now.len() {
+        let diff = (0..3)
+            .map(|k| after[4 * i + k].abs_diff(before[4 * i + k]))
+            .max()
+            .unwrap_or(0);
+        if in_box(now[i]) {
+            out.in_box += 1;
+            out.in_box_aged += usize::from(age[i][2] != 0.0);
+        }
+        let emits = table
+            .get(info[i][2])
+            .is_some_and(|m| m.emission.iter().any(|&e| e > 0.0));
+        if info[i][3] & 1 == 1 && !emits {
+            let n = octa16_decode(info[i][0], info[i][1]);
+            let v = VoxelCoord([0, 1, 2].map(|k| (pos[i][k] - 0.01 * n[k]).floor() as i32));
+            if world.material_at(v) == Some(AIR) {
+                out.removed += 1;
+                out.removed_stale += usize::from(diff <= 2);
+            }
+        }
+        let (col, row) = (
+            (i as u32 % WIDTH) as f32 + 0.5,
+            (i as u32 / WIDTH) as f32 + 0.5,
+        );
+        let dx = (rect[0] - col).max(col - rect[2]).max(0.0);
+        let dy = (rect[1] - row).max(row - rect[3]).max(0.0);
+        if dx.max(dy) > 16.0 {
+            out.far += 1;
+            out.far_over += usize::from(diff > 8);
+        }
+    }
+    out
+}
+
+/// `dark_cave.png`: the carved scene from a pose facing an ore vein, the lamp off, lit only by
+/// the ore, after 32 accumulated frames. With the ore's emission off the same view is black
+/// in every pixel. On the frame right after a radius-6 carve into the wall the vein lights (its
+/// brightest rock pixel 15 to 25 voxels away), every hit pixel in the carve's dilated `aabb`
+/// reads age 0 (the test also prints how many pixels whose non-emissive pre-carve hit voxel
+/// the carve removed stay within 2/255 of their pre-carve value), and at most 0.1 % of the pixels farther than
+/// 16 pixels from the box's projection change by more than 8/255; the same carve with all
+/// history flushed exceeds that bar.
+#[test]
+fn dark_cave_golden_is_lit_by_its_ore_alone() {
+    let Some((world, mut rig)) =
+        settled_dark_cave(&flythrough::with_emissive_ore(&cave_materials()))
+    else {
+        return;
+    };
+    let before = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    assert_golden("dark_cave.png", &before);
+    let samples = rig.gpu.light_samples();
+    let bright = before
+        .chunks(4)
+        .filter(|p| p[..3].iter().any(|&c| c >= 16))
+        .count();
+    println!(
+        "dark_cave.png: {samples} light samples, {bright} of {} pixels at 16/255 or more, bins covering 1 %: {}",
+        WIDTH * HEIGHT,
+        bins_covering(&before, 0.01)
+    );
+    assert!(samples > 0);
+    assert!(
+        bright > (WIDTH * HEIGHT / 20) as usize,
+        "{bright} lit pixels"
+    );
+
+    // The carve at the brightest rock pixel 15 to 25 voxels away, and the frame right after
+    // it; the control makes the same carve on a second settled rig with every pixel's history
+    // flushed.
+    let pos = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let info = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let target = (0..pos.len())
+        .filter(|&i| {
+            // The radius-6 sphere stays inside the scene's 384-voxel extent.
+            info[i][3] & 1 == 1
+                && info[i][2] == ROCK
+                && (15.0..25.0).contains(&pos[i][3])
+                && pos[i][..3].iter().all(|c| (7.0..377.0).contains(c))
+        })
+        .max_by_key(|&i| u32::from(before[4 * i]) + u32::from(before[4 * i + 1]))
+        .expect("a lit rock pixel");
+    let at = pos[target];
+    println!(
+        "carve at pixel ({}, {}), {:?}, t {:.1}",
+        target as u32 % WIDTH,
+        target as u32 / WIDTH,
+        &at[..3],
+        at[3]
+    );
+    let carve = EditOp::sphere(
+        Fixed3([0, 1, 2].map(|k| (at[k] * FIXED_ONE as f32) as i64)),
+        6 * FIXED_ONE,
+        Mode::Carve,
+    );
+    let table = flythrough::with_emissive_ore(&cave_materials());
+    let reading = carve_reading(
+        &world, &mut rig, &carve, &before, &pos, &info, &table, false,
+    );
+    let (cworld, mut control) = settled_dark_cave(&table).unwrap();
+    let control = carve_reading(
+        &cworld,
+        &mut control,
+        &carve,
+        &before,
+        &pos,
+        &info,
+        &table,
+        true,
+    );
+    println!(
+        "carve: {} hit pixels in the dilated box, {} not at age 0; {} pixels whose non-emissive pre-carve voxel was carved, {} within 2/255 of before; far: {} of {} over 8/255 (control, history flushed: {} of {})",
+        reading.in_box,
+        reading.in_box_aged,
+        reading.removed,
+        reading.removed_stale,
+        reading.far_over,
+        reading.far,
+        control.far_over,
+        control.far
+    );
+    assert!(reading.in_box > 0 && reading.removed > 0);
+    assert_eq!(reading.in_box_aged, 0, "pixels in the box kept history");
+    // `removed_stale` is a reading: rock revealed behind the removed rock, most of it as dark,
+    // reads within 2/255 of it in about a fifth of those pixels (Plan 0024's log).
+    let bar = |r: &CarveReading| r.far_over * 1000 <= r.far;
+    assert!(bar(&reading), "the carve disturbs pixels far from it");
+    assert!(
+        !bar(&control),
+        "the flushed control meets the far bar, which then bites on nothing"
+    );
+
+    let (_, off) = settled_dark_cave(&cave_materials()).unwrap();
+    assert_eq!(off.gpu.light_samples(), 0);
+    let off = readback::read_rgba8(&off.device, &off.queue, off.frame.target());
+    let lit_off = off.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
+    assert_eq!(
+        lit_off, 0,
+        "{lit_off} pixels are not black with the ore dark"
+    );
+}
+
+/// The slab scene of `headlamp_slab_casts_the_computed_shadow`, with a one-voxel hole through
+/// the slab along x at `(y, z)` when given.
+fn slab_world(hole: Option<[i64; 2]>) -> World {
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [2, 2, 2]),
+        &UniformSource(0),
+        &cave_materials(),
+    );
+    fill_voxels(&world, [44, 0, 0], [46, 128, 128], ROCK);
+    fill_voxels(&world, [28, 56, 56], [30, 68, 68], ROCK);
+    if let Some([y, z]) = hole {
+        let op = EditOp::box_(
+            Fixed3([28 * FIXED_ONE, y * FIXED_ONE, z * FIXED_ONE]),
+            Fixed3([30 * FIXED_ONE, (y + 1) * FIXED_ONE, (z + 1) * FIXED_ONE]),
+            Mode::Carve,
+        );
+        world.apply(&op).expect("the slab is resident");
+    }
+    world
+}
+
+/// The slab scene's renders under the headlamp in `walk`, shadows on and off.
+fn slab_renders(world: &World, walk: vxe_render::ShadowWalk) -> Option<[Vec<u8>; 2]> {
+    let mut rig = LookRig::new(world, None)?;
+    rig.frame.set_lighting(vxe_render::Lighting {
+        shadow_walk: walk,
+        ..vxe_render::Lighting::default()
+    });
+    let camera = occluder_camera();
+    let lit = LightParams::headlamp();
+    let look = vxe_render::LookParams::default();
+    let shadowed = rig.render(&camera, &lit, look);
+    let plain = rig.render(
+        &camera,
+        &LightParams {
+            shadows: false,
+            ..lit
+        },
+        look,
+    );
+    Some([shadowed, plain])
+}
+
+/// Pixels darker than the unshadowed render by more than 8/255 in some channel.
+fn darkened(shadowed: &[u8], plain: &[u8]) -> usize {
+    shadowed
+        .chunks(4)
+        .zip(plain.chunks(4))
+        .filter(|(s, p)| (0..3).any(|k| p[k] > s[k].saturating_add(8)))
+        .count()
+}
+
+/// The coarse shadow walk treats any 2^3 block with a set bit as solid: through a one-voxel
+/// hole along x in the slab's edge row (y 67, z 62) the full walk lights wall pixels the
+/// hole-less slab shadows (the same surface seen in both, so the unshadowed renders agree
+/// there), and the coarse walk lights none of them; on the slab without a hole the coarse
+/// walk darkens at least as many pixels as the full walk. An interior hole's light lands on
+/// wall the slab hides from the camera beside the lamp.
+#[test]
+fn the_coarse_shadow_walk_closes_a_one_voxel_hole() {
+    use vxe_render::ShadowWalk::{Coarse, Full};
+    let Some([full_solid, plain]) = slab_renders(&slab_world(None), Full) else {
+        return;
+    };
+    let [coarse_solid, _] = slab_renders(&slab_world(None), Coarse).unwrap();
+    let (dark_full, dark_coarse) = (
+        darkened(&full_solid, &plain),
+        darkened(&coarse_solid, &plain),
+    );
+    println!("slab: full walk darkens {dark_full} pixels, coarse walk {dark_coarse}");
+    assert!(dark_full > 0);
+    assert!(dark_coarse >= dark_full, "{dark_coarse} < {dark_full}");
+
+    let hole = slab_world(Some([67, 62]));
+    let [full_hole, plain_hole] = slab_renders(&hole, Full).unwrap();
+    let [coarse_hole, _] = slab_renders(&hole, Coarse).unwrap();
+    // Pixels the hole lets the lamp reach in the full walk.
+    let through: Vec<usize> = (0..full_hole.len() / 4)
+        .filter(|&i| {
+            plain_hole[4 * i..4 * i + 3] == plain[4 * i..4 * i + 3]
+                && (0..3).any(|k| full_hole[4 * i + k] > full_solid[4 * i + k].saturating_add(8))
+        })
+        .collect();
+    let coarse_lit = through
+        .iter()
+        .filter(|&&i| {
+            (0..3).any(|k| coarse_hole[4 * i + k] > full_solid[4 * i + k].saturating_add(2))
+        })
+        .count();
+    println!(
+        "hole: the full walk lights {} pixels through it, the coarse walk {coarse_lit} of them",
+        through.len()
+    );
+    assert!(
+        !through.is_empty(),
+        "the full walk lights no pixel through the hole"
+    );
+    assert_eq!(coarse_lit, 0);
+}
+
+/// `dark_cave_half.png`: the dark cave with the lighting passes at half resolution, after 32
+/// accumulated frames; its mean absolute difference from `dark_cave.png` is under 6/255 in
+/// every channel.
+#[test]
+fn half_resolution_dark_cave_golden_stays_near_the_full_one() {
+    let table = flythrough::with_emissive_ore(&cave_materials());
+    let Some((_, rig)) = settled_dark_cave_at(&table, vxe_render::LightingResolution::Half) else {
+        return;
+    };
+    let half = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    assert_golden("dark_cave_half.png", &half);
+    let (full, _, _) = read_png(&golden_path("dark_cave.png"));
+    let n = (WIDTH * HEIGHT) as f64;
+    let mad: Vec<f64> = (0..3)
+        .map(|k| {
+            half.chunks(4)
+                .zip(full.chunks(4))
+                .map(|(a, b)| f64::from(a[k].abs_diff(b[k])))
+                .sum::<f64>()
+                / n
+        })
+        .collect();
+    println!(
+        "dark_cave_half.png: mean absolute difference from dark_cave.png per channel {mad:.3?} (of 255)"
+    );
+    assert!(mad.iter().all(|&d| d < 6.0), "{mad:?}");
 }

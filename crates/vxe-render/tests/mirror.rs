@@ -13,20 +13,35 @@ use vxe_render::gpu_world::{
     translucent_mask_word,
 };
 use vxe_render::{
-    ATTRIB_WGSL, GpuWorld, MARCH_WGSL, MirrorConfig, ShardLayout, Window, readback, wgpu,
+    ATROUS_WGSL, ATTRIB_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, GpuWorld, LIGHT_WGSL, MARCH_WGSL,
+    MirrorConfig, ShardLayout, TEMPORAL_WGSL, Window, readback, wgpu,
 };
 use vxe_world::*;
 
-/// The shader parses and validates headless, without a device.
+/// The frame's shaders parse and validate headless, without a device: the hit pass alone and
+/// each pass compiled after it.
 #[test]
 fn march_wgsl_validates() {
-    let module = wgpu::naga::front::wgsl::parse_str(MARCH_WGSL).expect("march.wgsl parses");
-    wgpu::naga::valid::Validator::new(
-        wgpu::naga::valid::ValidationFlags::all(),
-        wgpu::naga::valid::Capabilities::default(),
-    )
-    .validate(&module)
-    .expect("march.wgsl validates");
+    for (name, source) in [
+        ("march.wgsl", MARCH_WGSL.to_owned()),
+        ("light.wgsl", format!("{MARCH_WGSL}\n{LIGHT_WGSL}")),
+        ("composite.wgsl", format!("{MARCH_WGSL}\n{COMPOSITE_WGSL}")),
+        ("temporal.wgsl", format!("{MARCH_WGSL}\n{TEMPORAL_WGSL}")),
+        ("atrous.wgsl", format!("{MARCH_WGSL}\n{ATROUS_WGSL}")),
+        (
+            "gradient.wgsl",
+            format!("{MARCH_WGSL}\n{LIGHT_WGSL}\n{GRADIENT_WGSL}"),
+        ),
+    ] {
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|e| panic!("{name} parses: {}", e.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{name} validates: {e:?}"));
+    }
 }
 
 /// The attribute pass's shader parses and validates headless.
@@ -553,6 +568,10 @@ fn a_following_window_mirrors_the_streamed_residency() {
             budget_bytes: SMALL_BUDGET,
             record_chunks: None,
             attr_cap: usize::MAX,
+            light_samples: vxe_render::gpu_world::DEFAULT_LIGHT_SAMPLES,
+            light_chunk_cap: vxe_render::gpu_world::DEFAULT_LIGHT_CHUNK_CAP,
+            light_radius: vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
+            light_sync_samples: vxe_render::gpu_world::DEFAULT_LIGHT_SYNC_SAMPLES,
         },
     );
     // 343 records, then whole pages of what is left past the placeholders: 27 pages on one
@@ -861,7 +880,7 @@ fn limits(binding: u64, buffer: u64, storage_buffers: u32) -> wgpu::Limits {
 #[test]
 fn the_shard_layout_follows_the_limits_alone() {
     // lavapipe: 128 MiB per binding.
-    let l = ShardLayout::from_limits(&limits(128 << 20, 2_147_483_647, 8), None);
+    let l = ShardLayout::from_limits(&limits(128 << 20, 2_147_483_647, 10), None);
     assert_eq!(l.slots_per_shard, 262_144);
     assert_eq!(l.shards, 4);
     // RTX 3080 Laptop and RADV: 2 147 483 644 B per binding, the largest page multiple below.
@@ -871,9 +890,9 @@ fn the_shard_layout_follows_the_limits_alone() {
     // The smaller of the two size limits binds.
     let l = ShardLayout::from_limits(&limits(1 << 30, 100 << 20, 8), None);
     assert_eq!(l.slots_per_shard, 204_800);
-    // Shards: storage buffers per stage less the four other bindings, at most four.
+    // Shards: storage buffers per stage less the six other bindings, at most four.
     assert_eq!(
-        ShardLayout::from_limits(&limits(1 << 30, 1 << 30, 6), None).shards,
+        ShardLayout::from_limits(&limits(1 << 30, 1 << 30, 8), None).shards,
         2
     );
     assert_eq!(
@@ -881,7 +900,7 @@ fn the_shard_layout_follows_the_limits_alone() {
         4
     );
     // The test knob caps slots per shard, rounded down to a page.
-    let l = ShardLayout::from_limits(&limits(128 << 20, 1 << 31, 8), Some(10_000));
+    let l = ShardLayout::from_limits(&limits(128 << 20, 1 << 31, 10), Some(10_000));
     assert_eq!(l.slots_per_shard, 8192);
     assert_eq!(l.capacity(), 4 * 8192);
 }

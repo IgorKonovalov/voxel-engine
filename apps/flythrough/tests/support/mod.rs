@@ -201,7 +201,7 @@ pub fn assert_golden(name: &str, rgba: &[u8]) {
 
 use flythrough::cave::ROCK;
 use vxe_render::glam::Vec3;
-use vxe_render::{GpuWorld, LightParams, LodParams, LookParams, Marcher, MirrorConfig, readback};
+use vxe_render::{Frame, GpuWorld, LightParams, LodParams, LookParams, MirrorConfig, readback};
 
 /// Rows 0 (air) and 1..=5, plain, row 3 with the cave's rock albedo: the solid material-3
 /// world of the cavity scene.
@@ -423,7 +423,7 @@ pub struct LookRig {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub gpu: GpuWorld,
-    pub marcher: Marcher,
+    pub frame: Frame,
 }
 
 impl LookRig {
@@ -446,21 +446,23 @@ impl LookRig {
         let mut gpu = GpuWorld::with_config(&device, cfg);
         gpu.sync_now(world, &device, &queue)
             .expect("mirror fits the adapter");
-        let marcher = Marcher::new(&device, WIDTH, HEIGHT);
+        let mut frame = Frame::new(&device, WIDTH, HEIGHT);
+        // The walk and the look at full resolution: lighting at half would blur them.
+        frame.set_resolution(&device, vxe_render::LightingResolution::Full);
         Self {
             device,
             queue,
             gpu,
-            marcher,
+            frame,
         }
     }
 
     /// One render of `camera` lit by `light` in `look`, read back as RGBA8.
     pub fn render(&mut self, camera: &Camera, light: &LightParams, look: LookParams) -> Vec<u8> {
-        self.marcher.set_look(look);
-        self.marcher
+        self.frame.set_look(look);
+        self.frame
             .render(&self.device, &self.queue, &self.gpu, camera, light);
-        readback::read_rgba8(&self.device, &self.queue, self.marcher.target())
+        readback::read_rgba8(&self.device, &self.queue, self.frame.target())
     }
 }
 
