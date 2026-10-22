@@ -1,8 +1,8 @@
 # ADR-0023: Indirect light comes from a scrolling volume of irradiance probes around the camera, refreshed by a few rays per probe per frame and gathered with visibility weights
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-22, at Plan 0029's close; see Outcome)
 > **Date:** 2026-10-21
-> **Related plan(s):** [Plan 0029](../plans/0029-indirect-light-probe-volume.md)
+> **Related plan(s):** [Plan 0029](../plans/done/0029-indirect-light-probe-volume.md)
 
 ## Context
 
@@ -120,4 +120,37 @@ Worth a look for the far-field clipmap, not for the near-field cave.
 
 ## Outcome
 
-_(Added at acceptance, from Plan 0029's readings and the owner's windowed check.)_
+2026-10-22, Plan 0029's close (v0.31.0). The decision stands: a 32^3 volume at 1.6 m that
+scrolls with the camera, one probe in 8 refreshed a frame by 64 full-walk rays, octahedral
+irradiance and visibility maps, a Chebyshev-weighted gather. The owner's eye kept the bounce
+light and the 1.6 m spacing (`--probe-spacing 8` "takes a lot of time to settle"). What the
+implementation changed or measured against the body above:
+
+- **Storage buffers, not texture atlases.** lavapipe, RADV and the RTX 3080 offer read-write
+  storage of `rgba16float` and `rg16float` only under
+  `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`, which the engine does not request (a
+  backend-dependent path). The atlases are storage buffers of the same bytes per texel; the
+  state is a `u32` per slot carrying the inside flag, the age and the slot's tag, and toroidal
+  tagged slots replace a scroll copy. The frame's bytes rise by 58 837 024 B (atlases and state
+  50.5 MB, the update list, ray buffer and uniform 4.2 MB, the gather's target 4.1 MB at 1080p
+  half), not the 50 MB above.
+- **Hysteresis is a schedule:** 0 on a slot's first update, 0.5 for the next 8 and for
+  edit-touched probes, 0.97 after. A flat 0.97 could not reach the furnace bar in 256 frames.
+  The furnace floor settles 5.3 % under pi, traced to the direct estimator's bias at the probe
+  rays' hits, inside the 10 % bar.
+- **Latency was the owner's finding, and the "half a second" above was wrong for a light
+  switch.** At 0.97 with stale bounces a closed room keeps a tenth of the lamp's light for
+  about 1400 frames. A light change the frame knows (the lamp and its parameters, the shadow
+  walk, the candidate count, an emission scale) opens a window of 16 frames in which one probe
+  in 4 refreshes at hysteresis 0, then the schedule's young updates; the lamp-off box falls
+  under a tenth by frame 14 (lavapipe). The lamp switch also resets the direct light's temporal
+  lamp history, which the level reading found to be the longest tail. Probe rays read their own
+  emission scale per material, so an animated emitter feeds the probes at its mean and opens no
+  window. The owner: "almost instant", the pulse "fine, no flicker".
+- **Cost** (RTX 3080 Laptop, 1080p, half lighting, streamed spawn): update plus gather 1.465 to
+  1.663 ms across the phases against a projected 0.8 to 1.3 ms, under the amended 1.7 ms bar;
+  2.7 ms inside a light-change window. The emissive sample and its shadow ray are about a third
+  of the update. On the RADV iGPU 9.3 to 10.2 ms outside a window, no bar, which is why rays per probe and
+  the refreshed share are engine settings (`Lighting::probe_rays`, `probe_slices`).
+- **Open:** the owner asks for a per-light and per-emissive-material switch on feeding the
+  probes (Plan 0029's Followups).

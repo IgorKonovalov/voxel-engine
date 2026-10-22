@@ -1,14 +1,15 @@
 # 0029: Indirect light from a probe volume that scrolls with the camera
 
-> **Status:** in-progress (2026-10-22)
+> **Status:** done (closed 2026-10-22, v0.31.0). Every phase met its amended done-when; the
+> owner's eye passed the bounce, the lamp-off fade and the pulse in live session 11.
 > **Created:** 2026-10-21
 > **Milestone:** M2 in `docs/roadmap.md` (the indirect-light plan after Plan 0024; "indirect
 > light from probes in both tiers", the floor decision of 2026-10-17)
-> **Related ADRs:** [ADR-0023](../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md)
-> (proposed with this plan: the probe volume and the rejected per-pixel bounce),
-> [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> **Related ADRs:** [ADR-0023](../../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md)
+> (accepted at the close, with an Outcome: the probe volume and the rejected per-pixel bounce),
+> [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (the direct estimator the probe rays reuse, the hit buffer the gather reads),
-> [ADR-0013](../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) (the atlases are
+> [ADR-0013](../../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) (the atlases are
 > reserved once)
 > **Source:** Plan 0024's Followups (the indirect-light plan); the owner's choice of the probe
 > family (2026-10-21); `docs/references/voxel-optimizations.md` (DDGI).
@@ -480,7 +481,7 @@ Outcome records at the close; the decision it records is unchanged.
 | 8: The faster refresh inside the light-change window | dev | done: in a window (16 frames) one probe in 4 a frame, every update at hysteresis 0 (`WINDOW_SLICES`, `WINDOW_VISITS`, `WINDOW_FRAMES`); lamp off under 10 % of F0 from frame 14 (Phase 6: 58), emission 0 from frame 14, back to 100.4 % at frame 64; dev box update plus gather 1.465 ms outside a window, 2.403 ms inside; `--lamp-toggle N`; readings in `nfr.md` §2 | bb8ea94 |
 | 9: The owner's re-check of the faster fade | human | done (orchestrator's record of the owner's verdict, live session 9: the fade too slow, the pulse flickers) | |
 | 10: Find what lingers after the lamp, and keep the pulse out of the probes | dev | done: `--fade-reading`; the longest tail was the direct light's temporal lamp history (composite, direct and indirect each first under 10 % at frame 11); `LIGHTING_LAMP_CHANGED` resets the lamp part on a lamp change, and after it the composite is under 10 % from frame 1, the direct 0 from frame 1, the indirect first under at 11; `Frame::set_emission_scales` (probe-ray rows), the ore pulse at its mean opens no window; retake 1.567 / 2.701 ms (dev box, quiet) | f8a4bb8 |
-| 11: The owner's re-check of the lamp-off tail and the pulse | human | not started | |
+| 11: The owner's re-check of the lamp-off tail and the pulse | human | done (orchestrator's record of the owner's verdict, live session 11: lamp-off fade "almost instant", the pulse "fine, no flicker"; a per-light probe feed asked for, see Followups) | |
 
 ### Notes
 
@@ -746,15 +747,38 @@ Outcome records at the close; the decision it records is unchanged.
 
 ### Close triggers
 
-_(Facts for the architect. No recommendations, and no suggested version bump.)_
+_(Left as the template by dev; filled by the architect at the close from the log above and
+the close review's own gate.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature.
+- **Public API changed:** added `ProbeVolume` (`probes.rs`), `Lighting::indirect`,
+  `probe_rays`, `probe_slices`, `Frame::set_probe_spacing`, `traced_probe_rays`,
+  `probe_light_window`, `set_emission_scales`, `ProbeVolume::set_light_restarts`; `light.wgsl`
+  split into callable estimator functions; `FRAME_PASSES` gains "probes" and "gather";
+  `limits_for` requests two more storage buffers; the emission-scale buffer doubles; fly-through
+  flags `--indirect`, `--probe-spacing`, `--probe-rays`, `--probe-slices`, `--lamp-toggle`,
+  `--fade-reading`, key `F8`.
+- **Budget readings:** `nfr.md` §2 (update plus gather 1.465 to 1.663 ms over the phases, the
+  quiet retake 1.567 ms outside a window and 2.701 ms inside, RTX 3080 Laptop; the lighting line
+  at half 4.42 to 4.48 ms; RADV iGPU recorded with no bar) and §3 (`frame_bytes` +58 837 024 B);
+  machines and commits in the rows above and in `nfr.md`.
+- **Gate at the tip:** the close review at 31705d7, exclusive perf lock, load 1.6: `cargo nextest
+  run --workspace --profile full --test-threads 2 --no-fail-fast` 615 passed, 8 skipped, exit 0;
+  `cargo test --doc` 7 passed, 1 ignored; clippy `-D warnings`, fmt, deny, `check-doc-links`,
+  `check-comment-hygiene`, `check-index-rows` (and `--self-test`), `check-test-tiers`: exit 0.
+- **Outstanding `human` phases:** none.
 
 ## Followups
+
+- **Per-source probe feed** (owner, Phase 11, 2026-10-22): "leave indirect light only for
+  certain sources, like fire on stick or fire in dungeon - and for simple lights it should be
+  off". A per-light switch (the headlamp and any later light sample) and a per-emissive-material
+  switch for whether a source feeds the probe rays; Phase 10's probe-ray emission row
+  (`Frame::set_emission_scales`) is the per-material half's mechanism already (a probe scale of
+  0). A new plan, in M2's list in the roadmap.
+- **The level's lamp-off tail is a reading, not a test** (close review): `--fade-reading`
+  measured it once on the dev box; a headless test on the level would keep it from regressing.
+  Fold into the per-source plan above.
 
 - The showcase cave (owner, 2026-10-20): several ore materials with different emission
   colours as the light sources, after this plan.

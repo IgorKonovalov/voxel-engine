@@ -4,7 +4,7 @@
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0040](../plans/0040-eye-adaptation-asymmetric-auto-exposure-and-pre-exposure.md)
 > (builds it), [Plan 0032](../plans/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
-> (its Phase 4 shrinks to using it), [Plan 0029](../plans/0029-indirect-light-probe-volume.md)
+> (its Phase 4 shrinks to using it), [Plan 0029](../plans/done/0029-indirect-light-probe-volume.md)
 > (the live check that asked for it)
 
 ## Context
