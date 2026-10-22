@@ -125,3 +125,97 @@ fn the_veins_source_fills_the_bins_the_arithmetic_says() {
         assert_eq!(c.majority_bin(), Some(bin), "N {n}: {c}");
     }
 }
+
+/// The surface of `solid` by brute force: non-air voxels with a face neighbour that is air,
+/// a neighbour past the brick read from `beside` (`None` is air).
+fn surface_by_voxel(solid: &[u64; 8], beside: &[[Option<[u64; 8]>; 2]; 3]) -> [u64; 8] {
+    let bit = |m: &[u64; 8], l: [i32; 3]| m[l[2] as usize] >> (l[0] + 8 * l[1]) & 1 == 1;
+    let at = |l: [i32; 3]| -> bool {
+        for k in 0..3 {
+            if l[k] < 0 || l[k] > 7 {
+                let d = usize::from(l[k] > 7);
+                let mut q = l;
+                q[k] = l[k].rem_euclid(8);
+                return beside[k][d].is_some_and(|m| bit(&m, q));
+            }
+        }
+        bit(solid, l)
+    };
+    let mut out = [0u64; 8];
+    for z in 0..8 {
+        for y in 0..8 {
+            for x in 0..8 {
+                let l = [x, y, z];
+                if !at(l) {
+                    continue;
+                }
+                let exposed = (0..3).any(|k| {
+                    [-1, 1].iter().any(|d| {
+                        let mut q = l;
+                        q[k] += d;
+                        !at(q)
+                    })
+                });
+                if exposed {
+                    out[z as usize] |= 1 << (x + 8 * y);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A 4 x 4 x 4 cube at voxels 2..6 of air has 56 surface voxels (its 8 inner ones are
+/// buried); a solid brick whose -x face is the chunk's face and whose other neighbours are
+/// solid has its 64 voxels of x = 0 as surface; and 200 seeded bricks with seeded neighbours
+/// (some absent) match the voxel-by-voxel rule word for word.
+#[test]
+fn the_chunk_local_surface_is_the_voxels_with_an_air_face_neighbour() {
+    let cube = Brick::from_fn(|l| {
+        if l.iter().all(|&v| (2..6).contains(&v)) {
+            1
+        } else {
+            AIR
+        }
+    });
+    let m = solid_mask(&cube);
+    let none = [[None; 2]; 3];
+    let s = surface_mask(&m, &none);
+    assert_eq!(s.iter().map(|w| w.count_ones()).sum::<u32>(), 56);
+    assert_eq!(s[2] >> (2 + 8 * 2) & 1, 1, "voxel (2, 2, 2)");
+    assert_eq!(s[3] >> (3 + 8 * 3) & 1, 0, "voxel (3, 3, 3) is buried");
+
+    let full = solid_mask(&Brick::Uniform(1));
+    let mut beside = [[Some(full); 2]; 3];
+    beside[0][0] = None;
+    let s = surface_mask(&full, &beside);
+    assert_eq!(s, [0x0101_0101_0101_0101; 8]);
+
+    let mut z = 0x0028_0001_u64;
+    let mut next = || {
+        z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        hash::mix64(z)
+    };
+    for _ in 0..200 {
+        let density = next() % 4;
+        let mut mask = || -> [u64; 8] {
+            std::array::from_fn(|_| {
+                let mut w = u64::MAX;
+                for _ in 0..=density {
+                    w &= next();
+                }
+                w
+            })
+        };
+        let solid = mask();
+        let mut beside: [[Option<[u64; 8]>; 2]; 3] = [[None; 2]; 3];
+        for side in beside.iter_mut().flatten() {
+            let m = mask();
+            *side = (m[0] % 5 != 0).then_some(m);
+        }
+        assert_eq!(
+            surface_mask(&solid, &beside),
+            surface_by_voxel(&solid, &beside)
+        );
+    }
+}

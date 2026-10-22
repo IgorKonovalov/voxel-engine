@@ -345,8 +345,8 @@ fn emissive_irradiance(px: vec2<u32>, rec: HitRecord, n: vec3<f32>, ns: vec3<f32
     let p = rec.p;
     var r = draw_candidates(px, p, n);
     if ((params.lighting & LIGHTING_REUSE) != 0u && (params.history & 1u) != 0u) {
-        let v = params.prev_views[view_of(full_px(px))];
-        let full = project_prev(v, p);
+        let vi = view_of(full_px(px));
+        let full = reproject_centred(params.prev_views[vi], params.views[vi].jitter, p);
         let q = select(prev_light_grid(full), full, full.x < 0.0);
         let centre = vec2<i32>(floor(q));
         if (q.x >= 0.0 && same_surface(centre, rec)) {

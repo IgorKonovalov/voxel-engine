@@ -5,7 +5,7 @@ mod support;
 use flythrough::cave::ROCK;
 use flythrough::cave_materials;
 use support::*;
-use vxe_render::gpu_world::POOL_PAGE_SLOTS;
+use vxe_render::gpu_world::{PAGE_UNITS, UNIT_BYTES};
 use vxe_render::{
     Camera, Frame, GpuWorld, LightParams, LodParams, MirrorConfig, ShadowWalk, Window, readback,
     wgpu,
@@ -351,13 +351,10 @@ fn goldens_match_bit_exactly_over_one_and_several_shards() {
         return;
     }
     let world = carved_world();
-    let full = world.stats().full_bricks as u64;
-    let Some((device, queue)) = software_device((full + 4096) * 512) else {
+    let pool = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
+    let Some((device, queue)) = software_device(pool) else {
         return;
     };
-    // The smallest page multiple that holds the scene in at most four shards.
-    let page = u64::from(POOL_PAGE_SLOTS);
-    let cap = full.div_ceil(4).div_ceil(page) * page;
     let goldens = [
         ("primary.png", LightParams::at_eye()),
         ("headlamp.png", LightParams::headlamp()),
@@ -365,19 +362,23 @@ fn goldens_match_bit_exactly_over_one_and_several_shards() {
     .map(|(name, light)| (name, light, read_png(&golden_path(name)).0));
     let mut frame = Frame::new(&device, WIDTH, HEIGHT);
     frame.set_resolution(&device, vxe_render::LightingResolution::Full);
-    for max_shard_slots in [None, Some(cap as u32)] {
+    // One shard first; its pages size the cap that spreads the next mirror over several.
+    let mut pages = 0u32;
+    for several in [false, true] {
+        let max_shard_units = several.then(|| pages.div_ceil(3) * PAGE_UNITS);
         let mut gpu = GpuWorld::with_config(
             &device,
             MirrorConfig {
-                max_shard_slots,
+                max_shard_units,
                 ..MirrorConfig::new(Window::Fixed(world.extent()))
             },
         );
         gpu.sync_now(&world, &device, &queue)
             .expect("mirror fits the adapter");
         let shards = gpu.shards_in_use();
-        println!("max_shard_slots {max_shard_slots:?}: {full} slots over {shards} shards");
-        if max_shard_slots.is_some() {
+        pages = gpu.pages_issued();
+        println!("max_shard_units {max_shard_units:?}: {pages} pages over {shards} shards");
+        if several {
             assert!((2..=4).contains(&shards), "{shards} shards");
         } else {
             assert_eq!(shards, 1);
@@ -650,8 +651,8 @@ fn cutaway_look() -> vxe_render::LookParams {
 #[test]
 fn cutaway_level_golden_shows_sky_and_lit_rock() {
     let world = seed_1_level();
-    let full = world.stats().full_bricks as u64;
-    let Some((device, queue)) = software_device(full * vxe_render::gpu_world::SLOT_BYTES) else {
+    let pool = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
+    let Some((device, queue)) = software_device(pool) else {
         return;
     };
     let cfg = MirrorConfig {
@@ -714,7 +715,7 @@ fn cutaway_steps_from_outside_the_level_at_1080p() {
         ..Default::default()
     }))
     .expect("an adapter");
-    let pool_bytes = world.stats().full_bricks as u64 * vxe_render::gpu_world::SLOT_BYTES;
+    let pool_bytes = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_limits: vxe_render::limits_for(&adapter, pool_bytes),
         ..Default::default()
@@ -1422,4 +1423,121 @@ fn indirect_golden_shows_the_vein_s_bounce_light() {
         centre_pixel(&off)
     );
     assert!(share >= 0.20, "{:.1} %", share * 100.0);
+}
+
+/// The upscaler's golden scene: the cavity from its centre under the headlamp at 256 x 144
+/// internal and 384 x 216 output, jittered, after 32 frames, at each of `sharpness`; with the
+/// upscale pass's history (rgba16float) of the first.
+fn upscaled_cavity(sharpness: &[f32]) -> Option<(Vec<Vec<u8>>, History16)> {
+    let world = cavity_world();
+    let rig = LookRig::new(&world, None)?;
+    let mut out = Vec::new();
+    let mut history = Vec::new();
+    for &s in sharpness {
+        let mut frame = Frame::with_sizes(&rig.device, UPSCALED_INTERNAL, UPSCALED_OUTPUT);
+        frame.set_jitter(&rig.device, true);
+        frame.set_sharpness(&rig.queue, s);
+        for _ in 0..32 {
+            frame.step(
+                &rig.device,
+                &rig.queue,
+                &rig.gpu,
+                &cavity_camera(),
+                &LightParams::headlamp(),
+            );
+        }
+        if history.is_empty() {
+            history = readback::read_rgba16f(
+                &rig.device,
+                &rig.queue,
+                frame.upscale_history().expect("the upscaler runs"),
+            );
+        }
+        out.push(readback::read_rgba8(
+            &rig.device,
+            &rig.queue,
+            frame.target(),
+        ));
+    }
+    Some((out, history))
+}
+
+/// An rgba16float texture read back, texel by texel.
+type History16 = Vec<[f32; 4]>;
+
+const UPSCALED_INTERNAL: [u32; 2] = [256, 144];
+const UPSCALED_OUTPUT: [u32; 2] = [384, 216];
+
+/// `upscaled.png`: the upscaler's golden at the fly-through's default sharpening (0.5). At
+/// sharpening 0 the pass writes the upscale pass's output unchanged: each byte is its history's
+/// value times 255, rounded. The sharpened image's edge contrast (the mean absolute luminance
+/// gradient over the pixels whose unsharpened 3 x 3 spans at least 16/255, the cavity's voxel
+/// rims) is higher than the unsharpened one's, and no channel of a sharpened pixel exceeds its
+/// unsharpened 3 x 3 neighbourhood's maximum by more than 1/255.
+#[test]
+fn upscaled_golden_sharpens_within_the_neighbourhood() {
+    let Some((images, history)) = upscaled_cavity(&[0.0, 0.5]) else {
+        return;
+    };
+    let (plain, sharp) = (&images[0], &images[1]);
+    let [w, h] = UPSCALED_OUTPUT.map(|n| n as usize);
+    let path = golden_path("upscaled.png");
+    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+        write_png(&path, sharp, w as u32, h as u32);
+        println!("blessed {path:?}");
+    } else {
+        let (golden, gw, gh) = read_png(&path);
+        assert_eq!((gw, gh), (w as u32, h as u32));
+        let f = fraction_differing(sharp, &golden, 2);
+        println!(
+            "upscaled.png: {:.4} % of pixels differ by more than 2/255",
+            f * 100.0
+        );
+        assert!(f <= 0.001, "{:.4} % of pixels differ", f * 100.0);
+    }
+    let identity = plain
+        .chunks(4)
+        .zip(&history)
+        .filter(|(p, t)| (0..3).any(|k| f32::from(p[k]) != (t[k] * 255.0).round()))
+        .count();
+    assert_eq!(identity, 0, "sharpening 0 changed {identity} pixels");
+    let lum = |img: &[u8], x: usize, y: usize| {
+        let p = &img[(y * w + x) * 4..];
+        0.2126 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[2])
+    };
+    let (mut rim, mut g_plain, mut g_sharp, mut over) = (0usize, 0.0f64, 0.0f64, 0usize);
+    for y in 1..h - 1 {
+        for x in 1..w - 1 {
+            let mut lo = [255u8; 3];
+            let mut hi = [0u8; 3];
+            for dy in 0..3 {
+                for dx in 0..3 {
+                    let p = &plain[((y + dy - 1) * w + x + dx - 1) * 4..];
+                    for k in 0..3 {
+                        lo[k] = lo[k].min(p[k]);
+                        hi[k] = hi[k].max(p[k]);
+                    }
+                }
+            }
+            let s = &sharp[(y * w + x) * 4..];
+            over += usize::from((0..3).any(|k| s[k] > hi[k].saturating_add(1)));
+            if (0..3).any(|k| hi[k] - lo[k] >= 16) {
+                rim += 1;
+                let grad = |img: &[u8]| {
+                    (lum(img, x + 1, y) - lum(img, x, y)).abs()
+                        + (lum(img, x, y + 1) - lum(img, x, y)).abs()
+                };
+                g_plain += grad(plain);
+                g_sharp += grad(sharp);
+            }
+        }
+    }
+    println!(
+        "rim pixels {rim}: mean absolute gradient unsharpened {:.3}, sharpened {:.3}; {over} pixels over their neighbourhood's maximum",
+        g_plain / rim as f64,
+        g_sharp / rim as f64
+    );
+    assert!(rim > 0);
+    assert!(g_sharp > g_plain, "{g_sharp} against {g_plain}");
+    assert_eq!(over, 0);
 }

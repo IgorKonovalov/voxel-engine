@@ -3,21 +3,24 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0037** (ADRs are a separate sequence; next free there is **0032**).
+**Next free number: 0042** (ADRs are a separate sequence; next free there is **0035**).
 
 ## Active roster
 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Status | Live constraint |
 |------|-------|--------|-----------------|
-| [0028](0028-size-classed-mirror-slots-and-surface-only-attributes.md) | Size-classed mirror slots: the packed brick's bytes in the pool, no chunk palette, contour attributes for surface voxels only | approved | M2, ADR-0012's third step. After Plan 0024 (Plan 0027 closed). |
 | [0029](0029-indirect-light-probe-volume.md) | Indirect light from a probe volume that scrolls with the camera | approved | M2, ADR-0023 (proposed). After Plan 0024. |
-| [0030](0030-temporal-upscaler.md) | A temporal upscaler of our own: jittered rays, reprojection by hit position, and a sharpening pass | approved | M2, ADR-0024 (proposed). After Plan 0024; independent of Plan 0029. |
-| [0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md) | Sun and sky: a Hillaire atmosphere, a time of day the game sets, the sun and moon as light samples, sky light into the probes, an outdoor testbed source | draft | M10, ADR-0026 and ADR-0027 (proposed). After Plans 0024 and 0029. |
-| [0033](0033-far-field-clipmap-to-a-kilometre.md) | The far field: a clipmap of three coarse chunk levels to about 1 km | draft | M10, ADR-0028 (proposed). After Plans 0028 and 0032. |
-| [0034](0034-water-surface-waves-reflection-refraction-underwater-fog.md) | Liquid surfaces: analytic waves, traced reflection and refraction rays, and absorption under the surface | draft | M10, ADR-0029 (proposed). After Plan 0032; its upscaler half after Plan 0030. |
-| [0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md) | Aerial perspective over the near and far field, and volumetric clouds that shadow the ground | draft | M10, ADR-0030 (proposed). After Plans 0032 and 0033. |
-| [0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md) | Weather: rain, snow, wind, wet surfaces and snow cover, lightning | draft | M10, ADR-0031 (proposed). After Plan 0035. |
+| [0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md) | Sun and sky: a Hillaire atmosphere, a time of day the game sets, the sun and moon as light samples, sky light into the probes, an outdoor testbed source | approved | M10, ADR-0026 and ADR-0027 (proposed). After Plans 0024 and 0029. |
+| [0033](0033-far-field-clipmap-to-a-kilometre.md) | The far field: a clipmap of three coarse chunk levels to about 1 km | approved | M10, ADR-0028 (proposed). After Plans 0028 and 0032. |
+| [0034](0034-water-surface-waves-reflection-refraction-underwater-fog.md) | Liquid surfaces: analytic waves, traced reflection and refraction rays, and absorption under the surface | approved | M10, ADR-0029 (proposed). After Plan 0032; its upscaler half after Plan 0030. |
+| [0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md) | Aerial perspective over the near and far field, and volumetric clouds that shadow the ground | approved | M10, ADR-0030 (proposed). After Plans 0032 and 0033. |
+| [0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md) | Weather: rain, snow, wind, wet surfaces and snow cover, lightning | approved | M10, ADR-0031 (proposed). After Plan 0035. |
+| [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: a star field, the moon's phases, sky bodies the game lists, an aurora that lights the ground, and a night tint | approved | M10, ADR-0032 (proposed). After Plans 0032 and 0035. |
+| [0038](0038-showcase-cavern-and-hero-shots.md) | A showcase cavern lit by four ores, and a hero still with named shots and no headlamp | approved | M2, testbed only, no ADR. After Plans 0029 and 0030. |
+| [0039](0039-contour-look-sharpness-measured-and-tuned.md) | The contour look at arm's length: a sharpness metric, the sources of its softness, named presets the owner compares | approved | M2, no ADR. After Plan 0028. |
+| [0040](0040-eye-adaptation-asymmetric-auto-exposure-and-pre-exposure.md) | Eye adaptation: an automatic exposure that is fast toward bright and slow toward dark, metered on the GPU, with pre-exposed HDR targets | approved | M2, ADR-0033 (proposed). After Plan 0029; before Plan 0032. |
+| [0041](0041-fsr2-port-to-wgsl.md) | AMD FSR 2.2.1 ported to WGSL: its six passes fed from the hit buffer, compared against our upscaler and the native frame | approved | M2, ADR-0034 (proposed). After Plan 0030. |
 <!-- roster:end -->
 
 ## Recently closed
@@ -25,6 +28,8 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0028](done/0028-size-classed-mirror-slots-and-surface-only-attributes.md) | Size-classed mirror slots: the level 232 to 63 MB, the default at `r_full` 16 under 0.9 GB, attribute pass p99 0.75 ms; the default's `sync` 3.1 ms open | 2026-10-22, v0.29.0 |
+| [0030](done/0030-temporal-upscaler.md) | A temporal upscaler of our own: jittered rays, hit-position reprojection, RCAS; every bar met, shipped opt-in as a performance setting, the default stays Plan 0024's frame | 2026-10-22, v0.28.0 |
 | [0024](done/0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md) | Direct light: a hit buffer, emissive light samples, one shadow ray, an SVGF denoiser; half tier, coarse walk, reuse, a 32-frame emissive history; extraction p99 missed | 2026-10-22, v0.27.0 |
 | [0027](done/0027-mirror-uploads-through-a-staging-belt.md) | Mirror uploads through a staging belt: `write_buffer` gone, plain `sync` p50 halved to 1.4 to 1.7 ms; the belt's share and the 1.0 ms line still missed | 2026-10-21, v0.26.0 |
 | [0031](done/0031-edit-cost-third-pass.md) | Edit cost, third pass: a stage profile, shape words from the spans and one span solve per op; the `B` line at 1.0 ms, the line back to 2.0 ms | 2026-10-21, v0.25.0 |

@@ -26,6 +26,8 @@ const UPLOAD_LINE_MS: f32 = 1.0;
 /// `nfr.md` §2's lighting and denoise lines.
 const LIGHTING_LINE_MS: f32 = 6.0;
 const DENOISE_LINE_MS: f32 = 3.0;
+/// `nfr.md` §2's upscale, tone map and post line: the composite, upscale and sharpen passes.
+const UPSCALE_LINE_MS: f32 = 1.5;
 /// Mirror pressure above which the fly-through lowers its full radius (ADR-0013); the
 /// pressure row turns yellow past it.
 pub const PRESSURE_HIGH: f32 = 0.9;
@@ -351,6 +353,7 @@ pub struct HudStats {
     pub upload_ms: f32,
     pub upload_chunks: u32,
     pub mirror_bytes: u64,
+    /// Slots holding a brick, and spare slots, over every bin.
     pub pool_live: u32,
     pub pool_free: u32,
     pub world: WorldSample,
@@ -383,9 +386,11 @@ pub struct LightingRow {
     pub light_samples: u64,
     pub live_probes: Option<u32>,
     pub modes: String,
+    /// The internal and output sizes while the upscaler runs: a row then reads its passes.
+    pub upscale: Option<[[u32; 2]; 2]>,
 }
 
-/// The mirror's pressure (the fuller of its pool slots and records), its reservation in bytes,
+/// The mirror's pressure (the fuller of its pool units and records), its reservation in bytes,
 /// and while streaming the full radius the pressure rule holds with the configured one.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Pressure {
@@ -553,6 +558,19 @@ impl HudStats {
                     HudColour::White,
                     format_args!("lights {} samples; {}", l.light_samples, l.modes),
                 )?,
+            }
+            if let Some([[iw, ih], [ow, oh]]) = l.upscale {
+                // Yellow when the composite, upscale and sharpen passes exceed the upscale line.
+                let post = ms("composite") + ms("upscale") + ms("sharpen");
+                row(
+                    out,
+                    over(post, UPSCALE_LINE_MS),
+                    format_args!(
+                        "upscale {:.2} sharpen {:.2} ms, {iw}x{ih} to {ow}x{oh}",
+                        ms("upscale"),
+                        ms("sharpen")
+                    ),
+                )?;
             }
         }
         row(
@@ -991,6 +1009,7 @@ mod tests {
             light_samples: 18_522,
             live_probes: Some(9_876),
             modes: "lighting full".to_owned(),
+            upscale: None,
         });
         s.write_rows(&mut out, &mut colours);
         let lines: Vec<&str> = out.lines().collect();
@@ -1024,6 +1043,36 @@ mod tests {
             colours[3],
             HudColour::Yellow,
             "light + temporal over 6.0 ms"
+        );
+    }
+
+    /// While the upscaler runs a row follows the light samples: the upscale and sharpen
+    /// passes' times and the two sizes, yellow when they and the composite pass 1.5 ms.
+    #[test]
+    fn the_upscale_row_follows_the_lighting_rows() {
+        let (mut out, mut colours) = (String::new(), Vec::new());
+        let mut s = HudStats::fixed();
+        s.lighting = Some(LightingRow {
+            passes: vec![("composite", 0.2), ("upscale", 0.5), ("sharpen", 0.12)],
+            light_samples: 0,
+            live_probes: None,
+            modes: "lighting half".to_owned(),
+            upscale: Some([[1280, 720], [1920, 1080]]),
+        });
+        s.write_rows(&mut out, &mut colours);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 15);
+        assert_eq!(
+            lines[5],
+            "upscale 0.50 sharpen 0.12 ms, 1280x720 to 1920x1080"
+        );
+        assert_eq!(colours[5], HudColour::White);
+        s.lighting.as_mut().unwrap().passes[1].1 = 1.3;
+        s.write_rows(&mut out, &mut colours);
+        assert_eq!(
+            colours[5],
+            HudColour::Yellow,
+            "0.2 + 1.3 + 0.12 over 1.5 ms"
         );
     }
 

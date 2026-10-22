@@ -52,27 +52,58 @@ pub fn stream_record_chunks(r: Residency) -> u64 {
 /// of `nfr.md` §3, 3 GiB, of which the residency's records take their share.
 pub const STREAM_MIRROR_BUDGET: u64 = vxe_render::gpu_world::DEFAULT_BUDGET_BYTES;
 
-/// Free pool slots beyond the bounded level's `Full` bricks, so digging has room: 64 Ki
-/// slots.
+/// `Full` bricks of headroom beyond the bounded level's own, so digging has room: 64 Ki
+/// bricks, each at the largest slot the level's rock takes (6 units, and 6 plus the most
+/// attribute units with attributes).
 pub const POOL_HEADROOM_BRICKS: u64 = 65_536;
 
-/// The pool slots the bounded level needs for `full_bricks` plus the headroom; with
-/// attribute pages (`attrs`), whole pages of `ATTR_PAGE_BRICK_SLOTS` bricks each.
-pub fn level_pool_slots(full_bricks: u64, attrs: bool) -> u64 {
-    use vxe_render::gpu_world::{ATTR_PAGE_BRICK_SLOTS, POOL_PAGE_SLOTS};
-    let bricks = full_bricks + POOL_HEADROOM_BRICKS;
-    if attrs {
-        bricks.div_ceil(u64::from(ATTR_PAGE_BRICK_SLOTS)) * u64::from(POOL_PAGE_SLOTS)
-    } else {
-        bricks
+/// The pool units the bounded level `world` needs: each bin's `Full` bricks in whole pages
+/// of that bin, their slots with their chunk-local surface's contour attributes when `attrs`,
+/// plus the headroom.
+pub fn level_pool_units(world: &vxe_world::World, attrs: bool) -> u64 {
+    use vxe_render::gpu_world::{
+        BIN_COUNT, BINS, MAX_ATTR_UNITS, PAGE_UNITS, bin_of, chunk_surface, slot_units,
+        slots_per_page,
+    };
+    let table = world.materials();
+    let translucent = |m| {
+        table
+            .flags(m)
+            .contains(vxe_world::MaterialFlags::TRANSLUCENT)
+    };
+    let mut bins = [0u64; BIN_COUNT];
+    for c in world.store().coords() {
+        let Some(chunk) = world.store().get(c) else {
+            continue;
+        };
+        let chunk = chunk
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (i, b) in chunk.bricks().iter().enumerate() {
+            if let vxe_world::Brick::Full(p) = b {
+                let surface = attrs.then(|| {
+                    let s = chunk_surface(chunk.bricks(), i);
+                    s.iter().map(|w| w.count_ones()).sum()
+                });
+                bins[bin_of(slot_units(p, translucent, surface))] += 1;
+            }
+        }
     }
+    let pages: u64 = bins
+        .iter()
+        .enumerate()
+        .map(|(k, &n)| n.div_ceil(u64::from(slots_per_page(k))))
+        .sum();
+    let largest = 6 + if attrs { MAX_ATTR_UNITS } else { 0 };
+    let headroom = POOL_HEADROOM_BRICKS * u64::from(BINS[bin_of(largest)]);
+    pages * u64::from(PAGE_UNITS) + headroom
 }
 
 /// The mirror budget of the bounded level unless `--mirror-budget` sets one: the pool
-/// [`level_pool_slots`] needs and a record for each of its `chunks`, sized from the world it
+/// [`level_pool_units`] needs and a record for each of its `chunks`, sized from the world it
 /// loads rather than the streamed default.
-pub fn level_mirror_budget(full_bricks: u64, chunks: u64, attrs: bool) -> u64 {
-    vxe_render::gpu_world::budget_for(level_pool_slots(full_bricks, attrs), chunks)
+pub fn level_mirror_budget(world: &vxe_world::World, chunks: u64, attrs: bool) -> u64 {
+    vxe_render::gpu_world::budget_for(level_pool_units(world, attrs), chunks)
 }
 
 /// The audio listener for `camera`: its position (voxel units), its forward and its up. The

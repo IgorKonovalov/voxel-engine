@@ -5,7 +5,7 @@
 mod support;
 
 use support::*;
-use vxe_render::gpu_world::{ATTR_PAGE_BRICK_SLOTS, POOL_PAGE_SLOTS, SLOT_BYTES};
+use vxe_render::gpu_world::{PAGE_UNITS, UNIT_BYTES};
 use vxe_render::{
     Frame, GpuWorld, LightParams, LookParams, MirrorConfig, NormalMode, ViewMode, Window, wgpu,
 };
@@ -29,21 +29,22 @@ fn look(normal_mode: NormalMode, view: ViewMode) -> LookParams {
     }
 }
 
-/// Pool bytes a mirror with attribute pages needs for `full` bricks, with a page to spare.
-fn attr_pool_bytes(full: u64) -> u64 {
-    (full.div_ceil(u64::from(ATTR_PAGE_BRICK_SLOTS)) + 1) * u64::from(POOL_PAGE_SLOTS) * SLOT_BYTES
+/// Pool bytes a mirror with attributes needs for `world`'s bricks, with a page of headroom
+/// for each bin's partly filled page.
+fn attr_pool_bytes(world: &World) -> u64 {
+    (flythrough::level_pool_units(world, true) + 10 * u64::from(PAGE_UNITS)) * UNIT_BYTES
 }
 
-/// `world` mirrored with attribute pages over a fixed window, shards capped at
-/// `max_shard_slots`, its attributes filled.
+/// `world` mirrored with contour attributes over a fixed window, shards capped at
+/// `max_shard_units`, its attributes filled.
 fn attr_rig_on(
     device: wgpu::Device,
     queue: wgpu::Queue,
     world: &World,
-    max_shard_slots: Option<u32>,
+    max_shard_units: Option<u32>,
 ) -> LookRig {
     let cfg = MirrorConfig {
-        max_shard_slots,
+        max_shard_units,
         ..MirrorConfig::new(Window::Fixed(world.extent()))
     };
     let mut gpu = GpuWorld::with_surface_attrs(&device, cfg);
@@ -70,18 +71,17 @@ fn attr_rig_on(
 
 /// [`attr_rig_on`] on the software adapter; `None` with a printed skip when there is none.
 fn attr_rig(world: &World) -> Option<LookRig> {
-    let full = world.stats().full_bricks as u64;
-    let (device, queue) = software_device(attr_pool_bytes(full).max(64 << 20))?;
+    let (device, queue) = software_device(attr_pool_bytes(world).max(64 << 20))?;
     Some(attr_rig_on(device, queue, world, None))
 }
 
 /// Cavity normal error (degrees) and pillar silhouette error (pixels) of `mode`, over mirrors
-/// without attribute pages.
+/// without contour attributes.
 fn metrics(mode: NormalMode) -> Option<(f64, usize)> {
     metrics_with(mode, false)
 }
 
-/// [`metrics`], over mirrors with attribute pages when `attrs` is set.
+/// [`metrics`], over mirrors with contour attributes when `attrs` is set.
 fn metrics_with(mode: NormalMode, attrs: bool) -> Option<(f64, usize)> {
     metrics_of(mode, false, attrs)
 }
@@ -299,17 +299,17 @@ fn contour_planes_cut_the_silhouette_and_normal_errors() {
 type Scene<'a> = (&'a World, &'a [(&'a str, LightParams)], bool);
 
 /// The attribute layout changes no pixel in face mode: `primary.png`, `headlamp.png` and
-/// `lod.png` render byte for byte with attribute pages, over one shard and over two to four.
+/// `lod.png` render byte for byte with contour attributes, over one shard and over two to
+/// four.
 #[test]
-fn attribute_pages_leave_the_face_goldens_byte_for_byte() {
+fn attributes_leave_the_face_goldens_byte_for_byte() {
     if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
         return;
     }
     let face = LookParams::default();
     let carved = carved_world();
     let lod = lod_scene();
-    let full = carved.stats().full_bricks as u64;
-    let Some((device, queue)) = software_device(attr_pool_bytes(full).max(64 << 20)) else {
+    let Some((device, queue)) = software_device(attr_pool_bytes(&carved).max(64 << 20)) else {
         return;
     };
     let scenes: [Scene<'_>; 2] = [
@@ -327,11 +327,11 @@ fn attribute_pages_leave_the_face_goldens_byte_for_byte() {
         // One shard first; its pages size the cap that spreads the next mirror over several.
         let mut pages = 0u32;
         for several in [false, true] {
-            let cap = several.then(|| pages.div_ceil(3) * POOL_PAGE_SLOTS);
+            let cap = several.then(|| pages.div_ceil(3) * PAGE_UNITS);
             let mut rig = attr_rig_on(device.clone(), queue.clone(), world, cap);
             let shards = rig.gpu.shards_in_use();
-            pages = rig.gpu.pool_slots() / POOL_PAGE_SLOTS;
-            println!("max_shard_slots {cap:?}: {pages} pages over {shards} shards");
+            pages = rig.gpu.pages_issued();
+            println!("max_shard_units {cap:?}: {pages} pages over {shards} shards");
             if several {
                 assert!((2..=4).contains(&shards), "{shards} shards");
             } else {
@@ -593,8 +593,8 @@ fn detail_is_a_function_of_world_position() {
     );
 }
 
-/// A material row is 64 B on the GPU, and the live mirror bytes are the slots, records,
-/// table and those rows, nothing else.
+/// A material row is 64 B on the GPU, and the live mirror bytes are the slots' units, the
+/// 2112-byte records, the table and those rows, nothing else.
 #[test]
 fn material_rows_are_64_bytes() {
     let world = carved_world();
@@ -612,10 +612,7 @@ fn material_rows_are_64_bytes() {
         .product::<u64>();
     assert_eq!(
         gpu.mirror_bytes(),
-        u64::from(gpu.live_slots()) * (512 + 72)
-            + gpu.mirrored_chunks() as u64 * 2624
-            + window * 4
-            + rows * 64
+        gpu.live_units() * 64 + gpu.mirrored_chunks() as u64 * 2112 + window * 4 + rows * 64
     );
 }
 

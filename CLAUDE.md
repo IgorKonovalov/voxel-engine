@@ -67,7 +67,8 @@ docs/
 │                    #   block-push-and-history-rewrite, block-compositor-window-close.
 │                    #   They DENY, not advise.
 │                    #   Bite tests: `node --test ".claude/hooks/*.test.mjs"`
-└── skills/          # architect (designs docs/) + dev (writes code)
+└── skills/          # architect (designs docs/) + dev (writes code) + orchestrate
+                     #   (parallel lanes; references/lane-rules.md for lane agents)
 scripts/
 ├── build-guests.sh            # builds every logic component into target/guests/ (wasm32-wasip2)
 ├── check-doc-links.mjs        # every relative markdown link resolves (run at every plan close)
@@ -81,12 +82,13 @@ scripts/
 
 ## How we work
 
-Two skills run a plan-driven loop:
+Two skills run a plan-driven loop, and `orchestrate` runs several lanes of it at once:
 
 | Skill       | Owns | Triggers on |
 |-------------|------|-------------|
 | `architect` | `docs/`: roadmap, plans, ADRs, NFR, close reviews | "how should we build X", "plan the …", "A or B?", "review/close plan N" |
 | `dev`       | all code, shaders, tests, config, CI | "implement plan N", "do phase 2", "code up the …" |
+| `orchestrate` | lanes: worktrees, agents, owner checks, merges | "orchestrate", "start the lanes", "run the human phases" |
 
 ```
 interview -> ADR (if a real tradeoff) -> phased plan -> "go" -> dev implements all phases -> fresh-session close review

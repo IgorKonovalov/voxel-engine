@@ -172,9 +172,10 @@ fn translucent_layers_composite_front_to_back_up_to_the_bound() {
 /// it (the steps view's blue channel: one, the grey wall's voxel). Its steps and loads differ
 /// by the red wall's brick, which is not uniform air: without the wall the ray skips the 16³
 /// group of bricks 2 and 3 (1 table, 2 bits, brick 4's entry, brick 5's entry, 4 mask words,
-/// 1 pool, 1 palette: 11 loads in 4 steps); with it the group is occupied, so brick 2's entry
-/// and its mask line are read and the two empty 4³ blocks and brick 3's uniform-air entry
-/// are stepped (17 loads in 6 steps). The translucent walk does not run in the steps view.
+/// and the hit's one pool word, the header's palette entry of a one-material brick: 10 loads
+/// in 4 steps); with it the group is occupied, so brick 2's entry and its mask line are read
+/// and the two empty 4³ blocks and brick 3's uniform-air entry are stepped (16 loads in 6
+/// steps). The translucent walk does not run in the steps view.
 #[test]
 fn a_translucent_wall_costs_the_opaque_walk_no_pool_read() {
     let Some((device, queue)) = device() else {
@@ -186,8 +187,8 @@ fn a_translucent_wall_costs_the_opaque_walk_no_pool_read() {
         with[2], without[2],
         "pool reads with {with:?}, without {without:?}"
     );
-    assert_eq!(without, [4, 11, 1, 255]);
-    assert_eq!(with, [6, 17, 1, 255]);
+    assert_eq!(without, [4, 10, 1, 255]);
+    assert_eq!(with, [6, 16, 1, 255]);
 }
 
 /// A uniform translucent brick is air to the opaque walk and one layer to the translucent

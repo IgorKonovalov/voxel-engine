@@ -200,7 +200,30 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024 and 0027 closed; Plans 0028 to 0030 drafted 2026-10-21)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028 and 0030 closed; Plan 0029 in progress)
+
+Plan 0028 closed 2026-10-22 (v0.29.0, ADR-0012's last step, with Outcomes on ADR-0012,
+ADR-0013 and ADR-0011): a `Full` brick's mirror slot is its packed CPU bytes in 64-byte units
+allocated in bins over ADR-0013's pages, the chunk palette and the masks buffer are gone, and
+the contour attribute is stored for a brick's chunk-local surface voxels only. The level's
+mirror fell from 232 to 63 MB plain and from 680 to 158 MB contour with every golden byte for
+byte; the default at 16/24 reaches full residency at `r_full` 16 with 0.87 GB live and pressure
+0.65, so the pressure rule no longer fires. The attribute pass, rebuilt at four bricks a
+workgroup, reads p99 0.71 to 0.75 ms with a 25 ms backlog age; plain `sync` p50 fell to 0.17 ms
+under the streaming line. The default look's `sync` reads 3.1 ms p50 (the surface masks on the
+render thread), its followup; light extraction's p99 miss stays open without a plan. The
+fly-through gains `--adapter`, and the first slow-adapter (RADV iGPU) readings are in `nfr.md`.
+The owner's windowed flights at full detail "feel fine".
+
+Plan 0030, the upscaler plan, closed 2026-10-22 (v0.28.0, ADR-0024 accepted with an Outcome):
+an internal resolution, a per-frame Halton ray jitter, lighting passes that ignore it, an
+upscale pass at the output size (hit-position reprojection, a 3 x 3 Gaussian, a Catmull-Rom
+history fetch, a light-change clip) and RCAS. It meets its headless bars and the upscale line
+on the dev box (0.76 ms at scale 1.5), and halves the frame's GPU time on both adapters at 720p
+for 1080p, but the owner's eye kept Plan 0024's frame (scale 1, jitter off) as the default: the
+upscaler ships as an opt-in performance setting, and an FSR 2 port (ADR-0024 Alternative A) is
+Plan 0041 with ADR-0034 (proposed). §2's "with the upscaler allowed" therefore rests on an
+opt-in path until that plan reads.
 
 Plan 0024, the lighting plan, closed 2026-10-22 (v0.27.0, ADR-0018 and ADR-0025 accepted with
 Outcomes): a hit pass, a light pass with one emissive sample resampled from a near-emitter
@@ -286,11 +309,11 @@ list, edit-box or gradient history, half or full lighting resolution. It starts 
 plan follow it (owner, 2026-10-21). The plans around it were drafted on 2026-10-21:
 [Plan 0027](plans/done/0027-mirror-uploads-through-a-staging-belt.md) (ADR-0022, the streaming
 line's copies through a staging belt; closed 2026-10-21),
-[Plan 0028](plans/0028-size-classed-mirror-slots-and-surface-only-attributes.md) (ADR-0012's
+[Plan 0028](plans/done/0028-size-classed-mirror-slots-and-surface-only-attributes.md) (ADR-0012's
 mirror-slot step, after Plans 0024 and 0027),
 [Plan 0029](plans/0029-indirect-light-probe-volume.md) (ADR-0023: indirect light from a probe
 volume that scrolls with the camera, the owner's choice over a per-pixel bounce) and
-[Plan 0030](plans/0030-temporal-upscaler.md) (ADR-0024: a temporal upscaler of our own over
+[Plan 0030](plans/done/0030-temporal-upscaler.md) (ADR-0024: a temporal upscaler of our own over
 an FSR 2 port). The edit-cost pass M1's paragraph names, Plan 0031, closed 2026-10-21.
 
 **Goal:** the consumer's P0 rendering bar. Few lights, emissive voxels, destruction, no ghosting.
@@ -496,7 +519,7 @@ a cheap query.
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
 
-### M10: Outdoors (Plans 0032 to 0036 drafted 2026-10-22)
+### M10: Outdoors (Plans 0032 to 0036 approved 2026-10-22)
 
 The open-sky half of the "Floor, profiles and scene scale" decision, as general engine
 mechanisms: the first consumer is underground, so nothing here is on its P0 list, and terrain
@@ -522,6 +545,10 @@ set by the game, never by a wall clock in the engine.
 - **Weather** (Plan 0036; ADR-0031): rain, snow, wind, wet surfaces, snow cover and lightning
   as cosmetic client state the game steps, rendered against a fall map traced through the
   mirror and never written as voxels. After Plan 0035.
+- **The night sky** (Plan 0037; ADR-0032, approved 2026-10-22): a seeded star field, the
+  moon's phases, sky bodies the game lists (a comet's tail, meteors), an aurora shell whose
+  glow lights the ground through a hemisphere map, and a blue-shifted, desaturated night tint
+  driven by scene luminance. After Plans 0032 and 0035.
 - **Flowing liquids** (not drafted): a deterministic cellular flow in `vxe-world` whose steps
   are ops through the log, a later plan with its own ADR.
 - **Headless proof:** each plan's goldens on lavapipe (noon, sunset, night, cave mouth, far
@@ -578,7 +605,8 @@ VR-readiness decision keeps open stay open, and so the cost is on paper before a
   the engine ships, and scripting hosts configured for it. Mitigation: CI asserts hashes on
   both arms from M1 on, and `clippy.toml` can deny the platform transcendentals in `vxe-world`.
 - **The upscaler port (M2).** No WGSL port of FSR 2 exists. Mitigation: the M2 plan sizes the
-  port as its own phase and names the TAA fallback.
+  port as its own phase and names the TAA fallback. Plan 0030 shipped our own upscaler opt-in
+  (2026-10-22); Plan 0041 (ADR-0034) ports FSR 2.2.1.
 
 ## What the engine will not do
 

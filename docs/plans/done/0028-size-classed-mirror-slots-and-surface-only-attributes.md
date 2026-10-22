@@ -1,17 +1,21 @@
 # 0028: Size-classed mirror slots: the packed brick's own bytes in the pool, no chunk palette, and contour attributes for surface voxels only
 
-> **Status:** approved (2026-10-21)
+> **Status:** done (closed 2026-10-22, v0.29.0). Every bar met: the level's mirror 232 to 63 MB
+> plain and 680 to 158 MB contour with every golden byte for byte, the default at 16/24 holding
+> `r_full` 16 at 0.87 GB and pressure 0.65, the amended attribute pass p99 0.71 to 0.75 ms with a
+> 25 ms backlog age, plain `sync` p50 0.17 ms; the default look's `sync` (3.1 ms p50, the
+> surface masks on the render thread) is the open followup.
 > **Created:** 2026-10-21
 > **Milestone:** M2 in `docs/roadmap.md` (ADR-0012's third and last step; the contour
 > footprint ADR-0011 and Plan 0013 owe; `nfr.md` §3)
-> **Related ADRs:** [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
+> **Related ADRs:** [ADR-0012](../../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
 > (the decision this plan finishes: the same bytes on the CPU and in the mirror, size classes
 > of 64-byte units, surface-only attributes by popcount),
-> [ADR-0013](../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) (the reservation, page
+> [ADR-0013](../../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) (the reservation, page
 > re-kinding and the pressure rule, which carry over to bins),
-> [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md) (the
+> [ADR-0011](../../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md) (the
 > attribute's encoding and `NO_PLANE`, unchanged; its page layout goes),
-> [ADR-0004](../adrs/0004-palette-narrowed-sharded-brick-pool.md) (the shards and bindings,
+> [ADR-0004](../../adrs/0004-palette-narrowed-sharded-brick-pool.md) (the shards and bindings,
 > which stand; its per-chunk palette goes, as ADR-0012 says)
 > **Source:** ADR-0012's Decision and Outcome; Plan 0013's Followups (the footprint), Plan
 > 0017's Followups (page fragmentation), Plan 0023's Followups (the attribute pass's GPU cost,
@@ -208,6 +212,85 @@ plan touches must render byte for byte; a re-bless is a deviation to disclose, n
   attribute pass's GPU time under the default autopilot reads p99 at most 1.0 ms (Plan
   0013's proposal; the pass now computes about 35 voxels per brick instead of 512), with
   `attr_cap` 8192 and 4096 both read (Plan 0023's followup) and the carry-over age at each.
+- **Amended 2026-10-22 (owner).** The first attempt (c6df852) met every done-when but the
+  pass's GPU bar: p99 5.770 ms (`attr_cap` 8192) and 5.751 ms (4096), and the backlog's
+  carry-over age p99 7 625 and 27 229 ms against 69 ms before the plan. The pass costs per
+  brick, not per voxel computed: one 256-invocation workgroup a brick, with its four
+  barriers (lines 291, 309, 336 and 364 of `attrib.wgsl`; the resume notes say three), the
+  10^3 occupancy fill and about 5 500 clear items a frame on top of the cap. `r_full` now
+  holds at 16, so the queue holds about 2.4 times the bricks it held at 12.
+  - **What, added:**
+    1. **Drop the clear items.** Every upload already writes its attribute units as
+       `NO_PLANE`, so a clear item rewrites words that already hold that value. `attr_work`
+       emits none, and the shader loses `CLEAR_BIT` and its branch.
+    2. **Four bricks per workgroup, 64 invocations a brick.** The workgroup stays at 256.
+       Item `4 g + b` of the work list is brick `b` of workgroup `g`, the last workgroup
+       runs partly empty, and the order the CPU builds the list in is unchanged. The four
+       barriers are shared by the four bricks, so a brick costs one barrier instead of
+       four. Invocation `t` of a brick computes the surface voxels at attribute indices
+       `t`, `t + 64`, and so on: the surface voxels are listed in index order first (each
+       invocation scans one byte of the surface mask, from the header's prefix plus a
+       popcount, and writes its voxels' cell numbers into the brick's list), then computed
+       in `ceil(n / 64)` rounds. The fixed width is chosen over packing by surface count
+       (bricks summed to at most 256 surface voxels a workgroup). Packing by count would
+       keep more lanes busy, but it needs a segmented work list and a per-workgroup offset
+       table built on the CPU in `build_split`, and the readings put the cost in per-brick
+       overhead, not in idle lanes. At the census's 55.07 chunk-local surface voxels a
+       brick (Phase 1: 90 331 692 / 1 640 292) a brick takes 1 round when `n <= 64` and 2
+       when `n` is in 65..128. Scaling Plan 0013's distribution by Phase 1's 1.565 gives
+       about 1.5 rounds on average, so the compute step keeps about 55 / 96 = 57 % of its
+       lanes busy against 55 / 256 = 21 % today. That figure is a guess from a scaled
+       distribution; the log records the measured mean.
+       Workgroup memory per brick, with occupancy held as bits (1 000 bits in 32 atomic
+       words, set with `atomicOr`): neighbour kinds and entries 27 x 2 x 4 = 216 B, staged
+       masks 27 x 16 x 4 = 1 728 B, occupancy 128 B, attribute words (or the surface list)
+       256 x 4 = 1 024 B at the worst case of 512 surface voxels. That is 3 096 B a brick
+       and 12 384 B for four, under WebGPU's default `maxComputeWorkgroupStorageSize` of
+       16 384 B. With today's `u32` per occupancy cell (4 000 B a brick) four bricks need
+       27 872 B, so the bit packing is required, and eight bricks of 32 invocations
+       (24 768 B) do not fit at all. With the clears dropped and four bricks a workgroup,
+       a frame at cap 8192 runs 2 048 workgroups and 8 192 barrier crossings, where today
+       it runs about 13 700 workgroups and 54 800 crossings (8 192 + 5 482 items, 4 each).
+       The occupancy fill does not shrink: it is still 1 000 cells a brick, now about 16
+       per invocation instead of 4.
+    3. **Optional, inside the pass only:** read occupancy at the lookup from the staged
+       masks (`nb_kind` and `nb_mask`) instead of filling the 10^3 box. A brick then fills
+       the box only when a neighbour is kind 3 (LOD-only, or translucent Wide), and the
+       per-brick fill above goes in the common case. The other candidates the readings
+       support are a cap on compute items derived from the frame's budget, a different
+       split of the front items from the capped ones, and the order of the work list.
+       Each one stays in `attrib.wgsl`, `attrib.rs`, `attr_work.rs` and `gpu_world.rs`'s
+       queue. The log records each change tried, with its p99 and age reading, kept or
+       not.
+  - **Files touched, added:** `crates/vxe-render/src/attr_work.rs` (no clear items; the
+    packing), `crates/vxe-render/src/attrib.rs` (groups of four),
+    `crates/vxe-render/src/shaders/attrib.wgsl`, `crates/vxe-render/src/gpu_world.rs` (the
+    queue, only if an optional change needs it), `crates/vxe-render/tests/mirror.rs`, and
+    `apps/flythrough/src/main.rs` with the root `README.md`, bringing Phase 4's
+    `--adapter <substring>` forward for the iGPU reading below (Phase 4 then uses it).
+  - **Done when, replacing the GPU-time clause above:** under the default autopilot at 16/24
+    on the dev box (RTX 3080 Laptop, the quiet box under the exclusive perf lock, the same
+    flight for both bars) the attribute pass's GPU time reads **p99 at most 1.0 ms** (the
+    bar is unchanged) **and** the carry-over age reads **p99 at most 250 ms** (Plan 0023's
+    line). Both bars are met at the `attr_cap` the commit ships, and the other of 8192 and
+    4096 is read and logged beside it. The same flight on the iGPU (`--adapter` with the
+    AMD adapter's name) records the pass's p50 and p99 and the age's p99, labelled
+    "iGPU, no bar". No bar is set there because nothing measured yet gives a basis for one.
+    The log names the mean surface voxels and rounds a brick. `attr_work` emits no clear
+    item, and a test checks it on a flight-shaped work list. A brick uploaded while its
+    compute item waits behind the cap reads every attribute word as `0xFFFFFFFF` (two
+    `NO_PLANE`), with no clear item run. A work list of five bricks (one partial workgroup)
+    holding the 4 x 4 x 4 cube brick (56 surface voxels, 1 round) and a 3D checkerboard
+    brick (256 solid voxels, every one surface, 8 attribute units, 4 rounds) reads back
+    the same attribute words as an uncapped mirror, and the same as c6df852's one-brick
+    workgroups gave for those bricks. All the other done-whens above stand unchanged:
+    the four look goldens byte for byte, 7.38 degrees and 32 px, the cube and
+    chunk-face counts, and the level's contour under 180 000 000 B live.
+  - **Stop rule:** if either bar still misses after this amendment, `dev` stops. It logs
+    every reading and every change tried, and does not start Phase 4. The next step is an
+    ADR on where contour attributes are computed (on the CPU at upload, or derived at the
+    hit), which Risks names as the fallback. The plan is then re-planned from that ADR's
+    decision.
 
 ### Phase 4: The streamed default at `r_full` 16, and the slow adapter
 - **Owner skill:** dev
@@ -279,7 +362,8 @@ the material rows are unchanged. Bindings: the masks buffer's binding is freed.
 | §3 World in VRAM, live against the reservation | 3 GB | the level 63 MB plain, under 180 MB contour; 16/24 default about 0.93 to 1.2 GB live, pressure peak about 0.65 (records) | `level_mirror`, the Phase 4 autopilot flights |
 | §3 the pressure rule | `r_full` restored above 0.7 | never fires at 16/24 | Phase 4 |
 | §2 Primary rays | 3.0 ms | level 1.43 to 1.55 ms; plain streamed 1.93 to 2.1 ms; the default at `r_full` 16 recorded | Phase 2 and 4 timings, three runs, quiet box, both adapters |
-| Attribute pass GPU (Plan 0013's proposal) | 1.0 ms p99 | under 1.0 ms (35 voxels per brick computed, not 512) | Phase 3 autopilot |
+| Attribute pass GPU (Plan 0013's proposal) | 1.0 ms p99 | under 1.0 ms (35 voxels per brick computed, not 512); amended 2026-10-22: 5.77 ms at c6df852, the fixes in Phase 3's amendment | Phase 3 autopilot, dev box; iGPU recorded, no bar |
+| Attribute backlog carry-over age (Plan 0023's line; amended 2026-10-22) | 250 ms p99 | 69 ms before the plan at `r_full` 12; 7 625 ms at c6df852 | Phase 3 autopilot, same flight |
 | §2 Streaming line | 1.0 ms | plain `sync` p50 about 2.0 ms (narrowing gone), still a miss | Phase 4, paired with Plan 0027's binary |
 | Slow adapter (`nfr.md` §1 from this plan) | none yet | first readings | Phase 4 on the iGPU |
 
@@ -298,6 +382,15 @@ the material rows are unchanged. Bindings: the masks buffer's binding is freed.
   (a solid chunk face is 64 voxels); Phase 1 measures it and the 180 MB and 1.2 GB bars have
   that room. The exact rule (reading neighbour chunks) is the fallback, with its re-upload
   coupling.
+- **The attribute pass's per-brick cost** (amended 2026-10-22, owner). If Phase 3's amended
+  pass still misses the 1.0 ms p99 or the 250 ms carry-over age, the GPU pass is not the
+  right place for the attribute at `r_full` 16. The fallback is an ADR that chooses between
+  two options. The first computes the attribute on the CPU at upload: the surface mask is
+  already computed there, but the 27-brick neighbourhood and its cross-chunk reads come
+  with it, and so do the stream workers' cost and a re-upload when a neighbour changes. The
+  second derives it at the hit from the mask lines the march already reads: no stored
+  attribute and no pass, at a cost in hit-pass time and the risk of moving the golden
+  bytes. Either one changes this plan's Data shapes and is re-planned from the ADR.
 - **Determinism:** nothing in `vxe-world` changes; the census is CPU-only and seeded.
 - **Threading:** unchanged; `sync` runs on the render thread through Plan 0027's belt.
 - **The hit pass of Plan 0024** reads the material at the hit from the slot; this plan
@@ -324,30 +417,136 @@ the material rows are unchanged. Bindings: the masks buffer's binding is freed.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The census of units | dev | not started | |
-| 2: The slot format, the bins and the march, plain look | dev | not started | |
-| 3: Surface-only attributes, contour look | dev | not started | |
-| 4: The streamed default at `r_full` 16, and the slow adapter | dev | not started | |
-| 5: The owner's windowed flight | human | not started | |
+| 1: The census of units | dev | done: level plain pool 56 075 200 B, records 6 758 400 B (62 846 720 B with table and rows); 16/24 exact plane voxels 57 703 350; chunk-local surface 90 331 692 (1.565 x exact; 1.570 at 12/24, 1.565 at 14/24), 3.08 attribute units (197 B) per brick; contour 16/24 at full residency 871 679 852 B, plain 502 928 492 B (57 777 records); bars: the 180 MB level bar and the pressure bar hold on this arithmetic; the 0.93 to 1.2 GB range reads 0.87 GB here, because it counted the 93 239 reserved records rather than the 57 777 mirrored; gate: 581 nextest passed, 4 skipped, 7 doctests, clippy and fmt clean | 1d1e67c |
+| 2: The slot format, the bins and the march, plain look | dev | done: every listed golden and the skip-against-single-voxel test unchanged (no re-bless); level plain 62 846 720 B live (`level_mirror`, lavapipe and the RTX 3080); level hit pass 1.264 to 1.314 ms plain, 1.404 to 1.420 ms default, streamed plain spawn 1.701 to 1.714 ms (paired with 1d1e67c, load 4.5 to 8.7); level first sync 342 ms against 500 ms; gate: 579 nextest passed, 4 skipped, clippy and fmt clean | 5fb6d26 |
+| 3: Surface-only attributes, contour look | dev | done after the 2026-10-22 amendment: default autopilot at 16/24, RTX 3080 Laptop, quiet (load 0.93 to 1.98, exclusive perf lock), `attr_cap` 8192 shipped: attribute pass GPU p99 0.711, 0.753, 0.754 ms (p50 0.445 to 0.485), carry-over age p99 25.1 to 25.5 ms over three runs; `attr_cap` 4096 (measurement build, load 3.88): p99 0.563 ms, age p99 2306.4 ms; iGPU (`--adapter AMD`, RADV RENOIR), 8192, no bar: p50 2.010 ms, p99 2.522 ms, age p99 5295.6 ms (load 7.27); 55.1 chunk-local surface voxels and 0.971 rounds a brick at 16/24 (census); the four look goldens byte for byte; 7.38 degrees and 32 px; cube 56 / 2 units / indices 0 and 55, 55 after the carve; chunk-face 64; gate: 582 nextest passed, 4 skipped; `--features wasm` 156 passed, 3 skipped; 7 doctests; clippy (both) and fmt clean | f0b8650 |
+| 4: The streamed default at `r_full` 16, and the slow adapter | dev | done: RTX 3080 Laptop, exclusive perf lock, load 1.49 to 9.53 (not quiet); default autopilot at 16/24: full residency with `r_full` 16, 871 679 852 B live there, peak 941 911 020 B, peak pressure 0.6514 (records), 0 radius changes, 0 deferred syncs, return hash match (1d1e67c: `r_full` 13, 2 864 309 692 B, pressure 0.911); plain `sync` p50 0.168 / 0.171 ms against 4.931 / 4.977 ms for 1d1e67c (`update + poll + sync` p50 0.172 / 0.175 ms); default `sync` p50 3.086 ms; spare units at full residency 0.10 % (default, 11 908 of 11 705 061) and 0.06 % (plain); settled spawn at 1080p, hit 1.764 to 1.780 ms default, 1.539 to 1.571 ms plain; iGPU (`--adapter AMD`, RADV RENOIR, load 0.69 to 3.62): level spawn hit 9.296 to 9.302 ms (frame 33.757 to 33.774), settled spawn hit 13.318 to 13.354 ms default (frame 44.550 to 44.706), 11.961 ms plain, default autopilot `sync` p50 16.001 ms; gate: 582 nextest passed, 4 skipped; `--features wasm` 156 passed, 3 skipped; 7 doctests; clippy (both) and fmt clean | 241a37e |
+| 5: The owner's windowed flight | human | done (owner, live session 8, 2026-10-22, binary of 241a37e, RTX 3080 Laptop, default look, `--seed 1`): run 1, overlay hidden: frame CPU p50 8.890 ms, p99 39.013 ms; `update + poll + sync` p50 4.910 ms, p99 30.172 ms; march GPU p50 10.793 ms, p99 22.828 ms over 1054 timed frames (2671 frames); verdict "run 1 feels fine". Run 2, overlay shown (`--hud`): frame CPU p50 12.056 ms, p99 47.437 ms; `update + poll + sync` p50 8.233 ms, p99 35.608 ms; march GPU p50 11.461 ms, p99 35.730 ms over 2751 timed frames; verdict "2 are fine". Plan 0027's baseline: frame CPU p50 10.223 ms, p99 53.354 ms; `update + poll + sync` p50 4.432 ms, p99 36.548 ms; march GPU p50 6.571 ms (overlay shown) | this log |
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Names: the plan's "march" reading is the hit pass since Plan 0024 (`Frame`'s `hit` timer, the
+  frame line's `hit`); its "masks buffer" binding was 6 of the world group; the attribute pass
+  is `AttribPass` and `attr_work::build_split`, as named. (Phase 2 commit)
+- A planar slot of a brick holding a translucent voxel carries one more unit, its translucent
+  voxels, after its planes (`attr_offset`), not in the plan's Data shapes. (Phase 2 commit)
+- Phase 2 also touched `attrib.wgsl`, `attrib.rs` (work items carry the entry less `FULL_BIT`),
+  `apps/flythrough/src/lib.rs` (`level_pool_units` replaces `level_pool_slots`),
+  `apps/flythrough/src/main.rs`, `tests/golden.rs` and `tests/look.rs`; until Phase 3 the
+  contour attribute is 16 units inside each full chunk's slot. (Phase 2 commit)
+- The done-when's "carve that adds a third material" is a one-voxel fill of a third material;
+  a carve removes material. (Phase 2 commit)
+- Retired with the chunk palette: the wide-chunk and slot-pair tests of `mirror.rs`; the
+  attribute-page tests became their bin equivalents; `walk.rs` and `translucent.rs` load counts
+  read the header word for the record's palette word. `level_mirror`'s shard test caps shards
+  at 64 pages (the level fits one lavapipe binding). (Phase 2 commit)
+- `exposed_emitters` reads a brick's materials through its palette words or raw ids, so a
+  brick past 16 materials is scanned for emitters too (it was skipped). (Phase 2 commit)
+- `OTHER_STORAGE_BUFFERS` is 5; `MirrorConfig::max_shard_slots` is `max_shard_units`.
+  (Phase 2 commit)
+- `contour_metrics_at_each_attribute_precision` was retired by Plan 0013; its successors
+  (`contour_planes_cut_the_silhouette_and_normal_errors`, `every_mode_with_and_without_detail`)
+  read 7.38 degrees and 32 px, the tree's figures since Plan 0013. (Phase 3 commit)
+- The header's attribute field counts the units after the surface-mask unit; its flag
+  (`HEADER_HAS_SURFACE`) is the word's high half. (Phase 3 commit)
+- A carve's sync now writes the carved brick and its `Full` face neighbours in the chunk:
+  `mirror.rs` counts 3 bricks where it counted 1. The upload recomputes a chunk's need under
+  its write lock and writes the surface masks computed there. (Phase 3 commit)
+- `attrib.wgsl` also fills its occupancy box from the 27 bricks' masks in workgroup memory,
+  reading voxel by voxel only LOD-only neighbours and translucent Wide bricks. (Phase 3 commit)
+- The 4096 reading came from a measurement build with `ATTR_CAP` 4096, not committed; the
+  slot-reuse test gives B two one-voxel slabs so it lands in A's bin; the deferral tests
+  `one_page_short_*`, `a_demotion_behind_*` and `a_page_the_sync_*` run on plain mirrors
+  (bins are one mechanism with or without attributes). (Phase 3 commit)
+- Followup noticed at c6df852: clear items still ran (p50 5482 a frame in the default
+  flight) though every upload writes its attribute units as "no plane"; the amendment
+  dropped them. (Phase 3 commit)
+- Amended pass, as built: invocation `t` of a brick computes attribute words `t`, `t + 64`,
+  and so on (two voxels a word), not indices; the pass has three barriers (c6df852 had four);
+  occupancy words are built one per invocation, without atomics. `world_budget --surface`
+  (a Phase 1 file) prints the pass's rounds; `--adapter` came forward from Phase 4.
+  (Phase 3 commit)
+- Kept beyond the amendment's list (its optional "inside the pass" changes): a brick of a
+  LOD-only chunk is read through its level-1 mip brick's staged masks (`NB_MIP` plus the
+  octant) instead of voxel by voxel through the table; only a Wide brick holding a
+  translucent voxel is still read voxel by voxel. New test
+  `attributes_beside_lod_only_chunks_read_their_mips`, its hash taken on the pass before the
+  change and unchanged after it. (Phase 3 commit)
+- Readings of every attempt, default autopilot (`flythrough --autopilot --headless --seed 1`),
+  RTX 3080 Laptop, exclusive perf lock; GPU p99 / carry-over age p99 at `attr_cap` (load):
+  c6df852 one brick a workgroup 5.770 / 7625 ms at 8192, 5.751 / 27 229 ms at 4096 (9.3 to
+  9.8), box filled voxel by voxel 7.636 / 7.781 ms; four bricks a workgroup, `atomicOr`
+  occupancy 1.418 / 27.9 ms at 8192 (2.15), 0.597 / 2191.7 ms at 4096 (5.79), 1.349 / 1936.6
+  ms at 6144 (5.72), 0.820 / 687.8 ms at 5120 (9.78); occupancy read at the lookup from the
+  staged masks, no box, 2.140 / 28.1 ms at 8192 (3.24), 0.792 / 3625.1 ms at 4096 (5.97), not
+  kept; occupancy words without atomics (1a163a9) 1.378 / 27.2 ms (8.50) and 1.202 / 26.0 ms
+  (0.34) at 8192, iGPU 6.625 / 4497.4 ms (4.81); a diagnostic build reading every
+  voxel-by-voxel neighbour as air 0.899 / 27.2 ms (0.67); LOD-only neighbours through their
+  mip bricks (shipped) 0.764, 0.743, 0.720, 0.760 / 25.4 to 26.0 ms (6.2 to 9.8) and the
+  quiet three in the row; plus bricks without surface voxels left out of the list 0.998,
+  0.725, 1.020, 0.806 / 25.6 to 28.3 ms (0.67 to 8.08), not kept; a cap from the frame budget
+  (1.0 ms over the measured 0.091 us a brick at 8192, 10 966) 1.398 / 27.5 ms (4.66), not
+  kept. (Phase 3 commit)
+- The fly-through prints a `bins:` line at full residency (per bin: slot units, live slots,
+  spare units, pages; the spare total against live units). `--adapter` and its README row
+  landed in Phase 3 (1a163a9), so this phase leaves the README alone. The iGPU was selected
+  with `--adapter AMD` in every slow-adapter reading. Phase 4's readings were taken under the
+  other lanes' load (1-minute 0.69 to 9.53), each labelled with its load in `nfr.md`.
+  (Phase 4 commit)
+- Phase 5 (owner, `live/session8-20261022-1644.log`, runs 1 and 2): run 1 reached full
+  residency after 29 176 ms with 18 616 full and 42 586 LOD-only chunks, 939 067 564 B live,
+  pressure 0.656, `r_full` 16, and the log has no radius change or deferral line. The owner's
+  verdicts on the 40 fps saturation, verbatim: run 1 (overlay hidden) "run 1 feels fine", run
+  2 (overlay shown) "2 are fine". Against Plan 0027's baseline (overlay shown): frame CPU p50
+  12.056 ms against 10.223 ms, `update + poll + sync` p50 8.233 ms against 4.432 ms, march
+  GPU p50 11.461 ms against 6.571 ms; p99 frame CPU 47.437 ms against 53.354 ms. The window
+  size is not printed in the log.
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature
+- **Public API changed:** `vxe-render`: the mirror's slot format (size-classed 64-byte units,
+  `UNIT_BYTES`, `UNIT_WORDS`, `PAGE_UNITS`, `BINS`, `bin_of`, `slot_units`, `payload_units`,
+  `attr_offset`, `surface_attr_units`, `chunk_surface`, `BinStats` and `GpuWorld::bin_stats`,
+  `live_units`, `spare_units`, `spare_slots`, `bin_of_unit`); `MirrorConfig::max_shard_units`
+  for `max_shard_slots`; the records lose the chunk palette and the masks buffer binding goes;
+  `attrib::BRICKS_PER_GROUP`, `AttribItem` carries the entry less `FULL_BIT`, no clear items;
+  shader interfaces of `march.wgsl` and `attrib.wgsl` (header unit, surface mask, popcount
+  addressing, `NB_MIP`). `vxe-world`: the census of units (`census.rs`). Fly-through:
+  `--adapter SUBSTRING`, the `bins:` line, `level_pool_units`.
+- **Budget readings:** level plain 62 846 720 B live, contour 157 872 640 B (Phases 2 and 3,
+  `level_mirror` on lavapipe and the RTX 3080); 16/24 default 871 679 852 B at full residency,
+  peak 941 911 020 B, peak pressure 0.6514, `r_full` 16, no deferral (Phase 4, RTX 3080 Laptop,
+  load 1.49); attribute pass GPU p99 0.711 to 0.754 ms and carry-over age p99 25.1 to 25.5 ms
+  at `attr_cap` 8192 (Phase 3, RTX 3080 Laptop, quiet, f0b8650), 0.563 ms / 2306.4 ms at 4096,
+  iGPU 2.522 ms / 5295.6 ms; plain `sync` p50 0.168 and 0.171 ms against 4.931 and 4.977 ms
+  (Phase 4, load 5.90 to 9.53); spare units 0.10 % and 0.06 % of live; hit pass at the level
+  spawn 1.264 to 1.314 ms plain (Phase 2), settled 16/24 spawn 1.764 to 1.780 ms default and
+  1.539 to 1.571 ms plain (Phase 4); iGPU (RADV RENOIR) level spawn hit 9.296 to 9.302 ms,
+  settled spawn 13.318 to 13.354 ms default, 11.961 ms plain; the owner's windowed frames
+  summaries in the Phase 5 row. Labels and loads are in `docs/nfr.md` §2 and §3.
+- **Gate at the tip (241a37e):** `cargo build --workspace` exit 0; `cargo nextest run
+  --workspace --test-threads 2` 582 passed, 4 skipped, exit 0; `cargo nextest run -p flythrough
+  --features wasm` 156 passed, 3 skipped, exit 0; `cargo test --workspace --doc` 7 passed, exit
+  0; `cargo clippy --workspace --all-targets -- -D warnings` and with `-p flythrough --features
+  wasm` exit 0; `cargo fmt --all --check` exit 0; `cargo deny check` advisories, bans, licenses
+  and sources ok; `check-doc-links` and `check-comment-hygiene` exit 0.
+- **Outstanding `human` phases:** none
 
 ## Followups
 
+- **The default look's render-thread `sync`** (close review, 2026-10-22): p50 3.086 ms on the
+  dev box and 16.0 ms on the slow adapter, against plain's 0.17 ms and the 1.0 ms line; the
+  chunk-local surface masks and the within-chunk neighbour re-uploads run in it. The owner's
+  windowed `update + poll + sync` p50 read 8.2 ms against Plan 0027's 4.4 ms (overlay shown).
+  No profile of the default flight's `sync` was recorded at Phase 4. Profile it, then decide
+  whether the surface mask moves to the stream workers (ADR-0017's hook). Plain `sync` p99 also
+  doubled (29.5 against 13.4 to 14.4 ms) under load; re-read it quiet.
+- **Light extraction's p99 miss** (Plan 0024's close assigned it here; this plan's scope left it
+  out): `exposed_emitters` now reads the header's palette, and nothing re-read the extraction
+  cost. It stays a recorded miss without a plan.
 - At close: ADR-0012 gets its final Outcome addendum (the mirror format in; the three plans
   done); ADR-0011's index row drops "footprint via the pressure rule"; ADR-0013's Outcome
   records bins as the page kinds.

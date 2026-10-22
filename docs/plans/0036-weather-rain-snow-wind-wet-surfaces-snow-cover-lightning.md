@@ -1,6 +1,6 @@
 # 0036: Weather: rain, snow, wind, wet surfaces and snow cover, lightning
 
-> **Status:** draft
+> **Status:** approved (2026-10-22)
 > **Created:** 2026-10-22
 > **Milestone:** M10: Outdoors in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0031](../adrs/0031-weather-is-cosmetic-client-state-rendered-against-a-fall-map.md)
@@ -123,7 +123,7 @@ between phases. The architect reviews once at the end, in a fresh session.
   `current`, `uniform(tick_fraction)`); `Frame::set_weather`; `weather.wgsl`'s `wet` and
   `snow_cover` applied in the composite with exposure fixed at 1 (no map yet); the fly-through's
   `--weather clear|rain|storm|snow|blizzard` presets, defined in the testbed, and the
-  key `F11` (Plan 0032 binds `F8`, Plan 0034 `F9` and `F10`) cycling them with the mode banner
+  key `F11` (Plan 0029 binds `F8`, Plan 0032 `Tab`, Plan 0034 `F9` and `F10`) cycling them with the mode banner
   naming the preset.
 - **Files touched:** new `crates/vxe-render/src/weather.rs`, new
   `crates/vxe-render/src/shaders/weather.wgsl`, `composite.wgsl`, `marcher.rs` (the `Frame`),

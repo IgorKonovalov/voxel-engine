@@ -5,19 +5,31 @@
 // Bindings, group 0 (every pass of the frame):
 //   0  uniform  params         views, mirror window, light, target size, flags (bit 0: shadow ray,
 //                              bit 1: occupancy masks, bits 2..4: normal mode, bit 4: detail,
-//                              bits 5..8: view, bit 8: the mirror has attribute pages, bit 9:
-//                              skip empty cells larger than a voxel, bit 10: cutaway), the
-//                              lighting flags and exposure
-//   1  storage  brick_pool0    shard 0 of the pool: [slot][128 x u32], four u8 palette indices
-//                              per word, x fastest; a wide brick is two slots, [256 x u32] of
-//                              u16 voxel pairs. Slot s is slot s % slots_per_shard of shard
-//                              s / slots_per_shard; 7, 8 and 9 are shards 1 to 3
-//   2  storage  chunk_records  [record][656 x u32]: 16 words of brick bits (bit b of word
-//                              b / 32 set when entry b is not uniform air), 512 brick entries,
-//                              then the palette as 256 u16 (index 0 air). Entry bit 31 set:
-//                              pool slot in bits 0..29, bit 30 wide; clear: the uniform
-//                              material in bits 0..16; bit 29 set either way when the brick
-//                              holds a TRANSLUCENT voxel
+//                              bits 5..8: view, bit 8: full chunks' bricks carry contour
+//                              attributes, bit 9: skip empty cells larger than a voxel, bit
+//                              10: cutaway), the lighting flags and exposure
+//   1  storage  brick_pool0    shard 0 of the pool: [unit][16 x u32], 64-byte units; unit u is
+//                              unit u % units_per_shard of shard u / units_per_shard; 7, 8 and
+//                              9 are shards 1 to 3. A Full brick's slot is a run of units
+//                              (gpu_world.rs): unit 0 its opaque mask, bit i % 32 of word
+//                              i / 32 set when voxel i (x + 8 y + 64 z) is neither air nor
+//                              TRANSLUCENT; unit 1 its header (words 0..8 the palette, 16 u16
+//                              ascending; words 8, 9 the translucent 2^3 block bits, bit
+//                              bx + 4 by + 16 bz); then 0, 1, 2 or 4 bit planes in the mask's
+//                              layout (plane k is bit k of a voxel's palette index), or for
+//                              class 5 (Wide) 16 units of u16 ids, voxel i in half i % 2 of
+//                              word i / 2; then, for a planar brick holding a TRANSLUCENT
+//                              voxel, one unit of its translucent voxels; then, for a full
+//                              chunk's brick when the flag says so, its surface mask and its
+//                              surface voxels' contour attributes (header word 14: their
+//                              units in the low half, 0 for none; words 10..14 the surface
+//                              voxels below each layer, 8 u16)
+//   2  storage  chunk_records  [record][528 x u32]: 16 words of brick bits (bit b of word
+//                              b / 32 set when entry b is not uniform air), then 512 brick
+//                              entries. Entry bit 31 set: the slot's first unit in bits 0..26
+//                              and its class in bits 26..29 (1 to 4: 0, 1, 2 or 4 planes; 5:
+//                              Wide); clear: the uniform material in bits 0..16; bit 29 set
+//                              either way when the brick holds a TRANSLUCENT voxel
 //   3  storage  chunk_table    [wrapped chunk]u32 record index in bits 0..29, bit 29 set when
 //                              the record's brick bits are all clear, bit 30 set for a LOD
 //                              record (entries 0..64 mip level 1, 64..72 level 2, 72 level 3);
@@ -25,13 +37,6 @@
 //   4  storage  materials      [id][4 x vec4]: albedo rgb + roughness, emission rgb + flag bits,
 //                              detail scale (voxels) + detail strength + opacity + 1 spare,
 //                              4 spare
-//   6  storage  brick_masks    [slot / 8][144 x u32], groups of eight slots: slot s's opaque
-//                              mask is words 144 (s / 8) + 16 (s % 8) .. + 16, one 64-byte
-//                              line, bit i % 32 of word i / 32 set when voxel i (x + 8 y +
-//                              64 z) of its brick is opaque (not air, not TRANSLUCENT); its two
-//                              translucent words follow the eight opaque lines at
-//                              144 (s / 8) + 128 + 2 (s % 8), bit bx + 4 by + 16 bz set when 2^3
-//                              block (bx, by, bz) holds a TRANSLUCENT voxel
 //   7  storage  brick_pool1    pool shard 1
 //   8  storage  brick_pool2    pool shard 2
 //   9  storage  brick_pool3    pool shard 3
@@ -61,11 +66,12 @@
 // rectangle from minus the left tangent to the right one and from the up tangent to minus the
 // down one.
 //
-// With attribute pages (flag bit 8), a full chunk's Full brick in slot s of the page
-// p = s - s % 4096 has its 512 u16 contour attributes in slots p + 1364 + 2 (s - p) and the
-// one after, two per word, x fastest: bits 0..6 octahedral u, 6..12 octahedral v, 12..16 the
-// plane offset code k for (k - 7) / 8 voxel along the normal from the voxel centre; 0xFFFF is
-// no plane. In the Contour normal mode the walk tests a solid voxel that has a plane against
+// With attributes (flag bit 8), a full chunk's Full brick has a u16 contour attribute for each
+// voxel of its surface mask (its non-air voxels with an air face neighbour inside the chunk,
+// or on the chunk's face): voxel (x, y, z)'s at index prefix[z] + the surface bits below it in
+// its layer, two per word: bits 0..6 octahedral u, 6..12 octahedral v, 12..16 the plane
+// offset code k for (k - 7) / 8 voxel along the normal from the voxel centre; 0xFFFF, and every
+// voxel off the surface, is no plane. In the Contour normal mode the walk tests a solid voxel that has a plane against
 // the ray: it is hit where the ray enters the plane's solid half-space inside the voxel's
 // cube, with the plane normal, and skipped when the ray's segment through the cube misses
 // that half-space. A solid voxel with no plane, of a uniform brick or of a mip-brick, hits
@@ -75,9 +81,10 @@
 // or empty (its table entry's EMPTY_BIT) is skipped as one 64^3 cell, a 2 x 2 x 2 group of
 // bricks whose brick bits are all clear as one 16^3 cell, a uniform-air brick as one 8^3
 // cell, and, when the masks flag is set, an empty 4^3 or 2^3 block or an empty voxel of a
-// full brick as one cell of its size, each read from the brick's opaque line, so the pool is
-// read only for a voxel whose bit is set. With the masks flag clear every voxel of a full
-// brick is read through the pool; with the skips flag clear every cell is one voxel (one mip
+// full brick as one cell of its size, each read from the brick's opaque line (its slot's unit
+// 0), so the rest of the slot is read only for a voxel whose bit is set. With the masks flag
+// clear every voxel of a full brick is one cell whose opaque bit is read as a pool word; with
+// the skips flag clear every cell is one voxel (one mip
 // cell in a LOD-only chunk), the comparison walk. A uniform solid brick is hit where the ray
 // enters it. A LOD-only chunk is walked the same way at its mip level L, every size scaled by
 // 2^L: a clear group of mip-bricks is one (16 * 2^L)^3 cell below level 3, a uniform-air
@@ -125,6 +132,9 @@ struct View {
     unit_scale: f32,
     unit_offset: f32,
     _pad0: f32,
+    // The rays' sub-pixel offset in internal pixels (`View::jitter`).
+    jitter: vec2<f32>,
+    _pad1: vec2<f32>,
 };
 
 const MAX_VIEWS: u32 = 2u;
@@ -146,7 +156,7 @@ struct Params {
     size: vec2<u32>,
     cos_inner: f32,
     flags: u32,
-    slots_per_shard: u32,
+    units_per_shard: u32,
     forced_level: u32,
     lod1_r2: i32,
     lod2_r2: i32,
@@ -171,8 +181,8 @@ struct Params {
     prev_light_offset: u32,
     // The emissive part's history length in frames (`Lighting::emissive_history`).
     emissive_history: f32,
-    _pad9: u32,
-    _pad10: u32,
+    // The size of the frame's image (the upscale pass's output); `size` without the upscaler.
+    output_size: vec2<u32>,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -180,7 +190,6 @@ struct Params {
 @group(0) @binding(2) var<storage, read> chunk_records: array<u32>;
 @group(0) @binding(3) var<storage, read> chunk_table: array<u32>;
 @group(0) @binding(4) var<storage, read> materials: array<vec4<f32>>;
-@group(0) @binding(6) var<storage, read> brick_masks: array<u32>;
 @group(0) @binding(7) var<storage, read> brick_pool1: array<u32>;
 @group(0) @binding(8) var<storage, read> brick_pool2: array<u32>;
 @group(0) @binding(9) var<storage, read> brick_pool3: array<u32>;
@@ -195,20 +204,22 @@ const FULL_BIT: u32 = 0x80000000u;
 const LOD_BIT: u32 = 0x40000000u;
 const EMPTY_BIT: u32 = 0x20000000u;
 const RECORD_MASK: u32 = 0x1FFFFFFFu;
-const WIDE_BIT: u32 = 0x40000000u;
 const TRANSLUCENT_BIT: u32 = 0x20000000u;
-const SLOT_MASK: u32 = 0x1FFFFFFFu;
 const MATERIAL_MASK: u32 = 0xFFFFu;
+// A Full entry's first unit and class (gpu_world.rs: UNIT_MASK, CLASS_SHIFT, CLASS_WIDE).
+const UNIT_MASK: u32 = 0x3FFFFFFu;
+const CLASS_SHIFT: u32 = 26u;
+const CLASS_WIDE: u32 = 5u;
 // MaterialFlags::TRANSLUCENT, in the material row's flag bits.
 const MATERIAL_TRANSLUCENT: u32 = 2u;
-// u32 words of a pool slot and of a chunk record, and the record words where the brick
-// entries and the palette start.
-const SLOT_WORDS: u32 = 128u;
-const RECORD_WORDS: u32 = 656u;
+// u32 words of a pool unit and of a chunk record, and the record word where the brick entries
+// start; the slot words of the header, its translucent words, and the payload.
+const UNIT_WORDS: u32 = 16u;
+const RECORD_WORDS: u32 = 528u;
 const ENTRY_WORD: u32 = 16u;
-const PALETTE_WORD: u32 = 528u;
-// u32 words of a group of eight slots' masks.
-const MASK_GROUP_WORDS: u32 = 144u;
+const HEADER_WORD: u32 = 16u;
+const HEADER_TRANSLUCENT_WORD: u32 = 24u;
+const PAYLOAD_WORD: u32 = 32u;
 const MAX_STEPS: u32 = 4096u;
 const BIG: f32 = 3.0e38;
 // Params.flags bits.
@@ -218,7 +229,7 @@ const NORMAL_SHIFT: u32 = 2u;
 const FLAG_DETAIL: u32 = 16u;
 const VIEW_SHIFT: u32 = 5u;
 const VIEW_BITS: u32 = 7u;
-const FLAG_ATTR_PAGES: u32 = 256u;
+const FLAG_ATTRS: u32 = 256u;
 const FLAG_SKIPS: u32 = 512u;
 const FLAG_CUTAWAY: u32 = 1024u;
 // Normal modes (flags bits 2..4) and views (flags bits 5..8).
@@ -231,9 +242,7 @@ const VIEW_NORMALS: u32 = 1u;
 const VIEW_HITMASK: u32 = 2u;
 const VIEW_STEPS: u32 = 3u;
 const VIEW_ALBEDO: u32 = 4u;
-// Attribute pages: brick slots per page, slots per page, and the attribute of no plane.
-const PAGE_SLOTS: u32 = 4096u;
-const ATTR_PAGE_BRICK_SLOTS: u32 = 1364u;
+// The attribute of no plane.
 const NO_PLANE: u32 = 0xFFFFu;
 // Params.lighting bits.
 const LIGHTING_LAMP: u32 = 1u;
@@ -253,7 +262,7 @@ const PI: f32 = 3.14159265358979;
 
 // What the walk found at a voxel: `size` is the edge of the empty cell to skip, or 0 for a
 // solid voxel of `material`. A solid voxel of a full chunk's Full brick carries its brick's
-// pool slot and its index in the brick; any other cell carries ABSENT. `through` is the edge of
+// record entry (`slot`) and its index in the brick; any other cell carries ABSENT. `through` is the edge of
 // the aligned solid cell a cutaway ray in its passing state steps through (0 for an empty
 // cell), and `air` is set for an empty cell of a resident chunk, the cell that ends passing.
 struct Cell {
@@ -296,8 +305,9 @@ struct Walk {
     brick: vec3<i32>,
     in_brick: bool,
     brick_entry: u32,
-    // `mask` holds mask words `mask_word`, + 2, + 4 and + 6: the four words of one 4^3 block
-    // row of a brick (its x-slab of four layers and one y-half); ABSENT holds nothing.
+    // `mask` holds mask words `mask_word`, + 2, + 4 and + 6 (keyed by the pool word index,
+    // the slot's first unit times 16 plus the word): the four words of one 4^3 block row of a
+    // brick (its x-slab of four layers and one y-half); ABSENT holds nothing.
     mask_word: u32,
     mask: vec4<u32>,
     // Set when a brick entry read since the reset carries TRANSLUCENT_BIT.
@@ -313,8 +323,9 @@ var<private> walk: Walk;
 var<private> coarse_span: vec2<f32> = vec2<f32>(3.0e38, -3.0e38);
 
 // The walk's cost counters since the last reset: loop iterations of `march`, 32-bit storage
-// loads from the mirror (table, record bits and entries, masks, pool, palette), and the pool
-// loads among them. `main` resets them before the primary ray and reads them after it in the
+// loads from the mirror (table, record bits and entries, mask lines, the header's translucent
+// words, the rest of the slots), and the pool loads among them: every slot word but a mask
+// line's or a translucent word's. `main` resets them before the primary ray and reads them after it in the
 // steps view.
 var<private> walk_steps: u32;
 var<private> loads: u32;
@@ -328,13 +339,11 @@ fn reset_walk() {
     walk.saw_translucent = false;
 }
 
-// Word `word` of the brick in global pool slot `slot` (a wide brick's words run on into the
-// next slot, which is in the same shard).
-fn pool_word(slot: u32, word: u32) -> u32 {
-    loads += 1u;
-    pool_reads += 1u;
-    let shard = slot / params.slots_per_shard;
-    let i = (slot - shard * params.slots_per_shard) * SLOT_WORDS + word;
+// Word `word` of the slot whose first unit is `unit` (a slot's words run on through its units,
+// which lie in one page, so in one shard), uncounted.
+fn slot_word(unit: u32, word: u32) -> u32 {
+    let shard = unit / params.units_per_shard;
+    let i = (unit - shard * params.units_per_shard) * UNIT_WORDS + word;
     switch shard {
         case 0u: { return brick_pool0[i]; }
         case 1u: { return brick_pool1[i]; }
@@ -343,14 +352,22 @@ fn pool_word(slot: u32, word: u32) -> u32 {
     }
 }
 
+// `slot_word`, counted as a pool load.
+fn pool_word(unit: u32, word: u32) -> u32 {
+    loads += 1u;
+    pool_reads += 1u;
+    return slot_word(unit, word);
+}
+
+// `slot_word` of a mask line or a translucent word, counted as a load only.
+fn mask_word_at(unit: u32, word: u32) -> u32 {
+    loads += 1u;
+    return slot_word(unit, word);
+}
+
 fn record_word(w: u32) -> u32 {
     loads += 1u;
     return chunk_records[w];
-}
-
-fn mask_word_at(w: u32) -> u32 {
-    loads += 1u;
-    return brick_masks[w];
 }
 
 fn floor_div(a: vec3<i32>, b: i32) -> vec3<i32> {
@@ -422,29 +439,26 @@ fn group_occupied(b: vec3<i32>) -> bool {
     }
 }
 
-// The first word of slot `slot`'s opaque mask in its group of eight.
-fn opaque_word(slot: u32) -> u32 {
-    return MASK_GROUP_WORDS * (slot / 8u) + 16u * (slot % 8u);
-}
-
-// The edge of the empty cell holding voxel `l` (index `i`) of the brick whose opaque mask
-// starts at word `m`: 4 or 2 for an empty block, 1 for an empty voxel, 0 for a set voxel.
+// The edge of the empty cell holding voxel `l` (index `i`) of the brick whose slot starts at
+// `unit` (its opaque mask is the unit's 16 words): 4 or 2 for an empty block, 1 for an empty
+// voxel, 0 for a set voxel.
 // Layer z is words 2 z (rows 0..4) and 2 z + 1 (rows 4..8), bit x + 8 (y % 4); a 4^3 block
 // (bx, by, bz) is the byte-wide nibbles 0x0F0F0F0F << 4 bx of words 2 (4 bz + k) + by, and a
 // 2^3 block (cx, cy, cz) the bits 0x0303 << (2 cx + 16 (cy % 2)) of words
 // 2 (2 cz + k) + cy / 2. The four 4^3 words are held across steps, and the 2^3 block's two
 // words and the voxel's word are among them (layers 2 cz, 2 cz + 1 and z lie in the block's
 // four layers, with the same y-half), so a step inside the slab issues no mask load.
-fn mask_skip(m: u32, l: vec3<u32>, i: u32) -> i32 {
+fn mask_skip(unit: u32, l: vec3<u32>, i: u32) -> i32 {
     let q = l / 4u;
-    let w4 = m + 8u * q.z + q.y;
+    let w = 8u * q.z + q.y;
+    let w4 = unit * UNIT_WORDS + w;
     if (w4 != walk.mask_word) {
         walk.mask_word = w4;
         walk.mask = vec4<u32>(
-            mask_word_at(w4),
-            mask_word_at(w4 + 2u),
-            mask_word_at(w4 + 4u),
-            mask_word_at(w4 + 6u),
+            mask_word_at(unit, w),
+            mask_word_at(unit, w + 2u),
+            mask_word_at(unit, w + 4u),
+            mask_word_at(unit, w + 6u),
         );
     }
     let mk = walk.mask;
@@ -547,22 +561,34 @@ fn descend(v: vec3<i32>) -> Descent {
     return Descent(0, entry, cell, level, vec3<u32>(l), u32(l.x + 8 * (l.y + 8 * l.z)), true);
 }
 
-// The material of voxel `i` of the Full brick in pool slot `slot` with record entry `entry`:
-// a wide brick's u16 directly, a narrow brick's byte through the record's palette (index 0
-// is air and reads no palette word).
-fn voxel_material(slot: u32, entry: u32, i: u32) -> u32 {
-    if ((entry & WIDE_BIT) != 0u) {
-        // A wide brick: slots `slot` and `slot + 1` hold 512 u16 voxels.
-        let word = pool_word(slot, i / 2u);
+// Bit planes of a planar class: 0, 1, 2 or 4 for classes 1 to 4.
+fn class_planes(cls: u32) -> u32 {
+    return select(cls - 1u, 4u, cls == 4u);
+}
+
+// Units of a Full entry's payload: its planes, or 16 of raw ids for class Wide.
+fn payload_units(entry: u32) -> u32 {
+    let cls = (entry >> CLASS_SHIFT) & 7u;
+    return select(class_planes(cls), 16u, cls == CLASS_WIDE);
+}
+
+// The material of voxel `i` of the Full brick with record entry `entry`, a voxel that is not
+// air: a Wide brick's u16 id directly; a planar brick's palette entry, its index assembled
+// from one bit of each plane, read from the header.
+fn voxel_material(entry: u32, i: u32) -> u32 {
+    let unit = entry & UNIT_MASK;
+    let cls = (entry >> CLASS_SHIFT) & 7u;
+    if (cls == CLASS_WIDE) {
+        let word = pool_word(unit, PAYLOAD_WORD + i / 2u);
         return (word >> ((i & 1u) * 16u)) & 0xFFFFu;
     }
-    // A narrow brick: one byte per voxel, an index into the record's palette; 0 is air.
-    let word = pool_word(slot, i / 4u);
-    let index = (word >> ((i & 3u) * 8u)) & 0xFFu;
-    if (index == 0u) {
-        return 0u;
+    var index = 0u;
+    let planes = class_planes(cls);
+    for (var k = 0u; k < planes; k++) {
+        let w = pool_word(unit, PAYLOAD_WORD + UNIT_WORDS * k + i / 32u);
+        index |= ((w >> (i % 32u)) & 1u) << k;
     }
-    let pair = record_word(walk.base + PALETTE_WORD + index / 2u);
+    let pair = pool_word(unit, HEADER_WORD + index / 2u);
     return (pair >> ((index & 1u) * 16u)) & 0xFFFFu;
 }
 
@@ -596,23 +622,23 @@ fn lookup_walk(v: vec3<i32>, coarse: bool) -> Cell {
         }
         return Cell(0, entry & MATERIAL_MASK, ABSENT, 0u, brick, false);
     }
-    let slot = entry & SLOT_MASK;
+    let unit = entry & UNIT_MASK;
     let masked = skips && (params.flags & FLAG_MASKS) != 0u;
     if (masked) {
-        let size = mask_skip(opaque_word(slot), dsc.l, dsc.i);
+        let size = mask_skip(unit, dsc.l, dsc.i);
         if (coarse && size < 2) {
             return Cell(0, 0u, ABSENT, 0u, cell, false);
         }
         if (size != 0) {
             return Cell(size * cell, 0u, ABSENT, 0u, 0, true);
         }
-    }
-    let m = voxel_material(slot, entry, dsc.i);
-    // With the masks on, a set bit is an opaque voxel; without them the class is read.
-    if (m == 0u || (!masked && is_translucent(m))) {
+    } else if (((pool_word(unit, dsc.i / 32u) >> (dsc.i % 32u)) & 1u) == 0u) {
+        // Without the mask tests the voxel's opaque bit is read alone: clear is air or a
+        // translucent voxel, both air to this walk.
         return Cell(cell, 0u, ABSENT, 0u, 0, true);
     }
-    return Cell(0, m, select(ABSENT, slot, dsc.level == 0u), dsc.i, cell, false);
+    let m = voxel_material(entry, dsc.i);
+    return Cell(0, m, select(ABSENT, entry, dsc.level == 0u), dsc.i, cell, false);
 }
 
 // What the translucent walk finds at voxel `v`: `size` > 0 is a cell holding no translucent
@@ -639,20 +665,30 @@ fn tlookup(v: vec3<i32>) -> TCell {
     if ((entry & FULL_BIT) == 0u) {
         return TCell(0, entry & MATERIAL_MASK, cell);
     }
-    let slot = entry & SLOT_MASK;
+    let unit = entry & UNIT_MASK;
     if (skips) {
         let l = dsc.l;
         let block = l.x / 2u + 4u * (l.y / 2u) + 16u * (l.z / 2u);
-        let tw = MASK_GROUP_WORDS * (slot / 8u) + 128u + 2u * (slot % 8u) + block / 32u;
-        if ((mask_word_at(tw) & (1u << (block % 32u))) == 0u) {
+        let tw = mask_word_at(unit, HEADER_TRANSLUCENT_WORD + block / 32u);
+        if ((tw & (1u << (block % 32u))) == 0u) {
             return TCell(2 * cell, 0u, cell);
         }
     }
-    let m = voxel_material(slot, entry, dsc.i);
-    if (m == 0u || !is_translucent(m)) {
+    let i = dsc.i;
+    if (((entry >> CLASS_SHIFT) & 7u) == CLASS_WIDE) {
+        // A Wide brick's id says it all: 0 is air.
+        let m = voxel_material(entry, i);
+        if (m == 0u || !is_translucent(m)) {
+            return TCell(cell, 0u, cell);
+        }
+        return TCell(0, m, cell);
+    }
+    // A planar brick's translucent unit follows its planes: a clear bit is air or opaque.
+    let t = pool_word(unit, PAYLOAD_WORD + UNIT_WORDS * payload_units(entry) + i / 32u);
+    if (((t >> (i % 32u)) & 1u) == 0u) {
         return TCell(cell, 0u, cell);
     }
-    return TCell(0, m, cell);
+    return TCell(0, voxel_material(entry, i), cell);
 }
 
 // The voxel holding `p` on a ray of direction `d`: on an axis the ray travels down, a position
@@ -702,11 +738,44 @@ fn decode_octahedral(e: u32) -> vec3<f32> {
     return normalize(n);
 }
 
-// The contour attribute of voxel `index` of the Full brick in pool slot `slot`.
-fn contour_attr(slot: u32, index: u32) -> u32 {
-    let page = slot - slot % PAGE_SLOTS;
-    let attr_slot = page + ATTR_PAGE_BRICK_SLOTS + 2u * (slot - page);
-    return (pool_word(attr_slot, index / 2u) >> ((index & 1u) * 16u)) & 0xFFFFu;
+// The unit offset of a Full entry's surface mask from its first unit, its attributes one unit
+// on: past its mask, header, payload and, for a planar brick holding a TRANSLUCENT voxel, its
+// translucent unit.
+fn attr_offset(entry: u32) -> u32 {
+    let cls = (entry >> CLASS_SHIFT) & 7u;
+    let t = select(0u, 1u, (entry & TRANSLUCENT_BIT) != 0u && cls != CLASS_WIDE);
+    return 2u + payload_units(entry) + t;
+}
+
+// The contour attribute of voxel `index` of the Full brick with record entry `entry`: NO_PLANE
+// for a brick without attributes or a voxel off its surface mask, else the attribute at the
+// voxel's popcount index.
+fn contour_attr(entry: u32, index: u32) -> u32 {
+    let unit = entry & UNIT_MASK;
+    if ((pool_word(unit, HEADER_WORD + 14u) & 0xFFFFu) == 0u) {
+        return NO_PLANE;
+    }
+    let s = UNIT_WORDS * attr_offset(entry);
+    let z = index / 64u;
+    let b = index % 64u;
+    let lo = pool_word(unit, s + 2u * z);
+    var bit = 0u;
+    var below = 0u;
+    if (b < 32u) {
+        bit = (lo >> b) & 1u;
+        below = countOneBits(lo & ((1u << b) - 1u));
+    } else {
+        let hi = pool_word(unit, s + 2u * z + 1u);
+        bit = (hi >> (b - 32u)) & 1u;
+        below = countOneBits(lo) + countOneBits(hi & ((1u << (b - 32u)) - 1u));
+    }
+    if (bit == 0u) {
+        return NO_PLANE;
+    }
+    let prefix = pool_word(unit, HEADER_WORD + 10u + z / 2u);
+    let k = ((prefix >> ((z & 1u) * 16u)) & 0xFFFFu) + below;
+    let word = pool_word(unit, s + UNIT_WORDS + k / 2u);
+    return (word >> ((k & 1u) * 16u)) & 0xFFFFu;
 }
 
 // The contour test of solid voxel `v`, entered at `t`: `kind` 0 when the voxel has no plane,
@@ -747,7 +816,7 @@ fn contour_test(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t: f32
 
 fn contour_active() -> bool {
     return ((params.flags >> NORMAL_SHIFT) & 3u) == NORMAL_CONTOUR
-        && (params.flags & FLAG_ATTR_PAGES) != 0u;
+        && (params.flags & FLAG_ATTRS) != 0u;
 }
 
 // The first solid voxel along `o + d t` for `0 <= t <= t_limit`. With `cutaway` set the walk
@@ -1116,7 +1185,8 @@ fn view_of(px: vec2<u32>) -> u32 {
     return 0u;
 }
 
-// The primary ray of pixel `px` through the centre of the pixel, in its view. Horizontal
+// The primary ray of pixel `px` through the centre of the pixel moved by the view's jitter
+// (zero: the centre itself, bit for bit), in its view. Horizontal
 // tangents are taken in units of `unit = hv aspect` (hv the mean vertical tangent): with
 // `u = (px - x + 0.5) / w`, `x = ((u (L + R) / unit - L / unit) hv) aspect`, the two ratios
 // rounded on the CPU (`View::unit_scale`, `unit_offset`). A symmetric
@@ -1125,7 +1195,7 @@ fn view_of(px: vec2<u32>) -> u32 {
 // the same frustum (a view and its left half over half the pixels) take bit-identical rays.
 fn pixel_ray(px: vec2<u32>) -> Ray {
     let v = params.views[view_of(px)];
-    let u = (vec2<f32>(px - v.rect.xy) + 0.5) / vec2<f32>(v.rect.zw);
+    let u = (vec2<f32>(px - v.rect.xy) + 0.5 + v.jitter) / vec2<f32>(v.rect.zw);
     let hv = (v.tan_up + v.tan_down) * 0.5;
     let cv = (v.tan_up - v.tan_down) * 0.5;
     let nx = u.x * v.unit_scale - v.unit_offset;
@@ -1210,7 +1280,8 @@ fn shadow_normal_of(rec: HitRecord, d: vec3<f32>) -> vec3<f32> {
 }
 
 // `p` projected through previous view `v` to a fractional pixel of the target (pixel
-// centres at integer + 0.5); a negative x when it lies behind the view.
+// centres at integer + 0.5, the view's jitter ignored); a negative x when it lies behind the
+// view.
 fn project_prev(v: View, p: vec3<f32>) -> vec2<f32> {
     let dir = p - v.origin;
     let z = dot(dir, v.fwd);
@@ -1222,6 +1293,20 @@ fn project_prev(v: View, p: vec3<f32>) -> vec2<f32> {
     let u = (x + v.tan_left) / (v.tan_left + v.tan_right);
     let w = (v.tan_up - y) / (v.tan_up + v.tan_down);
     return vec2<f32>(v.rect.xy) + vec2<f32>(u, w) * vec2<f32>(v.rect.zw);
+}
+
+// The pixel of the previous frame a hit `p` of this frame's pixel reprojects to, as if both
+// frames' rays went through their pixels' centres: `p` projected through previous view `v`,
+// less this frame's jitter `j` (the offset of this pixel's ray from its centre). On a still
+// camera every pixel maps onto its own centre whatever the two jitters, so history is never
+// resampled across the moving sample lattice; with the jitter off it is `project_prev`. A
+// negative x when `p` lies behind the view.
+fn reproject_centred(v: View, j: vec2<f32>, p: vec3<f32>) -> vec2<f32> {
+    let q = project_prev(v, p);
+    if (q.x < 0.0) {
+        return q;
+    }
+    return q - j;
 }
 
 // A 32-bit integer hash (Wellons' lowbias32).

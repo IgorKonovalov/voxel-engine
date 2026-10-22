@@ -207,8 +207,9 @@ fn far_corner_voxel() -> World {
 /// The +x ray through the corner voxel crosses brick 0 from its -x face: the empty 4³ block,
 /// the empty 2³ block, the empty voxel (6, 7, 7) from the opaque line, then the hit, the only
 /// pool read. Its loads: 1 table entry, the 2 bits words of brick 0's group, 1 record entry,
-/// the 4 words of the slab (layers 4..8, rows 4..8) that the 4³, 2³ and voxel tests all read
-/// from, 1 pool word and 1 palette word: 10.
+/// the 4 words of the slab (layers 4..8, rows 4..8) of the slot's mask unit that the 4³, 2³
+/// and voxel tests all read from, and 1 pool word, the header's palette entry (a one-material
+/// brick has no plane): 9.
 #[test]
 fn a_hit_in_a_full_brick_reads_the_pool_once() {
     let Some((device, queue)) = device() else {
@@ -219,15 +220,16 @@ fn a_hit_in_a_full_brick_reads_the_pool_once() {
         cost_x(&device, &queue, &w, [0.0, 7.5, 7.5]),
         Cost {
             steps: 4,
-            loads: 1 + 2 + 1 + 4 + 1 + 1,
+            loads: 1 + 2 + 1 + 4 + 1,
             pool: 1
         }
     );
 }
 
 /// With the masks flag clear the same ray reads each of the brick's 8 voxels on its row
-/// through the pool, one step each; only the hit voxel's palette index is non-zero, so the
-/// palette is read once: 1 table, 2 bits, 1 entry, 8 pool, 1 palette.
+/// through the pool, one step each: the voxel's opaque bit as a pool word, and for the hit
+/// voxel, the only one set, its header's palette entry: 1 table, 2 bits, 1 entry, 8 + 1
+/// pool.
 #[test]
 fn without_masks_every_voxel_of_a_full_brick_is_read_through_the_pool() {
     let Some((device, queue)) = device() else {
@@ -243,7 +245,7 @@ fn without_masks_every_voxel_of_a_full_brick_is_read_through_the_pool() {
         Cost {
             steps: 8,
             loads: 1 + 2 + 1 + 8 + 1,
-            pool: 8
+            pool: 8 + 1
         }
     );
 }

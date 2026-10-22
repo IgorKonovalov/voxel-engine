@@ -123,3 +123,12 @@ Added 2026-10-20, from Plan 0017's review fix pass (its second Amendment of that
   above the 0.9 trigger, while about 9 % of its slots sat spare in plain pages. Rejecting
   the whole selection then hid every edit until the rule's decrease landed. The
   reservation, the page kinds and the rule stand.
+
+Added 2026-10-22, from Plan 0028 (ADR-0012's mirror-slot step):
+
+- **Page kinds became bins.** A page of 4096 64-byte units takes one of ten bins (2 to 36
+  units a slot) when first issued and returns to the free pages when its last slot leaves, the
+  two kinds generalised. The reservation, the nearest-first partial sync, the deferral rules
+  and the pressure rule stand, with the slot term read on units. At the streamed default's
+  full residency the bins hold 0.10 % of live units spare, and the default no longer reaches
+  the rule's trigger.

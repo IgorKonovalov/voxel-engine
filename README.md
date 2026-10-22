@@ -180,6 +180,7 @@ shown, `F1`, the autopilot's flight).
 | `--logic native\|wasm[=PATH]` | Run the dig logic natively (default) or as a component; `wasm` needs `--features wasm` |
 | `--vault` | Generate a 16-voxel room with an indestructible shell 10 m along +x from the spawn |
 | `--headless` | Run the same frames on an offscreen target, with no window |
+| `--adapter SUBSTRING` | With `--headless`, use the first GPU adapter whose name contains the substring (for example `AMD` for the dev box's iGPU), the default adapter when none does |
 | `--frames N` | Exit after `N` frames, printing the `F1` readings over the last ones |
 | `--bench N` | Send `N` `B` benchmark inputs on the first frame |
 | `--autopilot` | Dig, fly 300 m out and back through the streamed cave, print streaming readings |
@@ -207,6 +208,9 @@ shown, `F1`, the autopilot's flight).
 | `--sampler list\|reuse` | The emissive sampler: candidates alone, or with last frame's reservoirs (default reuse) |
 | `--history edits\|gradient` | What kills temporal history: edit boxes, or edit boxes and A-SVGF's gradient (default edits) |
 | `--lighting full\|half` | The lighting passes' resolution (default half) |
+| `--internal-scale 1\|1.5\|2` | The output size over the internal size on each edge; above 1 the upscaler fills the output (default 1: no upscaler). `--internal-scale 1.5 --jitter on` is the performance option: 720p for 1080p, about half the frame's GPU time |
+| `--jitter on\|off` | Each frame's sub-pixel ray jitter, which the upscaler accumulates (default off); on, the upscaler runs at any scale |
+| `--sharpen S` | The upscaler's RCAS sharpening, 0 to 1 (default 0.5, 0 off) |
 | `--emissive-history N` | Frames static emissive light accumulates over at least, 1 to 4096 (default 32); the headlamp's part keeps a short history |
 | `--filter on\|off` | The a-trous filter; off shows the light pass's raw irradiance (default on) |
 | `--light-radius N` | Chunks around the camera whose emitters light the frame (default 4) |

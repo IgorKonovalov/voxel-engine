@@ -519,6 +519,32 @@ Outcome records at the close; the decision it records is unchanged.
   - `cargo test --doc`: 7 passed, 1 ignored.
   - clippy `-D warnings`, `fmt --check`, `cargo deny check`, `check-doc-links`,
     `check-comment-hygiene` and `check-index-rows`: exit 0.
+- Merge of main (99e7bee, Plans 0028 and 0030) into plan-0029:
+  - Conflicts in `marcher.rs`, `lib.rs`, `hud.rs`, `main.rs`, `tests/golden.rs` and `nfr.md`;
+    both sides are kept.
+  - `FRAME_PASSES` has 10 passes: hit, gradient, light, temporal, atrous, probes, gather,
+    composite, upscale, sharpen.
+  - `limits_for` requests 11 storage buffers: 4 shards, 5 others (0028 dropped the mask
+    buffer) and the probe passes' 2.
+  - `Targets::bytes` keeps 0030's output-size target and histories plus the gather's 8 B per
+    lighting pixel.
+  - `History` holds 0030's lamp ring beside the probe light key.
+  - The HUD keeps the live-probe lighting row and 0030's upscale row.
+- After the merge (exclusive perf lock):
+  - `cargo nextest run --workspace --test-threads 2 --no-fail-fast` (load 4.82): 613 passed,
+    8 skipped, exit 0.
+  - `cargo test --doc`: 7 passed, 1 ignored.
+  - clippy `-D warnings`, fmt, deny, `check-doc-links` (301 links), `check-comment-hygiene`
+    and `check-index-rows`: exit 0.
+  - Lamp-off test: first frame under 10 % is 14 (lavapipe, load 5.63).
+- After the merge, `--lamp-toggle 64` at the streamed spawn, one run per adapter. Both runs
+  are loaded, so indicative only.
+  - RTX 3080 Laptop (load 7.29): outside a window 1.725 ms, inside 2.779 ms. The quiet
+    reading before the merge was 1.515 and 2.403 ms.
+  - Radeon Cezanne RADV (load 8.14): outside 10.556 ms, inside 18.442 ms. Before the merge,
+    9.298 and 16.476 ms.
+  - The dev-box outside-window figure is over the 1.7 ms bar at that load. The load stayed
+    over 2 (13.9 after 30 minutes), so a quiet retake is still owed.
 - Phase 6: the window compares, between encodes with history, `Lighting::lamp`, the
   `LightParams` the last `params_for` placed (`masks` and `skips` normalized), the shadow walk,
   `Lighting::candidates` and `emission_changed_at`. It counts `Lighting::slices()` encoded frames
