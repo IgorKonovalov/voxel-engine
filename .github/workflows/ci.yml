@@ -42,6 +42,20 @@ jobs:
         shell: bash
         run: scripts/build-guests.sh
       - run: cargo build --workspace
+      # Pipeline creation per compute pass (docs/nfr.md section 7). Windows runs DX12 on WARP
+      # with FXC forced through WGPU_DX12_COMPILER; the fly-through's size is the debug
+      # binary the build step above produced.
+      - name: Pipeline times on DX12 under FXC
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          WGPU_DX12_COMPILER: fxc
+        run: |
+          cargo run -p vxe-render --release --example pipeline_times
+          echo "target/debug/flythrough.exe: $(wc -c < target/debug/flythrough.exe) bytes"
+      - name: Pipeline times on lavapipe
+        if: runner.os == 'Linux'
+        run: cargo run -p vxe-render --release --example pipeline_times
       # The full tier (.config/nextest.toml): every test, quick, gpu and slow alike.
       # On Linux a missing lavapipe fails the golden tests instead of skipping them.
       - run: cargo nextest run --workspace --profile full

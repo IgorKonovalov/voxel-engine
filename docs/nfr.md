@@ -1104,6 +1104,20 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   Before the tiers every phase gate was a full run under the lock, 4 to 7 minutes in the
   lanes' logs at 87e4b67. The CI Linux job time against run 39808788735's 981 s is owed by the
   first CI run after the merge into main (the Phase 3 amendment).
+- Pipeline creation, one compute pipeline per pass the renderer builds (attrib, the march hit
+  pass and the nine march-prefixed passes), read by
+  `cargo run -p vxe-render --release --example pipeline_times` (cold is the first creation on
+  a fresh device, min the fastest of three). No budget; part of time to first frame.
+  **Reading (Plan 0046 Phase 1, on ce62f0c, Linux on Vulkan, driver shader caches off with
+  `MESA_SHADER_CACHE_DISABLE=true` and `__GL_SHADER_DISK_CACHE=0`, adapter by
+  `WGPU_ADAPTER_NAME`, exclusive perf lock, 1-minute load 10.4 to 11.1, so loaded):** sum of
+  the eleven cold creations 1396.1 ms on the RTX 3080 Laptop GPU (light 522.6, march 312.3,
+  gradient 265.1, attrib 75.3), 458.4 ms on the Radeon iGPU on RADV (light 152.7, march 90.9,
+  gradient 70.8, attrib 54.2), 299.0 ms on lavapipe (light 96.3, march 53.9, attrib 32.4).
+  Microsoft's Linux `dxc` 1.9.2609 on naga's Shader Model 6.0 HLSL of the same passes,
+  `-HV 2018 -Ges` as wgpu passes them, wall time per process, at load 8.95: attrib 437 ms,
+  march 283, light 517, gradient 390, upscale 111, the other six 46 to 81. Windows DX12 on WARP
+  under FXC and under static DXC: read on the `windows-latest` CI arm (Plan 0046).
 
 ## 8. Collision and coarse grids
 

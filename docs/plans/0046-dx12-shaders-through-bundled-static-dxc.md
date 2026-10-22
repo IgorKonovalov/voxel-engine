@@ -1,6 +1,6 @@
 # 0046: DX12 shaders through wgpu's bundled static DXC: pipeline times measured per pass under FXC and DXC, the feature on for every consumer, the shutdown workaround reverted
 
-> **Status:** approved (2026-10-22)
+> **Status:** in-progress
 > **Created:** 2026-10-22
 > **Milestone:** none; platform health (the Windows arm of ADR-0001's Linux + Windows stack)
 > **Related ADRs:** [ADR-0035](../adrs/0035-dx12-shaders-compile-with-wgpus-bundled-static-dxc.md)
@@ -267,9 +267,47 @@ upscale     1778    ...        ...
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: a per-pass pipeline-time table | dev | not started | |
+| 1: a per-pass pipeline-time table | dev | done | committed with this row |
 | 2: `static-dxc` on, in the deny gate, named at startup | dev | not started | |
 | 3: the workaround reverted and the Windows bars set | dev | not started | |
+
+**Phase 1.** `crates/vxe-render/examples/pipeline_times.rs`; `UPSCALE_WGSL` and `SHARPEN_WGSL`
+are re-exported from `lib.rs` (`pub use marcher::{...}`), `marcher.rs` unchanged. The table has
+eleven rows, not eight: gradient, downsample and variance are compute pipelines `Frame` also
+builds. The timing fn carries `#[allow(clippy::disallowed_methods, reason = ...)]`, since
+`clippy.toml`'s clock ban is workspace-wide. Readings on ce62f0c plus this phase's tree,
+release, Vulkan, `MESA_SHADER_CACHE_DISABLE=true __GL_SHADER_DISK_CACHE=0`, adapter by
+`WGPU_ADAPTER_NAME`, exclusive perf lock, 1-minute load 10.4 to 11.1 (loaded). Cold / min ms:
+
+| pass | lines | lavapipe | RTX 3080 Laptop | Radeon iGPU (RADV) |
+|---|---|---|---|---|
+| attrib | 415 | 32.4 / 29.2 | 75.3 / 68.3 | 54.2 / 49.7 |
+| march | 1383 | 53.9 / 48.6 | 312.3 / 305.3 | 90.9 / 86.0 |
+| light | 1788 | 96.3 / 93.0 | 522.6 / 522.6 | 152.7 / 149.1 |
+| temporal | 1586 | 18.6 / 18.1 | 42.0 / 39.5 | 21.2 / 20.5 |
+| gradient | 1868 | 41.0 / 40.3 | 265.1 / 262.5 | 70.8 / 68.4 |
+| downsample | 1555 | 3.9 / 3.6 | 9.7 / 6.9 | 4.3 / 4.0 |
+| variance | 1552 | 8.9 / 8.9 | 18.8 / 14.3 | 10.5 / 10.4 |
+| atrous | 1552 | 11.2 / 11.2 | 25.2 / 22.7 | 13.7 / 13.7 |
+| upscale | 1779 | 18.9 / 18.3 | 76.7 / 76.2 | 23.1 / 22.7 |
+| sharpen | 1469 | 3.7 / 3.6 | 10.8 / 8.8 | 4.4 / 4.2 |
+| composite | 1555 | 10.3 / 10.3 | 37.6 / 35.5 | 12.6 / 12.4 |
+| total | | 299.0 / 285.0 | 1396.1 / 1362.5 | 458.4 / 441.0 |
+
+`--hlsl live/hlsl` wrote `<pass>.sm51.hlsl` and `<pass>.sm60.hlsl` for all eleven passes plus
+`entries.txt`. Microsoft's Linux `dxc` (release v1.9.2609, `libdxcompiler.so` 1.9.2609.5),
+`-T cs_6_0 -E <entry> -HV 2018 -no-warnings -Ges`, wall time per process including its start,
+load 8.95, every exit 0: attrib 437 ms, march 283, light 517, temporal 71, gradient 390,
+downsample 46, variance 49, atrous 81, upscale 111, sharpen 59, composite 72. FXC was not run:
+no Microsoft `fxc.exe` or `d3dcompiler_47.dll` was obtainable here (the
+`Microsoft.Windows.SDK.BuildTools` NuGet packages 10.0.22621.756, 10.0.26100.1742 and
+10.0.28000.2705 carry neither), so the Windows CI table is the FXC reading. CI gains
+`Pipeline times on DX12 under FXC` (Windows only, `WGPU_DX12_COMPILER=fxc`, then the byte size
+of `target/debug/flythrough.exe`) and `Pipeline times on lavapipe` (Linux only); the Windows
+FXC table is owed by the first CI run on main after the merge. Gate: build, quick 470 passed
+(3 skipped), doctests, clippy, fmt, test tiers, comment hygiene, doc links. The gpu tier was not
+run at this commit: a live-session runner was up (lane rule 6); it is owed before the close.
+
 
 ### Notes
 

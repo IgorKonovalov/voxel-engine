@@ -46,6 +46,7 @@ pub const ATROUS_WGSL: &str = include_str!("shaders/atrous.wgsl");
 pub const COMPOSITE_WGSL: &str = include_str!("shaders/composite.wgsl");
 /// The source of the contour-attribute pass, for headless validation.
 pub const ATTRIB_WGSL: &str = include_str!("shaders/attrib.wgsl");
+pub use marcher::{SHARPEN_WGSL, UPSCALE_WGSL};
 
 /// Limits to request from `adapter`: the defaults, with the storage-binding and buffer-size
 /// limits raised toward what a brick pool of `pool_bytes` needs in one shard, capped at what
