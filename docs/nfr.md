@@ -308,6 +308,35 @@ Against the lines: lighting (light + temporal) 2.0 and 3.0 ms at half resolution
 4.7 ms at full over it. The quiet-box readings are in "Quiet-box readings at the lighting
 defaults" above.
 
+**The probe volume's two passes (dev reference, Plan 0029 Phase 4, the release binary of
+83ae737's tree, 2026-10-22, exclusive perf lock; 1920 x 1080, the defaults with indirect light
+on (16-voxel spacing, 4096 probes x 64 rays a frame), lamp on, ore emissive; median of the last
+30 frames, three runs; the streamed spawn `--frames 3000`, the level `--level --frames 300`;
+1-minute load at each run's start in brackets). The slow adapter is selected with
+`VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json`, which leaves the Vulkan loader only
+RADV:**
+
+| adapter, spawn, lighting | probes (update) ms | gather ms | probes + gather ms | light + temporal + probes + gather ms |
+|---|---|---|---|---|
+| RTX 3080 Laptop, streamed, half [6.2, 4.2, 2.8] | 1.356, 1.390, 1.392 | 0.269, 0.271, 0.271 | 1.625, 1.661, 1.663 | 4.417, 4.454, 4.483 |
+| RTX 3080 Laptop, streamed, full [2.3, 1.7, 2.1] | 1.607, 1.589, 1.568 | 1.154, 1.141, 1.129 | 2.761, 2.730, 2.697 | 15.064, 14.952, 14.891 |
+| RTX 3080 Laptop, level, half [1.1, 2.4, 2.3] | 1.350, 1.339, 1.351 | 0.239, 0.234, 0.237 | 1.589, 1.573, 1.588 | 3.711, 3.661, 3.698 |
+| RTX 3080 Laptop, level, full [2.1, 2.0, 1.8] | 1.599, 1.592, 1.606 | 1.052, 1.053, 1.066 | 2.651, 2.645, 2.672 | 12.104, 12.095, 12.211 |
+| Radeon (Cezanne, RADV), streamed, half [1.6, 0.3, 0.7] | 7.832, 7.764, 7.760 | 1.546, 1.546, 1.546 | 9.378, 9.310, 9.306 | 31.188, 31.126, 31.109 |
+| Radeon (Cezanne, RADV), level, half [0.3, 0.4, 0.4] | 7.081, 7.080, 7.088 | 1.341, 1.341, 1.342 | 8.422, 8.421, 8.430 | 24.393, 24.398, 24.413 |
+| Radeon (Cezanne, RADV), streamed, full [0.4, 0.1, 0.1] | 7.746, 7.781, 7.747 | 6.015, 6.016, 6.015 | 13.761, 13.797, 13.762 | 99.649, 99.749, 99.613 |
+
+On the dev box the two passes read 1.63 to 1.66 ms at the streamed spawn, over the plan's
+1.5 ms bar; the lighting line (light, temporal and the two passes) holds under 6.0 ms at half
+resolution (4.4 to 4.5 ms streamed) and misses it at full (14.9 to 15.1 ms, of which light
+plus temporal is 12.2 to 12.3). Readings taken during tuning on the same box, 1000 frames,
+1-minute load 8 to 14: the update pass read 1.525 ms before the blend skipped inside probes'
+texels and the visibility rays under 0.83 in cosine (1.274 after); without the probe rays'
+emissive sample it read 0.989 ms and with the blend alone 0.367 ms, so the emissive sample
+and its shadow ray are about a third of the pass. Over the autopilot's flight (`--autopilot
+--headless --seed 1 --render 1920x1080`, 4429 frames, load 1.57): update p50 1.104, p99
+1.370 ms; gather p50 0.107, p99 0.294 ms.
+
 **Denoise: the temporal pass and four a-trous iterations (dev reference, Plan 0024 Phase 6,
 RTX 3080 Laptop GPU, exclusive perf lock, 1-minute load 4.2 to 4.6; the default look with the
 ore emissive, median of the last 30 frames, 1920 x 1080 full-resolution lighting):** the
@@ -397,6 +426,12 @@ the emission scale 256 KiB. Per pixel at full resolution: the hit buffer twice (
 translucent layers 8 B, the irradiance 8 B, the accumulation and moments twice (32 B), the
 filter's pair 16 B, the reservoirs twice (32 B), the output 4 B, and the gradient strata 8 B
 per 9 pixels. The plan's projection was about 276 MB.
+
+**The probe volume (Plan 0029 Phase 4, 83ae737's tree, the same autopilot command):**
+`Frame::frame_bytes` reads 254 216 224 B at 1080p with half-resolution lighting, 58 837 024 B
+above Plan 0024's 195 379 200: the atlases 50 331 648 B, the state 131 072 B, the update list,
+ray buffer and uniform 4 227 104 B (the volume, 54 689 824 B, printed as `autopilot: probe
+volume`), and the gather's lighting-grid target 4 147 200 B (8 B per lighting pixel).
 
 **Readings (dev reference, 2026-10-16, Plan 0001 Phase 4 commit, `flythrough` cave seed 1,
 `cargo run --release -p flythrough --example world_budget`):**

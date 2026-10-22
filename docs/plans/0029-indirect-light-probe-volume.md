@@ -270,8 +270,8 @@ Outcome records at the close; the decision it records is unchanged.
 | 1: The volume, the gather, and a constant probe | dev | done: `ProbeVolume` (atlases and state in one storage buffer), gather pass, composite term, `Lighting::indirect`, `--indirect`; `tests/indirect.rs` 2 tests | 6dfd37f |
 | 2: The update pass and the furnace | dev | done: trace and blend dispatches, Chebyshev weight, `light.wgsl` split into `draw_candidates`/`resolve_emissive`/`emissive_estimate`; furnace floor 2.975 after 256 frames (-5.3 % of pi), centre probe texels 2.856 to 2.981; dark box 0.36 % of the lit; 63 solid probes flagged inside, gather unchanged with their texels at 1000 (lavapipe) | f9da073 |
 | 3: Scrolling and edits | dev | stopped at a done-when: origin follows the camera (tagged slots), `Frame::invalidate` adds touched probes to the next update; scroll test passes (12 288 stayed byte for byte, 20 480 entered at age 0); the carve bar (20 % within 32 frames) is not reached, test committed `#[ignore]` pending the owner | 545390f |
-| 3 (after the 518b522 amendment) | dev | done: carve test on the amended bar: dark floor 0.01069 before, 0.12354 at frame 32 = 71.5 % of settled 0.17273 (frame 256) and 11.6x the pre-carve; after the fill, 2.78 % of the lit box's at frame 64, peaking at 3.23 % at frame 26 (lavapipe) | committed with this row |
-| 4: The cave, the switches and the readings | dev | not started | |
+| 3 (after the 518b522 amendment) | dev | done: carve test on the amended bar: dark floor 0.01069 before, 0.12354 at frame 32 = 71.5 % of settled 0.17273 (frame 256) and 11.6x the pre-carve; after the fill, 2.78 % of the lit box's at frame 64, peaking at 3.23 % at frame 26 (lavapipe) | d90e9ab |
+| 4: The cave, the switches and the readings | dev | done with three done-whens unmet (Notes): `F8`, `--probe-spacing`, HUD rows, autopilot bytes line, `indirect.png` blessed (100 % of 57 600 hit pixels differ from indirect off by more than 8/255); readings in `nfr.md` §2 and §3 on both adapters | 83ae737 (code), readings committed with this row |
 | 5: The owner's windowed check | human | not started | |
 
 ### Notes
@@ -316,6 +316,30 @@ Outcome records at the close; the decision it records is unchanged.
   `a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again` was committed
   ignored at 545390f; the owner chose the refresh-speed bar (518b522) and the test carries it
   un-ignored. The frame-32 margin over 70 % is 1.5 points.
+- Phase 4 done-when unmet: update plus gather at the streamed spawn on the dev box read 1.625,
+  1.661, 1.663 ms (release, 83ae737, RTX 3080 Laptop, 1080p, half lighting, loads 6.2/4.2/2.8),
+  over 1.5 ms; the update pass is 1.36 to 1.39 of it.
+- Phase 4 done-when unmet: the §2 lighting line at full resolution reads 14.89 to 15.06 ms
+  streamed, over 6.0; light plus temporal alone are 12.2 to 12.3 ms there (Plan 0024's full
+  tier already missed the line). At half it reads 4.42 to 4.48 ms.
+- Phase 4 done-when unmet: `frame_bytes` rises by 58 837 024 B, 8 374 304 B over the atlases
+  and state (50 462 720 B): the update list, ray buffer and uniform (4 227 104 B) and the
+  gather's lighting-grid target (4 147 200 B at 1080p half).
+- Phase 4: the slow adapter (AMD Radeon, Cezanne, RADV) is selected with
+  `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json`; `--adapter` is not on this
+  branch. Readings there: update 7.76 to 7.83 ms, gather 1.55 ms streamed at half.
+- Phase 4 outside the files: `Frame::set_probe_spacing` (`marcher.rs`),
+  `ProbeVolume::pinned_origin` (`probes.rs`), and in `probe_update.wgsl` the blend skips an
+  inside probe's texels and the visibility rays under 0.83 in cosine (1.525 to 1.274 ms in a
+  tuning run); `tests/hud_golden.rs`'s `mode_banner.png` is reblessed for the new
+  `indirect` word in the banner.
+- Phase 4, the furnace's open item: the light pass's direct estimate at the furnace floor
+  centre reads 3.0814 over 248 frames (-1.92 % of pi); with the probe rays' emissive estimate
+  at 2 candidates instead of 8 (a tuning run, reverted) the furnace floor fell from -5.3 % to
+  -12.2 % of pi, so the residual follows the direct estimator's bias at the probe rays' hits
+  (its firefly clamp and few-candidate resampling), not the probes' blend or gather.
+- Phase 4: the vein golden's vein emits 8 times the fly-through's ore over the partition's
+  whole -x face; a 16 x 16 patch at 4 times read 5/255 at the centre, under the 8/255 bar.
 - Phase 3: after the fill the dark/lit ratio rises from 1.95 % (frame 1) to 3.23 % (frame 26)
   before falling: the dark box's probe the fill box does not touch (x 64.5) still holds the
   opened light and refreshes only in its slice.
