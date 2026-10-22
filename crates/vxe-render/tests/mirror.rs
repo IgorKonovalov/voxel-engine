@@ -3454,3 +3454,98 @@ fn plane_fits_agree_where_the_geometry_is_simple() {
         }
     }
 }
+
+/// [`edge_and_stair`] with a second one-voxel stair on top of the block, in the far chunk
+/// `(1, 1, 0)`: `z < 41` for `x < 96` and `z < 42` from `x = 96`, over `y` in `[64, 128)`.
+fn far_stair() -> World {
+    let world = edge_and_stair();
+    let f = |v: [i64; 3]| Fixed3(v.map(|x| x * FIXED_ONE));
+    for (min, max) in [([64, 64, 40], [96, 128, 41]), ([96, 64, 40], [128, 128, 42])] {
+        world
+            .apply(&EditOp::box_(f(min), f(max), Mode::Fill(1)))
+            .expect("resident");
+    }
+    world
+}
+
+/// A fit change re-queues every full chunk through the attribute pass under its cap: until a
+/// brick's turn its voxels keep the previous fit's attribute (never "no plane") and the mirror
+/// reports `refitting`; once it drains, every probed voxel equals a fresh fill's under the new
+/// fit, among them a stair voxel of the far chunk whose attribute the change moved. Neither
+/// the refit nor a material rewrite moves the mirror's bytes, and the rewrite reaches the
+/// material rows.
+#[test]
+fn a_fit_change_refits_every_brick_under_the_cap() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = far_stair();
+    let [old, new] = [fits()[0], fits()[3]];
+    let fresh = fitted(&device, &queue, &world, new);
+    let cap = 64;
+    let mut gpu = GpuWorld::with_surface_attrs(
+        &device,
+        MirrorConfig {
+            attr_cap: cap,
+            ..small(Window::Fixed(world.extent()))
+        },
+    );
+    assert_eq!(gpu.surface_fit(), old);
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    while update_attrs(&device, &queue, &mut gpu) > 0 {}
+    assert!(!gpu.refitting());
+    let bytes = (gpu.mirror_bytes(), gpu.allocated_bytes());
+    // The far stair's lower and upper voxels, the near stair's, the edge column, the top face.
+    let probes = [
+        [95, 90, 40],
+        [96, 90, 41],
+        [15, 16, 2],
+        [63, 63, 20],
+        [100, 100, 41],
+    ];
+    let at = |gpu: &GpuWorld, v| attr_at(&device, &queue, gpu, v);
+    let before: Vec<_> = probes.iter().map(|&v| at(&gpu, v)).collect();
+    let want: Vec<_> = probes.iter().map(|&v| at(&fresh, v)).collect();
+    for (v, (b, w)) in probes.iter().zip(before.iter().zip(&want)) {
+        println!("{v:?}: {} {b:?}, {} {w:?}", old.name(), new.name());
+        assert!(b.is_some() && w.is_some(), "{v:?} has a plane");
+    }
+    assert_ne!(before[0], want[0], "the far stair's lower voxel moves");
+
+    gpu.set_surface_fit(new);
+    assert!(gpu.refitting());
+    let mut calls = 0;
+    while gpu.refitting() {
+        let n = update_attrs(&device, &queue, &mut gpu);
+        assert!(n > 0 && n <= cap, "call {calls}: {n} items");
+        calls += 1;
+        assert!(calls < 100_000, "the refit drains");
+        let now: Vec<_> = probes.iter().map(|&v| at(&gpu, v)).collect();
+        for (i, a) in now.iter().enumerate() {
+            assert!(
+                *a == before[i] || *a == want[i],
+                "call {calls}: {:?} reads {a:?}",
+                probes[i]
+            );
+        }
+    }
+    println!("refit of {} bricks in {calls} calls under a cap of {cap}", world.stats().full_bricks);
+    assert!(calls > 1, "the refit spreads over calls");
+    for (i, &v) in probes.iter().enumerate() {
+        assert_eq!(at(&gpu, v), want[i], "{v:?} after the drain");
+    }
+    assert_eq!((gpu.mirror_bytes(), gpu.allocated_bytes()), bytes);
+
+    let mut t = MaterialTable::new();
+    for row in world.materials().rows().iter().skip(1) {
+        let mut row = row.clone();
+        row.detail = [2.0, 0.3];
+        row.detail_fine = 0.5;
+        t.push(row);
+    }
+    gpu.rewrite_materials(&t, &queue);
+    let rows = readback::read_buffer(&device, &queue, gpu.materials(), 0, 2 * 64);
+    let rock: &[f32] = bytemuck::cast_slice(&rows[64..]);
+    assert_eq!([rock[8], rock[9], rock[11]], [2.0, 0.3, 0.5]);
+    assert_eq!((gpu.mirror_bytes(), gpu.allocated_bytes()), bytes);
+}

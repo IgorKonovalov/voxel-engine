@@ -581,6 +581,36 @@ Lavapipe, 320 x 180, 64 static frames from a fresh `Frame` per reading, headlamp
 | rock 4, 0.3 | 0.19174 | 0.24121 | 13.60 | 0.843 | 7.38 | 32 | 6.80 | met |
 | rock 4, 0.3 + C5 | 0.21315 | 0.26817 | 13.60 | 0.917 | 7.38 | 32 | 6.80 | met |
 
+### Resume notes (2026-10-22, delete when Phase 3 lands)
+
+- Done: Phase 2 at 0589ec7 (C5 bar 98.4 %, misses printed: 0.896 % unlit in C5, 0.639 % clamp).
+  Phase 3 wip in the next commit: `GpuWorld::set_surface_fit` now re-queues every full chunk
+  (nearest the focus first) through the carry-over queue, `GpuWorld::refitting()` reports
+  until those drain, `GpuWorld::rewrite_materials(table, queue)` rewrites the rows (held for
+  the first sync if called before it); `mirror.rs::a_fit_change_refits_every_brick_under_the_cap`
+  (far stair in chunk (1, 1, 0), cap 64) builds but has NOT been run (it was waiting on the
+  perf lock at the checkpoint). `cargo check -p vxe-render` clean.
+- Left in Phase 3: in `apps/flythrough/src/lib.rs` a `LookPreset` (name, normal mode,
+  `SurfaceTuning`, rock pair, fine weight) with `face`, `contour`, `contour-sharp` (weighted27
+  + C5, rock 4, 0.1, fine 0: C1 has the best S_mid of the fits, 0.24356) and `contour-grain`
+  (uniform27 + C5, rock 2, 0.3, fine 0.5: the highest S_fine rows of the sweep); in `main.rs`
+  `Args::look: Option<LookPreset>`, `--look` parsing preset names (unknown lists them),
+  part flags for the Phase 2 readings (`--plane-fit`, `--plane-offset`, `--detail-fine`,
+  `--detail-after`), the startup/look line with the parts, `N` cycling the presets (face,
+  trilinear8, gradient27 without attributes, as today), applying a preset's fit and material
+  rows in the frame before `set_look`, `set_surface_fit` at `new_mirror`; in `hud.rs` the
+  banner gains the look text and `refitting` (shown while refitting), with a test in the
+  style of the banner test; sharpness goldens `look_wall_contour_sharp.png` and
+  `look_wall_contour_grain.png`, the side-by-side image gaining both (check the combined
+  grain preset's metrics there); README preset names; then readings (`live/timings.sh` runs
+  the level and autopilot per look on both adapters; the level's output carries the initial
+  fill and the mirror bytes line) for Phase 2 (fits' initial fill, C4/C5 light + composite,
+  NVIDIA, recorded under Phase 2 readings) and Phase 3 (three looks, both adapters, nfr.md
+  section 2). Gate: quick + gpu tiers.
+- Gotchas: the quick tier's `replay::a_stamp_and_a_collapse_replay_from_the_save` can time out
+  at 30 s under load (passes alone in 17.9 s). The perf lock is busy with other lanes' full
+  runs; queue waits are long.
+
 ### Notes
 
 - Phase 1: the edge scene's edge is the line `x = y = 63` (block `[63, 96)`), not 64: a face
