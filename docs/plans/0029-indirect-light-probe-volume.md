@@ -288,6 +288,47 @@ between phases. The architect reviews once at the end, in a fresh session.
 - **Files touched:** this plan's log.
 - **Done when:** the owner has recorded a verdict on the lingering and on the noise in the
   log; a "still too slow" names the fallback (Phase 6's faster refresh) as an amendment.
+- *Amended 2026-10-22 (owner, at the Phase 7 check):* the owner's verdict, live session 8,
+  run 3: "there is still some delay and it feels very unnatural really, in real situation I
+  would be blinded at first seconds when high light is turned off, and gradually my eyes would
+  be accustomed to darkness and I would see normally again". The owner chose the fallback
+  (Phase 8). The eye adaptation the owner describes is exposure, not light transport, and gets
+  its own plan.
+
+### Phase 8: The faster refresh inside the light-change window (amended 2026-10-22, owner)
+- **Owner skill:** dev
+- **What:** while a light-change window is open, the update pass refreshes one probe in 4
+  per frame instead of the setting's share, and every update inside the window blends at
+  hysteresis 0 (not only the first), so a probe sheds the old light at the rate its stale
+  neighbours do: each cycle keeps about the albedo-weighted half of the bounce from the
+  previous cycle, `0.5^k` after `k` visits in a uniform room of albedo 0.5. The window is
+  four visits per probe: 16 frames at one in 4. After it, Phase 6's rule (age restart, 0.5
+  for 8 updates) smooths the noise back down. The share and the window length are constants
+  beside Phase 6's, named and documented; `Lighting::probe_slices` still sets the share
+  outside the window.
+- **Files touched:** `crates/vxe-render/src/marcher.rs`, `crates/vxe-render/src/probes.rs`,
+  `crates/vxe-render/src/shaders/probe_update.wgsl`, `apps/flythrough/tests/indirect.rs`,
+  `docs/nfr.md` §2.
+- **Done when:**
+  - **Lamp off.** Phase 6's lamp-off box: the floor-centre indirect is under 10 % of `F0`
+    at every frame from frame 24 after the switch on (`0.5^4 = 0.0625` of the brightest probe
+    texel after the window's 16 frames, a floor value down to about two thirds of that
+    texel, plus one cycle of margin at one in 8 after the window); the test prints the first
+    frame under 10 % (expected near 16), and the log records Phase 6's 58 beside it.
+  - **Emission step.** The furnace box with the scale stepped to 0: under 10 % of `F0` from
+    frame 24 on; stepped back to 1: at least 90 % of `F0` by frame 64.
+  - **No signal, no change** and **the bars hold**, as in Phase 6.
+  - **The cost is the window's only.** At the streamed spawn on the dev box, update plus
+    gather outside a window still reads at most 1.7 ms (one run); inside a window (the lamp
+    toggled every 64 frames for the run) the frames inside it read at most 1.7 + 1.5 ms. The
+    slow adapter is read the same way, labelled, with no bar.
+
+### Phase 9: The owner's re-check of the faster fade
+- **Owner skill:** human
+- **What:** as Phase 7: the level, a dark room, `F7` toggled a few times with indirect on, the
+  ore pulse beside a vein; a verdict on the fade and on the noise during the window.
+- **Files touched:** this plan's log.
+- **Done when:** the owner has recorded the verdict in the log.
 
 ## Data shapes
 
@@ -372,7 +413,9 @@ Outcome records at the close; the decision it records is unchanged.
 | 4: The cave, the switches and the readings | dev | done (after the c444a61 amendment): `F8`, `--probe-spacing`, HUD rows, autopilot bytes line, `indirect.png` blessed (100 % of 57 600 hit pixels differ from indirect off by more than 8/255); `Lighting::probe_rays`/`probe_slices`, `--probe-rays`, `--probe-slices`; update plus gather 1.625 to 1.663 ms, lighting line at half 4.42 to 4.48 ms, `frame_bytes` +58 837 024 B; readings in `nfr.md` §2 and §3 on both adapters | 83ae737, 68b3bdb, db7b057, 979dd35 |
 | 5: The owner's windowed check | human | done (owner, 2026-10-22, live session 7, runs 6 to 9, about 2530x1378, RTX 3080 Laptop; architect's record): bounce light wanted, 1.6 m spacing kept, the lingering light after the lamp goes off to be fixed now (Phases 6 and 7); verdicts in Notes | |
 | 6: A light change drops the probe history | dev | done: light-change window (lamp, its parameters, shadow walk, candidates, emission scale) of one slice cycle, settled probes at hysteresis 0, ages restart at 1; lamp off under 10 % of F0 from frame 58 (1418 with the window off), emission 0 from frame 50, back to 94.0 % at frame 64; update plus gather 1.490 ms streamed (dev box); `frame_bytes` 254 216 224 B unchanged | b3f7cb1, committed with this row |
-| 7: The owner's re-check of the lingering light | human | not started | |
+| 7: The owner's re-check of the lingering light | human | done (architect's record of the owner's verdict, live session 8 run 3, 2026-10-22: still some delay, "feels very unnatural"; the fallback chosen) | |
+| 8: The faster refresh inside the light-change window | dev | not started | |
+| 9: The owner's re-check of the faster fade | human | not started | |
 
 ### Notes
 
