@@ -289,6 +289,26 @@ is named.
      more than 1/255.
   5. Readings, no bar: ES, GE and Plan 0030 Phase 4's rim gradient for N, R, B, ours and FSR, at
      sharpening 0 and the default, both distances, still and panning.
+- **Amended 2026-10-22 (owner): investigate the motion softness before the bars are re-read.**
+  The first reading missed bar 2 at both scales (panning ES 1.653 px against ours 1.436 at
+  scale 1, 1.792 against 1.780 at 1.5, GE lower at both), and the far pan at 1.5 collapsed to
+  GE 0.00688 against ours 0.04773. That collapse reads as a port defect, not a limit of the
+  algorithm. Before Phase 5:
+  1. **Find the cause.** Compare the port pass by pass against `ffx_fsr2_*.h` at v2.2.1 for
+     the panning rig: the motion vector's sign, units and the jitter it carries; the
+     reprojection's sample position and its Lanczos or bilinear history fetch; the lock's
+     lifetime and its reprojection; the luma-stability and the new-sample weight in
+     accumulate; the depth-clip dilation. A per-pass readback on a 64-frame pan (history
+     colour, lock, disocclusion, the accumulate weight) shows where the detail goes. The log
+     names the cause with a before/after reading.
+  2. **Re-read bars 1 to 4** after any fix, in one run, as written.
+  3. **If no defect is found**, or the fix still misses bar 2, stop and report the readings
+     with options; the owner decides between the window (Phases 5 to 7) and closing.
+  The architect settles two secondary questions with the post-investigation readings: whether
+  bar 3's supersampled reference is averaged in linear light (FSR resolves in linear light;
+  the test prints both), and whether bar 4's neighbourhood bound holds for AMD's unclamped
+  RCAS or RCAS takes `sharpen.wgsl`'s clamp. Until then, both stay as written, and their
+  readings are printed.
 
 ### Phase 5: Lights, flicker and shadow motion
 - **Owner skill:** dev
