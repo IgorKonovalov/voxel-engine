@@ -199,6 +199,8 @@ shown, `F1`, the autopilot's flight).
 | `--lamp on\|off` | The headlamp (default on) |
 | `--indirect on\|off` | Indirect light from the probe volume that follows the camera (default on) |
 | `--probe-spacing N` | Voxels between the probe volume's probes, 4 to 64 (default 16, 1.6 m) |
+| `--probe-rays N` | Rays each updated probe traces, 1 to 64 (default 64) |
+| `--probe-slices N` | The probe volume refreshes one probe in `N` a frame: 8 (default), 16 or 32 |
 | `--emissive-ore on\|off` | The ore glows and lights the cave (default on) |
 | `--shadow-walk full\|coarse` | The walk shadow rays take (default coarse) |
 | `--sampler list\|reuse` | The emissive sampler: candidates alone, or with last frame's reservoirs (default reuse) |

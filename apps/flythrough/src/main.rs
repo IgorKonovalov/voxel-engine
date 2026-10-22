@@ -13,7 +13,7 @@
 //! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]
 //! [--history edits|gradient] [--lighting full|half] [--emissive-history N]
-//! [--indirect on|off] [--probe-spacing N]`.
+//! [--indirect on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N]`.
 //! `--render` fixes the frame's internal resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -55,7 +55,9 @@
 //! `--emissive-history N` sets the frames static emissive light accumulates over (default 32;
 //! the lamp's light keeps a short history); `--indirect off` turns the probe volume's indirect
 //! light off (on by default, ADR-0023); `--probe-spacing N` sets the voxels between its probes
-//! (default 16, 1.6 m; 4 to 64). In a window
+//! (default 16, 1.6 m; 4 to 64), `--probe-rays N` the rays each updated probe traces (default
+//! 64, 1 to 64) and `--probe-slices N` the share it refreshes a frame, one in N (8, the
+//! default, 16 or 32). In a window
 //! `F3` toggles the shadow walk, `F4` the sampler, `F5` the history killer, `F6` the lighting
 //! resolution, `F7` the lamp and `F8` indirect light, each printing the lighting modes; with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
@@ -350,6 +352,10 @@ struct Args {
     indirect: bool,
     /// `--probe-spacing N`: voxels between the probe volume's probes (default 16).
     probe_spacing: u32,
+    /// `--probe-rays N`: rays each updated probe traces (default 64).
+    probe_rays: u32,
+    /// `--probe-slices N`: the volume refreshes one probe in N a frame (default 8).
+    probe_slices: u32,
 }
 
 /// The probe volume's bytes inside `Frame::frame_bytes`, by part.
@@ -397,6 +403,8 @@ impl Args {
             history: self.history,
             emissive_history: self.emissive_history,
             indirect: self.indirect,
+            probe_rays: self.probe_rays,
+            probe_slices: self.probe_slices,
             ..Lighting::default()
         }
     }
@@ -460,6 +468,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         lamp: true,
         indirect: true,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
+        probe_rays: vxe_render::probes::RAYS_PER_PROBE,
+        probe_slices: vxe_render::probes::SLICES,
         shadow_walk: ShadowWalk::default(),
         filter: true,
         light_radius: vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
@@ -571,6 +581,22 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 let v = value()?;
                 args.shadow_walk = ShadowWalk::from_name(&v)
                     .ok_or(format!("--shadow-walk takes full or coarse, not {v}"))?;
+            }
+            "--probe-rays" => {
+                let v = value()?;
+                args.probe_rays = v
+                    .parse()
+                    .ok()
+                    .filter(|n| (1..=vxe_render::probes::RAYS_PER_PROBE).contains(n))
+                    .ok_or(format!("--probe-rays takes 1 to 64 rays, not {v}"))?;
+            }
+            "--probe-slices" => {
+                let v = value()?;
+                args.probe_slices = v
+                    .parse()
+                    .ok()
+                    .filter(|n| [8, 16, 32].contains(n))
+                    .ok_or(format!("--probe-slices takes 8, 16 or 32, not {v}"))?;
             }
             "--probe-spacing" => {
                 let v = value()?;
@@ -5542,6 +5568,12 @@ mod tests {
         assert!(d.start_lighting().indirect);
         assert_eq!(d.probe_spacing, 16);
         assert_eq!(parse(&["--probe-spacing", "8"]).unwrap().probe_spacing, 8);
+        let p = parse(&["--probe-rays", "32", "--probe-slices", "16"]).unwrap();
+        assert_eq!(
+            (p.start_lighting().rays(), p.start_lighting().slices()),
+            (32, 16)
+        );
+        assert!(parse(&["--probe-slices", "12"]).is_err());
         assert_eq!(
             (
                 d.shadow_walk,
@@ -5561,7 +5593,7 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
             hud::Modes::new(d.start_lighting(), d.lighting, 0.0).line(),
-            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on, filter on, ore pulse off, emissive history 32"
+            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on at 64 rays 1/8, filter on, ore pulse off, emissive history 32"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),
@@ -5571,6 +5603,8 @@ mod tests {
                 "--probe-spacing",
                 "--probe-spacing takes 4 to 64 voxels, not x",
             ),
+            ("--probe-rays", "--probe-rays takes 1 to 64 rays, not x"),
+            ("--probe-slices", "--probe-slices takes 8, 16 or 32, not x"),
             ("--filter", "--filter takes on or off, not x"),
             ("--shadow-walk", "--shadow-walk takes full or coarse, not x"),
             ("--sampler", "--sampler takes list or reuse, not x"),

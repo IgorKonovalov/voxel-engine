@@ -446,6 +446,12 @@ pub struct Lighting {
     /// Indirect light from the probe volume (ADR-0023): the probes update and the gather adds
     /// their irradiance, in the shaded view outside the cutaway. Off by default.
     pub indirect: bool,
+    /// Rays each updated probe traces, clamped to 1 ..= 64 (default 64): fewer rays cost less
+    /// and blend a noisier estimate.
+    pub probe_rays: u32,
+    /// The probe volume refreshes one probe in this many each frame, rounded up to a power of
+    /// two in 8 ..= 32 (default 8): more slices cost less and lag longer.
+    pub probe_slices: u32,
 }
 
 impl Default for Lighting {
@@ -462,11 +468,25 @@ impl Default for Lighting {
             history: HistoryKill::default(),
             emissive_history: DEFAULT_EMISSIVE_HISTORY,
             indirect: false,
+            probe_rays: crate::probes::RAYS_PER_PROBE,
+            probe_slices: crate::probes::SLICES,
         }
     }
 }
 
 impl Lighting {
+    /// [`Lighting::probe_rays`] as the probe passes take it.
+    pub fn rays(&self) -> u32 {
+        self.probe_rays.clamp(1, crate::probes::RAYS_PER_PROBE)
+    }
+
+    /// [`Lighting::probe_slices`] as the probe passes take it.
+    pub fn slices(&self) -> u32 {
+        self.probe_slices
+            .clamp(crate::probes::SLICES, crate::probes::MAX_SLICES)
+            .next_power_of_two()
+    }
+
     /// The bits of `Params::lighting`.
     pub fn flags(&self) -> u32 {
         (if self.tone_map == ToneMap::Identity {
@@ -584,6 +604,8 @@ pub struct Frame {
     /// The probe update's two dispatches (`probe_update.wgsl`).
     probe_trace: wgpu::ComputePipeline,
     probe_blend: wgpu::ComputePipeline,
+    /// Probe rays the last encode dispatched: update-list entries times rays per probe.
+    traced_probe_rays: std::sync::atomic::AtomicU64,
 }
 
 /// A-trous iterations per frame, at strides 1, 2, 4, 8.
@@ -1060,7 +1082,15 @@ impl Frame {
             gather,
             probe_trace,
             probe_blend,
+            traced_probe_rays: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// Probe rays the last encode dispatched (update-list entries times
+    /// [`Lighting::probe_rays`]); 0 with indirect light off or the update off.
+    pub fn traced_probe_rays(&self) -> u64 {
+        self.traced_probe_rays
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The probe volume (ADR-0023).
@@ -1603,6 +1633,8 @@ impl Frame {
         let mut gather: Vec<Dispatch<'_>> = Vec::new();
         let mut probes: Vec<Dispatch<'_>> = Vec::new();
         let mut updates = 0;
+        self.traced_probe_rays
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         let probe_bind = indirect.then(|| {
             p.lighting |= LIGHTING_INDIRECT;
             if self.probes.updates() {
@@ -1611,10 +1643,16 @@ impl Frame {
                     .iter()
                     .flat_map(|&[min, max]| self.probes.touched(origin, min, max))
                     .collect();
-                let list = self.probes.update_list(p.frame, &touched);
+                let list = self
+                    .probes
+                    .update_list(p.frame, self.lighting.slices(), &touched);
                 queue.write_buffer(self.probes.scratch(), 0, bytemuck::cast_slice(&list));
                 updates = list.len() as u32;
             }
+            self.traced_probe_rays.store(
+                u64::from(updates) * u64::from(self.lighting.rays()),
+                std::sync::atomic::Ordering::Relaxed,
+            );
             self.write_probe_uniform(queue, &p, updates);
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("probes"),
@@ -1677,7 +1715,8 @@ impl Frame {
             origin: self.probes.origin_for(p.views[0].origin),
             spacing: self.probes.spacing(),
             updates,
-            _pad: [0; 3],
+            rays: self.lighting.rays(),
+            _pad: [0; 2],
         };
         queue.write_buffer(self.probes.uniform(), 0, bytemuck::bytes_of(&u));
     }

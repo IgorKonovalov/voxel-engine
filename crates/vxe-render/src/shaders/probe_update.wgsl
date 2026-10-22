@@ -1,10 +1,11 @@
-// The probe update (ADR-0023): the frame's update list of probes each traces RAYS rays and
+// The probe update (ADR-0023): the frame's update list of probes each traces `probe.rays` rays
+// (at most RAYS, the workgroup's size) and
 // blends what they saw into its irradiance and visibility maps. Compiled after march.wgsl,
 // light.wgsl and probe_gather.wgsl, whose walk, direct estimator, probe bindings (group 3)
 // and probe reads it uses.
 //
 // `probe_trace`, one workgroup per list entry and one invocation per ray: ray i leaves the
-// probe along the i-th of RAYS spherical Fibonacci directions turned by the frame's random
+// probe along the i-th of `probe.rays` spherical Fibonacci directions turned by the frame's random
 // rotation, through the full walk. A ray that starts inside rock is a back face: signed
 // distance -1 and no radiance. A ray that hits a face returns its distance and the radiance
 // the face reflects toward the probe, `albedo / PI (E_direct + E_probes)`: E_direct the light
@@ -60,7 +61,7 @@ fn probe_rotation() -> vec4<f32> {
 
 // Ray `i`'s direction this frame.
 fn probe_ray_dir(i: u32) -> vec3<f32> {
-    let z = 1.0 - (2.0 * f32(i) + 1.0) / f32(RAYS);
+    let z = 1.0 - (2.0 * f32(i) + 1.0) / f32(probe.rays);
     let r = sqrt(max(1.0 - z * z, 0.0));
     let phi = f32(i) * GOLDEN_ANGLE;
     let v = vec3<f32>(r * cos(phi), r * sin(phi), z);
@@ -75,7 +76,7 @@ fn ray_word(k: u32, lane: u32) -> u32 {
 @compute @workgroup_size(64, 1, 1)
 fn probe_trace(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) lane: u32) {
     let k = wg.x;
-    if (k >= probe.updates) {
+    if (k >= probe.updates || lane >= probe.rays) {
         return;
     }
     let slot = probe_scratch[k] & ~TOUCHED_BIT;
@@ -147,6 +148,7 @@ fn probe_blend(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
     let at = ray_word(k, lane);
     let rg = unpack_half2(probe_scratch[at]);
     let bd = unpack_half2(probe_scratch[at + 1u]);
+    // Lanes past the rays in use hold nothing; every loop below stops at `probe.rays`.
     ray_radiance[lane] = vec3<f32>(rg, bd.x);
     ray_dist[lane] = bd.y;
     ray_dirs[lane] = probe_ray_dir(lane);
@@ -154,10 +156,10 @@ fn probe_blend(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
     // Every lane counts the back faces itself: an inside probe skips the texels, which the
     // gather never reads.
     var backs = 0u;
-    for (var r = 0u; r < RAYS; r++) {
+    for (var r = 0u; r < probe.rays; r++) {
         backs += select(0u, 1u, ray_dist[r] < 0.0);
     }
-    let inside = backs * 4u > RAYS;
+    let inside = backs * 4u > probe.rays;
     let entry = probe_scratch[k];
     let slot = entry & ~TOUCHED_BIT;
     let w = slot_probe(slot);
@@ -175,7 +177,7 @@ fn probe_blend(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
         let dir = texel_dir(lane, IRR_N);
         var sum = vec3<f32>(0.0);
         var w_sum = 0.0;
-        for (var r = 0u; r < RAYS; r++) {
+        for (var r = 0u; r < probe.rays; r++) {
             if (ray_dist[r] < 0.0) {
                 continue;
             }
@@ -194,7 +196,7 @@ fn probe_blend(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
         let dir = texel_dir(t, VIS_N);
         var sum = vec2<f32>(0.0);
         var w_sum = 0.0;
-        for (var r = 0u; r < RAYS; r++) {
+        for (var r = 0u; r < probe.rays; r++) {
             let cos_r = dot(dir, ray_dirs[r]);
             // VIS_CUTOFF^VIS_SHARPNESS is under 1e-4: the rays beyond it weigh nothing.
             if (cos_r <= VIS_CUTOFF) {

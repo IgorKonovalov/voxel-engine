@@ -554,3 +554,55 @@ fn a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again() {
     println!("filled: dark / lit over 64 frames {closed:?}");
     assert!(closed[63] < 0.05, "{closed:?}");
 }
+
+/// The probe settings scale the update's dispatch: in the furnace, the default (64 rays, one
+/// probe in 8) dispatches 4096 x 64 rays a frame, 32 rays half that, one in 16 half that, and
+/// both a quarter; at 32 rays and one in 16 the box's centre probe is live after 16 frames.
+#[test]
+fn the_probe_settings_scale_the_rays_a_frame_traces() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let (world, _) = furnace_world();
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    let mut f = FloorProbe::new(&device, BOX_MIN[0]);
+    let base = f.frame.lighting();
+    let mut traced = Vec::new();
+    for (rays, slices, want) in [
+        (64, 8, 4096 * 64),
+        (32, 8, 4096 * 32),
+        (64, 16, 2048 * 64),
+        (32, 16, 2048 * 32),
+    ] {
+        f.frame.set_lighting(Lighting {
+            probe_rays: rays,
+            probe_slices: slices,
+            ..base
+        });
+        f.run(&device, &queue, &gpu, 1);
+        let n = f.frame.traced_probe_rays();
+        println!("{rays} rays, one in {slices}: {n} rays a frame");
+        assert_eq!(n, want);
+        traced.push(n);
+    }
+    assert_eq!(traced[1] * 2, traced[0]);
+    assert_eq!(traced[2] * 2, traced[0]);
+    assert_eq!(traced[3] * 4, traced[0]);
+    f.run(&device, &queue, &gpu, 16);
+    let probe = f
+        .frame
+        .probes()
+        .read_probe(&device, &queue, probe_slot([2, 2, 2]));
+    let lo = probe
+        .interior_irradiance()
+        .iter()
+        .flatten()
+        .fold(f32::MAX, |a, &v| a.min(v));
+    println!(
+        "at 32 rays, one in 16: centre probe age {}, lowest texel {lo:.4}",
+        probe.age()
+    );
+    assert!(!probe.inside() && probe.age() >= 1);
+    assert!(lo > 0.5, "{lo}");
+}

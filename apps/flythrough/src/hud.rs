@@ -1156,18 +1156,21 @@ impl Modes {
     }
 
     /// The modes in words: `lighting half, shadow walk coarse, sampler reuse, history edits,
-    /// lamp on, indirect on, filter on, ore pulse off, emissive history 32`.
+    /// lamp on, indirect on at 64 rays 1/8, filter on, ore pulse off, emissive history 32`
+    /// (the probe rays per update and the share of probes refreshed a frame).
     pub fn line(&self) -> String {
         let l = &self.lighting;
         let on = |b: bool| if b { "on" } else { "off" };
         format!(
-            "lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, indirect {}, filter {}, ore pulse {}, emissive history {}",
+            "lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, indirect {} at {} rays 1/{}, filter {}, ore pulse {}, emissive history {}",
             self.resolution.name(),
             l.shadow_walk.name(),
             l.sampler.name(),
             l.history.name(),
             on(l.lamp),
             on(l.indirect),
+            l.rays(),
+            l.slices(),
             on(l.filter),
             on(self.pulse),
             l.emissive_history
@@ -1214,7 +1217,7 @@ mod mode_tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, shadow walk coarse\nsampler reuse, history edits, lamp on\nindirect off, filter on, ore pulse off\nemissive history 32"
+            "lighting half, shadow walk coarse\nsampler reuse, history edits, lamp on\nindirect off at 64 rays 1/8, filter on\nore pulse off, emissive history 32"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;

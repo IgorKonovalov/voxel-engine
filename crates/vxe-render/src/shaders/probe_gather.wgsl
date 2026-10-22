@@ -16,7 +16,7 @@
 //                              touched by an edit), then per entry and ray the radiance and
 //                              signed distance as four f16 (probe_update.wgsl)
 //   2  uniform  probe          the volume's lowest world probe, the spacing in voxels, the
-//                              update list's length
+//                              update list's length, the rays per updated probe
 //
 // Bindings, group 2 of `gather`:
 //   0  texture_2d<f32>  hit_pos_in    the lighting grid's hit positions
@@ -37,7 +37,8 @@ struct ProbeParams {
     origin: vec3<i32>,
     spacing: u32,
     updates: u32,
-    _pad0: u32,
+    // Rays each updated probe traces, 1 to 64.
+    rays: u32,
     _pad1: u32,
     _pad2: u32,
 };

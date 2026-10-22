@@ -34,11 +34,15 @@ pub const DEFAULT_PROBE_SPACING: u32 = 16;
 pub const IRRADIANCE_TEXELS: u32 = 6;
 /// The visibility map's interior edge in texels.
 pub const VISIBILITY_TEXELS: u32 = 14;
-/// Rays each updated probe traces per update.
+/// Rays each updated probe traces per update at most, and by default
+/// ([`crate::Lighting::probe_rays`]).
 pub const RAYS_PER_PROBE: u32 = 64;
-/// The round robin: each frame updates the probes of one of this many slices.
+/// The round robin: each frame updates the probes of one of this many slices, by default
+/// ([`crate::Lighting::probe_slices`]); the fewest slices allowed.
 pub const SLICES: u32 = 8;
-/// Probes of one slice.
+/// The most slices allowed: one probe in 32 a frame.
+pub const MAX_SLICES: u32 = 32;
+/// Probes of one slice at the default (and largest) share.
 pub const SLICE_PROBES: u32 = PROBE_COUNT / SLICES;
 /// Probes an edit can add to one frame's update beyond its slice; the rest wait for theirs.
 pub const MAX_TOUCHED: u32 = 4096;
@@ -81,7 +85,9 @@ pub struct ProbeUniform {
     pub spacing: u32,
     /// Entries of this frame's update list.
     pub updates: u32,
-    pub _pad: [u32; 3],
+    /// Rays each updated probe traces, 1 ..= [`RAYS_PER_PROBE`].
+    pub rays: u32,
+    pub _pad: [u32; 2],
 }
 
 /// One probe as [`ProbeVolume::write_test_irradiance`] presets it.
@@ -310,12 +316,16 @@ impl ProbeVolume {
         out
     }
 
-    /// The update list of `frame` for the volume at `origin`: the probes of slice
-    /// `frame % SLICES` (slots `SLICES k + slice`) and the probes `touched` names, each slot
-    /// once, a touched one flagged with [`TOUCHED_BIT`]; at most [`MAX_TOUCHED`] touched ones
-    /// outside the slice.
-    pub fn update_list(&self, frame: u32, touched: &[[i32; 3]]) -> Vec<u32> {
-        let slice = frame % SLICES;
+    /// The update list of `frame` with the volume cut into `slices` slices (a power of two in
+    /// [`SLICES`] ..= [`MAX_SLICES`]): the probes of slice `frame % slices` (slots
+    /// `slices k + slice`) and the probes `touched` names, each slot once, a touched one
+    /// flagged with [`TOUCHED_BIT`]; at most [`MAX_TOUCHED`] touched ones outside the slice.
+    pub fn update_list(&self, frame: u32, slices: u32, touched: &[[i32; 3]]) -> Vec<u32> {
+        assert!(
+            slices.is_power_of_two() && (SLICES..=MAX_SLICES).contains(&slices),
+            "{slices} slices"
+        );
+        let slice = frame % slices;
         let mut flagged = vec![false; PROBE_COUNT as usize];
         let mut extra = Vec::new();
         for &w in touched {
@@ -323,7 +333,7 @@ impl ProbeVolume {
             if flagged[s as usize] {
                 continue;
             }
-            if s % SLICES != slice {
+            if s % slices != slice {
                 if extra.len() == MAX_TOUCHED as usize {
                     continue;
                 }
@@ -331,9 +341,9 @@ impl ProbeVolume {
             }
             flagged[s as usize] = true;
         }
-        let mut list: Vec<u32> = (0..SLICE_PROBES)
+        let mut list: Vec<u32> = (0..PROBE_COUNT / slices)
             .map(|k| {
-                let s = SLICES * k + slice;
+                let s = slices * k + slice;
                 if flagged[s as usize] {
                     s | TOUCHED_BIT
                 } else {
