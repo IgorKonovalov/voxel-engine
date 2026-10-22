@@ -2,6 +2,8 @@
 
 > **Status:** proposed
 > **Date:** 2026-10-21
+> **Amended:** 2026-10-22 (owner, at Plan 0030's Phase 2 stop, while proposed): Plan 0024's
+> lighting passes become jitter-aware, and history is accepted from a 3 x 3 neighbourhood.
 > **Related plan(s):** [Plan 0030](../plans/0030-temporal-upscaler.md)
 
 ## Context
@@ -30,10 +32,15 @@ RCAS sharpening is one function, MIT, and ports in an afternoon.
 output.** The internal scale is a quality setting (1.0, 1.5 or 2.0 per axis; 1.5 is 720p for
 1080p). The hit pass offsets each pixel's ray through a per-frame sub-pixel jitter (Halton 2,
 3, sixteen phases) that every view carries. The direct light and denoiser passes of Plan 0024
-run at internal resolution on the jittered hits. An upscale pass at output resolution, per
+run at internal resolution on the jittered hits and are made jitter-aware (amended
+2026-10-22, owner): the temporal pass reprojects as if every ray went through its pixel's
+centre and accepts history from the 3 x 3 previous pixels around the reprojected one, the
+a-trous filter stops on inputs the jitter does not move, and the half tier's sample pixel
+accounts for the jitter. An upscale pass at output resolution, per
 view, reprojects each output pixel's previous output through the previous view by the nearest
-internal hit's world position, rejects the history when the previous hit's depth, normal or
-material disagree beyond thresholds or the pixel was inside an edit box, clips the accepted
+internal hit's world position, rejects the history when none of the 3 x 3 previous internal
+pixels around it agrees in depth, normal and material within thresholds, or the hit is inside
+an edit box, clips the accepted
 history to the YCoCg bounding box of the current 3 x 3 internal neighbourhood, and blends it
 with the current sample weighted by a Lanczos-2 kernel of the jittered sample's distance to
 the output pixel centre at alpha 0.1 (1.0 on a reject). A sharpening pass (RCAS, ported from
@@ -54,18 +61,20 @@ rules out).
 - The upscaler's inputs are what the engine has: jittered hits and exact reprojection. No
   motion-vector pass, no depth conventions, no reactive mask.
 - Four shaders of ours, each testable headless on lavapipe with a golden and a still-camera
-  convergence test.
+  convergence test against a 2 x 2 supersampled native render, the reference that scores
+  resolved detail above copied aliasing (amended 2026-10-22, owner).
 - Per-view history keeps the VR door open; the jitter sequence is per view.
 
 ### Negative
 - **Our own artifacts to tune.** Ghosting on disocclusion, flicker on thin features and
   over-sharpening are the known failure modes of every TAA upscaler; the plan's tests bound
   them and the owner's eye is the last word. FSR 2 would have brought AMD's tuning.
-- **The denoiser sees jittered samples.** Plan 0024's temporal pass matches history by world
-  position, so jitter adds no mismatch there, but its a-trous filter and the reservoir reuse
-  sample a jittered grid; Quake II RTX ships this combination. If the jitter degrades the
-  denoised direct term, the jitter amplitude is a parameter down to zero (then the upscaler
-  is spatial).
+- **The denoiser sees jittered samples.** The draft held that matching history by world
+  position made Plan 0024's temporal pass indifferent to the jitter. Plan 0030 Phase 2
+  measured otherwise (amended 2026-10-22, owner): at scale 1 the jittered image sat 50 %
+  farther from a supersampled render than native did with the half tier and the a-trous on,
+  3 % with both off, so the lighting passes are changed to ignore the jitter (above). If that
+  fails, the jitter amplitude is a parameter down to zero (then the upscaler is spatial).
 - **Translucent layers and the HUD.** The translucent composite happens at internal
   resolution and is upscaled with everything else; the HUD draws at output resolution after
   sharpening.
