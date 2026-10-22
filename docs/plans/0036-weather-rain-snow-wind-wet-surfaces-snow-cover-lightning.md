@@ -1,6 +1,6 @@
 # 0036: Weather: rain, snow, wind, wet surfaces and snow cover, lightning
 
-> **Status:** draft
+> **Status:** approved (2026-10-22)
 > **Created:** 2026-10-22
 > **Milestone:** M10: Outdoors in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0031](../adrs/0031-weather-is-cosmetic-client-state-rendered-against-a-fall-map.md)

@@ -1,6 +1,6 @@
 # 0035: Aerial perspective over the near and far field, and volumetric clouds that shadow the ground
 
-> **Status:** draft
+> **Status:** approved (2026-10-22)
 > **Created:** 2026-10-22
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0030](../adrs/0030-volumetric-cloud-shell-amortised-march-and-projected-shadow-map.md)

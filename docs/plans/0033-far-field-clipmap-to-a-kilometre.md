@@ -1,6 +1,6 @@
 # 0033: The far field: a clipmap of three coarse chunk levels to about 1 km
 
-> **Status:** draft
+> **Status:** approved (2026-10-22)
 > **Created:** 2026-10-22
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0028](../adrs/0028-far-field-as-a-clipmap-of-source-generated-coarse-chunks.md)

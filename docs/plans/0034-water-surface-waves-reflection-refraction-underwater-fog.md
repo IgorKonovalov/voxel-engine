@@ -1,6 +1,6 @@
 # 0034: Liquid surfaces: analytic waves, traced reflection and refraction rays, and absorption under the surface
 
-> **Status:** draft
+> **Status:** approved (2026-10-22)
 > **Created:** 2026-10-22
 > **Milestone:** M10: Outdoors in `docs/roadmap.md`
 > **Related ADRs:** [ADR-0029](../adrs/0029-liquid-surfaces-as-analytic-wave-normals-with-traced-reflection-and-refraction.md)
