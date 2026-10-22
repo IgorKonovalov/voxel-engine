@@ -7,7 +7,9 @@ plan lanes run at once, each in its own worktree at
 ## Scope
 
 1. Work only inside your worktree. Never touch the main checkout or another lane's worktree.
-   Never merge, push or switch branches; the orchestrator merges.
+   Never merge, push or switch branches; the orchestrator merges. The one exception: when the
+   orchestrator asks, merge main into your own branch (`git merge --no-ff main`), resolve,
+   gate the merged tree and commit it as `merge: main into plan-NNNN (...)`.
 2. Inside a plan you edit only the `Status:` line and the `## Implementation log` (the `dev`
    skill's rule). A done-when you cannot meet is a question, not an edit: stop and report it
    with options. Never weaken an assertion to make a bar pass.

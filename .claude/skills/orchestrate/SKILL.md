@@ -55,6 +55,11 @@ prompt.
 
 ## Closing and merging
 
+- **Main into a lane before its close.** When main has moved under a lane with code that
+  conflicts, the lane's dev agent merges main into its own branch (`git merge --no-ff main`,
+  never a rebase), resolves the conflicts, gates the merged tree as below and commits
+  `merge: main into plan-NNNN (...)`. That code work is the lane's, not the orchestrator's;
+  the merge into main stays the orchestrator's.
 - After the last dev phase and the owner's check, a **fresh** architect agent runs the close
   review (architect Mode 4) in the lane's worktree. It reruns the gate itself, and on a clean
   review it does the close ceremony on the branch. Findings go back to a dev agent as a fix
