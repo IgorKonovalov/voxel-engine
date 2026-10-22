@@ -32,7 +32,9 @@ plan lanes run at once, each in its own worktree at
        flock /home/igor/Work/voxel-engine/.git/vxe-perf.lock systemd-run --user --scope --quiet -p MemoryMax=6G -p MemorySwapMax=1G -- <command>
 
    Build first, outside the lock, and keep the hold short. The owner's windowed checks take the
-   same lock, so your GPU work waits while the owner flies; that is expected.
+   same lock run by run, and the lock is free between runs, so a GPU job started then blocks
+   the owner's next run. While a live-session runner is up (`pgrep -f "live/session"` finds
+   it), take no GPU or timing work at all; poll at most once a minute, and keep doing CPU work.
 7. Record "exclusive perf lock" and the 1-minute load average with every reading. A reading
    taken at a load above 2 is labelled loaded (indicative), not quiet.
 
