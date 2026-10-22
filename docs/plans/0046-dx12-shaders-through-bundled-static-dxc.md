@@ -269,7 +269,7 @@ upscale     1778    ...        ...
 |---|---|---|---|
 | 1: a per-pass pipeline-time table | dev | done | 622dcf3 |
 | 2: `static-dxc` on, in the deny gate, named at startup | dev | done | c3b32b4 |
-| 3: the workaround reverted and the Windows bars set | dev | done (Windows bars owed to CI) | committed with this row |
+| 3: the workaround reverted and the Windows bars set | dev | done (Windows bars owed to CI) | 1a18b57 |
 
 **Phase 1.** `crates/vxe-render/examples/pipeline_times.rs`; `UPSCALE_WGSL` and `SHARPEN_WGSL`
 are re-exported from `lib.rs` (`pub use marcher::{...}`), `marcher.rs` unchanged. The table has
@@ -348,13 +348,37 @@ do not push, so they come from the first `windows-latest` run on main after the 
 
 ### Notes
 
+- Deviations: eleven passes in the table, not eight (Phase 1, 622dcf3); the headless
+  fly-through instance reads wgpu's environment (Phase 2, c3b32b4); `vxe-app/src/lib.rs`
+  re-exports `backend_label`, outside Files touched (c3b32b4).
+- Unmet as stated, owed to the first `windows-latest` run on main after the merge: Phase 1's FXC
+  table; Phase 2's `dx12_compiler` pass and `auto` table; Phase 3's bars 1 to 3; the `nfr.md`
+  section 7 Windows readings. The Phase 1 "before" size of `flythrough.exe` cannot be read
+  on CI, since both phases reach it in one push; the step prints the static DXC `.lib` size
+  instead.
+- FXC was not run locally (no Microsoft `fxc.exe` or `d3dcompiler_47.dll` here).
+- The Vulkan readings were taken at 1-minute load 10.4 to 11.1 (loaded, indicative).
+- Followup noticed: the light pass is the costliest creation on every Linux adapter (522.6 ms
+  cold on the RTX 3080 Laptop), above `march` itself.
+
 ### Close triggers
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** feature
+- **Public API changed:** `vxe_render::{UPSCALE_WGSL, SHARPEN_WGSL}` re-exported at the crate
+  root; new `vxe_app::backend_label(wgpu::Backend) -> String`; the workspace `wgpu` gains
+  `static-dxc`; the shell's `adapter:` line and the headless `headless on` line gain the backend
+  label.
+- **Budget readings:** the Phase 1 per-pass table above (lavapipe, RTX 3080 Laptop, Radeon
+  iGPU on RADV, Vulkan, exclusive perf lock, load 10.4 to 11.1, on ce62f0c plus Phase 1) and
+  the local `dxc` times, both in `docs/nfr.md` section 7. Windows DX12 readings: none yet, owed
+  to CI.
+- **Gate at the tip (1a18b57 tree):** `cargo build --workspace` 0; `cargo nextest run --workspace
+  --profile quick` 470 passed, 3 skipped (Phase 2 tree); `cargo nextest run --workspace --profile
+  full --no-fail-fast --test-threads 2`, exclusive perf lock, load 5.77 to 4.33: 599 passed, 7
+  skipped, 357.8 s, exit 0; `cargo test --workspace --doc` 7 passed; `cargo clippy --workspace
+  --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` 0; test
+  tiers, comment hygiene, doc links 0.
+- **Outstanding `human` phases:** none. Outstanding CI readings: listed under Notes.
 
 ## Followups
 
