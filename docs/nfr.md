@@ -1094,7 +1094,7 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   still compiles no `wasmtime` or `tokio`.
 - The test gate (Plan 0043): a dev phase runs `cargo nextest run --workspace --profile quick`
   (CPU only, no perf lock), adds `--profile gpu` under the lock when it touches render paths,
-  and a close, a merge or CI runs `--profile full` (`.config/nextest.toml`). Proposal: quick
+  and a close or a merge runs `--profile full`, CI its `ci` twin (the full tests, the GPU group unthrottled) (`.config/nextest.toml`). Proposal: quick
   under 60 s on the dev reference, so a phase gate holds no lock and blocks no other lane.
   **Reading (Plan 0043 close review, 5877b8a, 599 tests, dev reference, Ryzen 9 5900HS and RTX
   3080 Laptop GPU on lavapipe, built tree, `--test-threads 2`, other lanes running, so all
