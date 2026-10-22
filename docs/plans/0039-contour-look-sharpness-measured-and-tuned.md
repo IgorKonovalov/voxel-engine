@@ -484,7 +484,7 @@ adapter; the readings go into `nfr.md` §2 as dev-reference lines labelled by ad
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The sharpness harness, the baselines and the source-isolation matrix | dev | done | 61b1fcf |
-| 2: The candidate mechanisms, each measured alone | dev | stopped: one done-when unmet (C5 exactness) | wip, committed with this row |
+| 2: The candidate mechanisms, each measured alone | dev | done; its fly-through readings are taken with Phase 3's flags | 29c37b5, e53bf8d, committed with this row |
 | 3: Named presets in the window | dev | not started | |
 | 4: The owner's comparison | human | not started | |
 | 5: The pick as the default | dev | not started | |
@@ -531,7 +531,7 @@ Lavapipe, 320 x 180, 64 static frames from a fresh `Frame` per reading, headlamp
   (binary of 99e7bee, NVIDIA via `--adapter NVIDIA`, AMD via `--adapter AMD`, load 4.2 to 18.8,
   loaded).
 
-### Phase 2 readings (work in progress)
+### Phase 2 readings
 
 - Off is today: with every switch off the full workspace run on the Phase 2 tree passed 605 of
   606 (every golden, both pinned attribute hashes in `mirror.rs`); the one failure is the C5
@@ -542,12 +542,16 @@ Lavapipe, 320 x 180, 64 static frames from a fresh `Frame` per reading, headlamp
   equal. Stair codes: lower voxel (15, 16, 2) code 14 with the fraction offset, 13 with the
   volume-matched; its normal z 0.890 uniform, 0.935 weighted; upper voxel (16, 16, 3) code 8
   under all four, normal z 0.952 uniform, 0.914 weighted.
-- **Unmet:** `detail_after_lighting_is_exact_for_the_lamp`: C5 against today at the full tier,
-  filter off: 98.465 % of the window within 2/255 (bar 99 %), worst 229/255. With the ratio's
-  clamp lifted to `[0, 1e9]` and floor `1e-9` (a diagnostic build, reverted) it reads 99.104 %,
-  worst still 229/255: the clamp binds on about 0.64 % of the window, and about 0.9 % are hits
-  whose undetailed normal faces away from the lamp while the detailed one faces it (the light
-  pass's lamp term is 0 there, so no ratio recovers it).
+- `detail_after_lighting_is_exact_for_the_lamp` (bar 98.4 % by the 2026-10-22 amendment): C5
+  against today at the full tier, filter off: 98.465 % of the window within 2/255, worst 229/255;
+  misses 0.896 % unlit in C5 and lit today, 0.639 % lit and darker in C5, 0.000 % other. R at
+  the default tier: today 0.860 (S_fine 0.19592 against 0.22779), C5 0.897 (0.20664 against
+  0.23025). Lavapipe, exclusive perf lock, load 17.0.
+- Gate on this commit: fmt, clippy, doctests pass; `--profile quick` 469 of 470 with
+  `replay::a_stamp_and_a_collapse_replay_from_the_save` timed out at 30 s at load 17, then 6 of
+  6 alone in 17.9 s at load 33.9. The gpu tier ran as the full workspace run above (605 of 606,
+  the one failure the C5 bar this commit's amendment moved); the only change since is the C5
+  test's bar and its printed miss classes.
 - `candidate_sweep` (wall at the default tier; E on the edge's normals view without detail;
   guardrails undetailed; face silhouette 172 px):
 
@@ -577,19 +581,6 @@ Lavapipe, 320 x 180, 64 static frames from a fresh `Frame` per reading, headlamp
 | rock 4, 0.3 | 0.19174 | 0.24121 | 13.60 | 0.843 | 7.38 | 32 | 6.80 | met |
 | rock 4, 0.3 + C5 | 0.21315 | 0.26817 | 13.60 | 0.917 | 7.38 | 32 | 6.80 | met |
 
-### Resume notes (2026-10-22, delete when Phase 2 lands)
-
-- Done: Phase 1 at 61b1fcf. Phase 2's five switches, `mirror.rs`'s fit test, the C5 test and
-  the sweep are in this wip commit; the gate on it: build, clippy, fmt, doctests (7), deny,
-  comment hygiene, doc links pass; nextest 605 of 606, the failure being the C5 bar.
-- Waiting on: the owner or architect's call on the C5 bar (see the stop report).
-- Left in Phase 2 once that is settled: the attribute pass's level initial fill for C1, C2 and
-  C1 + C2 and the light pass and composite at 1080p with C4 and C5 on the NVIDIA card, and the
-  level's `--frames 1` mirror line. The fly-through has no switch for a single candidate until
-  Phase 3's flags, so these readings wait for them.
-- Gotchas: a reading needs a fresh `Frame` (Phase 1 note); C3 is recovered for the shadow
-  offset in `shadow_normal_of` by inverting the mix (`face_unmixed`).
-
 ### Notes
 
 - Phase 1: the edge scene's edge is the line `x = y = 63` (block `[63, 96)`), not 64: a face
@@ -607,15 +598,20 @@ Lavapipe, 320 x 180, 64 static frames from a fresh `Frame` per reading, headlamp
 - Phase 1: the wall at 1 m under the headlamp is near white: rock's radiance about 5.6 sits on
   the ACES shoulder (display about 0.99), and the window's contrast is mostly shadow edges and
   the cone's falloff (`target/look-sharpness/wall_*.png`). Not a source the plan names.
-- Phase 2 (wip): `SurfaceTuning` carries `fit: SurfaceFit` (`PlaneFit` and `PlaneOffset` in
+- Phase 2: `SurfaceTuning` carries `fit: SurfaceFit` (`PlaneFit` and `PlaneOffset` in
   `attrib.rs`) for the data shape's separate `fit` and `offset`; the frame ignores it and the
   caller hands it to `GpuWorld::set_surface_fit`. `face_mix` takes `Params::_pad2`; the C5 flag
   is `Params::flags` bit 13.
-- Phase 2 (wip): C3 is applied in the hit pass as planned; the shadow offset recovers the plane
+- Phase 2: C3 is applied in the hit pass as planned; the shadow offset recovers the plane
   normal from the stored mix in closed form.
-- Phase 2 (wip), outside the files touched: `gradient.wgsl` shades with the same normal as the
+- Phase 2, outside the files touched: `gradient.wgsl` shades with the same normal as the
   light pass (`lighting_normal`), and `apps/flythrough/src/main.rs` gains
   `tuning: Default::default()` in `start_look` to compile.
+- Phase 2: the attribute pass's level initial fill for C1, C2 and C1 + C2, the light pass and
+  composite at 1080p with C4 and C5, and the level's `--frames 1` mirror line are taken with
+  Phase 3's per-part flags and recorded under Phase 2's readings in Phase 3's commit.
+- Phase 2: the C5 test classifies its misses from the two images (C5's pixel at most 2/255 on
+  every channel: unlit; otherwise darker in C5: the clamp), not from the normals.
 - Phase 1: the side-by-side images and the readings above are of goldens blessed on lavapipe
   (llvmpipe, Mesa 26.2.5).
 
