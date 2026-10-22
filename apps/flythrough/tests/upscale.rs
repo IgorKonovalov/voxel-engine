@@ -352,10 +352,20 @@ fn still_camera_reading() -> Option<StillReading> {
     Some(r)
 }
 
-/// The still camera's distances from native and from the supersampled render: a reading.
+/// The still camera comes nearer the truth than a bilinear blit: the upscaled image's mean
+/// absolute difference from the 2 x 2 supersampled native render is lower than the bilinear
+/// blit's (a property, not a threshold). The distances from plain native are a reading.
 #[test]
-fn still_camera_distances_from_native() {
-    let _ = still_camera_reading();
+fn a_still_camera_upscales_nearer_the_supersampled_render_than_the_bilinear_blit() {
+    let Some(r) = still_camera_reading() else {
+        return;
+    };
+    assert!(
+        r.up_ssaa < r.bilinear_ssaa,
+        "upscaled {:.3} not below bilinear {:.3}",
+        r.up_ssaa,
+        r.bilinear_ssaa
+    );
 }
 
 /// The pixel rectangle (`col0, row0, col1, row1`) the voxels `min ..= max` dilated by one
@@ -699,5 +709,148 @@ fn the_upscalers_distance_from_native_under_each_lighting_mode() {
             mean(mad(&native, &ssaa)),
             mean(mad(&taa, &ssaa)),
         );
+    }
+}
+
+/// The dark cave's golden pose (the carved golden scene, ore emissive, voxel (264, 120, 376),
+/// 15 degrees of yaw) with the lamp off and the filter on at the Plan 0024 defaults, at a
+/// 320 x 180 output and scale 1.5 (213 x 120 internal), jittered or not: settled over 64
+/// still frames, then 32 more upscaled frames read back. Returns the mean over hit pixels
+/// (output pixels whose nearest internal sample hit) and the 31 consecutive pairs of the
+/// largest channel difference, and the share of (pixel, pair) values above 4/255.
+fn still_vein_flicker(jitter: bool) -> Option<(f64, f64)> {
+    let source = scene_source();
+    let world = World::generate(
+        source.extent,
+        &source,
+        &flythrough::with_emissive_ore(&flythrough::cave_materials()),
+    );
+    world.apply(&scene_carve(&world)).unwrap();
+    let output = [WIDTH, HEIGHT];
+    let internal = vxe_render::RenderScale::OneHalf.internal(output);
+    assert_eq!(internal, [213, 120]);
+    let full = world.stats().full_bricks as u64;
+    let (device, queue) = software_device(((full + 4096) * 512).max(64 << 20))?;
+    let mut gpu = GpuWorld::with_config(&device, MirrorConfig::new(Window::Fixed(world.extent())));
+    gpu.set_focus(VoxelCoord([264, 120, 376]));
+    for _ in 0..4 {
+        gpu.sync_now(&world, &device, &queue).unwrap();
+    }
+    let mut frame = frame_of(&device, internal, output, jitter);
+    frame.set_lighting(vxe_render::Lighting {
+        lamp: false,
+        ..vxe_render::Lighting::default()
+    });
+    let camera = vxe_render::Camera {
+        position: [264.5, 120.5, 376.5].into(),
+        yaw: 15f32.to_radians(),
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    };
+    let light = LightParams::headlamp();
+    for _ in 0..64 {
+        frame.step(&device, &queue, &gpu, &camera, &light);
+    }
+    let mut frames = Vec::new();
+    let mut hits = Vec::new();
+    for _ in 0..32 {
+        frame.step(&device, &queue, &gpu, &camera, &light);
+        frames.push(readback::read_rgba8(&device, &queue, frame.target()));
+        if hits.is_empty() {
+            let rec = readback::read_rgba16u(&device, &queue, frame.hit_records());
+            let j = if jitter {
+                vxe_render::jitter_at(frame.frame_index())
+            } else {
+                [0.0; 2]
+            };
+            for y in 0..output[1] {
+                for x in 0..output[0] {
+                    let n = [(x, 0), (y, 1)].map(|(c, k)| {
+                        let centre = (c as f32 + 0.5) * internal[k] as f32 / output[k] as f32;
+                        ((centre - j[k]).floor() as i32).clamp(0, internal[k] as i32 - 1) as usize
+                    });
+                    hits.push(rec[n[1] * internal[0] as usize + n[0]][3] & 1 == 1);
+                }
+            }
+        }
+    }
+    let (mut sum, mut over, mut n) = (0.0f64, 0usize, 0usize);
+    for pair in frames.windows(2) {
+        for (i, &hit) in hits.iter().enumerate() {
+            if !hit {
+                continue;
+            }
+            let d = (0..3)
+                .map(|k| pair[0][4 * i + k].abs_diff(pair[1][4 * i + k]))
+                .max()
+                .unwrap_or(0);
+            sum += f64::from(d);
+            over += usize::from(d > 4);
+            n += 1;
+        }
+    }
+    Some((sum / n as f64, over as f64 / n as f64))
+}
+
+/// Jitter adds little flicker: on the dark cave's still rig at scale 1.5, the upscaled frames'
+/// mean step with jitter on is at most 0.40/255 above jitter off's, and its share of values
+/// over 4/255 at most 1.15 percentage points above it (Plan 0024 Phase 13's gain, from the
+/// stillest image the owner judged to its default).
+#[test]
+fn jitter_adds_little_flicker_on_a_still_vein() {
+    let Some((off_mean, off_over)) = still_vein_flicker(false) else {
+        return;
+    };
+    let (on_mean, on_over) = still_vein_flicker(true).unwrap();
+    println!(
+        "still vein at scale 1.5: jitter off mean {off_mean:.4}/255, {:.4} % over 4/255; jitter on mean {on_mean:.4}/255, {:.4} % over 4/255",
+        off_over * 100.0,
+        on_over * 100.0
+    );
+    assert!(
+        on_mean <= off_mean + 0.40,
+        "mean {on_mean:.4} against {off_mean:.4}"
+    );
+    assert!(
+        on_over * 100.0 <= off_over * 100.0 + 1.15,
+        "{:.4} % against {:.4} %",
+        on_over * 100.0,
+        off_over * 100.0
+    );
+}
+
+/// A reading, no bar: on the level from its spawn at scale 1 (384 x 216), lighting at full
+/// resolution so the temporal pass's ages align with the hit buffer, a still camera for 16
+/// frames with the jitter on and off; the share of hit pixels whose temporal age is below 15,
+/// the age of a history unbroken since the first frame (which reads 0).
+#[test]
+fn temporal_age_under_the_jitter() {
+    let (world, camera) = level();
+    let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
+        return;
+    };
+    let light = LightParams::headlamp();
+    for jitter in [false, true] {
+        let mut f = frame_of(&device, OUTPUT, OUTPUT, jitter);
+        f.set_resolution(&device, vxe_render::LightingResolution::Full);
+        for _ in 0..16 {
+            f.step(&device, &queue, &gpu, &camera, &light);
+        }
+        let rec = readback::read_rgba16u(&device, &queue, f.hit_records());
+        let age = readback::read_rgba16f(&device, &queue, f.moments());
+        let hits = rec.iter().filter(|r| r[3] & 1 == 1).count();
+        let young = rec
+            .iter()
+            .zip(&age)
+            .filter(|(r, a)| r[3] & 1 == 1 && a[2] < 15.0)
+            .count();
+        println!(
+            "jitter {}: {young} of {hits} hit pixels below age 15 after 16 frames ({:.3} %)",
+            if jitter { "on" } else { "off" },
+            young as f64 * 100.0 / hits as f64
+        );
+        if !jitter {
+            assert_eq!(young, 0, "jitter off ages every hit");
+        }
     }
 }

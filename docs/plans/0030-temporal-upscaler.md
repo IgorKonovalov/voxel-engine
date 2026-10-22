@@ -349,8 +349,8 @@ of Plan 0024 shrink to 44 % at scale 1.5.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: Internal resolution and the jitter | dev | done: 11 of 11 `assert_golden` renders (golden.rs, look.rs) byte-identical to 578c8d3's at scale 1 jitter off (dumped and compared with `cmp`); jitter on, 16-frame hit mask of the pillar: 396 edge pixels, 15 distinct values in (0, 255) (unjittered: 0 partial); 384 x 216 at 1.5: hit buffer 256 x 144, blit within 1.03/255 of bilinear; parse test pins `--internal-scale`, `--jitter` | 9900eee |
-| 2: The upscale pass | dev | done: carve on the level (t = 30.5 voxels): 4749 output pixels hit in the dilated box, 0 blend history; readings in the projected box against native: max 192/255, mean 14.26/255, 686 of 4900 over 8/255; sideways step on the cavity: 67409 of 67443 unchanged pixels at alpha 0.1 (99.95 %), all 3317 changed-material pixels at alpha 1; still camera (reading): from native upscaled 4.699, bilinear 3.333 (1.410), from 2 x 2 supersampled 4.369, 3.044 (1.435), native 2.066 | committed with this row |
-| 3: Lighting that ignores the jitter | dev | not started | |
+| 2: The upscale pass | dev | done: carve on the level (t = 30.5 voxels): 4749 output pixels hit in the dilated box, 0 blend history; readings in the projected box against native: max 192/255, mean 14.26/255, 686 of 4900 over 8/255; sideways step on the cavity: 67409 of 67443 unchanged pixels at alpha 0.1 (99.95 %), all 3317 changed-material pixels at alpha 1; still camera (reading): from native upscaled 4.699, bilinear 3.333 (1.410), from 2 x 2 supersampled 4.369, 3.044 (1.435), native 2.066 | 4bc49d8 |
+| 3: Lighting that ignores the jitter | dev | done: still camera from 2 x 2 supersampled: upscaled 2.969, bilinear 3.044 (0.975), native 2.066; from native 3.363, 3.333 (1.009); jittered at scale 1 against native from supersampled 2.013 vs 2.066 (284d132: 3.099); flicker at 1.5: jitter off mean 0.1212/255, 0.0020 % over 4/255, on 0.3185/255, 1.0176 % (+0.197, +1.016 pp; margins 0.40, 1.15); Plan 0024's tests pass at jitter off, 11 of 11 `assert_golden` renders byte-identical to 578c8d3 (`dark_cave*.png` unchanged); reading: age below 15 after 16 still frames, jitter on 216 of 82944 hit pixels (0.260 %), off 0 | committed with this row |
 | 4: The sharpening pass and the golden | dev | not started | |
 | 5: The readings and the defaults | dev | not started | |
 | 6: The owner's windowed check | human | not started | |
@@ -385,6 +385,31 @@ of Plan 0024 shrink to 44 % at scale 1.5.
   frame after a view-mode change (the upscaler's history then holds another view).
 - Phase 2: `UPSCALE_WGSL` lives in `marcher.rs` with a naga validation unit test; the
   shader is not in `crates/vxe-render/tests/shader_portability.rs` (followup).
+- Phase 3 item 1: `project_prev` is the unjittered projection again; `reproject_centred(v, j,
+  p)` (march.wgsl) is it less this frame's jitter. The temporal pass and the light pass's
+  reservoir reuse use it; the gradient pass projects no hit (it reads last frame's pixels in
+  place) and is unchanged. The upscale pass takes its previous-hit 3 x 3 around
+  `floor(project_prev - jitter)` too. The temporal 3 x 3: the bilinear taps first; when none
+  accepts, the accepted pixel of the 3 x 3 around the nearest whose position lies nearest the
+  hit, taken alone.
+- Phase 3 item 2: the a-trous filter is unchanged. Its edge weight is the plane distance and
+  normal of face hits, which a ray moving inside its pixel on one face leaves at 0 and 1.
+  Readings at the tip, upscaled / bilinear from supersampled: defaults 2.969 / 3.044, filter
+  off 2.210 / 2.837 (the filter's cost remains, the bar holds with it on).
+- Phase 3 item 3: no code change. The downsample copies the jittered hit of its sample pixel;
+  every pixel of a frame carries the same jitter, so the composite's upsample weights (pixel
+  index differences) equal those between the jittered positions; the lighting grid's
+  reprojection goes through `reproject_centred`. Readings: full-res lighting 2.078 / 2.306.
+- Phase 3 item 4, clip settings tried (still camera, upscaled / bilinear from supersampled,
+  with item 1 in): 3 x 3 mean +-1 sigma inside min/max (Phase 2's) 3.710 / 3.044; min/max
+  only 3.773; mean +-2 sigma inside min/max 3.763; gamma rising to 4 below 1 px of motion
+  3.444; no clip 2.969. Kept: no clip where the history moved less than 0.01 output pixels
+  (`CLIP_STILL`), Phase 2's box elsewhere. On a still camera the clip no longer catches a
+  change of light alone (an emission step, the lamp switched): alpha 0.1 takes it in.
+- Phase 3: `tests/golden.rs` and `tests/lights.rs` needed no change; the flicker rig and the
+  age reading are in `tests/upscale.rs`. The age reading uses full-resolution lighting so the
+  moments align with the hit buffer, and "below 16" reads "below 15": the first frame reads
+  age 0, so 16 unbroken frames read 15.
 
 ### Close triggers
 

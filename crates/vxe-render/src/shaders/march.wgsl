@@ -1213,9 +1213,9 @@ fn shadow_normal_of(rec: HitRecord, d: vec3<f32>) -> vec3<f32> {
     return select(vec3<f32>(0.0), vec3<f32>(-sign(d[rec.axis])), axis_mask(rec.axis));
 }
 
-// `p` projected through previous view `v` to a fractional pixel of the target, in the frame
-// of that view's samples: pixel `i`'s ray at `i + 0.5` (its jitter taken off); a negative x
-// when it lies behind the view.
+// `p` projected through previous view `v` to a fractional pixel of the target (pixel
+// centres at integer + 0.5, the view's jitter ignored); a negative x when it lies behind the
+// view.
 fn project_prev(v: View, p: vec3<f32>) -> vec2<f32> {
     let dir = p - v.origin;
     let z = dot(dir, v.fwd);
@@ -1226,7 +1226,21 @@ fn project_prev(v: View, p: vec3<f32>) -> vec2<f32> {
     let y = dot(dir, v.up) / z;
     let u = (x + v.tan_left) / (v.tan_left + v.tan_right);
     let w = (v.tan_up - y) / (v.tan_up + v.tan_down);
-    return vec2<f32>(v.rect.xy) + vec2<f32>(u, w) * vec2<f32>(v.rect.zw) - v.jitter;
+    return vec2<f32>(v.rect.xy) + vec2<f32>(u, w) * vec2<f32>(v.rect.zw);
+}
+
+// The pixel of the previous frame a hit `p` of this frame's pixel reprojects to, as if both
+// frames' rays went through their pixels' centres: `p` projected through previous view `v`,
+// less this frame's jitter `j` (the offset of this pixel's ray from its centre). On a still
+// camera every pixel maps onto its own centre whatever the two jitters, so history is never
+// resampled across the moving sample lattice; with the jitter off it is `project_prev`. A
+// negative x when `p` lies behind the view.
+fn reproject_centred(v: View, j: vec2<f32>, p: vec3<f32>) -> vec2<f32> {
+    let q = project_prev(v, p);
+    if (q.x < 0.0) {
+        return q;
+    }
+    return q - j;
 }
 
 // A 32-bit integer hash (Wellons' lowbias32).

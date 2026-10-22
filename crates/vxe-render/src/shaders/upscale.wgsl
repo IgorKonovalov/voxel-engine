@@ -62,6 +62,7 @@ struct UpEdits {
 
 const UPSCALE_ALPHA: f32 = 0.1;
 const CLIP_GAMMA: f32 = 1.0;
+const CLIP_STILL: f32 = 0.01;
 // temporal.wgsl's HISTORY_COS, HISTORY_DIST and HISTORY_DIST_PER_T.
 const UP_HISTORY_COS: f32 = 0.8;
 const UP_HISTORY_DIST: f32 = 0.5;
@@ -200,17 +201,23 @@ fn upscale(@builtin(global_invocation_id) gid: vec3<u32>) {
     if ((params.history & 2u) != 0u && rec.found && !up_in_edit(rec.p)) {
         let pv = params.prev_views[vi];
         let y = project_prev(pv, rec.p);
-        let k = vec2<i32>(floor(y));
+        // As the temporal pass: the previous pixel as if both rays went through centres.
+        let k = vec2<i32>(floor(y - v.jitter));
         if (y.x >= 0.0 && all(k >= vec2<i32>(0)) && all(k <= last)) {
             if (prev_surface_seen(k, rec)) {
                 // The sample's motion in unjittered internal pixels moves the output centre.
-                let moved = centre + (y + pv.jitter) - (vec2<f32>(near) + 0.5 + v.jitter);
+                let moved = centre + y - (vec2<f32>(near) + 0.5 + v.jitter);
                 let h = moved / ratio;
                 if (all(h >= vec2<f32>(0.0)) && all(h <= vec2<f32>(params.output_size))) {
                     let mean = m1 / n;
                     let sigma = sqrt(max(m2 / n - mean * mean, vec3<f32>(0.0)));
-                    let b_lo = max(lo, mean - CLIP_GAMMA * sigma);
-                    let b_hi = min(hi, mean + CLIP_GAMMA * sigma);
+                    // A still pixel (its history moved less than CLIP_STILL output pixels)
+                    // keeps its history unclipped: it is the average of the jittered samples,
+                    // which one frame's 3 x 3 does not span. What changes under a still
+                    // camera without moving the history is an edit (rejected above) or light.
+                    let still = length(h - (vec2<f32>(gid.xy) + 0.5)) < CLIP_STILL;
+                    let b_lo = select(max(lo, mean - CLIP_GAMMA * sigma), vec3<f32>(-1e9), still);
+                    let b_hi = select(min(hi, mean + CLIP_GAMMA * sigma), vec3<f32>(1e9), still);
                     let mid = 0.5 * (b_lo + b_hi);
                     let ext = 0.5 * (b_hi - b_lo) + vec3<f32>(1e-5);
                     var hy = to_ycocg(history_at(h)) - mid;
