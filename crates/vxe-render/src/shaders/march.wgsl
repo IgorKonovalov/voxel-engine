@@ -44,7 +44,9 @@
 //                              then its material (bits 0..16) and the faces it shows (bit
 //                              16 + 2 k toward -k, the next toward +k); material 0 is a hole.
 //                              Declared by light.wgsl
-//  11  storage  emission_scale [material]f32, the frame's emission scale
+//  11  storage  emission_scale [material]f32, the frame's emission scale in the light the
+//                              pixels sample, then EMISSION_ROWS more in the light the probe
+//                              rays sample (`emission_base`)
 //  12  texture  blue_noise     128 x 128 r8unorm blue noise (void and cluster)
 //
 // Bindings, group 1 (the hit pass's outputs, the hit buffer):
@@ -251,6 +253,7 @@ const LIGHTING_REUSE: u32 = 4u;
 const LIGHTING_GRADIENT: u32 = 8u;
 const LIGHTING_FILTER_OFF: u32 = 32u;
 const LIGHTING_EMISSION_CHANGED: u32 = 256u;
+const LIGHTING_LAMP_CHANGED: u32 = 512u;
 const LIGHTING_IDENTITY_TONE_MAP: u32 = 64u;
 const LIGHTING_UNIFORM_DRAW: u32 = 128u;
 // Hit record flags.
@@ -1337,9 +1340,15 @@ fn luminance(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
 }
 
+// Material ids the emission-scale buffer holds per half (`marcher::EMISSION_ROWS`).
+const EMISSION_ROWS: u32 = 65536u;
+// The half of the emission-scale buffer `emission_of` reads: 0 for the pixels' light,
+// EMISSION_ROWS once an entry point (the probe trace) sets it for the probe rays' light.
+var<private> emission_base: u32 = 0u;
+
 // A material's emitted radiance under the frame's emission scale.
 fn emission_of(m: u32) -> vec3<f32> {
-    return materials[m * 4u + 1u].xyz * emission_scale[m];
+    return materials[m * 4u + 1u].xyz * emission_scale[emission_base + m];
 }
 
 @compute @workgroup_size(8, 8, 1)

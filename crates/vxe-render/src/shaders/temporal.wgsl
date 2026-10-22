@@ -36,7 +36,10 @@
 // the taps' age plus one, capped at AGE_MAX. The lamp's part and the moments blend the new
 // sample in at `max(ALPHA, 1 / (age + 1))`; the emissive part, static light, at
 // `max(1 / (age + 1), 1 / Params.emissive_history)`, and at no less than ALPHA while
-// Params.lighting bit 8 says an emission scale changed within the last frames.
+// Params.lighting bit 8 says an emission scale changed within the last frames. On the frame
+// Params.lighting bit 9 says the lamp's light changed, the lamp's part takes this frame's
+// sample as it is (and the moments follow it by the lamp's share): the light pass's lamp
+// estimate is exact up to its shadow ray, so a lamp switched off leaves nothing behind.
 
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 @group(2) @binding(1) var hit_info_in: texture_2d<u32>;
@@ -189,6 +192,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 // wherever emitted light reaches, and a floor would take a whole frame of age
                 // for it every frame, pinning the age, and so the blend, near the first frame.
                 age = floor(age * (1.0 - lambda) + 0.5);
+            }
+            if ((params.lighting & LIGHTING_LAMP_CHANGED) != 0u) {
+                a = 1.0;
             }
             accum = vec4<f32>(mix(h.xyz, sample.xyz, a_emissive), mix(h.w, sample.w, a));
             // The moments follow each part at its own pace, by the lamp's share of the

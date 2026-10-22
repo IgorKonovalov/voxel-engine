@@ -1428,13 +1428,10 @@ fn luma_mad(a: &[f64], b: &[f64]) -> f64 {
 }
 
 /// The frames, from the first after a change, until `series` (each frame's mean absolute
-/// difference from the settled image) falls below 10 % of its first value; `None` if it
-/// does not within the series.
-fn settle_frames(series: &[f64]) -> Option<usize> {
-    series
-        .iter()
-        .position(|&d| d < 0.1 * series[0])
-        .map(|i| i + 1)
+/// difference from the settled image) falls below 10 % of `step` (the change's size);
+/// `None` if it does not within the series.
+fn settle_frames(series: &[f64], step: f64) -> Option<usize> {
+    series.iter().position(|&d| d < 0.1 * step).map(|i| i + 1)
 }
 
 /// One pipeline's lamp readings.
@@ -1444,7 +1441,8 @@ struct LampReading {
     centroids: Vec<f64>,
     /// The lamp's contribution over the sweep's last 16 frames.
     contributions: Vec<Vec<f64>>,
-    /// Frames for the lamp switched off to settle within 10 %.
+    /// Frames for the lamp switched off to settle within 10 % of the lamp's settled
+    /// contribution.
     step: Option<usize>,
     /// Frames for an emission step (ore 1.0 to 0.25, lamp off) to settle within 10 %.
     emission: Option<usize>,
@@ -1494,6 +1492,13 @@ fn lamp_reading(
         }
     }
     let mut f = settled(true, SETTLE);
+    // The step's size: the settled lamp-lit image's difference from the lamp-off one. The
+    // temporal pass drops the lamp's history on the switch, so the first frame after it is
+    // already near the settled image and cannot be the measure.
+    let step = luma_mad(
+        &lumas(&readback::read_rgba8(device, queue, f.target())),
+        &off,
+    );
     f.set_lighting(vxe_render::Lighting {
         lamp: false,
         ..f.lighting()
@@ -1507,7 +1512,7 @@ fn lamp_reading(
             )
         })
         .collect();
-    r.step = settle_frames(&series);
+    r.step = settle_frames(&series, step);
     if !full {
         return r;
     }
@@ -1529,7 +1534,7 @@ fn lamp_reading(
             )
         })
         .collect();
-    r.emission = settle_frames(&series);
+    r.emission = settle_frames(&series, series[0]);
     r.emission_series = (series[0], series[series.len() - 1]);
     let mut f = settled(true, SETTLE);
     let n = (OUTPUT[0] * OUTPUT[1]) as usize;
@@ -1663,8 +1668,8 @@ fn lamp_readings(upscaler: Upscaler, label: &str, full: bool) -> Option<Vec<Stri
 /// Plan 0024's frame: on the level at the spawn pose with a still camera, at scale 1 and 1.5
 /// (jittered, 384 x 216 output), the lamp's centroid lags the ideal (a single frame with no
 /// history at each turn) by at most 2 frames more than Plan 0024's frame does over the
-/// sweep's last 16 frames, and the lamp step settles within 10 % of its first difference in
-/// at most 2 frames more than that frame takes.
+/// sweep's last 16 frames, and the lamp step settles within 10 % of the lamp's settled
+/// contribution in at most 2 frames more than that frame takes.
 #[test]
 fn a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame() {
     let Some(failures) = lamp_readings(Upscaler::default(), "default", false) else {
