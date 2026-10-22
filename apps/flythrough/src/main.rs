@@ -15,12 +15,13 @@
 //! [--history edits|gradient] [--lighting full|half] [--emissive-history N]
 //! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S]`.
 //! `--render` fixes the frame's output resolution (the window scales it); `--internal-scale`
-//! renders at the output size divided by it on each edge (default 1.5); `--jitter off` sends
-//! every primary ray through its pixel's centre (by default it moves by the Halton (2, 3)
-//! sub-pixel jitter of the frame); `--sharpen S` sets the upscaler's RCAS sharpening, 0 to 1
-//! (default 0.5, 0 off); `--frames` exits after N
-//! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
-//! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
+//! renders at the output size divided by it on each edge (default 1: no upscaler); `--jitter
+//! on` moves every primary ray by the Halton (2, 3) sub-pixel jitter of the frame (default off:
+//! through its pixel's centre), which the upscaler accumulates; the upscaler runs when the
+//! scale is above 1 or the jitter is on (`--internal-scale 1.5 --jitter on` is the performance
+//! option); `--sharpen S` sets the upscaler's RCAS sharpening, 0 to 1 (default 0.5, 0 off);
+//! `--frames` exits after N frames, printing the `F1` readings over the last ones and the
+//! stats HUD's rows; `--hud` starts with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
 //! [`Autopilot`]); `--cutaway auto|on|off` sets the cutaway view's start state (default `auto`:
 //! on while the camera's voxel is neither air nor translucent, so a camera in rock or outside
@@ -357,9 +358,13 @@ struct Args {
     sharpen: f32,
 }
 
-/// The internal scale by default (`--internal-scale`): 720p for 1080p, which halves the
-/// frame's GPU time on both adapters of `nfr.md` §1 (§2's upscaler readings).
-const DEFAULT_SCALE: RenderScale = RenderScale::OneHalf;
+/// The internal scale by default (`--internal-scale`): the output size, with the jitter off
+/// the frame runs no upscaler. `--internal-scale 1.5 --jitter on` is the performance option:
+/// 720p for 1080p, about half the frame's GPU time on both adapters of `nfr.md` §1.
+const DEFAULT_SCALE: RenderScale = RenderScale::One;
+
+/// The jitter by default (`--jitter`): off.
+const DEFAULT_JITTER: bool = false;
 
 /// The upscaler's sharpening strength by default (`--sharpen`).
 const DEFAULT_SHARPEN: f32 = 0.5;
@@ -465,7 +470,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         lighting: LightingResolution::default(),
         emissive_history: vxe_render::DEFAULT_EMISSIVE_HISTORY,
         internal_scale: DEFAULT_SCALE,
-        jitter: true,
+        jitter: DEFAULT_JITTER,
         sharpen: DEFAULT_SHARPEN,
     };
     let mut detail_flag = false;
@@ -5568,13 +5573,13 @@ mod tests {
         }
     }
 
-    /// `--internal-scale`, `--jitter` and `--sharpen` parse their values, default to 1.5, on
+    /// `--internal-scale`, `--jitter` and `--sharpen` parse their values, default to 1, off
     /// and 0.5, and refuse an unknown value.
     #[test]
     fn internal_scale_and_jitter_parse_and_refuse_unknown_values() {
         let parse = |a: &[&str]| parse_args_from(argv(a));
         let d = parse(&[]).unwrap();
-        assert_eq!((d.internal_scale, d.jitter), (RenderScale::OneHalf, true));
+        assert_eq!((d.internal_scale, d.jitter), (RenderScale::One, false));
         assert_eq!(d.sharpen, 0.5);
         assert_eq!(parse(&["--sharpen", "0"]).unwrap().sharpen, 0.0);
         assert_eq!(parse(&["--sharpen", "0.8"]).unwrap().sharpen, 0.8);
@@ -5583,9 +5588,10 @@ mod tests {
             ("1.5", RenderScale::OneHalf),
             ("2", RenderScale::Two),
         ] {
-            let a = parse(&["--internal-scale", name, "--jitter", "off"]).unwrap();
-            assert_eq!((a.internal_scale, a.jitter), (scale, false));
+            let a = parse(&["--internal-scale", name, "--jitter", "on"]).unwrap();
+            assert_eq!((a.internal_scale, a.jitter), (scale, true));
         }
+        assert!(!parse(&["--jitter", "off"]).unwrap().jitter);
         assert!(parse(&["--jitter", "on"]).unwrap().jitter);
         assert_eq!(
             RenderScale::OneHalf.internal([1920, 1080]),

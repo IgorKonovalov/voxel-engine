@@ -594,8 +594,8 @@ of Plan 0024 shrink to 44 % at scale 1.5.
 | 5: The readings and the defaults | dev | done: 1080p output, level spawn, release headless, median of last 30 of 300, 3 runs; RTX 3080 Laptop: upscale + sharpen 0.810 to 0.825 ms at 1.5 (0.889 to 0.899 at 1); hit at 1.5 / 1: 0.600 to 0.610 / 1.375 to 1.389 ms (43.5 %); light + temporal + a-trous 1.489 to 1.520 / 3.392 to 3.428 ms (43.8 %); RADV iGPU, no bar: frame 20.149 to 20.876 ms at 1.5, 38.658 to 40.955 at 1; `frame_bytes` 124 621 440 B at 1.5 = 86 835 840 (Plan 0024 frame at 1280 x 720) + 4 608 000 (rgba8 to output size) + 33 177 600 (histories), Phase 3 added no target; fly-through default scale 1.5 | 2a4c72f |
 | 6: A sharper reconstruction and history fetch | dev | done: stripe wall, sharpening 0, arm's length (22.034 px/voxel) / 88 voxels (1.753 px/voxel); N ES 0.798 GE 0.00867 / 0.14138, R 1.186 0.00656 / 0.10586, B 1.718 0.00435 / 0.05063; at 7cc58a4's settings U1 1.465 0.00507 / 0.08105, U1.5 1.630 0.00449 / 0.06147, pan U1 2.020 0.00357, U1.5 2.404 0.00281; shipped U1 1.192 0.00621 / 0.09951, U1.5 1.252 0.00612 / 0.10024 (bars 1.328, 0.00558 / 0.08998; 1.452, 0.00546 / 0.07825), pan U1 1.436 0.00494, U1.5 1.780 0.00454 (bars 1.720, 0.00357; 2.104, 0.00281); still camera from 2 x 2 supersampled upscaled 2.840, bilinear 3.044, native 2.066, from native 2.965, 3.333; flicker at 1.5 off 0.1016/255 0.0029 %, on 0.2752/255 0.6377 %; carve 4749 in box, 0 blend; sideways 67409 of 67443 (99.95 %), 3317 at alpha 1; `upscaled.png` re-blessed (8044 of 82944 pixels, 9.70 %, over 2/255 from the old), rim 16695 px, 25.953 -> 27.469, 0 over max; workspace nextest 596 run, 596 passed, 6 skipped | 76f887f |
 | 7: Light changes and the history weight | dev | done: level spawn, still camera, sweep 0.013 rad a frame (ideal centroid 1.811 px a frame); lag behind the ideal over the last 16 frames: reference 5.38, U1 5.82, U1.5 5.92 (Phase 6's code: 15.39, 15.26); lamp step to 10 %: reference 18 frames, U1 18, U1.5 18 (Phase 6's code: 32, 32); trail 1.121 % (U1), 2.605 % (U1.5) of the reference's dark pixels (Phase 6's: 12.198, 12.319 %); wobble over one jitter cycle reference 0.099/255, U1 0.858, U1.5 1.711; still alpha 0.1 kept (1/16: still camera 2.985 against bilinear 3.044, flicker on 0.2058/255 0.4326 %, wobble 0.653 / 1.285); Phase 6's, 3's and 2's bars hold (still camera 2.840 / 3.044, flicker on 0.2752/255 0.6377 %); workspace nextest 597 run, 597 passed, 7 skipped | 12c6c57 |
-| 8: The readings again | dev | done: 1080p output, level spawn, release headless, median of the last 30 of 300, 3 runs, render code 12c6c57; RTX 3080 Laptop: upscale + sharpen 0.619 to 0.632 ms at 1.5; hit at 1.5 / 1: 0.570 to 0.578 / 1.257 to 1.317 ms (43.3 to 46.0 %); light + temporal + a-trous 1.409 to 1.440 / 3.093 to 3.240 ms (43.5 to 46.6 %); frame 2.727 to 2.780 / 5.294 to 5.546 ms; RADV iGPU, no bar: frame 18.797 to 18.865 ms at 1.5 (Phase 5: 20.149 to 20.876), 38.011 to 38.246 at 1 (38.658 to 40.955); upscale 3.216 to 3.232 at 1.5 (4.786 to 4.872), 4.145 to 4.191 at 1 (5.171 to 5.549); `frame_bytes` 124 621 440 B at 1.5, Phase 7 added no target; `docs/nfr.md` §2 and §3 updated; default scale stays 1.5 | committed with this row |
-| 9: The owner's windowed re-check (the old 6, first run 2026-10-22: rework, see Notes) | human | not started | |
+| 8: The readings again | dev | done: 1080p output, level spawn, release headless, median of the last 30 of 300, 3 runs, render code 12c6c57; RTX 3080 Laptop: upscale + sharpen 0.619 to 0.632 ms at 1.5; hit at 1.5 / 1: 0.570 to 0.578 / 1.257 to 1.317 ms (43.3 to 46.0 %); light + temporal + a-trous 1.409 to 1.440 / 3.093 to 3.240 ms (43.5 to 46.6 %); frame 2.727 to 2.780 / 5.294 to 5.546 ms; RADV iGPU, no bar: frame 18.797 to 18.865 ms at 1.5 (Phase 5: 20.149 to 20.876), 38.011 to 38.246 at 1 (38.658 to 40.955); upscale 3.216 to 3.232 at 1.5 (4.786 to 4.872), 4.145 to 4.191 at 1 (5.171 to 5.549); `frame_bytes` 124 621 440 B at 1.5, Phase 7 added no target; `docs/nfr.md` §2 and §3 updated; default scale stays 1.5 | 0c3a82d |
+| 9: The owner's windowed re-check (the old 6, first run 2026-10-22: rework, see Notes) | human | done 2026-10-22 (live session 8, runs 4 to 7, binary of 0c3a82d): default scale 1 with the jitter off (Plan 0024's frame); the upscaler opt-in (`--internal-scale 1.5 --jitter on`); an FSR 2 port (ADR-0024 Alternative A) as the next plan; verdicts in Notes; the default landed as a dev fix: fly-through defaults, README, parse test; no golden moved; workspace nextest 597 run, 597 passed, 7 skipped | committed with this row |
 
 ### Notes
 
@@ -763,6 +763,22 @@ of Plan 0024 shrink to 44 % at scale 1.5.
   Graphics (RADV RENOIR)"). The 1-minute load was 3.9 to 4.5 (NVIDIA) and 2.3 to 3.6 (RADV)
   from other lanes: loaded, indicative. "Scale 1" is the jitter on, as in Phase 5. The
   root `README.md` needed no change (no flag changed).
+- Phase 9, the owner's windowed re-check, 2026-10-22: live session 8, log
+  `live/session8-20261022-1644.log` in the plan-0028 lane's worktree, runs 4 to 7, the binary
+  of 0c3a82d. The owner's words: run 4 (default: scale 1.5, jitter on, sharpen 0.5): "there is
+  some ghosting on run 4, but not as bad. maybe it is fine as a part of visual style"; run 5
+  (scale 1, jitter on): "5 is meh"; run 6 (Plan 0024's frame: scale 1, jitter off): "6 is
+  almost fine"; run 7 (the default starting in face mode): "7 looked meh, too much shadow
+  motion". Decision: the default is Plan 0024's frame (scale 1, jitter off: the upscaler is
+  not dispatched); the reworked upscaler stays an opt-in setting (`--internal-scale 1.5
+  --jitter on`, sharpening 0.5); an FSR 2 port (ADR-0024 Alternative A) is the next plan, the
+  architect drafts it.
+- Phase 9 dev fix: `DEFAULT_SCALE` is `RenderScale::One` and the new `DEFAULT_JITTER` false
+  (`apps/flythrough/src/main.rs`, its module doc and the parse test); the root `README.md`'s
+  `--internal-scale` and `--jitter` rows name the default and the performance option. The
+  hero example builds `Frame::new` (scale 1, jitter off) and needed no change; the library's
+  defaults were already scale 1 and jitter off. No golden moved (they render through the
+  library's `Frame`, not the fly-through's arguments).
 - Followup: on the RADV iGPU the upscale pass reads 4.8 ms at 1080p output (25 Lanczos taps
   and 9 previous-hit taps per output pixel), against the 1.5 ms line's dev-box reading; 3.2 ms
   after Phase 6 (9 colour taps, 16 Catmull-Rom history loads, 9 previous-hit taps).
@@ -779,7 +795,8 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   and "sharpen" (8 passes); `Frame::target` is the output-size image while upscaling; shaders:
   new `upscale.wgsl`, `sharpen.wgsl`, `reproject_centred` in `march.wgsl` (`project_prev` no
   longer takes a jitter); fly-through flags `--internal-scale` (default 1.5), `--jitter`
-  (default on), `--sharpen` (default 0.5). Phases 6 and 7: `marcher::{Upscaler,
+  (default on), `--sharpen` (default 0.5); at Phase 9 the fly-through's defaults became
+  `--internal-scale 1` and `--jitter off` (no upscaler unless asked for). Phases 6 and 7: `marcher::{Upscaler,
   Reconstruction, HistoryFetch, Blend, StillClip, LAMP_FRAMES}`, `Upscaler::lanczos()`,
   `Frame::set_upscaler`, `Frame::upscaler`; binding 8 of the upscale group (`UpTuning`, 96
   B).
@@ -796,13 +813,16 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   against 3.093 to 3.240; frame 2.727 to 2.780 against 5.294 to 5.546. RADV RENOIR: frame
   18.797 to 18.865 ms at 1.5 against 38.011 to 38.246 at 1, upscale 3.216 to 3.232 at 1.5.
   `frame_bytes` 124 621 440 B at 1.5, unchanged.
-- **Gate at the tip:** at 12c6c57 (Phase 8 changed only `docs/`): `cargo nextest run
+- **Gate at the tip:** after the Phase 9 default change: `cargo nextest run
   --workspace --test-threads 2`: 597 run, 597 passed, 7 skipped, exit 0; `cargo test --doc
   --workspace`: 7 passed, 0 failed; `cargo clippy --workspace --all-targets -- -D warnings`
   exit 0; `cargo fmt --all --check` exit 0; `cargo deny check` exit 0 (advisories, bans,
   licenses, sources ok); `scripts/check-doc-links.mjs` and `check-comment-hygiene.mjs` OK.
   `upscaled.png` re-blessed at Phase 6; the other goldens pass their tests.
-- **Outstanding `human` phases:** Phase 9, the owner's windowed re-check.
+- **Outstanding `human` phases:** none.
+- **Observations from Phase 9 (the opt-in upscaler):** some ghosting remains at scale 1.5 with
+  the jitter on ("not as bad", possibly acceptable as style); in face mode the jitter makes
+  the shadows move ("too much shadow motion"); scale 1 with the jitter on read "meh".
 
 ## Followups
 
