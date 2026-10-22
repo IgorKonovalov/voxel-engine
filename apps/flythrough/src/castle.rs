@@ -87,6 +87,16 @@ impl Tile {
     }
 }
 
+/// The tiles whose box meets the world voxel box `lo..hi` (maximum exclusive).
+pub fn tiles_meeting(lo: [i32; 3], hi: [i32; 3]) -> impl Fn(&Tile) -> bool {
+    move |t| {
+        (0..3).all(|k| {
+            let a = ORIGIN[k] + t.lo[k];
+            a < hi[k] && lo[k] < a + t.size[k] as i32
+        })
+    }
+}
+
 /// The 27 tiles: `u` and `v` split at 256, 256, 88; `w` at the dungeon's 100 below the floor,
 /// then 256 and 144 above it. Ordered by layer (dungeon, lower, upper), then `v`, then `u`.
 pub fn tiles() -> Vec<Tile> {
@@ -772,12 +782,18 @@ fn tile_model(all: &[Part], tile: Tile) -> VoxModel {
 /// the model's centre (`lo + size / 2`) at its castle-local place. Tiles are built on up to
 /// `threads` threads; the result does not depend on the count.
 pub fn castle_vox_on(threads: usize) -> VoxFile {
+    castle_vox_where(threads, |_| true)
+}
+
+/// [`castle_vox_on`] built from only the tiles `keep` accepts: a view that needs part of the
+/// castle builds and holds only that part.
+pub fn castle_vox_where(threads: usize, keep: impl Fn(&Tile) -> bool) -> VoxFile {
     let parts = parts();
-    let tiles = tiles();
+    let tiles: Vec<Tile> = tiles().into_iter().filter(|t| keep(t)).collect();
     let next = AtomicUsize::new(0);
     let mut built: Vec<Option<VoxModel>> = vec![None; tiles.len()];
     std::thread::scope(|s| {
-        let workers: Vec<_> = (0..threads.clamp(1, tiles.len()))
+        let workers: Vec<_> = (0..threads.clamp(1, tiles.len().max(1)))
             .map(|_| {
                 s.spawn(|| {
                     let mut out = Vec::new();
@@ -920,4 +936,52 @@ pub fn prefab_bytes<'a>(prefabs: impl IntoIterator<Item = &'a Prefab>) -> u64 {
             2 * n + 8 * n.div_ceil(64)
         })
         .sum()
+}
+
+/// A named camera pose in the castle, for `--castle-shot` and the shot key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CastleShot {
+    /// The spawn pose, facing the gate across the hall.
+    Gate,
+    /// Inside the keep, looking west along the vault at the rose window.
+    Nave,
+    /// Outside, 6 m from a lancet and its buttresses.
+    Window,
+    /// In the dungeon's corridor, looking along the cells.
+    Dungeon,
+}
+
+impl CastleShot {
+    pub const ALL: [Self; 4] = [Self::Gate, Self::Nave, Self::Window, Self::Dungeon];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Gate => "gate",
+            Self::Nave => "nave",
+            Self::Window => "window",
+            Self::Dungeon => "dungeon",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.name() == name)
+    }
+
+    /// The next shot, wrapping after the last.
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|&s| s == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+
+    /// The eye's world voxel (the camera sits at its centre), the yaw (0 looks along +x, 90
+    /// along +y) and the pitch (up positive), in whole degrees.
+    pub fn pose(self) -> ([i32; 3], i32, i32) {
+        let at = |l: [i32; 3]| [0, 1, 2].map(|k| ORIGIN[k] + l[k]);
+        match self {
+            Self::Gate => (crate::cave::UNBOUNDED_SPAWN.0, 0, 0),
+            Self::Nave => (at([470, NAVE_V, 100]), 180, 12),
+            Self::Window => (at([360, 160, 100]), 90, 0),
+            Self::Dungeon => (at([260, 450, FLOOR + 15]), 0, 0),
+        }
+    }
 }

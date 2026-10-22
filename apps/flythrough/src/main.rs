@@ -4,7 +4,8 @@
 //! By default the cave is unbounded and streams around the camera (ADR-0003): full detail
 //! within `r_full` chunks, mips out to `r_lod`. `--level` generates the bounded level instead.
 //!
-//! `flythrough [--seed N] [--level] [--vault] [--castle] [--castle-out PATH] [--walk] [--render WxH] [--frames N] [--bench N]
+//! `flythrough [--seed N] [--level] [--vault] [--castle] [--castle-out PATH]
+//! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH] [--view VIEW] [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
@@ -71,8 +72,10 @@
 //! gothic castle at startup as a multi-model `.vox` scene (`flythrough::castle`), parses it
 //! back, maps its palette to the castle's material rows and stamps it at generation into a
 //! hall of air over a rock plinth, the gate facing the spawn. It prints each stage's time and
-//! the prefabs' bytes, and the banner names it. `--castle-out PATH` (implies `--castle`) also
-//! writes the generated `.vox` to `PATH`.
+//! the prefabs' bytes, and the banner names it and the shot. `--castle-out PATH` (implies
+//! `--castle`) also writes the generated `.vox` to `PATH`. `--castle-shot NAME` (implies
+//! `--castle`) starts at one of `flythrough::castle::CastleShot`'s poses instead of the gate
+//! (the spawn), and `I` moves the camera to the next shot, printing and showing its name.
 //!
 //! `P` stamps that 16-voxel room at runtime, unrotated, with its minimum corner at the voxel
 //! the dig ray hits, and prints what it changed like a dig does.
@@ -301,6 +304,8 @@ struct Args {
     castle: bool,
     /// `--castle-out PATH`: where to write the generated `.vox`.
     castle_out: Option<std::path::PathBuf>,
+    /// `--castle-shot NAME`: the castle pose the camera starts at.
+    castle_shot: castle::CastleShot,
     sync_budget: u64,
     /// `--mirror-budget`: the mirror's VRAM reservation in bytes.
     mirror_budget: Option<u64>,
@@ -456,6 +461,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         vault: false,
         castle: false,
         castle_out: None,
+        castle_shot: castle::CastleShot::Gate,
         sync_budget: SYNC_BUDGET_MIB << 20,
         mirror_budget: None,
         residency: RESIDENCY,
@@ -682,6 +688,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--castle-out" => {
                 args.castle = true;
                 args.castle_out = Some(value()?.into());
+            }
+            "--castle-shot" => {
+                args.castle = true;
+                let v = value()?;
+                args.castle_shot = castle::CastleShot::parse(&v).ok_or_else(|| {
+                    format!("--castle-shot takes gate, nave, window or dungeon, not {v}")
+                })?;
             }
             "--audio" => args.audio = true,
             "--audio-debug" => {
@@ -2119,9 +2132,11 @@ struct Run {
     /// The lighting modes `F3` to `F7` and `M` switch, and the banner naming them; the frame
     /// takes them at the start of each frame (`F6`'s resolution needs the device).
     modes: hud::Modes,
-    /// The scene's banner row (`castle`) and when it was last shown, by the frame loop's
+    /// The scene's banner row (`castle gate`) and when it was last shown, by the frame loop's
     /// clock; `None` without one.
     scene: Option<(String, f64)>,
+    /// `--castle`'s current shot, which `I` advances; `None` without the castle.
+    castle_shot: Option<castle::CastleShot>,
     look: LookParams,
     /// Sets `look.cutaway` each frame of interactive flight; `X` or the pad's `West` cycles it.
     cutaway: CutawayMode,
@@ -3375,6 +3390,18 @@ impl Run {
             self.look.normal_mode = self.look.normal_mode.next(contour);
             println!("{}", look_line(&self.look, self.rock_detail()));
         }
+        if input.pressed(KeyCode::KeyI)
+            && let Some(shot) = self.castle_shot.map(castle::CastleShot::next)
+        {
+            self.castle_shot = Some(shot);
+            self.fly.camera = Camera {
+                vfov: self.fly.camera.vfov,
+                ..castle_camera(shot)
+            };
+            let line = castle_banner(shot);
+            println!("{line}");
+            self.scene = Some((line, ms_since(self.start)));
+        }
         if input.pressed(KeyCode::KeyX) || input.pad_pressed(PadButton::West) {
             self.cutaway = self.cutaway.next();
             println!("cutaway {}", self.cutaway.name());
@@ -4018,7 +4045,8 @@ impl App for Flythrough {
                 scene: self
                     .args
                     .castle
-                    .then(|| ("castle".to_owned(), ms_since(self.start))),
+                    .then(|| (castle_banner(self.args.castle_shot), ms_since(self.start))),
+                castle_shot: self.args.castle.then_some(self.args.castle_shot),
                 look: self.args.start_look(),
                 cutaway: self.args.cutaway,
                 dig_radius: DIG_RADIUS,
@@ -4190,6 +4218,22 @@ fn materials(args: &Args) -> MaterialTable {
     } else {
         table
     }
+}
+
+/// The camera at castle shot `shot`: the eye voxel's centre, its yaw and pitch.
+fn castle_camera(shot: castle::CastleShot) -> Camera {
+    let (eye, yaw, pitch) = shot.pose();
+    Camera {
+        position: eye.map(|v| v as f32 + 0.5).into(),
+        yaw: (yaw as f32).to_radians(),
+        pitch: (pitch as f32).to_radians(),
+        vfov: 70f32.to_radians(),
+    }
+}
+
+/// The castle's banner row for `shot`: `castle gate`.
+fn castle_banner(shot: castle::CastleShot) -> String {
+    format!("castle {}", shot.name())
 }
 
 /// `--castle`'s source over the cave of `seed`: the castle generated, encoded (and written to
@@ -4398,11 +4442,15 @@ fn main() {
         )
     };
 
-    let camera = Camera {
-        position: spawn.0.map(|v| v as f32 + 0.5).into(),
-        yaw: 0.0,
-        pitch: 0.0,
-        vfov: 70f32.to_radians(),
+    let camera = if args.castle {
+        castle_camera(args.castle_shot)
+    } else {
+        Camera {
+            position: spawn.0.map(|v| v as f32 + 0.5).into(),
+            yaw: 0.0,
+            pitch: 0.0,
+            vfov: 70f32.to_radians(),
+        }
     };
     let size = args.render.unwrap_or([1280, 720]);
     let headless = args.headless;
@@ -4821,6 +4869,10 @@ mod tests {
             a.extend_from_slice(other);
             assert!(parse_args_from(argv(&a)).is_err(), "{a:?}");
         }
+        let a = parse_args_from(argv(&["--castle-shot", "nave"])).unwrap();
+        assert!(a.castle);
+        assert_eq!(a.castle_shot, castle::CastleShot::Nave);
+        assert!(parse_args_from(argv(&["--castle-shot", "keep"])).is_err());
         let a = parse_args_from(argv(&["--castle-out", "c.vox"])).unwrap();
         assert!(a.castle);
         assert_eq!(a.castle_out.as_deref(), Some(std::path::Path::new("c.vox")));
@@ -5142,6 +5194,7 @@ mod tests {
             light: LightParams::headlamp(),
             modes,
             scene: None,
+            castle_shot: None,
             dig_radius: DIG_RADIUS,
             scroll: ScrollSteps::default(),
             triggers: [false; 2],
@@ -5249,6 +5302,43 @@ mod tests {
         input.pad_down(PadButton::DpadDown);
         run.handle_input(&input);
         assert_eq!(run.dig_radius, DIG_RADIUS + DIG_STEP);
+    }
+
+    /// With the castle, `I` moves the camera to the next shot's pose and puts its name on the
+    /// banner: gate, nave, window, dungeon, gate. Without it, `I` does nothing.
+    #[test]
+    fn i_cycles_the_castle_shots() {
+        let mut run = bare_run(carved_rock());
+        let mut input = Input::default();
+        input.key_down(KeyCode::KeyI);
+        run.handle_input(&input);
+        assert!(run.scene.is_none() && run.fly.camera.position == Vec3::splat(0.5));
+        run.castle_shot = Some(castle::CastleShot::Gate);
+        for want in ["nave", "window", "dungeon", "gate"] {
+            input.end_frame();
+            input.key_up(KeyCode::KeyI);
+            input.key_down(KeyCode::KeyI);
+            run.handle_input(&input);
+            let shot = run.castle_shot.unwrap();
+            assert_eq!(shot.name(), want);
+            let (eye, _, _) = shot.pose();
+            assert_eq!(
+                run.fly.camera.position,
+                Vec3::from(eye.map(|v| v as f32 + 0.5))
+            );
+            assert_eq!(run.scene.as_ref().unwrap().0, format!("castle {want}"));
+            assert!(
+                run.banner()
+                    .unwrap()
+                    .starts_with(&format!("castle {want}\n"))
+            );
+        }
+        let (_, yaw, pitch) = castle::CastleShot::Nave.pose();
+        let nave = castle_camera(castle::CastleShot::Nave);
+        assert_eq!(
+            (nave.yaw, nave.pitch),
+            ((yaw as f32).to_radians(), (pitch as f32).to_radians())
+        );
     }
 
     /// `X` and the pad's `West` (Square) cycle the cutaway alike: auto, on, off, auto.
