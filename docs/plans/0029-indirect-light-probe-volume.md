@@ -282,7 +282,7 @@ Outcome records at the close; the decision it records is unchanged.
 | 2: The update pass and the furnace | dev | done: trace and blend dispatches, Chebyshev weight, `light.wgsl` split into `draw_candidates`/`resolve_emissive`/`emissive_estimate`; furnace floor 2.975 after 256 frames (-5.3 % of pi), centre probe texels 2.856 to 2.981; dark box 0.36 % of the lit; 63 solid probes flagged inside, gather unchanged with their texels at 1000 (lavapipe) | f9da073 |
 | 3: Scrolling and edits | dev | stopped at a done-when: origin follows the camera (tagged slots), `Frame::invalidate` adds touched probes to the next update; scroll test passes (12 288 stayed byte for byte, 20 480 entered at age 0); the carve bar (20 % within 32 frames) is not reached, test committed `#[ignore]` pending the owner | 545390f |
 | 3 (after the 518b522 amendment) | dev | done: carve test on the amended bar: dark floor 0.01069 before, 0.12354 at frame 32 = 71.5 % of settled 0.17273 (frame 256) and 11.6x the pre-carve; after the fill, 2.78 % of the lit box's at frame 64, peaking at 3.23 % at frame 26 (lavapipe) | d90e9ab |
-| 4: The cave, the switches and the readings | dev | done with three done-whens unmet (Notes): `F8`, `--probe-spacing`, HUD rows, autopilot bytes line, `indirect.png` blessed (100 % of 57 600 hit pixels differ from indirect off by more than 8/255); readings in `nfr.md` §2 and §3 on both adapters | 83ae737 (code), readings committed with this row |
+| 4: The cave, the switches and the readings | dev | done (after the c444a61 amendment): `F8`, `--probe-spacing`, HUD rows, autopilot bytes line, `indirect.png` blessed (100 % of 57 600 hit pixels differ from indirect off by more than 8/255); `Lighting::probe_rays`/`probe_slices`, `--probe-rays`, `--probe-slices`; update plus gather 1.625 to 1.663 ms, lighting line at half 4.42 to 4.48 ms, `frame_bytes` +58 837 024 B; readings in `nfr.md` §2 and §3 on both adapters | 83ae737, 68b3bdb, db7b057, committed with this row |
 | 5: The owner's windowed check | human | not started | |
 
 ### Notes
@@ -327,15 +327,28 @@ Outcome records at the close; the decision it records is unchanged.
   `a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again` was committed
   ignored at 545390f; the owner chose the refresh-speed bar (518b522) and the test carries it
   un-ignored. The frame-32 margin over 70 % is 1.5 points.
-- Phase 4 done-when unmet: update plus gather at the streamed spawn on the dev box read 1.625,
-  1.661, 1.663 ms (release, 83ae737, RTX 3080 Laptop, 1080p, half lighting, loads 6.2/4.2/2.8),
-  over 1.5 ms; the update pass is 1.36 to 1.39 of it.
-- Phase 4 done-when unmet: the §2 lighting line at full resolution reads 14.89 to 15.06 ms
-  streamed, over 6.0; light plus temporal alone are 12.2 to 12.3 ms there (Plan 0024's full
-  tier already missed the line). At half it reads 4.42 to 4.48 ms.
-- Phase 4 done-when unmet: `frame_bytes` rises by 58 837 024 B, 8 374 304 B over the atlases
-  and state (50 462 720 B): the update list, ray buffer and uniform (4 227 104 B) and the
-  gather's lighting-grid target (4 147 200 B at 1080p half).
+- Phase 4: update plus gather at the streamed spawn on the dev box read 1.625, 1.661, 1.663 ms
+  (release, 83ae737, RTX 3080 Laptop, 1080p, half lighting, loads 6.2/4.2/2.8), over the
+  drafted 1.5 ms and under the amended 1.7 ms (c444a61); the update pass is 1.36 to 1.39 of it.
+- Phase 4: the §2 lighting line at the half tier reads 4.42 to 4.48 ms streamed (the amended
+  bar, 6.0 ms); the full tier, recorded with no bar under the amendment, reads 14.89 to
+  15.06 ms, of which light plus temporal is 12.2 to 12.3 ms.
+- Phase 4: `frame_bytes` rises by 58 837 024 B, the amended bar's sum: atlases and state
+  (50 462 720 B), the update list, ray buffer and uniform (4 227 104 B) and the gather's
+  lighting-grid target (4 147 200 B at 1080p half); the drafted bar (atlases and state only)
+  was exceeded by 8 374 304 B.
+- Phase 4 amendment (db7b057): `Lighting::probe_rays` (clamped 1..=64, default 64) and
+  `Lighting::probe_slices` (8, 16 or 32, default 8), `Frame::traced_probe_rays()`,
+  `ProbeVolume::update_list(frame, slices, touched)`; the test
+  `the_probe_settings_scale_the_rays_a_frame_traces` asserts 262 144, 131 072, 131 072 and
+  65 536 rays a frame (lavapipe); the mode line and banner read `indirect on at 64 rays 1/8`,
+  `mode_banner.png` reblessed. Slow adapter (db7b057's release binary, RADV, streamed, half):
+  `--probe-rays 32` update 6.202 to 6.249 ms (loaded, 7.94), `--probe-slices 16` 4.162 to
+  4.234 ms (load 0.86), gather 1.546 to 1.547 ms in both.
+- Phase 4 gate on db7b057's tree plus this row's docs (2026-10-22, exclusive perf lock, load
+  0.19): `cargo nextest run --workspace --test-threads 2` 591 passed, 4 skipped, exit 0;
+  `cargo test --doc` 7 passed, 1 ignored; clippy `-D warnings`, `fmt --check`, `cargo deny
+  check`, `check-doc-links` (258 links), `check-comment-hygiene`, `check-index-rows` all exit 0.
 - Phase 4: the slow adapter (AMD Radeon, Cezanne, RADV) is selected with
   `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json`; `--adapter` is not on this
   branch. Readings there: update 7.76 to 7.83 ms, gather 1.55 ms streamed at half.
@@ -360,37 +373,6 @@ Outcome records at the close; the decision it records is unchanged.
   outside the frame's slice wait for their slice.
 - Phase 2: the furnace's converged floor reads 2.97 (about -5.3 % of pi) frame after frame from
   frame 72 on; the residual is not diagnosed.
-
-### Resume notes (2026-10-22, delete when the Phase 4 amendment lands)
-
-- Done: phases 1 to 3 (6dfd37f, f9da073, 545390f, d90e9ab), Phase 4 code (83ae737) and
-  readings (68b3bdb); the c444a61 amendment's code is at db7b057 (`wip`): `Lighting::probe_rays`
-  (clamped 1..=64, default 64; `Lighting::rays()`) and `Lighting::probe_slices` (8, 16, 32,
-  default 8; `Lighting::slices()`), `ProbeUniform::rays`, `ProbeVolume::update_list(frame,
-  slices, touched)`, `Frame::traced_probe_rays()`; the test
-  `the_probe_settings_scale_the_rays_a_frame_traces` (262144, 131072, 131072, 65536 rays a
-  frame; passes on lavapipe); flags `--probe-rays N` and `--probe-slices N`; the mode line and
-  banner read `indirect on at 64 rays 1/8`; `mode_banner.png` reblessed. The indirect test
-  binary, the two goldens and the flythrough unit tests passed on db7b057's tree; the full
-  workspace gate has not run on it.
-- Extra slow-adapter readings, taken (the release binary of db7b057's tree, AMD Radeon
-  Cezanne RADV, 1080p, streamed spawn `--frames 3000`, half lighting, median of the last 30,
-  exclusive perf lock, loads at start 7.94/0.64/0.84 and 0.86/0.34/0.67): `--probe-rays 32`
-  update 6.249, 6.222, 6.202 ms, gather 1.546 to 1.547; `--probe-slices 16` update 4.162,
-  4.234, 4.167 ms, gather 1.546 to 1.547 (64 rays, one in 8 read 7.76 to 7.83 at 68b3bdb).
-- Left: add those readings to `docs/nfr.md` §2 under "The probe volume's two passes" (no bar;
-  note the 1.7 ms dev-box bar, the half-tier lighting line, the full tier recorded with no bar,
-  and §3's 58 837 024 B now counted in full); update the Phase 4 log row and the three
-  "done-when unmet" Notes to what the amendment accepted; run the full gate (nextest
-  workspace `--test-threads 2` under the perf lock, doctests, clippy, fmt, deny, the two
-  `scripts/check-*.mjs`); commit; stop at Phase 5.
-- iGPU selection: `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json` before the
-  command leaves the loader only RADV ("headless on AMD Radeon Graphics (RADV RENOIR)");
-  `systemd-run --scope` inherits it. `--adapter` is not on this branch.
-- Gotchas: nextest's `-j` is `--test-threads` (use `CARGO_BUILD_JOBS=4`, not `-j 4`); the
-  vxe-script-wasm tests need `scripts/build-guests.sh` once per worktree; WGSL
-  `pack2x16float` fails the naga portability test (the shaders use `pack_half2`); fewer
-  emissive candidates on probe rays bias the furnace low (2 candidates: -12.2 %), so keep 8.
 
 ### Close triggers
 

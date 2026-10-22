@@ -326,10 +326,27 @@ RADV:**
 | Radeon (Cezanne, RADV), level, half [0.3, 0.4, 0.4] | 7.081, 7.080, 7.088 | 1.341, 1.341, 1.342 | 8.422, 8.421, 8.430 | 24.393, 24.398, 24.413 |
 | Radeon (Cezanne, RADV), streamed, full [0.4, 0.1, 0.1] | 7.746, 7.781, 7.747 | 6.015, 6.016, 6.015 | 13.761, 13.797, 13.762 | 99.649, 99.749, 99.613 |
 
-On the dev box the two passes read 1.63 to 1.66 ms at the streamed spawn, over the plan's
-1.5 ms bar; the lighting line (light, temporal and the two passes) holds under 6.0 ms at half
-resolution (4.4 to 4.5 ms streamed) and misses it at full (14.9 to 15.1 ms, of which light
-plus temporal is 12.2 to 12.3). Readings taken during tuning on the same box, 1000 frames,
+Bars (the owner, 2026-10-22, at these readings): the two passes at most 1.7 ms on the dev box
+at the streamed spawn, read 1.63 to 1.66 ms; the lighting line (light, temporal and the two
+passes) is read at the default half tier, at most 6.0 ms, read 4.4 to 4.5 ms streamed. The
+full tier is a quality mode with no bar: 14.9 to 15.1 ms streamed, of which light plus
+temporal is 12.2 to 12.3. The slow adapter carries no bar.
+
+**The slow adapter at the probe settings (the release binary of db7b057's tree, 2026-10-22,
+exclusive perf lock, AMD Radeon Cezanne on RADV selected as above, 1920 x 1080, half lighting,
+the streamed spawn `--frames 3000`, median of the last 30 frames, three runs; 1-minute load
+7.94 at the start of the 32-ray runs, so they are loaded (indicative), and 0.86 at the start
+of the one-in-16 runs):** `Lighting::probe_rays`
+and `Lighting::probe_slices` (flags `--probe-rays N`, `--probe-slices N`; defaults 64 rays and
+one probe in 8 a frame) trade the update pass's cost.
+
+| setting | probes (update) ms | gather ms |
+|---|---|---|
+| `--probe-rays 32`, one in 8 | 6.249, 6.222, 6.202 | 1.546 to 1.547 |
+| 64 rays, `--probe-slices 16` | 4.162, 4.234, 4.167 | 1.546 to 1.547 |
+| 64 rays, one in 8 (the table above, 68b3bdb) | 7.832, 7.764, 7.760 | 1.546 |
+
+Readings taken during tuning on the same box, 1000 frames,
 1-minute load 8 to 14: the update pass read 1.525 ms before the blend skipped inside probes'
 texels and the visibility rays under 0.83 in cosine (1.274 after); without the probe rays'
 emissive sample it read 0.989 ms and with the blend alone 0.367 ms, so the emissive sample
@@ -431,7 +448,9 @@ per 9 pixels. The plan's projection was about 276 MB.
 `Frame::frame_bytes` reads 254 216 224 B at 1080p with half-resolution lighting, 58 837 024 B
 above Plan 0024's 195 379 200: the atlases 50 331 648 B, the state 131 072 B, the update list,
 ray buffer and uniform 4 227 104 B (the volume, 54 689 824 B, printed as `autopilot: probe
-volume`), and the gather's lighting-grid target 4 147 200 B (8 B per lighting pixel).
+volume`), and the gather's lighting-grid target 4 147 200 B (8 B per lighting pixel). The
+plan's bar (amended 2026-10-22, owner) counts all of it: 58 837 024 B and no more, against the
+1.5 GB line.
 
 **Readings (dev reference, 2026-10-16, Plan 0001 Phase 4 commit, `flythrough` cave seed 1,
 `cargo run --release -p flythrough --example world_budget`):**
