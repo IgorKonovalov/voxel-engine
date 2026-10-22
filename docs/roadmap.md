@@ -460,7 +460,7 @@ a cheap query.
 - **Visible proof:** a golden image of an animated model casting a shadow on the world.
 - **ADRs expected:** entity representation.
 
-### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views, the profiler across passes and the benchmark lane remain; Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1)
+### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views, the profiler across passes and the benchmark lane remain; Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1; Plan 0042 closed the generated castle, v0.30.0)
 
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane
@@ -469,7 +469,8 @@ a cheap query.
   0018, v0.15.0).
 - Stamping at authored-building scale: a generated castle and dungeon, a 27-tile `.vox`
   scene through the importer and `StampedSource`, with its RAM and generation costs read (Plan
-  0042, approved).
+  0042, v0.30.0: 343 566 464 B of prefabs, about 92 % air; sparse prefab storage stays a
+  followup).
 - Test tiers for the gate every lane runs: `quick` (CPU only, no perf lock) after every dev
   phase, `gpu` under the lock for render phases, `full` at a close, a merge and in CI, kept
   true by `scripts/check-test-tiers.mjs` (Plan 0043, v0.29.1).
@@ -555,6 +556,8 @@ set by the game, never by a wall clock in the engine.
   moon's phases, sky bodies the game lists (a comet's tail, meteors), an aurora shell whose
   glow lights the ground through a hemisphere map, and a blue-shifted, desaturated night tint
   driven by scene luminance. After Plans 0032 and 0035.
+- **The castle outdoors** (not drafted): Plan 0042's generated castle on open terrain under
+  the sky, the owner's pick after its flight. After Plan 0032's outdoor source.
 - **Flowing liquids** (not drafted): a deterministic cellular flow in `vxe-world` whose steps
   are ops through the log, a later plan with its own ADR.
 - **Headless proof:** each plan's goldens on lavapipe (noon, sunset, night, cave mouth, far

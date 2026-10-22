@@ -738,8 +738,8 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
 5900HS, exclusive perf lock, 1-minute load 2.4 to 13.0, so loaded and indicative):** the
 generated castle keeps 21 of its 27 tiles (600 x 600 x 500 voxels split at 256): its prefabs
 hold 343 566 464 B (the sum of `2n + 8 ceil(n / 64)` over the kept tiles), of which the
-castle's listed voxels are 13 154 879 (about 3.5 % of the 2 B per voxel; the rest is the
-air in each tile's box). The encoded `.vox` is 52 623 529 B. Process peak RSS (`VmHWM`,
+castle's listed voxels are 13 154 879 (about 8 % of the kept tiles' 161 678 336 voxels; the
+rest is the air in each tile's box). The encoded `.vox` is 52 623 529 B. Process peak RSS (`VmHWM`,
 streamed seed 1, headless, `--frames 3000`, 1280 x 720) is 1 242 440 to 1 331 404 kB
 with the castle against 949 184 to 986 124 kB without it, three runs each: about 260 to 350
 MiB more, the prefabs' 328 MiB plus the build's transients. Chunk generation over the 990

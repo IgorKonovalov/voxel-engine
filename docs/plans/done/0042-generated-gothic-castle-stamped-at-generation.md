@@ -1,6 +1,8 @@
 # 0042: A generated gothic castle with a dungeon, imported as a .vox scene and stamped at generation
 
-> **Status:** in-progress (2026-10-22)
+> **Status:** done (closed 2026-10-22, v0.30.0). Verdict: every phase met; the castle's 21 kept
+> tiles hold 343 566 464 B of prefabs (about 92 % air), add about 0.3 GB of peak RSS and double the
+> castle chunks' generation mean, and the owner's flight says it looks amazing.
 > **Decisions:** Owner, 2026-10-22, after the Phase 5 flight (live session 10, three screen
 > captures under the untracked `live/video/`): "castle looks amazing", the verdict for the gate,
 > the nave, the window and the dungeon alike; nothing named as breaking first. MagicaVoxel was
@@ -311,7 +313,7 @@ pub fn castle_source(file: &VoxFile) -> StampedSource<HallSource>;
 | 2: The whole castle, the dungeon, the materials and the determinism vector | dev | done: four curtain walls, four corner towers, gatehouse, keep (nave, rib vault, shafts, buttresses, lancets, west door and leaves, rose window, roof, west tower and spire, a torch per bay), stair house, dungeon (stair of 48 steps, corridor, cross corridor, 8 barred cells, crypt on 9 pillars, lining, torches). 21 of 27 tiles list voxels and are kept; prefab bytes 343 566 464 (sum of `2n + 8 ceil(n/64)` over the kept tiles, asserted against `Prefab::len`). Pinned: `.vox` FNV-1a 0x35a8_89ee_81c4_17e9 (52 623 529 B), voxel hash of the 990 castle chunks 0xa2f6_f292_88e1_04e3. Window check owed to Phase 5 | 0057070 |
 | 3: Named shots, the banner and the golden | dev | done: `CastleShot` (gate, nave, window, dungeon) with integer poses; `--castle-shot NAME`; key `I` cycles the shots, banner `castle <shot>`; every eye has 10 voxels of air along each axis both ways (headless test); `castle_gate.png` blessed on llvmpipe (Mesa 26.2.5), 0.0000 % differing on the re-run, from a 5 x 9 x 5-chunk world built from the 6 tiles meeting it, process peak RSS 777 871 360 B (dev box, not the CI runner). The key press in a window is owed to Phase 5 | 1474e59 |
 | 4: The readings | dev | done: `examples/castle_gen`; readings below and in `nfr.md` §3 Prefabs and §7, release builds at 1474e59, three runs each, RTX 3080 Laptop (`--adapter NVIDIA`) and AMD Cezanne iGPU on RADV (`--adapter AMD`), exclusive perf lock per run, 1-minute load 2.4 to 13.0 (loaded, indicative) | 9a86e0e |
-| 5: The owner flies the castle | human | not started; the commands are in Close triggers | |
+| 5: The owner flies the castle | human | done: the verdict is in the header's Decisions; MagicaVoxel not checked | 3849b24 |
 
 ### Notes
 
@@ -392,4 +394,13 @@ pub fn castle_source(file: &VoxFile) -> StampedSource<HallSource>;
 - Sparse prefab storage (uniform bricks stored once, or a brick map per prefab) if Phase 4
   shows the castle's prefab RAM is mostly air. That is an ADR, with dense storage as the
   rejected or kept alternative.
-- The castle on open terrain once Plan 0032's outdoor source exists.
+  The Phase 4 reading says it is: 13 154 879 listed voxels of the kept tiles'
+  161 678 336, so about 92 % of the prefab bytes are air, though the whole castle still adds only about 0.3 GB of peak
+  RSS against the 4 GB line. Not urgent until a consumer stamps several such buildings.
+- The castle on open terrain, under the sky, once Plan 0032's outdoor source exists: the
+  owner's pick after the Phase 5 flight (roadmap M10).
+- The audio's acoustic table is built from the cave's rows only, so the castle's rows (ids
+  5..=11) carry no acoustic triple under `--audio`. A testbed fix: build the table from the
+  same extended material table the world uses.
+- MagicaVoxel opening `--castle-out` was not checked in Phase 5; check it the next time the
+  writer changes.
