@@ -7,6 +7,11 @@
 > still-camera bar, now read against a 2 x 2 supersampled native render; Phase 2's carve bar
 > becomes an alpha-1 bar with the native difference as a reading; the old Phases 3 to 5 are
 > now 4 to 6 (see "Amendment of 2026-10-22" below)
+> **Amended 2026-10-22 (owner, Phase 6):** the owner's windowed check found the upscaled image
+> blurry at both scales, with and without the contour look, and ruled "rework before close".
+> New dev Phases 6 to 8 sharpen the reconstruction and the history fetch, restore rejection of
+> light changes, and re-read the budgets; the windowed check becomes Phase 9 (see "Amendment of
+> 2026-10-22 (owner, Phase 6)" below)
 > **Milestone:** M2 in `docs/roadmap.md` (the upscaler plan; `nfr.md` §2's "with the upscaler
 > allowed, internal resolution between 720p and 1080p")
 > **Related ADRs:** [ADR-0024](../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md)
@@ -25,7 +30,9 @@ The frame renders at an internal resolution (720p for 1080p output at scale 1.5)
 pixel's ray jittered by a sub-pixel offset that changes every frame. After the composite, an
 upscale pass at output resolution reprojects last frame's output through the previous view by
 the hit position, rejects it where the hit changed, clips it to the current neighbourhood's
-colour box, and blends in the jittered sample with a Lanczos weight; a sharpening pass
+colour box, and blends in the jittered samples with a kernel weight of their distance to the
+output pixel (Lanczos-2 until Phase 6, a narrower kernel and a sharper history fetch after
+it, amended 2026-10-22 at Phase 6); a sharpening pass
 (RCAS) follows, then the HUD. Plan 0024's temporal pass, a-trous filter and half tier stop
 reacting to the jitter (amended 2026-10-22). The first thing a reader sees is a still camera
 at scale 1.5 converging to an image closer to a 2 x 2 supersampled native render than a
@@ -101,6 +108,95 @@ change the carve bar. This amendment carries the ruling.
 The old Phases 3 to 5 are now 4 to 6. The Implementation log's table is renumbered to match;
 its entries are left as written.
 
+## Amendment of 2026-10-22 (owner, Phase 6)
+
+The owner ran the windowed check on 2026-10-22 (live session 7, a window of about 2530 x 1378,
+RTX 3080 Laptop, the binary of 7cc58a4) and ruled **rework before close**. The verdicts, in
+the owner's words, are in the Implementation log's Notes. Run 4 (Plan 0024's frame: scale 1,
+jitter off, no upscaler) "looks totally fine"; every run through the upscaler looks blurry, at
+scale 1 a little less than at 1.5, with or without sharpening, and with or without the contour
+look. The upscaler itself blurs; the contour look gets its own plan. Three new dev phases fix
+the blur against measured sharpness and lamp bars, and the windowed check moves to Phase 9.
+
+**What the tip builds** (`upscale.wgsl` at 7cc58a4), and the suspect in each:
+
+- **The current colour** is the Lanczos-2 weighted mean of the 5 x 5 internal samples around
+  the nearest one, the kernel in output pixels at each sample's jittered position, clamped to
+  the 3 x 3 samples' RGB range, and blended at a fixed `UPSCALE_ALPHA` 0.1 whatever the
+  samples' distance from the output pixel's centre. The converged pixel is then the average
+  over the jitter of a full reconstruction about two output pixels wide: the kernel convolved
+  with the jitter's one-internal-pixel box, wider than one pixel's footprint at both scales.
+  A sample half a pixel away counts as much as one on the centre.
+- **The history fetch** (`history_at`) is bilinear. On a still camera it reads the pixel's
+  own centre (the reprojected centre is the output centre), so it costs nothing there; under
+  any camera motion it resamples every frame. A bilinear tap at fraction `f` adds a variance
+  of `f (1 - f)` px^2, and an EMA at alpha holds a sample `k` frames old at weight
+  `alpha (1 - alpha)^k`, so the history carries `f (1 - f) (1 - alpha) / alpha` px^2 of added
+  blur: at alpha 0.1 and 0.37 px of motion per frame, 0.233 x 9 = 2.10 px^2, a Gaussian of
+  sigma 1.45 px whose 10 to 90 % edge rise is 2.56 sigma = 3.7 output pixels. The owner flew
+  the camera; this alone predicts the blur he saw in motion.
+- **No clip on a still pixel** (`CLIP_STILL`, Phase 3 item 4: history moved less than 0.01
+  output pixels keeps its history unclipped). A change of light under a still camera (the
+  lamp's cone sweeping, Plan 0024's emission step) enters only at alpha 0.1: a step leaves
+  `0.9^k` of the old image after `k` frames, under 10 % only at `k = 22`, and a light moving
+  at constant speed trails by `(1 - alpha) / alpha = 9` frames on top of Plan 0024's temporal
+  pass (alpha 0.2: 4 frames, a step under 10 % at `0.8^11 = 0.086`, 11 frames). The headlamp
+  lights the highest-contrast part of the image, which matches "esp with headlamp".
+- **The history weight against the jitter cycle.** Alpha 0.1 averages about
+  `(2 - alpha) / alpha = 19` samples, but the oldest of a 16-phase cycle weighs `0.9^15 =
+  0.21` of the newest, so the cycle is unevenly weighted. At scale 1.5 an output pixel's
+  footprint receives on average `1 / 2.25 = 0.44` internal samples a frame, about 7 a cycle.
+
+**The sharpness measure.** Phase 4's rim gradient (the mean absolute gradient over pixels
+whose 3 x 3 spans 16/255 or more) is nearly blind to blur: across a monotone edge the sum of
+absolute differences is the step height however wide the edge, and a blurrier image only adds
+pixels to the mask. It stays a reading. Two measures that do see blur, on luminance in output
+pixels:
+
+- **Edge spread** (ES): the 10 to 90 % rise across a straight voxel edge, by linear
+  interpolation between pixel centres, per row, the mean over rows.
+- **Gradient energy** (GE): the mean squared forward difference over a patch, both axes. A
+  step of height `h` spread over `w` pixels has `GE` about `h^2 / w`.
+
+The arithmetic for one straight edge at a uniformly random sub-pixel offset, step height 1:
+
+| image | ES (px) | GE per edge row |
+|---|---|---|
+| point-sampled native (Plan 0024's frame, N) | 0.80 | 1.00 |
+| 2 x 2 supersampled native, box-filtered to the output (the reference, R) | 1.20 | 0.75 |
+| a one-pixel box footprint (an ideal converged jitter average at scale 1) | 1.33 | 0.667 |
+| bilinear blit of a box-filtered render at scale 1.5 (B) | 2.25 | 0.374 (0.50 of R) |
+
+Native's extra gradient energy over R's is its aliasing, so no anti-aliased image matches
+native's GE. "At scale 1, jitter on, at least as sharp as Plan 0024's jitter-off frame" is read
+as edges no wider than anti-aliasing over one pixel makes them: ES at most N's plus
+1.33 - 0.80 = 0.53 px, and GE at least 0.85 of R's (the one-pixel box reads 0.889 of R).
+"Scale 1.5 within a stated fraction" is the midpoint between the bilinear blit and the
+reference, on both measures, taken from the readings (0.75 of R's GE and 1.72 px of ES in
+the model).
+
+The new phases:
+
+- **Phase 6 (dev): a sharper reconstruction and history fetch.** It decomposes the tip's
+  blur first, then replaces the bilinear history fetch with Catmull-Rom and the Lanczos-2
+  mean with a narrow Blackman-Harris-like kernel over the 3 x 3 samples, the blend weighted
+  by how near the samples lie to the output centre. It carries the sharpness bars, still and
+  panning.
+- **Phase 7 (dev): light changes and the history weight.** It restores rejection of a change
+  of light under a still camera without giving back Phase 3's still-camera bar, and settles
+  the history weight against the jitter cycle. It carries a headlamp sweep and a lamp step.
+- **Phase 8 (dev): the readings again.** Phase 5's frame-time readings on both adapters and
+  `frame_bytes`, after the change.
+- **Phase 9 (human): the windowed re-check** (the old Phase 6, widened): the default, scale 1
+  and Plan 0024's frame, headlamp on, with the contour look on and off, and the default scale.
+  If the image is still blurry, the owner decides between keeping the upscaler opt-in
+  (default scale 1, jitter off) and ADR-0024's Alternative A.
+
+Phase 3 item 4's "alpha 0.1 and the Lanczos-2 kernel stay" held for Phase 3; Phases 6 and 7
+may change both. Phase 3's, Phase 2's and Phase 4's bars, and Plan 0024's, still hold at every
+new phase. The Implementation log's table gains rows 6 to 8 and its old row 6 becomes row 9;
+its entries are left as written.
+
 ## Architecture diagram
 
 ```mermaid
@@ -108,7 +204,7 @@ flowchart LR
     subgraph render [vxe-render]
         J[View.jitter\nHalton 2,3 x16] --> H[hit pass\ninternal res]
         H --> HB[(hit buffer)] --> L[light, temporal,\na-trous, composite\ninternal res,\njitter-aware]
-        L --> UP[upscale.wgsl\noutput res, per view:\nreproject by hit pos,\nreject, clip, Lanczos blend]
+        L --> UP[upscale.wgsl\noutput res, per view:\nreproject by hit pos,\nreject, clip,\nkernel-weighted blend]
         HB --> UP
         HIST[(history, output res,\nper view)] <--> UP
         UP --> SH[sharpen.wgsl\nRCAS] --> OUT[(rgba8 output)] --> P[presenter, HUD]
@@ -261,7 +357,7 @@ between phases. The architect reviews once at the end, in a fresh session.
 - **What:** HUD rows for the upscale and sharpen passes; the autopilot prints their p50 and
   p99 and the frame's passes at scale 1.0 and 1.5; readings on both adapters (`nfr.md` §1)
   at 1080p output; the fly-through's default scale is set from them (the owner's call in
-  Phase 6 confirms it).
+  Phase 9 confirms it).
 - **Files touched:** `apps/flythrough/src/main.rs`, `hud.rs`, the root `README.md` (flags),
   `docs/nfr.md` §2 and §3.
 - **Done when:** upscale plus sharpen read at most 1.0 ms at 1080p output on the dev box
@@ -276,14 +372,140 @@ between phases. The architect reviews once at the end, in a fresh session.
   Phase 3 adds (listed in the log), and no more (amended 2026-10-22, owner: the composite
   target and the resolve dispatch, from the Phase 2 log).
 
-### Phase 6: The owner's windowed check
+### Phase 6: A sharper reconstruction and history fetch (amended 2026-10-22, owner, Phase 6)
+- **Owner skill:** dev
+- **What:** the upscaled image converges as sharp as the anti-aliased native frame at scale
+  1 and keeps that sharpness while the camera moves.
+  1. **The sharpness rig, and the tip's readings first.** A fixture wall facing the camera,
+     columns one voxel wide alternating two materials of contrasting albedo, the headlamp on,
+     a still camera, 384 x 216 output; at two distances: arm's length (7 voxels, 0.7 m at 10
+     cm), and the distance at which one voxel spans 1.5 to 2 output pixels (the high
+     frequencies). Dev logs the pixels per voxel at both. The images: N (Plan 0024's frame,
+     scale 1, jitter off), R (the 2 x 2 supersampled native render, box-filtered to the
+     output, as Phase 3's still-camera reference), B (the bilinear blit of the 256 x 144
+     render), U1 (the upscaler at scale 1, jitter on) and U1.5 (at scale 1.5), each after 32
+     frames, the upscaler's at sharpening 0 and at the default 0.5. ES over the vertical
+     stripe edges in the middle half of the image at arm's length, GE over the stripe patch at
+     both distances, and Phase 4's rim gradient, all as defined in the amendment. Before any
+     change, the log records them at 7cc58a4, and the tip's blur decomposed: the reading with
+     the current colour taken from the nearest sample alone (no kernel), and under done-when
+     3's pan with the history fetched by nearest texel, each switched alone.
+  2. **The history fetch is Catmull-Rom** (the 5-tap form over bilinear taps, as Jimenez's
+     filmic SMAA and common TAA implementations do it, or the 16 texel loads; dev's call)
+     in place of `history_at`'s bilinear, its result kept non-negative and then clipped as
+     today's box clips it.
+  3. **The current colour is reconstructed with a narrow kernel over the 3 x 3 internal
+     samples** around the nearest, in place of the Lanczos-2 mean over 5 x 5: a
+     Blackman-Harris window of the jittered sample's distance to the output centre in output
+     pixels, or its Gaussian fit `exp(-2.29 d^2)` (Karis, "High Quality Temporal
+     Supersampling", 2014). Its width is dev's call, tuned against the bars, each tried value
+     and its readings in the log; at scale 1.5 it must give every output pixel a non-zero
+     weight from the 3 x 3 (the nearest sample lies within 0.75 output pixels on each axis,
+     where the Gaussian fit still weighs `exp(-2.29 x 1.125) = 0.076`).
+  4. **The blend is weighted by the samples' nearness.** The current colour's share of the
+     blend falls with the kernel weight its samples carry this frame (for example alpha times
+     the nearest sample's weight normalised to the weight at the centre, or an accumulated
+     weight in the history's alpha channel, capped, as FSR 2 does); a sample half a pixel off
+     the centre no longer counts as much as one on it. On a reject the pixel still takes the
+     current colour alone (alpha 1).
+- **Files touched:** `crates/vxe-render/src/shaders/upscale.wgsl`, `marcher.rs` (a sampler
+  binding, if the 5-tap form is chosen), `apps/flythrough/tests/upscale.rs`, `tests/golden.rs`
+  (`upscaled.png` re-blessed).
+- **Done when** (headless, lavapipe, on the upscale pass's output at sharpening 0 unless
+  stated):
+  1. **Scale 1, jitter on, as sharp as Plan 0024's frame:** at arm's length U1's ES is at most
+     N's plus 0.53 px, and at both distances U1's GE is at least 0.85 of R's (the arithmetic
+     in the amendment: a one-pixel box footprint reads 1.33 px and 0.889).
+  2. **Scale 1.5 within the midpoint:** U1.5's GE is at least `(1 + GE(B) / GE(R)) / 2` of
+     R's at both distances, and its ES at arm's length at most `(ES(B) + ES(R)) / 2` (0.75
+     and 1.72 px in the model; the bars are computed from the logged B and R readings).
+  3. **Sharp in motion:** the camera translating parallel to the wall at 0.37 output pixels
+     per frame for 64 frames after the 32 still ones, at scale 1 and at 1.5: on the last
+     frame ES at most the still camera's plus 0.5 px and GE at least 0.75 of the still
+     camera's. The margins are judgments; the amendment's arithmetic predicts the tip's
+     bilinear fetch adds about 3.7 px of ES here, and the log records the tip's reading.
+  4. **Nothing else gives way:** Phase 2's three bars, Phase 3's bars 1 to 3 (bar 2 read on
+     the new output; the still camera's distances re-recorded), Phase 4's bars on the
+     re-blessed `upscaled.png` (with its changed pixel counts in the log), and every Plan 0024
+     golden byte for byte at scale 1 with the jitter off.
+  5. Readings, no bar: each image's ES, GE and rim gradient at sharpening 0 and 0.5, at both
+     distances, still and panning; the still-camera distances from R and from N.
+
+### Phase 7: Light changes and the history weight (amended 2026-10-22, owner, Phase 6)
+- **Owner skill:** dev
+- **What:** a change of light under a still camera reaches the image about as fast as in
+  Plan 0024's frame, and the history weight fits the jitter cycle.
+  1. **Rejection of a light change returns.** `CLIP_STILL` leaves a still pixel unclipped
+     because one frame's 3 x 3 does not span the jitter-averaged history (Phase 3 item 4: the
+     still camera read 2.969 unclipped against 3.444 to 3.773 clipped). The replacement is
+     decided by measurement against the bars below and Phase 3's bar 1, each tried mechanism
+     and its readings in the log. Candidates: a clip on still pixels against a box that spans
+     the jitter (for example the 3 x 3 widened by the variance the history has seen); a
+     per-pixel light-change signal written by the light pass where a light's direct term at
+     the hit changed by more than a stated fraction since last frame, on which the upscaler
+     clips or raises alpha (a general mechanism, FSR 2's reactive mask built from what the
+     light pass knows; it adds a target that Phase 8 lists); or both.
+  2. **The history weight against the jitter cycle.** Dev reads alpha 0.1, 1/16 and the
+     capped accumulated weight of Phase 6 item 4 (whichever Phase 6 kept) on the sharpness
+     bars, the flicker bar and the lamp bars below, keeps one and logs the readings. The
+     sequence length (16 phases) may change to 8 or 32 if a reading favours it.
+- **Files touched:** `crates/vxe-render/src/shaders/upscale.wgsl`, `light.wgsl` and
+  `marcher.rs` if the light-change signal is chosen, `apps/flythrough/tests/upscale.rs`.
+- **Done when** (headless, lavapipe, 384 x 216 output, at scale 1 and at 1.5 with the jitter
+  on; the reference is Plan 0024's frame, scale 1, jitter off, through the same lamp poses):
+  1. **A sweeping headlamp lags at most 2 frames more than in Plan 0024's frame.** On the
+     level at the spawn pose, a still camera, 32 frames settled, then the lamp's `turn` raised
+     at a constant rate for 32 frames, the rate moving the spot by about 2 output pixels a
+     frame (dev logs it in radians a frame). The lamp's contribution is the frame less a
+     lamp-off render of the same pose; its luminance-weighted centroid along the sweep,
+     behind the reference's, divided by the reference's centroid speed, is the lag in frames,
+     the mean over the last 16 frames of the sweep. The upscaler's lag is at most the
+     reference's plus 2. The arithmetic: an EMA lags a constant-speed ramp by
+     `(1 - alpha) / alpha` frames, 4 for Plan 0024's temporal pass and 9 more for the tip's
+     unclipped alpha 0.1, so the tip should read about 9 over (the passes in series and the
+     age-dependent alpha make that approximate; the tip's reading goes in the log).
+  2. **A lamp step settles within 2 frames of Plan 0024's frame.** The same pose settled 32
+     frames, the lamp switched off: the frames until the mean absolute difference from the
+     same pipeline's settled lamp-off image falls below 10 % of its first frame's value is at
+     most the reference's plus 2 (the arithmetic: 22 frames for an unclipped alpha 0.1 alone,
+     11 for Plan 0024's temporal pass alone; the tip's and the reference's counts in the log).
+  3. **Phase 6's bars, Phase 3's bars 1 to 3 and Phase 2's three bars still hold**, with the
+     still camera's distances re-recorded.
+  4. Readings, no bar: during the sweep, the share of pixels outside the reference's lit spot
+     (the lamp's contribution under 4/255) that the upscaler lights over 4/255 (the trail);
+     Plan 0024 Phase 13's emission step on the upscaled output; the per-phase wobble of a
+     still pixel over one jitter cycle.
+
+### Phase 8: The readings again (amended 2026-10-22, owner, Phase 6)
+- **Owner skill:** dev
+- **What:** Phase 5's readings re-taken on the code of Phase 7: 1080p output, the level's
+  spawn, release headless, the median of the last 30 of 300 frames, three runs, on the RTX
+  3080 Laptop and the RADV iGPU, at scale 1.0 and 1.5; `frame_bytes`; `docs/nfr.md` §2 and §3
+  updated. The fly-through's default scale stays 1.5 until Phase 9.
+- **Files touched:** `docs/nfr.md` §2 and §3, the root `README.md` (if a flag changed), this
+  plan's log.
+- **Done when:** Phase 5's bars hold again (upscale plus sharpen at most 1.0 ms on the dev box
+  at 1080p output and scale 1.5; the hit pass and the sum of light, temporal and a-trous at
+  most 55 % of their scale-1.0 times); the iGPU's whole frame and upscale pass at both scales
+  are read beside Phase 5's (20.149 to 20.876 ms and 4.786 to 4.872 ms at 1.5), with no bar;
+  `frame_bytes` at scale 1.5 is Phase 5's 124 621 440 B plus any target Phase 7 added (listed
+  in the log), and no more.
+
+### Phase 9: The owner's windowed re-check (amended 2026-10-22, owner, Phase 6)
 - **Owner skill:** human
-- **What:** the owner flies the default look at 2530 x 1378 output at scale 1.5 and 1.0,
-  digs, sweeps the headlamp, holds still in front of a vein, and reads edges at arm's length;
-  a verdict on ghosting, flicker (the lit image with jitter on against `--jitter off`) and
-  sharpness, and the default scale.
+- **What:** the old Phase 6, widened. In a window of about 2530 x 1378, headlamp on, the owner
+  flies, digs, sweeps the headlamp, holds still in front of a vein and reads edges at arm's
+  length in three runs: the default (scale 1.5, jitter on, sharpening 0.5), scale 1 with the
+  jitter on, and Plan 0024's frame (scale 1, jitter off, no upscaler); each with the contour
+  look on and off (the look toggle between contour and face). A verdict on sharpness,
+  ghosting after digs, the lamp's smear and flicker, and the default scale. If the upscaled
+  image is still blurry, the owner decides between keeping the upscaler opt-in (default scale
+  1, jitter off: Plan 0024's frame unless asked for) and ADR-0024's Alternative A (FSR 2's
+  port as the next plan).
 - **Files touched:** this plan's log, ADR-0024's Outcome at the close.
-- **Done when:** the owner has recorded a verdict and the default scale in the log.
+- **Done when:** the owner's verdict per run and the default scale (or the opt-in and
+  Alternative A decision) are recorded in the log; a default that differs from 1.5 lands as
+  a dev fix before the close.
 
 ## Data shapes
 
@@ -307,16 +529,22 @@ of Plan 0024 shrink to 44 % at scale 1.5.
 
 | `nfr.md` figure | line | projection (dev box, 1080p output) | how the close measures it |
 |---|---|---|---|
-| §2 Upscale, tone map, post | 1.5 ms | upscale with its resolve dispatch 0.4 to 0.7 ms, sharpen 0.1 to 0.2 ms, composite 0.2 ms | Phase 5, three runs, both adapters |
-| §2 Primary rays | 3.0 ms | at scale 1.5, 44 % of the rays: the hit pass about 0.65 to 0.9 ms (dev), 1.7 to 2.6 ms (floor projection) | Phase 5 |
-| §2 Lighting, Denoise | 6.0, 3.0 ms | 44 % of Plan 0024's readings at scale 1.5; Phase 3's 3 x 3 history acceptance reads up to nine previous pixels where Plan 0024 read four (a guess: within the 55 % bar's margin) | Phase 5 |
-| §3 Everything else in VRAM | 1.5 GB | +33.2 MB history, −56 % of the internal buffers at scale 1.5 except the composite's `rgba8` target (8.3 MB, stays at the output size) | `frame_bytes`, Phase 5 |
+| §2 Upscale, tone map, post | 1.5 ms | upscale with its resolve dispatch 0.4 to 0.7 ms, sharpen 0.1 to 0.2 ms, composite 0.2 ms; Phase 6's 3 x 3 kernel reads 9 colour taps where Lanczos-2 read 25, and Catmull-Rom up to 16 history texels where bilinear read 4 (a guess: within 1.0 ms) | Phase 5, three runs, both adapters; re-read in Phase 8 |
+| §2 Primary rays | 3.0 ms | at scale 1.5, 44 % of the rays: the hit pass about 0.65 to 0.9 ms (dev), 1.7 to 2.6 ms (floor projection) | Phase 5; re-read in Phase 8 |
+| §2 Lighting, Denoise | 6.0, 3.0 ms | 44 % of Plan 0024's readings at scale 1.5; Phase 3's 3 x 3 history acceptance reads up to nine previous pixels where Plan 0024 read four (a guess: within the 55 % bar's margin) | Phase 5; re-read in Phase 8 |
+| §3 Everything else in VRAM | 1.5 GB | +33.2 MB history, −56 % of the internal buffers at scale 1.5 except the composite's `rgba8` target (8.3 MB, stays at the output size), plus any target Phase 7 adds (a light-change mask, if chosen) | `frame_bytes`, Phase 5; re-read in Phase 8 |
 
 ## Risks & open questions
 
 - **Ghosting, flicker and over-sharpening** are the known failure modes; Phase 2's reject and
-  clip tests, Phase 3's flicker bar and Phase 6's eye are the bar. If the owner rejects it, FSR 2's port is the next
-  plan (ADR-0024 Alternative A).
+  clip tests, Phase 3's flicker bar, Phases 6 and 7's sharpness and lamp bars and Phase 9's
+  eye are the bar. If the owner rejects it, FSR 2's port is the next plan (ADR-0024
+  Alternative A).
+- **Catmull-Rom and a narrow kernel ring and flicker** (amended 2026-10-22, Phase 6): both
+  have negative lobes or less smoothing than what they replace. The neighbourhood clip bounds
+  the history's overshoot, and Phase 3's flicker bar is re-read at Phases 6 and 7; if the
+  flicker bar and the sharpness bars cannot both be met, the log says which setting reads what
+  and the owner decides at Phase 9.
 - **The denoiser on jittered samples** (amended 2026-10-22, owner): the draft assumed
   reprojection by world position made Plan 0024's passes indifferent to the jitter. Phase 2
   measured otherwise (the still camera at scale 1 sits 50 % farther from a supersampled
@@ -353,7 +581,10 @@ of Plan 0024 shrink to 44 % at scale 1.5.
 | 3: Lighting that ignores the jitter | dev | done: still camera from 2 x 2 supersampled: upscaled 2.969, bilinear 3.044 (0.975), native 2.066; from native 3.363, 3.333 (1.009); jittered at scale 1 against native from supersampled 2.013 vs 2.066 (284d132: 3.099); flicker at 1.5: jitter off mean 0.1212/255, 0.0020 % over 4/255, on 0.3185/255, 1.0176 % (+0.197, +1.016 pp; margins 0.40, 1.15); Plan 0024's tests pass at jitter off, 11 of 11 `assert_golden` renders byte-identical to 578c8d3 (`dark_cave*.png` unchanged); reading: age below 15 after 16 still frames, jitter on 216 of 82944 hit pixels (0.260 %), off 0 | 0b048ae |
 | 4: The sharpening pass and the golden | dev | done: `upscaled.png` blessed (cavity, 256 x 144 -> 384 x 216, 32 frames, jitter on, sharpening 0.5); sharpening 0 writes each byte as its history value times 255, rounded (0 pixels differ); rim pixels (unsharpened 3 x 3 spanning 16/255 or more): 15914, mean absolute luminance gradient unsharpened 22.888, sharpened 24.100; 0 pixels over their unsharpened 3 x 3 maximum by more than 1/255; workspace nextest 593 run, 593 passed, 5 skipped | 11a5bc9 |
 | 5: The readings and the defaults | dev | done: 1080p output, level spawn, release headless, median of last 30 of 300, 3 runs; RTX 3080 Laptop: upscale + sharpen 0.810 to 0.825 ms at 1.5 (0.889 to 0.899 at 1); hit at 1.5 / 1: 0.600 to 0.610 / 1.375 to 1.389 ms (43.5 %); light + temporal + a-trous 1.489 to 1.520 / 3.392 to 3.428 ms (43.8 %); RADV iGPU, no bar: frame 20.149 to 20.876 ms at 1.5, 38.658 to 40.955 at 1; `frame_bytes` 124 621 440 B at 1.5 = 86 835 840 (Plan 0024 frame at 1280 x 720) + 4 608 000 (rgba8 to output size) + 33 177 600 (histories), Phase 3 added no target; fly-through default scale 1.5 | 2a4c72f |
-| 6: The owner's windowed check | human | not started | |
+| 6: A sharper reconstruction and history fetch | dev | not started | |
+| 7: Light changes and the history weight | dev | not started | |
+| 8: The readings again | dev | not started | |
+| 9: The owner's windowed re-check (the old 6, first run 2026-10-22: rework, see Notes) | human | not started | |
 
 ### Notes
 
@@ -437,6 +668,17 @@ of Plan 0024 shrink to 44 % at scale 1.5.
   report print the internal size and `frame_bytes`; their per-pass p50 and p99 cover the
   "upscale" and "sharpen" passes through `FRAME_PASSES`.
 - Phase 5: the fly-through's default scale is 1.5 (`DEFAULT_SCALE`), pending Phase 6.
+- Phase 6, the owner's windowed check, 2026-10-22 (architect, quoting the owner; an architect
+  edit of this log, made only to record the owner's words): live session 7, log
+  `live/session7-20261022-1307.log` in the lane's worktree, a window of about 2530 x 1378 on
+  the RTX 3080 Laptop, the binary of 7cc58a4. Run 1 (default: scale 1.5, jitter on, sharpen
+  0.5): "everything is really blurry, esp with headlamp". Run 2 (scale 1, jitter on): "looks a
+  bit better, still blurry". Run 3 (scale 1.5, jitter off): skipped. Run 4 (Plan 0024's frame:
+  scale 1, jitter off, no upscaler): "looks somewhat better, looks totally fine without
+  contours". Run 5 (scale 1.5, sharpen 0): "looks very blurry even with no contours". The
+  owner's conclusion: the upscaler itself blurs, independent of the contour look (which gets
+  its own plan). Decision: rework before close (amended 2026-10-22: Phases 6 to 8 dev, the
+  check moves to Phase 9). No default scale was chosen.
 - Followup: on the RADV iGPU the upscale pass reads 4.8 ms at 1080p output (25 Lanczos taps
   and 9 previous-hit taps per output pixel), against the 1.5 ms line's dev-box reading.
 

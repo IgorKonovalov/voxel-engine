@@ -4,6 +4,9 @@
 > **Date:** 2026-10-21
 > **Amended:** 2026-10-22 (owner, at Plan 0030's Phase 2 stop, while proposed): Plan 0024's
 > lighting passes become jitter-aware, and history is accepted from a 3 x 3 neighbourhood.
+> Amended again 2026-10-22 (owner, at Plan 0030's windowed check, while proposed): the image
+> read blurry, so the history fetch, the reconstruction kernel, the blend weight and the
+> still-pixel clip are reworked by the plan's Phases 6 and 7 before the close.
 > **Related plan(s):** [Plan 0030](../plans/0030-temporal-upscaler.md)
 
 ## Context
@@ -42,8 +45,13 @@ internal hit's world position, rejects the history when none of the 3 x 3 previo
 pixels around it agrees in depth, normal and material within thresholds, or the hit is inside
 an edit box, clips the accepted
 history to the YCoCg bounding box of the current 3 x 3 internal neighbourhood, and blends it
-with the current sample weighted by a Lanczos-2 kernel of the jittered sample's distance to
-the output pixel centre at alpha 0.1 (1.0 on a reject). A sharpening pass (RCAS, ported from
+with the current samples weighted by a kernel of each jittered sample's distance to the
+output pixel centre (1.0 on a reject). Amended 2026-10-22 (owner, windowed check): the history
+is fetched with a Catmull-Rom filter rather than bilinearly, the kernel is a narrow
+Blackman-Harris-like window over the 3 x 3 samples rather than Lanczos-2 over 5 x 5, the blend
+weight falls with the samples' distance from the centre rather than staying at a fixed 0.1,
+and a change of light under a still camera is rejected rather than left unclipped; Plan 0030
+Phases 6 and 7 set the values by measurement. A sharpening pass (RCAS, ported from
 FSR 1 with its licence notice) runs on the result, before the HUD. History is one output-
 resolution colour texture per view plus the previous view.
 
