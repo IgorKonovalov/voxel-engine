@@ -459,22 +459,49 @@ the material rows are unchanged. Bindings: the masks buffer's binding is freed.
 
 ### Resume notes (2026-10-22, delete when Phase 3 lands)
 
-- Stopped at Phase 3's attribute-pass bar (p99 at most 1.0 ms under the default autopilot).
-  Readings (RTX 3080 Laptop, exclusive perf lock, load 9.3 to 9.8): `attr_cap` 8192 p50 3.054,
-  p99 5.770 ms, work list p50 8192, p99 10 204, clear items p50 5482, carry-over age p99 7625
-  ms; `attr_cap` 4096 p50 1.533, p99 5.751 ms, age p99 27 229 ms. 1d1e67c in the same session
-  (its flight lowered `r_full` to 12): p99 4.820 ms, clears p50 0, age p99 69 ms.
-- Diagnosis: the pass's cost is per brick (the 10^3 occupancy fill, the workgroup and its
-  three barriers, the clear items), not per voxel computed, so computing about 55 surface
-  voxels instead of 512 does not move it; and at `r_full` 16 the queue holds about 2.4 times
-  the full chunks it held at 12, so every frame runs the cap plus about 5500 clear items. The
-  uncapped front items put p99 above the cap at both caps. Filling the box from the 27 bricks'
-  masks (in c6df852) took p99 from 7.6 to 5.8 ms.
-- Candidates, none tried: drop clear items (every upload now writes "no plane"); several
-  bricks per workgroup (64 invocations a brick); a cap derived from the frame's budget.
-- Gate at c6df852: 580 nextest passed, 4 skipped (workspace, perf lock); 156 passed with
-  `--features wasm`; 7 doctests; clippy (both) and fmt clean; doc gates OK.
-- Owner question: see the dev report of 2026-10-22; Phase 4 is not started.
+- **Done:** Phase 1 (1d1e67c), Phase 2 (5fb6d26), Phase 3 first attempt (c6df852, every
+  done-when but the pass's GPU bar), amendment by the architect (f3d951b), amended Phase 3
+  work in progress (1a163a9, wip). Phase 4 not started; `--adapter` is already in (1a163a9).
+- **In 1a163a9:** clear items gone (`CLEAR_BIT`, `attr_written`, `AttrWorkStats::clears`,
+  the fly-through's clear-item line); `attrib.wgsl` runs four bricks of 64 invocations a
+  workgroup (`attrib::BRICKS_PER_GROUP`), 12 384 B of workgroup memory, three barriers;
+  each invocation lists one byte of the surface mask in index order, occupancy is 1000 bits
+  (word w built by invocation w, no atomics), and invocation t computes attribute words t,
+  t + 64, ... (two voxels a word; the amendment says indices t, t + 64; logged as a change);
+  tests: `a_capped_pass_emits_no_clear_item_and_what_waits_reads_no_plane`,
+  `a_five_brick_list_matches_an_uncapped_mirror_and_the_one_brick_pass` (pinned to c6df852's
+  words, `FIVE_BRICK_HASH`); `world_budget --surface` prints the pass's rounds; `--adapter`
+  with a README row and a parse test.
+- **Readings, default autopilot (`flythrough --autopilot --headless --seed 1`), RTX 3080
+  Laptop, exclusive perf lock; GPU p99 / carry-over age p99 (load at start):**
+  - c6df852, one brick a workgroup: cap 8192 5.770 / 7625 ms; cap 4096 5.751 / 27 229 ms
+    (load 9.3 to 9.8). With the box filled voxel by voxel: 7.636 / 7.781 ms.
+  - Four bricks a workgroup, atomicOr occupancy: cap 8192 1.418 ms / 27.9 ms (p50 0.605,
+    load 2.15); cap 4096 0.597 ms / 2191.7 ms (load 5.79).
+  - Optional change 3, occupancy read at the lookup from the staged masks, no box: cap 8192
+    2.140 ms / 28.1 ms (load 3.24); cap 4096 0.792 ms / 3625.1 ms (load 5.97). Not kept.
+  - atomicOr occupancy, cap 6144: 1.349 ms / 1936.6 ms (load 5.72); cap 5120: 0.820 ms /
+    687.8 ms (load 9.78). Cap tuning alone cannot meet both bars.
+  - Occupancy words without atomics (the tip): cap 8192 1.378 ms / 27.2 ms (p50 0.679, load
+    8.50). Kept.
+  - iGPU (`--adapter AMD`, AMD Radeon Graphics RADV RENOIR), the tip, cap 8192, no bar:
+    p50 1.977 ms, p99 6.625 ms; age p99 4497.4 ms (load 4.81); 1258 frames.
+  - Census: 55.1 chunk-local surface voxels a brick; rounds (words of two voxels, 64 lanes)
+    0.971 a brick at 16/24 (bricks by rounds 0..4: 86 274, 1 515 688, 38 330, 0, 0).
+- **State against the stop rule:** at 8192 the age bar holds and the GPU bar misses by about
+  0.4 ms; at 4096 the reverse. Untried: skipping bricks with no surface voxel from the queue
+  (about 5 %), the neighbour resolution's dependent table and record loads, a cap set from
+  the frame's budget. If none closes it, the stop rule applies (ADR on where attributes are
+  computed) and Phase 4 is not started.
+- **Gate at 1a163a9:** `cargo nextest run -p vxe-render --test mirror` 41 passed;
+  workspace clippy `-D warnings` and fmt clean; the full workspace nextest and the
+  `--features wasm` run were last green at c6df852 (580 and 156 passed) and are owed.
+- **Gotchas:** `ATTR_CAP` in `apps/flythrough/src/main.rs` ships at 8192; the 4096, 5120 and
+  6144 readings used measurement builds (`sed` the constant, build, copy the binary to
+  `target/baseline/`, `sed` it back). Measurement binaries live in `target/baseline/`
+  (`flythrough-1d1e67c` is the pre-plan binary), flight logs in `target/runs/`. Timings
+  under other lanes' load are diagnostic; the bars ask for the quiet box. WGSL reserves
+  `class`; barriers must stay at top level (storage reads are non-uniform).
 
 ### Close triggers
 
