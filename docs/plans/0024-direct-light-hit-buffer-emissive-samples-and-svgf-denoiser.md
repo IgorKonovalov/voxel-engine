@@ -456,6 +456,10 @@ changes it, with the count of changed pixels in the log.
   degrees in one frame, pixels that left the cone fall under 10 % of their lit value within 2
   frames in gradient mode, where plain accumulation at alpha 0.2 needs 11 (0.8^11 = 0.086);
   the gradient pass's time at 1080p goes in `nfr.md`.
+  *Amended 2026-10-22 (owner, at the Phase 14 question):* "their lit value" and the 10 % are
+  read on the lamp's part of each pixel's light, the light that left the cone, with both the
+  list and the reuse sampler; the steady emissive light of the veins, which the turn does not
+  change, is left out of the ratio.
 
 ### Phase 10: The half-resolution tier
 - **Owner skill:** dev
@@ -534,7 +538,8 @@ changes it, with the count of changed pixels in the log.
   2. **Nothing lags that moved.** The Phase 9 cone turn in the edit-box mode reads no slower
      than at the base commit: at least 67 % of the pixels that left the cone are under 10 %
      of their lit value at frame 11, and all of them by frame 22. The gradient mode still takes
-     all of them within 2 frames. On Phase 3's emissive-ceiling box with the filter off, an
+     all of them within 2 frames. Both read on the lamp's part, with both samplers (Phase 9's
+     amendment of 2026-10-22). On Phase 3's emissive-ceiling box with the filter off, an
      emission-scale step from 1.0 to 0.25 in the edit-box mode brings the floor centre's
      accumulated irradiance within 10 % of its new value within 11 frames.
   3. **The earlier bars still hold:** Phase 3's analytic box, Phase 5's age tests, Phase 6's
