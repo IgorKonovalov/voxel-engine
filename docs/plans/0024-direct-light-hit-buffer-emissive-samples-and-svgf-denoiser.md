@@ -956,17 +956,27 @@ each. Empty is fine.)_
   flat list, the sampler they were set with; with reuse they are printed, and the edit-box
   mode asserts with both that the lamp part keeps under 10 % of its change at frame 11 (0.0857
   read).
-- Phase 9's and Phase 13 bar 2's cone-turn bars not met under the reuse default (owner
-  question; Phase 14's own done-whens hold): with reuse,
-  the gradient mode has 1 of 9320 pixels over 10 % at frame 2 (all by frame 3); its emissive
-  part reads 6.337, the firefly ceiling, against a settled 0.542, after the gradient's lambda
-  near 1 at the turn replaced both parts' history with one frame's estimate, and reuse carries
-  the same kept point into the next frames. The edit-box mode with reuse reads 51.3 % at frame
-  11 (all by 18) against 67 %: the lamp part decays as at the base, and a pixel keeping more
-  than 1.4 % of its lit value as static emissive light stays over 10 % at 0.8^11, which more
-  pixels do under reuse.
+- Phase 9's and Phase 13 bar 2's cone-turn bars, read on the whole light under the reuse
+  default (a08d59f): gradient 1 of 9320 pixels over 10 % at frame 2, all by 3; edit-box
+  51.3 % at frame 11, all by 18. The owner answered (cbb4a80, option c): the bars are read on
+  the lamp's part with both samplers.
 - Phase 14: `docs/nfr.md` §2's d367d8f quiet table (flat list) is replaced by the defaults'
   readings, as the phase says; its figures stay in the Phase 7 note above.
+- After Phase 15 (the coarse default and the amended cone turn, committed with this entry):
+  the cone-turn test reads the lamp's part with both samplers. The edit-box bars hold: list
+  and reuse 97.0 % of 14 467 pixels under 10 % at frame 11, all by 14. The gradient bar "all
+  within 2 frames" is an owner-accepted miss (2026-10-22): list 99.9 % by frame 2, all by 7;
+  reuse 99.3 % by 2, all by 9, of 14 468; the test asserts 99 % by frame 2 and all by 7 (list)
+  or 9 (reuse). The cause: lambda is read on the whole light, so where a pixel's steady
+  emissive light is one to two times the lamp's, the turn reads as a 40 to 60 % change, the
+  blend stays under 1, and 16 to 23 % of the lamp part is left after frame 1. The test is
+  renamed `the_lamp_light_that_left_the_cone_drops_in_each_history_mode`.
+- After Phase 15 deviation: `contour_dark_specks_with_and_without_shadows` and
+  `the_walk_renders_the_same_bytes_with_every_skip_on_or_off` take the full walk for their
+  claims (the owner's answer, 2026-10-22) and still compare the goldens at the default walk.
+  Under the coarse walk the contour scene read 248 dark specks only with shadows against face
+  mode's 147 (at the full walk 4 against 34), and `headlamp.png` with every skip off differed
+  by 12 155 bytes: the coarse walk is defined on the mask blocks the skips read.
 
 Phase 15 observations (the owner's windowed re-check, live session 5, 2026-10-22, run log
 `live/session5-20261022-0756.log` in the worktree, untracked): the owner's verdict, "mode that
@@ -980,7 +990,10 @@ apart. The default change (9ad79c0, checkpoint) re-blessed (changed / by more th
 57 600): dark_cave 33 227 / 23 281, dark_cave_half 33 801 / 23 473 (mean absolute difference
 3.988, 2.771, 1.516), headlamp 4919 / 2194, look_contour 4126 / 2129, look_detail 5364 /
 2365, look_gradient27 4244 / 2057, look_trilinear8 3981 / 1841, mode_banner 125 / 120;
-`hero.png` re-shot (720 859 of 1 440 000 pixels changed, 14 564 by more than 2/255).
+`hero.png` re-shot (720 859 of 1 440 000 pixels changed, 14 564 by more than 2/255). At the
+coarse default (`docs/nfr.md` §2, "The coarse shadow walk as the default", load 1.77 to 1.98)
+the half tier's light pass reads 1.972 to 1.996 ms (level) and 2.650 to 2.810 ms (streamed),
+light plus temporal 2.107 to 2.945 ms, a-trous 1.093 to 1.154 ms.
 
 Phase 14 observations: the banner shows for 3 s after the start and after each `F3` to `F7`
 and `M` change, by the frame loop's clock, under the HUD rows or alone with `F2` off;
@@ -1074,29 +1087,6 @@ headlamp 24 929 / 3872, lod 24 431 / 3465, translucent 13 733 / 353, cutaway_lev
 look_contour 27 259 / 3643, look_detail 32 898 / 21 073, look_gradient27 27 651 / 3593,
 look_trilinear8 25 639 / 3071, hud 15 831 / 2109.
 
-### Resume notes (2026-10-22, delete when the coarse default and the amended cone turn land)
-
-- At 9ad79c0 (checkpoint) the shadow walk defaults to coarse; goldens and `hero.png` follow.
-  Two tests fail there (9ad79c0's message names only the first).
-  `the_walk_renders_the_same_bytes_with_every_skip_on_or_off` (`golden.rs`): `headlamp.png`
-  with every skip off differs from every skip on by 12 155 bytes under the coarse walk, which
-  is defined on the mask blocks the skips read, so turning them off changes what it treats as
-  solid; at the full walk the three variants were byte-identical. And `contour_dark_specks_with_and_without_shadows` (Plan 0013's contour
-  bar) reads 248 contour specks only with shadows against face's 147 under the coarse walk;
-  at the full walk it held. The coarse walk counts any 2^3 block with rock as solid, and a
-  smooth contour surface sends more grazing shadow rays through such blocks. Owner question.
-- cbb4a80's amended cone-turn bars, read on the lamp's part with both samplers: the edit-box
-  bars hold (list and reuse: 97.0 % at frame 11, all by 14, of 14 467 pixels); the gradient
-  bar does not (list 99.7 % at frame 1, 99.9 % at 2, all by 7; reuse 99.1 % at 1, 99.3 % at
-  2, all by 9, of 14 468). The slow pixels keep 16 to 23 % of their lamp part after frame 1
-  and then fall at 0.8 a frame: their steady emissive light is one to two times the lamp's,
-  and the gradient's lambda is read on the whole light, so the turn reads as a 40 to 60 %
-  change there and twice that, under 1, is the blend. The test written to the amendment is
-  at `target/plan-0024-resume/lights.rs.lamp-part` (not committed; the committed test is
-  a08d59f's). Owner question.
-- Gate at 9ad79c0: clippy (`-D warnings`) and fmt clean; `cargo nextest run --workspace
-  --test-threads 2`: 580 run, 578 passed, the two tests above failed, 4 skipped.
-
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
@@ -1109,7 +1099,8 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   (default `Half`), `Sampler` (default `Reuse`), `ShadowWalk`, `HistoryKill`, `ToneMap`,
   `CandidateDraw`, `View` and `MAX_VIEWS`, `MAX_EDITS`, `FRAME_PASSES`, `GRADIENT_STRATUM`,
   `DEFAULT_EMISSIVE_HISTORY`, `LightParams::turn`, the `Params` lighting fields, the
-  `LIGHT_WGSL`, `GRADIENT_WGSL`, `TEMPORAL_WGSL`, `ATROUS_WGSL` and `COMPOSITE_WGSL` sources;
+  `LIGHT_WGSL`, `GRADIENT_WGSL`, `TEMPORAL_WGSL`, `ATROUS_WGSL` and `COMPOSITE_WGSL` sources
+  (`ShadowWalk` defaults to `Coarse`);
   `GpuWorld`'s light samples (`LightSample`, `light_buffer`, `light_range`, `light_chunks`,
   `light_table_base`, `light_radius`, `light_span`, `light_samples`), `MirrorConfig`'s
   `light_samples`, `light_chunk_cap`, `light_radius`, `light_sync_samples`, `SyncStats`'
@@ -1127,15 +1118,16 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   Light extraction over the autopilot's flight p50 0.150, p99 2.210, max 6.123 ms against p99
   1.0 and max 3.0 (missed; a followup). `Frame::frame_bytes` 195 379 200 B at half and
   308 736 000 B at full (§3, against the 300 MB projection and 1.5 GB line). Every run's
-  1-minute load is in `nfr.md`. No iGPU or baseline reading was taken.
+  1-minute load is in `nfr.md`. At the final coarse default (the closing tree's binary, load
+  1.77 to 1.98, `nfr.md` §2 "The coarse shadow walk as the default"): light 1.972 to 1.996 ms
+  (level) and 2.650 to 2.810 ms (streamed), light plus temporal 2.107 to 2.945 ms, a-trous
+  1.093 to 1.154 ms. No iGPU or baseline reading was taken.
 - **Gate at the tip:** `cargo build --workspace` exit 0; `cargo nextest run --workspace
-  --test-threads 2` under the perf lock and a 6 GB cap: 580 run, 580 passed, 4 skipped, exit
-  0; `cargo test --doc --workspace` 7 passed; `cargo clippy --workspace --all-targets -- -D
+  --test-threads 2` under the perf lock and a 6 GB cap: 580 run, 580 passed, 4 skipped; `cargo test --doc --workspace` 7 passed; `cargo clippy --workspace --all-targets -- -D
   warnings` exit 0; `cargo fmt --all --check` exit 0; `cargo deny check` exit 0 (advisories,
   bans, licenses, sources ok); `check-doc-links`, `check-comment-hygiene`, `check-index-rows`
-  OK. Run on e9a8e6a plus this commit's README, `nfr.md`, goldens and `hero.png`.
-- **Outstanding `human` phases:** none (Phase 15 done 2026-10-22); two owner questions are
-  open in the resume notes, and this block's gate line is a08d59f's.
+  OK. Run on the tree this entry is committed with.
+- **Outstanding `human` phases:** none (Phase 15 done 2026-10-22).
 
 ## Followups
 
@@ -1146,6 +1138,10 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   2.255 ms and max 6.693 ms on the quiet box, against 1.0 and 3.0. The fix is to extract
   exposed emitters on the stream workers beside the decode, with Plan 0028, which rewrites what
   the workers hand the mirror.
+- Separate lamp and emissive change values in the gradient pass (owner, 2026-10-22): lambda
+  is read on the whole light, so a lamp change where steady emissive light is strong resets
+  only part of the lamp's history (the cone turn's lamp part: all under 10 % by frame 7 with
+  the list and 9 with reuse, against 2).
 - Deliberate flicker as a material emission property (owner, 2026-10-21, live session 4):
   fire and embers flicker by design, so static veins can stay steady.
 - A showcase cave for the hero and demos (owner, 2026-10-20, for later): a large cavern

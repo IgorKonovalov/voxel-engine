@@ -272,6 +272,22 @@ against Phase 7's p99 1.0 and max 3.0 ms (missed, as d367d8f's p99 2.255 and max
 longest wait inside the radius 0 ms; peak 18 522 samples, 0 evicted, 0 refused.
 `Frame::frame_bytes` at 1080p is unchanged: 195 379 200 B at half, 308 736 000 B at full.
 
+**The coarse shadow walk as the default (dev reference, Plan 0024 after Phase 15, the release
+binary of the plan's closing tree, RTX 3080 Laptop GPU, 2026-10-22, exclusive perf lock, each
+run started at a 1-minute load of 1.77 to 1.98 with other sessions' background load; 1080p,
+the defaults: half lighting, coarse shadow walk, reservoir reuse, edit-box history; median of
+the last 30 frames, three runs):**
+
+| pass (ms) | level | streamed |
+|---|---|---|
+| light | 1.972, 1.996, 1.994 | 2.810, 2.650, 2.686 |
+| temporal | 0.135, 0.136, 0.135 | 0.135, 0.134, 0.135 |
+| light + temporal | 2.107, 2.132, 2.129 | 2.945, 2.784, 2.821 |
+| a-trous (variance + 4) | 1.140, 1.150, 1.154 | 1.147, 1.093, 1.103 |
+
+Under the 4.0 ms light bar, the 6.0 ms lighting line and the 3.0 ms denoise line at both
+spawns; the coarse walk takes 0.4 to 0.6 ms off the full walk's light pass at half.
+
 **Both lighting tiers at 1080p output (dev reference, indicative, Plan 0024 Phase 10, RTX
 3080 Laptop GPU, exclusive perf lock, 1-minute load 2.2 to 6.1 with the owner using the
 machine, so not quiet; defaults otherwise: full shadow walk, the flat list, edit-box
