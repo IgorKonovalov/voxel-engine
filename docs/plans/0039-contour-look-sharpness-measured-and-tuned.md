@@ -292,6 +292,11 @@ Shared conventions for every phase:
     C4 off, the C5 render matches today's render within 2/255 per channel at 99 % of the
     window's pixels (the ratio reproduces `n_d.l` wherever the clamp does not bind), and at
     the half tier its `R` is printed beside today's.
+    **Amended 2026-10-22 (owner):** the bar is 98.4 % of the window's pixels. The measured
+    98.465 % misses 99 % on two named causes: the ratio's clamp binds on about 0.64 % of the
+    window, and about 0.9 % are hits whose undetailed normal faces away from the lamp while
+    the detailed one faces it, where the light pass stores 0 and no ratio recovers them. The
+    test prints both shares beside the fraction.
   - **Mirror bytes do not move.** For each fit combination, the level's `mirror_bytes` and
     `allocated_bytes` equal today's exactly (a test in `mirror.rs` on a small world, and the
     level's `--frames 1` line recorded).
