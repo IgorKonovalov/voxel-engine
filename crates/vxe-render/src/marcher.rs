@@ -1072,6 +1072,17 @@ impl Frame {
         &mut self.probes
     }
 
+    /// Replaces the probe volume with one of probes `spacing` voxels apart, every probe never
+    /// traced, when the spacing changes; its pinned origin and update switch carry over.
+    pub fn set_probe_spacing(&mut self, device: &wgpu::Device, spacing: u32) {
+        if spacing != self.probes.spacing() {
+            let mut v = ProbeVolume::new(device, spacing);
+            v.set_origin(self.probes.pinned_origin());
+            v.set_updates(self.probes.updates());
+            self.probes = v;
+        }
+    }
+
     /// The gather's indirect irradiance on the lighting grid (rgba16float, rgb).
     pub fn indirect_irradiance(&self) -> &wgpu::Texture {
         &self.targets.indirect

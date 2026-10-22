@@ -13,7 +13,7 @@
 //! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]
 //! [--history edits|gradient] [--lighting full|half] [--emissive-history N]
-//! [--indirect on|off]`.
+//! [--indirect on|off] [--probe-spacing N]`.
 //! `--render` fixes the frame's internal resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -54,9 +54,10 @@
 //! `--lighting half` runs the lighting passes at half resolution on each edge;
 //! `--emissive-history N` sets the frames static emissive light accumulates over (default 32;
 //! the lamp's light keeps a short history); `--indirect off` turns the probe volume's indirect
-//! light off (on by default, ADR-0023). In a window
+//! light off (on by default, ADR-0023); `--probe-spacing N` sets the voxels between its probes
+//! (default 16, 1.6 m; 4 to 64). In a window
 //! `F3` toggles the shadow walk, `F4` the sampler, `F5` the history killer, `F6` the lighting
-//! resolution and `F7` the lamp, each printing the lighting modes; with the stats HUD shown,
+//! resolution, `F7` the lamp and `F8` indirect light, each printing the lighting modes; with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
 //! `N` cycles the normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
@@ -347,6 +348,20 @@ struct Args {
     emissive_history: u32,
     /// `--indirect on|off`: indirect light from the probe volume (on by default).
     indirect: bool,
+    /// `--probe-spacing N`: voxels between the probe volume's probes (default 16).
+    probe_spacing: u32,
+}
+
+/// The probe volume's bytes inside `Frame::frame_bytes`, by part.
+fn probe_bytes_line(p: &vxe_render::ProbeVolume) -> String {
+    format!(
+        "probe volume {} B in frame_bytes (atlases {} B, state {} B, update list, rays and uniform {} B), spacing {} voxels",
+        p.bytes(),
+        p.atlas_bytes(),
+        p.state_bytes(),
+        p.bytes() - p.atlas_bytes() - p.state_bytes(),
+        p.spacing()
+    )
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -444,6 +459,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         emissive_ore: true,
         lamp: true,
         indirect: true,
+        probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
         shadow_walk: ShadowWalk::default(),
         filter: true,
         light_radius: vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
@@ -555,6 +571,14 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 let v = value()?;
                 args.shadow_walk = ShadowWalk::from_name(&v)
                     .ok_or(format!("--shadow-walk takes full or coarse, not {v}"))?;
+            }
+            "--probe-spacing" => {
+                let v = value()?;
+                args.probe_spacing = v
+                    .parse()
+                    .ok()
+                    .filter(|n| (4..=64).contains(n))
+                    .ok_or(format!("--probe-spacing takes 4 to 64 voxels, not {v}"))?;
             }
             "--emissive-history" => {
                 let v = value()?;
@@ -1394,6 +1418,8 @@ struct Hud {
     pass_ms: Option<Vec<f64>>,
     hud_ms: Option<f32>,
     cpu_ms: f32,
+    /// The probe volume's live probes at the last world sample, with indirect light on.
+    live_probes: Option<u32>,
     /// The last frame's steps view, read back while that view and the HUD are on.
     steps: Option<hud::StepsSample>,
     format_us: u32,
@@ -1420,6 +1446,7 @@ impl Hud {
             pass_ms: None,
             hud_ms: None,
             cpu_ms: 0.0,
+            live_probes: None,
             steps: None,
             format_us: 0,
             page_bytes: hud::page_bytes(),
@@ -2088,6 +2115,19 @@ impl Run {
         self.hud.rss_bytes = hud::rss_bytes(self.hud.page_bytes);
     }
 
+    /// Counts the probe volume's live probes for the HUD, with indirect light on: a blocking
+    /// read of its state words, paid at the world sample's cadence.
+    fn sample_probes(&mut self, gpu: &Gpu) {
+        self.hud.live_probes = self.gfx.as_ref().and_then(|g| {
+            g.frame.lighting().indirect.then(|| {
+                let probes = g.frame.probes();
+                let states = probes.read_states(&gpu.device, &gpu.queue);
+                let origin = probes.origin_for(self.fly.camera.position.to_array());
+                probes.live_count(&states, origin)
+            })
+        });
+    }
+
     /// Refreshes the HUD's values in place for this frame, from the O(1) sources and the
     /// last world sample; the last edit is already there.
     fn refresh_hud_stats(&mut self) {
@@ -2112,6 +2152,10 @@ impl Run {
                     .map(|(&n, &ms)| (n, ms as f32))
                     .collect(),
                 light_samples: g.mirror.light_samples(),
+                live_probes: self
+                    .hud
+                    .live_probes
+                    .filter(|_| self.modes.lighting.indirect),
                 modes: self.modes.line(),
             })
         });
@@ -2556,6 +2600,7 @@ impl Run {
             .look
             .and_then(|_| MarchTimer::new(&gpu.device, &gpu.queue));
         let mut frame = Frame::new(&gpu.device, w, h);
+        frame.set_probe_spacing(&gpu.device, self.args.probe_spacing);
         frame.set_lighting(self.modes.lighting);
         frame.set_resolution(&gpu.device, self.modes.resolution);
         println!("{}", self.modes.line());
@@ -3135,6 +3180,7 @@ impl Run {
             gfx.frame.target().height(),
             gfx.frame.resolution().name()
         );
+        println!("autopilot: {}", probe_bytes_line(gfx.frame.probes()));
         if !p.attr.items.is_empty() {
             for line in p.attr.lines() {
                 println!("{line}");
@@ -3203,6 +3249,7 @@ impl Run {
             (KeyCode::F5, hud::ModeKey::History),
             (KeyCode::F6, hud::ModeKey::Resolution),
             (KeyCode::F7, hud::ModeKey::Lamp),
+            (KeyCode::F8, hud::ModeKey::Indirect),
             (KeyCode::KeyM, hud::ModeKey::Pulse),
         ] {
             if input.pressed(key) {
@@ -3489,6 +3536,7 @@ impl Run {
         let hud = self.hud.visible;
         if self.hud.cadence.due(hud) {
             self.sample_world();
+            self.sample_probes(gpu);
         }
         // The steps row reads the last frame's target back before this frame's march
         // overwrites it: a blocking copy, paid only with the HUD and that view both on.
@@ -3676,6 +3724,7 @@ impl Run {
                 println!("mirror: {}", belt_line(&gfx.mirror));
             }
             self.sample_world();
+            self.sample_probes(gpu);
             self.refresh_hud_stats();
             let mut stats = self.hud.stats.clone();
             stats.world.age_frames = 0;
@@ -5491,6 +5540,8 @@ mod tests {
         let d = parse(&[]).unwrap();
         assert!(d.emissive_ore && d.lamp && d.filter && d.indirect);
         assert!(d.start_lighting().indirect);
+        assert_eq!(d.probe_spacing, 16);
+        assert_eq!(parse(&["--probe-spacing", "8"]).unwrap().probe_spacing, 8);
         assert_eq!(
             (
                 d.shadow_walk,
@@ -5510,12 +5561,16 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
             hud::Modes::new(d.start_lighting(), d.lighting, 0.0).line(),
-            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, filter on, ore pulse off, emissive history 32"
+            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on, filter on, ore pulse off, emissive history 32"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),
             ("--lamp", "--lamp takes on or off, not x"),
             ("--indirect", "--indirect takes on or off, not x"),
+            (
+                "--probe-spacing",
+                "--probe-spacing takes 4 to 64 voxels, not x",
+            ),
             ("--filter", "--filter takes on or off, not x"),
             ("--shadow-walk", "--shadow-walk takes full or coarse, not x"),
             ("--sampler", "--sampler takes list or reuse, not x"),

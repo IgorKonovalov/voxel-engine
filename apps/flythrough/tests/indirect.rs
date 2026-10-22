@@ -260,10 +260,24 @@ fn the_furnace_box_reads_pi_of_indirect_irradiance() {
     assert_eq!(centre & 1, 0, "the centre probe is live: {centre:#x}");
     println!("after 8 frames: {inside} solid probes flagged inside, origin {origin:?}");
     let mut series = Vec::new();
+    let mut direct = Vec::new();
     for _ in 0..31 {
-        f.run(&device, &queue, &gpu, 8);
+        for _ in 0..8 {
+            f.run(&device, &queue, &gpu, 1);
+            direct.push(f64::from(
+                readback::read_rgba16f(&device, &queue, f.frame.irradiance())[0][0],
+            ));
+        }
         series.push(f.indirect(&device, &queue)[0]);
     }
+    // The light pass's direct estimate at the same pixel (filter off: its emissive part),
+    // whose expectation is `PI L_e = PI`; the probe rays shade their hits with the same
+    // estimator.
+    let direct_mean = direct.iter().sum::<f64>() / direct.len() as f64;
+    println!(
+        "floor centre direct over 248 frames: mean {direct_mean:.4} ({:+.2} % of pi)",
+        (direct_mean / std::f64::consts::PI - 1.0) * 100.0
+    );
     let e = f.indirect(&device, &queue);
     let pi = std::f32::consts::PI;
     println!(

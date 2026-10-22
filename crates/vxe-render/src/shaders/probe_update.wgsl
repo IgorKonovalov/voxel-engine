@@ -16,14 +16,15 @@
 //
 // `probe_blend`, one workgroup per entry, after every trace: interior irradiance texel t takes
 // `PI sum(L max(0, d_t . w)) / sum(max(0, d_t . w))` over the front-face rays, interior
-// visibility texel t the `max(0, d_t . w)^VIS_SHARPNESS`-weighted mean of the ray distance
+// visibility texel t the `max(0, d_t . w)^VIS_SHARPNESS`-weighted mean (rays under VIS_CUTOFF
+// in cosine left out) of the ray distance
 // (clamped to [0, PROBE_MISS_DISTANCE spacings]) and of its square; each blends with the
 // previous texel as `h old + (1 - h) new`. h is 0 for a slot holding another probe or one never
 // traced (age 0), YOUNG_HYSTERESIS for the YOUNG_UPDATES updates after the first and for a
 // probe an edit touched (whose age restarts at 1), HYSTERESIS after. The border texels then
 // repeat the interior ones the octahedral fold puts beside them. The probe is inside rock when
 // more than a quarter of its rays met a back face; the state word takes the inside flag, the
-// age plus one (capped) and the probe's tag.
+// age plus one (capped) and the probe's tag, and its texels are left as they were.
 
 const RAYS: u32 = 64u;
 // Words of the update list at the front of the scratch buffer (`probes::MAX_UPDATES`).
@@ -33,6 +34,7 @@ const YOUNG_UPDATES: u32 = 8u;
 const YOUNG_HYSTERESIS: f32 = 0.5;
 const HYSTERESIS: f32 = 0.97;
 const VIS_SHARPNESS: f32 = 50.0;
+const VIS_CUTOFF: f32 = 0.83;
 // A missing ray's distance, and the ceiling of every visibility distance, in spacings.
 const PROBE_MISS_DISTANCE: f32 = 2.0;
 // pi (3 - sqrt 5): the spherical Fibonacci set's turn per ray.
@@ -110,7 +112,6 @@ var<workgroup> ray_dirs: array<vec3<f32>, 64>;
 var<workgroup> ray_dist: array<f32, 64>;
 var<workgroup> new_irradiance: array<vec3<f32>, 36>;
 var<workgroup> new_visibility: array<vec2<f32>, 196>;
-var<workgroup> back_faces: atomic<u32>;
 
 // The direction of interior texel `t` (row-major) of a map of edge `n`.
 fn texel_dir(t: u32, n: u32) -> vec3<f32> {
@@ -143,9 +144,6 @@ fn probe_blend(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
     if (k >= probe.updates) {
         return;
     }
-    if (lane == 0u) {
-        atomicStore(&back_faces, 0u);
-    }
     let at = ray_word(k, lane);
     let rg = unpack_half2(probe_scratch[at]);
     let bd = unpack_half2(probe_scratch[at + 1u]);
@@ -153,9 +151,13 @@ fn probe_blend(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
     ray_dist[lane] = bd.y;
     ray_dirs[lane] = probe_ray_dir(lane);
     workgroupBarrier();
-    if (ray_dist[lane] < 0.0) {
-        atomicAdd(&back_faces, 1u);
+    // Every lane counts the back faces itself: an inside probe skips the texels, which the
+    // gather never reads.
+    var backs = 0u;
+    for (var r = 0u; r < RAYS; r++) {
+        backs += select(0u, 1u, ray_dist[r] < 0.0);
     }
+    let inside = backs * 4u > RAYS;
     let entry = probe_scratch[k];
     let slot = entry & ~TOUCHED_BIT;
     let w = slot_probe(slot);
@@ -169,7 +171,7 @@ fn probe_blend(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
         h = YOUNG_HYSTERESIS;
     }
     let max_dist = PROBE_MISS_DISTANCE * f32(probe.spacing);
-    if (lane < IRR_N * IRR_N) {
+    if (!inside && lane < IRR_N * IRR_N) {
         let dir = texel_dir(lane, IRR_N);
         var sum = vec3<f32>(0.0);
         var w_sum = 0.0;
@@ -188,12 +190,17 @@ fn probe_blend(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
         }
         new_irradiance[lane] = v;
     }
-    for (var t = lane; t < VIS_N * VIS_N; t += 64u) {
+    for (var t = lane; !inside && t < VIS_N * VIS_N; t += 64u) {
         let dir = texel_dir(t, VIS_N);
         var sum = vec2<f32>(0.0);
         var w_sum = 0.0;
         for (var r = 0u; r < RAYS; r++) {
-            let c = pow(max(dot(dir, ray_dirs[r]), 0.0), VIS_SHARPNESS);
+            let cos_r = dot(dir, ray_dirs[r]);
+            // VIS_CUTOFF^VIS_SHARPNESS is under 1e-4: the rays beyond it weigh nothing.
+            if (cos_r <= VIS_CUTOFF) {
+                continue;
+            }
+            let c = pow(cos_r, VIS_SHARPNESS);
             let dr = clamp(ray_dist[r], 0.0, max_dist);
             sum += c * vec2<f32>(dr, dr * dr);
             w_sum += c;
@@ -207,18 +214,19 @@ fn probe_blend(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
     }
     workgroupBarrier();
     // The whole tiles, borders included: 64 irradiance texels, four visibility texels a lane.
-    let ie = IRR_N + 2u;
-    let iv = new_irradiance[border_source(lane % ie, lane / ie, IRR_N)];
-    let iw = 2u * (slot * IRR_EDGE * IRR_EDGE + lane);
-    probe_data[iw] = pack_half2(iv.xy);
-    probe_data[iw + 1u] = pack_half2(vec2<f32>(iv.z, 0.0));
-    let ve = VIS_N + 2u;
-    for (var t = lane; t < ve * ve; t += 64u) {
-        let vv = new_visibility[border_source(t % ve, t / ve, VIS_N)];
-        probe_data[VIS_BASE + slot * VIS_EDGE * VIS_EDGE + t] = pack_half2(vv);
+    if (!inside) {
+        let ie = IRR_N + 2u;
+        let iv = new_irradiance[border_source(lane % ie, lane / ie, IRR_N)];
+        let iw = 2u * (slot * IRR_EDGE * IRR_EDGE + lane);
+        probe_data[iw] = pack_half2(iv.xy);
+        probe_data[iw + 1u] = pack_half2(vec2<f32>(iv.z, 0.0));
+        let ve = VIS_N + 2u;
+        for (var t = lane; t < ve * ve; t += 64u) {
+            let vv = new_visibility[border_source(t % ve, t / ve, VIS_N)];
+            probe_data[VIS_BASE + slot * VIS_EDGE * VIS_EDGE + t] = pack_half2(vv);
+        }
     }
     if (lane == 0u) {
-        let inside = atomicLoad(&back_faces) * 4u > RAYS;
         let next = select(min(age + 1u, PROBE_MAX_AGE), 1u, touched);
         probe_data[STATE_BASE + slot] = select(0u, 1u, inside) | (next << 1u) | (probe_tag(w) << 8u);
     }

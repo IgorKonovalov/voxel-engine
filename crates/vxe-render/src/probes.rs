@@ -261,6 +261,11 @@ impl ProbeVolume {
         self.pinned = origin;
     }
 
+    /// The pinned origin, if any.
+    pub fn pinned_origin(&self) -> Option<[i32; 3]> {
+        self.pinned
+    }
+
     /// Turns the per-frame update off (tests preset the probes) or on (the default).
     pub fn set_updates(&mut self, on: bool) {
         self.updates = on;
