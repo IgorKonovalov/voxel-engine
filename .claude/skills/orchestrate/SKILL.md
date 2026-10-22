@@ -65,6 +65,12 @@ prompt.
     of the two.
   - Plans that moved to `done/` break links in other plans; the link gate finds them.
   - When resolving with a script, read every file before writing it.
+  - **Run the full gate on the merged tree before committing**, when both sides changed code:
+    a clean textual merge can still fail to compile (a constant one lane removed and another
+    lane's new test uses). Use `set -o pipefail` so a `| tail` can't hide a failure, rebuild
+    the wasm guests (`scripts/build-guests.sh`) first, and pass `--no-fail-fast` to nextest.
+  - Two lanes closing in parallel both claim the next version; the second to merge renumbers
+    (pins, lockfile, changelog, Status line, index row, roadmap, any ADR Outcome header).
 - Commit doc changes without asking. Push only when the owner says so.
 - After a merge, start the lanes whose "After" constraint it satisfied.
 
