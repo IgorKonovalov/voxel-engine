@@ -597,3 +597,108 @@ fn a_translucent_row_maps_and_stamps_like_any_other() {
     assert_eq!(world.material_at(VoxelCoord([10, 10, 10])), Some(glass));
     assert_eq!(world.material_at(VoxelCoord([12, 10, 10])), Some(rock));
 }
+
+/// A three-model scene, two models translated and one turned by a rotation from `Rot::all`,
+/// under a custom palette: the encoder's bytes parse back to the same file, and the scene's
+/// placements come back with the translations and the rotation written.
+#[test]
+fn an_encoded_three_model_scene_parses_back_to_the_same_file() {
+    use std::collections::BTreeMap;
+    let rot = Rot::all().nth(13).unwrap();
+    assert_ne!(rot, Rot::IDENTITY);
+    let small = VoxModel {
+        size: [4, 3, 2],
+        voxels: vec![[0, 0, 0, 1], [3, 2, 1, 200], [1, 1, 0, 9]],
+    };
+    let models = vec![two_voxel_model(), vault_model(), small];
+    let mut nodes = BTreeMap::new();
+    nodes.insert(
+        0,
+        Node::Transform {
+            child: 1,
+            translation: [0; 3],
+            rot: Rot::IDENTITY,
+        },
+    );
+    nodes.insert(
+        1,
+        Node::Group {
+            children: vec![2, 4, 6],
+        },
+    );
+    let placed = [
+        ([10, -20, 30], Rot::IDENTITY),
+        ([-300, 7, 0], Rot::IDENTITY),
+        ([0; 3], rot),
+    ];
+    for (k, (t, r)) in placed.iter().enumerate() {
+        let id = 2 + 2 * k as u32;
+        nodes.insert(
+            id,
+            Node::Transform {
+                child: id + 1,
+                translation: *t,
+                rot: *r,
+            },
+        );
+        nodes.insert(
+            id + 1,
+            Node::Shape {
+                models: vec![k as u32],
+            },
+        );
+    }
+    let mut palette = test_palette();
+    palette[0] = [0; 4];
+    let file = VoxFile {
+        version: 200,
+        models,
+        palette,
+        nodes,
+        imap_present: false,
+    };
+    let bytes = encode(&file);
+    let back = VoxFile::parse(&bytes).unwrap();
+    assert_eq!(back, file);
+    assert_eq!(encode(&back), bytes, "a re-encode is byte-identical");
+    let p = back.placements();
+    assert_eq!(
+        p.iter()
+            .map(|p| (p.model, p.translation, p.rot))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, [10, -20, 30], Rot::IDENTITY),
+            (1, [-300, 7, 0], Rot::IDENTITY),
+            (2, [0; 3], rot)
+        ]
+    );
+    // PACK leads MAIN's children when there is more than one model.
+    assert_eq!(&bytes[20..24], b"PACK");
+    assert_eq!(u32::from_le_bytes(bytes[32..36].try_into().unwrap()), 3);
+}
+
+/// Every one of the 24 rotations writes the `_r` byte that `decode_rotation` reads back to
+/// it, and the identity is byte 4.
+#[test]
+fn every_rotation_encodes_to_the_byte_that_decodes_to_it() {
+    assert_eq!(encode_rotation(Rot::IDENTITY), 4);
+    for r in Rot::all() {
+        assert_eq!(decode_rotation(encode_rotation(r)), Ok(r), "{r:?}");
+    }
+}
+
+/// One model with no scene graph writes no PACK and parses back unchanged, with the default
+/// palette written out as RGBA.
+#[test]
+fn a_single_model_without_a_scene_graph_round_trips() {
+    let file = VoxFile {
+        version: 150,
+        models: vec![vault_model()],
+        palette: DEFAULT_PALETTE,
+        nodes: Default::default(),
+        imap_present: false,
+    };
+    let bytes = encode(&file);
+    assert_eq!(&bytes[20..24], b"SIZE");
+    assert_eq!(VoxFile::parse(&bytes).unwrap(), file);
+}

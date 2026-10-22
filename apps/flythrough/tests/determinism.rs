@@ -280,7 +280,11 @@ fn same_seed_same_bytes_and_seeds_differ() {
 #[test]
 fn generation_sources_contain_no_floating_point() {
     let root = env!("CARGO_MANIFEST_DIR");
-    for path in ["src/cave.rs", "../../crates/vxe-world/src/hash.rs"] {
+    for path in [
+        "src/cave.rs",
+        "src/castle.rs",
+        "../../crates/vxe-world/src/hash.rs",
+    ] {
         let text = std::fs::read_to_string(format!("{root}/{path}")).unwrap();
         for word in text.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_')) {
             assert!(
@@ -325,3 +329,31 @@ fn the_unbounded_cave_matches_the_bounded_one_in_the_interior() {
     }
     assert!(seen.contains(&AIR) && !seen.contains(&SHELL), "{seen:?}");
 }
+
+/// The castle's vector: FNV-1a 64 over its encoded `.vox` bytes, and the voxel hash of the
+/// 990 chunks its box meets (x 2..=11, y -5..=5, z -2..=6) generated from the hall of seed 1
+/// with the castle stamped over it, under the castle's table. Blessed on Linux.
+#[test]
+fn castle_vector() {
+    use flythrough::castle;
+    let file = castle::castle_vox();
+    let bytes = vxe_assets::encode(&file);
+    let mut h = Fnv1a::default();
+    h.write(&bytes);
+    let vox = h.finish();
+    let placements = castle::castle_prefabs(&file).expect("every index is mapped");
+    drop(file);
+    let source = castle::castle_source(1, placements);
+    let table = flythrough::castle_materials(&cave_materials());
+    let world = World::generate(ChunkExtent::new([2, -5, -2], [12, 6, 7]), &source, &table);
+    let voxels = world.voxel_hash();
+    println!(
+        "castle vector: vox 0x{vox:016x} ({} B), voxels 0x{voxels:016x}",
+        bytes.len()
+    );
+    assert_eq!(vox, CASTLE_VOX_HASH);
+    assert_eq!(voxels, CASTLE_VOXEL_HASH);
+}
+
+const CASTLE_VOX_HASH: u64 = 0x35a8_89ee_81c4_17e9;
+const CASTLE_VOXEL_HASH: u64 = 0xa2f6_f292_88e1_04e3;
