@@ -228,8 +228,8 @@ pub struct ProbeVolume {
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The volume, the gather, and a constant probe | dev | done: `ProbeVolume` (atlases and state in one storage buffer), gather pass, composite term, `Lighting::indirect`, `--indirect`; `tests/indirect.rs` 2 tests | committed with this row |
-| 2: The update pass and the furnace | dev | not started | |
+| 1: The volume, the gather, and a constant probe | dev | done: `ProbeVolume` (atlases and state in one storage buffer), gather pass, composite term, `Lighting::indirect`, `--indirect`; `tests/indirect.rs` 2 tests | 6dfd37f |
+| 2: The update pass and the furnace | dev | done: trace and blend dispatches, Chebyshev weight, `light.wgsl` split into `draw_candidates`/`resolve_emissive`/`emissive_estimate`; furnace floor 2.975 after 256 frames (-5.3 % of pi), centre probe texels 2.856 to 2.981; dark box 0.36 % of the lit; 63 solid probes flagged inside, gather unchanged with their texels at 1000 (lavapipe) | committed with this row |
 | 3: Scrolling and edits | dev | not started | |
 | 4: The cave, the switches and the readings | dev | not started | |
 | 5: The owner's windowed check | human | not started | |
@@ -258,6 +258,17 @@ pub struct ProbeVolume {
   while ADR-0023's "zero weight" renormalized over live probes is what lets the furnace floor
   (whose probe cell is half in rock) read `PI`; the gather renormalizes, and the test asserts
   instead that inside probes preset to 50 change no pixel and that all-inside probes give 0.
+- Phase 2: the update is two dispatches (trace into a ray buffer of 4 MiB in the scratch
+  buffer, then blend), so a ray's bounce reads the atlas as it stood before the frame's blend;
+  no double-buffered atlas.
+- Phase 2: hysteresis is 0 for a slot's first update (slot never traced or holding another
+  probe), 0.5 for the next 8 updates and for edit-touched probes, 0.97 after; the plan's 0.97
+  from the second update converges by `0.985` per update in the furnace (`0.985^32 = 0.62` of
+  the start error after 256 frames), so the furnace bar is not reachable with it.
+- Phase 2: a probe ray's hit is shaded with its face (or contour-plane) normal, not the
+  pixel's normal modes or detail.
+- Phase 2: the furnace's converged floor reads 2.97 (about -5.3 % of pi) frame after frame from
+  frame 72 on; the residual is not diagnosed.
 
 ### Close triggers
 

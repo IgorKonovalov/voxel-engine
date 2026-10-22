@@ -8,7 +8,7 @@ use crate::light::LightParams;
 use crate::probes::{DEFAULT_PROBE_SPACING, ProbeUniform, ProbeVolume};
 use crate::{
     ATROUS_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, LIGHT_WGSL, MARCH_WGSL, PROBE_GATHER_WGSL,
-    TEMPORAL_WGSL,
+    PROBE_UPDATE_WGSL, TEMPORAL_WGSL,
 };
 use vxe_world::ChunkCoord;
 
@@ -581,6 +581,9 @@ pub struct Frame {
     probe_layout: wgpu::BindGroupLayout,
     gather_layout: wgpu::BindGroupLayout,
     gather: wgpu::ComputePipeline,
+    /// The probe update's two dispatches (`probe_update.wgsl`).
+    probe_trace: wgpu::ComputePipeline,
+    probe_blend: wgpu::ComputePipeline,
 }
 
 /// A-trous iterations per frame, at strides 1, 2, 4, 8.
@@ -973,6 +976,19 @@ impl Frame {
             ],
             "gather",
         );
+        let update_source =
+            format!("{MARCH_WGSL}\n{LIGHT_WGSL}\n{PROBE_GATHER_WGSL}\n{PROBE_UPDATE_WGSL}");
+        let probe_pass = |entry: &str| {
+            compute_pipeline(
+                device,
+                entry,
+                update_source.clone(),
+                &[Some(&world_layout), None, None, Some(&probe_layout)],
+                entry,
+            )
+        };
+        let probe_trace = probe_pass("probe_trace");
+        let probe_blend = probe_pass("probe_blend");
         let params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("frame params"),
             size: size_of::<Params>() as u64,
@@ -1042,6 +1058,8 @@ impl Frame {
             probe_layout,
             gather_layout,
             gather,
+            probe_trace,
+            probe_blend,
         }
     }
 
@@ -1568,9 +1586,16 @@ impl Frame {
             self.lighting.indirect && self.look.view == ViewMode::Shaded && !self.look.cutaway;
         p.lighting &= !LIGHTING_INDIRECT;
         let mut gather: Vec<Dispatch<'_>> = Vec::new();
+        let mut probes: Vec<Dispatch<'_>> = Vec::new();
+        let mut updates = 0;
         let probe_bind = indirect.then(|| {
             p.lighting |= LIGHTING_INDIRECT;
-            self.write_probe_uniform(queue, &p, 0);
+            if self.probes.updates() {
+                let list = self.probes.update_list(p.frame, &[]);
+                queue.write_buffer(self.probes.scratch(), 0, bytemuck::cast_slice(&list));
+                updates = list.len() as u32;
+            }
+            self.write_probe_uniform(queue, &p, updates);
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("probes"),
                 layout: &self.probe_layout,
@@ -1590,8 +1615,12 @@ impl Frame {
                 Res::Tex(&t.indirect),
             ],
         );
-        if indirect {
+        if let Some(b) = &probe_bind {
             gather.push((&self.gather, &gather_bind, 2, lw));
+            if updates > 0 {
+                probes.push((&self.probe_trace, b, 3, [updates, 1]));
+                probes.push((&self.probe_blend, b, 3, [updates, 1]));
+            }
         }
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&p));
         let passes: [Vec<Dispatch<'_>>; 8] = [
@@ -1600,7 +1629,7 @@ impl Frame {
             vec![(&self.light, &light_bind, 2, lw)],
             vec![(&self.temporal, &temporal_bind, 2, lw)],
             atrous,
-            Vec::new(),
+            probes,
             gather,
             vec![(&self.composite, &composite_bind, 2, full)],
         ];

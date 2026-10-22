@@ -376,6 +376,19 @@ impl ProbeVolume {
         queue.write_buffer(&self.data, 0, bytemuck::cast_slice(&words));
     }
 
+    /// Sets every texel of slot `slot`'s irradiance tile to `irradiance`, leaving its
+    /// visibility and state.
+    pub fn write_test_tile(&self, queue: &wgpu::Queue, slot: u32, irradiance: [f32; 3]) {
+        let rg = pack2x16(irradiance[0], irradiance[1]);
+        let ba = pack2x16(irradiance[2], 0.0);
+        let words: Vec<u32> = (0..IRR_TILE).flat_map(|_| [rg, ba]).collect();
+        queue.write_buffer(
+            &self.data,
+            u64::from(2 * IRR_TILE * slot) * 4,
+            bytemuck::cast_slice(&words),
+        );
+    }
+
     /// Every slot's state word, by slot.
     pub fn read_states(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<u32> {
         let bytes = readback::read_buffer(

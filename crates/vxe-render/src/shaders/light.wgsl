@@ -343,11 +343,7 @@ fn same_surface(q: vec2<i32>, rec: HitRecord) -> bool {
 // the kept point. Writes this pixel's reservoir.
 fn emissive_irradiance(px: vec2<u32>, rec: HitRecord, n: vec3<f32>, ns: vec3<f32>) -> vec3<f32> {
     let p = rec.p;
-    var r = Reservoir(vec3<f32>(0.0), 0u, vec3<f32>(0.0), 0.0, 0.0, 0.0);
-    for (var j = 0u; j < params.candidates; j++) {
-        let c = candidate(px, j, p, n);
-        merge(&r, c.x, c.face, c.le, c.target_pdf, c.weight, 1.0, rand(px, 2u + CANDIDATE_DIMS * j + 4u));
-    }
+    var r = draw_candidates(px, p, n);
     if ((params.lighting & LIGHTING_REUSE) != 0u && (params.history & 1u) != 0u) {
         let v = params.prev_views[view_of(full_px(px))];
         let full = project_prev(v, p);
@@ -373,7 +369,6 @@ fn emissive_irradiance(px: vec2<u32>, rec: HitRecord, n: vec3<f32>, ns: vec3<f32
         r.m = cap;
     }
     var stored = vec4<u32>(0u);
-    var e = vec3<f32>(0.0);
     if (r.w_sum > 0.0 && r.target_pdf > 0.0 && r.m > 0.0) {
         // The estimate's luminance is `target * W = w_sum / M`.
         let w_big = r.w_sum / (r.m * r.target_pdf);
@@ -382,6 +377,27 @@ fn emissive_irradiance(px: vec2<u32>, rec: HitRecord, n: vec3<f32>, ns: vec3<f32
         let packed = ((bitcast<u32>(w_big) + 0x8000u) >> 16u)
             | (u32(min(r.m, 255.0)) << 16u) | (r.face << 24u) | 0x8000000u;
         stored = vec4<u32>(bitcast<vec3<u32>>(r.x), packed);
+    }
+    textureStore(reservoir_out, vec2<i32>(px), stored);
+    return resolve_emissive(r, p, ns);
+}
+
+// The reservoir over `params.candidates` candidates for the hit at `p` with shading normal
+// `n`, drawn with the random numbers of pixel `px`.
+fn draw_candidates(px: vec2<u32>, p: vec3<f32>, n: vec3<f32>) -> Reservoir {
+    var r = Reservoir(vec3<f32>(0.0), 0u, vec3<f32>(0.0), 0.0, 0.0, 0.0);
+    for (var j = 0u; j < params.candidates; j++) {
+        let c = candidate(px, j, p, n);
+        merge(&r, c.x, c.face, c.le, c.target_pdf, c.weight, 1.0, rand(px, 2u + CANDIDATE_DIMS * j + 4u));
+    }
+    return r;
+}
+
+// The irradiance reservoir `r` estimates at the hit `p` (shadow normal `ns`): its kept
+// emitter's, 0 when the shadow ray toward it finds rock or the reservoir is empty.
+fn resolve_emissive(r: Reservoir, p: vec3<f32>, ns: vec3<f32>) -> vec3<f32> {
+    var e = vec3<f32>(0.0);
+    if (r.w_sum > 0.0 && r.target_pdf > 0.0 && r.m > 0.0) {
         let o = p + ns * SHADOW_OFFSET;
         let to = r.x - o;
         let dist = length(to);
@@ -396,8 +412,13 @@ fn emissive_irradiance(px: vec2<u32>, rec: HitRecord, n: vec3<f32>, ns: vec3<f32
             e = r.le / luminance(r.le) * l;
         }
     }
-    textureStore(reservoir_out, vec2<i32>(px), stored);
     return e;
+}
+
+// One emissive estimate at a hit that is not a pixel of the lighting grid (a probe ray's):
+// the frame's candidates alone, no reuse, its random numbers those of `px`.
+fn emissive_estimate(px: vec2<u32>, p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> vec3<f32> {
+    return resolve_emissive(draw_candidates(px, p, n), p, ns);
 }
 
 // The emissive estimate's ceiling, in units of `PI lum(Le)` of the kept emitter.

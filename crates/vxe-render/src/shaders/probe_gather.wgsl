@@ -28,8 +28,10 @@
 // w mod 32 per axis, x fastest. A probe is live when its slot's tag is w's, its age is above 0
 // and it is not inside rock. The irradiance at a point x with normal n (`probe_irradiance`)
 // blends the eight probes of the cell holding x + PROBE_NORMAL_BIAS n, each live one weighted
-// by its trilinear weight and by `((1 + cos) / 2)^2 + 0.2` of the angle between n and the
-// direction to the probe; the weights are renormalized over the live probes, 0 when none is.
+// by its trilinear weight, by `((1 + cos) / 2)^2 + 0.2` of the angle between n and the
+// direction to the probe, and by the Chebyshev bound of its visibility map toward the point
+// (the chance the point is not behind the probe's mean occluder in that direction, cubed);
+// the weights are renormalized over the live probes, 0 when none is.
 
 struct ProbeParams {
     origin: vec3<i32>,
@@ -207,6 +209,19 @@ fn probe_irradiance(x: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
         if (len > 1e-4) {
             let c = (dot(to_probe / len, n) + 1.0) * 0.5;
             weight = c * c + 0.2;
+        }
+        // The Chebyshev bound: a point farther from the probe than its mean occluder in that
+        // direction is likely behind it.
+        let v = xb - pp;
+        let dist = length(v);
+        if (dist > 1e-4) {
+            let m = probe_visibility_toward(slot, v / dist);
+            if (dist > m.x) {
+                let variance = abs(m.y - m.x * m.x);
+                let d = dist - m.x;
+                let cheb = variance / (variance + d * d);
+                weight *= cheb * cheb * cheb;
+            }
         }
         weight *= tri.x * tri.y * tri.z;
         sum += weight * probe_irradiance_toward(slot, n);

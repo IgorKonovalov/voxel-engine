@@ -48,6 +48,9 @@ pub const ATROUS_WGSL: &str = include_str!("shaders/atrous.wgsl");
 pub const COMPOSITE_WGSL: &str = include_str!("shaders/composite.wgsl");
 /// The probe volume's reads and the gather pass, compiled after [`MARCH_WGSL`].
 pub const PROBE_GATHER_WGSL: &str = include_str!("shaders/probe_gather.wgsl");
+/// The probe update's trace and blend, compiled after [`MARCH_WGSL`], [`LIGHT_WGSL`] and
+/// [`PROBE_GATHER_WGSL`].
+pub const PROBE_UPDATE_WGSL: &str = include_str!("shaders/probe_update.wgsl");
 /// The source of the contour-attribute pass, for headless validation.
 pub const ATTRIB_WGSL: &str = include_str!("shaders/attrib.wgsl");
 
