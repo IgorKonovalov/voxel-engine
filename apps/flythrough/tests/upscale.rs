@@ -305,13 +305,14 @@ struct StillReading {
 /// (jitter off), the presenter's bilinear blit of a 256 x 144 render (jitter off) and a 2 x 2
 /// supersampled native render (768 x 432, jitter off, box-filtered to 384 x 216), each after
 /// the same 32 frames; `None` without the software adapter.
-fn still_camera_reading() -> Option<StillReading> {
+fn still_camera_reading(upscaler: Upscaler) -> Option<StillReading> {
     let (world, camera) = level();
     let (device, queue, gpu) = level_rig(&world, &camera)?;
     let light = LightParams::headlamp();
     let big = OUTPUT.map(|n| 2 * n);
     let mut native = frame_of(&device, OUTPUT, OUTPUT, false);
     let mut up = frame_of(&device, INTERNAL, OUTPUT, true);
+    up.set_upscaler(upscaler);
     let mut low = frame_of(&device, INTERNAL, INTERNAL, false);
     let mut ssaa = frame_of(&device, big, big, false);
     assert!(up.upscaling() && !native.upscaling() && !low.upscaling());
@@ -358,7 +359,7 @@ fn still_camera_reading() -> Option<StillReading> {
 /// blit's (a property, not a threshold). The distances from plain native are a reading.
 #[test]
 fn a_still_camera_upscales_nearer_the_supersampled_render_than_the_bilinear_blit() {
-    let Some(r) = still_camera_reading() else {
+    let Some(r) = still_camera_reading(Upscaler::default()) else {
         return;
     };
     assert!(
@@ -522,7 +523,8 @@ fn reproject(camera: &vxe_render::Camera, j: [f32; 2], p: [f32; 3]) -> Option<us
 /// of the wall ahead (a `Replace` the frame is not told of) and the camera moves one voxel
 /// sideways. On the next frame at least 95 % of the output pixels whose hit surface did not
 /// change (the nearest sample's hit reprojected into the frame before lands on a hit of the
-/// same material, a normal within 0.99 and 1.5 voxels) blend history at alpha 0.1, and every
+/// same material, a normal within 0.99 and 1.5 voxels) blend history (the current colour's
+/// weight in the blend above 0 and below 1; the nearness blend varies it per pixel), and every
 /// output pixel whose nearest sample hit material 4 takes the current colour (alpha 1).
 #[test]
 fn a_sideways_step_keeps_history_and_a_material_change_rejects_it() {
@@ -599,13 +601,13 @@ fn a_sideways_step_keeps_history_and_a_material_change_rejects_it() {
                 && dist <= 1.5;
             if unchanged {
                 same += 1;
-                kept += usize::from((alpha[o] - 0.1).abs() < 1e-3);
+                kept += usize::from(alpha[o] > 0.0 && alpha[o] < 0.999);
             }
         }
     }
     let share = kept as f64 / same as f64;
     println!(
-        "sideways step: {kept} of {same} unchanged output pixels blend history at 0.1 ({:.2} %), {changed} changed pixels take alpha 1",
+        "sideways step: {kept} of {same} unchanged output pixels blend history ({:.2} %), {changed} changed pixels take alpha 1",
         share * 100.0
     );
     assert!(changed > 0 && same > 0);
@@ -1136,7 +1138,7 @@ fn stripe_image(rig: &StripeRig, image: Image, shot: Shot) -> ([Vec<u8>; 2], vxe
         exposure: stripe_exposure(shot.dist),
         ..vxe_render::Lighting::default()
     });
-    f.set_upscaler(queue, shot.upscaler);
+    f.set_upscaler(shot.upscaler);
     f.set_sharpness(queue, 0.5);
     let light = LightParams::headlamp();
     let mut camera = stripe_camera(shot.dist, shot.phase);
@@ -1196,10 +1198,26 @@ fn stripe_sharpness(rig: &StripeRig, image: Image, shot: Shot) -> [Sharpness; 2]
     sum
 }
 
-/// A reading of every image's sharpness on the stripe wall at both distances, still and
-/// panning, under `upscaler`; printed, with the bars of Phase 6's done-whens 1 to 3 checked
-/// (the return value lists the failures).
-fn stripe_readings(rig: &StripeRig, upscaler: Upscaler, label: &str) -> Vec<String> {
+/// The first upscaler's (7cc58a4, [`Upscaler::lanczos`]) last panning frame at arm's length,
+/// sharpening 0: edge spread and gradient energy at scale 1 and at 1.5.
+const LANCZOS_PAN_U1: (f64, f64) = (2.020, 0.00357);
+const LANCZOS_PAN_U15: (f64, f64) = (2.404, 0.00281);
+
+/// `a <= b`, false when either is NaN.
+fn at_most(a: f64, b: f64) -> bool {
+    a <= b
+}
+
+/// `a >= b`, false when either is NaN.
+fn at_least(a: f64, b: f64) -> bool {
+    a >= b
+}
+
+/// Every image's sharpness on the stripe wall at both distances, still and panning at arm's
+/// length, under `upscaler`, printed with Phase 6's bars checked; the return value lists the
+/// failures. With `full` the far-distance pans and Plan 0024's frame panning are read too
+/// (readings, no bar).
+fn stripe_readings(rig: &StripeRig, upscaler: Upscaler, label: &str, full: bool) -> Vec<String> {
     let mut failures = Vec::new();
     for dist in [NEAR, FAR] {
         let still = Shot {
@@ -1224,29 +1242,29 @@ fn stripe_readings(rig: &StripeRig, upscaler: Upscaler, label: &str) -> Vec<Stri
         println!("  U1   sharpen 0: {}; 0.5: {}", u1[0], u1[1]);
         println!("  U1.5 sharpen 0: {}; 0.5: {}", u15[0], u15[1]);
         let near = dist == NEAR;
-        // Done-when 1.
-        if near && !(u1[0].es <= n.es + 0.53) {
+        // Done-when 1: edges no wider than anti-aliasing over one pixel makes them.
+        if near && !at_most(u1[0].es, n.es + 0.53) {
             failures.push(format!(
                 "{dist}: U1 ES {:.3} over N's {:.3} + 0.53",
                 u1[0].es, n.es
             ));
         }
-        if !(u1[0].ge >= 0.85 * r.ge) {
+        if !at_least(u1[0].ge, 0.85 * r.ge) {
             failures.push(format!(
                 "{dist}: U1 GE {:.5} under 0.85 of R's {:.5}",
                 u1[0].ge, r.ge
             ));
         }
-        // Done-when 2.
+        // Done-when 2: the midpoint between the bilinear blit and the reference.
         let ge_bar = (1.0 + b.ge / r.ge) / 2.0;
-        if !(u15[0].ge >= ge_bar * r.ge) {
+        if !at_least(u15[0].ge, ge_bar * r.ge) {
             failures.push(format!(
                 "{dist}: U1.5 GE {:.5} under {ge_bar:.3} of R's {:.5}",
                 u15[0].ge, r.ge
             ));
         }
         let es_bar = (b.es + r.es) / 2.0;
-        if near && !(u15[0].es <= es_bar) {
+        if near && !at_most(u15[0].es, es_bar) {
             failures.push(format!("{dist}: U1.5 ES {:.3} over {es_bar:.3}", u15[0].es));
         }
         println!(
@@ -1255,29 +1273,39 @@ fn stripe_readings(rig: &StripeRig, upscaler: Upscaler, label: &str) -> Vec<Stri
             0.85 * r.ge,
             ge_bar * r.ge
         );
-        // Done-when 3.
+        if !near && !full {
+            continue;
+        }
+        // Done-when 3, at arm's length: the last panning frame's edge spread at least 0.3 px
+        // below the first upscaler's, its gradient energy no lower.
         let pan = Shot { pan: 64, ..still };
-        for (name, image, s) in [("U1", Image::U1, u1[0]), ("U1.5", Image::U15, u15[0])] {
+        for (name, image, (es, ge)) in [
+            ("U1", Image::U1, LANCZOS_PAN_U1),
+            ("U1.5", Image::U15, LANCZOS_PAN_U15),
+        ] {
             let p = stripe_sharpness(rig, image, pan);
             println!(
                 "  {name} panning 64 frames: sharpen 0: {}; 0.5: {}",
                 p[0], p[1]
             );
-            if near && !(p[0].es <= s.es + 0.5) {
+            if near && !at_most(p[0].es, es - 0.3) {
                 failures.push(format!(
-                    "{dist}: {name} panning ES {:.3} over still {:.3} + 0.5",
-                    p[0].es, s.es
+                    "{dist}: {name} panning ES {:.3} over {:.3}",
+                    p[0].es,
+                    es - 0.3
                 ));
             }
-            if !(p[0].ge >= 0.75 * s.ge) {
+            if near && !at_least(p[0].ge, ge) {
                 failures.push(format!(
-                    "{dist}: {name} panning GE {:.5} under 0.75 of still {:.5}",
-                    p[0].ge, s.ge
+                    "{dist}: {name} panning GE {:.5} under {ge:.5}",
+                    p[0].ge
                 ));
             }
         }
-        let [np, _] = stripe_sharpness(rig, Image::N, Shot { pan: 64, ..still });
-        println!("  N panning 64 frames: {np}");
+        if full {
+            let [np, _] = stripe_sharpness(rig, Image::N, pan);
+            println!("  N panning 64 frames: {np}");
+        }
     }
     for f in &failures {
         println!("[{label}] over a bar: {f}");
@@ -1285,71 +1313,61 @@ fn stripe_readings(rig: &StripeRig, upscaler: Upscaler, label: &str) -> Vec<Stri
     failures
 }
 
-/// The tip's blur decomposed, a reading: the stripe readings under the default upscaler, then
-/// with the current colour from the nearest sample alone, then with the history fetched by
-/// nearest texel, each switched alone. Run with `--ignored`.
+/// The upscaler is as sharp as Plan 0024's frame allows, on the stripe wall with the headlamp
+/// (sharpening 0; edge spread at arm's length, gradient energy at arm's length and at 88
+/// voxels): at scale 1 the edge spread is at most native's plus 0.53 px and the gradient
+/// energy at least 0.85 of the 2 x 2 supersampled render's; at scale 1.5 both lie on the
+/// reference's side of the midpoint between the bilinear blit and the reference; panning
+/// along the wall at 0.37 output pixels a frame for 64 frames, the last frame's edge spread is
+/// at least 0.3 px below the first upscaler's and its gradient energy no lower, at both
+/// scales.
 #[test]
-#[ignore = "a diagnostic reading of the upscaler's blur; run by hand with --ignored"]
-fn the_upscalers_blur_decomposed() {
+fn the_upscaler_keeps_stripe_edges_sharp_still_and_panning() {
     let Some(rig) = stripe_rig() else {
         return;
     };
-    let base = Upscaler::default();
+    let failures = stripe_readings(&rig, Upscaler::default(), "default", false);
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+/// A reading, no bar: the stripe readings in full (the far pans too) under the default
+/// upscaler, under the first one ([`Upscaler::lanczos`]), and the first one's blur
+/// decomposed: its current colour from the nearest sample alone, then its history fetched by
+/// nearest texel, each switched alone. Run with `--ignored`.
+#[test]
+#[ignore = "a diagnostic reading of the upscaler's sharpness; run by hand with --ignored"]
+fn the_upscalers_sharpness_readings() {
+    use vxe_render::marcher::{HistoryFetch, Reconstruction};
+    let Some(rig) = stripe_rig() else {
+        return;
+    };
+    let first = Upscaler::lanczos();
     for (label, u) in [
-        ("default", base),
+        ("default", Upscaler::default()),
         (
-            "nearest sample",
+            "default, nearness unnormalised, 0.5 in motion",
             Upscaler {
-                reconstruction: vxe_render::marcher::Reconstruction::Nearest,
-                ..base
+                blend: vxe_render::marcher::Blend::Nearness,
+                alpha_moving: 0.5,
+                ..Upscaler::default()
+            },
+        ),
+        ("first upscaler", first),
+        (
+            "first, nearest sample",
+            Upscaler {
+                reconstruction: Reconstruction::Nearest,
+                ..first
             },
         ),
         (
-            "nearest history texel",
+            "first, nearest history texel",
             Upscaler {
-                history_fetch: vxe_render::marcher::HistoryFetch::Nearest,
-                ..base
+                history_fetch: HistoryFetch::Nearest,
+                ..first
             },
         ),
     ] {
-        stripe_readings(&rig, u, label);
-    }
-}
-
-#[test]
-#[ignore = "tuning"]
-fn zz_tune() {
-    use vxe_render::marcher::{Blend, HistoryFetch, Reconstruction};
-    let rig = stripe_rig().unwrap();
-    let base = Upscaler {
-        reconstruction: Reconstruction::Gaussian,
-        width: 1.0,
-        history_fetch: HistoryFetch::CatmullRom,
-        blend: Blend::Nearness,
-        ..Upscaler::default()
-    };
-    let which = std::env::var("TUNE").unwrap_or_default();
-    let mut variants = vec![];
-    let base = Upscaler {
-        width: 0.6,
-        alpha_moving: 0.1,
-        clip_gamma: 1.0,
-        ..base
-    };
-    for am in [0.35f32, 0.5] {
-        variants.push((
-            format!("g0.6 am{am} lanczos fetch"),
-            Upscaler {
-                alpha_moving: am,
-                history_fetch: HistoryFetch::Lanczos2,
-                ..base
-            },
-        ));
-    }
-    for (label, u) in variants {
-        if !which.is_empty() && !label.contains(&which) {
-            continue;
-        }
-        stripe_readings(&rig, u, &label);
+        stripe_readings(&rig, u, label, true);
     }
 }

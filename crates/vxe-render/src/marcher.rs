@@ -524,6 +524,10 @@ pub enum Blend {
     /// [`Upscaler::alpha`] times the nearest sample's kernel weight over the kernel's peak: a
     /// sample far from the output pixel's centre counts for less.
     Nearness,
+    /// As [`Blend::Nearness`], divided by the nearest sample's mean kernel weight at the
+    /// frame's scale (its sample uniform over one internal pixel around the centre), at most 1:
+    /// the current colour's mean share stays [`Upscaler::alpha`].
+    MeanNearness,
 }
 
 /// The upscale pass's reconstruction, history fetch and blend ([`Frame::set_upscaler`]).
@@ -544,7 +548,26 @@ pub struct Upscaler {
 }
 
 impl Default for Upscaler {
+    /// The Gaussian of width 0.6 over the 3 x 3, the Catmull-Rom fetch and the
+    /// nearness-weighted blend, normalised to a mean share of 0.1 still and 0.2 in motion
+    /// (ADR-0024).
     fn default() -> Self {
+        Self {
+            reconstruction: Reconstruction::Gaussian,
+            width: 0.6,
+            history_fetch: HistoryFetch::CatmullRom,
+            blend: Blend::MeanNearness,
+            alpha: 0.1,
+            alpha_moving: 0.2,
+            clip_gamma: 1.0,
+        }
+    }
+}
+
+impl Upscaler {
+    /// The first upscaler's settings: Lanczos-2 over the 5 x 5, a bilinear fetch, and the
+    /// current colour at 0.1 everywhere. Kept for comparisons.
+    pub fn lanczos() -> Self {
         Self {
             reconstruction: Reconstruction::Lanczos2,
             width: 1.0,
@@ -569,10 +592,59 @@ struct UpscaleUniform {
     alpha: f32,
     alpha_moving: f32,
     clip_gamma: f32,
+    w_mean: f32,
+    _pad: [f32; 3],
 }
 
 impl Upscaler {
-    fn uniform(&self) -> UpscaleUniform {
+    /// The reconstruction kernel at offset `(x, y)` output pixels, 1 at the centre
+    /// (`up_kernel` in `upscale.wgsl`).
+    fn kernel(&self, x: f32, y: f32) -> f32 {
+        let lanczos2 = |x: f32| {
+            let a = std::f32::consts::PI * x.abs();
+            if a < 1e-4 {
+                1.0
+            } else if x.abs() >= 2.0 {
+                0.0
+            } else {
+                2.0 * a.sin() * (0.5 * a).sin() / (a * a)
+            }
+        };
+        match self.reconstruction {
+            Reconstruction::Lanczos2 => lanczos2(x) * lanczos2(y),
+            Reconstruction::Nearest => 1.0,
+            Reconstruction::Gaussian => (-2.29 * (x * x + y * y) / (self.width * self.width)).exp(),
+            Reconstruction::BlackmanHarris => {
+                let r = 1.65 * self.width;
+                let d = (x * x + y * y).sqrt();
+                if d >= r {
+                    0.0
+                } else {
+                    let t = std::f32::consts::PI * d / r;
+                    0.35875
+                        + 0.48829 * t.cos()
+                        + 0.14128 * (2.0 * t).cos()
+                        + 0.01168 * (3.0 * t).cos()
+                }
+            }
+        }
+    }
+
+    /// The nearest sample's mean kernel weight at `scale` output pixels per internal pixel:
+    /// its offset uniform over the internal pixel around the output centre, a 32 x 32 grid.
+    fn mean_weight(&self, scale: f32) -> f32 {
+        const N: usize = 32;
+        let at = |i: usize| ((i as f32 + 0.5) / N as f32 - 0.5) * scale;
+        let mut sum = 0.0;
+        for j in 0..N {
+            for i in 0..N {
+                sum += self.kernel(at(i), at(j));
+            }
+        }
+        sum / (N * N) as f32
+    }
+
+    fn uniform(&self, scale: f32) -> UpscaleUniform {
         UpscaleUniform {
             reconstruction: match self.reconstruction {
                 Reconstruction::Lanczos2 => 0,
@@ -589,12 +661,15 @@ impl Upscaler {
             blend: match self.blend {
                 Blend::Fixed => 0,
                 Blend::Nearness => 1,
+                Blend::MeanNearness => 2,
             },
             still_clip: 0,
             width: self.width,
             alpha: self.alpha,
             alpha_moving: self.alpha_moving,
             clip_gamma: self.clip_gamma,
+            w_mean: self.mean_weight(scale),
+            _pad: [0.0; 3],
         }
     }
 }
@@ -1240,7 +1315,7 @@ impl Frame {
                 device,
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("upscale tuning"),
-                    contents: bytemuck::bytes_of(&Upscaler::default().uniform()),
+                    contents: bytemuck::bytes_of(&Upscaler::default().uniform(1.0)),
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 },
             ),
@@ -1294,13 +1369,8 @@ impl Frame {
     }
 
     /// Sets the upscale pass's reconstruction, history fetch and blend from the next frame on.
-    pub fn set_upscaler(&mut self, queue: &wgpu::Queue, upscaler: Upscaler) {
+    pub fn set_upscaler(&mut self, upscaler: Upscaler) {
         self.upscaler = upscaler;
-        queue.write_buffer(
-            &self.upscale_params,
-            0,
-            bytemuck::bytes_of(&upscaler.uniform()),
-        );
     }
 
     pub fn upscaler(&self) -> Upscaler {
@@ -1683,6 +1753,12 @@ impl Frame {
         }
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&p));
         queue.write_buffer(&self.edits, 0, bytemuck::bytes_of(&edits));
+        let scale = self.output[0] as f32 / self.targets.width as f32;
+        queue.write_buffer(
+            &self.upscale_params,
+            0,
+            bytemuck::bytes_of(&self.upscaler.uniform(scale)),
+        );
         let table = light_table(world, p.views[0].origin);
         let used = (1 + table.count as usize) * 16;
         queue.write_buffer(

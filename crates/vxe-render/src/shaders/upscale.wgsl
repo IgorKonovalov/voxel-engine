@@ -12,7 +12,7 @@
 //   5  texture_2d<f32>   up_prev_hist_in last frame's history (output size)
 //   6  storage texture   up_hist_out     rgba16float: this frame's history, the upscaled
 //                                        image, display-encoded rgb, and in a the weight
-//                                        of the current colour (UPSCALE_ALPHA, or 1 without
+//                                        of the current colour in the blend (1 without
 //                                        history)
 //   7  uniform           up_edits        the frame's edit boxes (temporal.wgsl's `Edits`)
 //   8  uniform           up_tuning       the reconstruction, history fetch and blend
@@ -22,19 +22,21 @@
 // `i + 0.5 + jitter`; output pixel `o`'s centre is at internal `(o + 0.5) size / output_size`.
 //
 // Per output pixel, in the shaded view: the nearest internal sample's hit `rec` (the internal
-// pixel whose jittered sample lies nearest the centre). The current colour is the Lanczos-2
-// weighted mean of the internal samples within 2 output pixels (the kernel at each sample's
-// jittered position, distances in output pixels), clamped to the range of the 3 x 3
-// samples around the nearest. History is taken when `Params.history` bit 1 says it is valid,
-// `rec` hit outside every edit box dilated by one voxel, and last frame's hit buffer agrees
-// with `rec` at one of the 3 x 3 pixels around where `rec.p` reprojects through the previous
-// view: a hit, the same material, a normal within UP_HISTORY_COS, a position within
-// `UP_HISTORY_DIST + UP_HISTORY_DIST_PER_T t` voxels (temporal.wgsl's thresholds). The history is read bilinearly where the output
-// centre moved with the sample's motion, clipped toward the centre of the YCoCg box of the 3 x
-// 3 samples (their mean plus and minus CLIP_GAMMA standard deviations, inside their minimum
-// and maximum), and blended with the current colour at UPSCALE_ALPHA; a pixel without history
-// takes the current colour (alpha 1). Every other view takes the nearest sample's colour
-// unblended.
+// pixel whose jittered sample lies nearest the centre). The current colour is the kernel
+// weighted mean of the samples around the nearest (`up_tuning.reconstruction`: a narrow
+// Gaussian or Blackman-Harris over the 3 x 3, Lanczos-2 over the 5 x 5, or the nearest alone;
+// the kernel at each sample's jittered position, distances in output pixels), clamped to the
+// range of the 3 x 3. History is taken when `Params.history` bit 1 says it is valid, `rec`
+// hit outside every edit box dilated by one voxel, and last frame's hit buffer agrees with
+// `rec` at one of the 3 x 3 pixels around where `rec.p` reprojects through the previous view:
+// a hit, the same material, a normal within UP_HISTORY_COS, a position within
+// `UP_HISTORY_DIST + UP_HISTORY_DIST_PER_T t` voxels (temporal.wgsl's thresholds). The history
+// is read where the output centre moved with the sample's motion (`up_tuning.fetch`), clipped
+// toward the centre of the YCoCg box of the 3 x 3 samples (their mean plus and minus
+// `clip_gamma` standard deviations, inside their minimum and maximum) unless it held still,
+// and blended with the current colour at `alpha` (still) or `alpha_moving`, times the nearest
+// sample's kernel weight under the nearness blend; a pixel without history takes the current
+// colour (alpha 1). Every other view takes the nearest sample's colour unblended.
 
 
 @group(2) @binding(0) var up_pos_in: texture_2d<f32>;
@@ -66,7 +68,7 @@ struct UpTuning {
     // 0: bilinear; 1: the nearest texel; 2: Catmull-Rom over the 4 x 4 texels.
     fetch: u32,
     // 0: the current colour blends at `alpha`; 1: at `alpha` times the nearest sample's
-    // kernel weight over the kernel's peak.
+    // kernel weight over the kernel's peak; 2: that over `w_mean`, at most 1.
     blend: u32,
     still_clip: u32,
     width: f32,
@@ -75,6 +77,11 @@ struct UpTuning {
     alpha_moving: f32,
     // The clip box: the 3 x 3's YCoCg mean plus and minus `clip_gamma` deviations.
     clip_gamma: f32,
+    // The nearest sample's mean kernel weight at this scale (blend 2 divides by it).
+    w_mean: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 @group(2) @binding(8) var<uniform> up_tuning: UpTuning;
@@ -87,6 +94,7 @@ const FETCH_NEAREST: u32 = 1u;
 const FETCH_CATMULL_ROM: u32 = 2u;
 const FETCH_LANCZOS2: u32 = 3u;
 const BLEND_NEARNESS: u32 = 1u;
+const BLEND_MEAN_NEARNESS: u32 = 2u;
 const CLIP_STILL: f32 = 0.01;
 // temporal.wgsl's HISTORY_COS, HISTORY_DIST and HISTORY_DIST_PER_T.
 const UP_HISTORY_COS: f32 = 0.8;
@@ -330,6 +338,8 @@ fn upscale(@builtin(global_invocation_id) gid: vec3<u32>) {
                     alpha = select(up_tuning.alpha_moving, up_tuning.alpha, still);
                     if (up_tuning.blend == BLEND_NEARNESS) {
                         alpha *= w_near;
+                    } else if (up_tuning.blend == BLEND_MEAN_NEARNESS) {
+                        alpha = min(1.0, alpha * w_near / max(up_tuning.w_mean, 1e-3));
                     }
                     result = mix(from_ycocg(mid + hy), current, alpha);
                 }
