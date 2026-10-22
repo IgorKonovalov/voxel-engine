@@ -179,6 +179,7 @@ shown, `F1`, the autopilot's flight).
 | `--logic native\|wasm[=PATH]` | Run the dig logic natively (default) or as a component; `wasm` needs `--features wasm` |
 | `--vault` | Generate a 16-voxel room with an indestructible shell 10 m along +x from the spawn |
 | `--headless` | Run the same frames on an offscreen target, with no window |
+| `--adapter SUBSTRING` | With `--headless`, use the first GPU adapter whose name contains the substring (for example `AMD` for the dev box's iGPU), the default adapter when none does |
 | `--frames N` | Exit after `N` frames, printing the `F1` readings over the last ones |
 | `--bench N` | Send `N` `B` benchmark inputs on the first frame |
 | `--autopilot` | Dig, fly 300 m out and back through the streamed cave, print streaming readings |

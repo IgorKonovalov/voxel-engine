@@ -558,6 +558,13 @@ fn sized_contour(t: &Census, c: &WorldCensus, records: u64, table: u64, material
         units as f64 / t.bricks.max(1) as f64,
         (units * UNIT_BYTES) as f64 / t.bricks.max(1) as f64
     );
+    let rounds: u64 = t.rounds.iter().enumerate().map(|(r, n)| r as u64 * n).sum();
+    println!(
+        "{:LABEL$}{:.3} per brick (bricks by rounds 0..4: {:?})",
+        "pass rounds:",
+        rounds as f64 / t.bricks.max(1) as f64,
+        t.rounds
+    );
     let mips = census_bins(&c.mip_bricks);
     let mut bins = t.contour_bins;
     for (a, b) in bins.iter_mut().zip(mips) {
@@ -597,6 +604,9 @@ struct Census {
     by_class: [ClassRow; 5],
     /// Slots of each bin of `MIRROR_BINS` the bricks take with their attributes.
     contour_bins: [u64; 10],
+    /// Bricks by the attribute pass's rounds (64 invocations, an attribute word of two
+    /// surface voxels each a round): `ceil(n / 128)`, 0 to 4.
+    rounds: [u64; 5],
 }
 
 impl Census {
@@ -614,6 +624,9 @@ impl Census {
             a.attr_units += b.attr_units;
         }
         for (a, b) in self.contour_bins.iter_mut().zip(&o.contour_bins) {
+            *a += b;
+        }
+        for (a, b) in self.rounds.iter_mut().zip(&o.rounds) {
             *a += b;
         }
     }
@@ -770,6 +783,7 @@ fn census_chunk(world: &World, source: &CaveSource, cache: &SourceCache, c: Chun
         row.planes += planes;
         row.surface += n;
         row.attr_units += attr_units(n);
+        out.rounds[n.div_ceil(128) as usize] += 1;
         out.contour_bins[bin_of((class_units(class) + attr_units(n)) as u32)] += 1;
     }
     out

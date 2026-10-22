@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use vxe_render::attrib::{AttribBindings, AttribItem, AttribPass, CLEAR_BIT};
+use vxe_render::attrib::{AttribBindings, AttribItem, AttribPass};
 use vxe_render::gpu_world::{
     ABSENT, BINS, BITS_WORDS, CLASS_MASK, CLASS_SHIFT, CLASS_WIDE, EMPTY_BIT, ENTRY_WORD, FULL_BIT,
     HEADER_TRANSLUCENT_WORD, LOD_BIT, LOD_LEVEL_ENTRY, NO_PLANE, PAGE_BYTES, PAGE_UNITS,
@@ -2931,21 +2931,19 @@ fn capped(window: Window, cap: usize) -> MirrorConfig {
     }
 }
 
-/// Runs one attribute pass and waits for it; returns its compute items and its clear items.
-fn attr_pass(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    gpu: &mut GpuWorld,
-) -> (Vec<AttribItem>, Vec<AttribItem>) {
+/// Runs one attribute pass and waits for it; returns its items, every one a compute item:
+/// no item carries bit 31, the clear flag the pass once had.
+fn attr_pass(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &mut GpuWorld) -> Vec<AttribItem> {
     gpu.prepare_attrs();
-    let (clears, computes): (Vec<AttribItem>, Vec<AttribItem>) = gpu
-        .attr_list()
-        .iter()
-        .partition(|it| it.slot & CLEAR_BIT != 0);
+    let items = gpu.attr_list().to_vec();
+    assert!(
+        items.iter().all(|it| it.slot & 1 << 31 == 0),
+        "a clear item"
+    );
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     gpu.encode_attrs(&mut enc, None);
     queue.submit([enc.finish()]);
-    (computes, clears)
+    items
 }
 
 /// The world brick of a work item.
@@ -3005,8 +3003,11 @@ fn drain_attrs(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &mut GpuWorld) -
     calls
 }
 
+/// A capped pass lists its cap of compute items and no clear item; a brick uploaded while its
+/// item waits behind the cap reads every attribute word as `0xFFFFFFFF` (two `NO_PLANE`), as
+/// its upload wrote it; the queue drains onto the uncapped mirror's attributes.
 #[test]
-fn a_capped_pass_clears_what_waits_and_converges_on_the_uncapped_mirror() {
+fn a_capped_pass_emits_no_clear_item_and_what_waits_reads_no_plane() {
     let Some((device, queue)) = device() else {
         return;
     };
@@ -3016,11 +3017,9 @@ fn a_capped_pass_clears_what_waits_and_converges_on_the_uncapped_mirror() {
     let k = s.bricks as usize;
     println!("first sync wrote K = {k} Full bricks");
     assert!(k > 64);
-    let (computes, clears) = attr_pass(&device, &queue, &mut gpu);
-    assert_eq!(computes.len(), 64);
+    let computes = attr_pass(&device, &queue, &mut gpu);
+    assert_eq!(computes.len(), 64, "the cap, and no clear item");
     assert_eq!(gpu.attr_stats().items, 64);
-    assert_eq!(clears.len(), k - 64);
-    assert_eq!(gpu.attr_stats().clears as usize, k - 64);
     let computed: HashSet<[i32; 3]> = computes.iter().map(brick_of).collect();
     let attrs = attr_bytes(&device, &queue, &gpu, &world);
     assert_eq!(attrs.len(), k);
@@ -3072,7 +3071,7 @@ fn a_carve_is_computed_in_the_next_pass_ahead_of_the_queue() {
     assert_eq!(reuploaded, [[0, 0, 0]]);
     let s = gpu.sync_now(&world, &device, &queue).unwrap();
     assert_eq!(s.bricks, 3, "the carved brick and its Full face neighbours");
-    let (computes, _) = attr_pass(&device, &queue, &mut gpu);
+    let computes = attr_pass(&device, &queue, &mut gpu);
     let computed: HashSet<[i32; 3]> = computes.iter().map(brick_of).collect();
     for b in &reuploaded {
         for d in [-1, 0, 1] {
@@ -3107,12 +3106,15 @@ fn a_slot_reused_while_its_old_brick_waits_ends_with_the_new_brick_s_attributes(
     let world = world();
     let mut gpu = GpuWorld::with_surface_attrs(&device, capped(Window::Fixed(world.extent()), 64));
     gpu.sync_now(&world, &device, &queue).unwrap();
-    let (_, clears) = attr_pass(&device, &queue, &mut gpu);
-    // A waiting floor brick A (z brick 0), and the air brick B above it in the same chunk.
-    let a = clears
+    let computed: HashSet<[i32; 3]> = attr_pass(&device, &queue, &mut gpu)
         .iter()
         .map(brick_of)
-        .filter(|b| b[2] == 0)
+        .collect();
+    // A waiting floor brick A (z brick 0), and the air brick B above it in the same chunk.
+    let a = all_items(&gpu, &world)
+        .iter()
+        .map(brick_of)
+        .filter(|b| !computed.contains(b) && b[2] == 0)
         .min()
         .expect("a floor brick waits");
     let b = [a[0], a[1], 1];
@@ -3159,3 +3161,101 @@ fn a_slot_reused_while_its_old_brick_waits_ends_with_the_new_brick_s_attributes(
     assert_eq!(got[&b], want[&b]);
     assert_eq!(got, want);
 }
+
+/// One chunk holding five `Full` bricks along x at bricks (1..6, 3, 3): the 4 x 4 x 4 cube at
+/// voxels 2..6 (56 surface voxels), a 3D checkerboard (256 solid voxels, every one surface),
+/// and three floor bricks (material 1 below local z = 3); everything else air.
+struct FiveBricks;
+
+impl WorldSource for FiveBricks {
+    fn chunk(&self, _: ChunkCoord, out: &mut Chunk) {
+        out.set_brick(
+            brick_slot([1, 3, 3]),
+            Brick::from_fn(|l| u16::from(l.iter().all(|&v| (2..6).contains(&v)))),
+        );
+        out.set_brick(
+            brick_slot([2, 3, 3]),
+            Brick::from_fn(|l| u16::from((l[0] + l[1] + l[2]) % 2 == 0)),
+        );
+        for x in 3..6 {
+            out.set_brick(
+                brick_slot([x, 3, 3]),
+                Brick::from_fn(|l| u16::from(l[2] < 3)),
+            );
+        }
+    }
+}
+
+/// A work list of five bricks (one partial workgroup) holding the cube brick and the
+/// checkerboard brick reads back the same attribute words as an uncapped mirror's own pass,
+/// and the words the one-brick workgroups of c6df852 wrote for them (pinned as a hash): the
+/// cube's 56 surface voxels in 2 units, the checkerboard's 256 in 8.
+#[test]
+fn a_five_brick_list_matches_an_uncapped_mirror_and_the_one_brick_pass() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &FiveBricks,
+        &numbered_table(1),
+    );
+    let mut gpu = GpuWorld::with_surface_attrs(&device, small(Window::Fixed(world.extent())));
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    let items = all_items(&gpu, &world);
+    assert_eq!(items.len(), 5);
+    let c = ChunkCoord([0, 0, 0]);
+    let heads: Vec<u32> = [1, 2]
+        .iter()
+        .map(|&x| {
+            let e = gpu.entry(c, brick_slot([x, 3, 3])).unwrap();
+            slot_words(&device, &queue, &gpu, e)[UNIT_WORDS + 14] & 0xFFFF
+        })
+        .collect();
+    assert_eq!(
+        heads,
+        [2, 8],
+        "the cube's and the checkerboard's attribute units"
+    );
+    let e = gpu.window();
+    let mut pass = AttribPass::new(&device);
+    let b = AttribBindings {
+        shards: [0, 1, 2, 3].map(|k| gpu.pool_shard(k)),
+        records: gpu.records(),
+        table: gpu.table(),
+        window: (e.min.0, e.size()),
+        units_per_shard: gpu.shard_layout().units_per_shard,
+    };
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    pass.encode(&device, &queue, &mut enc, &b, &items, None);
+    queue.submit([enc.finish()]);
+    let got: Vec<u8> = items
+        .iter()
+        .flat_map(|it| item_attrs(&device, &queue, &gpu, it.slot))
+        .collect();
+    let units: u32 = items
+        .iter()
+        .map(|it| slot_words(&device, &queue, &gpu, it.slot | FULL_BIT)[UNIT_WORDS + 14] & 0xFFFF)
+        .sum();
+    assert_eq!(got.len(), units as usize * UNIT_BYTES as usize);
+    assert!(got.iter().any(|&b| b != 0xFF), "some voxel has a plane");
+    let mut fresh = GpuWorld::with_surface_attrs(&device, small(Window::Fixed(world.extent())));
+    fresh.sync_now(&world, &device, &queue).unwrap();
+    assert_eq!(update_attrs(&device, &queue, &mut fresh), 5);
+    let want: Vec<u8> = items
+        .iter()
+        .flat_map(|it| item_attrs(&device, &queue, &fresh, it.slot))
+        .collect();
+    assert!(got == want, "the list's words equal the uncapped mirror's");
+    let mut h = hash::Fnv1a::default();
+    h.write(&got);
+    println!("five-brick attribute hash {:#018x}", h.finish());
+    assert_eq!(
+        h.finish(),
+        FIVE_BRICK_HASH,
+        "c6df852's one-brick workgroups"
+    );
+}
+
+/// The hash of the five bricks' attribute words as c6df852's pass wrote them.
+const FIVE_BRICK_HASH: u64 = 0xd795_d691_eff6_7ad3;

@@ -1,11 +1,14 @@
 // The attribute pass: fills the contour attributes of the bricks in a work list from the pool
-// itself. One workgroup per brick: it resolves the brick and its 26 neighbours once (table and
-// record reads), loads their non-air masks (16 words each) into workgroup memory, and fills
-// the occupancy of the brick and a one-voxel shell around it (10^3 voxels) from those masks,
-// reading voxel by voxel only a neighbour in a LOD-only chunk or a brick of more than 16
-// materials holding a translucent voxel. Each invocation then computes the attributes of the
-// two voxels it holds that lie on the brick's surface mask, nothing for the others, into a
-// workgroup copy of the attribute words, which the invocations write out one word each.
+// itself. Four bricks a workgroup, 64 invocations a brick: item 4 g + b is brick b of
+// workgroup g, and the last workgroup may run partly empty. A brick resolves itself and its 26
+// neighbours once (table and record reads), loads their non-air masks (16 words each) into
+// workgroup memory, lists its surface voxels in attribute-index order (each invocation scans
+// one byte of the surface mask), and sets the occupancy of the brick and a one-voxel shell
+// around it (10^3 voxels, as bits) from those masks, reading voxel by voxel only a neighbour
+// in a LOD-only chunk or a brick of more than 16 materials holding a translucent voxel. Then
+// invocation t computes attribute words t, t + 64, ... (indices 2 w and 2 w + 1) up to the
+// surface's count and writes each whole; the words past it keep the "no plane" the upload
+// wrote. The four bricks share the workgroup's three barriers.
 //
 // Bindings, group 0:
 //   0  uniform  params         mirror window, units per shard, work-list length, the
@@ -16,9 +19,7 @@
 //   6  storage  chunk_table    as in march.wgsl
 //   7  storage  attrib_work    [n][4 x u32]: the brick's record entry less bit 31 (its slot's
 //                              first unit, class and translucent flag), brick origin in
-//                              voxels (x, y, z as i32 bits). Bit 31 of the first word marks a
-//                              clear item: the brick's attribute is written all "no plane" and
-//                              nothing is computed
+//                              voxels (x, y, z as i32 bits)
 //
 // A Full brick's slot holds, after its mask, header, payload and translucent unit (march.wgsl's
 // attr_offset), its surface mask (one unit, the mask's layout), then a u16 attribute for each
@@ -71,22 +72,23 @@ const RECORD_WORDS: u32 = 528u;
 const ENTRY_WORD: u32 = 16u;
 const PAYLOAD_WORD: u32 = 32u;
 const NO_PLANE: u32 = 0xFFFFu;
-// Bit 31 of a work item's slot word: a clear item (`attrib::CLEAR_BIT`).
-const CLEAR_BIT: u32 = 0x80000000u;
-// Invocations per workgroup, two voxels each and one attribute word each at most; must match
-// `attrib::WORKGROUP`.
-const WORKGROUP: u32 = 256u;
+// Bricks a workgroup and invocations a brick; `attrib::BRICKS_PER_GROUP` and
+// `attrib::WORKGROUP` must match.
+const BRICKS: u32 = 4u;
+const LANES: u32 = 64u;
 // The occupancy box: the brick and a one-voxel shell, 10 voxels to an edge.
 const BOX: u32 = 10u;
 
-var<workgroup> occ: array<u32, 1000>;
-// The brick and its 26 neighbours, index (dx + 1) + 3 (dy + 1) + 9 (dz + 1): how each is read
-// (NB_AIR, NB_SOLID, NB_MASK with its entry, NB_VOXELS), and the NB_MASK ones' non-air masks.
-var<workgroup> nb_kind: array<u32, 27>;
-var<workgroup> nb_entry: array<u32, 27>;
-var<workgroup> nb_mask: array<u32, 432>;
-// The brick's attribute words as computed, NO_PLANE where no surface voxel lands.
-var<workgroup> words: array<atomic<u32>, 256>;
+// Per brick of the workgroup (brick b's at b times the per-brick length), 12 384 B in all:
+// its occupancy box as 1000 bits (word w set by invocation w alone); it and its 26 neighbours, index (dx + 1) + 3 (dy + 1) +
+// 9 (dz + 1), how each is read (NB_AIR, NB_SOLID, NB_MASK with its entry, NB_VOXELS) and the
+// NB_MASK ones' non-air masks; and its surface voxels' cells in attribute-index order, two
+// u16 a word.
+var<workgroup> occ: array<u32, 128>;
+var<workgroup> nb_kind: array<u32, 108>;
+var<workgroup> nb_entry: array<u32, 108>;
+var<workgroup> nb_mask: array<u32, 1728>;
+var<workgroup> cells: array<atomic<u32>, 1024>;
 
 // The shard and index of word `word` of the slot whose first unit is `unit`.
 fn shard_index(unit: u32, word: u32) -> vec2<u32> {
@@ -227,14 +229,15 @@ fn encode_octahedral(n: vec3<f32>) -> u32 {
     return q.x | (q.y << 6u);
 }
 
-// Occupancy of box cell `c` (each component in 0..10), from workgroup memory.
-fn occ_at(c: vec3<i32>) -> bool {
-    return occ[u32(c.x) + BOX * (u32(c.y) + BOX * u32(c.z))] != 0u;
+// Occupancy of box cell `c` (each component in 0..10) of the workgroup's brick `b`.
+fn occ_at(b: u32, c: vec3<i32>) -> bool {
+    let j = u32(c.x) + BOX * (u32(c.y) + BOX * u32(c.z));
+    return ((occ[b * 32u + j / 32u] >> (j % 32u)) & 1u) != 0u;
 }
 
-// The attribute of the voxel at box cell `c` (each component in 1..9).
-fn voxel_attr(c: vec3<i32>) -> u32 {
-    if (!occ_at(c)) {
+// The attribute of the voxel at box cell `c` (each component in 1..9) of brick `b`.
+fn voxel_attr(b: u32, c: vec3<i32>) -> u32 {
+    if (!occ_at(b, c)) {
         return NO_PLANE;
     }
     var g = vec3<f32>(0.0);
@@ -244,7 +247,7 @@ fn voxel_attr(c: vec3<i32>) -> u32 {
         for (var y = -1; y <= 1; y++) {
             for (var x = -1; x <= 1; x++) {
                 let o = vec3<i32>(x, y, z);
-                if (occ_at(c + o)) {
+                if (occ_at(b, c + o)) {
                     g += vec3<f32>(o);
                     count += 1.0;
                     if (abs(x) + abs(y) + abs(z) == 1) {
@@ -267,35 +270,46 @@ fn voxel_attr(c: vec3<i32>) -> u32 {
 
 @compute @workgroup_size(256, 1, 1)
 fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
-    let item = wg.y * params.groups_x + wg.x;
-    if (item >= params.items) {
-        return;
+    let b = li / LANES;
+    let t = li % LANES;
+    let item = (wg.y * params.groups_x + wg.x) * BRICKS + b;
+    // Every invocation reaches the three barriers; an empty lane (past the list) or a brick
+    // without a surface does no work between them.
+    var entry = 0u;
+    var origin = vec3<i32>(0);
+    var n = 0u;
+    if (item < params.items) {
+        let w = attrib_work[item];
+        entry = w.x;
+        origin = bitcast<vec3<i32>>(w.yzw);
+        // The surface voxels: the last layer's prefix plus its own count.
+        let u = entry & UNIT_MASK;
+        if ((pool_word(u, UNIT_WORDS + 14u) & 0xFFFFu) != 0u) {
+            let s = UNIT_WORDS * attr_offset(entry);
+            let last = pool_word(u, UNIT_WORDS + 13u) >> 16u;
+            n = last + countOneBits(pool_word(u, s + 14u)) + countOneBits(pool_word(u, s + 15u));
+        }
     }
-    let w = attrib_work[item];
-    let clear = (w.x & CLEAR_BIT) != 0u;
-    let entry = w.x & ~CLEAR_BIT;
-    let origin = bitcast<vec3<i32>>(w.yzw);
     let unit = entry & UNIT_MASK;
-    // Attribute words of the brick; 0 for a brick without a surface.
-    let n = (pool_word(unit, UNIT_WORDS + 14u) & 0xFFFFu) * UNIT_WORDS;
     let s = UNIT_WORDS * attr_offset(entry);
-    let compute = !clear && n > 0u;
-    // The barriers below stay in uniform control flow; the work between them is guarded, so
-    // a clear item, or a brick without a surface, computes nothing.
-    if (compute && li < 27u) {
-        let d = vec3<i32>(i32(li % 3u), i32((li / 3u) % 3u), i32(li / 9u)) - vec3<i32>(1);
+    let compute = n > 0u;
+    for (var j = t; j < 256u; j += LANES) {
+        atomicStore(&cells[b * 256u + j], 0u);
+    }
+    if (compute && t < 27u) {
+        let d = vec3<i32>(i32(t % 3u), i32((t / 3u) % 3u), i32(t / 9u)) - vec3<i32>(1);
         let k = brick_kind(floor_div(origin, 8) + d);
-        nb_kind[li] = k.x;
-        nb_entry[li] = k.y;
+        nb_kind[b * 27u + t] = k.x;
+        nb_entry[b * 27u + t] = k.y;
     }
     workgroupBarrier();
     if (compute) {
-        for (var j = li; j < 27u * UNIT_WORDS; j += WORKGROUP) {
+        for (var j = t; j < 27u * UNIT_WORDS; j += LANES) {
             let k = j / UNIT_WORDS;
             let w = j % UNIT_WORDS;
             var m = 0u;
-            if (nb_kind[k] == NB_MASK) {
-                let e = nb_entry[k];
+            if (nb_kind[b * 27u + k] == NB_MASK) {
+                let e = nb_entry[b * 27u + k];
                 let u = e & UNIT_MASK;
                 m = pool_word(u, w);
                 if ((e & TRANSLUCENT_BIT) != 0u) {
@@ -303,17 +317,45 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
                     m |= pool_word(u, PAYLOAD_WORD + UNIT_WORDS * payload_units(e) + w);
                 }
             }
-            nb_mask[j] = m;
+            nb_mask[b * 432u + j] = m;
+        }
+        // Byte t of the surface mask: layer t / 8, row t % 8 (x in its bits). Its voxels'
+        // indices start at the layer's prefix plus the surface bits below the row in the
+        // layer.
+        let z = t / 8u;
+        let lo = pool_word(unit, s + 2u * z);
+        let hi = pool_word(unit, s + 2u * z + 1u);
+        let byte_at = (t % 8u) * 8u;
+        var below = 0u;
+        var bits = 0u;
+        if (byte_at < 32u) {
+            below = countOneBits(lo & ((1u << byte_at) - 1u));
+            bits = (lo >> byte_at) & 0xFFu;
+        } else {
+            below = countOneBits(lo) + countOneBits(hi & ((1u << (byte_at - 32u)) - 1u));
+            bits = (hi >> (byte_at - 32u)) & 0xFFu;
+        }
+        let prefix = pool_word(unit, UNIT_WORDS + 10u + z / 2u);
+        var k = ((prefix >> ((z & 1u) * 16u)) & 0xFFFFu) + below;
+        while (bits != 0u) {
+            let x = firstTrailingBit(bits);
+            bits &= bits - 1u;
+            let cell = 64u * z + byte_at + x;
+            atomicOr(&cells[b * 256u + k / 2u], cell << ((k & 1u) * 16u));
+            k += 1u;
         }
     }
     workgroupBarrier();
-    if (compute) {
-        for (var j = li; j < BOX * BOX * BOX; j += WORKGROUP) {
+    // Occupancy word t of the box (cells 32 t to 32 t + 31), set by one invocation each, so
+    // no word is shared between invocations.
+    if (compute && t < 32u) {
+        var word = 0u;
+        for (var j = 32u * t; j < min(32u * t + 32u, BOX * BOX * BOX); j++) {
             let c = vec3<i32>(i32(j % BOX), i32((j / BOX) % BOX), i32(j / (BOX * BOX)));
             // The neighbour on each axis: -1 for box cell 0, +1 for cell 9, else the brick.
             let d = select(vec3<i32>(0), vec3<i32>(-1), c < vec3<i32>(1))
                 + select(vec3<i32>(0), vec3<i32>(1), c > vec3<i32>(8));
-            let k = u32((d.x + 1) + 3 * (d.y + 1) + 9 * (d.z + 1));
+            let k = b * 27u + u32((d.x + 1) + 3 * (d.y + 1) + 9 * (d.z + 1));
             let l = vec3<u32>(c - vec3<i32>(1) - d * 8);
             let i = l.x + 8u * (l.y + 8u * l.z);
             var on = false;
@@ -329,40 +371,25 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
                 }
                 default: {}
             }
-            occ[j] = select(0u, 1u, on);
+            word |= select(0u, 1u, on) << (j % 32u);
         }
+        occ[b * 32u + t] = word;
     }
-    atomicStore(&words[li], 0xFFFFFFFFu);
     workgroupBarrier();
     if (compute) {
-        for (var h = 0u; h < 2u; h++) {
-            let i = 2u * li + h;
-            let z = i / 64u;
-            let b = i % 64u;
-            let lo = pool_word(unit, s + 2u * z);
-            let hi = pool_word(unit, s + 2u * z + 1u);
-            var bit = 0u;
-            var below = 0u;
-            if (b < 32u) {
-                bit = (lo >> b) & 1u;
-                below = countOneBits(lo & ((1u << b) - 1u));
-            } else {
-                bit = (hi >> (b - 32u)) & 1u;
-                below = countOneBits(lo) + countOneBits(hi & ((1u << (b - 32u)) - 1u));
+        for (var w = t; 2u * w < n; w += LANES) {
+            let pair = atomicLoad(&cells[b * 256u + w]);
+            var packed = 0u;
+            for (var h = 0u; h < 2u; h++) {
+                var a = NO_PLANE;
+                if (2u * w + h < n) {
+                    let i = (pair >> (16u * h)) & 0xFFFFu;
+                    let l = vec3<i32>(i32(i % 8u), i32((i / 8u) % 8u), i32(i / 64u));
+                    a = voxel_attr(b, l + vec3<i32>(1));
+                }
+                packed |= a << (16u * h);
             }
-            if (bit != 0u) {
-                let prefix = pool_word(unit, UNIT_WORDS + 10u + z / 2u);
-                let k = ((prefix >> ((z & 1u) * 16u)) & 0xFFFFu) + below;
-                let l = vec3<i32>(i32(i % 8u), i32((i / 8u) % 8u), i32(i / 64u));
-                let a = voxel_attr(l + vec3<i32>(1));
-                let shift = (k & 1u) * 16u;
-                // Clears the u16 to the attribute, keeping the other half.
-                atomicAnd(&words[k / 2u], (a << shift) | (0xFFFFu << (16u - shift)));
-            }
+            store_pool_word(unit, s + UNIT_WORDS + w, packed);
         }
-    }
-    workgroupBarrier();
-    if (li < n) {
-        store_pool_word(unit, s + UNIT_WORDS + li, atomicLoad(&words[li]));
     }
 }

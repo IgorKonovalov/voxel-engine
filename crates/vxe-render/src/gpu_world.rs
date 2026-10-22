@@ -104,7 +104,7 @@ use vxe_world::{
 };
 
 use crate::attr_work::{self, AttrWorkStats, MirrorView};
-use crate::attrib::{AttribBindings, AttribItem, AttribPass, CLEAR_BIT};
+use crate::attrib::{AttribBindings, AttribItem, AttribPass};
 
 /// Light samples [`MirrorConfig::new`] reserves, and the samples one chunk keeps at most.
 pub const DEFAULT_LIGHT_SAMPLES: u32 = 1 << 20;
@@ -940,9 +940,6 @@ pub struct GpuWorld {
     attr_cursor: Option<(ChunkCoord, usize, u64)>,
     queued_chunks: HashSet<ChunkCoord>,
     queued_bricks: HashSet<[i32; 3]>,
-    /// `Full` bricks of full chunks written into a slot since the last `prepare_attrs`: the
-    /// ones whose compute item does not run in that call get a clear item.
-    attr_written: HashSet<[i32; 3]>,
     /// The bricks of the current list, compute and front items, for deduplication.
     attr_taken: HashSet<[i32; 3]>,
     /// `prepare_attrs` calls so far.
@@ -1137,7 +1134,6 @@ impl GpuWorld {
             attr_cursor: None,
             queued_chunks: HashSet::new(),
             queued_bricks: HashSet::new(),
-            attr_written: HashSet::new(),
             attr_taken: HashSet::new(),
             attr_calls: 0,
             queue: None,
@@ -1494,11 +1490,10 @@ impl GpuWorld {
     ///   [`MirrorConfig::attr_cap`] compute items. Chunks written whole are queued as their
     ///   coordinate and expanded as they are taken, the shells' bricks one by one. A queued
     ///   brick is resolved to its slot when it is taken, and skipped when its chunk is no
-    ///   longer mirrored full or it is not `Full`;
-    /// - a clear item for every brick `sync` wrote into a slot since the last call that is
-    ///   not computed in this one, so the brick reads "no plane" (face mode) until its turn
-    ///   instead of the attribute its slot held before.
+    ///   longer mirrored full or it is not `Full`.
     ///
+    /// A brick `sync` wrote whose item waits reads "no plane" (face mode) until its turn: its
+    /// upload wrote its attribute units so, whatever its slot held before.
     /// Each brick is listed once per call.
     pub fn prepare_attrs(&mut self) -> AttrWorkStats {
         self.attr_calls += 1;
@@ -1506,7 +1501,6 @@ impl GpuWorld {
         let chunks = std::mem::take(&mut self.attr_chunks);
         let bricks = std::mem::take(&mut self.attr_bricks);
         let shells = std::mem::take(&mut self.shell_chunks);
-        let written = std::mem::take(&mut self.attr_written);
         let mut items = std::mem::take(&mut self.attr_items);
         let mut taken = std::mem::take(&mut self.attr_taken);
         items.clear();
@@ -1596,17 +1590,6 @@ impl GpuWorld {
             }
         }
         st.items = items.len() as u32;
-        for b in written {
-            if !taken.contains(&b)
-                && let Some(slot) = self.full_slot(b)
-            {
-                items.push(AttribItem {
-                    slot: slot | CLEAR_BIT,
-                    origin: b.map(|v| v * BRICK_EDGE),
-                });
-                st.clears += 1;
-            }
-        }
         self.attr_items = items;
         self.attr_taken = taken;
         self.attr_stats = st;
@@ -1614,7 +1597,8 @@ impl GpuWorld {
     }
 
     /// The list [`GpuWorld::prepare_attrs`] built, until [`GpuWorld::encode_attrs`] records
-    /// it: compute items, then clear items ([`CLEAR_BIT`]).
+    /// it: compute items only. A brick written into a slot whose item waits reads "no plane"
+    /// until its turn, from the attribute units its upload wrote.
     pub fn attr_list(&self) -> &[AttribItem] {
         &self.attr_items
     }
@@ -2203,11 +2187,6 @@ impl GpuWorld {
                         }
                     }
                 }
-            }
-            if self.surface_attrs && !lod && self.entries[base + ENTRY_WORD + i] & FULL_BIT != 0 {
-                let b = brick_of_slot(i);
-                self.attr_written
-                    .insert([0, 1, 2].map(|k| coord.0[k] * CHUNK_EDGE_BRICKS + b[k]));
             }
         }
         if !lod {

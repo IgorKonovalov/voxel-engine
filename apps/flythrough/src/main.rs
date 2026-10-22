@@ -278,6 +278,8 @@ struct Args {
     level: bool,
     autopilot: bool,
     headless: bool,
+    /// `--adapter SUBSTRING`: a headless run takes the first adapter whose name contains it.
+    adapter: Option<String>,
     walk: bool,
     /// `--vault`: the cave generates with the vault room ahead of the spawn.
     vault: bool,
@@ -413,6 +415,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         level: false,
         autopilot: false,
         headless: false,
+        adapter: None,
         walk: false,
         vault: false,
         sync_budget: SYNC_BUDGET_MIB << 20,
@@ -609,6 +612,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--detail" => detail_flag = true,
             "--autopilot" => args.autopilot = true,
             "--headless" => args.headless = true,
+            "--adapter" => args.adapter = Some(value()?),
             "--walk" => args.walk = true,
             "--hud" => args.hud = true,
             "--census" => args.census = true,
@@ -1708,8 +1712,6 @@ struct AttrSamples {
     /// How long the oldest waiting brick had waited when each call started, in milliseconds
     /// (0 when none waited).
     age_ms: Vec<f64>,
-    /// Clear items per call.
-    clears: Vec<f64>,
     /// The attribute pass's work-buffer builds after the first flight frame and the last.
     builds_first: Option<u32>,
     builds_last: u32,
@@ -1755,7 +1757,6 @@ impl AttrSamples {
         age_ms: f64,
     ) {
         self.age_ms.push(age_ms);
-        self.clears.push(f64::from(st.clears));
         let cpu = build_ms + encode_ms;
         if cpu > HITCH_MS {
             self.hitches.push((self.items.len(), cpu, st));
@@ -1795,10 +1796,6 @@ impl AttrSamples {
         let [a50, a99, amax] = stats(&mut self.age_ms);
         out.push(format!(
             "autopilot: attribute carry-over age (oldest waiting brick at the start of each update_attrs): p50 {a50:.1} ms, p99 {a99:.1} ms, max {amax:.1} ms (bar 250 ms)"
-        ));
-        let [l50, l99, lmax] = stats(&mut self.clears);
-        out.push(format!(
-            "autopilot: attribute clear items: p50 {l50:.0}, p99 {l99:.0}, max {lmax:.0}"
         ));
         out.push(format!(
             "autopilot: attribute work buffer builds: {} after the first flight frame, {} at the end",
@@ -3938,16 +3935,29 @@ impl App for Flythrough {
     }
 }
 
-/// Runs `app` without a window: a device on the high-performance adapter and an offscreen
-/// target in place of the surface, the same frames until the app exits. Teardown follows
-/// the windowed shell's order (the app, then the queue, device and adapter), traced alike.
+/// Runs `app` without a window: a device on the high-performance adapter, or with
+/// `--adapter` the first adapter whose name contains its substring (the high-performance one
+/// when none does), and an offscreen target in place of the surface, the same frames until
+/// the app exits. Teardown follows the windowed shell's order (the app, then the queue,
+/// device and adapter), traced alike.
 fn run_headless(mut app: Flythrough, size: [u32; 2]) -> Result<(), String> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter = pollster_block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }))
-    .map_err(|e| format!("no adapter: {e}"))?;
+    let named = app.args.adapter.as_deref().and_then(|want| {
+        let all = pollster_block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+        let found = all.into_iter().find(|a| a.get_info().name.contains(want));
+        if found.is_none() {
+            eprintln!("--adapter {want:?}: no adapter's name contains it; the default is used");
+        }
+        found
+    });
+    let adapter = match named {
+        Some(a) => a,
+        None => pollster_block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            ..Default::default()
+        }))
+        .map_err(|e| format!("no adapter: {e}"))?,
+    };
     println!("headless on {}", adapter.get_info().name);
     let (required_features, required_limits) = app.device_request(&adapter);
     let (device, queue) = pollster_block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -4192,6 +4202,9 @@ fn main() {
     };
     let size = args.render.unwrap_or([1280, 720]);
     let headless = args.headless;
+    if !headless && args.adapter.is_some() {
+        eprintln!("--adapter applies to --headless runs; the window takes the default adapter");
+    }
     let audio = if args.audio {
         Audio::open(
             args.audio_debug,
@@ -4544,6 +4557,9 @@ mod tests {
             .expect("x refused");
         assert_eq!(e, "--pad takes on or off, not x");
         assert!(parse_args_from(argv(&["--pad"])).is_err());
+        let amd = parse_args_from(argv(&["--headless", "--adapter", "AMD"])).unwrap();
+        assert_eq!(amd.adapter.as_deref(), Some("AMD"));
+        assert!(parse_args_from(argv(&["--adapter"])).is_err());
         let headless = parse_args_from(argv(&["--pad", "on", "--headless"])).unwrap();
         assert!(!headless.wants_pad());
         let pilot = parse_args_from(argv(&["--autopilot"])).unwrap();
