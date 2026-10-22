@@ -1119,7 +1119,7 @@ impl Modes {
         self.banner_at = now_ms;
     }
 
-    /// The modes in words: `lighting half, shadow walk full, sampler reuse, history edits,
+    /// The modes in words: `lighting half, shadow walk coarse, sampler reuse, history edits,
     /// lamp on, filter on, ore pulse off, emissive history 32`.
     pub fn line(&self) -> String {
         let l = &self.lighting;
@@ -1177,13 +1177,13 @@ mod mode_tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, shadow walk full\nsampler reuse, history edits, lamp on\nfilter on, ore pulse off\nemissive history 32"
+            "lighting half, shadow walk coarse\nsampler reuse, history edits, lamp on\nfilter on, ore pulse off\nemissive history 32"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;
         let mut last = start;
         for (key, word) in [
-            (ModeKey::ShadowWalk, "shadow walk coarse"),
+            (ModeKey::ShadowWalk, "shadow walk full"),
             (ModeKey::Sampler, "sampler list"),
             (ModeKey::History, "history gradient"),
             (ModeKey::Resolution, "lighting full"),

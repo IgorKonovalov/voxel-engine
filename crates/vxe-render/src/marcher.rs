@@ -291,11 +291,11 @@ pub enum ToneMap {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ShadowWalk {
     /// Every voxel, as the primary ray.
-    #[default]
     Full,
     /// Any 2^3 block of the opaque masks with a set bit is solid: chunk bits, brick bits and
     /// one mask line per brick, never a voxel or the pool. The first and last 3.5 voxels of
-    /// the ray take the full walk.
+    /// the ray take the full walk. The default.
+    #[default]
     Coarse,
 }
 

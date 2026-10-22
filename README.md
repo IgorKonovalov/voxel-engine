@@ -7,7 +7,7 @@
 
 <sub>The bounded level, seed 1, from voxel (148, 280, 484) at yaw 135 and pitch -10 degrees: the
 headlamp's cone and a vein of glowing ore, after 64 accumulated and filtered frames at exposure
-0.08, contour look, at the lighting defaults (half-resolution lighting, full shadow walk,
+0.08, contour look, at the lighting defaults (half-resolution lighting, coarse shadow walk,
 reservoir reuse, edit-box history, a 32-frame emissive history), on an RTX 3080 Laptop GPU at
 1600x900. Regenerate with
 `cargo run --release -p flythrough --example hero -- --at 148,280,484 --yaw 135 --pitch -10
@@ -152,7 +152,7 @@ go through an in-process server, so every edit you see came back as a client eve
 | `E` | With `--audio`: toggle the early reflections |
 | `F1` | Sample the next frames and print frame-time readings |
 | `F2` | Toggle the stats overlay; with the lighting it shows every frame pass's GPU time and the light samples |
-| `F3` | Toggle the shadow walk: full (default) or coarse (2^3 blocks of the masks) |
+| `F3` | Toggle the shadow walk: coarse (default; 2^3 blocks of the masks) or full |
 | `F4` | Toggle the emissive sampler: reservoir reuse (default) or the flat candidate list |
 | `F5` | Toggle what kills history: edit boxes (default), or edit boxes and A-SVGF's gradient |
 | `F6` | Toggle the lighting resolution: half (default) or full; applied on the next frame |
@@ -197,7 +197,7 @@ shown, `F1`, the autopilot's flight).
 | `--audio-debug` | `--audio` plus a line a second of the output callback's readings; on exit writes the last 60 s to `flythrough-audio-debug.wav` |
 | `--lamp on\|off` | The headlamp (default on) |
 | `--emissive-ore on\|off` | The ore glows and lights the cave (default on) |
-| `--shadow-walk full\|coarse` | The walk shadow rays take (default full) |
+| `--shadow-walk full\|coarse` | The walk shadow rays take (default coarse) |
 | `--sampler list\|reuse` | The emissive sampler: candidates alone, or with last frame's reservoirs (default reuse) |
 | `--history edits\|gradient` | What kills temporal history: edit boxes, or edit boxes and A-SVGF's gradient (default edits) |
 | `--lighting full\|half` | The lighting passes' resolution (default half) |

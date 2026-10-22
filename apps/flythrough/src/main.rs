@@ -438,7 +438,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         pad: true,
         emissive_ore: true,
         lamp: true,
-        shadow_walk: ShadowWalk::Full,
+        shadow_walk: ShadowWalk::default(),
         filter: true,
         light_radius: vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
         sampler: Sampler::default(),
@@ -5476,7 +5476,7 @@ mod tests {
                 d.light_radius
             ),
             (
-                ShadowWalk::Full,
+                ShadowWalk::Coarse,
                 Sampler::Reuse,
                 HistoryKill::Edits,
                 LightingResolution::Half,
@@ -5486,7 +5486,7 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
             hud::Modes::new(d.start_lighting(), d.lighting, 0.0).line(),
-            "lighting half, shadow walk full, sampler reuse, history edits, lamp on, filter on, ore pulse off, emissive history 32"
+            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, filter on, ore pulse off, emissive history 32"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),
