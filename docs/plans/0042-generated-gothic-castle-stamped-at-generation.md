@@ -1,6 +1,6 @@
 # 0042: A generated gothic castle with a dungeon, imported as a .vox scene and stamped at generation
 
-> **Status:** draft
+> **Status:** approved (2026-10-22)
 > **Created:** 2026-10-22
 > **Milestone:** M7 in `docs/roadmap.md` (prefab stamping at authored-building scale; testbed
 > content plus a `.vox` writer in `vxe-assets`)

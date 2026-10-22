@@ -469,7 +469,7 @@ a cheap query.
   0018, v0.15.0).
 - Stamping at authored-building scale: a generated castle and dungeon, a 27-tile `.vox`
   scene through the importer and `StampedSource`, with its RAM and generation costs read (Plan
-  0042, draft).
+  0042, approved).
 
 ### M8: Volumetrics, debris and collapse (support query and collapse ops shipped in Plan 0009, v0.8.0; volumetrics, debris and the cosmetic rigid-body layer remain open, the last after M6)
 
