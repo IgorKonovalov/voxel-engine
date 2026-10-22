@@ -27,7 +27,19 @@ allow = [
     "MPL-2.0",
     "CC0-1.0",
     "BSL-1.0",
+    # DXC, statically linked into Windows builds through mach-dxcompiler-rs (below).
+    "NCSA",
 ]
+
+# mach-dxcompiler-rs declares only its own MIT, but its build script downloads and links a
+# prebuilt static DXC (Microsoft's DirectXShaderCompiler), which is under the University of
+# Illinois/NCSA Open Source License. Shipping a Windows binary owes DXC's notice (ADR-0035).
+[[licenses.clarify]]
+crate = "mach-dxcompiler-rs"
+expression = "MIT AND NCSA"
+# The hash is cargo-deny's (XxHash32 of the file with line endings normalised); a changed
+# LICENSE stops the clarification applying and the crate falls back to its own MIT.
+license-files = [{ path = "LICENSE", hash = 0xc9d1a063 }]
 
 [bans]
 multiple-versions = "warn"

@@ -84,7 +84,10 @@ wasip2 = { version = "=1.0.4", default-features = false, features = ["std"] }
 bytes = { version = "=1.12.1", default-features = false }
 tokio = { version = "=1.53.3", default-features = false }
 # Only the backends we ship (ADR-0001): Vulkan on Linux and Windows, DX12 on Windows.
-wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "dx12", "wgsl"] }
+# `static-dxc` links DXC into the DX12 backend so it never falls back to FXC (ADR-0035). It is
+# inert off x86_64/i686 Windows MSVC: wgpu-hal pulls mach-dxcompiler-rs only there, whose build
+# script downloads the prebuilt static library.
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "dx12", "wgsl", "static-dxc"] }
 # Wayland and X11 on Linux without client-side decorations (the window manager draws them).
 winit = { version = "=0.30.13", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 

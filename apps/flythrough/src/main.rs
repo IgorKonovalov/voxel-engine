@@ -4107,9 +4107,11 @@ impl App for Flythrough {
 /// `--adapter` the first adapter whose name contains its substring (the high-performance one
 /// when none does), and an offscreen target in place of the surface, the same frames until
 /// the app exits. Teardown follows the windowed shell's order (the app, then the queue,
-/// device and adapter), traced alike.
+/// device and adapter), traced alike. The instance reads wgpu's environment variables
+/// (`WGPU_BACKEND`, `WGPU_DX12_COMPILER`, ...) as the windowed shell's does.
 fn run_headless(mut app: Flythrough, size: [u32; 2]) -> Result<(), String> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let named = app.args.adapter.as_deref().and_then(|want| {
         let all = pollster_block_on(instance.enumerate_adapters(wgpu::Backends::all()));
         let found = all.into_iter().find(|a| a.get_info().name.contains(want));
@@ -4126,7 +4128,12 @@ fn run_headless(mut app: Flythrough, size: [u32; 2]) -> Result<(), String> {
         }))
         .map_err(|e| format!("no adapter: {e}"))?,
     };
-    println!("headless on {}", adapter.get_info().name);
+    let info = adapter.get_info();
+    println!(
+        "headless on {} ({})",
+        info.name,
+        vxe_app::backend_label(info.backend)
+    );
     let (required_features, required_limits) = app.device_request(&adapter);
     let (device, queue) = pollster_block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_features,

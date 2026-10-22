@@ -1,6 +1,6 @@
 # 0046: DX12 shaders through wgpu's bundled static DXC: pipeline times measured per pass under FXC and DXC, the feature on for every consumer, the shutdown workaround reverted
 
-> **Status:** approved (2026-10-22)
+> **Status:** in-progress
 > **Created:** 2026-10-22
 > **Milestone:** none; platform health (the Windows arm of ADR-0001's Linux + Windows stack)
 > **Related ADRs:** [ADR-0035](../adrs/0035-dx12-shaders-compile-with-wgpus-bundled-static-dxc.md)
@@ -267,19 +267,118 @@ upscale     1778    ...        ...
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: a per-pass pipeline-time table | dev | not started | |
-| 2: `static-dxc` on, in the deny gate, named at startup | dev | not started | |
-| 3: the workaround reverted and the Windows bars set | dev | not started | |
+| 1: a per-pass pipeline-time table | dev | done | 622dcf3 |
+| 2: `static-dxc` on, in the deny gate, named at startup | dev | done | c3b32b4 |
+| 3: the workaround reverted and the Windows bars set | dev | done (Windows bars owed to CI) | 1a18b57 |
+
+**Phase 1.** `crates/vxe-render/examples/pipeline_times.rs`; `UPSCALE_WGSL` and `SHARPEN_WGSL`
+are re-exported from `lib.rs` (`pub use marcher::{...}`), `marcher.rs` unchanged. The table has
+eleven rows, not eight: gradient, downsample and variance are compute pipelines `Frame` also
+builds. The timing fn carries `#[allow(clippy::disallowed_methods, reason = ...)]`, since
+`clippy.toml`'s clock ban is workspace-wide. Readings on ce62f0c plus this phase's tree,
+release, Vulkan, `MESA_SHADER_CACHE_DISABLE=true __GL_SHADER_DISK_CACHE=0`, adapter by
+`WGPU_ADAPTER_NAME`, exclusive perf lock, 1-minute load 10.4 to 11.1 (loaded). Cold / min ms:
+
+| pass | lines | lavapipe | RTX 3080 Laptop | Radeon iGPU (RADV) |
+|---|---|---|---|---|
+| attrib | 415 | 32.4 / 29.2 | 75.3 / 68.3 | 54.2 / 49.7 |
+| march | 1383 | 53.9 / 48.6 | 312.3 / 305.3 | 90.9 / 86.0 |
+| light | 1788 | 96.3 / 93.0 | 522.6 / 522.6 | 152.7 / 149.1 |
+| temporal | 1586 | 18.6 / 18.1 | 42.0 / 39.5 | 21.2 / 20.5 |
+| gradient | 1868 | 41.0 / 40.3 | 265.1 / 262.5 | 70.8 / 68.4 |
+| downsample | 1555 | 3.9 / 3.6 | 9.7 / 6.9 | 4.3 / 4.0 |
+| variance | 1552 | 8.9 / 8.9 | 18.8 / 14.3 | 10.5 / 10.4 |
+| atrous | 1552 | 11.2 / 11.2 | 25.2 / 22.7 | 13.7 / 13.7 |
+| upscale | 1779 | 18.9 / 18.3 | 76.7 / 76.2 | 23.1 / 22.7 |
+| sharpen | 1469 | 3.7 / 3.6 | 10.8 / 8.8 | 4.4 / 4.2 |
+| composite | 1555 | 10.3 / 10.3 | 37.6 / 35.5 | 12.6 / 12.4 |
+| total | | 299.0 / 285.0 | 1396.1 / 1362.5 | 458.4 / 441.0 |
+
+`--hlsl live/hlsl` wrote `<pass>.sm51.hlsl` and `<pass>.sm60.hlsl` for all eleven passes plus
+`entries.txt`. Microsoft's Linux `dxc` (release v1.9.2609, `libdxcompiler.so` 1.9.2609.5),
+`-T cs_6_0 -E <entry> -HV 2018 -no-warnings -Ges`, wall time per process including its start,
+load 8.95, every exit 0: attrib 437 ms, march 283, light 517, temporal 71, gradient 390,
+downsample 46, variance 49, atrous 81, upscale 111, sharpen 59, composite 72. FXC was not run:
+no Microsoft `fxc.exe` or `d3dcompiler_47.dll` was obtainable here (the
+`Microsoft.Windows.SDK.BuildTools` NuGet packages 10.0.22621.756, 10.0.26100.1742 and
+10.0.28000.2705 carry neither), so the Windows CI table is the FXC reading. CI gains
+`Pipeline times on DX12 under FXC` (Windows only, `WGPU_DX12_COMPILER=fxc`, then the byte size
+of `target/debug/flythrough.exe`) and `Pipeline times on lavapipe` (Linux only); the Windows
+FXC table is owed by the first CI run on main after the merge. Gate: build, quick 470 passed
+(3 skipped), doctests, clippy, fmt, test tiers, comment hygiene, doc links. The gpu tier was not
+run at this commit: a live-session runner was up (lane rule 6); it is owed before the close.
+
+**Merge.** 405be8e merges main at 93cce0c (the `ci` nextest profile, `--look plain` in
+`shutdown.rs`); the one conflict was ci.yml beside the new steps. Its full-tier gate was not
+run at the merge (live-session runner up); the full run at the close covers that tree plus
+Phases 2 and 3.
+
+**Phase 2.** The lockfile adds `mach-dxcompiler-rs` 0.1.4+2024.11.22-df583a3.1; its build
+script fetches
+`https://github.com/DouglasDwyer/mach-dxcompiler/releases/download/2024.11.22+284d956.1/x86_64-windows-msvc_ReleaseFast_Dynamic_lib.tar.gz`
+(`_lib` with a static CRT). `deny.toml`'s clarify hash is cargo-deny's XxHash32 of the
+normalised `LICENSE` (0xc9d1a063); the CRC32 tried first never matched and cargo-deny said
+nothing about it. `cargo deny check` exit 0; `cargo deny list` prints
+`NCSA (1): mach-dxcompiler-rs@0.1.4+2024.11.22-df583a3.1` and the crate under MIT too.
+`cargo clean -p wgpu-hal` then `cargo build --workspace --offline`: compiled wgpu-hal, wgpu-core,
+wgpu and the three workspace crates over them, no fetch. `cargo tree -i mach-dxcompiler-rs
+--target x86_64-unknown-linux-gnu`: nothing to print; `--target x86_64-pc-windows-msvc`: under
+`wgpu-hal v30.0.1`. `dx12_compiler.rs` is cfg'd out on Linux; a copy without the `cfg` passed
+clippy here, and on Vulkan it captured `wgpu_hal`'s log lines. The startup label is
+`vxe_app::backend_label` (new public fn in `shell.rs`, used by the shell's `adapter:` info line
+and the headless line; re-exported from `crates/vxe-app/src/lib.rs`, outside Files touched). Deviation: the headless instance now comes from
+`new_without_display_handle_from_env()` as the windowed shell's does, so the
+`WGPU_DX12_COMPILER` the line names is the one the instance reads. Headless at 3 frames:
+`headless on NVIDIA GeForce RTX 3080 Laptop GPU (Vulkan)`; with `WGPU_DX12_COMPILER=fxc
+--adapter llvmpipe`: `headless on llvmpipe (LLVM 23.1.3, 256 bits) (Vulkan)`. The Windows CI step
+now runs the example under `WGPU_DX12_COMPILER=fxc`, then with no variable, then prints the
+fly-through's size and the size of the static DXC `.lib` under `target/debug/build`. Finding:
+no CI run can print `flythrough.exe` without `static-dxc`, since Phase 1 and Phase 2 reach CI in
+the same push; the `.lib` size bounds what the feature adds. Owed to Windows CI after the merge:
+`dx12_compiler` passing, the `auto` table beside the FXC one. Gate: build, quick 470 passed
+(3 skipped), doctests 7, clippy, fmt, test tiers, comment hygiene, `cargo deny check`.
+
+**Phase 3.** `shutdown.rs`'s headless run has no `--look` again; the file is byte-identical to
+ce62f0c's. `cargo nextest run -p flythrough --profile gpu -E 'binary(shutdown)'`, exclusive perf
+lock, load 6.55: 3 passed, the trace test 3.235 s (RTX 3080 Laptop, the default adapter), its
+16 expected teardown stages asserted in order. `docs/nfr.md` section 7 names the Windows
+readings owed and where they go; no Windows figure is in it. Bars 1 to 3 are not read: lanes
+do not push, so they come from the first `windows-latest` run on main after the merge.
+
 
 ### Notes
 
+- Deviations: eleven passes in the table, not eight (Phase 1, 622dcf3); the headless
+  fly-through instance reads wgpu's environment (Phase 2, c3b32b4); `vxe-app/src/lib.rs`
+  re-exports `backend_label`, outside Files touched (c3b32b4).
+- Unmet as stated, owed to the first `windows-latest` run on main after the merge: Phase 1's FXC
+  table; Phase 2's `dx12_compiler` pass and `auto` table; Phase 3's bars 1 to 3; the `nfr.md`
+  section 7 Windows readings. The Phase 1 "before" size of `flythrough.exe` cannot be read
+  on CI, since both phases reach it in one push; the step prints the static DXC `.lib` size
+  instead.
+- FXC was not run locally (no Microsoft `fxc.exe` or `d3dcompiler_47.dll` here).
+- The Vulkan readings were taken at 1-minute load 10.4 to 11.1 (loaded, indicative).
+- Followup noticed: the light pass is the costliest creation on every Linux adapter (522.6 ms
+  cold on the RTX 3080 Laptop), above `march` itself.
+
 ### Close triggers
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** feature
+- **Public API changed:** `vxe_render::{UPSCALE_WGSL, SHARPEN_WGSL}` re-exported at the crate
+  root; new `vxe_app::backend_label(wgpu::Backend) -> String`; the workspace `wgpu` gains
+  `static-dxc`; the shell's `adapter:` line and the headless `headless on` line gain the backend
+  label.
+- **Budget readings:** the Phase 1 per-pass table above (lavapipe, RTX 3080 Laptop, Radeon
+  iGPU on RADV, Vulkan, exclusive perf lock, load 10.4 to 11.1, on ce62f0c plus Phase 1) and
+  the local `dxc` times, both in `docs/nfr.md` section 7. Windows DX12 readings: none yet, owed
+  to CI.
+- **Gate at the tip (1a18b57 tree):** `cargo build --workspace` 0; `cargo nextest run --workspace
+  --profile quick` 470 passed, 3 skipped (Phase 2 tree); `cargo nextest run --workspace --profile
+  full --no-fail-fast --test-threads 2`, exclusive perf lock, load 5.77 to 4.33: 599 passed, 7
+  skipped, 357.8 s, exit 0; `cargo test --workspace --doc` 7 passed; `cargo clippy --workspace
+  --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check` 0; test
+  tiers, comment hygiene, doc links 0.
+- **Outstanding `human` phases:** none. Outstanding CI readings: listed under Notes.
 
 ## Followups
 

@@ -109,19 +109,8 @@ fn dropping_the_streamer_before_the_world_returns_within_bound() {
 /// printed skip when the machine has no adapter. The run is killed past `RUN_BOUND`.
 fn headless_run_trace() -> Option<String> {
     const RUN_BOUND: Duration = Duration::from_secs(120);
-    // `--look plain`: the teardown trace needs no contour attributes, and a plain mirror
-    // builds no attribute pipeline. Where wgpu compiles WGSL through FXC (DX12 without DXC),
-    // that pipeline's compile alone exceeds `RUN_BOUND`; Plan 0046 removes FXC.
     let mut child = Command::new(env!("CARGO_BIN_EXE_flythrough"))
-        .args([
-            "--headless",
-            "--frames",
-            "3",
-            "--render",
-            "64x36",
-            "--look",
-            "plain",
-        ])
+        .args(["--headless", "--frames", "3", "--render", "64x36"])
         .env("RUST_LOG", "flythrough=info")
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
