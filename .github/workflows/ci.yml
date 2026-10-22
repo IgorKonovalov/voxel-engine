@@ -43,16 +43,17 @@ jobs:
         run: scripts/build-guests.sh
       - run: cargo build --workspace
       # Pipeline creation per compute pass (docs/nfr.md section 7). Windows runs DX12 on WARP
-      # with FXC forced through WGPU_DX12_COMPILER; the fly-through's size is the debug
-      # binary the build step above produced.
-      - name: Pipeline times on DX12 under FXC
+      # twice: FXC forced through WGPU_DX12_COMPILER, then the default (static DXC,
+      # ADR-0035). The fly-through's size is the debug binary the build step above produced;
+      # the static DXC library's size is what the feature adds to it at most.
+      - name: Pipeline times on DX12 under FXC and the default compiler
         if: runner.os == 'Windows'
         shell: bash
-        env:
-          WGPU_DX12_COMPILER: fxc
         run: |
+          WGPU_DX12_COMPILER=fxc cargo run -p vxe-render --release --example pipeline_times
           cargo run -p vxe-render --release --example pipeline_times
           echo "target/debug/flythrough.exe: $(wc -c < target/debug/flythrough.exe) bytes"
+          find target/debug/build -path '*mach-dxcompiler-rs-*' -name '*.lib' -exec wc -c {} + || true
       - name: Pipeline times on lavapipe
         if: runner.os == 'Linux'
         run: cargo run -p vxe-render --release --example pipeline_times

@@ -267,8 +267,8 @@ upscale     1778    ...        ...
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: a per-pass pipeline-time table | dev | done | committed with this row |
-| 2: `static-dxc` on, in the deny gate, named at startup | dev | not started | |
+| 1: a per-pass pipeline-time table | dev | done | 622dcf3 |
+| 2: `static-dxc` on, in the deny gate, named at startup | dev | done | committed with this row |
 | 3: the workaround reverted and the Windows bars set | dev | not started | |
 
 **Phase 1.** `crates/vxe-render/examples/pipeline_times.rs`; `UPSCALE_WGSL` and `SHARPEN_WGSL`
@@ -307,6 +307,36 @@ of `target/debug/flythrough.exe`) and `Pipeline times on lavapipe` (Linux only);
 FXC table is owed by the first CI run on main after the merge. Gate: build, quick 470 passed
 (3 skipped), doctests, clippy, fmt, test tiers, comment hygiene, doc links. The gpu tier was not
 run at this commit: a live-session runner was up (lane rule 6); it is owed before the close.
+
+**Merge.** 405be8e merges main at 93cce0c (the `ci` nextest profile, `--look plain` in
+`shutdown.rs`); the one conflict was ci.yml beside the new steps. Its full-tier gate was not
+run at the merge (live-session runner up); the full run at the close covers that tree plus
+Phases 2 and 3.
+
+**Phase 2.** The lockfile adds `mach-dxcompiler-rs` 0.1.4+2024.11.22-df583a3.1; its build
+script fetches
+`https://github.com/DouglasDwyer/mach-dxcompiler/releases/download/2024.11.22+284d956.1/x86_64-windows-msvc_ReleaseFast_Dynamic_lib.tar.gz`
+(`_lib` with a static CRT). `deny.toml`'s clarify hash is cargo-deny's XxHash32 of the
+normalised `LICENSE` (0xc9d1a063); the CRC32 tried first never matched and cargo-deny said
+nothing about it. `cargo deny check` exit 0; `cargo deny list` prints
+`NCSA (1): mach-dxcompiler-rs@0.1.4+2024.11.22-df583a3.1` and the crate under MIT too.
+`cargo clean -p wgpu-hal` then `cargo build --workspace --offline`: compiled wgpu-hal, wgpu-core,
+wgpu and the three workspace crates over them, no fetch. `cargo tree -i mach-dxcompiler-rs
+--target x86_64-unknown-linux-gnu`: nothing to print; `--target x86_64-pc-windows-msvc`: under
+`wgpu-hal v30.0.1`. `dx12_compiler.rs` is cfg'd out on Linux; a copy without the `cfg` passed
+clippy here, and on Vulkan it captured `wgpu_hal`'s log lines. The startup label is
+`vxe_app::backend_label` (new public fn in `shell.rs`, used by the shell's `adapter:` info line
+and the headless line; re-exported from `crates/vxe-app/src/lib.rs`, outside Files touched). Deviation: the headless instance now comes from
+`new_without_display_handle_from_env()` as the windowed shell's does, so the
+`WGPU_DX12_COMPILER` the line names is the one the instance reads. Headless at 3 frames:
+`headless on NVIDIA GeForce RTX 3080 Laptop GPU (Vulkan)`; with `WGPU_DX12_COMPILER=fxc
+--adapter llvmpipe`: `headless on llvmpipe (LLVM 23.1.3, 256 bits) (Vulkan)`. The Windows CI step
+now runs the example under `WGPU_DX12_COMPILER=fxc`, then with no variable, then prints the
+fly-through's size and the size of the static DXC `.lib` under `target/debug/build`. Finding:
+no CI run can print `flythrough.exe` without `static-dxc`, since Phase 1 and Phase 2 reach CI in
+the same push; the `.lib` size bounds what the feature adds. Owed to Windows CI after the merge:
+`dx12_compiler` passing, the `auto` table beside the FXC one. Gate: build, quick 470 passed
+(3 skipped), doctests 7, clippy, fmt, test tiers, comment hygiene, `cargo deny check`.
 
 
 ### Notes
