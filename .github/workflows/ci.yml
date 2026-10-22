@@ -42,15 +42,16 @@ jobs:
         shell: bash
         run: scripts/build-guests.sh
       - run: cargo build --workspace
-      # The full tier (.config/nextest.toml): every test, quick, gpu and slow alike.
+      # The full tier (.config/nextest.toml): every test, quick, gpu and slow alike. The `ci`
+      # profile runs the full tier's tests with the GPU tests in parallel.
       # On Linux a missing lavapipe fails the golden tests instead of skipping them.
-      - run: cargo nextest run --workspace --profile full
+      - run: cargo nextest run --workspace --profile ci
         env:
           VXE_REQUIRE_SOFTWARE_ADAPTER: ${{ runner.os == 'Linux' && '1' || '' }}
       # The fly-through's `wasm` feature (off in the workspace build) hosts its logic
       # component; its tests (`tests/component.rs`) need the feature and the built component.
       # Every other fly-through test ran in the workspace step, so only that binary runs here.
-      - run: cargo nextest run -p flythrough --features wasm --profile full -E 'binary(component)'
+      - run: cargo nextest run -p flythrough --features wasm --profile ci -E 'binary(component)'
         env:
           VXE_REQUIRE_SOFTWARE_ADAPTER: ${{ runner.os == 'Linux' && '1' || '' }}
       - run: cargo test --workspace --doc
