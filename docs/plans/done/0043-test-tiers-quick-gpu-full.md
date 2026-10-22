@@ -404,3 +404,8 @@ CI runner. The owner approved a CI-only override the same day (a fix commit on m
 Windows job still fails, as it has on every run since `99e7bee`, in the shutdown test's
 headless run (the FXC compile of the attribute pipeline, outside this plan); a temporary test
 fix and Plan 0046 (bundled DXC) address it.
+
+**After the ci profile (2026-10-22, orchestrator):** run 39836102080 at `93cce0c` is green on
+Linux, Windows and `deny`. Linux: the workspace step under `--profile ci` 602 s, the wasm step
+81 s, the job 827 s against the 981 s baseline (154 s saved, short of the 400 s the plan
+expected). Windows passes again with the shutdown test on `--look plain`.
