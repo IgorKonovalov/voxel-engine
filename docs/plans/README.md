@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0042** (ADRs are a separate sequence; next free there is **0035**).
+**Next free number: 0043** (ADRs are a separate sequence; next free there is **0035**).
 
 ## Active roster
 
@@ -21,6 +21,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0039](0039-contour-look-sharpness-measured-and-tuned.md) | The contour look at arm's length: a sharpness metric, the sources of its softness, named presets the owner compares | approved | M2, no ADR. After Plan 0028. |
 | [0040](0040-eye-adaptation-asymmetric-auto-exposure-and-pre-exposure.md) | Eye adaptation: an automatic exposure that is fast toward bright and slow toward dark, metered on the GPU, with pre-exposed HDR targets | approved | M2, ADR-0033 (proposed). After Plan 0029; before Plan 0032. |
 | [0041](0041-fsr2-port-to-wgsl.md) | AMD FSR 2.2.1 ported to WGSL: its six passes fed from the hit buffer, compared against our upscaler and the native frame | approved | M2, ADR-0034 (proposed). After Plan 0030. |
+| [0042](0042-generated-gothic-castle-stamped-at-generation.md) | A generated gothic castle with a dungeon: a `.vox` writer, a 27-tile scene imported and stamped at generation into a carved hall, its costs read | draft | M7, no ADR. Testbed plus `vxe-assets`; independent of the other lanes. |
 <!-- roster:end -->
 
 ## Recently closed
