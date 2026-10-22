@@ -728,6 +728,22 @@ commit follows it).
   1.335 / 0.00542 (fails 1 narrowly). gauss 0.8 bilinear nearness: pan U1 2.046, U1.5 2.516.
   At FAR every variant's pan GE collapses (0.002 to 0.013 against still 0.06 to 0.10): the
   near-Nyquist stripes wash out under any resampled history.
+- **Resumed 2026-10-22 (mains), more pan attempts** (knobs added: `Upscaler::alpha_moving`,
+  the alpha where the history moved by 0.01 px or more, and `clip_gamma`; fetch mode
+  `HistoryFetch::Lanczos2`; logs `live/0030/p6-tune2..4.log`). All on gauss 0.6 + nearness,
+  still U1 1.196 / 0.00615, U1.5 1.234 / 0.00603, far 0.09765 / 0.09541. Pan NEAR ES / GE,
+  FAR GE, sharpening 0:
+  CR am 0.2: U1 1.769 / 0.00412, U1.5 2.194 / 0.00322; far 0.01677, 0.00660.
+  CR am 0.35: U1 1.610 / 0.00454, U1.5 2.104 / 0.00344; far 0.03606, 0.01509.
+  CR am 0.35 gamma 0.75: U1 1.609, U1.5 2.109; gamma 1.5: 1.610, 2.105 (clip width no effect).
+  CR am 0.5: U1 1.402 / 0.00504, U1.5 2.012 / 0.00370; far 0.05481, 0.02435.
+  CR am 0.75: U1 1.107 / 0.00608, U1.5 1.861 / 0.00418; far 0.08390, 0.03851.
+  CR am 1.0: U1 0.868 / 0.00742, U1.5 1.752 / 0.00469; far 0.11421, 0.05164.
+  Lanczos-2 fetch am 0.35: U1 1.582, U1.5 2.105; am 0.5: U1 1.374, U1.5 2.005 (as CR).
+  Pan bars: U1 ES <= 1.696, GE >= 0.00461; U1.5 ES <= 1.734, GE >= 0.00452; far U1 >= 0.0732,
+  U1.5 >= 0.0716. Scale 1 meets them at NEAR from am 0.5 and at FAR only from am 1.0; scale
+  1.5 meets none (best ES 1.752 at am 1.0, i.e. history nearly off in motion; B, one frame
+  at 1.5 bilinear, reads 1.718). Stopped here for an owner question (lane instruction).
 - **Left:** done-when 3 (pan) is the open problem: still sharpness is met at gauss 0.6 +
   nearness + CR, but panning adds 0.67 to 1.0 px of ES. Next tries: narrower still (0.5),
   a higher alpha or a nearness-weighted alpha floor while moving, clip box tightness while
