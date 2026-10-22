@@ -1,19 +1,18 @@
 //! The attribute pass (`attrib.wgsl`): fills the contour attributes of a work list of bricks
-//! in the mirror's attribute pages. `GpuWorld::update_attrs` builds the list and records the
+//! inside their mirror slots. `GpuWorld::update_attrs` builds the list and records the
 //! pass.
 
-/// Invocations per workgroup, one per pool word of a brick's 1024-byte attribute; must match
-/// `@workgroup_size` in `attrib.wgsl`. One workgroup fills one brick.
+/// Invocations per workgroup; must match `@workgroup_size` in `attrib.wgsl`.
 pub const WORKGROUP: u32 = 256;
+/// Bricks one workgroup fills, 64 invocations each: item `4 g + b` is brick `b` of workgroup
+/// `g`, the last workgroup partly empty when the list is not a multiple of four.
+pub const BRICKS_PER_GROUP: u32 = 4;
 /// Most workgroups along one dispatch dimension (the WebGPU default limit).
 const MAX_GROUPS_X: u32 = 65_535;
 
-/// Set in [`AttribItem::slot`] for a clear item: the pass writes "no plane" (`0xFFFF`) over
-/// the brick's attribute and computes nothing. Slots fit in 29 bits.
-pub const CLEAR_BIT: u32 = 1 << 31;
-
-/// One work-list entry: a brick slot in an attribute page and the brick's origin in voxels;
-/// [`CLEAR_BIT`] set in `slot` makes it a clear item.
+/// One work-list entry: the brick's record entry less its `FULL_BIT` (its slot's first unit,
+/// class and translucent flag, which locate its attributes) and the brick's origin in
+/// voxels.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct AttribItem {
@@ -26,7 +25,7 @@ pub struct AttribItem {
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 struct Params {
     window_min: [i32; 3],
-    slots_per_shard: u32,
+    units_per_shard: u32,
     window_size: [i32; 3],
     items: u32,
     groups_x: u32,
@@ -41,7 +40,7 @@ pub struct AttribBindings<'a> {
     pub table: &'a wgpu::Buffer,
     /// The mirror window's minimum corner and size, in chunks.
     pub window: ([i32; 3], [i32; 3]),
-    pub slots_per_shard: u32,
+    pub units_per_shard: u32,
 }
 
 /// The pass, with the buffers it keeps between calls: its uniform, its work list (sized by
@@ -141,7 +140,7 @@ impl AttribPass {
         self.work.as_ref().map_or(0, |w| w.1)
     }
 
-    /// Records the pass over `items` into `encoder`, one workgroup per item. Records nothing
+    /// Records the pass over `items` into `encoder`, four items a workgroup. Records nothing
     /// for an empty list.
     ///
     /// The uniform and the work list are written through `queue`, so they take effect at the
@@ -159,14 +158,14 @@ impl AttribPass {
         if items.is_empty() {
             return;
         }
-        let groups = items.len() as u32;
+        let groups = (items.len() as u32).div_ceil(BRICKS_PER_GROUP);
         let groups_x = groups.min(MAX_GROUPS_X);
         let groups_y = groups.div_ceil(groups_x);
         let params = Params {
             window_min: b.window.0,
-            slots_per_shard: b.slots_per_shard,
+            units_per_shard: b.units_per_shard,
             window_size: b.window.1,
-            items: groups,
+            items: items.len() as u32,
             groups_x,
             _pad: [0; 3],
         };

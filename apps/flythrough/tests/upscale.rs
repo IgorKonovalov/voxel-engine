@@ -222,8 +222,8 @@ fn level_rig(
     world: &World,
     camera: &vxe_render::Camera,
 ) -> Option<(wgpu::Device, wgpu::Queue, GpuWorld)> {
-    let full = world.stats().full_bricks as u64;
-    let (device, queue) = software_device(full * vxe_render::gpu_world::SLOT_BYTES)?;
+    let pool = flythrough::level_pool_units(world, true) * vxe_render::gpu_world::UNIT_BYTES;
+    let (device, queue) = software_device(pool)?;
     let cfg = MirrorConfig {
         budget_bytes: 256 << 20,
         ..MirrorConfig::new(Window::Fixed(world.extent()))

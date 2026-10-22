@@ -353,6 +353,7 @@ pub struct HudStats {
     pub upload_ms: f32,
     pub upload_chunks: u32,
     pub mirror_bytes: u64,
+    /// Slots holding a brick, and spare slots, over every bin.
     pub pool_live: u32,
     pub pool_free: u32,
     pub world: WorldSample,
@@ -387,7 +388,7 @@ pub struct LightingRow {
     pub upscale: Option<[[u32; 2]; 2]>,
 }
 
-/// The mirror's pressure (the fuller of its pool slots and records), its reservation in bytes,
+/// The mirror's pressure (the fuller of its pool units and records), its reservation in bytes,
 /// and while streaming the full radius the pressure rule holds with the configured one.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Pressure {

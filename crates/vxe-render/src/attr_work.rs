@@ -49,9 +49,6 @@ pub struct AttrWorkStats {
     /// Items returned: by [`build`], the whole list; by [`build_split`], the two lists; by a
     /// capped mirror's `prepare_attrs`, the compute items it took.
     pub items: u32,
-    /// Clear items: bricks written into a slot whose compute item waits (a capped mirror's
-    /// `prepare_attrs` only).
-    pub clears: u32,
 }
 
 impl AttrWorkStats {

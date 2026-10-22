@@ -37,12 +37,13 @@
 //! `--headless` runs the
 //! same frames on an offscreen target with no window; `--walk` (with `--level`) starts in walk
 //! mode, the body spawned in the spawn pocket. The fly-through starts in contour with detail on,
-//! the mirror holding attribute pages and rock its procedural detail (`--rock-detail` sets rock's
-//! feature scale in voxels and strength, default `flythrough::ROCK_DETAIL`), and prints that
+//! the mirror holding contour attributes and rock its procedural detail (`--rock-detail` sets
+//! rock's feature scale in voxels and strength, default `flythrough::ROCK_DETAIL`), and prints
+//! that
 //! look first; `--look` picks the starting normal mode (`face`, `trilinear8`, `gradient27`,
-//! `contour`), and `--look plain` starts in face mode without attribute pages or rock detail,
+//! `contour`), and `--look plain` starts in face mode without contour attributes or rock detail,
 //! detail off (`N` then skips contour, `--detail` turns detail on), the look of Plan 0002's and
-//! Plan 0017's face readings. With attribute pages the autopilot's report adds the attribute
+//! Plan 0017's face readings. With contour attributes the autopilot's report adds the attribute
 //! pass's work list, CPU and GPU time over the flight. `--view`
 //! starts in a view (`shaded`, `normals`, `hitmask`, `steps`, `albedo`; with `--frames`, `steps`
 //! prints the last frame's mean and p99 steps per ray on exit);
@@ -159,7 +160,7 @@ use flythrough::logic::{
 };
 use flythrough::{
     LogicChoice, RESIDENCY, STREAM_MIRROR_BUDGET, ScrollSteps, cave_materials, chunk_ram,
-    chunks_hash, level_mirror_budget, level_pool_slots, mips_ram, percentile,
+    chunks_hash, level_mirror_budget, level_pool_units, mips_ram, percentile,
 };
 use pad::Pad;
 use vxe_app::{App, Axis, Flow, Gpu, Input, KeyCode, MouseButton, PadButton, ShellConfig};
@@ -283,6 +284,8 @@ struct Args {
     level: bool,
     autopilot: bool,
     headless: bool,
+    /// `--adapter SUBSTRING`: a headless run takes the first adapter whose name contains it.
+    adapter: Option<String>,
     walk: bool,
     /// `--vault`: the cave generates with the vault room ahead of the spawn.
     vault: bool,
@@ -295,7 +298,7 @@ struct Args {
     audio: bool,
     /// `--audio-debug`: print the callback's readings and record its output.
     audio_debug: bool,
-    /// `--look`: the starting normal mode, with attribute pages and rock detail; `None` for
+    /// `--look`: the starting normal mode, with contour attributes and rock detail; `None` for
     /// `--look plain`, face mode without either. Contour by default.
     look: Option<NormalMode>,
     /// Start with procedural detail on: by default, except under `--look plain`, where
@@ -436,6 +439,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         level: false,
         autopilot: false,
         headless: false,
+        adapter: None,
         walk: false,
         vault: false,
         sync_budget: SYNC_BUDGET_MIB << 20,
@@ -655,6 +659,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--detail" => detail_flag = true,
             "--autopilot" => args.autopilot = true,
             "--headless" => args.headless = true,
+            "--adapter" => args.adapter = Some(value()?),
             "--walk" => args.walk = true,
             "--hud" => args.hud = true,
             "--census" => args.census = true,
@@ -1308,7 +1313,7 @@ struct Gfx {
     presenter: Presenter,
     /// Times the frame's passes, `FRAME_PASSES` in order.
     timer: Option<PassTimer>,
-    /// Times the attribute pass, with attribute pages and `TIMESTAMP_QUERY`.
+    /// Times the attribute pass, with contour attributes and `TIMESTAMP_QUERY`.
     attr_timer: Option<MarchTimer>,
     hud: HudOverlay,
     /// Times the HUD pass, with `TIMESTAMP_QUERY`.
@@ -1336,6 +1341,33 @@ impl Gfx {
         let ms = timer.filter(|_| n > 0).map(|t| t.read_ms(&gpu.device));
         (n, ms)
     }
+}
+
+/// The pool's bins at a moment: per bin with a page, its slot size, live slots, spare units
+/// (free slots and the rest of its cursor's page) and pages, then the spare units over every
+/// bin against the live units, e.g. `bins: 2u 10 live 6 spare 1p, 3u 4 live 0 spare 1p;
+/// spare 6 of 32 live units (18.75 %)`.
+fn bins_line(mirror: &GpuWorld) -> String {
+    let bins: Vec<String> = mirror
+        .bin_stats()
+        .iter()
+        .filter(|b| b.pages > 0)
+        .map(|b| {
+            format!(
+                "{}u {} live {} spare {}p",
+                b.units,
+                b.live,
+                b.spare * u64::from(b.units),
+                b.pages
+            )
+        })
+        .collect();
+    let (spare, live) = (mirror.spare_units(), mirror.live_units());
+    format!(
+        "bins: {}; spare {spare} of {live} live units ({:.2} %)",
+        bins.join(", "),
+        100.0 * spare as f64 / live.max(1) as f64
+    )
 }
 
 /// `attrib: 383608 bricks in 12.345 ms GPU (initial fill)`.
@@ -1485,12 +1517,10 @@ const PRESSURE_LOW_FRAMES: u32 = 300;
 /// The full radius the pressure rule never lowers below, in chunks.
 const R_FULL_FLOOR: i32 = 6;
 
-/// The two terms of `GpuWorld::pressure`: pool-slot occupancy (two attribute slots with each
-/// brick in an attribute page) and record occupancy.
+/// The two terms of `GpuWorld::pressure`: pool-unit occupancy and record occupancy.
 fn pressure_terms(m: &GpuWorld) -> [f64; 2] {
-    let slots = f64::from(m.live_slots()) + 2.0 * f64::from(m.live_attr_slots());
     [
-        slots / f64::from(m.reserved_slots().max(1)),
+        m.live_units() as f64 / f64::from(m.reserved_units().max(1)),
         m.mirrored_chunks() as f64 / f64::from(m.reserved_records().max(1)),
     ]
 }
@@ -1686,7 +1716,7 @@ struct Autopilot {
     light_evicted: u64,
     light_refused: u64,
     light_wait_ms: f64,
-    /// The attribute pass over the flight, with attribute pages.
+    /// The attribute pass over the flight, with contour attributes.
     attr: AttrSamples,
     latency_from: usize,
     peak_mirror: u64,
@@ -1756,8 +1786,6 @@ struct AttrSamples {
     /// How long the oldest waiting brick had waited when each call started, in milliseconds
     /// (0 when none waited).
     age_ms: Vec<f64>,
-    /// Clear items per call.
-    clears: Vec<f64>,
     /// The attribute pass's work-buffer builds after the first flight frame and the last.
     builds_first: Option<u32>,
     builds_last: u32,
@@ -1803,7 +1831,6 @@ impl AttrSamples {
         age_ms: f64,
     ) {
         self.age_ms.push(age_ms);
-        self.clears.push(f64::from(st.clears));
         let cpu = build_ms + encode_ms;
         if cpu > HITCH_MS {
             self.hitches.push((self.items.len(), cpu, st));
@@ -1843,10 +1870,6 @@ impl AttrSamples {
         let [a50, a99, amax] = stats(&mut self.age_ms);
         out.push(format!(
             "autopilot: attribute carry-over age (oldest waiting brick at the start of each update_attrs): p50 {a50:.1} ms, p99 {a99:.1} ms, max {amax:.1} ms (bar 250 ms)"
-        ));
-        let [l50, l99, lmax] = stats(&mut self.clears);
-        out.push(format!(
-            "autopilot: attribute clear items: p50 {l50:.0}, p99 {l99:.0}, max {lmax:.0}"
         ));
         out.push(format!(
             "autopilot: attribute work buffer builds: {} after the first flight frame, {} at the end",
@@ -2128,8 +2151,8 @@ impl Run {
         let (mirror_bytes, pool_live, pool_free) = self.gfx.as_ref().map_or((0, 0, 0), |g| {
             (
                 g.mirror.mirror_bytes(),
-                g.mirror.live_slots(),
-                g.mirror.free_slots().len() as u32,
+                g.mirror.live_bricks(),
+                g.mirror.spare_slots().min(u64::from(u32::MAX)) as u32,
             )
         });
         let pressure = self.gfx.as_ref().map(|g| hud::Pressure {
@@ -2431,7 +2454,7 @@ impl Run {
         }
     }
 
-    /// The mirror sync after a bench, timed, with the bench line; with attribute pages, the
+    /// The mirror sync after a bench, timed, with the bench line; with contour attributes, the
     /// attribute pass over the carves timed alone.
     fn bench_sync(&mut self, gpu: &Gpu, carves: usize, refused: usize, edit_ms: f64) {
         let Some(gfx) = self.gfx.as_mut() else { return };
@@ -2578,8 +2601,7 @@ impl Run {
         let pool = if self.stream.is_some() {
             STREAM_POOL_BYTES
         } else {
-            let full = self.world.stats().full_bricks as u64;
-            level_pool_slots(full, self.args.look.is_some()) * gpu_world::SLOT_BYTES
+            level_pool_units(&self.world, self.args.look.is_some()) * gpu_world::UNIT_BYTES
         };
         (
             adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
@@ -2670,13 +2692,12 @@ impl Run {
                     .iter()
                     .map(|&v| v as u64)
                     .product();
-                let full = self.world.stats().full_bricks as u64;
-                level_mirror_budget(full, chunks, self.args.look.is_some())
+                level_mirror_budget(&self.world, chunks, self.args.look.is_some())
             }
         })
     }
 
-    /// A mirror under `cfg` reserving [`Run::mirror_budget`], with attribute pages when
+    /// A mirror under `cfg` reserving [`Run::mirror_budget`], with contour attributes when
     /// `--look` was given. Prints what it reserved and how long creating its buffers took.
     fn new_mirror(&self, gpu: &Gpu, cfg: MirrorConfig) -> GpuWorld {
         let cfg = MirrorConfig {
@@ -2693,11 +2714,11 @@ impl Run {
         let ms = ms_since(t);
         let l = mirror.shard_layout();
         println!(
-            "mirror: reserved {} B of a {} B budget ({} slots over {} shards, {} records) in {ms:.1} ms",
+            "mirror: reserved {} B of a {} B budget ({} units over {} shards, {} records) in {ms:.1} ms",
             mirror.allocated_bytes(),
             cfg.budget_bytes,
-            l.reserved_slots,
-            l.reserved_slots.div_ceil(l.slots_per_shard),
+            l.reserved_units,
+            l.reserved_units.div_ceil(l.units_per_shard),
             l.reserved_records
         );
         mirror
@@ -2843,10 +2864,10 @@ impl Run {
         if (deferred > 0 || empty) && stream.deferrals.syncs == 0 {
             let what = error.map_or_else(|| "deferred chunks".to_owned(), |e| e.to_string());
             eprintln!(
-                "mirror: {deferred} chunks wait for space ({what}) at tick {tick} (pressure {:.4}, slots {slots:.4}, records {records:.4}; {} plain free slots, {} spare slots, {} free pages, {} pages issued, r_full {})",
+                "mirror: {deferred} chunks wait for space ({what}) at tick {tick} (pressure {:.4}, units {slots:.4}, records {records:.4}; {} spare slots, {} spare units, {} free pages, {} pages issued, r_full {})",
                 m.pressure(),
-                m.free_slots().len(),
                 m.spare_slots(),
+                m.spare_units(),
                 m.free_pages().len(),
                 m.pages_issued(),
                 stream.rule.r_full
@@ -2892,6 +2913,7 @@ impl Run {
                 gfx.mirror.pressure(),
                 stream.rule.r_full
             );
+            println!("{}", bins_line(&gfx.mirror));
         }
         Ok(())
     }
@@ -3129,9 +3151,9 @@ impl Run {
             p.peak_persisted.max(st.persisted_ram_bytes)
         );
         println!(
-            "autopilot: mirror budget {} B ({} slots, {} records), peak live / budget {:.4}, peak pressure {:.4} (slots {:.4}, records {:.4}), {} radius changes (r_full {} of {}), {} syncs with a deferral",
+            "autopilot: mirror budget {} B ({} units, {} records), peak live / budget {:.4}, peak pressure {:.4} (units {:.4}, records {:.4}), {} radius changes (r_full {} of {}), {} syncs with a deferral",
             gfx.mirror.allocated_bytes(),
-            gfx.mirror.reserved_slots(),
+            gfx.mirror.reserved_units(),
             gfx.mirror.reserved_records(),
             p.peak_mirror as f64 / gfx.mirror.allocated_bytes() as f64,
             p.peak_pressure,
@@ -4005,16 +4027,29 @@ impl App for Flythrough {
     }
 }
 
-/// Runs `app` without a window: a device on the high-performance adapter and an offscreen
-/// target in place of the surface, the same frames until the app exits. Teardown follows
-/// the windowed shell's order (the app, then the queue, device and adapter), traced alike.
+/// Runs `app` without a window: a device on the high-performance adapter, or with
+/// `--adapter` the first adapter whose name contains its substring (the high-performance one
+/// when none does), and an offscreen target in place of the surface, the same frames until
+/// the app exits. Teardown follows the windowed shell's order (the app, then the queue,
+/// device and adapter), traced alike.
 fn run_headless(mut app: Flythrough, size: [u32; 2]) -> Result<(), String> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter = pollster_block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }))
-    .map_err(|e| format!("no adapter: {e}"))?;
+    let named = app.args.adapter.as_deref().and_then(|want| {
+        let all = pollster_block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+        let found = all.into_iter().find(|a| a.get_info().name.contains(want));
+        if found.is_none() {
+            eprintln!("--adapter {want:?}: no adapter's name contains it; the default is used");
+        }
+        found
+    });
+    let adapter = match named {
+        Some(a) => a,
+        None => pollster_block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            ..Default::default()
+        }))
+        .map_err(|e| format!("no adapter: {e}"))?,
+    };
     println!("headless on {}", adapter.get_info().name);
     let (required_features, required_limits) = app.device_request(&adapter);
     let (device, queue) = pollster_block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -4259,6 +4294,9 @@ fn main() {
     };
     let size = args.render.unwrap_or([1280, 720]);
     let headless = args.headless;
+    if !headless && args.adapter.is_some() {
+        eprintln!("--adapter applies to --headless runs; the window takes the default adapter");
+    }
     let audio = if args.audio {
         Audio::open(
             args.audio_debug,
@@ -4611,6 +4649,9 @@ mod tests {
             .expect("x refused");
         assert_eq!(e, "--pad takes on or off, not x");
         assert!(parse_args_from(argv(&["--pad"])).is_err());
+        let amd = parse_args_from(argv(&["--headless", "--adapter", "AMD"])).unwrap();
+        assert_eq!(amd.adapter.as_deref(), Some("AMD"));
+        assert!(parse_args_from(argv(&["--adapter"])).is_err());
         let headless = parse_args_from(argv(&["--pad", "on", "--headless"])).unwrap();
         assert!(!headless.wants_pad());
         let pilot = parse_args_from(argv(&["--autopilot"])).unwrap();

@@ -187,6 +187,28 @@ pass's, 0.712 to 0.718 ms, and the composite reads 0.255 ms, so the frame's thre
 uses 112 SGPRs and 64 VGPRs with no spills, 4 waves per SIMD; the single-pass march used 112
 SGPRs (9 spilled) and 84 VGPRs, 3 waves per SIMD.
 
+**The hit pass over size-classed slots (dev reference, Plan 0028 Phase 2, RTX 3080 Laptop GPU,
+exclusive perf lock, 1-minute load 4.5 to 8.7 from the other lanes' work, not quiet; three runs
+of each binary alternated against the pre-plan binary at 1d1e67c; the frame line's `hit`):** the
+level's spawn (`flythrough --level --headless --seed 1 --render 1920x1080 --frames 300`) reads
+1.274, 1.314 and 1.274 ms with `--look plain` against 1.273, 1.274 and 1.264 ms, and 1.404,
+1.420 and 1.419 ms in the default look against 1.346, 1.404 and 1.346 ms (that phase's contour
+still kept 16 attribute units per brick); the streamed spawn (`--frames 3000 --look plain`,
+full residency at `r_full` 16) 1.701, 1.710 and 1.714 ms against 1.708, 1.731 and 1.705 ms. A
+hit in a one-material brick reads one header word where the walk read a pool byte and a record
+palette word; a plane costs one more word per plane.
+
+**The settled streamed spawn at `r_full` 16, both adapters (Plan 0028 Phase 4, exclusive perf
+lock; `flythrough --headless --seed 1 --render 1920x1080 --frames 3000 [--look plain]`, median
+of the last 30 frames, three runs each; no bar).** Dev reference (RTX 3080 Laptop, load 3.27
+to 7.90, not quiet): the hit pass reads 1.767, 1.764 and 1.780 ms in the default look (frame
+5.705 to 5.739 ms) and 1.539, 1.571 and 1.558 ms plain (frame 5.277 to 5.381 ms). Slow adapter
+(AMD Radeon Graphics, RADV RENOIR, selected with `--adapter AMD`, load 1.05 to 2.96): the
+default look's hit 13.337, 13.318 and 13.354 ms (frame 44.550 to 44.706 ms, the light pass
+22.344 to 22.370 ms), plain 11.961 ms in one run (frame 41.229 ms); the level's spawn
+(`--level ... --frames 300 --adapter AMD`, load 2.01 to 3.62) hit 9.302, 9.296 and 9.297 ms,
+frame 33.757 to 33.774 ms. These are the first slow-adapter readings.
+
 **The attribute pass under motion (dev reference, diagnostic, Plan 0013 Phase 7, same machine
 and lock, `flythrough --autopilot --headless --seed 1`, default contour, two runs at load 3.6
 to 11.1):** per frame of the flight, the work list reads p50 3584 to 4446, p99 5468 to 5469,
@@ -210,6 +232,27 @@ plain's 4123 and 4155, 35 to 47 % fewer. `update_attrs` CPU p50 4.600 and 4.700 
 and 5509, max 11 477 and 7555 bricks (1717 and 1802 frames with work); the pass's GPU p50
 2.990 and 2.416 ms, p99 5.572 and 4.463 ms, max 9.074 and 5.049 ms. The hitch is not a load
 artifact. The followup stays owed before the lighting plan (owner, 2026-10-20).
+
+**The attribute pass over surface-only attributes (dev reference, Plan 0028 Phase 3, RTX 3080
+Laptop GPU, exclusive perf lock, 1-minute load 9.3 to 9.8; `flythrough --autopilot --headless
+--seed 1`, the default look, `r_full` 16 held by every run):** GPU p50 3.054 ms, p99 5.770 ms,
+max 6.058 ms with `attr_cap` 8192 (work list p50 8192, p99 10 204; clear items p50 5482), and
+p50 1.533 ms, p99 5.751 ms with 4096 (a measurement build of the cap), against Plan 0013's 1.0
+ms p99 proposal: a recorded miss. The carry-over age reads p50 520 ms, p99 7625 ms at 8192 and
+p50 13 360 ms, p99 27 229 ms at 4096. The pre-plan binary (1d1e67c), whose flight lowered
+`r_full` to 12, read p99 4.820 ms with clear items p50 0 and age p99 69 ms. A first version of
+the pass that filled its occupancy box voxel by voxel read p99 7.636 and 7.781 ms; filling it
+from the 27 bricks' masks in workgroup memory took 2 ms off. The pass's cost is per brick (the
+box fill, the workgroup, the clear items), not per voxel computed.
+
+**The amended pass (dev reference, Plan 0028 Phase 3, RTX 3080 Laptop GPU, exclusive perf
+lock, quiet: 1-minute load 0.93 to 1.98; the same flight):** four bricks a workgroup, no clear
+items, a LOD-only neighbour read through its level-1 mip brick's masks. With `attr_cap` 8192,
+GPU p99 0.711, 0.753 and 0.754 ms over three runs (p50 0.445 to 0.485 ms) and carry-over age
+p99 25.1 to 25.5 ms: under the 1.0 ms proposal and the 250 ms line. With 4096 (a measurement
+build, load 3.88), p99 0.563 ms and age p99 2306.4 ms. On the slow adapter (AMD Radeon
+Graphics, RADV RENOIR, `--adapter AMD`, load 7.27, no bar), 8192: p50 2.010 ms, p99 2.522 ms,
+age p99 5295.6 ms. The per-attempt readings are in Plan 0028's log.
 
 **Mirror attribute pass (contour look), render-thread CPU: p99 under 4 ms on the dev reference,
 deferred work visible as face-mode normals for at most 250 ms** (budget, Plan 0023, ADR-0017;
@@ -393,6 +436,16 @@ serialized CPU and GPU, the mirror at its 3 GiB budget): frame CPU p50 10.223 ms
 53.354 ms; `update + poll + sync` p50 4.432 ms, p99 36.548 ms; march GPU p50 6.571 ms; about
 30 fps. It is the baseline Plan 0028's windowed flight compares with.
 
+**Streaming after size-classed slots (dev reference, Plan 0028 Phase 4, RTX 3080 Laptop GPU,
+exclusive perf lock, 1-minute load 5.90 to 9.53, not quiet; `flythrough --autopilot --headless
+--seed 1 --look plain`, two runs alternated with 1d1e67c):** `sync` p50 0.168 and 0.171 ms
+against 4.931 and 4.977 ms, `update + poll + sync` p50 0.172 and 0.175 ms against 5.471 and
+5.493 ms, under the 1.0 ms line; `sync` p99 29.474 and 29.598 ms against 13.353 and 14.403 ms.
+The default look's flight (load 1.49) reads `sync` p50 3.086 ms, p99 29.199 ms, the chunk-local
+surface masks computed in it; 1d1e67c's default flight settled at `r_full` 13 (p50 0.186 ms).
+On the slow adapter (`--adapter AMD`, load 0.69) the default flight reads `sync` p50 16.001 ms
+over 1275 frames.
+
 **Stats HUD (dev reference, Plan 0010, f91726f, headless `flythrough [--level] --seed 1
 --render 1920x1080 --frames 300 [--hud]`, three runs each, NVIDIA GeForce RTX 3080 Laptop GPU,
 Ryzen 9 5900HS):** a tool, not a frame stage, so it has no line in the table. The HUD pass
@@ -542,6 +595,54 @@ slots and their two 72 B mask entries). At the level (`flythrough --level --head
 448 054 144 B, under a 797 779 456 B reservation. The layout is unchanged; surface-only
 attribute storage is ADR-0012's mirror-slot plan.
 
+**Size-classed slots, projected (arithmetic, not a reading; Plan 0028 Phase 1, `world_budget
+--chunks 20x20x8 --census` and `--stream R,24 --surface`, cave seed 1, dev box).** A `Full`
+brick's slot is 64-byte units (mask, header, 0/1/2/4 plane units or 16 of raw ids: 2, 3, 4, 6
+or 18 units) in bins of 2, 3, 4, 6, 8, 12, 16, 20, 24 and 36 units; a record is 2112 B. With
+contour attributes a full chunk's brick adds a surface-mask unit and `ceil(n / 32)` units for
+its `n` chunk-local surface voxels (an air face neighbour inside the chunk, or the chunk's
+face). The level: pool 56 075 200 B, records 6 758 400 B, 62 846 720 B with table and rows
+(232 436 992 B live today). Streamed, at full residency (57 777 records):
+
+| residency | plain look | contour look | surface voxels (chunk-local / exact plane) | attribute units per brick |
+|---|---|---|---|---|
+| 12/24 | 409 969 196 B | 563 102 380 B | 37 518 244 / 23 899 197 (1.570) | 3.07 |
+| 14/24 | 451 317 548 B | 700 607 596 B | 61 043 072 / 39 015 306 (1.565) | 3.08 |
+| 16/24 | 502 928 492 B | 871 679 852 B | 90 331 692 / 57 703 350 (1.565) | 3.08 |
+
+**Size-classed slots, read (dev reference, Plan 0028 Phase 2, RTX 3080 Laptop GPU, exclusive perf
+lock, 1-minute load 5.2 to 8.8).** The level (`flythrough --level --headless --seed 1 --frames 1
+--look plain`, and `apps/flythrough/tests/level_mirror.rs` on lavapipe) holds 62 846 720 B live
+(56 075 200 B of 2-, 3- and 4-unit slots, 3200 records of 2112 B, the table, the rows) under an
+88 285 376 B reservation, against 232 436 992 B live before; its first sync uploads 63 027 696 B
+in 405 writes in 342 ms against 500 ms for the pre-plan binary (1d1e67c, 232 617 968 B in 435
+writes) in the same session, lights included (65 to 67 ms in both). The streamed plain spawn at
+full residency (16/24, `--frames 3000`) holds 502 928 492 B live against 1 786 641 644 B, as
+projected.
+
+**Surface-only contour attributes, read (dev reference, Plan 0028 Phase 3, RTX 3080 Laptop GPU,
+exclusive perf lock, 1-minute load 9.5 to 10.2).** The level in the default look (`flythrough
+--level --headless --seed 1 --frames 3 --look contour`) holds 157 872 640 B live (680 491 136 B
+before) under a 259 203 264 B reservation; its first sync uploads 158 053 616 B in 826 writes in
+687 and 690 ms against 652 and 659 ms for 1d1e67c (232 617 968 B), the chunk-local surface
+masks computed on the render thread; the attribute pass's initial fill of its 383 608 bricks
+reads 34.7 and 47.2 ms against 55.2 ms. The default autopilot flight (`--autopilot --headless
+--seed 1`, same load) keeps `r_full` 16 with no radius change and no deferral, peak pressure
+0.6447 (records; units 0.3027), peak 1 003 260 588 B live, where 1d1e67c lowered `r_full` to 12
+at pressure 0.911 with 2 864 318 452 B live.
+
+**The streamed default at `r_full` 16 (dev reference, Plan 0028 Phase 4, RTX 3080 Laptop GPU,
+exclusive perf lock, 1-minute load 1.49 to 9.53 from the other lanes' work; `flythrough
+--autopilot --headless --seed 1`, paired with 1d1e67c).** The default look reaches full
+residency at 16/24 (17 077 full, 40 700 LOD-only chunks) with `r_full` 16: 871 679 852 B live
+there, peak 941 911 020 B over the flight, peak pressure 0.6514 (records; units 0.2701), no
+radius change, no sync with a deferral, return hash matching; 1d1e67c settled at `r_full` 13
+with 2 864 309 692 B live, pressure 0.911 and four radius changes. Plain: 502 928 492 B at
+full residency, peak 532 183 724 B, against 1 786 641 644 and 1 890 756 140 B. Fragmentation at
+full residency (the fly-through's `bins:` line): 11 908 spare units of 11 705 061 live (0.10 %)
+in the default look over six bins (2, 3, 4, 6, 8 and 12 units), 3817 of 5 943 321 (0.06 %) in
+plain over two; the same figures on the slow adapter's runs.
+
 **The reserved budget (dev reference, Plan 0017 Phase 4, ef37395, headless `flythrough
 --autopilot --headless`, unbounded cave seed 1, h 1, 15 workers, RTX 3080 Laptop GPU, Ryzen 9
 5900HS, exclusive perf lock, 1-minute load 10.6 to 23.2 from other builds on the box, two runs
@@ -590,7 +691,9 @@ at pressure 0.755 to 0.763, none empty, longest streak 3. Both returned `return:
 hash match` with no wgpu error. The default look therefore holds full detail to the radius
 the rule settles at, 12 to 13 chunks (76.8 to 83.2 m), against this section's "about 100 m",
 until ADR-0012's mirror-slot plan stores the attribute for surface voxels only; `--look
-plain` holds 16 (102 m).
+plain` holds 16 (102 m). Since Plan 0028 (surface-only attributes, below) the default holds
+`r_full` 16 (102 m) at 0.87 GB live with pressure 0.65: the "about 100 m" figure is met in both
+looks on the dev reference.
 
 **The pressure rule's gate (Plan 0017 Phase 3, same machine and flags, r_full 16, r_lod 24,
 no `--look`, `--mirror-budget 1930`: 3 043 328 slots and 93 239 records, 2 021 964 224 B,

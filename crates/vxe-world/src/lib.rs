@@ -49,7 +49,7 @@ pub mod wire;
 pub use brick::Brick;
 #[doc(hidden)]
 pub use brick::RawBrick;
-pub use census::{BrickCensus, WorldCensus};
+pub use census::{BrickCensus, WorldCensus, solid_mask, surface_mask};
 pub use chunk::Chunk;
 pub use coarse::{CellChange, CellCoord, CoarseCell, CoarseGrid};
 pub use collapse::{DropResult, PileResult, RemoveResult};
