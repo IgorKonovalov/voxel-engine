@@ -1,8 +1,8 @@
 # ADR-0035: DX12 shaders compile with wgpu's bundled static DXC, never FXC
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-22, with an Outcome)
 > **Date:** 2026-10-22
-> **Related plan(s):** [Plan 0046](../plans/0046-dx12-shaders-through-bundled-static-dxc.md)
+> **Related plan(s):** [Plan 0046](../plans/done/0046-dx12-shaders-through-bundled-static-dxc.md)
 
 ## Context
 
@@ -116,5 +116,14 @@ workaround hiding it is how a regression stays unnoticed.
 
 ## Outcome
 
-_(Added only at acceptance if implementation falsified something above. Dated. Never rewrite the
-body.)_
+
+**2026-10-22, at acceptance (Plan 0046 close, CI run 39843578678 on f3ed4a3, `windows-latest`,
+DX12 on WARP).** The premise held for compile time: static DXC creates the eleven compute
+pipelines in 2507.9 ms cold against FXC's 76 623.6 ms, attrib 596.0 ms against 42 412.2 ms.
+Two expectations in Positive were falsified. The shutdown test's `--look plain` workaround
+does not come out: with DXC the headless fly-through on the default look still ran past its
+120 s bound (121.055 s), and the `mirror` attribute tests still each pass 90 s, so on WARP the
+cost is the attribute pass's execution, not its compile, and the Windows arm still spends
+minutes on it. The workaround is back (7c4c086), and the WARP execution cost is a followup of
+Plan 0046. The binary-size guess read as 37 744 128 B for the debug `flythrough.exe`, with a
+113 589 902 B static library linked into it.

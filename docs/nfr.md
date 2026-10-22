@@ -1214,13 +1214,19 @@ mean 423.5 to 427.9 us and p99 2258 to 2380 us per chunk with the castle, agains
   Microsoft's Linux `dxc` 1.9.2609 on naga's Shader Model 6.0 HLSL of the same passes,
   `-HV 2018 -Ges` as wgpu passes them, wall time per process, at load 8.95: attrib 437 ms,
   march 283, light 517, gradient 390, upscale 111, the other six 46 to 81.
-  **Windows DX12 on WARP (the `windows-latest` CI arm, a software rasterizer):** owed by the
-  first CI run on main after the Plan 0046 merge: the FXC and the default (static DXC) tables
-  of the step "Pipeline times on DX12 under FXC and the default compiler", the debug
-  `flythrough.exe` size and the static DXC `.lib` size it prints, the `cargo build --workspace`
-  step time against the run before the merge, and the nextest times of
-  `flythrough::shutdown` and of the `mirror` binary's three attribute tests (15.3 s at 578c8d3,
-  152.8 to 158.2 s under FXC). Recorded here with run id and commit when read.
+  **Reading (Plan 0046 close, Windows DX12 on WARP, the `windows-latest` CI arm, a software
+  rasterizer, run 39843578678 on f3ed4a3):** sum of the eleven cold creations 76 623.6 ms
+  under FXC (`WGPU_DX12_COMPILER=fxc`; attrib 42 412.2, light 18 050.1, march 10 214.0,
+  gradient 4876.8) and 2507.9 ms under the default static DXC (light 744.6, attrib 596.0,
+  gradient 469.0, march 452.5); the full table is in Plan 0046's close review. Debug
+  `flythrough.exe` 37 744 128 B with static DXC linked; `machdxcompiler.lib` 113 589 902 B, an
+  upper bound on what the feature adds (no before-size was read). The compile is not WARP's
+  whole startup cost: with DXC the headless fly-through's `flythrough::shutdown` trace test on
+  the default look still failed at 121.055 s against its 120 s bound, and each `mirror`
+  attribute test still passed nextest's 90 s slow marker (15.3 s for the three at 578c8d3,
+  152.8 to 158.2 s under FXC after Plan 0028), so WARP's cost is the attribute pass's
+  execution; the test runs `--look plain` there. The Windows `cargo build --workspace` step
+  delta is not read: the merge run's cache key changed with the lockfile.
 
 ## 8. Collision and coarse grids
 

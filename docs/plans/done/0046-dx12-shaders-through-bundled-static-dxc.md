@@ -1,9 +1,9 @@
 # 0046: DX12 shaders through wgpu's bundled static DXC: pipeline times measured per pass under FXC and DXC, the feature on for every consumer, the shutdown workaround reverted
 
-> **Status:** in-progress
+> **Status:** done (closed 2026-10-22): DXC compiles every pass on WARP in 2.5 s cold against FXC's 76.6 s (attrib 0.6 s against 42.4 s); the Windows shutdown and attribute tests stay slow on the pass's execution, so the workaround stays and that cost is a followup
 > **Created:** 2026-10-22
 > **Milestone:** none; platform health (the Windows arm of ADR-0001's Linux + Windows stack)
-> **Related ADRs:** [ADR-0035](../adrs/0035-dx12-shaders-compile-with-wgpus-bundled-static-dxc.md)
+> **Related ADRs:** [ADR-0035](../../adrs/0035-dx12-shaders-compile-with-wgpus-bundled-static-dxc.md)
 > (proposed): DX12 compiles with the bundled static DXC, never FXC
 
 ## TL;DR
@@ -190,6 +190,14 @@ between phases. The architect reviews once at the end, in a fresh session.
     3. Phase 2's `auto` table shows the attrib row's cold time below Phase 1's FXC attrib row.
        If it does not, ADR-0035's premise is false: the plan stops and goes back to the
        architect rather than closing.
+  - **Amended 2026-10-22 (owner).** Bars 1 and 2 become readings, recorded whatever they are,
+    not pass conditions. Both rested on the diagnosis that the Windows cost was FXC compiling
+    the attribute pass; run 39843578678 at f3ed4a3 shows DXC compiling attrib in 596.0 ms cold
+    (FXC 42 412.2 ms) while the shutdown test and the `mirror` attribute tests stay slow, so the
+    cost on WARP is the attribute pass's execution, not its compile. Bar 3 stays the deciding
+    bar. The `--look plain` workaround in `shutdown.rs` is restored on main (7c4c086) with a
+    comment naming WARP's attribute fill as the cause; why WARP runs that pass so slowly is a
+    followup.
   - `docs/nfr.md` section 7 gains the Windows DX12 readings (both tables, the binary size
     before and after, the two test times), each labelled as the CI arm on WARP with run id and
     commit, and the build-time delta of the Windows job's build step as CI reports it.
@@ -380,6 +388,44 @@ do not push, so they come from the first `windows-latest` run on main after the 
   tiers, comment hygiene, doc links 0.
 - **Outstanding `human` phases:** none. Outstanding CI readings: listed under Notes.
 
+## Close review (architect, 2026-10-22)
+
+Fresh-session review at 811161b: no blocker or major. Gate rerun on Linux at 811161b: build,
+quick 470 passed (3 skipped), doctests, clippy, fmt, `cargo deny check` (`cargo deny list`
+names `mach-dxcompiler-rs` under NCSA), test tiers, comment hygiene, doc links, index rows all
+0; full tier under the perf lock, `--test-threads 2`: 599 passed, 7 skipped, 341.0 s.
+
+**Windows readings, run 39843578678 on main at f3ed4a3 (the merge), `windows-latest`, DX12 on
+WARP ("Microsoft Basic Render Driver"):** cold ms under `WGPU_DX12_COMPILER=fxc` then the
+default (`auto`, static DXC):
+
+| pass | FXC | static DXC |
+|---|---|---|
+| attrib | 42412.2 | 596.0 |
+| march | 10214.0 | 452.5 |
+| light | 18050.1 | 744.6 |
+| temporal | 181.1 | 46.3 |
+| gradient | 4876.8 | 469.0 |
+| downsample | 11.9 | 14.7 |
+| variance | 116.2 | 23.7 |
+| atrous | 119.4 | 27.0 |
+| upscale | 472.6 | 73.8 |
+| sharpen | 18.3 | 15.2 |
+| composite | 151.1 | 45.0 |
+| total | 76623.6 (min 166.7) | 2507.9 (min 264.8) |
+
+- Bar 3 met: attrib 596.0 ms under DXC against 42 412.2 ms under FXC.
+- `dx12_compiler` passed in 0.310 s: wgpu chose static DXC.
+- Bar 1 (a reading after the owner's amendment): `flythrough::shutdown`'s headless trace test
+  with the default look failed at 121.055 s, past `RUN_BOUND`. The workaround is back on main
+  at 7c4c086.
+- Bar 2 (a reading after the amendment): the `mirror` binary's attribute tests still each pass
+  nextest's 90 s slow marker; the run's exact per-test times were not copied into this record.
+- Sizes: debug `flythrough.exe` 37 744 128 B with the feature; `machdxcompiler.lib`
+  113 589 902 B, an upper bound on what it adds (no before-size exists, see Notes).
+- The Windows build-step time delta was not read at the close; the first run's cache key also
+  changed with the lockfile, so a reading needs a second run on main.
+
 ## Followups
 
 - Lazy upscale and sharpen pipelines, created on the first frame whose render scale needs them,
@@ -387,3 +433,7 @@ do not push, so they come from the first `windows-latest` run on main after the 
 - A Windows CI gate on Phase 1's table: fail the arm when any pass's cold time passes a bar set
   from the DXC readings, so a shader that regresses compile time is caught at its commit.
 - A reading on a Windows machine with a hardware DX12 driver.
+- Why WARP runs the attribute pass so slowly: the headless fly-through's initial attribute fill
+  passes 120 s and each `mirror` attribute test 90 s on `windows-latest` with the shader
+  compiled by DXC in 0.6 s; Linux lavapipe runs the same tests in under a second. When it is
+  fixed, the `--look plain` argument in `apps/flythrough/tests/shutdown.rs` comes out.

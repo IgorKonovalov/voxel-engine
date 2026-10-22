@@ -6,6 +6,14 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-10-22
+
+Plan 0046 (a patch bump: a platform fix on Windows; ADR-0035 accepted with an Outcome). The workspace builds `wgpu` with `static-dxc`, so on x86_64 Windows MSVC the DX12 backend compiles with a statically linked DXC (`mach-dxcompiler-rs`, whose build script downloads the prebuilt library) and never falls back to FXC; the feature is inert on Linux. `deny.toml` clarifies that crate as `MIT AND NCSA` and allows `NCSA`: a Windows build owes DXC's notice. A headless example, `pipeline_times`, times each of the renderer's eleven compute-pipeline creations; on the `windows-latest` CI arm (WARP) the cold total is 76.6 s under FXC and 2.5 s under DXC (attrib 42.4 s against 0.6 s). The attribute pass's execution on WARP stays slow, so the shutdown test keeps `--look plain` there; that cost is a followup. The debug `flythrough.exe` reads 37 744 128 B with the 113 589 902 B static library linked.
+
+- **Added: `vxe_app::backend_label`; `vxe_render::{UPSCALE_WGSL, SHARPEN_WGSL}` at the crate root; the `pipeline_times` example; a Windows-only `dx12_compiler` test.**
+- **Changed: the shell's `adapter:` line and the fly-through's `headless on` line name the backend and, on DX12, the requested shader compiler; the headless instance reads wgpu's environment variables.**
+- **Changed (CI): pipeline-time steps on both arms.**
+
 ## [0.31.0] - 2026-10-22
 
 Plan 0029 (a minor bump: public API added; ADR-0023 accepted with an Outcome). Indirect light from a probe volume that scrolls with the camera. A 32^3 grid of irradiance probes at 16 voxels (1.6 m) follows the camera in toroidal tagged slots; each frame one probe in 8 and every probe an edit touched trace 64 full-walk rays whose hits return the direct estimate plus the previous irradiance there, blended into 6 x 6 octahedral irradiance and 14 x 14 visibility maps held in storage buffers (hysteresis 0, then 0.5 for 8 updates, then 0.97). A gather pass reads the eight probes around each hit with Chebyshev visibility weights, renormalised over live probes, and the composite adds `albedo E / pi`. A light change the frame knows (the lamp and its parameters, the shadow walk, the candidate count, an emission scale) opens a 16-frame window refreshing one probe in 4 at hysteresis 0, and a lamp change resets the temporal pass's lamp history; probe rays read their own per-material emission scale, so the fly-through's ore pulse feeds them its mean. On the RTX 3080 Laptop at 1080p half lighting, update plus gather reads 1.57 ms (2.70 ms inside a window) and the lighting line 4.4 ms; the frame's targets grow by 58 837 024 B. The furnace box reads pi within 5.3 %, two boxes behind a 2-voxel wall leak 0.36 %, the lamp-off box falls under a tenth by frame 14. New golden `indirect.png`; `mode_banner.png` reblessed.
