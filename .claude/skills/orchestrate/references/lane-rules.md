@@ -7,7 +7,10 @@ plan lanes run at once, each in its own worktree at
 ## Scope
 
 1. Work only inside your worktree. Never touch the main checkout or another lane's worktree.
-   Never merge, push or switch branches; the orchestrator merges.
+   Never merge, push or switch branches; the orchestrator merges. The one exception: when the
+   orchestrator asks, merge main into your own branch (`git merge --no-ff main`), resolve,
+   gate the merged tree with the full tier (`cargo nextest run --workspace --profile full
+   --no-fail-fast`, under the perf lock) and commit it as `merge: main into plan-NNNN (...)`.
 2. Inside a plan you edit only the `Status:` line and the `## Implementation log` (the `dev`
    skill's rule). A done-when you cannot meet is a question, not an edit: stop and report it
    with options. Never weaken an assertion to make a bar pass.
@@ -16,8 +19,11 @@ plan lanes run at once, each in its own worktree at
 
 ## Machine load
 
-4. Cap build parallelism: `export CARGO_BUILD_JOBS=4` for every cargo command, and run full
-   nextest passes with `--test-threads 2`.
+4. Cap build parallelism: `export CARGO_BUILD_JOBS=4` for every cargo command, and run
+   `--profile full` nextest passes with `--test-threads 2`. `CARGO_BUILD_JOBS` caps the build;
+   nextest's `-j` is `--test-threads`, not build jobs. The tiers are in `.config/nextest.toml`:
+   `--profile quick` is the phase gate, `--profile gpu` adds the render tests, `--profile full`
+   is everything (the default profile is the full suite too).
 5. Every cargo build, test, bench or fly-through run goes inside a memory-capped scope, so a
    runaway dies alone (the 2026-10-20 oomd kill took every session at once):
 
@@ -26,8 +32,9 @@ plan lanes run at once, each in its own worktree at
    If a command dies to the cap, report its name and peak. Don't raise the cap yourself.
 6. GPU work is serialized across lanes by one exclusive lock. Anything that touches the GPU or
    measures time (render and golden tests, `vxe-render` tests, headless fly-through renders,
-   any bench, any timing reading, a full-workspace nextest run) runs under it, with the lock
-   outside the scope:
+   any bench, any timing reading, a `--profile gpu` or `--profile full` nextest run) runs
+   under it, with the lock outside the scope. A `--profile quick` run touches no GPU and takes
+   no lock:
 
        flock /home/igor/Work/voxel-engine/.git/vxe-perf.lock systemd-run --user --scope --quiet -p MemoryMax=6G -p MemorySwapMax=1G -- <command>
 
