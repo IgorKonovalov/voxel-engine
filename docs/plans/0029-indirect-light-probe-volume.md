@@ -371,7 +371,7 @@ Outcome records at the close; the decision it records is unchanged.
 | 3 (after the 518b522 amendment) | dev | done: carve test on the amended bar: dark floor 0.01069 before, 0.12354 at frame 32 = 71.5 % of settled 0.17273 (frame 256) and 11.6x the pre-carve; after the fill, 2.78 % of the lit box's at frame 64, peaking at 3.23 % at frame 26 (lavapipe) | d90e9ab |
 | 4: The cave, the switches and the readings | dev | done (after the c444a61 amendment): `F8`, `--probe-spacing`, HUD rows, autopilot bytes line, `indirect.png` blessed (100 % of 57 600 hit pixels differ from indirect off by more than 8/255); `Lighting::probe_rays`/`probe_slices`, `--probe-rays`, `--probe-slices`; update plus gather 1.625 to 1.663 ms, lighting line at half 4.42 to 4.48 ms, `frame_bytes` +58 837 024 B; readings in `nfr.md` §2 and §3 on both adapters | 83ae737, 68b3bdb, db7b057, 979dd35 |
 | 5: The owner's windowed check | human | done (owner, 2026-10-22, live session 7, runs 6 to 9, about 2530x1378, RTX 3080 Laptop; architect's record): bounce light wanted, 1.6 m spacing kept, the lingering light after the lamp goes off to be fixed now (Phases 6 and 7); verdicts in Notes | |
-| 6: A light change drops the probe history | dev | not started | |
+| 6: A light change drops the probe history | dev | done: light-change window (lamp, its parameters, shadow walk, candidates, emission scale) of one slice cycle, settled probes at hysteresis 0, ages restart at 1; lamp off under 10 % of F0 from frame 58 (1418 with the window off), emission 0 from frame 50, back to 94.0 % at frame 64; update plus gather 1.490 ms streamed (dev box); `frame_bytes` 254 216 224 B unchanged | b3f7cb1, committed with this row |
 | 7: The owner's re-check of the lingering light | human | not started | |
 
 ### Notes
@@ -448,6 +448,43 @@ Outcome records at the close; the decision it records is unchanged.
   `mode_banner.png` reblessed. Slow adapter (db7b057's release binary, RADV, streamed, half):
   `--probe-rays 32` update 6.202 to 6.249 ms (loaded, 7.94), `--probe-slices 16` 4.162 to
   4.234 ms (load 0.86), gather 1.546 to 1.547 ms in both.
+- Phase 6: the window compares, between encodes with history, `Lighting::lamp`, the
+  `LightParams` the last `params_for` placed (`masks` and `skips` normalized), the shadow walk,
+  `Lighting::candidates` and `emission_changed_at`. It counts `Lighting::slices()` encoded frames
+  that ran a probe update, and a change inside it restarts it. `ProbeUniform`'s first pad word
+  is `light_window`. The extra signal found in the tree is `Lighting::shadow_walk`: the probe
+  rays' lamp shadows take the frame's shadow walk.
+- Phase 6 API outside the plan's text: `Frame::probe_light_window()` (the test reads the window
+  through it) and `ProbeVolume::set_light_restarts(bool)` (default on; the comparison turns it
+  off; `set_probe_spacing` carries it over).
+- Phase 6 readings (lavapipe, b3f7cb1's tree, exclusive perf lock, load 5.6, loaded):
+  - Lamp off in the dull box: F0 4.58594; the first frame under 10 % of F0 is 58, and every
+    frame from 96 to 160 is under it. The window is open for frames 1 to 8 after the switch
+    and closed after them.
+  - The same switch with the restart off (`the_lamp_off_fade_without_the_window`,
+    `#[ignore]`): first frame under 10 % is 1418, in 1600 frames.
+  - Furnace emission step: F0 2.9746; at scale 0 the first frame under 10 % is 50, and every
+    frame from 64 to 96 is under it. Back at 1: frame 64 reads 2.7949 (94.0 % of F0), first
+    at 90 % at frame 50.
+  - No change: 256 still frames and 16 moving frames open no window. A lamp-intensity change
+    and candidates 8 to 4 each open one, and it closes after 8 frames.
+  - The 1 x 1 floor value steps once every 8 frames.
+- Phase 6 dev-box reading (release, b3f7cb1's tree, RTX 3080 Laptop, `flythrough --headless
+  --seed 1 --render 1920x1080 --frames 3000`, streamed spawn, half lighting, indirect on at 64
+  rays and one in 8, median of the last 30, one run, exclusive perf lock, 1-minute load 0.71
+  at the start): probes 1.250 ms, gather 0.240 ms, update plus gather 1.490 ms. That is 0.135
+  to 0.173 ms under Phase 4's 1.625 to 1.663 ms (83ae737). The autopilot (`--autopilot
+  --headless --seed 1 --render 1920x1080`, load 1.47) reads `frame targets 254216224 B` and
+  probes p50 1.048 ms, p99 1.288 ms.
+- Phase 6 gate (b3f7cb1's tree, exclusive perf lock):
+  - `cargo nextest run --workspace --test-threads 2` (load 5.77 at the start): 594 passed,
+    5 skipped, exit 0. This includes `indirect.png`, `mode_banner.png` and the furnace, leak,
+    scroll and carve tests.
+  - `cargo test --doc`: 7 passed, 1 ignored.
+  - clippy `-D warnings`, `fmt --check`, `cargo deny check`, `check-doc-links`,
+    `check-comment-hygiene` and `check-index-rows`: exit 0.
+- Phase 6: a `flythrough --help` without `--headless` was run once by mistake. It exited at
+  once with no output.
 - Phase 4 gate on db7b057's tree plus this row's docs (2026-10-22, exclusive perf lock, load
   0.19): `cargo nextest run --workspace --test-threads 2` 591 passed, 4 skipped, exit 0;
   `cargo test --doc` 7 passed, 1 ignored; clippy `-D warnings`, `fmt --check`, `cargo deny
@@ -476,40 +513,6 @@ Outcome records at the close; the decision it records is unchanged.
   outside the frame's slice wait for their slice.
 - Phase 2: the furnace's converged floor reads 2.97 (about -5.3 % of pi) frame after frame from
   frame 72 on; the residual is not diagnosed.
-
-### Resume notes (2026-10-22, delete when Phase 6 lands)
-
-- Done: Phase 6's code at b3f7cb1 (`wip`). `Frame` compares a `LightKey` between encodes with
-  history (`Lighting::lamp`, the `LightParams` that the last `params_for` placed, kept in
-  `History::built_lamp` with `masks`/`skips` normalized, `Lighting::shadow_walk`,
-  `Lighting::candidates`, `emission_changed_at`). A change opens `Lighting::slices()` encoded
-  frames with a probe update, and a change inside the window restarts it. `ProbeUniform`'s first
-  pad word is `light_window` (`probe_gather.wgsl`'s `_pad1` too). In `probe_update.wgsl`, while
-  the window is open, h is 0 for age > `YOUNG_UPDATES` and the next age is 1. The new API is
-  `Frame::probe_light_window()` and `ProbeVolume::set_light_restarts(bool)` (default on;
-  `set_probe_spacing` carries it over). `shadow_walk` is the extra signal found in the tree
-  (the probe rays' lamp shadows take the frame's shadow walk).
-- Tests in `tests/indirect.rs`, all passing on lavapipe (b3f7cb1's tree, exclusive perf lock,
-  load 5.6): `switching_the_lamp_off_drops_the_probe_history` (F0 4.58594, first frame under
-  10 % = 58; the window is true for frames 1..=8, false after),
-  `an_emission_step_drops_the_probe_history` (F0 2.9746, first under 10 % = 50; back to 1:
-  frame 64 2.7949 = 94.0 % of F0, first at 90 % = 50), and `no_light_change_opens_no_window`
-  (256 still frames and 16 moving ones open no window; lamp intensity and candidates 4 each
-  open one, and it closes after 8). The comparison `the_lamp_off_fade_without_the_window`
-  (`#[ignore]`) gives a first frame under 10 % of 1418 in 1600 frames.
-- Gate on b3f7cb1's tree: clippy `-D warnings`, `fmt --check`, `cargo deny check` and
-  `check-comment-hygiene` exit 0. The full workspace nextest and the doctests have not run; the
-  existing indirect tests and the goldens (`indirect.png`, `mode_banner.png`) are not rerun yet.
-- Left: (1) the dev-box reading: release `flythrough --headless --seed 1 --render 1920x1080
-  --frames 3000` (streamed spawn, half, indirect on), one run, update plus gather <= 1.7 ms,
-  with its delta to Phase 4's 1.625 to 1.663 ms. Not taken, because the load stayed at 13 to
-  15 from other lanes and then the laptop went on battery; take it on AC at a load under 2.
-  (2) `frame_bytes` unchanged: compare the autopilot's bytes line with 254 216 224 B. (3) The
-  full gate, the Phase 6 log row and Notes, commit, then stop at Phase 7 (human).
-- Gotchas: run `flythrough` only with `--headless`. At 13:5x a `flythrough --help` without
-  `--headless` was run once by mistake; it exited at once with no output and no process stayed.
-  The runner check is `pgrep -f '^bash .*live/session[0-9]+\.sh'`. Values at the 1 x 1 floor
-  probe step every 8 frames (one slice cycle).
 
 ### Close triggers
 
