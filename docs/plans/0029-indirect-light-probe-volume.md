@@ -182,6 +182,17 @@ between phases. The architect reviews once at the end, in a fresh session.
   lighting line (Plan 0024's light pass plus temporal plus this plan's two passes, at full
   resolution) at most 6.0 ms there; both passes are also read on the slow adapter (`nfr.md`
   §1) with no bar; `frame_bytes` rises by 50.3 MB plus the state buffer and no more.
+- *Amended 2026-10-22 (owner, at the Phase 4 readings):* (1) the update plus gather bar is
+  1.7 ms on the dev box (read 1.625 to 1.663 ms at the streamed spawn, half tier), and the
+  probe rays per update and the share of probes refreshed per frame become engine settings
+  (`Lighting` or `Frame` setters, documented defaults 64 rays and one eighth, shown on the HUD
+  row) so a slow-adapter profile can trade them; a test pins that changing either changes the
+  dispatch's ray count by the stated factor, and the slow adapter is read once more at 32 rays
+  and at one sixteenth, labelled, with no bar; (2) the §2 lighting line is read at the default
+  half tier, at most 6.0 ms (read 4.42 to 4.48 ms streamed); the full tier is a quality mode
+  whose reading is recorded with no bar; (3) `frame_bytes` rises by the atlases and state plus
+  the update list, ray buffer and uniform (4 227 104 B) and the gather's output texture
+  (4 147 200 B at 1080p half), 58 837 024 B in all, and no more.
 
 ### Phase 5: The owner's windowed check
 - **Owner skill:** human
