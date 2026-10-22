@@ -361,6 +361,37 @@ Outcome records at the close; the decision it records is unchanged.
 - Phase 2: the furnace's converged floor reads 2.97 (about -5.3 % of pi) frame after frame from
   frame 72 on; the residual is not diagnosed.
 
+### Resume notes (2026-10-22, delete when the Phase 4 amendment lands)
+
+- Done: phases 1 to 3 (6dfd37f, f9da073, 545390f, d90e9ab), Phase 4 code (83ae737) and
+  readings (68b3bdb); the c444a61 amendment's code is at db7b057 (`wip`): `Lighting::probe_rays`
+  (clamped 1..=64, default 64; `Lighting::rays()`) and `Lighting::probe_slices` (8, 16, 32,
+  default 8; `Lighting::slices()`), `ProbeUniform::rays`, `ProbeVolume::update_list(frame,
+  slices, touched)`, `Frame::traced_probe_rays()`; the test
+  `the_probe_settings_scale_the_rays_a_frame_traces` (262144, 131072, 131072, 65536 rays a
+  frame; passes on lavapipe); flags `--probe-rays N` and `--probe-slices N`; the mode line and
+  banner read `indirect on at 64 rays 1/8`; `mode_banner.png` reblessed. The indirect test
+  binary, the two goldens and the flythrough unit tests passed on db7b057's tree; the full
+  workspace gate has not run on it.
+- Extra slow-adapter readings, taken (the release binary of db7b057's tree, AMD Radeon
+  Cezanne RADV, 1080p, streamed spawn `--frames 3000`, half lighting, median of the last 30,
+  exclusive perf lock, loads at start 7.94/0.64/0.84 and 0.86/0.34/0.67): `--probe-rays 32`
+  update 6.249, 6.222, 6.202 ms, gather 1.546 to 1.547; `--probe-slices 16` update 4.162,
+  4.234, 4.167 ms, gather 1.546 to 1.547 (64 rays, one in 8 read 7.76 to 7.83 at 68b3bdb).
+- Left: add those readings to `docs/nfr.md` §2 under "The probe volume's two passes" (no bar;
+  note the 1.7 ms dev-box bar, the half-tier lighting line, the full tier recorded with no bar,
+  and §3's 58 837 024 B now counted in full); update the Phase 4 log row and the three
+  "done-when unmet" Notes to what the amendment accepted; run the full gate (nextest
+  workspace `--test-threads 2` under the perf lock, doctests, clippy, fmt, deny, the two
+  `scripts/check-*.mjs`); commit; stop at Phase 5.
+- iGPU selection: `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json` before the
+  command leaves the loader only RADV ("headless on AMD Radeon Graphics (RADV RENOIR)");
+  `systemd-run --scope` inherits it. `--adapter` is not on this branch.
+- Gotchas: nextest's `-j` is `--test-threads` (use `CARGO_BUILD_JOBS=4`, not `-j 4`); the
+  vxe-script-wasm tests need `scripts/build-guests.sh` once per worktree; WGSL
+  `pack2x16float` fails the naga portability test (the shaders use `pack_half2`); fewer
+  emissive candidates on probe rays bias the furnace low (2 candidates: -12.2 %), so keep 8.
+
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
