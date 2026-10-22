@@ -33,10 +33,7 @@
 // and maximum), and blended with the current colour at UPSCALE_ALPHA; a pixel without history
 // takes the current colour (alpha 1). Every other view takes the nearest sample's colour
 // unblended.
-//
-// Bindings, group 3 of `resolve`, which writes the output image from the history:
-//   0  texture_2d<f32>   resolve_in      the history `upscale` wrote
-//   1  storage texture   resolve_out     rgba8unorm: the frame's image (output size)
+
 
 @group(2) @binding(0) var up_pos_in: texture_2d<f32>;
 @group(2) @binding(1) var up_info_in: texture_2d<u32>;
@@ -56,9 +53,6 @@ struct UpEdits {
 };
 
 @group(2) @binding(7) var<uniform> up_edits: UpEdits;
-
-@group(3) @binding(0) var resolve_in: texture_2d<f32>;
-@group(3) @binding(1) var resolve_out: texture_storage_2d<rgba8unorm, write>;
 
 const UPSCALE_ALPHA: f32 = 0.1;
 const CLIP_GAMMA: f32 = 1.0;
@@ -233,13 +227,4 @@ fn upscale(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
     textureStore(up_hist_out, o, vec4<f32>(result, alpha));
-}
-
-@compute @workgroup_size(8, 8, 1)
-fn resolve(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= params.output_size.x || gid.y >= params.output_size.y) {
-        return;
-    }
-    let o = vec2<i32>(gid.xy);
-    textureStore(resolve_out, o, vec4<f32>(textureLoad(resolve_in, o, 0).xyz, 1.0));
 }

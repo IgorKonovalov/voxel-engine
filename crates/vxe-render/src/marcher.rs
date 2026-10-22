@@ -7,8 +7,10 @@ use crate::light::LightParams;
 use crate::{ATROUS_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, LIGHT_WGSL, MARCH_WGSL, TEMPORAL_WGSL};
 use vxe_world::ChunkCoord;
 
-/// The upscale pass and its resolve, compiled after [`MARCH_WGSL`].
+/// The upscale pass, compiled after [`MARCH_WGSL`].
 pub const UPSCALE_WGSL: &str = include_str!("shaders/upscale.wgsl");
+/// The sharpening pass (RCAS), compiled after [`MARCH_WGSL`].
+pub const SHARPEN_WGSL: &str = include_str!("shaders/sharpen.wgsl");
 
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
 pub const WORKGROUP: u32 = 8;
@@ -633,8 +635,11 @@ pub struct Frame {
     downsample: wgpu::ComputePipeline,
     upscale_layout: wgpu::BindGroupLayout,
     upscale: wgpu::ComputePipeline,
-    resolve_layout: wgpu::BindGroupLayout,
-    resolve: wgpu::ComputePipeline,
+    sharpen_layout: wgpu::BindGroupLayout,
+    sharpen: wgpu::ComputePipeline,
+    /// The sharpening pass's `con` (`Sharpen` in `sharpen.wgsl`).
+    sharpen_params: wgpu::Buffer,
+    sharpness: f32,
     history: std::sync::Mutex<History>,
     /// The output size the frame's image is presented at; the targets are at the internal
     /// size.
@@ -1002,17 +1007,21 @@ impl Frame {
                 Io::Uniform,
             ],
         );
-        let resolve_layout = io_layout(
+        let sharpen_layout = io_layout(
             device,
-            "resolve",
-            &[Io::Float, Io::Store(wgpu::TextureFormat::Rgba8Unorm)],
+            "sharpen",
+            &[
+                Io::Float,
+                Io::Store(wgpu::TextureFormat::Rgba8Unorm),
+                Io::Uniform,
+            ],
         );
-        let resolve = compute_pipeline(
+        let sharpen = compute_pipeline(
             device,
-            "resolve",
-            format!("{MARCH_WGSL}\n{UPSCALE_WGSL}"),
-            &[Some(&world_layout), None, None, Some(&resolve_layout)],
-            "resolve",
+            "sharpen",
+            format!("{MARCH_WGSL}\n{SHARPEN_WGSL}"),
+            &[Some(&world_layout), None, None, Some(&sharpen_layout)],
+            "sharpen_main",
         );
         let (composite_layout, composite) = pass(
             "composite",
@@ -1100,8 +1109,17 @@ impl Frame {
             downsample,
             upscale_layout,
             upscale,
-            resolve_layout,
-            resolve,
+            sharpen_layout,
+            sharpen,
+            sharpen_params: wgpu::util::DeviceExt::create_buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("sharpen"),
+                    contents: bytemuck::cast_slice(&[0.0f32; 4]),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                },
+            ),
+            sharpness: 0.0,
             history: std::sync::Mutex::new(History::default()),
             output,
             jitter: false,
@@ -1127,6 +1145,27 @@ impl Frame {
             self.jitter = on;
             self.set_sizes(device, self.internal_size(), self.output);
         }
+    }
+
+    /// Sets the sharpening pass's strength in `0..=1` (clamped): 0 (the default) writes the
+    /// upscale pass's output unchanged, 1 is RCAS at full strength (0 stops), and between them
+    /// `2 (1 - s)` stops (`con = 2^-stops`). It runs with the upscaler.
+    pub fn set_sharpness(&mut self, queue: &wgpu::Queue, sharpness: f32) {
+        self.sharpness = sharpness.clamp(0.0, 1.0);
+        let con = if self.sharpness > 0.0 {
+            (-2.0 * (1.0 - self.sharpness)).exp2()
+        } else {
+            0.0
+        };
+        queue.write_buffer(
+            &self.sharpen_params,
+            0,
+            bytemuck::cast_slice(&[con, 0.0, 0.0, 0.0]),
+        );
+    }
+
+    pub fn sharpness(&self) -> f32 {
+        self.sharpness
     }
 
     /// Whether the upscale pass runs: the frame jitters or renders below its output size.
@@ -1259,7 +1298,7 @@ impl Frame {
     /// The frame's `rgba8unorm` image: the composite's output, or with the upscaler (see
     /// [`Frame::upscaling`]) the upscaled image at the output size. With the upscaler the
     /// composite writes the internal image into its top-left pixels and the upscale pass's
-    /// resolve overwrites the whole of it.
+    /// sharpening pass overwrites the whole of it.
     pub fn target(&self) -> &wgpu::Texture {
         &self.targets.output
     }
@@ -1676,11 +1715,15 @@ impl Frame {
                 ],
             )
         });
-        let resolve_bind = t.history.as_ref().map(|hist| {
+        let sharpen_bind = t.history.as_ref().map(|hist| {
             bind_io(
                 device,
-                &self.resolve_layout,
-                &[Res::Tex(&hist[c]), Res::Tex(&t.output)],
+                &self.sharpen_layout,
+                &[
+                    Res::Tex(&hist[c]),
+                    Res::Tex(&t.output),
+                    Res::Buf(&self.sharpen_params),
+                ],
             )
         });
         let gradient_on =
@@ -1709,12 +1752,13 @@ impl Frame {
             atrous.extend(atrous_binds.iter().map(|b| (&self.atrous, b, 2, lw)));
         }
         let mut upscale: Vec<Dispatch<'_>> = Vec::new();
-        if let (Some(u), Some(r)) = (&upscale_bind, &resolve_bind) {
+        let mut sharpen: Vec<Dispatch<'_>> = Vec::new();
+        if let (Some(u), Some(r)) = (&upscale_bind, &sharpen_bind) {
             let out = self.output.map(|n| n.div_ceil(WORKGROUP));
             upscale.push((&self.upscale, u, 2, out));
-            upscale.push((&self.resolve, r, 3, out));
+            sharpen.push((&self.sharpen, r, 3, out));
         }
-        let passes: [Vec<Dispatch<'_>>; 7] = [
+        let passes: [Vec<Dispatch<'_>>; 8] = [
             hit,
             gradient,
             vec![(&self.light, &light_bind, 2, lw)],
@@ -1722,6 +1766,7 @@ impl Frame {
             atrous,
             vec![(&self.composite, &composite_bind, 2, full)],
             upscale,
+            sharpen,
         ];
         for (i, dispatches) in passes.into_iter().enumerate() {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1775,7 +1820,7 @@ fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_>
 
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
-pub const FRAME_PASSES: [&str; 7] = [
+pub const FRAME_PASSES: [&str; 8] = [
     "hit",
     "gradient",
     "light",
@@ -1783,6 +1828,7 @@ pub const FRAME_PASSES: [&str; 7] = [
     "atrous",
     "composite",
     "upscale",
+    "sharpen",
 ];
 
 /// The gradient pass's stratum edge in pixels; `STRATUM` in `gradient.wgsl`.
@@ -1821,7 +1867,7 @@ struct Targets {
     strata: wgpu::Texture,
     /// The frame's display-encoded image (rgba8unorm): the composite's output at the
     /// internal size, or with the upscaler at the output size, the composite's image in its
-    /// top-left pixels until the resolve overwrites it.
+    /// top-left pixels until the sharpening pass overwrites it.
     output: wgpu::Texture,
     /// The upscaler's history at the output size (rgba16float), this frame's and the last.
     history: Option<[wgpu::Texture; 2]>,
@@ -2138,7 +2184,7 @@ mod tests {
         }
     }
 
-    /// The upscale pass and its resolve parse and validate headless, compiled after the hit
+    /// The upscale pass parses and validates headless, compiled after the hit
     /// pass.
     #[test]
     fn upscale_wgsl_validates_through_naga() {
@@ -2151,6 +2197,20 @@ mod tests {
         )
         .validate(&module)
         .unwrap_or_else(|e| panic!("upscale.wgsl validates: {e:?}"));
+    }
+
+    /// The sharpening pass parses and validates headless, compiled after the hit pass.
+    #[test]
+    fn sharpen_wgsl_validates_through_naga() {
+        let source = format!("{}\n{}", crate::MARCH_WGSL, super::SHARPEN_WGSL);
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|e| panic!("sharpen.wgsl parses: {}", e.emit_to_string(&source)));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("sharpen.wgsl validates: {e:?}"));
     }
 
     #[test]

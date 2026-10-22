@@ -13,11 +13,12 @@
 //! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]
 //! [--history edits|gradient] [--lighting full|half] [--emissive-history N]
-//! [--internal-scale 1|1.5|2] [--jitter on|off]`.
+//! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S]`.
 //! `--render` fixes the frame's output resolution (the window scales it); `--internal-scale`
 //! renders at the output size divided by it on each edge (default 1); `--jitter off` sends
 //! every primary ray through its pixel's centre (by default it moves by the Halton (2, 3)
-//! sub-pixel jitter of the frame); `--frames` exits after N
+//! sub-pixel jitter of the frame); `--sharpen S` sets the upscaler's RCAS sharpening, 0 to 1
+//! (default 0.5, 0 off); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
@@ -352,7 +353,12 @@ struct Args {
     /// `--jitter on|off`: the primary rays move by the frame's sub-pixel jitter (on by
     /// default).
     jitter: bool,
+    /// `--sharpen S`: the upscaler's sharpening strength, 0 to 1.
+    sharpen: f32,
 }
+
+/// The upscaler's sharpening strength by default (`--sharpen`).
+const DEFAULT_SHARPEN: f32 = 0.5;
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
 const WALK_NEEDS_LEVEL: &str =
@@ -456,6 +462,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         emissive_history: vxe_render::DEFAULT_EMISSIVE_HISTORY,
         internal_scale: RenderScale::default(),
         jitter: true,
+        sharpen: DEFAULT_SHARPEN,
     };
     let mut detail_flag = false;
     let mut it = argv.into_iter();
@@ -575,6 +582,14 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 let v = value()?;
                 args.internal_scale = RenderScale::from_name(&v)
                     .ok_or(format!("--internal-scale takes 1, 1.5 or 2, not {v}"))?;
+            }
+            "--sharpen" => {
+                let v = value()?;
+                args.sharpen = v
+                    .parse()
+                    .ok()
+                    .filter(|s: &f32| (0.0..=1.0).contains(s))
+                    .ok_or(format!("--sharpen takes 0 to 1, not {v}"))?;
             }
             "--jitter" => {
                 args.jitter = match value()?.as_str() {
@@ -2571,6 +2586,7 @@ impl Run {
             output,
         );
         frame.set_jitter(&gpu.device, self.args.jitter);
+        frame.set_sharpness(&gpu.queue, self.args.sharpen);
         frame.set_lighting(self.modes.lighting);
         frame.set_resolution(&gpu.device, self.modes.resolution);
         println!("{}", self.modes.line());
@@ -5548,6 +5564,9 @@ mod tests {
         let parse = |a: &[&str]| parse_args_from(argv(a));
         let d = parse(&[]).unwrap();
         assert_eq!((d.internal_scale, d.jitter), (RenderScale::One, true));
+        assert_eq!(d.sharpen, 0.5);
+        assert_eq!(parse(&["--sharpen", "0"]).unwrap().sharpen, 0.0);
+        assert_eq!(parse(&["--sharpen", "0.8"]).unwrap().sharpen, 0.8);
         for (name, scale) in [
             ("1", RenderScale::One),
             ("1.5", RenderScale::OneHalf),
@@ -5576,6 +5595,8 @@ mod tests {
                 "--internal-scale takes 1, 1.5 or 2, not 1.0",
             ),
             ("--jitter", "x", "--jitter takes on or off, not x"),
+            ("--sharpen", "1.5", "--sharpen takes 0 to 1, not 1.5"),
+            ("--sharpen", "x", "--sharpen takes 0 to 1, not x"),
         ] {
             assert_eq!(parse(&[flag, v]).err().as_deref(), Some(err), "{flag} {v}");
         }

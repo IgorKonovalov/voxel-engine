@@ -1318,3 +1318,120 @@ fn half_resolution_dark_cave_golden_stays_near_the_full_one() {
     );
     assert!(mad.iter().all(|&d| d < 6.0), "{mad:?}");
 }
+
+/// The upscaler's golden scene: the cavity from its centre under the headlamp at 256 x 144
+/// internal and 384 x 216 output, jittered, after 32 frames, at each of `sharpness`; with the
+/// upscale pass's history (rgba16float) of the first.
+fn upscaled_cavity(sharpness: &[f32]) -> Option<(Vec<Vec<u8>>, History16)> {
+    let world = cavity_world();
+    let rig = LookRig::new(&world, None)?;
+    let mut out = Vec::new();
+    let mut history = Vec::new();
+    for &s in sharpness {
+        let mut frame = Frame::with_sizes(&rig.device, UPSCALED_INTERNAL, UPSCALED_OUTPUT);
+        frame.set_jitter(&rig.device, true);
+        frame.set_sharpness(&rig.queue, s);
+        for _ in 0..32 {
+            frame.step(
+                &rig.device,
+                &rig.queue,
+                &rig.gpu,
+                &cavity_camera(),
+                &LightParams::headlamp(),
+            );
+        }
+        if history.is_empty() {
+            history = readback::read_rgba16f(
+                &rig.device,
+                &rig.queue,
+                frame.upscale_history().expect("the upscaler runs"),
+            );
+        }
+        out.push(readback::read_rgba8(
+            &rig.device,
+            &rig.queue,
+            frame.target(),
+        ));
+    }
+    Some((out, history))
+}
+
+/// An rgba16float texture read back, texel by texel.
+type History16 = Vec<[f32; 4]>;
+
+const UPSCALED_INTERNAL: [u32; 2] = [256, 144];
+const UPSCALED_OUTPUT: [u32; 2] = [384, 216];
+
+/// `upscaled.png`: the upscaler's golden at the fly-through's default sharpening (0.5). At
+/// sharpening 0 the pass writes the upscale pass's output unchanged: each byte is its history's
+/// value times 255, rounded. The sharpened image's edge contrast (the mean absolute luminance
+/// gradient over the pixels whose unsharpened 3 x 3 spans at least 16/255, the cavity's voxel
+/// rims) is higher than the unsharpened one's, and no channel of a sharpened pixel exceeds its
+/// unsharpened 3 x 3 neighbourhood's maximum by more than 1/255.
+#[test]
+fn upscaled_golden_sharpens_within_the_neighbourhood() {
+    let Some((images, history)) = upscaled_cavity(&[0.0, 0.5]) else {
+        return;
+    };
+    let (plain, sharp) = (&images[0], &images[1]);
+    let [w, h] = UPSCALED_OUTPUT.map(|n| n as usize);
+    let path = golden_path("upscaled.png");
+    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+        write_png(&path, sharp, w as u32, h as u32);
+        println!("blessed {path:?}");
+    } else {
+        let (golden, gw, gh) = read_png(&path);
+        assert_eq!((gw, gh), (w as u32, h as u32));
+        let f = fraction_differing(sharp, &golden, 2);
+        println!(
+            "upscaled.png: {:.4} % of pixels differ by more than 2/255",
+            f * 100.0
+        );
+        assert!(f <= 0.001, "{:.4} % of pixels differ", f * 100.0);
+    }
+    let identity = plain
+        .chunks(4)
+        .zip(&history)
+        .filter(|(p, t)| (0..3).any(|k| f32::from(p[k]) != (t[k] * 255.0).round()))
+        .count();
+    assert_eq!(identity, 0, "sharpening 0 changed {identity} pixels");
+    let lum = |img: &[u8], x: usize, y: usize| {
+        let p = &img[(y * w + x) * 4..];
+        0.2126 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[2])
+    };
+    let (mut rim, mut g_plain, mut g_sharp, mut over) = (0usize, 0.0f64, 0.0f64, 0usize);
+    for y in 1..h - 1 {
+        for x in 1..w - 1 {
+            let mut lo = [255u8; 3];
+            let mut hi = [0u8; 3];
+            for dy in 0..3 {
+                for dx in 0..3 {
+                    let p = &plain[((y + dy - 1) * w + x + dx - 1) * 4..];
+                    for k in 0..3 {
+                        lo[k] = lo[k].min(p[k]);
+                        hi[k] = hi[k].max(p[k]);
+                    }
+                }
+            }
+            let s = &sharp[(y * w + x) * 4..];
+            over += usize::from((0..3).any(|k| s[k] > hi[k].saturating_add(1)));
+            if (0..3).any(|k| hi[k] - lo[k] >= 16) {
+                rim += 1;
+                let grad = |img: &[u8]| {
+                    (lum(img, x + 1, y) - lum(img, x, y)).abs()
+                        + (lum(img, x, y + 1) - lum(img, x, y)).abs()
+                };
+                g_plain += grad(plain);
+                g_sharp += grad(sharp);
+            }
+        }
+    }
+    println!(
+        "rim pixels {rim}: mean absolute gradient unsharpened {:.3}, sharpened {:.3}; {over} pixels over their neighbourhood's maximum",
+        g_plain / rim as f64,
+        g_sharp / rim as f64
+    );
+    assert!(rim > 0);
+    assert!(g_sharp > g_plain, "{g_sharp} against {g_plain}");
+    assert_eq!(over, 0);
+}

@@ -350,8 +350,8 @@ of Plan 0024 shrink to 44 % at scale 1.5.
 |---|---|---|---|
 | 1: Internal resolution and the jitter | dev | done: 11 of 11 `assert_golden` renders (golden.rs, look.rs) byte-identical to 578c8d3's at scale 1 jitter off (dumped and compared with `cmp`); jitter on, 16-frame hit mask of the pillar: 396 edge pixels, 15 distinct values in (0, 255) (unjittered: 0 partial); 384 x 216 at 1.5: hit buffer 256 x 144, blit within 1.03/255 of bilinear; parse test pins `--internal-scale`, `--jitter` | 9900eee |
 | 2: The upscale pass | dev | done: carve on the level (t = 30.5 voxels): 4749 output pixels hit in the dilated box, 0 blend history; readings in the projected box against native: max 192/255, mean 14.26/255, 686 of 4900 over 8/255; sideways step on the cavity: 67409 of 67443 unchanged pixels at alpha 0.1 (99.95 %), all 3317 changed-material pixels at alpha 1; still camera (reading): from native upscaled 4.699, bilinear 3.333 (1.410), from 2 x 2 supersampled 4.369, 3.044 (1.435), native 2.066 | 4bc49d8 |
-| 3: Lighting that ignores the jitter | dev | done: still camera from 2 x 2 supersampled: upscaled 2.969, bilinear 3.044 (0.975), native 2.066; from native 3.363, 3.333 (1.009); jittered at scale 1 against native from supersampled 2.013 vs 2.066 (284d132: 3.099); flicker at 1.5: jitter off mean 0.1212/255, 0.0020 % over 4/255, on 0.3185/255, 1.0176 % (+0.197, +1.016 pp; margins 0.40, 1.15); Plan 0024's tests pass at jitter off, 11 of 11 `assert_golden` renders byte-identical to 578c8d3 (`dark_cave*.png` unchanged); reading: age below 15 after 16 still frames, jitter on 216 of 82944 hit pixels (0.260 %), off 0 | committed with this row |
-| 4: The sharpening pass and the golden | dev | not started | |
+| 3: Lighting that ignores the jitter | dev | done: still camera from 2 x 2 supersampled: upscaled 2.969, bilinear 3.044 (0.975), native 2.066; from native 3.363, 3.333 (1.009); jittered at scale 1 against native from supersampled 2.013 vs 2.066 (284d132: 3.099); flicker at 1.5: jitter off mean 0.1212/255, 0.0020 % over 4/255, on 0.3185/255, 1.0176 % (+0.197, +1.016 pp; margins 0.40, 1.15); Plan 0024's tests pass at jitter off, 11 of 11 `assert_golden` renders byte-identical to 578c8d3 (`dark_cave*.png` unchanged); reading: age below 15 after 16 still frames, jitter on 216 of 82944 hit pixels (0.260 %), off 0 | 0b048ae |
+| 4: The sharpening pass and the golden | dev | done: `upscaled.png` blessed (cavity, 256 x 144 -> 384 x 216, 32 frames, jitter on, sharpening 0.5); sharpening 0 writes each byte as its history value times 255, rounded (0 pixels differ); rim pixels (unsharpened 3 x 3 spanning 16/255 or more): 15914, mean absolute luminance gradient unsharpened 22.888, sharpened 24.100; 0 pixels over their unsharpened 3 x 3 maximum by more than 1/255; workspace nextest 593 run, 593 passed, 5 skipped | committed with this row |
 | 5: The readings and the defaults | dev | not started | |
 | 6: The owner's windowed check | human | not started | |
 
@@ -410,6 +410,19 @@ of Plan 0024 shrink to 44 % at scale 1.5.
   age reading are in `tests/upscale.rs`. The age reading uses full-resolution lighting so the
   moments align with the hit buffer, and "below 16" reads "below 15": the first frame reads
   age 0, so 16 unbroken frames read 15.
+- Phase 4: `sharpen.wgsl` takes over the resolve dispatch (the upscale pass writes only the
+  history; the sharpening pass writes the frame's rgba8 image at every strength, its own
+  timed pass "sharpen" in `FRAME_PASSES`). `Frame::set_sharpness(queue, s)`: library default
+  0 (the image is the upscale output), the fly-through's `--sharpen` default 0.5; `s` maps to
+  `2 (1 - s)` stops.
+- Phase 4: the port adds a clamp of the result to the five taps' minimum and maximum after
+  `FsrRcasF`'s [0, 1] limit. Without it 6.55 % of `upscaled.png`'s pixels differ from the
+  clamped image by more than 2/255 (its neighbourhood-maximum count was not read).
+- Phase 4: `docs/references/voxel-optimizations.md` cites FSR 2, not FSR 1; the shader names
+  the FSR 1 repository and carries its MIT notice. The reference entry is an architect
+  followup.
+- Phase 4: the golden's comparison is written in golden.rs (`assert_golden` in
+  `tests/support/mod.rs` is fixed at 320 x 180).
 
 ### Close triggers
 
