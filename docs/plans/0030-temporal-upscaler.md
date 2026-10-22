@@ -424,6 +424,17 @@ between phases. The architect reviews once at the end, in a fresh session.
      frame ES at most the still camera's plus 0.5 px and GE at least 0.75 of the still
      camera's. The margins are judgments; the amendment's arithmetic predicts the tip's
      bilinear fetch adds about 3.7 px of ES here, and the log records the tip's reading.
+     *Amended 2026-10-22 (owner, at the Phase 6 question):* as written this cannot be met at
+     scale 1.5 (one upscaled frame is already softer than the bar; with history nearly off
+     in motion ES reads 1.752 against 1.734). Bar 3 is now, at arm's length only: on the
+     last panning frame ES is at least 0.3 px below the old tip's (7cc58a4: U1 2.020, U1.5
+     2.404, so at most 1.720 and 2.104 px) and GE is no lower than the old tip's, at scale 1
+     and 1.5; the far-distance pan is a reading. The shipped candidate is the Gaussian of
+     width 0.6, the Catmull-Rom fetch and the nearness-weighted blend with the current
+     colour's weight at 0.5 where the history moved (read: U1 1.402, U1.5 2.012). The owner
+     judges motion sharpness by eye in Phase 9; if it is still too soft there, the fallback
+     is the upscaler opt-in with Plan 0024's frame as the default and an FSR 2 port
+     (ADR-0024 Alternative A) as the next plan.
   4. **Nothing else gives way:** Phase 2's three bars, Phase 3's bars 1 to 3 (bar 2 read on
      the new output; the still camera's distances re-recorded), Phase 4's bars on the
      re-blessed `upscaled.png` (with its changed pixel counts in the log), and every Plan 0024
