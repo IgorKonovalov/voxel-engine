@@ -301,6 +301,14 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
 
 ### Phase 4: Pre-exposure and automatic exposure
 - **Owner skill:** dev
+- *Amended 2026-10-22 (owner, eye adaptation):* Plan 0040 (ADR-0033) builds the exposure
+  machinery first: the `Exposure` type and its asymmetric `AutoExposure` (0032's `speed` is its
+  `symmetric(speed)` preset), the `[current, previous]` state, pre-exposure of the light pass,
+  the temporal rescale and the composite, the per-8x8 log2 meter with its centre weight,
+  `exposure.wgsl`, `Frame::set_dt`, `--exposure auto|<value>` with its banner, and this
+  phase's bars 1, 3 and 4. When this plan runs, Phase 4 keeps only: the sky and the discs
+  multiplied by `current`, the sun and sky-ray terms through the pre-exposed path, the outdoor
+  defaults and the preset choice, and bars 2 and 5. The text below is the pre-0040 design.
 - **What:** `Lighting::exposure` becomes `Exposure`: `Manual(f32)`, with 1.0 the default, or
   `Auto { key, min, max, speed }`. The testbed defaults are 0.18, 1e-4, 4.0 and 1.5 per
   second, all guesses that Phase 9 judges. A storage buffer holds `[current, previous]`

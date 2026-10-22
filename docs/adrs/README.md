@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0033.**
+**Next free number: 0035.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -47,6 +47,8 @@ the status.
 | [0030](0030-volumetric-cloud-shell-amortised-march-and-projected-shadow-map.md) | Clouds are a ray-marched shell of seeded noise, one pixel in four of a quarter-resolution buffer per frame, rebuilt temporally and shadowing the ground through a projected map | proposed (Plan 0035) |
 | [0031](0031-weather-is-cosmetic-client-state-rendered-against-a-fall-map.md) | Weather is cosmetic client state stepped by the game's ticks, and rain, snow, wetness and snow cover are rendered against a fall map traced through the mirror, never written as voxels | proposed (Plan 0036) |
 | [0032](0032-night-sky-drawn-analytically-on-miss-pixels-with-a-marched-aurora-shell.md) | The night sky is drawn analytically on miss pixels (a binned star catalogue, sky bodies the game lists, an aurora shell lighting the scene via a hemisphere map), and the night look is a luminance tint | proposed (Plan 0037) |
+| [0033](0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md) | Exposure adapts like an eye: fast toward bright, slow toward dark in two stages, metered and stepped on the GPU, applied as pre-exposure | proposed (Plan 0040) |
+| [0034](0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) | AMD FSR 2.2.1 ported to WGSL is the upscaler's default candidate; our own upscaler stays opt-in | proposed (Plan 0041) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

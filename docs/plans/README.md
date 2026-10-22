@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0040** (ADRs are a separate sequence; next free there is **0033**).
+**Next free number: 0042** (ADRs are a separate sequence; next free there is **0035**).
 
 ## Active roster
 
@@ -21,6 +21,8 @@ state from `git log`. Completed plans move to `done/`.
 | [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: a star field, the moon's phases, sky bodies the game lists, an aurora that lights the ground, and a night tint | approved | M10, ADR-0032 (proposed). After Plans 0032 and 0035. |
 | [0038](0038-showcase-cavern-and-hero-shots.md) | A showcase cavern lit by four ores, and a hero still with named shots and no headlamp | approved | M2, testbed only, no ADR. After Plans 0029 and 0030. |
 | [0039](0039-contour-look-sharpness-measured-and-tuned.md) | The contour look at arm's length: a sharpness metric, the sources of its softness, named presets the owner compares | approved | M2, no ADR. After Plan 0028. |
+| [0040](0040-eye-adaptation-asymmetric-auto-exposure-and-pre-exposure.md) | Eye adaptation: an automatic exposure that is fast toward bright and slow toward dark, metered on the GPU, with pre-exposed HDR targets | draft | M2, ADR-0033 (proposed). After Plan 0029; before Plan 0032. |
+| [0041](0041-fsr2-port-to-wgsl.md) | AMD FSR 2.2.1 ported to WGSL: its six passes fed from the hit buffer, compared against our upscaler and the native frame | draft | M2, ADR-0034 (proposed). After Plan 0030. |
 <!-- roster:end -->
 
 ## Recently closed

@@ -582,7 +582,8 @@ VR-readiness decision keeps open stay open, and so the cost is on paper before a
   the engine ships, and scripting hosts configured for it. Mitigation: CI asserts hashes on
   both arms from M1 on, and `clippy.toml` can deny the platform transcendentals in `vxe-world`.
 - **The upscaler port (M2).** No WGSL port of FSR 2 exists. Mitigation: the M2 plan sizes the
-  port as its own phase and names the TAA fallback.
+  port as its own phase and names the TAA fallback. Plan 0030 shipped our own upscaler opt-in
+  (2026-10-22); Plan 0041 (ADR-0034) ports FSR 2.2.1.
 
 ## What the engine will not do
 
