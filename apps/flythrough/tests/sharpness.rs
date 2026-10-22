@@ -206,7 +206,7 @@ fn source_matrix() {
         "H4 contour -> face (detail off, full tier, filter off): {:+.1} % of the gap",
         share(get(f, Full, false, false).fine - get(c, Full, false, false).fine)
     );
-    // Not a source the plan names: at 1 m the headlamp puts rock facing it on the ACES
+    // Beside H1 to H6: at 1 m the headlamp puts rock facing it on the ACES
     // curve's shoulder (radiance about 5.6 displays at about 0.99), which flattens shading
     // contrast. The default pair at a quarter of the exposure, for the record.
     let quarter = [face(), contour()].map(|s| {
