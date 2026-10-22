@@ -419,6 +419,26 @@ fn contour_dark_specks_with_and_without_shadows() {
         shadows: false,
         ..LightParams::headlamp()
     };
+    if std::env::var("VXE_BLESS").as_deref() != Ok("1") {
+        // The golden is drawn at the default walk.
+        let on_img = rig.render(
+            &scene_camera(),
+            &LightParams::headlamp(),
+            look(NormalMode::Contour, ViewMode::Shaded),
+        );
+        let golden = read_png(&golden_path("look_contour.png")).0;
+        let differing = on_img.iter().zip(&golden).filter(|(a, b)| a != b).count();
+        assert_eq!(
+            differing, 0,
+            "the shadows-on render is look_contour.png: {differing} bytes differ"
+        );
+    }
+    // The full walk: the claim is the shadow ray's origin, and the coarse walk's own darkening
+    // of grazing rays (any 2^3 block with rock is solid) confounds it.
+    rig.frame.set_lighting(vxe_render::Lighting {
+        shadow_walk: vxe_render::ShadowWalk::Full,
+        ..rig.frame.lighting()
+    });
     let mut only_with = Vec::new();
     for mode in [NormalMode::Contour, NormalMode::Face] {
         let render = |rig: &mut LookRig, light: &LightParams| {
@@ -426,14 +446,6 @@ fn contour_dark_specks_with_and_without_shadows() {
         };
         let on_img = render(&mut rig, &LightParams::headlamp());
         let off_img = render(&mut rig, &off);
-        if mode == NormalMode::Contour && std::env::var("VXE_BLESS").as_deref() != Ok("1") {
-            let golden = read_png(&golden_path("look_contour.png")).0;
-            let differing = on_img.iter().zip(&golden).filter(|(a, b)| a != b).count();
-            assert_eq!(
-                differing, 0,
-                "the shadows-on render is look_contour.png: {differing} bytes differ"
-            );
-        }
         let on = dark_specks(&on_img);
         let off = dark_specks(&off_img);
         let only_on = on.iter().filter(|i| off.binary_search(i).is_err()).count();

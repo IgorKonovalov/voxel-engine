@@ -7,7 +7,8 @@ use flythrough::cave_materials;
 use support::*;
 use vxe_render::gpu_world::POOL_PAGE_SLOTS;
 use vxe_render::{
-    Camera, Frame, GpuWorld, LightParams, LodParams, MirrorConfig, Window, readback, wgpu,
+    Camera, Frame, GpuWorld, LightParams, LodParams, MirrorConfig, ShadowWalk, Window, readback,
+    wgpu,
 };
 use vxe_world::*;
 
@@ -158,13 +159,16 @@ fn the_walk_renders_the_same_bytes_with_every_skip_on_or_off() {
                 },
             ),
         ];
-        let images = render_with(
+        // The full walk: the coarse walk is defined on the mask blocks the skips read, so
+        // turning them off changes what it treats as solid, which is not the skips' claim.
+        let images = render_walk(
             &device,
             &queue,
             world,
             &scene_camera(),
             &variants.map(|(_, light)| light),
             lod,
+            ShadowWalk::Full,
         );
         for (i, (label, _)) in variants.iter().enumerate().skip(1) {
             let differing = differing_bytes(&images[0], &images[i]);
@@ -174,7 +178,9 @@ fn the_walk_renders_the_same_bytes_with_every_skip_on_or_off() {
             );
         }
         if !bless {
-            let differing = differing_bytes(&images[0], &read_png(&golden_path(name)).0);
+            // The golden is drawn at the default walk.
+            let image = &render_with(&device, &queue, world, &scene_camera(), &[light], lod)[0];
+            let differing = differing_bytes(image, &read_png(&golden_path(name)).0);
             assert_eq!(
                 differing, 0,
                 "{name}: {differing} bytes differ from the golden"
@@ -409,11 +415,36 @@ fn render_with(
     lights: &[LightParams],
     lod: LodParams,
 ) -> Vec<Vec<u8>> {
+    render_walk(
+        device,
+        queue,
+        world,
+        camera,
+        lights,
+        lod,
+        ShadowWalk::default(),
+    )
+}
+
+/// [`render_with`] with shadow rays taking `walk`.
+fn render_walk(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    world: &World,
+    camera: &Camera,
+    lights: &[LightParams],
+    lod: LodParams,
+    walk: ShadowWalk,
+) -> Vec<Vec<u8>> {
     let mut gpu = GpuWorld::new(device, world.extent());
     gpu.sync_now(world, device, queue)
         .expect("mirror fits the adapter");
     let mut frame = Frame::new(device, WIDTH, HEIGHT);
     frame.set_resolution(device, vxe_render::LightingResolution::Full);
+    frame.set_lighting(vxe_render::Lighting {
+        shadow_walk: walk,
+        ..frame.lighting()
+    });
     frame.set_lod(lod);
     lights
         .iter()

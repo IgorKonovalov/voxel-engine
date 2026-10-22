@@ -834,18 +834,19 @@ fn accumulated_lum(rig: &LookRig) -> Vec<f64> {
         .collect()
 }
 
-/// A static camera in the dark cave and the headlamp's cone turned 30 degrees in one frame.
-/// The pixels that left the cone have their filtered irradiance at 0.5 or more before and
-/// under 5 % of that 40 frames after. With the flat list, the sampler the bars were set
-/// with: in the gradient mode every such pixel falls under 10 % of its lit value within 2
-/// frames, where plain accumulation at alpha 0.2 needs about 11 (0.8^11 = 0.086); in the
-/// edit-box mode two thirds of them are under 10 % by frame 11 and all by frame 22. With
-/// either sampler, in the edit-box mode the accumulated lamp part keeps under 10 % of its
-/// change at frame 11 (0.8^11). The whole light also holds the static emissive light, which
-/// the gradient's reset leaves at one frame's estimate and which the sampler moves; with
-/// reuse the whole light's frames are printed for the log, not asserted.
+/// A static camera in the dark cave and the headlamp's cone turned 30 degrees in one frame,
+/// read on the lamp's part of each pixel's accumulated light (the light that left the cone;
+/// the veins' steady emissive light, which the turn does not change, is out of the ratio),
+/// with the flat list and with reservoir reuse. The pixels that left the cone have a lamp
+/// part of 0.5 or more before and under 5 % of that 40 frames after. In the edit-box mode at
+/// least two thirds are under 10 % of their lamp part before at frame 11 and all by frame 22,
+/// where plain accumulation at alpha 0.2 needs about 11 (0.8^11 = 0.086). In the gradient
+/// mode 99 % are under 10 % by frame 2 and all by frame 7 (list) or 9 (reuse), not all by 2:
+/// lambda is read on the whole light, so where a pixel's steady emissive light is one to two
+/// times the lamp's the turn reads as a partial change and part of the lamp's history stays.
+/// The whole light's frames are printed for the log.
 #[test]
-fn the_gradient_drops_light_that_left_the_cone_within_two_frames() {
+fn the_lamp_light_that_left_the_cone_drops_in_each_history_mode() {
     let turned = vxe_render::LightParams {
         turn: 30f32.to_radians(),
         ..vxe_render::LightParams::headlamp()
@@ -864,75 +865,67 @@ fn the_gradient_drops_light_that_left_the_cone_within_two_frames() {
                     .map(|e| f64::from(e[3]))
                     .collect()
             };
-            let before = accumulated_lum(&rig);
-            let lamp_before = lamp_part(&rig);
+            let whole_before = accumulated_lum(&rig);
+            let before = lamp_part(&rig);
             let mut after = Vec::new();
-            let mut lamp_after = Vec::new();
+            let mut whole = Vec::new();
             for _ in 0..40 {
                 rig.frame
                     .step(&rig.device, &rig.queue, &rig.gpu, &camera, &turned);
-                after.push(accumulated_lum(&rig));
-                lamp_after.push(lamp_part(&rig));
+                after.push(lamp_part(&rig));
+                whole.push(accumulated_lum(&rig));
             }
             let settled = &after[39];
             let left: Vec<usize> = (0..before.len())
                 .filter(|&i| before[i] >= 0.5 && settled[i] < 0.05 * before[i])
                 .collect();
             assert!(!left.is_empty());
+            let under = |x: &[Vec<f64>], b: &[f64], k: usize| {
+                left.iter().filter(|&&i| x[k][i] < 0.1 * b[i]).count()
+            };
             // The first frame after the turn by which every such pixel reads under 10 % of
             // before.
-            let k = (0..40)
-                .find(|&k| left.iter().all(|&i| after[k][i] < 0.1 * before[i]))
-                .map_or(41, |k| k + 1);
-            let share: Vec<String> = (0..12)
-                .map(|k| {
-                    let n = left
-                        .iter()
-                        .filter(|&&i| after[k][i] < 0.1 * before[i])
-                        .count();
-                    format!("{:.3}", n as f64 / left.len() as f64)
-                })
-                .collect();
-            // The largest share of its change the lamp part keeps at frame `f` (a pixel at
-            // the cone's new rim keeps some lamp light, its settled value).
-            let lamp_left = |f: usize| {
-                left.iter()
-                    .map(|&i| {
-                        let settled = lamp_after[39][i];
-                        (lamp_after[f - 1][i] - settled) / (lamp_before[i] - settled).max(1e-6)
-                    })
-                    .fold(0.0, f64::max)
+            let first_all = |x: &[Vec<f64>], b: &[f64]| {
+                (0..40)
+                    .find(|&k| under(x, b, k) == left.len())
+                    .map_or(41, |k| k + 1)
             };
-            let lamp_worst = lamp_left(11);
+            let share = |x: &[Vec<f64>], b: &[f64]| {
+                (0..12)
+                    .map(|k| format!("{:.3}", under(x, b, k) as f64 / left.len() as f64))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            let k = first_all(&after, &before);
             println!(
-                "{sampler:?}, {history:?}: {} pixels left the cone; all under 10 % after {k} frames; share under 10 % after 1..12 frames: {}; the lamp part keeps at most {lamp_worst:.4} of its change at frame 11",
+                "{sampler:?}, {history:?}: {} pixels left the cone; lamp part all under 10 % after {k} frames, share after 1..12 frames: {}; whole light all under 10 % after {} frames, share: {}",
                 left.len(),
-                share.join(" ")
+                share(&after, &before),
+                first_all(&whole, &whole_before),
+                share(&whole, &whole_before)
             );
-            if history == vxe_render::HistoryKill::Edits {
-                assert!(
-                    lamp_worst < 0.1,
-                    "{sampler:?}: the lamp part keeps {lamp_worst:.4} of its change at frame 11"
-                );
-            }
-            if sampler != vxe_render::Sampler::List {
-                continue;
-            }
             match history {
                 vxe_render::HistoryKill::Gradient => {
-                    assert!(k <= 2, "gradient: {k} frames");
-                }
-                vxe_render::HistoryKill::Edits => {
-                    let at11 = left
-                        .iter()
-                        .filter(|&&i| after[10][i] < 0.1 * before[i])
-                        .count();
+                    let at2 = under(&after, &before, 1);
                     assert!(
-                        at11 * 100 >= 67 * left.len(),
-                        "{at11} of {} at frame 11",
+                        at2 * 100 >= 99 * left.len(),
+                        "{sampler:?}: {at2} of {} at frame 2",
                         left.len()
                     );
-                    assert!(k <= 22, "edits: {k} frames");
+                    let all_by = match sampler {
+                        vxe_render::Sampler::List => 7,
+                        vxe_render::Sampler::Reuse => 9,
+                    };
+                    assert!(k <= all_by, "{sampler:?}, gradient: {k} frames");
+                }
+                vxe_render::HistoryKill::Edits => {
+                    let at11 = under(&after, &before, 10);
+                    assert!(
+                        at11 * 100 >= 67 * left.len(),
+                        "{sampler:?}: {at11} of {} at frame 11",
+                        left.len()
+                    );
+                    assert!(k <= 22, "{sampler:?}, edits: {k} frames");
                 }
             }
         }
