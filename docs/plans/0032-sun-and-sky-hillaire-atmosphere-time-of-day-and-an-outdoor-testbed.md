@@ -15,6 +15,12 @@
 > time of day is a parameter the game sets; Hillaire 2020 with per-frame LUTs; the sun's shadow
 > is one per-pixel ray continued into the far field later; every toggle shows its mode in the
 > window; readings on both adapters.
+> **Amended:** 2026-10-22 (owner): measure the worst daylight case instead of hoping. A new
+> dev Phase 8 adds seeded integer trees to the outdoor source, a forest spawn and a fixed-sun
+> flag, a headless test that a tree's shadow travels with the sun, the golden
+> `outdoor_forest_sunset.png`, and forest-against-open readings at sun elevations 60 and 10
+> degrees on both adapters. The owner's check moves to Phase 9 and gains the forest. Phases 1
+> to 7 are unchanged.
 > **Starts after:** [Plan 0024](done/0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md)
 > and [Plan 0029](0029-indirect-light-probe-volume.md) close. This plan is drafted against Plan
 > 0024's branch as of 2b08d42 (`Frame`, `Lighting`, `light.wgsl`, `temporal.wgsl`,
@@ -38,6 +44,8 @@ with a cave mouth that leads into a roofed chamber. `F8` switches between the ca
 and the outdoors, `,` and `.` step the time of day, and the mode banner shows both. The first
 thing a reader sees is Phase 1's headless golden of an empty world under a noon sky. In the
 window they see Phase 3's hills under that sky, then Phase 5's sunlit hills with soft shadows.
+Phase 8 (an amendment, owner, 2026-10-22) plants a seeded forest on the hills and reads the
+worst daylight case, a forest under a low sun, on both adapters.
 
 ## Context & problem
 
@@ -119,6 +127,10 @@ We build ADR-0026's atmosphere and ADR-0027's directional light in `vxe-render`,
    `--source cave|level|outdoor`, an `F8` key that cycles the source in process, and a
    time of day owned by the testbed: `--time HH:MM`, `,` and `.` step an hour, and `/` runs or
    pauses the cycle. The mode banner shows the source, the time and the exposure.
+   *Amended 2026-10-22 (owner):* `apps/flythrough/src/trees.rs` scatters seeded integer trees
+   over the hills (a `bark` trunk and a half-filled `leaf` canopy) at `--trees
+   none|sparse|forest`, with a `forest` spawn and a fixed sun (`--sun EL,AZ`) for the
+   readings (Phase 8). The engine sees voxels and materials. Nothing in `crates/` names a tree.
 
 We rejected Bruneton's tables, an analytic sky and a per-pixel atmosphere march (ADR-0026), and
 a shadow heightmap, cascaded shadow maps and the sun as an RIS candidate (ADR-0027). For the
@@ -287,7 +299,7 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
 - **Owner skill:** dev
 - **What:** `Lighting::exposure` becomes `Exposure`: `Manual(f32)`, with 1.0 the default, or
   `Auto { key, min, max, speed }`. The testbed defaults are 0.18, 1e-4, 4.0 and 1.5 per
-  second, all guesses that Phase 8 judges. A storage buffer holds `[current, previous]`
+  second, all guesses that Phase 9 judges. A storage buffer holds `[current, previous]`
   exposure. The light pass multiplies every irradiance it stores by `current`. The temporal
   pass multiplies history by `current / previous`, and the moments by its square. The
   composite multiplies emission, sky and discs by `current`, and the probe gather's indirect
@@ -445,19 +457,134 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
      outdoor mirror's live bytes at frame 3000 go in `nfr.md` §3. The outdoor autopilot's
      streaming line p50 and p99 go in §5.
 
-### Phase 8: The owner's windowed check
+### Phase 8: Trees, the shadow that travels with the sun, and the forest at low sun
+*Amendment 2026-10-22 (owner): a new phase. The per-pixel sun ray (ADR-0027) costs nothing per
+object, but foliage defeats the empty-space skip (partially filled masks) and a low sun sends
+long grazing rays through many canopies. This phase builds that scene and reads it instead of
+projecting it.*
+- **Owner skill:** dev
+- **What:**
+  - **The scatter.** `apps/flythrough/src/trees.rs`, used by `OutdoorSource` when its
+    `trees: TreeDensity` is not `None`. The xy plane is cut into scatter cells of `TREE_CELL`
+    = 48 voxels (4.8 m). Each cell draws from an integer hash of `(seed, cell x, cell y)` (no
+    float anywhere): a tree stands when `hash & 255 < keep`, with `keep` 24 for `sparse`
+    (about 9 % of cells) and 240 for `forest` (about 94 %). Its trunk axis sits at the cell
+    origin plus `8 + (bits mod 32)` on each axis. Its trunk radius is 2 or 3 voxels, its trunk
+    height 50 to 89 voxels, and its canopy radius 18 to 29 voxels, all from further bits of the
+    same hash. The base is `h` at the trunk's axis column. The trunk is `dx^2 + dy^2 <= rt^2`
+    in `i64`, of a new `bark` row, from 4 voxels under the lowest `h` over its footprint (no
+    trunk floats on a slope) to `base + height - 1`. The canopy is `dx^2 + dy^2 + dz^2 <=
+    rc^2` in `i64` around `(axis, base + height)`, of a new `leaf` row, keeping a voxel when
+    an integer hash of `(seed, x, y, z)` has `& 255 < leaf_fill`, default `LEAF_FILL` = 128
+    (half the voxels, a noise of partially filled 2^3 blocks: the walk's worst case by
+    design). Bark wins over leaf. A chunk rasterizes every tree whose reach (its canopy
+    radius past its axis) overlaps its footprint. No tree's axis lies within 120 voxels of
+    `MOUTH`, within 60 voxels of the xy segment from the `outside` spawn's column to `MOUTH`,
+    or within 10 voxels of `FOREST` (below). `bark` and `leaf` are appended after `grass`
+    and `soil`, so every earlier id keeps its meaning. `trees.rs` also exposes the
+    single-tree builder the test below uses, with `leaf_fill` 256 for a solid canopy.
+  - **The flags and the banner.** `--trees none|sparse|forest`, default `none`, so Phase 3's
+    pinned hash and bars and Phase 7's four goldens hold as approved. `--leaf-fill N`
+    (1 to 256, default 128). A key cycles the density in process through `F8`'s rebuild path
+    (dev picks a free key, the README names it). The banner's source text reads `outdoor,
+    trees forest`. `--spawn forest` stands at a fixed column `FOREST`, pinned in
+    `outdoor.rs` at least 400 voxels from `MOUTH`, 2 m above the ground, facing +y (north),
+    pitched 10 degrees down. `--sun EL,AZ` (degrees, azimuth clockwise from north, so 180 is
+    south) fixes the sun's direction, keeps the moon opposite, and stops `/`, `,` and `.`
+    from moving it. The banner's time reads `sun 10/180 fixed` in its place.
+  - **The step count.** The `--view steps` exit line and the HUD's steps row gain the
+    directional shadow ray's mean and p99 steps, as they report the lamp's shadow rays.
+- **Files touched:** new `apps/flythrough/src/trees.rs`, `outdoor.rs`, `lib.rs` (the `bark`
+  and `leaf` rows), `main.rs` (flags, key, spawn, fixed sun, steps line), `hud.rs`,
+  `crates/vxe-render/src/marcher.rs` and `crates/vxe-render/src/shaders/light.wgsl` (the
+  directional ray's steps beside the lamp's), `apps/flythrough/tests/{determinism.rs,
+  outdoor.rs, lights.rs, golden.rs}`, new golden `outdoor_forest_sunset.png`, the root
+  `README.md` (flags, key), `docs/nfr.md` §2 and §3.
+- **Done when:**
+  1. **The forest is deterministic.** With `--trees forest`, hashes of the chunks over a 4 x 4
+     x 4 block around the `FOREST` spawn chunk, generated serially and on 8 threads in reverse
+     order, are equal, and the hash is pinned beside Phase 3's. Phase 3's `--trees none` hash
+     is unchanged.
+  2. **The trees are what the formula says.** For 16 seeded scatter cells where a forest tree
+     stands, every voxel of the trunk's axis column from `h + 1` to `base + height - 1` is
+     `bark`; the voxel `rc + 1` above the canopy's centre is air; and the canopy's `leaf`
+     count is within 3 % of half the count of its sphere's lattice points outside the trunk
+     (the test counts both; at the smallest canopy, about 24 400 points, the binomial standard
+     deviation of a half-keep is about 78, under 0.4 %). No `bark` or `leaf` voxel lies
+     within 120 voxels of `MOUTH` in xy.
+  3. **The banner and the flags.** The density key moves the banner through `trees none`,
+     `trees sparse`, `trees forest` and back. The parse test pins `--trees`, `--leaf-fill`
+     (refuses 0 and 257), `--spawn forest` and `--sun 10,180` (refuses an elevation outside
+     [-90, 90] and an azimuth outside [0, 360)). With `--sun` the banner reads `sun 10/180
+     fixed`, and `/` and `.` leave the sun's direction unchanged.
+  4. **The shadow travels with the sun** (headless, lavapipe, Phase 5's conditions: lamp off,
+     no emissive material, no sky light, filter off, manual exposure 1.0, `E_sun = (1, 1, 1)`,
+     the real angular radius, mean over 16 frames). The scene is a level of a 1024 x 1024
+     voxel rock floor whose top is z = 0, and one tree from the builder: trunk radius 2 on
+     column (0, 0) up to z = 80, a solid canopy (`leaf_fill` 256) of radius 12 on voxel
+     (0, 0, 80). The voxel set is symmetric about the point (0.5, 0.5, 80.5), and parallel
+     light projects a centrally symmetric body to a shadow centred on its centre's
+     projection. The camera is at (0.5, 0.5, 250.5) looking straight down, screen right +x,
+     640 x 360, so the floor is mapped affinely at 0.76 voxels a pixel (`2 x 250.5 x
+     tan(0.5) / 360`). Each floor pixel's occlusion is `w = 1 - I / I_open`, with `I_open`
+     the same pixel in a run without the tree. The centroid of `w` is taken over floor pixels
+     at least 4 voxels to either side of the shadow's axis (the line through (0.5, 0.5) away
+     from the sun). That band holds the trunk's shadow, which lies within 2.55 voxels of the
+     axis, and removing it keeps the canopy shadow's centroid, because the band is symmetric
+     about the shadow ellipse's centre.
+     - Sun at elevation 60 degrees, azimuth 180: the centroid lies at `(0.5, 0.5 + 80.5 /
+       tan 60) = (0.5, 46.98)` within 1.5 voxels on each axis.
+     - Sun at elevation 30 degrees, azimuth 270: the centroid lies at `(0.5 + 80.5 / tan 30,
+       0.5) = (139.93, 0.5)` within 1.5 voxels on each axis.
+     - The sum of `w` at 30 degrees over the sum at 60 degrees is `sin 60 / sin 30 = 1.732`
+       within 10 %. The ellipse's axis along the light is `R / sin(e)` and across it `R`, and
+       the removed band scales the same way.
+     - The tolerance covers the pixel's 0.76 voxels and 16 frames of penumbra noise, which is
+       about 1.5 voxels wide at 30 degrees (`80.5 / sin 30 x 2 x 4.65e-3`). The geometry
+       clears both cases. The canopy hides from the camera only floor points within about
+       19 voxels of the axis (`12.5 / (1 - 80.5 / 250.5)` = 18.4). The 60-degree ellipse
+       spans `46.48 +- 13.86` (32.6 to 60.3) along +y, and the 30-degree one `139.43 +- 24`
+       (115.4 to 163.4) along +x, inside the view's half-extents of 136.9 and 243.3 voxels at
+       the floor.
+  5. **The forest golden.** `outdoor_forest_sunset.png`: seed 1, `--spawn forest --trees
+     forest --time 17:45`, the default lighting tier, 64 settled frames, auto exposure with
+     instant adaptation, blessed on lavapipe at 320 x 180 under the plan's floor (at most
+     0.1 % of pixels differ by more than 2/255). The same test renders the pose with
+     `--trees none` and finds the mean luminance of the ground pixels (hit material `grass`
+     or `soil`) lower in the forest image. That is a property, and the ratio goes in the log.
+  6. **The worst daylight case, read on both adapters** (`--adapter`), quiet box, median of
+     the last 30 of 3000 frames, three runs each: `flythrough --source outdoor --headless
+     --seed 1 --render 1920x1080 --frames 3000 --spawn forest --sun EL,180 --trees T` for
+     `EL` in {60, 10} and `T` in {none, forest}. Each run reads the light pass's GPU time and
+     the frame's GPU time (the first pass's begin timestamp to the last pass's end). A
+     separate `--view steps` run of each reads the directional shadow ray's mean and p99
+     steps. `nfr.md` §2 gains a table of these readings, labelled by adapter (NVIDIA GeForce
+     RTX 3080 Laptop GPU, dev reference; AMD Cezanne iGPU on RADV, the slow adapter), with
+     driver, commit and the ratio forest/open per elevation and adapter. The mirror's live
+     bytes at frame 3000 for `none` and `forest` go in §3. **There is no bar.** The cost of a
+     ray threading a half-filled canopy has no closed form this plan trusts, and a number
+     would be invented. The property is that the readings and the ratios are recorded, and
+     the log states each light-pass reading against §2's 6.0 ms line and each frame reading
+     against 16.6 ms as under or over. An over is a close trigger for the architect, not an
+     unmet done-when.
+
+### Phase 9: The owner's windowed check
 - **Owner skill:** human
 - **What:** the owner flies the outdoor source from noon through sunset to night with `/` and
   the `.` key, walks into the cave mouth and out again at noon, digs a skylight into the
   chamber, switches sources with `F8`, and tries `--sun-radius` at 0.27, 1 and 3 degrees,
-  `--exposure` auto and fixed, and the lighting tier. A ping reaches the owner when the
-  window is ready (memory: batch the live checks).
+  `--exposure` auto and fixed, and the lighting tier. *Amended 2026-10-22 (owner):* the owner
+  also stands at `--spawn forest --trees forest` and runs the day with `/` from 15:00 to
+  sunset, then holds `--sun 60,180` and `--sun 10,180`, and tries `--leaf-fill` at 64, 128
+  and 256. A ping reaches the owner when the window is ready (memory: batch the live checks).
 - **Files touched:** this plan's log, then ADR-0026's and ADR-0027's Outcomes at the close.
 - **Done when:** the owner has recorded a verdict on the sky's colour at noon, sunset and
   night, on the cave mouth's transition (too dark, right or too bright inside), on the
   exposure's speed and night darkness (the `min`, `max` and `speed` values to keep), on the
   sun radius to default, and on whether a dug skylight lights the chamber on the next frames
-  without a visible lag.
+  without a visible lag. *Amended 2026-10-22 (owner):* also on whether every tree's shadow
+  travels with the sun without crawling or smearing at sunset, the leaf fill to keep, and the
+  outdoor source's default `--trees`.
 
 ## Data shapes
 
@@ -518,6 +645,8 @@ light and probe passes, not per frame.
 | §3 Everything else in VRAM | 1.5 GB | +0.56 MB (table above) | `Frame::frame_bytes` printed by the autopilot |
 | §3 World in VRAM | 3 GB | the outdoor source holds fewer `Full` bricks than the cave (a terrain surface against a volume of caverns) but one record per resident air chunk; unknown until read | the mirror's live bytes at frame 3000 of the outdoor run |
 | §5 Streaming line | 1.0 ms | unchanged code; a new scene, with uniform-air chunks above the hills cheap to generate and narrow | the outdoor autopilot's render-thread timers, p50 and p99 |
+| §2 Lighting and the frame, forest at low sun (amendment 2026-10-22, owner) | 6.0 ms; 16.6 ms | no projection: a half-filled canopy defeats the 2^3 skip, and a ray rising at 10 degrees crosses the canopy layer (about 21 to 118 voxels above the ground) over `97 / tan 10 = 550` voxels of ground distance | Phase 8's eight configurations (two elevations, two densities, two adapters), the forest/open ratio, the directional ray's steps |
+| §3 World in VRAM, forest (amendment 2026-10-22, owner) | 3 GB | a guess: a mean canopy of radius 23.5 (54 400 voxels) touches about 110 to 215 bricks, every one of them `Full` at a half fill, and about 1.7 trees stand per chunk column (`64^2 / 48^2 x 0.94`), so 185 to 360 more bricks a surface column; over the `r_lod` disc's 1810 columns at 128 to 192 B a brick, 0.04 to 0.13 GB | Phase 8's live bytes, `none` against `forest` |
 
 On the slow adapter (`nfr.md` §1) every line projects two to four times the dev box. Plan
 0024's half-resolution light pass alone read 1.85 to 2.92 ms on the dev box. With Plan 0029's
@@ -544,7 +673,28 @@ hand.
 - **History and a moving sun.** A running day cycle at the testbed's default (1200 s per
   day) turns the sun by its 4.65 mrad radius about every 0.9 s (`2 pi / 1200 = 5.2 mrad/s`),
   so the bit is up about 11 frames of every 54 at 60 fps. A faster cycle keeps history short
-  and the penumbra noisier. The owner judges this at Phase 8.
+  and the penumbra noisier. The owner judges this at Phase 9.
+- **Foliage step counts** (amendment 2026-10-22, owner). A canopy at `LEAF_FILL` 128 has no
+  empty 2^3 block inside it, so a ray in it steps voxel by voxel. Each voxel blocks with
+  probability one half, so a ray that enters a canopy usually stops within a few voxels. The
+  cost lies in rays that thread the gaps between canopies at brick and 2^3 level, in grazing
+  primary rays, and in the lit pixels' sun rays that must clear every canopy toward a low sun.
+  A sparser fill costs more per canopy and a clumped one less, which `--leaf-fill` lets the
+  owner read. If Phase 8 reads the forest at 10 degrees over the line, the knobs are the
+  coarse walk for the directional ray (already named above) and a clumped leaf fill in the
+  content, not a different shadow technique (ADR-0027).
+- **The time of day resets history across a forest** (amendment 2026-10-22, owner). A canopy
+  80 voxels up casts its shadow `80 / tan(e)` away, and that tip moves at `80 x de/dt /
+  sin^2(e)`. At the default day length the sun's elevation moves at up to 5.2 mrad/s, so the
+  tip moves about 14 voxels a second at 10 degrees (`80 x 5.2e-3 / 0.0302`) and about 195 a
+  second at 2.65 degrees (`/ 0.00214`), some 3 voxels a frame at 60 fps. Every turn of one
+  angular radius raises the "static light changed" bit for every pixel (about every 0.9 s),
+  and `,` or `.` jumps the sun by up to 15 degrees at once. At sunset the forest floor's
+  penumbrae are close to one-frame noise while the cycle runs. Phase 9 judges it; a per-pixel
+  history test against the directional term alone is the followup if the eye asks.
+- **Swaying vegetation is out of scope** (amendment 2026-10-22, owner). The trees are static
+  voxels of the testbed's source. Moving foliage is an entity concern (voxel models, M6), not
+  an edit stream.
 - **The upscaler rejects history on a miss** (Plan 0030 Phase 2's rule). A sky pixel is then
   unaccumulated, which is harmless for a smooth sky but may shimmer at the sun disc's edge
   and the horizon. If the eye sees it, the followup is reprojection by direction for misses in
@@ -553,7 +703,7 @@ hand.
   paper's width; a wider table is a measured change.
 - **Units are a convention, not physics.** One frame radiance unit is "about 30 cd/m^2", so
   that the ore's 1.6 and a sun of 3000 sit in their real ratio. Both numbers are guesses the
-  owner tunes at Phase 8. The engine documents that emission and illuminance share units and
+  owner tunes at Phase 9. The engine documents that emission and illuminance share units and
   defines nothing else.
 - **Translucent layers** are lit by the headlamp's cone only (Plan 0024). In sunlight, glass
   and water render unlit by the sun until Plan 0034.
@@ -579,6 +729,9 @@ hand.
 - **Weather** (Plan 0036): no rain, snow, wind, wet surfaces or lightning. The atmosphere's
   parameters are fixed per run here, though the LUTs rebuild on change.
 - **Flowing liquids**, a later deterministic simulation plan.
+- **Vegetation in the engine, or moving vegetation** (amendment 2026-10-22, owner). Trees are
+  testbed content in `apps/flythrough`. Swaying foliage, wind and tree entities belong to M6's
+  voxel-model entities and Plan 0036's wind.
 - **Stars, a moon phase shape, eclipses, bloom, lens flare**, and histogram percentile
   clipping in the exposure.
 - **A sun query in `vxe-world`** for gameplay ("is this voxel in sunlight"). That would be a
@@ -601,7 +754,8 @@ hand.
 | 5: The sun and the moon as the light pass's directional sample | dev | not started | |
 | 6: Sky light: the probes on a miss, and one sky ray beyond them | dev | not started | |
 | 7: The four goldens, the HUD rows and the readings | dev | not started | |
-| 8: The owner's windowed check | human | not started | |
+| 8: Trees, the shadow that travels with the sun, and the forest at low sun | dev | not started | |
+| 9: The owner's windowed check | human | not started | |
 
 ### Notes
 
@@ -627,6 +781,6 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   Model for Full Spectral Sky-Dome Radiance"), and Lagarde and de Rousiers 2014 ("Moving
   Frostbite to Physically Based Rendering", for exposure and sun units). The architect writes
   it with the batch.
-- Reprojection by direction for miss pixels in Plan 0030's upscaler, if Phase 8 sees the sky
+- Reprojection by direction for miss pixels in Plan 0030's upscaler, if Phase 9 sees the sky
   shimmer.
 - Stars and a moon phase shape, for a night-sky plan.

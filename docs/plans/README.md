@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0037** (ADRs are a separate sequence; next free there is **0032**).
+**Next free number: 0038** (ADRs are a separate sequence; next free there is **0033**).
 
 ## Active roster
 
@@ -18,6 +18,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0034](0034-water-surface-waves-reflection-refraction-underwater-fog.md) | Liquid surfaces: analytic waves, traced reflection and refraction rays, and absorption under the surface | approved | M10, ADR-0029 (proposed). After Plan 0032; its upscaler half after Plan 0030. |
 | [0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md) | Aerial perspective over the near and far field, and volumetric clouds that shadow the ground | approved | M10, ADR-0030 (proposed). After Plans 0032 and 0033. |
 | [0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md) | Weather: rain, snow, wind, wet surfaces and snow cover, lightning | approved | M10, ADR-0031 (proposed). After Plan 0035. |
+| [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: a star field, the moon's phases, sky bodies the game lists, and an aurora that lights the ground | draft | M10, ADR-0032 (proposed). After Plans 0032 and 0035. |
 <!-- roster:end -->
 
 ## Recently closed

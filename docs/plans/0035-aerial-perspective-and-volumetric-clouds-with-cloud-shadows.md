@@ -523,7 +523,7 @@ was measured, as with every render plan since Plan 0028.
 ## What this plan does NOT do
 
 - **Plan 0032:** the transmittance, multi-scattering and sky-view LUTs (this plan builds the
-  aerial-perspective volume, as ADR-0026 says), the sun, the moon, stars, time of day, the sun's shadow ray, the sky in the probes and the
+  aerial-perspective volume, as ADR-0026 says), the sun, the moon, time of day, the sun's shadow ray, the sky in the probes and the
   outdoor testbed source. This plan reads them, and darkens the sun sample and the probes'
   sky.
 - **Plan 0033:** the far field. This plan clips the march against its hits and applies the

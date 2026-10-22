@@ -26,6 +26,13 @@
 > extends). Drafted against Plan 0024's `Frame`, hit buffer, `light.wgsl` and `Modes` banner,
 > and Plan 0032's `OutdoorSource`, `--source outdoor` and directional sample as drafted; the
 > names dev finds in the tree win.
+> **Amended:** 2026-10-22 (owner): the scene includes Plan 0032 Phase 8's seeded forest
+> (amended into that plan the same day). Phase 2's coarse path carries the trees under the
+> half rule, its census counts how many trunks and canopies survive at levels 1 to 3, and a
+> headless check pins a canopy-sized block and a thin trunk at level 1 with worked
+> arithmetic. Phase 7 adds far-field low-sun readings with the forest on and off on both
+> adapters and an observation of whether far tree shadows survive. Phase 8 adds the owner's
+> judgement of distant forest shadows at sunset.
 
 ## TL;DR
 
@@ -82,6 +89,21 @@ The numbers the plan rests on (arithmetic, `chunks_in_ball` and the disc of the 
   plus 1.2 MB of tables, against `nfr.md` §3's 3 GB line, which already names "LOD to about
   1 km". RAM: the same clip chunks at 8 KiB of slots plus about 150 B a packed brick, about
   0.2 GB against the 4 GB line; uniform clip chunks are a few bytes.
+
+- **The forest at distance** (amendment 2026-10-22, owner). Plan 0032 Phase 8's trees stand
+  one per 48-voxel scatter cell at `--trees forest` (about 94 % kept), with trunks of radius
+  2 or 3, canopies of radius 18 to 29 and half their canopy voxels kept by a hash. A level-`k`
+  clip chunk's footprint holds about `(64 x 2^k / 48)^2 x 0.94` trees: 6.7, 26.7 and 107 at
+  levels 1 to 3. At about 54 400 voxels a mean tree, its exact half-rule cells cost about
+  3.7e5, 1.5e6 and 5.8e6 voxel samples a surface clip chunk; at Phase 2's 3.8 % guess of a
+  face (45, 22 and 11.5 surface clip chunks a second at 10 m/s) that is about 1.2e8 samples
+  a second, some 1.7 workers at `nfr.md` §5's rate, against 0.3 for the bare hills (a guess
+  until Phase 2 reads it). Under the half rule as this plan's data shape states it (at least
+  4 of 8 children, level by level), a canopy interior at half fill keeps a level-1 cell with
+  probability `(70 + 56 + 28 + 8 + 1) / 256 = 163 / 256 = 63.7 %`, a level-2 cell with
+  `P(Bin(8, 0.637) >= 4) = 87.8 %` and a level-3 cell with `P(Bin(8, 0.878) >= 4) = 99.9 %`:
+  canopies survive and grow denser with distance. A radius-2 trunk keeps 3 level-1 cells per
+  2-voxel slab at the alignment Phase 2 pins, and none at level 2 (beyond about 243 m).
 
 The consumer requirement is general (the owner's outdoor capability); `project-context.md`'s
 Rendering row sets the look (smooth, not visible cubes). The `nfr.md` figures touched are §2
@@ -180,9 +202,20 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
   by Plan 0028 class, projected mirror bytes (pool by bin, records, tables), CPU bytes, and
   the coarse generation rate in cells and clip chunks per second per thread; a property test
   compares the source's level-1 cells with the half-rule downsample of its full-detail
-  generation over a test region.
+  generation over a test region. *Amended 2026-10-22 (owner):* with trees on (Plan 0032 Phase
+  8), every cell inside a tree's bounding box takes the half rule over the tree's full-detail
+  voxels (`trees.rs`'s per-voxel function), the same reduction `MipRule::Half` applies, so a
+  tree downsamples exactly as an edit's overlay would; terrain cells keep the centre-sampled
+  rule. A clip chunk that a tree's box reaches is never answered `Uniform(air)`.
+  `world_budget --clip LEVELS,R --trees forest` also prints, per level, the trees whose axis
+  lies in that level's ring (from its switch distance to the next level's, or to the far
+  limit), the share whose trunk keeps at least one `bark` cell under its canopy, the share
+  whose canopy keeps at least one `leaf` cell, and the mean ratio of a canopy's solid cell
+  volume (`8^k` voxels a cell) to its full-detail `leaf` volume.
 - **Files touched:** `apps/flythrough/src/outdoor.rs` (Plan 0032's source; the name follows
-  that plan), `apps/flythrough/examples/world_budget.rs`, `crates/vxe-world/src/census.rs`,
+  that plan), `apps/flythrough/src/trees.rs` (amendment: the coarse path's tree cells),
+  `apps/flythrough/examples/world_budget.rs`, `crates/vxe-world/src/census.rs`,
+  `crates/vxe-world/tests/clip.rs` (amendment: the canopy and trunk check),
   `apps/flythrough/tests/far_field.rs`, `docs/nfr.md` §3 and §5 (projection rows, labelled
   arithmetic).
 - **Done when:** the census prints for levels 1 to 3 at `r_clip` 22 around the outdoor spawn,
@@ -195,6 +228,30 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
   a cell where the downsample changes between solid and air, and records the share of cells
   that differ, and the share of exposed cells whose material differs; the generation rate is
   recorded on the dev box with its load.
+  *Amended 2026-10-22 (owner):*
+  1. **A canopy-sized block and a thin trunk at level 1** (`half_rule_canopy_block_and_trunk`,
+     headless, `MipRule::Half` on one chunk of air; level 1 is one reduction of voxels, so
+     every reading of the rule agrees there). A solid `leaf` block at local `[8, 32)^3` (24
+     voxels, aligned to the 2-voxel cells) gives exactly `12^3 = 1728` level-1 `leaf` cells
+     and no other solid cell. The same block at `[9, 33)^3` gives exactly 2057: on each axis
+     11 cells are full (`[10, 32)`) and 2 hold one voxel of 2 (`[8, 10)` and `[32, 34)`), a
+     cell's solid children number the product of its axes' counts, and the rule keeps a cell
+     with at least 4 of 8, so a cell keeps when at most one axis is a boundary: `11^3 + 3 x 2
+     x 11^2 = 1331 + 726`. A `bark` trunk of the columns `dx^2 + dy^2 <= 4` around local
+     column (32, 32), from z = 0 to 32, gives exactly 48 level-1 cells: the cells (16, 16),
+     (15, 16) and (16, 15) hold 4, 3 and 3 of their 4 columns (8, 6 and 6 children), the
+     other cells it touches hold one column (2 children), and there are 16 slabs. At level 2
+     the same trunk gives no solid cell: each level-2 cell over it holds one solid level-1
+     column through its two level-1 slabs, 2 of 8 children.
+  2. **Tree cells are exact.** `coarse_cells_sit_within_a_cell_of_the_downsample`, run again
+     with `--trees forest` over the same region, finds every cell inside a tree's bounding box
+     equal to the half-rule downsample at levels 1 to 3.
+  3. **The forest census** at levels 1 to 3 around the `FOREST` spawn is recorded in the log
+     with the bare hills' beside it: the trunk and canopy survival shares, the canopy volume
+     ratios against this plan's interior arithmetic (63.7 %, 87.8 % and 99.9 % of a canopy's
+     interior cells kept, so at most 1.27, 1.76 and 2.0 times the half-filled leaf volume),
+     the forest's clip bytes and the coarse generation rate with trees. These are
+     observations; the bars of Phase 7 read the bare hills (below).
 
 ### Phase 3: Clip residency on the streamer
 - **Owner skill:** dev
@@ -297,6 +354,11 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
   (`far field on, 3 levels to 1024 m, normals gradient`); HUD rows for clip chunks resident per
   level against their ball, clip bytes live and the overlay; the outdoor autopilot flight at 10
   m/s with the far field on and off; the readings below on the NVIDIA card and the AMD iGPU.
+  *Amended 2026-10-22 (owner):* `--spawn vista` stands over Plan 0032's `FOREST` column, 30 m
+  above the ground (above every canopy, whose tops reach at most 11.8 m), facing +y (north)
+  with pitch 0, so the forest runs to the horizon under the camera. With `--frames`, an exit
+  line (beside the steps line) prints, per hit level 0 to 3, the count of ground pixels (hit
+  material `grass` or `soil`) and their mean linear luminance before the tone map.
 - **Files touched:** `apps/flythrough/src/{main.rs, hud.rs}`, `apps/flythrough/tests/hud_golden.rs`,
   the root `README.md` (the flags and keys), `docs/nfr.md` §2, §3 and §5.
 - **Done when:** a test presses the far-field key three times and finds `Modes::line()` naming
@@ -311,6 +373,26 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
   spawn looking at the horizon at 1080p the march GPU time with the far field on and off
   (bar: at most 3.0 ms on the NVIDIA card, `nfr.md` §2's line; recorded on the iGPU) and the
   light pass with the sun at 45 and 10 degrees elevation, on both adapters, labelled by adapter.
+  *Amended 2026-10-22 (owner), the forest under a low sun at distance:*
+  1. **Readings on both adapters** (NVIDIA GeForce RTX 3080 Laptop GPU, dev reference; AMD
+     Cezanne iGPU on RADV, the slow adapter; quiet box, median of the last 30 of 3000 frames,
+     three runs each): `flythrough --source outdoor --headless --seed 1 --render 1920x1080
+     --frames 3000 --spawn vista --sun 10,270 --far-field F --trees T` for `F` in {on, off}
+     and `T` in {none, forest}. Each reads the march, the light pass and the frame's GPU time
+     (first pass's begin to last pass's end), and a separate `--view steps` run reads the
+     directional shadow ray's mean and p99 steps. They go in `nfr.md` §2 beside Plan 0032
+     Phase 8's near-field forest table, with the ratios forest/open (far field on) and on/off
+     (forest). The clip live bytes of the forest run are recorded against the 0.5 GB line as
+     under or over. **No bar**: the bars above read the bare hills, and a forest bar would be
+     invented. The march's 3.0 ms bar does not apply to the forest runs; the log states each
+     against it as under or over.
+  2. **Do far tree shadows survive? An observation.** In the four runs above, with the
+     exposure fixed at the value auto settles to in the open, far-field-on run (logged), the
+     exit line's mean ground luminance per hit level goes in the log for forest and none, and
+     their ratio per level (1.0 at a level means no tree shadow there survives; Phase 2's census
+     says how many trunks and canopies the level holds). The shaded and `levels` views of the
+     forest run are saved under `target/` and named in the log. The log states, per level,
+     whether trunk shadows and canopy shadows are visible in the saved image.
 
 ### Phase 8: The owner's windowed outdoor flight
 - **Owner skill:** human
@@ -318,10 +400,15 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
   horizon at each switch distance in the `levels` view and shaded, slow and 30 m/s passes along
   the terrain watching for seams and popping, far normals `gradient` against `face`, and one
   flight at `r_full` 24 against 16 (level 1 then starts at 134 to 141 m, about 1.5 px a cell at
-  1080p, and the near tier's cost is the census's).
+  1080p, and the near tier's cost is the census's). *Amended 2026-10-22 (owner):* from
+  `--spawn vista --trees forest`, the owner runs the day with `/` from 16:00 through sunset
+  and holds `--sun 10,270`, in the shaded and `levels` views, judging distant forest shadows.
 - **Files touched:** this plan's log.
 - **Done when:** the owner has recorded in the Implementation log a verdict on the seams and
   popping, the default far normal mode, and whether the outdoor `r_full` default stays 16.
+  *Amended 2026-10-22 (owner):* also a verdict on distant forest shadows at sunset: whether
+  they read at each level band, whether far canopies look too dense or too sparse, and
+  whether thin trunks vanishing beyond about 243 m is visible.
 
 ## Data shapes
 
@@ -365,6 +452,9 @@ pub trait WorldSource {
 | §5 Residency latency | 500 ms p95 near | unchanged near; ring p95 under 1.28, 2.56, 5.12 s by level (bars) | Phase 7 autopilot, far field on |
 | §2 Primary rays | 3.0 ms | outdoor horizon view, far field on: under 3.0 ms on the NVIDIA card (bar, a guess of +0.3 to 1.0 ms over off); iGPU recorded | Phase 7, timestamps, median of the last 30 of 300 frames, three runs, quiet box, both adapters |
 | §2 Lighting | 6.0 ms | the sun ray grows with the far field, most at low sun; recorded at 45 and 10 degrees | Phase 7, both adapters |
+| §2 Primary rays, lighting and frame, forest at low sun (amendment 2026-10-22, owner) | 3.0 ms; 6.0 ms; 16.6 ms | no projection: canopies keep 64 to 100 % of their interior cells at levels 1 to 3, so a grazing far ray meets denser masks than the bare hills | Phase 7, `--spawn vista --sun 10,270`, far field and forest on and off, both adapters |
+| §3 World in VRAM, forest (amendment 2026-10-22, owner) | 3 GB | a guess: canopies add about 270, 170 and 120 `Full` bricks to a surface clip chunk at levels 1 to 3 (bounded by the canopy layer, 6, 3 and 2 bricks tall), about +0.15 to 0.25 GB, so 0.3 to 0.45 GB for three levels | Phase 2's forest census; Phase 7's forest run, recorded against 0.5 GB |
+| §5 Generation throughput, forest (amendment 2026-10-22, owner) | as above | exact tree cells about 1.2e8 voxel samples a second at 10 m/s, some 1.7 workers (a guess, Context) | Phase 2's forest rate |
 | §2 Streaming line (render thread) | 1.0 ms | clip syncs add uploads of surface clip chunks and table entries; recorded beside off | Phase 7 autopilot timers |
 
 A figure read only on the NVIDIA card is labelled dev reference; the iGPU's readings are the
@@ -373,6 +463,19 @@ is shared DDR4.
 
 ## Risks & open questions
 
+- **Thin trunks vanish and canopies thicken at distance** (amendment 2026-10-22, owner). A
+  radius-2 trunk is gone at level 2 in the alignment Phase 2 pins (beyond about 243 m); a
+  radius-3 trunk or a luckier alignment lasts longer, which the census counts. A half-filled
+  canopy keeps 63.7, 87.8 and 99.9 % of its interior cells at levels 1 to 3 under the
+  level-by-level rule, so far canopies are opaque blobs and their shadows, if anything, too
+  dark. ADR-0028's Decision words the rule as "at least half its volume", which at levels 2
+  and 3 would keep 55 % and 52 % instead (`P(Bin(64, 0.5) >= 32)` and `P(Bin(512, 0.5) >=
+  256)`); this plan's data shape and `ChunkMips` reduce level by level. Phase 8 judges the
+  look; the choice between the two readings is the owner's (open question at the amendment).
+- **Tree cells may be too slow to generate exactly** (amendment 2026-10-22, owner). If
+  Phase 2's forest rate cannot keep the ring latency bars at 10 m/s, the lever is a
+  centre-sampled canopy that keeps a cell by a per-cell hash at the interior shares above,
+  an approximation the property test then bounds instead of matching exactly.
 - **Grazing rays are the step cost.** A ray skimming terrain to the horizon crosses every level
   at brick or cell granularity near the surface; the bound of non-empty chunks helps only rays
   that leave the slab. If Phase 7's march misses its bar, the next levers are a coarser shadow

@@ -522,6 +522,9 @@ set by the game, never by a wall clock in the engine.
 - **Weather** (Plan 0036; ADR-0031): rain, snow, wind, wet surfaces, snow cover and lightning
   as cosmetic client state the game steps, rendered against a fall map traced through the
   mirror and never written as voxels. After Plan 0035.
+- **The night sky** (Plan 0037; ADR-0032, drafted 2026-10-22): a seeded star field, the
+  moon's phases, sky bodies the game lists (a comet's tail, meteors), and an aurora shell whose
+  glow lights the ground through a hemisphere map. After Plans 0032 and 0035.
 - **Flowing liquids** (not drafted): a deterministic cellular flow in `vxe-world` whose steps
   are ops through the log, a later plan with its own ADR.
 - **Headless proof:** each plan's goldens on lavapipe (noon, sunset, night, cave mouth, far
