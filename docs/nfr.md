@@ -158,6 +158,21 @@ a-trous 2.323 to 2.408, composite 1.116 to 1.265, upscale 4.786 to 4.872, sharpe
 upscale line holds on the dev box (upscale, sharpen and composite 0.95 to 0.97 ms at scale
 1.5); on the iGPU the upscale pass alone reads 4.8 ms.
 
+**The upscaler after its rework (Plan 0030 Phase 8, render code at 12c6c57: the 3 x 3
+Gaussian, the Catmull-Rom history fetch, the light-change clip; same command, pose, machines
+and adapter selection as Phase 5, exclusive perf lock, 1-minute load 3.9 to 4.5 on the NVIDIA
+runs and 2.3 to 3.6 on the RADV runs, loaded, indicative):** NVIDIA, scale 1.5: frame 2.727 to
+2.780 ms, hit 0.570 to 0.578, light 0.832 to 0.850, temporal 0.069, a-trous 0.508 to 0.521,
+composite 0.136 to 0.138, upscale 0.544 to 0.556, sharpen 0.075 to 0.076; scale 1 (jitter
+on): frame 5.294 to 5.546, hit 1.257 to 1.317, light 1.857 to 1.952, temporal 0.137 to 0.138,
+a-trous 1.099 to 1.150, composite 0.297 to 0.309, upscale 0.573 to 0.596, sharpen 0.075 to
+0.076. RADV, scale 1.5: frame 18.797 to 18.865 ms (hit 4.078 to 4.126, light 6.729 to 6.755,
+temporal 0.492 to 0.503, a-trous 2.332 to 2.343, composite 1.126 to 1.134, upscale 3.216 to
+3.232, sharpen 0.645 to 0.652); scale 1 frame 38.011 to 38.246 (hit 8.934 to 8.945, light
+15.000 to 15.116, upscale 4.145 to 4.191, sharpen 0.646 to 0.653). Upscale, sharpen and
+composite read 0.755 to 0.770 ms on the dev box at scale 1.5; on the iGPU the upscale pass
+alone reads 3.2 ms.
+
 **The hit pass, split from the shading (dev reference, Plan 0024 Phase 1, same machine,
 exclusive perf lock, 1-minute load 7.3 to 8.0 from other work on the box, not quiet; the
 default look, `flythrough --level --headless --seed 1 --render 1920x1080 --frames 300`, three
@@ -423,7 +438,8 @@ output):** 124 621 440 B at scale 1.5 (1280 x 720 internal): the 86 835 840 B of
 frame at 1280 x 720, plus the composite's `rgba8` target grown to the output size (4 608 000
 B) and two output-size `rgba16float` histories (33 177 600 B); 228 556 800 B at scale 1 with
 the jitter on (195 379 200 B of the frame plus the histories); 195 379 200 B at scale 1 with
-the jitter off, as before.
+the jitter off, as before. Plan 0030 Phase 8 (12c6c57): unchanged at 124 621 440 B at scale
+1.5; the light-change clip adds no target (the upscale pass's settings are a 96 B uniform).
 
 **Readings (dev reference, 2026-10-16, Plan 0001 Phase 4 commit, `flythrough` cave seed 1,
 `cargo run --release -p flythrough --example world_budget`):**

@@ -593,8 +593,8 @@ of Plan 0024 shrink to 44 % at scale 1.5.
 | 4: The sharpening pass and the golden | dev | done: `upscaled.png` blessed (cavity, 256 x 144 -> 384 x 216, 32 frames, jitter on, sharpening 0.5); sharpening 0 writes each byte as its history value times 255, rounded (0 pixels differ); rim pixels (unsharpened 3 x 3 spanning 16/255 or more): 15914, mean absolute luminance gradient unsharpened 22.888, sharpened 24.100; 0 pixels over their unsharpened 3 x 3 maximum by more than 1/255; workspace nextest 593 run, 593 passed, 5 skipped | 11a5bc9 |
 | 5: The readings and the defaults | dev | done: 1080p output, level spawn, release headless, median of last 30 of 300, 3 runs; RTX 3080 Laptop: upscale + sharpen 0.810 to 0.825 ms at 1.5 (0.889 to 0.899 at 1); hit at 1.5 / 1: 0.600 to 0.610 / 1.375 to 1.389 ms (43.5 %); light + temporal + a-trous 1.489 to 1.520 / 3.392 to 3.428 ms (43.8 %); RADV iGPU, no bar: frame 20.149 to 20.876 ms at 1.5, 38.658 to 40.955 at 1; `frame_bytes` 124 621 440 B at 1.5 = 86 835 840 (Plan 0024 frame at 1280 x 720) + 4 608 000 (rgba8 to output size) + 33 177 600 (histories), Phase 3 added no target; fly-through default scale 1.5 | 2a4c72f |
 | 6: A sharper reconstruction and history fetch | dev | done: stripe wall, sharpening 0, arm's length (22.034 px/voxel) / 88 voxels (1.753 px/voxel); N ES 0.798 GE 0.00867 / 0.14138, R 1.186 0.00656 / 0.10586, B 1.718 0.00435 / 0.05063; at 7cc58a4's settings U1 1.465 0.00507 / 0.08105, U1.5 1.630 0.00449 / 0.06147, pan U1 2.020 0.00357, U1.5 2.404 0.00281; shipped U1 1.192 0.00621 / 0.09951, U1.5 1.252 0.00612 / 0.10024 (bars 1.328, 0.00558 / 0.08998; 1.452, 0.00546 / 0.07825), pan U1 1.436 0.00494, U1.5 1.780 0.00454 (bars 1.720, 0.00357; 2.104, 0.00281); still camera from 2 x 2 supersampled upscaled 2.840, bilinear 3.044, native 2.066, from native 2.965, 3.333; flicker at 1.5 off 0.1016/255 0.0029 %, on 0.2752/255 0.6377 %; carve 4749 in box, 0 blend; sideways 67409 of 67443 (99.95 %), 3317 at alpha 1; `upscaled.png` re-blessed (8044 of 82944 pixels, 9.70 %, over 2/255 from the old), rim 16695 px, 25.953 -> 27.469, 0 over max; workspace nextest 596 run, 596 passed, 6 skipped | 76f887f |
-| 7: Light changes and the history weight | dev | done: level spawn, still camera, sweep 0.013 rad a frame (ideal centroid 1.811 px a frame); lag behind the ideal over the last 16 frames: reference 5.38, U1 5.82, U1.5 5.92 (Phase 6's code: 15.39, 15.26); lamp step to 10 %: reference 18 frames, U1 18, U1.5 18 (Phase 6's code: 32, 32); trail 1.121 % (U1), 2.605 % (U1.5) of the reference's dark pixels (Phase 6's: 12.198, 12.319 %); wobble over one jitter cycle reference 0.099/255, U1 0.858, U1.5 1.711; still alpha 0.1 kept (1/16: still camera 2.985 against bilinear 3.044, flicker on 0.2058/255 0.4326 %, wobble 0.653 / 1.285); Phase 6's, 3's and 2's bars hold (still camera 2.840 / 3.044, flicker on 0.2752/255 0.6377 %); workspace nextest 597 run, 597 passed, 7 skipped | committed with this row |
-| 8: The readings again | dev | not started | |
+| 7: Light changes and the history weight | dev | done: level spawn, still camera, sweep 0.013 rad a frame (ideal centroid 1.811 px a frame); lag behind the ideal over the last 16 frames: reference 5.38, U1 5.82, U1.5 5.92 (Phase 6's code: 15.39, 15.26); lamp step to 10 %: reference 18 frames, U1 18, U1.5 18 (Phase 6's code: 32, 32); trail 1.121 % (U1), 2.605 % (U1.5) of the reference's dark pixels (Phase 6's: 12.198, 12.319 %); wobble over one jitter cycle reference 0.099/255, U1 0.858, U1.5 1.711; still alpha 0.1 kept (1/16: still camera 2.985 against bilinear 3.044, flicker on 0.2058/255 0.4326 %, wobble 0.653 / 1.285); Phase 6's, 3's and 2's bars hold (still camera 2.840 / 3.044, flicker on 0.2752/255 0.6377 %); workspace nextest 597 run, 597 passed, 7 skipped | 12c6c57 |
+| 8: The readings again | dev | done: 1080p output, level spawn, release headless, median of the last 30 of 300, 3 runs, render code 12c6c57; RTX 3080 Laptop: upscale + sharpen 0.619 to 0.632 ms at 1.5; hit at 1.5 / 1: 0.570 to 0.578 / 1.257 to 1.317 ms (43.3 to 46.0 %); light + temporal + a-trous 1.409 to 1.440 / 3.093 to 3.240 ms (43.5 to 46.6 %); frame 2.727 to 2.780 / 5.294 to 5.546 ms; RADV iGPU, no bar: frame 18.797 to 18.865 ms at 1.5 (Phase 5: 20.149 to 20.876), 38.011 to 38.246 at 1 (38.658 to 40.955); upscale 3.216 to 3.232 at 1.5 (4.786 to 4.872), 4.145 to 4.191 at 1 (5.171 to 5.549); `frame_bytes` 124 621 440 B at 1.5, Phase 7 added no target; `docs/nfr.md` §2 and §3 updated; default scale stays 1.5 | committed with this row |
 | 9: The owner's windowed re-check (the old 6, first run 2026-10-22: rework, see Notes) | human | not started | |
 
 ### Notes
@@ -755,8 +755,17 @@ of Plan 0024 shrink to 44 % at scale 1.5.
   reference's. The emission step (ore 1.0 to 0.25, lamp off, against a settled 0.25 image)
   is too small on the level to read a settling count: the first and 64th frames' difference
   read 0.306 and 0.237/255 (reference), 0.320 and 0.136 (U1), 0.273 and 0.200 (U1.5).
+- Phase 8: the runs are `live/0030/p8-runs.sh` in the lane's worktree (logs beside it), the
+  same command as Phase 5 (`target/release/flythrough --level --seed 1 --headless --render
+  1920x1080 --frames 300 --internal-scale 1.5|1`), each run under the exclusive perf lock and
+  a 6 GB memory scope; the iGPU selected by `VK_DRIVER_FILES` and
+  `__EGL_VENDOR_LIBRARY_FILENAMES` as in Phase 5 (the run prints "headless on AMD Radeon
+  Graphics (RADV RENOIR)"). The 1-minute load was 3.9 to 4.5 (NVIDIA) and 2.3 to 3.6 (RADV)
+  from other lanes: loaded, indicative. "Scale 1" is the jitter on, as in Phase 5. The
+  root `README.md` needed no change (no flag changed).
 - Followup: on the RADV iGPU the upscale pass reads 4.8 ms at 1080p output (25 Lanczos taps
-  and 9 previous-hit taps per output pixel), against the 1.5 ms line's dev-box reading.
+  and 9 previous-hit taps per output pixel), against the 1.5 ms line's dev-box reading; 3.2 ms
+  after Phase 6 (9 colour taps, 16 Catmull-Rom history loads, 9 previous-hit taps).
 
 ### Close triggers
 
@@ -770,7 +779,10 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   and "sharpen" (8 passes); `Frame::target` is the output-size image while upscaling; shaders:
   new `upscale.wgsl`, `sharpen.wgsl`, `reproject_centred` in `march.wgsl` (`project_prev` no
   longer takes a jitter); fly-through flags `--internal-scale` (default 1.5), `--jitter`
-  (default on), `--sharpen` (default 0.5).
+  (default on), `--sharpen` (default 0.5). Phases 6 and 7: `marcher::{Upscaler,
+  Reconstruction, HistoryFetch, Blend, StillClip, LAMP_FRAMES}`, `Upscaler::lanczos()`,
+  `Frame::set_upscaler`, `Frame::upscaler`; binding 8 of the upscale group (`UpTuning`, 96
+  B).
 - **Budget readings:** `nfr.md` §2 upscale line, RTX 3080 Laptop (Vulkan, 615.78.08), 1080p
   output, scale 1.5: upscale 0.729 to 0.748 + sharpen 0.076 to 0.081 + composite 0.142 to
   0.145 ms; primary rays (hit) 0.600 to 0.610 ms at 1.5 against 1.375 to 1.389 at 1; lighting
@@ -778,11 +790,18 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   to 3.103 against 5.980 to 6.038. RADV RENOIR (Mesa 26.2.5): frame 20.149 to 20.876 ms at
   1.5 against 38.658 to 40.955 at 1, upscale 4.786 to 4.872. §3 `frame_bytes` 124 621 440 B
   at 1.5, 228 556 800 B at 1 with the jitter on. All on the render code of 11a5bc9.
-- **Gate at the tip:** `cargo build` (via nextest) exit 0; `cargo nextest run --workspace
-  --test-threads 2`: 595 run, 595 passed, 5 skipped; `cargo test --doc --workspace`: 7
-  passed, 0 failed; `cargo clippy --workspace --all-targets -- -D warnings` exit 0; `cargo fmt
-  --all --check` exit 0; `cargo deny check` exit 0 (advisories, bans, licenses, sources ok).
-  The 11 `assert_golden` renders byte-identical to 578c8d3's.
+  Phase 8, render code 12c6c57, loaded (1-minute load 2.3 to 4.5): RTX 3080 Laptop, scale
+  1.5: upscale 0.544 to 0.556 + sharpen 0.075 to 0.076 + composite 0.136 to 0.138 ms; hit
+  0.570 to 0.578 against 1.257 to 1.317 at 1; light + temporal + a-trous 1.409 to 1.440
+  against 3.093 to 3.240; frame 2.727 to 2.780 against 5.294 to 5.546. RADV RENOIR: frame
+  18.797 to 18.865 ms at 1.5 against 38.011 to 38.246 at 1, upscale 3.216 to 3.232 at 1.5.
+  `frame_bytes` 124 621 440 B at 1.5, unchanged.
+- **Gate at the tip:** at 12c6c57 (Phase 8 changed only `docs/`): `cargo nextest run
+  --workspace --test-threads 2`: 597 run, 597 passed, 7 skipped, exit 0; `cargo test --doc
+  --workspace`: 7 passed, 0 failed; `cargo clippy --workspace --all-targets -- -D warnings`
+  exit 0; `cargo fmt --all --check` exit 0; `cargo deny check` exit 0 (advisories, bans,
+  licenses, sources ok); `scripts/check-doc-links.mjs` and `check-comment-hygiene.mjs` OK.
+  `upscaled.png` re-blessed at Phase 6; the other goldens pass their tests.
 - **Outstanding `human` phases:** Phase 9, the owner's windowed re-check.
 
 ## Followups
