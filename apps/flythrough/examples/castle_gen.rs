@@ -26,7 +26,7 @@ fn time(src: &impl WorldSource, chunks: &[ChunkCoord]) -> Vec<f64> {
             let mut out = Chunk::default();
             let t = now();
             src.chunk(c, &mut out);
-            let us = t.elapsed().as_secs_f64() * 1e6;
+            let us = (now() - t).as_secs_f64() * 1e6;
             std::hint::black_box(&out);
             us
         })
