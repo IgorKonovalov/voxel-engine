@@ -1,7 +1,11 @@
 // The attribute pass: fills the contour attributes of the bricks in a work list from the pool
-// itself. One workgroup per brick: it loads the occupancy of the brick and a one-voxel shell
-// around it (10^3 voxels) into workgroup memory, then each invocation writes one pool word,
-// the attributes of two voxels.
+// itself. One workgroup per brick: it resolves the brick and its 26 neighbours once (table and
+// record reads), loads their non-air masks (16 words each) into workgroup memory, and fills
+// the occupancy of the brick and a one-voxel shell around it (10^3 voxels) from those masks,
+// reading voxel by voxel only a neighbour in a LOD-only chunk or a brick of more than 16
+// materials holding a translucent voxel. Each invocation then computes the attributes of the
+// two voxels it holds that lie on the brick's surface mask, nothing for the others, into a
+// workgroup copy of the attribute words, which the invocations write out one word each.
 //
 // Bindings, group 0:
 //   0  uniform  params         mirror window, units per shard, work-list length, the
@@ -16,9 +20,11 @@
 //                              clear item: the brick's attribute is written all "no plane" and
 //                              nothing is computed
 //
-// The attribute of a Full brick lives in the 16 units of its slot after its mask, header,
-// payload and translucent unit (march.wgsl's attr_offset): 512 u16, two per word, x fastest.
-// A voxel's u16 is
+// A Full brick's slot holds, after its mask, header, payload and translucent unit (march.wgsl's
+// attr_offset), its surface mask (one unit, the mask's layout), then a u16 attribute for each
+// surface voxel, two per word, voxel (x, y, z)'s at index prefix[z] (header words 10..14) plus
+// the surface bits below it in its layer; header word 14's low half is the attribute units, 0
+// for a brick without attributes, which the pass leaves alone. A voxel's u16 is
 // bits 0..6 octahedral u, 6..12 octahedral v, 12..16 the plane offset code k in 0..=14 for
 // (k - 7) / 8 voxel along the normal from the voxel centre; 0xFFFF is "no plane": air, a voxel
 // whose six face neighbours are all solid, or one whose occupancy gradient vanishes.
@@ -67,13 +73,20 @@ const PAYLOAD_WORD: u32 = 32u;
 const NO_PLANE: u32 = 0xFFFFu;
 // Bit 31 of a work item's slot word: a clear item (`attrib::CLEAR_BIT`).
 const CLEAR_BIT: u32 = 0x80000000u;
-// Invocations per workgroup, one per pool word of a brick's attribute; must match
+// Invocations per workgroup, two voxels each and one attribute word each at most; must match
 // `attrib::WORKGROUP`.
 const WORKGROUP: u32 = 256u;
 // The occupancy box: the brick and a one-voxel shell, 10 voxels to an edge.
 const BOX: u32 = 10u;
 
 var<workgroup> occ: array<u32, 1000>;
+// The brick and its 26 neighbours, index (dx + 1) + 3 (dy + 1) + 9 (dz + 1): how each is read
+// (NB_AIR, NB_SOLID, NB_MASK with its entry, NB_VOXELS), and the NB_MASK ones' non-air masks.
+var<workgroup> nb_kind: array<u32, 27>;
+var<workgroup> nb_entry: array<u32, 27>;
+var<workgroup> nb_mask: array<u32, 432>;
+// The brick's attribute words as computed, NO_PLANE where no surface voxel lands.
+var<workgroup> words: array<atomic<u32>, 256>;
 
 // The shard and index of word `word` of the slot whose first unit is `unit`.
 fn shard_index(unit: u32, word: u32) -> vec2<u32> {
@@ -165,6 +178,45 @@ fn attr_offset(entry: u32) -> u32 {
     return 2u + payload_units(entry) + t;
 }
 
+const NB_AIR: u32 = 0u;
+const NB_SOLID: u32 = 1u;
+const NB_MASK: u32 = 2u;
+const NB_VOXELS: u32 = 3u;
+
+// How the brick at world brick coordinate `bw` is read, and its entry: NB_AIR outside the
+// window, in an absent or empty chunk or for uniform air; NB_SOLID for a uniform brick of any
+// other material; NB_MASK for a Full brick of a full chunk, read through its masks; NB_VOXELS
+// for a LOD-only chunk's (read at level 1 by `solid`) or a Wide brick holding a translucent
+// voxel.
+fn brick_kind(bw: vec3<i32>) -> vec2<u32> {
+    let chunk = floor_div(bw, 8);
+    let rel = chunk - params.window_min;
+    let w = params.window_size;
+    if (any(rel < vec3<i32>(0)) || any(rel >= w)) {
+        return vec2<u32>(NB_AIR, 0u);
+    }
+    let wr = ((chunk % w) + w) % w;
+    let t = chunk_table[u32(wr.x + w.x * (wr.y + w.y * wr.z))];
+    if (t == ABSENT || (t & EMPTY_BIT) != 0u) {
+        return vec2<u32>(NB_AIR, 0u);
+    }
+    if ((t & LOD_BIT) != 0u) {
+        return vec2<u32>(NB_VOXELS, 0u);
+    }
+    let b = bw - chunk * 8;
+    let entry = chunk_records[
+        (t & RECORD_MASK) * RECORD_WORDS + ENTRY_WORD + u32(b.x + 8 * (b.y + 8 * b.z))
+    ];
+    if ((entry & FULL_BIT) == 0u) {
+        return vec2<u32>(select(NB_AIR, NB_SOLID, (entry & 0xFFFFu) != 0u), entry);
+    }
+    let cls = (entry >> CLASS_SHIFT) & 7u;
+    if ((entry & TRANSLUCENT_BIT) != 0u && cls == CLASS_WIDE) {
+        return vec2<u32>(NB_VOXELS, entry);
+    }
+    return vec2<u32>(NB_MASK, entry);
+}
+
 // Octahedral encoding of the unit vector `n` into 6 + 6 bits.
 fn encode_octahedral(n: vec3<f32>) -> u32 {
     var p = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
@@ -223,22 +275,94 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
     let clear = (w.x & CLEAR_BIT) != 0u;
     let entry = w.x & ~CLEAR_BIT;
     let origin = bitcast<vec3<i32>>(w.yzw);
-    // A clear item skips the fill but not the barrier, which stays in uniform control flow.
-    if (!clear) {
-        for (var j = li; j < BOX * BOX * BOX; j += WORKGROUP) {
-            let c = vec3<i32>(i32(j % BOX), i32((j / BOX) % BOX), i32(j / (BOX * BOX)));
-            occ[j] = select(0u, 1u, solid(origin + c - vec3<i32>(1)));
+    let unit = entry & UNIT_MASK;
+    // Attribute words of the brick; 0 for a brick without a surface.
+    let n = (pool_word(unit, UNIT_WORDS + 14u) & 0xFFFFu) * UNIT_WORDS;
+    let s = UNIT_WORDS * attr_offset(entry);
+    let compute = !clear && n > 0u;
+    // The barriers below stay in uniform control flow; the work between them is guarded, so
+    // a clear item, or a brick without a surface, computes nothing.
+    if (compute && li < 27u) {
+        let d = vec3<i32>(i32(li % 3u), i32((li / 3u) % 3u), i32(li / 9u)) - vec3<i32>(1);
+        let k = brick_kind(floor_div(origin, 8) + d);
+        nb_kind[li] = k.x;
+        nb_entry[li] = k.y;
+    }
+    workgroupBarrier();
+    if (compute) {
+        for (var j = li; j < 27u * UNIT_WORDS; j += WORKGROUP) {
+            let k = j / UNIT_WORDS;
+            let w = j % UNIT_WORDS;
+            var m = 0u;
+            if (nb_kind[k] == NB_MASK) {
+                let e = nb_entry[k];
+                let u = e & UNIT_MASK;
+                m = pool_word(u, w);
+                if ((e & TRANSLUCENT_BIT) != 0u) {
+                    // A planar brick's translucent unit: its translucent voxels are non-air.
+                    m |= pool_word(u, PAYLOAD_WORD + UNIT_WORDS * payload_units(e) + w);
+                }
+            }
+            nb_mask[j] = m;
         }
     }
     workgroupBarrier();
-    var packed = NO_PLANE | (NO_PLANE << 16u);
-    if (!clear) {
-        packed = 0u;
-        for (var h = 0u; h < 2u; h++) {
-            let i = 2u * li + h;
-            let l = vec3<i32>(i32(i % 8u), i32((i / 8u) % 8u), i32(i / 64u));
-            packed |= voxel_attr(l + vec3<i32>(1)) << (16u * h);
+    if (compute) {
+        for (var j = li; j < BOX * BOX * BOX; j += WORKGROUP) {
+            let c = vec3<i32>(i32(j % BOX), i32((j / BOX) % BOX), i32(j / (BOX * BOX)));
+            // The neighbour on each axis: -1 for box cell 0, +1 for cell 9, else the brick.
+            let d = select(vec3<i32>(0), vec3<i32>(-1), c < vec3<i32>(1))
+                + select(vec3<i32>(0), vec3<i32>(1), c > vec3<i32>(8));
+            let k = u32((d.x + 1) + 3 * (d.y + 1) + 9 * (d.z + 1));
+            let l = vec3<u32>(c - vec3<i32>(1) - d * 8);
+            let i = l.x + 8u * (l.y + 8u * l.z);
+            var on = false;
+            switch nb_kind[k] {
+                case 1u: {
+                    on = true;
+                }
+                case 2u: {
+                    on = ((nb_mask[k * UNIT_WORDS + i / 32u] >> (i % 32u)) & 1u) != 0u;
+                }
+                case 3u: {
+                    on = solid(origin + c - vec3<i32>(1));
+                }
+                default: {}
+            }
+            occ[j] = select(0u, 1u, on);
         }
     }
-    store_pool_word(entry & UNIT_MASK, UNIT_WORDS * attr_offset(entry) + li, packed);
+    atomicStore(&words[li], 0xFFFFFFFFu);
+    workgroupBarrier();
+    if (compute) {
+        for (var h = 0u; h < 2u; h++) {
+            let i = 2u * li + h;
+            let z = i / 64u;
+            let b = i % 64u;
+            let lo = pool_word(unit, s + 2u * z);
+            let hi = pool_word(unit, s + 2u * z + 1u);
+            var bit = 0u;
+            var below = 0u;
+            if (b < 32u) {
+                bit = (lo >> b) & 1u;
+                below = countOneBits(lo & ((1u << b) - 1u));
+            } else {
+                bit = (hi >> (b - 32u)) & 1u;
+                below = countOneBits(lo) + countOneBits(hi & ((1u << (b - 32u)) - 1u));
+            }
+            if (bit != 0u) {
+                let prefix = pool_word(unit, UNIT_WORDS + 10u + z / 2u);
+                let k = ((prefix >> ((z & 1u) * 16u)) & 0xFFFFu) + below;
+                let l = vec3<i32>(i32(i % 8u), i32((i / 8u) % 8u), i32(i / 64u));
+                let a = voxel_attr(l + vec3<i32>(1));
+                let shift = (k & 1u) * 16u;
+                // Clears the u16 to the attribute, keeping the other half.
+                atomicAnd(&words[k / 2u], (a << shift) | (0xFFFFu << (16u - shift)));
+            }
+        }
+    }
+    workgroupBarrier();
+    if (li < n) {
+        store_pool_word(unit, s + UNIT_WORDS + li, atomicLoad(&words[li]));
+    }
 }

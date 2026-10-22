@@ -325,8 +325,8 @@ the material rows are unchanged. Bindings: the masks buffer's binding is freed.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The census of units | dev | done: level plain pool 56 075 200 B, records 6 758 400 B (62 846 720 B with table and rows); 16/24 exact plane voxels 57 703 350; chunk-local surface 90 331 692 (1.565 x exact; 1.570 at 12/24, 1.565 at 14/24), 3.08 attribute units (197 B) per brick; contour 16/24 at full residency 871 679 852 B, plain 502 928 492 B (57 777 records); bars: the 180 MB level bar and the pressure bar hold on this arithmetic; the 0.93 to 1.2 GB range reads 0.87 GB here, because it counted the 93 239 reserved records rather than the 57 777 mirrored; gate: 581 nextest passed, 4 skipped, 7 doctests, clippy and fmt clean | 1d1e67c |
-| 2: The slot format, the bins and the march, plain look | dev | done: every listed golden and the skip-against-single-voxel test unchanged (no re-bless); level plain 62 846 720 B live (`level_mirror`, lavapipe and the RTX 3080); level hit pass 1.264 to 1.314 ms plain, 1.404 to 1.420 ms default, streamed plain spawn 1.701 to 1.714 ms (paired with 1d1e67c, load 4.5 to 8.7); level first sync 342 ms against 500 ms; gate: 579 nextest passed, 4 skipped, clippy and fmt clean | committed with this row |
-| 3: Surface-only attributes, contour look | dev | not started | |
+| 2: The slot format, the bins and the march, plain look | dev | done: every listed golden and the skip-against-single-voxel test unchanged (no re-bless); level plain 62 846 720 B live (`level_mirror`, lavapipe and the RTX 3080); level hit pass 1.264 to 1.314 ms plain, 1.404 to 1.420 ms default, streamed plain spawn 1.701 to 1.714 ms (paired with 1d1e67c, load 4.5 to 8.7); level first sync 342 ms against 500 ms; gate: 579 nextest passed, 4 skipped, clippy and fmt clean | 5fb6d26 |
+| 3: Surface-only attributes, contour look | dev | stopped on one done-when: the attribute pass's GPU p99 under the default autopilot reads 5.770 ms with `attr_cap` 8192 and 5.751 ms with 4096 against 1.0 ms (carry-over age p99 7625 and 27 229 ms); owner question in the resume notes. Met: the four look goldens byte for byte; contour 7.38 degrees and 32 px; the cube brick's 56 surface voxels, 2 units, indices 0 and 55, 55 after the carve, matching an uncapped mirror; the chunk-face brick's 64; level contour 157 872 640 B live; gate 580 nextest passed, 4 skipped | committed with this row |
 | 4: The streamed default at `r_full` 16, and the slow adapter | dev | not started | |
 | 5: The owner's windowed flight | human | not started | |
 
@@ -351,6 +351,22 @@ the material rows are unchanged. Bindings: the masks buffer's binding is freed.
   brick past 16 materials is scanned for emitters too (it was skipped). (Phase 2 commit)
 - `OTHER_STORAGE_BUFFERS` is 5; `MirrorConfig::max_shard_slots` is `max_shard_units`.
   (Phase 2 commit)
+- `contour_metrics_at_each_attribute_precision` was retired by Plan 0013; its successors
+  (`contour_planes_cut_the_silhouette_and_normal_errors`, `every_mode_with_and_without_detail`)
+  read 7.38 degrees and 32 px, the tree's figures since Plan 0013. (Phase 3 commit)
+- The header's attribute field counts the units after the surface-mask unit; its flag
+  (`HEADER_HAS_SURFACE`) is the word's high half. (Phase 3 commit)
+- A carve's sync now writes the carved brick and its `Full` face neighbours in the chunk:
+  `mirror.rs` counts 3 bricks where it counted 1. The upload recomputes a chunk's need under
+  its write lock and writes the surface masks computed there. (Phase 3 commit)
+- `attrib.wgsl` also fills its occupancy box from the 27 bricks' masks in workgroup memory,
+  reading voxel by voxel only LOD-only neighbours and translucent Wide bricks. (Phase 3 commit)
+- The 4096 reading came from a measurement build with `ATTR_CAP` 4096, not committed; the
+  slot-reuse test gives B two one-voxel slabs so it lands in A's bin; the deferral tests
+  `one_page_short_*`, `a_demotion_behind_*` and `a_page_the_sync_*` run on plain mirrors
+  (bins are one mechanism with or without attributes). (Phase 3 commit)
+- Followup noticed: clear items still run (p50 5482 a frame in the default flight) though
+  every upload now writes its attribute units as "no plane".
 
 ### Close triggers
 

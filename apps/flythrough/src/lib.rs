@@ -53,13 +53,18 @@ pub fn stream_record_chunks(r: Residency) -> u64 {
 pub const STREAM_MIRROR_BUDGET: u64 = vxe_render::gpu_world::DEFAULT_BUDGET_BYTES;
 
 /// `Full` bricks of headroom beyond the bounded level's own, so digging has room: 64 Ki
-/// bricks, each at the largest slot the level's rock takes (6 units, 24 with attributes).
+/// bricks, each at the largest slot the level's rock takes (6 units, and 6 plus the most
+/// attribute units with attributes).
 pub const POOL_HEADROOM_BRICKS: u64 = 65_536;
 
 /// The pool units the bounded level `world` needs: each bin's `Full` bricks in whole pages
-/// of that bin, their slots with contour attributes when `attrs`, plus the headroom.
+/// of that bin, their slots with their chunk-local surface's contour attributes when `attrs`,
+/// plus the headroom.
 pub fn level_pool_units(world: &vxe_world::World, attrs: bool) -> u64 {
-    use vxe_render::gpu_world::{BIN_COUNT, BINS, PAGE_UNITS, bin_of, slot_units, slots_per_page};
+    use vxe_render::gpu_world::{
+        BIN_COUNT, BINS, MAX_ATTR_UNITS, PAGE_UNITS, bin_of, chunk_surface, slot_units,
+        slots_per_page,
+    };
     let table = world.materials();
     let translucent = |m| {
         table
@@ -74,9 +79,13 @@ pub fn level_pool_units(world: &vxe_world::World, attrs: bool) -> u64 {
         let chunk = chunk
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for b in chunk.bricks() {
+        for (i, b) in chunk.bricks().iter().enumerate() {
             if let vxe_world::Brick::Full(p) = b {
-                bins[bin_of(slot_units(p, translucent, attrs))] += 1;
+                let surface = attrs.then(|| {
+                    let s = chunk_surface(chunk.bricks(), i);
+                    s.iter().map(|w| w.count_ones()).sum()
+                });
+                bins[bin_of(slot_units(p, translucent, surface))] += 1;
             }
         }
     }
@@ -85,7 +94,8 @@ pub fn level_pool_units(world: &vxe_world::World, attrs: bool) -> u64 {
         .enumerate()
         .map(|(k, &n)| n.div_ceil(u64::from(slots_per_page(k))))
         .sum();
-    let headroom = POOL_HEADROOM_BRICKS * u64::from(BINS[bin_of(if attrs { 22 } else { 6 })]);
+    let largest = 6 + if attrs { MAX_ATTR_UNITS } else { 0 };
+    let headroom = POOL_HEADROOM_BRICKS * u64::from(BINS[bin_of(largest)]);
     pages * u64::from(PAGE_UNITS) + headroom
 }
 

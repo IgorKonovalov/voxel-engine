@@ -19,8 +19,11 @@
 //                              layout (plane k is bit k of a voxel's palette index), or for
 //                              class 5 (Wide) 16 units of u16 ids, voxel i in half i % 2 of
 //                              word i / 2; then, for a planar brick holding a TRANSLUCENT
-//                              voxel, one unit of its translucent voxels; then its contour
-//                              attributes, when the flag says so
+//                              voxel, one unit of its translucent voxels; then, for a full
+//                              chunk's brick when the flag says so, its surface mask and its
+//                              surface voxels' contour attributes (header word 14: their
+//                              units in the low half, 0 for none; words 10..14 the surface
+//                              voxels below each layer, 8 u16)
 //   2  storage  chunk_records  [record][528 x u32]: 16 words of brick bits (bit b of word
 //                              b / 32 set when entry b is not uniform air), then 512 brick
 //                              entries. Entry bit 31 set: the slot's first unit in bits 0..26
@@ -63,10 +66,12 @@
 // rectangle from minus the left tangent to the right one and from the up tangent to minus the
 // down one.
 //
-// With attributes (flag bit 8), a full chunk's Full brick has its 512 u16 contour attributes
-// in the 16 units after its CPU units, two per word, x fastest: bits 0..6 octahedral u, 6..12
-// octahedral v, 12..16 the plane offset code k for (k - 7) / 8 voxel along the normal from the
-// voxel centre; 0xFFFF is no plane. In the Contour normal mode the walk tests a solid voxel that has a plane against
+// With attributes (flag bit 8), a full chunk's Full brick has a u16 contour attribute for each
+// voxel of its surface mask (its non-air voxels with an air face neighbour inside the chunk,
+// or on the chunk's face): voxel (x, y, z)'s at index prefix[z] + the surface bits below it in
+// its layer, two per word: bits 0..6 octahedral u, 6..12 octahedral v, 12..16 the plane
+// offset code k for (k - 7) / 8 voxel along the normal from the voxel centre; 0xFFFF, and every
+// voxel off the surface, is no plane. In the Contour normal mode the walk tests a solid voxel that has a plane against
 // the ray: it is hit where the ray enters the plane's solid half-space inside the voxel's
 // cube, with the plane normal, and skipped when the ray's segment through the cube misses
 // that half-space. A solid voxel with no plane, of a uniform brick or of a mip-brick, hits
@@ -730,18 +735,44 @@ fn decode_octahedral(e: u32) -> vec3<f32> {
     return normalize(n);
 }
 
-// The unit offset of a Full entry's attributes from its first unit: past its mask, header,
-// payload and, for a planar brick holding a TRANSLUCENT voxel, its translucent unit.
+// The unit offset of a Full entry's surface mask from its first unit, its attributes one unit
+// on: past its mask, header, payload and, for a planar brick holding a TRANSLUCENT voxel, its
+// translucent unit.
 fn attr_offset(entry: u32) -> u32 {
     let cls = (entry >> CLASS_SHIFT) & 7u;
     let t = select(0u, 1u, (entry & TRANSLUCENT_BIT) != 0u && cls != CLASS_WIDE);
     return 2u + payload_units(entry) + t;
 }
 
-// The contour attribute of voxel `index` of the Full brick with record entry `entry`.
+// The contour attribute of voxel `index` of the Full brick with record entry `entry`: NO_PLANE
+// for a brick without attributes or a voxel off its surface mask, else the attribute at the
+// voxel's popcount index.
 fn contour_attr(entry: u32, index: u32) -> u32 {
-    let word = pool_word(entry & UNIT_MASK, UNIT_WORDS * attr_offset(entry) + index / 2u);
-    return (word >> ((index & 1u) * 16u)) & 0xFFFFu;
+    let unit = entry & UNIT_MASK;
+    if ((pool_word(unit, HEADER_WORD + 14u) & 0xFFFFu) == 0u) {
+        return NO_PLANE;
+    }
+    let s = UNIT_WORDS * attr_offset(entry);
+    let z = index / 64u;
+    let b = index % 64u;
+    let lo = pool_word(unit, s + 2u * z);
+    var bit = 0u;
+    var below = 0u;
+    if (b < 32u) {
+        bit = (lo >> b) & 1u;
+        below = countOneBits(lo & ((1u << b) - 1u));
+    } else {
+        let hi = pool_word(unit, s + 2u * z + 1u);
+        bit = (hi >> (b - 32u)) & 1u;
+        below = countOneBits(lo) + countOneBits(hi & ((1u << (b - 32u)) - 1u));
+    }
+    if (bit == 0u) {
+        return NO_PLANE;
+    }
+    let prefix = pool_word(unit, HEADER_WORD + 10u + z / 2u);
+    let k = ((prefix >> ((z & 1u) * 16u)) & 0xFFFFu) + below;
+    let word = pool_word(unit, s + UNIT_WORDS + k / 2u);
+    return (word >> ((k & 1u) * 16u)) & 0xFFFFu;
 }
 
 // The contour test of solid voxel `v`, entered at `t`: `kind` 0 when the voxel has no plane,

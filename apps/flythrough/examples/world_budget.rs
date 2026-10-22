@@ -57,7 +57,7 @@ use flythrough::cave::CaveSource;
 use flythrough::{cave_materials, chunk_ram, mips_ram, stream_record_chunks, window_side};
 use vxe_render::gpu_world::{
     BIN_COUNT, BINS, MATERIAL_FLOATS, PAGE_UNITS, RECORD_BYTES, UNIT_BYTES, bin_of, budget_for,
-    class_code, payload_units, slot_units, slots_per_page,
+    chunk_surface, class_code, payload_units, slot_units, slots_per_page, surface_attr_units,
 };
 use vxe_world::hash::{ValueNoise, hash3};
 use vxe_world::packed::PackedClass;
@@ -75,7 +75,7 @@ fn class_units(c: PackedClass) -> u64 {
 
 /// Units of a full chunk's brick's slot with `n` chunk-local surface voxels' attributes.
 fn attr_units(n: u64) -> u64 {
-    if n == 0 { 0 } else { 1 + n.div_ceil(32) }
+    u64::from(surface_attr_units(n as u32))
 }
 
 /// `Full` bricks of a census bin of materials (`BrickCensus::BINS`) as slots of each bin.
@@ -130,12 +130,22 @@ fn page_units(bins: &[u64; BIN_COUNT]) -> u64 {
     pages * u64::from(PAGE_UNITS)
 }
 
-/// Adds `brick`'s slot, when `Full`, to `bins`: its units with contour attributes when
-/// `attrs`.
-fn add_slot(bins: &mut [u64; BIN_COUNT], brick: &Brick, table: &MaterialTable, attrs: bool) {
-    if let Brick::Full(p) = brick {
+/// Adds brick `i` of `bricks` (a chunk's, or a mip level's), when `Full`, to `bins`: its
+/// units, with its chunk-local surface's contour attributes when `attrs`.
+fn add_slot(
+    bins: &mut [u64; BIN_COUNT],
+    bricks: &[Brick],
+    i: usize,
+    table: &MaterialTable,
+    attrs: bool,
+) {
+    if let Brick::Full(p) = &bricks[i] {
         let glass = |m| table.flags(m).contains(MaterialFlags::TRANSLUCENT);
-        bins[bin_of(slot_units(p, glass, attrs))] += 1;
+        let surface = attrs.then(|| {
+            let s = chunk_surface(bricks, i);
+            s.iter().map(|w| w.count_ones()).sum()
+        });
+        bins[bin_of(slot_units(p, glass, surface))] += 1;
     }
 }
 
@@ -313,9 +323,9 @@ fn bounded(seed: u64, chunks: [i32; 3], census: bool) {
             .iter()
             .map(Brick::payload_bytes)
             .sum::<usize>();
-        for b in chunk.bricks() {
-            add_slot(&mut face, b, &table, false);
-            add_slot(&mut contour, b, &table, true);
+        for i in 0..CHUNK_BRICKS {
+            add_slot(&mut face, chunk.bricks(), i, &table, false);
+            add_slot(&mut contour, chunk.bricks(), i, &table, true);
         }
     }
     let cpu = payload + s.chunks * slot_array;
@@ -417,9 +427,9 @@ fn streamed(seed: u64, r: Residency, census: bool, surface: bool) {
         full_bricks += full;
         uniform_bricks += CHUNK_BRICKS - full;
         cpu_full += chunk_ram(&chunk);
-        for b in chunk.bricks() {
-            add_slot(&mut face, b, &table, false);
-            add_slot(&mut contour, b, &table, true);
+        for i in 0..CHUNK_BRICKS {
+            add_slot(&mut face, chunk.bricks(), i, &table, false);
+            add_slot(&mut contour, chunk.bricks(), i, &table, true);
         }
     }
     let (mut mip_full, mut cpu_lod) = (0usize, 0u64);
@@ -428,8 +438,9 @@ fn streamed(seed: u64, r: Residency, census: bool, surface: bool) {
         mip_full += mips.full_bricks();
         cpu_lod += mips_ram(&mips);
         for n in 1..=vxe_world::MIP_LEVELS {
-            for b in mips.level(n) {
-                add_slot(&mut mip_bins, b, &table, false);
+            let level = mips.level(n);
+            for i in 0..level.len() {
+                add_slot(&mut mip_bins, level, i, &table, false);
             }
         }
     }

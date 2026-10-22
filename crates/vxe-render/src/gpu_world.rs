@@ -31,8 +31,17 @@
 //! then            for a planar brick holding a TRANSLUCENT voxel, one unit of its translucent
 //!                 voxels in the mask's layout (a translucent voxel at palette index 0 is
 //!                 otherwise indistinguishable from air)
-//! then            the contour attributes, for a full chunk's brick in a mirror with them
+//! then            for a full chunk's brick in a mirror with contour attributes and with `n > 0`
+//!                 surface voxels: one unit of its surface mask, then ceil(n / 32) units of
+//!                 their u16 attributes, two per word, NO_PLANE past the n-th
 //! ```
+//!
+//! A brick's *surface* is chunk-local ([`chunk_surface`]): its non-air voxels with a face
+//! neighbour that is air inside the same chunk, or on a face of the chunk; no other chunk is
+//! read, so an upload never couples chunks. The attribute of surface voxel `(x, y, z)` is at
+//! index `prefix[z] + popcount(surface[z] & ((1 << (x + 8 y)) - 1))`, the header carrying
+//! `prefix[z]`, the surface voxels of the layers below `z`. An upload of a dirty brick also
+//! re-uploads its face neighbours within the chunk, whose surface masks may have changed.
 //!
 //! The record entry of a `Full` brick names its first unit and its class (`CLASS_SHIFT`), so
 //! the slot's layout follows from the entry alone. Ahead of its 512 entries a record holds 512
@@ -63,12 +72,11 @@
 //! table entry carries `LOD_BIT`. A chunk that changes tier gets a new record: its old one and
 //! its slots are freed in the same sync.
 //!
-//! A mirror made with [`GpuWorld::with_surface_attrs`] keeps a per-voxel contour attribute for
-//! the `Full` bricks of full chunks inside their slots, after the CPU units (the attribute
-//! layout is in [`ATTR_UNITS`]). The CPU writes the attribute units as "no plane" and never
-//! fills them: [`GpuWorld::update_attrs`] does, on the GPU (`attrib.wgsl`), for the bricks
-//! `sync` wrote and their neighbours, so a brick written into a slot is always followed by its
-//! attribute.
+//! A mirror made with [`GpuWorld::with_surface_attrs`] keeps a contour attribute for each
+//! surface voxel of the `Full` bricks of full chunks inside their slots, after the surface
+//! mask. The CPU writes the attribute units as "no plane" and never fills them:
+//! [`GpuWorld::update_attrs`] does, on the GPU (`attrib.wgsl`), for the bricks `sync` wrote
+//! and their neighbours, so a brick written into a slot is always followed by its attribute.
 //!
 //! Every `Full` brick of a full chunk that `sync` writes, and each of its neighbours in the
 //! chunk, is scanned (when its voxels hold a material with non-zero emission) for its
@@ -92,7 +100,7 @@ use vxe_world::packed::{Packed, PackedClass};
 use vxe_world::{
     AIR, BRICK_EDGE, BRICK_VOXELS, Brick, CHUNK_BRICKS, CHUNK_EDGE_BRICKS, ChunkCoord, ChunkExtent,
     ChunkMips, MIP_LEVELS, MaterialId, MaterialTable, StreamEvents, VoxelCoord, World,
-    brick_of_slot, brick_slot,
+    brick_of_slot, brick_slot, solid_mask, surface_mask,
 };
 
 use crate::attr_work::{self, AttrWorkStats, MirrorView};
@@ -264,8 +272,11 @@ pub const HEADER_PALETTE_WORD: usize = 0;
 pub const HEADER_TRANSLUCENT_WORD: usize = 8;
 pub const HEADER_PREFIX_WORD: usize = 10;
 pub const HEADER_ATTR_WORD: usize = 14;
-/// Units of a full chunk's brick's contour attributes: 512 `u16`, two per word, x fastest.
-pub const ATTR_UNITS: u32 = 16;
+/// Most units a full chunk's brick's contour attributes take: its surface mask and 512 `u16`.
+pub const MAX_ATTR_UNITS: u32 = 17;
+/// The header's flag (in the high half of `HEADER_ATTR_WORD`): the slot carries a surface
+/// mask.
+pub const HEADER_HAS_SURFACE: u32 = 1;
 /// Palette entries a slot's header holds.
 pub const PALETTE_ENTRIES: usize = 16;
 /// `u32` words of brick bits at the head of a chunk record: bit `b` of word `b / 32` is set
@@ -362,13 +373,77 @@ pub fn attr_offset(entry: u32) -> u32 {
     2 + payload_units(code) + u32::from(translucent)
 }
 
+/// Units of the contour attributes of a brick with `n` surface voxels: none for `n` 0, else
+/// its surface mask and `ceil(n / 32)` units of `u16` attributes.
+pub fn surface_attr_units(n: u32) -> u32 {
+    if n == 0 { 0 } else { 1 + n.div_ceil(32) }
+}
+
 /// The units of the slot of `p` (module docs): mask, header, payload, a translucent unit for a
-/// planar brick holding a voxel of a material `translucent` names, and with `attrs` the
-/// contour attributes.
-pub fn slot_units(p: &Packed, translucent: impl Fn(MaterialId) -> bool, attrs: bool) -> u32 {
+/// planar brick holding a voxel of a material `translucent` names, and with `surface` (its
+/// surface voxels, for a brick carrying contour attributes) their attributes.
+pub fn slot_units(
+    p: &Packed,
+    translucent: impl Fn(MaterialId) -> bool,
+    surface: Option<u32>,
+) -> u32 {
     let code = class_code(p.class());
     let t = code != CLASS_WIDE && materials_of(p, translucent);
-    2 + payload_units(code) + u32::from(t) + if attrs { ATTR_UNITS } else { 0 }
+    2 + payload_units(code) + u32::from(t) + surface.map_or(0, surface_attr_units)
+}
+
+/// The chunk-local surface of brick `slot` of a chunk's `bricks` ([`vxe_world::surface_mask`]):
+/// its non-air voxels with an air face neighbour inside the chunk, or on the chunk's face.
+pub fn chunk_surface(bricks: &[Brick], slot: usize) -> [u64; 8] {
+    let b = brick_of_slot(slot);
+    let beside: [[Option<[u64; 8]>; 2]; 3] = std::array::from_fn(|k| {
+        std::array::from_fn(|d| {
+            let mut n = b;
+            n[k] += if d == 0 { -1 } else { 1 };
+            (0..CHUNK_EDGE_BRICKS)
+                .contains(&n[k])
+                .then(|| solid_mask(&bricks[brick_slot(n)]))
+        })
+    });
+    surface_mask(&solid_mask(&bricks[slot]), &beside)
+}
+
+/// Which of `len` bricks an upload writes: all when `every`, else the dirty ones and, with
+/// `neighbours` (a full chunk's bricks carrying attributes), the face neighbours of each
+/// dirty brick within the chunk, whose surface may have changed.
+fn upload_set(
+    len: usize,
+    every: bool,
+    neighbours: bool,
+    is_dirty: impl Fn(usize) -> bool,
+) -> Vec<bool> {
+    if every {
+        return vec![true; len];
+    }
+    let mut set: Vec<bool> = (0..len).map(&is_dirty).collect();
+    if neighbours {
+        for i in 0..len {
+            if !is_dirty(i) {
+                continue;
+            }
+            let b = brick_of_slot(i);
+            for k in 0..3 {
+                for dir in [-1, 1] {
+                    let mut n = b;
+                    n[k] += dir;
+                    if (0..CHUNK_EDGE_BRICKS).contains(&n[k]) {
+                        set[brick_slot(n)] = true;
+                    }
+                }
+            }
+        }
+    }
+    set
+}
+
+/// Set bits of a surface mask.
+fn popcount(m: &[u64; 8]) -> u32 {
+    m.iter().map(|w| w.count_ones()).sum()
 }
 
 /// The bin index of a slot of `units` units.
@@ -909,6 +984,9 @@ pub struct GpuWorld {
     stage: [(u32, Vec<u32>); BIN_COUNT],
     /// One slot's words as `upload_brick` builds them.
     slot_words: Vec<u32>,
+    /// The surface masks of the chunk being selected or uploaded, by brick slot
+    /// ([`GpuWorld::need`]).
+    surfaces: Vec<Option<[u64; 8]>>,
     /// The run of consecutive records staged for one write.
     rec_stage_start: u32,
     rec_stage: Vec<u32>,
@@ -1087,6 +1165,7 @@ impl GpuWorld {
             belt: Belt::new(device),
             stage: Default::default(),
             slot_words: Vec::new(),
+            surfaces: Vec::new(),
             rec_stage_start: 0,
             rec_stage: Vec::new(),
             selected: Vec::new(),
@@ -1821,11 +1900,57 @@ impl GpuWorld {
         self.surface_attrs && !lod
     }
 
-    /// The units of `p`'s slot in a record whose bricks carry attributes when `attrs`: mask,
+    /// The units of `p`'s slot with `surface` voxels' attributes ([`slot_units`]): mask,
     /// header, payload, a translucent unit for a planar brick holding a translucent voxel,
     /// and the attributes.
-    fn slot_units(&self, p: &Packed, attrs: bool) -> u32 {
-        slot_units(p, |m| self.translucent[usize::from(m)], attrs)
+    fn slot_units(&self, p: &Packed, surface: Option<u32>) -> u32 {
+        slot_units(p, |m| self.translucent[usize::from(m)], surface)
+    }
+
+    /// What uploading `bricks` into record `rec` (`None`: a new record) takes: the new slots
+    /// of each bin (a brick keeps its slot only when its bin is unchanged) and the slot bytes
+    /// written, over the bricks [`upload_set`] names, whose surface masks, for a full chunk's
+    /// bricks carrying attributes, are left in `surfaces` by brick slot. Reads only; `sync`
+    /// calls it to select a chunk and again, under the chunk's write lock, as the upload's
+    /// backstop, whose surfaces the upload then writes.
+    fn need(
+        &self,
+        bricks: &Bricks<'_>,
+        rec: Option<u32>,
+        lod: bool,
+        surfaces: &mut Vec<Option<[u64; 8]>>,
+    ) -> ([u64; BIN_COUNT], u64) {
+        let attrs = self.attrs_for(lod);
+        let set = upload_set(bricks.len(), rec.is_none(), attrs, |i| bricks.is_dirty(i));
+        surfaces.clear();
+        surfaces.resize(bricks.len(), None);
+        let mut new = [0u64; BIN_COUNT];
+        let mut bytes = 0;
+        for (i, &up) in set.iter().enumerate() {
+            let Brick::Full(p) = bricks.get(i) else {
+                continue;
+            };
+            if !up {
+                continue;
+            }
+            let surface = match bricks {
+                Bricks::Chunk(ch) if attrs => {
+                    let s = chunk_surface(ch.bricks(), i);
+                    surfaces[i] = Some(s);
+                    Some(popcount(&s))
+                }
+                _ => None,
+            };
+            let k = bin_of(self.slot_units(p, surface));
+            bytes += u64::from(BINS[k]) * UNIT_BYTES;
+            let old = rec.map_or(0, |r| {
+                self.entries[r as usize * RECORD_WORDS + ENTRY_WORD + i]
+            });
+            if old & FULL_BIT == 0 || self.bin_of_unit(old & UNIT_MASK) != Some(k) {
+                new[k] += 1;
+            }
+        }
+        (new, bytes)
     }
 
     /// Spare slots of bin `k` in page `p`: its free slots, and the rest of the bin's cursor
@@ -1858,6 +1983,7 @@ impl GpuWorld {
         self.stale.clear();
         let mut fit = Fit::new(self);
         let mut short = None;
+        let mut surfaces = std::mem::take(&mut self.surfaces);
         for &(_, coord) in &self.pending {
             if bytes >= budget && !self.selected.is_empty() {
                 break;
@@ -1879,32 +2005,17 @@ impl GpuWorld {
             // A record of the other tier is replaced whole.
             let rec = mirrored.filter(|m| m.lod == lod).map(|m| m.record);
             let demotion = mirrored.is_some_and(|m| !m.lod) && lod;
-            let attrs = self.attrs_for(lod);
             let mut chunk_bytes = RECORD_BYTES + if rec.is_none() { 4 } else { 0 };
-            let mut new = [0u64; BIN_COUNT];
-            match &src {
+            let new = match &src {
                 Src::Full(chunk) => {
                     let ch = chunk.read().unwrap_or_else(PoisonError::into_inner);
                     if rec.is_some() && !ch.any_dirty() {
                         self.stale.push(coord);
                         continue;
                     }
-                    for slot in 0..CHUNK_BRICKS {
-                        if rec.is_some() && !ch.is_dirty(slot) {
-                            continue;
-                        }
-                        if let Brick::Full(p) = ch.brick(slot) {
-                            let k = bin_of(self.slot_units(p, attrs));
-                            chunk_bytes += u64::from(BINS[k]) * UNIT_BYTES;
-                            let old = rec.map_or(0, |r| {
-                                self.entries[r as usize * RECORD_WORDS + ENTRY_WORD + slot]
-                            });
-                            // A brick keeps its slot only when the bin is the same.
-                            if old & FULL_BIT == 0 || self.bin_of_unit(old & UNIT_MASK) != Some(k) {
-                                new[k] += 1;
-                            }
-                        }
-                    }
+                    let (new, bytes) = self.need(&Bricks::Chunk(&ch), rec, false, &mut surfaces);
+                    chunk_bytes += bytes;
+                    new
                 }
                 Src::Lod(mips) => {
                     // Mips never change: a chunk already mirrored LOD-only needs nothing.
@@ -1912,17 +2023,11 @@ impl GpuWorld {
                         self.stale.push(coord);
                         continue;
                     }
-                    for n in 1..=MIP_LEVELS {
-                        for b in mips.level(n) {
-                            if let Brick::Full(p) = b {
-                                let k = bin_of(self.slot_units(p, false));
-                                chunk_bytes += u64::from(BINS[k]) * UNIT_BYTES;
-                                new[k] += 1;
-                            }
-                        }
-                    }
+                    let (new, bytes) = self.need(&Bricks::Mips(mips), None, true, &mut surfaces);
+                    chunk_bytes += bytes;
+                    new
                 }
-            }
+            };
             // The frees of a tier change: the old record's slots.
             let frees = mirrored.filter(|m| m.lod != lod).map(|m| m.record);
             if short.is_some() && !demotion {
@@ -1940,6 +2045,7 @@ impl GpuWorld {
                 }
             }
         }
+        self.surfaces = surfaces;
         let mut stale = std::mem::take(&mut self.stale);
         for &c in &stale {
             self.unqueue(c);
@@ -1972,11 +2078,27 @@ impl GpuWorld {
             }
             let frees = mirrored.filter(|m| m.lod != lod).map(|m| m.record);
             let new_record = mirrored.is_none();
+            let rec = mirrored.filter(|m| m.lod == lod).map(|m| m.record);
+            // A full chunk is held under its write lock from the backstop to its upload, so
+            // the need checked is the need written.
+            let mut guard = match &src {
+                Src::Full(chunk) => Some(chunk.write().unwrap_or_else(PoisonError::into_inner)),
+                Src::Lod(_) => None,
+            };
+            let mut surfaces = std::mem::take(&mut self.surfaces);
+            let need = match &guard {
+                Some(ch) => self.need(&Bricks::Chunk(ch), rec, false, &mut surfaces).0,
+                None => {
+                    surfaces.clear();
+                    new
+                }
+            };
+            self.surfaces = surfaces;
             // The backstop: this chunk alone against the allocator as it is now. It must be
             // exact for every need it admits, so that no admitted chunk fails part-way: the
             // state is exact since a chunk's own tier-change frees precede its allocations,
             // and a moved brick's free, which follows its allocation, is never credited.
-            if let Err(e) = Fit::new(self).place(self, frees, new, new_record) {
+            if let Err(e) = Fit::new(self).place(self, frees, need, new_record) {
                 short.get_or_insert(e);
                 st.deferred_chunks += 1;
                 defer_rest = true;
@@ -1985,16 +2107,18 @@ impl GpuWorld {
             if self.mirrored.get(&coord).is_some_and(|m| m.lod != lod) {
                 self.drop_record(coord);
             }
-            result = match src {
-                Src::Full(chunk) => {
-                    let mut ch = chunk.write().unwrap_or_else(PoisonError::into_inner);
-                    let r = self.upload_record(coord, Bricks::Chunk(&ch), false, enc, st);
+            result = match (&src, guard.as_mut()) {
+                (_, Some(ch)) => {
+                    let r = self.upload_record(coord, Bricks::Chunk(ch), false, enc, st);
                     if r.is_ok() {
                         ch.clear_dirty();
                     }
                     r
                 }
-                Src::Lod(mips) => self.upload_record(coord, Bricks::Mips(&mips), true, enc, st),
+                (Src::Lod(mips), None) => {
+                    self.upload_record(coord, Bricks::Mips(mips), true, enc, st)
+                }
+                (Src::Full(_), None) => unreachable!("a full chunk is locked above"),
             };
             if result.is_err() {
                 break;
@@ -2051,16 +2175,19 @@ impl GpuWorld {
             }
         }
         let mut result = Ok(());
-        for i in 0..bricks.len() {
-            if !every && !bricks.is_dirty(i) {
+        let set = upload_set(bricks.len(), every, attrs, |i| bricks.is_dirty(i));
+        for (i, &up) in set.iter().enumerate() {
+            if !up {
                 continue;
             }
-            if self.surface_attrs && !every && !lod {
+            if self.surface_attrs && !every && !lod && bricks.is_dirty(i) {
                 let b = brick_of_slot(i);
                 self.attr_bricks
                     .insert([0, 1, 2].map(|k| coord.0[k] * CHUNK_EDGE_BRICKS + b[k]));
             }
-            result = self.upload_brick(base + ENTRY_WORD + i, bricks.get(i), attrs, enc, st);
+            // The upload's backstop computed the surfaces under the same write lock.
+            let surface = self.surfaces.get(i).copied().flatten();
+            result = self.upload_brick(base + ENTRY_WORD + i, bricks.get(i), surface, enc, st);
             if result.is_err() {
                 break;
             }
@@ -2134,13 +2261,14 @@ impl GpuWorld {
     }
 
     /// Writes `brick` into record word `i`, a brick entry: a `Full` brick as its slot, staged
-    /// from its packed words ([`GpuWorld::fill_slot`]); a uniform one as its material. A brick
-    /// whose slot changes bin takes a slot of the new bin, then returns the old one.
+    /// from its packed words and, for a brick carrying attributes, its `surface` mask
+    /// ([`GpuWorld::fill_slot`]); a uniform one as its material. A brick whose slot changes
+    /// bin takes a slot of the new bin, then returns the old one.
     fn upload_brick(
         &mut self,
         i: usize,
         brick: &Brick,
-        attrs: bool,
+        surface: Option<[u64; 8]>,
         enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) -> Result<(), MirrorError> {
@@ -2160,7 +2288,7 @@ impl GpuWorld {
             return Ok(());
         };
         let mut words = std::mem::take(&mut self.slot_words);
-        let flag = self.fill_slot(p, attrs, &mut words);
+        let flag = self.fill_slot(p, surface, &mut words);
         let k = bin_of((words.len() / UNIT_WORDS) as u32);
         // The rest of the bin's slot reads as "no plane" and is never read as anything else.
         words.resize(BINS[k] as usize * UNIT_WORDS, u32::MAX);
@@ -2190,9 +2318,10 @@ impl GpuWorld {
     /// Fills `out` with the CPU units of `p`'s slot (module docs): the opaque mask (the packed
     /// mask less the translucent voxels), the header, the planes or raw ids copied from the
     /// packed words, the translucent unit of a planar brick holding a translucent voxel, and
-    /// with `attrs` the attribute units as "no plane". Returns `TRANSLUCENT_BIT` when the brick
-    /// holds a translucent voxel, else 0.
-    fn fill_slot(&self, p: &Packed, attrs: bool, out: &mut Vec<u32>) -> u32 {
+    /// for a brick carrying attributes with a non-empty `surface`, its surface mask and its
+    /// attribute units as "no plane", the header holding their prefix popcounts and count.
+    /// Returns `TRANSLUCENT_BIT` when the brick holds a translucent voxel, else 0.
+    fn fill_slot(&self, p: &Packed, surface: Option<[u64; 8]>, out: &mut Vec<u32>) -> u32 {
         out.clear();
         out.resize(2 * UNIT_WORDS, 0);
         let translucent = |m: MaterialId| self.translucent[usize::from(m)];
@@ -2236,8 +2365,15 @@ impl GpuWorld {
                 out[header + HEADER_TRANSLUCENT_WORD + block / 32] |= 1 << (block % 32);
             }
         }
-        if attrs {
-            out[header + HEADER_ATTR_WORD] = ATTR_UNITS;
+        let surface = surface.filter(|s| popcount(s) > 0);
+        if let Some(s) = &surface {
+            let mut below = 0u32;
+            for (z, w) in s.iter().enumerate() {
+                out[header + HEADER_PREFIX_WORD + z / 2] |= below << (16 * (z % 2));
+                below += w.count_ones();
+            }
+            out[header + HEADER_ATTR_WORD] =
+                (surface_attr_units(below) - 1) | (HEADER_HAS_SURFACE << 16);
         }
         match p.words() {
             Some(w) => {
@@ -2269,8 +2405,12 @@ impl GpuWorld {
                 + payload_units(code) as usize * UNIT_WORDS
                 + usize::from(glass != [0; 8] && code != CLASS_WIDE) * UNIT_WORDS
         );
-        if attrs {
-            out.resize(out.len() + ATTR_UNITS as usize * UNIT_WORDS, u32::MAX);
+        if let Some(s) = surface {
+            for w in s {
+                out.extend([w as u32, (w >> 32) as u32]);
+            }
+            let attrs = surface_attr_units(popcount(&s)) - 1;
+            out.resize(out.len() + attrs as usize * UNIT_WORDS, u32::MAX);
         }
         if glass != [0; 8] { TRANSLUCENT_BIT } else { 0 }
     }

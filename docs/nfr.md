@@ -183,6 +183,18 @@ and 5509, max 11 477 and 7555 bricks (1717 and 1802 frames with work); the pass'
 2.990 and 2.416 ms, p99 5.572 and 4.463 ms, max 9.074 and 5.049 ms. The hitch is not a load
 artifact. The followup stays owed before the lighting plan (owner, 2026-10-20).
 
+**The attribute pass over surface-only attributes (dev reference, Plan 0028 Phase 3, RTX 3080
+Laptop GPU, exclusive perf lock, 1-minute load 9.3 to 9.8; `flythrough --autopilot --headless
+--seed 1`, the default look, `r_full` 16 held by every run):** GPU p50 3.054 ms, p99 5.770 ms,
+max 6.058 ms with `attr_cap` 8192 (work list p50 8192, p99 10 204; clear items p50 5482), and
+p50 1.533 ms, p99 5.751 ms with 4096 (a measurement build of the cap), against Plan 0013's 1.0
+ms p99 proposal: a recorded miss. The carry-over age reads p50 520 ms, p99 7625 ms at 8192 and
+p50 13 360 ms, p99 27 229 ms at 4096. The pre-plan binary (1d1e67c), whose flight lowered
+`r_full` to 12, read p99 4.820 ms with clear items p50 0 and age p99 69 ms. A first version of
+the pass that filled its occupancy box voxel by voxel read p99 7.636 and 7.781 ms; filling it
+from the 27 bricks' masks in workgroup memory took 2 ms off. The pass's cost is per brick (the
+box fill, the workgroup, the clear items), not per voxel computed.
+
 **Mirror attribute pass (contour look), render-thread CPU: p99 under 4 ms on the dev reference,
 deferred work visible as face-mode normals for at most 250 ms** (budget, Plan 0023, ADR-0017;
 dev reference only). **Reading: a recorded miss (Plan 0023 Phase 6 quiet re-read, the Phase 6
@@ -530,6 +542,17 @@ in 405 writes in 342 ms against 500 ms for the pre-plan binary (1d1e67c, 232 617
 writes) in the same session, lights included (65 to 67 ms in both). The streamed plain spawn at
 full residency (16/24, `--frames 3000`) holds 502 928 492 B live against 1 786 641 644 B, as
 projected.
+
+**Surface-only contour attributes, read (dev reference, Plan 0028 Phase 3, RTX 3080 Laptop GPU,
+exclusive perf lock, 1-minute load 9.5 to 10.2).** The level in the default look (`flythrough
+--level --headless --seed 1 --frames 3 --look contour`) holds 157 872 640 B live (680 491 136 B
+before) under a 259 203 264 B reservation; its first sync uploads 158 053 616 B in 826 writes in
+687 and 690 ms against 652 and 659 ms for 1d1e67c (232 617 968 B), the chunk-local surface
+masks computed on the render thread; the attribute pass's initial fill of its 383 608 bricks
+reads 34.7 and 47.2 ms against 55.2 ms. The default autopilot flight (`--autopilot --headless
+--seed 1`, same load) keeps `r_full` 16 with no radius change and no deferral, peak pressure
+0.6447 (records; units 0.3027), peak 1 003 260 588 B live, where 1d1e67c lowered `r_full` to 12
+at pressure 0.911 with 2 864 318 452 B live.
 
 **The reserved budget (dev reference, Plan 0017 Phase 4, ef37395, headless `flythrough
 --autopilot --headless`, unbounded cave seed 1, h 1, 15 workers, RTX 3080 Laptop GPU, Ryzen 9
