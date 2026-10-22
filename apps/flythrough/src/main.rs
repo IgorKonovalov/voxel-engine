@@ -1296,6 +1296,33 @@ impl Gfx {
     }
 }
 
+/// The pool's bins at a moment: per bin with a page, its slot size, live slots, spare units
+/// (free slots and the rest of its cursor's page) and pages, then the spare units over every
+/// bin against the live units, e.g. `bins: 2u 10 live 6 spare 1p, 3u 4 live 0 spare 1p;
+/// spare 6 of 32 live units (18.75 %)`.
+fn bins_line(mirror: &GpuWorld) -> String {
+    let bins: Vec<String> = mirror
+        .bin_stats()
+        .iter()
+        .filter(|b| b.pages > 0)
+        .map(|b| {
+            format!(
+                "{}u {} live {} spare {}p",
+                b.units,
+                b.live,
+                b.spare * u64::from(b.units),
+                b.pages
+            )
+        })
+        .collect();
+    let (spare, live) = (mirror.spare_units(), mirror.live_units());
+    format!(
+        "bins: {}; spare {spare} of {live} live units ({:.2} %)",
+        bins.join(", "),
+        100.0 * spare as f64 / live.max(1) as f64
+    )
+}
+
 /// `attrib: 383608 bricks in 12.345 ms GPU (initial fill)`.
 fn attr_line(what: &str, (n, ms): (usize, Option<f64>)) -> String {
     let ms = ms.map_or("n/a (no TIMESTAMP_QUERY)".to_owned(), |ms| {
@@ -2823,6 +2850,7 @@ impl Run {
                 gfx.mirror.pressure(),
                 stream.rule.r_full
             );
+            println!("{}", bins_line(&gfx.mirror));
         }
         Ok(())
     }

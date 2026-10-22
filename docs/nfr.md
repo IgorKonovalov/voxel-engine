@@ -159,6 +159,17 @@ full residency at `r_full` 16) 1.701, 1.710 and 1.714 ms against 1.708, 1.731 an
 hit in a one-material brick reads one header word where the walk read a pool byte and a record
 palette word; a plane costs one more word per plane.
 
+**The settled streamed spawn at `r_full` 16, both adapters (Plan 0028 Phase 4, exclusive perf
+lock; `flythrough --headless --seed 1 --render 1920x1080 --frames 3000 [--look plain]`, median
+of the last 30 frames, three runs each; no bar).** Dev reference (RTX 3080 Laptop, load 3.27
+to 7.90, not quiet): the hit pass reads 1.767, 1.764 and 1.780 ms in the default look (frame
+5.705 to 5.739 ms) and 1.539, 1.571 and 1.558 ms plain (frame 5.277 to 5.381 ms). Slow adapter
+(AMD Radeon Graphics, RADV RENOIR, selected with `--adapter AMD`, load 1.05 to 2.96): the
+default look's hit 13.337, 13.318 and 13.354 ms (frame 44.550 to 44.706 ms, the light pass
+22.344 to 22.370 ms), plain 11.961 ms in one run (frame 41.229 ms); the level's spawn
+(`--level ... --frames 300 --adapter AMD`, load 2.01 to 3.62) hit 9.302, 9.296 and 9.297 ms,
+frame 33.757 to 33.774 ms. These are the first slow-adapter readings.
+
 **The attribute pass under motion (dev reference, diagnostic, Plan 0013 Phase 7, same machine
 and lock, `flythrough --autopilot --headless --seed 1`, default contour, two runs at load 3.6
 to 11.1):** per frame of the flight, the work list reads p50 3584 to 4446, p99 5468 to 5469,
@@ -386,6 +397,16 @@ serialized CPU and GPU, the mirror at its 3 GiB budget): frame CPU p50 10.223 ms
 53.354 ms; `update + poll + sync` p50 4.432 ms, p99 36.548 ms; march GPU p50 6.571 ms; about
 30 fps. It is the baseline Plan 0028's windowed flight compares with.
 
+**Streaming after size-classed slots (dev reference, Plan 0028 Phase 4, RTX 3080 Laptop GPU,
+exclusive perf lock, 1-minute load 5.90 to 9.53, not quiet; `flythrough --autopilot --headless
+--seed 1 --look plain`, two runs alternated with 1d1e67c):** `sync` p50 0.168 and 0.171 ms
+against 4.931 and 4.977 ms, `update + poll + sync` p50 0.172 and 0.175 ms against 5.471 and
+5.493 ms, under the 1.0 ms line; `sync` p99 29.474 and 29.598 ms against 13.353 and 14.403 ms.
+The default look's flight (load 1.49) reads `sync` p50 3.086 ms, p99 29.199 ms, the chunk-local
+surface masks computed in it; 1d1e67c's default flight settled at `r_full` 13 (p50 0.186 ms).
+On the slow adapter (`--adapter AMD`, load 0.69) the default flight reads `sync` p50 16.001 ms
+over 1275 frames.
+
 **Stats HUD (dev reference, Plan 0010, f91726f, headless `flythrough [--level] --seed 1
 --render 1920x1080 --frames 300 [--hud]`, three runs each, NVIDIA GeForce RTX 3080 Laptop GPU,
 Ryzen 9 5900HS):** a tool, not a frame stage, so it has no line in the table. The HUD pass
@@ -562,6 +583,18 @@ reads 34.7 and 47.2 ms against 55.2 ms. The default autopilot flight (`--autopil
 --seed 1`, same load) keeps `r_full` 16 with no radius change and no deferral, peak pressure
 0.6447 (records; units 0.3027), peak 1 003 260 588 B live, where 1d1e67c lowered `r_full` to 12
 at pressure 0.911 with 2 864 318 452 B live.
+
+**The streamed default at `r_full` 16 (dev reference, Plan 0028 Phase 4, RTX 3080 Laptop GPU,
+exclusive perf lock, 1-minute load 1.49 to 9.53 from the other lanes' work; `flythrough
+--autopilot --headless --seed 1`, paired with 1d1e67c).** The default look reaches full
+residency at 16/24 (17 077 full, 40 700 LOD-only chunks) with `r_full` 16: 871 679 852 B live
+there, peak 941 911 020 B over the flight, peak pressure 0.6514 (records; units 0.2701), no
+radius change, no sync with a deferral, return hash matching; 1d1e67c settled at `r_full` 13
+with 2 864 309 692 B live, pressure 0.911 and four radius changes. Plain: 502 928 492 B at
+full residency, peak 532 183 724 B, against 1 786 641 644 and 1 890 756 140 B. Fragmentation at
+full residency (the fly-through's `bins:` line): 11 908 spare units of 11 705 061 live (0.10 %)
+in the default look over six bins (2, 3, 4, 6, 8 and 12 units), 3817 of 5 943 321 (0.06 %) in
+plain over two; the same figures on the slow adapter's runs.
 
 **The reserved budget (dev reference, Plan 0017 Phase 4, ef37395, headless `flythrough
 --autopilot --headless`, unbounded cave seed 1, h 1, 15 workers, RTX 3080 Laptop GPU, Ryzen 9
