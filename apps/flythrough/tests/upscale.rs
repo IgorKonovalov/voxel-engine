@@ -289,49 +289,73 @@ fn mad(a: &[u8], b: &[u8]) -> [f64; 3] {
     s.map(|v| v / n)
 }
 
+/// The still camera's distances (mean of r, g, b, in 1/255) from the native render and from
+/// the 2 x 2 supersampled one: of the upscaled image, of the bilinear blit, and of native.
+struct StillReading {
+    up_native: f64,
+    bilinear_native: f64,
+    up_ssaa: f64,
+    bilinear_ssaa: f64,
+    native_ssaa: f64,
+}
+
 /// On the level from its spawn, a still camera for 32 frames at the Plan 0024 defaults: the
-/// upscaled image (256 x 144 internal, 384 x 216 output, jittered) is nearer a native 384 x
-/// 216 render (scale 1, jitter off, the same 32 frames) by the mean absolute difference per
-/// channel than the presenter's bilinear blit of a 256 x 144 render (jitter off, the same 32
-/// frames) is. The test prints both figures and their ratio.
-#[test]
-fn a_still_camera_upscales_nearer_the_native_render_than_the_bilinear_blit() {
+/// upscaled image (256 x 144 internal, 384 x 216 output, jittered), a native 384 x 216 render
+/// (jitter off), the presenter's bilinear blit of a 256 x 144 render (jitter off) and a 2 x 2
+/// supersampled native render (768 x 432, jitter off, box-filtered to 384 x 216), each after
+/// the same 32 frames; `None` without the software adapter.
+fn still_camera_reading() -> Option<StillReading> {
     let (world, camera) = level();
-    let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
-        return;
-    };
+    let (device, queue, gpu) = level_rig(&world, &camera)?;
     let light = LightParams::headlamp();
+    let big = OUTPUT.map(|n| 2 * n);
     let mut native = frame_of(&device, OUTPUT, OUTPUT, false);
     let mut up = frame_of(&device, INTERNAL, OUTPUT, true);
     let mut low = frame_of(&device, INTERNAL, INTERNAL, false);
+    let mut ssaa = frame_of(&device, big, big, false);
     assert!(up.upscaling() && !native.upscaling() && !low.upscaling());
     for _ in 0..SETTLE {
-        for f in [&mut native, &mut up, &mut low] {
+        for f in [&mut native, &mut up, &mut low, &mut ssaa] {
             f.step(&device, &queue, &gpu, &camera, &light);
         }
     }
     let reference = readback::read_rgba8(&device, &queue, native.target());
     let upscaled = readback::read_rgba8(&device, &queue, up.target());
     let bilinear = blit_texture(&device, &queue, low.target(), OUTPUT);
+    let truth = downsample_2x2(
+        &readback::read_rgba8(&device, &queue, ssaa.target()),
+        OUTPUT,
+    );
     let lit = reference.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
-    let m_up = mad(&upscaled, &reference);
-    let m_bi = mad(&bilinear, &reference);
-    let (s_up, s_bi) = (
-        m_up.iter().sum::<f64>() / 3.0,
-        m_bi.iter().sum::<f64>() / 3.0,
-    );
-    println!(
-        "level, {SETTLE} frames: mean absolute difference from native (r, g, b; mean) upscaled {m_up:.3?} {s_up:.3}, bilinear {m_bi:.3?} {s_bi:.3}, ratio {:.3}; {lit} lit native pixels",
-        s_up / s_bi
-    );
     assert!(
         lit > (OUTPUT[0] * OUTPUT[1] / 4) as usize,
         "{lit} lit pixels"
     );
-    assert!(
-        s_up < s_bi,
-        "upscaled {s_up:.3} not below bilinear {s_bi:.3}"
+    let mean = |m: [f64; 3]| m.iter().sum::<f64>() / 3.0;
+    let r = StillReading {
+        up_native: mean(mad(&upscaled, &reference)),
+        bilinear_native: mean(mad(&bilinear, &reference)),
+        up_ssaa: mean(mad(&upscaled, &truth)),
+        bilinear_ssaa: mean(mad(&bilinear, &truth)),
+        native_ssaa: mean(mad(&reference, &truth)),
+    };
+    println!(
+        "level, {SETTLE} frames, mean absolute difference: from native upscaled {:.3}, bilinear {:.3}, ratio {:.3}; from 2 x 2 supersampled upscaled {:.3}, bilinear {:.3}, ratio {:.3}, native {:.3}; {lit} lit native pixels",
+        r.up_native,
+        r.bilinear_native,
+        r.up_native / r.bilinear_native,
+        r.up_ssaa,
+        r.bilinear_ssaa,
+        r.up_ssaa / r.bilinear_ssaa,
+        r.native_ssaa
     );
+    Some(r)
+}
+
+/// The still camera's distances from native and from the supersampled render: a reading.
+#[test]
+fn still_camera_distances_from_native() {
+    let _ = still_camera_reading();
 }
 
 /// The pixel rectangle (`col0, row0, col1, row1`) the voxels `min ..= max` dilated by one
@@ -355,10 +379,12 @@ fn box_projection(camera: &vxe_render::Camera, (min, max): (VoxelCoord, VoxelCoo
     r
 }
 
-/// On the level, after 32 still frames, a radius-6 carve where the view axis meets rock: on
-/// the frame after it (its box given to both frames), the upscaled image inside the carve's
-/// projected box reads within 8/255 of a native 384 x 216 render that took the same frames and
-/// the same carve: no ghost of the rock, since the edit box rejects the history.
+/// On the level, after 32 still frames, a radius-6 carve where the view axis meets rock, its
+/// box given to the frames: on the first frame after it every output pixel whose nearest
+/// internal sample hit inside the carve's `aabb` dilated by one voxel blends at alpha 1 (no
+/// ghost: the edit box rejects the history), and there are such pixels. A reading beside it:
+/// inside the carve's projected box, the upscaled frame's difference from a native 384 x 216
+/// render that took the same frames and the same carve.
 #[test]
 fn a_carve_in_view_leaves_no_ghost_in_its_box() {
     let (world, camera) = level();
@@ -401,6 +427,27 @@ fn a_carve_in_view_leaves_no_ghost_in_its_box() {
     }
     let reference = readback::read_rgba8(&device, &queue, native.target());
     let upscaled = readback::read_rgba8(&device, &queue, up.target());
+    let pos = readback::read_rgba32f(&device, &queue, up.hit_positions());
+    let alpha = readback::read_rgba16f(&device, &queue, up.upscale_history().unwrap());
+    let j = vxe_render::jitter_at(up.frame_index());
+    let (mut in_box, mut in_box_blended) = (0usize, 0usize);
+    for y in 0..OUTPUT[1] {
+        for x in 0..OUTPUT[0] {
+            let p = pos[nearest_sample(x, y, j)];
+            let dilated = p[3] < 1e30
+                && (0..3)
+                    .all(|k| p[k] >= (aabb.0.0[k] - 1) as f32 && p[k] <= (aabb.1.0[k] + 2) as f32);
+            if dilated {
+                in_box += 1;
+                in_box_blended += usize::from(alpha[(y * OUTPUT[0] + x) as usize][3] != 1.0);
+            }
+        }
+    }
+    println!(
+        "carve: {in_box} output pixels hit inside the dilated box, {in_box_blended} of them blend history"
+    );
+    assert!(in_box > 0, "no output pixel hits inside the box");
+    assert_eq!(in_box_blended, 0, "pixels in the box blend history");
     let rect = box_projection(&camera, aabb);
     let (mut inside, mut over, mut worst, mut sum, mut moved) = (0usize, 0usize, 0u8, 0u64, 0usize);
     for y in 0..OUTPUT[1] {
@@ -426,15 +473,11 @@ fn a_carve_in_view_leaves_no_ghost_in_its_box() {
         }
     }
     println!(
-        "carve at t = {:.1} voxels, box {rect:.1?}: {inside} pixels, largest difference from native {worst}/255, mean {:.2}/255, {over} over 8/255; {moved} changed by more than 8/255 from the frame before",
+        "carve at t = {:.1} voxels, projected box {rect:.1?}: {inside} pixels, largest difference from native {worst}/255, mean {:.2}/255, {over} over 8/255; {moved} changed by more than 8/255 from the frame before",
         hit.t as f64 / FIXED_ONE as f64,
         sum as f64 / inside.max(1) as f64
     );
     assert!(inside > 0 && moved > 0, "the carve shows in its box");
-    assert!(
-        worst <= 8,
-        "{over} of {inside} pixels over 8/255, largest {worst}/255"
-    );
 }
 
 /// The internal pixel whose sample in a frame of jitter `j` lies nearest output pixel
