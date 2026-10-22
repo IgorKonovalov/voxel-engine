@@ -12,6 +12,43 @@ use crate::brick::Brick;
 use crate::material::{AIR, MaterialFlags, MaterialId, MaterialTable};
 use crate::store::{World, read};
 
+/// The non-air voxels of `brick`, one `u64` per z-layer (bit `x + 8 y`): a `Full` brick's
+/// mask, all set for a uniform solid brick, clear for uniform air.
+pub fn solid_mask(brick: &Brick) -> [u64; 8] {
+    match brick {
+        Brick::Uniform(m) => [if *m == AIR { 0 } else { u64::MAX }; 8],
+        Brick::Full(p) => p.mask(),
+    }
+}
+
+/// The *chunk-local surface* of a brick whose non-air voxels are `solid` (layer-major as
+/// [`solid_mask`]): its non-air voxels with at least one of the six face neighbours air, the
+/// neighbours across the brick's faces read from `beside[k][d]`, the solid mask of the brick
+/// next to it on axis `k` toward minus (`d` 0) or plus (`d` 1). `None` there (the brick's face
+/// is a face of its chunk) counts as air, so every voxel on that face is surface: no chunk
+/// past the brick's own is read.
+pub fn surface_mask(solid: &[u64; 8], beside: &[[Option<[u64; 8]>; 2]; 3]) -> [u64; 8] {
+    // Bits of the x = 0 and x = 7 columns, and of the y = 0 and y = 7 rows, of one layer.
+    const X0: u64 = 0x0101_0101_0101_0101;
+    const X7: u64 = X0 << 7;
+    const Y0: u64 = 0xFF;
+    const Y7: u64 = Y0 << 56;
+    let side = |k: usize, d: usize, z: usize| beside[k][d].map_or(0, |m| m[z]);
+    let mut out = [0u64; 8];
+    for z in 0..8 {
+        let m = solid[z];
+        // Each word is set where the neighbour on that side is solid.
+        let xm = ((m << 1) & !X0) | ((side(0, 0, z) & X7) >> 7);
+        let xp = ((m >> 1) & !X7) | ((side(0, 1, z) & X0) << 7);
+        let ym = (m << 8) | ((side(1, 0, z) & Y7) >> 56);
+        let yp = (m >> 8) | ((side(1, 1, z) & Y0) << 56);
+        let zm = if z > 0 { solid[z - 1] } else { side(2, 0, 7) };
+        let zp = if z < 7 { solid[z + 1] } else { side(2, 1, 0) };
+        out[z] = m & !(xm & xp & ym & yp & zm & zp);
+    }
+    out
+}
+
 /// Counts over a set of bricks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct BrickCensus {

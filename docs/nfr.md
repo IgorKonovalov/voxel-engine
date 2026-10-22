@@ -495,6 +495,21 @@ slots and their two 72 B mask entries). At the level (`flythrough --level --head
 448 054 144 B, under a 797 779 456 B reservation. The layout is unchanged; surface-only
 attribute storage is ADR-0012's mirror-slot plan.
 
+**Size-classed slots, projected (arithmetic, not a reading; Plan 0028 Phase 1, `world_budget
+--chunks 20x20x8 --census` and `--stream R,24 --surface`, cave seed 1, dev box).** A `Full`
+brick's slot is 64-byte units (mask, header, 0/1/2/4 plane units or 16 of raw ids: 2, 3, 4, 6
+or 18 units) in bins of 2, 3, 4, 6, 8, 12, 16, 20, 24 and 36 units; a record is 2112 B. With
+contour attributes a full chunk's brick adds a surface-mask unit and `ceil(n / 32)` units for
+its `n` chunk-local surface voxels (an air face neighbour inside the chunk, or the chunk's
+face). The level: pool 56 075 200 B, records 6 758 400 B, 62 846 720 B with table and rows
+(232 436 992 B live today). Streamed, at full residency (57 777 records):
+
+| residency | plain look | contour look | surface voxels (chunk-local / exact plane) | attribute units per brick |
+|---|---|---|---|---|
+| 12/24 | 409 969 196 B | 563 102 380 B | 37 518 244 / 23 899 197 (1.570) | 3.07 |
+| 14/24 | 451 317 548 B | 700 607 596 B | 61 043 072 / 39 015 306 (1.565) | 3.08 |
+| 16/24 | 502 928 492 B | 871 679 852 B | 90 331 692 / 57 703 350 (1.565) | 3.08 |
+
 **The reserved budget (dev reference, Plan 0017 Phase 4, ef37395, headless `flythrough
 --autopilot --headless`, unbounded cave seed 1, h 1, 15 workers, RTX 3080 Laptop GPU, Ryzen 9
 5900HS, exclusive perf lock, 1-minute load 10.6 to 23.2 from other builds on the box, two runs

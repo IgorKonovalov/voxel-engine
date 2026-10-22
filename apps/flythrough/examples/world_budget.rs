@@ -37,6 +37,18 @@
 //! residency, from the source; an upper bound on the attribute pass's planes, which also drop
 //! voxels whose occupancy gradient vanishes), the plane voxels per brick in 32-voxel bins, the
 //! 2 x 2 x 2 blocks holding a plane voxel, and the attribute bytes of each footprint layout.
+//!
+//! The size-classed slot projection (ADR-0012's mirror format) follows `--census` and
+//! `--surface`. A `Full` brick's slot is a run of 64-byte units: the opaque mask, a header,
+//! then 0, 1, 2 or 4 plane units (one, two, three to four, five to sixteen materials) or 16
+//! units of raw ids, so 2, 3, 4, 6 or 18 units; it is allocated from the smallest bin of
+//! `MIRROR_BINS` units that holds it. A record is 2112 B (no palette). With contour
+//! attributes a full chunk's brick with `n > 0` *chunk-local surface* voxels
+//! (`vxe_world::surface_mask`: non-air voxels with an air face neighbour inside the chunk, a
+//! chunk face counting as air) adds a unit of surface mask and `ceil(n / 32)` units of `u16`
+//! attributes. `--surface` prints, per packed class, its units, bricks, exact plane voxels,
+//! chunk-local surface voxels and attribute units, then the projected mirror of each look:
+//! pool by bin, records, table and material rows.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
@@ -45,16 +57,81 @@ use flythrough::cave::CaveSource;
 use flythrough::{cave_materials, chunk_ram, mips_ram, stream_record_chunks, window_side};
 use vxe_render::gpu_world::{ATTR_PAGE_BRICK_SLOTS, MATERIAL_FLOATS, POOL_PAGE_SLOTS, budget_for};
 use vxe_world::hash::{ValueNoise, hash3};
+use vxe_world::packed::PackedClass;
 use vxe_world::{
     AIR, BRICK_EDGE, BRICK_VOXELS, Brick, BrickCensus, CHUNK_BRICKS, CHUNK_EDGE, Chunk, ChunkCoord,
     ChunkExtent, ChunkMips, CoarseGrid, Material, MaterialId, MaterialTable, PersistConfig,
-    Residency, StreamConfig, Streamer, World, WorldLimits, WorldSource, brick_of_slot, brick_slot,
-    index_in_brick,
+    Residency, StreamConfig, Streamer, World, WorldCensus, WorldLimits, WorldSource, brick_of_slot,
+    brick_slot, index_in_brick, solid_mask, surface_mask,
 };
 
 /// Mirror bytes per `Full` brick or mip-brick, and per mirrored chunk's record.
 const SLOT_AND_MASK: usize = 512 + 72;
 const RECORD: usize = 2624;
+
+/// The size-classed slot layout's unit, bins (units per slot) and record bytes.
+const UNIT_BYTES: u64 = 64;
+const MIRROR_BINS: [u64; 10] = [2, 3, 4, 6, 8, 12, 16, 20, 24, 36];
+const SIZED_RECORD: u64 = 2112;
+
+/// Units of a `Full` brick's slot without attributes, by packed class.
+fn class_units(c: PackedClass) -> u64 {
+    match c {
+        PackedClass::Wide => 18,
+        c => 2 + c.planes() as u64,
+    }
+}
+
+/// Units of a full chunk's brick's slot with `n` chunk-local surface voxels' attributes.
+fn attr_units(n: u64) -> u64 {
+    if n == 0 { 0 } else { 1 + n.div_ceil(32) }
+}
+
+/// The bin holding a slot of `units`.
+fn bin_of(units: u64) -> usize {
+    MIRROR_BINS
+        .iter()
+        .position(|&b| b >= units)
+        .expect("a slot fits the largest bin")
+}
+
+/// `Full` bricks of a census bin of materials (`BrickCensus::BINS`) as slots of each bin.
+fn census_bins(c: &BrickCensus) -> [u64; 10] {
+    const UNITS: [u64; 6] = [2, 3, 4, 6, 18, 18];
+    let mut out = [0u64; 10];
+    for (n, units) in c.full_by_materials.iter().zip(UNITS) {
+        out[bin_of(units)] += n;
+    }
+    out
+}
+
+/// Prints one look's projected mirror: the pool by bin (slots of each bin times its units),
+/// `records` records, `table` chunk-table entries and the material rows.
+fn projection(look: &str, bins: &[u64; 10], records: u64, table: u64, materials: usize) {
+    let pool: u64 = bins
+        .iter()
+        .zip(MIRROR_BINS)
+        .map(|(n, b)| n * b * UNIT_BYTES)
+        .sum();
+    let rec = records * SIZED_RECORD;
+    let rows = (materials * MATERIAL_FLOATS * 4) as u64;
+    let total = pool + rec + table * 4 + rows;
+    let by_bin: Vec<String> = bins
+        .iter()
+        .zip(MIRROR_BINS)
+        .filter(|(n, _)| **n > 0)
+        .map(|(n, b)| format!("{b}u x {n} = {} B", n * b * UNIT_BYTES))
+        .collect();
+    println!(
+        "{:LABEL$}pool {pool} B ({:.1} MiB) [{}]; records {records} x {SIZED_RECORD} = {rec} B; \
+         table {} B; materials {rows} B; total {total} B ({:.1} MiB)",
+        format!("sized ({look}):"),
+        mib(pool),
+        by_bin.join(", "),
+        table * 4,
+        mib(total)
+    );
+}
 
 /// Width of the label column the figures are printed after.
 const LABEL: usize = 19;
@@ -286,7 +363,16 @@ fn bounded(seed: u64, chunks: [i32; 3], census: bool) {
         s.chunks
     );
     if census {
-        println!("{}", world.brick_census());
+        let c = world.brick_census();
+        println!("{c}");
+        let n = chunks.iter().map(|&v| v as u64).product::<u64>();
+        projection(
+            "plain",
+            &census_bins(&c.total()),
+            s.chunks as u64,
+            n,
+            table.len(),
+        );
     }
 }
 
@@ -378,12 +464,68 @@ fn streamed(seed: u64, r: Residency, census: bool, surface: bool) {
         mib(mirror_lod as u64),
         mib(mirror as u64)
     );
-    if census {
-        println!("{}", world.brick_census());
+    let records = (st.resident_full + st.resident_lod) as u64;
+    let table_entries = (w * w * w) as u64;
+    if census || surface {
+        let c = world.brick_census();
+        if census {
+            println!("{c}");
+        }
+        projection(
+            "plain",
+            &census_bins(&c.total()),
+            records,
+            table_entries,
+            table.len(),
+        );
+        if surface {
+            let t = surface_census(&world, &source, workers, mirror as u64);
+            sized_contour(&t, &c, records, table_entries, table.len());
+        }
     }
-    if surface {
-        surface_census(&world, &source, workers, mirror as u64);
+}
+
+/// The per-class table of the full chunks' `Full` bricks and the contour look's projection:
+/// their slots with attributes, plus the mip-bricks' plain slots.
+fn sized_contour(t: &Census, c: &WorldCensus, records: u64, table: u64, materials: usize) {
+    println!(
+        "| class | units | bricks | plane voxels (exact) | surface voxels (chunk-local) | surface / exact | attribute units (mask + attrs) |"
+    );
+    println!("|---|---|---|---|---|---|---|");
+    let (mut planes, mut surface, mut units) = (0u64, 0u64, 0u64);
+    for (k, row) in t.by_class.iter().enumerate() {
+        let class = PackedClass::ALL[k];
+        planes += row.planes;
+        surface += row.surface;
+        units += row.attr_units;
+        println!(
+            "| {class:?} | {} | {} | {} | {} | {:.3} | {} |",
+            class_units(class),
+            row.bricks,
+            row.planes,
+            row.surface,
+            row.surface as f64 / row.planes.max(1) as f64,
+            row.attr_units
+        );
     }
+    println!(
+        "| all | | {} | {planes} | {surface} | {:.3} | {units} |",
+        t.bricks,
+        surface as f64 / planes.max(1) as f64
+    );
+    println!(
+        "{:LABEL$}{:.1} per brick, {:.2} attribute units per brick ({:.0} B)",
+        "surface voxels:",
+        surface as f64 / t.bricks.max(1) as f64,
+        units as f64 / t.bricks.max(1) as f64,
+        (units * UNIT_BYTES) as f64 / t.bricks.max(1) as f64
+    );
+    let mips = census_bins(&c.mip_bricks);
+    let mut bins = t.contour_bins;
+    for (a, b) in bins.iter_mut().zip(mips) {
+        *a += b;
+    }
+    projection("contour", &bins, records, table, materials);
 }
 
 /// Bytes of the contour attribute per `Full` brick of a full chunk as built: two 512-byte
@@ -394,6 +536,17 @@ const ATTR_PER_BRICK_8B_MASK: u64 = 2 * (512 + 8);
 /// Plan 0005's live rise of the streamed mirror at r_full 16, r_lod 24 with attribute pages.
 const PLAN_0005_RISE: u64 = 1_705_903_808;
 
+/// The size-classed census of one packed class's bricks.
+#[derive(Clone, Copy, Default)]
+struct ClassRow {
+    bricks: u64,
+    planes: u64,
+    /// Chunk-local surface voxels.
+    surface: u64,
+    /// Units of surface mask and attributes.
+    attr_units: u64,
+}
+
 /// What the census counts over a set of bricks.
 #[derive(Clone, Copy, Default)]
 struct Census {
@@ -402,6 +555,10 @@ struct Census {
     blocks: u64,
     /// Bricks by plane voxels, in bins of 32 (bin 16 holds exactly 512).
     hist: [u64; 17],
+    /// By `PackedClass::ALL`.
+    by_class: [ClassRow; 5],
+    /// Slots of each bin of `MIRROR_BINS` the bricks take with their attributes.
+    contour_bins: [u64; 10],
 }
 
 impl Census {
@@ -410,6 +567,15 @@ impl Census {
         self.planes += o.planes;
         self.blocks += o.blocks;
         for (a, b) in self.hist.iter_mut().zip(&o.hist) {
+            *a += b;
+        }
+        for (a, b) in self.by_class.iter_mut().zip(&o.by_class) {
+            a.bricks += b.bricks;
+            a.planes += b.planes;
+            a.surface += b.surface;
+            a.attr_units += b.attr_units;
+        }
+        for (a, b) in self.contour_bins.iter_mut().zip(&o.contour_bins) {
             *a += b;
         }
     }
@@ -540,13 +706,40 @@ fn census_chunk(world: &World, source: &CaveSource, cache: &SourceCache, c: Chun
         out.planes += planes;
         out.blocks += blocks;
         out.hist[(planes / 32) as usize] += 1;
+        // The chunk-local surface: neighbours inside this chunk only.
+        let beside: [[Option<[u64; 8]>; 2]; 3] = std::array::from_fn(|k| {
+            std::array::from_fn(|d| {
+                let mut n = b;
+                n[k] += if d == 0 { -1 } else { 1 };
+                (0..chunk_bricks)
+                    .contains(&n[k])
+                    .then(|| solid_mask(here.brick(brick_slot(n))))
+            })
+        });
+        let n = surface_mask(&solid_mask(brick), &beside)
+            .iter()
+            .map(|w| u64::from(w.count_ones()))
+            .sum::<u64>();
+        let Brick::Full(p) = brick else {
+            unreachable!("only Full bricks are counted")
+        };
+        let class = p.class();
+        let row = &mut out.by_class[PackedClass::ALL
+            .iter()
+            .position(|&c| c == class)
+            .expect("a class")];
+        row.bricks += 1;
+        row.planes += planes;
+        row.surface += n;
+        row.attr_units += attr_units(n);
+        out.contour_bins[bin_of(class_units(class) + attr_units(n))] += 1;
     }
     out
 }
 
 /// The plane-voxel census of the resident full chunks and the attribute bytes of each
 /// footprint layout; `face_mirror` is the face-mode mirror estimate printed above.
-fn surface_census(world: &World, source: &CaveSource, threads: usize, face_mirror: u64) {
+fn surface_census(world: &World, source: &CaveSource, threads: usize, face_mirror: u64) -> Census {
     let start = now();
     let coords = world.store().coords();
     let cache = SourceCache::default();
@@ -619,6 +812,7 @@ fn surface_census(world: &World, source: &CaveSource, threads: usize, face_mirro
             face_mirror + bytes
         );
     }
+    t
 }
 
 /// Prints the budget `full` bricks of full chunks and `mips` mip-bricks need with a record for

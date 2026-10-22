@@ -1,6 +1,6 @@
 # 0028: Size-classed mirror slots: the packed brick's own bytes in the pool, no chunk palette, and contour attributes for surface voxels only
 
-> **Status:** approved (2026-10-21)
+> **Status:** in-progress (2026-10-22)
 > **Created:** 2026-10-21
 > **Milestone:** M2 in `docs/roadmap.md` (ADR-0012's third and last step; the contour
 > footprint ADR-0011 and Plan 0013 owe; `nfr.md` §3)
@@ -324,7 +324,7 @@ the material rows are unchanged. Bindings: the masks buffer's binding is freed.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The census of units | dev | not started | |
+| 1: The census of units | dev | done: level plain pool 56 075 200 B, records 6 758 400 B (62 846 720 B with table and rows); 16/24 exact plane voxels 57 703 350; chunk-local surface 90 331 692 (1.565 x exact; 1.570 at 12/24, 1.565 at 14/24), 3.08 attribute units (197 B) per brick; contour 16/24 at full residency 871 679 852 B, plain 502 928 492 B (57 777 records); bars: the 180 MB level bar and the pressure bar hold on this arithmetic; the 0.93 to 1.2 GB range reads 0.87 GB here, because it counted the 93 239 reserved records rather than the 57 777 mirrored; gate: 581 nextest passed, 4 skipped, 7 doctests, clippy and fmt clean | committed with this row |
 | 2: The slot format, the bins and the march, plain look | dev | not started | |
 | 3: Surface-only attributes, contour look | dev | not started | |
 | 4: The streamed default at `r_full` 16, and the slow adapter | dev | not started | |
