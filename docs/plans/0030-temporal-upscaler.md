@@ -682,6 +682,68 @@ of Plan 0024 shrink to 44 % at scale 1.5.
 - Followup: on the RADV iGPU the upscale pass reads 4.8 ms at 1080p output (25 Lanczos taps
   and 9 previous-hit taps per output pixel), against the 1.5 ms line's dev-box reading.
 
+### Resume notes (2026-10-22, delete when Phase 6 lands)
+
+Checkpoint on the owner's request (laptop on battery). Phase 6 in progress; nothing of
+Phases 6 to 8 is done. Code so far is the `wip(render)` commit after 24a0639 (this note's
+commit follows it).
+
+- **Built (wip):** `vxe_render::marcher::{Upscaler, Reconstruction, HistoryFetch, Blend}` and
+  `Frame::set_upscaler(queue, u)` / `upscaler()`; a uniform `UpscaleUniform` at binding 8 of
+  the upscale group (`UpTuning` in `upscale.wgsl`). Modes: reconstruction Lanczos2 (5 x 5,
+  the tip's) / Nearest / Gaussian `exp(-2.29 (d/width)^2)` / BlackmanHarris radius `1.65
+  width` (3 x 3); fetch Bilinear (tip) / Nearest / CatmullRom (16 `textureLoad`s, no sampler,
+  `max(0)`); blend Fixed (tip) / Nearness (`alpha * w_near`, w_near the nearest sample's
+  kernel weight, peak 1). `Upscaler::default()` is still the tip (Lanczos2, bilinear, fixed
+  0.1), so every existing test still runs the tip's shader path. `still_clip` field is
+  reserved for Phase 7 (unused, 0).
+- **Sharpness rig (tests/upscale.rs):** `stripe_world` (air over chunks [0,3)^3, wall face
+  x = 160, two voxels thick, y in [0,192) alternating albedo 0.8 / 0.1 per voxel), camera at
+  (160 - d, 96.3, 96.4) looking +x; NEAR 7 voxels = 22.034 px/voxel, FAR 88 voxels = 1.753
+  px/voxel (384 x 216 output, vfov 70). Exposure `d^2 / 1200` (else the near wall saturates).
+  Each reading is the mean over 5 sub-pixel camera phases (`PHASES`: shift (j + 0.5)/5 output
+  px) because the stripe period is near-integer in pixels and one camera sees every edge at
+  one offset. ES only at NEAR, over boundaries inside the headlamp's inner cone, plateaus a
+  quarter stripe either side, step > 32/255. N, R, B, U1, U1.5 as the amendment; U images
+  read at sharpening 0 from the history (bytes = round(255 h)) and 0.5 from the target.
+  `stripe_readings` prints readings and lists bar failures (done-whens 1 to 3). Tests:
+  `the_upscalers_blur_decomposed` (ignored, the tip's decomposition) and `zz_tune` (ignored,
+  a temporary tuning loop; filter with `TUNE=<label substring>`). Logs in the worktree:
+  `live/0030/p6-tip-decomposed.log`, `live/0030/p6-tune1.log`.
+- **Readings at the tip's shader (lavapipe, sharpening 0; GE in luminance 0..1):** NEAR: N ES
+  0.798 GE 0.00867; R 1.186 / 0.00656; B 1.718 / 0.00435; U1 1.465 / 0.00507 (0.773 R); U1.5
+  1.630 / 0.00449 (0.684 R); pan 64 frames: U1 2.020 / 0.00357, U1.5 2.404 / 0.00281, N 0.802.
+  FAR: N GE 0.14138, R 0.10586, B 0.05063, U1 0.08105 (0.766 R), U1.5 0.06147 (0.581 R); pan:
+  U1 0.00551, U1.5 0.00441, N 0.14114. Bars from these: U1 ES <= 1.328, U1 GE >= 0.85 R;
+  U1.5 GE >= 0.831 R (near) / 0.739 R (far), U1.5 ES <= 1.452.
+- **Decomposition (each switched alone):** nearest sample (no kernel): U1 still 1.323 /
+  0.00582 (0.887 R), far 0.09318; U1.5 1.610 / 0.00457 (barely changes: the 1.5 blur is the
+  unweighted blend of samples up to 0.75 px off-centre). Nearest history texel: pan U1 2.020
+  -> 1.551, U1.5 2.404 -> 1.973 at NEAR; at FAR pan GE worse (0.00551 -> 0.00277).
+- **Tuning so far (CR fetch unless said; NEAR ES / GE, FAR GE; pan NEAR ES):** gauss 0.6
+  nearness: U1 1.196 / 0.00615, far 0.09765; U1.5 1.234 / 0.00603, far 0.09541 (done-whens 1
+  and 2 met at both distances); pan U1 1.864 (still + 0.668), U1.5 2.252 (+1.018), GE 0.64 /
+  0.52 of still: done-when 3 unmet. gauss 0.8 nearness: U1 1.354 / 0.00530 (fails 1).
+  gauss 1.0 nearness: U1 1.568 (fails). gauss 0.8 fixed: worse at 1.5. BH 0.8 nearness: U1
+  1.335 / 0.00542 (fails 1 narrowly). gauss 0.8 bilinear nearness: pan U1 2.046, U1.5 2.516.
+  At FAR every variant's pan GE collapses (0.002 to 0.013 against still 0.06 to 0.10): the
+  near-Nyquist stripes wash out under any resampled history.
+- **Left:** done-when 3 (pan) is the open problem: still sharpness is met at gauss 0.6 +
+  nearness + CR, but panning adds 0.67 to 1.0 px of ES. Next tries: narrower still (0.5),
+  a higher alpha or a nearness-weighted alpha floor while moving, clip box tightness while
+  moving, CR vs 5-tap. Done-when 3 is being read at NEAR only (ES is defined there; the
+  far pan is a reading); if kept, say so in Notes. Then: re-run Phase 2/3/4 bars and Plan
+  0024 goldens, re-bless `upscaled.png`, fix the Phase 2 sideways test's `alpha == 0.1`
+  check for the nearness blend (log it as a deviation), update `upscale.wgsl`'s header
+  comment (still describes Lanczos-2 / UPSCALE_ALPHA), drop `zz_tune`, set the default.
+  Then Phases 7 (idea: a lamp-change signal computed in the upscale pass from this and an
+  older frame's lamp parameters, held for ~11 frames, clipping still pixels; no new target)
+  and 8.
+- **Gate at the wip commit:** not run (only `upscale_wgsl_validates_through_naga` passed and
+  the flythrough `upscale` test binary built). `cargo fmt --all` applied.
+- **Gotchas:** `Mode::Fill` fills air only (stripes need one fill per column). A full
+  tuning variant costs about 80 s of lavapipe under the perf lock.
+
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
