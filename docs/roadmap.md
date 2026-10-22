@@ -460,13 +460,19 @@ a cheap query.
 - **Visible proof:** a golden image of an animated model casting a shadow on the world.
 - **ADRs expected:** entity representation.
 
-### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views, the profiler across passes and the benchmark lane remain; Plan 0026 closed gamepad flight, v0.21.0)
+### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views, the profiler across passes and the benchmark lane remain; Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1)
 
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane
   (`criterion` for CPU, timestamp queries for GPU) with readings committed per named machine.
 - The runtime stamp is op kind 2 through `Server`, logged and replayed like an edit (Plan
   0018, v0.15.0).
+- Stamping at authored-building scale: a generated castle and dungeon, a 27-tile `.vox`
+  scene through the importer and `StampedSource`, with its RAM and generation costs read (Plan
+  0042, approved).
+- Test tiers for the gate every lane runs: `quick` (CPU only, no perf lock) after every dev
+  phase, `gpu` under the lock for render phases, `full` at a close, a merge and in CI, kept
+  true by `scripts/check-test-tiers.mjs` (Plan 0043, v0.29.1).
 
 ### M8: Volumetrics, debris and collapse (support query and collapse ops shipped in Plan 0009, v0.8.0; volumetrics, debris and the cosmetic rigid-body layer remain open, the last after M6)
 

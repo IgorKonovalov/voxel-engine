@@ -1092,6 +1092,18 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   of them and `cargo tree -p flythrough -e normal` list none; `flythrough --features wasm`
   brings it in. Under the 10 s budget, and unchanged at the Plan 0011 close: the default build
   still compiles no `wasmtime` or `tokio`.
+- The test gate (Plan 0043): a dev phase runs `cargo nextest run --workspace --profile quick`
+  (CPU only, no perf lock), adds `--profile gpu` under the lock when it touches render paths,
+  and a close, a merge or CI runs `--profile full` (`.config/nextest.toml`). Proposal: quick
+  under 60 s on the dev reference, so a phase gate holds no lock and blocks no other lane.
+  **Reading (Plan 0043 close review, 5877b8a, 599 tests, dev reference, Ryzen 9 5900HS and RTX
+  3080 Laptop GPU on lavapipe, built tree, `--test-threads 2`, other lanes running, so all
+  loaded):** quick 470 tests in 45.4 s, no lock, 1-minute load 6.40 to 8.80; gpu 124 tests in
+  201.5 s, exclusive perf lock, load 9.51 to 2.53; full 599 tests in 327.1 s, exclusive perf
+  lock, load 7.90 to 3.71. The dev lane read 44.8, 205.2 and 362.7 s at 8059d41, also loaded.
+  Before the tiers every phase gate was a full run under the lock, 4 to 7 minutes in the
+  lanes' logs at 87e4b67. The CI Linux job time against run 39808788735's 981 s is owed by the
+  first CI run after the merge into main (the Phase 3 amendment).
 
 ## 8. Collision and coarse grids
 

@@ -153,7 +153,8 @@ followup for a future plan, not a finding.
   in-vocabulary owner tag?
 - **For every test the plan named, open it and read the assertion body.** Look for tautologies,
   promised tests that were never written, and assertions weaker than the done-when claims.
-- **Run the gate yourself** (build, nextest, doctests, clippy, fmt, deny) on the finished tree.
+- **Run the gate yourself** (build, `cargo nextest run --workspace --profile full` under the
+  perf lock, doctests, clippy, fmt, deny) on the finished tree.
   Don't copy the log's numbers.
 - **Check every budget reading** in the close triggers against `nfr.md`: is there a number, a
   machine, a commit? A missing reading on a touched figure is a `major`.

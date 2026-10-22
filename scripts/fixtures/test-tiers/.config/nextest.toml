@@ -1,0 +1,17 @@
+# Seeded tree for scripts/check-test-tiers.mjs; scripts/fixtures/README.md names the findings.
+[test-groups]
+lavapipe = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = '(package(gfx) - kind(lib)) | binary_id(app::golden) | binary_id(app::gone)'
+test-group = 'lavapipe'
+
+[[profile.default.overrides]]
+filter = 'test(=slow_one)'
+slow-timeout = { period = "60s" }
+
+[profile.quick]
+default-filter = 'not ((package(gfx) - kind(lib)) | binary_id(app::golden) | binary_id(app::gone)) and not (test(=slow_one))'
+
+[profile.gpu]
+default-filter = '((package(gfx) - kind(lib)) | binary_id(app::golden) | binary_id(app::gone)) and not (test(=slow_one))'

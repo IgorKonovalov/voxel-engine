@@ -55,6 +55,11 @@ prompt.
 
 ## Closing and merging
 
+- **Main into a lane before its close.** When main has moved under a lane with code that
+  conflicts, the lane's dev agent merges main into its own branch (`git merge --no-ff main`,
+  never a rebase), resolves the conflicts, gates the merged tree as below and commits
+  `merge: main into plan-NNNN (...)`. That code work is the lane's, not the orchestrator's;
+  the merge into main stays the orchestrator's.
 - After the last dev phase and the owner's check, a **fresh** architect agent runs the close
   review (architect Mode 4) in the lane's worktree. It reruns the gate itself, and on a clean
   review it does the close ceremony on the branch. Findings go back to a dev agent as a fix
@@ -68,7 +73,8 @@ prompt.
   - **Run the full gate on the merged tree before committing**, when both sides changed code:
     a clean textual merge can still fail to compile (a constant one lane removed and another
     lane's new test uses). Use `set -o pipefail` so a `| tail` can't hide a failure, rebuild
-    the wasm guests (`scripts/build-guests.sh`) first, and pass `--no-fail-fast` to nextest.
+    the wasm guests (`scripts/build-guests.sh`) first, and run the full tier:
+    `cargo nextest run --workspace --profile full --no-fail-fast`, under the perf lock.
   - Two lanes closing in parallel both claim the next version; the second to merge renumbers
     (pins, lockfile, changelog, Status line, index row, roadmap, any ADR Outcome header).
 - Commit doc changes without asking. Push only when the owner says so.
