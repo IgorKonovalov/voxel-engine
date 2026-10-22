@@ -732,8 +732,8 @@ such.
 | 10: The half-resolution tier | dev | done; the 3.0 ms a-trous bar met | 3c2de1d |
 | 11: The fly-through's switches, HUD rows and autopilot readings | dev | done; `frame_bytes` at 1080p over 300 MB (Notes) | 1b896b3 |
 | 12: The owner's windowed check | human | done (live session 4, 2026-10-21; observations below) | none (docs) |
-| 13: Static emissive light holds still (close review fix) | dev | done; bar 1's quarter missed for full with reuse; bar 4 waiting for quiet (Notes) | 152d1f1 |
-| 14: The mode on screen, and the defaults (close review fix) | dev | in progress (resume notes) | 390d1fe (checkpoint) |
+| 13: Static emissive light holds still (close review fix) | dev | done; bar 1's quarter missed for full with reuse; bar 4 met on the quiet box (Notes) | 152d1f1 |
+| 14: The mode on screen, and the defaults (close review fix) | dev | done; Phase 9's cone-turn bars under the new reuse default are an owner question (Notes) | 390d1fe, e9a8e6a, committed with this row |
 | 15: The owner's windowed re-check (close review) | human | not started | |
 
 Phase 13 observations (merge a59199d is the base): the base's flicker (mean step / share
@@ -933,6 +933,51 @@ each. Empty is fine.)_
   asserting it); bar 2's emission step is read as under 10 % of the change left (0.072),
   since at 0.2 a 4:1 step is 26 % above its new value after 11 frames; bar 4 is waiting for
   the quiet box.
+- Phase 13 bar 4 read on the quiet box at Phase 14 (`docs/nfr.md` §2, "Quiet-box readings
+  at the lighting defaults"): temporal 0.134 to 0.145 ms at half and 0.553 to 0.559 ms at full,
+  both spawns; `frame_bytes` 308 736 000 B at full.
+- Phase 14 (390d1fe): the walk and look harness (`LookRig`) and the three emissive-ceiling
+  tests pin full-resolution lighting, which the half default would otherwise blur; the
+  hit-buffer `full_px` in `march.wgsl` (not in the phase's files) clamps to the target, since
+  the half grid's last row and column map past an odd-sized target.
+- Phase 14 (e9a8e6a, `temporal.wgsl`, not in the phase's files): the gradient mode's age cut
+  `floor(age * (1 - lambda))` is now rounded. Lambda reads f16 and bfloat16 rounding wherever
+  emitted light reaches, and the floor pinned the age: after 32 still frames in the dark cave
+  39 048 (list) and 42 450 (reuse) of 57 600 hit pixels read age 0, all 57 600 read 31 after
+  the change (`the_gradient_keeps_history_where_nothing_changed`). Before it, the cone turn in
+  the gradient mode with reuse took 27 frames for every pixel.
+- Phase 14 deviation (e9a8e6a): the cone-turn test runs both samplers. The whole-light bars
+  (gradient within 2 frames; edit-box 67 % at frame 11 and all by 22) are asserted with the
+  flat list, the sampler they were set with; with reuse they are printed, and the edit-box
+  mode asserts with both that the lamp part keeps under 10 % of its change at frame 11 (0.0857
+  read).
+- Phase 9's and Phase 13 bar 2's cone-turn bars not met under the reuse default (owner
+  question; Phase 14's own done-whens hold): with reuse,
+  the gradient mode has 1 of 9320 pixels over 10 % at frame 2 (all by frame 3); its emissive
+  part reads 6.337, the firefly ceiling, against a settled 0.542, after the gradient's lambda
+  near 1 at the turn replaced both parts' history with one frame's estimate, and reuse carries
+  the same kept point into the next frames. The edit-box mode with reuse reads 51.3 % at frame
+  11 (all by 18) against 67 %: the lamp part decays as at the base, and a pixel keeping more
+  than 1.4 % of its lit value as static emissive light stays over 10 % at 0.8^11, which more
+  pixels do under reuse.
+- Phase 14: `docs/nfr.md` §2's d367d8f quiet table (flat list) is replaced by the defaults'
+  readings, as the phase says; its figures stay in the Phase 7 note above.
+
+Phase 14 observations: the banner shows for 3 s after the start and after each `F3` to `F7`
+and `M` change, by the frame loop's clock, under the HUD rows or alone with `F2` off;
+`mode_banner.png` blessed at 390d1fe. Defaults: half lighting, full shadow walk, reservoir
+reuse, edit-box history. Re-blessed at the reuse default (changed / by more than 2/255, of
+57 600): dark_cave 54 212 / 21 728, dark_cave_half 52 864 / 22 952; `dark_cave.png` now has
+45 728 pixels at 16/255 or more (29 103 at Phase 6) from 5616 light samples, and
+`dark_cave_half.png`'s mean absolute difference from it is 4.189, 2.896, 1.565. The cone turn
+(e9a8e6a): list gradient all by frame 2 (0.998 at 1), list edit-box 67.1 % at frame 11 and all
+by 21; reuse gradient all by frame 3, reuse edit-box 51.3 % at 11, all by 18. Quiet readings
+at the defaults (`docs/nfr.md` §2, "Quiet-box readings at the lighting defaults", load 0.83 to
+1.98): light 2.335 to 2.441 ms (level) and 3.315 to 3.355 ms (streamed); light plus temporal
+2.470 to 3.489 ms; a-trous 1.102 to 1.197 ms; at full resolution light 10.528 to 14.526 ms,
+a-trous 4.960 to 5.269 ms. Extraction over the flight p99 2.210, max 6.123 ms (load 0.90).
+`docs/images/hero.png` re-shot at the defaults on the RTX 3080 Laptop GPU (6142 light samples
+in reach), same pose and flags.
 
 Phase 1 observations: hitmask and normals of the three scenes byte-identical to ae58f0c; the
 identity-tone-mapped carve's largest channel difference from ae58f0c's is 0/255; the
@@ -1010,30 +1055,45 @@ headlamp 24 929 / 3872, lod 24 431 / 3465, translucent 13 733 / 353, cutaway_lev
 look_contour 27 259 / 3643, look_detail 32 898 / 21 073, look_gradient27 27 651 / 3593,
 look_trilinear8 25 639 / 3071, hud 15 831 / 2109.
 
-### Resume notes (2026-10-21, delete when Phase 14 lands)
-
-- Done at 390d1fe (checkpoint): `hud::Modes` with the banner (start and every `F3` to `F7`
-  and `M` change, 3 s by the frame loop's clock, wrapped to 40 columns, yellow, under the HUD
-  rows or alone with `F2` off); defaults `LightingResolution::Half`, `Sampler::Reuse` in
-  `Lighting`, `Frame`, the fly-through and the hero; `full_px` clamps to the target; the walk
-  and look tests pin full resolution; `mode_banner.png` blessed; the banner and parse tests.
-- Left: re-bless `dark_cave.png` and `dark_cave_half.png` at the new sampler default (with
-  counts); look at `the_gradient_drops_light_that_left_the_cone_within_two_frames`, which
-  fails under the reuse default; README (keys, banner, defaults); the quiet-box bar 4
-  readings (loaded indicative first); re-shoot `docs/images/hero.png` at the defaults; fill
-  `### Close triggers`; full gate (`--test-threads 2` under the 6G cap).
-- Gate at 390d1fe: clippy and fmt clean; `cargo nextest run --workspace --test-threads 2`
-  579 run, 576 passed, the three above failed.
-
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature (the frame's hit, gradient, light, temporal, a-trous and composite
+  passes; light samples extracted by the mirror; the fly-through's lighting keys, flags, HUD
+  rows and mode banner) plus the close-review fixes of Phases 13 and 14.
+- **Public API changed:** `vxe-render`: `Frame` (the frame passes, `set_lighting`,
+  `set_resolution`, `frame_bytes`, the target accessors), `Lighting`, `LightingResolution`
+  (default `Half`), `Sampler` (default `Reuse`), `ShadowWalk`, `HistoryKill`, `ToneMap`,
+  `CandidateDraw`, `View` and `MAX_VIEWS`, `MAX_EDITS`, `FRAME_PASSES`, `GRADIENT_STRATUM`,
+  `DEFAULT_EMISSIVE_HISTORY`, `LightParams::turn`, the `Params` lighting fields, the
+  `LIGHT_WGSL`, `GRADIENT_WGSL`, `TEMPORAL_WGSL`, `ATROUS_WGSL` and `COMPOSITE_WGSL` sources;
+  `GpuWorld`'s light samples (`LightSample`, `light_buffer`, `light_range`, `light_chunks`,
+  `light_table_base`, `light_radius`, `light_span`, `light_samples`), `MirrorConfig`'s
+  `light_samples`, `light_chunk_cap`, `light_radius`, `light_sync_samples`, `SyncStats`'
+  `light_*` counters, `exposed_emitters`, `thin_samples`; storage buffers per stage raised to
+  10. `flythrough`: `hud::Modes`, `ModeKey`, the banner; flags `--lighting`, `--shadow-walk`,
+  `--sampler`, `--history`, `--emissive-history`, `--filter`, `--lamp`, `--emissive-ore`,
+  `--light-radius`; keys `F3` to `F7`, `M`; the hero example's lighting flags and `--frames`.
+- **Budget readings** (RTX 3080 Laptop GPU, Ryzen 9 5900HS, 1080p, the release binary of
+  e9a8e6a's tree, exclusive perf lock, quiet box, 2026-10-22, `docs/nfr.md` §2 "Quiet-box
+  readings at the lighting defaults"): at the default half tier the light pass 2.335 to 2.441
+  ms (level) and 3.315 to 3.355 ms (streamed) against 4.0; light plus temporal 2.470 to 3.489
+  ms against the 6.0 ms lighting line; a-trous 1.102 to 1.197 ms against the 3.0 ms denoise
+  line; temporal 0.134 to 0.145 ms against 0.3. At full resolution light 10.528 to 14.526 ms
+  (missed), a-trous 4.960 to 5.269 ms (over the line), temporal 0.553 to 0.559 ms against 1.0.
+  Light extraction over the autopilot's flight p50 0.150, p99 2.210, max 6.123 ms against p99
+  1.0 and max 3.0 (missed; a followup). `Frame::frame_bytes` 195 379 200 B at half and
+  308 736 000 B at full (§3, against the 300 MB projection and 1.5 GB line). Every run's
+  1-minute load is in `nfr.md`. No iGPU or baseline reading was taken.
+- **Gate at the tip:** `cargo build --workspace` exit 0; `cargo nextest run --workspace
+  --test-threads 2` under the perf lock and a 6 GB cap: 580 run, 580 passed, 4 skipped, exit
+  0; `cargo test --doc --workspace` 7 passed; `cargo clippy --workspace --all-targets -- -D
+  warnings` exit 0; `cargo fmt --all --check` exit 0; `cargo deny check` exit 0 (advisories,
+  bans, licenses, sources ok); `check-doc-links`, `check-comment-hygiene`, `check-index-rows`
+  OK. Run on e9a8e6a plus this commit's README, `nfr.md`, goldens and `hero.png`.
+- **Outstanding `human` phases:** Phase 15 (the owner's windowed re-check), and the owner's
+  answer on the cone-turn bars under the reuse default (Notes).
 
 ## Followups
 

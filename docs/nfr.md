@@ -209,7 +209,8 @@ beside the eye), so its loads barely move.
 **Light candidates from the near-emitter table and bounded extraction (dev reference,
 indicative, Plan 0024 Phase 7, RTX 3080 Laptop GPU, exclusive perf lock, NOT quiet: 1-minute
 load 2.9 to 8.7; light radius 4, the ore emissive, the lamp on, 8 candidates; one run each;
-the quiet-box readings are owed):** the light pass reads at the level's spawn 9.420 ms (full
+the quiet-box readings at the defaults are in "Quiet-box readings at the lighting defaults"
+below):** the light pass reads at the level's spawn 9.420 ms (full
 walk) and 8.293 ms (coarse) with the table in a 16 KiB uniform, and 7.448 ms (full) with the
 table moved into the light-sample buffer; the streamed spawn (`--frames 3000`) 13.249 ms (full)
 and 11.311 ms (coarse) with the uniform table. With one candidate the level reads 4.644 ms
@@ -239,25 +240,37 @@ level's spawn and 1.277 ms at the streamed spawn at 1080p; the a-trous pass read
 ore emissive, lamp on, one run each):** the temporal pass (the emissive part on a 32-frame
 history, the lamp's on 0.2) reads 0.508 and 0.505 ms at full resolution and 0.137 and
 0.135 ms at half (level, streamed spawn) at 1080p, against Phase 13's 1.0 and 0.3 ms bars; the
-quiet reading is owed. `Frame::frame_bytes` is unchanged at 308 736 000 B.
+quiet readings are in "Quiet-box readings at the lighting defaults" above. `Frame::frame_bytes`
+is unchanged at 308 736 000 B.
 
-**Quiet-box readings of Plan 0024's owed bars (dev reference, d367d8f's release binary,
-RTX 3080 Laptop GPU, Ryzen 9 5900HS, exclusive perf lock, each run started at a 1-minute load
-of 0.18 to 1.87 with no other process above 7 % CPU; 1080p, the default look, the ore
-emissive, the lamp on, the flat list, edit-box history, the filter on):**
+**Quiet-box readings at the lighting defaults (dev reference, Plan 0024 Phase 14, the release
+binary of e9a8e6a's tree, RTX 3080 Laptop GPU, Ryzen 9 5900HS, 2026-10-22, exclusive perf
+lock, each run started at a 1-minute load of 0.83 to 1.98 with no other process above 8 % CPU;
+1920 x 1080, the default look, the ore emissive, the lamp on, full shadow walk, reservoir
+reuse, edit-box history, a 32-frame emissive history, the filter on; median of the last 30
+frames, three runs; `--level --frames 300` and the streamed spawn `--frames 3000`):**
 
-| bar | line | readings | |
-|---|---|---|---|
-| Light extraction over the autopilot's flight (`--autopilot --headless --seed 1`, 4568 frames) | p99 under 1.0 ms, max under 3.0 ms, no wait over 250 ms | p50 0.156, p99 2.255, max 6.693 ms; longest wait 0 ms; peak 18 522 samples, 0 evicted, 0 refused | missed (p99, max); met (wait) |
-| Light pass, level (`--level --frames 300`), full walk | under 4.0 ms | 8.164, 8.240, 7.495 ms | missed |
-| Light pass, level, coarse walk | under 4.0 ms | 6.050, 6.051, 5.713 ms | missed |
-| Light pass, streamed (`--frames 3000`), full walk | under 4.0 ms | 11.539, 11.450, 11.534 ms | missed |
-| Light pass, streamed, coarse walk | under 4.0 ms | 8.901, 8.765, 8.989 ms | missed |
-| Light pass at `--lighting half`, level / streamed (full walk) | under 4.0 ms (read beside the bar) | 1.873, 1.845, 1.861 / 2.901, 2.915, 2.897 ms | under it |
-| A-trous at `--lighting half`, level / streamed | under 3.0 ms | 1.169, 1.151, 1.157 / 1.108, 1.121, 1.113 ms | met |
+| pass (ms) | level, half (default) | streamed, half (default) | level, full | streamed, full |
+|---|---|---|---|---|
+| light | 2.335, 2.441, 2.430 | 3.315, 3.355, 3.340 | 10.528, 10.915, 11.028 | 14.413, 14.526, 14.436 |
+| temporal | 0.135, 0.137, 0.136 | 0.134, 0.134, 0.145 | 0.557, 0.559, 0.558 | 0.553, 0.553, 0.554 |
+| light + temporal | 2.470, 2.578, 2.566 | 3.449, 3.489, 3.485 | 11.085, 11.474, 11.586 | 14.966, 15.079, 14.990 |
+| a-trous (variance + 4) | 1.141, 1.197, 1.192 | 1.102, 1.119, 1.114 | 4.983, 5.147, 5.269 | 4.960, 4.960, 4.960 |
+| hit | 1.343, 1.402, 1.390 | 1.906, 1.928, 1.916 | 1.377, 1.438, 1.457 | 2.034, 1.993, 2.015 |
+| composite | 0.316, 0.329, 0.326 | 0.304, 0.308, 0.312 | 0.278, 0.282, 0.279 | 0.256, 0.278, 0.278 |
 
-The third coarse run at the level read an a-trous of 11.608 ms and a temporal of 1.041 ms
-against 4.7 and 0.5 ms in its neighbours; its light reading is kept as read.
+At the default (half) tier the light pass is under its 4.0 ms bar, light plus temporal under the
+6.0 ms lighting line and the a-trous under the 3.0 ms denoise line at both spawns; the temporal
+pass is under 0.3 ms at half and 1.0 ms at full. Full resolution misses the light bar and both
+lines. The loads at the streamed full runs' starts: 1.31, 0.83, 1.48 (two earlier runs started
+at 2.30 and 2.36 were re-read). These replace the flat-list readings of d367d8f (light at half
+1.845 to 1.873 level, 2.897 to 2.915 ms streamed; reuse adds about 0.5 ms at half).
+
+Light extraction over the autopilot's flight at the defaults (`--autopilot --headless --seed
+1`, 1280 x 720, 6868 frames, load 0.90 at the start): p50 0.150, p99 2.210, max 6.123 ms,
+against Phase 7's p99 1.0 and max 3.0 ms (missed, as d367d8f's p99 2.255 and max 6.693 ms);
+longest wait inside the radius 0 ms; peak 18 522 samples, 0 evicted, 0 refused.
+`Frame::frame_bytes` at 1080p is unchanged: 195 379 200 B at half, 308 736 000 B at full.
 
 **Both lighting tiers at 1080p output (dev reference, indicative, Plan 0024 Phase 10, RTX
 3080 Laptop GPU, exclusive perf lock, 1-minute load 2.2 to 6.1 with the owner using the
@@ -276,7 +289,8 @@ frames):**
 
 Against the lines: lighting (light + temporal) 2.0 and 3.0 ms at half resolution under 6.0,
 8.0 and 12.1 ms at full over it; denoise (a-trous) 1.1 to 1.2 ms at half under 3.0, 4.5 to
-4.7 ms at full over it. The quiet-box reading of the half tier's a-trous bar is owed.
+4.7 ms at full over it. The quiet-box readings are in "Quiet-box readings at the lighting
+defaults" above.
 
 **Denoise: the temporal pass and four a-trous iterations (dev reference, Plan 0024 Phase 6,
 RTX 3080 Laptop GPU, exclusive perf lock, 1-minute load 4.2 to 4.6; the default look with the

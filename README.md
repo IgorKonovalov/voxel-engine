@@ -7,7 +7,9 @@
 
 <sub>The bounded level, seed 1, from voxel (148, 280, 484) at yaw 135 and pitch -10 degrees: the
 headlamp's cone and a vein of glowing ore, after 64 accumulated and filtered frames at exposure
-0.08, contour look, on an RTX 3080 Laptop GPU at 1600x900. Regenerate with
+0.08, contour look, at the lighting defaults (half-resolution lighting, full shadow walk,
+reservoir reuse, edit-box history, a 32-frame emissive history), on an RTX 3080 Laptop GPU at
+1600x900. Regenerate with
 `cargo run --release -p flythrough --example hero -- --at 148,280,484 --yaw 135 --pitch -10
 --exposure 0.08 --frames 64`.</sub>
 
@@ -150,13 +152,18 @@ go through an in-process server, so every edit you see came back as a client eve
 | `E` | With `--audio`: toggle the early reflections |
 | `F1` | Sample the next frames and print frame-time readings |
 | `F2` | Toggle the stats overlay; with the lighting it shows every frame pass's GPU time and the light samples |
-| `F3` | Toggle the shadow walk: full or coarse (2^3 blocks of the masks) |
-| `F4` | Toggle the emissive sampler: the flat candidate list or reservoir reuse |
-| `F5` | Toggle what kills history: edit boxes, or edit boxes and A-SVGF's gradient |
-| `F6` | Toggle the lighting resolution: full or half |
+| `F3` | Toggle the shadow walk: full (default) or coarse (2^3 blocks of the masks) |
+| `F4` | Toggle the emissive sampler: reservoir reuse (default) or the flat candidate list |
+| `F5` | Toggle what kills history: edit boxes (default), or edit boxes and A-SVGF's gradient |
+| `F6` | Toggle the lighting resolution: half (default) or full; applied on the next frame |
 | `F7` | Toggle the headlamp |
 | `M` | Pulse the ore's emission (a render-side scale) |
 | `Esc` | Quit |
+
+For 3 s after the start and after every `F3` to `F7`, `M` or applied `F6` change, a yellow
+banner names the lighting modes (shadow walk, sampler, history, resolution, lamp, filter), the
+pulse and the emissive history. It shows with the stats overlay off, and sits under its rows
+when `F2` has it on. The same line goes to stdout.
 
 Walking, the coarse grid and collapse run on the bounded level (`--level`) only. Every run
 prints a `frames:` line at exit: p50, p99 and max of the frame's render-thread CPU, of
@@ -191,9 +198,10 @@ shown, `F1`, the autopilot's flight).
 | `--lamp on\|off` | The headlamp (default on) |
 | `--emissive-ore on\|off` | The ore glows and lights the cave (default on) |
 | `--shadow-walk full\|coarse` | The walk shadow rays take (default full) |
-| `--sampler list\|reuse` | The emissive sampler: candidates alone, or with last frame's reservoirs (default list) |
+| `--sampler list\|reuse` | The emissive sampler: candidates alone, or with last frame's reservoirs (default reuse) |
 | `--history edits\|gradient` | What kills temporal history: edit boxes, or edit boxes and A-SVGF's gradient (default edits) |
-| `--lighting full\|half` | The lighting passes' resolution (default full) |
+| `--lighting full\|half` | The lighting passes' resolution (default half) |
+| `--emissive-history N` | Frames static emissive light accumulates over at least, 1 to 4096 (default 32); the headlamp's part keeps a short history |
 | `--filter on\|off` | The a-trous filter; off shows the light pass's raw irradiance (default on) |
 | `--light-radius N` | Chunks around the camera whose emitters light the frame (default 4) |
 | `--replay PATH` | With `--level`: re-simulate a saved session before the first frame and print its hash; add `--vault` for a session saved with it (the save does not record the room placed at generation) |
