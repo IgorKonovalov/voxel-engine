@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0046** (ADRs are a separate sequence; next free there is **0035**).
+**Next free number: 0047** (ADRs are a separate sequence; next free there is **0036**).
 
 ## Active roster
 
@@ -24,6 +24,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0042](0042-generated-gothic-castle-stamped-at-generation.md) | A generated gothic castle with a dungeon: a `.vox` writer, a 27-tile scene imported and stamped at generation into a carved hall, its costs read | approved | M7, no ADR. Testbed plus `vxe-assets`; independent of the other lanes. |
 | [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, six verified defects | approved | Code health, no ADR. After every plan active on 2026-10-22. |
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044. |
+| [0046](0046-dx12-shaders-through-bundled-static-dxc.md) | DX12 shaders through wgpu's bundled static DXC: pipeline times per pass under FXC and DXC, the feature on for every consumer | draft | Platform health, ADR-0035 (proposed). Windows readings come from CI on `main` after the merge. |
 <!-- roster:end -->
 
 ## Recently closed
