@@ -1,6 +1,10 @@
 # 0042: A generated gothic castle with a dungeon, imported as a .vox scene and stamped at generation
 
 > **Status:** in-progress (2026-10-22)
+> **Decisions:** Owner, 2026-10-22, after the Phase 5 flight (live session 10, three screen
+> captures under the untracked `live/video/`): "castle looks amazing", the verdict for the gate,
+> the nave, the window and the dungeon alike; nothing named as breaking first. MagicaVoxel was
+> not checked. The followup the owner picks: the castle outdoors, under the sky, after Plan 0032.
 > **Created:** 2026-10-22
 > **Milestone:** M7 in `docs/roadmap.md` (prefab stamping at authored-building scale; testbed
 > content plus a `.vox` writer in `vxe-assets`)
