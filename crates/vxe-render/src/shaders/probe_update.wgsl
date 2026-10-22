@@ -10,7 +10,8 @@
 // distance -1 and no radiance. A ray that hits a face returns its distance and the radiance
 // the face reflects toward the probe, `albedo / PI (E_direct + E_probes)`: E_direct the light
 // pass's estimate at the hit (the headlamp by next-event estimation, one emissive sample, each
-// with its shadow ray in the frame's shadow walk), E_probes the probes' irradiance there as
+// with its shadow ray in the frame's shadow walk, every emitter at its probe emission scale),
+// E_probes the probes' irradiance there as
 // they stood before this frame's blend (`probe_irradiance`). The hit's own emission is left out,
 // since the direct estimate samples every emissive face. A miss returns PROBE_MISS_DISTANCE
 // spacings and no radiance. Each ray's radiance and signed distance go to the scratch buffer.
@@ -83,6 +84,8 @@ fn probe_trace(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
     if (k >= probe.updates || lane >= probe.rays) {
         return;
     }
+    // The probe rays see each emitter at its probe scale (a pulsing one at its average).
+    emission_base = EMISSION_ROWS;
     let slot = probe_scratch[k] & ~TOUCHED_BIT;
     let w = slot_probe(slot);
     let o = probe_position(w);

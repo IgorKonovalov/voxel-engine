@@ -442,6 +442,12 @@ inside at most 3.2 ms. The slow adapter carries no bar.
 | RTX 3080 Laptop [1.26, 1.76] | 1.465 (1.226 + 0.239) | 1.515 | 2.403 |
 | Radeon (Cezanne, RADV) [1.40, 1.18] | 9.479 (7.933 + 1.546) | 9.298 | 16.476 |
 
+The retake after the merge of Plans 0028 and 0030 (Plan 0029 Phase 10, the release binary of
+the tree at a8b20c2 plus Phase 10's code, 2026-10-22, exclusive perf lock, the same flags,
+`--lamp-toggle 64`, one run each, the adapter chosen with `--adapter`): RTX 3080 Laptop at a
+1-minute load of 1.88 (quiet), outside a window 1.567 ms, inside 2.701 ms; Radeon (Cezanne,
+RADV) at 2.62 (loaded), outside 10.177 ms, inside 18.037 ms.
+
 Readings taken during tuning on the same box, 1000 frames,
 1-minute load 8 to 14: the update pass read 1.525 ms before the blend skipped inside probes'
 texels and the visibility rays under 0.83 in cosine (1.274 after); without the probe rays'

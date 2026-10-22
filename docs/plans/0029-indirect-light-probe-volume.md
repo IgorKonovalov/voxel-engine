@@ -472,8 +472,10 @@ Outcome records at the close; the decision it records is unchanged.
 | 5: The owner's windowed check | human | done (owner, 2026-10-22, live session 7, runs 6 to 9, about 2530x1378, RTX 3080 Laptop; architect's record): bounce light wanted, 1.6 m spacing kept, the lingering light after the lamp goes off to be fixed now (Phases 6 and 7); verdicts in Notes | |
 | 6: A light change drops the probe history | dev | done: light-change window (lamp, its parameters, shadow walk, candidates, emission scale) of one slice cycle, settled probes at hysteresis 0, ages restart at 1; lamp off under 10 % of F0 from frame 58 (1418 with the window off), emission 0 from frame 50, back to 94.0 % at frame 64; update plus gather 1.490 ms streamed (dev box); `frame_bytes` 254 216 224 B unchanged | b3f7cb1, 54b25f0 |
 | 7: The owner's re-check of the lingering light | human | done (architect's record of the owner's verdict, live session 8 run 3, 2026-10-22: still some delay, "feels very unnatural"; the fallback chosen) | |
-| 8: The faster refresh inside the light-change window | dev | done: in a window (16 frames) one probe in 4 a frame, every update at hysteresis 0 (`WINDOW_SLICES`, `WINDOW_VISITS`, `WINDOW_FRAMES`); lamp off under 10 % of F0 from frame 14 (Phase 6: 58), emission 0 from frame 14, back to 100.4 % at frame 64; dev box update plus gather 1.465 ms outside a window, 2.403 ms inside; `--lamp-toggle N`; readings in `nfr.md` §2 | committed with this row |
-| 9: The owner's re-check of the faster fade | human | not started | |
+| 8: The faster refresh inside the light-change window | dev | done: in a window (16 frames) one probe in 4 a frame, every update at hysteresis 0 (`WINDOW_SLICES`, `WINDOW_VISITS`, `WINDOW_FRAMES`); lamp off under 10 % of F0 from frame 14 (Phase 6: 58), emission 0 from frame 14, back to 100.4 % at frame 64; dev box update plus gather 1.465 ms outside a window, 2.403 ms inside; `--lamp-toggle N`; readings in `nfr.md` §2 | bb8ea94 |
+| 9: The owner's re-check of the faster fade | human | done (orchestrator's record of the owner's verdict, live session 9: the fade too slow, the pulse flickers) | |
+| 10: Find what lingers after the lamp, and keep the pulse out of the probes | dev | done: `--fade-reading`; the longest tail was the direct light's temporal lamp history (composite, direct and indirect each first under 10 % at frame 11); `LIGHTING_LAMP_CHANGED` resets the lamp part on a lamp change, and after it the composite is under 10 % from frame 1, the direct 0 from frame 1, the indirect first under at 11; `Frame::set_emission_scales` (probe-ray rows), the ore pulse at its mean opens no window; retake 1.567 / 2.701 ms (dev box, quiet) | committed with this row |
+| 11: The owner's re-check of the lamp-off tail and the pulse | human | not started | |
 
 ### Notes
 
@@ -577,6 +579,66 @@ Outcome records at the close; the decision it records is unchanged.
   - `cargo test --doc`: 7 passed, 1 ignored.
   - clippy `-D warnings`, `fmt --check`, `cargo deny check`, `check-doc-links`,
     `check-comment-hygiene` and `check-index-rows`: exit 0.
+- Phase 10, the isolation reading: `flythrough --headless --level --fade-reading --render
+  2530x1378 --adapter NVIDIA` (release, RTX 3080 Laptop, exclusive perf lock; the owner's
+  session 9 window size). At the level's spawn, five digs along +x, then 256 frames with the
+  lamp off, 256 on, and 200 off. It reads an 8 x 8 block of lighting pixels at the screen
+  centre each frame: the filter's output (direct), the light pass's lamp and emissive parts,
+  the gather (indirect), and their sum. The composite shades with `albedo (direct + indirect)
+  / PI`. Logs: `live/p10/fade-before-nvidia.log` and `fade-after-nvidia.log`.
+  - Before the fix (a8b20c2 plus the flag), lamp-on sum 1.258, baseline 0.00001 (no ore light
+    reaches that wall). First frame under 10 %: sum 11, direct 11, the light pass's lamp 1,
+    indirect 11, the display-encoded output 16. Nothing is over the bar from frame 24 to 160.
+    At frame 24 the direct reads 0.0054 and the indirect 0.0014; the direct falls by 0.8 a
+    frame.
+  - After the fix: sum 1 (the indirect alone, 0.1226 = 9.7 % of the sum's lamp-on value),
+    direct 1 (0 from frame 1), indirect 11, output 7. Nothing is over the bar from frame 24
+    to 160.
+  - The frame's GPU time read 17.2 to 17.7 ms in these runs (loaded, with the readbacks). The
+    owner's session 9 window read march GPU p50 10.14 ms, so frame 11 is about 110 ms there.
+  - The gather has no filter in the tree, so the plan's "the gather with its filter off" is
+    the gather as shipped.
+- Phase 10, the fix: on an encode with history whose lamp (switch, `LightParams`, shadow walk)
+  differs from the last, `Params::lighting` carries `LIGHTING_LAMP_CHANGED` (bit 9). For that
+  frame the temporal pass blends the lamp part at 1, and the moments follow by the lamp's
+  share. The emissive part's history is unchanged.
+  - Test `a_lamp_switch_drops_the_lamp_s_direct_history` (lavapipe): settled lamp part 66.0;
+    off for four frames, it reads 0, 0, 0, 0; back on, it reads 66.0, equal to that frame's
+    light-pass estimate.
+- Phase 10, the pulse: `Frame::set_emission_scales(queue, material, pixels, probes)`. The
+  emission-scale buffer doubles to `2 x EMISSION_ROWS` f32. Only the probe trace sets
+  `emission_base` to read the second half. `set_emission_scale` sets both halves. A change to
+  the probe half alone feeds the light-change window's key. The fly-through's `M` passes
+  `ORE_PULSE_MEAN` (1.0) as the probe scale.
+  - Test `a_pulse_at_its_mean_leaves_the_probes_still` (lavapipe; the vein box, the camera
+    still, 256 frames, a 90-frame period). At the mean, no window opens. The floor indirect
+    beside the vein, mean 0.10263, changes by 0.000013 a frame with the pulse off and 0.000013
+    at the mean. With both scales pulsing it changes by 0.003625, and windows are open on 255
+    of 256 frames. The direct swing over the last period reads 6.0088 in both pulse runs.
+- Phase 10 outside the files: `apps/flythrough/tests/upscale.rs`. The lamp step in
+  `a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame` read `None` for every
+  pipeline after the fix: its measure was "under 10 % of the first frame's difference", and
+  the first frame after the switch now holds only the probes' residual (0.147/255 for the
+  reference against a lamp step of many /255). The measure is now "under 10 % of the settled
+  lamp image's difference from the lamp-off one"; the bar (step at most the reference's plus
+  2) is unchanged. It reads 1 frame for the reference, U1 and U15. The emission step keeps
+  the first-difference measure. Also outside the files: the `README.md` rows for
+  `--fade-reading` and `M`.
+- Phase 10 gate (exclusive perf lock):
+  - `cargo nextest run --workspace --test-threads 2 --no-fail-fast` (load 8.80): 614 passed,
+    1 failed (the upscale lamp step above), 8 skipped. After the measure change, every test in
+    `tests/upscale.rs` passes (10 passed, 3 skipped). The targeted indirect and lights
+    lamp/emission/pulse tests: 8 passed. Lamp off, first frame under 10 %: 14. Emission 0: 14;
+    back to 1, 100.4 % at frame 64.
+  - `cargo test --doc`: 7 passed, 1 ignored.
+  - clippy `-D warnings`, fmt, `cargo deny check`, `check-doc-links` (301 links),
+    `check-comment-hygiene` and `check-index-rows`: exit 0.
+- Phase 10, Phase 8's timing retake: `--headless --seed 1 --render 1920x1080 --frames 3000
+  --lamp-toggle 64`, one run per adapter, exclusive perf lock. Readings are in `nfr.md` §2.
+  - RTX 3080 Laptop, load 1.88 at the start (2.62 at the end): outside a window 1.567 ms,
+    inside 2.701 ms.
+  - Radeon Cezanne RADV (`--adapter AMD`), load 2.62, loaded: outside 10.177 ms, inside
+    18.037 ms.
 - Merge of main (99e7bee, Plans 0028 and 0030) into plan-0029:
   - Conflicts in `marcher.rs`, `lib.rs`, `hud.rs`, `main.rs`, `tests/golden.rs` and `nfr.md`;
     both sides are kept.

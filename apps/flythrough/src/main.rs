@@ -11,6 +11,7 @@
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
 //! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off] [--lamp-toggle N]
+//! [--fade-reading]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]
 //! [--history edits|gradient] [--lighting full|half] [--emissive-history N]
 //! [--indirect on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N]
@@ -51,7 +52,10 @@
 //! `--translucent-layers` sets how many translucent voxels are composited in front of the opaque
 //! hit (default 4, 0 ignores them). `--emissive-ore off` keeps the ore dark (by default it
 //! glows, `flythrough::ORE_EMISSION`, and lights the cave through the light pass's emissive
-//! samples); `M` pulses its emission scale; `--lamp off` turns the headlamp off;
+//! samples); `M` pulses its emission scale (the probe volume sees the ore at the pulse's
+//! average); `--lamp off` turns the headlamp off; `--fade-reading` (headless) digs five times
+//! along the camera ray, lets the light settle with the lamp off and then on, switches it off
+//! and prints how the screen centre's light fades, by source (see [`FadeSample`]);
 //! `--shadow-walk coarse` sends every shadow ray through the coarse walk (2^3 blocks of the
 //! masks; with `--view steps` and `--frames`, the exit prints the lamp shadow rays' cost too);
 //! `--filter off` shows the light pass's raw irradiance, unaccumulated and unfiltered;
@@ -346,6 +350,10 @@ struct Args {
     /// `--lamp-toggle N`: switch the lamp every `N` frames, as `F7` does, timing the probe
     /// passes inside and outside the light-change windows the switches open.
     lamp_toggle: Option<u32>,
+    /// `--fade-reading`: dig into the rock ahead, settle the ore light with the lamp off,
+    /// then the lamp light with it on, switch it off and print how each light source at the
+    /// screen centre fades (see [`FadeSample`]).
+    fade_reading: bool,
     /// `--shadow-walk full|coarse`: the walk shadow rays take.
     shadow_walk: ShadowWalk,
     /// `--filter on|off`: the a-trous filter runs (on by default).
@@ -498,6 +506,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         emissive_ore: true,
         lamp: true,
         lamp_toggle: None,
+        fade_reading: false,
         indirect: true,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
         probe_rays: vxe_render::probes::RAYS_PER_PROBE,
@@ -708,6 +717,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     _ => return Err(format!("--lamp-toggle takes a frame count, not {v}")),
                 }
             }
+            "--fade-reading" => args.fade_reading = true,
             "--lamp" => {
                 args.lamp = match value()?.as_str() {
                     "on" => true,
@@ -900,6 +910,153 @@ fn window_line(every: u32, ms: &[Vec<f64>; 2]) -> String {
         tail(&ms[1]),
         ms[1].len()
     )
+}
+
+/// `--fade-reading`'s digs along the camera ray, one a frame from the first.
+const FADE_DIGS: u32 = 5;
+/// Frames the light settles in before each switch: the lamp off (the ore's light alone, the
+/// baseline), then on.
+const FADE_SETTLE: u32 = 256;
+/// Frames read after the lamp goes off.
+const FADE_TAIL: u32 = 200;
+/// Frames the baseline and the lamp-on values average over, the last of each settle.
+const FADE_MEAN: usize = 32;
+/// A source whose lamp-on value exceeds its baseline by no more than this has no fade to
+/// read.
+const FADE_NO_LAMP: f64 = 1e-4;
+/// The frame `--fade-reading` exits at.
+const FADE_END: u32 = FADE_DIGS + 2 * FADE_SETTLE + FADE_TAIL;
+/// Lighting pixels on each edge of the block around the screen centre a sample averages.
+const FADE_BLOCK: u32 = 8;
+/// The frames after the switch the bar is read over: under 10 % from FADE_BY through
+/// FADE_THROUGH.
+const FADE_BY: usize = 24;
+const FADE_THROUGH: usize = 160;
+
+/// Whether `--fade-reading`'s lamp is on at frame `frame`.
+fn fade_lamp(frame: u32) -> bool {
+    (FADE_DIGS + FADE_SETTLE..FADE_DIGS + 2 * FADE_SETTLE).contains(&frame)
+}
+
+/// One frame of `--fade-reading`: luminances averaged over the FADE_BLOCK square of lighting
+/// pixels at the screen centre (the composite's output over the same square). `direct` is
+/// the filter's irradiance (the light pass through its temporal history and the a-trous
+/// filter, lamp and emissive), `lamp` and `emissive` the light pass's own estimate of each
+/// before any history, `indirect` the probe gather's (which runs no filter); the composite
+/// shades a hit with `albedo (direct + indirect) / PI`, so `lit`, their sum, is the wall's
+/// radiance over its albedo. `output` is the composite's display-encoded output in [0, 1].
+#[derive(Clone, Copy, Debug, Default)]
+struct FadeSample {
+    lit: f64,
+    direct: f64,
+    lamp: f64,
+    emissive: f64,
+    indirect: f64,
+    output: f64,
+    gpu_ms: f64,
+}
+
+impl FadeSample {
+    fn read(gpu: &Gpu, frame: &Frame, gpu_ms: f64) -> Self {
+        let lum = |p: [f32; 4]| {
+            0.2126 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[2])
+        };
+        let block = |t: &wgpu::Texture, edge: u32| {
+            let (w, h) = (t.width(), t.height());
+            let x0 = (w / 2).saturating_sub(edge / 2);
+            let y0 = (h / 2).saturating_sub(edge / 2);
+            move |i: u32| ((y0 + i / edge).min(h - 1) * w + (x0 + i % edge).min(w - 1)) as usize
+        };
+        let mean = |v: &[[f32; 4]], t: &wgpu::Texture, edge: u32, f: &dyn Fn([f32; 4]) -> f64| {
+            let at = block(t, edge);
+            (0..edge * edge).map(|i| f(v[at(i)])).sum::<f64>() / f64::from(edge * edge)
+        };
+        let (dev, q) = (&gpu.device, &gpu.queue);
+        let filtered = readback::read_rgba16f(dev, q, frame.filtered());
+        let raw = readback::read_rgba16f(dev, q, frame.irradiance());
+        let indirect = readback::read_rgba16f(dev, q, frame.indirect_irradiance());
+        let out_tex = frame.target();
+        let out: Vec<[f32; 4]> = readback::read_rgba8(dev, q, out_tex)
+            .chunks(4)
+            .map(|p| [0, 1, 2, 3].map(|k| f32::from(p[k]) / 255.0))
+            .collect();
+        let scale = (out_tex.width() / frame.filtered().width()).max(1);
+        let direct = mean(&filtered, frame.filtered(), FADE_BLOCK, &lum);
+        let indirect = mean(&indirect, frame.indirect_irradiance(), FADE_BLOCK, &lum);
+        Self {
+            lit: direct + indirect,
+            direct,
+            lamp: mean(&raw, frame.irradiance(), FADE_BLOCK, &|p| f64::from(p[3])),
+            emissive: mean(&raw, frame.irradiance(), FADE_BLOCK, &lum),
+            indirect,
+            output: mean(&out, out_tex, FADE_BLOCK * scale, &lum),
+            gpu_ms,
+        }
+    }
+}
+
+/// One source of a [`FadeSample`], read out of it.
+type FadeSource = fn(&FadeSample) -> f64;
+
+/// `--fade-reading`'s report: for each source of [`FadeSample`], its baseline (the mean of
+/// the last FADE_MEAN frames before the lamp first goes on), its lamp-on value (the last
+/// FADE_MEAN with it on), the first frame after the switch whose excess over the baseline is
+/// under 10 % of the lamp-on excess, the frames from FADE_BY through FADE_THROUGH over it, and
+/// the first 32 frames of the tail.
+fn fade_report(samples: &[FadeSample]) -> Vec<String> {
+    let settle = FADE_SETTLE as usize;
+    if samples.len() < 2 * settle + FADE_THROUGH {
+        return vec![format!(
+            "fade: {} samples, too few for a reading",
+            samples.len()
+        )];
+    }
+    let mut tail_ms: Vec<f64> = samples[2 * settle..].iter().map(|s| s.gpu_ms).collect();
+    let ms = median(&mut tail_ms);
+    let mut lines = vec![format!(
+        "fade: the lamp off at frame {} after {} frames on; the frame's GPU time {ms:.3} ms (median of the tail)",
+        FADE_DIGS + 2 * FADE_SETTLE,
+        FADE_SETTLE
+    )];
+    let sources: [(&str, FadeSource); 6] = [
+        ("composite (direct + indirect)", |s| s.lit),
+        ("direct (filtered)", |s| s.direct),
+        ("lamp (light pass)", |s| s.lamp),
+        ("emissive (light pass)", |s| s.emissive),
+        ("indirect (gather)", |s| s.indirect),
+        ("output (display-encoded)", |s| s.output),
+    ];
+    let avg = |r: &[FadeSample], f: FadeSource| r.iter().map(f).sum::<f64>() / r.len() as f64;
+    for (name, f) in sources {
+        let base = avg(&samples[settle - FADE_MEAN..settle], f);
+        let on = avg(&samples[2 * settle - FADE_MEAN..2 * settle], f);
+        let tail: Vec<f64> = samples[2 * settle..].iter().map(f).collect();
+        if on - base <= FADE_NO_LAMP {
+            lines.push(format!(
+                "fade: {name}: off {base:.5}, on {on:.5}; the lamp adds nothing here"
+            ));
+            continue;
+        }
+        let bar = 0.1 * (on - base);
+        let under = |v: f64| v - base < bar;
+        let first = tail.iter().position(|&v| under(v)).map(|i| i + 1);
+        let over: Vec<usize> = (FADE_BY..=FADE_THROUGH)
+            .filter(|&n| !under(tail[n - 1]))
+            .collect();
+        let first_text = first.map_or("not reached".to_owned(), |n| {
+            format!("{n} ({:.0} ms)", n as f64 * ms)
+        });
+        lines.push(format!(
+            "fade: {name}: off {base:.5}, on {on:.5}; first frame under 10 %: {first_text}; frames {FADE_BY}..={FADE_THROUGH} over it: {}; frames 1..=32 {:?}",
+            if over.is_empty() {
+                "none".to_owned()
+            } else {
+                format!("{} ({:?})", over.len(), &over[..over.len().min(8)])
+            },
+            tail[..32].iter().map(|v| (v * 1e4).round() / 1e4).collect::<Vec<_>>()
+        ));
+    }
+    lines
 }
 
 fn median(v: &mut [f64]) -> f64 {
@@ -2215,6 +2372,8 @@ struct Run {
     /// Under `--lamp-toggle`, the probes plus gather GPU time of each frame outside and
     /// inside a light-change window.
     window_ms: [Vec<f64>; 2],
+    /// Under `--fade-reading`, a sample a frame from the end of the digs on.
+    fade: Vec<FadeSample>,
     stream: Option<Stream>,
     pilot: Option<Autopilot>,
     /// Walk mode's body, `None` in fly mode.
@@ -3368,6 +3527,9 @@ impl Run {
                 self.bench();
             }
         }
+        if self.args.fade_reading && self.frame < FADE_DIGS {
+            self.dig();
+        }
         if self.pilot.is_some() {
             if self.pilot_step() == Flow::Exit {
                 return Flow::Exit;
@@ -3728,6 +3890,9 @@ impl Run {
         {
             self.modes.press(hud::ModeKey::Lamp, ms_since(self.start));
         }
+        if self.args.fade_reading && self.modes.lighting.lamp != fade_lamp(self.frame) {
+            self.modes.press(hud::ModeKey::Lamp, ms_since(self.start));
+        }
         let Some(gfx) = self.gfx.as_mut() else {
             return Flow::Exit;
         };
@@ -3739,13 +3904,18 @@ impl Run {
         } else {
             1.0
         };
+        // The probes see the pulse at its average, so it opens no light-change window; the
+        // pixels' light keeps its full swing.
         gfx.frame
-            .set_emission_scale(&gpu.queue, flythrough::cave::ORE, scale);
+            .set_emission_scales(&gpu.queue, flythrough::cave::ORE, scale, ORE_PULSE_MEAN);
         let params = gfx.frame.params(&gfx.mirror, &self.fly.camera, &self.light);
-        let timer = gfx
-            .timer
-            .as_ref()
-            .filter(|_| self.samples.is_some() || flying || hud || self.args.lamp_toggle.is_some());
+        let timer = gfx.timer.as_ref().filter(|_| {
+            self.samples.is_some()
+                || flying
+                || hud
+                || self.args.lamp_toggle.is_some()
+                || self.args.fade_reading
+        });
         let hud_timer = gfx.hud_timer.as_ref().filter(|_| hud);
         // Under the autopilot's flight the attribute pass is timed: its GPU time when its
         // work list is not empty, and the render thread's CPU time building the list and
@@ -3815,6 +3985,10 @@ impl Run {
             let window = usize::from(gfx.frame.probe_light_window());
             self.window_ms[window].push(probe_passes_ms(p));
         }
+        if self.args.fade_reading && self.frame >= FADE_DIGS {
+            self.fade
+                .push(FadeSample::read(gpu, &gfx.frame, gpu_ms.unwrap_or(0.0)));
+        }
         self.hud.hud_ms = hud_ms.map(|v| v as f32);
         if flying && let (Some(p), Some(ms)) = (self.pilot.as_mut(), gpu_ms) {
             p.gpu_ms.push(ms);
@@ -3860,6 +4034,12 @@ impl Run {
             }
         }
         self.frame += 1;
+        if self.args.fade_reading && self.frame >= FADE_END {
+            for line in fade_report(&self.fade) {
+                println!("{line}");
+            }
+            return Flow::Exit;
+        }
         if self.args.frames.is_some_and(|n| self.frame >= n) {
             if let Some(w) = &self.walk {
                 println!(
@@ -3926,10 +4106,13 @@ fn shadow_steps_line(texels: &[[f32; 4]], walk: ShadowWalk) -> String {
 }
 
 /// The ore's emission scale `ms` milliseconds into the run while `M` pulses it: between 0.25
-/// and 1.75, one cycle every 1.5 s.
+/// and 1.75, one cycle every 1.5 s, about [`ORE_PULSE_MEAN`].
 fn ore_pulse(ms: f64) -> f32 {
-    (1.0 + 0.75 * (ms / 1500.0 * std::f64::consts::TAU).sin()) as f32
+    (f64::from(ORE_PULSE_MEAN) + 0.75 * (ms / 1500.0 * std::f64::consts::TAU).sin()) as f32
 }
+
+/// The ore pulse's time average, the scale the probe rays see the ore at, pulsing or not.
+const ORE_PULSE_MEAN: f32 = 1.0;
 
 /// The steps view's reading of one frame: `steps per ray (2073600 rays): mean 41.27, p99 133,
 /// block-max mean 88.10; loads mean 12.40, p99 61; pool reads mean 3.02, p99 18`. Counts clamp
@@ -4128,6 +4311,7 @@ impl App for Flythrough {
                 gfx: None,
                 samples: None,
                 window_ms: [Vec::new(), Vec::new()],
+                fade: Vec::new(),
                 stream,
                 pilot,
                 walk,
@@ -5170,6 +5354,7 @@ mod tests {
             gfx: None,
             samples: None,
             window_ms: [Vec::new(), Vec::new()],
+            fade: Vec::new(),
             stream: None,
             pilot: None,
             walk: None,

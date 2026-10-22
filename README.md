@@ -158,7 +158,7 @@ go through an in-process server, so every edit you see came back as a client eve
 | `F6` | Toggle the lighting resolution: half (default) or full; applied on the next frame |
 | `F7` | Toggle the headlamp |
 | `F8` | Toggle indirect light from the probe volume |
-| `M` | Pulse the ore's emission (a render-side scale) |
+| `M` | Pulse the ore's emission (a render-side scale); the probe volume's indirect light sees the ore at the pulse's average |
 | `Esc` | Quit |
 
 For 3 s after the start and after every `F3` to `F8`, `M` or applied `F6` change, a yellow
@@ -199,6 +199,7 @@ shown, `F1`, the autopilot's flight).
 | `--audio-debug` | `--audio` plus a line a second of the output callback's readings; on exit writes the last 60 s to `flythrough-audio-debug.wav` |
 | `--lamp on\|off` | The headlamp (default on) |
 | `--lamp-toggle N` | Switch the lamp every `N` frames as `F7` does; at exit print the probe passes' median inside and outside the light-change windows |
+| `--fade-reading` | Headless: dig five times along the camera ray, settle the light with the lamp off, then on, switch it off and print, for the screen centre's direct light, indirect light and their sum, the first frame under 10 % of the lamp's part |
 | `--indirect on\|off` | Indirect light from the probe volume that follows the camera (default on) |
 | `--probe-spacing N` | Voxels between the probe volume's probes, 4 to 64 (default 16, 1.6 m) |
 | `--probe-rays N` | Rays each updated probe traces, 1 to 64 (default 64) |

@@ -790,3 +790,179 @@ fn no_light_change_opens_no_window() {
     f.run(&device, &queue, &gpu, 1);
     assert!(f.frame.probe_light_window(), "the candidate count");
 }
+
+/// Lamp switch, the direct light's history: in the dull box lit by the lamp from its centre
+/// for 64 frames (indirect off, the filter on), the temporal pass's lamp part at the floor
+/// centre is above 0; on the frame the lamp goes off it reads 0 and stays 0, and on the frame
+/// it comes back on it reads that frame's light-pass lamp estimate exactly, not a blend with
+/// the dark history.
+#[test]
+fn a_lamp_switch_drops_the_lamp_s_direct_history() {
+    let world = dull_box_world();
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    let mut f = FloorProbe::new(&device, BOX_MIN[0]);
+    f.camera.position.z = 32.0;
+    let on = Lighting {
+        lamp: true,
+        filter: true,
+        indirect: false,
+        ..f.frame.lighting()
+    };
+    let lamp_part = |f: &FloorProbe| {
+        let acc = readback::read_rgba16f(&device, &queue, f.frame.accumulated())[0][3];
+        let raw = readback::read_rgba16f(&device, &queue, f.frame.irradiance())[0][3];
+        (acc, raw)
+    };
+    f.frame.set_lighting(on);
+    f.run(&device, &queue, &gpu, 64);
+    let (settled, _) = lamp_part(&f);
+    f.frame.set_lighting(Lighting { lamp: false, ..on });
+    let mut off = Vec::new();
+    for _ in 0..4 {
+        f.run(&device, &queue, &gpu, 1);
+        off.push(lamp_part(&f).0);
+    }
+    f.frame.set_lighting(on);
+    f.run(&device, &queue, &gpu, 1);
+    let (back, raw) = lamp_part(&f);
+    println!("lamp part settled {settled:.4}; off {off:?}; back on {back:.4} (estimate {raw:.4})");
+    assert!(settled > 0.0, "{settled}");
+    assert_eq!(off, vec![0.0; 4]);
+    assert!(raw > 0.0 && back == raw, "{back} against {raw}");
+}
+
+/// The vein box: the dull box with an 8 x 8 patch of `glow` in its -x wall (the wall voxels
+/// at x = 19, y and z from 28 and 27), its table's glow emitting `[1, 1, 1]`.
+fn vein_box_world() -> (World, MaterialId) {
+    let (table, glow, dull) = furnace_table();
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &UniformSource(dull),
+        &table,
+    );
+    world
+        .apply(&box_op(
+            [19, 28, 27],
+            [20, 36, 35],
+            Mode::Replace {
+                from: dull,
+                to: glow,
+            },
+        ))
+        .unwrap();
+    world.apply(&box_op(BOX_MIN, BOX_MAX, Mode::Carve)).unwrap();
+    (world, glow)
+}
+
+/// The pulse's period in frames (1.5 s at 60 frames a second) and the frames a pulse run
+/// steps.
+const PULSE_PERIOD: u32 = 90;
+const PULSE_FRAMES: u32 = 256;
+
+/// How a pulse run sets the vein's emission each frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Pulse {
+    /// The scale stays 1.
+    Off,
+    /// The pixels' scale pulses between 0.25 and 1.75 about 1; the probes' stays at 1.
+    AtMean,
+    /// Both scales pulse (`set_emission_scale`).
+    Everywhere,
+}
+
+/// The floor beside the vein (x = 24) after each of PULSE_FRAMES frames with the lamp off and
+/// the vein pulsing as `pulse` says: the gathered indirect and the temporal pass's emissive
+/// direct irradiance (luminance), and whether a light-change window was open.
+fn pulse_run(pulse: Pulse) -> Option<(Vec<f64>, Vec<f64>, Vec<bool>)> {
+    let (world, glow) = vein_box_world();
+    let (device, queue) = software_device(64 << 20)?;
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    let mut f = FloorProbe::new(&device, 12);
+    let lum = |e: [f32; 4]| {
+        0.2126 * f64::from(e[0]) + 0.7152 * f64::from(e[1]) + 0.0722 * f64::from(e[2])
+    };
+    let (mut indirect, mut direct, mut window) = (Vec::new(), Vec::new(), Vec::new());
+    for i in 0..PULSE_FRAMES {
+        let s = 1.0 + 0.75 * (i as f32 / PULSE_PERIOD as f32 * std::f32::consts::TAU).sin();
+        match pulse {
+            Pulse::Off => f.frame.set_emission_scale(&queue, glow, 1.0),
+            Pulse::AtMean => f.frame.set_emission_scales(&queue, glow, s, 1.0),
+            Pulse::Everywhere => f.frame.set_emission_scale(&queue, glow, s),
+        }
+        f.run(&device, &queue, &gpu, 1);
+        let e = f.indirect(&device, &queue);
+        indirect.push(lum([e[0], e[1], e[2], 0.0]));
+        direct.push(lum(readback::read_rgba16f(
+            &device,
+            &queue,
+            f.frame.accumulated(),
+        )[0]));
+        window.push(f.frame.probe_light_window());
+    }
+    Some((indirect, direct, window))
+}
+
+/// The mean frame-to-frame change of `v` over its second half.
+fn mean_step(v: &[f64]) -> f64 {
+    let h = &v[v.len() / 2..];
+    h.windows(2).map(|w| (w[1] - w[0]).abs()).sum::<f64>() / (h.len() - 1) as f64
+}
+
+/// Max over min of `v` over its last pulse period.
+fn swing(v: &[f64]) -> f64 {
+    let p = &v[v.len() - PULSE_PERIOD as usize..];
+    let (lo, hi) = p
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(lo, hi), &x| (lo.min(x), hi.max(x)));
+    hi / lo
+}
+
+/// The pulse feeds the probes at its mean: in the vein box with the camera still for 256
+/// frames, a vein whose pixel scale pulses while its probe scale holds at the pulse's mean
+/// opens no light-change window; the floor beside it reads a gathered indirect whose
+/// frame-to-frame change is no more than with the pulse off plus 1 % of that run's mean; and
+/// its direct light's max-to-min ratio over the last pulse period matches, within 5 %, the run
+/// whose probes pulse too.
+#[test]
+fn a_pulse_at_its_mean_leaves_the_probes_still() {
+    let Some((ind_off, _, _)) = pulse_run(Pulse::Off) else {
+        return;
+    };
+    let Some((ind_mean, dir_mean, window)) = pulse_run(Pulse::AtMean) else {
+        return;
+    };
+    let Some((ind_all, dir_all, window_all)) = pulse_run(Pulse::Everywhere) else {
+        return;
+    };
+    let half = &ind_off[ind_off.len() / 2..];
+    let mean_off = half.iter().sum::<f64>() / half.len() as f64;
+    let (step_off, step_mean, step_all) = (
+        mean_step(&ind_off),
+        mean_step(&ind_mean),
+        mean_step(&ind_all),
+    );
+    let (swing_mean, swing_all) = (swing(&dir_mean), swing(&dir_all));
+    println!(
+        "indirect beside the vein: mean {mean_off:.5} with the pulse off; frame-to-frame change {step_off:.6} off, {step_mean:.6} at the mean, {step_all:.6} everywhere (windows open {} of {PULSE_FRAMES} frames)",
+        window_all.iter().filter(|&&w| w).count()
+    );
+    println!(
+        "direct swing over the last period: {swing_mean:.4} at the mean, {swing_all:.4} everywhere"
+    );
+    assert!(window.iter().all(|&w| !w), "{window:?}");
+    assert!(mean_off > 0.0, "{mean_off}");
+    assert!(
+        step_mean <= step_off + 0.01 * mean_off,
+        "{step_mean} against {step_off} + 1 % of {mean_off}"
+    );
+    assert!(swing_mean > 2.0, "{swing_mean}");
+    assert!(
+        (swing_mean / swing_all - 1.0).abs() <= 0.05,
+        "{swing_mean} against {swing_all}"
+    );
+}

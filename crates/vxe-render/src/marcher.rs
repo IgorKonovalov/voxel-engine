@@ -102,6 +102,12 @@ pub const EMISSION_CHANGE_FRAMES: u32 = 11;
 /// `Params::lighting` bit: an emission scale changed within the last
 /// [`EMISSION_CHANGE_FRAMES`] frames.
 pub const LIGHTING_EMISSION_CHANGED: u32 = 1 << 8;
+/// `Params::lighting` bit: the lamp's light changed since the last encode with history (its
+/// switch, a parameter, or the walk its shadow rays take): the temporal pass takes this
+/// frame's lamp part as it is, the way an edit box resets a pixel (ADR-0018), and keeps the
+/// emissive part's history. The light pass's lamp estimate carries no sampling noise (one
+/// point light, one shadow ray), so the reset adds none.
+pub const LIGHTING_LAMP_CHANGED: u32 = 1 << 9;
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
 pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
 /// `Params::lighting` bit: candidates are drawn uniformly over the buffer
@@ -917,7 +923,9 @@ pub struct Frame {
     lod: LodParams,
     look: LookParams,
     lighting: Lighting,
-    /// The per-material emission scale, an `f32` per material id, 1.0 unless set.
+    /// The per-material emission scales, 1.0 unless set: an `f32` per material id for the
+    /// light the frame's pixels sample, then [`EMISSION_ROWS`] more for the light the probe
+    /// rays sample.
     emission_scale: wgpu::Buffer,
     emission_cpu: Vec<f32>,
     /// The blue-noise texture, uploaded by the first `encode`.
@@ -927,6 +935,8 @@ pub struct Frame {
     frame: u32,
     /// The frame index of the last emission-scale change.
     emission_changed_at: Option<u32>,
+    /// The frame index of the last change of a scale the probe rays sample.
+    probe_emission_changed_at: Option<u32>,
     /// The copy of the double-buffered targets the next `encode` writes.
     cur: usize,
     resolution: LightingResolution,
@@ -1001,7 +1011,8 @@ struct History {
 /// it between encodes: the lamp's switch and its parameters (not `masks` or `skips`, which
 /// leave the walk byte-identical, and not its pose, which follows the camera), the shadow walk
 /// the lamp's shadow rays take, the emissive candidate count (0 is emissive light off) and the
-/// frame of the last emission-scale change. Exposure and the tone map come after the light.
+/// frame of the last change of an emission scale the probe rays sample. Exposure and the tone
+/// map come after the light.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct LightKey {
     lamp: bool,
@@ -1009,6 +1020,16 @@ struct LightKey {
     shadow_walk: ShadowWalk,
     candidates: u32,
     emission_changed_at: Option<u32>,
+}
+
+impl LightKey {
+    /// Whether the lamp's light differs between `self` and `other`: its switch, its
+    /// parameters or its shadow rays' walk.
+    fn lamp_differs(&self, other: &Self) -> bool {
+        self.lamp != other.lamp
+            || self.params != other.params
+            || self.shadow_walk != other.shadow_walk
+    }
 }
 
 /// Entries the candidate table holds at most.
@@ -1472,11 +1493,11 @@ impl Frame {
                 device,
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("emission scale"),
-                    contents: bytemuck::cast_slice(&vec![1.0f32; EMISSION_ROWS]),
+                    contents: bytemuck::cast_slice(&vec![1.0f32; 2 * EMISSION_ROWS]),
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 },
             ),
-            emission_cpu: vec![1.0; EMISSION_ROWS],
+            emission_cpu: vec![1.0; 2 * EMISSION_ROWS],
             blue_noise: device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("blue noise"),
                 size: wgpu::Extent3d {
@@ -1494,6 +1515,7 @@ impl Frame {
             blue_noise_written: std::sync::atomic::AtomicBool::new(false),
             frame: 0,
             emission_changed_at: None,
+            probe_emission_changed_at: None,
             cur: 0,
             downsample_layout,
             downsample,
@@ -1706,26 +1728,55 @@ impl Frame {
         queue.submit([enc.finish()]);
     }
 
-    /// Scales material `material`'s emission by `scale` from the next frame on: a visual
-    /// knob that leaves the world untouched (an authoritative change is a `Replace` op).
+    /// Scales material `material`'s emission by `scale` from the next frame on, in the
+    /// pixels' light and the probes' alike: a visual knob that leaves the world untouched
+    /// (an authoritative change is a `Replace` op).
     pub fn set_emission_scale(&mut self, queue: &wgpu::Queue, material: u16, scale: f32) {
+        self.set_emission_scales(queue, material, scale, scale);
+    }
+
+    /// Scales material `material`'s emission by `pixels` in the light the frame's pixels
+    /// sample (the light pass, the composite) and by `probes` in the light the probe rays
+    /// sample. An emitter that varies over time passes its current scale and its time
+    /// average: the pixels follow it at full amplitude, and while `probes` holds still the
+    /// probe volume sees no light change (no light-change window opens).
+    pub fn set_emission_scales(
+        &mut self,
+        queue: &wgpu::Queue,
+        material: u16,
+        pixels: f32,
+        probes: f32,
+    ) {
         let i = usize::from(material);
-        if self.emission_cpu[i] != scale {
-            self.emission_cpu[i] = scale;
-            self.emission_changed_at = Some(self.frame);
-            queue.write_buffer(
-                &self.emission_scale,
-                i as u64 * 4,
-                bytemuck::bytes_of(&scale),
-            );
+        for (row, scale) in [(i, pixels), (EMISSION_ROWS + i, probes)] {
+            if self.emission_cpu[row] != scale {
+                self.emission_cpu[row] = scale;
+                if row == i {
+                    self.emission_changed_at = Some(self.frame);
+                } else {
+                    self.probe_emission_changed_at = Some(self.frame);
+                }
+                queue.write_buffer(
+                    &self.emission_scale,
+                    row as u64 * 4,
+                    bytemuck::bytes_of(&scale),
+                );
+            }
         }
     }
 
+    /// Material `material`'s emission scale in the pixels' light.
     pub fn emission_scale(&self, material: u16) -> f32 {
         self.emission_cpu[usize::from(material)]
     }
 
-    /// The emission-scale buffer, an `f32` per material id.
+    /// Material `material`'s emission scale in the probe rays' light.
+    pub fn probe_emission_scale(&self, material: u16) -> f32 {
+        self.emission_cpu[EMISSION_ROWS + usize::from(material)]
+    }
+
+    /// The emission-scale buffer: an `f32` per material id for the pixels' light, then one
+    /// per material id for the probe rays' (see [`Frame::set_emission_scales`]).
     pub fn emission_scales(&self) -> &wgpu::Buffer {
         &self.emission_scale
     }
@@ -2022,8 +2073,11 @@ impl Frame {
                 }),
                 shadow_walk: self.lighting.shadow_walk,
                 candidates: self.lighting.candidates,
-                emission_changed_at: self.emission_changed_at,
+                emission_changed_at: self.probe_emission_changed_at,
             };
+            if h.light_key.is_some_and(|k| k.lamp_differs(&key)) {
+                p.lighting |= LIGHTING_LAMP_CHANGED;
+            }
             if h.light_key.is_some_and(|k| k != key) && self.probes.light_restarts() {
                 h.light_window = crate::probes::WINDOW_FRAMES;
             }
