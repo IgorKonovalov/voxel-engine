@@ -4,8 +4,9 @@
 // neighbours once (table and record reads), loads their non-air masks (16 words each) into
 // workgroup memory, lists its surface voxels in attribute-index order (each invocation scans
 // one byte of the surface mask), and sets the occupancy of the brick and a one-voxel shell
-// around it (10^3 voxels, as bits) from those masks, reading voxel by voxel only a neighbour
-// in a LOD-only chunk or a brick of more than 16 materials holding a translucent voxel. Then
+// around it (10^3 voxels, as bits) from those masks, a LOD-only chunk's neighbour through
+// its level-1 mip brick's, reading voxel by voxel only a brick of more than 16 materials
+// holding a translucent voxel. Then
 // invocation t computes attribute words t, t + 64, ... (indices 2 w and 2 w + 1) up to the
 // surface's count and writes each whole; the words past it keep the "no plane" the upload
 // wrote. The four bricks share the workgroup's three barriers.
@@ -80,10 +81,10 @@ const LANES: u32 = 64u;
 const BOX: u32 = 10u;
 
 // Per brick of the workgroup (brick b's at b times the per-brick length), 12 384 B in all:
-// its occupancy box as 1000 bits (word w set by invocation w alone); it and its 26 neighbours, index (dx + 1) + 3 (dy + 1) +
-// 9 (dz + 1), how each is read (NB_AIR, NB_SOLID, NB_MASK with its entry, NB_VOXELS) and the
-// NB_MASK ones' non-air masks; and its surface voxels' cells in attribute-index order, two
-// u16 a word.
+// its occupancy box as 1000 bits (word w set by invocation w alone); it and its 26
+// neighbours, index (dx + 1) + 3 (dy + 1) + 9 (dz + 1), how each is read (NB_AIR, NB_SOLID,
+// NB_MASK or NB_MIP with its entry, NB_VOXELS) and the NB_MASK and NB_MIP ones' non-air
+// masks; and its surface voxels' cells in attribute-index order, two u16 a word.
 var<workgroup> occ: array<u32, 128>;
 var<workgroup> nb_kind: array<u32, 108>;
 var<workgroup> nb_entry: array<u32, 108>;
@@ -184,12 +185,17 @@ const NB_AIR: u32 = 0u;
 const NB_SOLID: u32 = 1u;
 const NB_MASK: u32 = 2u;
 const NB_VOXELS: u32 = 3u;
+// NB_MIP + o: a brick of a LOD-only chunk read through its level-1 mip brick's masks, `o`
+// (0..8) the octant of that mip brick the brick covers (x in bit 0, y in 1, z in 2).
+const NB_MIP: u32 = 4u;
 
 // How the brick at world brick coordinate `bw` is read, and its entry: NB_AIR outside the
 // window, in an absent or empty chunk or for uniform air; NB_SOLID for a uniform brick of any
-// other material; NB_MASK for a Full brick of a full chunk, read through its masks; NB_VOXELS
-// for a LOD-only chunk's (read at level 1 by `solid`) or a Wide brick holding a translucent
-// voxel.
+// other material; NB_MASK for a Full brick of a full chunk, read through its masks; NB_MIP
+// plus its octant for a brick of a LOD-only chunk whose level-1 mip brick is Full, read
+// through that brick's masks (a uniform mip brick reads as NB_AIR or NB_SOLID); NB_VOXELS,
+// read voxel by voxel by `solid`, for a Wide brick holding a translucent voxel at either
+// level.
 fn brick_kind(bw: vec3<i32>) -> vec2<u32> {
     let chunk = floor_div(bw, 8);
     let rel = chunk - params.window_min;
@@ -202,13 +208,19 @@ fn brick_kind(bw: vec3<i32>) -> vec2<u32> {
     if (t == ABSENT || (t & EMPTY_BIT) != 0u) {
         return vec2<u32>(NB_AIR, 0u);
     }
-    if ((t & LOD_BIT) != 0u) {
-        return vec2<u32>(NB_VOXELS, 0u);
-    }
+    // A LOD-only chunk's level-1 bricks each cover 2^3 of its level-0 bricks: `solid` maps
+    // voxel l of level-0 brick b to voxel 4 (b % 2) + l / 2 of level-1 brick b / 2.
+    let lod = (t & LOD_BIT) != 0u;
     let b = bw - chunk * 8;
-    let entry = chunk_records[
-        (t & RECORD_MASK) * RECORD_WORDS + ENTRY_WORD + u32(b.x + 8 * (b.y + 8 * b.z))
-    ];
+    var slot = u32(b.x + 8 * (b.y + 8 * b.z));
+    var kind = NB_MASK;
+    if (lod) {
+        let h = b / 2;
+        let o = b - h * 2;
+        slot = u32(h.x + 4 * (h.y + 4 * h.z));
+        kind = NB_MIP + u32(o.x + 2 * o.y + 4 * o.z);
+    }
+    let entry = chunk_records[(t & RECORD_MASK) * RECORD_WORDS + ENTRY_WORD + slot];
     if ((entry & FULL_BIT) == 0u) {
         return vec2<u32>(select(NB_AIR, NB_SOLID, (entry & 0xFFFFu) != 0u), entry);
     }
@@ -216,7 +228,7 @@ fn brick_kind(bw: vec3<i32>) -> vec2<u32> {
     if ((entry & TRANSLUCENT_BIT) != 0u && cls == CLASS_WIDE) {
         return vec2<u32>(NB_VOXELS, entry);
     }
-    return vec2<u32>(NB_MASK, entry);
+    return vec2<u32>(kind, entry);
 }
 
 // Octahedral encoding of the unit vector `n` into 6 + 6 bits.
@@ -308,7 +320,8 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
             let k = j / UNIT_WORDS;
             let w = j % UNIT_WORDS;
             var m = 0u;
-            if (nb_kind[b * 27u + k] == NB_MASK) {
+            let kind = nb_kind[b * 27u + k];
+            if (kind == NB_MASK || kind >= NB_MIP) {
                 let e = nb_entry[b * 27u + k];
                 let u = e & UNIT_MASK;
                 m = pool_word(u, w);
@@ -369,7 +382,14 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
                 case 3u: {
                     on = solid(origin + c - vec3<i32>(1));
                 }
-                default: {}
+                case 0u: {}
+                default: {
+                    // NB_MIP + o: voxel 4 o + l / 2 of the staged mip brick.
+                    let o = nb_kind[k] - NB_MIP;
+                    let m = (vec3<u32>(o, o >> 1u, o >> 2u) & vec3<u32>(1u)) * 4u + l / 2u;
+                    let mi = m.x + 8u * (m.y + 8u * m.z);
+                    on = ((nb_mask[k * UNIT_WORDS + mi / 32u] >> (mi % 32u)) & 1u) != 0u;
+                }
             }
             word |= select(0u, 1u, on) << (j % 32u);
         }

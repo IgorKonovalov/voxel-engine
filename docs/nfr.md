@@ -195,6 +195,15 @@ the pass that filled its occupancy box voxel by voxel read p99 7.636 and 7.781 m
 from the 27 bricks' masks in workgroup memory took 2 ms off. The pass's cost is per brick (the
 box fill, the workgroup, the clear items), not per voxel computed.
 
+**The amended pass (dev reference, Plan 0028 Phase 3, RTX 3080 Laptop GPU, exclusive perf
+lock, quiet: 1-minute load 0.93 to 1.98; the same flight):** four bricks a workgroup, no clear
+items, a LOD-only neighbour read through its level-1 mip brick's masks. With `attr_cap` 8192,
+GPU p99 0.711, 0.753 and 0.754 ms over three runs (p50 0.445 to 0.485 ms) and carry-over age
+p99 25.1 to 25.5 ms: under the 1.0 ms proposal and the 250 ms line. With 4096 (a measurement
+build, load 3.88), p99 0.563 ms and age p99 2306.4 ms. On the slow adapter (AMD Radeon
+Graphics, RADV RENOIR, `--adapter AMD`, load 7.27, no bar), 8192: p50 2.010 ms, p99 2.522 ms,
+age p99 5295.6 ms. The per-attempt readings are in Plan 0028's log.
+
 **Mirror attribute pass (contour look), render-thread CPU: p99 under 4 ms on the dev reference,
 deferred work visible as face-mode normals for at most 250 ms** (budget, Plan 0023, ADR-0017;
 dev reference only). **Reading: a recorded miss (Plan 0023 Phase 6 quiet re-read, the Phase 6

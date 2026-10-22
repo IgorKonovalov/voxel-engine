@@ -3259,3 +3259,73 @@ fn a_five_brick_list_matches_an_uncapped_mirror_and_the_one_brick_pass() {
 
 /// The hash of the five bricks' attribute words as c6df852's pass wrote them.
 const FIVE_BRICK_HASH: u64 = 0xd795_d691_eff6_7ad3;
+
+/// A `Mixed` full chunk at (1, 0, 0) whose five neighbours in a 3 x 2 x 1 window are LOD-only
+/// (their own mips): its bricks' attribute words, by world brick in ascending order, as an
+/// uncapped pass writes them, pinned as a hash. The pass reads a LOD-only neighbour at its
+/// level-1 mip cell, so the words of the bricks on the chunk's faces toward those neighbours
+/// differ from the same chunk's with the neighbours absent, and the inner bricks' words do
+/// not.
+#[test]
+fn attributes_beside_lod_only_chunks_read_their_mips() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let extent = ChunkExtent::new([0, 0, 0], [3, 2, 1]);
+    let full = ChunkCoord([1, 0, 0]);
+    let lod_world = World::generate(extent, &Mixed, &mixed_table());
+    for c in lod_world.store().coords() {
+        if c != full {
+            let m = Arc::new(ChunkMips::build(
+                &lod_world.store().get(c).unwrap().read().unwrap(),
+            ));
+            lod_world.store().remove(c);
+            lod_world.insert_lod(c, m);
+        }
+    }
+    let alone = World::generate(extent, &Mixed, &mixed_table());
+    for c in alone.store().coords() {
+        if c != full {
+            alone.store().remove(c);
+        }
+    }
+    let attrs = |world: &World| {
+        let mut gpu = GpuWorld::with_surface_attrs(&device, small(Window::Fixed(extent)));
+        gpu.sync_now(world, &device, &queue).unwrap();
+        assert!(update_attrs(&device, &queue, &mut gpu) > 0);
+        let mut v: Vec<_> = attr_bytes(&device, &queue, &gpu, world)
+            .into_iter()
+            .collect();
+        v.sort_unstable();
+        v
+    };
+    let beside = attrs(&lod_world);
+    let without = attrs(&alone);
+    assert_eq!(beside.len(), without.len());
+    let mut faces = 0;
+    for ((b, got), (b2, other)) in beside.iter().zip(&without) {
+        assert_eq!(b, b2);
+        let l = b.map(|v| v.rem_euclid(8));
+        // The chunk's faces toward its LOD-only neighbours: x = 0, x = 7, y = 7.
+        let toward = l[0] == 0 || l[0] == 7 || l[1] == 7;
+        if !toward {
+            assert_eq!(got, other, "inner brick {b:?}");
+        } else if toward && got != other {
+            faces += 1;
+        }
+    }
+    println!("face bricks whose words a LOD-only neighbour changed: {faces}");
+    assert!(
+        faces > 20,
+        "{faces} face bricks read their LOD-only neighbour"
+    );
+    let mut h = hash::Fnv1a::default();
+    for (_, w) in &beside {
+        h.write(w);
+    }
+    println!("beside-LOD attribute hash {:#018x}", h.finish());
+    assert_eq!(h.finish(), BESIDE_LOD_HASH, "the pass's words at the tip");
+}
+
+/// The hash of the full chunk's attribute words beside its LOD-only neighbours.
+const BESIDE_LOD_HASH: u64 = 0xda7d_5f1f_ace6_9921;
