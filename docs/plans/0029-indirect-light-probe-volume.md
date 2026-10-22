@@ -201,6 +201,93 @@ between phases. The architect reviews once at the end, in a fresh session.
   on the softness (1.6 m spacing) and on leaks, and whether the finer spacing is wanted.
 - **Files touched:** this plan's log, ADR-0023's Outcome at the close.
 - **Done when:** the owner has recorded a verdict and the spacing choice in the log.
+- **Amended 2026-10-22 (owner, Phase 5):** verdict recorded in the log (session 7, runs 6 to
+  9): the bounce light is wanted; the spacing stays 1.6 m (16 voxels), `--probe-spacing 8` is
+  not adopted ("it takes a lot of time to settle"); the light that lingers on the walls after
+  the lamp goes off is fixed now, in Phases 6 and 7 below. The lag is the probe history: a
+  settled probe blends at 0.97 and one probe in 8 refreshes a frame, so a stale value keeps
+  `0.97 + 0.03 rho` of itself per update when its bounce reads stale neighbours, 0.985 at
+  albedo 0.5: `ln 0.1 / ln 0.985` = 152 updates x 8 = about 1220 frames (20 s at 60 fps) to
+  fall to a tenth in a closed room, and 75.6 x 8 = about 605 frames (10 s) with no bounce.
+
+### Phase 6: A light change drops the probe history
+- **Owner skill:** dev
+- **What:** a light change the frame knows about restarts the probes' history the way an edit
+  does, for every probe, through the hysteresis and not through extra rays.
+  - **The signals.** (a) `Lighting::lamp` changes in `Frame::set_lighting`; (b) a lamp
+    parameter changes between encodes: `LightParams`'s `intensity`, `inner`, `outer`, `turn`,
+    `offset_right`, `offset_down` or `shadows` (not `masks` or `skips`, which the walk keeps
+    byte-identical, and not the camera's motion, which moves the lamp every frame and which the
+    volume follows at its normal rate); (c) `Lighting::candidates` changes to or from 0
+    (emissive light on or off) or between values; (d) `Frame::set_emission_scale` changes a
+    scale (the existing `emission_changed_at` mark). Any further "static light changed"
+    signal dev finds in the tree is added and named in the log. Exposure and the tone map are
+    after the light and are not signals.
+  - **The rule.** A change opens a window of `S` encoded frames, `S` the slice count
+    (`Lighting::probe_slices`, 8 by default), so the round robin visits every probe exactly
+    once inside it; a change inside an open window restarts it. A probe the window's update
+    visits whose age is past the young updates (settled) blends at hysteresis 0 and restarts
+    at age 1, so its next 8 updates blend at 0.5 as an edit-touched probe's do; a probe already
+    young restarts at age 1 and blends at 0.5. An edit-touched probe visited outside its slice
+    inside the window follows the same rule on each visit. This replaces the brief's "0.5 for
+    the next 8 updates" because 0.5 alone is too slow when the bounce reads stale neighbours:
+    with no direct light, a probe's new estimate is at most `rho` times the largest irradiance
+    its rays hit, so one cycle of 8 frames at hysteresis `h` keeps at most `h + (1 - h) rho`
+    of the largest stale value, 0.75 at `h` 0.5 and `rho` 0.5, and `0.75^8 = 0.100` misses a
+    tenth after the 8 young updates. With the first update at 0: after `k` cycles the largest
+    stale value is at most `0.5 x 0.75^(k-1)` of its start, 0.089 at `k` 7 (56 frames) and
+    0.067 at `k` 8 (64 frames); in a room whose reflectance is below 0.5 it falls faster.
+  - **Which probes.** All of them, for every signal. For the lamp that is the right set. For an
+    emission scale, the set "probes within the light radius of chunks holding that material"
+    is rejected: the frame keeps no per-chunk material index (and Plan 0028, approved, drops the chunk
+    palette the mirror had), and narrowing the set saves no rays, because the probes refresh
+    in their slices either way. The cost of "all" is that a probe the change did not affect
+    shows one 64-ray estimate unsmoothed for one update, then 0.5 for 8: a noise bump, not a
+    cost in rays. While the fly-through's ore pulse (`M`) changes the scale every frame, every
+    probe stays at 0.5 (age restarting at 1), which is noisier than 0.97 and is the re-check's
+    call.
+  - **Not built:** a faster refresh inside the window (one in 4 for 8 frames would cost about
+    1.4 ms more on the dev box for those frames, twice the update pass). It is the fallback if
+    Phase 7 finds the 1-second fade too slow, and it is not started without the owner.
+  - The cost is a uniform word or flag for the window and a branch in the blend's hysteresis
+    choice: no extra rays, no new buffer, `frame_bytes` unchanged.
+- **Files touched:** `crates/vxe-render/src/marcher.rs` (the signals, the window),
+  `crates/vxe-render/src/probes.rs`, `crates/vxe-render/src/shaders/probe_update.wgsl`,
+  `apps/flythrough/tests/indirect.rs`.
+- **Done when:**
+  - **Lamp off.** In a closed box of 24 x 24 x 12 interior voxels whose walls are a
+    non-emissive material of albedo 0.5, no emissive material anywhere, the camera at the
+    box's centre looking at the floor with the lamp on, indirect on and the default 64 rays and
+    one eighth: after 256 frames the floor-centre pixel's gathered indirect `F0` is above 0;
+    the lamp is then switched off through `Frame::set_lighting`, and the floor-centre indirect
+    is under 10 % of `F0` at every frame from frame 96 after the switch on (12 cycles,
+    `0.5 x 0.75^11 = 0.021` of the largest probe texel, which covers a floor value down to
+    a fifth of that texel). The test prints the first frame it falls under 10 % (the
+    uniform-room arithmetic puts it near frame 53); the log records it and, as the comparison,
+    the same frame count with the window disabled (expected near 1220 frames, or "not reached
+    in N frames").
+  - **Emission step.** In Phase 2's furnace box after 256 frames (floor-centre indirect `F0`
+    near pi), `set_emission_scale(wall, 0.0)` brings the floor-centre indirect under 10 % of
+    `F0` at every frame from frame 64 after the step (8 cycles, 0.067 in a uniform room);
+    stepping the scale back to 1 brings it to at least 90 % of `F0` by frame 64.
+  - **No signal, no change.** Encoding 256 frames with the lamp and the scales unchanged opens
+    no window (the test reads the window state or the hysteresis the blend used); a camera
+    move alone opens none.
+  - **The bars hold:** every existing `tests/indirect.rs` test, the furnace, the leak, the
+    scroll and the carve bars, `indirect.png` and `mode_banner.png` unchanged; update plus
+    gather at most 1.7 ms at the streamed spawn on the dev box (median of the last 30 of 3000
+    frames, one run, the Phase 4 method), recorded with its delta to Phase 4's readings;
+    `frame_bytes` unchanged.
+
+### Phase 7: The owner's re-check of the lingering light
+- **Owner skill:** human
+- **What:** the owner flies the level, digs into a dark room, and toggles the lamp (`F7`) on
+  and off a few times with indirect on, then the ore pulse (`M`) beside a vein; a verdict on
+  how long the walls keep the light after the lamp goes off, and on any flicker or noise when
+  the lamp toggles or while the ore pulses.
+- **Files touched:** this plan's log.
+- **Done when:** the owner has recorded a verdict on the lingering and on the noise in the
+  log; a "still too slow" names the fallback (Phase 6's faster refresh) as an amendment.
 
 ## Data shapes
 
@@ -283,10 +370,26 @@ Outcome records at the close; the decision it records is unchanged.
 | 3: Scrolling and edits | dev | stopped at a done-when: origin follows the camera (tagged slots), `Frame::invalidate` adds touched probes to the next update; scroll test passes (12 288 stayed byte for byte, 20 480 entered at age 0); the carve bar (20 % within 32 frames) is not reached, test committed `#[ignore]` pending the owner | 545390f |
 | 3 (after the 518b522 amendment) | dev | done: carve test on the amended bar: dark floor 0.01069 before, 0.12354 at frame 32 = 71.5 % of settled 0.17273 (frame 256) and 11.6x the pre-carve; after the fill, 2.78 % of the lit box's at frame 64, peaking at 3.23 % at frame 26 (lavapipe) | d90e9ab |
 | 4: The cave, the switches and the readings | dev | done (after the c444a61 amendment): `F8`, `--probe-spacing`, HUD rows, autopilot bytes line, `indirect.png` blessed (100 % of 57 600 hit pixels differ from indirect off by more than 8/255); `Lighting::probe_rays`/`probe_slices`, `--probe-rays`, `--probe-slices`; update plus gather 1.625 to 1.663 ms, lighting line at half 4.42 to 4.48 ms, `frame_bytes` +58 837 024 B; readings in `nfr.md` §2 and §3 on both adapters | 83ae737, 68b3bdb, db7b057, committed with this row |
-| 5: The owner's windowed check | human | not started | |
+| 5: The owner's windowed check | human | done (owner, 2026-10-22, live session 7, runs 6 to 9, about 2530x1378, RTX 3080 Laptop; architect's record): bounce light wanted, 1.6 m spacing kept, the lingering light after the lamp goes off to be fixed now (Phases 6 and 7); verdicts in Notes | |
+| 6: A light change drops the probe history | dev | not started | |
+| 7: The owner's re-check of the lingering light | human | not started | |
 
 ### Notes
 
+- Phase 5 (architect's record of the owner's words, 2026-10-22, live session 7; log
+  `live/session7-20261022-1307.log` in the plan-0030 worktree, runs 6 to 9, window about
+  2530x1378, RTX 3080 Laptop):
+  - Run 6 (streamed cave, indirect on): "bounce light makes it better, bit costs
+    performance". Exit summary: frame CPU p50 13.2 ms, p99 25.4 ms; march GPU p50 10.7 ms,
+    p99 25.0 ms.
+  - Run 7 (lamp off): "same, looks better but performance is bad - i've got 10fps". Exit
+    summary: frame CPU p50 19.4 ms, p99 105 ms; `update + poll + sync` p99 104 ms; march GPU
+    p50 13.2 ms, p99 36.9 ms.
+  - Run 8 (level, dig into a dark room): "this is much better. but when I turn off the light
+    I still see a bit of it on the walls for a while".
+  - Run 9 (`--probe-spacing 8`): "feels off - it takes a lot of time to settle".
+  - The owner's decisions: fix the lag now (Phase 6 amendment); finer spacing not adopted,
+    1.6 m (16 voxels) stays the default.
 - Scope restated 2026-10-22 under the owner's standing "go" (2026-10-21): phases 1 to 4 `dev`,
   stop at Phase 5 (`human`).
 - Tree names for the plan's 0024-era ones: `Frame::invalidate(min, max)` as named; the hit
@@ -388,3 +491,8 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 - The showcase cave (owner, 2026-10-20): several ore materials with different emission
   colours as the light sources, after this plan.
+- Phase 5 (owner's flight, 2026-10-22): the streaming-sync p99 spikes in flight, `update +
+  poll + sync` p99 104 ms in run 7 (frame CPU p99 105 ms, the owner's "10fps"), are the
+  streaming line's known misses, not this plan's passes: Plan 0023's streaming line and
+  Plan 0027's Followups (the windowed `update + poll + sync` and the unattributed streaming
+  step), carried by Plan 0028's windowed reading. No new work here.
