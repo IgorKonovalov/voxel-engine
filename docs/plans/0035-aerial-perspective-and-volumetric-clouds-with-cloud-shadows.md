@@ -510,7 +510,7 @@ was measured, as with every render plan since Plan 0028.
   for a world seen from the air; ours is a 1 km world under a sky of clouds, hence the
   quadratic mapping. Phase 5's brute-force comparison is the check that six slices carry
   the kilometre without banding; if they do not, a 48-slice volume (393 216 B) is the knob.
-- **Keys.** Plan 0032 binds `F8`, `,`, `.` and `/`, and Plans 0033 and 0034 add keys in the
+- **Keys.** Plan 0029 binds `F8`; Plan 0032 binds `Tab`, `,`, `.` and `/`, and Plans 0033 and 0034 add keys in the
   same batch. Dev takes unbound keys and lists them in the mode line; the banner, not the
   key, is the contract.
 - **Lavapipe cost.** Generating 2.4 million noise texels and marching 14 400 cloud rays for

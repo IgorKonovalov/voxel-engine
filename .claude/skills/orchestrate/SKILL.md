@@ -42,7 +42,8 @@ prompt.
 
 - Build the release binary in the lane's worktree (memory-capped), then write a runner script
   `live/sessionN.sh` in that worktree (untracked). Each step prints what to do and waits for
-  Enter. Each run goes under the perf lock and is `tee`d to a log beside the script, so stdout
+  Enter. Launch it as `bash <path>/live/sessionN.sh` (lanes detect a runner by that command
+  line). Each run goes under the perf lock and is `tee`d to a log beside the script, so stdout
   stays visible. Open it with `setsid -f foot --title "vxe live session N" bash live/sessionN.sh`.
 - Every toggle under test must show its mode in the window (the mode banner). A check that
   needs one which doesn't is a finding for the plan, not something to work around.

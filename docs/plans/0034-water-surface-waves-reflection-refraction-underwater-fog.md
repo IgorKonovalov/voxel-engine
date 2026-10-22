@@ -335,7 +335,7 @@ none, `Frame::set_sky_override(Some(s))` added in Phase 1.
 ### Phase 8: The testbed's switches, the mode banner, and the readings
 - **Owner skill:** dev
 - **What:** `--liquid-reflection trace|sky|off` and `F9` cycling it; `--waves on|frozen` and
-  `F10` freezing the time the fly-through supplies (Plan 0032 binds `F8`, Plan 0036 `F11` and `F12`; the
+  `F10` freezing the time the fly-through supplies (Plan 0029 binds `F8`, Plan 0032 `Tab`, Plan 0036 `F11` and `F12`; the
   banner names whatever key `dev` binds); both shown on Plan 0024 Phase 14's mode banner for 3 s
   after start and after each change. `--spawn lake|under-water|lava` places the camera at the
   goldens' poses in the outdoor source. HUD rows for the liquid pass's GPU time and its

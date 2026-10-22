@@ -1,6 +1,7 @@
 # 0032: Sun and sky: a Hillaire atmosphere, a time of day the game sets, the sun and moon as light samples, sky light into the probes, an outdoor testbed source
 
 > **Status:** approved (2026-10-22)
+> **Amended:** 2026-10-22, the source switch moved from `F8` (Plan 0029 took it) to `Tab`.
 > **Created:** 2026-10-22
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0026](../adrs/0026-atmosphere-from-hillaire-luts-built-on-the-gpu-at-runtime.md)
@@ -43,7 +44,7 @@ per pixel, with a soft shadow ray toward the sun or moon (ADR-0027). Plan 0029's
 return sky radiance on a miss. Surfaces beyond the probe volume take one cosine-weighted sky ray. The HDR targets
 become pre-exposed, and an automatic exposure carries the image from noon to midnight
 through the existing ACES tone map. The fly-through gains an outdoor source of integer hills
-with a cave mouth that leads into a roofed chamber. `F8` switches between the cave, the level
+with a cave mouth that leads into a roofed chamber. `Tab` switches between the cave, the level
 and the outdoors, `,` and `.` step the time of day, and the mode banner shows both. The first
 thing a reader sees is Phase 1's headless golden of an empty world under a noon sky. In the
 window they see Phase 3's hills under that sky, then Phase 5's sunlit hills with soft shadows.
@@ -127,7 +128,7 @@ We build ADR-0026's atmosphere and ADR-0027's directional light in `vxe-render`,
    caller passes `dt` because the engine reads no clock.
 6. **The testbed.** `apps/flythrough/src/outdoor.rs` holds an integer heightfield of hills
    over the cave noise, with a carved tunnel from a hillside to a roofed chamber. It adds
-   `--source cave|level|outdoor`, an `F8` key that cycles the source in process, and a
+   `--source cave|level|outdoor`, an `Tab` key that cycles the source in process, and a
    time of day owned by the testbed: `--time HH:MM`, `,` and `.` step an hour, and `/` runs or
    pauses the cycle. The mode banner shows the source, the time and the exposure.
    *Amended 2026-10-22 (owner):* `apps/flythrough/src/trees.rs` scatters seeded integer trees
@@ -258,7 +259,7 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
   material table is `look_materials()` with `grass` and `soil` appended, so every cave id
   keeps its meaning. `--source cave|level|outdoor` (`--level` stays as `--source level`) and
   `--spawn outside|inside` choose the spawn: 30 m in front of the mouth facing it, 2 m above
-  the ground, or 3 m inside the tunnel facing out. `F8` cycles the source in process. It
+  the ground, or 3 m inside the tunnel facing out. `Tab` cycles the source in process. It
   tears down and rebuilds the world, the stream, the mirror's contents, the server and the
   logic, and keeps the window, the `Frame` and the sky. The testbed's sky uses latitude 45
   degrees and declination 0 (an equinox, so the sun rises at 06:00, sets at 18:00 and reaches
@@ -268,7 +269,7 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
   the frame loop's `dt`, never inside the engine. The outdoor source sets the sky, and the
   cave and the level set `None` unless `--sky on`. The banner (Plan 0024 Phase 14's
   `hud::Modes`) gains `source`, `time` and `day cycle`. If a plan that merged earlier took
-  `F8`, `,`, `.` or `/`, dev picks a free key and the README says which.
+  `Tab`, `,`, `.` or `/`, dev picks a free key and the README says which.
 - **Files touched:** new `apps/flythrough/src/outdoor.rs`, `lib.rs` (the outdoor table),
   `main.rs` (flags, keys, the in-process switch, the clock), `hud.rs` (the banner's new
   keys), `apps/flythrough/tests/determinism.rs`, new `apps/flythrough/tests/outdoor.rs`, the
@@ -287,12 +288,12 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
      voxel is `grass` at the computed `h` and the 8 below are `soil`, except inside the
      tunnel's capsule.
   4. **The banner names the change** (headless, the frame clock driven as in Plan 0024 Phase
-     14's test). `F8` changes the banner's source text through `cave`, `level` and `outdoor`
+     14's test). `Tab` changes the banner's source text through `cave`, `level` and `outdoor`
      and back. `.` changes `12:00` to `13:00` and `,` back to `12:00`. `/` changes `day cycle
      off` to `on`. The banner reads empty 3 s after the last change.
   5. **The parse test** pins `--source`, `--spawn`, `--time` (and refuses `25:00`),
      `--day-length` and `--sky`, and `--level` as `--source level`.
-  6. **The switch is clean.** A headless run with `--frames 600 --source outdoor` sends `F8`
+  6. **The switch is clean.** A headless run with `--frames 600 --source outdoor` sends `Tab`
      at frame 200 (to the cave) and stops at frame 600. Its world's voxel hash over the
      chunks within 2 of the cave's spawn chunk equals a fresh `--source cave` run's over the
      same chunks. No resident record's palette holds `grass` or `soil`, and the server's op
@@ -488,7 +489,7 @@ projecting it.*
     single-tree builder the test below uses, with `leaf_fill` 256 for a solid canopy.
   - **The flags and the banner.** `--trees none|sparse|forest`, default `none`, so Phase 3's
     pinned hash and bars and Phase 7's four goldens hold as approved. `--leaf-fill N`
-    (1 to 256, default 128). A key cycles the density in process through `F8`'s rebuild path
+    (1 to 256, default 128). A key cycles the density in process through `Tab`'s rebuild path
     (dev picks a free key, the README names it). The banner's source text reads `outdoor,
     trees forest`. `--spawn forest` stands at a fixed column `FOREST`, pinned in
     `outdoor.rs` at least 400 voxels from `MOUTH`, 2 m above the ground, facing +y (north),
@@ -588,7 +589,7 @@ projecting it.*
 - **Owner skill:** human
 - **What:** the owner flies the outdoor source from noon through sunset to night with `/` and
   the `.` key, walks into the cave mouth and out again at noon, digs a skylight into the
-  chamber, switches sources with `F8`, and tries `--sun-radius` at 0.27, 1 and 3 degrees,
+  chamber, switches sources with `Tab`, and tries `--sun-radius` at 0.27, 1 and 3 degrees,
   `--exposure` auto and fixed, and the lighting tier. *Amended 2026-10-22 (owner):* the owner
   also stands at `--spawn forest --trees forest` and runs the day with `/` from 15:00 to
   sunset, then holds `--sun 60,180` and `--sun 10,180`, and tries `--leaf-fill` at 64, 128

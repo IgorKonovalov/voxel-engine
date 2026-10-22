@@ -379,9 +379,8 @@ reads them.
   floors in `i64`, and its largest value (`448^2 x 65 536`, about 1.3e10) fits. Feature placement uses
   `hash3` and a sorted list, never a `HashMap` order. The vector pins it on both OSes.
 - **Plan 0032's `--source` and banner.** Whichever plan lands second adds its source to the
-  other's list. Plan 0032's `F8` source cycle would gain `showcase` with no extra work. Plan
-  0029 has `F8` for indirect light in its tree, so the key belongs to whichever plan the
-  owner chose for it, not to this plan.
+  other's list. Plan 0032's `Tab` source cycle would gain `showcase` with no extra work
+  (`F8` is Plan 0029's indirect-light toggle; Plan 0032 moved to `Tab`, 2026-10-22).
 - **Plan 0028's slot classes** change the mirror's bytes per brick. Phase 5 compares the
   showcase to the level on the same commit, so the property holds either way.
 - **Digging the hall.** The bounded path's collapse can drop the bridge or a pillar. That is
