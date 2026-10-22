@@ -1,6 +1,7 @@
 # 0039: The contour look at arm's length: a sharpness metric, the sources of its softness, and named presets the owner compares
 
-> **Status:** draft
+> **Status:** approved (2026-10-22)
+> **Decisions:** Owner, 2026-10-22: the pick becomes the default and `--look contour` keeps today's look; the comparison runs where the plan proposes first; the face-mix candidate (C3) enters a preset only if it passes the axis-fraction guardrail; if no preset wins, today's default stays and the presets are opt-in; the plan starts right after Plan 0028 closes, without waiting for Plan 0030.
 > **Created:** 2026-10-22
 > **Milestone:** M2 in `docs/roadmap.md` (the surface look that Plan 0005 measured, ADR-0011
 > decided and Plan 0013 made the default, re-read under Plan 0024's frame)

@@ -1,6 +1,7 @@
 # 0038: A showcase cavern lit by four ores, and a hero still with named shots and no headlamp
 
-> **Status:** draft
+> **Status:** approved (2026-10-22)
+> **Decisions:** Owner, 2026-10-22: hall 72 x 58 x 24 m as planned with probe spacing settled from the review renders; ore palette as planned; shots hall, chasm and crystals with `hall` the default; everything stays diggable (no SHELL bridge or pillars).
 > **Created:** 2026-10-22
 > **Milestone:** M2 in `docs/roadmap.md` (testbed content: the hero and demos show M2's
 > lighting; no engine work)
