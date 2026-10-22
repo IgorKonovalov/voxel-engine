@@ -39,7 +39,8 @@ struct ProbeParams {
     updates: u32,
     // Rays each updated probe traces, 1 to 64.
     rays: u32,
-    _pad1: u32,
+    // 1 while a light-change window is open (the update's blend restarts the history).
+    light_window: u32,
     _pad2: u32,
 };
 

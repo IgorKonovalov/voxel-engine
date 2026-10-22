@@ -186,6 +186,7 @@ fn furnace_world() -> (World, MaterialId) {
 struct FloorProbe {
     frame: vxe_render::Frame,
     camera: vxe_render::Camera,
+    light: LightParams,
 }
 
 impl FloorProbe {
@@ -204,7 +205,11 @@ impl FloorProbe {
             pitch: -std::f32::consts::FRAC_PI_2,
             vfov: 0.5,
         };
-        Self { frame, camera }
+        Self {
+            frame,
+            camera,
+            light: LightParams::headlamp(),
+        }
     }
 
     /// Steps `n` frames.
@@ -217,7 +222,7 @@ impl FloorProbe {
     ) {
         for _ in 0..n {
             self.frame
-                .step(device, queue, gpu, &self.camera, &LightParams::headlamp());
+                .step(device, queue, gpu, &self.camera, &self.light);
         }
     }
 
@@ -605,4 +610,179 @@ fn the_probe_settings_scale_the_rays_a_frame_traces() {
     );
     assert!(!probe.inside() && probe.age() >= 1);
     assert!(lo > 0.5, "{lo}");
+}
+
+// ---- Light changes (the light-change window) ----
+
+/// One chunk of solid `dull` (albedo 0.5, no emission) with the furnace box carved, and a
+/// table with no emissive row.
+fn dull_box_world() -> World {
+    let mut table = MaterialTable::new();
+    let dull = table.push(Material {
+        albedo: [0.5; 3],
+        ..Material::named("dull")
+    });
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &UniformSource(dull),
+        &table,
+    );
+    world.apply(&box_op(BOX_MIN, BOX_MAX, Mode::Carve)).unwrap();
+    world
+}
+
+/// The first frame (1-based) of `series` under `bar`.
+fn first_under(series: &[f32], bar: f32) -> Option<usize> {
+    series.iter().position(|&v| v < bar).map(|i| i + 1)
+}
+
+/// The dull box lit by the lamp from its centre, looking at the floor, for 256 frames; then
+/// the lamp switched off through `Frame::set_lighting` and `frames` more frames: the
+/// floor-centre indirect before the switch and at each frame after it, and whether each
+/// frame's update ran inside the light-change window.
+fn lamp_off_fade(restarts: bool, frames: u32) -> Option<(f32, Vec<f32>, Vec<bool>)> {
+    let world = dull_box_world();
+    let (device, queue) = software_device(64 << 20)?;
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    let mut f = FloorProbe::new(&device, BOX_MIN[0]);
+    f.camera.position.z = 32.0;
+    f.frame.probes_mut().set_light_restarts(restarts);
+    let on = Lighting {
+        lamp: true,
+        ..f.frame.lighting()
+    };
+    f.frame.set_lighting(on);
+    f.run(&device, &queue, &gpu, 256);
+    let f0 = f.indirect(&device, &queue)[0];
+    f.frame.set_lighting(Lighting { lamp: false, ..on });
+    let mut series = Vec::new();
+    let mut window = Vec::new();
+    for _ in 0..frames {
+        f.run(&device, &queue, &gpu, 1);
+        series.push(f.indirect(&device, &queue)[0]);
+        window.push(f.frame.probe_light_window());
+    }
+    Some((f0, series, window))
+}
+
+/// Lamp off: in the closed dull box (24 x 24 x 12 interior voxels, albedo 0.5, nothing
+/// emissive) lit by the lamp from its centre at the defaults (64 rays, one probe in 8), the
+/// floor-centre indirect `F0` after 256 frames is above 0; with the lamp switched off it is
+/// under 10 % of `F0` at every frame from frame 96 after the switch on. The switch opens the
+/// light-change window for exactly the 8 frames of one slice cycle.
+#[test]
+fn switching_the_lamp_off_drops_the_probe_history() {
+    let Some((f0, series, window)) = lamp_off_fade(true, 160) else {
+        return;
+    };
+    let first = first_under(&series, 0.1 * f0);
+    println!(
+        "lamp off: F0 {f0:.5}; first frame under 10 %: {first:?}; frames 1..=96 {:?}",
+        &series[..96]
+    );
+    assert!(f0 > 0.0, "{f0}");
+    assert_eq!(window[..8], [true; 8], "{window:?}");
+    assert!(window[8..].iter().all(|&w| !w), "{window:?}");
+    for (i, &v) in series.iter().enumerate().skip(95) {
+        assert!(v < 0.1 * f0, "frame {}: {v} against F0 {f0}", i + 1);
+    }
+}
+
+/// The comparison for the lamp-off fade: the same switch with the light-change restart off,
+/// the probes fading at their settled hysteresis. Prints the first frame under 10 % of `F0`
+/// in 1600 frames; ignored by default (about 1900 frames on the software adapter).
+#[test]
+#[ignore = "a reading for the log, not a bar"]
+fn the_lamp_off_fade_without_the_window() {
+    let Some((f0, series, window)) = lamp_off_fade(false, 1600) else {
+        return;
+    };
+    let first = first_under(&series, 0.1 * f0);
+    println!(
+        "lamp off, restarts off: F0 {f0:.5}; first frame under 10 %: {first:?} in {} frames; every 100: {:?}",
+        series.len(),
+        series.iter().step_by(100).collect::<Vec<_>>()
+    );
+    assert!(window.iter().all(|&w| !w));
+}
+
+/// Emission step: in the furnace after 256 frames (floor-centre indirect `F0` near pi),
+/// `set_emission_scale(glow, 0)` brings the floor-centre indirect under 10 % of `F0` at every
+/// frame from frame 64 after the step on; stepping the scale back to 1 brings it to at least
+/// 90 % of `F0` by frame 64.
+#[test]
+fn an_emission_step_drops_the_probe_history() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let (world, glow) = furnace_world();
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    let mut f = FloorProbe::new(&device, BOX_MIN[0]);
+    f.run(&device, &queue, &gpu, 256);
+    let f0 = f.indirect(&device, &queue)[0];
+    f.frame.set_emission_scale(&queue, glow, 0.0);
+    let mut off = Vec::new();
+    for _ in 0..96 {
+        f.run(&device, &queue, &gpu, 1);
+        off.push(f.indirect(&device, &queue)[0]);
+    }
+    f.frame.set_emission_scale(&queue, glow, 1.0);
+    let mut on = Vec::new();
+    for _ in 0..64 {
+        f.run(&device, &queue, &gpu, 1);
+        on.push(f.indirect(&device, &queue)[0]);
+    }
+    println!(
+        "emission 0: F0 {f0:.4}; first frame under 10 %: {:?}; frames 1..=64 {:?}",
+        first_under(&off, 0.1 * f0),
+        &off[..64]
+    );
+    println!(
+        "emission back to 1: frame 64 {:.4} = {:.1} % of F0; first frame at 90 %: {:?}",
+        on[63],
+        on[63] / f0 * 100.0,
+        on.iter().position(|&v| v >= 0.9 * f0).map(|i| i + 1)
+    );
+    for (i, &v) in off.iter().enumerate().skip(63) {
+        assert!(v < 0.1 * f0, "frame {}: {v} against F0 {f0}", i + 1);
+    }
+    assert!(on[63] >= 0.9 * f0, "{} against F0 {f0}", on[63]);
+}
+
+/// No signal, no change: in the furnace, 256 frames with the lamp, its parameters and the
+/// scales unchanged open no light-change window, nor do 16 frames of camera motion; a change
+/// of the lamp's intensity or of the candidate count opens one at the next frame.
+#[test]
+fn no_light_change_opens_no_window() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let (world, _) = furnace_world();
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    let mut f = FloorProbe::new(&device, BOX_MIN[0]);
+    for i in 0..256 {
+        f.run(&device, &queue, &gpu, 1);
+        assert!(!f.frame.probe_light_window(), "frame {}", i + 1);
+    }
+    for i in 0..16 {
+        f.camera.position.x += 0.37;
+        f.camera.yaw += 0.05;
+        f.run(&device, &queue, &gpu, 1);
+        assert!(!f.frame.probe_light_window(), "moving, frame {}", i + 1);
+    }
+    f.light.intensity *= 0.5;
+    f.run(&device, &queue, &gpu, 1);
+    assert!(f.frame.probe_light_window(), "the lamp's intensity");
+    f.run(&device, &queue, &gpu, 8);
+    assert!(
+        !f.frame.probe_light_window(),
+        "the window closes after 8 frames"
+    );
+    let l = f.frame.lighting();
+    f.frame.set_lighting(Lighting { candidates: 4, ..l });
+    f.run(&device, &queue, &gpu, 1);
+    assert!(f.frame.probe_light_window(), "the candidate count");
 }

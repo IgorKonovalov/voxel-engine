@@ -87,7 +87,10 @@ pub struct ProbeUniform {
     pub updates: u32,
     /// Rays each updated probe traces, 1 ..= [`RAYS_PER_PROBE`].
     pub rays: u32,
-    pub _pad: [u32; 2],
+    /// 1 while a light-change window is open: a settled probe this frame's update visits
+    /// blends at hysteresis 0, and every visited probe's age restarts at 1.
+    pub light_window: u32,
+    pub _pad: u32,
 }
 
 /// One probe as [`ProbeVolume::write_test_irradiance`] presets it.
@@ -140,6 +143,8 @@ pub struct ProbeVolume {
     pinned: Option<[i32; 3]>,
     /// Whether frames update probes; off holds what tests preset.
     updates: bool,
+    /// Whether a light change opens a window that restarts the probes' history.
+    light_restarts: bool,
 }
 
 /// `w` divided by `n`, rounded toward negative infinity.
@@ -225,6 +230,7 @@ impl ProbeVolume {
             spacing,
             pinned: None,
             updates: true,
+            light_restarts: true,
         }
     }
 
@@ -279,6 +285,16 @@ impl ProbeVolume {
 
     pub fn updates(&self) -> bool {
         self.updates
+    }
+
+    /// Turns the light-change restart on (the default) or off (a comparison for tests: a
+    /// light change then fades at the probes' settled hysteresis).
+    pub fn set_light_restarts(&mut self, on: bool) {
+        self.light_restarts = on;
+    }
+
+    pub fn light_restarts(&self) -> bool {
+        self.light_restarts
     }
 
     /// The volume's lowest world probe for a camera at `eye` (voxels): the probe cell holding

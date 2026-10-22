@@ -606,6 +606,8 @@ pub struct Frame {
     probe_blend: wgpu::ComputePipeline,
     /// Probe rays the last encode dispatched: update-list entries times rays per probe.
     traced_probe_rays: std::sync::atomic::AtomicU64,
+    /// Whether the last encode's probe update blended inside a light-change window.
+    probe_light_window: std::sync::atomic::AtomicBool,
 }
 
 /// A-trous iterations per frame, at strides 1, 2, 4, 8.
@@ -630,6 +632,26 @@ struct History {
     /// arrived.
     edits: Vec<[[i32; 3]; 2]>,
     overflow: bool,
+    /// The lamp the last `params_for` placed, and the static light of the last encode with
+    /// history (`None` before the first).
+    built_lamp: Option<LightParams>,
+    light_key: Option<LightKey>,
+    /// Encoded frames with a probe update left in the open light-change window.
+    light_window: u32,
+}
+
+/// What a frame's static light depends on, as the probe volume's light-change window compares
+/// it between encodes: the lamp's switch and its parameters (not `masks` or `skips`, which
+/// leave the walk byte-identical, and not its pose, which follows the camera), the shadow walk
+/// the lamp's shadow rays take, the emissive candidate count (0 is emissive light off) and the
+/// frame of the last emission-scale change. Exposure and the tone map come after the light.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LightKey {
+    lamp: bool,
+    params: Option<LightParams>,
+    shadow_walk: ShadowWalk,
+    candidates: u32,
+    emission_changed_at: Option<u32>,
 }
 
 /// Entries the candidate table holds at most.
@@ -1083,6 +1105,7 @@ impl Frame {
             probe_trace,
             probe_blend,
             traced_probe_rays: std::sync::atomic::AtomicU64::new(0),
+            probe_light_window: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -1090,6 +1113,16 @@ impl Frame {
     /// [`Lighting::probe_rays`]); 0 with indirect light off or the update off.
     pub fn traced_probe_rays(&self) -> u64 {
         self.traced_probe_rays
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Whether the last encode's probe update ran inside a light-change window: a change of
+    /// the lamp's switch or parameters, the shadow walk, the emissive candidate count or an
+    /// emission scale opens one for [`Lighting::slices`] encoded frames with a probe update
+    /// (every probe visited once), and a change inside it restarts it. In the window a settled
+    /// probe blends at hysteresis 0 and every visited probe's age restarts at 1.
+    pub fn probe_light_window(&self) -> bool {
+        self.probe_light_window
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
@@ -1109,6 +1142,7 @@ impl Frame {
             let mut v = ProbeVolume::new(device, spacing);
             v.set_origin(self.probes.pinned_origin());
             v.set_updates(self.probes.updates());
+            v.set_light_restarts(self.probes.light_restarts());
             self.probes = v;
         }
     }
@@ -1328,6 +1362,11 @@ impl Frame {
             "{} views",
             views.len()
         );
+        // The lamp the next encode with history compares against the last one's.
+        self.history
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .built_lamp = Some(*light);
         let (fwd, right, up) = camera.basis();
         let mut vs = [View::default(); MAX_VIEWS];
         vs[..views.len()].copy_from_slice(views);
@@ -1417,6 +1456,11 @@ impl Frame {
         keep_history: bool,
     ) {
         let mut p = *params;
+        // The probe passes run in the shaded view outside the cutaway, with indirect light on.
+        let indirect =
+            self.lighting.indirect && self.look.view == ViewMode::Shaded && !self.look.cutaway;
+        let probe_update = indirect && self.probes.updates();
+        let mut light_window = false;
         let mut boxes: Vec<[[i32; 3]; 2]> = Vec::new();
         let mut edits = EditsUniform {
             count: 0,
@@ -1441,6 +1485,25 @@ impl Frame {
             h.overflow = false;
             h.last_views = params.views;
             h.encoded = true;
+            let key = LightKey {
+                lamp: self.lighting.lamp,
+                params: h.built_lamp.map(|l| LightParams {
+                    masks: true,
+                    skips: true,
+                    ..l
+                }),
+                shadow_walk: self.lighting.shadow_walk,
+                candidates: self.lighting.candidates,
+                emission_changed_at: self.emission_changed_at,
+            };
+            if h.light_key.is_some_and(|k| k != key) && self.probes.light_restarts() {
+                h.light_window = self.lighting.slices();
+            }
+            h.light_key = Some(key);
+            if probe_update && h.light_window > 0 {
+                light_window = true;
+                h.light_window -= 1;
+            }
         } else {
             p.history = 0;
         }
@@ -1626,18 +1689,17 @@ impl Frame {
             atrous.push((&self.variance, &variance_bind, 2, lw));
             atrous.extend(atrous_binds.iter().map(|b| (&self.atrous, b, 2, lw)));
         }
-        // The probe passes run in the shaded view outside the cutaway, with indirect light on.
-        let indirect =
-            self.lighting.indirect && self.look.view == ViewMode::Shaded && !self.look.cutaway;
         p.lighting &= !LIGHTING_INDIRECT;
         let mut gather: Vec<Dispatch<'_>> = Vec::new();
         let mut probes: Vec<Dispatch<'_>> = Vec::new();
         let mut updates = 0;
         self.traced_probe_rays
             .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.probe_light_window
+            .store(light_window, std::sync::atomic::Ordering::Relaxed);
         let probe_bind = indirect.then(|| {
             p.lighting |= LIGHTING_INDIRECT;
-            if self.probes.updates() {
+            if probe_update {
                 let origin = self.probes.origin_for(p.views[0].origin);
                 let touched: Vec<[i32; 3]> = boxes
                     .iter()
@@ -1653,7 +1715,7 @@ impl Frame {
                 u64::from(updates) * u64::from(self.lighting.rays()),
                 std::sync::atomic::Ordering::Relaxed,
             );
-            self.write_probe_uniform(queue, &p, updates);
+            self.write_probe_uniform(queue, &p, updates, light_window);
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("probes"),
                 layout: &self.probe_layout,
@@ -1709,14 +1771,16 @@ impl Frame {
     }
 
     /// Writes the probe passes' uniform for the frame `p`: the volume's origin for its first
-    /// view's eye and `updates` entries in the update list.
-    fn write_probe_uniform(&self, queue: &wgpu::Queue, p: &Params, updates: u32) {
+    /// view's eye, `updates` entries in the update list, and whether the light-change window
+    /// is open.
+    fn write_probe_uniform(&self, queue: &wgpu::Queue, p: &Params, updates: u32, window: bool) {
         let u = ProbeUniform {
             origin: self.probes.origin_for(p.views[0].origin),
             spacing: self.probes.spacing(),
             updates,
             rays: self.lighting.rays(),
-            _pad: [0; 2],
+            light_window: u32::from(window),
+            _pad: 0,
         };
         queue.write_buffer(self.probes.uniform(), 0, bytemuck::bytes_of(&u));
     }
