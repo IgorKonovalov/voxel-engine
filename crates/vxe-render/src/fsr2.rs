@@ -17,6 +17,15 @@ pub const FSR2_ACCUMULATE_WGSL: &str = include_str!("shaders/fsr2/accumulate.wgs
 pub const FSR2_INPUT_WGSL: &str = include_str!("shaders/fsr2/input.wgsl");
 /// Our tone pass (exposure, tone map, display encoding), compiled after `march.wgsl`.
 pub const FSR2_TONE_WGSL: &str = include_str!("shaders/fsr2/tone.wgsl");
+/// FSR 2's luminance pyramid (two entry points), compiled after [`FSR2_COMMON_WGSL`].
+pub const FSR2_LUMINANCE_PYRAMID_WGSL: &str = include_str!("shaders/fsr2/luminance_pyramid.wgsl");
+/// FSR 2's reconstruct-previous-depth pass, compiled after [`FSR2_COMMON_WGSL`].
+pub const FSR2_RECONSTRUCT_WGSL: &str =
+    include_str!("shaders/fsr2/reconstruct_previous_depth.wgsl");
+/// FSR 2's depth-clip pass, compiled after [`FSR2_COMMON_WGSL`].
+pub const FSR2_DEPTH_CLIP_WGSL: &str = include_str!("shaders/fsr2/depth_clip.wgsl");
+/// FSR 2's lock pass, compiled after [`FSR2_COMMON_WGSL`].
+pub const FSR2_LOCK_WGSL: &str = include_str!("shaders/fsr2/lock.wgsl");
 
 /// The source of an FSR pass: `HDR` (FFX_FSR2_OPTION_HDR_COLOR_INPUT), the common part, then
 /// the pass.
@@ -120,7 +129,8 @@ pub struct Fsr2Constants {
     pub spd_mips: u32,
     pub spd_work_groups: u32,
     pub rcas_con: f32,
-    pub _pad: [u32; 2],
+    pub debug: u32,
+    pub _pad: u32,
 }
 
 /// The shading-change mip of the luminance pyramid (`FFX_FSR2_SHADING_CHANGE_MIP_LEVEL`).
@@ -143,16 +153,27 @@ struct Resources {
     /// The composite's linear colour at the render size (rgba32float: the tone pass of the
     /// composite's own arithmetic reproduces its rgba8 bytes only from f32 radiance).
     colour: wgpu::Texture,
-    /// Our input pass's depth (r32float) and motion vectors (rg32float).
+    /// Our input pass's depth (r32float), motion vectors (rg32float) and masks (rgba8unorm:
+    /// reactive, transparency and composition, the edit flag).
     depth: wgpu::Texture,
     motion: wgpu::Texture,
-    /// The prepared input colour (rgba16float: YCoCg, depth clip).
-    prepared: wgpu::Texture,
-    /// Our input pass's reactive mask (x) and transparency-and-composition mask (y, zero),
-    /// rgba8unorm at the render size.
     reactive: wgpu::Texture,
-    /// The luminance mip, held neutral (r32float 1 x 1, 0.5).
-    luma_mip_neutral: wgpu::Texture,
+    /// The luminance pyramid's shading-change mip and mip 5 (r32float), and its exposure
+    /// (rg32float 1 x 1), this frame's and the last.
+    luma_mip: wgpu::Texture,
+    luma_mip5: wgpu::Texture,
+    auto_exposure: [wgpu::Texture; 2],
+    /// The reconstructed previous depth, an atomic `u32` per render pixel.
+    reconstructed: wgpu::Buffer,
+    /// The reconstruct pass's dilated depth (r32float), dilated motion (rg32float, this
+    /// frame's and the last) and lock input luma (r32float).
+    dilated_depth: wgpu::Texture,
+    dilated_motion: [wgpu::Texture; 2],
+    lock_luma: wgpu::Texture,
+    /// The depth clip's prepared input colour (rgba16float: YCoCg, depth clip) and dilated
+    /// reactive masks (rgba8unorm).
+    prepared: wgpu::Texture,
+    dilated_reactive: wgpu::Texture,
     /// The exposure (rg32float 1 x 1, x).
     exposure: wgpu::Texture,
     /// The internal upscaled colour (rgba16float), lock status (rg32float) and luma history
@@ -162,6 +183,9 @@ struct Resources {
     luma_history: [wgpu::Texture; 2],
     /// The new locks, an `f32` per display pixel.
     new_locks: wgpu::Buffer,
+    /// The accumulate pass's history weight (r32float), at the display size with
+    /// [`Fsr2::set_debug`], else 1 x 1.
+    weight: wgpu::Texture,
 }
 
 fn texture(
@@ -204,29 +228,57 @@ fn texture_bytes(t: &wgpu::Texture) -> u64 {
     u64::from(t.width()) * u64::from(t.height()) * texel_bytes(t.format())
 }
 
+/// The size of mip `level` of a pyramid whose mip 0 is half of `render` (AMD's scene
+/// luminance), at least 1.
+fn mip_size(render: [u32; 2], level: u32) -> [u32; 2] {
+    render.map(|n| ((n / 2) >> level).max(1))
+}
+
 impl Resources {
-    fn new(device: &wgpu::Device, render: [u32; 2], display: [u32; 2]) -> Self {
+    fn new(device: &wgpu::Device, render: [u32; 2], display: [u32; 2], debug: bool) -> Self {
         use wgpu::TextureFormat::{R32Float, Rg32Float, Rgba8Unorm, Rgba16Float, Rgba32Float};
-        let pair = |label, format| [0, 1].map(|_| texture(device, label, format, display));
+        let pair = |label, format, size| [0, 1].map(|_| texture(device, label, format, size));
+        let buffer = |label, size| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            })
+        };
+        let px = |s: [u32; 2]| u64::from(s[0]) * u64::from(s[1]);
         Self {
             render,
             display,
             colour: texture(device, "fsr2 colour", Rgba32Float, render),
             depth: texture(device, "fsr2 depth", R32Float, render),
             motion: texture(device, "fsr2 motion", Rg32Float, render),
-            prepared: texture(device, "fsr2 prepared colour", Rgba16Float, render),
             reactive: texture(device, "fsr2 reactive", Rgba8Unorm, render),
-            luma_mip_neutral: texture(device, "fsr2 luma mip (neutral)", R32Float, [1, 1]),
+            luma_mip: texture(
+                device,
+                "fsr2 shading-change mip",
+                R32Float,
+                mip_size(render, SHADING_CHANGE_MIP as u32),
+            ),
+            luma_mip5: texture(device, "fsr2 luma mip 5", R32Float, mip_size(render, 5)),
+            auto_exposure: pair("fsr2 auto exposure", Rg32Float, [1, 1]),
+            reconstructed: buffer("fsr2 reconstructed depth", 4 * px(render)),
+            dilated_depth: texture(device, "fsr2 dilated depth", R32Float, render),
+            dilated_motion: pair("fsr2 dilated motion", Rg32Float, render),
+            lock_luma: texture(device, "fsr2 lock luma", R32Float, render),
+            prepared: texture(device, "fsr2 prepared colour", Rgba16Float, render),
+            dilated_reactive: texture(device, "fsr2 dilated reactive", Rgba8Unorm, render),
             exposure: texture(device, "fsr2 exposure", Rg32Float, [1, 1]),
-            upscaled: pair("fsr2 upscaled", Rgba16Float),
-            lock_status: pair("fsr2 lock status", Rg32Float),
-            luma_history: pair("fsr2 luma history", Rgba8Unorm),
-            new_locks: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("fsr2 new locks"),
-                size: 4 * u64::from(display[0]) * u64::from(display[1]),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            }),
+            upscaled: pair("fsr2 upscaled", Rgba16Float, display),
+            lock_status: pair("fsr2 lock status", Rg32Float, display),
+            luma_history: pair("fsr2 luma history", Rgba8Unorm, display),
+            new_locks: buffer("fsr2 new locks", 4 * px(display)),
+            weight: texture(
+                device,
+                "fsr2 history weight",
+                R32Float,
+                if debug { display } else { [1, 1] },
+            ),
         }
     }
 
@@ -235,30 +287,50 @@ impl Resources {
             &self.colour,
             &self.depth,
             &self.motion,
-            &self.prepared,
             &self.reactive,
-            &self.luma_mip_neutral,
+            &self.luma_mip,
+            &self.luma_mip5,
+            &self.dilated_depth,
+            &self.lock_luma,
+            &self.prepared,
+            &self.dilated_reactive,
             &self.exposure,
+            &self.weight,
         ];
-        let pairs = [&self.upscaled, &self.lock_status, &self.luma_history];
+        let pairs = [
+            &self.auto_exposure,
+            &self.dilated_motion,
+            &self.upscaled,
+            &self.lock_status,
+            &self.luma_history,
+        ];
         singles.iter().map(|t| texture_bytes(t)).sum::<u64>()
             + pairs
                 .iter()
                 .map(|p| texture_bytes(&p[0]) + texture_bytes(&p[1]))
                 .sum::<u64>()
             + self.new_locks.size()
+            + self.reconstructed.size()
     }
+}
+
+/// One FSR pass: its group-1 layout (group 2 for ours) and pipeline.
+struct Pass {
+    layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
 }
 
 /// One frame's FSR 2: its pipelines and resources ([`crate::Frame`] holds it in FSR mode).
 pub struct Fsr2 {
-    input_layout: wgpu::BindGroupLayout,
-    input: wgpu::ComputePipeline,
     cb_layout: wgpu::BindGroupLayout,
-    accumulate_layout: wgpu::BindGroupLayout,
-    accumulate: wgpu::ComputePipeline,
-    tone_layout: wgpu::BindGroupLayout,
-    tone: wgpu::ComputePipeline,
+    input: Pass,
+    spd_mips: Pass,
+    spd_tail: Pass,
+    reconstruct: Pass,
+    depth_clip: Pass,
+    lock: Pass,
+    accumulate: Pass,
+    tone: Pass,
     cb: wgpu::Buffer,
     input_tuning: wgpu::Buffer,
     res: Resources,
@@ -266,6 +338,8 @@ pub struct Fsr2 {
     /// The tone pass reads the composite's colour and FSR's passes are skipped
     /// ([`Fsr2::set_bypass`]).
     bypass: bool,
+    /// The accumulate pass writes its history weight ([`Fsr2::set_debug`]).
+    debug: bool,
     /// The pre-exposure of the last encoded frame (`previousFramePreExposure`).
     pre_exposure: std::sync::Mutex<f32>,
 }
@@ -274,15 +348,23 @@ pub struct Fsr2 {
 pub(crate) struct Fsr2Binds {
     cb: wgpu::BindGroup,
     input: wgpu::BindGroup,
+    spd_mips: wgpu::BindGroup,
+    spd_tail: wgpu::BindGroup,
+    reconstruct: wgpu::BindGroup,
+    depth_clip: wgpu::BindGroup,
+    lock: wgpu::BindGroup,
     accumulate: wgpu::BindGroup,
     tone: wgpu::BindGroup,
     bypass: bool,
     render_groups: [u32; 2],
     display_groups: [u32; 2],
+    spd_groups: [u32; 2],
 }
 
 impl Fsr2Binds {
-    /// The dispatches of the frame's upscale slot, after the composite: input, then accumulate.
+    /// The dispatches of the frame's upscale slot, after the composite, in AMD's order: our
+    /// input pass, the luminance pyramid (two dispatches), reconstruct previous depth, depth
+    /// clip, lock and accumulate.
     pub(crate) fn upscale<'a>(
         &'a self,
         fsr: &'a Fsr2,
@@ -291,17 +373,23 @@ impl Fsr2Binds {
         if self.bypass {
             return Vec::new();
         }
+        let fsr_pass = |p: &'a Pass, b: &'a wgpu::BindGroup, workgroups| Dispatch {
+            pipeline: &p.pipeline,
+            groups: [Some(&self.cb), Some(b), None, None],
+            workgroups,
+        };
         vec![
             Dispatch {
-                pipeline: &fsr.input,
+                pipeline: &fsr.input.pipeline,
                 groups: [Some(world), None, Some(&self.input), None],
                 workgroups: self.render_groups,
             },
-            Dispatch {
-                pipeline: &fsr.accumulate,
-                groups: [Some(&self.cb), Some(&self.accumulate), None, None],
-                workgroups: self.display_groups,
-            },
+            fsr_pass(&fsr.spd_mips, &self.spd_mips, self.spd_groups),
+            fsr_pass(&fsr.spd_tail, &self.spd_tail, [1, 1]),
+            fsr_pass(&fsr.reconstruct, &self.reconstruct, self.render_groups),
+            fsr_pass(&fsr.depth_clip, &self.depth_clip, self.render_groups),
+            fsr_pass(&fsr.lock, &self.lock, self.render_groups),
+            fsr_pass(&fsr.accumulate, &self.accumulate, self.display_groups),
         ]
     }
 
@@ -312,7 +400,7 @@ impl Fsr2Binds {
         world: &'a wgpu::BindGroup,
     ) -> Vec<Dispatch<'a>> {
         vec![Dispatch {
-            pipeline: &fsr.tone,
+            pipeline: &fsr.tone.pipeline,
             groups: [Some(world), None, Some(&self.tone), None],
             workgroups: self.display_groups,
         }]
@@ -405,9 +493,28 @@ fn bind(
     layout: &wgpu::BindGroupLayout,
     res: &[Bind<'_>],
 ) -> wgpu::BindGroup {
+    let at: Vec<(u32, &Bind<'_>)> = res.iter().enumerate().map(|(i, r)| (i as u32, r)).collect();
+    bind_refs(device, layout, &at)
+}
+
+/// A bind group of `res` at explicit binding numbers.
+fn bind_at(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    res: &[(u32, Bind<'_>)],
+) -> wgpu::BindGroup {
+    let at: Vec<(u32, &Bind<'_>)> = res.iter().map(|(b, r)| (*b, r)).collect();
+    bind_refs(device, layout, &at)
+}
+
+fn bind_refs(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    res: &[(u32, &Bind<'_>)],
+) -> wgpu::BindGroup {
     let views: Vec<Option<wgpu::TextureView>> = res
         .iter()
-        .map(|r| match r {
+        .map(|(_, r)| match r {
             Bind::Tex(t) => Some(t.create_view(&wgpu::TextureViewDescriptor::default())),
             Bind::Buf(_) => None,
         })
@@ -415,9 +522,8 @@ fn bind(
     let entries: Vec<wgpu::BindGroupEntry<'_>> = res
         .iter()
         .zip(&views)
-        .enumerate()
-        .map(|(i, (r, v))| wgpu::BindGroupEntry {
-            binding: i as u32,
+        .map(|((binding, r), v)| wgpu::BindGroupEntry {
+            binding: *binding,
             resource: match (r, v) {
                 (Bind::Buf(b), _) => b.as_entire_binding(),
                 (_, Some(v)) => wgpu::BindingResource::TextureView(v),
@@ -458,9 +564,20 @@ fn pipeline(
     })
 }
 
+fn ro_buffer_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    entry(
+        binding,
+        wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+    )
+}
+
 impl Fsr2 {
     /// FSR 2's pipelines and its resources for `render`-sized frames shown at `display`;
-    /// `world_layout` is the frame's group 0, which the input pass reads.
+    /// `world_layout` is the frame's group 0, which our input and tone passes read.
     pub(crate) fn new(
         device: &wgpu::Device,
         world_layout: &wgpu::BindGroupLayout,
@@ -469,34 +586,124 @@ impl Fsr2 {
         settings: Fsr2Settings,
     ) -> Self {
         use wgpu::TextureFormat::{R32Float, Rg32Float, Rgba8Unorm, Rgba16Float};
-        let input_layout = layout(
-            device,
+        let cb_layout = layout(device, "fsr2 constants", &[uniform_entry(0)]);
+        // Ours: group 0 is the frame's world, group 2 the pass's.
+        let ours = |label: &str,
+                    source: &str,
+                    entry_point: &str,
+                    entries: &[wgpu::BindGroupLayoutEntry]| {
+            let l = layout(device, label, entries);
+            let p = pipeline(
+                device,
+                label,
+                format!("{}\n{source}", crate::MARCH_WGSL),
+                &[Some(world_layout), None, Some(&l)],
+                entry_point,
+            );
+            Pass {
+                layout: l,
+                pipeline: p,
+            }
+        };
+        // AMD's: group 0 is the constants, group 1 the pass's.
+        let amd = |label: &str,
+                   source: &str,
+                   entry_point: &str,
+                   entries: &[wgpu::BindGroupLayoutEntry]| {
+            let l = layout(device, label, entries);
+            let p = pipeline(
+                device,
+                label,
+                fsr2_source(source, true),
+                &[Some(&cb_layout), Some(&l)],
+                entry_point,
+            );
+            Pass {
+                layout: l,
+                pipeline: p,
+            }
+        };
+        let input = ours(
             "fsr2 input",
+            FSR2_INPUT_WGSL,
+            "fsr2_input",
             &[
                 tex_entry(0),
                 uint_entry(1),
                 tex_entry(2),
                 uniform_entry(3),
-                store_entry(4, R32Float),
-                store_entry(5, Rg32Float),
-                store_entry(6, Rgba16Float),
+                uniform_entry(4),
+                uniform_entry(5),
+                store_entry(6, R32Float),
+                store_entry(7, Rg32Float),
+                store_entry(8, Rgba8Unorm),
+            ],
+        );
+        let tone = ours(
+            "fsr2 tone",
+            FSR2_TONE_WGSL,
+            "tone",
+            &[tex_entry(0), store_entry(1, Rgba8Unorm)],
+        );
+        let spd_mips = amd(
+            "fsr2 luminance pyramid",
+            FSR2_LUMINANCE_PYRAMID_WGSL,
+            "spd_mips",
+            &[
+                tex_entry(0),
+                store_entry(1, R32Float),
+                store_entry(2, R32Float),
+            ],
+        );
+        let spd_tail = amd(
+            "fsr2 luminance pyramid tail",
+            FSR2_LUMINANCE_PYRAMID_WGSL,
+            "spd_tail",
+            &[tex_entry(3), store_entry(4, Rg32Float), tex_entry(5)],
+        );
+        let reconstruct = amd(
+            "fsr2 reconstruct previous depth",
+            FSR2_RECONSTRUCT_WGSL,
+            "reconstruct_and_dilate",
+            &[
+                tex_entry(0),
+                tex_entry(1),
+                tex_entry(2),
+                tex_entry(3),
+                rw_buffer_entry(4),
+                store_entry(5, R32Float),
+                store_entry(6, Rg32Float),
+                store_entry(7, R32Float),
+            ],
+        );
+        let depth_clip = amd(
+            "fsr2 depth clip",
+            FSR2_DEPTH_CLIP_WGSL,
+            "depth_clip",
+            &[
+                tex_entry(0),
+                tex_entry(1),
+                tex_entry(2),
+                tex_entry(3),
+                tex_entry(4),
+                tex_entry(5),
+                tex_entry(6),
                 tex_entry(7),
-                uniform_entry(8),
-                uniform_entry(9),
+                ro_buffer_entry(8),
+                store_entry(9, Rgba16Float),
                 store_entry(10, Rgba8Unorm),
             ],
         );
-        let input = pipeline(
-            device,
-            "fsr2 input",
-            format!("{}\n{FSR2_INPUT_WGSL}", crate::MARCH_WGSL),
-            &[Some(world_layout), None, Some(&input_layout)],
-            "fsr2_input",
+        let lock = amd(
+            "fsr2 lock",
+            FSR2_LOCK_WGSL,
+            "compute_lock",
+            &[tex_entry(0), rw_buffer_entry(1), rw_buffer_entry(2)],
         );
-        let cb_layout = layout(device, "fsr2 constants", &[uniform_entry(0)]);
-        let accumulate_layout = layout(
-            device,
+        let accumulate = amd(
             "fsr2 accumulate",
+            FSR2_ACCUMULATE_WGSL,
+            "accumulate",
             &[
                 tex_entry(0),
                 tex_entry(1),
@@ -510,26 +717,8 @@ impl Fsr2 {
                 store_entry(9, Rg32Float),
                 store_entry(10, Rgba16Float),
                 store_entry(11, Rgba8Unorm),
+                store_entry(12, R32Float),
             ],
-        );
-        let accumulate = pipeline(
-            device,
-            "fsr2 accumulate",
-            fsr2_source(FSR2_ACCUMULATE_WGSL, true),
-            &[Some(&cb_layout), Some(&accumulate_layout)],
-            "accumulate",
-        );
-        let tone_layout = layout(
-            device,
-            "fsr2 tone",
-            &[tex_entry(0), store_entry(1, Rgba8Unorm)],
-        );
-        let tone = pipeline(
-            device,
-            "fsr2 tone",
-            format!("{}\n{FSR2_TONE_WGSL}", crate::MARCH_WGSL),
-            &[Some(world_layout), None, Some(&tone_layout)],
-            "tone",
         );
         let buffer = |label, size| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -540,18 +729,21 @@ impl Fsr2 {
             })
         };
         Self {
-            input_layout,
-            input,
             cb_layout,
-            accumulate_layout,
+            input,
+            spd_mips,
+            spd_tail,
+            reconstruct,
+            depth_clip,
+            lock,
             accumulate,
-            tone_layout,
             tone,
             cb: buffer("fsr2 constants", size_of::<Fsr2Constants>() as u64),
             input_tuning: buffer("fsr2 input tuning", size_of::<InputUniform>() as u64),
-            res: Resources::new(device, render, display),
+            res: Resources::new(device, render, display, false),
             settings,
             bypass: false,
+            debug: false,
             pre_exposure: std::sync::Mutex::new(1.0),
         }
     }
@@ -559,7 +751,7 @@ impl Fsr2 {
     /// Replaces the resources with ones for `render`-sized frames shown at `display`.
     pub(crate) fn resize(&mut self, device: &wgpu::Device, render: [u32; 2], display: [u32; 2]) {
         if self.res.render != render || self.res.display != display {
-            self.res = Resources::new(device, render, display);
+            self.res = Resources::new(device, render, display, self.debug);
         }
     }
 
@@ -579,6 +771,16 @@ impl Fsr2 {
 
     pub fn bypassed(&self) -> bool {
         self.bypass
+    }
+
+    /// For tests: the accumulate pass writes its history weight ([`Fsr2::history_weight`])
+    /// from the next frame on; the resources are replaced and the history dropped by the
+    /// frame's next size change, so call it before [`crate::Frame::set_sizes`].
+    pub fn set_debug(&mut self, device: &wgpu::Device, debug: bool) {
+        if debug != self.debug {
+            self.debug = debug;
+            self.res = Resources::new(device, self.res.render, self.res.display, debug);
+        }
     }
 
     /// Bytes FSR's resources occupy.
@@ -601,8 +803,8 @@ impl Fsr2 {
         &self.res.motion
     }
 
-    /// The input pass's reactive mask (rgba8unorm, render size: x reactive, y the
-    /// transparency-and-composition mask).
+    /// The input pass's masks (rgba8unorm, render size: x reactive, y the
+    /// transparency-and-composition mask, z the edit flag).
     pub fn reactive(&self) -> &wgpu::Texture {
         &self.res.reactive
     }
@@ -617,9 +819,25 @@ impl Fsr2 {
         &self.res.exposure
     }
 
+    /// The depth clip's prepared colour (rgba16float, render size: YCoCg, the depth clip in a).
+    pub fn prepared(&self) -> &wgpu::Texture {
+        &self.res.prepared
+    }
+
     /// The internal upscaled colour copy `i` (rgba16float, display size).
     pub fn upscaled(&self, i: usize) -> &wgpu::Texture {
         &self.res.upscaled[i]
+    }
+
+    /// The lock status copy `i` (rg32float, display size: lifetime, temporal luma).
+    pub fn lock_status(&self, i: usize) -> &wgpu::Texture {
+        &self.res.lock_status[i]
+    }
+
+    /// The accumulate pass's history weight of the last encoded frame (r32float, display
+    /// size with [`Fsr2::set_debug`]).
+    pub fn history_weight(&self) -> &wgpu::Texture {
+        &self.res.weight
     }
 
     /// FSR's constants for a frame of `params` (its first view), `reset` when history is
@@ -635,6 +853,7 @@ impl Fsr2 {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let pre_exposure = 1.0;
+        let [w, h] = self.res.render;
         let c = Fsr2Constants {
             render_size: render,
             max_render_size: render,
@@ -656,14 +875,16 @@ impl Fsr2 {
             pre_exposure,
             previous_pre_exposure: if reset { pre_exposure } else { *prev },
             tan_half_fov: tan_h,
-            jitter_sequence_length: jitter_phases(self.res.render[0], self.res.display[0]) as f32,
+            jitter_sequence_length: jitter_phases(w, self.res.display[0]) as f32,
             delta_time: 1.0 / 60.0,
             dynamic_res_change: 0.0,
             view_space_to_meters: self.settings.metres_per_voxel,
-            spd_mips: 0,
-            spd_work_groups: 0,
+            // SpdSetup over the whole render rectangle.
+            spd_mips: ((w.max(h) as f32).log2().floor() as u32).min(12),
+            spd_work_groups: w.div_ceil(64) * h.div_ceil(64),
             rcas_con: 0.0,
-            _pad: [0; 2],
+            debug: u32::from(self.debug),
+            _pad: 0,
         };
         *prev = pre_exposure;
         c
@@ -691,60 +912,102 @@ impl Fsr2 {
             }),
         );
         let r = &self.res;
-        let texel = |t: &wgpu::Texture, bytes: &[u8]| {
-            queue.write_texture(
-                t.as_image_copy(),
-                bytes,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: None,
-                    rows_per_image: None,
-                },
-                wgpu::Extent3d {
-                    width: 1,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-            );
-        };
         // The exposure seam: the frame's manual exposure, pre-exposure 1 (no eye adaptation).
-        texel(&r.exposure, bytemuck::cast_slice(&[params.exposure, 0.0]));
-        texel(&r.luma_mip_neutral, bytemuck::bytes_of(&0.5f32));
+        queue.write_texture(
+            r.exposure.as_image_copy(),
+            bytemuck::cast_slice(&[params.exposure, 0.0]),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: None,
+                rows_per_image: None,
+            },
+            r.exposure.size(),
+        );
         let (w, q) = (f.cur, f.cur ^ 1);
-        let cb = bind(device, &self.cb_layout, &[Bind::Buf(&self.cb)]);
+        use Bind::{Buf, Tex};
+        let cb = bind(device, &self.cb_layout, &[Buf(&self.cb)]);
         let input = bind(
             device,
-            &self.input_layout,
+            &self.input.layout,
             &[
-                Bind::Tex(f.hit_pos),
-                Bind::Tex(f.hit_info),
-                Bind::Tex(&r.colour),
-                Bind::Buf(&self.input_tuning),
-                Bind::Tex(&r.depth),
-                Bind::Tex(&r.motion),
-                Bind::Tex(&r.prepared),
-                Bind::Tex(f.layer),
-                Bind::Buf(f.edits),
-                Bind::Buf(f.lamp),
-                Bind::Tex(&r.reactive),
+                Tex(f.hit_pos),
+                Tex(f.hit_info),
+                Tex(f.layer),
+                Buf(&self.input_tuning),
+                Buf(f.edits),
+                Buf(f.lamp),
+                Tex(&r.depth),
+                Tex(&r.motion),
+                Tex(&r.reactive),
             ],
+        );
+        let spd_mips = bind(
+            device,
+            &self.spd_mips.layout,
+            &[Tex(&r.colour), Tex(&r.luma_mip), Tex(&r.luma_mip5)],
+        );
+        let spd_tail = bind_at(
+            device,
+            &self.spd_tail.layout,
+            &[
+                (3, Tex(&r.luma_mip5)),
+                (4, Tex(&r.auto_exposure[w])),
+                (5, Tex(&r.auto_exposure[q])),
+            ],
+        );
+        let reconstruct = bind(
+            device,
+            &self.reconstruct.layout,
+            &[
+                Tex(&r.depth),
+                Tex(&r.motion),
+                Tex(&r.colour),
+                Tex(&r.exposure),
+                Buf(&r.reconstructed),
+                Tex(&r.dilated_depth),
+                Tex(&r.dilated_motion[w]),
+                Tex(&r.lock_luma),
+            ],
+        );
+        let depth_clip = bind(
+            device,
+            &self.depth_clip.layout,
+            &[
+                Tex(&r.depth),
+                Tex(&r.motion),
+                Tex(&r.colour),
+                Tex(&r.reactive),
+                Tex(&r.exposure),
+                Tex(&r.dilated_depth),
+                Tex(&r.dilated_motion[w]),
+                Tex(&r.dilated_motion[q]),
+                Buf(&r.reconstructed),
+                Tex(&r.prepared),
+                Tex(&r.dilated_reactive),
+            ],
+        );
+        let lock = bind(
+            device,
+            &self.lock.layout,
+            &[Tex(&r.lock_luma), Buf(&r.new_locks), Buf(&r.reconstructed)],
         );
         let accumulate = bind(
             device,
-            &self.accumulate_layout,
+            &self.accumulate.layout,
             &[
-                Bind::Tex(&r.exposure),
-                Bind::Tex(&r.reactive),
-                Bind::Tex(&r.motion),
-                Bind::Tex(&r.upscaled[q]),
-                Bind::Tex(&r.lock_status[q]),
-                Bind::Tex(&r.prepared),
-                Bind::Tex(&r.luma_mip_neutral),
-                Bind::Tex(&r.luma_history[q]),
-                Bind::Buf(&r.new_locks),
-                Bind::Tex(&r.lock_status[w]),
-                Bind::Tex(&r.upscaled[w]),
-                Bind::Tex(&r.luma_history[w]),
+                Tex(&r.exposure),
+                Tex(&r.dilated_reactive),
+                Tex(&r.dilated_motion[w]),
+                Tex(&r.upscaled[q]),
+                Tex(&r.lock_status[q]),
+                Tex(&r.prepared),
+                Tex(&r.luma_mip),
+                Tex(&r.luma_history[q]),
+                Buf(&r.new_locks),
+                Tex(&r.lock_status[w]),
+                Tex(&r.upscaled[w]),
+                Tex(&r.luma_history[w]),
+                Tex(&r.weight),
             ],
         );
         let tone_in = if self.bypass {
@@ -752,19 +1015,22 @@ impl Fsr2 {
         } else {
             &r.upscaled[w]
         };
-        let tone = bind(
-            device,
-            &self.tone_layout,
-            &[Bind::Tex(tone_in), Bind::Tex(f.output)],
-        );
+        let tone = bind(device, &self.tone.layout, &[Tex(tone_in), Tex(f.output)]);
+        let [rw, rh] = r.render;
         Fsr2Binds {
             cb,
             input,
+            spd_mips,
+            spd_tail,
+            reconstruct,
+            depth_clip,
+            lock,
             accumulate,
             tone,
             bypass: self.bypass,
             render_groups: r.render.map(|n| n.div_ceil(WORKGROUP)),
             display_groups: r.display.map(|n| n.div_ceil(WORKGROUP)),
+            spd_groups: [rw.div_ceil(64), rh.div_ceil(64)],
         }
     }
 }

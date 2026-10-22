@@ -1574,6 +1574,12 @@ impl Frame {
         }
     }
 
+    /// Drops the upscaler's history alone in the next encoded frame (the lighting's is kept),
+    /// as a change of view does.
+    pub fn reset_upscaler_history(&mut self) {
+        self.history().view_changed = true;
+    }
+
     /// Drops all history: the next encoded frame starts every pixel afresh.
     pub fn reset_history(&mut self) {
         self.history().valid = false;

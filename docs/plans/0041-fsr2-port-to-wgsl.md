@@ -482,8 +482,8 @@ and the owner weighs it in Phase 7.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The walking skeleton: FSR 2's accumulate pass end to end on lavapipe | dev | done | 80aed60 |
-| 2: HDR in, tone after, the exposure seam and the masks | dev | done | committed with this row |
-| 3: The remaining passes: luminance pyramid, previous depth, depth clip, lock | dev | not started | |
+| 2: HDR in, tone after, the exposure seam and the masks | dev | done | 80085f8 |
+| 3: The remaining passes: luminance pyramid, previous depth, depth clip, lock | dev | done | committed with this row |
 | 4: RCAS, and the sharpness bars still and panning | dev | not started | |
 | 5: Lights, flicker and shadow motion | dev | not started | |
 | 6: The readings on both adapters | dev | not started | |
@@ -565,6 +565,40 @@ to 15.7 from the other lanes, so no timing is taken here).
 - Gate: clippy, fmt clean; `cargo nextest run -p flythrough -p vxe-render --test-threads 2`
   252 passed, 7 skipped.
 
+**Phase 3** (lavapipe; exclusive perf lock; 1-min load 7.8 to 18.9, loaded).
+
+- Passes in AMD's order in the `upscale` slot: input, `spd_mips` (one 256-thread workgroup
+  per 64 x 64 render pixels; the shading-change mip 4 and mip 5 stored), `spd_tail` (one
+  workgroup: mip 5 to the last mip and the exposure, which no pass reads since FSR's exposure
+  is ours), reconstruct previous depth (`atomicMax` on a `u32` buffer), depth clip (the edit
+  boxes force a clip of 1 through the input pass's flag in the masks' z), lock (new locks into
+  the `f32` buffer; clears the reconstructed depth), accumulate. SPD keeps one channel of its
+  LDS intermediate (the pyramid is single-channel).
+- Bindings per stage (wgpu defaults: 4 storage textures, 16 sampled, 8 storage buffers,
+  `limits_for` 9; no limit moved): input 3 sampled, 3 uniform, 3 storage textures (plus the
+  world's group); `spd_mips` 1 sampled, 2 storage textures; `spd_tail` 2 sampled, 1 storage
+  texture; reconstruct 4 sampled, 1 storage buffer, 3 storage textures; depth clip 8 sampled, 1
+  read-only storage buffer, 2 storage textures; lock 1 sampled, 2 storage buffers; accumulate 8
+  sampled, 1 storage buffer, 4 storage textures (the fourth the debug history weight); tone 1
+  sampled, 1 storage texture.
+- Done-when 1 (level, radius-6 carve at t = 30.5, 32 still frames, scale 1.5, against a twin
+  frame whose FSR history alone is reset each frame, `Frame::reset_upscaler_history`): frame 1
+  after, 4 822 output pixels in the dilated box, mean 0.001/255, 0 over 8/255; frame 4, 4 749
+  pixels, mean 5.127/255, 625 over 8/255.
+- Done-when 2 (cavity, scale 1.5, still 4 frames then one voxel sideways; the variable is
+  `1 - fAlpha` of `Accumulate`, written by `Fsr2::set_debug`): 70 877 of 70 878 unchanged output
+  pixels keep history (100.00 %). With the light-change term applied to moving pixels too
+  (Phase 2's mask) it read 51 605 of 70 878 (72.81 %): the headlamp moves with the camera, so
+  the term is now gated on stillness (see Notes); with the term's weight 0 it read 100.00 %.
+- Done-when 3 (level, still, 2 frames): 36 864 hit pixels checked, none beside a silhouette by
+  the test's 5 % depth step, 0 with a depth clip.
+- Done-when 4 (stripe wall at 88 voxels, 32 still frames, scale 1.5): 20 736 of 20 736
+  stripe-edge output pixels hold a lock (100.00 %); the flat single-material patch 0 of 20 736.
+- Done-when 5: Phase 1's and 2's bars re-read: B ES 1.718 / GE 0.00435, FSR 1.479 / 0.00530;
+  motion error 2.94e-5; tone 0 bytes on four poses; masks 0 wrong; exposure mean 1.114/255.
+- Gate: clippy, fmt clean; `cargo nextest run -p flythrough -p vxe-render --test-threads 2`
+  256 passed, 7 skipped.
+
 ### Notes
 
 - Names: the plan's names match the merged tree (`jitter_at`, `reproject_centred`,
@@ -589,6 +623,10 @@ to 15.7 from the other lanes, so no timing is taken here).
   and `tests/support/rigs.rs` (the carve, lamp-term and glass-scene helpers), outside its list.
 - In FSR mode every view but the shaded one reaches FSR in display values and the tone pass
   stores it clamped, unchanged.
+- The reactive mask's light-change term applies to still pixels alone (motion under 0.01 output
+  pixels, upscale.wgsl's `CLIP_STILL`), as Plan 0030's signal does there (Phase 3, this
+  commit); the plan's term list does not say still.
+- `Frame::reset_upscaler_history` and `Fsr2::set_debug` were added for the tests.
 - The input pass reads the light-change thresholds and the older lamp from the upscale pass's
   uniform (`UpscaleUniform`, `Upscaler::change_frames` 24 by default).
 

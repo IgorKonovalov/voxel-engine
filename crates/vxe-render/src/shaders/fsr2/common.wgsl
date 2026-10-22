@@ -64,7 +64,8 @@ struct Fsr2Constants {
     spd_mips: u32,
     spd_work_groups: u32,
     rcas_con: f32,
-    _pad0: u32,
+    // Nonzero: the accumulate pass writes its history weight to its debug target.
+    debug: u32,
     _pad1: u32,
 };
 

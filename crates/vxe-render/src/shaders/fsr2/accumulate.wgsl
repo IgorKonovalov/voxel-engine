@@ -22,6 +22,9 @@
 //   9  storage texture   lock_status_out          rg32float
 //   10 storage texture   upscaled_out             rgba16float
 //   11 storage texture   luma_history_out         rgba8unorm
+//   12 storage texture   weight_out               r32float: with `cb.debug`, the history's
+//                                                 share of the blend, `1 - fAlpha` of AMD's
+//                                                 `Accumulate` (0 for a new sample)
 //
 // `HDR` (FFX_FSR2_OPTION_HDR_COLOR_INPUT) is defined before common.wgsl. The upscaled image is
 // `upscaled_out`'s rgb, the accumulated colour unprepared: AMD's pass also writes it to its
@@ -40,6 +43,7 @@
 @group(1) @binding(9) var lock_status_out: texture_storage_2d<rg32float, write>;
 @group(1) @binding(10) var upscaled_out: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(11) var luma_history_out: texture_storage_2d<rgba8unorm, write>;
+@group(1) @binding(12) var weight_out: texture_storage_2d<r32float, write>;
 
 // ffx_fsr2_common.h's AccumulationPassCommonParams.
 struct AccumulationParams {
@@ -397,11 +401,16 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3<u32>) {
     let upsampled = compute_upsampled_color_and_weight(params, &clipping_box, this_frame_reactive);
     let luma_instability = compute_luma_instability_factor(params, clipping_box, this_frame_reactive, luminance_diff);
     var accumulation = compute_base_accumulation_weight(params, this_frame_reactive, in_motion_last_frame, upsampled.w);
+    var history_weight = 0.0;
     if (params.is_new_sample) {
         history = ycocg_to_rgb(upsampled.xyz);
     } else {
         rectify_history(params, clipping_box, &history, &accumulation, lock_contribution, luma_instability);
         history = accumulate_colors(history, accumulation, upsampled);
+        history_weight = 1.0 - upsampled.w / max(FSR2_EPSILON, accumulation.x + upsampled.w);
+    }
+    if (cb.debug != 0u) {
+        textureStore(weight_out, hr_pos, vec4<f32>(history_weight, 0.0, 0.0, 0.0));
     }
     history = unprepare_rgb(history, exposure());
     finalize_lock_status(params, lock_status, upsampled.w);

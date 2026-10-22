@@ -388,3 +388,335 @@ fn doubling_the_exposure_reaches_fsr_the_same_frame() {
     println!("FSR at 2x exposure against Plan 0024's frame: mean {mean:.3}/255 ({m:.3?})");
     assert!(mean <= 2.0, "mean {mean:.3}/255");
 }
+
+/// The internal pixel whose sample lies nearest output pixel `(x, y)`'s centre in a frame
+/// whose rays move by `j` (`View::jitter`, internal pixels).
+fn nearest_sample(x: u32, y: u32, j: [f32; 2]) -> usize {
+    let c = [x, y];
+    let n = [0, 1].map(|k| {
+        let centre = (c[k] as f32 + 0.5) * INTERNAL[k] as f32 / OUTPUT[k] as f32;
+        ((centre - j[k]).floor() as i32).clamp(0, INTERNAL[k] as i32 - 1) as usize
+    });
+    n[1] * INTERNAL[0] as usize + n[0]
+}
+
+/// The mean and the count over 8/255 of the largest channel difference between `a` and `b`
+/// over the output pixels `at`.
+fn difference_over(a: &[u8], b: &[u8], at: &[usize]) -> (f64, usize) {
+    let (mut sum, mut over) = (0u64, 0usize);
+    for &o in at {
+        let d = (0..3)
+            .map(|k| a[4 * o + k].abs_diff(b[4 * o + k]))
+            .max()
+            .unwrap();
+        sum += u64::from(d);
+        over += usize::from(d > 8);
+    }
+    (sum as f64 / at.len().max(1) as f64, over)
+}
+
+/// No ghost after a carve: on the level at scale 1.5, after 32 still frames, a radius-6 carve
+/// where the view axis meets rock; on the first frame after it, over the output pixels whose
+/// nearest internal hit lies in the carve's box dilated by one voxel, FSR's image differs from
+/// the same pipeline's frame with FSR's history reset (the same pose, jitter phase and
+/// lighting history) by at most 2/255 mean. The count over 8/255 and the fourth frame's two
+/// figures are readings.
+#[test]
+fn a_carve_leaves_no_ghost_under_fsr2() {
+    let (world, camera) = level();
+    let Some((device, queue, mut gpu)) = level_rig(&world, &camera) else {
+        return;
+    };
+    let light = LightParams::headlamp();
+    let mut kept = frame_of(&device, INTERNAL, OUTPUT, false);
+    let mut reset = frame_of(&device, INTERNAL, OUTPUT, false);
+    for f in [&mut kept, &mut reset] {
+        f.set_upscaler_kind(&device, fsr2_kind());
+    }
+    for _ in 0..SETTLE {
+        for f in [&mut kept, &mut reset] {
+            f.step(&device, &queue, &gpu, &camera, &light);
+        }
+    }
+    let (aabb, t) = carve_in_view(&world, &camera);
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    for f in [&mut kept, &mut reset] {
+        f.invalidate(aabb.0.0, aabb.1.0);
+    }
+    for frame in 1..=4 {
+        reset.reset_upscaler_history();
+        for f in [&mut kept, &mut reset] {
+            f.step(&device, &queue, &gpu, &camera, &light);
+        }
+        let j = kept.params(&gpu, &camera, &light).views[0].jitter;
+        let pos = readback::read_rgba32f(&device, &queue, kept.hit_positions());
+        let mut at = Vec::new();
+        for y in 0..OUTPUT[1] {
+            for x in 0..OUTPUT[0] {
+                let p = pos[nearest_sample(x, y, j)];
+                if p[3] < 1e30 && in_dilated([p[0], p[1], p[2]], aabb) {
+                    at.push((y * OUTPUT[0] + x) as usize);
+                }
+            }
+        }
+        let a = readback::read_rgba8(&device, &queue, kept.target());
+        let b = readback::read_rgba8(&device, &queue, reset.target());
+        let (mean, over) = difference_over(&a, &b, &at);
+        println!(
+            "carve at t = {t:.1}, frame {frame} after: {} output pixels in the dilated box, mean difference from the reset frame {mean:.3}/255, {over} over 8/255",
+            at.len()
+        );
+        if frame == 1 {
+            assert!(!at.is_empty(), "no output pixel hits inside the box");
+            assert!(mean <= 2.0, "mean {mean:.3}/255 from the reset frame");
+        }
+    }
+}
+
+/// The cavity at scale 1.5 on the software adapter with FSR 2, lighting at full resolution.
+fn cavity_rig() -> Option<LookRig> {
+    let world = cavity_world();
+    let (device, queue, gpu) = mirrored(&world)?;
+    let mut frame = Frame::with_sizes(&device, INTERNAL, OUTPUT);
+    frame.set_upscaler_kind(&device, fsr2_kind());
+    Some(LookRig {
+        device,
+        queue,
+        gpu,
+        frame,
+    })
+}
+
+/// History survives a sideways step: the cavity at scale 1.5, still for 4 frames, then one
+/// voxel sideways; on the next frame the accumulate pass's history weight (`1 - fAlpha`) is
+/// above 0 in at least 95 % of the output pixels whose hit surface did not change (the nearest
+/// sample's hit reprojected into the frame before lands on a hit of the same material, a
+/// normal within 0.99 and 1.5 voxels).
+#[test]
+fn a_sideways_step_keeps_fsr2s_history() {
+    let Some(mut rig) = cavity_rig() else {
+        return;
+    };
+    rig.frame
+        .fsr2_mut()
+        .expect("FSR mode")
+        .set_debug(&rig.device, true);
+    let light = LightParams::headlamp();
+    let mut camera = cavity_camera();
+    for _ in 0..4 {
+        rig.frame
+            .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+    }
+    let read_hits = |rig: &LookRig, camera: &vxe_render::Camera| {
+        (
+            readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions()),
+            readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
+            rig.frame.params(&rig.gpu, camera, &light).views[0],
+        )
+    };
+    let (pos0, info0, view0) = read_hits(&rig, &camera);
+    let (_, right, _) = camera.basis();
+    camera.position += right;
+    rig.frame
+        .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+    let (pos1, info1, view1) = read_hits(&rig, &camera);
+    let weight = read_f32_texels(
+        &rig.device,
+        &rig.queue,
+        rig.frame.fsr2().unwrap().history_weight(),
+    );
+    let (mut same, mut kept) = (0usize, 0usize);
+    for y in 0..OUTPUT[1] {
+        for x in 0..OUTPUT[0] {
+            let i = nearest_sample(x, y, view1.jitter);
+            if info1[i][3] & 1 == 0 {
+                continue;
+            }
+            let p = [pos1[i][0], pos1[i][1], pos1[i][2]];
+            let Some(q) = project(&view0, p) else {
+                continue;
+            };
+            // The previous frame's pixel whose jittered sample lies nearest.
+            let k = [0, 1].map(|c| q[c] - f64::from(view0.jitter[c]));
+            if k[0] < 0.0
+                || k[1] < 0.0
+                || k[0] >= f64::from(INTERNAL[0])
+                || k[1] >= f64::from(INTERNAL[1])
+            {
+                continue;
+            }
+            let k = k[1] as usize * INTERNAL[0] as usize + k[0] as usize;
+            let (n0, n1) = (
+                octa16_normal(info0[k][0], info0[k][1]),
+                octa16_normal(info1[i][0], info1[i][1]),
+            );
+            let dist = (0..3)
+                .map(|c| (pos0[k][c] - p[c]).powi(2))
+                .sum::<f32>()
+                .sqrt();
+            let unchanged = info0[k][3] & 1 == 1
+                && info0[k][2] == info1[i][2]
+                && (0..3).map(|c| n0[c] * n1[c]).sum::<f32>() >= 0.99
+                && dist <= 1.5;
+            if unchanged {
+                same += 1;
+                kept += usize::from(weight[(y * OUTPUT[0] + x) as usize] > 0.0);
+            }
+        }
+    }
+    let share = kept as f64 / same.max(1) as f64;
+    println!(
+        "sideways step: {kept} of {same} unchanged output pixels keep history ({:.2} %)",
+        share * 100.0
+    );
+    assert!(same > 0 && share >= 0.95, "{:.2} %", share * 100.0);
+}
+
+/// Still means no disocclusion: on the level at scale 1.5, a still camera, after 2 frames
+/// the depth clip is 0 at every hit pixel not within one internal pixel of a silhouette (a
+/// neighbour whose view depth differs by more than 5 %, or a miss).
+#[test]
+fn a_still_camera_has_no_disocclusion() {
+    let Some((device, queue, gpu, mut frame, camera)) = fsr_level_frame() else {
+        return;
+    };
+    let light = LightParams::headlamp();
+    for _ in 0..2 {
+        frame.step(&device, &queue, &gpu, &camera, &light);
+    }
+    let fsr = frame.fsr2().expect("FSR mode");
+    let clip = readback::read_rgba16f(&device, &queue, fsr.prepared());
+    let depth = read_f32_texels(&device, &queue, fsr.depth());
+    let [w, h] = INTERNAL.map(|n| n as i32);
+    let at = |x: i32, y: i32| depth[(y * w + x) as usize];
+    let (mut checked, mut near_edge, mut clipped, mut worst) = (0usize, 0usize, 0usize, 0.0f32);
+    for y in 0..h {
+        for x in 0..w {
+            let d = at(x, y);
+            if d == 0.0 {
+                continue;
+            }
+            let edge = (-1..=1).any(|dy| {
+                (-1..=1).any(|dx| {
+                    let (nx, ny) = ((x + dx).clamp(0, w - 1), (y + dy).clamp(0, h - 1));
+                    let n = at(nx, ny);
+                    n == 0.0 || (n / d - 1.0).abs() > 0.05
+                })
+            });
+            if edge {
+                near_edge += 1;
+                continue;
+            }
+            checked += 1;
+            let c = clip[(y * w + x) as usize][3];
+            clipped += usize::from(c != 0.0);
+            worst = worst.max(c);
+        }
+    }
+    println!(
+        "still camera: {checked} hit pixels away from silhouettes, {clipped} with a depth clip (largest {worst}); {near_edge} beside one"
+    );
+    assert!(
+        checked > 1000 && clipped == 0,
+        "{clipped} clipped, worst {worst}"
+    );
+}
+
+/// Locks form on thin features: on the stripe wall at 88 voxels (1.753 output pixels a voxel),
+/// after 32 still frames at scale 1.5, the share of the stripe-edge output pixels (the 3 x 3
+/// spans 16/255 in a channel) in the middle half holding a lock is above zero; the share on a
+/// flat patch of one material is a reading.
+#[test]
+fn locks_form_on_the_stripe_edges() {
+    let Some(rig) = stripe_rig() else {
+        return;
+    };
+    let (device, queue) = (&rig.device, &rig.queue);
+    let light = LightParams::headlamp();
+    let mut f = frame_of(device, INTERNAL, OUTPUT, false);
+    f.set_upscaler_kind(device, fsr2_kind());
+    f.set_lighting(vxe_render::Lighting {
+        exposure: stripe_exposure(FAR),
+        ..Default::default()
+    });
+    let camera = stripe_camera(FAR, 0);
+    for _ in 0..SETTLE {
+        f.step(device, queue, &rig.gpu, &camera, &light);
+    }
+    let img = readback::read_rgba8(device, queue, f.target());
+    let fsr = f.fsr2().expect("FSR mode");
+    let lock = read_f32_texels(device, queue, fsr.lock_status(f.current_copy()));
+    let [w, h] = OUTPUT.map(|n| n as usize);
+    let (mut edges, mut locked) = (0usize, 0usize);
+    for y in h / 4..3 * h / 4 {
+        for x in w / 4..3 * w / 4 {
+            let spans = (0..3).any(|k| {
+                let (mut lo, mut hi) = (255u8, 0u8);
+                for yy in y - 1..=y + 1 {
+                    for xx in x - 1..=x + 1 {
+                        let v = img[(yy * w + xx) * 4 + k];
+                        lo = lo.min(v);
+                        hi = hi.max(v);
+                    }
+                }
+                hi - lo >= 16
+            });
+            if spans {
+                edges += 1;
+                locked += usize::from(lock[2 * (y * w + x)] > 0.0);
+            }
+        }
+    }
+    let share = locked as f64 / edges.max(1) as f64;
+    // The flat patch: the same distance, one material.
+    let flat = vxe_world::World::generate(
+        vxe_world::ChunkExtent::new([0, 0, 0], [3, 3, 3]),
+        &vxe_world::UniformSource(vxe_world::AIR),
+        &{
+            let mut t = vxe_world::MaterialTable::new();
+            t.push(vxe_world::Material {
+                albedo: [0.8; 3],
+                ..vxe_world::Material::named("flat")
+            });
+            t
+        },
+    );
+    flat.apply(&vxe_world::EditOp::box_(
+        vxe_world::Fixed3([WALL_X * vxe_world::FIXED_ONE, 0, 0]),
+        vxe_world::Fixed3([
+            (WALL_X + 2) * vxe_world::FIXED_ONE,
+            192 * vxe_world::FIXED_ONE,
+            192 * vxe_world::FIXED_ONE,
+        ]),
+        vxe_world::Mode::Fill(1),
+    ))
+    .expect("the wall is resident");
+    let Some((device, queue, gpu)) = mirrored(&flat) else {
+        return;
+    };
+    let mut g = frame_of(&device, INTERNAL, OUTPUT, false);
+    g.set_upscaler_kind(&device, fsr2_kind());
+    g.set_lighting(vxe_render::Lighting {
+        exposure: stripe_exposure(FAR),
+        ..Default::default()
+    });
+    for _ in 0..SETTLE {
+        g.step(&device, &queue, &gpu, &camera, &light);
+    }
+    let lock = read_f32_texels(
+        &device,
+        &queue,
+        g.fsr2().unwrap().lock_status(g.current_copy()),
+    );
+    let middle: Vec<usize> = (h / 4..3 * h / 4)
+        .flat_map(|y| (w / 4..3 * w / 4).map(move |x| y * w + x))
+        .collect();
+    let flat_locked = middle.iter().filter(|&&i| lock[2 * i] > 0.0).count();
+    println!(
+        "locks at {FAR} voxels: {locked} of {edges} stripe-edge pixels ({:.2} %); flat patch {flat_locked} of {} ({:.2} %)",
+        share * 100.0,
+        middle.len(),
+        flat_locked as f64 * 100.0 / middle.len() as f64
+    );
+    assert!(locked > 0, "no stripe-edge pixel holds a lock");
+}

@@ -5,19 +5,18 @@
 // Bindings, group 2:
 //   0  texture_2d<f32>   in_pos          this frame's hit positions (rgba32float, t in w)
 //   1  texture_2d<u32>   in_info         this frame's hit records
-//   2  texture_2d<f32>   in_colour       the composite's linear colour (internal size)
+//   2  texture_2d<f32>   in_layer        the hit pass's translucent layers (transmittance w)
 //   3  uniform           in_tuning       `Fsr2InputUniform` in fsr2.rs
-//   4  storage texture   depth_out       r32float: inverted infinite device depth,
-//                                        `near / z_view`, 0 on a miss
-//   5  storage texture   motion_out      rg32float: motion to the previous frame, in UV
-//   6  storage texture   prepared_out    rgba16float: the prepared input colour, YCoCg, with
-//                                        a depth clip of 0 in a
-//   7  texture_2d<f32>   in_layer        the hit pass's translucent layers (transmittance w)
-//   8  uniform           in_edits        the frame's edit boxes (temporal.wgsl's `Edits`)
-//   9  uniform           in_lamp         the upscale pass's tuning (`UpTuning` in
+//   4  uniform           in_edits        the frame's edit boxes (temporal.wgsl's `Edits`)
+//   5  uniform           in_lamp         the upscale pass's tuning (`UpTuning` in
 //                                        upscale.wgsl): the older lamp and the change thresholds
-//   10 storage texture   reactive_out    rgba8unorm: FSR's reactive mask in x, its
-//                                        transparency-and-composition mask in y (zero)
+//   6  storage texture   depth_out       r32float: inverted infinite device depth,
+//                                        `near / z_view`, 0 on a miss
+//   7  storage texture   motion_out      rg32float: motion to the previous frame, in UV
+//   8  storage texture   reactive_out    rgba8unorm: FSR's reactive mask in x, its
+//                                        transparency-and-composition mask in y (zero), and
+//                                        in z 1 where the hit lies in an edit box dilated by
+//                                        one voxel (the depth-clip pass's edit flag)
 //
 // Motion: the hit `p` of pixel `px` reprojected through the previous view as if both frames'
 // rays went through their pixels' centres (`reproject_centred`), less the pixel's centre, over
@@ -27,13 +26,16 @@
 //
 // Reactive: the largest of a translucent layer's `1 - transmittance` times
 // `in_tuning.reactive_translucent` (capped at 1), 1 where the hit lies in an edit box dilated
-// by one voxel, and `in_tuning.reactive_light` where the light at the hit changed (the
-// upscale pass's light-change signal: an emission scale changed, or the lamp's unshadowed term
-// moved past the thresholds since the lamp of `change_frames` frames before).
+// by one voxel, and `in_tuning.reactive_light` where the light at a still hit changed (the
+// upscale pass's light-change signal, which it too applies to still pixels alone: the hit moved
+// less than CLIP_STILL output pixels, and an emission scale changed or the lamp's unshadowed
+// term moved past the thresholds since the lamp of `change_frames` frames before). A moving
+// pixel's lamp term changes with the camera that carries the lamp; FSR's rectification takes
+// that, where the mask would take its history.
 
 @group(2) @binding(0) var in_pos: texture_2d<f32>;
 @group(2) @binding(1) var in_info: texture_2d<u32>;
-@group(2) @binding(2) var in_colour: texture_2d<f32>;
+@group(2) @binding(2) var in_layer: texture_2d<f32>;
 
 struct Fsr2InputTuning {
     near: f32,
@@ -43,10 +45,6 @@ struct Fsr2InputTuning {
 };
 
 @group(2) @binding(3) var<uniform> in_tuning: Fsr2InputTuning;
-@group(2) @binding(4) var depth_out: texture_storage_2d<r32float, write>;
-@group(2) @binding(5) var motion_out: texture_storage_2d<rg32float, write>;
-@group(2) @binding(6) var prepared_out: texture_storage_2d<rgba16float, write>;
-@group(2) @binding(7) var in_layer: texture_2d<f32>;
 
 // temporal.wgsl's `Edits`.
 struct InEdits {
@@ -57,7 +55,7 @@ struct InEdits {
     boxes: array<vec4<i32>, 128>,
 };
 
-@group(2) @binding(8) var<uniform> in_edits: InEdits;
+@group(2) @binding(4) var<uniform> in_edits: InEdits;
 
 // upscale.wgsl's `UpTuning`, field for field (`UpscaleUniform` in marcher.rs).
 struct InLamp {
@@ -83,11 +81,15 @@ struct InLamp {
     _pad2: f32,
 };
 
-@group(2) @binding(9) var<uniform> in_lamp: InLamp;
-@group(2) @binding(10) var reactive_out: texture_storage_2d<rgba8unorm, write>;
+@group(2) @binding(5) var<uniform> in_lamp: InLamp;
+@group(2) @binding(6) var depth_out: texture_storage_2d<r32float, write>;
+@group(2) @binding(7) var motion_out: texture_storage_2d<rg32float, write>;
+@group(2) @binding(8) var reactive_out: texture_storage_2d<rgba8unorm, write>;
 
 // A motion that leaves the screen: FSR finds no history there.
 const OFF_SCREEN: vec2<f32> = vec2<f32>(-4.0, -4.0);
+// upscale.wgsl's CLIP_STILL: a pixel moving less than this many output pixels is still.
+const STILL_PX: f32 = 0.01;
 
 // Whether `a` is `b` but for the jitter: the same eye, basis, frustum and rectangle.
 fn same_view(a: View, b: View) -> bool {
@@ -147,6 +149,7 @@ fn fsr2_input(@builtin(global_invocation_id) gid: vec3<u32>) {
     var depth = 0.0;
     var motion = vec2<f32>(0.0);
     var reactive = 0.0;
+    var edit = 0.0;
     let still = same_view(v, prev);
     if (rec.found) {
         let z = dot(rec.p - v.origin, v.fwd);
@@ -157,8 +160,10 @@ fn fsr2_input(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         if (in_edit_box(rec.p)) {
             reactive = 1.0;
+            edit = 1.0;
         }
-        if (light_changed(rec)) {
+        let moved = length(motion * vec2<f32>(params.output_size));
+        if (moved < STILL_PX && light_changed(rec)) {
             reactive = max(reactive, in_tuning.reactive_light);
         }
     } else if (!still) {
@@ -172,14 +177,5 @@ fn fsr2_input(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     textureStore(depth_out, px, vec4<f32>(depth, 0.0, 0.0, 0.0));
     textureStore(motion_out, px, vec4<f32>(motion, 0.0, 0.0));
-    textureStore(reactive_out, px, vec4<f32>(reactive, 0.0, 0.0, 0.0));
-    // ComputePreparedInputColor with the frame's exposure, pre-exposure 1, and no depth clip.
-    let c = max(vec3<f32>(0.0), textureLoad(in_colour, px, 0).xyz);
-    let prepared = clamp(c * params.exposure, vec3<f32>(0.0), vec3<f32>(65504.0));
-    let ycocg = vec3<f32>(
-        0.25 * prepared.r + 0.5 * prepared.g + 0.25 * prepared.b,
-        0.5 * prepared.r - 0.5 * prepared.b,
-        -0.25 * prepared.r + 0.5 * prepared.g - 0.25 * prepared.b,
-    );
-    textureStore(prepared_out, px, vec4<f32>(ycocg, 0.0));
+    textureStore(reactive_out, px, vec4<f32>(reactive, 0.0, edit, 0.0));
 }

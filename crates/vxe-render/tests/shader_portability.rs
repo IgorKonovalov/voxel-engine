@@ -67,6 +67,22 @@ fn shaders() -> Vec<(&'static str, String)> {
             format!("{MARCH}\n{}", vxe_render::marcher::composite_hdr_source()),
         ),
         (
+            "fsr2/luminance_pyramid.wgsl",
+            fsr2_source(vxe_render::fsr2::FSR2_LUMINANCE_PYRAMID_WGSL, true),
+        ),
+        (
+            "fsr2/reconstruct_previous_depth.wgsl",
+            fsr2_source(vxe_render::fsr2::FSR2_RECONSTRUCT_WGSL, true),
+        ),
+        (
+            "fsr2/depth_clip.wgsl",
+            fsr2_source(vxe_render::fsr2::FSR2_DEPTH_CLIP_WGSL, true),
+        ),
+        (
+            "fsr2/lock.wgsl",
+            fsr2_source(vxe_render::fsr2::FSR2_LOCK_WGSL, true),
+        ),
+        (
             "fsr2/accumulate.wgsl (LDR)",
             fsr2_source(vxe_render::fsr2::FSR2_ACCUMULATE_WGSL, false),
         ),
