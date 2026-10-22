@@ -387,6 +387,11 @@ between phases. The architect reviews once at the end, in a fresh session.
   beside a vein. A verdict on the fade and on the pulse.
 - **Files touched:** this plan's log.
 - **Done when:** the owner has recorded the verdict in the log.
+- **Verdict (2026-10-22, live session 11, recorded by the orchestrator):** run 1, lamp off with
+  indirect on: "almost instant". Run 2, indirect off: "instant". Run 3, the ore pulse: "fine, no
+  flicker". Passed. The owner's followup: "leave indirect light only for certain sources, like
+  fire on stick or fire in dungeon - and for simple lights it should be off", a per-light and
+  per-emissive-material switch for feeding the probes (a new plan; see Followups).
 
 ## Data shapes
 
