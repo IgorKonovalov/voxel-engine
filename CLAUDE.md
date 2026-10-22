@@ -12,8 +12,10 @@ the milestone sequence in `docs/roadmap.md`, the budgets in `docs/nfr.md`.
 
 > **Stack (ADR-0001):** Rust stable pinned in `rust-toolchain.toml`, edition 2024, `wgpu` +
 > WGSL compute ray marching, `winit` shell, Linux + Windows. Canonical commands: `cargo build`,
-> `cargo nextest run`, `cargo clippy --workspace --all-targets -- -D warnings`,
-> `cargo fmt --all --check`, `cargo deny check`.
+> `cargo nextest run --profile quick|gpu|full` (`.config/nextest.toml`: CPU-only per phase,
+> render tests under the perf lock, everything at close; bare `run` is full),
+> `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`,
+> `cargo deny check`.
 
 First consumer: `~/Work/voxel-roguelite` (a first-person sound-horror delve). Its needs are in
 that repo's `docs/engine-requirements.md`, summarised in
@@ -74,6 +76,7 @@ scripts/
 ├── check-doc-links.mjs        # every relative markdown link resolves (run at every plan close)
 ├── check-comment-hygiene.mjs  # no relative link or plan-relative narration in .rs/.wgsl comments
 ├── check-index-rows.mjs       # rows inside roster:begin markers in the index READMEs <= 320 bytes
+├── check-test-tiers.mjs       # every test file that opens a GPU device is in .config/nextest.toml's gpu filter
 └── fixtures/                  # seeded trees each gate bites on; README lists the expected findings
 .github/workflows/ci.yml  # build, nextest, doctests, clippy, fmt, hooks, doc gates; cargo-deny
 ```

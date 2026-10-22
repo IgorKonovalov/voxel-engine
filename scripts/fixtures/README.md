@@ -99,6 +99,27 @@ Expect **exit 1 and exactly three breaks**, one over cap and two of the wrong sh
 
 The two trees are siblings, each its own root, so neither run reaches the other's rows.
 
+## `test-tiers/`: for `check-test-tiers.mjs`
+
+```
+node scripts/check-test-tiers.mjs scripts/fixtures/test-tiers
+```
+
+Expect **exit 1 and exactly three findings**, then the count line `3 finding(s) across 5 test
+files`. The tree is two packages (`gfx`, `app`) and a `.config/nextest.toml` whose gpu filter is
+`(package(gfx) - kind(lib)) | binary_id(app::golden) | binary_id(app::gone)`:
+
+| Case | Seeded as | Expected |
+|------|-----------|----------|
+| a GPU test file missing from the filter | `apps/app/tests/missing.rs` opens `wgpu::Instance` and calls `request_adapter` | `apps/app/tests/missing.rs -> not in the gpu filter: add \`binary_id(app::missing)\` ...` |
+| a filter entry with no file | `binary_id(app::gone)` in the filter, no `tests/gone.rs` | `binary_id(app::gone) -> matches no test file: ...` |
+| a file that reaches a device only through `support` | `apps/app/tests/via_support.rs` declares `mod support;`, whose `mod.rs` names `software_device` | `apps/app/tests/via_support.rs -> not in the gpu filter: ...` |
+| a covered GPU file | `apps/app/tests/golden.rs` (by `binary_id`), `crates/gfx/tests/draw.rs` (by `package`) | not reported |
+| a CPU-only file | `apps/app/tests/cpu.rs` names every entry point in comments only, and a local `device` | not reported; comments are stripped before matching |
+
+The profile copies are green here (`quick` and `gpu` each repeat the gpu filter and the slow
+override `test(=slow_one)` verbatim), so the three lines above are the whole output.
+
 ## `--self-test`: the counts are asserted, not printed
 
 ```

@@ -1,6 +1,6 @@
 # 0043: Test tiers: a quick gate per phase, a GPU tier under the lock, the full suite at close
 
-> **Status:** approved (2026-10-22)
+> **Status:** done (2026-10-22): the three tiers split the suite exactly (470 + 124 + 5 = 599), the gpu-list gate bites its fixture, quick reads 45 s with no lock; v0.29.1. Phase 3's CI readings are owed by the first CI run on main
 > **Created:** 2026-10-22
 > **Milestone:** M7 in `docs/roadmap.md` (tooling: the gate every lane runs)
 > **Related ADRs:** none. The rejected options are recorded under Decision. None of them is a
@@ -171,6 +171,11 @@ flowchart LR
     `cargo nextest list -p flythrough --features wasm -E 'binary(component)'` gives locally).
   - The Linux job's wall time is recorded against the 981 s of run 39808788735. About 400 s
     less is expected.
+- **Amended 2026-10-22 (owner):** lanes never push, so the first and third bullets cannot be
+  met on the branch. They are read from the first CI run after this plan merges into main and
+  the owner pushes it; the orchestrator records that run's result and Linux wall time in this
+  plan's log on main. The plan closes and merges before that run. The second bullet is met
+  locally (the list count matches).
 
 ### Phase 4: the skills and lane rules name the tiers
 - **Owner skill:** dev
@@ -257,14 +262,89 @@ All on the dev box, named with its commit. `docs/nfr.md` section 7 (startup and 
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: three profiles that split the suite exactly | dev | not started | |
-| 2: a gate that keeps the gpu list true | dev | not started | |
-| 3: CI runs the full tier and the wasm step runs only what needs wasm | dev | not started | |
-| 4: the skills and lane rules name the tiers | dev | not started | |
+| 1: three profiles that split the suite exactly | dev | done | 28da8b7 |
+| 2: a gate that keeps the gpu list true | dev | done | bbee61d |
+| 3: CI runs the full tier and the wasm step runs only what needs wasm | dev | done locally; CI run pending | 56b3569 |
+| 4: the skills and lane rules name the tiers | dev | done | 8059d41 |
 
 ### Notes
 
+- Phase 1: the gpu filter adds `flythrough::cutaway` (its tests open a device through
+  `support::LookRig`) and `flythrough::shutdown` (one of its three tests spawns
+  `flythrough --headless --render 64x36`, which opens a device; the whole binary is gpu, so its
+  two CPU-only drop tests run in the gpu tier). `flythrough::audio_sides` uses
+  `vxe_render::Camera` only and stays quick.
+- Phase 1: the slow list's override sets `slow-timeout = { period = "60s" }`, so the slow list
+  has one canonical copy in the default profile's overrides that `quick` and `gpu` repeat.
+- Phase 1: every count and run is `--workspace` (the non-default member `vxe-script-wasm` is
+  in the suite CI runs); a run without `--workspace` covers the default members only.
+- Phase 2: the script's device entry points add a fifth to the plan's four: the string
+  `"--headless"`, a test spawning a headless render of an app binary (how
+  `flythrough::shutdown` reaches a device). `fn device(` / `device()` covers the `device()`
+  helper. Comments are stripped before matching.
+- Phase 2: the script also fails when the `quick` or `gpu` default-filter is not exactly
+  `not (<gpu>) and not (<slow>)` / `(<gpu>) and not (<slow>)` with the lavapipe override's
+  filter and another default override's filter, so the three copies cannot drift. Verified by
+  hand on scratch edits of the tree's config (one gpu entry dropped from `gpu`, one slow test
+  dropped from `quick`): one finding each. Not seeded in the fixture.
+- Phase 3: the workspace step drops `--no-tests=pass` with its comment. Done-when not met in
+  the lane: the first CI run and the Linux job's wall time need the branch on GitHub, and the
+  lane does not push. Both are owed by the first CI run after the merge into main.
+- Phase 4: lane rule 1's merge-main-into-a-lane gate (from `87e4b67`) now names
+  `--profile full --no-fail-fast` under the perf lock; the orchestrate skill's merged-tree gate
+  the same. `CLAUDE.md`'s `scripts/` map gains `check-test-tiers.mjs`. The dev skill's phase
+  gate and close name `--workspace`, so the quick tier covers `vxe-script-wasm` as the full
+  suite does.
+
 ### Close triggers
+
+- Phase 1 partition at `5989620` + `.config/nextest.toml`, `cargo nextest list --workspace
+  --profile p -T oneline` (ignored tests excluded alike): quick 470, gpu 124, slow list
+  (`-E '<slow>'`) 5, full 599, default 599, plain `cargo nextest list --workspace` 599.
+  470 + 124 + 5 = 599. Pairwise intersections quick/gpu, quick/slow, gpu/slow: 0, 0, 0. The
+  sorted union equals full's list. No quick test is in a gpu-filter binary (the 16
+  `vxe-render` tests in quick are its lib unit tests).
+- Phase 1 quick, dev box (Ryzen 9 5900HS, RTX 3080 Laptop), no lock, built tree,
+  `cargo nextest run --workspace --profile quick --test-threads 2`: exit 0, 470 passed,
+  3 skipped, 1 slow (`flythrough::replay a_stamp_and_a_collapse_replay_from_the_save`,
+  > 10 s, under 30 s). Wall 44.8 s (nextest 43.9 s), 1-minute load 2.93 at start and 9.12 at
+  end: loaded. An earlier run the same hour: nextest 36.6 s at load 7.66.
+- Phase 1 gpu, same box, exclusive perf lock, built tree,
+  `cargo nextest run --workspace --profile gpu --test-threads 2`: exit 0, 124 passed,
+  9 skipped. Wall 205.2 s (nextest 204.7 s), 1-minute load 4.18 at start, 2.80 at end:
+  loaded. The plan's estimate was about 130 s.
+- Phase 2: `node scripts/check-test-tiers.mjs`: exit 0, `test tiers: 52 test files, gpu
+  filter 8 binaries + 1 package(s), all agree`. `node scripts/check-test-tiers.mjs
+  scripts/fixtures/test-tiers`: exit 1, the three findings of the fixture README's row
+  (missing.rs, via_support.rs, binary_id(app::gone)), `3 finding(s) across 5 test files`.
+  With `binary_id(flythrough::cutaway)` and `binary_id(flythrough::shutdown)` removed from
+  a scratch copy of the tree's config: exit 1 naming `apps/flythrough/tests/cutaway.rs` and
+  `apps/flythrough/tests/shutdown.rs`.
+- Phase 3, local: `cargo nextest list -p flythrough --features wasm --profile full -E
+  'binary(component)'` lists 2 tests, both `flythrough::component`; the same without
+  `--profile full` lists 2; `tests/component.rs` has 2 `#[test]`. The step run locally: exit 0,
+  2 passed. `ci.yml` parses as YAML. CI run and Linux job time against run 39808788735's 981 s:
+  not read (no push from the lane).
+- Phase 4: `grep -rn 'nextest run' .claude/skills CLAUDE.md`: 8 lines, each naming a
+  `--profile` or saying the bare run is the default full suite (dev SKILL.md:74). Hook bite
+  tests: 59 pass, 0 fail. Doc links 305 resolve; comment hygiene OK; index rows OK; index-rows
+  self-test 9/9.
+- Gate at the tip `8059d41`, dev box (Ryzen 9 5900HS, RTX 3080 Laptop):
+  `cargo build --workspace` exit 0; `cargo clippy --workspace --all-targets -- -D warnings`
+  exit 0; `cargo fmt --all --check` exit 0; `cargo test --workspace --doc` 7 passed, 0 failed;
+  `cargo deny check` advisories, bans, licenses, sources ok; the four node gates and
+  `check-test-tiers.mjs` exit 0.
+- Full tier at `8059d41`, exclusive perf lock, built tree,
+  `cargo nextest run --workspace --profile full --test-threads 2`: exit 0, 599 passed,
+  7 skipped (the ignored tests: 2 in quick's set, 5 in gpu's), 1 slow at 60 s
+  (`flythrough::upscale the_upscaler_keeps_stripe_edges_sharp_still_and_panning`). Wall
+  362.7 s (nextest 362.2 s), 1-minute load 10.75 at start, 6.37 at end: loaded.
+- The skipped counts of the tier runs are the ignored tests plus the slow tests their
+  profile's filter drops: quick 3 = 2 ignored + 1 slow (`vxe-world::stamp`), gpu 9 =
+  5 ignored + 4 slow.
+- Test gate summary, all at `5989620`'s suite (599 tests), dev box, loaded:
+  quick 470 tests, 44.8 s, no lock; gpu 124 tests, 205.2 s, lock; full 599 tests, 362.7 s,
+  lock. The `docs/nfr.md` section 7 "test gate" reading is the close's.
 
 ## Followups
 
@@ -273,3 +353,38 @@ All on the dev box, named with its commit. `docs/nfr.md` section 7 (startup and 
 2. Blessed references for the convergence tests, if the full tier at close still hurts.
 3. `target/` disk use: one integration binary per crate, or `debug = "line-tables-only"` for
    test builds.
+
+## Close
+
+Closed 2026-10-22 with a patch bump (v0.29.1, tooling only, the Plan 0012 precedent) after a
+fresh-session review with no blocker, major or minor finding.
+
+**Review readings** at `5877b8a` in the plan's worktree, dev reference (Ryzen 9 5900HS, RTX 3080
+Laptop GPU, lavapipe for the GPU tests), `CARGO_BUILD_JOBS=4`, memory-capped scopes, other lanes
+running (all timings loaded):
+
+- Gate: `cargo build --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo fmt --all --check` exit 0; `cargo test --workspace --doc` 7 passed; `cargo deny check`
+  advisories, bans, licenses, sources ok.
+- Partition, `cargo nextest list --workspace -T oneline` per profile, sorted: quick 470,
+  gpu 124, the slow override's filter alone 5, full 599, default 599, plain 599. The pairwise
+  intersections of quick, gpu and slow are empty; their sorted union equals full's list; full
+  equals the plain list. The 16 `vxe-render` tests in quick are its lib unit tests, none of
+  which opens a device.
+- Tiers run: quick 470 passed, 3 skipped, 45.4 s, no lock, 1-minute load 6.40 to 8.80; gpu
+  124 passed, 9 skipped, 201.5 s, exclusive perf lock, load 9.51 to 2.53; full 599 passed,
+  7 skipped, 327.1 s, exclusive perf lock, load 7.90 to 3.71.
+- `check-test-tiers.mjs`: exit 0 on the tree (52 test files, 8 binaries + 1 package); exit 1
+  on `scripts/fixtures/test-tiers` with exactly the README's three findings; on a scratch edit
+  of the tree's config dropping `binary_id(flythrough::look)` from the canonical filter only,
+  exit 1 naming the two drifted profile copies and `apps/flythrough/tests/look.rs`.
+- Hook bite tests 59 pass; doc links, comment hygiene, index rows and its self-test exit 0.
+- Text: the dev, orchestrate and architect skills, lane rules 1, 4 and 6 and `CLAUDE.md` name
+  the same tiers; every `nextest run` gate line names a `--profile` or says the bare run is
+  the full default. Lane rule 1 keeps the merge-main-into-a-lane exception from `87e4b67`, now
+  gated by the full tier under the lock.
+
+**Owed after the merge:** Phase 3's first and third done-when bullets (a green first CI run on
+Linux and its job time against run 39808788735's 981 s), recorded by the orchestrator in this
+plan's log on main, per the 2026-10-22 amendment. Plan 0029's lane adds its `indirect.rs` slow
+tests to the slow list when it merges main.
