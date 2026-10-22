@@ -51,19 +51,26 @@ record.
 **The source generates coarse chunks directly.** `WorldSource` gains a provided method,
 `coarse_chunk(at, out) -> Coarse`, that fills a level's cells or answers `Uniform(material)`
 for the whole chunk; its default answers `Unsupported`, and a source that does not implement
-it has no far field (the cave keeps ADR-0003's ring). The contract is the **half rule**: a cell
-is solid when at least half its volume is solid, and it takes the material a viewer sees on it:
-the most frequent material among its exposed solid children (those with an air face
-neighbour), or among all its solid children when none is exposed, ties to the lowest id. A
-source approximates the rule as it sees fit (sampling the cell centre for occupancy and giving
-the column's surface cell its surface material is the expected implementation), and may leave
-out interiors no viewer outside can see. The engine's own coarse cells (`ChunkMips` built under
-`MipRule::Half`) follow the same rule, so a coarse surface sits within half a cell of the fine
-one instead of a cell outside it, and a thin surface layer (grass over soil) keeps its colour
-at distance.
+it has no far field (the cave keeps ADR-0003's ring). The contract is the **half rule**, and
+its default reading is **level by level**: a level-1 cell is solid when at least 4 of its 8
+voxels are, and a level-`k` cell when at least 4 of its 8 level-`(k-1)` cells are
+(`MipRule::Half`). A cell takes the material a viewer sees on it: the most frequent material
+among its exposed solid children (those with an air face neighbour), or among all its solid
+children when none is exposed, ties to the lowest id. The **by-volume** reading, in which a
+level-`k` cell is solid when at least half of its `8^k` full-detail voxels are, with the same
+material rule over its voxels (`MipRule::HalfVolume`), is built beside it as a selectable
+mode and measured against it (Alternative E); the residency names the rule, the source and
+the overlay both follow it, and the owner picks the default on screen (Plan 0033 Phase 8).
+The two readings agree at level 1 and wherever a cell is wholly solid or wholly air; they
+differ on partly filled volumes such as foliage. A source approximates the rule as it sees
+fit (sampling the cell centre for occupancy and giving the column's surface cell its surface
+material is the expected implementation), and may leave out interiors no viewer outside can
+see. The engine's own coarse cells (`ChunkMips` built under the same rule) follow it, so a
+coarse surface sits within half a cell of the fine one instead of a cell outside it, and a
+thin surface layer (grass over soil) keeps its colour at distance.
 
 **Edits fold in from full detail.** After an edit, the touched full chunks' half-rule mips
-(levels 1 to 3, the three `ChunkMips` levels) are rebuilt on a stream worker and kept in an
+(levels 1 to 3, the three `ChunkMips` levels, under the residency's rule) are rebuilt on a stream worker and kept in an
 *edit overlay* keyed by chunk; a clip chunk is the source's coarse cells with every overlay
 entry inside its footprint written over them, in chunk-coordinate order (footprints are
 disjoint, so the order never matters). Resident clip chunks are patched when an overlay entry
@@ -110,8 +117,14 @@ far field is off (no clip levels), the walk is today's.
 - **Each level also stores the ball its finer level draws.** That inner region is about
   `(r_clip / 2)^3 / r_clip^3`, one eighth, of each level's ball; outdoors it is mostly
   table-only uniform chunks, but a cave-like source would pay it in records and slots.
-- **Two coarse rules in one engine.** ADR-0003's LOD-only mips keep the conservative
-  any-solid rule; the far field uses the half rule. A source with no coarse path keeps the
+- **Partly filled volumes change density with distance, by the rule.** Under the default
+  level-by-level reading, a canopy whose interior holds half its voxels keeps 63.7, 87.8 and
+  99.9 % of its cells at levels 1 to 3, so far foliage thickens into opaque blobs; under the
+  by-volume reading it keeps 63.7, 55.0 and 51.8 %, near its real density. At a quarter fill
+  both keep 11.4 % at level 1 and almost nothing beyond (Plan 0033's Context). Neither is
+  right for every look, which is why both are built and judged on screen.
+- **Coarse rules in one engine.** ADR-0003's LOD-only mips keep the conservative any-solid
+  rule; the far field uses the half rule in one of its two readings. A source with no coarse path keeps the
   ring; with the far field on, the application sets `r_lod = r_full` and the ring is empty.
   Retiring the ring is a later decision, by measurement.
 - **The material rule is a heuristic.** Where the half rule turns a cell holding the exposed
@@ -169,6 +182,21 @@ The path ADR-0003's ring takes. A level-`k` clip chunk covers `8^k` world chunks
 voxels, about 2 s). At 10 m/s the level-1 face alone needs 1185 clip chunks a second, about
 35 worker-seconds a second. Downsampling is the right answer only where full voxels already
 exist, which is what the edit overlay does.
+
+### Alternative E: the by-volume half rule as the only rule (built and measured, not the default)
+
+Keeping a level-`k` cell when at least half of its `8^k` full-detail voxels are solid is the
+literal "half its volume" and keeps a partly filled volume near its true density at every
+level (a half-filled canopy keeps 55 % of its level-2 and 52 % of its level-3 cells, against
+88 % and 99.9 % level by level). It is not taken as the only rule because the owner decides
+foliage looks on screen, and the two readings trade differently: the level rule keeps thin
+partial structures visible and dark at distance (a far forest stays a solid mass that casts
+shadow), the volume rule keeps density honest but lets sparse foliage thin away. It is not
+rejected either: the owner chose (2026-10-22) to build both behind `MipRule` and a flag,
+measure their generation cost and canopy fill per level (Plan 0033 Phases 2 and 7), and pick
+the default at Plan 0033 Phase 8. Until then the level rule is the default because it is the
+existing `ChunkMips` reduction and its cost is a fixed 8-child step per level. The Outcome
+records the pick.
 
 ## Outcome
 

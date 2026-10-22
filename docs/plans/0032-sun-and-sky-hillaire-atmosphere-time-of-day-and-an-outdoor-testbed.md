@@ -21,6 +21,9 @@
 > `outdoor_forest_sunset.png`, and forest-against-open readings at sun elevations 60 and 10
 > degrees on both adapters. The owner's check moves to Phase 9 and gains the forest. Phases 1
 > to 7 are unchanged.
+> **Amended:** 2026-10-22 (owner, second set): Phase 8's forest readings also run at
+> `--leaf-fill 64`, and Phase 8 pins `--trees none` as the default until the owner picks at
+> Phase 9.
 > **Starts after:** [Plan 0024](done/0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md)
 > and [Plan 0029](0029-indirect-light-probe-volume.md) close. This plan is drafted against Plan
 > 0024's branch as of 2b08d42 (`Frame`, `Lighting`, `light.wgsl`, `temporal.wgsl`,
@@ -567,6 +570,19 @@ projecting it.*
      the log states each light-pass reading against §2's 6.0 ms line and each frame reading
      against 16.6 ms as under or over. An over is a close trigger for the architect, not an
      unmet done-when.
+     *Amended 2026-10-22 (owner, second set): leaf fill 64 as well.* Every `forest` run is
+     also taken at `--leaf-fill 64` beside the default 128, so `T` runs over {none, forest
+     at 128, forest at 64}. That is six configurations per adapter (two elevations by three
+     tree settings), twelve on the two adapters, 36 timed runs and 12 `--view steps` runs.
+     The table gains the fill-64 rows, the ratio forest/open per fill, and the ratio fill
+     64/128 per elevation and adapter, with the mirror's live bytes at both fills in §3. A
+     sparser fill leaves more partly filled `2^3` blocks per canopy volume but fewer leaves,
+     so its cost has no sign this plan trusts either; it is read, not projected.
+  7. **The default stays `none`** (amended 2026-10-22, owner). The outdoor source's
+     `--trees` default is `none` through this plan's dev phases; a test parses no `--trees`
+     flag and finds `TreeDensity::None` and the banner's `trees none`. The owner picks the
+     default at Phase 9, and a change is a one-line commit after that verdict, with Phase 3's
+     pinned hash and Phase 7's goldens re-read under it as a disclosed deviation.
 
 ### Phase 9: The owner's windowed check
 - **Owner skill:** human
@@ -584,7 +600,9 @@ projecting it.*
   sun radius to default, and on whether a dug skylight lights the chamber on the next frames
   without a visible lag. *Amended 2026-10-22 (owner):* also on whether every tree's shadow
   travels with the sun without crawling or smearing at sunset, the leaf fill to keep, and the
-  outdoor source's default `--trees`.
+  outdoor source's default `--trees`. *Amended 2026-10-22 (owner, second set):* `--trees
+  none` is the default until this verdict; the owner picks `none`, `sparse` or `forest`
+  here, with Phase 8's fill-64 and fill-128 readings at hand.
 
 ## Data shapes
 
@@ -645,7 +663,7 @@ light and probe passes, not per frame.
 | §3 Everything else in VRAM | 1.5 GB | +0.56 MB (table above) | `Frame::frame_bytes` printed by the autopilot |
 | §3 World in VRAM | 3 GB | the outdoor source holds fewer `Full` bricks than the cave (a terrain surface against a volume of caverns) but one record per resident air chunk; unknown until read | the mirror's live bytes at frame 3000 of the outdoor run |
 | §5 Streaming line | 1.0 ms | unchanged code; a new scene, with uniform-air chunks above the hills cheap to generate and narrow | the outdoor autopilot's render-thread timers, p50 and p99 |
-| §2 Lighting and the frame, forest at low sun (amendment 2026-10-22, owner) | 6.0 ms; 16.6 ms | no projection: a half-filled canopy defeats the 2^3 skip, and a ray rising at 10 degrees crosses the canopy layer (about 21 to 118 voxels above the ground) over `97 / tan 10 = 550` voxels of ground distance | Phase 8's eight configurations (two elevations, two densities, two adapters), the forest/open ratio, the directional ray's steps |
+| §2 Lighting and the frame, forest at low sun (amendment 2026-10-22, owner) | 6.0 ms; 16.6 ms | no projection: a half-filled canopy defeats the 2^3 skip, and a ray rising at 10 degrees crosses the canopy layer (about 21 to 118 voxels above the ground) over `97 / tan 10 = 550` voxels of ground distance | Phase 8's twelve configurations (two elevations, three tree settings: none and forest at leaf fill 128 and 64, two adapters; amended 2026-10-22, owner), the forest/open and fill 64/128 ratios, the directional ray's steps |
 | §3 World in VRAM, forest (amendment 2026-10-22, owner) | 3 GB | a guess: a mean canopy of radius 23.5 (54 400 voxels) touches about 110 to 215 bricks, every one of them `Full` at a half fill, and about 1.7 trees stand per chunk column (`64^2 / 48^2 x 0.94`), so 185 to 360 more bricks a surface column; over the `r_lod` disc's 1810 columns at 128 to 192 B a brick, 0.04 to 0.13 GB | Phase 8's live bytes, `none` against `forest` |
 
 On the slow adapter (`nfr.md` §1) every line projects two to four times the dev box. Plan

@@ -33,6 +33,12 @@
 > arithmetic. Phase 7 adds far-field low-sun readings with the forest on and off on both
 > adapters and an observation of whether far tree shadows survive. Phase 8 adds the owner's
 > judgement of distant forest shadows at sunset.
+> **Amended:** 2026-10-22 (owner, second set): build both readings of the half rule and judge
+> them on screen. The level-by-level rule (at least 4 of 8 children) stays the default; the
+> by-volume rule (a coarse cell is solid when at least half its full-detail volume is) is a
+> selectable mode, `--clip-rule level|volume`, shown on the banner. Phase 1 adds the mode,
+> Phase 2's census and Phase 5's overlay check cover both rules, Phase 7's readings add the
+> volume rule and leaf fill 64, and Phase 8 picks the default rule.
 
 ## TL;DR
 
@@ -105,6 +111,27 @@ The numbers the plan rests on (arithmetic, `chunks_in_ball` and the disc of the 
   canopies survive and grow denser with distance. A radius-2 trunk keeps 3 level-1 cells per
   2-voxel slab at the alignment Phase 2 pins, and none at level 2 (beyond about 243 m).
 
+- **Two readings of the half rule** (amendment 2026-10-22, owner, second set). The
+  *level-by-level* rule above (`MipRule::Half`, the default) reduces each level from the one
+  below. The *by-volume* rule (`MipRule::HalfVolume`) keeps a level-`k` cell when at least half
+  of its `8^k` full-detail voxels are solid. The two agree at level 1 (one reduction of
+  voxels) and differ from level 2. Over a canopy interior at fill `f` (each voxel kept with
+  probability `f / 256`, independently by the hash), the share of cells kept at levels 1 to 3
+  is:
+
+  | leaf fill | level-by-level | by-volume |
+  |---|---|---|
+  | 128 (half) | 63.7 %, 87.8 %, 99.9 % | 63.7 %, 55.0 %, 51.8 % |
+  | 64 (a quarter) | 11.4 %, 0.80 %, under 0.001 % | 11.4 %, 0.001 %, under 0.001 % |
+
+  (`P(Bin(8, p) >= 4)` chained level by level, against `P(Bin(8^k, f/256) >= 8^k / 2)`; at fill
+  128 the by-volume figures are `P(Bin(64, 0.5) >= 32) = 0.5 + C(64, 32) / 2^65` and the same
+  at 512.) At fill 128 the level rule thickens far canopies and the volume rule keeps them
+  near their real density; at fill 64 both rules thin canopies to almost nothing beyond level
+  1 (about 243 m), which Phase 7's readings and Phase 8's flight show. The volume rule costs
+  the same voxel reads for an exact tree cell (each voxel is read once either way); Phase 2
+  measures both.
+
 The consumer requirement is general (the owner's outdoor capability); `project-context.md`'s
 Rendering row sets the look (smooth, not visible cubes). The `nfr.md` figures touched are §2
 (primary rays and lighting), §3 (world VRAM and RAM) and §5 (generation throughput, residency
@@ -128,6 +155,12 @@ chunk), the dithered band, a per-level bound of non-empty chunks a ray may leave
 the level in the hit flags and a far normal mode (face, or a gradient over the hit cell's 3³
 neighbourhood); `light.wgsl`'s sun shadow ray starts at its hit's level. With no clip levels
 the walk is today's and every existing golden holds its floor.
+
+*Amended 2026-10-22 (owner):* the half rule has two readings, and the plan builds both.
+`ClipResidency::rule` is `MipRule::Half` (level by level, the default) or
+`MipRule::HalfVolume` (by volume); the streamer passes it to `coarse_chunk` and builds the
+overlay under it, so the source's cells and the overlay never disagree on the rule. The
+fly-through selects it with `--clip-rule level|volume`, and Phase 8 picks the default.
 
 We rejected a cylinder (vertical extent capped) instead of a sphere per level because uniform
 clip chunks cost a table entry and nothing else, and one residency rule is worth more than the
@@ -189,6 +222,14 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
   levels 1 to 3 (the cells just under local z = 32) holding the top material (each has four
   top and four lower children, so a plain majority would tie to the lower id and fail); every
   existing golden holds its floor.
+  *Amended 2026-10-22 (owner):* `MipRule::HalfVolume` joins `mips.rs` (a level-`k` cell is
+  solid when at least `8^k / 2` of its voxels are; its material is the most frequent among
+  its exposed solid voxels, else among all its solid voxels, ties to the lowest id), and
+  `coarse_chunk`, `generate_clip` and `ChunkMips::build_with` take the rule. `half_rule_matches_on_aligned_planes`
+  also finds the volume rule equal to the other two on the plane source, and
+  `half_rule_keeps_the_exposed_layer` holds under the volume rule too (a cell of the top solid
+  layer is wholly solid, and its only exposed voxels are its `4^k` voxels in the z = 31
+  layer, all of the top material, so that material wins).
 
 ### Phase 2: The outdoor source's coarse path and the census
 - **Owner skill:** dev
@@ -212,6 +253,9 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
   limit), the share whose trunk keeps at least one `bark` cell under its canopy, the share
   whose canopy keeps at least one `leaf` cell, and the mean ratio of a canopy's solid cell
   volume (`8^k` voxels a cell) to its full-detail `leaf` volume.
+  *Amended 2026-10-22 (owner, second set):* the tree cells take the rule the residency names
+  (`Half` or `HalfVolume`), and `world_budget` gains `--clip-rule level|volume` and
+  `--leaf-fill N`, so the census runs under either rule at any fill.
 - **Files touched:** `apps/flythrough/src/outdoor.rs` (Plan 0032's source; the name follows
   that plan), `apps/flythrough/src/trees.rs` (amendment: the coarse path's tree cells),
   `apps/flythrough/examples/world_budget.rs`, `crates/vxe-world/src/census.rs`,
@@ -243,15 +287,40 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
      other cells it touches hold one column (2 children), and there are 16 slabs. At level 2
      the same trunk gives no solid cell: each level-2 cell over it holds one solid level-1
      column through its two level-1 slabs, 2 of 8 children.
+     *Amended 2026-10-22 (owner, second set): both rules at levels 2 and 3.* The same test
+     runs under `Half` and `HalfVolume`. The aligned block `[8, 32)^3` gives 216 level-2 and
+     27 level-3 cells under both (`6^3` and `3^3`, every cell full or empty). The block
+     `[9, 33)^3` separates them. At level 2 (4-voxel cells) each axis has a cell holding 3
+     voxels (`[8, 12)`), 5 full cells (`[12, 32)`) and a cell holding 1 (`[32, 36)`).
+     *By volume* a cell keeps when the product of its axes' counts is at least 32: `4 4 4`,
+     `3 4 4` and `3 3 4` keep, `3 3 3` (27) and any axis at 1 (at most 16) do not, so
+     `5^3 + 3 x 25 + 3 x 5 = 215`. *Level by level*, over the level-1 cells above, a level-2
+     cell whose axes are each "boundary pair" (a level-1 boundary cell and a full one) or
+     full keeps at least 4 of its 8 children in every mix, and so does one with a single axis
+     on `[32, 36)` and the others full (4 of 8), so `125 + 75 + 15 + 1 + 75 = 291`. At level
+     3 (8-voxel cells; per axis `[8, 16)` holds 7, `[16, 32)` two full cells, `[32, 40)`
+     holds 1) the volume rule keeps `3^3 = 27` (the 1-voxel axis gives at most 64 of 256) and
+     the level rule `27 + 3 x 2 x 2 = 39` (a cell with one axis on `[32, 40)` and the others
+     full keeps 4 of 8). The trunk gives no level-2 cell under either rule: by volume the
+     level-2 cells over it hold 24, 12, 12 and 4 of 64 voxels.
   2. **Tree cells are exact.** `coarse_cells_sit_within_a_cell_of_the_downsample`, run again
      with `--trees forest` over the same region, finds every cell inside a tree's bounding box
-     equal to the half-rule downsample at levels 1 to 3.
+     equal to the half-rule downsample at levels 1 to 3. *Amended 2026-10-22 (owner, second
+     set):* it runs under each rule against that rule's downsample.
   3. **The forest census** at levels 1 to 3 around the `FOREST` spawn is recorded in the log
      with the bare hills' beside it: the trunk and canopy survival shares, the canopy volume
      ratios against this plan's interior arithmetic (63.7 %, 87.8 % and 99.9 % of a canopy's
      interior cells kept, so at most 1.27, 1.76 and 2.0 times the half-filled leaf volume),
      the forest's clip bytes and the coarse generation rate with trees. These are
      observations; the bars of Phase 7 read the bare hills (below).
+     *Amended 2026-10-22 (owner, second set):* the forest census runs four times, under
+     `--clip-rule level` and `volume` at `--leaf-fill` 128 and 64, beside the bare hills (one
+     run: the hills' cells are centre-sampled, so the rule does not change them). Each run
+     records per level the canopy fill (the share of a canopy's interior cells kept, against
+     the Context table: 63.7, 87.8 and 99.9 % against 63.7, 55.0 and 51.8 % at fill 128;
+     11.4, 0.80 and about 0 % against 11.4, 0.001 and about 0 % at fill 64), the survival
+     shares, the clip bytes and the coarse generation rate in cells and clip chunks per
+     second per thread, so the two rules' generation cost sits side by side.
 
 ### Phase 3: Clip residency on the streamer
 - **Owner skill:** dev
@@ -323,6 +392,10 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
   evicted and regenerated, the regenerated clip chunk equals the patched one byte for byte,
   with a RAM persistence cap of 0 and a spill directory as well; the clip hash of Phase 3 is
   unchanged by a run with no edits.
+  *Amended 2026-10-22 (owner, second set):* the same carve with the residency's rule
+  `HalfVolume` leaves exactly 492, 60 and 8 air cells at levels 1 to 3 (a level-`k` cell is
+  air when more than half its `8^k` voxels are carved; level 1 agrees with the level rule),
+  and the regenerated clip chunk equals the patched one under that rule too.
 
 ### Phase 6: The sun's shadow ray walks the far field
 - **Owner skill:** dev
@@ -359,11 +432,17 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
   with pitch 0, so the forest runs to the horizon under the camera. With `--frames`, an exit
   line (beside the steps line) prints, per hit level 0 to 3, the count of ground pixels (hit
   material `grass` or `soil`) and their mean linear luminance before the tone map.
+  *Amended 2026-10-22 (owner, second set):* `--clip-rule level|volume` (default `level`)
+  sets `ClipResidency::rule`, and the banner names it (`far field on, 3 levels to 1024 m,
+  normals gradient, rule level`). It is a start-up flag, not a key: changing it regenerates
+  every clip chunk and the overlay.
 - **Files touched:** `apps/flythrough/src/{main.rs, hud.rs}`, `apps/flythrough/tests/hud_golden.rs`,
   the root `README.md` (the flags and keys), `docs/nfr.md` §2, §3 and §5.
 - **Done when:** a test presses the far-field key three times and finds `Modes::line()` naming
   `far field levels`, `far field off`, `far field on` in turn with the banner shown from each
-  press, and the far-normals key flipping `normals gradient` to `normals face`; the outdoor
+  press, and the far-normals key flipping `normals gradient` to `normals face`, and (amended
+  2026-10-22, owner) a parse of `--clip-rule volume` naming `rule volume` on the line while
+  the default names `rule level`; the outdoor
   autopilot with the far field on reads: clip residency per level at full residency equal to
   its ball, clip live bytes recorded against Phase 2's census (bar: under 0.5 GB, the census's
   figure with room), the near tier's residency latency p95 under 500 ms (`nfr.md` §5, the far
@@ -386,13 +465,26 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
      under or over. **No bar**: the bars above read the bare hills, and a forest bar would be
      invented. The march's 3.0 ms bar does not apply to the forest runs; the log states each
      against it as under or over.
+     *Amended 2026-10-22 (owner, second set): both rules and leaf fill 64.* The forest runs
+     also take `--leaf-fill L` for `L` in {128, 64} and, with the far field on,
+     `--clip-rule R` for `R` in {level, volume}. The configurations per adapter are eight:
+     far field off with `none`, forest at 128 and forest at 64 (three; the rule does not
+     apply), and far field on with `none` (one; the bare hills' cells are centre-sampled, so
+     the rule changes nothing without edits) and forest at 128 and 64 under each rule (four).
+     That is 16 configurations on the two adapters, 48 timed runs and 16 `--view steps` runs.
+     The ratios add level/volume per fill and adapter, and fill 64/128 per rule. Each forest
+     run with the far field on also prints Phase 2's per-level canopy fill for its rule and
+     fill, so the frame cost and the far canopy's density are read together.
   2. **Do far tree shadows survive? An observation.** In the four runs above, with the
      exposure fixed at the value auto settles to in the open, far-field-on run (logged), the
      exit line's mean ground luminance per hit level goes in the log for forest and none, and
      their ratio per level (1.0 at a level means no tree shadow there survives; Phase 2's census
      says how many trunks and canopies the level holds). The shaded and `levels` views of the
      forest run are saved under `target/` and named in the log. The log states, per level,
-     whether trunk shadows and canopy shadows are visible in the saved image.
+     whether trunk shadows and canopy shadows are visible in the saved image. *Amended
+     2026-10-22 (owner, second set):* the luminance ratios and the saved images are taken
+     for each forest configuration with the far field on (two rules at two fills) against
+     `none`, at the same fixed exposure.
 
 ### Phase 8: The owner's windowed outdoor flight
 - **Owner skill:** human
@@ -403,12 +495,17 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
   1080p, and the near tier's cost is the census's). *Amended 2026-10-22 (owner):* from
   `--spawn vista --trees forest`, the owner runs the day with `/` from 16:00 through sunset
   and holds `--sun 10,270`, in the shaded and `levels` views, judging distant forest shadows.
+  *Amended 2026-10-22 (owner, second set):* the owner flies the forest vista at
+  `--clip-rule level` and `--clip-rule volume`, each at `--leaf-fill` 128 and 64, the banner
+  naming the rule, and picks the default rule.
 - **Files touched:** this plan's log.
 - **Done when:** the owner has recorded in the Implementation log a verdict on the seams and
   popping, the default far normal mode, and whether the outdoor `r_full` default stays 16.
   *Amended 2026-10-22 (owner):* also a verdict on distant forest shadows at sunset: whether
   they read at each level band, whether far canopies look too dense or too sparse, and
-  whether thin trunks vanishing beyond about 243 m is visible.
+  whether thin trunks vanishing beyond about 243 m is visible. *Amended 2026-10-22 (owner,
+  second set):* also the default clip rule (`level` or `volume`), which dev then sets as the
+  `--clip-rule` default and records; ADR-0028's Outcome records it at the close.
 
 ## Data shapes
 
@@ -417,13 +514,19 @@ with the far field off; a re-bless of an existing golden is a deviation to discl
 pub struct ClipCoord { pub level: u8, pub chunk: ChunkCoord } // level 1..=3; spans 64 << level voxels
 pub enum Coarse { Unsupported, Uniform(MaterialId), Cells }   // Cells: `out` holds the 64^3 cells
 pub enum ClipChunk { Uniform(MaterialId), Cells(Chunk) }
-pub struct ClipResidency { pub levels: u8, pub r_clip: i32, pub hysteresis: i32 } // 3, 22, 1
-pub enum MipRule { AnySolid, Half }  // Half: solid when >= 4 of 8 children solid; the majority
-                                     // material of the exposed solid children, else of all;
-                                     // a child on the chunk's face counts as exposed there
+pub struct ClipResidency { pub levels: u8, pub r_clip: i32, pub hysteresis: i32,
+                           pub rule: MipRule }                // 3, 22, 1, Half
+pub enum MipRule { AnySolid, Half, HalfVolume }
+// Half (default): solid when >= 4 of 8 children solid, level by level; the majority
+//   material of the exposed solid children, else of all; a child on the chunk's face
+//   counts as exposed there.
+// HalfVolume (amended 2026-10-22, owner): solid when >= 8^k / 2 of the cell's voxels are
+//   solid; the same material rule over its voxels.
 pub trait WorldSource {
     fn chunk(&self, coord: ChunkCoord, out: &mut Chunk);
-    fn coarse_chunk(&self, _at: ClipCoord, _out: &mut Chunk) -> Coarse { Coarse::Unsupported }
+    fn coarse_chunk(&self, _at: ClipCoord, _rule: MipRule, _out: &mut Chunk) -> Coarse {
+        Coarse::Unsupported
+    }
 }
 ```
 
@@ -439,8 +542,8 @@ pub trait WorldSource {
 - **Mirror:** clip records reserved apart (`MirrorConfig::clip_records`, per level, default
   4096: 3 x 4096 x 2112 B = 25 952 256 B), clip slots from the shared bins; pressure's record
   term reads near and clip records separately, the larger counting.
-- **Overlay:** `ChunkCoord -> Arc<ChunkMips>` built under `MipRule::Half`, kept while the chunk
-  has a persistence entry or is resident and edited.
+- **Overlay:** `ChunkCoord -> Arc<ChunkMips>` built under the residency's rule (`MipRule::Half`
+  by default), kept while the chunk has a persistence entry or is resident and edited.
 
 ## Budgets
 
@@ -452,7 +555,7 @@ pub trait WorldSource {
 | §5 Residency latency | 500 ms p95 near | unchanged near; ring p95 under 1.28, 2.56, 5.12 s by level (bars) | Phase 7 autopilot, far field on |
 | §2 Primary rays | 3.0 ms | outdoor horizon view, far field on: under 3.0 ms on the NVIDIA card (bar, a guess of +0.3 to 1.0 ms over off); iGPU recorded | Phase 7, timestamps, median of the last 30 of 300 frames, three runs, quiet box, both adapters |
 | §2 Lighting | 6.0 ms | the sun ray grows with the far field, most at low sun; recorded at 45 and 10 degrees | Phase 7, both adapters |
-| §2 Primary rays, lighting and frame, forest at low sun (amendment 2026-10-22, owner) | 3.0 ms; 6.0 ms; 16.6 ms | no projection: canopies keep 64 to 100 % of their interior cells at levels 1 to 3, so a grazing far ray meets denser masks than the bare hills | Phase 7, `--spawn vista --sun 10,270`, far field and forest on and off, both adapters |
+| §2 Primary rays, lighting and frame, forest at low sun (amendment 2026-10-22, owner) | 3.0 ms; 6.0 ms; 16.6 ms | no projection: at fill 128 canopies keep 64 to 100 % of their interior cells at levels 1 to 3 under the level rule and 52 to 64 % under the volume rule, at fill 64 at most 11 %, so a grazing far ray meets denser masks than the bare hills at fill 128 | Phase 7, `--spawn vista --sun 10,270`, the eight configurations per adapter (amended 2026-10-22, owner: both rules, fills 128 and 64), both adapters |
 | §3 World in VRAM, forest (amendment 2026-10-22, owner) | 3 GB | a guess: canopies add about 270, 170 and 120 `Full` bricks to a surface clip chunk at levels 1 to 3 (bounded by the canopy layer, 6, 3 and 2 bricks tall), about +0.15 to 0.25 GB, so 0.3 to 0.45 GB for three levels | Phase 2's forest census; Phase 7's forest run, recorded against 0.5 GB |
 | §5 Generation throughput, forest (amendment 2026-10-22, owner) | as above | exact tree cells about 1.2e8 voxel samples a second at 10 m/s, some 1.7 workers (a guess, Context) | Phase 2's forest rate |
 | §2 Streaming line (render thread) | 1.0 ms | clip syncs add uploads of surface clip chunks and table entries; recorded beside off | Phase 7 autopilot timers |
@@ -468,10 +571,12 @@ is shared DDR4.
   radius-3 trunk or a luckier alignment lasts longer, which the census counts. A half-filled
   canopy keeps 63.7, 87.8 and 99.9 % of its interior cells at levels 1 to 3 under the
   level-by-level rule, so far canopies are opaque blobs and their shadows, if anything, too
-  dark. ADR-0028's Decision words the rule as "at least half its volume", which at levels 2
-  and 3 would keep 55 % and 52 % instead (`P(Bin(64, 0.5) >= 32)` and `P(Bin(512, 0.5) >=
-  256)`); this plan's data shape and `ChunkMips` reduce level by level. Phase 8 judges the
-  look; the choice between the two readings is the owner's (open question at the amendment).
+  dark. The by-volume rule keeps 55 % and 52 % at levels 2 and 3 instead (`P(Bin(64, 0.5) >=
+  32)` and `P(Bin(512, 0.5) >= 256)`). *Settled 2026-10-22 (owner):* both are built, the
+  level rule is the default, `--clip-rule volume` selects the other, Phases 2 and 7 measure
+  both, and Phase 8 picks the default. At leaf fill 64 both rules thin far canopies to
+  almost nothing beyond level 1, so the fill the owner keeps (Plan 0032 Phase 9) matters as
+  much as the rule.
 - **Tree cells may be too slow to generate exactly** (amendment 2026-10-22, owner). If
   Phase 2's forest rate cannot keep the ring latency bars at 10 m/s, the lever is a
   centre-sampled canopy that keeps a cell by a per-cell hash at the interior shares above,

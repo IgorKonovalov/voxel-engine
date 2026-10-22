@@ -1,12 +1,13 @@
-# 0037: The night sky: a star field, the moon's phases, sky bodies the game lists, and an aurora that lights the ground
+# 0037: The night sky: a star field, the moon's phases, sky bodies the game lists, an aurora that lights the ground, and a night tint
 
-> **Status:** draft
+> **Status:** approved (2026-10-22)
 > **Created:** 2026-10-22
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
 > **Related ADRs:** [ADR-0032](../adrs/0032-night-sky-drawn-analytically-on-miss-pixels-with-a-marched-aurora-shell.md)
 > (proposed with this plan: stars as a binned catalogue splatted by flux, sky bodies as a list,
 > the aurora as a marched shell lighting through a hemisphere map, and the rejected skybox,
-> 2D aurora, voxel bodies and hashed stars),
+> 2D aurora, voxel bodies and hashed stars; and the night tint, with physical darkness alone
+> and a night-adapted exposure key not taken),
 > [ADR-0026](../adrs/0026-atmosphere-from-hillaire-luts-built-on-the-gpu-at-runtime.md) (the
 > transmittance and sky-view LUTs),
 > [ADR-0027](../adrs/0027-the-sun-shadow-is-one-per-pixel-ray-in-the-light-pass.md) (the
@@ -19,6 +20,9 @@
 > and the orchestrator's analysis given to the owner the same day; the outdoor batch's
 > standing answers (outdoors is a general engine capability; the game sets time; the engine
 > reads no clock; every toggle shows its mode in the window; readings on both adapters).
+> The owner's answer of 2026-10-22 to open question 1: the night look is a blue-shifted,
+> desaturated tint ("movie night", a scotopic or Purkinje-style shift) as a post effect,
+> folded into this plan as Phase 7 (ADR-0032 records it and its rejected alternatives).
 > **Starts after:** [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > and [Plan 0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md) close.
 > Drafted against their approved text (`Sky`, `Body`, `body_direction`, `sky.wgsl`'s
@@ -38,8 +42,10 @@ phase. The game lists up to 64 sky bodies each frame: direction, size, brightnes
 sunlit look, an optional texture and an optional tail. A comet's tail points away from the
 sun, and a meteor's trail runs where the game says. An aurora of curtains 90 to 320 km up,
 animated by the game's time, is marched at quarter resolution on sky pixels. Its glow lights
-the ground through the probes and the sky ray. All of it is off by default and costs nothing
-off. The first thing a reader sees is Phase 1's headless golden of an empty world's night sky
+the ground through the probes and the sky ray. A night tint, driven by each pixel's
+luminance before exposure, moves dark pixels toward a desaturated blue the game sets, the
+classic night look, without changing their luminance. All of it is off by default and costs
+nothing off. The first thing a reader sees is Phase 1's headless golden of an empty world's night sky
 full of stars around the celestial pole, and a test that counts exactly 9 stars brighter
 than magnitude 0.5 and 900 brighter than 4.5 for seed 1.
 
@@ -190,13 +196,32 @@ for byte the same.
    miss of Plan 0034. It adds `night_light(d)` to `sky_radiance(d)`. With clouds on, Plan
    0035's `cloud_sky` march takes `sky_radiance + night_light` as its background, so clouds
    hide the aurora's light too.
+9. **The night tint** (the owner's answer to open question 1, 2026-10-22). `NightTint {
+   strength, hue, full_below, none_above }`, set by `Frame::set_night_tint` and independent
+   of `Night`, moves a pixel's colour toward `Y h`, its own luminance `Y` times the game's
+   hue normalised to unit luminance, by a weight that is 0 above `none_above`, `strength`
+   below `full_below`, and a smoothstep in `log10 Y` between (Phase 7 gives the formula).
+   `Y` is the pre-exposure luminance in frame units, so the tint follows how dark the scene
+   is, not how far the exposure has brightened it, and a bright lamp at night keeps its
+   colour. The mix keeps `Y` exactly, so the exposure metering, the stars' flux and every
+   luminance test above are unchanged. It runs in the composite after the metering's read
+   and before the exposure multiply and the tone map. It models the look of rod vision (the
+   blue shift and the loss of colour that film and games use for night, after Thompson,
+   Shirley and Ferwerda, "A Spatial Post-Processing Algorithm for Images of Night Scenes",
+   Journal of Graphics Tools, 2002), not the rods' spectral sensitivity. A scotopic
+   luminance (the CIE 1951 scotopic luminosity function `V'(lambda)`, which peaks near 507 nm
+   against the photopic 555 nm and so brightens blues at night: the Purkinje shift) would
+   change each pixel's brightness, the metering and the stars' calibrated flux, and is not
+   used. The testbed's bounds are the usual mesopic band, about 0.001 to 3 cd/m2 (CIE
+   191:2010, "Recommended System for Mesopic Photometry Based on Visual Performance", sets
+   its own at 0.005 and 5), converted through Plan 0032's unit.
 
 We rejected a painted skybox as the whole night sky, the aurora as a textured sheet or a
 sky-view LUT term, bodies as voxel models at a distance, and stars hashed per pixel with no
 catalogue (ADR-0032). We also rejected putting the aurora's glow in the sky-view LUT: primary
 misses read that LUT, and the aurora would show twice, once sharp and once as a blur. We
 rejected an exposure model of our own here: the metering sees the night terms, and the
-night's darkness is Plan 0032's `min` and `max`, with one owner question below.
+night's darkness is Plan 0032's `min` and `max`, under the tint of point 9.
 
 ## Architecture diagram
 
@@ -400,7 +425,7 @@ function over a grid and writes `f32` results to a storage buffer, as in Plan 00
   `aurora_reconstruct` in `FRAME_PASSES`. The testbed has three presets. `quiet` is one
   curtain, green only, peak emission 1e-4 per km. `active` is three curtains with folds,
   rays and red tops, 5e-4. `storm` is four curtains with the band overhead (the corona), the
-  edge colour on and fast drift, 2e-3. All three intensities are guesses tuned at Phase 8.
+  edge colour on and fast drift, 2e-3. All three intensities are guesses tuned at Phase 9.
   `--aurora` and an aurora key (proposed apostrophe) choose the preset, and
   `--aurora-update every|one-in-four|one-in-sixteen` chooses the update.
 - **Files touched:** new `crates/vxe-render/src/shaders/aurora.wgsl`, `night.rs`,
@@ -469,7 +494,72 @@ function over a grid and writes `f32` results to a storage buffer, as in Plan 00
   6. **Off is free.** With `Night` `None`, the light pass's and the probes' output is byte for
      byte the base commit's.
 
-### Phase 7: The testbed's night, the goldens and the readings on both adapters
+### Phase 7: The night tint (the owner's "movie night" look)
+- **Owner skill:** dev
+- **What:** `NightTint { strength, hue, full_below, none_above }` and
+  `Frame::set_night_tint(Option<NightTint>)`, independent of `Night` (a lamp-lit cave can use
+  it too). The composite applies it to every pixel, hit or miss, after the night terms, the
+  clouds and the translucent layers, after the exposure metering has read the frame, and
+  before the exposure multiply and the tone map. It reads the pixel's pre-exposure radiance
+  `c` (frame units):
+  `Y = dot(c, (0.2126, 0.7152, 0.0722))`;
+  `t = clamp((log10(none_above) - log10(Y)) / (log10(none_above) - log10(full_below)), 0, 1)`
+  (1 for `Y <= full_below`, including `Y = 0`); `w = strength x t^2 (3 - 2t)`;
+  `h = hue / dot(hue, (0.2126, 0.7152, 0.0722))`; and `c' = mix(c, Y h, w)`, skipped where
+  `w = 0`. The pixel keeps its luminance and its exposure, and only its chromaticity moves
+  toward the game's night hue (Decision 9). In the fly-through, `--night-tint off|on` and
+  `--night-tint-strength S` (0 to 1) set it. The default is `on` with `--source outdoor`
+  (the owner's chosen look) and `off` with the cave source. A key (proposed `]`; dev picks
+  a free one if it is taken) toggles `night tint on` and `night tint off` on the mode
+  banner. The testbed's values are guesses the owner tunes at Phase 9: `strength` 0.8, `hue`
+  (0.80, 0.92, 1.30), and the bounds tied to Plan 0032's unit (`E_sun` frame units for
+  127 500 lux, so 1 cd/m2 is `E_sun / 127 500`): `none_above = 3 E_sun / 127 500` (3 cd/m2,
+  0.0706 at `E_sun` 3000), and `full_below = 1e-3 E_sun / 127 500` (0.001 cd/m2, 2.353e-5),
+  the mesopic band's usual bounds. As an illustration at those values, a floor of albedo 0.3
+  under the testbed's full moon (`E_sun / 400 000`) has `Y = 7.16e-4` (0.030 cd/m2), so
+  `t = 0.573`, `t^2 (3 - 2t) = 0.609` and `w = 0.487`. A moonless floor sits under
+  `full_below` at `w = 0.8`, and a noon floor (`Y` about 286) at `w = 0`. `golden.rs` passes
+  `--night-tint off` to every existing golden on the outdoor source (Phases 1 to 5's and
+  the earlier plans'), so they stay as blessed.
+- **Files touched:** `night.rs` (`NightTint`), `composite.wgsl`, `night.wgsl` (the tint
+  function and its probe entry), `marcher.rs`, `lib.rs`, `crates/vxe-render/tests/night.rs`,
+  `apps/flythrough/src/main.rs`, `hud.rs`, `apps/flythrough/tests/golden.rs`, new golden
+  `night_tint_moonless.png`.
+- **Done when:**
+  1. **The luminance ramp** (probe dispatch). The test uses `NightTint { strength: 1, hue:
+     (0.80, 0.92, 1.30), full_below: 1e-4, none_above: 1e-1 }` and an input of chromaticity
+     `k = (0.6, 0.4, 0.2)` scaled to unit luminance, `k = (1.4016, 0.9344, 0.4672)`, with
+     saturation `(max - min) / max = 0.6667` and blue share `B / (R + G + B) = 0.1667`. The
+     normalised hue is `h = (0.8678, 0.9979, 1.4101)` (`dot(hue, W) = 0.92192`), with
+     saturation 0.3846 and blue share 0.4305. The ramp is `c = Y k` for `Y` in {1, 0.1, 0.01,
+     0.001, 1e-4, 1e-5}.
+     - **At and above `none_above`** (`Y` = 1 and 0.1, `t = 0`), the output equals the input
+       bit for bit.
+     - **At `Y = 0.01`**, `t = 1/3` and `w = 7/27 = 0.2593`, so `c' / Y = (1.2632, 0.9509,
+       0.7117)`: saturation 0.4366, blue share 0.2432.
+     - **At `Y = 0.001`**, `t = 2/3` and `w = 20/27 = 0.7407`, so `c' / Y = (1.0062, 0.9814,
+       1.1656)`: saturation 0.1580, blue share 0.3697.
+     - **At and below `full_below`** (`Y` = 1e-4 and 1e-5, `w = 1`), `c' / Y = h`.
+     - Each component is within 1e-4 of these values. Every output's luminance equals its
+       `Y` within 1e-5 relative. Below `none_above`, every output's saturation is under the
+       input's 0.6667, and the blue share rises strictly as `Y` falls to `full_below`.
+  2. **Off is the frame before.** With `None`, and with `Some` at `strength` 0, every
+     existing golden is byte-identical to the base commit. A `Frame` that renders a frame
+     with the tint on, then turns it off, renders the next frame byte for byte as a `Frame`
+     that never set it.
+  3. **The exposure ignores the tint.** On bar 4's moonless pose with auto exposure and
+     instant adaptation, the settled exposure is bit-identical with the tint on and off.
+  4. **Golden.** `night_tint_moonless.png` is blessed: Phase 8's `night_stars_moonless` pose
+     (the outdoor source with seed 1, spawn `outside` facing north and pitched up 30 degrees,
+     00:00, moon phase 180, stars at gain 1, auto exposure with instant adaptation) with the
+     testbed's tint. The same test renders the pose with the tint off and reads the HDR
+     target before the exposure multiply: each pixel's luminance matches within 1e-5
+     relative, and the mean blue share over pixels with a channel above `full_below` is
+     higher with the tint on. That is a property, and both means go in the log.
+  5. **Banner.** The tint key changes the banner's text to `night tint off` and back to
+     `night tint on`.
+
+### Phase 8: The testbed's night, the goldens and the readings on both adapters
 - **Owner skill:** dev
 - **What:** the outdoor source's defaults become `--night on` with stars on, the moon Lit,
   airglow `background` set to 1/100 of the full moon's sky radiance at the zenith (a guess),
@@ -486,13 +576,15 @@ function over a grid and writes `f32` results to a storage buffer, as in Plan 00
 - **Done when:**
   1. **Golden.** `night_stars_moonless.png` is blessed: the outdoor source with seed 1, spawn
      `outside` facing north and pitched up 30 degrees, 00:00, moon phase 180, stars at gain
-     1, and auto exposure with instant adaptation. The test also reads the settled exposure,
-     which equals `max` (4.0 at Plan 0032's testbed default, or the value its close kept),
+     1, `--night-tint off`, and auto exposure with instant adaptation. The test also reads
+     the settled exposure, which equals `max` (4.0 at Plan 0032's testbed default, or the value its close kept),
      because a moonless sky's mean is far under `key / max`.
   2. **The four goldens differ** pairwise in more than 10 % of their pixels by more than
      8/255 (`night_empty_stars`, `dusk_comet`, `night_aurora`, `night_stars_moonless`).
+     `night_tint_moonless` is left out of that count: it keeps every pixel's luminance, and
+     Phase 7 bar 4 states its difference from `night_stars_moonless` as a property.
   3. **The banner test** presses each night key in turn and finds each word of Phases 1 to 5
-     on `Modes::line()`, and the banner empty 3 s after the last press.
+     and 7 on `Modes::line()`, and the banner empty 3 s after the last press.
   4. **Readings on both adapters** (`--adapter`, quiet box, 1920 x 1080 output at internal
      scale 1.5, median of the last 30 of 3000 frames, three runs each):
      `flythrough --source outdoor --headless --seed 1 --render 1920x1080 --internal-scale
@@ -501,17 +593,21 @@ function over a grid and writes `f32` results to a storage buffer, as in Plan 00
      `active`. Each run reads `aurora`, `aurora_reconstruct`, `night_light`, the composite and
      the light pass. The same pose at `--night off` gives the composite's and the light
      pass's baseline. `--time 12:00` with the night on shows the daylight skip as a
-     composite time within noise of `--night off`. The night's bytes go in `nfr.md` §3, the
+     composite time within noise of `--night off`. The moonless pose with `--aurora off`
+     is also read with `--night-tint on` and `off`, so the tint's composite cost is recorded
+     beside it. The night's bytes go in `nfr.md` §3, the
      catalogue's generation time at startup in §7, and the default aurora update per adapter
      is chosen from the readings and named in the log.
 
-### Phase 8: The owner's windowed check
+### Phase 9: The owner's windowed check
 - **Owner skill:** human
 - **What:** the owner flies the outdoor source at night on both adapters (pinged when ready,
   batched with the other outdoor checks). They watch a moonless sky turn through the night with
   `/`, step the moon through its phases, watch the comet at dusk and the meteors, cycle the
   aurora's presets with clouds off and scattered, look straight up into a `storm` corona,
   try `--star-gain` at 1, 4 and 16, and try `--aurora-update` modes on the slow adapter.
+  They toggle the night tint on a moonless night, under a full moon and at dusk, and try
+  `--night-tint-strength` at 0.5, 0.8 and 1.
 - **Files touched:** this plan's log (dev records the verdicts), then ADR-0032's Outcome at
   the close.
 - **Done when:** the owner has recorded a verdict on the stars' brightness and gain (the
@@ -519,7 +615,9 @@ function over a grid and writes `f32` results to a storage buffer, as in Plan 00
   shimmer at scale 1.5, or the `star_psf_px` to keep), on the moon's phases and earthshine,
   on the comet and the meteors, on the aurora presets' intensities and colours, on the
   aurora's motion under the update mode each adapter keeps, on whether its glow on the
-  ground reads, and on the night's darkness (open question 1); every switch's banner was
+  ground reads, on the night's darkness (open question 1, the exposure's `max`, `star_gain`
+  and airglow kept under the tint), and on the night tint (its strength, hue and luminance
+  bounds, and whether the outdoor testbed keeps it on by default); every switch's banner was
   seen on screen.
 
 ## Data shapes
@@ -557,13 +655,17 @@ pub struct Aurora { pub seed: u32, pub intensity: f32,
     pub fold_amplitude_km: f32, pub fold_scale_km: f32, pub ray_scale_km: f32,
     pub ray_contrast: f32, pub drift_km_s: f32, pub flicker_hz: f32,
     pub time_s: f32, pub update: CloudUpdate, pub debug: Option<AuroraDebug> }
+pub struct NightTint { pub strength: f32,  // 0..1; the weight below full_below
+    pub hue: [f32; 3],                       // linear RGB; normalised to unit luminance
+    pub full_below: f32, pub none_above: f32 } // pre-exposure luminance, frame units
 pub const MAX_SKY_BODIES: usize = 64;
 pub fn celestial_to_world(sidereal_angle: f32, latitude: f32) -> [[f32; 3]; 3];
 pub fn moon_phase_illuminance(full: [f32; 3], phase_angle: f32) -> [f32; 3];
 pub fn phase_angle(sun: [f32; 3], body: [f32; 3]) -> f32;
 // Frame::set_night(Option<Night>), set_star_catalogue(Option<&StarCatalogue>),
 // set_sky_bodies(&[SkyBody]) -> Result<(), SkyBodiesFull>,
-// set_body_texture(slot, &[u8]), set_sky_texture(Option<SkyTexture<'_>>)
+// set_body_texture(slot, &[u8]), set_sky_texture(Option<SkyTexture<'_>>),
+// set_night_tint(Option<NightTint>)
 ```
 
 `Night` and `Aurora` are plain `Copy` values, and the per-frame setters take values and
@@ -599,8 +701,9 @@ and allocated on their first set:
 
 | `nfr.md` figure | line | projection (guesses: dev box, 1080p output at 720p internal, an all-sky night view) | how the close measures it |
 |---|---|---|---|
-| §2 Upscale, tone map, post | 1.5 ms | composite with stars and bodies: +0.05 to 0.15 ms on NVIDIA (about 13 star tests per miss pixel); the slow adapter about eight times that. In daylight, a branch | Phase 7's runs, the composite's timestamp with the night on against `--night off`, at 00:00 and 12:00, both adapters |
-| §2 Headroom (volumetrics) | 2.1 ms, shared with Plan 0035's clouds | aurora `Every` at quarter resolution, 230 400 rays of 32 steps: 0.2 to 0.5 ms on NVIDIA; `night_light` under 0.05 ms; the slow adapter eight times the march, 1.6 to 4 ms, so `OneInFour` (a quarter of that) is its candidate. Zero with the aurora off, and near zero under overcast | `aurora`, `aurora_reconstruct` and `night_light` timestamps, Phase 7's runs, every update mode |
+| §2 Upscale, tone map, post | 1.5 ms | composite with stars and bodies: +0.05 to 0.15 ms on NVIDIA (about 13 star tests per miss pixel); the slow adapter about eight times that. In daylight, a branch | Phase 8's runs, the composite's timestamp with the night on against `--night off`, at 00:00 and 12:00, both adapters |
+| §2 Headroom (volumetrics) | 2.1 ms, shared with Plan 0035's clouds | aurora `Every` at quarter resolution, 230 400 rays of 32 steps: 0.2 to 0.5 ms on NVIDIA; `night_light` under 0.05 ms; the slow adapter eight times the march, 1.6 to 4 ms, so `OneInFour` (a quarter of that) is its candidate. Zero with the aurora off, and near zero under overcast | `aurora`, `aurora_reconstruct` and `night_light` timestamps, Phase 8's runs, every update mode |
+| §2 Upscale, tone map, post: the night tint | 1.5 ms | a luminance, a `log10`, a smoothstep and a mix per pixel, under 0.01 ms on NVIDIA (a guess); zero cost beyond a branch where `w = 0` | Phase 8, the moonless pose with `--night-tint on` against `off`, both adapters |
 | §2 Lighting | 6.0 ms | one bilinear `night_light` read per lighting-ray miss, under 0.05 ms | the light pass's timestamp, night on against off, same pose |
 | §3 Everything else in VRAM | 1.5 GB | 9.8 MB at 1080p internal by default, plus the optional textures (table) | `Frame::frame_bytes` printed by the autopilot |
 | §7 Time to first frame | 3 s | 9000 stars generated and binned on the CPU, under 5 ms (a guess) | the autopilot's startup timers, night on against off, both adapters |
@@ -610,27 +713,30 @@ body share) take at most 0.3 ms of the floor's headroom on an all-sky view. That
 Plan 0035's proposed 1.0 ms for clouds and aerial perspective. The floor projects two to three
 times the dev box (the card is not on hand), so the NVIDIA reading must stay under about 0.1
 to 0.15 ms for the projection to meet it. That likely makes `OneInFour` the aurora's default
-on every adapter, which Phase 7 decides from the readings. The slow adapter's reading is
+on every adapter, which Phase 8 decides from the readings. The slow adapter's reading is
 recorded against the line, not gated. A miss is recorded with the profile measured.
 
 ## Risks & open questions
 
-1. **Owner question: how dark is the night?** At physical brightness and Plan 0032's
-   testbed `max` exposure of 4.0, a moonless landscape is black, the stars read to about
-   magnitude 4 to 5, and a moonlit one is dim. The options, recommended first:
-   (a) keep Plan 0032's model, and tune `max`, `star_gain` and the airglow `background` at
-   Phase 8. This adds nothing, and the game owns the look.
-   (b) a low-light key in `exposure.wgsl`: the key falls with the scene's mean luminance
-   (Krawczyk, Myszkowski and Seidel 2005, "Lightness Perception in Tone Reproduction for High
-   Dynamic Range Images"), so the night stays darker than the day without a hard clamp. This
-   changes every auto-exposure frame, so it is its own small plan with an ADR.
-   (c) a scotopic tint (a blue shift and desaturation below a luminance), the classic "night
-   look". It is a post effect and also its own plan.
+1. **How dark is the night? Answered 2026-10-22 (owner): the tint.** At physical
+   brightness and Plan 0032's testbed `max` exposure of 4.0, a moonless landscape is black,
+   the stars read to about magnitude 4 to 5, and a moonlit one is dim. The owner chose
+   option (c), a scotopic tint (a blue shift and desaturation below a luminance), the
+   classic "night look", folded into this plan as Phase 7 rather than a plan of its own;
+   `max`, `star_gain` and the airglow `background` are still tuned at Phase 9 under it.
+   Option (a), physical darkness with exposure tuning alone, is the tint at `None` and is
+   rejected as the look (ADR-0032). Option (b), a night-adapted exposure key that falls
+   with the scene's mean luminance (Krawczyk, Myszkowski and Seidel 2005, "Lightness
+   Perception in Tone Reproduction for High Dynamic Range Images"), is not built; it is a
+   possible later addition that would change every auto-exposure frame and needs its own
+   plan and ADR. The tint's risk is that its bounds sit in frame units tied to Plan 0032's
+   guessed sun constant: if the owner retunes `E_sun`, the testbed's bounds move with it by
+   construction, and a game sets its own.
 2. **Shimmer through the upscaler.** Flux is conserved at the composite, but Plan 0030's
    upscale rebuilds miss pixels from one frame of jittered samples through a Lanczos kernel,
-   so a star's output can wobble. Phase 7 logs a still camera's frame-to-frame spread of a
+   so a star's output can wobble. Phase 8 logs a still camera's frame-to-frame spread of a
    magnitude-1 star's summed output over a 9 x 9 output window, at `star_psf_px` 0.6 and
-   0.25. The property is that the wider point-spread function wobbles less. Phase 8 judges
+   0.25. The property is that the wider point-spread function wobbles less. Phase 9 judges
    it by eye. The followup is reprojection of misses by direction in Plan 0030's upscale
    pass, already a followup of Plan 0032.
 3. **Aurora intensities are units by convention.** The presets' emission figures are
@@ -638,7 +744,7 @@ recorded against the line, not gated. A miss is recorded with the profile measur
    the game sets them.
 4. **The aurora's light lags.** Probe hysteresis (0.97) and `cloud_sky`'s one-eighth refresh
    smooth a pulsing display's light over about 30 frames. This is acceptable for a glow, and
-   Phase 8 judges it.
+   Phase 9 judges it.
 5. **Keys.** The proposals are `;` (stars), backquote (the moon), backslash (bodies) and
    apostrophe (the aurora), from the keys unbound on main today. Plans 0033 and 0035 let dev
    pick keys too. If a plan merged earlier took one of these, dev picks a free key and the
@@ -677,8 +783,9 @@ recorded against the line, not gated. A miss is recorded with the profile measur
 - Light from sky bodies (a bright comet or a second moon casts no light or shadow; a game
   that needs a second key light asks for it in a later plan), eclipses, in-scattering of the
   aurora's glow in the lower atmosphere, the zodiacal light, planets' own ephemerides (the
-  game computes directions), motion blur of meteors, a scotopic tint or a low-light exposure
-  key (open question 1), and any server-side or deterministic sky state.
+  game computes directions), motion blur of meteors, a low-light exposure key (open question 1, option b), a
+  scotopic-luminance brightness shift or a spatial night blur (Phase 7 tints chromaticity
+  only), and any server-side or deterministic sky state.
 
 References worth an annotated entry in `docs/references/` (not added by this plan): Jensen,
 Durand, Stark, Premoze, Dorsey and Shirley, "A Physically-Based Night Sky Model" (SIGGRAPH
@@ -688,7 +795,10 @@ Shirley, Trondsen and Bastos, "Simulating the Aurora" (Journal of Visualization 
 Animation, 2003); Wyman, Sloan and Shirley, "Simple Analytic Approximations to the CIE XYZ
 Color Matching Functions" (JCGT, 2013); Allen's Astrophysical Quantities, for the lunar phase
 law and the zero-magnitude illuminance; Krawczyk, Myszkowski and Seidel (2005), for open
-question 1.
+question 1's option (b); Thompson, Shirley and Ferwerda, "A Spatial Post-Processing Algorithm
+for Images of Night Scenes" (Journal of Graphics Tools, 2002), for the night tint's blue shift;
+CIE 191:2010, "Recommended System for Mesopic Photometry Based on Visual Performance", for the
+mesopic band the tint's bounds follow.
 
 ## Implementation log
 
@@ -705,8 +815,9 @@ question 1.
 | 4: Sky bodies and their tails | dev | not started | |
 | 5: The aurora | dev | not started | |
 | 6: Night light: the aurora and the airglow light the ground | dev | not started | |
-| 7: The testbed's night, the goldens and the readings on both adapters | dev | not started | |
-| 8: The owner's windowed check | human | not started | |
+| 7: The night tint | dev | not started | |
+| 8: The testbed's night, the goldens and the readings on both adapters | dev | not started | |
+| 9: The owner's windowed check | human | not started | |
 
 ### Notes
 
@@ -729,5 +840,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - Stars and bodies in calm-water reflections (Plan 0034's reflection ray with the splat at the
   reflected footprint).
 - Reprojection of miss pixels by direction in Plan 0030's upscaler, shared with Plan 0032's
-  followup, if Phase 8 sees stars shimmer.
-- Open question 1's low-light key or scotopic tint, if the owner picks (b) or (c).
+  followup, if Phase 9 sees stars shimmer.
+- Open question 1's option (b), a night-adapted exposure key (Krawczyk et al. 2005), as its
+  own plan and ADR, if Phase 9 finds the tint alone leaves the night too bright or too
+  flat.

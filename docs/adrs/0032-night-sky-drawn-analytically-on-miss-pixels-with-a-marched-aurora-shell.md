@@ -1,4 +1,4 @@
-# ADR-0032: The night sky is drawn analytically on miss pixels: a binned star catalogue, sky bodies the game lists, and an aurora shell that lights the scene through a hemisphere map
+# ADR-0032: The night sky is drawn analytically on miss pixels (a binned star catalogue, sky bodies the game lists, an aurora shell lighting the scene via a hemisphere map), and the night look is a luminance tint
 
 > **Status:** proposed
 > **Date:** 2026-10-22
@@ -38,6 +38,11 @@ The budget: `nfr.md` §2 gives volumetrics a share of the 2.1 ms headroom line, 
 0035's clouds already draw on, and the composite sits in the 1.5 ms post line. At night, most
 of an outdoor frame can be sky.
 
+The night's look is a separate question from its contents. At physical brightness under
+Plan 0032's exposure, a moonlit landscape is a dim copy of the day in the same colours; the
+eye sees a night scene bluer and greyer as rods take over (the Purkinje shift), and film and
+games draw night that way. The owner chose that look (2026-10-22).
+
 ## Decision
 
 **We draw the night sky in `vxe-render` on primary-miss pixels, behind the atmosphere's
@@ -74,8 +79,27 @@ transmittance and under the clouds, from three analytic sources.**
    aurora twice.
 
 An optional sky texture (a cube map in the celestial frame, for a painted Milky Way or
-nebulae) adds behind the stars. Everything here is off by default, and a frame with no night
-sky set is byte for byte the frame before.
+nebulae) adds behind the stars.
+
+4. **The night look is a tint driven by scene luminance** (the owner's choice, 2026-10-22: a
+   blue-shifted, desaturated "movie night", a scotopic or Purkinje-style shift, as a post
+   effect). A `NightTint { strength, hue, full_below, none_above }` the game sets applies in
+   the composite to every pixel, after the exposure metering reads the frame and before the
+   exposure multiply and the tone map. From the pixel's pre-exposure luminance `Y` (frame
+   units) a weight runs from 0 above `none_above` to `strength` below `full_below`, a
+   smoothstep in `log10 Y` between, and the pixel's colour moves by that weight toward `Y`
+   times the game's hue normalised to unit luminance. Luminance is kept exactly, so only
+   chromaticity moves: saturation falls and the hue goes toward blue as the scene darkens,
+   which is the look of rod vision (Thompson, Shirley and Ferwerda, "A Spatial
+   Post-Processing Algorithm for Images of Night Scenes", 2002). It does not reweight
+   brightness by the scotopic luminosity function (CIE 1951 `V'(lambda)`, peak near 507 nm),
+   which would move the metering and the stars' calibrated flux. Its bounds default to the
+   mesopic band, about 0.001 to 3 cd/m2 (CIE 191:2010, "Recommended System for Mesopic
+   Photometry Based on Visual Performance"), in the game's units. It is independent of the
+   night sky: a dark cave can use it.
+
+Everything here is off by default, and a frame with no night sky and no tint set is byte for
+byte the frame before.
 
 ## Consequences
 
@@ -114,6 +138,11 @@ sky set is byte for byte the frame before.
   caps the point-spread function's reach at one cell (about 1.6 degrees at a cube corner).
   That suits any field of view a frame uses.
 - About a dozen new public types and many parameters are surface to keep tested.
+- The tint is art direction, not physiology. Keeping luminance means a night-blue scene is
+  no darker than the physical one, so darkness still comes from the exposure's `max` and
+  the game's light levels. Its bounds are in frame units and so tied to the game's unit
+  convention; a game that rescales its sun moves them with it. A chromaticity shift is a
+  look some games will not want, which is why it is a separate, optional setting.
 
 ## Alternatives considered
 
@@ -155,6 +184,26 @@ catalogue, though, and the magnitude distribution is only a probability per cell
 count of stars brighter than a magnitude is not a stated number a test can pin. The decisive
 reason is that a list serves both the seeded field and a supplied one with the same shader,
 and makes the distribution exact.
+
+### Alternative E: Pure physical darkness, tuned through exposure alone
+Leave the night physically dark and let the game set Plan 0032's exposure `max`, the
+stars' gain and the airglow until it reads. It adds nothing to the engine, and a game that
+wants a neutral night still gets it (the tint at `None`). It is not the look the owner
+wants: a physically exposed moonlit scene is a dim daylight scene with the same colours, and
+the eye's and the film convention's night is bluer and greyer. Exposure tuning can only make
+it brighter or darker. The decisive reason is that the owner judged the colour, not the
+level, to be what is missing. The tuning stays, under the tint.
+
+### Alternative F: A night-adapted exposure target (Krawczyk et al. 2005)
+Let auto exposure's key fall with the scene's mean luminance (Krawczyk, Myszkowski and
+Seidel, "Lightness Perception in Tone Reproduction for High Dynamic Range Images", 2005), so
+the night stays darker than the day without a hard `max` clamp. It addresses how dark the
+night reads, not its colour, and it changes every auto-exposure frame of every scene, day
+and cave included, so its testing surface is far larger than a post effect's. It is not
+taken now and not ruled out: it composes with the tint (the tint reads pre-exposure
+luminance, so a different exposure leaves it unchanged) and is a possible later addition
+with its own plan and ADR if the owner's night check finds the tint alone leaves the night
+too bright.
 
 ## Outcome
 
