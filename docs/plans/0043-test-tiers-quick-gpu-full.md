@@ -257,8 +257,8 @@ All on the dev box, named with its commit. `docs/nfr.md` section 7 (startup and 
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: three profiles that split the suite exactly | dev | done | committed with this row |
-| 2: a gate that keeps the gpu list true | dev | not started | |
+| 1: three profiles that split the suite exactly | dev | done | 28da8b7 |
+| 2: a gate that keeps the gpu list true | dev | done | committed with this row |
 | 3: CI runs the full tier and the wasm step runs only what needs wasm | dev | not started | |
 | 4: the skills and lane rules name the tiers | dev | not started | |
 
@@ -273,6 +273,15 @@ All on the dev box, named with its commit. `docs/nfr.md` section 7 (startup and 
   has one canonical copy in the default profile's overrides that `quick` and `gpu` repeat.
 - Phase 1: every count and run is `--workspace` (the non-default member `vxe-script-wasm` is
   in the suite CI runs); a run without `--workspace` covers the default members only.
+- Phase 2: the script's device entry points add a fifth to the plan's four: the string
+  `"--headless"`, a test spawning a headless render of an app binary (how
+  `flythrough::shutdown` reaches a device). `fn device(` / `device()` covers the `device()`
+  helper. Comments are stripped before matching.
+- Phase 2: the script also fails when the `quick` or `gpu` default-filter is not exactly
+  `not (<gpu>) and not (<slow>)` / `(<gpu>) and not (<slow>)` with the lavapipe override's
+  filter and another default override's filter, so the three copies cannot drift. Verified by
+  hand on scratch edits of the tree's config (one gpu entry dropped from `gpu`, one slow test
+  dropped from `quick`): one finding each. Not seeded in the fixture.
 
 ### Close triggers
 
@@ -291,6 +300,13 @@ All on the dev box, named with its commit. `docs/nfr.md` section 7 (startup and 
   `cargo nextest run --workspace --profile gpu --test-threads 2`: exit 0, 124 passed,
   9 skipped. Wall 205.2 s (nextest 204.7 s), 1-minute load 4.18 at start, 2.80 at end:
   loaded. The plan's estimate was about 130 s.
+- Phase 2: `node scripts/check-test-tiers.mjs`: exit 0, `test tiers: 52 test files, gpu
+  filter 8 binaries + 1 package(s), all agree`. `node scripts/check-test-tiers.mjs
+  scripts/fixtures/test-tiers`: exit 1, the three findings of the fixture README's row
+  (missing.rs, via_support.rs, binary_id(app::gone)), `3 finding(s) across 5 test files`.
+  With `binary_id(flythrough::cutaway)` and `binary_id(flythrough::shutdown)` removed from
+  a scratch copy of the tree's config: exit 1 naming `apps/flythrough/tests/cutaway.rs` and
+  `apps/flythrough/tests/shutdown.rs`.
 
 ## Followups
 
