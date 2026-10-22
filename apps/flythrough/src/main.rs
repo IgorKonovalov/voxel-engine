@@ -15,7 +15,7 @@
 //! [--history edits|gradient] [--lighting full|half] [--emissive-history N]
 //! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S]`.
 //! `--render` fixes the frame's output resolution (the window scales it); `--internal-scale`
-//! renders at the output size divided by it on each edge (default 1); `--jitter off` sends
+//! renders at the output size divided by it on each edge (default 1.5); `--jitter off` sends
 //! every primary ray through its pixel's centre (by default it moves by the Halton (2, 3)
 //! sub-pixel jitter of the frame); `--sharpen S` sets the upscaler's RCAS sharpening, 0 to 1
 //! (default 0.5, 0 off); `--frames` exits after N
@@ -357,6 +357,10 @@ struct Args {
     sharpen: f32,
 }
 
+/// The internal scale by default (`--internal-scale`): 720p for 1080p, which halves the
+/// frame's GPU time on both adapters of `nfr.md` §1 (§2's upscaler readings).
+const DEFAULT_SCALE: RenderScale = RenderScale::OneHalf;
+
 /// The upscaler's sharpening strength by default (`--sharpen`).
 const DEFAULT_SHARPEN: f32 = 0.5;
 
@@ -460,7 +464,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         history: HistoryKill::default(),
         lighting: LightingResolution::default(),
         emissive_history: vxe_render::DEFAULT_EMISSIVE_HISTORY,
-        internal_scale: RenderScale::default(),
+        internal_scale: DEFAULT_SCALE,
         jitter: true,
         sharpen: DEFAULT_SHARPEN,
     };
@@ -2138,6 +2142,10 @@ impl Run {
                     .collect(),
                 light_samples: g.mirror.light_samples(),
                 modes: self.modes.line(),
+                upscale: g
+                    .frame
+                    .upscaling()
+                    .then(|| [g.frame.internal_size(), g.frame.output_size()]),
             })
         });
         let pos = self.fly.camera.position;
@@ -2479,6 +2487,7 @@ impl Run {
         } = samples;
         let Some(gfx) = &self.gfx else { return };
         let [w, h] = [gfx.frame.target().width(), gfx.frame.target().height()];
+        let [iw, ih] = gfx.frame.internal_size();
         let gpu = if gpu_ms.is_empty() {
             "n/a (no TIMESTAMP_QUERY)".to_owned()
         } else {
@@ -2495,10 +2504,11 @@ impl Run {
             format!(", gpu hud {:.4} ms", median(&mut hud_ms))
         };
         println!(
-            "frame ({w}x{h}, median of {}, {}): cpu {:.3} ms, gpu frame {gpu}{hud}; full bricks {}, mirror {} B live, {} B allocated",
+            "frame ({w}x{h} from {iw}x{ih}, median of {}, {}): cpu {:.3} ms, gpu frame {gpu}{hud}; frame targets {} B; full bricks {}, mirror {} B live, {} B allocated",
             cpu_ms.len(),
             look_line(&self.look, self.rock_detail()),
             median(&mut cpu_ms),
+            gfx.frame.frame_bytes(),
             self.world.stats().full_bricks,
             gfx.mirror.mirror_bytes(),
             gfx.mirror.allocated_bytes()
@@ -3163,8 +3173,9 @@ impl Run {
                 );
             }
         }
+        let [iw, ih] = gfx.frame.internal_size();
         println!(
-            "autopilot: frame targets {} B at {}x{} ({} lighting)",
+            "autopilot: frame targets {} B at {}x{} from {iw}x{ih} ({} lighting)",
             gfx.frame.frame_bytes(),
             gfx.frame.target().width(),
             gfx.frame.target().height(),
@@ -5557,13 +5568,13 @@ mod tests {
         }
     }
 
-    /// `--internal-scale` and `--jitter` parse their values, default to 1 and on, and refuse
-    /// an unknown value.
+    /// `--internal-scale`, `--jitter` and `--sharpen` parse their values, default to 1.5, on
+    /// and 0.5, and refuse an unknown value.
     #[test]
     fn internal_scale_and_jitter_parse_and_refuse_unknown_values() {
         let parse = |a: &[&str]| parse_args_from(argv(a));
         let d = parse(&[]).unwrap();
-        assert_eq!((d.internal_scale, d.jitter), (RenderScale::One, true));
+        assert_eq!((d.internal_scale, d.jitter), (RenderScale::OneHalf, true));
         assert_eq!(d.sharpen, 0.5);
         assert_eq!(parse(&["--sharpen", "0"]).unwrap().sharpen, 0.0);
         assert_eq!(parse(&["--sharpen", "0.8"]).unwrap().sharpen, 0.8);

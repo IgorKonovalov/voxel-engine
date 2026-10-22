@@ -351,8 +351,8 @@ of Plan 0024 shrink to 44 % at scale 1.5.
 | 1: Internal resolution and the jitter | dev | done: 11 of 11 `assert_golden` renders (golden.rs, look.rs) byte-identical to 578c8d3's at scale 1 jitter off (dumped and compared with `cmp`); jitter on, 16-frame hit mask of the pillar: 396 edge pixels, 15 distinct values in (0, 255) (unjittered: 0 partial); 384 x 216 at 1.5: hit buffer 256 x 144, blit within 1.03/255 of bilinear; parse test pins `--internal-scale`, `--jitter` | 9900eee |
 | 2: The upscale pass | dev | done: carve on the level (t = 30.5 voxels): 4749 output pixels hit in the dilated box, 0 blend history; readings in the projected box against native: max 192/255, mean 14.26/255, 686 of 4900 over 8/255; sideways step on the cavity: 67409 of 67443 unchanged pixels at alpha 0.1 (99.95 %), all 3317 changed-material pixels at alpha 1; still camera (reading): from native upscaled 4.699, bilinear 3.333 (1.410), from 2 x 2 supersampled 4.369, 3.044 (1.435), native 2.066 | 4bc49d8 |
 | 3: Lighting that ignores the jitter | dev | done: still camera from 2 x 2 supersampled: upscaled 2.969, bilinear 3.044 (0.975), native 2.066; from native 3.363, 3.333 (1.009); jittered at scale 1 against native from supersampled 2.013 vs 2.066 (284d132: 3.099); flicker at 1.5: jitter off mean 0.1212/255, 0.0020 % over 4/255, on 0.3185/255, 1.0176 % (+0.197, +1.016 pp; margins 0.40, 1.15); Plan 0024's tests pass at jitter off, 11 of 11 `assert_golden` renders byte-identical to 578c8d3 (`dark_cave*.png` unchanged); reading: age below 15 after 16 still frames, jitter on 216 of 82944 hit pixels (0.260 %), off 0 | 0b048ae |
-| 4: The sharpening pass and the golden | dev | done: `upscaled.png` blessed (cavity, 256 x 144 -> 384 x 216, 32 frames, jitter on, sharpening 0.5); sharpening 0 writes each byte as its history value times 255, rounded (0 pixels differ); rim pixels (unsharpened 3 x 3 spanning 16/255 or more): 15914, mean absolute luminance gradient unsharpened 22.888, sharpened 24.100; 0 pixels over their unsharpened 3 x 3 maximum by more than 1/255; workspace nextest 593 run, 593 passed, 5 skipped | committed with this row |
-| 5: The readings and the defaults | dev | not started | |
+| 4: The sharpening pass and the golden | dev | done: `upscaled.png` blessed (cavity, 256 x 144 -> 384 x 216, 32 frames, jitter on, sharpening 0.5); sharpening 0 writes each byte as its history value times 255, rounded (0 pixels differ); rim pixels (unsharpened 3 x 3 spanning 16/255 or more): 15914, mean absolute luminance gradient unsharpened 22.888, sharpened 24.100; 0 pixels over their unsharpened 3 x 3 maximum by more than 1/255; workspace nextest 593 run, 593 passed, 5 skipped | 11a5bc9 |
+| 5: The readings and the defaults | dev | done: 1080p output, level spawn, release headless, median of last 30 of 300, 3 runs; RTX 3080 Laptop: upscale + sharpen 0.810 to 0.825 ms at 1.5 (0.889 to 0.899 at 1); hit at 1.5 / 1: 0.600 to 0.610 / 1.375 to 1.389 ms (43.5 %); light + temporal + a-trous 1.489 to 1.520 / 3.392 to 3.428 ms (43.8 %); RADV iGPU, no bar: frame 20.149 to 20.876 ms at 1.5, 38.658 to 40.955 at 1; `frame_bytes` 124 621 440 B at 1.5 = 86 835 840 (Plan 0024 frame at 1280 x 720) + 4 608 000 (rgba8 to output size) + 33 177 600 (histories), Phase 3 added no target; fly-through default scale 1.5 | committed with this row |
 | 6: The owner's windowed check | human | not started | |
 
 ### Notes
@@ -423,16 +423,49 @@ of Plan 0024 shrink to 44 % at scale 1.5.
   followup.
 - Phase 4: the golden's comparison is written in golden.rs (`assert_golden` in
   `tests/support/mod.rs` is fixed at 320 x 180).
+- Phase 5: the `--adapter` flag (Plan 0028) is not on this branch. The iGPU was selected with
+  `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json
+  __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json` (the only Vulkan
+  ICD and EGL vendor left are Mesa's; the headless run prints "headless on AMD Radeon Graphics
+  (RADV RENOIR)").
+- Phase 5: readings ran on 11a5bc9's render code with Phase 5's report lines (the commit of
+  this row); 1-minute load 4.7 to 10.4 under the exclusive perf lock (other lanes building).
+  "Scale 1.0" is jitter on (the upscaler accumulating at 1080p); one run each with the jitter
+  off: NVIDIA 5.210 ms, RADV 32.704 ms.
+- Phase 5: the HUD's upscale row shows while the upscaler runs (upscale and sharpen times,
+  the two sizes), yellow past 1.5 ms with the composite. The autopilot and the `--frames`
+  report print the internal size and `frame_bytes`; their per-pass p50 and p99 cover the
+  "upscale" and "sharpen" passes through `FRAME_PASSES`.
+- Phase 5: the fly-through's default scale is 1.5 (`DEFAULT_SCALE`), pending Phase 6.
+- Followup: on the RADV iGPU the upscale pass reads 4.8 ms at 1080p output (25 Lanczos taps
+  and 9 previous-hit taps per output pixel), against the 1.5 ms line's dev-box reading.
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature
+- **Public API changed:** `View` (`jitter`, `_pad2`; 112 bytes); `Params` (`output_size` for
+  `_pad8`); `Frame::with_sizes`, `set_sizes`, `internal_size`, `output_size`, `set_jitter`,
+  `jitter`, `upscaling`, `set_sharpness`, `sharpness`, `upscale_history`; `RenderScale`,
+  `jitter_at`, `JITTER_PHASES`, `UPSCALE_WGSL`, `SHARPEN_WGSL`; `FRAME_PASSES` gains "upscale"
+  and "sharpen" (8 passes); `Frame::target` is the output-size image while upscaling; shaders:
+  new `upscale.wgsl`, `sharpen.wgsl`, `reproject_centred` in `march.wgsl` (`project_prev` no
+  longer takes a jitter); fly-through flags `--internal-scale` (default 1.5), `--jitter`
+  (default on), `--sharpen` (default 0.5).
+- **Budget readings:** `nfr.md` §2 upscale line, RTX 3080 Laptop (Vulkan, 615.78.08), 1080p
+  output, scale 1.5: upscale 0.729 to 0.748 + sharpen 0.076 to 0.081 + composite 0.142 to
+  0.145 ms; primary rays (hit) 0.600 to 0.610 ms at 1.5 against 1.375 to 1.389 at 1; lighting
+  and denoise (light + temporal + a-trous) 1.489 to 1.520 against 3.392 to 3.428; frame 3.053
+  to 3.103 against 5.980 to 6.038. RADV RENOIR (Mesa 26.2.5): frame 20.149 to 20.876 ms at
+  1.5 against 38.658 to 40.955 at 1, upscale 4.786 to 4.872. §3 `frame_bytes` 124 621 440 B
+  at 1.5, 228 556 800 B at 1 with the jitter on. All on the render code of 11a5bc9.
+- **Gate at the tip:** `cargo build` (via nextest) exit 0; `cargo nextest run --workspace
+  --test-threads 2`: 595 run, 595 passed, 5 skipped; `cargo test --doc --workspace`: 7
+  passed, 0 failed; `cargo clippy --workspace --all-targets -- -D warnings` exit 0; `cargo fmt
+  --all --check` exit 0; `cargo deny check` exit 0 (advisories, bans, licenses, sources ok).
+  The 11 `assert_golden` renders byte-identical to 578c8d3's.
+- **Outstanding `human` phases:** Phase 6, the owner's windowed check.
 
 ## Followups
 

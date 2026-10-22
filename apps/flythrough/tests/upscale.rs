@@ -854,3 +854,25 @@ fn temporal_age_under_the_jitter() {
         }
     }
 }
+
+/// `frame_bytes` at scale 1.5 and 1080p output is Plan 0024's frame with its targets at the
+/// internal 1280 x 720, its `rgba8` target grown to the output size, plus two output-size
+/// `rgba16float` histories, and no more.
+#[test]
+fn frame_bytes_add_the_histories_and_the_output_target() {
+    let Some((device, _queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let output = [1920u32, 1080];
+    let internal = vxe_render::RenderScale::OneHalf.internal(output);
+    let plain = Frame::with_sizes(&device, internal, internal).frame_bytes();
+    let up = Frame::with_sizes(&device, internal, output).frame_bytes();
+    let px = |[w, h]: [u32; 2]| u64::from(w) * u64::from(h);
+    let histories = 2 * 8 * px(output);
+    let grown = 4 * (px(output) - px(internal));
+    println!(
+        "frame_bytes at 1080p output: scale 1.5 {up} B, its targets at 1280x720 without the upscaler {plain} B, histories {histories} B, rgba8 growth {grown} B; scale 1 {} B",
+        Frame::with_sizes(&device, output, output).frame_bytes()
+    );
+    assert_eq!(up, plain + histories + grown);
+}
