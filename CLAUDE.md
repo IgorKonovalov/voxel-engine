@@ -82,7 +82,7 @@ scripts/
 
 ## How we work
 
-Two skills run a plan-driven loop:
+Two skills run a plan-driven loop, and `orchestrate` runs several lanes of it at once:
 
 | Skill       | Owns | Triggers on |
 |-------------|------|-------------|
