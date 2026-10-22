@@ -231,3 +231,34 @@ In code, this supersedes ADR-0002's `Full` clause: `Brick::Full` holds a packed 
 - **The mirror bytes did not move.** The upload maps palette entries to chunk-palette indices
   from their match words. The level still reads 232 436 992 B live, the goldens are unchanged
   byte for byte, and the first sync of the level fell from about 585 to about 190 ms.
+
+Added 2026-10-22 at the Plan 0028 close (v0.28.0), from the plan's readings and its
+fresh-session review. The mirror-slot step is in, so all three steps of this decision are
+done (Plans 0015, 0021 and 0028). In code, this supersedes ADR-0004's mirror layout: the
+per-chunk palette, the one-byte indices and the separate masks buffer are gone.
+
+- **The same bytes on the CPU and in the mirror.** A `Full` brick's slot is a run of 64-byte
+  units: the opaque mask, a header (the brick's palette, the two translucent `2^3` words, the
+  surface prefix popcounts, the attribute unit count), then its plane units copied from the
+  CPU words, or 16 units of raw ids above 16 materials. `upload_brick` narrows nothing. One
+  addition to the Decision's layout: a planar brick holding a translucent voxel carries one
+  more unit, its translucent voxels, after its planes. Records are 2112 B (no palette).
+- **Memory.** The level's mirror reads 62 846 720 B live plain (232 436 992 B before) and
+  157 872 640 B with contour attributes (680 491 136 B before). The streamed default at 16/24
+  reaches full residency with `r_full` 16 at 871 679 852 B live, pressure peak 0.65 (records),
+  where it settled at `r_full` 13 with 2.86 GB at pressure 0.91: the pressure rule no longer
+  fires. Slots sit in bins of unit counts over ADR-0013's pages; spare units at full residency
+  read 0.10 % of live (`docs/nfr.md` section 3).
+- **The image did not move.** Every golden renders byte for byte, the walk over single voxels
+  still matches the walk with every skip, and the hit pass at the level's spawn reads 1.26 to
+  1.31 ms plain against the same before (dev box, loaded).
+- **The contour attribute is stored for surface voxels only,** addressed by popcount of a
+  chunk-local surface mask computed at upload (a chunk face counts as air, so no neighbour
+  chunk is read). The chunk-local rule stores 1.565 times the exact plane-voxel count at 16/24.
+  The attribute pass had to change shape to hold its 1.0 ms p99 at `r_full` 16: four bricks a
+  workgroup, no clear items, LOD-only neighbours read through their mips; it reads p99 0.71 to
+  0.75 ms with a 25 ms backlog age on the dev box, 2.5 ms on the slow adapter.
+- **Narrowing left `sync`, and the surface mask took its place in the default look.** Plain
+  `sync` p50 fell from about 4.9 to 0.17 ms; the default look's reads 3.1 ms, the surface masks
+  and the within-chunk neighbour re-uploads computed on the render thread. Moving them to the
+  stream workers is Plan 0028's followup.

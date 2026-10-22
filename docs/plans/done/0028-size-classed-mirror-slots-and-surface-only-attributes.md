@@ -1,17 +1,21 @@
 # 0028: Size-classed mirror slots: the packed brick's own bytes in the pool, no chunk palette, and contour attributes for surface voxels only
 
-> **Status:** in-progress (2026-10-22)
+> **Status:** done (closed 2026-10-22, v0.28.0). Every bar met: the level's mirror 232 to 63 MB
+> plain and 680 to 158 MB contour with every golden byte for byte, the default at 16/24 holding
+> `r_full` 16 at 0.87 GB and pressure 0.65, the amended attribute pass p99 0.71 to 0.75 ms with a
+> 25 ms backlog age, plain `sync` p50 0.17 ms; the default look's `sync` (3.1 ms p50, the
+> surface masks on the render thread) is the open followup.
 > **Created:** 2026-10-21
 > **Milestone:** M2 in `docs/roadmap.md` (ADR-0012's third and last step; the contour
 > footprint ADR-0011 and Plan 0013 owe; `nfr.md` §3)
-> **Related ADRs:** [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
+> **Related ADRs:** [ADR-0012](../../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md)
 > (the decision this plan finishes: the same bytes on the CPU and in the mirror, size classes
 > of 64-byte units, surface-only attributes by popcount),
-> [ADR-0013](../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) (the reservation, page
+> [ADR-0013](../../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) (the reservation, page
 > re-kinding and the pressure rule, which carry over to bins),
-> [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md) (the
+> [ADR-0011](../../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md) (the
 > attribute's encoding and `NO_PLANE`, unchanged; its page layout goes),
-> [ADR-0004](../adrs/0004-palette-narrowed-sharded-brick-pool.md) (the shards and bindings,
+> [ADR-0004](../../adrs/0004-palette-narrowed-sharded-brick-pool.md) (the shards and bindings,
 > which stand; its per-chunk palette goes, as ADR-0012 says)
 > **Source:** ADR-0012's Decision and Outcome; Plan 0013's Followups (the footprint), Plan
 > 0017's Followups (page fragmentation), Plan 0023's Followups (the attribute pass's GPU cost,
@@ -533,6 +537,16 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
+- **The default look's render-thread `sync`** (close review, 2026-10-22): p50 3.086 ms on the
+  dev box and 16.0 ms on the slow adapter, against plain's 0.17 ms and the 1.0 ms line; the
+  chunk-local surface masks and the within-chunk neighbour re-uploads run in it. The owner's
+  windowed `update + poll + sync` p50 read 8.2 ms against Plan 0027's 4.4 ms (overlay shown).
+  No profile of the default flight's `sync` was recorded at Phase 4. Profile it, then decide
+  whether the surface mask moves to the stream workers (ADR-0017's hook). Plain `sync` p99 also
+  doubled (29.5 against 13.4 to 14.4 ms) under load; re-read it quiet.
+- **Light extraction's p99 miss** (Plan 0024's close assigned it here; this plan's scope left it
+  out): `exposed_emitters` now reads the header's palette, and nothing re-read the extraction
+  cost. It stays a recorded miss without a plan.
 - At close: ADR-0012 gets its final Outcome addendum (the mirror format in; the three plans
   done); ADR-0011's index row drops "footprint via the pressure rule"; ADR-0013's Outcome
   records bins as the page kinds.

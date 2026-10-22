@@ -200,7 +200,20 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024 and 0027 closed; Plans 0028 to 0030 drafted 2026-10-21)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027 and 0028 closed; Plans 0029 and 0030 drafted 2026-10-21)
+
+Plan 0028 closed 2026-10-22 (v0.28.0, ADR-0012's last step, with Outcomes on ADR-0012,
+ADR-0013 and ADR-0011): a `Full` brick's mirror slot is its packed CPU bytes in 64-byte units
+allocated in bins over ADR-0013's pages, the chunk palette and the masks buffer are gone, and
+the contour attribute is stored for a brick's chunk-local surface voxels only. The level's
+mirror fell from 232 to 63 MB plain and from 680 to 158 MB contour with every golden byte for
+byte; the default at 16/24 reaches full residency at `r_full` 16 with 0.87 GB live and pressure
+0.65, so the pressure rule no longer fires. The attribute pass, rebuilt at four bricks a
+workgroup, reads p99 0.71 to 0.75 ms with a 25 ms backlog age; plain `sync` p50 fell to 0.17 ms
+under the streaming line. The default look's `sync` reads 3.1 ms p50 (the surface masks on the
+render thread), its followup; light extraction's p99 miss stays open without a plan. The
+fly-through gains `--adapter`, and the first slow-adapter (RADV iGPU) readings are in `nfr.md`.
+The owner's windowed flights at full detail "feel fine".
 
 Plan 0024, the lighting plan, closed 2026-10-22 (v0.27.0, ADR-0018 and ADR-0025 accepted with
 Outcomes): a hit pass, a light pass with one emissive sample resampled from a near-emitter
@@ -286,7 +299,7 @@ list, edit-box or gradient history, half or full lighting resolution. It starts 
 plan follow it (owner, 2026-10-21). The plans around it were drafted on 2026-10-21:
 [Plan 0027](plans/done/0027-mirror-uploads-through-a-staging-belt.md) (ADR-0022, the streaming
 line's copies through a staging belt; closed 2026-10-21),
-[Plan 0028](plans/0028-size-classed-mirror-slots-and-surface-only-attributes.md) (ADR-0012's
+[Plan 0028](plans/done/0028-size-classed-mirror-slots-and-surface-only-attributes.md) (ADR-0012's
 mirror-slot step, after Plans 0024 and 0027),
 [Plan 0029](plans/0029-indirect-light-probe-volume.md) (ADR-0023: indirect light from a probe
 volume that scrolls with the camera, the owner's choice over a per-pixel bounce) and

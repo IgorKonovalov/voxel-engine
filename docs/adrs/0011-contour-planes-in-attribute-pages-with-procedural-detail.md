@@ -169,3 +169,11 @@ face mode without attribute pages.
   two) and the bind group are kept between calls. The GPU chunk table is created filled with
   `ABSENT`, so a boundary brick next to an absent chunk reads its plane. A headless test covers
   the shell recompute when a neighbour arrives and leaves.
+
+Added 2026-10-22, from Plan 0028 (ADR-0012's mirror-slot step):
+
+- **The footprint is settled, and the attribute pages are gone.** The attribute's encoding and
+  `NO_PLANE` are unchanged; it is now stored inside a full chunk's brick slot for its
+  chunk-local surface voxels only, addressed by popcount. The level's contour mirror reads
+  157 872 640 B live (680 491 136 B before), and the default holds `r_full` 16 at 16/24 without
+  the pressure rule.

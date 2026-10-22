@@ -644,7 +644,9 @@ at pressure 0.755 to 0.763, none empty, longest streak 3. Both returned `return:
 hash match` with no wgpu error. The default look therefore holds full detail to the radius
 the rule settles at, 12 to 13 chunks (76.8 to 83.2 m), against this section's "about 100 m",
 until ADR-0012's mirror-slot plan stores the attribute for surface voxels only; `--look
-plain` holds 16 (102 m).
+plain` holds 16 (102 m). Since Plan 0028 (surface-only attributes, below) the default holds
+`r_full` 16 (102 m) at 0.87 GB live with pressure 0.65: the "about 100 m" figure is met in both
+looks on the dev reference.
 
 **The pressure rule's gate (Plan 0017 Phase 3, same machine and flags, r_full 16, r_lod 24,
 no `--look`, `--mirror-budget 1930`: 3 043 328 slots and 93 239 records, 2 021 964 224 B,

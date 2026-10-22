@@ -19,7 +19,7 @@
 > **Source:** the owner's outdoor answers (2026-10-22: view range about 1 km with the
 > far-field clipmap); the roadmap's far-field note and its "Floor, profiles and scene scale"
 > decision; ADR-0003's Negative on LOD generation cost.
-> **Starts after:** [Plan 0028](0028-size-classed-mirror-slots-and-surface-only-attributes.md)
+> **Starts after:** [Plan 0028](done/0028-size-classed-mirror-slots-and-surface-only-attributes.md)
 > closes (this plan's byte arithmetic is in its 64-byte units, its 2112-byte record and its
 > header; it rewrites what `upload_brick` and the records hold) and Plan 0032 closes (its
 > outdoor testbed source is this plan's scene, its directional sample is the shadow ray Phase 6
