@@ -200,7 +200,17 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024 and 0027 closed; Plans 0028 to 0030 drafted 2026-10-21)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027 and 0030 closed; Plans 0028 and 0029 drafted 2026-10-21)
+
+Plan 0030, the upscaler plan, closed 2026-10-22 (v0.28.0, ADR-0024 accepted with an Outcome):
+an internal resolution, a per-frame Halton ray jitter, lighting passes that ignore it, an
+upscale pass at the output size (hit-position reprojection, a 3 x 3 Gaussian, a Catmull-Rom
+history fetch, a light-change clip) and RCAS. It meets its headless bars and the upscale line
+on the dev box (0.76 ms at scale 1.5), and halves the frame's GPU time on both adapters at 720p
+for 1080p, but the owner's eye kept Plan 0024's frame (scale 1, jitter off) as the default: the
+upscaler ships as an opt-in performance setting, and an FSR 2 port (ADR-0024 Alternative A) is
+Plan 0041 with ADR-0034 (proposed). §2's "with the upscaler allowed" therefore rests on an
+opt-in path until that plan reads.
 
 Plan 0024, the lighting plan, closed 2026-10-22 (v0.27.0, ADR-0018 and ADR-0025 accepted with
 Outcomes): a hit pass, a light pass with one emissive sample resampled from a near-emitter
@@ -290,7 +300,7 @@ line's copies through a staging belt; closed 2026-10-21),
 mirror-slot step, after Plans 0024 and 0027),
 [Plan 0029](plans/0029-indirect-light-probe-volume.md) (ADR-0023: indirect light from a probe
 volume that scrolls with the camera, the owner's choice over a per-pixel bounce) and
-[Plan 0030](plans/0030-temporal-upscaler.md) (ADR-0024: a temporal upscaler of our own over
+[Plan 0030](plans/done/0030-temporal-upscaler.md) (ADR-0024: a temporal upscaler of our own over
 an FSR 2 port). The edit-cost pass M1's paragraph names, Plan 0031, closed 2026-10-21.
 
 **Goal:** the consumer's P0 rendering bar. Few lights, emissive voxels, destruction, no ghosting.

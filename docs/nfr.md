@@ -141,7 +141,7 @@ Both are under the 3.0 ms line; the loaded readings above overstated them by 0.3
 **The upscaler at 1080p output (dev reference, Plan 0030 Phase 5, render code at 11a5bc9,
 the release `flythrough --headless --level --render 1920x1080 --frames 300` from the spawn
 pose, median of the last 30 frames, three runs each, exclusive perf lock, 1-minute load 4.7 to
-10.4 from other lanes' builds):** on the NVIDIA GeForce RTX 3080 Laptop GPU (Vulkan, driver
+10.4 from other lanes' builds: loaded, indicative):** on the NVIDIA GeForce RTX 3080 Laptop GPU (Vulkan, driver
 615.78.08), scale 1.5 (1280 x 720 internal): frame 3.053 to 3.103 ms, hit 0.600 to 0.610,
 light 0.878 to 0.900, temporal 0.070 to 0.074, a-trous 0.541 to 0.549, composite 0.142 to
 0.145, upscale 0.729 to 0.748, sharpen 0.076 to 0.081; scale 1 (jitter on, the upscaler
@@ -172,6 +172,10 @@ temporal 0.492 to 0.503, a-trous 2.332 to 2.343, composite 1.126 to 1.134, upsca
 15.000 to 15.116, upscale 4.145 to 4.191, sharpen 0.646 to 0.653). Upscale, sharpen and
 composite read 0.755 to 0.770 ms on the dev box at scale 1.5; on the iGPU the upscale pass
 alone reads 3.2 ms.
+
+The default frame stays Plan 0024's (scale 1, jitter off, no upscaler; the owner's ruling at
+Plan 0030's close, ADR-0024's Outcome); the readings above are the opt-in performance setting
+(`--internal-scale 1.5 --jitter on`). An FSR 2 port (ADR-0034, proposed) is read against them.
 
 **The hit pass, split from the shading (dev reference, Plan 0024 Phase 1, same machine,
 exclusive perf lock, 1-minute load 7.3 to 8.0 from other work on the box, not quiet; the

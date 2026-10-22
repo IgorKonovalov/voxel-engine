@@ -1,13 +1,14 @@
 # ADR-0024: The upscaler is a temporal upscaler of our own, driven by jittered rays and the hit buffer, with a sharpening pass
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-22, at Plan 0030's close; see Outcome: shipped opt-in, not as the
+> default)
 > **Date:** 2026-10-21
 > **Amended:** 2026-10-22 (owner, at Plan 0030's Phase 2 stop, while proposed): Plan 0024's
 > lighting passes become jitter-aware, and history is accepted from a 3 x 3 neighbourhood.
 > Amended again 2026-10-22 (owner, at Plan 0030's windowed check, while proposed): the image
 > read blurry, so the history fetch, the reconstruction kernel, the blend weight and the
 > still-pixel clip are reworked by the plan's Phases 6 and 7 before the close.
-> **Related plan(s):** [Plan 0030](../plans/0030-temporal-upscaler.md)
+> **Related plan(s):** [Plan 0030](../plans/done/0030-temporal-upscaler.md)
 
 ## Context
 
@@ -116,4 +117,35 @@ for the indirect, entity and volumetric lines.
 
 ## Outcome
 
-_(Added at acceptance, from Plan 0030's readings and the owner's windowed check.)_
+**2026-10-22, Plan 0030's close (v0.28.0): our own upscaler shipped, opt-in, not as the
+default.** The decision above was built as written, with the 2026-10-22 amendments: a 3 x 3
+Gaussian reconstruction of width 0.6 output pixels, a Catmull-Rom history fetch, a blend
+weighted by the nearest sample's nearness (0.1 still, 0.2 where the history moved), and a
+still-pixel clip that fires where the lamp's term at the hit changed over the last 24 frames.
+Measured, headless on lavapipe at 384 x 216 output unless stated:
+
+- **Sharpness (stripe wall, sharpening 0, arm's length):** edge spread at scale 1 1.192 px
+  against native's 0.798 and the 2 x 2 supersampled reference's 1.186; at scale 1.5 1.252 px
+  against the bilinear blit's 1.718. Panning at 0.37 px a frame: 1.436 px (scale 1) and
+  1.780 px (1.5), against 2.020 and 2.404 for the first build (Lanczos-2, bilinear fetch).
+- **Still camera:** 2.840/255 from the supersampled reference against the bilinear blit's
+  3.044 and plain native's 2.066.
+- **Light changes:** a sweeping headlamp lags 5.82 (scale 1) and 5.92 (1.5) frames against
+  Plan 0024's frame's 5.38; a lamp step settles in 18 frames, as Plan 0024's frame does.
+- **Time (Plan 0030 Phase 8, 1080p output, render code 12c6c57, exclusive perf lock, 1-minute
+  load 2.3 to 4.5: loaded, indicative):** RTX 3080 Laptop at scale 1.5: upscale, sharpen and
+  composite 0.755 to 0.770 ms against the 1.5 ms line, frame 2.727 to 2.780 ms against 5.294
+  to 5.546 at scale 1 with the jitter on. RADV RENOIR iGPU: frame 18.797 to 18.865 ms at 1.5
+  against 38.011 to 38.246 at 1; the upscale pass alone 3.2 ms. `frame_bytes` 124 621 440 B
+  at scale 1.5. The readings are in `docs/nfr.md` §2 and §3.
+
+The owner's windowed check (Plan 0030 Phase 9, RTX 3080 Laptop) read the first build blurry
+and the reworked one better but not as good as Plan 0024's frame ("some ghosting ... maybe it
+is fine as a part of visual style"; scale 1 jittered "meh"; Plan 0024's frame "almost fine";
+"too much shadow motion" in face mode). His ruling: the default is Plan 0024's frame (scale
+1, jitter off, the upscaler not dispatched; the library's `Frame` defaults to the same), and
+the upscaler is a performance setting (`--internal-scale 1.5 --jitter on` in the fly-through,
+`Frame::with_sizes` and `Frame::set_jitter` in the library). The consequence the Positive list
+counted on, the floor rendering 44 % of the primary rays, is therefore available but not the
+default. Alternative A, an FSR 2 port, is taken up by ADR-0034 (proposed) and Plan 0041; if
+accepted it supersedes this decision's choice of upscaler.

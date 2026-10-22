@@ -1,6 +1,8 @@
 # 0030: A temporal upscaler of our own: jittered rays, reprojection by hit position, and a sharpening pass
 
-> **Status:** in-progress
+> **Status:** done (closed 2026-10-22, v0.28.0): the upscaler meets every amended bar headless
+> and on the dev box's time line, but the owner's eye kept Plan 0024's frame as the default; it
+> ships opt-in (`--internal-scale 1.5 --jitter on`) and an FSR 2 port is Plan 0041 (ADR-0034)
 > **Created:** 2026-10-21
 > **Amended:** 2026-10-22 by the owner's ruling at the Phase 2 stop (both of its unmet
 > done-whens): a new Phase 3 makes Plan 0024's lighting passes jitter-aware and carries the
@@ -14,9 +16,9 @@
 > 2026-10-22 (owner, Phase 6)" below)
 > **Milestone:** M2 in `docs/roadmap.md` (the upscaler plan; `nfr.md` §2's "with the upscaler
 > allowed, internal resolution between 720p and 1080p")
-> **Related ADRs:** [ADR-0024](../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md)
+> **Related ADRs:** [ADR-0024](../../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md)
 > (proposed with this plan: our own temporal upscaler, FSR 2 and spatial-only rejected),
-> [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (the hit buffer and reprojection by hit position this plan reuses)
 > **Source:** Plan 0024's Followups (the upscaler plan); the owner's choice (2026-10-21);
 > `docs/references/voxel-optimizations.md` (FSR 2, its cost and the port's size).
@@ -828,3 +830,15 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 - Dynamic resolution against a frame-time target, once the slow adapter's frame readings
   exist.
+- An FSR 2 port (ADR-0024 Alternative A): Plan 0041, ADR-0034 (proposed), drafted on main at
+  the owner's Phase 9 ruling.
+- `upscale.wgsl` and `sharpen.wgsl` are validated by naga unit tests in `marcher.rs` but are
+  not in `crates/vxe-render/tests/shader_portability.rs` (Phase 2 note; review minor).
+- `docs/references/voxel-optimizations.md` cites FSR 2 but not FSR 1's RCAS, whose
+  repository and MIT notice `sharpen.wgsl` carries (Phase 4 note; architect).
+- The fly-through's `Args::jitter` doc comment (`apps/flythrough/src/main.rs`) still says "on
+  by default" after Phase 9's default change (review minor).
+- On the RADV iGPU the upscale pass alone reads 3.2 ms at 1080p output against the 1.5 ms
+  line (Phase 8, loaded); the opt-in path on the slow adapter is the FSR 2 plan's comparison.
+- The opt-in upscaler's Phase 9 observations (some ghosting at scale 1.5, shadow motion from
+  the jitter in face mode) are the FSR 2 plan's baseline to beat.

@@ -20,7 +20,7 @@
 > 0024's branch as of 2b08d42 (`Frame`, `Lighting`, `light.wgsl`, `temporal.wgsl`,
 > `composite.wgsl`, the mode banner of its Phase 14) and Plan 0029's drafted names
 > (`ProbeVolume`, `probe_update.wgsl`, `probe_gather.wgsl`). The names dev finds in the tree
-> win. It is independent of [Plan 0030](0030-temporal-upscaler.md); whichever lands second
+> win. It is independent of [Plan 0030](done/0030-temporal-upscaler.md); whichever lands second
 > rebases `composite.wgsl`.
 
 ## TL;DR
