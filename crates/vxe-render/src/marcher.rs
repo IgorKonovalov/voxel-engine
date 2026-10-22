@@ -487,6 +487,106 @@ pub fn jitter_at(frame: u32) -> [f32; 2] {
     [halton(i, 2) - 0.5, halton(i, 3) - 0.5]
 }
 
+/// How the upscale pass reconstructs this frame's colour at an output pixel from the internal
+/// samples around it; `d` is a sample's distance from the output pixel's centre, in output
+/// pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reconstruction {
+    /// The Lanczos-2 weighted mean of the 5 x 5 samples around the nearest.
+    Lanczos2,
+    /// The nearest sample alone.
+    Nearest,
+    /// `exp(-2.29 (d / width)^2)` over the 3 x 3 samples around the nearest: at width 1,
+    /// Karis's Gaussian fit of a Blackman-Harris window of width 3.3 ("High Quality Temporal
+    /// Supersampling", 2014).
+    Gaussian,
+    /// The 4-term Blackman-Harris window of radius `1.65 width` over the 3 x 3.
+    BlackmanHarris,
+}
+
+/// How the upscale pass reads last frame's history at the reprojected position.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryFetch {
+    Bilinear,
+    /// The texel the position falls in.
+    Nearest,
+    /// Catmull-Rom over the 4 x 4 texels around the position, held non-negative.
+    CatmullRom,
+}
+
+/// The current colour's share of the upscale pass's blend where history is kept.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Blend {
+    /// [`Upscaler::alpha`].
+    Fixed,
+    /// [`Upscaler::alpha`] times the nearest sample's kernel weight over the kernel's peak: a
+    /// sample far from the output pixel's centre counts for less.
+    Nearness,
+}
+
+/// The upscale pass's reconstruction, history fetch and blend ([`Frame::set_upscaler`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Upscaler {
+    pub reconstruction: Reconstruction,
+    /// The width of [`Reconstruction::Gaussian`] and [`Reconstruction::BlackmanHarris`].
+    pub width: f32,
+    pub history_fetch: HistoryFetch,
+    pub blend: Blend,
+    /// The current colour's weight in the blend (see [`Blend`]).
+    pub alpha: f32,
+}
+
+impl Default for Upscaler {
+    fn default() -> Self {
+        Self {
+            reconstruction: Reconstruction::Lanczos2,
+            width: 1.0,
+            history_fetch: HistoryFetch::Bilinear,
+            blend: Blend::Fixed,
+            alpha: 0.1,
+        }
+    }
+}
+
+/// `UpTuning` in `upscale.wgsl`, field for field.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct UpscaleUniform {
+    reconstruction: u32,
+    fetch: u32,
+    blend: u32,
+    still_clip: u32,
+    width: f32,
+    alpha: f32,
+    _pad: [f32; 2],
+}
+
+impl Upscaler {
+    fn uniform(&self) -> UpscaleUniform {
+        UpscaleUniform {
+            reconstruction: match self.reconstruction {
+                Reconstruction::Lanczos2 => 0,
+                Reconstruction::Nearest => 1,
+                Reconstruction::Gaussian => 2,
+                Reconstruction::BlackmanHarris => 3,
+            },
+            fetch: match self.history_fetch {
+                HistoryFetch::Bilinear => 0,
+                HistoryFetch::Nearest => 1,
+                HistoryFetch::CatmullRom => 2,
+            },
+            blend: match self.blend {
+                Blend::Fixed => 0,
+                Blend::Nearness => 1,
+            },
+            still_clip: 0,
+            width: self.width,
+            alpha: self.alpha,
+            _pad: [0.0; 2],
+        }
+    }
+}
+
 /// The frame's lighting knobs beside the lamp's own ([`LightParams`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Lighting {
@@ -640,6 +740,9 @@ pub struct Frame {
     /// The sharpening pass's `con` (`Sharpen` in `sharpen.wgsl`).
     sharpen_params: wgpu::Buffer,
     sharpness: f32,
+    /// The upscale pass's tuning (`UpTuning` in `upscale.wgsl`).
+    upscale_params: wgpu::Buffer,
+    upscaler: Upscaler,
     history: std::sync::Mutex<History>,
     /// The output size the frame's image is presented at; the targets are at the internal
     /// size.
@@ -1005,6 +1108,7 @@ impl Frame {
                 Io::Float,
                 f16,
                 Io::Uniform,
+                Io::Uniform,
             ],
         );
         let sharpen_layout = io_layout(
@@ -1120,6 +1224,15 @@ impl Frame {
                 },
             ),
             sharpness: 0.0,
+            upscale_params: wgpu::util::DeviceExt::create_buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("upscale tuning"),
+                    contents: bytemuck::bytes_of(&Upscaler::default().uniform()),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                },
+            ),
+            upscaler: Upscaler::default(),
             history: std::sync::Mutex::new(History::default()),
             output,
             jitter: false,
@@ -1166,6 +1279,20 @@ impl Frame {
 
     pub fn sharpness(&self) -> f32 {
         self.sharpness
+    }
+
+    /// Sets the upscale pass's reconstruction, history fetch and blend from the next frame on.
+    pub fn set_upscaler(&mut self, queue: &wgpu::Queue, upscaler: Upscaler) {
+        self.upscaler = upscaler;
+        queue.write_buffer(
+            &self.upscale_params,
+            0,
+            bytemuck::bytes_of(&upscaler.uniform()),
+        );
+    }
+
+    pub fn upscaler(&self) -> Upscaler {
+        self.upscaler
     }
 
     /// Whether the upscale pass runs: the frame jitters or renders below its output size.
@@ -1712,6 +1839,7 @@ impl Frame {
                     Res::Tex(&hist[q]),
                     Res::Tex(&hist[c]),
                     Res::Buf(&self.edits),
+                    Res::Buf(&self.upscale_params),
                 ],
             )
         });

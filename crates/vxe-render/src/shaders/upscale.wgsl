@@ -15,6 +15,8 @@
 //                                        of the current colour (UPSCALE_ALPHA, or 1 without
 //                                        history)
 //   7  uniform           up_edits        the frame's edit boxes (temporal.wgsl's `Edits`)
+//   8  uniform           up_tuning       the reconstruction, history fetch and blend
+//                                        (`Upscaler` in marcher.rs)
 //
 // Coordinates: internal pixel `i` spans `[i, i + 1)` and this frame's sample of it lies at
 // `i + 0.5 + jitter`; output pixel `o`'s centre is at internal `(o + 0.5) size / output_size`.
@@ -54,7 +56,34 @@ struct UpEdits {
 
 @group(2) @binding(7) var<uniform> up_edits: UpEdits;
 
-const UPSCALE_ALPHA: f32 = 0.1;
+// `UpscaleUniform` in marcher.rs.
+struct UpTuning {
+    // 0: Lanczos-2 over the 5 x 5 samples around the nearest; 1: the nearest sample alone;
+    // 2: the Gaussian `exp(-2.29 (d / width)^2)` over the 3 x 3; 3: a Blackman-Harris window
+    // of radius `1.65 width` over the 3 x 3. `d` is the sample's distance from the output
+    // pixel's centre in output pixels.
+    reconstruction: u32,
+    // 0: bilinear; 1: the nearest texel; 2: Catmull-Rom over the 4 x 4 texels.
+    fetch: u32,
+    // 0: the current colour blends at `alpha`; 1: at `alpha` times the nearest sample's
+    // kernel weight over the kernel's peak.
+    blend: u32,
+    still_clip: u32,
+    width: f32,
+    alpha: f32,
+    _pad0: f32,
+    _pad1: f32,
+};
+
+@group(2) @binding(8) var<uniform> up_tuning: UpTuning;
+
+const RECON_LANCZOS2: u32 = 0u;
+const RECON_NEAREST: u32 = 1u;
+const RECON_GAUSSIAN: u32 = 2u;
+const RECON_BLACKMAN_HARRIS: u32 = 3u;
+const FETCH_NEAREST: u32 = 1u;
+const FETCH_CATMULL_ROM: u32 = 2u;
+const BLEND_NEARNESS: u32 = 1u;
 const CLIP_GAMMA: f32 = 1.0;
 const CLIP_STILL: f32 = 0.01;
 // temporal.wgsl's HISTORY_COS, HISTORY_DIST and HISTORY_DIST_PER_T.
@@ -86,6 +115,35 @@ fn lanczos2(x: f32) -> f32 {
     return 2.0 * sin(a) * sin(0.5 * a) / (a * a);
 }
 
+// The 4-term Blackman-Harris window of radius `r` at distance `d`, 1 at `d = 0`.
+fn blackman_harris(d: f32, r: f32) -> f32 {
+    if (d >= r) {
+        return 0.0;
+    }
+    let x = PI * d / r;
+    return 0.35875 + 0.48829 * cos(x) + 0.14128 * cos(2.0 * x) + 0.01168 * cos(3.0 * x);
+}
+
+// The reconstruction kernel's weight of a sample `d` output pixels (a vector) from the output
+// pixel's centre, 1 at the centre.
+fn up_kernel(d: vec2<f32>) -> f32 {
+    switch up_tuning.reconstruction {
+        case 2u: {
+            let s = up_tuning.width;
+            return exp(-2.29 * dot(d, d) / (s * s));
+        }
+        case 3u: {
+            return blackman_harris(length(d), 1.65 * up_tuning.width);
+        }
+        case 1u: {
+            return 1.0;
+        }
+        default: {
+            return lanczos2(d.x) * lanczos2(d.y);
+        }
+    }
+}
+
 fn to_ycocg(c: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(
         0.25 * c.x + 0.5 * c.y + 0.25 * c.z,
@@ -98,17 +156,43 @@ fn from_ycocg(c: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z);
 }
 
-// Last frame's history at continuous output position `h` (pixel centres at + 0.5), bilinear,
-// clamped to the edge.
-fn history_at(h: vec2<f32>) -> vec3<f32> {
+fn hist_texel(t: vec2<i32>) -> vec3<f32> {
     let n = vec2<i32>(params.output_size) - vec2<i32>(1);
+    return textureLoad(up_prev_hist_in, clamp(t, vec2<i32>(0), n), 0).xyz;
+}
+
+// Last frame's history at continuous output position `h` (pixel centres at + 0.5), clamped
+// to the edge: bilinear, the nearest texel, or Catmull-Rom over the 4 x 4 texels around `h`
+// (its negative lobes held off below zero; the clip bounds the overshoot above).
+fn history_at(h: vec2<f32>) -> vec3<f32> {
     let q = h - 0.5;
     let b = vec2<i32>(floor(q));
     let f = q - floor(q);
-    let t00 = textureLoad(up_prev_hist_in, clamp(b, vec2<i32>(0), n), 0).xyz;
-    let t10 = textureLoad(up_prev_hist_in, clamp(b + vec2<i32>(1, 0), vec2<i32>(0), n), 0).xyz;
-    let t01 = textureLoad(up_prev_hist_in, clamp(b + vec2<i32>(0, 1), vec2<i32>(0), n), 0).xyz;
-    let t11 = textureLoad(up_prev_hist_in, clamp(b + vec2<i32>(1, 1), vec2<i32>(0), n), 0).xyz;
+    if (up_tuning.fetch == FETCH_NEAREST) {
+        return hist_texel(vec2<i32>(floor(h)));
+    }
+    if (up_tuning.fetch == FETCH_CATMULL_ROM) {
+        // Catmull-Rom weights of the texels at offsets -1, 0, 1, 2 for fraction f.
+        let w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+        let w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+        let w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+        let w3 = f * f * (-0.5 + 0.5 * f);
+        var wx = array<f32, 4>(w0.x, w1.x, w2.x, w3.x);
+        var wy = array<f32, 4>(w0.y, w1.y, w2.y, w3.y);
+        var sum = vec3<f32>(0.0);
+        for (var y = 0; y < 4; y++) {
+            var row = vec3<f32>(0.0);
+            for (var x = 0; x < 4; x++) {
+                row += wx[x] * hist_texel(b + vec2<i32>(x - 1, y - 1));
+            }
+            sum += wy[y] * row;
+        }
+        return max(sum, vec3<f32>(0.0));
+    }
+    let t00 = hist_texel(b);
+    let t10 = hist_texel(b + vec2<i32>(1, 0));
+    let t01 = hist_texel(b + vec2<i32>(0, 1));
+    let t11 = hist_texel(b + vec2<i32>(1, 1));
     return mix(mix(t00, t10, f.x), mix(t01, t11, f.x), f.y);
 }
 
@@ -154,8 +238,11 @@ fn upscale(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let rec = unpack_hit(textureLoad(up_pos_in, near, 0), textureLoad(up_info_in, near, 0));
+    // Lanczos-2 reads the 5 x 5 samples around the nearest, the narrow kernels the 3 x 3.
+    let reach = select(1, 2, up_tuning.reconstruction == RECON_LANCZOS2);
     var sum = vec3<f32>(0.0);
     var w_sum = 0.0;
+    var w_near = 0.0;
     var lo_rgb = vec3<f32>(1e9);
     var hi_rgb = vec3<f32>(-1e9);
     var lo = vec3<f32>(1e9);
@@ -163,15 +250,18 @@ fn upscale(@builtin(global_invocation_id) gid: vec3<u32>) {
     var m1 = vec3<f32>(0.0);
     var m2 = vec3<f32>(0.0);
     var n = 0.0;
-    for (var dy = -2; dy <= 2; dy++) {
-        for (var dx = -2; dx <= 2; dx++) {
+    for (var dy = -reach; dy <= reach; dy++) {
+        for (var dx = -reach; dx <= reach; dx++) {
             let tap = near + vec2<i32>(dx, dy);
             if (any(tap < vec2<i32>(0)) || any(tap > last)) {
                 continue;
             }
             let c = textureLoad(up_colour_in, tap, 0).xyz;
             let d = (vec2<f32>(tap) + 0.5 + v.jitter - centre) / ratio;
-            let w = lanczos2(d.x) * lanczos2(d.y);
+            let w = up_kernel(d);
+            if (dx == 0 && dy == 0) {
+                w_near = w;
+            }
             sum += w * c;
             w_sum += w;
             if (abs(dx) <= 1 && abs(dy) <= 1) {
@@ -187,7 +277,7 @@ fn upscale(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
     var current = textureLoad(up_colour_in, near, 0).xyz;
-    if (w_sum > 1e-3) {
+    if (up_tuning.reconstruction != RECON_NEAREST && w_sum > 1e-3) {
         current = clamp(sum / w_sum, lo_rgb, hi_rgb);
     }
     var result = current;
@@ -220,7 +310,10 @@ fn upscale(@builtin(global_invocation_id) gid: vec3<u32>) {
                     if (m > 1.0) {
                         hy /= m;
                     }
-                    alpha = UPSCALE_ALPHA;
+                    alpha = up_tuning.alpha;
+                    if (up_tuning.blend == BLEND_NEARNESS) {
+                        alpha *= w_near;
+                    }
                     result = mix(from_ycocg(mid + hy), current, alpha);
                 }
             }
