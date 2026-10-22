@@ -1,6 +1,6 @@
 # 0043: Test tiers: a quick gate per phase, a GPU tier under the lock, the full suite at close
 
-> **Status:** in-progress
+> **Status:** done (2026-10-22): the three tiers split the suite exactly (470 + 124 + 5 = 599), the gpu-list gate bites its fixture, quick reads 45 s with no lock; v0.29.1. Phase 3's CI readings are owed by the first CI run on main
 > **Created:** 2026-10-22
 > **Milestone:** M7 in `docs/roadmap.md` (tooling: the gate every lane runs)
 > **Related ADRs:** none. The rejected options are recorded under Decision. None of them is a
@@ -353,3 +353,38 @@ All on the dev box, named with its commit. `docs/nfr.md` section 7 (startup and 
 2. Blessed references for the convergence tests, if the full tier at close still hurts.
 3. `target/` disk use: one integration binary per crate, or `debug = "line-tables-only"` for
    test builds.
+
+## Close
+
+Closed 2026-10-22 with a patch bump (v0.29.1, tooling only, the Plan 0012 precedent) after a
+fresh-session review with no blocker, major or minor finding.
+
+**Review readings** at `5877b8a` in the plan's worktree, dev reference (Ryzen 9 5900HS, RTX 3080
+Laptop GPU, lavapipe for the GPU tests), `CARGO_BUILD_JOBS=4`, memory-capped scopes, other lanes
+running (all timings loaded):
+
+- Gate: `cargo build --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo fmt --all --check` exit 0; `cargo test --workspace --doc` 7 passed; `cargo deny check`
+  advisories, bans, licenses, sources ok.
+- Partition, `cargo nextest list --workspace -T oneline` per profile, sorted: quick 470,
+  gpu 124, the slow override's filter alone 5, full 599, default 599, plain 599. The pairwise
+  intersections of quick, gpu and slow are empty; their sorted union equals full's list; full
+  equals the plain list. The 16 `vxe-render` tests in quick are its lib unit tests, none of
+  which opens a device.
+- Tiers run: quick 470 passed, 3 skipped, 45.4 s, no lock, 1-minute load 6.40 to 8.80; gpu
+  124 passed, 9 skipped, 201.5 s, exclusive perf lock, load 9.51 to 2.53; full 599 passed,
+  7 skipped, 327.1 s, exclusive perf lock, load 7.90 to 3.71.
+- `check-test-tiers.mjs`: exit 0 on the tree (52 test files, 8 binaries + 1 package); exit 1
+  on `scripts/fixtures/test-tiers` with exactly the README's three findings; on a scratch edit
+  of the tree's config dropping `binary_id(flythrough::look)` from the canonical filter only,
+  exit 1 naming the two drifted profile copies and `apps/flythrough/tests/look.rs`.
+- Hook bite tests 59 pass; doc links, comment hygiene, index rows and its self-test exit 0.
+- Text: the dev, orchestrate and architect skills, lane rules 1, 4 and 6 and `CLAUDE.md` name
+  the same tiers; every `nextest run` gate line names a `--profile` or says the bare run is
+  the full default. Lane rule 1 keeps the merge-main-into-a-lane exception from `87e4b67`, now
+  gated by the full tier under the lock.
+
+**Owed after the merge:** Phase 3's first and third done-when bullets (a green first CI run on
+Linux and its job time against run 39808788735's 981 s), recorded by the orchestrator in this
+plan's log on main, per the 2026-10-22 amendment. Plan 0029's lane adds its `indirect.rs` slow
+tests to the slow list when it merges main.
