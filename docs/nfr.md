@@ -254,6 +254,22 @@ build, load 3.88), p99 0.563 ms and age p99 2306.4 ms. On the slow adapter (AMD 
 Graphics, RADV RENOIR, `--adapter AMD`, load 7.27, no bar), 8192: p50 2.010 ms, p99 2.522 ms,
 age p99 5295.6 ms. The per-attempt readings are in Plan 0028's log.
 
+**Face against contour at the level's spawn, both adapters (dev reference, Plan 0039 Phase 1,
+the binary of 99e7bee, exclusive perf lock, 1-minute load 4.2 to 18.8 from the other lanes:
+loaded, indicative; `flythrough --level --headless --seed 1 --render 1920x1080 --frames 300
+--look face|contour --adapter NVIDIA|AMD`, median of the last 30 frames, three runs of each look
+alternated; the attribute pass from the level's initial fill and two `flythrough --autopilot
+--headless --seed 1 --look face|contour` flights each).** NVIDIA GeForce RTX 3080 Laptop GPU:
+face hit 1.290 to 1.375 ms, light 2.074 to 2.226, composite 0.316 to 0.338; contour hit 1.391 to
+1.470, light 2.147 to 2.276, composite 0.317 to 0.336; initial fill 16.4 to 16.5 ms for 383 608
+bricks in both looks (one contour run 11.8); autopilot attribute pass GPU p50 0.488 and 1.510
+ms, p99 0.740 and 2.483 ms (face), p50 0.482 and 0.811, p99 1.281 and 1.790 ms (contour). AMD
+Radeon Graphics (RADV RENOIR, `--adapter AMD`): face hit 8.749 to 8.798 ms, light 14.993 to
+15.039, composite 2.542 to 2.629; contour hit 9.307 to 9.310, light 15.585 to 15.616,
+composite 2.543 to 2.561; initial fill 94.2 to 94.8 ms; autopilot p50 2.010 to 2.025 ms, p99
+2.514 and 2.965 ms (face), 2.530 and 2.542 ms (contour). The NVIDIA flights' spread follows the
+load (face p99 2.483 ms at load 14.8, 0.740 at 8.4).
+
 **Mirror attribute pass (contour look), render-thread CPU: p99 under 4 ms on the dev reference,
 deferred work visible as face-mode normals for at most 250 ms** (budget, Plan 0023, ADR-0017;
 dev reference only). **Reading: a recorded miss (Plan 0023 Phase 6 quiet re-read, the Phase 6

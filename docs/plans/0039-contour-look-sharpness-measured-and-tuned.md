@@ -1,6 +1,6 @@
 # 0039: The contour look at arm's length: a sharpness metric, the sources of its softness, and named presets the owner compares
 
-> **Status:** approved (2026-10-22)
+> **Status:** in-progress
 > **Decisions:** Owner, 2026-10-22: the pick becomes the default and `--look contour` keeps today's look; the comparison runs where the plan proposes first; the face-mix candidate (C3) enters a preset only if it passes the axis-fraction guardrail; if no preset wins, today's default stays and the presets are opt-in; the plan starts right after Plan 0028 closes, without waiting for Plan 0030.
 > **Created:** 2026-10-22
 > **Milestone:** M2 in `docs/roadmap.md` (the surface look that Plan 0005 measured, ADR-0011
@@ -478,17 +478,73 @@ adapter; the readings go into `nfr.md` §2 as dev-reference lines labelled by ad
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The sharpness harness, the baselines and the source-isolation matrix | dev | not started | |
+| 1: The sharpness harness, the baselines and the source-isolation matrix | dev | done | committed with this row |
 | 2: The candidate mechanisms, each measured alone | dev | not started | |
 | 3: Named presets in the window | dev | not started | |
 | 4: The owner's comparison | human | not started | |
 | 5: The pick as the default | dev | not started | |
 
+### Phase 1 readings
+
+Lavapipe, 320 x 180, 64 static frames from a fresh `Frame` per reading, headlamp, rock at
+`ROCK_DETAIL` (4, 0.1). `face` and `contour` are the fly-through's looks: detail on.
+
+- `face_against_contour_on_the_wall`: face S_fine 0.23596, S_mid 0.28182; contour S_fine
+  0.19592, S_mid 0.24338.
+- `edge_spread` (normals view): face 0.80 px (0.062 voxel), contour 13.60 px (1.058 voxel);
+  with detail face 0.68 px, contour 13.67 px.
+- `look.rs` axis fraction A: face 100.00 %, contour 6.80 %; contour cavity normal error 7.38
+  degrees, silhouette 32 px against face 172.
+- `source_matrix` (S_fine / S_mid):
+
+| mode | detail | tier | filter | S_fine | S_mid |
+|---|---|---|---|---|---|
+| face | on | half | on | 0.23596 | 0.28182 |
+| face | off | half | on | 0.24744 | 0.30249 |
+| face | on | half | off | 0.24306 | 0.28576 |
+| face | off | half | off | 0.24980 | 0.30370 |
+| face | on | full | on | 0.26949 | 0.30141 |
+| face | off | full | on | 0.27947 | 0.31869 |
+| face | on | full | off | 0.27281 | 0.30259 |
+| face | off | full | off | 0.28091 | 0.31931 |
+| contour | on | half | on | 0.19592 | 0.24338 |
+| contour | off | half | on | 0.20611 | 0.25067 |
+| contour | on | half | off | 0.19793 | 0.24451 |
+| contour | off | half | off | 0.20618 | 0.25081 |
+| contour | on | full | on | 0.22638 | 0.25298 |
+| contour | off | full | on | 0.23423 | 0.25717 |
+| contour | on | full | off | 0.22779 | 0.25349 |
+| contour | off | full | off | 0.23421 | 0.25732 |
+
+  R: contour 0.860, face 0.865. Face-to-contour S_fine gap at the default 0.04004. Share of
+  the gap each switch recovers: H1 (half to full tier, filter off) +74.6 %; H2 (filter on to
+  off, full tier) +3.5 %; H3 (detail off to on, default tier) -25.4 % (detail lowers S_fine);
+  H4 (contour to face, detail off, full, filter off) +116.6 %. H6 normals-view S_fine: face
+  0.15544, contour 0.06932 (detail off); 0.16740, 0.07245 (on). At exposure 0.25 (not a plan
+  source): face S_fine 0.23574, S_mid 0.29795; contour 0.18036, 0.23438.
+- Timings: `docs/nfr.md` §2, "Face against contour at the level's spawn, both adapters"
+  (binary of 99e7bee, NVIDIA via `--adapter NVIDIA`, AMD via `--adapter AMD`, load 4.2 to 18.8,
+  loaded).
+
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: the edge scene's edge is the line `x = y = 63` (block `[63, 96)`), not 64: a face
+  on a brick boundary leaves uniform solid bricks, which carry no attributes and hit as cubes.
+- Phase 1: E is read on the `view = Normals` render, the horizontal normal angle from -x
+  toward -y as the signal, with the plan's plateau columns and 10 to 90 % rise. On the shaded
+  luminance the plan's premise fails: the headlamp's offset puts it almost on the edge's
+  bisector (both faces take n.l about 0.7), the ACES shoulder compresses the step, the faces
+  slope with the lamp's distance and cone, and contour's bevel is brighter than both faces.
+  Face's E <= 1 px is asserted on face without detail; with detail the rows carry the detail.
+- Phase 1: every sharpness reading builds a fresh `Frame`: on one frame, a reading after a
+  half-tier render of another look differed from a fresh one by about 0.5 % of S_fine after
+  64 frames and `reset_history` (state in the lighting targets survives the reset). Followup,
+  not acted on: what survives `reset_history`.
+- Phase 1: the wall at 1 m under the headlamp is near white: rock's radiance about 5.6 sits on
+  the ACES shoulder (display about 0.99), and the window's contrast is mostly shadow edges and
+  the cone's falloff (`target/look-sharpness/wall_*.png`). Not a source the plan names.
+- Phase 1: the side-by-side images and the readings above are of goldens blessed on lavapipe
+  (llvmpipe, Mesa 26.2.5).
 
 ### Close triggers
 

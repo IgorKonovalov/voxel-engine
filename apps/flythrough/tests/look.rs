@@ -4,11 +4,10 @@
 
 mod support;
 
+use support::sharpness::axis_fraction;
 use support::*;
-use vxe_render::gpu_world::{PAGE_UNITS, UNIT_BYTES};
-use vxe_render::{
-    Frame, GpuWorld, LightParams, LookParams, MirrorConfig, NormalMode, ViewMode, Window, wgpu,
-};
+use vxe_render::gpu_world::PAGE_UNITS;
+use vxe_render::{LightParams, LookParams, NormalMode, ViewMode};
 use vxe_world::World;
 
 /// Rock's detail in the look tests: the spike's `[scale, strength]`, pinned here so that the
@@ -29,52 +28,6 @@ fn look(normal_mode: NormalMode, view: ViewMode) -> LookParams {
     }
 }
 
-/// Pool bytes a mirror with attributes needs for `world`'s bricks, with a page of headroom
-/// for each bin's partly filled page.
-fn attr_pool_bytes(world: &World) -> u64 {
-    (flythrough::level_pool_units(world, true) + 10 * u64::from(PAGE_UNITS)) * UNIT_BYTES
-}
-
-/// `world` mirrored with contour attributes over a fixed window, shards capped at
-/// `max_shard_units`, its attributes filled.
-fn attr_rig_on(
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    world: &World,
-    max_shard_units: Option<u32>,
-) -> LookRig {
-    let cfg = MirrorConfig {
-        max_shard_units,
-        ..MirrorConfig::new(Window::Fixed(world.extent()))
-    };
-    let mut gpu = GpuWorld::with_surface_attrs(&device, cfg);
-    gpu.sync_now(world, &device, &queue)
-        .expect("mirror fits the adapter");
-    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-    let bricks = gpu.update_attrs(&mut enc);
-    queue.submit([enc.finish()]);
-    assert_eq!(
-        bricks,
-        world.stats().full_bricks,
-        "every Full brick has its attribute"
-    );
-    let mut frame = Frame::new(&device, WIDTH, HEIGHT);
-    // The walk and the look at full resolution: lighting at half would blur them.
-    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
-    LookRig {
-        device,
-        queue,
-        gpu,
-        frame,
-    }
-}
-
-/// [`attr_rig_on`] on the software adapter; `None` with a printed skip when there is none.
-fn attr_rig(world: &World) -> Option<LookRig> {
-    let (device, queue) = software_device(attr_pool_bytes(world).max(64 << 20))?;
-    Some(attr_rig_on(device, queue, world, None))
-}
-
 /// Cavity normal error (degrees) and pillar silhouette error (pixels) of `mode`, over mirrors
 /// without contour attributes.
 fn metrics(mode: NormalMode) -> Option<(f64, usize)> {
@@ -89,6 +42,22 @@ fn metrics_with(mode: NormalMode, attrs: bool) -> Option<(f64, usize)> {
 /// [`metrics_with`], with `detail` on and rock (the cavity's row 3, the pillar's rock) at
 /// [`SPIKE_ROCK_DETAIL`] when `detail` is set.
 fn metrics_of(mode: NormalMode, detail: bool, attrs: bool) -> Option<(f64, usize)> {
+    guardrails_of(mode, detail, attrs).map(|g| (g.normal_error, g.silhouette))
+}
+
+/// The guardrails of the "not a Lego look" bar: the cavity's normal error (degrees), the
+/// pillar's silhouette error (pixels) and the cavity's axis fraction `A`, the share of its
+/// hit pixels whose shading normal (detailed when `detail` is set) lies within 5 degrees of
+/// a coordinate axis.
+#[derive(Clone, Copy, Debug)]
+struct Guardrails {
+    normal_error: f64,
+    silhouette: usize,
+    axis_fraction: f64,
+}
+
+/// [`Guardrails`] of `mode` as [`metrics_of`] renders them.
+fn guardrails_of(mode: NormalMode, detail: bool, attrs: bool) -> Option<Guardrails> {
     let mut cavity_table = look_table();
     let mut pillar_table = flythrough::cave_materials();
     if detail {
@@ -119,6 +88,7 @@ fn metrics_of(mode: NormalMode, detail: bool, attrs: bool) -> Option<(f64, usize
     let cam = cavity_camera();
     let normals = rig.render(&cam, &LightParams::at_eye(), look(ViewMode::Normals));
     let normal_error = cavity_normal_error(&normals, &cam);
+    let axis = axis_fraction(&normals);
 
     let pillar = pillar_world_with(pillar_table);
     let mut rig = if attrs {
@@ -130,11 +100,16 @@ fn metrics_of(mode: NormalMode, detail: bool, attrs: bool) -> Option<(f64, usize
     let mask = rig.render(&cam, &LightParams::at_eye(), look(ViewMode::HitMask));
     let silhouette = pillar_silhouette_error(&mask, &cam);
     println!(
-        "{}{}: cavity normal error {normal_error:.2} degrees, pillar silhouette error {silhouette} pixels",
+        "{}{}: cavity normal error {normal_error:.2} degrees, pillar silhouette error {silhouette} pixels, axis fraction {:.2} %",
         mode.name(),
-        if detail { " + detail" } else { "" }
+        if detail { " + detail" } else { "" },
+        axis * 100.0
     );
-    Some((normal_error, silhouette))
+    Some(Guardrails {
+        normal_error,
+        silhouette,
+        axis_fraction: axis,
+    })
 }
 
 #[test]
@@ -292,6 +267,33 @@ fn contour_planes_cut_the_silhouette_and_normal_errors() {
     assert!(
         2 * silhouette <= face_silhouette,
         "contour silhouette {silhouette} pixels against face {face_silhouette}"
+    );
+}
+
+/// The axis fraction `A`: face mode's undetailed normals are all axes; contour's is printed,
+/// and contour still meets the cavity normal error and silhouette guardrails.
+#[test]
+fn axis_fraction_of_face_and_contour() {
+    let Some(face) = guardrails_of(NormalMode::Face, false, false) else {
+        return;
+    };
+    let contour = guardrails_of(NormalMode::Contour, false, true).unwrap();
+    println!(
+        "axis fraction: face {:.2} %, contour {:.2} %",
+        face.axis_fraction * 100.0,
+        contour.axis_fraction * 100.0
+    );
+    assert_eq!(face.axis_fraction, 1.0, "face mode's normals are axes");
+    assert!(
+        contour.normal_error <= 12.0,
+        "contour {:.2} degrees",
+        contour.normal_error
+    );
+    assert!(
+        2 * contour.silhouette <= face.silhouette,
+        "contour silhouette {} pixels against face {}",
+        contour.silhouette,
+        face.silhouette
     );
 }
 
