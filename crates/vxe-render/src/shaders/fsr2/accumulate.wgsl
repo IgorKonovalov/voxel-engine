@@ -22,12 +22,11 @@
 //   9  storage texture   lock_status_out          rg32float
 //   10 storage texture   upscaled_out             rgba16float
 //   11 storage texture   luma_history_out         rgba8unorm
-//   12 storage texture   output_out               rgba8unorm: the upscaled image while the
-//                                                 colour is display-encoded (`HDR` false)
 //
-// `HDR` (FFX_FSR2_OPTION_HDR_COLOR_INPUT) is defined before common.wgsl. The output is the
-// accumulated colour unprepared (FFX_FSR2_OPTION_APPLY_SHARPENING 0 writes it out; with
-// sharpening RCAS reads `upscaled_out` instead).
+// `HDR` (FFX_FSR2_OPTION_HDR_COLOR_INPUT) is defined before common.wgsl. The upscaled image is
+// `upscaled_out`'s rgb, the accumulated colour unprepared: AMD's pass also writes it to its
+// output when sharpening is off (FFX_FSR2_OPTION_APPLY_SHARPENING 0), and the tone pass reads
+// it here instead.
 
 @group(1) @binding(0) var exposure_in: texture_2d<f32>;
 @group(1) @binding(1) var dilated_reactive_in: texture_2d<f32>;
@@ -41,7 +40,6 @@
 @group(1) @binding(9) var lock_status_out: texture_storage_2d<rg32float, write>;
 @group(1) @binding(10) var upscaled_out: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(11) var luma_history_out: texture_storage_2d<rgba8unorm, write>;
-@group(1) @binding(12) var output_out: texture_storage_2d<rgba8unorm, write>;
 
 // ffx_fsr2_common.h's AccumulationPassCommonParams.
 struct AccumulationParams {
@@ -409,6 +407,5 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3<u32>) {
     finalize_lock_status(params, lock_status, upsampled.w);
     let reactive_out = compute_temporal_reactive_factor(params, this_frame_reactive);
     textureStore(upscaled_out, hr_pos, vec4<f32>(history, reactive_out));
-    textureStore(output_out, hr_pos, vec4<f32>(history, 1.0));
     new_locks[new_lock_index(hr_pos)] = 0.0;
 }

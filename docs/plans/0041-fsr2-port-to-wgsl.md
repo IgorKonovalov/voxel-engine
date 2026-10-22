@@ -481,8 +481,8 @@ and the owner weighs it in Phase 7.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The walking skeleton: FSR 2's accumulate pass end to end on lavapipe | dev | done | committed with this row |
-| 2: HDR in, tone after, the exposure seam and the masks | dev | not started | |
+| 1: The walking skeleton: FSR 2's accumulate pass end to end on lavapipe | dev | done | 80aed60 |
+| 2: HDR in, tone after, the exposure seam and the masks | dev | done | committed with this row |
 | 3: The remaining passes: luminance pyramid, previous depth, depth clip, lock | dev | not started | |
 | 4: RCAS, and the sharpness bars still and panning | dev | not started | |
 | 5: Lights, flicker and shadow motion | dev | not started | |
@@ -539,6 +539,32 @@ to 15.7 from the other lanes, so no timing is taken here).
   phase's `composite.wgsl` line, which was being written; the phase's tree alone then re-ran
   `fsr2`, `golden`, `upscale` and `vxe-render`: 30 passed, 4 skipped); doctests 7 passed.
 
+**Phase 2** (lavapipe; exclusive perf lock; 1-min load 11.0, loaded).
+
+- The composite's FSR variant (`marcher::composite_hdr_source`: `HDR_TARGET` true, the target
+  rgba32float) stores linear radiance before exposure; the tone pass (`fsr2/tone.wgsl`) applies
+  `display`'s arithmetic, copied; accumulate runs with `HDR`. The input pass writes the
+  reactive mask (rgba8unorm: x reactive, y the transparency-and-composition mask, 0), and
+  accumulate reads it undilated until Phase 3.
+- Exposure seam, the manual case (Plan 0040 has not landed): FSR's 1x1 exposure texel is
+  `params.exposure` each frame, `preExposure` 1, the tone pass applies the full exposure.
+- Done-when 1 (scale 1, jitter off, the upscaler bypassed with `Fsr2::set_bypass`): 0 bytes
+  differ on the primary, headlamp, translucent and LOD golden poses (34 486, 34 906, 34 635,
+  34 527 lit pixels). With an rgba16float colour target instead, primary differs in 1 492
+  bytes (measured, then reverted).
+- Done-when 2 (level, scale 1.5, reactive_light 0.6, reactive_translucent 0.8): lamp switched
+  on over a settled still camera, 20 604 hits whose lamp term exceeds 0.0105 read 153/255,
+  16 203 below 0.0095 read 0, none off; radius-6 carve at t = 30.5, 2 112 hits in the dilated
+  box read 255 and 34 752 outside read 0; behind the glass slab of `translucent.png`'s scene,
+  4 900 pixels, largest error 1/255.
+- Done-when 3 (stripe wall, arm's length, scale 1): the exposure texel reads the doubled
+  exposure on the frame of the change; settled, FSR's image against Plan 0024's frame at the
+  doubled exposure: mean 1.115/255.
+- Done-when 4: Phase 1's bars on the HDR path: B ES 1.718 px, GE 0.00435; FSR at 1.5 ES 1.479
+  px, GE 0.00530; motion error 2.94e-5 internal pixels; `off` byte for byte.
+- Gate: clippy, fmt clean; `cargo nextest run -p flythrough -p vxe-render --test-threads 2`
+  252 passed, 7 skipped.
+
 ### Notes
 
 - Names: the plan's names match the merged tree (`jitter_at`, `reproject_centred`,
@@ -557,6 +583,14 @@ to 15.7 from the other lanes, so no timing is taken here).
   the depth-clip pass takes it over in Phase 3.
 - The upscaler rigs moved from `upscale.rs` to `apps/flythrough/tests/support/rigs.rs`;
   `Shot::upscaler` became `Shot::kind` (`UpscalerKind`).
+- FSR's colour input is rgba32float, not the plan's rgba16float (Phase 2): the lossless bar
+  holds only with f32 radiance (1 280 x 720: 14.75 MB, not 7.37 MB).
+- Phase 2 also touched `shader_portability.rs` (the tone pass and the composite's variant)
+  and `tests/support/rigs.rs` (the carve, lamp-term and glass-scene helpers), outside its list.
+- In FSR mode every view but the shaded one reaches FSR in display values and the tone pass
+  stores it clamped, unchanged.
+- The input pass reads the light-change thresholds and the older lamp from the upscale pass's
+  uniform (`UpscaleUniform`, `Upscaler::change_frames` 24 by default).
 
 ### Close triggers
 

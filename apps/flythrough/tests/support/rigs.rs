@@ -537,3 +537,105 @@ pub fn project(v: &vxe_render::View, p: [f32; 3]) -> Option<[f64; 2]> {
         f64::from(v.rect[1]) + w * f64::from(v.rect[3]),
     ])
 }
+
+/// A radius-6 carve where the view axis of `camera` (looking +x) meets rock, applied to
+/// `world`: the carve's `aabb` and its distance along the axis in voxels.
+pub fn carve_in_view(
+    world: &World,
+    camera: &vxe_render::Camera,
+) -> ((VoxelCoord, VoxelCoord), f64) {
+    let o = Fixed3(
+        camera
+            .position
+            .to_array()
+            .map(|c| (c * FIXED_ONE as f32) as i64),
+    );
+    let hit = world
+        .raycast(o, [FIXED_ONE, 0, 0], 400 * FIXED_ONE)
+        .expect("the view ray is in range")
+        .expect("the view ray meets rock");
+    let carve = EditOp::sphere(
+        Fixed3([o.0[0] + hit.t, o.0[1], o.0[2]]),
+        6 * FIXED_ONE,
+        Mode::Carve,
+    );
+    let aabb = world
+        .apply(&carve)
+        .expect("the carve applies")
+        .aabb
+        .expect("the carve removes rock");
+    (aabb, hit.t as f64 / FIXED_ONE as f64)
+}
+
+/// Whether `p` lies in `aabb` dilated by one voxel, faces included (the passes' edit test).
+pub fn in_dilated(p: [f32; 3], (min, max): (VoxelCoord, VoxelCoord)) -> bool {
+    (0..3).all(|k| p[k] >= (min.0[k] - 1) as f32 && p[k] <= (max.0[k] + 2) as f32)
+}
+
+/// The octahedral snorm16 normal of a hit record (`octa16_decode` in `march.wgsl`).
+pub fn octa16_normal(u: u16, v: u16) -> [f32; 3] {
+    let p = [u as i16, v as i16].map(|q| f32::from(q) / 32767.0);
+    let mut n = [p[0], p[1], 1.0 - p[0].abs() - p[1].abs()];
+    if n[2] < 0.0 {
+        let s = |x: f32| if x >= 0.0 { 1.0 } else { -1.0 };
+        n = [
+            (1.0 - n[1].abs()) * s(n[0]),
+            (1.0 - n[0].abs()) * s(n[1]),
+            n[2],
+        ];
+    }
+    let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+    n.map(|c| c / l)
+}
+
+/// The headlamp's unshadowed term of `params` at `p`, normal `n` (`up_lamp` in
+/// `upscale.wgsl`): `intensity * cone * max(n.l, 0) / dist^2`.
+pub fn lamp_term(params: &vxe_render::marcher::Params, p: [f32; 3], n: [f32; 3]) -> f32 {
+    let to: Vec<f32> = (0..3).map(|k| params.light_pos[k] - p[k]).collect();
+    let dist2 = (to[0] * to[0] + to[1] * to[1] + to[2] * to[2]).max(1e-4);
+    let l: Vec<f32> = to.iter().map(|c| c / dist2.sqrt()).collect();
+    let along = -(0..3).map(|k| l[k] * params.light_dir[k]).sum::<f32>();
+    let (e0, e1) = (params.cos_outer, params.cos_inner);
+    let t = ((along - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    let cone = t * t * (3.0 - 2.0 * t);
+    let ndl = (0..3).map(|k| n[k] * l[k]).sum::<f32>().max(0.0);
+    params.light_intensity * cone * ndl / dist2
+}
+
+/// The cave's table plus a translucent red glass row (opacity 0.5), and the glass's id.
+pub fn glass_table() -> (MaterialTable, MaterialId) {
+    let mut t = flythrough::cave_materials();
+    let glass = t.push(Material {
+        albedo: [0.9, 0.1, 0.1],
+        flags: MaterialFlags::TRANSLUCENT,
+        opacity: 0.5,
+        ..Material::named("glass")
+    });
+    (t, glass)
+}
+
+/// `translucent.png`'s scene: air over chunks `[0, 2)^3`, a rock wall at x `[44, 46)` and a
+/// glass slab at x `[36, 38)`, y and z `[56, 72)`; seen from [`translucent_camera`].
+pub fn translucent_world() -> World {
+    let (table, glass) = glass_table();
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [2, 2, 2]),
+        &UniformSource(0),
+        &table,
+    );
+    let fill = |min: [i64; 3], max: [i64; 3], m: MaterialId| {
+        let op = EditOp::box_(
+            Fixed3(min.map(|v| v * FIXED_ONE)),
+            Fixed3(max.map(|v| v * FIXED_ONE)),
+            Mode::Fill(m),
+        );
+        world.apply(&op).expect("the box is resident");
+    };
+    fill([44, 0, 0], [46, 128, 128], flythrough::cave::ROCK);
+    fill([36, 56, 56], [38, 72, 72], glass);
+    world
+}
+
+pub fn translucent_camera() -> vxe_render::Camera {
+    camera_looking_x([8.5, 64.5, 64.5])
+}

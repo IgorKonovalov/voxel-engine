@@ -13,8 +13,10 @@ use crate::marcher::{Dispatch, Params, Upscaler, WORKGROUP};
 pub const FSR2_COMMON_WGSL: &str = include_str!("shaders/fsr2/common.wgsl");
 /// FSR 2's accumulate pass, compiled after [`FSR2_COMMON_WGSL`].
 pub const FSR2_ACCUMULATE_WGSL: &str = include_str!("shaders/fsr2/accumulate.wgsl");
-/// Our input pass (depth, motion vectors), compiled after `march.wgsl`.
+/// Our input pass (depth, motion vectors, reactive mask), compiled after `march.wgsl`.
 pub const FSR2_INPUT_WGSL: &str = include_str!("shaders/fsr2/input.wgsl");
+/// Our tone pass (exposure, tone map, display encoding), compiled after `march.wgsl`.
+pub const FSR2_TONE_WGSL: &str = include_str!("shaders/fsr2/tone.wgsl");
 
 /// The source of an FSR pass: `HDR` (FFX_FSR2_OPTION_HDR_COLOR_INPUT), the common part, then
 /// the pass.
@@ -129,23 +131,27 @@ pub const SHADING_CHANGE_MIP: i32 = 4;
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct InputUniform {
     near: f32,
-    _pad: [f32; 3],
+    reactive_translucent: f32,
+    reactive_light: f32,
+    _pad: f32,
 }
 
 /// FSR 2's resources at one pair of sizes; replaced with the frame's targets.
 struct Resources {
     render: [u32; 2],
     display: [u32; 2],
-    /// The composite's colour at the render size (rgba8unorm, display-encoded).
+    /// The composite's linear colour at the render size (rgba32float: the tone pass of the
+    /// composite's own arithmetic reproduces its rgba8 bytes only from f32 radiance).
     colour: wgpu::Texture,
     /// Our input pass's depth (r32float) and motion vectors (rg32float).
     depth: wgpu::Texture,
     motion: wgpu::Texture,
     /// The prepared input colour (rgba16float: YCoCg, depth clip).
     prepared: wgpu::Texture,
-    /// Inputs held neutral: the dilated reactive masks (rgba8unorm, zero) and the luminance
-    /// mip (r32float, 0.5), 1 x 1.
-    reactive_neutral: wgpu::Texture,
+    /// Our input pass's reactive mask (x) and transparency-and-composition mask (y, zero),
+    /// rgba8unorm at the render size.
+    reactive: wgpu::Texture,
+    /// The luminance mip, held neutral (r32float 1 x 1, 0.5).
     luma_mip_neutral: wgpu::Texture,
     /// The exposure (rg32float 1 x 1, x).
     exposure: wgpu::Texture,
@@ -200,16 +206,16 @@ fn texture_bytes(t: &wgpu::Texture) -> u64 {
 
 impl Resources {
     fn new(device: &wgpu::Device, render: [u32; 2], display: [u32; 2]) -> Self {
-        use wgpu::TextureFormat::{R32Float, Rg32Float, Rgba8Unorm, Rgba16Float};
+        use wgpu::TextureFormat::{R32Float, Rg32Float, Rgba8Unorm, Rgba16Float, Rgba32Float};
         let pair = |label, format| [0, 1].map(|_| texture(device, label, format, display));
         Self {
             render,
             display,
-            colour: texture(device, "fsr2 colour", Rgba8Unorm, render),
+            colour: texture(device, "fsr2 colour", Rgba32Float, render),
             depth: texture(device, "fsr2 depth", R32Float, render),
             motion: texture(device, "fsr2 motion", Rg32Float, render),
             prepared: texture(device, "fsr2 prepared colour", Rgba16Float, render),
-            reactive_neutral: texture(device, "fsr2 reactive (neutral)", Rgba8Unorm, [1, 1]),
+            reactive: texture(device, "fsr2 reactive", Rgba8Unorm, render),
             luma_mip_neutral: texture(device, "fsr2 luma mip (neutral)", R32Float, [1, 1]),
             exposure: texture(device, "fsr2 exposure", Rg32Float, [1, 1]),
             upscaled: pair("fsr2 upscaled", Rgba16Float),
@@ -230,7 +236,7 @@ impl Resources {
             &self.depth,
             &self.motion,
             &self.prepared,
-            &self.reactive_neutral,
+            &self.reactive,
             &self.luma_mip_neutral,
             &self.exposure,
         ];
@@ -251,10 +257,15 @@ pub struct Fsr2 {
     cb_layout: wgpu::BindGroupLayout,
     accumulate_layout: wgpu::BindGroupLayout,
     accumulate: wgpu::ComputePipeline,
+    tone_layout: wgpu::BindGroupLayout,
+    tone: wgpu::ComputePipeline,
     cb: wgpu::Buffer,
     input_tuning: wgpu::Buffer,
     res: Resources,
     settings: Fsr2Settings,
+    /// The tone pass reads the composite's colour and FSR's passes are skipped
+    /// ([`Fsr2::set_bypass`]).
+    bypass: bool,
     /// The pre-exposure of the last encoded frame (`previousFramePreExposure`).
     pre_exposure: std::sync::Mutex<f32>,
 }
@@ -264,6 +275,8 @@ pub(crate) struct Fsr2Binds {
     cb: wgpu::BindGroup,
     input: wgpu::BindGroup,
     accumulate: wgpu::BindGroup,
+    tone: wgpu::BindGroup,
+    bypass: bool,
     render_groups: [u32; 2],
     display_groups: [u32; 2],
 }
@@ -275,6 +288,9 @@ impl Fsr2Binds {
         fsr: &'a Fsr2,
         world: &'a wgpu::BindGroup,
     ) -> Vec<Dispatch<'a>> {
+        if self.bypass {
+            return Vec::new();
+        }
         vec![
             Dispatch {
                 pipeline: &fsr.input,
@@ -287,6 +303,19 @@ impl Fsr2Binds {
                 workgroups: self.display_groups,
             },
         ]
+    }
+
+    /// The dispatches of the frame's sharpen slot: the tone pass.
+    pub(crate) fn sharpen<'a>(
+        &'a self,
+        fsr: &'a Fsr2,
+        world: &'a wgpu::BindGroup,
+    ) -> Vec<Dispatch<'a>> {
+        vec![Dispatch {
+            pipeline: &fsr.tone,
+            groups: [Some(world), None, Some(&self.tone), None],
+            workgroups: self.display_groups,
+        }]
     }
 }
 
@@ -451,6 +480,10 @@ impl Fsr2 {
                 store_entry(4, R32Float),
                 store_entry(5, Rg32Float),
                 store_entry(6, Rgba16Float),
+                tex_entry(7),
+                uniform_entry(8),
+                uniform_entry(9),
+                store_entry(10, Rgba8Unorm),
             ],
         );
         let input = pipeline(
@@ -477,15 +510,26 @@ impl Fsr2 {
                 store_entry(9, Rg32Float),
                 store_entry(10, Rgba16Float),
                 store_entry(11, Rgba8Unorm),
-                store_entry(12, Rgba8Unorm),
             ],
         );
         let accumulate = pipeline(
             device,
             "fsr2 accumulate",
-            fsr2_source(FSR2_ACCUMULATE_WGSL, false),
+            fsr2_source(FSR2_ACCUMULATE_WGSL, true),
             &[Some(&cb_layout), Some(&accumulate_layout)],
             "accumulate",
+        );
+        let tone_layout = layout(
+            device,
+            "fsr2 tone",
+            &[tex_entry(0), store_entry(1, Rgba8Unorm)],
+        );
+        let tone = pipeline(
+            device,
+            "fsr2 tone",
+            format!("{}\n{FSR2_TONE_WGSL}", crate::MARCH_WGSL),
+            &[Some(world_layout), None, Some(&tone_layout)],
+            "tone",
         );
         let buffer = |label, size| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -501,10 +545,13 @@ impl Fsr2 {
             cb_layout,
             accumulate_layout,
             accumulate,
+            tone_layout,
+            tone,
             cb: buffer("fsr2 constants", size_of::<Fsr2Constants>() as u64),
             input_tuning: buffer("fsr2 input tuning", size_of::<InputUniform>() as u64),
             res: Resources::new(device, render, display),
             settings,
+            bypass: false,
             pre_exposure: std::sync::Mutex::new(1.0),
         }
     }
@@ -522,6 +569,16 @@ impl Fsr2 {
 
     pub fn settings(&self) -> Fsr2Settings {
         self.settings
+    }
+
+    /// For tests at equal sizes: the tone pass reads the composite's linear colour directly,
+    /// FSR's passes are not dispatched and the rays are not jittered.
+    pub fn set_bypass(&mut self, bypass: bool) {
+        self.bypass = bypass;
+    }
+
+    pub fn bypassed(&self) -> bool {
+        self.bypass
     }
 
     /// Bytes FSR's resources occupy.
@@ -542,6 +599,22 @@ impl Fsr2 {
     /// The input pass's motion vectors (rg32float, render size, UV to the previous frame).
     pub fn motion(&self) -> &wgpu::Texture {
         &self.res.motion
+    }
+
+    /// The input pass's reactive mask (rgba8unorm, render size: x reactive, y the
+    /// transparency-and-composition mask).
+    pub fn reactive(&self) -> &wgpu::Texture {
+        &self.res.reactive
+    }
+
+    /// The composite's linear colour FSR reads (rgba32float, render size).
+    pub fn colour_in(&self) -> &wgpu::Texture {
+        &self.res.colour
+    }
+
+    /// The exposure texel FSR reads (rg32float 1 x 1, x).
+    pub fn exposure(&self) -> &wgpu::Texture {
+        &self.res.exposure
     }
 
     /// The internal upscaled colour copy `i` (rgba16float, display size).
@@ -596,22 +669,13 @@ impl Fsr2 {
         c
     }
 
-    /// Writes this frame's constants and builds its bind groups: `hit_pos` and `hit_info` are
-    /// the hit buffer the frame writes, `cur` the copy of the double-buffered resources it
-    /// writes (the other is last frame's), `output` the frame's rgba8 image.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "the frame's targets the passes read and write"
-    )]
+    /// Writes this frame's constants and builds its bind groups from the frame's targets.
     pub(crate) fn prepare(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         params: &Params,
-        hit_pos: &wgpu::Texture,
-        hit_info: &wgpu::Texture,
-        output: &wgpu::Texture,
-        cur: usize,
+        f: &FrameInputs<'_>,
     ) -> Fsr2Binds {
         let reset = params.history & 2 == 0;
         let c = self.constants(params, reset);
@@ -621,7 +685,9 @@ impl Fsr2 {
             0,
             bytemuck::bytes_of(&InputUniform {
                 near: NEAR,
-                _pad: [0.0; 3],
+                reactive_translucent: self.settings.reactive_translucent,
+                reactive_light: self.settings.reactive_light,
+                _pad: 0.0,
             }),
         );
         let r = &self.res;
@@ -641,21 +707,26 @@ impl Fsr2 {
                 },
             );
         };
-        texel(&r.exposure, bytemuck::cast_slice(&[1.0f32, 0.0]));
+        // The exposure seam: the frame's manual exposure, pre-exposure 1 (no eye adaptation).
+        texel(&r.exposure, bytemuck::cast_slice(&[params.exposure, 0.0]));
         texel(&r.luma_mip_neutral, bytemuck::bytes_of(&0.5f32));
-        let (w, q) = (cur, cur ^ 1);
+        let (w, q) = (f.cur, f.cur ^ 1);
         let cb = bind(device, &self.cb_layout, &[Bind::Buf(&self.cb)]);
         let input = bind(
             device,
             &self.input_layout,
             &[
-                Bind::Tex(hit_pos),
-                Bind::Tex(hit_info),
+                Bind::Tex(f.hit_pos),
+                Bind::Tex(f.hit_info),
                 Bind::Tex(&r.colour),
                 Bind::Buf(&self.input_tuning),
                 Bind::Tex(&r.depth),
                 Bind::Tex(&r.motion),
                 Bind::Tex(&r.prepared),
+                Bind::Tex(f.layer),
+                Bind::Buf(f.edits),
+                Bind::Buf(f.lamp),
+                Bind::Tex(&r.reactive),
             ],
         );
         let accumulate = bind(
@@ -663,7 +734,7 @@ impl Fsr2 {
             &self.accumulate_layout,
             &[
                 Bind::Tex(&r.exposure),
-                Bind::Tex(&r.reactive_neutral),
+                Bind::Tex(&r.reactive),
                 Bind::Tex(&r.motion),
                 Bind::Tex(&r.upscaled[q]),
                 Bind::Tex(&r.lock_status[q]),
@@ -674,17 +745,42 @@ impl Fsr2 {
                 Bind::Tex(&r.lock_status[w]),
                 Bind::Tex(&r.upscaled[w]),
                 Bind::Tex(&r.luma_history[w]),
-                Bind::Tex(output),
             ],
+        );
+        let tone_in = if self.bypass {
+            &r.colour
+        } else {
+            &r.upscaled[w]
+        };
+        let tone = bind(
+            device,
+            &self.tone_layout,
+            &[Bind::Tex(tone_in), Bind::Tex(f.output)],
         );
         Fsr2Binds {
             cb,
             input,
             accumulate,
+            tone,
+            bypass: self.bypass,
             render_groups: r.render.map(|n| n.div_ceil(WORKGROUP)),
             display_groups: r.display.map(|n| n.div_ceil(WORKGROUP)),
         }
     }
+}
+
+/// The frame's targets FSR reads and writes: this frame's hit buffer and translucent layers,
+/// the edit boxes and the upscale pass's tuning uniforms (the older lamp), the frame's rgba8
+/// image, and the copy of the double-buffered resources this frame writes (the other is last
+/// frame's).
+pub(crate) struct FrameInputs<'a> {
+    pub hit_pos: &'a wgpu::Texture,
+    pub hit_info: &'a wgpu::Texture,
+    pub layer: &'a wgpu::Texture,
+    pub edits: &'a wgpu::Buffer,
+    pub lamp: &'a wgpu::Buffer,
+    pub output: &'a wgpu::Texture,
+    pub cur: usize,
 }
 
 #[cfg(test)]

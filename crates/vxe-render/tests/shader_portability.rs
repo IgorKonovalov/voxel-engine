@@ -59,6 +59,14 @@ fn shaders() -> Vec<(&'static str, String)> {
             format!("{MARCH}\n{}", vxe_render::fsr2::FSR2_INPUT_WGSL),
         ),
         (
+            "fsr2/tone.wgsl",
+            format!("{MARCH}\n{}", vxe_render::fsr2::FSR2_TONE_WGSL),
+        ),
+        (
+            "composite.wgsl (FSR 2's HDR variant)",
+            format!("{MARCH}\n{}", vxe_render::marcher::composite_hdr_source()),
+        ),
+        (
             "fsr2/accumulate.wgsl (LDR)",
             fsr2_source(vxe_render::fsr2::FSR2_ACCUMULATE_WGSL, false),
         ),

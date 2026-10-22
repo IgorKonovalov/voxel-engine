@@ -142,3 +142,249 @@ fn off_after_fsr2_renders_the_goldens_byte_for_byte() {
         assert_golden(name, &img);
     }
 }
+
+/// `world` mirrored over its extent on the software adapter; `None` without the adapter.
+fn mirrored(world: &vxe_world::World) -> Option<(wgpu::Device, wgpu::Queue, GpuWorld)> {
+    let full = world.stats().full_bricks as u64;
+    let (device, queue) = software_device(((full + 4096) * 512).max(64 << 20))?;
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.sync_now(world, &device, &queue)
+        .expect("mirror fits the adapter");
+    Some((device, queue, gpu))
+}
+
+/// The tone move is lossless: on the primary, headlamp, translucent and LOD golden poses at
+/// scale 1, jitter off, the composite's
+/// linear target put through the tone pass (the upscaler bypassed) is the composite's direct
+/// rgba8 image byte for byte.
+#[test]
+fn the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose() {
+    let carved = support::carved_world();
+    let poses: [(
+        &str,
+        vxe_world::World,
+        vxe_render::Camera,
+        LightParams,
+        vxe_render::LodParams,
+    ); 4] = [
+        (
+            "primary",
+            carved,
+            scene_camera(),
+            LightParams::at_eye(),
+            Default::default(),
+        ),
+        (
+            "headlamp",
+            support::carved_world(),
+            scene_camera(),
+            LightParams::headlamp(),
+            Default::default(),
+        ),
+        (
+            "translucent",
+            translucent_world(),
+            translucent_camera(),
+            LightParams::headlamp(),
+            Default::default(),
+        ),
+        (
+            "lod",
+            lod_scene(),
+            scene_camera(),
+            LightParams::at_eye(),
+            lod_forced_1(),
+        ),
+    ];
+    for (name, world, camera, light, lod) in poses {
+        let Some((device, queue, gpu)) = mirrored(&world) else {
+            return;
+        };
+        let mut plain = Frame::new(&device, WIDTH, HEIGHT);
+        let mut toned = Frame::new(&device, WIDTH, HEIGHT);
+        toned.set_upscaler_kind(&device, fsr2_kind());
+        toned.fsr2_mut().expect("FSR mode").set_bypass(true);
+        for f in [&mut plain, &mut toned] {
+            f.set_resolution(&device, vxe_render::LightingResolution::Full);
+            f.set_lod(lod);
+            f.render(&device, &queue, &gpu, &camera, &light);
+        }
+        let want = readback::read_rgba8(&device, &queue, plain.target());
+        let got = readback::read_rgba8(&device, &queue, toned.target());
+        let differing = want.iter().zip(&got).filter(|(a, b)| a != b).count();
+        let lit = want.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
+        println!("{name}: {differing} bytes differ, {lit} lit pixels");
+        assert!(lit > 0, "{name} renders something");
+        assert_eq!(
+            differing, 0,
+            "{name}: the tone pass differs from the composite"
+        );
+    }
+}
+
+/// The reactive mask, pixel by pixel, on the level at scale 1.5: on the frame of a radius-6
+/// carve every hit in the carve's box dilated by one voxel reads 1 and every other opaque hit
+/// 0; switching the lamp on over a settled still camera, every pixel the lamp lights past the
+/// light-change threshold reads `reactive_light` and the rest 0; behind the glass slab every
+/// pixel reads `reactive_translucent (1 - transmittance)` within 1/255.
+#[test]
+fn the_reactive_mask_marks_edits_light_changes_and_translucency() {
+    let (world, camera) = level();
+    let Some((device, queue, mut gpu)) = level_rig(&world, &camera) else {
+        return;
+    };
+    let light = LightParams::headlamp();
+    let settings = vxe_render::Fsr2Settings {
+        reactive_light: 0.6,
+        reactive_translucent: 0.8,
+        ..Default::default()
+    };
+    let mut frame = frame_of(&device, INTERNAL, OUTPUT, false);
+    frame.set_upscaler_kind(&device, UpscalerKind::Fsr2(settings));
+    let byte = |v: f32| (v * 255.0).round() as u8;
+    let reactive = |frame: &Frame| -> Vec<u8> {
+        readback::read_rgba8(&device, &queue, frame.fsr2().unwrap().reactive())
+            .chunks(4)
+            .map(|p| p[0])
+            .collect()
+    };
+    // The lamp: off for the settle, on for one frame.
+    frame.set_lighting(vxe_render::Lighting {
+        lamp: false,
+        ..Default::default()
+    });
+    for _ in 0..SETTLE {
+        frame.step(&device, &queue, &gpu, &camera, &light);
+    }
+    assert!(
+        reactive(&frame).iter().all(|&r| r == 0),
+        "a settled still frame is not reactive"
+    );
+    frame.set_lighting(vxe_render::Lighting::default());
+    frame.step(&device, &queue, &gpu, &camera, &light);
+    let params = frame.params(&gpu, &camera, &light);
+    let pos = readback::read_rgba32f(&device, &queue, frame.hit_positions());
+    let info = readback::read_rgba16u(&device, &queue, frame.hit_records());
+    let r = reactive(&frame);
+    let (mut lit, mut dark, mut wrong) = (0usize, 0usize, 0usize);
+    for i in 0..r.len() {
+        if pos[i][3] >= 1e30 {
+            continue;
+        }
+        let p = [pos[i][0], pos[i][1], pos[i][2]];
+        let term = lamp_term(&params, p, octa16_normal(info[i][0], info[i][1]));
+        if term > 0.0105 {
+            lit += 1;
+            wrong += usize::from(r[i] != byte(0.6));
+        } else if term < 0.0095 {
+            dark += 1;
+            wrong += usize::from(r[i] != 0);
+        }
+    }
+    println!("lamp on: {lit} lit hits, {dark} unlit, {wrong} off their term");
+    assert!(lit > 1000 && wrong == 0, "{lit} lit, {wrong} wrong");
+
+    // The carve, the lamp steady.
+    for _ in 0..SETTLE {
+        frame.step(&device, &queue, &gpu, &camera, &light);
+    }
+    let (aabb, t) = carve_in_view(&world, &camera);
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    frame.invalidate(aabb.0.0, aabb.1.0);
+    frame.step(&device, &queue, &gpu, &camera, &light);
+    let pos = readback::read_rgba32f(&device, &queue, frame.hit_positions());
+    let r = reactive(&frame);
+    let (mut inside, mut outside, mut wrong) = (0usize, 0usize, 0usize);
+    for i in 0..r.len() {
+        if pos[i][3] >= 1e30 {
+            continue;
+        }
+        if in_dilated([pos[i][0], pos[i][1], pos[i][2]], aabb) {
+            inside += 1;
+            wrong += usize::from(r[i] != 255);
+        } else {
+            outside += 1;
+            wrong += usize::from(r[i] != 0);
+        }
+    }
+    println!(
+        "carve at t = {t:.1}: {inside} hits in the dilated box, {outside} outside, {wrong} wrong"
+    );
+    assert!(
+        inside > 0 && outside > 0 && wrong == 0,
+        "{inside} in, {wrong} wrong"
+    );
+
+    // The glass slab, in its own scene.
+    let world = translucent_world();
+    let Some((device, queue, gpu)) = mirrored(&world) else {
+        return;
+    };
+    let mut frame = frame_of(&device, INTERNAL, OUTPUT, false);
+    frame.set_upscaler_kind(&device, UpscalerKind::Fsr2(settings));
+    frame.step(&device, &queue, &gpu, &translucent_camera(), &light);
+    let r: Vec<u8> = readback::read_rgba8(&device, &queue, frame.fsr2().unwrap().reactive())
+        .chunks(4)
+        .map(|p| p[0])
+        .collect();
+    let info = readback::read_rgba16u(&device, &queue, frame.hit_records());
+    let pos = readback::read_rgba32f(&device, &queue, frame.hit_positions());
+    let layer = readback::read_rgba16f(&device, &queue, frame.layers());
+    let (mut behind, mut worst) = (0usize, 0i32);
+    for i in 0..r.len() {
+        if info[i][3] & 4 == 0 || pos[i][3] >= 1e30 {
+            continue;
+        }
+        behind += 1;
+        let want = (0.8 * (1.0 - layer[i][3])).min(1.0);
+        worst = worst.max((i32::from(r[i]) - i32::from(byte(want))).abs());
+    }
+    println!("glass: {behind} pixels behind it, largest error {worst}/255");
+    assert!(
+        behind > 1000 && worst <= 1,
+        "{behind} behind, worst {worst}/255"
+    );
+}
+
+/// The exposure seam: doubling `params.exposure` changes FSR's exposure texel on that frame,
+/// and once the history settles the tone pass's output on the stripe wall at scale 1 is Plan
+/// 0024's frame's at the new exposure within 2/255 mean.
+#[test]
+fn doubling_the_exposure_reaches_fsr_the_same_frame() {
+    let Some(rig) = stripe_rig() else {
+        return;
+    };
+    let (device, queue) = (&rig.device, &rig.queue);
+    let camera = stripe_camera(NEAR, 0);
+    let light = LightParams::headlamp();
+    let e = stripe_exposure(NEAR);
+    let lighting = |exposure| vxe_render::Lighting {
+        exposure,
+        ..vxe_render::Lighting::default()
+    };
+    let mut fsr = frame_of(device, OUTPUT, OUTPUT, false);
+    fsr.set_upscaler_kind(device, fsr2_kind());
+    fsr.set_lighting(lighting(e));
+    for _ in 0..SETTLE {
+        fsr.step(device, queue, &rig.gpu, &camera, &light);
+    }
+    let texel = |f: &Frame| read_f32_texels(device, queue, f.fsr2().unwrap().exposure())[0];
+    assert_eq!(texel(&fsr), e);
+    fsr.set_lighting(lighting(2.0 * e));
+    fsr.step(device, queue, &rig.gpu, &camera, &light);
+    assert_eq!(texel(&fsr), 2.0 * e, "the texel follows the same frame");
+    for _ in 0..SETTLE {
+        fsr.step(device, queue, &rig.gpu, &camera, &light);
+    }
+    let mut native = frame_of(device, OUTPUT, OUTPUT, false);
+    native.set_lighting(lighting(2.0 * e));
+    for _ in 0..SETTLE {
+        native.step(device, queue, &rig.gpu, &camera, &light);
+    }
+    let a = readback::read_rgba8(device, queue, fsr.target());
+    let b = readback::read_rgba8(device, queue, native.target());
+    let m = mad(&a, &b);
+    let mean = m.iter().sum::<f64>() / 3.0;
+    println!("FSR at 2x exposure against Plan 0024's frame: mean {mean:.3}/255 ({m:.3?})");
+    assert!(mean <= 2.0, "mean {mean:.3}/255");
+}

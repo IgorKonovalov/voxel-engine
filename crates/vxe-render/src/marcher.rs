@@ -916,9 +916,11 @@ pub struct Frame {
     output: [u32; 2],
     /// The views' rays are jittered by [`jitter_at`] of the frame index.
     jitter: bool,
-    /// The upscaler the frame runs; with FSR 2, its context.
+    /// The upscaler the frame runs; with FSR 2, its context and the composite's variant
+    /// that stores linear radiance (`HDR_TARGET` in composite.wgsl), built with it.
     kind: UpscalerKind,
     fsr: Option<Fsr2>,
+    composite_hdr: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
 }
 
 /// A-trous iterations per frame, at strides 1, 2, 4, 8.
@@ -1412,6 +1414,7 @@ impl Frame {
             jitter: false,
             kind: UpscalerKind::Off,
             fsr: None,
+            composite_hdr: None,
         }
     }
 
@@ -1493,6 +1496,9 @@ impl Frame {
                         s,
                     ));
                 }
+                if self.composite_hdr.is_none() {
+                    self.composite_hdr = Some(composite_hdr_pass(device, &self.world_layout));
+                }
             }
         }
         if !kind.is_fsr2() {
@@ -1513,6 +1519,10 @@ impl Frame {
     /// FSR 2's context while the frame runs it.
     pub fn fsr2(&self) -> Option<&Fsr2> {
         self.fsr.as_ref()
+    }
+
+    pub fn fsr2_mut(&mut self) -> Option<&mut Fsr2> {
+        self.fsr.as_mut()
     }
 
     /// The copy of the double-buffered targets the last (or next) encode writes.
@@ -1668,6 +1678,12 @@ impl Frame {
         &self.targets.hit_info[self.cur]
     }
 
+    /// The translucent layers in front of each hit (rgba16float: premultiplied colour,
+    /// transmittance).
+    pub fn layers(&self) -> &wgpu::Texture {
+        &self.targets.layer
+    }
+
     /// The light pass's irradiance (rgba16float: rgb, then the emissive part's luminance).
     pub fn irradiance(&self) -> &wgpu::Texture {
         &self.targets.irradiance
@@ -1765,7 +1781,7 @@ impl Frame {
         let (fwd, right, up) = camera.basis();
         let mut vs = [View::default(); MAX_VIEWS];
         vs[..views.len()].copy_from_slice(views);
-        let jitter = if self.fsr.is_some() {
+        let jitter = if self.fsr.as_ref().is_some_and(|f| !f.bypassed()) {
             // FSR's sample of pixel p lies at p + 0.5 - offset (`fsr2::jitter_offset`).
             let [w, _] = self.internal_size();
             let [x, y] = jitter_at(self.frame, crate::fsr2::jitter_phases(w, self.output[0]));
@@ -2048,9 +2064,15 @@ impl Frame {
         };
         // In FSR mode the composite writes FSR's colour input at the internal size.
         let composite_out = self.fsr.as_ref().map_or(&t.output, Fsr2::colour);
+        // FSR 2's composite stores linear radiance (`composite_hdr`).
+        let (composite_layout, composite) = self
+            .composite_hdr
+            .as_ref()
+            .filter(|_| self.fsr.is_some())
+            .map_or((&self.composite_layout, &self.composite), |(l, p)| (l, p));
         let composite_bind = bind_io(
             device,
-            &self.composite_layout,
+            composite_layout,
             &[
                 Res::Tex(&t.hit_pos[c]),
                 Res::Tex(&t.hit_info[c]),
@@ -2112,10 +2134,15 @@ impl Frame {
                     device,
                     queue,
                     &p,
-                    &t.hit_pos[c],
-                    &t.hit_info[c],
-                    &t.output,
-                    c,
+                    &crate::fsr2::FrameInputs {
+                        hit_pos: &t.hit_pos[c],
+                        hit_info: &t.hit_info[c],
+                        layer: &t.layer,
+                        edits: &self.edits,
+                        lamp: &self.upscale_params,
+                        output: &t.output,
+                        cur: c,
+                    },
                 ),
             )
         });
@@ -2155,6 +2182,7 @@ impl Frame {
         }
         if let Some((f, b)) = &fsr_binds {
             upscale.extend(b.upscale(f, &world_bind));
+            sharpen.extend(b.sharpen(f, &world_bind));
         }
         let passes: [Vec<Dispatch<'_>>; 8] = [
             hit,
@@ -2162,7 +2190,7 @@ impl Frame {
             vec![frame_pass(&self.light, &light_bind, 2, lw)],
             vec![frame_pass(&self.temporal, &temporal_bind, 2, lw)],
             atrous,
-            vec![frame_pass(&self.composite, &composite_bind, 2, full)],
+            vec![frame_pass(composite, &composite_bind, 2, full)],
             upscale,
             sharpen,
         ];
@@ -2210,6 +2238,53 @@ impl Frame {
         self.encode_with(device, queue, &mut enc, world, params, None, false);
         queue.submit([enc.finish()]);
     }
+}
+
+/// The source of the composite's variant for FSR 2: `HDR_TARGET` set and the target
+/// rgba32float, linear radiance before exposure in the shaded view.
+pub fn composite_hdr_source() -> String {
+    let flag = "const HDR_TARGET: bool = false;";
+    let target = "var target_tex: texture_storage_2d<rgba8unorm, write>;";
+    assert!(
+        COMPOSITE_WGSL.matches(flag).count() == 1 && COMPOSITE_WGSL.matches(target).count() == 1,
+        "composite.wgsl declares its HDR flag and its target once"
+    );
+    COMPOSITE_WGSL
+        .replacen(flag, "const HDR_TARGET: bool = true;", 1)
+        .replacen(
+            target,
+            "var target_tex: texture_storage_2d<rgba32float, write>;",
+            1,
+        )
+}
+
+/// The composite's FSR 2 variant: its layout (the composite's, the target rgba32float) and
+/// pipeline.
+fn composite_hdr_pass(
+    device: &wgpu::Device,
+    world_layout: &wgpu::BindGroupLayout,
+) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline) {
+    let layout = io_layout(
+        device,
+        "composite hdr",
+        &[
+            Io::Float,
+            Io::Uint,
+            Io::Float,
+            Io::Float,
+            Io::Store(wgpu::TextureFormat::Rgba32Float),
+            Io::Float,
+            Io::Uint,
+        ],
+    );
+    let pipeline = compute_pipeline(
+        device,
+        "composite hdr",
+        format!("{MARCH_WGSL}\n{}", composite_hdr_source()),
+        &[Some(world_layout), None, Some(&layout)],
+        "composite",
+    );
+    (layout, pipeline)
 }
 
 /// One dispatch of a frame pass: its pipeline, the bind groups at indices 0 to 3, and the
