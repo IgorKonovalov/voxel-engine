@@ -1,7 +1,9 @@
 # 0024: Direct light that holds in the dark: a hit buffer, emissive voxels as light samples, one shadow ray per pixel, and an SVGF-family denoiser whose history dies where the world was edited
 
-> **Status:** in-progress: the close review of 2026-10-21 returned fix Phases 13 to 15 (see
-> "Close review of 2026-10-21" below); not closed
+> **Status:** done (closed 2026-10-22 by the second close review): direct light, the emissive
+> sampler and the denoiser ship at the owner's defaults (half tier, coarse walk, reuse,
+> edit-box history, a 32-frame emissive history) under the lighting and denoise lines on the
+> dev box; the recorded misses are in the log and Followups
 > **Created:** 2026-10-20
 > **Amended:** 2026-10-21 by the owner's ruling at the Phase 6 stop: Phase 6's bars rewritten,
 > a new Phase 7 (near-emitter candidates and bounded light extraction) inserted before reservoir
@@ -9,22 +11,22 @@
 > 2026-10-21 by the close review: Phases 13 to 15 added
 > **Milestone:** M2 in `docs/roadmap.md` (the lighting plan; direct light and the denoiser only,
 > see "What this plan does NOT do")
-> **Related ADRs:** [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> **Related ADRs:** [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (proposed with this plan: the lighting family and the rejected ones),
-> [ADR-0025](../adrs/0025-light-candidates-from-a-power-over-distance-table-of-near-emitter-chunks.md)
+> [ADR-0025](../../adrs/0025-light-candidates-from-a-power-over-distance-table-of-near-emitter-chunks.md)
 > (proposed with the amendment of 2026-10-21: where a candidate's light sample comes from),
-> [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md) (the
+> [ADR-0011](../../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md) (the
 > plane hit and its shadow-ray origin, which the hit buffer carries),
-> [ADR-0012](../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md) (the masks the
+> [ADR-0012](../../adrs/0012-mask-first-brick-with-per-brick-palette-planes.md) (the masks the
 > coarse shadow walk reads; its mirror-slot plan comes after this one),
-> [ADR-0013](../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) (the light-sample buffer
-> is reserved the same way), [ADR-0001](../adrs/0001-rust-library-workspace-wgpu-compute-ray-marching.md)
+> [ADR-0013](../../adrs/0013-mirror-reserves-its-vram-budget-up-front.md) (the light-sample buffer
+> is reserved the same way), [ADR-0001](../../adrs/0001-rust-library-workspace-wgpu-compute-ray-marching.md)
 > **Source:** the owner's interview answers, 2026-10-20 (scope: direct light and the denoiser
 > first; emission changes by the `Replace` op and by a render-side scale; four mechanisms kept
 > switchable until seen; sequenced after Plan 0023 and before ADR-0012's mirror-slot plan;
 > family A with C inside), the two M2 design inputs (the traversal review of 2026-10-17 and
 > `docs/references/voxel-optimizations.md`), `docs/nfr.md` §2 and §3.
-> **Starts after:** [Plan 0023](done/0023-render-thread-cpu-attribute-hitch-and-streaming-line.md)
+> **Starts after:** [Plan 0023](0023-render-thread-cpu-attribute-hitch-and-streaming-line.md)
 > closes (the attribute hitch and the streaming line; this plan adds light extraction to that
 > line and must not be measured under the hitch). ADR-0012's mirror-slot plan (surface-only
 > attributes in size-classed slots) comes **after** this plan: this plan changes what the march
@@ -1144,6 +1146,23 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   the list and 9 with reuse, against 2).
 - Deliberate flicker as a material emission property (owner, 2026-10-21, live session 4):
   fire and embers flicker by design, so static veins can stay steady.
+- Emissive history 32 vs 64 (owner, live session 5, 2026-10-22): 64 looked slightly better
+  than 32, 16 and 32 alike; parked. Zero GPU cost; the cost is a slower fade-in of emissive
+  light that changes outside an edit box (90 % after about 146 frames at 64 vs 72 at 32), and
+  an unchecked f16 accumulation stall at a 1/64 blend.
+- Consumer-facing render settings (owner, 2026-10-22): every mechanism choice (shadow walk,
+  tier, sampler, history, look, later sky/clouds/reflections/far field) is a documented engine
+  setting, with named quality profiles and live-vs-restart marked; a later plan.
+- Phase 13 bar 1, full with reuse (second close review, 2026-10-22, accepted as a recorded
+  miss): the still-vein mean step reads 0.1563/255 against a quarter of the base's 0.1414
+  (ratio 0.276); every share over 4/255 holds, it is not the default tier, and the owner
+  judged the default still. `static_emissive_light_holds_still` prints it.
+- The still-vein test's references drifted (second close review): its a59199d base readings
+  were taken at the full shadow walk, and since the coarse default the test reads the coarse
+  walk against them. Pin `ShadowWalk::Full` in `still_vein_flicker` (or re-read the base at
+  coarse) the next time `apps/flythrough/tests/lights.rs` is touched.
+- The hero example's `--emissive-history` takes any `u32` including 0 (the shader clamps it
+  to 1), where the fly-through refuses values outside 1 to 4096; share the fly-through's check.
 - A showcase cave for the hero and demos (owner, 2026-10-20, for later): a large cavern
   with several ore materials of different emission colours and intensities as its light
   sources, generated by the testbed's source behind a flag. Testbed content, no engine work;

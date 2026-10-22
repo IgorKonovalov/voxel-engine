@@ -1,8 +1,8 @@
 # ADR-0018: Direct light is one sample per pixel from a hit buffer, denoised by an SVGF-family filter whose history dies where the world was edited
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-22, at Plan 0024's close)
 > **Date:** 2026-10-20
-> **Related plan(s):** [Plan 0024](../plans/0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md)
+> **Related plan(s):** [Plan 0024](../plans/done/0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md)
 
 ## Context
 
@@ -108,5 +108,33 @@ pyramid is a storage decision that belongs to the indirect-light plan if it want
 
 ## Outcome
 
-_(Added at acceptance: the owner's choice per mode pair from Plan 0024's Phase 12, and the
-measured lines.)_
+Accepted 2026-10-22 at Plan 0024's close. **The owner's choice per mode pair** (Phases 12 and
+15, live sessions 4 and 5, on the dev box): lighting resolution **half** (the only tier under
+the lines; full looks sharper and stays a mode), shadow walk **coarse** (darker by contract,
+cheaper by 0.4 to 0.6 ms at half; full stays a mode), sampler **reservoir reuse** (beats the
+list at both tiers; the list stays a mode), history killer **edit boxes** with A-SVGF's
+gradient kept as a mode (no visible difference on a still camera; it differs only when light
+changes without an edit). All four modes stay in the code.
+
+**What the implementation changed against the body above:**
+
+- **Two histories, not one.** The owner saw static emissive light shimmer on a still camera
+  under a single 0.2 blend (Phase 12). The light pass writes the emissive estimate and the
+  lamp's apart, and the temporal pass blends the emissive part over at least
+  `Lighting::emissive_history` frames (default 32) and the lamp's at 0.2; an emission-scale
+  change raises the emissive blend to 0.2 for 12 frames. Edit boxes still reset both. The
+  still vein's mean frame-to-frame step fell to 0.16 to 0.18 of 255 from 0.57 to 1.04.
+- **The gradient reads the whole light,** so a lamp change where steady emissive light is
+  strong resets only part of the lamp's history (all pixels by 7 to 9 frames, not 2; accepted
+  by the owner). Separate lamp and emissive change values are a followup.
+- **The half tier samples a fixed pixel of each 2 x 2**, not a cycle: the cycle moved a still
+  camera's upsampled image.
+- **The frame's targets** read 308.7 MB at full and 195.4 MB at half at 1080p, against the
+  276 MB in Consequences (a translucent-layer target, the raw irradiance and the gradient
+  strata were left out of the table).
+
+**Measured lines** (dev box only, RTX 3080 Laptop GPU, 1080p, the defaults; `docs/nfr.md` §2
+"The coarse shadow walk as the default" and "Quiet-box readings at the lighting defaults"):
+light 1.97 to 2.81 ms, light plus temporal 2.11 to 2.95 ms against 6.0, a-trous 1.09 to 1.15
+ms against 3.0. Full resolution misses: light 10.5 to 14.5 ms, a-trous 5.0 to 5.3 ms. No
+baseline or iGPU reading.

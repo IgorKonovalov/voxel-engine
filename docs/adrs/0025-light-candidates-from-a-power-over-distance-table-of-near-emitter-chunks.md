@@ -1,8 +1,8 @@
 # ADR-0025: Light candidates come from a power-over-distance table of the emitter chunks near the camera, and only those chunks hold light samples on the GPU
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-22, at Plan 0024's close)
 > **Date:** 2026-10-21
-> **Related plan(s):** [Plan 0024](../plans/0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md)
+> **Related plan(s):** [Plan 0024](../plans/done/0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md)
 > (Phase 7, added by the owner's amendment of 2026-10-21); refines the candidate source of
 > [ADR-0018](0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 
@@ -103,4 +103,17 @@ wherever they are, so the far-emitter shadow ray, the cost being fixed, stays.
 
 ## Outcome
 
-_(Added at acceptance if the implementation falsified something above.)_
+Accepted 2026-10-22 at Plan 0024's close (Phase 7). Two claims above were falsified:
+
+- **The table is not a uniform.** Indexed dynamically per pixel, the 16 KiB uniform read 9.42
+  ms against 7.45 ms for the same table in storage (loaded box), so it lives in 1025
+  sample-sized slots past the light-sample reservation (`GpuWorld::light_table_base`), written
+  each frame; no new binding was needed.
+- **Extraction is not bounded enough by the budget alone.** Over the autopilot's flight it
+  reads p99 2.21 ms and max 6.12 ms on the quiet box against the plan's 1.0 and 3.0 ms; moving
+  extraction to the stream workers goes with Plan 0028.
+
+What held: the table's 64-frame mean is within 2.9 % of the analytic box with a relative RMSE
+0.35 of the uniform draw's; the autopilot's light-sample peak is 18 522 with nothing refused
+and no wait inside the radius (against 997 740 under the uniform pool). A light sample is 16
+bytes (a world voxel and face bits), not the 8 of the plan's data shapes.
