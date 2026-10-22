@@ -720,3 +720,213 @@ fn locks_form_on_the_stripe_edges() {
     );
     assert!(locked > 0, "no stripe-edge pixel holds a lock");
 }
+
+/// `a < b`, false when either is NaN.
+fn below(a: f64, b: f64) -> bool {
+    a < b
+}
+
+/// FSR 2 at `sharpness`.
+fn fsr2_sharp(sharpness: f32) -> UpscalerKind {
+    UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+        sharpness,
+        ..Default::default()
+    })
+}
+
+/// The stripe wall's sharpness, Plan 0030 Phase 6's images beside FSR 2's, in one run: N, R,
+/// B, our upscaler (sharpening 0 and 0.5) and FSR 2 (0 and 0.5) at scale 1 and 1.5, at both
+/// distances, still and panning 64 frames. The bars, at sharpening 0: still, FSR at scale 1
+/// has ES at arm's length at most N's plus 0.53 px and GE at least 0.85 of R's, and at scale
+/// 1.5 GE at least `(GE(R) + GE(B)) / 2` and ES at arm's length at most `(ES(R) + ES(B)) / 2`;
+/// panning at arm's length, FSR's ES below our upscaler's and its GE at least ours, at both
+/// scales. The far pans, sharpening 0.5 and the rim gradients are readings.
+#[test]
+fn fsr2_keeps_stripe_edges_sharp_still_and_beats_ours_panning() {
+    let Some(rig) = stripe_rig() else {
+        return;
+    };
+    let own = UpscalerKind::Own(vxe_render::marcher::Upscaler::default());
+    let mut failures = Vec::new();
+    for dist in [NEAR, FAR] {
+        let near = dist == NEAR;
+        let still = |kind| Shot {
+            dist,
+            kind,
+            pan: 0,
+            phase: 0,
+        };
+        let read = |image, shot| stripe_sharpness(&rig, image, shot);
+        println!(
+            "stripes at {dist} voxels ({:.3} px per voxel):",
+            px_per_voxel(dist)
+        );
+        let [n, _] = read(Image::N, still(own));
+        let [r, _] = read(Image::R, still(own));
+        let [b, _] = read(Image::B, still(own));
+        println!("  N    {n}\n  R    {r}\n  B    {b}");
+        let mut fsr0 = [n; 2];
+        for (k, (name, image)) in [("1", Image::U1), ("1.5", Image::U15)]
+            .into_iter()
+            .enumerate()
+        {
+            let ours = read(image, still(own));
+            let [f0, _] = read(image, still(fsr2_sharp(0.0)));
+            let [f5, _] = read(image, still(fsr2_sharp(0.5)));
+            println!("  ours {name}: sharpen 0 {}; 0.5 {}", ours[0], ours[1]);
+            println!("  FSR  {name}: sharpen 0 {f0}; 0.5 {f5}");
+            fsr0[k] = f0;
+        }
+        let [f1, f15] = fsr0;
+        if near && !at_most(f1.es, n.es + 0.53) {
+            failures.push(format!(
+                "{dist}: FSR 1 ES {:.3} over {:.3}",
+                f1.es,
+                n.es + 0.53
+            ));
+        }
+        if !at_least(f1.ge, 0.85 * r.ge) {
+            failures.push(format!(
+                "{dist}: FSR 1 GE {:.5} under {:.5}",
+                f1.ge,
+                0.85 * r.ge
+            ));
+        }
+        let (ge_bar, es_bar) = ((r.ge + b.ge) / 2.0, (r.es + b.es) / 2.0);
+        if !at_least(f15.ge, ge_bar) {
+            failures.push(format!(
+                "{dist}: FSR 1.5 GE {:.5} under {ge_bar:.5}",
+                f15.ge
+            ));
+        }
+        if near && !at_most(f15.es, es_bar) {
+            failures.push(format!("{dist}: FSR 1.5 ES {:.3} over {es_bar:.3}", f15.es));
+        }
+        println!(
+            "  bars: FSR 1 ES <= {:.3}, GE >= {:.5}; FSR 1.5 GE >= {ge_bar:.5}, ES <= {es_bar:.3}",
+            n.es + 0.53,
+            0.85 * r.ge
+        );
+        let pan = |kind| Shot {
+            pan: 64,
+            ..still(kind)
+        };
+        for (name, image) in [("1", Image::U1), ("1.5", Image::U15)] {
+            let [ours, ours5] = read(image, pan(own));
+            let [f0, _] = read(image, pan(fsr2_sharp(0.0)));
+            let [f5, _] = read(image, pan(fsr2_sharp(0.5)));
+            println!("  panning 64 frames, scale {name}: ours sharpen 0 {ours}; 0.5 {ours5}");
+            println!("  panning 64 frames, scale {name}: FSR  sharpen 0 {f0}; 0.5 {f5}");
+            if near && !below(f0.es, ours.es) {
+                failures.push(format!(
+                    "{dist}: FSR {name} panning ES {:.3} not below ours {:.3}",
+                    f0.es, ours.es
+                ));
+            }
+            if near && !at_least(f0.ge, ours.ge) {
+                failures.push(format!(
+                    "{dist}: FSR {name} panning GE {:.5} under ours {:.5}",
+                    f0.ge, ours.ge
+                ));
+            }
+        }
+        let [np, _] = read(Image::N, pan(own));
+        println!("  N panning 64 frames: {np}");
+    }
+    for f in &failures {
+        println!("over a bar: {f}");
+    }
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+/// A still camera on the level (Plan 0024's defaults, 32 frames, scale 1.5): FSR 2's image is
+/// nearer the 2 x 2 supersampled render than the bilinear blit is, in mean absolute difference
+/// per channel; our upscaler's is read beside it.
+#[test]
+fn a_still_camera_under_fsr2_is_nearer_the_supersampled_render_than_a_blit() {
+    let (world, camera) = level();
+    let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
+        return;
+    };
+    let light = LightParams::headlamp();
+    let big = OUTPUT.map(|n| 2 * n);
+    let mut fsr = frame_of(&device, INTERNAL, OUTPUT, false);
+    fsr.set_upscaler_kind(&device, fsr2_kind());
+    let mut ours = frame_of(&device, INTERNAL, OUTPUT, true);
+    let mut low = frame_of(&device, INTERNAL, INTERNAL, false);
+    let mut ssaa = frame_of(&device, big, big, false);
+    for _ in 0..SETTLE {
+        for f in [&mut fsr, &mut ours, &mut low, &mut ssaa] {
+            f.step(&device, &queue, &gpu, &camera, &light);
+        }
+    }
+    let truth = downsample_2x2(
+        &readback::read_rgba8(&device, &queue, ssaa.target()),
+        OUTPUT,
+    );
+    let mean = |m: [f64; 3]| m.iter().sum::<f64>() / 3.0;
+    let f = mean(mad(
+        &readback::read_rgba8(&device, &queue, fsr.target()),
+        &truth,
+    ));
+    let o = mean(mad(
+        &readback::read_rgba8(&device, &queue, ours.target()),
+        &truth,
+    ));
+    let b = mean(mad(
+        &blit_texture(&device, &queue, low.target(), OUTPUT),
+        &truth,
+    ));
+    println!(
+        "level, {SETTLE} frames, from 2 x 2 supersampled: FSR {f:.3}, ours {o:.3}, bilinear {b:.3}"
+    );
+    // A reading beside the bar: the mean signed difference, and the distances from the
+    // supersampled render averaged in linear light (its bytes decoded by 2.2, averaged,
+    // encoded), which FSR resolves in and the blit and our upscaler do not.
+    let images = [
+        ("FSR", readback::read_rgba8(&device, &queue, fsr.target())),
+        ("ours", readback::read_rgba8(&device, &queue, ours.target())),
+        (
+            "bilinear",
+            blit_texture(&device, &queue, low.target(), OUTPUT),
+        ),
+    ];
+    let big_img = readback::read_rgba8(&device, &queue, ssaa.target());
+    let (w, _) = (OUTPUT[0] as usize, OUTPUT[1] as usize);
+    let linear_truth: Vec<u8> = (0..truth.len())
+        .map(|i| {
+            let (px, k) = (i / 4, i % 4);
+            if k == 3 {
+                return 255;
+            }
+            let (x, y) = (px % w, px / w);
+            let at = |xx: usize, yy: usize| {
+                (f64::from(big_img[(yy * 2 * w + xx) * 4 + k]) / 255.0).powf(2.2)
+            };
+            let m = (at(2 * x, 2 * y)
+                + at(2 * x + 1, 2 * y)
+                + at(2 * x, 2 * y + 1)
+                + at(2 * x + 1, 2 * y + 1))
+                / 4.0;
+            (m.powf(1.0 / 2.2) * 255.0).round() as u8
+        })
+        .collect();
+    for (name, img) in &images {
+        let signed: f64 = img
+            .chunks(4)
+            .zip(truth.chunks(4))
+            .map(|(p, q)| {
+                (0..3)
+                    .map(|k| f64::from(p[k]) - f64::from(q[k]))
+                    .sum::<f64>()
+                    / 3.0
+            })
+            .sum::<f64>()
+            / (img.len() / 4) as f64;
+        println!(
+            "  {name}: mean signed difference from supersampled {signed:+.3}; from it averaged in linear light {:.3}",
+            mean(mad(img, &linear_truth))
+        );
+    }
+    assert!(f < b, "FSR {f:.3} not below the blit's {b:.3}");
+}

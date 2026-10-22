@@ -1436,3 +1436,92 @@ fn upscaled_golden_sharpens_within_the_neighbourhood() {
     assert!(g_sharp > g_plain, "{g_sharp} against {g_plain}");
     assert_eq!(over, 0);
 }
+
+/// FSR 2's golden scene: the cavity from its centre under the headlamp at 256 x 144 internal
+/// and 384 x 216 output after 32 frames, at each of `sharpness`; with the accumulate pass's
+/// output (rgba16float, the internal upscaled colour) of each.
+fn fsr2_cavity(sharpness: &[f32]) -> Option<Vec<(Vec<u8>, History16)>> {
+    let world = cavity_world();
+    let rig = LookRig::new(&world, None)?;
+    let mut out = Vec::new();
+    for &s in sharpness {
+        let mut frame = Frame::with_sizes(&rig.device, UPSCALED_INTERNAL, UPSCALED_OUTPUT);
+        frame.set_upscaler_kind(
+            &rig.device,
+            vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                sharpness: s,
+                ..Default::default()
+            }),
+        );
+        for _ in 0..32 {
+            frame.step(
+                &rig.device,
+                &rig.queue,
+                &rig.gpu,
+                &cavity_camera(),
+                &LightParams::headlamp(),
+            );
+        }
+        let fsr = frame.fsr2().expect("FSR mode");
+        let accumulated =
+            readback::read_rgba16f(&rig.device, &rig.queue, fsr.upscaled(frame.current_copy()));
+        out.push((
+            readback::read_rgba8(&rig.device, &rig.queue, frame.target()),
+            accumulated,
+        ));
+    }
+    Some(out)
+}
+
+/// `fsr2.png`: FSR 2's golden at the fly-through's default sharpening (0.5). RCAS leaves the
+/// accumulate pass's output alone (the same with sharpening 0 and 0.5, texel for texel; at 0
+/// the pass is not dispatched and the tone pass reads that output), and no channel of a
+/// sharpened pixel exceeds its unsharpened 3 x 3 neighbourhood's maximum by more than 1/255.
+#[test]
+fn fsr2_golden_sharpens_within_the_neighbourhood() {
+    let Some(images) = fsr2_cavity(&[0.0, 0.5]) else {
+        return;
+    };
+    let ((plain, acc0), (sharp, acc5)) = (&images[0], &images[1]);
+    let [w, h] = UPSCALED_OUTPUT.map(|n| n as usize);
+    let path = golden_path("fsr2.png");
+    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+        write_png(&path, sharp, w as u32, h as u32);
+        println!("blessed {path:?}");
+    } else {
+        let (golden, gw, gh) = read_png(&path);
+        assert_eq!((gw, gh), (w as u32, h as u32));
+        let f = fraction_differing(sharp, &golden, 2);
+        println!(
+            "fsr2.png: {:.4} % of pixels differ by more than 2/255",
+            f * 100.0
+        );
+        assert!(f <= 0.001, "{:.4} % of pixels differ", f * 100.0);
+    }
+    let moved = acc0
+        .iter()
+        .zip(acc5)
+        .filter(|(a, b)| a[..3] != b[..3])
+        .count();
+    assert_eq!(moved, 0, "sharpening changed {moved} accumulated texels");
+    let (mut over, mut changed) = (0usize, 0usize);
+    for y in 1..h - 1 {
+        for x in 1..w - 1 {
+            let mut hi = [0u8; 3];
+            for dy in 0..3 {
+                for dx in 0..3 {
+                    let p = &plain[((y + dy - 1) * w + x + dx - 1) * 4..];
+                    for k in 0..3 {
+                        hi[k] = hi[k].max(p[k]);
+                    }
+                }
+            }
+            let i = (y * w + x) * 4;
+            over += usize::from((0..3).any(|k| sharp[i + k] > hi[k].saturating_add(1)));
+            changed += usize::from(sharp[i..i + 3] != plain[i..i + 3]);
+        }
+    }
+    println!("fsr2.png: {changed} pixels sharpened, {over} over their neighbourhood's maximum");
+    assert!(changed > 0, "sharpening changed nothing");
+    assert_eq!(over, 0);
+}

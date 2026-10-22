@@ -83,6 +83,10 @@ fn shaders() -> Vec<(&'static str, String)> {
             fsr2_source(vxe_render::fsr2::FSR2_LOCK_WGSL, true),
         ),
         (
+            "fsr2/rcas.wgsl",
+            fsr2_source(vxe_render::fsr2::FSR2_RCAS_WGSL, true),
+        ),
+        (
             "fsr2/accumulate.wgsl (LDR)",
             fsr2_source(vxe_render::fsr2::FSR2_ACCUMULATE_WGSL, false),
         ),

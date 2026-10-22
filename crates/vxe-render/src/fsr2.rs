@@ -26,6 +26,8 @@ pub const FSR2_RECONSTRUCT_WGSL: &str =
 pub const FSR2_DEPTH_CLIP_WGSL: &str = include_str!("shaders/fsr2/depth_clip.wgsl");
 /// FSR 2's lock pass, compiled after [`FSR2_COMMON_WGSL`].
 pub const FSR2_LOCK_WGSL: &str = include_str!("shaders/fsr2/lock.wgsl");
+/// FSR 2's RCAS pass, compiled after [`FSR2_COMMON_WGSL`].
+pub const FSR2_RCAS_WGSL: &str = include_str!("shaders/fsr2/rcas.wgsl");
 
 /// The source of an FSR pass: `HDR` (FFX_FSR2_OPTION_HDR_COLOR_INPUT), the common part, then
 /// the pass.
@@ -40,7 +42,8 @@ pub const NEAR: f32 = 0.01;
 /// FSR 2's knobs in the engine ([`UpscalerKind::Fsr2`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fsr2Settings {
-    /// RCAS's sharpness, 0 to 1 (FSR's `sharpness`); 0 skips the pass.
+    /// RCAS's sharpness, 0 to 1 (FSR's `sharpness`: `2 - 2 sharpness` stops); 0 skips the
+    /// pass (FSR's `enableSharpening` off).
     pub sharpness: f32,
     /// The reactive mask's weight on a translucent layer's `1 - transmittance`.
     pub reactive_translucent: f32,
@@ -330,6 +333,7 @@ pub struct Fsr2 {
     depth_clip: Pass,
     lock: Pass,
     accumulate: Pass,
+    rcas: Pass,
     tone: Pass,
     cb: wgpu::Buffer,
     input_tuning: wgpu::Buffer,
@@ -354,6 +358,8 @@ pub(crate) struct Fsr2Binds {
     depth_clip: wgpu::BindGroup,
     lock: wgpu::BindGroup,
     accumulate: wgpu::BindGroup,
+    /// With sharpening on: RCAS and its workgroups.
+    rcas: Option<(wgpu::BindGroup, [u32; 2])>,
     tone: wgpu::BindGroup,
     bypass: bool,
     render_groups: [u32; 2],
@@ -393,17 +399,27 @@ impl Fsr2Binds {
         ]
     }
 
-    /// The dispatches of the frame's sharpen slot: the tone pass.
+    /// The dispatches of the frame's sharpen slot: RCAS when sharpening is on, then the tone
+    /// pass.
     pub(crate) fn sharpen<'a>(
         &'a self,
         fsr: &'a Fsr2,
         world: &'a wgpu::BindGroup,
     ) -> Vec<Dispatch<'a>> {
-        vec![Dispatch {
+        let mut d = Vec::new();
+        if let Some((b, workgroups)) = self.rcas.as_ref().filter(|_| !self.bypass) {
+            d.push(Dispatch {
+                pipeline: &fsr.rcas.pipeline,
+                groups: [Some(&self.cb), Some(b), None, None],
+                workgroups: *workgroups,
+            });
+        }
+        d.push(Dispatch {
             pipeline: &fsr.tone.pipeline,
             groups: [Some(world), None, Some(&self.tone), None],
             workgroups: self.display_groups,
-        }]
+        });
+        d
     }
 }
 
@@ -720,6 +736,12 @@ impl Fsr2 {
                 store_entry(12, R32Float),
             ],
         );
+        let rcas = amd(
+            "fsr2 rcas",
+            FSR2_RCAS_WGSL,
+            "rcas",
+            &[tex_entry(0), tex_entry(1), store_entry(2, Rgba16Float)],
+        );
         let buffer = |label, size| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
@@ -737,6 +759,7 @@ impl Fsr2 {
             depth_clip,
             lock,
             accumulate,
+            rcas,
             tone,
             cb: buffer("fsr2 constants", size_of::<Fsr2Constants>() as u64),
             input_tuning: buffer("fsr2 input tuning", size_of::<InputUniform>() as u64),
@@ -882,7 +905,8 @@ impl Fsr2 {
             // SpdSetup over the whole render rectangle.
             spd_mips: ((w.max(h) as f32).log2().floor() as u32).min(12),
             spd_work_groups: w.div_ceil(64) * h.div_ceil(64),
-            rcas_con: 0.0,
+            // FsrRcasCon of `-2 sharpness + 2` stops.
+            rcas_con: (-(2.0 - 2.0 * self.settings.sharpness.clamp(0.0, 1.0))).exp2(),
             debug: u32::from(self.debug),
             _pad: 0,
         };
@@ -1010,8 +1034,23 @@ impl Fsr2 {
                 Tex(&r.weight),
             ],
         );
+        // RCAS writes into last frame's copy of the upscaled colour: the accumulate pass has
+        // read it, and the next frame's accumulate pass overwrites it.
+        let sharpening = self.settings.sharpness > 0.0;
+        let rcas = sharpening.then(|| {
+            (
+                bind(
+                    device,
+                    &self.rcas.layout,
+                    &[Tex(&r.upscaled[w]), Tex(&r.exposure), Tex(&r.upscaled[q])],
+                ),
+                r.display.map(|n| n.div_ceil(16)),
+            )
+        });
         let tone_in = if self.bypass {
             &r.colour
+        } else if sharpening {
+            &r.upscaled[q]
         } else {
             &r.upscaled[w]
         };
@@ -1026,6 +1065,7 @@ impl Fsr2 {
             depth_clip,
             lock,
             accumulate,
+            rcas,
             tone,
             bypass: self.bypass,
             render_groups: r.render.map(|n| n.div_ceil(WORKGROUP)),

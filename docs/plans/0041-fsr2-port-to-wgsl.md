@@ -483,8 +483,8 @@ and the owner weighs it in Phase 7.
 |---|---|---|---|
 | 1: The walking skeleton: FSR 2's accumulate pass end to end on lavapipe | dev | done | 80aed60 |
 | 2: HDR in, tone after, the exposure seam and the masks | dev | done | 80085f8 |
-| 3: The remaining passes: luminance pyramid, previous depth, depth clip, lock | dev | done | committed with this row |
-| 4: RCAS, and the sharpness bars still and panning | dev | not started | |
+| 3: The remaining passes: luminance pyramid, previous depth, depth clip, lock | dev | done | d3b8ddb |
+| 4: RCAS, and the sharpness bars still and panning | dev | stopped: bars unmet, owner question | committed with this row (wip) |
 | 5: Lights, flicker and shadow motion | dev | not started | |
 | 6: The readings on both adapters | dev | not started | |
 | 7: The owner's windowed comparison and the default | human | not started | |
@@ -599,6 +599,40 @@ to 15.7 from the other lanes, so no timing is taken here).
 - Gate: clippy, fmt clean; `cargo nextest run -p flythrough -p vxe-render --test-threads 2`
   256 passed, 7 skipped.
 
+**Phase 4** (lavapipe; exclusive perf lock; 1-min load 8.3 to 10.5, loaded). Stopped here:
+the motion bar is missed (the plan's stop rule), and so are three still bars and two others.
+
+- RCAS (`fsr2/rcas.wgsl`, FSR 2's `FsrRcasF` with `FSR_RCAS_DENOISE`, on the exposed colour)
+  runs when `Fsr2Settings::sharpness > 0` (`2 - 2 sharpness` stops) and writes into last
+  frame's copy of the internal upscaled colour, which the tone pass then reads; at 0 it is not
+  dispatched. `fsr2.png` is blessed (the cavity, 256 x 144 to 384 x 216, 32 frames, 0.5).
+- Stripe wall, one run, sharpening 0 unless named, 5-phase means (ES px, GE):
+  - 7 voxels, still: N 0.798 / 0.00867, R 1.186 / 0.00656, B 1.718 / 0.00435; ours 1 1.192 /
+    0.00621, ours 1.5 1.252 / 0.00612; FSR 1 1.321 / 0.00571 (0.5: 1.243 / 0.00627), FSR 1.5
+    1.479 / 0.00530 (0.5: 1.393 / 0.00580). Bars: FSR 1 ES <= 1.328, GE >= 0.00558 (met); FSR 1.5
+    GE >= 0.00546, ES <= 1.452 (missed).
+  - 7 voxels, panning 64 frames: ours 1 ES 1.436 GE 0.00494 (0.5: 1.225, 0.00553); FSR 1 ES
+    1.653 GE 0.00416 (0.5: 1.573, 0.00454); ours 1.5 ES 1.780 GE 0.00454 (0.5: 1.659, 0.00518);
+    FSR 1.5 ES 1.792 GE 0.00394 (0.5: 1.699, 0.00430); N panning ES 0.802 GE 0.00867.
+  - 88 voxels, still GE: N 0.14138, R 0.10586, B 0.05063, ours 1 0.09951, FSR 1 0.08736 (bar
+    0.08998), ours 1.5 0.10024, FSR 1.5 0.06348 (bar 0.07825).
+  - 88 voxels, panning GE (reading): ours 1 0.05150, FSR 1 0.02716, ours 1.5 0.04773, FSR 1.5
+    0.00688 (0.5: 0.01056); N 0.14114.
+  - Over a bar: FSR 1.5 still at 7 voxels (GE, ES); both pans at 7 voxels (ES and GE); FSR 1
+    and 1.5 GE still at 88 voxels. Full output: `live/p4.log` (untracked).
+- Done-when 3 (level, still, 32 frames, MAD from the 2 x 2 supersampled render): FSR 3.312,
+  ours 2.840, bilinear 3.044: not met. FSR's image is brighter than that render by +1.29 to
+  +1.37/255 per channel on average (ours -0.06 to +0.09): FSR resolves in linear light, the
+  supersampled render and the blit average display-encoded bytes. The test also prints the
+  distances from the supersampled render averaged in linear light (a reading; not yet run).
+- Done-when 4: `fsr2.png` blessed and matching; the accumulate output is the same texel for
+  texel at sharpening 0 and 0.5; 26 705 pixels sharpened, 1 527 exceed their unsharpened 3 x 3
+  maximum by more than 1/255: not met (AMD's RCAS has no clamp to the taps' range; Plan 0030's
+  `sharpen.wgsl` added one).
+- The three failing tests are committed active: `fsr2_keeps_stripe_edges_sharp_still_and_beats_ours_panning`,
+  `a_still_camera_under_fsr2_is_nearer_the_supersampled_render_than_a_blit`,
+  `fsr2_golden_sharpens_within_the_neighbourhood`.
+
 ### Notes
 
 - Names: the plan's names match the merged tree (`jitter_at`, `reproject_centred`,
@@ -627,6 +661,8 @@ to 15.7 from the other lanes, so no timing is taken here).
   pixels, upscale.wgsl's `CLIP_STILL`), as Plan 0030's signal does there (Phase 3, this
   commit); the plan's term list does not say still.
 - `Frame::reset_upscaler_history` and `Fsr2::set_debug` were added for the tests.
+- Main (Plan 0043, v0.29.1) was merged at 8fe03b9 on the orchestrator's request; the
+  `flythrough::fsr2` binary is in the gpu filter, and the stripe-bar test on the slow list.
 - The input pass reads the light-change thresholds and the older lamp from the upscale pass's
   uniform (`UpscaleUniform`, `Upscaler::change_frames` 24 by default).
 
