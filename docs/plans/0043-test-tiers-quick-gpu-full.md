@@ -171,6 +171,11 @@ flowchart LR
     `cargo nextest list -p flythrough --features wasm -E 'binary(component)'` gives locally).
   - The Linux job's wall time is recorded against the 981 s of run 39808788735. About 400 s
     less is expected.
+- **Amended 2026-10-22 (owner):** lanes never push, so the first and third bullets cannot be
+  met on the branch. They are read from the first CI run after this plan merges into main and
+  the owner pushes it; the orchestrator records that run's result and Linux wall time in this
+  plan's log on main. The plan closes and merges before that run. The second bullet is met
+  locally (the list count matches).
 
 ### Phase 4: the skills and lane rules name the tiers
 - **Owner skill:** dev
