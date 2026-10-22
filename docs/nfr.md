@@ -148,6 +148,17 @@ pass's, 0.712 to 0.718 ms, and the composite reads 0.255 ms, so the frame's thre
 uses 112 SGPRs and 64 VGPRs with no spills, 4 waves per SIMD; the single-pass march used 112
 SGPRs (9 spilled) and 84 VGPRs, 3 waves per SIMD.
 
+**The hit pass over size-classed slots (dev reference, Plan 0028 Phase 2, RTX 3080 Laptop GPU,
+exclusive perf lock, 1-minute load 4.5 to 8.7 from the other lanes' work, not quiet; three runs
+of each binary alternated against the pre-plan binary at 1d1e67c; the frame line's `hit`):** the
+level's spawn (`flythrough --level --headless --seed 1 --render 1920x1080 --frames 300`) reads
+1.274, 1.314 and 1.274 ms with `--look plain` against 1.273, 1.274 and 1.264 ms, and 1.404,
+1.420 and 1.419 ms in the default look against 1.346, 1.404 and 1.346 ms (that phase's contour
+still kept 16 attribute units per brick); the streamed spawn (`--frames 3000 --look plain`,
+full residency at `r_full` 16) 1.701, 1.710 and 1.714 ms against 1.708, 1.731 and 1.705 ms. A
+hit in a one-material brick reads one header word where the walk read a pool byte and a record
+palette word; a plane costs one more word per plane.
+
 **The attribute pass under motion (dev reference, diagnostic, Plan 0013 Phase 7, same machine
 and lock, `flythrough --autopilot --headless --seed 1`, default contour, two runs at load 3.6
 to 11.1):** per frame of the flight, the work list reads p50 3584 to 4446, p99 5468 to 5469,
@@ -509,6 +520,16 @@ face). The level: pool 56 075 200 B, records 6 758 400 B, 62 846 720 B with tabl
 | 12/24 | 409 969 196 B | 563 102 380 B | 37 518 244 / 23 899 197 (1.570) | 3.07 |
 | 14/24 | 451 317 548 B | 700 607 596 B | 61 043 072 / 39 015 306 (1.565) | 3.08 |
 | 16/24 | 502 928 492 B | 871 679 852 B | 90 331 692 / 57 703 350 (1.565) | 3.08 |
+
+**Size-classed slots, read (dev reference, Plan 0028 Phase 2, RTX 3080 Laptop GPU, exclusive perf
+lock, 1-minute load 5.2 to 8.8).** The level (`flythrough --level --headless --seed 1 --frames 1
+--look plain`, and `apps/flythrough/tests/level_mirror.rs` on lavapipe) holds 62 846 720 B live
+(56 075 200 B of 2-, 3- and 4-unit slots, 3200 records of 2112 B, the table, the rows) under an
+88 285 376 B reservation, against 232 436 992 B live before; its first sync uploads 63 027 696 B
+in 405 writes in 342 ms against 500 ms for the pre-plan binary (1d1e67c, 232 617 968 B in 435
+writes) in the same session, lights included (65 to 67 ms in both). The streamed plain spawn at
+full residency (16/24, `--frames 3000`) holds 502 928 492 B live against 1 786 641 644 B, as
+projected.
 
 **The reserved budget (dev reference, Plan 0017 Phase 4, ef37395, headless `flythrough
 --autopilot --headless`, unbounded cave seed 1, h 1, 15 workers, RTX 3080 Laptop GPU, Ryzen 9

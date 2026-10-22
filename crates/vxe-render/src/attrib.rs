@@ -1,5 +1,5 @@
 //! The attribute pass (`attrib.wgsl`): fills the contour attributes of a work list of bricks
-//! in the mirror's attribute pages. `GpuWorld::update_attrs` builds the list and records the
+//! inside their mirror slots. `GpuWorld::update_attrs` builds the list and records the
 //! pass.
 
 /// Invocations per workgroup, one per pool word of a brick's 1024-byte attribute; must match
@@ -9,11 +9,12 @@ pub const WORKGROUP: u32 = 256;
 const MAX_GROUPS_X: u32 = 65_535;
 
 /// Set in [`AttribItem::slot`] for a clear item: the pass writes "no plane" (`0xFFFF`) over
-/// the brick's attribute and computes nothing. Slots fit in 29 bits.
+/// the brick's attribute and computes nothing. An entry less its `FULL_BIT` fits in 31 bits.
 pub const CLEAR_BIT: u32 = 1 << 31;
 
-/// One work-list entry: a brick slot in an attribute page and the brick's origin in voxels;
-/// [`CLEAR_BIT`] set in `slot` makes it a clear item.
+/// One work-list entry: the brick's record entry less its `FULL_BIT` (its slot's first unit,
+/// class and translucent flag, which locate its attributes) and the brick's origin in
+/// voxels; [`CLEAR_BIT`] set in `slot` makes it a clear item.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct AttribItem {
@@ -26,7 +27,7 @@ pub struct AttribItem {
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 struct Params {
     window_min: [i32; 3],
-    slots_per_shard: u32,
+    units_per_shard: u32,
     window_size: [i32; 3],
     items: u32,
     groups_x: u32,
@@ -41,7 +42,7 @@ pub struct AttribBindings<'a> {
     pub table: &'a wgpu::Buffer,
     /// The mirror window's minimum corner and size, in chunks.
     pub window: ([i32; 3], [i32; 3]),
-    pub slots_per_shard: u32,
+    pub units_per_shard: u32,
 }
 
 /// The pass, with the buffers it keeps between calls: its uniform, its work list (sized by
@@ -164,7 +165,7 @@ impl AttribPass {
         let groups_y = groups.div_ceil(groups_x);
         let params = Params {
             window_min: b.window.0,
-            slots_per_shard: b.slots_per_shard,
+            units_per_shard: b.units_per_shard,
             window_size: b.window.1,
             items: groups,
             groups_x,

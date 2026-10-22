@@ -19,7 +19,7 @@ pub mod readback;
 pub use attr_work::{AttrWorkStats, MirrorView};
 pub use camera::{Camera, View};
 pub use gpu_world::{
-    BELT_CHUNK_BYTES, GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncStats, Window,
+    BELT_CHUNK_BYTES, BinStats, GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncStats, Window,
 };
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
@@ -50,7 +50,7 @@ pub const ATTRIB_WGSL: &str = include_str!("shaders/attrib.wgsl");
 /// Limits to request from `adapter`: the defaults, with the storage-binding and buffer-size
 /// limits raised toward what a brick pool of `pool_bytes` needs in one shard, capped at what
 /// the adapter offers; a pool past the cap spreads over more shards (`ShardLayout`). The
-/// storage buffers per stage are raised to 10: four pool shards and the six other bindings
+/// storage buffers per stage are raised to 9: four pool shards and the five other bindings
 /// (`OTHER_STORAGE_BUFFERS`).
 pub fn limits_for(adapter: &wgpu::Adapter, pool_bytes: u64) -> wgpu::Limits {
     let offered = adapter.limits();

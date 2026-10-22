@@ -324,17 +324,33 @@ the material rows are unchanged. Bindings: the masks buffer's binding is freed.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The census of units | dev | done: level plain pool 56 075 200 B, records 6 758 400 B (62 846 720 B with table and rows); 16/24 exact plane voxels 57 703 350; chunk-local surface 90 331 692 (1.565 x exact; 1.570 at 12/24, 1.565 at 14/24), 3.08 attribute units (197 B) per brick; contour 16/24 at full residency 871 679 852 B, plain 502 928 492 B (57 777 records); bars: the 180 MB level bar and the pressure bar hold on this arithmetic; the 0.93 to 1.2 GB range reads 0.87 GB here, because it counted the 93 239 reserved records rather than the 57 777 mirrored; gate: 581 nextest passed, 4 skipped, 7 doctests, clippy and fmt clean | committed with this row |
-| 2: The slot format, the bins and the march, plain look | dev | not started | |
+| 1: The census of units | dev | done: level plain pool 56 075 200 B, records 6 758 400 B (62 846 720 B with table and rows); 16/24 exact plane voxels 57 703 350; chunk-local surface 90 331 692 (1.565 x exact; 1.570 at 12/24, 1.565 at 14/24), 3.08 attribute units (197 B) per brick; contour 16/24 at full residency 871 679 852 B, plain 502 928 492 B (57 777 records); bars: the 180 MB level bar and the pressure bar hold on this arithmetic; the 0.93 to 1.2 GB range reads 0.87 GB here, because it counted the 93 239 reserved records rather than the 57 777 mirrored; gate: 581 nextest passed, 4 skipped, 7 doctests, clippy and fmt clean | 1d1e67c |
+| 2: The slot format, the bins and the march, plain look | dev | done: every listed golden and the skip-against-single-voxel test unchanged (no re-bless); level plain 62 846 720 B live (`level_mirror`, lavapipe and the RTX 3080); level hit pass 1.264 to 1.314 ms plain, 1.404 to 1.420 ms default, streamed plain spawn 1.701 to 1.714 ms (paired with 1d1e67c, load 4.5 to 8.7); level first sync 342 ms against 500 ms; gate: 579 nextest passed, 4 skipped, clippy and fmt clean | committed with this row |
 | 3: Surface-only attributes, contour look | dev | not started | |
 | 4: The streamed default at `r_full` 16, and the slow adapter | dev | not started | |
 | 5: The owner's windowed flight | human | not started | |
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Names: the plan's "march" reading is the hit pass since Plan 0024 (`Frame`'s `hit` timer, the
+  frame line's `hit`); its "masks buffer" binding was 6 of the world group; the attribute pass
+  is `AttribPass` and `attr_work::build_split`, as named. (Phase 2 commit)
+- A planar slot of a brick holding a translucent voxel carries one more unit, its translucent
+  voxels, after its planes (`attr_offset`), not in the plan's Data shapes. (Phase 2 commit)
+- Phase 2 also touched `attrib.wgsl`, `attrib.rs` (work items carry the entry less `FULL_BIT`),
+  `apps/flythrough/src/lib.rs` (`level_pool_units` replaces `level_pool_slots`),
+  `apps/flythrough/src/main.rs`, `tests/golden.rs` and `tests/look.rs`; until Phase 3 the
+  contour attribute is 16 units inside each full chunk's slot. (Phase 2 commit)
+- The done-when's "carve that adds a third material" is a one-voxel fill of a third material;
+  a carve removes material. (Phase 2 commit)
+- Retired with the chunk palette: the wide-chunk and slot-pair tests of `mirror.rs`; the
+  attribute-page tests became their bin equivalents; `walk.rs` and `translucent.rs` load counts
+  read the header word for the record's palette word. `level_mirror`'s shard test caps shards
+  at 64 pages (the level fits one lavapipe binding). (Phase 2 commit)
+- `exposed_emitters` reads a brick's materials through its palette words or raw ids, so a
+  brick past 16 materials is scanned for emitters too (it was skipped). (Phase 2 commit)
+- `OTHER_STORAGE_BUFFERS` is 5; `MirrorConfig::max_shard_slots` is `max_shard_units`.
+  (Phase 2 commit)
 
 ### Close triggers
 

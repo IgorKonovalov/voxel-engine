@@ -1,5 +1,5 @@
-//! The GPU mirror of a world's bricks (ADR-0002, ADR-0004): brick pool, brick occupancy
-//! masks, chunk records, chunk table and material rows.
+//! The GPU mirror of a world's bricks (ADR-0002, ADR-0004, ADR-0012): brick pool, chunk
+//! records, chunk table and material rows.
 //!
 //! The mirror holds the resident chunks inside a box-shaped *window* of chunks. A fixed
 //! window is a bounded world's extent; a following window is a cube of side `W` centred on
@@ -13,61 +13,62 @@
 //! until its byte budget is spent; the chunk that crosses the budget is still uploaded whole,
 //! so a sync writes at most the budget plus one chunk.
 //!
-//! The CPU keeps a copy of every record entry, so `sync` knows which pool slot a brick held
-//! before an edit. A brick that becomes `Full` takes a slot from the free list or the next
-//! never-used slot; a brick that collapses to `Uniform`, and every `Full` brick of a chunk
-//! that leaves the mirror, return their slots to the free list. `Full` bricks are staged and
-//! written in runs of consecutive pool slots, records in runs of consecutive records, and
-//! table entries in runs of nearby indices, so a first sync issues a few writes per page.
+//! The CPU keeps a copy of every record entry, so `sync` knows which slot a brick held before
+//! an edit. A `Full` brick's slot is its packed CPU bytes (ADR-0012), a run of 64-byte *units*
+//! in the pool, nothing narrowed:
 //!
-//! Voxels are narrowed to 8 bits (ADR-0004). A `Full` brick takes one 512-byte slot of palette
-//! indices, and each record carries its chunk's palette of 256 `u16` materials after its 512
-//! entries; index 0 is air in every palette. Ahead of its entries a record holds 512 brick
-//! bits, one per entry that is not uniform air, and the chunk table entry of a record whose
-//! bits are all clear carries `EMPTY_BIT`, so the marcher skips an empty chunk on the table
-//! read alone. A palette only grows while its chunk is
-//! mirrored, so bricks already uploaded keep their indices. A chunk that needs more than 255
-//! non-air materials is *wide*: each `Full` brick takes two slots from an even slot and holds
-//! `u16` voxels, and a chunk that turns wide uploads every `Full` brick again.
+//! ```text
+//! unit 0          the opaque mask: bit i % 32 of word i / 32 set when voxel i (x + 8 y + 64 z)
+//!                 is neither air nor TRANSLUCENT; layer z is words 2 z (low) and 2 z + 1
+//! unit 1          the header (HEADER_* words): the brick's palette of up to 16 u16 ids,
+//!                 ascending, entry j in half j % 2 of word j / 2; the two translucent words
+//!                 (bit bx + 4 by + 16 bz set when 2^3 block (bx, by, bz) holds a TRANSLUCENT
+//!                 voxel); the surface prefix, attribute units and flags
+//! units 2..       the payload: 0, 1, 2 or 4 bit planes in the mask's bit layout, plane k's
+//!                 bits forming bit k of a voxel's palette index; or, for a brick of more than
+//!                 16 materials (class Wide), 16 units of u16 ids, voxel i in half i % 2 of
+//!                 word i / 2 (0 is air), and no palette
+//! then            for a planar brick holding a TRANSLUCENT voxel, one unit of its translucent
+//!                 voxels in the mask's layout (a translucent voxel at palette index 0 is
+//!                 otherwise indistinguishable from air)
+//! then            the contour attributes, for a full chunk's brick in a mirror with them
+//! ```
 //!
-//! The pool is sharded over up to `MAX_SHARDS` storage buffers (ADR-0004). Slot `s` lives in
-//! shard `s / slots_per_shard`; `slots_per_shard` is the largest multiple of a page that fits
-//! the device's binding and buffer size limits, so a wide brick's even-aligned pair never
-//! straddles two shards. Masks, records, table and materials stay one buffer each, the masks
-//! indexed by global slot.
+//! The record entry of a `Full` brick names its first unit and its class (`CLASS_SHIFT`), so
+//! the slot's layout follows from the entry alone. Ahead of its 512 entries a record holds 512
+//! brick bits, one per entry that is not uniform air, and the chunk table entry of a record
+//! whose bits are all clear carries `EMPTY_BIT`, so the marcher skips an empty chunk on the
+//! table read alone. Records carry no palette.
+//!
+//! Slots are handed out in *bins* of [`BINS`] units (ADR-0013's page kinds, one per bin): a
+//! 4096-unit page takes a bin when it is first issued and holds `4096 / bin` slots of it; a
+//! page whose last live slot leaves joins the free pages and is issued to whichever bin next
+//! needs one, lowest first, before a page never handed out. A brick whose slot size changes
+//! (a class, its translucent unit or its attributes) moves to a slot of its new bin in the
+//! same sync, and its entry is rewritten with it. No live brick moves otherwise. The pool is
+//! sharded over up to `MAX_SHARDS` storage buffers (ADR-0004): unit `u` lives in shard
+//! `u / units_per_shard`, a multiple of a page, so a slot never straddles two shards.
 //!
 //! The mirror reserves its VRAM once, at creation (ADR-0013): [`MirrorConfig::budget_bytes`]
 //! is split into records for every chunk the window can hold (at most the binding allows),
-//! then whole pages of pool slots with their masks, filling shard 0 to its limit, then shard
-//! 1, and so on ([`ShardLayout::with_budget`]). A shard holding no reserved slot is a one-slot
-//! placeholder, so the marcher can always bind all of them. No pool, mask or record buffer is
-//! created or copied after `new`: a sync that would need more slots or records than are
-//! reserved fails before writing anything. Pages are handed out from the bottom, so the pages
-//! handed out so far ([`GpuWorld::pool_slots`]) are the pool's high-water mark.
+//! then whole pages of units, filling shard 0 to its limit, then shard 1, and so on
+//! ([`ShardLayout::with_budget`]). A shard holding no reserved unit is a one-unit placeholder,
+//! so the marcher can always bind all of them. No pool or record buffer is created or copied
+//! after `new`: a sync that would need more pages or records than are reserved fails before
+//! writing anything. Pages are handed out from the bottom, so the pages handed out so far
+//! ([`GpuWorld::pool_units`]) are the pool's high-water mark.
 //!
 //! A LOD-only chunk (ADR-0003) is mirrored from its mips as a LOD record: entries 0..64 hold
-//! level 1's mip-bricks, 64..72 level 2's and 72 level 3's, encoded like brick entries and
-//! narrowed through the record's palette like voxel bricks. Its table entry carries
-//! `LOD_BIT`. A chunk that changes tier gets a new record: its old one and its slots are
-//! freed in the same sync.
+//! level 1's mip-bricks, 64..72 level 2's and 72 level 3's, encoded like brick entries. Its
+//! table entry carries `LOD_BIT`. A chunk that changes tier gets a new record: its old one and
+//! its slots are freed in the same sync.
 //!
 //! A mirror made with [`GpuWorld::with_surface_attrs`] keeps a per-voxel contour attribute for
-//! the `Full` bricks of full chunks, in *attribute pages* of the pool (ADR-0002's reserved
-//! attribute, packed into the existing shards). Each 4096-slot page is then of one kind: a
-//! *plain page* holds mip-bricks as above; an attribute page holds bricks of full chunks in its
-//! slots `0..ATTR_PAGE_BRICK_SLOTS`, and brick slot `i` of the page owns the two slots
-//! `ATTR_PAGE_BRICK_SLOTS + 2i` and the one after, which hold its 512 `u16` attributes
-//! ([`attr_slot`]). Each kind has its own cursor and free lists. The CPU never writes an
-//! attribute slot: [`GpuWorld::update_attrs`] fills them on the GPU (`attrib.wgsl`) for the
-//! bricks `sync` wrote and their neighbours, so a brick placed in a page is always followed by
-//! its attribute. Without attribute pages every page is plain, and the allocator hands out
-//! slots exactly as a single plain kind.
-//!
-//! A page is of one kind while it holds a live slot. Each page counts its live brick slots
-//! (two for a wide brick); a page whose count falls to zero leaves its kind's free lists and
-//! cursor and joins the free pages, and a kind that needs a page takes the lowest free page,
-//! of either former kind, before one never handed out. So plain and attribute slots share one
-//! high-water mark, and no live brick ever moves: a page changes kind only while it is empty.
+//! the `Full` bricks of full chunks inside their slots, after the CPU units (the attribute
+//! layout is in [`ATTR_UNITS`]). The CPU writes the attribute units as "no plane" and never
+//! fills them: [`GpuWorld::update_attrs`] does, on the GPU (`attrib.wgsl`), for the bricks
+//! `sync` wrote and their neighbours, so a brick written into a slot is always followed by its
+//! attribute.
 //!
 //! Every `Full` brick of a full chunk that `sync` writes, and each of its neighbours in the
 //! chunk, is scanned (when its voxels hold a material with non-zero emission) for its
@@ -87,7 +88,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::PoisonError;
 
-use vxe_world::packed::Packed;
+use vxe_world::packed::{Packed, PackedClass};
 use vxe_world::{
     AIR, BRICK_EDGE, BRICK_VOXELS, Brick, CHUNK_BRICKS, CHUNK_EDGE_BRICKS, ChunkCoord, ChunkExtent,
     ChunkMips, MIP_LEVELS, MaterialId, MaterialTable, StreamEvents, VoxelCoord, World,
@@ -148,7 +149,7 @@ pub fn exposed_emitters<'a>(
     let Brick::Full(p) = brick else {
         return Vec::new();
     };
-    if !p.palette().iter().any(|&m| emissive[usize::from(m)]) {
+    if !materials_of(p, |m| emissive[usize::from(m)]) {
         return Vec::new();
     }
     let mut v = [AIR; BRICK_VOXELS];
@@ -237,50 +238,54 @@ struct ChunkLights {
     power: f32,
 }
 
-/// Pool slots per page: the unit the pool is reserved and handed out in, and the unit
-/// `slots_per_shard` is a multiple of.
-pub const POOL_PAGE_SLOTS: u32 = 4096;
+/// Bytes of one unit of the pool: one 64-byte line, the opaque mask of a brick.
+pub const UNIT_BYTES: u64 = 64;
+/// `u32` words of one unit.
+pub const UNIT_WORDS: usize = 16;
+/// Units per page: the unit the pool is reserved and handed out in, and the unit
+/// `units_per_shard` is a multiple of. 256 KiB.
+pub const PAGE_UNITS: u32 = 4096;
+/// The slot sizes, in units, that pages are binned by; a slot takes the smallest that holds
+/// it.
+pub const BINS: [u32; 10] = [2, 3, 4, 6, 8, 12, 16, 20, 24, 36];
+/// How many bins there are.
+pub const BIN_COUNT: usize = BINS.len();
 /// Most storage buffers the pool is sharded over.
 pub const MAX_SHARDS: u32 = 4;
-/// Storage buffers the frame's passes bind besides the pool shards: masks, records, table,
+/// Storage buffers the frame's passes bind besides the pool shards: records, table,
 /// materials, light samples and the emission scale.
-pub const OTHER_STORAGE_BUFFERS: u32 = 6;
-/// Bytes of one pool slot: a narrow brick's 512 palette indices, or half a wide brick.
-pub const SLOT_BYTES: u64 = BRICK_VOXELS as u64;
-/// Pool slots per group of the mask buffer.
-pub const MASK_GROUP_SLOTS: u32 = 8;
-/// `u32` words of a slot's opaque mask: one bit per voxel, one 64-byte line.
+pub const OTHER_STORAGE_BUFFERS: u32 = 5;
+/// `u32` words of a slot's opaque mask (its unit 0): one bit per voxel.
 pub const OPAQUE_WORDS: usize = 16;
-/// `u32` words of a slot's translucent mask: one bit per 2³ block.
-pub const TRANSLUCENT_WORDS: usize = 2;
-/// `u32` words of one mask group: its eight slots' opaque masks, each on its own 64-byte line,
-/// then one line holding the eight slots' translucent masks.
-pub const MASK_GROUP_WORDS: u32 = MASK_GROUP_SLOTS * (OPAQUE_WORDS + TRANSLUCENT_WORDS) as u32;
-/// Bytes of one slot's masks, a group's bytes over its slots: 576 / 8.
-pub const MASK_BYTES: u64 = MASK_GROUP_WORDS as u64 * 4 / MASK_GROUP_SLOTS as u64;
-/// Entries in a palette, index 0 being air.
-pub const PALETTE_ENTRIES: usize = 256;
+/// The header unit's words: the palette (16 `u16`), the two translucent words (one bit per
+/// 2^3 block), the surface prefix (8 `u16`, the surface voxels below each layer), then the
+/// attribute units in the low half of a word and the flags in its high half.
+pub const HEADER_PALETTE_WORD: usize = 0;
+pub const HEADER_TRANSLUCENT_WORD: usize = 8;
+pub const HEADER_PREFIX_WORD: usize = 10;
+pub const HEADER_ATTR_WORD: usize = 14;
+/// Units of a full chunk's brick's contour attributes: 512 `u16`, two per word, x fastest.
+pub const ATTR_UNITS: u32 = 16;
+/// Palette entries a slot's header holds.
+pub const PALETTE_ENTRIES: usize = 16;
 /// `u32` words of brick bits at the head of a chunk record: bit `b` of word `b / 32` is set
 /// when record entry `b` is not uniform air.
 pub const BITS_WORDS: usize = CHUNK_BRICKS / 32;
 /// The record word of brick entry 0.
 pub const ENTRY_WORD: usize = BITS_WORDS;
-/// The record word where the palette starts.
-pub const PALETTE_WORD: usize = ENTRY_WORD + CHUNK_BRICKS;
-/// `u32` words of one chunk record: the brick bits, 512 brick entries, then the palette as
-/// `u16` pairs.
-pub const RECORD_WORDS: usize = PALETTE_WORD + PALETTE_ENTRIES / 2;
+/// `u32` words of one chunk record: the brick bits, then 512 brick entries.
+pub const RECORD_WORDS: usize = ENTRY_WORD + CHUNK_BRICKS;
 /// Bytes of one chunk record.
 pub const RECORD_BYTES: u64 = (RECORD_WORDS * 4) as u64;
-/// Bytes one page of the pool reserves: its slots and their masks.
-pub const PAGE_BYTES: u64 = POOL_PAGE_SLOTS as u64 * (SLOT_BYTES + MASK_BYTES);
-/// Bytes a reservation sets aside for placeholders before it counts pages: four one-slot
-/// shards and one mask group, so the buffers never exceed the budget.
-pub const PLACEHOLDER_BYTES: u64 = MAX_SHARDS as u64 * SLOT_BYTES + MASK_GROUP_WORDS as u64 * 4;
-/// The default budget of the pool, masks and records: the world line of `nfr.md` §3, 3 GiB.
+/// Bytes one page of the pool reserves.
+pub const PAGE_BYTES: u64 = PAGE_UNITS as u64 * UNIT_BYTES;
+/// Bytes a reservation sets aside for placeholders before it counts pages: four one-unit
+/// shards, so the buffers never exceed the budget.
+pub const PLACEHOLDER_BYTES: u64 = MAX_SHARDS as u64 * UNIT_BYTES;
+/// The default budget of the pool and records: the world line of `nfr.md` §3, 3 GiB.
 pub const DEFAULT_BUDGET_BYTES: u64 = 3 << 30;
-/// Most slots `sync` stages on the CPU before writing a run: one pool page.
-const STAGE_SLOTS: u32 = POOL_PAGE_SLOTS;
+/// Most units `sync` stages on the CPU before writing a run: 2 MiB.
+const STAGE_UNITS: u32 = 8 * PAGE_UNITS;
 /// Most records staged before writing a run: 4 MiB.
 const STAGE_RECORDS: u32 = 2048;
 /// Changed table entries closer than this many entries are written in one run.
@@ -294,18 +299,23 @@ pub const BELT_CHUNK_BYTES: u64 = 4 << 20;
 pub const BELT_KEEP_CHUNKS: usize = 3;
 /// Chunk table entry of a chunk with no record.
 pub const ABSENT: u32 = u32::MAX;
-/// Chunk record entry bit: set, the low bits are a pool slot; clear, they are a material.
+/// Chunk record entry bit: set, the entry names a slot (its class and first unit); clear,
+/// the low bits are a uniform brick's material.
 pub const FULL_BIT: u32 = 1 << 31;
-/// Chunk record entry bit, with `FULL_BIT`: the brick is wide, two slots of `u16` voxels.
-pub const WIDE_BIT: u32 = 1 << 30;
 /// Brick entry bit: the brick holds a `TRANSLUCENT` voxel (a uniform brick's material is one).
 /// The opaque walk reads it from the entry it loads anyway, so the translucent walk runs only
-/// for a ray that passed such a brick.
+/// for a ray that passed such a brick. A planar `Full` brick with it carries a translucent
+/// unit.
 pub const TRANSLUCENT_BIT: u32 = 1 << 29;
 /// The material of a uniform brick's entry.
 pub const MATERIAL_MASK: u32 = 0xFFFF;
-/// The pool slot in a `Full` entry.
-pub const SLOT_MASK: u32 = TRANSLUCENT_BIT - 1;
+/// Where a `Full` entry's class lies: bits 26..29, [`class_code`].
+pub const CLASS_SHIFT: u32 = 26;
+pub const CLASS_MASK: u32 = 7;
+/// The first unit of the slot in a `Full` entry: 26 bits, 4 GiB of units.
+pub const UNIT_MASK: u32 = (1 << CLASS_SHIFT) - 1;
+/// The class code of a `Wide` brick: 16 units of raw ids, no palette.
+pub const CLASS_WIDE: u32 = 5;
 /// Chunk table entry bit: the record is a LOD record.
 pub const LOD_BIT: u32 = 1 << 30;
 /// Chunk table entry bit: every entry of the record is uniform air, so its brick bits are
@@ -315,85 +325,95 @@ pub const EMPTY_BIT: u32 = 1 << 29;
 pub const RECORD_MASK: u32 = EMPTY_BIT - 1;
 /// First entry of each mip level in a LOD record, level 1 first.
 pub const LOD_LEVEL_ENTRY: [usize; MIP_LEVELS] = [0, 64, 72];
-/// `rev` value of a material not in the palette being built.
-const NO_INDEX: u16 = u16::MAX;
 /// `f32`s per material row: albedo rgb, roughness, emission rgb, flags as bits, detail scale
 /// and strength, opacity, 5 spare.
 pub const MATERIAL_FLOATS: usize = 16;
-/// Brick slots of an attribute page; the rest of the page holds their attributes, two slots
-/// per brick slot, and its last 4 slots are unused.
-pub const ATTR_PAGE_BRICK_SLOTS: u32 = 1364;
 /// The attribute of a voxel with no contour plane.
 pub const NO_PLANE: u16 = 0xFFFF;
 
-/// The first of the two pool slots holding the attributes of brick slot `s`, which lies in an
-/// attribute page: `p + ATTR_PAGE_BRICK_SLOTS + 2 (s - p)` with `p = s - s % POOL_PAGE_SLOTS`.
-/// Always in the same page, so in the same shard, as `s`.
-pub fn attr_slot(s: u32) -> u32 {
-    let p = s - s % POOL_PAGE_SLOTS;
-    p + ATTR_PAGE_BRICK_SLOTS + 2 * (s - p)
-}
-
-/// The mask word where slot `s`'s opaque mask starts: word `i / 32` bit `i % 32` is voxel `i`
-/// of the brick (`x + 8 y + 64 z`), set when the voxel is not air. A multiple of 16 words, so
-/// the mask is one 64-byte line.
-pub fn opaque_mask_word(s: u32) -> u32 {
-    MASK_GROUP_WORDS * (s / MASK_GROUP_SLOTS) + OPAQUE_WORDS as u32 * (s % MASK_GROUP_SLOTS)
-}
-
-/// The mask word where slot `s`'s two translucent words start, in its group's ninth line: bit
-/// `bx + 4 by + 16 bz` is set when 2³ block `(bx, by, bz)` holds a translucent voxel.
-pub fn translucent_mask_word(s: u32) -> u32 {
-    MASK_GROUP_WORDS * (s / MASK_GROUP_SLOTS)
-        + MASK_GROUP_SLOTS * OPAQUE_WORDS as u32
-        + TRANSLUCENT_WORDS as u32 * (s % MASK_GROUP_SLOTS)
-}
-
-/// A slot's masks as staged: the opaque words, then the translucent words.
-type SlotMasks = [u32; OPAQUE_WORDS + TRANSLUCENT_WORDS];
-
-/// The kind of a pool page, and of the slots it hands out.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Kind {
-    /// Every slot a brick slot: mip-bricks, or every brick without attribute pages.
-    Plain = 0,
-    /// Brick slots of full chunks' `Full` bricks, then their attributes.
-    Attr = 1,
-}
-
-impl Kind {
-    /// Brick slots a page of this kind hands out.
-    fn brick_slots(self) -> u32 {
-        match self {
-            Self::Plain => POOL_PAGE_SLOTS,
-            Self::Attr => ATTR_PAGE_BRICK_SLOTS,
-        }
+/// The entry code of packed class `c`: 1 to 4 for 0, 1, 2 and 4 planes, [`CLASS_WIDE`].
+pub fn class_code(c: PackedClass) -> u32 {
+    match c {
+        PackedClass::Mask => 1,
+        PackedClass::Plane1 => 2,
+        PackedClass::Plane2 => 3,
+        PackedClass::Plane4 => 4,
+        PackedClass::Wide => CLASS_WIDE,
     }
 }
 
-/// The slot allocator of one page kind: a cursor through its current page and free lists.
+/// Units of a slot's payload after its mask and header, by entry class code: its planes, or
+/// 16 units of raw ids.
+pub fn payload_units(code: u32) -> u32 {
+    match code {
+        2 => 1,
+        3 => 2,
+        4 => 4,
+        CLASS_WIDE => 16,
+        _ => 0,
+    }
+}
+
+/// The unit offset, from a slot's first unit, of the units after its payload and its
+/// translucent unit: where its attributes start. Read from the `Full` entry alone.
+pub fn attr_offset(entry: u32) -> u32 {
+    let code = entry >> CLASS_SHIFT & CLASS_MASK;
+    let translucent = entry & TRANSLUCENT_BIT != 0 && code != CLASS_WIDE;
+    2 + payload_units(code) + u32::from(translucent)
+}
+
+/// The units of the slot of `p` (module docs): mask, header, payload, a translucent unit for a
+/// planar brick holding a voxel of a material `translucent` names, and with `attrs` the
+/// contour attributes.
+pub fn slot_units(p: &Packed, translucent: impl Fn(MaterialId) -> bool, attrs: bool) -> u32 {
+    let code = class_code(p.class());
+    let t = code != CLASS_WIDE && materials_of(p, translucent);
+    2 + payload_units(code) + u32::from(t) + if attrs { ATTR_UNITS } else { 0 }
+}
+
+/// The bin index of a slot of `units` units.
+pub fn bin_of(units: u32) -> usize {
+    BINS.iter()
+        .position(|&b| b >= units)
+        .expect("a slot fits the largest bin")
+}
+
+/// Slots of bin `k` one page holds.
+pub fn slots_per_page(k: usize) -> u32 {
+    PAGE_UNITS / BINS[k]
+}
+
+/// The slot allocator of one bin: a cursor through its current page and a free list.
 #[derive(Debug, Default)]
-struct SlotAlloc {
-    /// The next never-used slot of the current page, and the end of the page's brick slots.
+struct BinAlloc {
+    /// The first unit of the next never-used slot of the current page, and the end of the
+    /// page's last slot.
     next: u32,
     end: u32,
-    /// Brick slots of this kind holding a brick, two for a wide brick.
+    /// Slots of this bin holding a brick.
     live: u32,
-    /// Free single slots in pages of this kind that still hold a live slot.
+    /// First units of free slots in pages of this bin that still hold a live slot.
     free: Vec<u32>,
-    /// First slots of free slot pairs, from wide bricks.
-    free_pairs: Vec<u32>,
 }
 
-impl SlotAlloc {
-    fn live(&self) -> u32 {
-        self.live
+impl BinAlloc {
+    /// Slots this bin can hand out without a new page.
+    fn available(&self, k: usize) -> u64 {
+        u64::from((self.end - self.next) / BINS[k]) + self.free.len() as u64
     }
+}
 
-    /// Brick slots this kind can hand out without a new page.
-    fn available(&self) -> u64 {
-        u64::from(self.end - self.next) + self.free.len() as u64 + 2 * self.free_pairs.len() as u64
-    }
+/// One bin's occupancy ([`GpuWorld::bin_stats`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BinStats {
+    /// Units per slot.
+    pub units: u32,
+    /// Slots holding a brick.
+    pub live: u32,
+    /// Slots handed out to no brick: the free list and the rest of the cursor's page.
+    pub spare: u64,
+    /// Pages of this bin.
+    pub pages: u32,
 }
 
 /// Why a sync could not complete.
@@ -474,9 +494,9 @@ pub struct MirrorConfig {
     pub window: Window,
     /// Bytes a sync writes before it stops taking chunks; `u64::MAX` for no budget.
     pub sync_budget_bytes: u64,
-    /// Caps the slots per pool shard below what the device allows; for tests.
-    pub max_shard_slots: Option<u32>,
-    /// VRAM reserved for the pool shards, masks and records at creation, split by the
+    /// Caps the units per pool shard below what the device allows; for tests.
+    pub max_shard_units: Option<u32>,
+    /// VRAM reserved for the pool shards and records at creation, split by the
     /// device's limits ([`ShardLayout::with_budget`]). The chunk table and material rows are
     /// not part of it.
     pub budget_bytes: u64,
@@ -504,7 +524,7 @@ impl MirrorConfig {
         Self {
             window,
             sync_budget_bytes: u64::MAX,
-            max_shard_slots: None,
+            max_shard_units: None,
             budget_bytes: DEFAULT_BUDGET_BYTES,
             record_chunks: None,
             attr_cap: usize::MAX,
@@ -516,27 +536,28 @@ impl MirrorConfig {
     }
 }
 
-/// The smallest budget whose split reserves at least `slots` pool slots and a record for each
-/// of `window_chunks` chunks, when the device can bind them.
-pub fn budget_for(slots: u64, window_chunks: u64) -> u64 {
+/// The smallest budget whose split reserves at least `units` pool units (rounded up to whole
+/// pages) and a record for each of `window_chunks` chunks, when the device can bind them.
+pub fn budget_for(units: u64, window_chunks: u64) -> u64 {
     window_chunks * RECORD_BYTES
-        + slots.div_ceil(u64::from(POOL_PAGE_SLOTS)) * PAGE_BYTES
+        + units.div_ceil(u64::from(PAGE_UNITS)) * PAGE_BYTES
         + PLACEHOLDER_BYTES
 }
 
 /// How the pool is split over storage buffers on a device, and what a budget reserves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ShardLayout {
-    /// The largest multiple of `POOL_PAGE_SLOTS` whose bytes fit one binding and one buffer,
-    /// at most `max_shard_slots` rounded down to a page.
-    pub slots_per_shard: u32,
+    /// The largest multiple of `PAGE_UNITS` whose bytes fit one binding and one buffer, at
+    /// most `max_shard_units` rounded down to a page.
+    pub units_per_shard: u32,
     /// `min(MAX_SHARDS, max_storage_buffers_per_shader_stage - OTHER_STORAGE_BUFFERS)`.
     pub shards: u32,
     /// Chunk records the one record buffer can hold:
     /// `min(max_storage_buffer_binding_size, max_buffer_size) / RECORD_BYTES`.
     pub record_capacity: u32,
-    /// Pool slots reserved, a whole number of pages, at most [`ShardLayout::capacity`].
-    pub reserved_slots: u32,
+    /// Pool units reserved, a whole number of pages, at most [`ShardLayout::capacity`] and at
+    /// most what an entry's 26-bit unit index addresses.
+    pub reserved_units: u32,
     /// Chunk records reserved, at most `record_capacity`.
     pub reserved_records: u32,
 }
@@ -544,43 +565,41 @@ pub struct ShardLayout {
 impl ShardLayout {
     /// The layout `limits` allow, reserving all of it. Reads only the limits, never the
     /// backend or vendor.
-    pub fn from_limits(limits: &wgpu::Limits, max_shard_slots: Option<u32>) -> Self {
+    pub fn from_limits(limits: &wgpu::Limits, max_shard_units: Option<u32>) -> Self {
         let bytes = limits
             .max_storage_buffer_binding_size
             .min(limits.max_buffer_size);
-        let page = u64::from(POOL_PAGE_SLOTS);
-        let mut slots = bytes / SLOT_BYTES;
-        if let Some(cap) = max_shard_slots {
-            slots = slots.min(u64::from(cap));
+        let page = u64::from(PAGE_UNITS);
+        let mut units = bytes / UNIT_BYTES;
+        if let Some(cap) = max_shard_units {
+            units = units.min(u64::from(cap));
         }
-        let slots_per_shard = ((slots / page) * page).clamp(page, u64::from(u32::MAX / 2)) as u32;
+        let units_per_shard = ((units / page) * page).clamp(page, u64::from(UNIT_MASK) + 1) as u32;
         let shards = limits
             .max_storage_buffers_per_shader_stage
             .saturating_sub(OTHER_STORAGE_BUFFERS)
             .clamp(1, MAX_SHARDS);
         let record_capacity = (bytes / RECORD_BYTES).min(u64::from(u32::MAX)) as u32;
-        let capacity = u64::from(slots_per_shard) * u64::from(shards);
+        let capacity = u64::from(units_per_shard) * u64::from(shards);
         Self {
-            slots_per_shard,
+            units_per_shard,
             shards,
             record_capacity,
-            reserved_slots: capacity
-                .min(u64::from(u32::MAX) / u64::from(POOL_PAGE_SLOTS) * u64::from(POOL_PAGE_SLOTS))
-                as u32,
+            reserved_units: capacity.min(u64::from(UNIT_MASK) + 1) as u32,
             reserved_records: record_capacity,
         }
     }
 
-    /// Slots the pool can hold over all its shards.
+    /// Units the pool can hold over all its shards.
     pub fn capacity(&self) -> u64 {
-        u64::from(self.slots_per_shard) * u64::from(self.shards)
+        u64::from(self.units_per_shard) * u64::from(self.shards)
     }
 
     /// This layout reserving `budget_bytes`: past [`PLACEHOLDER_BYTES`], a record for each of
     /// `window_chunks` chunks, at most `record_capacity` and at most what the budget holds;
-    /// then whole pages of slots with their masks ([`PAGE_BYTES`] each) in what is left, at
-    /// most the shards' capacity. The reserved bytes never exceed the budget unless it is
-    /// smaller than one record and the placeholders.
+    /// then whole pages ([`PAGE_BYTES`] each) in what is left, at most the reservation's cap.
+    /// The reserved bytes never exceed the budget unless it is smaller than one record and the
+    /// placeholders.
     pub fn with_budget(self, budget_bytes: u64, window_chunks: u64) -> Self {
         let budget = budget_bytes.saturating_sub(PLACEHOLDER_BYTES);
         let records = window_chunks
@@ -588,42 +607,45 @@ impl ShardLayout {
             .min(budget / RECORD_BYTES)
             .max(1);
         let rest = budget.saturating_sub(records * RECORD_BYTES);
-        let page = u64::from(POOL_PAGE_SLOTS);
-        let slots = (rest / PAGE_BYTES * page).min(u64::from(self.reserved_slots));
+        let page = u64::from(PAGE_UNITS);
+        let units = (rest / PAGE_BYTES * page).min(u64::from(self.reserved_units));
         Self {
-            reserved_slots: slots as u32,
+            reserved_units: units as u32,
             reserved_records: records as u32,
             ..self
         }
     }
 
-    /// Bytes of the buffers this layout reserves: the pool shards (a placeholder slot for a
-    /// shard holding none), the masks (one group when there is no slot) and the records.
+    /// Pages reserved.
+    pub fn reserved_pages(&self) -> u32 {
+        self.reserved_units / PAGE_UNITS
+    }
+
+    /// Bytes of the buffers this layout reserves: the pool shards (a placeholder unit for a
+    /// shard holding none) and the records.
     pub fn reserved_bytes(&self) -> u64 {
-        let sps = u64::from(self.slots_per_shard);
-        let slots = u64::from(self.reserved_slots);
+        let ups = u64::from(self.units_per_shard);
+        let units = u64::from(self.reserved_units);
         let shards: u64 = (0..u64::from(MAX_SHARDS))
-            .map(|k| shard_slots(slots, sps, k).max(1) * SLOT_BYTES)
+            .map(|k| shard_units(units, ups, k).max(1) * UNIT_BYTES)
             .sum();
-        let groups = slots.div_ceil(u64::from(MASK_GROUP_SLOTS)).max(1);
-        shards
-            + groups * u64::from(MASK_GROUP_WORDS) * 4
-            + u64::from(self.reserved_records) * RECORD_BYTES
+        shards + u64::from(self.reserved_records) * RECORD_BYTES
     }
 }
 
-/// The slots shard `k` holds of `slots` reserved, shards filling in order at `sps` each.
-fn shard_slots(slots: u64, sps: u64, k: u64) -> u64 {
-    slots.saturating_sub(k * sps).min(sps)
+/// The units shard `k` holds of `units` reserved, shards filling in order at `ups` each.
+fn shard_units(units: u64, ups: u64, k: u64) -> u64 {
+    units.saturating_sub(k * ups).min(ups)
 }
 
 /// What the mirror keeps for a mirrored chunk besides its record entries.
 struct Mirrored {
     record: u32,
-    palette: Vec<MaterialId>,
-    wide: bool,
     /// A LOD record, from the chunk's mips.
     lod: bool,
+    /// Whether a brick uploaded into this record has held a material with emission: its
+    /// bricks are then scanned for light samples whenever they or a neighbour change.
+    emits: bool,
 }
 
 /// What a chosen chunk is uploaded from.
@@ -636,52 +658,52 @@ enum Src {
 struct Selected {
     coord: ChunkCoord,
     src: Src,
-    /// Brick slots of each page kind its upload takes new, narrow.
-    new: [u64; 2],
+    /// New slots of each bin its upload takes.
+    new: [u64; BIN_COUNT],
 }
 
 /// The pool and records as a sync's selection leaves them, replayed chunk by chunk in the
 /// order `upload` places them. A chunk changing tier first frees its old record's slots:
-/// credited to that kind's spare slots, or, for a page those frees empty, as a free page less
-/// the page's spare slots. Then its new slots take spare slots of their kind, then free
-/// pages, then pages never handed out. No free is credited before the chunk that makes it.
-/// Once a kind has taken spare slots (its free lists or cursor), a later free of that kind is
-/// credited as a slot, never as an emptied page: the allocator hands just-freed slots back
-/// first, so an earlier allocation may sit on the page.
+/// credited to their bin's spare slots, or, for a page those frees empty, as a free page less
+/// the page's spare slots. Then its new slots take spare slots of their bin, then free pages,
+/// then pages never handed out. No free is credited before the chunk that makes it. Once a
+/// bin has taken spare slots (its free list or cursor), a later free of that bin is credited
+/// as a slot, never as an emptied page: the allocator hands just-freed slots back first, so an
+/// earlier allocation may sit on the page. A brick that moves bins inside a record frees its
+/// old slot after taking its new one; that free is never credited.
 struct Fit {
-    /// Spare brick slots of each kind.
-    avail: [u64; 2],
+    /// Spare slots of each bin.
+    avail: [u64; BIN_COUNT],
     free_pages: u64,
-    /// Slots past the pages handed out: whole pages with attribute pages, else slots, since
-    /// a plain page never handed out continues the cursor's page.
+    /// Pages past the pages handed out.
     fresh: u64,
     records: u64,
     /// Slots the placed chunks free, per page.
     freed: HashMap<u32, u32>,
-    /// Whether each kind has taken spare slots.
-    took: [bool; 2],
+    /// Whether each bin has taken spare slots.
+    took: [bool; BIN_COUNT],
 }
 
 impl Fit {
     fn new(gw: &GpuWorld) -> Self {
         Self {
-            avail: [0, 1].map(|k| gw.allocs[k].available()),
+            avail: std::array::from_fn(|k| gw.bins[k].available(k)),
             free_pages: gw.free_pages.len() as u64,
             fresh: 0,
             records: gw.mirrored.len() as u64,
             freed: HashMap::new(),
-            took: [false; 2],
+            took: [false; BIN_COUNT],
         }
     }
 
-    /// Places one chunk: `frees` (the kind and record of a tier change's old record), `new`
-    /// slots of each kind, and a new record when `new_record`. Changes nothing when the chunk
-    /// does not fit, and returns what it would have needed.
+    /// Places one chunk: `frees` (the record of a tier change's old record), `new` slots of
+    /// each bin, and a new record when `new_record`. Changes nothing when the chunk does not
+    /// fit, and returns what it would have needed.
     fn place(
         &mut self,
         gw: &GpuWorld,
-        frees: Option<(usize, u32)>,
-        new: [u64; 2],
+        frees: Option<u32>,
+        new: [u64; BIN_COUNT],
         new_record: bool,
     ) -> Result<(), MirrorError> {
         let reserved = u64::from(gw.layout.reserved_records);
@@ -691,31 +713,29 @@ impl Fit {
                 limit: reserved * RECORD_BYTES,
             });
         }
-        let page = u64::from(POOL_PAGE_SLOTS);
         let (mut avail, mut free_pages, mut fresh) = (self.avail, self.free_pages, self.fresh);
         let mut took = self.took;
         let mut local: HashMap<u32, u32> = HashMap::new();
-        if let Some((kind, rec)) = frees {
+        if let Some(rec) = frees {
             let base = rec as usize * RECORD_WORDS;
-            for &e in &gw.entries[base + ENTRY_WORD..base + PALETTE_WORD] {
+            for &e in &gw.entries[base + ENTRY_WORD..base + RECORD_WORDS] {
                 if e & FULL_BIT == 0 {
                     continue;
                 }
-                let s = e & SLOT_MASK;
-                let n = if e & WIDE_BIT != 0 { 2 } else { 1 };
-                let p = s / POOL_PAGE_SLOTS;
+                let p = (e & UNIT_MASK) / PAGE_UNITS;
+                let k = gw.page_bin[p as usize].expect("a live slot's page has a bin") as usize;
                 let f = local.entry(p).or_insert(0);
-                *f += n;
+                *f += 1;
                 let total = *f + self.freed.get(&p).copied().unwrap_or(0);
-                if !self.took[kind] && u32::from(gw.page_live[p as usize]) == total {
+                if !self.took[k] && u32::from(gw.page_live[p as usize]) == total {
                     // The page empties: its spare slots, and the ones credited from it so
-                    // far, leave the kind; the page becomes free for either kind.
-                    let credited = total - n;
-                    avail[kind] =
-                        avail[kind].saturating_sub(gw.spare_in_page(kind, p) + u64::from(credited));
+                    // far, leave the bin; the page becomes free for any bin.
+                    let credited = total - 1;
+                    avail[k] =
+                        avail[k].saturating_sub(gw.spare_in_page(k, p) + u64::from(credited));
                     free_pages += 1;
                 } else {
-                    avail[kind] += u64::from(n);
+                    avail[k] += 1;
                 }
             }
         }
@@ -724,32 +744,24 @@ impl Fit {
             avail[k] -= take;
             took[k] |= take > 0;
             let mut rest = n - take;
-            let bs = u64::from(if k == Kind::Attr as usize {
-                ATTR_PAGE_BRICK_SLOTS
-            } else {
-                POOL_PAGE_SLOTS
-            });
+            let per = u64::from(slots_per_page(k));
             while rest > 0 {
                 if free_pages > 0 {
                     free_pages -= 1;
-                } else if gw.surface_attrs {
-                    fresh += page;
                 } else {
-                    // Plain pages continue the cursor: count the slots, not the page.
-                    fresh += rest;
-                    break;
+                    fresh += 1;
                 }
-                let used = rest.min(bs);
-                avail[k] += bs - used;
+                let used = rest.min(per);
+                avail[k] += per - used;
                 rest -= used;
             }
         }
-        let need = u64::from(gw.next_page) * page + fresh;
-        let limit = u64::from(gw.layout.reserved_slots);
+        let need = u64::from(gw.next_page) + fresh;
+        let limit = u64::from(gw.layout.reserved_pages());
         if need > limit {
             return Err(MirrorError::PoolTooLarge {
-                needed: need * SLOT_BYTES,
-                limit: limit * SLOT_BYTES,
+                needed: need * PAGE_BYTES,
+                limit: limit * PAGE_BYTES,
             });
         }
         (self.avail, self.free_pages, self.fresh, self.took) = (avail, free_pages, fresh, took);
@@ -804,12 +816,11 @@ pub struct GpuWorld {
     window_size: [i32; 3],
     focus: ChunkCoord,
     initialized: bool,
-    /// The device's layout and the reservation: `reserved_slots` and `reserved_records`.
+    /// The device's layout and the reservation: `reserved_units` and `reserved_records`.
     layout: ShardLayout,
-    /// One buffer per shard, created at its reserved size; a shard holding no reserved slot
-    /// is a one-slot placeholder.
+    /// One buffer per shard, created at its reserved size; a shard holding no reserved unit
+    /// is a one-unit placeholder.
     shards: Vec<wgpu::Buffer>,
-    masks: wgpu::Buffer,
     records: wgpu::Buffer,
     table: wgpu::Buffer,
     materials: wgpu::Buffer,
@@ -825,15 +836,14 @@ pub struct GpuWorld {
     /// CPU copy of the chunk table, and the indices changed since the last write.
     table_cpu: Vec<u32>,
     table_changed: Vec<u32>,
-    /// Whether full chunks' `Full` bricks take slots from attribute pages.
+    /// Whether full chunks' `Full` bricks carry contour attributes.
     surface_attrs: bool,
-    /// The allocator of each page kind, indexed by `Kind`.
-    allocs: [SlotAlloc; 2],
-    /// The kind of every page handed out, `None` while it is free, and its live brick slots
-    /// (two for a wide brick).
-    page_kind: Vec<Option<Kind>>,
+    /// The allocator of each bin.
+    bins: [BinAlloc; BIN_COUNT],
+    /// The bin of every page handed out, `None` while it is free, and its live slots.
+    page_bin: Vec<Option<u8>>,
     page_live: Vec<u16>,
-    /// Pages handed out whose live slots fell to zero, taken lowest first by either kind.
+    /// Pages handed out whose live slots fell to zero, taken lowest first by any bin.
     free_pages: BTreeSet<u32>,
     /// The next page never handed out: the pool's high-water mark in pages.
     next_page: u32,
@@ -864,8 +874,6 @@ pub struct GpuWorld {
     attr_calls: u64,
     /// The queue of the last `sync`, which writes the attribute pass's uniform and work list.
     queue: Option<wgpu::Queue>,
-    /// Palette index of every material while one chunk is narrowed, else `NO_INDEX`.
-    rev: Vec<u16>,
     /// Whether each material is `TRANSLUCENT`, from the table at the first sync.
     translucent: Vec<bool>,
     /// Whether each material has non-zero emission, from the table at the first sync.
@@ -894,13 +902,13 @@ pub struct GpuWorld {
     pending_focus: ChunkCoord,
     bytes_written: u64,
     belt: Belt,
-    /// The run of consecutive pool slots staged for one write: its first slot, its voxels
-    /// and its masks, and the run's masks rearranged into group layout when written. Kept
-    /// across syncs so staging allocates only while it first grows.
-    stage_start: u32,
-    stage_voxels: Vec<u8>,
-    stage_masks: Vec<SlotMasks>,
-    stage_groups: Vec<u32>,
+    /// Per bin, the run of consecutive pool units staged for one write: its first unit and
+    /// its words. A fresh chunk's bricks interleave bins but take consecutive slots of each,
+    /// so each bin's run stays long. Kept across syncs so staging allocates only while it
+    /// first grows.
+    stage: [(u32, Vec<u32>); BIN_COUNT],
+    /// One slot's words as `upload_brick` builds them.
+    slot_words: Vec<u32>,
     /// The run of consecutive records staged for one write.
     rec_stage_start: u32,
     rec_stage: Vec<u32>,
@@ -978,8 +986,8 @@ impl GpuWorld {
         Self::with_config(device, MirrorConfig::new(Window::Fixed(extent)))
     }
 
-    /// A mirror with an explicit window, sync budget and VRAM budget. Creates every pool,
-    /// mask and record buffer at its reserved size; the pool starts empty.
+    /// A mirror with an explicit window, sync budget and VRAM budget. Creates every pool and
+    /// record buffer at its reserved size; the pool starts empty.
     pub fn with_config(device: &wgpu::Device, cfg: MirrorConfig) -> Self {
         let (window_min, window_size, focus) = match cfg.window {
             Window::Fixed(e) => {
@@ -996,10 +1004,10 @@ impl GpuWorld {
             .iter()
             .map(|&v| v.max(1) as usize)
             .product::<usize>();
-        let layout = ShardLayout::from_limits(&device.limits(), cfg.max_shard_slots)
+        let layout = ShardLayout::from_limits(&device.limits(), cfg.max_shard_units)
             .with_budget(cfg.budget_bytes, cfg.record_chunks.unwrap_or(n as u64));
-        let sps = u64::from(layout.slots_per_shard);
-        let reserved = u64::from(layout.reserved_slots);
+        let ups = u64::from(layout.units_per_shard);
+        let reserved = u64::from(layout.reserved_units);
         let storage = wgpu::BufferUsages::STORAGE
             | wgpu::BufferUsages::COPY_DST
             | wgpu::BufferUsages::COPY_SRC;
@@ -1022,9 +1030,8 @@ impl GpuWorld {
             initialized: false,
             layout,
             shards: (0..u64::from(MAX_SHARDS))
-                .map(|k| Self::create_pool(device, shard_slots(reserved, sps, k) as u32))
+                .map(|k| Self::create_pool(device, shard_units(reserved, ups, k) as u32))
                 .collect(),
-            masks: Self::create_masks(device, layout.reserved_slots),
             records: Self::create_records(device, layout.reserved_records),
             table,
             materials: Self::create_materials(device, 1),
@@ -1037,8 +1044,8 @@ impl GpuWorld {
             table_cpu: vec![ABSENT; n],
             table_changed: Vec::new(),
             surface_attrs: false,
-            allocs: Default::default(),
-            page_kind: Vec::new(),
+            bins: Default::default(),
+            page_bin: Vec::new(),
             page_live: Vec::new(),
             free_pages: BTreeSet::new(),
             next_page: 0,
@@ -1056,7 +1063,6 @@ impl GpuWorld {
             attr_taken: HashSet::new(),
             attr_calls: 0,
             queue: None,
-            rev: vec![NO_INDEX; 1 << 16],
             translucent: vec![false; 1 << 16],
             emissive: vec![false; 1 << 16],
             light_buf: Self::storage_buffer(
@@ -1079,10 +1085,8 @@ impl GpuWorld {
             pending_focus: focus,
             bytes_written: 0,
             belt: Belt::new(device),
-            stage_start: 0,
-            stage_voxels: Vec::new(),
-            stage_masks: Vec::new(),
-            stage_groups: Vec::new(),
+            stage: Default::default(),
+            slot_words: Vec::new(),
             rec_stage_start: 0,
             rec_stage: Vec::new(),
             selected: Vec::new(),
@@ -1090,23 +1094,24 @@ impl GpuWorld {
         }
     }
 
-    /// A mirror under `cfg` whose full chunks' `Full` bricks take slots from attribute pages,
-    /// with the pass that fills their contour attributes ([`GpuWorld::update_attrs`]).
+    /// A mirror under `cfg` whose full chunks' `Full` bricks carry contour attributes in
+    /// their slots, with the pass that fills them ([`GpuWorld::update_attrs`]).
     pub fn with_surface_attrs(device: &wgpu::Device, cfg: MirrorConfig) -> Self {
         let mut m = Self::with_config(device, cfg);
         m.surface_attrs = true;
         let mut pass = AttribPass::new(device);
         if cfg.attr_cap != usize::MAX && cfg.sync_budget_bytes != u64::MAX {
             // A capped list: the cap, then a clear item for every brick one sync writes, its
-            // budget's worth of narrow slots and the one chunk it may finish past it.
-            let bricks = cfg.sync_budget_bytes / (SLOT_BYTES + MASK_BYTES) + CHUNK_BRICKS as u64;
+            // budget's worth of the smallest slots and the one chunk it may finish past it.
+            let bricks =
+                cfg.sync_budget_bytes / (u64::from(BINS[0]) * UNIT_BYTES) + CHUNK_BRICKS as u64;
             pass.reserve(cfg.attr_cap.saturating_add(bricks as usize));
         }
         m.attrib = Some(pass);
         m
     }
 
-    /// Whether the mirror holds attribute pages.
+    /// Whether full chunks' bricks carry contour attributes.
     pub fn surface_attrs(&self) -> bool {
         self.surface_attrs
     }
@@ -1123,18 +1128,8 @@ impl GpuWorld {
         })
     }
 
-    fn create_pool(device: &wgpu::Device, slots: u32) -> wgpu::Buffer {
-        Self::storage_buffer(device, "brick_pool", u64::from(slots.max(1)) * SLOT_BYTES)
-    }
-
-    /// A mask buffer of whole groups holding at least `slots` slots.
-    fn create_masks(device: &wgpu::Device, slots: u32) -> wgpu::Buffer {
-        let groups = slots.div_ceil(MASK_GROUP_SLOTS).max(1);
-        Self::storage_buffer(
-            device,
-            "brick_masks",
-            u64::from(groups * MASK_GROUP_WORDS) * 4,
-        )
+    fn create_pool(device: &wgpu::Device, units: u32) -> wgpu::Buffer {
+        Self::storage_buffer(device, "brick_pool", u64::from(units.max(1)) * UNIT_BYTES)
     }
 
     fn create_records(device: &wgpu::Device, records: u32) -> wgpu::Buffer {
@@ -1172,7 +1167,7 @@ impl GpuWorld {
         self.focus = v.chunk();
     }
 
-    /// Pool shard `k`, for `k < MAX_SHARDS`; a shard holding no reserved slot is a one-slot
+    /// Pool shard `k`, for `k < MAX_SHARDS`; a shard holding no reserved unit is a one-unit
     /// placeholder.
     pub fn pool_shard(&self, k: usize) -> &wgpu::Buffer {
         &self.shards[k]
@@ -1185,26 +1180,20 @@ impl GpuWorld {
 
     /// Shards holding a page handed out so far.
     pub fn shards_in_use(&self) -> usize {
-        self.pool_slots()
-            .div_ceil(self.layout.slots_per_shard)
+        self.pool_units()
+            .div_ceil(self.layout.units_per_shard)
             .try_into()
             .unwrap_or(usize::MAX)
     }
 
-    /// Pool slots reserved, a whole number of pages.
-    pub fn reserved_slots(&self) -> u32 {
-        self.layout.reserved_slots
+    /// Pool units reserved, a whole number of pages.
+    pub fn reserved_units(&self) -> u32 {
+        self.layout.reserved_units
     }
 
     /// Chunk records reserved.
     pub fn reserved_records(&self) -> u32 {
         self.layout.reserved_records
-    }
-
-    /// The masks of every pool slot, in groups of eight slots: [`opaque_mask_word`] and
-    /// [`translucent_mask_word`] say where a slot's words lie.
-    pub fn masks(&self) -> &wgpu::Buffer {
-        &self.masks
     }
 
     pub fn records(&self) -> &wgpu::Buffer {
@@ -1219,26 +1208,73 @@ impl GpuWorld {
         &self.materials
     }
 
-    /// Slots of the pages handed out so far, from slot 0: the pool's high-water mark, at most
-    /// `reserved_slots`.
-    pub fn pool_slots(&self) -> u32 {
-        self.next_page * POOL_PAGE_SLOTS
+    /// Units of the pages handed out so far, from unit 0: the pool's high-water mark, at most
+    /// `reserved_units`.
+    pub fn pool_units(&self) -> u32 {
+        self.next_page * PAGE_UNITS
     }
 
-    /// Brick slots currently holding a `Full` brick or half of a wide one; attribute slots
-    /// are not counted.
-    pub fn live_slots(&self) -> u32 {
-        self.allocs.iter().map(SlotAlloc::live).sum()
+    /// Slots currently holding a `Full` brick, over every bin.
+    pub fn live_bricks(&self) -> u32 {
+        self.bins.iter().map(|b| b.live).sum()
     }
 
-    /// Brick slots in attribute pages currently holding a `Full` brick or half of a wide one.
-    pub fn live_attr_slots(&self) -> u32 {
-        self.allocs[Kind::Attr as usize].live()
+    /// Units of the slots currently holding a `Full` brick: each slot's whole bin.
+    pub fn live_units(&self) -> u64 {
+        self.bins
+            .iter()
+            .zip(BINS)
+            .map(|(b, n)| u64::from(b.live) * u64::from(n))
+            .sum()
     }
 
-    /// Whether pool slot `s` lies in an attribute page.
-    pub fn in_attr_page(&self, s: u32) -> bool {
-        self.page_kind.get((s / POOL_PAGE_SLOTS) as usize) == Some(&Some(Kind::Attr))
+    /// Units of the slots handed out to no brick: every bin's free slots and the rest of its
+    /// cursor's page. The units of free pages, and the tail of each page past its last whole
+    /// slot, are not counted.
+    pub fn spare_units(&self) -> u64 {
+        self.bins
+            .iter()
+            .enumerate()
+            .map(|(k, b)| b.available(k) * u64::from(BINS[k]))
+            .sum()
+    }
+
+    /// Slots handed out to no brick, over every bin: free slots and the rest of each cursor's
+    /// page.
+    pub fn spare_slots(&self) -> u64 {
+        self.bins
+            .iter()
+            .enumerate()
+            .map(|(k, b)| b.available(k))
+            .sum()
+    }
+
+    /// Each bin's slot size, live and spare slots, and pages.
+    pub fn bin_stats(&self) -> [BinStats; BIN_COUNT] {
+        std::array::from_fn(|k| BinStats {
+            units: BINS[k],
+            live: self.bins[k].live,
+            spare: self.bins[k].available(k),
+            pages: self
+                .page_bin
+                .iter()
+                .filter(|b| **b == Some(k as u8))
+                .count() as u32,
+        })
+    }
+
+    /// The bin of the page holding unit `u`, `None` for a free or never-issued page.
+    pub fn bin_of_unit(&self, u: u32) -> Option<usize> {
+        self.page_bin
+            .get((u / PAGE_UNITS) as usize)
+            .copied()
+            .flatten()
+            .map(usize::from)
+    }
+
+    /// The free slots of bin `k`, in the order they will be reused last-first.
+    pub fn free_slots(&self, k: usize) -> &[u32] {
+        &self.bins[k].free
     }
 
     /// Pages ever handed out from the reservation, free ones included: the pool's high-water
@@ -1247,54 +1283,9 @@ impl GpuWorld {
         self.next_page
     }
 
-    /// Pages handed out whose live slots fell to zero, ascending: free for either kind.
+    /// Pages handed out whose live slots fell to zero, ascending: free for any bin.
     pub fn free_pages(&self) -> Vec<u32> {
         self.free_pages.iter().copied().collect()
-    }
-
-    /// Brick slots the mirror can hand out before it takes a page never handed out: each
-    /// kind's free slots and the rest of its current page, and every slot of the free pages.
-    /// Without attribute pages, `live_slots() + spare_slots() == pool_slots()`.
-    pub fn spare_slots(&self) -> u64 {
-        self.allocs.iter().map(SlotAlloc::available).sum::<u64>()
-            + self.free_pages.len() as u64 * u64::from(POOL_PAGE_SLOTS)
-    }
-
-    /// Bytes of the masks of the pool slots in use, attribute slots included: `MASK_BYTES` a
-    /// slot.
-    pub fn live_mask_bytes(&self) -> u64 {
-        (u64::from(self.live_slots()) + 2 * u64::from(self.live_attr_slots())) * MASK_BYTES
-    }
-
-    /// Bytes of the pool slots in use.
-    pub fn live_pool_bytes(&self) -> u64 {
-        u64::from(self.live_slots()) * SLOT_BYTES
-    }
-
-    /// The palette the mirror holds for `coord`, index 0 first.
-    pub fn palette(&self, coord: ChunkCoord) -> Option<&[MaterialId]> {
-        self.mirrored.get(&coord).map(|m| m.palette.as_slice())
-    }
-
-    /// Whether `coord` is mirrored wide.
-    pub fn is_wide(&self, coord: ChunkCoord) -> bool {
-        self.mirrored.get(&coord).is_some_and(|m| m.wide)
-    }
-
-    /// Whether `coord` is mirrored from its mips.
-    pub fn is_lod(&self, coord: ChunkCoord) -> bool {
-        self.mirrored.get(&coord).is_some_and(|m| m.lod)
-    }
-
-    /// Mirrored chunks that are wide.
-    pub fn wide_chunks(&self) -> usize {
-        self.mirrored.values().filter(|m| m.wide).count()
-    }
-
-    /// Single slots of plain pages (every page, without attribute pages) returned and not yet
-    /// reused, in the order they will be reused last-first.
-    pub fn free_slots(&self) -> &[u32] {
-        &self.allocs[Kind::Plain as usize].free
     }
 
     /// Bytes written to the GPU over the mirror's life.
@@ -1313,6 +1304,11 @@ impl GpuWorld {
     /// it.
     pub fn belt_trims(&self) -> u64 {
         self.belt.trims
+    }
+
+    /// Whether `coord` is mirrored from its mips.
+    pub fn is_lod(&self, coord: ChunkCoord) -> bool {
+        self.mirrored.get(&coord).is_some_and(|m| m.lod)
     }
 
     /// Chunks holding a record.
@@ -1354,41 +1350,35 @@ impl GpuWorld {
         })
     }
 
-    /// Bytes the mirror occupies on the GPU by the uploader's live accounting: pool slots in
-    /// use with their masks, the two attribute slots and their masks of each live brick slot
-    /// in an attribute page, the records of mirrored chunks, chunk table and material rows.
-    /// Free slots and free records are not counted; `allocated_bytes` is what the reserved
-    /// buffers hold.
+    /// Bytes the mirror occupies on the GPU by the uploader's live accounting: the units of
+    /// live slots (each slot's whole bin), the records of mirrored chunks, chunk table and
+    /// material rows. Spare slots, free pages and free records are not counted;
+    /// `allocated_bytes` is what the reserved buffers hold.
     pub fn mirror_bytes(&self) -> u64 {
-        u64::from(self.live_slots()) * (SLOT_BYTES + MASK_BYTES)
-            + u64::from(self.live_attr_slots()) * 2 * (SLOT_BYTES + MASK_BYTES)
+        self.live_units() * UNIT_BYTES
             + self.mirrored.len() as u64 * RECORD_BYTES
             + self.table_cpu.len() as u64 * 4
             + self.material_rows * MATERIAL_FLOATS as u64 * 4
     }
 
-    /// Bytes of the reserved buffers: every pool shard (placeholders included), the masks
-    /// and the records, which is the budget rounded down to whole pages and records
+    /// Bytes of the reserved buffers: every pool shard (placeholders included) and the
+    /// records, which is the budget rounded down to whole pages and records
     /// ([`ShardLayout::reserved_bytes`]). Fixed from creation: no sync, eviction or window
     /// move changes it. The chunk table and material rows are outside the reservation.
     pub fn allocated_bytes(&self) -> u64 {
-        self.shards.iter().map(wgpu::Buffer::size).sum::<u64>()
-            + self.masks.size()
-            + self.records.size()
+        self.shards.iter().map(wgpu::Buffer::size).sum::<u64>() + self.records.size()
     }
 
-    /// The mirror's pressure, the larger of its two occupancies (ADR-0013): pool slots in
-    /// use, `(live_slots() + 2 live_attr_slots()) / reserved_slots()` (a brick in an attribute
-    /// page holds its two attribute slots too), and records in use, `mirrored_chunks() /
+    /// The mirror's pressure, the larger of its two occupancies (ADR-0013): pool units in
+    /// use, `live_units() / reserved_units()`, and records in use, `mirrored_chunks() /
     /// reserved_records()`. The application decides what to do as it nears 1; a sync that
-    /// would pass the reservation fails instead of growing it. With attribute pages the pool
-    /// can fail a little below 1, at each kind's partly filled page.
+    /// would pass the reservation fails instead of growing it. The pool can fail a little
+    /// below 1, at each bin's partly filled page and each page's tail.
     pub fn pressure(&self) -> f32 {
-        let slots = u64::from(self.live_slots()) + 2 * u64::from(self.live_attr_slots());
-        let slot_term = slots as f64 / f64::from(self.layout.reserved_slots.max(1));
+        let unit_term = self.live_units() as f64 / f64::from(self.layout.reserved_units.max(1));
         let record_term =
             self.mirrored.len() as f64 / f64::from(self.layout.reserved_records.max(1));
-        slot_term.max(record_term) as f32
+        unit_term.max(record_term) as f32
     }
 
     /// Records into `encoder` the attribute pass over what changed since the last call: every
@@ -1396,7 +1386,7 @@ impl GpuWorld {
     /// neighbours, and the bricks of full chunks next to a chunk whose record was written new,
     /// dropped or replaced. Under [`MirrorConfig::attr_cap`] part of that waits for later
     /// calls ([`GpuWorld::prepare_attrs`]). Returns the items in the work list, compute and
-    /// clear; 0 records nothing, and so does a mirror without attribute pages. The pass reads
+    /// clear; 0 records nothing, and so does a mirror without contour attributes. The pass reads
     /// the pool, records and table as earlier submissions and the `sync` copies recorded
     /// ahead of it in `encoder` leave them.
     pub fn update_attrs(&mut self, encoder: &mut wgpu::CommandEncoder) -> usize {
@@ -1562,7 +1552,7 @@ impl GpuWorld {
     }
 
     /// The attribute pass's work buffers built so far ([`AttribPass::buffer_builds`]); 0
-    /// without attribute pages.
+    /// without contour attributes.
     pub fn attr_buffer_builds(&self) -> u32 {
         self.attrib.as_ref().map_or(0, AttribPass::buffer_builds)
     }
@@ -1585,7 +1575,7 @@ impl GpuWorld {
                 records: &self.records,
                 table: &self.table,
                 window: (e.min.0, e.size()),
-                slots_per_shard: self.layout.slots_per_shard,
+                units_per_shard: self.layout.units_per_shard,
             };
             pass.encode(
                 &self.device,
@@ -1622,36 +1612,26 @@ impl GpuWorld {
 
     /// Frees `coord`'s record and slots and clears its table entry, leaving it queued.
     fn drop_record(&mut self, coord: ChunkCoord) {
-        let Some(Mirrored {
-            record: rec, lod, ..
-        }) = self.mirrored.remove(&coord)
-        else {
+        let Some(Mirrored { record: rec, .. }) = self.mirrored.remove(&coord) else {
             return;
         };
         if self.surface_attrs {
             self.shell_chunks.insert(coord);
         }
         self.drop_lights(coord);
-        // A record's slots are all of one kind.
-        let kind = self.kind_for(lod);
         let base = rec as usize * RECORD_WORDS;
         let mut slots = Vec::new();
-        let mut pairs = Vec::new();
         let mut emptied = Vec::new();
-        for i in base + ENTRY_WORD..base + PALETTE_WORD {
+        for i in base + ENTRY_WORD..base + RECORD_WORDS {
             let e = self.entries[i];
             if e & FULL_BIT == 0 {
                 continue;
             }
-            let (s, wide) = (e & SLOT_MASK, e & WIDE_BIT != 0);
-            if self.unlive(s, wide) {
-                emptied.push(s / POOL_PAGE_SLOTS);
+            let u = e & UNIT_MASK;
+            if self.unlive(u) {
+                emptied.push(u / PAGE_UNITS);
             }
-            if wide {
-                pairs.push(s);
-            } else {
-                slots.push(s);
-            }
+            slots.push(u);
         }
         self.entries[base..base + RECORD_WORDS].fill(0);
         for p in emptied {
@@ -1660,13 +1640,12 @@ impl GpuWorld {
         // Slots of a released page are not listed. The rest are pushed highest first, so the
         // next allocations pop them in ascending order and the chunk that reuses them is
         // written in long runs.
-        let held = |gw: &Self, s: &u32| gw.page_kind[(s / POOL_PAGE_SLOTS) as usize].is_some();
-        slots.retain(|s| held(self, s));
-        pairs.retain(|s| held(self, s));
+        slots.retain(|u| self.page_bin[(u / PAGE_UNITS) as usize].is_some());
         slots.sort_unstable_by(|a, b| b.cmp(a));
-        let a = &mut self.allocs[kind as usize];
-        a.free.extend(slots);
-        a.free_pairs.extend(pairs);
+        for u in slots {
+            let k = self.page_bin[(u / PAGE_UNITS) as usize].expect("held above") as usize;
+            self.bins[k].free.push(u);
+        }
         self.free_records.push(rec);
         if self.in_window(coord) {
             let i = self.table_index(coord);
@@ -1798,7 +1777,7 @@ impl GpuWorld {
         }
 
         if !self.materials_written {
-            // The flags are read while narrowing; the rows are written below, once a sync
+            // The flags are read while staging slots; the rows are written below, once a sync
             // writes anything.
             for (id, m) in world.materials().rows().iter().enumerate() {
                 self.translucent[id] = m.is_translucent();
@@ -1808,9 +1787,8 @@ impl GpuWorld {
                 self.opaque[id] = id != usize::from(AIR) && !m.is_translucent();
             }
         }
-        let may_widen = world.materials().len() > PALETTE_ENTRIES;
         let mut short = short;
-        let result = self.upload(may_widen, &mut short, enc, &mut st);
+        let result = self.upload(&mut short, enc, &mut st);
         if result.is_ok()
             && st.chunks == 0
             && let Some(e) = short
@@ -1828,7 +1806,9 @@ impl GpuWorld {
         self.place_lights(enc, &mut st);
         st.light_us += micros_since(t);
         // Staged runs are written even after a failed allocation: their records name them.
-        self.flush_stage(enc, &mut st);
+        for k in 0..BIN_COUNT {
+            self.flush_stage(k, enc, &mut st);
+        }
         self.flush_records(enc, &mut st);
         self.flush_table(enc, &mut st);
         st.pending_chunks = self.pending.len() as u64;
@@ -1836,77 +1816,29 @@ impl GpuWorld {
         result.map(|()| st)
     }
 
-    /// The page kind of a record's slots.
-    fn kind_for(&self, lod: bool) -> Kind {
-        if self.surface_attrs && !lod {
-            Kind::Attr
-        } else {
-            Kind::Plain
-        }
+    /// Whether a `Full` brick of a record of this tier carries contour attributes.
+    fn attrs_for(&self, lod: bool) -> bool {
+        self.surface_attrs && !lod
     }
 
-    /// The `Full` bricks of `bricks` when uploading them turns `coord`'s record wide (more
-    /// non-air materials than a palette holds): every one then takes a slot pair. `None` when
-    /// the record stays narrow or already is wide. Reads only; the upload's own scan builds
-    /// the palette.
-    fn turns_wide(&self, coord: ChunkCoord, bricks: &Bricks<'_>, lod: bool) -> Option<u64> {
-        let kept = self.mirrored.get(&coord).filter(|m| m.lod == lod);
-        if kept.is_some_and(|m| m.wide) {
-            return None;
-        }
-        let palette: HashSet<MaterialId> = match kept {
-            Some(m) => m.palette.iter().copied().collect(),
-            None => HashSet::from([AIR]),
-        };
-        let mut added = HashSet::new();
-        let mut full = 0u64;
-        for i in 0..bricks.len() {
-            let Brick::Full(p) = bricks.get(i) else {
-                continue;
-            };
-            full += 1;
-            if kept.is_some() && !bricks.is_dirty(i) {
-                continue;
-            }
-            for m in first_appearance(p) {
-                if !palette.contains(&m) {
-                    added.insert(m);
-                }
-            }
-        }
-        (palette.len() + added.len() > PALETTE_ENTRIES).then_some(full)
+    /// The units of `p`'s slot in a record whose bricks carry attributes when `attrs`: mask,
+    /// header, payload, a translucent unit for a planar brick holding a translucent voxel,
+    /// and the attributes.
+    fn slot_units(&self, p: &Packed, attrs: bool) -> u32 {
+        slot_units(p, |m| self.translucent[usize::from(m)], attrs)
     }
 
-    /// Slots of `kind` that can still take slot pairs: free pairs, the rest of the kind's
-    /// current page, free pages and the pages the reservation has not handed out.
-    fn pair_room(&self, kind: Kind) -> u64 {
-        let a = &self.allocs[kind as usize];
-        let page = u64::from(POOL_PAGE_SLOTS);
-        let unissued = u64::from(self.layout.reserved_slots) / page - u64::from(self.next_page);
-        // `alloc_pair` skips an odd cursor slot; pages and their brick slots are even.
-        let start = a.next + a.next % 2;
-        let cursor = u64::from(a.end.saturating_sub(start)) / 2 * 2;
-        2 * a.free_pairs.len() as u64
-            + cursor
-            + (self.free_pages.len() as u64 + unissued) * u64::from(kind.brick_slots())
-    }
-
-    /// Spare brick slots of `kind` in page `p`: its free singles and pairs, and the rest of
-    /// the kind's current page when that is `p`.
-    fn spare_in_page(&self, kind: usize, p: u32) -> u64 {
-        let a = &self.allocs[kind];
-        let free = a.free.iter().filter(|&&s| s / POOL_PAGE_SLOTS == p).count() as u64;
-        let pairs = a
-            .free_pairs
-            .iter()
-            .filter(|&&s| s / POOL_PAGE_SLOTS == p)
-            .count() as u64;
-        let cursor = if a.next < a.end && (a.end - 1) / POOL_PAGE_SLOTS == p {
-            u64::from(a.end - a.next)
+    /// Spare slots of bin `k` in page `p`: its free slots, and the rest of the bin's cursor
+    /// when that is in `p`.
+    fn spare_in_page(&self, k: usize, p: u32) -> u64 {
+        let a = &self.bins[k];
+        let free = a.free.iter().filter(|&&u| u / PAGE_UNITS == p).count() as u64;
+        let cursor = if a.next < a.end && (a.end - 1) / PAGE_UNITS == p {
+            u64::from((a.end - a.next) / BINS[k])
         } else {
             0
         };
-        free + 2 * pairs + cursor
+        free + cursor
     }
 
     /// Walks the pending set nearest first and picks chunks into `self.selected` until the
@@ -1926,7 +1858,6 @@ impl GpuWorld {
         self.stale.clear();
         let mut fit = Fit::new(self);
         let mut short = None;
-        let attr = self.kind_for(false) as usize;
         for &(_, coord) in &self.pending {
             if bytes >= budget && !self.selected.is_empty() {
                 break;
@@ -1946,16 +1877,11 @@ impl GpuWorld {
             let mirrored = self.mirrored.get(&coord);
             let lod = matches!(src, Src::Lod(_));
             // A record of the other tier is replaced whole.
-            let (rec, wide) = match mirrored {
-                Some(m) if m.lod == lod => (Some(m.record), m.wide),
-                _ => (None, false),
-            };
+            let rec = mirrored.filter(|m| m.lod == lod).map(|m| m.record);
             let demotion = mirrored.is_some_and(|m| !m.lod) && lod;
-            // A chunk that turns wide during upload is estimated narrow here; `upload`
-            // re-checks it before its first slot (ADR-0004's rare path).
-            let (slots, slot_bytes) = if wide { (2, 2) } else { (1, 1) };
+            let attrs = self.attrs_for(lod);
             let mut chunk_bytes = RECORD_BYTES + if rec.is_none() { 4 } else { 0 };
-            let mut new = [0u64; 2];
+            let mut new = [0u64; BIN_COUNT];
             match &src {
                 Src::Full(chunk) => {
                     let ch = chunk.read().unwrap_or_else(PoisonError::into_inner);
@@ -1967,13 +1893,15 @@ impl GpuWorld {
                         if rec.is_some() && !ch.is_dirty(slot) {
                             continue;
                         }
-                        if ch.brick(slot).is_full() {
-                            chunk_bytes += slot_bytes * (SLOT_BYTES + MASK_BYTES);
+                        if let Brick::Full(p) = ch.brick(slot) {
+                            let k = bin_of(self.slot_units(p, attrs));
+                            chunk_bytes += u64::from(BINS[k]) * UNIT_BYTES;
                             let old = rec.map_or(0, |r| {
                                 self.entries[r as usize * RECORD_WORDS + ENTRY_WORD + slot]
                             });
-                            if old & FULL_BIT == 0 {
-                                new[attr] += slots;
+                            // A brick keeps its slot only when the bin is the same.
+                            if old & FULL_BIT == 0 || self.bin_of_unit(old & UNIT_MASK) != Some(k) {
+                                new[k] += 1;
                             }
                         }
                     }
@@ -1984,15 +1912,19 @@ impl GpuWorld {
                         self.stale.push(coord);
                         continue;
                     }
-                    let full = mips.full_bricks() as u64;
-                    chunk_bytes += full * (SLOT_BYTES + MASK_BYTES);
-                    new[Kind::Plain as usize] += full;
+                    for n in 1..=MIP_LEVELS {
+                        for b in mips.level(n) {
+                            if let Brick::Full(p) = b {
+                                let k = bin_of(self.slot_units(p, false));
+                                chunk_bytes += u64::from(BINS[k]) * UNIT_BYTES;
+                                new[k] += 1;
+                            }
+                        }
+                    }
                 }
             }
-            // The frees of a tier change: the old record's slots, of the old record's kind.
-            let frees = mirrored
-                .filter(|m| m.lod != lod)
-                .map(|m| (self.kind_for(m.lod) as usize, m.record));
+            // The frees of a tier change: the old record's slots.
+            let frees = mirrored.filter(|m| m.lod != lod).map(|m| m.record);
             if short.is_some() && !demotion {
                 st.deferred_chunks += 1;
                 continue;
@@ -2018,13 +1950,11 @@ impl GpuWorld {
     }
 
     /// Uploads the chunks `select` chose, stopping at the first failed allocation, and
-    /// empties `self.selected`. When the table has more materials than a palette holds
-    /// (`may_widen`), a chunk about to turn wide is re-checked first: if its bricks do not fit
-    /// as slot pairs it is deferred whole, before anything of it is written or its old record
-    /// dropped, and so is every later chunk but a demotion.
+    /// empties `self.selected`. Each chunk is checked against the allocator as it is then
+    /// before anything of it is written or its old record dropped: one that does not fit is
+    /// deferred whole, and so is every later chunk but a demotion.
     fn upload(
         &mut self,
-        may_widen: bool,
         short: &mut Option<MirrorError>,
         enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
@@ -2040,53 +1970,13 @@ impl GpuWorld {
                 st.deferred_chunks += 1;
                 continue;
             }
-            let frees = mirrored
-                .filter(|m| m.lod != lod)
-                .map(|m| (self.kind_for(m.lod) as usize, m.record));
+            let frees = mirrored.filter(|m| m.lod != lod).map(|m| m.record);
             let new_record = mirrored.is_none();
-            // A chunk turning wide takes a slot pair for every `Full` brick; its old narrow
-            // slots are freed only after their pairs are taken, so none is credited.
-            let pairs = if may_widen {
-                match &src {
-                    Src::Full(chunk) => {
-                        let ch = chunk.read().unwrap_or_else(PoisonError::into_inner);
-                        self.turns_wide(coord, &Bricks::Chunk(&ch), false)
-                    }
-                    Src::Lod(mips) => self.turns_wide(coord, &Bricks::Mips(mips), true),
-                }
-            } else {
-                None
-            };
-            let kind = self.kind_for(lod);
-            let mut need = new;
-            if let Some(n) = pairs {
-                need[kind as usize] = 2 * n;
-            }
-            // An already-wide record's new bricks take pairs too (`select` counts two slots
-            // each).
-            let kept_wide = mirrored.is_some_and(|m| m.lod == lod && m.wide);
-            let pairs = pairs.or(kept_wide.then(|| new[kind as usize] / 2));
             // The backstop: this chunk alone against the allocator as it is now. It must be
             // exact for every need it admits, so that no admitted chunk fails part-way: the
-            // state is exact since a chunk's own frees precede its allocations, every slot
-            // `Fit` counts serves a narrow brick (`alloc` splits free pairs), and a wide need
-            // is checked against pair room only (free pairs, the even-aligned cursor, free
-            // and unissued pages), never free singles. A chunk that does not fit is deferred
-            // whole, before anything of it is dropped or written.
-            let mut fit = Fit::new(self).place(self, frees, need, new_record);
-            if let Some(n) = pairs
-                && fit.is_ok()
-            {
-                let room = self.pair_room(kind);
-                if 2 * n > room {
-                    let limit = u64::from(self.layout.reserved_slots);
-                    fit = Err(MirrorError::PoolTooLarge {
-                        needed: (limit + 2 * n - room) * SLOT_BYTES,
-                        limit: limit * SLOT_BYTES,
-                    });
-                }
-            }
-            if let Err(e) = fit {
+            // state is exact since a chunk's own tier-change frees precede its allocations,
+            // and a moved brick's free, which follows its allocation, is never credited.
+            if let Err(e) = Fit::new(self).place(self, frees, new, new_record) {
                 short.get_or_insert(e);
                 st.deferred_chunks += 1;
                 defer_rest = true;
@@ -2115,9 +2005,8 @@ impl GpuWorld {
     }
 
     /// Writes one chunk's record: `bricks` into its entries (512 voxel bricks, or a LOD
-    /// record's 73 mip-bricks): every brick when `coord` had no record before this call or
-    /// its width changes, else the dirty ones; then its palette and, for a record allocated
-    /// here, its table entry.
+    /// record's 73 mip-bricks): every brick when `coord` had no record before this call, else
+    /// the dirty ones; then, for a record allocated here, its table entry.
     fn upload_record(
         &mut self,
         coord: ChunkCoord,
@@ -2126,48 +2015,28 @@ impl GpuWorld {
         enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) -> Result<(), MirrorError> {
-        let (rec, mut palette, was_wide, new) = match self.mirrored.remove(&coord) {
-            Some(m) => (m.record, m.palette, m.wide, false),
-            None => (self.alloc_record()?, vec![AIR], false, true),
+        let (rec, kept_emits, new) = match self.mirrored.remove(&coord) {
+            Some(m) => (m.record, m.emits, false),
+            None => (self.alloc_record()?, false, true),
         };
         let base = rec as usize * RECORD_WORDS;
         if new {
             self.entries[base..base + RECORD_WORDS].fill(0);
         }
-        for (i, &m) in palette.iter().enumerate() {
-            self.rev[usize::from(m)] = i as u16;
-        }
-        // Append the uploaded bricks' new materials; past 255 non-air the chunk is wide.
-        let mut wide = was_wide;
-        if !wide {
-            'scan: for i in 0..bricks.len() {
-                if !new && !bricks.is_dirty(i) {
-                    continue;
-                }
-                let Brick::Full(p) = bricks.get(i) else {
-                    continue;
-                };
-                // The chunk palette grows in first-appearance order.
-                for m in first_appearance(p) {
-                    if self.rev[usize::from(m)] == NO_INDEX {
-                        if palette.len() == PALETTE_ENTRIES {
-                            wide = true;
-                            break 'scan;
-                        }
-                        self.rev[usize::from(m)] = palette.len() as u16;
-                        palette.push(m);
-                    }
-                }
-            }
-        }
-        let every = new || wide != was_wide;
-        let kind = self.kind_for(lod);
+        let every = new;
+        // The record has held an emissive material while mirrored: without one no brick of it
+        // has an emitter.
+        let emits = !lod
+            && (kept_emits
+                || (0..bricks.len()).any(|i| {
+                    (every || bricks.is_dirty(i))
+                        && matches!(bricks.get(i), Brick::Full(p)
+                            if materials_of(p, |m| self.emissive[usize::from(m)]))
+                }));
+        let attrs = self.attrs_for(lod);
         let mut light_us = 0u64;
         let mut rescan = BTreeSet::new();
-        // The chunk's palette holds every material it has held while mirrored (a wide
-        // chunk's may not): without an emissive one no brick of it has an emitter.
-        let chunk_emits = !lod && (wide || palette.iter().any(|&m| self.emissive[usize::from(m)]));
-        if !chunk_emits && !lod {
+        if !emits && !lod {
             self.drop_lights(coord);
         }
         if every && let Some(l) = self.lights.get_mut(&coord) {
@@ -2191,11 +2060,11 @@ impl GpuWorld {
                 self.attr_bricks
                     .insert([0, 1, 2].map(|k| coord.0[k] * CHUNK_EDGE_BRICKS + b[k]));
             }
-            result = self.upload_brick(base + ENTRY_WORD + i, bricks.get(i), wide, kind, enc, st);
+            result = self.upload_brick(base + ENTRY_WORD + i, bricks.get(i), attrs, enc, st);
             if result.is_err() {
                 break;
             }
-            if chunk_emits {
+            if emits {
                 rescan.insert(i);
                 let b = brick_of_slot(i);
                 for k in 0..3 {
@@ -2227,24 +2096,13 @@ impl GpuWorld {
             }
         }
         st.light_us += light_us;
-        for &m in &palette {
-            self.rev[usize::from(m)] = NO_INDEX;
-        }
-        for (k, w) in self.entries[base + PALETTE_WORD..base + RECORD_WORDS]
-            .iter_mut()
-            .enumerate()
-        {
-            let at = |i: usize| u32::from(palette.get(i).copied().unwrap_or(AIR));
-            *w = at(2 * k) | at(2 * k + 1) << 16;
-        }
         let empty = self.write_bits(base);
         self.mirrored.insert(
             coord,
             Mirrored {
                 record: rec,
-                palette,
-                wide,
                 lod,
+                emits,
             },
         );
         self.stage_record(rec, enc, st);
@@ -2265,7 +2123,7 @@ impl GpuWorld {
     /// Sets the brick bits of the record at word `base` from its entries; true when they are
     /// all clear.
     fn write_bits(&mut self, base: usize) -> bool {
-        let (bits, rest) = self.entries[base..base + PALETTE_WORD].split_at_mut(ENTRY_WORD);
+        let (bits, rest) = self.entries[base..base + RECORD_WORDS].split_at_mut(ENTRY_WORD);
         for (w, entries) in bits.iter_mut().zip(rest.chunks_exact(32)) {
             *w = entries
                 .iter()
@@ -2275,23 +2133,22 @@ impl GpuWorld {
         bits.iter().all(|&w| w == 0)
     }
 
-    /// Writes `brick` into record word `i`, a brick entry: a narrow brick as palette indices through `rev`,
-    /// a wide one as two slots of `u16` voxels, a uniform one as its material. A slot of the
-    /// wrong width is returned and a new one taken.
+    /// Writes `brick` into record word `i`, a brick entry: a `Full` brick as its slot, staged
+    /// from its packed words ([`GpuWorld::fill_slot`]); a uniform one as its material. A brick
+    /// whose slot changes bin takes a slot of the new bin, then returns the old one.
     fn upload_brick(
         &mut self,
         i: usize,
         brick: &Brick,
-        wide: bool,
-        kind: Kind,
+        attrs: bool,
         enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) -> Result<(), MirrorError> {
         let old = self.entries[i];
-        let old_slot = (old & FULL_BIT != 0).then_some((old & SLOT_MASK, old & WIDE_BIT != 0));
+        let old_unit = (old & FULL_BIT != 0).then_some(old & UNIT_MASK);
         let Brick::Full(p) = brick else {
-            if let Some(s) = old_slot {
-                self.free_slot(s);
+            if let Some(u) = old_unit {
+                self.free_slot(u);
             }
             let m = brick.get(0);
             self.entries[i] = u32::from(m)
@@ -2302,98 +2159,120 @@ impl GpuWorld {
                 };
             return Ok(());
         };
-        let s = match old_slot {
-            Some((s, w)) if w == wide => s,
-            _ => {
-                let s = if wide {
-                    self.alloc_pair(kind)?
-                } else {
-                    self.alloc(kind)?
-                };
-                if let Some(old) = old_slot {
-                    self.free_slot(old);
-                }
-                s
-            }
-        };
-        // The bits are set in the pass that narrows the voxels: an opaque voxel sets its bit
-        // of the opaque mask, a translucent one its 2^3 block's bit (bx + 4 by + 16 bz) of the
-        // two translucent words, and flags the entry.
-        let mut masks: SlotMasks = [0; OPAQUE_WORDS + TRANSLUCENT_WORDS];
-        let mut flag = 0;
-        let entries = p.entry_matches().filter(|_| !wide);
-        if let Some(entries) = entries {
-            // From the planes: each palette entry's chunk-palette index written over its
-            // match words, the opaque entries' match words as the opaque mask (the CPU's `u64`
-            // per layer is the GPU's two `u32` words), the translucent entries' voxels as their
-            // 2^3 blocks' bits.
-            let mut idx = [0u8; BRICK_VOXELS];
-            for (m, words) in &entries {
-                let r = self.rev[usize::from(*m)] as u8;
-                let translucent = self.translucent[usize::from(*m)];
-                for (z, &w) in words.iter().enumerate() {
-                    if !translucent {
-                        masks[2 * z] |= w as u32;
-                        masks[2 * z + 1] |= (w >> 32) as u32;
+        let mut words = std::mem::take(&mut self.slot_words);
+        let flag = self.fill_slot(p, attrs, &mut words);
+        let k = bin_of((words.len() / UNIT_WORDS) as u32);
+        // The rest of the bin's slot reads as "no plane" and is never read as anything else.
+        words.resize(BINS[k] as usize * UNIT_WORDS, u32::MAX);
+        let u = match old_unit {
+            Some(u) if self.bin_of_unit(u) == Some(k) => u,
+            _ => match self.alloc(k) {
+                Ok(u) => {
+                    if let Some(o) = old_unit {
+                        self.free_slot(o);
                     }
-                    let mut bits = w;
-                    while bits != 0 {
-                        let b = bits.trailing_zeros() as usize;
-                        bits &= bits - 1;
-                        idx[64 * z + b] = r;
-                        if translucent {
-                            let (x, y) = (b % 8, b / 8);
-                            let block = x / 2 + 4 * (y / 2) + 16 * (z / 2);
-                            masks[OPAQUE_WORDS + block / 32] |= 1 << (block % 32);
-                            flag = TRANSLUCENT_BIT;
+                    u
+                }
+                Err(e) => {
+                    self.slot_words = words;
+                    return Err(e);
+                }
+            },
+        };
+        self.stage(k, u, &words, enc, st);
+        st.bytes += (words.len() * 4) as u64;
+        self.entries[i] = FULL_BIT | flag | class_code(p.class()) << CLASS_SHIFT | u;
+        self.slot_words = words;
+        st.bricks += 1;
+        Ok(())
+    }
+
+    /// Fills `out` with the CPU units of `p`'s slot (module docs): the opaque mask (the packed
+    /// mask less the translucent voxels), the header, the planes or raw ids copied from the
+    /// packed words, the translucent unit of a planar brick holding a translucent voxel, and
+    /// with `attrs` the attribute units as "no plane". Returns `TRANSLUCENT_BIT` when the brick
+    /// holds a translucent voxel, else 0.
+    fn fill_slot(&self, p: &Packed, attrs: bool, out: &mut Vec<u32>) -> u32 {
+        out.clear();
+        out.resize(2 * UNIT_WORDS, 0);
+        let translucent = |m: MaterialId| self.translucent[usize::from(m)];
+        let mut glass = [0u64; 8];
+        let code = class_code(p.class());
+        if materials_of(p, translucent) {
+            match (p.entry_matches(), p.wide_ids()) {
+                (Some(entries), _) => {
+                    for (m, w) in entries {
+                        if translucent(m) {
+                            for z in 0..8 {
+                                glass[z] |= w[z];
+                            }
                         }
                     }
                 }
+                (None, Some(ids)) => {
+                    for (i, &m) in ids.iter().enumerate() {
+                        if m != AIR && translucent(m) {
+                            glass[i / 64] |= 1 << (i % 64);
+                        }
+                    }
+                }
+                (None, None) => unreachable!("a packed brick is planar or wide"),
             }
-            self.stage(s, &idx, &masks, enc, st);
-            st.bytes += SLOT_BYTES + MASK_BYTES;
-            self.entries[i] = FULL_BIT | flag | s;
-            st.bricks += 1;
-            return Ok(());
         }
-        let mut set_bits = |i: usize, m: MaterialId| {
-            if m == AIR {
-                return;
-            }
-            if self.translucent[usize::from(m)] {
-                let (x, y, z) = (i % 8, i / 8 % 8, i / 64);
+        let mask = p.mask();
+        for z in 0..8 {
+            let opaque = mask[z] & !glass[z];
+            out[2 * z] = opaque as u32;
+            out[2 * z + 1] = (opaque >> 32) as u32;
+        }
+        let header = UNIT_WORDS;
+        for (z, &w) in glass.iter().enumerate() {
+            let mut bits = w;
+            while bits != 0 {
+                let b = bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                let (x, y) = (b % 8, b / 8);
                 let block = x / 2 + 4 * (y / 2) + 16 * (z / 2);
-                masks[OPAQUE_WORDS + block / 32] |= 1 << (block % 32);
-                flag = TRANSLUCENT_BIT;
-            } else {
-                masks[i / 32] |= 1 << (i % 32);
+                out[header + HEADER_TRANSLUCENT_WORD + block / 32] |= 1 << (block % 32);
             }
-        };
-        // A wide record, or a brick above 16 materials: narrowed from the decoded voxels.
-        let mut v = [AIR; BRICK_VOXELS];
-        p.decode(&mut v);
-        if wide {
-            for (i, &m) in v.iter().enumerate() {
-                set_bits(i, m);
-            }
-            let bytes: &[u8] = bytemuck::cast_slice(&v[..]);
-            let (lo, hi) = bytes.split_at(SLOT_BYTES as usize);
-            self.stage(s, lo, &masks, enc, st);
-            self.stage(s + 1, hi, &[0; OPAQUE_WORDS + TRANSLUCENT_WORDS], enc, st);
-            st.bytes += 2 * (SLOT_BYTES + MASK_BYTES);
-            self.entries[i] = FULL_BIT | WIDE_BIT | flag | s;
-        } else {
-            let mut idx = [0u8; BRICK_VOXELS];
-            for (i, (d, &m)) in idx.iter_mut().zip(v.iter()).enumerate() {
-                *d = self.rev[usize::from(m)] as u8;
-                set_bits(i, m);
-            }
-            self.stage(s, &idx, &masks, enc, st);
-            st.bytes += SLOT_BYTES + MASK_BYTES;
-            self.entries[i] = FULL_BIT | flag | s;
         }
-        st.bricks += 1;
-        Ok(())
+        if attrs {
+            out[header + HEADER_ATTR_WORD] = ATTR_UNITS;
+        }
+        match p.words() {
+            Some(w) => {
+                let planes = p.class().planes();
+                for (q, &pal) in w[8 + 8 * planes..].iter().enumerate() {
+                    out[header + HEADER_PALETTE_WORD + 2 * q] = pal as u32;
+                    out[header + HEADER_PALETTE_WORD + 2 * q + 1] = (pal >> 32) as u32;
+                }
+                for &plane in &w[8..8 + 8 * planes] {
+                    out.extend([plane as u32, (plane >> 32) as u32]);
+                }
+                if glass != [0; 8] {
+                    for g in glass {
+                        out.extend([g as u32, (g >> 32) as u32]);
+                    }
+                }
+            }
+            None => {
+                let ids = p.wide_ids().expect("a packed brick is planar or wide");
+                out.extend(
+                    ids.chunks_exact(2)
+                        .map(|v| u32::from(v[0]) | u32::from(v[1]) << 16),
+                );
+            }
+        }
+        debug_assert_eq!(
+            out.len(),
+            2 * UNIT_WORDS
+                + payload_units(code) as usize * UNIT_WORDS
+                + usize::from(glass != [0; 8] && code != CLASS_WIDE) * UNIT_WORDS
+        );
+        if attrs {
+            out.resize(out.len() + ATTR_UNITS as usize * UNIT_WORDS, u32::MAX);
+        }
+        if glass != [0; 8] { TRANSLUCENT_BIT } else { 0 }
     }
 
     /// Replaces brick `slot` of `coord`'s light lists with its exposed emissive voxels.
@@ -2676,156 +2555,82 @@ impl GpuWorld {
         self.lights.get(&coord).and_then(|l| l.range)
     }
 
-    /// Returns a slot, or a wide brick's slot pair, to the free list of its page's kind, or
-    /// releases the page when it held the page's last live slot.
-    fn free_slot(&mut self, (s, wide): (u32, bool)) {
-        let p = s / POOL_PAGE_SLOTS;
-        let kind = self.page_kind[p as usize].expect("a live slot's page has a kind");
-        if self.unlive(s, wide) {
+    /// Returns the slot at unit `u` to its bin's free list, or releases its page when it held
+    /// the page's last live slot.
+    fn free_slot(&mut self, u: u32) {
+        let p = u / PAGE_UNITS;
+        let k = self.page_bin[p as usize].expect("a live slot's page has a bin") as usize;
+        if self.unlive(u) {
             self.release_page(p);
             return;
         }
-        let a = &mut self.allocs[kind as usize];
-        if wide {
-            a.free_pairs.push(s);
-        } else {
-            a.free.push(s);
-        }
+        self.bins[k].free.push(u);
     }
 
-    /// Takes slot `s` (two slots from `s` when `wide`) off its page's and its kind's live
-    /// counts; true when the page holds no live slot after it.
-    fn unlive(&mut self, s: u32, wide: bool) -> bool {
-        let p = (s / POOL_PAGE_SLOTS) as usize;
-        let kind = self.page_kind[p].expect("a live slot's page has a kind");
-        let n = if wide { 2 } else { 1 };
-        self.page_live[p] -= n;
-        self.allocs[kind as usize].live -= u32::from(n);
+    /// Takes the slot at unit `u` off its page's and its bin's live counts; true when the page
+    /// holds no live slot after it.
+    fn unlive(&mut self, u: u32) -> bool {
+        let p = (u / PAGE_UNITS) as usize;
+        let k = self.page_bin[p].expect("a live slot's page has a bin") as usize;
+        self.page_live[p] -= 1;
+        self.bins[k].live -= 1;
         self.page_live[p] == 0
     }
 
-    /// Adds slot `s` (two from `s` when `wide`) to its page's and its kind's live counts.
-    fn make_live(&mut self, s: u32, wide: bool, kind: Kind) {
-        let n = if wide { 2 } else { 1 };
-        self.page_live[(s / POOL_PAGE_SLOTS) as usize] += n;
-        self.allocs[kind as usize].live += u32::from(n);
-    }
-
-    /// Frees page `p`, which holds no live slot: its slots leave its kind's free lists, the
-    /// kind's cursor leaves it, and it joins the free pages.
+    /// Frees page `p`, which holds no live slot: its slots leave its bin's free list, the
+    /// bin's cursor leaves it, and it joins the free pages.
     fn release_page(&mut self, p: u32) {
-        let kind = self.page_kind[p as usize]
+        let k = self.page_bin[p as usize]
             .take()
-            .expect("a page released once");
-        let a = &mut self.allocs[kind as usize];
-        a.free.retain(|&s| s / POOL_PAGE_SLOTS != p);
-        a.free_pairs.retain(|&s| s / POOL_PAGE_SLOTS != p);
-        if a.next < a.end && (a.end - 1) / POOL_PAGE_SLOTS == p {
+            .expect("a page released once") as usize;
+        let a = &mut self.bins[k];
+        a.free.retain(|&u| u / PAGE_UNITS != p);
+        if a.next < a.end && (a.end - 1) / PAGE_UNITS == p {
             a.next = a.end;
         }
         self.free_pages.insert(p);
     }
 
-    /// Appends slot `s` to the staged run, first writing the run out if `s` does not extend it
-    /// or it is full.
+    /// Appends the slot at unit `u` of bin `k`, whose words are `words` (whole units), to the
+    /// bin's staged run, first writing the run out if `u` does not extend it, it is full, or
+    /// `u` starts a shard.
     fn stage(
         &mut self,
-        s: u32,
-        bytes: &[u8],
-        masks: &SlotMasks,
+        k: usize,
+        u: u32,
+        words: &[u32],
         enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) {
-        let len = self.stage_masks.len() as u32;
-        let boundary = s.is_multiple_of(self.layout.slots_per_shard);
-        if len > 0 && (s != self.stage_start + len || len >= STAGE_SLOTS || boundary) {
-            self.flush_stage(enc, st);
+        let (start, run) = &self.stage[k];
+        let len = (run.len() / UNIT_WORDS) as u32;
+        let boundary = u.is_multiple_of(self.layout.units_per_shard);
+        if len > 0 && (u != start + len || len >= STAGE_UNITS || boundary) {
+            self.flush_stage(k, enc, st);
         }
-        if self.stage_masks.is_empty() {
-            self.stage_start = s;
+        let (start, run) = &mut self.stage[k];
+        if run.is_empty() {
+            *start = u;
         }
-        self.stage_voxels.extend_from_slice(bytes);
-        self.stage_masks.push(*masks);
+        run.extend_from_slice(words);
     }
 
-    /// Writes the staged run into its pool shard and the masks buffer, and empties it.
-    fn flush_stage(&mut self, enc: &mut wgpu::CommandEncoder, st: &mut SyncStats) {
-        if self.stage_masks.is_empty() {
+    /// Writes bin `k`'s staged run into its pool shard, and empties it.
+    fn flush_stage(&mut self, k: usize, enc: &mut wgpu::CommandEncoder, st: &mut SyncStats) {
+        let (start, run) = &mut self.stage[k];
+        if run.is_empty() {
             return;
         }
-        let sps = self.layout.slots_per_shard;
-        let shard = (self.stage_start / sps) as usize;
+        let ups = self.layout.units_per_shard;
+        let shard = (*start / ups) as usize;
         self.belt.write(
             enc,
             &self.shards[shard],
-            u64::from(self.stage_start % sps) * SLOT_BYTES,
-            bytemuck::cast_slice(&self.stage_voxels),
+            u64::from(*start % ups) * UNIT_BYTES,
+            bytemuck::cast_slice(run),
         );
         st.writes += 1;
-        self.write_masks(enc, st);
-        self.stage_voxels.clear();
-        self.stage_masks.clear();
-    }
-
-    /// Writes the staged run's masks: the groups it covers whole as one write of group
-    /// layout, and the slots of a group it covers in part as one write of their opaque lines
-    /// and one of their translucent words, so no write touches a slot outside the run.
-    fn write_masks(&mut self, enc: &mut wgpu::CommandEncoder, st: &mut SyncStats) {
-        let g = MASK_GROUP_SLOTS;
-        let start = self.stage_start;
-        let end = start + self.stage_masks.len() as u32;
-        let mut s = start;
-        while s < end {
-            let first = s % g;
-            let whole = if first == 0 { (end - s) / g } else { 0 };
-            if whole > 0 {
-                let groups = &mut self.stage_groups;
-                groups.clear();
-                for k in 0..whole {
-                    let slots = &self.stage_masks[(s - start + k * g) as usize..][..g as usize];
-                    for m in slots {
-                        groups.extend_from_slice(&m[..OPAQUE_WORDS]);
-                    }
-                    for m in slots {
-                        groups.extend_from_slice(&m[OPAQUE_WORDS..]);
-                    }
-                }
-                self.belt.write(
-                    enc,
-                    &self.masks,
-                    u64::from(opaque_mask_word(s)) * 4,
-                    bytemuck::cast_slice(groups),
-                );
-                st.writes += 1;
-                s += whole * g;
-                continue;
-            }
-            let n = (g - first).min(end - s);
-            let slots = &self.stage_masks[(s - start) as usize..][..n as usize];
-            let groups = &mut self.stage_groups;
-            groups.clear();
-            for m in slots {
-                groups.extend_from_slice(&m[..OPAQUE_WORDS]);
-            }
-            let opaque = groups.len();
-            for m in slots {
-                groups.extend_from_slice(&m[OPAQUE_WORDS..]);
-            }
-            self.belt.write(
-                enc,
-                &self.masks,
-                u64::from(opaque_mask_word(s)) * 4,
-                bytemuck::cast_slice(&groups[..opaque]),
-            );
-            self.belt.write(
-                enc,
-                &self.masks,
-                u64::from(translucent_mask_word(s)) * 4,
-                bytemuck::cast_slice(&groups[opaque..]),
-            );
-            st.writes += 2;
-            s += n;
-        }
+        run.clear();
     }
 
     /// Appends record `rec`'s CPU entries to the staged run of records.
@@ -2954,86 +2759,52 @@ impl GpuWorld {
         Ok(self.next_record - 1)
     }
 
-    /// Moves `kind`'s cursor onto a page: the lowest free page, of either former kind, else
-    /// the next page never handed out, failing with `PoolTooLarge` when that one lies past
-    /// the reservation. A page right after the cursor's end continues it; otherwise the
-    /// current page's unused brick slots go to the free list.
-    fn take_page(&mut self, kind: Kind) -> Result<(), MirrorError> {
+    /// Moves bin `k`'s cursor onto a page: the lowest free page, of any former bin, else the
+    /// next page never handed out, failing with `PoolTooLarge` when that one lies past the
+    /// reservation. The current page's unused slots go to the free list.
+    fn take_page(&mut self, k: usize) -> Result<(), MirrorError> {
         let page = match self.free_pages.pop_first() {
             Some(page) => page,
             None => {
-                let end = u64::from(self.next_page + 1) * u64::from(POOL_PAGE_SLOTS);
-                let limit = u64::from(self.layout.reserved_slots);
-                if end > limit {
+                let limit = self.layout.reserved_pages();
+                if self.next_page + 1 > limit {
                     return Err(MirrorError::PoolTooLarge {
-                        needed: end * SLOT_BYTES,
-                        limit: limit * SLOT_BYTES,
+                        needed: u64::from(self.next_page + 1) * PAGE_BYTES,
+                        limit: u64::from(limit) * PAGE_BYTES,
                     });
                 }
-                self.page_kind.push(None);
+                self.page_bin.push(None);
                 self.page_live.push(0);
                 self.next_page += 1;
                 self.next_page - 1
             }
         };
-        self.page_kind[page as usize] = Some(kind);
-        let p = page * POOL_PAGE_SLOTS;
-        let a = &mut self.allocs[kind as usize];
-        if p != a.end {
-            a.free.extend((a.next..a.end).rev());
-            a.next = p;
-        }
-        a.end = p + kind.brick_slots();
+        self.page_bin[page as usize] = Some(k as u8);
+        let b = BINS[k];
+        let a = &mut self.bins[k];
+        // Pushed highest first, so they pop ascending.
+        a.free.extend((a.next..a.end).step_by(b as usize).rev());
+        a.next = page * PAGE_UNITS;
+        a.end = a.next + slots_per_page(k) * b;
         Ok(())
     }
 
-    /// One slot: a free single, else the cursor, else half of a free pair (the other half
-    /// becomes a single), else a new page. So every slot `SlotAlloc::available` counts can
-    /// serve a narrow brick.
-    fn alloc(&mut self, kind: Kind) -> Result<u32, MirrorError> {
-        let a = &mut self.allocs[kind as usize];
-        let s = if let Some(s) = a.free.pop() {
-            s
-        } else if a.next < a.end {
-            a.next += 1;
-            a.next - 1
-        } else if let Some(s) = a.free_pairs.pop() {
-            a.free.push(s + 1);
-            s
+    /// One slot of bin `k`: a free one, else the cursor, else a new page.
+    fn alloc(&mut self, k: usize) -> Result<u32, MirrorError> {
+        let a = &mut self.bins[k];
+        let u = if let Some(u) = a.free.pop() {
+            u
         } else {
-            self.take_page(kind)?;
-            let a = &mut self.allocs[kind as usize];
-            a.next += 1;
-            a.next - 1
-        };
-        self.make_live(s, false, kind);
-        Ok(s)
-    }
-
-    /// Two adjacent slots starting on an even slot, for a wide brick. An odd next slot is
-    /// skipped onto the single free list.
-    fn alloc_pair(&mut self, kind: Kind) -> Result<u32, MirrorError> {
-        let s = match self.allocs[kind as usize].free_pairs.pop() {
-            Some(s) => s,
-            None => {
-                let a = &self.allocs[kind as usize];
-                // Pages and their brick-slot counts are even, so a pair never straddles a
-                // page end unless the next page continues this one.
-                if a.next + a.next % 2 + 2 > a.end {
-                    self.take_page(kind)?;
-                }
-                let a = &mut self.allocs[kind as usize];
-                let next = a.next;
-                let start = next + next % 2;
-                if start != next {
-                    a.free.push(next);
-                }
-                a.next = start + 2;
-                start
+            if a.next >= a.end {
+                self.take_page(k)?;
             }
+            let a = &mut self.bins[k];
+            a.next += BINS[k];
+            a.next - BINS[k]
         };
-        self.make_live(s, true, kind);
-        Ok(s)
+        self.page_live[(u / PAGE_UNITS) as usize] += 1;
+        self.bins[k].live += 1;
+        Ok(u)
     }
 }
 
@@ -3051,13 +2822,15 @@ impl MirrorView for GpuWorld {
         self.mirrored.get(&c).is_some_and(|m| !m.lod)
     }
 
+    /// The brick's entry less `FULL_BIT`: its first unit, class and translucent flag, which
+    /// locate its attributes ([`attr_offset`]).
     fn full_slot(&self, b: [i32; 3]) -> Option<u32> {
         let e = CHUNK_EDGE_BRICKS;
         let c = ChunkCoord(b.map(|v| v.div_euclid(e)));
         let m = self.mirrored.get(&c).filter(|m| !m.lod)?;
         let local = b.map(|v| v.rem_euclid(e));
         let entry = self.entries[m.record as usize * RECORD_WORDS + ENTRY_WORD + brick_slot(local)];
-        (entry & FULL_BIT != 0).then_some(entry & SLOT_MASK)
+        (entry & FULL_BIT != 0).then_some(entry & !FULL_BIT)
     }
 }
 
@@ -3119,35 +2892,21 @@ fn box_difference(a: ChunkExtent, b: ChunkExtent) -> Vec<ChunkCoord> {
     out
 }
 
-/// A `Full` brick's non-air materials in the order their first voxels appear (ascending brick
-/// index): each palette entry's first set match bit, sorted; a `Wide` brick's decoded ids
-/// scanned in order.
-fn first_appearance(p: &Packed) -> Vec<MaterialId> {
-    match p.entry_matches() {
-        Some(entries) => {
-            let mut firsts: Vec<(usize, MaterialId)> = entries
-                .iter()
-                .map(|(m, words)| {
-                    let z = words.iter().position(|&w| w != 0).expect("a used entry");
-                    (64 * z + words[z].trailing_zeros() as usize, *m)
-                })
-                .collect();
-            firsts.sort_unstable();
-            firsts.into_iter().map(|(_, m)| m).collect()
-        }
-        None => {
-            let mut v = [AIR; BRICK_VOXELS];
-            p.decode(&mut v);
-            let mut out = Vec::new();
-            for m in v {
-                if m != AIR && !out.contains(&m) {
-                    out.push(m);
-                }
-            }
-            out
-        }
+/// Whether a material of `p` satisfies `f`: its palette entries, or a `Wide` brick's ids.
+fn materials_of(p: &Packed, f: impl Fn(MaterialId) -> bool) -> bool {
+    match p.words() {
+        Some(w) => w[8 + 8 * p.class().planes()..].iter().any(|&q| {
+            (0..4).any(|j| {
+                let m = (q >> (16 * j)) as MaterialId;
+                m != AIR && f(m)
+            })
+        }),
+        None => p
+            .wide_ids()
+            .is_some_and(|ids| ids.iter().any(|&m| m != AIR && f(m))),
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -4,19 +4,21 @@
 // the attributes of two voxels.
 //
 // Bindings, group 0:
-//   0  uniform  params         mirror window, slots per shard, work-list length, the
+//   0  uniform  params         mirror window, units per shard, work-list length, the
 //                              dispatch's workgroups along x
 //   1  storage  brick_pool0    pool shard 0, read-write; 2, 3 and 4 are shards 1 to 3. Same
-//                              layout as in march.wgsl; this pass writes only attribute slots
+//                              layout as in march.wgsl; this pass writes only attribute units
 //   5  storage  chunk_records  as in march.wgsl
 //   6  storage  chunk_table    as in march.wgsl
-//   7  storage  attrib_work    [n][4 x u32]: brick slot (in an attribute page), brick origin
-//                              in voxels (x, y, z as i32 bits). Bit 31 of the slot word
-//                              marks a clear item: the brick's attribute is written all
-//                              "no plane" and nothing is computed
+//   7  storage  attrib_work    [n][4 x u32]: the brick's record entry less bit 31 (its slot's
+//                              first unit, class and translucent flag), brick origin in
+//                              voxels (x, y, z as i32 bits). Bit 31 of the first word marks a
+//                              clear item: the brick's attribute is written all "no plane" and
+//                              nothing is computed
 //
-// The attribute of brick slot s in attribute page p = s - s % 4096 lives in the two slots
-// p + 1364 + 2 (s - p) and the one after: 512 u16, two per word, x fastest. A voxel's u16 is
+// The attribute of a Full brick lives in the 16 units of its slot after its mask, header,
+// payload and translucent unit (march.wgsl's attr_offset): 512 u16, two per word, x fastest.
+// A voxel's u16 is
 // bits 0..6 octahedral u, 6..12 octahedral v, 12..16 the plane offset code k in 0..=14 for
 // (k - 7) / 8 voxel along the normal from the voxel centre; 0xFFFF is "no plane": air, a voxel
 // whose six face neighbours are all solid, or one whose occupancy gradient vanishes.
@@ -29,7 +31,7 @@
 
 struct Params {
     window_min: vec3<i32>,
-    slots_per_shard: u32,
+    units_per_shard: u32,
     window_size: vec3<i32>,
     items: u32,
     groups_x: u32,
@@ -50,16 +52,18 @@ struct Params {
 const ABSENT: u32 = 0xFFFFFFFFu;
 const FULL_BIT: u32 = 0x80000000u;
 const LOD_BIT: u32 = 0x40000000u;
-const WIDE_BIT: u32 = 0x40000000u;
-// Bit 29 of an entry flags a brick holding a translucent voxel; a slot takes bits 0..29.
-const SLOT_MASK: u32 = 0x1FFFFFFFu;
+// Bit 29 of an entry flags a brick holding a translucent voxel; a Full entry's first unit
+// takes bits 0..26 and its class bits 26..29 (5: Wide, raw u16 ids).
+const TRANSLUCENT_BIT: u32 = 0x20000000u;
+const UNIT_MASK: u32 = 0x3FFFFFFu;
+const CLASS_SHIFT: u32 = 26u;
+const CLASS_WIDE: u32 = 5u;
 const EMPTY_BIT: u32 = 0x20000000u;
 const RECORD_MASK: u32 = 0x1FFFFFFFu;
-const SLOT_WORDS: u32 = 128u;
-const RECORD_WORDS: u32 = 656u;
+const UNIT_WORDS: u32 = 16u;
+const RECORD_WORDS: u32 = 528u;
 const ENTRY_WORD: u32 = 16u;
-const PAGE_SLOTS: u32 = 4096u;
-const ATTR_PAGE_BRICK_SLOTS: u32 = 1364u;
+const PAYLOAD_WORD: u32 = 32u;
 const NO_PLANE: u32 = 0xFFFFu;
 // Bit 31 of a work item's slot word: a clear item (`attrib::CLEAR_BIT`).
 const CLEAR_BIT: u32 = 0x80000000u;
@@ -71,13 +75,14 @@ const BOX: u32 = 10u;
 
 var<workgroup> occ: array<u32, 1000>;
 
-fn shard_index(slot: u32, word: u32) -> vec2<u32> {
-    let shard = slot / params.slots_per_shard;
-    return vec2<u32>(shard, (slot - shard * params.slots_per_shard) * SLOT_WORDS + word);
+// The shard and index of word `word` of the slot whose first unit is `unit`.
+fn shard_index(unit: u32, word: u32) -> vec2<u32> {
+    let shard = unit / params.units_per_shard;
+    return vec2<u32>(shard, (unit - shard * params.units_per_shard) * UNIT_WORDS + word);
 }
 
-fn pool_word(slot: u32, word: u32) -> u32 {
-    let a = shard_index(slot, word);
+fn pool_word(unit: u32, word: u32) -> u32 {
+    let a = shard_index(unit, word);
     switch a.x {
         case 0u: { return brick_pool0[a.y]; }
         case 1u: { return brick_pool1[a.y]; }
@@ -86,8 +91,8 @@ fn pool_word(slot: u32, word: u32) -> u32 {
     }
 }
 
-fn store_pool_word(slot: u32, word: u32, value: u32) {
-    let a = shard_index(slot, word);
+fn store_pool_word(unit: u32, word: u32, value: u32) {
+    let a = shard_index(unit, word);
     switch a.x {
         case 0u: { brick_pool0[a.y] = value; }
         case 1u: { brick_pool1[a.y] = value; }
@@ -127,16 +132,37 @@ fn solid(v: vec3<i32>) -> bool {
         // for every reader but the opaque walk.
         return (entry & 0xFFFFu) != 0u;
     }
-    let slot = entry & SLOT_MASK;
+    let unit = entry & UNIT_MASK;
     let l = c - b * 8;
     let i = u32(l.x + 8 * (l.y + 8 * l.z));
-    if ((entry & WIDE_BIT) != 0u) {
-        let word = pool_word(slot, i / 2u);
+    if (((pool_word(unit, i / 32u) >> (i % 32u)) & 1u) != 0u) {
+        // An opaque voxel.
+        return true;
+    }
+    if ((entry & TRANSLUCENT_BIT) == 0u) {
+        return false;
+    }
+    // Air or a translucent voxel: a Wide brick's id, else the translucent unit after the planes.
+    let cls = (entry >> CLASS_SHIFT) & 7u;
+    if (cls == CLASS_WIDE) {
+        let word = pool_word(unit, PAYLOAD_WORD + i / 2u);
         return ((word >> ((i & 1u) * 16u)) & 0xFFFFu) != 0u;
     }
-    // A narrow brick: palette index 0 is air in every palette.
-    let word = pool_word(slot, i / 4u);
-    return ((word >> ((i & 3u) * 8u)) & 0xFFu) != 0u;
+    let tw = pool_word(unit, PAYLOAD_WORD + UNIT_WORDS * payload_units(entry) + i / 32u);
+    return ((tw >> (i % 32u)) & 1u) != 0u;
+}
+
+// Units of a Full entry's payload: 0, 1, 2 or 4 planes for classes 1 to 4, 16 for Wide.
+fn payload_units(entry: u32) -> u32 {
+    let cls = (entry >> CLASS_SHIFT) & 7u;
+    return select(select(cls - 1u, 4u, cls == 4u), 16u, cls == CLASS_WIDE);
+}
+
+// The unit offset of a Full entry's attributes from its first unit, as march.wgsl's.
+fn attr_offset(entry: u32) -> u32 {
+    let cls = (entry >> CLASS_SHIFT) & 7u;
+    let t = select(0u, 1u, (entry & TRANSLUCENT_BIT) != 0u && cls != CLASS_WIDE);
+    return 2u + payload_units(entry) + t;
 }
 
 // Octahedral encoding of the unit vector `n` into 6 + 6 bits.
@@ -195,7 +221,7 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
     }
     let w = attrib_work[item];
     let clear = (w.x & CLEAR_BIT) != 0u;
-    let slot = w.x & ~CLEAR_BIT;
+    let entry = w.x & ~CLEAR_BIT;
     let origin = bitcast<vec3<i32>>(w.yzw);
     // A clear item skips the fill but not the barrier, which stays in uniform control flow.
     if (!clear) {
@@ -205,8 +231,6 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
         }
     }
     workgroupBarrier();
-    let page = slot - slot % PAGE_SLOTS;
-    let attr_slot = page + ATTR_PAGE_BRICK_SLOTS + 2u * (slot - page);
     var packed = NO_PLANE | (NO_PLANE << 16u);
     if (!clear) {
         packed = 0u;
@@ -216,5 +240,5 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
             packed |= voxel_attr(l + vec3<i32>(1)) << (16u * h);
         }
     }
-    store_pool_word(attr_slot, li, packed);
+    store_pool_word(entry & UNIT_MASK, UNIT_WORDS * attr_offset(entry) + li, packed);
 }

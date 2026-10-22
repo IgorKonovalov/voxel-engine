@@ -16,20 +16,20 @@
 //! `--veins N` generates, over the `--chunks` extent, a synthetic world of `N - 1` materials in
 //! 2^3 cells with about a third of the voxels air, and prints its census.
 //!
-//! Mirror bytes use the uploader's formula (ADR-0004): each `Full` brick or mip-brick takes a
-//! 512-byte slot of palette indices plus 72 bytes of masks (a 64-byte opaque mask and two
-//! translucent words), each mirrored chunk (full or LOD-only) a 2624-byte record (16 words of
-//! brick bits, 512 entries, the palette), each chunk-table entry 4 bytes (the window's `W^3`
-//! when streaming), and each material row `MATERIAL_FLOATS` `f32`s. CPU bytes count a full
+//! Mirror bytes use the uploader's layout (ADR-0012, `gpu_world::slot_units`): each `Full`
+//! brick or mip-brick takes a slot of its bin's 64-byte units (mask, header, planes or raw
+//! ids, a translucent unit when it has glass), each mirrored chunk (full or LOD-only) a
+//! 2112-byte record (16 words of brick bits, 512 entries), each chunk-table entry 4 bytes (the
+//! window's `W^3` when streaming), and each material row `MATERIAL_FLOATS` `f32`s. CPU bytes
+//! count a full
 //! chunk's slot array and its `Full` bricks' class boxes, and a LOD-only chunk's mip-brick slots
 //! and `Full` mip-bricks' boxes.
 //!
 //! The budget lines are the smallest `--mirror-budget` (ADR-0013) that reserves this content
-//! at rest (`gpu_world::budget_for`): its slots in whole pages and a record for every chunk of
-//! the extent, or when streaming the records the fly-through reserves for the residency's ball
-//! (`flythrough::stream_record_chunks`). Face mode puts every brick in plain pages; contour
-//! puts full chunks' bricks in attribute pages of 1364 bricks each. Neither counts the
-//! streamer's hysteresis or the dig headroom.
+//! at rest (`gpu_world::budget_for`): each bin's slots in whole pages of that bin and a record
+//! for every chunk of the extent, or when streaming the records the fly-through reserves for
+//! the residency's ball (`flythrough::stream_record_chunks`). Contour adds the attribute units
+//! to full chunks' bricks. Neither counts the streamer's hysteresis or the dig headroom.
 //!
 //! `--surface` (with `--stream`) adds the contour-attribute census of the `Full` bricks of
 //! full chunks: their count, their *plane voxels* (solid voxels with at least one air face
@@ -42,7 +42,7 @@
 //! `--surface`. A `Full` brick's slot is a run of 64-byte units: the opaque mask, a header,
 //! then 0, 1, 2 or 4 plane units (one, two, three to four, five to sixteen materials) or 16
 //! units of raw ids, so 2, 3, 4, 6 or 18 units; it is allocated from the smallest bin of
-//! `MIRROR_BINS` units that holds it. A record is 2112 B (no palette). With contour
+//! `gpu_world::BINS` units that holds it. A record is 2112 B (no palette). With contour
 //! attributes a full chunk's brick with `n > 0` *chunk-local surface* voxels
 //! (`vxe_world::surface_mask`: non-air voxels with an air face neighbour inside the chunk, a
 //! chunk face counting as air) adds a unit of surface mask and `ceil(n / 32)` units of `u16`
@@ -55,31 +55,22 @@ use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 
 use flythrough::cave::CaveSource;
 use flythrough::{cave_materials, chunk_ram, mips_ram, stream_record_chunks, window_side};
-use vxe_render::gpu_world::{ATTR_PAGE_BRICK_SLOTS, MATERIAL_FLOATS, POOL_PAGE_SLOTS, budget_for};
+use vxe_render::gpu_world::{
+    BIN_COUNT, BINS, MATERIAL_FLOATS, PAGE_UNITS, RECORD_BYTES, UNIT_BYTES, bin_of, budget_for,
+    class_code, payload_units, slot_units, slots_per_page,
+};
 use vxe_world::hash::{ValueNoise, hash3};
 use vxe_world::packed::PackedClass;
 use vxe_world::{
     AIR, BRICK_EDGE, BRICK_VOXELS, Brick, BrickCensus, CHUNK_BRICKS, CHUNK_EDGE, Chunk, ChunkCoord,
-    ChunkExtent, ChunkMips, CoarseGrid, Material, MaterialId, MaterialTable, PersistConfig,
-    Residency, StreamConfig, Streamer, World, WorldCensus, WorldLimits, WorldSource, brick_of_slot,
-    brick_slot, index_in_brick, solid_mask, surface_mask,
+    ChunkExtent, ChunkMips, CoarseGrid, Material, MaterialFlags, MaterialId, MaterialTable,
+    PersistConfig, Residency, StreamConfig, Streamer, World, WorldCensus, WorldLimits, WorldSource,
+    brick_of_slot, brick_slot, index_in_brick, solid_mask, surface_mask,
 };
 
-/// Mirror bytes per `Full` brick or mip-brick, and per mirrored chunk's record.
-const SLOT_AND_MASK: usize = 512 + 72;
-const RECORD: usize = 2624;
-
-/// The size-classed slot layout's unit, bins (units per slot) and record bytes.
-const UNIT_BYTES: u64 = 64;
-const MIRROR_BINS: [u64; 10] = [2, 3, 4, 6, 8, 12, 16, 20, 24, 36];
-const SIZED_RECORD: u64 = 2112;
-
-/// Units of a `Full` brick's slot without attributes, by packed class.
+/// Units of a `Full` brick's slot without attributes or glass, by packed class.
 fn class_units(c: PackedClass) -> u64 {
-    match c {
-        PackedClass::Wide => 18,
-        c => 2 + c.planes() as u64,
-    }
+    u64::from(2 + payload_units(class_code(c)))
 }
 
 /// Units of a full chunk's brick's slot with `n` chunk-local surface voxels' attributes.
@@ -87,20 +78,12 @@ fn attr_units(n: u64) -> u64 {
     if n == 0 { 0 } else { 1 + n.div_ceil(32) }
 }
 
-/// The bin holding a slot of `units`.
-fn bin_of(units: u64) -> usize {
-    MIRROR_BINS
-        .iter()
-        .position(|&b| b >= units)
-        .expect("a slot fits the largest bin")
-}
-
 /// `Full` bricks of a census bin of materials (`BrickCensus::BINS`) as slots of each bin.
 fn census_bins(c: &BrickCensus) -> [u64; 10] {
     const UNITS: [u64; 6] = [2, 3, 4, 6, 18, 18];
     let mut out = [0u64; 10];
     for (n, units) in c.full_by_materials.iter().zip(UNITS) {
-        out[bin_of(units)] += n;
+        out[bin_of(units as u32)] += n;
     }
     out
 }
@@ -108,22 +91,18 @@ fn census_bins(c: &BrickCensus) -> [u64; 10] {
 /// Prints one look's projected mirror: the pool by bin (slots of each bin times its units),
 /// `records` records, `table` chunk-table entries and the material rows.
 fn projection(look: &str, bins: &[u64; 10], records: u64, table: u64, materials: usize) {
-    let pool: u64 = bins
-        .iter()
-        .zip(MIRROR_BINS)
-        .map(|(n, b)| n * b * UNIT_BYTES)
-        .sum();
-    let rec = records * SIZED_RECORD;
+    let pool = pool_bytes(bins);
+    let rec = records * RECORD_BYTES;
     let rows = (materials * MATERIAL_FLOATS * 4) as u64;
     let total = pool + rec + table * 4 + rows;
     let by_bin: Vec<String> = bins
         .iter()
-        .zip(MIRROR_BINS)
+        .zip(BINS)
         .filter(|(n, _)| **n > 0)
-        .map(|(n, b)| format!("{b}u x {n} = {} B", n * b * UNIT_BYTES))
+        .map(|(n, b)| format!("{b}u x {n} = {} B", n * u64::from(b) * UNIT_BYTES))
         .collect();
     println!(
-        "{:LABEL$}pool {pool} B ({:.1} MiB) [{}]; records {records} x {SIZED_RECORD} = {rec} B; \
+        "{:LABEL$}pool {pool} B ({:.1} MiB) [{}]; records {records} x {RECORD_BYTES} = {rec} B; \
          table {} B; materials {rows} B; total {total} B ({:.1} MiB)",
         format!("sized ({look}):"),
         mib(pool),
@@ -131,6 +110,33 @@ fn projection(look: &str, bins: &[u64; 10], records: u64, table: u64, materials:
         table * 4,
         mib(total)
     );
+}
+
+/// Bytes of the slots in `bins`, each its bin's units.
+fn pool_bytes(bins: &[u64; BIN_COUNT]) -> u64 {
+    bins.iter()
+        .zip(BINS)
+        .map(|(n, b)| n * u64::from(b) * UNIT_BYTES)
+        .sum()
+}
+
+/// Pool units of `bins` in whole pages of each bin.
+fn page_units(bins: &[u64; BIN_COUNT]) -> u64 {
+    let pages: u64 = bins
+        .iter()
+        .enumerate()
+        .map(|(k, &n)| n.div_ceil(u64::from(slots_per_page(k))))
+        .sum();
+    pages * u64::from(PAGE_UNITS)
+}
+
+/// Adds `brick`'s slot, when `Full`, to `bins`: its units with contour attributes when
+/// `attrs`.
+fn add_slot(bins: &mut [u64; BIN_COUNT], brick: &Brick, table: &MaterialTable, attrs: bool) {
+    if let Brick::Full(p) = brick {
+        let glass = |m| table.flags(m).contains(MaterialFlags::TRANSLUCENT);
+        bins[bin_of(slot_units(p, glass, attrs))] += 1;
+    }
 }
 
 /// Width of the label column the figures are printed after.
@@ -298,6 +304,7 @@ fn bounded(seed: u64, chunks: [i32; 3], census: bool) {
     let bricks = s.full_bricks + s.uniform_bricks;
     let slot_array = CHUNK_BRICKS * size_of::<Brick>();
     let mut payload = 0usize;
+    let (mut face, mut contour) = ([0u64; BIN_COUNT], [0u64; BIN_COUNT]);
     for c in world.store().coords() {
         let chunk = world.store().get(c).expect("resident");
         let chunk = chunk.read().expect("chunk lock");
@@ -306,10 +313,15 @@ fn bounded(seed: u64, chunks: [i32; 3], census: bool) {
             .iter()
             .map(Brick::payload_bytes)
             .sum::<usize>();
+        for b in chunk.bricks() {
+            add_slot(&mut face, b, &table, false);
+            add_slot(&mut contour, b, &table, true);
+        }
     }
     let cpu = payload + s.chunks * slot_array;
-    let mirror =
-        s.full_bricks * SLOT_AND_MASK + s.chunks * (RECORD + 4) + table.len() * MATERIAL_FLOATS * 4;
+    let mirror = pool_bytes(&face) as usize
+        + s.chunks * (RECORD_BYTES as usize + 4)
+        + table.len() * MATERIAL_FLOATS * 4;
     let voxels = s.chunks as f64 * 64.0 * 64.0 * 64.0;
     let air = world
         .count_in_box(
@@ -339,7 +351,7 @@ fn bounded(seed: u64, chunks: [i32; 3], census: bool) {
         mirror,
         mib(mirror as u64)
     );
-    budget_lines(s.full_bricks as u64, 0, s.chunks as u64);
+    budget_lines(&face, &contour, s.chunks as u64);
     println!("generation:        {:.3} s on {threads} threads", secs);
     println!("voxels/s/thread:   {:.3e}", voxels / secs / threads as f64);
     println!(
@@ -396,6 +408,8 @@ fn streamed(seed: u64, r: Residency, census: bool, surface: bool) {
 
     let st = streamer.stats();
     let (mut full_bricks, mut uniform_bricks, mut cpu_full) = (0usize, 0usize, 0u64);
+    let (mut face, mut contour, mut mip_bins) =
+        ([0u64; BIN_COUNT], [0u64; BIN_COUNT], [0u64; BIN_COUNT]);
     for c in world.store().coords() {
         let chunk = world.store().get(c).expect("resident");
         let chunk = chunk.read().expect("chunk lock");
@@ -403,16 +417,25 @@ fn streamed(seed: u64, r: Residency, census: bool, surface: bool) {
         full_bricks += full;
         uniform_bricks += CHUNK_BRICKS - full;
         cpu_full += chunk_ram(&chunk);
+        for b in chunk.bricks() {
+            add_slot(&mut face, b, &table, false);
+            add_slot(&mut contour, b, &table, true);
+        }
     }
     let (mut mip_full, mut cpu_lod) = (0usize, 0u64);
     for c in world.lod_coords() {
         let mips = world.lod(c).expect("LOD-only");
         mip_full += mips.full_bricks();
         cpu_lod += mips_ram(&mips);
+        for n in 1..=vxe_world::MIP_LEVELS {
+            for b in mips.level(n) {
+                add_slot(&mut mip_bins, b, &table, false);
+            }
+        }
     }
     let w = window_side(r) as usize;
-    let mirror_full = full_bricks * SLOT_AND_MASK + st.resident_full * RECORD;
-    let mirror_lod = mip_full * SLOT_AND_MASK + st.resident_lod * RECORD;
+    let mirror_full = pool_bytes(&face) as usize + st.resident_full * RECORD_BYTES as usize;
+    let mirror_lod = pool_bytes(&mip_bins) as usize + st.resident_lod * RECORD_BYTES as usize;
     let mirror = mirror_full + mirror_lod + w * w * w * 4 + table.len() * MATERIAL_FLOATS * 4;
     let generated = st.generated_chunks as f64 * 64.0 * 64.0 * 64.0;
 
@@ -447,7 +470,11 @@ fn streamed(seed: u64, r: Residency, census: bool, surface: bool) {
         mirror_full,
         mirror_lod
     );
-    budget_lines(full_bricks as u64, mip_full as u64, stream_record_chunks(r));
+    for k in 0..BIN_COUNT {
+        face[k] += mip_bins[k];
+        contour[k] += mip_bins[k];
+    }
+    budget_lines(&face, &contour, stream_record_chunks(r));
     println!("generation:        {secs:.3} s on {workers} workers");
     println!(
         "voxels/s/worker:   {:.3e}",
@@ -528,9 +555,9 @@ fn sized_contour(t: &Census, c: &WorldCensus, records: u64, table: u64, material
     projection("contour", &bins, records, table, materials);
 }
 
-/// Bytes of the contour attribute per `Full` brick of a full chunk as built: two 512-byte
-/// slots and their two 72-byte mask entries.
-const ATTR_PER_BRICK: u64 = 2 * SLOT_AND_MASK as u64;
+/// Bytes of the contour attribute per `Full` brick of a full chunk in attribute pages, before
+/// size-classed slots: two 512-byte slots and their two 72-byte mask entries.
+const ATTR_PER_BRICK: u64 = 2 * (512 + 72);
 /// The same with the 8-byte mask entries the mirror had when Plan 0005 read its live rise.
 const ATTR_PER_BRICK_8B_MASK: u64 = 2 * (512 + 8);
 /// Plan 0005's live rise of the streamed mirror at r_full 16, r_lod 24 with attribute pages.
@@ -732,7 +759,7 @@ fn census_chunk(world: &World, source: &CaveSource, cache: &SourceCache, c: Chun
         row.planes += planes;
         row.surface += n;
         row.attr_units += attr_units(n);
-        out.contour_bins[bin_of(class_units(class) + attr_units(n))] += 1;
+        out.contour_bins[bin_of((class_units(class) + attr_units(n)) as u32)] += 1;
     }
     out
 }
@@ -798,7 +825,7 @@ fn surface_census(world: &World, source: &CaveSource, threads: usize, face_mirro
         }
     }
     let rows = [
-        ("current (2 x 512 B + 2 x 72 B)", n * ATTR_PER_BRICK),
+        ("attribute pages (2 x 512 B + 2 x 72 B)", n * ATTR_PER_BRICK),
         ("A (64 B mask + 2 B per plane voxel)", n * 64 + 2 * t.planes),
         ("B (512 B code + 72 B mask)", n * 584),
         ("C (64 x u16 per brick)", n * 128),
@@ -815,13 +842,11 @@ fn surface_census(world: &World, source: &CaveSource, threads: usize, face_mirro
     t
 }
 
-/// Prints the budget `full` bricks of full chunks and `mips` mip-bricks need with a record for
-/// each of `records` chunks, in face mode and in contour mode.
-fn budget_lines(full: u64, mips: u64, records: u64) {
-    let attr_slots = full.div_ceil(u64::from(ATTR_PAGE_BRICK_SLOTS)) * u64::from(POOL_PAGE_SLOTS);
-    let face = budget_for(full + mips, records);
-    // Plain and attribute pages are whole pages each.
-    let contour = budget_for(attr_slots, 0) + budget_for(mips, records) - budget_for(0, 0);
+/// Prints the budget the slots of each look need, by bin (`face` without attributes,
+/// `contour` with them on full chunks' bricks), with a record for each of `records` chunks.
+fn budget_lines(face: &[u64; BIN_COUNT], contour: &[u64; BIN_COUNT], records: u64) {
+    let face = budget_for(page_units(face), records);
+    let contour = budget_for(page_units(contour), records);
     println!("budget (face):     {face} B ({:.1} MiB)", mib(face));
     println!("budget (contour):  {contour} B ({:.1} MiB)", mib(contour));
 }

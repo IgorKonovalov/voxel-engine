@@ -38,8 +38,8 @@ pub struct Params {
     pub size: [u32; 2],
     pub cos_inner: f32,
     pub flags: u32,
-    /// Pool slots per shard: slot `s` is slot `s % n` of shard `s / n`.
-    pub slots_per_shard: u32,
+    /// Pool units per shard: unit `u` is unit `u % n` of shard `u / n`.
+    pub units_per_shard: u32,
     /// The mip level every LOD-only chunk is walked at, 1 to 3; 0 picks it by distance.
     pub forced_level: u32,
     /// A LOD-only chunk within this squared chunk distance of the first view's chunk is
@@ -109,8 +109,8 @@ pub const NORMAL_SHIFT: u32 = 2;
 pub const FLAG_DETAIL: u32 = 1 << 4;
 /// `Params::flags` bits 5..8: the [`ViewMode`].
 pub const VIEW_SHIFT: u32 = 5;
-/// `Params::flags` bit: the mirror holds attribute pages (`MirrorConfig::surface_attrs`).
-pub const FLAG_ATTR_PAGES: u32 = 1 << 8;
+/// `Params::flags` bit: full chunks' bricks carry contour attributes (`GpuWorld::surface_attrs`).
+pub const FLAG_ATTRS: u32 = 1 << 8;
 /// `Params::flags` bit: skip empty cells larger than a voxel (`LightParams::skips`).
 pub const FLAG_SKIPS: u32 = 1 << 9;
 /// `Params::flags` bit: the primary ray passes through solid until it has crossed real air
@@ -128,7 +128,7 @@ pub enum NormalMode {
     Trilinear8,
     /// Central differences of occupancy over the 3 x 3 x 3 voxels around the hit voxel.
     Gradient27,
-    /// The per-voxel contour plane read from the mirror's attribute pages; it moves the hit
+    /// The per-voxel contour plane read from the brick's slot in the mirror; it moves the hit
     /// too. Needs a mirror with `surface_attrs`; without one it shades as `Face`.
     Contour,
 }
@@ -783,7 +783,6 @@ impl Frame {
                 storage(2),
                 storage(3),
                 storage(4),
-                storage(6),
                 storage(7),
                 storage(8),
                 storage(9),
@@ -1210,12 +1209,8 @@ impl Frame {
                 | if light.masks { FLAG_MASKS } else { 0 }
                 | if light.skips { FLAG_SKIPS } else { 0 }
                 | self.look.flags()
-                | if world.surface_attrs() {
-                    FLAG_ATTR_PAGES
-                } else {
-                    0
-                },
-            slots_per_shard: world.shard_layout().slots_per_shard,
+                | if world.surface_attrs() { FLAG_ATTRS } else { 0 },
+            units_per_shard: world.shard_layout().units_per_shard,
             forced_level: self.lod.forced_level.unwrap_or(0),
             lod1_r2: (2 * self.lod.r_full).pow(2),
             lod2_r2: (4 * self.lod.r_full).pow(2),
@@ -1342,7 +1337,6 @@ impl Frame {
                 buffer_entry(2, world.records()),
                 buffer_entry(3, world.table()),
                 buffer_entry(4, world.materials()),
-                buffer_entry(6, world.masks()),
                 buffer_entry(10, world.light_buffer()),
                 buffer_entry(11, &self.emission_scale),
                 wgpu::BindGroupEntry {

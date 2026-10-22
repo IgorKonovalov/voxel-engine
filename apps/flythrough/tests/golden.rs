@@ -5,7 +5,7 @@ mod support;
 use flythrough::cave::ROCK;
 use flythrough::cave_materials;
 use support::*;
-use vxe_render::gpu_world::POOL_PAGE_SLOTS;
+use vxe_render::gpu_world::{PAGE_UNITS, UNIT_BYTES};
 use vxe_render::{
     Camera, Frame, GpuWorld, LightParams, LodParams, MirrorConfig, ShadowWalk, Window, readback,
     wgpu,
@@ -351,13 +351,10 @@ fn goldens_match_bit_exactly_over_one_and_several_shards() {
         return;
     }
     let world = carved_world();
-    let full = world.stats().full_bricks as u64;
-    let Some((device, queue)) = software_device((full + 4096) * 512) else {
+    let pool = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
+    let Some((device, queue)) = software_device(pool) else {
         return;
     };
-    // The smallest page multiple that holds the scene in at most four shards.
-    let page = u64::from(POOL_PAGE_SLOTS);
-    let cap = full.div_ceil(4).div_ceil(page) * page;
     let goldens = [
         ("primary.png", LightParams::at_eye()),
         ("headlamp.png", LightParams::headlamp()),
@@ -365,19 +362,23 @@ fn goldens_match_bit_exactly_over_one_and_several_shards() {
     .map(|(name, light)| (name, light, read_png(&golden_path(name)).0));
     let mut frame = Frame::new(&device, WIDTH, HEIGHT);
     frame.set_resolution(&device, vxe_render::LightingResolution::Full);
-    for max_shard_slots in [None, Some(cap as u32)] {
+    // One shard first; its pages size the cap that spreads the next mirror over several.
+    let mut pages = 0u32;
+    for several in [false, true] {
+        let max_shard_units = several.then(|| pages.div_ceil(3) * PAGE_UNITS);
         let mut gpu = GpuWorld::with_config(
             &device,
             MirrorConfig {
-                max_shard_slots,
+                max_shard_units,
                 ..MirrorConfig::new(Window::Fixed(world.extent()))
             },
         );
         gpu.sync_now(&world, &device, &queue)
             .expect("mirror fits the adapter");
         let shards = gpu.shards_in_use();
-        println!("max_shard_slots {max_shard_slots:?}: {full} slots over {shards} shards");
-        if max_shard_slots.is_some() {
+        pages = gpu.pages_issued();
+        println!("max_shard_units {max_shard_units:?}: {pages} pages over {shards} shards");
+        if several {
             assert!((2..=4).contains(&shards), "{shards} shards");
         } else {
             assert_eq!(shards, 1);
@@ -650,8 +651,8 @@ fn cutaway_look() -> vxe_render::LookParams {
 #[test]
 fn cutaway_level_golden_shows_sky_and_lit_rock() {
     let world = seed_1_level();
-    let full = world.stats().full_bricks as u64;
-    let Some((device, queue)) = software_device(full * vxe_render::gpu_world::SLOT_BYTES) else {
+    let pool = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
+    let Some((device, queue)) = software_device(pool) else {
         return;
     };
     let cfg = MirrorConfig {
@@ -714,7 +715,7 @@ fn cutaway_steps_from_outside_the_level_at_1080p() {
         ..Default::default()
     }))
     .expect("an adapter");
-    let pool_bytes = world.stats().full_bricks as u64 * vxe_render::gpu_world::SLOT_BYTES;
+    let pool_bytes = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_limits: vxe_render::limits_for(&adapter, pool_bytes),
         ..Default::default()
