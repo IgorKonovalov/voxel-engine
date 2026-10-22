@@ -102,18 +102,37 @@ between phases. The architect reviews once at the end, in a fresh session.
 - **Done when:** on the cavity scene at 320 x 180 on lavapipe with the lamp off, no emissive
   material, the filter off and the identity tone map, every probe preset to irradiance
   `[1, 1, 1]` with visibility "unoccluded" makes every hit pixel read its material's albedo
-  within 2/255 per channel, and every miss pixel 0; with `--indirect off` every pixel reads 0;
-  a probe preset to the inside flag contributes nothing (a pixel between one live and one
-  inside probe reads half the albedo within 4/255).
+  over pi within 2/255 per channel, and every probe preset to `[pi, pi, pi]` makes it read the
+  albedo within 2/255; every miss pixel reads 0; with `--indirect off` every pixel reads 0;
+  probes carrying the inside flag change no pixel whatever irradiance they are preset to, and
+  with every probe inside every pixel reads 0.
+- **Amended 2026-10-22 (architect):** the done-when above replaces the drafted one, confirming
+  the dev's two deviations. (a) The composite computes `albedo x E / pi`, so an irradiance of 1
+  is albedo over pi and pi is the albedo; the drafted "reads its albedo at `[1, 1, 1]`" was an
+  arithmetic slip. (b) The gather renormalises its weights over live probes, which is how
+  ADR-0023's "zero weight" for an inside probe reads, and is what lets a floor whose probe cell
+  is half in rock read the furnace value; the drafted "half the albedo between one live and one
+  inside probe" assumed an unrenormalised gather and is dropped.
 
 ### Phase 2: The update pass and the furnace
 - **Owner skill:** dev
 - **What:** the update pass: a slice of 4096 probes per frame in round robin, 64 spherical
   Fibonacci directions rotated per frame by a blue-noise angle, full-walk rays, reflected
   radiance at the hit from Plan 0024's estimator plus the previous atlas's irradiance at the
-  hit, octahedral blend at hysteresis 0.97 (0.5 for a probe whose age is 0), the visibility
+  hit, octahedral blend at the hysteresis schedule below, the visibility
   map's mean and squared distance, back-face hits as negative distance and the inside flag
   over a quarter of back faces. The gather's Chebyshev visibility weight.
+- **Hysteresis (amended 2026-10-22, architect):** 0 on a probe slot's first update (never
+  traced, or holding another probe), 0.5 for the next 8 updates and for every edit-touched
+  probe, 0.97 after that. The drafted 0.97 from the second update converges by about 0.985 per
+  update in the furnace, leaving `0.985^32 = 0.62` of the starting error after 256 frames (32
+  updates per probe), so the furnace bar could not be met; the schedule as built keeps 0.97's
+  steady-state noise and lag and reaches the fixed point in the first dozen updates.
+- **Open item for Phase 4 (architect, 2026-10-22):** the furnace floor settles at 2.97, about
+  5 % below pi, from frame 72 on, inside the 10 % bar but undiagnosed (the probe rays'
+  face-normal shading, the floor's cell half in rock and the estimator's emissive sample are
+  the candidates). Phase 4 investigates it or records the residual and its suspected cause in
+  the log; it is not a new bar.
 - **Files touched:** new `crates/vxe-render/src/shaders/probe_update.wgsl`,
   `probe_gather.wgsl`, `probes.rs`, `light.wgsl` (its estimator as callable functions),
   `tests/indirect.rs`.
@@ -135,9 +154,17 @@ between phases. The architect reviews once at the end, in a fresh session.
 - **Done when:** after a camera jump of 20 probe steps along `x`, the 12 x 32 x 32 probes
   that stay read back texel for texel what they held before the jump and the entering probes
   read age 0; in the two-box scene, a radius-4 carve through the dividing wall at the frame
-  after convergence makes the dark box's floor-centre indirect rise above 20 % of the lit
-  box's within 32 frames (the touched probes refresh at once and the rest within four
-  slices), and filling the hole back drops it under 5 % within 64 frames.
+  after convergence makes the dark box's floor-centre indirect reach, within 32 frames, at
+  least 70 % of its own settled value (its reading at frame 256 after the carve) and at least
+  10 times its pre-carve value (the touched probes refresh at once and the rest within four
+  slices), and filling the hole back drops it under 5 % of the lit box's within 64 frames.
+- **Amended 2026-10-22 (owner):** the carve bar is a refresh-speed bar, not an absolute one;
+  the radius-4 carve stays. The drafted "above 20 % of the lit box's" was a physics error: a
+  flux balance gives the dark box's floor about `pi L A / ((1 - rho) S)` against the lit box's
+  pi, with A the opening's area and S = 2304 voxels^2 the dark box's wall, which is about 4 %
+  for a radius-4 opening. Measured on lavapipe: 4.8 % of the lit box's at frame 32, 6.6 %
+  settled, so 73 % of settled at frame 32. What the phase defends is that an edit refreshes
+  the probes it touches at once, which the new bar measures directly.
 
 ### Phase 4: The cave, the switches and the readings
 - **Owner skill:** dev
@@ -173,23 +200,34 @@ pub const PROBE_SPACING_VOXELS: u32 = 16;             // 1.6 m
 pub const IRRADIANCE_TEXELS: u32 = 6;                  // + 1 border each side in the atlas
 pub const VISIBILITY_TEXELS: u32 = 14;                 // + 1 border
 pub struct ProbeVolume {
-    irradiance: wgpu::Texture,   // rgba16float, 2048 x 1024 texels (256 x 128 tiles of 8), 16.8 MB
-    visibility: wgpu::Texture,   // rg16float,   4096 x 2048 texels (256 x 128 tiles of 16), 33.6 MB
-                                 // both under the 8192 default texture limit
-    state: wgpu::Buffer,         // u8 per probe: bit 0 inside, bits 1..8 age (capped)
+    irradiance: wgpu::Buffer,    // storage buffer, 4 x f16 per texel, 8 x 8 texels per probe
+                                 //   (6 x 6 + border), 32 768 x 512 B = 16.8 MB
+    visibility: wgpu::Buffer,    // storage buffer, 2 x f16 per texel, 16 x 16 texels per probe
+                                 //   (14 x 14 + border), 32 768 x 1024 B = 33.6 MB
+    state: wgpu::Buffer,         // u32 per slot: inside flag, age, the probe tag; 128 KiB
     origin: [i32; 3],            // in probe steps, world voxel = origin * 16 + index * 16
     slice: u32,                  // 0..8, the round-robin cursor
 }
-// probe index (x, y, z) -> atlas tile (x + 32 (y % 8), y / 8 + 4 z); a direction -> octahedral uv
+// probe (x, y, z) -> toroidal slot (x, y, z) mod 32, tagged with the probe it holds, so a
+// scroll moves no data; a direction -> octahedral uv within the slot's texels
 // update: 4096 probes x 64 rays per frame; touched probes added to the slice
 ```
+
+**Amended 2026-10-22 (architect):** the atlases are storage buffers, not the drafted
+`rgba16float` and `rg16float` storage textures. lavapipe, RADV (Cezanne) and the RTX 3080
+offer read-write storage of those formats only under
+`Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`, which the engine does not request and
+which would be a backend-dependent path. The bytes per texel are the same, so the atlases stay
+50.3 MB; the state grows to a `u32` per slot (128 KiB) to carry the slot's tag, and toroidal
+tagged slots replace a scroll copy. ADR-0023's "texture atlases" is a storage detail its
+Outcome records at the close; the decision it records is unchanged.
 
 ## Budgets
 
 | `nfr.md` figure | line | projection (dev box, 1080p) | how the close measures it |
 |---|---|---|---|
 | §2 Lighting (with Plan 0024's passes) | 6.0 ms | update 0.5 to 0.8 ms, gather 0.3 to 0.5 ms, on top of direct 1.5 to 2.5 ms | Phase 4 runs at the streamed spawn and the level, three each, both adapters |
-| §3 Everything else in VRAM | 1.5 GB | +50.3 MB atlases, +32 KiB state | `frame_bytes` |
+| §3 Everything else in VRAM | 1.5 GB | +50.3 MB atlases, +128 KiB state (amended 2026-10-22, architect: a `u32` per slot) | `frame_bytes` |
 | §2 Streaming line | 1.0 ms | unchanged (no CPU work per frame beyond the origin step and the touched list) | the autopilot's render-thread timers |
 
 ## Risks & open questions
@@ -206,6 +244,7 @@ pub struct ProbeVolume {
 - **Adapter features:** `rgba16float` and `rg16float` storage textures with read and write
   in the same pass are not guaranteed; the update writes a new slice texture and copies, or
   uses storage buffers for the atlases if lavapipe refuses the format (a Phase 1 check, logged).
+  Resolved 2026-10-22 (architect): storage buffers, see Data shapes.
 - **The mirror window:** probe rays that leave the window see air; the volume's 25.6 m
   half-extent is inside `r_full` 16 (102 m) and inside the settled 12 (77 m).
 - **Threading:** none; every pass is a compute dispatch on the frame's encoder.
