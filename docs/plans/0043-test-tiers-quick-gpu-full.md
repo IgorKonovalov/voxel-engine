@@ -260,7 +260,7 @@ All on the dev box, named with its commit. `docs/nfr.md` section 7 (startup and 
 | 1: three profiles that split the suite exactly | dev | done | 28da8b7 |
 | 2: a gate that keeps the gpu list true | dev | done | bbee61d |
 | 3: CI runs the full tier and the wasm step runs only what needs wasm | dev | done locally; CI run pending | 56b3569 |
-| 4: the skills and lane rules name the tiers | dev | done | committed with this row |
+| 4: the skills and lane rules name the tiers | dev | done | 8059d41 |
 
 ### Notes
 
@@ -324,6 +324,22 @@ All on the dev box, named with its commit. `docs/nfr.md` section 7 (startup and 
   `--profile` or saying the bare run is the default full suite (dev SKILL.md:74). Hook bite
   tests: 59 pass, 0 fail. Doc links 305 resolve; comment hygiene OK; index rows OK; index-rows
   self-test 9/9.
+- Gate at the tip `8059d41`, dev box (Ryzen 9 5900HS, RTX 3080 Laptop):
+  `cargo build --workspace` exit 0; `cargo clippy --workspace --all-targets -- -D warnings`
+  exit 0; `cargo fmt --all --check` exit 0; `cargo test --workspace --doc` 7 passed, 0 failed;
+  `cargo deny check` advisories, bans, licenses, sources ok; the four node gates and
+  `check-test-tiers.mjs` exit 0.
+- Full tier at `8059d41`, exclusive perf lock, built tree,
+  `cargo nextest run --workspace --profile full --test-threads 2`: exit 0, 599 passed,
+  7 skipped (the ignored tests: 2 in quick's set, 5 in gpu's), 1 slow at 60 s
+  (`flythrough::upscale the_upscaler_keeps_stripe_edges_sharp_still_and_panning`). Wall
+  362.7 s (nextest 362.2 s), 1-minute load 10.75 at start, 6.37 at end: loaded.
+- The skipped counts of the tier runs are the ignored tests plus the slow tests their
+  profile's filter drops: quick 3 = 2 ignored + 1 slow (`vxe-world::stamp`), gpu 9 =
+  5 ignored + 4 slow.
+- Test gate summary, all at `5989620`'s suite (599 tests), dev box, loaded:
+  quick 470 tests, 44.8 s, no lock; gpu 124 tests, 205.2 s, lock; full 599 tests, 362.7 s,
+  lock. The `docs/nfr.md` section 7 "test gate" reading is the close's.
 
 ## Followups
 
