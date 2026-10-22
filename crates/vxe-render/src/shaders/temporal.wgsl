@@ -160,7 +160,10 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let lambda = clamp(GRADIENT_GAIN * gradient_at(q + 0.5), 0.0, 1.0);
                 a = max(a, lambda);
                 a_emissive = max(a_emissive, lambda);
-                age = floor(age * (1.0 - lambda));
+                // Rounded, not floored: lambda reads f16 and bfloat16 rounding (about 0.004)
+                // wherever emitted light reaches, and a floor would take a whole frame of age
+                // for it every frame, pinning the age, and so the blend, near the first frame.
+                age = floor(age * (1.0 - lambda) + 0.5);
             }
             accum = vec4<f32>(mix(h.xyz, sample.xyz, a_emissive), mix(h.w, sample.w, a));
             // The moments follow each part at its own pace, by the lamp's share of the
