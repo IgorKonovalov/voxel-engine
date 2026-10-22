@@ -197,6 +197,7 @@ shown, `F1`, the autopilot's flight).
 | `--audio` | Open the default output device; `H`, `J`, `T` and `E` then work, and every frame probes the sounds' occlusion through the world. `FLYTHROUGH_HRIR=<pack>` loads another HRIR pack |
 | `--audio-debug` | `--audio` plus a line a second of the output callback's readings; on exit writes the last 60 s to `flythrough-audio-debug.wav` |
 | `--lamp on\|off` | The headlamp (default on) |
+| `--lamp-toggle N` | Switch the lamp every `N` frames as `F7` does; at exit print the probe passes' median inside and outside the light-change windows |
 | `--indirect on\|off` | Indirect light from the probe volume that follows the camera (default on) |
 | `--probe-spacing N` | Voxels between the probe volume's probes, 4 to 64 (default 16, 1.6 m) |
 | `--probe-rays N` | Rays each updated probe traces, 1 to 64 (default 64) |

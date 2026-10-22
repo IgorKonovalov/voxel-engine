@@ -412,9 +412,9 @@ Outcome records at the close; the decision it records is unchanged.
 | 3 (after the 518b522 amendment) | dev | done: carve test on the amended bar: dark floor 0.01069 before, 0.12354 at frame 32 = 71.5 % of settled 0.17273 (frame 256) and 11.6x the pre-carve; after the fill, 2.78 % of the lit box's at frame 64, peaking at 3.23 % at frame 26 (lavapipe) | d90e9ab |
 | 4: The cave, the switches and the readings | dev | done (after the c444a61 amendment): `F8`, `--probe-spacing`, HUD rows, autopilot bytes line, `indirect.png` blessed (100 % of 57 600 hit pixels differ from indirect off by more than 8/255); `Lighting::probe_rays`/`probe_slices`, `--probe-rays`, `--probe-slices`; update plus gather 1.625 to 1.663 ms, lighting line at half 4.42 to 4.48 ms, `frame_bytes` +58 837 024 B; readings in `nfr.md` §2 and §3 on both adapters | 83ae737, 68b3bdb, db7b057, 979dd35 |
 | 5: The owner's windowed check | human | done (owner, 2026-10-22, live session 7, runs 6 to 9, about 2530x1378, RTX 3080 Laptop; architect's record): bounce light wanted, 1.6 m spacing kept, the lingering light after the lamp goes off to be fixed now (Phases 6 and 7); verdicts in Notes | |
-| 6: A light change drops the probe history | dev | done: light-change window (lamp, its parameters, shadow walk, candidates, emission scale) of one slice cycle, settled probes at hysteresis 0, ages restart at 1; lamp off under 10 % of F0 from frame 58 (1418 with the window off), emission 0 from frame 50, back to 94.0 % at frame 64; update plus gather 1.490 ms streamed (dev box); `frame_bytes` 254 216 224 B unchanged | b3f7cb1, committed with this row |
+| 6: A light change drops the probe history | dev | done: light-change window (lamp, its parameters, shadow walk, candidates, emission scale) of one slice cycle, settled probes at hysteresis 0, ages restart at 1; lamp off under 10 % of F0 from frame 58 (1418 with the window off), emission 0 from frame 50, back to 94.0 % at frame 64; update plus gather 1.490 ms streamed (dev box); `frame_bytes` 254 216 224 B unchanged | b3f7cb1, 54b25f0 |
 | 7: The owner's re-check of the lingering light | human | done (architect's record of the owner's verdict, live session 8 run 3, 2026-10-22: still some delay, "feels very unnatural"; the fallback chosen) | |
-| 8: The faster refresh inside the light-change window | dev | not started | |
+| 8: The faster refresh inside the light-change window | dev | done: in a window (16 frames) one probe in 4 a frame, every update at hysteresis 0 (`WINDOW_SLICES`, `WINDOW_VISITS`, `WINDOW_FRAMES`); lamp off under 10 % of F0 from frame 14 (Phase 6: 58), emission 0 from frame 14, back to 100.4 % at frame 64; dev box update plus gather 1.465 ms outside a window, 2.403 ms inside; `--lamp-toggle N`; readings in `nfr.md` §2 | committed with this row |
 | 9: The owner's re-check of the faster fade | human | not started | |
 
 ### Notes
@@ -491,6 +491,34 @@ Outcome records at the close; the decision it records is unchanged.
   `mode_banner.png` reblessed. Slow adapter (db7b057's release binary, RADV, streamed, half):
   `--probe-rays 32` update 6.202 to 6.249 ms (loaded, 7.94), `--probe-slices 16` 4.162 to
   4.234 ms (load 0.86), gather 1.546 to 1.547 ms in both.
+- Phase 8: a window frame's update list is the 8192 probes of its one-in-4 slice, which is
+  `MAX_UPDATES`. Edit-touched probes outside the slice are not added in a window frame, since
+  the window revisits every probe within 4 frames; buffers and `frame_bytes` are unchanged.
+- Phase 8 outside the files: `--lamp-toggle N` in `apps/flythrough/src/main.rs` (switches the
+  lamp every N frames as `F7` does; at exit, the probes plus gather median of the last 30 frames
+  outside and inside the windows) and its row in the root `README.md`; it is how the in-window
+  reading is taken.
+- Phase 8 readings (lavapipe, exclusive perf lock, load 15.5, loaded):
+  - Lamp off: F0 4.58594; first frame under 10 % of F0 is 14 (Phase 6: 58; with the window
+    off: 1418). The window is open for frames 1 to 16.
+  - Emission step to 0: F0 2.9746; first frame under 10 % is 14, and every frame from 24 to 96
+    is under it. Back to 1: frame 64 reads 2.9863 (100.4 % of F0), first at 90 % at frame 14.
+  - No change: no window in 256 still or 16 moving frames. A change traces 8192 x 64 rays a
+    frame in the window and 4096 x 64 after its 16 frames.
+- Phase 8 timing readings (release, streamed spawn, one run each, exclusive perf lock): in
+  `nfr.md` §2 under "The light-change window". RTX 3080 Laptop: 1.465 ms plain (load 1.26);
+  under `--lamp-toggle 64` (load 1.76), 1.515 ms outside a window and 2.403 ms inside. Radeon
+  Cezanne on RADV, selected with `VK_DRIVER_FILES`: 9.479 ms plain; 9.298 ms outside and
+  16.476 ms inside.
+- Phase 8: `frame_bytes` reads 254 216 224 B (autopilot, `autopilot: frame targets`),
+  unchanged.
+- Phase 8 gate (exclusive perf lock):
+  - `cargo nextest run --workspace --test-threads 2` (load 2.03): 594 passed, 5 skipped,
+    exit 0. This includes `indirect.png`, `mode_banner.png` and the furnace, leak, scroll,
+    carve and settings tests.
+  - `cargo test --doc`: 7 passed, 1 ignored.
+  - clippy `-D warnings`, `fmt --check`, `cargo deny check`, `check-doc-links`,
+    `check-comment-hygiene` and `check-index-rows`: exit 0.
 - Phase 6: the window compares, between encodes with history, `Lighting::lamp`, the
   `LightParams` the last `params_for` placed (`masks` and `skips` normalized), the shadow walk,
   `Lighting::candidates` and `emission_changed_at`. It counts `Lighting::slices()` encoded frames

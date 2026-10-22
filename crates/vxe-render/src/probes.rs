@@ -48,6 +48,16 @@ pub const SLICE_PROBES: u32 = PROBE_COUNT / SLICES;
 pub const MAX_TOUCHED: u32 = 4096;
 /// Entries of one frame's update list at most.
 pub const MAX_UPDATES: u32 = SLICE_PROBES + MAX_TOUCHED;
+/// Slices while a light-change window is open: one probe in 4 a frame, whatever
+/// [`crate::Lighting::probe_slices`] says. Its list is [`MAX_UPDATES`] long, so a window
+/// frame takes no touched probe beyond its slice (the window revisits every probe within 4
+/// frames at hysteresis 0 anyway).
+pub const WINDOW_SLICES: u32 = 4;
+/// Visits of every probe a light-change window lasts: each blends at hysteresis 0, so a
+/// stale bounce falls to about `0.5^4` of itself in a room of albedo 0.5.
+pub const WINDOW_VISITS: u32 = 4;
+/// Encoded frames with a probe update a light-change window lasts (16).
+pub const WINDOW_FRAMES: u32 = WINDOW_SLICES * WINDOW_VISITS;
 /// Storage buffers the probe passes bind beyond the frame's world group.
 pub const PROBE_STORAGE_BUFFERS: u32 = 2;
 /// Updates during which a probe blends at [`YOUNG_HYSTERESIS`] after its first.
@@ -87,8 +97,8 @@ pub struct ProbeUniform {
     pub updates: u32,
     /// Rays each updated probe traces, 1 ..= [`RAYS_PER_PROBE`].
     pub rays: u32,
-    /// 1 while a light-change window is open: a settled probe this frame's update visits
-    /// blends at hysteresis 0, and every visited probe's age restarts at 1.
+    /// 1 while a light-change window is open: every probe this frame's update visits blends
+    /// at hysteresis 0 and its age restarts at 1.
     pub light_window: u32,
     pub _pad: u32,
 }
@@ -333,15 +343,17 @@ impl ProbeVolume {
     }
 
     /// The update list of `frame` with the volume cut into `slices` slices (a power of two in
-    /// [`SLICES`] ..= [`MAX_SLICES`]): the probes of slice `frame % slices` (slots
+    /// [`WINDOW_SLICES`] ..= [`MAX_SLICES`]): the probes of slice `frame % slices` (slots
     /// `slices k + slice`) and the probes `touched` names, each slot once, a touched one
-    /// flagged with [`TOUCHED_BIT`]; at most [`MAX_TOUCHED`] touched ones outside the slice.
+    /// flagged with [`TOUCHED_BIT`]; touched ones outside the slice up to [`MAX_TOUCHED`] and
+    /// the list's [`MAX_UPDATES`] entries.
     pub fn update_list(&self, frame: u32, slices: u32, touched: &[[i32; 3]]) -> Vec<u32> {
         assert!(
-            slices.is_power_of_two() && (SLICES..=MAX_SLICES).contains(&slices),
+            slices.is_power_of_two() && (WINDOW_SLICES..=MAX_SLICES).contains(&slices),
             "{slices} slices"
         );
         let slice = frame % slices;
+        let room = MAX_TOUCHED.min(MAX_UPDATES - PROBE_COUNT / slices) as usize;
         let mut flagged = vec![false; PROBE_COUNT as usize];
         let mut extra = Vec::new();
         for &w in touched {
@@ -350,7 +362,7 @@ impl ProbeVolume {
                 continue;
             }
             if s % slices != slice {
-                if extra.len() == MAX_TOUCHED as usize {
+                if extra.len() == room {
                     continue;
                 }
                 extra.push(s | TOUCHED_BIT);

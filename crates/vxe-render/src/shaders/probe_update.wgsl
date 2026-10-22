@@ -23,9 +23,10 @@
 // previous texel as `h old + (1 - h) new`. h is 0 for a slot holding another probe or one never
 // traced (age 0), YOUNG_HYSTERESIS for the YOUNG_UPDATES updates after the first and for a
 // probe an edit touched (whose age restarts at 1), HYSTERESIS after. While a light-change
-// window is open (`probe.light_window`), a settled probe (age past YOUNG_UPDATES) blends at 0
-// instead and every visited probe's age restarts at 1, so a light switched off fades within a
-// few slice cycles rather than at HYSTERESIS. The border texels then
+// window is open (`probe.light_window`, one probe in 4 a frame for four visits each), every
+// update blends at 0 and the visited probe's age restarts at 1, so a light switched off fades
+// by about the room's albedo per visit rather than at HYSTERESIS, and the young updates after
+// the window smooth the noise back down. The border texels then
 // repeat the interior ones the octahedral fold puts beside them. The probe is inside rock when
 // more than a quarter of its rays met a back face; the state word takes the inside flag, the
 // age plus one (capped) and the probe's tag, and its texels are left as they were.
@@ -171,7 +172,7 @@ fn probe_blend(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
     let touched = (entry & TOUCHED_BIT) != 0u;
     let window = probe.light_window != 0u;
     var h = HYSTERESIS;
-    if (age == 0u || (window && age > YOUNG_UPDATES)) {
+    if (age == 0u || window) {
         h = 0.0;
     } else if (touched || age <= YOUNG_UPDATES) {
         h = YOUNG_HYSTERESIS;

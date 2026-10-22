@@ -449,8 +449,9 @@ pub struct Lighting {
     /// Rays each updated probe traces, clamped to 1 ..= 64 (default 64): fewer rays cost less
     /// and blend a noisier estimate.
     pub probe_rays: u32,
-    /// The probe volume refreshes one probe in this many each frame, rounded up to a power of
-    /// two in 8 ..= 32 (default 8): more slices cost less and lag longer.
+    /// The probe volume refreshes one probe in this many each frame outside a light-change
+    /// window ([`Frame::probe_light_window`]), rounded up to a power of two in 8 ..= 32
+    /// (default 8): more slices cost less and lag longer.
     pub probe_slices: u32,
 }
 
@@ -1118,9 +1119,11 @@ impl Frame {
 
     /// Whether the last encode's probe update ran inside a light-change window: a change of
     /// the lamp's switch or parameters, the shadow walk, the emissive candidate count or an
-    /// emission scale opens one for [`Lighting::slices`] encoded frames with a probe update
-    /// (every probe visited once), and a change inside it restarts it. In the window a settled
-    /// probe blends at hysteresis 0 and every visited probe's age restarts at 1.
+    /// emission scale opens one for [`crate::probes::WINDOW_FRAMES`] encoded frames with a
+    /// probe update, and a change inside it restarts it. In the window the update refreshes
+    /// one probe in [`crate::probes::WINDOW_SLICES`] a frame, every visit blends at
+    /// hysteresis 0 and restarts the probe's age at 1, so the young updates after it smooth
+    /// the noise back down.
     pub fn probe_light_window(&self) -> bool {
         self.probe_light_window
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -1497,7 +1500,7 @@ impl Frame {
                 emission_changed_at: self.emission_changed_at,
             };
             if h.light_key.is_some_and(|k| k != key) && self.probes.light_restarts() {
-                h.light_window = self.lighting.slices();
+                h.light_window = crate::probes::WINDOW_FRAMES;
             }
             h.light_key = Some(key);
             if probe_update && h.light_window > 0 {
@@ -1700,14 +1703,17 @@ impl Frame {
         let probe_bind = indirect.then(|| {
             p.lighting |= LIGHTING_INDIRECT;
             if probe_update {
+                let slices = if light_window {
+                    crate::probes::WINDOW_SLICES
+                } else {
+                    self.lighting.slices()
+                };
                 let origin = self.probes.origin_for(p.views[0].origin);
                 let touched: Vec<[i32; 3]> = boxes
                     .iter()
                     .flat_map(|&[min, max]| self.probes.touched(origin, min, max))
                     .collect();
-                let list = self
-                    .probes
-                    .update_list(p.frame, self.lighting.slices(), &touched);
+                let list = self.probes.update_list(p.frame, slices, &touched);
                 queue.write_buffer(self.probes.scratch(), 0, bytemuck::cast_slice(&list));
                 updates = list.len() as u32;
             }

@@ -346,6 +346,20 @@ one probe in 8 a frame) trade the update pass's cost.
 | 64 rays, `--probe-slices 16` | 4.162, 4.234, 4.167 | 1.546 to 1.547 |
 | 64 rays, one in 8 (the table above, 68b3bdb) | 7.832, 7.764, 7.760 | 1.546 |
 
+**The light-change window (Plan 0029 Phase 8, the release binary of the tree at b51538a plus
+Phase 8's code, 2026-10-22, exclusive perf lock, 1920 x 1080, half lighting, indirect on at 64
+rays and one in 8, the streamed spawn `--frames 3000`, one run each; 1-minute load at each
+run's start in brackets).** A light change opens a window of 16 frames that refresh one probe
+in 4 at hysteresis 0. `--lamp-toggle 64` switches the lamp every 64 frames and gives the median
+of the last 30 frames outside and inside the windows; "plain" is the run with no toggle,
+median of the last 30 frames. The bars are the dev box's: outside a window at most 1.7 ms,
+inside at most 3.2 ms. The slow adapter carries no bar.
+
+| adapter | plain probes + gather ms | toggled, outside a window ms | toggled, inside a window ms |
+|---|---|---|---|
+| RTX 3080 Laptop [1.26, 1.76] | 1.465 (1.226 + 0.239) | 1.515 | 2.403 |
+| Radeon (Cezanne, RADV) [1.40, 1.18] | 9.479 (7.933 + 1.546) | 9.298 | 16.476 |
+
 Readings taken during tuning on the same box, 1000 frames,
 1-minute load 8 to 14: the update pass read 1.525 ms before the blend skipped inside probes'
 texels and the visibility rays under 0.83 in cosine (1.274 after); without the probe rays'

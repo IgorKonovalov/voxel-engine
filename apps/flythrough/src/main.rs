@@ -10,7 +10,7 @@
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
-//! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off]
+//! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off] [--lamp-toggle N]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]
 //! [--history edits|gradient] [--lighting full|half] [--emissive-history N]
 //! [--indirect on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N]`.
@@ -334,6 +334,9 @@ struct Args {
     emissive_ore: bool,
     /// `--lamp on|off`: the headlamp lights the frame (on by default).
     lamp: bool,
+    /// `--lamp-toggle N`: switch the lamp every `N` frames, as `F7` does, timing the probe
+    /// passes inside and outside the light-change windows the switches open.
+    lamp_toggle: Option<u32>,
     /// `--shadow-walk full|coarse`: the walk shadow rays take.
     shadow_walk: ShadowWalk,
     /// `--filter on|off`: the a-trous filter runs (on by default).
@@ -466,6 +469,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         pad: true,
         emissive_ore: true,
         lamp: true,
+        lamp_toggle: None,
         indirect: true,
         probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
         probe_rays: vxe_render::probes::RAYS_PER_PROBE,
@@ -646,6 +650,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     v => return Err(format!("--filter takes on or off, not {v}")),
                 }
             }
+            "--lamp-toggle" => {
+                let v = value()?;
+                args.lamp_toggle = match v.parse::<u32>() {
+                    Ok(n) if n > 0 => Some(n),
+                    _ => return Err(format!("--lamp-toggle takes a frame count, not {v}")),
+                }
+            }
             "--lamp" => {
                 args.lamp = match value()?.as_str() {
                     "on" => true,
@@ -807,6 +818,36 @@ fn peak_rss_bytes() -> Option<u64> {
         .parse()
         .ok()?;
     Some(kb * 1024)
+}
+
+/// The probe update and gather passes' GPU time in a frame's `FRAME_PASSES` times.
+fn probe_passes_ms(passes: &[f64]) -> f64 {
+    FRAME_PASSES
+        .iter()
+        .zip(passes)
+        .filter(|(name, _)| matches!(**name, "probes" | "gather"))
+        .map(|(_, ms)| ms)
+        .sum()
+}
+
+/// `--lamp-toggle`'s exit line: the probes plus gather median of the last [`SAMPLES`] frames
+/// outside and inside a light-change window.
+fn window_line(every: u32, ms: &[Vec<f64>; 2]) -> String {
+    let tail = |v: &Vec<f64>| {
+        let mut t = v[v.len().saturating_sub(SAMPLES)..].to_vec();
+        if t.is_empty() {
+            "n/a".to_owned()
+        } else {
+            format!("{:.3} ms", median(&mut t))
+        }
+    };
+    format!(
+        "lamp toggled every {every} frames: probes + gather median of the last {SAMPLES} outside a light-change window {} ({} frames), inside {} ({} frames)",
+        tail(&ms[0]),
+        ms[0].len(),
+        tail(&ms[1]),
+        ms[1].len()
+    )
 }
 
 fn median(v: &mut [f64]) -> f64 {
@@ -2101,6 +2142,9 @@ struct Run {
     frame: u32,
     gfx: Option<Gfx>,
     samples: Option<Samples>,
+    /// Under `--lamp-toggle`, the probes plus gather GPU time of each frame outside and
+    /// inside a light-change window.
+    window_ms: [Vec<f64>; 2],
     stream: Option<Stream>,
     pilot: Option<Autopilot>,
     /// Walk mode's body, `None` in fly mode.
@@ -3592,6 +3636,12 @@ impl Run {
             .as_ref()
             .is_some_and(|p| matches!(p.leg, Leg::Out | Leg::Back));
 
+        if let Some(n) = self.args.lamp_toggle
+            && self.frame > 0
+            && self.frame.is_multiple_of(n)
+        {
+            self.modes.press(hud::ModeKey::Lamp, ms_since(self.start));
+        }
         let Some(gfx) = self.gfx.as_mut() else {
             return Flow::Exit;
         };
@@ -3609,7 +3659,7 @@ impl Run {
         let timer = gfx
             .timer
             .as_ref()
-            .filter(|_| self.samples.is_some() || flying || hud);
+            .filter(|_| self.samples.is_some() || flying || hud || self.args.lamp_toggle.is_some());
         let hud_timer = gfx.hud_timer.as_ref().filter(|_| hud);
         // Under the autopilot's flight the attribute pass is timed: its GPU time when its
         // work list is not empty, and the render thread's CPU time building the list and
@@ -3673,6 +3723,12 @@ impl Run {
         self.hud.cpu_ms = cpu_ms as f32;
         self.hud.march_ms = gpu_ms.map(|v| v as f32);
         self.hud.pass_ms.clone_from(&pass_ms);
+        if self.args.lamp_toggle.is_some()
+            && let Some(p) = &pass_ms
+        {
+            let window = usize::from(gfx.frame.probe_light_window());
+            self.window_ms[window].push(probe_passes_ms(p));
+        }
         self.hud.hud_ms = hud_ms.map(|v| v as f32);
         if flying && let (Some(p), Some(ms)) = (self.pilot.as_mut(), gpu_ms) {
             p.gpu_ms.push(ms);
@@ -3748,6 +3804,9 @@ impl Run {
             }
             if let Some(gfx) = &self.gfx {
                 println!("mirror: {}", belt_line(&gfx.mirror));
+            }
+            if let Some(n) = self.args.lamp_toggle {
+                println!("{}", window_line(n, &self.window_ms));
             }
             self.sample_world();
             self.sample_probes(gpu);
@@ -3982,6 +4041,7 @@ impl App for Flythrough {
                 frame: 0,
                 gfx: None,
                 samples: None,
+                window_ms: [Vec::new(), Vec::new()],
                 stream,
                 pilot,
                 walk,
@@ -5004,6 +5064,7 @@ mod tests {
             frame: 0,
             gfx: None,
             samples: None,
+            window_ms: [Vec::new(), Vec::new()],
             stream: None,
             pilot: None,
             walk: None,

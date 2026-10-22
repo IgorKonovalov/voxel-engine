@@ -4,7 +4,7 @@ mod support;
 
 use support::*;
 use vxe_render::GpuWorld;
-use vxe_render::probes::{TestProbe, probe_slot};
+use vxe_render::probes::{PROBE_COUNT, TestProbe, WINDOW_FRAMES, probe_slot};
 use vxe_render::{LightParams, Lighting, ToneMap, readback};
 use vxe_world::*;
 
@@ -669,8 +669,8 @@ fn lamp_off_fade(restarts: bool, frames: u32) -> Option<(f32, Vec<f32>, Vec<bool
 /// Lamp off: in the closed dull box (24 x 24 x 12 interior voxels, albedo 0.5, nothing
 /// emissive) lit by the lamp from its centre at the defaults (64 rays, one probe in 8), the
 /// floor-centre indirect `F0` after 256 frames is above 0; with the lamp switched off it is
-/// under 10 % of `F0` at every frame from frame 96 after the switch on. The switch opens the
-/// light-change window for exactly the 8 frames of one slice cycle.
+/// under 10 % of `F0` at every frame from frame 24 after the switch on. The switch opens the
+/// light-change window for exactly its 16 frames, which trace one probe in 4 a frame.
 #[test]
 fn switching_the_lamp_off_drops_the_probe_history() {
     let Some((f0, series, window)) = lamp_off_fade(true, 160) else {
@@ -678,13 +678,14 @@ fn switching_the_lamp_off_drops_the_probe_history() {
     };
     let first = first_under(&series, 0.1 * f0);
     println!(
-        "lamp off: F0 {f0:.5}; first frame under 10 %: {first:?}; frames 1..=96 {:?}",
-        &series[..96]
+        "lamp off: F0 {f0:.5}; first frame under 10 %: {first:?}; frames 1..=48 {:?}",
+        &series[..48]
     );
     assert!(f0 > 0.0, "{f0}");
-    assert_eq!(window[..8], [true; 8], "{window:?}");
-    assert!(window[8..].iter().all(|&w| !w), "{window:?}");
-    for (i, &v) in series.iter().enumerate().skip(95) {
+    let w = WINDOW_FRAMES as usize;
+    assert_eq!(window[..w], vec![true; w], "{window:?}");
+    assert!(window[w..].iter().all(|&w| !w), "{window:?}");
+    for (i, &v) in series.iter().enumerate().skip(23) {
         assert!(v < 0.1 * f0, "frame {}: {v} against F0 {f0}", i + 1);
     }
 }
@@ -709,7 +710,7 @@ fn the_lamp_off_fade_without_the_window() {
 
 /// Emission step: in the furnace after 256 frames (floor-centre indirect `F0` near pi),
 /// `set_emission_scale(glow, 0)` brings the floor-centre indirect under 10 % of `F0` at every
-/// frame from frame 64 after the step on; stepping the scale back to 1 brings it to at least
+/// frame from frame 24 after the step on; stepping the scale back to 1 brings it to at least
 /// 90 % of `F0` by frame 64.
 #[test]
 fn an_emission_step_drops_the_probe_history() {
@@ -745,7 +746,7 @@ fn an_emission_step_drops_the_probe_history() {
         on[63] / f0 * 100.0,
         on.iter().position(|&v| v >= 0.9 * f0).map(|i| i + 1)
     );
-    for (i, &v) in off.iter().enumerate().skip(63) {
+    for (i, &v) in off.iter().enumerate().skip(23) {
         assert!(v < 0.1 * f0, "frame {}: {v} against F0 {f0}", i + 1);
     }
     assert!(on[63] >= 0.9 * f0, "{} against F0 {f0}", on[63]);
@@ -753,7 +754,8 @@ fn an_emission_step_drops_the_probe_history() {
 
 /// No signal, no change: in the furnace, 256 frames with the lamp, its parameters and the
 /// scales unchanged open no light-change window, nor do 16 frames of camera motion; a change
-/// of the lamp's intensity or of the candidate count opens one at the next frame.
+/// of the lamp's intensity or of the candidate count opens one at the next frame, which
+/// traces one probe in 4, and it closes after its 16 frames.
 #[test]
 fn no_light_change_opens_no_window() {
     let Some((device, queue)) = software_device(64 << 20) else {
@@ -776,11 +778,13 @@ fn no_light_change_opens_no_window() {
     f.light.intensity *= 0.5;
     f.run(&device, &queue, &gpu, 1);
     assert!(f.frame.probe_light_window(), "the lamp's intensity");
-    f.run(&device, &queue, &gpu, 8);
+    assert_eq!(f.frame.traced_probe_rays(), u64::from(PROBE_COUNT / 4) * 64);
+    f.run(&device, &queue, &gpu, WINDOW_FRAMES);
     assert!(
         !f.frame.probe_light_window(),
-        "the window closes after 8 frames"
+        "the window closes after its frames"
     );
+    assert_eq!(f.frame.traced_probe_rays(), u64::from(PROBE_COUNT / 8) * 64);
     let l = f.frame.lighting();
     f.frame.set_lighting(Lighting { candidates: 4, ..l });
     f.run(&device, &queue, &gpu, 1);
