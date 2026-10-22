@@ -1,6 +1,6 @@
 # 0029: Indirect light from a probe volume that scrolls with the camera
 
-> **Status:** approved (2026-10-21)
+> **Status:** in-progress (2026-10-22)
 > **Created:** 2026-10-21
 > **Milestone:** M2 in `docs/roadmap.md` (the indirect-light plan after Plan 0024; "indirect
 > light from probes in both tiers", the floor decision of 2026-10-17)
@@ -228,7 +228,7 @@ pub struct ProbeVolume {
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The volume, the gather, and a constant probe | dev | not started | |
+| 1: The volume, the gather, and a constant probe | dev | done: `ProbeVolume` (atlases and state in one storage buffer), gather pass, composite term, `Lighting::indirect`, `--indirect`; `tests/indirect.rs` 2 tests | committed with this row |
 | 2: The update pass and the furnace | dev | not started | |
 | 3: Scrolling and edits | dev | not started | |
 | 4: The cave, the switches and the readings | dev | not started | |
@@ -236,9 +236,28 @@ pub struct ProbeVolume {
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Scope restated 2026-10-22 under the owner's standing "go" (2026-10-21): phases 1 to 4 `dev`,
+  stop at Phase 5 (`human`).
+- Tree names for the plan's 0024-era ones: `Frame::invalidate(min, max)` as named; the hit
+  buffer is `Frame::hit_positions`/`hit_records`, the gather reads the lighting grid's copy
+  (`Targets::lit_pos`/`lit_info`); `Frame::indirect(bool)` is the field `Lighting::indirect`
+  (set through `Frame::set_lighting`), default off in the library and on in the fly-through.
+- Phase 1: the atlases are storage buffers, not `rgba16float`/`rg16float` textures: lavapipe,
+  RADV (Cezanne) and the RTX 3080 offer read-write storage of both formats only under
+  `Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`, which the engine's devices do not
+  request (checked 2026-10-22 with `Adapter::get_texture_format_features`). Same bytes per
+  texel; the state is a `u32` per probe (128 KiB), not a `u8` (32 KiB); toroidal slots with a
+  per-slot tag replace a scroll copy.
+- Phase 1: `limits_for` (`crates/vxe-render/src/lib.rs`, outside the phase's files) requests 12
+  storage buffers per stage, two more for the probe passes; `shader_portability.rs` (outside
+  the files) validates the new shaders.
+- Phase 1 done-when, as stated, conflicts with ADR-0023's gather and Phase 2: (a) a probe
+  irradiance of `[1, 1, 1]` composites to `albedo / PI` under the composite's `albedo E / PI`,
+  not the albedo; the test asserts `albedo / PI` at 1 and the albedo at `PI`; (b) "a pixel
+  between one live and one inside probe reads half the albedo" needs an unrenormalized gather,
+  while ADR-0023's "zero weight" renormalized over live probes is what lets the furnace floor
+  (whose probe cell is half in rock) read `PI`; the gather renormalizes, and the test asserts
+  instead that inside probes preset to 50 change no pixel and that all-inside probes give 0.
 
 ### Close triggers
 

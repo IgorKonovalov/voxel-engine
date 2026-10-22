@@ -14,8 +14,11 @@
 //   5  texture_2d<f32>   light_pos_in    the lighting grid's hit positions (the hit buffer at
 //                                        full resolution)
 //   6  texture_2d<u32>   light_info_in   the lighting grid's hit records
+//   7  texture_2d<f32>   indirect_in     the probe gather's indirect irradiance on the
+//                                        lighting grid, rgb; read with Params.lighting bit 12
 //
-// Per view: `shaded` is the Lambertian `albedo * tint * E / PI` of a hit plus its material's
+// Per view: `shaded` is the Lambertian `albedo * tint * E / PI` of a hit (E the direct
+// irradiance plus, with Params.lighting bit 12, the probes' indirect irradiance) plus its material's
 // emission under the frame's scale (none in the cutaway view; the cutaway's flat
 // sky on a miss in that view, else black), the translucent layers composited over it, times
 // `params.exposure`, tone mapped (`Lighting::tone_map`: ACES or the identity clamp) and
@@ -30,15 +33,23 @@
 @group(2) @binding(4) var target_tex: texture_storage_2d<rgba8unorm, write>;
 @group(2) @binding(5) var light_pos_in: texture_2d<f32>;
 @group(2) @binding(6) var light_info_in: texture_2d<u32>;
+@group(2) @binding(7) var indirect_in: texture_2d<f32>;
+
+// `Params::lighting` bit: the probe gather ran and its irradiance adds to the direct one.
+const LIGHTING_INDIRECT: u32 = 4096u;
 
 // The irradiance of lighting pixel `q`: the filter's rgb, or with the filter off the light
-// pass's emissive rgb plus its lamp's white a.
+// pass's emissive rgb plus its lamp's white a; plus the gathered indirect rgb when it ran.
 fn irradiance_at(q: vec2<i32>) -> vec3<f32> {
     let v = textureLoad(irradiance_in, q, 0);
+    var e = v.xyz;
     if ((params.lighting & LIGHTING_FILTER_OFF) != 0u) {
-        return v.xyz + vec3<f32>(v.w);
+        e += vec3<f32>(v.w);
     }
-    return v.xyz;
+    if ((params.lighting & LIGHTING_INDIRECT) != 0u) {
+        e += textureLoad(indirect_in, q, 0).xyz;
+    }
+    return e;
 }
 
 // The irradiance at full-resolution pixel `px` (hit `rec`): the lighting grid's own texel at

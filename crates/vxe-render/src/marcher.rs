@@ -1,10 +1,15 @@
-//! The frame: the hit pass ([`Marcher`], `march.wgsl`), the light pass (`light.wgsl`) and the
-//! composite (`composite.wgsl`), each a compute dispatch over the internal target (ADR-0018).
+//! The frame: the hit pass ([`Marcher`], `march.wgsl`), the light pass (`light.wgsl`), the
+//! probe volume's passes (`probe_gather.wgsl`, ADR-0023) and the composite (`composite.wgsl`),
+//! each a compute dispatch over the internal target (ADR-0018).
 
 use crate::camera::{Camera, View};
 use crate::gpu_world::GpuWorld;
 use crate::light::LightParams;
-use crate::{ATROUS_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, LIGHT_WGSL, MARCH_WGSL, TEMPORAL_WGSL};
+use crate::probes::{DEFAULT_PROBE_SPACING, ProbeUniform, ProbeVolume};
+use crate::{
+    ATROUS_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, LIGHT_WGSL, MARCH_WGSL, PROBE_GATHER_WGSL,
+    TEMPORAL_WGSL,
+};
 use vxe_world::ChunkCoord;
 
 /// Workgroup edge in pixels; must match `@workgroup_size` in every frame shader.
@@ -98,6 +103,9 @@ pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
 pub const LIGHTING_UNIFORM_DRAW: u32 = 1 << 7;
 /// `Params::lighting` bit: the composite's tone map is the identity clamp.
 pub const LIGHTING_IDENTITY_TONE_MAP: u32 = 1 << 6;
+/// `Params::lighting` bit: the probe passes ran and the composite adds the gathered indirect
+/// irradiance ([`Lighting::indirect`]).
+pub const LIGHTING_INDIRECT: u32 = 1 << 12;
 
 /// `Params::flags` bit: trace the shadow ray.
 pub const FLAG_SHADOWS: u32 = 1;
@@ -435,6 +443,9 @@ pub struct Lighting {
     /// Frames of history the emissive part of the irradiance blends over at least (static
     /// light holds still); the lamp's part keeps alpha 0.2.
     pub emissive_history: u32,
+    /// Indirect light from the probe volume (ADR-0023): the probes update and the gather adds
+    /// their irradiance, in the shaded view outside the cutaway. Off by default.
+    pub indirect: bool,
 }
 
 impl Default for Lighting {
@@ -450,6 +461,7 @@ impl Default for Lighting {
             sampler: Sampler::default(),
             history: HistoryKill::default(),
             emissive_history: DEFAULT_EMISSIVE_HISTORY,
+            indirect: false,
         }
     }
 }
@@ -483,6 +495,7 @@ impl Lighting {
             } else {
                 0
             }
+            | if self.indirect { LIGHTING_INDIRECT } else { 0 }
     }
 }
 
@@ -563,6 +576,11 @@ pub struct Frame {
     downsample_layout: wgpu::BindGroupLayout,
     downsample: wgpu::ComputePipeline,
     history: std::sync::Mutex<History>,
+    /// The probe volume and its passes' group-3 layout; the gather's group-2 layout.
+    probes: ProbeVolume,
+    probe_layout: wgpu::BindGroupLayout,
+    gather_layout: wgpu::BindGroupLayout,
+    gather: wgpu::ComputePipeline,
 }
 
 /// A-trous iterations per frame, at strides 1, 2, 4, 8.
@@ -912,7 +930,48 @@ impl Frame {
                 Io::Store(wgpu::TextureFormat::Rgba8Unorm),
                 Io::Float,
                 Io::Uint,
+                Io::Float,
             ],
+        );
+        let probe_storage = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let probe_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("probes"),
+            entries: &[
+                probe_storage(0),
+                probe_storage(1),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let gather_layout = io_layout(device, "gather", &[Io::Float, Io::Uint, f16]);
+        let gather = compute_pipeline(
+            device,
+            "gather",
+            format!("{MARCH_WGSL}\n{PROBE_GATHER_WGSL}"),
+            &[
+                Some(&world_layout),
+                None,
+                Some(&gather_layout),
+                Some(&probe_layout),
+            ],
+            "gather",
         );
         let params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("frame params"),
@@ -979,7 +1038,25 @@ impl Frame {
             downsample_layout,
             downsample,
             history: std::sync::Mutex::new(History::default()),
+            probes: ProbeVolume::new(device, DEFAULT_PROBE_SPACING),
+            probe_layout,
+            gather_layout,
+            gather,
         }
+    }
+
+    /// The probe volume (ADR-0023).
+    pub fn probes(&self) -> &ProbeVolume {
+        &self.probes
+    }
+
+    pub fn probes_mut(&mut self) -> &mut ProbeVolume {
+        &mut self.probes
+    }
+
+    /// The gather's indirect irradiance on the lighting grid (rgba16float, rgb).
+    pub fn indirect_irradiance(&self) -> &wgpu::Texture {
+        &self.targets.indirect
     }
 
     /// The frame index the next `params` seeds its random numbers with.
@@ -1140,9 +1217,9 @@ impl Frame {
         &self.targets.moments[self.cur]
     }
 
-    /// Bytes the frame's targets occupy.
+    /// Bytes the frame's targets and its probe volume occupy.
     pub fn frame_bytes(&self) -> u64 {
-        self.targets.bytes()
+        self.targets.bytes() + self.probes.bytes()
     }
 
     /// Replaces the targets with ones of `width` × `height` and drops the history; the
@@ -1304,7 +1381,6 @@ impl Frame {
         } else {
             p.history = 0;
         }
-        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&p));
         queue.write_buffer(&self.edits, 0, bytemuck::bytes_of(&edits));
         let table = light_table(world, p.views[0].origin);
         let used = (1 + table.count as usize) * 16;
@@ -1448,6 +1524,7 @@ impl Frame {
                 Res::Tex(&t.output),
                 Res::Tex(t.lit_pos(c)),
                 Res::Tex(t.lit_info(c)),
+                Res::Tex(&t.indirect),
             ],
         );
         let gradient_bind = bind_io(
@@ -1486,12 +1563,45 @@ impl Frame {
             atrous.push((&self.variance, &variance_bind, 2, lw));
             atrous.extend(atrous_binds.iter().map(|b| (&self.atrous, b, 2, lw)));
         }
-        let passes: [Vec<Dispatch<'_>>; 6] = [
+        // The probe passes run in the shaded view outside the cutaway, with indirect light on.
+        let indirect =
+            self.lighting.indirect && self.look.view == ViewMode::Shaded && !self.look.cutaway;
+        p.lighting &= !LIGHTING_INDIRECT;
+        let mut gather: Vec<Dispatch<'_>> = Vec::new();
+        let probe_bind = indirect.then(|| {
+            p.lighting |= LIGHTING_INDIRECT;
+            self.write_probe_uniform(queue, &p, 0);
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("probes"),
+                layout: &self.probe_layout,
+                entries: &[
+                    buffer_entry(0, self.probes.data()),
+                    buffer_entry(1, self.probes.scratch()),
+                    buffer_entry(2, self.probes.uniform()),
+                ],
+            })
+        });
+        let gather_bind = bind_io(
+            device,
+            &self.gather_layout,
+            &[
+                Res::Tex(t.lit_pos(c)),
+                Res::Tex(t.lit_info(c)),
+                Res::Tex(&t.indirect),
+            ],
+        );
+        if indirect {
+            gather.push((&self.gather, &gather_bind, 2, lw));
+        }
+        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&p));
+        let passes: [Vec<Dispatch<'_>>; 8] = [
             hit,
             gradient,
             vec![(&self.light, &light_bind, 2, lw)],
             vec![(&self.temporal, &temporal_bind, 2, lw)],
             atrous,
+            Vec::new(),
+            gather,
             vec![(&self.composite, &composite_bind, 2, full)],
         ];
         for (i, dispatches) in passes.into_iter().enumerate() {
@@ -1502,10 +1612,25 @@ impl Frame {
             for (pipeline, bind, group, groups) in dispatches {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &world_bind, &[]);
+                if let Some(b) = &probe_bind {
+                    pass.set_bind_group(3, b, &[]);
+                }
                 pass.set_bind_group(group, bind, &[]);
                 pass.dispatch_workgroups(groups[0], groups[1], 1);
             }
         }
+    }
+
+    /// Writes the probe passes' uniform for the frame `p`: the volume's origin for its first
+    /// view's eye and `updates` entries in the update list.
+    fn write_probe_uniform(&self, queue: &wgpu::Queue, p: &Params, updates: u32) {
+        let u = ProbeUniform {
+            origin: self.probes.origin_for(p.views[0].origin),
+            spacing: self.probes.spacing(),
+            updates,
+            _pad: [0; 3],
+        };
+        queue.write_buffer(self.probes.uniform(), 0, bytemuck::bytes_of(&u));
     }
 
     /// Renders `camera` over `world` lit by `light` as one frame alone, with no history,
@@ -1546,12 +1671,14 @@ fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_>
 
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
-pub const FRAME_PASSES: [&str; 6] = [
+pub const FRAME_PASSES: [&str; 8] = [
     "hit",
     "gradient",
     "light",
     "temporal",
     "atrous",
+    "probes",
+    "gather",
     "composite",
 ];
 
@@ -1591,6 +1718,8 @@ struct Targets {
     strata: wgpu::Texture,
     /// The composite's display-encoded output (rgba8unorm).
     output: wgpu::Texture,
+    /// The probe gather's indirect irradiance (rgba16float), on the lighting grid.
+    indirect: wgpu::Texture,
 }
 
 impl Targets {
@@ -1639,6 +1768,7 @@ impl Targets {
                 lh.div_ceil(GRADIENT_STRATUM),
             ),
             output: tex("frame target", Rgba8Unorm),
+            indirect: lit("indirect irradiance", Rgba16Float),
         }
     }
 
@@ -1663,7 +1793,9 @@ impl Targets {
         let lpx = u64::from(lw) * u64::from(lh);
         let half = if self.scale > 1 { 2 * (16 + 8) } else { 0 };
         let strata = u64::from(self.strata.width()) * u64::from(self.strata.height());
-        px * (2 * (16 + 8) + 8 + 4) + lpx * (half + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16) + strata * 8
+        px * (2 * (16 + 8) + 8 + 4)
+            + lpx * (half + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16 + 8)
+            + strata * 8
     }
 }
 

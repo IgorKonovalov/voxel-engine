@@ -34,6 +34,13 @@ fn shaders() -> Vec<(&'static str, String)> {
             ),
         ),
         (
+            "probe_gather.wgsl",
+            format!(
+                "{MARCH}\n{}",
+                include_str!("../src/shaders/probe_gather.wgsl")
+            ),
+        ),
+        (
             "attrib.wgsl",
             include_str!("../src/shaders/attrib.wgsl").to_owned(),
         ),

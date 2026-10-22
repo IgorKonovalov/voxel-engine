@@ -12,7 +12,8 @@
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
 //! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]
-//! [--history edits|gradient] [--lighting full|half] [--emissive-history N]`.
+//! [--history edits|gradient] [--lighting full|half] [--emissive-history N]
+//! [--indirect on|off]`.
 //! `--render` fixes the frame's internal resolution (the window scales it); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
@@ -52,7 +53,8 @@
 //! `--history gradient` also shortens history where A-SVGF's gradient sees the light change;
 //! `--lighting half` runs the lighting passes at half resolution on each edge;
 //! `--emissive-history N` sets the frames static emissive light accumulates over (default 32;
-//! the lamp's light keeps a short history). In a window
+//! the lamp's light keeps a short history); `--indirect off` turns the probe volume's indirect
+//! light off (on by default, ADR-0023). In a window
 //! `F3` toggles the shadow walk, `F4` the sampler, `F5` the history killer, `F6` the lighting
 //! resolution and `F7` the lamp, each printing the lighting modes; with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
@@ -343,6 +345,8 @@ struct Args {
     lighting: LightingResolution,
     /// `--emissive-history N`: frames the emissive light's history blends over at least.
     emissive_history: u32,
+    /// `--indirect on|off`: indirect light from the probe volume (on by default).
+    indirect: bool,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -377,6 +381,7 @@ impl Args {
             sampler: self.sampler,
             history: self.history,
             emissive_history: self.emissive_history,
+            indirect: self.indirect,
             ..Lighting::default()
         }
     }
@@ -438,6 +443,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         pad: true,
         emissive_ore: true,
         lamp: true,
+        indirect: true,
         shadow_walk: ShadowWalk::default(),
         filter: true,
         light_radius: vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
@@ -595,6 +601,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     "on" => true,
                     "off" => false,
                     v => return Err(format!("--lamp takes on or off, not {v}")),
+                }
+            }
+            "--indirect" => {
+                args.indirect = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("--indirect takes on or off, not {v}")),
                 }
             }
             "--emissive-ore" => {
@@ -5445,8 +5458,18 @@ mod tests {
     #[test]
     fn lighting_flags_parse_and_refuse_unknown_values() {
         let parse = |a: &[&str]| parse_args_from(argv(a));
-        let a = parse(&["--emissive-ore", "off", "--lamp", "off", "--filter", "off"]).unwrap();
-        assert!(!a.emissive_ore && !a.lamp && !a.filter);
+        let a = parse(&[
+            "--emissive-ore",
+            "off",
+            "--lamp",
+            "off",
+            "--filter",
+            "off",
+            "--indirect",
+            "off",
+        ])
+        .unwrap();
+        assert!(!a.emissive_ore && !a.lamp && !a.filter && !a.indirect);
         let a = parse(&[
             "--shadow-walk",
             "coarse",
@@ -5466,7 +5489,8 @@ mod tests {
         assert_eq!(a.lighting, LightingResolution::Full);
         assert_eq!(a.light_radius, 6);
         let d = parse(&[]).unwrap();
-        assert!(d.emissive_ore && d.lamp && d.filter);
+        assert!(d.emissive_ore && d.lamp && d.filter && d.indirect);
+        assert!(d.start_lighting().indirect);
         assert_eq!(
             (
                 d.shadow_walk,
@@ -5491,6 +5515,7 @@ mod tests {
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),
             ("--lamp", "--lamp takes on or off, not x"),
+            ("--indirect", "--indirect takes on or off, not x"),
             ("--filter", "--filter takes on or off, not x"),
             ("--shadow-walk", "--shadow-walk takes full or coarse, not x"),
             ("--sampler", "--sampler takes list or reuse, not x"),
