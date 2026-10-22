@@ -2,6 +2,8 @@
 //! image comparisons.
 #![allow(dead_code, reason = "shared across test binaries; each uses a subset")]
 
+pub mod rigs;
+
 use std::path::PathBuf;
 
 use flythrough::cave::CaveSource;

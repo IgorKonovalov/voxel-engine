@@ -1,0 +1,539 @@
+//! The rigs of the upscalers' tests (Plan 0030's, shared with FSR 2's): the level at its
+//! spawn, the presenter's blit, image distances, and the stripe wall with its sharpness
+//! readings.
+
+use super::*;
+use vxe_render::{
+    Frame, GpuWorld, LightParams, MirrorConfig, Presenter, UpscalerKind, Window, readback, wgpu,
+};
+use vxe_world::*;
+
+/// The internal and output sizes of the upscaler's tests: scale 1.5.
+pub const INTERNAL: [u32; 2] = [256, 144];
+pub const OUTPUT: [u32; 2] = [384, 216];
+
+/// Frames the upscaler's still-camera tests accumulate.
+pub const SETTLE: u32 = 32;
+
+/// The level the fly-through generates with `--level --seed 1`, its ore emissive (the
+/// fly-through's default), and its spawn pose.
+pub fn level() -> (World, vxe_render::Camera) {
+    let source = flythrough::cave::CaveSource::new(
+        1,
+        ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
+    );
+    let table = flythrough::with_emissive_ore(&flythrough::cave_materials());
+    let world = World::generate(source.extent, &source, &table);
+    let camera = camera_looking_x(source.spawn().0.map(|v| v as f32 + 0.5));
+    (world, camera)
+}
+
+/// A device and the level's mirror on it, focused on `camera` with the light ranges written.
+pub fn level_rig(
+    world: &World,
+    camera: &vxe_render::Camera,
+) -> Option<(wgpu::Device, wgpu::Queue, GpuWorld)> {
+    let pool = flythrough::level_pool_units(world, true) * vxe_render::gpu_world::UNIT_BYTES;
+    let (device, queue) = software_device(pool)?;
+    let cfg = MirrorConfig {
+        budget_bytes: 256 << 20,
+        ..MirrorConfig::new(Window::Fixed(world.extent()))
+    };
+    let mut gpu = GpuWorld::with_config(&device, cfg);
+    gpu.set_focus(VoxelCoord(
+        camera.position.to_array().map(|c| c.floor() as i32),
+    ));
+    for _ in 0..4 {
+        gpu.sync_now(world, &device, &queue)
+            .expect("mirror fits the adapter");
+    }
+    Some((device, queue, gpu))
+}
+
+/// A frame of `internal` pixels for an `output` image, jittered or not, at the Plan 0024
+/// defaults (lamp on, filter on, half-resolution lighting, coarse shadow walk, reuse).
+pub fn frame_of(
+    device: &wgpu::Device,
+    internal: [u32; 2],
+    output: [u32; 2],
+    jitter: bool,
+) -> Frame {
+    let mut frame = Frame::with_sizes(device, internal, output);
+    frame.set_jitter(device, jitter);
+    frame
+}
+
+/// The presenter's bilinear blit of `source` onto a fresh `rgba8unorm` texture of `size`.
+pub fn blit_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    source: &wgpu::Texture,
+    size: [u32; 2],
+) -> Vec<u8> {
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let target = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("blit target"),
+        size: wgpu::Extent3d {
+            width: size[0],
+            height: size[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+    let presenter = Presenter::new(device, format);
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    presenter.encode(device, &mut enc, source, &view);
+    queue.submit([enc.finish()]);
+    readback::read_rgba8(device, queue, &target)
+}
+
+/// Mean absolute difference per channel (r, g, b) of two RGBA8 images, in 1/255.
+pub fn mad(a: &[u8], b: &[u8]) -> [f64; 3] {
+    assert_eq!(a.len(), b.len());
+    let n = (a.len() / 4) as f64;
+    let mut s = [0.0f64; 3];
+    for (p, q) in a.chunks(4).zip(b.chunks(4)) {
+        for k in 0..3 {
+            s[k] += f64::from(p[k].abs_diff(q[k]));
+        }
+    }
+    s.map(|v| v / n)
+}
+
+/// `img`, `2 w` x `2 h`, box-filtered to `w` x `h`.
+pub fn downsample_2x2(img: &[u8], [w, h]: [u32; 2]) -> Vec<u8> {
+    let (w, h) = (w as usize, h as usize);
+    let mut out = vec![255u8; w * h * 4];
+    for y in 0..h {
+        for x in 0..w {
+            for k in 0..3 {
+                let at = |xx: usize, yy: usize| u32::from(img[(yy * 2 * w + xx) * 4 + k]);
+                let s = at(2 * x, 2 * y)
+                    + at(2 * x + 1, 2 * y)
+                    + at(2 * x, 2 * y + 1)
+                    + at(2 * x + 1, 2 * y + 1);
+                out[(y * w + x) * 4 + k] = ((s + 2) / 4) as u8;
+            }
+        }
+    }
+    out
+}
+
+// ---- The sharpness rig: a wall of one-voxel stripes facing the camera ----
+
+/// The stripe wall's face: the plane x = `WALL_X`, the wall two voxels thick behind it.
+pub const WALL_X: i64 = 160;
+/// The stripes' materials: albedo 0.8 and 0.1, alternating along y one voxel at a time.
+pub const BRIGHT: u16 = 1;
+pub const DARK: u16 = 2;
+/// Arm's length (0.7 m at 10 cm voxels) and the far distance, in voxels from the wall's face.
+pub const NEAR: f32 = 7.0;
+pub const FAR: f32 = 88.0;
+
+/// Air over chunks `[0, 3)^3` with the stripe wall over y and z `[0, 192)`: material
+/// `BRIGHT` on even y, `DARK` on odd.
+pub fn stripe_world() -> World {
+    let mut table = MaterialTable::new();
+    for (name, albedo) in [("bright", 0.8f32), ("dark", 0.1)] {
+        table.push(Material {
+            albedo: [albedo; 3],
+            ..Material::named(name)
+        });
+    }
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [3, 3, 3]),
+        &UniformSource(AIR),
+        &table,
+    );
+    let fill = |y0: i64, y1: i64, m: u16| {
+        let op = EditOp::box_(
+            Fixed3([WALL_X * FIXED_ONE, y0 * FIXED_ONE, 0]),
+            Fixed3([(WALL_X + 2) * FIXED_ONE, y1 * FIXED_ONE, 192 * FIXED_ONE]),
+            Mode::Fill(m),
+        );
+        world.apply(&op).expect("the wall is resident");
+    };
+    for y in 0..192 {
+        fill(y, y + 1, if y % 2 == 0 { BRIGHT } else { DARK });
+    }
+    world
+}
+
+/// Sub-pixel phases each stripe reading averages over: the stripes' period in pixels is
+/// close to whole at both distances, so one camera would see every edge at one sub-pixel
+/// offset.
+pub const PHASES: u32 = 5;
+
+/// `dist` voxels in front of the wall, looking +x at it (the camera's right is -y, so the
+/// stripes run vertically on screen), moved `(phase + 0.5) / PHASES` output pixels along its
+/// right.
+pub fn stripe_camera(dist: f32, phase: u32) -> vxe_render::Camera {
+    let shift = (phase as f32 + 0.5) / PHASES as f32 / px_per_voxel(dist);
+    camera_looking_x([WALL_X as f32 - dist, 96.3 - shift, 96.4])
+}
+
+/// Output pixels one voxel of the wall spans at `dist` voxels.
+pub fn px_per_voxel(dist: f32) -> f32 {
+    OUTPUT[1] as f32 / (2.0 * (35f32.to_radians()).tan()) / dist
+}
+
+/// The exposure that puts the bright stripe under the lamp's centre near the tone map's
+/// knee at `dist`: the lamp's radiance falls as `1 / dist^2`.
+pub fn stripe_exposure(dist: f32) -> f32 {
+    dist * dist / 1200.0
+}
+
+/// The sharpness readings of one image: edge spread in output pixels (arm's length only),
+/// gradient energy and Phase 4's rim gradient, over the image's middle half.
+#[derive(Clone, Copy, Debug)]
+pub struct Sharpness {
+    pub es: f64,
+    pub ge: f64,
+    pub rim: f64,
+}
+
+impl std::fmt::Display for Sharpness {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ES {:.3} px, GE {:.5}, rim {:.3}",
+            self.es, self.ge, self.rim
+        )
+    }
+}
+
+/// Luminance (Rec. 709 weights on the display-encoded bytes), in 0..=255.
+pub fn luma(img: &[u8], x: usize, y: usize) -> f64 {
+    let p = &img[(y * OUTPUT[0] as usize + x) * 4..];
+    0.2126 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[2])
+}
+
+/// `img`'s sharpness seen from `camera` at `dist` voxels from the wall. Edge spread: per row
+/// of the middle half and per stripe boundary whose projection lies in the middle half's
+/// columns at least a quarter stripe in, the 10 to 90 % rise between the pixels a quarter
+/// stripe either side of the boundary (by linear interpolation between pixel centres; the
+/// 10 % crossing the last before the first 90 % one), over boundaries whose step exceeds
+/// 32/255 and whose point on the wall lies inside the headlamp's inner cone, the mean (the
+/// quarter stripe and the cone keep the lamp's falloff out of the step); NaN when no stripe
+/// is over 6 pixels wide. Gradient energy: the mean of the squared forward
+/// differences on both axes of luminance in 0..=1. Rim gradient: the mean of `|dx| + |dy|`
+/// of luminance over the pixels whose 3 x 3 spans 16/255 or more in a channel.
+pub fn sharpness(img: &[u8], camera: &vxe_render::Camera, dist: f32) -> Sharpness {
+    let [w, h] = OUTPUT.map(|n| n as usize);
+    let (x0, x1, y0, y1) = (w / 4, 3 * w / 4, h / 4, 3 * h / 4);
+    let (mut ge, mut n) = (0.0f64, 0usize);
+    let (mut rim, mut rim_n) = (0.0f64, 0usize);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let l = luma(img, x, y);
+            let dx = luma(img, x + 1, y) - l;
+            let dy = luma(img, x, y + 1) - l;
+            ge += (dx * dx + dy * dy) / (255.0 * 255.0);
+            n += 1;
+            let spans = (0..3).any(|k| {
+                let (mut lo, mut hi) = (255u8, 0u8);
+                for yy in y - 1..=y + 1 {
+                    for xx in x - 1..=x + 1 {
+                        let v = img[(yy * w + xx) * 4 + k];
+                        lo = lo.min(v);
+                        hi = hi.max(v);
+                    }
+                }
+                hi - lo >= 16
+            });
+            if spans {
+                rim += dx.abs() + dy.abs();
+                rim_n += 1;
+            }
+        }
+    }
+    let s = px_per_voxel(dist);
+    let (mut es, mut es_n) = (0.0f64, 0usize);
+    if s > 6.0 {
+        let (_, right, _) = camera.basis();
+        let tan = (camera.vfov * 0.5).tan();
+        let aspect = w as f32 / h as f32;
+        let z = WALL_X as f32 - camera.position.x;
+        // The boundary between voxel rows y = k - 1 and k, projected to a column.
+        let col = |k: f32| {
+            let d = vxe_render::glam::Vec3::new(z, k - camera.position.y, 0.0);
+            ((d.dot(right) / z / (tan * aspect) + 1.0) * 0.5 * w as f32) as f64
+        };
+        let half = f64::from(s) / 4.0;
+        for k in 0..=192 {
+            let c = col(k as f32);
+            if c - half < x0 as f64 || c + half >= x1 as f64 {
+                continue;
+            }
+            let (ia, ib) = ((c - half).floor() as usize, (c + half).floor() as usize);
+            for y in y0..y1 {
+                // The boundary's point on the wall at this row lies inside the lamp's inner
+                // cone: the lamp's falloff leaves the step alone.
+                let up_t = (1.0 - 2.0 * (y as f32 + 0.5) / h as f32) * tan;
+                let p = vxe_render::glam::Vec3::new(
+                    WALL_X as f32,
+                    k as f32,
+                    camera.position.z + z * up_t,
+                );
+                let lamp = LightParams::headlamp();
+                let (fwd, _, up) = camera.basis();
+                let at = camera.position + right * lamp.offset_right - up * lamp.offset_down;
+                if (p - at).normalize().dot(fwd) < lamp.inner.cos() {
+                    continue;
+                }
+                let (a, b) = (luma(img, ia, y), luma(img, ib, y));
+                let step = b - a;
+                if step.abs() <= 32.0 {
+                    continue;
+                }
+                let t = |i: usize| (luma(img, i, y) - a) / step;
+                let Some(i90) = (ia..=ib).find(|&i| t(i) >= 0.9) else {
+                    continue;
+                };
+                let cross = |i: usize, level: f64| {
+                    let (t0, t1) = (t(i), t(i + 1));
+                    i as f64 + 0.5 + (level - t0) / (t1 - t0)
+                };
+                let x90 = if i90 == ia {
+                    ia as f64 + 0.5
+                } else {
+                    cross(i90 - 1, 0.9)
+                };
+                let Some(i10) = (ia..i90).rev().find(|&i| t(i) < 0.1) else {
+                    continue;
+                };
+                es += x90 - cross(i10, 0.1);
+                es_n += 1;
+            }
+        }
+    }
+    Sharpness {
+        es: if es_n > 0 { es / es_n as f64 } else { f64::NAN },
+        ge: ge / n as f64,
+        rim: rim / rim_n.max(1) as f64,
+    }
+}
+
+/// The stripe wall on the software adapter.
+pub struct StripeRig {
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub gpu: GpuWorld,
+}
+
+pub fn stripe_rig() -> Option<StripeRig> {
+    let world = stripe_world();
+    let full = world.stats().full_bricks as u64;
+    let (device, queue) = software_device(((full + 4096) * 512).max(64 << 20))?;
+    let mut gpu = GpuWorld::with_config(&device, MirrorConfig::new(Window::Fixed(world.extent())));
+    gpu.sync_now(&world, &device, &queue)
+        .expect("mirror fits the adapter");
+    Some(StripeRig { device, queue, gpu })
+}
+
+/// The images the sharpness bars compare.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Image {
+    /// Plan 0024's frame: 384 x 216, jitter off.
+    N,
+    /// 768 x 432, jitter off, box-filtered to 384 x 216.
+    R,
+    /// The bilinear blit of a 256 x 144 render, jitter off.
+    B,
+    /// The upscaler at scale 1 (384 x 216 internal), jittered.
+    U1,
+    /// The upscaler at scale 1.5 (256 x 144 internal), jittered.
+    U15,
+}
+
+/// The settings of one stripe reading: the distance, the upscaler U1 and U15 run (ADR-0024's
+/// with its tuning, or FSR 2), the frames panned after the 32 still ones (0: still), and the
+/// sub-pixel phase.
+#[derive(Clone, Copy)]
+pub struct Shot {
+    pub dist: f32,
+    pub kind: UpscalerKind,
+    pub pan: u32,
+    pub phase: u32,
+}
+
+/// Output pixels a panning camera moves per frame.
+pub const PAN_PX: f32 = 0.37;
+
+/// `image` of the stripe wall under the headlamp at the Plan 0024 defaults (the exposure
+/// [`stripe_exposure`]) after 32 still frames and `shot.pan` frames translating along the
+/// camera's right at [`PAN_PX`] output pixels a frame, read at sharpening 0 and 0.5 (the
+/// same for N, R and B; under FSR 2 both are its image at its settings' sharpness), with the
+/// last frame's camera.
+pub fn stripe_image(
+    rig: &StripeRig,
+    image: Image,
+    shot: Shot,
+) -> ([Vec<u8>; 2], vxe_render::Camera) {
+    let (internal, output, jitter) = match image {
+        Image::N => (OUTPUT, OUTPUT, false),
+        Image::R => (OUTPUT.map(|n| 2 * n), OUTPUT.map(|n| 2 * n), false),
+        Image::B => (INTERNAL, INTERNAL, false),
+        Image::U1 => (OUTPUT, OUTPUT, true),
+        Image::U15 => (INTERNAL, OUTPUT, true),
+    };
+    let (device, queue) = (&rig.device, &rig.queue);
+    let mut f = frame_of(device, internal, output, jitter);
+    f.set_lighting(vxe_render::Lighting {
+        exposure: stripe_exposure(shot.dist),
+        ..vxe_render::Lighting::default()
+    });
+    let fsr = matches!(image, Image::U1 | Image::U15) && shot.kind.is_fsr2();
+    match shot.kind {
+        UpscalerKind::Own(u) => f.set_upscaler(u),
+        k @ UpscalerKind::Fsr2(_) if fsr => f.set_upscaler_kind(device, k),
+        _ => {}
+    }
+    f.set_sharpness(queue, 0.5);
+    let light = LightParams::headlamp();
+    let mut camera = stripe_camera(shot.dist, shot.phase);
+    let (_, right, _) = camera.basis();
+    let step = right * (PAN_PX / px_per_voxel(shot.dist));
+    for i in 0..SETTLE + shot.pan {
+        if i >= SETTLE {
+            camera.position += step;
+        }
+        f.step(device, queue, &rig.gpu, &camera, &light);
+    }
+    let img = readback::read_rgba8(device, queue, f.target());
+    let images = match image {
+        Image::N => [img.clone(), img],
+        Image::R => {
+            let d = downsample_2x2(&img, OUTPUT);
+            [d.clone(), d]
+        }
+        Image::B => {
+            let b = blit_texture(device, queue, f.target(), OUTPUT);
+            [b.clone(), b]
+        }
+        Image::U1 | Image::U15 if fsr => [img.clone(), img],
+        Image::U1 | Image::U15 => {
+            let hist = readback::read_rgba16f(device, queue, f.upscale_history().unwrap());
+            let plain = hist
+                .iter()
+                .flat_map(|t| {
+                    [t[0], t[1], t[2]]
+                        .map(|c| (c * 255.0).round() as u8)
+                        .into_iter()
+                        .chain([255])
+                })
+                .collect();
+            [plain, img]
+        }
+    };
+    (images, camera)
+}
+
+/// Sharpness of `image` in `shot` at sharpening 0 and 0.5, the mean over the [`PHASES`]
+/// sub-pixel phases.
+pub fn stripe_sharpness(rig: &StripeRig, image: Image, shot: Shot) -> [Sharpness; 2] {
+    let mut sum = [Sharpness {
+        es: 0.0,
+        ge: 0.0,
+        rim: 0.0,
+    }; 2];
+    for phase in 0..PHASES {
+        let (imgs, camera) = stripe_image(rig, image, Shot { phase, ..shot });
+        for (acc, img) in sum.iter_mut().zip(&imgs) {
+            let r = sharpness(img, &camera, shot.dist);
+            acc.es += r.es / f64::from(PHASES);
+            acc.ge += r.ge / f64::from(PHASES);
+            acc.rim += r.rim / f64::from(PHASES);
+        }
+    }
+    sum
+}
+
+/// The first upscaler's (7cc58a4, [`Upscaler::lanczos`]) last panning frame at arm's length,
+/// sharpening 0: edge spread and gradient energy at scale 1 and at 1.5.
+pub const LANCZOS_PAN_U1: (f64, f64) = (2.020, 0.00357);
+pub const LANCZOS_PAN_U15: (f64, f64) = (2.404, 0.00281);
+
+/// `a <= b`, false when either is NaN.
+pub fn at_most(a: f64, b: f64) -> bool {
+    a <= b
+}
+
+/// `a >= b`, false when either is NaN.
+pub fn at_least(a: f64, b: f64) -> bool {
+    a >= b
+}
+
+/// The texels of a 32-bit float texture (r32float, rg32float or rgba32float) as `f32`, rows
+/// top to bottom, every channel.
+pub fn read_f32_texels(device: &wgpu::Device, queue: &wgpu::Queue, t: &wgpu::Texture) -> Vec<f32> {
+    let channels = match t.format() {
+        wgpu::TextureFormat::R32Float => 1,
+        wgpu::TextureFormat::Rg32Float => 2,
+        wgpu::TextureFormat::Rgba32Float => 4,
+        f => panic!("{f:?} is not a 32-bit float format"),
+    };
+    let row = 4 * channels * t.width();
+    let padded = row.div_ceil(256) * 256;
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("f32 texels"),
+        size: u64::from(padded * t.height()),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    enc.copy_texture_to_buffer(
+        t.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded),
+                rows_per_image: Some(t.height()),
+            },
+        },
+        t.size(),
+    );
+    queue.submit([enc.finish()]);
+    let bytes = readback::read_buffer(device, queue, &buffer, 0, buffer.size());
+    bytes
+        .chunks(padded as usize)
+        .flat_map(|r| r[..row as usize].chunks(4))
+        .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+        .collect()
+}
+
+/// FSR 2 at its default settings.
+pub fn fsr2_kind() -> UpscalerKind {
+    UpscalerKind::Fsr2(vxe_render::Fsr2Settings::default())
+}
+
+/// `p` projected through `v` to a fractional pixel of the target, pixel centres at integer +
+/// 0.5, the jitter ignored (`project_prev` in `march.wgsl`); `None` behind the view.
+pub fn project(v: &vxe_render::View, p: [f32; 3]) -> Option<[f64; 2]> {
+    let d: Vec<f64> = (0..3).map(|k| f64::from(p[k] - v.origin[k])).collect();
+    let dot = |a: [f32; 3]| (0..3).map(|k| d[k] * f64::from(a[k])).sum::<f64>();
+    let z = dot(v.fwd);
+    if z <= 1e-4 {
+        return None;
+    }
+    let (x, y) = (dot(v.right) / z, dot(v.up) / z);
+    let (tl, tr, tu, td) = (
+        f64::from(v.tan_left),
+        f64::from(v.tan_right),
+        f64::from(v.tan_up),
+        f64::from(v.tan_down),
+    );
+    let u = (x + tl) / (tl + tr);
+    let w = (tu - y) / (tu + td);
+    Some([
+        f64::from(v.rect[0]) + u * f64::from(v.rect[2]),
+        f64::from(v.rect[1]) + w * f64::from(v.rect[3]),
+    ])
+}

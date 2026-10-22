@@ -1,6 +1,6 @@
 # 0041: AMD FSR 2.2.1 ported to WGSL: its six passes fed from the hit buffer, compared against our upscaler and the native frame
 
-> **Status:** approved (2026-10-22)
+> **Status:** in-progress
 > **Decisions:** Owner, 2026-10-22: approved with the plan's recommended options: Plan 0040 owns exposure and FSR reads it; behavioural bars with careful source reading, no SPIR-V harness; the motion bar beats our upscaler at both scales; if FSR misses it at Phase 4, stop and ask; FSR at scale 1 is in the comparison.
 > **Created:** 2026-10-22
 > **Milestone:** M2 in `docs/roadmap.md` (the upscaler; the roadmap's risk "No WGSL port of FSR 2
@@ -481,7 +481,7 @@ and the owner weighs it in Phase 7.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The walking skeleton: FSR 2's accumulate pass end to end on lavapipe | dev | not started | |
+| 1: The walking skeleton: FSR 2's accumulate pass end to end on lavapipe | dev | done | committed with this row |
 | 2: HDR in, tone after, the exposure seam and the masks | dev | not started | |
 | 3: The remaining passes: luminance pyramid, previous depth, depth clip, lock | dev | not started | |
 | 4: RCAS, and the sharpness bars still and panning | dev | not started | |
@@ -489,11 +489,74 @@ and the owner weighs it in Phase 7.
 | 6: The readings on both adapters | dev | not started | |
 | 7: The owner's windowed comparison and the default | human | not started | |
 
+**Phase 1** (lavapipe, llvmpipe LLVM 23.1.3, Mesa 26.2.5; exclusive perf lock; 1-min load 8.3
+to 15.7 from the other lanes, so no timing is taken here).
+
+- Source: tag `v2.2.1` of GPUOpen-Effects/FidelityFX-FSR2 is commit
+  `1680d1edd5c034f88ebbbb793d8b88f8842cf804`, read under the untracked `live/fsr2-src/`
+  (sparse checkout of `src/ffx-fsr2-api/{shaders,vk}` and `LICENSE.txt`; no build script
+  run). `LICENSE.txt`: "Copyright (c) 2022-2023 Advanced Micro Devices, Inc. All rights
+  reserved."
+- Sizing, `wc -l` of the files the upscaling path reads: `ffx_fsr2_accumulate.h` 295,
+  `ffx_fsr2_upsample.h` 194, `ffx_fsr2_reproject.h` 136, `ffx_fsr2_postprocess_lock_status.h`
+  106, `ffx_fsr2_sample.h` 605, `ffx_fsr2_common.h` 565, `ffx_fsr2_depth_clip.h` 257,
+  `ffx_fsr2_lock.h` 115, `ffx_fsr2_reconstruct_dilated_velocity_and_previous_depth.h` 145,
+  `ffx_fsr2_compute_luminance_pyramid.h` 188, `ffx_fsr2_rcas.h` 67, `ffx_fsr2_callbacks_glsl.h`
+  681 (the `ffx_fsr2_*.h` total 3354); `ffx_spd.h` 936; `ffx_fsr1.h` 1250 (RCAS only);
+  `ffx_core.h` 51, `ffx_core_glsl.h` 1669, `ffx_core_gpu_common.h` 2784,
+  `ffx_core_portability.h` 50, `ffx_common_types.h` 429; pass files
+  `ffx_fsr2_accumulate_pass.glsl` 86, `..._compute_luminance_pyramid_pass.glsl` 133,
+  `..._depth_clip_pass.glsl` 67, `..._lock_pass.glsl` 56, `..._reconstruct_previous_depth_pass.glsl`
+  65, `..._rcas_pass.glsl` 79. Not on the path: `ffx_fsr2_tcr_autogen*` and
+  `ffx_fsr2_autogen_reactive_pass.*` (reactive autogen), the FP16 core
+  (`ffx_core_gpu_common_half.h` 2978).
+- Portable forms the accumulate pass needed: the FP32 path; AMD's read-write r8 new-locks
+  image as an `f32` storage buffer; rg16f lock status as rg32float; every `s_LinearClamp`
+  sample as four `textureLoad`s (`bilinear` in `common.wgsl`: the r32float and rg32float
+  targets are not filterable in core); no Lanczos LUT, since the upsample's Lanczos type 2
+  (approximate) and the reprojection's type 0 (reference) read none (AMD's Vulkan backend picks
+  the LUT type only on wave-64 hardware); the GLSL group-row flip of the accumulate pass's
+  `main` (dispatch order only) is not ported. Input pass: ours.
+- Jitter: `jitter_at(frame, phases)`; under FSR `View::jitter` is FSR's offset negated on both
+  axes and FSR's `Jitter()` is the offset: FSR's sample of render pixel `p` lies at
+  `p + 0.5 - offset` in the same y-down pixel space our rays use (`p + 0.5 + View::jitter`).
+- Near plane `fsr2::NEAR` = 0.01 voxels; device depth `near / z_view`, a miss 0;
+  `deviceToViewDepth` = (-FLT_EPSILON, near, tan_h, tan_v) of the first view.
+- Done-when 1 (stripe wall, arm's length, scale 1.5, 32 still frames, the 5-phase mean, same
+  run): B ES 1.718 px, GE 0.00435; FSR (LDR, neutral inputs) ES 1.480 px, GE 0.00515.
+- Done-when 2 (level spawn, scale 1.5): still camera, 0 motion components not 0 (every pixel);
+  after a one-voxel sideways step, 36 864 hit pixels, largest motion error 2.94e-5 internal
+  pixels.
+- Done-when 3: `fsr2::tests::the_jitter_sequence_is_fsrs` (8, 18, 32 phases; the four
+  offsets within 1e-6).
+- Done-when 4: a frame switched to FSR and back to off renders `primary.png` and
+  `headlamp.png` byte for byte as a never-switched frame (and 0.0000 % over the golden
+  tolerance); `the_upscaler_banner_names_each_mode_it_cycles_through` steps through
+  `upscaler own, scale 1.5`, `upscaler fsr2, scale 1.5`, `upscaler off, scale 1`; every new
+  shader (plus `upscale.wgsl` and `sharpen.wgsl`) validates in `shader_portability.rs`.
+- Gate: build, clippy `-D warnings`, fmt clean; full `cargo nextest run --workspace
+  --test-threads 2` 605 passed, 7 skipped (taken with this phase's tree plus the next
+  phase's `composite.wgsl` line, which was being written; the phase's tree alone then re-ran
+  `fsr2`, `golden`, `upscale` and `vxe-render`: 30 passed, 4 skipped); doctests 7 passed.
+
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Names: the plan's names match the merged tree (`jitter_at`, `reproject_centred`,
+  `Upscaler`, `upscale_history`, `apps/flythrough/tests/upscale.rs`); `Frame::set_upscaler`
+  keeps the own upscaler's tuning beside the new `Frame::set_upscaler_kind`.
+- Plan 0040 has not landed: the exposure seam is the manual case (Phase 2).
+- Keys and flags taken: `F10` cycles the upscaler (off, own, fsr2); `--upscaler
+  off|own|fsr2`. The banner is a line of its own (`hud::UpscalerBanner`), shown for 3 s after
+  each change beside the lighting modes' banner, not at the start.
+- `--upscaler own` (or `F10` to own) jitters unless `--jitter off`; without `--upscaler` the
+  old flags decide as before (`own` when the scale is above 1 or `--jitter on`).
+- One FSR context per `Frame` (the frame's first view supplies FOV and depth constants; a
+  split frame's second view gets per-pixel motion but view 0's constants).
+- Until Phase 6 the FSR dispatches run inside the `upscale` slot of `FRAME_PASSES`.
+- Phase 1's prepared input colour is written by the input pass (exposure 1, depth clip 0);
+  the depth-clip pass takes it over in Phase 3.
+- The upscaler rigs moved from `upscale.rs` to `apps/flythrough/tests/support/rigs.rs`;
+  `Shot::upscaler` became `Shot::kind` (`UpscalerKind`).
 
 ### Close triggers
 
