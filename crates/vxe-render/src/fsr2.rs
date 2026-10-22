@@ -847,6 +847,17 @@ impl Fsr2 {
         &self.res.prepared
     }
 
+    /// The depth clip's dilated reactive masks (rgba8unorm, render size: the dilated reactive
+    /// mask in x, the accumulation mask in y).
+    pub fn dilated_reactive(&self) -> &wgpu::Texture {
+        &self.res.dilated_reactive
+    }
+
+    /// The reconstruct pass's dilated motion copy `i` (rg32float, render size, UV).
+    pub fn dilated_motion(&self, i: usize) -> &wgpu::Texture {
+        &self.res.dilated_motion[i]
+    }
+
     /// The internal upscaled colour copy `i` (rgba16float, display size).
     pub fn upscaled(&self, i: usize) -> &wgpu::Texture {
         &self.res.upscaled[i]

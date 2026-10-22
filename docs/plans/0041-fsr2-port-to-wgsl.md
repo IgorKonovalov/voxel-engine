@@ -653,6 +653,48 @@ the motion bar is missed (the plan's stop rule), and so are three still bars and
   `a_still_camera_under_fsr2_is_nearer_the_supersampled_render_than_a_blit`,
   `fsr2_golden_sharpens_within_the_neighbourhood`.
 
+### Resume notes (2026-10-22, delete when Phase 4 lands)
+
+Amended Phase 4, step 1 (find the cause), in progress. Tip before these notes: ae1c643; the
+diagnostic is committed with these notes as `wip(render)`.
+
+- Source compared line by line against v2.2.1 (`live/fsr2-src/`): `ffx_fsr2_accumulate.h`,
+  `_upsample.h`, `_reproject.h`, `_postprocess_lock_status.h`, `_depth_clip.h`, `_lock.h`,
+  `_reconstruct_dilated_velocity_and_previous_depth.h`, the sample macros of `_sample.h`
+  (history Lanczos-2 reference + 4-texel deringing, `ClampCoord`), `setupDeviceDepthToViewSpaceDepthParams`
+  (inverted infinite: `[-FLT_EPSILON, near]`, matches). No transcription difference found.
+  Motion: `reproject_centred(prev, j_cur, p) - (px + 0.5)` equals `S_prev(P) - S_cur(P)` in
+  unjittered pixels, FSR's convention (current to previous, no jitter); jitter sign as Phase 1.
+- New diagnostic `fsr2_pan_per_pass_readings` (`apps/flythrough/tests/fsr2.rs`; accessors
+  `Fsr2::dilated_reactive`, `Fsr2::dilated_motion` added): 32 still + 64 panning frames,
+  scale 1.5, sharpening 0, middle half, per frame. Run 1 (0.37 px a frame; lavapipe; exclusive
+  perf lock; 1-min load 12.7, loaded; `live/p4-diag1.log`):
+  - 88 voxels: depth clip 0 at every frame (share 0.00 %), dilated reactive 0, accumulation
+    mask 0, locks 100 % (lifetime ~1.78), history share 0.977 still, 0.908 to 0.918 panning,
+    temporal reactive 0.027. GE 0.06283 at frame 32, 0.04525 / 0.02930 / 0.01648 / 0.00903 at
+    frames 33 / 34 / 36 / 40, then 0.0066 to 0.0072 to frame 96.
+  - 7 voxels: clip 0, reactive 0, locks 4 to 10 %, history share 0.97 still, 0.87 to 0.91
+    panning; GE 0.00498 at 32, 0.0035 to 0.0040 panning.
+- Working hypothesis (arithmetic, not yet tested): AMD's motion blend gives the new sample
+  1/11 (`ComputeBaseAccumulationWeight`: base = 10 x upsampled weight once velocity >= 0.1
+  px), and the reference Lanczos-2 history resample passes about 0.84 of a 3.5 px period
+  (the far stripes) at fraction 0.37 (Catmull-Rom 0.84 too). Steady amplitude
+  0.09 / (1 - 0.91 x 0.84) ~ 0.38, GE ratio ~0.15: the measured 0.007 / 0.063 is 0.11. Ours
+  blends 0.2 in motion (`Upscaler::alpha_moving`), steady ~0.61. If this holds, the collapse is
+  the algorithm, not a defect (amendment step 3).
+- Left: (1) run the diagnostic with the pan at 1.0 and 0.5 px a frame at 88 voxels (already in
+  the test's list): at 1.0 px the history fetch is the identity, so GE should stay near still
+  if alignment is right; a collapse there would be a misalignment defect. (2) If no defect:
+  stop per step 3 with these readings and options (window Phases 5 to 7, or close). (3) If a
+  defect: fix, re-read bars 1 to 4 in one run (`fsr2_keeps_stripe_edges_sharp_still_and_beats_ours_panning`,
+  `a_still_camera_under_fsr2_is_nearer_the_supersampled_render_than_a_blit`,
+  `fsr2_golden_sharpens_within_the_neighbourhood`; the first takes ~180 s).
+- Gate at the tip: build clean, fmt clean; the three Phase 4 bar tests fail as logged above
+  (unchanged); quick/gpu tiers not re-run since 8fe03b9's merge gate.
+- Gotchas: `Frame::step` advances before encoding, so after a step `current_copy()` is the
+  copy just written. The diagnostic's runs take ~6 s each; the GPU lock is often held by other
+  lanes' full gates for many minutes.
+
 ### Notes
 
 - Names: the plan's names match the merged tree (`jitter_at`, `reproject_centred`,

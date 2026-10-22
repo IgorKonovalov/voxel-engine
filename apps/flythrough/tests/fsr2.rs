@@ -930,3 +930,87 @@ fn a_still_camera_under_fsr2_is_nearer_the_supersampled_render_than_a_blit() {
     }
     assert!(f < b, "FSR {f:.3} not below the blit's {b:.3}");
 }
+
+/// Per-pass readings of FSR 2 on a pan of the stripe wall: after 32 still frames, 64 frames
+/// translating at `PAN_PX` output pixels a frame, at `dist` and scale 1.5, sharpening 0;
+/// over the middle half, frame by frame: the output's gradient energy, the depth clip and the
+/// dilated masks (render size), the share of output pixels holding a lock and their mean
+/// lifetime, the history's share of the blend, and the temporal reactivity.
+fn pan_per_pass_readings(dist: f32, pan_px: f32) -> Vec<String> {
+    let Some(rig) = stripe_rig() else {
+        return Vec::new();
+    };
+    let (device, queue) = (&rig.device, &rig.queue);
+    let light = LightParams::headlamp();
+    let mut f = frame_of(device, INTERNAL, OUTPUT, true);
+    f.set_upscaler_kind(device, fsr2_sharp(0.0));
+    f.fsr2_mut().expect("FSR mode").set_debug(device, true);
+    f.set_lighting(vxe_render::Lighting {
+        exposure: stripe_exposure(dist),
+        ..Default::default()
+    });
+    f.set_sharpness(queue, 0.5);
+    let mut camera = stripe_camera(dist, 0);
+    let (_, right, _) = camera.basis();
+    let step = right * (pan_px / px_per_voxel(dist));
+    let [w, h] = OUTPUT.map(|n| n as usize);
+    let [rw, rh] = INTERNAL.map(|n| n as usize);
+    let middle = |w: usize, h: usize| -> Vec<usize> {
+        (h / 4..3 * h / 4)
+            .flat_map(|y| (w / 4..3 * w / 4).map(move |x| y * w + x))
+            .collect()
+    };
+    let (mid, rmid) = (middle(w, h), middle(rw, rh));
+    let mut lines = Vec::new();
+    for i in 0..SETTLE + 64 {
+        if i >= SETTLE {
+            camera.position += step;
+        }
+        f.step(device, queue, &rig.gpu, &camera, &light);
+        let n = i + 1;
+        if !(n == SETTLE || n == SETTLE + 1 || n == SETTLE + 2 || n == SETTLE + 4 || n % 8 == 0) {
+            continue;
+        }
+        let img = readback::read_rgba8(device, queue, f.target());
+        let ge = sharpness(&img, &camera, dist).ge;
+        let fsr = f.fsr2().unwrap();
+        let cur = f.current_copy();
+        let prepared = readback::read_rgba16f(device, queue, fsr.prepared());
+        let masks = readback::read_rgba8(device, queue, fsr.dilated_reactive());
+        let lock = read_f32_texels(device, queue, fsr.lock_status(cur));
+        let weight = read_f32_texels(device, queue, fsr.history_weight());
+        let up = readback::read_rgba16f(device, queue, fsr.upscaled(cur));
+        let rn = rmid.len() as f64;
+        let on = mid.len() as f64;
+        let clip = rmid.iter().map(|&k| f64::from(prepared[k][3])).sum::<f64>() / rn;
+        let clipped = rmid.iter().filter(|&&k| prepared[k][3] > 0.0).count() as f64 / rn;
+        let reactive = rmid.iter().map(|&k| f64::from(masks[4 * k])).sum::<f64>() / rn / 255.0;
+        let accum = rmid
+            .iter()
+            .map(|&k| f64::from(masks[4 * k + 1]))
+            .sum::<f64>()
+            / rn
+            / 255.0;
+        let locked = mid.iter().filter(|&&k| lock[2 * k] > 0.0).count() as f64 / on;
+        let life = mid.iter().map(|&k| f64::from(lock[2 * k])).sum::<f64>() / on;
+        let hist = mid.iter().map(|&k| f64::from(weight[k])).sum::<f64>() / on;
+        let tr = mid.iter().map(|&k| f64::from(up[k][3].abs())).sum::<f64>() / on;
+        lines.push(format!(
+            "frame {n:3}: GE {ge:.5}; clip mean {clip:.4} share {:.2} %; dilated reactive {reactive:.4}, accumulation mask {accum:.4}; locked {:.2} %, lifetime {life:.3}; history share {hist:.4}; temporal reactive {tr:.4}",
+            clipped * 100.0,
+            locked * 100.0
+        ));
+    }
+    lines
+}
+
+/// The pan's per-pass readings at both distances (readings, no bar).
+#[test]
+fn fsr2_pan_per_pass_readings() {
+    for (dist, px) in [(NEAR, PAN_PX), (FAR, PAN_PX), (FAR, 1.0), (FAR, 0.5)] {
+        println!("pan at {dist} voxels, {px} px a frame, scale 1.5:");
+        for l in pan_per_pass_readings(dist, px) {
+            println!("  {l}");
+        }
+    }
+}
