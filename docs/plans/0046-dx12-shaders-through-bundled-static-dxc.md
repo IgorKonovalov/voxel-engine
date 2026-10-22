@@ -1,6 +1,6 @@
 # 0046: DX12 shaders through wgpu's bundled static DXC: pipeline times measured per pass under FXC and DXC, the feature on for every consumer, the shutdown workaround reverted
 
-> **Status:** draft
+> **Status:** approved (2026-10-22)
 > **Created:** 2026-10-22
 > **Milestone:** none; platform health (the Windows arm of ADR-0001's Linux + Windows stack)
 > **Related ADRs:** [ADR-0035](../adrs/0035-dx12-shaders-compile-with-wgpus-bundled-static-dxc.md)
