@@ -474,7 +474,7 @@ Outcome records at the close; the decision it records is unchanged.
 | 7: The owner's re-check of the lingering light | human | done (architect's record of the owner's verdict, live session 8 run 3, 2026-10-22: still some delay, "feels very unnatural"; the fallback chosen) | |
 | 8: The faster refresh inside the light-change window | dev | done: in a window (16 frames) one probe in 4 a frame, every update at hysteresis 0 (`WINDOW_SLICES`, `WINDOW_VISITS`, `WINDOW_FRAMES`); lamp off under 10 % of F0 from frame 14 (Phase 6: 58), emission 0 from frame 14, back to 100.4 % at frame 64; dev box update plus gather 1.465 ms outside a window, 2.403 ms inside; `--lamp-toggle N`; readings in `nfr.md` §2 | bb8ea94 |
 | 9: The owner's re-check of the faster fade | human | done (orchestrator's record of the owner's verdict, live session 9: the fade too slow, the pulse flickers) | |
-| 10: Find what lingers after the lamp, and keep the pulse out of the probes | dev | done: `--fade-reading`; the longest tail was the direct light's temporal lamp history (composite, direct and indirect each first under 10 % at frame 11); `LIGHTING_LAMP_CHANGED` resets the lamp part on a lamp change, and after it the composite is under 10 % from frame 1, the direct 0 from frame 1, the indirect first under at 11; `Frame::set_emission_scales` (probe-ray rows), the ore pulse at its mean opens no window; retake 1.567 / 2.701 ms (dev box, quiet) | committed with this row |
+| 10: Find what lingers after the lamp, and keep the pulse out of the probes | dev | done: `--fade-reading`; the longest tail was the direct light's temporal lamp history (composite, direct and indirect each first under 10 % at frame 11); `LIGHTING_LAMP_CHANGED` resets the lamp part on a lamp change, and after it the composite is under 10 % from frame 1, the direct 0 from frame 1, the indirect first under at 11; `Frame::set_emission_scales` (probe-ray rows), the ore pulse at its mean opens no window; retake 1.567 / 2.701 ms (dev box, quiet) | f8a4bb8 |
 | 11: The owner's re-check of the lamp-off tail and the pulse | human | not started | |
 
 ### Notes
@@ -639,6 +639,14 @@ Outcome records at the close; the decision it records is unchanged.
     inside 2.701 ms.
   - Radeon Cezanne RADV (`--adapter AMD`), load 2.62, loaded: outside 10.177 ms, inside
     18.037 ms.
+- Merge of main (75a5acd, Plan 0043's test tiers) into plan-0029: no conflicts.
+  `.config/nextest.toml` gains `binary_id(flythrough::indirect)` in its three gpu-filter
+  copies. Its slow list gains the indirect tests read at 20 s or more under load 15.7 (the
+  carve test 87.6 s, the pulse 40.4 s, the lamp-off fade 20.4 s). `check-test-tiers` exits 0.
+  The merged tree, exclusive perf lock, load 7.03 at the start: `cargo nextest run --workspace
+  --profile full --test-threads 2 --no-fail-fast` 615 passed, 8 skipped, exit 0; `cargo test
+  --doc` 7 passed, 1 ignored; clippy `-D warnings`, fmt, deny, `check-doc-links` (305 links),
+  `check-comment-hygiene`, `check-index-rows` and `check-test-tiers`: exit 0.
 - Merge of main (99e7bee, Plans 0028 and 0030) into plan-0029:
   - Conflicts in `marcher.rs`, `lib.rs`, `hud.rs`, `main.rs`, `tests/golden.rs` and `nfr.md`;
     both sides are kept.

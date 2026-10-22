@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0042** (ADRs are a separate sequence; next free there is **0035**).
+**Next free number: 0046** (ADRs are a separate sequence; next free there is **0035**).
 
 ## Active roster
 
@@ -21,6 +21,9 @@ state from `git log`. Completed plans move to `done/`.
 | [0039](0039-contour-look-sharpness-measured-and-tuned.md) | The contour look at arm's length: a sharpness metric, the sources of its softness, named presets the owner compares | approved | M2, no ADR. After Plan 0028. |
 | [0040](0040-eye-adaptation-asymmetric-auto-exposure-and-pre-exposure.md) | Eye adaptation: an automatic exposure that is fast toward bright and slow toward dark, metered on the GPU, with pre-exposed HDR targets | approved | M2, ADR-0033 (proposed). After Plan 0029; before Plan 0032. |
 | [0041](0041-fsr2-port-to-wgsl.md) | AMD FSR 2.2.1 ported to WGSL: its six passes fed from the hit buffer, compared against our upscaler and the native frame | approved | M2, ADR-0034 (proposed). After Plan 0030. |
+| [0042](0042-generated-gothic-castle-stamped-at-generation.md) | A generated gothic castle with a dungeon: a `.vox` writer, a 27-tile scene imported and stamped at generation into a carved hall, its costs read | approved | M7, no ADR. Testbed plus `vxe-assets`; independent of the other lanes. |
+| [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, six verified defects | approved | Code health, no ADR. After every plan active on 2026-10-22. |
+| [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044. |
 <!-- roster:end -->
 
 ## Recently closed
@@ -28,6 +31,7 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0043](done/0043-test-tiers-quick-gpu-full.md) | Test tiers: quick (CPU, no lock) per phase, gpu under the lock for render phases, full at close; 470 + 124 + 5 = 599, a gate on the gpu list | 2026-10-22, v0.29.1 |
 | [0028](done/0028-size-classed-mirror-slots-and-surface-only-attributes.md) | Size-classed mirror slots: the level 232 to 63 MB, the default at `r_full` 16 under 0.9 GB, attribute pass p99 0.75 ms; the default's `sync` 3.1 ms open | 2026-10-22, v0.29.0 |
 | [0030](done/0030-temporal-upscaler.md) | A temporal upscaler of our own: jittered rays, hit-position reprojection, RCAS; every bar met, shipped opt-in as a performance setting, the default stays Plan 0024's frame | 2026-10-22, v0.28.0 |
 | [0024](done/0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md) | Direct light: a hit buffer, emissive light samples, one shadow ray, an SVGF denoiser; half tier, coarse walk, reuse, a 32-frame emissive history; extraction p99 missed | 2026-10-22, v0.27.0 |
