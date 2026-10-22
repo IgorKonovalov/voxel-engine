@@ -738,8 +738,8 @@ such.
 | 11: The fly-through's switches, HUD rows and autopilot readings | dev | done; `frame_bytes` at 1080p over 300 MB (Notes) | 1b896b3 |
 | 12: The owner's windowed check | human | done (live session 4, 2026-10-21; observations below) | none (docs) |
 | 13: Static emissive light holds still (close review fix) | dev | done; bar 1's quarter missed for full with reuse; bar 4 met on the quiet box (Notes) | 152d1f1 |
-| 14: The mode on screen, and the defaults (close review fix) | dev | done; Phase 9's cone-turn bars under the new reuse default are an owner question (Notes) | 390d1fe, e9a8e6a, committed with this row |
-| 15: The owner's windowed re-check (close review) | human | not started | |
+| 14: The mode on screen, and the defaults (close review fix) | dev | done; Phase 9's cone-turn bars under the new reuse default are an owner question (Notes) | 390d1fe, e9a8e6a, a08d59f |
+| 15: The owner's windowed re-check (close review) | human | done (live session 5, 2026-10-22; observations below) | none (docs) |
 
 Phase 13 observations (merge a59199d is the base): the base's flicker (mean step / share
 above 4/255) read full list 0.6617 / 1.1052 %, full reuse 0.5655 / 1.1490 %, half list
@@ -968,6 +968,20 @@ each. Empty is fine.)_
 - Phase 14: `docs/nfr.md` §2's d367d8f quiet table (flat list) is replaced by the defaults'
   readings, as the phase says; its figures stay in the Phase 7 note above.
 
+Phase 15 observations (the owner's windowed re-check, live session 5, 2026-10-22, run log
+`live/session5-20261022-0756.log` in the worktree, untracked): the owner's verdict, "mode that
+are active now lighting half, shadow walk coarse, sampler reuse, history edits, lamp off,
+filter on, ore pulse off, emissive history 32 - are fine. pressing f5 doesnt change
+anything". The log shows `F5` toggled with the ore pulse on and off, `F3`, `F4`, `F6` and `F7`
+toggled, and two carves. Choices: `F6` half, `F3` coarse (the default moves from full), `F4`
+reuse, `F5` edits as the default with the gradient kept as a mode (no visible difference, an
+observation, not a defect), emissive history 32; runs 2 to 4 (16 and 64) were not judged
+apart. The default change (9ad79c0, checkpoint) re-blessed (changed / by more than 2/255, of
+57 600): dark_cave 33 227 / 23 281, dark_cave_half 33 801 / 23 473 (mean absolute difference
+3.988, 2.771, 1.516), headlamp 4919 / 2194, look_contour 4126 / 2129, look_detail 5364 /
+2365, look_gradient27 4244 / 2057, look_trilinear8 3981 / 1841, mode_banner 125 / 120;
+`hero.png` re-shot (720 859 of 1 440 000 pixels changed, 14 564 by more than 2/255).
+
 Phase 14 observations: the banner shows for 3 s after the start and after each `F3` to `F7`
 and `M` change, by the frame loop's clock, under the HUD rows or alone with `F2` off;
 `mode_banner.png` blessed at 390d1fe. Defaults: half lighting, full shadow walk, reservoir
@@ -1060,6 +1074,29 @@ headlamp 24 929 / 3872, lod 24 431 / 3465, translucent 13 733 / 353, cutaway_lev
 look_contour 27 259 / 3643, look_detail 32 898 / 21 073, look_gradient27 27 651 / 3593,
 look_trilinear8 25 639 / 3071, hud 15 831 / 2109.
 
+### Resume notes (2026-10-22, delete when the coarse default and the amended cone turn land)
+
+- At 9ad79c0 (checkpoint) the shadow walk defaults to coarse; goldens and `hero.png` follow.
+  Two tests fail there (9ad79c0's message names only the first).
+  `the_walk_renders_the_same_bytes_with_every_skip_on_or_off` (`golden.rs`): `headlamp.png`
+  with every skip off differs from every skip on by 12 155 bytes under the coarse walk, which
+  is defined on the mask blocks the skips read, so turning them off changes what it treats as
+  solid; at the full walk the three variants were byte-identical. And `contour_dark_specks_with_and_without_shadows` (Plan 0013's contour
+  bar) reads 248 contour specks only with shadows against face's 147 under the coarse walk;
+  at the full walk it held. The coarse walk counts any 2^3 block with rock as solid, and a
+  smooth contour surface sends more grazing shadow rays through such blocks. Owner question.
+- cbb4a80's amended cone-turn bars, read on the lamp's part with both samplers: the edit-box
+  bars hold (list and reuse: 97.0 % at frame 11, all by 14, of 14 467 pixels); the gradient
+  bar does not (list 99.7 % at frame 1, 99.9 % at 2, all by 7; reuse 99.1 % at 1, 99.3 % at
+  2, all by 9, of 14 468). The slow pixels keep 16 to 23 % of their lamp part after frame 1
+  and then fall at 0.8 a frame: their steady emissive light is one to two times the lamp's,
+  and the gradient's lambda is read on the whole light, so the turn reads as a 40 to 60 %
+  change there and twice that, under 1, is the blend. The test written to the amendment is
+  at `target/plan-0024-resume/lights.rs.lamp-part` (not committed; the committed test is
+  a08d59f's). Owner question.
+- Gate at 9ad79c0: clippy (`-D warnings`) and fmt clean; `cargo nextest run --workspace
+  --test-threads 2`: 580 run, 578 passed, the two tests above failed, 4 skipped.
+
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
@@ -1097,8 +1134,8 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   warnings` exit 0; `cargo fmt --all --check` exit 0; `cargo deny check` exit 0 (advisories,
   bans, licenses, sources ok); `check-doc-links`, `check-comment-hygiene`, `check-index-rows`
   OK. Run on e9a8e6a plus this commit's README, `nfr.md`, goldens and `hero.png`.
-- **Outstanding `human` phases:** Phase 15 (the owner's windowed re-check), and the owner's
-  answer on the cone-turn bars under the reuse default (Notes).
+- **Outstanding `human` phases:** none (Phase 15 done 2026-10-22); two owner questions are
+  open in the resume notes, and this block's gate line is a08d59f's.
 
 ## Followups
 
