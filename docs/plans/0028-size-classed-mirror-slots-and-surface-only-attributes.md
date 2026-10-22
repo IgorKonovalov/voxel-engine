@@ -416,8 +416,8 @@ the material rows are unchanged. Bindings: the masks buffer's binding is freed.
 | 1: The census of units | dev | done: level plain pool 56 075 200 B, records 6 758 400 B (62 846 720 B with table and rows); 16/24 exact plane voxels 57 703 350; chunk-local surface 90 331 692 (1.565 x exact; 1.570 at 12/24, 1.565 at 14/24), 3.08 attribute units (197 B) per brick; contour 16/24 at full residency 871 679 852 B, plain 502 928 492 B (57 777 records); bars: the 180 MB level bar and the pressure bar hold on this arithmetic; the 0.93 to 1.2 GB range reads 0.87 GB here, because it counted the 93 239 reserved records rather than the 57 777 mirrored; gate: 581 nextest passed, 4 skipped, 7 doctests, clippy and fmt clean | 1d1e67c |
 | 2: The slot format, the bins and the march, plain look | dev | done: every listed golden and the skip-against-single-voxel test unchanged (no re-bless); level plain 62 846 720 B live (`level_mirror`, lavapipe and the RTX 3080); level hit pass 1.264 to 1.314 ms plain, 1.404 to 1.420 ms default, streamed plain spawn 1.701 to 1.714 ms (paired with 1d1e67c, load 4.5 to 8.7); level first sync 342 ms against 500 ms; gate: 579 nextest passed, 4 skipped, clippy and fmt clean | 5fb6d26 |
 | 3: Surface-only attributes, contour look | dev | done after the 2026-10-22 amendment: default autopilot at 16/24, RTX 3080 Laptop, quiet (load 0.93 to 1.98, exclusive perf lock), `attr_cap` 8192 shipped: attribute pass GPU p99 0.711, 0.753, 0.754 ms (p50 0.445 to 0.485), carry-over age p99 25.1 to 25.5 ms over three runs; `attr_cap` 4096 (measurement build, load 3.88): p99 0.563 ms, age p99 2306.4 ms; iGPU (`--adapter AMD`, RADV RENOIR), 8192, no bar: p50 2.010 ms, p99 2.522 ms, age p99 5295.6 ms (load 7.27); 55.1 chunk-local surface voxels and 0.971 rounds a brick at 16/24 (census); the four look goldens byte for byte; 7.38 degrees and 32 px; cube 56 / 2 units / indices 0 and 55, 55 after the carve; chunk-face 64; gate: 582 nextest passed, 4 skipped; `--features wasm` 156 passed, 3 skipped; 7 doctests; clippy (both) and fmt clean | f0b8650 |
-| 4: The streamed default at `r_full` 16, and the slow adapter | dev | done: RTX 3080 Laptop, exclusive perf lock, load 1.49 to 9.53 (not quiet); default autopilot at 16/24: full residency with `r_full` 16, 871 679 852 B live there, peak 941 911 020 B, peak pressure 0.6514 (records), 0 radius changes, 0 deferred syncs, return hash match (1d1e67c: `r_full` 13, 2 864 309 692 B, pressure 0.911); plain `sync` p50 0.168 / 0.171 ms against 4.931 / 4.977 ms for 1d1e67c (`update + poll + sync` p50 0.172 / 0.175 ms); default `sync` p50 3.086 ms; spare units at full residency 0.10 % (default, 11 908 of 11 705 061) and 0.06 % (plain); settled spawn at 1080p, hit 1.764 to 1.780 ms default, 1.539 to 1.571 ms plain; iGPU (`--adapter AMD`, RADV RENOIR, load 0.69 to 3.62): level spawn hit 9.296 to 9.302 ms (frame 33.757 to 33.774), settled spawn hit 13.318 to 13.354 ms default (frame 44.550 to 44.706), 11.961 ms plain, default autopilot `sync` p50 16.001 ms; gate: 582 nextest passed, 4 skipped; `--features wasm` 156 passed, 3 skipped; 7 doctests; clippy (both) and fmt clean | committed with this row |
-| 5: The owner's windowed flight | human | not started | |
+| 4: The streamed default at `r_full` 16, and the slow adapter | dev | done: RTX 3080 Laptop, exclusive perf lock, load 1.49 to 9.53 (not quiet); default autopilot at 16/24: full residency with `r_full` 16, 871 679 852 B live there, peak 941 911 020 B, peak pressure 0.6514 (records), 0 radius changes, 0 deferred syncs, return hash match (1d1e67c: `r_full` 13, 2 864 309 692 B, pressure 0.911); plain `sync` p50 0.168 / 0.171 ms against 4.931 / 4.977 ms for 1d1e67c (`update + poll + sync` p50 0.172 / 0.175 ms); default `sync` p50 3.086 ms; spare units at full residency 0.10 % (default, 11 908 of 11 705 061) and 0.06 % (plain); settled spawn at 1080p, hit 1.764 to 1.780 ms default, 1.539 to 1.571 ms plain; iGPU (`--adapter AMD`, RADV RENOIR, load 0.69 to 3.62): level spawn hit 9.296 to 9.302 ms (frame 33.757 to 33.774), settled spawn hit 13.318 to 13.354 ms default (frame 44.550 to 44.706), 11.961 ms plain, default autopilot `sync` p50 16.001 ms; gate: 582 nextest passed, 4 skipped; `--features wasm` 156 passed, 3 skipped; 7 doctests; clippy (both) and fmt clean | 241a37e |
+| 5: The owner's windowed flight | human | done (owner, live session 8, 2026-10-22, binary of 241a37e, RTX 3080 Laptop, default look, `--seed 1`): run 1, overlay hidden: frame CPU p50 8.890 ms, p99 39.013 ms; `update + poll + sync` p50 4.910 ms, p99 30.172 ms; march GPU p50 10.793 ms, p99 22.828 ms over 1054 timed frames (2671 frames); verdict "run 1 feels fine". Run 2, overlay shown (`--hud`): frame CPU p50 12.056 ms, p99 47.437 ms; `update + poll + sync` p50 8.233 ms, p99 35.608 ms; march GPU p50 11.461 ms, p99 35.730 ms over 2751 timed frames; verdict "2 are fine". Plan 0027's baseline: frame CPU p50 10.223 ms, p99 53.354 ms; `update + poll + sync` p50 4.432 ms, p99 36.548 ms; march GPU p50 6.571 ms (overlay shown) | this log |
 
 ### Notes
 
@@ -489,16 +489,47 @@ the material rows are unchanged. Bindings: the masks buffer's binding is freed.
   with `--adapter AMD` in every slow-adapter reading. Phase 4's readings were taken under the
   other lanes' load (1-minute 0.69 to 9.53), each labelled with its load in `nfr.md`.
   (Phase 4 commit)
+- Phase 5 (owner, `live/session8-20261022-1644.log`, runs 1 and 2): run 1 reached full
+  residency after 29 176 ms with 18 616 full and 42 586 LOD-only chunks, 939 067 564 B live,
+  pressure 0.656, `r_full` 16, and the log has no radius change or deferral line. The owner's
+  verdicts on the 40 fps saturation, verbatim: run 1 (overlay hidden) "run 1 feels fine", run
+  2 (overlay shown) "2 are fine". Against Plan 0027's baseline (overlay shown): frame CPU p50
+  12.056 ms against 10.223 ms, `update + poll + sync` p50 8.233 ms against 4.432 ms, march
+  GPU p50 11.461 ms against 6.571 ms; p99 frame CPU 47.437 ms against 53.354 ms. The window
+  size is not printed in the log.
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature
+- **Public API changed:** `vxe-render`: the mirror's slot format (size-classed 64-byte units,
+  `UNIT_BYTES`, `UNIT_WORDS`, `PAGE_UNITS`, `BINS`, `bin_of`, `slot_units`, `payload_units`,
+  `attr_offset`, `surface_attr_units`, `chunk_surface`, `BinStats` and `GpuWorld::bin_stats`,
+  `live_units`, `spare_units`, `spare_slots`, `bin_of_unit`); `MirrorConfig::max_shard_units`
+  for `max_shard_slots`; the records lose the chunk palette and the masks buffer binding goes;
+  `attrib::BRICKS_PER_GROUP`, `AttribItem` carries the entry less `FULL_BIT`, no clear items;
+  shader interfaces of `march.wgsl` and `attrib.wgsl` (header unit, surface mask, popcount
+  addressing, `NB_MIP`). `vxe-world`: the census of units (`census.rs`). Fly-through:
+  `--adapter SUBSTRING`, the `bins:` line, `level_pool_units`.
+- **Budget readings:** level plain 62 846 720 B live, contour 157 872 640 B (Phases 2 and 3,
+  `level_mirror` on lavapipe and the RTX 3080); 16/24 default 871 679 852 B at full residency,
+  peak 941 911 020 B, peak pressure 0.6514, `r_full` 16, no deferral (Phase 4, RTX 3080 Laptop,
+  load 1.49); attribute pass GPU p99 0.711 to 0.754 ms and carry-over age p99 25.1 to 25.5 ms
+  at `attr_cap` 8192 (Phase 3, RTX 3080 Laptop, quiet, f0b8650), 0.563 ms / 2306.4 ms at 4096,
+  iGPU 2.522 ms / 5295.6 ms; plain `sync` p50 0.168 and 0.171 ms against 4.931 and 4.977 ms
+  (Phase 4, load 5.90 to 9.53); spare units 0.10 % and 0.06 % of live; hit pass at the level
+  spawn 1.264 to 1.314 ms plain (Phase 2), settled 16/24 spawn 1.764 to 1.780 ms default and
+  1.539 to 1.571 ms plain (Phase 4); iGPU (RADV RENOIR) level spawn hit 9.296 to 9.302 ms,
+  settled spawn 13.318 to 13.354 ms default, 11.961 ms plain; the owner's windowed frames
+  summaries in the Phase 5 row. Labels and loads are in `docs/nfr.md` §2 and §3.
+- **Gate at the tip (241a37e):** `cargo build --workspace` exit 0; `cargo nextest run
+  --workspace --test-threads 2` 582 passed, 4 skipped, exit 0; `cargo nextest run -p flythrough
+  --features wasm` 156 passed, 3 skipped, exit 0; `cargo test --workspace --doc` 7 passed, exit
+  0; `cargo clippy --workspace --all-targets -- -D warnings` and with `-p flythrough --features
+  wasm` exit 0; `cargo fmt --all --check` exit 0; `cargo deny check` advisories, bans, licenses
+  and sources ok; `check-doc-links` and `check-comment-hygiene` exit 0.
+- **Outstanding `human` phases:** none
 
 ## Followups
 
