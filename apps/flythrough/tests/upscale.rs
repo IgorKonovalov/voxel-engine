@@ -721,7 +721,7 @@ fn the_upscalers_distance_from_native_under_each_lighting_mode() {
 /// still frames, then 32 more upscaled frames read back. Returns the mean over hit pixels
 /// (output pixels whose nearest internal sample hit) and the 31 consecutive pairs of the
 /// largest channel difference, and the share of (pixel, pair) values above 4/255.
-fn still_vein_flicker(jitter: bool) -> Option<(f64, f64)> {
+fn still_vein_flicker(jitter: bool, upscaler: Upscaler) -> Option<(f64, f64)> {
     let source = scene_source();
     let world = World::generate(
         source.extent,
@@ -740,6 +740,7 @@ fn still_vein_flicker(jitter: bool) -> Option<(f64, f64)> {
         gpu.sync_now(&world, &device, &queue).unwrap();
     }
     let mut frame = frame_of(&device, internal, output, jitter);
+    frame.set_upscaler(upscaler);
     frame.set_lighting(vxe_render::Lighting {
         lamp: false,
         ..vxe_render::Lighting::default()
@@ -801,10 +802,10 @@ fn still_vein_flicker(jitter: bool) -> Option<(f64, f64)> {
 /// stillest image the owner judged to its default).
 #[test]
 fn jitter_adds_little_flicker_on_a_still_vein() {
-    let Some((off_mean, off_over)) = still_vein_flicker(false) else {
+    let Some((off_mean, off_over)) = still_vein_flicker(false, Upscaler::default()) else {
         return;
     };
-    let (on_mean, on_over) = still_vein_flicker(true).unwrap();
+    let (on_mean, on_over) = still_vein_flicker(true, Upscaler::default()).unwrap();
     println!(
         "still vein at scale 1.5: jitter off mean {off_mean:.4}/255, {:.4} % over 4/255; jitter on mean {on_mean:.4}/255, {:.4} % over 4/255",
         off_over * 100.0,
@@ -1370,4 +1371,342 @@ fn the_upscalers_sharpness_readings() {
     ] {
         stripe_readings(&rig, u, label, true);
     }
+}
+
+// ---- Light changes under a still camera: the headlamp's sweep and step ----
+
+/// The pipelines the lamp bars compare: Plan 0024's frame (scale 1, jitter off) and the
+/// upscaler at scale 1 and 1.5, jittered, all at a 384 x 216 output.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Pipe {
+    Reference,
+    U1,
+    U15,
+}
+
+impl Pipe {
+    fn frame(self, device: &wgpu::Device, upscaler: Upscaler, lamp: bool) -> Frame {
+        let mut f = match self {
+            Pipe::Reference => frame_of(device, OUTPUT, OUTPUT, false),
+            Pipe::U1 => frame_of(device, OUTPUT, OUTPUT, true),
+            Pipe::U15 => frame_of(device, INTERNAL, OUTPUT, true),
+        };
+        f.set_upscaler(upscaler);
+        f.set_lighting(vxe_render::Lighting {
+            lamp,
+            ..vxe_render::Lighting::default()
+        });
+        f
+    }
+}
+
+/// The lamp's turn a frame during the sweep, in radians: about 2 output pixels a frame near
+/// the image's centre (384 / 2 / tan(35 degrees) / (16 / 9) = 154 pixels a radian).
+const SWEEP_RATE: f32 = 0.013;
+
+/// Per-pixel luminance of an `OUTPUT` image.
+fn lumas(img: &[u8]) -> Vec<f64> {
+    let [w, h] = OUTPUT.map(|n| n as usize);
+    (0..w * h).map(|i| luma(img, i % w, i / w)).collect()
+}
+
+/// The luminance-weighted mean column of `max(0, lit - off)`, and that contribution.
+fn lamp_centroid(lit: &[f64], off: &[f64]) -> (f64, Vec<f64>) {
+    let w = OUTPUT[0] as usize;
+    let c: Vec<f64> = lit.iter().zip(off).map(|(a, b)| (a - b).max(0.0)).collect();
+    let (mut s, mut sx) = (0.0, 0.0);
+    for (i, v) in c.iter().enumerate() {
+        s += v;
+        sx += v * ((i % w) as f64 + 0.5);
+    }
+    (sx / s.max(1e-9), c)
+}
+
+/// The mean absolute luminance difference of two images, in 1/255.
+fn luma_mad(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b).map(|(x, y)| (x - y).abs()).sum::<f64>() / a.len() as f64
+}
+
+/// The frames, from the first after a change, until `series` (each frame's mean absolute
+/// difference from the settled image) falls below 10 % of its first value; `None` if it
+/// does not within the series.
+fn settle_frames(series: &[f64]) -> Option<usize> {
+    series
+        .iter()
+        .position(|&d| d < 0.1 * series[0])
+        .map(|i| i + 1)
+}
+
+/// One pipeline's lamp readings.
+#[derive(Debug, Default)]
+struct LampReading {
+    /// The sweep's centroid over its last 16 frames, one per frame.
+    centroids: Vec<f64>,
+    /// The lamp's contribution over the sweep's last 16 frames.
+    contributions: Vec<Vec<f64>>,
+    /// Frames for the lamp switched off to settle within 10 %.
+    step: Option<usize>,
+    /// Frames for an emission step (ore 1.0 to 0.25, lamp off) to settle within 10 %.
+    emission: Option<usize>,
+    /// The emission step's first and last difference from its settled image, in 1/255.
+    emission_series: (f64, f64),
+    /// The mean over pixels of a still lamp-lit image's luminance range over one jitter cycle.
+    wobble: f64,
+}
+
+/// On the level at the spawn pose, a still camera: `pipe`'s lamp sweep (32 frames settled,
+/// then the lamp's turn raised by [`SWEEP_RATE`] a frame for 32 frames, its contribution
+/// against a settled lamp-off image of the same pipeline) and lamp step (32 frames settled,
+/// then the lamp off for 40 frames); with `full` the emission step and the wobble too.
+fn lamp_reading(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &GpuWorld,
+    camera: &vxe_render::Camera,
+    pipe: Pipe,
+    upscaler: Upscaler,
+    full: bool,
+) -> LampReading {
+    let light = LightParams::headlamp();
+    let settled = |lamp: bool, frames: u32| {
+        let mut f = pipe.frame(device, upscaler, lamp);
+        for _ in 0..frames {
+            f.step(device, queue, gpu, camera, &light);
+        }
+        f
+    };
+    let off = lumas(&readback::read_rgba8(
+        device,
+        queue,
+        settled(false, 48).target(),
+    ));
+    let mut r = LampReading::default();
+    let mut f = settled(true, SETTLE);
+    let mut swept = light;
+    for i in 0..32 {
+        swept.turn += SWEEP_RATE;
+        f.step(device, queue, gpu, camera, &swept);
+        if i >= 16 {
+            let lit = lumas(&readback::read_rgba8(device, queue, f.target()));
+            let (c, contribution) = lamp_centroid(&lit, &off);
+            r.centroids.push(c);
+            r.contributions.push(contribution);
+        }
+    }
+    let mut f = settled(true, SETTLE);
+    f.set_lighting(vxe_render::Lighting {
+        lamp: false,
+        ..f.lighting()
+    });
+    let series: Vec<f64> = (0..40)
+        .map(|_| {
+            f.step(device, queue, gpu, camera, &light);
+            luma_mad(
+                &lumas(&readback::read_rgba8(device, queue, f.target())),
+                &off,
+            )
+        })
+        .collect();
+    r.step = settle_frames(&series);
+    if !full {
+        return r;
+    }
+    let ore = flythrough::cave::ORE;
+    let mut dim = settled(false, 0);
+    dim.set_emission_scale(queue, ore, 0.25);
+    for _ in 0..64 {
+        dim.step(device, queue, gpu, camera, &light);
+    }
+    let target = lumas(&readback::read_rgba8(device, queue, dim.target()));
+    let mut f = settled(false, 64);
+    f.set_emission_scale(queue, ore, 0.25);
+    let series: Vec<f64> = (0..64)
+        .map(|_| {
+            f.step(device, queue, gpu, camera, &light);
+            luma_mad(
+                &lumas(&readback::read_rgba8(device, queue, f.target())),
+                &target,
+            )
+        })
+        .collect();
+    r.emission = settle_frames(&series);
+    r.emission_series = (series[0], series[series.len() - 1]);
+    let mut f = settled(true, SETTLE);
+    let n = (OUTPUT[0] * OUTPUT[1]) as usize;
+    let (mut lo, mut hi) = (vec![f64::MAX; n], vec![f64::MIN; n]);
+    for _ in 0..vxe_render::marcher::JITTER_PHASES {
+        f.step(device, queue, gpu, camera, &light);
+        for (i, v) in lumas(&readback::read_rgba8(device, queue, f.target()))
+            .into_iter()
+            .enumerate()
+        {
+            lo[i] = lo[i].min(v);
+            hi[i] = hi[i].max(v);
+        }
+    }
+    r.wobble = hi.iter().zip(&lo).map(|(a, b)| a - b).sum::<f64>() / n as f64;
+    r
+}
+
+/// The sweep's ideal centroids: for each of the sweep's last 16 frames, a single frame of
+/// Plan 0024's pipeline with no history, lamp on at that turn, against one with the lamp off.
+fn ideal_centroids(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &GpuWorld,
+    camera: &vxe_render::Camera,
+) -> Vec<f64> {
+    let light = LightParams::headlamp();
+    let off_frame = Pipe::Reference.frame(device, Upscaler::default(), false);
+    off_frame.render(device, queue, gpu, camera, &light);
+    let off = lumas(&readback::read_rgba8(device, queue, off_frame.target()));
+    let on = Pipe::Reference.frame(device, Upscaler::default(), true);
+    (16..32)
+        .map(|i| {
+            let swept = LightParams {
+                turn: SWEEP_RATE * (i + 1) as f32,
+                ..light
+            };
+            on.render(device, queue, gpu, camera, &swept);
+            lamp_centroid(
+                &lumas(&readback::read_rgba8(device, queue, on.target())),
+                &off,
+            )
+            .0
+        })
+        .collect()
+}
+
+/// The least-squares slope of `ys` against their index.
+fn slope(ys: &[f64]) -> f64 {
+    let n = ys.len() as f64;
+    let mx = (n - 1.0) / 2.0;
+    let my = ys.iter().sum::<f64>() / n;
+    let (mut sxy, mut sxx) = (0.0, 0.0);
+    for (i, y) in ys.iter().enumerate() {
+        let dx = i as f64 - mx;
+        sxy += dx * (y - my);
+        sxx += dx * dx;
+    }
+    sxy / sxx
+}
+
+/// Every pipeline's lamp readings under `upscaler`, printed, with Phase 7's bars checked; the
+/// return value lists the failures.
+fn lamp_readings(upscaler: Upscaler, label: &str, full: bool) -> Option<Vec<String>> {
+    let (world, camera) = level();
+    let (device, queue, gpu) = level_rig(&world, &camera)?;
+    let ideal = ideal_centroids(&device, &queue, &gpu, &camera);
+    let speed = slope(&ideal);
+    let lag = |r: &LampReading| {
+        ideal
+            .iter()
+            .zip(&r.centroids)
+            .map(|(a, b)| (a - b) / speed)
+            .sum::<f64>()
+            / ideal.len() as f64
+    };
+    println!(
+        "[{label}] lamp sweep: {SWEEP_RATE} rad a frame, the ideal centroid moves {speed:.3} px a frame"
+    );
+    let reference = lamp_reading(
+        &device,
+        &queue,
+        &gpu,
+        &camera,
+        Pipe::Reference,
+        upscaler,
+        full,
+    );
+    let ref_lag = lag(&reference);
+    println!(
+        "[{label}] reference: lag {ref_lag:.2} frames, lamp step settles in {:?} frames, emission step {:?} ({:.3?}), wobble {:.3}/255",
+        reference.step, reference.emission, reference.emission_series, reference.wobble
+    );
+    let mut failures = Vec::new();
+    for pipe in [Pipe::U1, Pipe::U15] {
+        let r = lamp_reading(&device, &queue, &gpu, &camera, pipe, upscaler, full);
+        let l = lag(&r);
+        // The trail: pixels the reference leaves under 4/255 that the upscaler lights over it.
+        let (mut trail, mut dark) = (0usize, 0usize);
+        for (c, rc) in r.contributions.iter().zip(&reference.contributions) {
+            for (v, rv) in c.iter().zip(rc) {
+                if *rv < 4.0 {
+                    dark += 1;
+                    trail += usize::from(*v > 4.0);
+                }
+            }
+        }
+        println!(
+            "[{label}] {pipe:?}: lag {l:.2} frames, lamp step settles in {:?} frames, emission step {:?} ({:.3?}), wobble {:.3}/255, trail {:.3} % of the reference's dark pixels",
+            r.step,
+            r.emission,
+            r.emission_series,
+            r.wobble,
+            trail as f64 * 100.0 / dark.max(1) as f64
+        );
+        if !at_most(l, ref_lag + 2.0) {
+            failures.push(format!("{pipe:?}: lag {l:.2} over {:.2}", ref_lag + 2.0));
+        }
+        match (r.step, reference.step) {
+            (Some(s), Some(rs)) if s <= rs + 2 => {}
+            (s, rs) => failures.push(format!("{pipe:?}: lamp step {s:?} against {rs:?} + 2")),
+        }
+    }
+    for f in &failures {
+        println!("[{label}] over a bar: {f}");
+    }
+    Some(failures)
+}
+
+/// A sweeping headlamp and a lamp switched off reach the upscaled image about as fast as
+/// Plan 0024's frame: on the level at the spawn pose with a still camera, at scale 1 and 1.5
+/// (jittered, 384 x 216 output), the lamp's centroid lags the ideal (a single frame with no
+/// history at each turn) by at most 2 frames more than Plan 0024's frame does over the
+/// sweep's last 16 frames, and the lamp step settles within 10 % of its first difference in
+/// at most 2 frames more than that frame takes.
+#[test]
+fn a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame() {
+    let Some(failures) = lamp_readings(Upscaler::default(), "default", false) else {
+        return;
+    };
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+/// A reading, no bar: the lamp readings in full (the emission step, the wobble and the trail
+/// too) under the default upscaler, with still pixels never clipped, and with the still
+/// blend at 1/16, which also reads the still camera, the flicker rig and the stripes. Run
+/// with `--ignored`.
+#[test]
+#[ignore = "a diagnostic reading of light changes and the history weight; run by hand with --ignored"]
+fn the_upscalers_lamp_and_history_weight_readings() {
+    use vxe_render::marcher::StillClip;
+    let base = Upscaler::default();
+    let never = Upscaler {
+        still_clip: StillClip::Never,
+        ..base
+    };
+    let sixteenth = Upscaler {
+        alpha: 0.0625,
+        ..base
+    };
+    if lamp_readings(base, "default", true).is_none() {
+        return;
+    }
+    lamp_readings(never, "still never clipped", true);
+    for (label, u) in [("default", base), ("still alpha 1/16", sixteenth)] {
+        let r = still_camera_reading(u).unwrap();
+        let (m0, o0) = still_vein_flicker(false, u).unwrap();
+        let (m1, o1) = still_vein_flicker(true, u).unwrap();
+        println!(
+            "[{label}] still camera from supersampled {:.3} (bilinear {:.3}); flicker at 1.5 jitter off {m0:.4}/255 {:.4} %, on {m1:.4}/255 {:.4} %",
+            r.up_ssaa,
+            r.bilinear_ssaa,
+            o0 * 100.0,
+            o1 * 100.0
+        );
+    }
+    let rig = stripe_rig().unwrap();
+    stripe_readings(&rig, sixteenth, "still alpha 1/16", false);
+    lamp_readings(sixteenth, "still alpha 1/16", true);
 }

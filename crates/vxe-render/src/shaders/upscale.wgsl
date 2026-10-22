@@ -70,6 +70,8 @@ struct UpTuning {
     // 0: the current colour blends at `alpha`; 1: at `alpha` times the nearest sample's
     // kernel weight over the kernel's peak; 2: that over `w_mean`, at most 1.
     blend: u32,
+    // 0: a still pixel keeps its history unclipped; 1: unless the light at its hit changed
+    // (it is then clipped and blended as a moving one); 2: still pixels are clipped too.
     still_clip: u32,
     width: f32,
     alpha: f32,
@@ -79,6 +81,17 @@ struct UpTuning {
     clip_gamma: f32,
     // The nearest sample's mean kernel weight at this scale (blend 2 divides by it).
     w_mean: f32,
+    // A light change under a still pixel (`still_clip` 1): the lamp's unshadowed term at the
+    // hit moved by more than `change_rel` of the larger of the two and `change_abs` since the
+    // lamp of `old_*` (an older frame's), or an emission scale changed.
+    change_rel: f32,
+    change_abs: f32,
+    old_on: u32,
+    old_pos: vec3<f32>,
+    old_intensity: f32,
+    old_dir: vec3<f32>,
+    old_cos_outer: f32,
+    old_cos_inner: f32,
     _pad0: f32,
     _pad1: f32,
     _pad2: f32,
@@ -152,6 +165,33 @@ fn up_kernel(d: vec2<f32>) -> f32 {
             return lanczos2(d.x) * lanczos2(d.y);
         }
     }
+}
+
+// The headlamp's `intensity * cone * max(n.l, 0) / dist^2` at `p`, normal `n`, without the
+// shadow ray (light.wgsl's `lamp_lit`); 0 when the lamp is off.
+fn up_lamp(on: bool, pos: vec3<f32>, dir: vec3<f32>, intensity: f32, cos_o: f32, cos_i: f32, p: vec3<f32>, n: vec3<f32>) -> f32 {
+    if (!on) {
+        return 0.0;
+    }
+    let to_light = pos - p;
+    let dist2 = max(dot(to_light, to_light), 1e-4);
+    let l = to_light * inverseSqrt(dist2);
+    let cone = smoothstep(cos_o, cos_i, dot(-l, dir));
+    return intensity * cone * max(dot(n, l), 0.0) / dist2;
+}
+
+// Whether the light at `rec` changed since the older frame `up_tuning` holds: an emission
+// scale changed within EMISSION_CHANGE_FRAMES, or the lamp's term moved past the thresholds.
+fn up_light_changed(rec: HitRecord) -> bool {
+    if ((params.lighting & LIGHTING_EMISSION_CHANGED) != 0u) {
+        return true;
+    }
+    let now = up_lamp((params.lighting & LIGHTING_LAMP) != 0u, params.light_pos, params.light_dir,
+        params.light_intensity, params.cos_outer, params.cos_inner, rec.p, rec.n);
+    let then = up_lamp(up_tuning.old_on != 0u, up_tuning.old_pos, up_tuning.old_dir,
+        up_tuning.old_intensity, up_tuning.old_cos_outer, up_tuning.old_cos_inner, rec.p, rec.n);
+    let d = abs(now - then);
+    return d > up_tuning.change_abs && d > up_tuning.change_rel * max(now, then);
 }
 
 fn to_ycocg(c: vec3<f32>) -> vec3<f32> {
@@ -323,8 +363,13 @@ fn upscale(@builtin(global_invocation_id) gid: vec3<u32>) {
                     // A still pixel (its history moved less than CLIP_STILL output pixels)
                     // keeps its history unclipped: it is the average of the jittered samples,
                     // which one frame's 3 x 3 does not span. What changes under a still
-                    // camera without moving the history is an edit (rejected above) or light.
-                    let still = length(h - (vec2<f32>(gid.xy) + 0.5)) < CLIP_STILL;
+                    // camera without moving the history is an edit (rejected above) or light,
+                    // which `still_clip` 1 clips and blends as motion.
+                    var still = length(h - (vec2<f32>(gid.xy) + 0.5)) < CLIP_STILL;
+                    if (still && (up_tuning.still_clip == 2u
+                        || (up_tuning.still_clip == 1u && up_light_changed(rec)))) {
+                        still = false;
+                    }
                     let b_lo = select(max(lo, mean - up_tuning.clip_gamma * sigma), vec3<f32>(-1e9), still);
                     let b_hi = select(min(hi, mean + up_tuning.clip_gamma * sigma), vec3<f32>(1e9), still);
                     let mid = 0.5 * (b_lo + b_hi);

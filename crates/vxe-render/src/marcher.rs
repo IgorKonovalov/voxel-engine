@@ -530,6 +530,21 @@ pub enum Blend {
     MeanNearness,
 }
 
+/// Whether the upscale pass clips a still pixel's history (one that moved less than 0.01
+/// output pixels), which is otherwise the unclipped average of the jittered samples.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StillClip {
+    /// Never.
+    Never,
+    /// Where the light at the hit changed: the lamp's unshadowed term moved past
+    /// [`Upscaler::change_rel`] and [`Upscaler::change_abs`] since the lamp of
+    /// [`Upscaler::change_frames`] frames before, or an emission scale changed within
+    /// [`EMISSION_CHANGE_FRAMES`]. Such a pixel is clipped and blended as a moving one.
+    LightChange,
+    /// Always, as a moving pixel.
+    Always,
+}
+
 /// The upscale pass's reconstruction, history fetch and blend ([`Frame::set_upscaler`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Upscaler {
@@ -545,7 +560,18 @@ pub struct Upscaler {
     /// The clip box around the 3 x 3 samples' YCoCg mean, in standard deviations (inside
     /// their minimum and maximum).
     pub clip_gamma: f32,
+    pub still_clip: StillClip,
+    /// A light change: the lamp's term moved by more than this share of the larger of the two
+    /// ([`StillClip::LightChange`]).
+    pub change_rel: f32,
+    /// ... and by more than this, in the lamp's irradiance units.
+    pub change_abs: f32,
+    /// The frames between the lamps compared, 1 to [`LAMP_FRAMES`].
+    pub change_frames: u32,
 }
+
+/// Frames of lamp parameters the frame keeps for [`Upscaler::change_frames`].
+pub const LAMP_FRAMES: usize = 32;
 
 impl Default for Upscaler {
     /// The Gaussian of width 0.6 over the 3 x 3, the Catmull-Rom fetch and the
@@ -560,6 +586,10 @@ impl Default for Upscaler {
             alpha: 0.1,
             alpha_moving: 0.2,
             clip_gamma: 1.0,
+            still_clip: StillClip::LightChange,
+            change_rel: 0.1,
+            change_abs: 0.01,
+            change_frames: 24,
         }
     }
 }
@@ -576,6 +606,10 @@ impl Upscaler {
             alpha: 0.1,
             alpha_moving: 0.1,
             clip_gamma: 1.0,
+            still_clip: StillClip::Never,
+            change_rel: 0.1,
+            change_abs: 0.01,
+            change_frames: 12,
         }
     }
 }
@@ -593,7 +627,39 @@ struct UpscaleUniform {
     alpha_moving: f32,
     clip_gamma: f32,
     w_mean: f32,
+    change_rel: f32,
+    change_abs: f32,
+    old_on: u32,
+    old_pos: [f32; 3],
+    old_intensity: f32,
+    old_dir: [f32; 3],
+    old_cos_outer: f32,
+    old_cos_inner: f32,
     _pad: [f32; 3],
+}
+
+/// One frame's lamp, as `Params` carries it.
+#[derive(Clone, Copy, Debug, Default)]
+struct Lamp {
+    on: bool,
+    pos: [f32; 3],
+    intensity: f32,
+    dir: [f32; 3],
+    cos_outer: f32,
+    cos_inner: f32,
+}
+
+impl Lamp {
+    fn of(p: &Params) -> Self {
+        Self {
+            on: p.lighting & LIGHTING_LAMP != 0,
+            pos: p.light_pos,
+            intensity: p.light_intensity,
+            dir: p.light_dir,
+            cos_outer: p.cos_outer,
+            cos_inner: p.cos_inner,
+        }
+    }
 }
 
 impl Upscaler {
@@ -644,7 +710,7 @@ impl Upscaler {
         sum / (N * N) as f32
     }
 
-    fn uniform(&self, scale: f32) -> UpscaleUniform {
+    fn uniform(&self, scale: f32, old: Lamp) -> UpscaleUniform {
         UpscaleUniform {
             reconstruction: match self.reconstruction {
                 Reconstruction::Lanczos2 => 0,
@@ -663,12 +729,24 @@ impl Upscaler {
                 Blend::Nearness => 1,
                 Blend::MeanNearness => 2,
             },
-            still_clip: 0,
+            still_clip: match self.still_clip {
+                StillClip::Never => 0,
+                StillClip::LightChange => 1,
+                StillClip::Always => 2,
+            },
             width: self.width,
             alpha: self.alpha,
             alpha_moving: self.alpha_moving,
             clip_gamma: self.clip_gamma,
             w_mean: self.mean_weight(scale),
+            change_rel: self.change_rel,
+            change_abs: self.change_abs,
+            old_on: u32::from(old.on),
+            old_pos: old.pos,
+            old_intensity: old.intensity,
+            old_dir: old.dir,
+            old_cos_outer: old.cos_outer,
+            old_cos_inner: old.cos_inner,
             _pad: [0.0; 3],
         }
     }
@@ -863,6 +941,8 @@ struct History {
     /// The view mode changed since the last encode: the upscaler's history holds another
     /// view's image.
     view_changed: bool,
+    /// The lamps of the last encodes with history, newest last, at most [`LAMP_FRAMES`].
+    lamps: std::collections::VecDeque<Lamp>,
 }
 
 /// Entries the candidate table holds at most.
@@ -1315,7 +1395,9 @@ impl Frame {
                 device,
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("upscale tuning"),
-                    contents: bytemuck::bytes_of(&Upscaler::default().uniform(1.0)),
+                    contents: bytemuck::bytes_of(
+                        &Upscaler::default().uniform(1.0, Lamp::default()),
+                    ),
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 },
             ),
@@ -1727,6 +1809,7 @@ impl Frame {
             _pad: [0; 3],
             boxes: [[0; 4]; 2 * MAX_EDITS],
         };
+        let mut old_lamp = Lamp::of(params);
         if keep_history {
             let mut h = self
                 .history
@@ -1748,6 +1831,19 @@ impl Frame {
             h.overflow = false;
             h.last_views = params.views;
             h.encoded = true;
+            let back = (self.upscaler.change_frames.max(1) as usize).min(LAMP_FRAMES);
+            old_lamp = h
+                .lamps
+                .len()
+                .checked_sub(back)
+                .and_then(|i| h.lamps.get(i))
+                .or(h.lamps.front())
+                .copied()
+                .unwrap_or_else(|| Lamp::of(params));
+            if h.lamps.len() == LAMP_FRAMES {
+                h.lamps.pop_front();
+            }
+            h.lamps.push_back(Lamp::of(params));
         } else {
             p.history = 0;
         }
@@ -1757,7 +1853,7 @@ impl Frame {
         queue.write_buffer(
             &self.upscale_params,
             0,
-            bytemuck::bytes_of(&self.upscaler.uniform(scale)),
+            bytemuck::bytes_of(&self.upscaler.uniform(scale, old_lamp)),
         );
         let table = light_table(world, p.views[0].origin);
         let used = (1 + table.count as usize) * 16;

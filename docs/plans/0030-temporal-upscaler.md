@@ -592,8 +592,8 @@ of Plan 0024 shrink to 44 % at scale 1.5.
 | 3: Lighting that ignores the jitter | dev | done: still camera from 2 x 2 supersampled: upscaled 2.969, bilinear 3.044 (0.975), native 2.066; from native 3.363, 3.333 (1.009); jittered at scale 1 against native from supersampled 2.013 vs 2.066 (284d132: 3.099); flicker at 1.5: jitter off mean 0.1212/255, 0.0020 % over 4/255, on 0.3185/255, 1.0176 % (+0.197, +1.016 pp; margins 0.40, 1.15); Plan 0024's tests pass at jitter off, 11 of 11 `assert_golden` renders byte-identical to 578c8d3 (`dark_cave*.png` unchanged); reading: age below 15 after 16 still frames, jitter on 216 of 82944 hit pixels (0.260 %), off 0 | 0b048ae |
 | 4: The sharpening pass and the golden | dev | done: `upscaled.png` blessed (cavity, 256 x 144 -> 384 x 216, 32 frames, jitter on, sharpening 0.5); sharpening 0 writes each byte as its history value times 255, rounded (0 pixels differ); rim pixels (unsharpened 3 x 3 spanning 16/255 or more): 15914, mean absolute luminance gradient unsharpened 22.888, sharpened 24.100; 0 pixels over their unsharpened 3 x 3 maximum by more than 1/255; workspace nextest 593 run, 593 passed, 5 skipped | 11a5bc9 |
 | 5: The readings and the defaults | dev | done: 1080p output, level spawn, release headless, median of last 30 of 300, 3 runs; RTX 3080 Laptop: upscale + sharpen 0.810 to 0.825 ms at 1.5 (0.889 to 0.899 at 1); hit at 1.5 / 1: 0.600 to 0.610 / 1.375 to 1.389 ms (43.5 %); light + temporal + a-trous 1.489 to 1.520 / 3.392 to 3.428 ms (43.8 %); RADV iGPU, no bar: frame 20.149 to 20.876 ms at 1.5, 38.658 to 40.955 at 1; `frame_bytes` 124 621 440 B at 1.5 = 86 835 840 (Plan 0024 frame at 1280 x 720) + 4 608 000 (rgba8 to output size) + 33 177 600 (histories), Phase 3 added no target; fly-through default scale 1.5 | 2a4c72f |
-| 6: A sharper reconstruction and history fetch | dev | done: stripe wall, sharpening 0, arm's length (22.034 px/voxel) / 88 voxels (1.753 px/voxel); N ES 0.798 GE 0.00867 / 0.14138, R 1.186 0.00656 / 0.10586, B 1.718 0.00435 / 0.05063; at 7cc58a4's settings U1 1.465 0.00507 / 0.08105, U1.5 1.630 0.00449 / 0.06147, pan U1 2.020 0.00357, U1.5 2.404 0.00281; shipped U1 1.192 0.00621 / 0.09951, U1.5 1.252 0.00612 / 0.10024 (bars 1.328, 0.00558 / 0.08998; 1.452, 0.00546 / 0.07825), pan U1 1.436 0.00494, U1.5 1.780 0.00454 (bars 1.720, 0.00357; 2.104, 0.00281); still camera from 2 x 2 supersampled upscaled 2.840, bilinear 3.044, native 2.066, from native 2.965, 3.333; flicker at 1.5 off 0.1016/255 0.0029 %, on 0.2752/255 0.6377 %; carve 4749 in box, 0 blend; sideways 67409 of 67443 (99.95 %), 3317 at alpha 1; `upscaled.png` re-blessed (8044 of 82944 pixels, 9.70 %, over 2/255 from the old), rim 16695 px, 25.953 -> 27.469, 0 over max; workspace nextest 596 run, 596 passed, 6 skipped | committed with this row |
-| 7: Light changes and the history weight | dev | not started | |
+| 6: A sharper reconstruction and history fetch | dev | done: stripe wall, sharpening 0, arm's length (22.034 px/voxel) / 88 voxels (1.753 px/voxel); N ES 0.798 GE 0.00867 / 0.14138, R 1.186 0.00656 / 0.10586, B 1.718 0.00435 / 0.05063; at 7cc58a4's settings U1 1.465 0.00507 / 0.08105, U1.5 1.630 0.00449 / 0.06147, pan U1 2.020 0.00357, U1.5 2.404 0.00281; shipped U1 1.192 0.00621 / 0.09951, U1.5 1.252 0.00612 / 0.10024 (bars 1.328, 0.00558 / 0.08998; 1.452, 0.00546 / 0.07825), pan U1 1.436 0.00494, U1.5 1.780 0.00454 (bars 1.720, 0.00357; 2.104, 0.00281); still camera from 2 x 2 supersampled upscaled 2.840, bilinear 3.044, native 2.066, from native 2.965, 3.333; flicker at 1.5 off 0.1016/255 0.0029 %, on 0.2752/255 0.6377 %; carve 4749 in box, 0 blend; sideways 67409 of 67443 (99.95 %), 3317 at alpha 1; `upscaled.png` re-blessed (8044 of 82944 pixels, 9.70 %, over 2/255 from the old), rim 16695 px, 25.953 -> 27.469, 0 over max; workspace nextest 596 run, 596 passed, 6 skipped | 76f887f |
+| 7: Light changes and the history weight | dev | done: level spawn, still camera, sweep 0.013 rad a frame (ideal centroid 1.811 px a frame); lag behind the ideal over the last 16 frames: reference 5.38, U1 5.82, U1.5 5.92 (Phase 6's code: 15.39, 15.26); lamp step to 10 %: reference 18 frames, U1 18, U1.5 18 (Phase 6's code: 32, 32); trail 1.121 % (U1), 2.605 % (U1.5) of the reference's dark pixels (Phase 6's: 12.198, 12.319 %); wobble over one jitter cycle reference 0.099/255, U1 0.858, U1.5 1.711; still alpha 0.1 kept (1/16: still camera 2.985 against bilinear 3.044, flicker on 0.2058/255 0.4326 %, wobble 0.653 / 1.285); Phase 6's, 3's and 2's bars hold (still camera 2.840 / 3.044, flicker on 0.2752/255 0.6377 %); workspace nextest 597 run, 597 passed, 7 skipped | committed with this row |
 | 8: The readings again | dev | not started | |
 | 9: The owner's windowed re-check (the old 6, first run 2026-10-22: rework, see Notes) | human | not started | |
 
@@ -733,6 +733,28 @@ of Plan 0024 shrink to 44 % at scale 1.5.
 - Phase 6: Plan 0024's goldens pass their tests (`assert_golden`, at most 0.1 % of pixels
   over 2/255); at scale 1 with the jitter off the upscale pass is not dispatched, so their
   path is unchanged (not re-dumped with `cmp` as in Phase 1).
+- Phase 7 item 1: the light-change signal is computed in the upscale pass, not written by
+  the light pass, so it adds no target: the lamp's unshadowed term at the hit (light.wgsl's
+  `lamp_lit` less the shadow ray) under this frame's lamp against the lamp of
+  `Upscaler::change_frames` frames before (the frame keeps the last 32 lamps), changed by
+  more than 10 % of the larger and 0.01; or an emission scale changed within
+  `EMISSION_CHANGE_FRAMES`. Such a still pixel is clipped and blended as a moving one
+  (`StillClip::LightChange`). Only `upscale.wgsl` and `marcher.rs` changed; `light.wgsl`
+  did not. The camera's own motion moves the lamp too, so after a stop still pixels whose
+  lamp term changed stay clipped for `change_frames` frames.
+- Phase 7 tried, by `change_frames` (U1 / U1.5): 12: lag 6.01 / 6.11, step 27 / 26 frames
+  (over the bar, 20), trail 8.284 / 8.920 %; 20: 5.84 / 5.94, 18 / 18, 1.890 / 4.264 %; 24:
+  5.82 / 5.92, 18 / 18, 1.121 / 2.605 %; 32: 5.81 / 5.91, 18 / 18, 1.120 / 2.580 %. Kept 24.
+  The reference's lamp step reads 18 frames, not the amendment's 11 (the lamp part's alpha
+  0.2 under the filter and the composite).
+- Phase 7 item 2: alpha 0.1 and 1/16 read (above); the capped accumulated weight was not
+  read, since Phase 6 kept the normalised nearness blend instead. The jitter sequence stays
+  16 phases (8 and 32 not read).
+- Phase 7 readings: the lag is measured against an ideal, a single history-free frame of
+  Plan 0024's pipeline at each turn, and the bar compares each pipeline's lag with the
+  reference's. The emission step (ore 1.0 to 0.25, lamp off, against a settled 0.25 image)
+  is too small on the level to read a settling count: the first and 64th frames' difference
+  read 0.306 and 0.237/255 (reference), 0.320 and 0.136 (U1), 0.273 and 0.200 (U1.5).
 - Followup: on the RADV iGPU the upscale pass reads 4.8 ms at 1080p output (25 Lanczos taps
   and 9 previous-hit taps per output pixel), against the 1.5 ms line's dev-box reading.
 
