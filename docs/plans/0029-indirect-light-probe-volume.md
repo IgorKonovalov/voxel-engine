@@ -269,7 +269,8 @@ Outcome records at the close; the decision it records is unchanged.
 |---|---|---|---|
 | 1: The volume, the gather, and a constant probe | dev | done: `ProbeVolume` (atlases and state in one storage buffer), gather pass, composite term, `Lighting::indirect`, `--indirect`; `tests/indirect.rs` 2 tests | 6dfd37f |
 | 2: The update pass and the furnace | dev | done: trace and blend dispatches, Chebyshev weight, `light.wgsl` split into `draw_candidates`/`resolve_emissive`/`emissive_estimate`; furnace floor 2.975 after 256 frames (-5.3 % of pi), centre probe texels 2.856 to 2.981; dark box 0.36 % of the lit; 63 solid probes flagged inside, gather unchanged with their texels at 1000 (lavapipe) | f9da073 |
-| 3: Scrolling and edits | dev | stopped at a done-when: origin follows the camera (tagged slots), `Frame::invalidate` adds touched probes to the next update; scroll test passes (12 288 stayed byte for byte, 20 480 entered at age 0); the carve bar (20 % within 32 frames) is not reached, test committed `#[ignore]` pending the owner | committed with this row |
+| 3: Scrolling and edits | dev | stopped at a done-when: origin follows the camera (tagged slots), `Frame::invalidate` adds touched probes to the next update; scroll test passes (12 288 stayed byte for byte, 20 480 entered at age 0); the carve bar (20 % within 32 frames) is not reached, test committed `#[ignore]` pending the owner | 545390f |
+| 3 (after the 518b522 amendment) | dev | done: carve test on the amended bar: dark floor 0.01069 before, 0.12354 at frame 32 = 71.5 % of settled 0.17273 (frame 256) and 11.6x the pre-carve; after the fill, 2.78 % of the lit box's at frame 64, peaking at 3.23 % at frame 26 (lavapipe) | committed with this row |
 | 4: The cave, the switches and the readings | dev | not started | |
 | 5: The owner's windowed check | human | not started | |
 
@@ -312,8 +313,12 @@ Outcome records at the close; the decision it records is unchanged.
   radius-8 carve reads 18.1 % at frame 32 and 22.2 % at frame 256. The flux balance agrees:
   an opening of area A into a box of wall area S = 2304 voxels^2 at albedo 0.5 gives about
   `PI L A / ((1 - rho) S)` against the lit box's PI, about 4 % at radius 4. The test
-  `a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again` carries the plan's
-  bars and is ignored; the fill half (under 5 % within 64 frames) is unmeasured.
+  `a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again` was committed
+  ignored at 545390f; the owner chose the refresh-speed bar (518b522) and the test carries it
+  un-ignored. The frame-32 margin over 70 % is 1.5 points.
+- Phase 3: after the fill the dark/lit ratio rises from 1.95 % (frame 1) to 3.23 % (frame 26)
+  before falling: the dark box's probe the fill box does not touch (x 64.5) still holds the
+  opened light and refreshes only in its slice.
 - Phase 3: the scroll test turns the update off for the jump's frame, so "the probes that
   stay" are compared before any update can rewrite them.
 - Phase 3: edit boxes past `MAX_EDITS` in one frame touch no probe; touched probes past 4096

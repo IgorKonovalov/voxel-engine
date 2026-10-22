@@ -479,14 +479,12 @@ fn probe_bytes(data: &[u8], slot: u32) -> Vec<u8> {
 }
 
 /// In the two-box scene after 256 frames, a radius-4 carve through the dividing wall makes the
-/// dark box's floor-centre indirect irradiance rise above 20 % of the lit box's within 32
-/// frames (the probes the edit box touches refresh at once, the rest in their slices), and
-/// filling the hole back with the wall's rock drops it under 5 % within 64 frames.
-///
-/// Ignored while the bar is an open question: at radius 4 the dark box's converged reading is
-/// about 6.6 % of the lit box's on lavapipe (Plan 0029 Phase 3), under 20 %.
+/// dark box's floor-centre indirect irradiance reach, within 32 frames, at least 70 % of its
+/// own settled value (its reading 256 frames after the carve) and at least 10 times its
+/// pre-carve value (the probes the edit box touches refresh at once, the rest in their
+/// slices); filling the hole back with the wall's rock drops it under 5 % of the lit box's
+/// within 64 frames.
 #[test]
-#[ignore = "Plan 0029 Phase 3: the 20 % bar is above the radius-4 hole's converged 6.6 %; owner question open"]
 fn a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again() {
     let world = two_boxes();
     let full = world.stats().full_bricks as u64;
@@ -499,7 +497,6 @@ fn a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again() {
     let mut dark = FloorProbe::new(&device, DARK_X0);
     lit.run(&device, &queue, &gpu, 256);
     dark.run(&device, &queue, &gpu, 256);
-    let l = lit.indirect(&device, &queue)[0];
     let d0 = dark.indirect(&device, &queue)[0];
     let edit = |mode: Mode, lit: &mut FloorProbe, dark: &mut FloorProbe, gpu: &mut GpuWorld| {
         let r = world
@@ -518,21 +515,27 @@ fn a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again() {
     let dull = furnace_table().2;
     let aabb = edit(Mode::Carve, &mut lit, &mut dark, &mut gpu);
     let mut opened = Vec::new();
-    for _ in 0..32 {
+    for _ in 0..256 {
         lit.run(&device, &queue, &gpu, 1);
         dark.run(&device, &queue, &gpu, 1);
-        opened.push(dark.indirect(&device, &queue)[0] / l);
+        opened.push(dark.indirect(&device, &queue)[0]);
     }
+    let settled = opened[255];
+    let at_32 = opened[31];
     println!(
-        "lit {l:.4}, dark {d0:.5} before; carve {aabb:?}: dark / lit over 32 frames {opened:?}"
+        "dark {d0:.5} before; carve {aabb:?}: frame 32 {at_32:.5} = {:.1} % of settled {settled:.5}, {:.1} x the pre-carve; first 32 frames {:?}",
+        at_32 / settled * 100.0,
+        at_32 / d0,
+        &opened[..32]
     );
-    assert!(opened[31] > 0.20, "{opened:?}");
+    assert!(at_32 >= 0.70 * settled, "{at_32} against settled {settled}");
+    assert!(at_32 >= 10.0 * d0, "{at_32} against pre-carve {d0}");
     edit(Mode::Fill(dull), &mut lit, &mut dark, &mut gpu);
     let mut closed = Vec::new();
     for _ in 0..64 {
         lit.run(&device, &queue, &gpu, 1);
         dark.run(&device, &queue, &gpu, 1);
-        closed.push(dark.indirect(&device, &queue)[0] / l);
+        closed.push(dark.indirect(&device, &queue)[0] / lit.indirect(&device, &queue)[0]);
     }
     println!("filled: dark / lit over 64 frames {closed:?}");
     assert!(closed[63] < 0.05, "{closed:?}");
