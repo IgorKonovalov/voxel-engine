@@ -208,6 +208,85 @@ plan touches must render byte for byte; a re-bless is a deviation to disclose, n
   attribute pass's GPU time under the default autopilot reads p99 at most 1.0 ms (Plan
   0013's proposal; the pass now computes about 35 voxels per brick instead of 512), with
   `attr_cap` 8192 and 4096 both read (Plan 0023's followup) and the carry-over age at each.
+- **Amended 2026-10-22 (owner).** The first attempt (c6df852) met every done-when but the
+  pass's GPU bar: p99 5.770 ms (`attr_cap` 8192) and 5.751 ms (4096), and the backlog's
+  carry-over age p99 7 625 and 27 229 ms against 69 ms before the plan. The pass costs per
+  brick, not per voxel computed: one 256-invocation workgroup a brick, with its four
+  barriers (lines 291, 309, 336 and 364 of `attrib.wgsl`; the resume notes say three), the
+  10^3 occupancy fill and about 5 500 clear items a frame on top of the cap. `r_full` now
+  holds at 16, so the queue holds about 2.4 times the bricks it held at 12.
+  - **What, added:**
+    1. **Drop the clear items.** Every upload already writes its attribute units as
+       `NO_PLANE`, so a clear item rewrites words that already hold that value. `attr_work`
+       emits none, and the shader loses `CLEAR_BIT` and its branch.
+    2. **Four bricks per workgroup, 64 invocations a brick.** The workgroup stays at 256.
+       Item `4 g + b` of the work list is brick `b` of workgroup `g`, the last workgroup
+       runs partly empty, and the order the CPU builds the list in is unchanged. The four
+       barriers are shared by the four bricks, so a brick costs one barrier instead of
+       four. Invocation `t` of a brick computes the surface voxels at attribute indices
+       `t`, `t + 64`, and so on: the surface voxels are listed in index order first (each
+       invocation scans one byte of the surface mask, from the header's prefix plus a
+       popcount, and writes its voxels' cell numbers into the brick's list), then computed
+       in `ceil(n / 64)` rounds. The fixed width is chosen over packing by surface count
+       (bricks summed to at most 256 surface voxels a workgroup). Packing by count would
+       keep more lanes busy, but it needs a segmented work list and a per-workgroup offset
+       table built on the CPU in `build_split`, and the readings put the cost in per-brick
+       overhead, not in idle lanes. At the census's 55.07 chunk-local surface voxels a
+       brick (Phase 1: 90 331 692 / 1 640 292) a brick takes 1 round when `n <= 64` and 2
+       when `n` is in 65..128. Scaling Plan 0013's distribution by Phase 1's 1.565 gives
+       about 1.5 rounds on average, so the compute step keeps about 55 / 96 = 57 % of its
+       lanes busy against 55 / 256 = 21 % today. That figure is a guess from a scaled
+       distribution; the log records the measured mean.
+       Workgroup memory per brick, with occupancy held as bits (1 000 bits in 32 atomic
+       words, set with `atomicOr`): neighbour kinds and entries 27 x 2 x 4 = 216 B, staged
+       masks 27 x 16 x 4 = 1 728 B, occupancy 128 B, attribute words (or the surface list)
+       256 x 4 = 1 024 B at the worst case of 512 surface voxels. That is 3 096 B a brick
+       and 12 384 B for four, under WebGPU's default `maxComputeWorkgroupStorageSize` of
+       16 384 B. With today's `u32` per occupancy cell (4 000 B a brick) four bricks need
+       27 872 B, so the bit packing is required, and eight bricks of 32 invocations
+       (24 768 B) do not fit at all. With the clears dropped and four bricks a workgroup,
+       a frame at cap 8192 runs 2 048 workgroups and 8 192 barrier crossings, where today
+       it runs about 13 700 workgroups and 54 800 crossings (8 192 + 5 482 items, 4 each).
+       The occupancy fill does not shrink: it is still 1 000 cells a brick, now about 16
+       per invocation instead of 4.
+    3. **Optional, inside the pass only:** read occupancy at the lookup from the staged
+       masks (`nb_kind` and `nb_mask`) instead of filling the 10^3 box. A brick then fills
+       the box only when a neighbour is kind 3 (LOD-only, or translucent Wide), and the
+       per-brick fill above goes in the common case. The other candidates the readings
+       support are a cap on compute items derived from the frame's budget, a different
+       split of the front items from the capped ones, and the order of the work list.
+       Each one stays in `attrib.wgsl`, `attrib.rs`, `attr_work.rs` and `gpu_world.rs`'s
+       queue. The log records each change tried, with its p99 and age reading, kept or
+       not.
+  - **Files touched, added:** `crates/vxe-render/src/attr_work.rs` (no clear items; the
+    packing), `crates/vxe-render/src/attrib.rs` (groups of four),
+    `crates/vxe-render/src/shaders/attrib.wgsl`, `crates/vxe-render/src/gpu_world.rs` (the
+    queue, only if an optional change needs it), `crates/vxe-render/tests/mirror.rs`, and
+    `apps/flythrough/src/main.rs` with the root `README.md`, bringing Phase 4's
+    `--adapter <substring>` forward for the iGPU reading below (Phase 4 then uses it).
+  - **Done when, replacing the GPU-time clause above:** under the default autopilot at 16/24
+    on the dev box (RTX 3080 Laptop, the quiet box under the exclusive perf lock, the same
+    flight for both bars) the attribute pass's GPU time reads **p99 at most 1.0 ms** (the
+    bar is unchanged) **and** the carry-over age reads **p99 at most 250 ms** (Plan 0023's
+    line). Both bars are met at the `attr_cap` the commit ships, and the other of 8192 and
+    4096 is read and logged beside it. The same flight on the iGPU (`--adapter` with the
+    AMD adapter's name) records the pass's p50 and p99 and the age's p99, labelled
+    "iGPU, no bar". No bar is set there because nothing measured yet gives a basis for one.
+    The log names the mean surface voxels and rounds a brick. `attr_work` emits no clear
+    item, and a test checks it on a flight-shaped work list. A brick uploaded while its
+    compute item waits behind the cap reads every attribute word as `0xFFFFFFFF` (two
+    `NO_PLANE`), with no clear item run. A work list of five bricks (one partial workgroup)
+    holding the 4 x 4 x 4 cube brick (56 surface voxels, 1 round) and a 3D checkerboard
+    brick (256 solid voxels, every one surface, 8 attribute units, 4 rounds) reads back
+    the same attribute words as an uncapped mirror, and the same as c6df852's one-brick
+    workgroups gave for those bricks. All the other done-whens above stand unchanged:
+    the four look goldens byte for byte, 7.38 degrees and 32 px, the cube and
+    chunk-face counts, and the level's contour under 180 000 000 B live.
+  - **Stop rule:** if either bar still misses after this amendment, `dev` stops. It logs
+    every reading and every change tried, and does not start Phase 4. The next step is an
+    ADR on where contour attributes are computed (on the CPU at upload, or derived at the
+    hit), which Risks names as the fallback. The plan is then re-planned from that ADR's
+    decision.
 
 ### Phase 4: The streamed default at `r_full` 16, and the slow adapter
 - **Owner skill:** dev
@@ -279,7 +358,8 @@ the material rows are unchanged. Bindings: the masks buffer's binding is freed.
 | §3 World in VRAM, live against the reservation | 3 GB | the level 63 MB plain, under 180 MB contour; 16/24 default about 0.93 to 1.2 GB live, pressure peak about 0.65 (records) | `level_mirror`, the Phase 4 autopilot flights |
 | §3 the pressure rule | `r_full` restored above 0.7 | never fires at 16/24 | Phase 4 |
 | §2 Primary rays | 3.0 ms | level 1.43 to 1.55 ms; plain streamed 1.93 to 2.1 ms; the default at `r_full` 16 recorded | Phase 2 and 4 timings, three runs, quiet box, both adapters |
-| Attribute pass GPU (Plan 0013's proposal) | 1.0 ms p99 | under 1.0 ms (35 voxels per brick computed, not 512) | Phase 3 autopilot |
+| Attribute pass GPU (Plan 0013's proposal) | 1.0 ms p99 | under 1.0 ms (35 voxels per brick computed, not 512); amended 2026-10-22: 5.77 ms at c6df852, the fixes in Phase 3's amendment | Phase 3 autopilot, dev box; iGPU recorded, no bar |
+| Attribute backlog carry-over age (Plan 0023's line; amended 2026-10-22) | 250 ms p99 | 69 ms before the plan at `r_full` 12; 7 625 ms at c6df852 | Phase 3 autopilot, same flight |
 | §2 Streaming line | 1.0 ms | plain `sync` p50 about 2.0 ms (narrowing gone), still a miss | Phase 4, paired with Plan 0027's binary |
 | Slow adapter (`nfr.md` §1 from this plan) | none yet | first readings | Phase 4 on the iGPU |
 
@@ -298,6 +378,15 @@ the material rows are unchanged. Bindings: the masks buffer's binding is freed.
   (a solid chunk face is 64 voxels); Phase 1 measures it and the 180 MB and 1.2 GB bars have
   that room. The exact rule (reading neighbour chunks) is the fallback, with its re-upload
   coupling.
+- **The attribute pass's per-brick cost** (amended 2026-10-22, owner). If Phase 3's amended
+  pass still misses the 1.0 ms p99 or the 250 ms carry-over age, the GPU pass is not the
+  right place for the attribute at `r_full` 16. The fallback is an ADR that chooses between
+  two options. The first computes the attribute on the CPU at upload: the surface mask is
+  already computed there, but the 27-brick neighbourhood and its cross-chunk reads come
+  with it, and so do the stream workers' cost and a re-upload when a neighbour changes. The
+  second derives it at the hit from the mask lines the march already reads: no stored
+  attribute and no pass, at a cost in hit-pass time and the risk of moving the golden
+  bytes. Either one changes this plan's Data shapes and is re-planned from the ADR.
 - **Determinism:** nothing in `vxe-world` changes; the census is CPU-only and seeded.
 - **Threading:** unchanged; `sync` runs on the render thread through Plan 0027's belt.
 - **The hit pass of Plan 0024** reads the material at the hit from the slot; this plan
