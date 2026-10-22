@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0032** (ADRs are a separate sequence; next free there is **0025**).
+**Next free number: 0037** (ADRs are a separate sequence; next free there is **0032**).
 
 ## Active roster
 
@@ -14,6 +14,11 @@ state from `git log`. Completed plans move to `done/`.
 | [0028](0028-size-classed-mirror-slots-and-surface-only-attributes.md) | Size-classed mirror slots: the packed brick's bytes in the pool, no chunk palette, contour attributes for surface voxels only | approved | M2, ADR-0012's third step. After Plan 0024 (Plan 0027 closed). |
 | [0029](0029-indirect-light-probe-volume.md) | Indirect light from a probe volume that scrolls with the camera | approved | M2, ADR-0023 (proposed). After Plan 0024. |
 | [0030](0030-temporal-upscaler.md) | A temporal upscaler of our own: jittered rays, reprojection by hit position, and a sharpening pass | approved | M2, ADR-0024 (proposed). After Plan 0024; independent of Plan 0029. |
+| [0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md) | Sun and sky: a Hillaire atmosphere, a time of day the game sets, the sun and moon as light samples, sky light into the probes, an outdoor testbed source | draft | M10, ADR-0026 and ADR-0027 (proposed). After Plans 0024 and 0029. |
+| [0033](0033-far-field-clipmap-to-a-kilometre.md) | The far field: a clipmap of three coarse chunk levels to about 1 km | draft | M10, ADR-0028 (proposed). After Plans 0028 and 0032. |
+| [0034](0034-water-surface-waves-reflection-refraction-underwater-fog.md) | Liquid surfaces: analytic waves, traced reflection and refraction rays, and absorption under the surface | draft | M10, ADR-0029 (proposed). After Plan 0032; its upscaler half after Plan 0030. |
+| [0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md) | Aerial perspective over the near and far field, and volumetric clouds that shadow the ground | draft | M10, ADR-0030 (proposed). After Plans 0032 and 0033. |
+| [0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md) | Weather: rain, snow, wind, wet surfaces and snow cover, lightning | draft | M10, ADR-0031 (proposed). After Plan 0035. |
 <!-- roster:end -->
 
 ## Recently closed
