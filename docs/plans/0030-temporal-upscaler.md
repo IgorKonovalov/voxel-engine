@@ -214,8 +214,8 @@ of Plan 0024 shrink to 44 % at scale 1.5.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Internal resolution and the jitter | dev | done: 11 of 11 `assert_golden` renders (golden.rs, look.rs) byte-identical to 578c8d3's at scale 1 jitter off (dumped and compared with `cmp`); jitter on, 16-frame hit mask of the pillar: 396 edge pixels, 15 distinct values in (0, 255) (unjittered: 0 partial); 384 x 216 at 1.5: hit buffer 256 x 144, blit within 1.03/255 of bilinear; parse test pins `--internal-scale`, `--jitter` | committed with this row |
-| 2: The upscale pass | dev | not started | |
+| 1: Internal resolution and the jitter | dev | done: 11 of 11 `assert_golden` renders (golden.rs, look.rs) byte-identical to 578c8d3's at scale 1 jitter off (dumped and compared with `cmp`); jitter on, 16-frame hit mask of the pillar: 396 edge pixels, 15 distinct values in (0, 255) (unjittered: 0 partial); 384 x 216 at 1.5: hit buffer 256 x 144, blit within 1.03/255 of bilinear; parse test pins `--internal-scale`, `--jitter` | 9900eee |
+| 2: The upscale pass | dev | stopped: code at 284d132; 2 of 4 done-whens unmet as written (see resume notes) | 284d132 (wip) |
 | 3: The sharpening pass and the golden | dev | not started | |
 | 4: The readings and the defaults | dev | not started | |
 | 5: The owner's windowed check | human | not started | |
@@ -239,6 +239,54 @@ of Plan 0024 shrink to 44 % at scale 1.5.
   (a pixel with a 4-neighbour on the other side).
 - Phase 1: `crates/vxe-render/src/lib.rs` (outside the phase's list) re-exports `RenderScale`
   and `jitter_at`.
+
+### Resume notes (Phase 2, 2026-10-22; delete when Phase 2 lands)
+
+All readings on lavapipe (software Vulkan), exclusive perf lock, commit 284d132.
+
+- **Gate at 284d132:** clippy and fmt clean; `cargo nextest run --workspace`: 588 run, 586
+  passed, 2 failed (the two tests below, assertions as the plan wrote them), 5 skipped; the 11
+  `assert_golden` renders byte-identical to 578c8d3's (scale 1, jitter off: the upscaler does
+  not run).
+- **Met:** sideways step on the cavity at 256 x 144 -> 384 x 216: 67409 of 67443 unchanged
+  output pixels blend history at alpha 0.1 (99.95 %); all 3317 output pixels whose nearest
+  sample hit the replaced material take alpha 1 (the history's alpha channel holds the blend
+  weight).
+- **Unmet 1, the still camera** (level seed 1, spawn pose, 32 frames, Plan 0024 defaults, ore
+  emissive): mean absolute difference from native 384 x 216 (jitter off), mean of r, g, b in
+  1/255: upscaled 4.699, bilinear blit 3.333, ratio 1.410. The ignored reading
+  `the_upscalers_distance_from_native_under_each_lighting_mode` splits it by lighting mode
+  (upscaled / bilinear, ratio; then from a 2 x 2 supersampled native: upscaled, bilinear,
+  native, jittered at scale 1):
+  defaults 4.699 / 3.333, 1.410; 4.369, 3.044, 2.066, 3.099.
+  no emissive 4.539 / 3.160, 1.436; 4.215, 2.867, 1.852, 2.910.
+  full-res lighting 3.516 / 2.887, 1.218; 2.862, 2.306, 1.672, 2.012.
+  filter off 3.576 / 3.181, 1.124; 3.120, 2.837, 1.835, 1.996.
+  full-res lighting and filter off 2.807 / 2.724, 1.030; 2.117, 2.124, 1.482, 1.532.
+  At scale 1 the jittered accumulation sits as near the supersampled render as native does
+  only with the half-resolution lighting and the a-trous filter both off (1.532 vs 1.482);
+  with both on it is 50 % farther (3.099 vs 2.066). Experiments not kept (same scene, no
+  emissive): with the clip off and the lighting passes at full resolution with the filter off
+  the ratio read 0.858; a min/max-only clip read 0.968 there and 1.434 at the defaults; the
+  temporal pass with nearest-tap history, a looser temporal acceptance, half the jitter
+  amplitude and an alpha scaled by the nearest sample's kernel weight each left the
+  defaults' ratio between 1.27 and 1.78. Observed: the upscaler is nearer native than the
+  bilinear blit only with Plan 0024's lighting passes' jitter-sensitive parts off.
+- **Unmet 2, the carve** (same level, 32 frames, radius-6 carve at t = 30.5 voxels on the
+  view axis, box given to both frames): inside the projected box (4900 output pixels) the
+  upscaled frame differs from native by at most 192/255, mean 14.26/255, 686 pixels over
+  8/255; 2834 box pixels changed by more than 8/255 from the frame before (the cavity shows
+  in the first frame). The pixels over the bar lie on the one-pixel slivers of voxel step
+  faces, present in one sampling grid and absent in the other.
+- **Deviation:** the history is rejected when none of the 3 x 3 previous internal pixels
+  around the reprojected point agrees (the plan: "there"); with one pixel alone 9763 of
+  82944 output pixels (11.8 %) rejected every frame of a still camera, along every face edge,
+  and 342 with the 3 x 3.
+- **Deviation:** the composite's rgba8 target is the output size while upscaling (the
+  composite fills its top-left internal pixels, the upscale pass's resolve dispatch writes
+  the whole); FRAME_PASSES gains "upscale" (the upscale and resolve dispatches).
+- **Open question to the owner** (verbatim in the final report): how should Phase 2's two
+  unmet done-whens be resolved?
 
 ### Close triggers
 
