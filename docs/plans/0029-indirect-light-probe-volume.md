@@ -329,6 +329,64 @@ between phases. The architect reviews once at the end, in a fresh session.
   ore pulse beside a vein; a verdict on the fade and on the noise during the window.
 - **Files touched:** this plan's log.
 - **Done when:** the owner has recorded the verdict in the log.
+- **Verdict (2026-10-22, live session 9, recorded by the orchestrator):** the lamp-off fade
+  "still a long time for light to fade"; the ore pulse "is very bad, there is large
+  flickering all around". Neither passes; Phases 10 and 11 follow.
+
+### Phase 10: Find what lingers after the lamp, and keep the pulse out of the probes (amended 2026-10-22, owner)
+- **Owner skill:** dev
+- **Why:** Phase 8's lamp-off box reads its first frame under 10 % at 14, about 0.15 s at the
+  dev box's frame rate, yet the owner still sees the light linger in the level. Whatever
+  lingers is outside what that box measures: the direct light's SVGF or emissive history,
+  the gather's filter, a lit neighbour room's bounce reaching the probes, or the level's
+  geometry. The owner's call for the pulse: pulsing ore feeds the probes only at its
+  average emission.
+- **What:**
+  1. **Isolate the tail in the level.** A headless reading (a test, or a flag on the
+     headless fly-through) in the level at the spot the owner checks, a dark room beside a
+     lit one, opened by a dig: lamp on long enough to converge, then lamp off. For each frame
+     after the switch it records the wall's radiance at screen centre in the composite, and
+     the same with each source isolated: direct only (SVGF and emissive history as shipped),
+     indirect only (probes plus gather), and the gather with its filter off. The log names
+     the component whose tail is longest, with frames and milliseconds at the dev box's
+     measured frame rate.
+  2. **Fix that component** with the light-change signal that already exists (Phase 6),
+     never by weakening the denoiser for steady light. If the tail is in the direct light's
+     history, the lamp switch drops or clamps that history the way an edit box does
+     (ADR-0018). If it is the probes, the window covers the case the box missed. Name the
+     fix in the log.
+  3. **The pulse feeds the probes at its mean.** The probe update reads a pulsing material's
+     emission at its time average, not its current value. The pulse then never opens a
+     light-change window and never moves a probe. The direct light, which samples emitters
+     per pixel, keeps the pulse at full amplitude.
+  4. **The quiet retake of Phase 8's timing**, owed from the merge of main (8208d7c): one run
+     per adapter at load under 2, under the perf lock.
+- **Files touched:** as the fix needs, within `crates/vxe-render/src/{marcher.rs, probes.rs,
+  light.rs}`, their shaders, `apps/flythrough/src/main.rs` (the headless reading's flag, if
+  any), `apps/flythrough/tests/indirect.rs`, `docs/nfr.md` §2.
+- **Done when:**
+  - **The level's lamp-off tail.** In the isolation reading, the composite's wall radiance
+    at screen centre is under 10 % of its lamp-on value (less whatever ore light reaches
+    that wall with the lamp off, read in the same run before the lamp first turns on) by
+    frame 24 after the switch, and stays under through frame 160. The test prints the first
+    frame under 10 % for the composite and for each isolated source, before and after the
+    fix.
+  - **Steady light is untouched.** With no light change, the existing denoiser goldens and
+    Phase 6's no-signal checks pass unchanged.
+  - **The pulse.** With the ore pulse on and the camera still for 256 frames, no light-change
+    window opens. The probe-gathered indirect at the floor beside the vein changes from
+    frame to frame by no more than it does with the pulse off, plus 1 % of its mean. The
+    vein's direct radiance still swings with the pulse: its max-to-min ratio over one pulse
+    period matches the pulse-off-probes build within 5 %.
+  - **The bars hold** (Phase 8's quiet retake, both adapters, the dev box within its bars).
+
+### Phase 11: The owner's re-check of the lamp-off tail and the pulse
+- **Owner skill:** human
+- **What:** as Phase 9, with one run per isolated source if Phase 10 gave the fly-through a
+  switch for it: the level, a dark room, `F7` toggled a few times, then the ore pulse
+  beside a vein. A verdict on the fade and on the pulse.
+- **Files touched:** this plan's log.
+- **Done when:** the owner has recorded the verdict in the log.
 
 ## Data shapes
 
