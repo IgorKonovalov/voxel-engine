@@ -406,6 +406,16 @@ impl ProbeVolume {
         state >> 8 == probe_tag(w) && (state >> 1) & MAX_AGE > 0 && state & 1 == 0
     }
 
+    /// The age of world probe `w` that its slot's `state` gives: 0 when the slot holds
+    /// another probe.
+    pub fn age(state: u32, w: [i32; 3]) -> u32 {
+        if state >> 8 == probe_tag(w) {
+            (state >> 1) & MAX_AGE
+        } else {
+            0
+        }
+    }
+
     /// Probes of the volume at `origin` that are live (see [`ProbeVolume::live`]).
     pub fn live_count(&self, states: &[u32], origin: [i32; 3]) -> u32 {
         let n = PROBES_PER_AXIS as i32;

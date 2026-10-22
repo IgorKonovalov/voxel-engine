@@ -229,8 +229,8 @@ pub struct ProbeVolume {
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The volume, the gather, and a constant probe | dev | done: `ProbeVolume` (atlases and state in one storage buffer), gather pass, composite term, `Lighting::indirect`, `--indirect`; `tests/indirect.rs` 2 tests | 6dfd37f |
-| 2: The update pass and the furnace | dev | done: trace and blend dispatches, Chebyshev weight, `light.wgsl` split into `draw_candidates`/`resolve_emissive`/`emissive_estimate`; furnace floor 2.975 after 256 frames (-5.3 % of pi), centre probe texels 2.856 to 2.981; dark box 0.36 % of the lit; 63 solid probes flagged inside, gather unchanged with their texels at 1000 (lavapipe) | committed with this row |
-| 3: Scrolling and edits | dev | not started | |
+| 2: The update pass and the furnace | dev | done: trace and blend dispatches, Chebyshev weight, `light.wgsl` split into `draw_candidates`/`resolve_emissive`/`emissive_estimate`; furnace floor 2.975 after 256 frames (-5.3 % of pi), centre probe texels 2.856 to 2.981; dark box 0.36 % of the lit; 63 solid probes flagged inside, gather unchanged with their texels at 1000 (lavapipe) | f9da073 |
+| 3: Scrolling and edits | dev | stopped at a done-when: origin follows the camera (tagged slots), `Frame::invalidate` adds touched probes to the next update; scroll test passes (12 288 stayed byte for byte, 20 480 entered at age 0); the carve bar (20 % within 32 frames) is not reached, test committed `#[ignore]` pending the owner | committed with this row |
 | 4: The cave, the switches and the readings | dev | not started | |
 | 5: The owner's windowed check | human | not started | |
 
@@ -267,6 +267,18 @@ pub struct ProbeVolume {
   the start error after 256 frames), so the furnace bar is not reachable with it.
 - Phase 2: a probe ray's hit is shaded with its face (or contour-plane) normal, not the
   pixel's normal modes or detail.
+- Phase 3 done-when not satisfiable as stated: the radius-4 carve through the dividing wall
+  (aabb x 44..45, y 28..36, z 27..35) brings the dark box's floor-centre indirect to 4.8 % of
+  the lit box's at frame 32 and 6.6 % at frame 256 (lavapipe, f9da073 plus this phase); a
+  radius-8 carve reads 18.1 % at frame 32 and 22.2 % at frame 256. The flux balance agrees:
+  an opening of area A into a box of wall area S = 2304 voxels^2 at albedo 0.5 gives about
+  `PI L A / ((1 - rho) S)` against the lit box's PI, about 4 % at radius 4. The test
+  `a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again` carries the plan's
+  bars and is ignored; the fill half (under 5 % within 64 frames) is unmeasured.
+- Phase 3: the scroll test turns the update off for the jump's frame, so "the probes that
+  stay" are compared before any update can rewrite them.
+- Phase 3: edit boxes past `MAX_EDITS` in one frame touch no probe; touched probes past 4096
+  outside the frame's slice wait for their slice.
 - Phase 2: the furnace's converged floor reads 2.97 (about -5.3 % of pi) frame after frame from
   frame 72 on; the residual is not diagnosed.
 

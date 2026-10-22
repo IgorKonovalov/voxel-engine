@@ -386,3 +386,154 @@ fn an_inside_probe_s_texels_are_never_gathered() {
     assert!(before[0] > 1.0, "{before:?}");
     assert_eq!(before, after);
 }
+
+// ---- Scrolling and edits ----
+
+/// After 16 updated frames at the cavity's centre, a camera jump of 20 probe steps along x
+/// (the update off for the jump's frame) leaves the 12 x 32 x 32 probes that stay in the
+/// volume texel for texel as they were, at the same slots, and every one of the 20 x 32 x 32
+/// probes that enter reads age 0.
+#[test]
+fn a_scroll_keeps_the_probes_that_stay_and_enters_new_ones_at_age_zero() {
+    let world = cavity_world();
+    let Some(mut rig) = LookRig::new(&world, None) else {
+        return;
+    };
+    let mut camera = cavity_camera();
+    rig.frame.set_lighting(Lighting {
+        indirect: true,
+        ..Lighting::default()
+    });
+    let light = LightParams::headlamp();
+    for _ in 0..16 {
+        rig.frame
+            .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+    }
+    let probes = rig.frame.probes();
+    let before_origin = probes.origin_for(camera.position.to_array());
+    let before = readback::read_buffer(
+        &rig.device,
+        &rig.queue,
+        probes.data(),
+        0,
+        probes.data().size(),
+    );
+    let spacing = probes.spacing() as f32;
+    camera.position.x += 20.0 * spacing;
+    rig.frame.probes_mut().set_updates(false);
+    rig.frame
+        .step(&rig.device, &rig.queue, &rig.gpu, &camera, &light);
+    let probes = rig.frame.probes();
+    let origin = probes.origin_for(camera.position.to_array());
+    assert_eq!(
+        origin,
+        [before_origin[0] + 20, before_origin[1], before_origin[2]]
+    );
+    let states = probes.read_states(&rig.device, &rig.queue);
+    let after = readback::read_buffer(
+        &rig.device,
+        &rig.queue,
+        probes.data(),
+        0,
+        probes.data().size(),
+    );
+    let (mut stayed, mut entered, mut live_before) = (0, 0, 0);
+    for z in 0..32 {
+        for y in 0..32 {
+            for x in 0..32 {
+                let w = [origin[0] + x, origin[1] + y, origin[2] + z];
+                let slot = probe_slot(w);
+                if w[0] < before_origin[0] + 32 {
+                    assert_eq!(
+                        probe_bytes(&after, slot),
+                        probe_bytes(&before, slot),
+                        "probe {w:?}"
+                    );
+                    stayed += 1;
+                    live_before +=
+                        u32::from(vxe_render::ProbeVolume::age(states[slot as usize], w) > 0);
+                } else {
+                    let age = vxe_render::ProbeVolume::age(states[slot as usize], w);
+                    assert_eq!(age, 0, "entering probe {w:?}");
+                    entered += 1;
+                }
+            }
+        }
+    }
+    println!("{stayed} probes stayed ({live_before} traced), {entered} entered at age 0");
+    assert_eq!((stayed, entered), (12 * 32 * 32, 20 * 32 * 32));
+    assert!(live_before > 0);
+}
+
+/// Slot `slot`'s irradiance tile, visibility tile and state word, as bytes of the data buffer
+/// read back whole in `data`.
+fn probe_bytes(data: &[u8], slot: u32) -> Vec<u8> {
+    use vxe_render::probes::{STATE_BASE, VIS_BASE};
+    let s = slot as usize;
+    let mut out = data[s * 512..(s + 1) * 512].to_vec();
+    let v = VIS_BASE as usize * 4 + s * 1024;
+    out.extend_from_slice(&data[v..v + 1024]);
+    let st = STATE_BASE as usize * 4 + s * 4;
+    out.extend_from_slice(&data[st..st + 4]);
+    out
+}
+
+/// In the two-box scene after 256 frames, a radius-4 carve through the dividing wall makes the
+/// dark box's floor-centre indirect irradiance rise above 20 % of the lit box's within 32
+/// frames (the probes the edit box touches refresh at once, the rest in their slices), and
+/// filling the hole back with the wall's rock drops it under 5 % within 64 frames.
+///
+/// Ignored while the bar is an open question: at radius 4 the dark box's converged reading is
+/// about 6.6 % of the lit box's on lavapipe (Plan 0029 Phase 3), under 20 %.
+#[test]
+#[ignore = "Plan 0029 Phase 3: the 20 % bar is above the radius-4 hole's converged 6.6 %; owner question open"]
+fn a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again() {
+    let world = two_boxes();
+    let full = world.stats().full_bricks as u64;
+    let Some((device, queue)) = software_device(((full + 4096) * 512).max(64 << 20)) else {
+        return;
+    };
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    let mut lit = FloorProbe::new(&device, BOX_MIN[0]);
+    let mut dark = FloorProbe::new(&device, DARK_X0);
+    lit.run(&device, &queue, &gpu, 256);
+    dark.run(&device, &queue, &gpu, 256);
+    let l = lit.indirect(&device, &queue)[0];
+    let d0 = dark.indirect(&device, &queue)[0];
+    let edit = |mode: Mode, lit: &mut FloorProbe, dark: &mut FloorProbe, gpu: &mut GpuWorld| {
+        let r = world
+            .apply(&EditOp::sphere(
+                centre_of_voxel([45, 32, 31]),
+                4 * FIXED_ONE,
+                mode,
+            ))
+            .unwrap();
+        let (min, max) = r.aabb.expect("the edit changes voxels");
+        gpu.sync_now(&world, &device, &queue).unwrap();
+        lit.frame.invalidate(min.0, max.0);
+        dark.frame.invalidate(min.0, max.0);
+        (min, max)
+    };
+    let dull = furnace_table().2;
+    let aabb = edit(Mode::Carve, &mut lit, &mut dark, &mut gpu);
+    let mut opened = Vec::new();
+    for _ in 0..32 {
+        lit.run(&device, &queue, &gpu, 1);
+        dark.run(&device, &queue, &gpu, 1);
+        opened.push(dark.indirect(&device, &queue)[0] / l);
+    }
+    println!(
+        "lit {l:.4}, dark {d0:.5} before; carve {aabb:?}: dark / lit over 32 frames {opened:?}"
+    );
+    assert!(opened[31] > 0.20, "{opened:?}");
+    edit(Mode::Fill(dull), &mut lit, &mut dark, &mut gpu);
+    let mut closed = Vec::new();
+    for _ in 0..64 {
+        lit.run(&device, &queue, &gpu, 1);
+        dark.run(&device, &queue, &gpu, 1);
+        closed.push(dark.indirect(&device, &queue)[0] / l);
+    }
+    println!("filled: dark / lit over 64 frames {closed:?}");
+    assert!(closed[63] < 0.05, "{closed:?}");
+}

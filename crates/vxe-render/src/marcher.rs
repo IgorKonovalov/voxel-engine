@@ -1107,7 +1107,10 @@ impl Frame {
 
     /// Kills the history of every pixel whose hit lies in the voxels `min ..= max` dilated by
     /// one voxel, in the next encoded frame: an edit's `EditResult::aabb`. More than
-    /// [`MAX_EDITS`] boxes in one frame flush all history.
+    /// [`MAX_EDITS`] boxes in one frame flush all history. With indirect light on, the next
+    /// encoded frame also updates every probe whose cell the box touches
+    /// ([`ProbeVolume::touched`]) at the young hysteresis, its age restarting at 1; boxes past
+    /// [`MAX_EDITS`] touch no probe, which then refresh in their slices.
     pub fn invalidate(&mut self, min: [i32; 3], max: [i32; 3]) {
         let h = self.history();
         if h.edits.len() == MAX_EDITS {
@@ -1373,6 +1376,7 @@ impl Frame {
         keep_history: bool,
     ) {
         let mut p = *params;
+        let mut boxes: Vec<[[i32; 3]; 2]> = Vec::new();
         let mut edits = EditsUniform {
             count: 0,
             _pad: [0; 3],
@@ -1392,7 +1396,7 @@ impl Frame {
                 edits.boxes[2 * i + 1] = [max[0], max[1], max[2], 0];
             }
             edits.count = h.edits.len() as u32;
-            h.edits.clear();
+            boxes = std::mem::take(&mut h.edits);
             h.overflow = false;
             h.last_views = params.views;
             h.encoded = true;
@@ -1591,7 +1595,12 @@ impl Frame {
         let probe_bind = indirect.then(|| {
             p.lighting |= LIGHTING_INDIRECT;
             if self.probes.updates() {
-                let list = self.probes.update_list(p.frame, &[]);
+                let origin = self.probes.origin_for(p.views[0].origin);
+                let touched: Vec<[i32; 3]> = boxes
+                    .iter()
+                    .flat_map(|&[min, max]| self.probes.touched(origin, min, max))
+                    .collect();
+                let list = self.probes.update_list(p.frame, &touched);
                 queue.write_buffer(self.probes.scratch(), 0, bytemuck::cast_slice(&list));
                 updates = list.len() as u32;
             }
