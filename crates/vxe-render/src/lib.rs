@@ -17,6 +17,7 @@ pub mod present;
 pub mod readback;
 
 pub use attr_work::{AttrWorkStats, MirrorView};
+pub use attrib::{PlaneFit, PlaneOffset, SurfaceFit};
 pub use camera::{Camera, View};
 pub use gpu_world::{
     BELT_CHUNK_BYTES, BinStats, GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncStats, Window,
@@ -26,7 +27,8 @@ pub use light::LightParams;
 pub use marcher::{
     CandidateDraw, DEFAULT_EMISSIVE_HISTORY, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill,
     Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
-    NormalMode, PassTimer, RenderScale, Sampler, ShadowWalk, ToneMap, ViewMode, jitter_at,
+    NormalMode, PassTimer, RenderScale, Sampler, ShadowWalk, SurfaceTuning, ToneMap, ViewMode,
+    jitter_at,
 };
 pub use present::Presenter;
 pub use {glam, wgpu};

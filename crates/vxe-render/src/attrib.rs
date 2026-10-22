@@ -10,6 +10,68 @@ pub const BRICKS_PER_GROUP: u32 = 4;
 /// Most workgroups along one dispatch dimension (the WebGPU default limit).
 const MAX_GROUPS_X: u32 = 65_535;
 
+/// How the attribute pass fits a surface voxel's plane normal: the gradient of occupancy over
+/// its 3 x 3 x 3 neighbourhood with every neighbour weighing 1, or each weighing `1 / |o|^2`
+/// for its offset `o` (face 1, edge 1/2, corner 1/3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PlaneFit {
+    #[default]
+    Uniform27,
+    Weighted27,
+}
+
+impl PlaneFit {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Uniform27 => "uniform27",
+            Self::Weighted27 => "weighted27",
+        }
+    }
+}
+
+/// How the attribute pass places a surface voxel's plane along its normal: `(f - 0.5) * 3`
+/// voxels for the solid fraction `f` of its 27 voxels, or the offset at which the plane's
+/// solid half-space holds the block's solid volume exactly (ADR-0011's encoding either way:
+/// clamped to 7/8 and rounded to 1/8).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PlaneOffset {
+    #[default]
+    Fraction,
+    VolumeMatched,
+}
+
+impl PlaneOffset {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Fraction => "fraction",
+            Self::VolumeMatched => "volume",
+        }
+    }
+}
+
+/// The attribute pass's plane fit: its normal and its offset.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SurfaceFit {
+    pub fit: PlaneFit,
+    pub offset: PlaneOffset,
+}
+
+impl SurfaceFit {
+    /// The bits of `attrib.wgsl`'s `params.fit`.
+    fn bits(self) -> u32 {
+        u32::from(self.fit == PlaneFit::Weighted27)
+            | u32::from(self.offset == PlaneOffset::VolumeMatched) << 1
+    }
+
+    /// `uniform27` or `weighted27`, `+ volume` for the volume-matched offset.
+    pub fn name(self) -> String {
+        match self.offset {
+            PlaneOffset::Fraction => self.fit.name().to_owned(),
+            PlaneOffset::VolumeMatched => format!("{} + volume", self.fit.name()),
+        }
+    }
+}
+
 /// One work-list entry: the brick's record entry less its `FULL_BIT` (its slot's first unit,
 /// class and translucent flag, which locate its attributes) and the brick's origin in
 /// voxels.
@@ -29,7 +91,8 @@ struct Params {
     window_size: [i32; 3],
     items: u32,
     groups_x: u32,
-    _pad: [u32; 3],
+    fit: u32,
+    _pad: [u32; 2],
 }
 
 /// The buffers of the mirror the pass binds.
@@ -57,6 +120,7 @@ pub struct AttribPass {
     builds: u32,
     /// Items the first work buffer holds at least; 0 sizes it by the first list.
     reserve: usize,
+    fit: SurfaceFit,
 }
 
 /// Fewest items a work buffer holds.
@@ -120,7 +184,17 @@ impl AttribPass {
             bind: None,
             builds: 0,
             reserve: 0,
+            fit: SurfaceFit::default(),
         }
+    }
+
+    /// The plane fit the next encoded passes compute; bricks filled before keep theirs.
+    pub fn set_fit(&mut self, fit: SurfaceFit) {
+        self.fit = fit;
+    }
+
+    pub fn fit(&self) -> SurfaceFit {
+        self.fit
     }
 
     /// Sizes the work buffer, when it is first built, for at least `items` items, so a caller
@@ -167,7 +241,8 @@ impl AttribPass {
             window_size: b.window.1,
             items: items.len() as u32,
             groups_x,
-            _pad: [0; 3],
+            fit: self.fit.bits(),
+            _pad: [0; 2],
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&params));
         if self.work_capacity() < items.len() {

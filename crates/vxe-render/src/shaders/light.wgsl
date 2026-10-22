@@ -102,7 +102,7 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
     textureStore(reservoir_out, px, vec4<u32>(0u));
     if (rec.found) {
         let ray = pixel_ray(full_px(gid.xy));
-        let n = surface_detail(rec).xyz;
+        let n = lighting_normal(rec);
         if ((params.flags & FLAG_CUTAWAY) != 0u) {
             e = vec3<f32>(PI * (0.3 + 0.7 * (0.5 + 0.5 * n.z)));
         } else {

@@ -44,7 +44,7 @@ fn gradient(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (rec.found && (params.flags & FLAG_CUTAWAY) == 0u) {
             let v = params.prev_views[view_of(q * params.light_scale + unpack_offset(params.prev_light_offset))];
             let d = normalize(rec.p - v.origin);
-            let n = surface_detail(rec).xyz;
+            let n = lighting_normal(rec);
             let ns = shadow_normal_of(rec, d);
             var e = 0.0;
             if ((params.lighting & LIGHTING_LAMP) != 0u) {

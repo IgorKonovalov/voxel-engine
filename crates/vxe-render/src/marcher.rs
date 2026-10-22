@@ -1,6 +1,7 @@
 //! The frame: the hit pass ([`Marcher`], `march.wgsl`), the light pass (`light.wgsl`) and the
 //! composite (`composite.wgsl`), each a compute dispatch over the internal target (ADR-0018).
 
+use crate::attrib::SurfaceFit;
 use crate::camera::{Camera, View};
 use crate::gpu_world::GpuWorld;
 use crate::light::LightParams;
@@ -33,7 +34,8 @@ pub struct Params {
     /// [`Lighting::flags`].
     pub lighting: u32,
     pub window_min: [i32; 3],
-    pub _pad2: i32,
+    /// [`SurfaceTuning::face_mix`].
+    pub face_mix: f32,
     pub window_size: [i32; 3],
     pub _pad3: i32,
     pub light_pos: [f32; 3],
@@ -122,6 +124,9 @@ pub const FLAG_SKIPS: u32 = 1 << 9;
 /// `Params::flags` bit: the primary ray passes through solid until it has crossed real air
 /// (`LookParams::cutaway`).
 pub const FLAG_CUTAWAY: u32 = 1 << 10;
+/// `Params::flags` bit: with the lamp on, the light pass shades with the undetailed normal and
+/// the composite applies the detail's `n.l` ratio ([`SurfaceTuning::detail_after_lighting`]).
+pub const FLAG_DETAIL_AFTER_LIGHTING: u32 = 1 << 13;
 
 /// How the marcher finds the normal at a hit, and in `Contour` the hit itself.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -219,9 +224,31 @@ impl ViewMode {
     }
 }
 
-/// The surface look: normal mode, procedural detail, view, translucent layers and cutaway. The
-/// default is face normals, no detail, shaded, 4 layers, cutaway off.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The surface look's tuning beyond its normal mode: the attribute pass's plane fit, a mix of
+/// a contour-plane hit's shading normal toward its entry face's normal, and where the detail's
+/// shading is applied. The default is every part off: the uniform gradient, the fraction
+/// offset, no mix, detail shaded in the light pass.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SurfaceTuning {
+    /// The plane fit of the attribute pass. It lives in the mirror: a frame reads only the
+    /// attributes, so the caller hands it to [`GpuWorld::set_surface_fit`].
+    pub fit: SurfaceFit,
+    /// A contour-plane hit's shading normal is `normalize(mix(plane, face, face_mix))`, `face`
+    /// the normal of the face the ray entered its voxel through; the hit point and the shadow
+    /// ray's offset keep the plane's. In `[0, 0.5]`; 0 is the plane normal.
+    pub face_mix: f32,
+    /// With the lamp on, the light pass shades every term with the undetailed normal, and the
+    /// composite multiplies the upsampled irradiance by the detail's lamp term ratio
+    /// `clamp(max(n_d.l, 0) / max(n.l, 1e-3), 0, 2)`, `n_d` the detailed normal and `l` the
+    /// unit vector to the lamp, per full-resolution pixel. With the lamp off it changes
+    /// nothing.
+    pub detail_after_lighting: bool,
+}
+
+/// The surface look: normal mode, procedural detail, view, translucent layers, cutaway and the
+/// surface tuning. The default is face normals, no detail, shaded, 4 layers, cutaway off, the
+/// tuning off.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LookParams {
     pub normal_mode: NormalMode,
     pub detail: bool,
@@ -238,6 +265,7 @@ pub struct LookParams {
     /// hemisphere light (`albedo × (0.3 + 0.7 × (0.5 + 0.5 n.z))`, world z up) with no lamp and
     /// no shadow ray, and a miss is a flat grey-blue sky.
     pub cutaway: bool,
+    pub tuning: SurfaceTuning,
 }
 
 impl Default for LookParams {
@@ -248,6 +276,7 @@ impl Default for LookParams {
             view: ViewMode::default(),
             translucent_layers: 4,
             cutaway: false,
+            tuning: SurfaceTuning::default(),
         }
     }
 }
@@ -259,6 +288,11 @@ impl LookParams {
             | if self.detail { FLAG_DETAIL } else { 0 }
             | (self.view as u32) << VIEW_SHIFT
             | if self.cutaway { FLAG_CUTAWAY } else { 0 }
+            | if self.tuning.detail_after_lighting {
+                FLAG_DETAIL_AFTER_LIGHTING
+            } else {
+                0
+            }
     }
 }
 
@@ -1718,6 +1752,7 @@ impl Frame {
             view_count: views.len() as u32,
             translucent_layers: self.look.translucent_layers,
             window_min: e.min.0,
+            face_mix: self.look.tuning.face_mix,
             window_size: e.size(),
             light_pos: (camera.position + right * light.offset_right - up * light.offset_down)
                 .to_array(),

@@ -11,6 +11,8 @@ mod support;
 use support::sharpness::*;
 use support::*;
 use vxe_render::{Camera, LightingResolution, NormalMode, ViewMode};
+use vxe_render::{GpuWorld, MirrorConfig, PlaneFit, PlaneOffset, SurfaceFit, SurfaceTuning, wgpu};
+use vxe_world::MaterialTable;
 
 /// Rock's detail in the harness: the fly-through's default pair.
 const ROCK: [f32; 2] = flythrough::ROCK_DETAIL;
@@ -249,4 +251,344 @@ fn source_matrix() {
             r.mid
         );
     }
+}
+
+// ---- The candidate mechanisms ----
+
+/// One candidate of the sweep: the plane fit, the face mix, the detail after lighting, and
+/// rock's detail pair and fine-octave weight.
+#[derive(Clone, Debug)]
+struct Candidate {
+    name: String,
+    fit: SurfaceFit,
+    face_mix: f32,
+    after: bool,
+    rock: [f32; 2],
+    fine: f32,
+}
+
+impl Candidate {
+    /// Today: every switch off, rock at the fly-through's pair.
+    fn today() -> Self {
+        Self {
+            name: "today".to_owned(),
+            fit: SurfaceFit::default(),
+            face_mix: 0.0,
+            after: false,
+            rock: ROCK,
+            fine: 0.0,
+        }
+    }
+
+    fn tuning(&self) -> SurfaceTuning {
+        SurfaceTuning {
+            fit: self.fit,
+            face_mix: self.face_mix,
+            detail_after_lighting: self.after,
+        }
+    }
+
+    /// The contour look with this candidate's tuning, detail `detail`, in `view`.
+    fn look(&self, detail: bool, view: ViewMode) -> vxe_render::LookParams {
+        vxe_render::LookParams {
+            normal_mode: NormalMode::Contour,
+            detail,
+            view,
+            tuning: self.tuning(),
+            ..vxe_render::LookParams::default()
+        }
+    }
+
+    /// The contour look with detail at `tier` and `filter`.
+    fn setting(&self, tier: LightingResolution, filter: bool) -> Setting {
+        Setting {
+            look: self.look(true, ViewMode::Shaded),
+            ..Setting::new(NormalMode::Contour, true).at(tier, filter)
+        }
+    }
+}
+
+/// [`sharp_table`] at `rock` with rock's fine-octave weight `fine`.
+fn table_with(rock: [f32; 2], fine: f32) -> MaterialTable {
+    let base = sharp_table(rock);
+    let mut t = MaterialTable::new();
+    for (id, row) in base.rows().iter().enumerate().skip(1) {
+        let mut row = row.clone();
+        if id == usize::from(flythrough::cave::ROCK) {
+            row.detail_fine = fine;
+        }
+        t.push(row);
+    }
+    t
+}
+
+/// `world` mirrored with contour attributes under `fit` on `device`, filled; lighting at the
+/// default tier.
+fn fit_rig(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    world: &vxe_world::World,
+    fit: SurfaceFit,
+) -> LookRig {
+    let mut gpu = GpuWorld::with_surface_attrs(
+        device,
+        MirrorConfig::new(vxe_render::Window::Fixed(world.extent())),
+    );
+    gpu.set_surface_fit(fit);
+    gpu.sync_now(world, device, queue)
+        .expect("mirror fits the adapter");
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    let bricks = gpu.update_attrs(&mut enc);
+    queue.submit([enc.finish()]);
+    assert_eq!(bricks, world.stats().full_bricks);
+    LookRig {
+        device: device.clone(),
+        queue: queue.clone(),
+        gpu,
+        frame: vxe_render::Frame::new(device, WIDTH, HEIGHT),
+    }
+}
+
+/// A software device large enough for every scene of the sweep; `None` with a printed skip.
+fn sweep_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+    let pool = attr_pool_bytes(&cavity_world()).max(64 << 20);
+    software_device(pool)
+}
+
+/// The guardrails of the "not a Lego look" bar under `c`'s fit and face mix, undetailed: the
+/// cavity's normal error (degrees) and axis fraction, and the pillar's silhouette error.
+fn guardrails(device: &wgpu::Device, queue: &wgpu::Queue, c: &Candidate) -> (f64, f64, usize) {
+    let cavity = cavity_world();
+    let mut rig = fit_rig(device, queue, &cavity, c.fit);
+    rig.frame.set_resolution(device, LightingResolution::Full);
+    let cam = cavity_camera();
+    let normals = rig.render(
+        &cam,
+        &vxe_render::LightParams::at_eye(),
+        c.look(false, ViewMode::Normals),
+    );
+    let error = cavity_normal_error(&normals, &cam);
+    let axis = axis_fraction(&normals);
+    let pillar = pillar_world();
+    let mut rig = fit_rig(device, queue, &pillar, c.fit);
+    let cam = pillar_camera();
+    let mask = rig.render(
+        &cam,
+        &vxe_render::LightParams::at_eye(),
+        c.look(false, ViewMode::HitMask),
+    );
+    (error, axis, pillar_silhouette_error(&mask, &cam))
+}
+
+/// Face mode's pillar silhouette error, the silhouette guardrail's reference.
+fn face_silhouette(device: &wgpu::Device, queue: &wgpu::Queue) -> usize {
+    let pillar = pillar_world();
+    let mut rig = LookRig::on(device.clone(), queue.clone(), &pillar, None);
+    let cam = pillar_camera();
+    let look = vxe_render::LookParams {
+        view: ViewMode::HitMask,
+        ..vxe_render::LookParams::default()
+    };
+    let mask = rig.render(&cam, &vxe_render::LightParams::at_eye(), look);
+    pillar_silhouette_error(&mask, &cam)
+}
+
+/// One row of the sweep.
+struct SweepRow {
+    fine: f64,
+    mid: f64,
+    e: f64,
+    r: f64,
+    error: f64,
+    silhouette: usize,
+    axis: f64,
+}
+
+/// `c` read on every metric of the sweep.
+fn sweep_row(device: &wgpu::Device, queue: &wgpu::Queue, c: &Candidate) -> SweepRow {
+    use LightingResolution::{Full, Half};
+    let wall = wall_world_with(table_with(c.rock, c.fine));
+    let mut rig = fit_rig(device, queue, &wall, c.fit);
+    let cam = wall_camera();
+    let default = read(&mut rig, &cam, c.setting(Half, true));
+    let full = read(&mut rig, &cam, c.setting(Full, false));
+    let edge = edge_world_with(table_with(c.rock, c.fine));
+    let mut rig = fit_rig(device, queue, &edge, c.fit);
+    let normals = rig.render(
+        &edge_camera(),
+        &vxe_render::LightParams::headlamp(),
+        c.look(false, ViewMode::Normals),
+    );
+    let (error, axis, silhouette) = guardrails(device, queue, c);
+    SweepRow {
+        fine: default.fine,
+        mid: default.mid,
+        e: spread_of(&normals).0,
+        r: default.fine / full.fine,
+        error,
+        silhouette,
+        axis,
+    }
+}
+
+/// C5 is exact for the lamp: on the wall at the full tier with the filter off and no fine
+/// octave, detail after lighting matches today's render within 2/255 per channel at 99 % of
+/// the window's pixels; at the default tier its detail survival `R` is printed beside today's.
+#[test]
+fn detail_after_lighting_is_exact_for_the_lamp() {
+    use LightingResolution::{Full, Half};
+    let Some((device, queue)) = sweep_device() else {
+        return;
+    };
+    let wall = wall_world_with(sharp_table(ROCK));
+    let mut rig = fit_rig(&device, &queue, &wall, SurfaceFit::default());
+    let cam = wall_camera();
+    let today = Candidate::today();
+    let c5 = Candidate {
+        name: "C5".to_owned(),
+        after: true,
+        ..Candidate::today()
+    };
+    let a = rig.converge(&cam, today.setting(Full, false));
+    let b = rig.converge(&cam, c5.setting(Full, false));
+    let w = WIDTH as usize;
+    let [x0, x1, y0, y1] = WINDOW;
+    let (mut within, mut n, mut worst) = (0usize, 0usize, 0u8);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let i = (y * w + x) * 4;
+            let d = (0..3).map(|k| a[i + k].abs_diff(b[i + k])).max().unwrap();
+            worst = worst.max(d);
+            within += usize::from(d <= 2);
+            n += 1;
+        }
+    }
+    let share = within as f64 / n as f64;
+    println!(
+        "C5 against today, full tier, filter off: {:.3} % of the window within 2/255 (worst {worst}/255)",
+        share * 100.0
+    );
+    assert!(share >= 0.99, "{:.3} %", share * 100.0);
+    for c in [&today, &c5] {
+        let half = read(&mut rig, &cam, c.setting(Half, true));
+        let full = read(&mut rig, &cam, c.setting(Full, false));
+        println!(
+            "{}: S_fine default {:.5}, full + filter off {:.5}, R {:.3}",
+            c.name,
+            half.fine,
+            full.fine,
+            half.fine / full.fine
+        );
+    }
+}
+
+/// Every candidate alone, and rock's detail pairs with and without C5, against the metrics and
+/// the guardrails, in one table: `cargo nextest run -p flythrough --test sharpness
+/// --no-capture candidate_sweep`.
+#[test]
+fn candidate_sweep() {
+    let Some((device, queue)) = sweep_device() else {
+        return;
+    };
+    let today = Candidate::today();
+    let fit = |name: &str, fit: PlaneFit, offset: PlaneOffset| Candidate {
+        name: name.to_owned(),
+        fit: SurfaceFit { fit, offset },
+        ..today.clone()
+    };
+    let mut rows = vec![
+        today.clone(),
+        fit("C1 weighted27", PlaneFit::Weighted27, PlaneOffset::Fraction),
+        fit("C2 volume", PlaneFit::Uniform27, PlaneOffset::VolumeMatched),
+        fit("C1 + C2", PlaneFit::Weighted27, PlaneOffset::VolumeMatched),
+    ];
+    for k in [0.25, 0.5] {
+        rows.push(Candidate {
+            name: format!("C3 face mix {k}"),
+            face_mix: k,
+            ..today.clone()
+        });
+    }
+    for w in [0.25, 0.5] {
+        rows.push(Candidate {
+            name: format!("C4 fine {w}"),
+            fine: w,
+            ..today.clone()
+        });
+    }
+    rows.push(Candidate {
+        name: "C5".to_owned(),
+        after: true,
+        ..today.clone()
+    });
+    for w in [0.25, 0.5] {
+        rows.push(Candidate {
+            name: format!("C4 fine {w} + C5"),
+            fine: w,
+            after: true,
+            ..today.clone()
+        });
+    }
+    for strength in [0.1, 0.2, 0.3] {
+        for scale in [2.0, 4.0] {
+            for after in [false, true] {
+                rows.push(Candidate {
+                    name: format!(
+                        "rock {scale}, {strength}{}",
+                        if after { " + C5" } else { "" }
+                    ),
+                    rock: [scale, strength],
+                    after,
+                    ..today.clone()
+                });
+            }
+        }
+    }
+    let face_sil = face_silhouette(&device, &queue);
+    println!("face mode's pillar silhouette error: {face_sil} px");
+    let mut table = Vec::new();
+    for c in &rows {
+        let r = sweep_row(&device, &queue, c);
+        let meets = r.error <= 12.0 && 2 * r.silhouette <= face_sil && r.axis <= 0.10;
+        println!(
+            "{}: S_fine {:.5}, S_mid {:.5}, E {:.2}, R {:.3}, error {:.2}, silhouette {}, A {:.2} %, guardrails {}",
+            c.name,
+            r.fine,
+            r.mid,
+            r.e,
+            r.r,
+            r.error,
+            r.silhouette,
+            r.axis * 100.0,
+            if meets { "met" } else { "missed" }
+        );
+        table.push((c.name.clone(), r, meets));
+    }
+    println!(
+        "| candidate | S_fine | S_mid | E (px) | R | cavity normal error (deg) | silhouette error (px) | A (%) | guardrails |"
+    );
+    println!("|---|---|---|---|---|---|---|---|---|");
+    for (name, r, meets) in &table {
+        println!(
+            "| {name} | {:.5} | {:.5} | {:.2} | {:.3} | {:.2} | {} | {:.2} | {} |",
+            r.fine,
+            r.mid,
+            r.e,
+            r.r,
+            r.error,
+            r.silhouette,
+            r.axis * 100.0,
+            if *meets { "met" } else { "missed" }
+        );
+    }
+    for (name, r, _) in &table {
+        assert!(
+            r.fine.is_finite() && r.mid.is_finite() && r.r.is_finite(),
+            "{name}: a metric is not finite"
+        );
+    }
+    // Today's contour meets the guardrails.
+    let today_row = &table[0].1;
+    assert_eq!(table[0].0, "today");
+    assert!(today_row.error <= 12.0 && 2 * today_row.silhouette <= face_sil);
 }

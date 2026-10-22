@@ -104,7 +104,7 @@ use vxe_world::{
 };
 
 use crate::attr_work::{self, AttrWorkStats, MirrorView};
-use crate::attrib::{AttribBindings, AttribItem, AttribPass};
+use crate::attrib::{AttribBindings, AttribItem, AttribPass, SurfaceFit};
 
 /// Light samples [`MirrorConfig::new`] reserves, and the samples one chunk keeps at most.
 pub const DEFAULT_LIGHT_SAMPLES: u32 = 1 << 20;
@@ -337,7 +337,7 @@ pub const RECORD_MASK: u32 = EMPTY_BIT - 1;
 /// First entry of each mip level in a LOD record, level 1 first.
 pub const LOD_LEVEL_ENTRY: [usize; MIP_LEVELS] = [0, 64, 72];
 /// `f32`s per material row: albedo rgb, roughness, emission rgb, flags as bits, detail scale
-/// and strength, opacity, 5 spare.
+/// and strength, opacity, the fine detail octave's weight, 4 spare.
 pub const MATERIAL_FLOATS: usize = 16;
 /// The attribute of a voxel with no contour plane.
 pub const NO_PLANE: u16 = 0xFFFF;
@@ -1189,6 +1189,23 @@ impl GpuWorld {
     /// Whether full chunks' bricks carry contour attributes.
     pub fn surface_attrs(&self) -> bool {
         self.surface_attrs
+    }
+
+    /// The plane fit the attribute pass computes from its next call on; the attributes
+    /// already filled keep the fit they were computed with. A mirror without contour
+    /// attributes ignores it.
+    pub fn set_surface_fit(&mut self, fit: SurfaceFit) {
+        if let Some(pass) = &mut self.attrib {
+            pass.set_fit(fit);
+        }
+    }
+
+    /// The attribute pass's plane fit; the default for a mirror without contour attributes.
+    pub fn surface_fit(&self) -> SurfaceFit {
+        self.attrib
+            .as_ref()
+            .map(AttribPass::fit)
+            .unwrap_or_default()
     }
 
     fn storage_buffer(device: &wgpu::Device, label: &str, size: u64) -> wgpu::Buffer {
@@ -2842,7 +2859,7 @@ impl GpuWorld {
                     m.detail[0],
                     m.detail[1],
                     m.opacity,
-                    0.0,
+                    m.detail_fine,
                     0.0,
                     0.0,
                     0.0,

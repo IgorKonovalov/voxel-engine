@@ -15,7 +15,8 @@
 //                                        full resolution)
 //   6  texture_2d<u32>   light_info_in   the lighting grid's hit records
 //
-// Per view: `shaded` is the Lambertian `albedo * tint * E / PI` of a hit plus its material's
+// Per view: `shaded` is the Lambertian `albedo * tint * E / PI` of a hit (E times the detail's
+// lamp ratio when the detail is applied after lighting, march.wgsl's `detail_lamp_ratio`) plus its material's
 // emission under the frame's scale (none in the cutaway view; the cutaway's flat
 // sky on a miss in that view, else black), the translucent layers composited over it, times
 // `params.exposure`, tone mapped (`Lighting::tone_map`: ACES or the identity clamp) and
@@ -159,7 +160,11 @@ fn composite(@builtin(global_invocation_id) gid: vec3<u32>) {
             return;
         }
         let albedo = materials[rec.material * 4u].xyz * st.w;
-        c = albedo * lit_at(px, rec) * (1.0 / PI);
+        var e = lit_at(px, rec);
+        if (detail_after_lighting()) {
+            e *= detail_lamp_ratio(rec, st.xyz);
+        }
+        c = albedo * e * (1.0 / PI);
         if ((params.flags & FLAG_CUTAWAY) == 0u) {
             c += emission_of(rec.material);
         }

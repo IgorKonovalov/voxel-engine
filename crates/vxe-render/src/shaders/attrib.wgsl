@@ -13,7 +13,7 @@
 //
 // Bindings, group 0:
 //   0  uniform  params         mirror window, units per shard, work-list length, the
-//                              dispatch's workgroups along x
+//                              dispatch's workgroups along x, the plane fit's bits
 //   1  storage  brick_pool0    pool shard 0, read-write; 2, 3 and 4 are shards 1 to 3. Same
 //                              layout as in march.wgsl; this pass writes only attribute units
 //   5  storage  chunk_records  as in march.wgsl
@@ -34,8 +34,13 @@
 // The normal is the Gradient27 normal of occupancy (central differences over the 3 x 3 x 3
 // voxels around the voxel), read through the chunk table: neighbours across brick and chunk
 // boundaries count, a voxel in an absent chunk is air, one in a LOD-only chunk its level-1 mip
-// cell. The offset is (f - 0.5) * 3 voxels, f the solid fraction of the 27 voxels, clamped to
-// [-7/8, 7/8] and rounded to the nearest 1/8.
+// cell. With params.fit bit 0 (`PlaneFit::Weighted27`) each neighbour at offset o weighs
+// 1 / |o|^2 (face 1, edge 1/2, corner 1/3); without it every neighbour weighs 1. The offset
+// is (f - 0.5) * 3 voxels, f the solid fraction of the 27 voxels; with params.fit bit 1
+// (`PlaneOffset::VolumeMatched`) it is instead the d at which the half-space n.(x - c) <= d
+// cuts the 3 x 3 x 3 block about the voxel centre c into a solid volume equal to the solid
+// count, found by 8 bisection steps on [-1.5, 1.5]. Either is clamped to [-7/8, 7/8] and
+// rounded to the nearest 1/8.
 
 struct Params {
     window_min: vec3<i32>,
@@ -43,10 +48,14 @@ struct Params {
     window_size: vec3<i32>,
     items: u32,
     groups_x: u32,
-    _pad0: u32,
+    // Bit 0: the weighted gradient; bit 1: the volume-matched offset.
+    fit: u32,
     _pad1: u32,
     _pad2: u32,
 };
+
+const FIT_WEIGHTED: u32 = 1u;
+const FIT_VOLUME: u32 = 2u;
 
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read_write> brick_pool0: array<u32>;
@@ -252,6 +261,7 @@ fn voxel_attr(b: u32, c: vec3<i32>) -> u32 {
     if (!occ_at(b, c)) {
         return NO_PLANE;
     }
+    let weighted = (params.fit & FIT_WEIGHTED) != 0u;
     var g = vec3<f32>(0.0);
     var count = 0.0;
     var faces = 0u;
@@ -260,9 +270,14 @@ fn voxel_attr(b: u32, c: vec3<i32>) -> u32 {
             for (var x = -1; x <= 1; x++) {
                 let o = vec3<i32>(x, y, z);
                 if (occ_at(b, c + o)) {
-                    g += vec3<f32>(o);
+                    let m = abs(x) + abs(y) + abs(z);
+                    if (weighted && m > 1) {
+                        g += vec3<f32>(o) / f32(m);
+                    } else {
+                        g += vec3<f32>(o);
+                    }
                     count += 1.0;
-                    if (abs(x) + abs(y) + abs(z) == 1) {
+                    if (m == 1) {
                         faces += 1u;
                     }
                 }
@@ -274,10 +289,95 @@ fn voxel_attr(b: u32, c: vec3<i32>) -> u32 {
         return NO_PLANE;
     }
     let n = -g * inverseSqrt(l2);
-    let f = count / 27.0;
-    let offset = clamp((f - 0.5) * 3.0, -0.875, 0.875);
+    var offset = 0.0;
+    if ((params.fit & FIT_VOLUME) != 0u) {
+        offset = volume_matched_offset(n, count);
+    } else {
+        offset = (count / 27.0 - 0.5) * 3.0;
+    }
+    offset = clamp(offset, -0.875, 0.875);
     let k = u32(round(offset * 8.0) + 7.0);
     return encode_octahedral(n) | (k << 12u);
+}
+
+// Components of the plane normal below this take the limit of the slab-volume formula along
+// them (a derivative in place of a difference quotient), so the formula never divides by a
+// vanishing component.
+const SLAB_EPS: f32 = 0.05;
+
+// One difference quotient of the slab-volume formula along a step `h`: `(F(t) - F(t - h)) / h`
+// of the antiderivative F of order `order` (F_k(x) = max(x, 0)^k / k!), or for h below
+// SLAB_EPS its derivative F_{order - 1} at the step's midpoint.
+fn ramp(order: u32, x: f32) -> f32 {
+    let p = max(x, 0.0);
+    switch order {
+        case 0u: { return select(0.0, 1.0, x > 0.0); }
+        case 1u: { return p; }
+        case 2u: { return p * p * 0.5; }
+        default: { return p * p * p / 6.0; }
+    }
+}
+
+// The solid fraction of the unit cube under the half-space `a x + b y + c z <= t` for
+// a, b, c >= 0: the third difference of F_3 over the three steps, `Δa Δb Δc F_3 (t) / (a b c)`,
+// each difference along a component below SLAB_EPS replaced by the derivative at its
+// midpoint (exact in the limit, within O(h^2) below it).
+fn slab_fraction(a: vec3<f32>, t: f32) -> f32 {
+    var v = 0.0;
+    // Inclusion-exclusion over the 8 corners; a small component's corner pair collapses to
+    // one evaluation at its midpoint one order lower.
+    for (var i = 0u; i < 8u; i++) {
+        var x = t;
+        var sign = 1.0;
+        var order = 3u;
+        var skip = false;
+        for (var k = 0u; k < 3u; k++) {
+            let bit = (i >> k) & 1u;
+            if (a[k] < SLAB_EPS) {
+                // The derivative: one evaluation at the midpoint, from the corner with bit 0.
+                if (bit == 1u) {
+                    skip = true;
+                }
+                x -= 0.5 * a[k];
+                order -= 1u;
+            } else if (bit == 1u) {
+                x -= a[k];
+                sign = -sign;
+            }
+        }
+        if (!skip) {
+            v += sign * ramp(order, x);
+        }
+    }
+    var denom = 1.0;
+    for (var k = 0u; k < 3u; k++) {
+        if (a[k] >= SLAB_EPS) {
+            denom *= a[k];
+        }
+    }
+    return v / denom;
+}
+
+// The offset d (voxels along the unit normal `n` from the voxel centre) at which the
+// half-space `n.(x - c) <= d` cuts the 3 x 3 x 3 block `[-1.5, 1.5]^3` about the centre into a
+// solid volume of `count` voxels: 8 bisection steps on [-1.5, 1.5] over the exact slab volume.
+// In the block's unit-cube coordinates u = (x - c) / 3 + 0.5, mirrored so every component of
+// the normal is non-negative, the half-space is `|n|.u <= (d + 1.5 sum |n|) / 3`.
+fn volume_matched_offset(n: vec3<f32>, count: f32) -> f32 {
+    let a = abs(n);
+    let s = a.x + a.y + a.z;
+    let want = count / 27.0;
+    var lo = -1.5;
+    var hi = 1.5;
+    for (var i = 0; i < 8; i++) {
+        let mid = 0.5 * (lo + hi);
+        if (slab_fraction(a, (mid + 1.5 * s) / 3.0) < want) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    return 0.5 * (lo + hi);
 }
 
 @compute @workgroup_size(256, 1, 1)
