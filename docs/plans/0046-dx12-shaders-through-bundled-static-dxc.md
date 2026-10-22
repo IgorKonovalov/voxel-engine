@@ -268,8 +268,8 @@ upscale     1778    ...        ...
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: a per-pass pipeline-time table | dev | done | 622dcf3 |
-| 2: `static-dxc` on, in the deny gate, named at startup | dev | done | committed with this row |
-| 3: the workaround reverted and the Windows bars set | dev | not started | |
+| 2: `static-dxc` on, in the deny gate, named at startup | dev | done | c3b32b4 |
+| 3: the workaround reverted and the Windows bars set | dev | done (Windows bars owed to CI) | committed with this row |
 
 **Phase 1.** `crates/vxe-render/examples/pipeline_times.rs`; `UPSCALE_WGSL` and `SHARPEN_WGSL`
 are re-exported from `lib.rs` (`pub use marcher::{...}`), `marcher.rs` unchanged. The table has
@@ -337,6 +337,13 @@ no CI run can print `flythrough.exe` without `static-dxc`, since Phase 1 and Pha
 the same push; the `.lib` size bounds what the feature adds. Owed to Windows CI after the merge:
 `dx12_compiler` passing, the `auto` table beside the FXC one. Gate: build, quick 470 passed
 (3 skipped), doctests 7, clippy, fmt, test tiers, comment hygiene, `cargo deny check`.
+
+**Phase 3.** `shutdown.rs`'s headless run has no `--look` again; the file is byte-identical to
+ce62f0c's. `cargo nextest run -p flythrough --profile gpu -E 'binary(shutdown)'`, exclusive perf
+lock, load 6.55: 3 passed, the trace test 3.235 s (RTX 3080 Laptop, the default adapter), its
+16 expected teardown stages asserted in order. `docs/nfr.md` section 7 names the Windows
+readings owed and where they go; no Windows figure is in it. Bars 1 to 3 are not read: lanes
+do not push, so they come from the first `windows-latest` run on main after the merge.
 
 
 ### Notes

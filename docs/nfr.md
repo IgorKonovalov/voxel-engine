@@ -1116,8 +1116,14 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   gradient 70.8, attrib 54.2), 299.0 ms on lavapipe (light 96.3, march 53.9, attrib 32.4).
   Microsoft's Linux `dxc` 1.9.2609 on naga's Shader Model 6.0 HLSL of the same passes,
   `-HV 2018 -Ges` as wgpu passes them, wall time per process, at load 8.95: attrib 437 ms,
-  march 283, light 517, gradient 390, upscale 111, the other six 46 to 81. Windows DX12 on WARP
-  under FXC and under static DXC: read on the `windows-latest` CI arm (Plan 0046).
+  march 283, light 517, gradient 390, upscale 111, the other six 46 to 81.
+  **Windows DX12 on WARP (the `windows-latest` CI arm, a software rasterizer):** owed by the
+  first CI run on main after the Plan 0046 merge: the FXC and the default (static DXC) tables
+  of the step "Pipeline times on DX12 under FXC and the default compiler", the debug
+  `flythrough.exe` size and the static DXC `.lib` size it prints, the `cargo build --workspace`
+  step time against the run before the merge, and the nextest times of
+  `flythrough::shutdown` and of the `mirror` binary's three attribute tests (15.3 s at 578c8d3,
+  152.8 to 158.2 s under FXC). Recorded here with run id and commit when read.
 
 ## 8. Collision and coarse grids
 
