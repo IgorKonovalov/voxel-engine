@@ -326,7 +326,7 @@ the material rows are unchanged. Bindings: the masks buffer's binding is freed.
 |---|---|---|---|
 | 1: The census of units | dev | done: level plain pool 56 075 200 B, records 6 758 400 B (62 846 720 B with table and rows); 16/24 exact plane voxels 57 703 350; chunk-local surface 90 331 692 (1.565 x exact; 1.570 at 12/24, 1.565 at 14/24), 3.08 attribute units (197 B) per brick; contour 16/24 at full residency 871 679 852 B, plain 502 928 492 B (57 777 records); bars: the 180 MB level bar and the pressure bar hold on this arithmetic; the 0.93 to 1.2 GB range reads 0.87 GB here, because it counted the 93 239 reserved records rather than the 57 777 mirrored; gate: 581 nextest passed, 4 skipped, 7 doctests, clippy and fmt clean | 1d1e67c |
 | 2: The slot format, the bins and the march, plain look | dev | done: every listed golden and the skip-against-single-voxel test unchanged (no re-bless); level plain 62 846 720 B live (`level_mirror`, lavapipe and the RTX 3080); level hit pass 1.264 to 1.314 ms plain, 1.404 to 1.420 ms default, streamed plain spawn 1.701 to 1.714 ms (paired with 1d1e67c, load 4.5 to 8.7); level first sync 342 ms against 500 ms; gate: 579 nextest passed, 4 skipped, clippy and fmt clean | 5fb6d26 |
-| 3: Surface-only attributes, contour look | dev | stopped on one done-when: the attribute pass's GPU p99 under the default autopilot reads 5.770 ms with `attr_cap` 8192 and 5.751 ms with 4096 against 1.0 ms (carry-over age p99 7625 and 27 229 ms); owner question in the resume notes. Met: the four look goldens byte for byte; contour 7.38 degrees and 32 px; the cube brick's 56 surface voxels, 2 units, indices 0 and 55, 55 after the carve, matching an uncapped mirror; the chunk-face brick's 64; level contour 157 872 640 B live; gate 580 nextest passed, 4 skipped | committed with this row |
+| 3: Surface-only attributes, contour look | dev | stopped on one done-when: the attribute pass's GPU p99 under the default autopilot reads 5.770 ms with `attr_cap` 8192 and 5.751 ms with 4096 against 1.0 ms (carry-over age p99 7625 and 27 229 ms); owner question in the resume notes. Met: the four look goldens byte for byte; contour 7.38 degrees and 32 px; the cube brick's 56 surface voxels, 2 units, indices 0 and 55, 55 after the carve, matching an uncapped mirror; the chunk-face brick's 64; level contour 157 872 640 B live; gate 580 nextest passed, 4 skipped | c6df852 |
 | 4: The streamed default at `r_full` 16, and the slow adapter | dev | not started | |
 | 5: The owner's windowed flight | human | not started | |
 
@@ -367,6 +367,25 @@ the material rows are unchanged. Bindings: the masks buffer's binding is freed.
   (bins are one mechanism with or without attributes). (Phase 3 commit)
 - Followup noticed: clear items still run (p50 5482 a frame in the default flight) though
   every upload now writes its attribute units as "no plane".
+
+### Resume notes (2026-10-22, delete when Phase 3 lands)
+
+- Stopped at Phase 3's attribute-pass bar (p99 at most 1.0 ms under the default autopilot).
+  Readings (RTX 3080 Laptop, exclusive perf lock, load 9.3 to 9.8): `attr_cap` 8192 p50 3.054,
+  p99 5.770 ms, work list p50 8192, p99 10 204, clear items p50 5482, carry-over age p99 7625
+  ms; `attr_cap` 4096 p50 1.533, p99 5.751 ms, age p99 27 229 ms. 1d1e67c in the same session
+  (its flight lowered `r_full` to 12): p99 4.820 ms, clears p50 0, age p99 69 ms.
+- Diagnosis: the pass's cost is per brick (the 10^3 occupancy fill, the workgroup and its
+  three barriers, the clear items), not per voxel computed, so computing about 55 surface
+  voxels instead of 512 does not move it; and at `r_full` 16 the queue holds about 2.4 times
+  the full chunks it held at 12, so every frame runs the cap plus about 5500 clear items. The
+  uncapped front items put p99 above the cap at both caps. Filling the box from the 27 bricks'
+  masks (in c6df852) took p99 from 7.6 to 5.8 ms.
+- Candidates, none tried: drop clear items (every upload now writes "no plane"); several
+  bricks per workgroup (64 invocations a brick); a cap derived from the frame's budget.
+- Gate at c6df852: 580 nextest passed, 4 skipped (workspace, perf lock); 156 passed with
+  `--features wasm`; 7 doctests; clippy (both) and fmt clean; doc gates OK.
+- Owner question: see the dev report of 2026-10-22; Phase 4 is not started.
 
 ### Close triggers
 
