@@ -1,6 +1,6 @@
 # 0030: A temporal upscaler of our own: jittered rays, reprojection by hit position, and a sharpening pass
 
-> **Status:** approved (2026-10-21)
+> **Status:** in-progress
 > **Created:** 2026-10-21
 > **Milestone:** M2 in `docs/roadmap.md` (the upscaler plan; `nfr.md` §2's "with the upscaler
 > allowed, internal resolution between 720p and 1080p")
@@ -214,7 +214,7 @@ of Plan 0024 shrink to 44 % at scale 1.5.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Internal resolution and the jitter | dev | not started | |
+| 1: Internal resolution and the jitter | dev | done: 11 of 11 `assert_golden` renders (golden.rs, look.rs) byte-identical to 578c8d3's at scale 1 jitter off (dumped and compared with `cmp`); jitter on, 16-frame hit mask of the pillar: 396 edge pixels, 15 distinct values in (0, 255) (unjittered: 0 partial); 384 x 216 at 1.5: hit buffer 256 x 144, blit within 1.03/255 of bilinear; parse test pins `--internal-scale`, `--jitter` | committed with this row |
 | 2: The upscale pass | dev | not started | |
 | 3: The sharpening pass and the golden | dev | not started | |
 | 4: The readings and the defaults | dev | not started | |
@@ -222,9 +222,23 @@ of Plan 0024 shrink to 44 % at scale 1.5.
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Scope restated 2026-10-22 (the owner's go of 2026-10-21 stands): phases 1 to 4 dev, stop
+  at phase 5 (human). Lane: worktree `plan-0030` off 578c8d3.
+- Phase 1: `Frame::new(device, w, h)` kept (internal = output); the two sizes come through a
+  new `Frame::with_sizes(device, internal, output)` and `Frame::set_sizes`. The scale is
+  `RenderScale` (`One`, `OneHalf`, `Two`; internal edge `round(output / scale)`).
+- Phase 1: `View` grows `jitter: [f32; 2]` and `_pad2: [f32; 2]` (112 bytes); `project_prev`
+  takes the previous view's jitter off, so the temporal pass and reservoir reuse reproject onto
+  jittered sample positions. `Frame` jitter defaults off (library); the fly-through's
+  `--jitter` defaults on.
+- Phase 1: golden.rs needed no change; "every golden byte for byte" was read by dumping each
+  `assert_golden` render at 578c8d3 and at the phase's tree and comparing with `cmp` (a local,
+  uncommitted dump hook in `tests/support/mod.rs`). The split_* and hud goldens compare
+  byte-exact in their own tests, which pass.
+- Phase 1: "the pillar's edge column" read as the silhouette pixels of the unjittered mask
+  (a pixel with a 4-neighbour on the other side).
+- Phase 1: `crates/vxe-render/src/lib.rs` (outside the phase's list) re-exports `RenderScale`
+  and `jitter_at`.
 
 ### Close triggers
 

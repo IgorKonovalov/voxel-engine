@@ -27,8 +27,8 @@ impl Camera {
 /// One view of a frame, as the shaders read it: an eye at `origin` with an orthonormal basis,
 /// the tangents of its four half-angles (left, right, up, down; an asymmetric frustum has
 /// unequal pairs), and the rectangle of the internal target it fills (`x, y, w, h` in
-/// pixels). The ray of pixel `(px, py)` inside the rectangle, with `u = (px - x + 0.5) / w`
-/// and `v = (py - y + 0.5) / h`, is
+/// pixels). The ray of pixel `(px, py)` inside the rectangle, with
+/// `u = (px - x + 0.5 + jitter.x) / w` and `v = (py - y + 0.5 + jitter.y) / h`, is
 /// `fwd + right (-tan_left + u (tan_left + tan_right)) + up (tan_up - v (tan_up + tan_down))`.
 /// `aspect` changes no ray beyond rounding: the shader takes horizontal tangents in units of
 /// the mean vertical tangent times it, so views sharing it round alike (see `pixel_ray` in
@@ -51,6 +51,11 @@ pub struct View {
     pub unit_scale: f32,
     pub unit_offset: f32,
     pub _pad: f32,
+    /// The sub-pixel offset of every ray of the view, in internal pixels, each component in
+    /// `(-0.5, 0.5)`; zero by the constructors (`Frame::params_for` sets it per frame when
+    /// the frame jitters).
+    pub jitter: [f32; 2],
+    pub _pad2: [f32; 2],
 }
 
 impl View {
@@ -82,6 +87,8 @@ impl View {
             unit_scale: (tan_left + tan_right) / unit,
             unit_offset: tan_left / unit,
             _pad: 0.0,
+            jitter: [0.0; 2],
+            _pad2: [0.0; 2],
         }
     }
 }

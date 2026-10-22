@@ -125,6 +125,9 @@ struct View {
     unit_scale: f32,
     unit_offset: f32,
     _pad0: f32,
+    // The rays' sub-pixel offset in internal pixels (`View::jitter`).
+    jitter: vec2<f32>,
+    _pad1: vec2<f32>,
 };
 
 const MAX_VIEWS: u32 = 2u;
@@ -1116,7 +1119,8 @@ fn view_of(px: vec2<u32>) -> u32 {
     return 0u;
 }
 
-// The primary ray of pixel `px` through the centre of the pixel, in its view. Horizontal
+// The primary ray of pixel `px` through the centre of the pixel moved by the view's jitter
+// (zero: the centre itself, bit for bit), in its view. Horizontal
 // tangents are taken in units of `unit = hv aspect` (hv the mean vertical tangent): with
 // `u = (px - x + 0.5) / w`, `x = ((u (L + R) / unit - L / unit) hv) aspect`, the two ratios
 // rounded on the CPU (`View::unit_scale`, `unit_offset`). A symmetric
@@ -1125,7 +1129,7 @@ fn view_of(px: vec2<u32>) -> u32 {
 // the same frustum (a view and its left half over half the pixels) take bit-identical rays.
 fn pixel_ray(px: vec2<u32>) -> Ray {
     let v = params.views[view_of(px)];
-    let u = (vec2<f32>(px - v.rect.xy) + 0.5) / vec2<f32>(v.rect.zw);
+    let u = (vec2<f32>(px - v.rect.xy) + 0.5 + v.jitter) / vec2<f32>(v.rect.zw);
     let hv = (v.tan_up + v.tan_down) * 0.5;
     let cv = (v.tan_up - v.tan_down) * 0.5;
     let nx = u.x * v.unit_scale - v.unit_offset;
@@ -1209,8 +1213,9 @@ fn shadow_normal_of(rec: HitRecord, d: vec3<f32>) -> vec3<f32> {
     return select(vec3<f32>(0.0), vec3<f32>(-sign(d[rec.axis])), axis_mask(rec.axis));
 }
 
-// `p` projected through previous view `v` to a fractional pixel of the target (pixel
-// centres at integer + 0.5); a negative x when it lies behind the view.
+// `p` projected through previous view `v` to a fractional pixel of the target, in the frame
+// of that view's samples: pixel `i`'s ray at `i + 0.5` (its jitter taken off); a negative x
+// when it lies behind the view.
 fn project_prev(v: View, p: vec3<f32>) -> vec2<f32> {
     let dir = p - v.origin;
     let z = dot(dir, v.fwd);
@@ -1221,7 +1226,7 @@ fn project_prev(v: View, p: vec3<f32>) -> vec2<f32> {
     let y = dot(dir, v.up) / z;
     let u = (x + v.tan_left) / (v.tan_left + v.tan_right);
     let w = (v.tan_up - y) / (v.tan_up + v.tan_down);
-    return vec2<f32>(v.rect.xy) + vec2<f32>(u, w) * vec2<f32>(v.rect.zw);
+    return vec2<f32>(v.rect.xy) + vec2<f32>(u, w) * vec2<f32>(v.rect.zw) - v.jitter;
 }
 
 // A 32-bit integer hash (Wellons' lowbias32).

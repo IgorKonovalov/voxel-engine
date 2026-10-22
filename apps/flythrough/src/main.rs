@@ -12,8 +12,12 @@
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
 //! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]
-//! [--history edits|gradient] [--lighting full|half] [--emissive-history N]`.
-//! `--render` fixes the frame's internal resolution (the window scales it); `--frames` exits after N
+//! [--history edits|gradient] [--lighting full|half] [--emissive-history N]
+//! [--internal-scale 1|1.5|2] [--jitter on|off]`.
+//! `--render` fixes the frame's output resolution (the window scales it); `--internal-scale`
+//! renders at the output size divided by it on each edge (default 1); `--jitter off` sends
+//! every primary ray through its pixel's centre (by default it moves by the Halton (2, 3)
+//! sub-pixel jitter of the frame); `--frames` exits after N
 //! frames, printing the `F1` readings over the last ones and the stats HUD's rows; `--hud` starts
 //! with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
@@ -168,8 +172,8 @@ use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
     AttrWorkStats, BELT_CHUNK_BYTES, Camera, FRAME_PASSES, Frame, GpuWorld, HistoryKill, HudColour,
     HudOverlay, LightParams, Lighting, LightingResolution, LodParams, LookParams, MarchTimer,
-    MirrorConfig, NormalMode, PassTimer, Presenter, Sampler, ShadowWalk, SyncStats, ViewMode,
-    Window, wgpu,
+    MirrorConfig, NormalMode, PassTimer, Presenter, RenderScale, Sampler, ShadowWalk, SyncStats,
+    ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -343,6 +347,11 @@ struct Args {
     lighting: LightingResolution,
     /// `--emissive-history N`: frames the emissive light's history blends over at least.
     emissive_history: u32,
+    /// `--internal-scale 1|1.5|2`: the output size over the internal size, on each edge.
+    internal_scale: RenderScale,
+    /// `--jitter on|off`: the primary rays move by the frame's sub-pixel jitter (on by
+    /// default).
+    jitter: bool,
 }
 
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
@@ -445,6 +454,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         history: HistoryKill::default(),
         lighting: LightingResolution::default(),
         emissive_history: vxe_render::DEFAULT_EMISSIVE_HISTORY,
+        internal_scale: RenderScale::default(),
+        jitter: true,
     };
     let mut detail_flag = false;
     let mut it = argv.into_iter();
@@ -559,6 +570,18 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                         .ok_or(format!(
                             "--emissive-history takes 1 to 4096 frames, not {v}"
                         ))?;
+            }
+            "--internal-scale" => {
+                let v = value()?;
+                args.internal_scale = RenderScale::from_name(&v)
+                    .ok_or(format!("--internal-scale takes 1, 1.5 or 2, not {v}"))?;
+            }
+            "--jitter" => {
+                args.jitter = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("--jitter takes on or off, not {v}")),
+                }
             }
             "--lighting" => {
                 let v = value()?;
@@ -2535,14 +2558,19 @@ impl Run {
     }
 
     fn init(&mut self, gpu: &Gpu) {
-        let [w, h] = self.args.render.unwrap_or(gpu.size);
+        let output = self.args.render.unwrap_or(gpu.size);
         let timer = PassTimer::with_passes(&gpu.device, &gpu.queue, FRAME_PASSES.len() as u32);
         println!("device ready after {:.0} ms", ms_since(self.start));
         let attr_timer = self
             .args
             .look
             .and_then(|_| MarchTimer::new(&gpu.device, &gpu.queue));
-        let mut frame = Frame::new(&gpu.device, w, h);
+        let mut frame = Frame::with_sizes(
+            &gpu.device,
+            self.args.internal_scale.internal(output),
+            output,
+        );
+        frame.set_jitter(self.args.jitter);
         frame.set_lighting(self.modes.lighting);
         frame.set_resolution(&gpu.device, self.modes.resolution);
         println!("{}", self.modes.line());
@@ -2722,7 +2750,11 @@ impl Run {
 
     fn resized(&mut self, gpu: &Gpu) {
         if let (Some(gfx), None) = (self.gfx.as_mut(), self.args.render) {
-            gfx.frame.resize(&gpu.device, gpu.size[0], gpu.size[1]);
+            gfx.frame.set_sizes(
+                &gpu.device,
+                self.args.internal_scale.internal(gpu.size),
+                gpu.size,
+            );
         }
     }
 
@@ -5506,6 +5538,46 @@ mod tests {
             ),
         ] {
             assert_eq!(parse(&[flag, "x"]).err().as_deref(), Some(err), "{flag}");
+        }
+    }
+
+    /// `--internal-scale` and `--jitter` parse their values, default to 1 and on, and refuse
+    /// an unknown value.
+    #[test]
+    fn internal_scale_and_jitter_parse_and_refuse_unknown_values() {
+        let parse = |a: &[&str]| parse_args_from(argv(a));
+        let d = parse(&[]).unwrap();
+        assert_eq!((d.internal_scale, d.jitter), (RenderScale::One, true));
+        for (name, scale) in [
+            ("1", RenderScale::One),
+            ("1.5", RenderScale::OneHalf),
+            ("2", RenderScale::Two),
+        ] {
+            let a = parse(&["--internal-scale", name, "--jitter", "off"]).unwrap();
+            assert_eq!((a.internal_scale, a.jitter), (scale, false));
+        }
+        assert!(parse(&["--jitter", "on"]).unwrap().jitter);
+        assert_eq!(
+            RenderScale::OneHalf.internal([1920, 1080]),
+            [1280, 720],
+            "1.5 renders 720p for 1080p"
+        );
+        assert_eq!(RenderScale::OneHalf.internal([384, 216]), [256, 144]);
+        assert_eq!(RenderScale::Two.internal([1920, 1080]), [960, 540]);
+        for (flag, v, err) in [
+            (
+                "--internal-scale",
+                "3",
+                "--internal-scale takes 1, 1.5 or 2, not 3",
+            ),
+            (
+                "--internal-scale",
+                "1.0",
+                "--internal-scale takes 1, 1.5 or 2, not 1.0",
+            ),
+            ("--jitter", "x", "--jitter takes on or off, not x"),
+        ] {
+            assert_eq!(parse(&[flag, v]).err().as_deref(), Some(err), "{flag} {v}");
         }
     }
 

@@ -26,7 +26,7 @@ pub use light::LightParams;
 pub use marcher::{
     CandidateDraw, DEFAULT_EMISSIVE_HISTORY, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill,
     Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
-    NormalMode, PassTimer, Sampler, ShadowWalk, ToneMap, ViewMode,
+    NormalMode, PassTimer, RenderScale, Sampler, ShadowWalk, ToneMap, ViewMode, jitter_at,
 };
 pub use present::Presenter;
 pub use {glam, wgpu};

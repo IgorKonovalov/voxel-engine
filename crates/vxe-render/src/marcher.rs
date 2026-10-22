@@ -416,6 +416,71 @@ pub enum CandidateDraw {
     Uniform,
 }
 
+/// The ratio of the output size to the internal size the frame renders at, on each edge.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RenderScale {
+    /// The internal size is the output size.
+    #[default]
+    One,
+    /// Two internal pixels per three output pixels on an edge (720p for 1080p): 44 % of the
+    /// output's pixels.
+    OneHalf,
+    /// One internal pixel per two output pixels on an edge: 25 % of the output's pixels.
+    Two,
+}
+
+impl RenderScale {
+    pub const ALL: [Self; 3] = [Self::One, Self::OneHalf, Self::Two];
+
+    /// The name the fly-through prints and parses.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::One => "1",
+            Self::OneHalf => "1.5",
+            Self::Two => "2",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+
+    /// The internal size for an `output`-sized image: each edge divided by the scale and
+    /// rounded to the nearest pixel, at least 1.
+    pub fn internal(self, output: [u32; 2]) -> [u32; 2] {
+        output.map(|n| {
+            match self {
+                Self::One => n,
+                Self::OneHalf => (2 * n + 1) / 3,
+                Self::Two => n.div_ceil(2),
+            }
+            .max(1)
+        })
+    }
+}
+
+/// Phases of the jitter sequence: frame `f` takes phase `f % JITTER_PHASES`.
+pub const JITTER_PHASES: u32 = 16;
+
+/// The radical inverse of `i` in base `b`: element `i` of the Halton sequence of that base.
+fn halton(mut i: u32, b: u32) -> f32 {
+    let (mut f, mut r) = (1.0f32, 0.0f32);
+    while i > 0 {
+        f /= b as f32;
+        r += f * (i % b) as f32;
+        i /= b;
+    }
+    r
+}
+
+/// The sub-pixel jitter of frame `frame`, in internal pixels: elements `1 ..= 16` of the
+/// Halton (2, 3) sequence by `frame % JITTER_PHASES`, centred on zero, each component in
+/// `(-0.5, 0.5)`.
+pub fn jitter_at(frame: u32) -> [f32; 2] {
+    let i = frame % JITTER_PHASES + 1;
+    [halton(i, 2) - 0.5, halton(i, 3) - 0.5]
+}
+
 /// The frame's lighting knobs beside the lamp's own ([`LightParams`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Lighting {
@@ -563,6 +628,11 @@ pub struct Frame {
     downsample_layout: wgpu::BindGroupLayout,
     downsample: wgpu::ComputePipeline,
     history: std::sync::Mutex<History>,
+    /// The output size the frame's image is presented at; the targets are at the internal
+    /// size.
+    output: [u32; 2],
+    /// The views' rays are jittered by [`jitter_at`] of the frame index.
+    jitter: bool,
 }
 
 /// A-trous iterations per frame, at strides 1, 2, 4, 8.
@@ -754,8 +824,14 @@ fn bind_io_at(
 }
 
 impl Frame {
-    /// A frame drawing into a `width` × `height` target.
+    /// A frame drawing into a `width` × `height` target, presented at that size.
     pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        Self::with_sizes(device, [width, height], [width, height])
+    }
+
+    /// A frame rendering at `internal` pixels for an image presented at `output` pixels.
+    pub fn with_sizes(device: &wgpu::Device, internal: [u32; 2], output: [u32; 2]) -> Self {
+        let [width, height] = internal;
         let storage = |binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -979,7 +1055,29 @@ impl Frame {
             downsample_layout,
             downsample,
             history: std::sync::Mutex::new(History::default()),
+            output,
+            jitter: false,
         }
+    }
+
+    /// The size the hit pass and the lighting passes render at.
+    pub fn internal_size(&self) -> [u32; 2] {
+        [self.targets.width, self.targets.height]
+    }
+
+    /// The size the frame's image is presented at.
+    pub fn output_size(&self) -> [u32; 2] {
+        self.output
+    }
+
+    /// Jitters every view's rays by [`jitter_at`] of the frame index (off by default: each
+    /// ray through its pixel's centre).
+    pub fn set_jitter(&mut self, on: bool) {
+        self.jitter = on;
+    }
+
+    pub fn jitter(&self) -> bool {
+        self.jitter
     }
 
     /// The frame index the next `params` seeds its random numbers with.
@@ -1145,10 +1243,17 @@ impl Frame {
         self.targets.bytes()
     }
 
-    /// Replaces the targets with ones of `width` × `height` and drops the history; the
-    /// pipelines are kept.
+    /// Replaces the targets with ones of `width` × `height`, presented at that size, and
+    /// drops the history; the pipelines are kept.
     pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
-        self.targets = Targets::new(device, width, height, self.resolution.scale());
+        self.set_sizes(device, [width, height], [width, height]);
+    }
+
+    /// Replaces the targets with ones of `internal` pixels for an image presented at
+    /// `output` pixels and drops the history; the pipelines are kept.
+    pub fn set_sizes(&mut self, device: &wgpu::Device, internal: [u32; 2], output: [u32; 2]) {
+        self.targets = Targets::new(device, internal[0], internal[1], self.resolution.scale());
+        self.output = output;
         self.reset_history();
     }
 
@@ -1175,8 +1280,9 @@ impl Frame {
     }
 
     /// The uniform block for `views` (at most [`MAX_VIEWS`]; a pixel outside every rectangle
-    /// takes the first) over `world`, lit by `light` placed relative to `camera`.
-    /// [`Frame::encode`] fills in the history fields.
+    /// takes the first) over `world`, lit by `light` placed relative to `camera`. Each view's
+    /// jitter is the frame's ([`Frame::set_jitter`]). [`Frame::encode`] fills in the history
+    /// fields.
     pub fn params_for(
         &self,
         world: &GpuWorld,
@@ -1192,6 +1298,14 @@ impl Frame {
         let (fwd, right, up) = camera.basis();
         let mut vs = [View::default(); MAX_VIEWS];
         vs[..views.len()].copy_from_slice(views);
+        let jitter = if self.jitter {
+            jitter_at(self.frame)
+        } else {
+            [0.0; 2]
+        };
+        for v in &mut vs[..views.len()] {
+            v.jitter = jitter;
+        }
         let e = world.window();
         Params {
             views: vs,
@@ -1859,5 +1973,37 @@ impl PassTimer {
             .into_iter()
             .map(|t| t as f64 * f64::from(self.period_ns) / 1.0e6)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{JITTER_PHASES, RenderScale, jitter_at};
+
+    /// The jitter's sixteen phases are distinct points of `(-0.5, 0.5)^2` that repeat with
+    /// period 16 and average to within 1/16 of zero on each axis (-0.029 and -0.037).
+    #[test]
+    fn the_jitter_cycles_sixteen_distinct_centred_offsets() {
+        let phases: Vec<[f32; 2]> = (0..JITTER_PHASES).map(jitter_at).collect();
+        for (i, p) in phases.iter().enumerate() {
+            assert!(p.iter().all(|c| c.abs() < 0.5), "phase {i}: {p:?}");
+            assert_eq!(jitter_at(i as u32 + JITTER_PHASES), *p);
+            assert!(phases[..i].iter().all(|q| q != p), "phase {i} repeats");
+        }
+        assert_eq!(phases[0], [0.0, 1.0 / 3.0 - 0.5]);
+        for k in 0..2 {
+            let mean = phases.iter().map(|p| p[k]).sum::<f32>() / JITTER_PHASES as f32;
+            assert!(mean.abs() <= 1.0 / 16.0, "axis {k}: mean {mean}");
+        }
+    }
+
+    #[test]
+    fn the_internal_size_rounds_the_output_over_the_scale() {
+        assert_eq!(RenderScale::One.internal([2530, 1378]), [2530, 1378]);
+        assert_eq!(RenderScale::OneHalf.internal([2530, 1378]), [1687, 919]);
+        assert_eq!(RenderScale::Two.internal([385, 1]), [193, 1]);
+        for s in RenderScale::ALL {
+            assert_eq!(RenderScale::from_name(s.name()), Some(s));
+        }
     }
 }
