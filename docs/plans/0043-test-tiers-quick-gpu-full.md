@@ -1,6 +1,6 @@
 # 0043: Test tiers: a quick gate per phase, a GPU tier under the lock, the full suite at close
 
-> **Status:** approved (2026-10-22)
+> **Status:** in-progress
 > **Created:** 2026-10-22
 > **Milestone:** M7 in `docs/roadmap.md` (tooling: the gate every lane runs)
 > **Related ADRs:** none. The rejected options are recorded under Decision. None of them is a
@@ -257,14 +257,40 @@ All on the dev box, named with its commit. `docs/nfr.md` section 7 (startup and 
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: three profiles that split the suite exactly | dev | not started | |
+| 1: three profiles that split the suite exactly | dev | done | committed with this row |
 | 2: a gate that keeps the gpu list true | dev | not started | |
 | 3: CI runs the full tier and the wasm step runs only what needs wasm | dev | not started | |
 | 4: the skills and lane rules name the tiers | dev | not started | |
 
 ### Notes
 
+- Phase 1: the gpu filter adds `flythrough::cutaway` (its tests open a device through
+  `support::LookRig`) and `flythrough::shutdown` (one of its three tests spawns
+  `flythrough --headless --render 64x36`, which opens a device; the whole binary is gpu, so its
+  two CPU-only drop tests run in the gpu tier). `flythrough::audio_sides` uses
+  `vxe_render::Camera` only and stays quick.
+- Phase 1: the slow list's override sets `slow-timeout = { period = "60s" }`, so the slow list
+  has one canonical copy in the default profile's overrides that `quick` and `gpu` repeat.
+- Phase 1: every count and run is `--workspace` (the non-default member `vxe-script-wasm` is
+  in the suite CI runs); a run without `--workspace` covers the default members only.
+
 ### Close triggers
+
+- Phase 1 partition at `5989620` + `.config/nextest.toml`, `cargo nextest list --workspace
+  --profile p -T oneline` (ignored tests excluded alike): quick 470, gpu 124, slow list
+  (`-E '<slow>'`) 5, full 599, default 599, plain `cargo nextest list --workspace` 599.
+  470 + 124 + 5 = 599. Pairwise intersections quick/gpu, quick/slow, gpu/slow: 0, 0, 0. The
+  sorted union equals full's list. No quick test is in a gpu-filter binary (the 16
+  `vxe-render` tests in quick are its lib unit tests).
+- Phase 1 quick, dev box (Ryzen 9 5900HS, RTX 3080 Laptop), no lock, built tree,
+  `cargo nextest run --workspace --profile quick --test-threads 2`: exit 0, 470 passed,
+  3 skipped, 1 slow (`flythrough::replay a_stamp_and_a_collapse_replay_from_the_save`,
+  > 10 s, under 30 s). Wall 44.8 s (nextest 43.9 s), 1-minute load 2.93 at start and 9.12 at
+  end: loaded. An earlier run the same hour: nextest 36.6 s at load 7.66.
+- Phase 1 gpu, same box, exclusive perf lock, built tree,
+  `cargo nextest run --workspace --profile gpu --test-threads 2`: exit 0, 124 passed,
+  9 skipped. Wall 205.2 s (nextest 204.7 s), 1-minute load 4.18 at start, 2.80 at end:
+  loaded. The plan's estimate was about 130 s.
 
 ## Followups
 
