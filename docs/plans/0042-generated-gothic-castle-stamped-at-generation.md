@@ -303,8 +303,8 @@ pub fn castle_source(file: &VoxFile) -> StampedSource<HallSource>;
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: A wall, a tower and the gate through the whole path | dev | done: `vxe_assets::encode` + `encode_rotation` (new `write.rs`), round-trip tests (three-model scene, all 24 rotations, single model); `castle.rs` generates the gate wall, the (60, 60) corner tower and the gatehouse into 4 non-empty tiles (3 013 543 voxels listed, 12 055 856 B `.vox`); `HallSource` in `cave.rs`; `--castle`, `--castle-out`; banner row `castle`. Headless `--castle --frames 60` on the RTX 3080 Laptop: generate 110 ms, encode 8 ms, parse 10 ms, map 128 ms, place 12 ms, prefabs 103 612 416 B. The window check is owed to Phase 5 | committed with this row |
-| 2: The whole castle, the dungeon, the materials and the determinism vector | dev | not started | |
+| 1: A wall, a tower and the gate through the whole path | dev | done: `vxe_assets::encode` + `encode_rotation` (new `write.rs`), round-trip tests (three-model scene, all 24 rotations, single model); `castle.rs` generates the gate wall, the (60, 60) corner tower and the gatehouse into 4 non-empty tiles (3 013 543 voxels listed, 12 055 856 B `.vox`); `HallSource` in `cave.rs`; `--castle`, `--castle-out`; banner row `castle`. Headless `--castle --frames 60` on the RTX 3080 Laptop: generate 110 ms, encode 8 ms, parse 10 ms, map 128 ms, place 12 ms, prefabs 103 612 416 B. The window check is owed to Phase 5 | 430a2c4 |
+| 2: The whole castle, the dungeon, the materials and the determinism vector | dev | done: four curtain walls, four corner towers, gatehouse, keep (nave, rib vault, shafts, buttresses, lancets, west door and leaves, rose window, roof, west tower and spire, a torch per bay), stair house, dungeon (stair of 48 steps, corridor, cross corridor, 8 barred cells, crypt on 9 pillars, lining, torches). 21 of 27 tiles list voxels and are kept; prefab bytes 343 566 464 (sum of `2n + 8 ceil(n/64)` over the kept tiles, asserted against `Prefab::len`). Pinned: `.vox` FNV-1a 0x35a8_89ee_81c4_17e9 (52 623 529 B), voxel hash of the 990 castle chunks 0xa2f6_f292_88e1_04e3. Window check owed to Phase 5 | committed with this row |
 | 3: Named shots, the banner and the golden | dev | not started | |
 | 4: The readings | dev | not started | |
 | 5: The owner flies the castle | human | not started | |
@@ -320,9 +320,19 @@ pub fn castle_source(file: &VoxFile) -> StampedSource<HallSource>;
 - The banner row is composed in `main.rs` (`Run::banner`, a `scene` field) rather than in
   `hud.rs`, which no phase lists; it shows for `hud::BANNER_MS` from the run's start.
 - Tiles that list no voxel are left out of the `.vox` (and so are not kept as prefabs).
-- Phase 1's gate ran without the workspace-wide nextest pass (the shared GPU lock was held by
-  other lanes): vxe-assets and flythrough lib, bin, `castle` and `determinism` tests, 93 passed;
-  doctests, clippy and fmt clean. The full pass runs at the tip.
+- Phase 1's gate: the workspace nextest pass (under the perf lock) ran on Phase 1's tree,
+  607 passed, 7 skipped; doctests, clippy and fmt clean. Phase 2 and on ran the vxe-assets and
+  flythrough lib, bin, `castle` and `determinism` tests per phase; the full pass runs at the
+  tip.
+- 382 500 000 B is not asserted: 6 tiles list no voxel (the upper tiles at `u` 512.. `v`
+  256.. and `u` 256.. `v` 512.., and four dungeon tiles away from the dungeon), so 21 are kept.
+- The stair has 48 steps (three whole turns) to a floor at `w = -96`, not 50 to `w = -100`:
+  the floor sits 4 above the dungeon tiles' bottom so the lining fits under it.
+- The crypt's 3 x 3 pillars put the middle pillar at the crypt's centre `(360, 300)`, so that
+  probe reads stone (the pillar probe), and the air probe is at the centre of the bay beside
+  it, `(345, 285, -80)`.
+- `castle.rs` joined the existing no-floating-point source check in `determinism.rs`, besides
+  its own test in `tests/castle.rs`.
 
 ### Close triggers
 

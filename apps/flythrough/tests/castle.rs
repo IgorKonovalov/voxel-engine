@@ -1,7 +1,7 @@
 //! `--castle`: the generated castle goes through the `.vox` writer, the parser, the palette
 //! map and `StampedSource` over the hall, and the world it makes holds the castle's parts.
 
-use flythrough::castle::{self, ORIGIN, STONE, TORCH};
+use flythrough::castle::{self, GLASS, IRON, ORIGIN, STONE, TORCH, TRIM};
 use flythrough::cave::{HallSource, ROCK};
 use vxe_world::{
     AIR, BRICK_VOXELS, Chunk, ChunkCoord, MaterialId, StampedSource, VoxelCoord, WorldSource,
@@ -92,10 +92,77 @@ fn the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn() {
     assert_eq!(at(&src, [32, 32, 32]), AIR, "the spawn");
     assert_eq!(at(&src, [32, 32, 0]), ROCK, "under the hall floor");
     // A torch on each side of the arch.
-    for v in [275, 323] {
+    for v in castle::GATE_TORCH_V {
         assert_eq!(at(&src, world([44, v + 1, 41])), castle::material(TORCH));
     }
     let listed = castle::index_counts(&file)[usize::from(STONE)];
     assert!(listed > 0);
     assert_eq!(count(&src, &castle_chunks(), stone), listed);
+}
+
+/// `castle.rs` is integer only.
+#[test]
+fn the_castle_generator_holds_no_floating_point() {
+    let src = include_str!("../src/castle.rs");
+    for t in ["f32", "f64"] {
+        assert!(!src.contains(t), "castle.rs names {t}");
+    }
+}
+
+/// Voxel probes of every part: the nave, its vault's rib, the rose window's glass, a cell's
+/// bars, the stair, the crypt, the rock around the dungeon and the gate's torches; and the
+/// kept prefabs' sizes and bytes.
+#[test]
+fn the_whole_castle_holds_its_parts() {
+    let file = castle::castle_vox();
+    let placements = castle::castle_prefabs(&file).expect("every index is mapped");
+    // Each kept prefab has its tile's size.
+    let sizes: Vec<usize> = file
+        .models
+        .iter()
+        .map(|m| m.size.iter().map(|&s| s as usize).product())
+        .collect();
+    let lens: Vec<usize> = placements.iter().map(|(p, _, _)| p.len()).collect();
+    assert_eq!(lens, sizes);
+    let bytes = castle::prefab_bytes(placements.iter().map(|(p, _, _)| &**p));
+    let want: u64 = sizes
+        .iter()
+        .map(|&n| 2 * n as u64 + 8 * (n as u64).div_ceil(64))
+        .sum();
+    assert_eq!(bytes, want);
+    println!(
+        "castle: {} of 27 tiles kept, {bytes} prefab bytes",
+        file.models.len()
+    );
+    if file.models.len() == 27 {
+        assert_eq!(bytes, 382_500_000);
+    }
+    let src = castle::castle_source(1, placements);
+    let m = castle::material;
+    let probe = |l: [i32; 3]| at(&src, world(l));
+    assert_eq!(probe([380, 300, 100]), AIR, "the nave under the vault");
+    assert_eq!(
+        probe([340, 233, 140]),
+        m(TRIM),
+        "a transverse rib at the springing line"
+    );
+    assert_eq!(probe([266, 310, 172]), m(GLASS), "the rose window's glass");
+    assert_eq!(probe([246, 437, -90]), m(IRON), "a cell's bar");
+    assert_eq!(probe([247, 437, -90]), AIR, "between two bars");
+    assert_eq!(probe([200, 450, -50]), AIR, "the stair's axis");
+    assert_eq!(probe([185, 448, -50]), m(STONE), "a step beside it");
+    assert_eq!(probe([345, 285, -80]), AIR, "the crypt's central bays");
+    assert_eq!(
+        probe([360, 300, -80]),
+        m(STONE),
+        "the crypt's middle pillar"
+    );
+    assert_eq!(
+        probe([161, 450, -50]),
+        ROCK,
+        "10 voxels outside the stair's lining"
+    );
+    for v in castle::GATE_TORCH_V {
+        assert_eq!(probe([44, v + 1, 41]), m(TORCH));
+    }
 }
