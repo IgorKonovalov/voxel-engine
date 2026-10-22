@@ -258,8 +258,8 @@ All on the dev box, named with its commit. `docs/nfr.md` section 7 (startup and 
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: three profiles that split the suite exactly | dev | done | 28da8b7 |
-| 2: a gate that keeps the gpu list true | dev | done | committed with this row |
-| 3: CI runs the full tier and the wasm step runs only what needs wasm | dev | not started | |
+| 2: a gate that keeps the gpu list true | dev | done | bbee61d |
+| 3: CI runs the full tier and the wasm step runs only what needs wasm | dev | done locally; CI run pending | committed with this row |
 | 4: the skills and lane rules name the tiers | dev | not started | |
 
 ### Notes
@@ -282,6 +282,9 @@ All on the dev box, named with its commit. `docs/nfr.md` section 7 (startup and 
   filter and another default override's filter, so the three copies cannot drift. Verified by
   hand on scratch edits of the tree's config (one gpu entry dropped from `gpu`, one slow test
   dropped from `quick`): one finding each. Not seeded in the fixture.
+- Phase 3: the workspace step drops `--no-tests=pass` with its comment. Done-when not met in
+  the lane: the first CI run and the Linux job's wall time need the branch on GitHub, and the
+  lane does not push. Both are owed by the first CI run after the merge into main.
 
 ### Close triggers
 
@@ -307,6 +310,11 @@ All on the dev box, named with its commit. `docs/nfr.md` section 7 (startup and 
   With `binary_id(flythrough::cutaway)` and `binary_id(flythrough::shutdown)` removed from
   a scratch copy of the tree's config: exit 1 naming `apps/flythrough/tests/cutaway.rs` and
   `apps/flythrough/tests/shutdown.rs`.
+- Phase 3, local: `cargo nextest list -p flythrough --features wasm --profile full -E
+  'binary(component)'` lists 2 tests, both `flythrough::component`; the same without
+  `--profile full` lists 2; `tests/component.rs` has 2 `#[test]`. The step run locally: exit 0,
+  2 passed. `ci.yml` parses as YAML. CI run and Linux job time against run 39808788735's 981 s:
+  not read (no push from the lane).
 
 ## Followups
 
