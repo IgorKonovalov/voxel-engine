@@ -578,7 +578,7 @@ and the owner weighs it in Phase 7.
 | 4: RCAS, and the sharpness bars still and panning | dev | done | dab579b, dd272de, 66cd9d0, be59e30 |
 | 5: Lights, flicker and shadow motion | dev | done: bar 4 at scale 1 a reading | 09c7a6c |
 | 6: The readings on both adapters | dev | done: bar 1 a reading (1.894 to 1.913 ms) | 4f1fe72 |
-| 7: The owner's windowed comparison and the default | human | done: default `own` at 1.5 | committed with this row |
+| 7: The owner's windowed comparison and the default | human | done: default `own` at 1.5 | 92f19b3, 0428d39 |
 
 **Phase 1** (lavapipe, llvmpipe LLVM 23.1.3, Mesa 26.2.5; exclusive perf lock; 1-min load 8.3
 to 15.7 from the other lanes, so no timing is taken here).
@@ -889,6 +889,35 @@ orchestrator, in `live/owner-notes.md` with times).
   at 1.5, RCAS halos, the Phase 4 to 6 readings): no separate verdict.
 - Default: "I'm for own 1.5 - there is not much difference with fsr anyways". Lands as the dev
   fix below.
+
+### Resume notes (2026-10-27, delete when the close lands)
+
+Every phase is done; the plan waits for its close block and the fresh-session close review.
+
+- Phase 7 (92f19b3): the owner's verdict, in the log above and in `live/owner-notes.md`
+  with times. Run 1 (own 1.5, contour): "with upscaler own flicker seems to be minimal when I
+  turn off the lamp"; F10 to fsr2 at 1.5: "fsr 2 seems to be a bit softer, but not much
+  difference with own"; last run (fsr2 at 1, face): "too much details on fsr i guess".
+  Default: "I'm for own 1.5 - there is not much difference with fsr anyways". The other
+  items have no separate verdict.
+- Main 80e8934 (v0.32.0, Plan 0039 contour-sharp) merged at e7679c0. Conflicts only in
+  `.config/nextest.toml` and `tests/support/mod.rs`. FSR's composite variant is the same
+  `composite.wgsl` with `HDR_TARGET` set, so `Lit`'s split reaches FSR's input unchanged.
+- The default landed at 0428d39: `DEFAULT_SCALE` 1.5, our upscaler jitters unless `--jitter
+  off`, `--upscaler off` or `--internal-scale 1` is Plan 0024's frame; README flag rows;
+  `internal_scale_and_jitter_parse_and_refuse_unknown_values` and
+  `upscaler_picks_the_kind_scale_and_jitter` pin it. No golden renders the fly-through's
+  default, so none was re-blessed.
+- Gate at 0428d39's tree: full tier under the perf lock, `--test-threads 2`, 668 passed, 10
+  skipped, exit 0 (`live/p7-full.log`, load 4.5 at the end); quick 493 passed, 3 skipped;
+  clippy `-D warnings` and fmt clean; doctests 7 passed; `cargo deny check` ok (advisories,
+  bans, licenses, sources); the four scripts clean (doc links 309, comment hygiene, index
+  rows, test tiers 58 files).
+- Left before the close review: the Step 4 close block (`### Notes` deviations as they
+  stand, `### Close triggers` with the gate above and Phase 6's readings, the final SHA),
+  stripping these notes, and the three-line pointer. ADR-0034's Outcome is the architect's
+  at the close (the plan's Phase 7 files). The CHANGELOG's fly-through flag defaults (Plan
+  0030's entry says default 1, jitter off) are the close ceremony's.
 
 ### Notes
 
