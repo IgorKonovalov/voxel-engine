@@ -411,8 +411,8 @@ reads them.
 | 1: The hall on screen with the lamp off | dev | done | 58abae3 |
 | 2: The features | dev | done | dde5427 |
 | 3: The ores, the determinism vector and the open volume | dev | done | 660a5bd |
-| 4: The hero's shots, the review set and the golden | dev | done | committed with this row |
-| 5: The readings | dev | not started | |
+| 4: The hero's shots, the review set and the golden | dev | done | 654d3c6 |
+| 5: The readings | dev | done, the windowed first frame left to Phase 6 | committed with this row |
 | 6: The owner's pick and the cave on screen | human | not started | |
 | 7: The hero re-shot and the README | dev | not started | |
 
@@ -442,6 +442,11 @@ reads them.
 - Phase 4: `showcase_hall.png` blessed on lavapipe (llvmpipe, LLVM 23.1.3, Mesa 26.2.5) against the current default look; 99 326 light samples (0 with the emission off), hue shares amber 63.10 %, ember 1.81 %, cyan 2.91 %, violet 3.73 %, mean sRGB luma 51.3/255, 0 pixels over 2/255 with the emission off; a rerun differs in 0.0000 % of pixels. It took 18.3 s and 25.6 s, so it joins the slow list in `.config/nextest.toml` (outside Phase 4's files). Plan 0039 changes the fly-through's default look, so the golden is re-blessed after that merge.
 - Phase 4: `hero --shot all` (RTX 3080 Laptop) wrote `target/hero/hero-{hall,chasm,crystals,hall-spacing32}.png`, each line naming the adapter, 99 326 light samples (7 syncs to settle) and 64 frames.
 - Phase 4 gate: workspace quick tier 493 of 496 at load 33, the three over 30 s being existing tests (`castle::the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn`, `determinism::castle_vector`, `replay::a_stamp_and_a_collapse_replay_from_the_save`), which passed alone at load 5.5; gpu tier 136 of 136 under the perf lock; clippy, fmt and doctests (7) clean.
+- Phase 5: `world_budget` gains `--source showcase|level` and prints the bounded mirror budget (`apps/flythrough/examples/world_budget.rs`, outside Phase 5's files). Showcase 71 282 `Full` bricks (18.6 % of the level's 383 608, not the projected 12 %), CPU bytes 17 842 448 against 60 807 552, budget 134 604 544 B against 259 203 328 B: both at most the level's.
+- Phase 5: done-when 3 (the windowed time to first frame, three cold and three warm) is not met here: lane rule 10 forbids windowed runs. Headless warm reading instead: first frame 664 to 700 ms (RTX 3080 Laptop, load 8.9). The windowed runs go to the owner with Phase 6.
+- Phase 5: `SyncStats::light_us` is per sync; the one upload is seven syncs of the 16 384-sample budget, and the first reads 8.297 to 8.812 ms for 16 471 samples. The total over the seven was not read.
+- Phase 5 gate: workspace quick tier 494 of 496 at load 28, the same two existing tests over 30 s as in Phase 1; clippy, fmt, comment hygiene and doc links clean.
+- Phase 5: the 1-minute load never stayed under 2 inside the lock from 09:05 to 10:07 (the orchestrator's hour of retries; low point 2.10); every Phase 5 reading is labelled loaded (4.3 to 12.8). Frame medians, three runs each, 1080p: RTX 3080 Laptop hall 11.448 to 11.510, chasm 10.658 to 10.714, crystals 12.955 to 13.523 ms; RADV iGPU hall 79.551 to 79.861, chasm 75.706 to 100.301, crystals 89.861 to 90.413 ms (`docs/nfr.md` §2, with the passes).
 - Phase 1: `level_mirror_budget` takes the world, not a `Full` count (`level_mirror_budget(&world, 1176, attrs)`).
 
 ### Close triggers

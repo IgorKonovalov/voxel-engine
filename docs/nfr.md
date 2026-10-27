@@ -532,6 +532,20 @@ off the same camera reads a mean of 0.91, p99 1. From 20 m out the cutaway read 
 p99 201 (load 21.3). A ray through the hull steps uniform bricks eight voxels at a time and the
 voxels of full bricks one at a time.
 
+**The showcase cavern at its shots (Plan 0038 Phase 5, 654d3c6, `flythrough --source showcase
+--shot NAME --headless --render 1920x1080 --frames 300`, median of the last 30 frames, three
+runs each, the lamp off, indirect on, no upscaler, the default look, adapter by `--adapter`,
+exclusive perf lock, 1-minute load 4.3 to 12.8, so loaded and indicative):** readings, no
+line. RTX 3080 Laptop GPU: `hall` 11.448 to 11.510 ms (hit 4.81 to 4.86, light 3.41 to 3.43,
+atrous 1.08 to 1.13, probes 1.36), `chasm` 10.658 to 10.714 ms (hit 3.43 to 3.46, light 3.69 to
+3.73, probes 1.59 to 1.63), `crystals` 12.955 to 13.523 ms (hit 6.07 to 6.14, light 3.61 to
+3.66, probes 1.38 to 1.40). The Radeon iGPU on RADV (`AMD Radeon Graphics (RADV RENOIR)`):
+`hall` 79.551 to 79.861 ms (hit 33.1, light 27.3 to 27.7, probes 8.0 to 8.2), `chasm` 75.706 to
+100.301 ms (hit 23.3 to 30.8, light 30.0 to 40.2, probes 10.9 to 14.4; the slowest run at load
+4.3, the other two at 12.8 and 11.4), `crystals` 89.861 to 90.413 ms (hit 42.6, light 28.7 to
+29.3, probes 8.1 to 8.2). The hall's 99 326 light samples, against the level's 417 388, leave
+the light pass near the level's; the long rays across the hall raise the hit pass.
+
 No frame may stall on paging: work attributable to streaming on the render thread is capped at
 the streaming line above; the rest runs on background threads.
 
@@ -797,6 +811,17 @@ at rest (`--census`): the level's 383 608 `Full` bricks hold 1 material (275 466
 or 3 to 4 (817); the streamed defaults' 1 640 292 `Full` bricks and 1 158 516 `Full`
 mip-bricks hold 1 or 2. Mirror bytes are unchanged by construction: the level reads
 232 436 992 B live.
+
+**The showcase cavern beside the level (Plan 0038 Phase 5, 654d3c6, `world_budget --source
+showcase --census` and `--chunks 20,20,8 --census`, seed 1, release, the dev reference;
+arithmetic from the generated worlds, no timing):** the showcase's 1176 chunks hold 71 282
+`Full` bricks (23 214 of 1 material, 48 068 of 2) against the level's 383 608 in 3200 chunks:
+CPU bytes 17 842 448 against 60 807 552, mirror bytes 14 689 376 against 62 846 720, and the
+fly-through's bounded budget (`level_mirror_budget(world, chunks, contour)`, dig headroom
+included) 134 604 544 B against 259 203 328 B. Live in the fly-through: 33 290 592 B of mirror
+in 134 604 480 B allocated. Light samples 99 326 of the 1 048 576 reserved (amber 30 558,
+crystal 13 498, amethyst 19 325, ember 35 945; the fullest chunk 2 880 of its 8192 cap), so no
+new VRAM.
 
 
 **Stats HUD (arithmetic, Plan 0010; ADR-0009).** The overlay holds about 130 KiB of VRAM
@@ -1179,6 +1204,14 @@ mean 423.5 to 427.9 us and p99 2258 to 2380 us per chunk with the castle, agains
   at full residency: 1 547 872 `Full` bricks with the castle (its materials in 295 bricks of
   3 to 4 materials and 407 with glass) against 1 640 292 without, the hall replacing cave
   surface; mirror 841 816 812 B live against 871 679 852 B.
+  **Reading (Plan 0038 Phase 5, 654d3c6, `flythrough --source showcase --headless --frames
+  60`, release, RTX 3080 Laptop GPU, three warm runs, exclusive perf lock, 1-minute load 8.9,
+  loaded):** generation of the 1176 chunks 281 to 300 ms (71 282 `Full` bricks), device ready
+  443 to 470 ms, the first sync 83 to 86 ms for 33 554 128 B, first frame 664 to 700 ms. The
+  first sync's light-sample extraction (`SyncStats::light_us`) 8.297 to 8.812 ms for 16 471
+  samples from 21 484 bricks, the sync's sample budget (16 384 plus the last chunk); the rest of
+  the 99 326 follow over six more syncs. Headless, so no window or surface; the windowed cold
+  and warm first frame against the 3 s line is the owner's (Plan 0038 Phase 6).
  of a one-crate change under 10 s on the dev reference; the
   everyday loop does not compile crates a plan does not touch (`default-members`).
   **Reading (Plan 0011 Phase 4, dev reference, AMD Ryzen 9 5900HS, `CARGO_BUILD_JOBS=3`,
