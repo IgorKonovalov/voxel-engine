@@ -1,7 +1,7 @@
 # 0041: AMD FSR 2.2.1 ported to WGSL: its six passes fed from the hit buffer, compared against our upscaler and the native frame
 
 > **Status:** in-progress
-> **Decisions:** Owner, 2026-10-22: approved with the plan's recommended options: Plan 0040 owns exposure and FSR reads it; behavioural bars with careful source reading, no SPIR-V harness; the motion bar beats our upscaler at both scales; if FSR misses it at Phase 4, stop and ask; FSR at scale 1 is in the comparison.
+> **Decisions:** Owner, 2026-10-22: approved with the plan's recommended options: Plan 0040 owns exposure and FSR reads it; behavioural bars with careful source reading, no SPIR-V harness; the motion bar beats our upscaler at both scales; if FSR misses it at Phase 4, stop and ask; FSR at scale 1 is in the comparison. Owner, 2026-10-27 (after Phase 4's investigation found no port defect): option (a), window it; the algorithm's misses become readings judged in Phase 7 (Phases 4 to 7 amended).
 > **Created:** 2026-10-22
 > **Milestone:** M2 in `docs/roadmap.md` (the upscaler; the roadmap's risk "No WGSL port of FSR 2
 > exists", which this plan sizes)
@@ -309,6 +309,48 @@ is named.
   the test prints both), and whether bar 4's neighbourhood bound holds for AMD's unclamped
   RCAS or RCAS takes `sharpen.wgsl`'s clamp. Until then, both stay as written, and their
   readings are printed.
+- **Amended 2026-10-27 (owner): window it. The bars FSR 2's algorithm misses become readings
+  the owner judges in Phase 7; the bars that hold stay asserted.** Step 1 found no port defect
+  (the log's Phase 4 amendment block). The 1.0 px a frame pan at 88 voxels holds GE at the still
+  value (0.06239 against 0.06283), so motion and alignment are right. The 0.37 to 0.5 px pans
+  collapse to GE 0.007, which matches FSR's own arithmetic (a 1/11 new-sample weight in motion
+  and an off-centre Lanczos-2 history fetch). This replaces step 3's stop. The remaining steps:
+  4. **Split each failing test into what it asserts and what it prints.** A test's name states
+     the claim its assertions defend. A missed bar is printed on a line that starts
+     `reading:` and gives the reading, the bar as written above, and "owner judges, Phase 7".
+     No bar is loosened in place: an assertion either holds the bar as written or moves to a
+     `reading:` line that this amendment names. Asserted, each computed in the run:
+     - **Bar 1, the part that held:** at scale 1, at arm's length, ES at most N's plus 0.53
+       px, and GE at least 0.85 of R's. Printed: scale 1.5 at arm's length (ES and GE), and the
+       88-voxel GE at both scales.
+     - **Bar 2, alignment in motion (new, a regression bar):** at 88 voxels, scale 1.5,
+       sharpening 0, a 1.0 output px a frame pan of 64 frames after 32 still ones: GE on the
+       last frame is at least 0.85 of the same run's still GE at frame 32. Step 1 read 0.993 of
+       it. 0.85 leaves room for lavapipe's noise and catches a motion-vector or jitter
+       regression, which drops it toward the slow pans' 0.11. Printed: both 7-voxel pans at
+       0.37 px (ES and GE against ours), and the 88-voxel pans at 0.37 and 0.5 px for ours and
+       FSR at both scales.
+     - **Bar 3:** the reference becomes the 2 x 2 supersampled render averaged in linear
+       light (decision below). Asserted: our upscaler is nearer it than the bilinear blit (step
+       1 read 2.835 against 3.014; it guards the rig and the reference). Printed: FSR's
+       distance (3.195), and the display-byte distances beside all three.
+     - **Bar 4:** RCAS stays AMD's, unclamped (decision below). Asserted: `fsr2.png` matches,
+       and at sharpening 0 the RCAS pass is not dispatched and the output equals the
+       accumulate output texel for texel. Printed: the count of sharpened pixels over their
+       unsharpened 3 x 3 maximum by more than 1/255 (step 1: 1 527 of 26 705), and the
+       largest excess.
+     - Bar 5 stays readings.
+  5. **Re-read every Phase 4 test in one run**, record each assertion and `reading:` line in
+     the log, and go on to Phase 5. Phase 1's bar (FSR at 1.5 sharper than the blit, still)
+     and the bars of Phases 2 and 3 are unchanged and stay asserted.
+
+  **Decisions on the two secondary questions:**
+  - **Bar 3's reference is averaged in linear light:** FSR and a real pixel both integrate
+    radiance, so a box filter of display bytes is a biased truth (the encode alone shifts it
+    against FSR), and the linear figure is the honest one even though FSR still misses it.
+  - **RCAS takes no clamp:** the plan measures FSR 2 as AMD ships it, and `sharpen.wgsl`'s
+    clamp would make the comparison partly ours. The overshoot is RCAS's design, so it is
+    printed and the owner judges its halos on screen in Phase 7.
 
 ### Phase 5: Lights, flicker and shadow motion
 - **Owner skill:** dev
@@ -337,6 +379,14 @@ is named.
   5. Phase 3's and Phase 4's bars still hold.
   6. Readings, no bar: the sweep's trail (Plan 0030 read 1.121 % and 2.605 %), and Plan 0024
      Phase 13's emission step on FSR's output.
+- **Amended 2026-10-27 (owner): Phase 4's split carries over; a miss here does not stop the
+  lane.** Bar 5 reads "Phase 3's bars and Phase 4's amended assertions still hold"; Phase 4's
+  `reading:` lines are re-printed, not asserted. Bars 1 to 4 stay gates as written. If one
+  misses after the tuning, dev does what Phase 4 did before moving it: compare the passes the
+  rig exercises against v2.2.1 and log a per-pass reading. A defect found is fixed. If none is
+  found, the bar becomes a `reading:` line (the reading, the bar, "owner judges, Phase 7"), the
+  log names the evidence, and Phase 7 lists that rig as something to look at. Dev does not pick
+  a new threshold.
 
 ### Phase 6: The readings on both adapters
 - **Owner skill:** dev
@@ -362,6 +412,12 @@ is named.
   3. `frame_bytes` in FSR mode at scale 1.5 is Plan 0030's 124 621 440 B, less its two
      histories (33 177 600 B, not allocated in FSR mode), plus the FSR inventory in Data shapes
      as the log lists it, and no more.
+- **Amended 2026-10-27 (owner): the readings are the owner's evidence; one bar adjusts to the
+  tree.** Bar 3's inventory is the log's, including Phase 2's rgba32float colour input (14.75
+  MB at 1280 x 720, not the table's 7.37 MB) and the target RCAS writes. Bar 1 stays a gate
+  against §2. If it misses, the reading is logged as it stands, `docs/nfr.md` gets the
+  measured figure with machine and commit, and Phase 7 weighs it. The FP16 and subgroup
+  variants stay followups, not a fix inside this plan.
 
 ### Phase 7: The owner's windowed comparison and the default
 - **Owner skill:** human
@@ -377,6 +433,21 @@ is named.
 - **Done when:** the verdict for each run and the default are in the log. A default other than
   Plan 0024's frame lands as a dev fix before the close (the fly-through's `DEFAULT_SCALE` and
   upscaler, and the README's flags).
+- **Amended 2026-10-27 (owner): this is where FSR 2 is judged against ours.** The headless
+  misses of Phases 4 to 6 are the owner's to judge here, and each gets its own verdict in the
+  log beside its reading. The owner looks at, in each look, cycling `own` and `fsr2` at one
+  pose:
+  1. **The slow pan at a distance:** strafing at about 0.37 to 0.5 output pixels a frame
+     past a striped or veined wall about 88 voxels away, at scale 1.5 and at scale 1. This is
+     where FSR read GE 0.007 against ours 0.048. A faster strafe (about 1 px a frame) at the
+     same distance is the contrast: FSR held its still value there.
+  2. **The slow pan at arm's length** (about 7 voxels, the same speed): both scales missed
+     bar 2 headlessly.
+  3. **The still image at scale 1.5**, at arm's length and at 88 voxels: Phase 4 bar 1 missed
+     there.
+  4. **RCAS halos** at the default sharpening on high-contrast edges: AMD's RCAS overshoots its
+     neighbourhood (Phase 4 bar 4's reading), and ours clamps.
+  5. Any Phase 5 or 6 bar the log turned into a reading.
 
 ## Data shapes
 
