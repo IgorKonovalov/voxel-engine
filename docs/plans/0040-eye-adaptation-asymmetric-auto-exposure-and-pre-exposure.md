@@ -537,8 +537,8 @@ exposure multiply, so the settled exposure ignores it.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The meter, the read-back and the banner | dev | done | committed with this row |
-| 2: Pre-exposure | dev | not started | |
+| 1: The meter, the read-back and the banner | dev | done | 044daed |
+| 2: Pre-exposure | dev | done | committed with this row |
 | 3: Adaptation | dev | not started | |
 | 4: The fly-through, the cave's own curve, and the readings | dev | not started | |
 | 5: The owner's windowed check | human | not started | |
@@ -551,6 +551,16 @@ frame 1. `--profile gpu`: 139 run, 138 passed, the one failure `mode_banner.png`
 re-blessed on lavapipe and passing; every other golden unchanged. `--profile quick` at
 `--test-threads 2`: 488 of 489 passed, `replay::a_stamp_and_a_collapse_replay_from_the_save` hit
 the 30 s kill at load 28 and passed alone in 25.3 s.
+
+Phase 2 (lavapipe, exclusive perf lock, load about 24): `--profile gpu` 142 run, 142 passed
+(every golden byte-identical to 044daed, `indirect.png` among them). Scale-free on the level's
+spawn (seed 1, emissive ore, 192 x 108, 64 frames): s = 1/64 and s = 64 both largest channel
+difference 1/255, 0 pixels past 1/255 (11 474 of 20 736 pixels lit at s = 1). Exposure step 1.0
+to 4.0 at frame 64 on the ceiling box (32 x 32): centre age 63, 64, 65 at frames 63 to 65, every
+pixel +1; floor centre at frame 65 [239, 239, 239], the run at 4.0 [239, 239, 239]. Glare box
+(`Manual(64)`, 3 voxels, 64 x 36, 64 frames): largest irradiance 26 784, accumulation 26 768,
+moments 65 024, filter 26 800, no non-finite texel. `--profile quick --test-threads 2`: 489 of
+489 passed.
 
 ### Notes
 
@@ -569,6 +579,13 @@ the 30 s kill at load 28 and passed alone in 25.3 s.
   Files touched) gains `exposure.wgsl`.
 - Phase 1: `march.wgsl` also gains `exposure_ratio`, `HDR_MAX` and `MOMENT_LUM_MAX`, which
   Phase 2's passes use.
+- Phase 2: the moments store is clamped at `(255, 255^2)`, not at 60 000 (60 000 is under
+  `255^2`); the first moment is also of the clamped luminance.
+- Phase 2: bar 3 runs on a re-made ceiling box in `crates/vxe-render/tests/exposure.rs` (albedo
+  0.5, a 32 x 32 target looking down) and also checks frame 64's ages; bar 4 uses that box's wall
+  with the lamp at the eye (`LightParams::at_eye`).
+- Phase 2: a manual exposure applies to the frame it is set on (`exposure_now` reads
+  `params.exposure` in manual), not one frame later through the exposure pass.
 
 ### Close triggers
 

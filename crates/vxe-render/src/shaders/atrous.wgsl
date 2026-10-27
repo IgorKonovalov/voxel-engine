@@ -104,7 +104,7 @@ fn variance(@builtin(global_invocation_id) gid: vec3<u32>) {
             v = max(mm.y - mm.x * mm.x, 0.0);
         }
     }
-    textureStore(filter_out, px, vec4<f32>(c, v));
+    textureStore(filter_out, px, min(vec4<f32>(c, v), vec4<f32>(HDR_MAX)));
 }
 
 @group(2) @binding(6) var<uniform> step: Step;
@@ -162,7 +162,7 @@ fn atrous(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
     // The centre tap always weighs its kernel weight, so w_sum > 0.
-    textureStore(filter_out_atrous, px, vec4<f32>(c_sum / w_sum, v_sum / (w_sum * w_sum)));
+    textureStore(filter_out_atrous, px, min(vec4<f32>(c_sum / w_sum, v_sum / (w_sum * w_sum)), vec4<f32>(HDR_MAX)));
 }
 
 @group(2) @binding(5) var filter_out_atrous: texture_storage_2d<rgba16float, write>;

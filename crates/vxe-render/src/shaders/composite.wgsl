@@ -26,8 +26,10 @@
 // Per view: `shaded` is the Lambertian `albedo * tint * E / PI` of a hit (E the direct
 // irradiance plus, with Params.lighting bit 12, the probes' indirect irradiance) plus its material's
 // emission under the frame's scale (none in the cutaway view; the cutaway's flat
-// sky on a miss in that view, else black), the translucent layers composited over it, times
-// `params.exposure`, tone mapped (`Lighting::tone_map`: ACES or the identity clamp) and
+// sky on a miss in that view, else black), the translucent layers composited over it, all
+// pre-exposed (ADR-0033: the irradiance arrives pre-exposed, and the absolute terms, emission,
+// the layers, the sky and the probes' indirect irradiance, are multiplied by `exposure_now()`
+// where they join it), tone mapped (`Lighting::tone_map`: ACES or the identity clamp) and
 // display-encoded by `pow(c, 1 / 2.2)`; `normals` writes a hit's shading normal as
 // `n * 0.5 + 0.5`, linear, and a miss as `shaded` does; `hitmask` white on a hit;
 // `steps` the counters over 255; `albedo` the hit's albedo with the unlit layers over it.
@@ -57,7 +59,7 @@ fn irradiance_at(q: vec2<i32>) -> vec3<f32> {
         e += vec3<f32>(v.w);
     }
     if ((params.lighting & LIGHTING_INDIRECT) != 0u) {
-        e += textureLoad(indirect_in, q, 0).xyz;
+        e += textureLoad(indirect_in, q, 0).xyz * exposure_now();
     }
     return e;
 }
@@ -132,8 +134,8 @@ fn aces(x: vec3<f32>) -> vec3<f32> {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-fn display(c: vec3<f32>) -> vec3<f32> {
-    let x = c * params.exposure;
+// The pre-exposed radiance `x` tone mapped and display-encoded.
+fn display(x: vec3<f32>) -> vec3<f32> {
     var m = clamp(x, vec3<f32>(0.0), vec3<f32>(1.0));
     if ((params.lighting & LIGHTING_IDENTITY_TONE_MAP) == 0u) {
         m = aces(max(x, vec3<f32>(0.0)));
@@ -194,9 +196,10 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
         textureStore(target_tex, px, vec4<f32>(a, 1.0));
         return vec2<f32>(0.0);
     }
+    let ex = exposure_now();
     var c = vec3<f32>(0.0);
     if (!rec.found && (params.flags & FLAG_CUTAWAY) != 0u) {
-        c = CUTAWAY_SKY;
+        c = CUTAWAY_SKY * ex;
     }
     if (rec.found) {
         let st = surface_detail(rec);
@@ -207,12 +210,12 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
         let albedo = materials[rec.material * 4u].xyz * st.w;
         c = albedo * lit_at(px, rec) * (1.0 / PI);
         if ((params.flags & FLAG_CUTAWAY) == 0u) {
-            c += emission_of(rec.material);
+            c += emission_of(rec.material) * ex;
         }
     }
     if (rec.translucent) {
-        c = layer.xyz + layer.w * c;
+        c = layer.xyz * ex + layer.w * c;
     }
     textureStore(target_tex, px, vec4<f32>(display(c), 1.0));
-    return meter_of(c);
+    return meter_of(c / ex);
 }

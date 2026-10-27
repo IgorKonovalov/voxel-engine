@@ -279,3 +279,180 @@ fn the_readout_arrives_within_four_frames_without_waiting() {
     assert_eq!(r.exposure, 1.0);
     assert!(!r.held);
 }
+
+/// Material 1: rock, albedo 0.5. Material 2: an emitter of albedo 0.5 and emission
+/// `[1, 1, 1]`.
+fn rock_and_glow() -> MaterialTable {
+    let mut t = MaterialTable::new();
+    assert_eq!(
+        t.push(Material {
+            albedo: [0.5; 3],
+            ..Material::named("rock")
+        }),
+        1
+    );
+    assert_eq!(
+        t.push(Material {
+            albedo: [0.5; 3],
+            emission: [1.0; 3],
+            ..Material::named("glow")
+        }),
+        2
+    );
+    t
+}
+
+/// One chunk of rock with a closed box of air, interior x and y `[22, 42)`, z `[20, 30)`, whose
+/// whole ceiling (the layer z = 30) glows.
+fn ceiling_box() -> World {
+    World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &Voxels(|v: [i32; 3]| {
+            let inside_xy = (22..42).contains(&v[0]) && (22..42).contains(&v[1]);
+            if inside_xy && (20..30).contains(&v[2]) {
+                AIR
+            } else if inside_xy && v[2] == 30 {
+                2
+            } else {
+                1
+            }
+        }),
+        &rock_and_glow(),
+    )
+}
+
+/// The camera at (32, 32, 29) looking straight down at the floor's centre.
+fn floor_camera() -> Camera {
+    Camera {
+        position: Vec3::new(32.0, 32.0, 29.0),
+        yaw: 0.0,
+        pitch: -std::f32::consts::FRAC_PI_2,
+        vfov: 1.0,
+    }
+}
+
+/// A 32 x 32 frame over the ceiling box, full-resolution lighting, the lamp and the filter
+/// off, at manual exposure `e`.
+fn ceiling_frame(device: &wgpu::Device, e: f32) -> Frame {
+    let mut frame = Frame::new(device, 32, 32);
+    frame.set_resolution(device, LightingResolution::Full);
+    frame.set_lighting(Lighting {
+        lamp: false,
+        filter: false,
+        exposure: e,
+        ..Lighting::default()
+    });
+    frame
+}
+
+/// The ages (moments alpha) of the last encoded frame.
+fn ages(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> Vec<f32> {
+    readback::read_rgba16f(device, queue, frame.moments())
+        .iter()
+        .map(|m| m[2])
+        .collect()
+}
+
+/// The centre pixel's display bytes.
+fn centre(device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) -> [u8; 3] {
+    let px = readback::read_rgba8(device, queue, frame.target());
+    let i = (16 * 32 + 16) * 4;
+    [px[i], px[i + 1], px[i + 2]]
+}
+
+/// On the emissive-ceiling box (filter off, lamp off), a manual step from 1.0 to 4.0 at frame
+/// 64 kills no history: at frames 64 and 65 every hit pixel's age is the frame before's plus
+/// one, and the floor-centre pixel at frame 65 lies within 2/255 of a run at 4.0 throughout.
+#[test]
+fn history_survives_an_exposure_step() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = ceiling_box();
+    let gpu = mirror(&device, &queue, &world);
+    let light = LightParams::at_eye();
+    let mut stepped = ceiling_frame(&device, 1.0);
+    let mut prev_ages = Vec::new();
+    for i in 0..66 {
+        if i == 64 {
+            stepped.set_lighting(Lighting {
+                exposure: 4.0,
+                ..stepped.lighting()
+            });
+        }
+        stepped.step(&device, &queue, &gpu, &floor_camera(), &light);
+        if i >= 63 {
+            let a = ages(&device, &queue, &stepped);
+            if i >= 64 {
+                for (k, (now, before)) in a.iter().zip(&prev_ages).enumerate() {
+                    assert_eq!(
+                        *now,
+                        before + 1.0,
+                        "frame {i}, pixel {k}: age {now} after {before}"
+                    );
+                }
+            }
+            println!("frame {i}: centre age {}", a[16 * 32 + 16]);
+            prev_ages = a;
+        }
+    }
+    let got = centre(&device, &queue, &stepped);
+    let mut at_four = ceiling_frame(&device, 4.0);
+    for _ in 0..66 {
+        at_four.step(&device, &queue, &gpu, &floor_camera(), &light);
+    }
+    let want = centre(&device, &queue, &at_four);
+    println!("floor centre at frame 65: stepped {got:?}, at 4.0 throughout {want:?}");
+    for k in 0..3 {
+        assert!(got[k].abs_diff(want[k]) <= 2, "{got:?} against {want:?}");
+    }
+}
+
+/// In a rock box with the lamp on at the eye, `Manual(64)`, and the camera 3 voxels from a wall
+/// on the lamp's axis (irradiance `PI 1200 / 9 = 419`, pre-exposed 26 800), every texel of the
+/// irradiance, the accumulation, the moments and the filter is finite after 64 frames.
+#[test]
+fn no_target_overflows_at_the_glare() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = ceiling_box();
+    let gpu = mirror(&device, &queue, &world);
+    // From (32, 25, 25) looking -y: the wall's face at y = 22 is 3 voxels away.
+    let camera = Camera {
+        position: Vec3::new(32.0, 25.0, 25.0),
+        yaw: -std::f32::consts::FRAC_PI_2,
+        pitch: 0.0,
+        vfov: 1.0,
+    };
+    let mut frame = Frame::new(&device, 64, 36);
+    frame.set_resolution(&device, LightingResolution::Full);
+    frame.set_lighting(Lighting {
+        exposure: 64.0,
+        ..Lighting::default()
+    });
+    let light = LightParams::at_eye();
+    for _ in 0..64 {
+        frame.step(&device, &queue, &gpu, &camera, &light);
+    }
+    let mut peak = 0.0f32;
+    for (name, tex) in [
+        ("irradiance", frame.irradiance()),
+        ("accumulated", frame.accumulated()),
+        ("moments", frame.moments()),
+        ("filtered", frame.filtered()),
+    ] {
+        let texels = readback::read_rgba16f(&device, &queue, tex);
+        let bad = texels.iter().flatten().filter(|v| !v.is_finite()).count();
+        let max = texels.iter().flatten().fold(0.0f32, |m, &v| m.max(v));
+        println!("{name}: largest {max}, {bad} non-finite");
+        assert_eq!(bad, 0, "{name}: {bad} non-finite values");
+        if name == "irradiance" {
+            peak = max;
+        }
+    }
+    assert!(
+        peak > 20_000.0,
+        "the wall's pre-exposed irradiance reads {peak}"
+    );
+}

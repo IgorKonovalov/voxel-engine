@@ -40,6 +40,11 @@
 // Params.lighting bit 9 says the lamp's light changed, the lamp's part takes this frame's
 // sample as it is (and the moments follow it by the lamp's share): the light pass's lamp
 // estimate is exact up to its shadow ray, so a lamp switched off leaves nothing behind.
+//
+// Every value is pre-exposed (ADR-0033): the history read from last frame is rescaled by
+// `exposure_ratio()` (the second moment by its square) before it blends, the accumulation's
+// store is clamped at HDR_MAX, and the moments are of the luminance clamped at MOMENT_LUM_MAX
+// and stored at most MOMENT_LUM_MAX and its square.
 
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
 @group(2) @binding(1) var hit_info_in: texture_2d<u32>;
@@ -117,7 +122,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     let rec = unpack_hit(textureLoad(hit_pos_in, px, 0), textureLoad(hit_info_in, px, 0));
     // The emissive irradiance in rgb, the lamp's (white) in a.
     let sample = textureLoad(irradiance_in, px, 0);
-    let l = luminance(sample.xyz) + sample.w;
+    let l = min(luminance(sample.xyz) + sample.w, MOMENT_LUM_MAX);
     var accum = sample;
     var moments = vec2<f32>(l, l * l);
     var age = 0.0;
@@ -172,8 +177,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
         }
         if (w_sum > 1e-3) {
-            h /= w_sum;
-            m /= w_sum;
+            let ratio = exposure_ratio();
+            h = h / w_sum * ratio;
+            m = vec3<f32>(m.xy / w_sum * vec2<f32>(ratio, ratio * ratio), m.z / w_sum);
             age = min(floor(m.z + 0.5) + 1.0, AGE_MAX);
             // The lamp's part keeps a short history; static emissive light a long one.
             var a = max(ALPHA, 1.0 / (age + 1.0));
@@ -203,6 +209,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             moments = mix(m.xy, vec2<f32>(l, l * l), mix(a_emissive, a, lamp_share));
         }
     }
-    textureStore(accum_out, px, accum);
-    textureStore(moments_out, px, vec4<f32>(moments, age, 0.0));
+    textureStore(accum_out, px, min(accum, vec4<f32>(HDR_MAX)));
+    // The moments of a luminance at most MOMENT_LUM_MAX: the rescaled history can carry them
+    // past it, and the second moment's bound, 65 025, is still a finite half.
+    let m_max = vec2<f32>(MOMENT_LUM_MAX, MOMENT_LUM_MAX * MOMENT_LUM_MAX);
+    textureStore(moments_out, px, vec4<f32>(min(moments, m_max), age, 0.0));
 }

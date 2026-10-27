@@ -20,7 +20,8 @@
 //   2  storage texture   irradiance_out  rgba16float: the irradiance E at the hit (light
 //                                        per unit area arriving over the hemisphere of the
 //                                        shading normal), its emissive part in rgb and the
-//                                        lamp's (white) in a; 0 on a miss. In the steps view the lamp shadow
+//                                        lamp's (white) in a, pre-exposed (`exposure_now`,
+//                                        clamped at HDR_MAX); 0 on a miss. In the steps view the lamp shadow
 //                                        ray's counters instead (see `shade`)
 //
 // The headlamp (Params.lighting bit 0) is a point light: E = PI * intensity * cone *
@@ -64,8 +65,6 @@ fn table_slot(i: u32) -> vec4<u32> {
     return bitcast<vec4<u32>>(light_samples[params.light_table_base + i]);
 }
 
-// The largest finite f16.
-const HALF_MAX: f32 = 65504.0;
 // Random dimensions per emissive candidate: chunk or sample, face, two for the point, the keep
 // test, the sample within the chunk.
 const CANDIDATE_DIMS: u32 = 6u;
@@ -114,11 +113,13 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
     // The emissive part in rgb, the lamp's (white, or the cutaway's hemisphere) in a: the
-    // temporal pass keeps them on histories of different lengths.
+    // temporal pass keeps them on histories of different lengths. Stored pre-exposed: times
+    // this frame's exposure, at most HDR_MAX (ADR-0033).
+    let ex = exposure_now();
     textureStore(
         irradiance_out,
         px,
-        vec4<f32>(min(emissive, vec3<f32>(HALF_MAX)), min(e.x, HALF_MAX)),
+        min(vec4<f32>(emissive * ex, e.x * ex), vec4<f32>(HDR_MAX)),
     );
 }
 
