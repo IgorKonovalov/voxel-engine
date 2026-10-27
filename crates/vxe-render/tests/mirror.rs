@@ -3329,3 +3329,229 @@ fn attributes_beside_lod_only_chunks_read_their_mips() {
 
 /// The hash of the full chunk's attribute words beside its LOD-only neighbours.
 const BESIDE_LOD_HASH: u64 = 0xda7d_5f1f_ace6_9921;
+
+// ---- Plane fits ----
+
+/// The four plane fits: the uniform and weighted gradients, each with the fraction and the
+/// volume-matched offset.
+fn fits() -> [vxe_render::SurfaceFit; 4] {
+    use vxe_render::{PlaneFit, PlaneOffset, SurfaceFit};
+    [
+        (PlaneFit::Uniform27, PlaneOffset::Fraction),
+        (PlaneFit::Weighted27, PlaneOffset::Fraction),
+        (PlaneFit::Uniform27, PlaneOffset::VolumeMatched),
+        (PlaneFit::Weighted27, PlaneOffset::VolumeMatched),
+    ]
+    .map(|(fit, offset)| SurfaceFit { fit, offset })
+}
+
+/// `world` mirrored with attributes under `fit`, its attributes filled.
+fn fitted(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    world: &World,
+    fit: vxe_render::SurfaceFit,
+) -> GpuWorld {
+    let mut gpu = GpuWorld::with_surface_attrs(device, small(Window::Fixed(world.extent())));
+    gpu.set_surface_fit(fit);
+    assert_eq!(gpu.surface_fit(), fit);
+    gpu.sync_now(world, device, queue).unwrap();
+    assert!(update_attrs(device, queue, &mut gpu) > 0);
+    gpu
+}
+
+/// The decoded attribute of voxel `v` (its plane normal and offset code), read back.
+fn attr_at(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &GpuWorld,
+    v: [i32; 3],
+) -> Option<([f32; 3], u16)> {
+    let vc = VoxelCoord(v);
+    let c = vc.chunk();
+    let l = vc.local();
+    let b = l.map(|x| x / BRICK_EDGE);
+    let e = gpu
+        .entry(c, brick_slot(b))
+        .expect("the voxel's chunk is mirrored");
+    assert!(e & FULL_BIT != 0, "voxel {v:?} lies in a Full brick");
+    let w = slot_words(device, queue, gpu, e);
+    decode_attr(attr_in(&w, e, index_in_brick(l.map(|x| x % BRICK_EDGE))))
+}
+
+fn angle_deg(a: [f32; 3], b: [f32; 3]) -> f32 {
+    let d: f32 = (0..3).map(|k| a[k] * b[k]).sum();
+    d.clamp(-1.0, 1.0).acos().to_degrees()
+}
+
+/// Material 1 at `x >= 63, y >= 63, z < 40` of chunks `[0, 2)^2 x [0, 1)`: a convex vertical
+/// edge off the brick grid, its column `x = y = 63`; and material 1 below a one-voxel stair,
+/// `z < 3` for `x < 16` and `z < 4` from `x = 16`, under `y < 32`.
+fn edge_and_stair() -> World {
+    let mut t = MaterialTable::new();
+    t.push(Material::named("rock"));
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [2, 2, 1]),
+        &UniformSource(AIR),
+        &t,
+    );
+    let f = |v: [i64; 3]| Fixed3(v.map(|x| x * FIXED_ONE));
+    for (min, max) in [
+        ([63, 63, 0], [128, 128, 40]),
+        ([0, 0, 0], [16, 32, 3]),
+        ([16, 0, 0], [40, 32, 4]),
+    ] {
+        world
+            .apply(&EditOp::box_(f(min), f(max), Mode::Fill(1)))
+            .expect("resident");
+    }
+    world
+}
+
+/// Where the geometry is simple every fit agrees: the floor's top solid voxel decodes to +z
+/// within 3 degrees and offset code 11 (`(18/27 - 0.5) x 3 = 0.5`, and the volume-matched
+/// plane of 18 solid voxels in the block lies at +0.5), and a voxel of a convex edge's column
+/// (12 of 27 solid) to `(-1, -1, 0) / sqrt 2` within 3 degrees and code 6 (`-0.167` and
+/// `-0.121`, both rounded to `-1/8`). A one-voxel stair is where they differ: its codes are
+/// printed. Every fit leaves the mirror's bytes as the default's.
+#[test]
+fn plane_fits_agree_where_the_geometry_is_simple() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let floor = world();
+    let edges = edge_and_stair();
+    let r = std::f32::consts::FRAC_1_SQRT_2;
+    let mut bytes = None;
+    for fit in fits() {
+        let gpu = fitted(&device, &queue, &floor, fit);
+        let (n, k) = attr_at(&device, &queue, &gpu, [10, 10, 2]).expect("the floor has a plane");
+        println!("{}: floor top {n:?} code {k}", fit.name());
+        assert!(
+            angle_deg(n, [0.0, 0.0, 1.0]) <= 3.0,
+            "{}: {n:?}",
+            fit.name()
+        );
+        assert_eq!(k, 11, "{}: floor code", fit.name());
+        let b = (gpu.mirror_bytes(), gpu.allocated_bytes());
+        assert_eq!(*bytes.get_or_insert(b), b, "{}: mirror bytes", fit.name());
+
+        let gpu = fitted(&device, &queue, &edges, fit);
+        let (n, k) = attr_at(&device, &queue, &gpu, [63, 63, 20]).expect("the edge has a plane");
+        println!("{}: edge column {n:?} code {k}", fit.name());
+        assert!(angle_deg(n, [-r, -r, 0.0]) <= 3.0, "{}: {n:?}", fit.name());
+        assert_eq!(k, 6, "{}: edge code", fit.name());
+        for v in [[15, 16, 2], [16, 16, 3], [17, 16, 3], [14, 16, 2]] {
+            let a = attr_at(&device, &queue, &gpu, v);
+            println!(
+                "{}: stair voxel {v:?}: {}",
+                fit.name(),
+                a.map_or("no plane".to_owned(), |(n, k)| format!(
+                    "normal {n:.3?}, code {k} ({:+.3} voxel)",
+                    (f32::from(k) - 7.0) / 8.0
+                ))
+            );
+        }
+    }
+}
+
+/// [`edge_and_stair`] with a second one-voxel stair on top of the block, in the far chunk
+/// `(1, 1, 0)`: `z < 41` for `x < 96` and `z < 42` from `x = 96`, over `y` in `[64, 128)`.
+fn far_stair() -> World {
+    let world = edge_and_stair();
+    let f = |v: [i64; 3]| Fixed3(v.map(|x| x * FIXED_ONE));
+    for (min, max) in [
+        ([64, 64, 40], [96, 128, 41]),
+        ([96, 64, 40], [128, 128, 42]),
+    ] {
+        world
+            .apply(&EditOp::box_(f(min), f(max), Mode::Fill(1)))
+            .expect("resident");
+    }
+    world
+}
+
+/// A fit change re-queues every full chunk through the attribute pass under its cap: until a
+/// brick's turn its voxels keep the previous fit's attribute (never "no plane") and the mirror
+/// reports `refitting`; once it drains, every probed voxel equals a fresh fill's under the new
+/// fit, among them a stair voxel of the far chunk whose attribute the change moved. Neither
+/// the refit nor a material rewrite moves the mirror's bytes, and the rewrite reaches the
+/// material rows.
+#[test]
+fn a_fit_change_refits_every_brick_under_the_cap() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = far_stair();
+    let [old, new] = [fits()[0], fits()[3]];
+    let fresh = fitted(&device, &queue, &world, new);
+    let cap = 64;
+    let mut gpu = GpuWorld::with_surface_attrs(
+        &device,
+        MirrorConfig {
+            attr_cap: cap,
+            ..small(Window::Fixed(world.extent()))
+        },
+    );
+    assert_eq!(gpu.surface_fit(), old);
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    while update_attrs(&device, &queue, &mut gpu) > 0 {}
+    assert!(!gpu.refitting());
+    let bytes = (gpu.mirror_bytes(), gpu.allocated_bytes());
+    // The far stair's lower and upper voxels, the near stair's, the edge column, the top face.
+    let probes = [
+        [95, 90, 40],
+        [96, 90, 41],
+        [15, 16, 2],
+        [63, 63, 20],
+        [100, 100, 41],
+    ];
+    let at = |gpu: &GpuWorld, v| attr_at(&device, &queue, gpu, v);
+    let before: Vec<_> = probes.iter().map(|&v| at(&gpu, v)).collect();
+    let want: Vec<_> = probes.iter().map(|&v| at(&fresh, v)).collect();
+    for (v, (b, w)) in probes.iter().zip(before.iter().zip(&want)) {
+        println!("{v:?}: {} {b:?}, {} {w:?}", old.name(), new.name());
+        assert!(b.is_some() && w.is_some(), "{v:?} has a plane");
+    }
+    assert_ne!(before[0], want[0], "the far stair's lower voxel moves");
+
+    gpu.set_surface_fit(new);
+    assert!(gpu.refitting());
+    let mut calls = 0;
+    while gpu.refitting() {
+        let n = update_attrs(&device, &queue, &mut gpu);
+        assert!(n > 0 && n <= cap, "call {calls}: {n} items");
+        calls += 1;
+        assert!(calls < 100_000, "the refit drains");
+        let now: Vec<_> = probes.iter().map(|&v| at(&gpu, v)).collect();
+        for (i, a) in now.iter().enumerate() {
+            assert!(
+                *a == before[i] || *a == want[i],
+                "call {calls}: {:?} reads {a:?}",
+                probes[i]
+            );
+        }
+    }
+    println!(
+        "refit of {} bricks in {calls} calls under a cap of {cap}",
+        world.stats().full_bricks
+    );
+    assert!(calls > 1, "the refit spreads over calls");
+    for (i, &v) in probes.iter().enumerate() {
+        assert_eq!(at(&gpu, v), want[i], "{v:?} after the drain");
+    }
+    assert_eq!((gpu.mirror_bytes(), gpu.allocated_bytes()), bytes);
+
+    let mut t = MaterialTable::new();
+    for row in world.materials().rows().iter().skip(1) {
+        let mut row = row.clone();
+        row.detail = [2.0, 0.3];
+        row.detail_fine = 0.5;
+        t.push(row);
+    }
+    gpu.rewrite_materials(&t, &queue);
+    let rows = readback::read_buffer(&device, &queue, gpu.materials(), 0, 2 * 64);
+    let rock: &[f32] = bytemuck::cast_slice(&rows[64..]);
+    assert_eq!([rock[8], rock[9], rock[11]], [2.0, 0.3, 0.5]);
+    assert_eq!((gpu.mirror_bytes(), gpu.allocated_bytes()), bytes);
+}

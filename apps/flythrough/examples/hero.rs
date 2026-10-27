@@ -7,7 +7,7 @@
 //! [--indirect on|off] [--probe-spacing N] [--internal-scale 1|1.5|2] [--jitter on|off]
 //! [--sharpen S] [--light-radius N] [--adapter SUBSTRING] [--lighting full|half]
 //! [--shadow-walk full|coarse] [--sampler list|reuse] [--history edits|gradient]
-//! [--lamp on|off] [--filter on|off] [--emissive-history N]`.
+//! [--lamp on|off] [--filter on|off] [--emissive-history N] [--look PRESET]`.
 //!
 //! `--source showcase` (the default) generates `flythrough::showcase` and frames one of its
 //! shots (`--shot`, default `hall`); `--at`, `--yaw`, `--pitch` and `--exposure` override the
@@ -18,7 +18,8 @@
 //! `R` voxels where the view ray meets rock before the frame is drawn. The lamp is off by
 //! default for both sources; indirect light is on at the fly-through's probe spacing (16) and
 //! the upscaler at the fly-through's defaults (`--internal-scale 1`, `--jitter off`: none).
-//! The look is the fly-through's default (contour planes, rock's detail), the ores emit, and
+//! The look is a contour preset of `flythrough::LookPreset`, the fly-through's default unless
+//! `--look` names another (its fit, tuning and rock detail); the ores emit, and
 //! the light radius is the source's (19 chunks on the showcase, 4 on the level). The mirror
 //! syncs until its light-sample count stops changing, and the still is the last of
 //! `--frames` frames (default 64) from the same pose, so the accumulation, the filter and the
@@ -71,6 +72,7 @@ struct Args {
     sharpen: f32,
     light_radius: Option<i32>,
     adapter: Option<String>,
+    look: flythrough::LookPreset,
 }
 
 /// The light radius of the showcase: its farthest pair of chunks lies 18.06 chunks apart.
@@ -102,6 +104,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         sharpen: 0.5,
         light_radius: None,
         adapter: None,
+        look: flythrough::LookPreset::DEFAULT,
     };
     let mut shot_given = false;
     let on_off = |flag: &str, v: &str| match v {
@@ -154,6 +157,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--carve" => args.carve = v.parse().map_err(|e| bad(&e))?,
             "--out" => args.out = Some(v.into()),
             "--out-dir" => args.out_dir = v.into(),
+            "--look" => {
+                args.look = flythrough::LookPreset::from_name(&v)
+                    .filter(|p| p.normal_mode == vxe_render::NormalMode::Contour)
+                    .ok_or(format!("--look takes a contour preset, not {v}"))?
+            }
             "--frames" => args.frames = v.parse().map_err(|e| bad(&e))?,
             "--indirect" => args.lighting.indirect = on_off(&flag, &v)?,
             "--probe-spacing" => {
@@ -315,8 +323,13 @@ fn main() -> Result<(), String> {
     let (world, level_spawn, light_radius) = match args.source {
         Source::Showcase => {
             let source = ShowcaseSource::new(args.seed);
-            let world =
-                World::generate(source.extent(), &source, &flythrough::showcase_materials());
+            let world = World::generate(
+                source.extent(),
+                &source,
+                &flythrough::with_showcase_rows(&flythrough::with_emissive_ore(
+                    &args.look.materials(),
+                )),
+            );
             (world, source.spawn(), SHOWCASE_LIGHT_RADIUS)
         }
         Source::Level => {
@@ -324,7 +337,7 @@ fn main() -> Result<(), String> {
             let world = World::generate(
                 source.extent,
                 &source,
-                &flythrough::with_emissive_ore(&flythrough::look_materials()),
+                &flythrough::with_emissive_ore(&args.look.materials()),
             );
             (
                 world,
@@ -381,8 +394,7 @@ fn main() -> Result<(), String> {
     }))
     .map_err(|e| format!("no device: {e}"))?;
 
-    // The fly-through's default look: contour planes with rock's procedural detail, on the
-    // bounded path's mirror budget.
+    // Contour attributes on the bounded path's mirror budget, fitted as the look says.
     let chunks = world.extent().len() as u64;
     let mut gpu = GpuWorld::with_surface_attrs(
         &device,
@@ -401,6 +413,7 @@ fn main() -> Result<(), String> {
             .to_array()
             .map(|v| v.floor() as i32),
     );
+    gpu.set_surface_fit(args.look.tuning.fit);
     gpu.set_focus(focus);
     let mut syncs = 0;
     let mut last = None;
@@ -438,8 +451,9 @@ fn main() -> Result<(), String> {
             ..args.lighting
         });
         frame.set_look(vxe_render::LookParams {
-            normal_mode: vxe_render::NormalMode::Contour,
+            normal_mode: args.look.normal_mode,
             detail: true,
+            tuning: args.look.tuning,
             ..vxe_render::LookParams::default()
         });
         frame.set_resolution(&device, args.resolution);
