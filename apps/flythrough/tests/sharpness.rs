@@ -530,6 +530,145 @@ fn detail_after_lighting_is_exact_for_the_lamp() {
     }
 }
 
+/// The probes' preset irradiance in [`indirect_render`]: `PI x 2` on every channel.
+const INDIRECT_PRESET: f32 = 2.0 * std::f32::consts::PI;
+
+/// Exposure of [`indirect_render`]: the lamp-lit wall stays under the identity tone map's
+/// clamp.
+const INDIRECT_EXPOSURE: f32 = 0.1;
+
+/// The wall under `c` at `tier`, filter off, identity tone map, exposure
+/// [`INDIRECT_EXPOSURE`], lamp on, after [`SHARP_FRAMES`] frames on a fresh frame; with
+/// `indirect`, every probe preset to [`INDIRECT_PRESET`] and its updates off.
+fn indirect_render(
+    rig: &mut LookRig,
+    cam: &Camera,
+    c: &Candidate,
+    tier: LightingResolution,
+    indirect: bool,
+) -> Vec<u8> {
+    use vxe_render::probes::TestProbe;
+    use vxe_render::{LightParams, Lighting, ToneMap, readback};
+    rig.frame = vxe_render::Frame::new(&rig.device, WIDTH, HEIGHT);
+    rig.frame.set_look(c.look(true, ViewMode::Shaded));
+    rig.frame.set_resolution(&rig.device, tier);
+    rig.frame.set_lighting(Lighting {
+        lamp: true,
+        filter: false,
+        exposure: INDIRECT_EXPOSURE,
+        tone_map: ToneMap::Identity,
+        indirect,
+        ..Lighting::default()
+    });
+    rig.frame.probes_mut().set_updates(false);
+    let origin = rig.frame.probes().origin_for(cam.position.to_array());
+    rig.frame
+        .probes()
+        .write_test_irradiance(&rig.queue, origin, |_| TestProbe {
+            irradiance: [INDIRECT_PRESET; 3],
+            inside: false,
+        });
+    let light = LightParams::headlamp();
+    for _ in 0..SHARP_FRAMES {
+        rig.frame
+            .step(&rig.device, &rig.queue, &rig.gpu, cam, &light);
+    }
+    readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target())
+}
+
+/// The linear value of display byte `b` under the identity tone map.
+fn linear(b: u8) -> f64 {
+    (f64::from(b) / 255.0).powf(2.2)
+}
+
+/// Half the width of the linear interval that rounds to display byte `b`.
+fn rounding(b: u8) -> f64 {
+    let at = |v: f64| (v.clamp(0.0, 255.0) / 255.0).powf(2.2);
+    (at(f64::from(b) + 0.5) - at(f64::from(b) - 0.5)) / 2.0
+}
+
+/// C5 leaves the probes' indirect light alone: on the wall with the lamp on, every probe
+/// preset to `2 PI` and the filter off, at both lighting tiers, the indirect contribution
+/// (the linear image with indirect light on minus the one with it off) under C5 matches the
+/// one without C5 per channel within the four display bytes' rounding plus 0.0005 linear, on
+/// every pixel of the window that no image clamps (at least half of them), and the two
+/// contributions' means over those pixels agree within 1 %. A lamp ratio applied to the
+/// indirect part (0 where the detailed normal faces away from the lamp, up to 2) moves
+/// single pixels by up to the whole contribution.
+#[test]
+fn detail_after_lighting_leaves_the_indirect_light_alone() {
+    use LightingResolution::{Full, Half};
+    let Some((device, queue)) = sweep_device() else {
+        return;
+    };
+    let wall = wall_world_with(sharp_table(ROCK));
+    let mut rig = fit_rig(&device, &queue, &wall, SurfaceFit::default());
+    let cam = wall_camera();
+    let today = Candidate::today();
+    let c5 = Candidate {
+        name: "C5".to_owned(),
+        after: true,
+        ..Candidate::today()
+    };
+    let w = WIDTH as usize;
+    let [x0, x1, y0, y1] = WINDOW;
+    for tier in [Full, Half] {
+        let contribution = |rig: &mut LookRig, c: &Candidate| -> (Vec<u8>, Vec<u8>) {
+            (
+                indirect_render(rig, &cam, c, tier, true),
+                indirect_render(rig, &cam, c, tier, false),
+            )
+        };
+        let (a_on, a_off) = contribution(&mut rig, &today);
+        let (b_on, b_off) = contribution(&mut rig, &c5);
+        let (mut n, mut clamped, mut worst, mut excess) = (0usize, 0usize, 0.0f64, f64::MIN);
+        let (mut sum_a, mut sum_b) = (0.0f64, 0.0f64);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let i = (y * w + x) * 4;
+                if [&a_on, &b_on]
+                    .iter()
+                    .any(|img| img[i..i + 3].contains(&255))
+                {
+                    clamped += 1;
+                    continue;
+                }
+                n += 1;
+                for k in 0..3 {
+                    let da = linear(a_on[i + k]) - linear(a_off[i + k]);
+                    let db = linear(b_on[i + k]) - linear(b_off[i + k]);
+                    let bound = [a_on[i + k], a_off[i + k], b_on[i + k], b_off[i + k]]
+                        .into_iter()
+                        .map(rounding)
+                        .sum::<f64>();
+                    worst = worst.max((da - db).abs());
+                    excess = excess.max((da - db).abs() - bound);
+                    sum_a += da;
+                    sum_b += db;
+                }
+            }
+        }
+        let mean_a = sum_a / (3 * n) as f64;
+        let mean_b = sum_b / (3 * n) as f64;
+        println!(
+            "{}: indirect contribution over {n} unclamped window pixels ({clamped} clamped): mean today {mean_a:.5}, C5 {mean_b:.5}, worst per-channel difference {worst:.5}, worst past the rounding bound {excess:.5}",
+            tier.name()
+        );
+        assert!(n * 2 > (x1 - x0) * (y1 - y0), "{clamped} clamped");
+        assert!(mean_a > 0.01, "the preset probes light the wall: {mean_a}");
+        assert!(
+            excess <= 0.0005,
+            "{}: {excess:.5} past the bound",
+            tier.name()
+        );
+        assert!(
+            (mean_b - mean_a).abs() <= 0.01 * mean_a,
+            "{}: mean {mean_b:.5} against {mean_a:.5}",
+            tier.name()
+        );
+    }
+}
+
 /// Every candidate alone, and rock's detail pairs with and without C5, against the metrics and
 /// the guardrails, in one table: `cargo nextest run -p flythrough --test sharpness
 /// --no-capture candidate_sweep`.
