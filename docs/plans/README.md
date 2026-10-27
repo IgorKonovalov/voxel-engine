@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0047** (ADRs are a separate sequence; next free there is **0036**).
+**Next free number: 0048** (ADRs are a separate sequence; next free there is **0037**).
 
 ## Active roster
 
@@ -20,6 +20,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0040](0040-eye-adaptation-asymmetric-auto-exposure-and-pre-exposure.md) | Eye adaptation: an automatic exposure that is fast toward bright and slow toward dark, metered on the GPU, with pre-exposed HDR targets | approved | M2, ADR-0033 (proposed). After Plan 0029; before Plan 0032. |
 | [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, six verified defects | approved | Code health, no ADR. After every plan active on 2026-10-22. |
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044. |
+| [0047](0047-emissive-light-holds-still-long-guarded-history.md) | Emissive light holds still: a patch bar, a long f32 emissive history, an emissive-only gradient guard | draft | M2, ADR-0036 (proposed). After Plan 0040; before Plan 0032. |
 <!-- roster:end -->
 
 ## Recently closed
