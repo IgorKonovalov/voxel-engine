@@ -590,7 +590,7 @@ exposure multiply, so the settled exposure ignores it.
 | 2: Pre-exposure | dev | done | 81d300a |
 | 3: Adaptation | dev | done | e9879cc |
 | 4: The fly-through, the cave's own curve, and the readings | dev | done | 9a0d342 (first pass); amendment committed with this row |
-| 5: The owner's windowed check | human | not started | |
+| 5: The owner's windowed check | human | done (two sessions; verdicts recorded by dev) | committed with this row |
 
 Phase 1 (lavapipe, exclusive perf lock, load 14 to 30 from the other lanes): `tests/exposure.rs`
 split wall reads `metered_log2` -6.000000 (average) and -6.0000005 (centre); the centred square
@@ -709,6 +709,29 @@ Phase 4 amendment of b05accc (committed with this paragraph): `check_curve` lose
 stepped-model assertion and the other two clauses are unchanged. The vein test is renamed
 `the_curve_facing_a_vein_follows_the_stepped_model` (and in `.config/nextest.toml`'s three
 filters).
+
+Phase 5, first session (`live/session1.log`, 2026-10-27 17:37 to 17:53, NVIDIA RTX 3080 Laptop,
+`live/flythrough-p5`, its build commit not recorded; runs: defaults, `--adapt
+0.15,2,10,0.015625`, `--adapt 0.1,0.5,2,0.015625`, `--metering average`). Owner (17:55): "eye
+tests - slowest is the best, but flicker really gives it a strange look. when i close the lamp
+and scene gets brighter - it seems like multiple lights are opening on walls one after another
+within 10-15 sec, and it looks super strange and unnatural". The resulting picks are the
+Decisions line and the first Phase 4 amendment.
+
+Phase 5, second session (`live/session2.sh`, `live/session2.log`, 2026-10-27 21:31 to 21:35, load
+1.7 to 1.8, NVIDIA RTX 3080 Laptop through the shell's default adapter, `live/flythrough-p5b`
+built from 7c322cc, own upscaler at 1.5, each run under the perf lock). Run 1, `--level --seed 1
+--hud` (the new defaults, banner `exposure auto eye`), 2052 frames, exit 0: lamp toggled five
+times, lighting half then full; scene with the lamp on -1.6 to -5.2 EV, off -9.6 to -15.0 EV;
+every lamp-off stretch ends at `+4.00 EV` (`max` 16), the lamp-on stretches settle +1.50 to
++2.74 EV. Run 2, `--exposure 11.3` (manual +3.50 EV), 1276 frames, exit 0. Run 3,
+`--emissive-history 64`, 2003 frames, exit 0: lamp toggled five times, lamp-off stretches end at
++3.97 to +4.00 EV. Owner on run 3's wall patches: "with 64 it was better, but still visible, we
+should make a separate plan to fix it. really unnatural look". Owner: no objection to the new
+defaults (0.15 / 2 / 10 s, `max` 16), which stay. Owner, for Phase 4 bar 2: (b) drops to a
+reading (the second Phase 4 amendment, code in 08cf9cc). Step 4 closes: the emissive
+direct-light estimator owns the patches and a separate plan follows; `DEFAULT_EMISSIVE_HISTORY`
+is unchanged here (32).
 
 ### Notes
 
