@@ -409,8 +409,8 @@ reads them.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The hall on screen with the lamp off | dev | done | 58abae3 |
-| 2: The features | dev | done | committed with this row |
-| 3: The ores, the determinism vector and the open volume | dev | not started | |
+| 2: The features | dev | done | dde5427 |
+| 3: The ores, the determinism vector and the open volume | dev | done | committed with this row |
 | 4: The hero's shots, the review set and the golden | dev | not started | |
 | 5: The readings | dev | not started | |
 | 6: The owner's pick and the cave on screen | human | not started | |
@@ -429,6 +429,11 @@ reads them.
 - Phase 2: rejection rules added beyond the plan's: pillars and cones keep 2 voxels off the first 11 m of each shot's centre ray (`Shot::ray_milli`, an integer unit vector of the yaw and pitch) and off the ledges' 2 m probe points; stalagmites keep 3 m off the chasm's reach and off the crystal floor (`x >= 650`). Ledges are rock only in the hall's air within `depth` (30..50) of the wall outward from the centre, and drop any voxel within 4 m of an eye.
 - Phase 2: the 4 m clearance is asserted for pillars, cones and ledges; the bridge's deck is 1.6 m under the `chasm` eye by the plan's own shot, so the bridge is excluded from it.
 - Phase 2: seed 1 places 5 pillars, 28 stalactites, 12 stalagmites, 2 ledges and the bridge. Generation (release, `flythrough --source showcase --headless --frames 60`, RTX 3080 Laptop box, exclusive perf lock, load 7.2): 210 ms, 70 360 `Full` bricks, 16 416 light samples.
+- Phase 3: crystal prisms are a sixth feature kind (`Kind::Crystal`, `Feature::Capsule`), `CRYSTAL` wherever they lie (rock or air); a brick a prism touches is always evaluated per voxel. Clusters keep 4 m from every pillar's reach and their prisms 2 voxels off the first 11 m of each shot's centre ray, beyond the plan's rules; "one cluster per chunk" is read as distinct chunks of the cluster centres (on the floor).
+- Phase 3: the ember zone is rock within 3 voxels of the chasm's band and bottom (`|x - 598 - w(y)| <= 28`, `z` 29..127) under the footprint with `K/32` of slack, so the bridge's sides and underside carry ember too. Thresholds: amber and amethyst 14 800 and ember 7 300 on the vein noise (8 % and 25 % of its values, measured over a seed-1 sample).
+- Phase 3: the generation-source float check (`generation_sources_contain_no_floating_point`) now covers `src/showcase.rs`; the reverse-order regeneration in `showcase_vector` runs in contiguous reverse runs over the machine's threads (single-threaded it took 15.5 s at load 24).
+- Phase 3 readings (seed 1, `cargo nextest`, quick tier): light samples amber 27 142, crystal 13 498, amethyst 19 703, ember 35 945, total 96 288; the fullest chunk `[11, 6, 2]` holds 2 880; the flood reaches 89 568 air bricks (45 859 m^3), 351 of them at brick z 4. Vector `0x7ea7_b99b_eed4_2df0` blessed on Linux.
+- Phase 3: the workspace quick tier timed out `determinism::showcase_vector` (before its reverse pass was threaded) and `replay::a_stamp_and_a_collapse_replay_from_the_save` at 30 s at load 31; after the change the flythrough quick tier passed 118 of 118 at load 27.
 - Phase 1: `level_mirror_budget` takes the world, not a `Full` count (`level_mirror_budget(&world, 1176, attrs)`).
 
 ### Close triggers

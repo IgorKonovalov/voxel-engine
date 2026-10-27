@@ -38,7 +38,7 @@ use vxe_world::{
 
 use crate::cave::{ORE, ROCK, SHELL};
 
-/// The showcase's extent in chunks: 896 x 768 x 448 voxels (89.6 x 76.8 x 44.8 m).
+/// The showcase's extent in chunks: 896 x 768 x 448 voxels (about 90 x 77 x 45 m).
 pub const SHOWCASE_CHUNKS: [i32; 3] = [14, 12, 7];
 /// Cyan crystal, the emissive row after the cave's four.
 pub const CRYSTAL: MaterialId = 5;
@@ -94,9 +94,21 @@ pub const EYE_CLEAR: i64 = 40;
 /// How far along each shot's centre ray pillars and cones keep clear of it, voxels.
 pub const RAY_CLEAR: i64 = 110;
 
-/// Vein-noise value above which rock in the amber zone is amber: about 8 % of the noise's
-/// values lie above it.
+/// Vein-noise values above which rock in the amber and amethyst zones is ore: about 8 % of
+/// the noise's values lie above it.
 const AMBER_ABOVE: i64 = 14800;
+const AMETHYST_ABOVE: i64 = 14800;
+/// Vein-noise value above which rock in the ember zone is ember: about 25 %.
+const EMBER_ABOVE: i64 = 7300;
+/// The ember zone reaches this many voxels past the chasm's band and under its bottom.
+const EMBER_REACH: i64 = 3;
+/// The ember zone's slack on the hall's footprint at the floor, about 4 voxels at its edge.
+const EMBER_FOOT: i64 = K / 32;
+/// The crystal clusters, the capsules in each, and the least distance between two centres.
+pub const CLUSTERS: usize = 8;
+pub const CLUSTER_SPACING: i64 = 30;
+/// The clearance every crystal voxel keeps from each shot's eye, voxels (2 m).
+pub const CRYSTAL_EYE_CLEAR: i64 = 20;
 /// Voxels of indestructible shell inside each face of the extent.
 const SHELL_THICKNESS: i32 = 2;
 /// Rounding slack for the per-brick bounds, in noise units.
@@ -387,6 +399,9 @@ pub enum Feature {
     },
     /// The natural arch over the chasm (`BRIDGE_*`).
     Bridge,
+    /// A crystal prism: [`CRYSTAL`] within `r` of the segment from `a` to `b`, wherever it
+    /// lies.
+    Capsule { a: [i64; 3], b: [i64; 3], r: i64 },
 }
 
 impl Feature {
@@ -398,6 +413,7 @@ impl Feature {
             Feature::Cone { .. } => Kind::Stalagmite,
             Feature::Ledge { .. } => Kind::Ledge,
             Feature::Bridge => Kind::Bridge,
+            Feature::Capsule { .. } => Kind::Crystal,
         }
     }
 
@@ -425,6 +441,7 @@ pub enum Kind {
     Stalagmite,
     Ledge,
     Bridge,
+    Crystal,
 }
 
 /// The showcase cavern of one seed over [`SHOWCASE_CHUNKS`].
@@ -535,6 +552,8 @@ impl ShowcaseSource {
         let cones = self.place_cones(&probes);
         self.features.extend(cones);
         self.features.push(Feature::Bridge);
+        let crystals = self.place_crystals();
+        self.features.extend(crystals);
         // Stable: within a kind the order of placement, which is the index order.
         self.features.sort_by_key(Feature::kind);
         self.boxes = (0..self.features.len())
@@ -564,7 +583,7 @@ impl ShowcaseSource {
         })
     }
 
-    /// Five pillars: axes where `q_xy <= 0.6 K`, at least [`PILLAR_SPACING`] apart, 3 m from
+    /// Five pillars: axes where `10 q_xy <= 6 K`, at least [`PILLAR_SPACING`] apart, 3 m from
     /// the chasm's reach, clear of the shots and of the ledges' probes, their mid-height
     /// probe off a ledge.
     fn place_pillars(&self, probes: &[[i64; 2]]) -> Vec<Feature> {
@@ -639,7 +658,7 @@ impl ShowcaseSource {
     }
 
     /// One stalactite with probability 1/2 and one stalagmite with probability 1/3 per
-    /// [`CONE_CELL`] floor cell whose centre has `q_xy <= 0.8 K`, each inside its cell, 1 m
+    /// [`CONE_CELL`] floor cell whose centre has `10 q_xy <= 8 K`, each inside its cell, 1 m
     /// clear of every pillar and of the ledges, clear of the shots; stalactite tips keep 5 m
     /// over the floor and a stalagmite's tip 1 m under its cell's stalactite's; stalagmites
     /// keep 3 m off the chasm's reach and off the crystal floor.
@@ -745,6 +764,82 @@ impl ShowcaseSource {
         stalactites
     }
 
+    /// Eight clusters of three to six crystal prisms (radius 2..4, length 16..36, a hashed
+    /// tilt) standing in the east floor at `x` 690..749 where `10 q_xy <= 7 K`: centres
+    /// [`CLUSTER_SPACING`] apart and in distinct chunks, 4 m clear of every pillar's reach,
+    /// every prism [`CRYSTAL_EYE_CLEAR`] from each shot's eye and two voxels off the first
+    /// [`RAY_CLEAR`] voxels of its centre ray.
+    fn place_crystals(&self) -> Vec<Feature> {
+        let pillars: Vec<([i64; 2], i64)> = self
+            .features
+            .iter()
+            .filter_map(|f| match *f {
+                Feature::Pillar { axis, r_end, .. } => Some((axis, r_end)),
+                _ => None,
+            })
+            .collect();
+        let mut centres: Vec<[i64; 3]> = Vec::new();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while centres.len() < CLUSTERS {
+            assert!(
+                i < ATTEMPTS,
+                "the showcase places {CLUSTERS} crystal clusters"
+            );
+            let h = hash3(self.seed, [Kind::Crystal as i32, i, 0]);
+            let cluster = i;
+            i += 1;
+            let c = [690 + (h % 60) as i64, 241 + ((h >> 16) % 287) as i64];
+            if q_xy(c[0], c[1]) * 10 > K * 7 {
+                continue;
+            }
+            let centre = [c[0], c[1], self.floor_at(c[0] as i32, c[1] as i32)];
+            let chunk = centre.map(|v| v.div_euclid(i64::from(CHUNK_EDGE)));
+            let apart = centres.iter().all(|o| {
+                o.map(|v| v.div_euclid(i64::from(CHUNK_EDGE))) != chunk
+                    && d2_xy([o[0], o[1]], c) >= CLUSTER_SPACING.pow(2)
+            });
+            let off_pillars = pillars
+                .iter()
+                .all(|&(a, r)| d2_xy(a, c) >= (r + EYE_CLEAR).pow(2));
+            if !apart || !off_pillars {
+                continue;
+            }
+            let prisms: Vec<Feature> = (0..3 + (h >> 32) % 4)
+                .map(|k| {
+                    let h = hash3(self.seed, [Kind::Crystal as i32, cluster, 1 + k as i32]);
+                    let r = 2 + (h % 3) as i64;
+                    let len = 16 + ((h >> 8) % 21) as i64;
+                    let jitter = |shift: u32| ((h >> shift) % 21) as i64 - 10;
+                    let tilt = |shift: u32| ((h >> shift) % (len as u64 + 1)) as i64 - len / 2;
+                    let foot = [c[0] + jitter(16), c[1] + jitter(24)];
+                    let a = [
+                        foot[0],
+                        foot[1],
+                        self.floor_at(foot[0] as i32, foot[1] as i32) - 4,
+                    ];
+                    let b = [a[0] + tilt(32), a[1] + tilt(44), a[2] + len];
+                    Feature::Capsule { a, b, r }
+                })
+                .collect();
+            let clear = prisms.iter().all(|p| {
+                let Feature::Capsule { a, b, r } = *p else {
+                    return false;
+                };
+                SHOTS.iter().all(|s| {
+                    let eye = s.eye.0.map(i64::from);
+                    !in_capsule(a, b, r + CRYSTAL_EYE_CLEAR, eye)
+                        && (0..=RAY_CLEAR).all(|t| !in_capsule(a, b, r + 2, s.ray_point(t)))
+                })
+            });
+            if clear {
+                centres.push(centre);
+                out.extend(prisms);
+            }
+        }
+        out
+    }
+
     /// Feature `i`'s bounds, inclusive.
     fn bounds_of(&self, i: usize) -> ([i32; 3], [i32; 3]) {
         let f = &self.features[i];
@@ -758,6 +853,10 @@ impl ShowcaseSource {
             Feature::Bridge => (
                 [CHASM_X - BRIDGE_HALF_SPAN, BRIDGE_Y[0], BRIDGE_SPRING].map(|v| v as i32),
                 [CHASM_X + BRIDGE_HALF_SPAN, BRIDGE_Y[1], BRIDGE_DECK].map(|v| v as i32),
+            ),
+            Feature::Capsule { a, b, r } => (
+                [0, 1, 2].map(|k| (a[k].min(b[k]) - r) as i32),
+                [0, 1, 2].map(|k| (a[k].max(b[k]) + r) as i32),
             ),
             _ => {
                 let bricks = self.bricks_of(i);
@@ -933,6 +1032,25 @@ impl ShowcaseSource {
                     && self.in_band(f, p[0], p[1])
                     && (z - BRIDGE_SPRING).pow(2) * s2 >= rise * rise * (s2 - dx * dx)
             }
+            Feature::Capsule { .. } => false,
+        }
+    }
+
+    /// Whether a crystal of `scope` holds `p`.
+    fn crystal_at(&self, scope: Scope<'_>, p: [i32; 3]) -> bool {
+        let hit = |i: usize| {
+            let (lo, hi) = self.boxes[i];
+            match self.features[i] {
+                Feature::Capsule { a, b, r } => {
+                    (0..3).all(|k| p[k] >= lo[k] && p[k] <= hi[k])
+                        && in_capsule(a, b, r, p.map(i64::from))
+                }
+                _ => false,
+            }
+        };
+        match scope {
+            Scope::All => (0..self.features.len()).any(hit),
+            Scope::Bucket(b) => b.iter().any(|&i| hit(i as usize)),
         }
     }
 
@@ -962,14 +1080,14 @@ impl ShowcaseSource {
         }
         let b = brick_min(p);
         if b == f.brick {
-            self.base_air(f, p) && !self.rock_feature(scope, f, p)
+            !self.crystal_at(scope, p) && self.base_air(f, p) && !self.rock_feature(scope, f, p)
         } else {
             let g = Fields::of_brick(self.noises, b);
             let scope = match scope {
                 Scope::All => Scope::All,
                 Scope::Bucket(_) => Scope::Bucket(self.bucket(b)),
             };
-            self.base_air(&g, p) && !self.rock_feature(scope, &g, p)
+            !self.crystal_at(scope, p) && self.base_air(&g, p) && !self.rock_feature(scope, &g, p)
         }
     }
 
@@ -978,8 +1096,26 @@ impl ShowcaseSource {
     fn vein_ore(&self, f: &Fields, p: [i32; 3]) -> Option<MaterialId> {
         let [x, _, z] = p.map(i64::from);
         let v = f.vein(p);
-        (x < CENTRE[0] && z < DOME_THIRD_Z && z > f.floor(p[0], p[1]) && v > AMBER_ABOVE)
-            .then_some(AMBER)
+        if z >= DOME_THIRD_Z {
+            (v > AMETHYST_ABOVE).then_some(AMETHYST)
+        } else if x < CENTRE[0] && z > f.floor(p[0], p[1]) {
+            (v > AMBER_ABOVE).then_some(AMBER)
+        } else if v > EMBER_ABOVE && self.ember_zone(f, p) {
+            Some(EMBER)
+        } else {
+            None
+        }
+    }
+
+    /// Whether rock at `p` lies in the ember zone: within [`EMBER_REACH`] of the chasm's band
+    /// and bottom, under the floor's mean height, under the hall's footprint with
+    /// [`EMBER_FOOT`] of slack.
+    fn ember_zone(&self, f: &Fields, p: [i32; 3]) -> bool {
+        let [x, y, z] = p;
+        let zz = i64::from(z);
+        (CHASM_BOTTOM - EMBER_REACH..FLOOR_Z).contains(&zz)
+            && (i64::from(x) - CHASM_X - f.chasm(y)).abs() <= CHASM_HALF + EMBER_REACH
+            && q_xy(i64::from(x), i64::from(y)) <= K + f.wall_floor(x, y) + EMBER_FOOT
     }
 
     /// The material of voxel `p` from its brick's fields against `scope`'s features: ore is
@@ -987,6 +1123,9 @@ impl ShowcaseSource {
     fn eval(&self, f: &Fields, scope: Scope<'_>, p: [i32; 3]) -> MaterialId {
         if self.in_shell(p) {
             return SHELL;
+        }
+        if self.crystal_at(scope, p) {
+            return CRYSTAL;
         }
         if self.base_air(f, p) && !self.rock_feature(scope, f, p) {
             return AIR;
@@ -1039,6 +1178,12 @@ impl ShowcaseSource {
         if near_shell {
             return None;
         }
+        let crystal = bucket
+            .iter()
+            .any(|&i| self.features[i as usize].kind() == Kind::Crystal);
+        if crystal {
+            return None;
+        }
         let bounds = Bounds::of_brick(f, lo, hi);
         match base_side(lo, hi, &bounds) {
             Side::In => bucket.is_empty().then_some(AIR),
@@ -1046,7 +1191,7 @@ impl ShowcaseSource {
             Side::Out => {
                 let (glo, ghi) = (lo.map(|v| v - 1), hi.map(|v| v + 1));
                 let grown = base_side(glo, ghi, &Bounds::of_box(&self.noises, glo, ghi));
-                if grown == Side::Out || !self.ore_possible(f, lo, hi, bounds.floor) {
+                if grown == Side::Out || !self.ore_possible(f, lo, hi, &bounds) {
                     Some(ROCK)
                 } else {
                     None
@@ -1057,13 +1202,40 @@ impl ShowcaseSource {
 
     /// Whether some voxel of the solid brick `lo..=hi` can lie in an ore zone above its vein
     /// threshold.
-    fn ore_possible(&self, f: &Fields, lo: [i32; 3], hi: [i32; 3], floor: (i64, i64)) -> bool {
-        let (_, vein_hi) = corner_bounds(lo, hi, |p| f.vein(p));
-        let amber_zone = i64::from(lo[0]) < CENTRE[0]
-            && i64::from(lo[2]) < DOME_THIRD_Z
-            && i64::from(hi[2]) > floor.0;
-        amber_zone && vein_hi > AMBER_ABOVE - MARGIN
+    fn ore_possible(&self, f: &Fields, lo: [i32; 3], hi: [i32; 3], b: &Bounds) -> bool {
+        let (_, vein) = corner_bounds(lo, hi, |p| f.vein(p));
+        let (z_lo, z_hi) = (i64::from(lo[2]), i64::from(hi[2]));
+        let amethyst = z_hi >= DOME_THIRD_Z && vein > AMETHYST_ABOVE - MARGIN;
+        let amber = i64::from(lo[0]) < CENTRE[0]
+            && z_lo < DOME_THIRD_Z
+            && z_hi > b.floor.0
+            && vein > AMBER_ABOVE - MARGIN;
+        let w = (
+            chasm_offset(b.chasm.0 - MARGIN),
+            chasm_offset(b.chasm.1 + MARGIN),
+        );
+        let reach = CHASM_HALF + EMBER_REACH;
+        let band_out =
+            i64::from(hi[0]) < CHASM_X + w.0 - reach || i64::from(lo[0]) > CHASM_X + w.1 + reach;
+        let height_out = z_hi < CHASM_BOTTOM - EMBER_REACH || z_lo >= FLOOR_Z;
+        let foot_out = q_xy_bounds(lo, hi).0 > K + wall_from(b.wall_floor).1 + EMBER_FOOT;
+        let ember = !band_out && !height_out && !foot_out && vein > EMBER_ABOVE - MARGIN;
+        amethyst || amber || ember
     }
+}
+
+/// Whether `p` lies within `r` of the segment from `a` to `b`: with `d = b - a`, `w = p - a`
+/// and `t` the clamped `w . d` over `L2 = d . d`, `|w L2 - d t|^2 <= r^2 L2^2`.
+fn in_capsule(a: [i64; 3], b: [i64; 3], r: i64, p: [i64; 3]) -> bool {
+    let d = [0, 1, 2].map(|k| b[k] - a[k]);
+    let w = [0, 1, 2].map(|k| p[k] - a[k]);
+    let l2: i64 = d.iter().map(|v| v * v).sum();
+    if l2 == 0 {
+        return w.iter().map(|v| v * v).sum::<i64>() <= r * r;
+    }
+    let t = (0..3).map(|k| w[k] * d[k]).sum::<i64>().clamp(0, l2);
+    let e: i64 = (0..3).map(|k| (w[k] * l2 - d[k] * t).pow(2)).sum();
+    e <= r * r * l2 * l2
 }
 
 /// The minimum voxel of the brick holding `p`.
@@ -1233,7 +1405,7 @@ mod tests {
                     .push(*b);
             }
         }
-        assert_eq!(by_kind.len(), 5, "every kind is bucketed");
+        assert_eq!(by_kind.len(), 6, "every kind is bucketed");
         for (kind, bricks) in by_kind {
             let step = bricks.len() / 48 + 1;
             let full = bricks
@@ -1249,7 +1421,7 @@ mod tests {
         }
     }
 
-    /// Seed 1's features follow their rules, and each shows where the plan says it is.
+    /// Seed 1's features follow their rules, and each shows at its worked voxels.
     #[test]
     fn seed_1_places_the_features_by_their_rules() {
         let s = ShowcaseSource::new(1);
@@ -1317,7 +1489,7 @@ mod tests {
     }
 
     /// No pillar, cone or ledge voxel lies within 4 m of a shot's eye. The bridge is the
-    /// `chasm` shot's subject, 1.6 m under its eye.
+    /// `chasm` shot's subject, 16 voxels under its eye.
     #[test]
     fn no_feature_lies_within_four_metres_of_a_shot() {
         let s = ShowcaseSource::new(1);
