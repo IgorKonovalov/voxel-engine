@@ -288,6 +288,19 @@ fresh session.
     rows, is read on the RTX 3080 Laptop GPU and on the slow adapter (`--adapter`), each
     labelled. These are readings against §2's lines, with no new bar.
 
+### Phase 5a: The probe spacing in the banner
+> **Amended:** 2026-10-27 (orchestrator, under the owner's standing rule that every toggle
+> under test shows its mode in the window). Phase 6 compares spacing 16 and 32, and the banner
+> did not show the spacing.
+- **Owner skill:** dev
+- **What:** the fly-through's mode banner names the probe spacing whenever indirect light is
+  on (`probes 16`, `probes 32`), in every mode, not only autopilot. `--shot NAME` is a start
+  pose, not a toggle, and stays out of the banner.
+- **Files touched:** the fly-through's banner and its tests, this plan's log.
+- **Done when:** a headless test builds the banner with `--probe-spacing 32` and asserts it
+  contains `probes 32`, and with the default asserts `probes 16`; the Phase 6 runner's
+  binary is rebuilt from this commit.
+
 ### Phase 6: The owner's pick and the cave on screen
 - **Owner skill:** human
 - **What:** the owner reviews `target/hero/*.png` and picks the hero shot (or asks for a
