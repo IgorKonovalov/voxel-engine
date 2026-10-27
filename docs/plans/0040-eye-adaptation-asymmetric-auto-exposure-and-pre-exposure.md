@@ -579,7 +579,7 @@ exposure multiply, so the settled exposure ignores it.
 | 1: The meter, the read-back and the banner | dev | done | 044daed |
 | 2: Pre-exposure | dev | done | 81d300a |
 | 3: Adaptation | dev | done | e9879cc |
-| 4: The fly-through, the cave's own curve, and the readings | dev | done, bar 2's closed-form clause not met | committed with this row |
+| 4: The fly-through, the cave's own curve, and the readings | dev | done | 9a0d342 (first pass); amendment committed with this row |
 | 5: The owner's windowed check | human | not started | |
 
 Phase 1 (lavapipe, exclusive perf lock, load 14 to 30 from the other lanes): `tests/exposure.rs`
@@ -630,58 +630,70 @@ to 0.365 ms, exposure pass 0.072 ms; AMD RADV composite 2.877 to 2.906 ms, expos
 0.061 ms; `frame_bytes` 254 216 224 to 254 476 352 B. `--profile quick --test-threads 2`: 491
 of 491 passed.
 
-### Resume notes (2026-10-27, delete when Phase 4's amendment lands)
+Phase 4 amendment (f64505f; lavapipe, exclusive perf lock, load 0.8 to 13). Defaults now
+0.15 / 2 / 10 s and `max` 16 (`AutoExposure::eye()`). Re-derived bars (`live/model.py`, the f64
+model): dark B to D log2 e k 15 1.9961, 60 3.0999, 120 3.6451, 240 3.9861, 480 4.0000 (closed
+form equal to 4 places); floor between k 83 and 84, slope 0.01676 then 0.00333 EV per frame
+(fivefold: `2/120` against `2/600`); `max` from k 246; pixel 22 at k 1, 72 at k 600 (asserted
+72 within 2; the old floor of 120 was for 0.2 EV under the key, which `max` 16 no longer
+reaches). Light unchanged (2.9976, 1.6688, 1.5312). Glare: first dark frame 2.2816 (pixel 31);
+floor between dark frames 58 and 59; dark 150 3.8102; dark 300 4.0000 (`max`); pixel 72 at 600.
+`2^-12` settles at 16.0; compensation 1 EV 7.200002 against 3.600001; `instant()` now steps to
+`2^-6` (11.519997; its old D target clamps at 16). The HUD's `Q` fixture readout moves from
+46.08 (above `max`) to 11.52 / -6.0 (`+3.53 EV`).
 
-- **Main merge: committed** at cee9708 (`merge: main into plan-0040 (0039 contour-sharp)`,
-  main 80e8934). Conflicts: `composite.wgsl` keeps main's `Lit { all, direct, indirect }`
-  with `ind = indirect * exposure_now()` (both `all` and `indirect` pre-exposed);
-  `main.rs` imports, `hud.rs` `Modes` fields and banner doc, `hero.rs` usage, and
-  `nextest.toml` (both `flythrough::exposure` and `flythrough::sharpness` in the gpu filter
-  and slow list) take both sides. Main's `tests/support/mod.rs:607` and `tests/sharpness.rs:558`
-  move to `Exposure::Manual`. `scripts/build-guests.sh` run. Gate on the merge: build,
-  clippy, fmt clean, `--profile quick --test-threads 2` 494 of 494 (3 skipped). **The full
-  tier was not run** (queued third behind 0041 and 0038 on the lock, then stopped for this
-  checkpoint without ever holding it). Run it first.
-- **The f64505f amendment: no code written yet.** Defaults, bar 2, step 4 and the flicker are
-  all open.
-- **Defaults, worked** (`live/model.py`, the f64 model with 0.15 / 2 / 10 s, max 16, floor
-  2^-6; B = 2^-4, D = 2^-8): dark B to D, log2 e at k 15 1.9961, 60 3.0999, 120 3.6451, 240
-  3.9861, 480 4.0000 (max, reached between k 245 and 246); floor between k 83 and 84; slope
-  0.01676 then 0.00333 EV per frame (fivefold, `2/(2x60)` against `2/(10x60)`); pixel 22 at
-  k 1, settled pixel at max 72 (not 130). Light D to B unchanged (2.9976, 1.6688, 1.5312).
-  Glare: first dark frame 2.2816 (pixel 31) unchanged; floor between dark frames 58 and 59
-  (0.968 s to the floor); max between dark 220 and 221; dark 150 3.8102; 300 and 600 at max
-  4.000 (pixel 72). `2^-12` settles at 16. `instant()` inherits max 16, so its test's D target
-  (46.08) clamps: step to `2^-6` instead (11.52).
-- **Edits needed for the defaults** (outside Phase 4's Files touched, disclose):
-  `crates/vxe-render/src/exposure.rs` `eye()` (max 2^4, tau_cone 2, tau_rod 10; its doc line)
-  and its unit test `the_reference_step_follows_the_two_stage_curve` (floor at 2 ln 2, rod
-  `-8 + 2 exp(-(t - 2 ln 2)/10)`, `exposure(-12) == 16`, `exposure(-8)` now clamps);
-  `crates/vxe-render/tests/exposure.rs` bars 2, 4, 6 (numbers above; `limits_compensation_and_dt`
-  asserts 16 and the instant change); `apps/flythrough/src/main.rs` module doc (`1 s then 4 s`).
-- **Bar 2 and step 4 need a level pose facing a vein** whose lamp-off meter settles above the
-  clamp (`> log2(0.18) - 4 = -6.474`). The owner's Phase 5 pose was not recorded in
-  `live/session1.log`. Draft search test in `live/exposure_probe.rs` (copy to
-  `apps/flythrough/tests/`, run under the lock, `#[ignore]`d, delete after): clusters ore
-  surface voxels near the spawn, places a camera 5 / 9 / 14 voxels out along the cluster's
-  normal and prints each pose's lamp-off meter after 90 frames under `Manual(1)`. The README
-  hero pose (148, 280, 484, yaw 135, pitch -10) is another candidate. A log-mean meter needs
-  about half the centre-weighted view glowing to reach -6.47, so expect close poses.
-- **Step 4 design (not yet coded):** in `apps/flythrough/tests/exposure.rs`, a lamp-off run
-  from the vein pose under auto eye and under `Manual(final auto exposure)`; save PNGs every
-  30 frames to `CARGO_TARGET_TMPDIR/../exposure-patches/`; per frame read
-  `frame.exposure_tiles()` (8 x 8 tiles of log2 absolute luminance, already divided by the
-  exposure in the composite: the exposure-normalised radiance) and the display target. A
-  patch is a full tile (count 64, above -15) whose tile value moves by more than log2 1.1 =
-  0.1375 between saved frames from frame 30 on. Variants for a found patch: `indirect: false`,
-  `candidates: 0`, `emissive_history`, `filter: false`; the mirror is synced before the run
-  (no uploads in the window). Compare auto against manual per tile: a uniform pre-exposure
-  makes them match. Flicker: per wall tile, mean frame-to-frame change of the display bytes
-  and of the tile value, auto against manual, early and late windows.
-- **Second session:** not prepared (no `live/flythrough-p5b`, no `live/session2.sh`).
+Bar 2 (128 x 72, indirect on, the fly-through's lighting defaults). Spawn: meter lamp on -3.046,
+off -15.175; log2 e 0 / 0.25 / 0.5 / 1 / 2 s 0.572, 1.336, 2.405, 3.728, 4.000 (`max`) on; (a)
+largest |log2 e - stepped model| from 1 s 0.0000 EV; reading: closed-form distance 0.1948 EV.
+Vein pose (727.5, 644.3, 208.5), yaw 153.4, pitch 0: meter lamp on -0.722, off -4.873 (above the
+cone floor -6.000, so no rod stage); log2 e 0 / 0.25 / 0.5 / 1 / 2 / 4 / 8 s -1.761, -1.283,
+-0.803, -0.160, 0.786, 1.741, 2.259; (a) 0.0000 EV; (b) closed form 0.0974 EV (bar 0.1). The
+pose search (`live/zz_vein_probe.rs`: 37 poses 5 / 9 / 14 voxels out along ore clusters, meter
+after 90 lamp-off frames under `Manual(1)`), then the closed-form distance on nine poses
+(lamp-off meter / distance): 688.2,815.8,270.7 (-2.01 / 0.042), 727.5,644.3,208.5 (-4.87 /
+0.097), 512.0,604.0,159.0 (-4.26 / 0.130), 678.3,518.2,192.4 (-4.18 / 0.128), 730.8,749.8,274.2
+(-5.49 / 0.122), 676.2,514.8,193.1 (-5.88 / 0.167), 820.7,546.2,160.7 (-6.07 / 0.107),
+731.0,642.5,208.5 (-6.13 / 0.187), 833.3,755.5,238.5 (-6.07 / 0.228). On every pose the meter
+falls over about 30 frames and drifts 0.2 to 0.3 EV after; the three poses whose meter ends
+between the floor and the clamp (both stages) are 0.107 to 0.228.
+
+Step 4, the light patches (`live/zz_patches.rs`, vein pose 676.2,514.8,193.1 yaw 59 pitch -9.7,
+192 x 108, 600 frames lamp on then 900 off; PNGs every 30 frames in
+`target/exposure-patches/`; a patch is a full tile (64 pixels, above -15) whose mean log2
+absolute luminance moves by more than log2 1.1 between frames 30 apart from off frame 24).
+Auto eye (final exposure 10.9624) against `Manual(10.9624)`: 2298 against 2286 patches, 1035
+against 1056 single-frame steps over 10 %, largest per-tile auto-manual difference 0.2757 log2
+(off frame 50); the eight brightest tiles' series equal to 2 places. Patches per 30-frame step
+from off frame 54 (312 full tiles), Manual: 225 84 82 70 74 87 73 70 60 70 69 92 80 84 89 79 50 74
+74 86 72 67 67 61 60 70 89 63 65. Under Manual, one part off at a time (steady-state patches per
+step, after the first three; single-frame steps over 10 % per second after 2 s): indirect off
+about 140 of 306, 30 to 100; emissive candidates 0: 0, 0; emissive history 1: about 178, about
+3 900; filter off: about 178, about 3 900; sampler `list`: about 48, 35 to 67; emissive history
+64: about 32, 0 to 2; candidates 32: about 43, 0 to 4. The mirror is synced whole before the run
+(no uploads in the window). No test was added (step 4.4 applies only to a cause in this plan).
+
+Flicker (same tiles, mean |d log2| frame to frame, and display luma |d| in /255): auto off frames
+24-300 0.01032 and 0.245, 600-900 0.00644 and 0.221; Manual 0.01037 and 0.303, 0.00644 and
+0.218. Emissive history 64: 0.00774 and 0.211, 0.00405 and 0.128.
+
+Gate on the amendment: `--profile quick --test-threads 2` 494 of 494 (5 skipped); clippy and fmt
+clean; under the lock, `vxe-render::exposure`, `flythrough::exposure`, `flythrough::hud_golden`
+and `flythrough::upscale` (`--profile full -E`) 27 of 27. Before it, the full tier on eff60f2
+(the merge of main d54823f): 662 of 662 passed, 9 skipped, 1012 s.
 
 ### Notes
 
+- Phase 4 amendment: `crates/vxe-render/src/exposure.rs` (`eye()` and its unit test),
+  `crates/vxe-render/tests/exposure.rs` (bars 2, 4, 6) and `.config/nextest.toml` (the vein test
+  on the slow list) are outside Phase 4's Files touched.
+- Phase 4 amendment: bar 2 (b) holds on one chosen pose at 0.0974 EV; seven of the nine poses
+  tried read 0.107 to 0.228, and the chosen pose's dark meter (-4.87) is above the cone floor, so
+  (b) exercises the cone stage only. Every pose meets (a) at 0.0000 EV.
+- Phase 4 amendment: the light patches step equally under `Manual` at the adapted exposure; they
+  follow the emissive light samples (none with candidates 0). Owner question, not fixed here.
+- Phase 4 amendment: the curve tests now share the fly-through's lighting defaults through
+  `Lighting::default()` with indirect on (unchanged from the first pass); the vein test is
+  `the_curve_facing_a_vein_follows_the_closed_form`.
 - Phase 1: the state the frame passes read is a 32-byte uniform at group 0 binding 13, copied
   from the exposure pass's storage buffer after it runs (the plan says a storage buffer read
   read-only through group 0).

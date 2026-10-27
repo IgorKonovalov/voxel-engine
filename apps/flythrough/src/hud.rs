@@ -1526,21 +1526,21 @@ mod mode_tests {
             0.0,
         );
         q.set_readout(Some(vxe_render::ExposureReadout {
-            exposure: 46.08,
-            adapted_log2: -8.0,
-            metered_log2: -8.0,
+            exposure: 11.52,
+            adapted_log2: -6.0,
+            metered_log2: -6.0,
             frame: 9,
             held: false,
         }));
         assert!(
             q.banner(0.0)
                 .unwrap()
-                .contains("exposure auto eye +5.53 EV")
+                .contains("exposure auto eye +3.53 EV")
         );
         for (i, want) in [
-            "exposure auto symmetric +5.53 EV",
-            "exposure manual +5.53 EV",
-            "exposure auto eye +5.53 EV",
+            "exposure auto symmetric +3.53 EV",
+            "exposure manual +3.53 EV",
+            "exposure auto eye +3.53 EV",
         ]
         .into_iter()
         .enumerate()
@@ -1553,7 +1553,7 @@ mod mode_tests {
         }
         assert_eq!(
             q.exposure_row().to_string(),
-            "exposure auto eye +5.53 EV  scene -8.0 EV  settles +5.53 EV"
+            "exposure auto eye +3.53 EV  scene -6.0 EV  settles +3.53 EV"
         );
         m.press(ModeKey::Lamp, changed + 10_000.0);
         let again = m

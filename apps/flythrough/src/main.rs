@@ -22,8 +22,8 @@
 //! [--adaptation eye|symmetric|instant] [--adapt LIGHT,CONE,ROD,FLOOR] [--metering centre|average]`.
 //! `--exposure auto` (the default) adapts like an eye (ADR-0033), `--exposure E` fixes it
 //! (`--exposure 1` is the old look); `--adaptation` picks the auto preset (`eye`: 0.15 s toward
-//! bright, 1 s then 4 s below a cone floor of 2^-6 toward dark; `symmetric`: 0.67 s both ways;
-//! `instant`), `--adapt` replaces its three time constants (seconds) and its floor, and
+//! bright, 2 s then 10 s below a cone floor of 2^-6 toward dark, at most 16; `symmetric`: 0.67 s
+//! both ways; `instant`), `--adapt` replaces its three time constants (seconds) and its floor, and
 //! `--metering` weights the meter toward the view's centre or not. `Q` cycles `auto` with the
 //! preset, `auto symmetric` and `manual` (holding the exposure of the moment); the banner names
 //! the mode and its exposure in EV, the stats HUD's exposure row adds the metered scene and the

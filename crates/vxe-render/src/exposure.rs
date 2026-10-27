@@ -125,17 +125,17 @@ impl Default for AutoExposure {
 }
 
 impl AutoExposure {
-    /// The eye: key 0.18, limits 2^-6 and 2^6, constants 0.15, 1 and 4 s, floor 2^-6,
+    /// The eye: key 0.18, limits 2^-6 and 2^4, constants 0.15, 2 and 10 s, floor 2^-6,
     /// centre-weighted.
     pub fn eye() -> Self {
         Self {
             key: 0.18,
             compensation_ev: 0.0,
             min: 2f32.powi(-6),
-            max: 2f32.powi(6),
+            max: 2f32.powi(4),
             tau_light: 0.15,
-            tau_cone: 1.0,
-            tau_rod: 4.0,
+            tau_cone: 2.0,
+            tau_rod: 10.0,
             cone_floor: 2f32.powi(-6),
             metering: Metering::default(),
         }
@@ -612,16 +612,17 @@ mod tests {
     }
 
     /// The reference model's worked numbers (Plan 0040): from `a = -4` toward `t = -8` the
-    /// floor `-6` is reached at `ln 2` s, and the rod stage leaves `2 exp(-(t - ln 2) / 4)`;
+    /// floor `-6` is reached at `2 ln 2` s, and the rod stage leaves `2 exp(-(t - 2 ln 2) / 10)`;
     /// toward bright the step is `4 exp(-t / 0.15)`; a step of 0 holds; `instant` jumps.
     #[test]
     fn the_reference_step_follows_the_two_stage_curve() {
         let e = AutoExposure::eye();
         let a = |t: f64| e.step(-4.0, -8.0, t);
-        assert!((a(std::f64::consts::LN_2) + 6.0).abs() < 1e-12);
-        assert!((a(0.5) - (-8.0 + 4.0 * (-0.5f64).exp())).abs() < 1e-12);
-        for t in [1.0, 2.0, 8.0] {
-            let want = -8.0 + 2.0 * (-(t - std::f64::consts::LN_2) / 4.0).exp();
+        let floor_at = 2.0 * std::f64::consts::LN_2;
+        assert!((a(floor_at) + 6.0).abs() < 1e-12);
+        assert!((a(0.5) - (-8.0 + 4.0 * (-0.25f64).exp())).abs() < 1e-12);
+        for t in [2.0, 4.0, 16.0] {
+            let want = -8.0 + 2.0 * (-(t - floor_at) / 10.0).exp();
             assert!((a(t) - want).abs() < 1e-12, "{t}: {} {want}", a(t));
         }
         // Stepping in frames lands on the closed form.
@@ -636,8 +637,9 @@ mod tests {
         );
         assert_eq!(e.step(-5.3, -8.0, 0.0), -5.3);
         assert_eq!(AutoExposure::instant().step(-5.3, -8.0, 1.0 / 60.0), -8.0);
-        assert!((e.exposure(-8.0) - f64::from(0.18f32) * 256.0).abs() < 1e-9);
-        assert_eq!(e.exposure(-12.0), 64.0);
+        assert!((e.exposure(-6.0) - f64::from(0.18f32) * 64.0).abs() < 1e-9);
+        assert_eq!(e.exposure(-8.0), 16.0);
+        assert_eq!(e.exposure(-12.0), 16.0);
         let s = AutoExposure::symmetric(2.0);
         assert!((s.step(-1.0, -3.0, 0.5) - (-3.0 + 2.0 * (-1f64).exp())).abs() < 1e-12);
     }

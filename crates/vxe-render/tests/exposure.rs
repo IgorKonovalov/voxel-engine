@@ -598,9 +598,10 @@ fn auto_exposure_finds_the_key() {
 }
 
 /// Settled at `B` (log2 e 1.526), stepped to `D`: log2 e reads the closed form within 0.01 EV at
-/// k 15, 60, 120, 240 and 480 (2.411, 3.674, 4.084, 4.651, 5.204), crosses the floor (3.526)
-/// between k 41 and 42 where the per-frame slope falls fourfold (0.033 to 0.0083 EV), and the
-/// box pixel is at most 26/255 at k 1 and at least 120/255 at k 600.
+/// k 15, 60, 120, 240 and 480 (1.996, 3.100, 3.645, 3.986, 4.000 at `max` 16), crosses the floor
+/// (3.526) between k 83 and 84 where the per-frame slope falls fivefold (0.0167 to 0.0033 EV),
+/// and the box pixel is at most 26/255 at k 1 and, held at `max` from k 246, 72/255 within 2 at
+/// k 600.
 #[test]
 fn dark_adaptation_runs_in_two_stages() {
     let auto = AutoExposure::eye();
@@ -612,13 +613,13 @@ fn dark_adaptation_runs_in_two_stages() {
     check_against_reference("dark", &auto, &states, &luminances(&steps));
     let used = |k: usize| ev(&states[k]);
     for (k, want) in [
-        (15, 2.411),
-        (60, 3.674),
-        (120, 4.084),
-        (240, 4.651),
-        (480, 5.204),
+        (15, 1.996),
+        (60, 3.100),
+        (120, 3.645),
+        (240, 3.986),
+        (480, 4.000),
     ] {
-        let closed = log2_key() - auto.step(-4.0, -8.0, k as f64 / 60.0);
+        let closed = auto.exposure(auto.step(-4.0, -8.0, k as f64 / 60.0)).log2();
         println!(
             "k {k}: log2 e {:.4}, closed form {closed:.4}, plan {want}",
             used(k)
@@ -632,18 +633,23 @@ fn dark_adaptation_runs_in_two_stages() {
     }
     let floor = log2_key() + 6.0;
     assert!(
-        used(41) < floor && used(42) >= floor,
+        used(83) < floor && used(84) >= floor,
         "{} {}",
-        used(41),
-        used(42)
+        used(83),
+        used(84)
     );
-    let (before, after) = (used(41) - used(40), used(43) - used(42));
+    let (before, after) = (used(83) - used(82), used(85) - used(84));
     println!("slope at the floor: {before:.5} then {after:.5} EV per frame");
-    assert!((before - 2.0 / 60.0).abs() < 0.002, "{before}");
-    assert!((after - 2.0 / 240.0).abs() < 0.0005, "{after}");
+    assert!((before - 2.0 / 120.0).abs() < 0.002, "{before}");
+    assert!((after - 2.0 / 600.0).abs() < 0.0005, "{after}");
+    assert!(
+        used(245) < 4.0 && states[246].current == 16.0,
+        "{}",
+        used(245)
+    );
     println!("box pixel at k 1: {}, at k 600: {}", px[0], px[1]);
     assert!(px[0] <= 26, "k 1: {}", px[0]);
-    assert!(px[1] >= 120, "k 600: {}", px[1]);
+    assert!(px[1].abs_diff(72) <= 2, "k 600: {}", px[1]);
 }
 
 /// Settled at `D`, stepped to `B`: log2 e reads `-2.474 + 4 + 4 exp(-k / 9)` within 0.01 EV,
@@ -668,9 +674,10 @@ fn light_adaptation_is_fast() {
     }
 }
 
-/// Settled at `D`, `B` for exactly 15 frames, then `D`: the first `D` frame uses log2 e 2.282
-/// (3.24 EV under) and its pixel is at most 36/255; log2 e reaches the floor (3.526) between
-/// frames 29 and 30 of the dark and reads 4.879 at 300; at 600 the pixel is at least 120/255.
+/// Settled at `D` (at `max` 16), `B` for exactly 15 frames, then `D`: the first `D` frame uses
+/// log2 e 2.282 (3.24 EV under) and its pixel is at most 36/255; log2 e reaches the floor
+/// (3.526) between frames 58 and 59 of the dark, reads 3.810 at 150 and `max` (4.000) at 300;
+/// at 600 the pixel is 72/255 within 2.
 #[test]
 fn a_flash_leaves_the_eye_glared() {
     let auto = AutoExposure::eye();
@@ -690,20 +697,26 @@ fn a_flash_leaves_the_eye_glared() {
     assert!((dark(0) - 2.282).abs() <= 0.01, "{}", dark(0));
     let floor = log2_key() + 6.0;
     assert!(
-        dark(29) < floor && dark(30) >= floor,
+        dark(58) < floor && dark(59) >= floor,
         "{} {}",
-        dark(29),
-        dark(30)
+        dark(58),
+        dark(59)
     );
-    let closed = log2_key() - auto.step(a0, -8.0, 5.0);
-    println!(
-        "dark frame 300: log2 e {:.4}, closed form {closed:.4}",
-        dark(300)
-    );
-    assert!((dark(300) - 4.879).abs() <= 0.01 && (dark(300) - closed).abs() <= 0.01);
+    for (d, want) in [(150, 3.810), (300, 4.000)] {
+        let closed = auto.exposure(auto.step(a0, -8.0, d as f64 / 60.0)).log2();
+        println!(
+            "dark frame {d}: log2 e {:.4}, closed form {closed:.4}",
+            dark(d)
+        );
+        assert!(
+            (dark(d) - want).abs() <= 0.01 && (dark(d) - closed).abs() <= 0.01,
+            "dark frame {d}: {}",
+            dark(d)
+        );
+    }
     println!("pixel at the first dark frame {}, at 600 {}", px[0], px[1]);
     assert!(px[0] <= 36, "{}", px[0]);
-    assert!(px[1] >= 120, "{}", px[1]);
+    assert!(px[1].abs_diff(72) <= 2, "{}", px[1]);
 }
 
 /// `symmetric(2.0)` settled at 0.36 (`L` 0.5), stepped to 0.05: log2 e at k 60 reads
@@ -727,7 +740,7 @@ fn the_symmetric_preset_is_one_rate() {
     assert!((got - 1.399).abs() <= 0.05, "{got}");
 }
 
-/// A box at 2^-12 settles at exactly `max` 64; `compensation_ev` 1 doubles the settled exposure
+/// A box at 2^-12 settles at exactly `max` 16; `compensation_ev` 1 doubles the settled exposure
 /// within 1 %; `set_dt(0)` holds the exposure bit for bit for 30 frames mid-adaptation; and
 /// `instant()` settles in one step.
 #[test]
@@ -736,7 +749,7 @@ fn limits_compensation_and_dt() {
         return;
     };
     let s = rig.frame_at(2f32.powi(-12));
-    assert_eq!(s.current, 64.0);
+    assert_eq!(s.current, 16.0);
     // Mid-adaptation, then a step of 0.
     rig.frame_at(B);
     for _ in 0..10 {
@@ -784,11 +797,12 @@ fn limits_compensation_and_dt() {
         exposure: Exposure::Auto(AutoExposure::instant()),
         ..rig.frame.lighting()
     });
+    // 2^-6 settles at 0.18 x 64 = 11.52, inside `max` 16.
     rig.frame_at(B);
-    let s = rig.frame_at(D);
-    println!("instant: {} after one frame at D", s.current);
+    let s = rig.frame_at(2f32.powi(-6));
+    println!("instant: {} after one frame at 2^-6", s.current);
     assert!(
-        (s.current / (0.18 * 256.0) - 1.0).abs() <= 1e-3,
+        (s.current / (0.18 * 64.0) - 1.0).abs() <= 1e-3,
         "{}",
         s.current
     );
