@@ -681,6 +681,19 @@ clean; under the lock, `vxe-render::exposure`, `flythrough::exposure`, `flythrou
 and `flythrough::upscale` (`--profile full -E`) 27 of 27. Before it, the full tier on eff60f2
 (the merge of main d54823f): 662 of 662 passed, 9 skipped, 1012 s.
 
+Merge of main 05a3a28 (FSR 2, v0.33.0) at 7c322cc. FSR 2's composite variant (`composite hdr`)
+gains the meter's tile binding and stores the pre-exposed colour; `Fsr2::copy_exposure` copies
+the exposure state's `current` into FSR's `pre_exposure` and exposure texel (auto) and its
+`previous` into `previous_pre_exposure`; `fsr2/tone.wgsl` no longer multiplies by the exposure;
+`FRAME_PASSES` is 20 with `exposure` last. New `fsr2::fsr_follows_the_eyes_moving_exposure`
+(stripe wall, scale 1, `eye()`, lamp intensity to 1/16): texel equal to `current` bit for bit on
+60 frames; FSR against Plan 0024's frame mean 1.170, 1.548, 0.883, 0.717 /255 at frames 5, 15,
+30, 60 (log2 e 2.285, 2.507, 2.806, 3.303; native 2.302, 2.520, 2.816, 3.307). Full tier on the
+merge before the layout fix: 690 run, 668 passed, 22 failed (all `composite hdr`: binding 8
+missing from its layout); after it, `flythrough::fsr2` and `flythrough::golden` 41 of 41, then
+the full tier on 7c322cc 690 of 690 (10 skipped, 1440 s, exclusive perf lock, load 3.5).
+Phase 5's second session: `live/session2.sh` with `live/flythrough-p5b` built from 7c322cc.
+
 ### Notes
 
 - Phase 4 amendment: `crates/vxe-render/src/exposure.rs` (`eye()` and its unit test),
@@ -691,6 +704,9 @@ and `flythrough::upscale` (`--profile full -E`) 27 of 27. Before it, the full ti
   (b) exercises the cone stage only. Every pose meets (a) at 0.0000 EV.
 - Phase 4 amendment: the light patches step equally under `Manual` at the adapted exposure; they
   follow the emissive light samples (none with candidates 0). Owner question, not fixed here.
+- Merge 7c322cc: `crates/vxe-render/src/fsr2.rs`, `fsr2/tone.wgsl`, `tests/support/rigs.rs`
+  (`tone_bytes` takes pre-exposed colour) and `tests/fsr2.rs` are outside every phase's Files
+  touched.
 - Phase 4 amendment: the curve tests now share the fly-through's lighting defaults through
   `Lighting::default()` with indirect on (unchanged from the first pass); the vein test is
   `the_curve_facing_a_vein_follows_the_closed_form`.
