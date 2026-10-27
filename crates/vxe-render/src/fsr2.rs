@@ -796,6 +796,13 @@ impl Fsr2 {
         self.bypass
     }
 
+    /// Whether the next frame dispatches RCAS: sharpening above 0 and the upscaler not
+    /// bypassed. Otherwise the tone pass reads the accumulate pass's output (or, bypassed, the
+    /// composite's colour) directly.
+    pub fn sharpens(&self) -> bool {
+        self.settings.sharpness > 0.0 && !self.bypass
+    }
+
     /// For tests: the accumulate pass writes its history weight ([`Fsr2::history_weight`])
     /// from the next frame on; the resources are replaced and the history dropped by the
     /// frame's next size change, so call it before [`crate::Frame::set_sizes`].
@@ -1047,7 +1054,7 @@ impl Fsr2 {
         );
         // RCAS writes into last frame's copy of the upscaled colour: the accumulate pass has
         // read it, and the next frame's accumulate pass overwrites it.
-        let sharpening = self.settings.sharpness > 0.0;
+        let sharpening = self.sharpens();
         let rcas = sharpening.then(|| {
             (
                 bind(

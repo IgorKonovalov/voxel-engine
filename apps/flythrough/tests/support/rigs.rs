@@ -376,6 +376,16 @@ pub fn stripe_image(
     image: Image,
     shot: Shot,
 ) -> ([Vec<u8>; 2], vxe_render::Camera) {
+    stripe_image_at(rig, image, shot, PAN_PX)
+}
+
+/// [`stripe_image`] with the camera panning at `pan_px` output pixels a frame.
+pub fn stripe_image_at(
+    rig: &StripeRig,
+    image: Image,
+    shot: Shot,
+    pan_px: f32,
+) -> ([Vec<u8>; 2], vxe_render::Camera) {
     let (internal, output, jitter) = match image {
         Image::N => (OUTPUT, OUTPUT, false),
         Image::R => (OUTPUT.map(|n| 2 * n), OUTPUT.map(|n| 2 * n), false),
@@ -399,7 +409,7 @@ pub fn stripe_image(
     let light = LightParams::headlamp();
     let mut camera = stripe_camera(shot.dist, shot.phase);
     let (_, right, _) = camera.basis();
-    let step = right * (PAN_PX / px_per_voxel(shot.dist));
+    let step = right * (pan_px / px_per_voxel(shot.dist));
     for i in 0..SETTLE + shot.pan {
         if i >= SETTLE {
             camera.position += step;
@@ -438,13 +448,23 @@ pub fn stripe_image(
 /// Sharpness of `image` in `shot` at sharpening 0 and 0.5, the mean over the [`PHASES`]
 /// sub-pixel phases.
 pub fn stripe_sharpness(rig: &StripeRig, image: Image, shot: Shot) -> [Sharpness; 2] {
+    stripe_sharpness_at(rig, image, shot, PAN_PX)
+}
+
+/// [`stripe_sharpness`] with the camera panning at `pan_px` output pixels a frame.
+pub fn stripe_sharpness_at(
+    rig: &StripeRig,
+    image: Image,
+    shot: Shot,
+    pan_px: f32,
+) -> [Sharpness; 2] {
     let mut sum = [Sharpness {
         es: 0.0,
         ge: 0.0,
         rim: 0.0,
     }; 2];
     for phase in 0..PHASES {
-        let (imgs, camera) = stripe_image(rig, image, Shot { phase, ..shot });
+        let (imgs, camera) = stripe_image_at(rig, image, Shot { phase, ..shot }, pan_px);
         for (acc, img) in sum.iter_mut().zip(&imgs) {
             let r = sharpness(img, &camera, shot.dist);
             acc.es += r.es / f64::from(PHASES);

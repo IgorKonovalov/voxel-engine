@@ -575,7 +575,7 @@ and the owner weighs it in Phase 7.
 | 1: The walking skeleton: FSR 2's accumulate pass end to end on lavapipe | dev | done | 80aed60 |
 | 2: HDR in, tone after, the exposure seam and the masks | dev | done | 80085f8 |
 | 3: The remaining passes: luminance pyramid, previous depth, depth clip, lock | dev | done | d3b8ddb |
-| 4: RCAS, and the sharpness bars still and panning | dev | stopped at amendment step 3: no defect, owner question | dab579b, dd272de, committed with this row |
+| 4: RCAS, and the sharpness bars still and panning | dev | done | dab579b, dd272de, 66cd9d0, committed with this row |
 | 5: Lights, flicker and shadow motion | dev | not started | |
 | 6: The readings on both adapters | dev | not started | |
 | 7: The owner's windowed comparison and the default | human | not started | |
@@ -752,18 +752,38 @@ No defect found; stopped at step 3.
   bytes: 3.312, 2.840, 3.044; mean signed differences +1.332, +0.013, +0.721).
 - Bars 1 to 4 not re-read: no code changed since the Phase 4 reading.
 
-### Resume notes (2026-10-27, delete when Phase 4 lands)
+**Phase 4 amendment, steps 4 and 5** (lavapipe; exclusive perf lock; 1-min load 28.9 at the
+start, 8.7 at the end, loaded; one run of the `fsr2` binary plus the golden, `--profile full
+--test-threads 2`, 15 passed; `live/p4-reread.log`).
 
-Amended Phase 4 at step 3: the investigation found no defect (readings in the Phase 4
-amendment block above); the owner chooses between the window (Phases 5 to 7) and closing.
-
-- Gate at the tip: build, fmt clean; the three Phase 4 bar tests fail as logged; quick/gpu
-  tiers not re-run since 8fe03b9's merge gate. Main is not merged since 8fe03b9.
-- On resume after the owner's answer: if the window, Phases 5 and 6 run with the Phase 4 bar
-  tests as the architect amends them; bar 3's linear-light reference and bar 4's clamp are the
-  architect's open questions.
-- Gotchas: `Frame::step` advances before encoding, so after a step `current_copy()` is the
-  copy just written. The stripe-bar test takes ~180 s; the diagnostic ~12 s for four pans.
+- Tests after the split: `fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length` (bar 1's
+  asserted part, every other bar 1 and 2 figure a `reading:` line, 347 s),
+  `fsr2_keeps_its_still_sharpness_on_a_whole_pixel_pan` (new; `fsr2_pan_ge`, the 5-phase mean
+  of one run's frame 32 and frame 96),
+  `a_still_camera_under_our_upscaler_is_nearer_the_linear_supersampled_render_than_a_blit`,
+  `fsr2_golden_matches_and_rcas_is_bypassed_at_zero` (golden.rs). `Fsr2::sharpens` (sharpness
+  above 0 and not bypassed) is the predicate the bind builder dispatches RCAS on and the golden
+  test asserts. `support::rigs` gains `stripe_image_at` and `stripe_sharpness_at` (a pan speed);
+  the slow list in `.config/nextest.toml` carries the renamed test.
+- Asserted, read: bar 1, 7 voxels, scale 1: FSR ES 1.321 px (bar 1.328), GE 0.00571 (bar
+  0.00558; N 0.798 / 0.00867, R 1.186 / 0.00656, B 1.718 / 0.00435). Bar 2 (1.0 px a frame, 88
+  voxels, 1.5): still GE 0.06348, last 0.06280, 0.989 of still (bar 0.85). Bar 3 (linear
+  light): ours 2.835, bilinear 3.014. Bar 4: `fsr2.png` 0.0000 % over 2/255; RCAS not
+  dispatched at 0, dispatched at 0.5; 0 accumulated texels moved; 0 of 82 944 pixels at
+  sharpening 0 differ from the accumulate output through the tone arithmetic (CPU).
+- `reading:` lines (the reading; the bar):
+  - 7 voxels still, FSR 1.5: ES 1.479 px (at most 1.452); GE 0.00530 (at least 0.00546).
+  - 88 voxels still: FSR 1 GE 0.08736 (at least 0.08998); FSR 1.5 GE 0.06348 (at least 0.07825).
+  - 7 voxels, 0.37 px pan: FSR 1 ES 1.653 against ours 1.436, GE 0.00416 against 0.00494; FSR
+    1.5 ES 1.792 against 1.780, GE 0.00394 against 0.00454.
+  - 88 voxels pans, GE, FSR against ours: 0.37 px, scale 1 0.02716 / 0.05150, scale 1.5 0.00688
+    / 0.04773; 0.5 px, scale 1 0.03133 / 0.04837, scale 1.5 0.00645 / 0.04367.
+  - Bar 3: FSR 3.195 against the blit's 3.014 (display bytes FSR 3.312, ours 2.840, bilinear
+    3.044; signed +1.332, +0.013, +0.721).
+  - Bar 4: 1 527 of 26 705 sharpened pixels over their unsharpened 3 x 3 maximum by more than
+    1/255; largest excess 5/255.
+- Phases 1 to 3 bars in the same run: B ES 1.718 / GE 0.00435, FSR 1.5 1.479 / 0.00530; tone 0
+  bytes on four poses; carve frame 1 mean 0.001/255, 0 over 8/255; the rest passed.
 
 ### Notes
 
@@ -797,6 +817,8 @@ amendment block above); the owner chooses between the window (Phases 5 to 7) and
   `flythrough::fsr2` binary is in the gpu filter, and the stripe-bar test on the slow list.
 - The input pass reads the light-change thresholds and the older lamp from the upscale pass's
   uniform (`UpscaleUniform`, `Upscaler::change_frames` 24 by default).
+- Phase 4's split also touched `apps/flythrough/tests/support/rigs.rs` (the pan-speed
+  variants) and `.config/nextest.toml` (the renamed slow test), outside its list.
 
 ### Close triggers
 

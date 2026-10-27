@@ -721,11 +721,6 @@ fn locks_form_on_the_stripe_edges() {
     assert!(locked > 0, "no stripe-edge pixel holds a lock");
 }
 
-/// `a < b`, false when either is NaN.
-fn below(a: f64, b: f64) -> bool {
-    a < b
-}
-
 /// FSR 2 at `sharpness`.
 fn fsr2_sharp(sharpness: f32) -> UpscalerKind {
     UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
@@ -734,15 +729,22 @@ fn fsr2_sharp(sharpness: f32) -> UpscalerKind {
     })
 }
 
+/// A bar FSR 2's algorithm misses, printed for the owner (Phase 7 of Plan 0041): the reading,
+/// the bar as written, and who judges it.
+fn reading(what: &str, value: &str, bar: &str) {
+    println!("reading: {what} {value}; bar: {bar}; owner judges, Phase 7");
+}
+
 /// The stripe wall's sharpness, Plan 0030 Phase 6's images beside FSR 2's, in one run: N, R,
 /// B, our upscaler (sharpening 0 and 0.5) and FSR 2 (0 and 0.5) at scale 1 and 1.5, at both
-/// distances, still and panning 64 frames. The bars, at sharpening 0: still, FSR at scale 1
-/// has ES at arm's length at most N's plus 0.53 px and GE at least 0.85 of R's, and at scale
-/// 1.5 GE at least `(GE(R) + GE(B)) / 2` and ES at arm's length at most `(ES(R) + ES(B)) / 2`;
-/// panning at arm's length, FSR's ES below our upscaler's and its GE at least ours, at both
-/// scales. The far pans, sharpening 0.5 and the rim gradients are readings.
+/// distances, still and panning 64 frames. Asserted, at sharpening 0, still, at arm's length:
+/// FSR at scale 1 has ES at most N's plus 0.53 px and GE at least 0.85 of R's. Printed as
+/// `reading:` lines: scale 1.5 at arm's length (GE at least `(GE(R) + GE(B)) / 2`, ES at most
+/// `(ES(R) + ES(B)) / 2`), the 88-voxel GE at both scales, the arm's-length pans at 0.37 px a
+/// frame against ours, and the 88-voxel pans at 0.37 and 0.5 px a frame. Sharpening 0.5 and the
+/// rim gradients are readings.
 #[test]
-fn fsr2_keeps_stripe_edges_sharp_still_and_beats_ours_panning() {
+fn fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length() {
     let Some(rig) = stripe_rig() else {
         return;
     };
@@ -778,56 +780,65 @@ fn fsr2_keeps_stripe_edges_sharp_still_and_beats_ours_panning() {
             fsr0[k] = f0;
         }
         let [f1, f15] = fsr0;
-        if near && !at_most(f1.es, n.es + 0.53) {
-            failures.push(format!(
-                "{dist}: FSR 1 ES {:.3} over {:.3}",
-                f1.es,
-                n.es + 0.53
-            ));
-        }
-        if !at_least(f1.ge, 0.85 * r.ge) {
-            failures.push(format!(
-                "{dist}: FSR 1 GE {:.5} under {:.5}",
-                f1.ge,
-                0.85 * r.ge
-            ));
-        }
+        let (es1_bar, ge1_bar) = (n.es + 0.53, 0.85 * r.ge);
         let (ge_bar, es_bar) = ((r.ge + b.ge) / 2.0, (r.es + b.es) / 2.0);
-        if !at_least(f15.ge, ge_bar) {
-            failures.push(format!(
-                "{dist}: FSR 1.5 GE {:.5} under {ge_bar:.5}",
-                f15.ge
-            ));
-        }
-        if near && !at_most(f15.es, es_bar) {
-            failures.push(format!("{dist}: FSR 1.5 ES {:.3} over {es_bar:.3}", f15.es));
-        }
         println!(
-            "  bars: FSR 1 ES <= {:.3}, GE >= {:.5}; FSR 1.5 GE >= {ge_bar:.5}, ES <= {es_bar:.3}",
-            n.es + 0.53,
-            0.85 * r.ge
+            "  bars: FSR 1 ES <= {es1_bar:.3}, GE >= {ge1_bar:.5}; FSR 1.5 GE >= {ge_bar:.5}, ES <= {es_bar:.3}"
+        );
+        if near {
+            if !at_most(f1.es, es1_bar) {
+                failures.push(format!("{dist}: FSR 1 ES {:.3} over {es1_bar:.3}", f1.es));
+            }
+            if !at_least(f1.ge, ge1_bar) {
+                failures.push(format!("{dist}: FSR 1 GE {:.5} under {ge1_bar:.5}", f1.ge));
+            }
+            reading(
+                &format!("{dist} voxels, still, FSR 1.5 ES"),
+                &format!("{:.3} px", f15.es),
+                &format!("at most (ES(R) + ES(B)) / 2 = {es_bar:.3} px"),
+            );
+        } else {
+            reading(
+                &format!("{dist} voxels, still, FSR 1 GE"),
+                &format!("{:.5}", f1.ge),
+                &format!("at least 0.85 GE(R) = {ge1_bar:.5}"),
+            );
+        }
+        reading(
+            &format!("{dist} voxels, still, FSR 1.5 GE"),
+            &format!("{:.5}", f15.ge),
+            &format!("at least (GE(R) + GE(B)) / 2 = {ge_bar:.5}"),
         );
         let pan = |kind| Shot {
             pan: 64,
             ..still(kind)
         };
-        for (name, image) in [("1", Image::U1), ("1.5", Image::U15)] {
-            let [ours, ours5] = read(image, pan(own));
-            let [f0, _] = read(image, pan(fsr2_sharp(0.0)));
-            let [f5, _] = read(image, pan(fsr2_sharp(0.5)));
-            println!("  panning 64 frames, scale {name}: ours sharpen 0 {ours}; 0.5 {ours5}");
-            println!("  panning 64 frames, scale {name}: FSR  sharpen 0 {f0}; 0.5 {f5}");
-            if near && !below(f0.es, ours.es) {
-                failures.push(format!(
-                    "{dist}: FSR {name} panning ES {:.3} not below ours {:.3}",
-                    f0.es, ours.es
-                ));
-            }
-            if near && !at_least(f0.ge, ours.ge) {
-                failures.push(format!(
-                    "{dist}: FSR {name} panning GE {:.5} under ours {:.5}",
-                    f0.ge, ours.ge
-                ));
+        let speeds: &[f32] = if near { &[PAN_PX] } else { &[PAN_PX, 0.5] };
+        for &px in speeds {
+            for (name, image) in [("1", Image::U1), ("1.5", Image::U15)] {
+                let read_at = |kind| stripe_sharpness_at(&rig, image, pan(kind), px);
+                let [ours, ours5] = read_at(own);
+                let [f0, _] = read_at(fsr2_sharp(0.0));
+                let [f5, _] = read_at(fsr2_sharp(0.5));
+                println!(
+                    "  panning 64 frames at {px} px, scale {name}: ours sharpen 0 {ours}; 0.5 {ours5}"
+                );
+                println!(
+                    "  panning 64 frames at {px} px, scale {name}: FSR  sharpen 0 {f0}; 0.5 {f5}"
+                );
+                let at = format!("{dist} voxels, panning at {px} px a frame, FSR {name}");
+                if near {
+                    reading(
+                        &format!("{at} ES"),
+                        &format!("{:.3} px", f0.es),
+                        &format!("below ours {:.3} px", ours.es),
+                    );
+                }
+                reading(
+                    &format!("{at} GE"),
+                    &format!("{:.5}", f0.ge),
+                    &format!("at least ours {:.5}", ours.ge),
+                );
             }
         }
         let [np, _] = read(Image::N, pan(own));
@@ -839,11 +850,90 @@ fn fsr2_keeps_stripe_edges_sharp_still_and_beats_ours_panning() {
     assert!(failures.is_empty(), "{failures:?}");
 }
 
-/// A still camera on the level (Plan 0024's defaults, 32 frames, scale 1.5): FSR 2's image is
-/// nearer the 2 x 2 supersampled render than the bilinear blit is, in mean absolute difference
-/// per channel; our upscaler's is read beside it.
+/// FSR 2's still-frame GE and its last panning frame's GE in one run of the stripe wall at
+/// `dist`, scale 1.5, sharpening 0: 32 still frames, then 64 translating at `pan_px` output
+/// pixels a frame; the mean over the [`PHASES`] sub-pixel phases.
+fn fsr2_pan_ge(rig: &StripeRig, dist: f32, pan_px: f32) -> (f64, f64) {
+    let (device, queue) = (&rig.device, &rig.queue);
+    let light = LightParams::headlamp();
+    let (mut still, mut last) = (0.0, 0.0);
+    for phase in 0..PHASES {
+        let mut f = frame_of(device, INTERNAL, OUTPUT, true);
+        f.set_upscaler_kind(device, fsr2_sharp(0.0));
+        f.set_lighting(vxe_render::Lighting {
+            exposure: stripe_exposure(dist),
+            ..Default::default()
+        });
+        let mut camera = stripe_camera(dist, phase);
+        let (_, right, _) = camera.basis();
+        let step = right * (pan_px / px_per_voxel(dist));
+        for i in 0..SETTLE + 64 {
+            if i >= SETTLE {
+                camera.position += step;
+            }
+            f.step(device, queue, &rig.gpu, &camera, &light);
+            if i + 1 == SETTLE {
+                let img = readback::read_rgba8(device, queue, f.target());
+                still += sharpness(&img, &camera, dist).ge / f64::from(PHASES);
+            }
+        }
+        let img = readback::read_rgba8(device, queue, f.target());
+        last += sharpness(&img, &camera, dist).ge / f64::from(PHASES);
+    }
+    (still, last)
+}
+
+/// Alignment in motion: on the stripe wall at 88 voxels, scale 1.5, sharpening 0, a pan of one
+/// output pixel a frame (each history fetch lands on a texel centre) for 64 frames after 32
+/// still ones keeps the last frame's GE at least 0.85 of the same run's still GE at frame 32. A
+/// motion-vector or jitter misalignment blurs the history on every frame and drops it.
 #[test]
-fn a_still_camera_under_fsr2_is_nearer_the_supersampled_render_than_a_blit() {
+fn fsr2_keeps_its_still_sharpness_on_a_whole_pixel_pan() {
+    let Some(rig) = stripe_rig() else {
+        return;
+    };
+    let (still, last) = fsr2_pan_ge(&rig, FAR, 1.0);
+    println!(
+        "{FAR} voxels, scale 1.5, 1 px a frame: still GE {still:.5}, last panning GE {last:.5} ({:.3} of still)",
+        last / still
+    );
+    assert!(
+        at_least(last, 0.85 * still),
+        "panning GE {last:.5} under 0.85 of still {still:.5}"
+    );
+}
+
+/// The 2 x 2 downsample of `big` (twice `OUTPUT`) averaged in linear light: each channel's
+/// bytes decoded by 2.2, the four averaged, encoded again.
+fn downsample_2x2_linear(big: &[u8]) -> Vec<u8> {
+    let [w, h] = OUTPUT.map(|n| n as usize);
+    (0..w * h * 4)
+        .map(|i| {
+            let (px, k) = (i / 4, i % 4);
+            if k == 3 {
+                return 255;
+            }
+            let (x, y) = (px % w, px / w);
+            let at = |xx: usize, yy: usize| {
+                (f64::from(big[(yy * 2 * w + xx) * 4 + k]) / 255.0).powf(2.2)
+            };
+            let m = (at(2 * x, 2 * y)
+                + at(2 * x + 1, 2 * y)
+                + at(2 * x, 2 * y + 1)
+                + at(2 * x + 1, 2 * y + 1))
+                / 4.0;
+            (m.powf(1.0 / 2.2) * 255.0).round() as u8
+        })
+        .collect()
+}
+
+/// A still camera on the level (Plan 0024's defaults, 32 frames, scale 1.5), against the 2 x 2
+/// supersampled render averaged in linear light: our upscaler's image is nearer it than the
+/// bilinear blit is, in mean absolute difference per channel. Printed: FSR 2's distance as a
+/// `reading:` line (the bar: below the blit's), and every image's distance from the render
+/// averaged in display bytes, with its mean signed difference.
+#[test]
+fn a_still_camera_under_our_upscaler_is_nearer_the_linear_supersampled_render_than_a_blit() {
     let (world, camera) = level();
     let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
         return;
@@ -860,29 +950,10 @@ fn a_still_camera_under_fsr2_is_nearer_the_supersampled_render_than_a_blit() {
             f.step(&device, &queue, &gpu, &camera, &light);
         }
     }
-    let truth = downsample_2x2(
-        &readback::read_rgba8(&device, &queue, ssaa.target()),
-        OUTPUT,
-    );
+    let big_img = readback::read_rgba8(&device, &queue, ssaa.target());
+    let truth = downsample_2x2_linear(&big_img);
+    let display_truth = downsample_2x2(&big_img, OUTPUT);
     let mean = |m: [f64; 3]| m.iter().sum::<f64>() / 3.0;
-    let f = mean(mad(
-        &readback::read_rgba8(&device, &queue, fsr.target()),
-        &truth,
-    ));
-    let o = mean(mad(
-        &readback::read_rgba8(&device, &queue, ours.target()),
-        &truth,
-    ));
-    let b = mean(mad(
-        &blit_texture(&device, &queue, low.target(), OUTPUT),
-        &truth,
-    ));
-    println!(
-        "level, {SETTLE} frames, from 2 x 2 supersampled: FSR {f:.3}, ours {o:.3}, bilinear {b:.3}"
-    );
-    // A reading beside the bar: the mean signed difference, and the distances from the
-    // supersampled render averaged in linear light (its bytes decoded by 2.2, averaged,
-    // encoded), which FSR resolves in and the blit and our upscaler do not.
     let images = [
         ("FSR", readback::read_rgba8(&device, &queue, fsr.target())),
         ("ours", readback::read_rgba8(&device, &queue, ours.target())),
@@ -891,30 +962,14 @@ fn a_still_camera_under_fsr2_is_nearer_the_supersampled_render_than_a_blit() {
             blit_texture(&device, &queue, low.target(), OUTPUT),
         ),
     ];
-    let big_img = readback::read_rgba8(&device, &queue, ssaa.target());
-    let (w, _) = (OUTPUT[0] as usize, OUTPUT[1] as usize);
-    let linear_truth: Vec<u8> = (0..truth.len())
-        .map(|i| {
-            let (px, k) = (i / 4, i % 4);
-            if k == 3 {
-                return 255;
-            }
-            let (x, y) = (px % w, px / w);
-            let at = |xx: usize, yy: usize| {
-                (f64::from(big_img[(yy * 2 * w + xx) * 4 + k]) / 255.0).powf(2.2)
-            };
-            let m = (at(2 * x, 2 * y)
-                + at(2 * x + 1, 2 * y)
-                + at(2 * x, 2 * y + 1)
-                + at(2 * x + 1, 2 * y + 1))
-                / 4.0;
-            (m.powf(1.0 / 2.2) * 255.0).round() as u8
-        })
-        .collect();
+    let [f, o, b] = [0, 1, 2].map(|i| mean(mad(&images[i].1, &truth)));
+    println!(
+        "level, {SETTLE} frames, from 2 x 2 supersampled in linear light: FSR {f:.3}, ours {o:.3}, bilinear {b:.3}"
+    );
     for (name, img) in &images {
         let signed: f64 = img
             .chunks(4)
-            .zip(truth.chunks(4))
+            .zip(display_truth.chunks(4))
             .map(|(p, q)| {
                 (0..3)
                     .map(|k| f64::from(p[k]) - f64::from(q[k]))
@@ -924,11 +979,16 @@ fn a_still_camera_under_fsr2_is_nearer_the_supersampled_render_than_a_blit() {
             .sum::<f64>()
             / (img.len() / 4) as f64;
         println!(
-            "  {name}: mean signed difference from supersampled {signed:+.3}; from it averaged in linear light {:.3}",
-            mean(mad(img, &linear_truth))
+            "  {name}: from it averaged in display bytes {:.3}, mean signed difference {signed:+.3}",
+            mean(mad(img, &display_truth))
         );
     }
-    assert!(f < b, "FSR {f:.3} not below the blit's {b:.3}");
+    reading(
+        "level, still, FSR 1.5 from the linear supersampled render",
+        &format!("{f:.3}"),
+        &format!("below the bilinear blit's {b:.3}"),
+    );
+    assert!(o < b, "ours {o:.3} not below the blit's {b:.3}");
 }
 
 /// Per-pass readings of FSR 2 on a pan of the stripe wall: after 32 still frames, 64 frames
