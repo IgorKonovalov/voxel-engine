@@ -408,8 +408,8 @@ reads them.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The hall on screen with the lamp off | dev | done | committed with this row |
-| 2: The features | dev | not started | |
+| 1: The hall on screen with the lamp off | dev | done | 58abae3 |
+| 2: The features | dev | done | committed with this row |
 | 3: The ores, the determinism vector and the open volume | dev | not started | |
 | 4: The hero's shots, the review set and the golden | dev | not started | |
 | 5: The readings | dev | not started | |
@@ -424,6 +424,11 @@ reads them.
 - Phase 1: the amber zone also excludes rock at or under the floor (`z > floor(x, y)`), so the veins are in the west walls and the dome's lower two thirds, not the floor.
 - Phase 1: the workspace quick tier at the phase commit timed out two existing tests at 30 s (`castle::the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn`, `replay::a_stamp_and_a_collapse_replay_from_the_save`) at a load average of 25 from the other lanes; rerun alone at load 17 both passed (14.8 s). The other 487 passed.
 - Phase 1: `flythrough --source showcase --headless --frames 60` (release, RTX 3080 Laptop, exclusive perf lock, load 18): exit 0, `frames:` line printed; generation 103 ms, 64 560 `Full` bricks, 14 790 light samples.
+- Phase 2: the chasm is part of the air before the features (with the hall's), not an entry of the feature list; the list holds pillars, stalactites, stalagmites, ledges and the bridge, built from `hash3(seed, [kind, i, attempt])` (attempt 0 for the plan's draw, further attempts only to re-place a rejected cone).
+- Phase 2: a stalactite's length (40..120) is measured from the actual roof over its axis (a scan up from the floor), not the noiseless dome height, and continued 4 m into the rock as a cylinder; a stalagmite stands on the noisy floor, continued 3 m into it. Stalactite tips keep 5 m over the floor; a stalagmite's tip keeps 1 m under its cell's stalactite's.
+- Phase 2: rejection rules added beyond the plan's: pillars and cones keep 2 voxels off the first 11 m of each shot's centre ray (`Shot::ray_milli`, an integer unit vector of the yaw and pitch) and off the ledges' 2 m probe points; stalagmites keep 3 m off the chasm's reach and off the crystal floor (`x >= 650`). Ledges are rock only in the hall's air within `depth` (30..50) of the wall outward from the centre, and drop any voxel within 4 m of an eye.
+- Phase 2: the 4 m clearance is asserted for pillars, cones and ledges; the bridge's deck is 1.6 m under the `chasm` eye by the plan's own shot, so the bridge is excluded from it.
+- Phase 2: seed 1 places 5 pillars, 28 stalactites, 12 stalagmites, 2 ledges and the bridge. Generation (release, `flythrough --source showcase --headless --frames 60`, RTX 3080 Laptop box, exclusive perf lock, load 7.2): 210 ms, 70 360 `Full` bricks, 16 416 light samples.
 - Phase 1: `level_mirror_budget` takes the world, not a `Full` count (`level_mirror_budget(&world, 1176, attrs)`).
 
 ### Close triggers
