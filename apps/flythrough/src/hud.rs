@@ -1150,6 +1150,8 @@ pub struct Modes {
     pub resolution: vxe_render::LightingResolution,
     /// The ore's emission scale pulses.
     pub pulse: bool,
+    /// The world source the line names first (`source showcase`), when it names one.
+    pub source: Option<&'static str>,
     banner_at: f64,
 }
 
@@ -1164,8 +1166,14 @@ impl Modes {
             lighting,
             resolution,
             pulse: false,
+            source: None,
             banner_at: now_ms,
         }
+    }
+
+    /// These modes with the line starting `source NAME` when `source` is given.
+    pub fn with_source(self, source: Option<&'static str>) -> Self {
+        Self { source, ..self }
     }
 
     /// Switches the mode `key` changes and shows the banner from `now_ms`.
@@ -1206,12 +1214,16 @@ impl Modes {
 
     /// The modes in words: `lighting half, shadow walk coarse, sampler reuse, history edits,
     /// lamp on, indirect on at 64 rays 1/8, filter on, ore pulse off, emissive history 32`
-    /// (the probe rays per update and the share of probes refreshed a frame).
+    /// (the probe rays per update and the share of probes refreshed a frame), after
+    /// `source NAME, ` when the modes name a source.
     pub fn line(&self) -> String {
         let l = &self.lighting;
         let on = |b: bool| if b { "on" } else { "off" };
+        let source = self
+            .source
+            .map_or_else(String::new, |s| format!("source {s}, "));
         format!(
-            "lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, indirect {} at {} rays 1/{}, filter {}, ore pulse {}, emissive history {}",
+            "{source}lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, indirect {} at {} rays 1/{}, filter {}, ore pulse {}, emissive history {}",
             self.resolution.name(),
             l.shadow_walk.name(),
             l.sampler.name(),

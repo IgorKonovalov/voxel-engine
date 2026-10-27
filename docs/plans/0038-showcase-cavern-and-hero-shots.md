@@ -1,6 +1,6 @@
 # 0038: A showcase cavern lit by four ores, and a hero still with named shots and no headlamp
 
-> **Status:** approved (2026-10-22)
+> **Status:** in-progress (2026-10-27)
 > **Decisions:** Owner, 2026-10-22: hall 72 x 58 x 24 m as planned with probe spacing settled from the review renders; ore palette as planned; shots hall, chasm and crystals with `hall` the default; everything stays diggable (no SHELL bridge or pillars).
 > **Created:** 2026-10-22
 > **Milestone:** M2 in `docs/roadmap.md` (testbed content: the hero and demos show M2's
@@ -408,7 +408,7 @@ reads them.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The hall on screen with the lamp off | dev | not started | |
+| 1: The hall on screen with the lamp off | dev | done | committed with this row |
 | 2: The features | dev | not started | |
 | 3: The ores, the determinism vector and the open volume | dev | not started | |
 | 4: The hero's shots, the review set and the golden | dev | not started | |
@@ -418,9 +418,13 @@ reads them.
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: the tree had no `--source` (Plan 0032 not merged); `--source cave|level|showcase` was added in its shape, `--level` kept and equal to `--source level`. The castle stays `--castle`.
+- Phase 1: the banner's `source showcase` prefix is on the modes line (`hud::Modes::with_source`), only for the showcase; the cave and level lines are unchanged.
+- Phase 1: ore (amber here, every ore later) is rock in its zone above its vein threshold that has a six-neighbour of air. Without the last rule the zone's buried ore on chunk faces counted as exposed light samples (336 336 samples in the first headless run against 14 790 with it).
+- Phase 1: the amber zone also excludes rock at or under the floor (`z > floor(x, y)`), so the veins are in the west walls and the dome's lower two thirds, not the floor.
+- Phase 1: the workspace quick tier at the phase commit timed out two existing tests at 30 s (`castle::the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn`, `replay::a_stamp_and_a_collapse_replay_from_the_save`) at a load average of 25 from the other lanes; rerun alone at load 17 both passed (14.8 s). The other 487 passed.
+- Phase 1: `flythrough --source showcase --headless --frames 60` (release, RTX 3080 Laptop, exclusive perf lock, load 18): exit 0, `frames:` line printed; generation 103 ms, 64 560 `Full` bricks, 14 790 light samples.
+- Phase 1: `level_mirror_budget` takes the world, not a `Full` count (`level_mirror_budget(&world, 1176, attrs)`).
 
 ### Close triggers
 
