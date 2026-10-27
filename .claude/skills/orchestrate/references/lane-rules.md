@@ -54,6 +54,17 @@ plan lanes run at once, each in its own worktree at
    RADV. Say in the log how the adapter was selected.
 9. The wasm tests need `scripts/build-guests.sh` run once in a fresh worktree.
 
+## Context budget
+
+9a. Read your own plan in full, but not the large shared docs: `docs/nfr.md` (~110 KB),
+    `docs/roadmap.md` (~55 KB), `CHANGELOG.md`, other plans. `grep -n` for the section you need
+    and read only that range.
+9b. Keep tool output short. Cargo and nextest output is the main waste:
+    - builds: `cargo build -q`; clippy: `--message-format short`;
+    - nextest: `--status-level fail --final-status-level fail` (failures and the summary only);
+    - anything longer: `set -o pipefail; <command> 2>&1 | tee live/<name>.log | tail -n 40`, then
+      `grep` the log for what you need rather than reading it whole.
+
 ## The owner
 
 10. Never open a window, never run anything windowed, and never ask the compositor
