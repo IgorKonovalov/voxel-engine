@@ -313,6 +313,40 @@ fresh session.
   shipped, or the changed emission values), on the hall's size, and on the probe spacing for
   the hero.
 
+### Phase 6a: Fewer ores, none on the ceiling, half the cave dark
+> **Amended:** 2026-10-27 (owner, Phase 6 verdicts). The owner, flying the hall: "for
+> showcase we should not have light ore on the ceiling ... only some, let cave be half dark,
+> with crystals". The other verdicts: any of the four stills will do as the hero (keep
+> `hall`), palette and intensities as shipped, the hall's size is right, the hero's probe
+> spacing is 32.
+- **Owner skill:** dev
+- **What:** the generator places emissive ore on floors, walls and features only, never on the
+  roof or on a downward-facing surface (stalactites stay plain rock). Ore zones thin out so
+  that about half the hall is unlit by ore; the crystal clusters stay the main light. The
+  hero's default probe spacing becomes 32. Phase 3's ore bars are replaced by the ones below;
+  the determinism hash and the golden are re-blessed.
+- **Files touched:** `apps/flythrough/src/showcase.rs`, `apps/flythrough/tests/showcase.rs`,
+  `apps/flythrough/tests/determinism.rs`, `apps/flythrough/examples/hero.rs` (spacing),
+  `apps/flythrough/tests/golden/showcase_hall.png`, this plan's log.
+- **Done when:**
+  1. **No ceiling ore.** Over the generated world (seed 1), no exposed emissive voxel has its
+     only non-opaque six-neighbours at `-z` (a ceiling face), and none sits in the dome's upper
+     half above the floor plane. The test prints the count (0).
+  2. **Half dark.** On a 2 m grid over the hall's floor surface, at least 50 % of the cells have
+     no exposed emissive voxel within 6 m. The test prints the fraction.
+  3. **Crystals lead.** Exposed crystal voxels outnumber each other ore; every ore still has at
+     least one cluster (count > 0), so the palette shipped stays visible. Phase 3 bar 3's caps
+     (8192 a chunk, 262 144 total) and its zone rule still hold.
+  4. Phase 3 bars 1 and 2 hold with a re-blessed hash; `showcase_hall.png` is re-blessed on
+     lavapipe and opened before commit; `hero --shot all` re-renders the stills.
+
+### Phase 6b: The owner's look at the darker hall
+- **Owner skill:** human
+- **What:** the owner flies `flythrough --source showcase --probe-spacing 32` and looks at
+  the new stills: is the ore thin enough, the cave half dark, the crystals the light?
+- **Files touched:** this plan's log.
+- **Done when:** the log records the verdict (or another round of Phase 6a's values).
+
 ### Phase 7: The hero re-shot and the README
 - **Owner skill:** dev
 - **What:** apply Phase 6's choices (emission values, a preset's pose, the hero's default
