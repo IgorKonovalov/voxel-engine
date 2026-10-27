@@ -200,7 +200,17 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030 and 0039 closed)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0039 and 0041 closed)
+
+Plan 0041, the FSR 2 port, closed 2026-10-27 (v0.33.0, ADR-0034 accepted with an Outcome):
+FSR 2.2.1's six upscaling passes in WGSL, FP32 with no wave operations, fed by an input pass
+from the hit buffer and finished by a tone pass, beside our upscaler (`--upscaler
+off|own|fsr2`, `F10`). It holds its still, ghost, history, lock and lamp bars, but it misses
+the slow-pan bars against ours (its motion weight and history fetch, no port defect found)
+and the 1.2 ms bar on the dev box (1.89 to 1.91 ms at scale 1.5). The owner's windowed
+comparison found "not much difference" and made our own upscaler at scale 1.5, jittered, the
+fly-through's default; FSR 2 stays opt-in. §2's "with the upscaler allowed" now rests on the
+default path.
 
 Plan 0039, the contour look at arm's length, closed 2026-10-27 (v0.32.0, an Outcome on
 ADR-0011): a headless sharpness harness found the half lighting tier the main source of the
@@ -638,7 +648,8 @@ VR-readiness decision keeps open stay open, and so the cost is on paper before a
   both arms from M1 on, and `clippy.toml` can deny the platform transcendentals in `vxe-world`.
 - **The upscaler port (M2).** No WGSL port of FSR 2 exists. Mitigation: the M2 plan sizes the
   port as its own phase and names the TAA fallback. Plan 0030 shipped our own upscaler opt-in
-  (2026-10-22); Plan 0041 (ADR-0034) ports FSR 2.2.1.
+  (2026-10-22); Plan 0041 (ADR-0034) ported FSR 2.2.1 and closed 2026-10-27 with FSR 2
+  opt-in and our upscaler at scale 1.5 the default: the risk is retired.
 
 ## What the engine will not do
 

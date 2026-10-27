@@ -173,9 +173,11 @@ temporal 0.492 to 0.503, a-trous 2.332 to 2.343, composite 1.126 to 1.134, upsca
 composite read 0.755 to 0.770 ms on the dev box at scale 1.5; on the iGPU the upscale pass
 alone reads 3.2 ms.
 
-The default frame stays Plan 0024's (scale 1, jitter off, no upscaler; the owner's ruling at
-Plan 0030's close, ADR-0024's Outcome); the readings above are the opt-in performance setting
-(`--internal-scale 1.5 --jitter on`). An FSR 2 port (ADR-0034, proposed) is read against them.
+Plan 0030's close kept Plan 0024's frame (scale 1, jitter off, no upscaler) as the default and
+read the above as the opt-in performance setting. Since Plan 0041's close (2026-10-27,
+ADR-0034's Outcome) the fly-through's default is our upscaler at scale 1.5, jittered, the
+owner's pick after the windowed comparison with the FSR 2 port read below; the library's
+`Frame` still defaults to Plan 0024's frame.
 
 **FSR 2.2.1 ported to WGSL beside our upscaler and Plan 0024's frame (Plan 0041 Phase 6, the
 release binary of 6e64744's tree plus the Phase 6 banner change, 2026-10-27; `flythrough
@@ -200,7 +202,8 @@ path, no wave operations.
 
 At scale 1.5 on the dev box FSR 2's passes read 1.894 to 1.913 ms against the plan's 1.2 ms
 bar (the 1.5 ms upscale line less the composite and the HUD): a recorded miss, judged at
-Plan 0041 Phase 7. The largest are accumulate (0.728 to 0.743 ms) and depth clip (0.600 to
+Plan 0041 Phase 7, where the owner kept FSR 2 opt-in and made `own` at 1.5 the default, whose
+upscale, sharpen and composite are under the line. The largest are accumulate (0.728 to 0.743 ms) and depth clip (0.600 to
 0.601). With the composite, 2.05 to 2.07 ms against the 1.5 ms line; our upscaler's
 upscale, sharpen and composite read 0.79 to 0.82 ms in the same session. The hit pass at 1.5
 is 44.6 to 45.6 % of scale 1's, light + temporal + a-trous 45.4 to 46.5 %. The probe update

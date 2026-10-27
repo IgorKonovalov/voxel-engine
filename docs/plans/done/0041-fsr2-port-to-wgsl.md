@@ -1,18 +1,18 @@
 # 0041: AMD FSR 2.2.1 ported to WGSL: its six passes fed from the hit buffer, compared against our upscaler and the native frame
 
-> **Status:** in-progress
+> **Status:** done (closed 2026-10-27, v0.33.0: the port built and judged as amended; its misses are readings the owner weighed, FSR 2 ships opt-in and `own` at 1.5 is the default)
 > **Decisions:** Owner, 2026-10-22: approved with the plan's recommended options: Plan 0040 owns exposure and FSR reads it; behavioural bars with careful source reading, no SPIR-V harness; the motion bar beats our upscaler at both scales; if FSR misses it at Phase 4, stop and ask; FSR at scale 1 is in the comparison. Owner, 2026-10-27 (after Phase 4's investigation found no port defect): option (a), window it; the algorithm's misses become readings judged in Phase 7 (Phases 4 to 7 amended).
 > **Created:** 2026-10-22
 > **Milestone:** M2 in `docs/roadmap.md` (the upscaler; the roadmap's risk "No WGSL port of FSR 2
 > exists", which this plan sizes)
-> **Related ADRs:** [ADR-0034](../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md)
+> **Related ADRs:** [ADR-0034](../../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md)
 > (proposed with this plan: FSR 2.2.1's port is the default candidate, and our upscaler stays
-> opt-in). [ADR-0024](../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) (superseded in
-> part: its jitter, internal resolution and RCAS stand). [ADR-0001](../adrs/0001-rust-library-workspace-wgpu-compute-ray-marching.md)
+> opt-in). [ADR-0024](../../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) (superseded in
+> part: its jitter, internal resolution and RCAS stand). [ADR-0001](../../adrs/0001-rust-library-workspace-wgpu-compute-ray-marching.md)
 > (wgpu and WGSL, no vendor path, no backend branch).
-> [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (the hit buffer and the edit boxes).
-> **Source:** the owner's decision of 2026-10-22, after [Plan 0030](done/0030-temporal-upscaler.md)'s
+> **Source:** the owner's decision of 2026-10-22, after [Plan 0030](0030-temporal-upscaler.md)'s
 > Phase 9 check: Plan 0030 closes with Plan 0024's frame as the default and its upscaler
 > opt-in, and the FSR 2 port (ADR-0024's Alternative A) is the next plan.
 > **Starts after:** Plan 0030 merges. This plan builds on its internal size, jitter,
