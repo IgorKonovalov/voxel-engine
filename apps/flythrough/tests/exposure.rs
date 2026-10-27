@@ -144,7 +144,7 @@ fn the_caves_curve_after_the_lamp_goes_off() {
     println!(
         "largest |log2 e - model over the measured meters| {worst_stepped:.4} EV; from frame 30, |log2 e - closed form from frame 30| {worst_late:.4} EV"
     );
-    // Plan 0040 Phase 4 bar 2's third clause, not met on this pose: see the plan's log.
+    // Plan 0040 Phase 4 bar 2's closed-form clause: printed, not asserted, on this pose.
     if worst > 0.1 {
         println!("bar 2's closed-form clause is not met: {worst:.4} EV > 0.1");
     }
