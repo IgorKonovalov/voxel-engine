@@ -224,9 +224,10 @@ fn the_tone_pass_reproduces_the_composites_bytes_on_every_golden_pose() {
 
 /// The reactive mask, pixel by pixel, on the level at scale 1.5: on the frame of a radius-6
 /// carve every hit in the carve's box dilated by one voxel reads 1 and every other opaque hit
-/// 0; switching the lamp on over a settled still camera, every pixel the lamp lights past the
-/// light-change threshold reads `reactive_light` and the rest 0; behind the glass slab every
-/// pixel reads `reactive_translucent (1 - transmittance)` within 1/255.
+/// 0; switching the lamp on over a settled still camera, with indirect light on and off, every
+/// pixel the lamp lights past the light-change threshold reads `reactive_light` and the rest
+/// 0; behind the glass slab every pixel reads `reactive_translucent (1 - transmittance)`
+/// within 1/255.
 #[test]
 fn the_reactive_mask_marks_edits_light_changes_and_translucency() {
     let (world, camera) = level();
@@ -239,8 +240,6 @@ fn the_reactive_mask_marks_edits_light_changes_and_translucency() {
         reactive_translucent: 0.8,
         ..Default::default()
     };
-    let mut frame = frame_of(&device, INTERNAL, OUTPUT, false);
-    frame.set_upscaler_kind(&device, UpscalerKind::Fsr2(settings));
     let byte = |v: f32| (v * 255.0).round() as u8;
     let reactive = |frame: &Frame| -> Vec<u8> {
         readback::read_rgba8(&device, &queue, frame.fsr2().unwrap().reactive())
@@ -248,41 +247,55 @@ fn the_reactive_mask_marks_edits_light_changes_and_translucency() {
             .map(|p| p[0])
             .collect()
     };
-    // The lamp: off for the settle, on for one frame.
-    frame.set_lighting(vxe_render::Lighting {
-        lamp: false,
-        ..Default::default()
-    });
-    for _ in 0..SETTLE {
+    // The lamp: off for the settle, on for one frame; with the probe volume's indirect light
+    // on (the fly-through's default) and off. The mask follows the lamp's own term either way.
+    let lamp_switched_on = |indirect: bool| -> Frame {
+        let mut frame = frame_of(&device, INTERNAL, OUTPUT, false);
+        frame.set_upscaler_kind(&device, UpscalerKind::Fsr2(settings));
+        let lighting = vxe_render::Lighting {
+            indirect,
+            ..Default::default()
+        };
+        frame.set_lighting(vxe_render::Lighting {
+            lamp: false,
+            ..lighting
+        });
+        for _ in 0..SETTLE {
+            frame.step(&device, &queue, &gpu, &camera, &light);
+        }
+        assert!(
+            reactive(&frame).iter().all(|&r| r == 0),
+            "a settled still frame is not reactive (indirect {indirect})"
+        );
+        frame.set_lighting(lighting);
         frame.step(&device, &queue, &gpu, &camera, &light);
-    }
-    assert!(
-        reactive(&frame).iter().all(|&r| r == 0),
-        "a settled still frame is not reactive"
-    );
-    frame.set_lighting(vxe_render::Lighting::default());
-    frame.step(&device, &queue, &gpu, &camera, &light);
-    let params = frame.params(&gpu, &camera, &light);
-    let pos = readback::read_rgba32f(&device, &queue, frame.hit_positions());
-    let info = readback::read_rgba16u(&device, &queue, frame.hit_records());
-    let r = reactive(&frame);
-    let (mut lit, mut dark, mut wrong) = (0usize, 0usize, 0usize);
-    for i in 0..r.len() {
-        if pos[i][3] >= 1e30 {
-            continue;
+        let params = frame.params(&gpu, &camera, &light);
+        let pos = readback::read_rgba32f(&device, &queue, frame.hit_positions());
+        let info = readback::read_rgba16u(&device, &queue, frame.hit_records());
+        let r = reactive(&frame);
+        let (mut lit, mut dark, mut wrong) = (0usize, 0usize, 0usize);
+        for i in 0..r.len() {
+            if pos[i][3] >= 1e30 {
+                continue;
+            }
+            let p = [pos[i][0], pos[i][1], pos[i][2]];
+            let term = lamp_term(&params, p, octa16_normal(info[i][0], info[i][1]));
+            if term > 0.0105 {
+                lit += 1;
+                wrong += usize::from(r[i] != byte(0.6));
+            } else if term < 0.0095 {
+                dark += 1;
+                wrong += usize::from(r[i] != 0);
+            }
         }
-        let p = [pos[i][0], pos[i][1], pos[i][2]];
-        let term = lamp_term(&params, p, octa16_normal(info[i][0], info[i][1]));
-        if term > 0.0105 {
-            lit += 1;
-            wrong += usize::from(r[i] != byte(0.6));
-        } else if term < 0.0095 {
-            dark += 1;
-            wrong += usize::from(r[i] != 0);
-        }
-    }
-    println!("lamp on: {lit} lit hits, {dark} unlit, {wrong} off their term");
-    assert!(lit > 1000 && wrong == 0, "{lit} lit, {wrong} wrong");
+        println!(
+            "lamp on, indirect {indirect}: {lit} lit hits, {dark} unlit, {wrong} off their term"
+        );
+        assert!(lit > 1000 && wrong == 0, "{lit} lit, {wrong} wrong");
+        frame
+    };
+    lamp_switched_on(true);
+    let mut frame = lamp_switched_on(false);
 
     // The carve, the lamp steady.
     for _ in 0..SETTLE {

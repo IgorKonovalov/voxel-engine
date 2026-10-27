@@ -1371,7 +1371,25 @@ const INDIRECT_FRAMES: u32 = 64;
 /// The vein cavity after [`INDIRECT_FRAMES`] frames with the lamp off and indirect light
 /// `indirect`, read back.
 fn vein_cavity_render(world: &World, indirect: bool) -> Option<(Vec<u8>, Vec<[u16; 4]>)> {
+    vein_cavity_render_under(world, indirect, None)
+}
+
+/// [`vein_cavity_render`] under FSR 2 at scale 1 when `fsr2` is `Some`: `Some(true)` with
+/// the upscaler bypassed (the composite's linear target put through the tone pass alone),
+/// `Some(false)` with every pass running.
+fn vein_cavity_render_under(
+    world: &World,
+    indirect: bool,
+    fsr2: Option<bool>,
+) -> Option<(Vec<u8>, Vec<[u16; 4]>)> {
     let mut rig = LookRig::new(world, None)?;
+    if let Some(bypass) = fsr2 {
+        rig.frame.set_upscaler_kind(
+            &rig.device,
+            vxe_render::UpscalerKind::Fsr2(Default::default()),
+        );
+        rig.frame.fsr2_mut().expect("FSR mode").set_bypass(bypass);
+    }
     rig.frame.set_lighting(vxe_render::Lighting {
         lamp: false,
         indirect,
@@ -1421,6 +1439,54 @@ fn indirect_golden_shows_the_vein_s_bounce_light() {
         share * 100.0,
         centre_pixel(&lit),
         centre_pixel(&off)
+    );
+    assert!(share >= 0.20, "{:.1} %", share * 100.0);
+}
+
+/// The share of hit pixels (`info`'s flag 1) whose largest channel differs between `a` and
+/// `b` by more than 8/255, and the mean absolute byte difference over those hits.
+fn hit_difference(a: &[u8], b: &[u8], info: &[[u16; 4]]) -> (f64, f64) {
+    let (mut hits, mut differ, mut sum) = (0usize, 0usize, 0u64);
+    for (i, rec) in info.iter().enumerate() {
+        if rec[3] & 1 == 0 {
+            continue;
+        }
+        hits += 1;
+        let d: Vec<u8> = (0..3)
+            .map(|k| a[4 * i + k].abs_diff(b[4 * i + k]))
+            .collect();
+        differ += usize::from(d.iter().copied().max().unwrap_or(0) > 8);
+        sum += d.iter().map(|&v| u64::from(v)).sum::<u64>();
+    }
+    (differ as f64 / hits as f64, sum as f64 / (3 * hits) as f64)
+}
+
+/// FSR 2 carries the probe volume's indirect light: on `indirect.png`'s view, FSR 2's
+/// colour input put through the tone pass alone (the upscaler bypassed) is the plain frame's
+/// image byte for byte; with every FSR pass running at scale 1, the image with indirect light
+/// differs from the one without in at least 20 % of its hit pixels by more than 8/255, as the
+/// plain frame's does. FSR's mean distance from the plain indirect image is a `reading:` line.
+#[test]
+fn fsr2_carries_the_indirect_golden_s_bounce_light() {
+    let world = vein_cavity();
+    let Some((plain, info)) = vein_cavity_render(&world, true) else {
+        return;
+    };
+    let (toned, _) =
+        vein_cavity_render_under(&world, true, Some(true)).expect("the adapter rendered once");
+    let differing = plain.iter().zip(&toned).filter(|(a, b)| a != b).count();
+    println!("indirect, FSR 2 bypassed: {differing} bytes differ from the plain frame");
+    assert_eq!(differing, 0, "the tone pass changes the indirect image");
+    let (fsr_lit, _) =
+        vein_cavity_render_under(&world, true, Some(false)).expect("the adapter rendered once");
+    let (fsr_off, _) =
+        vein_cavity_render_under(&world, false, Some(false)).expect("the adapter rendered once");
+    let (share, _) = hit_difference(&fsr_lit, &fsr_off, &info);
+    let (far, mean) = hit_difference(&fsr_lit, &plain, &info);
+    println!(
+        "reading: FSR 2 at scale 1 with indirect light against without: {:.1} % of hits over 8/255; against the plain indirect image: {:.1} % over 8/255, mean {mean:.3}/255",
+        share * 100.0,
+        far * 100.0
     );
     assert!(share >= 0.20, "{:.1} %", share * 100.0);
 }

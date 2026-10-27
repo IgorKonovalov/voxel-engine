@@ -164,8 +164,9 @@ go through an in-process server, so every edit you see came back as a client eve
 
 For 3 s after the start and after every `F3` to `F8`, `M` or applied `F6` change, a yellow
 banner names the lighting modes (shadow walk, sampler, history, resolution, lamp, indirect, filter), the
-pulse and the emissive history. It shows with the stats overlay off, and sits under its rows
-when `F2` has it on. The same line goes to stdout.
+pulse and the emissive history; under it a second row names the upscaler and its scale, for
+3 s after the start and after every `F10`. It shows with the stats overlay off, and sits under
+its rows when `F2` has it on. The same lines go to stdout.
 
 Walking, the coarse grid and collapse run on the bounded level (`--level`) only. Every run
 prints a `frames:` line at exit: p50, p99 and max of the frame's render-thread CPU, of

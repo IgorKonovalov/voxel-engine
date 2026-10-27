@@ -577,7 +577,7 @@ and the owner weighs it in Phase 7.
 | 3: The remaining passes: luminance pyramid, previous depth, depth clip, lock | dev | done | d3b8ddb |
 | 4: RCAS, and the sharpness bars still and panning | dev | done | dab579b, dd272de, 66cd9d0, be59e30 |
 | 5: Lights, flicker and shadow motion | dev | done: bar 4 at scale 1 a reading | 09c7a6c |
-| 6: The readings on both adapters | dev | not started | |
+| 6: The readings on both adapters | dev | done: bar 1 a reading (1.894 to 1.913 ms) | committed with this row |
 | 7: The owner's windowed comparison and the default | human | not started | |
 
 **Phase 1** (lavapipe, llvmpipe LLVM 23.1.3, Mesa 26.2.5; exclusive perf lock; 1-min load 8.3
@@ -827,42 +827,51 @@ camera, 384 x 216 output; `live/p5-run1.log`, `live/p5-tune.log`, `live/p5-diag.
 - `fsr2.rs` also carries Phase 6's `frame_bytes_under_fsr2_swap_the_histories_for_fsr2s_inventory`
   (written while the GPU lock was held by the owner's session, passed in the same run).
 
-### Resume notes (2026-10-27, delete when Phase 6 lands)
+**Phase 6** (release `flythrough` of 6e64744's tree plus this commit's banner change, copied
+to `live/flythrough-p6`; exclusive perf lock and memory cap per run; every run waited for a
+1-minute load under 2 inside the lock and after 60 min ran loaded: load 2.4 to 6.5 at the
+starts, loaded, indicative; `live/p6/*.log`, `live/p6/runs.sh`).
 
-Phase 6 in progress; Phases 4 and 5 committed (be59e30, 09c7a6c). The Phase 6 code is
-committed with these notes as `wip(render)`; no reading taken yet.
-
-- Next, in order: (1) merge main into plan-0041 (the orchestrator's request: 48 commits behind
-  dedd83c, v0.31.1; plans 0042, 0046 and 0029, probe GI with indirect light on by default
-  through `composite.wgsl`'s `irradiance_at`): `git merge --no-ff main`, resolve,
-  `scripts/build-guests.sh`, full tier under the lock (`--test-threads 2 --no-fail-fast`),
-  commit `merge: main into plan-0041 (0042, 0046, 0029)`. Check that FSR's composite variant
-  (`marcher::composite_hdr_source`, linear radiance before exposure) carries the indirect
-  term and that the input pass's reactive light-change term is unaffected by it (rerun the
-  `fsr2` binary: the tone pass's byte-for-byte test and the reactive mask test bite). (2)
-  Rebuild release, rerun `live/p6/runs.sh` (untracked; it skips logs that have a `frame (`
-  line, waits out a live session, checks the 1-minute load under 2 inside the lock and runs
-  loaded after an hour; delete `live/p6/NVIDIA-off-1-1.log` first, it is pre-merge). (3)
-  Bar 1 is the sum of the nine `fsr2 *` passes at 1.5 on NVIDIA (at most 1.2 ms), the hit
-  pass and light + temporal + a-trous at most 55 % of scale 1's (`off 1` runs); bar 2 RADV
-  readings beside Plan 0030's; `docs/nfr.md` §2 and §3 get the figures with machine and
-  commit. (4) Log Phase 6, commit, stop at Phase 7.
-- Phase 6 code done: `FRAME_PASSES` has 17 slots, the last nine `fsr2::FSR2_PASSES` (input,
-  spd, spd tail, reconstruct, depth clip, lock, accumulate, rcas, tone; `Fsr2Binds::passes`);
-  an empty slot is skipped unless a timer is given; `fsrs_passes_close_the_frame_passes`
-  (unit). The HUD's gpu row leaves out `fsr2 *` and the upscale row reads `fsr2 X ms`
-  (`the_upscale_row_sums_fsr2s_passes`). README: `--upscaler` and `F10` rows. Bar 3 already
-  passes (09c7a6c's `frame_bytes_under_fsr2_swap_the_histories_for_fsr2s_inventory`: FSR mode
-  249 041 868 B = 124 621 440 - 33 177 600 + 157 598 028; re-read after the merge).
-- Phase 7 runner: `live/session1.sh` (untracked; binary `live/flythrough-p6`, copy
-  `target/release/flythrough` there after the merge and Phase 6). Runs: contour and face at
-  `--upscaler own --internal-scale 1.5` (F10 to fsr2 and off), contour and face at
-  `--upscaler fsr2 --internal-scale 1`; the five Phase 7 items in the prompt. Not started.
-- Gate at this tip: clippy `-D warnings` and fmt clean; quick tier 475 passed, 3 skipped;
-  doctests pass; the `fsr2` binary plus the FSR golden 20 passed (09c7a6c's tree, before the
-  Phase 6 code; the gpu tier not run on the Phase 6 code).
-- Gotchas: `Frame::step` advances before encoding (after a step `current_copy()` is the copy
-  just written). The stripe test takes ~350 s, the lamp test ~85 s.
+- Main (v0.31.1, dedd83c: Plans 0042, 0046, 0029) merged at 6e64744. `FRAME_PASSES` is 19
+  slots (probes and gather before composite; FSR 2's nine last). The composite's FSR variant
+  binds the gather's indirect texture; `composite.wgsl` adds it before `display`, so FSR's
+  colour input carries it.
+- Indirect check (lavapipe, `live/p6-indirect.log`; the render crate's `Lighting::default`
+  has indirect off, so the earlier FSR tests ran without it): new
+  `fsr2_carries_the_indirect_golden_s_bounce_light` (golden.rs), `indirect.png`'s view 64
+  frames: FSR bypassed through the tone pass 0 bytes differ from the plain frame; FSR at scale
+  1 with indirect against without, 100.0 % of hits over 8/255; against the plain indirect image
+  0.0 % over 8/255, mean 0.039/255. The reactive mask test now runs the lamp step with
+  indirect on and off: 20 604 lit, 16 203 unlit, 0 wrong in both. `fsr2.png` matched unchanged
+  (0.0000 % over 2/255), not re-blessed. 39 passed, 2 skipped (fsr2 and golden binaries).
+- Adapters by `--adapter NVIDIA` (NVIDIA GeForce RTX 3080 Laptop GPU, Vulkan, 615.78.08) and
+  `--adapter RADV` (AMD Radeon Graphics, RADV RENOIR); level spawn, 1920 x 1080, 300 frames,
+  median of the last 30, the fly-through defaults (indirect on). Per-run figures in
+  `docs/nfr.md` §2's table.
+- Bar 1, NVIDIA scale 1.5: the nine FSR passes 1.913, 1.904, 1.894 ms (at most 1.2): missed;
+  accumulate 0.728 to 0.743, depth clip 0.600 to 0.601, reconstruct 0.132, input 0.109, rcas
+  0.100, lock 0.086 to 0.088, tone 0.072, spd 0.060, spd tail 0.007 to 0.008. Hit 0.626 to
+  0.634 against `off 1`'s 1.390 to 1.403 (44.6 to 45.6 %); light + temporal + a-trous 1.571 to
+  1.593 against 3.427 to 3.460 (45.4 to 46.5 %). Frames: off 1 6.789 to 6.878, own 1.5 4.389
+  to 4.514, fsr2 1 10.077 to 10.167 (FSR 3.115 to 3.127), fsr2 1.5 5.709 to 5.805.
+- Bar 2, RADV: fsr2 1.5 frame 34.652 to 34.998, FSR 10.045 to 10.085 (accumulate 4.240 to
+  4.260); fsr2 1 frame 61.327 to 61.384, FSR 16.393 to 16.446; own 1.5 frame 28.120 to 28.780,
+  upscale 3.232 to 3.335, sharpen 0.653 to 0.681; off 1 frame 43.733 to 43.938. Every mode
+  carries the probe update, 7.80 to 8.22 ms, and the gather, 0.60 (1.5) or 1.34 (1) ms, which
+  Plan 0030's 18.797 to 18.865 ms frame did not.
+- Bar 3: `frame_bytes` at 1.5, ours 181 154 464 B (Plan 0030's 124 621 440 plus the probe
+  volume and gather target, 56 533 024), FSR 305 574 892 B = ours - 33 177 600 + 157 598 028
+  (render size 66 355 200, output size 91 238 400, the rest 4 428); fsr2 1 494 763 692 B, off
+  1 254 216 224 B (the run logs).
+- The upscaler banner now shows for 3 s from the start as the lighting modes' banner does
+  (`hud::UpscalerBanner::shown_from`), so the window names the upscaler, its scale and the
+  indirect mode at the start; stdout prints `upscaler fsr2, scale 1.5` and `lighting half,
+  ..., indirect on at 64 rays 1/8, ...` (the run logs).
+- Phase 7 runner: `live/session1.sh` (untracked) runs `live/flythrough-p6` (md5 b44ed270...,
+  the binary the readings used); `bash -n` clean; not started.
+- Gate: clippy `-D warnings`, fmt clean; quick 490 passed, 3 skipped (a first quick run at
+  load 33 timed one castle test out at 30 s; re-run at `--test-threads 4`, all passed);
+  doctests 7 passed; the merge's full tier 654 passed, 9 skipped.
 
 ### Notes
 
@@ -901,6 +910,13 @@ committed with these notes as `wip(render)`; no reading taken yet.
 - Phase 5 touched `apps/flythrough/tests/upscale.rs`, `support/rigs.rs`, `golden.rs` (the CPU
   tone moved to `rigs::tone_bytes`) and `.config/nextest.toml` (two slow tests), outside its
   list; `fsr2/input.wgsl` and `fsr2.rs` were not changed by it.
+- Main (Plan 0029 and others, v0.31.1) was merged at 6e64744 on the orchestrator's request;
+  main's lamp-step settle measure (10 % of the settled lamp contribution) was applied to the
+  shared rigs in `support/rigs.rs`, which the FSR lamp test uses too.
+- Phase 6 touched `apps/flythrough/tests/golden.rs` and `tests/fsr2.rs` (the indirect check
+  after the merge), outside its list; the upscaler banner showing at the start is this
+  phase's change, not the plan's.
+- Phase 6's readings were all taken loaded (1-minute load 2.4 to 6.5).
 
 ### Close triggers
 

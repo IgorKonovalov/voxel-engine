@@ -4454,10 +4454,14 @@ impl App for Flythrough {
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
                 modes: hud::Modes::new(self.args.start_lighting(), self.args.lighting, 0.0),
-                upscaler: hud::UpscalerBanner::new(self.args.start_upscaler(), {
-                    let mode = self.args.start_upscaler();
-                    self.args.upscaler_settings(mode).1.name()
-                }),
+                upscaler: hud::UpscalerBanner::shown_from(
+                    self.args.start_upscaler(),
+                    {
+                        let mode = self.args.start_upscaler();
+                        self.args.upscaler_settings(mode).1.name()
+                    },
+                    0.0,
+                ),
                 upscaler_changed: false,
                 scene: self
                     .args

@@ -1400,6 +1400,15 @@ impl UpscalerBanner {
         }
     }
 
+    /// The banner of the starting mode, shown from `now_ms` as the lighting modes' banner is
+    /// at the start.
+    pub fn shown_from(mode: UpscalerMode, scale: &'static str, now_ms: f64) -> Self {
+        Self {
+            shown_at: Some(now_ms),
+            ..Self::new(mode, scale)
+        }
+    }
+
     /// The mode is now `mode` at `scale`; the banner shows from `now_ms`.
     pub fn change(&mut self, mode: UpscalerMode, scale: &'static str, now_ms: f64) {
         self.mode = mode;
@@ -1425,7 +1434,8 @@ mod upscaler_banner_tests {
     use super::*;
 
     /// `F10` steps the banner's text through `off`, `own` and `fsr2`, each line fitting the
-    /// banner's width; it shows only after a change, for [`BANNER_MS`].
+    /// banner's width; it shows after a change, or from the start when built with
+    /// [`UpscalerBanner::shown_from`], for [`BANNER_MS`].
     #[test]
     fn the_upscaler_banner_names_each_mode_it_cycles_through() {
         let mut b = UpscalerBanner::new(UpscalerMode::Off, "1");
@@ -1458,6 +1468,13 @@ mod upscaler_banner_tests {
         );
         assert!(b.banner(2000.0 + BANNER_MS - 1.0).is_some());
         assert_eq!(b.banner(2000.0 + BANNER_MS), None);
+        let start = UpscalerBanner::shown_from(UpscalerMode::Fsr2, "1.5", 0.0);
+        assert_eq!(
+            start.banner(BANNER_MS - 1.0).as_deref(),
+            Some("upscaler fsr2, scale 1.5"),
+            "the starting mode shows at the start"
+        );
+        assert_eq!(start.banner(BANNER_MS), None);
         for m in UpscalerMode::ALL {
             assert_eq!(UpscalerMode::from_name(m.name()), Some(m));
         }
