@@ -151,17 +151,18 @@ go through an in-process server, so every edit you see came back as a client eve
 | `H`, `J`, `T` | With `--audio`: play a knock, a looping hum, or a looping pulse (a knock each second) at the point the last left click dug |
 | `E` | With `--audio`: toggle the early reflections |
 | `F1` | Sample the next frames and print frame-time readings |
-| `F2` | Toggle the stats overlay; with the lighting it shows every frame pass's GPU time and the light samples |
+| `F2` | Toggle the stats overlay; with the lighting it shows every frame pass's GPU time (the probe update and gather among them), the light samples and, with indirect light on, the live probes |
 | `F3` | Toggle the shadow walk: coarse (default; 2^3 blocks of the masks) or full |
 | `F4` | Toggle the emissive sampler: reservoir reuse (default) or the flat candidate list |
 | `F5` | Toggle what kills history: edit boxes (default), or edit boxes and A-SVGF's gradient |
 | `F6` | Toggle the lighting resolution: half (default) or full; applied on the next frame |
 | `F7` | Toggle the headlamp |
-| `M` | Pulse the ore's emission (a render-side scale) |
+| `F8` | Toggle indirect light from the probe volume |
+| `M` | Pulse the ore's emission (a render-side scale); the probe volume's indirect light sees the ore at the pulse's average |
 | `Esc` | Quit |
 
-For 3 s after the start and after every `F3` to `F7`, `M` or applied `F6` change, a yellow
-banner names the lighting modes (shadow walk, sampler, history, resolution, lamp, filter), the
+For 3 s after the start and after every `F3` to `F8`, `M` or applied `F6` change, a yellow
+banner names the lighting modes (shadow walk, sampler, history, resolution, lamp, indirect, filter), the
 pulse and the emissive history. It shows with the stats overlay off, and sits under its rows
 when `F2` has it on. The same line goes to stdout.
 
@@ -198,6 +199,12 @@ shown, `F1`, the autopilot's flight).
 | `--audio` | Open the default output device; `H`, `J`, `T` and `E` then work, and every frame probes the sounds' occlusion through the world. `FLYTHROUGH_HRIR=<pack>` loads another HRIR pack |
 | `--audio-debug` | `--audio` plus a line a second of the output callback's readings; on exit writes the last 60 s to `flythrough-audio-debug.wav` |
 | `--lamp on\|off` | The headlamp (default on) |
+| `--lamp-toggle N` | Switch the lamp every `N` frames as `F7` does; at exit print the probe passes' median inside and outside the light-change windows |
+| `--fade-reading` | Headless: dig five times along the camera ray, settle the light with the lamp off, then on, switch it off and print, for the screen centre's direct light, indirect light and their sum, the first frame under 10 % of the lamp's part |
+| `--indirect on\|off` | Indirect light from the probe volume that follows the camera (default on) |
+| `--probe-spacing N` | Voxels between the probe volume's probes, 4 to 64 (default 16, 1.6 m) |
+| `--probe-rays N` | Rays each updated probe traces, 1 to 64 (default 64) |
+| `--probe-slices N` | The probe volume refreshes one probe in `N` a frame: 8 (default), 16 or 32 |
 | `--emissive-ore on\|off` | The ore glows and lights the cave (default on) |
 | `--shadow-walk full\|coarse` | The walk shadow rays take (default coarse) |
 | `--sampler list\|reuse` | The emissive sampler: candidates alone, or with last frame's reservoirs (default reuse) |

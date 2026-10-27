@@ -3,6 +3,7 @@
 //! native or hosted build, save replay, the streaming defaults, and the small measurement
 //! helpers its readings use. The engine ships no terrain; this cave is the testbed's own.
 
+pub mod castle;
 pub mod cave;
 pub mod hud;
 pub use flythrough_logic as logic;
@@ -136,6 +137,46 @@ pub fn cave_materials() -> MaterialTable {
     shell.flags = MaterialFlags::INDESTRUCTIBLE;
     assert_eq!(t.push(shell), cave::SHELL);
     assert_eq!(t.push(row("rubble", [0.36, 0.33, 0.30])), RUBBLE);
+    t
+}
+
+/// `table` (the cave's four rows after air) with the castle's seven rows appended at
+/// `castle::MATERIAL_BASE` on, in palette order: stone, trim (darker stone for ribs, tracery
+/// and merlons), slate, wood and iron, opaque; glass, translucent and tinted blue; and torch,
+/// emitting a warm light. None is indestructible, so a dig into the castle is an ordinary edit.
+pub fn castle_materials(table: &MaterialTable) -> MaterialTable {
+    let mut t = table.clone();
+    assert_eq!(
+        t.len(),
+        usize::from(castle::MATERIAL_BASE),
+        "the castle's rows follow the cave's"
+    );
+    let row = |name: &str, albedo: [f32; 3]| Material {
+        albedo,
+        ..Material::named(name)
+    };
+    let rows = [
+        row("castle stone", [0.55, 0.53, 0.50]),
+        row("castle trim", [0.36, 0.35, 0.34]),
+        row("castle slate", [0.20, 0.22, 0.27]),
+        row("castle wood", [0.40, 0.27, 0.15]),
+        Material {
+            roughness: 0.5,
+            ..row("castle iron", [0.18, 0.18, 0.20])
+        },
+        Material {
+            flags: MaterialFlags::TRANSLUCENT,
+            opacity: 0.6,
+            ..row("castle glass", [0.25, 0.35, 0.85])
+        },
+        Material {
+            emission: [3.0, 1.7, 0.6],
+            ..row("castle torch", [1.0, 0.7, 0.3])
+        },
+    ];
+    for (i, m) in (castle::STONE..=castle::TORCH).zip(rows) {
+        assert_eq!(t.push(m), castle::material(i));
+    }
     t
 }
 

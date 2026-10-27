@@ -28,6 +28,7 @@ vxe-app = { path = "../../crates/vxe-app" }
 flythrough-logic = { path = "logic" }
 vxe-script-wasm = { workspace = true, features = ["host"], optional = true }
 vxe-audio = { path = "../../crates/vxe-audio" }
+vxe-assets = { path = "../../crates/vxe-assets" }
 
 [dev-dependencies]
 criterion.workspace = true

@@ -232,6 +232,111 @@ impl CaveSource {
     }
 }
 
+/// The `--castle` hall's air before its noise, as voxel half-open ranges per axis: 80 x 80 x
+/// 48 m around the castle's box, its floor at `z = 12`.
+pub const HALL_LO: [i32; 3] = [-18, -368, 12];
+/// The exclusive upper corner of the hall's air before its noise.
+pub const HALL_HI: [i32; 3] = [782, 432, 492];
+/// The most voxels the hall's noise pushes a wall or the ceiling outward.
+pub const HALL_NOISE: i32 = 16;
+/// The bottom of the rock plinth under the hall, inclusive; the plinth's top is the floor.
+pub const PLINTH_BOTTOM: i32 = -138;
+
+/// `--castle`'s base: the unbounded cave with a hall of air carved in it and a plinth of solid
+/// rock under the hall's floor, so a building stamped on the floor stands on rock and what it
+/// carves below the floor is carved from rock, not from the cave's voids.
+///
+/// The hall is the box [`HALL_LO`]..[`HALL_HI`] with each of its four walls and its ceiling
+/// pushed outward by 0 to [`HALL_NOISE`] voxels of value noise (one 2D field per face, sampled
+/// on a 32-voxel lattice); the floor is flat. The plinth is solid [`ROCK`] for `z` in
+/// [`PLINTH_BOTTOM`]..`HALL_LO.z` under the hall's footprint grown by [`HALL_NOISE`], and wins
+/// over the cave's spawn pocket. Everywhere else the cave's own voxels. Pure integer, like
+/// [`CaveSource`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HallSource {
+    pub cave: CaveSource,
+}
+
+impl HallSource {
+    /// The hall in the unbounded cave of `seed`.
+    pub fn new(seed: u64) -> Self {
+        Self {
+            cave: CaveSource::unbounded(seed),
+        }
+    }
+
+    /// How far face `face` (0 and 1: low and high x; 2 and 3: low and high y; 4: the
+    /// ceiling) is pushed outward at the face's coordinates `(a, b)`: 0 to [`HALL_NOISE`].
+    fn push(&self, face: i32, a: i32, b: i32) -> i32 {
+        let n = ValueNoise::new(self.cave.seed ^ 0x4A11_0000_0000_0000, 5);
+        let s = n.sample([a, b, face * 4096]);
+        (((s + 32768) * i64::from(HALL_NOISE + 1)) >> 16) as i32
+    }
+
+    /// Whether voxel `p` is the hall's air.
+    pub fn in_hall(&self, p: [i32; 3]) -> bool {
+        let [x, y, z] = p;
+        let outer = |k: usize, c: i32| c >= HALL_LO[k] - HALL_NOISE && c < HALL_HI[k] + HALL_NOISE;
+        if z < HALL_LO[2] || !outer(0, x) || !outer(1, y) || !outer(2, z) {
+            return false;
+        }
+        x >= HALL_LO[0] - self.push(0, y, z)
+            && x < HALL_HI[0] + self.push(1, y, z)
+            && y >= HALL_LO[1] - self.push(2, x, z)
+            && y < HALL_HI[1] + self.push(3, x, z)
+            && z < HALL_HI[2] + self.push(4, x, y)
+    }
+
+    fn in_plinth(&self, p: [i32; 3]) -> bool {
+        (PLINTH_BOTTOM..HALL_LO[2]).contains(&p[2])
+            && (0..2).all(|k| p[k] >= HALL_LO[k] - HALL_NOISE && p[k] < HALL_HI[k] + HALL_NOISE)
+    }
+
+    /// The final material of voxel `p`.
+    pub fn material(&self, p: [i32; 3]) -> MaterialId {
+        if self.in_plinth(p) {
+            ROCK
+        } else if self.in_hall(p) {
+            AIR
+        } else {
+            self.cave.material(p)
+        }
+    }
+
+    /// The brick with minimum voxel `b`: air inside the hall's noiseless box, rock inside the
+    /// plinth, the cave's brick clear of both, else evaluated per voxel.
+    pub fn brick(&self, b: [i32; 3]) -> Brick {
+        let hi = b.map(|v| v + BRICK_EDGE - 1);
+        let within = |lo: [i32; 3], top: [i32; 3]| (0..3).all(|k| b[k] >= lo[k] && hi[k] < top[k]);
+        let g = HALL_NOISE;
+        if within(HALL_LO, HALL_HI) {
+            return Brick::Uniform(AIR);
+        }
+        let foot_lo = [HALL_LO[0] - g, HALL_LO[1] - g, PLINTH_BOTTOM];
+        let foot_hi = [HALL_HI[0] + g, HALL_HI[1] + g, HALL_LO[2]];
+        if within(foot_lo, foot_hi) {
+            return Brick::Uniform(ROCK);
+        }
+        let outer_hi = [HALL_HI[0] + g, HALL_HI[1] + g, HALL_HI[2] + g];
+        let clear = (0..3).any(|k| hi[k] < foot_lo[k] || b[k] >= outer_hi[k]);
+        if clear {
+            return self.cave.brick(b);
+        }
+        Brick::from_fn(|l| self.material([0, 1, 2].map(|k| b[k] + l[k])))
+    }
+}
+
+impl WorldSource for HallSource {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        let base = coord.min_voxel().0;
+        for slot in 0..CHUNK_BRICKS {
+            let b = brick_of_slot(slot);
+            let b = [0, 1, 2].map(|k| base[k] + b[k] * BRICK_EDGE);
+            out.set_brick(slot, self.brick(b));
+        }
+    }
+}
+
 /// Voxels of rock around a [`RoomSource`]'s air: 2 m at 10 cm.
 pub const ROOM_ROCK: i32 = 20;
 
@@ -405,6 +510,50 @@ mod tests {
             CaveSource::unbounded(1).vault_origin(),
             VoxelCoord([132, 32, 32])
         );
+    }
+
+    /// The hall is air inside its noiseless box and rock on its plinth, its walls move
+    /// outward only, and the brick early-outs agree with the voxels around every face.
+    #[test]
+    fn the_hall_is_air_over_a_rock_plinth_and_its_bricks_match_its_voxels() {
+        let h = HallSource::new(1);
+        assert_eq!(h.material([32, 32, 32]), AIR, "the spawn");
+        assert_eq!(h.material([32, 32, 0]), ROCK, "under the floor");
+        assert_eq!(
+            h.material([32, 32, 11]),
+            ROCK,
+            "the pocket's lower half stays rock"
+        );
+        assert_eq!(h.material([-18, -368, 12]), AIR);
+        assert_eq!(h.material([781, 431, 491]), AIR);
+        assert_eq!(h.material([400, 32, PLINTH_BOTTOM]), ROCK);
+        // Past the noise on every side the cave's own voxels.
+        for p in [
+            [-35, 32, 100],
+            [798, 32, 100],
+            [400, -385, 100],
+            [400, 448, 100],
+            [400, 32, 508],
+        ] {
+            assert_eq!(h.material(p), h.cave.material(p), "{p:?}");
+        }
+        // The noise reaches past the box somewhere on each face.
+        let pushed = |f: i32| (0..800).step_by(7).any(|a| h.push(f, a - 300, 100) > 0);
+        assert!((0..5).all(pushed));
+        for b in [
+            [-24, 24, 24],
+            [-40, -376, 8],
+            [776, 424, 488],
+            [400, 32, 488],
+            [400, 440, 200],
+            [-40, 32, -144],
+            [0, 0, 0],
+            [800, 0, 100],
+        ] {
+            let fast = h.brick(b);
+            let slow = Brick::from_fn(|l| h.material([0, 1, 2].map(|k| b[k] + l[k])));
+            assert_eq!(fast, slow, "brick at {b:?}");
+        }
     }
 
     #[test]

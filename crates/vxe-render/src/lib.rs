@@ -14,6 +14,7 @@ pub mod hud;
 pub mod light;
 pub mod marcher;
 pub mod present;
+pub mod probes;
 pub mod readback;
 
 pub use attr_work::{AttrWorkStats, MirrorView};
@@ -31,6 +32,7 @@ pub use marcher::{
     jitter_at,
 };
 pub use present::Presenter;
+pub use probes::ProbeVolume;
 pub use {glam, wgpu};
 
 /// The source of the hit pass, whose walk and helpers the other frame shaders are compiled
@@ -46,20 +48,26 @@ pub const TEMPORAL_WGSL: &str = include_str!("shaders/temporal.wgsl");
 pub const ATROUS_WGSL: &str = include_str!("shaders/atrous.wgsl");
 /// The composite pass, compiled after [`MARCH_WGSL`].
 pub const COMPOSITE_WGSL: &str = include_str!("shaders/composite.wgsl");
+/// The probe volume's reads and the gather pass, compiled after [`MARCH_WGSL`].
+pub const PROBE_GATHER_WGSL: &str = include_str!("shaders/probe_gather.wgsl");
+/// The probe update's trace and blend, compiled after [`MARCH_WGSL`], [`LIGHT_WGSL`] and
+/// [`PROBE_GATHER_WGSL`].
+pub const PROBE_UPDATE_WGSL: &str = include_str!("shaders/probe_update.wgsl");
 /// The source of the contour-attribute pass, for headless validation.
 pub const ATTRIB_WGSL: &str = include_str!("shaders/attrib.wgsl");
+pub use marcher::{SHARPEN_WGSL, UPSCALE_WGSL};
 
 /// Limits to request from `adapter`: the defaults, with the storage-binding and buffer-size
 /// limits raised toward what a brick pool of `pool_bytes` needs in one shard, capped at what
 /// the adapter offers; a pool past the cap spreads over more shards (`ShardLayout`). The
-/// storage buffers per stage are raised to 9: four pool shards and the five other bindings
-/// (`OTHER_STORAGE_BUFFERS`).
+/// storage buffers per stage are raised to 11: four pool shards, the five other bindings
+/// (`OTHER_STORAGE_BUFFERS`) and the probe passes' two (`probes::PROBE_STORAGE_BUFFERS`).
 pub fn limits_for(adapter: &wgpu::Adapter, pool_bytes: u64) -> wgpu::Limits {
     let offered = adapter.limits();
     let mut l = wgpu::Limits::default();
-    l.max_storage_buffers_per_shader_stage = l
-        .max_storage_buffers_per_shader_stage
-        .max(gpu_world::MAX_SHARDS + gpu_world::OTHER_STORAGE_BUFFERS);
+    l.max_storage_buffers_per_shader_stage = l.max_storage_buffers_per_shader_stage.max(
+        gpu_world::MAX_SHARDS + gpu_world::OTHER_STORAGE_BUFFERS + probes::PROBE_STORAGE_BUFFERS,
+    );
     l.max_storage_buffer_binding_size = offered
         .max_storage_buffer_binding_size
         .min(pool_bytes.max(l.max_storage_buffer_binding_size));

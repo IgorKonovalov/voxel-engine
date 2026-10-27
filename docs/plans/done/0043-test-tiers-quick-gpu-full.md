@@ -388,3 +388,24 @@ running (all timings loaded):
 Linux and its job time against run 39808788735's 981 s), recorded by the orchestrator in this
 plan's log on main, per the 2026-10-22 amendment. Plan 0029's lane adds its `indirect.rs` slow
 tests to the slow list when it merges main.
+
+**Recorded after the merge (2026-10-22, orchestrator):** the first CI run on main with the
+tiers, run 39827065925 at `75a5acd`, is green on Linux (and on `deny`). The Linux job took
+1061 s against run 39808788735's 981 s, so the expected 400 s saving did not show:
+
+| Linux step | 39808788735 (`99e7bee`) | 39827065925 (`75a5acd`) |
+|---|---|---|
+| workspace nextest (`--profile full`) | 444 s | 819 s |
+| wasm step (`-E 'binary(component)'`) | 414 s | 57 s |
+
+The wasm step saved 357 s as planned. The workspace step doubled because the `lavapipe` test
+group's `max-threads = 1`, meant for the shared dev box, also serialises the GPU tests on the
+CI runner. The owner approved a CI-only override the same day (a fix commit on main). The
+Windows job still fails, as it has on every run since `99e7bee`, in the shutdown test's
+headless run (the FXC compile of the attribute pipeline, outside this plan); a temporary test
+fix and Plan 0046 (bundled DXC) address it.
+
+**After the ci profile (2026-10-22, orchestrator):** run 39836102080 at `93cce0c` is green on
+Linux, Windows and `deny`. Linux: the workspace step under `--profile ci` 602 s, the wasm step
+81 s, the job 827 s against the 981 s baseline (154 s saved, short of the 400 s the plan
+expected). Windows passes again with the shutdown test on `--look plain`.

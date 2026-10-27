@@ -200,7 +200,17 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028 and 0030 closed; Plan 0029 in progress)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029 and 0030 closed)
+
+Plan 0029, the indirect-light plan, closed 2026-10-22 (v0.31.0, ADR-0023 accepted with an
+Outcome): a 32^3 probe volume at 1.6 m scrolls with the camera, one probe in 8 traces 64 rays a
+frame, and a visibility-weighted gather adds the bounce to the composite. A light change opens
+a 16-frame window that refreshes one probe in 4 at hysteresis 0 and resets the direct light's
+lamp history; probe rays read their own emission scale, so a pulsing emitter feeds them its
+mean. On the dev box update plus gather reads 1.57 ms (2.70 ms inside a window) under the
+1.7 ms bar, and the lighting line at half 4.4 ms under 6.0. The owner kept the bounce and the
+spacing; the lamp-off fade reads "almost instant". The owner's followup, a per-light and
+per-emissive-material switch for feeding the probes, is in M2's list below.
 
 Plan 0028 closed 2026-10-22 (v0.29.0, ADR-0012's last step, with Outcomes on ADR-0012,
 ADR-0013 and ADR-0011): a `Full` brick's mirror slot is its packed CPU bytes in 64-byte units
@@ -311,7 +321,7 @@ plan follow it (owner, 2026-10-21). The plans around it were drafted on 2026-10-
 line's copies through a staging belt; closed 2026-10-21),
 [Plan 0028](plans/done/0028-size-classed-mirror-slots-and-surface-only-attributes.md) (ADR-0012's
 mirror-slot step, after Plans 0024 and 0027),
-[Plan 0029](plans/0029-indirect-light-probe-volume.md) (ADR-0023: indirect light from a probe
+[Plan 0029](plans/done/0029-indirect-light-probe-volume.md) (ADR-0023: indirect light from a probe
 volume that scrolls with the camera, the owner's choice over a per-pixel bounce) and
 [Plan 0030](plans/done/0030-temporal-upscaler.md) (ADR-0024: a temporal upscaler of our own over
 an FSR 2 port). The edit-cost pass M1's paragraph names, Plan 0031, closed 2026-10-21.
@@ -356,6 +366,11 @@ work), and the light (real-time GI standing in for the baked occlusion).
   list has one symmetric entry and nothing costs more. This lands in the lighting plan because
   that plan rewrites the marcher's parameter block and creates the history buffers; doing it
   later would touch every stage twice.
+- A per-source switch on feeding the probes (the owner, Plan 0029 Phase 11, 2026-10-22):
+  "leave indirect light only for certain sources, like fire on stick or fire in dungeon - and
+  for simple lights it should be off". A flag per light sample (the headlamp, later lights) and
+  per emissive material on whether it feeds the probe rays, on Plan 0029's per-material probe
+  emission row; not yet planned.
 - **Headless proof:** irradiance in a closed test box matches an analytic value within a stated
   tolerance; a carve invalidates exactly the touched history region.
 - **Visible proof:** golden images of a dark cave with one emissive vein, before and after a
@@ -460,7 +475,7 @@ a cheap query.
 - **Visible proof:** a golden image of an animated model casting a shadow on the world.
 - **ADRs expected:** entity representation.
 
-### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views, the profiler across passes and the benchmark lane remain; Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1)
+### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views, the profiler across passes and the benchmark lane remain; Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1; Plan 0042 closed the generated castle, v0.30.0)
 
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane
@@ -469,7 +484,8 @@ a cheap query.
   0018, v0.15.0).
 - Stamping at authored-building scale: a generated castle and dungeon, a 27-tile `.vox`
   scene through the importer and `StampedSource`, with its RAM and generation costs read (Plan
-  0042, approved).
+  0042, v0.30.0: 343 566 464 B of prefabs, about 92 % air; sparse prefab storage stays a
+  followup).
 - Test tiers for the gate every lane runs: `quick` (CPU only, no perf lock) after every dev
   phase, `gpu` under the lock for render phases, `full` at a close, a merge and in CI, kept
   true by `scripts/check-test-tiers.mjs` (Plan 0043, v0.29.1).
@@ -555,6 +571,8 @@ set by the game, never by a wall clock in the engine.
   moon's phases, sky bodies the game lists (a comet's tail, meteors), an aurora shell whose
   glow lights the ground through a hemisphere map, and a blue-shifted, desaturated night tint
   driven by scene luminance. After Plans 0032 and 0035.
+- **The castle outdoors** (not drafted): Plan 0042's generated castle on open terrain under
+  the sky, the owner's pick after its flight. After Plan 0032's outdoor source.
 - **Flowing liquids** (not drafted): a deterministic cellular flow in `vxe-world` whose steps
   are ops through the log, a later plan with its own ADR.
 - **Headless proof:** each plan's goldens on lavapipe (noon, sunset, night, cave mouth, far

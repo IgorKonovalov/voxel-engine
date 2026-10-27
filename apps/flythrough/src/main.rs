@@ -4,7 +4,8 @@
 //! By default the cave is unbounded and streams around the camera (ADR-0003): full detail
 //! within `r_full` chunks, mips out to `r_lod`. `--level` generates the bounded level instead.
 //!
-//! `flythrough [--seed N] [--level] [--vault] [--walk] [--render WxH] [--frames N] [--bench N]
+//! `flythrough [--seed N] [--level] [--vault] [--castle] [--castle-out PATH]
+//! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look PRESET] [--rock-detail SCALE,STRENGTH] [--plane-fit FIT]
 //! [--plane-offset OFFSET] [--face-mix K] [--detail-fine W] [--detail-after on|off] [--view VIEW]
@@ -12,9 +13,11 @@
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
-//! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off]
+//! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off] [--lamp-toggle N]
+//! [--fade-reading]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]
 //! [--history edits|gradient] [--lighting full|half] [--emissive-history N]
+//! [--indirect on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N]
 //! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S]`.
 //! `--render` fixes the frame's output resolution (the window scales it); `--internal-scale`
 //! renders at the output size divided by it on each edge (default 1: no upscaler); `--jitter
@@ -56,7 +59,10 @@
 //! `--translucent-layers` sets how many translucent voxels are composited in front of the opaque
 //! hit (default 4, 0 ignores them). `--emissive-ore off` keeps the ore dark (by default it
 //! glows, `flythrough::ORE_EMISSION`, and lights the cave through the light pass's emissive
-//! samples); `M` pulses its emission scale; `--lamp off` turns the headlamp off;
+//! samples); `M` pulses its emission scale (the probe volume sees the ore at the pulse's
+//! average); `--lamp off` turns the headlamp off; `--fade-reading` (headless) digs five times
+//! along the camera ray, lets the light settle with the lamp off and then on, switches it off
+//! and prints how the screen centre's light fades, by source (see [`FadeSample`]);
 //! `--shadow-walk coarse` sends every shadow ray through the coarse walk (2^3 blocks of the
 //! masks; with `--view steps` and `--frames`, the exit prints the lamp shadow rays' cost too);
 //! `--filter off` shows the light pass's raw irradiance, unaccumulated and unfiltered;
@@ -65,14 +71,27 @@
 //! `--history gradient` also shortens history where A-SVGF's gradient sees the light change;
 //! `--lighting half` runs the lighting passes at half resolution on each edge;
 //! `--emissive-history N` sets the frames static emissive light accumulates over (default 32;
-//! the lamp's light keeps a short history). In a window
+//! the lamp's light keeps a short history); `--indirect off` turns the probe volume's indirect
+//! light off (on by default, ADR-0023); `--probe-spacing N` sets the voxels between its probes
+//! (default 16, 1.6 m; 4 to 64), `--probe-rays N` the rays each updated probe traces (default
+//! 64, 1 to 64) and `--probe-slices N` the share it refreshes a frame, one in N (8, the
+//! default, 16 or 32). In a window
 //! `F3` toggles the shadow walk, `F4` the sampler, `F5` the history killer, `F6` the lighting
-//! resolution and `F7` the lamp, each printing the lighting modes; with the stats HUD shown,
+//! resolution, `F7` the lamp and `F8` indirect light, each printing the lighting modes; with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
 //! `N` cycles the look presets and `V` toggles detail, each naming the look on the banner, and
 //! a fit change refits the mirror's bricks under the attribute cap (`refitting` on the banner). `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
 //! inside the extent).
+//!
+//! `--castle` (the streamed cave only; not with `--level`, `--vault` or `--room`) builds a
+//! gothic castle at startup as a multi-model `.vox` scene (`flythrough::castle`), parses it
+//! back, maps its palette to the castle's material rows and stamps it at generation into a
+//! hall of air over a rock plinth, the gate facing the spawn. It prints each stage's time and
+//! the prefabs' bytes, and the banner names it and the shot. `--castle-out PATH` (implies
+//! `--castle`) also writes the generated `.vox` to `PATH`. `--castle-shot NAME` (implies
+//! `--castle`) starts at one of `flythrough::castle::CastleShot`'s poses instead of the gate
+//! (the spawn), and `I` moves the camera to the next shot, printing and showing its name.
 //!
 //! `P` stamps that 16-voxel room at runtime, unrotated, with its minimum corner at the voxel
 //! the dig ray hits, and prints what it changed like a dig does.
@@ -159,6 +178,7 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use fly::{CutawayMode, Fly, Walk};
+use flythrough::castle;
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS, ROCK, RoomSource, VAULT_EDGE, vault};
 use flythrough::hud::{self, Cadence, EditLine, FrameStats, HudStats, WorldSample};
 use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB, REACH};
@@ -296,6 +316,12 @@ struct Args {
     walk: bool,
     /// `--vault`: the cave generates with the vault room ahead of the spawn.
     vault: bool,
+    /// `--castle`: the streamed cave generates with the castle in its hall.
+    castle: bool,
+    /// `--castle-out PATH`: where to write the generated `.vox`.
+    castle_out: Option<std::path::PathBuf>,
+    /// `--castle-shot NAME`: the castle pose the camera starts at.
+    castle_shot: castle::CastleShot,
     sync_budget: u64,
     /// `--mirror-budget`: the mirror's VRAM reservation in bytes.
     mirror_budget: Option<u64>,
@@ -344,6 +370,13 @@ struct Args {
     emissive_ore: bool,
     /// `--lamp on|off`: the headlamp lights the frame (on by default).
     lamp: bool,
+    /// `--lamp-toggle N`: switch the lamp every `N` frames, as `F7` does, timing the probe
+    /// passes inside and outside the light-change windows the switches open.
+    lamp_toggle: Option<u32>,
+    /// `--fade-reading`: dig into the rock ahead, settle the ore light with the lamp off,
+    /// then the lamp light with it on, switch it off and print how each light source at the
+    /// screen centre fades (see [`FadeSample`]).
+    fade_reading: bool,
     /// `--shadow-walk full|coarse`: the walk shadow rays take.
     shadow_walk: ShadowWalk,
     /// `--filter on|off`: the a-trous filter runs (on by default).
@@ -358,6 +391,14 @@ struct Args {
     lighting: LightingResolution,
     /// `--emissive-history N`: frames the emissive light's history blends over at least.
     emissive_history: u32,
+    /// `--indirect on|off`: indirect light from the probe volume (on by default).
+    indirect: bool,
+    /// `--probe-spacing N`: voxels between the probe volume's probes (default 16).
+    probe_spacing: u32,
+    /// `--probe-rays N`: rays each updated probe traces (default 64).
+    probe_rays: u32,
+    /// `--probe-slices N`: the volume refreshes one probe in N a frame (default 8).
+    probe_slices: u32,
     /// `--internal-scale 1|1.5|2`: the output size over the internal size, on each edge.
     internal_scale: RenderScale,
     /// `--jitter on|off`: the primary rays move by the frame's sub-pixel jitter (on by
@@ -365,6 +406,18 @@ struct Args {
     jitter: bool,
     /// `--sharpen S`: the upscaler's sharpening strength, 0 to 1.
     sharpen: f32,
+}
+
+/// The probe volume's bytes inside `Frame::frame_bytes`, by part.
+fn probe_bytes_line(p: &vxe_render::ProbeVolume) -> String {
+    format!(
+        "probe volume {} B in frame_bytes (atlases {} B, state {} B, update list, rays and uniform {} B), spacing {} voxels",
+        p.bytes(),
+        p.atlas_bytes(),
+        p.state_bytes(),
+        p.bytes() - p.atlas_bytes() - p.state_bytes(),
+        p.spacing()
+    )
 }
 
 /// The internal scale by default (`--internal-scale`): the output size, with the jitter off
@@ -410,6 +463,9 @@ impl Args {
             sampler: self.sampler,
             history: self.history,
             emissive_history: self.emissive_history,
+            indirect: self.indirect,
+            probe_rays: self.probe_rays,
+            probe_slices: self.probe_slices,
             ..Lighting::default()
         }
     }
@@ -446,6 +502,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         adapter: None,
         walk: false,
         vault: false,
+        castle: false,
+        castle_out: None,
+        castle_shot: castle::CastleShot::Gate,
         sync_budget: SYNC_BUDGET_MIB << 20,
         mirror_budget: None,
         residency: RESIDENCY,
@@ -469,6 +528,12 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         pad: true,
         emissive_ore: true,
         lamp: true,
+        lamp_toggle: None,
+        fade_reading: false,
+        indirect: true,
+        probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
+        probe_rays: vxe_render::probes::RAYS_PER_PROBE,
+        probe_slices: vxe_render::probes::SLICES,
         shadow_walk: ShadowWalk::default(),
         filter: true,
         light_radius: vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS,
@@ -615,6 +680,30 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 args.shadow_walk = ShadowWalk::from_name(&v)
                     .ok_or(format!("--shadow-walk takes full or coarse, not {v}"))?;
             }
+            "--probe-rays" => {
+                let v = value()?;
+                args.probe_rays = v
+                    .parse()
+                    .ok()
+                    .filter(|n| (1..=vxe_render::probes::RAYS_PER_PROBE).contains(n))
+                    .ok_or(format!("--probe-rays takes 1 to 64 rays, not {v}"))?;
+            }
+            "--probe-slices" => {
+                let v = value()?;
+                args.probe_slices = v
+                    .parse()
+                    .ok()
+                    .filter(|n| [8, 16, 32].contains(n))
+                    .ok_or(format!("--probe-slices takes 8, 16 or 32, not {v}"))?;
+            }
+            "--probe-spacing" => {
+                let v = value()?;
+                args.probe_spacing = v
+                    .parse()
+                    .ok()
+                    .filter(|n| (4..=64).contains(n))
+                    .ok_or(format!("--probe-spacing takes 4 to 64 voxels, not {v}"))?;
+            }
             "--emissive-history" => {
                 let v = value()?;
                 args.emissive_history =
@@ -675,11 +764,26 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     v => return Err(format!("--filter takes on or off, not {v}")),
                 }
             }
+            "--lamp-toggle" => {
+                let v = value()?;
+                args.lamp_toggle = match v.parse::<u32>() {
+                    Ok(n) if n > 0 => Some(n),
+                    _ => return Err(format!("--lamp-toggle takes a frame count, not {v}")),
+                }
+            }
+            "--fade-reading" => args.fade_reading = true,
             "--lamp" => {
                 args.lamp = match value()?.as_str() {
                     "on" => true,
                     "off" => false,
                     v => return Err(format!("--lamp takes on or off, not {v}")),
+                }
+            }
+            "--indirect" => {
+                args.indirect = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("--indirect takes on or off, not {v}")),
                 }
             }
             "--emissive-ore" => {
@@ -698,6 +802,18 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--hud" => args.hud = true,
             "--census" => args.census = true,
             "--vault" => args.vault = true,
+            "--castle" => args.castle = true,
+            "--castle-out" => {
+                args.castle = true;
+                args.castle_out = Some(value()?.into());
+            }
+            "--castle-shot" => {
+                args.castle = true;
+                let v = value()?;
+                args.castle_shot = castle::CastleShot::parse(&v).ok_or_else(|| {
+                    format!("--castle-shot takes gate, nave, window or dungeon, not {v}")
+                })?;
+            }
             "--audio" => args.audio = true,
             "--audio-debug" => {
                 args.audio = true;
@@ -741,6 +857,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         return Err(
             "--room builds its own world; it does not take --level, --autopilot, --vault, \
              --save or --replay"
+                .to_owned(),
+        );
+    }
+    if args.castle && (args.level || args.vault || args.room.is_some()) {
+        return Err(
+            "--castle stands in the streamed cave; it does not take --level (too short for \
+             it), --vault (inside its box) or --room"
                 .to_owned(),
         );
     }
@@ -869,6 +992,183 @@ fn peak_rss_bytes() -> Option<u64> {
         .parse()
         .ok()?;
     Some(kb * 1024)
+}
+
+/// The probe update and gather passes' GPU time in a frame's `FRAME_PASSES` times.
+fn probe_passes_ms(passes: &[f64]) -> f64 {
+    FRAME_PASSES
+        .iter()
+        .zip(passes)
+        .filter(|(name, _)| matches!(**name, "probes" | "gather"))
+        .map(|(_, ms)| ms)
+        .sum()
+}
+
+/// `--lamp-toggle`'s exit line: the probes plus gather median of the last [`SAMPLES`] frames
+/// outside and inside a light-change window.
+fn window_line(every: u32, ms: &[Vec<f64>; 2]) -> String {
+    let tail = |v: &Vec<f64>| {
+        let mut t = v[v.len().saturating_sub(SAMPLES)..].to_vec();
+        if t.is_empty() {
+            "n/a".to_owned()
+        } else {
+            format!("{:.3} ms", median(&mut t))
+        }
+    };
+    format!(
+        "lamp toggled every {every} frames: probes + gather median of the last {SAMPLES} outside a light-change window {} ({} frames), inside {} ({} frames)",
+        tail(&ms[0]),
+        ms[0].len(),
+        tail(&ms[1]),
+        ms[1].len()
+    )
+}
+
+/// `--fade-reading`'s digs along the camera ray, one a frame from the first.
+const FADE_DIGS: u32 = 5;
+/// Frames the light settles in before each switch: the lamp off (the ore's light alone, the
+/// baseline), then on.
+const FADE_SETTLE: u32 = 256;
+/// Frames read after the lamp goes off.
+const FADE_TAIL: u32 = 200;
+/// Frames the baseline and the lamp-on values average over, the last of each settle.
+const FADE_MEAN: usize = 32;
+/// A source whose lamp-on value exceeds its baseline by no more than this has no fade to
+/// read.
+const FADE_NO_LAMP: f64 = 1e-4;
+/// The frame `--fade-reading` exits at.
+const FADE_END: u32 = FADE_DIGS + 2 * FADE_SETTLE + FADE_TAIL;
+/// Lighting pixels on each edge of the block around the screen centre a sample averages.
+const FADE_BLOCK: u32 = 8;
+/// The frames after the switch the bar is read over: under 10 % from FADE_BY through
+/// FADE_THROUGH.
+const FADE_BY: usize = 24;
+const FADE_THROUGH: usize = 160;
+
+/// Whether `--fade-reading`'s lamp is on at frame `frame`.
+fn fade_lamp(frame: u32) -> bool {
+    (FADE_DIGS + FADE_SETTLE..FADE_DIGS + 2 * FADE_SETTLE).contains(&frame)
+}
+
+/// One frame of `--fade-reading`: luminances averaged over the FADE_BLOCK square of lighting
+/// pixels at the screen centre (the composite's output over the same square). `direct` is
+/// the filter's irradiance (the light pass through its temporal history and the a-trous
+/// filter, lamp and emissive), `lamp` and `emissive` the light pass's own estimate of each
+/// before any history, `indirect` the probe gather's (which runs no filter); the composite
+/// shades a hit with `albedo (direct + indirect) / PI`, so `lit`, their sum, is the wall's
+/// radiance over its albedo. `output` is the composite's display-encoded output in [0, 1].
+#[derive(Clone, Copy, Debug, Default)]
+struct FadeSample {
+    lit: f64,
+    direct: f64,
+    lamp: f64,
+    emissive: f64,
+    indirect: f64,
+    output: f64,
+    gpu_ms: f64,
+}
+
+impl FadeSample {
+    fn read(gpu: &Gpu, frame: &Frame, gpu_ms: f64) -> Self {
+        let lum = |p: [f32; 4]| {
+            0.2126 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[2])
+        };
+        let block = |t: &wgpu::Texture, edge: u32| {
+            let (w, h) = (t.width(), t.height());
+            let x0 = (w / 2).saturating_sub(edge / 2);
+            let y0 = (h / 2).saturating_sub(edge / 2);
+            move |i: u32| ((y0 + i / edge).min(h - 1) * w + (x0 + i % edge).min(w - 1)) as usize
+        };
+        let mean = |v: &[[f32; 4]], t: &wgpu::Texture, edge: u32, f: &dyn Fn([f32; 4]) -> f64| {
+            let at = block(t, edge);
+            (0..edge * edge).map(|i| f(v[at(i)])).sum::<f64>() / f64::from(edge * edge)
+        };
+        let (dev, q) = (&gpu.device, &gpu.queue);
+        let filtered = readback::read_rgba16f(dev, q, frame.filtered());
+        let raw = readback::read_rgba16f(dev, q, frame.irradiance());
+        let indirect = readback::read_rgba16f(dev, q, frame.indirect_irradiance());
+        let out_tex = frame.target();
+        let out: Vec<[f32; 4]> = readback::read_rgba8(dev, q, out_tex)
+            .chunks(4)
+            .map(|p| [0, 1, 2, 3].map(|k| f32::from(p[k]) / 255.0))
+            .collect();
+        let scale = (out_tex.width() / frame.filtered().width()).max(1);
+        let direct = mean(&filtered, frame.filtered(), FADE_BLOCK, &lum);
+        let indirect = mean(&indirect, frame.indirect_irradiance(), FADE_BLOCK, &lum);
+        Self {
+            lit: direct + indirect,
+            direct,
+            lamp: mean(&raw, frame.irradiance(), FADE_BLOCK, &|p| f64::from(p[3])),
+            emissive: mean(&raw, frame.irradiance(), FADE_BLOCK, &lum),
+            indirect,
+            output: mean(&out, out_tex, FADE_BLOCK * scale, &lum),
+            gpu_ms,
+        }
+    }
+}
+
+/// One source of a [`FadeSample`], read out of it.
+type FadeSource = fn(&FadeSample) -> f64;
+
+/// `--fade-reading`'s report: for each source of [`FadeSample`], its baseline (the mean of
+/// the last FADE_MEAN frames before the lamp first goes on), its lamp-on value (the last
+/// FADE_MEAN with it on), the first frame after the switch whose excess over the baseline is
+/// under 10 % of the lamp-on excess, the frames from FADE_BY through FADE_THROUGH over it, and
+/// the first 32 frames of the tail.
+fn fade_report(samples: &[FadeSample]) -> Vec<String> {
+    let settle = FADE_SETTLE as usize;
+    if samples.len() < 2 * settle + FADE_THROUGH {
+        return vec![format!(
+            "fade: {} samples, too few for a reading",
+            samples.len()
+        )];
+    }
+    let mut tail_ms: Vec<f64> = samples[2 * settle..].iter().map(|s| s.gpu_ms).collect();
+    let ms = median(&mut tail_ms);
+    let mut lines = vec![format!(
+        "fade: the lamp off at frame {} after {} frames on; the frame's GPU time {ms:.3} ms (median of the tail)",
+        FADE_DIGS + 2 * FADE_SETTLE,
+        FADE_SETTLE
+    )];
+    let sources: [(&str, FadeSource); 6] = [
+        ("composite (direct + indirect)", |s| s.lit),
+        ("direct (filtered)", |s| s.direct),
+        ("lamp (light pass)", |s| s.lamp),
+        ("emissive (light pass)", |s| s.emissive),
+        ("indirect (gather)", |s| s.indirect),
+        ("output (display-encoded)", |s| s.output),
+    ];
+    let avg = |r: &[FadeSample], f: FadeSource| r.iter().map(f).sum::<f64>() / r.len() as f64;
+    for (name, f) in sources {
+        let base = avg(&samples[settle - FADE_MEAN..settle], f);
+        let on = avg(&samples[2 * settle - FADE_MEAN..2 * settle], f);
+        let tail: Vec<f64> = samples[2 * settle..].iter().map(f).collect();
+        if on - base <= FADE_NO_LAMP {
+            lines.push(format!(
+                "fade: {name}: off {base:.5}, on {on:.5}; the lamp adds nothing here"
+            ));
+            continue;
+        }
+        let bar = 0.1 * (on - base);
+        let under = |v: f64| v - base < bar;
+        let first = tail.iter().position(|&v| under(v)).map(|i| i + 1);
+        let over: Vec<usize> = (FADE_BY..=FADE_THROUGH)
+            .filter(|&n| !under(tail[n - 1]))
+            .collect();
+        let first_text = first.map_or("not reached".to_owned(), |n| {
+            format!("{n} ({:.0} ms)", n as f64 * ms)
+        });
+        lines.push(format!(
+            "fade: {name}: off {base:.5}, on {on:.5}; first frame under 10 %: {first_text}; frames {FADE_BY}..={FADE_THROUGH} over it: {}; frames 1..=32 {:?}",
+            if over.is_empty() {
+                "none".to_owned()
+            } else {
+                format!("{} ({:?})", over.len(), &over[..over.len().min(8)])
+            },
+            tail[..32].iter().map(|v| (v * 1e4).round() / 1e4).collect::<Vec<_>>()
+        ));
+    }
+    lines
 }
 
 fn median(v: &mut [f64]) -> f64 {
@@ -1533,6 +1833,8 @@ struct Hud {
     pass_ms: Option<Vec<f64>>,
     hud_ms: Option<f32>,
     cpu_ms: f32,
+    /// The probe volume's live probes at the last world sample, with indirect light on.
+    live_probes: Option<u32>,
     /// The last frame's steps view, read back while that view and the HUD are on.
     steps: Option<hud::StepsSample>,
     format_us: u32,
@@ -1559,6 +1861,7 @@ impl Hud {
             pass_ms: None,
             hud_ms: None,
             cpu_ms: 0.0,
+            live_probes: None,
             steps: None,
             format_us: 0,
             page_bytes: hud::page_bytes(),
@@ -2166,6 +2469,11 @@ struct Run {
     /// The lighting modes `F3` to `F7` and `M` switch, and the banner naming them; the frame
     /// takes them at the start of each frame (`F6`'s resolution needs the device).
     modes: hud::Modes,
+    /// The scene's banner row (`castle gate`) and when it was last shown, by the frame loop's
+    /// clock; `None` without one.
+    scene: Option<(String, f64)>,
+    /// `--castle`'s current shot, which `I` advances; `None` without the castle.
+    castle_shot: Option<castle::CastleShot>,
     look: LookParams,
     /// The preset `N` last chose, or `--look`'s with its part flags.
     preset: LookPreset,
@@ -2182,6 +2490,11 @@ struct Run {
     frame: u32,
     gfx: Option<Gfx>,
     samples: Option<Samples>,
+    /// Under `--lamp-toggle`, the probes plus gather GPU time of each frame outside and
+    /// inside a light-change window.
+    window_ms: [Vec<f64>; 2],
+    /// Under `--fade-reading`, a sample a frame from the end of the digs on.
+    fade: Vec<FadeSample>,
     stream: Option<Stream>,
     pilot: Option<Autopilot>,
     /// Walk mode's body, `None` in fly mode.
@@ -2222,6 +2535,19 @@ impl Run {
         self.hud.rss_bytes = hud::rss_bytes(self.hud.page_bytes);
     }
 
+    /// Counts the probe volume's live probes for the HUD, with indirect light on: a blocking
+    /// read of its state words, paid at the world sample's cadence.
+    fn sample_probes(&mut self, gpu: &Gpu) {
+        self.hud.live_probes = self.gfx.as_ref().and_then(|g| {
+            g.frame.lighting().indirect.then(|| {
+                let probes = g.frame.probes();
+                let states = probes.read_states(&gpu.device, &gpu.queue);
+                let origin = probes.origin_for(self.fly.camera.position.to_array());
+                probes.live_count(&states, origin)
+            })
+        });
+    }
+
     /// Refreshes the HUD's values in place for this frame, from the O(1) sources and the
     /// last world sample; the last edit is already there.
     fn refresh_hud_stats(&mut self) {
@@ -2246,6 +2572,10 @@ impl Run {
                     .map(|(&n, &ms)| (n, ms as f32))
                     .collect(),
                 light_samples: g.mirror.light_samples(),
+                live_probes: self
+                    .hud
+                    .live_probes
+                    .filter(|_| self.modes.lighting.indirect),
                 modes: self.modes.line(),
                 upscale: g
                     .frame
@@ -2288,11 +2618,28 @@ impl Run {
         s.lighting = lighting;
     }
 
+    /// The banner at the frame loop's clock: the scene's row while it shows (for
+    /// `hud::BANNER_MS` after it was last shown), over the modes' banner.
+    fn banner(&self) -> Option<String> {
+        let now = ms_since(self.start);
+        let modes = self.modes.banner(now);
+        let scene = self
+            .scene
+            .as_ref()
+            .filter(|(_, at)| now - at < hud::BANNER_MS)
+            .map(|(s, _)| s.as_str());
+        match (scene, modes) {
+            (Some(s), Some(m)) => Some(format!("{s}\n{m}")),
+            (Some(s), None) => Some(s.to_owned()),
+            (None, m) => m,
+        }
+    }
+
     /// Formats this frame's rows and strip into the overlay, timing the formatting. Allocates
     /// nothing once the buffers have grown to the rows' size.
     fn update_hud(&mut self, gpu: &Gpu) {
         self.refresh_hud_stats();
-        let banner = self.modes.banner(ms_since(self.start));
+        let banner = self.banner();
         let h = &mut self.hud;
         h.format_rows();
         // The mode banner goes under the rows, hiding none of them.
@@ -2700,6 +3047,7 @@ impl Run {
             self.args.internal_scale.internal(output),
             output,
         );
+        frame.set_probe_spacing(&gpu.device, self.args.probe_spacing);
         frame.set_jitter(&gpu.device, self.args.jitter);
         frame.set_sharpness(&gpu.queue, self.args.sharpen);
         frame.set_lighting(self.modes.lighting);
@@ -3289,6 +3637,7 @@ impl Run {
             gfx.frame.target().height(),
             gfx.frame.resolution().name()
         );
+        println!("autopilot: {}", probe_bytes_line(gfx.frame.probes()));
         if !p.attr.items.is_empty() {
             for line in p.attr.lines() {
                 println!("{line}");
@@ -3319,6 +3668,9 @@ impl Run {
             for _ in 0..self.args.bench {
                 self.bench();
             }
+        }
+        if self.args.fade_reading && self.frame < FADE_DIGS {
+            self.dig();
         }
         if self.pilot.is_some() {
             if self.pilot_step() == Flow::Exit {
@@ -3357,6 +3709,7 @@ impl Run {
             (KeyCode::F5, hud::ModeKey::History),
             (KeyCode::F6, hud::ModeKey::Resolution),
             (KeyCode::F7, hud::ModeKey::Lamp),
+            (KeyCode::F8, hud::ModeKey::Indirect),
             (KeyCode::KeyM, hud::ModeKey::Pulse),
         ] {
             if input.pressed(key) {
@@ -3414,6 +3767,18 @@ impl Run {
             self.modes
                 .show_look(&self.preset, self.look.detail, ms_since(self.start));
             println!("{}", look_line(&self.look, self.preset()));
+        }
+        if input.pressed(KeyCode::KeyI)
+            && let Some(shot) = self.castle_shot.map(castle::CastleShot::next)
+        {
+            self.castle_shot = Some(shot);
+            self.fly.camera = Camera {
+                vfov: self.fly.camera.vfov,
+                ..castle_camera(shot)
+            };
+            let line = castle_banner(shot);
+            println!("{line}");
+            self.scene = Some((line, ms_since(self.start)));
         }
         if input.pressed(KeyCode::KeyX) || input.pad_pressed(PadButton::West) {
             self.cutaway = self.cutaway.next();
@@ -3650,6 +4015,7 @@ impl Run {
         let hud = self.hud.visible;
         if self.hud.cadence.due(hud) {
             self.sample_world();
+            self.sample_probes(gpu);
         }
         // The steps row reads the last frame's target back before this frame's march
         // overwrites it: a blocking copy, paid only with the HUD and that view both on.
@@ -3664,14 +4030,12 @@ impl Run {
             self.hud.steps = Some(hud::StepsSample::from_histogram(&h));
         }
         // With the stats HUD off the overlay draws the mode banner alone while it shows.
-        let banner = (!hud)
-            .then(|| self.modes.banner(ms_since(self.start)))
-            .flatten();
+        let banner = (!hud).then(|| self.banner()).flatten();
         if hud {
             self.update_hud(gpu);
         } else if let (Some(b), Some(gfx)) = (&banner, self.gfx.as_mut()) {
             gfx.hud
-                .set_lines(&gpu.queue, b, &[HudColour::Yellow; hud::BANNER_ROWS]);
+                .set_lines(&gpu.queue, b, &[HudColour::Yellow; hud::BANNER_ROWS + 1]);
             gfx.hud.set_samples(&gpu.queue, &[], 0.0);
         }
         let flying = self
@@ -3679,6 +4043,15 @@ impl Run {
             .as_ref()
             .is_some_and(|p| matches!(p.leg, Leg::Out | Leg::Back));
 
+        if let Some(n) = self.args.lamp_toggle
+            && self.frame > 0
+            && self.frame.is_multiple_of(n)
+        {
+            self.modes.press(hud::ModeKey::Lamp, ms_since(self.start));
+        }
+        if self.args.fade_reading && self.modes.lighting.lamp != fade_lamp(self.frame) {
+            self.modes.press(hud::ModeKey::Lamp, ms_since(self.start));
+        }
         let Some(gfx) = self.gfx.as_mut() else {
             return Flow::Exit;
         };
@@ -3700,13 +4073,18 @@ impl Run {
         } else {
             1.0
         };
+        // The probes see the pulse at its average, so it opens no light-change window; the
+        // pixels' light keeps its full swing.
         gfx.frame
-            .set_emission_scale(&gpu.queue, flythrough::cave::ORE, scale);
+            .set_emission_scales(&gpu.queue, flythrough::cave::ORE, scale, ORE_PULSE_MEAN);
         let params = gfx.frame.params(&gfx.mirror, &self.fly.camera, &self.light);
-        let timer = gfx
-            .timer
-            .as_ref()
-            .filter(|_| self.samples.is_some() || flying || hud);
+        let timer = gfx.timer.as_ref().filter(|_| {
+            self.samples.is_some()
+                || flying
+                || hud
+                || self.args.lamp_toggle.is_some()
+                || self.args.fade_reading
+        });
         let hud_timer = gfx.hud_timer.as_ref().filter(|_| hud);
         // Under the autopilot's flight the attribute pass is timed: its GPU time when its
         // work list is not empty, and the render thread's CPU time building the list and
@@ -3770,6 +4148,16 @@ impl Run {
         self.hud.cpu_ms = cpu_ms as f32;
         self.hud.march_ms = gpu_ms.map(|v| v as f32);
         self.hud.pass_ms.clone_from(&pass_ms);
+        if self.args.lamp_toggle.is_some()
+            && let Some(p) = &pass_ms
+        {
+            let window = usize::from(gfx.frame.probe_light_window());
+            self.window_ms[window].push(probe_passes_ms(p));
+        }
+        if self.args.fade_reading && self.frame >= FADE_DIGS {
+            self.fade
+                .push(FadeSample::read(gpu, &gfx.frame, gpu_ms.unwrap_or(0.0)));
+        }
         self.hud.hud_ms = hud_ms.map(|v| v as f32);
         if flying && let (Some(p), Some(ms)) = (self.pilot.as_mut(), gpu_ms) {
             p.gpu_ms.push(ms);
@@ -3815,6 +4203,12 @@ impl Run {
             }
         }
         self.frame += 1;
+        if self.args.fade_reading && self.frame >= FADE_END {
+            for line in fade_report(&self.fade) {
+                println!("{line}");
+            }
+            return Flow::Exit;
+        }
         if self.args.frames.is_some_and(|n| self.frame >= n) {
             if let Some(w) = &self.walk {
                 println!(
@@ -3846,7 +4240,11 @@ impl Run {
             if let Some(gfx) = &self.gfx {
                 println!("mirror: {}", belt_line(&gfx.mirror));
             }
+            if let Some(n) = self.args.lamp_toggle {
+                println!("{}", window_line(n, &self.window_ms));
+            }
             self.sample_world();
+            self.sample_probes(gpu);
             self.refresh_hud_stats();
             let mut stats = self.hud.stats.clone();
             stats.world.age_frames = 0;
@@ -3877,10 +4275,13 @@ fn shadow_steps_line(texels: &[[f32; 4]], walk: ShadowWalk) -> String {
 }
 
 /// The ore's emission scale `ms` milliseconds into the run while `M` pulses it: between 0.25
-/// and 1.75, one cycle every 1.5 s.
+/// and 1.75, one cycle every 1.5 s, about [`ORE_PULSE_MEAN`].
 fn ore_pulse(ms: f64) -> f32 {
-    (1.0 + 0.75 * (ms / 1500.0 * std::f64::consts::TAU).sin()) as f32
+    (f64::from(ORE_PULSE_MEAN) + 0.75 * (ms / 1500.0 * std::f64::consts::TAU).sin()) as f32
 }
+
+/// The ore pulse's time average, the scale the probe rays see the ore at, pulsing or not.
+const ORE_PULSE_MEAN: f32 = 1.0;
 
 /// The steps view's reading of one frame: `steps per ray (2073600 rays): mean 41.27, p99 133,
 /// block-max mean 88.10; loads mean 12.40, p99 61; pool reads mean 3.02, p99 18`. Counts clamp
@@ -4077,6 +4478,11 @@ impl App for Flythrough {
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
                 modes: hud::Modes::new(self.args.start_lighting(), self.args.lighting, 0.0),
+                scene: self
+                    .args
+                    .castle
+                    .then(|| (castle_banner(self.args.castle_shot), ms_since(self.start))),
+                castle_shot: self.args.castle.then_some(self.args.castle_shot),
                 look: self.args.start_look(),
                 preset: self.args.look.unwrap_or(LookPreset::FACE),
                 preset_changed: false,
@@ -4088,6 +4494,8 @@ impl App for Flythrough {
                 frame: 0,
                 gfx: None,
                 samples: None,
+                window_ms: [Vec::new(), Vec::new()],
+                fade: Vec::new(),
                 stream,
                 pilot,
                 walk,
@@ -4139,9 +4547,11 @@ impl App for Flythrough {
 /// `--adapter` the first adapter whose name contains its substring (the high-performance one
 /// when none does), and an offscreen target in place of the surface, the same frames until
 /// the app exits. Teardown follows the windowed shell's order (the app, then the queue,
-/// device and adapter), traced alike.
+/// device and adapter), traced alike. The instance reads wgpu's environment variables
+/// (`WGPU_BACKEND`, `WGPU_DX12_COMPILER`, ...) as the windowed shell's does.
 fn run_headless(mut app: Flythrough, size: [u32; 2]) -> Result<(), String> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let named = app.args.adapter.as_deref().and_then(|want| {
         let all = pollster_block_on(instance.enumerate_adapters(wgpu::Backends::all()));
         let found = all.into_iter().find(|a| a.get_info().name.contains(want));
@@ -4158,7 +4568,12 @@ fn run_headless(mut app: Flythrough, size: [u32; 2]) -> Result<(), String> {
         }))
         .map_err(|e| format!("no adapter: {e}"))?,
     };
-    println!("headless on {}", adapter.get_info().name);
+    let info = adapter.get_info();
+    println!(
+        "headless on {} ({})",
+        info.name,
+        vxe_app::backend_label(info.backend)
+    );
     let (required_features, required_limits) = app.device_request(&adapter);
     let (device, queue) = pollster_block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_features,
@@ -4238,14 +4653,90 @@ fn materials(args: &Args) -> MaterialTable {
     preset_materials(args, args.look.as_ref())
 }
 
-/// [`materials`] with rock's detail from `preset`, or none for `--look plain`.
+/// [`materials`] with rock's detail from `preset`, or none for `--look plain`; the castle's
+/// rows under `--castle`.
 fn preset_materials(args: &Args, preset: Option<&LookPreset>) -> MaterialTable {
     let table = preset.map_or_else(cave_materials, LookPreset::materials);
-    if args.emissive_ore {
+    let table = if args.emissive_ore {
         flythrough::with_emissive_ore(&table)
     } else {
         table
+    };
+    if args.castle {
+        flythrough::castle_materials(&table)
+    } else {
+        table
     }
+}
+
+/// The camera at castle shot `shot`: the eye voxel's centre, its yaw and pitch.
+fn castle_camera(shot: castle::CastleShot) -> Camera {
+    let (eye, yaw, pitch) = shot.pose();
+    Camera {
+        position: eye.map(|v| v as f32 + 0.5).into(),
+        yaw: (yaw as f32).to_radians(),
+        pitch: (pitch as f32).to_radians(),
+        vfov: 70f32.to_radians(),
+    }
+}
+
+/// The castle's banner row for `shot`: `castle gate`.
+fn castle_banner(shot: castle::CastleShot) -> String {
+    format!("castle {}", shot.name())
+}
+
+/// `--castle`'s source over the cave of `seed`: the castle generated, encoded (and written to
+/// `--castle-out`), parsed, mapped and placed, each stage's time printed, then the prefabs'
+/// bytes.
+fn castle_source(
+    seed: u64,
+    out: Option<&std::path::Path>,
+) -> vxe_world::StampedSource<flythrough::cave::HallSource> {
+    let t = now();
+    let file = castle::castle_vox();
+    let listed: usize = file.models.iter().map(|m| m.voxels.len()).sum();
+    println!(
+        "castle: generated {} tiles, {listed} voxels listed, in {:.0} ms",
+        file.models.len(),
+        ms_since(t)
+    );
+    let t = now();
+    let bytes = vxe_assets::encode(&file);
+    drop(file);
+    println!(
+        "castle: encoded {} bytes of .vox in {:.0} ms",
+        bytes.len(),
+        ms_since(t)
+    );
+    if let Some(path) = out {
+        match std::fs::write(path, &bytes) {
+            Ok(()) => println!("castle: wrote {}", path.display()),
+            Err(e) => eprintln!("flythrough: --castle-out {}: {e}", path.display()),
+        }
+    }
+    let t = now();
+    let file = vxe_assets::VoxFile::parse(&bytes).unwrap_or_else(|e| {
+        eprintln!("flythrough: the generated castle does not parse: {e}");
+        std::process::exit(1);
+    });
+    drop(bytes);
+    println!("castle: parsed in {:.0} ms", ms_since(t));
+    let t = now();
+    let placements = castle::castle_prefabs(&file).unwrap_or_else(|e| {
+        eprintln!("flythrough: the castle's palette map: {e}");
+        std::process::exit(1);
+    });
+    drop(file);
+    let bytes = castle::prefab_bytes(placements.iter().map(|(p, _, _)| &**p));
+    println!(
+        "castle: mapped {} prefabs, {bytes} bytes, in {:.0} ms",
+        placements.len(),
+        ms_since(t)
+    );
+    let t = now();
+    let source = castle::castle_source(seed, placements);
+    println!("castle: placed in {:.0} ms", ms_since(t));
+    source
 }
 
 fn main() {
@@ -4371,7 +4862,12 @@ fn main() {
             workers,
             persist: PersistConfig::default(),
         };
-        let mut streamer = if args.vault {
+        let mut streamer = if args.castle {
+            Streamer::new(
+                Arc::new(castle_source(seed, args.castle_out.as_deref())),
+                cfg,
+            )
+        } else if args.vault {
             println!(
                 "vault: {VAULT_EDGE}^3 shell room at {:?}",
                 source.vault_origin().0
@@ -4395,11 +4891,15 @@ fn main() {
         )
     };
 
-    let camera = Camera {
-        position: spawn.0.map(|v| v as f32 + 0.5).into(),
-        yaw: 0.0,
-        pitch: 0.0,
-        vfov: 70f32.to_radians(),
+    let camera = if args.castle {
+        castle_camera(args.castle_shot)
+    } else {
+        Camera {
+            position: spawn.0.map(|v| v as f32 + 0.5).into(),
+            yaw: 0.0,
+            pitch: 0.0,
+            vfov: 70f32.to_radians(),
+        }
     };
     let size = args.render.unwrap_or([1280, 720]);
     let headless = args.headless;
@@ -4808,6 +5308,25 @@ mod tests {
         );
     }
 
+    /// `--castle` streams: the bounded level is too short for it, the vault's origin is
+    /// inside its box, and `--room` builds its own world. `--castle-out` implies it.
+    #[test]
+    fn castle_refuses_the_level_the_vault_and_the_room() {
+        assert!(parse_args_from(argv(&["--castle"])).unwrap().castle);
+        for other in [&["--level"][..], &["--vault"], &["--room", "12"]] {
+            let mut a = vec!["--castle"];
+            a.extend_from_slice(other);
+            assert!(parse_args_from(argv(&a)).is_err(), "{a:?}");
+        }
+        let a = parse_args_from(argv(&["--castle-shot", "nave"])).unwrap();
+        assert!(a.castle);
+        assert_eq!(a.castle_shot, castle::CastleShot::Nave);
+        assert!(parse_args_from(argv(&["--castle-shot", "keep"])).is_err());
+        let a = parse_args_from(argv(&["--castle-out", "c.vox"])).unwrap();
+        assert!(a.castle);
+        assert_eq!(a.castle_out.as_deref(), Some(std::path::Path::new("c.vox")));
+    }
+
     /// Every edit is in the log now, so `--vault` combines with `--save` and `--replay` (the
     /// room placed at generation is not an op; `--replay` takes `--vault` to regenerate it).
     #[test]
@@ -5125,6 +5644,8 @@ mod tests {
             fly: Fly::new(camera),
             light: LightParams::headlamp(),
             modes,
+            scene: None,
+            castle_shot: None,
             dig_radius: DIG_RADIUS,
             scroll: ScrollSteps::default(),
             triggers: [false; 2],
@@ -5132,6 +5653,8 @@ mod tests {
             frame: 0,
             gfx: None,
             samples: None,
+            window_ms: [Vec::new(), Vec::new()],
+            fade: Vec::new(),
             stream: None,
             pilot: None,
             walk: None,
@@ -5232,6 +5755,43 @@ mod tests {
         input.pad_down(PadButton::DpadDown);
         run.handle_input(&input);
         assert_eq!(run.dig_radius, DIG_RADIUS + DIG_STEP);
+    }
+
+    /// With the castle, `I` moves the camera to the next shot's pose and puts its name on the
+    /// banner: gate, nave, window, dungeon, gate. Without it, `I` does nothing.
+    #[test]
+    fn i_cycles_the_castle_shots() {
+        let mut run = bare_run(carved_rock());
+        let mut input = Input::default();
+        input.key_down(KeyCode::KeyI);
+        run.handle_input(&input);
+        assert!(run.scene.is_none() && run.fly.camera.position == Vec3::splat(0.5));
+        run.castle_shot = Some(castle::CastleShot::Gate);
+        for want in ["nave", "window", "dungeon", "gate"] {
+            input.end_frame();
+            input.key_up(KeyCode::KeyI);
+            input.key_down(KeyCode::KeyI);
+            run.handle_input(&input);
+            let shot = run.castle_shot.unwrap();
+            assert_eq!(shot.name(), want);
+            let (eye, _, _) = shot.pose();
+            assert_eq!(
+                run.fly.camera.position,
+                Vec3::from(eye.map(|v| v as f32 + 0.5))
+            );
+            assert_eq!(run.scene.as_ref().unwrap().0, format!("castle {want}"));
+            assert!(
+                run.banner()
+                    .unwrap()
+                    .starts_with(&format!("castle {want}\n"))
+            );
+        }
+        let (_, yaw, pitch) = castle::CastleShot::Nave.pose();
+        let nave = castle_camera(castle::CastleShot::Nave);
+        assert_eq!(
+            (nave.yaw, nave.pitch),
+            ((yaw as f32).to_radians(), (pitch as f32).to_radians())
+        );
     }
 
     /// `X` and the pad's `West` (Square) cycle the cutaway alike: auto, on, off, auto.
@@ -5661,8 +6221,18 @@ mod tests {
     #[test]
     fn lighting_flags_parse_and_refuse_unknown_values() {
         let parse = |a: &[&str]| parse_args_from(argv(a));
-        let a = parse(&["--emissive-ore", "off", "--lamp", "off", "--filter", "off"]).unwrap();
-        assert!(!a.emissive_ore && !a.lamp && !a.filter);
+        let a = parse(&[
+            "--emissive-ore",
+            "off",
+            "--lamp",
+            "off",
+            "--filter",
+            "off",
+            "--indirect",
+            "off",
+        ])
+        .unwrap();
+        assert!(!a.emissive_ore && !a.lamp && !a.filter && !a.indirect);
         let a = parse(&[
             "--shadow-walk",
             "coarse",
@@ -5682,7 +6252,16 @@ mod tests {
         assert_eq!(a.lighting, LightingResolution::Full);
         assert_eq!(a.light_radius, 6);
         let d = parse(&[]).unwrap();
-        assert!(d.emissive_ore && d.lamp && d.filter);
+        assert!(d.emissive_ore && d.lamp && d.filter && d.indirect);
+        assert!(d.start_lighting().indirect);
+        assert_eq!(d.probe_spacing, 16);
+        assert_eq!(parse(&["--probe-spacing", "8"]).unwrap().probe_spacing, 8);
+        let p = parse(&["--probe-rays", "32", "--probe-slices", "16"]).unwrap();
+        assert_eq!(
+            (p.start_lighting().rays(), p.start_lighting().slices()),
+            (32, 16)
+        );
+        assert!(parse(&["--probe-slices", "12"]).is_err());
         assert_eq!(
             (
                 d.shadow_walk,
@@ -5702,11 +6281,18 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
             hud::Modes::new(d.start_lighting(), d.lighting, 0.0).line(),
-            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, filter on, ore pulse off, emissive history 32"
+            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on at 64 rays 1/8, filter on, ore pulse off, emissive history 32"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),
             ("--lamp", "--lamp takes on or off, not x"),
+            ("--indirect", "--indirect takes on or off, not x"),
+            (
+                "--probe-spacing",
+                "--probe-spacing takes 4 to 64 voxels, not x",
+            ),
+            ("--probe-rays", "--probe-rays takes 1 to 64 rays, not x"),
+            ("--probe-slices", "--probe-slices takes 8, 16 or 32, not x"),
             ("--filter", "--filter takes on or off, not x"),
             ("--shadow-walk", "--shadow-walk takes full or coarse, not x"),
             ("--sampler", "--sampler takes list or reuse, not x"),

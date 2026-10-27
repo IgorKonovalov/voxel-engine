@@ -14,9 +14,14 @@
 //   5  texture_2d<f32>   light_pos_in    the lighting grid's hit positions (the hit buffer at
 //                                        full resolution)
 //   6  texture_2d<u32>   light_info_in   the lighting grid's hit records
+//   7  texture_2d<f32>   indirect_in     the probe gather's indirect irradiance on the
+//                                        lighting grid, rgb; read with Params.lighting bit 12
 //
-// Per view: `shaded` is the Lambertian `albedo * tint * E / PI` of a hit (E times the detail's
-// lamp ratio when the detail is applied after lighting, march.wgsl's `detail_lamp_ratio`) plus its material's
+// Per view: `shaded` is the Lambertian `albedo * tint * E / PI` of a hit (E the direct
+// irradiance plus, with Params.lighting bit 12, the probes' indirect irradiance; the direct
+// part times the detail's lamp ratio when the detail is applied after lighting, march.wgsl's
+// `detail_lamp_ratio`, while the indirect part carries the detail from the gather's own
+// normal) plus its material's
 // emission under the frame's scale (none in the cutaway view; the cutaway's flat
 // sky on a miss in that view, else black), the translucent layers composited over it, times
 // `params.exposure`, tone mapped (`Lighting::tone_map`: ACES or the identity clamp) and
@@ -31,22 +36,41 @@
 @group(2) @binding(4) var target_tex: texture_storage_2d<rgba8unorm, write>;
 @group(2) @binding(5) var light_pos_in: texture_2d<f32>;
 @group(2) @binding(6) var light_info_in: texture_2d<u32>;
+@group(2) @binding(7) var indirect_in: texture_2d<f32>;
 
-// The irradiance of lighting pixel `q`: the filter's rgb, or with the filter off the light
-// pass's emissive rgb plus its lamp's white a.
-fn irradiance_at(q: vec2<i32>) -> vec3<f32> {
+// `Params::lighting` bit: the probe gather ran and its irradiance adds to the direct one.
+const LIGHTING_INDIRECT: u32 = 4096u;
+
+// The irradiance of a lighting pixel or of its upsampled value, split: `direct` the
+// filter's rgb, or with the filter off the light pass's emissive rgb plus its lamp's white a;
+// `indirect` the gathered indirect rgb when it ran, else zero; `all` their sum, accumulated
+// as one value so it is exactly the unsplit irradiance.
+struct Lit {
+    all: vec3<f32>,
+    direct: vec3<f32>,
+    indirect: vec3<f32>,
+}
+
+fn irradiance_at(q: vec2<i32>) -> Lit {
     let v = textureLoad(irradiance_in, q, 0);
+    var d = v.xyz;
     if ((params.lighting & LIGHTING_FILTER_OFF) != 0u) {
-        return v.xyz + vec3<f32>(v.w);
+        d += vec3<f32>(v.w);
     }
-    return v.xyz;
+    var e = d;
+    var ind = vec3<f32>(0.0);
+    if ((params.lighting & LIGHTING_INDIRECT) != 0u) {
+        ind = textureLoad(indirect_in, q, 0).xyz;
+        e += ind;
+    }
+    return Lit(e, d, ind);
 }
 
 // The irradiance at full-resolution pixel `px` (hit `rec`): the lighting grid's own texel at
 // full resolution; at half resolution the four lighting pixels around it, bilinear weights
 // times `max(n.n', 0)^32 exp(-plane distance)` against the full-resolution hit, or the
-// nearest hit tap when every weight vanishes.
-fn lit_at(px: vec2<i32>, rec: HitRecord) -> vec3<f32> {
+// nearest hit tap when every weight vanishes. Each part of [`Lit`] takes the same weights.
+fn lit_at(px: vec2<i32>, rec: HitRecord) -> Lit {
     if (params.light_scale == 1u) {
         return irradiance_at(px);
     }
@@ -55,8 +79,10 @@ fn lit_at(px: vec2<i32>, rec: HitRecord) -> vec3<f32> {
     let base = vec2<i32>(floor(c));
     let f = c - floor(c);
     var sum = vec3<f32>(0.0);
+    var sum_d = vec3<f32>(0.0);
+    var sum_i = vec3<f32>(0.0);
     var w_sum = 0.0;
-    var nearest = vec3<f32>(0.0);
+    var nearest = Lit(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
     var nearest_w = -1.0;
     for (var i = 0; i < 4; i++) {
         let d = vec2<i32>(i & 1, i >> 1);
@@ -77,7 +103,9 @@ fn lit_at(px: vec2<i32>, rec: HitRecord) -> vec3<f32> {
         cosn *= cosn;
         let w = bil * cosn * exp(-abs(dot(rec.n, other.p - rec.p)));
         let e = irradiance_at(tap);
-        sum += w * e;
+        sum += w * e.all;
+        sum_d += w * e.direct;
+        sum_i += w * e.indirect;
         w_sum += w;
         if (bil > nearest_w) {
             nearest_w = bil;
@@ -85,7 +113,7 @@ fn lit_at(px: vec2<i32>, rec: HitRecord) -> vec3<f32> {
         }
     }
     if (w_sum > 1e-6) {
-        return sum / w_sum;
+        return Lit(sum / w_sum, sum_d / w_sum, sum_i / w_sum);
     }
     return nearest;
 }
@@ -160,9 +188,12 @@ fn composite(@builtin(global_invocation_id) gid: vec3<u32>) {
             return;
         }
         let albedo = materials[rec.material * 4u].xyz * st.w;
-        var e = lit_at(px, rec);
+        let lit = lit_at(px, rec);
+        var e = lit.all;
         if (detail_after_lighting()) {
-            e *= detail_lamp_ratio(rec, st.xyz);
+            // The ratio is the lamp's term; the indirect part was gathered with the detailed
+            // normal already, so it is added unscaled.
+            e = lit.direct * detail_lamp_ratio(rec, st.xyz) + lit.indirect;
         }
         c = albedo * e * (1.0 / PI);
         if ((params.flags & FLAG_CUTAWAY) == 0u) {
