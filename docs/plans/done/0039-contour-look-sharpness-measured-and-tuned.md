@@ -1,14 +1,14 @@
 # 0039: The contour look at arm's length: a sharpness metric, the sources of its softness, and named presets the owner compares
 
-> **Status:** in-progress
+> **Status:** done (closed 2026-10-27, v0.32.0): contour-sharp (weighted plane fit plus the lamp's detail ratio applied after lighting, the probes' indirect light left alone) is the fly-through's default by the owner's call, re-confirmed with probe GI; every bar met, the attribute pass's p99 on the plan's median; the owner-seen voxel-corner facets are the next look followup.
 > **Decisions:** Owner, 2026-10-22: the pick becomes the default and `--look contour` keeps today's look; the comparison runs where the plan proposes first; the face-mix candidate (C3) enters a preset only if it passes the axis-fraction guardrail; if no preset wins, today's default stays and the presets are opt-in; the plan starts right after Plan 0028 closes, without waiting for Plan 0030.
 > **Created:** 2026-10-22
 > **Milestone:** M2 in `docs/roadmap.md` (the surface look that Plan 0005 measured, ADR-0011
 > decided and Plan 0013 made the default, re-read under Plan 0024's frame)
-> **Related ADRs:** [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
+> **Related ADRs:** [ADR-0011](../../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
 > (contour planes and procedural detail; its encoding stands, and the offset formula it calls
 > crude is one of the candidates here),
-> [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (the hit buffer, the half lighting tier and the denoiser this plan's detail path runs
 > through). This plan writes no ADR: the choice is the owner's on-screen call from the
 > readings, as in Plan 0005; the close review decides whether that call needs an Outcome on
@@ -896,5 +896,43 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Followups
 
-- If Phase 4 finds the procedural path cannot carry arm's length: a look plan for stored
-  per-material textures or a sub-voxel normal, with its ADR.
+The owner's re-check with probe GI (2026-10-27, `live/session3.sh`, `--level --seed 1`,
+`contour` against the default `contour-sharp`): "contour sharp seems to be a pick, however on
+second scene I've seen artifacts with sharp corners of voxels on some smooth walls". Asked
+whether that blocks the close, the owner chose to close with the facets as a followup;
+contour-sharp stays the default.
+
+- **Voxel-aligned facets and sharp voxel corners on smooth walls (owner-seen; the architect's
+  next priority, beside the smooth flag).** The owner saw sharp voxel corners on some smooth
+  walls in the default look with probe GI on (the re-check's second scene, 2026-10-27). Phase
+  5's headless check found the same family: at small rims and protrusions contour-sharp draws
+  small voxel-aligned rectangular steps in mid grey, and its surface faint voxel-scale
+  rectangular facets, the plane steps its normals view shows (`live/ridge/`, the hero example
+  at 960 x 540 from the level's spawn pocket, NVIDIA). A long ridge at grazing incidence was
+  not checked. The next look plan reproduces the owner's view headlessly, reads it with the
+  sharpness harness's normals view, and only then chooses a mechanism (a wider or
+  curvature-aware fit, a plane continuity term across neighbouring voxels, more normal bits,
+  or a sub-voxel normal; the last two change storage and need an ADR).
+- **A per-material "smooth" flag (owner, 2026-10-27; the architect's next priority, beside
+  the facets).** A material row that opts out of the procedural detail and takes a fit for
+  flat faces, so built architecture (the castle's ashlar, a consumer's masonry) reads as
+  planes while rock keeps contour-sharp's weighted fit and detail. A general mechanism in the
+  material row's opaque flags; no storage change expected.
+- **Grain that fades at grazing incidence (owner, 2026-10-27).** If procedural grain comes
+  back (contour-grain stays opt-in), its fine octave and strength fade as `n.l` or `n.v`
+  approaches 0: under contour-grain grazing-lit walls went fully black in speckles, and
+  halving the fine octave helped more than lowering the strength.
+- **What survives `reset_history` (Phase 1 note).** A reading after a half-tier render of
+  another look differed from a fresh frame's by about 0.5 % of S_fine; the harness builds a
+  fresh `Frame` per reading. Find the lighting-target state the reset misses.
+- **The AMD attribute pass's tail is a machine state, not code.** On RADV RENOIR the
+  autopilot's attribute pass read p99 2.6 to 2.7 ms at 07:40 on 2026-10-27 (Phase 3, binary
+  of 426982e) and about 21 to 26 ms from 10:00 on under every binary: main's dedd83c, the
+  pre-plan 99e7bee (no Plan 0029), this plan's tip, and 426982e itself (re-run at the close
+  review, 14:32, load 3.41: p50 2.093, p99 23.314 ms). Same binary, ten times the tail, so
+  neither this plan nor Plans 0028 and 0029 caused it. Find what changed on the machine
+  (RADV's clock or power state after hours of lane load, a firmware limit) before any
+  slow-adapter p99 is compared across sessions; until then only same-session pairs are
+  readings. A measurement item for Plan 0044's hot-path pass or the lane rules.
+- If the procedural path cannot carry arm's length: a look plan for stored per-material
+  textures or a sub-voxel normal, with its ADR.

@@ -200,7 +200,15 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029 and 0030 closed)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030 and 0039 closed)
+
+Plan 0039, the contour look at arm's length, closed 2026-10-27 (v0.32.0, an Outcome on
+ADR-0011): a headless sharpness harness found the half lighting tier the main source of the
+softness, and the fly-through's default became `contour-sharp`, a weighted plane fit with the
+detail's lamp term applied after lighting, by the owner's call, re-confirmed with probe GI.
+`contour-grain` stays opt-in. The owner saw sharp voxel corners on some smooth walls in the
+default look; that and a per-material smooth flag are the next look work, in the plan's
+followups with grain that fades at grazing incidence.
 
 Plan 0029, the indirect-light plan, closed 2026-10-22 (v0.31.0, ADR-0023 accepted with an
 Outcome): a 32^3 probe volume at 1.6 m scrolls with the camera, one probe in 8 traces 64 rays a

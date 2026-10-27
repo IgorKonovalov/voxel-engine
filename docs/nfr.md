@@ -304,7 +304,9 @@ and 0.851 ms against 0.945, 0.871 and 0.737 (-7.7, +21.0 and +15.5 %; medians 0.
 21.765, 21.126 and 20.964 (+10.0, +7.6 and +6.8 %), p50 2.07 against 2.04. Quiet, the AMD
 attribute pass's p50 is Phase 3's again (about 2.05 ms; loaded it read about 20) while its p99
 stays near 22 ms against Phase 3's 2.7, with the same work-list sizes; the pairing, not the
-absolute value, is the reading.
+absolute value, is the reading. The tail is the machine's state, not the code: Phase 3's own binary
+of 426982e, re-run at the close review (2026-10-27 14:32, load 3.41), read p50 2.093 and p99
+23.314 ms.
 
 **Mirror attribute pass (contour look), render-thread CPU: p99 under 4 ms on the dev reference,
 deferred work visible as face-mode normals for at most 250 ms** (budget, Plan 0023, ADR-0017;
