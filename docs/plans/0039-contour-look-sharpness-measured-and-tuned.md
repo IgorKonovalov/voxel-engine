@@ -484,8 +484,8 @@ adapter; the readings go into `nfr.md` §2 as dev-reference lines labelled by ad
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The sharpness harness, the baselines and the source-isolation matrix | dev | done | 61b1fcf |
-| 2: The candidate mechanisms, each measured alone | dev | done; its fly-through readings are taken with Phase 3's flags | 29c37b5, e53bf8d, committed with this row |
-| 3: Named presets in the window | dev | not started | |
+| 2: The candidate mechanisms, each measured alone | dev | done; its fly-through readings are taken with Phase 3's flags | 29c37b5, e53bf8d, 0589ec7 |
+| 3: Named presets in the window | dev | done | 767f32a, 426982e, committed with this row |
 | 4: The owner's comparison | human | not started | |
 | 5: The pick as the default | dev | not started | |
 
@@ -581,35 +581,63 @@ Lavapipe, 320 x 180, 64 static frames from a fresh `Frame` per reading, headlamp
 | rock 4, 0.3 | 0.19174 | 0.24121 | 13.60 | 0.843 | 7.38 | 32 | 6.80 | met |
 | rock 4, 0.3 + C5 | 0.21315 | 0.26817 | 13.60 | 0.917 | 7.38 | 32 | 6.80 | met |
 
-### Resume notes (2026-10-22, delete when Phase 3 lands)
+- Fly-through readings (binary of 426982e, NVIDIA GeForce RTX 3080 Laptop GPU via `--adapter
+  NVIDIA`, exclusive perf lock, 1-minute load 5.7 to 36.6 from the other lanes: loaded,
+  indicative; `flythrough --level --headless --seed 1 --render 1920x1080 --frames 300 --look
+  contour <part flags>`, the median over three alternated runs of each run's median of its last
+  30 frames, ms):
 
-- Done: Phase 2 at 0589ec7 (C5 bar 98.4 %, misses printed: 0.896 % unlit in C5, 0.639 % clamp).
-  Phase 3 wip in the next commit: `GpuWorld::set_surface_fit` now re-queues every full chunk
-  (nearest the focus first) through the carry-over queue, `GpuWorld::refitting()` reports
-  until those drain, `GpuWorld::rewrite_materials(table, queue)` rewrites the rows (held for
-  the first sync if called before it); `mirror.rs::a_fit_change_refits_every_brick_under_the_cap`
-  (far stair in chunk (1, 1, 0), cap 64) builds but has NOT been run (it was waiting on the
-  perf lock at the checkpoint). `cargo check -p vxe-render` clean.
-- Left in Phase 3: in `apps/flythrough/src/lib.rs` a `LookPreset` (name, normal mode,
-  `SurfaceTuning`, rock pair, fine weight) with `face`, `contour`, `contour-sharp` (weighted27
-  + C5, rock 4, 0.1, fine 0: C1 has the best S_mid of the fits, 0.24356) and `contour-grain`
-  (uniform27 + C5, rock 2, 0.3, fine 0.5: the highest S_fine rows of the sweep); in `main.rs`
-  `Args::look: Option<LookPreset>`, `--look` parsing preset names (unknown lists them),
-  part flags for the Phase 2 readings (`--plane-fit`, `--plane-offset`, `--detail-fine`,
-  `--detail-after`), the startup/look line with the parts, `N` cycling the presets (face,
-  trilinear8, gradient27 without attributes, as today), applying a preset's fit and material
-  rows in the frame before `set_look`, `set_surface_fit` at `new_mirror`; in `hud.rs` the
-  banner gains the look text and `refitting` (shown while refitting), with a test in the
-  style of the banner test; sharpness goldens `look_wall_contour_sharp.png` and
-  `look_wall_contour_grain.png`, the side-by-side image gaining both (check the combined
-  grain preset's metrics there); README preset names; then readings (`live/timings.sh` runs
-  the level and autopilot per look on both adapters; the level's output carries the initial
-  fill and the mirror bytes line) for Phase 2 (fits' initial fill, C4/C5 light + composite,
-  NVIDIA, recorded under Phase 2 readings) and Phase 3 (three looks, both adapters, nfr.md
-  section 2). Gate: quick + gpu tiers.
-- Gotchas: the quick tier's `replay::a_stamp_and_a_collapse_replay_from_the_save` can time out
-  at 30 s under load (passes alone in 17.9 s). The perf lock is busy with other lanes' full
-  runs; queue waits are long.
+| look | part flags | hit | light | composite | light + composite | initial fill |
+|---|---|---|---|---|---|---|
+| today | none | 1.440 | 2.243 | 0.336 | 2.579 | 16.987 |
+| C1 | `--plane-fit weighted27` | 1.438 | 2.239 | 0.335 | 2.574 | 17.803 |
+| C2 | `--plane-offset volume` | 1.469 | 2.283 | 0.342 | 2.625 | 46.604 |
+| C1 + C2 | both | 1.415 | 2.205 | 0.330 | 2.535 | 61.774 |
+| C4 | `--detail-fine 0.5` | 1.485 | 2.327 | 0.398 | 2.725 | 17.084 |
+| C5 | `--detail-after on` | 1.438 | 2.213 | 0.342 | 2.555 | 16.991 |
+| C4 + C5 | both | 1.471 | 2.268 | 0.402 | 2.670 | 17.074 |
+
+  The level's `--frames 1` and `--frames 300` lines read `mirror 157872640 B live, 259203264 B
+  allocated` under every fit combination (`live/p3/frames1.txt`, `live/p3/parts/`).
+
+### Phase 3 readings
+
+- Presets picked by the Phase 3 rules from the Phase 2 sweep: `contour-sharp` = C1
+  `weighted27` (the fit rows' highest S_mid, 0.24356; C2 0.23979, C1 + C2 0.23919) + C5, rock
+  4, 0.1, fine 0. `contour-grain` = today's fit + C5 + rock 2, 0.3 (the sweep's highest S_fine
+  with C5, 0.25897) + fine 0.5 (the higher-S_fine C4 row, 0.20117 alone and 0.21323 with C5);
+  the combination was not a sweep row. C3 stays a diagnostic (`--face-mix`): both C3 rows
+  missed the cavity normal error guardrail (12.14 and 21.86 degrees).
+- `mirror.rs::a_fit_change_refits_every_brick_under_the_cap` (lavapipe, exclusive perf lock):
+  uniform27 to weighted27 + volume on the far-stair world, cap 64: 169 bricks refit in 3
+  calls; the far stair's lower voxel (95, 90, 40) moved; every probe read the old or the new
+  fit between calls and the new fit after the drain; `mirror_bytes` and `allocated_bytes`
+  unchanged through the refit and a material row rewrite (rock detail 2, 0.3, fine 0.5 read
+  back from the rows).
+- `sharpness.rs::face_against_contour_on_the_wall` (lavapipe; default tier, filter on, detail
+  on): face S_fine 0.23596, S_mid 0.28182; contour 0.19592, 0.24338; contour-sharp 0.20200,
+  0.25383; contour-grain 0.33134, 0.29191. `look_wall_face.png` and `look_wall_contour.png` were
+  unchanged by the bless run; `look_wall_contour_sharp.png` and `look_wall_contour_grain.png`
+  are new. Side by side: `target/look-sharpness/wall_face_fine0.2360_mid0.2818_contour_fine0.1959_mid0.2434_sharp_fine0.2020_mid0.2538_grain_fine0.3313_mid0.2919.png`.
+- Timings (binary of 426982e, exclusive perf lock, loaded: the 1-minute loads per look are in
+  the table; `--look contour|contour-sharp|contour-grain`, the level as in Phase 2's table on
+  each adapter by `--adapter NVIDIA|AMD`; the attribute pass GPU p50 and p99 over the frames
+  with work of two `flythrough --autopilot --headless --seed 1` flights each, ms):
+
+| adapter | look | hit | light | composite | light + composite | initial fill | autopilot p50 | autopilot p99 | load |
+|---|---|---|---|---|---|---|---|---|---|
+| NVIDIA | contour | 1.378 | 2.139 | 0.320 | 2.459 | 17.013 | 1.552, 1.308 | 2.944, 2.756 | 11.5 to 25.4 |
+| NVIDIA | contour-sharp | 1.408 | 2.174 | 0.334 | 2.508 | 17.806 | 1.928, 1.384 | 2.756, 2.522 | 11.5 to 44.6 |
+| NVIDIA | contour-grain | 1.408 | 2.160 | 0.383 | 2.543 | 16.989 | 1.234, 1.730 | 2.376, 2.957 | 11.5 to 44.6 |
+| AMD | contour | 9.908 | 17.545 | 3.424 | 21.090 | 97.141 | 2.080, 2.080 | 2.709, 2.697 | 13.8 to 27.5 |
+| AMD | contour-sharp | 9.898 | 16.929 | 3.483 | 20.412 | 96.284 | 2.075, 2.070 | 2.645, 2.614 | 14.6 to 27.8 |
+| AMD | contour-grain | 9.831 | 17.172 | 3.600 | 20.772 | 96.270 | 2.063, 2.062 | 2.655, 2.586 | 13.8 to 36.6 |
+
+  AMD is the AMD Radeon Graphics (RADV RENOIR) iGPU. Every level run of every preset on both
+  adapters read `mirror 157872640 B live, 259203264 B allocated` (`live/p3/presets/`).
+- Gate on 426982e: build, clippy `-D warnings`, fmt, doctests pass; `--profile quick` 473 of
+  473 (3 skipped); `--profile gpu` 130 of 130 (11 skipped) under the exclusive perf lock;
+  `check-test-tiers`, `check-comment-hygiene`, `check-doc-links` OK.
 
 ### Notes
 
@@ -644,6 +672,27 @@ Lavapipe, 320 x 180, 64 static frames from a fresh `Frame` per reading, headlamp
   every channel: unlit; otherwise darker in C5: the clamp), not from the normals.
 - Phase 1: the side-by-side images and the readings above are of goldens blessed on lavapipe
   (llvmpipe, Mesa 26.2.5).
+- Phase 3: `N` cycles face, contour, contour-sharp, contour-grain, then trilinear8 and
+  gradient27 (the two diagnostic normal modes the cycle had before), not the four alone; without
+  contour attributes it cycles face, trilinear8, gradient27 (426982e).
+- Phase 3: the presets live in `apps/flythrough/src/lib.rs` (`LookPreset`) so the sharpness
+  test reads the same parts; the part flags `--plane-fit`, `--plane-offset`, `--face-mix`,
+  `--detail-fine`, `--detail-after` and `--rock-detail` override the starting preset only, and
+  `N` cycles the presets as defined (426982e).
+- Phase 3: the startup and `N` look line changed for every look but `--look plain` (it names
+  the preset and its parts); the default-look parse test pins the new line (426982e).
+- Phase 3: the banner keeps its start text (the `mode_banner.png` golden is unchanged); the
+  look row appears from the first `N` or `V` press on, and the banner stays up while
+  `refitting`. `hud_golden.rs` is unchanged (426982e).
+- Phase 3, outside the files touched: `crates/vxe-render/tests/mirror.rs` (the refit test) and
+  the materials buffer's `COPY_SRC` in `gpu_world.rs` for its readback (426982e).
+- Phase 3: "switching presets changes neither mirror_bytes nor allocated_bytes" is asserted on
+  the small far-stair world through a fit change and a material rewrite; at the level it is
+  read per preset at startup (headless runs cannot press `N`), not across a switch.
+- Phase 3: `set_surface_fit` reports `refitting` only when the mirror held a full chunk at the
+  change, so the startup fit of a fresh mirror does not show `refitting` during the initial
+  fill.
+
 
 ### Close triggers
 

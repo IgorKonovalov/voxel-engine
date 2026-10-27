@@ -270,6 +270,24 @@ composite 2.543 to 2.561; initial fill 94.2 to 94.8 ms; autopilot p50 2.010 to 2
 2.514 and 2.965 ms (face), 2.530 and 2.542 ms (contour). The NVIDIA flights' spread follows the
 load (face p99 2.483 ms at load 14.8, 0.740 at 8.4).
 
+**The contour presets at the level's spawn, both adapters (dev reference, Plan 0039 Phase 3,
+the binary of 426982e, exclusive perf lock, 1-minute load 11.5 to 44.6 from the other lanes:
+loaded, indicative; `flythrough --level --headless --seed 1 --render 1920x1080 --frames 300
+--look contour|contour-sharp|contour-grain --adapter NVIDIA|AMD`, the median over three
+alternated runs of each run's median of the last 30 frames; the attribute pass from the
+level's initial fill and two `flythrough --autopilot --headless --seed 1` flights each).**
+NVIDIA GeForce RTX 3080 Laptop GPU: contour hit 1.378 ms, light 2.139, composite 0.320,
+initial fill 17.0 ms, autopilot p50 1.552 and 1.308, p99 2.944 and 2.756 ms; contour-sharp hit
+1.408, light 2.174, composite 0.334, fill 17.8, p50 1.928 and 1.384, p99 2.756 and 2.522;
+contour-grain hit 1.408, light 2.160, composite 0.383, fill 17.0, p50 1.234 and 1.730, p99 2.376
+and 2.957. AMD Radeon Graphics (RADV RENOIR): contour hit 9.908, light 17.545, composite 3.424,
+fill 97.1, p50 2.080 and 2.080, p99 2.709 and 2.697; contour-sharp hit 9.898, light 16.929,
+composite 3.483, fill 96.3, p50 2.075 and 2.070, p99 2.645 and 2.614; contour-grain hit 9.831,
+light 17.172, composite 3.600, fill 96.3, p50 2.063 and 2.062, p99 2.655 and 2.586. Mirror
+157 872 640 B live, 259 203 264 B allocated in every run. The volume-matched offset alone
+(not in a preset) filled in 46.6 ms on NVIDIA, 61.8 ms with the weighted fit (Plan 0039's
+log).
+
 **Mirror attribute pass (contour look), render-thread CPU: p99 under 4 ms on the dev reference,
 deferred work visible as face-mode normals for at most 250 ms** (budget, Plan 0023, ADR-0017;
 dev reference only). **Reading: a recorded miss (Plan 0023 Phase 6 quiet re-read, the Phase 6
