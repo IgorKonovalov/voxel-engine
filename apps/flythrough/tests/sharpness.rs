@@ -34,23 +34,51 @@ fn contour() -> Setting {
     Setting::new(NormalMode::Contour, true)
 }
 
+/// The fly-through's preset `p` on the wall: its rock detail and fine weight in the table,
+/// its fit in the mirror, its tuning in the look; detail on, the default tier, filter on.
+fn preset_on_the_wall(rig: &LookRig, p: &flythrough::LookPreset) -> Vec<u8> {
+    let mut rig = fit_rig(
+        &rig.device,
+        &rig.queue,
+        &wall_world_with(p.materials()),
+        p.tuning.fit,
+    );
+    let base = Setting::new(p.normal_mode, true);
+    let setting = Setting {
+        look: vxe_render::LookParams {
+            tuning: p.tuning,
+            ..base.look
+        },
+        ..base
+    };
+    rig.converge(&wall_camera(), setting)
+}
+
 /// Face mode against today's contour on the wall: both contrasts finite and above 0, and face
-/// mode's mid band above contour's (the voxel-edge contrast contour removes by design).
+/// mode's mid band above contour's (the voxel-edge contrast contour removes by design). The
+/// `contour-sharp` and `contour-grain` presets are read and blessed beside them.
 #[test]
 fn face_against_contour_on_the_wall() {
+    use flythrough::LookPreset;
     let Some(mut rig) = wall_rig() else {
         return;
     };
     let cam = wall_camera();
     let f = rig.converge(&cam, face());
     let c = rig.converge(&cam, contour());
+    let sharp = preset_on_the_wall(&rig, &LookPreset::CONTOUR_SHARP);
+    let grain = preset_on_the_wall(&rig, &LookPreset::CONTOUR_GRAIN);
     let (f_fine, f_mid) = (s_fine(&f), s_mid(&f));
     let (c_fine, c_mid) = (s_fine(&c), s_mid(&c));
+    let (sh_fine, sh_mid) = (s_fine(&sharp), s_mid(&sharp));
+    let (g_fine, g_mid) = (s_fine(&grain), s_mid(&grain));
     println!("| look | S_fine | S_mid |");
     println!("|---|---|---|");
     println!("| {} | {f_fine:.5} | {f_mid:.5} |", face().name());
     println!("| {} | {c_fine:.5} | {c_mid:.5} |", contour().name());
-    for v in [f_fine, f_mid, c_fine, c_mid] {
+    println!("| contour-sharp | {sh_fine:.5} | {sh_mid:.5} |");
+    println!("| contour-grain | {g_fine:.5} | {g_mid:.5} |");
+    for v in [f_fine, f_mid, c_fine, c_mid, sh_fine, sh_mid, g_fine, g_mid] {
         assert!(v.is_finite() && v > 0.0, "a contrast reads {v}");
     }
     assert!(
@@ -58,12 +86,15 @@ fn face_against_contour_on_the_wall() {
         "face S_mid {f_mid:.5} against contour {c_mid:.5}"
     );
     let path = out_dir().join(format!(
-        "wall_face_fine{f_fine:.4}_mid{f_mid:.4}_contour_fine{c_fine:.4}_mid{c_mid:.4}.png"
+        "wall_face_fine{f_fine:.4}_mid{f_mid:.4}_contour_fine{c_fine:.4}_mid{c_mid:.4}\
+         _sharp_fine{sh_fine:.4}_mid{sh_mid:.4}_grain_fine{g_fine:.4}_mid{g_mid:.4}.png"
     ));
-    write_wide_png(&path, &side_by_side(&[&f, &c]), 2);
+    write_wide_png(&path, &side_by_side(&[&f, &c, &sharp, &grain]), 4);
     println!("wrote {path:?}");
     assert_golden("look_wall_face.png", &f);
     assert_golden("look_wall_contour.png", &c);
+    assert_golden("look_wall_contour_sharp.png", &sharp);
+    assert_golden("look_wall_contour_grain.png", &grain);
 }
 
 /// The edge scene's `view = Normals` render in `mode`, detail `detail`.

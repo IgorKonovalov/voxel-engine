@@ -1115,6 +1115,11 @@ pub struct Modes {
     /// The ore's emission scale pulses.
     pub pulse: bool,
     banner_at: f64,
+    /// The look's words, from the first [`Modes::show_look`]: the banner's first row on.
+    look: Option<String>,
+    /// The mirror refits to a new plane fit: the banner adds `refitting` and shows until it
+    /// drains.
+    refitting: bool,
 }
 
 impl Modes {
@@ -1129,7 +1134,25 @@ impl Modes {
             resolution,
             pulse: false,
             banner_at: now_ms,
+            look: None,
+            refitting: false,
         }
+    }
+
+    /// Shows the banner from `now_ms` with the look in words, `look contour-sharp, detail on`:
+    /// the first row of every banner from then on.
+    pub fn show_look(&mut self, preset: &crate::LookPreset, detail: bool, now_ms: f64) {
+        self.look = Some(format!(
+            "look {}, detail {}",
+            preset.name,
+            if detail { "on" } else { "off" }
+        ));
+        self.banner_at = now_ms;
+    }
+
+    /// Whether the mirror refits to a new plane fit, each frame.
+    pub fn set_refitting(&mut self, refitting: bool) {
+        self.refitting = refitting;
     }
 
     /// Switches the mode `key` changes and shows the banner from `now_ms`.
@@ -1185,28 +1208,40 @@ impl Modes {
         )
     }
 
-    /// The banner at `now_ms`: the modes' line within [`BANNER_MS`] of the start or the last
-    /// change, wrapped at its commas into rows of at most [`BANNER_COLS`] characters, one per
-    /// text line; else `None`.
+    /// The banner at `now_ms`: the look's words and `refitting` once [`Modes::show_look`]
+    /// gave them, then the modes' line, within [`BANNER_MS`] of the start or the last change
+    /// or while refitting; each wrapped at its commas into rows of at most [`BANNER_COLS`]
+    /// characters, one per text line; else `None`.
     pub fn banner(&self, now_ms: f64) -> Option<String> {
-        (now_ms - self.banner_at < BANNER_MS).then(|| {
-            let mut out = String::new();
-            let mut row = String::new();
-            for part in self.line().split(", ") {
-                if !row.is_empty() && row.len() + 2 + part.len() > BANNER_COLS {
-                    out.push_str(&row);
-                    out.push('\n');
-                    row.clear();
-                }
-                if !row.is_empty() {
-                    row.push_str(", ");
-                }
-                row.push_str(part);
+        (now_ms - self.banner_at < BANNER_MS || self.refitting).then(|| {
+            let mut look: Vec<&str> = self.look.iter().flat_map(|l| l.split(", ")).collect();
+            if self.refitting {
+                look.push("refitting");
             }
-            out.push_str(&row);
-            out
+            let mut rows = wrap(&look);
+            rows.extend(wrap(&self.line().split(", ").collect::<Vec<_>>()));
+            rows.join("\n")
         })
     }
+}
+
+/// `parts` joined by `, ` into rows of at most [`BANNER_COLS`] characters where they fit.
+fn wrap(parts: &[&str]) -> Vec<String> {
+    let mut rows = Vec::new();
+    let mut row = String::new();
+    for part in parts {
+        if !row.is_empty() && row.len() + 2 + part.len() > BANNER_COLS {
+            rows.push(std::mem::take(&mut row));
+        }
+        if !row.is_empty() {
+            row.push_str(", ");
+        }
+        row.push_str(part);
+    }
+    if !row.is_empty() {
+        rows.push(row);
+    }
+    rows
 }
 
 #[cfg(test)]
@@ -1257,5 +1292,65 @@ mod mode_tests {
             .banner(changed + 10_000.0)
             .expect("the next change shows it again");
         assert!(again.contains("lamp on"), "{again}");
+    }
+
+    /// `N` names each preset in turn on the banner's first row, `V` the detail state, and a
+    /// refit adds `refitting` and keeps the banner up until it drains.
+    #[test]
+    fn the_banner_names_each_look_preset_and_the_detail_state() {
+        use crate::LookPreset;
+        let mut m = Modes::new(
+            vxe_render::Lighting::default(),
+            vxe_render::LightingResolution::default(),
+            0.0,
+        );
+        let lighting = m.banner(0.0).expect("the banner shows at the start");
+        let mut preset = LookPreset::FACE;
+        let mut t = 5000.0;
+        let mut names = Vec::new();
+        for _ in 0..LookPreset::ALL.len() {
+            preset = preset.next(true);
+            m.show_look(&preset, true, t);
+            let b = m.banner(t).expect("a press shows the banner");
+            assert_eq!(b, format!("look {}, detail on\n{lighting}", preset.name));
+            assert!(b.lines().count() <= BANNER_ROWS && b.lines().all(|l| l.len() <= BANNER_COLS));
+            assert_eq!(m.banner(t + BANNER_MS), None);
+            names.push(preset.name);
+            t += BANNER_MS;
+        }
+        assert_eq!(
+            names,
+            [
+                "contour",
+                "contour-sharp",
+                "contour-grain",
+                "trilinear8",
+                "gradient27",
+                "face"
+            ]
+        );
+        assert_eq!(
+            LookPreset::FACE.next(false).name,
+            "trilinear8",
+            "without contour attributes N skips the contour presets"
+        );
+        assert_eq!(LookPreset::GRADIENT27.next(false), LookPreset::FACE);
+        let first = m.banner(t - BANNER_MS).unwrap();
+        assert!(first.starts_with("look face, detail on\n"), "{first}");
+        m.show_look(&preset, false, t);
+        assert!(
+            m.banner(t).unwrap().starts_with("look face, detail off\n"),
+            "V shows the detail state"
+        );
+        m.show_look(&LookPreset::CONTOUR_GRAIN, true, t);
+        m.set_refitting(true);
+        let far = t + 10.0 * BANNER_MS;
+        assert_eq!(
+            m.banner(far).as_deref(),
+            Some(format!("look contour-grain, detail on, refitting\n{lighting}").as_str()),
+            "a refit keeps the banner up"
+        );
+        m.set_refitting(false);
+        assert_eq!(m.banner(far), None, "it fades once the refit drains");
     }
 }

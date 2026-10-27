@@ -3460,7 +3460,10 @@ fn plane_fits_agree_where_the_geometry_is_simple() {
 fn far_stair() -> World {
     let world = edge_and_stair();
     let f = |v: [i64; 3]| Fixed3(v.map(|x| x * FIXED_ONE));
-    for (min, max) in [([64, 64, 40], [96, 128, 41]), ([96, 64, 40], [128, 128, 42])] {
+    for (min, max) in [
+        ([64, 64, 40], [96, 128, 41]),
+        ([96, 64, 40], [128, 128, 42]),
+    ] {
         world
             .apply(&EditOp::box_(f(min), f(max), Mode::Fill(1)))
             .expect("resident");
@@ -3529,7 +3532,10 @@ fn a_fit_change_refits_every_brick_under_the_cap() {
             );
         }
     }
-    println!("refit of {} bricks in {calls} calls under a cap of {cap}", world.stats().full_bricks);
+    println!(
+        "refit of {} bricks in {calls} calls under a cap of {cap}",
+        world.stats().full_bricks
+    );
     assert!(calls > 1, "the refit spreads over calls");
     for (i, &v) in probes.iter().enumerate() {
         assert_eq!(at(&gpu, v), want[i], "{v:?} after the drain");

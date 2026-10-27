@@ -1229,7 +1229,10 @@ impl GpuWorld {
                 self.attr_queue.push_back((AttrWait::Chunk(c), call));
             }
         }
-        self.refit_call = Some(call);
+        // A mirror with nothing filled yet has nothing to refit.
+        if self.mirrored.values().any(|m| !m.lod) {
+            self.refit_call = Some(call);
+        }
     }
 
     /// Whether a brick queued by the last fit change still waits for the new fit.
@@ -1300,7 +1303,10 @@ impl GpuWorld {
         device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("materials"),
             size: (rows.max(1) * MATERIAL_FLOATS * 4) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            // COPY_SRC for readback, as the mirror's other storage buffers.
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         })
     }
