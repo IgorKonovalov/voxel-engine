@@ -485,8 +485,8 @@ adapter; the readings go into `nfr.md` §2 as dev-reference lines labelled by ad
 |---|---|---|---|
 | 1: The sharpness harness, the baselines and the source-isolation matrix | dev | done | 61b1fcf |
 | 2: The candidate mechanisms, each measured alone | dev | done; its fly-through readings are taken with Phase 3's flags | 29c37b5, e53bf8d, 0589ec7 |
-| 3: Named presets in the window | dev | done | 767f32a, 426982e, committed with this row |
-| 4: The owner's comparison | human | not started | |
+| 3: Named presets in the window | dev | done | 767f32a, 426982e, f411c96 |
+| 4: The owner's comparison | human | done | committed with this row |
 | 5: The pick as the default | dev | not started | |
 
 ### Phase 1 readings
@@ -638,6 +638,26 @@ Lavapipe, 320 x 180, 64 static frames from a fresh `Frame` per reading, headlamp
 - Gate on 426982e: build, clippy `-D warnings`, fmt, doctests pass; `--profile quick` 473 of
   473 (3 skipped); `--profile gpu` 130 of 130 (11 skipped) under the exclusive perf lock;
   `check-test-tiers`, `check-comment-hygiene`, `check-doc-links` OK.
+
+### Phase 4: the owner's call (2026-10-27)
+
+Relayed by the orchestrator from the owner's words; the runs are in `live/session1.log` and
+`live/session2.log` (untracked). Windowed, at the dev box.
+
+- **Call:** `contour-sharp` becomes the default (weighted27 + C5, rock 4, 0.1, fine 0), with no
+  `--rock-detail` change. `contour-grain` stays an opt-in preset.
+- **On-screen reason:** contour-grain looked the most natural at first, but it puts too much
+  dark speckle on the rock, worst where the lamp grazes a wall (hard black blobs). Run B
+  (contour-grain at rock 2, 0.15, fine 0.5) was still too grainy; run D (rock 2, 0.2, fine 0.25)
+  was better for grain, and the owner still prefers contour-sharp.
+- Observation 1: under contour-grain, grazing-lit walls go fully black in speckles; lowering
+  the strength alone did not remove it, halving the fine octave helped.
+- Observation 2: in the run-B screenshot, dark rectangular stair-step patches lie along a ridge
+  and around hole rims, apparently on voxel or brick boundaries; whether contour-sharp shows
+  them was not checked in the window.
+- Owner followups (for the architect's Followups section): a per-material "smooth" flag, so
+  built architecture is never detailed and is fitted for flat faces; and grain that fades at
+  grazing incidence, if procedural grain is to come back.
 
 ### Notes
 
