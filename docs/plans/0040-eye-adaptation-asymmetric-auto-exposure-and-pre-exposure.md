@@ -388,6 +388,16 @@ under `Manual(1.0)` except where a bar names it.
     log it. It is a reading for the owner's re-check, not a bar.
   - Phase 5 gets a second, short windowed session after step 4: the new defaults, lamp off
     near a vein, the patches and the flicker.
+- **Amended 2026-10-27 (owner), after the second Phase 5 session:**
+  - **Bar 2 (b) becomes a reading.** It passed on only 2 of 9 vein poses (0.0974 EV on the
+    chosen one against 0.1), so it guards a pose, not the mechanism. (a), the stepped model
+    on both poses, is the bar. (b)'s closed-form distance on the vein pose and the spawn
+    pose stay printed `reading:` lines.
+  - **Step 4 closes without a fix here.** The patches appear identically under `Manual` and
+    vanish only with the emissive light samples off: the owning subsystem is the emissive
+    direct-light estimator (ADR-0018). The owner saw emissive history 64 improve them but
+    leave them visible ("really unnatural look") and asked for a separate plan. This plan
+    keeps `DEFAULT_EMISSIVE_HISTORY` as it is; the new plan owns that default.
 
 ### Phase 5: The owner's windowed check
 - **Owner skill:** human
