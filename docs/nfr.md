@@ -532,6 +532,18 @@ off the same camera reads a mean of 0.91, p99 1. From 20 m out the cutaway read 
 p99 201 (load 21.3). A ray through the hull steps uniform bricks eight voxels at a time and the
 voxels of full bricks one at a time.
 
+**Eye adaptation (Plan 0040 Phase 4; ADR-0033): the meter in the composite and the exposure
+pass, under "Upscale, tone map, post".** `flythrough --level --headless --seed 1 --render
+1920x1080 --frames 3000 --adapter NVIDIA|AMD`, the spawn pose, the default look, per-pass
+timestamps, median of the last 30 of 3000 frames, release; dedd83c (no meter) against the tip
+of Plan 0040 Phase 4 (renderer as at e9879cc), exclusive perf lock, **loaded and indicative**
+(1-minute load 5.6 and 5.1 on NVIDIA, 26.4 and 7.4 on the iGPU: an hour of retries found no
+quiet window). NVIDIA GeForce RTX 3080 Laptop GPU (dev reference): composite 0.329 to 0.365 ms
+(+0.036 ms), the exposure pass 0.072 ms; light 2.119 to 2.050, temporal 0.136 to 0.135, a-trous
+1.127 to 1.102 ms (within the spread). AMD Radeon Graphics (RADV RENOIR, the slow adapter, by
+`--adapter AMD`): composite 2.877 to 2.906 ms (+0.029 ms), the exposure pass 0.061 ms; light
+15.662 to 15.610, temporal 1.179 to 1.154, a-trous 5.317 to 5.266 ms.
+
 No frame may stall on paging: work attributable to streaming on the render thread is capped at
 the streaming line above; the rest runs on background threads.
 
@@ -802,6 +814,12 @@ mip-bricks hold 1 or 2. Mirror bytes are unchanged by construction: the level re
 **Stats HUD (arithmetic, Plan 0010; ADR-0009).** The overlay holds about 130 KiB of VRAM
 under "everything else": a 128 KiB cell buffer at the 256 x 128 cap layout (`u32` per cell),
 a 1 KiB sample buffer (256 `f32`), the font and a small parameter block, under the 200 KiB ADR-0009 states.
+
+**Eye adaptation (Plan 0040 Phase 4; ADR-0033).** `Frame::frame_bytes` on the level at
+1920x1080 (same runs as §2's eye-adaptation reading, both adapters): 254 216 224 B at dedd83c,
+254 476 352 B at the tip, +260 128 B: the meter's 240 x 135 tiles (259 200 B), the 32-byte
+state and its uniform copy, the pass's 96-byte parameters and three 256-byte read-back
+buffers.
 
 **Prefabs (arithmetic, Plan 0008; no reading needed).** A `Prefab` holds 2 B of material plus
 one mask bit per voxel: a 16³ prefab is 8 KiB + 512 B, a 64³ one 512 KiB + 32 KiB. A parsed

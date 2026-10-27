@@ -1190,6 +1190,43 @@ pub enum ModeKey {
     Indirect,
     /// `M`: the ore's emission pulse.
     Pulse,
+    /// `Q`: the exposure: auto with the start's preset, auto symmetric, manual.
+    Exposure,
+}
+
+/// The auto exposure's preset, as `--adaptation` names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Adaptation {
+    /// `AutoExposure::eye()`.
+    Eye,
+    /// `AutoExposure::symmetric(1.5)`: one rate both ways, 0.67 s.
+    Symmetric,
+    /// `AutoExposure::instant()`.
+    Instant,
+}
+
+impl Adaptation {
+    pub const ALL: [Self; 3] = [Self::Eye, Self::Symmetric, Self::Instant];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Eye => "eye",
+            Self::Symmetric => "symmetric",
+            Self::Instant => "instant",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|a| a.name() == name)
+    }
+
+    pub fn preset(self) -> vxe_render::AutoExposure {
+        match self {
+            Self::Eye => vxe_render::AutoExposure::eye(),
+            Self::Symmetric => vxe_render::AutoExposure::symmetric(1.5),
+            Self::Instant => vxe_render::AutoExposure::instant(),
+        }
+    }
 }
 
 impl ModeKey {
@@ -1213,6 +1250,10 @@ pub struct Modes {
     /// The ore's emission scale pulses.
     pub pulse: bool,
     banner_at: f64,
+    /// The auto exposure `Q` returns to, under its preset's name.
+    auto: (Adaptation, vxe_render::AutoExposure),
+    /// The exposure state as last read back.
+    readout: Option<vxe_render::ExposureReadout>,
 }
 
 impl Modes {
@@ -1227,12 +1268,42 @@ impl Modes {
             resolution,
             pulse: false,
             banner_at: now_ms,
+            auto: match lighting.exposure {
+                vxe_render::Exposure::Auto(a) => (Adaptation::Eye, a),
+                vxe_render::Exposure::Manual(_) => (Adaptation::Eye, Adaptation::Eye.preset()),
+            },
+            readout: None,
+        }
+    }
+
+    /// The auto exposure `Q` returns to and its preset's name; the current exposure too while
+    /// it is auto.
+    pub fn set_auto(&mut self, adaptation: Adaptation, auto: vxe_render::AutoExposure) {
+        self.auto = (adaptation, auto);
+        if let vxe_render::Exposure::Auto(_) = self.lighting.exposure {
+            self.lighting.exposure = vxe_render::Exposure::Auto(auto);
+        }
+    }
+
+    /// Keeps the latest exposure read-back for the banner, the row and `Q`'s manual hold.
+    pub fn set_readout(&mut self, readout: Option<vxe_render::ExposureReadout>) {
+        if readout.is_some() {
+            self.readout = readout;
+        }
+    }
+
+    /// The auto symmetric preset `Q` passes through, with the start's metering.
+    fn symmetric(&self) -> vxe_render::AutoExposure {
+        vxe_render::AutoExposure {
+            metering: self.auto.1.metering,
+            ..Adaptation::Symmetric.preset()
         }
     }
 
     /// Switches the mode `key` changes and shows the banner from `now_ms`.
     pub fn press(&mut self, key: ModeKey, now_ms: f64) {
         use vxe_render::{HistoryKill, LightingResolution, Sampler, ShadowWalk};
+        let symmetric = self.symmetric();
         let l = &mut self.lighting;
         match key {
             ModeKey::ShadowWalk => {
@@ -1262,18 +1333,54 @@ impl Modes {
             ModeKey::Lamp => l.lamp = !l.lamp,
             ModeKey::Indirect => l.indirect = !l.indirect,
             ModeKey::Pulse => self.pulse = !self.pulse,
+            ModeKey::Exposure => {
+                use vxe_render::Exposure;
+                l.exposure = match l.exposure {
+                    Exposure::Auto(a)
+                        if a == self.auto.1 && self.auto.0 != Adaptation::Symmetric =>
+                    {
+                        Exposure::Auto(symmetric)
+                    }
+                    Exposure::Auto(_) => Exposure::Manual(self.readout.map_or(1.0, |r| r.exposure)),
+                    Exposure::Manual(_) => Exposure::Auto(self.auto.1),
+                };
+            }
         }
         self.banner_at = now_ms;
     }
 
-    /// The exposure's mode in words, as the banner and the exposure row name it: `manual`.
-    pub fn exposure_mode(&self) -> &'static str {
-        "manual"
+    /// The exposure's mode in words, as the banner and the exposure row name it: `auto eye`,
+    /// `auto symmetric`, `auto instant` or `manual`.
+    pub fn exposure_mode(&self) -> String {
+        match self.lighting.exposure {
+            vxe_render::Exposure::Manual(_) => "manual".to_owned(),
+            vxe_render::Exposure::Auto(a) if a == self.auto.1 => {
+                format!("auto {}", self.auto.0.name())
+            }
+            vxe_render::Exposure::Auto(_) => "auto symmetric".to_owned(),
+        }
+    }
+
+    /// The exposure row: the mode, the exposure in EV, the metered scene, and in auto the
+    /// exposure the meter settles at.
+    pub fn exposure_row(&self) -> ExposureRow {
+        let scene = self.readout.filter(|r| !r.held).map(|r| r.metered_log2);
+        ExposureRow {
+            mode: self.exposure_mode(),
+            ev: self.exposure_ev(),
+            scene_ev: scene,
+            target_ev: match self.lighting.exposure {
+                vxe_render::Exposure::Auto(a) => {
+                    scene.map(|t| a.exposure(f64::from(t)).log2() as f32)
+                }
+                vxe_render::Exposure::Manual(_) => None,
+            },
+        }
     }
 
     /// The modes in words: `lighting half, shadow walk coarse, sampler reuse, history edits,
     /// lamp on, indirect on at 64 rays 1/8, filter on, ore pulse off, emissive history 32,
-    /// exposure manual +0.00 EV` (the probe rays per update, the share of probes refreshed a
+    /// exposure auto eye +1.53 EV` (the probe rays per update, the share of probes refreshed a
     /// frame, and the exposure in EV, `log2 e`).
     pub fn line(&self) -> String {
         let l = &self.lighting;
@@ -1296,9 +1403,13 @@ impl Modes {
         )
     }
 
-    /// The exposure in EV the banner names: `log2` of the manual exposure.
+    /// The exposure in EV the banner names: `log2` of the manual exposure, or in auto of the
+    /// last read-back's (1.0 before the first).
     pub fn exposure_ev(&self) -> f32 {
-        self.lighting.manual_exposure().log2()
+        match self.lighting.exposure {
+            vxe_render::Exposure::Manual(e) => e.log2(),
+            vxe_render::Exposure::Auto(_) => self.readout.map_or(0.0, |r| r.exposure.log2()),
+        }
     }
 
     /// The banner at `now_ms`: the modes' line within [`BANNER_MS`] of the start or the last
@@ -1368,6 +1479,46 @@ mod mode_tests {
             m.banner(changed + BANNER_MS),
             None,
             "empty 3 s after the last change"
+        );
+        // `Q` from the default auto eye: auto symmetric, then manual holding the read-back's
+        // exposure, then auto eye again, each with its EV.
+        let mut q = Modes::new(
+            vxe_render::Lighting {
+                exposure: vxe_render::Exposure::Auto(vxe_render::AutoExposure::eye()),
+                ..vxe_render::Lighting::default()
+            },
+            vxe_render::LightingResolution::default(),
+            0.0,
+        );
+        q.set_readout(Some(vxe_render::ExposureReadout {
+            exposure: 46.08,
+            adapted_log2: -8.0,
+            metered_log2: -8.0,
+            frame: 9,
+            held: false,
+        }));
+        assert!(
+            q.banner(0.0)
+                .unwrap()
+                .contains("exposure auto eye +5.53 EV")
+        );
+        for (i, want) in [
+            "exposure auto symmetric +5.53 EV",
+            "exposure manual +5.53 EV",
+            "exposure auto eye +5.53 EV",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let at = 100.0 * (i + 1) as f64;
+            q.press(ModeKey::Exposure, at);
+            let b = q.banner(at).expect("a change shows the banner");
+            assert!(b.contains(want), "{b}");
+            assert!(b.lines().all(|l| l.len() <= BANNER_COLS), "{b}");
+        }
+        assert_eq!(
+            q.exposure_row().to_string(),
+            "exposure auto eye +5.53 EV  scene -8.0 EV  settles +5.53 EV"
         );
         m.press(ModeKey::Lamp, changed + 10_000.0);
         let again = m
