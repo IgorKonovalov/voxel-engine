@@ -577,8 +577,8 @@ and the owner weighs it in Phase 7.
 | 3: The remaining passes: luminance pyramid, previous depth, depth clip, lock | dev | done | d3b8ddb |
 | 4: RCAS, and the sharpness bars still and panning | dev | done | dab579b, dd272de, 66cd9d0, be59e30 |
 | 5: Lights, flicker and shadow motion | dev | done: bar 4 at scale 1 a reading | 09c7a6c |
-| 6: The readings on both adapters | dev | done: bar 1 a reading (1.894 to 1.913 ms) | committed with this row |
-| 7: The owner's windowed comparison and the default | human | not started | |
+| 6: The readings on both adapters | dev | done: bar 1 a reading (1.894 to 1.913 ms) | 4f1fe72 |
+| 7: The owner's windowed comparison and the default | human | done: default `own` at 1.5 | committed with this row |
 
 **Phase 1** (lavapipe, llvmpipe LLVM 23.1.3, Mesa 26.2.5; exclusive perf lock; 1-min load 8.3
 to 15.7 from the other lanes, so no timing is taken here).
@@ -872,6 +872,23 @@ starts, loaded, indicative; `live/p6/*.log`, `live/p6/runs.sh`).
 - Gate: clippy `-D warnings`, fmt clean; quick 490 passed, 3 skipped (a first quick run at
   load 33 timed one castle test out at 30 s; re-run at `--test-threads 4`, all passed);
   doctests 7 passed; the merge's full tier 654 passed, 9 skipped.
+
+**Phase 7** (owner, 2026-10-27, `live/session1.sh` on `live/flythrough-p6`, RTX 3080 Laptop,
+windowed; runs at 17:25:54, 17:29:07, 17:32:15 and 17:33:46, each exit 0, 1-minute load 1.98,
+6.07, 23.28 and 8.77 at their starts; `live/session1.log`; the owner's words, relayed by the
+orchestrator, in `live/owner-notes.md` with times).
+
+- Run 1 (`own` 1.5, contour): "with upscaler own flicker seems to be minimal when I turn off
+  the lamp".
+- Run 1, `F10` to `fsr2` at 1.5: "fsr 2 seems to be a bit softer, but not much difference with
+  own" (noted at 17:32:15, the start time of run 3).
+- Run 2 (`own` 1.5, face) and run 3 (`fsr2` 1, contour): no separate verdict.
+- Run 4 (`fsr2` 1, face): "too much details on fsr i guess".
+- Sharpness in motion, ghosting after digs, the lamp's smear, shadow motion, flicker (beyond
+  run 1's): no separate verdict. Items 1 to 5 (slow pan far, slow pan at arm's length, still
+  at 1.5, RCAS halos, the Phase 4 to 6 readings): no separate verdict.
+- Default: "I'm for own 1.5 - there is not much difference with fsr anyways". Lands as the dev
+  fix below.
 
 ### Notes
 
