@@ -460,8 +460,10 @@ reads them.
 | 3: The ores, the determinism vector and the open volume | dev | done | 660a5bd |
 | 4: The hero's shots, the review set and the golden | dev | done | 654d3c6 |
 | 5: The readings | dev | done, the windowed first frame left to Phase 6 | 65fa828 |
-| 5a: The probe spacing in the banner | dev | done | committed with this row |
-| 6: The owner's pick and the cave on screen | human | not started | |
+| 5a: The probe spacing in the banner | dev | done | e4b43bb |
+| 6: The owner's pick and the cave on screen | human | done, verdicts in the Phase 6a amendment | committed with this row |
+| 6a: Fewer ores, none on the ceiling, half the cave dark | dev | not started | |
+| 6b: The owner's look at the darker hall | human | not started | |
 | 7: The hero re-shot and the README | dev | not started | |
 
 ### Notes
@@ -499,6 +501,8 @@ reads them.
 - Phase 4: `hero --shot all` re-run at 4fd5668 in the contour-sharp default (release, RTX 3080 Laptop, exclusive perf lock, load 14.92, loaded): 99 326 light samples after 7 syncs, 64 frames, exposure 1.5; mean sRGB luma hall 49.7, chasm 53.8, crystals 49.3, hall at spacing 32 52.7. In the stills the ore patches are flat saturated areas (amber near cream, amethyst lilac), the chasm shot's lower half is the bridge deck, and the crystals shot frames the amethyst roof and the pillars with the cyan prisms at the bottom-right edge.
 - Phase 5a: the spacing sits in the modes line after the indirect part (`indirect on at 64 rays 1/8, probes 16, filter on`), only while indirect light is on, so `F8` off drops it (`hud::Modes::with_probe_spacing`, set from `--probe-spacing` in `start_modes`). The default-line assertion in `main.rs`'s parse test gains `probes 16`; `mode_banner.png` starts with indirect off and is unchanged. Test: `the_banner_names_the_probe_spacing_while_indirect_light_is_on` (cave, level and showcase; default, 32, `--indirect off`, `F8` off and on).
 - Phase 5a gate: workspace quick tier 493 of 500 at load 23.7, the 7 over 30 s existing CPU tests (`collapse_level` 2, `castle` 3, `castle_vector`, `replay::a_stamp_and_a_collapse_replay_from_the_save`); rerun alone under the default profile at load 30.9 they passed (10 of 10 with their binaries). Clippy, fmt and comment hygiene clean; no render code touched, no gpu tier.
+- Phase 6 (owner, `live/session1.sh` at e4b43bb, 2026-10-27 21:31 to 21:43): the hero shot stays `hall` (any of the four stills would do); palette and intensities as shipped; the hall's size is right; the hero's probe spacing is 32; and "for showcase we should not have light ore on the ceiling ... only some, let cave be half dark, with crystals", which is Phase 6a.
+- Phase 6, Phase 5's windowed time to first frame (`flythrough --source showcase`, release e4b43bb, RTX 3080 Laptop, windowed, each run under the exclusive perf lock): cold (dGPU runtime-suspended before each) 2077, 2047 and 2081 ms at load 1.24, 0.68 and 7.56 (the last loaded); warm 671, 660 and 701 ms at load 7.12, 6.71 and 6.17 (loaded). The session's first look run (`--source showcase`, 21:31, load 1.50, not one of the six) printed 4015 ms; the next three look runs 726, 742 and 689 ms.
 - Phase 1: `level_mirror_budget` takes the world, not a `Full` count (`level_mirror_budget(&world, 1176, attrs)`).
 
 ### Resume notes (2026-10-27, delete when Phase 6 lands)
