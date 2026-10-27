@@ -890,35 +890,6 @@ orchestrator, in `live/owner-notes.md` with times).
 - Default: "I'm for own 1.5 - there is not much difference with fsr anyways". Lands as the dev
   fix below.
 
-### Resume notes (2026-10-27, delete when the close lands)
-
-Every phase is done; the plan waits for its close block and the fresh-session close review.
-
-- Phase 7 (92f19b3): the owner's verdict, in the log above and in `live/owner-notes.md`
-  with times. Run 1 (own 1.5, contour): "with upscaler own flicker seems to be minimal when I
-  turn off the lamp"; F10 to fsr2 at 1.5: "fsr 2 seems to be a bit softer, but not much
-  difference with own"; last run (fsr2 at 1, face): "too much details on fsr i guess".
-  Default: "I'm for own 1.5 - there is not much difference with fsr anyways". The other
-  items have no separate verdict.
-- Main 80e8934 (v0.32.0, Plan 0039 contour-sharp) merged at e7679c0. Conflicts only in
-  `.config/nextest.toml` and `tests/support/mod.rs`. FSR's composite variant is the same
-  `composite.wgsl` with `HDR_TARGET` set, so `Lit`'s split reaches FSR's input unchanged.
-- The default landed at 0428d39: `DEFAULT_SCALE` 1.5, our upscaler jitters unless `--jitter
-  off`, `--upscaler off` or `--internal-scale 1` is Plan 0024's frame; README flag rows;
-  `internal_scale_and_jitter_parse_and_refuse_unknown_values` and
-  `upscaler_picks_the_kind_scale_and_jitter` pin it. No golden renders the fly-through's
-  default, so none was re-blessed.
-- Gate at 0428d39's tree: full tier under the perf lock, `--test-threads 2`, 668 passed, 10
-  skipped, exit 0 (`live/p7-full.log`, load 4.5 at the end); quick 493 passed, 3 skipped;
-  clippy `-D warnings` and fmt clean; doctests 7 passed; `cargo deny check` ok (advisories,
-  bans, licenses, sources); the four scripts clean (doc links 309, comment hygiene, index
-  rows, test tiers 58 files).
-- Left before the close review: the Step 4 close block (`### Notes` deviations as they
-  stand, `### Close triggers` with the gate above and Phase 6's readings, the final SHA),
-  stripping these notes, and the three-line pointer. ADR-0034's Outcome is the architect's
-  at the close (the plan's Phase 7 files). The CHANGELOG's fly-through flag defaults (Plan
-  0030's entry says default 1, jitter off) are the close ceremony's.
-
 ### Notes
 
 - Names: the plan's names match the merged tree (`jitter_at`, `reproject_centred`,
@@ -963,16 +934,60 @@ Every phase is done; the plan waits for its close block and the fresh-session cl
   after the merge), outside its list; the upscaler banner showing at the start is this
   phase's change, not the plan's.
 - Phase 6's readings were all taken loaded (1-minute load 2.4 to 6.5).
+- Phase 7's default landed as a dev fix at 0428d39: `DEFAULT_SCALE` 1.5, our upscaler, which
+  jitters unless `--jitter off`; `--upscaler off` or `--internal-scale 1` is Plan 0024's frame;
+  the README's flag rows. No golden renders the fly-through's default, so none was re-blessed.
+- Main (Plan 0039, v0.32.0) was merged at e7679c0 (conflicts only in `.config/nextest.toml` and
+  `tests/support/mod.rs`; FSR's composite variant is the same `composite.wgsl` with `HDR_TARGET`
+  set) and main (d54823f, `.claude/skills/orchestrate` only) at 338e61a, both on the
+  orchestrator's request.
+- Unmet as stated, now readings (the 2026-10-27 amendment): Phase 4's still bars at scale 1.5
+  and at 88 voxels, the pan bars against ours, bar 3 (linear light) and bar 4 (RCAS overshoot);
+  Phase 5 bar 4 at scale 1; Phase 6 bar 1 (1.894 to 1.913 ms against at most 1.2). The values
+  are in the phase entries above.
+- Owed to the close ceremony, not done here: ADR-0034's Outcome (Phase 7's files), and the
+  CHANGELOG's fly-through flag defaults (Plan 0030's entry says default scale 1, jitter off).
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature. FSR 2.2.1's upscaling path ported to WGSL under
+  `crates/vxe-render/src/shaders/fsr2/` (input, luminance pyramid, reconstruct previous depth,
+  depth clip, lock, accumulate, RCAS, tone; FP32, no wave operations) beside our upscaler.
+  Phase 1 80aed60 (accumulate end to end), Phase 2 80085f8 (HDR in, tone after, exposure seam,
+  masks), Phase 3 d3b8ddb (the remaining passes), Phase 4 dab579b, dd272de, 66cd9d0, be59e30
+  (RCAS, the sharpness bars split into asserts and readings), Phase 5 09c7a6c (lamp, flicker,
+  wobble rigs), Phase 6 78197ff, 4f1fe72 (per-pass timer slots, readings on both adapters,
+  `docs/nfr.md` §2 and §3), Phase 7 92f19b3 (owner verdict), 0428d39 (the default: `own` at 1.5).
+- **Public API changed:** `vxe_render::fsr2` (`Fsr2`, `Fsr2Settings`, `UpscalerKind`);
+  `jitter_at`; `Frame::set_upscaler_kind`, `upscaler_kind`, `fsr2`, `fsr2_mut`,
+  `reset_upscaler_history`, `current_copy`, `layers`; `composite_hdr_source`; `FRAME_PASSES`
+  is 19 slots (FSR 2's nine last). Fly-through: `--upscaler off|own|fsr2`, `F10` cycles it,
+  `hud::UpscalerBanner`; the default is now scale 1.5 with our upscaler, jittered.
+- **Budget readings** (level spawn, 1920 x 1080, 300 frames, median of the last 30, three runs,
+  release binary of 6e64744's tree plus Phase 6's banner change, exclusive perf lock, memory
+  cap, 1-minute load 2.4 to 6.5: loaded, indicative; adapter by `--adapter NVIDIA` / `--adapter
+  RADV`; full table in `docs/nfr.md` §2):
+  - RTX 3080 Laptop (Vulkan, 615.78.08), `fsr2` 1.5: FSR's nine passes 1.894 to 1.913 ms
+    (bar at most 1.2: missed); frame 5.709 to 5.805; hit 44.6 to 45.6 % and light + temporal +
+    a-trous 45.4 to 46.5 % of `off` 1 (bar at most 55 %). `own` 1.5 frame 4.389 to 4.514;
+    `fsr2` 1 frame 10.077 to 10.167 (FSR 3.115 to 3.127); `off` 1 6.789 to 6.878.
+  - Radeon Cezanne iGPU (RADV RENOIR): `fsr2` 1.5 frame 34.652 to 34.998 (FSR 10.045 to
+    10.085); `fsr2` 1 61.327 to 61.384 (FSR 16.393 to 16.446); `own` 1.5 28.120 to 28.780
+    (upscale 3.232 to 3.335, sharpen 0.653 to 0.681); `off` 1 43.733 to 43.938. Every mode
+    carries the probe update (7.80 to 8.22 ms) and the gather, which Plan 0030's readings did not.
+  - `frame_bytes` at 1.5: ours 181 154 464 B; FSR 305 574 892 B = ours - 33 177 600 + 157 598 028
+    (bar 3's inventory); `fsr2` 1 494 763 692 B; `off` 1 254 216 224 B.
+- **Gate at the tip:** at 0428d39's tree (code unchanged since): `cargo nextest run --workspace
+  --profile full --test-threads 2` under the perf lock, exit 0, 668 passed, 10 skipped;
+  `cargo test --doc` 7 passed; `cargo clippy --workspace --all-targets -- -D warnings` and
+  `cargo fmt --all --check` clean; `cargo deny check` ok (advisories, bans, licenses, sources);
+  `check-doc-links` (309 links), `check-comment-hygiene`, `check-index-rows`, `check-test-tiers`
+  (58 files) clean. After the 338e61a merge (docs only): `--profile quick` exit 0, 493 passed,
+  3 skipped (1-minute load 22.8).
+- **Outstanding `human` phases:** none. Phase 7's verdict: default `own` at 1.5 ("I'm for own
+  1.5 - there is not much difference with fsr anyways").
 
 ## Followups
 
