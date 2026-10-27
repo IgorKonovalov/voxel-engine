@@ -346,6 +346,10 @@ fresh session.
   the new stills: is the ore thin enough, the cave half dark, the crystals the light?
 - **Files touched:** this plan's log.
 - **Done when:** the log records the verdict (or another round of Phase 6a's values).
+- **Amended 2026-10-27 (owner), the verdict:** "much better now, could be a bit darker but we
+  can keep it". The shots keep exposure 1.5 (option b). Phase 4's luma band, in its exposure
+  rule and in bar 4, becomes 12/255 to 40/255 for the stills and the golden; the golden
+  blessed at 16.7/255 stands. Phase 6a's values ship as they are.
 
 ### Phase 7: The hero re-shot and the README
 - **Owner skill:** dev
