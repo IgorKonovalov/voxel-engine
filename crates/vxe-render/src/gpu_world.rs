@@ -104,7 +104,7 @@ use vxe_world::{
 };
 
 use crate::attr_work::{self, AttrWorkStats, MirrorView};
-use crate::attrib::{AttribBindings, AttribItem, AttribPass};
+use crate::attrib::{AttribBindings, AttribItem, AttribPass, SurfaceFit};
 
 /// Light samples [`MirrorConfig::new`] reserves, and the samples one chunk keeps at most.
 pub const DEFAULT_LIGHT_SAMPLES: u32 = 1 << 20;
@@ -337,7 +337,7 @@ pub const RECORD_MASK: u32 = EMPTY_BIT - 1;
 /// First entry of each mip level in a LOD record, level 1 first.
 pub const LOD_LEVEL_ENTRY: [usize; MIP_LEVELS] = [0, 64, 72];
 /// `f32`s per material row: albedo rgb, roughness, emission rgb, flags as bits, detail scale
-/// and strength, opacity, 5 spare.
+/// and strength, opacity, the fine detail octave's weight, 4 spare.
 pub const MATERIAL_FLOATS: usize = 16;
 /// The attribute of a voxel with no contour plane.
 pub const NO_PLANE: u16 = 0xFFFF;
@@ -944,6 +944,12 @@ pub struct GpuWorld {
     attr_taken: HashSet<[i32; 3]>,
     /// `prepare_attrs` calls so far.
     attr_calls: u64,
+    /// The `prepare_attrs` call before the last fit change: every brick queued at or before it
+    /// waits for the new fit.
+    refit_call: Option<u64>,
+    /// Rows written in place of the world's table's at the first sync, from
+    /// [`GpuWorld::rewrite_materials`] before it.
+    material_rows_from: Option<MaterialTable>,
     /// The queue of the last `sync`, which writes the attribute pass's uniform and work list.
     queue: Option<wgpu::Queue>,
     /// Whether each material is `TRANSLUCENT`, from the table at the first sync.
@@ -1136,6 +1142,8 @@ impl GpuWorld {
             queued_bricks: HashSet::new(),
             attr_taken: HashSet::new(),
             attr_calls: 0,
+            refit_call: None,
+            material_rows_from: None,
             queue: None,
             translucent: vec![false; 1 << 16],
             emissive: vec![false; 1 << 16],
@@ -1191,6 +1199,82 @@ impl GpuWorld {
         self.surface_attrs
     }
 
+    /// The plane fit the attribute pass computes from its next call on. A change re-queues
+    /// every chunk mirrored full through the carry-over queue, nearest the focus first, so
+    /// the refit spreads under [`MirrorConfig::attr_cap`]; until its turn a brick keeps the
+    /// attribute it was computed with, valid under the previous fit
+    /// ([`GpuWorld::refitting`]). A mirror without contour attributes ignores it.
+    pub fn set_surface_fit(&mut self, fit: SurfaceFit) {
+        let Some(pass) = &mut self.attrib else {
+            return;
+        };
+        if pass.fit() == fit {
+            return;
+        }
+        pass.set_fit(fit);
+        let f = self.focus.0;
+        let mut chunks: Vec<ChunkCoord> = self
+            .mirrored
+            .iter()
+            .filter(|(_, m)| !m.lod)
+            .map(|(&c, _)| c)
+            .collect();
+        chunks.sort_by_key(|c| {
+            let d = [0, 1, 2].map(|k| i64::from(c.0[k] - f[k]));
+            (d[0] * d[0] + d[1] * d[1] + d[2] * d[2], c.0)
+        });
+        let call = self.attr_calls;
+        for c in chunks {
+            if self.queued_chunks.insert(c) {
+                self.attr_queue.push_back((AttrWait::Chunk(c), call));
+            }
+        }
+        // A mirror with nothing filled yet has nothing to refit.
+        if self.mirrored.values().any(|m| !m.lod) {
+            self.refit_call = Some(call);
+        }
+    }
+
+    /// Whether a brick queued by the last fit change still waits for the new fit.
+    pub fn refitting(&self) -> bool {
+        let (_, oldest) = self.attr_queue_age();
+        self.refit_call
+            .is_some_and(|r| oldest.is_some_and(|o| o <= r))
+    }
+
+    /// Rewrites the material rows from `table`, a table of the same rows as the world's at the
+    /// first sync with other renderer fields (albedo, roughness, detail, opacity): the
+    /// translucent, emissive and opaque flags the upload reads stay the first sync's. Before
+    /// the first sync the rows wait for it.
+    ///
+    /// # Panics
+    ///
+    /// If the rows are written and `table` has a different number of rows.
+    pub fn rewrite_materials(&mut self, table: &MaterialTable, queue: &wgpu::Queue) {
+        if !self.materials_written {
+            self.material_rows_from = Some(table.clone());
+            return;
+        }
+        assert_eq!(
+            table.len() as u64,
+            self.material_rows,
+            "a rewrite keeps the table's rows"
+        );
+        queue.write_buffer(
+            &self.materials,
+            0,
+            bytemuck::cast_slice(&material_rows(table)),
+        );
+    }
+
+    /// The attribute pass's plane fit; the default for a mirror without contour attributes.
+    pub fn surface_fit(&self) -> SurfaceFit {
+        self.attrib
+            .as_ref()
+            .map(AttribPass::fit)
+            .unwrap_or_default()
+    }
+
     fn storage_buffer(device: &wgpu::Device, label: &str, size: u64) -> wgpu::Buffer {
         device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label),
@@ -1219,7 +1303,10 @@ impl GpuWorld {
         device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("materials"),
             size: (rows.max(1) * MATERIAL_FLOATS * 4) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            // COPY_SRC for readback, as the mirror's other storage buffers.
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         })
     }
@@ -1862,7 +1949,8 @@ impl GpuWorld {
             return Err(e);
         }
         if !self.materials_written {
-            self.write_materials(world.materials(), enc, &mut st);
+            let table = self.material_rows_from.take();
+            self.write_materials(table.as_ref().unwrap_or(world.materials()), enc, &mut st);
             self.materials_written = true;
         }
         let t = stopwatch();
@@ -2826,30 +2914,7 @@ impl GpuWorld {
         enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) {
-        let rows: Vec<[f32; MATERIAL_FLOATS]> = table
-            .rows()
-            .iter()
-            .map(|m| {
-                [
-                    m.albedo[0],
-                    m.albedo[1],
-                    m.albedo[2],
-                    m.roughness,
-                    m.emission[0],
-                    m.emission[1],
-                    m.emission[2],
-                    f32::from_bits(m.flags.0),
-                    m.detail[0],
-                    m.detail[1],
-                    m.opacity,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                ]
-            })
-            .collect();
+        let rows = material_rows(table);
         // The material rows are outside the reservation: sized to the table at the first sync.
         if self.materials.size() < (rows.len() * MATERIAL_FLOATS * 4) as u64 {
             self.materials = Self::create_materials(&self.device, rows.len());
@@ -2925,6 +2990,34 @@ impl GpuWorld {
         self.bins[k].live += 1;
         Ok(u)
     }
+}
+
+/// The GPU rows of `table`, [`MATERIAL_FLOATS`] each.
+fn material_rows(table: &MaterialTable) -> Vec<[f32; MATERIAL_FLOATS]> {
+    table
+        .rows()
+        .iter()
+        .map(|m| {
+            [
+                m.albedo[0],
+                m.albedo[1],
+                m.albedo[2],
+                m.roughness,
+                m.emission[0],
+                m.emission[1],
+                m.emission[2],
+                f32::from_bits(m.flags.0),
+                m.detail[0],
+                m.detail[1],
+                m.opacity,
+                m.detail_fine,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            ]
+        })
+        .collect()
 }
 
 /// An entry of the attribute carry-over queue.

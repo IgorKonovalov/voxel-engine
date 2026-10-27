@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use vxe_audio::Listener;
 use vxe_net::{Logic, Server};
-use vxe_render::Camera;
+use vxe_render::{Camera, NormalMode, PlaneFit, PlaneOffset, SurfaceFit, SurfaceTuning};
 use vxe_world::hash::Fnv1a;
 use vxe_world::{
     BRICK_VOXELS, Brick, Chunk, ChunkCoord, ChunkExtent, ChunkMips, LogFile, Material,
@@ -220,6 +220,146 @@ pub fn look_materials_with(rock_detail: [f32; 2]) -> MaterialTable {
         t.push(row);
     }
     t
+}
+
+/// A named look of the window: a normal mode, the surface tuning, and rock's detail pair and
+/// fine-octave weight. `--look` starts in one, `N` cycles them in [`LookPreset::ALL`] order.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LookPreset {
+    pub name: &'static str,
+    pub normal_mode: NormalMode,
+    pub tuning: SurfaceTuning,
+    /// Rock's feature scale in voxels and strength.
+    pub rock_detail: [f32; 2],
+    /// Rock's third-octave weight (`Material::detail_fine`).
+    pub detail_fine: f32,
+}
+
+/// Every part off: the uniform gradient, the fraction offset, no face mix, detail shaded in
+/// the light pass.
+const TUNING_OFF: SurfaceTuning = SurfaceTuning {
+    fit: SurfaceFit {
+        fit: PlaneFit::Uniform27,
+        offset: PlaneOffset::Fraction,
+    },
+    face_mix: 0.0,
+    detail_after_lighting: false,
+};
+
+impl LookPreset {
+    /// A preset of `mode` with every tuning part off and rock at [`ROCK_DETAIL`].
+    const fn plain(name: &'static str, normal_mode: NormalMode) -> Self {
+        Self {
+            name,
+            normal_mode,
+            tuning: TUNING_OFF,
+            rock_detail: ROCK_DETAIL,
+            detail_fine: 0.0,
+        }
+    }
+
+    pub const FACE: Self = Self::plain("face", NormalMode::Face);
+    /// Contour with every tuning part off.
+    pub const CONTOUR: Self = Self::plain("contour", NormalMode::Contour);
+    /// The geometry and lighting-path fixes: the distance-weighted gradient (the fit with the
+    /// highest mid-band contrast of the guardrail-passing fits) and the detail's lamp term
+    /// applied at full resolution.
+    pub const CONTOUR_SHARP: Self = Self {
+        name: "contour-sharp",
+        tuning: SurfaceTuning {
+            fit: SurfaceFit {
+                fit: PlaneFit::Weighted27,
+                offset: PlaneOffset::Fraction,
+            },
+            detail_after_lighting: true,
+            ..TUNING_OFF
+        },
+        ..Self::CONTOUR
+    };
+    /// Today's fit, the detail's lamp term at full resolution, and rock's detail at 20 cm,
+    /// strength 0.3, with the fine octave at weight 0.5 (the guardrail-passing pair and weight
+    /// with the highest fine-band contrast).
+    pub const CONTOUR_GRAIN: Self = Self {
+        name: "contour-grain",
+        tuning: SurfaceTuning {
+            detail_after_lighting: true,
+            ..TUNING_OFF
+        },
+        rock_detail: [2.0, 0.3],
+        detail_fine: 0.5,
+        ..Self::CONTOUR
+    };
+
+    pub const TRILINEAR8: Self = Self::plain("trilinear8", NormalMode::Trilinear8);
+    pub const GRADIENT27: Self = Self::plain("gradient27", NormalMode::Gradient27);
+
+    /// `N`'s order: the contour presets side by side after face, then the two diagnostic
+    /// normal modes.
+    pub const ALL: [Self; 6] = [
+        Self::FACE,
+        Self::CONTOUR,
+        Self::CONTOUR_SHARP,
+        Self::CONTOUR_GRAIN,
+        Self::TRILINEAR8,
+        Self::GRADIENT27,
+    ];
+
+    /// The look the fly-through starts in without `--look`.
+    pub const DEFAULT: Self = Self::CONTOUR_SHARP;
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.name == name)
+    }
+
+    /// The names `--look` takes besides `plain`, comma-separated.
+    pub fn names() -> String {
+        Self::ALL.map(|p| p.name).join(", ")
+    }
+
+    /// The next preset in [`LookPreset::ALL`] order, wrapping, skipping the contour presets
+    /// unless `contour` is set (a mirror with contour attributes). A preset not in the list
+    /// (one with a part overridden) continues from the first of its normal mode.
+    pub fn next(self, contour: bool) -> Self {
+        let i = Self::ALL
+            .iter()
+            .position(|p| *p == self)
+            .or_else(|| {
+                Self::ALL
+                    .iter()
+                    .position(|p| p.normal_mode == self.normal_mode)
+            })
+            .unwrap_or(0);
+        (1..=Self::ALL.len())
+            .map(|k| Self::ALL[(i + k) % Self::ALL.len()])
+            .find(|p| contour || p.normal_mode != NormalMode::Contour)
+            .unwrap_or(Self::FACE)
+    }
+
+    /// The parts beyond the normal mode: `fit uniform27, face mix 0, detail after lighting
+    /// off`.
+    pub fn parts(&self) -> String {
+        let t = &self.tuning;
+        format!(
+            "fit {}, face mix {}, detail after lighting {}",
+            t.fit.name(),
+            t.face_mix,
+            if t.detail_after_lighting { "on" } else { "off" }
+        )
+    }
+
+    /// [`look_materials_with`] at this preset's rock pair, with rock's fine-octave weight.
+    pub fn materials(&self) -> MaterialTable {
+        let base = look_materials_with(self.rock_detail);
+        let mut t = MaterialTable::new();
+        for (id, row) in base.rows().iter().enumerate().skip(1) {
+            let mut row = row.clone();
+            if id == usize::from(cave::ROCK) {
+                row.detail_fine = self.detail_fine;
+            }
+            t.push(row);
+        }
+        t
+    }
 }
 
 /// FNV-1a 64 over the voxels of the resident chunks `coords`, in the given order: each as its
@@ -550,6 +690,22 @@ mod tests {
         assert_eq!(
             look_materials().get(cave::ROCK).map(|r| r.detail),
             Some(ROCK_DETAIL)
+        );
+    }
+
+    /// A preset's table carries its rock pair and fine weight on rock alone; `contour` is the
+    /// fly-through's look table row for row.
+    #[test]
+    fn a_preset_table_puts_its_rock_detail_and_fine_weight_on_rock() {
+        let t = LookPreset::CONTOUR_GRAIN.materials();
+        for (id, row) in t.rows().iter().enumerate() {
+            let rock = id == usize::from(cave::ROCK);
+            assert_eq!(row.detail, if rock { [2.0, 0.3] } else { [0.0; 2] }, "{id}");
+            assert_eq!(row.detail_fine, if rock { 0.5 } else { 0.0 }, "{id}");
+        }
+        assert_eq!(
+            LookPreset::CONTOUR.materials().rows(),
+            look_materials().rows()
         );
     }
 

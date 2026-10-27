@@ -7,7 +7,9 @@
 //! `flythrough [--seed N] [--level] [--vault] [--castle] [--castle-out PATH]
 //! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
-//! [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH] [--view VIEW] [--detail]
+//! [--headless] [--look PRESET] [--rock-detail SCALE,STRENGTH] [--plane-fit FIT]
+//! [--plane-offset OFFSET] [--face-mix K] [--detail-fine W] [--detail-after on|off] [--view VIEW]
+//! [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
@@ -44,14 +46,18 @@
 //! `--residency` sets the streamed radii (default `flythrough::RESIDENCY`, hysteresis 1);
 //! `--headless` runs the
 //! same frames on an offscreen target with no window; `--walk` (with `--level`) starts in walk
-//! mode, the body spawned in the spawn pocket. The fly-through starts in contour with detail on,
+//! mode, the body spawned in the spawn pocket. The fly-through starts in `contour-sharp`
+//! (`LookPreset::DEFAULT`) with detail on,
 //! the mirror holding contour attributes and rock its procedural detail (`--rock-detail` sets
 //! rock's feature scale in voxels and strength, default `flythrough::ROCK_DETAIL`), and prints
 //! that
-//! look first; `--look` picks the starting normal mode (`face`, `trilinear8`, `gradient27`,
-//! `contour`), and `--look plain` starts in face mode without contour attributes or rock detail,
-//! detail off (`N` then skips contour, `--detail` turns detail on), the look of Plan 0002's and
-//! Plan 0017's face readings. With contour attributes the autopilot's report adds the attribute
+//! look first; `--look` picks the starting preset (`flythrough::LookPreset`: `face`, `contour`,
+//! `contour-sharp`, `contour-grain`, `trilinear8`, `gradient27`), a normal mode with its plane
+//! fit, face mix, detail after lighting and rock's detail pair and fine weight, each part
+//! overridable by `--plane-fit`, `--plane-offset`, `--face-mix`, `--detail-after`,
+//! `--detail-fine` and `--rock-detail`; and `--look plain` starts in face mode without contour
+//! attributes or rock detail, detail off (`N` then skips the contour presets, `--detail` turns
+//! detail on), the look of Plan 0002's and Plan 0017's face readings. With contour attributes the autopilot's report adds the attribute
 //! pass's work list, CPU and GPU time over the flight. `--view`
 //! starts in a view (`shaded`, `normals`, `hitmask`, `steps`, `albedo`; with `--frames`, `steps`
 //! prints the last frame's mean and p99 steps per ray on exit);
@@ -78,7 +84,8 @@
 //! `F3` toggles the shadow walk, `F4` the sampler, `F5` the history killer, `F6` the lighting
 //! resolution, `F7` the lamp and `F8` indirect light, each printing the lighting modes; with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
-//! `N` cycles the normal mode and `V` toggles detail. `--vault` places a 16-voxel room with an indestructible
+//! `N` cycles the look presets and `V` toggles detail, each naming the look on the banner, and
+//! a fit change refits the mirror's bricks under the attribute cap (`refitting` on the banner). `--vault` places a 16-voxel room with an indestructible
 //! shell 10 m along +x from the spawn, written over the cave as it generates (on the level, clamped
 //! inside the extent).
 //!
@@ -184,8 +191,8 @@ use flythrough::logic::{
     DROP_VERB, PILE_VERB, REMOVE_VERB, STAMP_VERB, parse_region_line, parse_wedged_line,
 };
 use flythrough::{
-    LogicChoice, RESIDENCY, STREAM_MIRROR_BUDGET, ScrollSteps, cave_materials, chunk_ram,
-    chunks_hash, level_mirror_budget, level_pool_units, mips_ram, percentile,
+    LogicChoice, LookPreset, RESIDENCY, STREAM_MIRROR_BUDGET, ScrollSteps, cave_materials,
+    chunk_ram, chunks_hash, level_mirror_budget, level_pool_units, mips_ram, percentile,
 };
 use pad::Pad;
 use vxe_app::{App, Axis, Flow, Gpu, Input, KeyCode, MouseButton, PadButton, ShellConfig};
@@ -201,8 +208,8 @@ use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
     AttrWorkStats, BELT_CHUNK_BYTES, Camera, FRAME_PASSES, Frame, GpuWorld, HistoryKill, HudColour,
     HudOverlay, LightParams, Lighting, LightingResolution, LodParams, LookParams, MarchTimer,
-    MirrorConfig, NormalMode, PassTimer, Presenter, RenderScale, Sampler, ShadowWalk, SyncStats,
-    ViewMode, Window, wgpu,
+    MirrorConfig, NormalMode, PassTimer, PlaneFit, PlaneOffset, Presenter, RenderScale, Sampler,
+    ShadowWalk, SyncStats, ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -330,14 +337,13 @@ struct Args {
     audio: bool,
     /// `--audio-debug`: print the callback's readings and record its output.
     audio_debug: bool,
-    /// `--look`: the starting normal mode, with contour attributes and rock detail; `None` for
-    /// `--look plain`, face mode without either. Contour by default.
-    look: Option<NormalMode>,
+    /// `--look`: the starting preset with any part flag applied, with contour attributes and
+    /// rock detail; `None` for `--look plain`, face mode without either. `contour-sharp` by
+    /// default.
+    look: Option<LookPreset>,
     /// Start with procedural detail on: by default, except under `--look plain`, where
     /// `--detail` turns it on.
     detail: bool,
-    /// `--rock-detail`: rock's feature scale (voxels) and strength under `--look`.
-    rock_detail: [f32; 2],
     view: ViewMode,
     /// `--translucent-layers`: translucent voxels composited in front of the opaque hit.
     translucent_layers: u32,
@@ -519,17 +525,15 @@ impl Args {
     /// The look the fly-through starts in.
     fn start_look(&self) -> LookParams {
         LookParams {
-            normal_mode: self.look.unwrap_or_default(),
+            normal_mode: self
+                .look
+                .map_or_else(NormalMode::default, |p| p.normal_mode),
             detail: self.detail,
             view: self.view,
             translucent_layers: self.translucent_layers,
             cutaway: false,
+            tuning: self.look.map_or_else(Default::default, |p| p.tuning),
         }
-    }
-
-    /// Rock's detail pair, in every look but `--look plain`.
-    fn rock_detail(&self) -> Option<[f32; 2]> {
-        self.look.is_some().then_some(self.rock_detail)
     }
 }
 
@@ -558,9 +562,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         residency: RESIDENCY,
         audio: false,
         audio_debug: false,
-        look: Some(NormalMode::Contour),
+        look: Some(LookPreset::DEFAULT),
         detail: false,
-        rock_detail: flythrough::ROCK_DETAIL,
         view: ViewMode::Shaded,
         translucent_layers: LookParams::default().translucent_layers,
         hud: false,
@@ -597,6 +600,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         upscaler: None,
     };
     let mut detail_flag = false;
+    // The part flags, applied to the `--look` preset after every flag is read.
+    let mut rock_detail = None;
+    let mut plane_fit = None;
+    let mut plane_offset = None;
+    let mut face_mix = None;
+    let mut detail_fine = None;
+    let mut detail_after = None;
     let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or(format!("{flag} needs a value"));
@@ -630,12 +640,36 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 args.look = if v == "plain" {
                     None
                 } else {
-                    Some(NormalMode::from_name(&v).ok_or(format!(
-                        "--look takes plain, face, trilinear8, gradient27 or contour, not {v}"
+                    Some(LookPreset::from_name(&v).ok_or(format!(
+                        "--look takes plain, {}, not {v}",
+                        LookPreset::names()
                     ))?)
                 };
             }
-            "--rock-detail" => args.rock_detail = parse_rock_detail(&value()?)?,
+            "--rock-detail" => rock_detail = Some(parse_rock_detail(&value()?)?),
+            "--plane-fit" => {
+                let v = value()?;
+                plane_fit = Some(match v.as_str() {
+                    "uniform27" => PlaneFit::Uniform27,
+                    "weighted27" => PlaneFit::Weighted27,
+                    _ => {
+                        return Err(format!(
+                            "--plane-fit takes uniform27 or weighted27, not {v}"
+                        ));
+                    }
+                });
+            }
+            "--plane-offset" => {
+                let v = value()?;
+                plane_offset = Some(match v.as_str() {
+                    "fraction" => PlaneOffset::Fraction,
+                    "volume" => PlaneOffset::VolumeMatched,
+                    _ => return Err(format!("--plane-offset takes fraction or volume, not {v}")),
+                });
+            }
+            "--face-mix" => face_mix = Some(parse_unit("--face-mix", &value()?, 0.5)?),
+            "--detail-fine" => detail_fine = Some(parse_unit("--detail-fine", &value()?, 1.0)?),
+            "--detail-after" => detail_after = Some(parse_on_off("--detail-after", &value()?)?),
             "--view" => {
                 let v = value()?;
                 args.view = ViewMode::from_name(&v).ok_or(format!(
@@ -851,8 +885,26 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         }
     }
     args.detail = detail_flag || args.look.is_some();
-    if args.rock_detail != flythrough::ROCK_DETAIL && args.look.is_none() {
+    if let Some(p) = args.look.as_mut() {
+        p.rock_detail = rock_detail.unwrap_or(p.rock_detail);
+        p.tuning.fit.fit = plane_fit.unwrap_or(p.tuning.fit.fit);
+        p.tuning.fit.offset = plane_offset.unwrap_or(p.tuning.fit.offset);
+        p.tuning.face_mix = face_mix.unwrap_or(p.tuning.face_mix);
+        p.detail_fine = detail_fine.unwrap_or(p.detail_fine);
+        p.tuning.detail_after_lighting = detail_after.unwrap_or(p.tuning.detail_after_lighting);
+    } else if rock_detail.is_some() {
         return Err("--rock-detail does not apply under --look plain".to_owned());
+    } else if plane_fit.is_some()
+        || plane_offset.is_some()
+        || face_mix.is_some()
+        || detail_fine.is_some()
+        || detail_after.is_some()
+    {
+        return Err(
+            "--plane-fit, --plane-offset, --face-mix, --detail-fine and --detail-after do not \
+             apply under --look plain"
+                .to_owned(),
+        );
     }
     if args.autopilot && args.level {
         return Err("--autopilot streams; it does not take --level".to_owned());
@@ -908,6 +960,27 @@ fn parse_residency(v: &str) -> Result<Residency, String> {
         r_lod,
         ..RESIDENCY
     })
+}
+
+/// A number in `[0, max]` for `flag`.
+fn parse_unit(flag: &str, v: &str, max: f32) -> Result<f32, String> {
+    let x: f32 = v
+        .trim()
+        .parse()
+        .map_err(|_| format!("{flag} takes a number, not {v}"))?;
+    if !(0.0..=max).contains(&x) {
+        return Err(format!("{flag} must be in [0, {max}], not {x}"));
+    }
+    Ok(x)
+}
+
+/// `on` or `off` for `flag`.
+fn parse_on_off(flag: &str, v: &str) -> Result<bool, String> {
+    match v {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        _ => Err(format!("{flag} takes on or off, not {v}")),
+    }
 }
 
 /// `SCALE,STRENGTH`: a feature scale in voxels above 0 and a strength in `[0, 1]`.
@@ -2467,6 +2540,10 @@ struct Run {
     /// `--castle`'s current shot, which `I` advances; `None` without the castle.
     castle_shot: Option<castle::CastleShot>,
     look: LookParams,
+    /// The preset `N` last chose, or `--look`'s with its part flags.
+    preset: LookPreset,
+    /// `N` changed the preset: its fit and material rows reach the mirror in the next frame.
+    preset_changed: bool,
     /// Sets `look.cutaway` each frame of interactive flight; `X` or the pad's `West` cycles it.
     cutaway: CutawayMode,
     dig_radius: i64,
@@ -2685,9 +2762,10 @@ impl Run {
         }
     }
 
-    /// Rock's detail pair when the table carries it (every look but `--look plain`).
-    fn rock_detail(&self) -> Option<[f32; 2]> {
-        self.args.rock_detail()
+    /// The current preset when the table carries rock's detail (every look but `--look
+    /// plain`).
+    fn preset(&self) -> Option<&LookPreset> {
+        self.args.look.is_some().then_some(&self.preset)
     }
 
     fn camera_ray(&self) -> (Fixed3, [i64; 3]) {
@@ -2950,7 +3028,7 @@ impl Run {
         println!(
             "frame ({w}x{h} from {iw}x{ih}, median of {}, {}): cpu {:.3} ms, gpu frame {gpu}{hud}; frame targets {} B; full bricks {}, mirror {} B live, {} B allocated",
             cpu_ms.len(),
-            look_line(&self.look, self.rock_detail()),
+            look_line(&self.look, self.preset()),
             median(&mut cpu_ms),
             gfx.frame.frame_bytes(),
             self.world.stats().full_bricks,
@@ -3122,10 +3200,13 @@ impl Run {
             ..cfg
         };
         let t = now();
-        let mirror = if self.args.look.is_some() {
-            GpuWorld::with_surface_attrs(&gpu.device, cfg)
-        } else {
-            GpuWorld::with_config(&gpu.device, cfg)
+        let mirror = match &self.args.look {
+            Some(p) => {
+                let mut m = GpuWorld::with_surface_attrs(&gpu.device, cfg);
+                m.set_surface_fit(p.tuning.fit);
+                m
+            }
+            None => GpuWorld::with_config(&gpu.device, cfg),
         };
         let ms = ms_since(t);
         let l = mirror.shard_layout();
@@ -3753,8 +3834,13 @@ impl Run {
         }
         if input.pressed(KeyCode::KeyN) {
             let contour = self.gfx.as_ref().is_some_and(|g| g.mirror.surface_attrs());
-            self.look.normal_mode = self.look.normal_mode.next(contour);
-            println!("{}", look_line(&self.look, self.rock_detail()));
+            self.preset = self.preset.next(contour);
+            self.look.normal_mode = self.preset.normal_mode;
+            self.look.tuning = self.preset.tuning;
+            self.preset_changed = true;
+            self.modes
+                .show_look(&self.preset, self.look.detail, ms_since(self.start));
+            println!("{}", look_line(&self.look, self.preset()));
         }
         if input.pressed(KeyCode::KeyI)
             && let Some(shot) = self.castle_shot.map(castle::CastleShot::next)
@@ -3774,7 +3860,9 @@ impl Run {
         }
         if input.pressed(KeyCode::KeyV) {
             self.look.detail = !self.look.detail;
-            println!("{}", look_line(&self.look, self.rock_detail()));
+            self.modes
+                .show_look(&self.preset, self.look.detail, ms_since(self.start));
+            println!("{}", look_line(&self.look, self.preset()));
         }
         if input.pressed(KeyCode::F1) {
             self.samples = Some(Samples::default());
@@ -4051,6 +4139,16 @@ impl Run {
         }
         gfx.frame.set_lighting(self.modes.lighting);
         gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
+        // A preset's fit refits the mirror's bricks under the attribute cap and its rock
+        // detail rewrites the material rows; `--look plain` has neither.
+        if std::mem::take(&mut self.preset_changed) && self.args.look.is_some() {
+            gfx.mirror.set_surface_fit(self.preset.tuning.fit);
+            gfx.mirror.rewrite_materials(
+                &preset_materials(&self.args, Some(&self.preset)),
+                &gpu.queue,
+            );
+        }
+        self.modes.set_refitting(gfx.mirror.refitting());
         gfx.frame.set_look(self.look);
         let scale = if self.modes.pulse {
             ore_pulse(ms_since(self.start))
@@ -4286,18 +4384,26 @@ fn steps_line(h: &StepHistogram) -> String {
     )
 }
 
-/// `look face, detail off, view shaded`, or with rock's detail under `--look`:
-/// `look face, detail off (rock scale 4, strength 0.3), view shaded`.
-fn look_line(look: &LookParams, rock_detail: Option<[f32; 2]>) -> String {
-    let rock = rock_detail.map_or_else(String::new, |[scale, strength]| {
-        format!(" (rock scale {scale}, strength {strength})")
-    });
-    format!(
-        "look {}, detail {}{rock}, view {}",
-        look.normal_mode.name(),
-        if look.detail { "on" } else { "off" },
-        look.view.name()
-    )
+/// `look face, detail off, view shaded` under `--look plain`, or with the preset's name,
+/// parts and rock's detail: `look contour-sharp (normals contour, fit weighted27, face mix
+/// 0, detail after lighting on), detail on (rock scale 4, strength 0.1, fine 0), view
+/// shaded`.
+fn look_line(look: &LookParams, preset: Option<&LookPreset>) -> String {
+    let on = if look.detail { "on" } else { "off" };
+    let view = look.view.name();
+    match preset {
+        None => format!("look {}, detail {on}, view {view}", look.normal_mode.name()),
+        Some(p) => {
+            let [scale, strength] = p.rock_detail;
+            format!(
+                "look {} (normals {}, {}), detail {on} (rock scale {scale}, strength {strength}, fine {}), view {view}",
+                p.name,
+                look.normal_mode.name(),
+                p.parts(),
+                p.detail_fine
+            )
+        }
+    }
 }
 
 /// Logs a teardown stage before and after it runs, like the shell's, so a hang at exit
@@ -4469,6 +4575,8 @@ impl App for Flythrough {
                     .then(|| (castle_banner(self.args.castle_shot), ms_since(self.start))),
                 castle_shot: self.args.castle.then_some(self.args.castle_shot),
                 look: self.args.start_look(),
+                preset: self.args.look.unwrap_or(LookPreset::FACE),
+                preset_changed: false,
                 cutaway: self.args.cutaway,
                 dig_radius: DIG_RADIUS,
                 scroll: ScrollSteps::default(),
@@ -4630,14 +4738,16 @@ fn pollster_block_on<F: std::future::Future>(f: F) -> F::Output {
     }
 }
 
-/// The cave's material table; under `--look`, with rock's procedural detail at
-/// `--rock-detail`; the ore emissive unless `--emissive-ore off`.
+/// The cave's material table; under `--look`, with rock's procedural detail from its preset;
+/// the ore emissive unless `--emissive-ore off`.
 fn materials(args: &Args) -> MaterialTable {
-    let table = if args.look.is_some() {
-        flythrough::look_materials_with(args.rock_detail)
-    } else {
-        cave_materials()
-    };
+    preset_materials(args, args.look.as_ref())
+}
+
+/// [`materials`] with rock's detail from `preset`, or none for `--look plain`; the castle's
+/// rows under `--castle`.
+fn preset_materials(args: &Args, preset: Option<&LookPreset>) -> MaterialTable {
+    let table = preset.map_or_else(cave_materials, LookPreset::materials);
     let table = if args.emissive_ore {
         flythrough::with_emissive_ore(&table)
     } else {
@@ -4743,7 +4853,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    println!("{}", look_line(&args.start_look(), args.rock_detail()));
+    println!("{}", look_line(&args.start_look(), args.look.as_ref()));
     let logic = load_logic(&args.logic);
     println!("logic: {}", args.logic);
 
@@ -5619,6 +5729,8 @@ mod tests {
             net: Some(net),
             spawn: voxel_of(camera.position),
             look: args.start_look(),
+            preset: args.look.unwrap_or(LookPreset::FACE),
+            preset_changed: false,
             args,
             fly: Fly::new(camera),
             light: LightParams::headlamp(),
@@ -6399,27 +6511,35 @@ mod tests {
         assert!(parse_rock_detail("4,x").is_err());
     }
 
-    /// No flag starts in contour with detail on and rock's detail; `--look plain` starts in
+    /// No flag starts in contour-sharp with detail on and rock's detail, `--look contour` in
+    /// the contour look with every tuning part off; `--look plain` starts in
     /// face mode with neither, and `--detail` turns detail on there.
     #[test]
     fn the_default_look_is_contour_with_detail_and_plain_is_face() {
         let a = parse_args_from(argv(&[])).unwrap();
         assert_eq!(
-            look_line(&a.start_look(), a.rock_detail()),
-            "look contour, detail on (rock scale 4, strength 0.1), view shaded"
+            look_line(&a.start_look(), a.look.as_ref()),
+            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+        );
+        assert_eq!(a.look, Some(LookPreset::CONTOUR_SHARP));
+        let c = parse_args_from(argv(&["--look", "contour"])).unwrap();
+        assert_eq!(
+            look_line(&c.start_look(), c.look.as_ref()),
+            "look contour (normals contour, fit uniform27, face mix 0, detail after lighting off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
         );
         assert_eq!(flythrough::ROCK_DETAIL, [4.0, 0.1]);
         let a = parse_args_from(argv(&["--look", "face"])).unwrap();
-        assert_eq!((a.look, a.detail), (Some(NormalMode::Face), true));
+        assert_eq!((a.look, a.detail), (Some(LookPreset::FACE), true));
         let a = parse_args_from(argv(&["--look", "plain"])).unwrap();
-        assert_eq!((a.look, a.detail, a.rock_detail()), (None, false, None));
+        assert_eq!((a.look, a.detail), (None, false));
         assert_eq!(
-            look_line(&a.start_look(), a.rock_detail()),
+            look_line(&a.start_look(), a.look.as_ref()),
             "look face, detail off, view shaded"
         );
         let a = parse_args_from(argv(&["--look", "plain", "--detail"])).unwrap();
         assert!(a.detail);
         assert!(parse_args_from(argv(&["--look", "plain", "--rock-detail", "4,0.2"])).is_err());
+        assert!(parse_args_from(argv(&["--look", "plain", "--detail-after", "on"])).is_err());
         assert_eq!(
             parse_args_from(argv(&["--attrib-quant", "none"]))
                 .err()
@@ -6428,16 +6548,75 @@ mod tests {
         );
     }
 
+    /// `--look` pins each preset by name with its parts on the startup line, an unknown name
+    /// lists the valid ones, and the part flags override the preset's parts.
     #[test]
-    fn the_look_line_names_rock_detail_under_look() {
+    fn look_presets_parse_by_name_with_their_parts() {
+        let line = |v: &[&str]| {
+            let a = parse_args_from(argv(v)).unwrap();
+            look_line(&a.start_look(), a.look.as_ref())
+        };
+        assert_eq!(
+            line(&["--look", "contour-sharp"]),
+            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+        );
+        assert_eq!(
+            line(&["--look", "contour-grain"]),
+            "look contour-grain (normals contour, fit uniform27, face mix 0, detail after lighting on), detail on (rock scale 2, strength 0.3, fine 0.5), view shaded"
+        );
+        for p in LookPreset::ALL {
+            let a = parse_args_from(argv(&["--look", p.name])).unwrap();
+            assert_eq!(a.look, Some(p), "{}", p.name);
+            assert_eq!(a.start_look().normal_mode, p.normal_mode, "{}", p.name);
+            assert_eq!(a.start_look().tuning, p.tuning, "{}", p.name);
+        }
+        assert_eq!(
+            parse_args_from(argv(&["--look", "contour-soft"]))
+                .err()
+                .as_deref(),
+            Some(
+                "--look takes plain, face, contour, contour-sharp, contour-grain, trilinear8, gradient27, not contour-soft"
+            )
+        );
+        assert_eq!(
+            line(&[
+                "--look",
+                "contour",
+                "--plane-fit",
+                "weighted27",
+                "--plane-offset",
+                "volume",
+                "--face-mix",
+                "0.25",
+                "--detail-fine",
+                "0.5",
+                "--detail-after",
+                "on",
+                "--rock-detail",
+                "2,0.2",
+            ]),
+            "look contour (normals contour, fit weighted27 + volume, face mix 0.25, detail after lighting on), detail on (rock scale 2, strength 0.2, fine 0.5), view shaded"
+        );
+        assert!(parse_args_from(argv(&["--plane-fit", "sobel"])).is_err());
+        assert!(parse_args_from(argv(&["--face-mix", "0.6"])).is_err());
+        assert!(parse_args_from(argv(&["--detail-fine", "-1"])).is_err());
+        assert!(parse_args_from(argv(&["--detail-after", "yes"])).is_err());
+    }
+
+    #[test]
+    fn the_look_line_names_the_preset_under_look() {
         let look = LookParams {
             normal_mode: NormalMode::Face,
             detail: true,
             ..LookParams::default()
         };
+        let p = LookPreset {
+            rock_detail: [4.0, 0.3],
+            ..LookPreset::FACE
+        };
         assert_eq!(
-            look_line(&look, Some([4.0, 0.3])),
-            "look face, detail on (rock scale 4, strength 0.3), view shaded"
+            look_line(&look, Some(&p)),
+            "look face (normals face, fit uniform27, face mix 0, detail after lighting off), detail on (rock scale 4, strength 0.3, fine 0), view shaded"
         );
         assert_eq!(look_line(&look, None), "look face, detail on, view shaded");
     }

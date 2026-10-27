@@ -3,6 +3,7 @@
 #![allow(dead_code, reason = "shared across test binaries; each uses a subset")]
 
 pub mod rigs;
+pub mod sharpness;
 
 use std::path::PathBuf;
 
@@ -482,4 +483,243 @@ pub fn camera_looking_x(position: [f32; 3]) -> Camera {
 pub fn centre_pixel(rgba: &[u8]) -> [u8; 3] {
     let i = ((HEIGHT / 2) * WIDTH + WIDTH / 2) as usize * 4;
     [rgba[i], rgba[i + 1], rgba[i + 2]]
+}
+
+// ---- Contour attributes and the sharpness scenes (tests/look.rs, tests/sharpness.rs) ----
+
+use vxe_render::gpu_world::{PAGE_UNITS, UNIT_BYTES};
+use vxe_render::{Lighting, LightingResolution, NormalMode, ViewMode};
+
+/// Pool bytes a mirror with attributes needs for `world`'s bricks, with a page of headroom
+/// for each bin's partly filled page.
+pub fn attr_pool_bytes(world: &World) -> u64 {
+    (flythrough::level_pool_units(world, true) + 10 * u64::from(PAGE_UNITS)) * UNIT_BYTES
+}
+
+/// `world` mirrored with contour attributes over a fixed window, shards capped at
+/// `max_shard_units`, its attributes filled; lighting at full resolution.
+pub fn attr_rig_on(
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    world: &World,
+    max_shard_units: Option<u32>,
+) -> LookRig {
+    let cfg = MirrorConfig {
+        max_shard_units,
+        ..MirrorConfig::new(vxe_render::Window::Fixed(world.extent()))
+    };
+    let mut gpu = GpuWorld::with_surface_attrs(&device, cfg);
+    gpu.sync_now(world, &device, &queue)
+        .expect("mirror fits the adapter");
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    let bricks = gpu.update_attrs(&mut enc);
+    queue.submit([enc.finish()]);
+    assert_eq!(
+        bricks,
+        world.stats().full_bricks,
+        "every Full brick has its attribute"
+    );
+    let mut frame = Frame::new(&device, WIDTH, HEIGHT);
+    // The walk and the look at full resolution: lighting at half would blur them.
+    frame.set_resolution(&device, LightingResolution::Full);
+    LookRig {
+        device,
+        queue,
+        gpu,
+        frame,
+    }
+}
+
+/// [`attr_rig_on`] on the software adapter; `None` with a printed skip when there is none.
+pub fn attr_rig(world: &World) -> Option<LookRig> {
+    let (device, queue) = software_device(attr_pool_bytes(world).max(64 << 20))?;
+    Some(attr_rig_on(device, queue, world, None))
+}
+
+/// Static frames a sharpness render runs; the last is read.
+pub const SHARP_FRAMES: usize = 64;
+
+/// One frame setting of the sharpness harness: the look and the lighting path.
+#[derive(Clone, Copy, Debug)]
+pub struct Setting {
+    pub look: LookParams,
+    pub tier: LightingResolution,
+    /// The a-trous filter runs.
+    pub filter: bool,
+    /// Radiance is multiplied by this before the tone map (the frame's default 1).
+    pub exposure: f32,
+}
+
+impl Setting {
+    /// `mode` with detail `detail`, shaded, at the default tier with the filter on.
+    pub fn new(mode: NormalMode, detail: bool) -> Self {
+        Self {
+            look: LookParams {
+                normal_mode: mode,
+                detail,
+                view: ViewMode::Shaded,
+                ..LookParams::default()
+            },
+            tier: LightingResolution::default(),
+            filter: true,
+            exposure: 1.0,
+        }
+    }
+
+    pub fn at(self, tier: LightingResolution, filter: bool) -> Self {
+        Self {
+            tier,
+            filter,
+            ..self
+        }
+    }
+
+    /// `face` or `contour`, `+ detail`, the tier, `filter on|off` and the exposure when it
+    /// is not 1.
+    pub fn name(&self) -> String {
+        format!(
+            "{}{} {} filter {}{}",
+            self.look.normal_mode.name(),
+            if self.look.detail { " + detail" } else { "" },
+            self.tier.name(),
+            if self.filter { "on" } else { "off" },
+            if self.exposure == 1.0 {
+                String::new()
+            } else {
+                format!(" exposure {}", self.exposure)
+            }
+        )
+    }
+}
+
+impl LookRig {
+    /// [`SHARP_FRAMES`] static frames of `camera` in `setting`, lit by the headlamp alone (no
+    /// emissive material in the scenes' tables), with history from a reset; returns the
+    /// last, after asserting the last two differ by at most 1/255 in every channel.
+    pub fn converge(&mut self, camera: &Camera, setting: Setting) -> Vec<u8> {
+        // A fresh frame for every reading: a frame's lighting targets carry state past
+        // `reset_history` that moves a converged reading by about 0.5 % of `S_fine`.
+        self.frame = Frame::new(&self.device, WIDTH, HEIGHT);
+        self.frame.set_look(setting.look);
+        self.frame.set_resolution(&self.device, setting.tier);
+        self.frame.set_lighting(Lighting {
+            lamp: true,
+            filter: setting.filter,
+            exposure: setting.exposure,
+            ..Lighting::default()
+        });
+        let light = LightParams::headlamp();
+        let mut prev = Vec::new();
+        for i in 0..SHARP_FRAMES {
+            self.frame
+                .step(&self.device, &self.queue, &self.gpu, camera, &light);
+            if i + 2 >= SHARP_FRAMES {
+                let img = readback::read_rgba8(&self.device, &self.queue, self.frame.target());
+                if !prev.is_empty() {
+                    let d = sharpness::max_channel_diff(&prev, &img);
+                    assert!(
+                        d <= 1,
+                        "{}: the last two frames differ by {d}/255",
+                        setting.name()
+                    );
+                }
+                prev = img;
+            }
+        }
+        prev
+    }
+}
+
+/// The sharpness scenes' table: the fly-through's look table (no emissive material) with
+/// rock's detail at `rock_detail`.
+pub fn sharp_table(rock_detail: [f32; 2]) -> MaterialTable {
+    flythrough::look_materials_with(rock_detail)
+}
+
+/// The wall's roughening: 24 spheres from a test-local LCG seeded 39, each `(centre voxel,
+/// radius in voxels, carve)`: even indices carve, odd ones fill; radius 3 to 8, centre x
+/// within 2 voxels of the face plane `x = 74`, y and z in `[44, 85)`.
+pub fn wall_spheres() -> Vec<([i32; 3], i64, bool)> {
+    let mut state: u64 = 39;
+    let mut next = |n: u64| {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (state >> 33) % n
+    };
+    (0..24)
+        .map(|i| {
+            let r = 3 + next(6) as i64;
+            let x = 72 + next(5) as i32;
+            let y = 44 + next(41) as i32;
+            let z = 44 + next(41) as i32;
+            ([x, y, z], r, i % 2 == 0)
+        })
+        .collect()
+}
+
+/// Air over chunks `[0, 2)^3` under `table`, rock filled at `x >= 74` and roughened by
+/// [`wall_spheres`] in order.
+pub fn wall_world_with(table: MaterialTable) -> World {
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [2, 2, 2]),
+        &UniformSource(AIR),
+        &table,
+    );
+    world
+        .apply(&EditOp::box_(
+            Fixed3([74 * FIXED_ONE, 0, 0]),
+            Fixed3([128 * FIXED_ONE; 3]),
+            Mode::Fill(ROCK),
+        ))
+        .expect("the wall is resident");
+    for (c, r, carve) in wall_spheres() {
+        let mode = if carve { Mode::Carve } else { Mode::Fill(ROCK) };
+        world
+            .apply(&EditOp::sphere(centre_of_voxel(c), r * FIXED_ONE, mode))
+            .expect("the wall is resident");
+    }
+    world
+}
+
+/// At `(64.5, 64.5, 64.5)` looking +x: the mean face 9.5 voxels away.
+pub fn wall_camera() -> Camera {
+    camera_looking_x([64.5, 64.5, 64.5])
+}
+
+/// The edge scene's convex edge: the vertical line `x = y = EDGE`. Off the brick grid, so the
+/// bricks on both faces are `Full` and carry contour attributes: a face on a brick boundary
+/// leaves uniform solid bricks behind it, which have no attributes and hit as cubes.
+pub const EDGE: i64 = 63;
+
+/// Air over chunks `[0, 2)^3` under `table` with a rock block at x and y in `[EDGE, 96)`, z
+/// in `[32, 96)`.
+pub fn edge_world_with(table: MaterialTable) -> World {
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [2, 2, 2]),
+        &UniformSource(AIR),
+        &table,
+    );
+    world
+        .apply(&EditOp::box_(
+            Fixed3([EDGE * FIXED_ONE, EDGE * FIXED_ONE, 32 * FIXED_ONE]),
+            Fixed3([96 * FIXED_ONE, 96 * FIXED_ONE, 96 * FIXED_ONE]),
+            Mode::Fill(ROCK),
+        ))
+        .expect("the block is resident");
+    world
+}
+
+/// 10 voxels from the edge, at `(EDGE - 10 cos 30, EDGE - 10 sin 30, 64.5)` looking along
+/// `(cos 30, sin 30, 0)`: the edge is the image's centre line, the -x face on its left and
+/// the -y face on its right.
+pub fn edge_camera() -> Camera {
+    let a = 30f32.to_radians();
+    let e = EDGE as f32;
+    Camera {
+        position: [e - 10.0 * a.cos(), e - 10.0 * a.sin(), 64.5].into(),
+        yaw: a,
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    }
 }
