@@ -589,8 +589,8 @@ exposure multiply, so the settled exposure ignores it.
 | 1: The meter, the read-back and the banner | dev | done | 044daed |
 | 2: Pre-exposure | dev | done | 81d300a |
 | 3: Adaptation | dev | done | e9879cc |
-| 4: The fly-through, the cave's own curve, and the readings | dev | done | 9a0d342 (first pass); amendment committed with this row |
-| 5: The owner's windowed check | human | done (two sessions; verdicts recorded by dev) | committed with this row |
+| 4: The fly-through, the cave's own curve, and the readings | dev | done | 9a0d342 (first pass); ce54dde (first amendment); 08cf9cc (second) |
+| 5: The owner's windowed check | human | done (two sessions; verdicts recorded by dev) | 213ee69 |
 
 Phase 1 (lavapipe, exclusive perf lock, load 14 to 30 from the other lanes): `tests/exposure.rs`
 split wall reads `metered_log2` -6.000000 (average) and -6.0000005 (centre); the centred square
@@ -704,7 +704,7 @@ missing from its layout); after it, `flythrough::fsr2` and `flythrough::golden` 
 the full tier on 7c322cc 690 of 690 (10 skipped, 1440 s, exclusive perf lock, load 3.5).
 Phase 5's second session: `live/session2.sh` with `live/flythrough-p5b` built from 7c322cc.
 
-Phase 4 amendment of b05accc (committed with this paragraph): `check_curve` loses its
+Phase 4 amendment of b05accc (08cf9cc): `check_curve` loses its
 `closed_form` switch and prints the closed-form distance as a `reading:` line on both poses; the
 stepped-model assertion and the other two clauses are unchanged. The vein test is renamed
 `the_curve_facing_a_vein_follows_the_stepped_model` (and in `.config/nextest.toml`'s three
@@ -735,6 +735,13 @@ is unchanged here (32).
 
 ### Notes
 
+- Phase 4 amendment of b05accc (08cf9cc): bar 2 (b) is a printed reading, not an assertion. It
+  held on the chosen vein pose at 0.0974 EV against 0.1 and on 2 of the 9 poses tried, so it is
+  fragile to the pose; (a) is the asserting bar on both poses. `.config/nextest.toml` (the
+  renamed vein test in its three filters) is outside Phase 4's Files touched.
+- Phase 5: dev wrote the owner's verdicts into the log from the session logs and the owner's
+  words relayed by the orchestrator. Step 4 closes with no fix; `DEFAULT_EMISSIVE_HISTORY`
+  stays 32 and the owner asked for a separate plan for the emissive estimator's wall patches.
 - Phase 4 amendment: `crates/vxe-render/src/exposure.rs` (`eye()` and its unit test),
   `crates/vxe-render/tests/exposure.rs` (bars 2, 4, 6) and `.config/nextest.toml` (the vein test
   on the slow list) are outside Phase 4's Files touched.
@@ -798,11 +805,37 @@ is unchanged here (32).
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature.
+- **Public API changed:** `vxe-render`: new `exposure` module with `Exposure` (`Manual`,
+  `Auto`), `AutoExposure` (`eye`, `symmetric`, `instant`, `step`, `exposure`, `floor_log2`),
+  `Metering`, `ExposureState`, `ExposureReadout`, `EXPOSURE_WGSL`, `METER_TILE`,
+  `METER_LOG2_LIMIT`, `STATE_HELD`; `Lighting::exposure` is `Exposure` (was `f32`),
+  `Lighting::manual_exposure`; `Frame::set_dt`, `reset_exposure`, `set_metering`,
+  `exposure_readout`, `exposure_state`; `FRAME_PASSES` gains `exposure` (last); every frame
+  shader's group 0 gains the exposure uniform at binding 13 and the composite the meter tiles;
+  `fsr2/tone.wgsl` no longer multiplies by the exposure. `flythrough`: `--exposure
+  auto|<value>` (default auto), `--adaptation eye|symmetric|instant`, `--adapt
+  LIGHT,CONE,ROD,FLOOR`, `--metering centre|average`, `Q` cycling the exposure mode, the HUD's
+  `exposure` row.
+- **Budget readings:** `nfr.md` §2 "Upscale, tone map, post" and §3, from Phase 4 (renderer as
+  at e9879cc against dedd83c, 1920x1080, level spawn, median of the last 30 of 3000, exclusive
+  perf lock, loaded: 1-minute load 5.1 to 26.4). NVIDIA GeForce RTX 3080 Laptop: composite
+  0.329 to 0.365 ms, exposure pass 0.072 ms. AMD Radeon Graphics (RADV RENOIR, `--adapter
+  AMD`): composite 2.877 to 2.906 ms, exposure pass 0.061 ms. `Frame::frame_bytes` 254 216 224
+  to 254 476 352 B. Not re-taken after the amendments or the merge of 05a3a28.
+- **Readings at the tip** (lavapipe, `flythrough::exposure`, exclusive perf lock, load 3.2 to
+  12.2, 128 x 72): spawn, meter lamp on -3.046 / off -15.175, stepped-model distance from 1 s
+  0.0000 EV, `reading: spawn closed-form distance from 1 s on 0.1948 EV`; vein pose
+  (727.5, 644.3, 208.5, yaw 153.4), meter -0.722 / -4.873, stepped model 0.0000 EV,
+  `reading: vein closed-form distance from 1 s on 0.0974 EV`.
+- **Gate at 213ee69 (code as at 08cf9cc):** `cargo nextest run --workspace --profile full
+  --no-fail-fast --test-threads 2` (exclusive perf lock, MemoryMax 6G, load 2.3 at start, 3.4
+  at end) exit 0, 690 run, 690 passed (5 slow), 10 skipped, 1438 s; `--profile quick
+  --test-threads 2` exit 0, 499 of 499 (3 skipped); `cargo test --doc --workspace` exit 0, 7
+  passed; `cargo clippy --workspace --all-targets -- -D warnings` exit 0; `cargo fmt --all
+  --check` exit 0; `cargo deny check` advisories, bans, licenses and sources ok;
+  `check-doc-links`, `check-comment-hygiene`, `check-index-rows`, `check-test-tiers` exit 0.
+- **Outstanding `human` phases:** none (Phase 5's two sessions are recorded above).
 
 ## Followups
 
