@@ -35,6 +35,20 @@ pub fn fsr2_source(pass: &str, hdr: bool) -> String {
     format!("const HDR: bool = {hdr};\n{FSR2_COMMON_WGSL}\n{pass}")
 }
 
+/// FSR 2's frame passes in encode order, each its own slot of [`crate::FRAME_PASSES`] after
+/// the composite, upscale and sharpen slots.
+pub const FSR2_PASSES: [&str; 9] = [
+    "fsr2 input",
+    "fsr2 spd",
+    "fsr2 spd tail",
+    "fsr2 reconstruct",
+    "fsr2 depth clip",
+    "fsr2 lock",
+    "fsr2 accumulate",
+    "fsr2 rcas",
+    "fsr2 tone",
+];
+
 /// The near plane FSR's depth is taken against, in voxels: below any hit's view depth that
 /// matters (a hit nearer than it still gets a finite depth above 1).
 pub const NEAR: f32 = 0.01;
@@ -368,58 +382,52 @@ pub(crate) struct Fsr2Binds {
 }
 
 impl Fsr2Binds {
-    /// The dispatches of the frame's upscale slot, after the composite, in AMD's order: our
-    /// input pass, the luminance pyramid (two dispatches), reconstruct previous depth, depth
-    /// clip, lock and accumulate.
-    pub(crate) fn upscale<'a>(
+    /// The dispatches of FSR 2's frame passes ([`FSR2_PASSES`], one slot each), after the
+    /// composite, in AMD's order: our input pass, the luminance pyramid (its mips, then its
+    /// tail), reconstruct previous depth, depth clip, lock, accumulate, RCAS when sharpening
+    /// is on, and our tone pass. Bypassed, the tone pass alone runs.
+    pub(crate) fn passes<'a>(
         &'a self,
         fsr: &'a Fsr2,
         world: &'a wgpu::BindGroup,
-    ) -> Vec<Dispatch<'a>> {
-        if self.bypass {
-            return Vec::new();
-        }
-        let fsr_pass = |p: &'a Pass, b: &'a wgpu::BindGroup, workgroups| Dispatch {
-            pipeline: &p.pipeline,
-            groups: [Some(&self.cb), Some(b), None, None],
-            workgroups,
+    ) -> [Vec<Dispatch<'a>>; FSR2_PASSES.len()] {
+        let fsr_pass = |p: &'a Pass, b: &'a wgpu::BindGroup, workgroups| {
+            vec![Dispatch {
+                pipeline: &p.pipeline,
+                groups: [Some(&self.cb), Some(b), None, None],
+                workgroups,
+            }]
         };
-        vec![
-            Dispatch {
+        let tone = vec![Dispatch {
+            pipeline: &fsr.tone.pipeline,
+            groups: [Some(world), None, Some(&self.tone), None],
+            workgroups: self.display_groups,
+        }];
+        if self.bypass {
+            let mut passes: [Vec<Dispatch<'a>>; FSR2_PASSES.len()] = Default::default();
+            passes[FSR2_PASSES.len() - 1] = tone;
+            return passes;
+        }
+        let rcas = self
+            .rcas
+            .as_ref()
+            .map(|(b, workgroups)| fsr_pass(&fsr.rcas, b, *workgroups))
+            .unwrap_or_default();
+        [
+            vec![Dispatch {
                 pipeline: &fsr.input.pipeline,
                 groups: [Some(world), None, Some(&self.input), None],
                 workgroups: self.render_groups,
-            },
+            }],
             fsr_pass(&fsr.spd_mips, &self.spd_mips, self.spd_groups),
             fsr_pass(&fsr.spd_tail, &self.spd_tail, [1, 1]),
             fsr_pass(&fsr.reconstruct, &self.reconstruct, self.render_groups),
             fsr_pass(&fsr.depth_clip, &self.depth_clip, self.render_groups),
             fsr_pass(&fsr.lock, &self.lock, self.render_groups),
             fsr_pass(&fsr.accumulate, &self.accumulate, self.display_groups),
+            rcas,
+            tone,
         ]
-    }
-
-    /// The dispatches of the frame's sharpen slot: RCAS when sharpening is on, then the tone
-    /// pass.
-    pub(crate) fn sharpen<'a>(
-        &'a self,
-        fsr: &'a Fsr2,
-        world: &'a wgpu::BindGroup,
-    ) -> Vec<Dispatch<'a>> {
-        let mut d = Vec::new();
-        if let Some((b, workgroups)) = self.rcas.as_ref().filter(|_| !self.bypass) {
-            d.push(Dispatch {
-                pipeline: &fsr.rcas.pipeline,
-                groups: [Some(&self.cb), Some(b), None, None],
-                workgroups: *workgroups,
-            });
-        }
-        d.push(Dispatch {
-            pipeline: &fsr.tone.pipeline,
-            groups: [Some(world), None, Some(&self.tone), None],
-            workgroups: self.display_groups,
-        });
-        d
     }
 }
 
@@ -1110,6 +1118,14 @@ pub(crate) struct FrameInputs<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FSR's passes are the frame's last slots, in their order.
+    #[test]
+    fn fsrs_passes_close_the_frame_passes() {
+        let n = crate::FRAME_PASSES.len() - FSR2_PASSES.len();
+        assert_eq!(crate::FRAME_PASSES[n..], FSR2_PASSES);
+        assert_eq!(crate::FRAME_PASSES[n - 2..n], ["upscale", "sharpen"]);
+    }
 
     /// FSR's phase counts: 8 at scale 1, 18 at 1.5 and 32 at 2; and its first four offsets.
     #[test]

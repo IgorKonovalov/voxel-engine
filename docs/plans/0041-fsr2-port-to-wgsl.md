@@ -576,7 +576,7 @@ and the owner weighs it in Phase 7.
 | 2: HDR in, tone after, the exposure seam and the masks | dev | done | 80085f8 |
 | 3: The remaining passes: luminance pyramid, previous depth, depth clip, lock | dev | done | d3b8ddb |
 | 4: RCAS, and the sharpness bars still and panning | dev | done | dab579b, dd272de, 66cd9d0, be59e30 |
-| 5: Lights, flicker and shadow motion | dev | done: bar 4 at scale 1 a reading | committed with this row |
+| 5: Lights, flicker and shadow motion | dev | done: bar 4 at scale 1 a reading | 09c7a6c |
 | 6: The readings on both adapters | dev | not started | |
 | 7: The owner's windowed comparison and the default | human | not started | |
 
@@ -826,6 +826,43 @@ camera, 384 x 216 output; `live/p5-run1.log`, `live/p5-tune.log`, `live/p5-diag.
   readings unchanged to the third decimal).
 - `fsr2.rs` also carries Phase 6's `frame_bytes_under_fsr2_swap_the_histories_for_fsr2s_inventory`
   (written while the GPU lock was held by the owner's session, passed in the same run).
+
+### Resume notes (2026-10-27, delete when Phase 6 lands)
+
+Phase 6 in progress; Phases 4 and 5 committed (be59e30, 09c7a6c). The Phase 6 code is
+committed with these notes as `wip(render)`; no reading taken yet.
+
+- Next, in order: (1) merge main into plan-0041 (the orchestrator's request: 48 commits behind
+  dedd83c, v0.31.1; plans 0042, 0046 and 0029, probe GI with indirect light on by default
+  through `composite.wgsl`'s `irradiance_at`): `git merge --no-ff main`, resolve,
+  `scripts/build-guests.sh`, full tier under the lock (`--test-threads 2 --no-fail-fast`),
+  commit `merge: main into plan-0041 (0042, 0046, 0029)`. Check that FSR's composite variant
+  (`marcher::composite_hdr_source`, linear radiance before exposure) carries the indirect
+  term and that the input pass's reactive light-change term is unaffected by it (rerun the
+  `fsr2` binary: the tone pass's byte-for-byte test and the reactive mask test bite). (2)
+  Rebuild release, rerun `live/p6/runs.sh` (untracked; it skips logs that have a `frame (`
+  line, waits out a live session, checks the 1-minute load under 2 inside the lock and runs
+  loaded after an hour; delete `live/p6/NVIDIA-off-1-1.log` first, it is pre-merge). (3)
+  Bar 1 is the sum of the nine `fsr2 *` passes at 1.5 on NVIDIA (at most 1.2 ms), the hit
+  pass and light + temporal + a-trous at most 55 % of scale 1's (`off 1` runs); bar 2 RADV
+  readings beside Plan 0030's; `docs/nfr.md` §2 and §3 get the figures with machine and
+  commit. (4) Log Phase 6, commit, stop at Phase 7.
+- Phase 6 code done: `FRAME_PASSES` has 17 slots, the last nine `fsr2::FSR2_PASSES` (input,
+  spd, spd tail, reconstruct, depth clip, lock, accumulate, rcas, tone; `Fsr2Binds::passes`);
+  an empty slot is skipped unless a timer is given; `fsrs_passes_close_the_frame_passes`
+  (unit). The HUD's gpu row leaves out `fsr2 *` and the upscale row reads `fsr2 X ms`
+  (`the_upscale_row_sums_fsr2s_passes`). README: `--upscaler` and `F10` rows. Bar 3 already
+  passes (09c7a6c's `frame_bytes_under_fsr2_swap_the_histories_for_fsr2s_inventory`: FSR mode
+  249 041 868 B = 124 621 440 - 33 177 600 + 157 598 028; re-read after the merge).
+- Phase 7 runner: `live/session1.sh` (untracked; binary `live/flythrough-p6`, copy
+  `target/release/flythrough` there after the merge and Phase 6). Runs: contour and face at
+  `--upscaler own --internal-scale 1.5` (F10 to fsr2 and off), contour and face at
+  `--upscaler fsr2 --internal-scale 1`; the five Phase 7 items in the prompt. Not started.
+- Gate at this tip: clippy `-D warnings` and fmt clean; quick tier 475 passed, 3 skipped;
+  doctests pass; the `fsr2` binary plus the FSR golden 20 passed (09c7a6c's tree, before the
+  Phase 6 code; the gpu tier not run on the Phase 6 code).
+- Gotchas: `Frame::step` advances before encoding (after a step `current_copy()` is the copy
+  just written). The stripe test takes ~350 s, the lamp test ~85 s.
 
 ### Notes
 

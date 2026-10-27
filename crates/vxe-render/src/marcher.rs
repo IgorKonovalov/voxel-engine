@@ -2186,11 +2186,11 @@ impl Frame {
             upscale.push(frame_pass(&self.upscale, u, 2, out));
             sharpen.push(frame_pass(&self.sharpen, r, 3, out));
         }
-        if let Some((f, b)) = &fsr_binds {
-            upscale.extend(b.upscale(f, &world_bind));
-            sharpen.extend(b.sharpen(f, &world_bind));
-        }
-        let passes: [Vec<Dispatch<'_>>; 8] = [
+        let fsr_passes = fsr_binds
+            .as_ref()
+            .map(|(f, b)| b.passes(f, &world_bind))
+            .unwrap_or_default();
+        let passes = [
             hit,
             gradient,
             vec![frame_pass(&self.light, &light_bind, 2, lw)],
@@ -2199,8 +2199,14 @@ impl Frame {
             vec![frame_pass(composite, &composite_bind, 2, full)],
             upscale,
             sharpen,
-        ];
-        for (i, dispatches) in passes.into_iter().enumerate() {
+        ]
+        .into_iter()
+        .chain(fsr_passes);
+        for (i, dispatches) in passes.enumerate() {
+            // An empty slot is still recorded under a timer, so every timestamp pair is written.
+            if dispatches.is_empty() && timer.is_none() {
+                continue;
+            }
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(FRAME_PASSES[i]),
                 timestamp_writes: timer.map(|t| t.writes_at(i as u32)),
@@ -2310,7 +2316,9 @@ fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_>
 
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
-pub const FRAME_PASSES: [&str; 8] = [
+/// The last nine are FSR 2's ([`crate::fsr2::FSR2_PASSES`]); in FSR mode `upscale` and
+/// `sharpen` are empty, and otherwise FSR's are.
+pub const FRAME_PASSES: [&str; 17] = [
     "hit",
     "gradient",
     "light",
@@ -2319,6 +2327,15 @@ pub const FRAME_PASSES: [&str; 8] = [
     "composite",
     "upscale",
     "sharpen",
+    "fsr2 input",
+    "fsr2 spd",
+    "fsr2 spd tail",
+    "fsr2 reconstruct",
+    "fsr2 depth clip",
+    "fsr2 lock",
+    "fsr2 accumulate",
+    "fsr2 rcas",
+    "fsr2 tone",
 ];
 
 /// The gradient pass's stratum edge in pixels; `STRATUM` in `gradient.wgsl`.

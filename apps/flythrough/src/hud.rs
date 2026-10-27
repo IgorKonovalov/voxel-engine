@@ -536,7 +536,8 @@ impl HudStats {
                 HudColour::White
             };
             out.write_str("gpu")?;
-            for (name, v) in &l.passes {
+            // FSR 2's passes are summed on the upscale row instead.
+            for (name, v) in l.passes.iter().filter(|(n, _)| !n.starts_with("fsr2 ")) {
                 write!(out, " {name} {v:.2}")?;
             }
             out.write_str(" ms")?;
@@ -547,16 +548,28 @@ impl HudStats {
                 format_args!("lights {} samples; {}", l.light_samples, l.modes),
             )?;
             if let Some([[iw, ih], [ow, oh]]) = l.upscale {
-                // Yellow when the composite, upscale and sharpen passes exceed the upscale line.
-                let post = ms("composite") + ms("upscale") + ms("sharpen");
+                // Yellow when the composite, upscale and sharpen passes and FSR 2's exceed the
+                // upscale line. FSR 2's passes, when they ran, read as one total.
+                let fsr: f32 = l
+                    .passes
+                    .iter()
+                    .filter(|(n, _)| n.starts_with("fsr2 "))
+                    .map(|&(_, v)| v)
+                    .sum();
+                let post = ms("composite") + ms("upscale") + ms("sharpen") + fsr;
+                let times = if fsr > 0.0 {
+                    format!("fsr2 {fsr:.2} ms")
+                } else {
+                    format!(
+                        "upscale {:.2} sharpen {:.2} ms",
+                        ms("upscale"),
+                        ms("sharpen")
+                    )
+                };
                 row(
                     out,
                     over(post, UPSCALE_LINE_MS),
-                    format_args!(
-                        "upscale {:.2} sharpen {:.2} ms, {iw}x{ih} to {ow}x{oh}",
-                        ms("upscale"),
-                        ms("sharpen")
-                    ),
+                    format_args!("{times}, {iw}x{ih} to {ow}x{oh}"),
                 )?;
             }
         }
@@ -1040,6 +1053,35 @@ mod tests {
             HudColour::Yellow,
             "0.2 + 1.3 + 0.12 over 1.5 ms"
         );
+    }
+
+    /// Under FSR 2 the upscale row reads its passes' total and the gpu row leaves them out;
+    /// the total counts towards the 1.5 ms line.
+    #[test]
+    fn the_upscale_row_sums_fsr2s_passes() {
+        let (mut out, mut colours) = (String::new(), Vec::new());
+        let mut s = HudStats::fixed();
+        s.lighting = Some(LightingRow {
+            passes: vec![
+                ("composite", 0.2),
+                ("upscale", 0.0),
+                ("sharpen", 0.0),
+                ("fsr2 input", 0.1),
+                ("fsr2 accumulate", 0.4),
+                ("fsr2 tone", 0.05),
+            ],
+            light_samples: 0,
+            modes: "lighting half".to_owned(),
+            upscale: Some([[1280, 720], [1920, 1080]]),
+        });
+        s.write_rows(&mut out, &mut colours);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[5], "fsr2 0.55 ms, 1280x720 to 1920x1080");
+        assert_eq!(colours[5], HudColour::White);
+        assert!(!out.contains("fsr2 input"), "{out}");
+        s.lighting.as_mut().unwrap().passes[4].1 = 1.4;
+        s.write_rows(&mut out, &mut colours);
+        assert_eq!(colours[5], HudColour::Yellow, "0.2 + 1.55 over 1.5 ms");
     }
 
     /// A pad row sits before the format row, and a run without a pad source shows none.

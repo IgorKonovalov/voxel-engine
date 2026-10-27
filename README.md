@@ -157,6 +157,7 @@ go through an in-process server, so every edit you see came back as a client eve
 | `F5` | Toggle what kills history: edit boxes (default), or edit boxes and A-SVGF's gradient |
 | `F6` | Toggle the lighting resolution: half (default) or full; applied on the next frame |
 | `F7` | Toggle the headlamp |
+| `F10` | Cycle the upscaler: off, own, fsr2; a banner names the mode and its scale for 3 s |
 | `M` | Pulse the ore's emission (a render-side scale) |
 | `Esc` | Quit |
 
@@ -204,7 +205,8 @@ shown, `F1`, the autopilot's flight).
 | `--lighting full\|half` | The lighting passes' resolution (default half) |
 | `--internal-scale 1\|1.5\|2` | The output size over the internal size on each edge; above 1 the upscaler fills the output (default 1: no upscaler). `--internal-scale 1.5 --jitter on` is the performance option: 720p for 1080p, about half the frame's GPU time |
 | `--jitter on\|off` | Each frame's sub-pixel ray jitter, which the upscaler accumulates (default off); on, the upscaler runs at any scale |
-| `--sharpen S` | The upscaler's RCAS sharpening, 0 to 1 (default 0.5, 0 off) |
+| `--upscaler off\|own\|fsr2` | The upscaler: none, ours (ADR-0024; it jitters unless `--jitter off`), or AMD's FSR 2.2.1 ported to WGSL (ADR-0034; it jitters by its own sequence). Without it, `--internal-scale` and `--jitter` choose between off and own as before. The overlay's upscale row shows FSR 2's passes as one total |
+| `--sharpen S` | The upscaler's RCAS sharpening (FSR 2's RCAS under `fsr2`), 0 to 1 (default 0.5, 0 off) |
 | `--emissive-history N` | Frames static emissive light accumulates over at least, 1 to 4096 (default 32); the headlamp's part keeps a short history |
 | `--filter on\|off` | The a-trous filter; off shows the light pass's raw irradiance (default on) |
 | `--light-radius N` | Chunks around the camera whose emitters light the frame (default 4) |
