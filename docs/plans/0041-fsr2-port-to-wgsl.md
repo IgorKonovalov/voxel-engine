@@ -575,8 +575,8 @@ and the owner weighs it in Phase 7.
 | 1: The walking skeleton: FSR 2's accumulate pass end to end on lavapipe | dev | done | 80aed60 |
 | 2: HDR in, tone after, the exposure seam and the masks | dev | done | 80085f8 |
 | 3: The remaining passes: luminance pyramid, previous depth, depth clip, lock | dev | done | d3b8ddb |
-| 4: RCAS, and the sharpness bars still and panning | dev | done | dab579b, dd272de, 66cd9d0, committed with this row |
-| 5: Lights, flicker and shadow motion | dev | not started | |
+| 4: RCAS, and the sharpness bars still and panning | dev | done | dab579b, dd272de, 66cd9d0, be59e30 |
+| 5: Lights, flicker and shadow motion | dev | done: bar 4 at scale 1 a reading | committed with this row |
 | 6: The readings on both adapters | dev | not started | |
 | 7: The owner's windowed comparison and the default | human | not started | |
 
@@ -785,6 +785,48 @@ start, 8.7 at the end, loaded; one run of the `fsr2` binary plus the golden, `--
 - Phases 1 to 3 bars in the same run: B ES 1.718 / GE 0.00435, FSR 1.5 1.479 / 0.00530; tone 0
   bytes on four poses; carve frame 1 mean 0.001/255, 0 over 8/255; the rest passed.
 
+**Phase 5** (lavapipe; exclusive perf lock; 1-min load 7.0 to 27.3, loaded; level spawn, still
+camera, 384 x 216 output; `live/p5-run1.log`, `live/p5-tune.log`, `live/p5-diag.log`,
+`live/p5-gate.log`).
+
+- The lamp and flicker rigs moved from `upscale.rs` into `support::rigs`, taking an
+  `UpscalerKind` (`Pipe::frame`, `Pipe::phases`: FSR's own cycle, 8 at scale 1 and 18 at 1.5,
+  ours 16); `upscale.rs` calls them with `UpscalerKind::Own`.
+- Tuning (`fsr2_reactive_tuning_readings`, ignored), light-change value / translucent weight,
+  lag U1 / U1.5 frames, trail U1 / U1.5: 1.0 / 1.0: 5.43 / 5.42, 0.605 / 2.228 %; 0.6 / 1.0: 5.58
+  / 6.02, 0.719 / 3.075 %; 0.3 / 1.0: 5.60 / 6.29, 0.728 / 3.549 %; 0.0 / 1.0: 5.84 / 6.76,
+  1.053 / 4.318 %; 1.0 / 0.6: as 1.0 / 1.0. Every tuning: lamp step 18 frames, flicker
+  0.1819/255 and 0.4113 %, wobble U1 1.353 and U1.5 1.403/255 (the same to the third
+  decimal). Kept: the defaults, 1.0 and 1.0; the level has no translucent voxel in view.
+- Bar 1 (sweep 0.013 rad a frame, ideal centroid 1.811 px a frame): lag reference 5.38, FSR U1
+  5.43, U1.5 5.42 frames. Bar 2: lamp step reference 18, FSR U1 18, U1.5 18 frames.
+- Bar 3 (dark cave, 320 x 180, scale 1.5): FSR 2 always jitters, so the jitter-off reading is
+  our upscaler's with the jitter off: 0.1016/255, 0.0029 %; FSR 2 0.1819/255, 0.4113 % (ours
+  jittered 0.2752/255, 0.6377 %).
+- Bar 4, wobble over each pipeline's own jitter cycle (ours 16 frames, FSR 8 / 18), mean luma
+  range: reference 0.099/255; U1 ours 0.858, FSR 1.353; U1.5 ours 1.711, FSR 1.403. Face look,
+  the 3 306 of 82 944 pixels within 2 px of a lamp-shadow boundary (the test's definition: in
+  the settled reference, 4-neighbours on one surface, same entry axis and `t` within 5 %,
+  whose lamp contribution differs by more than 16/255): reference 0.102; U1 ours 4.190, FSR
+  4.996; U1.5 ours 8.126, FSR 4.829. The split: FSR's colour input (the composite, before the
+  upscaler, toned on the CPU) wobbles 22.663 (U1) and 33.820/255 (U1.5) at those pixels.
+- Bar 4 missed at scale 1 (whole image and boundary). Passes the rig exercises compared
+  against v2.2.1 (input jitter, depth clip, lock, accumulate's `ComputeBaseAccumulationWeight`,
+  `ComputeLumaInstabilityFactor`, `RectifyHistory`, `ComputeTemporalReactiveFactor`): no
+  difference found. Per-pass reading at the boundary pixels (`fsr2_wobble_per_pass_readings`),
+  frame by frame over the cycle: U1 history share 0.710 to 0.813, locks 8.44 %, temporal
+  reactive 0, dilated reactive 0, accumulation mask 0, depth clip 0; U1.5 history share 0.902
+  to 0.923, locks 16.4 to 16.6 %, the rest 0. Our upscaler's still alpha is 0.1 (history 0.9).
+  Scale 1 is a `reading:` line in `fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera`;
+  Phase 7 lists the rig.
+- Readings: trail U1 0.605 %, U1.5 2.228 % (Plan 0030: 1.121, 2.605); emission step (ore 1.0
+  to 0.25) settles in none of 64 frames on any pipeline, first and last difference reference
+  0.306 / 0.237, FSR U1 0.328 / 0.134, U1.5 0.275 / 0.223.
+- Bar 5, the same run as the gate: the `fsr2` binary and the golden, 20 passed (the Phase 4
+  readings unchanged to the third decimal).
+- `fsr2.rs` also carries Phase 6's `frame_bytes_under_fsr2_swap_the_histories_for_fsr2s_inventory`
+  (written while the GPU lock was held by the owner's session, passed in the same run).
+
 ### Notes
 
 - Names: the plan's names match the merged tree (`jitter_at`, `reproject_centred`,
@@ -819,6 +861,9 @@ start, 8.7 at the end, loaded; one run of the `fsr2` binary plus the golden, `--
   uniform (`UpscaleUniform`, `Upscaler::change_frames` 24 by default).
 - Phase 4's split also touched `apps/flythrough/tests/support/rigs.rs` (the pan-speed
   variants) and `.config/nextest.toml` (the renamed slow test), outside its list.
+- Phase 5 touched `apps/flythrough/tests/upscale.rs`, `support/rigs.rs`, `golden.rs` (the CPU
+  tone moved to `rigs::tone_bytes`) and `.config/nextest.toml` (two slow tests), outside its
+  list; `fsr2/input.wgsl` and `fsr2.rs` were not changed by it.
 
 ### Close triggers
 

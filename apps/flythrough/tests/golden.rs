@@ -1486,22 +1486,6 @@ fn fsr2_cavity(sharpness: &[f32]) -> Option<Vec<Fsr2Shot>> {
     Some(out)
 }
 
-/// `tone.wgsl`'s arithmetic on the CPU (the shaded view): exposure, ACES unless the identity
-/// tone map, the 2.2 encode, rounded to a byte.
-fn fsr2_tone(c: [f32; 4], lighting: &vxe_render::Lighting) -> [u8; 3] {
-    let identity = lighting.tone_map == vxe_render::ToneMap::Identity;
-    [0, 1, 2].map(|k| {
-        let x = c[k] * lighting.exposure;
-        let m = if identity {
-            x.clamp(0.0, 1.0)
-        } else {
-            let x = x.max(0.0);
-            ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0)
-        };
-        (m.powf(1.0 / 2.2) * 255.0).round() as u8
-    })
-}
-
 /// `fsr2.png`: FSR 2's golden at the fly-through's default sharpening (0.5) matches. At
 /// sharpening 0 RCAS is not dispatched and the image is the accumulate pass's output put
 /// through the tone arithmetic, texel for texel; RCAS leaves that output alone (the same at 0
@@ -1542,7 +1526,7 @@ fn fsr2_golden_matches_and_rcas_is_bypassed_at_zero() {
         .accumulated
         .iter()
         .zip(plain.chunks(4))
-        .filter(|(c, p)| fsr2_tone(**c, &zero.lighting) != [p[0], p[1], p[2]])
+        .filter(|(c, p)| support::rigs::tone_bytes(**c, &zero.lighting) != [p[0], p[1], p[2]])
         .count();
     println!(
         "sharpening 0: {toned} of {} pixels differ from the toned accumulate output",

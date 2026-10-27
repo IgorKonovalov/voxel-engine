@@ -5,7 +5,7 @@ mod support;
 
 use support::rigs::*;
 use support::*;
-use vxe_render::{Frame, GpuWorld, LightParams, UpscalerKind, View, readback, wgpu};
+use vxe_render::{Frame, GpuWorld, LightParams, LookParams, UpscalerKind, View, readback, wgpu};
 
 /// FSR 2 on the stripe wall at arm's length, a still camera at scale 1.5 for 32 frames,
 /// recovers sub-pixel detail a blit cannot: its gradient energy is above the bilinear blit's
@@ -1073,4 +1073,392 @@ fn fsr2_pan_per_pass_readings() {
             println!("  {l}");
         }
     }
+}
+
+// ---- Lights, flicker and shadow motion ----
+
+/// FSR 2 with the reactive mask's light-change value `light` and translucent weight
+/// `translucent`, sharpening 0.
+fn fsr2_reactive(light: f32, translucent: f32) -> UpscalerKind {
+    UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+        reactive_light: light,
+        reactive_translucent: translucent,
+        ..Default::default()
+    })
+}
+
+/// A sweeping headlamp and a lamp switched off reach FSR 2's image about as fast as Plan
+/// 0024's frame: on the level at the spawn pose with a still camera, at scale 1 and 1.5 (384 x
+/// 216 output), the lamp's centroid lags the ideal by at most 2 frames more than Plan 0024's
+/// frame does over the sweep's last 16 frames, and the lamp step settles within 10 % of its
+/// first difference in at most 2 frames more than that frame takes. The trail, the emission
+/// step and the whole-image wobble are readings.
+#[test]
+fn fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step() {
+    let Some(failures) = lamp_readings(fsr2_kind(), "fsr2", true) else {
+        return;
+    };
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+/// FSR 2's jitter adds little flicker: on the dark cave's still rig at scale 1.5 (320 x 180
+/// output), FSR 2's frames' mean step is at most 0.40/255 above our upscaler's with the jitter
+/// off, and its share of values over 4/255 at most 1.15 percentage points above it (FSR 2
+/// always jitters; the jitter-off image is the stillest one Plan 0030 compared against).
+#[test]
+fn fsr2_adds_little_flicker_on_a_still_vein() {
+    let own = UpscalerKind::Own(vxe_render::marcher::Upscaler::default());
+    let Some((off_mean, off_over)) = still_vein_flicker(false, own) else {
+        return;
+    };
+    let (on_mean, on_over) = still_vein_flicker(true, fsr2_kind()).unwrap();
+    let (own_mean, own_over) = still_vein_flicker(true, own).unwrap();
+    println!(
+        "still vein at scale 1.5: jitter off (ours) mean {off_mean:.4}/255, {:.4} % over 4/255; FSR 2 mean {on_mean:.4}/255, {:.4} %; ours jittered {own_mean:.4}/255, {:.4} %",
+        off_over * 100.0,
+        on_over * 100.0,
+        own_over * 100.0
+    );
+    assert!(
+        on_mean <= off_mean + 0.40,
+        "mean {on_mean:.4} against {off_mean:.4}"
+    );
+    assert!(
+        on_over * 100.0 <= off_over * 100.0 + 1.15,
+        "{:.4} % against {:.4} %",
+        on_over * 100.0,
+        off_over * 100.0
+    );
+}
+
+/// The output pixels within 2 pixels (Chebyshev) of a lamp-shadow boundary on the level at
+/// its spawn: in Plan 0024's frame (scale 1, jitter off, the face look) settled 48 frames with
+/// the lamp on and off, a pair of 4-neighbours on one surface (both hit, the same entry face
+/// axis, `t` within 5 %) whose lamp contribution (lit less off, luminance) differs by more
+/// than 16/255.
+fn shadow_boundary(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &GpuWorld,
+    camera: &vxe_render::Camera,
+) -> Vec<bool> {
+    let light = LightParams::headlamp();
+    let settled = |lamp: bool| {
+        let mut f = Pipe::Reference.frame(device, UpscalerKind::Off, lamp);
+        for _ in 0..48 {
+            f.step(device, queue, gpu, camera, &light);
+        }
+        f
+    };
+    let lit_frame = settled(true);
+    let lit = lumas(&readback::read_rgba8(device, queue, lit_frame.target()));
+    let pos = readback::read_rgba32f(device, queue, lit_frame.hit_positions());
+    let rec = readback::read_rgba16u(device, queue, lit_frame.hit_records());
+    let off = lumas(&readback::read_rgba8(
+        device,
+        queue,
+        settled(false).target(),
+    ));
+    let [w, h] = OUTPUT.map(|n| n as usize);
+    let c: Vec<f64> = lit
+        .iter()
+        .zip(&off)
+        .map(|(a, b)| (a - b).max(0.0))
+        .collect();
+    let surface = |a: usize, b: usize| {
+        let hit = |i: usize| rec[i][3] & 1 == 1;
+        let axis = |i: usize| (rec[i][3] >> 3) & 7;
+        let (ta, tb) = (pos[a][3], pos[b][3]);
+        hit(a) && hit(b) && axis(a) == axis(b) && (ta - tb).abs() <= 0.05 * ta.min(tb)
+    };
+    let mut mask = vec![false; w * h];
+    let mut mark = |x: usize, y: usize| {
+        for yy in y.saturating_sub(2)..(y + 3).min(h) {
+            for xx in x.saturating_sub(2)..(x + 3).min(w) {
+                mask[yy * w + xx] = true;
+            }
+        }
+    };
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            for (j, ok) in [(i + 1, x + 1 < w), (i + w, y + 1 < h)] {
+                if ok && surface(i, j) && (c[i] - c[j]).abs() > 16.0 {
+                    mark(x, y);
+                    mark(j % w, j / w);
+                }
+            }
+        }
+    }
+    mask
+}
+
+/// One pipeline's wobble on the level's spawn, lamp on, still, after 32 frames: the mean
+/// over pixels of each output pixel's luminance range over one jitter cycle, over the whole
+/// image and over `boundary`; under FSR 2 also the composite's input (FSR's colour input, the
+/// jittered lighting before the upscaler, put through the tone arithmetic) over the internal
+/// pixels nearest the boundary pixels' centres.
+fn wobble(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &GpuWorld,
+    camera: &vxe_render::Camera,
+    pipe: Pipe,
+    kind: UpscalerKind,
+    boundary: &[bool],
+) -> (f64, f64, Option<f64>) {
+    let light = LightParams::headlamp();
+    let mut f = pipe.frame(device, kind, true);
+    f.set_look(LookParams {
+        normal_mode: vxe_render::NormalMode::Face,
+        ..f.look()
+    });
+    for _ in 0..SETTLE {
+        f.step(device, queue, gpu, camera, &light);
+    }
+    let n = boundary.len();
+    let internal = f.internal_size();
+    let ni = (internal[0] * internal[1]) as usize;
+    let (mut lo, mut hi) = (vec![f64::MAX; n], vec![f64::MIN; n]);
+    let (mut ilo, mut ihi) = (vec![f64::MAX; ni], vec![f64::MIN; ni]);
+    let fsr = kind.is_fsr2() && pipe != Pipe::Reference;
+    for _ in 0..pipe.phases(kind) {
+        f.step(device, queue, gpu, camera, &light);
+        for (i, v) in lumas(&readback::read_rgba8(device, queue, f.target()))
+            .into_iter()
+            .enumerate()
+        {
+            lo[i] = lo[i].min(v);
+            hi[i] = hi[i].max(v);
+        }
+        if fsr {
+            let lighting = f.lighting();
+            let colour = read_f32_texels(device, queue, f.fsr2().unwrap().colour_in());
+            for (i, c) in colour.chunks(4).enumerate() {
+                let [r, g, b] = tone_bytes([c[0], c[1], c[2], c[3]], &lighting).map(f64::from);
+                let v = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                ilo[i] = ilo[i].min(v);
+                ihi[i] = ihi[i].max(v);
+            }
+        }
+    }
+    let range = |i: usize| hi[i] - lo[i];
+    let all = (0..n).map(range).sum::<f64>() / n as f64;
+    let at: Vec<usize> = (0..n).filter(|&i| boundary[i]).collect();
+    let edge = at.iter().map(|&i| range(i)).sum::<f64>() / at.len().max(1) as f64;
+    let input = fsr.then(|| {
+        let [w, _] = OUTPUT.map(|n| n as usize);
+        let [iw, ih] = internal.map(|n| n as usize);
+        at.iter()
+            .map(|&i| {
+                let (x, y) = (i % w, i / w);
+                let ix = ((x as f64 + 0.5) * iw as f64 / OUTPUT[0] as f64) as usize;
+                let iy = ((y as f64 + 0.5) * ih as f64 / OUTPUT[1] as f64) as usize;
+                let k = iy.min(ih - 1) * iw + ix.min(iw - 1);
+                ihi[k] - ilo[k]
+            })
+            .sum::<f64>()
+            / at.len().max(1) as f64
+    });
+    (all, edge, input)
+}
+
+/// Shadow wobble no worse than ours at scale 1.5: on the level's spawn, lamp on, a still
+/// camera in the face look, over one jitter cycle (each pipeline's own), FSR 2's mean
+/// per-pixel luminance range at scale 1.5 is at most our upscaler's, over the whole image and
+/// over the pixels within 2 output pixels of a lamp-shadow boundary. Scale 1 against ours is a
+/// `reading:` line (the same bar, missed with no port defect found); Plan 0024's frame and the
+/// composite's input under FSR 2 (the jittered lighting before the upscaler) are readings.
+#[test]
+fn fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera() {
+    let (world, camera) = level();
+    let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
+        return;
+    };
+    let boundary = shadow_boundary(&device, &queue, &gpu, &camera);
+    println!(
+        "lamp-shadow boundary: {} of {} output pixels",
+        boundary.iter().filter(|&&b| b).count(),
+        boundary.len()
+    );
+    let own = UpscalerKind::Own(vxe_render::marcher::Upscaler::default());
+    let (ra, re, _) = wobble(
+        &device,
+        &queue,
+        &gpu,
+        &camera,
+        Pipe::Reference,
+        own,
+        &boundary,
+    );
+    println!("reference: wobble {ra:.3}/255, at the boundary {re:.3}/255");
+    let mut failures = Vec::new();
+    for pipe in [Pipe::U1, Pipe::U15] {
+        let (oa, oe, _) = wobble(&device, &queue, &gpu, &camera, pipe, own, &boundary);
+        let (fa, fe, fi) = wobble(&device, &queue, &gpu, &camera, pipe, fsr2_kind(), &boundary);
+        println!(
+            "{pipe:?}: ours wobble {oa:.3}/255 over {} frames, at the boundary {oe:.3}/255; FSR 2 {fa:.3}/255 over {} frames, at the boundary {fe:.3}/255, its input there {:.3}/255",
+            pipe.phases(own),
+            pipe.phases(fsr2_kind()),
+            fi.unwrap_or(f64::NAN)
+        );
+        if pipe == Pipe::U1 {
+            reading(
+                "level, still, FSR 1 wobble",
+                &format!("{fa:.3}/255"),
+                &format!("at most ours {oa:.3}/255"),
+            );
+            reading(
+                "level, still, FSR 1 wobble at the lamp-shadow boundary",
+                &format!("{fe:.3}/255"),
+                &format!("at most ours {oe:.3}/255"),
+            );
+            continue;
+        }
+        if !at_most(fa, oa) {
+            failures.push(format!("{pipe:?}: wobble {fa:.3} over ours {oa:.3}"));
+        }
+        if !at_most(fe, oe) {
+            failures.push(format!(
+                "{pipe:?}: boundary wobble {fe:.3} over ours {oe:.3}"
+            ));
+        }
+    }
+    for f in &failures {
+        println!("over a bar: {f}");
+    }
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+/// A reading, no bar: the lamp, flicker and wobble rigs under FSR 2 for each reactive-mask
+/// tuning tried (the light-change value, the translucent weight). Run with `--ignored`.
+#[test]
+#[ignore = "a diagnostic reading of the reactive mask's tuning; run by hand with --ignored"]
+fn fsr2_reactive_tuning_readings() {
+    let (world, camera) = level();
+    let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
+        return;
+    };
+    let boundary = shadow_boundary(&device, &queue, &gpu, &camera);
+    for (light, translucent) in [(1.0, 1.0), (0.6, 1.0), (0.3, 1.0), (0.0, 1.0), (1.0, 0.6)] {
+        let kind = fsr2_reactive(light, translucent);
+        let label = format!("light {light}, translucent {translucent}");
+        lamp_readings(kind, &label, false);
+        let (m, o) = still_vein_flicker(true, kind).unwrap();
+        println!(
+            "[{label}] flicker at 1.5: {m:.4}/255, {:.4} % over 4/255",
+            o * 100.0
+        );
+        for pipe in [Pipe::U1, Pipe::U15] {
+            let (a, e, i) = wobble(&device, &queue, &gpu, &camera, pipe, kind, &boundary);
+            println!(
+                "[{label}] {pipe:?}: wobble {a:.3}/255, at the boundary {e:.3}/255, its input there {:.3}/255",
+                i.unwrap_or(f64::NAN)
+            );
+        }
+    }
+}
+
+/// Per-pass readings of FSR 2 on the wobble rig (readings, no bar): the level's spawn, lamp
+/// on, still, face look, at scale 1 and 1.5; over one jitter cycle after 32 frames, at the
+/// lamp-shadow boundary's output pixels, frame by frame: the history's share of the blend,
+/// the share holding a lock, the temporal reactivity (the upscaled colour's alpha), and at the
+/// internal pixels nearest them the dilated reactive and accumulation masks and the depth clip.
+#[test]
+fn fsr2_wobble_per_pass_readings() {
+    let (world, camera) = level();
+    let Some((device, queue, gpu)) = level_rig(&world, &camera) else {
+        return;
+    };
+    let boundary = shadow_boundary(&device, &queue, &gpu, &camera);
+    let at: Vec<usize> = (0..boundary.len()).filter(|&i| boundary[i]).collect();
+    let light = LightParams::headlamp();
+    for pipe in [Pipe::U1, Pipe::U15] {
+        let kind = fsr2_kind();
+        let mut f = pipe.frame(&device, kind, true);
+        f.fsr2_mut().expect("FSR mode").set_debug(&device, true);
+        for _ in 0..SETTLE {
+            f.step(&device, &queue, &gpu, &camera, &light);
+        }
+        let internal = f.internal_size().map(|n| n as usize);
+        let [w, _] = OUTPUT.map(|n| n as usize);
+        let inner: Vec<usize> = at
+            .iter()
+            .map(|&i| {
+                let (x, y) = (i % w, i / w);
+                let ix = (x as f64 + 0.5) * internal[0] as f64 / OUTPUT[0] as f64;
+                let iy = (y as f64 + 0.5) * internal[1] as f64 / OUTPUT[1] as f64;
+                (iy as usize).min(internal[1] - 1) * internal[0]
+                    + (ix as usize).min(internal[0] - 1)
+            })
+            .collect();
+        println!("{pipe:?}, {} boundary pixels:", at.len());
+        let n = at.len() as f64;
+        for k in 0..pipe.phases(kind) {
+            f.step(&device, &queue, &gpu, &camera, &light);
+            let fsr = f.fsr2().unwrap();
+            let cur = f.current_copy();
+            let weight = read_f32_texels(&device, &queue, fsr.history_weight());
+            let lock = read_f32_texels(&device, &queue, fsr.lock_status(cur));
+            let up = readback::read_rgba16f(&device, &queue, fsr.upscaled(cur));
+            let masks = readback::read_rgba8(&device, &queue, fsr.dilated_reactive());
+            let prepared = readback::read_rgba16f(&device, &queue, fsr.prepared());
+            let hist = at.iter().map(|&i| f64::from(weight[i])).sum::<f64>() / n;
+            let locked = at.iter().filter(|&&i| lock[2 * i] > 0.0).count() as f64 / n;
+            let tr = at.iter().map(|&i| f64::from(up[i][3].abs())).sum::<f64>() / n;
+            let reactive = inner.iter().map(|&i| f64::from(masks[4 * i])).sum::<f64>() / n / 255.0;
+            let accum = inner
+                .iter()
+                .map(|&i| f64::from(masks[4 * i + 1]))
+                .sum::<f64>()
+                / n
+                / 255.0;
+            let clip = inner
+                .iter()
+                .map(|&i| f64::from(prepared[i][3]))
+                .sum::<f64>()
+                / n;
+            println!(
+                "  frame {k:2}: history share {hist:.4}; locked {:.2} %; temporal reactive {tr:.4}; dilated reactive {reactive:.4}, accumulation mask {accum:.4}; clip {clip:.4}",
+                locked * 100.0
+            );
+        }
+    }
+}
+
+// ---- The readings on both adapters ----
+
+/// `frame_bytes` in FSR mode at scale 1.5 and 1080p output is our upscaler's frame at those
+/// sizes, less its two output-size rgba16float histories (not allocated in FSR mode), plus
+/// FSR 2's inventory, resource by resource, and no more: at render size (1280 x 720) the
+/// rgba32float colour input, the r32float depth, the rg32float motion, the rgba8unorm masks,
+/// the reconstructed-depth `u32` buffer, the r32float dilated depth, two rg32float dilated
+/// motions, the r32float lock luma, the rgba16float prepared colour and the rgba8unorm dilated
+/// masks; at output size two rgba16float upscaled colours (RCAS writes the older one), two
+/// rg32float lock statuses, two rgba8unorm luma histories and the new-locks `f32` buffer; the
+/// luminance pyramid's r32float mips 4 (40 x 22) and 5 (20 x 11); two rg32float 1 x 1
+/// auto-exposure texels, the rg32float exposure texel and the 1 x 1 r32float history weight.
+#[test]
+fn frame_bytes_under_fsr2_swap_the_histories_for_fsr2s_inventory() {
+    let Some((device, _queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let output = [1920u32, 1080];
+    let internal = vxe_render::RenderScale::OneHalf.internal(output);
+    assert_eq!(internal, [1280, 720]);
+    let ours = Frame::with_sizes(&device, internal, output).frame_bytes();
+    let mut f = Frame::with_sizes(&device, internal, output);
+    f.set_upscaler_kind(&device, fsr2_kind());
+    let fsr = f.frame_bytes();
+    let px = |[w, h]: [u32; 2]| u64::from(w) * u64::from(h);
+    let (r, d) = (px(internal), px(output));
+    let histories = 2 * 8 * d;
+    let render = (16 + 4 + 8 + 4 + 4 + 4 + 2 * 8 + 4 + 8 + 4) * r;
+    let display = (2 * 8 + 2 * 8 + 2 * 4 + 4) * d;
+    let tiny = 4 * px([40, 22]) + 4 * px([20, 11]) + 2 * 8 + 8 + 4;
+    let inventory = render + display + tiny;
+    println!(
+        "frame_bytes at 1080p output, scale 1.5: ours {ours} B, FSR 2 {fsr} B; histories {histories} B; FSR 2's inventory {inventory} B (render size {render}, output size {display}, the rest {tiny})"
+    );
+    assert_eq!(fsr, ours - histories + inventory);
 }

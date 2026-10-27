@@ -659,3 +659,401 @@ pub fn translucent_world() -> World {
 pub fn translucent_camera() -> vxe_render::Camera {
     camera_looking_x([8.5, 64.5, 64.5])
 }
+
+/// `tone.wgsl`'s arithmetic on the CPU (the shaded view): exposure, ACES unless the identity
+/// tone map, the 2.2 encode, rounded to a byte.
+pub fn tone_bytes(c: [f32; 4], lighting: &vxe_render::Lighting) -> [u8; 3] {
+    let identity = lighting.tone_map == vxe_render::ToneMap::Identity;
+    [0, 1, 2].map(|k| {
+        let x = c[k] * lighting.exposure;
+        let m = if identity {
+            x.clamp(0.0, 1.0)
+        } else {
+            let x = x.max(0.0);
+            ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0)
+        };
+        (m.powf(1.0 / 2.2) * 255.0).round() as u8
+    })
+}
+
+/// Puts `frame` under `kind`: ADR-0024's upscaler with its tuning (the jitter as the frame
+/// has it), FSR 2, or none.
+pub fn set_kind(device: &wgpu::Device, frame: &mut Frame, kind: UpscalerKind) {
+    match kind {
+        UpscalerKind::Own(u) => frame.set_upscaler(u),
+        k => frame.set_upscaler_kind(device, k),
+    }
+}
+
+// ---- Light changes under a still camera: the headlamp's sweep and step, and flicker ----
+
+/// The pipelines the lamp bars compare: Plan 0024's frame (scale 1, jitter off) and the
+/// upscaler at scale 1 and 1.5, jittered, all at a 384 x 216 output.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Pipe {
+    Reference,
+    U1,
+    U15,
+}
+
+impl Pipe {
+    /// The frames of one jitter cycle of the pipeline under `kind`: FSR 2's own count at the
+    /// pipeline's sizes, else [`vxe_render::marcher::JITTER_PHASES`].
+    pub fn phases(self, kind: UpscalerKind) -> u32 {
+        match (self, kind) {
+            (Pipe::U1, UpscalerKind::Fsr2(_)) => {
+                vxe_render::fsr2::jitter_phases(OUTPUT[0], OUTPUT[0])
+            }
+            (Pipe::U15, UpscalerKind::Fsr2(_)) => {
+                vxe_render::fsr2::jitter_phases(INTERNAL[0], OUTPUT[0])
+            }
+            _ => vxe_render::marcher::JITTER_PHASES,
+        }
+    }
+
+    /// The pipeline's frame under `kind` (Plan 0024's frame runs none), the lamp on or off.
+    pub fn frame(self, device: &wgpu::Device, kind: UpscalerKind, lamp: bool) -> Frame {
+        let mut f = match self {
+            Pipe::Reference => frame_of(device, OUTPUT, OUTPUT, false),
+            Pipe::U1 => frame_of(device, OUTPUT, OUTPUT, true),
+            Pipe::U15 => frame_of(device, INTERNAL, OUTPUT, true),
+        };
+        if self != Pipe::Reference {
+            set_kind(device, &mut f, kind);
+        }
+        f.set_lighting(vxe_render::Lighting {
+            lamp,
+            ..vxe_render::Lighting::default()
+        });
+        f
+    }
+}
+
+/// The lamp's turn a frame during the sweep, in radians: about 2 output pixels a frame near
+/// the image's centre (384 / 2 / tan(35 degrees) / (16 / 9) = 154 pixels a radian).
+pub const SWEEP_RATE: f32 = 0.013;
+
+/// Per-pixel luminance of an `OUTPUT` image.
+pub fn lumas(img: &[u8]) -> Vec<f64> {
+    let [w, h] = OUTPUT.map(|n| n as usize);
+    (0..w * h).map(|i| luma(img, i % w, i / w)).collect()
+}
+
+/// The luminance-weighted mean column of `max(0, lit - off)`, and that contribution.
+pub fn lamp_centroid(lit: &[f64], off: &[f64]) -> (f64, Vec<f64>) {
+    let w = OUTPUT[0] as usize;
+    let c: Vec<f64> = lit.iter().zip(off).map(|(a, b)| (a - b).max(0.0)).collect();
+    let (mut s, mut sx) = (0.0, 0.0);
+    for (i, v) in c.iter().enumerate() {
+        s += v;
+        sx += v * ((i % w) as f64 + 0.5);
+    }
+    (sx / s.max(1e-9), c)
+}
+
+/// The mean absolute luminance difference of two images, in 1/255.
+pub fn luma_mad(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b).map(|(x, y)| (x - y).abs()).sum::<f64>() / a.len() as f64
+}
+
+/// The frames, from the first after a change, until `series` (each frame's mean absolute
+/// difference from the settled image) falls below 10 % of its first value; `None` if it
+/// does not within the series.
+pub fn settle_frames(series: &[f64]) -> Option<usize> {
+    series
+        .iter()
+        .position(|&d| d < 0.1 * series[0])
+        .map(|i| i + 1)
+}
+
+/// One pipeline's lamp readings.
+#[derive(Debug, Default)]
+pub struct LampReading {
+    /// The sweep's centroid over its last 16 frames, one per frame.
+    pub centroids: Vec<f64>,
+    /// The lamp's contribution over the sweep's last 16 frames.
+    pub contributions: Vec<Vec<f64>>,
+    /// Frames for the lamp switched off to settle within 10 %.
+    pub step: Option<usize>,
+    /// Frames for an emission step (ore 1.0 to 0.25, lamp off) to settle within 10 %.
+    pub emission: Option<usize>,
+    /// The emission step's first and last difference from its settled image, in 1/255.
+    pub emission_series: (f64, f64),
+    /// The mean over pixels of a still lamp-lit image's luminance range over one jitter cycle.
+    pub wobble: f64,
+}
+
+/// On the level at the spawn pose, a still camera: `pipe`'s lamp sweep (32 frames settled,
+/// then the lamp's turn raised by [`SWEEP_RATE`] a frame for 32 frames, its contribution
+/// against a settled lamp-off image of the same pipeline) and lamp step (32 frames settled,
+/// then the lamp off for 40 frames); with `full` the emission step and the wobble too.
+pub fn lamp_reading(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &GpuWorld,
+    camera: &vxe_render::Camera,
+    pipe: Pipe,
+    kind: UpscalerKind,
+    full: bool,
+) -> LampReading {
+    let light = LightParams::headlamp();
+    let settled = |lamp: bool, frames: u32| {
+        let mut f = pipe.frame(device, kind, lamp);
+        for _ in 0..frames {
+            f.step(device, queue, gpu, camera, &light);
+        }
+        f
+    };
+    let off = lumas(&readback::read_rgba8(
+        device,
+        queue,
+        settled(false, 48).target(),
+    ));
+    let mut r = LampReading::default();
+    let mut f = settled(true, SETTLE);
+    let mut swept = light;
+    for i in 0..32 {
+        swept.turn += SWEEP_RATE;
+        f.step(device, queue, gpu, camera, &swept);
+        if i >= 16 {
+            let lit = lumas(&readback::read_rgba8(device, queue, f.target()));
+            let (c, contribution) = lamp_centroid(&lit, &off);
+            r.centroids.push(c);
+            r.contributions.push(contribution);
+        }
+    }
+    let mut f = settled(true, SETTLE);
+    f.set_lighting(vxe_render::Lighting {
+        lamp: false,
+        ..f.lighting()
+    });
+    let series: Vec<f64> = (0..40)
+        .map(|_| {
+            f.step(device, queue, gpu, camera, &light);
+            luma_mad(
+                &lumas(&readback::read_rgba8(device, queue, f.target())),
+                &off,
+            )
+        })
+        .collect();
+    r.step = settle_frames(&series);
+    if !full {
+        return r;
+    }
+    let ore = flythrough::cave::ORE;
+    let mut dim = settled(false, 0);
+    dim.set_emission_scale(queue, ore, 0.25);
+    for _ in 0..64 {
+        dim.step(device, queue, gpu, camera, &light);
+    }
+    let target = lumas(&readback::read_rgba8(device, queue, dim.target()));
+    let mut f = settled(false, 64);
+    f.set_emission_scale(queue, ore, 0.25);
+    let series: Vec<f64> = (0..64)
+        .map(|_| {
+            f.step(device, queue, gpu, camera, &light);
+            luma_mad(
+                &lumas(&readback::read_rgba8(device, queue, f.target())),
+                &target,
+            )
+        })
+        .collect();
+    r.emission = settle_frames(&series);
+    r.emission_series = (series[0], series[series.len() - 1]);
+    let mut f = settled(true, SETTLE);
+    let n = (OUTPUT[0] * OUTPUT[1]) as usize;
+    let (mut lo, mut hi) = (vec![f64::MAX; n], vec![f64::MIN; n]);
+    for _ in 0..pipe.phases(kind) {
+        f.step(device, queue, gpu, camera, &light);
+        for (i, v) in lumas(&readback::read_rgba8(device, queue, f.target()))
+            .into_iter()
+            .enumerate()
+        {
+            lo[i] = lo[i].min(v);
+            hi[i] = hi[i].max(v);
+        }
+    }
+    r.wobble = hi.iter().zip(&lo).map(|(a, b)| a - b).sum::<f64>() / n as f64;
+    r
+}
+
+/// The sweep's ideal centroids: for each of the sweep's last 16 frames, a single frame of
+/// Plan 0024's pipeline with no history, lamp on at that turn, against one with the lamp off.
+pub fn ideal_centroids(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gpu: &GpuWorld,
+    camera: &vxe_render::Camera,
+) -> Vec<f64> {
+    let light = LightParams::headlamp();
+    let off_frame = Pipe::Reference.frame(device, UpscalerKind::Off, false);
+    off_frame.render(device, queue, gpu, camera, &light);
+    let off = lumas(&readback::read_rgba8(device, queue, off_frame.target()));
+    let on = Pipe::Reference.frame(device, UpscalerKind::Off, true);
+    (16..32)
+        .map(|i| {
+            let swept = LightParams {
+                turn: SWEEP_RATE * (i + 1) as f32,
+                ..light
+            };
+            on.render(device, queue, gpu, camera, &swept);
+            lamp_centroid(
+                &lumas(&readback::read_rgba8(device, queue, on.target())),
+                &off,
+            )
+            .0
+        })
+        .collect()
+}
+
+/// The least-squares slope of `ys` against their index.
+pub fn slope(ys: &[f64]) -> f64 {
+    let n = ys.len() as f64;
+    let mx = (n - 1.0) / 2.0;
+    let my = ys.iter().sum::<f64>() / n;
+    let (mut sxy, mut sxx) = (0.0, 0.0);
+    for (i, y) in ys.iter().enumerate() {
+        let dx = i as f64 - mx;
+        sxy += dx * (y - my);
+        sxx += dx * dx;
+    }
+    sxy / sxx
+}
+
+/// Every pipeline's lamp readings under `kind`, printed, with Phase 7's bars checked; the
+/// return value lists the failures.
+pub fn lamp_readings(kind: UpscalerKind, label: &str, full: bool) -> Option<Vec<String>> {
+    let (world, camera) = level();
+    let (device, queue, gpu) = level_rig(&world, &camera)?;
+    let ideal = ideal_centroids(&device, &queue, &gpu, &camera);
+    let speed = slope(&ideal);
+    let lag = |r: &LampReading| {
+        ideal
+            .iter()
+            .zip(&r.centroids)
+            .map(|(a, b)| (a - b) / speed)
+            .sum::<f64>()
+            / ideal.len() as f64
+    };
+    println!(
+        "[{label}] lamp sweep: {SWEEP_RATE} rad a frame, the ideal centroid moves {speed:.3} px a frame"
+    );
+    let reference = lamp_reading(&device, &queue, &gpu, &camera, Pipe::Reference, kind, full);
+    let ref_lag = lag(&reference);
+    println!(
+        "[{label}] reference: lag {ref_lag:.2} frames, lamp step settles in {:?} frames, emission step {:?} ({:.3?}), wobble {:.3}/255",
+        reference.step, reference.emission, reference.emission_series, reference.wobble
+    );
+    let mut failures = Vec::new();
+    for pipe in [Pipe::U1, Pipe::U15] {
+        let r = lamp_reading(&device, &queue, &gpu, &camera, pipe, kind, full);
+        let l = lag(&r);
+        // The trail: pixels the reference leaves under 4/255 that the upscaler lights over it.
+        let (mut trail, mut dark) = (0usize, 0usize);
+        for (c, rc) in r.contributions.iter().zip(&reference.contributions) {
+            for (v, rv) in c.iter().zip(rc) {
+                if *rv < 4.0 {
+                    dark += 1;
+                    trail += usize::from(*v > 4.0);
+                }
+            }
+        }
+        println!(
+            "[{label}] {pipe:?}: lag {l:.2} frames, lamp step settles in {:?} frames, emission step {:?} ({:.3?}), wobble {:.3}/255, trail {:.3} % of the reference's dark pixels",
+            r.step,
+            r.emission,
+            r.emission_series,
+            r.wobble,
+            trail as f64 * 100.0 / dark.max(1) as f64
+        );
+        if !at_most(l, ref_lag + 2.0) {
+            failures.push(format!("{pipe:?}: lag {l:.2} over {:.2}", ref_lag + 2.0));
+        }
+        match (r.step, reference.step) {
+            (Some(s), Some(rs)) if s <= rs + 2 => {}
+            (s, rs) => failures.push(format!("{pipe:?}: lamp step {s:?} against {rs:?} + 2")),
+        }
+    }
+    for f in &failures {
+        println!("[{label}] over a bar: {f}");
+    }
+    Some(failures)
+}
+
+/// The dark cave's golden pose (the carved golden scene, ore emissive, voxel (264, 120, 376),
+/// 15 degrees of yaw) with the lamp off and the filter on at the Plan 0024 defaults, at a
+/// 320 x 180 output and scale 1.5 (213 x 120 internal), under `kind`, jittered or not (FSR 2
+/// always jitters): settled over 64
+/// still frames, then 32 more upscaled frames read back. Returns the mean over hit pixels
+/// (output pixels whose nearest internal sample hit) and the 31 consecutive pairs of the
+/// largest channel difference, and the share of (pixel, pair) values above 4/255.
+pub fn still_vein_flicker(jitter: bool, kind: UpscalerKind) -> Option<(f64, f64)> {
+    let source = scene_source();
+    let world = World::generate(
+        source.extent,
+        &source,
+        &flythrough::with_emissive_ore(&flythrough::cave_materials()),
+    );
+    world.apply(&scene_carve(&world)).unwrap();
+    let output = [WIDTH, HEIGHT];
+    let internal = vxe_render::RenderScale::OneHalf.internal(output);
+    assert_eq!(internal, [213, 120]);
+    let full = world.stats().full_bricks as u64;
+    let (device, queue) = software_device(((full + 4096) * 512).max(64 << 20))?;
+    let mut gpu = GpuWorld::with_config(&device, MirrorConfig::new(Window::Fixed(world.extent())));
+    gpu.set_focus(VoxelCoord([264, 120, 376]));
+    for _ in 0..4 {
+        gpu.sync_now(&world, &device, &queue).unwrap();
+    }
+    let mut frame = frame_of(&device, internal, output, jitter);
+    set_kind(&device, &mut frame, kind);
+    frame.set_lighting(vxe_render::Lighting {
+        lamp: false,
+        ..vxe_render::Lighting::default()
+    });
+    let camera = vxe_render::Camera {
+        position: [264.5, 120.5, 376.5].into(),
+        yaw: 15f32.to_radians(),
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    };
+    let light = LightParams::headlamp();
+    for _ in 0..64 {
+        frame.step(&device, &queue, &gpu, &camera, &light);
+    }
+    let mut frames = Vec::new();
+    let mut hits = Vec::new();
+    for _ in 0..32 {
+        frame.step(&device, &queue, &gpu, &camera, &light);
+        frames.push(readback::read_rgba8(&device, &queue, frame.target()));
+        if hits.is_empty() {
+            let rec = readback::read_rgba16u(&device, &queue, frame.hit_records());
+            let j = frame.params(&gpu, &camera, &light).views[0].jitter;
+            for y in 0..output[1] {
+                for x in 0..output[0] {
+                    let n = [(x, 0), (y, 1)].map(|(c, k)| {
+                        let centre = (c as f32 + 0.5) * internal[k] as f32 / output[k] as f32;
+                        ((centre - j[k]).floor() as i32).clamp(0, internal[k] as i32 - 1) as usize
+                    });
+                    hits.push(rec[n[1] * internal[0] as usize + n[0]][3] & 1 == 1);
+                }
+            }
+        }
+    }
+    let (mut sum, mut over, mut n) = (0.0f64, 0usize, 0usize);
+    for pair in frames.windows(2) {
+        for (i, &hit) in hits.iter().enumerate() {
+            if !hit {
+                continue;
+            }
+            let d = (0..3)
+                .map(|k| pair[0][4 * i + k].abs_diff(pair[1][4 * i + k]))
+                .max()
+                .unwrap_or(0);
+            sum += f64::from(d);
+            over += usize::from(d > 4);
+            n += 1;
+        }
+    }
+    Some((sum / n as f64, over as f64 / n as f64))
+}
