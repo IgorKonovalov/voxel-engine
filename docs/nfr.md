@@ -254,6 +254,60 @@ build, load 3.88), p99 0.563 ms and age p99 2306.4 ms. On the slow adapter (AMD 
 Graphics, RADV RENOIR, `--adapter AMD`, load 7.27, no bar), 8192: p50 2.010 ms, p99 2.522 ms,
 age p99 5295.6 ms. The per-attempt readings are in Plan 0028's log.
 
+**Face against contour at the level's spawn, both adapters (dev reference, Plan 0039 Phase 1,
+the binary of 99e7bee, exclusive perf lock, 1-minute load 4.2 to 18.8 from the other lanes:
+loaded, indicative; `flythrough --level --headless --seed 1 --render 1920x1080 --frames 300
+--look face|contour --adapter NVIDIA|AMD`, median of the last 30 frames, three runs of each look
+alternated; the attribute pass from the level's initial fill and two `flythrough --autopilot
+--headless --seed 1 --look face|contour` flights each).** NVIDIA GeForce RTX 3080 Laptop GPU:
+face hit 1.290 to 1.375 ms, light 2.074 to 2.226, composite 0.316 to 0.338; contour hit 1.391 to
+1.470, light 2.147 to 2.276, composite 0.317 to 0.336; initial fill 16.4 to 16.5 ms for 383 608
+bricks in both looks (one contour run 11.8); autopilot attribute pass GPU p50 0.488 and 1.510
+ms, p99 0.740 and 2.483 ms (face), p50 0.482 and 0.811, p99 1.281 and 1.790 ms (contour). AMD
+Radeon Graphics (RADV RENOIR, `--adapter AMD`): face hit 8.749 to 8.798 ms, light 14.993 to
+15.039, composite 2.542 to 2.629; contour hit 9.307 to 9.310, light 15.585 to 15.616,
+composite 2.543 to 2.561; initial fill 94.2 to 94.8 ms; autopilot p50 2.010 to 2.025 ms, p99
+2.514 and 2.965 ms (face), 2.530 and 2.542 ms (contour). The NVIDIA flights' spread follows the
+load (face p99 2.483 ms at load 14.8, 0.740 at 8.4).
+
+**The contour presets at the level's spawn, both adapters (dev reference, Plan 0039 Phase 3,
+the binary of 426982e, exclusive perf lock, 1-minute load 11.5 to 44.6 from the other lanes:
+loaded, indicative; `flythrough --level --headless --seed 1 --render 1920x1080 --frames 300
+--look contour|contour-sharp|contour-grain --adapter NVIDIA|AMD`, the median over three
+alternated runs of each run's median of the last 30 frames; the attribute pass from the
+level's initial fill and two `flythrough --autopilot --headless --seed 1` flights each).**
+NVIDIA GeForce RTX 3080 Laptop GPU: contour hit 1.378 ms, light 2.139, composite 0.320,
+initial fill 17.0 ms, autopilot p50 1.552 and 1.308, p99 2.944 and 2.756 ms; contour-sharp hit
+1.408, light 2.174, composite 0.334, fill 17.8, p50 1.928 and 1.384, p99 2.756 and 2.522;
+contour-grain hit 1.408, light 2.160, composite 0.383, fill 17.0, p50 1.234 and 1.730, p99 2.376
+and 2.957. AMD Radeon Graphics (RADV RENOIR): contour hit 9.908, light 17.545, composite 3.424,
+fill 97.1, p50 2.080 and 2.080, p99 2.709 and 2.697; contour-sharp hit 9.898, light 16.929,
+composite 3.483, fill 96.3, p50 2.075 and 2.070, p99 2.645 and 2.614; contour-grain hit 9.831,
+light 17.172, composite 3.600, fill 96.3, p50 2.063 and 2.062, p99 2.655 and 2.586. Mirror
+157 872 640 B live, 259 203 264 B allocated in every run. The volume-matched offset alone
+(not in a preset) filled in 46.6 ms on NVIDIA, 61.8 ms with the weighted fit (Plan 0039's
+log).
+
+**The default look, contour-sharp, against the pre-plan default, both adapters (dev reference,
+Plan 0039's fix pass: the merged binary of 4d68e91 against main's binary of dedd83c, whose
+default is `contour`, both with no `--look`, so with main's probe GI on by default; alternated
+in one session; exclusive perf lock; the level runs at 1-minute loads 1.9 to 3.0 (NVIDIA) and
+7.1 to 14.9 (AMD): loaded, indicative; commands as in Phase 3's line, three level runs of each
+binary; the attribute pass retaken quiet: three alternated pairs of autopilot flights per
+adapter, each started at a 1-minute load of 1.73 to 1.98).** NVIDIA GeForce RTX
+3080 Laptop GPU: hit 1.392 ms against 1.402 (-0.7 %), light + composite 2.505 against 2.486
+(+0.8 %), initial fill 17.8 against 16.4 ms; quiet autopilot attribute pass p99 0.872, 1.054
+and 0.851 ms against 0.945, 0.871 and 0.737 (-7.7, +21.0 and +15.5 %; medians 0.872 against
+0.871, +0.1 %; main's own three span 0.737 to 0.945). AMD Radeon Graphics (RADV RENOIR): hit
+9.338 against 9.330 (+0.1 %), light + composite 18.488 against 18.454 (+0.2 %), initial fill
+266.0 against 262.5 ms (loaded); quiet autopilot p99 23.952, 22.728 and 22.399 ms against
+21.765, 21.126 and 20.964 (+10.0, +7.6 and +6.8 %), p50 2.07 against 2.04. Quiet, the AMD
+attribute pass's p50 is Phase 3's again (about 2.05 ms; loaded it read about 20) while its p99
+stays near 22 ms against Phase 3's 2.7, with the same work-list sizes; the pairing, not the
+absolute value, is the reading. The tail is the machine's state, not the code: Phase 3's own binary
+of 426982e, re-run at the close review (2026-10-27 14:32, load 3.41), read p50 2.093 and p99
+23.314 ms.
+
 **Mirror attribute pass (contour look), render-thread CPU: p99 under 4 ms on the dev reference,
 deferred work visible as face-mode normals for at most 250 ms** (budget, Plan 0023, ADR-0017;
 dev reference only). **Reading: a recorded miss (Plan 0023 Phase 6 quiet re-read, the Phase 6
@@ -558,6 +612,13 @@ the streaming line above; the rest runs on background threads.
 The world figure rests on the uniform-brick assumption in `roadmap.md` (under 10 % of bricks
 non-uniform at full detail). When exceeded, far chunks drop to LOD-only residency rather than
 the frame dropping.
+
+**The contour-sharp default leaves the mirror's bytes unchanged (Plan 0039's fix pass, the
+merged binary of 4d68e91 against main's binary of dedd83c, both adapters):** the level reads
+157 872 640 B live and 259 203 264 B allocated under both, and the streamed flight's full
+residency (17 077 full and 40 700 LOD-only chunks) 871 679 852 B live and 3 221 014 080 B
+allocated under both; the flights' peaks differ with the flight (882 016 044 to 996 021 932
+B live across both binaries).
 
 **The frame's targets (Plan 0024 Phase 11, `Frame::frame_bytes` printed by `flythrough
 --autopilot --headless --seed 1 --render 1920x1080`):** 308 736 000 B with full-resolution

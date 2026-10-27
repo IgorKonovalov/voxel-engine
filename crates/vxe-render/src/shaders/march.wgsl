@@ -7,7 +7,8 @@
 //                              bit 1: occupancy masks, bits 2..4: normal mode, bit 4: detail,
 //                              bits 5..8: view, bit 8: full chunks' bricks carry contour
 //                              attributes, bit 9: skip empty cells larger than a voxel, bit
-//                              10: cutaway), the lighting flags and exposure
+//                              10: cutaway, bit 13: detail after lighting), the lighting flags,
+//                              exposure and the face mix
 //   1  storage  brick_pool0    shard 0 of the pool: [unit][16 x u32], 64-byte units; unit u is
 //                              unit u % units_per_shard of shard u / units_per_shard; 7, 8 and
 //                              9 are shards 1 to 3. A Full brick's slot is a run of units
@@ -35,8 +36,8 @@
 //                              record (entries 0..64 mip level 1, 64..72 level 2, 72 level 3);
 //                              0xFFFFFFFF when absent
 //   4  storage  materials      [id][4 x vec4]: albedo rgb + roughness, emission rgb + flag bits,
-//                              detail scale (voxels) + detail strength + opacity + 1 spare,
-//                              4 spare
+//                              detail scale (voxels) + detail strength + opacity + the fine
+//                              detail octave's weight, 4 spare
 //   7  storage  brick_pool1    pool shard 1
 //   8  storage  brick_pool2    pool shard 2
 //   9  storage  brick_pool3    pool shard 3
@@ -150,7 +151,9 @@ struct Params {
     frame: u32,
     lighting: u32,
     window_min: vec3<i32>,
-    _pad2: i32,
+    // A contour-plane hit's shading normal is mixed this far toward its entry face's normal
+    // (`SurfaceTuning::face_mix`); 0 keeps the plane's.
+    face_mix: f32,
     window_size: vec3<i32>,
     _pad3: i32,
     light_pos: vec3<f32>,
@@ -251,6 +254,7 @@ const VIEW_BITS: u32 = 7u;
 const FLAG_ATTRS: u32 = 256u;
 const FLAG_SKIPS: u32 = 512u;
 const FLAG_CUTAWAY: u32 = 1024u;
+const FLAG_DETAIL_AFTER_LIGHTING: u32 = 8192u;
 // Normal modes (flags bits 2..4) and views (flags bits 5..8).
 const NORMAL_FACE: u32 = 0u;
 const NORMAL_TRILINEAR8: u32 = 1u;
@@ -1077,7 +1081,7 @@ fn surface_normal(o: vec3<f32>, d: vec3<f32>, h: Hit) -> vec3<f32> {
         return nf;
     }
     if (h.plane) {
-        return h.n;
+        return face_mixed(h.n, nf);
     }
     let mode = normal_mode();
     if (mode == NORMAL_TRILINEAR8) {
@@ -1087,6 +1091,28 @@ fn surface_normal(o: vec3<f32>, d: vec3<f32>, h: Hit) -> vec3<f32> {
         return gradient27_normal(h, nf);
     }
     return nf;
+}
+
+// A contour-plane hit's shading normal: its plane normal `n` mixed `params.face_mix` of the
+// way toward its entry face's normal `f`, `normalize(mix(n, f, k))`; exactly `n` at 0.
+fn face_mixed(n: vec3<f32>, f: vec3<f32>) -> vec3<f32> {
+    if (params.face_mix > 0.0) {
+        return normalize(mix(n, f, params.face_mix));
+    }
+    return n;
+}
+
+// The plane normal `n` of a contour-plane hit whose stored shading normal is `m`, the face mix
+// of `n` toward its entry face's normal `f`: `(1 - k) n = l m - k f` with `l = |mix|` the root
+// of `l^2 - 2 l k (m.f) + k^2 - (1 - k)^2 = 0`, real for `k <= 1/2`; `m` itself at 0.
+fn face_unmixed(m: vec3<f32>, f: vec3<f32>) -> vec3<f32> {
+    let k = params.face_mix;
+    if (k <= 0.0) {
+        return m;
+    }
+    let mf = dot(m, f);
+    let l = k * mf + sqrt(max(k * k * mf * mf - k * k + (1.0 - k) * (1.0 - k), 0.0));
+    return normalize(l * m - k * f);
 }
 
 // A hash of lattice point `c` to [0, 1).
@@ -1135,17 +1161,24 @@ fn value_noise(p: vec3<f32>) -> vec4<f32> {
 const DETAIL_TILT: f32 = 4.0;
 
 // Procedural detail at world point `p` (voxels) on a surface of normal `n`: two octaves of
-// value noise at feature scale `scale` and `scale / 2`, weights 1 and 1/2. It returns the
-// normal tilted against the noise's tangential gradient (in feature units) times `strength`
-// and `DETAIL_TILT`, and the albedo factor `1 + strength (2 v - 1)` for the noise value `v` in
-// [0, 1). It is a pure function of `p`, so a wall point shades the same from any camera.
-fn detail(p: vec3<f32>, n: vec3<f32>, scale: f32, strength: f32) -> vec4<f32> {
+// value noise at feature scale `scale` and `scale / 2`, weights 1 and 1/2, and with `fine`
+// above 0 a third at `scale / 4` of weight `fine`. It returns the normal tilted against the
+// noise's tangential gradient (in feature units) times `strength` and `DETAIL_TILT`, and the
+// albedo factor `1 + strength (2 v - 1)` for the noise value `v` in [0, 1). It is a pure
+// function of `p`, so a wall point shades the same from any camera.
+fn detail(p: vec3<f32>, n: vec3<f32>, scale: f32, strength: f32, fine: f32) -> vec4<f32> {
     let q = p / scale;
     let o1 = value_noise(q);
     let o2 = value_noise(q * 2.0 + vec3<f32>(17.0, 31.0, 47.0));
-    let v = (o1.x + 0.5 * o2.x) / 1.5;
+    var v = (o1.x + 0.5 * o2.x) / 1.5;
     // Gradient with respect to q: octave 2 is sampled at 2q.
-    let g = (o1.yzw + o2.yzw) / 1.5;
+    var g = (o1.yzw + o2.yzw) / 1.5;
+    if (fine > 0.0) {
+        // Octave 3 at 4q: its gradient with respect to q is 4 times its own.
+        let o3 = value_noise(q * 4.0 + vec3<f32>(59.0, 7.0, 23.0));
+        v = (o1.x + 0.5 * o2.x + fine * o3.x) / (1.5 + fine);
+        g = (o1.yzw + o2.yzw + 4.0 * fine * o3.yzw) / (1.5 + fine);
+    }
     let gt = g - dot(g, n) * n;
     let tilted = normalize(n - (strength * DETAIL_TILT) * gt);
     return vec4<f32>(tilted, 1.0 + strength * (2.0 * v - 1.0));
@@ -1283,7 +1316,7 @@ fn surface_detail(rec: HitRecord) -> vec4<f32> {
         // Exactly no change at strength 0.
         let row = materials[rec.material * 4u + 2u];
         if (row.y > 0.0) {
-            return detail(rec.p, rec.n, row.x, row.y);
+            return detail(rec.p, rec.n, row.x, row.y, row.w);
         }
     }
     return vec4<f32>(rec.n, 1.0);
@@ -1292,13 +1325,40 @@ fn surface_detail(rec: HitRecord) -> vec4<f32> {
 // The shadow normal of a hit seen along `d` (see `shadow_normal`): the plane normal of a
 // contour-plane hit, else the entry face's normal, `-d` for a ray that started inside rock.
 fn shadow_normal_of(rec: HitRecord, d: vec3<f32>) -> vec3<f32> {
+    if (rec.axis < 0) {
+        return select(-d, rec.n, rec.plane);
+    }
+    let face = select(vec3<f32>(0.0), vec3<f32>(-sign(d[rec.axis])), axis_mask(rec.axis));
     if (rec.plane) {
+        // The stored normal is the plane's mixed toward this face (`face_mixed`).
+        return face_unmixed(rec.n, face);
+    }
+    return face;
+}
+
+// Whether the detail's shading is applied after lighting (flag bit 13 with the lamp on, not
+// in the cutaway view): the light pass then shades with the undetailed normal and the
+// composite applies `detail_lamp_ratio`.
+fn detail_after_lighting() -> bool {
+    return (params.flags & FLAG_DETAIL_AFTER_LIGHTING) != 0u
+        && (params.lighting & LIGHTING_LAMP) != 0u
+        && (params.flags & FLAG_CUTAWAY) == 0u;
+}
+
+// The normal the light pass shades a hit with: the detailed normal, or the undetailed one
+// when the detail is applied after lighting.
+fn lighting_normal(rec: HitRecord) -> vec3<f32> {
+    if (detail_after_lighting()) {
         return rec.n;
     }
-    if (rec.axis < 0) {
-        return -d;
-    }
-    return select(vec3<f32>(0.0), vec3<f32>(-sign(d[rec.axis])), axis_mask(rec.axis));
+    return surface_detail(rec).xyz;
+}
+
+// The detail's lamp term at hit `rec` with detailed normal `nd`, over the undetailed one's:
+// `clamp(max(nd.l, 0) / max(n.l, 1e-3), 0, 2)`, `l` the unit vector from the hit to the lamp.
+fn detail_lamp_ratio(rec: HitRecord, nd: vec3<f32>) -> f32 {
+    let l = normalize(params.light_pos - rec.p);
+    return clamp(max(dot(nd, l), 0.0) / max(dot(rec.n, l), 1e-3), 0.0, 2.0);
 }
 
 // `p` projected through previous view `v` to a fractional pixel of the target (pixel

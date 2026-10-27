@@ -61,6 +61,9 @@ pub struct Material {
     /// The alpha the renderer composites a `TRANSLUCENT` voxel at, in `[0, 1]`; ignored
     /// without the flag.
     pub opacity: f32,
+    /// The weight of the renderer's third, finest detail octave (a quarter of the detail's
+    /// feature scale), in `[0, 1]`; 0 is the two-octave detail.
+    pub detail_fine: f32,
 }
 
 impl Material {
@@ -77,6 +80,7 @@ impl Material {
             payload: 0,
             detail: [0.0; 2],
             opacity: 1.0,
+            detail_fine: 0.0,
         }
     }
 

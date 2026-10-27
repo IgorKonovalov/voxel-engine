@@ -177,3 +177,26 @@ Added 2026-10-22, from Plan 0028 (ADR-0012's mirror-slot step):
   chunk-local surface voxels only, addressed by popcount. The level's contour mirror reads
   157 872 640 B live (680 491 136 B before), and the default holds `r_full` 16 at 16/24 without
   the pressure rule.
+
+Added 2026-10-27, from Plan 0039 (the contour look at arm's length):
+
+- **The encoding stands; the fit and the detail's lighting path changed.** The attribute
+  pass gains two fits into the same `u16` (`PlaneFit::Weighted27`, a `1 / |o|^2`-weighted
+  gradient, and `PlaneOffset::VolumeMatched`, the slab-volume offset this ADR called crude),
+  and the composite can apply the detail's lamp term after lighting: the light pass shades
+  with the undetailed normal, the composite multiplies the direct part by
+  `clamp(max(n_d.l, 0) / max(n.l, 1e-3), 0, 2)` and adds the probes' indirect part unscaled.
+  The engine's defaults stay every part off; the fly-through's default look is
+  `contour-sharp` (the weighted fit plus the ratio, rock `[4.0, 0.1]`), the owner's call on
+  screen, re-confirmed with probe GI.
+- **The softness was the lighting path, not the fit.** On the headless wall at 1 m under the
+  lamp (lavapipe), moving from the half to the full lighting tier recovered 74.6 % of the
+  face-to-contour fine-band gap and the filter 3.5 %; the fit variants lowered the fine band
+  by 1 to 4 %. Mirror bytes are unchanged under every fit (the level 157 872 640 B live).
+- **The volume-matched offset is not free.** It fills the level's attributes in 46.6 ms
+  against 17.0 ms on the dev box and won no preset; the weighted fit costs about 5 to 9 % of
+  the fill.
+- **The face mix fails the cavity normal guardrail** (12.14 degrees at a quarter mix), so a
+  partial face normal is not a route back to edge contrast.
+- **One plane per voxel still shows at arm's length.** The owner saw sharp voxel corners on
+  some smooth walls in the default look; the plan's followups carry it.

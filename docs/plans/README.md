@@ -17,7 +17,6 @@ state from `git log`. Completed plans move to `done/`.
 | [0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md) | Weather: rain, snow, wind, wet surfaces and snow cover, lightning | approved | M10, ADR-0031 (proposed). After Plan 0035. |
 | [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: a star field, the moon's phases, sky bodies the game lists, an aurora that lights the ground, and a night tint | approved | M10, ADR-0032 (proposed). After Plans 0032 and 0035. |
 | [0038](0038-showcase-cavern-and-hero-shots.md) | A showcase cavern lit by four ores, and a hero still with named shots and no headlamp | approved | M2, testbed only, no ADR. After Plans 0029 and 0030. |
-| [0039](0039-contour-look-sharpness-measured-and-tuned.md) | The contour look at arm's length: a sharpness metric, the sources of its softness, named presets the owner compares | approved | M2, no ADR. After Plan 0028. |
 | [0040](0040-eye-adaptation-asymmetric-auto-exposure-and-pre-exposure.md) | Eye adaptation: an automatic exposure that is fast toward bright and slow toward dark, metered on the GPU, with pre-exposed HDR targets | approved | M2, ADR-0033 (proposed). After Plan 0029; before Plan 0032. |
 | [0041](0041-fsr2-port-to-wgsl.md) | AMD FSR 2.2.1 ported to WGSL: its six passes fed from the hit buffer, compared against our upscaler and the native frame | approved | M2, ADR-0034 (proposed). After Plan 0030. |
 | [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, six verified defects | approved | Code health, no ADR. After every plan active on 2026-10-22. |
@@ -29,6 +28,7 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0039](done/0039-contour-look-sharpness-measured-and-tuned.md) | The contour look at arm's length: a sharpness harness, five candidates; contour-sharp (weighted fit, lamp detail after lighting) the default; mirror bytes unchanged | 2026-10-27, v0.32.0 |
 | [0046](done/0046-dx12-shaders-through-bundled-static-dxc.md) | DX12 shaders through bundled static DXC: WARP's eleven pipelines 76.6 s cold under FXC, 2.5 s under DXC; the attribute pass's WARP execution stays slow | 2026-10-22, v0.31.1 |
 | [0029](done/0029-indirect-light-probe-volume.md) | Indirect light from a probe volume that scrolls with the camera: bounce kept at 1.6 m, update plus gather 1.57 ms, a light change refreshes it in 16 frames | 2026-10-22, v0.31.0 |
 | [0042](done/0042-generated-gothic-castle-stamped-at-generation.md) | A generated gothic castle: a `.vox` writer, 21 tiles stamped into a carved hall; 344 MB of prefabs, about 92 % air, +0.3 GB RSS | 2026-10-22, v0.30.0 |
