@@ -486,8 +486,8 @@ adapter; the readings go into `nfr.md` §2 as dev-reference lines labelled by ad
 | 1: The sharpness harness, the baselines and the source-isolation matrix | dev | done | 61b1fcf |
 | 2: The candidate mechanisms, each measured alone | dev | done; its fly-through readings are taken with Phase 3's flags | 29c37b5, e53bf8d, 0589ec7 |
 | 3: Named presets in the window | dev | done | 767f32a, 426982e, f411c96 |
-| 4: The owner's comparison | human | done | committed with this row |
-| 5: The pick as the default | dev | not started | |
+| 4: The owner's comparison | human | done | c7530c7 |
+| 5: The pick as the default | dev | done | 93c3d9b, committed with this row |
 
 ### Phase 1 readings
 
@@ -659,6 +659,46 @@ Relayed by the orchestrator from the owner's words; the runs are in `live/sessio
   built architecture is never detailed and is fitted for flat faces; and grain that fades at
   grazing incidence, if procedural grain is to come back.
 
+### Phase 5 readings
+
+- Default: `LookPreset::DEFAULT` is `contour-sharp`. With no flag the startup line reads `look
+  contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on), detail
+  on (rock scale 4, strength 0.1, fine 0), view shaded`; `--look contour` reads the contour look
+  with every part off (both pinned in `the_default_look_is_contour_with_detail_and_plain_is_face`).
+- Guardrails, `sharpness.rs::the_default_look_meets_the_guardrails` (lavapipe): cavity normal
+  error 7.02 degrees, silhouette 32 px against face 172, axis fraction 6.81 %.
+- Goldens: none re-blessed. No golden renders the fly-through's default look (the tests build
+  their looks from `LookParams` or named presets); every golden is byte for byte.
+- Budget readings, the binary of 93c3d9b (`new`, default contour-sharp) against the pre-plan
+  binary of 99e7bee (`pre`, default contour), both without `--look`, alternated in one session,
+  exclusive perf lock (`live/quiet.sh`: each run waited for a 1-minute load under 2 read inside
+  the lock; none came within the hour, so the runs went ahead loaded). Level as in Phase 3,
+  three runs each; the attribute pass over two autopilot flights each; ms:
+
+| adapter | binary | hit | light | composite | light + composite | initial fill | autopilot p50 | autopilot p99 | load |
+|---|---|---|---|---|---|---|---|---|---|
+| NVIDIA | pre | 1.497 | 2.313 | 0.341 | 2.654 | 11.801 | 1.049, 1.437 | 1.406, 2.616 | 2.9 to 15.4 |
+| NVIDIA | new | 1.441 | 2.226 | 0.343 | 2.570 | 12.838 | 1.158, 1.527 | 1.756, 2.911 | 2.9 to 17.9 |
+| AMD | pre | 9.366 | 15.672 | 2.634 | 18.306 | 265.868 | 20.926, 20.934 | 25.275, 25.527 | 9.4 to 17.9 |
+| AMD | new | 9.348 | 15.644 | 2.674 | 18.318 | 267.795 | 21.240, 21.233 | 25.873, 25.740 | 9.4 to 16.6 |
+
+  Against the Budgets bars: hit -3.7 % (NVIDIA), -0.2 % (AMD), bar 3 %; light + composite -3.2 %
+  and +0.1 %, bar 5 %; attribute pass p99 +25 % and +11 % (NVIDIA, flight by flight), +2.4 % and
+  +0.8 % (AMD), bar 10 %. The NVIDIA level runs were at load 2.9 to 3.0, every other run at 9.4
+  to 17.9. The AMD initial fill and attribute pass read about ten times Phase 3's for both
+  binaries (same adapter, RADV RENOIR, and the same work-list sizes, p50 8192 bricks).
+- Mirror bytes: the level 157 872 640 B live, 259 203 264 B allocated under both binaries on
+  both adapters; the streamed flight's full residency 871 679 852 B live, 3 221 014 080 B
+  allocated under both.
+- Owner observation 2, the headless check: `sharpness.rs::level_ridges_under_the_presets`
+  (by hand, lavapipe, the level's chunks around the spawn) and the hero example on the NVIDIA
+  card (`--size 960x540 --pitch -25 --yaw 0|90|180|270 --look contour-sharp|contour-grain`,
+  `live/ridge/`) from the spawn pocket. At the same small rim and protrusion features where
+  contour-grain draws hard black blobs, contour-sharp draws small voxel-aligned rectangular
+  steps in mid grey, not black; its surface also shows faint voxel-scale rectangular facets,
+  the plane steps its normals view shows. The pocket's walls face the lamp; no long ridge at
+  grazing incidence was in these views.
+
 ### Notes
 
 - Phase 1: the edge scene's edge is the line `x = y = 63` (block `[63, 96)`), not 64: a face
@@ -712,17 +752,48 @@ Relayed by the orchestrator from the owner's words; the runs are in `live/sessio
 - Phase 3: `set_surface_fit` reports `refitting` only when the mirror held a full chunk at the
   change, so the startup fit of a fresh mirror does not show `refitting` during the initial
   fill.
+- Phase 5: the default changes in the fly-through only (`LookPreset::DEFAULT`); the engine's
+  `SurfaceTuning` and `SurfaceFit` defaults stay every part off, so `marcher.rs` and `attrib.rs`
+  are untouched and every engine golden is byte for byte (93c3d9b).
+- Phase 5, outside the files touched: `apps/flythrough/examples/hero.rs` takes `--look` (contour
+  presets) and defaults to `LookPreset::DEFAULT`, since it renders "the fly-through's default";
+  the README's regenerate command gains `--look contour` so it reproduces the current image
+  (93c3d9b).
+- Phase 5: the autopilot attribute pass p99 bar (10 %) is missed on NVIDIA (+25 % and +11 %,
+  loaded); see Phase 5 readings.
+- Phase 5: the quick tier's `replay::a_stamp_and_a_collapse_replay_from_the_save` timed out at
+  30 s at load above 20 and passed alone in 14.1 s.
+- Owner followups relayed with the Phase 4 call (for the architect's Followups section, which
+  `dev` does not edit): a per-material "smooth" flag (no detail, a fit for flat faces); grain
+  that fades at grazing incidence.
 
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature
+- **Public API changed:** vxe-render: `PlaneFit`, `PlaneOffset`, `SurfaceFit`,
+  `SurfaceTuning`, `LookParams::tuning`, `GpuWorld::{set_surface_fit, surface_fit, refitting,
+  rewrite_materials}`, `Params::flags` bit 13 and `_pad2` as the face mix, `attrib.wgsl`'s fit
+  bits, the materials buffer gains `COPY_SRC`; vxe-world: `Material::detail_fine`;
+  flythrough: `LookPreset` (`DEFAULT` = `CONTOUR_SHARP`, `ALL`, `from_name`, `next`, `parts`,
+  `materials`), `hud::Modes::{show_look, set_refitting}`, `--look PRESET`, `--plane-fit`,
+  `--plane-offset`, `--face-mix`, `--detail-fine`, `--detail-after`; the hero example's
+  `--look`.
+- **Budget readings:** Phase 5 readings (93c3d9b against 99e7bee, NVIDIA RTX 3080 Laptop and
+  AMD RADV RENOIR, exclusive perf lock, loaded): hit -3.7 % / -0.2 %, light + composite -3.2 % /
+  +0.1 %, attribute pass p99 +25 % and +11 % (NVIDIA) / +2.4 % and +0.8 % (AMD); mirror bytes
+  equal at the level and the streamed full residency. Phase 1 to 3 readings above; `nfr.md` §2
+  and §3.
+- **Gate at the tip (93c3d9b's code, log commit on top):** `cargo build --workspace` 0;
+  `cargo nextest run --workspace --profile full --no-fail-fast --test-threads 2` under the
+  exclusive perf lock 0, 611 passed, 8 skipped; `--profile gpu` 131 passed, 12 skipped;
+  `--profile quick` 472 of 473 with the replay timeout above (6 of 6 alone); `cargo test --doc
+  --workspace` 0; `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo fmt --all
+  --check` 0; `cargo deny check` 0 (advisories, bans, licenses, sources ok);
+  `check-doc-links`, `check-comment-hygiene`, `check-test-tiers`, `check-index-rows` OK.
+- **Outstanding `human` phases:** none
 
 ## Followups
 

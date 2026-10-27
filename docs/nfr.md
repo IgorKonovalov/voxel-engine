@@ -288,6 +288,20 @@ light 17.172, composite 3.600, fill 96.3, p50 2.063 and 2.062, p99 2.655 and 2.5
 (not in a preset) filled in 46.6 ms on NVIDIA, 61.8 ms with the weighted fit (Plan 0039's
 log).
 
+**The default look, contour-sharp, against the pre-plan default, both adapters (dev reference,
+Plan 0039 Phase 5: the binary of 93c3d9b against the binary of 99e7bee, whose default is
+`contour`, both with no `--look`, alternated in one session; exclusive perf lock; the 1-minute
+load stayed above 2 for the hour the runs waited, so they ran at loads 2.9 to 3.0 (NVIDIA level)
+and 9.4 to 17.9 (the rest): loaded, indicative; commands as in Phase 3's line, three level runs
+and two autopilot flights of each binary).** NVIDIA GeForce RTX 3080 Laptop GPU: hit 1.441 ms
+against 1.497 (-3.7 %), light + composite 2.570 against 2.654 (-3.2 %), initial fill 12.8
+against 11.8 ms, autopilot attribute pass p99 1.756 and 2.911 ms against 1.406 and 2.616 (+25
+and +11 %: over the 10 % bar, loaded). AMD Radeon Graphics (RADV RENOIR): hit 9.348 against
+9.366 (-0.2 %), light + composite 18.318 against 18.306 (+0.1 %), initial fill 267.8 against
+265.9 ms, autopilot p99 25.873 and 25.740 ms against 25.275 and 25.527 (+2.4 and +0.8 %). The
+AMD attribute pass read about ten times Phase 3's in this session for both binaries (same
+adapter and work-list sizes); the pairing, not the absolute value, is the reading.
+
 **Mirror attribute pass (contour look), render-thread CPU: p99 under 4 ms on the dev reference,
 deferred work visible as face-mode normals for at most 250 ms** (budget, Plan 0023, ADR-0017;
 dev reference only). **Reading: a recorded miss (Plan 0023 Phase 6 quiet re-read, the Phase 6
@@ -514,6 +528,13 @@ the streaming line above; the rest runs on background threads.
 The world figure rests on the uniform-brick assumption in `roadmap.md` (under 10 % of bricks
 non-uniform at full detail). When exceeded, far chunks drop to LOD-only residency rather than
 the frame dropping.
+
+**The contour-sharp default leaves the mirror's bytes unchanged (Plan 0039 Phase 5, the
+binary of 93c3d9b against the pre-plan binary of 99e7bee, both adapters):** the level reads
+157 872 640 B live and 259 203 264 B allocated under both, and the streamed flight's full
+residency (17 077 full and 40 700 LOD-only chunks) 871 679 852 B live and 3 221 014 080 B
+allocated under both; the flights' peaks differ with the flight (883 801 004 to 1 003 610 028
+B live across both binaries).
 
 **The frame's targets (Plan 0024 Phase 11, `Frame::frame_bytes` printed by `flythrough
 --autopilot --headless --seed 1 --render 1920x1080`):** 308 736 000 B with full-resolution
