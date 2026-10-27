@@ -1,7 +1,7 @@
 # 0040: Eye adaptation: an automatic exposure that is fast toward bright and slow toward dark, metered on the GPU, with pre-exposed HDR targets
 
 > **Status:** in-progress (2026-10-27)
-> **Decisions:** Owner, 2026-10-22: approved with the plan's recommended options: time constants 0.15 / 1 / 4 s (normal after about 10 s), max exposure 64 so the dark-adapted cave settles at the key, centre-weighted metering, the fly-through defaulting to auto eye.
+> **Decisions:** Owner, 2026-10-22: approved with the plan's recommended options: time constants 0.15 / 1 / 4 s (normal after about 10 s), max exposure 64 so the dark-adapted cave settles at the key, centre-weighted metering, the fly-through defaulting to auto eye. Owner, 2026-10-27 (Phase 5 session): the slower constants 0.15 / 2 / 10 s and `max` 16, so the cave stays dim; the third clause of Phase 4 bar 2 is answered (b) with (a); the light patches seen while adapting are investigated first (Phase 4 amendment).
 > **Created:** 2026-10-22
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "exposure, tone mapping, and an
 > upscaler" bullet)
@@ -349,6 +349,45 @@ under `Manual(1.0)` except where a bar names it.
      against the composite without it (the delta) and `exposure.wgsl`, per-pass timestamps,
      the median of the last 30 of 3000 frames. Also `Frame::frame_bytes` before and after.
      These go to `nfr.md` §2 and §3 with the commit.
+- **Amended 2026-10-27 (owner), after the Phase 5 session:**
+  - **Bar 2, third clause.** The closed form assumes the meter steps in one frame. The
+    measured meter falls over about 30 frames, and the spawn view has no vein, so the dark
+    meter sits far under the floor (worst 0.4587 EV). The clause is replaced by two
+    assertions. (b) The same lamp-off run from a pose that looks at a vein, chosen so the
+    dark meter settles above the clamp, keeps the clause as written: from 1 s on, within
+    0.1 EV of the closed form for that pose's measured meters. (a) On both poses, from 1 s
+    on, `log2 e` stays within 0.1 EV of `AutoExposure::step` stepped over the measured
+    per-frame meter. The spawn pose's closed-form distance stays a printed `reading:` line.
+  - **The defaults change** to the owner's pick: time constants 0.15 / 2 / 10 s (the
+    slower option; normal after about 25 s), and `max` exposure 16, so the dark-adapted cave
+    settles about 1.5 EV under the key and stays dim. Centre-weighted metering and auto eye
+    as the fly-through default stay. Every bar above that names the old constants or `max`
+    64 is re-read with the new defaults. A bar whose arithmetic depended on them is re-derived
+    in the log from the same formula, not loosened.
+  - **Step 4: the light patches.** The owner saw, with the lamp switched off and the eye
+    adapting, "multiple lights are opening on walls one after another within 10-15 sec".
+    Asked, the owner said separate patches of wall switch on, one by one and each fairly
+    suddenly. One exposure scales the whole frame, so a patch that steps on is a non-uniform
+    change underneath. Find the cause headlessly before changing anything:
+    1. On the level, from the Phase 5 pose near a vein, run the lamp-off series twice,
+       auto eye and `Manual` held at the adapted run's final exposure, and save frames at
+       0.5 s steps to `target/exposure-patches/`.
+    2. Over a grid of wall tiles, print each tile's linear radiance divided by the frame's
+       exposure, per frame. A tile whose exposure-normalised radiance steps by more than
+       10 % between consecutive saved frames, after the probes' first 24 frames, is a patch.
+    3. For each patch, name the source by switching parts off one at a time: probe GI
+       (`F8`'s switch), the emissive light samples and their history, the denoiser's
+       history, and streaming or mirror uploads in that window. If the patches also appear
+       under `Manual`, the cause is not this plan's. Record that, and the owning subsystem,
+       as an owner question, not a fix here.
+    4. If the cause is in this plan (a pre-exposure or history rescale that is not uniform),
+       fix it. Add a headless test that the tiles' exposure-normalised radiance does not
+       step after the first 24 frames.
+  - **The flicker** the owner saw during adaptation: read the frame-to-frame luminance
+    noise of the same tiles under auto eye against `Manual` at the same final exposure, and
+    log it. It is a reading for the owner's re-check, not a bar.
+  - Phase 5 gets a second, short windowed session after step 4: the new defaults, lamp off
+    near a vein, the patches and the flicker.
 
 ### Phase 5: The owner's windowed check
 - **Owner skill:** human
