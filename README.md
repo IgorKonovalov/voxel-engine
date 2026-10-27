@@ -212,9 +212,9 @@ shown, `F1`, the autopilot's flight).
 | `--sampler list\|reuse` | The emissive sampler: candidates alone, or with last frame's reservoirs (default reuse) |
 | `--history edits\|gradient` | What kills temporal history: edit boxes, or edit boxes and A-SVGF's gradient (default edits) |
 | `--lighting full\|half` | The lighting passes' resolution (default half) |
-| `--internal-scale 1\|1.5\|2` | The output size over the internal size on each edge; above 1 the upscaler fills the output (default 1: no upscaler). `--internal-scale 1.5 --jitter on` is the performance option: 720p for 1080p, about half the frame's GPU time |
-| `--jitter on\|off` | Each frame's sub-pixel ray jitter, which the upscaler accumulates (default off); on, the upscaler runs at any scale |
-| `--upscaler off\|own\|fsr2` | The upscaler: none, ours (ADR-0024; it jitters unless `--jitter off`), or AMD's FSR 2.2.1 ported to WGSL (ADR-0034; it jitters by its own sequence). Without it, `--internal-scale` and `--jitter` choose between off and own as before. The overlay's upscale row shows FSR 2's passes as one total |
+| `--internal-scale 1\|1.5\|2` | The output size over the internal size on each edge; above 1 the upscaler fills the output (default 1.5: our upscaler, 720p for 1080p, about half the frame's GPU time). `--internal-scale 1` is Plan 0024's native frame with no upscaler |
+| `--jitter on\|off` | Each frame's sub-pixel ray jitter, which the upscaler accumulates (our upscaler: on unless `--jitter off`; with no upscaler: off); on, the upscaler runs at any scale |
+| `--upscaler off\|own\|fsr2` | The upscaler: none, ours (ADR-0024; it jitters unless `--jitter off`), or AMD's FSR 2.2.1 ported to WGSL (ADR-0034; it jitters by its own sequence). Without it the fly-through starts in `own` at scale 1.5; `--internal-scale 1` without `--jitter on` starts in `off`, as `--upscaler off` does. The overlay's upscale row shows FSR 2's passes as one total |
 | `--sharpen S` | The upscaler's RCAS sharpening (FSR 2's RCAS under `fsr2`), 0 to 1 (default 0.5, 0 off) |
 | `--emissive-history N` | Frames static emissive light accumulates over at least, 1 to 4096 (default 32); the headlamp's part keeps a short history |
 | `--filter on\|off` | The a-trous filter; off shows the light pass's raw irradiance (default on) |
