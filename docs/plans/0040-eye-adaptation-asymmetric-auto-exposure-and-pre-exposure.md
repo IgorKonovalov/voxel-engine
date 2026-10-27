@@ -704,6 +704,12 @@ missing from its layout); after it, `flythrough::fsr2` and `flythrough::golden` 
 the full tier on 7c322cc 690 of 690 (10 skipped, 1440 s, exclusive perf lock, load 3.5).
 Phase 5's second session: `live/session2.sh` with `live/flythrough-p5b` built from 7c322cc.
 
+Phase 4 amendment of b05accc (committed with this paragraph): `check_curve` loses its
+`closed_form` switch and prints the closed-form distance as a `reading:` line on both poses; the
+stepped-model assertion and the other two clauses are unchanged. The vein test is renamed
+`the_curve_facing_a_vein_follows_the_stepped_model` (and in `.config/nextest.toml`'s three
+filters).
+
 ### Notes
 
 - Phase 4 amendment: `crates/vxe-render/src/exposure.rs` (`eye()` and its unit test),
@@ -719,7 +725,7 @@ Phase 5's second session: `live/session2.sh` with `live/flythrough-p5b` built fr
   touched.
 - Phase 4 amendment: the curve tests now share the fly-through's lighting defaults through
   `Lighting::default()` with indirect on (unchanged from the first pass); the vein test is
-  `the_curve_facing_a_vein_follows_the_closed_form`.
+  `the_curve_facing_a_vein_follows_the_stepped_model`.
 - Phase 1: the state the frame passes read is a 32-byte uniform at group 0 binding 13, copied
   from the exposure pass's storage buffer after it runs (the plan says a storage buffer read
   read-only through group 0).

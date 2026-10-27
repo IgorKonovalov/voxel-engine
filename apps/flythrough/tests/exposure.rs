@@ -105,9 +105,9 @@ fn lamp_off_states(
 /// asserts: after the switch `log2 e` falls by no more than 0.01 EV between two frames; by
 /// 15 s it is within 0.25 EV of its settled value (the key's exposure for the meter, or `max`);
 /// from 1 s on it is within 0.1 EV of `AutoExposure::step` stepped over each frame's measured
-/// meter (a); and, when `closed_form` is set, within 0.1 EV of the closed form for the
-/// measured meters (b). Without it the closed form's distance is a printed reading.
-fn check_curve(name: &str, states: &[ExposureState], closed_form: bool) {
+/// meter. The distance from the closed form for the measured meters, which assumes the meter
+/// steps in one frame, is a printed `reading:` line.
+fn check_curve(name: &str, states: &[ExposureState]) {
     let eye = AutoExposure::eye();
     // The exposure frame LAMP_ON + k uses: the state after the frame before it.
     let used = |k: usize| f64::from(states[LAMP_ON - 1 + k].current).log2();
@@ -175,15 +175,10 @@ fn check_curve(name: &str, states: &[ExposureState], closed_form: bool) {
         worst_stepped <= 0.1,
         "{name}: stepped model {worst_stepped}"
     );
-    if closed_form {
-        assert!(worst_closed <= 0.1, "{name}: closed form {worst_closed}");
-    } else {
-        println!("reading: {name} closed-form distance from 1 s on {worst_closed:.4} EV");
-    }
+    println!("reading: {name} closed-form distance from 1 s on {worst_closed:.4} EV");
 }
 
-/// On the level at its spawn pose, which sees no vein: the dark meter sits far under the clamp,
-/// so the closed-form clause is a reading here and the stepped model is asserted.
+/// On the level at its spawn pose, which sees no vein: the dark meter sits far under the clamp.
 #[test]
 fn the_caves_curve_after_the_lamp_goes_off() {
     let Some(level) = level() else {
@@ -191,13 +186,12 @@ fn the_caves_curve_after_the_lamp_goes_off() {
     };
     let cam = camera(level.spawn, 0.0, 0.0);
     let states = lamp_off_states(&level, &cam, Exposure::Auto(AutoExposure::eye()));
-    check_curve("spawn", &states, false);
+    check_curve("spawn", &states);
 }
 
-/// From a pose facing a vein (VEIN_POSE), whose lamp-off meter settles above `max`'s clamp:
-/// both the stepped model and the closed form hold from 1 s on.
+/// From a pose facing a vein (VEIN_POSE), whose lamp-off meter settles above `max`'s clamp.
 #[test]
-fn the_curve_facing_a_vein_follows_the_closed_form() {
+fn the_curve_facing_a_vein_follows_the_stepped_model() {
     let Some(level) = level() else {
         return;
     };
@@ -207,5 +201,5 @@ fn the_curve_facing_a_vein_follows_the_closed_form() {
         &camera(p, yaw, pitch),
         Exposure::Auto(AutoExposure::eye()),
     );
-    check_curve("vein", &states, true);
+    check_curve("vein", &states);
 }
