@@ -449,6 +449,15 @@ reads them.
 - Phase 5: the 1-minute load never stayed under 2 inside the lock from 09:05 to 10:07 (the orchestrator's hour of retries; low point 2.10); every Phase 5 reading is labelled loaded (4.3 to 12.8). Frame medians, three runs each, 1080p: RTX 3080 Laptop hall 11.448 to 11.510, chasm 10.658 to 10.714, crystals 12.955 to 13.523 ms; RADV iGPU hall 79.551 to 79.861, chasm 75.706 to 100.301, crystals 89.861 to 90.413 ms (`docs/nfr.md` §2, with the passes).
 - Phase 1: `level_mirror_budget` takes the world, not a `Full` count (`level_mirror_budget(&world, 1176, attrs)`).
 
+### Resume notes (2026-10-27, delete when Phase 6 lands)
+
+- Main merge committed: ae1090d (`merge: main into plan-0038 (0039 contour-sharp default)`). Conflicts in `.config/nextest.toml` (both slow-list entries kept, `flythrough::sharpness` in the gpu filter), `hud.rs` (`with_source` beside `show_look`/`set_refitting`), `main.rs` (source flags beside the look part flags), `examples/hero.rs` (takes `--look`, default `LookPreset::DEFAULT`; materials from `look.materials()`, `set_surface_fit` and the look's tuning). `scripts/build-guests.sh` run.
+- Gate on ae1090d: clippy, fmt, doctests (7), test tiers, doc links, comment hygiene, index rows clean; quick tier 499 of 499. Full tier: the first run was killed at 575 of 654 (by its own timeout and to free the lock for the owner's session); the rerun (exclusive perf lock, load 6.33 to 6.72) passed 654 of 654, 9 skipped, with `showcase_vector` and `determinism_vector` unchanged.
+- The golden passed on ae1090d only because `showcase_hall` hard-coded `NormalMode::Contour` at default tuning (the old `contour`, not the new default). The wip commit after this note points it at `LookPreset::DEFAULT` (fit and tuning); it is NOT re-blessed yet. Next: `VXE_BLESS=1` the one test `flythrough::golden showcase_hall_golden_is_lit_by_its_four_ores` on lavapipe under the perf lock, rerun it unblessed, commit test plus png as one `test(flythrough)` commit, and record the hue shares and luma it prints.
+- Not done: the hero review stills (`hero --shot all` under the lock, in the new default look) are not regenerated; `target/hero/*.png` are still Phase 4's (old look).
+- Runner: `live/flythrough-p6` is the release build of ae1090d (the wip commit changes only a test, so it stays valid). `live/session1.sh` is written, not launched: four look steps (`--source showcase`, `--shot chasm`, `--shot crystals`, `--probe-spacing 32`) then three cold (waits for `/sys/bus/pci/devices/0000:01:00.0/power/runtime_status` = suspended) and three warm `--source showcase` time-to-first-frame runs, each printing the `first frame after N ms` line against 3000 ms. Each run is under the perf lock and tee'd to `live/session1.log`.
+- Left: the golden re-bless, the stills, then hand Phase 6 to the owner.
+
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_

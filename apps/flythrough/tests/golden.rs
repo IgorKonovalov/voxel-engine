@@ -1544,8 +1544,9 @@ fn upscaled_golden_sharpens_within_the_neighbourhood() {
 
 /// The showcase's `hall` shot at the golden's size after [`SHOWCASE_FRAMES`] frames at the
 /// fly-through's defaults (indirect light on at the default probe spacing, the upscaler at
-/// its default scale, the lighting at its default resolution, contour with rock's detail),
-/// the lamp off, the shot's exposure and the showcase's light radius, under `table`.
+/// its default scale, the lighting at its default resolution, `LookPreset::DEFAULT` with
+/// rock's detail), the lamp off, the shot's exposure and the showcase's light radius, under
+/// `table`.
 fn showcase_hall(table: &MaterialTable) -> Option<(Vec<u8>, u64)> {
     use flythrough::showcase::{SHOTS, ShowcaseSource};
     let source = ShowcaseSource::new(1);
@@ -1561,6 +1562,8 @@ fn showcase_hall(table: &MaterialTable) -> Option<(Vec<u8>, u64)> {
             ..MirrorConfig::new(Window::Fixed(world.extent()))
         },
     );
+    let look = flythrough::LookPreset::DEFAULT;
+    gpu.set_surface_fit(look.tuning.fit);
     let shot = SHOTS[0];
     gpu.set_focus(shot.eye);
     let mut last = None;
@@ -1585,8 +1588,9 @@ fn showcase_hall(table: &MaterialTable) -> Option<(Vec<u8>, u64)> {
         ..vxe_render::Lighting::default()
     });
     frame.set_look(vxe_render::LookParams {
-        normal_mode: vxe_render::NormalMode::Contour,
+        normal_mode: look.normal_mode,
         detail: true,
+        tuning: look.tuning,
         ..vxe_render::LookParams::default()
     });
     let camera = Camera {
