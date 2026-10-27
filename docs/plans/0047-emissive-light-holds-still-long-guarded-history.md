@@ -1,6 +1,7 @@
 # 0047: Emissive light holds still: a patch bar, a long full-precision emissive history, and an emissive-only gradient that guards it
 
-> **Status:** draft
+> **Status:** approved (2026-10-27)
+> **Decisions:** Owner, 2026-10-27: the long f32 history guarded by an emissive-only gradient (option a); after Plan 0040, before Plan 0032; the strict bar (at most 3 patches a step, 1 sudden step a second, flicker 0.002 log2 a frame); a lag bounded by H is acceptable for changes the guard cannot see.
 > **Created:** 2026-10-27
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet: static light in a dark cave)
