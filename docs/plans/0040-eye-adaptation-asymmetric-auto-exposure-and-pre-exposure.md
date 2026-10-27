@@ -630,6 +630,56 @@ to 0.365 ms, exposure pass 0.072 ms; AMD RADV composite 2.877 to 2.906 ms, expos
 0.061 ms; `frame_bytes` 254 216 224 to 254 476 352 B. `--profile quick --test-threads 2`: 491
 of 491 passed.
 
+### Resume notes (2026-10-27, delete when Phase 4's amendment lands)
+
+- **Main merge: committed** at cee9708 (`merge: main into plan-0040 (0039 contour-sharp)`,
+  main 80e8934). Conflicts: `composite.wgsl` keeps main's `Lit { all, direct, indirect }`
+  with `ind = indirect * exposure_now()` (both `all` and `indirect` pre-exposed);
+  `main.rs` imports, `hud.rs` `Modes` fields and banner doc, `hero.rs` usage, and
+  `nextest.toml` (both `flythrough::exposure` and `flythrough::sharpness` in the gpu filter
+  and slow list) take both sides. Main's `tests/support/mod.rs:607` and `tests/sharpness.rs:558`
+  move to `Exposure::Manual`. `scripts/build-guests.sh` run. Gate on the merge: build,
+  clippy, fmt clean, `--profile quick --test-threads 2` 494 of 494 (3 skipped). **The full
+  tier was not run** (queued third behind 0041 and 0038 on the lock, then stopped for this
+  checkpoint without ever holding it). Run it first.
+- **The f64505f amendment: no code written yet.** Defaults, bar 2, step 4 and the flicker are
+  all open.
+- **Defaults, worked** (`live/model.py`, the f64 model with 0.15 / 2 / 10 s, max 16, floor
+  2^-6; B = 2^-4, D = 2^-8): dark B to D, log2 e at k 15 1.9961, 60 3.0999, 120 3.6451, 240
+  3.9861, 480 4.0000 (max, reached between k 245 and 246); floor between k 83 and 84; slope
+  0.01676 then 0.00333 EV per frame (fivefold, `2/(2x60)` against `2/(10x60)`); pixel 22 at
+  k 1, settled pixel at max 72 (not 130). Light D to B unchanged (2.9976, 1.6688, 1.5312).
+  Glare: first dark frame 2.2816 (pixel 31) unchanged; floor between dark frames 58 and 59
+  (0.968 s to the floor); max between dark 220 and 221; dark 150 3.8102; 300 and 600 at max
+  4.000 (pixel 72). `2^-12` settles at 16. `instant()` inherits max 16, so its test's D target
+  (46.08) clamps: step to `2^-6` instead (11.52).
+- **Edits needed for the defaults** (outside Phase 4's Files touched, disclose):
+  `crates/vxe-render/src/exposure.rs` `eye()` (max 2^4, tau_cone 2, tau_rod 10; its doc line)
+  and its unit test `the_reference_step_follows_the_two_stage_curve` (floor at 2 ln 2, rod
+  `-8 + 2 exp(-(t - 2 ln 2)/10)`, `exposure(-12) == 16`, `exposure(-8)` now clamps);
+  `crates/vxe-render/tests/exposure.rs` bars 2, 4, 6 (numbers above; `limits_compensation_and_dt`
+  asserts 16 and the instant change); `apps/flythrough/src/main.rs` module doc (`1 s then 4 s`).
+- **Bar 2 and step 4 need a level pose facing a vein** whose lamp-off meter settles above the
+  clamp (`> log2(0.18) - 4 = -6.474`). The owner's Phase 5 pose was not recorded in
+  `live/session1.log`. Draft search test in `live/exposure_probe.rs` (copy to
+  `apps/flythrough/tests/`, run under the lock, `#[ignore]`d, delete after): clusters ore
+  surface voxels near the spawn, places a camera 5 / 9 / 14 voxels out along the cluster's
+  normal and prints each pose's lamp-off meter after 90 frames under `Manual(1)`. The README
+  hero pose (148, 280, 484, yaw 135, pitch -10) is another candidate. A log-mean meter needs
+  about half the centre-weighted view glowing to reach -6.47, so expect close poses.
+- **Step 4 design (not yet coded):** in `apps/flythrough/tests/exposure.rs`, a lamp-off run
+  from the vein pose under auto eye and under `Manual(final auto exposure)`; save PNGs every
+  30 frames to `CARGO_TARGET_TMPDIR/../exposure-patches/`; per frame read
+  `frame.exposure_tiles()` (8 x 8 tiles of log2 absolute luminance, already divided by the
+  exposure in the composite: the exposure-normalised radiance) and the display target. A
+  patch is a full tile (count 64, above -15) whose tile value moves by more than log2 1.1 =
+  0.1375 between saved frames from frame 30 on. Variants for a found patch: `indirect: false`,
+  `candidates: 0`, `emissive_history`, `filter: false`; the mirror is synced before the run
+  (no uploads in the window). Compare auto against manual per tile: a uniform pre-exposure
+  makes them match. Flicker: per wall tile, mean frame-to-frame change of the display bytes
+  and of the tile value, auto against manual, early and late windows.
+- **Second session:** not prepared (no `live/flythrough-p5b`, no `live/session2.sh`).
+
 ### Notes
 
 - Phase 1: the state the frame passes read is a 32-byte uniform at group 0 binding 13, copied
