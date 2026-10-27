@@ -757,13 +757,10 @@ pub fn luma_mad(a: &[f64], b: &[f64]) -> f64 {
 }
 
 /// The frames, from the first after a change, until `series` (each frame's mean absolute
-/// difference from the settled image) falls below 10 % of its first value; `None` if it
-/// does not within the series.
-pub fn settle_frames(series: &[f64]) -> Option<usize> {
-    series
-        .iter()
-        .position(|&d| d < 0.1 * series[0])
-        .map(|i| i + 1)
+/// difference from the settled image) falls below 10 % of `step` (the change's size);
+/// `None` if it does not within the series.
+pub fn settle_frames(series: &[f64], step: f64) -> Option<usize> {
+    series.iter().position(|&d| d < 0.1 * step).map(|i| i + 1)
 }
 
 /// One pipeline's lamp readings.
@@ -773,7 +770,8 @@ pub struct LampReading {
     pub centroids: Vec<f64>,
     /// The lamp's contribution over the sweep's last 16 frames.
     pub contributions: Vec<Vec<f64>>,
-    /// Frames for the lamp switched off to settle within 10 %.
+    /// Frames for the lamp switched off to settle within 10 % of the lamp's settled
+    /// contribution.
     pub step: Option<usize>,
     /// Frames for an emission step (ore 1.0 to 0.25, lamp off) to settle within 10 %.
     pub emission: Option<usize>,
@@ -823,6 +821,13 @@ pub fn lamp_reading(
         }
     }
     let mut f = settled(true, SETTLE);
+    // The step's size: the settled lamp-lit image's difference from the lamp-off one. The
+    // temporal pass drops the lamp's history on the switch, so the first frame after it is
+    // already near the settled image and cannot be the measure.
+    let step = luma_mad(
+        &lumas(&readback::read_rgba8(device, queue, f.target())),
+        &off,
+    );
     f.set_lighting(vxe_render::Lighting {
         lamp: false,
         ..f.lighting()
@@ -836,7 +841,7 @@ pub fn lamp_reading(
             )
         })
         .collect();
-    r.step = settle_frames(&series);
+    r.step = settle_frames(&series, step);
     if !full {
         return r;
     }
@@ -858,7 +863,7 @@ pub fn lamp_reading(
             )
         })
         .collect();
-    r.emission = settle_frames(&series);
+    r.emission = settle_frames(&series, series[0]);
     r.emission_series = (series[0], series[series.len() - 1]);
     let mut f = settled(true, SETTLE);
     let n = (OUTPUT[0] * OUTPUT[1]) as usize;

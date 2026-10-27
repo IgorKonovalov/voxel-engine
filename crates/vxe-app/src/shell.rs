@@ -111,6 +111,29 @@ pub fn run<A: App>(config: ShellConfig, app: A) -> Result<(), ShellError> {
     error.map_or(Ok(()), Err)
 }
 
+/// Whether this build links DXC into wgpu's DX12 backend: the workspace builds `wgpu` with
+/// `static-dxc` (ADR-0035), which `wgpu-hal` honours only on x86_64 and i686 Windows MSVC.
+const STATIC_DXC: bool = cfg!(all(
+    windows,
+    target_env = "msvc",
+    not(target_arch = "aarch64")
+));
+
+/// The backend for a startup line: its name, and on DX12 the shader compiler the build and the
+/// environment request (`WGPU_DX12_COMPILER` when set, else static DXC where it is linked, else
+/// `Dx12Compiler::Auto`'s fallback). It reports the request, not what `wgpu-hal` loaded.
+pub fn backend_label(backend: wgpu::Backend) -> String {
+    if backend != wgpu::Backend::Dx12 {
+        return format!("{backend:?}");
+    }
+    let compiler = match std::env::var("WGPU_DX12_COMPILER") {
+        Ok(value) => format!("WGPU_DX12_COMPILER={value}"),
+        Err(_) if STATIC_DXC => "static DXC".to_owned(),
+        Err(_) => "dxcompiler.dll if found, else FXC".to_owned(),
+    };
+    format!("{backend:?}, shader compiler: {compiler}")
+}
+
 /// Runs one teardown stage between two log lines, so the last line before a hang is the
 /// stage that hangs.
 fn stage(what: &str, f: impl FnOnce()) {
@@ -229,7 +252,7 @@ impl<A: App> Shell<A> {
         }
 
         let info = adapter.get_info();
-        log::info!("adapter: {} ({:?})", info.name, info.backend);
+        log::info!("adapter: {} ({})", info.name, backend_label(info.backend));
         let gpu = Gpu {
             adapter,
             device,

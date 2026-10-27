@@ -17,6 +17,7 @@ vxe-world.workspace = true
 wgpu.workspace = true
 
 [dev-dependencies]
+log.workspace = true
 pollster.workspace = true
 criterion.workspace = true
 

@@ -1,11 +1,16 @@
-//! The frame: the hit pass ([`Marcher`], `march.wgsl`), the light pass (`light.wgsl`) and the
-//! composite (`composite.wgsl`), each a compute dispatch over the internal target (ADR-0018).
+//! The frame: the hit pass ([`Marcher`], `march.wgsl`), the light pass (`light.wgsl`), the
+//! probe volume's passes (`probe_gather.wgsl`, ADR-0023) and the composite (`composite.wgsl`),
+//! each a compute dispatch over the internal target (ADR-0018).
 
 use crate::camera::{Camera, View};
 use crate::fsr2::{Fsr2, UpscalerKind};
 use crate::gpu_world::GpuWorld;
 use crate::light::LightParams;
-use crate::{ATROUS_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, LIGHT_WGSL, MARCH_WGSL, TEMPORAL_WGSL};
+use crate::probes::{DEFAULT_PROBE_SPACING, ProbeUniform, ProbeVolume};
+use crate::{
+    ATROUS_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, LIGHT_WGSL, MARCH_WGSL, PROBE_GATHER_WGSL,
+    PROBE_UPDATE_WGSL, TEMPORAL_WGSL,
+};
 use vxe_world::ChunkCoord;
 
 /// The upscale pass, compiled after [`MARCH_WGSL`].
@@ -98,6 +103,12 @@ pub const EMISSION_CHANGE_FRAMES: u32 = 11;
 /// `Params::lighting` bit: an emission scale changed within the last
 /// [`EMISSION_CHANGE_FRAMES`] frames.
 pub const LIGHTING_EMISSION_CHANGED: u32 = 1 << 8;
+/// `Params::lighting` bit: the lamp's light changed since the last encode with history (its
+/// switch, a parameter, or the walk its shadow rays take): the temporal pass takes this
+/// frame's lamp part as it is, the way an edit box resets a pixel (ADR-0018), and keeps the
+/// emissive part's history. The light pass's lamp estimate carries no sampling noise (one
+/// point light, one shadow ray), so the reset adds none.
+pub const LIGHTING_LAMP_CHANGED: u32 = 1 << 9;
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
 pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
 /// `Params::lighting` bit: candidates are drawn uniformly over the buffer
@@ -105,6 +116,9 @@ pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
 pub const LIGHTING_UNIFORM_DRAW: u32 = 1 << 7;
 /// `Params::lighting` bit: the composite's tone map is the identity clamp.
 pub const LIGHTING_IDENTITY_TONE_MAP: u32 = 1 << 6;
+/// `Params::lighting` bit: the probe passes ran and the composite adds the gathered indirect
+/// irradiance ([`Lighting::indirect`]).
+pub const LIGHTING_INDIRECT: u32 = 1 << 12;
 
 /// `Params::flags` bit: trace the shadow ray.
 pub const FLAG_SHADOWS: u32 = 1;
@@ -773,6 +787,16 @@ pub struct Lighting {
     /// Frames of history the emissive part of the irradiance blends over at least (static
     /// light holds still); the lamp's part keeps alpha 0.2.
     pub emissive_history: u32,
+    /// Indirect light from the probe volume (ADR-0023): the probes update and the gather adds
+    /// their irradiance, in the shaded view outside the cutaway. Off by default.
+    pub indirect: bool,
+    /// Rays each updated probe traces, clamped to 1 ..= 64 (default 64): fewer rays cost less
+    /// and blend a noisier estimate.
+    pub probe_rays: u32,
+    /// The probe volume refreshes one probe in this many each frame outside a light-change
+    /// window ([`Frame::probe_light_window`]), rounded up to a power of two in 8 ..= 32
+    /// (default 8): more slices cost less and lag longer.
+    pub probe_slices: u32,
 }
 
 impl Default for Lighting {
@@ -788,11 +812,26 @@ impl Default for Lighting {
             sampler: Sampler::default(),
             history: HistoryKill::default(),
             emissive_history: DEFAULT_EMISSIVE_HISTORY,
+            indirect: false,
+            probe_rays: crate::probes::RAYS_PER_PROBE,
+            probe_slices: crate::probes::SLICES,
         }
     }
 }
 
 impl Lighting {
+    /// [`Lighting::probe_rays`] as the probe passes take it.
+    pub fn rays(&self) -> u32 {
+        self.probe_rays.clamp(1, crate::probes::RAYS_PER_PROBE)
+    }
+
+    /// [`Lighting::probe_slices`] as the probe passes take it.
+    pub fn slices(&self) -> u32 {
+        self.probe_slices
+            .clamp(crate::probes::SLICES, crate::probes::MAX_SLICES)
+            .next_power_of_two()
+    }
+
     /// The bits of `Params::lighting`.
     pub fn flags(&self) -> u32 {
         (if self.tone_map == ToneMap::Identity {
@@ -821,6 +860,7 @@ impl Lighting {
             } else {
                 0
             }
+            | if self.indirect { LIGHTING_INDIRECT } else { 0 }
     }
 }
 
@@ -885,7 +925,9 @@ pub struct Frame {
     lod: LodParams,
     look: LookParams,
     lighting: Lighting,
-    /// The per-material emission scale, an `f32` per material id, 1.0 unless set.
+    /// The per-material emission scales, 1.0 unless set: an `f32` per material id for the
+    /// light the frame's pixels sample, then [`EMISSION_ROWS`] more for the light the probe
+    /// rays sample.
     emission_scale: wgpu::Buffer,
     emission_cpu: Vec<f32>,
     /// The blue-noise texture, uploaded by the first `encode`.
@@ -895,6 +937,8 @@ pub struct Frame {
     frame: u32,
     /// The frame index of the last emission-scale change.
     emission_changed_at: Option<u32>,
+    /// The frame index of the last change of a scale the probe rays sample.
+    probe_emission_changed_at: Option<u32>,
     /// The copy of the double-buffered targets the next `encode` writes.
     cur: usize,
     resolution: LightingResolution,
@@ -911,6 +955,18 @@ pub struct Frame {
     upscale_params: wgpu::Buffer,
     upscaler: Upscaler,
     history: std::sync::Mutex<History>,
+    /// The probe volume and its passes' group-3 layout; the gather's group-2 layout.
+    probes: ProbeVolume,
+    probe_layout: wgpu::BindGroupLayout,
+    gather_layout: wgpu::BindGroupLayout,
+    gather: wgpu::ComputePipeline,
+    /// The probe update's two dispatches (`probe_update.wgsl`).
+    probe_trace: wgpu::ComputePipeline,
+    probe_blend: wgpu::ComputePipeline,
+    /// Probe rays the last encode dispatched: update-list entries times rays per probe.
+    traced_probe_rays: std::sync::atomic::AtomicU64,
+    /// Whether the last encode's probe update blended inside a light-change window.
+    probe_light_window: std::sync::atomic::AtomicBool,
     /// The output size the frame's image is presented at; the targets are at the internal
     /// size.
     output: [u32; 2],
@@ -950,6 +1006,37 @@ struct History {
     view_changed: bool,
     /// The lamps of the last encodes with history, newest last, at most [`LAMP_FRAMES`].
     lamps: std::collections::VecDeque<Lamp>,
+    /// The lamp the last `params_for` placed, and the static light of the last encode with
+    /// history (`None` before the first).
+    built_lamp: Option<LightParams>,
+    light_key: Option<LightKey>,
+    /// Encoded frames with a probe update left in the open light-change window.
+    light_window: u32,
+}
+
+/// What a frame's static light depends on, as the probe volume's light-change window compares
+/// it between encodes: the lamp's switch and its parameters (not `masks` or `skips`, which
+/// leave the walk byte-identical, and not its pose, which follows the camera), the shadow walk
+/// the lamp's shadow rays take, the emissive candidate count (0 is emissive light off) and the
+/// frame of the last change of an emission scale the probe rays sample. Exposure and the tone
+/// map come after the light.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LightKey {
+    lamp: bool,
+    params: Option<LightParams>,
+    shadow_walk: ShadowWalk,
+    candidates: u32,
+    emission_changed_at: Option<u32>,
+}
+
+impl LightKey {
+    /// Whether the lamp's light differs between `self` and `other`: its switch, its
+    /// parameters or its shadow rays' walk.
+    fn lamp_differs(&self, other: &Self) -> bool {
+        self.lamp != other.lamp
+            || self.params != other.params
+            || self.shadow_walk != other.shadow_walk
+    }
 }
 
 /// Entries the candidate table holds at most.
@@ -1312,8 +1399,62 @@ impl Frame {
                 Io::Store(wgpu::TextureFormat::Rgba8Unorm),
                 Io::Float,
                 Io::Uint,
+                Io::Float,
             ],
         );
+        let probe_storage = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let probe_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("probes"),
+            entries: &[
+                probe_storage(0),
+                probe_storage(1),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let gather_layout = io_layout(device, "gather", &[Io::Float, Io::Uint, f16]);
+        let gather = compute_pipeline(
+            device,
+            "gather",
+            format!("{MARCH_WGSL}\n{PROBE_GATHER_WGSL}"),
+            &[
+                Some(&world_layout),
+                None,
+                Some(&gather_layout),
+                Some(&probe_layout),
+            ],
+            "gather",
+        );
+        let update_source =
+            format!("{MARCH_WGSL}\n{LIGHT_WGSL}\n{PROBE_GATHER_WGSL}\n{PROBE_UPDATE_WGSL}");
+        let probe_pass = |entry: &str| {
+            compute_pipeline(
+                device,
+                entry,
+                update_source.clone(),
+                &[Some(&world_layout), None, None, Some(&probe_layout)],
+                entry,
+            )
+        };
+        let probe_trace = probe_pass("probe_trace");
+        let probe_blend = probe_pass("probe_blend");
         let params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("frame params"),
             size: size_of::<Params>() as u64,
@@ -1360,11 +1501,11 @@ impl Frame {
                 device,
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("emission scale"),
-                    contents: bytemuck::cast_slice(&vec![1.0f32; EMISSION_ROWS]),
+                    contents: bytemuck::cast_slice(&vec![1.0f32; 2 * EMISSION_ROWS]),
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 },
             ),
-            emission_cpu: vec![1.0; EMISSION_ROWS],
+            emission_cpu: vec![1.0; 2 * EMISSION_ROWS],
             blue_noise: device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("blue noise"),
                 size: wgpu::Extent3d {
@@ -1382,6 +1523,7 @@ impl Frame {
             blue_noise_written: std::sync::atomic::AtomicBool::new(false),
             frame: 0,
             emission_changed_at: None,
+            probe_emission_changed_at: None,
             cur: 0,
             downsample_layout,
             downsample,
@@ -1415,7 +1557,60 @@ impl Frame {
             kind: UpscalerKind::Off,
             fsr: None,
             composite_hdr: None,
+            probes: ProbeVolume::new(device, DEFAULT_PROBE_SPACING),
+            probe_layout,
+            gather_layout,
+            gather,
+            probe_trace,
+            probe_blend,
+            traced_probe_rays: std::sync::atomic::AtomicU64::new(0),
+            probe_light_window: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Probe rays the last encode dispatched (update-list entries times
+    /// [`Lighting::probe_rays`]); 0 with indirect light off or the update off.
+    pub fn traced_probe_rays(&self) -> u64 {
+        self.traced_probe_rays
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Whether the last encode's probe update ran inside a light-change window: a change of
+    /// the lamp's switch or parameters, the shadow walk, the emissive candidate count or an
+    /// emission scale opens one for [`crate::probes::WINDOW_FRAMES`] encoded frames with a
+    /// probe update, and a change inside it restarts it. In the window the update refreshes
+    /// one probe in [`crate::probes::WINDOW_SLICES`] a frame, every visit blends at
+    /// hysteresis 0 and restarts the probe's age at 1, so the young updates after it smooth
+    /// the noise back down.
+    pub fn probe_light_window(&self) -> bool {
+        self.probe_light_window
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The probe volume (ADR-0023).
+    pub fn probes(&self) -> &ProbeVolume {
+        &self.probes
+    }
+
+    pub fn probes_mut(&mut self) -> &mut ProbeVolume {
+        &mut self.probes
+    }
+
+    /// Replaces the probe volume with one of probes `spacing` voxels apart, every probe never
+    /// traced, when the spacing changes; its pinned origin and update switch carry over.
+    pub fn set_probe_spacing(&mut self, device: &wgpu::Device, spacing: u32) {
+        if spacing != self.probes.spacing() {
+            let mut v = ProbeVolume::new(device, spacing);
+            v.set_origin(self.probes.pinned_origin());
+            v.set_updates(self.probes.updates());
+            v.set_light_restarts(self.probes.light_restarts());
+            self.probes = v;
+        }
+    }
+
+    /// The gather's indirect irradiance on the lighting grid (rgba16float, rgb).
+    pub fn indirect_irradiance(&self) -> &wgpu::Texture {
+        &self.targets.indirect
     }
 
     /// The size the hit pass and the lighting passes render at.
@@ -1564,7 +1759,10 @@ impl Frame {
 
     /// Kills the history of every pixel whose hit lies in the voxels `min ..= max` dilated by
     /// one voxel, in the next encoded frame: an edit's `EditResult::aabb`. More than
-    /// [`MAX_EDITS`] boxes in one frame flush all history.
+    /// [`MAX_EDITS`] boxes in one frame flush all history. With indirect light on, the next
+    /// encoded frame also updates every probe whose cell the box touches
+    /// ([`ProbeVolume::touched`]) at the young hysteresis, its age restarting at 1; boxes past
+    /// [`MAX_EDITS`] touch no probe, which then refresh in their slices.
     pub fn invalidate(&mut self, min: [i32; 3], max: [i32; 3]) {
         let h = self.history();
         if h.edits.len() == MAX_EDITS {
@@ -1602,26 +1800,55 @@ impl Frame {
         queue.submit([enc.finish()]);
     }
 
-    /// Scales material `material`'s emission by `scale` from the next frame on: a visual
-    /// knob that leaves the world untouched (an authoritative change is a `Replace` op).
+    /// Scales material `material`'s emission by `scale` from the next frame on, in the
+    /// pixels' light and the probes' alike: a visual knob that leaves the world untouched
+    /// (an authoritative change is a `Replace` op).
     pub fn set_emission_scale(&mut self, queue: &wgpu::Queue, material: u16, scale: f32) {
+        self.set_emission_scales(queue, material, scale, scale);
+    }
+
+    /// Scales material `material`'s emission by `pixels` in the light the frame's pixels
+    /// sample (the light pass, the composite) and by `probes` in the light the probe rays
+    /// sample. An emitter that varies over time passes its current scale and its time
+    /// average: the pixels follow it at full amplitude, and while `probes` holds still the
+    /// probe volume sees no light change (no light-change window opens).
+    pub fn set_emission_scales(
+        &mut self,
+        queue: &wgpu::Queue,
+        material: u16,
+        pixels: f32,
+        probes: f32,
+    ) {
         let i = usize::from(material);
-        if self.emission_cpu[i] != scale {
-            self.emission_cpu[i] = scale;
-            self.emission_changed_at = Some(self.frame);
-            queue.write_buffer(
-                &self.emission_scale,
-                i as u64 * 4,
-                bytemuck::bytes_of(&scale),
-            );
+        for (row, scale) in [(i, pixels), (EMISSION_ROWS + i, probes)] {
+            if self.emission_cpu[row] != scale {
+                self.emission_cpu[row] = scale;
+                if row == i {
+                    self.emission_changed_at = Some(self.frame);
+                } else {
+                    self.probe_emission_changed_at = Some(self.frame);
+                }
+                queue.write_buffer(
+                    &self.emission_scale,
+                    row as u64 * 4,
+                    bytemuck::bytes_of(&scale),
+                );
+            }
         }
     }
 
+    /// Material `material`'s emission scale in the pixels' light.
     pub fn emission_scale(&self, material: u16) -> f32 {
         self.emission_cpu[usize::from(material)]
     }
 
-    /// The emission-scale buffer, an `f32` per material id.
+    /// Material `material`'s emission scale in the probe rays' light.
+    pub fn probe_emission_scale(&self, material: u16) -> f32 {
+        self.emission_cpu[EMISSION_ROWS + usize::from(material)]
+    }
+
+    /// The emission-scale buffer: an `f32` per material id for the pixels' light, then one
+    /// per material id for the probe rays' (see [`Frame::set_emission_scales`]).
     pub fn emission_scales(&self) -> &wgpu::Buffer {
         &self.emission_scale
     }
@@ -1717,9 +1944,9 @@ impl Frame {
         &self.targets.moments[self.cur]
     }
 
-    /// Bytes the frame's targets occupy, FSR 2's resources included.
+    /// Bytes the frame's targets, its probe volume and FSR 2's resources occupy.
     pub fn frame_bytes(&self) -> u64 {
-        self.targets.bytes() + self.fsr.as_ref().map_or(0, Fsr2::bytes)
+        self.targets.bytes() + self.probes.bytes() + self.fsr.as_ref().map_or(0, Fsr2::bytes)
     }
 
     /// Replaces the targets with ones of `width` × `height`, presented at that size, and
@@ -1784,6 +2011,11 @@ impl Frame {
             "{} views",
             views.len()
         );
+        // The lamp the next encode with history compares against the last one's.
+        self.history
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .built_lamp = Some(*light);
         let (fwd, right, up) = camera.basis();
         let mut vs = [View::default(); MAX_VIEWS];
         vs[..views.len()].copy_from_slice(views);
@@ -1887,6 +2119,12 @@ impl Frame {
         keep_history: bool,
     ) {
         let mut p = *params;
+        // The probe passes run in the shaded view outside the cutaway, with indirect light on.
+        let indirect =
+            self.lighting.indirect && self.look.view == ViewMode::Shaded && !self.look.cutaway;
+        let probe_update = indirect && self.probes.updates();
+        let mut light_window = false;
+        let mut boxes: Vec<[[i32; 3]; 2]> = Vec::new();
         let mut edits = EditsUniform {
             count: 0,
             _pad: [0; 3],
@@ -1910,10 +2148,32 @@ impl Frame {
                 edits.boxes[2 * i + 1] = [max[0], max[1], max[2], 0];
             }
             edits.count = h.edits.len() as u32;
-            h.edits.clear();
+            boxes = std::mem::take(&mut h.edits);
             h.overflow = false;
             h.last_views = params.views;
             h.encoded = true;
+            let key = LightKey {
+                lamp: self.lighting.lamp,
+                params: h.built_lamp.map(|l| LightParams {
+                    masks: true,
+                    skips: true,
+                    ..l
+                }),
+                shadow_walk: self.lighting.shadow_walk,
+                candidates: self.lighting.candidates,
+                emission_changed_at: self.probe_emission_changed_at,
+            };
+            if h.light_key.is_some_and(|k| k.lamp_differs(&key)) {
+                p.lighting |= LIGHTING_LAMP_CHANGED;
+            }
+            if h.light_key.is_some_and(|k| k != key) && self.probes.light_restarts() {
+                h.light_window = crate::probes::WINDOW_FRAMES;
+            }
+            h.light_key = Some(key);
+            if probe_update && h.light_window > 0 {
+                light_window = true;
+                h.light_window -= 1;
+            }
             let back = (self.upscaler.change_frames.max(1) as usize).min(LAMP_FRAMES);
             old_lamp = h
                 .lamps
@@ -1930,7 +2190,6 @@ impl Frame {
         } else {
             p.history = 0;
         }
-        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&p));
         queue.write_buffer(&self.edits, 0, bytemuck::bytes_of(&edits));
         let scale = self.output[0] as f32 / self.targets.width as f32;
         queue.write_buffer(
@@ -2087,6 +2346,7 @@ impl Frame {
                 Res::Tex(composite_out),
                 Res::Tex(t.lit_pos(c)),
                 Res::Tex(t.lit_info(c)),
+                Res::Tex(&t.indirect),
             ],
         );
         let gradient_bind = bind_io(
@@ -2179,6 +2439,67 @@ impl Frame {
                     .map(|b| frame_pass(&self.atrous, b, 2, lw)),
             );
         }
+        p.lighting &= !LIGHTING_INDIRECT;
+        let mut gather: Vec<Dispatch<'_>> = Vec::new();
+        let mut probes: Vec<Dispatch<'_>> = Vec::new();
+        let mut updates = 0;
+        self.traced_probe_rays
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.probe_light_window
+            .store(light_window, std::sync::atomic::Ordering::Relaxed);
+        let probe_bind = indirect.then(|| {
+            p.lighting |= LIGHTING_INDIRECT;
+            if probe_update {
+                let slices = if light_window {
+                    crate::probes::WINDOW_SLICES
+                } else {
+                    self.lighting.slices()
+                };
+                let origin = self.probes.origin_for(p.views[0].origin);
+                let touched: Vec<[i32; 3]> = boxes
+                    .iter()
+                    .flat_map(|&[min, max]| self.probes.touched(origin, min, max))
+                    .collect();
+                let list = self.probes.update_list(p.frame, slices, &touched);
+                queue.write_buffer(self.probes.scratch(), 0, bytemuck::cast_slice(&list));
+                updates = list.len() as u32;
+            }
+            self.traced_probe_rays.store(
+                u64::from(updates) * u64::from(self.lighting.rays()),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            self.write_probe_uniform(queue, &p, updates, light_window);
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("probes"),
+                layout: &self.probe_layout,
+                entries: &[
+                    buffer_entry(0, self.probes.data()),
+                    buffer_entry(1, self.probes.scratch()),
+                    buffer_entry(2, self.probes.uniform()),
+                ],
+            })
+        });
+        let gather_bind = bind_io(
+            device,
+            &self.gather_layout,
+            &[
+                Res::Tex(t.lit_pos(c)),
+                Res::Tex(t.lit_info(c)),
+                Res::Tex(&t.indirect),
+            ],
+        );
+        if let Some(b) = &probe_bind {
+            gather.push(Dispatch {
+                pipeline: &self.gather,
+                groups: [Some(&world_bind), None, Some(&gather_bind), Some(b)],
+                workgroups: lw,
+            });
+            if updates > 0 {
+                probes.push(frame_pass(&self.probe_trace, b, 3, [updates, 1]));
+                probes.push(frame_pass(&self.probe_blend, b, 3, [updates, 1]));
+            }
+        }
+        queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&p));
         let mut upscale: Vec<Dispatch<'_>> = Vec::new();
         let mut sharpen: Vec<Dispatch<'_>> = Vec::new();
         if let (Some(u), Some(r)) = (&upscale_bind, &sharpen_bind) {
@@ -2196,6 +2517,8 @@ impl Frame {
             vec![frame_pass(&self.light, &light_bind, 2, lw)],
             vec![frame_pass(&self.temporal, &temporal_bind, 2, lw)],
             atrous,
+            probes,
+            gather,
             vec![frame_pass(composite, &composite_bind, 2, full)],
             upscale,
             sharpen,
@@ -2221,6 +2544,21 @@ impl Frame {
                 pass.dispatch_workgroups(d.workgroups[0], d.workgroups[1], 1);
             }
         }
+    }
+
+    /// Writes the probe passes' uniform for the frame `p`: the volume's origin for its first
+    /// view's eye, `updates` entries in the update list, and whether the light-change window
+    /// is open.
+    fn write_probe_uniform(&self, queue: &wgpu::Queue, p: &Params, updates: u32, window: bool) {
+        let u = ProbeUniform {
+            origin: self.probes.origin_for(p.views[0].origin),
+            spacing: self.probes.spacing(),
+            updates,
+            rays: self.lighting.rays(),
+            light_window: u32::from(window),
+            _pad: 0,
+        };
+        queue.write_buffer(self.probes.uniform(), 0, bytemuck::bytes_of(&u));
     }
 
     /// Renders `camera` over `world` lit by `light` as one frame alone, with no history,
@@ -2287,6 +2625,7 @@ fn composite_hdr_pass(
             Io::Store(wgpu::TextureFormat::Rgba32Float),
             Io::Float,
             Io::Uint,
+            Io::Float,
         ],
     );
     let pipeline = compute_pipeline(
@@ -2318,12 +2657,14 @@ fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_>
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
 /// The last nine are FSR 2's ([`crate::fsr2::FSR2_PASSES`]); in FSR mode `upscale` and
 /// `sharpen` are empty, and otherwise FSR's are.
-pub const FRAME_PASSES: [&str; 17] = [
+pub const FRAME_PASSES: [&str; 19] = [
     "hit",
     "gradient",
     "light",
     "temporal",
     "atrous",
+    "probes",
+    "gather",
     "composite",
     "upscale",
     "sharpen",
@@ -2376,6 +2717,8 @@ struct Targets {
     /// internal size, or with the upscaler at the output size, the composite's image in its
     /// top-left pixels until the sharpening pass overwrites it.
     output: wgpu::Texture,
+    /// The probe gather's indirect irradiance (rgba16float), on the lighting grid.
+    indirect: wgpu::Texture,
     /// The upscaler's history at the output size (rgba16float), this frame's and the last.
     history: Option<[wgpu::Texture; 2]>,
 }
@@ -2441,6 +2784,7 @@ impl Targets {
             history: upscaled
                 .filter(|_| own_history)
                 .map(|[w, h]| [0, 1].map(|_| sized("upscale history", Rgba16Float, w, h))),
+            indirect: lit("indirect irradiance", Rgba16Float),
         }
     }
 
@@ -2472,7 +2816,7 @@ impl Targets {
         px * (2 * (16 + 8) + 8)
             + output * 4
             + history
-            + lpx * (half + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16)
+            + lpx * (half + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16 + 8)
             + strata * 8
     }
 }

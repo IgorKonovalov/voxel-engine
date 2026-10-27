@@ -42,15 +42,31 @@ jobs:
         shell: bash
         run: scripts/build-guests.sh
       - run: cargo build --workspace
-      # The full tier (.config/nextest.toml): every test, quick, gpu and slow alike.
+      # Pipeline creation per compute pass (docs/nfr.md section 7). Windows runs DX12 on WARP
+      # twice: FXC forced through WGPU_DX12_COMPILER, then the default (static DXC,
+      # ADR-0035). The fly-through's size is the debug binary the build step above produced;
+      # the static DXC library's size is what the feature adds to it at most.
+      - name: Pipeline times on DX12 under FXC and the default compiler
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          WGPU_DX12_COMPILER=fxc cargo run -p vxe-render --release --example pipeline_times
+          cargo run -p vxe-render --release --example pipeline_times
+          echo "target/debug/flythrough.exe: $(wc -c < target/debug/flythrough.exe) bytes"
+          find target/debug/build -path '*mach-dxcompiler-rs-*' -name '*.lib' -exec wc -c {} + || true
+      - name: Pipeline times on lavapipe
+        if: runner.os == 'Linux'
+        run: cargo run -p vxe-render --release --example pipeline_times
+      # The full tier (.config/nextest.toml): every test, quick, gpu and slow alike. The `ci`
+      # profile runs the full tier's tests with the GPU tests in parallel.
       # On Linux a missing lavapipe fails the golden tests instead of skipping them.
-      - run: cargo nextest run --workspace --profile full
+      - run: cargo nextest run --workspace --profile ci
         env:
           VXE_REQUIRE_SOFTWARE_ADAPTER: ${{ runner.os == 'Linux' && '1' || '' }}
       # The fly-through's `wasm` feature (off in the workspace build) hosts its logic
       # component; its tests (`tests/component.rs`) need the feature and the built component.
       # Every other fly-through test ran in the workspace step, so only that binary runs here.
-      - run: cargo nextest run -p flythrough --features wasm --profile full -E 'binary(component)'
+      - run: cargo nextest run -p flythrough --features wasm --profile ci -E 'binary(component)'
         env:
           VXE_REQUIRE_SOFTWARE_ADAPTER: ${{ runner.os == 'Linux' && '1' || '' }}
       - run: cargo test --workspace --doc

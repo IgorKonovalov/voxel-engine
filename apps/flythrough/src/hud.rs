@@ -378,11 +378,13 @@ pub struct HudStats {
 }
 
 /// The frame passes' GPU times (name and milliseconds, in pass order), the light samples the
-/// mirror holds, and the lighting modes in words.
+/// mirror holds, the probe volume's live probes at the last sample (`None` with indirect light
+/// off), and the lighting modes in words.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LightingRow {
     pub passes: Vec<(&'static str, f32)>,
     pub light_samples: u64,
+    pub live_probes: Option<u32>,
     pub modes: String,
     /// The internal and output sizes while the upscaler runs: a row then reads its passes.
     pub upscale: Option<[[u32; 2]; 2]>,
@@ -519,8 +521,8 @@ impl HudStats {
             format_args!("gpu march {}  hud {}", Ms(self.march_ms), Ms(self.hud_ms)),
         )?;
         if let Some(l) = &self.lighting {
-            // Yellow when light and temporal exceed the lighting line or the filter the
-            // denoise line.
+            // Yellow when the lighting passes (light, temporal and the probe update and
+            // gather) exceed the lighting line or the filter the denoise line.
             let ms = |name: &str| {
                 l.passes
                     .iter()
@@ -528,7 +530,8 @@ impl HudStats {
                     .map(|&(_, v)| v)
                     .sum::<f32>()
             };
-            let colour = if ms("light") + ms("temporal") > LIGHTING_LINE_MS
+            let colour = if ms("light") + ms("temporal") + ms("probes") + ms("gather")
+                > LIGHTING_LINE_MS
                 || ms("atrous") > DENOISE_LINE_MS
             {
                 HudColour::Yellow
@@ -542,11 +545,21 @@ impl HudStats {
             }
             out.write_str(" ms")?;
             row(out, colour, format_args!(""))?;
-            row(
-                out,
-                HudColour::White,
-                format_args!("lights {} samples; {}", l.light_samples, l.modes),
-            )?;
+            match l.live_probes {
+                Some(p) => row(
+                    out,
+                    HudColour::White,
+                    format_args!(
+                        "lights {} samples, {p} probes live; {}",
+                        l.light_samples, l.modes
+                    ),
+                )?,
+                None => row(
+                    out,
+                    HudColour::White,
+                    format_args!("lights {} samples; {}", l.light_samples, l.modes),
+                )?,
+            }
             if let Some([[iw, ih], [ow, oh]]) = l.upscale {
                 // Yellow when the composite, upscale and sharpen passes and FSR 2's exceed the
                 // upscale line. FSR 2's passes, when they ran, read as one total.
@@ -990,9 +1003,9 @@ mod tests {
         assert!(colours.iter().all(|&c| c != HudColour::Red));
     }
 
-    /// The lighting rows follow the march row: every pass's time, yellow when light and
-    /// temporal pass the 6.0 ms line or the filter the 3.0 ms one, then the light samples and
-    /// the modes.
+    /// The lighting rows follow the march row: every pass's time, yellow when light,
+    /// temporal and the probe update and gather pass the 6.0 ms line or the filter the 3.0 ms
+    /// one, then the light samples, the live probes and the modes.
     #[test]
     fn the_lighting_rows_follow_the_march_row() {
         let (mut out, mut colours) = (String::new(), Vec::new());
@@ -1003,8 +1016,11 @@ mod tests {
                 ("light", 4.5),
                 ("temporal", 0.5),
                 ("atrous", 2.5),
+                ("probes", 0.25),
+                ("gather", 0.5),
             ],
             light_samples: 18_522,
+            live_probes: Some(9_876),
             modes: "lighting full".to_owned(),
             upscale: None,
         });
@@ -1013,10 +1029,27 @@ mod tests {
         assert_eq!(lines.len(), 14);
         assert_eq!(
             lines[3],
-            "gpu hit 1.25 light 4.50 temporal 0.50 atrous 2.50 ms"
+            "gpu hit 1.25 light 4.50 temporal 0.50 atrous 2.50 probes 0.25 gather 0.50 ms"
         );
-        assert_eq!(lines[4], "lights 18522 samples; lighting full");
+        assert_eq!(
+            lines[4],
+            "lights 18522 samples, 9876 probes live; lighting full"
+        );
         assert_eq!(colours[3], HudColour::White);
+        s.lighting.as_mut().unwrap().passes[5].1 = 1.25;
+        s.write_rows(&mut out, &mut colours);
+        assert_eq!(
+            colours[3],
+            HudColour::Yellow,
+            "light, temporal, probes and gather over 6.0 ms"
+        );
+        s.lighting.as_mut().unwrap().passes[5].1 = 0.5;
+        s.lighting.as_mut().unwrap().live_probes = None;
+        s.write_rows(&mut out, &mut colours);
+        assert_eq!(
+            out.lines().nth(4),
+            Some("lights 18522 samples; lighting full")
+        );
         s.lighting.as_mut().unwrap().passes[1].1 = 6.0;
         s.write_rows(&mut out, &mut colours);
         assert_eq!(
@@ -1035,6 +1068,7 @@ mod tests {
         s.lighting = Some(LightingRow {
             passes: vec![("composite", 0.2), ("upscale", 0.5), ("sharpen", 0.12)],
             light_samples: 0,
+            live_probes: None,
             modes: "lighting half".to_owned(),
             upscale: Some([[1280, 720], [1920, 1080]]),
         });
@@ -1071,6 +1105,7 @@ mod tests {
                 ("fsr2 tone", 0.05),
             ],
             light_samples: 0,
+            live_probes: None,
             modes: "lighting half".to_owned(),
             upscale: Some([[1280, 720], [1920, 1080]]),
         });
@@ -1132,6 +1167,8 @@ pub enum ModeKey {
     Resolution,
     /// `F7`: the headlamp.
     Lamp,
+    /// `F8`: indirect light from the probe volume.
+    Indirect,
     /// `M`: the ore's emission pulse.
     Pulse,
 }
@@ -1204,23 +1241,28 @@ impl Modes {
                 }
             }
             ModeKey::Lamp => l.lamp = !l.lamp,
+            ModeKey::Indirect => l.indirect = !l.indirect,
             ModeKey::Pulse => self.pulse = !self.pulse,
         }
         self.banner_at = now_ms;
     }
 
     /// The modes in words: `lighting half, shadow walk coarse, sampler reuse, history edits,
-    /// lamp on, filter on, ore pulse off, emissive history 32`.
+    /// lamp on, indirect on at 64 rays 1/8, filter on, ore pulse off, emissive history 32`
+    /// (the probe rays per update and the share of probes refreshed a frame).
     pub fn line(&self) -> String {
         let l = &self.lighting;
         let on = |b: bool| if b { "on" } else { "off" };
         format!(
-            "lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, filter {}, ore pulse {}, emissive history {}",
+            "lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, indirect {} at {} rays 1/{}, filter {}, ore pulse {}, emissive history {}",
             self.resolution.name(),
             l.shadow_walk.name(),
             l.sampler.name(),
             l.history.name(),
             on(l.lamp),
+            on(l.indirect),
+            l.rays(),
+            l.slices(),
             on(l.filter),
             on(self.pulse),
             l.emissive_history
@@ -1267,7 +1309,7 @@ mod mode_tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, shadow walk coarse\nsampler reuse, history edits, lamp on\nfilter on, ore pulse off\nemissive history 32"
+            "lighting half, shadow walk coarse\nsampler reuse, history edits, lamp on\nindirect off at 64 rays 1/8, filter on\nore pulse off, emissive history 32"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;
@@ -1278,6 +1320,7 @@ mod mode_tests {
             (ModeKey::History, "history gradient"),
             (ModeKey::Resolution, "lighting full"),
             (ModeKey::Lamp, "lamp off"),
+            (ModeKey::Indirect, "indirect on"),
             (ModeKey::Pulse, "ore pulse on"),
         ] {
             m.press(key, t);

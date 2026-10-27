@@ -2,7 +2,8 @@
 #
 #   cargo nextest run --profile quick   CPU-only tests; every dev phase; no perf lock, no GPU
 #   cargo nextest run --profile gpu     the GPU tests minus the slow list; under the perf lock
-#   cargo nextest run --profile full    everything; plan close, orchestrator merge, CI
+#   cargo nextest run --profile full    everything; plan close, orchestrator merge
+#   cargo nextest run --profile ci      the full tier with the GPU tests in parallel; CI only
 #
 # A bare `cargo nextest run` is the default profile, which is the full suite as well.
 #
@@ -18,7 +19,8 @@
 #      filter below is the canonical copy. A newly slow CPU test fails the quick tier's 30 s
 #      termination until it is added here; a newly slow GPU test has to be added by hand.
 
-# One lavapipe process already spreads over every core, so two at once only contend.
+# One lavapipe process already spreads over every core, so two at once only contend on a
+# shared dev box. The `ci` profile lifts the cap on a dedicated runner.
 [test-groups]
 lavapipe = { max-threads = 1 }
 
@@ -28,24 +30,36 @@ slow-timeout = { period = "30s" }
 
 # GPU: the canonical copy of the gpu filter.
 [[profile.default.overrides]]
-filter = '(package(vxe-render) - kind(lib)) | binary_id(flythrough::cutaway) | binary_id(flythrough::fsr2) | binary_id(flythrough::golden) | binary_id(flythrough::hud_golden) | binary_id(flythrough::level_mirror) | binary_id(flythrough::lights) | binary_id(flythrough::look) | binary_id(flythrough::shutdown) | binary_id(flythrough::upscale)'
+filter = '(package(vxe-render) - kind(lib)) | binary_id(flythrough::cutaway) | binary_id(flythrough::castle_golden) | binary_id(flythrough::fsr2) | binary_id(flythrough::golden) | binary_id(flythrough::hud_golden) | binary_id(flythrough::indirect) | binary_id(flythrough::level_mirror) | binary_id(flythrough::lights) | binary_id(flythrough::look) | binary_id(flythrough::shutdown) | binary_id(flythrough::upscale)'
 test-group = 'lavapipe'
 
 # SLOW: the canonical copy of the slow list. Its own effect is a quieter report: a test known
 # to take 20 s or more is flagged at 60 s rather than 30 s.
 [[profile.default.overrides]]
-filter = '(binary_id(flythrough::upscale) & (test(=the_upscaler_keeps_stripe_edges_sharp_still_and_panning) | test(=a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame))) | (binary_id(flythrough::fsr2) & (test(=fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length) | test(=fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step) | test(=fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera))) | (binary_id(flythrough::lights) & (test(=reservoir_reuse_lowers_one_frames_error) | test(=the_lamp_light_that_left_the_cone_drops_in_each_history_mode))) | (binary_id(vxe-world::stamp) & test(=stamp_tally_agrees_with_apply_on_random_boxes))'
+filter = '(binary_id(flythrough::upscale) & (test(=the_upscaler_keeps_stripe_edges_sharp_still_and_panning) | test(=a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame))) | (binary_id(flythrough::fsr2) & (test(=fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length) | test(=fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step) | test(=fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera))) | (binary_id(flythrough::lights) & (test(=reservoir_reuse_lowers_one_frames_error) | test(=the_lamp_light_that_left_the_cone_drops_in_each_history_mode))) | (binary_id(flythrough::indirect) & (test(=a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again) | test(=a_pulse_at_its_mean_leaves_the_probes_still) | test(=switching_the_lamp_off_drops_the_probe_history))) | (binary_id(vxe-world::stamp) & test(=stamp_tally_agrees_with_apply_on_random_boxes))'
 slow-timeout = { period = "60s" }
 
 [profile.quick]
-default-filter = 'not ((package(vxe-render) - kind(lib)) | binary_id(flythrough::cutaway) | binary_id(flythrough::fsr2) | binary_id(flythrough::golden) | binary_id(flythrough::hud_golden) | binary_id(flythrough::level_mirror) | binary_id(flythrough::lights) | binary_id(flythrough::look) | binary_id(flythrough::shutdown) | binary_id(flythrough::upscale)) and not ((binary_id(flythrough::upscale) & (test(=the_upscaler_keeps_stripe_edges_sharp_still_and_panning) | test(=a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame))) | (binary_id(flythrough::fsr2) & (test(=fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length) | test(=fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step) | test(=fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera))) | (binary_id(flythrough::lights) & (test(=reservoir_reuse_lowers_one_frames_error) | test(=the_lamp_light_that_left_the_cone_drops_in_each_history_mode))) | (binary_id(vxe-world::stamp) & test(=stamp_tally_agrees_with_apply_on_random_boxes)))'
+default-filter = 'not ((package(vxe-render) - kind(lib)) | binary_id(flythrough::cutaway) | binary_id(flythrough::castle_golden) | binary_id(flythrough::fsr2) | binary_id(flythrough::golden) | binary_id(flythrough::hud_golden) | binary_id(flythrough::indirect) | binary_id(flythrough::level_mirror) | binary_id(flythrough::lights) | binary_id(flythrough::look) | binary_id(flythrough::shutdown) | binary_id(flythrough::upscale)) and not ((binary_id(flythrough::upscale) & (test(=the_upscaler_keeps_stripe_edges_sharp_still_and_panning) | test(=a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame))) | (binary_id(flythrough::fsr2) & (test(=fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length) | test(=fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step) | test(=fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera))) | (binary_id(flythrough::lights) & (test(=reservoir_reuse_lowers_one_frames_error) | test(=the_lamp_light_that_left_the_cone_drops_in_each_history_mode))) | (binary_id(flythrough::indirect) & (test(=a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again) | test(=a_pulse_at_its_mean_leaves_the_probes_still) | test(=switching_the_lamp_off_drops_the_probe_history))) | (binary_id(vxe-world::stamp) & test(=stamp_tally_agrees_with_apply_on_random_boxes)))'
 # A test past 30 s is killed: the fix is the slow list, not a longer timeout.
 slow-timeout = { period = "10s", terminate-after = 3 }
 
 [profile.gpu]
-default-filter = '((package(vxe-render) - kind(lib)) | binary_id(flythrough::cutaway) | binary_id(flythrough::fsr2) | binary_id(flythrough::golden) | binary_id(flythrough::hud_golden) | binary_id(flythrough::level_mirror) | binary_id(flythrough::lights) | binary_id(flythrough::look) | binary_id(flythrough::shutdown) | binary_id(flythrough::upscale)) and not ((binary_id(flythrough::upscale) & (test(=the_upscaler_keeps_stripe_edges_sharp_still_and_panning) | test(=a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame))) | (binary_id(flythrough::fsr2) & (test(=fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length) | test(=fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step) | test(=fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera))) | (binary_id(flythrough::lights) & (test(=reservoir_reuse_lowers_one_frames_error) | test(=the_lamp_light_that_left_the_cone_drops_in_each_history_mode))) | (binary_id(vxe-world::stamp) & test(=stamp_tally_agrees_with_apply_on_random_boxes)))'
+default-filter = '((package(vxe-render) - kind(lib)) | binary_id(flythrough::cutaway) | binary_id(flythrough::castle_golden) | binary_id(flythrough::fsr2) | binary_id(flythrough::golden) | binary_id(flythrough::hud_golden) | binary_id(flythrough::indirect) | binary_id(flythrough::level_mirror) | binary_id(flythrough::lights) | binary_id(flythrough::look) | binary_id(flythrough::shutdown) | binary_id(flythrough::upscale)) and not ((binary_id(flythrough::upscale) & (test(=the_upscaler_keeps_stripe_edges_sharp_still_and_panning) | test(=a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame))) | (binary_id(flythrough::fsr2) & (test(=fsr2_at_scale_1_keeps_stripe_edges_sharp_at_arms_length) | test(=fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step) | test(=fsr2_at_scale_1_5_moves_shadows_no_more_than_ours_on_a_still_camera))) | (binary_id(flythrough::lights) & (test(=reservoir_reuse_lowers_one_frames_error) | test(=the_lamp_light_that_left_the_cone_drops_in_each_history_mode))) | (binary_id(flythrough::indirect) & (test(=a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again) | test(=a_pulse_at_its_mean_leaves_the_probes_still) | test(=switching_the_lamp_off_drops_the_probe_history))) | (binary_id(vxe-world::stamp) & test(=stamp_tally_agrees_with_apply_on_random_boxes)))'
 slow-timeout = { period = "30s" }
 
 [profile.full]
 default-filter = 'all()'
 slow-timeout = { period = "30s" }
+
+# The full tier for CI. It inherits `full`'s filter, so it runs the same tests, and moves every
+# test out of the `lavapipe` group into nextest's `@global` group: a profile's own overrides
+# win over the default profile's, setting by setting, so the slow list's timeout still applies.
+# A dedicated runner has no other lane to crowd, and serialising the GPU tests there roughly
+# doubles the Linux test step.
+[profile.ci]
+inherits = "full"
+
+[[profile.ci.overrides]]
+filter = 'all()'
+test-group = '@global'

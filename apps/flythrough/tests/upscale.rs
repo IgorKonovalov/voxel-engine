@@ -857,8 +857,8 @@ fn the_upscalers_sharpness_readings() {
 /// Plan 0024's frame: on the level at the spawn pose with a still camera, at scale 1 and 1.5
 /// (jittered, 384 x 216 output), the lamp's centroid lags the ideal (a single frame with no
 /// history at each turn) by at most 2 frames more than Plan 0024's frame does over the
-/// sweep's last 16 frames, and the lamp step settles within 10 % of its first difference in
-/// at most 2 frames more than that frame takes.
+/// sweep's last 16 frames, and the lamp step settles within 10 % of the lamp's settled
+/// contribution in at most 2 frames more than that frame takes.
 #[test]
 fn a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame() {
     let Some(failures) = lamp_readings(UpscalerKind::Own(Upscaler::default()), "default", false)

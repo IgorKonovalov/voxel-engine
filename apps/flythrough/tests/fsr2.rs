@@ -1090,9 +1090,9 @@ fn fsr2_reactive(light: f32, translucent: f32) -> UpscalerKind {
 /// A sweeping headlamp and a lamp switched off reach FSR 2's image about as fast as Plan
 /// 0024's frame: on the level at the spawn pose with a still camera, at scale 1 and 1.5 (384 x
 /// 216 output), the lamp's centroid lags the ideal by at most 2 frames more than Plan 0024's
-/// frame does over the sweep's last 16 frames, and the lamp step settles within 10 % of its
-/// first difference in at most 2 frames more than that frame takes. The trail, the emission
-/// step and the whole-image wobble are readings.
+/// frame does over the sweep's last 16 frames, and the lamp step settles within 10 % of the
+/// lamp's settled contribution in at most 2 frames more than that frame takes. The trail, the
+/// emission step and the whole-image wobble are readings.
 #[test]
 fn fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step() {
     let Some(failures) = lamp_readings(fsr2_kind(), "fsr2", true) else {

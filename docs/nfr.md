@@ -390,6 +390,72 @@ Against the lines: lighting (light + temporal) 2.0 and 3.0 ms at half resolution
 4.7 ms at full over it. The quiet-box readings are in "Quiet-box readings at the lighting
 defaults" above.
 
+**The probe volume's two passes (dev reference, Plan 0029 Phase 4, the release binary of
+83ae737's tree, 2026-10-22, exclusive perf lock; 1920 x 1080, the defaults with indirect light
+on (16-voxel spacing, 4096 probes x 64 rays a frame), lamp on, ore emissive; median of the last
+30 frames, three runs; the streamed spawn `--frames 3000`, the level `--level --frames 300`;
+1-minute load at each run's start in brackets). The slow adapter is selected with
+`VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json`, which leaves the Vulkan loader only
+RADV:**
+
+| adapter, spawn, lighting | probes (update) ms | gather ms | probes + gather ms | light + temporal + probes + gather ms |
+|---|---|---|---|---|
+| RTX 3080 Laptop, streamed, half [6.2, 4.2, 2.8] | 1.356, 1.390, 1.392 | 0.269, 0.271, 0.271 | 1.625, 1.661, 1.663 | 4.417, 4.454, 4.483 |
+| RTX 3080 Laptop, streamed, full [2.3, 1.7, 2.1] | 1.607, 1.589, 1.568 | 1.154, 1.141, 1.129 | 2.761, 2.730, 2.697 | 15.064, 14.952, 14.891 |
+| RTX 3080 Laptop, level, half [1.1, 2.4, 2.3] | 1.350, 1.339, 1.351 | 0.239, 0.234, 0.237 | 1.589, 1.573, 1.588 | 3.711, 3.661, 3.698 |
+| RTX 3080 Laptop, level, full [2.1, 2.0, 1.8] | 1.599, 1.592, 1.606 | 1.052, 1.053, 1.066 | 2.651, 2.645, 2.672 | 12.104, 12.095, 12.211 |
+| Radeon (Cezanne, RADV), streamed, half [1.6, 0.3, 0.7] | 7.832, 7.764, 7.760 | 1.546, 1.546, 1.546 | 9.378, 9.310, 9.306 | 31.188, 31.126, 31.109 |
+| Radeon (Cezanne, RADV), level, half [0.3, 0.4, 0.4] | 7.081, 7.080, 7.088 | 1.341, 1.341, 1.342 | 8.422, 8.421, 8.430 | 24.393, 24.398, 24.413 |
+| Radeon (Cezanne, RADV), streamed, full [0.4, 0.1, 0.1] | 7.746, 7.781, 7.747 | 6.015, 6.016, 6.015 | 13.761, 13.797, 13.762 | 99.649, 99.749, 99.613 |
+
+Bars (the owner, 2026-10-22, at these readings): the two passes at most 1.7 ms on the dev box
+at the streamed spawn, read 1.63 to 1.66 ms; the lighting line (light, temporal and the two
+passes) is read at the default half tier, at most 6.0 ms, read 4.4 to 4.5 ms streamed. The
+full tier is a quality mode with no bar: 14.9 to 15.1 ms streamed, of which light plus
+temporal is 12.2 to 12.3. The slow adapter carries no bar.
+
+**The slow adapter at the probe settings (the release binary of db7b057's tree, 2026-10-22,
+exclusive perf lock, AMD Radeon Cezanne on RADV selected as above, 1920 x 1080, half lighting,
+the streamed spawn `--frames 3000`, median of the last 30 frames, three runs; 1-minute load
+7.94 at the start of the 32-ray runs, so they are loaded (indicative), and 0.86 at the start
+of the one-in-16 runs):** `Lighting::probe_rays`
+and `Lighting::probe_slices` (flags `--probe-rays N`, `--probe-slices N`; defaults 64 rays and
+one probe in 8 a frame) trade the update pass's cost.
+
+| setting | probes (update) ms | gather ms |
+|---|---|---|
+| `--probe-rays 32`, one in 8 | 6.249, 6.222, 6.202 | 1.546 to 1.547 |
+| 64 rays, `--probe-slices 16` | 4.162, 4.234, 4.167 | 1.546 to 1.547 |
+| 64 rays, one in 8 (the table above, 68b3bdb) | 7.832, 7.764, 7.760 | 1.546 |
+
+**The light-change window (Plan 0029 Phase 8, the release binary of the tree at b51538a plus
+Phase 8's code, 2026-10-22, exclusive perf lock, 1920 x 1080, half lighting, indirect on at 64
+rays and one in 8, the streamed spawn `--frames 3000`, one run each; 1-minute load at each
+run's start in brackets).** A light change opens a window of 16 frames that refresh one probe
+in 4 at hysteresis 0. `--lamp-toggle 64` switches the lamp every 64 frames and gives the median
+of the last 30 frames outside and inside the windows; "plain" is the run with no toggle,
+median of the last 30 frames. The bars are the dev box's: outside a window at most 1.7 ms,
+inside at most 3.2 ms. The slow adapter carries no bar.
+
+| adapter | plain probes + gather ms | toggled, outside a window ms | toggled, inside a window ms |
+|---|---|---|---|
+| RTX 3080 Laptop [1.26, 1.76] | 1.465 (1.226 + 0.239) | 1.515 | 2.403 |
+| Radeon (Cezanne, RADV) [1.40, 1.18] | 9.479 (7.933 + 1.546) | 9.298 | 16.476 |
+
+The retake after the merge of Plans 0028 and 0030 (Plan 0029 Phase 10, the release binary of
+the tree at a8b20c2 plus Phase 10's code, 2026-10-22, exclusive perf lock, the same flags,
+`--lamp-toggle 64`, one run each, the adapter chosen with `--adapter`): RTX 3080 Laptop at a
+1-minute load of 1.88 (quiet), outside a window 1.567 ms, inside 2.701 ms; Radeon (Cezanne,
+RADV) at 2.62 (loaded), outside 10.177 ms, inside 18.037 ms.
+
+Readings taken during tuning on the same box, 1000 frames,
+1-minute load 8 to 14: the update pass read 1.525 ms before the blend skipped inside probes'
+texels and the visibility rays under 0.83 in cosine (1.274 after); without the probe rays'
+emissive sample it read 0.989 ms and with the blend alone 0.367 ms, so the emissive sample
+and its shadow ray are about a third of the pass. Over the autopilot's flight (`--autopilot
+--headless --seed 1 --render 1920x1080`, 4429 frames, load 1.57): update p50 1.104, p99
+1.370 ms; gather p50 0.107, p99 0.294 ms.
+
 **Denoise: the temporal pass and four a-trous iterations (dev reference, Plan 0024 Phase 6,
 RTX 3080 Laptop GPU, exclusive perf lock, 1-minute load 4.2 to 4.6; the default look with the
 ore emissive, median of the last 30 frames, 1920 x 1080 full-resolution lighting):** the
@@ -489,6 +555,14 @@ the emission scale 256 KiB. Per pixel at full resolution: the hit buffer twice (
 translucent layers 8 B, the irradiance 8 B, the accumulation and moments twice (32 B), the
 filter's pair 16 B, the reservoirs twice (32 B), the output 4 B, and the gradient strata 8 B
 per 9 pixels. The plan's projection was about 276 MB.
+
+**The probe volume (Plan 0029 Phase 4, 83ae737's tree, the same autopilot command):**
+`Frame::frame_bytes` reads 254 216 224 B at 1080p with half-resolution lighting, 58 837 024 B
+above Plan 0024's 195 379 200: the atlases 50 331 648 B, the state 131 072 B, the update list,
+ray buffer and uniform 4 227 104 B (the volume, 54 689 824 B, printed as `autopilot: probe
+volume`), and the gather's lighting-grid target 4 147 200 B (8 B per lighting pixel). The
+plan's bar (amended 2026-10-22, owner) counts all of it: 58 837 024 B and no more, against the
+1.5 GB line.
 
 **The frame's targets with the upscaler (Plan 0030 Phase 5, `Frame::frame_bytes`, 1080p
 output):** 124 621 440 B at scale 1.5 (1280 x 720 internal): the 86 835 840 B of Plan 0024's
@@ -734,6 +808,18 @@ one mask bit per voxel: a 16³ prefab is 8 KiB + 512 B, a 64³ one 512 KiB + 32 
 `.vox` model is capped at 256³ per axis (`MAX_MODEL_EDGE`), so the largest `to_prefab`
 allocation is about 50 MiB including its index buffer. `StampedSource` holds one rotated copy
 of the prefab per placement, so its RAM grows with the placement count, not the prefab count.
+**Reading (Plan 0042 Phase 4, 1474e59, `--castle`, release, RTX 3080 Laptop GPU, Ryzen 9
+5900HS, exclusive perf lock, 1-minute load 2.4 to 13.0, so loaded and indicative):** the
+generated castle keeps 21 of its 27 tiles (600 x 600 x 500 voxels split at 256): its prefabs
+hold 343 566 464 B (the sum of `2n + 8 ceil(n / 64)` over the kept tiles), of which the
+castle's listed voxels are 13 154 879 (about 8 % of the kept tiles' 161 678 336 voxels; the
+rest is the air in each tile's box). The encoded `.vox` is 52 623 529 B. Process peak RSS (`VmHWM`,
+streamed seed 1, headless, `--frames 3000`, 1280 x 720) is 1 242 440 to 1 331 404 kB
+with the castle against 949 184 to 986 124 kB without it, three runs each: about 260 to 350
+MiB more, the prefabs' 328 MiB plus the build's transients. Chunk generation over the 990
+chunks the castle meets (`examples/castle_gen`, single thread, three runs, load 9.1 to 6.3):
+mean 423.5 to 427.9 us and p99 2258 to 2380 us per chunk with the castle, against 186.2 to
+188.6 us and 1650 to 1710 us for the hall alone.
 
 ## 4. Edits
 
@@ -1082,7 +1168,18 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   497 to 517 ms, up from Plan 0001's 349 to 357 ms for the `u16` mirror; the palette scan
   before indices are written. Accepted at the Plan 0002 close (owner, 2026-10-16); TTFF stays
   under 3 s.
-- An incremental `cargo build` of a one-crate change under 10 s on the dev reference; the
+  **Reading (Plan 0042 Phase 4, 1474e59, `--castle`, streaming seed 1 headless, release, RTX
+  3080 Laptop GPU, exclusive perf lock, 1-minute load 2.4 to 13.0, loaded):** the castle's
+  build runs before the first chunk, single-threaded but for the tiles: generate 86 to 138 ms
+  (tiles on the machine's threads), encode 30 to 44 ms, parse 43 to 64 ms, map (palette to
+  prefabs) 405 to 492 ms, place (`StampedSource::new`, a rotated copy per prefab) 37 to 82 ms,
+  about 0.7 s in all over 18 runs. First frame 1087 to 2638 ms with the castle (1105 to 1303
+  ms at the gate shot) against 510 to 559 ms without it; full residency (17 077 full, 40 700
+  LOD-only chunks) at 8735 to 11 200 ms with it against 9343 to 9396 ms without. The census
+  at full residency: 1 547 872 `Full` bricks with the castle (its materials in 295 bricks of
+  3 to 4 materials and 407 with glass) against 1 640 292 without, the hall replacing cave
+  surface; mirror 841 816 812 B live against 871 679 852 B.
+ of a one-crate change under 10 s on the dev reference; the
   everyday loop does not compile crates a plan does not touch (`default-members`).
   **Reading (Plan 0011 Phase 4, dev reference, AMD Ryzen 9 5900HS, `CARGO_BUILD_JOBS=3`,
   exclusive perf lock, 1-minute load 1.99 to 1.91):** default-members `cargo build` after a
@@ -1094,7 +1191,7 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   still compiles no `wasmtime` or `tokio`.
 - The test gate (Plan 0043): a dev phase runs `cargo nextest run --workspace --profile quick`
   (CPU only, no perf lock), adds `--profile gpu` under the lock when it touches render paths,
-  and a close, a merge or CI runs `--profile full` (`.config/nextest.toml`). Proposal: quick
+  and a close or a merge runs `--profile full`, CI its `ci` twin (the full tests, the GPU group unthrottled) (`.config/nextest.toml`). Proposal: quick
   under 60 s on the dev reference, so a phase gate holds no lock and blocks no other lane.
   **Reading (Plan 0043 close review, 5877b8a, 599 tests, dev reference, Ryzen 9 5900HS and RTX
   3080 Laptop GPU on lavapipe, built tree, `--test-threads 2`, other lanes running, so all
@@ -1104,6 +1201,32 @@ of the prefab per placement, so its RAM grows with the placement count, not the 
   Before the tiers every phase gate was a full run under the lock, 4 to 7 minutes in the
   lanes' logs at 87e4b67. The CI Linux job time against run 39808788735's 981 s is owed by the
   first CI run after the merge into main (the Phase 3 amendment).
+- Pipeline creation, one compute pipeline per pass the renderer builds (attrib, the march hit
+  pass and the nine march-prefixed passes), read by
+  `cargo run -p vxe-render --release --example pipeline_times` (cold is the first creation on
+  a fresh device, min the fastest of three). No budget; part of time to first frame.
+  **Reading (Plan 0046 Phase 1, on ce62f0c, Linux on Vulkan, driver shader caches off with
+  `MESA_SHADER_CACHE_DISABLE=true` and `__GL_SHADER_DISK_CACHE=0`, adapter by
+  `WGPU_ADAPTER_NAME`, exclusive perf lock, 1-minute load 10.4 to 11.1, so loaded):** sum of
+  the eleven cold creations 1396.1 ms on the RTX 3080 Laptop GPU (light 522.6, march 312.3,
+  gradient 265.1, attrib 75.3), 458.4 ms on the Radeon iGPU on RADV (light 152.7, march 90.9,
+  gradient 70.8, attrib 54.2), 299.0 ms on lavapipe (light 96.3, march 53.9, attrib 32.4).
+  Microsoft's Linux `dxc` 1.9.2609 on naga's Shader Model 6.0 HLSL of the same passes,
+  `-HV 2018 -Ges` as wgpu passes them, wall time per process, at load 8.95: attrib 437 ms,
+  march 283, light 517, gradient 390, upscale 111, the other six 46 to 81.
+  **Reading (Plan 0046 close, Windows DX12 on WARP, the `windows-latest` CI arm, a software
+  rasterizer, run 39843578678 on f3ed4a3):** sum of the eleven cold creations 76 623.6 ms
+  under FXC (`WGPU_DX12_COMPILER=fxc`; attrib 42 412.2, light 18 050.1, march 10 214.0,
+  gradient 4876.8) and 2507.9 ms under the default static DXC (light 744.6, attrib 596.0,
+  gradient 469.0, march 452.5); the full table is in Plan 0046's close review. Debug
+  `flythrough.exe` 37 744 128 B with static DXC linked; `machdxcompiler.lib` 113 589 902 B, an
+  upper bound on what the feature adds (no before-size was read). The compile is not WARP's
+  whole startup cost: with DXC the headless fly-through's `flythrough::shutdown` trace test on
+  the default look still failed at 121.055 s against its 120 s bound, and each `mirror`
+  attribute test still passed nextest's 90 s slow marker (15.3 s for the three at 578c8d3,
+  152.8 to 158.2 s under FXC after Plan 0028), so WARP's cost is the attribute pass's
+  execution; the test runs `--look plain` there. The Windows `cargo build --workspace` step
+  delta is not read: the merge run's cache key changed with the lockfile.
 
 ## 8. Collision and coarse grids
 

@@ -17,7 +17,7 @@
 > accustomed to darkness and I would see normally again". The owner's choice: a small plan of
 > its own, before the outdoor work, as an engine exposure setting the game controls. Plan 0032
 > then builds on it.
-> **Starts after:** [Plan 0029](0029-indirect-light-probe-volume.md) closes, so the owner's
+> **Starts after:** [Plan 0029](done/0029-indirect-light-probe-volume.md) closes, so the owner's
 > check sees Phase 8's faster bounce fade and not the old lingering light. It is drafted
 > against main at 3b690bb (Plan 0024 merged: `Lighting::exposure: f32`, `composite.wgsl`'s
 > `display`, `temporal.wgsl`, `atrous.wgsl`, `gradient.wgsl`) and Plan 0029's branch at b51538a

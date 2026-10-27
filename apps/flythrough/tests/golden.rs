@@ -1320,6 +1320,111 @@ fn half_resolution_dark_cave_golden_stays_near_the_full_one() {
     assert!(mad.iter().all(|&d| d < 6.0), "{mad:?}");
 }
 
+/// The cavity's table with row 6 an ore vein emitting eight times the fly-through's ore.
+fn vein_cavity_table() -> (MaterialTable, MaterialId) {
+    let mut t = look_table();
+    let vein = t.push(Material {
+        albedo: [0.6, 0.45, 0.3],
+        emission: flythrough::ORE_EMISSION.map(|c| 8.0 * c),
+        ..Material::named("vein")
+    });
+    (t, vein)
+}
+
+/// The cavity split by a rock partition at x in [-4, 0) up to z = 20, open above, whose
+/// whole -x face is an emissive vein facing -x: from the camera at (24.5, 0.5,
+/// 0.5) looking -x the vein is around the partition's corner, and no voxel the camera sees
+/// takes its light directly.
+fn vein_cavity() -> World {
+    let (table, vein) = vein_cavity_table();
+    let world = cavity_world_with(table);
+    let fill = |min: [i64; 3], max: [i64; 3], mode: Mode| {
+        world
+            .apply(&EditOp::box_(
+                Fixed3(min.map(|v| v * FIXED_ONE)),
+                Fixed3(max.map(|v| v * FIXED_ONE)),
+                mode,
+            ))
+            .unwrap();
+    };
+    fill([-4, -40, -40], [0, 40, 20], Mode::Fill(3));
+    fill(
+        [-4, -40, -40],
+        [-3, 40, 20],
+        Mode::Replace { from: 3, to: vein },
+    );
+    world
+}
+
+fn vein_cavity_camera() -> Camera {
+    Camera {
+        position: [24.5, 0.5, 0.5].into(),
+        yaw: std::f32::consts::PI,
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    }
+}
+
+/// Frames the indirect golden settles over.
+const INDIRECT_FRAMES: u32 = 64;
+
+/// The vein cavity after [`INDIRECT_FRAMES`] frames with the lamp off and indirect light
+/// `indirect`, read back.
+fn vein_cavity_render(world: &World, indirect: bool) -> Option<(Vec<u8>, Vec<[u16; 4]>)> {
+    let mut rig = LookRig::new(world, None)?;
+    rig.frame.set_lighting(vxe_render::Lighting {
+        lamp: false,
+        indirect,
+        ..vxe_render::Lighting::default()
+    });
+    for _ in 0..INDIRECT_FRAMES {
+        rig.frame.step(
+            &rig.device,
+            &rig.queue,
+            &rig.gpu,
+            &vein_cavity_camera(),
+            &LightParams::headlamp(),
+        );
+    }
+    Some((
+        readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target()),
+        readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
+    ))
+}
+
+/// `indirect.png`: the cavity lit only by a vein around the partition's corner, after 64
+/// frames with indirect light; with indirect light off the same view differs in at least 20 %
+/// of its hit pixels by more than 8/255 (the vein's bounce light is what the golden shows).
+#[test]
+fn indirect_golden_shows_the_vein_s_bounce_light() {
+    let world = vein_cavity();
+    let Some((lit, info)) = vein_cavity_render(&world, true) else {
+        return;
+    };
+    assert_golden("indirect.png", &lit);
+    let (off, _) = vein_cavity_render(&world, false).expect("the adapter rendered once");
+    let (mut hits, mut differ) = (0, 0);
+    for (i, rec) in info.iter().enumerate() {
+        if rec[3] & 1 == 0 {
+            continue;
+        }
+        hits += 1;
+        let d = (0..3)
+            .map(|k| lit[4 * i + k].abs_diff(off[4 * i + k]))
+            .max()
+            .unwrap_or(0);
+        differ += usize::from(d > 8);
+    }
+    let share = differ as f64 / hits as f64;
+    println!(
+        "indirect.png: {differ} of {hits} hit pixels ({:.1} %) differ from indirect off by more than 8/255; centre {:?} against {:?}",
+        share * 100.0,
+        centre_pixel(&lit),
+        centre_pixel(&off)
+    );
+    assert!(share >= 0.20, "{:.1} %", share * 100.0);
+}
+
 /// The upscaler's golden scene: the cavity from its centre under the headlamp at 256 x 144
 /// internal and 384 x 216 output, jittered, after 32 frames, at each of `sharpness`; with the
 /// upscale pass's history (rgba16float) of the first.

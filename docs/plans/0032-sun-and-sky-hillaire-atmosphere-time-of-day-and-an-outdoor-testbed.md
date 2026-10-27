@@ -26,7 +26,7 @@
 > `--leaf-fill 64`, and Phase 8 pins `--trees none` as the default until the owner picks at
 > Phase 9.
 > **Starts after:** [Plan 0024](done/0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md)
-> and [Plan 0029](0029-indirect-light-probe-volume.md) close. This plan is drafted against Plan
+> and [Plan 0029](done/0029-indirect-light-probe-volume.md) close. This plan is drafted against Plan
 > 0024's branch as of 2b08d42 (`Frame`, `Lighting`, `light.wgsl`, `temporal.wgsl`,
 > `composite.wgsl`, the mode banner of its Phase 14) and Plan 0029's drafted names
 > (`ProbeVolume`, `probe_update.wgsl`, `probe_gather.wgsl`). The names dev finds in the tree
