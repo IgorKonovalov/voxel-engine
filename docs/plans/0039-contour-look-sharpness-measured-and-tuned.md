@@ -699,6 +699,69 @@ Relayed by the orchestrator from the owner's words; the runs are in `live/sessio
   the plane steps its normals view shows. The pocket's walls face the lamp; no long ridge at
   grazing incidence was in these views.
 
+### Fix pass readings (2026-10-27, after the close review)
+
+- Merge: main (dedd83c, v0.31.1) into plan-0039 at 8e1701b. Conflicts: `.config/nextest.toml`
+  (main's filters plus the sharpness binary and its slow tests), `apps/flythrough/src/main.rs`
+  (`preset_materials` keeps the preset's table and adds the castle's rows under `--castle`, so
+  `N` keeps them too), `composite.wgsl`.
+- composite.wgsl: `lit_at` returns `Lit { all, direct, indirect }`, the three accumulated with
+  the same weights (and the same nearest-tap fallback); with C5 the composite takes
+  `direct x detail_lamp_ratio + indirect`, otherwise `all`, which is accumulated exactly as
+  main's unsplit sum. probe_gather.wgsl keeps main's normal (`surface_detail(rec)`): the
+  indirect part carries the detail once, through the gather, and the ratio never touches it.
+- `sharpness.rs::detail_after_lighting_leaves_the_indirect_light_alone` (4d68e91; lavapipe,
+  exclusive perf lock, load 9.4): the wall, lamp on, every probe preset to `2 PI` with updates
+  off, filter off, identity tone map, exposure 0.1, 64 frames per image; the indirect
+  contribution is the linear image with indirect on minus off. Full tier: 14 400 window pixels,
+  0 clamped, mean 0.07676 under both, worst per-channel difference 0.00800, worst past the four
+  bytes' rounding bound -0.00021 (bar 0.0005). Half tier: mean 0.07676 under both, worst
+  0.01089, past the bound -0.00001. With the composite's C5 line set back to the naive
+  `all x ratio` (by hand, not committed): full tier C5 mean 0.07246, worst 0.09024, 0.08804
+  past the bound; the test fails.
+- Off is today on the merged tree: a `VXE_BLESS=1` run of the golden, hud_golden, look,
+  sharpness and castle_golden binaries (45 passed, 2 skipped) rewrote all 22 blessed goldens,
+  `indirect.png` and `castle_gate.png` among them, and `git status` showed none changed; the
+  six `split_*` and `primary_pre_split.png` goldens are asserted byte for byte by their tests
+  in the full run below.
+- Budget readings, the merged binary of 4d68e91 (`new`, default contour-sharp) against main's
+  binary of dedd83c (`main`, default contour, built from `git archive dedd83c` under `live/`),
+  both without `--look` (probe GI on by default in both), alternated, exclusive perf lock,
+  `live/fix/quiet2.sh` (`live/quiet.sh` plus the platform profile and the AMD shader clock
+  sampled every 0.5 s): one run started at a 1-minute load of 1.86; none other came under 2 in
+  the hour, so the rest ran loaded. Level three runs each, autopilot two flights each, ms:
+
+| adapter | binary | hit | light | composite | light + composite | initial fill | autopilot p50 | autopilot p99 | load |
+|---|---|---|---|---|---|---|---|---|---|
+| NVIDIA | main | 1.402 | 2.161 | 0.325 | 2.486 | 16.358 | 0.720, 0.574 | 1.078, 0.925 | 1.9 to 12.7 |
+| NVIDIA | new | 1.392 | 2.137 | 0.368 | 2.505 | 17.813 | 0.747, 0.906 | 1.166, 1.209 | 2.7 to 14.9 |
+| AMD | main | 9.330 | 15.615 | 2.833 | 18.454 | 262.548 | 19.276, 20.174 | 25.118, 25.239 | 7.1 to 14.9 |
+| AMD | new | 9.338 | 15.557 | 2.931 | 18.488 | 265.955 | 20.444, 19.012 | 25.122, 25.878 | 7.1 to 12.2 |
+
+  Against the Budgets bars: hit -0.7 % (NVIDIA), +0.1 % (AMD), bar 3 %; light + composite
+  +0.8 % and +0.2 %, bar 5 %; attribute pass p99 +8.2 % and +30.7 % (NVIDIA, flight by flight),
+  +0.0 % and +2.5 % (AMD), bar 10 %. The probe passes read probes 1.40 to 1.43 and gather 0.24
+  to 0.25 (NVIDIA), probes 7.84 to 7.89 and gather 1.34 (AMD) under both binaries. NVIDIA level
+  runs at load 1.9 to 3.0, the rest at 3.0 to 14.9 (`live/fix/budget/`).
+- The AMD attribute pass's 10x against Phase 3 persists: p50 19.0 to 20.4 ms against Phase 3's
+  2.06 to 2.08, the level's initial fill 262.5 to 266.0 ms against 96.1 to 97.1, under both
+  binaries, with the same work-list sizes (p50 8192 bricks), while the hit, light and
+  composite readings match Phase 3's within 10 %. Same boot (since 06:30; Phase 3's runs at
+  07:40, Phase 5's at 10:01), same RADV (vulkan-radeon 26.2.5 since 2026-10-19), platform
+  profile `performance` at every run of this pass, AC online. The shader clock sampled during
+  the AMD level runs sat at 2100 MHz in 27 of about 32 samples; during the AMD flights it
+  ranged 200 to 2100 MHz, mostly 200 to 600. The cause is not identified from these readings.
+- Mirror bytes: the level 157 872 640 B live, 259 203 264 B allocated in every run of both
+  binaries on both adapters; the streamed flight's full residency 871 679 852 B live,
+  3 221 014 080 B allocated (17 077 full, 40 700 LOD-only chunks) in all eight flights; peaks
+  882 016 044 to 996 021 932 B live.
+- Owner check (human, prepared, not run): `live/flythrough-fix` is the release binary of
+  4d68e91; `live/session3.sh` runs `--level --seed 1 --look contour`, then `--level --seed 1`
+  (contour-sharp), each at arm's length and at 5 m with F8 and F7 toggled. The banner's
+  lighting rows name `lamp on|off` and `indirect on|off` and its look row the preset
+  (`hud.rs` `Modes::banner`; `the_banner_names_each_change_and_fades_after_three_seconds` pins
+  the lamp and indirect words).
+
 ### Notes
 
 - Phase 1: the edge scene's edge is the line `x = y = 63` (block `[63, 96)`), not 64: a face
@@ -763,6 +826,16 @@ Relayed by the orchestrator from the owner's words; the runs are in `live/sessio
   loaded); see Phase 5 readings.
 - Phase 5: the quick tier's `replay::a_stamp_and_a_collapse_replay_from_the_save` timed out at
   30 s at load above 20 and passed alone in 14.1 s.
+- Fix pass, BLOCKER (C5's ratio scaled the merged probe GI's indirect irradiance): main merged
+  and composite.wgsl resolved with the direct and indirect parts apart (8e1701b); the test
+  (4d68e91).
+- Fix pass, MAJOR (Phase 5's readings against 99e7bee): retaken on the merged binary against
+  main's dedd83c, `nfr.md` section 2's Phase 5 line and section 3's mirror line replaced
+  (committed with this note). The NVIDIA attribute pass p99 bar (10 %) is missed on one
+  flight (+30.7 %, loaded).
+- Fix pass: the quick tier's `castle::the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn`
+  and `replay::a_stamp_and_a_collapse_replay_from_the_save` timed out at 30 s at load about 24
+  and passed alone in 13.7 and 17.0 s.
 - Owner followups relayed with the Phase 4 call (for the architect's Followups section, which
   `dev` does not edit): a per-material "smooth" flag (no detail, a fit for flat faces); grain
   that fades at grazing incidence.
@@ -781,19 +854,20 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   `materials`), `hud::Modes::{show_look, set_refitting}`, `--look PRESET`, `--plane-fit`,
   `--plane-offset`, `--face-mix`, `--detail-fine`, `--detail-after`; the hero example's
   `--look`.
-- **Budget readings:** Phase 5 readings (93c3d9b against 99e7bee, NVIDIA RTX 3080 Laptop and
-  AMD RADV RENOIR, exclusive perf lock, loaded): hit -3.7 % / -0.2 %, light + composite -3.2 % /
-  +0.1 %, attribute pass p99 +25 % and +11 % (NVIDIA) / +2.4 % and +0.8 % (AMD); mirror bytes
-  equal at the level and the streamed full residency. Phase 1 to 3 readings above; `nfr.md` §2
-  and §3.
-- **Gate at the tip (93c3d9b's code, log commit on top):** `cargo build --workspace` 0;
+- **Budget readings:** fix pass readings (4d68e91 against main's dedd83c, NVIDIA RTX 3080
+  Laptop and AMD RADV RENOIR, exclusive perf lock, loaded): hit -0.7 % / +0.1 %, light +
+  composite +0.8 % / +0.2 %, attribute pass p99 +8.2 % and +30.7 % (NVIDIA) / +0.0 % and +2.5 %
+  (AMD); mirror bytes equal at the level and the streamed full residency. Phase 1 to 5
+  readings above; `nfr.md` section 2 and section 3.
+- **Gate at the tip (4d68e91's code, the log commit on top):** `cargo build --workspace` 0;
   `cargo nextest run --workspace --profile full --no-fail-fast --test-threads 2` under the
-  exclusive perf lock 0, 611 passed, 8 skipped; `--profile gpu` 131 passed, 12 skipped;
-  `--profile quick` 472 of 473 with the replay timeout above (6 of 6 alone); `cargo test --doc
-  --workspace` 0; `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo fmt --all
-  --check` 0; `cargo deny check` 0 (advisories, bans, licenses, sources ok);
-  `check-doc-links`, `check-comment-hygiene`, `check-test-tiers`, `check-index-rows` OK.
-- **Outstanding `human` phases:** none
+  exclusive perf lock (load 6.1 to 8.3) 0, 642 passed, 9 skipped; `--profile quick` 486 of 488
+  with the two timeouts in Notes (2 of 2 alone); `cargo test --doc --workspace` 0; `cargo
+  clippy --workspace --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny
+  check` 0 (advisories, bans, licenses, sources ok); `check-doc-links`, `check-comment-hygiene`,
+  `check-test-tiers`, `check-index-rows` OK; `scripts/build-guests.sh` run after the merge.
+- **Outstanding `human` phases:** none in the plan; the fix pass's owner confirmation (contour
+  against contour-sharp with probe GI, `live/session3.sh`) is prepared and not run
 
 ## Followups
 
