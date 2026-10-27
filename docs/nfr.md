@@ -173,9 +173,47 @@ temporal 0.492 to 0.503, a-trous 2.332 to 2.343, composite 1.126 to 1.134, upsca
 composite read 0.755 to 0.770 ms on the dev box at scale 1.5; on the iGPU the upscale pass
 alone reads 3.2 ms.
 
-The default frame stays Plan 0024's (scale 1, jitter off, no upscaler; the owner's ruling at
-Plan 0030's close, ADR-0024's Outcome); the readings above are the opt-in performance setting
-(`--internal-scale 1.5 --jitter on`). An FSR 2 port (ADR-0034, proposed) is read against them.
+Plan 0030's close kept Plan 0024's frame (scale 1, jitter off, no upscaler) as the default and
+read the above as the opt-in performance setting. Since Plan 0041's close (2026-10-27,
+ADR-0034's Outcome) the fly-through's default is our upscaler at scale 1.5, jittered, the
+owner's pick after the windowed comparison with the FSR 2 port read below; the library's
+`Frame` still defaults to Plan 0024's frame.
+
+**FSR 2.2.1 ported to WGSL beside our upscaler and Plan 0024's frame (Plan 0041 Phase 6, the
+release binary of 6e64744's tree plus the Phase 6 banner change, 2026-10-27; `flythrough
+--level --seed 1 --headless --render 1920x1080 --frames 300 --upscaler MODE --internal-scale S
+--adapter NAME` from the spawn pose, the fly-through's defaults (indirect light on, lamp on,
+half-resolution lighting, contour look with detail, sharpening 0.5), median of the last 30
+frames, three runs each, exclusive perf lock, memory cap; 1-minute load 2.4 to 6.5 inside the
+lock at each start: loaded, indicative).** FSR's nine passes are timed one by one (input, spd,
+spd tail, reconstruct, depth clip, lock, accumulate, rcas, tone) and summed here. The FP32
+path, no wave operations.
+
+| adapter, mode | frame ms | hit ms | light + temporal + a-trous ms | probes ms | composite ms | upscale + sharpen ms | FSR 2's nine passes ms |
+|---|---|---|---|---|---|---|---|
+| RTX 3080 Laptop, `off` 1 | 6.789 to 6.878 | 1.390 to 1.403 | 3.427 to 3.460 | 1.417 to 1.435 | 0.322 to 0.325 | | |
+| RTX 3080 Laptop, `own` 1.5 | 4.389 to 4.514 | 0.618 to 0.633 | | 1.349 to 1.365 | 0.145 to 0.150 | 0.648 to 0.669 | |
+| RTX 3080 Laptop, `fsr2` 1 | 10.077 to 10.167 | 1.425 to 1.444 | 3.461 to 3.510 | 1.452 to 1.486 | 0.347 to 0.348 | | 3.115 to 3.127 |
+| RTX 3080 Laptop, `fsr2` 1.5 | 5.709 to 5.805 | 0.626 to 0.634 | 1.571 to 1.593 | 1.331 to 1.389 | 0.156 to 0.157 | | 1.894 to 1.913 |
+| Radeon (Cezanne, RADV), `off` 1 | 43.733 to 43.938 | 9.327 to 9.387 | 22.025 to 22.208 | 7.953 to 8.027 | 2.804 to 2.866 | | |
+| Radeon (Cezanne, RADV), `own` 1.5 | 28.120 to 28.780 | 4.264 to 4.317 | | 7.926 to 8.223 | 1.230 to 1.309 | 3.885 to 4.016 | |
+| Radeon (Cezanne, RADV), `fsr2` 1 | 61.327 to 61.384 | 9.318 to 9.357 | 22.077 to 22.110 | 7.890 to 8.168 | 3.441 to 3.476 | | 16.393 to 16.446 |
+| Radeon (Cezanne, RADV), `fsr2` 1.5 | 34.652 to 34.998 | 4.274 to 4.284 | 9.915 to 9.930 | 7.800 to 8.166 | 1.507 to 1.521 | | 10.045 to 10.085 |
+
+At scale 1.5 on the dev box FSR 2's passes read 1.894 to 1.913 ms against the plan's 1.2 ms
+bar (the 1.5 ms upscale line less the composite and the HUD): a recorded miss, judged at
+Plan 0041 Phase 7, where the owner kept FSR 2 opt-in and made `own` at 1.5 the default, whose
+upscale, sharpen and composite are under the line. The largest are accumulate (0.728 to 0.743 ms) and depth clip (0.600 to
+0.601). With the composite, 2.05 to 2.07 ms against the 1.5 ms line; our upscaler's
+upscale, sharpen and composite read 0.79 to 0.82 ms in the same session. The hit pass at 1.5
+is 44.6 to 45.6 % of scale 1's, light + temporal + a-trous 45.4 to 46.5 %. The probe update
+does not scale with the internal size (1.33 to 1.39 ms at 1.5 against 1.42 to 1.44 at 1). On
+the iGPU FSR 2's passes at 1.5 read 10.0 to 10.1 ms (accumulate 4.24 to 4.26) against our
+upscale and sharpen's 3.9 to 4.0 ms; Plan 0030 Phase 8 read that iGPU frame at 18.797 to
+18.865 ms and its upscale at 3.216 to 3.232 ms before the probe volume landed (about 8 ms of
+probe update and 0.6 ms of gather in every mode here). The adapter is chosen with
+`--adapter` (a substring of the adapter's name): the NVIDIA GeForce RTX 3080 Laptop GPU
+(Vulkan, driver 615.78.08) and the AMD Radeon Graphics (RADV RENOIR) of the Ryzen 9 5900HS.
 
 **The hit pass, split from the shading (dev reference, Plan 0024 Phase 1, same machine,
 exclusive perf lock, 1-minute load 7.3 to 8.0 from other work on the box, not quiet; the
@@ -632,6 +670,20 @@ B) and two output-size `rgba16float` histories (33 177 600 B); 228 556 800 B at 
 the jitter on (195 379 200 B of the frame plus the histories); 195 379 200 B at scale 1 with
 the jitter off, as before. Plan 0030 Phase 8 (12c6c57): unchanged at 124 621 440 B at scale
 1.5; the light-change clip adds no target (the upscale pass's settings are a 96 B uniform).
+
+**The frame's targets under FSR 2 (Plan 0041 Phase 6, 6e64744's tree, `Frame::frame_bytes`,
+1080p output, the probe volume included as the fly-through runs it):** our upscaler at 1.5
+reads 181 154 464 B (Plan 0030's 124 621 440 B plus the probe volume and its gather target,
+56 533 024 B at that lighting size); FSR 2 at 1.5 reads 305 574 892 B, which is ours less
+the two output-size histories (33 177 600 B, not allocated in FSR mode) plus FSR 2's
+inventory, 157 598 028 B: 66 355 200 B at the render size (72 B a pixel: the rgba32float
+colour input, depth, motion, the masks, the reconstructed previous depth, the dilated depth,
+two dilated motions, the lock luma, the prepared colour and the dilated masks), 91 238 400 B
+at the output size (44 B a pixel: the rgba16float upscaled colour twice, which RCAS also
+writes into, the lock status twice, the luma history twice and the new locks) and 4 428 B
+for the luminance pyramid's two stored mips, the exposure texels and the 1 x 1 debug weight.
+`frame_bytes_under_fsr2_swap_the_histories_for_fsr2s_inventory` asserts the sum. FSR 2 at
+scale 1 reads 494 763 692 B; Plan 0024's frame with the probe volume 254 216 224 B.
 
 **Readings (dev reference, 2026-10-16, Plan 0001 Phase 4 commit, `flythrough` cave seed 1,
 `cargo run --release -p flythrough --example world_budget`):**

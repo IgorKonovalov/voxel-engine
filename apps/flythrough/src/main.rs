@@ -18,13 +18,19 @@
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]
 //! [--history edits|gradient] [--lighting full|half] [--emissive-history N]
 //! [--indirect on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N]
-//! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S]`.
+//! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2]`.
 //! `--render` fixes the frame's output resolution (the window scales it); `--internal-scale`
-//! renders at the output size divided by it on each edge (default 1: no upscaler); `--jitter
-//! on` moves every primary ray by the Halton (2, 3) sub-pixel jitter of the frame (default off:
-//! through its pixel's centre), which the upscaler accumulates; the upscaler runs when the
-//! scale is above 1 or the jitter is on (`--internal-scale 1.5 --jitter on` is the performance
-//! option); `--sharpen S` sets the upscaler's RCAS sharpening, 0 to 1 (default 0.5, 0 off);
+//! renders at the output size divided by it on each edge (default 1.5: 720p for 1080p, through
+//! our upscaler); `--jitter on|off` moves every primary ray by the Halton (2, 3) sub-pixel
+//! jitter of the frame or through its pixel's centre, which the upscaler accumulates (our
+//! upscaler jitters unless `--jitter off`; with no upscaler it is off unless `--jitter on`);
+//! the upscaler runs when the scale is above 1 or the jitter is on; `--sharpen S` sets the
+//! upscaler's RCAS sharpening, 0 to 1 (default 0.5, 0 off); `--upscaler off|own|fsr2` picks
+//! the upscaler: `off` is Plan 0024's frame (scale 1, the jitter off), `own` the upscaler of
+//! ADR-0024 at `--internal-scale`, `fsr2` FSR 2 (ADR-0034) at `--internal-scale` with its own
+//! jitter; without it the upscaler is `own` when the scale is above 1 or the jitter is on,
+//! else `off`, so no flag starts in `own` at 1.5 and `--internal-scale 1` in `off`. In a
+//! window `F10` cycles off, own and fsr2, printing the mode and showing it in a banner;
 //! `--frames` exits after N frames, printing the `F1` readings over the last ones and the
 //! stats HUD's rows; `--hud` starts with the stats HUD shown (`F2` toggles it); `--bench` sends N `B` bench inputs on the first
 //! frame; `--autopilot` digs, flies 300 m out and back and prints the streaming readings (see
@@ -196,6 +202,7 @@ use vxe_audio::{
     RoomEstimate, RoomTargets, Sound, TailLines, VoiceId,
 };
 use vxe_net::{Client, DEFAULT_SUPPORT, Event, Logic, LogicError, MemChannel, Server};
+use vxe_render::UpscalerKind;
 use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::readback::{self, StepHistogram};
@@ -401,11 +408,15 @@ struct Args {
     probe_slices: u32,
     /// `--internal-scale 1|1.5|2`: the output size over the internal size, on each edge.
     internal_scale: RenderScale,
-    /// `--jitter on|off`: the primary rays move by the frame's sub-pixel jitter (on by
-    /// default).
+    /// `--jitter on|off`: the primary rays move by the frame's sub-pixel jitter. Our
+    /// upscaler takes it only when given ([`Args::jitter_set`]) and jitters otherwise.
     jitter: bool,
     /// `--sharpen S`: the upscaler's sharpening strength, 0 to 1.
     sharpen: f32,
+    /// `--jitter` was given.
+    jitter_set: bool,
+    /// `--upscaler off|own|fsr2`, when given.
+    upscaler: Option<hud::UpscalerMode>,
 }
 
 /// The probe volume's bytes inside `Frame::frame_bytes`, by part.
@@ -420,12 +431,13 @@ fn probe_bytes_line(p: &vxe_render::ProbeVolume) -> String {
     )
 }
 
-/// The internal scale by default (`--internal-scale`): the output size, with the jitter off
-/// the frame runs no upscaler. `--internal-scale 1.5 --jitter on` is the performance option:
-/// 720p for 1080p, about half the frame's GPU time on both adapters of `nfr.md` §1.
-const DEFAULT_SCALE: RenderScale = RenderScale::One;
+/// The internal scale by default (`--internal-scale`): 1.5, so the fly-through starts in our
+/// upscaler at 720p for 1080p (the owner's default after ADR-0034's comparison, Plan 0041
+/// Phase 7). `--upscaler off` or `--internal-scale 1` is Plan 0024's frame.
+const DEFAULT_SCALE: RenderScale = RenderScale::OneHalf;
 
-/// The jitter by default (`--jitter`): off.
+/// The jitter without an upscaler by default (`--jitter`): off. Our upscaler jitters unless
+/// `--jitter off` is given.
 const DEFAULT_JITTER: bool = false;
 
 /// The upscaler's sharpening strength by default (`--sharpen`).
@@ -452,6 +464,42 @@ impl Args {
     /// Whether the run reads a gamepad: `--pad on` in a window, without the autopilot.
     fn wants_pad(&self) -> bool {
         self.pad && !self.headless && !self.autopilot
+    }
+
+    /// The upscaler the fly-through starts with: `--upscaler`, else `own` when the scale is
+    /// above 1 or the jitter is on, else `off`.
+    fn start_upscaler(&self) -> hud::UpscalerMode {
+        self.upscaler
+            .unwrap_or(if self.internal_scale != RenderScale::One || self.jitter {
+                hud::UpscalerMode::Own
+            } else {
+                hud::UpscalerMode::Off
+            })
+    }
+
+    /// The frame's settings in upscaler `mode`: the upscaler, the internal scale and the
+    /// jitter. `off` renders at scale 1 with the jitter off; `own` jitters unless `--jitter
+    /// off`; FSR 2 jitters by its own sequence.
+    fn upscaler_settings(&self, mode: hud::UpscalerMode) -> (UpscalerKind, RenderScale, bool) {
+        match mode {
+            hud::UpscalerMode::Off => (UpscalerKind::Off, RenderScale::One, false),
+            hud::UpscalerMode::Own => {
+                let jitter = !self.jitter_set || self.jitter;
+                (
+                    UpscalerKind::Own(vxe_render::marcher::Upscaler::default()),
+                    self.internal_scale,
+                    jitter,
+                )
+            }
+            hud::UpscalerMode::Fsr2 => (
+                UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                    sharpness: self.sharpen,
+                    ..vxe_render::Fsr2Settings::default()
+                }),
+                self.internal_scale,
+                false,
+            ),
+        }
     }
 
     /// The lighting the fly-through starts in, from its flags.
@@ -544,6 +592,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         internal_scale: DEFAULT_SCALE,
         jitter: DEFAULT_JITTER,
         sharpen: DEFAULT_SHARPEN,
+        jitter_set: false,
+        upscaler: None,
     };
     let mut detail_flag = false;
     // The part flags, applied to the `--look` preset after every flag is read.
@@ -732,7 +782,15 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     "on" => true,
                     "off" => false,
                     v => return Err(format!("--jitter takes on or off, not {v}")),
-                }
+                };
+                args.jitter_set = true;
+            }
+            "--upscaler" => {
+                let v = value()?;
+                args.upscaler = Some(
+                    hud::UpscalerMode::from_name(&v)
+                        .ok_or(format!("--upscaler takes off, own or fsr2, not {v}"))?,
+                );
             }
             "--lighting" => {
                 let v = value()?;
@@ -2469,6 +2527,9 @@ struct Run {
     /// The lighting modes `F3` to `F7` and `M` switch, and the banner naming them; the frame
     /// takes them at the start of each frame (`F6`'s resolution needs the device).
     modes: hud::Modes,
+    /// The upscaler `F10` cycles and its banner; a change is applied at the next frame.
+    upscaler: hud::UpscalerBanner,
+    upscaler_changed: bool,
     /// The scene's banner row (`castle gate`) and when it was last shown, by the frame loop's
     /// clock; `None` without one.
     scene: Option<(String, f64)>,
@@ -2619,19 +2680,23 @@ impl Run {
     }
 
     /// The banner at the frame loop's clock: the scene's row while it shows (for
-    /// `hud::BANNER_MS` after it was last shown), over the modes' banner.
+    /// `hud::BANNER_MS` after it was last shown), over the lighting modes' banner and the
+    /// upscaler's, whichever show.
     fn banner(&self) -> Option<String> {
         let now = ms_since(self.start);
-        let modes = self.modes.banner(now);
         let scene = self
             .scene
             .as_ref()
             .filter(|(_, at)| now - at < hud::BANNER_MS)
-            .map(|(s, _)| s.as_str());
-        match (scene, modes) {
-            (Some(s), Some(m)) => Some(format!("{s}\n{m}")),
-            (Some(s), None) => Some(s.to_owned()),
-            (None, m) => m,
+            .map(|(s, _)| s.to_owned());
+        let rows: Vec<String> = [scene, self.modes.banner(now), self.upscaler.banner(now)]
+            .into_iter()
+            .flatten()
+            .collect();
+        if rows.is_empty() {
+            None
+        } else {
+            Some(rows.join("\n"))
         }
     }
 
@@ -3042,14 +3107,13 @@ impl Run {
             .args
             .look
             .and_then(|_| MarchTimer::new(&gpu.device, &gpu.queue));
-        let mut frame = Frame::with_sizes(
-            &gpu.device,
-            self.args.internal_scale.internal(output),
-            output,
-        );
+        let (kind, scale, jitter) = self.args.upscaler_settings(self.upscaler.mode);
+        let mut frame = Frame::with_sizes(&gpu.device, scale.internal(output), output);
         frame.set_probe_spacing(&gpu.device, self.args.probe_spacing);
-        frame.set_jitter(&gpu.device, self.args.jitter);
+        frame.set_jitter(&gpu.device, jitter);
+        frame.set_upscaler_kind(&gpu.device, kind);
         frame.set_sharpness(&gpu.queue, self.args.sharpen);
+        println!("{}", self.upscaler.line());
         frame.set_lighting(self.modes.lighting);
         frame.set_resolution(&gpu.device, self.modes.resolution);
         println!("{}", self.modes.line());
@@ -3231,11 +3295,9 @@ impl Run {
 
     fn resized(&mut self, gpu: &Gpu) {
         if let (Some(gfx), None) = (self.gfx.as_mut(), self.args.render) {
-            gfx.frame.set_sizes(
-                &gpu.device,
-                self.args.internal_scale.internal(gpu.size),
-                gpu.size,
-            );
+            let (_, scale, _) = self.args.upscaler_settings(self.upscaler.mode);
+            gfx.frame
+                .set_sizes(&gpu.device, scale.internal(gpu.size), gpu.size);
         }
     }
 
@@ -3717,6 +3779,14 @@ impl Run {
                 println!("{}", self.modes.line());
             }
         }
+        if input.pressed(KeyCode::F10) {
+            let mode = self.upscaler.mode.next();
+            let (_, scale, _) = self.args.upscaler_settings(mode);
+            self.upscaler
+                .change(mode, scale.name(), ms_since(self.start));
+            self.upscaler_changed = true;
+            println!("{}", self.upscaler.line());
+        }
         if input.pressed(KeyCode::KeyL) {
             self.light.shadows = !self.light.shadows;
             println!(
@@ -4055,6 +4125,14 @@ impl Run {
         let Some(gfx) = self.gfx.as_mut() else {
             return Flow::Exit;
         };
+        if std::mem::take(&mut self.upscaler_changed) {
+            let (kind, scale, jitter) = self.args.upscaler_settings(self.upscaler.mode);
+            let output = gfx.frame.output_size();
+            gfx.frame.set_jitter(&gpu.device, jitter);
+            gfx.frame.set_upscaler_kind(&gpu.device, kind);
+            gfx.frame
+                .set_sizes(&gpu.device, scale.internal(output), output);
+        }
         gfx.frame.set_lighting(self.modes.lighting);
         gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
         // A preset's fit refits the mirror's bricks under the attribute cap and its rock
@@ -4478,6 +4556,15 @@ impl App for Flythrough {
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
                 modes: hud::Modes::new(self.args.start_lighting(), self.args.lighting, 0.0),
+                upscaler: hud::UpscalerBanner::shown_from(
+                    self.args.start_upscaler(),
+                    {
+                        let mode = self.args.start_upscaler();
+                        self.args.upscaler_settings(mode).1.name()
+                    },
+                    0.0,
+                ),
+                upscaler_changed: false,
                 scene: self
                     .args
                     .castle
@@ -5644,6 +5731,8 @@ mod tests {
             fly: Fly::new(camera),
             light: LightParams::headlamp(),
             modes,
+            upscaler: hud::UpscalerBanner::new(hud::UpscalerMode::Off, "1"),
+            upscaler_changed: false,
             scene: None,
             castle_shot: None,
             dig_radius: DIG_RADIUS,
@@ -6311,13 +6400,16 @@ mod tests {
         }
     }
 
-    /// `--internal-scale`, `--jitter` and `--sharpen` parse their values, default to 1, off
+    /// `--internal-scale`, `--jitter` and `--sharpen` parse their values, default to 1.5, off
     /// and 0.5, and refuse an unknown value.
     #[test]
     fn internal_scale_and_jitter_parse_and_refuse_unknown_values() {
         let parse = |a: &[&str]| parse_args_from(argv(a));
         let d = parse(&[]).unwrap();
-        assert_eq!((d.internal_scale, d.jitter), (RenderScale::One, false));
+        assert_eq!(
+            (d.internal_scale, d.jitter, d.jitter_set),
+            (RenderScale::OneHalf, false, false)
+        );
         assert_eq!(d.sharpen, 0.5);
         assert_eq!(parse(&["--sharpen", "0"]).unwrap().sharpen, 0.0);
         assert_eq!(parse(&["--sharpen", "0.8"]).unwrap().sharpen, 0.8);
@@ -6352,9 +6444,69 @@ mod tests {
             ("--jitter", "x", "--jitter takes on or off, not x"),
             ("--sharpen", "1.5", "--sharpen takes 0 to 1, not 1.5"),
             ("--sharpen", "x", "--sharpen takes 0 to 1, not x"),
+            (
+                "--upscaler",
+                "fsr",
+                "--upscaler takes off, own or fsr2, not fsr",
+            ),
         ] {
             assert_eq!(parse(&[flag, v]).err().as_deref(), Some(err), "{flag} {v}");
         }
+    }
+
+    /// `--upscaler` picks the frame's upscaler, scale and jitter: `off` is scale 1 with the
+    /// jitter off whatever `--internal-scale` says; `own` jitters unless `--jitter off`; FSR 2
+    /// takes `--internal-scale` and `--sharpen`. Without it the scale and `--jitter` decide:
+    /// no flag is `own` at 1.5, jittered; `--internal-scale 1` is Plan 0024's frame.
+    #[test]
+    fn upscaler_picks_the_kind_scale_and_jitter() {
+        let parse = |a: &[&str]| parse_args_from(argv(a));
+        let settings = |a: &[&str]| {
+            let args = parse(a).unwrap();
+            let (kind, scale, jitter) = args.upscaler_settings(args.start_upscaler());
+            (kind.name(), scale, jitter)
+        };
+        assert_eq!(settings(&[]), ("own", RenderScale::OneHalf, true));
+        assert_eq!(
+            settings(&["--internal-scale", "1"]),
+            ("off", RenderScale::One, false)
+        );
+        assert_eq!(
+            settings(&["--upscaler", "off"]),
+            ("off", RenderScale::One, false)
+        );
+        assert_eq!(
+            settings(&["--internal-scale", "1", "--jitter", "on"]),
+            ("own", RenderScale::One, true)
+        );
+        assert_eq!(
+            settings(&["--internal-scale", "1.5", "--jitter", "off"]),
+            ("own", RenderScale::OneHalf, false)
+        );
+        assert_eq!(
+            settings(&["--upscaler", "off", "--internal-scale", "1.5"]),
+            ("off", RenderScale::One, false)
+        );
+        assert_eq!(
+            settings(&["--upscaler", "own", "--internal-scale", "1.5"]),
+            ("own", RenderScale::OneHalf, true)
+        );
+        assert_eq!(
+            settings(&["--upscaler", "own", "--jitter", "off"]),
+            ("own", RenderScale::OneHalf, false)
+        );
+        assert_eq!(
+            settings(&["--upscaler", "fsr2", "--internal-scale", "1.5"]),
+            ("fsr2", RenderScale::OneHalf, false)
+        );
+        let args = parse(&["--upscaler", "fsr2", "--sharpen", "0.2"]).unwrap();
+        match args.upscaler_settings(hud::UpscalerMode::Fsr2).0 {
+            UpscalerKind::Fsr2(s) => assert_eq!(s.sharpness, 0.2),
+            k => panic!("{k:?}"),
+        }
+        // Cycled to with `F10` from `off`, our upscaler jitters.
+        let args = parse(&["--upscaler", "off"]).unwrap();
+        assert!(args.upscaler_settings(hud::UpscalerMode::Own).2);
     }
 
     #[test]

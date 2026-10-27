@@ -38,7 +38,7 @@ the status.
 | [0021](0021-echo-and-tail-levels-by-room-size-curves-and-a-tail-handed-between-two-networks.md) | Echo and tail levels follow listening-fitted curves of the room's mean free path, and a room change hands the tail to a second network | accepted (Plan 0020) |
 | [0022](0022-mirror-uploads-through-a-staging-belt-and-copy-commands.md) | Mirror uploads go through a persistently mapped staging belt and copy commands, not `Queue::write_buffer` | accepted (Plan 0027; Outcome: belt share a miss); supersedes ADR-0017's Alternative B rejection in part |
 | [0023](0023-indirect-light-from-a-scrolling-probe-volume.md) | Indirect light comes from a scrolling volume of irradiance probes around the camera, refreshed by a few rays per probe per frame and gathered with visibility weights | accepted (Plan 0029, Outcome) |
-| [0024](0024-own-temporal-upscaler-on-the-hit-buffer.md) | The upscaler is a temporal upscaler of our own, driven by jittered rays and the hit buffer, with a sharpening pass | accepted (Plan 0030); shipped opt-in, ADR-0034 takes up the FSR 2 port |
+| [0024](0024-own-temporal-upscaler-on-the-hit-buffer.md) | The upscaler is a temporal upscaler of our own, driven by jittered rays and the hit buffer, with a sharpening pass | accepted (Plan 0030); superseded in part by ADR-0034; the fly-through's default at 1.5 since Plan 0041 |
 | [0025](0025-light-candidates-from-a-power-over-distance-table-of-near-emitter-chunks.md) | Light candidates come from a power-over-distance table of the emitter chunks near the camera, and only those chunks hold light samples on the GPU | accepted (Plan 0024) |
 | [0026](0026-atmosphere-from-hillaire-luts-built-on-the-gpu-at-runtime.md) | The atmosphere is Hillaire's LUTs, built on the GPU at runtime from parameters the game sets | proposed (Plan 0032) |
 | [0027](0027-the-sun-shadow-is-one-per-pixel-ray-in-the-light-pass.md) | The sun's shadow is one per-pixel ray in the light pass, a dedicated directional sample beside the emissive one | proposed (Plan 0032) |
@@ -48,7 +48,7 @@ the status.
 | [0031](0031-weather-is-cosmetic-client-state-rendered-against-a-fall-map.md) | Weather is cosmetic client state stepped by the game's ticks, and rain, snow, wetness and snow cover are rendered against a fall map traced through the mirror, never written as voxels | proposed (Plan 0036) |
 | [0032](0032-night-sky-drawn-analytically-on-miss-pixels-with-a-marched-aurora-shell.md) | The night sky is drawn analytically on miss pixels (a binned star catalogue, sky bodies the game lists, an aurora shell lighting the scene via a hemisphere map), and the night look is a luminance tint | proposed (Plan 0037) |
 | [0033](0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md) | Exposure adapts like an eye: fast toward bright, slow toward dark in two stages, metered and stepped on the GPU, applied as pre-exposure | proposed (Plan 0040) |
-| [0034](0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) | AMD FSR 2.2.1 ported to WGSL is the upscaler's default candidate; our own upscaler stays opt-in | proposed (Plan 0041) |
+| [0034](0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) | AMD FSR 2.2.1 ported to WGSL is the upscaler's default candidate; our own upscaler stays opt-in | accepted (Plan 0041, Outcome): shipped opt-in, ADR-0024's upscaler at 1.5 the default |
 | [0035](0035-dx12-shaders-compile-with-wgpus-bundled-static-dxc.md) | DX12 shaders compile with wgpu's bundled static DXC, never FXC | accepted, Outcome (Plan 0046) |
 <!-- roster:end -->
 
