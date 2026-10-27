@@ -1764,6 +1764,8 @@ struct Hud {
     live_probes: Option<u32>,
     /// The last frame's steps view, read back while that view and the HUD are on.
     steps: Option<hud::StepsSample>,
+    /// The exposure state as last read back (`Frame::exposure_readout`), a few frames late.
+    exposure: Option<vxe_render::ExposureReadout>,
     format_us: u32,
     page_bytes: u64,
     /// Reused buffers: the rows' text, their colours, and the strip's samples.
@@ -1790,6 +1792,7 @@ impl Hud {
             cpu_ms: 0.0,
             live_probes: None,
             steps: None,
+            exposure: None,
             format_us: 0,
             page_bytes: hud::page_bytes(),
             text: String::new(),
@@ -2539,6 +2542,14 @@ impl Run {
         s.mode = mode;
         s.format_us = h.format_us;
         s.lighting = lighting;
+        s.exposure = Some(hud::ExposureRow {
+            mode: self.modes.exposure_mode().to_owned(),
+            ev: h
+                .exposure
+                .map_or(self.modes.exposure_ev(), |r| r.exposure.log2()),
+            scene_ev: h.exposure.filter(|r| !r.held).map(|r| r.metered_log2),
+            target_ev: None,
+        });
     }
 
     /// The banner at the frame loop's clock: the scene's row while it shows (for
@@ -4036,6 +4047,7 @@ impl Run {
         }
         gpu.queue.submit([enc.finish()]);
         let cpu_ms = ms_since(t0);
+        self.hud.exposure = gfx.frame.exposure_readout(&gpu.device);
 
         if self.frame == 0 {
             // The first frame counts once the GPU has finished it.
@@ -6169,7 +6181,7 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
             hud::Modes::new(d.start_lighting(), d.lighting, 0.0).line(),
-            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on at 64 rays 1/8, filter on, ore pulse off, emissive history 32"
+            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on at 64 rays 1/8, filter on, ore pulse off, emissive history 32, exposure manual +0.00 EV"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),

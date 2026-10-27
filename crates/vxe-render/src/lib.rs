@@ -8,6 +8,7 @@
 pub mod attr_work;
 pub mod attrib;
 pub mod camera;
+pub mod exposure;
 pub mod font8x8;
 pub mod gpu_world;
 pub mod hud;
@@ -19,6 +20,7 @@ pub mod readback;
 
 pub use attr_work::{AttrWorkStats, MirrorView};
 pub use camera::{Camera, View};
+pub use exposure::{EXPOSURE_WGSL, ExposureReadout, ExposureState, Metering};
 pub use gpu_world::{
     BELT_CHUNK_BYTES, BinStats, GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncStats, Window,
 };

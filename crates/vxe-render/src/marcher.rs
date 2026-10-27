@@ -3,6 +3,9 @@
 //! each a compute dispatch over the internal target (ADR-0018).
 
 use crate::camera::{Camera, View};
+use crate::exposure::{
+    EX_METER, ExposurePass, ExposureReadout, ExposureUniform, METER_TILE, Metering,
+};
 use crate::gpu_world::GpuWorld;
 use crate::light::LightParams;
 use crate::probes::{DEFAULT_PROBE_SPACING, ProbeUniform, ProbeVolume};
@@ -968,6 +971,9 @@ pub struct Frame {
     /// The output size the frame's image is presented at; the targets are at the internal
     /// size.
     output: [u32; 2],
+    /// The exposure pass, its state and its read-back ring (ADR-0033).
+    exposure: ExposurePass,
+    metering: Metering,
     /// The views' rays are jittered by [`jitter_at`] of the frame index.
     jitter: bool,
 }
@@ -1114,6 +1120,8 @@ enum Io {
     Store(wgpu::TextureFormat),
     /// A uniform buffer.
     Uniform,
+    /// A read-write storage buffer.
+    Storage,
 }
 
 fn io_layout(device: &wgpu::Device, label: &str, io: &[Io]) -> wgpu::BindGroupLayout {
@@ -1129,11 +1137,15 @@ fn io_layout_at(device: &wgpu::Device, label: &str, io: &[(u32, Io)]) -> wgpu::B
             Io::Float => sampled_texture(b, FLOAT),
             Io::Uint => sampled_texture(b, UINT),
             Io::Store(f) => storage_texture(b, f),
-            Io::Uniform => wgpu::BindGroupLayoutEntry {
+            Io::Uniform | Io::Storage => wgpu::BindGroupLayoutEntry {
                 binding: b,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
+                    ty: if matches!(k, Io::Uniform) {
+                        wgpu::BufferBindingType::Uniform
+                    } else {
+                        wgpu::BufferBindingType::Storage { read_only: false }
+                    },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
@@ -1238,6 +1250,16 @@ impl Frame {
                 storage(10),
                 storage(11),
                 sampled_texture(12, FLOAT),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 13,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let hit = Marcher::new(device, &world_layout);
@@ -1393,6 +1415,7 @@ impl Frame {
                 Io::Float,
                 Io::Uint,
                 Io::Float,
+                Io::Storage,
             ],
         );
         let probe_storage = |binding| wgpu::BindGroupLayoutEntry {
@@ -1554,7 +1577,39 @@ impl Frame {
             probe_blend,
             traced_probe_rays: std::sync::atomic::AtomicU64::new(0),
             probe_light_window: std::sync::atomic::AtomicBool::new(false),
+            exposure: ExposurePass::new(device),
+            metering: Metering::default(),
         }
+    }
+
+    /// Sets how the exposure pass weights the meter's tiles (centre-weighted by default).
+    pub fn set_metering(&mut self, metering: Metering) {
+        self.metering = metering;
+    }
+
+    pub fn metering(&self) -> Metering {
+        self.metering
+    }
+
+    /// The exposure state as last read back, without waiting: a non-blocking poll of
+    /// `device`, then the newest of the read-back ring's slots that has finished mapping
+    /// (two or three frames late), else the last one read; `None` until the first. Each
+    /// encode's commands must be submitted before the next encode or this call.
+    pub fn exposure_readout(&self, device: &wgpu::Device) -> Option<ExposureReadout> {
+        self.exposure.readout(device)
+    }
+
+    /// The exposure state buffer the exposure pass writes (32 bytes, `COPY_SRC`:
+    /// [`crate::exposure::ExposureState::from_bytes`] reads a copy), for tests and tools.
+    pub fn exposure_state(&self) -> &wgpu::Buffer {
+        self.exposure.state()
+    }
+
+    /// The meter's tiles the composite writes (`COPY_SRC`): per 8 x 8 workgroup of the
+    /// internal target, row-major over `ceil(w / 8) x ceil(h / 8)`, the sum of its pixels'
+    /// clamped log2 luminance and their count, as two `f32`.
+    pub fn exposure_tiles(&self) -> &wgpu::Buffer {
+        &self.targets.tiles
     }
 
     /// Probe rays the last encode dispatched (update-list entries times
@@ -1868,7 +1923,7 @@ impl Frame {
 
     /// Bytes the frame's targets and its probe volume occupy.
     pub fn frame_bytes(&self) -> u64 {
-        self.targets.bytes() + self.probes.bytes()
+        self.targets.bytes() + self.probes.bytes() + self.exposure.bytes()
     }
 
     /// Replaces the targets with ones of `width` × `height`, presented at that size, and
@@ -2151,6 +2206,7 @@ impl Frame {
                     binding: 12,
                     resource: wgpu::BindingResource::TextureView(&noise),
                 },
+                buffer_entry(13, self.exposure.state_uniform()),
             ],
         });
         let (c, q) = (self.cur, self.cur ^ 1);
@@ -2251,6 +2307,7 @@ impl Frame {
                 Res::Tex(t.lit_pos(c)),
                 Res::Tex(t.lit_info(c)),
                 Res::Tex(&t.indirect),
+                Res::Buf(&t.tiles),
             ],
         );
         let gradient_bind = bind_io(
@@ -2408,6 +2465,40 @@ impl Frame {
                 pass.dispatch_workgroups(groups[0], groups[1], 1);
             }
         }
+        let exposure_pass = FRAME_PASSES.len() as u32 - 1;
+        self.exposure.encode(
+            device,
+            queue,
+            encoder,
+            &t.tiles,
+            &self.exposure_uniform(&p),
+            timer
+                .filter(|t| t.passes() > exposure_pass)
+                .map(|t| t.writes_at(exposure_pass)),
+        );
+    }
+
+    /// The exposure pass's parameters for the frame `p`.
+    fn exposure_uniform(&self, p: &Params) -> ExposureUniform {
+        let (strength, sigma) = self.metering.params();
+        let mut rects = [[0.0; 4]; 2];
+        for (r, v) in rects.iter_mut().zip(&p.views) {
+            *r = v.rect.map(|x| x as f32);
+        }
+        ExposureUniform {
+            tiles: self.targets.tile_counts(),
+            view_count: p.view_count,
+            mode: if self.look.view == ViewMode::Shaded {
+                EX_METER
+            } else {
+                0
+            },
+            rects,
+            manual: self.lighting.exposure,
+            strength,
+            sigma,
+            dt: 0.0,
+        }
     }
 
     /// Writes the probe passes' uniform for the frame `p`: the volume's origin for its first
@@ -2463,7 +2554,7 @@ fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_>
 
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
-pub const FRAME_PASSES: [&str; 10] = [
+pub const FRAME_PASSES: [&str; 11] = [
     "hit",
     "gradient",
     "light",
@@ -2474,6 +2565,7 @@ pub const FRAME_PASSES: [&str; 10] = [
     "composite",
     "upscale",
     "sharpen",
+    "exposure",
 ];
 
 /// The gradient pass's stratum edge in pixels; `STRATUM` in `gradient.wgsl`.
@@ -2518,6 +2610,8 @@ struct Targets {
     indirect: wgpu::Texture,
     /// The upscaler's history at the output size (rgba16float), this frame's and the last.
     history: Option<[wgpu::Texture; 2]>,
+    /// The exposure meter's tiles: two `f32` per 8 x 8 workgroup of the internal target.
+    tiles: wgpu::Buffer,
 }
 
 impl Targets {
@@ -2580,7 +2674,18 @@ impl Targets {
             history: upscaled
                 .map(|[w, h]| [0, 1].map(|_| sized("upscale history", Rgba16Float, w, h))),
             indirect: lit("indirect irradiance", Rgba16Float),
+            tiles: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("exposure meter tiles"),
+                size: 8 * u64::from(width.div_ceil(METER_TILE) * height.div_ceil(METER_TILE)),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            }),
         }
+    }
+
+    /// The meter's tiles on each edge.
+    fn tile_counts(&self) -> [u32; 2] {
+        [self.width, self.height].map(|n| n.div_ceil(METER_TILE))
     }
 
     /// The lighting grid's size.
@@ -2613,6 +2718,7 @@ impl Targets {
             + history
             + lpx * (half + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16 + 8)
             + strata * 8
+            + self.tiles.size()
     }
 }
 

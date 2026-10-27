@@ -1,6 +1,6 @@
 # 0040: Eye adaptation: an automatic exposure that is fast toward bright and slow toward dark, metered on the GPU, with pre-exposed HDR targets
 
-> **Status:** approved (2026-10-22)
+> **Status:** in-progress (2026-10-27)
 > **Decisions:** Owner, 2026-10-22: approved with the plan's recommended options: time constants 0.15 / 1 / 4 s (normal after about 10 s), max exposure 64 so the dark-adapted cave settles at the key, centre-weighted metering, the fly-through defaulting to auto eye.
 > **Created:** 2026-10-22
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "exposure, tone mapping, and an
@@ -537,17 +537,38 @@ exposure multiply, so the settled exposure ignores it.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The meter, the read-back and the banner | dev | not started | |
+| 1: The meter, the read-back and the banner | dev | done | committed with this row |
 | 2: Pre-exposure | dev | not started | |
 | 3: Adaptation | dev | not started | |
 | 4: The fly-through, the cave's own curve, and the readings | dev | not started | |
 | 5: The owner's windowed check | human | not started | |
 
+Phase 1 (lavapipe, exclusive perf lock, load 14 to 30 from the other lanes): `tests/exposure.rs`
+split wall reads `metered_log2` -6.000000 (average) and -6.0000005 (centre); the centred square
+reads GPU -8.15625 / CPU -8.15625 (average) and GPU -7.354732 / CPU -7.354732 (centre); the
+readout is `None` right after frame 0's submit and `Some` (metered -6.0000005, frame 1) after
+frame 1. `--profile gpu`: 139 run, 138 passed, the one failure `mode_banner.png` (1749 bytes),
+re-blessed on lavapipe and passing; every other golden unchanged. `--profile quick` at
+`--test-threads 2`: 488 of 489 passed, `replay::a_stamp_and_a_collapse_replay_from_the_save` hit
+the 30 s kill at load 28 and passed alone in 25.3 s.
+
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: the state the frame passes read is a 32-byte uniform at group 0 binding 13, copied
+  from the exposure pass's storage buffer after it runs (the plan says a storage buffer read
+  read-only through group 0).
+- Phase 1: `exposure.wgsl` is standalone (its own group 0: parameters, state, tiles), not
+  compiled after `march.wgsl`.
+- Phase 1: `Frame::exposure_readout` takes the `wgpu::Device` (a non-blocking `Poll`); it
+  assumes each encode is submitted before the next encode or the call.
+- Phase 1: `Frame::set_metering` sets the metering outside `AutoExposure` (Phase 1's bars meter
+  under the manual exposure).
+- Phase 1: the test scenes put the eye 20 voxels from the wall (bar 1 says 10), with
+  `vfov` 2 atan(1/2) so the view is 20 voxels tall there and bar 2's square is 10 x 10 voxels.
+- Phase 1: `FRAME_PASSES` gains an 11th pass, `exposure`; `tests/shader_portability.rs` (not in
+  Files touched) gains `exposure.wgsl`.
+- Phase 1: `march.wgsl` also gains `exposure_ratio`, `HDR_MAX` and `MOMENT_LUM_MAX`, which
+  Phase 2's passes use.
 
 ### Close triggers
 

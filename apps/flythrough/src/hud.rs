@@ -375,6 +375,34 @@ pub struct HudStats {
     pub pad: Option<PadRow>,
     /// The frame's passes and light samples; `None` hides their two rows.
     pub lighting: Option<LightingRow>,
+    /// The exposure; `None` hides its row.
+    pub exposure: Option<ExposureRow>,
+}
+
+/// The exposure row: the mode in words, the exposure the next frame uses in EV (`log2 e`), the
+/// metered scene in EV (log2 of its luminance; `None` before the first read-back or while the
+/// meter holds), and in auto the exposure the meter settles at, in EV.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ExposureRow {
+    pub mode: String,
+    pub ev: f32,
+    pub scene_ev: Option<f32>,
+    pub target_ev: Option<f32>,
+}
+
+impl fmt::Display for ExposureRow {
+    /// `exposure manual +0.00 EV  scene -7.9 EV`, with `  settles +5.53 EV` in auto.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "exposure {} {:+.2} EV", self.mode, self.ev)?;
+        match self.scene_ev {
+            Some(v) => write!(f, "  scene {v:+.1} EV")?,
+            None => f.write_str("  scene n/a")?,
+        }
+        if let Some(t) = self.target_ev {
+            write!(f, "  settles {t:+.2} EV")?;
+        }
+        Ok(())
+    }
 }
 
 /// The frame passes' GPU times (name and milliseconds, in pass order), the light samples the
@@ -469,6 +497,7 @@ impl HudStats {
             pressure: None,
             pad: None,
             lighting: None,
+            exposure: None,
         }
     }
 
@@ -572,6 +601,9 @@ impl HudStats {
                     ),
                 )?;
             }
+        }
+        if let Some(e) = &self.exposure {
+            row(out, HudColour::White, format_args!("{e}"))?;
         }
         row(
             out,
@@ -1076,6 +1108,36 @@ mod tests {
         );
     }
 
+    /// The exposure row follows the march row's block (here, with no lighting rows, the march
+    /// row) and reads the mode, the exposure and the metered scene in EV; in auto, the
+    /// settled exposure too.
+    #[test]
+    fn the_exposure_row_names_the_mode_and_the_scene() {
+        let (mut out, mut colours) = (String::new(), Vec::new());
+        let mut s = HudStats::fixed();
+        s.exposure = Some(ExposureRow {
+            mode: "manual".to_owned(),
+            ev: 0.0,
+            scene_ev: Some(-7.94),
+            target_ev: None,
+        });
+        s.write_rows(&mut out, &mut colours);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[3], "exposure manual +0.00 EV  scene -7.9 EV");
+        assert_eq!(colours[3], HudColour::White);
+        s.exposure = Some(ExposureRow {
+            mode: "auto eye".to_owned(),
+            ev: 2.411,
+            scene_ev: None,
+            target_ev: Some(5.526),
+        });
+        s.write_rows(&mut out, &mut colours);
+        assert_eq!(
+            out.lines().nth(3),
+            Some("exposure auto eye +2.41 EV  scene n/a  settles +5.53 EV")
+        );
+    }
+
     /// A pad row sits before the format row, and a run without a pad source shows none.
     #[test]
     fn the_pad_row_shows_before_the_format_row() {
@@ -1204,14 +1266,20 @@ impl Modes {
         self.banner_at = now_ms;
     }
 
+    /// The exposure's mode in words, as the banner and the exposure row name it: `manual`.
+    pub fn exposure_mode(&self) -> &'static str {
+        "manual"
+    }
+
     /// The modes in words: `lighting half, shadow walk coarse, sampler reuse, history edits,
-    /// lamp on, indirect on at 64 rays 1/8, filter on, ore pulse off, emissive history 32`
-    /// (the probe rays per update and the share of probes refreshed a frame).
+    /// lamp on, indirect on at 64 rays 1/8, filter on, ore pulse off, emissive history 32,
+    /// exposure manual +0.00 EV` (the probe rays per update, the share of probes refreshed a
+    /// frame, and the exposure in EV, `log2 e`).
     pub fn line(&self) -> String {
         let l = &self.lighting;
         let on = |b: bool| if b { "on" } else { "off" };
         format!(
-            "lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, indirect {} at {} rays 1/{}, filter {}, ore pulse {}, emissive history {}",
+            "lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, indirect {} at {} rays 1/{}, filter {}, ore pulse {}, emissive history {}, exposure {} {:+.2} EV",
             self.resolution.name(),
             l.shadow_walk.name(),
             l.sampler.name(),
@@ -1222,8 +1290,15 @@ impl Modes {
             l.slices(),
             on(l.filter),
             on(self.pulse),
-            l.emissive_history
+            l.emissive_history,
+            self.exposure_mode(),
+            self.exposure_ev()
         )
+    }
+
+    /// The exposure in EV the banner names: `log2` of the manual exposure.
+    pub fn exposure_ev(&self) -> f32 {
+        self.lighting.exposure.log2()
     }
 
     /// The banner at `now_ms`: the modes' line within [`BANNER_MS`] of the start or the last
@@ -1266,7 +1341,7 @@ mod mode_tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, shadow walk coarse\nsampler reuse, history edits, lamp on\nindirect off at 64 rays 1/8, filter on\nore pulse off, emissive history 32"
+            "lighting half, shadow walk coarse\nsampler reuse, history edits, lamp on\nindirect off at 64 rays 1/8, filter on\nore pulse off, emissive history 32\nexposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;
