@@ -10,6 +10,7 @@ pub mod attrib;
 pub mod camera;
 pub mod exposure;
 pub mod font8x8;
+pub mod fsr2;
 pub mod gpu_world;
 pub mod hud;
 pub mod light;
@@ -24,6 +25,7 @@ pub use camera::{Camera, View};
 pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
 };
+pub use fsr2::{Fsr2, Fsr2Settings, UpscalerKind};
 pub use gpu_world::{
     BELT_CHUNK_BYTES, BinStats, GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncStats, Window,
 };

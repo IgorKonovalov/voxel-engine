@@ -42,6 +42,9 @@
 @group(2) @binding(2) var layer_in: texture_2d<f32>;
 @group(2) @binding(3) var irradiance_in: texture_2d<f32>;
 @group(2) @binding(4) var target_tex: texture_storage_2d<rgba8unorm, write>;
+// The shaded view stores linear radiance before exposure instead of `display` of it: FSR 2's
+// variant of this pass (marcher.rs) sets this true and declares `target_tex` rgba32float.
+const HDR_TARGET: bool = false;
 @group(2) @binding(5) var light_pos_in: texture_2d<f32>;
 @group(2) @binding(6) var light_info_in: texture_2d<u32>;
 @group(2) @binding(7) var indirect_in: texture_2d<f32>;
@@ -241,6 +244,6 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
     if (rec.translucent) {
         c = layer.xyz * ex + layer.w * c;
     }
-    textureStore(target_tex, px, vec4<f32>(display(c), 1.0));
+    textureStore(target_tex, px, vec4<f32>(select(display(c), c, HDR_TARGET), 1.0));
     return meter_of(c / ex);
 }

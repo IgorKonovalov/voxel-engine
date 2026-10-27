@@ -52,8 +52,10 @@ pub struct View {
     pub unit_offset: f32,
     pub _pad: f32,
     /// The sub-pixel offset of every ray of the view, in internal pixels, each component in
-    /// `(-0.5, 0.5)`; zero by the constructors (`Frame::params_for` sets it per frame when
-    /// the frame jitters).
+    /// `(-0.5, 0.5)`, y down the rows as the pixels are; zero by the constructors
+    /// (`Frame::params_for` sets it per frame when the frame jitters: `jitter_at` of the frame
+    /// over 16 phases for ADR-0024's upscaler, and FSR 2's offset of the frame negated, over
+    /// `fsr2::jitter_phases`, under FSR 2).
     pub jitter: [f32; 2],
     pub _pad2: [f32; 2],
 }

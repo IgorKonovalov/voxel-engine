@@ -8,6 +8,7 @@ use crate::exposure::{
     EX_AUTO, EX_METER, EX_RESET, Exposure, ExposurePass, ExposureReadout, ExposureUniform,
     METER_TILE, Metering,
 };
+use crate::fsr2::{Fsr2, UpscalerKind};
 use crate::gpu_world::GpuWorld;
 use crate::light::LightParams;
 use crate::probes::{DEFAULT_PROBE_SPACING, ProbeUniform, ProbeVolume};
@@ -535,11 +536,12 @@ fn halton(mut i: u32, b: u32) -> f32 {
     r
 }
 
-/// The sub-pixel jitter of frame `frame`, in internal pixels: elements `1 ..= 16` of the
-/// Halton (2, 3) sequence by `frame % JITTER_PHASES`, centred on zero, each component in
-/// `(-0.5, 0.5)`.
-pub fn jitter_at(frame: u32) -> [f32; 2] {
-    let i = frame % JITTER_PHASES + 1;
+/// The sub-pixel jitter of frame `frame` in a sequence of `phases`, in internal pixels:
+/// elements `1 ..= phases` of the Halton (2, 3) sequence by `frame % phases`, centred on zero,
+/// each component in `(-0.5, 0.5)`. The upscaler of ADR-0024 takes [`JITTER_PHASES`], FSR 2
+/// its own count (`fsr2::jitter_phases`).
+pub fn jitter_at(frame: u32, phases: u32) -> [f32; 2] {
+    let i = frame % phases.max(1) + 1;
     [halton(i, 2) - 0.5, halton(i, 3) - 0.5]
 }
 
@@ -1032,6 +1034,11 @@ pub struct Frame {
     reset_exposure: std::sync::atomic::AtomicBool,
     /// The views' rays are jittered by [`jitter_at`] of the frame index.
     jitter: bool,
+    /// The upscaler the frame runs; with FSR 2, its context and the composite's variant
+    /// that stores linear radiance (`HDR_TARGET` in composite.wgsl), built with it.
+    kind: UpscalerKind,
+    fsr: Option<Fsr2>,
+    composite_hdr: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
 }
 
 /// A-trous iterations per frame, at strides 1, 2, 4, 8.
@@ -1563,6 +1570,7 @@ impl Frame {
                 height,
                 LightingResolution::default().scale(),
                 (internal != output).then_some(output),
+                true,
             ),
             resolution: LightingResolution::default(),
             lod: LodParams::default(),
@@ -1625,6 +1633,9 @@ impl Frame {
             history: std::sync::Mutex::new(History::default()),
             output,
             jitter: false,
+            kind: UpscalerKind::Off,
+            fsr: None,
+            composite_hdr: None,
             probes: ProbeVolume::new(device, DEFAULT_PROBE_SPACING),
             probe_layout,
             gather_layout,
@@ -1788,10 +1799,65 @@ impl Frame {
         self.upscaler
     }
 
-    /// Whether the upscale pass runs: the frame jitters or renders below its output size.
-    /// Without it the composite's image is the frame's, byte for byte.
+    /// Whether an upscaler runs: FSR 2, or the frame jitters or renders below its output
+    /// size. Without one the composite's image is the frame's, byte for byte.
     pub fn upscaling(&self) -> bool {
-        self.jitter || self.internal_size() != self.output
+        self.fsr.is_some() || self.jitter || self.internal_size() != self.output
+    }
+
+    /// Selects the upscaler: `Off` turns the jitter off (at equal sizes no upscaler runs),
+    /// `Own` sets the tuning of ADR-0024's upscaler (the jitter as [`Frame::set_jitter`] left
+    /// it), and `Fsr2` runs FSR 2 with its own jitter sequence. A change of upscaler replaces
+    /// the targets and drops the history; a change of FSR's settings alone keeps them.
+    pub fn set_upscaler_kind(&mut self, device: &wgpu::Device, kind: UpscalerKind) {
+        let was_fsr = self.fsr.is_some();
+        match kind {
+            UpscalerKind::Off => self.jitter = false,
+            UpscalerKind::Own(u) => self.upscaler = u,
+            UpscalerKind::Fsr2(s) => {
+                if let Some(f) = self.fsr.as_mut() {
+                    f.set_settings(s);
+                } else {
+                    self.fsr = Some(Fsr2::new(
+                        device,
+                        &self.world_layout,
+                        self.internal_size(),
+                        self.output,
+                        s,
+                    ));
+                }
+                if self.composite_hdr.is_none() {
+                    self.composite_hdr = Some(composite_hdr_pass(device, &self.world_layout));
+                }
+            }
+        }
+        if !kind.is_fsr2() {
+            self.fsr = None;
+        }
+        let changed = std::mem::discriminant(&kind) != std::mem::discriminant(&self.kind)
+            || was_fsr != self.fsr.is_some();
+        self.kind = kind;
+        if changed {
+            self.set_sizes(device, self.internal_size(), self.output);
+        }
+    }
+
+    pub fn upscaler_kind(&self) -> UpscalerKind {
+        self.kind
+    }
+
+    /// FSR 2's context while the frame runs it.
+    pub fn fsr2(&self) -> Option<&Fsr2> {
+        self.fsr.as_ref()
+    }
+
+    pub fn fsr2_mut(&mut self) -> Option<&mut Fsr2> {
+        self.fsr.as_mut()
+    }
+
+    /// The copy of the double-buffered targets the last (or next) encode writes.
+    pub fn current_copy(&self) -> usize {
+        self.cur
     }
 
     pub fn jitter(&self) -> bool {
@@ -1839,6 +1905,12 @@ impl Frame {
         } else {
             h.edits.push([min, max]);
         }
+    }
+
+    /// Drops the upscaler's history alone in the next encoded frame (the lighting's is kept),
+    /// as a change of view does.
+    pub fn reset_upscaler_history(&mut self) {
+        self.history().view_changed = true;
     }
 
     /// Drops all history: the next encoded frame starts every pixel afresh.
@@ -1974,6 +2046,12 @@ impl Frame {
         &self.targets.hit_info[self.cur]
     }
 
+    /// The translucent layers in front of each hit (rgba16float: premultiplied colour,
+    /// transmittance).
+    pub fn layers(&self) -> &wgpu::Texture {
+        &self.targets.layer
+    }
+
     /// The light pass's irradiance (rgba16float: rgb, then the emissive part's luminance).
     pub fn irradiance(&self) -> &wgpu::Texture {
         &self.targets.irradiance
@@ -2001,9 +2079,12 @@ impl Frame {
         &self.targets.moments[self.cur]
     }
 
-    /// Bytes the frame's targets and its probe volume occupy.
+    /// Bytes the frame's targets, its probe volume and FSR 2's resources occupy.
     pub fn frame_bytes(&self) -> u64 {
-        self.targets.bytes() + self.probes.bytes() + self.exposure.bytes()
+        self.targets.bytes()
+            + self.probes.bytes()
+            + self.exposure.bytes()
+            + self.fsr.as_ref().map_or(0, Fsr2::bytes)
     }
 
     /// Replaces the targets with ones of `width` × `height`, presented at that size, and
@@ -2016,14 +2097,19 @@ impl Frame {
     /// `output` pixels and drops the history; the pipelines are kept.
     pub fn set_sizes(&mut self, device: &wgpu::Device, internal: [u32; 2], output: [u32; 2]) {
         self.output = output;
-        let upscaled = (self.jitter || internal != output).then_some(output);
+        let fsr = self.fsr.is_some();
+        let upscaled = (fsr || self.jitter || internal != output).then_some(output);
         self.targets = Targets::new(
             device,
             internal[0],
             internal[1],
             self.resolution.scale(),
             upscaled,
+            !fsr,
         );
+        if let Some(f) = self.fsr.as_mut() {
+            f.resize(device, internal, output);
+        }
         self.reset_history();
     }
 
@@ -2071,8 +2157,13 @@ impl Frame {
         let (fwd, right, up) = camera.basis();
         let mut vs = [View::default(); MAX_VIEWS];
         vs[..views.len()].copy_from_slice(views);
-        let jitter = if self.jitter {
-            jitter_at(self.frame)
+        let jitter = if self.fsr.as_ref().is_some_and(|f| !f.bypassed()) {
+            // FSR's sample of pixel p lies at p + 0.5 - offset (`fsr2::jitter_offset`).
+            let [w, _] = self.internal_size();
+            let [x, y] = jitter_at(self.frame, crate::fsr2::jitter_phases(w, self.output[0]));
+            [-x, -y]
+        } else if self.jitter {
+            jitter_at(self.frame, JITTER_PHASES)
         } else {
             [0.0; 2]
         };
@@ -2376,15 +2467,23 @@ impl Frame {
         } else {
             &t.irradiance
         };
+        // In FSR mode the composite writes FSR's colour input at the internal size.
+        let composite_out = self.fsr.as_ref().map_or(&t.output, Fsr2::colour);
+        // FSR 2's composite stores linear radiance (`composite_hdr`).
+        let (composite_layout, composite) = self
+            .composite_hdr
+            .as_ref()
+            .filter(|_| self.fsr.is_some())
+            .map_or((&self.composite_layout, &self.composite), |(l, p)| (l, p));
         let composite_bind = bind_io(
             device,
-            &self.composite_layout,
+            composite_layout,
             &[
                 Res::Tex(&t.hit_pos[c]),
                 Res::Tex(&t.hit_info[c]),
                 Res::Tex(&t.layer),
                 Res::Tex(lit),
-                Res::Tex(&t.output),
+                Res::Tex(composite_out),
                 Res::Tex(t.lit_pos(c)),
                 Res::Tex(t.lit_info(c)),
                 Res::Tex(&t.indirect),
@@ -2435,25 +2534,59 @@ impl Frame {
         let full = [t.width.div_ceil(WORKGROUP), t.height.div_ceil(WORKGROUP)];
         let lw = t.light_size().map(|n| n.div_ceil(WORKGROUP));
         let strata = [t.strata.width(), t.strata.height()].map(|n| n.div_ceil(WORKGROUP));
-        // Each pass's dispatches: pipeline, group-2 or -3 bind group and its index, workgroups.
-        type Dispatch<'a> = (
-            &'a wgpu::ComputePipeline,
-            &'a wgpu::BindGroup,
-            u32,
-            [u32; 2],
-        );
-        let mut hit: Vec<Dispatch<'_>> = vec![(&self.hit.pipeline, &hit_bind, 1, full)];
+        let fsr_binds = self.fsr.as_ref().map(|f| {
+            (
+                f,
+                f.prepare(
+                    device,
+                    queue,
+                    &p,
+                    &crate::fsr2::FrameInputs {
+                        hit_pos: &t.hit_pos[c],
+                        hit_info: &t.hit_info[c],
+                        layer: &t.layer,
+                        edits: &self.edits,
+                        lamp: &self.upscale_params,
+                        output: &t.output,
+                        cur: c,
+                    },
+                ),
+            )
+        });
+        if let Some(f) = &self.fsr {
+            f.copy_exposure(
+                encoder,
+                self.exposure.state(),
+                matches!(self.lighting.exposure, Exposure::Auto(_)),
+                p.history & 2 == 0,
+            );
+        }
+        // A frame pass's dispatch with the world's group 0 and its own group `group`.
+        let frame_pass = |pipeline, bind, group: usize, workgroups| {
+            let mut groups = [Some(&world_bind), None, None, None];
+            groups[group] = Some(bind);
+            Dispatch {
+                pipeline,
+                groups,
+                workgroups,
+            }
+        };
+        let mut hit: Vec<Dispatch<'_>> = vec![frame_pass(&self.hit.pipeline, &hit_bind, 1, full)];
         if half {
-            hit.push((&self.downsample, &downsample_bind, 3, lw));
+            hit.push(frame_pass(&self.downsample, &downsample_bind, 3, lw));
         }
         let mut gradient: Vec<Dispatch<'_>> = Vec::new();
         if gradient_on {
-            gradient.push((&self.gradient, &gradient_bind, 3, strata));
+            gradient.push(frame_pass(&self.gradient, &gradient_bind, 3, strata));
         }
         let mut atrous: Vec<Dispatch<'_>> = Vec::new();
         if filtering {
-            atrous.push((&self.variance, &variance_bind, 2, lw));
-            atrous.extend(atrous_binds.iter().map(|b| (&self.atrous, b, 2, lw)));
+            atrous.push(frame_pass(&self.variance, &variance_bind, 2, lw));
+            atrous.extend(
+                atrous_binds
+                    .iter()
+                    .map(|b| frame_pass(&self.atrous, b, 2, lw)),
+            );
         }
         p.lighting &= !LIGHTING_INDIRECT;
         let mut gather: Vec<Dispatch<'_>> = Vec::new();
@@ -2505,10 +2638,14 @@ impl Frame {
             ],
         );
         if let Some(b) = &probe_bind {
-            gather.push((&self.gather, &gather_bind, 2, lw));
+            gather.push(Dispatch {
+                pipeline: &self.gather,
+                groups: [Some(&world_bind), None, Some(&gather_bind), Some(b)],
+                workgroups: lw,
+            });
             if updates > 0 {
-                probes.push((&self.probe_trace, b, 3, [updates, 1]));
-                probes.push((&self.probe_blend, b, 3, [updates, 1]));
+                probes.push(frame_pass(&self.probe_trace, b, 3, [updates, 1]));
+                probes.push(frame_pass(&self.probe_blend, b, 3, [updates, 1]));
             }
         }
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&p));
@@ -2516,34 +2653,44 @@ impl Frame {
         let mut sharpen: Vec<Dispatch<'_>> = Vec::new();
         if let (Some(u), Some(r)) = (&upscale_bind, &sharpen_bind) {
             let out = self.output.map(|n| n.div_ceil(WORKGROUP));
-            upscale.push((&self.upscale, u, 2, out));
-            sharpen.push((&self.sharpen, r, 3, out));
+            upscale.push(frame_pass(&self.upscale, u, 2, out));
+            sharpen.push(frame_pass(&self.sharpen, r, 3, out));
         }
-        let passes: [Vec<Dispatch<'_>>; 10] = [
+        let fsr_passes = fsr_binds
+            .as_ref()
+            .map(|(f, b)| b.passes(f, &world_bind))
+            .unwrap_or_default();
+        let passes = [
             hit,
             gradient,
-            vec![(&self.light, &light_bind, 2, lw)],
-            vec![(&self.temporal, &temporal_bind, 2, lw)],
+            vec![frame_pass(&self.light, &light_bind, 2, lw)],
+            vec![frame_pass(&self.temporal, &temporal_bind, 2, lw)],
             atrous,
             probes,
             gather,
-            vec![(&self.composite, &composite_bind, 2, full)],
+            vec![frame_pass(composite, &composite_bind, 2, full)],
             upscale,
             sharpen,
-        ];
-        for (i, dispatches) in passes.into_iter().enumerate() {
+        ]
+        .into_iter()
+        .chain(fsr_passes);
+        for (i, dispatches) in passes.enumerate() {
+            // An empty slot is still recorded under a timer, so every timestamp pair is written.
+            if dispatches.is_empty() && timer.is_none() {
+                continue;
+            }
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(FRAME_PASSES[i]),
                 timestamp_writes: timer.map(|t| t.writes_at(i as u32)),
             });
-            for (pipeline, bind, group, groups) in dispatches {
-                pass.set_pipeline(pipeline);
-                pass.set_bind_group(0, &world_bind, &[]);
-                if let Some(b) = &probe_bind {
-                    pass.set_bind_group(3, b, &[]);
+            for d in dispatches {
+                pass.set_pipeline(d.pipeline);
+                for (g, bind) in d.groups.iter().enumerate() {
+                    if let Some(b) = bind {
+                        pass.set_bind_group(g as u32, *b, &[]);
+                    }
                 }
-                pass.set_bind_group(group, bind, &[]);
-                pass.dispatch_workgroups(groups[0], groups[1], 1);
+                pass.dispatch_workgroups(d.workgroups[0], d.workgroups[1], 1);
             }
         }
         let exposure_pass = FRAME_PASSES.len() as u32 - 1;
@@ -2643,6 +2790,63 @@ impl Frame {
     }
 }
 
+/// The source of the composite's variant for FSR 2: `HDR_TARGET` set and the target
+/// rgba32float, linear radiance before exposure in the shaded view.
+pub fn composite_hdr_source() -> String {
+    let flag = "const HDR_TARGET: bool = false;";
+    let target = "var target_tex: texture_storage_2d<rgba8unorm, write>;";
+    assert!(
+        COMPOSITE_WGSL.matches(flag).count() == 1 && COMPOSITE_WGSL.matches(target).count() == 1,
+        "composite.wgsl declares its HDR flag and its target once"
+    );
+    COMPOSITE_WGSL
+        .replacen(flag, "const HDR_TARGET: bool = true;", 1)
+        .replacen(
+            target,
+            "var target_tex: texture_storage_2d<rgba32float, write>;",
+            1,
+        )
+}
+
+/// The composite's FSR 2 variant: its layout (the composite's, the target rgba32float) and
+/// pipeline.
+fn composite_hdr_pass(
+    device: &wgpu::Device,
+    world_layout: &wgpu::BindGroupLayout,
+) -> (wgpu::BindGroupLayout, wgpu::ComputePipeline) {
+    let layout = io_layout(
+        device,
+        "composite hdr",
+        &[
+            Io::Float,
+            Io::Uint,
+            Io::Float,
+            Io::Float,
+            Io::Store(wgpu::TextureFormat::Rgba32Float),
+            Io::Float,
+            Io::Uint,
+            Io::Float,
+            Io::Storage,
+        ],
+    );
+    let pipeline = compute_pipeline(
+        device,
+        "composite hdr",
+        format!("{MARCH_WGSL}\n{}", composite_hdr_source()),
+        &[Some(world_layout), None, Some(&layout)],
+        "composite",
+    );
+    (layout, pipeline)
+}
+
+/// One dispatch of a frame pass: its pipeline, the bind groups at indices 0 to 3, and the
+/// workgroups in x and y.
+pub(crate) struct Dispatch<'a> {
+    pub pipeline: &'a wgpu::ComputePipeline,
+    pub groups: [Option<&'a wgpu::BindGroup>; 4],
+    pub workgroups: [u32; 2],
+}
+
 fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry {
         binding,
@@ -2652,7 +2856,9 @@ fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_>
 
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
-pub const FRAME_PASSES: [&str; 11] = [
+/// The nine before the last are FSR 2's ([`crate::fsr2::FSR2_PASSES`]); in FSR mode `upscale`
+/// and `sharpen` are empty, and otherwise FSR's are. `exposure` runs last, after either.
+pub const FRAME_PASSES: [&str; 20] = [
     "hit",
     "gradient",
     "light",
@@ -2663,6 +2869,15 @@ pub const FRAME_PASSES: [&str; 11] = [
     "composite",
     "upscale",
     "sharpen",
+    "fsr2 input",
+    "fsr2 spd",
+    "fsr2 spd tail",
+    "fsr2 reconstruct",
+    "fsr2 depth clip",
+    "fsr2 lock",
+    "fsr2 accumulate",
+    "fsr2 rcas",
+    "fsr2 tone",
     "exposure",
 ];
 
@@ -2713,14 +2928,15 @@ struct Targets {
 }
 
 impl Targets {
-    /// The targets at the internal size `width` x `height`, with the upscaler's at
-    /// `upscaled` when it runs.
+    /// The targets at the internal size `width` x `height`, with the output at `upscaled` when
+    /// an upscaler runs, and the history of ADR-0024's upscaler with `own_history`.
     fn new(
         device: &wgpu::Device,
         width: u32,
         height: u32,
         scale: u32,
         upscaled: Option<[u32; 2]>,
+        own_history: bool,
     ) -> Self {
         let sized = |label, format, width, height| {
             device.create_texture(&wgpu::TextureDescriptor {
@@ -2770,6 +2986,7 @@ impl Targets {
                 None => tex("frame target", Rgba8Unorm),
             },
             history: upscaled
+                .filter(|_| own_history)
                 .map(|[w, h]| [0, 1].map(|_| sized("upscale history", Rgba16Float, w, h))),
             indirect: lit("indirect irradiance", Rgba16Float),
             tiles: device.create_buffer(&wgpu::BufferDescriptor {
@@ -3023,10 +3240,12 @@ mod tests {
     /// period 16 and average to within 1/16 of zero on each axis (-0.029 and -0.037).
     #[test]
     fn the_jitter_cycles_sixteen_distinct_centred_offsets() {
-        let phases: Vec<[f32; 2]> = (0..JITTER_PHASES).map(jitter_at).collect();
+        let phases: Vec<[f32; 2]> = (0..JITTER_PHASES)
+            .map(|f| jitter_at(f, JITTER_PHASES))
+            .collect();
         for (i, p) in phases.iter().enumerate() {
             assert!(p.iter().all(|c| c.abs() < 0.5), "phase {i}: {p:?}");
-            assert_eq!(jitter_at(i as u32 + JITTER_PHASES), *p);
+            assert_eq!(jitter_at(i as u32 + JITTER_PHASES, JITTER_PHASES), *p);
             assert!(phases[..i].iter().all(|q| q != p), "phase {i} repeats");
         }
         assert_eq!(phases[0], [0.0, 1.0 / 3.0 - 0.5]);

@@ -2,6 +2,7 @@
 //! image comparisons.
 #![allow(dead_code, reason = "shared across test binaries; each uses a subset")]
 
+pub mod rigs;
 pub mod sharpness;
 
 use std::path::PathBuf;

@@ -1,7 +1,8 @@
 # ADR-0024: The upscaler is a temporal upscaler of our own, driven by jittered rays and the hit buffer, with a sharpening pass
 
 > **Status:** accepted (2026-10-22, at Plan 0030's close; see Outcome: shipped opt-in, not as the
-> default)
+> default); superseded in part by ADR-0034 (its rejection of an FSR 2 port only). Since
+> 2026-10-27 its upscaler at scale 1.5 is the fly-through's default (ADR-0034's Outcome)
 > **Date:** 2026-10-21
 > **Amended:** 2026-10-22 (owner, at Plan 0030's Phase 2 stop, while proposed): Plan 0024's
 > lighting passes become jitter-aware, and history is accepted from a 3 x 3 neighbourhood.
@@ -149,3 +150,9 @@ the upscaler is a performance setting (`--internal-scale 1.5 --jitter on` in the
 counted on, the floor rendering 44 % of the primary rays, is therefore available but not the
 default. Alternative A, an FSR 2 port, is taken up by ADR-0034 (proposed) and Plan 0041; if
 accepted it supersedes this decision's choice of upscaler.
+
+**2026-10-27, Plan 0041's close (v0.33.0):** the FSR 2 port was built and compared against
+this upscaler in a window, and the owner made this upscaler at scale 1.5, jittered, the
+fly-through's default ("I'm for own 1.5 - there is not much difference with fsr anyways").
+The library's `Frame` still defaults to Plan 0024's frame. The readings and the ruling are in
+ADR-0034's Outcome.

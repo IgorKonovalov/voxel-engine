@@ -1,8 +1,9 @@
 # ADR-0034: AMD FSR 2.2.1 ported to WGSL is the upscaler's default candidate; our own upscaler stays opt-in
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-27, at Plan 0041's close; see Outcome: the port shipped opt-in,
+> and the owner made our own upscaler at scale 1.5 the fly-through's default)
 > **Date:** 2026-10-22
-> **Related plan(s):** [Plan 0041](../plans/0041-fsr2-port-to-wgsl.md)
+> **Related plan(s):** [Plan 0041](../plans/done/0041-fsr2-port-to-wgsl.md)
 > **Supersedes in part:** [ADR-0024](0024-own-temporal-upscaler-on-the-hit-buffer.md): its
 > rejection of FSR 2 (its Alternative A) and its claim to be the M2 upscaler. Its jitter,
 > internal resolution, jitter-aware lighting and RCAS clauses stand and are reused.
@@ -148,4 +149,44 @@ For the cost of one bilinear-class pass, it is not worth a mode.
 
 ## Outcome
 
-_(Added at acceptance, from Plan 0041's readings and the owner's comparison.)_
+**2026-10-27, Plan 0041's close (v0.33.0): the port shipped, opt-in; FSR 2 did not win the
+comparison, and the default is our own upscaler at scale 1.5.** The decision was built as
+written: FSR 2.2.1's luminance pyramid (two dispatches), reconstruct previous depth
+(`atomicMax` on a storage buffer), depth clip (the edit boxes force a clip of 1), lock,
+accumulate and RCAS in WGSL under `crates/vxe-render/src/shaders/fsr2/`, fed by our input pass
+and finished by our tone pass, FP32 with no wave operations and no added feature, selected by
+`UpscalerKind::Fsr2` and the fly-through's `--upscaler fsr2` or `F10`. Two departures from the
+text: FSR's colour input is `rgba32float`, not `rgba16float` (the tone move is lossless only
+with f32 radiance), and the light-change term of the reactive mask applies to still pixels
+only (the headlamp moves with the camera). Plan 0040 had not landed, so the exposure seam is
+the manual case (pre-exposure 1). No transcription difference was found in two line-by-line
+comparisons against v2.2.1. Measured, headless on lavapipe at 384 x 216 output unless stated:
+
+- **Held:** at scale 1.5 FSR is sharper than the bilinear blit still (edge spread 1.479 against
+  1.718 px); scale 1 meets Plan 0030's still bars at arm's length (1.321 px, GE 0.00571); a
+  carve's first frame is 0.001/255 from a reset frame; 100.00 % of unchanged pixels keep
+  history after a step; locks form on every stripe edge at 88 voxels; a whole-pixel pan keeps
+  0.989 of the still GE; the lamp sweep lags 5.43 / 5.42 frames against the reference's 5.38;
+  flicker and the scale-1.5 shadow wobble are within the bars.
+- **Missed, recorded as readings for the owner (the plan's 2026-10-27 amendment):** the still
+  bars at scale 1.5 and at 88 voxels; every slow pan against ours (88 voxels at 0.37 px a frame
+  and scale 1.5: GE 0.00688 against 0.04773, which FSR's 1/11 motion weight and off-centre
+  Lanczos-2 history fetch account for); the linear-light supersampled distance (3.195 against
+  the blit's 3.014); RCAS overshoot (1 527 of 26 705 pixels over the 3 x 3 maximum, at most
+  5/255); the shadow wobble at scale 1.
+- **Time (Plan 0041 Phase 6, 1080p, 6e64744's tree, exclusive perf lock, loaded 2.4 to 6.5,
+  indicative):** RTX 3080 Laptop at scale 1.5, FSR's nine passes 1.894 to 1.913 ms against the
+  plan's 1.2 ms bar (missed; accumulate 0.73, depth clip 0.60), frame 5.71 to 5.81 ms against
+  our upscaler's 4.39 to 4.51. RADV RENOIR: FSR's passes 10.0 to 10.1 ms, frame 34.7 to 35.0
+  against ours 28.1 to 28.8. `frame_bytes` at 1.5: 305 574 892 B against ours 181 154 464 B.
+  The table is in `docs/nfr.md` §2 and §3.
+
+The owner's windowed comparison (Plan 0041 Phase 7, RTX 3080 Laptop): FSR 2 at 1.5 "seems to
+be a bit softer, but not much difference with own"; FSR 2 at 1 in the face look "too much
+details"; our upscaler's flicker "minimal". His ruling: "I'm for own 1.5 - there is not much
+difference with fsr anyways". The fly-through now starts at scale 1.5 in our upscaler,
+jittered (`--upscaler off` or `--internal-scale 1` is Plan 0024's frame); the library's `Frame`
+still defaults to Plan 0024's frame. FSR 2 stays selectable. This ADR therefore supersedes
+ADR-0024 only in its rejection of an FSR 2 port (Alternative A); ADR-0024's upscaler, not this
+one, is the M2 default. Removing one of the two upscalers, and FSR's FP16 and subgroup
+variants, are later plans.
