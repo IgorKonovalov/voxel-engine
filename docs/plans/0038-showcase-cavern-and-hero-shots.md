@@ -410,8 +410,8 @@ reads them.
 |---|---|---|---|
 | 1: The hall on screen with the lamp off | dev | done | 58abae3 |
 | 2: The features | dev | done | dde5427 |
-| 3: The ores, the determinism vector and the open volume | dev | done | committed with this row |
-| 4: The hero's shots, the review set and the golden | dev | not started | |
+| 3: The ores, the determinism vector and the open volume | dev | done | 660a5bd |
+| 4: The hero's shots, the review set and the golden | dev | done | committed with this row |
 | 5: The readings | dev | not started | |
 | 6: The owner's pick and the cave on screen | human | not started | |
 | 7: The hero re-shot and the README | dev | not started | |
@@ -434,6 +434,14 @@ reads them.
 - Phase 3: the generation-source float check (`generation_sources_contain_no_floating_point`) now covers `src/showcase.rs`; the reverse-order regeneration in `showcase_vector` runs in contiguous reverse runs over the machine's threads (single-threaded it took 15.5 s at load 24).
 - Phase 3 readings (seed 1, `cargo nextest`, quick tier): light samples amber 27 142, crystal 13 498, amethyst 19 703, ember 35 945, total 96 288; the fullest chunk `[11, 6, 2]` holds 2 880; the flood reaches 89 568 air bricks (45 859 m^3), 351 of them at brick z 4. Vector `0x7ea7_b99b_eed4_2df0` blessed on Linux.
 - Phase 3: the workspace quick tier timed out `determinism::showcase_vector` (before its reverse pass was threaded) and `replay::a_stamp_and_a_collapse_replay_from_the_save` at 30 s at load 31; after the change the flythrough quick tier passed 118 of 118 at load 27.
+- Phase 4: the first review set (exposure 1, RTX 3080 Laptop) showed all five seed-1 pillars in the west half, one 5 m from the `hall` eye and two filling its frame; pillars now keep 12 m horizontally from each shot's eye (`PILLAR_EYE_CLEAR`), which moved the pillars and re-blessed the Phase 3 vector to `0x5435_c85f_74ee_5cc1` (`tests/determinism.rs`, outside Phase 4's files). Census after it: amber 30 558, crystal 13 498, amethyst 19 325, ember 35 945, total 99 326, fullest chunk 2 880; flood 88 620 bricks; 28 stalactites, 11 stalagmites.
+- Phase 4: `apps/flythrough/Cargo.toml` gains `[[example]] name = "hero" test = true` (outside Phase 4's files) so the hero's parse test runs in the quick tier.
+- Phase 4: the fly-through's `--shot` also starts at the shot's exposure (`exposure_milli`), and the golden renders at the `hall` shot's exposure; the plan's "fly-through's defaults" is read as the fly-through's lighting, probe and upscaler defaults with the shot's exposure.
+- Phase 4: done-when 5 is a CPU test in `tests/showcase.rs` (`World::raycast`, which also checks `Shot::ray_milli` against the yaw and pitch): the centre rays meet rock at 43.2 m (`hall`), 22.5 m (`chasm`) and 38.1 m (`crystals`).
+- Phase 4: each shot's exposure is 1500 milli. Mean sRGB luma (1920x1080, 64 frames, RTX 3080 Laptop, exclusive perf lock): exposure 1.0 gave hall 39.5, chasm 42.5, crystals 39.5; 1.5 gives hall 50.0, chasm 53.5, crystals 49.1, hall at spacing 32 52.9; 2.0 gave 59.3, 63.2, 57.4.
+- Phase 4: `showcase_hall.png` blessed on lavapipe (llvmpipe, LLVM 23.1.3, Mesa 26.2.5) against the current default look; 99 326 light samples (0 with the emission off), hue shares amber 63.10 %, ember 1.81 %, cyan 2.91 %, violet 3.73 %, mean sRGB luma 51.3/255, 0 pixels over 2/255 with the emission off; a rerun differs in 0.0000 % of pixels. It took 18.3 s and 25.6 s, so it joins the slow list in `.config/nextest.toml` (outside Phase 4's files). Plan 0039 changes the fly-through's default look, so the golden is re-blessed after that merge.
+- Phase 4: `hero --shot all` (RTX 3080 Laptop) wrote `target/hero/hero-{hall,chasm,crystals,hall-spacing32}.png`, each line naming the adapter, 99 326 light samples (7 syncs to settle) and 64 frames.
+- Phase 4 gate: workspace quick tier 493 of 496 at load 33, the three over 30 s being existing tests (`castle::the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn`, `determinism::castle_vector`, `replay::a_stamp_and_a_collapse_replay_from_the_save`), which passed alone at load 5.5; gpu tier 136 of 136 under the perf lock; clippy, fmt and doctests (7) clean.
 - Phase 1: `level_mirror_budget` takes the world, not a `Full` count (`level_mirror_budget(&world, 1176, attrs)`).
 
 ### Close triggers

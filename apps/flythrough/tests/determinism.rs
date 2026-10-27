@@ -399,6 +399,6 @@ fn showcase_vector() {
     });
 }
 
-const SHOWCASE_HASH: u64 = 0x7ea7_b99b_eed4_2df0;
+const SHOWCASE_HASH: u64 = 0x5435_c85f_74ee_5cc1;
 const CASTLE_VOX_HASH: u64 = 0x35a8_89ee_81c4_17e9;
 const CASTLE_VOXEL_HASH: u64 = 0xa2f6_f292_88e1_04e3;

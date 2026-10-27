@@ -42,3 +42,8 @@ required-features = ["wasm"]
 [[bench]]
 name = "acoustics"
 harness = false
+
+# The hero still's argument tests run with the rest of the testbed's.
+[[example]]
+name = "hero"
+test = true

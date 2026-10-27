@@ -93,6 +93,9 @@ pub const CRYSTAL_FLOOR_X: i64 = 650;
 pub const EYE_CLEAR: i64 = 40;
 /// How far along each shot's centre ray pillars and cones keep clear of it, voxels.
 pub const RAY_CLEAR: i64 = 110;
+/// The horizontal distance a pillar's surface keeps from each shot's eye, voxels (12 m), so
+/// the shots frame the pillars rather than look into one.
+pub const PILLAR_EYE_CLEAR: i64 = 120;
 
 /// Vein-noise values above which rock in the amber and amethyst zones is ore: about 8 % of
 /// the noise's values lie above it.
@@ -136,7 +139,7 @@ pub const SHOTS: [Shot; 3] = [
         eye: VoxelCoord([190, 384, 218]),
         yaw_deg: 0,
         pitch_deg: -12,
-        exposure_milli: 1000,
+        exposure_milli: 1500,
         ray_milli: [978, 0, -208],
     },
     Shot {
@@ -144,7 +147,7 @@ pub const SHOTS: [Shot; 3] = [
         eye: VoxelCoord([598, 384, 144]),
         yaw_deg: 90,
         pitch_deg: -30,
-        exposure_milli: 1000,
+        exposure_milli: 1500,
         ray_milli: [0, 866, -500],
     },
     Shot {
@@ -152,7 +155,7 @@ pub const SHOTS: [Shot; 3] = [
         eye: VoxelCoord([720, 300, 160]),
         yaw_deg: 160,
         pitch_deg: 18,
-        exposure_milli: 1000,
+        exposure_milli: 1500,
         ray_milli: [-894, 325, 309],
     },
 ];
@@ -584,8 +587,8 @@ impl ShowcaseSource {
     }
 
     /// Five pillars: axes where `10 q_xy <= 6 K`, at least [`PILLAR_SPACING`] apart, 3 m from
-    /// the chasm's reach, clear of the shots and of the ledges' probes, their mid-height
-    /// probe off a ledge.
+    /// the chasm's reach, [`PILLAR_EYE_CLEAR`] from each shot's eye, clear of the shots' rays
+    /// and of the ledges' probes, their mid-height probe off a ledge.
     fn place_pillars(&self, probes: &[[i64; 2]]) -> Vec<Feature> {
         let mut out: Vec<Feature> = Vec::new();
         let (ra, rb) = (AXES[0] * 775 / 1000, AXES[1] * 775 / 1000);
@@ -619,7 +622,12 @@ impl ShowcaseSource {
                 .iter()
                 .all(|&pr| d2_xy(pr, axis) >= (r_end + 10).pow(2));
             let mid_probe = [axis[0] + r_mid + 1, axis[1], mid].map(|v| v as i32);
+            let framed = SHOTS.iter().all(|s| {
+                let e = [i64::from(s.eye.0[0]), i64::from(s.eye.0[1])];
+                d2_xy(axis, e) >= (r_end + PILLAR_EYE_CLEAR).pow(2)
+            });
             let ok = q * 10 <= K * 6
+                && framed
                 && spaced
                 && off_chasm
                 && off_probes

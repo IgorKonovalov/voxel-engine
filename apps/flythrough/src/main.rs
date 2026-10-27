@@ -9,8 +9,10 @@
 //! and a light radius of 19 chunks unless `--light-radius` is given; it walks, digs and
 //! collapses as the level does, and does not take `--save`, `--replay`, `--vault`,
 //! `--autopilot`, `--room` or `--castle`. The banner's line then starts `source showcase`.
+//! `--shot hall|chasm|crystals` (with the showcase) starts at that shot's pose and exposure
+//! instead of `hall`'s.
 //!
-//! `flythrough [--seed N] [--level] [--source cave|level|showcase] [--vault] [--castle] [--castle-out PATH]
+//! `flythrough [--seed N] [--level] [--source cave|level|showcase] [--shot NAME] [--vault] [--castle] [--castle-out PATH]
 //! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look MODE] [--rock-detail SCALE,STRENGTH] [--view VIEW] [--detail]
@@ -311,6 +313,8 @@ struct Args {
     level: bool,
     /// `--source showcase`: the bounded showcase cavern (`flythrough::showcase`).
     showcase: bool,
+    /// `--shot NAME`: the showcase shot the camera starts at, and its exposure.
+    shot: Shot,
     autopilot: bool,
     headless: bool,
     /// `--adapter SUBSTRING`: a headless run takes the first adapter whose name contains it.
@@ -473,6 +477,11 @@ impl Args {
             indirect: self.indirect,
             probe_rays: self.probe_rays,
             probe_slices: self.probe_slices,
+            exposure: if self.showcase {
+                self.shot.exposure_milli as f32 / 1000.0
+            } else {
+                Lighting::default().exposure
+            },
             ..Lighting::default()
         }
     }
@@ -514,6 +523,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         bench: 0,
         level: false,
         showcase: false,
+        shot: SHOTS[0],
         autopilot: false,
         headless: false,
         adapter: None,
@@ -566,6 +576,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     let mut detail_flag = false;
     // `--lamp` and `--light-radius` as given; their defaults depend on the source.
     let mut lamp_flag = None;
+    let mut shot_flag = false;
     let mut light_radius_flag = None;
     let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
@@ -785,6 +796,14 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 }
             }
             "--level" => args.level = true,
+            "--shot" => {
+                let v = value()?;
+                shot_flag = true;
+                args.shot = Shot::named(&v).ok_or_else(|| {
+                    let names: Vec<&str> = SHOTS.iter().map(|s| s.name).collect();
+                    format!("--shot takes {}, not {v}", names.join(", "))
+                })?;
+            }
             "--source" => {
                 let v = value()?;
                 (args.level, args.showcase) = match v.as_str() {
@@ -831,6 +850,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     } else {
         vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS
     });
+    if shot_flag && !args.showcase {
+        return Err("--shot frames the showcase; it needs --source showcase".to_owned());
+    }
     if args.showcase
         && (args.save.is_some()
             || args.replay.is_some()
@@ -4796,7 +4818,7 @@ fn main() {
             );
             world
         });
-        (SHOTS[0].eye, Pending::Level(generation))
+        (args.shot.eye, Pending::Level(generation))
     } else if args.level {
         let source = CaveSource::new(seed, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
         if args.vault {
@@ -4866,7 +4888,7 @@ fn main() {
     let camera = if args.castle {
         castle_camera(args.castle_shot)
     } else if args.showcase {
-        shot_camera(&SHOTS[0])
+        shot_camera(&args.shot)
     } else {
         Camera {
             position: spawn.0.map(|v| v as f32 + 0.5).into(),
@@ -6188,6 +6210,22 @@ mod tests {
         assert_eq!(a.light_radius, 6);
         let a = parse_args_from(argv(&["--source", "showcase", "--walk"])).expect("walks");
         assert!(a.walk && a.showcase);
+        assert_eq!(a.shot, SHOTS[0]);
+        for s in SHOTS {
+            let a = parse_args_from(argv(&["--source", "showcase", "--shot", s.name])).unwrap();
+            assert_eq!(a.shot, s);
+            assert_eq!(
+                a.start_lighting().exposure,
+                s.exposure_milli as f32 / 1000.0
+            );
+        }
+        assert_eq!(
+            parse_args_from(argv(&["--source", "showcase", "--shot", "keep"]))
+                .err()
+                .as_deref(),
+            Some("--shot takes hall, chasm, crystals, not keep")
+        );
+        assert!(parse_args_from(argv(&["--level", "--shot", "hall"])).is_err());
         let level = parse_args_from(argv(&["--source", "level"])).expect("parses");
         assert!(level.level && !level.showcase && level.lamp);
         assert_eq!(

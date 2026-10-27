@@ -164,3 +164,66 @@ fn the_four_ores_light_the_hall_from_their_own_zones() {
     assert!(worst.0 <= u64::from(DEFAULT_LIGHT_CHUNK_CAP), "{worst:?}");
     assert!(total <= u64::from(DEFAULT_LIGHT_SAMPLES) / 4, "{total}");
 }
+
+/// For every shot, the radius-10 ball around the eye is all air, and the view's centre ray
+/// (the yaw and pitch's, which `Shot::ray_milli` holds to a thousandth) meets rock no nearer
+/// than 10 m (100 voxels): no shot looks into a wall.
+#[test]
+fn every_shot_has_air_around_its_eye_and_a_long_centre_ray() {
+    let (_, world) = generate(1);
+    for s in SHOTS {
+        let e = s.eye.0;
+        for z in -10..=10 {
+            for y in -10..=10 {
+                for x in -10..=10 {
+                    if x * x + y * y + z * z > 100 {
+                        continue;
+                    }
+                    let p = VoxelCoord([e[0] + x, e[1] + y, e[2] + z]);
+                    assert_eq!(
+                        world.material_at(p),
+                        Some(AIR),
+                        "{} eye ball at {:?}",
+                        s.name,
+                        p.0
+                    );
+                }
+            }
+        }
+        let (yaw, pitch) = (
+            f64::from(s.yaw_deg).to_radians(),
+            f64::from(s.pitch_deg).to_radians(),
+        );
+        let dir = [
+            pitch.cos() * yaw.cos(),
+            pitch.cos() * yaw.sin(),
+            pitch.sin(),
+        ];
+        for (c, want) in dir.iter().zip(s.ray_milli) {
+            let milli = (c * 1000.0).round() as i32;
+            assert!(
+                (milli - want).abs() <= 1,
+                "{} ray {:?}",
+                s.name,
+                s.ray_milli
+            );
+        }
+        let d = dir.map(|c| (c * FIXED_ONE as f64).round() as i64);
+        let hit = world
+            .raycast(centre_of_voxel(s.eye), d, 1000 * FIXED_ONE)
+            .expect("in range")
+            .expect("the ray meets rock inside the shell");
+        println!(
+            "{}: the centre ray meets material {} at {:.1} m",
+            s.name,
+            hit.material,
+            hit.t as f64 / FIXED_ONE as f64 / 10.0
+        );
+        assert!(
+            hit.t >= 100 * FIXED_ONE,
+            "{}: {} voxels",
+            s.name,
+            hit.t / FIXED_ONE
+        );
+    }
+}
