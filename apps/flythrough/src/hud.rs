@@ -1158,6 +1158,9 @@ pub struct Modes {
     /// The mirror refits to a new plane fit: the banner adds `refitting` and shows until it
     /// drains.
     refitting: bool,
+    /// Voxels between the probe volume's probes: the line names it (`probes 16`) while
+    /// indirect light is on.
+    probe_spacing: u32,
 }
 
 impl Modes {
@@ -1175,12 +1178,21 @@ impl Modes {
             banner_at: now_ms,
             look: None,
             refitting: false,
+            probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
         }
     }
 
     /// These modes with the line starting `source NAME` when `source` is given.
     pub fn with_source(self, source: Option<&'static str>) -> Self {
         Self { source, ..self }
+    }
+
+    /// These modes with the probe volume's spacing `spacing` voxels (`probes N` in the line).
+    pub fn with_probe_spacing(self, spacing: u32) -> Self {
+        Self {
+            probe_spacing: spacing,
+            ..self
+        }
     }
 
     /// Shows the banner from `now_ms` with the look in words, `look contour-sharp, detail on`:
@@ -1236,17 +1248,23 @@ impl Modes {
     }
 
     /// The modes in words: `lighting half, shadow walk coarse, sampler reuse, history edits,
-    /// lamp on, indirect on at 64 rays 1/8, filter on, ore pulse off, emissive history 32`
-    /// (the probe rays per update and the share of probes refreshed a frame), after
-    /// `source NAME, ` when the modes name a source.
+    /// lamp on, indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, emissive
+    /// history 32` (the probe rays per update, the share of probes refreshed a frame and,
+    /// while indirect light is on, the voxels between probes), after `source NAME, ` when the
+    /// modes name a source.
     pub fn line(&self) -> String {
         let l = &self.lighting;
         let on = |b: bool| if b { "on" } else { "off" };
         let source = self
             .source
             .map_or_else(String::new, |s| format!("source {s}, "));
+        let probes = if l.indirect {
+            format!(", probes {}", self.probe_spacing)
+        } else {
+            String::new()
+        };
         format!(
-            "{source}lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, indirect {} at {} rays 1/{}, filter {}, ore pulse {}, emissive history {}",
+            "{source}lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, indirect {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, emissive history {}",
             self.resolution.name(),
             l.shadow_walk.name(),
             l.sampler.name(),

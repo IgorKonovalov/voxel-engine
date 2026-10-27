@@ -493,10 +493,11 @@ impl Args {
     }
 
     /// The lighting modes the fly-through starts in, the banner shown from 0 ms; the line
-    /// names the showcase source first.
+    /// names the showcase source first and the probe spacing while indirect light is on.
     fn start_modes(&self) -> hud::Modes {
         hud::Modes::new(self.start_lighting(), self.lighting, 0.0)
             .with_source(self.showcase.then_some("showcase"))
+            .with_probe_spacing(self.probe_spacing)
     }
 
     /// The look the fly-through starts in.
@@ -6391,6 +6392,39 @@ mod tests {
         assert!(level.start_modes().line().starts_with("lighting "));
     }
 
+    /// While indirect light is on the banner names the probe spacing, `probes 16` by default
+    /// and `probes 32` with `--probe-spacing 32`, in every mode and source; with indirect light
+    /// off it names none.
+    #[test]
+    fn the_banner_names_the_probe_spacing_while_indirect_light_is_on() {
+        for source in [&["--level"][..], &["--source", "showcase"][..], &[][..]] {
+            let banner = |extra: &[&str]| {
+                let mut v = source.to_vec();
+                v.extend_from_slice(extra);
+                let a = parse_args_from(argv(&v)).expect("parses");
+                a.start_modes()
+                    .banner(0.0)
+                    .expect("the banner shows at the start")
+            };
+            let default = banner(&[]);
+            assert!(default.contains("probes 16"), "{source:?}: {default}");
+            let wide = banner(&["--probe-spacing", "32"]);
+            assert!(
+                wide.contains("probes 32") && !wide.contains("probes 16"),
+                "{source:?}: {wide}"
+            );
+            assert!(wide.lines().all(|l| l.len() <= hud::BANNER_COLS));
+            let off = banner(&["--probe-spacing", "32", "--indirect", "off"]);
+            assert!(!off.contains("probes"), "{source:?}: {off}");
+        }
+        let a = parse_args_from(argv(&["--probe-spacing", "32"])).expect("parses");
+        let mut m = a.start_modes();
+        m.press(hud::ModeKey::Indirect, 1000.0);
+        assert!(!m.banner(1000.0).unwrap().contains("probes"));
+        m.press(hud::ModeKey::Indirect, 2000.0);
+        assert!(m.banner(2000.0).unwrap().contains("probes 32"));
+    }
+
     #[test]
     fn cutaway_parses_auto_on_and_off() {
         assert_eq!(
@@ -6477,7 +6511,7 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
             hud::Modes::new(d.start_lighting(), d.lighting, 0.0).line(),
-            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on at 64 rays 1/8, filter on, ore pulse off, emissive history 32"
+            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, emissive history 32"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),

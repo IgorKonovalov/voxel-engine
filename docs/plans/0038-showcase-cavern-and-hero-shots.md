@@ -425,7 +425,8 @@ reads them.
 | 2: The features | dev | done | dde5427 |
 | 3: The ores, the determinism vector and the open volume | dev | done | 660a5bd |
 | 4: The hero's shots, the review set and the golden | dev | done | 654d3c6 |
-| 5: The readings | dev | done, the windowed first frame left to Phase 6 | committed with this row |
+| 5: The readings | dev | done, the windowed first frame left to Phase 6 | 65fa828 |
+| 5a: The probe spacing in the banner | dev | done | committed with this row |
 | 6: The owner's pick and the cave on screen | human | not started | |
 | 7: The hero re-shot and the README | dev | not started | |
 
@@ -462,6 +463,8 @@ reads them.
 - Phase 5: the 1-minute load never stayed under 2 inside the lock from 09:05 to 10:07 (the orchestrator's hour of retries; low point 2.10); every Phase 5 reading is labelled loaded (4.3 to 12.8). Frame medians, three runs each, 1080p: RTX 3080 Laptop hall 11.448 to 11.510, chasm 10.658 to 10.714, crystals 12.955 to 13.523 ms; RADV iGPU hall 79.551 to 79.861, chasm 75.706 to 100.301, crystals 89.861 to 90.413 ms (`docs/nfr.md` §2, with the passes).
 - Phase 4: `showcase_hall.png` re-blessed after the 0039 merge (ae1090d) against `LookPreset::DEFAULT` (contour-sharp fit and tuning; the test points at it from a694ee2), on lavapipe (llvmpipe, LLVM 23.1.3, Mesa 26.2.5), exclusive perf lock, load 6.57: 99 326 light samples (0 with the emission off), hue shares amber 63.09 %, ember 1.71 %, cyan 2.82 %, violet 3.60 %, mean sRGB luma 51.0/255, 0 pixels over 2/255 with the emission off; the unblessed rerun (load 7.67) differs in 0.0000 % of pixels. Gpu tier after it: 144 of 144, 17 skipped.
 - Phase 4: `hero --shot all` re-run at 4fd5668 in the contour-sharp default (release, RTX 3080 Laptop, exclusive perf lock, load 14.92, loaded): 99 326 light samples after 7 syncs, 64 frames, exposure 1.5; mean sRGB luma hall 49.7, chasm 53.8, crystals 49.3, hall at spacing 32 52.7. In the stills the ore patches are flat saturated areas (amber near cream, amethyst lilac), the chasm shot's lower half is the bridge deck, and the crystals shot frames the amethyst roof and the pillars with the cyan prisms at the bottom-right edge.
+- Phase 5a: the spacing sits in the modes line after the indirect part (`indirect on at 64 rays 1/8, probes 16, filter on`), only while indirect light is on, so `F8` off drops it (`hud::Modes::with_probe_spacing`, set from `--probe-spacing` in `start_modes`). The default-line assertion in `main.rs`'s parse test gains `probes 16`; `mode_banner.png` starts with indirect off and is unchanged. Test: `the_banner_names_the_probe_spacing_while_indirect_light_is_on` (cave, level and showcase; default, 32, `--indirect off`, `F8` off and on).
+- Phase 5a gate: workspace quick tier 493 of 500 at load 23.7, the 7 over 30 s existing CPU tests (`collapse_level` 2, `castle` 3, `castle_vector`, `replay::a_stamp_and_a_collapse_replay_from_the_save`); rerun alone under the default profile at load 30.9 they passed (10 of 10 with their binaries). Clippy, fmt and comment hygiene clean; no render code touched, no gpu tier.
 - Phase 1: `level_mirror_budget` takes the world, not a `Full` count (`level_mirror_budget(&world, 1176, attrs)`).
 
 ### Resume notes (2026-10-27, delete when Phase 6 lands)
@@ -470,7 +473,7 @@ reads them.
 - Gate on ae1090d: clippy, fmt, doctests (7), test tiers, doc links, comment hygiene, index rows clean; quick tier 499 of 499. Full tier: the first run was killed at 575 of 654 (by its own timeout and to free the lock for the owner's session); the rerun (exclusive perf lock, load 6.33 to 6.72) passed 654 of 654, 9 skipped, with `showcase_vector` and `determinism_vector` unchanged.
 - Main merged again at 1df3291 (`merge: main into plan-0038 (orchestrate lane rules)`, docs-only under `.claude/skills/orchestrate`).
 - The golden is re-blessed (4fd5668) and the review stills regenerated in the contour-sharp default (`target/hero/*.png`, see Notes).
-- Runner: `live/flythrough-p6` is the release build at 4fd5668 (code unchanged since ae1090d). `live/session1.sh` is written, not launched: four look steps (`--source showcase`, `--shot chasm`, `--shot crystals`, `--probe-spacing 32`) then three cold (waits for `/sys/bus/pci/devices/0000:01:00.0/power/runtime_status` = suspended) and three warm `--source showcase` time-to-first-frame runs, each printing the `first frame after N ms` line against 3000 ms. Each run is under the perf lock and tee'd to `live/session1.log`.
+- Runner: `live/flythrough-p6` is the release build of Phase 5a's commit. `live/session1.sh` is written, not launched: four look steps (`--source showcase`, `--shot chasm`, `--shot crystals`, `--probe-spacing 32`) then three cold (waits for `/sys/bus/pci/devices/0000:01:00.0/power/runtime_status` = suspended) and three warm `--source showcase` time-to-first-frame runs, each printing the `first frame after N ms` line against 3000 ms. Each run is under the perf lock and tee'd to `live/session1.log`.
 - Left: Phase 6 with the owner (`bash live/session1.sh`), then Phase 7.
 
 ### Close triggers
