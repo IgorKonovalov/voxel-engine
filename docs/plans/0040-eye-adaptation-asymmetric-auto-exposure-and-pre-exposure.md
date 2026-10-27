@@ -733,6 +733,44 @@ reading (the second Phase 4 amendment, code in 08cf9cc). Step 4 closes: the emis
 direct-light estimator owns the patches and a separate plan follows; `DEFAULT_EMISSIVE_HISTORY`
 is unchanged here (32).
 
+### Resume notes (2026-10-27, close review in progress)
+
+Written by the fresh close-review architect session at the owner's pause; delete at the close.
+
+- **Gate re-run on 7b12dcc (the reviewer's own runs):** `scripts/build-guests.sh` ok;
+  `--profile quick --test-threads 2` 499 run, 499 passed, 3 skipped (44 s); `--profile full
+  --no-fail-fast --test-threads 2` (exclusive perf lock, MemoryMax 6G, load 1.5 before the
+  build, 1.8 at the end) 690 run, 690 passed (5 slow), 10 skipped, 1393 s; `cargo test --doc
+  --workspace` 7 passed; clippy `-D warnings` exit 0; `fmt --check` exit 0; `cargo deny check`
+  exit 0 (duplicate warnings only); `check-doc-links`, `check-comment-hygiene`,
+  `check-index-rows` (and `--self-test`), `check-test-tiers` exit 0. Logs in `live/review/`.
+- **Read so far, no finding:** `exposure.rs` (the model, the f64 reference, the ring),
+  `exposure.wgsl` (the step and split, the weighted reduction), the pre-exposure in
+  `march.wgsl`, `light.wgsl`, `temporal.wgsl`, `atrous.wgsl`, `gradient.wgsl`, `composite.wgsl`,
+  `upscale.wgsl`, `fsr2/tone.wgsl`, `fsr2.rs` (`copy_exposure`), `marcher.rs` (the uniform, the
+  tiles, `FRAME_PASSES`); the assertions of `crates/vxe-render/tests/exposure.rs` (Phase 1 to 3
+  bars, re-derived numbers for 0.15 / 2 / 10 s and `max` 16), `apps/flythrough/tests/exposure.rs`
+  (bar 2 (a) asserting, (b) a `reading:` line, per the second amendment), the parse and `Q`
+  banner tests. Possible nits only: `Manual(0)` through the library divides by zero in the
+  meter (`c / ex`) and the ratio (the fly-through refuses `--exposure 0`); the exposure pass
+  makes its bind group every frame.
+- **Judgement taken:** fresh budget readings are needed at the close. The Phase 4 readings are
+  loaded (load 5.1 to 26.4), at 1920x1080 internal on e9879cc's renderer, before the FSR 2
+  merge (pass list and composite variant changed) and the amendments.
+- **Left:** (1) build `live/base33/` (a `git archive` of main 05a3a28, already extracted) and
+  the tip's `flythrough` in release, outside the lock; (2) under the lock with the load under 2,
+  base and tip on `--adapter NVIDIA` and `--adapter AMD`: `flythrough --level --headless --seed
+  1 --render 1920x1080 --frames 3000 --upscaler off` (the plan's 1080p internal), as
+  `live/readings.sh` does; record composite delta, exposure pass, light / temporal / a-trous and
+  `frame_bytes`, labelled with the load; (3) if clean, the close ceremony: ADR-0033 accepted
+  with an Outcome (defaults 0.15 / 2 / 10 s and `max` 16, so the kink is fivefold; the frame
+  passes read a uniform copy of the state; the level's meter falls over about 30 frames so the
+  closed form is a reading there; FSR 2's pre-exposure seam; the wall patches owned by the
+  emissive estimator, Plan 0047), plan to `done/`, both indexes, roadmap M2, CHANGELOG, `nfr.md`
+  §2 and §3 with the fresh readings, version 0.34.0 (public API changed: `Lighting::exposure`
+  is `Exposure`). Plan 0047 (on main only, line 19, "Starts after") links this plan's path: the
+  link breaks after the move and is fixed at or after the merge; Plan 0032 does not link it.
+
 ### Notes
 
 - Phase 4 amendment of b05accc (08cf9cc): bar 2 (b) is a printed reading, not an assertion. It
