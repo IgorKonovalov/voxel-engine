@@ -802,7 +802,7 @@ fn the_identity_tone_map_reproduces_the_single_pass_carve() {
         return;
     };
     rig.frame.set_lighting(vxe_render::Lighting {
-        exposure: 1.0,
+        exposure: vxe_render::Exposure::Manual(1.0),
         tone_map: vxe_render::ToneMap::Identity,
         filter: false,
         ..vxe_render::Lighting::default()
@@ -1596,7 +1596,7 @@ fn the_lighting_targets_are_scale_free() {
     let shot = |s: f32| {
         let mut frame = Frame::new(&device, 192, 108);
         frame.set_lighting(vxe_render::Lighting {
-            exposure: 1.0 / s,
+            exposure: vxe_render::Exposure::Manual(1.0 / s),
             ..vxe_render::Lighting::default()
         });
         for &m in &emitters {

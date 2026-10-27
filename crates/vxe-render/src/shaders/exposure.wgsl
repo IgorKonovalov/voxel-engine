@@ -16,6 +16,10 @@
 // than the shaded one, or an empty target) the state's adapted and metered levels hold and
 // the HELD flag is set.
 //
+// In auto, with a meter and `dt > 0`, the adapted level steps toward it (`step_adapted`,
+// `AutoExposure::step` in f32); with the reset bit it jumps to it; without a meter or with
+// `dt` 0 it holds bit for bit. In manual the adapted level holds.
+//
 // `previous` becomes the exposure this frame's passes used (the state's `current` in auto,
 // else the manual value: `exposure_now` in march.wgsl) and `current` the one the next frame
 // uses: the manual value, or in auto `key 2^compensation / 2^adapted` clamped to the limits.
@@ -33,6 +37,16 @@ struct ExUniform {
     strength: f32,
     sigma: f32,
     dt: f32,
+    // The auto model (`AutoExposure` in exposure.rs): `key 2^compensation`, the limits, the
+    // time constants in seconds and log2 of the cone floor.
+    key: f32,
+    min_e: f32,
+    max_e: f32,
+    tau_light: f32,
+    tau_cone: f32,
+    tau_rod: f32,
+    floor_log2: f32,
+    _pad: f32,
 };
 
 struct ExState {
@@ -55,6 +69,38 @@ const EX_METER: u32 = 2u;
 const EX_RESET: u32 = 4u;
 const STATE_HELD: u32 = 1u;
 const TILE: f32 = 8.0;
+
+// `exp(-dt / tau)`, 0 for a constant of 0.
+fn decay(dt: f32, tau: f32) -> f32 {
+    if (tau <= 0.0) {
+        return 0.0;
+    }
+    return exp(-dt / tau);
+}
+
+// The adapted level `a` after `dt` seconds toward the meter `t`: toward bright at tau_light;
+// toward dark at tau_cone above the floor and tau_rod below it, a step that crosses the floor
+// split where it reaches it.
+fn step_adapted(a: f32, t: f32, dt: f32) -> f32 {
+    if (t >= a) {
+        return t + (a - t) * decay(dt, ex.tau_light);
+    }
+    let f = ex.floor_log2;
+    if (a > f) {
+        if (t >= f) {
+            return t + (a - t) * decay(dt, ex.tau_cone);
+        }
+        var to_floor = 0.0;
+        if (ex.tau_cone > 0.0) {
+            to_floor = ex.tau_cone * log((a - t) / (f - t));
+        }
+        if (dt <= to_floor) {
+            return t + (a - t) * decay(dt, ex.tau_cone);
+        }
+        return t + (f - t) * decay(dt - to_floor, ex.tau_rod);
+    }
+    return t + (a - t) * decay(dt, ex.tau_rod);
+}
 
 var<workgroup> partial: array<vec2<f32>, 256>;
 
@@ -99,13 +145,23 @@ fn exposure(@builtin(local_invocation_index) lane: u32) {
     var s = state;
     let used = select(ex.manual, s.current, (ex.mode & EX_AUTO) != 0u);
     s.flags = 0u;
-    if (sum.y > 0.0) {
+    let metered = sum.y > 0.0;
+    if (metered) {
         s.metered_log2 = sum.x / sum.y;
     } else {
         s.flags |= STATE_HELD;
     }
     s.previous = used;
-    s.current = ex.manual;
+    if ((ex.mode & EX_AUTO) != 0u) {
+        if (metered && (ex.mode & EX_RESET) != 0u) {
+            s.adapted_log2 = s.metered_log2;
+        } else if (metered && ex.dt > 0.0) {
+            s.adapted_log2 = step_adapted(s.adapted_log2, s.metered_log2, ex.dt);
+        }
+        s.current = clamp(ex.key / exp2(s.adapted_log2), ex.min_e, ex.max_e);
+    } else {
+        s.current = ex.manual;
+    }
     s.frame += 1u;
     state = s;
 }

@@ -1298,7 +1298,7 @@ impl Modes {
 
     /// The exposure in EV the banner names: `log2` of the manual exposure.
     pub fn exposure_ev(&self) -> f32 {
-        self.lighting.exposure.log2()
+        self.lighting.manual_exposure().log2()
     }
 
     /// The banner at `now_ms`: the modes' line within [`BANNER_MS`] of the start or the last

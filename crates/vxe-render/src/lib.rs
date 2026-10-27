@@ -20,7 +20,9 @@ pub mod readback;
 
 pub use attr_work::{AttrWorkStats, MirrorView};
 pub use camera::{Camera, View};
-pub use exposure::{EXPOSURE_WGSL, ExposureReadout, ExposureState, Metering};
+pub use exposure::{
+    AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,
+};
 pub use gpu_world::{
     BELT_CHUNK_BYTES, BinStats, GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncStats, Window,
 };

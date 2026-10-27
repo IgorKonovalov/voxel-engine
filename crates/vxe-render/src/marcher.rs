@@ -4,7 +4,8 @@
 
 use crate::camera::{Camera, View};
 use crate::exposure::{
-    EX_METER, ExposurePass, ExposureReadout, ExposureUniform, METER_TILE, Metering,
+    EX_AUTO, EX_METER, EX_RESET, Exposure, ExposurePass, ExposureReadout, ExposureUniform,
+    METER_TILE, Metering,
 };
 use crate::gpu_world::GpuWorld;
 use crate::light::LightParams;
@@ -59,7 +60,8 @@ pub struct Params {
     /// walked at level 1, within `lod2_r2` at level 2, and farther at level 3.
     pub lod1_r2: i32,
     pub lod2_r2: i32,
-    /// Radiance is multiplied by this before the tone map.
+    /// The manual exposure ([`Exposure::Manual`]); 1.0 and unread in auto, where the exposure
+    /// state's `current` is the frame's.
     pub exposure: f32,
     /// Light samples from 0 to the buffer's high-water mark, which the light pass draws
     /// candidates from ([`GpuWorld::light_span`]).
@@ -121,6 +123,9 @@ pub const LIGHTING_IDENTITY_TONE_MAP: u32 = 1 << 6;
 /// `Params::lighting` bit: the probe passes ran and the composite adds the gathered indirect
 /// irradiance ([`Lighting::indirect`]).
 pub const LIGHTING_INDIRECT: u32 = 1 << 12;
+/// `Params::lighting` bit: the exposure is automatic ([`Exposure::Auto`]): the frame's is the
+/// exposure state's `current`.
+pub const LIGHTING_AUTO_EXPOSURE: u32 = 1 << 13;
 
 /// `Params::flags` bit: trace the shadow ray.
 pub const FLAG_SHADOWS: u32 = 1;
@@ -772,8 +777,8 @@ impl Upscaler {
 /// The frame's lighting knobs beside the lamp's own ([`LightParams`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Lighting {
-    /// Radiance is multiplied by this before the tone map.
-    pub exposure: f32,
+    /// Radiance is multiplied by the exposure before the tone map (ADR-0033).
+    pub exposure: Exposure,
     pub tone_map: ToneMap,
     /// The headlamp lights the frame; off leaves emissive light alone.
     pub lamp: bool,
@@ -803,7 +808,7 @@ pub struct Lighting {
 impl Default for Lighting {
     fn default() -> Self {
         Self {
-            exposure: 1.0,
+            exposure: Exposure::default(),
             tone_map: ToneMap::default(),
             lamp: true,
             candidates: 8,
@@ -862,6 +867,19 @@ impl Lighting {
                 0
             }
             | if self.indirect { LIGHTING_INDIRECT } else { 0 }
+            | if matches!(self.exposure, Exposure::Auto(_)) {
+                LIGHTING_AUTO_EXPOSURE
+            } else {
+                0
+            }
+    }
+
+    /// The manual exposure, or 1.0 in auto.
+    pub fn manual_exposure(&self) -> f32 {
+        match self.exposure {
+            Exposure::Manual(e) => e,
+            Exposure::Auto(_) => 1.0,
+        }
     }
 }
 
@@ -974,6 +992,10 @@ pub struct Frame {
     /// The exposure pass, its state and its read-back ring (ADR-0033).
     exposure: ExposurePass,
     metering: Metering,
+    /// The exposure pass's step in seconds ([`Frame::set_dt`]).
+    dt: f32,
+    /// The next encode's exposure pass jumps the adapted level to the meter.
+    reset_exposure: std::sync::atomic::AtomicBool,
     /// The views' rays are jittered by [`jitter_at`] of the frame index.
     jitter: bool,
 }
@@ -1579,10 +1601,34 @@ impl Frame {
             probe_light_window: std::sync::atomic::AtomicBool::new(false),
             exposure: ExposurePass::new(device),
             metering: Metering::default(),
+            dt: 1.0 / 60.0,
+            reset_exposure: std::sync::atomic::AtomicBool::new(true),
         }
     }
 
-    /// Sets how the exposure pass weights the meter's tiles (centre-weighted by default).
+    /// Sets the exposure pass's step in seconds (1/60 by default): the time the adapted level
+    /// moves over in each encoded frame. A negative or non-finite `dt` is 0, which holds it.
+    pub fn set_dt(&mut self, seconds: f32) {
+        self.dt = if seconds.is_finite() {
+            seconds.max(0.0)
+        } else {
+            0.0
+        };
+    }
+
+    pub fn dt(&self) -> f32 {
+        self.dt
+    }
+
+    /// Makes the next frame's exposure pass that meters jump the adapted level to the meter
+    /// (a new frame starts so).
+    pub fn reset_exposure(&mut self) {
+        self.reset_exposure
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Sets how the exposure pass weights the meter's tiles under a manual exposure
+    /// (centre-weighted by default); in auto, [`crate::AutoExposure::metering`] does.
     pub fn set_metering(&mut self, metering: Metering) {
         self.metering = metering;
     }
@@ -2022,7 +2068,7 @@ impl Frame {
             forced_level: self.lod.forced_level.unwrap_or(0),
             lod1_r2: (2 * self.lod.r_full).pow(2),
             lod2_r2: (4 * self.lod.r_full).pow(2),
-            exposure: self.lighting.exposure,
+            exposure: self.lighting.manual_exposure(),
             emissive_history: self.lighting.emissive_history as f32,
             output_size: if self.upscaling() {
                 self.output
@@ -2480,25 +2526,42 @@ impl Frame {
 
     /// The exposure pass's parameters for the frame `p`.
     fn exposure_uniform(&self, p: &Params) -> ExposureUniform {
-        let (strength, sigma) = self.metering.params();
+        let metering = match self.lighting.exposure {
+            Exposure::Auto(a) => a.metering,
+            Exposure::Manual(_) => self.metering,
+        };
+        let (strength, sigma) = metering.params();
+        let meter = self.look.view == ViewMode::Shaded;
+        let mut mode = if meter { EX_METER } else { 0 };
+        if let Exposure::Auto(_) = self.lighting.exposure {
+            mode |= EX_AUTO;
+            if meter
+                && self
+                    .reset_exposure
+                    .swap(false, std::sync::atomic::Ordering::Relaxed)
+            {
+                mode |= EX_RESET;
+            }
+        }
         let mut rects = [[0.0; 4]; 2];
         for (r, v) in rects.iter_mut().zip(&p.views) {
             *r = v.rect.map(|x| x as f32);
         }
-        ExposureUniform {
+        let mut u = ExposureUniform {
             tiles: self.targets.tile_counts(),
             view_count: p.view_count,
-            mode: if self.look.view == ViewMode::Shaded {
-                EX_METER
-            } else {
-                0
-            },
+            mode,
             rects,
-            manual: self.lighting.exposure,
+            manual: self.lighting.manual_exposure(),
             strength,
             sigma,
-            dt: 0.0,
+            dt: self.dt,
+            ..ExposureUniform::default()
+        };
+        if let Exposure::Auto(a) = &self.lighting.exposure {
+            u.set_auto(a);
         }
+        u
     }
 
     /// Writes the probe passes' uniform for the frame `p`: the volume's origin for its first

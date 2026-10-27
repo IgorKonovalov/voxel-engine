@@ -8,6 +8,19 @@
 //! exposure pass (`exposure.wgsl`, one workgroup of 256, run last in the frame) weights tile
 //! `i` by [`Metering::weight`] and writes `sum(w S) / sum(w n)` into the state's
 //! `metered_log2`.
+//!
+//! The exposure is [`Exposure::Manual`] or [`Exposure::Auto`]. In auto the pass steps an adapted
+//! level `a` (log2 luminance) toward the meter `t` by [`AutoExposure::step`] over the caller's
+//! `dt` (`Frame::set_dt`), and the next frame's exposure is [`AutoExposure::exposure`] of it.
+//!
+//! **Pre-exposure.** Lighting math is in absolute units. Every value a pass stores into an
+//! `rgba16float` HDR target is multiplied by the frame's exposure (`exposure_now` in
+//! `march.wgsl`) and clamped at 60 000; a pass that reads a value an earlier frame stored
+//! multiplies it by `current / previous` (`exposure_ratio`) first, a second moment by its
+//! square, and a second moment is of the luminance clamped at 255. Terms that stay absolute
+//! (emission, translucent layers, the probe atlases and their gathered irradiance, reservoirs)
+//! are multiplied by the exposure where they join a pre-exposed value. A new pass that keeps HDR
+//! history follows the same rule, or its history pulses on every exposure change.
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -64,6 +77,135 @@ impl Metering {
             Self::CentreWeighted { .. } => "centre",
             Self::Average => "average",
         }
+    }
+}
+
+/// The frame's exposure: the radiance the tone map sees is the scene's times it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Exposure {
+    /// A fixed multiplier (the default, 1.0). It applies from the frame it is set on.
+    Manual(f32),
+    /// Adapted on the GPU from the frame's meter, one frame late (ADR-0033).
+    Auto(AutoExposure),
+}
+
+impl Default for Exposure {
+    fn default() -> Self {
+        Self::Manual(1.0)
+    }
+}
+
+/// The automatic exposure's model (ADR-0033). In log2 luminance, with `k(tau) = 1 - exp(-dt /
+/// tau)` (1 for `tau` 0): toward bright `a += (t - a) k(tau_light)`; toward dark `a` decays
+/// toward `t` at `tau_cone` while `a > log2 cone_floor` and at `tau_rod` once below, a step that
+/// crosses the floor spending `tau_cone ln((a - t) / (f - t))` of its `dt` reaching it. The
+/// exposure is `key 2^compensation_ev / 2^a` clamped to `[min, max]`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AutoExposure {
+    /// The frame luminance a settled scene is exposed to (0.18).
+    pub key: f32,
+    /// The game's bias in EV (0).
+    pub compensation_ev: f32,
+    pub min: f32,
+    pub max: f32,
+    /// Time constants in seconds: toward bright, toward dark above the floor, below it.
+    pub tau_light: f32,
+    pub tau_cone: f32,
+    pub tau_rod: f32,
+    /// The frame luminance where dark adaptation turns from `tau_cone` to `tau_rod`; 0 is one
+    /// dark stage at `tau_cone`.
+    pub cone_floor: f32,
+    pub metering: Metering,
+}
+
+impl Default for AutoExposure {
+    fn default() -> Self {
+        Self::eye()
+    }
+}
+
+impl AutoExposure {
+    /// The eye: key 0.18, limits 2^-6 and 2^6, constants 0.15, 1 and 4 s, floor 2^-6,
+    /// centre-weighted.
+    pub fn eye() -> Self {
+        Self {
+            key: 0.18,
+            compensation_ev: 0.0,
+            min: 2f32.powi(-6),
+            max: 2f32.powi(6),
+            tau_light: 0.15,
+            tau_cone: 1.0,
+            tau_rod: 4.0,
+            cone_floor: 2f32.powi(-6),
+            metering: Metering::default(),
+        }
+    }
+
+    /// One rate both ways: every constant `1 / speed` seconds, no floor.
+    pub fn symmetric(speed: f32) -> Self {
+        let tau = 1.0 / speed;
+        Self {
+            tau_light: tau,
+            tau_cone: tau,
+            tau_rod: tau,
+            cone_floor: 0.0,
+            ..Self::eye()
+        }
+    }
+
+    /// Every constant 0: the exposure follows the meter at once.
+    pub fn instant() -> Self {
+        Self::symmetric(f32::INFINITY)
+    }
+
+    /// `log2 cone_floor`, or minus infinity for a floor of 0.
+    pub fn floor_log2(&self) -> f64 {
+        if self.cone_floor > 0.0 {
+            f64::from(self.cone_floor).log2()
+        } else {
+            f64::NEG_INFINITY
+        }
+    }
+
+    /// The adapted level after `dt` seconds toward the meter `metered_log2` from
+    /// `adapted_log2`; `dt` 0 returns it unchanged.
+    pub fn step(&self, adapted_log2: f64, metered_log2: f64, dt: f64) -> f64 {
+        let (a, t) = (adapted_log2, metered_log2);
+        if dt <= 0.0 {
+            return a;
+        }
+        let decay = |dt: f64, tau: f32| {
+            if tau > 0.0 {
+                (-dt / f64::from(tau)).exp()
+            } else {
+                0.0
+            }
+        };
+        if t >= a {
+            return t + (a - t) * decay(dt, self.tau_light);
+        }
+        let f = self.floor_log2();
+        if a > f {
+            if t >= f {
+                return t + (a - t) * decay(dt, self.tau_cone);
+            }
+            let to_floor = if self.tau_cone > 0.0 {
+                f64::from(self.tau_cone) * ((a - t) / (f - t)).ln()
+            } else {
+                0.0
+            };
+            if dt <= to_floor {
+                return t + (a - t) * decay(dt, self.tau_cone);
+            }
+            return t + (f - t) * decay(dt - to_floor, self.tau_rod);
+        }
+        t + (a - t) * decay(dt, self.tau_rod)
+    }
+
+    /// The exposure at the adapted level `adapted_log2`.
+    pub fn exposure(&self, adapted_log2: f64) -> f64 {
+        let e = f64::from(self.key) * f64::from(self.compensation_ev).exp2() / adapted_log2.exp2();
+        e.clamp(f64::from(self.min), f64::from(self.max))
     }
 }
 
@@ -143,10 +285,37 @@ pub(crate) struct ExposureUniform {
     pub strength: f32,
     pub sigma: f32,
     pub dt: f32,
+    /// `key 2^compensation_ev`, the limits, the time constants and `log2 cone_floor` (a large
+    /// negative number for no floor).
+    pub key: f32,
+    pub min: f32,
+    pub max: f32,
+    pub tau_light: f32,
+    pub tau_cone: f32,
+    pub tau_rod: f32,
+    pub floor_log2: f32,
+    pub _pad: f32,
 }
 
+/// `ExUniform::mode` bit: the exposure is automatic.
+pub(crate) const EX_AUTO: u32 = 1;
 /// `ExUniform::mode` bit: the shaded view ran and its tiles hold the meter.
 pub(crate) const EX_METER: u32 = 2;
+/// `ExUniform::mode` bit: the adapted level jumps to the meter.
+pub(crate) const EX_RESET: u32 = 4;
+
+impl ExposureUniform {
+    /// The auto fields of `auto`.
+    pub fn set_auto(&mut self, auto: &AutoExposure) {
+        self.key = auto.key * auto.compensation_ev.exp2();
+        self.min = auto.min;
+        self.max = auto.max;
+        self.tau_light = auto.tau_light;
+        self.tau_cone = auto.tau_cone;
+        self.tau_rod = auto.tau_rod;
+        self.floor_log2 = auto.floor_log2().max(-1e30) as f32;
+    }
+}
 
 /// Read-back buffers in the ring.
 const RING: usize = 3;
@@ -424,11 +593,11 @@ mod tests {
         .unwrap_or_else(|e| panic!("exposure.wgsl validates: {e:?}"));
     }
 
-    /// The state and the uniform are the shader's sizes: 32 bytes and 64.
+    /// The state and the uniform are the shader's sizes: 32 bytes and 96.
     #[test]
     fn the_state_and_the_uniform_have_the_shaders_layout() {
         assert_eq!(size_of::<ExposureState>(), 32);
-        assert_eq!(size_of::<ExposureUniform>(), 64);
+        assert_eq!(size_of::<ExposureUniform>(), 96);
     }
 
     /// The centre weight is 1 + strength at the centre and falls to 1 far out; the average
@@ -440,5 +609,36 @@ mod tests {
         assert!((c.weight(0.5) - (1.0 + 3.0 * (-0.5f32).exp())).abs() < 1e-6);
         assert!((c.weight(5.0) - 1.0).abs() < 1e-6);
         assert_eq!(Metering::Average.weight(0.0), 1.0);
+    }
+
+    /// The reference model's worked numbers (Plan 0040): from `a = -4` toward `t = -8` the
+    /// floor `-6` is reached at `ln 2` s, and the rod stage leaves `2 exp(-(t - ln 2) / 4)`;
+    /// toward bright the step is `4 exp(-t / 0.15)`; a step of 0 holds; `instant` jumps.
+    #[test]
+    fn the_reference_step_follows_the_two_stage_curve() {
+        let e = AutoExposure::eye();
+        let a = |t: f64| e.step(-4.0, -8.0, t);
+        assert!((a(std::f64::consts::LN_2) + 6.0).abs() < 1e-12);
+        assert!((a(0.5) - (-8.0 + 4.0 * (-0.5f64).exp())).abs() < 1e-12);
+        for t in [1.0, 2.0, 8.0] {
+            let want = -8.0 + 2.0 * (-(t - std::f64::consts::LN_2) / 4.0).exp();
+            assert!((a(t) - want).abs() < 1e-12, "{t}: {} {want}", a(t));
+        }
+        // Stepping in frames lands on the closed form.
+        let mut x = -4.0;
+        for _ in 0..600 {
+            x = e.step(x, -8.0, 1.0 / 60.0);
+        }
+        assert!((x - a(10.0)).abs() < 1e-9, "{x} {}", a(10.0));
+        assert!(
+            (e.step(-8.0, -4.0, 0.15) - (-4.0 - 4.0 * (-1f64).exp())).abs() < 1e-6,
+            "tau_light is 0.15 in f32"
+        );
+        assert_eq!(e.step(-5.3, -8.0, 0.0), -5.3);
+        assert_eq!(AutoExposure::instant().step(-5.3, -8.0, 1.0 / 60.0), -8.0);
+        assert!((e.exposure(-8.0) - f64::from(0.18f32) * 256.0).abs() < 1e-9);
+        assert_eq!(e.exposure(-12.0), 64.0);
+        let s = AutoExposure::symmetric(2.0);
+        assert!((s.step(-1.0, -3.0, 0.5) - (-3.0 + 2.0 * (-1f64).exp())).abs() < 1e-12);
     }
 }

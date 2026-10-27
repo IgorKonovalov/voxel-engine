@@ -1136,7 +1136,7 @@ fn stripe_image(rig: &StripeRig, image: Image, shot: Shot) -> ([Vec<u8>; 2], vxe
     let (device, queue) = (&rig.device, &rig.queue);
     let mut f = frame_of(device, internal, output, jitter);
     f.set_lighting(vxe_render::Lighting {
-        exposure: stripe_exposure(shot.dist),
+        exposure: vxe_render::Exposure::Manual(stripe_exposure(shot.dist)),
         ..vxe_render::Lighting::default()
     });
     f.set_upscaler(shot.upscaler);
@@ -1714,4 +1714,105 @@ fn the_upscalers_lamp_and_history_weight_readings() {
     let rig = stripe_rig().unwrap();
     stripe_readings(&rig, sixteenth, "still alpha 1/16", false);
     lamp_readings(sixteenth, "still alpha 1/16", true);
+}
+
+/// The mean Rec. 709 luma of an RGBA8 image, in 1/255.
+fn mean_luma(img: &[u8]) -> f64 {
+    let n = (img.len() / 4) as f64;
+    img.chunks(4)
+        .map(|p| 0.2126 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[2]))
+        .sum::<f64>()
+        / n
+}
+
+/// The upscaler follows a moving exposure (ADR-0033): on the golden scene's vein pose (the
+/// carved cave, the ore emissive, the lamp off, so the ore's light is the meter's), at scale 1.5
+/// (213 x 120 for 320 x 180), jittered, under `AutoExposure::eye()`, a still camera settles 64
+/// frames, then every ore's emission scale steps from 1 to 1/16. The upscaled output's mean luma
+/// at each of the 30 frames after the step lies within 2/255 of the same run with the upscale
+/// pass's history off (the current colour weighing 1 still and moving); the exposure moves by
+/// more than 1/64 EV a frame over the first frames, where the clip applies.
+#[test]
+fn the_upscaler_follows_an_exposure_step() {
+    let source = scene_source();
+    let world = World::generate(
+        source.extent,
+        &source,
+        &flythrough::with_emissive_ore(&flythrough::cave_materials()),
+    );
+    world.apply(&scene_carve(&world)).unwrap();
+    let output = [WIDTH, HEIGHT];
+    let internal = vxe_render::RenderScale::OneHalf.internal(output);
+    let full = world.stats().full_bricks as u64;
+    let Some((device, queue)) = software_device(((full + 4096) * 512).max(64 << 20)) else {
+        return;
+    };
+    let mut gpu = GpuWorld::with_config(&device, MirrorConfig::new(Window::Fixed(world.extent())));
+    gpu.set_focus(VoxelCoord([264, 120, 376]));
+    for _ in 0..4 {
+        gpu.sync_now(&world, &device, &queue).unwrap();
+    }
+    let camera = vxe_render::Camera {
+        position: [264.5, 120.5, 376.5].into(),
+        yaw: 15f32.to_radians(),
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    };
+    let light = LightParams::headlamp();
+    let run = |upscaler: Upscaler| {
+        let mut frame = frame_of(&device, internal, output, true);
+        frame.set_upscaler(upscaler);
+        frame.set_lighting(vxe_render::Lighting {
+            lamp: false,
+            exposure: vxe_render::Exposure::Auto(vxe_render::AutoExposure::eye()),
+            ..vxe_render::Lighting::default()
+        });
+        for _ in 0..64 {
+            frame.step(&device, &queue, &gpu, &camera, &light);
+        }
+        frame.set_emission_scale(&queue, flythrough::cave::ORE, 1.0 / 16.0);
+        (0..30)
+            .map(|_| {
+                frame.step(&device, &queue, &gpu, &camera, &light);
+                let state = vxe_render::ExposureState::from_bytes(&readback::read_buffer(
+                    &device,
+                    &queue,
+                    frame.exposure_state(),
+                    0,
+                    32,
+                ));
+                (
+                    mean_luma(&readback::read_rgba8(&device, &queue, frame.target())),
+                    f64::from(state.current).log2(),
+                )
+            })
+            .collect::<Vec<(f64, f64)>>()
+    };
+    let kept = run(Upscaler::default());
+    let off = run(Upscaler {
+        alpha: 1.0,
+        alpha_moving: 1.0,
+        ..Upscaler::default()
+    });
+    let lumas = |r: &[(f64, f64)]| r.iter().map(|p| p.0).collect::<Vec<f64>>();
+    let evs: Vec<f64> = kept.iter().map(|p| p.1).collect();
+    println!("log2 e after the step: {evs:.3?}");
+    println!(
+        "mean luma after the step, history kept: {:.2?}",
+        lumas(&kept)
+    );
+    println!(
+        "mean luma after the step, history off:  {:.2?}",
+        lumas(&off)
+    );
+    for (i, (a, b)) in kept.iter().zip(&off).enumerate() {
+        assert!(
+            (a.0 - b.0).abs() <= 2.0,
+            "frame {}: {:.2} against {:.2}",
+            i + 1,
+            a.0,
+            b.0
+        );
+    }
+    assert!(evs[1] - evs[0] > 1.0 / 64.0, "the exposure moves: {evs:?}");
 }

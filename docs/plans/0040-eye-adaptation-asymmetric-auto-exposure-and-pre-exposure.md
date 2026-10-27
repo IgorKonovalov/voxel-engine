@@ -538,8 +538,8 @@ exposure multiply, so the settled exposure ignores it.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The meter, the read-back and the banner | dev | done | 044daed |
-| 2: Pre-exposure | dev | done | committed with this row |
-| 3: Adaptation | dev | not started | |
+| 2: Pre-exposure | dev | done | 81d300a |
+| 3: Adaptation | dev | done | committed with this row |
 | 4: The fly-through, the cave's own curve, and the readings | dev | not started | |
 | 5: The owner's windowed check | human | not started | |
 
@@ -561,6 +561,21 @@ pixel +1; floor centre at frame 65 [239, 239, 239], the run at 4.0 [239, 239, 23
 (`Manual(64)`, 3 voxels, 64 x 36, 64 frames): largest irradiance 26 784, accumulation 26 768,
 moments 65 024, filter 26 800, no non-finite texel. `--profile quick --test-threads 2`: 489 of
 489 passed.
+
+Phase 3 (lavapipe, exclusive perf lock, load about 11; box 32 x 18, `dt` 1/60, log2 e the
+exposure frame `s + k` uses). Dark (B to D): k 15 2.4109, 60 3.6738, 120 4.0835, 240 4.6511,
+480 5.2042 (closed form equal to 4 places at each); floor between k 41 and 42; slope 0.03394
+then 0.00830 EV per frame; pixel 22 at k 1, 130 at k 600. Light (D to B): k 9 2.9976, 30
+1.6688, 60 1.5312. Glare: first dark frame 2.2816 (pixel 31); floor between dark frames 29 and
+30; dark frame 300 4.8794 (closed form 4.8794); pixel 131 at 600. Symmetric(2): k 60 1.3984.
+Key: 3.600001 on the second frame. `2^-12` settles at 64.0; compensation 1 EV 7.200002 against
+3.600001; `set_dt(0)` held both words' bits 30 frames; `instant` 46.08 after one frame. GPU
+adapted against the f64 reference, largest difference per series: dark 4.92e-6, light 1.65e-6,
+glare 4.00e-6, symmetric 3.55e-6. Upscaler (vein pose, lamp off, 213 x 120 to 320 x 180):
+log2 e 1.258 to 2.425 over frames 1 to 30 after the ore step; mean luma with history 85.10,
+81.51, 78.51 ... 68.51 (frame 11) ... 83.04, without 84.76, 80.89, 77.92 ... 68.44 ... 83.15,
+largest difference 0.65/255. `--profile gpu` 149 of 149 passed (every golden byte-identical to
+81d300a); the 8 slow-list tests passed; `--profile quick` 490 of 490.
 
 ### Notes
 
@@ -584,6 +599,16 @@ moments 65 024, filter 26 800, no non-finite texel. `--profile quick --test-thre
 - Phase 2: bar 3 runs on a re-made ceiling box in `crates/vxe-render/tests/exposure.rs` (albedo
   0.5, a 32 x 32 target looking down) and also checks frame 64's ages; bar 4 uses that box's wall
   with the lamp at the eye (`LightParams::at_eye`).
+- Phase 3: the log keeps the listed frames of each series, not the whole printed series (the
+  tests print every frame's log2 e).
+- Phase 3: bar 9 runs on the golden scene's vein pose (carved cave, lamp off) at 213 x 120 to
+  320 x 180, not the level's spawn pose: there, with the lamp on, the ore step moved the
+  exposure by about 0.001 EV a frame, and with it off the scene metered near black.
+- Phase 3: `apps/flythrough/src/hud.rs` (one line), `apps/flythrough/tests/golden.rs` and
+  `crates/vxe-render/tests/exposure.rs` move to `Exposure::Manual` with `Lighting::exposure`'s
+  type; `Lighting::manual_exposure` is added.
+- Phase 3: in manual the adapted level holds; a switch back to auto continues from it (only
+  `reset_exposure` or a new frame jumps to the meter).
 - Phase 2: a manual exposure applies to the frame it is set on (`exposure_now` reads
   `params.exposure` in manual), not one frame later through the exposure pass.
 

@@ -180,10 +180,19 @@ fn up_lamp(on: bool, pos: vec3<f32>, dir: vec3<f32>, intensity: f32, cos_o: f32,
     return intensity * cone * max(dot(n, l), 0.0) / dist2;
 }
 
+// The exposure's move between frames, in EV, past which every still pixel is clipped as a
+// moving one.
+const EXPOSURE_MOVE: f32 = 1.0 / 64.0;
+
 // Whether the light at `rec` changed since the older frame `up_tuning` holds: an emission
-// scale changed within EMISSION_CHANGE_FRAMES, or the lamp's term moved past the thresholds.
+// scale changed within EMISSION_CHANGE_FRAMES, the exposure moved by more than EXPOSURE_MOVE EV
+// since the last frame (the history is display-encoded, so it cannot be rescaled: ADR-0033),
+// or the lamp's term moved past the thresholds.
 fn up_light_changed(rec: HitRecord) -> bool {
     if ((params.lighting & LIGHTING_EMISSION_CHANGED) != 0u) {
+        return true;
+    }
+    if (abs(log2(exposure_ratio())) > EXPOSURE_MOVE) {
         return true;
     }
     let now = up_lamp((params.lighting & LIGHTING_LAMP) != 0u, params.light_pos, params.light_dir,
