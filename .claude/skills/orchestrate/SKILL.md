@@ -21,6 +21,11 @@ prompt.
   which earlier plans have merged since the plan was drafted (the tree's names win, and the
   mapping goes in Notes), and the stop rule: stop at the first `human` phase or an
   unsatisfiable done-when.
+- **Models.** Dev lanes, fix passes, merges of main into a lane and close reviews run on
+  Opus (the owner's call: quality first on engine code). Only work that reads or writes no
+  code goes to Sonnet, by passing `model: "sonnet"` on the Agent call: read-only lookups
+  ("where is X", "which plans touch Y"), doc-only bookkeeping (index rows, changelog and
+  version renumbering after a merge).
 - Lanes that edit the same pass list or shared files will conflict at merge. Say so in both
   prompts and ask for focused changes.
 
