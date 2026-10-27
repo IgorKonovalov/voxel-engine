@@ -4,10 +4,11 @@
 //! `cargo run --release -p flythrough --example hero -- [--seed N] [--size WxH] [--yaw DEG]
 //! [--pitch DEG] [--at X,Y,Z] [--carve R] [--out PATH] [--frames N] [--lighting full|half]
 //! [--shadow-walk full|coarse] [--sampler list|reuse] [--history edits|gradient]
-//! [--lamp on|off] [--filter on|off] [--exposure E] [--emissive-history N]`. `--at` is a voxel coordinate (the level's spawn by
+//! [--lamp on|off] [--filter on|off] [--exposure E] [--emissive-history N] [--look PRESET]`. `--at` is a voxel coordinate (the level's spawn by
 //! default); `--carve R` digs a sphere of radius `R` voxels where the view ray meets rock
-//! before the frame is drawn. The look is the fly-through's default (contour planes, rock's
-//! detail); the ore glows (`flythrough::ORE_EMISSION`); the still is the
+//! before the frame is drawn. The look is a contour preset of `flythrough::LookPreset`, the
+//! fly-through's default unless `--look` names another (its fit, tuning and rock detail);
+//! the ore glows (`flythrough::ORE_EMISSION`); the still is the
 //! last of `--frames` frames (default 64) from the same pose, so the accumulation and the
 //! filter settle; the lighting flags are the fly-through's. Runs on the high-performance
 //! adapter with no window.
@@ -30,6 +31,7 @@ struct Args {
     frames: u32,
     resolution: LightingResolution,
     lighting: Lighting,
+    look: flythrough::LookPreset,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -44,6 +46,7 @@ fn parse_args() -> Result<Args, String> {
         frames: 64,
         resolution: LightingResolution::default(),
         lighting: Lighting::default(),
+        look: flythrough::LookPreset::DEFAULT,
     };
     let on_off = |flag: &str, v: &str| match v {
         "on" => Ok(true),
@@ -74,6 +77,11 @@ fn parse_args() -> Result<Args, String> {
                 args.at = Some(p.try_into().map_err(|_| "--at takes X,Y,Z")?);
             }
             "--carve" => args.carve = v.parse().map_err(|e| bad(&e))?,
+            "--look" => {
+                args.look = flythrough::LookPreset::from_name(&v)
+                    .filter(|p| p.normal_mode == vxe_render::NormalMode::Contour)
+                    .ok_or(format!("--look takes a contour preset, not {v}"))?
+            }
             "--out" => args.out = v,
             "--frames" => args.frames = v.parse().map_err(|e| bad(&e))?,
             "--lighting" => {
@@ -110,7 +118,7 @@ fn main() -> Result<(), String> {
     let world = World::generate(
         source.extent,
         &source,
-        &flythrough::with_emissive_ore(&flythrough::look_materials()),
+        &flythrough::with_emissive_ore(&args.look.materials()),
     );
     let eye = VoxelCoord(args.at.unwrap_or(source.spawn().0));
     let camera = Camera {
@@ -151,11 +159,11 @@ fn main() -> Result<(), String> {
     }))
     .map_err(|e| format!("no device: {e}"))?;
 
-    // The fly-through's default look: contour planes with rock's procedural detail.
     let mut gpu = GpuWorld::with_surface_attrs(
         &device,
         vxe_render::MirrorConfig::new(vxe_render::Window::Fixed(world.extent())),
     );
+    gpu.set_surface_fit(args.look.tuning.fit);
     // The light radius around the eye; its ranges take a few syncs of the sample budget.
     gpu.set_focus(eye);
     for _ in 0..8 {
@@ -169,8 +177,9 @@ fn main() -> Result<(), String> {
     let mut frame = Frame::new(&device, w, h);
     frame.set_lighting(args.lighting);
     frame.set_look(vxe_render::LookParams {
-        normal_mode: vxe_render::NormalMode::Contour,
+        normal_mode: args.look.normal_mode,
         detail: true,
+        tuning: args.look.tuning,
         ..vxe_render::LookParams::default()
     });
     frame.set_resolution(&device, args.resolution);

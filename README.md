@@ -11,7 +11,7 @@ headlamp's cone and a vein of glowing ore, after 64 accumulated and filtered fra
 reservoir reuse, edit-box history, a 32-frame emissive history), on an RTX 3080 Laptop GPU at
 1600x900. Regenerate with
 `cargo run --release -p flythrough --example hero -- --at 148,280,484 --yaw 135 --pitch -10
---exposure 0.08 --frames 64`.</sub>
+--exposure 0.08 --frames 64 --look contour`.</sub>
 
 A game-agnostic voxel engine in Rust. A streaming world of small voxels (10 cm at the first
 consumer's scale) is ray-marched in compute shaders through [`wgpu`](https://wgpu.rs), edited at
@@ -188,12 +188,12 @@ shown, `F1`, the autopilot's flight).
 | `--sync-budget MiB` | Bytes uploaded to the GPU mirror per frame |
 | `--mirror-budget MiB` | VRAM the GPU mirror reserves for its pool, masks and records at startup (default 3072 streamed; on `--level`, what the level needs plus dig headroom). While streaming, the full radius drops a chunk after 30 frames with the mirror's pressure (the fuller of its pool slots and records) over 0.9, and returns after 300 frames under 0.7, down to 6 |
 | `--residency R_FULL,R_LOD` | Streamed full and LOD radii in chunks, hysteresis 1 (default 16,24) |
-| `--look PRESET` | Start in a look preset, with attribute pages for contour and rock detail: `face`, `contour` (default), `contour-sharp` (the distance-weighted plane fit, the detail's lamp term at full resolution), `contour-grain` (the detail's lamp term at full resolution, rock detail 2,0.3 with the fine octave at 0.5), `trilinear8` or `gradient27`; `plain` starts in face mode without either, detail off. The startup line prints the preset's parts |
+| `--look PRESET` | Start in a look preset, with attribute pages for contour and rock detail: `face`, `contour` (every tuning part off), `contour-sharp` (default: the distance-weighted plane fit, the detail's lamp term at full resolution), `contour-grain` (the detail's lamp term at full resolution, rock detail 2,0.3 with the fine octave at 0.5), `trilinear8` or `gradient27`; `plain` starts in face mode without either, detail off. The startup line prints the preset's parts |
 | `--plane-fit uniform27\|weighted27`, `--plane-offset fraction\|volume`, `--face-mix K`, `--detail-fine W`, `--detail-after on\|off` | Override one part of the starting preset: the attribute pass's plane normal and offset, the shading normal's mix toward the face normal (0 to 0.5), rock's fine-octave weight (0 to 1), the detail's lamp term at full resolution. Not under `plain`; `N` cycles the presets as defined |
 | `--view VIEW` | Write `shaded` (default), `normals`, `hitmask`, `steps` (red: walk steps, green: storage loads, blue: pool loads per ray) or `albedo` (the composited albedo, unlit) to the target; with `--frames`, `steps` prints the last frame's mean and p99 steps per ray, the mean over 8 × 8 pixel blocks of each block's maximum steps, and the loads' and pool loads' mean and p99 |
 | `--translucent-layers N` | Translucent voxels composited in front of the opaque hit, nearest first (default 4); 0 ignores them |
 | `--detail` | Start with procedural surface detail on under `--look plain` (it is on in every other look) |
-| `--rock-detail SCALE,STRENGTH` | Rock's detail feature scale in voxels and strength in [0, 1] for the starting preset, in every look but `plain` (default the preset's, 4,0.1 for contour) |
+| `--rock-detail SCALE,STRENGTH` | Rock's detail feature scale in voxels and strength in [0, 1] for the starting preset, in every look but `plain` (default the preset's, 4,0.1 for contour and contour-sharp) |
 | `--save PATH` | With `--level`: write the session's log file to `PATH` on exit and print the world hash; stamps and collapse are in the log |
 | `--audio` | Open the default output device; `H`, `J`, `T` and `E` then work, and every frame probes the sounds' occlusion through the world. `FLYTHROUGH_HRIR=<pack>` loads another HRIR pack |
 | `--audio-debug` | `--audio` plus a line a second of the output callback's readings; on exit writes the last 60 s to `flythrough-audio-debug.wav` |

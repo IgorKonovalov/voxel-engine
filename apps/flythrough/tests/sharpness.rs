@@ -640,3 +640,126 @@ fn candidate_sweep() {
     assert_eq!(table[0].0, "today");
     assert!(today_row.error <= 12.0 && 2 * today_row.silhouette <= face_sil);
 }
+
+/// The fly-through's default look meets the "not a Lego look" guardrails: cavity normal
+/// error at most 12 degrees, pillar silhouette error at most half of face mode's, axis
+/// fraction at most 10 %.
+#[test]
+fn the_default_look_meets_the_guardrails() {
+    let Some((device, queue)) = sweep_device() else {
+        return;
+    };
+    let p = flythrough::LookPreset::DEFAULT;
+    let c = Candidate {
+        name: p.name.to_owned(),
+        fit: p.tuning.fit,
+        face_mix: p.tuning.face_mix,
+        after: p.tuning.detail_after_lighting,
+        rock: p.rock_detail,
+        fine: p.detail_fine,
+    };
+    let (error, axis, silhouette) = guardrails(&device, &queue, &c);
+    let face = face_silhouette(&device, &queue);
+    println!(
+        "{}: cavity normal error {error:.2} degrees, silhouette {silhouette} px against face {face}, axis fraction {:.2} %",
+        c.name,
+        axis * 100.0
+    );
+    assert!(error <= 12.0, "cavity normal error {error:.2}");
+    assert!(
+        2 * silhouette <= face,
+        "silhouette {silhouette} against face {face}"
+    );
+    assert!(axis <= 0.10, "axis fraction {:.2} %", axis * 100.0);
+}
+
+/// `rgba` (`WIDTH` x `HEIGHT`) scaled up `k` times by pixel repetition.
+fn enlarge(rgba: &[u8], k: usize) -> Vec<u8> {
+    let (w, h) = (WIDTH as usize, HEIGHT as usize);
+    let mut out = Vec::with_capacity(rgba.len() * k * k);
+    for y in 0..h * k {
+        for x in 0..w * k {
+            let i = ((y / k) * w + x / k) * 4;
+            out.extend_from_slice(&rgba[i..i + 4]);
+        }
+    }
+    out
+}
+
+/// By hand: the level (seed 1) around its spawn under `contour-sharp`, `contour` and
+/// `contour-grain` at rock 2, 0.15, from the spawn voxel's centre at four headings, pitched
+/// down and up so the lamp grazes the floor and the ceiling, plus `contour-sharp`'s normals
+/// view. Writes each image three times enlarged to `target/look-sharpness/level_ridge_*.png`;
+/// asserts only that each look converges.
+#[test]
+#[ignore = "by hand: writes images for reading by eye"]
+fn level_ridges_under_the_presets() {
+    use flythrough::LookPreset;
+    use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
+    let source = CaveSource::new(1, vxe_world::ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
+    let spawn = source.spawn();
+    let c = spawn.chunk().0;
+    let extent = vxe_world::ChunkExtent::new(
+        [c[0] - 3, c[1] - 3, c[2] - 2],
+        [c[0] + 3, c[1] + 3, c[2] + 3],
+    );
+    let grain_b = LookPreset {
+        rock_detail: [2.0, 0.15],
+        ..LookPreset::CONTOUR_GRAIN
+    };
+    let looks = [
+        ("sharp", LookPreset::CONTOUR_SHARP),
+        ("contour", LookPreset::CONTOUR),
+        ("grainB", grain_b),
+    ];
+    let worlds: Vec<_> = looks
+        .iter()
+        .map(|(_, p)| vxe_world::World::generate(extent, &source, &p.materials()))
+        .collect();
+    let Some((device, queue)) = software_device(attr_pool_bytes(&worlds[0]).max(64 << 20)) else {
+        return;
+    };
+    let pos = spawn.0.map(|v| v as f32 + 0.5);
+    println!("spawn {pos:?}, extent {extent:?}");
+    let mut rigs: Vec<_> = looks
+        .iter()
+        .zip(&worlds)
+        .map(|((_, p), w)| fit_rig(&device, &queue, w, p.tuning.fit))
+        .collect();
+    for k in 0..4 {
+        for (pn, pitch) in [("down", -0.6f32), ("up", 0.6)] {
+            let cam = Camera {
+                position: pos.into(),
+                yaw: k as f32 * std::f32::consts::FRAC_PI_2,
+                pitch,
+                vfov: 70f32.to_radians(),
+            };
+            for ((name, p), rig) in looks.iter().zip(rigs.iter_mut()) {
+                let base = Setting::new(p.normal_mode, true);
+                let setting = Setting {
+                    look: vxe_render::LookParams {
+                        tuning: p.tuning,
+                        ..base.look
+                    },
+                    ..base
+                };
+                let img = rig.converge(&cam, setting);
+                let path = out_dir().join(format!("level_ridge_{k}_{pn}_{name}.png"));
+                write_png(&path, &enlarge(&img, 3), 3 * WIDTH, 3 * HEIGHT);
+                println!("wrote {path:?}");
+            }
+            let normals = rigs[0].render(
+                &cam,
+                &vxe_render::LightParams::headlamp(),
+                vxe_render::LookParams {
+                    normal_mode: looks[0].1.normal_mode,
+                    tuning: looks[0].1.tuning,
+                    view: ViewMode::Normals,
+                    ..vxe_render::LookParams::default()
+                },
+            );
+            let path = out_dir().join(format!("level_ridge_{k}_{pn}_sharp_normals.png"));
+            write_png(&path, &enlarge(&normals, 3), 3 * WIDTH, 3 * HEIGHT);
+        }
+    }
+}

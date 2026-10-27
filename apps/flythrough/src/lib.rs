@@ -263,6 +263,9 @@ impl LookPreset {
         Self::GRADIENT27,
     ];
 
+    /// The look the fly-through starts in without `--look`.
+    pub const DEFAULT: Self = Self::CONTOUR_SHARP;
+
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|p| p.name == name)
     }

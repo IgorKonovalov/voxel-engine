@@ -38,7 +38,8 @@
 //! `--residency` sets the streamed radii (default `flythrough::RESIDENCY`, hysteresis 1);
 //! `--headless` runs the
 //! same frames on an offscreen target with no window; `--walk` (with `--level`) starts in walk
-//! mode, the body spawned in the spawn pocket. The fly-through starts in contour with detail on,
+//! mode, the body spawned in the spawn pocket. The fly-through starts in `contour-sharp`
+//! (`LookPreset::DEFAULT`) with detail on,
 //! the mirror holding contour attributes and rock its procedural detail (`--rock-detail` sets
 //! rock's feature scale in voxels and strength, default `flythrough::ROCK_DETAIL`), and prints
 //! that
@@ -305,7 +306,8 @@ struct Args {
     /// `--audio-debug`: print the callback's readings and record its output.
     audio_debug: bool,
     /// `--look`: the starting preset with any part flag applied, with contour attributes and
-    /// rock detail; `None` for `--look plain`, face mode without either. Contour by default.
+    /// rock detail; `None` for `--look plain`, face mode without either. `contour-sharp` by
+    /// default.
     look: Option<LookPreset>,
     /// Start with procedural detail on: by default, except under `--look plain`, where
     /// `--detail` turns it on.
@@ -449,7 +451,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         residency: RESIDENCY,
         audio: false,
         audio_debug: false,
-        look: Some(LookPreset::CONTOUR),
+        look: Some(LookPreset::DEFAULT),
         detail: false,
         view: ViewMode::Shaded,
         translucent_layers: LookParams::default().translucent_layers,
@@ -5779,16 +5781,22 @@ mod tests {
         assert!(parse_rock_detail("4,x").is_err());
     }
 
-    /// No flag starts in contour with detail on and rock's detail; `--look plain` starts in
+    /// No flag starts in contour-sharp with detail on and rock's detail, `--look contour` in
+    /// the contour look with every tuning part off; `--look plain` starts in
     /// face mode with neither, and `--detail` turns detail on there.
     #[test]
     fn the_default_look_is_contour_with_detail_and_plain_is_face() {
         let a = parse_args_from(argv(&[])).unwrap();
         assert_eq!(
             look_line(&a.start_look(), a.look.as_ref()),
+            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+        );
+        assert_eq!(a.look, Some(LookPreset::CONTOUR_SHARP));
+        let c = parse_args_from(argv(&["--look", "contour"])).unwrap();
+        assert_eq!(
+            look_line(&c.start_look(), c.look.as_ref()),
             "look contour (normals contour, fit uniform27, face mix 0, detail after lighting off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
         );
-        assert_eq!(a.look, Some(LookPreset::CONTOUR));
         assert_eq!(flythrough::ROCK_DETAIL, [4.0, 0.1]);
         let a = parse_args_from(argv(&["--look", "face"])).unwrap();
         assert_eq!((a.look, a.detail), (Some(LookPreset::FACE), true));
