@@ -291,17 +291,20 @@ log).
 **The default look, contour-sharp, against the pre-plan default, both adapters (dev reference,
 Plan 0039's fix pass: the merged binary of 4d68e91 against main's binary of dedd83c, whose
 default is `contour`, both with no `--look`, so with main's probe GI on by default; alternated
-in one session; exclusive perf lock; the 1-minute load came under 2 for one run (1.86) in the
-hour the runs waited, so the rest ran at 1.9 to 3.0 (NVIDIA level) and 3.0 to 14.9 (the rest):
-loaded, indicative; commands as in Phase 3's line, three level runs and two autopilot flights
-of each binary).** NVIDIA GeForce RTX 3080 Laptop GPU: hit 1.392 ms against 1.402 (-0.7 %),
-light + composite 2.505 against 2.486 (+0.8 %), initial fill 17.8 against 16.4 ms, autopilot
-attribute pass p99 1.166 and 1.209 ms against 1.078 and 0.925 (+8.2 and +30.7 %: the second
-over the 10 % bar, loaded). AMD Radeon Graphics (RADV RENOIR): hit 9.338 against 9.330
-(+0.1 %), light + composite 18.488 against 18.454 (+0.2 %), initial fill 266.0 against 262.5
-ms, autopilot p99 25.122 and 25.878 ms against 25.118 and 25.239 (+0.0 and +2.5 %). The AMD
-attribute pass still reads about ten times Phase 3's for both binaries (same adapter, driver
-and work-list sizes); the pairing, not the absolute value, is the reading.
+in one session; exclusive perf lock; the level runs at 1-minute loads 1.9 to 3.0 (NVIDIA) and
+7.1 to 14.9 (AMD): loaded, indicative; commands as in Phase 3's line, three level runs of each
+binary; the attribute pass retaken quiet: three alternated pairs of autopilot flights per
+adapter, each started at a 1-minute load of 1.73 to 1.98).** NVIDIA GeForce RTX
+3080 Laptop GPU: hit 1.392 ms against 1.402 (-0.7 %), light + composite 2.505 against 2.486
+(+0.8 %), initial fill 17.8 against 16.4 ms; quiet autopilot attribute pass p99 0.872, 1.054
+and 0.851 ms against 0.945, 0.871 and 0.737 (-7.7, +21.0 and +15.5 %; medians 0.872 against
+0.871, +0.1 %; main's own three span 0.737 to 0.945). AMD Radeon Graphics (RADV RENOIR): hit
+9.338 against 9.330 (+0.1 %), light + composite 18.488 against 18.454 (+0.2 %), initial fill
+266.0 against 262.5 ms (loaded); quiet autopilot p99 23.952, 22.728 and 22.399 ms against
+21.765, 21.126 and 20.964 (+10.0, +7.6 and +6.8 %), p50 2.07 against 2.04. Quiet, the AMD
+attribute pass's p50 is Phase 3's again (about 2.05 ms; loaded it read about 20) while its p99
+stays near 22 ms against Phase 3's 2.7, with the same work-list sizes; the pairing, not the
+absolute value, is the reading.
 
 **Mirror attribute pass (contour look), render-thread CPU: p99 under 4 ms on the dev reference,
 deferred work visible as face-mode normals for at most 250 ms** (budget, Plan 0023, ADR-0017;

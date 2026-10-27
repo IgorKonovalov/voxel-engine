@@ -743,6 +743,29 @@ Relayed by the orchestrator from the owner's words; the runs are in `live/sessio
   +0.0 % and +2.5 % (AMD), bar 10 %. The probe passes read probes 1.40 to 1.43 and gather 0.24
   to 0.25 (NVIDIA), probes 7.84 to 7.89 and gather 1.34 (AMD) under both binaries. NVIDIA level
   runs at load 1.9 to 3.0, the rest at 3.0 to 14.9 (`live/fix/budget/`).
+- Quiet retake of the attribute pass (the orchestrator's quiet window): `--autopilot
+  --headless --seed 1`, main's dedd83c against the merged 4d68e91, alternated in three pairs per
+  adapter, exclusive perf lock, each run started only at a 1-minute load under 2
+  (`live/fix/quiet4.sh`, `live/fix/quiet/`); the run itself lifts the load to 7 to 10 by its
+  end. One NVIDIA `new` flight started at 2.31 is kept apart as loaded (p99 1.000) and retaken.
+  Attribute pass GPU, ms:
+
+| adapter | pair | main p50 | main p99 | new p50 | new p99 | p99 change | start loads (main, new) |
+|---|---|---|---|---|---|---|---|
+| NVIDIA | 1 | 0.670 | 0.945 | 0.591 | 0.872 | -7.7 % | 1.73, 1.74 |
+| NVIDIA | 2 | 0.584 | 0.871 | 0.725 | 1.054 | +21.0 % | 1.96, 1.98 |
+| NVIDIA | 3 | 0.491 | 0.737 | 0.519 | 0.851 | +15.5 % | 1.82, 1.80 |
+| AMD | 1 | 2.042 | 21.765 | 2.072 | 23.952 | +10.0 % | 1.98, 1.89 |
+| AMD | 2 | 2.047 | 21.126 | 2.068 | 22.728 | +7.6 % | 1.87, 1.96 |
+| AMD | 3 | 2.045 | 20.964 | 2.071 | 22.399 | +6.8 % | 1.89, 1.74 |
+
+  Medians of the three: NVIDIA p99 0.871 (main) against 0.872 (new), +0.1 %; means 0.851
+  against 0.926, +8.8 %; main's own three span 0.737 to 0.945. AMD p99 median 21.126 against
+  22.728, +7.6 %. Work lists p50 7585 to 7836 bricks (NVIDIA) and 8192 (AMD) under both.
+- Quiet, the AMD attribute pass's p50 is back at Phase 3's level (2.04 to 2.07 ms against
+  Phase 3's 2.06 to 2.08); its p99 stays at 21.0 to 24.0 ms against Phase 3's 2.59 to 2.71.
+  The AMD shader clock sampled every 0.5 s sat mostly between 1000 and 2100 MHz through the
+  quiet AMD flights, against mostly 200 to 600 MHz through the loaded ones of the table above.
 - The AMD attribute pass's 10x against Phase 3 persists: p50 19.0 to 20.4 ms against Phase 3's
   2.06 to 2.08, the level's initial fill 262.5 to 266.0 ms against 96.1 to 97.1, under both
   binaries, with the same work-list sizes (p50 8192 bricks), while the hit, light and
@@ -750,7 +773,8 @@ Relayed by the orchestrator from the owner's words; the runs are in `live/sessio
   07:40, Phase 5's at 10:01), same RADV (vulkan-radeon 26.2.5 since 2026-10-19), platform
   profile `performance` at every run of this pass, AC online. The shader clock sampled during
   the AMD level runs sat at 2100 MHz in 27 of about 32 samples; during the AMD flights it
-  ranged 200 to 2100 MHz, mostly 200 to 600. The cause is not identified from these readings.
+  ranged 200 to 2100 MHz, mostly 200 to 600. The cause is not identified from these readings;
+  the quiet retake below separates the p50 (load-dependent) from the p99 (not).
 - Mirror bytes: the level 157 872 640 B live, 259 203 264 B allocated in every run of both
   binaries on both adapters; the streamed flight's full residency 871 679 852 B live,
   3 221 014 080 B allocated (17 077 full, 40 700 LOD-only chunks) in all eight flights; peaks
@@ -831,8 +855,8 @@ Relayed by the orchestrator from the owner's words; the runs are in `live/sessio
   (4d68e91).
 - Fix pass, MAJOR (Phase 5's readings against 99e7bee): retaken on the merged binary against
   main's dedd83c, `nfr.md` section 2's Phase 5 line and section 3's mirror line replaced
-  (committed with this note). The NVIDIA attribute pass p99 bar (10 %) is missed on one
-  flight (+30.7 %, loaded).
+  (committed with this note). The attribute pass p99 bar (10 %): quiet, NVIDIA's pairs read
+  -7.7, +21.0 and +15.5 % (medians +0.1 %), AMD's +10.0, +7.6 and +6.8 %.
 - Fix pass: the quick tier's `castle::the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn`
   and `replay::a_stamp_and_a_collapse_replay_from_the_save` timed out at 30 s at load about 24
   and passed alone in 13.7 and 17.0 s.
@@ -856,8 +880,9 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   `--look`.
 - **Budget readings:** fix pass readings (4d68e91 against main's dedd83c, NVIDIA RTX 3080
   Laptop and AMD RADV RENOIR, exclusive perf lock, loaded): hit -0.7 % / +0.1 %, light +
-  composite +0.8 % / +0.2 %, attribute pass p99 +8.2 % and +30.7 % (NVIDIA) / +0.0 % and +2.5 %
-  (AMD); mirror bytes equal at the level and the streamed full residency. Phase 1 to 5
+  composite +0.8 % / +0.2 %; attribute pass p99 quiet retake (three pairs, start loads under 2):
+  NVIDIA -7.7 %, +21.0 %, +15.5 % (medians +0.1 %), AMD +10.0 %, +7.6 %, +6.8 % (median
+  +7.6 %); mirror bytes equal at the level and the streamed full residency. Phase 1 to 5
   readings above; `nfr.md` section 2 and section 3.
 - **Gate at the tip (4d68e91's code, the log commit on top):** `cargo build --workspace` 0;
   `cargo nextest run --workspace --profile full --no-fail-fast --test-threads 2` under the
