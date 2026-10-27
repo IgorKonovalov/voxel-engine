@@ -42,7 +42,7 @@ use crate::cave::{ORE, ROCK, SHELL};
 pub const SHOWCASE_CHUNKS: [i32; 3] = [14, 12, 7];
 /// Cyan crystal, the emissive row after the cave's four.
 pub const CRYSTAL: MaterialId = 5;
-/// Violet amethyst veins in the dome.
+/// Violet amethyst veins in the east walls.
 pub const AMETHYST: MaterialId = 6;
 /// Deep red ember lining the chasm.
 pub const EMBER: MaterialId = 7;
@@ -59,8 +59,6 @@ pub const FLOOR_Z: i64 = 128;
 pub const AXES: [i64; 3] = [360, 288, 240];
 /// The floor noise's amplitude, voxels: the floor lies in `FLOOR_Z - 16..FLOOR_Z + 16`.
 pub const FLOOR_AMPLITUDE: i64 = 16;
-/// The top of the amber zone: the lower two thirds of the dome, `dz < 2c/3`.
-pub const DOME_THIRD_Z: i64 = FLOOR_Z + 2 * AXES[2] / 3;
 
 /// The chasm's centre line before its noise, its half-width and its lowest air voxel.
 pub const CHASM_X: i64 = 598;
@@ -97,14 +95,22 @@ pub const RAY_CLEAR: i64 = 110;
 /// the shots frame the pillars rather than look into one.
 pub const PILLAR_EYE_CLEAR: i64 = 120;
 
-/// Vein-noise values above which rock in the amber and amethyst zones is ore: about 8 % of
-/// the noise's values lie above it.
-const AMBER_ABOVE: i64 = 14800;
-const AMETHYST_ABOVE: i64 = 14800;
-/// Vein-noise value above which rock in the ember zone is ember: about 25 %.
-const EMBER_ABOVE: i64 = 7300;
+/// No ore lies at or above this height: the dome's upper half over the floor plane is plain
+/// rock, so the roof carries no light.
+pub const ORE_TOP_Z: i64 = FLOOR_Z + AXES[2] / 2;
+/// Vein-noise values above which rock in the amber (west wall) and amethyst (east wall) zones
+/// is ore.
+const AMBER_ABOVE: i64 = 20000;
+const AMETHYST_ABOVE: i64 = 20000;
+/// The amber and amethyst zones start this many voxels over the floor (4 m), so the veins
+/// light the walls and leave the floor dark.
+const WALL_ORE_OVER_FLOOR: i64 = 40;
+/// Vein-noise value above which rock in the ember zone is ember.
+const EMBER_ABOVE: i64 = 9000;
 /// The ember zone reaches this many voxels past the chasm's band and under its bottom.
 const EMBER_REACH: i64 = 3;
+/// The ember zone's top: the chasm's lowest 24 voxels glow, too deep to light the hall's floor.
+pub const EMBER_TOP_Z: i64 = CHASM_BOTTOM + 24;
 /// The ember zone's slack on the hall's footprint at the floor, about 4 voxels at its edge.
 const EMBER_FOOT: i64 = K / 32;
 /// The crystal clusters, the capsules in each, and the least distance between two centres.
@@ -1062,6 +1068,21 @@ impl ShowcaseSource {
         }
     }
 
+    /// Whether a stalactite of `scope` is rock at `p`.
+    fn in_stalactite(&self, scope: Scope<'_>, f: &Fields, p: [i32; 3]) -> bool {
+        let hit = |i: usize| {
+            let (lo, hi) = self.boxes[i];
+            let ft = &self.features[i];
+            ft.kind() == Kind::Stalactite
+                && (0..3).all(|k| p[k] >= lo[k] && p[k] <= hi[k])
+                && self.feature_rock(ft, f, p)
+        };
+        match scope {
+            Scope::All => (0..self.features.len()).any(hit),
+            Scope::Bucket(b) => b.iter().any(|&i| hit(i as usize)),
+        }
+    }
+
     /// Whether a feature of `scope` is rock at `p`.
     fn rock_feature(&self, scope: Scope<'_>, f: &Fields, p: [i32; 3]) -> bool {
         let hit = |i: usize| {
@@ -1100,16 +1121,22 @@ impl ShowcaseSource {
     }
 
     /// The ore rock at `p` takes, before the rule that it borders air: the zone's ore where
-    /// the vein noise lies above its threshold, else `None`.
+    /// the vein noise lies above its threshold, else `None`. Every zone lies under
+    /// [`ORE_TOP_Z`]: amber in the west walls over the floor, ember around the chasm, amethyst
+    /// in the east walls over the floor.
     fn vein_ore(&self, f: &Fields, p: [i32; 3]) -> Option<MaterialId> {
         let [x, _, z] = p.map(i64::from);
+        if z >= ORE_TOP_Z {
+            return None;
+        }
         let v = f.vein(p);
-        if z >= DOME_THIRD_Z {
-            (v > AMETHYST_ABOVE).then_some(AMETHYST)
-        } else if x < CENTRE[0] && z > f.floor(p[0], p[1]) {
+        let over_floor = z > f.floor(p[0], p[1]) + WALL_ORE_OVER_FLOOR;
+        if x < CENTRE[0] && over_floor {
             (v > AMBER_ABOVE).then_some(AMBER)
         } else if v > EMBER_ABOVE && self.ember_zone(f, p) {
             Some(EMBER)
+        } else if x >= CENTRE[0] && over_floor {
+            (v > AMETHYST_ABOVE).then_some(AMETHYST)
         } else {
             None
         }
@@ -1121,31 +1148,37 @@ impl ShowcaseSource {
     fn ember_zone(&self, f: &Fields, p: [i32; 3]) -> bool {
         let [x, y, z] = p;
         let zz = i64::from(z);
-        (CHASM_BOTTOM - EMBER_REACH..FLOOR_Z).contains(&zz)
+        (CHASM_BOTTOM - EMBER_REACH..EMBER_TOP_Z).contains(&zz)
             && (i64::from(x) - CHASM_X - f.chasm(y)).abs() <= CHASM_HALF + EMBER_REACH
             && q_xy(i64::from(x), i64::from(y)) <= K + f.wall_floor(x, y) + EMBER_FOOT
     }
 
     /// The material of voxel `p` from its brick's fields against `scope`'s features: ore is
-    /// rock in its zone, above its vein threshold, with a six-neighbour of air.
+    /// rock in its zone, above its vein threshold, outside every stalactite, with air beside
+    /// it or above it (air only below is a ceiling face, which stays rock).
     fn eval(&self, f: &Fields, scope: Scope<'_>, p: [i32; 3]) -> MaterialId {
         if self.in_shell(p) {
             return SHELL;
         }
         if self.crystal_at(scope, p) {
-            return CRYSTAL;
+            // A crystal voxel lit only from below would light the floor as a ceiling face.
+            let mut below = p;
+            below[2] -= 1;
+            let under_only = self.air_at(f, scope, below) && !self.faces_air(f, scope, p);
+            return if under_only { ROCK } else { CRYSTAL };
         }
         if self.base_air(f, p) && !self.rock_feature(scope, f, p) {
             return AIR;
         }
         match self.vein_ore(f, p) {
-            Some(ore) if self.borders_air(f, scope, p) => ore,
+            Some(ore) if self.faces_air(f, scope, p) && !self.in_stalactite(scope, f, p) => ore,
             _ => ROCK,
         }
     }
 
-    fn borders_air(&self, f: &Fields, scope: Scope<'_>, p: [i32; 3]) -> bool {
-        (0..6).any(|i| {
+    /// Whether a six-neighbour of `p` other than the one below is air.
+    fn faces_air(&self, f: &Fields, scope: Scope<'_>, p: [i32; 3]) -> bool {
+        (0..6).filter(|&i| i != 4).any(|i| {
             let mut n = p;
             n[i / 2] += if i % 2 == 0 { -1 } else { 1 };
             self.air_at(f, scope, n)
@@ -1213,11 +1246,9 @@ impl ShowcaseSource {
     fn ore_possible(&self, f: &Fields, lo: [i32; 3], hi: [i32; 3], b: &Bounds) -> bool {
         let (_, vein) = corner_bounds(lo, hi, |p| f.vein(p));
         let (z_lo, z_hi) = (i64::from(lo[2]), i64::from(hi[2]));
-        let amethyst = z_hi >= DOME_THIRD_Z && vein > AMETHYST_ABOVE - MARGIN;
-        let amber = i64::from(lo[0]) < CENTRE[0]
-            && z_lo < DOME_THIRD_Z
-            && z_hi > b.floor.0
-            && vein > AMBER_ABOVE - MARGIN;
+        let walls = z_lo < ORE_TOP_Z && z_hi > b.floor.0 + WALL_ORE_OVER_FLOOR;
+        let amethyst = walls && i64::from(hi[0]) >= CENTRE[0] && vein > AMETHYST_ABOVE - MARGIN;
+        let amber = walls && i64::from(lo[0]) < CENTRE[0] && vein > AMBER_ABOVE - MARGIN;
         let w = (
             chasm_offset(b.chasm.0 - MARGIN),
             chasm_offset(b.chasm.1 + MARGIN),
@@ -1225,7 +1256,7 @@ impl ShowcaseSource {
         let reach = CHASM_HALF + EMBER_REACH;
         let band_out =
             i64::from(hi[0]) < CHASM_X + w.0 - reach || i64::from(lo[0]) > CHASM_X + w.1 + reach;
-        let height_out = z_hi < CHASM_BOTTOM - EMBER_REACH || z_lo >= FLOOR_Z;
+        let height_out = z_hi < CHASM_BOTTOM - EMBER_REACH || z_lo >= EMBER_TOP_Z;
         let foot_out = q_xy_bounds(lo, hi).0 > K + wall_from(b.wall_floor).1 + EMBER_FOOT;
         let ember = !band_out && !height_out && !foot_out && vein > EMBER_ABOVE - MARGIN;
         amethyst || amber || ember

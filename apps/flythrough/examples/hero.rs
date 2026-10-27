@@ -12,12 +12,13 @@
 //! `--source showcase` (the default) generates `flythrough::showcase` and frames one of its
 //! shots (`--shot`, default `hall`); `--at`, `--yaw`, `--pitch` and `--exposure` override the
 //! shot's fields. `--shot all` writes `hero-<name>.png` for every shot into `--out-dir`
-//! (default `target/hero/`), and `hall` again at `--probe-spacing 32` as
-//! `hero-hall-spacing32.png`, the review set. `--source level` frames the bounded level from
+//! (default `target/hero/`), and `hall` again at the fly-through's probe spacing (16) as
+//! `hero-hall-spacing16.png`, the review set. `--source level` frames the bounded level from
 //! its spawn (`--at`, `--yaw`, `--pitch`), with no shots. `--carve R` digs a sphere of radius
 //! `R` voxels where the view ray meets rock before the frame is drawn. The lamp is off by
-//! default for both sources; indirect light is on at the fly-through's probe spacing (16) and
-//! the upscaler at the fly-through's defaults (`--internal-scale 1`, `--jitter off`: none).
+//! default for both sources; indirect light is on at the hero's probe spacing
+//! (`HERO_PROBE_SPACING`, 32 voxels, `--probe-spacing` overrides it) and the upscaler at
+//! the fly-through's defaults (`--internal-scale 1`, `--jitter off`: none).
 //! The look is a contour preset of `flythrough::LookPreset`, the fly-through's default unless
 //! `--look` names another (its fit, tuning and rock detail); the ores emit, and
 //! the light radius is the source's (19 chunks on the showcase, 4 on the level). The mirror
@@ -98,7 +99,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             indirect: true,
             ..Lighting::default()
         },
-        probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
+        probe_spacing: HERO_PROBE_SPACING,
         internal_scale: RenderScale::One,
         jitter: false,
         sharpen: 0.5,
@@ -225,6 +226,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     Ok(args)
 }
 
+/// The hero's probe spacing in voxels, wider than the fly-through's 16.
+const HERO_PROBE_SPACING: u32 = 32;
+
 /// One still to render: its file, its camera and exposure, and the probe spacing.
 struct Still {
     path: PathBuf,
@@ -281,9 +285,9 @@ impl Args {
                     .iter()
                     .map(|s| single(self.out_dir.join(format!("hero-{}.png", s.name)), s))
                     .collect();
-                let mut wide = single(self.out_dir.join("hero-hall-spacing32.png"), &SHOTS[0]);
-                wide.probe_spacing = 32;
-                v.push(wide);
+                let mut fine = single(self.out_dir.join("hero-hall-spacing16.png"), &SHOTS[0]);
+                fine.probe_spacing = vxe_render::probes::DEFAULT_PROBE_SPACING;
+                v.push(fine);
                 v
             }
         }
@@ -499,7 +503,7 @@ mod tests {
         assert_eq!(d.size, [1920, 1080]);
         assert!(!d.lighting.lamp && d.lighting.indirect);
         assert_eq!((d.internal_scale, d.jitter), (RenderScale::One, false));
-        assert_eq!(d.probe_spacing, 16);
+        assert_eq!(d.probe_spacing, 32);
         for s in SHOTS {
             assert_eq!(parse(&["--shot", s.name]).unwrap().shots, Shots::One(s));
         }
@@ -516,7 +520,7 @@ mod tests {
                 "target/hero/hero-hall.png",
                 "target/hero/hero-chasm.png",
                 "target/hero/hero-crystals.png",
-                "target/hero/hero-hall-spacing32.png"
+                "target/hero/hero-hall-spacing16.png"
             ]
         );
         assert_eq!(

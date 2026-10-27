@@ -4,8 +4,8 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use flythrough::showcase::{
-    AMBER, AMETHYST, CHASM_HALF, CHASM_X, CRYSTAL, CRYSTAL_FLOOR_X, DOME_THIRD_Z, EMBER, SHOTS,
-    ShowcaseSource,
+    AMBER, AMETHYST, CHASM_HALF, CHASM_X, CRYSTAL, CRYSTAL_FLOOR_X, EMBER, EMBER_TOP_Z, ORE_TOP_Z,
+    SHOTS, SHOWCASE_CHUNKS, ShowcaseSource,
 };
 use vxe_render::gpu_world::{DEFAULT_LIGHT_CHUNK_CAP, DEFAULT_LIGHT_SAMPLES, exposed_emitters};
 use vxe_world::*;
@@ -73,16 +73,21 @@ fn the_hall_is_one_open_volume_reaching_every_shot_and_the_chasm_floor() {
     assert!(chasm_floor > 0, "the flood reaches the chasm's bottom");
 }
 
+/// The light samples of a generated world.
+struct Census {
+    /// Each exposed emissive voxel's material and voxel.
+    samples: Vec<(MaterialId, [i32; 3])>,
+    /// The fullest chunk's sample count and coordinate.
+    worst: (u64, ChunkCoord),
+    /// Which material ids are opaque.
+    opaque: Vec<bool>,
+}
+
 /// The exposed emissive voxels of each chunk by the mirror's rule (an opaque emissive voxel
 /// with a non-opaque six-neighbour, across brick faces inside the chunk, a chunk face
-/// counting as exposed): seed 1 gives amber >= 3000, crystal >= 5000, amethyst >= 3000 and
-/// ember >= 7000; no chunk holds more than the per-chunk cap and the total is at most a
-/// quarter of the buffer. Each ore lies only in its own zone.
-#[test]
-fn the_four_ores_light_the_hall_from_their_own_zones() {
-    let (source, world) = generate(1);
-    let table = world.materials();
-    let rows = table.rows();
+/// counting as exposed), counted on the CPU.
+fn census(source: &ShowcaseSource, world: &World) -> Census {
+    let rows = world.materials().rows();
     let emissive: Vec<bool> = (0..1 << 16)
         .map(|id| {
             rows.get(id)
@@ -92,9 +97,8 @@ fn the_four_ores_light_the_hall_from_their_own_zones() {
     let opaque: Vec<bool> = (0..1 << 16)
         .map(|id| id != usize::from(AIR) && rows.get(id).is_some_and(|m| !m.is_translucent()))
         .collect();
-    let mut totals: BTreeMap<MaterialId, u64> = BTreeMap::new();
+    let mut samples = Vec::new();
     let mut worst = (0u64, ChunkCoord([0; 3]));
-    let mut misplaced = Vec::new();
     for coord in source.extent().coords() {
         let chunk = world.store().get(coord).expect("resident");
         let chunk = chunk
@@ -118,25 +122,43 @@ fn the_four_ores_light_the_hall_from_their_own_zones() {
                 &opaque,
                 neighbour,
             ) {
-                let m = s.material();
-                *totals.entry(m).or_default() += 1;
+                samples.push((s.material(), s.voxel));
                 in_chunk += 1;
-                let [x, y, z] = s.voxel.map(i64::from);
-                let band = (x - CHASM_X - source.chasm_offset(s.voxel[1])).abs() <= CHASM_HALF + 3;
-                let home = match m {
-                    AMBER => x < 448 && z < DOME_THIRD_Z,
-                    AMETHYST => z >= DOME_THIRD_Z,
-                    EMBER => band && z < 128,
-                    CRYSTAL => x >= CRYSTAL_FLOOR_X && z < DOME_THIRD_Z,
-                    _ => false,
-                };
-                if !home {
-                    misplaced.push((m, [x, y, z]));
-                }
             }
         }
         if in_chunk > worst.0 {
             worst = (in_chunk, coord);
+        }
+    }
+    Census {
+        samples,
+        worst,
+        opaque,
+    }
+}
+
+/// Seed 1's light samples: every ore lights some of the hall and the crystals outnumber each
+/// other ore; no chunk holds more than the per-chunk cap and the total is at most a quarter
+/// of the buffer. Each ore lies only in its own zone, all under the dome's upper half.
+#[test]
+fn the_four_ores_light_the_hall_from_their_own_zones() {
+    let (source, world) = generate(1);
+    let c = census(&source, &world);
+    let mut totals: BTreeMap<MaterialId, u64> = BTreeMap::new();
+    let mut misplaced = Vec::new();
+    for &(m, v) in &c.samples {
+        *totals.entry(m).or_default() += 1;
+        let [x, y, z] = v.map(i64::from);
+        let band = (x - CHASM_X - source.chasm_offset(v[1])).abs() <= CHASM_HALF + 3;
+        let home = match m {
+            AMBER => x < 448 && z < ORE_TOP_Z,
+            AMETHYST => x >= 448 && z < ORE_TOP_Z,
+            EMBER => band && z < EMBER_TOP_Z,
+            CRYSTAL => x >= CRYSTAL_FLOOR_X && z < ORE_TOP_Z,
+            _ => false,
+        };
+        if !home {
+            misplaced.push((m, [x, y, z]));
         }
     }
     let total: u64 = totals.values().sum();
@@ -147,8 +169,8 @@ fn the_four_ores_light_the_hall_from_their_own_zones() {
         get(CRYSTAL),
         get(AMETHYST),
         get(EMBER),
-        worst.1.0,
-        worst.0
+        c.worst.1.0,
+        c.worst.0
     );
     assert!(
         misplaced.is_empty(),
@@ -157,12 +179,115 @@ fn the_four_ores_light_the_hall_from_their_own_zones() {
         &misplaced[..misplaced.len().min(8)]
     );
     assert_eq!(totals.len(), 4, "{totals:?}");
-    assert!(get(AMBER) >= 3000);
-    assert!(get(CRYSTAL) >= 5000);
-    assert!(get(AMETHYST) >= 3000);
-    assert!(get(EMBER) >= 7000);
-    assert!(worst.0 <= u64::from(DEFAULT_LIGHT_CHUNK_CAP), "{worst:?}");
+    for ore in [AMBER, AMETHYST, EMBER] {
+        assert!(get(ore) > 0, "ore {ore}");
+        assert!(get(CRYSTAL) > get(ore), "crystal against ore {ore}");
+    }
+    assert!(
+        c.worst.0 <= u64::from(DEFAULT_LIGHT_CHUNK_CAP),
+        "{:?}",
+        c.worst
+    );
     assert!(total <= u64::from(DEFAULT_LIGHT_SAMPLES) / 4, "{total}");
+}
+
+/// No light sample of seed 1 is a ceiling face (its only non-opaque six-neighbour the one
+/// below it) or lies in the dome's upper half over the floor plane.
+#[test]
+fn no_ore_lights_the_roof() {
+    let (source, world) = generate(1);
+    let c = census(&source, &world);
+    let mut ceiling = 0u64;
+    let mut high = 0u64;
+    let mut first = Vec::new();
+    for &(m, v) in &c.samples {
+        let open: Vec<usize> = (0..6)
+            .filter(|&i| {
+                let mut n = v;
+                n[i / 2] += if i % 2 == 0 { -1 } else { 1 };
+                world
+                    .material_at(VoxelCoord(n))
+                    .is_some_and(|m| !c.opaque[usize::from(m)])
+            })
+            .collect();
+        let bad = open == [4] || i64::from(v[2]) >= ORE_TOP_Z;
+        ceiling += u64::from(open == [4]);
+        high += u64::from(i64::from(v[2]) >= ORE_TOP_Z);
+        if bad && first.len() < 8 {
+            first.push((m, v));
+        }
+    }
+    println!(
+        "{} light samples: {ceiling} ceiling faces, {high} at or over z {ORE_TOP_Z}",
+        c.samples.len()
+    );
+    assert_eq!((ceiling, high), (0, 0), "{first:?}");
+}
+
+/// On a 2 m grid over the hall's floor (each cell's centre column, where the voxel over the
+/// floor is air), at least half the cells have no light sample of seed 1 within 6 m of that
+/// voxel: about half the hall is dark.
+#[test]
+fn about_half_the_hall_floor_is_dark() {
+    let (source, world) = generate(1);
+    let c = census(&source, &world);
+    const REACH: i64 = 60;
+    let ores = [AMBER, CRYSTAL, AMETHYST, EMBER];
+    let mut grid: BTreeMap<[i64; 3], Vec<(usize, [i64; 3])>> = BTreeMap::new();
+    for &(m, v) in &c.samples {
+        let v = v.map(i64::from);
+        let ore = ores
+            .iter()
+            .position(|&o| o == m)
+            .expect("one of the four ores");
+        grid.entry(v.map(|k| k.div_euclid(REACH)))
+            .or_default()
+            .push((ore, v));
+    }
+    // The ores with a sample within REACH of `p`, one bit each in `ores`' order.
+    let lit_by = |p: [i64; 3]| {
+        let cell = p.map(|k| k.div_euclid(REACH));
+        let mut bits = 0u8;
+        for d in 0..27 {
+            let n = [d % 3 - 1, d / 3 % 3 - 1, d / 9 - 1];
+            for &(ore, v) in grid
+                .get(&[0, 1, 2].map(|k| cell[k] + n[k]))
+                .into_iter()
+                .flatten()
+            {
+                if (0..3).map(|k| (v[k] - p[k]).pow(2)).sum::<i64>() <= REACH * REACH {
+                    bits |= 1 << ore;
+                }
+            }
+        }
+        bits
+    };
+    let (mut cells, mut dark, mut by) = (0u64, 0u64, [0u64; 4]);
+    let size = [0, 1].map(|k| SHOWCASE_CHUNKS[k] * CHUNK_EDGE);
+    for y in (10..size[1]).step_by(20) {
+        for x in (10..size[0]).step_by(20) {
+            let z = source.floor_at(x, y) as i32 + 1;
+            if world.material_at(VoxelCoord([x, y, z])) != Some(AIR) {
+                continue;
+            }
+            cells += 1;
+            let bits = lit_by([x, y, z].map(i64::from));
+            dark += u64::from(bits == 0);
+            for (k, n) in by.iter_mut().enumerate() {
+                *n += u64::from(bits & 1 << k != 0);
+            }
+        }
+    }
+    println!(
+        "floor cells: {dark} of {cells} dark ({:.1} %); lit by amber {}, crystal {}, amethyst {}, ember {}",
+        100.0 * dark as f64 / cells as f64,
+        by[0],
+        by[1],
+        by[2],
+        by[3]
+    );
+    assert!(cells > 0);
+    assert!(2 * dark >= cells, "{dark} of {cells}");
 }
 
 /// For every shot, the radius-10 ball around the eye is all air, and the view's centre ray
