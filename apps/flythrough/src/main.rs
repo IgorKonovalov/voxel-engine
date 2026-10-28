@@ -95,7 +95,7 @@
 //! (default 4); `--sampler reuse` adds last frame's reservoirs (ReSTIR) to the candidates;
 //! `--history gradient` also shortens history where A-SVGF's gradient sees the light change;
 //! `--lighting half` runs the lighting passes at half resolution on each edge;
-//! `--emissive-history N` sets the frames static emissive light accumulates over (default 32;
+//! `--emissive-history N` sets the frames static emissive light accumulates over (default 256;
 //! the lamp's light keeps a short history); `--emissive-guard off` turns off the emissive-only
 //! gradient that shortens that history where emissive light changed (on by default,
 //! ADR-0036); `--indirect off` turns the probe volume's indirect
@@ -6833,7 +6833,7 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
             d.start_modes(0.0).line(),
-            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, emissive history 32, guard on, exposure auto eye +0.00 EV"
+            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, emissive history 256, guard on, exposure auto eye +0.00 EV"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),

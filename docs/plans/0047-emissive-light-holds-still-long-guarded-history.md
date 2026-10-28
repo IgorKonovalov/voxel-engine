@@ -927,8 +927,8 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
 | 1: The patch bar as a headless test | dev | done; stopped at done-when 4 | 031ab3b |
 | 2: A full-precision emissive accumulation | dev | done | a2b3852 |
 | 3: The emissive-only gradient guard | dev | done | 8263b17 |
-| 4: The probe gather holds still | dev | step A 93a2c72; step C 0b848cf; furnace test 9e229f5; filmstrip 5b75f81; step D read 919dbc4; kept mechanism wip 9fbf2b9; done | committed with this row |
-| 5: The sweep, the defaults and the bar | dev | not started | |
+| 4: The probe gather holds still | dev | step A 93a2c72; step C 0b848cf; furnace test 9e229f5; filmstrip 5b75f81; step D read 919dbc4; kept mechanism wip 9fbf2b9; done | f069033 |
+| 5: The sweep, the defaults and the bar | dev | done | committed with this row |
 | 6: Goldens, readings and the fly-through | dev | not started | |
 | 7: The owner's windowed check | human | not started | |
 
@@ -1329,8 +1329,63 @@ slow list. Lavapipe, exclusive perf lock, power Not charging (on AC), 1-minute l
   alone 6 of 6, 13.9 s); clippy `-D warnings`, `fmt --check`, `check-test-tiers.mjs`,
   `check-comment-hygiene.mjs` clean.
 
+Phase 5 (lavapipe, exclusive perf lock; counts, no timings). The rig prints the
+direct-attributed counts (`Direct` in `apps/flythrough/tests/support/stillness.rs`). The sweep
+(`live/p5-sweep.sh`, `live/p5-sweep.log`; power Not charging, load 3.0 at the start, 13.7 at
+the end, 1778 s): `H` by `reuse_m_cap`, reuse, guard on, both poses. Composite mean / max,
+sudden /s, flicker, luma /255; direct-attributed mean / max, sudden /s. The gather reads 8.15 /
+44, 21.00/s, flicker 0.00365 at the patch pose and 0 / 0, 0/s, 0.00273 at `VEIN_POSE` in every
+row, so the amended bars are flicker 0.00416 and 0.00338, luma 0.125 and 0.101:
+
+| H, cap | patch composite | patch direct | vein composite | vein direct |
+|---|---|---|---|---|
+| 32, 20 (today) | 74.45 / 96, 8.80, 0.00632, 0.226 | 70.75 / 96, 5.90 | 21.30 / 35, 0.00, 0.00346, 0.118 | 21.30 / 35, 0.00 |
+| 64, 20 | 33.30 / 49, 2.80, 0.00389, 0.132 | 30.90 / 44, 0.60 | 6.25 / 15, 0.00, 0.00244, 0.077 | 6.25 / 15, 0.00 |
+| 64, 8 | 28.80 / 43, 4.10, 0.00417, 0.146 | 27.20 / 43, 1.80 | 5.45 / 17, 0.00, 0.00256, 0.083 | 5.45 / 17, 0.00 |
+| 64, 4 | 26.00 / 45, 3.90, 0.00456, 0.164 | 24.10 / 37, 1.80 | 5.15 / 13, 0.00, 0.00270, 0.090 | 5.15 / 13, 0.00 |
+| 128, 20 | 6.35 / 18, 2.10, 0.00260, 0.082 | 5.25 / 12, 0.00 | 0.80 / 4, 0.00, 0.00188, 0.055 | 0.80 / 4, 0.00 |
+| 128, 8 | 5.30 / 19, 1.60, 0.00268, 0.087 | 4.50 / 9, 0.10 | 0.95 / 5, 0.00, 0.00193, 0.058 | 0.95 / 5, 0.00 |
+| 128, 4 | 4.30 / 16, 1.70, 0.00284, 0.095 | 3.45 / 8, 0.30 | 0.70 / 5, 0.00, 0.00200, 0.061 | 0.70 / 5, 0.00 |
+| 256, 20 | 1.50 / 7, 1.90, 0.00193, 0.056 | 0.75 / 4, 0.00 | 0.05 / 1, 0.00, 0.00160, 0.044 | 0.05 / 1, 0.00 |
+| 256, 8 | 1.15 / 5, 1.40, 0.00193, 0.057 | 0.60 / 3, 0.00 | 0.05 / 1, 0.00, 0.00162, 0.045 | 0.05 / 1, 0.00 |
+| 256, 4 | 1.05 / 6, 1.20, 0.00199, 0.061 | 0.40 / 2, 0.00 | 0.05 / 1, 0.00, 0.00165, 0.047 | 0.05 / 1, 0.00 |
+| 512, 20 | 0.85 / 6, 1.90, 0.00166, 0.045 | 0.30 / 3, 0.00 | 0 / 0, 0.00, 0.00148, 0.040 | 0 / 0, 0.00 |
+| 512, 8 | 0.70 / 3, 1.30, 0.00164, 0.045 | 0.20 / 1, 0.00 | 0 / 0, 0.00, 0.00149, 0.040 | 0 / 0, 0.00 |
+| 512, 4 | 0.75 / 6, 1.10, 0.00166, 0.047 | 0.15 / 2, 0.00 | 0 / 0, 0.00, 0.00151, 0.041 | 0 / 0, 0.00 |
+
+The shortest `H` meeting the amended bars at both poses is 256, and at it the highest cap is 20
+(`H` 128 misses the direct mean at every cap: 5.25, 4.50, 3.45). `DEFAULT_EMISSIVE_HISTORY`
+becomes 256; `DEFAULT_REUSE_M_CAP` stays 20. `the_vein_wall_holds_still_with_the_lamp_off`
+asserts the amended bars and Phase 4's done-whens 3 and 4 at the defaults (`live/p5-still.log`;
+power Discharging at the start of the run, load 10.7, counts only): patch pose composite 1.50 /
+7 (0 6 2 0 0 0 0 7 1 0 1 6 4 0 0 1 2 0 0 0), 1.90/s, flicker 0.00193, luma 0.056; direct 0.75 /
+4, 0.00/s; gather 8.15 / 44, 21.00/s, 0.00365; `VEIN_POSE` composite 0.05 / 1, 0.00/s,
+0.00160, luma 0.044; direct 0.05 / 1, 0.00/s; gather 0 / 0, 0.00/s, 0.00273. Done-whens 1 to 3
+as amended met at both poses (the patch pose's composite also meets the unamended 3 / 8 and
+0.002 flicker; its sudden steps, 1.90/s, are under 1 + 21.00). Phase 4's done-whens 3 and 4
+met (gather as above; composite 1.50 against 77.10). `the_vein_wall_patches_are_counted`
+(defaults now in the new test): candidates 0 reads 0 on every step at both poses; history 1
+173.85 a step at the patch pose. Done-when 4, the 384 x 216 reading at the defaults
+(`live/p5-384.log`): composite 10.45 / 58, 23.90/s, flicker 0.00212, luma 0.048; gather 40.70
+/ 200, 114.00/s, 0.00381; direct-attributed 1.90 / 9, 0.30/s; emissive 112.30 / 193. Done-when
+5 (`live/p5-dw5.log`, load 3.3 at the end): `flythrough::indirect`, `lights` and `golden`, 51
+run, 50 passed, 1 failed: `showcase_hall.png` 3.4080 % of pixels over 2/255 at the new
+default; re-blessed in this commit (1963 pixels, mean sRGB luma 16.8824 to 16.9187, +0.22 %),
+then it passes. `static_emissive_light_holds_still`, `reservoir_reuse_lowers_one_frames_error`
+and `the_lamp_light_that_left_the_cone_drops_in_each_history_mode` pass unchanged; no
+`lights.rs` arithmetic named the default 32. Gates: clippy `-D warnings`, `fmt --check`,
+`check-test-tiers.mjs`, `check-comment-hygiene.mjs` clean; `--profile quick` 514 run, 511
+passed, 1 failed (`hud::mode_tests::the_banner_names_each_change_and_fades_after_three_seconds`,
+its banner now reads `emissive history 256`; the expectation follows), 2 timed out at load
+(`castle`, `replay`); after the fix the `flythrough` lib, `castle` and `replay` binaries 54 of
+54.
+
 ### Notes
 
+- Phase 5: `apps/flythrough/src/hud.rs` (the banner test's expected text and a doc example now
+  read `emissive history 256`), `.config/nextest.toml` (the new test on the slow list) and
+  `apps/flythrough/tests/golden/showcase_hall.png` (re-blessed at the new default, so the
+  commit's gate passes) are outside Phase 5's Files touched.
 - Phase 4: `fsr2_carries_the_indirect_golden_s_bounce_light` shared `INDIRECT_FRAMES`; it keeps
   64 frames through its own `FSR2_INDIRECT_FRAMES`, so it runs as before.
 - Phase 4: `indirect_golden_shows_the_vein_s_bounce_light` joins the slow list (165 s at 1600

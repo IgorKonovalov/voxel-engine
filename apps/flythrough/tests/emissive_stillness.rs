@@ -8,8 +8,7 @@ use support::stillness::*;
 use vxe_render::{HistoryKill, Lighting, Sampler};
 
 /// The harness sees patches where they exist: none with the emissive candidates off at either
-/// pose, at least 100 a step with a one-frame emissive history at the patch pose. The default
-/// lighting's statistics at both poses are printed as `reading:` lines.
+/// pose, at least 100 a step with a one-frame emissive history at the patch pose.
 #[test]
 fn the_vein_wall_patches_are_counted() {
     let Some(level) = vein_level() else {
@@ -32,8 +31,6 @@ fn the_vein_wall_patches_are_counted() {
             pose.name,
             off.composite.patches
         );
-        let default = run(&level, &pose, Lighting::default(), SIZE);
-        default.print(&format!("{} default", pose.name));
     }
     let short = run(
         &level,
@@ -50,6 +47,91 @@ fn the_vein_wall_patches_are_counted() {
         "a one-frame emissive history reads at least 100 patches a step at the patch pose: {:.2}",
         short.composite.mean_patches()
     );
+}
+
+/// The probe gather's bars at one pose: its mean and largest patches a step, its sudden steps
+/// per second and its tile flicker.
+struct GatherBar {
+    mean: f64,
+    max: usize,
+    sudden_per_s: f64,
+    flicker: f64,
+}
+
+/// Static ore light holds still with the lamp off at the defaults, at both poses. The light the
+/// gather does not explain (`Direct`) averages at most 3 patches a step (1 % of the patch pose's
+/// 312 full tiles), none over 8, and at most 1 sudden step a second. The composite's tile
+/// flicker is at most `sqrt(0.002^2 + G^2)` and its display luma's at most
+/// `0.06 sqrt(1 + (G / 0.002)^2)` /255, `G` the gather's tile flicker in the same run: 0.002
+/// and 0.06/255 for the direct light, the gather's own noise added in quadrature. The gather
+/// itself stays within its bars: at the patch pose its readings with the probe slices spread
+/// by a hash (8.15 a step, 44 at most, 21.0 sudden steps a second) plus 10 %, at `VEIN_POSE`
+/// 1, 3 and 1; at both its flicker no higher than with the slices by `slot mod slices`
+/// (0.00430 and 0.00341). The patch pose's composite stays under its 77.10 patches a step at
+/// a 32-frame history.
+#[test]
+fn the_vein_wall_holds_still_with_the_lamp_off() {
+    let Some(level) = vein_level() else {
+        return;
+    };
+    for (pose, bar) in [
+        (
+            PATCH_POSE,
+            GatherBar {
+                mean: 9.0,
+                max: 48,
+                sudden_per_s: 23.0,
+                flicker: 0.00430,
+            },
+        ),
+        (
+            VEIN_POSE,
+            GatherBar {
+                mean: 1.0,
+                max: 3,
+                sudden_per_s: 1.0,
+                flicker: 0.00341,
+            },
+        ),
+    ] {
+        let r = run(&level, &pose, Lighting::default(), SIZE);
+        r.print(&format!("{} default", pose.name));
+        let name = pose.name;
+        let d = &r.direct;
+        assert!(
+            d.mean_patches() <= 3.0 && d.max_patches() <= 8,
+            "{name}: direct-attributed patches {}",
+            d.line()
+        );
+        assert!(
+            d.sudden_per_s <= 1.0,
+            "{name}: direct-attributed sudden steps {}",
+            d.line()
+        );
+        let g = r.gather.flicker;
+        let flicker = (0.002f64.powi(2) + g * g).sqrt();
+        let luma = 0.06 * (1.0 + (g / 0.002).powi(2)).sqrt();
+        let c = &r.composite;
+        assert!(
+            c.flicker <= flicker,
+            "{name}: composite flicker {:.5} over {flicker:.5}",
+            c.flicker
+        );
+        let l = c.luma_flicker.expect("the composite reads its luma");
+        assert!(l <= luma, "{name}: luma flicker {l:.3} over {luma:.3}");
+        let ga = &r.gather;
+        assert!(
+            ga.mean_patches() <= bar.mean
+                && ga.max_patches() <= bar.max
+                && ga.sudden_per_s <= bar.sudden_per_s
+                && ga.flicker <= bar.flicker,
+            "{name}: gather {}",
+            ga.line()
+        );
+        if name == PATCH_POSE.name {
+            assert!(c.mean_patches() <= 77.10, "{name}: composite {}", c.line());
+        }
+    }
 }
 
 /// One variant of the sweep: a `;`-separated list in `STILL_SWEEP`, each a `,`-separated list

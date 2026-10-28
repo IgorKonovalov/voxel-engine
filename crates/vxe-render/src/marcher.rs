@@ -105,8 +105,10 @@ pub const LIGHTING_REUSE: u32 = 1 << 2;
 /// `Params::lighting` bit: the temporal pass also shortens history by A-SVGF's gradient
 /// ([`History::Gradient`]).
 pub const LIGHTING_GRADIENT: u32 = 1 << 3;
-/// The emissive part's history in frames, by default.
-pub const DEFAULT_EMISSIVE_HISTORY: u32 = 32;
+/// The emissive part's history in frames, by default: the shortest of 64, 128, 256 and 512
+/// that holds static ore light still on the patch bar (ADR-0036). Light the emissive guard
+/// cannot see reaches 90 % in `ln 0.1 / ln(255/256)` = 589 frames.
+pub const DEFAULT_EMISSIVE_HISTORY: u32 = 256;
 /// [`Lighting::reuse_m_cap`] by default.
 pub const DEFAULT_REUSE_M_CAP: u32 = 20;
 /// Frames after an emission-scale change (the frame of the change too) during which the

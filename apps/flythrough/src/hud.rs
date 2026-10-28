@@ -1466,7 +1466,7 @@ impl Modes {
 
     /// The modes in words: `lighting half, shadow walk coarse, sampler reuse, history edits,
     /// lamp on, indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, emissive
-    /// history 32, guard on, exposure auto eye +1.53 EV` (the probe rays per update, the share of probes
+    /// history 256, guard on, exposure auto eye +1.53 EV` (the probe rays per update, the share of probes
     /// refreshed a frame, while indirect light is on the voxels between probes, and the
     /// exposure in EV, `log2 e`), after `source NAME, ` when the modes name a source.
     pub fn line(&self) -> String {
@@ -1560,7 +1560,7 @@ mod mode_tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, shadow walk coarse\nsampler reuse, history edits, lamp on\nindirect off at 64 rays 1/8, filter on\nore pulse off, emissive history 32\nguard on, exposure manual +0.00 EV"
+            "lighting half, shadow walk coarse\nsampler reuse, history edits, lamp on\nindirect off at 64 rays 1/8, filter on\nore pulse off, emissive history 256\nguard on, exposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;

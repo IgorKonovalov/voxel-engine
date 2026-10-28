@@ -160,12 +160,48 @@ impl Stats {
     }
 }
 
-/// A run's statistics: the composite's tiles, the emissive accumulation's and the gather's.
+/// The composite's events the gather does not explain: a **direct-attributed patch** is a
+/// composite patch on a tile whose gather tile is no patch on the same step, and a
+/// **direct-attributed sudden step** a composite sudden step on a tile and frame where the
+/// gather's tile makes none. Two parts that each move under `log2 1.1` but cross it together
+/// count as direct.
+#[derive(Clone, Debug)]
+pub struct Direct {
+    /// Direct-attributed patches on each of the window's steps.
+    pub patches: Vec<usize>,
+    /// Direct-attributed sudden steps over the window, per second at 60 fps.
+    pub sudden_per_s: f64,
+}
+
+impl Direct {
+    pub fn mean_patches(&self) -> f64 {
+        self.patches.iter().sum::<usize>() as f64 / self.patches.len().max(1) as f64
+    }
+
+    pub fn max_patches(&self) -> usize {
+        self.patches.iter().copied().max().unwrap_or(0)
+    }
+
+    pub fn line(&self) -> String {
+        let steps: Vec<String> = self.patches.iter().map(usize::to_string).collect();
+        format!(
+            "patches/step mean {:.2} max {} [{}], sudden {:.2}/s",
+            self.mean_patches(),
+            self.max_patches(),
+            steps.join(" "),
+            self.sudden_per_s,
+        )
+    }
+}
+
+/// A run's statistics: the composite's tiles, the emissive accumulation's and the gather's,
+/// and the composite's events not on a gather event.
 #[derive(Clone, Debug)]
 pub struct Reading {
     pub composite: Stats,
     pub emissive: Stats,
     pub gather: Stats,
+    pub direct: Direct,
     /// The gather's mean linear luminance over the lighting grid and the window's frames.
     pub gather_luminance: f64,
 }
@@ -176,6 +212,7 @@ impl Reading {
         println!("reading: {name} composite: {}", self.composite.line());
         println!("reading: {name} emissive: {}", self.emissive.line());
         println!("reading: {name} gather: {}", self.gather.line());
+        println!("reading: {name} direct-attributed: {}", self.direct.line());
         println!(
             "reading: {name} gather mean luminance {:.6}",
             self.gather_luminance
@@ -274,6 +311,24 @@ fn stats(tiles: &[Tiles], full: &[Vec<bool>], images: Option<&[Vec<u8>]>) -> Sta
         flicker: s / c.max(1) as f64,
         luma_flicker,
         full_tiles: (0..tiles[0].len()).filter(|&t| ok(n - 1, t)).count(),
+    }
+}
+
+/// The composite's direct-attributed events against the gather's (see [`Direct`]).
+fn direct(composite: &[Tiles], gather: &[Tiles], full: &[Vec<bool>]) -> Direct {
+    let n = composite.len();
+    let count = |a: usize, b: usize| {
+        (0..composite[0].len())
+            .filter(|&t| patch(composite, full, a, b, t) && !patch(gather, full, a, b, t))
+            .count()
+    };
+    let patches = (0..(n - 1) / STEP)
+        .map(|k| count(k * STEP, (k + 1) * STEP))
+        .collect();
+    let sudden: usize = (1..n).map(|f| count(f - 1, f)).sum();
+    Direct {
+        patches,
+        sudden_per_s: sudden as f64 / ((n - 1) as f64 / 60.0),
     }
 }
 
@@ -437,6 +492,7 @@ fn run_inner(
             composite: stats(&composite, &full, Some(&images)),
             emissive: stats(&emissive, &full, None),
             gather: stats(&gather, &full, None),
+            direct: direct(&composite, &gather, &full),
             gather_luminance: gather_lum / gather.len().max(1) as f64,
         },
         trace,
