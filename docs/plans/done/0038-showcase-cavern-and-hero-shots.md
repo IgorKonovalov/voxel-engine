@@ -1,15 +1,15 @@
 # 0038: A showcase cavern lit by four ores, and a hero still with named shots and no headlamp
 
-> **Status:** approved (2026-10-22)
+> **Status:** done (2026-10-28). Close review clean: every phase landed as amended, the gate re-run at b9f4b08 is green, `hero.png` reproduces byte for byte from its caption, and the section 2 and 3 readings were re-taken after Phase 6a and the two merges; four nits go to Followups.
 > **Decisions:** Owner, 2026-10-22: hall 72 x 58 x 24 m as planned with probe spacing settled from the review renders; ore palette as planned; shots hall, chasm and crystals with `hall` the default; everything stays diggable (no SHELL bridge or pillars).
 > **Created:** 2026-10-22
 > **Milestone:** M2 in `docs/roadmap.md` (testbed content: the hero and demos show M2's
 > lighting; no engine work)
 > **Related ADRs:** none. The plan uses what
-> [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (direct light from emissive samples),
-> [ADR-0023](../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md) (the probe volume)
-> and [ADR-0024](../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) (the upscaler)
+> [ADR-0023](../../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md) (the probe volume)
+> and [ADR-0024](../../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) (the upscaler)
 > already decided.
 > **Source:** Plan 0024's Followups ("A showcase cave for the hero and demos", owner,
 > 2026-10-20); Plan 0029's Followups; the owner, 2026-10-22: "hero image is lame, we should
@@ -288,6 +288,19 @@ fresh session.
     rows, is read on the RTX 3080 Laptop GPU and on the slow adapter (`--adapter`), each
     labelled. These are readings against §2's lines, with no new bar.
 
+### Phase 5a: The probe spacing in the banner
+> **Amended:** 2026-10-27 (orchestrator, under the owner's standing rule that every toggle
+> under test shows its mode in the window). Phase 6 compares spacing 16 and 32, and the banner
+> did not show the spacing.
+- **Owner skill:** dev
+- **What:** the fly-through's mode banner names the probe spacing whenever indirect light is
+  on (`probes 16`, `probes 32`), in every mode, not only autopilot. `--shot NAME` is a start
+  pose, not a toggle, and stays out of the banner.
+- **Files touched:** the fly-through's banner and its tests, this plan's log.
+- **Done when:** a headless test builds the banner with `--probe-spacing 32` and asserts it
+  contains `probes 32`, and with the default asserts `probes 16`; the Phase 6 runner's
+  binary is rebuilt from this commit.
+
 ### Phase 6: The owner's pick and the cave on screen
 - **Owner skill:** human
 - **What:** the owner reviews `target/hero/*.png` and picks the hero shot (or asks for a
@@ -299,6 +312,44 @@ fresh session.
 - **Done when:** the log records the chosen shot, a verdict on the palette and intensities (as
   shipped, or the changed emission values), on the hall's size, and on the probe spacing for
   the hero.
+
+### Phase 6a: Fewer ores, none on the ceiling, half the cave dark
+> **Amended:** 2026-10-27 (owner, Phase 6 verdicts). The owner, flying the hall: "for
+> showcase we should not have light ore on the ceiling ... only some, let cave be half dark,
+> with crystals". The other verdicts: any of the four stills will do as the hero (keep
+> `hall`), palette and intensities as shipped, the hall's size is right, the hero's probe
+> spacing is 32.
+- **Owner skill:** dev
+- **What:** the generator places emissive ore on floors, walls and features only, never on the
+  roof or on a downward-facing surface (stalactites stay plain rock). Ore zones thin out so
+  that about half the hall is unlit by ore; the crystal clusters stay the main light. The
+  hero's default probe spacing becomes 32. Phase 3's ore bars are replaced by the ones below;
+  the determinism hash and the golden are re-blessed.
+- **Files touched:** `apps/flythrough/src/showcase.rs`, `apps/flythrough/tests/showcase.rs`,
+  `apps/flythrough/tests/determinism.rs`, `apps/flythrough/examples/hero.rs` (spacing),
+  `apps/flythrough/tests/golden/showcase_hall.png`, this plan's log.
+- **Done when:**
+  1. **No ceiling ore.** Over the generated world (seed 1), no exposed emissive voxel has its
+     only non-opaque six-neighbours at `-z` (a ceiling face), and none sits in the dome's upper
+     half above the floor plane. The test prints the count (0).
+  2. **Half dark.** On a 2 m grid over the hall's floor surface, at least 50 % of the cells have
+     no exposed emissive voxel within 6 m. The test prints the fraction.
+  3. **Crystals lead.** Exposed crystal voxels outnumber each other ore; every ore still has at
+     least one cluster (count > 0), so the palette shipped stays visible. Phase 3 bar 3's caps
+     (8192 a chunk, 262 144 total) and its zone rule still hold.
+  4. Phase 3 bars 1 and 2 hold with a re-blessed hash; `showcase_hall.png` is re-blessed on
+     lavapipe and opened before commit; `hero --shot all` re-renders the stills.
+
+### Phase 6b: The owner's look at the darker hall
+- **Owner skill:** human
+- **What:** the owner flies `flythrough --source showcase --probe-spacing 32` and looks at
+  the new stills: is the ore thin enough, the cave half dark, the crystals the light?
+- **Files touched:** this plan's log.
+- **Done when:** the log records the verdict (or another round of Phase 6a's values).
+- **Amended 2026-10-27 (owner), the verdict:** "much better now, could be a bit darker but we
+  can keep it". The shots keep exposure 1.5 (option b). Phase 4's luma band, in its exposure
+  rule and in bar 4, becomes 12/255 to 40/255 for the stills and the golden; the golden
+  blessed at 16.7/255 stands. Phase 6a's values ship as they are.
 
 ### Phase 7: The hero re-shot and the README
 - **Owner skill:** dev
@@ -408,28 +459,122 @@ reads them.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The hall on screen with the lamp off | dev | not started | |
-| 2: The features | dev | not started | |
-| 3: The ores, the determinism vector and the open volume | dev | not started | |
-| 4: The hero's shots, the review set and the golden | dev | not started | |
-| 5: The readings | dev | not started | |
-| 6: The owner's pick and the cave on screen | human | not started | |
-| 7: The hero re-shot and the README | dev | not started | |
+| 1: The hall on screen with the lamp off | dev | done | 58abae3 |
+| 2: The features | dev | done | dde5427 |
+| 3: The ores, the determinism vector and the open volume | dev | done | 660a5bd |
+| 4: The hero's shots, the review set and the golden | dev | done | 654d3c6 |
+| 5: The readings | dev | done, the windowed first frame left to Phase 6 | 65fa828 |
+| 5a: The probe spacing in the banner | dev | done | e4b43bb |
+| 6: The owner's pick and the cave on screen | human | done, verdicts in the Phase 6a amendment | a2c6d64 |
+| 6a: Fewer ores, none on the ceiling, half the cave dark | dev | done (code at ffbfaec and 93aab01) | 4357e71 |
+| 6b: The owner's look at the darker hall | human | done, verdict in the Phase 6b amendment | cbe9983 |
+| 7: The hero re-shot and the README | dev | done | a8355f8 |
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 1: the tree had no `--source` (Plan 0032 not merged); `--source cave|level|showcase` was added in its shape, `--level` kept and equal to `--source level`. The castle stays `--castle`.
+- Phase 1: the banner's `source showcase` prefix is on the modes line (`hud::Modes::with_source`), only for the showcase; the cave and level lines are unchanged.
+- Phase 1: ore (amber here, every ore later) is rock in its zone above its vein threshold that has a six-neighbour of air. Without the last rule the zone's buried ore on chunk faces counted as exposed light samples (336 336 samples in the first headless run against 14 790 with it).
+- Phase 1: the amber zone also excludes rock at or under the floor (`z > floor(x, y)`), so the veins are in the west walls and the dome's lower two thirds, not the floor.
+- Phase 1: the workspace quick tier at the phase commit timed out two existing tests at 30 s (`castle::the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn`, `replay::a_stamp_and_a_collapse_replay_from_the_save`) at a load average of 25 from the other lanes; rerun alone at load 17 both passed (14.8 s). The other 487 passed.
+- Phase 1: `flythrough --source showcase --headless --frames 60` (release, RTX 3080 Laptop, exclusive perf lock, load 18): exit 0, `frames:` line printed; generation 103 ms, 64 560 `Full` bricks, 14 790 light samples.
+- Phase 2: the chasm is part of the air before the features (with the hall's), not an entry of the feature list; the list holds pillars, stalactites, stalagmites, ledges and the bridge, built from `hash3(seed, [kind, i, attempt])` (attempt 0 for the plan's draw, further attempts only to re-place a rejected cone).
+- Phase 2: a stalactite's length (40..120) is measured from the actual roof over its axis (a scan up from the floor), not the noiseless dome height, and continued 4 m into the rock as a cylinder; a stalagmite stands on the noisy floor, continued 3 m into it. Stalactite tips keep 5 m over the floor; a stalagmite's tip keeps 1 m under its cell's stalactite's.
+- Phase 2: rejection rules added beyond the plan's: pillars and cones keep 2 voxels off the first 11 m of each shot's centre ray (`Shot::ray_milli`, an integer unit vector of the yaw and pitch) and off the ledges' 2 m probe points; stalagmites keep 3 m off the chasm's reach and off the crystal floor (`x >= 650`). Ledges are rock only in the hall's air within `depth` (30..50) of the wall outward from the centre, and drop any voxel within 4 m of an eye.
+- Phase 2: the 4 m clearance is asserted for pillars, cones and ledges; the bridge's deck is 1.6 m under the `chasm` eye by the plan's own shot, so the bridge is excluded from it.
+- Phase 2: seed 1 places 5 pillars, 28 stalactites, 12 stalagmites, 2 ledges and the bridge. Generation (release, `flythrough --source showcase --headless --frames 60`, RTX 3080 Laptop box, exclusive perf lock, load 7.2): 210 ms, 70 360 `Full` bricks, 16 416 light samples.
+- Phase 3: crystal prisms are a sixth feature kind (`Kind::Crystal`, `Feature::Capsule`), `CRYSTAL` wherever they lie (rock or air); a brick a prism touches is always evaluated per voxel. Clusters keep 4 m from every pillar's reach and their prisms 2 voxels off the first 11 m of each shot's centre ray, beyond the plan's rules; "one cluster per chunk" is read as distinct chunks of the cluster centres (on the floor).
+- Phase 3: the ember zone is rock within 3 voxels of the chasm's band and bottom (`|x - 598 - w(y)| <= 28`, `z` 29..127) under the footprint with `K/32` of slack, so the bridge's sides and underside carry ember too. Thresholds: amber and amethyst 14 800 and ember 7 300 on the vein noise (8 % and 25 % of its values, measured over a seed-1 sample).
+- Phase 3: the generation-source float check (`generation_sources_contain_no_floating_point`) now covers `src/showcase.rs`; the reverse-order regeneration in `showcase_vector` runs in contiguous reverse runs over the machine's threads (single-threaded it took 15.5 s at load 24).
+- Phase 3 readings (seed 1, `cargo nextest`, quick tier): light samples amber 27 142, crystal 13 498, amethyst 19 703, ember 35 945, total 96 288; the fullest chunk `[11, 6, 2]` holds 2 880; the flood reaches 89 568 air bricks (45 859 m^3), 351 of them at brick z 4. Vector `0x7ea7_b99b_eed4_2df0` blessed on Linux.
+- Phase 3: the workspace quick tier timed out `determinism::showcase_vector` (before its reverse pass was threaded) and `replay::a_stamp_and_a_collapse_replay_from_the_save` at 30 s at load 31; after the change the flythrough quick tier passed 118 of 118 at load 27.
+- Phase 4: the first review set (exposure 1, RTX 3080 Laptop) showed all five seed-1 pillars in the west half, one 5 m from the `hall` eye and two filling its frame; pillars now keep 12 m horizontally from each shot's eye (`PILLAR_EYE_CLEAR`), which moved the pillars and re-blessed the Phase 3 vector to `0x5435_c85f_74ee_5cc1` (`tests/determinism.rs`, outside Phase 4's files). Census after it: amber 30 558, crystal 13 498, amethyst 19 325, ember 35 945, total 99 326, fullest chunk 2 880; flood 88 620 bricks; 28 stalactites, 11 stalagmites.
+- Phase 4: `apps/flythrough/Cargo.toml` gains `[[example]] name = "hero" test = true` (outside Phase 4's files) so the hero's parse test runs in the quick tier.
+- Phase 4: the fly-through's `--shot` also starts at the shot's exposure (`exposure_milli`), and the golden renders at the `hall` shot's exposure; the plan's "fly-through's defaults" is read as the fly-through's lighting, probe and upscaler defaults with the shot's exposure.
+- Phase 4: done-when 5 is a CPU test in `tests/showcase.rs` (`World::raycast`, which also checks `Shot::ray_milli` against the yaw and pitch): the centre rays meet rock at 43.2 m (`hall`), 22.5 m (`chasm`) and 38.1 m (`crystals`).
+- Phase 4: each shot's exposure is 1500 milli. Mean sRGB luma (1920x1080, 64 frames, RTX 3080 Laptop, exclusive perf lock): exposure 1.0 gave hall 39.5, chasm 42.5, crystals 39.5; 1.5 gives hall 50.0, chasm 53.5, crystals 49.1, hall at spacing 32 52.9; 2.0 gave 59.3, 63.2, 57.4.
+- Phase 4: `showcase_hall.png` blessed on lavapipe (llvmpipe, LLVM 23.1.3, Mesa 26.2.5) against the current default look; 99 326 light samples (0 with the emission off), hue shares amber 63.10 %, ember 1.81 %, cyan 2.91 %, violet 3.73 %, mean sRGB luma 51.3/255, 0 pixels over 2/255 with the emission off; a rerun differs in 0.0000 % of pixels. It took 18.3 s and 25.6 s, so it joins the slow list in `.config/nextest.toml` (outside Phase 4's files). Plan 0039 changes the fly-through's default look, so the golden is re-blessed after that merge.
+- Phase 4: `hero --shot all` (RTX 3080 Laptop) wrote `target/hero/hero-{hall,chasm,crystals,hall-spacing32}.png`, each line naming the adapter, 99 326 light samples (7 syncs to settle) and 64 frames.
+- Phase 4 gate: workspace quick tier 493 of 496 at load 33, the three over 30 s being existing tests (`castle::the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn`, `determinism::castle_vector`, `replay::a_stamp_and_a_collapse_replay_from_the_save`), which passed alone at load 5.5; gpu tier 136 of 136 under the perf lock; clippy, fmt and doctests (7) clean.
+- Phase 5: `world_budget` gains `--source showcase|level` and prints the bounded mirror budget (`apps/flythrough/examples/world_budget.rs`, outside Phase 5's files). Showcase 71 282 `Full` bricks (18.6 % of the level's 383 608, not the projected 12 %), CPU bytes 17 842 448 against 60 807 552, budget 134 604 544 B against 259 203 328 B: both at most the level's.
+- Phase 5: done-when 3 (the windowed time to first frame, three cold and three warm) is not met here: lane rule 10 forbids windowed runs. Headless warm reading instead: first frame 664 to 700 ms (RTX 3080 Laptop, load 8.9). The windowed runs go to the owner with Phase 6.
+- Phase 5: `SyncStats::light_us` is per sync; the one upload is seven syncs of the 16 384-sample budget, and the first reads 8.297 to 8.812 ms for 16 471 samples. The total over the seven was not read.
+- Phase 5 gate: workspace quick tier 494 of 496 at load 28, the same two existing tests over 30 s as in Phase 1; clippy, fmt, comment hygiene and doc links clean.
+- Phase 5: the 1-minute load never stayed under 2 inside the lock from 09:05 to 10:07 (the orchestrator's hour of retries; low point 2.10); every Phase 5 reading is labelled loaded (4.3 to 12.8). Frame medians, three runs each, 1080p: RTX 3080 Laptop hall 11.448 to 11.510, chasm 10.658 to 10.714, crystals 12.955 to 13.523 ms; RADV iGPU hall 79.551 to 79.861, chasm 75.706 to 100.301, crystals 89.861 to 90.413 ms (`docs/nfr.md` §2, with the passes).
+- Phase 4: `showcase_hall.png` re-blessed after the 0039 merge (ae1090d) against `LookPreset::DEFAULT` (contour-sharp fit and tuning; the test points at it from a694ee2), on lavapipe (llvmpipe, LLVM 23.1.3, Mesa 26.2.5), exclusive perf lock, load 6.57: 99 326 light samples (0 with the emission off), hue shares amber 63.09 %, ember 1.71 %, cyan 2.82 %, violet 3.60 %, mean sRGB luma 51.0/255, 0 pixels over 2/255 with the emission off; the unblessed rerun (load 7.67) differs in 0.0000 % of pixels. Gpu tier after it: 144 of 144, 17 skipped.
+- Phase 4: `hero --shot all` re-run at 4fd5668 in the contour-sharp default (release, RTX 3080 Laptop, exclusive perf lock, load 14.92, loaded): 99 326 light samples after 7 syncs, 64 frames, exposure 1.5; mean sRGB luma hall 49.7, chasm 53.8, crystals 49.3, hall at spacing 32 52.7. In the stills the ore patches are flat saturated areas (amber near cream, amethyst lilac), the chasm shot's lower half is the bridge deck, and the crystals shot frames the amethyst roof and the pillars with the cyan prisms at the bottom-right edge.
+- Phase 5a: the spacing sits in the modes line after the indirect part (`indirect on at 64 rays 1/8, probes 16, filter on`), only while indirect light is on, so `F8` off drops it (`hud::Modes::with_probe_spacing`, set from `--probe-spacing` in `start_modes`). The default-line assertion in `main.rs`'s parse test gains `probes 16`; `mode_banner.png` starts with indirect off and is unchanged. Test: `the_banner_names_the_probe_spacing_while_indirect_light_is_on` (cave, level and showcase; default, 32, `--indirect off`, `F8` off and on).
+- Phase 5a gate: workspace quick tier 493 of 500 at load 23.7, the 7 over 30 s existing CPU tests (`collapse_level` 2, `castle` 3, `castle_vector`, `replay::a_stamp_and_a_collapse_replay_from_the_save`); rerun alone under the default profile at load 30.9 they passed (10 of 10 with their binaries). Clippy, fmt and comment hygiene clean; no render code touched, no gpu tier.
+- Phase 6 (owner, `live/session1.sh` at e4b43bb, 2026-10-27 21:31 to 21:43): the hero shot stays `hall` (any of the four stills would do); palette and intensities as shipped; the hall's size is right; the hero's probe spacing is 32; and "for showcase we should not have light ore on the ceiling ... only some, let cave be half dark, with crystals", which is Phase 6a.
+- Phase 6, Phase 5's windowed time to first frame (`flythrough --source showcase`, release e4b43bb, RTX 3080 Laptop, windowed, each run under the exclusive perf lock): cold (dGPU runtime-suspended before each) 2077, 2047 and 2081 ms at load 1.24, 0.68 and 7.56 (the last loaded); warm 671, 660 and 701 ms at load 7.12, 6.71 and 6.17 (loaded). The session's first look run (`--source showcase`, 21:31, load 1.50, not one of the six) printed 4015 ms; the next three look runs 726, 742 and 689 ms.
+- Phase 1: `level_mirror_budget` takes the world, not a `Full` count (`level_mirror_budget(&world, 1176, attrs)`).
+- Phase 6a: amber (west) and amethyst (east, off the roof) are wall ore from 4 m over the floor (`WALL_ORE_OVER_FLOOR` 40) to under `ORE_TOP_Z` (z 248); every ore needs an air six-neighbour other than the one below it; stalactites carry no ore; ember lies only in the chasm's lowest 24 voxels (`EMBER_TOP_Z` 56); vein thresholds amber and amethyst 20 000, ember 9000; a crystal voxel whose only air is below is rock. The amethyst zone moved from the dome's top third to the east walls.
+- Phase 6a readings (seed 1, quick tier): light samples amber 3792, crystal 13 497, amethyst 1552, ember 10 965, total 29 806; fullest chunk 2880; 0 ceiling faces and 0 at or over z 248; floor cells 446 of 741 dark (60.2 %), lit by amber 132, crystal 123, amethyst 54, ember 0. Flood unchanged (88 620 bricks). Showcase vector re-blessed `0xb2ed_b827_7dc9_3e82`.
+- Phase 6a: crystal (13 497) outnumbers each other ore's samples; ember (10 965) is second.
+- Phase 6a: the hero's default probe spacing is 32 (`HERO_PROBE_SPACING`); the review set's fourth still is `hero-hall-spacing16.png` (the fly-through's spacing) in place of `hero-hall-spacing32.png`.
+- Phase 6a: `showcase_hall.png` re-blessed on lavapipe (llvmpipe, LLVM 23.1.3, Mesa 26.2.5) at the shots' exposure 1.5: mean sRGB luma 16.7/255, hue shares amber 7.69 %, ember 1.02 %, cyan 4.46 %, violet 0.26 % (three classes over 0.5 %). Phase 4 bar 4's assertion (`tests/golden.rs`, outside Phase 6a's files) is 12..40/255 per the Phase 6b amendment.
+- Phase 6a: exposure sweep before the amendment (hero, 640x360, RTX 3080 Laptop, exclusive perf lock, load 12.23, loaded), mean luma at exposure 1.5 / 3 / 4.5 / 6: hall 18.3 / 27.4 / 35.2 / 42.2, chasm 29.8 / 45.4 / 58.6 / 70.3, crystals 25.9 / 40.9 / 53.8 / 65.1. `hero --shot all` at exposure 1.5 (1920x1080, RTX 3080 Laptop): hall 17.9, chasm 29.6, crystals 25.5, hall at spacing 16 16.3, all inside 12..40. Phase 4's exposure rule has no automated check beyond the golden's bar 4; these are its readings.
+- Phase 6b (owner, `live/session1b.sh`, 2026-10-27): "much better now, could be a bit darker but we can keep it"; option b (exposure stays 1.5, luma band 12..40/255), recorded as the plan's Phase 6b amendment.
+- Merge of main at 51a6de8 (Plan 0041, FSR 2; the 0032 amendment; Plan 0047, ADR-0036): three conflicts. `.config/nextest.toml`: main's lines (with `flythrough::fsr2` in every filter and its three slow tests) plus the showcase golden on the slow list, as before. `tests/golden.rs`: both blocks kept (the showcase golden, then main's `fsr2.png`). `main.rs`: main's `Run` fields (`upscaler`, `upscaler_changed`) with this lane's `modes: self.args.start_modes()` (source and probe spacing). No names changed. The merge makes the fly-through's default our upscaler at internal scale 1.5 with its jitter (`DEFAULT_SCALE`, `upscaler_settings`).
+- Merge of main at ce07d8a (Plan 0040, eye adaptation; `Lighting::exposure` is `Exposure`, the fly-through's default `--exposure auto`): six conflicts. `.config/nextest.toml` and `tests/golden.rs` as in the first merge (main's `flythrough::exposure` entries kept; the showcase golden's exposure becomes `Exposure::Manual(1.5)`). `docs/nfr.md` §2: both paragraphs kept. `hud.rs`: one `Modes::line` with this lane's `source NAME, ` and `probes N` and main's `exposure MODE EV`. `main.rs`: one `Args::start_modes(now_ms)` (main's name and signature) that also names the source and the probe spacing; the showcase's start exposure moved from `start_lighting` into the parser (`--source showcase` without `--exposure` sets `exposure = Some(shot exposure)`, so `--exposure auto` still selects auto there). `examples/hero.rs`: this lane's file with main's `--exposure auto|E` folded into the shot override (`Option<Exposure>`, each shot's `Exposure::Manual` by default).
+- Phase 6a, after the two merges: the merged fly-through's default upscaler is ours at internal scale 1.5 with its jitter and sharpening 0.5, so `showcase_hall` (`tests/golden.rs`, outside Phase 6a's files) renders through it (`Frame::with_sizes` at 213 x 120 for 320 x 180, `set_jitter(true)`, `set_sharpness(0.5)`), at `Exposure::Manual(1.5)`. Re-blessed on lavapipe (llvmpipe, LLVM 23.1.3, Mesa 26.2.5), exclusive perf lock, load 6.98: 29 806 light samples (0 with the emission off), hue shares amber 7.43 %, ember 0.69 %, cyan 4.56 %, violet 0.06 %, mean sRGB luma 16.8/255, 0 pixels over 2/255 with the emission off; the unblessed rerun differs in 0.0000 % of pixels. Opened before commit: a dark hall, the cyan cluster at the centre, amber specks on the walls, one violet streak at the left.
+- Phase 6a gate (tree of 116d1d6 plus the golden): gpu tier 176 of 176 (23 skipped) under the perf lock; the full tier of 116d1d6 705 of 705 (10 skipped).
+- Phase 7: no emission value changed in Phase 6, so `lib.rs` and Phase 3's bars are untouched. The hero's upscaler defaults follow the merged fly-through: `--internal-scale 1.5` and the jitter on unless `--jitter` is given (off at scale 1), where they were scale 1 with the jitter off; the Resume notes' gotcha (no upscaler at the defaults) no longer holds, and the caption says our upscaler is on at 1.5. Each shot keeps its manual exposure 1.5 (`Exposure::Manual`); `--exposure auto` selects the eye. The parse test pins both.
+- Phase 7: `docs/images/hero.png` shot at 4357e71 plus the Phase 7 hero defaults: `hero --source showcase --shot hall --seed 1 --size 1920x1080 --frames 64 --exposure 1.5 --indirect on --probe-spacing 32 --internal-scale 1.5 --jitter on --sharpen 0.5 --lamp off` (release, NVIDIA GeForce RTX 3080 Laptop GPU, exclusive perf lock, load 7.30): 1920 x 1080, 29 806 light samples after 3 syncs, 64 frames, mean sRGB luma 17.8/255. The same command to `live/hero-repro.png` (load 8.47) is byte-identical (0 pixels differ). Opened: dark pillars frame the view; the cyan crystal cluster in the middle distance lights a teal patch of the far wall, with the chasm's red ember line under it and stalactites against a dim red dome; amber ore shows as flat pale-cream patches on the pillars and walls, violet as small streaks at the left; the near floor is black.
+- Phase 7: the README's flag table gains `--source cave|level|showcase` and `--shot`, `--level` reads as `--source level`, `--walk` takes either bounded source, and `--lamp` and `--light-radius` name the showcase's defaults.
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature (testbed only; no engine crate changed).
+- **Public API changed:** `flythrough` only. New `flythrough::showcase` (`ShowcaseSource`,
+  `SHOWCASE_CHUNKS`, `CRYSTAL`, `AMETHYST`, `EMBER`, `Shot`, `SHOTS`, `Shot::named`);
+  `showcase_materials()` and the three emission constants in `lib.rs`; `level_mirror_budget`
+  takes the world; `hud::Modes::with_source` and `with_probe_spacing` (the line gains
+  `source showcase, ` and `probes N`). Fly-through flags: `--source cave|level|showcase`
+  (`--level` kept), `--shot NAME`; on the showcase `--lamp` defaults off, `--light-radius` 19,
+  and the start exposure is the shot's manual 1.5 unless `--exposure` is given. `hero`:
+  `--source`, `--shot NAME|all`, `--out-dir`, `--indirect`, `--probe-spacing` (default 32),
+  `--internal-scale` (default 1.5), `--jitter` (default on above scale 1), `--sharpen`,
+  `--light-radius`, `--adapter`, `--lamp` (default off), `--size` (default 1920x1080),
+  `--exposure auto|E`. `world_budget --source showcase|level`.
+- **Budget readings:** `docs/nfr.md` §2 (the showcase at its three shots, both adapters,
+  654d3c6, loaded), §3 (showcase 71 282 `Full` bricks, CPU bytes 17 842 448 against the level's
+  60 807 552, mirror budget 134 604 544 B against 259 203 328 B) and §7 (windowed first frame,
+  e4b43bb, RTX 3080 Laptop: cold 2047 to 2081 ms, warm 660 to 701 ms, against 3 s); machines,
+  commits and loads in the Notes above. The light samples fell from 99 326 to 29 806 with Phase
+  6a (seed 1); the §2 and §3 readings predate it and were not re-read.
+- **Gate at the tip (a8355f8, plan-0038):** `cargo build --workspace --all-targets` exit 0;
+  `cargo nextest run --workspace --profile full --no-fail-fast --test-threads 2` under the
+  exclusive perf lock, exit 0, 705 of 705 passed, 10 skipped (load 2.94 at the end);
+  `cargo test --doc --workspace` 7 passed; `cargo clippy --workspace --all-targets -- -D
+  warnings` exit 0; `cargo fmt --all --check` exit 0; `cargo deny check` advisories, bans,
+  licenses and sources ok (one unmatched-license-allowance warning); `scripts/check-doc-links`,
+  `check-comment-hygiene`, `check-index-rows` and `check-test-tiers` exit 0;
+  `scripts/build-guests.sh` run first.
+- **Outstanding `human` phases:** none.
 
 ## Followups
+
+From the close review (2026-10-28), none blocking:
+
+- **Amber reads as flat cream.** In `hero.png` the amber ore (`ORE_EMISSION` `[1.6, 0.9, 0.35]` at
+  manual exposure 1.5) clips to near-white patches with no gradation, while the other three ores
+  keep their hue. The owner accepted the palette as shipped (Phase 6). A later look pass can
+  lower the amber's radiance for the showcase only (its own row instead of the shared `ore`
+  row) or let the tone map roll off saturated emitters.
+- **Thin golden margins.** `showcase_hall.png`'s ember share is 0.69 % against the 0.5 % floor
+  and violet 0.06 %, so bar 3 holds on three classes with little room. The golden is
+  deterministic on lavapipe; a change to the default look or the upscaler that dims the
+  chasm's line will trip it, and re-blessing then needs the shares re-read, not only the
+  pixels.
+- **The TL;DR's banner.** The TL;DR says the reader first sees the yellow `source showcase ...
+  lamp off` banner; `hero` renders no HUD, so the still has no banner. The banner is the
+  fly-through's (Phase 1's test). Wording only.
+- **`SyncStats::light_us` per sync.** Phase 5 read the first sync's extraction only (8.3 to
+  8.8 ms for 16 471 samples then; 4.27 ms for 16 564 samples at the close); the total over the
+  upload's syncs was never summed. With 29 806 samples the upload is now two syncs.
+- **One windowed first frame over 3 s.** The owner's first look run of the Phase 6 session read
+  4015 ms (load 1.50); the six counted runs and the next three sat at 0.66 to 2.08 s. Its cause
+  was not read; a later first-frame pass can time a cold start after a fresh boot.

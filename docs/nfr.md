@@ -624,6 +624,22 @@ off the same camera reads a mean of 0.91, p99 1. From 20 m out the cutaway read 
 p99 201 (load 21.3). A ray through the hull steps uniform bricks eight voxels at a time and the
 voxels of full bricks one at a time.
 
+**The showcase cavern at its shots (Plan 0038 close, 2026-10-28, b9f4b08, `flythrough --source
+showcase --shot NAME --headless --render 1920x1080 --frames 300 --adapter NVIDIA|AMD`, median
+of 30 frames, three runs each, the shipped defaults: lamp off, indirect on at probes 16, our
+upscaler at scale 1.5 (1280x720 internal), the contour-sharp look, manual exposure 1.5;
+29 806 light samples; exclusive perf lock, 1-minute load 2.2 to 5.9, so loaded and
+indicative):** readings, no line. RTX 3080 Laptop GPU: `hall` 5.848 to 5.906 ms (hit 1.96 to
+1.97, light 1.29 to 1.30, atrous 0.48, probes 1.15 to 1.16, upscale 0.54), `chasm` 5.627 to
+5.645 ms (hit 1.38 to 1.39, light 1.39 to 1.40, probes 1.35 to 1.36), `crystals` 6.549 to
+6.613 ms (hit 2.51 to 2.53, light 1.39 to 1.40, probes 1.17 to 1.18). The Radeon iGPU on RADV
+(`AMD Radeon Graphics (RADV RENOIR)`): `hall` 44.144 to 44.184 ms (hit 15.8, light 11.6,
+probes 8.0, upscale 3.2), `chasm` 42.675 to 42.843 ms (hit 11.0, light 12.3, probes 10.5 to
+10.6), `crystals` 49.436 to 49.456 ms (hit 20.4, light 12.5, probes 7.9 to 8.0). Phase 5's
+readings at 654d3c6 (no upscaler, 99 326 samples before Phase 6a thinned the ore) read 10.7
+to 13.5 ms and 75.7 to 100.3 ms; most of the fall is the 1.5 internal scale, which the merged
+default brought. The long rays across the hall keep the hit pass the largest at `crystals`.
+
 **Eye adaptation (Plan 0040 close, 2026-10-28; ADR-0033): the meter in the composite and the
 exposure pass, under "Upscale, tone map, post".** `flythrough --level --headless --seed 1
 --render 1920x1080 --frames 3000 --upscaler off --adapter NVIDIA|AMD` (1080p internal), the
@@ -926,6 +942,18 @@ at rest (`--census`): the level's 383 608 `Full` bricks hold 1 material (275 466
 or 3 to 4 (817); the streamed defaults' 1 640 292 `Full` bricks and 1 158 516 `Full`
 mip-bricks hold 1 or 2. Mirror bytes are unchanged by construction: the level reads
 232 436 992 B live.
+
+**The showcase cavern beside the level (Plan 0038 close, 2026-10-28, b9f4b08, `world_budget
+--source showcase --census` and `--chunks 20,20,8 --census`, seed 1, release, the dev
+reference; arithmetic from the generated worlds, no timing):** the showcase's 1176 chunks hold
+71 046 `Full` bricks (26 187 of 1 material, 44 859 of 2) against the level's 383 608 in 3200
+chunks: CPU bytes 17 620 080 against 60 807 552, mirror bytes 14 453 792 against 62 846 720,
+and the fly-through's bounded budget (`level_mirror_budget(world, chunks, contour)`, dig
+headroom included) 134 604 544 B against 259 203 328 B. Live in the fly-through: 33 003 744 B
+of mirror in 134 604 480 B allocated. Light samples 29 806 of the 1 048 576 reserved (amber
+3792, crystal 13 497, amethyst 1552, ember 10 965; the fullest chunk 2880 of its 8192 cap), so
+no new VRAM. Phase 5's census at 654d3c6, before Phase 6a moved the ore, read 71 282 `Full`
+bricks and 99 326 samples.
 
 
 **Stats HUD (arithmetic, Plan 0010; ADR-0009).** The overlay holds about 130 KiB of VRAM
@@ -1314,6 +1342,20 @@ mean 423.5 to 427.9 us and p99 2258 to 2380 us per chunk with the castle, agains
   at full residency: 1 547 872 `Full` bricks with the castle (its materials in 295 bricks of
   3 to 4 materials and 407 with glass) against 1 640 292 without, the hall replacing cave
   surface; mirror 841 816 812 B live against 871 679 852 B.
+  **Reading (Plan 0038 Phase 5, 654d3c6, `flythrough --source showcase --headless --frames
+  60`, release, RTX 3080 Laptop GPU, three warm runs, exclusive perf lock, 1-minute load 8.9,
+  loaded):** generation of the 1176 chunks 281 to 300 ms (71 282 `Full` bricks), device ready
+  443 to 470 ms, the first sync 83 to 86 ms for 33 554 128 B, first frame 664 to 700 ms. The
+  first sync's light-sample extraction (`SyncStats::light_us`) 8.297 to 8.812 ms for 16 471
+  samples from 21 484 bricks, the sync's sample budget (16 384 plus the last chunk); the rest of
+  the 99 326 follow over six more syncs (29 806 in two syncs since Phase 6a; the close's first
+  sync read 4.269 ms for 16 564 samples). Headless, so no window or surface.
+  **Reading (Plan 0038 Phase 6, e4b43bb, `flythrough --source showcase`, windowed, release, RTX
+  3080 Laptop GPU, exclusive perf lock per run):** cold (the dGPU runtime-suspended before
+  each) 2077, 2047 and 2081 ms at load 1.24, 0.68 and 7.56 (the last loaded); warm 671, 660
+  and 701 ms at load 7.12, 6.71 and 6.17 (loaded). Under the 3 s line. The session's first run
+  (load 1.50, not one of the six) read 4015 ms, over the line; it was not reproduced in the
+  next three (689 to 742 ms) and its cause was not read.
  of a one-crate change under 10 s on the dev reference; the
   everyday loop does not compile crates a plan does not touch (`default-members`).
   **Reading (Plan 0011 Phase 4, dev reference, AMD Ryzen 9 5900HS, `CARGO_BUILD_JOBS=3`,

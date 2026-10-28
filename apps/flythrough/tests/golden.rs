@@ -1608,6 +1608,150 @@ fn upscaled_golden_sharpens_within_the_neighbourhood() {
     assert_eq!(over, 0);
 }
 
+/// The showcase's `hall` shot at the golden's size after [`SHOWCASE_FRAMES`] frames at the
+/// fly-through's defaults (indirect light on at the default probe spacing, our upscaler at
+/// its default scale 1.5 with its jitter, the lighting at its default resolution, `LookPreset::DEFAULT` with
+/// rock's detail), the lamp off, the shot's exposure and the showcase's light radius, under
+/// `table`.
+fn showcase_hall(table: &MaterialTable) -> Option<(Vec<u8>, u64)> {
+    use flythrough::showcase::{SHOTS, ShowcaseSource};
+    let source = ShowcaseSource::new(1);
+    let world = World::generate(source.extent(), &source, table);
+    let pool = flythrough::level_pool_units(&world, true) * UNIT_BYTES;
+    let (device, queue) = software_device(pool)?;
+    let chunks = world.extent().len() as u64;
+    let mut gpu = GpuWorld::with_surface_attrs(
+        &device,
+        MirrorConfig {
+            budget_bytes: flythrough::level_mirror_budget(&world, chunks, true),
+            light_radius: 19,
+            ..MirrorConfig::new(Window::Fixed(world.extent()))
+        },
+    );
+    let look = flythrough::LookPreset::DEFAULT;
+    gpu.set_surface_fit(look.tuning.fit);
+    let shot = SHOTS[0];
+    gpu.set_focus(shot.eye);
+    let mut last = None;
+    for _ in 0..256 {
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        gpu.sync(&world, &queue, &mut enc).expect("the mirror fits");
+        gpu.update_attrs(&mut enc);
+        queue.submit([enc.finish()]);
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("device poll after a sync");
+        if last == Some(gpu.light_samples()) {
+            break;
+        }
+        last = Some(gpu.light_samples());
+    }
+    // The fly-through's default upscaler: ours at internal scale 1.5 with its jitter and
+    // sharpening 0.5.
+    let output = [WIDTH, HEIGHT];
+    let mut frame = Frame::with_sizes(
+        &device,
+        vxe_render::RenderScale::OneHalf.internal(output),
+        output,
+    );
+    frame.set_jitter(&device, true);
+    frame.set_sharpness(&queue, 0.5);
+    frame.set_lighting(vxe_render::Lighting {
+        lamp: false,
+        indirect: true,
+        exposure: vxe_render::Exposure::Manual(shot.exposure_milli as f32 / 1000.0),
+        ..vxe_render::Lighting::default()
+    });
+    frame.set_look(vxe_render::LookParams {
+        normal_mode: look.normal_mode,
+        detail: true,
+        tuning: look.tuning,
+        ..vxe_render::LookParams::default()
+    });
+    let camera = Camera {
+        position: shot.eye.0.map(|v| v as f32 + 0.5).into(),
+        yaw: (shot.yaw_deg as f32).to_radians(),
+        pitch: (shot.pitch_deg as f32).to_radians(),
+        vfov: 70f32.to_radians(),
+    };
+    for _ in 0..SHOWCASE_FRAMES {
+        frame.step(&device, &queue, &gpu, &camera, &LightParams::headlamp());
+    }
+    Some((
+        readback::read_rgba8(&device, &queue, frame.target()),
+        gpu.light_samples(),
+    ))
+}
+
+/// Frames the showcase golden settles over.
+const SHOWCASE_FRAMES: u32 = 64;
+
+/// The hue class of a pixel brighter than 24/255: amber, ember, cyan or violet.
+fn hue_class(p: &[u8]) -> Option<usize> {
+    let [r, g, b] = [p[0], p[1], p[2]].map(f32::from);
+    if r.max(g).max(b) <= 24.0 {
+        return None;
+    }
+    if r >= 3.0 * g {
+        Some(1)
+    } else if r >= g && g >= b && r >= 1.5 * b {
+        Some(0)
+    } else if g >= 1.3 * r && b >= 1.3 * r {
+        Some(2)
+    } else if b >= 1.5 * g && r >= 1.2 * g {
+        Some(3)
+    } else {
+        None
+    }
+}
+
+/// `showcase_hall.png`: the hall lit by its four ores alone. With every emission off the same
+/// view is black within 2/255 (no lamp: all its light is the ores'); at least three of the
+/// four hue classes each cover 0.5 % of the pixels; its mean sRGB luma lies in 12..40/255.
+#[test]
+fn showcase_hall_golden_is_lit_by_its_four_ores() {
+    let table = flythrough::showcase_materials();
+    let Some((lit, samples)) = showcase_hall(&table) else {
+        return;
+    };
+    assert_golden("showcase_hall.png", &lit);
+    let mut dark = MaterialTable::new();
+    for row in table.rows().iter().skip(1) {
+        dark.push(Material {
+            emission: [0.0; 3],
+            ..row.clone()
+        });
+    }
+    let (off, off_samples) = showcase_hall(&dark).expect("the adapter rendered once");
+    let lit_off = off
+        .chunks(4)
+        .filter(|p| p[..3].iter().any(|&c| c > 2))
+        .count();
+    let mut classes = [0usize; 4];
+    for p in lit.chunks(4) {
+        if let Some(c) = hue_class(p) {
+            classes[c] += 1;
+        }
+    }
+    let n = (WIDTH * HEIGHT) as f64;
+    let luma = lit
+        .chunks(4)
+        .map(|p| 0.2126 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[2]))
+        .sum::<f64>()
+        / n;
+    println!(
+        "showcase_hall.png: {samples} light samples ({off_samples} with the emission off); hue shares amber {:.2} %, ember {:.2} %, cyan {:.2} %, violet {:.2} %; mean sRGB luma {luma:.1}/255; {lit_off} pixels over 2/255 with the emission off",
+        classes[0] as f64 / n * 100.0,
+        classes[1] as f64 / n * 100.0,
+        classes[2] as f64 / n * 100.0,
+        classes[3] as f64 / n * 100.0
+    );
+    assert_eq!(lit_off, 0, "pixels lit with the emission off");
+    let covered = classes.iter().filter(|&&c| c >= 288).count();
+    assert!(covered >= 3, "{classes:?}");
+    assert!((12.0..=40.0).contains(&luma), "{luma}");
+}
+
 /// The level's spawn pose as the fly-through starts there: the spawn voxel's centre, yaw 0,
 /// 70 degrees of vertical field of view.
 fn level_spawn_camera() -> Camera {

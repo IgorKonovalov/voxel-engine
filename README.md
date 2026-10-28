@@ -3,15 +3,17 @@
 [![CI](https://github.com/IgorKonovalov/voxel-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/IgorKonovalov/voxel-engine/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-![A cave passage in the fly-through's bounded level, lit by the headlamp and a glowing ore vein](docs/images/hero.png)
+![A dark cavern seen between dark stone pillars, lit only by glowing ore: a cluster of cyan crystals in the middle distance over a red line of ember in a chasm, flecks of pale amber ore on the pillars and violet ore on a wall at the left, stalactites hanging from a dim red dome](docs/images/hero.png)
 
-<sub>The bounded level, seed 1, from voxel (148, 280, 484) at yaw 135 and pitch -10 degrees: the
-headlamp's cone and a vein of glowing ore, after 64 accumulated and filtered frames at exposure
-0.08, contour look, at the lighting defaults (half-resolution lighting, coarse shadow walk,
-reservoir reuse, edit-box history, a 32-frame emissive history), on an RTX 3080 Laptop GPU at
-1600x900. Regenerate with
-`cargo run --release -p flythrough --example hero -- --at 148,280,484 --yaw 135 --pitch -10
---exposure 0.08 --frames 64 --look contour`.</sub>
+<sub>The showcase cavern (`--source showcase`), seed 1, its `hall` shot: from voxel
+(190, 384, 218), 9 m over the west floor, at yaw 0 and pitch -12 degrees, lamp off, so all of
+the light is the four ores' (amber, cyan crystal, violet amethyst and red ember). 64 frames at
+a manual exposure of 1.5, indirect light on at a probe spacing of 32 voxels, our upscaler on at
+internal scale 1.5 (1280x720 for 1920x1080) with its jitter and sharpening 0.5, the default
+look (contour-sharp) and lighting, on an RTX 3080 Laptop GPU at 1920x1080. Regenerate with
+`cargo run --release -p flythrough --example hero -- --source showcase --shot hall --seed 1
+--size 1920x1080 --frames 64 --exposure 1.5 --indirect on --probe-spacing 32 --internal-scale
+1.5 --jitter on --sharpen 0.5 --lamp off` (every flag there is the example's default).</sub>
 
 A game-agnostic voxel engine in Rust. A streaming world of small voxels (10 cm at the first
 consumer's scale) is ray-marched in compute shaders through [`wgpu`](https://wgpu.rs), edited at
@@ -168,15 +170,18 @@ pulse and the emissive history; under it a second row names the upscaler and its
 3 s after the start and after every `F10`. It shows with the stats overlay off, and sits under
 its rows when `F2` has it on. The same lines go to stdout.
 
-Walking, the coarse grid and collapse run on the bounded level (`--level`) only. Every run
+Walking, the coarse grid and collapse run on the bounded worlds (`--source level` and
+`--source showcase`) only. Every run
 prints a `frames:` line at exit: p50, p99 and max of the frame's render-thread CPU, of
 `update + poll + sync`, and of the march's GPU time on the frames it was timed (the overlay
 shown, `F1`, the autopilot's flight).
 
 | Flag | Does |
 |------|------|
-| `--level` | The bounded level instead of the streamed cave |
-| `--walk` | With `--level`: start in walk mode |
+| `--source cave\|level\|showcase` | The world: the streamed noise cave (default), the bounded level, or the showcase cavern (a bounded 72 m hall lit by four ores; the lamp off and the light radius 19 unless given, its `hall` shot's pose and manual exposure 1.5 unless `--shot` or `--exposure` says otherwise; no `--save`, `--replay`, `--vault`, `--autopilot`, `--room` or `--castle`). The banner's line starts `source showcase` |
+| `--level` | The same as `--source level` |
+| `--shot hall\|chasm\|crystals` | With `--source showcase`: start at the named shot's pose and exposure (default `hall`) |
+| `--walk` | With a bounded source: start in walk mode |
 | `--seed N` | World seed (default 1) |
 | `--hud` | Start with the stats overlay shown; with `--view steps` it adds a row with the last frame's mean, p99 and block-max mean steps per ray and the mean loads |
 | `--logic native\|wasm[=PATH]` | Run the dig logic natively (default) or as a component; `wasm` needs `--features wasm` |
@@ -200,7 +205,7 @@ shown, `F1`, the autopilot's flight).
 | `--save PATH` | With `--level`: write the session's log file to `PATH` on exit and print the world hash; stamps and collapse are in the log |
 | `--audio` | Open the default output device; `H`, `J`, `T` and `E` then work, and every frame probes the sounds' occlusion through the world. `FLYTHROUGH_HRIR=<pack>` loads another HRIR pack |
 | `--audio-debug` | `--audio` plus a line a second of the output callback's readings; on exit writes the last 60 s to `flythrough-audio-debug.wav` |
-| `--lamp on\|off` | The headlamp (default on) |
+| `--lamp on\|off` | The headlamp (default on; off on the showcase) |
 | `--lamp-toggle N` | Switch the lamp every `N` frames as `F7` does; at exit print the probe passes' median inside and outside the light-change windows |
 | `--fade-reading` | Headless: dig five times along the camera ray, settle the light with the lamp off, then on, switch it off and print, for the screen centre's direct light, indirect light and their sum, the first frame under 10 % of the lamp's part |
 | `--indirect on\|off` | Indirect light from the probe volume that follows the camera (default on) |
@@ -218,7 +223,7 @@ shown, `F1`, the autopilot's flight).
 | `--sharpen S` | The upscaler's RCAS sharpening (FSR 2's RCAS under `fsr2`), 0 to 1 (default 0.5, 0 off) |
 | `--emissive-history N` | Frames static emissive light accumulates over at least, 1 to 4096 (default 32); the headlamp's part keeps a short history |
 | `--filter on\|off` | The a-trous filter; off shows the light pass's raw irradiance (default on) |
-| `--light-radius N` | Chunks around the camera whose emitters light the frame (default 4) |
+| `--light-radius N` | Chunks around the camera whose emitters light the frame (default 4; 19 on the showcase) |
 | `--replay PATH` | With `--level`: re-simulate a saved session before the first frame and print its hash; add `--vault` for a session saved with it (the save does not record the room placed at generation) |
 
 The storage figures come from an example: `cargo run --release -p flythrough --example

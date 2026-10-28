@@ -3,8 +3,16 @@
 //!
 //! By default the cave is unbounded and streams around the camera (ADR-0003): full detail
 //! within `r_full` chunks, mips out to `r_lod`. `--level` generates the bounded level instead.
+//! `--source cave|level|showcase` picks the world: the streamed cave (the default), the level
+//! (as `--level`), or the showcase cavern (`flythrough::showcase`), a bounded hall lit by four
+//! emissive ores, started at its `hall` shot with the lamp off (`--lamp on` or `F7` turns it on)
+//! and a light radius of 19 chunks unless `--light-radius` is given; it walks, digs and
+//! collapses as the level does, and does not take `--save`, `--replay`, `--vault`,
+//! `--autopilot`, `--room` or `--castle`. The banner's line then starts `source showcase`.
+//! `--shot hall|chasm|crystals` (with the showcase) starts at that shot's pose and exposure
+//! instead of `hall`'s.
 //!
-//! `flythrough [--seed N] [--level] [--vault] [--castle] [--castle-out PATH]
+//! `flythrough [--seed N] [--level] [--source cave|level|showcase] [--shot NAME] [--vault] [--castle] [--castle-out PATH]
 //! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look PRESET] [--rock-detail SCALE,STRENGTH] [--plane-fit FIT]
@@ -201,6 +209,7 @@ use flythrough::logic::{BENCH_CARVES, BENCH_VERB, DIG_VERB, DigInput, FILL_VERB,
 use flythrough::logic::{
     DROP_VERB, PILE_VERB, REMOVE_VERB, STAMP_VERB, parse_region_line, parse_wedged_line,
 };
+use flythrough::showcase::{SHOTS, SHOWCASE_CHUNKS, Shot, ShowcaseSource};
 use flythrough::{
     LogicChoice, LookPreset, RESIDENCY, STREAM_MIRROR_BUDGET, ScrollSteps, cave_materials,
     chunk_ram, chunks_hash, level_mirror_budget, level_pool_units, mips_ram, percentile,
@@ -326,6 +335,10 @@ struct Args {
     frames: Option<u32>,
     bench: u32,
     level: bool,
+    /// `--source showcase`: the bounded showcase cavern (`flythrough::showcase`).
+    showcase: bool,
+    /// `--shot NAME`: the showcase shot the camera starts at, and its exposure.
+    shot: Shot,
     autopilot: bool,
     headless: bool,
     /// `--adapter SUBSTRING`: a headless run takes the first adapter whose name contains it.
@@ -484,6 +497,10 @@ const DEFAULT_JITTER: bool = false;
 /// The upscaler's sharpening strength by default (`--sharpen`).
 const DEFAULT_SHARPEN: f32 = 0.5;
 
+/// The light radius of `--source showcase` unless `--light-radius` is given, in chunks: the
+/// farthest pair of its 14 x 12 x 7 chunks is `sqrt(13^2 + 11^2 + 6^2) = 18.06` apart.
+const SHOWCASE_LIGHT_RADIUS: i32 = 19;
+
 /// Why walk mode is refused while streaming, for `--walk` without `--level` and for `G`.
 const WALK_NEEDS_LEVEL: &str =
     "walk mode needs --level (the coarse grid is not wired to streaming)";
@@ -521,9 +538,12 @@ impl Args {
     }
 
     /// The lighting modes at the start, the banner shown from `now_ms`, the auto exposure's
-    /// slot `start_auto` under `--adaptation`'s name.
+    /// slot `start_auto` under `--adaptation`'s name; the line names the showcase source first
+    /// and the probe spacing while indirect light is on.
     fn start_modes(&self, now_ms: f64) -> hud::Modes {
-        let mut m = hud::Modes::new(self.start_lighting(), self.lighting, now_ms);
+        let mut m = hud::Modes::new(self.start_lighting(), self.lighting, now_ms)
+            .with_source(self.showcase.then_some("showcase"))
+            .with_probe_spacing(self.probe_spacing);
         m.set_auto(self.adaptation, self.start_auto());
         m
     }
@@ -611,6 +631,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         frames: None,
         bench: 0,
         level: false,
+        showcase: false,
+        shot: SHOTS[0],
         autopilot: false,
         headless: false,
         adapter: None,
@@ -666,6 +688,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         upscaler: None,
     };
     let mut detail_flag = false;
+    // `--lamp` and `--light-radius` as given; their defaults depend on the source.
+    let mut lamp_flag = None;
+    let mut shot_flag = false;
+    let mut exposure_flag = false;
+    let mut light_radius_flag = None;
     // The part flags, applied to the `--look` preset after every flag is read.
     let mut rock_detail = None;
     let mut plane_fit = None;
@@ -879,11 +906,12 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--light-radius" => {
                 let v = value()?;
-                args.light_radius = v
+                light_radius_flag = v
                     .parse()
                     .ok()
                     .filter(|r| (0..=64).contains(r))
-                    .ok_or(format!("--light-radius takes 0 to 64 chunks, not {v}"))?;
+                    .ok_or(format!("--light-radius takes 0 to 64 chunks, not {v}"))
+                    .map(Some)?;
             }
             "--filter" => {
                 args.filter = match value()?.as_str() {
@@ -901,9 +929,9 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--fade-reading" => args.fade_reading = true,
             "--lamp" => {
-                args.lamp = match value()?.as_str() {
-                    "on" => true,
-                    "off" => false,
+                lamp_flag = match value()?.as_str() {
+                    "on" => Some(true),
+                    "off" => Some(false),
                     v => return Err(format!("--lamp takes on or off, not {v}")),
                 }
             }
@@ -922,13 +950,33 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 }
             }
             "--level" => args.level = true,
+            "--shot" => {
+                let v = value()?;
+                shot_flag = true;
+                args.shot = Shot::named(&v).ok_or_else(|| {
+                    let names: Vec<&str> = SHOTS.iter().map(|s| s.name).collect();
+                    format!("--shot takes {}, not {v}", names.join(", "))
+                })?;
+            }
+            "--source" => {
+                let v = value()?;
+                (args.level, args.showcase) = match v.as_str() {
+                    "cave" => (false, false),
+                    "level" => (true, false),
+                    "showcase" => (false, true),
+                    _ => return Err(format!("--source takes cave, level or showcase, not {v}")),
+                };
+            }
             "--detail" => detail_flag = true,
             "--autopilot" => args.autopilot = true,
             "--headless" => args.headless = true,
             "--adapter" => args.adapter = Some(value()?),
             "--walk" => args.walk = true,
             "--hud" => args.hud = true,
-            "--exposure" => args.exposure = parse_exposure(&value()?)?,
+            "--exposure" => {
+                args.exposure = parse_exposure(&value()?)?;
+                exposure_flag = true;
+            }
             "--adaptation" => {
                 let v = value()?;
                 args.adaptation = hud::Adaptation::from_name(&v).ok_or(format!(
@@ -966,6 +1014,35 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         }
     }
     args.detail = detail_flag || args.look.is_some();
+    // The showcase is lit by its ores alone, and its light radius keeps every emitter of the
+    // hall in the buffer from any eye.
+    args.lamp = lamp_flag.unwrap_or(!args.showcase);
+    args.light_radius = light_radius_flag.unwrap_or(if args.showcase {
+        SHOWCASE_LIGHT_RADIUS
+    } else {
+        vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS
+    });
+    // The showcase starts at its shot's manual exposure unless `--exposure` is given.
+    if args.showcase && !exposure_flag {
+        args.exposure = Some(args.shot.exposure_milli as f32 / 1000.0);
+    }
+    if shot_flag && !args.showcase {
+        return Err("--shot frames the showcase; it needs --source showcase".to_owned());
+    }
+    if args.showcase
+        && (args.save.is_some()
+            || args.replay.is_some()
+            || args.vault
+            || args.autopilot
+            || args.room.is_some()
+            || args.castle)
+    {
+        return Err(
+            "--source showcase builds its own bounded hall; it does not take --save, --replay, \
+             --vault, --autopilot, --room or --castle"
+                .to_owned(),
+        );
+    }
     if let Some(p) = args.look.as_mut() {
         p.rock_detail = rock_detail.unwrap_or(p.rock_detail);
         p.tuning.fit.fit = plane_fit.unwrap_or(p.tuning.fit.fit);
@@ -1011,7 +1088,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         );
     }
     if args.walk {
-        walk_allowed(!args.level && args.room.is_none()).map_err(|e| format!("--walk: {e}"))?;
+        walk_allowed(!args.level && !args.showcase && args.room.is_none())
+            .map_err(|e| format!("--walk: {e}"))?;
     }
     if (args.save.is_some() || args.replay.is_some()) && !args.level {
         return Err(SAVE_NEEDS_LEVEL.to_owned());
@@ -4906,6 +4984,16 @@ fn castle_camera(shot: castle::CastleShot) -> Camera {
     }
 }
 
+/// The camera at showcase shot `shot`: the eye voxel's centre, its yaw and pitch.
+fn shot_camera(shot: &Shot) -> Camera {
+    Camera {
+        position: shot.eye.0.map(|v| v as f32 + 0.5).into(),
+        yaw: (shot.yaw_deg as f32).to_radians(),
+        pitch: (shot.pitch_deg as f32).to_radians(),
+        vfov: 70f32.to_radians(),
+    }
+}
+
 /// The castle's banner row for `shot`: `castle gate`.
 fn castle_banner(shot: castle::CastleShot) -> String {
     format!("castle {}", shot.name())
@@ -5051,6 +5139,21 @@ fn main() {
         let generation =
             std::thread::spawn(move || World::generate(source.extent, &source, &table));
         (source.spawn(), Pending::Level(generation))
+    } else if args.showcase {
+        let source = ShowcaseSource::new(seed);
+        let table = flythrough::with_showcase_rows(&materials(&args));
+        let generation = std::thread::spawn(move || {
+            let t = now();
+            let extent = source.extent();
+            let world = World::generate(extent, &source, &table);
+            println!(
+                "generated the showcase, seed {seed}, over {SHOWCASE_CHUNKS:?} chunks in {:.0} ms: {} full bricks",
+                ms_since(t),
+                world.stats().full_bricks
+            );
+            world
+        });
+        (args.shot.eye, Pending::Level(generation))
     } else if args.level {
         let source = CaveSource::new(seed, ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS));
         if args.vault {
@@ -5119,6 +5222,8 @@ fn main() {
 
     let camera = if args.castle {
         castle_camera(args.castle_shot)
+    } else if args.showcase {
+        shot_camera(&args.shot)
     } else {
         Camera {
             position: spawn.0.map(|v| v as f32 + 0.5).into(),
@@ -6498,6 +6603,129 @@ mod tests {
         }
     }
 
+    /// `--source` picks the cave, the level (as `--level` does) or the showcase; the showcase
+    /// starts with the lamp off and a light radius of 19 unless the flags set them, and
+    /// refuses what it cannot take.
+    #[test]
+    fn source_showcase_parses_with_the_lamp_off_and_refuses_what_it_cannot_take() {
+        let a = parse_args_from(argv(&["--source", "showcase"])).expect("parses");
+        assert!(a.showcase && !a.level && !a.lamp);
+        assert_eq!(a.light_radius, 19);
+        let a = parse_args_from(argv(&[
+            "--source",
+            "showcase",
+            "--lamp",
+            "on",
+            "--light-radius",
+            "6",
+        ]))
+        .expect("parses");
+        assert!(a.lamp);
+        assert_eq!(a.light_radius, 6);
+        let a = parse_args_from(argv(&["--source", "showcase", "--walk"])).expect("walks");
+        assert!(a.walk && a.showcase);
+        assert_eq!(a.shot, SHOTS[0]);
+        for s in SHOTS {
+            let a = parse_args_from(argv(&["--source", "showcase", "--shot", s.name])).unwrap();
+            assert_eq!(a.shot, s);
+            assert_eq!(
+                a.start_lighting().exposure,
+                Exposure::Manual(s.exposure_milli as f32 / 1000.0)
+            );
+        }
+        assert_eq!(
+            parse_args_from(argv(&["--source", "showcase", "--shot", "keep"]))
+                .err()
+                .as_deref(),
+            Some("--shot takes hall, chasm, crystals, not keep")
+        );
+        assert!(parse_args_from(argv(&["--level", "--shot", "hall"])).is_err());
+        let level = parse_args_from(argv(&["--source", "level"])).expect("parses");
+        assert!(level.level && !level.showcase && level.lamp);
+        assert_eq!(
+            level.light_radius,
+            vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS
+        );
+        let cave = parse_args_from(argv(&["--level", "--source", "cave"])).expect("parses");
+        assert!(!cave.level && !cave.showcase && cave.lamp);
+        assert_eq!(
+            parse_args_from(argv(&["--source", "outdoor"]))
+                .err()
+                .as_deref(),
+            Some("--source takes cave, level or showcase, not outdoor")
+        );
+        for extra in [
+            &["--save", "a.log"][..],
+            &["--replay", "a.log"],
+            &["--vault"],
+            &["--autopilot"],
+            &["--room", "12"],
+            &["--castle"],
+        ] {
+            let mut v = vec!["--source", "showcase"];
+            v.extend_from_slice(extra);
+            let e = parse_args_from(argv(&v)).err().expect("refused");
+            assert!(e.starts_with("--source showcase builds"), "{extra:?}: {e}");
+        }
+    }
+
+    /// With `--source showcase` the banner's line starts `source showcase` and reads `lamp
+    /// off`; `F7` turns it to `lamp on`. Other sources name none.
+    #[test]
+    fn the_showcase_banner_names_its_source_and_the_lamp() {
+        let a = parse_args_from(argv(&["--source", "showcase"])).expect("parses");
+        let mut m = a.start_modes(0.0);
+        let line = m.line();
+        assert!(line.starts_with("source showcase, "), "{line}");
+        assert!(line.contains("lamp off"), "{line}");
+        let banner = m.banner(0.0).expect("the banner shows at the start");
+        assert!(banner.starts_with("source showcase"), "{banner}");
+        assert!(banner.contains("lamp off"), "{banner}");
+        assert!(banner.lines().all(|l| l.len() <= hud::BANNER_COLS));
+        m.press(hud::ModeKey::Lamp, 1000.0);
+        let banner = m.banner(1000.0).expect("F7 shows the banner");
+        assert!(banner.starts_with("source showcase"), "{banner}");
+        assert!(
+            banner.contains("lamp on") && !banner.contains("lamp off"),
+            "{banner}"
+        );
+        let level = parse_args_from(argv(&["--level"])).expect("parses");
+        assert!(level.start_modes(0.0).line().starts_with("lighting "));
+    }
+
+    /// While indirect light is on the banner names the probe spacing, `probes 16` by default
+    /// and `probes 32` with `--probe-spacing 32`, in every mode and source; with indirect light
+    /// off it names none.
+    #[test]
+    fn the_banner_names_the_probe_spacing_while_indirect_light_is_on() {
+        for source in [&["--level"][..], &["--source", "showcase"][..], &[][..]] {
+            let banner = |extra: &[&str]| {
+                let mut v = source.to_vec();
+                v.extend_from_slice(extra);
+                let a = parse_args_from(argv(&v)).expect("parses");
+                a.start_modes(0.0)
+                    .banner(0.0)
+                    .expect("the banner shows at the start")
+            };
+            let default = banner(&[]);
+            assert!(default.contains("probes 16"), "{source:?}: {default}");
+            let wide = banner(&["--probe-spacing", "32"]);
+            assert!(
+                wide.contains("probes 32") && !wide.contains("probes 16"),
+                "{source:?}: {wide}"
+            );
+            assert!(wide.lines().all(|l| l.len() <= hud::BANNER_COLS));
+            let off = banner(&["--probe-spacing", "32", "--indirect", "off"]);
+            assert!(!off.contains("probes"), "{source:?}: {off}");
+        }
+        let a = parse_args_from(argv(&["--probe-spacing", "32"])).expect("parses");
+        let mut m = a.start_modes(0.0);
+        m.press(hud::ModeKey::Indirect, 1000.0);
+        assert!(!m.banner(1000.0).unwrap().contains("probes"));
+        m.press(hud::ModeKey::Indirect, 2000.0);
+        assert!(m.banner(2000.0).unwrap().contains("probes 32"));
+    }
+
     #[test]
     fn cutaway_parses_auto_on_and_off() {
         assert_eq!(
@@ -6584,7 +6812,7 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
             d.start_modes(0.0).line(),
-            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on at 64 rays 1/8, filter on, ore pulse off, emissive history 32, exposure auto eye +0.00 EV"
+            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, emissive history 32, exposure auto eye +0.00 EV"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),

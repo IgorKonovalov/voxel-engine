@@ -283,6 +283,7 @@ fn generation_sources_contain_no_floating_point() {
     for path in [
         "src/cave.rs",
         "src/castle.rs",
+        "src/showcase.rs",
         "../../crates/vxe-world/src/hash.rs",
     ] {
         let text = std::fs::read_to_string(format!("{root}/{path}")).unwrap();
@@ -355,5 +356,49 @@ fn castle_vector() {
     assert_eq!(voxels, CASTLE_VOXEL_HASH);
 }
 
+/// The showcase's vector: [`flythrough::chunks_hash`] over all 1176 chunks of seed 1 in
+/// extent order, generated under the showcase's table. Blessed on Linux, asserted on every
+/// arm. Seed 2 gives another hash, and generating the chunks one by one through
+/// `WorldSource::chunk` in reverse order (in runs over the threads) gives the same voxels.
+#[test]
+fn showcase_vector() {
+    use flythrough::showcase::ShowcaseSource;
+    let source = ShowcaseSource::new(1);
+    let coords = source.extent().coords();
+    assert_eq!(coords.len(), 1176);
+    let table = flythrough::showcase_materials();
+    let world = World::generate(source.extent(), &source, &table);
+    let hash = flythrough::chunks_hash(&world, &coords).expect("every chunk is resident");
+    println!("showcase vector: 0x{hash:016x}");
+    assert_eq!(hash, SHOWCASE_HASH);
+    let other = ShowcaseSource::new(2);
+    let world2 = World::generate(other.extent(), &other, &table);
+    assert_ne!(flythrough::chunks_hash(&world2, &coords), Some(hash));
+    // Reverse extent order, in contiguous runs over the machine's threads.
+    let reversed: Vec<ChunkCoord> = coords.iter().rev().copied().collect();
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    std::thread::scope(|s| {
+        for run in reversed.chunks(reversed.len().div_ceil(threads)) {
+            let (source, world) = (&source, &world);
+            s.spawn(move || {
+                for &c in run {
+                    let mut one = Chunk::default();
+                    source.chunk(c, &mut one);
+                    let resident = world.store().get(c).expect("resident");
+                    let resident = resident
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    assert!(
+                        one.bricks() == resident.bricks(),
+                        "chunk {:?} differs generated alone",
+                        c.0
+                    );
+                }
+            });
+        }
+    });
+}
+
+const SHOWCASE_HASH: u64 = 0xb2ed_b827_7dc9_3e82;
 const CASTLE_VOX_HASH: u64 = 0x35a8_89ee_81c4_17e9;
 const CASTLE_VOXEL_HASH: u64 = 0xa2f6_f292_88e1_04e3;

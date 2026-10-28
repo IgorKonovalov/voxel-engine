@@ -6,6 +6,7 @@
 pub mod castle;
 pub mod cave;
 pub mod hud;
+pub mod showcase;
 pub use flythrough_logic as logic;
 
 use std::path::{Path, PathBuf};
@@ -195,6 +196,56 @@ pub fn with_emissive_ore(table: &MaterialTable) -> MaterialTable {
         assert_eq!(usize::from(t.push(m)), id);
     }
     t
+}
+
+/// The showcase's crystal emission: cyan, radiance per channel.
+pub const CRYSTAL_EMISSION: [f32; 3] = [0.35, 1.6, 2.0];
+/// The showcase's amethyst emission: a dim violet.
+pub const AMETHYST_EMISSION: [f32; 3] = [0.6, 0.2, 1.1];
+/// The showcase's ember emission: deep red.
+pub const EMBER_EMISSION: [f32; 3] = [2.4, 0.3, 0.08];
+
+/// `table` (the cave's five rows, air included) with the showcase's three emissive rows
+/// appended at `showcase::CRYSTAL`, `AMETHYST` and `EMBER`, each with rock's acoustics. The
+/// showcase's amber is the table's ore row as it stands.
+pub fn with_showcase_rows(table: &MaterialTable) -> MaterialTable {
+    let mut t = table.clone();
+    assert_eq!(
+        t.len(),
+        usize::from(showcase::CRYSTAL),
+        "the showcase's rows follow the cave's"
+    );
+    let acoustic = t.get(cave::ROCK).map_or([0.0; 3], |r| r.acoustic);
+    let row = |name: &str, albedo: [f32; 3], emission: [f32; 3]| Material {
+        albedo,
+        emission,
+        acoustic,
+        ..Material::named(name)
+    };
+    let rows = [
+        (
+            showcase::CRYSTAL,
+            row("crystal", [0.35, 0.75, 0.85], CRYSTAL_EMISSION),
+        ),
+        (
+            showcase::AMETHYST,
+            row("amethyst", [0.45, 0.25, 0.60], AMETHYST_EMISSION),
+        ),
+        (
+            showcase::EMBER,
+            row("ember", [0.60, 0.22, 0.10], EMBER_EMISSION),
+        ),
+    ];
+    for (id, m) in rows {
+        assert_eq!(t.push(m), id);
+    }
+    t
+}
+
+/// The showcase's table: [`look_materials`] with the ore emitting [`ORE_EMISSION`] (the
+/// amber) and the three emissive rows of [`with_showcase_rows`].
+pub fn showcase_materials() -> MaterialTable {
+    with_showcase_rows(&with_emissive_ore(&look_materials()))
 }
 
 /// Rock's procedural detail in every look but `--look plain`: a 40 cm feature scale (4 voxels)
