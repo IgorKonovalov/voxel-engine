@@ -17,6 +17,13 @@
 > emissive clamp. Done-when 5 says how the furnace and hole tests are judged. Phase 3's
 > partial-plug lag is accepted as a reading, and Phases 6 and 7 add a partial opening to the
 > owner's reveal run. The TL;DR, diagram, Budgets and Risks follow.
+> **Amended 2026-10-28 (owner, third),** after step C stopped on its verdict. Step C's rule
+> reads the furnace against the probe rays' own direct mean at their hits, not the light
+> pass's estimate, so its verdict is row 2 (no defect) and step D proceeds. The furnace test
+> now judges the probes against that mean, `indirect.png` and `showcase_hall.png` are
+> re-blessed by done-when 5's 1 % rule, and the hole test's bars stay. Step D opens with a
+> test-only filmstrip (`STILL_FILMSTRIP`), which Phases 6 and 7 show the owner. The firefly
+> clamp's bias on the probe rays goes to Followups. The TL;DR and Risks follow.
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet: static light in a dark cave)
 > **Related ADRs:** [ADR-0036](../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
@@ -59,7 +66,11 @@ firing in a still scene) and fixes the cause it measures. It found the slice cad
 spreading the slices by a hash of the probe stills `VEIN_POSE` but not the patch pose, and it
 moves some indirect tests. So the phase first explains that move (a defect is fixed before
 anything else) and then tries, in order, an `f32` irradiance atlas with a longer hysteresis and
-a per-ray emissive clamp (amended 2026-10-28, owner, second). Only then does the plan pick the
+a per-ray emissive clamp (amended 2026-10-28, owner, second). Step C found no defect: the
+moved tests read an order-dependent transient, and the furnace sits under pi because the
+firefly clamp biases the probe rays' direct light about 8.5 % low. So the furnace test now
+holds the probes to that direct mean, and a test-only filmstrip lets the owner see the patch
+pose before and after step D (amended 2026-10-28, owner, third). Only then does the plan pick the
 history length and the reuse cap by sweeping them against the bar, and set the default. The
 first thing anyone sees is the Phase 1 test printing today's patch counts on the two vein
 poses: about 78 per step at the patch pose and 36 at `VEIN_POSE` under default, 0 with the
@@ -382,14 +393,96 @@ flowchart LR
 
       | observation | verdict | next |
       |---|---|---|
-      | the base and hash long readings disagree, or a candidate shows a fault, or the furnace's long reading lies more than 3.5 % from pi on either (the `f16` stall band of 1.6 %, doubled by the albedo-0.5 bounce series, rounded up; less any offset of the light pass's direct mean, which the test prints) | a defect | fix it as its own commit, with a test that fails before the fix and passes after it. Then re-measure, before any further mechanism: step A's default rows at both poses, the hash rows, done-when 4 and done-when 5. Re-enter this table on the fixed tree. If the fix is the `f16` atlas itself, it is step D's `f32` atlas at hysteresis 0.97, and step D then sweeps only the hysteresis |
+      | the base and hash long readings disagree, or a candidate shows a fault, or the furnace's long reading lies more than 3.5 % from pi on either (the `f16` stall band of 1.6 %, doubled by the albedo-0.5 bounce series, rounded up; less any offset of the probe rays' own direct mean at their hits from pi. Amended 2026-10-28, owner, third: that mean, not the light pass's floor-centre estimate the test prints) | a defect | fix it as its own commit, with a test that fails before the fix and passes after it. Then re-measure, before any further mechanism: step A's default rows at both poses, the hash rows, done-when 4 and done-when 5. Re-enter this table on the fixed tree. If the fix is the `f16` atlas itself, it is step D's `f32` atlas at hysteresis 0.97, and step D then sweeps only the hysteresis |
       | they agree within noise, and the furnace's long reading lies within 3.5 % of pi on both | no defect: the moved tests read an order-dependent transient | judge the tests by done-when 5's rules, then go on to step D |
       | evidence of a defect that none of the candidates explains | unknown | **stop** with the readings: the architect amends |
+
+    - **Step C's verdict (amended 2026-10-28, owner, third): row 2, no defect.** The base
+      and hash long series agree on every pair, and none of the four candidates is at fault.
+      The probe rays' direct estimate at their hits averages D = 2.874, -8.5 % of pi: with
+      the probes' own irradiance left out, the centre probe's texel mean reads 0.5 D =
+      1.43703. The furnace's fixed point is E = 0.5 (D + E) = D, and its long texel mean
+      reads +0.8 % (base) and +1.1 % (hash) against D. With `FIREFLY_CLAMP` at 1e6 it reads
+      +6.3 % of pi. So the offset from pi is the light estimator's clamp
+      (`resolve_emissive` in `light.wgsl`, ADR-0018) at the probe rays' hits, outside the
+      probe code and outside this plan (Followups). The floor-centre direct estimate the
+      test prints (-0.025 %) is the light pass's, which sees almost none of that clamp.
+      The next steps follow from the verdict:
+      - `the_furnace_box_reads_pi_of_indirect_irradiance` changes to the form below, with
+        the owner's approval given on 2026-10-28. It lands in its own commit before step D's
+        first mechanism. The log has its readings in the old and new form on the base probe
+        code (53a5520's, unchanged at 93a2c72) and on the tip with the hash.
+      - `indirect.png` and `showcase_hall.png` are re-blessed by done-when 5's 1 % rule, in
+        the commit that lands the kept mechanism (so every commit's gate passes). The log
+        names each one's moved share and its mean luminance change on the same tree. Phase 6
+        re-blesses them again only if Phase 5's defaults move them.
+      - The hole test's bars stay as written.
+    - **The furnace test's new form (amended 2026-10-28, owner, third).** The claim: the probe
+      update converges the closed furnace to its fixed point, the probe rays' own direct mean
+      `D`, within 256 frames, in every centre-probe texel and in the floor centre's gather.
+      - *How `D` is measured,* with readbacks the test already has and no engine change. After
+        the 256-frame run and its reads, the test zeroes the centre probe's irradiance tile
+        with `ProbeVolume::write_test_tile` before every frame, and steps one frame at a
+        time. The box holds one live probe at spacing 16 (the centre probe), so its rays'
+        `probe_irradiance` at their hits is 0, and each frame on which the centre probe is
+        visited (its texels read back non-zero) leaves `(1 - HYSTERESIS) x 0.5 x D_t` in
+        texel `t`. The state stays settled (age 32 or more, not touched, no window), so the
+        blend is at `probes::HYSTERESIS`. `D` is the mean of `texel / ((1 - HYSTERESIS) x
+        0.5)` over the 36 interior texels and 32 visits (256 frames). Its standard error is
+        the spread of the 32 per-visit means over the square root of 32. The test asserts
+        that error is at most 0.5 % of `D`; if 32 visits miss that, dev raises them to 64
+        and logs it. Dev checks the method once against step C's `live/stepc-donly.patch`
+        reading (`D` = 2.874): they agree within 1 %, or dev stops. If step D's `f32` atlas
+        lands, `write_test_tile` and `read_probe` follow its format.
+      - *The bar.* At 256 frames, as today: (a) every centre-probe interior texel and every
+        channel of the floor centre's gather lies within 7 % of `D`; (b) the centre probe's
+        texel mean lies within 4 % of `D`. The test prints `D`, its error, its offset from pi
+        (about -8.5 %, the Followup's figure, printed and not asserted), and each reading
+        against `D` and against pi. The light pass's floor-centre direct mean stays printed,
+        labelled as the light pass's.
+      - *Where 7 % and 4 % come from.* Against `D`, step C read at 256 frames: floor +3.5 %
+        (base) and +0.2 % (hash); texel mean +1.5 % and -2.4 %; texel min -0.6 % (base) and
+        -5.6 % (the tip with the hash, 2.7129). Long (2048 frames): texel min -0.5 % and
+        -0.4 %, texel max +2.6 % and +3.6 %, floor +2.2 % and +3.3 %. At 256 frames the
+        texel mean still lags: on the hash it is -2.4 %, so its deficit after the young
+        visits is about 2.4 / 0.985^23 = 3.4 % (the albedo-0.5 bounce shrinks the deficit by
+        `1 - 0.5 (1 - h)` a settled visit, 23 settled visits by 256 frames). Step D's
+        hysteresis up to 0.99 keeps more of it: 3.4 x 0.995^23 = 3.0 %. The texel min sat
+        3.3 % under the texel mean at 256 frames on the hash, so the predicted worst texel is
+        about (1 - 0.030)(1 - 0.033) - 1 = -6.2 %, and the worst high reading is +3.6 %.
+        Bar (a) is that worst case rounded up to 7 %. Bar (b) is the mean's worst predicted
+        lag, 3.0 %, plus twice the 0.5 % measurement error, 4 %.
+      - *It still fails on a probe regression.* A lost bounce (the probes' irradiance missing
+        from their rays) reads 0.5 D, -50 %. A doubled bounce or a lost normalisation
+        diverges or moves the mean by tens of %. A cosine-weight or blend error moves the
+        mean, and the mean bar catches any bias over 4 %. A blend that stalls or converges
+        slower than the arithmetic above misses (b) at 256 frames. Against `D` the old bar
+        allowed -1.6 % to +20.2 % per texel; the new one allows -7 % to +7 %, tighter above
+        and wider below, and the mean bar has no counterpart in the old form.
+      - If the tip misses the new form, done-when 5's rule applies: the mechanism changes, or
+        dev stops for the architect. The bar is not widened again without the owner.
 
   - **Step D: the next mechanisms, at the patch pose, with the hash kept.** In this order,
     keeping the first that meets done-whens 2 to 6. Every tried setting's readings go in the
     log: the gather and composite statistics at both poses, done-when 5's tests, and the
     reading below.
+    0. **A filmstrip, before any mechanism (amended 2026-10-28, owner, third).** A test-only
+       debug output in the stillness rig (`apps/flythrough/tests/support/stillness.rs`, driven
+       from `emissive_stillness.rs`), behind the env var `STILL_FILMSTRIP`. Unset or empty, it
+       writes nothing and the rig behaves as today. Set to a tag (for example `before` or
+       `h0.98`), each run of the rig writes, per pose, a contact sheet PNG of the composite
+       at every 30-frame step of the window (off frames 120, 150, ..., 720: 21 frames, row by
+       row) to `live/filmstrip/<tag>/<pose>-composite.png` in the worktree's root, never
+       under `apps/flythrough/tests/golden/` or any other test's directory. Each frame keeps
+       its 192 x 108 pixels, and the tiles the rig counts as patches on the step into that
+       frame are outlined (one pixel, one colour). If cheap, the same sheets of the emissive
+       and gather parts (their tile log2 values under the pinned exposure, as grey) go
+       beside it as `<pose>-emissive.png` and `<pose>-gather.png`. The rig prints each
+       sheet's path and its frame order to stdout. It uses the PNG encoder the golden tests
+       already use: no new dependency and no engine change. Dev writes the `before` sheets
+       at both poses on the tip with the hash before step D's first mechanism, and a sheet
+       for the kept setting of each mechanism tried. Its commit is test-only and lands before
+       the first mechanism's commit.
     1. **An `f32` irradiance atlas and a settled hysteresis above 0.97.** The irradiance
        texels become `f32` rgba (the visibility map stays `f16`), and `probe_gather.wgsl`
        follows. Dev reads 0.97 on the `f32` atlas first, then 0.98, 0.985 and 0.99. The young
@@ -426,7 +519,7 @@ flowchart LR
   atlas bytes in `frame_bytes`), `crates/vxe-render/src/shaders/probe_gather.wgsl` (only for
   an `f32` atlas), `apps/flythrough/tests/indirect.rs`, `apps/flythrough/src/main.rs` and
   `apps/flythrough/src/hud.rs` (only for a new switch), this plan's log. Step C's scratch runs
-  go under `live/`. A defect's fix touches the file the defect is in, and its test goes in
+  go under `live/`, and so do the filmstrips (`live/filmstrip/`, never committed). A defect's fix touches the file the defect is in, and its test goes in
   `probes.rs`'s unit tests or `apps/flythrough/tests/indirect.rs`.
 - **Done when** (the Phase 1 rig: lavapipe, 192 x 108, `Lighting::default()` with indirect on,
   off frames 120 to 720, the pinned `Manual` exposures, `H` 32, the gather's own tiles):
@@ -467,6 +560,11 @@ flowchart LR
      - `indirect.png` and `showcase_hall.png` are re-blessed by the 1 % rule above only after
        step C's verdict is "no defect", or its defect is fixed. Each is named in the log with
        its moved share and its mean luminance change on the same tree.
+     - **Amended 2026-10-28 (owner, third).** Step C's verdict is "no defect". The furnace
+       test is judged in its new form (step C's verdict, above): every texel and the floor
+       within 7 % of the probe rays' direct mean `D` and the texel mean within 4 %, at 256
+       frames. The hole test's bars stay as written. `indirect.png` and `showcase_hall.png`
+       are re-blessed by the 1 % rule in the kept mechanism's commit.
   6. **Cost.** The probe update pass at the defaults costs at most 5 % more than before on each
      adapter, read in Phase 6's budget run. `Frame::frame_bytes` grows by at most 16 777 216 B
      (an `f32` rgba irradiance atlas: 32 768 probes x 64 texels x 8 B more), and by 0 for any
@@ -474,7 +572,10 @@ flowchart LR
   7. **The reordering is explained (amended 2026-10-28, owner, second).** The log has step C's
      long series on the base and the hash, each candidate's finding and the verdict row. If
      the verdict is a defect, its fix and test are committed, and the re-measured readings
-     are logged, before any commit of step D.
+     are logged, before any commit of step D. Amended 2026-10-28 (owner, third): the verdict
+     is row 2. The furnace test's new form lands in its own commit, with its old and new
+     readings on the base and the tip, and the filmstrip's commit and its `before` sheets at
+     both poses, before step D's first mechanism.
 
 ### Phase 5: The sweep, the defaults and the bar
 - **Owner skill:** dev
@@ -522,6 +623,10 @@ flowchart LR
     other opens only part of it, a hole of a quarter of the wall's area or less, like Phase
     3's 10 x 10 plug in a 20 x 20 partition. The smaller the hole, the slower the reveal.
     The script prints which dig and guard state is running.
+  - **Filmstrips (amended 2026-10-28, owner, third).** Dev runs the stillness rig with
+    `STILL_FILMSTRIP=defaults` at the chosen defaults and `STILL_FILMSTRIP=old-look` at the
+    old look's settings, at both poses. With step D's `before` sheets that makes three sets
+    under `live/filmstrip/`, and the script prints their paths.
 - **Files touched:** `apps/flythrough/tests/golden/*.png` (only those that moved),
   `apps/flythrough/src/main.rs` (`--reuse-m-cap`), `docs/nfr.md`, this plan's log.
 - **Done when:**
@@ -538,7 +643,9 @@ flowchart LR
 - **What:** the owner runs Phase 6's script on the dev box. At the vein with the lamp off and
   the eye adapting, the owner watches for 15 s with the new defaults and then the old look.
   Then the dig reveals, the whole opening and the partial one, each guard on and off. Then a
-  short flight past the vein.
+  short flight past the vein. Beside the windowed check, the owner looks at the filmstrips
+  under `live/filmstrip/` (`before`, `defaults`, `old-look`, at both poses), so what the bar
+  counts can be set against what the owner sees (amended 2026-10-28, owner, third).
 - **Files touched:** this plan's log.
 - **Done when:** the owner records one of three outcomes, and separately says whether the
   partial reveal is fast enough (amended 2026-10-28, owner, second). (a) The patches and
@@ -625,6 +732,10 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
   probe's weight still lies on early visits. If step C finds no defect, any mechanism that
   changes the visit order or the hysteresis moves them, and they sit near their floors on the
   base. Done-when 5 says how a change to them is justified. It is never a silent loosening.
+  Amended 2026-10-28 (owner, third): step C found exactly that, and the furnace's offset from
+  pi is the firefly clamp at the probe rays' hits. The furnace's new bars (7 % and 4 % of
+  `D`) allow for step D's hysteresis up to 0.99 at 256 frames by arithmetic, not by margin
+  left over; a slower mechanism than that misses them, and done-when 5's rule applies.
 - **Plan 0038's hero shots** are lamp-off and ore-lit. If they are judged before this plan
   lands, they are judged with today's patches.
 - **The gradient's per-frame hash** picks one pixel per stratum, so a small change is found in
@@ -957,6 +1068,15 @@ for the architect; step D is not started.
 ### Close triggers
 
 ## Followups
+
+- **The firefly clamp biases the probe rays' direct light low** (amended 2026-10-28, owner,
+  third). ADR-0018's estimator clamps one emissive sample at `FIREFLY_CLAMP` (2) times
+  `PI lum(Le)` (`resolve_emissive` in `light.wgsl`). At the probe rays' hits in the furnace
+  (walls 6 to 12 voxels apart, edges and corners in reach) the direct estimate averages about
+  8.5 % under pi, and with the clamp at 1e6 the furnace reads +6.3 % of pi with single
+  visits up to 3.44. Fixing it (a clamp that keeps the mean, or one sized by the hit's
+  geometry) changes ADR-0018's estimator for every pass that uses it, and is its own plan.
+  That plan decides whether the furnace test judges against pi again. Not this plan's scope.
 
 - Plan 0032 amendment (when this plan merges): its directional sample and sky ray land in the
   emissive part at this plan's `H`. The gradient's emissive re-shade then has to include the
