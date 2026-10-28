@@ -7,7 +7,8 @@
 //! [--indirect on|off] [--probe-spacing N] [--internal-scale 1|1.5|2] [--jitter on|off]
 //! [--sharpen S] [--light-radius N] [--adapter SUBSTRING] [--lighting full|half]
 //! [--shadow-walk full|coarse] [--sampler list|reuse] [--history edits|gradient]
-//! [--lamp on|off] [--filter on|off] [--emissive-history N] [--look PRESET]`.
+//! [--lamp on|off] [--filter on|off] [--emissive-history N]
+//! [--emissive-guard on|off] [--look PRESET]`.
 //!
 //! `--source showcase` (the default) generates `flythrough::showcase` and frames one of its
 //! shots (`--shot`, default `hall`); `--at`, `--yaw`, `--pitch` and `--exposure` override the
@@ -232,6 +233,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--emissive-history" => {
                 args.lighting.emissive_history = v.parse().map_err(|e| bad(&e))?;
             }
+            "--emissive-guard" => args.lighting.emissive_guard = on_off(&flag, &v)?,
             _ => return Err(format!("unknown argument {flag}")),
         }
     }

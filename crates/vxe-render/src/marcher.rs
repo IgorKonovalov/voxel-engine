@@ -122,6 +122,10 @@ pub const LIGHTING_EMISSION_CHANGED: u32 = 1 << 8;
 /// emissive part's history. The light pass's lamp estimate carries no sampling noise (one
 /// point light, one shadow ray), so the reset adds none.
 pub const LIGHTING_LAMP_CHANGED: u32 = 1 << 9;
+/// `Params::lighting` bit: the emissive guard (ADR-0036, [`Lighting::emissive_guard`]): the
+/// gradient pass writes an emissive-only lambda, and the temporal pass raises the emissive
+/// part's blend to it and lowers the age by it. Set while emissive candidates are above 0.
+pub const LIGHTING_EMISSIVE_GUARD: u32 = 1 << 10;
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
 pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
 /// `Params::lighting` bit: candidates are drawn uniformly over the buffer
@@ -839,6 +843,10 @@ pub struct Lighting {
     /// reservoir's M ([`Sampler::Reuse`]; default [`DEFAULT_REUSE_M_CAP`]): a higher cap holds
     /// a kept point longer, a lower one decorrelates neighbouring frames' samples.
     pub reuse_m_cap: u32,
+    /// The emissive guard (ADR-0036, on by default): the gradient pass re-shades last frame's
+    /// kept emitter points in every history mode, and where the emissive light changed the
+    /// emissive part's long history follows as fast as the change.
+    pub emissive_guard: bool,
     /// Indirect light from the probe volume (ADR-0023): the probes update and the gather adds
     /// their irradiance, in the shaded view outside the cutaway. Off by default.
     pub indirect: bool,
@@ -865,6 +873,7 @@ impl Default for Lighting {
             history: HistoryKill::default(),
             emissive_history: DEFAULT_EMISSIVE_HISTORY,
             reuse_m_cap: DEFAULT_REUSE_M_CAP,
+            emissive_guard: true,
             indirect: false,
             probe_rays: crate::probes::RAYS_PER_PROBE,
             probe_slices: crate::probes::SLICES,
@@ -914,6 +923,11 @@ impl Lighting {
                 0
             }
             | if self.indirect { LIGHTING_INDIRECT } else { 0 }
+            | if self.emissive_guard && self.candidates > 0 {
+                LIGHTING_EMISSIVE_GUARD
+            } else {
+                0
+            }
             | if matches!(self.exposure, Exposure::Auto(_)) {
                 LIGHTING_AUTO_EXPOSURE
             } else {
@@ -2542,8 +2556,14 @@ impl Frame {
                 ],
             )
         });
-        let gradient_on =
-            self.lighting.history == HistoryKill::Gradient && self.look.view == ViewMode::Shaded;
+        // The gradient pass runs for the gradient mode's lambda or the emissive guard's.
+        let gradient_on = self.look.view == ViewMode::Shaded
+            && (self.lighting.history == HistoryKill::Gradient
+                || self.lighting.flags() & LIGHTING_EMISSIVE_GUARD != 0);
+        if !gradient_on {
+            // No strata this frame: the temporal pass must not read last one's.
+            p.lighting &= !LIGHTING_EMISSIVE_GUARD;
+        }
         let full = [t.width.div_ceil(WORKGROUP), t.height.div_ceil(WORKGROUP)];
         let lw = t.light_size().map(|n| n.div_ceil(WORKGROUP));
         let strata = [t.strata.width(), t.strata.height()].map(|n| n.div_ceil(WORKGROUP));
@@ -2927,7 +2947,8 @@ struct Targets {
     filter: [wgpu::Texture; 2],
     /// The light pass's reservoirs (rgba32uint), this frame's and the last.
     reservoir: [wgpu::Texture; 2],
-    /// The gradient pass's strata, one texel per 3 x 3 lighting pixels (rgba16float).
+    /// The gradient pass's strata, one texel per 3 x 3 lighting pixels (rgba16float: the
+    /// combined lambda, the new and old luminances, the emissive guard's lambda).
     strata: wgpu::Texture,
     /// The frame's display-encoded image (rgba8unorm): the composite's output at the
     /// internal size, or with the upscaler at the output size, the composite's image in its

@@ -1466,7 +1466,7 @@ impl Modes {
 
     /// The modes in words: `lighting half, shadow walk coarse, sampler reuse, history edits,
     /// lamp on, indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, emissive
-    /// history 32, exposure auto eye +1.53 EV` (the probe rays per update, the share of probes
+    /// history 32, guard on, exposure auto eye +1.53 EV` (the probe rays per update, the share of probes
     /// refreshed a frame, while indirect light is on the voxels between probes, and the
     /// exposure in EV, `log2 e`), after `source NAME, ` when the modes name a source.
     pub fn line(&self) -> String {
@@ -1481,7 +1481,7 @@ impl Modes {
             String::new()
         };
         format!(
-            "{source}lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, indirect {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, emissive history {}, exposure {} {:+.2} EV",
+            "{source}lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, indirect {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, emissive history {}, guard {}, exposure {} {:+.2} EV",
             self.resolution.name(),
             l.shadow_walk.name(),
             l.sampler.name(),
@@ -1493,6 +1493,7 @@ impl Modes {
             on(l.filter),
             on(self.pulse),
             l.emissive_history,
+            on(l.emissive_guard),
             self.exposure_mode(),
             self.exposure_ev()
         )
@@ -1559,7 +1560,7 @@ mod mode_tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, shadow walk coarse\nsampler reuse, history edits, lamp on\nindirect off at 64 rays 1/8, filter on\nore pulse off, emissive history 32\nexposure manual +0.00 EV"
+            "lighting half, shadow walk coarse\nsampler reuse, history edits, lamp on\nindirect off at 64 rays 1/8, filter on\nore pulse off, emissive history 32\nguard on, exposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;

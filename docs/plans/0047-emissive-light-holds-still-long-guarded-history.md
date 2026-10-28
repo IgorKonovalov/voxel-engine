@@ -505,8 +505,8 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The patch bar as a headless test | dev | done; stopped at done-when 4 | 031ab3b |
-| 2: A full-precision emissive accumulation | dev | done | committed with this row |
-| 3: The emissive-only gradient guard | dev | not started | |
+| 2: A full-precision emissive accumulation | dev | done | a2b3852 |
+| 3: The emissive-only gradient guard | dev | done | committed with this row |
 | 4: The probe gather holds still | dev | not started | |
 | 5: The sweep, the defaults and the bar | dev | not started | |
 | 6: Goldens, readings and the fly-through | dev | not started | |
@@ -575,6 +575,35 @@ at load 19.7; alone it passes in 14.0 s); `--profile gpu` (load 14.7 at the star
 passed, 1 failed: `golden::fsr2_golden_matches_and_rcas_is_bypassed_at_zero`, `fsr2.png` 4.1510 %
 of pixels over 2/255 (largest 33/255, mean luma 64.255 to 64.289/255, +0.053 %); re-blessed in
 this commit, then both `golden` FSR 2 tests pass (0.0000 %).
+Phase 3 (lavapipe, exclusive perf lock). The guard is `Params::lighting` bit 10
+(`LIGHTING_EMISSIVE_GUARD`), set while `Lighting::emissive_guard` and candidates above 0; its
+lambda goes in the strata's `w`. Done-when 1, `a_reveal_behind_a_plug_follows_within_seventy_three_frames`
+(one rock chunk; emitter wall at x = 3 facing +x into a cell at x 4..14, y and z 20..40; a
+one-voxel partition at x = 14; the far cell x 15..60; camera at (35, 30, 30) facing +x; the far
+wall's centre-third pixels with hit x at least 59; `H` 256, lamp off, filter on, `Manual(1)`,
+320 x 180 full-resolution lighting; load 2.7 to 6.6): plug the whole 20 x 20 partition, guard on
+90 % after 1 frame (0.00000 to 0.12067), guard off 430 frames (0.00000 to 0.10915). Plug a 10 x
+10 window (y and z 25..35) of the partition: guard on 222 frames (0.00000 to 0.02715), guard
+off 415 (0.00000 to 0.02559). Scratch runs of the same window plug at 16 x 16 and 12 x 12: guard
+on 1 frame (guard off 420 and 402); at 6 x 6: guard on 431, off 444. The test asserts the 20 x 20
+plug at 73 frames or fewer and prints the 10 x 10 one. Done-when 2,
+`the_emissive_guard_keeps_history_where_nothing_changed` (dark cave pose, lamp off, `Edits`, `H`
+256, 64 still frames): list and reuse, guard on and off, 57 600 of 57 600 hit pixels at age 63.
+Done-when 3, `a_moving_lamp_leaves_the_static_lights_history_alone` (`lamp_cave`, `Edits`, guard
+on, a 30-degree cone turn; pixels with an emissive part at least a tenth of the frame's largest):
+list 14 041 and reuse 13 221 pixels, every one at its pre-turn age plus the frames elapsed on each
+of the 40 frames. Done-when 4: `an_emission_step_settles_within_eleven_frames` 0.081 of the change
+left; `history_dies_in_the_edit_box_and_ages_elsewhere` passes (frame 17: 1296 pixels at 0, 56
+304 at 16). Done-when 5: the HUD's lighting row reads `guard on` (`--emissive-guard on|off`);
+`mode_banner.png` re-blessed, 1.4601 % of pixels over 2/255 against its old bytes (the banner's
+last row, now `guard on, exposure manual +0.00 EV`). Gates: build, clippy `-D warnings`, `fmt
+--check`, doc tests, `check-test-tiers.mjs`, `check-comment-hygiene.mjs` clean; `--profile quick`
+513 run, 511 passed, 2 timed out at load 25.4 (`castle::the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn`,
+`replay::a_stamp_and_a_collapse_replay_from_the_save`; alone both pass, 14.5 s); `--profile gpu`
+177 run, 177 passed (load 19.4 at the start); the slow list's `lights`, `indirect` and `golden`
+tests plus the three new ones 8 run, 8 passed (among them
+`the_lamp_light_that_left_the_cone_drops_in_each_history_mode` and
+`reservoir_reuse_lowers_one_frames_error`).
 
 ### Notes
 
@@ -586,6 +615,17 @@ this commit, then both `golden` FSR 2 tests pass (0.0000 %).
 - Phase 2: `apps/flythrough/tests/golden/fsr2.png` is re-blessed in this phase's commit (not in
   Phase 2's Files touched; Phase 6 is the re-bless phase). The cavity has no emitter: only the
   lamp's part changed precision.
+- Phase 3: `crates/vxe-render/src/shaders/march.wgsl` (the `LIGHTING_EMISSIVE_GUARD` constant)
+  and `.config/nextest.toml` (the three new `lights` tests join the slow list) are outside
+  Phase 3's Files touched. `README.md`'s flag table has no `--emissive-guard` row (not in Files
+  touched).
+- Phase 3: done-when 1 is met with the plug as the whole one-voxel partition. With the plug a
+  10 x 10 window of it the guard takes 222 frames to 90 %, three times a 32-frame history's 73,
+  and at 6 x 6 it is no faster than the guard off. The gradient reads a change on the one
+  frame after the carve, in the strata whose sampled pixel's kept point the opening uncovered;
+  where that is under about half the strata, the age falls only part way and the running mean
+  from there is slow. The plan's Risks name ADR-0036's Alternative C as this case's fallback;
+  it is not built.
 - Phase 1: `readback::read_float` (an `rgba16float` or `rgba32float` read by the texture's
   format) is added in this phase's commit, in `crates/vxe-render/src/readback.rs`, which Phase 1's
   Files touched does not list; the stillness rig reads the accumulation through it so Phase 2's
