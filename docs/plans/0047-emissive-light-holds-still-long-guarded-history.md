@@ -928,8 +928,8 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
 | 2: A full-precision emissive accumulation | dev | done | a2b3852 |
 | 3: The emissive-only gradient guard | dev | done | 8263b17 |
 | 4: The probe gather holds still | dev | step A 93a2c72; step C 0b848cf; furnace test 9e229f5; filmstrip 5b75f81; step D read 919dbc4; kept mechanism wip 9fbf2b9; done | f069033 |
-| 5: The sweep, the defaults and the bar | dev | done | committed with this row |
-| 6: Goldens, readings and the fly-through | dev | not started | |
+| 5: The sweep, the defaults and the bar | dev | done | 67872f8 |
+| 6: Goldens, readings and the fly-through | dev | done | committed with this row |
 | 7: The owner's windowed check | human | not started | |
 
 Phase 1 (lavapipe, llvmpipe LLVM 23.1.3; exclusive perf lock; 1-minute load 1.8 at the start and
@@ -1380,8 +1380,51 @@ its banner now reads `emissive history 256`; the expectation follows), 2 timed o
 (`castle`, `replay`); after the fix the `flythrough` lib, `castle` and `replay` binaries 54 of
 54.
 
+Phase 6. Done-when 1: the full tier at the new defaults (lavapipe, exclusive perf lock, power
+Charging, load 0.75 at the start and 4.24 at the end, `--test-threads 2`, `live/p6-full.log`):
+712 run, 711 passed, 1 failed, 11 skipped, 2913 s; the failure is
+`hud_golden::mode_banner_golden_shows_the_modes_with_the_hud_off` (3819 bytes differ: the
+banner's lighting rows now end `emissive history 256, guard on` / `reuse cap 20, exposure
+manual +0.00 EV`). `mode_banner.png` re-blessed, 1350 of 57 600 pixels (2.3438 %) over 2/255
+against its old bytes; `hud_golden` then 3 of 3. `showcase_hall.png` was re-blessed in Phase
+5's commit (3.4080 %); no other golden moved, `dark_cave.png`'s test among the passes.
+Done-when 3: `--reuse-m-cap N` (1 to 64, default `DEFAULT_REUSE_M_CAP`); the banner and the
+start line read `... emissive history 256, guard on, reuse cap 20, exposure auto eye +0.00 EV`
+(the release binary's start line). Done-when 2: the readings are in `nfr.md` §2 ("Static
+emissive light on a long guarded history ...", `live/p6-timing.sh`, `live/p6-timing.log`;
+release, `--level --headless --render 1920x1080 --frames 300 --adapter NVIDIA|AMD --lamp
+on|off`, spawn pose, median of the last 30 frames, exclusive perf lock, memory cap, power "Not
+charging" at every run's start and end; base `live/flythrough-base` (93a2c72's tree), tip
+`live/flythrough-tip` (this commit's code), interleaved). The Radeon lamp-off re-read, quiet
+(1-minute load 0.79 to 0.99 at each run's start): probe update base 7.277, 7.334, 7.303 ms,
+tip 7.606, 7.635, 7.610 ms; medians 7.610 against 7.303, +4.20 % (bar 5 %). The other
+readings, medians tip against base: RTX 3080 Laptop lamp on 1.206 against 1.175 (+2.6 %, load
+0.96 to 2.17), off 1.115 against 1.105 (+0.9 %, load 1.54 to 1.79); Radeon lamp on 8.146
+against 7.871 (+3.5 %, load 0.92 to 1.54), off (loaded, 1.06 to 2.32) 7.655 against 7.396
+(+3.5 %). Gather unchanged (RTX 0.097 to 0.099, Radeon 0.572 to 0.600). The tip's lighting
+passes on the RTX, lamp on: gradient 0.083 to 0.084 ms (bar 0.15), light + gradient + temporal
+0.98 to 0.99 ms (bar 6.0), a-trous 0.483 to 0.488 ms (bar 3.0); Radeon lamp on gradient 0.454
+to 0.460, light 7.004 to 7.132, temporal 0.618 to 0.626, a-trous 2.371 to 2.398. Frame CPU time
+RTX base 0.439 to 0.461 ms, tip 0.523 to 0.592 ms. `frame_bytes` 184 956 992 B on both. No
+`VEIN_POSE` timing: the fly-through has no pose flag. Filmstrips (lavapipe, exclusive perf
+lock, power Not charging, load 2.0; `live/p6-film-defaults.log`, `live/p6-film-old.log`):
+`live/filmstrip/defaults/` (the defaults: patch composite 1.50 / 7, direct 0.75 / 4, gather
+8.15 / 44; vein composite 0.05 / 1) and `live/filmstrip/old-look/` (`h=32,guard=off,cap=20`:
+patch composite 74.45 / 96, direct 70.75 / 96, gather 8.15 / 44, flicker 0.00632, luma 0.226;
+vein composite 21.30 / 35, flicker 0.00346), each `<pose>-composite.png`, `-emissive.png`,
+`-gather.png` for `patch` and `vein`. Gates on this commit's tree: clippy `-D warnings`, `fmt
+--check`, doc tests, `cargo deny check` (advisories, bans, licenses, sources ok),
+`check-test-tiers.mjs`, `check-comment-hygiene.mjs`, `check-doc-links.mjs` (326 links),
+`check-index-rows.mjs` clean; the full tier as above, with `hud_golden` 3 of 3 after the
+re-bless.
+
 ### Notes
 
+- Phase 6: `apps/flythrough/src/hud.rs` (the banner names the reuse cap; `BANNER_ROWS` 6 to 7,
+  since any placement of the cap adds a row at the defaults) is outside Phase 6's Files
+  touched. No owner script is written (the orchestrator's instruction); the owner's commands
+  go in the hand-off. The fly-through has no pose flag, so the owner flies to `VEIN_POSE`
+  by hand and no `VEIN_POSE` timing is read.
 - Phase 5: `apps/flythrough/src/hud.rs` (the banner test's expected text and a doc example now
   read `emissive history 256`), `.config/nextest.toml` (the new test on the slow list) and
   `apps/flythrough/tests/golden/showcase_hall.png` (re-blessed at the new default, so the

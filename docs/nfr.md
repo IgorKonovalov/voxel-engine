@@ -656,6 +656,35 @@ not touch). AMD Radeon Graphics (RADV RENOIR, the slow adapter, by `--adapter AM
 box and 0.17 ms on the iGPU, above the plan's guesses (0.03 to 0.08 ms) and inside the 1.5 ms
 line. Phase 4's loaded readings (dedd83c against e9879cc) are superseded.
 
+**Static emissive light on a long guarded history and probe slices spread by a hash (Plan 0047
+Phase 6, 2026-10-28; ADR-0036, ADR-0023).** `flythrough --level --headless --render 1920x1080
+--frames 300 --adapter NVIDIA|AMD --lamp on|off`, the spawn pose, the defaults (`own` 1.5, half
+lighting, 64 rays one in 8, emissive history 256, guard on, reuse cap 20), per-pass timestamps,
+median of the last 30 frames, release, exclusive perf lock, memory cap, on AC (power "Not
+charging" at every run's start and end). The base is the release binary of 93a2c72's tree
+(slices by `slot mod slices`, emissive history 32, the guard in); the tip is 67872f8's tree plus
+the `--reuse-m-cap` flag. Base and tip runs interleaved, three each. No `VEIN_POSE` run: the
+fly-through has no pose flag. Probe update ms per run, base then tip:
+
+| adapter, lamp, load at the runs' starts | probes (update) base | probes (update) tip | median, tip against base | gather |
+|---|---|---|---|---|
+| Radeon (Cezanne, RADV), off, **quiet** (0.79 to 0.99) | 7.277, 7.334, 7.303 | 7.606, 7.635, 7.610 | 7.610 against 7.303, +4.20 % | 0.574 to 0.575 / 0.572 to 0.573 |
+| RTX 3080 Laptop, on (0.96 to 2.17) | 1.171, 1.175, 1.201 | 1.207, 1.189, 1.206 | 1.206 against 1.175, +2.6 % | 0.098 to 0.099 / 0.097 to 0.098 |
+| RTX 3080 Laptop, off (1.54 to 1.79) | 1.111, 1.102, 1.105 | 1.120, 1.109, 1.115 | 1.115 against 1.105, +0.9 % | 0.098 to 0.099 / 0.098 |
+| Radeon (Cezanne, RADV), on (0.92 to 1.54) | 7.871, 7.969, 7.854 | 8.155, 8.146, 8.140 | 8.146 against 7.871, +3.5 % | 0.599 to 0.600 / 0.600 |
+| Radeon (Cezanne, RADV), off (1.06 to 2.32) | 7.635, 7.396, 7.340 | 7.711, 7.652, 7.655 | 7.655 against 7.396, +3.5 % | 0.574 to 0.575 / 0.572 to 0.573 |
+
+The bar (Plan 0047 Phase 4 done-when 6): the update at most 5 % over its base on each adapter,
+the Radeon's lamp-off figure read quiet; read +4.20 %. The tip's lighting passes, RTX 3080 Laptop
+lamp on: gradient 0.083 to 0.084 ms (bar 0.15), light 0.816 to 0.826, temporal 0.080 to 0.081
+(light + gradient + temporal 0.98 to 0.99 ms, bar 6.0), a-trous 0.483 to 0.488 ms (bar 3.0);
+lamp off: 0.084 to 0.085, 0.758 to 0.759, 0.080 to 0.081, a-trous 0.486 to 0.488. Radeon, lamp
+on: gradient 0.454 to 0.460, light 7.004 to 7.132, temporal 0.618 to 0.626, a-trous 2.371 to
+2.398; lamp off (quiet): 0.461 to 0.462, 6.511 to 6.531, 0.612 to 0.622, 2.371 to 2.377
+(readings, no bar). The frame's CPU time (the hashed slices' update list is filtered over all
+32 768 slots on the CPU each frame), RTX: base 0.439 to 0.461 ms, tip 0.523 to 0.592 ms.
+`Frame::frame_bytes` reads 184 956 992 B on both: the slice hash adds 0 B.
+
 No frame may stall on paging: work attributable to streaming on the render thread is capped at
 the streaming line above; the rest runs on background threads.
 
