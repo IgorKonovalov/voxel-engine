@@ -651,7 +651,7 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
 | 1: The patch bar as a headless test | dev | done; stopped at done-when 4 | 031ab3b |
 | 2: A full-precision emissive accumulation | dev | done | a2b3852 |
 | 3: The emissive-only gradient guard | dev | done | 8263b17 |
-| 4: The probe gather holds still | dev | step A done (93a2c72); stopped at done-when 3 and 5 | committed with this row |
+| 4: The probe gather holds still | dev | step A done (93a2c72); step C read, stopped at its verdict | committed with this row |
 | 5: The sweep, the defaults and the bar | dev | not started | |
 | 6: Goldens, readings and the fly-through | dev | not started | |
 | 7: The owner's windowed check | human | not started | |
@@ -810,12 +810,106 @@ settled against 70 %; at 93a2c72 71.5 %), `indirect_golden_shows_the_vein_s_boun
 misses done-when 3 at the patch pose and done-when 5, and the rule names no next mechanism for
 row 4. The branch tip carries no probe change. Phases 5 and 6 are not started.
 
+Phase 4 step C (lavapipe, exclusive perf lock, on battery, 1-minute load 6.9 to 18.8, so
+loaded; counts and means, no timings). Scratch tests `live/stepc_long.rs` and
+`live/stepc_replay.rs` (symlinked into `apps/flythrough/tests/` only while run, not committed),
+logs `live/stepc-base.log`, `live/stepc-hash.log`, `live/stepc-diag.log`. Base is the tip's
+probe code (93a2c72, identical to 53a5520's); hash is `live/phase4-row4-hashed-slices.patch` on
+it. Each series is sampled every 8 frames to 2048; the long reading is the mean of the samples
+in frames 1793 to 2048 and its spread their max minus min. Series every 64 frames (64, 128, ...,
+2048):
+
+- furnace floor-centre gather, base: 2.8574 2.9727 2.9688 2.9746 2.9648 2.9668 2.9590 2.9551
+  2.9492 2.9395 2.9336 2.9355 2.9375 2.9277 2.9375 2.9453 2.9434 2.9512 2.9453 2.9492 2.9629
+  2.9629 2.9668 2.9746 2.9609 2.9590 2.9512 2.9512 2.9395 2.9277 2.9395 2.9375; hash: 2.7441
+  2.8691 2.8828 2.8789 2.8867 2.8926 2.8906 2.9062 2.9121 2.9102 2.9160 2.9395 2.9492 2.9473
+  2.9434 2.9336 2.9414 2.9453 2.9297 2.9453 2.9453 2.9434 2.9316 2.9473 2.9512 2.9570 2.9590
+  2.9648 2.9648 2.9688 2.9785 2.9746.
+- furnace centre-probe texel mean, base: 2.8265 2.9142 2.9148 2.9162 2.9062 2.9017 2.8971 2.9013
+  2.8874 2.8819 2.8719 2.8821 2.8887 2.8817 2.8926 2.8892 2.8899 2.8979 2.9038 2.9041 2.9151
+  2.9135 2.9167 2.9220 2.9137 2.9060 2.9038 2.9068 2.8979 2.8982 2.8971 2.8904; hash: 2.6851
+  2.7593 2.7916 2.8052 2.8164 2.8314 2.8445 2.8535 2.8635 2.8766 2.8803 2.8975 2.8984 2.8997
+  2.8908 2.8832 2.8810 2.8844 2.8760 2.8969 2.8955 2.8900 2.8863 2.8929 2.8893 2.8963 2.8963
+  2.8998 2.8954 2.8993 2.9160 2.9162.
+- `indirect.png`'s view, mean sRGB luma /255, base: 19.94 20.33 20.37 20.56 20.65 20.82 20.88
+  21.04 21.08 21.18 21.25 21.31 21.40 21.37 21.47 21.58 21.58 21.58 21.50 21.39 21.43 21.43
+  21.50 21.48 21.55 21.53 21.59 21.64 21.70 21.77 21.68 21.73; hash: 20.75 21.70 21.65 21.62
+  21.64 21.67 21.67 21.77 21.69 21.67 21.79 21.79 21.79 21.74 21.72 21.67 21.65 21.56 21.51
+  21.48 21.46 21.52 21.56 21.51 21.43 21.41 21.48 21.54 21.55 21.53 21.44 21.45. Its gather
+  mean (luminance over the lighting grid), base: 0.0821 0.0846 0.0848 0.0860 0.0865 0.0876 0.0879
+  0.0889 0.0891 0.0898 0.0902 0.0906 0.0912 0.0910 0.0917 0.0924 0.0924 0.0924 0.0918 0.0911
+  0.0914 0.0914 0.0919 0.0917 0.0923 0.0921 0.0925 0.0928 0.0932 0.0937 0.0931 0.0934; hash:
+  0.0869 0.0934 0.0930 0.0928 0.0929 0.0930 0.0930 0.0937 0.0930 0.0929 0.0937 0.0938 0.0938
+  0.0934 0.0933 0.0930 0.0929 0.0923 0.0920 0.0917 0.0916 0.0920 0.0923 0.0919 0.0914 0.0913
+  0.0917 0.0922 0.0922 0.0920 0.0914 0.0915.
+- `showcase_hall.png`'s view, mean sRGB luma, base: 16.80 16.75 16.75 16.81 16.82 16.88 16.79
+  16.77 16.86 16.75 16.78 16.73 16.88 16.94 16.81 16.93 16.82 16.87 16.77 16.84 16.85 16.80
+  16.86 16.93 16.90 16.90 16.91 16.84 16.97 16.84 16.88 16.72; hash: 16.88 16.84 16.84 16.88
+  16.87 16.93 16.83 16.80 16.89 16.77 16.78 16.73 16.88 16.93 16.78 16.89 16.80 16.84 16.73
+  16.80 16.83 16.79 16.85 16.90 16.87 16.88 16.88 16.83 16.96 16.84 16.87 16.69. Its gather
+  mean, base 0.0103 to 0.0107, hash 0.0105 to 0.0107 throughout.
+
+Long readings, base against hash (mean, spread; the difference against twice the larger
+spread): furnace floor 2.93829 (0.02734) against 2.96936 (0.03125), 0.03107 against 0.0625;
+centre texel mean 2.89709 (0.01682) against 2.90477 (0.03868), 0.00768 against 0.0774; texel min
+2.86005 (0.03125) against 2.86212 (0.04102), 0.00207 against 0.0820; texel max 2.94952 (0.01953)
+against 2.97784 (0.03711), 0.02832 against 0.0742; `indirect.png` luma 21.696 (0.171) against
+21.493 (0.181), 0.203 against 0.362; its gather 0.09318 (0.00111) against 0.09183 (0.00124),
+0.00135 against 0.00248; `showcase_hall.png` luma 16.878 (0.250) against 16.867 (0.278), 0.011
+against 0.556; its gather 0.01060 (0.00013) against 0.01055 (0.00008). Every pair agrees. The
+furnace against pi: base floor -6.47 %, texel mean -7.78 %, texel min -8.96 %; hash floor -5.48
+%, texel mean -7.54 %, texel min -8.90 %. The light pass's direct estimate at the floor centre
+(what the furnace test prints) is 3.14079 over the 2048 frames, -0.025 % of pi, on both.
+
+Candidates:
+1. `slot mod slices` elsewhere: the tree's only uses are the two in `ProbeVolume::update_list`
+   (the touched merge and the slice list), both replaced by the patch; the window's 4 slices go
+   through the same function (`slot_slice(s, 4)` is `slot_slice(s, 8) & 3`, nested as on the
+   base); no read helper or test predicts a probe's update frame (grep of `crates/` and
+   `apps/flythrough/tests/`). No fault.
+2. The emissive estimate's random key: `rand` takes `px` mod 128, and `px.y` is slot bits 1 to
+   7, so on the base the 4096 probes of one frame use 32 rows (bits 3 to 7; bits 0 to 2 are the
+   slice). With the hash they spread over frames. The long readings agree, so the correlation
+   does not move a mean. No fault.
+3. The `f16` atlas at 0.97: a scratch shader patch (`live/stepc-replay.patch`) writes each
+   visit's unrounded per-texel sample and `h` over the probe's ray words after its blend, and the
+   CPU replays the furnace centre probe's 36 texels in `f64` over 256 visits (2048 frames).
+   Largest gap after visit 10 +0.285 % (frame 1338, texel 3: 2.89258 against 2.88436); mean
+   signed gap over the last 256 frames +0.0007 %. No fault.
+4. The `f16` ray radiance and distance: a scratch patch (`live/stepc-f32rays.patch`, valid for
+   the grey furnace only) stores the ray's radiance and distance as `f32`. Texel mean over the
+   last 256 frames 2.89717 against 2.89709 in `f16`. No fault.
+
+Beyond the candidates, on the base with the replay: with the probes' own irradiance left out
+of the probe rays (`live/stepc-donly.patch`, so a texel converges to `albedo x` the rays' direct
+mean, 0.5 D), the texel mean reads 1.43703, so the probe rays' direct estimate at their hits
+averages D = 2.874, -8.5 % of pi. The furnace's fixed point is E = 0.5 (D + E) = D, and the
+texel mean reads +0.8 % against it. With `FIREFLY_CLAMP` raised to 1e6
+(`live/stepc-noclamp.patch`) the texel mean reads 3.33840 (+6.3 % of pi), with single visits up
+to 3.44. So the furnace's shortfall is the light estimator's firefly clamp at the probe rays'
+hits (walls 6 to 12 voxels apart, edges and corners within reach), not the probe update; the
+floor centre, where the light pass's own estimate is read, sees almost none of it.
+
+Decision rule for step C: base and hash agree, and no candidate shows a fault. The furnace's
+long reading lies 7.5 to 7.8 % (texel mean) and 5.5 to 6.5 % (floor) under pi on both, more
+than 3.5 %, against the printed floor-centre direct offset of -0.025 %; taken against the probe
+rays' own direct mean (-8.5 %), it lies within 1 %. Read with the printed offset, row 1 holds
+and its cause is outside the four candidates and outside the probe code (the clamp in
+`light.wgsl`'s `resolve_emissive`, ADR-0018's estimator), which is row 3's case. Dev stops here
+for the architect; step D is not started.
+
 ### Resume notes (2026-10-28, delete when Phase 4 lands)
 
 - **State:** merge d9f9fae, Phase 2 a2b3852, Phase 3 8263b17, Phase 4 step A 93a2c72 (the rig's
   keys and trace). Phase 4's mechanism is not committed: stopped for the architect (see the
   paragraph above). The tip's gates are Phase 3's plus step A's test-only change (clippy and fmt
   clean).
+- **Step C:** read and logged (the paragraph above); stopped at the verdict (the furnace's
+  shortfall is the firefly clamp at the probe rays' hits, outside the candidates). Scratch:
+  `live/stepc_long.rs`, `live/stepc_replay.rs` (symlink into `apps/flythrough/tests/` as
+  `zz_stepc_*.rs` to run; remove before any gate), `live/stepc-replay.patch`,
+  `live/stepc-f32rays.patch`, `live/stepc-donly.patch`, `live/stepc-noclamp.patch`,
+  `live/stepc-diag.sh` (the replay under each patch). Step D not started.
 - **Scratch:** `live/phase4-row4-hashed-slices.patch` (probes.rs, applies on 93a2c72),
   `live/phase4-scratch-per-probe-rotation.patch` (probe_update.wgsl, on top of it). Logs:
   `live/p4-stepA.log`, `live/p4-hash.log`, `live/p4-hash-keys.log`, `live/p4-hash-rot.log`,
