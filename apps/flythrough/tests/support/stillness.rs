@@ -166,6 +166,8 @@ pub struct Reading {
     pub composite: Stats,
     pub emissive: Stats,
     pub gather: Stats,
+    /// The gather's mean linear luminance over the lighting grid and the window's frames.
+    pub gather_luminance: f64,
 }
 
 impl Reading {
@@ -174,6 +176,10 @@ impl Reading {
         println!("reading: {name} composite: {}", self.composite.line());
         println!("reading: {name} emissive: {}", self.emissive.line());
         println!("reading: {name} gather: {}", self.gather.line());
+        println!(
+            "reading: {name} gather mean luminance {:.6}",
+            self.gather_luminance
+        );
     }
 }
 
@@ -325,6 +331,7 @@ fn run_inner(
     let mut emissive: Vec<Tiles> = Vec::new();
     let mut gather: Vec<Tiles> = Vec::new();
     let mut images: Vec<Vec<u8>> = Vec::new();
+    let mut gather_lum = 0.0f64;
     let mut trace: Vec<TraceFrame> = Vec::new();
     let mut ages_before: Vec<u32> = Vec::new();
     let age_of = |w: u32| (w >> 1) & vxe_render::probes::MAX_AGE;
@@ -380,6 +387,11 @@ fn run_inner(
         let e = readback::read_float(device, queue, acc);
         emissive.push(grid_tiles(&e, grid, size, scale, pose.exposure));
         let g = readback::read_float(device, queue, frame.indirect_irradiance());
+        gather_lum += g
+            .iter()
+            .map(|p| f64::from(0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]))
+            .sum::<f64>()
+            / g.len() as f64;
         gather.push(grid_tiles(&g, grid, size, scale, pose.exposure));
         images.push(readback::read_rgba8(device, queue, frame.target()));
     }
@@ -425,6 +437,7 @@ fn run_inner(
             composite: stats(&composite, &full, Some(&images)),
             emissive: stats(&emissive, &full, None),
             gather: stats(&gather, &full, None),
+            gather_luminance: gather_lum / gather.len().max(1) as f64,
         },
         trace,
     )

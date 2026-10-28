@@ -762,7 +762,7 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
 | 1: The patch bar as a headless test | dev | done; stopped at done-when 4 | 031ab3b |
 | 2: A full-precision emissive accumulation | dev | done | a2b3852 |
 | 3: The emissive-only gradient guard | dev | done | 8263b17 |
-| 4: The probe gather holds still | dev | step A 93a2c72; step C 0b848cf; furnace test 9e229f5; filmstrip | committed with this row |
+| 4: The probe gather holds still | dev | step A 93a2c72; step C 0b848cf; furnace test 9e229f5; filmstrip 5b75f81; step D read, stopped at item 2 (ADR-0037) | committed with this row |
 | 5: The sweep, the defaults and the bar | dev | not started | |
 | 6: Goldens, readings and the fly-through | dev | not started | |
 | 7: The owner's windowed check | human | not started | |
@@ -1054,26 +1054,78 @@ warnings` and `fmt --check` clean; `--profile quick` 513 run, 511 passed, 2 time
 `replay::a_stamp_and_a_collapse_replay_from_the_save`, the two that time out under load in
 the earlier phases).
 
+Phase 4 step D item 1, the `f32` irradiance atlas (four words a texel, rgb `f32` and a pad;
+`VIS_BASE` 8 388 608 and `STATE_BASE` 16 777 216 words; `probes.rs`, `probe_gather.wgsl`,
+`probe_update.wgsl`, `indirect.rs`'s `probe_bytes`), with the hash, at each settled
+hysteresis (lavapipe, exclusive perf lock, power Not charging, load 4.8 to 15.7, loaded;
+`live/stepd-h.log`, `live/stepd-f32-h099.patch`; filmstrips `live/filmstrip/h0.97` to
+`h0.99`). Gather and composite, patches per step mean / max, sudden per s, flicker:
+
+| h | patch composite | patch gather | vein composite | vein gather | reveal gather 90 % |
+|---|---|---|---|---|---|
+| 0.97 | 74.50 / 96, 8.80, 0.00632 | 8.10 / 44, 20.90, 0.00365 | 21.30 / 35, 0.00 | 0 / 0, 0.00, 0.00273 | 1007 |
+| 0.98 | 72.60 / 92, 6.80, 0.00595 | 2.85 / 17, 7.00, 0.00245 | 19.20 / 35, 0.00 | 0 / 0, 0.00, 0.00177 | 1327 |
+| 0.985 | 72.15 / 87, 6.20, 0.00579 | 1.55 / 11, 3.90, 0.00185 | 18.65 / 35, 0.00 | 0 / 0, 0.00, 0.00132 | 1663 |
+| 0.99 | 71.45 / 83, 6.60, 0.00566 | 0.30 / 2, 0.90, 0.00125 | 18.05 / 35, 0.00 | 0 / 0, 0.00, 0.00088 | 1831 |
+
+Per-step gather at 0.99, patch pose: 0 2 0 2 0 0 0 0 0 0 0 2 0 0 0 0 0 0 0 0. The reveal reading
+is `live/stepd_reveal.rs` (Phase 3's reveal scene with the whole plug, indirect on, guard on,
+`H` 256): frames after the carve until the far wall's centre-third mean gather rises 90 % of
+the way to the mean of frames 2337 to 2400 after it (at 0.99 the series still rises there, so
+its 1831 is a lower bound). Done-when 5 at 0.99 (`flythrough::indirect`, `lights`, `golden`,
+51 run, `live/p4-dw5-h099.log`): 3 failed, `indirect.png` (32.34 % of pixels over 2/255),
+`showcase_hall.png` (3.98 %), and the furnace's new form: D 2.9010, texels 2.6155 ..= 2.9001
+(-9.84 ..= -0.03 % of D), mean 2.7678 (-4.59 % of D), floor -0.90 % of D. The hole test passes
+at 0.99. The furnace and hole tests at the lower settings: 0.985 furnace texels -8.91 ..= -0.13
+% of D, mean -4.24 % (fails), hole 71.7 % (passes); 0.98 texels -8.07 ..= -0.18 %, mean -3.91 %
+(fails), hole 70.9 % (passes). With the hash on the `f16` atlas at 0.97 (the furnace commit's
+reading) the texels read -6.48 ..= -0.22 % and the mean -3.30 %. Exit: no `h` meets done-whens 2
+to 6 (0.97 misses 3; 0.98 to 0.99 miss 5 on the furnace), and no `h` above 0.97 meets 4 to 6, so
+the atlas goes back to `f16` at 0.97 (step C fixed no defect with it) and step D goes to item
+2. The furnace's measured lag at 256 frames grows with `h` (texel mean -3.30, -3.91, -4.24,
+-4.59 % of D at 0.97, 0.98, 0.985, 0.99); the amendment's arithmetic predicted -3.0 % at 0.99.
+
+Phase 4 step D item 2, the per-ray emissive clamp (`live/stepd-clamp.patch`, on the hash with
+the `f16` atlas at 0.97): in `probe_trace` a settled update (age above `YOUNG_UPDATES`, not
+touched, no window) cuts one ray's `emissive_estimate` to `k` times the mean luminance of the
+probe's 36 interior irradiance texels as they stood before the frame's blend. The rig prints
+the gather's mean linear luminance over the lighting grid and the window
+(`gather mean luminance`, the bias bar's reading). Lavapipe, exclusive perf lock, power Not
+charging, load 6.7 to 15.6, loaded; `live/stepd-k.log`; filmstrips `live/filmstrip/k1e30`,
+`k8`, `k4`, `k2`. `k` 1e30 is the tree without the clamp:
+
+| k | patch composite | patch gather | patch gather luminance | vein composite | vein gather luminance | reveal gather 90 % | furnace long texel mean |
+|---|---|---|---|---|---|---|---|
+| none (1e30) | 74.45 / 96, 8.80/s | 8.15 / 44, 21.00/s, 0.00365 | 0.011765 | 21.30 / 35 | 0.055842 | 1007 | 2.90477 |
+| 8 | 103.95 / 113, 12.60/s | 1.75 / 10, 0.00/s, 0.00342 | 0.005905 (-49.8 %) | 41.60 / 70 | 0.034778 (-37.7 %) | 1159 | 2.90477 |
+| 4 | 108.40 / 123, 13.30/s | 5.55 / 46, 0.00/s, 0.00366 | 0.005626 (-52.2 %) | 46.30 / 78 | 0.032904 (-41.1 %) | 1335 | 2.90477 |
+| 2 | 110.60 / 130, 13.60/s | 15.20 / 62, 0.00/s, 0.00380 | 0.005485 (-53.4 %) | 50.65 / 83 | 0.031927 (-42.8 %) | 1647 | 2.87871 (-0.90 %) |
+
+The vein gather reads 0 patches on every step at every `k`. Exit: no `k` meets the bias bar
+(the gather's mean within 3 % of the tree without the clamp at both poses; it falls 38 to 53
+%), and at 8 and 4 the composite's patch-pose mean (103.95, 108.40) is over the before reading
+77.10 (done-when 4). By the plan's rule dev stops: the remaining options are outside ADR-0023's
+design, and the architect writes ADR-0037 before any code. The tree carries no probe change
+(the hash, the `f32` atlas and the clamp are patches under `live/`). Done-whens 3 and 5 are
+not met by any tried setting; 6 is not read for a kept mechanism.
+
 ### Resume notes (2026-10-28, delete when Phase 4 lands)
 
-- **State:** merge d9f9fae, Phase 2 a2b3852, Phase 3 8263b17, Phase 4 step A 93a2c72 (the rig's
-  keys and trace). Phase 4's mechanism is not committed: stopped for the architect (see the
-  paragraph above). The tip's gates are Phase 3's plus step A's test-only change (clippy and fmt
-  clean).
-- **Step C:** read and logged (the paragraph above); stopped at the verdict (the furnace's
-  shortfall is the firefly clamp at the probe rays' hits, outside the candidates). Scratch:
-  `live/stepc_long.rs`, `live/stepc_replay.rs` (symlink into `apps/flythrough/tests/` as
-  `zz_stepc_*.rs` to run; remove before any gate), `live/stepc-replay.patch`,
-  `live/stepc-f32rays.patch`, `live/stepc-donly.patch`, `live/stepc-noclamp.patch`,
-  `live/stepc-diag.sh` (the replay under each patch). Step D not started.
-- **Scratch:** `live/phase4-row4-hashed-slices.patch` (probes.rs, applies on 93a2c72),
-  `live/phase4-scratch-per-probe-rotation.patch` (probe_update.wgsl, on top of it). Logs:
-  `live/p4-stepA.log`, `live/p4-hash.log`, `live/p4-hash-keys.log`, `live/p4-hash-rot.log`,
-  `live/p4-dw5.log`, `live/p4-dw5-base.log`.
-- **Gotchas:** the sweep's empty spec reads the default at both poses plus the 384 x 216 patch
-  reading; `STILL_SWEEP=` set empty reads the default at both poses only. The furnace test's
-  centre texels sit at -9.1 % of pi at 93a2c72, near its 10 % floor: any change to the probes'
-  random sequence can cross it. No timing reading on battery (the orchestrator, 2026-10-28).
+- **State:** merge d9f9fae, Phase 2 a2b3852, Phase 3 8263b17, Phase 4 step A 93a2c72, step C
+  0b848cf (verdict row 2 by the third amendment, 6661d2b), the furnace test's new form 9e229f5,
+  the filmstrip 5b75f81, the rig's gather mean luminance with this row's commit. Step D items 1
+  and 2 read and logged above; stopped at item 2's exit (ADR-0037). The tree carries no probe
+  change. Phases 5 and 6 not started.
+- **Scratch:** `live/phase4-row4-hashed-slices.patch` (probes.rs, applies on the tip),
+  `live/stepd-f32-h099.patch` (the `f32` atlas with the hash, at 0.99; edit `HYSTERESIS` in
+  probes.rs and probe_update.wgsl together), `live/stepd-clamp.patch` (probe_update.wgsl, on
+  the hash), `live/stepd-h.sh`, `live/stepd-k.sh`, `live/stepd_reveal.rs`, `live/stepc_long.rs`,
+  `live/stepc_replay.rs` (symlink into `apps/flythrough/tests/` as `zz_*.rs` to run; remove
+  before `cargo fmt` or any gate), the step C patches and `live/stepc-diag.sh`. Release
+  binaries `live/flythrough-base` and `live/flythrough-hash` (the base timing readings,
+  `live/p4-base-timing.sh`). Filmstrips under `live/filmstrip/`.
+- **Gotchas:** `STILL_SWEEP=` set empty reads the default at both poses only. The furnace test
+  takes about 90 s (256 visits for `D`). Check the power state before any timing reading.
 
 ### Notes
 
