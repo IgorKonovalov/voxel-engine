@@ -927,7 +927,7 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
 | 1: The patch bar as a headless test | dev | done; stopped at done-when 4 | 031ab3b |
 | 2: A full-precision emissive accumulation | dev | done | a2b3852 |
 | 3: The emissive-only gradient guard | dev | done | 8263b17 |
-| 4: The probe gather holds still | dev | step A 93a2c72; step C 0b848cf; furnace test 9e229f5; filmstrip 5b75f81; step D read 919dbc4; kept mechanism wip, stopped on the hole test (owner) | committed with this row |
+| 4: The probe gather holds still | dev | step A 93a2c72; step C 0b848cf; furnace test 9e229f5; filmstrip 5b75f81; step D read 919dbc4; kept mechanism wip 9fbf2b9; done | committed with this row |
 | 5: The sweep, the defaults and the bar | dev | not started | |
 | 6: Goldens, readings and the fly-through | dev | not started | |
 | 7: The owner's windowed check | human | not started | |
@@ -1315,29 +1315,26 @@ slow list. Lavapipe, exclusive perf lock, power Not charging (on AC), 1-minute l
   77.10, gather flicker 0.00365 and 0.00273 against 0.00430 and 0.00341). 6 met on step D's
   timings (`frame_bytes` +0); the Radeon lamp-off re-read is Phase 6's.
 
-### Resume notes (2026-10-28, delete when Phase 4 lands)
-
-- **State:** merge d9f9fae, Phase 2 a2b3852, Phase 3 8263b17, Phase 4 step A 93a2c72, step C
-  0b848cf (verdict row 2 by the third amendment, 6661d2b), the furnace test's new form 9e229f5,
-  the filmstrip 5b75f81, step D log 919dbc4. The kept mechanism (the hash, `INDIRECT_FRAMES`
-  1600, both goldens re-blessed) is in this row's `wip(render)` commit; it fails only the hole
-  test (69.7 % against 70 %). Stopped for the owner on that test. Phase 4's own commit (and
-  this row's state) follow the owner's answer; Phases 5 and 6 not started.
-- **Scratch:** `live/phase4-row4-hashed-slices.patch` (probes.rs, applies on the tip),
-  `live/stepd-f32-h099.patch` (the `f32` atlas with the hash, at 0.99; edit `HYSTERESIS` in
-  probes.rs and probe_update.wgsl together), `live/stepd-clamp.patch` (probe_update.wgsl, on
-  the hash), `live/stepd-h.sh`, `live/stepd-k.sh`, `live/stepd_reveal.rs`, `live/stepc_long.rs`,
-  `live/stepc_replay.rs`, `live/p4-hole-long-*.log` (the hole test's 2048-frame scratch, a
-  `zz_hole_long` test appended to `indirect.rs` only while run), `live/zz-*.png` (scratch
-  renders of both goldens on the base and tip) (symlink into `apps/flythrough/tests/` as `zz_*.rs` to run; remove
-  before `cargo fmt` or any gate), the step C patches and `live/stepc-diag.sh`. Release
-  binaries `live/flythrough-base` and `live/flythrough-hash` (the base timing readings,
-  `live/p4-base-timing.sh`). Filmstrips under `live/filmstrip/`.
-- **Gotchas:** `STILL_SWEEP=` set empty reads the default at both poses only. The furnace test
-  takes about 90 s (256 visits for `D`). Check the power state before any timing reading.
+- The hole test's new form (the fifth amendment, c27891f): frame 32 against the box's value
+  2048 frames after the carve (`HOLE_SETTLED_FRAMES`), bar 52 %; the lit box runs in step.
+  Tip: frame 32 0.14136 = 61.4 % of 0.23010, 16.4 x the pre-carve 0.00861; frame 256 0.20288
+  (69.7 %, the old form, which fails); fill: dark / lit 0.0302 at frame 64; passes, 194 s.
+  Base (93a2c72's probe code): 0.12354 = 53.3 % of 0.23181, 11.6 x the pre-carve 0.01069;
+  frame 256 0.17273 (71.5 %, the old form passes); fill 0.0459; passes, 183 s
+  (`live/p4-hole-new-hash.log`, `live/p4-hole-new-base.log`; lavapipe, exclusive perf lock,
+  AC, load 0.4 at the start, 12.8 at the end). It stays on the slow list.
+- Gates on the Phase 4 tree: `flythrough::indirect`, `lights` and `golden` whole, 51 run, 51
+  passed, 2 skipped, 1030 s (`live/p4-dw5-final.log`); `--profile quick` 514 run, 513 passed,
+  1 timed out at load 10.8 (`replay::a_stamp_and_a_collapse_replay_from_the_save`; its binary
+  alone 6 of 6, 13.9 s); clippy `-D warnings`, `fmt --check`, `check-test-tiers.mjs`,
+  `check-comment-hygiene.mjs` clean.
 
 ### Notes
 
+- Phase 4: `fsr2_carries_the_indirect_golden_s_bounce_light` shared `INDIRECT_FRAMES`; it keeps
+  64 frames through its own `FSR2_INDIRECT_FRAMES`, so it runs as before.
+- Phase 4: `indirect_golden_shows_the_vein_s_bounce_light` joins the slow list (165 s at 1600
+  frames); `.config/nextest.toml` is outside Phase 4's Files touched.
 - Merge d9f9fae: the tree's names match the plan's; Plan 0038 renamed nothing this plan's
   files use.
 - Phase 2: the other readers of `Frame::accumulated` switch to `readback::read_float`:
