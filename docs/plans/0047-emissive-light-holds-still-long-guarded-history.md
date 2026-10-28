@@ -762,7 +762,7 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
 | 1: The patch bar as a headless test | dev | done; stopped at done-when 4 | 031ab3b |
 | 2: A full-precision emissive accumulation | dev | done | a2b3852 |
 | 3: The emissive-only gradient guard | dev | done | 8263b17 |
-| 4: The probe gather holds still | dev | step A done (93a2c72); step C read, stopped at its verdict | committed with this row |
+| 4: The probe gather holds still | dev | step A 93a2c72; step C 0b848cf; furnace test new form | committed with this row |
 | 5: The sweep, the defaults and the bar | dev | not started | |
 | 6: Goldens, readings and the fly-through | dev | not started | |
 | 7: The owner's windowed check | human | not started | |
@@ -1007,7 +1007,38 @@ than 3.5 %, against the printed floor-centre direct offset of -0.025 %; taken ag
 rays' own direct mean (-8.5 %), it lies within 1 %. Read with the printed offset, row 1 holds
 and its cause is outside the four candidates and outside the probe code (the clamp in
 `light.wgsl`'s `resolve_emissive`, ADR-0018's estimator), which is row 3's case. Dev stops here
-for the architect; step D is not started.
+for the architect; step D is not started. The third amendment (6661d2b) reads it as row 2.
+
+Phase 4 before readings, the probe passes' GPU time (release `flythrough --level --headless
+--render 1920x1080 --frames 300 --adapter NVIDIA|AMD`, `--lamp on` and `--lamp off`, the
+spawn pose, the defaults: `own` 1.5, 64 rays, 1 in 8; median of the last 30 frames per run,
+three runs each; exclusive perf lock, memory cap; power Charging on every run but the last
+(AMD, hash, lamp off, run 3: Discharging); 1-minute load 1.3 to 3.0, two runs above 2, so those
+are loaded). No `VEIN_POSE` run: the fly-through has no pose flag. `live/p4-base-timing.log`.
+Probes (update) ms per run, then gather:
+
+| adapter | lamp | base (93a2c72 probe code) | hash | gather base / hash |
+|---|---|---|---|---|
+| RTX 3080 Laptop | on | 1.148 1.152 1.128 | 1.154 1.170 1.181 | 0.094 to 0.095 / 0.094 to 0.096 |
+| Radeon (Cezanne, RADV) | on | 7.862 7.856 8.008 | 8.154 8.157 8.146 | 0.600 / 0.600 |
+| RTX 3080 Laptop | off | 1.056 1.078 1.058 | 1.075 1.099 1.106 | 0.094 to 0.095 / 0.094 to 0.096 |
+| Radeon (Cezanne, RADV) | off | 7.265 7.301 7.261 | 7.606 7.596 7.605 | 0.575 / 0.572 to 0.573 |
+
+The medians of three, hash against base: RTX lamp on 1.170 against 1.148 (+1.9 %), off 1.099
+against 1.058 (+3.9 %); Radeon on 8.154 against 7.862 (+3.7 %), off 7.605 against 7.265 (+4.7
+%). The frame's CPU time, RTX: base 0.646 to 0.652 ms, hash 0.545 to 0.790 ms.
+
+Furnace test, new form (the third amendment; lavapipe, exclusive perf lock, 1-minute load 5.3
+to 9.8, loaded; power Not charging). `D` by the zeroed-tile method: at 32 visits the standard
+error read 1.251 % (D 2.8542) and at 64 visits 0.888 % (D 2.8387), both over the 0.5 % bar, so
+the test takes 256 visits (2048 frames; the test runs about 90 s): base D 2.8788, error 0.386
+%, -8.36 % of pi, +0.17 % against step C's `stepc-donly` 2.874. Base probe code (93a2c72): floor
+2.9746 (+3.33 % of D, -5.32 % of pi), texels 2.8555 ..= 2.9805 (-0.81 ..= +3.53 % of D), mean
+2.9162 (+1.30 % of D, -7.18 % of pi); old form passes (10 % of pi), new form passes. With the
+hash: D 2.9010, error 0.380 % (-7.66 % of pi); floor 2.8789 (-0.76 % of D, -8.36 % of pi),
+texels 2.7129 ..= 2.8945 (-6.48 ..= -0.22 % of D), mean 2.8052 (-3.30 % of D, -10.71 % of pi);
+old form fails (2.7129 under 10 % of pi), new form passes. The light pass's floor-centre direct
+over 248 frames reads 3.0814 (-1.92 % of pi) on both.
 
 ### Resume notes (2026-10-28, delete when Phase 4 lands)
 
@@ -1051,6 +1082,9 @@ for the architect; step D is not started.
   where that is under about half the strata, the age falls only part way and the running mean
   from there is slow. The plan's Risks name ADR-0036's Alternative C as this case's fallback;
   it is not built.
+- Phase 4: the furnace test's `D` is measured over 256 visits, not the amendment's 32 (or 64):
+  at 32 and 64 visits its standard error read 1.251 % and 0.888 %, over the 0.5 % bar; at 256
+  it reads 0.38 to 0.39 %. The test takes about 90 s on lavapipe. Its name is unchanged.
 - Phase 4: step A is its own commit (93a2c72) before any mechanism, so the log's readings and
   the chosen row precede the mechanism's commit, as done-when 1 asks.
 - Phase 1: `readback::read_float` (an `rgba16float` or `rgba32float` read by the texture's
