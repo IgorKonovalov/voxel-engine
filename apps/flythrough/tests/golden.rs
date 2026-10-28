@@ -1609,8 +1609,8 @@ fn upscaled_golden_sharpens_within_the_neighbourhood() {
 }
 
 /// The showcase's `hall` shot at the golden's size after [`SHOWCASE_FRAMES`] frames at the
-/// fly-through's defaults (indirect light on at the default probe spacing, the upscaler at
-/// its default scale, the lighting at its default resolution, `LookPreset::DEFAULT` with
+/// fly-through's defaults (indirect light on at the default probe spacing, our upscaler at
+/// its default scale 1.5 with its jitter, the lighting at its default resolution, `LookPreset::DEFAULT` with
 /// rock's detail), the lamp off, the shot's exposure and the showcase's light radius, under
 /// `table`.
 fn showcase_hall(table: &MaterialTable) -> Option<(Vec<u8>, u64)> {
@@ -1646,7 +1646,16 @@ fn showcase_hall(table: &MaterialTable) -> Option<(Vec<u8>, u64)> {
         }
         last = Some(gpu.light_samples());
     }
-    let mut frame = Frame::new(&device, WIDTH, HEIGHT);
+    // The fly-through's default upscaler: ours at internal scale 1.5 with its jitter and
+    // sharpening 0.5.
+    let output = [WIDTH, HEIGHT];
+    let mut frame = Frame::with_sizes(
+        &device,
+        vxe_render::RenderScale::OneHalf.internal(output),
+        output,
+    );
+    frame.set_jitter(&device, true);
+    frame.set_sharpness(&queue, 0.5);
     frame.set_lighting(vxe_render::Lighting {
         lamp: false,
         indirect: true,

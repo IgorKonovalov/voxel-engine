@@ -466,7 +466,7 @@ reads them.
 | 5: The readings | dev | done, the windowed first frame left to Phase 6 | 65fa828 |
 | 5a: The probe spacing in the banner | dev | done | e4b43bb |
 | 6: The owner's pick and the cave on screen | human | done, verdicts in the Phase 6a amendment | a2c6d64 |
-| 6a: Fewer ores, none on the ceiling, half the cave dark | dev | in progress, gpu gate pending | |
+| 6a: Fewer ores, none on the ceiling, half the cave dark | dev | done (code at ffbfaec and 93aab01) | committed with this row |
 | 6b: The owner's look at the darker hall | human | done, verdict in the Phase 6b amendment | cbe9983 |
 | 7: The hero re-shot and the README | dev | not started | |
 
@@ -517,6 +517,8 @@ reads them.
 - Phase 6b (owner, `live/session1b.sh`, 2026-10-27): "much better now, could be a bit darker but we can keep it"; option b (exposure stays 1.5, luma band 12..40/255), recorded as the plan's Phase 6b amendment.
 - Merge of main at 51a6de8 (Plan 0041, FSR 2; the 0032 amendment; Plan 0047, ADR-0036): three conflicts. `.config/nextest.toml`: main's lines (with `flythrough::fsr2` in every filter and its three slow tests) plus the showcase golden on the slow list, as before. `tests/golden.rs`: both blocks kept (the showcase golden, then main's `fsr2.png`). `main.rs`: main's `Run` fields (`upscaler`, `upscaler_changed`) with this lane's `modes: self.args.start_modes()` (source and probe spacing). No names changed. The merge makes the fly-through's default our upscaler at internal scale 1.5 with its jitter (`DEFAULT_SCALE`, `upscaler_settings`).
 - Merge of main at ce07d8a (Plan 0040, eye adaptation; `Lighting::exposure` is `Exposure`, the fly-through's default `--exposure auto`): six conflicts. `.config/nextest.toml` and `tests/golden.rs` as in the first merge (main's `flythrough::exposure` entries kept; the showcase golden's exposure becomes `Exposure::Manual(1.5)`). `docs/nfr.md` §2: both paragraphs kept. `hud.rs`: one `Modes::line` with this lane's `source NAME, ` and `probes N` and main's `exposure MODE EV`. `main.rs`: one `Args::start_modes(now_ms)` (main's name and signature) that also names the source and the probe spacing; the showcase's start exposure moved from `start_lighting` into the parser (`--source showcase` without `--exposure` sets `exposure = Some(shot exposure)`, so `--exposure auto` still selects auto there). `examples/hero.rs`: this lane's file with main's `--exposure auto|E` folded into the shot override (`Option<Exposure>`, each shot's `Exposure::Manual` by default).
+- Phase 6a, after the two merges: the merged fly-through's default upscaler is ours at internal scale 1.5 with its jitter and sharpening 0.5, so `showcase_hall` (`tests/golden.rs`, outside Phase 6a's files) renders through it (`Frame::with_sizes` at 213 x 120 for 320 x 180, `set_jitter(true)`, `set_sharpness(0.5)`), at `Exposure::Manual(1.5)`. Re-blessed on lavapipe (llvmpipe, LLVM 23.1.3, Mesa 26.2.5), exclusive perf lock, load 6.98: 29 806 light samples (0 with the emission off), hue shares amber 7.43 %, ember 0.69 %, cyan 4.56 %, violet 0.06 %, mean sRGB luma 16.8/255, 0 pixels over 2/255 with the emission off; the unblessed rerun differs in 0.0000 % of pixels. Opened before commit: a dark hall, the cyan cluster at the centre, amber specks on the walls, one violet streak at the left.
+- Phase 6a gate (tree of 116d1d6 plus the golden): gpu tier 176 of 176 (23 skipped) under the perf lock; the full tier of 116d1d6 705 of 705 (10 skipped).
 
 ### Resume notes (2026-10-27, delete when Phase 7 lands)
 
