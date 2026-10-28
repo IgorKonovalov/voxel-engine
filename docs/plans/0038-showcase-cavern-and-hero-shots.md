@@ -468,7 +468,7 @@ reads them.
 | 6: The owner's pick and the cave on screen | human | done, verdicts in the Phase 6a amendment | a2c6d64 |
 | 6a: Fewer ores, none on the ceiling, half the cave dark | dev | done (code at ffbfaec and 93aab01) | 4357e71 |
 | 6b: The owner's look at the darker hall | human | done, verdict in the Phase 6b amendment | cbe9983 |
-| 7: The hero re-shot and the README | dev | done | committed with this row |
+| 7: The hero re-shot and the README | dev | done | a8355f8 |
 
 ### Notes
 
@@ -527,10 +527,32 @@ reads them.
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature (testbed only; no engine crate changed).
+- **Public API changed:** `flythrough` only. New `flythrough::showcase` (`ShowcaseSource`,
+  `SHOWCASE_CHUNKS`, `CRYSTAL`, `AMETHYST`, `EMBER`, `Shot`, `SHOTS`, `Shot::named`);
+  `showcase_materials()` and the three emission constants in `lib.rs`; `level_mirror_budget`
+  takes the world; `hud::Modes::with_source` and `with_probe_spacing` (the line gains
+  `source showcase, ` and `probes N`). Fly-through flags: `--source cave|level|showcase`
+  (`--level` kept), `--shot NAME`; on the showcase `--lamp` defaults off, `--light-radius` 19,
+  and the start exposure is the shot's manual 1.5 unless `--exposure` is given. `hero`:
+  `--source`, `--shot NAME|all`, `--out-dir`, `--indirect`, `--probe-spacing` (default 32),
+  `--internal-scale` (default 1.5), `--jitter` (default on above scale 1), `--sharpen`,
+  `--light-radius`, `--adapter`, `--lamp` (default off), `--size` (default 1920x1080),
+  `--exposure auto|E`. `world_budget --source showcase|level`.
+- **Budget readings:** `docs/nfr.md` §2 (the showcase at its three shots, both adapters,
+  654d3c6, loaded), §3 (showcase 71 282 `Full` bricks, CPU bytes 17 842 448 against the level's
+  60 807 552, mirror budget 134 604 544 B against 259 203 328 B) and §7 (windowed first frame,
+  e4b43bb, RTX 3080 Laptop: cold 2047 to 2081 ms, warm 660 to 701 ms, against 3 s); machines,
+  commits and loads in the Notes above. The light samples fell from 99 326 to 29 806 with Phase
+  6a (seed 1); the §2 and §3 readings predate it and were not re-read.
+- **Gate at the tip (a8355f8, plan-0038):** `cargo build --workspace --all-targets` exit 0;
+  `cargo nextest run --workspace --profile full --no-fail-fast --test-threads 2` under the
+  exclusive perf lock, exit 0, 705 of 705 passed, 10 skipped (load 2.94 at the end);
+  `cargo test --doc --workspace` 7 passed; `cargo clippy --workspace --all-targets -- -D
+  warnings` exit 0; `cargo fmt --all --check` exit 0; `cargo deny check` advisories, bans,
+  licenses and sources ok (one unmatched-license-allowance warning); `scripts/check-doc-links`,
+  `check-comment-hygiene`, `check-index-rows` and `check-test-tiers` exit 0;
+  `scripts/build-guests.sh` run first.
+- **Outstanding `human` phases:** none.
 
 ## Followups
