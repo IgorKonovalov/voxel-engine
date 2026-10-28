@@ -24,6 +24,15 @@
 > re-blessed by done-when 5's 1 % rule, and the hole test's bars stay. Step D opens with a
 > test-only filmstrip (`STILL_FILMSTRIP`), which Phases 6 and 7 show the owner. The firefly
 > clamp's bias on the probe rays goes to Followups. The TL;DR and Risks follow.
+> **Amended 2026-10-28 (owner, fourth),** after step D's readings. Phase 4 keeps the slice
+> hash alone, on the `f16` atlas at hysteresis 0.97: no `f32` atlas, no clamp (step D's
+> result says why). Done-when 3 at the patch pose becomes the hash's reading plus a 10 %
+> margin; at `VEIN_POSE` it stands. `indirect.png` renders at a settled 1600 frames and is
+> re-blessed by the 1 % rule there; `showcase_hall.png` is re-blessed by the rule at its own
+> 256 frames. Done-when 6's cost bar is met on step D's readings, and Phase 6 re-reads the
+> Radeon's lamp-off figure quiet. Phase 5's bar holds the direct light to the strict numbers
+> and adds the gather's measured share by arithmetic. Probe popping seen at Phase 7 leads to
+> ADR-0037. The TL;DR, diagram, Budgets, Risks and Followups follow.
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet: static light in a dark cave)
 > **Related ADRs:** [ADR-0036](../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
@@ -70,7 +79,13 @@ a per-ray emissive clamp (amended 2026-10-28, owner, second). Step C found no de
 moved tests read an order-dependent transient, and the furnace sits under pi because the
 firefly clamp biases the probe rays' direct light about 8.5 % low. So the furnace test now
 holds the probes to that direct mean, and a test-only filmstrip lets the owner see the patch
-pose before and after step D (amended 2026-10-28, owner, third). Only then does the plan pick the
+pose before and after step D (amended 2026-10-28, owner, third). Neither step D mechanism
+held: the `f32` atlas at 0.99 lags about 1831 frames and fails the furnace, and the clamp
+biases indirect light 38 to 53 % low. So the phase keeps the hash alone. It stills
+`VEIN_POSE` and leaves about 8 gather patches a step at the patch pose, which becomes that
+pose's bar. Phase 5's bar then holds the direct light to the strict numbers, with the gather's
+share added by arithmetic. If the owner still sees probes pop in Phase 7, ADR-0037 follows
+(amended 2026-10-28, owner, fourth). Only then does the plan pick the
 history length and the reuse cap by sweeping them against the bar, and set the default. The
 first thing anyone sees is the Phase 1 test printing today's patch counts on the two vein
 poses: about 78 per step at the patch pose and 36 at `VEIN_POSE` under default, 0 with the
@@ -169,7 +184,7 @@ flowchart LR
         L[light pass\n8 candidates, reuse\none shadow ray] --> T[temporal pass\nemissive: max 1/age+1, 1/H, lambda\nf32 accumulation\nlamp: alpha 0.2, reset]
         T --> A[a-trous x4]
         A --> C[composite\n+ probe gather]
-        P[probe update, Phase 4\none emissive sample per ray hit\n1 slice in 8, sliced by a hash\nhysteresis and atlas by step D] --> C
+        P[probe update, Phase 4\none emissive sample per ray hit\n1 slice in 8, sliced by a hash\nf16 atlas, hysteresis 0.97] --> C
     end
     E[edit boxes] --> T
     S[emission-scale change bit] --> T
@@ -506,6 +521,33 @@ flowchart LR
          furnace's long reading moves by at most 1 %.
        - If no `k` meets them, **stop**: the remaining options are outside ADR-0023's
          design, and the architect writes ADR-0037 before any code.
+  - **Step D's result (amended 2026-10-28, owner, fourth).** Dev stopped at item 2's exit, and
+    the owner decided on the readings instead of opening ADR-0037 now. Phase 4 keeps the
+    slice hash alone, on the `f16` atlas at hysteresis 0.97. Both step D mechanisms were
+    measured and rejected:
+    - *The `f32` atlas with a settled hysteresis above 0.97.* At 0.99 it brings the patch
+      pose's gather to 0.30 / 2 per step (0.90 sudden steps per second). But its reveal lag
+      is about 1831 frames (a lower bound, against 1007 at 0.97), and the furnace no longer
+      settles by 256 frames: its texel mean lags -4.59 % of `D` against the 4 % bar, with its
+      worst texel at -9.84 %. At 0.98 and 0.985 the furnace fails the same way. The atlas
+      would also add 16 777 216 B.
+    - *The per-ray emissive clamp.* At every `k` (8, 4, 2) it biases the gather's mean
+      luminance 38 to 53 % low, against the 3 % bias bar. At 8 and 4 it also raises the patch
+      pose's composite over the before reading (103.95 and 108.40 against 77.10).
+    - *The hash alone* (the tip with `live/phase4-row4-hashed-slices.patch`, `f16` at 0.97):
+      at `VEIN_POSE` the gather reads 0 patches on every step. At the patch pose it reads
+      8.15 / 44 and 21.0 sudden steps per second, with flicker 0.00365. The `f32` atlas at
+      0.97 reads 8.10 / 44 and 20.9, so the precision moves it by under 1 %. The furnace's
+      new form passes (worst texel -6.48 % of `D`, texel mean -3.30 %).
+    - *What is left at the patch pose.* The composite there reads about 71 to 77 patches a
+      step in every variant step D tried, the clamp's aside. The filmstrips in
+      `live/filmstrip/` show that the bulk is direct emissive light, which is Phase 5's
+      target. Phase 5's bar adds the gather's remaining share by arithmetic.
+    - The hash lands in its own commit with the `indirect.png` and `showcase_hall.png`
+      re-blesses (done-when 5). Before that commit, dev re-reads the hole test on that tree.
+      The log's only reading of the hash on the `f16` atlas is step A's 69.7 % against the
+      70 % bar. If it misses, done-when 5's rule applies: a justified change to the test, with
+      the owner's approval for any loosening, or a stop.
   - If the chosen mechanism adds a `Lighting` switch, the fly-through gets its flag and the
     HUD's lighting row shows its state (the testbed rule), and Phase 6's old-look run turns it
     off.
@@ -518,7 +560,9 @@ flowchart LR
   `crates/vxe-render/src/marcher.rs` (the light key, `Params` or a `Lighting` field, the
   atlas bytes in `frame_bytes`), `crates/vxe-render/src/shaders/probe_gather.wgsl` (only for
   an `f32` atlas), `apps/flythrough/tests/indirect.rs`, `apps/flythrough/src/main.rs` and
-  `apps/flythrough/src/hud.rs` (only for a new switch), this plan's log. Step C's scratch runs
+  `apps/flythrough/src/hud.rs` (only for a new switch), `apps/flythrough/tests/golden.rs`
+  (`INDIRECT_FRAMES`) with `apps/flythrough/tests/golden/indirect.png` and
+  `showcase_hall.png` (amended 2026-10-28, owner, fourth), this plan's log. Step C's scratch runs
   go under `live/`, and so do the filmstrips (`live/filmstrip/`, never committed). A defect's fix touches the file the defect is in, and its test goes in
   `probes.rs`'s unit tests or `apps/flythrough/tests/indirect.rs`.
 - **Done when** (the Phase 1 rig: lavapipe, 192 x 108, `Lighting::default()` with indirect on,
@@ -532,6 +576,17 @@ flowchart LR
      step, no step exceeds 3 (277 at `VEIN_POSE` today, 165 at the patch pose), and it has at
      most 1 single-frame step over 10 % per second (53.6 at the patch pose today). That leaves
      Phase 5's composite bar (mean 3, max 8) to the direct light.
+     **Amended 2026-10-28 (owner, fourth).** At `VEIN_POSE` the bar stands as written (the
+     hash reads 0 / 0 and 0 per second). At the patch pose it becomes the hash's reading plus
+     a 10 % margin: the gather averages at most 9.0 patches per step, no step exceeds 48, and
+     it has at most 23 single-frame steps over 10 % per second (8.15 / 44 and 21.0 read; 8.15
+     x 1.1 = 8.97, 44 x 1.1 = 48.4, 21.0 x 1.1 = 23.1). *Why 10 %:* nothing after Phase 4 is
+     meant to move the gather. Phase 1 read it identical at emissive history 1 and 32, step A
+     read it unchanged by the guard, and Phase 5 sweeps only `H` and the reuse cap. The one
+     measured perturbation is rounding: the `f32` atlas at the same 0.97 moved it by 0.6 %
+     (mean), 0.5 % (sudden steps) and 0 (max). So the margin is over ten times that, and the
+     base's 22.75 / 165 and 53.6 still fail all three parts. Phase 5 re-reads this bar at its
+     chosen defaults.
   4. **No regression at the patch pose.** The composite's mean patches per step there is no
      higher than this phase's before reading, and the gather's tile flicker is no higher than
      Phase 1's at either pose (0.00430 at the patch pose, 0.00341 at `VEIN_POSE`).
@@ -565,10 +620,51 @@ flowchart LR
        within 7 % of the probe rays' direct mean `D` and the texel mean within 4 %, at 256
        frames. The hole test's bars stay as written. `indirect.png` and `showcase_hall.png`
        are re-blessed by the 1 % rule in the kept mechanism's commit.
+     - **Amended 2026-10-28 (owner, fourth): the goldens are read where they have settled.**
+       - `indirect.png` renders at 1600 frames, not 64 (`INDIRECT_FRAMES` in
+         `apps/flythrough/tests/golden.rs`, with its doc comment). At 64 frames every probe
+         has had only its first and young visits, so the golden reads the order-dependent
+         transient: the hash moves 32 % of its pixels and its mean luma by +4.06 % (20.75
+         against 19.94). The long readings agree within noise (21.493 against 21.696, step
+         C). *The arithmetic:* step C's base series falls from a deficit of 8.1 % of its long
+         reading at 64 frames to 3.0 % at 512 frames. That is a factor of 0.983 a visit over
+         56 visits, which matches `1 - (1 - a)(1 - h)` at albedo 0.5 and h 0.97, 0.985. The
+         transient part of the base-to-tip difference, 4.06 % at the first settled visit
+         (frame 72), therefore falls as 0.985 per visit. It falls under a quarter of the 1 %
+         rule after `ln(0.25 / 4.06) / ln 0.985` = 185 settled visits, frame 72 + 8 x 185 =
+         1552. 1600 frames (200 visits, 191 settled) leaves 4.06 x 0.985^191 = 0.23 %, so
+         the rest of the 1 % is left for the view's own noise. That noise is about 0.8 %
+         peak to peak over the last 256 frames of step C's long series. Step C's series read
+         21.55 (base) and 21.43 (hash) at 1600, -0.56 %.
+       - Dev reads `indirect.png`'s mean luminance at 1600 frames on the base probe code
+         (93a2c72) and on the tip with the hash. The golden is re-blessed at 1600 only if the
+         two lie within 1 %. Otherwise dev stops, as the rule says. The log names the moved
+         share at 1600 and the mean change. The test's other claim (at least 20 % of hit
+         pixels differ from indirect off by more than 8/255) is read at the same count. The
+         test joins the slow list if its time on lavapipe calls for it.
+       - `showcase_hall.png` keeps its 256 frames. The transient does not explain its move.
+         Step C's series is flat from frame 64 on both trees (16.7 to 16.97, its gather
+         0.0103 to 0.0107), and at 256 frames the two read 16.81 and 16.88, +0.42 %. Its 4 %
+         of moved pixels is the same noise in a new visit order, at the same mean. It is
+         re-blessed by the 1 % rule as written, read at 256 frames on the base and the tip.
   6. **Cost.** The probe update pass at the defaults costs at most 5 % more than before on each
      adapter, read in Phase 6's budget run. `Frame::frame_bytes` grows by at most 16 777 216 B
      (an `f32` rgba irradiance atlas: 32 768 probes x 64 texels x 8 B more), and by 0 for any
      other row.
+     **Amended 2026-10-28 (owner, fourth).** With the hash alone `frame_bytes` grows by 0. The
+     cost bar is met on step D's readings (release fly-through, spawn pose, defaults, three
+     runs each, AC on all but one run, load 1.3 to 3.0). The medians of three, hash against
+     base, for the probe update pass: RTX 3080 Laptop +1.9 % lamp on and +3.9 % lamp off;
+     Radeon (Cezanne, RADV) +3.7 % lamp on and +4.7 % lamp off. The gather is unchanged. The
+     Radeon lamp-off figure lies within 0.3 % of the bar, and its every pair of base and
+     hash runs reads +4.0 to +4.75 %. But one of its hash runs was on battery and two runs
+     were loaded, so Phase 6 re-reads it as the bar's reading. Quiet means a 1-minute load
+     under 1.0 at each run's start. All runs are on AC (the power state is checked and
+     logged before each run). There are three runs each of `live/flythrough-base` and the
+     tip, interleaved, lamp off, with the median of the last 30 frames per run. The bar is
+     the median of three, at most +5 %. If the quiet re-read lands over 5 %, dev records it
+     and stops for the owner; the bar is not widened. The RTX figures and the Radeon
+     lamp-on figure are re-read in the same session as readings.
   7. **The reordering is explained (amended 2026-10-28, owner, second).** The log has step C's
      long series on the base and the hash, each candidate's finding and the verdict row. If
      the verdict is a defect, its fix and test are committed, and the re-measured readings
@@ -587,9 +683,16 @@ flowchart LR
   `the_vein_wall_patches_are_counted`'s default readings into assertions
   (`the_vein_wall_holds_still_with_the_lamp_off`). If no swept pair meets the bar, set the
   best pair, record its readings and stop for an owner amendment rather than loosen the bar.
+  - **The direct light's share (amended 2026-10-28, owner, fourth).** The rig gains, test-only,
+    a count of the composite's *direct-attributed* events. A direct-attributed patch is a
+    composite patch tile on a step whose gather tile did not patch on that step. A
+    direct-attributed sudden step is a composite single-frame step on a tile and frame where
+    the gather's tile made none. The rig prints them beside the composite and gather counts.
+    The sweep picks by the bar below.
 - **Files touched:** `crates/vxe-render/src/marcher.rs`, `apps/flythrough/src/main.rs`
   (the fly-through's default follows `DEFAULT_EMISSIVE_HISTORY`),
-  `apps/flythrough/tests/emissive_stillness.rs`, `apps/flythrough/tests/lights.rs` (any
+  `apps/flythrough/tests/emissive_stillness.rs`, `apps/flythrough/tests/support/stillness.rs`
+  (the direct-attributed counts), `apps/flythrough/tests/lights.rs` (any
   existing test whose arithmetic named 32, re-derived from the same formula, not loosened),
   this plan's log.
 - **Done when** (headless, lavapipe, 192 x 108, both poses, off frames 120 to 720 under the
@@ -601,6 +704,36 @@ flowchart LR
   3. **No flicker.** The tiles' mean |d log2| per frame is at most 0.002: 0.0064 today, 0.0041
      at history 64. The display luma's mean |d| per frame is at most 0.06/255: 0.218 today,
      0.128 at history 64.
+
+  **Amended 2026-10-28 (owner, fourth): done-whens 1 to 3 with the gather's share.** The bars
+  above were set for the direct light, before Phase 4 left the gather at about 8 patches a
+  step at the patch pose. Phase 5's knobs (`H`, the reuse cap) do not move the gather, so a
+  composite bar of 3 per step can't be met there by any swept pair. The owner's strict
+  numbers stay on the direct light. The composite allows the gather only its measured share,
+  which Phase 4's done-whens 3 and 4 bound. Read at both poses in one run:
+  - *1, patches.* The direct-attributed patches average at most 3 per step, and none exceeds
+    8. Every composite patch is either direct-attributed or on a tile whose gather patched,
+    so the composite on step `i` is at most `8 + gather_i`, and its mean is at most 3 plus
+    the gather's mean in the same run. At `VEIN_POSE` the gather reads 0, so the bar is 3 and
+    8 as written. At the patch pose the composite's ceiling is 3 + 9.0 = 12 at Phase 4's
+    gather bar. Two parts that each move under 10 % but cross it together count as direct,
+    so the split errs strict.
+  - *2, sudden steps.* At most 1 direct-attributed single-frame step over 10 % per second.
+    The composite is then at most 1 plus the gather's rate in the same run (at most 24 at the
+    patch pose at Phase 4's bar, and 1 at `VEIN_POSE`).
+  - *3, flicker.* Independent per-frame noise adds in quadrature, so the composite's tile
+    flicker is at most `sqrt(0.002^2 + G^2)`, with `G` the gather's tile flicker in the same
+    run. A fit of step D's readings (base against hash, and the `f32` rows' hysteresis series,
+    each changing only the gather) puts the gather's weight in the composite at 0.79 to 1.0.
+    The bar takes 1, because a smaller weight would make the bar unreachable if the weight is
+    really 1. With the hash's `G` (0.00365 at the patch pose, 0.00273 at `VEIN_POSE`) the bar
+    is 0.00416 and 0.00338. Today's composite reads 0.00632 and 0.00346, so the direct light
+    must still fall to about 0.002. The display luma's bar scales by the same factor,
+    `0.06 x sqrt(1 + (G / 0.002)^2)` /255: 0.125 and 0.101 at the hash's `G`. This is an
+    approximation (the steps are not Gaussian), and at a weight of 0.8 it lets the direct
+    part read up to about 0.003. Phase 7's look holds the rest.
+  - The gather at the chosen defaults still meets Phase 4's done-whens 3 and 4, re-read in
+    the same run.
   4. The 384 x 216 reading of the chosen defaults is logged at the patch pose, as a reading
      and not a bar.
   5. Every test in `flythrough::lights`, `flythrough::indirect` and `flythrough::golden` passes
@@ -634,7 +767,9 @@ flowchart LR
      pixels over 2/255 against its old bytes. `dark_cave.png` still passes its own assertions
      (lit pixels, sample count).
   2. The budget readings below are in `nfr.md` with machine, commit and load, the probe update
-     and gather passes among them (Phase 4's cost bar).
+     and gather passes among them (Phase 4's cost bar). The Radeon's lamp-off probe update is
+     re-read quiet, on AC, three interleaved runs each of base and tip, as Phase 4 done-when 6
+     says (amended 2026-10-28, owner, fourth).
   3. The fly-through's banner or HUD shows the emissive history, the guard and the reuse cap
      in effect.
 
@@ -652,7 +787,10 @@ flowchart LR
   flicker are gone, and the defaults stand. (b) Another `H` or cap from the sweep is wanted,
   and the default changes to it with Phase 5's bars re-read. (c) Something is still visible
   (for example in motion), and the architect amends the plan or opens ADR-0036's
-  Alternative A. If the partial reveal is too slow, the architect amends the plan to build
+  Alternative A. If what is still visible is probe popping (the gather stepping on its own,
+  as at the patch pose), the architect writes ADR-0037 first: a separate emissive probe
+  channel with its own history or guard, or a world-space cache (amended 2026-10-28, owner,
+  fourth). If the partial reveal is too slow, the architect amends the plan to build
   ADR-0036's Alternative C, measured against Phase 3's partial-plug reading.
 
 ## Data shapes
@@ -683,8 +821,8 @@ pub struct Lighting {
 | `nfr.md` figure | Base (read) | Expected | How the close measures it |
 |---|---|---|---|
 | §2 Lighting 6.0 ms and Denoise 3.0 ms | `own` 1.5 has no lighting column in the FSR 2 table. `fsr2` 1.5 at the same internal size reads light + temporal + a-trous 1.571 to 1.593 ms on the RTX 3080 Laptop and 9.915 to 9.930 ms on the Radeon (Cezanne, RADV), level spawn (`nfr.md` §2, "FSR 2.2.1 ported to WGSL") | The gradient pass at about one ninth of the light pass's shadow work (25 600 strata at 640 x 360). **A guess:** at most 0.15 ms on the dev box and 1.2 ms on the iGPU. The f32 store costs the temporal and variance passes a few percent. | The release fly-through, `--level --headless --render 1920x1080 --frames 300` at the defaults (`own` 1.5), from the spawn and from `VEIN_POSE` lamp off. Light, gradient, temporal and a-trous are timed per pass, median of the last 30 frames, three runs, exclusive perf lock, memory cap, both adapters (`--adapter`). Bar: the gradient pass at most 0.15 ms on the dev box. The light + gradient + temporal sum stays under 6.0 ms and the a-trous under 3.0 ms there. The iGPU's figures are recorded as readings. |
-| §2 Lighting 6.0 ms: the probe passes | `nfr.md` §2's probe volume tables (update and gather per adapter, Plan 0029 Phase 4 and the slow-adapter settings) | Phase 4's mechanisms (amended 2026-10-28, owner, second): the hashed slices, then step D's. **A guess:** the hash and a clamp cost the GPU nothing measurable. The hash's `update_list` filters all 32 768 slots on the CPU each frame, which is a reading, not a bar. An `f32` atlas costs the blend and gather a few percent of their atlas traffic | The same runs, the probe update and gather passes timed per pass, and the frame's CPU time for the update list read once on the dev box. Bar: the update at most 5 % over its before reading on each adapter (Phase 4 done-when 6) |
-| §3 everything else in VRAM, 1.5 GB | `Frame::frame_bytes` 181 154 464 B at `own` 1.5 with the probe volume (`nfr.md` §3, the FSR 2 entry) | At most +3 686 400 B at the default, +8 294 400 B at scale 1 half (Phase 2's bar), plus at most 16 777 216 B if Phase 4 picks an `f32` irradiance atlas (independent of the resolution) | `Frame::frame_bytes` printed by the fly-through's autopilot at 1080p, both scales |
+| §2 Lighting 6.0 ms: the probe passes | `nfr.md` §2's probe volume tables (update and gather per adapter, Plan 0029 Phase 4 and the slow-adapter settings) | Phase 4's kept mechanism, the hashed slices alone (amended 2026-10-28, owner, fourth). **Read** (step D, spawn pose, three runs, loaded): the update +1.9 % lamp on and +3.9 % lamp off on the RTX 3080 Laptop, +3.7 % and +4.7 % on the Radeon; the gather unchanged. The hash's `update_list` filters all 32 768 slots on the CPU each frame: the frame's CPU time read 0.545 to 0.790 ms against the base's 0.646 to 0.652 ms on the RTX, a reading, not a bar | The same runs, the probe update and gather passes timed per pass, and the frame's CPU time for the update list read once on the dev box. Bar: the update at most 5 % over its before reading on each adapter (Phase 4 done-when 6), with the Radeon's lamp-off figure re-read quiet and on AC |
+| §3 everything else in VRAM, 1.5 GB | `Frame::frame_bytes` 181 154 464 B at `own` 1.5 with the probe volume (`nfr.md` §3, the FSR 2 entry) | At most +3 686 400 B at the default, +8 294 400 B at scale 1 half (Phase 2's bar; read exactly, Phase 2's log). Phase 4 adds 0 B | `Frame::frame_bytes` printed by the fly-through's autopilot at 1080p, both scales |
 
 Determinism is not touched: everything here is in `vxe-render`, a client-side view.
 
@@ -727,6 +865,11 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
   - A clamp relative to the probe's own irradiance would hold a dark probe dark when a
     light first reaches it. That is why it applies only to settled updates, and the hole
     test and the bias bar hold it.
+  Amended 2026-10-28 (owner, fourth): both risks came true. The `f32` atlas at 0.99 lagged
+  about 1831 frames and did not settle the furnace by 256, and the clamp biased indirect
+  light 38 to 53 % low. The owner keeps the hash alone. The remaining risk is that the patch
+  pose's gather (about 8 patches a step, 21 sudden steps a second) shows as probe popping in
+  the owner's windowed check. If it does, Phase 7 (c) leads to ADR-0037 (Followups).
 - **The indirect tests may read transients** (amended 2026-10-28, owner, second). The
   furnace, `indirect.png` and the hole test read at 64 or 256 frames, when about half a
   probe's weight still lies on early visits. If step C finds no defect, any mechanism that
@@ -748,7 +891,9 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
 - No new probe structure or estimator (amended 2026-10-28). Phase 4 changes the probe update
   only within ADR-0023's design (rays, rotation, hysteresis and its precision, slices, the
   light-window trigger, a per-ray clamp); anything beyond stops for ADR-0037. No change to
-  the probe spacing, the volume's size or the gather's visibility weights.
+  the probe spacing, the volume's size or the gather's visibility weights. After step D
+  (amended 2026-10-28, owner, fourth) it keeps only the slice hash: no `f32` irradiance atlas,
+  no hysteresis change, no per-ray clamp.
 - No change to the lamp's history, the upscaler or FSR 2. The upscalers' light-change clip
   still reads the existing bits.
 - No consumer-facing quality profile. The new `Lighting` fields join the render-settings work
@@ -1177,6 +1322,15 @@ not met by any tried setting; 6 is not read for a kept mechanism.
   visits up to 3.44. Fixing it (a clamp that keeps the mean, or one sized by the hit's
   geometry) changes ADR-0018's estimator for every pass that uses it, and is its own plan.
   That plan decides whether the furnace test judges against pi again. Not this plan's scope.
+
+- **ADR-0037, if the owner sees probe popping in Phase 7** (amended 2026-10-28, owner,
+  fourth). The slice hash leaves the patch pose's gather at about 8 patches a step. Inside
+  ADR-0023's design the measured options are spent: a rotation per probe did not help, the
+  `f32` atlas with a longer hysteresis lags (about 1831 frames at 0.99) and fails the
+  furnace, and the per-ray clamp biases the light. The next options are new decisions: a
+  separate emissive probe channel with its own history or guard, or a world-space cache
+  (ADR-0036's Alternative A). The architect writes ADR-0037 with those as its options, then
+  a plan, before any code.
 
 - Plan 0032 amendment (when this plan merges): its directional sample and sky ray land in the
   emissive part at this plan's `H`. The gradient's emissive re-shade then has to include the
