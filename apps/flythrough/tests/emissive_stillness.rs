@@ -55,11 +55,14 @@ fn the_vein_wall_patches_are_counted() {
 /// One variant of the sweep: a `;`-separated list in `STILL_SWEEP`, each a `,`-separated list
 /// of `key=value`: `pose` (patch, vein or both; default both), `h` (the emissive history),
 /// `cap` (the reuse cap), `sampler` (list or reuse), `cand` (candidates), `guard` (on or off),
-/// `kill` (edits or gradient), `size` (`WxH`). Unset keys keep `Lighting::default()`.
-fn variant(spec: &str) -> (Vec<Pose>, Lighting, [u32; 2]) {
+/// `kill` (edits or gradient), `size` (`WxH`), `probe_rays` and `probe_slices` (the probe
+/// volume's rays per update and slices), `trace` (on: the gather's per-frame trace, printed
+/// around each gather step over 8 patches). Unset keys keep `Lighting::default()`.
+fn variant(spec: &str) -> (Vec<Pose>, Lighting, [u32; 2], bool) {
     let mut lit = Lighting::default();
     let mut poses = vec![PATCH_POSE, VEIN_POSE];
     let mut size = SIZE;
+    let mut trace = false;
     for kv in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
         let (k, v) = kv.split_once('=').expect("key=value");
         match k {
@@ -75,6 +78,10 @@ fn variant(spec: &str) -> (Vec<Pose>, Lighting, [u32; 2]) {
             "cand" => lit.candidates = v.parse().expect("cand"),
             "sampler" => lit.sampler = Sampler::from_name(v).expect("sampler"),
             "kill" => lit.history = HistoryKill::from_name(v).expect("kill"),
+            "guard" => lit.emissive_guard = v == "on",
+            "probe_rays" => lit.probe_rays = v.parse().expect("probe_rays"),
+            "probe_slices" => lit.probe_slices = v.parse().expect("probe_slices"),
+            "trace" => trace = v == "on",
             "size" => {
                 let (w, h) = v.split_once('x').expect("WxH");
                 size = [w.parse().expect("W"), h.parse().expect("H")];
@@ -82,7 +89,7 @@ fn variant(spec: &str) -> (Vec<Pose>, Lighting, [u32; 2]) {
             _ => panic!("unknown sweep key {k}"),
         }
     }
-    (poses, lit, size)
+    (poses, lit, size, trace)
 }
 
 /// The statistics of each variant in `STILL_SWEEP` (see `variant`), printed as `reading:`
@@ -95,19 +102,28 @@ fn emissive_patch_sweep() {
     };
     let specs = std::env::var("STILL_SWEEP").unwrap_or_else(|_| ";pose=patch,size=384x216".into());
     for spec in specs.split(';') {
-        let (poses, lit, size) = variant(spec);
+        let (poses, lit, size, traced) = variant(spec);
         for pose in poses {
-            let r = run(&level, &pose, lit, size);
-            r.print(&format!(
-                "{} [{spec}] {}x{} h {} cap {} {} cand {}",
+            let name = format!(
+                "{} [{spec}] {}x{} h {} cap {} {} cand {} guard {} rays {} slices {}",
                 pose.name,
                 size[0],
                 size[1],
                 lit.emissive_history,
                 lit.reuse_m_cap,
                 lit.sampler.name(),
-                lit.candidates
-            ));
+                lit.candidates,
+                lit.emissive_guard,
+                lit.rays(),
+                lit.slices()
+            );
+            if traced {
+                let (r, trace) = run_traced(&level, &pose, lit, size);
+                r.print(&name);
+                print_trace(&name, &r.gather, &trace, 8);
+            } else {
+                run(&level, &pose, lit, size).print(&name);
+            }
         }
     }
 }

@@ -254,9 +254,42 @@ fn stats(tiles: &[Tiles], full: &[Vec<bool>], images: Option<&[Vec<u8>]>) -> Sta
     }
 }
 
+/// One off frame of a traced run (`run_traced`): whether the probe volume's light-change
+/// window was open, how many probes' ages restarted (an age below the slot's last frame's),
+/// how many probes are young (age 1 to `YOUNG_UPDATES`), and the gather's tile mean |d log2|
+/// from the frame before over the tiles full in both.
+#[derive(Clone, Copy, Debug)]
+pub struct TraceFrame {
+    pub off: usize,
+    pub window: bool,
+    pub restarts: u32,
+    pub young: u32,
+    pub gather_dlog2: f64,
+}
+
 /// One run at `pose` with `lighting` (indirect light on and the pose's manual exposure
 /// imposed), `size` internal pixels, the lamp switched off after `LAMP_ON` frames.
 pub fn run(level: &VeinLevel, pose: &Pose, lighting: Lighting, size: [u32; 2]) -> Reading {
+    run_inner(level, pose, lighting, size, false).0
+}
+
+/// `run`, plus a `TraceFrame` for every off frame of the window.
+pub fn run_traced(
+    level: &VeinLevel,
+    pose: &Pose,
+    lighting: Lighting,
+    size: [u32; 2],
+) -> (Reading, Vec<TraceFrame>) {
+    run_inner(level, pose, lighting, size, true)
+}
+
+fn run_inner(
+    level: &VeinLevel,
+    pose: &Pose,
+    lighting: Lighting,
+    size: [u32; 2],
+    traced: bool,
+) -> (Reading, Vec<TraceFrame>) {
     let (device, queue) = (&level.device, &level.queue);
     let lit = Lighting {
         indirect: true,
@@ -275,6 +308,9 @@ pub fn run(level: &VeinLevel, pose: &Pose, lighting: Lighting, size: [u32; 2]) -
     let mut emissive: Vec<Tiles> = Vec::new();
     let mut gather: Vec<Tiles> = Vec::new();
     let mut images: Vec<Vec<u8>> = Vec::new();
+    let mut trace: Vec<TraceFrame> = Vec::new();
+    let mut ages_before: Vec<u32> = Vec::new();
+    let age_of = |w: u32| (w >> 1) & vxe_render::probes::MAX_AGE;
     for i in 0..LAMP_ON + LAMP_OFF {
         if i == LAMP_ON {
             frame.set_lighting(Lighting { lamp: false, ..lit });
@@ -284,6 +320,29 @@ pub fn run(level: &VeinLevel, pose: &Pose, lighting: Lighting, size: [u32; 2]) -
             continue;
         }
         let off = i + 1 - LAMP_ON;
+        if traced && off + 1 >= WINDOW.0 && off <= WINDOW.1 {
+            let ages: Vec<u32> = frame
+                .probes()
+                .read_states(device, queue)
+                .iter()
+                .map(|&w| age_of(w))
+                .collect();
+            if off >= WINDOW.0 {
+                let restarts = ages.iter().zip(&ages_before).filter(|(a, b)| a < b).count() as u32;
+                let young = ages
+                    .iter()
+                    .filter(|&&a| (1..=vxe_render::probes::YOUNG_UPDATES).contains(&a))
+                    .count() as u32;
+                trace.push(TraceFrame {
+                    off,
+                    window: frame.probe_light_window(),
+                    restarts,
+                    young,
+                    gather_dlog2: 0.0,
+                });
+            }
+            ages_before = ages;
+        }
         if off < WINDOW.0 || off > WINDOW.1 {
             continue;
         }
@@ -307,9 +366,58 @@ pub fn run(level: &VeinLevel, pose: &Pose, lighting: Lighting, size: [u32; 2]) -
         gather.push(grid_tiles(&g, grid, size, scale, pose.exposure));
         images.push(readback::read_rgba8(device, queue, frame.target()));
     }
-    Reading {
-        composite: stats(&composite, &full, Some(&images)),
-        emissive: stats(&emissive, &full, None),
-        gather: stats(&gather, &full, None),
+    for f in 1..trace.len().min(gather.len()) {
+        let (mut s, mut c) = (0.0f64, 0u32);
+        for t in 0..tiles_n {
+            let ok = |k: usize| full[k][t] && gather[k][t].1 && gather[k][t].0 > FULL_LOG2;
+            if ok(f) && ok(f - 1) {
+                s += f64::from((gather[f][t].0 - gather[f - 1][t].0).abs());
+                c += 1;
+            }
+        }
+        trace[f].gather_dlog2 = s / f64::from(c.max(1));
     }
+    (
+        Reading {
+            composite: stats(&composite, &full, Some(&images)),
+            emissive: stats(&emissive, &full, None),
+            gather: stats(&gather, &full, None),
+        },
+        trace,
+    )
+}
+
+/// The trace's lines for each gather step over `over` patches: the 30 frames before the step
+/// and the step's own, one `off:window/restarts/young/dlog2` entry a frame.
+pub fn print_trace(name: &str, gather: &Stats, trace: &[TraceFrame], over: usize) {
+    for (k, &p) in gather.patches.iter().enumerate() {
+        if p <= over {
+            continue;
+        }
+        let (a, b) = (WINDOW.0 + k * STEP, WINDOW.0 + (k + 1) * STEP);
+        let rows: Vec<String> = trace
+            .iter()
+            .filter(|t| t.off + STEP >= a && t.off <= b)
+            .map(|t| {
+                format!(
+                    "{}:{}/{}/{}/{:.4}",
+                    t.off,
+                    u8::from(t.window),
+                    t.restarts,
+                    t.young,
+                    t.gather_dlog2
+                )
+            })
+            .collect();
+        println!(
+            "reading: {name} trace, gather step {k} (off {a} to {b}, {p} patches): {}",
+            rows.join(" ")
+        );
+    }
+    let windows = trace.iter().filter(|t| t.window).count();
+    let restarts: u32 = trace.iter().map(|t| t.restarts).sum();
+    println!(
+        "reading: {name} trace over off {} to {}: window open on {windows} frames, {restarts} probe age restarts",
+        WINDOW.0, WINDOW.1
+    );
 }

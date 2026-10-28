@@ -506,8 +506,8 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
 |---|---|---|---|
 | 1: The patch bar as a headless test | dev | done; stopped at done-when 4 | 031ab3b |
 | 2: A full-precision emissive accumulation | dev | done | a2b3852 |
-| 3: The emissive-only gradient guard | dev | done | committed with this row |
-| 4: The probe gather holds still | dev | not started | |
+| 3: The emissive-only gradient guard | dev | done | 8263b17 |
+| 4: The probe gather holds still | dev | step A done | committed with this row |
 | 5: The sweep, the defaults and the bar | dev | not started | |
 | 6: Goldens, readings and the fly-through | dev | not started | |
 | 7: The owner's windowed check | human | not started | |
@@ -604,6 +604,40 @@ last row, now `guard on, exposure manual +0.00 EV`). Gates: build, clippy `-D wa
 tests plus the three new ones 8 run, 8 passed (among them
 `the_lamp_light_that_left_the_cone_drops_in_each_history_mode` and
 `reservoir_reuse_lowers_one_frames_error`).
+Phase 4 step A (lavapipe, exclusive perf lock, load 6.1 at the start and 8.8 at the end; the
+Phase 1 rig with Phases 2 and 3 in: `H` 32, guard on). `emissive_patch_sweep` gains the keys
+`probe_rays`, `probe_slices`, `guard` and `trace`. Before reading, the default: patch pose
+composite 77.10 / 92 (sudden 12.90/s, flicker 0.00671, luma 0.229), gather 22.75 / 165 (53.60/s,
+0.00430); `VEIN_POSE` composite 35.40 / 120 (0.00/s, 0.00402, luma 0.124), gather 29.40 / 277
+(0.00/s, 0.00341). The gather's readings equal Phase 1's at both poses: the guard does not move
+it. The gather, patches per step mean / max, per-step patches, sudden steps per s, flicker:
+
+| variant | pose | mean / max | per step | sudden /s | flicker |
+|---|---|---|---|---|---|
+| rays 64, slices 8 (default) | patch | 22.75 / 165 | 41 165 44 24 6 0 0 11 2 0 16 51 26 0 32 0 37 0 0 0 | 53.6 | 0.00430 |
+| rays 64, slices 8 (default) | vein | 29.40 / 277 | 0 0 0 0 0 0 277 0 0 0 40 54 0 217 0 0 0 0 0 0 | 0.0 | 0.00341 |
+| rays 32 | patch | 26.35 / 186 | 0 49 8 186 0 17 91 0 0 28 4 2 3 48 40 0 21 8 0 22 | 64.6 | 0.00491 |
+| rays 32 | vein | 63.25 / 285 | 183 192 0 0 125 0 285 4 52 0 0 182 0 0 0 221 0 21 0 0 | 142.4 | 0.00577 |
+| rays 16 | patch | 58.95 / 169 | 94 134 71 169 74 35 0 7 33 113 63 2 56 150 10 64 0 68 0 36 | 150.7 | 0.00713 |
+| rays 16 | vein | 13.10 / 103 | 103 0 0 0 55 1 0 2 0 0 0 0 73 0 0 25 0 0 3 0 | 50.9 | 0.00419 |
+| slices 16 | patch | 23.10 / 292 | 292 38 11 0 11 0 0 15 0 1 0 67 26 0 0 0 0 0 0 1 | 49.2 | 0.00293 |
+| slices 16 | vein | 12.50 / 250 | 250 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 | 25.4 | 0.00220 |
+| slices 32 | patch | 70.40 / 312 | 312 287 290 201 312 0 0 0 0 0 0 0 0 0 0 0 0 0 0 6 | 185.3 | 0.00613 |
+| slices 32 | vein | 55.00 / 312 | 280 0 312 312 135 0 0 0 0 61 0 0 0 0 0 0 0 0 0 0 | 114.9 | 0.00346 |
+
+The `VEIN_POSE` trace (default): over off frames 120 to 720 the light window is open on 0
+frames and 0 probe ages restart. Around each gather step over 8 patches the gather's tile mean
+|d log2| is 0 on seven frames in eight and moves on one, every 8 frames: step 6 (off 300 to
+330, 277 patches) at off 270 0.0015, 277 0.0175, 285 0.0215, 293 0.0189, 301 0.0625, 309
+0.0687, 317 0.0404, 325 0.0241 (the frame after each, 0.0006 to 0.0021); step 13 (off 510 to
+540, 217 patches) at 485 0.0231, 493 0.0267, 501 0.0243, 509 0.0218, 517 0.0532, 525 0.0618, 533
+0.0256; steps 10 and 11 the same pattern. Decision rule: row 1 does not hold (no window, no
+restart). Row 2 does not hold: rays 64 to 16 changes the steps (mean 29.40 to 13.10, max 277 to
+103), but so do the slices (slices 16 mean 12.50; slices 32 mean 55.00, max 312). Row 3 does not
+hold: the rays change the steps (the rotation runs were not needed). Row 4 holds: slices 8 to 32
+moves the steps' timing (the steps at `VEIN_POSE` move from 6 and 13 to 0, 2 to 4 and 9) and size
+(mean 29.40 to 55.00). The mechanism: the slices spread by a hash of the probe, not by `slot mod
+slices`.
 
 ### Notes
 
