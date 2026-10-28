@@ -33,6 +33,10 @@
 > Radeon's lamp-off figure quiet. Phase 5's bar holds the direct light to the strict numbers
 > and adds the gather's measured share by arithmetic. Probe popping seen at Phase 7 leads to
 > ADR-0037. The TL;DR, diagram, Budgets, Risks and Followups follow.
+> **Amended 2026-10-28 (owner, fifth),** after the hole test read 69.7 % against 70 % on the
+> kept tree. Its 256-frame "settled" value is a transient on both trees. Done-when 5 now reads
+> frame 32 against the box's value at 2048 frames after the carve, with a bar of at least
+> 52 % (the base's 53.1 %, less 1 point). The owner approved the change.
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet: static light in a dark cave)
 > **Related ADRs:** [ADR-0036](../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
@@ -647,6 +651,22 @@ flowchart LR
          0.0103 to 0.0107), and at 256 frames the two read 16.81 and 16.88, +0.42 %. Its 4 %
          of moved pixels is the same noise in a new visit order, at the same mean. It is
          re-blessed by the 1 % rule as written, read at 256 frames on the base and the tip.
+     - **Amended 2026-10-28 (owner, fifth): the hole test reads against its converged value.**
+       On the kept tree the test read 69.7 % against its 70 % (frame 32 after the carve
+       against frame 256). Read out to 2048 frames after the carve, frame 256 is itself a
+       transient on both trees. The tip's converged value is 0.23008, and frame 32 reaches
+       61.4 % of it. On the base (93a2c72) the converged value is 0.23247, and frame 32
+       reaches 53.1 % (`live/p4-hole-long-*.log`). The test's claim is that the light arrives
+       quickly after the carve. The owner approved this form, which makes the claim against
+       the converged value:
+       - The settled reference is the box's value at 2048 frames after the carve, not 256.
+       - At frame 32 the box reads at least **52 %** of that reference: the base's 53.1 %,
+         less a 1-point margin for the run-to-run noise. A tip slower than today's base fails.
+         The 10x pre-carve claim stays, and so does the fill's claim (under 5 % of the lit box
+         within 64 frames of the fill).
+       - The test's doc comment states the reference and where the 52 % comes from. It joins
+         the slow list if its time on lavapipe calls for it. The log records both forms on base
+         and tip.
   6. **Cost.** The probe update pass at the defaults costs at most 5 % more than before on each
      adapter, read in Phase 6's budget run. `Frame::frame_bytes` grows by at most 16 777 216 B
      (an `f32` rgba irradiance atlas: 32 768 probes x 64 texels x 8 B more), and by 0 for any
