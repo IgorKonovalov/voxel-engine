@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0048** (ADRs are a separate sequence; next free there is **0037**).
+**Next free number: 0049** (ADRs are a separate sequence; next free there is **0038**).
 
 ## Active roster
 
@@ -19,6 +19,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, six verified defects | approved | Code health, no ADR. After every plan active on 2026-10-22. |
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044. |
 | [0047](0047-emissive-light-holds-still-long-guarded-history.md) | Emissive light holds still: a patch bar, a long f32 emissive history, an emissive-only gradient guard | approved | M2, ADR-0036 (proposed). After Plan 0040; before Plan 0032. |
+| [0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) | The probe rays' direct light without the clamp's bias: candidate schemes measured, the furnace back at pi | draft | M2, ADR-0037 (proposed). After Plan 0047; before Plan 0032. |
 <!-- roster:end -->
 
 ## Recently closed
