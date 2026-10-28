@@ -62,14 +62,25 @@
 > settled `INDIRECT_FRAMES`, and Phase 7's no-sky reference is read at this plan's base. Data
 > shapes, the resource table and the Budgets follow `nfr.md` as it stands. Every point where
 > Plan 0047 changes what this plan touches is listed under Risks, "Plan 0047 interaction".
-> Questions for the owner are under "Owner questions". No phase's intent changes.
-> **Starts after:** [Plan 0047](0047-emissive-light-holds-still-long-guarded-history.md)
-> merges (amended 2026-10-28; Plans 0024, 0029, 0030, 0040 and 0038 are closed and on main;
-> whether it also waits for the draft Plan 0048 is Owner question 4).
+> The questions for the owner were listed for approval; their answers are under "Owner
+> answers". No phase's intent changes.
+> **Amended 2026-10-28 (owner's answers):** the four owner questions are answered with their
+> first option, under "Owner answers": the gradient pass re-shades the sun and sky terms
+> (Phases 5 and 6 as amended); the showcase is in the `Tab` cycle with its own start settings
+> (Phase 3); the outdoor dev exposure is `eye()` with `min` 1e-4 and `max` 4.0 (Phase 4); and
+> this plan waits for Plan 0048, which follows Plan 0047. What 0048 changes that this plan
+> reads (the probe rays' direct term, the furnace test against pi again, the re-blessed
+> goldens) is under Risks, "Plan 0048 interaction". Phase 6's furnace reference stays pi,
+> which holds again after 0048. "The base commit" in every bar is main after 0048's merge.
+> **Starts after:** [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md)
+> merges (owner, 2026-10-28), which itself starts after
+> [Plan 0047](0047-emissive-light-holds-still-long-guarded-history.md) merges. Plans 0024,
+> 0029, 0030, 0040 and 0038 are closed and on main.
 > The names in this plan were checked against main at bc1e7a5 and Plan 0047's branch at
 > c27891f. 0047 still has dev phases to run (its sweep may change `DEFAULT_EMISSIVE_HISTORY`
-> and `Lighting::reuse_m_cap`, and adds `--reuse-m-cap`), so dev re-reads the names at 0047's
-> merge, and the names dev finds in the tree win.
+> and `Lighting::reuse_m_cap`, and adds `--reuse-m-cap`), and 0048 adds `Lighting::probe_direct`
+> and its flag and key, so dev re-reads the names at 0048's merge, and the names dev finds in
+> the tree win.
 
 ## TL;DR
 
@@ -244,9 +255,10 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
   there starts at 9. The LUT passes take their own slots at the front of `FRAME_PASSES` (for
   example `sky luts` and `sky view` before `hit`): `fsr2.rs`'s test counts FSR 2's nine passes
   back from `exposure`, which stays last. "The base commit" in every bar is main after Plan
-  0047's merge, whose goldens (0047 re-blessed `indirect.png`, `showcase_hall.png`, `fsr2.png`
-  and `mode_banner.png`) and `frame_bytes` (0047's `rgba32float` accumulation) are the ones to
-  match.
+  0048's merge (amended 2026-10-28, owner), whose goldens (0047 re-blessed `indirect.png`,
+  `showcase_hall.png`, `fsr2.png` and `mode_banner.png`, and 0048 re-blesses those with the
+  probes on at its new probe direct term) and `frame_bytes` (0047's `rgba32float`
+  accumulation, plus 0048's gain buffer if its winner keeps one) are the ones to match.
 - **Files touched:** new `crates/vxe-render/src/sky.rs`, new
   `crates/vxe-render/src/shaders/sky.wgsl`, `sky_transmittance.wgsl`, `sky_view.wgsl`,
   `composite.wgsl` (both variants), `marcher.rs` (the `Frame`, the FSR 2 composite variant's
@@ -364,8 +376,8 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
     `--castle` beside it. The outdoor source's start is the sky, `auto` exposure with Phase
     4's preset, and `--spawn`. `Tab` rebuilds into a source with that source's start settings,
     as `--source NAME` with the run's other flags would start it, so bar 6's comparison with a
-    fresh run holds. Whether `showcase` belongs in the cycle is Owner question 2; the bars
-    below assume it does, as approved.
+    fresh run holds. The showcase is in the cycle, starting with its own settings (owner,
+    2026-10-28, owner answer 2); the bars below assume it.
   - **The banner.** `hud::Modes::source` names a source only for the showcase today, and the
     test `the_showcase_banner_names_its_source_and_the_lamp` asserts that the level names
     none. Bar 4 needs every source named, so every source's line starts `source NAME`, and that
@@ -449,8 +461,8 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
     option a), unless `--exposure` or `--adaptation` is given. A sunlit ground reads about 200
     to 300 frame radiance units (Context), so it needs an exposure of `0.18 / 300` to `0.18 /
     200`, 6e-4 to 9e-4, far under `eye()`'s `min` of 2^-6 (0.0156). That is why the outdoor
-    `min` is its own. Owner question 3 confirms the preset and
-    `max` for the dev phases; Phase 9 decides them.
+    `min` is its own. The owner confirmed this preset and its `max` of 4.0 for the dev
+    phases (owner, 2026-10-28, owner answer 3); Phase 9 decides the values to keep.
   - **Bar 2 as it runs.** In `crates/vxe-render/tests/exposure.rs`, an empty world under
     `Sky::uniform(0.5)` with `AutoExposure::instant()`, the camera pitched up far enough that
     its lowest ray is above the horizon (a uniform sky reads 0 below it, which would pull the
@@ -554,7 +566,7 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
     re-shades to last frame's value, within the guard's dead zone; a moved sun or a new
     occluder reads as a change, which is the guard's job. The gradient mode's combined lambda
     takes the same sum. This is the first of the two ways Plan 0047's Followups name, and
-    Owner question 1 asks whether to take it. The sun-turn bit (`LIGHTING_EMISSION_CHANGED`)
+    the owner takes it (owner, 2026-10-28, owner answer 1). The sun-turn bit (`LIGHTING_EMISSION_CHANGED`)
     stays as planned. Bar 8 below defends it.
 - **Files touched:** `light.wgsl`, `march.wgsl` (the absent-chunk flag), `sky.wgsl`,
   `gradient.wgsl` (the directional re-shade; amended 2026-10-28), `marcher.rs` (`LightKey`,
@@ -630,7 +642,7 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
   - **The sky ray under the guard.** The sky ray's `(1 - w_probe) pi sky_radiance(d)` lands
     in the emissive part as the sun's term does, so `gradient.wgsl`'s re-shade adds it too, at
     last frame's hit with last frame's cosine draw, where `w_probe < 1` (Phase 5's rule and
-    Owner question 1). Phase 6's bars run with the filter off and say nothing of history, so
+    owner answer 1, 2026-10-28). Phase 6's bars run with the filter off and say nothing of history, so
     Phase 5 bar 8's form is repeated once here as a reading: a floor pixel past the fade step
     under `Sky::uniform(1.0)`, guard on, reads its age after 64 still frames into the log.
   - **The probe slices** are spread by Plan 0047's per-probe hash (`probes::slot_slice`, used
@@ -639,12 +651,16 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
     read at 256 frames under a sky that is constant from frame 0, and a probe's first visit
     blends at 0, so they read the converged value up to visit noise and do not wait for the
     order-dependent transient Plan 0047 found in `indirect.png`.
-  - **Pi stays the reference.** Plan 0047's furnace test judges the probes against the probe
-    rays' own direct mean `D`, because `FIREFLY_CLAMP` biases the emissive estimate at their
-    hits about 8.5 % low. Bars 1 to 3 here have no emissive material and no directional light,
-    and a miss returns the sky exactly, so nothing passes the clamp and `pi` is the right
-    fixed point. If dev finds a term in them that does pass it, the bar is judged against the
-    probe rays' direct mean as in 0047's `furnace_direct_mean`, and the log says so.
+  - **Pi stays the reference.** Plan 0047's furnace test judged the probes against the probe
+    rays' own direct mean `D`, because `FIREFLY_CLAMP` biased the emissive estimate at their
+    hits about 8.5 % low. *Amended 2026-10-28 (owner):* this plan starts after Plan 0048,
+    which gives the probe rays a direct scheme of their own (`Lighting::probe_direct`,
+    ADR-0037) and returns `the_furnace_box_reads_pi_of_indirect_irradiance` to pi, with
+    `the_narrow_furnace_reads_pi` beside it. So pi is the reference for the probes again,
+    whatever term passes the probe estimator. Bars 1 to 3 here have no emissive material and
+    no directional light, and a miss returns the sky exactly, so `pi` is their fixed point
+    either way. 0048's furnace tests run unchanged in this plan's gate, and a change in them
+    is a stop for the architect, not a re-baseline.
 - **Files touched:** `probe_update.wgsl`, `probe_gather.wgsl`, `light.wgsl`, `sky.wgsl`,
   `gradient.wgsl` (the sky ray's re-shade; amended 2026-10-28), `probes.rs`, `marcher.rs`,
   `sky.rs`, `apps/flythrough/tests/indirect.rs`, `apps/flythrough/tests/lights.rs`.
@@ -705,7 +721,7 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
     `probes` (the probe update), `gather`, `composite`, `upscale`, `sharpen` and `exposure`.
   - **The no-sky reference.** Plan 0041's close table predates Plan 0040's meter and Plan
     0047's gradient pass and history defaults, so it is no longer the base. Bar 3's level and
-    cave spawns with no sky are read at this plan's base commit (main after 0047's merge) with
+    cave spawns with no sky are read at this plan's base commit (main after 0048's merge) with
     the same command, both adapters, as the reference, and set beside 0047's close readings
     in `nfr.md` §2.
   - **A stillness reading.** Plan 0047's stillness rig (`apps/flythrough/tests/support/stillness.rs`)
@@ -966,7 +982,9 @@ Plan 0041's close table, read before Plans 0040 and 0047. The base this plan run
 the dev box: Plan 0040's meter and exposure pass, read at 1080p internal as 0.13 to 0.15 ms
 (`nfr.md` §2, "Eye adaptation"), less at the default 1280 x 720; and Plan 0047's gradient
 pass, which runs by default, guessed at 0.15 ms at most (its bar). 0047 also reads the probe update
-at +1.9 to +4.7 % and its CPU-side update list at 0.55 to 0.79 ms a frame. So the base frame
+at +1.9 to +4.7 % and its CPU-side update list at 0.55 to 0.79 ms a frame. Plan 0048's probe
+direct scheme adds at most 5 % more to the probe update on each adapter (its bar 6; owner,
+2026-10-28). So the base frame
 is about 4.6 to 4.8 ms at `own` 1.5, a guess, which Phase 7 reads at the base commit (Phase 7's
 amendment). On the slow adapter the same additions are 0.17 ms (read) and up to 1.2 ms (0047's
 guess), about 29.5 to 30 ms a frame, a guess. This plan's own additions gain one line: the
@@ -1093,7 +1111,7 @@ dev box's +0.03 to 0.07 ms, 0.2 to 0.4 ms (a guess).
      `crates/vxe-render/tests/exposure.rs` (Phase 4's amendment).
   2. *Instant adaptation* in Phase 7 and Phase 8 bar 5 is `AutoExposure::instant()`. The
      outdoor preset is `eye()` with `min` 1e-4 and `max` 4.0 for the dev phases, 0040's
-     recommendation (Owner question 3; Phase 9 decides). Phase 4 bar 5 reads against 0040's
+     recommendation (owner, 2026-10-28, owner answer 3; Phase 9 decides). Phase 4 bar 5 reads against 0040's
      `HDR_MAX` 60 000 and `MOMENT_LUM_MAX` 255 clamps, and runs at Phase 5's commit.
   3. *Binding slots and bits.* Frame group 0 is used to 13, so the sky takes 14 up; the
      composite's group 2 is used to 8, so 9 up. `Params.lighting` bits 4, 11 and 14 up are free
@@ -1116,7 +1134,7 @@ dev box's +0.03 to 0.07 ms, 0.2 to 0.4 ms (a guess).
      default). The gradient pass now runs whenever candidates are above 0, and its guard
      compares the emissive re-shade with last frame's whole emissive part. Phases 5 and 6 add
      the sun's and the sky ray's re-shade to `gradient.wgsl` so they are not read as change,
-     and Phase 5 bar 8 defends it (Owner question 1). Phase 7 bar 2 relies on it.
+     and Phase 5 bar 8 defends it (owner answer 1). Phase 7 bar 2 relies on it.
   3. *`Params`.* 0047 adds `reuse_m_cap` and `_pad8` after `output_size` and takes bit 10;
      `resident_r2` and the sky's flags take a pad word and bits 4, 11 or 14 up. The Rust
      `Params` and `march.wgsl`'s struct change together, as 0047's did.
@@ -1129,9 +1147,9 @@ dev box's +0.03 to 0.07 ms, 0.2 to 0.4 ms (a guess).
      not at 64. Phase 7's four goldens and Phase 8's forest golden render at it and join the
      slow list.
   6. *The new furnace form* (`furnace_direct_mean` in `indirect.rs`: the probes judged against
-     the probe rays' own direct mean `D`, because the firefly clamp biases it). Phase 6's
-     uniform-sky bars keep `pi`, since nothing in them passes the clamp; the 0047 form is the
-     fallback if a term does (Phase 6's amendment).
+     the probe rays' own direct mean `D`, because the firefly clamp biases it). Plan 0048
+     moves the helpers and returns the test to pi (Plan 0048 interaction, below). Phase 6's
+     uniform-sky bars keep `pi` (Phase 6's amendment).
   7. *The stillness rig* (`apps/flythrough/tests/support/stillness.rs`,
      `apps/flythrough/tests/emissive_stillness.rs`). Phase 5 bar 8 mirrors 0047's
      `the_emissive_guard_keeps_history_where_nothing_changed` with the sun; Phase 7 logs the
@@ -1141,37 +1159,54 @@ dev box's +0.03 to 0.07 ms, 0.2 to 0.4 ms (a guess).
      `--emissive-guard` flag and parse tests), `examples/hero.rs`, `temporal.wgsl`
      (`gradient_at` returns both lambdas), `gradient.wgsl`, and `.config/nextest.toml`'s gpu
      filter (`flythrough::emissive_stillness` added to the same line Phase 3 extends, in every
-     copy). The lane starts from 0047's merge, so these are the files as 0047 left them, and
-     the byte-identical bars compare against 0047's re-blessed goldens.
+     copy). The lane starts from 0048's merge (owner, 2026-10-28), so these are the files as
+     0047 and then 0048 left them, and the byte-identical bars compare against the goldens as
+     0048 re-blessed them.
   9. *0047's remaining phases* may set a new `DEFAULT_EMISSIVE_HISTORY` and
      `Lighting::reuse_m_cap` and add `--reuse-m-cap`. Phase 5 bar 6's 11 frames come from
      the bit's `ALPHA` 0.2 floor, not from `H`, so they hold at any default; bar 8's 256 is
      set in the test. Every other history bar runs at the default dev finds.
+- **Plan 0048 interaction** (owner, 2026-10-28; 0048 lands after 0047 and before this plan).
+  What [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) changes that this
+  plan reads:
+  1. *The probe rays' direct term.* The probe update calls the emissive estimator through
+     0048's `Lighting::probe_direct` scheme (ADR-0037), not the screen's clamp of 2; the light
+     pass's path is unchanged. Phase 5's directional sample at the probe rays' hits and Phase
+     6's sky on a miss join the probe trace beside that scheme's emissive estimate, and pass
+     through none of its clamp or gain (Phase 5's "No firefly clamp on the sun"). If 0048's
+     winner keeps a per-probe gain (its scheme B2), the gain is computed over the emissive
+     estimate alone, and the sun's and the sky's terms are added after it. The `--probe-direct`
+     flag and its key are 0048's; Phase 3 and Phase 8 pick their keys from those still free.
+  2. *The furnace test against pi again.* `the_furnace_box_reads_pi_of_indirect_irradiance`
+     and `the_narrow_furnace_reads_pi` judge D within 1.5 % of pi at a 0.5 % error, and the
+     helpers live in `apps/flythrough/tests/support/furnace.rs`. Phase 6's reference stays pi,
+     which now holds for the probes as a whole (Phase 6's amendment).
+  3. *The re-blessed goldens.* 0048 re-blesses every golden with the probes on
+     (`indirect.png`, `showcase_hall.png` and any other its log names) and re-shoots
+     `docs/images/hero.png`. This plan's byte-identical bars (Phase 1 bar 3, Phase 4 bar 1)
+     compare against those, and Phase 7's and Phase 8's goldens render at 0048's default.
+  4. *The probe update's cost.* 0048's bar holds its update at most +5 % on each adapter, so
+     the Budgets' base probe update moves by up to that much before this plan's sun rays; the
+     base commit's readings (Phase 7) include it.
 
-## Owner questions
+## Owner answers
 
-Amended 2026-10-28. Each has the option the amendment writes first.
+Amended 2026-10-28. The owner answered each question with its first option (owner,
+2026-10-28):
 
-1. **The sun and sky under Plan 0047's guard.** (a) The gradient pass re-shades the sun's and
-   the sky ray's terms with last frame's draws, about +0.03 to 0.07 ms on the dev box (a
-   guess), and the guard keeps working outdoors (Phases 5 and 6 as amended; Phase 7 bar 2
-   relies on it). (b) The guard is off while a body is above the horizon. It costs nothing,
-   but outdoor static light falls back to `1 / H`, and Phase 7 bar 2 cannot then be met at a
-   long `H`.
-2. **The showcase in the `Tab` cycle.** (a) In it, starting with the showcase's own settings
-   (lamp off, its light radius and its shot's exposure), as Phase 3 bar 4 lists. (b) Left out:
-   `Tab` cycles `cave`, `level` and `outdoor`, and the showcase stays a launch-only source,
-   as its refusals of `--autopilot`, `--save` and `--replay` already treat it.
-3. **The outdoor exposure for the dev phases.** (a) `eye()` with `min` 1e-4 and `max` 4.0,
-   Plan 0040's recommendation, until Phase 9 picks. (b) `eye()` with `min` 1e-4 and the
-   cave's `max` 16, so the cave mouth's interior and the night can be exposed brighter. (c)
-   `symmetric(1.5)`, the approved pre-0040 model.
-4. **Plan 0048 and the order.** [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md)
-   (draft, 2026-10-28) changes the probe rays' direct light to remove the firefly clamp's bias
-   and asks to land before this plan, so Phase 6's probe bars are read once on an unbiased
-   probe term. (a) This plan starts when Plan 0047 merges, as amended: its Phase 6 bars pass
-   no term through the clamp, and 0048's Phase 1 re-reads its "before" on this plan's tree if
-   this plan lands first. (b) This plan also waits for Plan 0048.
+1. **The sun and sky under Plan 0047's guard.** The gradient pass re-shades the sun's and the
+   sky ray's terms with last frame's draws, about +0.03 to 0.07 ms on the dev box (a guess),
+   and the guard keeps working outdoors (Phases 5 and 6 as amended; Phase 5 bar 8 defends it,
+   Phase 7 bar 2 relies on it).
+2. **The showcase in the `Tab` cycle.** In it, starting with the showcase's own settings (lamp
+   off, its light radius and its shot's exposure), as Phase 3 bar 4 lists.
+3. **The outdoor exposure for the dev phases.** `eye()` with `min` 1e-4 and `max` 4.0, Plan
+   0040's recommendation, until Phase 9 picks (Phase 4).
+4. **Plan 0048 and the order.** This plan waits for
+   [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md), which follows Plan
+   0047, so Phase 6's probe bars are read once on an unbiased probe term ("Starts after";
+   Risks, "Plan 0048 interaction"). Phase 6's furnace reference stays pi, which holds after
+   0048.
 
 ## What this plan does NOT do
 
