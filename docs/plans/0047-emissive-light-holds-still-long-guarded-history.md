@@ -9,6 +9,14 @@
 > keys, then picks the mechanism by a decision rule. The old Phases 4, 5 and 6 become 5, 6 and
 > 7; dev relabels the log's rows. The diagram, Budgets, Risks, "What this plan does NOT do" and
 > the TL;DR follow, and ADR-0036's Consequences gain a scope line.
+> **Amended 2026-10-28 (owner, second),** after Phase 4's row 4 mechanism (slices spread by a
+> hash) missed done-whens 3 and 5. The hash stays. Phase 4 gains step C, which explains why
+> reordering the slices moved `indirect.png`, `showcase_hall.png` and the furnace (a defect is
+> fixed and re-measured before anything else), and step D, which continues the measured list
+> at the patch pose: the `f32` irradiance atlas with a hysteresis above 0.97, then a per-ray
+> emissive clamp. Done-when 5 says how the furnace and hole tests are judged. Phase 3's
+> partial-plug lag is accepted as a reading, and Phases 6 and 7 add a partial opening to the
+> owner's reveal run. The TL;DR, diagram, Budgets and Risks follow.
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet: static light in a dark cave)
 > **Related ADRs:** [ADR-0036](../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
@@ -47,7 +55,11 @@ light on its own, so a long history still follows a dig that opens a vein onto a
 found a second source: at `VEIN_POSE` the probe gather makes 83 % of the patches, in
 whole-screen steps that ignore the emissive history. So a phase then finds what drives the
 probe volume's steps (ray count, slice cadence, the shared rotation, or a light-change window
-firing in a still scene) and fixes the cause it measures. Only then does the plan pick the
+firing in a still scene) and fixes the cause it measures. It found the slice cadence, and
+spreading the slices by a hash of the probe stills `VEIN_POSE` but not the patch pose, and it
+moves some indirect tests. So the phase first explains that move (a defect is fixed before
+anything else) and then tries, in order, an `f32` irradiance atlas with a longer hysteresis and
+a per-ray emissive clamp (amended 2026-10-28, owner, second). Only then does the plan pick the
 history length and the reuse cap by sweeping them against the bar, and set the default. The
 first thing anyone sees is the Phase 1 test printing today's patch counts on the two vein
 poses: about 78 per step at the patch pose and 36 at `VEIN_POSE` under default, 0 with the
@@ -146,7 +158,7 @@ flowchart LR
         L[light pass\n8 candidates, reuse\none shadow ray] --> T[temporal pass\nemissive: max 1/age+1, 1/H, lambda\nf32 accumulation\nlamp: alpha 0.2, reset]
         T --> A[a-trous x4]
         A --> C[composite\n+ probe gather]
-        P[probe update, Phase 4\none emissive sample per ray hit\nhysteresis 0.97, 1 slice in 8] --> C
+        P[probe update, Phase 4\none emissive sample per ray hit\n1 slice in 8, sliced by a hash\nhysteresis and atlas by step D] --> C
     end
     E[edit boxes] --> T
     S[emission-scale change bit] --> T
@@ -279,6 +291,13 @@ flowchart LR
      `history_dies_in_the_edit_box_and_ages_elsewhere` pass unchanged with the guard on.
   5. The HUD shows `guard on` or `guard off` in its lighting row in the fly-through, with
      `hud_golden` re-blessed if the row's text changed.
+- **Partial openings (amended 2026-10-28, owner, second).** A partial plug (a 10 x 10 window
+  of the partition) takes 222 frames to reach 90 % with the guard on and 415 with it off. The
+  owner accepts that as within "a lag bounded by `H`": at `H` 256 the bound is 589 frames
+  (`ln 0.1 / ln(255/256)`), and the guard still halves the lag. It stays a `reading:` line in
+  `a_reveal_behind_a_plug_follows_within_seventy_three_frames`, not a bar. The owner judges a
+  partial opening in Phase 7's windowed reveal. ADR-0036's Alternative C (the edit-near-light
+  bit) stays a fallback, built only if the owner finds the partial reveal slow there.
 
 ### Phase 4: The probe gather holds still (amended 2026-10-28, owner)
 - **Owner skill:** dev
@@ -318,6 +337,82 @@ flowchart LR
     separate emissive probe channel with its own history or guard, the emissive term moved
     out of the probe rays, or a world-space cache, ADR-0036's Alternative A) **stops** for
     the architect, who writes ADR-0037 before any code.
+
+    Step A selected row 4, and the hashed slices (`live/phase4-row4-hashed-slices.patch`)
+    still `VEIN_POSE` (gather 0 patches on every step) but not the patch pose (gather 8.15 /
+    44, 21.0 sudden steps per second). With the hash in, the patch pose's steps answer to both
+    the rays and the slices. A rotation per probe on top did not help (patch 7.25 / 119, vein
+    11.40 / 174), so it is off the list. The hash also moved `indirect.png` (32.2 %),
+    `showcase_hall.png` (4.0 %), the furnace's centre texels (down to 2.7129, more than 10 %
+    under pi; -9.1 % on the base) and the hole test (69.7 % against its 70 %; 71.5 % on the
+    base). Steps C and D follow (amended 2026-10-28, owner, second).
+  - **Step C: why reordering moves the indirect tests.** In a still scene the order in which
+    probes update should not change what they converge to. So a 32 % move, and a shift in the
+    furnace, point either at a defect (in the hash patch, or in the existing slice, age or
+    hysteresis logic) or at tests that read before the probes converge. Step C tells the two
+    apart before any further mechanism. It commits nothing but a defect's fix and its test.
+    - *Is the reading converged?* At the default 8 slices a probe is visited every 8 frames.
+      Its first visit blends at 0, the next 8 at `YOUNG_HYSTERESIS` 0.5, then at 0.97. At the
+      furnace's 256 frames (32 visits, 23 settled) about half of a texel's weight
+      (0.97^23 = 0.50) still lies on visits whose neighbours had seen fewer bounces.
+      `indirect.png` is read at 64 frames (8 visits, all at 0 or 0.5). The hole test's
+      "settled" value is read 256 frames after the carve. So all three may read a transient
+      whose shape depends on visit order. Dev runs, as scratch, the furnace (floor centre and
+      centre-probe texels), `indirect.png`'s view (mean luminance and the gather's mean) and
+      `showcase_hall.png`'s view out to 2048 frames (256 visits, residual weight
+      0.97^247 = 0.05 %). Each runs on the base probe code (53a5520) and with the hash, and
+      the log prints each series every 64 frames.
+    - *Noise.* The noise of a long reading is the spread of its series over its last 256
+      frames. "Agree" means the base and hash long readings differ by at most twice the larger
+      spread.
+    - *Defect candidates* (dev checks each and the log says what each showed):
+      1. A `slot mod slices` assumption left elsewhere: the touched-probe merge, the window's
+         4 slices, a read helper, a test that predicts a probe's update frame.
+      2. The emissive estimate's random key. `probe_trace` builds `px` from slot bits 0 to 7,
+         and `rand` wraps at 128. So 128 probes share every blue-noise texel. On the base
+         they always update on the same frame and draw the same numbers, while with the hash
+         they do not. That changes the correlation, not the mean, unless something downstream
+         is non-linear.
+      3. The atlas's `f16` store at 0.97: a blend of 3 % stores nothing within about 1.6 % of
+         the old value (`0.03 d < 2^-11`), and the rounding of `pack2x16float` on lavapipe
+         may lean one way. Dev replays one furnace probe's blend in `f64` on the CPU from its
+         read-back rays, as Phase 2 did for the accumulation, and prints the largest gap.
+      4. The scratch's `f16` ray radiance and distance.
+    - **The decision rule for step C.** The first row that holds decides.
+
+      | observation | verdict | next |
+      |---|---|---|
+      | the base and hash long readings disagree, or a candidate shows a fault, or the furnace's long reading lies more than 3.5 % from pi on either (the `f16` stall band of 1.6 %, doubled by the albedo-0.5 bounce series, rounded up; less any offset of the light pass's direct mean, which the test prints) | a defect | fix it as its own commit, with a test that fails before the fix and passes after it. Then re-measure, before any further mechanism: step A's default rows at both poses, the hash rows, done-when 4 and done-when 5. Re-enter this table on the fixed tree. If the fix is the `f16` atlas itself, it is step D's `f32` atlas at hysteresis 0.97, and step D then sweeps only the hysteresis |
+      | they agree within noise, and the furnace's long reading lies within 3.5 % of pi on both | no defect: the moved tests read an order-dependent transient | judge the tests by done-when 5's rules, then go on to step D |
+      | evidence of a defect that none of the candidates explains | unknown | **stop** with the readings: the architect amends |
+
+  - **Step D: the next mechanisms, at the patch pose, with the hash kept.** In this order,
+    keeping the first that meets done-whens 2 to 6. Every tried setting's readings go in the
+    log: the gather and composite statistics at both poses, done-when 5's tests, and the
+    reading below.
+    1. **An `f32` irradiance atlas and a settled hysteresis above 0.97.** The irradiance
+       texels become `f32` rgba (the visibility map stays `f16`), and `probe_gather.wgsl`
+       follows. Dev reads 0.97 on the `f32` atlas first, then 0.98, 0.985 and 0.99. The young
+       and window blends do not change. The lag a settled probe has, to 90 % of a step that
+       neither an edit nor a window catches, is `8 ln 0.1 / ln h` frames: 605 at 0.97, 912
+       at 0.98, 1219 at 0.985, 1833 at 0.99. As a reading at each `h`, dev prints the
+       gather's 90 % frame in Phase 3's reveal scene with the whole plug.
+       - *Exit:* keep the lowest `h` that meets done-whens 2 to 6, and Phase 4 ends there.
+         If none does, keep the best `h` only if it lowers the patch pose's gather mean by a
+         factor of 1.5 or more and meets done-whens 4 to 6. Otherwise go back to 0.97, and
+         keep the `f32` atlas only if step C made it a defect's fix. Then go to 2.
+    2. **A per-ray clamp on the emissive term.** In `probe_trace`, one ray's
+       `emissive_estimate` is clamped to `k` times the luminance of the probe's current
+       irradiance, read from its own texels. The clamp applies only to a settled update
+       (age above `YOUNG_UPDATES`, not touched, no window). So a probe that is new, dug
+       beside or in a light change still takes the full sample, and a reveal still enters.
+       Dev reads `k` at 8, 4 and 2 (proposed).
+       - *Exit:* keep the largest `k` that meets done-whens 2 to 6 and stays within the bias
+         bar. The bias bar: at both poses the gather's mean linear luminance over off frames
+         120 to 720 lies within 3 % (proposed) of the same tree without the clamp, and the
+         furnace's long reading moves by at most 1 %.
+       - If no `k` meets them, **stop**: the remaining options are outside ADR-0023's
+         design, and the architect writes ADR-0037 before any code.
   - If the chosen mechanism adds a `Lighting` switch, the fly-through gets its flag and the
     HUD's lighting row shows its state (the testbed rule), and Phase 6's old-look run turns it
     off.
@@ -330,7 +425,9 @@ flowchart LR
   `crates/vxe-render/src/marcher.rs` (the light key, `Params` or a `Lighting` field, the
   atlas bytes in `frame_bytes`), `crates/vxe-render/src/shaders/probe_gather.wgsl` (only for
   an `f32` atlas), `apps/flythrough/tests/indirect.rs`, `apps/flythrough/src/main.rs` and
-  `apps/flythrough/src/hud.rs` (only for a new switch), this plan's log.
+  `apps/flythrough/src/hud.rs` (only for a new switch), this plan's log. Step C's scratch runs
+  go under `live/`. A defect's fix touches the file the defect is in, and its test goes in
+  `probes.rs`'s unit tests or `apps/flythrough/tests/indirect.rs`.
 - **Done when** (the Phase 1 rig: lavapipe, 192 x 108, `Lighting::default()` with indirect on,
   off frames 120 to 720, the pinned `Manual` exposures, `H` 32, the gather's own tiles):
   1. **Attributed.** The log has step A's readings for every key variant at both poses and the
@@ -352,10 +449,32 @@ flowchart LR
      `a_pulse_at_its_mean_leaves_the_probes_still`. If the mechanism moves `indirect.png`
      past `assert_golden`, the log names the moved share and its mean luminance change, Phase
      6 re-blesses it only if that mean is within 1 %, and otherwise dev stops.
+     **How the near-floor tests are judged (amended 2026-10-28, owner, second).** On the base,
+     `the_furnace_box_reads_pi_of_indirect_irradiance` already reads its centre texels at
+     -9.1 % against a 10 % bar, and the hole test reads 71.5 % against 70 %. So their bars are
+     not loosened silently:
+     - The bars stay as written: 10 % of pi for the floor and every centre texel at 256
+       frames; at frame 32 at least 70 % of settled and 10 times the pre-carve value; under
+       5 % of the lit box within 64 frames of the fill.
+     - If the tip misses one, the mechanism changes until it passes, or the test changes with
+       its own justification. That justification is in the log and in the commit that changes
+       the test. It restates the claim the test defends, and derives the change from
+       arithmetic or step C's readings, not from what makes it pass (for example a furnace
+       read at a frame count where step C shows convergence, at the same 10 %). It also
+       measures the test on the base probe code (53a5520) and the tip, in its old and new form.
+     - A change that loosens a bar (a wider tolerance, a lower ratio, a longer lag) also needs
+       the owner's approval before its commit: dev stops for it.
+     - `indirect.png` and `showcase_hall.png` are re-blessed by the 1 % rule above only after
+       step C's verdict is "no defect", or its defect is fixed. Each is named in the log with
+       its moved share and its mean luminance change on the same tree.
   6. **Cost.** The probe update pass at the defaults costs at most 5 % more than before on each
      adapter, read in Phase 6's budget run. `Frame::frame_bytes` grows by at most 16 777 216 B
      (an `f32` rgba irradiance atlas: 32 768 probes x 64 texels x 8 B more), and by 0 for any
      other row.
+  7. **The reordering is explained (amended 2026-10-28, owner, second).** The log has step C's
+     long series on the base and the hash, each candidate's finding and the verdict row. If
+     the verdict is a defect, its fix and test are committed, and the re-measured readings
+     are logged, before any commit of step D.
 
 ### Phase 5: The sweep, the defaults and the bar
 - **Owner skill:** dev
@@ -398,6 +517,11 @@ flowchart LR
   off --reuse-m-cap 20`, which is today's except for the f32 store. The script also adds a
   third run at the reveal: a dig through a wall beside a vein, guard on and then off. If Phase
   4 added a switch, the old-look run also turns it off. Stdout stays visible.
+  - **A partial opening (amended 2026-10-28, owner, second).** The reveal run has two digs,
+    each guard on and then off. One opens the whole wall between the vein and the view. The
+    other opens only part of it, a hole of a quarter of the wall's area or less, like Phase
+    3's 10 x 10 plug in a 20 x 20 partition. The smaller the hole, the slower the reveal.
+    The script prints which dig and guard state is running.
 - **Files touched:** `apps/flythrough/tests/golden/*.png` (only those that moved),
   `apps/flythrough/src/main.rs` (`--reuse-m-cap`), `docs/nfr.md`, this plan's log.
 - **Done when:**
@@ -413,12 +537,16 @@ flowchart LR
 - **Owner skill:** human
 - **What:** the owner runs Phase 6's script on the dev box. At the vein with the lamp off and
   the eye adapting, the owner watches for 15 s with the new defaults and then the old look.
-  Then the dig reveal, guard on and off. Then a short flight past the vein.
+  Then the dig reveals, the whole opening and the partial one, each guard on and off. Then a
+  short flight past the vein.
 - **Files touched:** this plan's log.
-- **Done when:** the owner records one of three outcomes. (a) The patches and flicker are gone,
-  and the defaults stand. (b) Another `H` or cap from the sweep is wanted, and the default
-  changes to it with Phase 5's bars re-read. (c) Something is still visible (for example in
-  motion), and the architect amends the plan or opens ADR-0036's Alternative A.
+- **Done when:** the owner records one of three outcomes, and separately says whether the
+  partial reveal is fast enough (amended 2026-10-28, owner, second). (a) The patches and
+  flicker are gone, and the defaults stand. (b) Another `H` or cap from the sweep is wanted,
+  and the default changes to it with Phase 5's bars re-read. (c) Something is still visible
+  (for example in motion), and the architect amends the plan or opens ADR-0036's
+  Alternative A. If the partial reveal is too slow, the architect amends the plan to build
+  ADR-0036's Alternative C, measured against Phase 3's partial-plug reading.
 
 ## Data shapes
 
@@ -448,7 +576,7 @@ pub struct Lighting {
 | `nfr.md` figure | Base (read) | Expected | How the close measures it |
 |---|---|---|---|
 | §2 Lighting 6.0 ms and Denoise 3.0 ms | `own` 1.5 has no lighting column in the FSR 2 table. `fsr2` 1.5 at the same internal size reads light + temporal + a-trous 1.571 to 1.593 ms on the RTX 3080 Laptop and 9.915 to 9.930 ms on the Radeon (Cezanne, RADV), level spawn (`nfr.md` §2, "FSR 2.2.1 ported to WGSL") | The gradient pass at about one ninth of the light pass's shadow work (25 600 strata at 640 x 360). **A guess:** at most 0.15 ms on the dev box and 1.2 ms on the iGPU. The f32 store costs the temporal and variance passes a few percent. | The release fly-through, `--level --headless --render 1920x1080 --frames 300` at the defaults (`own` 1.5), from the spawn and from `VEIN_POSE` lamp off. Light, gradient, temporal and a-trous are timed per pass, median of the last 30 frames, three runs, exclusive perf lock, memory cap, both adapters (`--adapter`). Bar: the gradient pass at most 0.15 ms on the dev box. The light + gradient + temporal sum stays under 6.0 ms and the a-trous under 3.0 ms there. The iGPU's figures are recorded as readings. |
-| §2 Lighting 6.0 ms: the probe passes | `nfr.md` §2's probe volume tables (update and gather per adapter, Plan 0029 Phase 4 and the slow-adapter settings) | Phase 4's mechanism. **A guess:** a per-probe rotation or a clamp costs nothing measurable; an `f32` atlas costs the blend and gather a few percent of their atlas traffic | The same runs, the probe update and gather passes timed per pass. Bar: the update at most 5 % over its before reading on each adapter (Phase 4 done-when 6) |
+| §2 Lighting 6.0 ms: the probe passes | `nfr.md` §2's probe volume tables (update and gather per adapter, Plan 0029 Phase 4 and the slow-adapter settings) | Phase 4's mechanisms (amended 2026-10-28, owner, second): the hashed slices, then step D's. **A guess:** the hash and a clamp cost the GPU nothing measurable. The hash's `update_list` filters all 32 768 slots on the CPU each frame, which is a reading, not a bar. An `f32` atlas costs the blend and gather a few percent of their atlas traffic | The same runs, the probe update and gather passes timed per pass, and the frame's CPU time for the update list read once on the dev box. Bar: the update at most 5 % over its before reading on each adapter (Phase 4 done-when 6) |
 | §3 everything else in VRAM, 1.5 GB | `Frame::frame_bytes` 181 154 464 B at `own` 1.5 with the probe volume (`nfr.md` §3, the FSR 2 entry) | At most +3 686 400 B at the default, +8 294 400 B at scale 1 half (Phase 2's bar), plus at most 16 777 216 B if Phase 4 picks an `f32` irradiance atlas (independent of the resolution) | `Frame::frame_bytes` printed by the fly-through's autopilot at 1080p, both scales |
 
 Determinism is not touched: everything here is in `vxe-render`, a client-side view.
@@ -462,7 +590,10 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
   If that test misses its 73 frames, the fallback is to raise the "static light changed" bit
   for `EMISSION_CHANGE_FRAMES` when an edit lands within the light radius, measured against
   the same bar. That fallback is ADR-0036's Alternative C, which gives the guard up only for
-  edits.
+  edits. Phase 3 met the bar for a whole opening. A partial opening is slower (222 frames at
+  10 x 10, guard on), and the owner accepts that within the `H` bound (amended 2026-10-28,
+  owner, second). Alternative C is built only if the owner finds the partial reveal slow in
+  Phase 7.
 - **Motion is not improved.** Disocclusions and newly seen walls converge at `1 / (age + 1)`
   as today. If the owner's flight finds that the remaining fault, Phase 7 (c) opens the
   world-space cache.
@@ -481,6 +612,19 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
   channel with its own guard, or ADR-0036's Alternative A) are new decisions. Phase 4 stops
   for ADR-0037 rather than loosen its bars. A longer probe hysteresis also lags a probe's
   response to a dig by more visits; the indirect tests in its done-when 5 hold that.
+  Amended 2026-10-28 (owner, second): the rotation per probe is measured as not helping, so
+  the list is the `f32` atlas with a longer hysteresis, then the clamp. Two risks follow:
+  - A settled probe at `h` takes `8 ln 0.1 / ln h` frames to follow a change that no edit
+    box or window catches: 912 frames at 0.98, 1833 at 0.99, against 605 today. Step D logs
+    the reveal scene's gather lag at each `h`, and the owner sees it in Phase 7.
+  - A clamp relative to the probe's own irradiance would hold a dark probe dark when a
+    light first reaches it. That is why it applies only to settled updates, and the hole
+    test and the bias bar hold it.
+- **The indirect tests may read transients** (amended 2026-10-28, owner, second). The
+  furnace, `indirect.png` and the hole test read at 64 or 256 frames, when about half a
+  probe's weight still lies on early visits. If step C finds no defect, any mechanism that
+  changes the visit order or the hysteresis moves them, and they sit near their floors on the
+  base. Done-when 5 says how a change to them is justified. It is never a silent loosening.
 - **Plan 0038's hero shots** are lamp-off and ore-lit. If they are judged before this plan
   lands, they are judged with today's patches.
 - **The gradient's per-frame hash** picks one pixel per stratum, so a small change is found in
