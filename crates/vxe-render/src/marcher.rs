@@ -90,6 +90,10 @@ pub struct Params {
     pub emissive_history: f32,
     /// The size of the frame's image: the output size with the upscaler, else `size`.
     pub output_size: [u32; 2],
+    /// A reservoir's M is capped at this many times the frame's candidates
+    /// ([`Lighting::reuse_m_cap`]).
+    pub reuse_m_cap: u32,
+    pub _pad8: [u32; 3],
 }
 
 /// `Params::lighting` bit: the headlamp lights the frame.
@@ -103,6 +107,8 @@ pub const LIGHTING_REUSE: u32 = 1 << 2;
 pub const LIGHTING_GRADIENT: u32 = 1 << 3;
 /// The emissive part's history in frames, by default.
 pub const DEFAULT_EMISSIVE_HISTORY: u32 = 32;
+/// [`Lighting::reuse_m_cap`] by default.
+pub const DEFAULT_REUSE_M_CAP: u32 = 20;
 /// Frames after an emission-scale change (the frame of the change too) during which the
 /// emissive part blends at no less
 /// than the lamp's 0.2 (`0.8^11 = 0.086`: a step settles within 10 % in them).
@@ -829,6 +835,10 @@ pub struct Lighting {
     /// Frames of history the emissive part of the irradiance blends over at least (static
     /// light holds still); the lamp's part keeps alpha 0.2.
     pub emissive_history: u32,
+    /// Reservoir reuse keeps at most this many times the frame's candidates of history in a
+    /// reservoir's M ([`Sampler::Reuse`]; default [`DEFAULT_REUSE_M_CAP`]): a higher cap holds
+    /// a kept point longer, a lower one decorrelates neighbouring frames' samples.
+    pub reuse_m_cap: u32,
     /// Indirect light from the probe volume (ADR-0023): the probes update and the gather adds
     /// their irradiance, in the shaded view outside the cutaway. Off by default.
     pub indirect: bool,
@@ -854,6 +864,7 @@ impl Default for Lighting {
             sampler: Sampler::default(),
             history: HistoryKill::default(),
             emissive_history: DEFAULT_EMISSIVE_HISTORY,
+            reuse_m_cap: DEFAULT_REUSE_M_CAP,
             indirect: false,
             probe_rays: crate::probes::RAYS_PER_PROBE,
             probe_slices: crate::probes::SLICES,
@@ -2196,6 +2207,7 @@ impl Frame {
             lod2_r2: (4 * self.lod.r_full).pow(2),
             exposure: self.lighting.manual_exposure(),
             emissive_history: self.lighting.emissive_history as f32,
+            reuse_m_cap: self.lighting.reuse_m_cap.max(1),
             output_size: if self.upscaling() {
                 self.output
             } else {

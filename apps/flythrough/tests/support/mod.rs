@@ -4,6 +4,7 @@
 
 pub mod rigs;
 pub mod sharpness;
+pub mod stillness;
 
 use std::path::PathBuf;
 

@@ -190,6 +190,12 @@ struct Params {
     emissive_history: f32,
     // The size of the frame's image (the upscale pass's output); `size` without the upscaler.
     output_size: vec2<u32>,
+    // A reservoir's M is capped at this many times the frame's candidates
+    // (`Lighting::reuse_m_cap`, at least 1).
+    reuse_m_cap: u32,
+    _pad8: u32,
+    _pad9: u32,
+    _pad10: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;

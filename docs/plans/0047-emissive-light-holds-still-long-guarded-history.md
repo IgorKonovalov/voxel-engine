@@ -1,6 +1,6 @@
 # 0047: Emissive light holds still: a patch bar, a long full-precision emissive history, and an emissive-only gradient that guards it
 
-> **Status:** approved (2026-10-27)
+> **Status:** in-progress
 > **Decisions:** Owner, 2026-10-27: the long f32 history guarded by an emissive-only gradient (option a); after Plan 0040, before Plan 0032; the strict bar (at most 3 patches a step, 1 sudden step a second, flicker 0.002 log2 a frame); a lag bounded by H is acceptable for changes the guard cannot see.
 > **Created:** 2026-10-27
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
@@ -398,14 +398,68 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The patch bar as a headless test | dev | not started | |
+| 1: The patch bar as a headless test | dev | done; stopped at done-when 4 | committed with this row |
 | 2: A full-precision emissive accumulation | dev | not started | |
 | 3: The emissive-only gradient guard | dev | not started | |
 | 4: The sweep, the defaults and the bar | dev | not started | |
 | 5: Goldens, readings and the fly-through | dev | not started | |
 | 6: The owner's windowed check | human | not started | |
 
+Phase 1 (lavapipe, llvmpipe LLVM 23.1.3; exclusive perf lock; 1-minute load 1.8 at the start and
+9.0 at the end of the readings run, so loaded and indicative for timing; the counts are
+deterministic on the adapter). Pinned exposures, read once with a scratch test (`Auto(eye)`, 600
+frames lamp on then 900 off at 192 x 108, the last frame's `current`): patch pose 10.9624
+(metered -5.935, 0040's value reproduced), `VEIN_POSE` 5.3720 (metered -4.899). Statistics over
+off frames 120 to 720 (20 steps), 192 x 108, `Lighting::default()` with indirect on, `Manual` at
+the pinned value. Patches per step mean / max, single-frame steps per s, tile |d log2| per frame,
+display luma |d| per frame /255, full tiles:
+
+| run | part | patches mean / max | sudden /s | flicker | luma | full tiles |
+|---|---|---|---|---|---|---|
+| patch, default | composite | 77.55 / 92 | 12.90 | 0.00673 | 0.230 | 312 |
+| patch, default | emissive | 210.10 / 221 | 348.0 | 0.02530 | | 267 |
+| patch, default | gather | 22.75 / 165 | 53.6 | 0.00430 | | 312 |
+| vein, default | composite | 35.50 / 120 | 0.00 | 0.00403 | 0.125 | 312 |
+| vein, default | emissive | 223.05 / 251 | 400.5 | 0.02829 | | 302 |
+| vein, default | gather | 29.40 / 277 | 0.00 | 0.00341 | | 312 |
+| patch, 384 x 216, default | composite | 242.40 / 387 | 73.0 | 0.00599 | 0.175 | 1296 |
+| patch, 384 x 216, default | emissive | 740.65 / 767 | 1247.6 | 0.02608 | | 1062 |
+| patch, 384 x 216, default | gather | 104.05 / 617 | 256.1 | 0.00449 | | 1296 |
+| patch, candidates 0 | all three | 0 on every step | 0 | 0 | 0.001 | 85 |
+| vein, candidates 0 | all three | 0 on every step | 0 | 0 | 0.000 | 105 |
+| patch, history 1 | composite | 180.10 / 215 | 3988.1 | 0.09967 | 3.981 | 312 |
+
+Per-step composite patches, patch pose: 85 79 72 68 87 81 77 87 73 85 92 92 79 86 60 74 64 67 80
+63. Vein pose: 25 27 29 25 20 35 120 23 23 34 38 38 30 94 35 35 19 16 20 24; its gather: 0 0 0 0 0
+0 277 0 0 0 40 54 0 217 0 0 0 0 0 0 (whole-screen gather steps at off frames 300-330 and 510-540,
+where the composite reads 120 and 94). The patch pose's gather: 41 165 44 24 6 0 0 11 2 0 16 51
+26 0 32 0 37 0 0 0. The gather's readings are identical between the default and history 1 at the
+patch pose. The emissive part is the temporal pass's accumulation before the a-trous filter.
+Done-when 1: candidates 0 reads 0 patches on every step at both poses; history 1 averages 180.10
+at the patch pose. Done-when 2: the patch pose's composite average, 77.55, lies within 50 to 95.
+Done-when 4: the gather alone reads 22.75 against the composite's 77.55 at the patch pose
+(29 %) and 29.40 against 35.50 at `VEIN_POSE` (83 %), over a third at `VEIN_POSE`: dev stops
+after this phase for the architect's amendment. Phase 2's replay test, run once on this tree's
+`rgba16float` accumulation as the before reading (not committed with this phase; saved in
+`live/phase2-wip.patch`): largest gap 13.92 % at frame 2021 (1.50000 against the replay's
+1.74258). Gates: `cargo build`, clippy `-D warnings`, `fmt --check`, doc tests,
+`check-test-tiers.mjs` clean; `--profile quick` 499 of 499 (a first run at load 28 had
+`replay::a_stamp_and_a_collapse_replay_from_the_save` hit the 30 s kill; it passed alone in
+14.7 s); `--profile gpu` 176 run, 176 passed, 705.8 s; `flythrough::lights` and `flythrough::golden` whole (the slow list included, default profile): 33 run, 33 passed, 1 skipped (load 6.4).
+
 ### Notes
+
+- Phase 1: `readback::read_float` (an `rgba16float` or `rgba32float` read by the texture's
+  format) is added in this phase's commit, in `crates/vxe-render/src/readback.rs`, which Phase 1's
+  Files touched does not list; the stillness rig reads the accumulation through it so Phase 2's
+  format change needs no edit there. The rig is `apps/flythrough/tests/support/stillness.rs`.
+- Phase 1: the window is off frames 120 to 720 numbered from 1 (the first lamp-off frame), so a
+  run is 120 frames lamp on and 720 off. A part's tile is its lighting-grid pixels under the
+  meter's tile, each `clamp(log2(max(Y / exposure, 2^-16)), -16, 16)`; it counts where the
+  composite's tile is full and the part's own mean is above -15.
+- Phase 1: `the_vein_wall_patches_are_counted` also runs the default at both poses (the
+  `reading:` lines); the 384 x 216 reading is `emissive_patch_sweep`'s run with `STILL_SWEEP`
+  unset (the default at both poses, then `pose=patch,size=384x216`).
 
 ### Close triggers
 

@@ -296,8 +296,10 @@ fn merge(r: ptr<function, Reservoir>, x: vec3<f32>, face: u32, le: vec3<f32>, ta
     }
 }
 
-// Reservoirs reuse at most this many times the frame's candidates from the past.
-const REUSE_M_CAP: f32 = 20.0;
+// Reservoirs reuse at most `params.reuse_m_cap` times the frame's candidates from the past.
+fn reuse_m_cap() -> f32 {
+    return f32(params.reuse_m_cap) * f32(params.candidates);
+}
 // Spatial neighbours, their radius in pixels, and the random dimensions reuse starts at.
 const SPATIAL_TAPS: u32 = 5u;
 const SPATIAL_RADIUS: f32 = 30.0;
@@ -312,7 +314,7 @@ fn reuse(r: ptr<function, Reservoir>, q: vec2<i32>, p: vec3<f32>, n: vec3<f32>, 
     }
     let x = bitcast<vec3<f32>>(stored.xyz);
     let w_big = bitcast<f32>((stored.w & 0xFFFFu) << 16u);
-    let m = min(f32((stored.w >> 16u) & 0xFFu), REUSE_M_CAP * f32(params.candidates));
+    let m = min(f32((stored.w >> 16u) & 0xFFu), reuse_m_cap());
     let face = (stored.w >> 24u) & 7u;
     // The emitter voxel lies behind the point's face: its material gives the radiance now.
     let c = lookup(vec3<i32>(floor(x - 0.5 * face_dir(face))));
@@ -340,7 +342,7 @@ fn same_surface(q: vec2<i32>, rec: HitRecord) -> bool {
 // point chosen by resampling `params.candidates` candidates, and with Params.lighting bit 2
 // (reservoir reuse, ReSTIR, Bitterli 2020) also last frame's reservoir at the reprojected
 // pixel and SPATIAL_TAPS of its neighbours within SPATIAL_RADIUS, each on the same surface,
-// re-targeted at this hit and capped at REUSE_M_CAP times the candidates; one shadow ray to
+// re-targeted at this hit and capped at `params.reuse_m_cap` times the candidates; one shadow ray to
 // the kept point. Writes this pixel's reservoir.
 fn emissive_irradiance(px: vec2<u32>, rec: HitRecord, n: vec3<f32>, ns: vec3<f32>) -> vec3<f32> {
     let p = rec.p;
@@ -362,9 +364,9 @@ fn emissive_irradiance(px: vec2<u32>, rec: HitRecord, n: vec3<f32>, ns: vec3<f32
             }
         }
     }
-    // The stored count is capped at REUSE_M_CAP times the candidates, the weights scaled
-    // with it so W stays.
-    let cap = REUSE_M_CAP * f32(params.candidates);
+    // The stored count is capped at `params.reuse_m_cap` times the candidates, the weights
+    // scaled with it so W stays.
+    let cap = reuse_m_cap();
     if (r.m > cap) {
         r.w_sum *= cap / r.m;
         r.m = cap;
