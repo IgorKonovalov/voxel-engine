@@ -1,6 +1,6 @@
 # 0047: Emissive light holds still: a patch bar, a long full-precision emissive history, and an emissive-only gradient that guards it
 
-> **Status:** in-progress
+> **Status:** in-progress (2026-10-28): every phase done, Phase 7's outcome recorded; awaiting the fresh-session close review
 > **Decisions:** Owner, 2026-10-27: the long f32 history guarded by an emissive-only gradient (option a); after Plan 0040, before Plan 0032; the strict bar (at most 3 patches a step, 1 sudden step a second, flicker 0.002 log2 a frame); a lag bounded by H is acceptable for changes the guard cannot see.
 > **Created:** 2026-10-27
 > **Amended:** 2026-10-28 (owner, option a, after Phase 1's done-when 4 tripped at `VEIN_POSE`):
@@ -929,8 +929,8 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
 | 3: The emissive-only gradient guard | dev | done | 8263b17 |
 | 4: The probe gather holds still | dev | step A 93a2c72; step C 0b848cf; furnace test 9e229f5; filmstrip 5b75f81; step D read 919dbc4; kept mechanism wip 9fbf2b9; done | f069033 |
 | 5: The sweep, the defaults and the bar | dev | done | 67872f8 |
-| 6: Goldens, readings and the fly-through | dev | done | committed with this row |
-| 7: The owner's windowed check | human | not started | |
+| 6: Goldens, readings and the fly-through | dev | done | e1cfe53 |
+| 7: The owner's windowed check | human | done; outcome (c), the two remaining faults out of scope by the owner's call | committed with this row |
 
 Phase 1 (lavapipe, llvmpipe LLVM 23.1.3; exclusive perf lock; 1-minute load 1.8 at the start and
 9.0 at the end of the readings run, so loaded and indicative for timing; the counts are
@@ -1418,6 +1418,19 @@ vein composite 21.30 / 35, flicker 0.00346), each `<pose>-composite.png`, `-emis
 `check-index-rows.mjs` clean; the full tier as above, with `hud_golden` 3 of 3 after the
 re-bless.
 
+Phase 7 (the owner, 2026-10-28, `live/session1.sh`, `live/session1.log`: 21:40 to 21:44, power
+Not charging, 1-minute load 2.29, 1.34, 1.24 and 1.15 at the four runs' starts; RTX 3080
+Laptop; `live/flythrough-tip`, e1cfe53's code). Runs: 1, the new defaults (`--level --seed 1
+--hud`); 2, the old look (`--emissive-history 32 --emissive-guard off --reuse-m-cap 20`); 3,
+the reveal with the guard on; 4, the reveal with the guard off. The owner: "It is much better,
+but still bad." The patches on still walls are greatly reduced. Outcome (c), for two faults,
+both out of this plan's scope by the owner's call: (1) with indirect light on, the light takes
+several seconds to settle when flying into new areas and after the lamp toggles (`F7`); with
+indirect off it is fine; (2) small light dots on a fast camera turn and on a dig, which the
+owner saw the same in the old look (history 32), so they predate this plan. The partial reveal
+was not singled out as too slow. The owner closes 0047 on its stillness result; a new
+measure-first plan, drafted by the architect, takes both faults.
+
 ### Notes
 
 - Phase 6: `apps/flythrough/src/hud.rs` (the banner names the reuse cap; `BANNER_ROWS` 6 to 7,
@@ -1470,6 +1483,40 @@ re-bless.
   unset (the default at both poses, then `pose=patch,size=384x216`).
 
 ### Close triggers
+
+_(Facts for the architect. No recommendations, and no suggested version bump.)_
+
+- **What shipped:** feature (`vxe-render` and the testbed). The emissive accumulation is
+  `rgba32float`; an emissive-only gradient guard; the probe slices spread by a hash of the
+  slot; `DEFAULT_EMISSIVE_HISTORY` 32 to 256; the stillness rig and its bar as tests.
+- **Public API changed:** `vxe-render`: `Lighting::reuse_m_cap` and `Lighting::emissive_guard`
+  (fields), `DEFAULT_REUSE_M_CAP` (20), `DEFAULT_EMISSIVE_HISTORY` (256),
+  `LIGHTING_EMISSIVE_GUARD` (`Params::lighting` bit 10), `probes::slot_slice`,
+  `readback::read_float`; `Frame::accumulated` is `rgba32float`. Fly-through flags:
+  `--emissive-guard on|off`, `--reuse-m-cap N`; the banner and start line name the guard and
+  the cap; `hud::BANNER_ROWS` 6 to 7.
+- **Goldens re-blessed:** `fsr2.png` (Phase 2, 4.1510 %), `mode_banner.png` (Phase 3, 1.4601 %;
+  Phase 6, 2.3438 %), `indirect.png` (Phase 4, at 1600 frames, 68.87 % against its 64-frame
+  bytes, mean luma -0.59 % against the base at 1600), `showcase_hall.png` (Phase 4, 3.98 %,
+  +0.50 % against the base; Phase 5, 3.4080 %, +0.22 %).
+- **Tests changed in form:** the furnace judged against the probe rays' direct mean `D`
+  (9e229f5, the third amendment); the hole test against the dark box 2048 frames after the
+  carve at 52 % (f069033, the fifth amendment); `indirect.png` at 1600 frames (the fourth).
+- **Budget readings:** `docs/nfr.md` §2 (Plan 0047 Phase 6: the probe update, the gather and
+  the lighting passes, both adapters; the Radeon lamp-off update +4.20 % read quiet) and §3
+  (Phase 2: `frame_bytes` 184 956 992 B at the default, +3 686 400 B; 262 770 752 B at scale
+  1, +8 294 400 B; Phase 4 adds 0 B). Machines, power and loads in the log above.
+- **Gate at e1cfe53's code:** `cargo nextest run --workspace --profile full --no-fail-fast
+  --test-threads 2` under the exclusive perf lock: 712 run, 711 passed, 1 failed
+  (`mode_banner.png`, re-blessed in e1cfe53; `hud_golden` then 3 of 3), 11 skipped, 2913 s;
+  `cargo test --doc --workspace` 7 passed; `cargo clippy --workspace --all-targets -- -D
+  warnings` exit 0; `cargo fmt --all --check` exit 0; `cargo deny check` advisories, bans,
+  licenses and sources ok; `check-doc-links` (326 links), `check-comment-hygiene`,
+  `check-index-rows`, `check-test-tiers` exit 0. The final `--profile quick` run is in this
+  commit's message.
+- **Outstanding `human` phases:** none. Phase 7's outcome (c) leaves two faults to a new plan
+  (the owner's call): indirect light settling over seconds after a move or a lamp toggle, and
+  small light dots on a fast turn or a dig.
 
 ## Followups
 
