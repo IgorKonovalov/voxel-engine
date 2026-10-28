@@ -55,9 +55,12 @@ Parametrization for Spherical Rectangles") under a clamp kept as a safety net, a
 candidates at probe hits. Multiple importance sampling with a short cosine ray is built only
 if none of these meets Plan 0048's bars. Plan 0048 measures each against the bias in two
 closed furnaces whose analytic answer is pi, the stillness of Plan 0047's rig and the probe
-update's cost, and its decision rule picks the default. The schemes that meet the bars stay
-selectable until the owner's windowed check. The default and the measured readings are
-recorded in this ADR's Outcome at acceptance.
+update's cost, and its decision rule picks the default. The schemes that meet the bars are
+selectable only until the owner's windowed check. After the owner's pick, the losing schemes
+are removed from the code (owner, 2026-10-28): the probe rays keep the chosen scheme, and
+today's clamp of 2 stays as the screen's path and as one probe mode for comparison. No other
+scheme stays. Their sweep readings stay in Plan 0048's log. The default and the measured
+readings are recorded in this ADR's Outcome at acceptance.
 
 ## Consequences
 

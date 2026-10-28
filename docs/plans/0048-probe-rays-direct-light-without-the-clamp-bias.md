@@ -1,7 +1,12 @@
 # 0048: The probe rays' direct light without the clamp's bias: candidate schemes measured, and the furnace back at pi
 
-> **Status:** draft
+> **Status:** approved (2026-10-28)
 > **Created:** 2026-10-28
+> **Approved:** 2026-10-28 (owner), with the answers under "Owner answers": the screen's
+> clamp stays (an edge-pixel bias is a reading and a Followup); bar 6's +5 % on each adapter,
+> the iGPU included, and bar 1's 1.5 % at a 0.5 % error stand as drafted; the hero is re-shot
+> after Phase 5; the losing schemes are removed, so Phase 6 is unconditional. The order is
+> Plan 0047, then this plan, then Plan 0032.
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet, and its headless proof: "irradiance in a closed test box
 > matches an analytic value within a stated tolerance")
@@ -18,10 +23,9 @@
 > merges. It changes the same probe and lighting code (`probe_update.wgsl`, `probes.rs`,
 > `light.wgsl`, `marcher.rs`), and its stillness rig, its slice hash, its furnace test form
 > and its Phase 5 defaults are this plan's "before". **Before [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**,
-> or alongside it if 0032 has started: 0032 adds the sun's sample and sky light to the probe
-> rays and reads its bars on the probes, so it should read them once, on an unbiased probe
-> direct term. If 0032 lands first, this plan's Phase 1 re-reads its "before" on 0032's tree
-> and the two plans' probe tests are re-read together. Plans 0044 and 0045 also touch
+> which waits for this plan (owner, 2026-10-28): 0032 adds the sun's sample and sky light to
+> the probe rays and reads its bars on the probes, so it reads them once, on an unbiased probe
+> direct term, against this plan's furnace at pi and its re-blessed goldens. Plans 0044 and 0045 also touch
 > `marcher.rs` and the flythrough tests, and whichever lands second rebases. Drafted against
 > main at bc1e7a5 and Plan 0047's branch at c27891f. The names dev finds in the tree win.
 
@@ -40,7 +44,8 @@ It then measures five candidates: a separate probe clamp, the clipped energy spr
 update, a per-probe running gain, solid-angle sampling of the kept face, and more candidates
 at probe hits. Multiple importance sampling with a short cosine ray is built only if all five
 miss. A decision rule picks the cheapest scheme that meets every bar, the furnace test judges
-against pi again, and the owner sees the brighter bounce light in a windowed check. The
+against pi again, and the owner sees the brighter bounce light in a windowed check. After
+the owner's pick, the losing schemes are removed and the hero is re-shot. The
 first thing anyone sees is Phase 1's test printing today's D = 2.87 (-8.5 % of pi) beside the
 narrow furnace's D and the share of probe samples the clamp cuts.
 
@@ -108,8 +113,11 @@ update pass's cost. Five schemes are built as modes of one setting:
 
 A sixth, **E, multiple importance sampling** of the light pick with a short cosine ray at the
 hit, is built only if none of the five meets the bars. A decision rule picks the cheapest
-setting that meets them all. The setting stays selectable in the fly-through until the owner's
-windowed check.
+setting that meets them all. The passing settings stay selectable in the fly-through until the
+owner's windowed check. After the owner's pick the losing schemes are removed with their
+flags, HUD modes and tests (owner, 2026-10-28). Only the winner and today's clamp of 2 stay:
+the clamp is the screen's path, and a probe mode kept for comparison. The log keeps the
+sweep's readings of every scheme.
 
 We rejected keeping the clamp and judging the furnace against D, because the bias depends on
 the geometry and a test against D cannot see it grow. We rejected a constant gain, because it
@@ -169,7 +177,9 @@ flowchart LR
     reads these over the first 64 visits, from the ray words before the blend.
   - *The screen's edge.* The light pass's direct mean over 2048 frames at a pixel whose hit
     lies one voxel from the floor's edge in each furnace, against pi. This is a reading only:
-    the screen path does not change in this plan.
+    the screen path stays byte-identical in this plan (owner, 2026-10-28). If the reading
+    shows a bias, the log records it and the plan's Followups gain a line with the figure; a
+    screen fix is a later plan of its own, if the bias shows on screen.
   - *Stillness.* `stillness::run` at `PATCH_POSE` and `VEIN_POSE` with Plan 0047's merged
     defaults: each part's patches per step (mean and max), sudden steps per second and tile
     flicker, and the gather's mean linear luminance over the lighting grid and window (the
@@ -189,7 +199,9 @@ flowchart LR
      architect.
   2. The rig prints, for the default, both furnaces' D with its error, visits and quarters,
      the tail figures, the edge pixels' direct means, and the stillness and cost rows. The log
-     has them as this plan's "before". They are not committed as bars except as below.
+     has them as this plan's "before". They are not committed as bars except as below. An
+     edge-pixel mean more than 2 % under pi (more than twice its standard error from pi, if
+     that is wider) is a Followup line, not a stop (owner answer 1).
   3. One unbiased-but-unbounded reading is logged: the default with the probe rays' clamp
      raised to the radiance range's top (see Risks: `k` at most `65504 / (albedo lum(Le))`,
      131 008 here, applied as a `min` before `pack2x16float`), as a scratch patch. It is
@@ -274,7 +286,8 @@ flowchart LR
 - **The bars** (a setting "passes" when it meets all six):
   1. **The standard furnace returns to pi.** D lies within 1.5 % of pi, at a standard error of
      at most 0.5 % of D, within 1024 visits. *Where 1.5 % comes from:* three times the largest
-     admitted error, so an unbiased scheme fails it by chance about 0.3 % of the time.
+     admitted error, so an unbiased scheme fails it by chance about 0.3 % of the time. The
+     owner confirmed this claim as "back at pi" (owner, 2026-10-28).
   2. **So does the narrow furnace,** with the same bar. A scheme whose error does not reach
      0.5 % by 1024 visits fails: its variance is too high to verify, which is the variance
      cost this bar holds.
@@ -294,14 +307,15 @@ flowchart LR
      `no_light_leaks_through_a_two_voxel_wall` (dark box under 2 % of the lit box). The other
      tests of `flythrough::indirect` and `flythrough::lights` pass. Goldens may move (Phase 4).
   6. **Cost.** The probe update pass at the setting costs at most 5 % more than the before on
-     each adapter, lamp on and lamp off, as the median of three quiet runs. The dev box's update
+     each adapter, the slow iGPU included, lamp on and lamp off, as the median of three quiet
+     runs (owner, 2026-10-28: the ceiling stays +5 %, not the 1.7 ms line). The dev box's update
      plus gather at the streamed spawn stays within 1.7 ms, and the lighting line within
      6.0 ms. `frame_bytes` grows by 0 B, or by 131 072 B for B2.
 - **The decision rule:** the first row that holds decides.
 
   | observation | next |
   |---|---|
-  | one or more settings pass | the default is the passing setting with the lowest slow-adapter update time. Settings within 1 % of it are tied, and the tie goes to the lower patch-pose gather flicker. Every passing setting stays selectable for Phase 5 |
+  | one or more settings pass | the default is the passing setting with the lowest slow-adapter update time. Settings within 1 % of it are tied, and the tie goes to the lower patch-pose gather flicker. Every passing setting stays selectable for Phase 5; Phase 6 removes the losers |
   | settings meet bars 1 to 5, and every one of them misses only bar 6 | **stop** for the owner with the table: the cost bar is not widened by dev |
   | no setting meets bars 1 to 5 | build E (below), sweep it, and re-enter the table once. If E also meets nothing, **stop** for the architect with the table |
 
@@ -360,16 +374,37 @@ flowchart LR
 - **Done when:** the owner's call is in the log, dated, in the owner's words. It names the kept
   default (Phase 3's or another passing setting) and says whether the bounce light's new
   brightness reads naturally, whether the gather pops or flickers more than under today's
-  clamp at either place, and which schemes stay selectable (owner question 5).
+  clamp at either place. Every other scheme is removed in Phase 6 (owner, 2026-10-28), so the
+  call needs no list of schemes to keep.
 
-### Phase 6: The owner's pick
+### Phase 6: The owner's pick: the losers removed, the hero re-shot
 - **Owner skill:** dev
-- **What:** only if Phase 5 picks a different default, or asks to remove schemes. Otherwise the
-  log says "not needed" and the phase is done.
-- **Files touched:** as Phases 2 and 4.
-- **Done when:** the owner's default is `Lighting::default`'s, Phase 4's done-whens 1 to 4 are
-  re-read and met at it, and the removed schemes (if any) are gone with their flag values and
-  tests. The log has the re-read readings.
+- **What:** unconditional (owner, 2026-10-28). The owner's default from Phase 5 becomes
+  `Lighting::default`'s `probe_direct`, if it is not Phase 3's. Every scheme other than the
+  winner and today's clamp of 2 is removed: its `ProbeDirect` variant, its shader path, its
+  uniform words or buffer (B2's gain buffer goes unless B2 won), its `--probe-direct` values,
+  its HUD mode and the key's stop for it, its README row, and its tests. Today's clamp stays as
+  the screen's path (unchanged) and as a probe mode for comparison. The sweep's code keeps only
+  the two remaining settings, and the log's sweep table and readings stay as written. Then
+  `docs/images/hero.png` is re-shot at the new default, with the caption's command, and the
+  README caption is updated if it names the light.
+- **Files touched:** as Phases 2 and 4, `docs/images/hero.png`, the root `README.md` (the flag
+  and key rows; the caption, if it names the light), `apps/flythrough/examples/hero.rs` (only
+  if its defaults change), `docs/nfr.md` §3 (if B2's buffer goes, or stays).
+- **Done when:**
+  1. The owner's default is `Lighting::default`'s, and Phase 4's done-whens 1 to 4 are re-read
+     and met at it (unchanged readings, if it is Phase 3's). The log has the re-read readings.
+  2. The losing schemes are gone: a grep over `crates/`, `apps/` and `README.md` for each
+     removed variant and flag value finds nothing, `--probe-direct <removed>` is refused by
+     the parse test, the key cycles exactly the winner and the clamp (the HUD test reads both
+     mode lines and no third), and the furnace and stillness rigs run at both settings. If B2
+     is removed, `frame_bytes` reads Phase 1's value.
+  3. `docs/images/hero.png` is 1920 x 1080 at the new default. Running the caption's command
+     (with the defaults written out) on the same adapter at the same commit writes the same
+     file, byte-identical or with at most 0.1 % of pixels differing by more than 2/255, as in
+     Plan 0038 Phase 7. The README caption names the light as the new default renders it, if
+     it names the light at all. `node scripts/check-doc-links.mjs` passes.
+  4. The full gate, as Phase 4 done-when 4.
 
 ## Data shapes
 
@@ -387,7 +422,8 @@ pub struct Lighting { /* ... */ pub probe_direct: ProbeDirect }
 ```
 
 The probe uniform gains a mode word and two parameter words. B2 adds a storage buffer of
-32 768 `f32`. The light pass's uniform and bindings do not change.
+32 768 `f32`. The light pass's uniform and bindings do not change. After Phase 6 the enum
+holds `Clamp` (today's `k` 2, for comparison) and the winner's variant only.
 
 ## Budgets
 
@@ -424,7 +460,8 @@ No figure touches `vxe-world`, determinism or the streaming line.
   / d^2` the target holds, or the weight double-counts. Bar 1 catches a wrong density.
 - **Brighter indirect light everywhere.** A scheme that meets bar 1 raises the gather wherever
   probe rays hit near emitters. The change is meant, but every probe golden moves and the
-  hero shot (`docs/images/hero.png`) is no longer what the engine renders. Owner question 4.
+  hero shot (`docs/images/hero.png`) is no longer what the engine renders. Phase 6 re-shoots
+  it (owner, 2026-10-28).
 - **The stillness bars may fight bar 1.** Every unbiased scheme puts more of the tail into
   the probes. If none meets bar 3, the rule's third row runs E, and E is costly. The stop rows
   exist so no bar is loosened by dev.
@@ -438,31 +475,36 @@ No figure touches `vxe-world`, determinism or the streaming line.
 
 ## What this plan does NOT do
 
-- No change to the screen's estimator, its clamp, its reuse or its histories. If Phase 1's
-  edge-pixel reading shows a screen bias, it is a Followup (owner question 1).
+- No change to the screen's estimator, its clamp, its reuse or its histories: the screen path
+  stays byte-identical. If Phase 1's edge-pixel reading shows a screen bias, it is a reading
+  and a Followup, and a screen fix is its own later plan if it shows on screen (owner,
+  2026-10-28).
 - No change to the probe structure, spacing, rays, slices, hysteresis or the gather's weights.
   Plan 0047 owns those.
 - No change to the candidate table (ADR-0025) or to the light samples the mirror extracts.
 - No per-source switch on feeding the probes (M2's list, Plan 0029's Followups).
 - No sun or sky light in the probes. Plan 0032 adds them, after this plan.
-- No hero shot re-shoot unless the owner asks at Phase 5.
+- No selectable schemes beyond the winner and today's clamp after Phase 6.
 
-## Owner questions
+## Owner answers
 
-1. **The screen's clamp.** This plan changes the probe rays only. If Phase 1 reads a screen
-   bias at the edge pixels (for example more than 2 % under pi), should a later plan take the
-   screen's estimator too, or does the screen's look stand as it is?
-2. **The cost ceiling.** Bar 6 caps the probe update at +5 % on each adapter (Plan 0047's
-   bar). Would you pay more for an unbiased scheme, up to the dev box's 1.7 ms line for
-   update plus gather, with the slow adapter carrying no bar as `docs/nfr.md` §2 has it?
-3. **"Back at pi."** Is D within 1.5 % of pi, with a 0.5 % standard error, the claim you want
-   the furnace test to defend? Or should it be tighter, at the cost of more visits and a
-   longer test?
-4. **Brighter bounce light.** The goldens with the probes on will be re-blessed brighter.
-   Should this plan also re-shoot `docs/images/hero.png` from the showcase hall after
-   Phase 5, or leave it for the next look pass?
-5. **After your pick.** Should the schemes that lose in Phase 5 be removed, or stay
-   selectable as modes, as ADR-0018's pairs did?
+The questions of the draft, answered at approval (owner, 2026-10-28):
+
+1. **The screen's clamp.** If Phase 1 reads a bias at the screen's edge pixels, this plan
+   records the reading only and adds a Followup. A screen fix gets its own later plan if the
+   bias shows on screen. This plan keeps the screen path byte-identical (owner, 2026-10-28).
+   Phase 1, done-when 2.
+2. **The cost ceiling.** The probe update at most +5 % on each adapter, the iGPU included,
+   as drafted (owner, 2026-10-28). Bar 6.
+3. **"Back at pi."** D within 1.5 % of pi at a standard error of at most 0.5 %, as drafted
+   (owner, 2026-10-28). Bars 1 and 2, Phase 4 done-when 1.
+4. **The hero.** Re-shoot `docs/images/hero.png` after the owner's Phase 5 check, with Plan
+   0038's reproducibility check (a rerun byte-identical, or at most 0.1 % of pixels over
+   2/255), and update the README caption if it names the light (owner, 2026-10-28). Phase 6,
+   done-when 3.
+5. **After the pick.** The losing schemes are removed. Only the winner and today's clamp stay,
+   the clamp as the screen's path and as a probe mode for comparison. The log keeps the
+   sweep's readings (owner, 2026-10-28). Phase 6 is unconditional.
 
 ## Implementation log
 
@@ -473,7 +515,7 @@ No figure touches `vxe-world`, determinism or the streaming line.
 | 3: The sweep, the decision rule, and the default chosen | dev | not started | |
 | 4: The furnace judges against pi, the goldens, the readings | dev | not started | |
 | 5: The owner's windowed check | human | not started | |
-| 6: The owner's pick | dev | not started | |
+| 6: The owner's pick: the losers removed, the hero re-shot | dev | not started | |
 
 ### Notes
 
@@ -483,4 +525,5 @@ No figure touches `vxe-world`, determinism or the streaming line.
 
 - Plan 0047's Followups name this plan's work ("That plan decides whether the furnace test
   judges against pi again"). At this plan's close, the line is answered by Phase 4's test.
-- Plan 0032's probe tests, if it lands after this plan, read at the new default.
+- Plan 0032 lands after this plan (owner, 2026-10-28) and reads its probe tests, its furnace
+  reference of pi and its goldens at this plan's default.

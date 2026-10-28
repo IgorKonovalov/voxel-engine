@@ -413,8 +413,9 @@ work), and the light (real-time GI standing in for the baked occlusion).
   by an emissive-only gradient, against a headless patch bar; after Plan 0040, before 0032.
 - The probe rays' direct light without the firefly clamp's bias (Plan 0047's step C,
   2026-10-28): the clamp cuts the probe rays' direct light about 8.5 % low in the furnace.
-  Plan 0048 (draft, ADR-0037 proposed) measures probe-only schemes against pi and returns the
-  furnace test to pi; after Plan 0047, before Plan 0032.
+  Plan 0048 (approved 2026-10-28, ADR-0037 proposed) measures probe-only schemes against pi,
+  keeps the winner and today's clamp, and returns the furnace test to pi. The order is Plan
+  0047, then Plan 0048, then Plan 0032 (owner, 2026-10-28).
 - **Headless proof:** irradiance in a closed test box matches an analytic value within a stated
   tolerance; a carve invalidates exactly the touched history region.
 - **Visible proof:** golden images of a dark cave with one emissive vein, before and after a
