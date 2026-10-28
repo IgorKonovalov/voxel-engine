@@ -447,6 +447,48 @@ after this phase for the architect's amendment. Phase 2's replay test, run once 
 `replay::a_stamp_and_a_collapse_replay_from_the_save` hit the 30 s kill; it passed alone in
 14.7 s); `--profile gpu` 176 run, 176 passed, 705.8 s; `flythrough::lights` and `flythrough::golden` whole (the slow list included, default profile): 33 run, 33 passed, 1 skipped (load 6.4).
 
+### Resume notes (2026-10-28, delete when Phase 2 lands)
+
+- **State:** Phase 1 done at 031ab3b (its row's commit cell still reads `committed with this
+  row`: backfill 031ab3b). Stopped at Phase 1 done-when 4; the owner chose option (a), a new phase
+  for the probe gather's emissive steps before Phase 4's bar (architect amendment pending).
+  Phase 2 not started. Gates at 031ab3b: quick 499/499, gpu 176/176, lights + golden whole 33/33.
+- **Pinned exposures** (in `apps/flythrough/tests/support/stillness.rs`): `PATCH_POSE` 10.9624,
+  `VEIN_POSE` 5.3720 (`VEIN_EXPOSURE`), each `Auto(eye)` 600 on / 900 off at 192 x 108, the last
+  frame's `current`.
+- **Vein pose gather, per step (off frames 120 to 720):** 0 0 0 0 0 0 277 0 0 0 40 54 0 217 0 0 0
+  0 0 0 (312 full tiles), against the composite's 25 27 29 25 20 35 120 23 23 34 38 38 30 94 35 35
+  19 16 20 24. Patch pose gather: 41 165 44 24 6 0 0 11 2 0 16 51 26 0 32 0 37 0 0 0. The gather is
+  identical with emissive history 1 and 32, so the temporal pass does not drive it.
+- **Where the gather's light comes from (read, not yet tested):** `probe_update.wgsl`
+  `probe_trace` adds `emissive_estimate` (`light.wgsl`, line ~423: one candidate draw and one
+  shadow ray per probe-ray hit) into each ray's radiance; `probe_blend` blends at `HYSTERESIS`
+  0.97 (`YOUNG_HYSTERESIS` 0.5 for young or touched probes); one slice in `Lighting::slices()`
+  (default 8) of the 32^3 probes updates a frame (`probes.rs` `SLICES`, `SLICE_PROBES`); the
+  gather (`probe_gather.wgsl`) writes `Frame::indirect_irradiance`. `probe_rotation()` is one
+  random rotation per frame shared by every probe (`rand(vec2(0), PROBE_ROTATION_DIMS)`).
+- **Suspects (unverified):** (1) the rare-event emissive sample in the probe rays: a probe whose
+  rays catch an unoccluded emitter point in one visit jumps by 3 % of a firefly-sized value, and
+  the few probes that light the view (spacing 16 voxels) move the whole screen at once, which
+  matches the 277- and 217-tile steps; (2) the shared per-frame rotation correlating all of a
+  slice's rays in a visit; (3) the slice cadence putting every near probe's update on the same
+  frame. A first probe: count the gather's per-frame |d log2| on single frames (the rig's
+  sudden steps read 0/s at the vein pose, so each step is spread over frames, not one jump), and
+  rerun the vein pose with `probe_rays` 64 vs 16 and `probe_slices` 8 vs 32
+  (`emissive_patch_sweep` has no key for them yet).
+- **Phase 2 work in progress:** `live/phase2-wip.patch` in this worktree (untracked; `git apply`
+  it): `temporal.wgsl`'s `accum_out` to `rgba32float` with its doc, `atrous.wgsl`'s doc, and
+  `lights.rs`'s `the_emissive_history_keeps_its_mean_over_a_long_window` (uses
+  `readback::read_float`). Still to do there: `marcher.rs` (the temporal layout's binding 7 to
+  `Io::Store(Rgba32Float)`, `Targets::accum` to `Rgba32Float`, `Targets::bytes` +16 B per
+  lighting pixel, `Frame::accumulated`'s doc), the other `accumulated()` readers switched to
+  `read_float` (`lights.rs` 863 and 1108, `indirect.rs` 816 and 903,
+  `crates/vxe-render/tests/exposure.rs` 441: outside Phase 2's Files touched, a deviation to
+  log), `nfr.md`'s frame-bytes reading. The before reading is already in the log above.
+- **Gotchas:** the rig takes about 70 s a run at 192 x 108 on lavapipe (counted test 289 s, the
+  default sweep 225 s); a fresh worktree needs `scripts/build-guests.sh` before the quick tier;
+  `check-test-tiers.mjs` reads tracked files only, so `git add` a new test file before it.
+
 ### Notes
 
 - Phase 1: `readback::read_float` (an `rgba16float` or `rgba32float` read by the texture's
