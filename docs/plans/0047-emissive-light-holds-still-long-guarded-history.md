@@ -507,7 +507,7 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
 | 1: The patch bar as a headless test | dev | done; stopped at done-when 4 | 031ab3b |
 | 2: A full-precision emissive accumulation | dev | done | a2b3852 |
 | 3: The emissive-only gradient guard | dev | done | 8263b17 |
-| 4: The probe gather holds still | dev | step A done | committed with this row |
+| 4: The probe gather holds still | dev | step A done (93a2c72); stopped at done-when 3 and 5 | committed with this row |
 | 5: The sweep, the defaults and the bar | dev | not started | |
 | 6: Goldens, readings and the fly-through | dev | not started | |
 | 7: The owner's windowed check | human | not started | |
@@ -639,6 +639,48 @@ moves the steps' timing (the steps at `VEIN_POSE` move from 6 and 13 to 0, 2 to 
 (mean 29.40 to 55.00). The mechanism: the slices spread by a hash of the probe, not by `slot mod
 slices`.
 
+Phase 4, the row 4 mechanism (not committed; `live/phase4-row4-hashed-slices.patch` in this
+worktree): `ProbeVolume::update_list` takes the slots whose `slot_slice` (the low bits of a
+15-bit xorshift-multiply bijection of the slot) is `frame % slices`, so every slice still holds
+`PROBE_COUNT / slices` slots. Readings (lavapipe, exclusive perf lock, load 7.5 to 10.4, on
+battery; counts, not timings): `VEIN_POSE` composite 21.30 / 35 (0.00/s, flicker 0.00346, luma
+0.118), gather 0.00 / 0 on every step (0.00/s, flicker 0.00273), window open on 0 frames, 0 age
+restarts. Patch pose composite 74.45 / 96 (8.80/s, 0.00632, luma 0.226), gather 8.15 / 44 (0 44 0
+13 5 0 0 14 15 0 0 44 23 0 0 0 4 0 0 1; 21.00/s; flicker 0.00365); its trace moves the gather on
+one or two frames in eight (for example off 304 0.0235 and 307 0.0076; 451 0.0822). With the hash
+at the patch pose: rays 32 gather 81.00 / 305 (162.7/s), rays 16 112.65 / 312 (275.8/s), slices
+16 18.95 / 311 (79.2/s), slices 32 74.30 / 295 (199.1/s; its large steps lie in off 120 to 300,
+none after). Against the done-whens: 2 met at `VEIN_POSE` (gather 0 of the composite's 21.30). 3
+not met at the patch pose (mean 8.15 against 1, max 44 against 3, 21.0 sudden/s against 1); met
+at `VEIN_POSE`. 4 met (composite 74.45 against the before reading's 77.10; gather flicker 0.00365
+against 0.00430 and 0.00273 against 0.00341). 5 not met: `flythrough::indirect`,
+`flythrough::lights` and `flythrough::golden` whole, 51 run, 4 failed:
+`the_furnace_box_reads_pi_of_indirect_irradiance` (floor centre -8.36 % of pi, centre probe
+texels 2.7129 ..= 2.8945, under the 10 % floor; at 93a2c72 -5.32 % and 2.8555 ..= 2.9805),
+`a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again` (frame 32 at 69.7 % of
+settled against 70 %; at 93a2c72 71.5 %), `indirect_golden_shows_the_vein_s_bounce_light`
+(`indirect.png` 32.2135 % of pixels over 2/255), `showcase_hall_golden_is_lit_by_its_four_ores`
+(3.9844 %). A scratch run of the hash plus a rotation per probe (seeded by a hash of the slot,
+`live/phase4-scratch-per-probe-rotation.patch`): patch gather 7.25 / 119 (13.0/s), vein gather
+11.40 / 174 (2.6/s), composites 73.70 / 100 and 31.05 / 72. Dev stops here: row 4's mechanism
+misses done-when 3 at the patch pose and done-when 5, and the rule names no next mechanism for
+row 4. The branch tip carries no probe change. Phases 5 and 6 are not started.
+
+### Resume notes (2026-10-28, delete when Phase 4 lands)
+
+- **State:** merge d9f9fae, Phase 2 a2b3852, Phase 3 8263b17, Phase 4 step A 93a2c72 (the rig's
+  keys and trace). Phase 4's mechanism is not committed: stopped for the architect (see the
+  paragraph above). The tip's gates are Phase 3's plus step A's test-only change (clippy and fmt
+  clean).
+- **Scratch:** `live/phase4-row4-hashed-slices.patch` (probes.rs, applies on 93a2c72),
+  `live/phase4-scratch-per-probe-rotation.patch` (probe_update.wgsl, on top of it). Logs:
+  `live/p4-stepA.log`, `live/p4-hash.log`, `live/p4-hash-keys.log`, `live/p4-hash-rot.log`,
+  `live/p4-dw5.log`, `live/p4-dw5-base.log`.
+- **Gotchas:** the sweep's empty spec reads the default at both poses plus the 384 x 216 patch
+  reading; `STILL_SWEEP=` set empty reads the default at both poses only. The furnace test's
+  centre texels sit at -9.1 % of pi at 93a2c72, near its 10 % floor: any change to the probes'
+  random sequence can cross it. No timing reading on battery (the orchestrator, 2026-10-28).
+
 ### Notes
 
 - Merge d9f9fae: the tree's names match the plan's; Plan 0038 renamed nothing this plan's
@@ -660,6 +702,8 @@ slices`.
   where that is under about half the strata, the age falls only part way and the running mean
   from there is slow. The plan's Risks name ADR-0036's Alternative C as this case's fallback;
   it is not built.
+- Phase 4: step A is its own commit (93a2c72) before any mechanism, so the log's readings and
+  the chosen row precede the mechanism's commit, as done-when 1 asks.
 - Phase 1: `readback::read_float` (an `rgba16float` or `rgba32float` read by the texture's
   format) is added in this phase's commit, in `crates/vxe-render/src/readback.rs`, which Phase 1's
   Files touched does not list; the stillness rig reads the accumulation through it so Phase 2's
