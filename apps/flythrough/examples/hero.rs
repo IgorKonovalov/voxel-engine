@@ -4,7 +4,10 @@
 //! `cargo run --release -p flythrough --example hero -- [--seed N] [--size WxH] [--yaw DEG]
 //! [--pitch DEG] [--at X,Y,Z] [--carve R] [--out PATH] [--frames N] [--lighting full|half]
 //! [--shadow-walk full|coarse] [--sampler list|reuse] [--history edits|gradient]
-//! [--lamp on|off] [--filter on|off] [--exposure E] [--emissive-history N] [--look PRESET]`. `--at` is a voxel coordinate (the level's spawn by
+//! [--lamp on|off] [--filter on|off] [--exposure auto|E] [--emissive-history N]
+//! [--look PRESET]`. `--exposure auto` adapts like an eye (`AutoExposure::eye`, jumping to the
+//! first frame's meter); a number is a manual exposure (1 by default). `--at` is a voxel
+//! coordinate (the level's spawn by
 //! default); `--carve R` digs a sphere of radius `R` voxels where the view ray meets rock
 //! before the frame is drawn. The look is a contour preset of `flythrough::LookPreset`, the
 //! fly-through's default unless `--look` names another (its fit, tuning and rock detail);
@@ -15,8 +18,8 @@
 
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
 use vxe_render::{
-    Camera, Frame, GpuWorld, HistoryKill, LightParams, Lighting, LightingResolution, Sampler,
-    ShadowWalk, readback, wgpu,
+    AutoExposure, Camera, Exposure, Frame, GpuWorld, HistoryKill, LightParams, Lighting,
+    LightingResolution, Sampler, ShadowWalk, readback, wgpu,
 };
 use vxe_world::*;
 
@@ -102,7 +105,13 @@ fn parse_args() -> Result<Args, String> {
             }
             "--lamp" => args.lighting.lamp = on_off(&flag, &v)?,
             "--filter" => args.lighting.filter = on_off(&flag, &v)?,
-            "--exposure" => args.lighting.exposure = v.parse().map_err(|e| bad(&e))?,
+            "--exposure" => {
+                args.lighting.exposure = if v == "auto" {
+                    Exposure::Auto(AutoExposure::eye())
+                } else {
+                    Exposure::Manual(v.parse().map_err(|e| bad(&e))?)
+                };
+            }
             "--emissive-history" => {
                 args.lighting.emissive_history = v.parse().map_err(|e| bad(&e))?;
             }

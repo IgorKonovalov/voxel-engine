@@ -802,7 +802,7 @@ fn the_identity_tone_map_reproduces_the_single_pass_carve() {
         return;
     };
     rig.frame.set_lighting(vxe_render::Lighting {
-        exposure: 1.0,
+        exposure: vxe_render::Exposure::Manual(1.0),
         tone_map: vxe_render::ToneMap::Identity,
         filter: false,
         ..vxe_render::Lighting::default()
@@ -1606,6 +1606,100 @@ fn upscaled_golden_sharpens_within_the_neighbourhood() {
     assert!(rim > 0);
     assert!(g_sharp > g_plain, "{g_sharp} against {g_plain}");
     assert_eq!(over, 0);
+}
+
+/// The level's spawn pose as the fly-through starts there: the spawn voxel's centre, yaw 0,
+/// 70 degrees of vertical field of view.
+fn level_spawn_camera() -> Camera {
+    let source = flythrough::cave::CaveSource::new(
+        1,
+        ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
+    );
+    Camera {
+        position: source.spawn().0.map(|v| v as f32 + 0.5).into(),
+        yaw: 0.0,
+        pitch: 0.0,
+        vfov: 70f32.to_radians(),
+    }
+}
+
+/// The lighting targets are scale-free (ADR-0033): on the level at the spawn pose with the
+/// headlamp on and the emissive ore, 64 frames with the lamp's intensity and every emission
+/// scaled by `s` under a manual exposure of `1 / s` land, for `s` = 1/64 and 64, within 1/255
+/// of `s` = 1 in every pixel.
+#[test]
+fn the_lighting_targets_are_scale_free() {
+    let source = flythrough::cave::CaveSource::new(
+        1,
+        ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
+    );
+    let world = World::generate(
+        source.extent,
+        &source,
+        &flythrough::with_emissive_ore(&cave_materials()),
+    );
+    let pool = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
+    let Some((device, queue)) = software_device(pool) else {
+        return;
+    };
+    let cfg = MirrorConfig {
+        budget_bytes: 256 << 20,
+        ..MirrorConfig::new(Window::Fixed(world.extent()))
+    };
+    let mut gpu = GpuWorld::with_config(&device, cfg);
+    gpu.sync_now(&world, &device, &queue)
+        .expect("mirror fits the adapter");
+    let emitters: Vec<MaterialId> = world
+        .materials()
+        .rows()
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.emission != [0.0; 3])
+        .map(|(i, _)| i as MaterialId)
+        .collect();
+    assert!(emitters.contains(&flythrough::cave::ORE), "{emitters:?}");
+    let camera = level_spawn_camera();
+    let shot = |s: f32| {
+        let mut frame = Frame::new(&device, 192, 108);
+        frame.set_lighting(vxe_render::Lighting {
+            exposure: vxe_render::Exposure::Manual(1.0 / s),
+            ..vxe_render::Lighting::default()
+        });
+        for &m in &emitters {
+            frame.set_emission_scale(&queue, m, s);
+        }
+        let light = LightParams {
+            intensity: LightParams::headlamp().intensity * s,
+            ..LightParams::headlamp()
+        };
+        for _ in 0..64 {
+            frame.step(&device, &queue, &gpu, &camera, &light);
+        }
+        readback::read_rgba8(&device, &queue, frame.target())
+    };
+    let base = shot(1.0);
+    let lit = base
+        .chunks(4)
+        .filter(|p| p[..3].iter().any(|&c| c >= 16))
+        .count();
+    println!("s = 1: {lit} of {} pixels lit", base.len() / 4);
+    assert!(lit > base.len() / 4 / 10, "{lit} lit pixels");
+    for s in [1.0 / 64.0, 64.0] {
+        let img = shot(s);
+        let worst = img
+            .chunks(4)
+            .zip(base.chunks(4))
+            .map(|(p, q)| (0..3).map(|k| p[k].abs_diff(q[k])).max().unwrap_or(0))
+            .max()
+            .unwrap_or(0);
+        let off = img
+            .chunks(4)
+            .zip(base.chunks(4))
+            .filter(|(p, q)| (0..3).any(|k| p[k].abs_diff(q[k]) > 1))
+            .count();
+        println!("s = {s}: largest channel difference {worst}/255, {off} pixels past 1/255");
+        assert!(worst <= 1, "s = {s}: {worst}/255 at {off} pixels");
+    }
 }
 
 /// One frame of FSR 2's golden scene at a sharpness: the frame's image, the accumulate pass's

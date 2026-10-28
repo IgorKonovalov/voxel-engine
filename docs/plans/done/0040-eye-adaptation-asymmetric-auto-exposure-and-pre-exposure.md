@@ -1,28 +1,28 @@
 # 0040: Eye adaptation: an automatic exposure that is fast toward bright and slow toward dark, metered on the GPU, with pre-exposed HDR targets
 
-> **Status:** approved (2026-10-22)
-> **Decisions:** Owner, 2026-10-22: approved with the plan's recommended options: time constants 0.15 / 1 / 4 s (normal after about 10 s), max exposure 64 so the dark-adapted cave settles at the key, centre-weighted metering, the fly-through defaulting to auto eye.
+> **Status:** done (2026-10-28). Close review clean: every phase landed, the gate re-run is green, the fresh quiet readings sit inside the §2 and §3 lines; two nits go to Followups.
+> **Decisions:** Owner, 2026-10-22: approved with the plan's recommended options: time constants 0.15 / 1 / 4 s (normal after about 10 s), max exposure 64 so the dark-adapted cave settles at the key, centre-weighted metering, the fly-through defaulting to auto eye. Owner, 2026-10-27 (Phase 5 session): the slower constants 0.15 / 2 / 10 s and `max` 16, so the cave stays dim; the third clause of Phase 4 bar 2 is answered (b) with (a); the light patches seen while adapting are investigated first (Phase 4 amendment).
 > **Created:** 2026-10-22
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "exposure, tone mapping, and an
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the "exposure, tone mapping, and an
 > upscaler" bullet)
-> **Related ADRs:** [ADR-0033](../adrs/0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md)
+> **Related ADRs:** [ADR-0033](../../adrs/0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md)
 > (proposed with this plan: the adaptation model, the meter on the GPU, pre-exposure),
-> [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (the light, temporal and filter passes whose stores become pre-exposed),
-> [ADR-0023](../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md) (the probe atlases,
-> which stay in absolute units), [ADR-0024](../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md)
+> [ADR-0023](../../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md) (the probe atlases,
+> which stay in absolute units), [ADR-0024](../../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md)
 > (the upscaler, whose still pixels must follow a moving exposure)
 > **Source:** the owner at Plan 0029's Phase 7 check (2026-10-22): "in real situation I would
 > be blinded at first seconds when high light is turned off, and gradually my eyes would be
 > accustomed to darkness and I would see normally again". The owner's choice: a small plan of
 > its own, before the outdoor work, as an engine exposure setting the game controls. Plan 0032
 > then builds on it.
-> **Starts after:** [Plan 0029](done/0029-indirect-light-probe-volume.md) closes, so the owner's
+> **Starts after:** [Plan 0029](0029-indirect-light-probe-volume.md) closes, so the owner's
 > check sees Phase 8's faster bounce fade and not the old lingering light. It is drafted
 > against main at 3b690bb (Plan 0024 merged: `Lighting::exposure: f32`, `composite.wgsl`'s
 > `display`, `temporal.wgsl`, `atrous.wgsl`, `gradient.wgsl`) and Plan 0029's branch at b51538a
 > (`probe_gather.wgsl`, the composite's `indirect_in`). The names dev finds in the tree win. It
-> is independent of [Plan 0030](done/0030-temporal-upscaler.md). If Plan 0030 has merged when this
+> is independent of [Plan 0030](0030-temporal-upscaler.md). If Plan 0030 has merged when this
 > plan starts, Phase 3 also adds the upscaler's exposure rule. If not, Plan 0030's lane adds it
 > on rebase (the rule is in Phase 3).
 > **Plan 0032 needs an amendment** (the orchestrator makes it). Its Phase 4 shrinks to using
@@ -349,6 +349,55 @@ under `Manual(1.0)` except where a bar names it.
      against the composite without it (the delta) and `exposure.wgsl`, per-pass timestamps,
      the median of the last 30 of 3000 frames. Also `Frame::frame_bytes` before and after.
      These go to `nfr.md` §2 and §3 with the commit.
+- **Amended 2026-10-27 (owner), after the Phase 5 session:**
+  - **Bar 2, third clause.** The closed form assumes the meter steps in one frame. The
+    measured meter falls over about 30 frames, and the spawn view has no vein, so the dark
+    meter sits far under the floor (worst 0.4587 EV). The clause is replaced by two
+    assertions. (b) The same lamp-off run from a pose that looks at a vein, chosen so the
+    dark meter settles above the clamp, keeps the clause as written: from 1 s on, within
+    0.1 EV of the closed form for that pose's measured meters. (a) On both poses, from 1 s
+    on, `log2 e` stays within 0.1 EV of `AutoExposure::step` stepped over the measured
+    per-frame meter. The spawn pose's closed-form distance stays a printed `reading:` line.
+  - **The defaults change** to the owner's pick: time constants 0.15 / 2 / 10 s (the
+    slower option; normal after about 25 s), and `max` exposure 16, so the dark-adapted cave
+    settles about 1.5 EV under the key and stays dim. Centre-weighted metering and auto eye
+    as the fly-through default stay. Every bar above that names the old constants or `max`
+    64 is re-read with the new defaults. A bar whose arithmetic depended on them is re-derived
+    in the log from the same formula, not loosened.
+  - **Step 4: the light patches.** The owner saw, with the lamp switched off and the eye
+    adapting, "multiple lights are opening on walls one after another within 10-15 sec".
+    Asked, the owner said separate patches of wall switch on, one by one and each fairly
+    suddenly. One exposure scales the whole frame, so a patch that steps on is a non-uniform
+    change underneath. Find the cause headlessly before changing anything:
+    1. On the level, from the Phase 5 pose near a vein, run the lamp-off series twice,
+       auto eye and `Manual` held at the adapted run's final exposure, and save frames at
+       0.5 s steps to `target/exposure-patches/`.
+    2. Over a grid of wall tiles, print each tile's linear radiance divided by the frame's
+       exposure, per frame. A tile whose exposure-normalised radiance steps by more than
+       10 % between consecutive saved frames, after the probes' first 24 frames, is a patch.
+    3. For each patch, name the source by switching parts off one at a time: probe GI
+       (`F8`'s switch), the emissive light samples and their history, the denoiser's
+       history, and streaming or mirror uploads in that window. If the patches also appear
+       under `Manual`, the cause is not this plan's. Record that, and the owning subsystem,
+       as an owner question, not a fix here.
+    4. If the cause is in this plan (a pre-exposure or history rescale that is not uniform),
+       fix it. Add a headless test that the tiles' exposure-normalised radiance does not
+       step after the first 24 frames.
+  - **The flicker** the owner saw during adaptation: read the frame-to-frame luminance
+    noise of the same tiles under auto eye against `Manual` at the same final exposure, and
+    log it. It is a reading for the owner's re-check, not a bar.
+  - Phase 5 gets a second, short windowed session after step 4: the new defaults, lamp off
+    near a vein, the patches and the flicker.
+- **Amended 2026-10-27 (owner), after the second Phase 5 session:**
+  - **Bar 2 (b) becomes a reading.** It passed on only 2 of 9 vein poses (0.0974 EV on the
+    chosen one against 0.1), so it guards a pose, not the mechanism. (a), the stepped model
+    on both poses, is the bar. (b)'s closed-form distance on the vein pose and the spawn
+    pose stay printed `reading:` lines.
+  - **Step 4 closes without a fix here.** The patches appear identically under `Manual` and
+    vanish only with the emissive light samples off: the owning subsystem is the emissive
+    direct-light estimator (ADR-0018). The owner saw emissive history 64 improve them but
+    leave them visible ("really unnatural look") and asked for a separate plan. This plan
+    keeps `DEFAULT_EMISSIVE_HISTORY` as it is; the new plan owns that default.
 
 ### Phase 5: The owner's windowed check
 - **Owner skill:** human
@@ -537,30 +586,267 @@ exposure multiply, so the settled exposure ignores it.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The meter, the read-back and the banner | dev | not started | |
-| 2: Pre-exposure | dev | not started | |
-| 3: Adaptation | dev | not started | |
-| 4: The fly-through, the cave's own curve, and the readings | dev | not started | |
-| 5: The owner's windowed check | human | not started | |
+| 1: The meter, the read-back and the banner | dev | done | 044daed |
+| 2: Pre-exposure | dev | done | 81d300a |
+| 3: Adaptation | dev | done | e9879cc |
+| 4: The fly-through, the cave's own curve, and the readings | dev | done | 9a0d342 (first pass); ce54dde (first amendment); 08cf9cc (second) |
+| 5: The owner's windowed check | human | done (two sessions; verdicts recorded by dev) | 213ee69 |
+
+Phase 1 (lavapipe, exclusive perf lock, load 14 to 30 from the other lanes): `tests/exposure.rs`
+split wall reads `metered_log2` -6.000000 (average) and -6.0000005 (centre); the centred square
+reads GPU -8.15625 / CPU -8.15625 (average) and GPU -7.354732 / CPU -7.354732 (centre); the
+readout is `None` right after frame 0's submit and `Some` (metered -6.0000005, frame 1) after
+frame 1. `--profile gpu`: 139 run, 138 passed, the one failure `mode_banner.png` (1749 bytes),
+re-blessed on lavapipe and passing; every other golden unchanged. `--profile quick` at
+`--test-threads 2`: 488 of 489 passed, `replay::a_stamp_and_a_collapse_replay_from_the_save` hit
+the 30 s kill at load 28 and passed alone in 25.3 s.
+
+Phase 2 (lavapipe, exclusive perf lock, load about 24): `--profile gpu` 142 run, 142 passed
+(every golden byte-identical to 044daed, `indirect.png` among them). Scale-free on the level's
+spawn (seed 1, emissive ore, 192 x 108, 64 frames): s = 1/64 and s = 64 both largest channel
+difference 1/255, 0 pixels past 1/255 (11 474 of 20 736 pixels lit at s = 1). Exposure step 1.0
+to 4.0 at frame 64 on the ceiling box (32 x 32): centre age 63, 64, 65 at frames 63 to 65, every
+pixel +1; floor centre at frame 65 [239, 239, 239], the run at 4.0 [239, 239, 239]. Glare box
+(`Manual(64)`, 3 voxels, 64 x 36, 64 frames): largest irradiance 26 784, accumulation 26 768,
+moments 65 024, filter 26 800, no non-finite texel. `--profile quick --test-threads 2`: 489 of
+489 passed.
+
+Phase 3 (lavapipe, exclusive perf lock, load about 11; box 32 x 18, `dt` 1/60, log2 e the
+exposure frame `s + k` uses). Dark (B to D): k 15 2.4109, 60 3.6738, 120 4.0835, 240 4.6511,
+480 5.2042 (closed form equal to 4 places at each); floor between k 41 and 42; slope 0.03394
+then 0.00830 EV per frame; pixel 22 at k 1, 130 at k 600. Light (D to B): k 9 2.9976, 30
+1.6688, 60 1.5312. Glare: first dark frame 2.2816 (pixel 31); floor between dark frames 29 and
+30; dark frame 300 4.8794 (closed form 4.8794); pixel 131 at 600. Symmetric(2): k 60 1.3984.
+Key: 3.600001 on the second frame. `2^-12` settles at 64.0; compensation 1 EV 7.200002 against
+3.600001; `set_dt(0)` held both words' bits 30 frames; `instant` 46.08 after one frame. GPU
+adapted against the f64 reference, largest difference per series: dark 4.92e-6, light 1.65e-6,
+glare 4.00e-6, symmetric 3.55e-6. Upscaler (vein pose, lamp off, 213 x 120 to 320 x 180):
+log2 e 1.258 to 2.425 over frames 1 to 30 after the ore step; mean luma with history 85.10,
+81.51, 78.51 ... 68.51 (frame 11) ... 83.04, without 84.76, 80.89, 77.92 ... 68.44 ... 83.15,
+largest difference 0.65/255. `--profile gpu` 149 of 149 passed (every golden byte-identical to
+81d300a); the 8 slow-list tests passed; `--profile quick` 490 of 490.
+
+Phase 4 (lavapipe for the tests, exclusive perf lock). Cave curve (level seed 1, spawn pose,
+128 x 72, indirect on, `eye()`): metered EV lamp on -3.046, lamp off -15.176 (the cone floor
+-6.000; the meter falls through -6.96, -8.86, -10.60, -12.19, -12.75 to -13.22 over the first
+30 frames off); log2 e at 0 / 0.25 / 0.5 / 1 / 2 / 4 / 8 / 12 / 15 s: 0.572, 2.025, 3.618,
+4.581, 6.000 (max) from 2 s on; closed form for the measured meters 0.572, 3.255, 4.019,
+5.039, 6.000 on. No fall above 0.01 EV between frames; 15 s within 0.25 EV of the settled 6.000.
+From 1 s on, largest |log2 e - closed form| 0.4587 EV (bar: 0.1); the f64 model stepped over
+each frame's measured meter matches to 0.0000 EV; the closed form restarted at frame 30 off is
+off by 0.1083 EV. The test runs 91 to 99 s and is on the slow list. Readings (1920x1080, level
+spawn, median of the last 30 of 3000, loaded): see `nfr.md` §2 and §3; NVIDIA composite 0.329
+to 0.365 ms, exposure pass 0.072 ms; AMD RADV composite 2.877 to 2.906 ms, exposure pass
+0.061 ms; `frame_bytes` 254 216 224 to 254 476 352 B. `--profile quick --test-threads 2`: 491
+of 491 passed.
+
+Phase 4 amendment (f64505f; lavapipe, exclusive perf lock, load 0.8 to 13). Defaults now
+0.15 / 2 / 10 s and `max` 16 (`AutoExposure::eye()`). Re-derived bars (`live/model.py`, the f64
+model): dark B to D log2 e k 15 1.9961, 60 3.0999, 120 3.6451, 240 3.9861, 480 4.0000 (closed
+form equal to 4 places); floor between k 83 and 84, slope 0.01676 then 0.00333 EV per frame
+(fivefold: `2/120` against `2/600`); `max` from k 246; pixel 22 at k 1, 72 at k 600 (asserted
+72 within 2; the old floor of 120 was for 0.2 EV under the key, which `max` 16 no longer
+reaches). Light unchanged (2.9976, 1.6688, 1.5312). Glare: first dark frame 2.2816 (pixel 31);
+floor between dark frames 58 and 59; dark 150 3.8102; dark 300 4.0000 (`max`); pixel 72 at 600.
+`2^-12` settles at 16.0; compensation 1 EV 7.200002 against 3.600001; `instant()` now steps to
+`2^-6` (11.519997; its old D target clamps at 16). The HUD's `Q` fixture readout moves from
+46.08 (above `max`) to 11.52 / -6.0 (`+3.53 EV`).
+
+Bar 2 (128 x 72, indirect on, the fly-through's lighting defaults). Spawn: meter lamp on -3.046,
+off -15.175; log2 e 0 / 0.25 / 0.5 / 1 / 2 s 0.572, 1.336, 2.405, 3.728, 4.000 (`max`) on; (a)
+largest |log2 e - stepped model| from 1 s 0.0000 EV; reading: closed-form distance 0.1948 EV.
+Vein pose (727.5, 644.3, 208.5), yaw 153.4, pitch 0: meter lamp on -0.722, off -4.873 (above the
+cone floor -6.000, so no rod stage); log2 e 0 / 0.25 / 0.5 / 1 / 2 / 4 / 8 s -1.761, -1.283,
+-0.803, -0.160, 0.786, 1.741, 2.259; (a) 0.0000 EV; (b) closed form 0.0974 EV (bar 0.1). The
+pose search (`live/zz_vein_probe.rs`: 37 poses 5 / 9 / 14 voxels out along ore clusters, meter
+after 90 lamp-off frames under `Manual(1)`), then the closed-form distance on nine poses
+(lamp-off meter / distance): 688.2,815.8,270.7 (-2.01 / 0.042), 727.5,644.3,208.5 (-4.87 /
+0.097), 512.0,604.0,159.0 (-4.26 / 0.130), 678.3,518.2,192.4 (-4.18 / 0.128), 730.8,749.8,274.2
+(-5.49 / 0.122), 676.2,514.8,193.1 (-5.88 / 0.167), 820.7,546.2,160.7 (-6.07 / 0.107),
+731.0,642.5,208.5 (-6.13 / 0.187), 833.3,755.5,238.5 (-6.07 / 0.228). On every pose the meter
+falls over about 30 frames and drifts 0.2 to 0.3 EV after; the three poses whose meter ends
+between the floor and the clamp (both stages) are 0.107 to 0.228.
+
+Step 4, the light patches (`live/zz_patches.rs`, vein pose 676.2,514.8,193.1 yaw 59 pitch -9.7,
+192 x 108, 600 frames lamp on then 900 off; PNGs every 30 frames in
+`target/exposure-patches/`; a patch is a full tile (64 pixels, above -15) whose mean log2
+absolute luminance moves by more than log2 1.1 between frames 30 apart from off frame 24).
+Auto eye (final exposure 10.9624) against `Manual(10.9624)`: 2298 against 2286 patches, 1035
+against 1056 single-frame steps over 10 %, largest per-tile auto-manual difference 0.2757 log2
+(off frame 50); the eight brightest tiles' series equal to 2 places. Patches per 30-frame step
+from off frame 54 (312 full tiles), Manual: 225 84 82 70 74 87 73 70 60 70 69 92 80 84 89 79 50 74
+74 86 72 67 67 61 60 70 89 63 65. Under Manual, one part off at a time (steady-state patches per
+step, after the first three; single-frame steps over 10 % per second after 2 s): indirect off
+about 140 of 306, 30 to 100; emissive candidates 0: 0, 0; emissive history 1: about 178, about
+3 900; filter off: about 178, about 3 900; sampler `list`: about 48, 35 to 67; emissive history
+64: about 32, 0 to 2; candidates 32: about 43, 0 to 4. The mirror is synced whole before the run
+(no uploads in the window). No test was added (step 4.4 applies only to a cause in this plan).
+
+Flicker (same tiles, mean |d log2| frame to frame, and display luma |d| in /255): auto off frames
+24-300 0.01032 and 0.245, 600-900 0.00644 and 0.221; Manual 0.01037 and 0.303, 0.00644 and
+0.218. Emissive history 64: 0.00774 and 0.211, 0.00405 and 0.128.
+
+Gate on the amendment: `--profile quick --test-threads 2` 494 of 494 (5 skipped); clippy and fmt
+clean; under the lock, `vxe-render::exposure`, `flythrough::exposure`, `flythrough::hud_golden`
+and `flythrough::upscale` (`--profile full -E`) 27 of 27. Before it, the full tier on eff60f2
+(the merge of main d54823f): 662 of 662 passed, 9 skipped, 1012 s.
+
+Merge of main 05a3a28 (FSR 2, v0.33.0) at 7c322cc. FSR 2's composite variant (`composite hdr`)
+gains the meter's tile binding and stores the pre-exposed colour; `Fsr2::copy_exposure` copies
+the exposure state's `current` into FSR's `pre_exposure` and exposure texel (auto) and its
+`previous` into `previous_pre_exposure`; `fsr2/tone.wgsl` no longer multiplies by the exposure;
+`FRAME_PASSES` is 20 with `exposure` last. New `fsr2::fsr_follows_the_eyes_moving_exposure`
+(stripe wall, scale 1, `eye()`, lamp intensity to 1/16): texel equal to `current` bit for bit on
+60 frames; FSR against Plan 0024's frame mean 1.170, 1.548, 0.883, 0.717 /255 at frames 5, 15,
+30, 60 (log2 e 2.285, 2.507, 2.806, 3.303; native 2.302, 2.520, 2.816, 3.307). Full tier on the
+merge before the layout fix: 690 run, 668 passed, 22 failed (all `composite hdr`: binding 8
+missing from its layout); after it, `flythrough::fsr2` and `flythrough::golden` 41 of 41, then
+the full tier on 7c322cc 690 of 690 (10 skipped, 1440 s, exclusive perf lock, load 3.5).
+Phase 5's second session: `live/session2.sh` with `live/flythrough-p5b` built from 7c322cc.
+
+Phase 4 amendment of b05accc (08cf9cc): `check_curve` loses its
+`closed_form` switch and prints the closed-form distance as a `reading:` line on both poses; the
+stepped-model assertion and the other two clauses are unchanged. The vein test is renamed
+`the_curve_facing_a_vein_follows_the_stepped_model` (and in `.config/nextest.toml`'s three
+filters).
+
+Phase 5, first session (`live/session1.log`, 2026-10-27 17:37 to 17:53, NVIDIA RTX 3080 Laptop,
+`live/flythrough-p5`, its build commit not recorded; runs: defaults, `--adapt
+0.15,2,10,0.015625`, `--adapt 0.1,0.5,2,0.015625`, `--metering average`). Owner (17:55): "eye
+tests - slowest is the best, but flicker really gives it a strange look. when i close the lamp
+and scene gets brighter - it seems like multiple lights are opening on walls one after another
+within 10-15 sec, and it looks super strange and unnatural". The resulting picks are the
+Decisions line and the first Phase 4 amendment.
+
+Phase 5, second session (`live/session2.sh`, `live/session2.log`, 2026-10-27 21:31 to 21:35, load
+1.7 to 1.8, NVIDIA RTX 3080 Laptop through the shell's default adapter, `live/flythrough-p5b`
+built from 7c322cc, own upscaler at 1.5, each run under the perf lock). Run 1, `--level --seed 1
+--hud` (the new defaults, banner `exposure auto eye`), 2052 frames, exit 0: lamp toggled five
+times, lighting half then full; scene with the lamp on -1.6 to -5.2 EV, off -9.6 to -15.0 EV;
+every lamp-off stretch ends at `+4.00 EV` (`max` 16), the lamp-on stretches settle +1.50 to
++2.74 EV. Run 2, `--exposure 11.3` (manual +3.50 EV), 1276 frames, exit 0. Run 3,
+`--emissive-history 64`, 2003 frames, exit 0: lamp toggled five times, lamp-off stretches end at
++3.97 to +4.00 EV. Owner on run 3's wall patches: "with 64 it was better, but still visible, we
+should make a separate plan to fix it. really unnatural look". Owner: no objection to the new
+defaults (0.15 / 2 / 10 s, `max` 16), which stay. Owner, for Phase 4 bar 2: (b) drops to a
+reading (the second Phase 4 amendment, code in 08cf9cc). Step 4 closes: the emissive
+direct-light estimator owns the patches and a separate plan follows; `DEFAULT_EMISSIVE_HISTORY`
+is unchanged here (32).
 
 ### Notes
 
-_(Deviations from the plan, with the commit, stated without justification. Done-whens not
-satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
-each. Empty is fine.)_
+- Phase 4 amendment of b05accc (08cf9cc): bar 2 (b) is a printed reading, not an assertion. It
+  held on the chosen vein pose at 0.0974 EV against 0.1 and on 2 of the 9 poses tried, so it is
+  fragile to the pose; (a) is the asserting bar on both poses. `.config/nextest.toml` (the
+  renamed vein test in its three filters) is outside Phase 4's Files touched.
+- Phase 5: dev wrote the owner's verdicts into the log from the session logs and the owner's
+  words relayed by the orchestrator. Step 4 closes with no fix; `DEFAULT_EMISSIVE_HISTORY`
+  stays 32 and the owner asked for a separate plan for the emissive estimator's wall patches.
+- Phase 4 amendment: `crates/vxe-render/src/exposure.rs` (`eye()` and its unit test),
+  `crates/vxe-render/tests/exposure.rs` (bars 2, 4, 6) and `.config/nextest.toml` (the vein test
+  on the slow list) are outside Phase 4's Files touched.
+- Phase 4 amendment: bar 2 (b) holds on one chosen pose at 0.0974 EV; seven of the nine poses
+  tried read 0.107 to 0.228, and the chosen pose's dark meter (-4.87) is above the cone floor, so
+  (b) exercises the cone stage only. Every pose meets (a) at 0.0000 EV.
+- Phase 4 amendment: the light patches step equally under `Manual` at the adapted exposure; they
+  follow the emissive light samples (none with candidates 0). Owner question, not fixed here.
+- Merge 7c322cc: `crates/vxe-render/src/fsr2.rs`, `fsr2/tone.wgsl`, `tests/support/rigs.rs`
+  (`tone_bytes` takes pre-exposed colour) and `tests/fsr2.rs` are outside every phase's Files
+  touched.
+- Phase 4 amendment: the curve tests now share the fly-through's lighting defaults through
+  `Lighting::default()` with indirect on (unchanged from the first pass); the vein test is
+  `the_curve_facing_a_vein_follows_the_stepped_model`.
+- Phase 1: the state the frame passes read is a 32-byte uniform at group 0 binding 13, copied
+  from the exposure pass's storage buffer after it runs (the plan says a storage buffer read
+  read-only through group 0).
+- Phase 1: `exposure.wgsl` is standalone (its own group 0: parameters, state, tiles), not
+  compiled after `march.wgsl`.
+- Phase 1: `Frame::exposure_readout` takes the `wgpu::Device` (a non-blocking `Poll`); it
+  assumes each encode is submitted before the next encode or the call.
+- Phase 1: `Frame::set_metering` sets the metering outside `AutoExposure` (Phase 1's bars meter
+  under the manual exposure).
+- Phase 1: the test scenes put the eye 20 voxels from the wall (bar 1 says 10), with
+  `vfov` 2 atan(1/2) so the view is 20 voxels tall there and bar 2's square is 10 x 10 voxels.
+- Phase 1: `FRAME_PASSES` gains an 11th pass, `exposure`; `tests/shader_portability.rs` (not in
+  Files touched) gains `exposure.wgsl`.
+- Phase 1: `march.wgsl` also gains `exposure_ratio`, `HDR_MAX` and `MOMENT_LUM_MAX`, which
+  Phase 2's passes use.
+- Phase 2: the moments store is clamped at `(255, 255^2)`, not at 60 000 (60 000 is under
+  `255^2`); the first moment is also of the clamped luminance.
+- Phase 2: bar 3 runs on a re-made ceiling box in `crates/vxe-render/tests/exposure.rs` (albedo
+  0.5, a 32 x 32 target looking down) and also checks frame 64's ages; bar 4 uses that box's wall
+  with the lamp at the eye (`LightParams::at_eye`).
+- Phase 4: bar 2's third clause (within 0.1 EV of the closed form from 1 s on) is not met on
+  the spawn pose: the meter falls over about 30 frames, not in one step, and the dark meter
+  (-15.2) is far below the floor and clamps at `max` by 2 s. The test asserts the other two
+  clauses and prints this one's reading. An open question for the owner and the architect.
+- Phase 4: `.config/nextest.toml` (not in Files touched) gains `flythrough::exposure` in the gpu
+  filter and its test in the slow list.
+- Phase 4: the fly-through's `symmetric` preset is `AutoExposure::symmetric(1.5)`; `Q` cycles
+  the start's preset (eye unless `--adaptation`), auto symmetric, manual (holding the last
+  read-back exposure); no source switch exists in the tree, so `reset_exposure` runs only at the
+  frame's start.
+- Phase 4: the readings were taken loaded (load 5.1 to 26.4) after an hour of retries; the tip
+  binary is e9879cc's renderer with this phase's fly-through changes.
+- Phase 3: the log keeps the listed frames of each series, not the whole printed series (the
+  tests print every frame's log2 e).
+- Phase 3: bar 9 runs on the golden scene's vein pose (carved cave, lamp off) at 213 x 120 to
+  320 x 180, not the level's spawn pose: there, with the lamp on, the ore step moved the
+  exposure by about 0.001 EV a frame, and with it off the scene metered near black.
+- Phase 3: `apps/flythrough/src/hud.rs` (one line), `apps/flythrough/tests/golden.rs` and
+  `crates/vxe-render/tests/exposure.rs` move to `Exposure::Manual` with `Lighting::exposure`'s
+  type; `Lighting::manual_exposure` is added.
+- Phase 3: in manual the adapted level holds; a switch back to auto continues from it (only
+  `reset_exposure` or a new frame jumps to the meter).
+- Phase 2: a manual exposure applies to the frame it is set on (`exposure_now` reads
+  `params.exposure` in manual), not one frame later through the exposure pass.
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** feature.
+- **Public API changed:** `vxe-render`: new `exposure` module with `Exposure` (`Manual`,
+  `Auto`), `AutoExposure` (`eye`, `symmetric`, `instant`, `step`, `exposure`, `floor_log2`),
+  `Metering`, `ExposureState`, `ExposureReadout`, `EXPOSURE_WGSL`, `METER_TILE`,
+  `METER_LOG2_LIMIT`, `STATE_HELD`; `Lighting::exposure` is `Exposure` (was `f32`),
+  `Lighting::manual_exposure`; `Frame::set_dt`, `reset_exposure`, `set_metering`,
+  `exposure_readout`, `exposure_state`; `FRAME_PASSES` gains `exposure` (last); every frame
+  shader's group 0 gains the exposure uniform at binding 13 and the composite the meter tiles;
+  `fsr2/tone.wgsl` no longer multiplies by the exposure. `flythrough`: `--exposure
+  auto|<value>` (default auto), `--adaptation eye|symmetric|instant`, `--adapt
+  LIGHT,CONE,ROD,FLOOR`, `--metering centre|average`, `Q` cycling the exposure mode, the HUD's
+  `exposure` row.
+- **Budget readings:** `nfr.md` §2 "Upscale, tone map, post" and §3, from Phase 4 (renderer as
+  at e9879cc against dedd83c, 1920x1080, level spawn, median of the last 30 of 3000, exclusive
+  perf lock, loaded: 1-minute load 5.1 to 26.4). NVIDIA GeForce RTX 3080 Laptop: composite
+  0.329 to 0.365 ms, exposure pass 0.072 ms. AMD Radeon Graphics (RADV RENOIR, `--adapter
+  AMD`): composite 2.877 to 2.906 ms, exposure pass 0.061 ms. `Frame::frame_bytes` 254 216 224
+  to 254 476 352 B. Not re-taken after the amendments or the merge of 05a3a28.
+- **Readings at the tip** (lavapipe, `flythrough::exposure`, exclusive perf lock, load 3.2 to
+  12.2, 128 x 72): spawn, meter lamp on -3.046 / off -15.175, stepped-model distance from 1 s
+  0.0000 EV, `reading: spawn closed-form distance from 1 s on 0.1948 EV`; vein pose
+  (727.5, 644.3, 208.5, yaw 153.4), meter -0.722 / -4.873, stepped model 0.0000 EV,
+  `reading: vein closed-form distance from 1 s on 0.0974 EV`.
+- **Gate at 213ee69 (code as at 08cf9cc):** `cargo nextest run --workspace --profile full
+  --no-fail-fast --test-threads 2` (exclusive perf lock, MemoryMax 6G, load 2.3 at start, 3.4
+  at end) exit 0, 690 run, 690 passed (5 slow), 10 skipped, 1438 s; `--profile quick
+  --test-threads 2` exit 0, 499 of 499 (3 skipped); `cargo test --doc --workspace` exit 0, 7
+  passed; `cargo clippy --workspace --all-targets -- -D warnings` exit 0; `cargo fmt --all
+  --check` exit 0; `cargo deny check` advisories, bans, licenses and sources ok;
+  `check-doc-links`, `check-comment-hygiene`, `check-index-rows`, `check-test-tiers` exit 0.
+- **Outstanding `human` phases:** none (Phase 5's two sessions are recorded above).
 
 ## Followups
 
 - Plan 0037's night tint weighted by the adapted state below the cone floor (Risks).
 - Pigment bleaching: dark recovery that lengthens with the light's dose.
 - Krawczyk's smooth time constant, if Phase 5 sees the kink.
+- `Exposure::Manual(0.0)` through the library divides by zero in the composite's meter
+  (`c / ex`, `composite.wgsl`) and in the exposure ratio; the fly-through refuses `--exposure 0`.
+  Clamp it in `Frame::set_lighting` or reject it at the type (close review nit).
+- The exposure pass makes its bind group every frame (`marcher.rs`); cache it with the targets
+  (close review nit, for Plan 0044's hot-path pass).
+- `apps/flythrough/src/main.rs`: `parse_exposure` and `parse_adapt` sit between
+  `parse_residency` and its doc comment, so `parse_exposure` carries both docs and
+  `parse_residency` none (close review nit).

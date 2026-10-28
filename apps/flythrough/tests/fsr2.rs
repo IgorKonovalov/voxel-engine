@@ -372,7 +372,7 @@ fn doubling_the_exposure_reaches_fsr_the_same_frame() {
     let light = LightParams::headlamp();
     let e = stripe_exposure(NEAR);
     let lighting = |exposure| vxe_render::Lighting {
-        exposure,
+        exposure: vxe_render::Exposure::Manual(exposure),
         ..vxe_render::Lighting::default()
     };
     let mut fsr = frame_of(device, OUTPUT, OUTPUT, false);
@@ -400,6 +400,69 @@ fn doubling_the_exposure_reaches_fsr_the_same_frame() {
     let mean = m.iter().sum::<f64>() / 3.0;
     println!("FSR at 2x exposure against Plan 0024's frame: mean {mean:.3}/255 ({m:.3?})");
     assert!(mean <= 2.0, "mean {mean:.3}/255");
+}
+
+/// Pre-exposure under the eye (ADR-0033): on the stripe wall at scale 1 under
+/// `AutoExposure::eye()`, FSR's exposure texel is the exposure state's `current` bit for bit,
+/// and after the lamp's intensity drops to 1/16 (the eye adapting over the next frames) the tone
+/// pass's output stays within 2/255 mean of Plan 0024's frame under the same eye, at 5, 15, 30
+/// and 60 frames after the drop: FSR's history follows the moving pre-exposure.
+#[test]
+fn fsr_follows_the_eyes_moving_exposure() {
+    let Some(rig) = stripe_rig() else {
+        return;
+    };
+    let (device, queue) = (&rig.device, &rig.queue);
+    let camera = stripe_camera(NEAR, 0);
+    let lighting = vxe_render::Lighting {
+        exposure: vxe_render::Exposure::Auto(vxe_render::AutoExposure::eye()),
+        ..vxe_render::Lighting::default()
+    };
+    let mut fsr = frame_of(device, OUTPUT, OUTPUT, false);
+    fsr.set_upscaler_kind(device, fsr2_kind());
+    let mut native = frame_of(device, OUTPUT, OUTPUT, false);
+    for f in [&mut fsr, &mut native] {
+        f.set_lighting(lighting);
+        f.set_dt(1.0 / 60.0);
+    }
+    let bright = LightParams::headlamp();
+    let dim = LightParams {
+        intensity: bright.intensity / 16.0,
+        ..bright
+    };
+    let state = |f: &Frame| {
+        vxe_render::ExposureState::from_bytes(&readback::read_buffer(
+            device,
+            queue,
+            f.exposure_state(),
+            0,
+            32,
+        ))
+    };
+    for _ in 0..SETTLE {
+        fsr.step(device, queue, &rig.gpu, &camera, &bright);
+        native.step(device, queue, &rig.gpu, &camera, &bright);
+    }
+    for k in 1..=60 {
+        // The exposure this frame uses: the state before it.
+        let used = state(&fsr).current;
+        fsr.step(device, queue, &rig.gpu, &camera, &dim);
+        native.step(device, queue, &rig.gpu, &camera, &dim);
+        let texel = read_f32_texels(device, queue, fsr.fsr2().unwrap().exposure())[0];
+        assert_eq!(texel.to_bits(), used.to_bits(), "frame {k}: {texel} {used}");
+        if [5, 15, 30, 60].contains(&k) {
+            let a = readback::read_rgba8(device, queue, fsr.target());
+            let b = readback::read_rgba8(device, queue, native.target());
+            let m = mad(&a, &b);
+            let mean = m.iter().sum::<f64>() / 3.0;
+            println!(
+                "frame {k} after the drop: log2 e {:.3} (native {:.3}), FSR against Plan 0024's frame mean {mean:.3}/255",
+                used.log2(),
+                state(&native).current.log2()
+            );
+            assert!(mean <= 2.0, "frame {k}: mean {mean:.3}/255");
+        }
+    }
 }
 
 /// The internal pixel whose sample lies nearest output pixel `(x, y)`'s centre in a frame
@@ -649,7 +712,7 @@ fn locks_form_on_the_stripe_edges() {
     let mut f = frame_of(device, INTERNAL, OUTPUT, false);
     f.set_upscaler_kind(device, fsr2_kind());
     f.set_lighting(vxe_render::Lighting {
-        exposure: stripe_exposure(FAR),
+        exposure: vxe_render::Exposure::Manual(stripe_exposure(FAR)),
         ..Default::default()
     });
     let camera = stripe_camera(FAR, 0);
@@ -710,7 +773,7 @@ fn locks_form_on_the_stripe_edges() {
     let mut g = frame_of(&device, INTERNAL, OUTPUT, false);
     g.set_upscaler_kind(&device, fsr2_kind());
     g.set_lighting(vxe_render::Lighting {
-        exposure: stripe_exposure(FAR),
+        exposure: vxe_render::Exposure::Manual(stripe_exposure(FAR)),
         ..Default::default()
     });
     for _ in 0..SETTLE {
@@ -874,7 +937,7 @@ fn fsr2_pan_ge(rig: &StripeRig, dist: f32, pan_px: f32) -> (f64, f64) {
         let mut f = frame_of(device, INTERNAL, OUTPUT, true);
         f.set_upscaler_kind(device, fsr2_sharp(0.0));
         f.set_lighting(vxe_render::Lighting {
-            exposure: stripe_exposure(dist),
+            exposure: vxe_render::Exposure::Manual(stripe_exposure(dist)),
             ..Default::default()
         });
         let mut camera = stripe_camera(dist, phase);
@@ -1019,7 +1082,7 @@ fn pan_per_pass_readings(dist: f32, pan_px: f32) -> Vec<String> {
     f.set_upscaler_kind(device, fsr2_sharp(0.0));
     f.fsr2_mut().expect("FSR mode").set_debug(device, true);
     f.set_lighting(vxe_render::Lighting {
-        exposure: stripe_exposure(dist),
+        exposure: vxe_render::Exposure::Manual(stripe_exposure(dist)),
         ..Default::default()
     });
     f.set_sharpness(queue, 0.5);

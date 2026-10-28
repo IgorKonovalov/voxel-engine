@@ -36,7 +36,7 @@ pub fn fsr2_source(pass: &str, hdr: bool) -> String {
 }
 
 /// FSR 2's frame passes in encode order, each its own slot of [`crate::FRAME_PASSES`] after
-/// the composite, upscale and sharpen slots.
+/// the composite, upscale and sharpen slots and before the exposure slot.
 pub const FSR2_PASSES: [&str; 9] = [
     "fsr2 input",
     "fsr2 spd",
@@ -901,7 +901,9 @@ impl Fsr2 {
             .pre_exposure
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let pre_exposure = 1.0;
+        // The manual exposure; in auto, `copy_exposure` replaces it (and `previous_pre_exposure`
+        // in both) on the GPU from the exposure state.
+        let pre_exposure = params.exposure;
         let [w, h] = self.res.render;
         let c = Fsr2Constants {
             render_size: render,
@@ -940,6 +942,44 @@ impl Fsr2 {
         c
     }
 
+    /// The pre-exposure seam (ADR-0033): the composite's colour reaches FSR pre-exposed by the
+    /// frame's exposure, so FSR's `pre_exposure` and its exposure texel are that exposure and
+    /// `previous_pre_exposure` the last frame's, and the accumulate pass rescales its history by
+    /// their ratio. `state` is the exposure state (`current` at byte 0, `previous` at 4) as this
+    /// frame's passes read it; the copies go after [`Fsr2::prepare`]'s writes and before FSR's
+    /// passes. In manual (`auto` false) `pre_exposure` and the texel stay the CPU's value. On a
+    /// `reset` the previous pre-exposure is this frame's.
+    pub(crate) fn copy_exposure(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        state: &wgpu::Buffer,
+        auto: bool,
+        reset: bool,
+    ) {
+        let pre = std::mem::offset_of!(Fsr2Constants, pre_exposure) as u64;
+        let previous = std::mem::offset_of!(Fsr2Constants, previous_pre_exposure) as u64;
+        if auto {
+            encoder.copy_buffer_to_buffer(state, 0, &self.cb, pre, 4);
+            encoder.copy_buffer_to_texture(
+                wgpu::TexelCopyBufferInfo {
+                    buffer: state,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: None,
+                        rows_per_image: None,
+                    },
+                },
+                self.res.exposure.as_image_copy(),
+                self.res.exposure.size(),
+            );
+        }
+        match (reset, auto) {
+            (false, _) => encoder.copy_buffer_to_buffer(state, 4, &self.cb, previous, 4),
+            (true, true) => encoder.copy_buffer_to_buffer(state, 0, &self.cb, previous, 4),
+            (true, false) => {}
+        }
+    }
+
     /// Writes this frame's constants and builds its bind groups from the frame's targets.
     pub(crate) fn prepare(
         &self,
@@ -962,7 +1002,7 @@ impl Fsr2 {
             }),
         );
         let r = &self.res;
-        // The exposure seam: the frame's manual exposure, pre-exposure 1 (no eye adaptation).
+        // The exposure texel: the frame's manual exposure, replaced in auto by `copy_exposure`.
         queue.write_texture(
             r.exposure.as_image_copy(),
             bytemuck::cast_slice(&[params.exposure, 0.0]),
@@ -1119,11 +1159,12 @@ pub(crate) struct FrameInputs<'a> {
 mod tests {
     use super::*;
 
-    /// FSR's passes are the frame's last slots, in their order.
+    /// FSR's passes are the frame's last slots but the exposure pass, in their order.
     #[test]
     fn fsrs_passes_close_the_frame_passes() {
-        let n = crate::FRAME_PASSES.len() - FSR2_PASSES.len();
-        assert_eq!(crate::FRAME_PASSES[n..], FSR2_PASSES);
+        let n = crate::FRAME_PASSES.len() - 1 - FSR2_PASSES.len();
+        assert_eq!(crate::FRAME_PASSES[n..n + FSR2_PASSES.len()], FSR2_PASSES);
+        assert_eq!(crate::FRAME_PASSES.last(), Some(&"exposure"));
         assert_eq!(crate::FRAME_PASSES[n - 2..n], ["upscale", "sharpen"]);
     }
 

@@ -1,8 +1,8 @@
-// The FSR 2 tone pass (ours, ADR-0034): FSR 2's output, linear radiance at the output size,
-// exposed, tone mapped and display-encoded into the frame's rgba8 image, one invocation per
-// output pixel. The same arithmetic as composite.wgsl's `display`, applied after the upscaler
-// instead of before it. Compiled after march.wgsl, whose parameters (`params.exposure`, the
-// tone-map flag, the view and `params.output_size`) it uses.
+// The FSR 2 tone pass (ours, ADR-0034): FSR 2's output, linear radiance at the output size
+// pre-exposed by the frame's exposure (ADR-0033), tone mapped and display-encoded into the
+// frame's rgba8 image, one invocation per output pixel. The same arithmetic as composite.wgsl's
+// `display`, applied after the upscaler instead of before it. Compiled after march.wgsl, whose
+// parameters (the tone-map flag, the view and `params.output_size`) it uses.
 //
 // Bindings, group 2:
 //   0  texture_2d<f32>   tone_in    FSR 2's output (rgb), or with the upscaler bypassed the
@@ -20,9 +20,9 @@ fn tone_aces(x: vec3<f32>) -> vec3<f32> {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-// composite.wgsl's `display`.
+// composite.wgsl's `display`: the colour is pre-exposed already.
 fn tone_display(c: vec3<f32>) -> vec3<f32> {
-    let x = c * params.exposure;
+    let x = c;
     var m = clamp(x, vec3<f32>(0.0), vec3<f32>(1.0));
     if ((params.lighting & LIGHTING_IDENTITY_TONE_MAP) == 0u) {
         m = tone_aces(max(x, vec3<f32>(0.0)));

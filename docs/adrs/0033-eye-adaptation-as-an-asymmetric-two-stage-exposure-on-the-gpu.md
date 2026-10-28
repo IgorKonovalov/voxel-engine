@@ -1,8 +1,8 @@
 # ADR-0033: Exposure adapts like an eye: fast toward bright, slow toward dark in two stages, metered and stepped on the GPU, applied as pre-exposure
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-28, Plan 0040 closed; see Outcome)
 > **Date:** 2026-10-22
-> **Related plan(s):** [Plan 0040](../plans/0040-eye-adaptation-asymmetric-auto-exposure-and-pre-exposure.md)
+> **Related plan(s):** [Plan 0040](../plans/done/0040-eye-adaptation-asymmetric-auto-exposure-and-pre-exposure.md)
 > (builds it), [Plan 0032](../plans/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
 > (its Phase 4 shrinks to using it), [Plan 0029](../plans/done/0029-indirect-light-probe-volume.md)
 > (the live check that asked for it)
@@ -136,5 +136,29 @@ values near the key either way.
 
 ## Outcome
 
-_(Added only at acceptance if implementation falsified something above. Dated. Never rewrite the
-body.)_
+2026-10-28, at Plan 0040's close (v0.34.0). The decision holds as built; these details moved.
+
+- **The defaults.** The owner's windowed sessions chose `tau_light` 0.15 s, `tau_cone` 2 s,
+  `tau_rod` 10 s and `max` 16, so the dark-adapted cave stays dim rather than settling at the
+  key. The kink at the cone floor is therefore a fivefold fall in slope, not the fourfold of
+  Consequences. Phase 5's log records no verdict on the kink; Krawczyk's smooth constant stays
+  a followup.
+- **The state the frame passes read** is a 32-byte uniform (group 0 binding 13), copied from
+  the exposure pass's storage buffer after it runs, not that storage buffer bound read-only.
+- **The clamps.** The moments store is clamped at `(255, 255^2)`, and the first moment is also
+  of the clamped luminance; the 60 000 clamp of other stores stands.
+- **The closed form is a reading, not a bar, on the level.** On the fly-through's level the
+  meter falls over about 30 frames when the lamp goes off, not in one step, so the GPU's curve
+  matches the stepped model exactly (0.0000 EV) but sits 0.1 to 0.2 EV from the one-step closed
+  form. Plan 0040's headless bars assert the stepped model on both test poses and print the
+  closed-form distance.
+- **FSR 2's seam.** FSR 2 (ADR-0034) receives pre-exposed colour; its tone pass no longer
+  multiplies by the exposure.
+- **Light patches while adapting.** The patches seen while the exposure moves follow the
+  emissive light samples (they step the same under `Manual` at the adapted exposure), so they
+  are the emissive estimator's, not this mechanism's. Plan 0047 owns them.
+- **Cost (quiet, 2026-10-28, `docs/nfr.md` §2 and §3):** the meter adds 0.05 to 0.07 ms to the
+  composite and the exposure pass reads 0.073 to 0.075 ms on the RTX 3080 Laptop at 1080p
+  internal; on RADV RENOIR +0.106 ms and 0.060 ms. Both are above the plan's dev-box guesses
+  (0.02 to 0.05 and 0.01 to 0.03 ms) and well inside the 1.5 ms post line. `frame_bytes` grows
+  by 260 128 B.

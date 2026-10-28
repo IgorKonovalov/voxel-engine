@@ -16,6 +16,12 @@
 //   6  texture_2d<u32>   light_info_in   the lighting grid's hit records
 //   7  texture_2d<f32>   indirect_in     the probe gather's indirect irradiance on the
 //                                        lighting grid, rgb; read with Params.lighting bit 12
+//   8  storage, rw       meter_tiles     the exposure meter (exposure.rs): per workgroup, at
+//                                        `workgroup_id.y * workgroups.x + workgroup_id.x`, the
+//                                        sum over its pixels of `clamp(log2(max(Y, 2^-16)),
+//                                        -16, 16)` of the shaded radiance before exposure and
+//                                        the tone map, and their count; written in the shaded
+//                                        view only
 //
 // Per view: `shaded` is the Lambertian `albedo * tint * E / PI` of a hit (E the direct
 // irradiance plus, with Params.lighting bit 12, the probes' indirect irradiance; the direct
@@ -23,8 +29,10 @@
 // `detail_lamp_ratio`, while the indirect part carries the detail from the gather's own
 // normal) plus its material's
 // emission under the frame's scale (none in the cutaway view; the cutaway's flat
-// sky on a miss in that view, else black), the translucent layers composited over it, times
-// `params.exposure`, tone mapped (`Lighting::tone_map`: ACES or the identity clamp) and
+// sky on a miss in that view, else black), the translucent layers composited over it, all
+// pre-exposed (ADR-0033: the irradiance arrives pre-exposed, and the absolute terms, emission,
+// the layers, the sky and the probes' indirect irradiance, are multiplied by `exposure_now()`
+// where they join it), tone mapped (`Lighting::tone_map`: ACES or the identity clamp) and
 // display-encoded by `pow(c, 1 / 2.2)`; `normals` writes a hit's shading normal as
 // `n * 0.5 + 0.5`, linear, and a miss as `shaded` does; `hitmask` white on a hit;
 // `steps` the counters over 255; `albedo` the hit's albedo with the unlit layers over it.
@@ -40,6 +48,10 @@ const HDR_TARGET: bool = false;
 @group(2) @binding(5) var light_pos_in: texture_2d<f32>;
 @group(2) @binding(6) var light_info_in: texture_2d<u32>;
 @group(2) @binding(7) var indirect_in: texture_2d<f32>;
+@group(2) @binding(8) var<storage, read_write> meter_tiles: array<vec2<f32>>;
+
+// The workgroup's meter partial sums: log2 luminance, pixel count.
+var<workgroup> meter_sum: array<vec2<f32>, 64>;
 
 // `Params::lighting` bit: the probe gather ran and its irradiance adds to the direct one.
 const LIGHTING_INDIRECT: u32 = 4096u;
@@ -63,7 +75,7 @@ fn irradiance_at(q: vec2<i32>) -> Lit {
     var e = d;
     var ind = vec3<f32>(0.0);
     if ((params.lighting & LIGHTING_INDIRECT) != 0u) {
-        ind = textureLoad(indirect_in, q, 0).xyz;
+        ind = textureLoad(indirect_in, q, 0).xyz * exposure_now();
         e += ind;
     }
     return Lit(e, d, ind);
@@ -143,8 +155,8 @@ fn aces(x: vec3<f32>) -> vec3<f32> {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-fn display(c: vec3<f32>) -> vec3<f32> {
-    let x = c * params.exposure;
+// The pre-exposed radiance `x` tone mapped and display-encoded.
+fn display(x: vec3<f32>) -> vec3<f32> {
     var m = clamp(x, vec3<f32>(0.0), vec3<f32>(1.0));
     if ((params.lighting & LIGHTING_IDENTITY_TONE_MAP) == 0u) {
         m = aces(max(x, vec3<f32>(0.0)));
@@ -153,21 +165,46 @@ fn display(c: vec3<f32>) -> vec3<f32> {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn composite(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= params.size.x || gid.y >= params.size.y) {
-        return;
+fn composite(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) lane: u32,
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) groups: vec3<u32>,
+) {
+    var m = vec2<f32>(0.0);
+    if (gid.x < params.size.x && gid.y < params.size.y) {
+        m = composite_px(vec2<i32>(gid.xy));
     }
-    let px = vec2<i32>(gid.xy);
+    meter_sum[lane] = m;
+    workgroupBarrier();
+    for (var stride = 32u; stride > 0u; stride >>= 1u) {
+        if (lane < stride) {
+            meter_sum[lane] += meter_sum[lane + stride];
+        }
+        workgroupBarrier();
+    }
+    if (lane == 0u && view_mode() == VIEW_SHADED) {
+        meter_tiles[wid.y * groups.x + wid.x] = meter_sum[0];
+    }
+}
+
+// The meter's term of radiance `c` before exposure: its clamped log2 luminance and a count.
+fn meter_of(c: vec3<f32>) -> vec2<f32> {
+    return vec2<f32>(clamp(log2(max(luminance(c), exp2(-16.0))), -16.0, 16.0), 1.0);
+}
+
+// Writes pixel `px`'s colour; returns its meter term in the shaded view, else zero.
+fn composite_px(px: vec2<i32>) -> vec2<f32> {
     let rec = unpack_hit(textureLoad(hit_pos_in, px, 0), textureLoad(hit_info_in, px, 0));
     let layer = textureLoad(layer_in, px, 0);
     let view = view_mode();
     if (view == VIEW_STEPS) {
         textureStore(target_tex, px, vec4<f32>(layer.xyz / 255.0, 1.0));
-        return;
+        return vec2<f32>(0.0);
     }
     if (view == VIEW_HITMASK) {
         textureStore(target_tex, px, vec4<f32>(vec3<f32>(select(0.0, 1.0, rec.found)), 1.0));
-        return;
+        return vec2<f32>(0.0);
     }
     if (view == VIEW_ALBEDO) {
         var a = vec3<f32>(0.0);
@@ -178,17 +215,18 @@ fn composite(@builtin(global_invocation_id) gid: vec3<u32>) {
             a = layer.xyz + layer.w * a;
         }
         textureStore(target_tex, px, vec4<f32>(a, 1.0));
-        return;
+        return vec2<f32>(0.0);
     }
+    let ex = exposure_now();
     var c = vec3<f32>(0.0);
     if (!rec.found && (params.flags & FLAG_CUTAWAY) != 0u) {
-        c = CUTAWAY_SKY;
+        c = CUTAWAY_SKY * ex;
     }
     if (rec.found) {
         let st = surface_detail(rec);
         if (view == VIEW_NORMALS) {
             textureStore(target_tex, px, vec4<f32>(st.xyz * 0.5 + 0.5, 1.0));
-            return;
+            return vec2<f32>(0.0);
         }
         let albedo = materials[rec.material * 4u].xyz * st.w;
         let lit = lit_at(px, rec);
@@ -200,11 +238,12 @@ fn composite(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         c = albedo * e * (1.0 / PI);
         if ((params.flags & FLAG_CUTAWAY) == 0u) {
-            c += emission_of(rec.material);
+            c += emission_of(rec.material) * ex;
         }
     }
     if (rec.translucent) {
-        c = layer.xyz + layer.w * c;
+        c = layer.xyz * ex + layer.w * c;
     }
     textureStore(target_tex, px, vec4<f32>(select(display(c), c, HDR_TARGET), 1.0));
+    return meter_of(c / ex);
 }

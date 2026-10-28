@@ -19,6 +19,10 @@
 // visibility under last frame's W. Nothing changed, the re-shade equals last frame's estimate
 // (`target * W = w_sum / M`), so lambda is 0 but for f16 rounding. A pixel with no hit, or no
 // valid history, reads 0.
+//
+// Both are compared pre-exposed (ADR-0033): the re-shade, computed in absolute units, times this
+// frame's exposure, and last frame's estimate times `exposure_ratio()`; the 1e-4 floor acts on
+// what the screen shows.
 
 @group(3) @binding(0) var grad_prev_pos: texture_2d<f32>;
 @group(3) @binding(1) var grad_prev_info: texture_2d<u32>;
@@ -69,8 +73,9 @@ fn gradient(@builtin(global_invocation_id) gid: vec3<u32>) {
                     }
                 }
             }
+            e *= exposure_now();
             let prev_light = textureLoad(grad_prev_light, qi, 0);
-            let old = luminance(prev_light.xyz) + prev_light.w;
+            let old = (luminance(prev_light.xyz) + prev_light.w) * exposure_ratio();
             let lambda = abs(e - old) / max(max(e, old), 1e-4);
             out = vec4<f32>(lambda, e, old, 0.0);
         }
