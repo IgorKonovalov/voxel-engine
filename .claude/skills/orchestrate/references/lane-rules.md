@@ -14,6 +14,22 @@ plan lanes run at once, each in its own worktree at
 2. Inside a plan you edit only the `Status:` line and the `## Implementation log` (the `dev`
    skill's rule). A done-when you cannot meet is a question, not an edit: stop and report it
    with options. Never weaken an assertion to make a bar pass.
+2a. **Pre-approved test re-derivation (owner, 2026-10-28).** An existing test that reads a
+    transient may move its reference to where the quantity has settled, without stopping.
+    Examples: a "settled" value at a frame count that a long series shows is still converging,
+    or a golden rendered before its history settles. The conditions:
+    - The claim and the bar stay as written; only the reference frame count or settled value
+      moves.
+    - A long series (run until the change per visit is under the bar's tolerance) shows where
+      the quantity settles. The new count comes from that series or from the blend arithmetic,
+      not from what makes the test pass.
+    - The test is read on the base and the tip, in its old and new form, and all four readings
+      go in the log, with the commit that changes the test.
+    - The doc comment states the reference and where it comes from.
+
+    Anything that loosens a bar still stops for the owner. That includes a wider tolerance, a
+    lower ratio, a longer lag, a dropped assertion, or a bar re-derived against a different
+    quantity.
 3. Keep anything that must survive a reboot in the worktree (committed, or under the
    untracked `live/`), never only in `/tmp` or a scratchpad.
 
@@ -53,6 +69,14 @@ plan lanes run at once, each in its own worktree at
    `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json` leaves the Vulkan loader only
    RADV. Say in the log how the adapter was selected.
 9. The wasm tests need `scripts/build-guests.sh` run once in a fresh worktree.
+9c. **Iterate on the RTX, prove on lavapipe (owner, 2026-10-28).** Exploratory render runs are
+    sweeps, attribution runs, variant comparisons and long series. Run them on the RTX 3080
+    Laptop, which is far faster than lavapipe, and label the readings with the adapter. Every
+    done-when reading, golden comparison or bless, and gate run stays on lavapipe, which is
+    CI's adapter and where the goldens were blessed. A sweep's winner is re-read on lavapipe
+    before its commit. The render tests hard-code `force_fallback_adapter: true` (2026-10-28),
+    so until a test-support switch exists, this applies only to scratch tests and fly-through
+    runs that take `--adapter`. Golden assertions never run against the RTX.
 
 ## Context budget
 

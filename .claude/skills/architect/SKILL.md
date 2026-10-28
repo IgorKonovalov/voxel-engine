@@ -85,6 +85,12 @@ specific. Vague plans get ignored.
 
 - **Phase 1 is a walking skeleton.** Something observable in a test or in the fly-through, not
   plumbing.
+- **A plan that chases a visual defect measures before it commits to a mechanism** (flicker,
+  popping, banding, a bias seen on screen). Phase 1 is a short spike: a rig that splits the
+  defect into its sources (composite, direct, indirect, temporal) and reads each one. The
+  mechanism phases are written or amended once the spike has named the dominant source. Don't
+  write a fix for a source no reading has attributed. (Plan 0047 assumed the emissive history,
+  but 83 % came from the probes, and the plan took five owner amendments in one day.)
 - **Every phase carries exactly one `**Owner skill:**` line: `dev` or `human`.** A `human` phase
   is one only the user can do: acquire the baseline GPU, create the GitHub repo, make a product
   call. A missing or malformed tag is a review blocker.
