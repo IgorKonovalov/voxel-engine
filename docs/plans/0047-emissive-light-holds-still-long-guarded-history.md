@@ -3,6 +3,12 @@
 > **Status:** in-progress
 > **Decisions:** Owner, 2026-10-27: the long f32 history guarded by an emissive-only gradient (option a); after Plan 0040, before Plan 0032; the strict bar (at most 3 patches a step, 1 sudden step a second, flicker 0.002 log2 a frame); a lag bounded by H is acceptable for changes the guard cannot see.
 > **Created:** 2026-10-27
+> **Amended:** 2026-10-28 (owner, option a, after Phase 1's done-when 4 tripped at `VEIN_POSE`):
+> a new dev Phase 4, "The probe gather holds still", runs before the bar, so the bar measures
+> what the owner sees. It starts by attributing the gather's whole-screen steps with new rig
+> keys, then picks the mechanism by a decision rule. The old Phases 4, 5 and 6 become 5, 6 and
+> 7; dev relabels the log's rows. The diagram, Budgets, Risks, "What this plan does NOT do" and
+> the TL;DR follow, and ADR-0036's Consequences gain a scope line.
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet: static light in a dark cave)
 > **Related ADRs:** [ADR-0036](../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
@@ -37,10 +43,15 @@ tile-sized blobs that move when the reservoirs change. Plan 0040 measured it und
 about 70 of 312 tiles step per half second. This plan makes static light still. It commits
 Plan 0040's tile method as a headless patch-and-flicker test. It moves the emissive
 accumulation to `f32`, so a long history keeps its mean. It runs the gradient pass for emissive
-light on its own, so a long history still follows a dig that opens a vein onto a far wall. It
-then picks the history length and the reuse cap by sweeping them against the bar, and sets the
-default. The first thing anyone sees is the Phase 1 test printing today's patch counts on the
-two vein poses: about 70 per step under default, 0 with the candidates off.
+light on its own, so a long history still follows a dig that opens a vein onto a far wall. Phase 1
+found a second source: at `VEIN_POSE` the probe gather makes 83 % of the patches, in
+whole-screen steps that ignore the emissive history. So a phase then finds what drives the
+probe volume's steps (ray count, slice cadence, the shared rotation, or a light-change window
+firing in a still scene) and fixes the cause it measures. Only then does the plan pick the
+history length and the reuse cap by sweeping them against the bar, and set the default. The
+first thing anyone sees is the Phase 1 test printing today's patch counts on the two vein
+poses: about 78 per step at the patch pose and 36 at `VEIN_POSE` under default, 0 with the
+candidates off.
 
 ## Context & problem
 
@@ -113,6 +124,11 @@ emissive blend to that lambda. The lamp's part keeps its own alpha and reset. `H
 `REUSE_M_CAP` are chosen together by sweeping them against the Phase 1 bar, and the chosen `H`
 becomes `DEFAULT_EMISSIVE_HISTORY`.
 
+The probe volume's emissive steps (amended 2026-10-28) are outside ADR-0036. Phase 4 fixes
+them within ADR-0023's design (a few rays per probe per frame, a hysteresis blend, a round
+robin), choosing the mechanism by measurement. A mechanism outside that design stops for an
+ADR (Phase 4's decision rule).
+
 We rejected a world-space emissive cache because it needs a new VRAM structure, fixed-point
 atomics and a cell size matched to the contour surface, and its invalidation is the same
 visibility question the gradient answers today. The measured fault is a still-camera one, and
@@ -130,6 +146,7 @@ flowchart LR
         L[light pass\n8 candidates, reuse\none shadow ray] --> T[temporal pass\nemissive: max 1/age+1, 1/H, lambda\nf32 accumulation\nlamp: alpha 0.2, reset]
         T --> A[a-trous x4]
         A --> C[composite\n+ probe gather]
+        P[probe update, Phase 4\none emissive sample per ray hit\nhysteresis 0.97, 1 slice in 8] --> C
     end
     E[edit boxes] --> T
     S[emission-scale change bit] --> T
@@ -190,7 +207,8 @@ flowchart LR
   4. **The probes' share.** If the gather alone shows more than a third of the composite's
      steady-state patches at either pose, dev stops after this phase and the architect
      amends the plan, since the probes' emissive estimate (`probe_update.wgsl`'s
-     `emissive_estimate`) is outside this plan's fix.
+     `emissive_estimate`) is outside this plan's fix. (Tripped at `VEIN_POSE`, 83 %; the
+     amendment of 2026-10-28 adds Phase 4.)
 
 ### Phase 2: A full-precision emissive accumulation
 - **Owner skill:** dev
@@ -262,9 +280,87 @@ flowchart LR
   5. The HUD shows `guard on` or `guard off` in its lighting row in the fly-through, with
      `hud_golden` re-blessed if the row's text changed.
 
-### Phase 4: The sweep, the defaults and the bar
+### Phase 4: The probe gather holds still (amended 2026-10-28, owner)
 - **Owner skill:** dev
-- **What:** run `emissive_patch_sweep` with the f32 accumulation and the guard over `H`
+- **What:** find what makes the probe gather step across the whole screen at `VEIN_POSE`, and
+  fix that cause. Phase 1 read the gather at `0 0 0 0 0 0 277 0 0 0 40 54 0 217 ...` per step
+  (29.40 of the composite's 35.50 patches per step, 83 %), with no single-frame steps, so each
+  step spreads over many frames. It reads the same at emissive history 1 and 32, so the
+  temporal pass does not drive it. The mechanism stays open until step A has measured it.
+  - **Step A: attribution, no shader change committed.**
+    - `emissive_patch_sweep` gains the keys `probe_rays=N` and `probe_slices=N` (the existing
+      `Lighting::probe_rays` and `Lighting::probe_slices`). Dev runs both poses at rays 64, 32
+      and 16 (slices 8), and at slices 8, 16 and 32 (rays 64), and prints the gather's
+      statistics and per-step patches for each.
+    - The rig gains a per-off-frame trace for one run at `VEIN_POSE`, printed for the frames
+      around each gather step over 8 patches: `Frame::probe_light_window()`, the number of
+      probes whose age restarted that frame (read from the state words, as `indirect.rs`'s
+      `probe_bytes` reads the atlas), and the gather's tile mean |d log2|. It tells a
+      window or a young re-blend from a drift of settled probes.
+    - Only if those readings do not separate the suspects: a scratch run with one fixed
+      rotation for the whole run, and one with a rotation per probe (seeded by slot and
+      frame), as an uncommitted patch under `live/`.
+    - The log records every reading before the mechanism's commit, and names the row of the
+      rule below that it selects.
+  - **Step B: the decision rule.** The first row whose observation holds picks the mechanism.
+    "Changes" means the gather's mean or largest step at `VEIN_POSE` moves by a factor of 1.5
+    or more.
+
+    | observation in step A | suspect | mechanism dev builds and measures |
+    |---|---|---|
+    | the light window is open, or probe ages restart, within 30 frames before a step over 8 patches | a window or young re-blend firing in a still scene | find what changes the light key or restarts the ages. If no light changed, fix the trigger, and give `no_light_change_opens_no_window` this case. If a light really changed (an emission scale in the level), **stop**: the window's design goes back to the architect |
+    | rays 64 to 16 changes the steps, slices do not | the probe rays' rare-event emissive sample | try in this order, keeping the first that meets the bars: a rotation per probe; a settled hysteresis above 0.97 with an `f32` irradiance atlas (in `f16` a 3 % blend already stores nothing within 1.6 %, so a longer one stalls); a clamp on one ray's emissive term relative to the probe's current irradiance. Each tried mechanism's readings go in the log |
+    | the fixed or per-probe rotation run changes the steps, rays do not | the frame's shared rotation correlates a visit's rays | a rotation per probe, seeded by slot and frame |
+    | slices 8 to 32 moves the steps' timing or size | the slice cadence (slice `frame % slices` takes the slots with the same `slot mod slices`, which is the probe's x in the wrapped volume, so near probes in a column update together) | spread the slices by a hash of the probe, not by `slot mod slices` |
+    | none of the above | unknown | **stop** with the readings: the architect amends |
+
+    These mechanisms tune ADR-0023's design and need no ADR. A mechanism outside it (a
+    separate emissive probe channel with its own history or guard, the emissive term moved
+    out of the probe rays, or a world-space cache, ADR-0036's Alternative A) **stops** for
+    the architect, who writes ADR-0037 before any code.
+  - If the chosen mechanism adds a `Lighting` switch, the fly-through gets its flag and the
+    HUD's lighting row shows its state (the testbed rule), and Phase 6's old-look run turns it
+    off.
+  - The phase starts by re-reading the default's gather at both poses with Phases 2 and 3 in,
+    as its before reading. The guard should not move the gather (Phase 1 found it identical
+    at history 1 and 32), and the log says whether it did.
+- **Files touched:** `apps/flythrough/tests/emissive_stillness.rs`,
+  `apps/flythrough/tests/support/stillness.rs` (the keys and the trace), and, by the row
+  chosen, `crates/vxe-render/src/shaders/probe_update.wgsl`, `crates/vxe-render/src/probes.rs`,
+  `crates/vxe-render/src/marcher.rs` (the light key, `Params` or a `Lighting` field, the
+  atlas bytes in `frame_bytes`), `crates/vxe-render/src/shaders/probe_gather.wgsl` (only for
+  an `f32` atlas), `apps/flythrough/tests/indirect.rs`, `apps/flythrough/src/main.rs` and
+  `apps/flythrough/src/hud.rs` (only for a new switch), this plan's log.
+- **Done when** (the Phase 1 rig: lavapipe, 192 x 108, `Lighting::default()` with indirect on,
+  off frames 120 to 720, the pinned `Manual` exposures, `H` 32, the gather's own tiles):
+  1. **Attributed.** The log has step A's readings for every key variant at both poses and the
+     `VEIN_POSE` trace, and names the rule's row and the mechanism it picked, before the
+     mechanism's commit.
+  2. **The gather's share falls at `VEIN_POSE`.** The gather averages at most a third of the
+     composite's patches per step, read in the same run (Phase 1's rule; 83 % today).
+  3. **No whole-screen gather step.** At both poses the gather averages at most 1 patch per
+     step, no step exceeds 3 (277 at `VEIN_POSE` today, 165 at the patch pose), and it has at
+     most 1 single-frame step over 10 % per second (53.6 at the patch pose today). That leaves
+     Phase 5's composite bar (mean 3, max 8) to the direct light.
+  4. **No regression at the patch pose.** The composite's mean patches per step there is no
+     higher than this phase's before reading, and the gather's tile flicker is no higher than
+     Phase 1's at either pose (0.00430 at the patch pose, 0.00341 at `VEIN_POSE`).
+  5. **Indirect light still works and follows changes.** Every test in `flythrough::indirect`,
+     `flythrough::lights` and `flythrough::golden` passes unchanged, among them
+     `switching_the_lamp_off_drops_the_probe_history`, `an_emission_step_drops_the_probe_history`,
+     `a_hole_in_the_wall_lights_the_dark_box_and_filling_it_darkens_it_again` and
+     `a_pulse_at_its_mean_leaves_the_probes_still`. If the mechanism moves `indirect.png`
+     past `assert_golden`, the log names the moved share and its mean luminance change, Phase
+     6 re-blesses it only if that mean is within 1 %, and otherwise dev stops.
+  6. **Cost.** The probe update pass at the defaults costs at most 5 % more than before on each
+     adapter, read in Phase 6's budget run. `Frame::frame_bytes` grows by at most 16 777 216 B
+     (an `f32` rgba irradiance atlas: 32 768 probes x 64 texels x 8 B more), and by 0 for any
+     other row.
+
+### Phase 5: The sweep, the defaults and the bar
+- **Owner skill:** dev
+- **What:** run `emissive_patch_sweep` with the f32 accumulation, the guard and Phase 4's
+  probe fix over `H`
   (64, 128, 256, 512) by `reuse_m_cap` (20, 8, 4), with reuse, at both poses. Pick the
   shortest `H`, and at it the highest cap, that meets the bar below. Set
   `DEFAULT_EMISSIVE_HISTORY` and `Lighting::default().reuse_m_cap` to them, and turn
@@ -292,7 +388,7 @@ flowchart LR
      `reservoir_reuse_lowers_one_frames_error` and
      `the_lamp_light_that_left_the_cone_drops_in_each_history_mode` hold as they assert today.
 
-### Phase 5: Goldens, readings and the fly-through
+### Phase 6: Goldens, readings and the fly-through
 - **Owner skill:** dev
 - **What:** re-bless any golden the new defaults moved, at lavapipe, and say which in the log
   with the pixel share that moved. Read the budgets (below) on both adapters, and record them
@@ -300,27 +396,28 @@ flowchart LR
   launches the release fly-through at `VEIN_POSE`, lamp off, auto eye, in two runs. One run
   uses the new defaults. The other uses the old look, `--emissive-history 32 --emissive-guard
   off --reuse-m-cap 20`, which is today's except for the f32 store. The script also adds a
-  third run at the reveal: a dig through a wall beside a vein, guard on and then off. Stdout
-  stays visible.
+  third run at the reveal: a dig through a wall beside a vein, guard on and then off. If Phase
+  4 added a switch, the old-look run also turns it off. Stdout stays visible.
 - **Files touched:** `apps/flythrough/tests/golden/*.png` (only those that moved),
   `apps/flythrough/src/main.rs` (`--reuse-m-cap`), `docs/nfr.md`, this plan's log.
 - **Done when:**
   1. Every golden the change moved is re-blessed. Each is named in the log with the share of
      pixels over 2/255 against its old bytes. `dark_cave.png` still passes its own assertions
      (lit pixels, sample count).
-  2. The budget readings below are in `nfr.md` with machine, commit and load.
+  2. The budget readings below are in `nfr.md` with machine, commit and load, the probe update
+     and gather passes among them (Phase 4's cost bar).
   3. The fly-through's banner or HUD shows the emissive history, the guard and the reuse cap
      in effect.
 
-### Phase 6: The owner's windowed check
+### Phase 7: The owner's windowed check
 - **Owner skill:** human
-- **What:** the owner runs Phase 5's script on the dev box. At the vein with the lamp off and
+- **What:** the owner runs Phase 6's script on the dev box. At the vein with the lamp off and
   the eye adapting, the owner watches for 15 s with the new defaults and then the old look.
   Then the dig reveal, guard on and off. Then a short flight past the vein.
 - **Files touched:** this plan's log.
 - **Done when:** the owner records one of three outcomes. (a) The patches and flicker are gone,
   and the defaults stand. (b) Another `H` or cap from the sweep is wanted, and the default
-  changes to it with Phase 4's bars re-read. (c) Something is still visible (for example in
+  changes to it with Phase 5's bars re-read. (c) Something is still visible (for example in
   motion), and the architect amends the plan or opens ADR-0036's Alternative A.
 
 ## Data shapes
@@ -329,7 +426,7 @@ flowchart LR
 // illustrative
 pub struct Lighting {
     // ...
-    /// Frames of history the emissive part blends over at least; Phase 4 sets the default.
+    /// Frames of history the emissive part blends over at least; Phase 5 sets the default.
     pub emissive_history: u32,
     /// Temporal and spatial reuse cap on a reservoir's M, in units of the frame's candidates
     /// (today's REUSE_M_CAP, 20).
@@ -351,7 +448,8 @@ pub struct Lighting {
 | `nfr.md` figure | Base (read) | Expected | How the close measures it |
 |---|---|---|---|
 | §2 Lighting 6.0 ms and Denoise 3.0 ms | `own` 1.5 has no lighting column in the FSR 2 table. `fsr2` 1.5 at the same internal size reads light + temporal + a-trous 1.571 to 1.593 ms on the RTX 3080 Laptop and 9.915 to 9.930 ms on the Radeon (Cezanne, RADV), level spawn (`nfr.md` §2, "FSR 2.2.1 ported to WGSL") | The gradient pass at about one ninth of the light pass's shadow work (25 600 strata at 640 x 360). **A guess:** at most 0.15 ms on the dev box and 1.2 ms on the iGPU. The f32 store costs the temporal and variance passes a few percent. | The release fly-through, `--level --headless --render 1920x1080 --frames 300` at the defaults (`own` 1.5), from the spawn and from `VEIN_POSE` lamp off. Light, gradient, temporal and a-trous are timed per pass, median of the last 30 frames, three runs, exclusive perf lock, memory cap, both adapters (`--adapter`). Bar: the gradient pass at most 0.15 ms on the dev box. The light + gradient + temporal sum stays under 6.0 ms and the a-trous under 3.0 ms there. The iGPU's figures are recorded as readings. |
-| §3 everything else in VRAM, 1.5 GB | `Frame::frame_bytes` 181 154 464 B at `own` 1.5 with the probe volume (`nfr.md` §3, the FSR 2 entry) | At most +3 686 400 B at the default, +8 294 400 B at scale 1 half (Phase 2's bar) | `Frame::frame_bytes` printed by the fly-through's autopilot at 1080p, both scales |
+| §2 Lighting 6.0 ms: the probe passes | `nfr.md` §2's probe volume tables (update and gather per adapter, Plan 0029 Phase 4 and the slow-adapter settings) | Phase 4's mechanism. **A guess:** a per-probe rotation or a clamp costs nothing measurable; an `f32` atlas costs the blend and gather a few percent of their atlas traffic | The same runs, the probe update and gather passes timed per pass. Bar: the update at most 5 % over its before reading on each adapter (Phase 4 done-when 6) |
+| §3 everything else in VRAM, 1.5 GB | `Frame::frame_bytes` 181 154 464 B at `own` 1.5 with the probe volume (`nfr.md` §3, the FSR 2 entry) | At most +3 686 400 B at the default, +8 294 400 B at scale 1 half (Phase 2's bar), plus at most 16 777 216 B if Phase 4 picks an `f32` irradiance atlas (independent of the resolution) | `Frame::frame_bytes` printed by the fly-through's autopilot at 1080p, both scales |
 
 Determinism is not touched: everything here is in `vxe-render`, a client-side view.
 
@@ -366,17 +464,23 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
   the same bar. That fallback is ADR-0036's Alternative C, which gives the guard up only for
   edits.
 - **Motion is not improved.** Disocclusions and newly seen walls converge at `1 / (age + 1)`
-  as today. If the owner's flight finds that the remaining fault, Phase 6 (c) opens the
+  as today. If the owner's flight finds that the remaining fault, Phase 7 (c) opens the
   world-space cache.
 - **The small frame exaggerates spatial reuse.** `SPATIAL_RADIUS` 30 lighting pixels covers
   most of a 96 x 54 lighting grid, but 8 % of the default's 640 x 360. The 384 x 216 reading
   says how far the bar transfers. If it diverges, the radius may need to scale with the grid,
   which would be a later change.
-- **The bar may be out of reach** at an affordable `H`. Phase 4 stops for an owner amendment
+- **The bar may be out of reach** at an affordable `H`. Phase 5 stops for an owner amendment
   rather than loosening it. Extrapolating 0040's 32 and 64 figures geometrically (70 to 32,
   a factor of 0.46 per doubling) predicts about 7 patches per step at 256 and 3 at 512 with
   the cap unchanged, which is why the cap is swept with `H`. The extrapolation is a guess:
   the f32 store and the guard change what it extrapolates.
+- **The probe steps may have no cheap cause** (amended 2026-10-28). If step A finds the
+  rare-event emissive sample and neither a per-probe rotation, a longer `f32` hysteresis nor
+  a per-ray clamp meets Phase 4's bars, the remaining options (a separate emissive probe
+  channel with its own guard, or ADR-0036's Alternative A) are new decisions. Phase 4 stops
+  for ADR-0037 rather than loosen its bars. A longer probe hysteresis also lags a probe's
+  response to a dig by more visits; the indirect tests in its done-when 5 hold that.
 - **Plan 0038's hero shots** are lamp-off and ore-lit. If they are judged before this plan
   lands, they are judged with today's patches.
 - **The gradient's per-frame hash** picks one pixel per stratum, so a small change is found in
@@ -385,9 +489,11 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
 ## What this plan does NOT do
 
 - No world-space light cache, no new candidate table, no light tree (ADR-0036 Alternatives A
-  and B; a later plan if Phase 6 asks).
-- No change to the probe volume's emissive estimate, unless Phase 1's attribution sends it back
-  to the architect.
+  and B; a later plan if Phase 7 asks).
+- No new probe structure or estimator (amended 2026-10-28). Phase 4 changes the probe update
+  only within ADR-0023's design (rays, rotation, hysteresis and its precision, slices, the
+  light-window trigger, a per-ray clamp); anything beyond stops for ADR-0037. No change to
+  the probe spacing, the volume's size or the gather's visibility weights.
 - No change to the lamp's history, the upscaler or FSR 2. The upscalers' light-change clip
   still reads the existing bits.
 - No consumer-facing quality profile. The new `Lighting` fields join the render-settings work

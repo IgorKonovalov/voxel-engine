@@ -19,7 +19,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0038](0038-showcase-cavern-and-hero-shots.md) | A showcase cavern lit by four ores, and a hero still with named shots and no headlamp | approved | M2, testbed only, no ADR. After Plans 0029 and 0030. |
 | [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, six verified defects | approved | Code health, no ADR. After every plan active on 2026-10-22. |
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044. |
-| [0047](0047-emissive-light-holds-still-long-guarded-history.md) | Emissive light holds still: a patch bar, a long f32 emissive history, an emissive-only gradient guard | approved | M2, ADR-0036 (proposed). After Plan 0040; before Plan 0032. |
+| [0047](0047-emissive-light-holds-still-long-guarded-history.md) | Emissive light holds still: a patch bar, a long f32 emissive history, an emissive-only gradient guard, the probe gather's steps | in-progress | M2, ADR-0036 (proposed). Amended 2026-10-28: probe Phase 4. Before Plan 0032. |
 <!-- roster:end -->
 
 ## Recently closed

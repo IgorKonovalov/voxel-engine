@@ -88,6 +88,10 @@ last frame's kept point says its light changed.**
 - The gradient pass becomes part of every emissive frame: one more dispatch and shadow ray,
   read on both adapters by Plan 0047.
 - The accumulation doubles its bytes: 16 B a lighting pixel per copy, not 8.
+- It does not reach indirect light (added 2026-10-28). The probe rays take their own
+  emissive sample (ADR-0023), and Plan 0047 Phase 1 found the probe gather making most of the
+  patches at one vein pose, untouched by `H`. Plan 0047 Phase 4 fixes that within ADR-0023's
+  design. A probe mechanism beyond it is a decision of its own, not part of this one.
 
 ## Alternatives considered
 
