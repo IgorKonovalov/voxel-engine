@@ -555,7 +555,7 @@ fn indirect_render(
     rig.frame.set_lighting(Lighting {
         lamp: true,
         filter: false,
-        exposure: INDIRECT_EXPOSURE,
+        exposure: vxe_render::Exposure::Manual(INDIRECT_EXPOSURE),
         tone_map: ToneMap::Identity,
         indirect,
         ..Lighting::default()

@@ -605,7 +605,7 @@ impl LookRig {
         self.frame.set_lighting(Lighting {
             lamp: true,
             filter: setting.filter,
-            exposure: setting.exposure,
+            exposure: vxe_render::Exposure::Manual(setting.exposure),
             ..Lighting::default()
         });
         let light = LightParams::headlamp();

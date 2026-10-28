@@ -4,6 +4,10 @@
 
 use crate::attrib::SurfaceFit;
 use crate::camera::{Camera, View};
+use crate::exposure::{
+    EX_AUTO, EX_METER, EX_RESET, Exposure, ExposurePass, ExposureReadout, ExposureUniform,
+    METER_TILE, Metering,
+};
 use crate::fsr2::{Fsr2, UpscalerKind};
 use crate::gpu_world::GpuWorld;
 use crate::light::LightParams;
@@ -59,7 +63,8 @@ pub struct Params {
     /// walked at level 1, within `lod2_r2` at level 2, and farther at level 3.
     pub lod1_r2: i32,
     pub lod2_r2: i32,
-    /// Radiance is multiplied by this before the tone map.
+    /// The manual exposure ([`Exposure::Manual`]); 1.0 and unread in auto, where the exposure
+    /// state's `current` is the frame's.
     pub exposure: f32,
     /// Light samples from 0 to the buffer's high-water mark, which the light pass draws
     /// candidates from ([`GpuWorld::light_span`]).
@@ -121,6 +126,9 @@ pub const LIGHTING_IDENTITY_TONE_MAP: u32 = 1 << 6;
 /// `Params::lighting` bit: the probe passes ran and the composite adds the gathered indirect
 /// irradiance ([`Lighting::indirect`]).
 pub const LIGHTING_INDIRECT: u32 = 1 << 12;
+/// `Params::lighting` bit: the exposure is automatic ([`Exposure::Auto`]): the frame's is the
+/// exposure state's `current`.
+pub const LIGHTING_AUTO_EXPOSURE: u32 = 1 << 13;
 
 /// `Params::flags` bit: trace the shadow ray.
 pub const FLAG_SHADOWS: u32 = 1;
@@ -805,8 +813,8 @@ impl Upscaler {
 /// The frame's lighting knobs beside the lamp's own ([`LightParams`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Lighting {
-    /// Radiance is multiplied by this before the tone map.
-    pub exposure: f32,
+    /// Radiance is multiplied by the exposure before the tone map (ADR-0033).
+    pub exposure: Exposure,
     pub tone_map: ToneMap,
     /// The headlamp lights the frame; off leaves emissive light alone.
     pub lamp: bool,
@@ -836,7 +844,7 @@ pub struct Lighting {
 impl Default for Lighting {
     fn default() -> Self {
         Self {
-            exposure: 1.0,
+            exposure: Exposure::default(),
             tone_map: ToneMap::default(),
             lamp: true,
             candidates: 8,
@@ -895,6 +903,19 @@ impl Lighting {
                 0
             }
             | if self.indirect { LIGHTING_INDIRECT } else { 0 }
+            | if matches!(self.exposure, Exposure::Auto(_)) {
+                LIGHTING_AUTO_EXPOSURE
+            } else {
+                0
+            }
+    }
+
+    /// The manual exposure, or 1.0 in auto.
+    pub fn manual_exposure(&self) -> f32 {
+        match self.exposure {
+            Exposure::Manual(e) => e,
+            Exposure::Auto(_) => 1.0,
+        }
     }
 }
 
@@ -1004,6 +1025,13 @@ pub struct Frame {
     /// The output size the frame's image is presented at; the targets are at the internal
     /// size.
     output: [u32; 2],
+    /// The exposure pass, its state and its read-back ring (ADR-0033).
+    exposure: ExposurePass,
+    metering: Metering,
+    /// The exposure pass's step in seconds ([`Frame::set_dt`]).
+    dt: f32,
+    /// The next encode's exposure pass jumps the adapted level to the meter.
+    reset_exposure: std::sync::atomic::AtomicBool,
     /// The views' rays are jittered by [`jitter_at`] of the frame index.
     jitter: bool,
     /// The upscaler the frame runs; with FSR 2, its context and the composite's variant
@@ -1155,6 +1183,8 @@ enum Io {
     Store(wgpu::TextureFormat),
     /// A uniform buffer.
     Uniform,
+    /// A read-write storage buffer.
+    Storage,
 }
 
 fn io_layout(device: &wgpu::Device, label: &str, io: &[Io]) -> wgpu::BindGroupLayout {
@@ -1170,11 +1200,15 @@ fn io_layout_at(device: &wgpu::Device, label: &str, io: &[(u32, Io)]) -> wgpu::B
             Io::Float => sampled_texture(b, FLOAT),
             Io::Uint => sampled_texture(b, UINT),
             Io::Store(f) => storage_texture(b, f),
-            Io::Uniform => wgpu::BindGroupLayoutEntry {
+            Io::Uniform | Io::Storage => wgpu::BindGroupLayoutEntry {
                 binding: b,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
+                    ty: if matches!(k, Io::Uniform) {
+                        wgpu::BufferBindingType::Uniform
+                    } else {
+                        wgpu::BufferBindingType::Storage { read_only: false }
+                    },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
@@ -1279,6 +1313,16 @@ impl Frame {
                 storage(10),
                 storage(11),
                 sampled_texture(12, FLOAT),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 13,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let hit = Marcher::new(device, &world_layout);
@@ -1434,6 +1478,7 @@ impl Frame {
                 Io::Float,
                 Io::Uint,
                 Io::Float,
+                Io::Storage,
             ],
         );
         let probe_storage = |binding| wgpu::BindGroupLayoutEntry {
@@ -1599,7 +1644,63 @@ impl Frame {
             probe_blend,
             traced_probe_rays: std::sync::atomic::AtomicU64::new(0),
             probe_light_window: std::sync::atomic::AtomicBool::new(false),
+            exposure: ExposurePass::new(device),
+            metering: Metering::default(),
+            dt: 1.0 / 60.0,
+            reset_exposure: std::sync::atomic::AtomicBool::new(true),
         }
+    }
+
+    /// Sets the exposure pass's step in seconds (1/60 by default): the time the adapted level
+    /// moves over in each encoded frame. A negative or non-finite `dt` is 0, which holds it.
+    pub fn set_dt(&mut self, seconds: f32) {
+        self.dt = if seconds.is_finite() {
+            seconds.max(0.0)
+        } else {
+            0.0
+        };
+    }
+
+    pub fn dt(&self) -> f32 {
+        self.dt
+    }
+
+    /// Makes the next frame's exposure pass that meters jump the adapted level to the meter
+    /// (a new frame starts so).
+    pub fn reset_exposure(&mut self) {
+        self.reset_exposure
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Sets how the exposure pass weights the meter's tiles under a manual exposure
+    /// (centre-weighted by default); in auto, [`crate::AutoExposure::metering`] does.
+    pub fn set_metering(&mut self, metering: Metering) {
+        self.metering = metering;
+    }
+
+    pub fn metering(&self) -> Metering {
+        self.metering
+    }
+
+    /// The exposure state as last read back, without waiting: a non-blocking poll of
+    /// `device`, then the newest of the read-back ring's slots that has finished mapping
+    /// (two or three frames late), else the last one read; `None` until the first. Each
+    /// encode's commands must be submitted before the next encode or this call.
+    pub fn exposure_readout(&self, device: &wgpu::Device) -> Option<ExposureReadout> {
+        self.exposure.readout(device)
+    }
+
+    /// The exposure state buffer the exposure pass writes (32 bytes, `COPY_SRC`:
+    /// [`crate::exposure::ExposureState::from_bytes`] reads a copy), for tests and tools.
+    pub fn exposure_state(&self) -> &wgpu::Buffer {
+        self.exposure.state()
+    }
+
+    /// The meter's tiles the composite writes (`COPY_SRC`): per 8 x 8 workgroup of the
+    /// internal target, row-major over `ceil(w / 8) x ceil(h / 8)`, the sum of its pixels'
+    /// clamped log2 luminance and their count, as two `f32`.
+    pub fn exposure_tiles(&self) -> &wgpu::Buffer {
+        &self.targets.tiles
     }
 
     /// Probe rays the last encode dispatched (update-list entries times
@@ -1980,7 +2081,10 @@ impl Frame {
 
     /// Bytes the frame's targets, its probe volume and FSR 2's resources occupy.
     pub fn frame_bytes(&self) -> u64 {
-        self.targets.bytes() + self.probes.bytes() + self.fsr.as_ref().map_or(0, Fsr2::bytes)
+        self.targets.bytes()
+            + self.probes.bytes()
+            + self.exposure.bytes()
+            + self.fsr.as_ref().map_or(0, Fsr2::bytes)
     }
 
     /// Replaces the targets with ones of `width` × `height`, presented at that size, and
@@ -2090,7 +2194,7 @@ impl Frame {
             forced_level: self.lod.forced_level.unwrap_or(0),
             lod1_r2: (2 * self.lod.r_full).pow(2),
             lod2_r2: (4 * self.lod.r_full).pow(2),
-            exposure: self.lighting.exposure,
+            exposure: self.lighting.manual_exposure(),
             emissive_history: self.lighting.emissive_history as f32,
             output_size: if self.upscaling() {
                 self.output
@@ -2274,6 +2378,7 @@ impl Frame {
                     binding: 12,
                     resource: wgpu::BindingResource::TextureView(&noise),
                 },
+                buffer_entry(13, self.exposure.state_uniform()),
             ],
         });
         let (c, q) = (self.cur, self.cur ^ 1);
@@ -2382,6 +2487,7 @@ impl Frame {
                 Res::Tex(t.lit_pos(c)),
                 Res::Tex(t.lit_info(c)),
                 Res::Tex(&t.indirect),
+                Res::Buf(&t.tiles),
             ],
         );
         let gradient_bind = bind_io(
@@ -2447,6 +2553,14 @@ impl Frame {
                 ),
             )
         });
+        if let Some(f) = &self.fsr {
+            f.copy_exposure(
+                encoder,
+                self.exposure.state(),
+                matches!(self.lighting.exposure, Exposure::Auto(_)),
+                p.history & 2 == 0,
+            );
+        }
         // A frame pass's dispatch with the world's group 0 and its own group `group`.
         let frame_pass = |pipeline, bind, group: usize, workgroups| {
             let mut groups = [Some(&world_bind), None, None, None];
@@ -2579,6 +2693,57 @@ impl Frame {
                 pass.dispatch_workgroups(d.workgroups[0], d.workgroups[1], 1);
             }
         }
+        let exposure_pass = FRAME_PASSES.len() as u32 - 1;
+        self.exposure.encode(
+            device,
+            queue,
+            encoder,
+            &t.tiles,
+            &self.exposure_uniform(&p),
+            timer
+                .filter(|t| t.passes() > exposure_pass)
+                .map(|t| t.writes_at(exposure_pass)),
+        );
+    }
+
+    /// The exposure pass's parameters for the frame `p`.
+    fn exposure_uniform(&self, p: &Params) -> ExposureUniform {
+        let metering = match self.lighting.exposure {
+            Exposure::Auto(a) => a.metering,
+            Exposure::Manual(_) => self.metering,
+        };
+        let (strength, sigma) = metering.params();
+        let meter = self.look.view == ViewMode::Shaded;
+        let mut mode = if meter { EX_METER } else { 0 };
+        if let Exposure::Auto(_) = self.lighting.exposure {
+            mode |= EX_AUTO;
+            if meter
+                && self
+                    .reset_exposure
+                    .swap(false, std::sync::atomic::Ordering::Relaxed)
+            {
+                mode |= EX_RESET;
+            }
+        }
+        let mut rects = [[0.0; 4]; 2];
+        for (r, v) in rects.iter_mut().zip(&p.views) {
+            *r = v.rect.map(|x| x as f32);
+        }
+        let mut u = ExposureUniform {
+            tiles: self.targets.tile_counts(),
+            view_count: p.view_count,
+            mode,
+            rects,
+            manual: self.lighting.manual_exposure(),
+            strength,
+            sigma,
+            dt: self.dt,
+            ..ExposureUniform::default()
+        };
+        if let Exposure::Auto(a) = &self.lighting.exposure {
+            u.set_auto(a);
+        }
+        u
     }
 
     /// Writes the probe passes' uniform for the frame `p`: the volume's origin for its first
@@ -2661,6 +2826,7 @@ fn composite_hdr_pass(
             Io::Float,
             Io::Uint,
             Io::Float,
+            Io::Storage,
         ],
     );
     let pipeline = compute_pipeline(
@@ -2690,9 +2856,9 @@ fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_>
 
 /// Passes of a frame in encode order, as [`Frame::encode`] times them: pass `i` writes
 /// timestamps `2 i` and `2 i + 1` of the timer it is given.
-/// The last nine are FSR 2's ([`crate::fsr2::FSR2_PASSES`]); in FSR mode `upscale` and
-/// `sharpen` are empty, and otherwise FSR's are.
-pub const FRAME_PASSES: [&str; 19] = [
+/// The nine before the last are FSR 2's ([`crate::fsr2::FSR2_PASSES`]); in FSR mode `upscale`
+/// and `sharpen` are empty, and otherwise FSR's are. `exposure` runs last, after either.
+pub const FRAME_PASSES: [&str; 20] = [
     "hit",
     "gradient",
     "light",
@@ -2712,6 +2878,7 @@ pub const FRAME_PASSES: [&str; 19] = [
     "fsr2 accumulate",
     "fsr2 rcas",
     "fsr2 tone",
+    "exposure",
 ];
 
 /// The gradient pass's stratum edge in pixels; `STRATUM` in `gradient.wgsl`.
@@ -2756,6 +2923,8 @@ struct Targets {
     indirect: wgpu::Texture,
     /// The upscaler's history at the output size (rgba16float), this frame's and the last.
     history: Option<[wgpu::Texture; 2]>,
+    /// The exposure meter's tiles: two `f32` per 8 x 8 workgroup of the internal target.
+    tiles: wgpu::Buffer,
 }
 
 impl Targets {
@@ -2820,7 +2989,18 @@ impl Targets {
                 .filter(|_| own_history)
                 .map(|[w, h]| [0, 1].map(|_| sized("upscale history", Rgba16Float, w, h))),
             indirect: lit("indirect irradiance", Rgba16Float),
+            tiles: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("exposure meter tiles"),
+                size: 8 * u64::from(width.div_ceil(METER_TILE) * height.div_ceil(METER_TILE)),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            }),
         }
+    }
+
+    /// The meter's tiles on each edge.
+    fn tile_counts(&self) -> [u32; 2] {
+        [self.width, self.height].map(|n| n.div_ceil(METER_TILE))
     }
 
     /// The lighting grid's size.
@@ -2853,6 +3033,7 @@ impl Targets {
             + history
             + lpx * (half + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16 + 8)
             + strata * 8
+            + self.tiles.size()
     }
 }
 

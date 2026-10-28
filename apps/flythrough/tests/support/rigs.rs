@@ -396,7 +396,7 @@ pub fn stripe_image_at(
     let (device, queue) = (&rig.device, &rig.queue);
     let mut f = frame_of(device, internal, output, jitter);
     f.set_lighting(vxe_render::Lighting {
-        exposure: stripe_exposure(shot.dist),
+        exposure: vxe_render::Exposure::Manual(stripe_exposure(shot.dist)),
         ..vxe_render::Lighting::default()
     });
     let fsr = matches!(image, Image::U1 | Image::U15) && shot.kind.is_fsr2();
@@ -660,12 +660,12 @@ pub fn translucent_camera() -> vxe_render::Camera {
     camera_looking_x([8.5, 64.5, 64.5])
 }
 
-/// `tone.wgsl`'s arithmetic on the CPU (the shaded view): exposure, ACES unless the identity
-/// tone map, the 2.2 encode, rounded to a byte.
+/// `tone.wgsl`'s arithmetic on the CPU (the shaded view) on pre-exposed colour `c`: ACES unless
+/// the identity tone map, the 2.2 encode, rounded to a byte.
 pub fn tone_bytes(c: [f32; 4], lighting: &vxe_render::Lighting) -> [u8; 3] {
     let identity = lighting.tone_map == vxe_render::ToneMap::Identity;
     [0, 1, 2].map(|k| {
-        let x = c[k] * lighting.exposure;
+        let x = c[k];
         let m = if identity {
             x.clamp(0.0, 1.0)
         } else {

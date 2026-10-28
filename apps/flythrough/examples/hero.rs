@@ -3,7 +3,7 @@
 //!
 //! `cargo run --release -p flythrough --example hero -- [--source showcase|level]
 //! [--shot hall|chasm|crystals|all] [--seed N] [--size WxH] [--at X,Y,Z] [--yaw DEG]
-//! [--pitch DEG] [--exposure E] [--carve R] [--out PATH] [--out-dir DIR] [--frames N]
+//! [--pitch DEG] [--exposure auto|E] [--carve R] [--out PATH] [--out-dir DIR] [--frames N]
 //! [--indirect on|off] [--probe-spacing N] [--internal-scale 1|1.5|2] [--jitter on|off]
 //! [--sharpen S] [--light-radius N] [--adapter SUBSTRING] [--lighting full|half]
 //! [--shadow-walk full|coarse] [--sampler list|reuse] [--history edits|gradient]
@@ -11,7 +11,8 @@
 //!
 //! `--source showcase` (the default) generates `flythrough::showcase` and frames one of its
 //! shots (`--shot`, default `hall`); `--at`, `--yaw`, `--pitch` and `--exposure` override the
-//! shot's fields. `--shot all` writes `hero-<name>.png` for every shot into `--out-dir`
+//! shot's fields; `--exposure auto` adapts like an eye (`AutoExposure::eye`, jumping to the
+//! first frame's meter), and a number is a manual exposure (each shot's own by default). `--shot all` writes `hero-<name>.png` for every shot into `--out-dir`
 //! (default `target/hero/`), and `hall` again at the fly-through's probe spacing (16) as
 //! `hero-hall-spacing16.png`, the review set. `--source level` frames the bounded level from
 //! its spawn (`--at`, `--yaw`, `--pitch`), with no shots. `--carve R` digs a sphere of radius
@@ -32,8 +33,8 @@ use std::path::{Path, PathBuf};
 use flythrough::cave::{CaveSource, LEVEL_CHUNKS};
 use flythrough::showcase::{SHOTS, Shot, ShowcaseSource};
 use vxe_render::{
-    Camera, Frame, GpuWorld, HistoryKill, LightParams, Lighting, LightingResolution, MirrorConfig,
-    RenderScale, Sampler, ShadowWalk, readback, wgpu,
+    AutoExposure, Camera, Exposure, Frame, GpuWorld, HistoryKill, LightParams, Lighting,
+    LightingResolution, MirrorConfig, RenderScale, Sampler, ShadowWalk, readback, wgpu,
 };
 use vxe_world::*;
 
@@ -60,7 +61,7 @@ struct Args {
     at: Option<[i32; 3]>,
     yaw: Option<f32>,
     pitch: Option<f32>,
-    exposure: Option<f32>,
+    exposure: Option<Exposure>,
     carve: i64,
     out: Option<PathBuf>,
     out_dir: PathBuf,
@@ -146,7 +147,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
             "--yaw" => args.yaw = Some(v.parse().map_err(|e| bad(&e))?),
             "--pitch" => args.pitch = Some(v.parse().map_err(|e| bad(&e))?),
-            "--exposure" => args.exposure = Some(v.parse().map_err(|e| bad(&e))?),
+            "--exposure" => {
+                args.exposure = Some(if v == "auto" {
+                    Exposure::Auto(AutoExposure::eye())
+                } else {
+                    Exposure::Manual(v.parse().map_err(|e| bad(&e))?)
+                });
+            }
             "--at" => {
                 let p: Vec<i32> = v
                     .split(',')
@@ -233,7 +240,7 @@ const HERO_PROBE_SPACING: u32 = 32;
 struct Still {
     path: PathBuf,
     camera: Camera,
-    exposure: f32,
+    exposure: Exposure,
     probe_spacing: u32,
 }
 
@@ -256,7 +263,9 @@ impl Args {
                 self.yaw.unwrap_or(shot.yaw_deg as f32),
                 self.pitch.unwrap_or(shot.pitch_deg as f32),
             );
-            let exposure = self.exposure.unwrap_or(shot.exposure_milli as f32 / 1000.0);
+            let exposure = self
+                .exposure
+                .unwrap_or(Exposure::Manual(shot.exposure_milli as f32 / 1000.0));
             (camera, exposure)
         };
         let single = |path: PathBuf, shot: &Shot| {
@@ -297,6 +306,14 @@ impl Args {
         self.out
             .clone()
             .unwrap_or_else(|| PathBuf::from("docs/images/hero.png"))
+    }
+}
+
+/// `exposure` as the still's line prints it: the manual multiplier, or `auto`.
+fn exposure_words(exposure: Exposure) -> String {
+    match exposure {
+        Exposure::Manual(e) => e.to_string(),
+        Exposure::Auto(_) => "auto".to_owned(),
     }
 }
 
@@ -476,7 +493,7 @@ fn main() -> Result<(), String> {
             "wrote {}: adapter {adapter_name}, {} light samples, {frames} frames, exposure {}, probe spacing {}, mean sRGB luma {:.1}/255",
             still.path.display(),
             gpu.light_samples(),
-            still.exposure,
+            exposure_words(still.exposure),
             still.probe_spacing,
             mean_luma(&rgba)
         );
@@ -536,7 +553,7 @@ mod tests {
         assert!(parse(&["--shot", "all", "--out", "x.png"]).is_err());
         let o = parse(&["--shot", "chasm", "--yaw", "45", "--exposure", "2"]).unwrap();
         let s = &o.stills(VoxelCoord([0; 3]))[0];
-        assert_eq!(s.exposure, 2.0);
+        assert_eq!(s.exposure, Exposure::Manual(2.0));
         assert!((s.camera.yaw - 45f32.to_radians()).abs() < 1e-6);
         assert!((s.camera.pitch - (-30f32).to_radians()).abs() < 1e-6);
     }

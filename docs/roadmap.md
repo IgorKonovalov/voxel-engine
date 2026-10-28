@@ -200,7 +200,16 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0039 and 0041 closed)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0039, 0040 and 0041 closed)
+
+Plan 0040, eye adaptation, closed 2026-10-28 (v0.34.0, ADR-0033 accepted with an Outcome):
+the exposure is automatic by default, metered in the composite and stepped on the GPU by an
+asymmetric two-stage model (0.15 s toward bright; 2 s, then 10 s below a cone floor, toward
+dark; at most 16), and every HDR target stores pre-exposed values. `Lighting::exposure` is
+`Exposure` (`Manual` or `Auto`); the fly-through has `--exposure`, `--adaptation`, `--adapt`,
+`--metering` and `Q`. This closes the "exposure" part of M2's exposure, tone mapping and
+upscaler bullet. The light patches seen while adapting belong to the emissive estimator
+(Plan 0047).
 
 Plan 0041, the FSR 2 port, closed 2026-10-27 (v0.33.0, ADR-0034 accepted with an Outcome):
 FSR 2.2.1's six upscaling passes in WGSL, FP32 with no wave operations, fed by an input pass

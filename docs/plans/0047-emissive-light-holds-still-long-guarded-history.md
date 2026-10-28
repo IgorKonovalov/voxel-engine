@@ -16,7 +16,7 @@
 > suddenly, plus low-frequency flicker. Emissive history 64 is "better, but still visible". The
 > owner asked for a separate plan. Plan 0040 leaves `DEFAULT_EMISSIVE_HISTORY` at 32, and this
 > plan owns that default.
-> **Starts after:** [Plan 0040](0040-eye-adaptation-asymmetric-auto-exposure-and-pre-exposure.md)
+> **Starts after:** [Plan 0040](done/0040-eye-adaptation-asymmetric-auto-exposure-and-pre-exposure.md)
 > merges. Its branch changes `light.wgsl`, `temporal.wgsl`, `gradient.wgsl` and `atrous.wgsl`
 > (pre-exposed stores, a history rescale, the moment clamp), and this plan's harness reads its
 > meter tiles (`Frame::exposure_tiles`). **Before [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**:

@@ -26,7 +26,17 @@
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]
 //! [--history edits|gradient] [--lighting full|half] [--emissive-history N]
 //! [--indirect on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N]
-//! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2]`.
+//! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2]
+//! [--exposure auto|E]
+//! [--adaptation eye|symmetric|instant] [--adapt LIGHT,CONE,ROD,FLOOR] [--metering centre|average]`.
+//! `--exposure auto` (the default) adapts like an eye (ADR-0033), `--exposure E` fixes it
+//! (`--exposure 1` is the old look); `--adaptation` picks the auto preset (`eye`: 0.15 s toward
+//! bright, 2 s then 10 s below a cone floor of 2^-6 toward dark, at most 16; `symmetric`: 0.67 s
+//! both ways; `instant`), `--adapt` replaces its three time constants (seconds) and its floor, and
+//! `--metering` weights the meter toward the view's centre or not. `Q` cycles `auto` with the
+//! preset, `auto symmetric` and `manual` (holding the exposure of the moment); the banner names
+//! the mode and its exposure in EV, the stats HUD's exposure row adds the metered scene and the
+//! settled exposure, and stdout prints that row every half second while the exposure moves.
 //! `--render` fixes the frame's output resolution (the window scales it); `--internal-scale`
 //! renders at the output size divided by it on each edge (default 1.5: 720p for 1080p, through
 //! our upscaler); `--jitter on|off` moves every primary ray by the Halton (2, 3) sub-pixel
@@ -91,7 +101,7 @@
 //! 64, 1 to 64) and `--probe-slices N` the share it refreshes a frame, one in N (8, the
 //! default, 16 or 32). In a window
 //! `F3` toggles the shadow walk, `F4` the sampler, `F5` the history killer, `F6` the lighting
-//! resolution, `F7` the lamp and `F8` indirect light, each printing the lighting modes; with the stats HUD shown,
+//! resolution, `F7` the lamp, `F8` indirect light and `Q` the exposure, each printing the lighting modes; with the stats HUD shown,
 //! two rows read every frame pass's GPU time and the light samples with those modes.
 //! `N` cycles the look presets and `V` toggles detail, each naming the look on the banner, and
 //! a fit change refits the mirror's bricks under the attribute cap (`refitting` on the banner). `--vault` places a 16-voxel room with an indestructible
@@ -216,10 +226,10 @@ use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
-    AttrWorkStats, BELT_CHUNK_BYTES, Camera, FRAME_PASSES, Frame, GpuWorld, HistoryKill, HudColour,
-    HudOverlay, LightParams, Lighting, LightingResolution, LodParams, LookParams, MarchTimer,
-    MirrorConfig, NormalMode, PassTimer, PlaneFit, PlaneOffset, Presenter, RenderScale, Sampler,
-    ShadowWalk, SyncStats, ViewMode, Window, wgpu,
+    AttrWorkStats, AutoExposure, BELT_CHUNK_BYTES, Camera, Exposure, FRAME_PASSES, Frame, GpuWorld,
+    HistoryKill, HudColour, HudOverlay, LightParams, Lighting, LightingResolution, LodParams,
+    LookParams, MarchTimer, MirrorConfig, NormalMode, PassTimer, PlaneFit, PlaneOffset, Presenter,
+    RenderScale, Sampler, ShadowWalk, SyncStats, ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -430,6 +440,37 @@ struct Args {
     jitter_set: bool,
     /// `--upscaler off|own|fsr2`, when given.
     upscaler: Option<hud::UpscalerMode>,
+    /// `--exposure auto|E`: a manual exposure, or `None` for auto (the default).
+    exposure: Option<f32>,
+    /// `--adaptation eye|symmetric|instant`: the auto exposure's preset (eye by default).
+    adaptation: hud::Adaptation,
+    /// `--adapt LIGHT,CONE,ROD,FLOOR`: the preset's time constants in seconds and its cone
+    /// floor, replaced.
+    adapt: Option<[f32; 4]>,
+    /// `--metering centre|average`: how the meter weights the frame (centre by default).
+    metering: vxe_render::Metering,
+}
+
+/// While the exposure moves by more than 0.01 EV per half second, prints the exposure row every
+/// half second: `last` is when it was last checked (ms since the start) and its EV.
+fn print_moving_exposure(
+    last: &mut Option<(f64, f32)>,
+    modes: &hud::Modes,
+    readout: Option<vxe_render::ExposureReadout>,
+    now_ms: f64,
+) {
+    let Some(r) = readout else { return };
+    let ev = r.exposure.log2();
+    match *last {
+        Some((at, _)) if now_ms - at < 500.0 => {}
+        Some((_, was)) => {
+            if (ev - was).abs() > 0.01 {
+                println!("{}", modes.exposure_row());
+            }
+            *last = Some((now_ms, ev));
+        }
+        None => *last = Some((now_ms, ev)),
+    }
 }
 
 /// The probe volume's bytes inside `Frame::frame_bytes`, by part.
@@ -483,6 +524,30 @@ impl Args {
         self.pad && !self.headless && !self.autopilot
     }
 
+    /// The auto exposure of `--adaptation`, `--adapt` and `--metering`.
+    fn start_auto(&self) -> AutoExposure {
+        let mut a = self.adaptation.preset();
+        if let Some([light, cone, rod, floor]) = self.adapt {
+            a.tau_light = light;
+            a.tau_cone = cone;
+            a.tau_rod = rod;
+            a.cone_floor = floor;
+        }
+        a.metering = self.metering;
+        a
+    }
+
+    /// The lighting modes at the start, the banner shown from `now_ms`, the auto exposure's
+    /// slot `start_auto` under `--adaptation`'s name; the line names the showcase source first
+    /// and the probe spacing while indirect light is on.
+    fn start_modes(&self, now_ms: f64) -> hud::Modes {
+        let mut m = hud::Modes::new(self.start_lighting(), self.lighting, now_ms)
+            .with_source(self.showcase.then_some("showcase"))
+            .with_probe_spacing(self.probe_spacing);
+        m.set_auto(self.adaptation, self.start_auto());
+        m
+    }
+
     /// The upscaler the fly-through starts with: `--upscaler`, else `own` when the scale is
     /// above 1 or the jitter is on, else `off`.
     fn start_upscaler(&self) -> hud::UpscalerMode {
@@ -522,6 +587,10 @@ impl Args {
     /// The lighting the fly-through starts in, from its flags.
     fn start_lighting(&self) -> Lighting {
         Lighting {
+            exposure: match self.exposure {
+                Some(e) => Exposure::Manual(e),
+                None => Exposure::Auto(self.start_auto()),
+            },
             lamp: self.lamp,
             shadow_walk: self.shadow_walk,
             filter: self.filter,
@@ -531,21 +600,8 @@ impl Args {
             indirect: self.indirect,
             probe_rays: self.probe_rays,
             probe_slices: self.probe_slices,
-            exposure: if self.showcase {
-                self.shot.exposure_milli as f32 / 1000.0
-            } else {
-                Lighting::default().exposure
-            },
             ..Lighting::default()
         }
-    }
-
-    /// The lighting modes the fly-through starts in, the banner shown from 0 ms; the line
-    /// names the showcase source first and the probe spacing while indirect light is on.
-    fn start_modes(&self) -> hud::Modes {
-        hud::Modes::new(self.start_lighting(), self.lighting, 0.0)
-            .with_source(self.showcase.then_some("showcase"))
-            .with_probe_spacing(self.probe_spacing)
     }
 
     /// The look the fly-through starts in.
@@ -624,6 +680,10 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         internal_scale: DEFAULT_SCALE,
         jitter: DEFAULT_JITTER,
         sharpen: DEFAULT_SHARPEN,
+        exposure: None,
+        adaptation: hud::Adaptation::Eye,
+        adapt: None,
+        metering: vxe_render::Metering::default(),
         jitter_set: false,
         upscaler: None,
     };
@@ -631,6 +691,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     // `--lamp` and `--light-radius` as given; their defaults depend on the source.
     let mut lamp_flag = None;
     let mut shot_flag = false;
+    let mut exposure_flag = false;
     let mut light_radius_flag = None;
     // The part flags, applied to the `--look` preset after every flag is read.
     let mut rock_detail = None;
@@ -912,6 +973,24 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--adapter" => args.adapter = Some(value()?),
             "--walk" => args.walk = true,
             "--hud" => args.hud = true,
+            "--exposure" => {
+                args.exposure = parse_exposure(&value()?)?;
+                exposure_flag = true;
+            }
+            "--adaptation" => {
+                let v = value()?;
+                args.adaptation = hud::Adaptation::from_name(&v).ok_or(format!(
+                    "--adaptation takes eye, symmetric or instant, not {v}"
+                ))?;
+            }
+            "--adapt" => args.adapt = Some(parse_adapt(&value()?)?),
+            "--metering" => {
+                args.metering = match value()?.as_str() {
+                    "centre" => vxe_render::Metering::default(),
+                    "average" => vxe_render::Metering::Average,
+                    v => return Err(format!("--metering takes centre or average, not {v}")),
+                }
+            }
             "--census" => args.census = true,
             "--vault" => args.vault = true,
             "--castle" => args.castle = true,
@@ -943,6 +1022,10 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     } else {
         vxe_render::gpu_world::DEFAULT_LIGHT_RADIUS
     });
+    // The showcase starts at its shot's manual exposure unless `--exposure` is given.
+    if args.showcase && !exposure_flag {
+        args.exposure = Some(args.shot.exposure_milli as f32 / 1000.0);
+    }
     if shot_flag && !args.showcase {
         return Err("--shot frames the showcase; it needs --source showcase".to_owned());
     }
@@ -1023,6 +1106,36 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
 
 /// `R_FULL,R_LOD`: radii in chunks with `1 <= R_FULL <= R_LOD`, hysteresis as
 /// [`RESIDENCY`]'s.
+/// `--exposure`: `auto` (`None`) or a positive finite manual exposure.
+fn parse_exposure(v: &str) -> Result<Option<f32>, String> {
+    if v == "auto" {
+        return Ok(None);
+    }
+    v.parse::<f32>()
+        .ok()
+        .filter(|e| e.is_finite() && *e > 0.0)
+        .map(Some)
+        .ok_or(format!(
+            "--exposure takes auto or a positive number, not {v}"
+        ))
+}
+
+/// `--adapt LIGHT,CONE,ROD,FLOOR`: three time constants in seconds and a cone floor, each
+/// finite and not negative.
+fn parse_adapt(v: &str) -> Result<[f32; 4], String> {
+    let bad =
+        || format!("--adapt takes LIGHT,CONE,ROD,FLOOR: four numbers, none negative, not {v}");
+    let parts: Vec<f32> = v
+        .split(',')
+        .map(|p| p.trim().parse::<f32>().map_err(|_| bad()))
+        .collect::<Result<_, _>>()?;
+    let a: [f32; 4] = parts.try_into().map_err(|_| bad())?;
+    if a.iter().any(|x| !x.is_finite() || *x < 0.0) {
+        return Err(bad());
+    }
+    Ok(a)
+}
+
 fn parse_residency(v: &str) -> Result<Residency, String> {
     let err = || format!("--residency takes R_FULL,R_LOD (e.g. 14,22), not {v}");
     let (full, lod) = v.split_once(',').ok_or_else(err)?;
@@ -1975,6 +2088,8 @@ struct Hud {
     live_probes: Option<u32>,
     /// The last frame's steps view, read back while that view and the HUD are on.
     steps: Option<hud::StepsSample>,
+    /// The exposure state as last read back (`Frame::exposure_readout`), a few frames late.
+    exposure: Option<vxe_render::ExposureReadout>,
     format_us: u32,
     page_bytes: u64,
     /// Reused buffers: the rows' text, their colours, and the strip's samples.
@@ -2001,6 +2116,7 @@ impl Hud {
             cpu_ms: 0.0,
             live_probes: None,
             steps: None,
+            exposure: None,
             format_us: 0,
             page_bytes: hud::page_bytes(),
             text: String::new(),
@@ -2645,6 +2761,8 @@ struct Run {
     audio: Option<Audio>,
     /// `--room-line` without an output device.
     room_probe: Option<RoomProbe>,
+    /// When the exposure line was last checked for printing (ms since the start) and its EV.
+    exposure_print: Option<(f64, f32)>,
 }
 
 impl Run {
@@ -2757,6 +2875,7 @@ impl Run {
         s.mode = mode;
         s.format_us = h.format_us;
         s.lighting = lighting;
+        s.exposure = Some(self.modes.exposure_row());
     }
 
     /// The banner at the frame loop's clock: the scene's row while it shows (for
@@ -3837,7 +3956,7 @@ impl Run {
         {
             self.samples = Some(Samples::default());
         }
-        self.draw(gpu, surface, t0)
+        self.draw(gpu, surface, t0, dt)
     }
 
     /// The keys, buttons and pad buttons of interactive flight; the autopilot takes none of
@@ -3853,6 +3972,7 @@ impl Run {
             (KeyCode::F7, hud::ModeKey::Lamp),
             (KeyCode::F8, hud::ModeKey::Indirect),
             (KeyCode::KeyM, hud::ModeKey::Pulse),
+            (KeyCode::KeyQ, hud::ModeKey::Exposure),
         ] {
             if input.pressed(key) {
                 self.modes.press(mode, ms_since(self.start));
@@ -4130,8 +4250,9 @@ impl Run {
         }
     }
 
-    /// Ticks the server, then streams, syncs, marches and presents one frame begun at `t0`.
-    fn draw(&mut self, gpu: &Gpu, surface: &wgpu::TextureView, t0: Instant) -> Flow {
+    /// Ticks the server, then streams, syncs, marches and presents one frame begun at `t0`;
+    /// `dt` is the frame interval the exposure adapts over in a window.
+    fn draw(&mut self, gpu: &Gpu, surface: &wgpu::TextureView, t0: Instant, dt: f32) -> Flow {
         self.tick(gpu);
         // The sync's copies are recorded first, so the attribute pass and the march read
         // them in the same submission.
@@ -4214,6 +4335,13 @@ impl Run {
                 .set_sizes(&gpu.device, scale.internal(output), output);
         }
         gfx.frame.set_lighting(self.modes.lighting);
+        // Headless frames step the exposure by exactly 1/60 s; the window by its measured
+        // interval, at most 0.1 s, so a hitch adapts by no more than that.
+        gfx.frame.set_dt(if self.args.headless {
+            1.0 / 60.0
+        } else {
+            dt.clamp(0.0, 0.1)
+        });
         gfx.frame.set_resolution(&gpu.device, self.modes.resolution);
         // A preset's fit refits the mirror's bricks under the attribute cap and its rock
         // detail rewrites the material rows; `--look plain` has neither.
@@ -4292,6 +4420,14 @@ impl Run {
         }
         gpu.queue.submit([enc.finish()]);
         let cpu_ms = ms_since(t0);
+        self.hud.exposure = gfx.frame.exposure_readout(&gpu.device);
+        self.modes.set_readout(self.hud.exposure);
+        print_moving_exposure(
+            &mut self.exposure_print,
+            &self.modes,
+            self.hud.exposure,
+            ms_since(self.start),
+        );
 
         if self.frame == 0 {
             // The first frame counts once the GPU has finished it.
@@ -4635,7 +4771,7 @@ impl App for Flythrough {
                 args: self.args.clone(),
                 fly: Fly::new(self.camera),
                 light: LightParams::headlamp(),
-                modes: self.args.start_modes(),
+                modes: self.args.start_modes(0.0),
                 upscaler: hud::UpscalerBanner::shown_from(
                     self.args.start_upscaler(),
                     {
@@ -4670,6 +4806,7 @@ impl App for Flythrough {
                 hud: Hud::new(self.args.hud),
                 audio: self.audio.take(),
                 room_probe: self.room_probe.take(),
+                exposure_print: None,
             });
         }
         match self.run.as_mut() {
@@ -5437,6 +5574,80 @@ mod tests {
         }
     }
 
+    /// `--exposure` takes `auto` (the default) or a positive number; `--adaptation` a preset
+    /// (eye by default); `--adapt` four numbers replacing the preset's constants and floor;
+    /// `--metering` centre (the default) or average. Each refuses anything else: `--adapt`
+    /// with three numbers, a negative constant or a negative floor.
+    #[test]
+    fn exposure_flags_parse_and_refuse_bad_values() {
+        let d = parse_args_from(argv(&[])).unwrap();
+        assert_eq!(
+            d.start_lighting().exposure,
+            Exposure::Auto(AutoExposure::eye())
+        );
+        let a = parse_args_from(argv(&[
+            "--exposure",
+            "2.5",
+            "--adaptation",
+            "symmetric",
+            "--adapt",
+            "0.1,0.5,2,0.01",
+            "--metering",
+            "average",
+        ]))
+        .unwrap();
+        assert_eq!(a.start_lighting().exposure, Exposure::Manual(2.5));
+        assert_eq!(a.adaptation, hud::Adaptation::Symmetric);
+        let auto = a.start_auto();
+        assert_eq!(
+            [auto.tau_light, auto.tau_cone, auto.tau_rod, auto.cone_floor],
+            [0.1, 0.5, 2.0, 0.01]
+        );
+        assert_eq!(auto.metering, vxe_render::Metering::Average);
+        assert_eq!(auto.key, 0.18);
+        let i = parse_args_from(argv(&["--exposure", "auto", "--adaptation", "instant"])).unwrap();
+        assert_eq!(
+            i.start_lighting().exposure,
+            Exposure::Auto(AutoExposure::instant())
+        );
+        for (args, err) in [
+            (
+                &["--exposure", "bright"][..],
+                "--exposure takes auto or a positive number, not bright",
+            ),
+            (
+                &["--exposure", "0"],
+                "--exposure takes auto or a positive number, not 0",
+            ),
+            (
+                &["--adaptation", "cat"],
+                "--adaptation takes eye, symmetric or instant, not cat",
+            ),
+            (
+                &["--adapt", "0.15,1,4"],
+                "--adapt takes LIGHT,CONE,ROD,FLOOR: four numbers, none negative, not 0.15,1,4",
+            ),
+            (
+                &["--adapt", "0.15,-1,4,0.01"],
+                "--adapt takes LIGHT,CONE,ROD,FLOOR: four numbers, none negative, not 0.15,-1,4,0.01",
+            ),
+            (
+                &["--adapt", "0.15,1,4,-0.01"],
+                "--adapt takes LIGHT,CONE,ROD,FLOOR: four numbers, none negative, not 0.15,1,4,-0.01",
+            ),
+            (
+                &["--metering", "spot"],
+                "--metering takes centre or average, not spot",
+            ),
+        ] {
+            assert_eq!(
+                parse_args_from(argv(args)).err().as_deref(),
+                Some(err),
+                "{args:?}"
+            );
+        }
+    }
+
     /// `--pad` takes `on` or `off`, defaults on, and refuses anything else; headless and
     /// the autopilot never read a pad.
     #[test]
@@ -5819,7 +6030,7 @@ mod tests {
         let world = Arc::new(world);
         let net = native_net(&world);
         let args = parse_args_from(argv(&["--level"])).expect("--level parses");
-        let modes = hud::Modes::new(args.start_lighting(), args.lighting, 0.0);
+        let modes = args.start_modes(0.0);
         let camera = Camera {
             position: Vec3::splat(0.5),
             yaw: 0.0,
@@ -5858,6 +6069,7 @@ mod tests {
             hud: Hud::new(false),
             audio: None,
             room_probe: None,
+            exposure_print: None,
             cutaway: CutawayMode::Auto,
         }
     }
@@ -6418,7 +6630,7 @@ mod tests {
             assert_eq!(a.shot, s);
             assert_eq!(
                 a.start_lighting().exposure,
-                s.exposure_milli as f32 / 1000.0
+                Exposure::Manual(s.exposure_milli as f32 / 1000.0)
             );
         }
         assert_eq!(
@@ -6462,7 +6674,7 @@ mod tests {
     #[test]
     fn the_showcase_banner_names_its_source_and_the_lamp() {
         let a = parse_args_from(argv(&["--source", "showcase"])).expect("parses");
-        let mut m = a.start_modes();
+        let mut m = a.start_modes(0.0);
         let line = m.line();
         assert!(line.starts_with("source showcase, "), "{line}");
         assert!(line.contains("lamp off"), "{line}");
@@ -6478,7 +6690,7 @@ mod tests {
             "{banner}"
         );
         let level = parse_args_from(argv(&["--level"])).expect("parses");
-        assert!(level.start_modes().line().starts_with("lighting "));
+        assert!(level.start_modes(0.0).line().starts_with("lighting "));
     }
 
     /// While indirect light is on the banner names the probe spacing, `probes 16` by default
@@ -6491,7 +6703,7 @@ mod tests {
                 let mut v = source.to_vec();
                 v.extend_from_slice(extra);
                 let a = parse_args_from(argv(&v)).expect("parses");
-                a.start_modes()
+                a.start_modes(0.0)
                     .banner(0.0)
                     .expect("the banner shows at the start")
             };
@@ -6507,7 +6719,7 @@ mod tests {
             assert!(!off.contains("probes"), "{source:?}: {off}");
         }
         let a = parse_args_from(argv(&["--probe-spacing", "32"])).expect("parses");
-        let mut m = a.start_modes();
+        let mut m = a.start_modes(0.0);
         m.press(hud::ModeKey::Indirect, 1000.0);
         assert!(!m.banner(1000.0).unwrap().contains("probes"));
         m.press(hud::ModeKey::Indirect, 2000.0);
@@ -6599,8 +6811,8 @@ mod tests {
         );
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
-            hud::Modes::new(d.start_lighting(), d.lighting, 0.0).line(),
-            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, emissive history 32"
+            d.start_modes(0.0).line(),
+            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, emissive history 32, exposure auto eye +0.00 EV"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),

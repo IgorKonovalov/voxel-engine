@@ -49,6 +49,8 @@
 //                              pixels sample, then EMISSION_ROWS more in the light the probe
 //                              rays sample (`emission_base`)
 //  12  texture  blue_noise     128 x 128 r8unorm blue noise (void and cluster)
+//  13  uniform  exposure_state the exposure state the last frame's exposure pass wrote
+//                              (exposure.wgsl, ADR-0033): `exposure_now` and `exposure_ratio`
 //
 // Bindings, group 1 (the hit pass's outputs, the hit buffer):
 //   0  storage texture  hit_pos_out    rgba32float: the hit's world position (voxels) and t;
@@ -200,6 +202,21 @@ struct Params {
 @group(0) @binding(9) var<storage, read> brick_pool3: array<u32>;
 @group(0) @binding(11) var<storage, read> emission_scale: array<f32>;
 @group(0) @binding(12) var blue_noise: texture_2d<f32>;
+
+// `ExposureState` in exposure.rs: the exposure this frame uses in auto (`current`) and the one
+// the last frame used (`previous`), then the adapted and metered levels, a counter and flags.
+struct ExposureState {
+    current: f32,
+    previous: f32,
+    adapted_log2: f32,
+    metered_log2: f32,
+    frame: u32,
+    flags: u32,
+    _pad0: u32,
+    _pad1: u32,
+};
+
+@group(0) @binding(13) var<uniform> exposure_state: ExposureState;
 @group(1) @binding(0) var hit_pos_out: texture_storage_2d<rgba32float, write>;
 @group(1) @binding(1) var hit_info_out: texture_storage_2d<rgba16uint, write>;
 @group(1) @binding(2) var layer_out: texture_storage_2d<rgba16float, write>;
@@ -260,6 +277,8 @@ const LIGHTING_EMISSION_CHANGED: u32 = 256u;
 const LIGHTING_LAMP_CHANGED: u32 = 512u;
 const LIGHTING_IDENTITY_TONE_MAP: u32 = 64u;
 const LIGHTING_UNIFORM_DRAW: u32 = 128u;
+// The exposure is automatic: this frame's is the state's `current`, not `params.exposure`.
+const LIGHTING_AUTO_EXPOSURE: u32 = 8192u;
 // Hit record flags.
 const HIT_FOUND: u32 = 1u;
 const HIT_PLANE: u32 = 2u;
@@ -1395,6 +1414,26 @@ fn rand(px: vec2<u32>, dim: u32) -> f32 {
     let v = (texel << 24u) + params.frame * (0x9E3779B9u * (dim + 1u)) + ((h >> 14u) & 0xFFFFFFu);
     return f32(v >> 8u) / 16777216.0;
 }
+
+// The exposure this frame's passes use: the state's `current` in auto, else the manual
+// `params.exposure`.
+fn exposure_now() -> f32 {
+    if ((params.lighting & LIGHTING_AUTO_EXPOSURE) != 0u) {
+        return exposure_state.current;
+    }
+    return params.exposure;
+}
+
+// The ratio of this frame's exposure to the last frame's: a pass that reads a value an earlier
+// frame stored pre-exposed multiplies it by this (its square for a second moment).
+fn exposure_ratio() -> f32 {
+    return exposure_now() / exposure_state.previous;
+}
+
+// Every store into an rgba16float HDR target is at most this (ADR-0033), and a second moment is
+// of a luminance at most MOMENT_LUM_MAX (its square, 65 025, stays finite in f16).
+const HDR_MAX: f32 = 60000.0;
+const MOMENT_LUM_MAX: f32 = 255.0;
 
 fn luminance(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
