@@ -539,7 +539,8 @@ impl HudStats {
                 HudColour::White
             };
             out.write_str("gpu")?;
-            for (name, v) in &l.passes {
+            // FSR 2's passes are summed on the upscale row instead.
+            for (name, v) in l.passes.iter().filter(|(n, _)| !n.starts_with("fsr2 ")) {
                 write!(out, " {name} {v:.2}")?;
             }
             out.write_str(" ms")?;
@@ -560,16 +561,28 @@ impl HudStats {
                 )?,
             }
             if let Some([[iw, ih], [ow, oh]]) = l.upscale {
-                // Yellow when the composite, upscale and sharpen passes exceed the upscale line.
-                let post = ms("composite") + ms("upscale") + ms("sharpen");
+                // Yellow when the composite, upscale and sharpen passes and FSR 2's exceed the
+                // upscale line. FSR 2's passes, when they ran, read as one total.
+                let fsr: f32 = l
+                    .passes
+                    .iter()
+                    .filter(|(n, _)| n.starts_with("fsr2 "))
+                    .map(|&(_, v)| v)
+                    .sum();
+                let post = ms("composite") + ms("upscale") + ms("sharpen") + fsr;
+                let times = if fsr > 0.0 {
+                    format!("fsr2 {fsr:.2} ms")
+                } else {
+                    format!(
+                        "upscale {:.2} sharpen {:.2} ms",
+                        ms("upscale"),
+                        ms("sharpen")
+                    )
+                };
                 row(
                     out,
                     over(post, UPSCALE_LINE_MS),
-                    format_args!(
-                        "upscale {:.2} sharpen {:.2} ms, {iw}x{ih} to {ow}x{oh}",
-                        ms("upscale"),
-                        ms("sharpen")
-                    ),
+                    format_args!("{times}, {iw}x{ih} to {ow}x{oh}"),
                 )?;
             }
         }
@@ -1076,6 +1089,36 @@ mod tests {
         );
     }
 
+    /// Under FSR 2 the upscale row reads its passes' total and the gpu row leaves them out;
+    /// the total counts towards the 1.5 ms line.
+    #[test]
+    fn the_upscale_row_sums_fsr2s_passes() {
+        let (mut out, mut colours) = (String::new(), Vec::new());
+        let mut s = HudStats::fixed();
+        s.lighting = Some(LightingRow {
+            passes: vec![
+                ("composite", 0.2),
+                ("upscale", 0.0),
+                ("sharpen", 0.0),
+                ("fsr2 input", 0.1),
+                ("fsr2 accumulate", 0.4),
+                ("fsr2 tone", 0.05),
+            ],
+            light_samples: 0,
+            live_probes: None,
+            modes: "lighting half".to_owned(),
+            upscale: Some([[1280, 720], [1920, 1080]]),
+        });
+        s.write_rows(&mut out, &mut colours);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[5], "fsr2 0.55 ms, 1280x720 to 1920x1080");
+        assert_eq!(colours[5], HudColour::White);
+        assert!(!out.contains("fsr2 input"), "{out}");
+        s.lighting.as_mut().unwrap().passes[4].1 = 1.4;
+        s.write_rows(&mut out, &mut colours);
+        assert_eq!(colours[5], HudColour::Yellow, "0.2 + 1.55 over 1.5 ms");
+    }
+
     /// A pad row sits before the format row, and a run without a pad source shows none.
     #[test]
     fn the_pad_row_shows_before_the_format_row() {
@@ -1424,5 +1467,142 @@ mod mode_tests {
         );
         m.set_refitting(false);
         assert_eq!(m.banner(far), None, "it fades once the refit drains");
+    }
+}
+
+/// The upscaler the window's `F10` cycles (`--upscaler`): Plan 0024's frame, the upscaler of
+/// ADR-0024, or FSR 2 (ADR-0034).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpscalerMode {
+    Off,
+    Own,
+    Fsr2,
+}
+
+impl UpscalerMode {
+    pub const ALL: [Self; 3] = [Self::Off, Self::Own, Self::Fsr2];
+
+    /// The name `--upscaler` parses and the banner shows.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Own => "own",
+            Self::Fsr2 => "fsr2",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+
+    /// The mode `F10` switches to: off, own, fsr2, then off again.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Own,
+            Self::Own => Self::Fsr2,
+            Self::Fsr2 => Self::Off,
+        }
+    }
+}
+
+/// The upscaler's banner: one line naming the mode and its internal scale, shown for
+/// [`BANNER_MS`] after each change, by the frame loop's clock, beside the stats HUD or alone.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UpscalerBanner {
+    pub mode: UpscalerMode,
+    /// The internal scale's name (`RenderScale::name`).
+    pub scale: &'static str,
+    shown_at: Option<f64>,
+}
+
+impl UpscalerBanner {
+    /// The banner of the starting mode, hidden until the first change.
+    pub fn new(mode: UpscalerMode, scale: &'static str) -> Self {
+        Self {
+            mode,
+            scale,
+            shown_at: None,
+        }
+    }
+
+    /// The banner of the starting mode, shown from `now_ms` as the lighting modes' banner is
+    /// at the start.
+    pub fn shown_from(mode: UpscalerMode, scale: &'static str, now_ms: f64) -> Self {
+        Self {
+            shown_at: Some(now_ms),
+            ..Self::new(mode, scale)
+        }
+    }
+
+    /// The mode is now `mode` at `scale`; the banner shows from `now_ms`.
+    pub fn change(&mut self, mode: UpscalerMode, scale: &'static str, now_ms: f64) {
+        self.mode = mode;
+        self.scale = scale;
+        self.shown_at = Some(now_ms);
+    }
+
+    /// `upscaler fsr2, scale 1.5`.
+    pub fn line(&self) -> String {
+        format!("upscaler {}, scale {}", self.mode.name(), self.scale)
+    }
+
+    /// The line within [`BANNER_MS`] of the last change, else `None`.
+    pub fn banner(&self, now_ms: f64) -> Option<String> {
+        self.shown_at
+            .filter(|&at| now_ms - at < BANNER_MS)
+            .map(|_| self.line())
+    }
+}
+
+#[cfg(test)]
+mod upscaler_banner_tests {
+    use super::*;
+
+    /// `F10` steps the banner's text through `off`, `own` and `fsr2`, each line fitting the
+    /// banner's width; it shows after a change, or from the start when built with
+    /// [`UpscalerBanner::shown_from`], for [`BANNER_MS`].
+    #[test]
+    fn the_upscaler_banner_names_each_mode_it_cycles_through() {
+        let mut b = UpscalerBanner::new(UpscalerMode::Off, "1");
+        assert_eq!(b.banner(0.0), None, "no banner before a change");
+        let mut mode = UpscalerMode::Off;
+        let mut seen = Vec::new();
+        for (i, scale) in ["1.5", "1.5", "1"].into_iter().enumerate() {
+            mode = mode.next();
+            let t = 1000.0 * i as f64;
+            b.change(
+                mode,
+                if mode == UpscalerMode::Off {
+                    "1"
+                } else {
+                    scale
+                },
+                t,
+            );
+            let text = b.banner(t).expect("a change shows the banner");
+            assert!(text.len() <= BANNER_COLS, "{text}");
+            seen.push(text);
+        }
+        assert_eq!(
+            seen,
+            [
+                "upscaler own, scale 1.5",
+                "upscaler fsr2, scale 1.5",
+                "upscaler off, scale 1"
+            ]
+        );
+        assert!(b.banner(2000.0 + BANNER_MS - 1.0).is_some());
+        assert_eq!(b.banner(2000.0 + BANNER_MS), None);
+        let start = UpscalerBanner::shown_from(UpscalerMode::Fsr2, "1.5", 0.0);
+        assert_eq!(
+            start.banner(BANNER_MS - 1.0).as_deref(),
+            Some("upscaler fsr2, scale 1.5"),
+            "the starting mode shows at the start"
+        );
+        assert_eq!(start.banner(BANNER_MS), None);
+        for m in UpscalerMode::ALL {
+            assert_eq!(UpscalerMode::from_name(m.name()), Some(m));
+        }
+        assert_eq!(UpscalerMode::from_name("fsr"), None);
     }
 }

@@ -1371,7 +1371,25 @@ const INDIRECT_FRAMES: u32 = 64;
 /// The vein cavity after [`INDIRECT_FRAMES`] frames with the lamp off and indirect light
 /// `indirect`, read back.
 fn vein_cavity_render(world: &World, indirect: bool) -> Option<(Vec<u8>, Vec<[u16; 4]>)> {
+    vein_cavity_render_under(world, indirect, None)
+}
+
+/// [`vein_cavity_render`] under FSR 2 at scale 1 when `fsr2` is `Some`: `Some(true)` with
+/// the upscaler bypassed (the composite's linear target put through the tone pass alone),
+/// `Some(false)` with every pass running.
+fn vein_cavity_render_under(
+    world: &World,
+    indirect: bool,
+    fsr2: Option<bool>,
+) -> Option<(Vec<u8>, Vec<[u16; 4]>)> {
     let mut rig = LookRig::new(world, None)?;
+    if let Some(bypass) = fsr2 {
+        rig.frame.set_upscaler_kind(
+            &rig.device,
+            vxe_render::UpscalerKind::Fsr2(Default::default()),
+        );
+        rig.frame.fsr2_mut().expect("FSR mode").set_bypass(bypass);
+    }
     rig.frame.set_lighting(vxe_render::Lighting {
         lamp: false,
         indirect,
@@ -1421,6 +1439,54 @@ fn indirect_golden_shows_the_vein_s_bounce_light() {
         share * 100.0,
         centre_pixel(&lit),
         centre_pixel(&off)
+    );
+    assert!(share >= 0.20, "{:.1} %", share * 100.0);
+}
+
+/// The share of hit pixels (`info`'s flag 1) whose largest channel differs between `a` and
+/// `b` by more than 8/255, and the mean absolute byte difference over those hits.
+fn hit_difference(a: &[u8], b: &[u8], info: &[[u16; 4]]) -> (f64, f64) {
+    let (mut hits, mut differ, mut sum) = (0usize, 0usize, 0u64);
+    for (i, rec) in info.iter().enumerate() {
+        if rec[3] & 1 == 0 {
+            continue;
+        }
+        hits += 1;
+        let d: Vec<u8> = (0..3)
+            .map(|k| a[4 * i + k].abs_diff(b[4 * i + k]))
+            .collect();
+        differ += usize::from(d.iter().copied().max().unwrap_or(0) > 8);
+        sum += d.iter().map(|&v| u64::from(v)).sum::<u64>();
+    }
+    (differ as f64 / hits as f64, sum as f64 / (3 * hits) as f64)
+}
+
+/// FSR 2 carries the probe volume's indirect light: on `indirect.png`'s view, FSR 2's
+/// colour input put through the tone pass alone (the upscaler bypassed) is the plain frame's
+/// image byte for byte; with every FSR pass running at scale 1, the image with indirect light
+/// differs from the one without in at least 20 % of its hit pixels by more than 8/255, as the
+/// plain frame's does. FSR's mean distance from the plain indirect image is a `reading:` line.
+#[test]
+fn fsr2_carries_the_indirect_golden_s_bounce_light() {
+    let world = vein_cavity();
+    let Some((plain, info)) = vein_cavity_render(&world, true) else {
+        return;
+    };
+    let (toned, _) =
+        vein_cavity_render_under(&world, true, Some(true)).expect("the adapter rendered once");
+    let differing = plain.iter().zip(&toned).filter(|(a, b)| a != b).count();
+    println!("indirect, FSR 2 bypassed: {differing} bytes differ from the plain frame");
+    assert_eq!(differing, 0, "the tone pass changes the indirect image");
+    let (fsr_lit, _) =
+        vein_cavity_render_under(&world, true, Some(false)).expect("the adapter rendered once");
+    let (fsr_off, _) =
+        vein_cavity_render_under(&world, false, Some(false)).expect("the adapter rendered once");
+    let (share, _) = hit_difference(&fsr_lit, &fsr_off, &info);
+    let (far, mean) = hit_difference(&fsr_lit, &plain, &info);
+    println!(
+        "reading: FSR 2 at scale 1 with indirect light against without: {:.1} % of hits over 8/255; against the plain indirect image: {:.1} % over 8/255, mean {mean:.3}/255",
+        share * 100.0,
+        far * 100.0
     );
     assert!(share >= 0.20, "{:.1} %", share * 100.0);
 }
@@ -1675,4 +1741,129 @@ fn showcase_hall_golden_is_lit_by_its_four_ores() {
     let covered = classes.iter().filter(|&&c| c >= 288).count();
     assert!(covered >= 3, "{classes:?}");
     assert!((12.0..=40.0).contains(&luma), "{luma}");
+}
+
+/// One frame of FSR 2's golden scene at a sharpness: the frame's image, the accumulate pass's
+/// output (rgba16float, the internal upscaled colour), whether RCAS was dispatched, and the
+/// frame's lighting.
+struct Fsr2Shot {
+    image: Vec<u8>,
+    accumulated: History16,
+    sharpened: bool,
+    lighting: vxe_render::Lighting,
+}
+
+/// FSR 2's golden scene: the cavity from its centre under the headlamp at 256 x 144 internal
+/// and 384 x 216 output after 32 frames, at each of `sharpness`.
+fn fsr2_cavity(sharpness: &[f32]) -> Option<Vec<Fsr2Shot>> {
+    let world = cavity_world();
+    let rig = LookRig::new(&world, None)?;
+    let mut out = Vec::new();
+    for &s in sharpness {
+        let mut frame = Frame::with_sizes(&rig.device, UPSCALED_INTERNAL, UPSCALED_OUTPUT);
+        frame.set_upscaler_kind(
+            &rig.device,
+            vxe_render::UpscalerKind::Fsr2(vxe_render::Fsr2Settings {
+                sharpness: s,
+                ..Default::default()
+            }),
+        );
+        for _ in 0..32 {
+            frame.step(
+                &rig.device,
+                &rig.queue,
+                &rig.gpu,
+                &cavity_camera(),
+                &LightParams::headlamp(),
+            );
+        }
+        let fsr = frame.fsr2().expect("FSR mode");
+        out.push(Fsr2Shot {
+            image: readback::read_rgba8(&rig.device, &rig.queue, frame.target()),
+            accumulated: readback::read_rgba16f(
+                &rig.device,
+                &rig.queue,
+                fsr.upscaled(frame.current_copy()),
+            ),
+            sharpened: fsr.sharpens(),
+            lighting: frame.lighting(),
+        });
+    }
+    Some(out)
+}
+
+/// `fsr2.png`: FSR 2's golden at the fly-through's default sharpening (0.5) matches. At
+/// sharpening 0 RCAS is not dispatched and the image is the accumulate pass's output put
+/// through the tone arithmetic, texel for texel; RCAS leaves that output alone (the same at 0
+/// and 0.5). AMD's RCAS has no clamp: the sharpened pixels over their unsharpened 3 x 3
+/// neighbourhood's maximum by more than 1/255, and the largest excess, are a `reading:` line.
+#[test]
+fn fsr2_golden_matches_and_rcas_is_bypassed_at_zero() {
+    let Some(shots) = fsr2_cavity(&[0.0, 0.5]) else {
+        return;
+    };
+    let (zero, half) = (&shots[0], &shots[1]);
+    let (plain, sharp) = (&zero.image, &half.image);
+    let [w, h] = UPSCALED_OUTPUT.map(|n| n as usize);
+    let path = golden_path("fsr2.png");
+    if std::env::var("VXE_BLESS").as_deref() == Ok("1") {
+        write_png(&path, sharp, w as u32, h as u32);
+        println!("blessed {path:?}");
+    } else {
+        let (golden, gw, gh) = read_png(&path);
+        assert_eq!((gw, gh), (w as u32, h as u32));
+        let f = fraction_differing(sharp, &golden, 2);
+        println!(
+            "fsr2.png: {:.4} % of pixels differ by more than 2/255",
+            f * 100.0
+        );
+        assert!(f <= 0.001, "{:.4} % of pixels differ", f * 100.0);
+    }
+    assert!(!zero.sharpened, "RCAS dispatched at sharpening 0");
+    assert!(half.sharpened, "RCAS not dispatched at sharpening 0.5");
+    let moved = zero
+        .accumulated
+        .iter()
+        .zip(&half.accumulated)
+        .filter(|(a, b)| a[..3] != b[..3])
+        .count();
+    assert_eq!(moved, 0, "sharpening changed {moved} accumulated texels");
+    let toned = zero
+        .accumulated
+        .iter()
+        .zip(plain.chunks(4))
+        .filter(|(c, p)| support::rigs::tone_bytes(**c, &zero.lighting) != [p[0], p[1], p[2]])
+        .count();
+    println!(
+        "sharpening 0: {toned} of {} pixels differ from the toned accumulate output",
+        w * h
+    );
+    assert_eq!(toned, 0, "{toned} pixels are not the accumulate output");
+    let (mut over, mut changed, mut most) = (0usize, 0usize, 0u8);
+    for y in 1..h - 1 {
+        for x in 1..w - 1 {
+            let mut hi = [0u8; 3];
+            for dy in 0..3 {
+                for dx in 0..3 {
+                    let p = &plain[((y + dy - 1) * w + x + dx - 1) * 4..];
+                    for k in 0..3 {
+                        hi[k] = hi[k].max(p[k]);
+                    }
+                }
+            }
+            let i = (y * w + x) * 4;
+            let excess = (0..3)
+                .map(|k| sharp[i + k].saturating_sub(hi[k]))
+                .max()
+                .unwrap_or(0);
+            over += usize::from(excess > 1);
+            most = most.max(excess);
+            changed += usize::from(sharp[i..i + 3] != plain[i..i + 3]);
+        }
+    }
+    println!("fsr2.png: {changed} pixels sharpened");
+    assert!(changed > 0, "sharpening changed nothing");
+    println!(
+        "reading: fsr2.png at sharpening 0.5, sharpened pixels over their unsharpened 3 x 3 maximum by more than 1/255 {over} of {changed}, largest excess {most}/255; bar: none over; owner judges, Phase 7"
+    );
 }

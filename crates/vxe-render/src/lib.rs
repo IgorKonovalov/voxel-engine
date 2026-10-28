@@ -9,6 +9,7 @@ pub mod attr_work;
 pub mod attrib;
 pub mod camera;
 pub mod font8x8;
+pub mod fsr2;
 pub mod gpu_world;
 pub mod hud;
 pub mod light;
@@ -20,6 +21,7 @@ pub mod readback;
 pub use attr_work::{AttrWorkStats, MirrorView};
 pub use attrib::{PlaneFit, PlaneOffset, SurfaceFit};
 pub use camera::{Camera, View};
+pub use fsr2::{Fsr2, Fsr2Settings, UpscalerKind};
 pub use gpu_world::{
     BELT_CHUNK_BYTES, BinStats, GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncStats, Window,
 };
