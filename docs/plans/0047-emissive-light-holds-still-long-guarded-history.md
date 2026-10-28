@@ -762,7 +762,7 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
 | 1: The patch bar as a headless test | dev | done; stopped at done-when 4 | 031ab3b |
 | 2: A full-precision emissive accumulation | dev | done | a2b3852 |
 | 3: The emissive-only gradient guard | dev | done | 8263b17 |
-| 4: The probe gather holds still | dev | step A 93a2c72; step C 0b848cf; furnace test new form | committed with this row |
+| 4: The probe gather holds still | dev | step A 93a2c72; step C 0b848cf; furnace test 9e229f5; filmstrip | committed with this row |
 | 5: The sweep, the defaults and the bar | dev | not started | |
 | 6: Goldens, readings and the fly-through | dev | not started | |
 | 7: The owner's windowed check | human | not started | |
@@ -1039,6 +1039,20 @@ hash: D 2.9010, error 0.380 % (-7.66 % of pi); floor 2.8789 (-0.76 % of D, -8.36
 texels 2.7129 ..= 2.8945 (-6.48 ..= -0.22 % of D), mean 2.8052 (-3.30 % of D, -10.71 % of pi);
 old form fails (2.7129 under 10 % of pi), new form passes. The light pass's floor-centre direct
 over 248 frames reads 3.0814 (-1.92 % of pi) on both.
+
+Phase 4 step D item 0, the filmstrip (`STILL_FILMSTRIP=<tag>`; `filmstrip` in
+`apps/flythrough/tests/support/stillness.rs`): per pose `<pose>-composite.png`,
+`<pose>-emissive.png` and `<pose>-gather.png` under `live/filmstrip/<tag>/`, 7 x 3 frames of
+192 x 108 (off 120, 150, ..., 720, row by row), the patch tiles of the step into each frame
+outlined in magenta, the parts' tile means as grey from the sheet's lowest to highest counted
+mean. The `before` sheets, the tip with the hash (`STILL_SWEEP=` `emissive_patch_sweep`;
+lavapipe, exclusive perf lock, load 2.4; `live/p4-film-before.log`): patch pose composite
+74.45 / 96, gather 8.15 / 44 (21.00/s, flicker 0.00365); `VEIN_POSE` composite 21.30 / 35,
+gather 0 on every step (flicker 0.00273), as step A's hash readings. Gates: clippy `-D
+warnings` and `fmt --check` clean; `--profile quick` 513 run, 511 passed, 2 timed out at 30 s
+(`castle::the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn`,
+`replay::a_stamp_and_a_collapse_replay_from_the_save`, the two that time out under load in
+the earlier phases).
 
 ### Resume notes (2026-10-28, delete when Phase 4 lands)
 

@@ -18,6 +18,10 @@
 //! **sudden step** is the same between consecutive frames. **Flicker** is the mean |d log2|
 //! between consecutive frames over the tiles full in both, and for the composite the display
 //! luma's mean |d| per frame in /255.
+//!
+//! With `STILL_FILMSTRIP` set to a tag, each run also writes contact sheets of its window
+//! (`filmstrip`) under the worktree's `live/filmstrip/<tag>/`; unset or empty, it writes
+//! nothing.
 
 use super::*;
 use vxe_render::{
@@ -209,14 +213,27 @@ fn grid_tiles(px: &[[f32; 4]], grid: [u32; 2], size: [u32; 2], scale: u32, expos
 
 /// The statistics of one part's per-frame tiles over the window, `full[f][t]` being the
 /// composite's full mask, and the display images for the luma flicker.
+/// Whether tile `t` of frame `f` counts: full in the composite, and its own mean above
+/// `FULL_LOG2`.
+fn counted(tiles: &[Tiles], full: &[Vec<bool>], f: usize, t: usize) -> bool {
+    full[f][t] && tiles[f][t].1 && tiles[f][t].0 > FULL_LOG2
+}
+
+/// Whether tile `t` is a patch between frames `a` and `b`: counted at both, its mean moved by
+/// more than `log2 1.1`.
+fn patch(tiles: &[Tiles], full: &[Vec<bool>], a: usize, b: usize, t: usize) -> bool {
+    counted(tiles, full, a, t)
+        && counted(tiles, full, b, t)
+        && (tiles[b][t].0 - tiles[a][t].0).abs() > 1.1f32.log2()
+}
+
 fn stats(tiles: &[Tiles], full: &[Vec<bool>], images: Option<&[Vec<u8>]>) -> Stats {
     let n = tiles.len();
-    let ok = |f: usize, t: usize| full[f][t] && tiles[f][t].1 && tiles[f][t].0 > FULL_LOG2;
+    let ok = |f: usize, t: usize| counted(tiles, full, f, t);
     let mean = |f: usize, t: usize| tiles[f][t].0;
-    let thr = 1.1f32.log2();
     let count = |a: usize, b: usize| {
         (0..tiles[0].len())
-            .filter(|&t| ok(a, t) && ok(b, t) && (mean(b, t) - mean(a, t)).abs() > thr)
+            .filter(|&t| patch(tiles, full, a, b, t))
             .count()
     };
     let patches = (0..(n - 1) / STEP)
@@ -377,6 +394,32 @@ fn run_inner(
         }
         trace[f].gather_dlog2 = s / f64::from(c.max(1));
     }
+    if let Some(tag) = std::env::var("STILL_FILMSTRIP")
+        .ok()
+        .filter(|t| !t.is_empty())
+    {
+        let mut name = pose.name.to_owned();
+        if size != SIZE {
+            name = format!("{name}-{}x{}", size[0], size[1]);
+        }
+        filmstrip(
+            &tag,
+            &format!("{name}-composite"),
+            size,
+            &composite,
+            &full,
+            Some(&images),
+        );
+        filmstrip(
+            &tag,
+            &format!("{name}-emissive"),
+            size,
+            &emissive,
+            &full,
+            None,
+        );
+        filmstrip(&tag, &format!("{name}-gather"), size, &gather, &full, None);
+    }
     (
         Reading {
             composite: stats(&composite, &full, Some(&images)),
@@ -419,5 +462,95 @@ pub fn print_trace(name: &str, gather: &Stats, trace: &[TraceFrame], over: usize
     println!(
         "reading: {name} trace over off {} to {}: window open on {windows} frames, {restarts} probe age restarts",
         WINDOW.0, WINDOW.1
+    );
+}
+
+/// Columns of a filmstrip sheet; the frames run row by row.
+const SHEET_COLUMNS: usize = 7;
+/// Pixels between a sheet's frames.
+const SHEET_GAP: u32 = 2;
+/// The outline colour of a tile counted as a patch on the step into its frame.
+const PATCH_OUTLINE: [u8; 4] = [255, 0, 255, 255];
+
+/// Writes the contact sheet `live/filmstrip/<tag>/<name>.png` (in the worktree's root) of the
+/// window's frames at every `STEP` off frames from `WINDOW.0` (`WINDOW.0`, `WINDOW.0 + STEP`,
+/// ... `WINDOW.1`), `SHEET_COLUMNS` to a row, each at `size`: the display image when `images`
+/// is given, else each tile's mean as grey, from black at the sheet's lowest counted tile
+/// mean to white at its highest (uncounted tiles black). The tiles that are patches on the
+/// step into a frame (from the frame `STEP` before it) carry a one-pixel `PATCH_OUTLINE`.
+/// Prints the path and the frame order.
+fn filmstrip(
+    tag: &str,
+    name: &str,
+    size: [u32; 2],
+    tiles: &[Tiles],
+    full: &[Vec<bool>],
+    images: Option<&[Vec<u8>]>,
+) {
+    let frames: Vec<usize> = (0..tiles.len()).step_by(STEP).collect();
+    let rows = frames.len().div_ceil(SHEET_COLUMNS);
+    let [w, h] = size;
+    let sw = SHEET_COLUMNS as u32 * (w + SHEET_GAP) - SHEET_GAP;
+    let sh = rows as u32 * (h + SHEET_GAP) - SHEET_GAP;
+    let mut sheet = vec![0u8; (sw * sh * 4) as usize];
+    let tw = w.div_ceil(TILE);
+    let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+    for &f in &frames {
+        for (t, &(m, _)) in tiles[f].iter().enumerate() {
+            if counted(tiles, full, f, t) {
+                lo = lo.min(m);
+                hi = hi.max(m);
+            }
+        }
+    }
+    for (k, &f) in frames.iter().enumerate() {
+        let ox = (k % SHEET_COLUMNS) as u32 * (w + SHEET_GAP);
+        let oy = (k / SHEET_COLUMNS) as u32 * (h + SHEET_GAP);
+        for y in 0..h {
+            for x in 0..w {
+                let t = ((y / TILE) * tw + x / TILE) as usize;
+                let px = match images {
+                    Some(im) => {
+                        let i = ((y * w + x) * 4) as usize;
+                        [im[f][i], im[f][i + 1], im[f][i + 2], 255]
+                    }
+                    None if counted(tiles, full, f, t) => {
+                        let g = ((tiles[f][t].0 - lo) / (hi - lo).max(1e-6) * 255.0)
+                            .round()
+                            .clamp(0.0, 255.0) as u8;
+                        [g, g, g, 255]
+                    }
+                    None => [0, 0, 0, 255],
+                };
+                let edge = x % TILE == 0
+                    || y % TILE == 0
+                    || x % TILE == TILE - 1
+                    || y % TILE == TILE - 1
+                    || x == w - 1
+                    || y == h - 1;
+                let outlined = f >= STEP && edge && patch(tiles, full, f - STEP, f, t);
+                let i = (((oy + y) * sw + ox + x) * 4) as usize;
+                sheet[i..i + 4].copy_from_slice(if outlined { &PATCH_OUTLINE } else { &px });
+            }
+        }
+    }
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = root.canonicalize().unwrap_or(root);
+    let dir = root.join("live/filmstrip").join(tag);
+    std::fs::create_dir_all(&dir).expect("create the filmstrip directory");
+    let path = dir.join(format!("{name}.png"));
+    write_png(&path, &sheet, sw, sh);
+    let order: Vec<String> = frames.iter().map(|f| (WINDOW.0 + f).to_string()).collect();
+    println!(
+        "filmstrip: {} ({} x {} frames of {w} x {h}, row by row, off frames {}{})",
+        path.display(),
+        SHEET_COLUMNS,
+        rows,
+        order.join(" "),
+        if images.is_some() {
+            String::new()
+        } else {
+            format!("; grey from tile mean {lo:.3} to {hi:.3} log2")
+        }
     );
 }
