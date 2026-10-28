@@ -19,7 +19,10 @@
 > [ADR-0034](../adrs/0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) (the two
 > upscalers the sky and the sun's history pass through; `own` at 1.5 is the default),
 > [ADR-0032](../adrs/0032-night-sky-drawn-analytically-on-miss-pixels-with-a-marched-aurora-shell.md)
-> (Plan 0037's night sky, which draws on this plan's miss pixels)
+> (Plan 0037's night sky, which draws on this plan's miss pixels),
+> [ADR-0036](../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
+> (Plan 0047's long `f32` emissive history and its emissive-only guard, which the sun's and the
+> sky's terms join; amended 2026-10-28)
 > **Source:** the owner's answers of 2026-10-22: outdoors is a general engine capability;
 > time of day is a parameter the game sets; Hillaire 2020 with per-frame LUTs; the sun's shadow
 > is one per-pixel ray continued into the far field later; every toggle shows its mode in the
@@ -45,13 +48,28 @@
 > Phase 5 sets `resident_r2` from the live residency; Phase 7 adds the sky passes to
 > `FRAME_PASSES`, the outdoor dig rule and Plan 0041's reference readings; the upscaler risks
 > are restated. Items that wait on Plan 0040 are listed under Risks.
-> **Starts after:** [Plan 0024](done/0024-direct-light-hit-buffer-emissive-samples-and-svgf-denoiser.md)
-> and [Plan 0029](done/0029-indirect-light-probe-volume.md) close. This plan is drafted against Plan
-> 0024's branch as of 2b08d42 (`Frame`, `Lighting`, `light.wgsl`, `temporal.wgsl`,
-> `composite.wgsl`, the mode banner of its Phase 14) and Plan 0029's drafted names
-> (`ProbeVolume`, `probe_update.wgsl`, `probe_gather.wgsl`). The names dev finds in the tree
-> win. It is independent of [Plan 0030](done/0030-temporal-upscaler.md); whichever lands second
-> rebases `composite.wgsl`.
+> **Amended 2026-10-28 (against main at v0.35.0 and plan 0047's branch):** re-checked against
+> main bc1e7a5 (Plans 0040 and 0038 merged) and Plan 0047's branch at c27891f. The five
+> post-0040 items are resolved (Risks, "Resolved after Plan 0040"). Phase 1 puts the sky into
+> the composite's pre-exposed colour, so both variants and the meter carry it, and names the
+> binding slots and the sky passes' place at the front of `FRAME_PASSES`. Phase 3 reuses the
+> chunk-hash harness Plan 0038 built (`flythrough::chunks_hash`) and fits the source switch to
+> 0038's `--source`, its showcase start settings and its banner. Phase 4 names the outdoor
+> preset as 0040's recommendation and moves its bar 5 to Phase 5's commit, where the sun
+> exists. Phase 5 takes `resident_r2` from a new `LodParams::r_lod` and, with Phase 6, makes
+> the gradient pass re-shade the sun and sky terms so Plan 0047's emissive guard does not read
+> them as change (a new Phase 5 bar 8). Phases 7 and 8 render their goldens at golden.rs's
+> settled `INDIRECT_FRAMES`, and Phase 7's no-sky reference is read at this plan's base. Data
+> shapes, the resource table and the Budgets follow `nfr.md` as it stands. Every point where
+> Plan 0047 changes what this plan touches is listed under Risks, "Plan 0047 interaction".
+> Questions for the owner are under "Owner questions". No phase's intent changes.
+> **Starts after:** [Plan 0047](0047-emissive-light-holds-still-long-guarded-history.md)
+> merges (amended 2026-10-28; Plans 0024, 0029, 0030, 0040 and 0038 are closed and on main;
+> whether it also waits for the draft Plan 0048 is Owner question 4).
+> The names in this plan were checked against main at bc1e7a5 and Plan 0047's branch at
+> c27891f. 0047 still has dev phases to run (its sweep may change `DEFAULT_EMISSIVE_HISTORY`
+> and `Lighting::reuse_m_cap`, and adds `--reuse-m-cap`), so dev re-reads the names at 0047's
+> merge, and the names dev finds in the tree win.
 
 ## TL;DR
 
@@ -212,6 +230,23 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
   linear radiance before exposure for `fsr2/tone.wgsl` (`FSR2_TONE_WGSL`) to tone-map after the
   upscale. The sky on a miss is computed as linear radiance ahead of that branch, so both
   variants carry it.
+  *Amended 2026-10-28 (against main at v0.35.0 and plan 0047's branch):* since Plan 0040 both
+  variants store pre-exposed colour. `composite.wgsl`'s shaded path builds `c` with the absolute
+  terms times `ex = exposure_now()`, ends in `select(display(c), c, HDR_TARGET)`, and meters
+  `meter_of(c / ex)`; `fsr2/tone.wgsl` no longer multiplies by the exposure. So a primary miss
+  outside the cutaway sets `c = sky_radiance(d) * ex` where the cutaway's `CUTAWAY_SKY * ex`
+  is set today, and both variants and the meter carry the sky with no branch of their own. The
+  variant's source is the `HDR_TARGET` replacement in `marcher.rs` (pipeline `composite hdr`).
+  Binding slots on main: frame group 0 holds 0 to 4, 7 to 9 and 11 to 13 (13 is 0040's
+  `exposure_state`), and 5 and 6 are free in `march.wgsl` but used by `attrib.wgsl`'s own layout,
+  so the sky's uniform, its LUTs and a filtering sampler take group 0 bindings from 14 up; the
+  composite's group 2 holds 0 to 8 (8 is 0040's `meter_tiles`), so anything the composite adds
+  there starts at 9. The LUT passes take their own slots at the front of `FRAME_PASSES` (for
+  example `sky luts` and `sky view` before `hit`): `fsr2.rs`'s test counts FSR 2's nine passes
+  back from `exposure`, which stays last. "The base commit" in every bar is main after Plan
+  0047's merge, whose goldens (0047 re-blessed `indirect.png`, `showcase_hall.png`, `fsr2.png`
+  and `mode_banner.png`) and `frame_bytes` (0047's `rgba32float` accumulation) are the ones to
+  match.
 - **Files touched:** new `crates/vxe-render/src/sky.rs`, new
   `crates/vxe-render/src/shaders/sky.wgsl`, `sky_transmittance.wgsl`, `sky_view.wgsl`,
   `composite.wgsl` (both variants), `marcher.rs` (the `Frame`, the FSR 2 composite variant's
@@ -238,8 +273,9 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
   5. **FSR 2's path shows the sky** (amended 2026-10-27, owner). Bar 4's pose through FSR 2's
      composite variant (`--upscaler fsr2` at scale 1) reads, in its HDR target at the top row's
      centre pixel, blue > green > red, and each channel within 1 % of the read-back sky-view
-     radiance for that pixel's direction times the sun's illuminance (the target holds
-     radiance before exposure).
+     radiance for that pixel's direction times the sun's illuminance times the frame's
+     exposure (amended 2026-10-28: since Plan 0040 the target holds pre-exposed radiance; bar
+     4's manual exposure is that factor).
 
 ### Phase 2: Multiple scattering, the moon, the discs and the time-of-day helper
 - **Owner skill:** dev
@@ -316,9 +352,40 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
     0038 has not merged. `--castle`, `--vault` and `--room N` are refused beside `--source
     outdoor`, as `--castle` already refuses `--level`. `Tab` cycles every `--source` value in
     the flag's order and back to the first.
+  *Amended 2026-10-28 (against main at v0.35.0 and plan 0047's branch):*
+  - **`--source` on main.** Plan 0038 merged: `parse_args_from` in `main.rs` maps `--source
+    cave|level|showcase` onto `Args::level` and `Args::showcase`, and its parse test asserts the
+    refusal `--source takes cave, level or showcase, not outdoor`. Phase 3 adds `outdoor` (an
+    `Args` field, or one source enum in place of the two booleans, dev's choice), turns that
+    assertion into acceptance, and words the refusal for the four values.
+  - **Each source's start settings.** `parse_args_from` gives the showcase its own start: the
+    lamp off, its light radius, and its shot's manual exposure (`--shot`), each unless its flag
+    is given, and refuses `--save`, `--replay`, `--vault`, `--autopilot`, `--room` and
+    `--castle` beside it. The outdoor source's start is the sky, `auto` exposure with Phase
+    4's preset, and `--spawn`. `Tab` rebuilds into a source with that source's start settings,
+    as `--source NAME` with the run's other flags would start it, so bar 6's comparison with a
+    fresh run holds. Whether `showcase` belongs in the cycle is Owner question 2; the bars
+    below assume it does, as approved.
+  - **The banner.** `hud::Modes::source` names a source only for the showcase today, and the
+    test `the_showcase_banner_names_its_source_and_the_lamp` asserts that the level names
+    none. Bar 4 needs every source named, so every source's line starts `source NAME`, and that
+    assertion changes to the level naming `source level`. `time` and `day cycle` appear only
+    while a sky is set. The banner wraps at `BANNER_COLS` (40) into at most `BANNER_ROWS` (6)
+    rows, and Plan 0047 adds `guard on` to the line. If the longest banner (a look row, the
+    outdoor words and the lighting line with indirect on) needs more rows, `BANNER_ROWS` rises
+    to fit, `main.rs`'s HUD line colours follow it, and `hud_golden.rs`'s `mode_banner.png` is
+    re-blessed as a disclosed change. It is a text golden, not a lighting one.
+  - **Keys.** `Tab`, `,`, `.` and `/` are unbound on main and on Plan 0047's branch.
+  - **The hash harness exists.** Plan 0038 added `flythrough::chunks_hash` (`lib.rs`) and the
+    `showcase_vector` test in `determinism.rs`: a hash over given chunks, and a check that the
+    chunks generated one by one in reverse order, in runs over the machine's threads, have the
+    same voxels. Bar 1 reuses both for the outdoor block and pins `OUTDOOR_HASH` beside
+    `SHOWCASE_HASH`. It builds no new harness.
 - **Files touched:** new `apps/flythrough/src/outdoor.rs`, `lib.rs` (the outdoor table),
   `main.rs` (flags, keys, the in-process switch, the clock), `hud.rs` (the banner's new
-  keys), `apps/flythrough/tests/determinism.rs` (a new chunk-hash harness), new
+  keys), `apps/flythrough/tests/hud_golden.rs` and `mode_banner.png` (only if the banner's
+  rows grow; amended 2026-10-28), `apps/flythrough/tests/determinism.rs` (the outdoor vector on
+  `chunks_hash`), new
   `apps/flythrough/tests/outdoor.rs`, `.config/nextest.toml` (the gpu filter, in every copy, if
   `outdoor.rs` opens a GPU device: `scripts/check-test-tiers.mjs` bites otherwise), the root
   `README.md` (flags, keys).
@@ -328,7 +395,9 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
      2026-10-27 (owner):* `determinism.rs` pins only `OP_LOG_HASH` today, so this phase builds
      the chunk-hash harness (generate a block of chunks on a given thread count and order,
      hash the voxels and palettes) and pins the outdoor source's hash as a new constant beside
-     `OP_LOG_HASH`.
+     `OP_LOG_HASH`. *Amended 2026-10-28:* Plan 0038 built that harness; the outdoor vector uses
+     `flythrough::chunks_hash` and the `showcase_vector` pattern, and `OUTDOOR_HASH` sits
+     beside `SHOWCASE_HASH`.
   2. **The mouth leads in and the chamber is roofed.** Every voxel on the tunnel's axis from
      the surface at `MOUTH` to the chamber's centre is air. Every column over the chamber's
      centre, within 40 voxels of it, has at least 60 voxels of non-air between the chamber's
@@ -362,6 +431,38 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
   phase's bars 1, 3 and 4. When this plan runs, Phase 4 keeps only: the sky and the discs
   multiplied by `current`, the sun and sky-ray terms through the pre-exposed path, the outdoor
   defaults and the preset choice, and bars 2 and 5. The text below is the pre-0040 design.
+- *Amended 2026-10-28 (against main at v0.35.0 and plan 0047's branch), the phase as it runs:*
+  - **Built.** `vxe_render::Exposure` (`Manual(f32)`, default 1.0, or `Auto(AutoExposure)`)
+    and `AutoExposure` with `eye()`, `symmetric(speed)` and `instant()` live in
+    `crates/vxe-render/src/exposure.rs`; `Lighting::exposure` is an `Exposure`. The state the
+    frame passes read is the 32-byte uniform at group 0 binding 13 (`exposure_now()`,
+    `exposure_ratio()` in `march.wgsl`). Stores into `rgba16float` targets clamp at `HDR_MAX`
+    (60 000) and the moments are of the luminance clamped at `MOMENT_LUM_MAX` (255). The
+    fly-through defaults to `auto eye` on every source, takes `--exposure auto|E`,
+    `--adaptation eye|symmetric|instant` (`symmetric` is `AutoExposure::symmetric(1.5)`, this
+    plan's model) and `--adapt`, and its banner names the mode and the EV.
+  - **What this phase writes.** The sky and the discs are pre-exposed by Phase 1's `* ex` in
+    the composite, and the sun's and the sky ray's terms by the light pass's existing store
+    (Phases 5 and 6), so this phase adds no exposure code to a shader. It sets the outdoor
+    source's start exposure in `main.rs`: `Exposure::Auto(AutoExposure { min: 1e-4, max: 4.0,
+    ..AutoExposure::eye() })`, key 0.18, Plan 0040's recommendation (its owner question 5,
+    option a), unless `--exposure` or `--adaptation` is given. A sunlit ground reads about 200
+    to 300 frame radiance units (Context), so it needs an exposure of `0.18 / 300` to `0.18 /
+    200`, 6e-4 to 9e-4, far under `eye()`'s `min` of 2^-6 (0.0156). That is why the outdoor
+    `min` is its own. Owner question 3 confirms the preset and
+    `max` for the dev phases; Phase 9 decides them.
+  - **Bar 2 as it runs.** In `crates/vxe-render/tests/exposure.rs`, an empty world under
+    `Sky::uniform(0.5)` with `AutoExposure::instant()`, the camera pitched up far enough that
+    its lowest ray is above the horizon (a uniform sky reads 0 below it, which would pull the
+    meter down), reads `current` from `Frame::exposure_state` at frame 2: 0.36 within 1 %.
+  - **Bar 5 moves to Phase 5's commit.** Its scene is Phase 5's floor under a sun of 3000,
+    which exists only once Phase 5 lands. The log records it under Phase 4. It reads the
+    irradiance (`rgba16float`), the accumulation (`rgba32float` since Plan 0047, read with
+    `readback::read_float`) and the moments. The clamps keep every stored value finite, so the
+    bar's work is to catch a NaN.
+  - **Files touched, replacing the list below:** `apps/flythrough/src/main.rs` (the outdoor
+    start exposure), `crates/vxe-render/tests/exposure.rs` (bar 2), `apps/flythrough/tests/lights.rs`
+    (bar 5, in Phase 5's commit).
 - **What:** `Lighting::exposure` becomes `Exposure`: `Manual(f32)`, with 1.0 the default, or
   `Auto { key, min, max, speed }`. The testbed defaults are 0.18, 1e-4, 4.0 and 1.5 per
   second, all guesses that Phase 9 judges. A storage buffer holds `[current, previous]`
@@ -425,9 +526,40 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
   degrees from it, so a slow drift blends through the ordinary slices.
   `Sky::sun.angular_radius` defaults to the real 0.2665 degrees (4.65 mrad). The
   fly-through takes `--sun-radius DEG` to show soft shadows on screen.
+  *Amended 2026-10-28 (against main at v0.35.0 and plan 0047's branch):*
+  - **`resident_r2`.** The live radii reach the `Frame` through `Frame::set_lod(LodParams)`,
+    which carries only `r_full` today. `LodParams` gains `r_lod`, and the two `set_lod` calls
+    in `main.rs` (the stream's start, and the `RadiusRule` step that calls
+    `Streamer::set_radii`) pass the residency's current `r_lod`. `resident_r2` is
+    `max(r_full, r_lod)^2`, the radius chunks are wanted to; a chunk past it but inside the
+    eviction hysteresis may be resident, and is walked as it is. `Params` takes it in a pad
+    word (`_pad3`, `_pad5`, or the `_pad8` that Plan 0047 adds after `reuse_m_cap`).
+  - **`Params.lighting` bits.** Main uses bits 0 to 3, 5 to 9, 12 (`LIGHTING_INDIRECT`) and 13
+    (`LIGHTING_AUTO_EXPOSURE`); Plan 0047 takes 10 (`LIGHTING_EMISSIVE_GUARD`). Bits 4, 11
+    and 14 up are free for the sky's flags, or the flags go in the sky's uniform. The
+    lighting-ray "absent is solid" choice stays an argument of `march` per call (Data shapes).
+  - **`LightKey`** (`marcher.rs`) holds `lamp`, `params`, `shadow_walk`, `candidates` and
+    `emission_changed_at`; the body in use, its illuminance and its key direction join it.
+  - **No firefly clamp on the sun.** `FIREFLY_CLAMP` bounds the emissive sample
+    (`resolve_emissive` in `light.wgsl`). The directional term is a bounded `E T max(n.l, 0)`
+    and does not pass through it, in the light pass or at the probe rays' hits.
+  - **The emissive guard sees the sun as still** (Plan 0047, ADR-0036). After 0047 the
+    gradient pass runs in the shaded view whenever emissive candidates are above 0, and its
+    guard compares the re-shaded emissive point alone with `luminance(prev_light.xyz)`, last
+    frame's whole emissive part. The sun's term lands in that part, so without a change every
+    sunlit pixel would read a lambda near 1 and lose its long history. So `gradient.wgsl`'s
+    re-shade adds the directional sample at last frame's hit, with last frame's disc draw (the
+    blue-noise dimensions the light pass used on frame `params.frame - 1`, at
+    `prev_light_offset` under half-resolution lighting) and this frame's body. A still sun
+    re-shades to last frame's value, within the guard's dead zone; a moved sun or a new
+    occluder reads as a change, which is the guard's job. The gradient mode's combined lambda
+    takes the same sum. This is the first of the two ways Plan 0047's Followups name, and
+    Owner question 1 asks whether to take it. The sun-turn bit (`LIGHTING_EMISSION_CHANGED`)
+    stays as planned. Bar 8 below defends it.
 - **Files touched:** `light.wgsl`, `march.wgsl` (the absent-chunk flag), `sky.wgsl`,
-  `marcher.rs` (`LightKey`), `sky.rs`, `crates/vxe-render/src/gpu_world.rs` (`resident_r2`
-  from the live residency), `apps/flythrough/src/main.rs`, `apps/flythrough/tests/lights.rs`,
+  `gradient.wgsl` (the directional re-shade; amended 2026-10-28), `marcher.rs` (`LightKey`,
+  `LodParams::r_lod` and `resident_r2`; amended 2026-10-28, in place of `gpu_world.rs`),
+  `sky.rs`, `apps/flythrough/src/main.rs` (the `set_lod` calls), `apps/flythrough/tests/lights.rs`,
   `apps/flythrough/tests/indirect.rs` (bar 7), `crates/vxe-render/tests/mirror.rs`.
 - **Done when** (headless, lavapipe, lamp off, no emissive material, no sky light, filter
   off, manual exposure 1.0, `E_sun = (1, 1, 1)`, mean over 16 frames, a floor of rock in a
@@ -467,6 +599,16 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
      `Frame::probe_light_window` true for the next `probes::WINDOW_FRAMES` encoded probe
      frames. A drift of 0.15 radius per frame opens no window over its first 48 frames: `48 x
      0.15 x 4.65 mrad = 33.5 mrad`, under 2 degrees (34.9 mrad).
+  8. **A still sun keeps its history under the guard** (amended 2026-10-28, against Plan
+     0047). Bar 3's slab under the zenith sun at the test radius of 5 degrees, but with the
+     filter on, the edit-box mode, emissive candidates 8 (the guard needs them above 0; no
+     emissive material, so they find nothing), the guard on and an emissive history of 256: at
+     least 99 % of hit pixels, the penumbra's among them, read age 63 after 64 still frames (0
+     on the first), with either sampler, as with the guard off. This is Plan 0047's
+     `the_emissive_guard_keeps_history_where_nothing_changed` with the sun as the light. A
+     counter-check in the same test: after a 10-degree turn at frame 64, the mean age of the
+     pixels that left the shadow falls under half its frame-64 value within 8 frames (the
+     guard lowers the age, the bit does not), so the re-shade sees the turn.
 
 ### Phase 6: Sky light: the probes on a miss, and one sky ray beyond them
 - **Owner skill:** dev
@@ -484,9 +626,28 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
   part when the ray reaches the sky above the horizon. The gather scales its result by
   `w_probe`. `Sky::uniform(L)`, a test setting, makes `sky_radiance(d) = L` above the horizon
   and 0 below, with no discs and no directional light.
+  *Amended 2026-10-28 (against main at v0.35.0 and plan 0047's branch):*
+  - **The sky ray under the guard.** The sky ray's `(1 - w_probe) pi sky_radiance(d)` lands
+    in the emissive part as the sun's term does, so `gradient.wgsl`'s re-shade adds it too, at
+    last frame's hit with last frame's cosine draw, where `w_probe < 1` (Phase 5's rule and
+    Owner question 1). Phase 6's bars run with the filter off and say nothing of history, so
+    Phase 5 bar 8's form is repeated once here as a reading: a floor pixel past the fade step
+    under `Sky::uniform(1.0)`, guard on, reads its age after 64 still frames into the log.
+  - **The probe slices** are spread by Plan 0047's per-probe hash (`probes::slot_slice`, used
+    by `ProbeVolume::update_list`). Every probe still updates once per `slices` frames and a
+    light-change window still revisits every probe, so no bar's arithmetic changes. The bars
+    read at 256 frames under a sky that is constant from frame 0, and a probe's first visit
+    blends at 0, so they read the converged value up to visit noise and do not wait for the
+    order-dependent transient Plan 0047 found in `indirect.png`.
+  - **Pi stays the reference.** Plan 0047's furnace test judges the probes against the probe
+    rays' own direct mean `D`, because `FIREFLY_CLAMP` biases the emissive estimate at their
+    hits about 8.5 % low. Bars 1 to 3 here have no emissive material and no directional light,
+    and a miss returns the sky exactly, so nothing passes the clamp and `pi` is the right
+    fixed point. If dev finds a term in them that does pass it, the bar is judged against the
+    probe rays' direct mean as in 0047's `furnace_direct_mean`, and the log says so.
 - **Files touched:** `probe_update.wgsl`, `probe_gather.wgsl`, `light.wgsl`, `sky.wgsl`,
-  `probes.rs`, `marcher.rs`, `sky.rs`, `apps/flythrough/tests/indirect.rs`,
-  `apps/flythrough/tests/lights.rs`.
+  `gradient.wgsl` (the sky ray's re-shade; amended 2026-10-28), `probes.rs`, `marcher.rs`,
+  `sky.rs`, `apps/flythrough/tests/indirect.rs`, `apps/flythrough/tests/lights.rs`.
 - **Done when** (headless, lavapipe, `Sky::uniform(1.0)`, lamp off, no emissive material,
   filter off, manual exposure 1.0, a level scene of a `64 s` square voxel rock floor (`s` =
   `ProbeVolume::spacing()`; 1024 x 1024 at the default 16) whose top is the scene's lowest air):
@@ -525,10 +686,40 @@ is `None` and the exposure is `Manual(1.0)`, and each phase's test run asserts i
   grass may not find: outdoors it carves at the first non-air voxel within 30 m along +x,
   whatever its material, or at the ground straight below the spawn if there is none, and its
   hash check is unchanged.
+  *Amended 2026-10-28 (against main at v0.35.0 and plan 0047's branch):*
+  - **Settled goldens.** "64 settled frames" no longer settles the probe volume. Plan 0047
+    found that a golden with indirect light at 64 frames reads a transient whose shape
+    depends on the order the probes update in, and it moved `indirect.png` to golden.rs's
+    `INDIRECT_FRAMES` (1600: the first visit blends at 0, the next 8 at the young hysteresis,
+    then about 191 settled visits leave under 6 % of an order-dependent difference). The four
+    goldens render at `INDIRECT_FRAMES`, with instant adaptation, and go on nextest's slow
+    list. The intent, settled images, is unchanged.
+  - **Bar 2 and the guard.** The sealing stamp kills history inside its edit box, and the
+    tunnel walls outside it hold the sun's term in the long emissive history (`H` frames after
+    Plan 0047). They follow the seal within bar 2's 64 frames through the guard's directional
+    re-shade (Phase 5): the re-shaded sun is now blocked, so the walls' lambda is high. Without
+    that re-shade they would follow at `1 / H`, and bar 2 could not be met. The accumulation
+    is `rgba32float` (`readback::read_float`).
+  - **The pass names.** Bar 3's passes are `FRAME_PASSES`' names: the sky passes, `hit`,
+    `gradient` (which runs by default after Plan 0047), `light`, `temporal`, `atrous`,
+    `probes` (the probe update), `gather`, `composite`, `upscale`, `sharpen` and `exposure`.
+  - **The no-sky reference.** Plan 0041's close table predates Plan 0040's meter and Plan
+    0047's gradient pass and history defaults, so it is no longer the base. Bar 3's level and
+    cave spawns with no sky are read at this plan's base commit (main after 0047's merge) with
+    the same command, both adapters, as the reference, and set beside 0047's close readings
+    in `nfr.md` §2.
+  - **A stillness reading.** Plan 0047's stillness rig (`apps/flythrough/tests/support/stillness.rs`)
+    counts patches, sudden steps and flicker on the meter's tiles over a still window. Dev
+    runs its statistics once at `outdoor_noon`'s pose (day cycle off, a pinned manual
+    exposure, no lamp stretch) and logs them beside 0047's bar numbers, as a reading with no
+    bar.
 - **Files touched:** `apps/flythrough/tests/golden.rs` (four new goldens),
   `crates/vxe-render/src/marcher.rs` (`FRAME_PASSES`), `apps/flythrough/src/main.rs` (the
   autopilot's dig rule), `hud.rs`, `apps/flythrough/examples/hero.rs` (`--source`,
-  `--time`), the root `README.md`, `docs/nfr.md` §2, §3 and §5.
+  `--time`), the root `README.md`, `docs/nfr.md` §2, §3 and §5; amended 2026-10-28:
+  `.config/nextest.toml` (the goldens on the slow list, in every copy) and
+  `apps/flythrough/tests/support/stillness.rs` (a pose and window for the outdoor reading, if
+  its API needs one).
 - **Done when:**
   1. **The four goldens are blessed**, and each differs from the others in more than 20 % of
      its pixels by more than 8/255 (the times of day are really different images). In
@@ -654,7 +845,8 @@ adds full-walk forest runs to read what the coarse walk saves.
        (115.4 to 163.4) along +x, inside the view's half-extents of 136.9 and 243.3 voxels at
        the floor.
   5. **The forest golden.** `outdoor_forest_sunset.png`: seed 1, `--spawn forest --trees
-     forest --time 17:45`, the default lighting tier, 64 settled frames, auto exposure with
+     forest --time 17:45`, the default lighting tier, settled at golden.rs's `INDIRECT_FRAMES`
+     (amended 2026-10-28, as Phase 7's goldens; it was 64 frames), auto exposure with
      instant adaptation, blessed on lavapipe at 320 x 180 under the plan's floor (at most
      0.1 % of pixels differ by more than 2/255). The same test renders the pose with
      `--trees none` and finds the mean luminance of the ground pixels (hit material `grass`
@@ -742,12 +934,14 @@ pub struct Sky {
     pub base_altitude_m: f32,     // altitude of that plane above the planet's surface
     pub uniform: Option<[f32; 3]>,// tests: a constant sky above the horizon, no bodies
 }
-pub enum Exposure { Manual(f32), Auto { key: f32, min: f32, max: f32, speed: f32 } }
 pub fn body_direction(hour_angle: f32, declination: f32, latitude: f32) -> [f32; 3];
-// Frame::set_sky(Option<Sky>), Frame::set_dt(f32); Lighting::exposure: Exposure
+// Frame::set_sky(Option<Sky>). Exposure, AutoExposure, Frame::set_dt and Lighting::exposure
+// are Plan 0040's, in crates/vxe-render/src/exposure.rs (amended 2026-10-28).
+// LodParams gains r_lod (Phase 5, amended 2026-10-28).
 ```
 
-GPU resources, sizes worked out:
+GPU resources, sizes worked out (amended 2026-10-28: the exposure rows are Plan 0040's, on
+main, with its meter at 160 x 90 tiles, 115 200 B, at the default 1280 x 720 internal size):
 
 | resource | format | size | bytes |
 |---|---|---|---|
@@ -755,24 +949,42 @@ GPU resources, sizes worked out:
 | multiple-scattering LUT | rgba16float | 32 x 32 | 8 192 |
 | sky-view LUT | rgba16float | 192 x 108 | 165 888 |
 | sky uniform (atmosphere, two bodies, mapping) | uniform | one block | under 256 |
-| exposure partial sums at 1080p | `vec2<f32>` per 8 x 8 workgroup | 240 x 135 | 259 200 |
-| exposure state | `[f32; 2]` | 1 | 8 |
 
-That is about 0.56 MB in total. No frame target is added: the directional and sky-ray
-irradiance join the existing emissive part.
+That is 305 152 B plus the uniform, about 0.31 MB. No frame target is added: the directional
+and sky-ray irradiance join the existing emissive part, which is `rgba32float` after Plan 0047.
 
-`Params` gains `resident_r2: i32`, the focus chunk (already implied by the LOD radii's
-centre), and the sky's flags: sky on, uniform, body (none, sun, moon). The new `Params.lighting`
-bit is "lighting ray: absent chunks inside the ball are solid", set per call of `march` by the
-light and probe passes, not per frame.
+`Params` gains `resident_r2: i32` in a pad word, the focus chunk (already implied by the LOD
+radii's centre), and the sky's flags: sky on, uniform, body (none, sun, moon), in free
+`Params.lighting` bits (4, 11, 14 up after Plan 0047 takes 10) or in the sky uniform. The
+"lighting ray: absent chunks inside the ball are solid" choice is an argument of `march` per
+call by the light, gradient and probe passes, not a per-frame bit.
 
 ## Budgets
 
+*Amended 2026-10-28 (against main at v0.35.0 and plan 0047's branch).* The table's base is
+Plan 0041's close table, read before Plans 0040 and 0047. The base this plan runs on adds, on
+the dev box: Plan 0040's meter and exposure pass, read at 1080p internal as 0.13 to 0.15 ms
+(`nfr.md` §2, "Eye adaptation"), less at the default 1280 x 720; and Plan 0047's gradient
+pass, which runs by default, guessed at 0.15 ms at most (its bar). 0047 also reads the probe update
+at +1.9 to +4.7 % and its CPU-side update list at 0.55 to 0.79 ms a frame. So the base frame
+is about 4.6 to 4.8 ms at `own` 1.5, a guess, which Phase 7 reads at the base commit (Phase 7's
+amendment). On the slow adapter the same additions are 0.17 ms (read) and up to 1.2 ms (0047's
+guess), about 29.5 to 30 ms a frame, a guess. This plan's own additions gain one line: the
+gradient pass's re-shade of the sun's and the sky ray's terms (Phases 5 and 6), up to two more
+shadow rays for each of the 25 600 strata at 640 x 360 lighting, a ninth of the light pass's
+pixels, so about `25 600 / 230 400 = 0.11` times the directional and sky rays' cost: +0.03 to
+0.07 ms on the dev box (a guess). `Frame::frame_bytes` at `own` 1.5 reads 181 154 464 B in
+`nfr.md` §3 (Plan 0041); Plan 0040 adds 116 128 B at 720p internal (the meter's 115 200 B, the
+state, its copy, the parameters and the ring, by its own arithmetic) and Plan 0047 adds
+3 686 400 B (16 B a lighting pixel at 640 x 360), so the base is about 184 956 992 B by
+arithmetic, which Phase 7 reads. This plan adds about 0.31 MB (Data shapes), not 0.56: the
+exposure rows are 0040's.
+
 | `nfr.md` figure | line | projection (dev box, 1080p output at main's defaults: `own` at 1.5, 1280 x 720 internal, 640 x 360 lighting, coarse shadow walk; re-based 2026-10-27, owner) | how the close measures it |
 |---|---|---|---|
-| §2 Lighting | 6.0 ms | **Base, read** (`nfr.md` §2, the "FSR 2.2.1 ported to WGSL" table, `own` 1.5 and `fsr2` 1.5 rows, level spawn, no sky): frame 4.39 to 4.51 ms; probe update 1.35 to 1.37 ms, which does not scale with the internal size; light + temporal + a-trous 1.57 to 1.59 ms (the `fsr2` 1.5 row: the same internal passes; the table does not split them, and a-trous sits on the denoise line). **Added, all guesses:** sky LUTs under 0.1 ms (sky-view every frame, about 622 000 samples for two bodies); directional ray 0.18 to 0.44 ms (the scale-1 guess of 0.4 to 1.0 ms at 960 x 540 times `230 400 / 518 400 = 0.44`; one more shadow ray per lit pixel, outdoor rays long but crossing mostly empty chunks); sky ray 0.09 to 0.22 ms on the pixels beyond the probes (the same scaling); the probe update's directional ray per probe hit, up to 262 144 more shadow rays a frame (4096 probes x 64 rays, the configuration of `nfr.md` §2 "The probe volume's two passes"), +0.4 to 1.0 ms against the pass's 1.35 ms. Sum +0.8 to 1.8 ms on the dev box, a frame of about 5.2 to 6.3 ms (a guess) | Phase 7's three outdoor runs and the level and cave spawns with no sky, both adapters, per-pass timestamps (the sky passes in `FRAME_PASSES`); the light pass is also read with `--sky off` at the same pose |
-| §2 Upscale, tone map, post | 1.5 ms | exposure partial sums inside the composite and a one-workgroup pass, under 0.05 ms (a guess) | the same runs |
-| §3 Everything else in VRAM | 1.5 GB | +0.56 MB (table above) | `Frame::frame_bytes` printed by the autopilot |
+| §2 Lighting | 6.0 ms | **Base, read** (`nfr.md` §2, the "FSR 2.2.1 ported to WGSL" table, `own` 1.5 and `fsr2` 1.5 rows, level spawn, no sky): frame 4.39 to 4.51 ms; probe update 1.35 to 1.37 ms, which does not scale with the internal size; light + temporal + a-trous 1.57 to 1.59 ms (the `fsr2` 1.5 row: the same internal passes; the table does not split them, and a-trous sits on the denoise line). **Added, all guesses:** sky LUTs under 0.1 ms (sky-view every frame, about 622 000 samples for two bodies); directional ray 0.18 to 0.44 ms (the scale-1 guess of 0.4 to 1.0 ms at 960 x 540 times `230 400 / 518 400 = 0.44`; one more shadow ray per lit pixel, outdoor rays long but crossing mostly empty chunks); sky ray 0.09 to 0.22 ms on the pixels beyond the probes (the same scaling); the probe update's directional ray per probe hit, up to 262 144 more shadow rays a frame (4096 probes x 64 rays, the configuration of `nfr.md` §2 "The probe volume's two passes"), +0.4 to 1.0 ms against the pass's 1.35 ms. Sum +0.8 to 1.8 ms on the dev box, a frame of about 5.2 to 6.3 ms (a guess). *Amended 2026-10-28:* plus the gradient re-shade's +0.03 to 0.07 ms, on the base of about 4.6 to 4.8 ms after Plans 0040 and 0047 (the paragraph above), a frame of about 5.4 to 6.7 ms (a guess) | Phase 7's three outdoor runs and the level and cave spawns with no sky, read at this plan's base commit (amended 2026-10-28), both adapters, per-pass timestamps (the sky passes in `FRAME_PASSES`); the light pass is also read with `--sky off` at the same pose |
+| §2 Upscale, tone map, post | 1.5 ms | *Amended 2026-10-28:* the meter and the exposure pass are Plan 0040's and in the base (0.13 to 0.15 ms read at 1080p internal); this plan adds the sky-view lookup and the discs on miss pixels in the composite, under 0.05 ms (a guess) | the same runs, the `composite` and `exposure` passes |
+| §3 Everything else in VRAM | 1.5 GB | +0.31 MB (table above; amended 2026-10-28, the exposure rows are 0040's), on a base of about 184 956 992 B at `own` 1.5 by arithmetic | `Frame::frame_bytes` printed by the autopilot, at the base commit and at the tip |
 | §3 World in VRAM | 3 GB | the outdoor source holds fewer `Full` bricks than the cave (a terrain surface against a volume of caverns) but one record per resident air chunk; unknown until read | the mirror's live bytes at frame 3000 of the outdoor run |
 | §5 Streaming line | 1.0 ms | unchanged code; a new scene, with uniform-air chunks above the hills cheap to generate and narrow | the outdoor autopilot's render-thread timers, p50 and p99 |
 | §2 Lighting and the frame, forest at low sun (amendment 2026-10-22, owner) | 6.0 ms; 16.6 ms | no projection: a half-filled canopy defeats the 2^3 skip for primary rays and the full walk (the default coarse walk sees it near-solid; amended 2026-10-27, owner), and a ray rising at 10 degrees crosses the canopy layer (about 21 to 118 voxels above the ground) over `97 / tan 10 = 550` voxels of ground distance | Phase 8's twelve configurations (two elevations, three tree settings: none and forest at leaf fill 128 and 64, two adapters; amended 2026-10-22, owner) at the coarse default, plus the four full-walk forest runs at elevation 10 (amended 2026-10-27, owner), the forest/open, fill 64/128 and coarse/full ratios, the directional ray's steps |
@@ -788,6 +1000,9 @@ in daylight as it already misses underground. Phase 7 records it as read. The co
 already the default for every shadow ray, so it is no longer a knob the close can turn; the
 knobs left are named under Risks (amended 2026-10-27, owner). **No baseline reading exists**;
 the card is not on hand.
+*Amended 2026-10-28:* after Plans 0040 and 0047 the slow adapter's base is about 29.5 to 30 ms
+(the paragraph above the table, a guess), and the gradient re-shade adds about six times the
+dev box's +0.03 to 0.07 ms, 0.2 to 0.4 ms (a guess).
 
 ## Risks & open questions
 
@@ -817,6 +1032,13 @@ the card is not on hand.
   running day cycle also softens the upscaled image for those 11 of every 54 frames, whichever
   upscaler is on. Phase 9 judges it; a separate "directional light changed" bit that the
   upscalers test against the directional term alone is the followup if the eye asks.
+  *Amended 2026-10-28:* between the bit's raises the emissive part blends at `1 / H`, and
+  Plan 0047 makes `H` long (its sweep runs 64 to 512). With the guard's directional re-shade
+  (Phase 5) a drifting penumbra reads as a change where it moved, so it follows; without it,
+  a drift under one angular radius would lag by up to `H` frames. The upscalers' history also
+  clips when the exposure moves more than `EXPOSURE_MOVE` (1/64 EV) in a frame
+  (`upscale.wgsl`, ADR-0033). A day cycle at the default length moves the exposure far less
+  than that a frame, but a `,` or `.` jump moves it at once, which is expected.
 - **Foliage step counts** (amendment 2026-10-22, owner). A canopy at `LEAF_FILL` 128 has no
   empty 2^3 block inside it, so a ray in it steps voxel by voxel. Each voxel blocks with
   probability one half, so a ray that enters a canopy usually stops within a few voxels. The
@@ -863,18 +1085,93 @@ the card is not on hand.
 - **Adapter features.** The LUT passes use `rgba16float` storage textures and filtered
   sampling, which the frame already uses. The exposure pass uses workgroup memory and no
   atomics. There are no subgroups and no 64-bit atomics.
-- **Re-checked when Plan 0040 merges** (amended 2026-10-27, owner). Plan 0040's lane is not on
-  main, so these items wait for its merge and are not amended here:
-  1. Data shapes and the resource table: `Exposure` and `AutoExposure` in
-     `vxe-render/src/exposure.rs`, 0040's exposure rows, and this plan's own total; Phase 4's
-     files touched extend 0040's `exposure.wgsl` and tests.
-  2. "Instant adaptation" in Phase 7 and Phase 8 bar 5 as `AutoExposure::instant()`, the
-     outdoor preset (`eye()` or `symmetric(1.5)`), and Phase 4 bar 5 against 0040's HDR clamp.
-  3. Binding slots (frame group 0, composite group 2) and the free `Params.lighting` bits.
-  4. Where 0040's pre-exposure and meter sit in FSR 2's composite path, and where the sky
-     times `current` goes there.
-  5. The `hud::Modes` layout after 0040's exposure text and Plan 0038's probe spacing, and
-     `FRAME_PASSES` after 0040's exposure pass.
+- **Re-checked when Plan 0040 merges** (amended 2026-10-27, owner). The five items waited on
+  Plan 0040's merge. *Resolved after Plan 0040 (amended 2026-10-28, against main at v0.35.0):*
+  1. *Data shapes and the resource table.* `Exposure` and `AutoExposure` are 0040's, in
+     `crates/vxe-render/src/exposure.rs`; the exposure rows left the table, whose total is
+     about 0.31 MB. Phase 4 writes no exposure shader: its files are `main.rs` and
+     `crates/vxe-render/tests/exposure.rs` (Phase 4's amendment).
+  2. *Instant adaptation* in Phase 7 and Phase 8 bar 5 is `AutoExposure::instant()`. The
+     outdoor preset is `eye()` with `min` 1e-4 and `max` 4.0 for the dev phases, 0040's
+     recommendation (Owner question 3; Phase 9 decides). Phase 4 bar 5 reads against 0040's
+     `HDR_MAX` 60 000 and `MOMENT_LUM_MAX` 255 clamps, and runs at Phase 5's commit.
+  3. *Binding slots and bits.* Frame group 0 is used to 13, so the sky takes 14 up; the
+     composite's group 2 is used to 8, so 9 up. `Params.lighting` bits 4, 11 and 14 up are free
+     after Plan 0047 takes 10 (Phases 1 and 5).
+  4. *FSR 2's composite path.* Both variants store the pre-exposed `c`; `fsr2/tone.wgsl` no
+     longer multiplies by the exposure, and `Fsr2::copy_exposure` hands FSR the state. The sky
+     joins `c` as `sky_radiance(d) * ex` before the variant's select, and the meter divides
+     `ex` back out (Phase 1).
+  5. *The banner and the passes.* `hud::Modes` has `source` (0038), the exposure mode and EV
+     (0040), `probes N` while indirect light is on (0038) and, on Plan 0047's branch, `guard
+     on`; the banner wraps at 40 columns into at most 6 rows (Phase 3's amendment).
+     `FRAME_PASSES` has 20 names with `exposure` last; the sky passes go at the front.
+- **Plan 0047 interaction** (amended 2026-10-28, against its branch at c27891f; 0047 lands
+  first). Where 0032's phases touch what 0047 changes, and how this lane takes it:
+  1. *The `rgba32float` emissive accumulation* (`Frame::accumulated`, `Targets::accum`). The
+     sun's and the sky ray's terms land in it at `1 / H`. Phase 4 bar 5 and Phase 7 bar 2 read
+     it with `readback::read_float`. `frame_bytes` grows by 0047's 3 686 400 B before this
+     plan's LUTs (Budgets).
+  2. *The emissive guard* (`LIGHTING_EMISSIVE_GUARD`, bit 10, `--emissive-guard`, on by
+     default). The gradient pass now runs whenever candidates are above 0, and its guard
+     compares the emissive re-shade with last frame's whole emissive part. Phases 5 and 6 add
+     the sun's and the sky ray's re-shade to `gradient.wgsl` so they are not read as change,
+     and Phase 5 bar 8 defends it (Owner question 1). Phase 7 bar 2 relies on it.
+  3. *`Params`.* 0047 adds `reuse_m_cap` and `_pad8` after `output_size` and takes bit 10;
+     `resident_r2` and the sky's flags take a pad word and bits 4, 11 or 14 up. The Rust
+     `Params` and `march.wgsl`'s struct change together, as 0047's did.
+  4. *The probe slices spread by a hash* (`probes::slot_slice` in `ProbeVolume::update_list`).
+     Phase 5 bar 7 and Phase 6's bars keep their arithmetic: each probe updates once per
+     `slices` frames and a light-change window revisits every probe. The probes' sun ray
+     (Phase 5, via the shared estimator) runs inside that order. The update list's CPU cost
+     (0.55 to 0.79 ms a frame, 0047's reading) is in the base.
+  5. *`INDIRECT_FRAMES` 1600 in `golden.rs`.* A golden with indirect light settles there,
+     not at 64. Phase 7's four goldens and Phase 8's forest golden render at it and join the
+     slow list.
+  6. *The new furnace form* (`furnace_direct_mean` in `indirect.rs`: the probes judged against
+     the probe rays' own direct mean `D`, because the firefly clamp biases it). Phase 6's
+     uniform-sky bars keep `pi`, since nothing in them passes the clamp; the 0047 form is the
+     fallback if a term does (Phase 6's amendment).
+  7. *The stillness rig* (`apps/flythrough/tests/support/stillness.rs`,
+     `apps/flythrough/tests/emissive_stillness.rs`). Phase 5 bar 8 mirrors 0047's
+     `the_emissive_guard_keeps_history_where_nothing_changed` with the sun; Phase 7 logs the
+     rig's statistics at the noon pose as a reading.
+  8. *Shared files that 0047 rewrote.* `apps/flythrough/tests/lights.rs`, `indirect.rs` and
+     `golden.rs`, `hud.rs` (the `guard on` word and the banner tests), `main.rs` (the
+     `--emissive-guard` flag and parse tests), `examples/hero.rs`, `temporal.wgsl`
+     (`gradient_at` returns both lambdas), `gradient.wgsl`, and `.config/nextest.toml`'s gpu
+     filter (`flythrough::emissive_stillness` added to the same line Phase 3 extends, in every
+     copy). The lane starts from 0047's merge, so these are the files as 0047 left them, and
+     the byte-identical bars compare against 0047's re-blessed goldens.
+  9. *0047's remaining phases* may set a new `DEFAULT_EMISSIVE_HISTORY` and
+     `Lighting::reuse_m_cap` and add `--reuse-m-cap`. Phase 5 bar 6's 11 frames come from
+     the bit's `ALPHA` 0.2 floor, not from `H`, so they hold at any default; bar 8's 256 is
+     set in the test. Every other history bar runs at the default dev finds.
+
+## Owner questions
+
+Amended 2026-10-28. Each has the option the amendment writes first.
+
+1. **The sun and sky under Plan 0047's guard.** (a) The gradient pass re-shades the sun's and
+   the sky ray's terms with last frame's draws, about +0.03 to 0.07 ms on the dev box (a
+   guess), and the guard keeps working outdoors (Phases 5 and 6 as amended; Phase 7 bar 2
+   relies on it). (b) The guard is off while a body is above the horizon. It costs nothing,
+   but outdoor static light falls back to `1 / H`, and Phase 7 bar 2 cannot then be met at a
+   long `H`.
+2. **The showcase in the `Tab` cycle.** (a) In it, starting with the showcase's own settings
+   (lamp off, its light radius and its shot's exposure), as Phase 3 bar 4 lists. (b) Left out:
+   `Tab` cycles `cave`, `level` and `outdoor`, and the showcase stays a launch-only source,
+   as its refusals of `--autopilot`, `--save` and `--replay` already treat it.
+3. **The outdoor exposure for the dev phases.** (a) `eye()` with `min` 1e-4 and `max` 4.0,
+   Plan 0040's recommendation, until Phase 9 picks. (b) `eye()` with `min` 1e-4 and the
+   cave's `max` 16, so the cave mouth's interior and the night can be exposed brighter. (c)
+   `symmetric(1.5)`, the approved pre-0040 model.
+4. **Plan 0048 and the order.** [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md)
+   (draft, 2026-10-28) changes the probe rays' direct light to remove the firefly clamp's bias
+   and asks to land before this plan, so Phase 6's probe bars are read once on an unbiased
+   probe term. (a) This plan starts when Plan 0047 merges, as amended: its Phase 6 bars pass
+   no term through the clamp, and 0048's Phase 1 re-reads its "before" on this plan's tree if
+   this plan lands first. (b) This plan also waits for Plan 0048.
 
 ## What this plan does NOT do
 
