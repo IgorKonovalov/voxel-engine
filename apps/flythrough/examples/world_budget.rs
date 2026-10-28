@@ -6,9 +6,13 @@
 //! cargo run --release -p flythrough --example world_budget -- --stream 16,24 --seed 1
 //! cargo run --release -p flythrough --example world_budget -- --stream 16,24 --surface
 //! cargo run --release -p flythrough --example world_budget -- --veins 16 --census
+//! cargo run --release -p flythrough --example world_budget -- --source showcase --census
 //! ```
 //!
-//! `--chunks` (`AxBxC` or `A,B,C`) generates the bounded cave over an extent. `--stream
+//! `--chunks` (`AxBxC` or `A,B,C`) generates the bounded cave over an extent; `--source
+//! showcase` generates the showcase cavern over its own extent instead (`--source level`, the
+//! default, is the cave). Both print the fly-through's bounded mirror budget
+//! (`flythrough::level_mirror_budget`, contour, dig headroom included). `--stream
 //! R_FULL,R_LOD` builds the residency the fly-through streams around the unbounded cave's
 //! spawn (hysteresis 1), on one worker per core, and waits until it is complete. `--census` adds the brick census
 //! (`World::brick_census`): the `Full` bricks and mip-bricks by count of non-air materials, and
@@ -54,6 +58,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 
 use flythrough::cave::CaveSource;
+use flythrough::showcase::{SHOWCASE_CHUNKS, ShowcaseSource};
 use flythrough::{cave_materials, chunk_ram, mips_ram, stream_record_chunks, window_side};
 use vxe_render::gpu_world::{
     BIN_COUNT, BINS, MATERIAL_FLOATS, PAGE_UNITS, RECORD_BYTES, UNIT_BYTES, bin_of, budget_for,
@@ -167,6 +172,7 @@ fn main() {
     let mut census = false;
     let mut veins = None;
     let mut surface = false;
+    let mut showcase = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         if a == "--census" {
@@ -188,6 +194,11 @@ fn main() {
                 chunks = parts.try_into().unwrap_or_else(|_| usage(&v));
             }
             "--seed" => seed = v.parse().unwrap_or_else(|_| usage(&v)),
+            "--source" => match v.as_str() {
+                "showcase" => showcase = true,
+                "level" => showcase = false,
+                _ => usage(&v),
+            },
             "--stream" => {
                 let parts: Vec<i32> = v.split(',').filter_map(|p| p.parse().ok()).collect();
                 let [r_full, r_lod]: [i32; 2] = parts.try_into().unwrap_or_else(|_| usage(&v));
@@ -204,7 +215,8 @@ fn main() {
         (Some(n), _) => veined(seed, n, chunks),
         (None, Some(r)) => streamed(seed, r, census, surface),
         (None, None) if surface => usage("--surface"),
-        (None, None) => bounded(seed, chunks, census),
+        (None, None) if showcase => bounded(seed, SHOWCASE_CHUNKS, census, true),
+        (None, None) => bounded(seed, chunks, census, false),
     }
 }
 
@@ -289,10 +301,13 @@ fn veined(seed: u64, n: u64, chunks: [i32; 3]) {
     }
 }
 
-fn bounded(seed: u64, chunks: [i32; 3], census: bool) {
+fn bounded(seed: u64, chunks: [i32; 3], census: bool, showcase: bool) {
     let extent = ChunkExtent::new([0, 0, 0], chunks);
-    let source = CaveSource::new(seed, extent);
-    let table = cave_materials();
+    let table = if showcase {
+        flythrough::showcase_materials()
+    } else {
+        cave_materials()
+    };
     let threads = std::thread::available_parallelism().map_or(1, usize::from);
 
     let start = now();
@@ -303,7 +318,12 @@ fn bounded(seed: u64, chunks: [i32; 3], census: bool) {
         query_voxels_max: size.iter().map(|&n| u64::from(n)).product(),
         ..WorldLimits::DEFAULT
     };
-    let world = World::generate_with_threads(extent, &source, &table, threads).with_limits(limits);
+    let world = if showcase {
+        World::generate_with_threads(extent, &ShowcaseSource::new(seed), &table, threads)
+    } else {
+        World::generate_with_threads(extent, &CaveSource::new(seed, extent), &table, threads)
+    }
+    .with_limits(limits);
     let secs = (now() - start).as_secs_f64();
 
     let start = now();
@@ -342,8 +362,12 @@ fn bounded(seed: u64, chunks: [i32; 3], census: bool) {
     let air = air.iter().find(|(m, _)| *m == 0).map_or(0, |&(_, n)| n);
 
     println!(
-        "{:LABEL$}{}x{}x{} chunks, seed {seed}",
-        "extent:", chunks[0], chunks[1], chunks[2]
+        "{:LABEL$}{}x{}x{} chunks, seed {seed}{}",
+        "extent:",
+        chunks[0],
+        chunks[1],
+        chunks[2],
+        if showcase { ", the showcase" } else { "" }
     );
     println!("{:LABEL$}{}", "chunks:", s.chunks);
     println!(
@@ -362,6 +386,12 @@ fn bounded(seed: u64, chunks: [i32; 3], census: bool) {
         mib(mirror as u64)
     );
     budget_lines(&face, &contour, s.chunks as u64);
+    let level_budget = flythrough::level_mirror_budget(&world, s.chunks as u64, true);
+    println!(
+        "level budget:      {level_budget} ({:.1} MiB): level_mirror_budget(world, {}, contour), dig headroom included",
+        mib(level_budget),
+        s.chunks
+    );
     println!("generation:        {:.3} s on {threads} threads", secs);
     println!("voxels/s/thread:   {:.3e}", voxels / secs / threads as f64);
     println!(
@@ -882,7 +912,7 @@ fn mib(b: u64) -> f64 {
 
 fn usage(bad: &str) -> ! {
     eprintln!(
-        "bad argument {bad:?}; usage: world_budget [--chunks AxBxC | --stream R_FULL,R_LOD | --veins N] [--seed N] [--census] [--surface]"
+        "bad argument {bad:?}; usage: world_budget [--chunks AxBxC | --source showcase|level | --stream R_FULL,R_LOD | --veins N] [--seed N] [--census] [--surface]"
     );
     std::process::exit(2)
 }

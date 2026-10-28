@@ -200,7 +200,16 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0039, 0040 and 0041 closed)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040 and 0041 closed)
+
+Plan 0038, the showcase cavern, closed 2026-10-28 (v0.35.0, testbed only, no ADR): the
+fly-through gains `--source cave|level|showcase` and `--shot`, and the showcase is a bounded,
+seeded, integer-only 72 x 58 x 24 m hall with pillars, cones, ledges, a chasm and a bridge,
+lit with the lamp off by four emissive ores. By the owner's Phase 6 call no ore lies on the
+roof, about half the floor is dark and the crystal clusters are the main light. `hero`
+defaults to the showcase's `hall` shot at 1920x1080 with indirect light at spacing 32 and our
+upscaler at 1.5, and `docs/images/hero.png` is re-shot from it. It shows M2's lighting and
+changes no engine crate.
 
 Plan 0040, eye adaptation, closed 2026-10-28 (v0.34.0, ADR-0033 accepted with an Outcome):
 the exposure is automatic by default, metered in the composite and stepped on the GPU by an
