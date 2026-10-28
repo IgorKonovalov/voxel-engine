@@ -907,7 +907,7 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
 | 1: The patch bar as a headless test | dev | done; stopped at done-when 4 | 031ab3b |
 | 2: A full-precision emissive accumulation | dev | done | a2b3852 |
 | 3: The emissive-only gradient guard | dev | done | 8263b17 |
-| 4: The probe gather holds still | dev | step A 93a2c72; step C 0b848cf; furnace test 9e229f5; filmstrip 5b75f81; step D read, stopped at item 2 (ADR-0037) | committed with this row |
+| 4: The probe gather holds still | dev | step A 93a2c72; step C 0b848cf; furnace test 9e229f5; filmstrip 5b75f81; step D read 919dbc4; kept mechanism wip, stopped on the hole test (owner) | committed with this row |
 | 5: The sweep, the defaults and the bar | dev | not started | |
 | 6: Goldens, readings and the fly-through | dev | not started | |
 | 7: The owner's windowed check | human | not started | |
@@ -1254,18 +1254,62 @@ design, and the architect writes ADR-0037 before any code. The tree carries no p
 (the hash, the `f32` atlas and the clamp are patches under `live/`). Done-whens 3 and 5 are
 not met by any tried setting; 6 is not read for a kept mechanism.
 
+Phase 4, the kept mechanism (the fourth amendment): the slice hash applied
+(`live/phase4-row4-hashed-slices.patch`, `f16` atlas at 0.97), `INDIRECT_FRAMES` 1600 with
+the FSR 2 indirect comparison kept at its 64 frames (`FSR2_INDIRECT_FRAMES`, its images are
+compared with each other at one count), `indirect_golden_shows_the_vein_s_bounce_light` on the
+slow list. Lavapipe, exclusive perf lock, power Not charging (on AC), 1-minute load 2.1 to
+18.6 (loaded; counts and means, no timings).
+- The hole test on this tree: frame 32 0.14136 = 69.7 % of settled 0.20288 (256 frames after
+  the carve), 16.4 x the pre-carve 0.00861; it fails its 70 % bar (`live/p4-hole-kept.log`).
+  A scratch run read the dark box for 2048 frames after the carve
+  (`live/p4-hole-long-hash.log`, `live/p4-hole-long-base.log`; long reading the mean of frames
+  1793 to 2048): hash at 32 0.14136, at 256 0.20288, long 0.23008 (spread 0.00342), frame 32 at
+  61.44 % of long; base (93a2c72) at 32 0.12354, at 256 0.17273 (71.52 %), long 0.23247
+  (spread 0.00354), frame 32 at 53.14 % of long. Series every 64 frames, hash: 0.1940 0.1980
+  0.2010 0.2029 0.2053 0.2084 0.2115 0.2115 0.2134 0.2159 0.2188 0.2206 0.2223 0.2251 0.2253
+  0.2239 0.2222 0.2256 0.2297 0.2307 0.2318 0.2305 0.2317 0.2303 0.2292 0.2305 0.2306 0.2292
+  0.2299 0.2313 0.2295 0.2301; base: 0.1440 0.1531 0.1654 0.1727 0.1792 0.1818 0.1876 0.1932
+  0.1971 0.1995 0.2029 0.2091 0.2141 0.2142 0.2191 0.2227 0.2229 0.2247 0.2267 0.2297 0.2305
+  0.2336 0.2351 0.2332 0.2374 0.2351 0.2355 0.2327 0.2330 0.2316 0.2314 0.2318. The "settled"
+  value at 256 frames is itself a transient on both trees; read against the converged value
+  both trees miss 70 %. Dev stops for the owner (done-when 5's rule): every form that passes on
+  this tree lowers the ratio or shortens the claim.
+- `indirect.png` at 1600 frames (`live/p4-goldens-hash.log`, `live/p4-goldens-base.log`): mean
+  sRGB luma 21.4254 (tip) against 21.5519 (base, 93a2c72), -0.59 %, within 1 %; tip against
+  base at 1600, 156 of 57 600 pixels over 2/255 (0.27 %, largest 3/255); the tip at 1600
+  against the old 64-frame golden 68.87 % (old golden luma 19.9392). 57 600 of 57 600 hit
+  pixels differ from indirect off by more than 8/255 (the 20 % claim). Re-blessed at 1600;
+  the blessed bytes equal the scratch render (0 pixels differ). The golden test runs 165 s.
+- `showcase_hall.png` at 256 frames: luma 16.8824 (tip) against 16.7976 (base), +0.50 %,
+  within 1 %; tip against base 2224 pixels over 2/255 (3.86 %, largest 14/255); against the
+  old golden 3.98 %. Re-blessed (the test prints luma 16.9, hue shares amber 8.32 %, ember
+  0.69 %, cyan 4.59 %, violet 0.06 %).
+- `flythrough::indirect`, `lights` and `golden` whole on this tree (`live/p4-dw5-kept.log`,
+  `--test-threads 2`): 51 run, 50 passed, 1 failed (the hole test as above), 2 skipped,
+  932 s. Clippy `-D warnings`, `fmt --check`, `check-test-tiers.mjs`,
+  `check-comment-hygiene.mjs` clean.
+- Done-whens 2 to 4 are step A's hash readings (the tree's probe code is that patch): 2 met
+  (gather 0 of `VEIN_POSE`'s composite 21.30); 3 as amended met (patch pose 8.15 <= 9.0,
+  44 <= 48, 21.0 <= 23 sudden/s; `VEIN_POSE` 0 / 0, 0/s); 4 met (composite 74.45 against
+  77.10, gather flicker 0.00365 and 0.00273 against 0.00430 and 0.00341). 6 met on step D's
+  timings (`frame_bytes` +0); the Radeon lamp-off re-read is Phase 6's.
+
 ### Resume notes (2026-10-28, delete when Phase 4 lands)
 
 - **State:** merge d9f9fae, Phase 2 a2b3852, Phase 3 8263b17, Phase 4 step A 93a2c72, step C
   0b848cf (verdict row 2 by the third amendment, 6661d2b), the furnace test's new form 9e229f5,
-  the filmstrip 5b75f81, the rig's gather mean luminance with this row's commit. Step D items 1
-  and 2 read and logged above; stopped at item 2's exit (ADR-0037). The tree carries no probe
-  change. Phases 5 and 6 not started.
+  the filmstrip 5b75f81, step D log 919dbc4. The kept mechanism (the hash, `INDIRECT_FRAMES`
+  1600, both goldens re-blessed) is in this row's `wip(render)` commit; it fails only the hole
+  test (69.7 % against 70 %). Stopped for the owner on that test. Phase 4's own commit (and
+  this row's state) follow the owner's answer; Phases 5 and 6 not started.
 - **Scratch:** `live/phase4-row4-hashed-slices.patch` (probes.rs, applies on the tip),
   `live/stepd-f32-h099.patch` (the `f32` atlas with the hash, at 0.99; edit `HYSTERESIS` in
   probes.rs and probe_update.wgsl together), `live/stepd-clamp.patch` (probe_update.wgsl, on
   the hash), `live/stepd-h.sh`, `live/stepd-k.sh`, `live/stepd_reveal.rs`, `live/stepc_long.rs`,
-  `live/stepc_replay.rs` (symlink into `apps/flythrough/tests/` as `zz_*.rs` to run; remove
+  `live/stepc_replay.rs`, `live/p4-hole-long-*.log` (the hole test's 2048-frame scratch, a
+  `zz_hole_long` test appended to `indirect.rs` only while run), `live/zz-*.png` (scratch
+  renders of both goldens on the base and tip) (symlink into `apps/flythrough/tests/` as `zz_*.rs` to run; remove
   before `cargo fmt` or any gate), the step C patches and `live/stepc-diag.sh`. Release
   binaries `live/flythrough-base` and `live/flythrough-hash` (the base timing readings,
   `live/p4-base-timing.sh`). Filmstrips under `live/filmstrip/`.

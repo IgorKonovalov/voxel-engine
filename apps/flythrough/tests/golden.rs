@@ -1365,22 +1365,32 @@ fn vein_cavity_camera() -> Camera {
     }
 }
 
-/// Frames the indirect golden settles over.
-const INDIRECT_FRAMES: u32 = 64;
+/// Frames the indirect golden settles over: 200 probe visits at one probe in 8. The first
+/// visit blends at 0 and the next 8 at the young hysteresis, so after 64 frames the golden
+/// would read a transient whose shape depends on the order the probes update in. From the
+/// first settled visit (frame 72) an order-dependent difference falls by about 0.985 a visit
+/// (`1 - (1 - albedo)(1 - h)` at albedo 0.5, h 0.97), so after 191 settled visits under 6 %
+/// of it is left.
+const INDIRECT_FRAMES: u32 = 1600;
+
+/// Frames the FSR 2 indirect comparison renders: it compares images rendered at the same
+/// count, so it needs no settled probe volume.
+const FSR2_INDIRECT_FRAMES: u32 = 64;
 
 /// The vein cavity after [`INDIRECT_FRAMES`] frames with the lamp off and indirect light
 /// `indirect`, read back.
 fn vein_cavity_render(world: &World, indirect: bool) -> Option<(Vec<u8>, Vec<[u16; 4]>)> {
-    vein_cavity_render_under(world, indirect, None)
+    vein_cavity_render_under(world, indirect, None, INDIRECT_FRAMES)
 }
 
-/// [`vein_cavity_render`] under FSR 2 at scale 1 when `fsr2` is `Some`: `Some(true)` with
-/// the upscaler bypassed (the composite's linear target put through the tone pass alone),
-/// `Some(false)` with every pass running.
+/// [`vein_cavity_render`] after `frames` frames, under FSR 2 at scale 1 when `fsr2` is
+/// `Some`: `Some(true)` with the upscaler bypassed (the composite's linear target put through
+/// the tone pass alone), `Some(false)` with every pass running.
 fn vein_cavity_render_under(
     world: &World,
     indirect: bool,
     fsr2: Option<bool>,
+    frames: u32,
 ) -> Option<(Vec<u8>, Vec<[u16; 4]>)> {
     let mut rig = LookRig::new(world, None)?;
     if let Some(bypass) = fsr2 {
@@ -1395,7 +1405,7 @@ fn vein_cavity_render_under(
         indirect,
         ..vxe_render::Lighting::default()
     });
-    for _ in 0..INDIRECT_FRAMES {
+    for _ in 0..frames {
         rig.frame.step(
             &rig.device,
             &rig.queue,
@@ -1410,9 +1420,10 @@ fn vein_cavity_render_under(
     ))
 }
 
-/// `indirect.png`: the cavity lit only by a vein around the partition's corner, after 64
-/// frames with indirect light; with indirect light off the same view differs in at least 20 %
-/// of its hit pixels by more than 8/255 (the vein's bounce light is what the golden shows).
+/// `indirect.png`: the cavity lit only by a vein around the partition's corner, after
+/// [`INDIRECT_FRAMES`] frames with indirect light; with indirect light off the same view
+/// differs in at least 20 % of its hit pixels by more than 8/255 (the vein's bounce light is
+/// what the golden shows).
 #[test]
 fn indirect_golden_shows_the_vein_s_bounce_light() {
     let world = vein_cavity();
@@ -1461,7 +1472,8 @@ fn hit_difference(a: &[u8], b: &[u8], info: &[[u16; 4]]) -> (f64, f64) {
     (differ as f64 / hits as f64, sum as f64 / (3 * hits) as f64)
 }
 
-/// FSR 2 carries the probe volume's indirect light: on `indirect.png`'s view, FSR 2's
+/// FSR 2 carries the probe volume's indirect light: on `indirect.png`'s view after
+/// [`FSR2_INDIRECT_FRAMES`] frames, FSR 2's
 /// colour input put through the tone pass alone (the upscaler bypassed) is the plain frame's
 /// image byte for byte; with every FSR pass running at scale 1, the image with indirect light
 /// differs from the one without in at least 20 % of its hit pixels by more than 8/255, as the
@@ -1469,18 +1481,19 @@ fn hit_difference(a: &[u8], b: &[u8], info: &[[u16; 4]]) -> (f64, f64) {
 #[test]
 fn fsr2_carries_the_indirect_golden_s_bounce_light() {
     let world = vein_cavity();
-    let Some((plain, info)) = vein_cavity_render(&world, true) else {
+    let n = FSR2_INDIRECT_FRAMES;
+    let Some((plain, info)) = vein_cavity_render_under(&world, true, None, n) else {
         return;
     };
     let (toned, _) =
-        vein_cavity_render_under(&world, true, Some(true)).expect("the adapter rendered once");
+        vein_cavity_render_under(&world, true, Some(true), n).expect("the adapter rendered once");
     let differing = plain.iter().zip(&toned).filter(|(a, b)| a != b).count();
     println!("indirect, FSR 2 bypassed: {differing} bytes differ from the plain frame");
     assert_eq!(differing, 0, "the tone pass changes the indirect image");
     let (fsr_lit, _) =
-        vein_cavity_render_under(&world, true, Some(false)).expect("the adapter rendered once");
+        vein_cavity_render_under(&world, true, Some(false), n).expect("the adapter rendered once");
     let (fsr_off, _) =
-        vein_cavity_render_under(&world, false, Some(false)).expect("the adapter rendered once");
+        vein_cavity_render_under(&world, false, Some(false), n).expect("the adapter rendered once");
     let (share, _) = hit_difference(&fsr_lit, &fsr_off, &info);
     let (far, mean) = hit_difference(&fsr_lit, &plain, &info);
     println!(

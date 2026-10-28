@@ -162,6 +162,28 @@ fn floor_div(w: i32, n: i32) -> i32 {
     w.div_euclid(n)
 }
 
+/// A bijection of the volume's 15-bit slot numbers whose low bits depend on every bit of the
+/// slot: two xorshift-multiply rounds (an xor with a right shift, and a product with an odd
+/// constant modulo 2^15, are each invertible on 15 bits).
+fn mix_slot(slot: u32) -> u32 {
+    let mut x = slot & (PROBE_COUNT - 1);
+    x ^= x >> 7;
+    x = x.wrapping_mul(0x6B4D) & (PROBE_COUNT - 1);
+    x ^= x >> 8;
+    x = x.wrapping_mul(0x2C9B) & (PROBE_COUNT - 1);
+    x ^= x >> 7;
+    x
+}
+
+/// The slice of `slices` (a power of two) that slot `slot` updates in: the low bits of
+/// [`mix_slot`]. Every slice holds `PROBE_COUNT / slices` slots, and neighbouring probes,
+/// whose slots differ in their low bits (x) or by a multiple of 32 (y, z), fall in slices
+/// spread by the hash rather than in one slice per x column, so the probes lighting one view
+/// update on different frames, each with its own frame's rotation.
+pub fn slot_slice(slot: u32, slices: u32) -> u32 {
+    mix_slot(slot) & (slices - 1)
+}
+
 /// The storage slot of world probe `w`.
 pub fn probe_slot(w: [i32; 3]) -> u32 {
     let m = w.map(|v| v.rem_euclid(PROBES_PER_AXIS as i32) as u32);
@@ -343,10 +365,10 @@ impl ProbeVolume {
     }
 
     /// The update list of `frame` with the volume cut into `slices` slices (a power of two in
-    /// [`WINDOW_SLICES`] ..= [`MAX_SLICES`]): the probes of slice `frame % slices` (slots
-    /// `slices k + slice`) and the probes `touched` names, each slot once, a touched one
-    /// flagged with [`TOUCHED_BIT`]; touched ones outside the slice up to [`MAX_TOUCHED`] and
-    /// the list's [`MAX_UPDATES`] entries.
+    /// [`WINDOW_SLICES`] ..= [`MAX_SLICES`]): the probes of slice `frame % slices` (the slots
+    /// whose [`slot_slice`] it is, in slot order) and the probes `touched` names, each slot
+    /// once, a touched one flagged with [`TOUCHED_BIT`]; touched ones outside the slice up to
+    /// [`MAX_TOUCHED`] and the list's [`MAX_UPDATES`] entries.
     pub fn update_list(&self, frame: u32, slices: u32, touched: &[[i32; 3]]) -> Vec<u32> {
         assert!(
             slices.is_power_of_two() && (WINDOW_SLICES..=MAX_SLICES).contains(&slices),
@@ -361,7 +383,7 @@ impl ProbeVolume {
             if flagged[s as usize] {
                 continue;
             }
-            if s % slices != slice {
+            if slot_slice(s, slices) != slice {
                 if extra.len() == room {
                     continue;
                 }
@@ -369,9 +391,9 @@ impl ProbeVolume {
             }
             flagged[s as usize] = true;
         }
-        let mut list: Vec<u32> = (0..PROBE_COUNT / slices)
-            .map(|k| {
-                let s = slices * k + slice;
+        let mut list: Vec<u32> = (0..PROBE_COUNT)
+            .filter(|&s| slot_slice(s, slices) == slice)
+            .map(|s| {
                 if flagged[s as usize] {
                     s | TOUCHED_BIT
                 } else {
@@ -524,6 +546,35 @@ mod tests {
             assert!((back - v).abs() <= v * 1e-3, "{v} -> {back}");
         }
         assert_eq!(f32_to_f16(1.0e6), 0x7C00);
+    }
+
+    /// Each slice count's slices partition the slots evenly, and the slots of one slice are
+    /// spread over x: slice 0 of 8 holds between 384 and 640 of its 4096 slots at each value
+    /// of `x mod 8` (a slice by `slot mod 8` would hold all of them at one).
+    #[test]
+    fn the_slices_partition_the_slots_spread_by_a_hash() {
+        let mut seen = std::collections::HashSet::new();
+        for s in 0..PROBE_COUNT {
+            assert!(
+                seen.insert(mix_slot(s)),
+                "mix_slot is not a bijection at {s}"
+            );
+        }
+        for slices in [WINDOW_SLICES, SLICES, 16, MAX_SLICES] {
+            let mut count = vec![0u32; slices as usize];
+            for s in 0..PROBE_COUNT {
+                count[slot_slice(s, slices) as usize] += 1;
+            }
+            assert!(
+                count.iter().all(|&c| c == PROBE_COUNT / slices),
+                "{slices}: {count:?}"
+            );
+        }
+        let mut by_x = [0u32; 8];
+        for s in (0..PROBE_COUNT).filter(|&s| slot_slice(s, SLICES) == 0) {
+            by_x[(s % 8) as usize] += 1;
+        }
+        assert!(by_x.iter().all(|&c| (384..=640).contains(&c)), "{by_x:?}");
     }
 
     #[test]
