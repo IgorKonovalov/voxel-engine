@@ -409,7 +409,7 @@ work), and the light (real-time GI standing in for the baked occlusion).
   emission row; not yet planned.
 - Static emissive light that holds still (the owner, after Plan 0040's second session,
   2026-10-27): with the lamp off near a vein, wall patches step on one by one and flicker.
-  Plan 0047 (draft, ADR-0036 proposed) gives the emissive part a long `f32` history guarded
+  Plan 0047 (in progress, ADR-0036 proposed) gives the emissive part a long `f32` history guarded
   by an emissive-only gradient, against a headless patch bar; after Plan 0040, before 0032.
 - The probe rays' direct light without the firefly clamp's bias (Plan 0047's step C,
   2026-10-28): the clamp cuts the probe rays' direct light about 8.5 % low in the furnace.
