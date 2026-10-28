@@ -19,7 +19,8 @@
 //! `R` voxels where the view ray meets rock before the frame is drawn. The lamp is off by
 //! default for both sources; indirect light is on at the hero's probe spacing
 //! (`HERO_PROBE_SPACING`, 32 voxels, `--probe-spacing` overrides it) and the upscaler at
-//! the fly-through's defaults (`--internal-scale 1`, `--jitter off`: none).
+//! the fly-through's defaults (`--internal-scale 1.5`: our upscaler with its jitter, which
+//! `--jitter off` stops; `--internal-scale 1` without `--jitter on` is the native frame).
 //! The look is a contour preset of `flythrough::LookPreset`, the fly-through's default unless
 //! `--look` names another (its fit, tuning and rock detail); the ores emit, and
 //! the light radius is the source's (19 chunks on the showcase, 4 on the level). The mirror
@@ -70,11 +71,21 @@ struct Args {
     lighting: Lighting,
     probe_spacing: u32,
     internal_scale: RenderScale,
-    jitter: bool,
+    /// `--jitter on|off` as given; unset, the upscaler jitters above scale 1.
+    jitter: Option<bool>,
     sharpen: f32,
     light_radius: Option<i32>,
     adapter: Option<String>,
     look: flythrough::LookPreset,
+}
+
+impl Args {
+    /// The frame's jitter: `--jitter` when given, else on above scale 1 (our upscaler
+    /// jitters, as the fly-through's does) and off at scale 1 (no upscaler).
+    fn jitter(&self) -> bool {
+        self.jitter
+            .unwrap_or(self.internal_scale != RenderScale::One)
+    }
 }
 
 /// The light radius of the showcase: its farthest pair of chunks lies 18.06 chunks apart.
@@ -101,8 +112,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             ..Lighting::default()
         },
         probe_spacing: HERO_PROBE_SPACING,
-        internal_scale: RenderScale::One,
-        jitter: false,
+        internal_scale: RenderScale::OneHalf,
+        jitter: None,
         sharpen: 0.5,
         light_radius: None,
         adapter: None,
@@ -183,7 +194,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 args.internal_scale = RenderScale::from_name(&v)
                     .ok_or(format!("--internal-scale takes 1, 1.5 or 2, not {v}"))?;
             }
-            "--jitter" => args.jitter = on_off(&flag, &v)?,
+            "--jitter" => args.jitter = Some(on_off(&flag, &v)?),
             "--sharpen" => {
                 args.sharpen = v
                     .parse()
@@ -465,7 +476,7 @@ fn main() -> Result<(), String> {
         let mut frame =
             Frame::with_sizes(&device, args.internal_scale.internal(args.size), args.size);
         frame.set_probe_spacing(&device, still.probe_spacing);
-        frame.set_jitter(&device, args.jitter);
+        frame.set_jitter(&device, args.jitter());
         frame.set_sharpness(&queue, args.sharpen);
         frame.set_lighting(Lighting {
             exposure: still.exposure,
@@ -519,7 +530,24 @@ mod tests {
         assert_eq!(d.shots, Shots::One(SHOTS[0]));
         assert_eq!(d.size, [1920, 1080]);
         assert!(!d.lighting.lamp && d.lighting.indirect);
-        assert_eq!((d.internal_scale, d.jitter), (RenderScale::One, false));
+        assert_eq!((d.internal_scale, d.jitter()), (RenderScale::OneHalf, true));
+        assert!(!parse(&["--internal-scale", "1"]).unwrap().jitter());
+        assert!(!parse(&["--jitter", "off"]).unwrap().jitter());
+        // Each shot keeps its manual exposure; `--exposure auto` is the eye.
+        for s in SHOTS {
+            let one = parse(&["--shot", s.name]).unwrap();
+            assert_eq!(
+                one.stills(VoxelCoord([0; 3]))[0].exposure,
+                Exposure::Manual(s.exposure_milli as f32 / 1000.0)
+            );
+        }
+        assert_eq!(
+            parse(&["--exposure", "auto"])
+                .unwrap()
+                .stills(VoxelCoord([0; 3]))[0]
+                .exposure,
+            Exposure::Auto(AutoExposure::eye())
+        );
         assert_eq!(d.probe_spacing, 32);
         for s in SHOTS {
             assert_eq!(parse(&["--shot", s.name]).unwrap().shots, Shots::One(s));
