@@ -504,12 +504,13 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The patch bar as a headless test | dev | done; stopped at done-when 4 | committed with this row |
-| 2: A full-precision emissive accumulation | dev | not started | |
+| 1: The patch bar as a headless test | dev | done; stopped at done-when 4 | 031ab3b |
+| 2: A full-precision emissive accumulation | dev | done | committed with this row |
 | 3: The emissive-only gradient guard | dev | not started | |
-| 4: The sweep, the defaults and the bar | dev | not started | |
-| 5: Goldens, readings and the fly-through | dev | not started | |
-| 6: The owner's windowed check | human | not started | |
+| 4: The probe gather holds still | dev | not started | |
+| 5: The sweep, the defaults and the bar | dev | not started | |
+| 6: Goldens, readings and the fly-through | dev | not started | |
+| 7: The owner's windowed check | human | not started | |
 
 Phase 1 (lavapipe, llvmpipe LLVM 23.1.3; exclusive perf lock; 1-minute load 1.8 at the start and
 9.0 at the end of the readings run, so loaded and indicative for timing; the counts are
@@ -553,50 +554,38 @@ after this phase for the architect's amendment. Phase 2's replay test, run once 
 `replay::a_stamp_and_a_collapse_replay_from_the_save` hit the 30 s kill; it passed alone in
 14.7 s); `--profile gpu` 176 run, 176 passed, 705.8 s; `flythrough::lights` and `flythrough::golden` whole (the slow list included, default profile): 33 run, 33 passed, 1 skipped (load 6.4).
 
-### Resume notes (2026-10-28, delete when Phase 2 lands)
+Merge of main at bc1e7a5 (v0.35.0, Plan 0038) as d9f9fae: one conflict, `.config/nextest.toml`
+(both sides' slow-list entries kept). Full tier on the merged tree under the exclusive perf lock
+(1-minute load 7.3 at the start, loaded): 706 run, 706 passed, 11 skipped, 2431 s.
 
-- **State:** Phase 1 done at 031ab3b (its row's commit cell still reads `committed with this
-  row`: backfill 031ab3b). Stopped at Phase 1 done-when 4; the owner chose option (a), a new phase
-  for the probe gather's emissive steps before Phase 4's bar (architect amendment pending).
-  Phase 2 not started. Gates at 031ab3b: quick 499/499, gpu 176/176, lights + golden whole 33/33.
-- **Pinned exposures** (in `apps/flythrough/tests/support/stillness.rs`): `PATCH_POSE` 10.9624,
-  `VEIN_POSE` 5.3720 (`VEIN_EXPOSURE`), each `Auto(eye)` 600 on / 900 off at 192 x 108, the last
-  frame's `current`.
-- **Vein pose gather, per step (off frames 120 to 720):** 0 0 0 0 0 0 277 0 0 0 40 54 0 217 0 0 0
-  0 0 0 (312 full tiles), against the composite's 25 27 29 25 20 35 120 23 23 34 38 38 30 94 35 35
-  19 16 20 24. Patch pose gather: 41 165 44 24 6 0 0 11 2 0 16 51 26 0 32 0 37 0 0 0. The gather is
-  identical with emissive history 1 and 32, so the temporal pass does not drive it.
-- **Where the gather's light comes from (read, not yet tested):** `probe_update.wgsl`
-  `probe_trace` adds `emissive_estimate` (`light.wgsl`, line ~423: one candidate draw and one
-  shadow ray per probe-ray hit) into each ray's radiance; `probe_blend` blends at `HYSTERESIS`
-  0.97 (`YOUNG_HYSTERESIS` 0.5 for young or touched probes); one slice in `Lighting::slices()`
-  (default 8) of the 32^3 probes updates a frame (`probes.rs` `SLICES`, `SLICE_PROBES`); the
-  gather (`probe_gather.wgsl`) writes `Frame::indirect_irradiance`. `probe_rotation()` is one
-  random rotation per frame shared by every probe (`rand(vec2(0), PROBE_ROTATION_DIMS)`).
-- **Suspects (unverified):** (1) the rare-event emissive sample in the probe rays: a probe whose
-  rays catch an unoccluded emitter point in one visit jumps by 3 % of a firefly-sized value, and
-  the few probes that light the view (spacing 16 voxels) move the whole screen at once, which
-  matches the 277- and 217-tile steps; (2) the shared per-frame rotation correlating all of a
-  slice's rays in a visit; (3) the slice cadence putting every near probe's update on the same
-  frame. A first probe: count the gather's per-frame |d log2| on single frames (the rig's
-  sudden steps read 0/s at the vein pose, so each step is spread over frames, not one jump), and
-  rerun the vein pose with `probe_rays` 64 vs 16 and `probe_slices` 8 vs 32
-  (`emissive_patch_sweep` has no key for them yet).
-- **Phase 2 work in progress:** `live/phase2-wip.patch` in this worktree (untracked; `git apply`
-  it): `temporal.wgsl`'s `accum_out` to `rgba32float` with its doc, `atrous.wgsl`'s doc, and
-  `lights.rs`'s `the_emissive_history_keeps_its_mean_over_a_long_window` (uses
-  `readback::read_float`). Still to do there: `marcher.rs` (the temporal layout's binding 7 to
-  `Io::Store(Rgba32Float)`, `Targets::accum` to `Rgba32Float`, `Targets::bytes` +16 B per
-  lighting pixel, `Frame::accumulated`'s doc), the other `accumulated()` readers switched to
-  `read_float` (`lights.rs` 863 and 1108, `indirect.rs` 816 and 903,
-  `crates/vxe-render/tests/exposure.rs` 441: outside Phase 2's Files touched, a deviation to
-  log), `nfr.md`'s frame-bytes reading. The before reading is already in the log above.
-- **Gotchas:** the rig takes about 70 s a run at 192 x 108 on lavapipe (counted test 289 s, the
-  default sweep 225 s); a fresh worktree needs `scripts/build-guests.sh` before the quick tier;
-  `check-test-tiers.mjs` reads tracked files only, so `git add` a new test file before it.
+Phase 2 (lavapipe, exclusive perf lock). Done-when 1: `the_emissive_history_keeps_its_mean_over_a_long_window`
+on the `rgba32float` accumulation reads a largest gap of 0.0001 % at frame 976 (1.74535 against
+the replay's 1.74535); before, on the `rgba16float` accumulation (Phase 1's paragraph), 13.92 %
+at frame 2021. Done-when 2: `dark_cave_golden_is_lit_by_its_ore_alone`,
+`half_resolution_dark_cave_golden_stays_near_the_full_one` and
+`indirect_golden_shows_the_vein_s_bounce_light` pass unchanged (load 5.1 to 8.3). Done-when 3:
+`Frame::frame_bytes` from `flythrough --autopilot --headless --seed 1 --render 1920x1080
+--frames 30` (release, RTX 3080 Laptop, exclusive perf lock, load 5.0 to 7.7): 184 956 992 B at
+the default (`own` 1.5, 640 x 360 lighting), 3 686 400 B over the merged base (181 154 464 B plus
+Plan 0040's 116 128 B meter at 1280 x 720); 262 770 752 B at `--internal-scale 1` (960 x 540
+lighting), 8 294 400 B over Plan 0040's 254 476 352 B. Gates: build, clippy `-D warnings`,
+`fmt --check`, doc tests, `check-test-tiers.mjs`, `check-comment-hygiene.mjs` clean; `--profile
+quick` 513 run, 512 passed, 1 timed out (`replay::a_stamp_and_a_collapse_replay_from_the_save`
+at load 19.7; alone it passes in 14.0 s); `--profile gpu` (load 14.7 at the start) 177 run, 176
+passed, 1 failed: `golden::fsr2_golden_matches_and_rcas_is_bypassed_at_zero`, `fsr2.png` 4.1510 %
+of pixels over 2/255 (largest 33/255, mean luma 64.255 to 64.289/255, +0.053 %); re-blessed in
+this commit, then both `golden` FSR 2 tests pass (0.0000 %).
 
 ### Notes
 
+- Merge d9f9fae: the tree's names match the plan's; Plan 0038 renamed nothing this plan's
+  files use.
+- Phase 2: the other readers of `Frame::accumulated` switch to `readback::read_float`:
+  `apps/flythrough/tests/indirect.rs` and `crates/vxe-render/tests/exposure.rs`, outside Phase
+  2's Files touched.
+- Phase 2: `apps/flythrough/tests/golden/fsr2.png` is re-blessed in this phase's commit (not in
+  Phase 2's Files touched; Phase 6 is the re-bless phase). The cavity has no emitter: only the
+  lamp's part changed precision.
 - Phase 1: `readback::read_float` (an `rgba16float` or `rgba32float` read by the texture's
   format) is added in this phase's commit, in `crates/vxe-render/src/readback.rs`, which Phase 1's
   Files touched does not list; the stillness rig reads the accumulation through it so Phase 2's

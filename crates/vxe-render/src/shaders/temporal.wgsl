@@ -11,8 +11,10 @@
 //   4  texture_2d<f32>   irradiance_in   this frame's irradiance from the light pass
 //   5  texture_2d<f32>   prev_accum_in   last frame's accumulated irradiance
 //   6  texture_2d<f32>   prev_moments_in last frame's moments: luminance, its square, age
-//   7  storage texture   accum_out       rgba16float: the accumulated irradiance, the
-//                                        emissive part in rgb, the lamp's (white) in a
+//   7  storage texture   accum_out       rgba32float: the accumulated irradiance, the
+//                                        emissive part in rgb, the lamp's (white) in a; full
+//                                        precision, so a blend of 1 / emissive_history moves
+//                                        it however long the history (ADR-0036)
 //   8  storage texture   moments_out     rgba16float: first and second moments of the
 //                                        irradiance's luminance, then the age: frames of
 //                                        history reused, 0 after a reset
@@ -53,7 +55,7 @@
 @group(2) @binding(4) var irradiance_in: texture_2d<f32>;
 @group(2) @binding(5) var prev_accum_in: texture_2d<f32>;
 @group(2) @binding(6) var prev_moments_in: texture_2d<f32>;
-@group(2) @binding(7) var accum_out: texture_storage_2d<rgba16float, write>;
+@group(2) @binding(7) var accum_out: texture_storage_2d<rgba32float, write>;
 @group(2) @binding(8) var moments_out: texture_storage_2d<rgba16float, write>;
 
 // Up to MAX_EDITS boxes, inclusive voxel bounds: box i is `boxes[2 i]` to `boxes[2 i + 1]`.

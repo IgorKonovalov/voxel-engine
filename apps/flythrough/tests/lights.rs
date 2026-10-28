@@ -860,7 +860,7 @@ fn the_lamp_light_that_left_the_cone_drops_in_each_history_mode() {
                 return;
             };
             let lamp_part = |rig: &LookRig| -> Vec<f64> {
-                readback::read_rgba16f(&rig.device, &rig.queue, rig.frame.accumulated())
+                readback::read_float(&rig.device, &rig.queue, rig.frame.accumulated())
                     .iter()
                     .map(|e| f64::from(e[3]))
                     .collect()
@@ -1105,7 +1105,7 @@ fn an_emission_step_settles_within_eleven_frames() {
     });
     let light = vxe_render::LightParams::headlamp();
     let read = |frame: &vxe_render::Frame| {
-        f64::from(readback::read_rgba16f(&device, &queue, frame.accumulated())[0][0])
+        f64::from(readback::read_float(&device, &queue, frame.accumulated())[0][0])
     };
     for _ in 0..96 {
         frame.step(&device, &queue, &gpu, &camera, &light);
@@ -1125,4 +1125,67 @@ fn an_emission_step_settles_within_eleven_frames() {
     let left = (series[10] - target).abs() / (before - target);
     println!("emission step: {left:.3} of the change left after 11 frames");
     assert!(left <= 0.1, "{left:.3}");
+}
+
+/// The emissive history keeps its mean over a long window: on the emissive-ceiling box (1 x 1
+/// target, lamp off, filter on, full-resolution lighting, the flat list, `Manual(1)`) with an
+/// emissive history of 512, the temporal pass's emissive accumulation agrees within 0.1 % at
+/// every frame from 1 to 2048 with a replay in `f64` of its blend rule,
+/// `max(1 / (age + 1), 1 / 512)` from age 0, over the light pass's irradiance read back each
+/// frame. The largest gap is printed.
+#[test]
+fn the_emissive_history_keeps_its_mean_over_a_long_window() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let (table, glow, _) = glow_table();
+    let world = ceiling_box(&table, glow);
+    let mut gpu = GpuWorld::new(&device, world.extent());
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    let camera = vxe_render::Camera {
+        position: [32.0, 32.0, 29.0].into(),
+        yaw: 0.0,
+        pitch: -std::f32::consts::FRAC_PI_2,
+        vfov: 0.5,
+    };
+    const H: u32 = 512;
+    let mut frame = vxe_render::Frame::new(&device, 1, 1);
+    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
+    frame.set_lighting(vxe_render::Lighting {
+        lamp: false,
+        sampler: vxe_render::Sampler::List,
+        exposure: vxe_render::Exposure::Manual(1.0),
+        emissive_history: H,
+        ..vxe_render::Lighting::default()
+    });
+    let light = vxe_render::LightParams::headlamp();
+    let mut replay = 0.0f64;
+    let mut worst = (0.0f64, 0usize, 0.0f64, 0.0f64);
+    for i in 1..=2048usize {
+        frame.step(&device, &queue, &gpu, &camera, &light);
+        let sample = f64::from(readback::read_float(&device, &queue, frame.irradiance())[0][0]);
+        let gpu_acc = f64::from(readback::read_float(&device, &queue, frame.accumulated())[0][0]);
+        // Age i - 1 on frame i: the first frame resets, each one after reuses one more.
+        let age = (i - 1) as f64;
+        let a = (1.0 / (age + 1.0)).max(1.0 / f64::from(H));
+        replay += a * (sample - replay);
+        let gap = (gpu_acc / replay - 1.0).abs();
+        if gap > worst.0 {
+            worst = (gap, i, gpu_acc, replay);
+        }
+    }
+    println!(
+        "reading: emissive accumulation ({:?}) against the f64 replay at H {H}: largest gap {:.4} % at frame {} ({:.5} against {:.5})",
+        frame.accumulated().format(),
+        worst.0 * 100.0,
+        worst.1,
+        worst.2,
+        worst.3
+    );
+    assert!(
+        worst.0 <= 1e-3,
+        "the accumulation drifts {:.4} % from the replay at frame {}",
+        worst.0 * 100.0,
+        worst.1
+    );
 }

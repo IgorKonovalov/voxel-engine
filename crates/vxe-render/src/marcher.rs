@@ -1375,7 +1375,7 @@ impl Frame {
                 Io::Float,
                 Io::Float,
                 Io::Float,
-                f16,
+                Io::Store(wgpu::TextureFormat::Rgba32Float),
                 f16,
                 Io::Uniform,
                 Io::Float,
@@ -2074,7 +2074,8 @@ impl Frame {
         &self.targets.reservoir[self.cur]
     }
 
-    /// The temporal pass's accumulated irradiance (rgba16float, rgb).
+    /// The temporal pass's accumulated irradiance (rgba32float: the emissive part in rgb, the
+    /// lamp's in a).
     pub fn accumulated(&self) -> &wgpu::Texture {
         &self.targets.accum[self.cur]
     }
@@ -2918,7 +2919,8 @@ struct Targets {
     layer: wgpu::Texture,
     /// The light pass's irradiance (rgba16float), on the lighting grid.
     irradiance: wgpu::Texture,
-    /// The temporal pass's accumulated irradiance and moments (rgba16float).
+    /// The temporal pass's accumulated irradiance (rgba32float: the emissive part's long
+    /// history keeps its mean, ADR-0036) and moments (rgba16float).
     accum: [wgpu::Texture; 2],
     moments: [wgpu::Texture; 2],
     /// The filter's ping-pong pair (rgba16float: irradiance rgb, variance a).
@@ -2983,7 +2985,7 @@ impl Targets {
             half_info: half.then(|| [0, 1].map(|_| lit("half hit info", Rgba16Uint))),
             layer: tex("layer", Rgba16Float),
             irradiance: lit("irradiance", Rgba16Float),
-            accum: [0, 1].map(|_| lit("accumulated irradiance", Rgba16Float)),
+            accum: [0, 1].map(|_| lit("accumulated irradiance", Rgba32Float)),
             moments: [0, 1].map(|_| lit("moments", Rgba16Float)),
             filter: [0, 1].map(|_| lit("filter", Rgba16Float)),
             reservoir: [0, 1].map(|_| lit("reservoir", Rgba32Uint)),
@@ -3043,7 +3045,7 @@ impl Targets {
         px * (2 * (16 + 8) + 8)
             + output * 4
             + history
-            + lpx * (half + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16 + 8)
+            + lpx * (half + 8 + 2 * 16 + 2 * 8 + 2 * 8 + 2 * 16 + 8)
             + strata * 8
             + self.tiles.size()
     }

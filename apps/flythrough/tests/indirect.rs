@@ -813,7 +813,7 @@ fn a_lamp_switch_drops_the_lamp_s_direct_history() {
         ..f.frame.lighting()
     };
     let lamp_part = |f: &FloorProbe| {
-        let acc = readback::read_rgba16f(&device, &queue, f.frame.accumulated())[0][3];
+        let acc = readback::read_float(&device, &queue, f.frame.accumulated())[0][3];
         let raw = readback::read_rgba16f(&device, &queue, f.frame.irradiance())[0][3];
         (acc, raw)
     };
@@ -897,7 +897,7 @@ fn pulse_run(pulse: Pulse) -> Option<(Vec<f64>, Vec<f64>, Vec<bool>)> {
         f.run(&device, &queue, &gpu, 1);
         let e = f.indirect(&device, &queue);
         indirect.push(lum([e[0], e[1], e[2], 0.0]));
-        direct.push(lum(readback::read_rgba16f(
+        direct.push(lum(readback::read_float(
             &device,
             &queue,
             f.frame.accumulated(),

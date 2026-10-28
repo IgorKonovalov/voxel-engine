@@ -966,6 +966,15 @@ B at main 05a3a28, 254 476 352 B at 8a3fff3, +260 128 B: the meter's 240 x 135 t
 the 32-byte state and its uniform copy, the pass's 96-byte parameters and three 256-byte
 read-back buffers. The plan projected +0.26 MB.
 
+**The emissive accumulation in `f32` (Plan 0047 Phase 2; ADR-0036).** The temporal pass's
+accumulation pair is `rgba32float`, 16 B more per lighting pixel. `Frame::frame_bytes` printed by
+`flythrough --autopilot --headless --seed 1 --render 1920x1080` (RTX 3080 Laptop, exclusive perf
+lock, 1-minute load 7.7, loaded): 184 956 992 B at the default (`own` 1.5, half: 640 x 360
+lighting), +3 686 400 B over the merged base (the FSR 2 entry's 181 154 464 B plus the eye
+adaptation's meter at 1280 x 720, 116 128 B); 262 770 752 B at scale 1, half (960 x 540
+lighting), +8 294 400 B over the eye adaptation's 254 476 352 B. The plan's bar is 16 B per
+lighting pixel at most.
+
 **Prefabs (arithmetic, Plan 0008; no reading needed).** A `Prefab` holds 2 B of material plus
 one mask bit per voxel: a 16³ prefab is 8 KiB + 512 B, a 64³ one 512 KiB + 32 KiB. A parsed
 `.vox` model is capped at 256³ per axis (`MAX_MODEL_EDGE`), so the largest `to_prefab`
