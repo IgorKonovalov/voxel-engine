@@ -1,15 +1,15 @@
 # 0038: A showcase cavern lit by four ores, and a hero still with named shots and no headlamp
 
-> **Status:** in-progress (2026-10-27)
+> **Status:** done (2026-10-28). Close review clean: every phase landed as amended, the gate re-run at b9f4b08 is green, `hero.png` reproduces byte for byte from its caption, and the section 2 and 3 readings were re-taken after Phase 6a and the two merges; four nits go to Followups.
 > **Decisions:** Owner, 2026-10-22: hall 72 x 58 x 24 m as planned with probe spacing settled from the review renders; ore palette as planned; shots hall, chasm and crystals with `hall` the default; everything stays diggable (no SHELL bridge or pillars).
 > **Created:** 2026-10-22
 > **Milestone:** M2 in `docs/roadmap.md` (testbed content: the hero and demos show M2's
 > lighting; no engine work)
 > **Related ADRs:** none. The plan uses what
-> [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (direct light from emissive samples),
-> [ADR-0023](../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md) (the probe volume)
-> and [ADR-0024](../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) (the upscaler)
+> [ADR-0023](../../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md) (the probe volume)
+> and [ADR-0024](../../adrs/0024-own-temporal-upscaler-on-the-hit-buffer.md) (the upscaler)
 > already decided.
 > **Source:** Plan 0024's Followups ("A showcase cave for the hero and demos", owner,
 > 2026-10-20); Plan 0029's Followups; the owner, 2026-10-22: "hero image is lame, we should
@@ -556,3 +556,25 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Outstanding `human` phases:** none.
 
 ## Followups
+
+From the close review (2026-10-28), none blocking:
+
+- **Amber reads as flat cream.** In `hero.png` the amber ore (`ORE_EMISSION` `[1.6, 0.9, 0.35]` at
+  manual exposure 1.5) clips to near-white patches with no gradation, while the other three ores
+  keep their hue. The owner accepted the palette as shipped (Phase 6). A later look pass can
+  lower the amber's radiance for the showcase only (its own row instead of the shared `ore`
+  row) or let the tone map roll off saturated emitters.
+- **Thin golden margins.** `showcase_hall.png`'s ember share is 0.69 % against the 0.5 % floor
+  and violet 0.06 %, so bar 3 holds on three classes with little room. The golden is
+  deterministic on lavapipe; a change to the default look or the upscaler that dims the
+  chasm's line will trip it, and re-blessing then needs the shares re-read, not only the
+  pixels.
+- **The TL;DR's banner.** The TL;DR says the reader first sees the yellow `source showcase ...
+  lamp off` banner; `hero` renders no HUD, so the still has no banner. The banner is the
+  fly-through's (Phase 1's test). Wording only.
+- **`SyncStats::light_us` per sync.** Phase 5 read the first sync's extraction only (8.3 to
+  8.8 ms for 16 471 samples then; 4.27 ms for 16 564 samples at the close); the total over the
+  upload's syncs was never summed. With 29 806 samples the upload is now two syncs.
+- **One windowed first frame over 3 s.** The owner's first look run of the Phase 6 session read
+  4015 ms (load 1.50); the six counted runs and the next three sat at 0.66 to 2.08 s. Its cause
+  was not read; a later first-frame pass can time a cold start after a fresh boot.
