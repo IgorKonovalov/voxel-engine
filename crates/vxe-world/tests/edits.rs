@@ -843,3 +843,86 @@ fn the_worst_ops_capture_the_pinned_row_spans() {
         h.0
     );
 }
+
+/// The diagonal capsule of the span-allocation test: from voxel centre `(4, 4, 4)` along
+/// `(577, 577, 577)` (999.4 voxels), radius 2, carved through solid rock over chunks
+/// `[0, 10)^3`.
+fn long_diagonal() -> (World, EditOp) {
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [10, 10, 10]),
+        &UniformSource(3),
+        &test_table(),
+    );
+    let a = centre_of_voxel([4, 4, 4]);
+    let b = Fixed3(a.0.map(|v| v + 577 * FIXED_ONE));
+    (world, EditOp::capsule(a, b, 2 * FIXED_ONE, Mode::Carve))
+}
+
+/// Brick rows `(by, bz)` of `lo..=hi` that the capsule from `a` to `b` (voxel units) of
+/// radius `r` can reach, counted loosely: those whose `y` and `z` ranges, widened by `r + 1`,
+/// the segment crosses at a common parameter. Every brick row the capsule meets is counted.
+fn brick_rows_near(a: [f64; 3], b: [f64; 3], r: f64, lo: [i32; 3], hi: [i32; 3]) -> usize {
+    let span = |k: usize, v0: f64, v1: f64| -> Option<(f64, f64)> {
+        let d = b[k] - a[k];
+        if d == 0.0 {
+            return (a[k] >= v0 && a[k] <= v1).then_some((0.0, 1.0));
+        }
+        let (t0, t1) = ((v0 - a[k]) / d, (v1 - a[k]) / d);
+        Some((t0.min(t1).max(0.0), t0.max(t1).min(1.0)))
+    };
+    let mut n = 0;
+    for bz in lo[2].div_euclid(8)..=hi[2].div_euclid(8) {
+        for by in lo[1].div_euclid(8)..=hi[1].div_euclid(8) {
+            let w = r + 1.0;
+            let ty = span(1, f64::from(by * 8) - w, f64::from(by * 8 + 8) + w);
+            let tz = span(2, f64::from(bz * 8) - w, f64::from(bz * 8 + 8) + w);
+            if let (Some((y0, y1)), Some((z0, z1))) = (ty, tz)
+                && y0.max(z0) <= y1.min(z1)
+            {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// A capsule of length 999.4 voxels and radius 2 along the space diagonal through solid
+/// rock: its voxel bounds span `582 x 582` rows `(y, z)`, and it allocates spans only for the
+/// brick rows it reaches, 64 each. The result is the one the whole-bounds allocation gave
+/// (pinned from it).
+#[test]
+fn a_long_diagonal_capsule_allocates_spans_only_for_the_brick_rows_it_reaches() {
+    let (world, op) = long_diagonal();
+    let (lo, hi) = op.shape.voxel_bounds().unwrap();
+    let rows = (hi[1] - lo[1] + 1) * (hi[2] - lo[2] + 1);
+    assert_eq!(rows, 582 * 582);
+    let (r, entries) = world.apply_counting_spans(&op).unwrap();
+    let near = brick_rows_near(
+        [4.5; 3],
+        [581.5; 3],
+        2.0,
+        lo.map(|v| v as i32),
+        hi.map(|v| v as i32),
+    );
+    println!("{entries} span entries for {near} reachable brick rows; {rows} rows in the bounds");
+    assert!(entries <= 64 * near, "{entries} entries, {near} brick rows");
+    assert!(
+        entries * 16 < rows as usize,
+        "{entries} entries of {rows} rows"
+    );
+
+    assert_eq!(r.changed_from, [(3, 10996)]);
+    assert_eq!(r.touched.len(), 64);
+    assert_eq!(
+        r.aabb,
+        Some((VoxelCoord([2, 2, 2]), VoxelCoord([583, 583, 583])))
+    );
+    let mut h = 0u64;
+    for c in &r.touched {
+        h = vxe_world::hash::mix64(
+            h ^ (c.0[0] as u64) ^ ((c.0[1] as u64) << 21) ^ ((c.0[2] as u64) << 42),
+        );
+    }
+    assert_eq!(h, 0xac65_8493_f64b_99ea);
+    assert_eq!(world.voxel_hash(), 0x2b8d_1391_b1a8_0d45);
+}

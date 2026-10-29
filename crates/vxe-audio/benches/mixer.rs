@@ -20,9 +20,14 @@ const SOURCES: usize = 32;
 /// 32 positions (voxel units) on three rings around `centre`, 2 to 12 m out, at different
 /// heights, so the voices take different HRTF directions.
 fn sources(centre: [f32; 3]) -> Vec<[f32; 3]> {
-    (0..SOURCES)
+    sources_n(centre, SOURCES)
+}
+
+/// [`sources`] with `n` positions.
+fn sources_n(centre: [f32; 3], n: usize) -> Vec<[f32; 3]> {
+    (0..n)
         .map(|i| {
-            let a = i as f32 * std::f32::consts::TAU / SOURCES as f32 * 3.0;
+            let a = i as f32 * std::f32::consts::TAU / n as f32 * 3.0;
             let r = 20.0 + 50.0 * (i % 3) as f32;
             let z = 10.0 * ((i % 5) as f32 - 2.0);
             [
@@ -54,13 +59,18 @@ fn noise() -> Sound {
 /// A mixer at the origin with the 32 looping noise voices, each with 16 taps and a low-pass,
 /// rendered past the start so the delay lines are full and the gains and filters settled.
 fn loaded_mixer(direct_delay: bool) -> Mixer {
+    loaded_mixer_n(direct_delay, SOURCES)
+}
+
+/// [`loaded_mixer`] with `n` voices.
+fn loaded_mixer_n(direct_delay: bool, n: usize) -> Mixer {
     let mut mixer = Mixer::new(Hrtf::sadie2_d2(), MPV);
     mixer.set_mix(MixSettings {
         direct_delay,
         ..MixSettings::default()
     });
     let sound = noise();
-    for (i, p) in sources([0.0; 3]).into_iter().enumerate() {
+    for (i, p) in sources_n([0.0; 3], n).into_iter().enumerate() {
         let id = VoiceId(i as u32 + 1);
         mixer.apply(Command::Play(
             id,
@@ -93,7 +103,7 @@ fn loaded_mixer(direct_delay: bool) -> Mixer {
         rooms.step(&mut mixer);
         mixer.render(&mut out, BLOCK);
     }
-    assert_eq!(mixer.voice_count(), SOURCES);
+    assert_eq!(mixer.voice_count(), n);
     assert!(
         mixer.reverb_networks().iter().all(|n| n.holds_signal),
         "both tail networks run"
@@ -282,5 +292,47 @@ fn mixer_block_turning_with(c: &mut Criterion, direct_delay: bool) {
     });
 }
 
-criterion_group!(benches, mixer_block, mixer_block_turning);
+/// Blocks in 10 s of audio.
+const TEN_SECONDS: usize = 10 * RATE as usize / BLOCK;
+
+/// 64 voices loaded as [`loaded_mixer`]'s, timed fresh; and the same 64 turned down to gain
+/// 0 and rendered for 10 s first, whose smoothers have settled on 0 (left to decay, they
+/// would sit in subnormal floats and every block would cost more).
+fn mixer_block_silent(c: &mut Criterion) {
+    let mut out = vec![0.0f32; 2 * BLOCK];
+    let mut rooms = Rooms(1);
+    let mut fresh = loaded_mixer_n(false, MAX_VOICES);
+    c.bench_function("mixer: one 256-frame block, 64 HRTF voices, fresh", |b| {
+        b.iter(|| {
+            rooms.step(&mut fresh);
+            fresh.render(&mut out, BLOCK);
+            black_box(&out);
+        })
+    });
+    let mut silent = loaded_mixer_n(false, MAX_VOICES);
+    for i in 0..MAX_VOICES {
+        silent.apply(Command::SetGain(VoiceId(i as u32 + 1), 0.0));
+    }
+    for _ in 0..TEN_SECONDS {
+        rooms.step(&mut silent);
+        silent.render(&mut out, BLOCK);
+    }
+    c.bench_function(
+        "mixer: one 256-frame block, 64 HRTF voices at gain 0 after 10 s",
+        |b| {
+            b.iter(|| {
+                rooms.step(&mut silent);
+                silent.render(&mut out, BLOCK);
+                black_box(&out);
+            })
+        },
+    );
+}
+
+criterion_group!(
+    benches,
+    mixer_block,
+    mixer_block_turning,
+    mixer_block_silent
+);
 criterion_main!(benches);

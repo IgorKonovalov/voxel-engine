@@ -542,9 +542,9 @@ Every reading names the machine, the commit, the lock and the load.
 |---|---|---|---|
 | 1: the world's two defects and its two unchecked doors | dev | done | 47eda2e |
 | 2: the wasm host charges before it works | dev | done | b0640c9 |
-| 3: the testbed fails out loud, and the logic fails the same way twice | dev | done | committed with this row |
+| 3: the testbed fails out loud, and the logic fails the same way twice | dev | done | a392e47 |
 | 4: the frame's idle probe volume, and the small corrections | dev | not started | |
-| 5: spans for the rows a shape touches, and smoothers that settle | dev | not started | |
+| 5: spans for the rows a shape touches, and smoothers that settle | dev | done (tip bench readings owed, see resume notes) | committed with this row |
 | 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | not started | |
 | 7: the lab-mode inventory, and the removals that need no pick | dev | not started | |
 | 8: the owner picks what else goes | human | not started | |
@@ -633,6 +633,37 @@ Every reading names the machine, the commit, the lock and the load.
   `binary(shutdown)`, under the exclusive perf lock on lavapipe at load 6.0: 5 of 5 passed.
   `-p flythrough --features wasm` `binary(component)`: 3 of 3. Clippy (workspace, and
   `-p flythrough --features wasm`) and fmt clean.
+- Phase 5 (committed before Phase 4, which needs the GPU lock): `OpRows` keeps spans in
+  slabs, one per brick row `(by, bz)` of the bounds (64 entries and one solved word each),
+  allocated on first use; the sphere's slabs are all walked up front, each by
+  `sphere_row_spans` over its own rows. The counter is `World::apply_counting_spans`
+  (`#[doc(hidden)] pub`, beside `apply_capturing`), not a `cfg(test)` field: the test is in
+  `tests/edits.rs`, an integration test, which `cfg(test)` on the library does not reach.
+- Phase 5 reading: the capsule from voxel centre `(4, 4, 4)` along `(577, 577, 577)` (999.4
+  voxels), radius 2, through solid rock over chunks `[0, 10)^3`: 13 888 span entries
+  (217 brick rows x 64; 217 is also the test's loose count of reachable brick rows) against
+  338 724 rows in its bounds, which the base allocated at 16 B each (5.4 MB) plus the
+  solved bitmap. Its result is pinned from the base: `changed_from [(3, 10996)]`, 64 touched
+  chunks, aabb `[2, 2, 2]..[583, 583, 583]`, voxel hash `0x2b8d1391b1a80d45`.
+- Phase 5: the edits bench gains `tool_long` (eight capsules of radius 2 along the space
+  diagonals, about 430 voxels long, bounds 253 voxels per axis); the mixer bench gains
+  `mixer_block_silent` (64 voices fresh, and 64 at gain 0 after 10 s).
+- Phase 5: the voice smoothers settle with `settle` (`SETTLE_WITHIN = 1e-7`, now also used
+  by the bus echo gain and `render_tap`), and the low-pass state flushes with reverb's
+  `flush`, made `pub(crate)` there (one definition, no new module: `Files touched` names
+  only `mixer.rs` and `reverb.rs`). `Mixer::voice_smoothers` (`#[doc(hidden)]`, an array, so
+  `lib.rs` needs no new export) reads them. At the base the new test reads own gain and
+  gain `1.682e-42` and the stream voice's low-pass state `-1e-44` after 10 s; at the tip
+  exactly 0. Every existing vxe-audio test passes unchanged (78 of 78).
+- Phase 5 readings at the base (dev box, the RTX 3080 laptop, CPU bench, exclusive perf
+  lock, `a392e47` plus the new bench case, 1-minute load 2.11 before and 2.20 after, loaded
+  (indicative)): `tool` 4.7714 ms, `tool_warm` 4.7716 ms, `tool_long` 5.8768 ms (criterion
+  medians; raw in `live/bench-edits-base.log`). The tip's edits reading and both mixer
+  readings were queued on the lock behind Plan 0050's full tier at checkpoint time; see the
+  resume notes.
+- Phase 5 gate: quick 529 run, 527 passed, 2 timed out at 30 s under load (`castle`,
+  `replay`, as in Phases 1 and 3). Doctests, clippy and fmt clean. Built in
+  `target/alt` so the lock holder's cargo was never blocked on the target dir.
 
 ### Close triggers
 
