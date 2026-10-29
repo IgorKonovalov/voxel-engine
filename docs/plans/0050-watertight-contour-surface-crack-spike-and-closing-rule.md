@@ -428,8 +428,8 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The crack spike: classes, the view, and where they land | dev | done | 00cacd4 |
-| 2: A zero normal component, exact in the plane code | dev | done | committed with this row |
-| 3: The closing rules, each measured | dev | not started | |
+| 2: A zero normal component, exact in the plane code | dev | done | 4b137e7 |
+| 3: The closing rules, each measured | dev | done | committed with this row |
 | 4: The pick as the default | dev | not started | |
 | 5: The owner's windowed check | human | not started | |
 | 6: The owner's findings, and the losers removed | dev | not started | |
@@ -596,6 +596,146 @@ Readings as Phase 1's (lavapipe, exclusive perf lock), at 00cacd4 plus this phas
   two CPU tests timed out at 30 s with the load average at 27, and passed alone in 14.8 s);
   `--profile gpu` 177 of 179 passed, the two hash pins above failing, then `mirror` alone 45
   of 45 at the new hashes.
+
+#### Phase 3
+
+Class readings as Phase 1's (lavapipe, exclusive perf lock, `closing_candidates`), at 4b137e7
+plus this phase's diff; the `old` rows equal Phase 2's table above row for row and are not
+repeated. `+ push` is the rule with the shadow push (O), read at the poses only.
+
+| scene | rule | hits | left out | clean % | class 1 % | class 2 % | class 3 % | 1+2 px | dark % | bright % | self-hit % |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| level vein | old + push | 82944 | 0 | 96.71 | 0.113 | 2.596 | 0.581 | 2247 | 32.0 | 0.4 | 0.000 |
+| level patch | old + push | 82944 | 0 | 91.33 | 0.034 | 6.315 | 2.318 | 5266 | 2.1 | 2.2 | 0.041 |
+| tilted slab | snap | 49366 | 191 | 98.17 | 0.000 | 0.000 | 1.825 | 0 | 0.0 | 0.0 | 0.000 |
+| concave corner | snap | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| 45-degree slab | snap | 48333 | 142 | 97.90 | 0.000 | 0.000 | 2.102 | 0 | 0.0 | 0.0 | 0.000 |
+| floor | snap | 43012 | 392 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| wall | snap | 37800 | 180 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| diagonal slab | snap | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| cavity | snap | 57600 | 0 | 99.54 | 0.000 | 0.000 | 0.458 | 0 | 0.0 | 0.0 | 0.000 |
+| pillar | snap | 3476 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| level vein | snap | 82944 | 0 | 99.42 | 0.000 | 0.000 | 0.581 | 0 | 0.0 | 0.0 | 0.077 |
+| level vein lamp off | snap | 82944 | 0 | 99.42 | 0.000 | 0.000 | 0.581 | 0 | 0.0 | 0.0 | 0.000 |
+| level patch | snap | 82944 | 0 | 97.68 | 0.000 | 0.000 | 2.318 | 0 | 0.0 | 0.0 | 0.136 |
+| level patch lamp off | snap | 82944 | 0 | 97.68 | 0.000 | 0.000 | 2.318 | 0 | 0.0 | 0.0 | 0.000 |
+| level vein | snap + push | 82944 | 0 | 99.42 | 0.000 | 0.000 | 0.581 | 0 | 0.0 | 0.0 | 0.000 |
+| level patch | snap + push | 82944 | 0 | 97.68 | 0.000 | 0.000 | 2.318 | 0 | 0.0 | 0.0 | 0.041 |
+| tilted slab | extend 0.25 | 49399 | 186 | 98.85 | 0.000 | 0.119 | 1.030 | 59 | 84.7 | 0.0 | 0.000 |
+| concave corner | extend 0.25 | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| 45-degree slab | extend 0.25 | 48346 | 172 | 99.81 | 0.000 | 0.000 | 0.186 | 0 | 0.0 | 0.0 | 0.000 |
+| floor | extend 0.25 | 43012 | 392 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| wall | extend 0.25 | 37800 | 180 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| diagonal slab | extend 0.25 | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| cavity | extend 0.25 | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| pillar | extend 0.25 | 3480 | 0 | 97.59 | 0.000 | 2.414 | 0.000 | 84 | 71.4 | 0.0 | 0.000 |
+| level vein | extend 0.25 | 82944 | 0 | 99.86 | 0.000 | 0.119 | 0.018 | 99 | 92.9 | 0.0 | 0.077 |
+| level vein lamp off | extend 0.25 | 82944 | 0 | 99.86 | 0.000 | 0.119 | 0.018 | 99 | 100.0 | 0.0 | 0.000 |
+| level patch | extend 0.25 | 82944 | 0 | 97.20 | 0.000 | 1.262 | 1.536 | 1047 | 2.2 | 4.1 | 0.127 |
+| level patch lamp off | extend 0.25 | 82944 | 0 | 97.20 | 0.000 | 1.262 | 1.536 | 1047 | 13.7 | 4.6 | 0.000 |
+| level vein | extend 0.25 + push | 82944 | 0 | 99.86 | 0.000 | 0.119 | 0.018 | 99 | 92.9 | 0.0 | 0.000 |
+| level patch | extend 0.25 + push | 82944 | 0 | 97.20 | 0.000 | 1.262 | 1.536 | 1047 | 2.2 | 4.0 | 0.041 |
+| tilted slab | extend 0.5 | 49417 | 192 | 99.74 | 0.000 | 0.000 | 0.257 | 0 | 0.0 | 0.0 | 0.000 |
+| concave corner | extend 0.5 | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| 45-degree slab | extend 0.5 | 48351 | 170 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| floor | extend 0.5 | 43012 | 392 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| wall | extend 0.5 | 37800 | 180 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| diagonal slab | extend 0.5 | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| cavity | extend 0.5 | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| pillar | extend 0.5 | 3484 | 0 | 98.62 | 0.000 | 1.378 | 0.000 | 48 | 75.0 | 0.0 | 0.000 |
+| level vein | extend 0.5 | 82944 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.077 |
+| level vein lamp off | extend 0.5 | 82944 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| level patch | extend 0.5 | 82944 | 0 | 99.00 | 0.000 | 0.164 | 0.838 | 136 | 6.6 | 5.9 | 0.124 |
+| level patch lamp off | extend 0.5 | 82944 | 0 | 99.00 | 0.000 | 0.164 | 0.838 | 136 | 6.6 | 5.1 | 0.000 |
+| level vein | extend 0.5 + push | 82944 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| level patch | extend 0.5 + push | 82944 | 0 | 99.00 | 0.000 | 0.164 | 0.838 | 136 | 6.6 | 5.9 | 0.039 |
+| tilted slab | blend | 49254 | 193 | 82.96 | 0.006 | 0.000 | 17.036 | 3 | 66.7 | 0.0 | 0.000 |
+| concave corner | blend | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| 45-degree slab | blend | 48235 | 159 | 85.27 | 0.000 | 0.000 | 14.730 | 0 | 0.0 | 0.0 | 0.000 |
+| floor | blend | 43012 | 392 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| wall | blend | 37800 | 180 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| diagonal slab | blend | 57600 | 0 | 94.47 | 0.101 | 0.000 | 5.434 | 58 | 53.4 | 0.0 | 0.000 |
+| cavity | blend | 57600 | 0 | 93.51 | 0.036 | 0.000 | 6.453 | 21 | 14.3 | 0.0 | 0.000 |
+| pillar | blend | 3390 | 0 | 93.69 | 0.118 | 0.000 | 6.195 | 4 | 25.0 | 75.0 | 0.000 |
+| level vein | blend | 82944 | 0 | 88.70 | 0.000 | 0.000 | 11.300 | 0 | 0.0 | 0.0 | 0.000 |
+| level vein lamp off | blend | 82944 | 0 | 88.70 | 0.000 | 0.000 | 11.300 | 0 | 0.0 | 0.0 | 0.000 |
+| level patch | blend | 82944 | 0 | 79.74 | 0.000 | 0.000 | 20.259 | 0 | 0.0 | 0.0 | 0.000 |
+| level patch lamp off | blend | 82944 | 0 | 79.74 | 0.000 | 0.000 | 20.259 | 0 | 0.0 | 0.0 | 0.000 |
+| level vein | blend + push | 82944 | 0 | 88.70 | 0.000 | 0.000 | 11.300 | 0 | 0.0 | 0.0 | 0.000 |
+| level patch | blend + push | 82944 | 0 | 79.74 | 0.000 | 0.000 | 20.259 | 0 | 0.0 | 0.0 | 0.000 |
+
+Guardrails (cavity normal error, pillar silhouette against face 172 px, `A`) and the speck test
+(contour golden scene, full shadow walk: with shadows, without, only with), lavapipe:
+
+| rule | normal error | silhouette px | `A` % | specks | specks + push |
+|---|---|---|---|---|---|
+| old | 7.19 | 32 | 6.83 | 379, 374, 6 | 379, 374, 6 |
+| snap | 7.13 | 32 | 6.73 | 365, 360, 6 | 365, 360, 6 |
+| extend 0.25 | 7.13 | 28 | 6.73 | 361, 355, 7 | 361, 355, 7 |
+| extend 0.5 | 7.13 | 32 | 6.73 | 345, 338, 7 | 344, 338, 6 |
+| blend | 5.81 | 62 | 6.51 | 210, 206, 5 | 210, 206, 5 |
+
+Cost, the hit and light passes at the level's spawn (`flythrough --level --seed 1 --headless
+--render 1920x1080 --frames 300 --adapter NVIDIA|AMD [--closing RULE] [--shadow-push on]`,
+release, each run under the exclusive perf lock and the memory cap, the median over three
+alternated rounds of each run's median of the last 30 frames; 1080p from 1280 x 720 internal;
+1-minute load 0.5 to 3.5). NVIDIA GeForce RTX 3080 Laptop GPU and AMD Radeon Graphics (RADV
+RENOIR), `--adapter`. "pre" is the binary of 00ca974; "tree" is this commit's binary with
+every rule selectable; "snap alone" is this commit's tree with the blend and extend branches
+deleted (a scratch build, `live/strip-losers.py`):
+
+| binary, rule | RTX hit ms | RTX light ms | Radeon hit ms | Radeon light ms |
+|---|---|---|---|---|
+| pre | 0.598 | 0.904 | 4.264 | 7.012 |
+| tree, old | 0.662 | 1.536 | 5.978 | 8.911 |
+| tree, snap | 0.658 | 1.529 | 5.981 | 8.893 |
+| snap alone, old | 0.600 | 0.906 | 4.353 | 7.039 |
+| snap alone, snap | 0.604 | 0.913 | 4.364 | 7.026 |
+| snap alone, snap + push | 0.586 | 1.439 | 4.360 | 9.165 |
+| snap alone, snap + push on the lamp ray only (scratch, two rounds) | 0.598, 0.604 | 1.091, 1.101 | 4.359, 4.365 | 7.907, 7.915 |
+
+An earlier round on the tree before the register changes below (same command, same session
+pattern): RTX hit pre 0.600, old 0.662, snap 0.671, extend 0.25 0.659, extend 0.5 0.661,
+blend 3.302 (light pre 0.904, blend 3.096); Radeon hit pre 4.261, old 5.972, snap 5.974,
+extend 0.25 5.928, extend 0.5 5.926, blend 35.151 (light pre 7.005, blend 13.439). Mirror
+157 872 640 B live, 259 203 264 B allocated in every run.
+
+- Attribution of the cost, Radeon hit pass (three alternated rounds): pre 4.264, Phase 1's
+  binary 4.717, Phase 2's 4.715. With Phase 1's cracks-view self-hit replaced by `false`
+  (scratch) 4.285; with the cracks branch removed 4.266. RADV's shader stats
+  (`RADV_DEBUG=shaderstats,nocache`) give the hit shader 64 VGPRs before the plan, 84 at Phase
+  1 and with snap's `vec3` memory, 128 in the tree with blend, and 64 for snap alone after the
+  two changes below; the light shader 84 before the plan and for snap alone, 128 in the tree.
+- Changes from the cost reading: the cracks view's classification and self-hit compile only
+  into a second hit pipeline (`override CRACKS_VIEW`, `Marcher::cracks`), and the walk's pass
+  memory is one `u32` (the passed voxel's attribute) instead of a normal and a count.
+- Kept: snap (S), the first in order that meets every bar: classes 1 and 2 at 0 on the tilted
+  slab, the concave corner and the cavity, 0 at both poses (Phase 2: 2247 and 5266), the
+  guardrails, specks 6 (Phase 2's 6, face 34), and the hit pass alone +1.0 % RTX and +2.3 %
+  Radeon against pre. The bar was read on "snap alone": the tree with every rule selectable
+  reads +10.0 % RTX and +40.3 % Radeon, from blend's registers.
+- O: the self-hit share falls under every rule (vein 0.077 to 0.000 %, patch 0.136 to 0.041
+  % under snap) and the speck reading does not rise, which rule 3 keeps. The owner kept snap
+  as the default with the push off and selectable (2026-10-29), for its light pass cost.
+- Owner (2026-10-29): the tree's cost with every rule selectable is accepted until Phase 6
+  removes the losers; `nfr.md` gets both readings.
+- Done-when 3: every golden re-rendered with `VXE_BLESS=1` at this commit (closing old, the
+  default) reads the same pixels as Phase 2's re-render, 29 of 29.
+- `castle_gate_golden`'s peak RSS: 952 848 384 B at this commit alone, 806 113 280 B at
+  4b137e7 alone, 1 494 994 944 B (over its 1 GiB bar) once in the bless run at load 2 to 3.
+- Deviations: `CrackClosing` has five values (`extend 0.25` and `extend 0.5` apart, flag bits
+  14 to 16) and the push is bit 17; files outside the list: `crates/vxe-render/src/lib.rs`
+  (the export), `apps/flythrough/src/hud.rs` (the banner names the rule, `BANNER_ROWS` 8),
+  `apps/flythrough/tests/sharpness.rs` (`..SurfaceTuning::default()`); the blend rule tests a
+  solid voxel without a plane in a Full brick too, and hits at its second secant point; O
+  starts at 0.5 and tries 0.75 before falling back to 1.0, over the eight voxels around the
+  origin.
+- Owed: the closing rule's ADR (the architect's, before Phase 4 lands the default).
+- The class table, guardrails and specks were read twice on lavapipe, before and after the
+  register changes, and match line for line.
+- Gate at this commit: build, clippy `-D warnings`, fmt, doctests, comment-hygiene and
+  test-tiers clean; `--profile quick --test-threads 8` 518 passed; `--profile gpu` 179 passed,
+  32 skipped.
 
 ### Notes
 

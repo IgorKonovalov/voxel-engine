@@ -316,6 +316,7 @@ impl Candidate {
             fit: self.fit,
             face_mix: self.face_mix,
             detail_after_lighting: self.after,
+            ..SurfaceTuning::default()
         }
     }
 

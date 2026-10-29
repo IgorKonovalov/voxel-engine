@@ -18,7 +18,8 @@
 //! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look PRESET] [--rock-detail SCALE,STRENGTH] [--plane-fit FIT]
-//! [--plane-offset OFFSET] [--face-mix K] [--detail-fine W] [--detail-after on|off] [--view VIEW]
+//! [--plane-offset OFFSET] [--face-mix K] [--detail-fine W] [--detail-after on|off]
+//! [--closing RULE] [--shadow-push on|off] [--view VIEW]
 //! [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
@@ -75,9 +76,10 @@
 //! that
 //! look first; `--look` picks the starting preset (`flythrough::LookPreset`: `face`, `contour`,
 //! `contour-sharp`, `contour-grain`, `trilinear8`, `gradient27`), a normal mode with its plane
-//! fit, face mix, detail after lighting and rock's detail pair and fine weight, each part
-//! overridable by `--plane-fit`, `--plane-offset`, `--face-mix`, `--detail-after`,
-//! `--detail-fine` and `--rock-detail`; and `--look plain` starts in face mode without contour
+//! fit, face mix, detail after lighting, crack-closing rule, shadow push and rock's detail
+//! pair and fine weight, each part overridable by `--plane-fit`, `--plane-offset`,
+//! `--face-mix`, `--detail-after`, `--closing` (`old`, `snap`, `extend-0.25`, `extend-0.5`,
+//! `blend`: `vxe_render::CrackClosing`), `--shadow-push`, `--detail-fine` and `--rock-detail`; and `--look plain` starts in face mode without contour
 //! attributes or rock detail, detail off (`N` then skips the contour presets, `--detail` turns
 //! detail on), the look of Plan 0002's and Plan 0017's face readings. With contour attributes the autopilot's report adds the attribute
 //! pass's work list, CPU and GPU time over the flight. `--view`
@@ -234,10 +236,10 @@ use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
-    AttrWorkStats, AutoExposure, BELT_CHUNK_BYTES, Camera, Exposure, FRAME_PASSES, Frame, GpuWorld,
-    HistoryKill, HudColour, HudOverlay, LightParams, Lighting, LightingResolution, LodParams,
-    LookParams, MarchTimer, MirrorConfig, NormalMode, PassTimer, PlaneFit, PlaneOffset, Presenter,
-    RenderScale, Sampler, ShadowWalk, SyncStats, ViewMode, Window, wgpu,
+    AttrWorkStats, AutoExposure, BELT_CHUNK_BYTES, Camera, CrackClosing, Exposure, FRAME_PASSES,
+    Frame, GpuWorld, HistoryKill, HudColour, HudOverlay, LightParams, Lighting, LightingResolution,
+    LodParams, LookParams, MarchTimer, MirrorConfig, NormalMode, PassTimer, PlaneFit, PlaneOffset,
+    Presenter, RenderScale, Sampler, ShadowWalk, SyncStats, ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -721,6 +723,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     let mut face_mix = None;
     let mut detail_fine = None;
     let mut detail_after = None;
+    let mut closing = None;
+    let mut shadow_push = None;
     let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or(format!("{flag} needs a value"));
@@ -784,6 +788,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--face-mix" => face_mix = Some(parse_unit("--face-mix", &value()?, 0.5)?),
             "--detail-fine" => detail_fine = Some(parse_unit("--detail-fine", &value()?, 1.0)?),
             "--detail-after" => detail_after = Some(parse_on_off("--detail-after", &value()?)?),
+            "--closing" => {
+                let v = value()?;
+                closing = Some(CrackClosing::from_name(&v).ok_or(format!(
+                    "--closing takes old, snap, extend-0.25, extend-0.5 or blend, not {v}"
+                ))?);
+            }
+            "--shadow-push" => shadow_push = Some(parse_on_off("--shadow-push", &value()?)?),
             "--view" => {
                 let v = value()?;
                 args.view = ViewMode::from_name(&v).ok_or(format!(
@@ -1100,6 +1111,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         p.tuning.face_mix = face_mix.unwrap_or(p.tuning.face_mix);
         p.detail_fine = detail_fine.unwrap_or(p.detail_fine);
         p.tuning.detail_after_lighting = detail_after.unwrap_or(p.tuning.detail_after_lighting);
+        p.tuning.closing = closing.unwrap_or(p.tuning.closing);
+        p.tuning.shadow_push = shadow_push.unwrap_or(p.tuning.shadow_push);
     } else if rock_detail.is_some() {
         return Err("--rock-detail does not apply under --look plain".to_owned());
     } else if plane_fit.is_some()
@@ -1107,10 +1120,12 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         || face_mix.is_some()
         || detail_fine.is_some()
         || detail_after.is_some()
+        || closing.is_some()
+        || shadow_push.is_some()
     {
         return Err(
-            "--plane-fit, --plane-offset, --face-mix, --detail-fine and --detail-after do not \
-             apply under --look plain"
+            "--plane-fit, --plane-offset, --face-mix, --detail-fine, --detail-after, --closing \
+             and --shadow-push do not apply under --look plain"
                 .to_owned(),
         );
     }
@@ -4698,8 +4713,8 @@ fn steps_line(h: &StepHistogram) -> String {
 
 /// `look face, detail off, view shaded` under `--look plain`, or with the preset's name,
 /// parts and rock's detail: `look contour-sharp (normals contour, fit weighted27, face mix
-/// 0, detail after lighting on), detail on (rock scale 4, strength 0.1, fine 0), view
-/// shaded`.
+/// 0, detail after lighting on, closing old, shadow push off), detail on (rock scale 4,
+/// strength 0.1, fine 0), view shaded`.
 fn look_line(look: &LookParams, preset: Option<&LookPreset>) -> String {
     let on = if look.detail { "on" } else { "off" };
     let view = look.view.name();
@@ -7196,13 +7211,13 @@ mod tests {
         let a = parse_args_from(argv(&[])).unwrap();
         assert_eq!(
             look_line(&a.start_look(), a.look.as_ref()),
-            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on, closing old, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
         );
         assert_eq!(a.look, Some(LookPreset::CONTOUR_SHARP));
         let c = parse_args_from(argv(&["--look", "contour"])).unwrap();
         assert_eq!(
             look_line(&c.start_look(), c.look.as_ref()),
-            "look contour (normals contour, fit uniform27, face mix 0, detail after lighting off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+            "look contour (normals contour, fit uniform27, face mix 0, detail after lighting off, closing old, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
         );
         assert_eq!(flythrough::ROCK_DETAIL, [4.0, 0.1]);
         let a = parse_args_from(argv(&["--look", "face"])).unwrap();
@@ -7235,11 +7250,11 @@ mod tests {
         };
         assert_eq!(
             line(&["--look", "contour-sharp"]),
-            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on, closing old, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
         );
         assert_eq!(
             line(&["--look", "contour-grain"]),
-            "look contour-grain (normals contour, fit uniform27, face mix 0, detail after lighting on), detail on (rock scale 2, strength 0.3, fine 0.5), view shaded"
+            "look contour-grain (normals contour, fit uniform27, face mix 0, detail after lighting on, closing old, shadow push off), detail on (rock scale 2, strength 0.3, fine 0.5), view shaded"
         );
         for p in LookPreset::ALL {
             let a = parse_args_from(argv(&["--look", p.name])).unwrap();
@@ -7272,12 +7287,25 @@ mod tests {
                 "--rock-detail",
                 "2,0.2",
             ]),
-            "look contour (normals contour, fit weighted27 + volume, face mix 0.25, detail after lighting on), detail on (rock scale 2, strength 0.2, fine 0.5), view shaded"
+            "look contour (normals contour, fit weighted27 + volume, face mix 0.25, detail after lighting on, closing old, shadow push off), detail on (rock scale 2, strength 0.2, fine 0.5), view shaded"
         );
         assert!(parse_args_from(argv(&["--plane-fit", "sobel"])).is_err());
         assert!(parse_args_from(argv(&["--face-mix", "0.6"])).is_err());
         assert!(parse_args_from(argv(&["--detail-fine", "-1"])).is_err());
         assert!(parse_args_from(argv(&["--detail-after", "yes"])).is_err());
+        for c in CrackClosing::ALL {
+            let name = c.name().replace(' ', "-");
+            assert_eq!(
+                line(&["--closing", &name, "--shadow-push", "on"]),
+                format!(
+                    "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on, closing {}, shadow push on), detail on (rock scale 4, strength 0.1, fine 0), view shaded",
+                    c.name()
+                )
+            );
+        }
+        assert!(parse_args_from(argv(&["--closing", "glue"])).is_err());
+        assert!(parse_args_from(argv(&["--look", "plain", "--closing", "snap"])).is_err());
+        assert!(parse_args_from(argv(&["--look", "plain", "--shadow-push", "on"])).is_err());
     }
 
     #[test]
@@ -7293,7 +7321,7 @@ mod tests {
         };
         assert_eq!(
             look_line(&look, Some(&p)),
-            "look face (normals face, fit uniform27, face mix 0, detail after lighting off), detail on (rock scale 4, strength 0.3, fine 0), view shaded"
+            "look face (normals face, fit uniform27, face mix 0, detail after lighting off, closing old, shadow push off), detail on (rock scale 4, strength 0.3, fine 0), view shaded"
         );
         assert_eq!(look_line(&look, None), "look face, detail on, view shaded");
     }

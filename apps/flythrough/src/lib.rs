@@ -14,7 +14,9 @@ use std::sync::Arc;
 
 use vxe_audio::Listener;
 use vxe_net::{Logic, Server};
-use vxe_render::{Camera, NormalMode, PlaneFit, PlaneOffset, SurfaceFit, SurfaceTuning};
+use vxe_render::{
+    Camera, CrackClosing, NormalMode, PlaneFit, PlaneOffset, SurfaceFit, SurfaceTuning,
+};
 use vxe_world::hash::Fnv1a;
 use vxe_world::{
     BRICK_VOXELS, Brick, Chunk, ChunkCoord, ChunkExtent, ChunkMips, LogFile, Material,
@@ -348,6 +350,8 @@ const TUNING_OFF: SurfaceTuning = SurfaceTuning {
     },
     face_mix: 0.0,
     detail_after_lighting: false,
+    closing: CrackClosing::Old,
+    shadow_push: false,
 };
 
 impl LookPreset {
@@ -440,14 +444,17 @@ impl LookPreset {
     }
 
     /// The parts beyond the normal mode: `fit uniform27, face mix 0, detail after lighting
-    /// off`.
+    /// off, closing old, shadow push off`.
     pub fn parts(&self) -> String {
         let t = &self.tuning;
+        let on = |b: bool| if b { "on" } else { "off" };
         format!(
-            "fit {}, face mix {}, detail after lighting {}",
+            "fit {}, face mix {}, detail after lighting {}, closing {}, shadow push {}",
             t.fit.name(),
             t.face_mix,
-            if t.detail_after_lighting { "on" } else { "off" }
+            on(t.detail_after_lighting),
+            t.closing.name(),
+            on(t.shadow_push)
         )
     }
 

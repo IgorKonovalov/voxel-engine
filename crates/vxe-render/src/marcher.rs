@@ -162,6 +162,64 @@ pub const FLAG_CUTAWAY: u32 = 1 << 10;
 /// `Params::flags` bit: with the lamp on, the light pass shades with the undetailed normal and
 /// the composite applies the detail's `n.l` ratio ([`SurfaceTuning::detail_after_lighting`]).
 pub const FLAG_DETAIL_AFTER_LIGHTING: u32 = 1 << 13;
+/// `Params::flags` bits 14..16: the [`CrackClosing`] rule of the contour walk.
+pub const CLOSING_SHIFT: u32 = 14;
+/// `Params::flags` bit: push a contour hit's shadow origin clear of its neighbours' planes
+/// ([`SurfaceTuning::shadow_push`]).
+pub const FLAG_SHADOW_PUSH: u32 = 1 << 17;
+
+/// How the contour walk treats a ray that passes a surface voxel outside its plane and then
+/// reaches the next solid voxel (ADR-0011's hit rule leaves a crack there).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CrackClosing {
+    /// The next voxel's own test: a cube hit for a voxel with no plane, an entry hit with its
+    /// normal when the ray enters inside its plane, a crossing otherwise.
+    #[default]
+    Old = 0,
+    /// The walk keeps the last passed voxel's plane. A pass followed by a voxel with no plane
+    /// hits at the passed voxel's exit with the passed plane's normal; a pass followed by an
+    /// entry inside the next plane hits there with the normalised mean of the two normals.
+    Snap = 1,
+    /// Each plane is tested over the ray's segment through its cube dilated by a quarter voxel
+    /// on every side; a crossing in the dilation hits at the cube's exit point.
+    ExtendQuarter = 2,
+    /// `ExtendQuarter` with the cube dilated by half a voxel.
+    ExtendHalf = 3,
+    /// Inside a surface voxel the signed distance is the trilinear blend over the eight voxel
+    /// centres around the point of each voxel's plane distance there (an air voxel `+1`, a
+    /// solid voxel with no plane `-1`): continuous across cube faces. The crossing is
+    /// bracketed by the voxel's entry and exit and refined by two secant steps; the normal is
+    /// the blend of the planes' normals there. Up to 32 attribute reads per surface voxel.
+    Blend = 4,
+}
+
+impl CrackClosing {
+    pub const ALL: [Self; 5] = [
+        Self::Old,
+        Self::Snap,
+        Self::ExtendQuarter,
+        Self::ExtendHalf,
+        Self::Blend,
+    ];
+
+    /// `old`, `snap`, `extend 0.25`, `extend 0.5`, `blend`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Old => "old",
+            Self::Snap => "snap",
+            Self::ExtendQuarter => "extend 0.25",
+            Self::ExtendHalf => "extend 0.5",
+            Self::Blend => "blend",
+        }
+    }
+
+    /// The rule named `name` ([`CrackClosing::name`], or `extend-0.25` and `extend-0.5`).
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|c| c.name() == name || c.name().replace(' ', "-") == name)
+    }
+}
 
 /// How the marcher finds the normal at a hit, and in `Contour` the hit itself.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -374,6 +432,12 @@ pub struct SurfaceTuning {
     /// unit vector to the lamp, per full-resolution pixel. With the lamp off it changes
     /// nothing.
     pub detail_after_lighting: bool,
+    /// The contour walk's crack-closing rule; `Old` is ADR-0011's hit rule.
+    pub closing: CrackClosing,
+    /// A contour hit's shadow rays start at the first of 0.5, 0.75 and 1.0 voxel along the
+    /// shadow normal where no plane of the eight voxels around the point (under `Blend`, the
+    /// blended distance) holds it inside rock, else at 1.0; off, at 0.5.
+    pub shadow_push: bool,
 }
 
 /// The surface look: normal mode, procedural detail, view, translucent layers, cutaway and the
@@ -421,6 +485,12 @@ impl LookParams {
             | if self.cutaway { FLAG_CUTAWAY } else { 0 }
             | if self.tuning.detail_after_lighting {
                 FLAG_DETAIL_AFTER_LIGHTING
+            } else {
+                0
+            }
+            | (self.tuning.closing as u32) << CLOSING_SHIFT
+            | if self.tuning.shadow_push {
+                FLAG_SHADOW_PUSH
             } else {
                 0
             }
@@ -1042,9 +1112,12 @@ impl Lighting {
     }
 }
 
-/// The hit pass: `march.wgsl`'s `main`, one primary ray per pixel into the hit buffer.
+/// The hit pass: `march.wgsl`'s `main`, one primary ray per pixel into the hit buffer, and in
+/// the cracks view its pipeline with `CRACKS_VIEW`, which records the crack classes and each
+/// hit's lamp self-hit.
 pub struct Marcher {
     pipeline: wgpu::ComputePipeline,
+    cracks: wgpu::ComputePipeline,
     out_layout: wgpu::BindGroupLayout,
 }
 
@@ -1058,15 +1131,19 @@ impl Marcher {
                 storage_texture(2, wgpu::TextureFormat::Rgba16Float),
             ],
         });
-        let pipeline = compute_pipeline(
+        let layouts = [Some(world_layout), Some(&out_layout)];
+        let pipeline = compute_pipeline(device, "hit", MARCH_WGSL.into(), &layouts, "main");
+        let cracks = compute_pipeline_with(
             device,
-            "hit",
+            "hit cracks",
             MARCH_WGSL.into(),
-            &[Some(world_layout), Some(&out_layout)],
+            &layouts,
             "main",
+            &[("CRACKS_VIEW", 1.0)],
         );
         Self {
             pipeline,
+            cracks,
             out_layout,
         }
     }
@@ -2702,7 +2779,12 @@ impl Frame {
                 workgroups,
             }
         };
-        let mut hit: Vec<Dispatch<'_>> = vec![frame_pass(&self.hit.pipeline, &hit_bind, 1, full)];
+        let hit_pipeline = if self.look.view == ViewMode::Cracks {
+            &self.hit.cracks
+        } else {
+            &self.hit.pipeline
+        };
+        let mut hit: Vec<Dispatch<'_>> = vec![frame_pass(hit_pipeline, &hit_bind, 1, full)];
         if half {
             hit.push(frame_pass(&self.downsample, &downsample_bind, 3, lw));
         }
@@ -3213,6 +3295,18 @@ fn compute_pipeline(
     layouts: &[Option<&wgpu::BindGroupLayout>],
     entry: &str,
 ) -> wgpu::ComputePipeline {
+    compute_pipeline_with(device, label, source, layouts, entry, &[])
+}
+
+/// [`compute_pipeline`] with the pipeline-overridable constants `constants`.
+fn compute_pipeline_with(
+    device: &wgpu::Device,
+    label: &str,
+    source: String,
+    layouts: &[Option<&wgpu::BindGroupLayout>],
+    entry: &str,
+    constants: &[(&str, f64)],
+) -> wgpu::ComputePipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
         source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -3227,7 +3321,10 @@ fn compute_pipeline(
         layout: Some(&layout),
         module: &module,
         entry_point: Some(entry),
-        compilation_options: Default::default(),
+        compilation_options: wgpu::PipelineCompilationOptions {
+            constants,
+            ..Default::default()
+        },
         cache: None,
     })
 }

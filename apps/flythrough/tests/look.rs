@@ -654,7 +654,7 @@ use support::rigs::{
     diagonal_slab_camera, diagonal_slab_world, fit_rig_on, floor_camera, floor_world, pose_level,
     pose_rig_on, tilted_slab_camera, tilted_slab_world, wall_camera, wall_world,
 };
-use vxe_render::{CrackShares, Exposure, SurfaceFit, readback};
+use vxe_render::{CrackClosing, CrackShares, Exposure, SurfaceFit, readback};
 
 /// The look the fly-through starts in (`LookPreset::DEFAULT`, detail on) in `view`.
 fn start_look(view: ViewMode) -> LookParams {
@@ -1056,5 +1056,189 @@ fn crack_classes() {
     println!("\nadapter {adapter}\n{CRACK_HEADER}");
     for r in rows {
         println!("{r}");
+    }
+}
+
+// ---- The crack-closing candidates ----
+
+/// The start look in `view` with crack-closing rule `closing` and shadow push `push`.
+fn closing_look(view: ViewMode, closing: CrackClosing, push: bool) -> LookParams {
+    let mut look = start_look(view);
+    look.tuning.closing = closing;
+    look.tuning.shadow_push = push;
+    look
+}
+
+/// Plan 0039's guardrails of the start look under `closing`, as
+/// `sharpness::the_default_look_meets_the_guardrails` reads them: the cavity's normal error
+/// (degrees) and axis fraction `A` at full lighting resolution, and the pillar's silhouette
+/// error (pixels), detail off.
+fn closing_guardrails(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    closing: CrackClosing,
+) -> (f64, f64, usize) {
+    let fit = flythrough::LookPreset::DEFAULT.tuning.fit;
+    let look = |view| LookParams {
+        detail: false,
+        ..closing_look(view, closing, false)
+    };
+    let cavity = cavity_world();
+    let mut rig = fit_rig_on(device.clone(), queue.clone(), &cavity, fit, [WIDTH, HEIGHT]);
+    let cam = cavity_camera();
+    let normals = rig.render(&cam, &LightParams::at_eye(), look(ViewMode::Normals));
+    let error = cavity_normal_error(&normals, &cam);
+    let axis = axis_fraction(&normals);
+    let pillar = pillar_world();
+    let mut rig = fit_rig_on(device.clone(), queue.clone(), &pillar, fit, [WIDTH, HEIGHT]);
+    let cam = pillar_camera();
+    let mask = rig.render(&cam, &LightParams::at_eye(), look(ViewMode::HitMask));
+    (error, axis, pillar_silhouette_error(&mask, &cam))
+}
+
+/// The speck test's reading of the contour look (the golden scene's tuning) under `closing`
+/// and shadow push `push`: dark specks with the headlamp's shadows, without, and only with,
+/// on the full shadow walk, as `contour_dark_specks_with_and_without_shadows` reads them.
+fn closing_specks(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    closing: CrackClosing,
+    push: bool,
+) -> (usize, usize, usize) {
+    let world = carved_world();
+    let mut rig = attr_rig_on(device.clone(), queue.clone(), &world, None);
+    rig.frame.set_lighting(vxe_render::Lighting {
+        shadow_walk: vxe_render::ShadowWalk::Full,
+        ..rig.frame.lighting()
+    });
+    let mut l = look(NormalMode::Contour, ViewMode::Shaded);
+    l.tuning.closing = closing;
+    l.tuning.shadow_push = push;
+    let off = LightParams {
+        shadows: false,
+        ..LightParams::headlamp()
+    };
+    let on = dark_specks(&rig.render(&scene_camera(), &LightParams::headlamp(), l));
+    let off = dark_specks(&rig.render(&scene_camera(), &off, l));
+    let only = on.iter().filter(|i| off.binary_search(i).is_err()).count();
+    (on.len(), off.len(), only)
+}
+
+/// The crack-closing candidates' readings (reading only; it asserts nothing): per rule, the
+/// crack class table of `crack_classes`' scenes and poses at the start look, Plan 0039's
+/// guardrails and the speck test's reading; and per rule with the shadow push, the poses'
+/// self-hit shares and the speck reading. On the adapter `VXE_TEST_ADAPTER` names (lavapipe
+/// unset): `cargo nextest run -p flythrough --test look --run-ignored only --no-capture
+/// closing_candidates`.
+#[test]
+#[ignore = "a reading: prints the closing candidates' tables"]
+fn closing_candidates() {
+    let table = flythrough::LookPreset::DEFAULT.materials();
+    let analytic: Vec<(&str, World, vxe_render::Camera)> = vec![
+        (
+            "tilted slab",
+            tilted_slab_world(&table),
+            tilted_slab_camera(),
+        ),
+        ("concave corner", corner_world(&table), corner_camera()),
+        (
+            "45-degree slab",
+            axis_slab_world(&table),
+            axis_slab_camera(),
+        ),
+        ("floor", floor_world(&table), floor_camera()),
+        ("wall", wall_world(&table), wall_camera()),
+        (
+            "diagonal slab",
+            diagonal_slab_world(&table),
+            diagonal_slab_camera(),
+        ),
+        ("cavity", cavity_world(), cavity_camera()),
+        ("pillar", pillar_world_with(table.clone()), pillar_camera()),
+    ];
+    let level = pose_level();
+    let pool = attr_pool_bytes(&level).max(256 << 20);
+    let Some((device, queue, adapter)) = reading_device(pool) else {
+        return;
+    };
+    println!("adapter {adapter}");
+    let fit = flythrough::LookPreset::DEFAULT.tuning.fit;
+    let face = {
+        let pillar = pillar_world();
+        let mut rig = LookRig::on(device.clone(), queue.clone(), &pillar, None);
+        let cam = pillar_camera();
+        let look = LookParams {
+            view: ViewMode::HitMask,
+            ..LookParams::default()
+        };
+        pillar_silhouette_error(&rig.render(&cam, &LightParams::at_eye(), look), &cam)
+    };
+    let mut rows = Vec::new();
+    let mut extra = Vec::new();
+    for closing in CrackClosing::ALL {
+        let name = closing.name();
+        for (scene, world, camera) in &analytic {
+            let mut rig = fit_rig_on(device.clone(), queue.clone(), world, fit, [WIDTH, HEIGHT]);
+            let r = crack_reading(
+                &mut rig,
+                camera,
+                &LightParams::headlamp(),
+                closing_look(ViewMode::Cracks, closing, false),
+                Some(analytic_window(world)),
+            );
+            println!("{}", r.row(scene, name));
+            rows.push(r.row(scene, name));
+        }
+        for push in [false, true] {
+            let look_name = if push {
+                format!("{name} + push")
+            } else {
+                name.to_owned()
+            };
+            for pose in flythrough::POSES {
+                for lamp in [true, false] {
+                    if push && !lamp {
+                        continue;
+                    }
+                    let mut rig = pose_rig_on(device.clone(), queue.clone(), &level, &pose, fit);
+                    rig.frame.set_lighting(vxe_render::Lighting {
+                        exposure: Exposure::Manual(pose.exposure),
+                        indirect: false,
+                        lamp,
+                        ..rig.frame.lighting()
+                    });
+                    let r = crack_reading(
+                        &mut rig,
+                        &pose.camera(),
+                        &LightParams::headlamp(),
+                        closing_look(ViewMode::Cracks, closing, push),
+                        None,
+                    );
+                    let lamp_tag = if lamp { "" } else { " lamp off" };
+                    let scene = format!("level {}{lamp_tag}", pose.name);
+                    println!("{}", r.row(&scene, &look_name));
+                    rows.push(r.row(&scene, &look_name));
+                    let tag = format!("{look_name}{lamp_tag}").replace([' ', '+'], "-");
+                    write_side_by_side(&r, &format!("{}-closing-{tag}", pose.name));
+                }
+            }
+            let (on, off, only) = closing_specks(&device, &queue, closing, push);
+            extra.push(format!(
+                "{look_name}: specks with shadows {on}, without {off}, only with {only}"
+            ));
+        }
+        let (error, axis, silhouette) = closing_guardrails(&device, &queue, closing);
+        extra.push(format!(
+            "{name}: cavity normal error {error:.2} degrees, silhouette {silhouette} px against face {face}, axis fraction {:.2} %",
+            axis * 100.0
+        ));
+        println!("{}", extra[extra.len() - 1]);
+    }
+    println!("\nadapter {adapter}\n{CRACK_HEADER}");
+    for r in rows {
+        println!("{r}");
+    }
+    for e in extra {
+        println!("{e}");
     }
 }
