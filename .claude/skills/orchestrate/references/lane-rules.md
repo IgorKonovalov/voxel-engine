@@ -75,8 +75,10 @@ plan lanes run at once, each in its own worktree at
     done-when reading, golden comparison or bless, and gate run stays on lavapipe, which is
     CI's adapter and where the goldens were blessed. A sweep's winner is re-read on lavapipe
     before its commit. The render tests hard-code `force_fallback_adapter: true` (2026-10-28),
-    so until a test-support switch exists, this applies only to scratch tests and fly-through
-    runs that take `--adapter`. Golden assertions never run against the RTX.
+    so this applies to scratch tests, fly-through runs that take `--adapter`, and, from Plan
+    0049 on, the reading-only ignored tests that open their device through the test-support
+    switch `VXE_TEST_ADAPTER` (`apps/flythrough/tests/support/mod.rs`; unset is lavapipe,
+    `rtx` or `radeon` picks by name). Golden assertions never run against the RTX.
 
 ## Context budget
 
