@@ -20,7 +20,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044. |
 | [0047](0047-emissive-light-holds-still-long-guarded-history.md) | Emissive light holds still: a patch bar, a long f32 emissive history, an emissive-only gradient guard | approved | M2, ADR-0036 (proposed). After Plan 0040; before Plan 0032. |
 | [0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) | The probe rays' direct light without the clamp's bias: candidate schemes measured, the furnace back at pi | approved | M2, ADR-0037 (proposed). After Plan 0047; before Plan 0032. |
-| [0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md) | Light settles fast, young pixels hold no dots: a settle-and-dot spike, then mechanisms by measurement | approved | M2, no ADR yet. Spike after 0047, beside 0048; the rest after 0048; before 0032. |
+| [0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md) | Light settles fast, holds still in flight, no dots: a settle, shimmer and dot spike, then mechanisms by measurement | approved | M2, no ADR yet. First and alone after 0047 (owner, 2026-10-29); before 0048 and 0032. |
 <!-- roster:end -->
 
 ## Recently closed
