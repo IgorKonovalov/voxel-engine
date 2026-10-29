@@ -6,7 +6,16 @@
 > clamp stays (an edge-pixel bias is a reading and a Followup); bar 6's +5 % on each adapter,
 > the iGPU included, and bar 1's 1.5 % at a 0.5 % error stand as drafted; the hero is re-shot
 > after Phase 5; the losing schemes are removed, so Phase 6 is unconditional. The order is
-> Plan 0047, then this plan, then Plan 0032.
+> Plan 0047, then this plan, then Plan 0032. (Superseded by the 2026-10-29 amendment below.)
+> **Amended 2026-10-29 (owner):** "after all these reviews and merges are done, I want to
+> concentrate on a real fix for the light flicker; without it it doesn't make sense to move
+> forward." The order is 0047, then
+> [Plan 0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md) end to end, then this
+> plan, then Plan 0032. This plan starts after 0049 merges, and its "before" is 0049's merged
+> tree. It must not undo 0049's fix: Phase 4 gains done-when 5, that 0049's asserted settle,
+> dot and shimmer tests and Plan 0047's stillness tests pass with their bars unchanged on this
+> plan's tree, and Phase 6 re-reads it at the owner's default. No scheme or bar of this plan
+> changes otherwise.
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet, and its headless proof: "irradiance in a closed test box
 > matches an analytic value within a stated tolerance")
@@ -19,8 +28,12 @@
 > **Source:** Plan 0047's Implementation log, Phase 4 step C, and its Followups ("The firefly
 > clamp biases the probe rays' direct light low"). Plan 0047's step C scratch is in that
 > plan's worktree under `live/` (`stepc-diag.log`, `stepc-donly.patch`, `stepc-noclamp.patch`).
-> **Starts after:** [Plan 0047](0047-emissive-light-holds-still-long-guarded-history.md)
-> merges. It changes the same probe and lighting code (`probe_update.wgsl`, `probes.rs`,
+> **Starts after:** [Plan 0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md)
+> merges (amended 2026-10-29, owner), which itself starts after
+> [Plan 0047](0047-emissive-light-holds-still-long-guarded-history.md) merges. 0049 may change
+> the probe update's schedule, the gather's path to the screen, the young pixels' filter and
+> the upscaler's history, and adds the settle, dot and shimmer tests this plan must hold; dev
+> re-reads the names there. It changes the same probe and lighting code (`probe_update.wgsl`, `probes.rs`,
 > `light.wgsl`, `marcher.rs`), and its stillness rig, its slice hash, its furnace test form
 > and its Phase 5 defaults are this plan's "before". **Before [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**,
 > which waits for this plan (owner, 2026-10-28): 0032 adds the sun's sample and sky light to
@@ -180,8 +193,8 @@ flowchart LR
     the screen path stays byte-identical in this plan (owner, 2026-10-28). If the reading
     shows a bias, the log records it and the plan's Followups gain a line with the figure; a
     screen fix is a later plan of its own, if the bias shows on screen.
-  - *Stillness.* `stillness::run` at `PATCH_POSE` and `VEIN_POSE` with Plan 0047's merged
-    defaults: each part's patches per step (mean and max), sudden steps per second and tile
+  - *Stillness.* `stillness::run` at `PATCH_POSE` and `VEIN_POSE` with the merged defaults
+    (Plan 0047's, and Plan 0049's kept settings; amended 2026-10-29, owner): each part's patches per step (mean and max), sudden steps per second and tile
     flicker, and the gather's mean linear luminance over the lighting grid and window (the
     bias proxy in a real cave, as Plan 0047's step D printed it).
   - *Cost.* The probe update and gather passes, from Plan 0047's method: release
@@ -195,6 +208,8 @@ flowchart LR
 - **Done when:**
   1. On the merged tree, the rig's standard-box D lies within 1 % of Plan 0047's committed
      reading at the same probe code (2.9010 with the hash) and under pi by more than 5 %. If
+     Plan 0049 changed the probe update's schedule, dev first re-reads D at 0049's merge and
+     logs it beside 2.9010; that reading is the reference (amended 2026-10-29, owner). If
      it lies within 1.5 % of pi, the bias is gone from the tree and dev stops for the
      architect.
   2. The rig prints, for the default, both furnaces' D with its error, visits and quarters,
@@ -362,6 +377,15 @@ flowchart LR
   4. The full gate: build, `cargo nextest run --workspace --profile full` under the perf lock,
      doctests, clippy with `-D warnings`, fmt, deny, and the doc and tier gates. Exit codes and
      counts are in the log.
+  5. **Plan 0049's fix holds** (amended 2026-10-29, owner). At the new default, on lavapipe,
+     0049's asserted settle, dot and shimmer tests
+     (`indirect_light_settles_about_as_fast_as_direct_light`,
+     `a_fast_turn_and_a_dig_leave_no_dots` and `a_steady_flight_holds_the_light_still`, by
+     the names dev finds at 0049's merge) and Plan 0047's stillness tests
+     (`apps/flythrough/tests/emissive_stillness.rs`) pass with their bars unchanged. The log
+     lists each test with its reading beside 0049's close reading. A scheme that passes bars
+     1 to 6 but fails one of these is not the default; if none passes, dev stops for the
+     architect. Loosening one of those bars is not an option here.
 
 ### Phase 5: The owner's windowed check
 - **Owner skill:** human
@@ -392,7 +416,7 @@ flowchart LR
   and key rows; the caption, if it names the light), `apps/flythrough/examples/hero.rs` (only
   if its defaults change), `docs/nfr.md` §3 (if B2's buffer goes, or stays).
 - **Done when:**
-  1. The owner's default is `Lighting::default`'s, and Phase 4's done-whens 1 to 4 are re-read
+  1. The owner's default is `Lighting::default`'s, and Phase 4's done-whens 1 to 5 are re-read
      and met at it (unchanged readings, if it is Phase 3's). The log has the re-read readings.
   2. The losing schemes are gone: a grep over `crates/`, `apps/` and `README.md` for each
      removed variant and flag value finds nothing, `--probe-direct <removed>` is refused by
@@ -470,6 +494,12 @@ No figure touches `vxe-world`, determinism or the streaming line.
   before readings are taken on whatever merges. If that ADR changes the probe structure
   (a separate emissive probe channel, for example), this plan's schemes apply to it
   unchanged, but its Phase 1 has to be re-read.
+- **Plan 0049 lands first** (amended 2026-10-29, owner). Its kept settings may change the
+  probe schedule (a running mean for young probes), add a screen history for the gather, or
+  change the young pixels' filter. B2's gain then blends on the schedule 0049 kept, and every
+  unbiased scheme's added tail meets 0049's shimmer bar as well as this plan's stillness bar
+  (Phase 4 done-when 5). If 0049 builds a separate probe channel (ADR-0038), Phase 1 is re-read
+  on it.
 - **No GPU feature risk:** the schemes use ALU, the existing walk and one storage buffer for
   B2. Nothing branches on the backend.
 
@@ -505,6 +535,9 @@ The questions of the draft, answered at approval (owner, 2026-10-28):
 5. **After the pick.** The losing schemes are removed. Only the winner and today's clamp stay,
    the clamp as the screen's path and as a probe mode for comparison. The log keeps the
    sweep's readings (owner, 2026-10-28). Phase 6 is unconditional.
+6. **The order (owner, 2026-10-29).** This plan starts after Plan 0049 merges, and must hold
+   0049's asserted settle, dot and shimmer tests and Plan 0047's stillness tests with their
+   bars unchanged. Phase 4, done-when 5.
 
 ## Implementation log
 

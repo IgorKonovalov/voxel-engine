@@ -78,9 +78,15 @@
 > sample pass through. The order is 0047, 0048, 0049, then this plan. "The base commit" in
 > every bar is now main after 0049's merge, and dev re-reads the names there. No phase
 > changes.
-> **Starts after:** [Plan 0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md)
-> merges (owner, 2026-10-28). 0049's mechanisms start after
-> [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) merges, which itself
+> **Amended 2026-10-29 (owner, order):** the owner puts the light flicker first: Plan 0049
+> runs alone, end to end, right after Plan 0047, and Plan 0048 follows it. The order is 0047,
+> 0049, 0048, then this plan. This plan starts after 0048 merges, and "the base commit" in
+> every bar is main after 0048's merge. Its sky light and sun sample pass through 0049's kept
+> settings and 0048's probe direct scheme, so 0049's settle, dot and shimmer tests join the
+> tests this plan must not regress. No phase changes.
+> **Starts after:** [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md)
+> merges (amended 2026-10-29, owner). 0048 starts after
+> [Plan 0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md) merges, which itself
 > starts after [Plan 0047](0047-emissive-light-holds-still-long-guarded-history.md) merges. Plans 0024,
 > 0029, 0030, 0040 and 0038 are closed and on main.
 > The names in this plan were checked against main at bc1e7a5 and Plan 0047's branch at
@@ -1167,8 +1173,8 @@ dev box's +0.03 to 0.07 ms, 0.2 to 0.4 ms (a guess).
      (`gradient_at` returns both lambdas), `gradient.wgsl`, and `.config/nextest.toml`'s gpu
      filter (`flythrough::emissive_stillness` added to the same line Phase 3 extends, in every
      copy). The lane starts from 0048's merge (owner, 2026-10-28), so these are the files as
-     0047 and then 0048 left them, and the byte-identical bars compare against the goldens as
-     0048 re-blessed them.
+     0047, then 0049 and then 0048 left them (amended 2026-10-29, owner), and the
+     byte-identical bars compare against the goldens as 0048 re-blessed them.
   9. *0047's remaining phases* may set a new `DEFAULT_EMISSIVE_HISTORY` and
      `Lighting::reuse_m_cap` and add `--reuse-m-cap`. Phase 5 bar 6's 11 frames come from
      the bit's `ALPHA` 0.2 floor, not from `H`, so they hold at any default; bar 8's 256 is
