@@ -544,7 +544,7 @@ Every reading names the machine, the commit, the lock and the load.
 | 2: the wasm host charges before it works | dev | done | b0640c9 |
 | 3: the testbed fails out loud, and the logic fails the same way twice | dev | done | a392e47 |
 | 4: the frame's idle probe volume, and the small corrections | dev | not started | |
-| 5: spans for the rows a shape touches, and smoothers that settle | dev | done (tip bench readings owed, see resume notes) | 14f3841 |
+| 5: spans for the rows a shape touches, and smoothers that settle | dev | done (edits bench slower, see Notes) | 14f3841 |
 | 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | done (golden wall-time readings owed) | committed with this row |
 | 7: the lab-mode inventory, and the removals that need no pick | dev | not started | |
 | 8: the owner picks what else goes | human | not started | |
@@ -557,20 +557,20 @@ Every reading names the machine, the commit, the lock and the load.
   `in-progress`. Left: Phase 4, then 6, then 7; stop at Phase 8 (human). Do not edit
   `march.wgsl` until the orchestrator says Plan 0050 merged; in Phase 7 inventory everything
   and remove only what lives outside it.
-- **Readings owed for Phase 5** (each under the exclusive perf lock, with the load):
-  the edits bench at the tip, `cargo bench -p vxe-world --bench edits -q -- "^tool"`
-  (compare `tool`, `tool_warm`, `tool_long` with the base numbers in the Notes); and the
-  mixer bench `mixer_block_silent` at the base and the tip. Two bench binaries are built for
-  the mixer: `live/mixer-bench-base` (the base's smoothers, the new bench case) and
-  `live/mixer-bench-tip`; run each from `crates/vxe-audio` as `../../live/mixer-bench-<b>
-  --bench "64 HRTF"`. At checkpoint both were queued on the lock behind Plan 0050's full
-  tier, writing to `live/bench-edits-tip.log` and `live/bench-mixer.log`; read those first,
-  and rerun if they are empty. Record them in the Notes and set Phase 5's row to `done`.
+- **Phase 5 readings are in** (Notes). The edits bench reads slower at the tip on
+  `tool` (+17 %) and `tool_long` (+7 %) than at the base: the next agent should look at the
+  per-slab `Box` allocations and the `Vec<Option<Box<Slab>>>` sized over every brick row
+  (a short capsule pays them where the base paid one `vec!`), for example one arena `Vec`
+  of slabs indexed from a `u32` table, before Phase 4, and reread both benches under the
+  lock. The base reading was at load 2.1 to 2.2, the tip at 1.5, so load does not explain
+  it.
 - **Owner-facing findings so far** (repeat in the final message):
   1. Phase 2: a `1 024^3` `count_in_box` over a world with nothing resident completed at the
      base and now traps on fuel (its volume bound is past the default `10^10`); the test
      asserts the new behaviour. The plan's Risks name this kind of case; the owner may want
      a residency-aware bound instead.
+  0. Phase 5: the edits bench's `tool` reads 5.60 ms at the tip against 4.77 ms at the base
+     (`docs/nfr.md` section 4 expected lower or equal); see above.
   2. Phase 2: the unsupported bound is `7 d (max_region + 2)` over distinct cells, not the
      plan's `max_region x cells` (that product does not bound the flood, and it would trap
      the duplicated over-cap list `charged_under` pins at `100 + 12 (cap + 1)`).
@@ -705,8 +705,17 @@ Every reading names the machine, the commit, the lock and the load.
   lock, `a392e47` plus the new bench case, 1-minute load 2.11 before and 2.20 after, loaded
   (indicative)): `tool` 4.7714 ms, `tool_warm` 4.7716 ms, `tool_long` 5.8768 ms (criterion
   medians; raw in `live/bench-edits-base.log`). The tip's edits reading and both mixer
-  readings were queued on the lock behind Plan 0050's full tier at checkpoint time; see the
-  resume notes.
+  readings were queued on the lock behind Plan 0050's full tier at checkpoint time and were
+  taken after it, below.
+- Phase 5 readings at the tip `14f3841` (dev box, the RTX 3080 laptop, CPU bench,
+  exclusive perf lock, load 1.48 before and 1.50 after, quiet): `tool` 5.6007 ms,
+  `tool_warm` 5.5960 ms, `tool_long` 6.2822 ms (`live/bench-edits-tip.log`). Finding:
+  slower than the base by 17 %, 17 % and 7 %, against the expected lower or equal.
+- Phase 5 mixer readings (dev box, exclusive perf lock, the base's smoothers built with the
+  new bench case vs the tip, load 1.50 to 1.36 for the base and 1.36 to 2.96 for the tip):
+  64 fresh voices 1.2177 ms base, 1.2053 ms tip; 64 voices at gain 0 after 10 s 1.7909 ms
+  base (47 % over fresh), 1.1721 ms tip (within the fresh case's spread, 1.1951 to
+  1.2164 ms, and under it) (`live/bench-mixer.log`).
 - Phase 5 gate: quick 529 run, 527 passed, 2 timed out at 30 s under load (`castle`,
   `replay`, as in Phases 1 and 3). Doctests, clippy and fmt clean. Built in
   `target/alt` so the lock holder's cargo was never blocked on the target dir.
