@@ -8,7 +8,8 @@
 > separate dev-only `vxe-testkit` crate, is recorded under Decision.
 > **Source:** the owner, 2026-10-22, the same review as Plan 0044. The owner's answers: two
 > plans, performance first; full splits, engine crates included.
-> **After:** Plan 0044, and with it every plan active on 2026-10-22.
+> **After:** Plan 0044, which now follows Plan 0051 and precedes the M10 batch (owner,
+> 2026-10-29).
 
 ## TL;DR
 

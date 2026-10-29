@@ -11,7 +11,9 @@
 > violation of clean code principles, duplications, mega files ... a plan addressing issues
 > that goes after all plans that are active are finished". The review ran at `87e4b67`; its
 > structural findings are Plan 0045.
-> **After:** every plan active on 2026-10-22: 0029, 0032 to 0042. Plan 0043 lands before them.
+> **After:** Plan 0051, and before the M10 batch (owner, 2026-10-29; it was "every plan
+> active on 2026-10-22", which would have parked it behind Plans 0032 to 0037). Plan 0052,
+> the second review, runs first and strikes what it already fixed.
 
 ## TL;DR
 
