@@ -1,8 +1,8 @@
 # ADR-0036: Static emissive light accumulates on a long full-precision history, guarded by an emissive-only gradient
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-29, Plan 0047 closed; see Outcome)
 > **Date:** 2026-10-27
-> **Related plan(s):** [Plan 0047](../plans/0047-emissive-light-holds-still-long-guarded-history.md);
+> **Related plan(s):** [Plan 0047](../plans/done/0047-emissive-light-holds-still-long-guarded-history.md);
 > refines the temporal pass of
 > [ADR-0018](0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > and reads the candidates of
@@ -123,4 +123,52 @@ by another client) would still lag by `H`.
 
 ## Outcome
 
-_(Added at acceptance if the implementation falsifies something above.)_
+**Accepted 2026-10-29 at Plan 0047's close (v0.36.0).** The decision shipped as written, plus
+one change to the probes that it did not foresee.
+
+- **What shipped.** The temporal pass's accumulation pair is `rgba32float`. On a 2048-frame
+  replay at `H` 512 it tracks an `f64` replay of the blend rule within 0.0001 %. The
+  `rgba16float` store drifted 13.92 % on the same replay. The gradient pass writes an
+  emissive-only lambda in the strata's `w` with a dead zone of 0.05 (`LAMBDA_FLOOR`), and runs
+  whenever emissive candidates are on (`Params::lighting` bit 10, `LIGHTING_EMISSIVE_GUARD`).
+  The temporal pass raises the emissive blend and lowers the age by that lambda. The lamp's
+  part never reads it. `Lighting` gains `reuse_m_cap` and `emissive_guard`. The fly-through
+  gains `--emissive-guard` and `--reuse-m-cap`, and its banner names both.
+- **The defaults.** `DEFAULT_EMISSIVE_HISTORY` 256 (was 32), `DEFAULT_REUSE_M_CAP` 20
+  (unchanged), the guard on, the `f32` store. Plan 0047's sweep of `H` 64 to 512 against cap
+  20, 8 and 4 picked them: 256 is the shortest `H` that meets the bar at both vein poses, and
+  20 is the highest cap at 256. At the defaults the patch pose reads 1.50 composite patches a
+  step (0.75 direct-attributed), against 74 to 78 at 32. `VEIN_POSE` reads 0.05. The guard
+  brings a whole reveal behind a one-voxel plug to 90 % in 1 frame (430 with the guard off).
+  A partial opening is slower: 222 frames for a 10 x 10 window. The owner accepted that within
+  the 589-frame bound of `H` 256, so Alternative C stays unbuilt.
+- **The probes, outside this decision.** Plan 0047 Phase 1 found the probe gather (ADR-0023)
+  making 83 % of the patches at `VEIN_POSE`, in whole-screen steps. Their cause was the slice
+  cadence: a slice took every slot with the same `slot mod slices`. The fix stays inside
+  ADR-0023's design. The slices are now spread by a 15-bit bijective hash of the slot
+  (`probes::slot_slice`), which takes the gather at `VEIN_POSE` to 0 patches a step. The patch
+  pose keeps about 8 gather patches a step. Two further mechanisms were measured and rejected:
+  - **An `f32` irradiance atlas with a settled hysteresis above 0.97.** At 0.99 it stilled the
+    gather (0.30 patches a step). But a reveal took about 1831 frames to reach 90 %, the furnace
+    no longer converged by 256 frames (texel mean -4.59 % against a 4 % bar), and the atlas
+    would have cost 16 777 216 B. At 0.97 it moved nothing (under 1 %).
+  - **A per-ray clamp on the probe rays' emissive term.** It biased the gather's mean 38 to 53 %
+    low, against a 3 % bar.
+- **The furnace test, rebased.** The probe furnace no longer judges against pi. Its fixed point
+  is the probe rays' own direct mean `D` at their hits. The test measures `D` with the centre
+  probe's tile zeroed (7.7 to 8.4 % under pi, because the firefly clamp of ADR-0018's estimator
+  biases those hits low) and holds every texel and the floor within 7 % of `D` and the texel
+  mean within 4 % at 256 frames. Plan 0048 takes the clamp's bias and decides whether the test
+  returns to pi.
+- **Measured cost** (`nfr.md` §2 and §3, Plan 0047 Phase 6). The gradient pass costs 0.083 to
+  0.085 ms on the RTX 3080 Laptop and 0.454 to 0.462 ms on the Radeon (Cezanne, RADV). The
+  hashed slices add +4.20 % to the probe update on the Radeon with the lamp off, read quiet,
+  against a 5 % bar. `Frame::frame_bytes` grows by 3 686 400 B at the default, exactly the 16 B
+  a lighting pixel the Consequences named.
+- **What it did not fix.** The owner's windowed check (Phase 7) chose outcome (c): "much
+  better, but still bad". Still walls hold, and two faults remain. Indirect light takes
+  seconds to settle after a move into a new area or a lamp toggle. Small light dots show on a
+  fast turn or a dig, the same as with the old 32-frame look. The second is the motion case
+  the Negative consequences predicted. Plan 0049 takes both as a measure-first plan. Any
+  mechanism beyond this decision or ADR-0023 is a new ADR there, with Alternative A among its
+  options.

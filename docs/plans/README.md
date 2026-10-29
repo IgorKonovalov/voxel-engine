@@ -18,7 +18,6 @@ state from `git log`. Completed plans move to `done/`.
 | [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: a star field, the moon's phases, sky bodies the game lists, an aurora that lights the ground, and a night tint | approved | M10, ADR-0032 (proposed). After Plans 0032 and 0035. |
 | [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, six verified defects | approved | Code health, no ADR. After every plan active on 2026-10-22. |
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044. |
-| [0047](0047-emissive-light-holds-still-long-guarded-history.md) | Emissive light holds still: a patch bar, a long f32 emissive history, an emissive-only gradient guard, the probe gather's steps | in-progress | M2, ADR-0036 (proposed). Amended 2026-10-28: probe Phase 4. Before Plan 0032. |
 <!-- roster:end -->
 
 ## Recently closed
@@ -26,6 +25,7 @@ state from `git log`. Completed plans move to `done/`.
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0047](done/0047-emissive-light-holds-still-long-guarded-history.md) | Emissive light holds still: an f32 history of 256 frames, an emissive-only guard and hashed probe slices; 1.5 patches a step from 77; motion faults to Plan 0049 | 2026-10-29, v0.36.0 |
 | [0038](done/0038-showcase-cavern-and-hero-shots.md) | A showcase cavern lit by four ores, lamp off: a 72 m hall, three named shots, half dark with crystals leading (owner, Phase 6a); the hero re-shot from `hall` | 2026-10-28, v0.35.0 |
 | [0040](done/0040-eye-adaptation-asymmetric-auto-exposure-and-pre-exposure.md) | Eye adaptation: asymmetric two-stage auto exposure metered on the GPU, pre-exposed HDR targets; owner chose 0.15 / 2 / 10 s and max 16 | 2026-10-28, v0.34.0 |
 | [0041](done/0041-fsr2-port-to-wgsl.md) | FSR 2.2.1 in WGSL beside our upscaler: still, ghost and lamp bars held, slow pans and 1.2 ms (1.9 ms) missed; owner kept it opt-in, `own` at 1.5 the default | 2026-10-27, v0.33.0 |

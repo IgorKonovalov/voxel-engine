@@ -1,6 +1,6 @@
 # 0047: Emissive light holds still: a patch bar, a long full-precision emissive history, and an emissive-only gradient that guards it
 
-> **Status:** in-progress (2026-10-28): every phase done, Phase 7's outcome recorded; awaiting the fresh-session close review
+> **Status:** done (2026-10-29, v0.36.0). Close review clean: every phase landed as amended five times, the gate re-run is green, and still ore light holds (1.50 patches a step at the patch pose, against 74 to 78). The owner's outcome (c), indirect settling and dots in motion, goes to Plan 0049.
 > **Decisions:** Owner, 2026-10-27: the long f32 history guarded by an emissive-only gradient (option a); after Plan 0040, before Plan 0032; the strict bar (at most 3 patches a step, 1 sudden step a second, flicker 0.002 log2 a frame); a lag bounded by H is acceptable for changes the guard cannot see.
 > **Created:** 2026-10-27
 > **Amended:** 2026-10-28 (owner, option a, after Phase 1's done-when 4 tripped at `VEIN_POSE`):
@@ -32,28 +32,28 @@
 > 256 frames. Done-when 6's cost bar is met on step D's readings, and Phase 6 re-reads the
 > Radeon's lamp-off figure quiet. Phase 5's bar holds the direct light to the strict numbers
 > and adds the gather's measured share by arithmetic. Probe popping seen at Phase 7 leads to
-> ADR-0037. The TL;DR, diagram, Budgets, Risks and Followups follow.
+> a new ADR (next free number). The TL;DR, diagram, Budgets, Risks and Followups follow.
 > **Amended 2026-10-28 (owner, fifth),** after the hole test read 69.7 % against 70 % on the
 > kept tree. Its 256-frame "settled" value is a transient on both trees. Done-when 5 now reads
 > frame 32 against the box's value at 2048 frames after the carve, with a bar of at least
 > 52 % (the base's 53.1 %, less 1 point). The owner approved the change.
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet: static light in a dark cave)
-> **Related ADRs:** [ADR-0036](../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
-> (proposed with this plan), [ADR-0018](../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
+> **Related ADRs:** [ADR-0036](../../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
+> (proposed with this plan), [ADR-0018](../../adrs/0018-direct-light-per-pixel-one-sample-from-a-hit-buffer-with-svgf-history-killed-by-edits.md)
 > (the light, temporal and filter passes this plan changes),
-> [ADR-0025](../adrs/0025-light-candidates-from-a-power-over-distance-table-of-near-emitter-chunks.md)
-> (the candidate table, unchanged), [ADR-0033](../adrs/0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md)
+> [ADR-0025](../../adrs/0025-light-candidates-from-a-power-over-distance-table-of-near-emitter-chunks.md)
+> (the candidate table, unchanged), [ADR-0033](../../adrs/0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md)
 > (pre-exposure: the history this plan stores is rescaled by it)
 > **Source:** the owner, 2026-10-27, after Plan 0040's second Phase 5 session. With the lamp
 > off near a vein, "multiple lights are opening on walls one after another", each fairly
 > suddenly, plus low-frequency flicker. Emissive history 64 is "better, but still visible". The
 > owner asked for a separate plan. Plan 0040 leaves `DEFAULT_EMISSIVE_HISTORY` at 32, and this
 > plan owns that default.
-> **Starts after:** [Plan 0040](done/0040-eye-adaptation-asymmetric-auto-exposure-and-pre-exposure.md)
+> **Starts after:** [Plan 0040](0040-eye-adaptation-asymmetric-auto-exposure-and-pre-exposure.md)
 > merges. Its branch changes `light.wgsl`, `temporal.wgsl`, `gradient.wgsl` and `atrous.wgsl`
 > (pre-exposed stores, a history rescale, the moment clamp), and this plan's harness reads its
-> meter tiles (`Frame::exposure_tiles`). **Before [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**:
+> meter tiles (`Frame::exposure_tiles`). **Before [Plan 0032](../0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**:
 > 0032 adds the sun's directional sample and sky light into this same long-history part
 > (its Decision 3 and 4) and reads its history bars against it. Settling the part's length,
 > precision and guard first means 0032 builds on them once, and does not re-read its bars
@@ -88,7 +88,7 @@ held: the `f32` atlas at 0.99 lags about 1831 frames and fails the furnace, and 
 biases indirect light 38 to 53 % low. So the phase keeps the hash alone. It stills
 `VEIN_POSE` and leaves about 8 gather patches a step at the patch pose, which becomes that
 pose's bar. Phase 5's bar then holds the direct light to the strict numbers, with the gather's
-share added by arithmetic. If the owner still sees probes pop in Phase 7, ADR-0037 follows
+share added by arithmetic. If the owner still sees probes pop in Phase 7, a new ADR (next free number) follows
 (amended 2026-10-28, owner, fourth). Only then does the plan pick the
 history length and the reuse cap by sweeping them against the bar, and set the default. The
 first thing anyone sees is the Phase 1 test printing today's patch counts on the two vein
@@ -366,7 +366,7 @@ flowchart LR
     These mechanisms tune ADR-0023's design and need no ADR. A mechanism outside it (a
     separate emissive probe channel with its own history or guard, the emissive term moved
     out of the probe rays, or a world-space cache, ADR-0036's Alternative A) **stops** for
-    the architect, who writes ADR-0037 before any code.
+    the architect, who writes a new ADR (next free number) before any code.
 
     Step A selected row 4, and the hashed slices (`live/phase4-row4-hashed-slices.patch`)
     still `VEIN_POSE` (gather 0 patches on every step) but not the patch pose (gather 8.15 /
@@ -524,9 +524,9 @@ flowchart LR
          120 to 720 lies within 3 % (proposed) of the same tree without the clamp, and the
          furnace's long reading moves by at most 1 %.
        - If no `k` meets them, **stop**: the remaining options are outside ADR-0023's
-         design, and the architect writes ADR-0037 before any code.
+         design, and the architect writes a new ADR (next free number) before any code.
   - **Step D's result (amended 2026-10-28, owner, fourth).** Dev stopped at item 2's exit, and
-    the owner decided on the readings instead of opening ADR-0037 now. Phase 4 keeps the
+    the owner decided on the readings instead of opening a new ADR (next free number) now. Phase 4 keeps the
     slice hash alone, on the `f16` atlas at hysteresis 0.97. Both step D mechanisms were
     measured and rejected:
     - *The `f32` atlas with a settled hysteresis above 0.97.* At 0.99 it brings the patch
@@ -808,7 +808,7 @@ flowchart LR
   and the default changes to it with Phase 5's bars re-read. (c) Something is still visible
   (for example in motion), and the architect amends the plan or opens ADR-0036's
   Alternative A. If what is still visible is probe popping (the gather stepping on its own,
-  as at the patch pose), the architect writes ADR-0037 first: a separate emissive probe
+  as at the patch pose), the architect writes a new ADR (next free number) first: a separate emissive probe
   channel with its own history or guard, or a world-space cache (amended 2026-10-28, owner,
   fourth). If the partial reveal is too slow, the architect amends the plan to build
   ADR-0036's Alternative C, measured against Phase 3's partial-plug reading.
@@ -875,7 +875,7 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
   rare-event emissive sample and neither a per-probe rotation, a longer `f32` hysteresis nor
   a per-ray clamp meets Phase 4's bars, the remaining options (a separate emissive probe
   channel with its own guard, or ADR-0036's Alternative A) are new decisions. Phase 4 stops
-  for ADR-0037 rather than loosen its bars. A longer probe hysteresis also lags a probe's
+  for a new ADR (next free number) rather than loosen its bars. A longer probe hysteresis also lags a probe's
   response to a dig by more visits; the indirect tests in its done-when 5 hold that.
   Amended 2026-10-28 (owner, second): the rotation per probe is measured as not helping, so
   the list is the `f32` atlas with a longer hysteresis, then the clamp. Two risks follow:
@@ -889,7 +889,7 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
   about 1831 frames and did not settle the furnace by 256, and the clamp biased indirect
   light 38 to 53 % low. The owner keeps the hash alone. The remaining risk is that the patch
   pose's gather (about 8 patches a step, 21 sudden steps a second) shows as probe popping in
-  the owner's windowed check. If it does, Phase 7 (c) leads to ADR-0037 (Followups).
+  the owner's windowed check. If it does, Phase 7 (c) leads to a new ADR (next free number) (Followups).
 - **The indirect tests may read transients** (amended 2026-10-28, owner, second). The
   furnace, `indirect.png` and the hole test read at 64 or 256 frames, when about half a
   probe's weight still lies on early visits. If step C finds no defect, any mechanism that
@@ -910,7 +910,7 @@ Determinism is not touched: everything here is in `vxe-render`, a client-side vi
   and B; a later plan if Phase 7 asks).
 - No new probe structure or estimator (amended 2026-10-28). Phase 4 changes the probe update
   only within ADR-0023's design (rays, rotation, hysteresis and its precision, slices, the
-  light-window trigger, a per-ray clamp); anything beyond stops for ADR-0037. No change to
+  light-window trigger, a per-ray clamp); anything beyond stops for a new ADR (next free number). No change to
   the probe spacing, the volume's size or the gather's visibility weights. After step D
   (amended 2026-10-28, owner, fourth) it keeps only the slice hash: no `f32` irradiance atlas,
   no hysteresis change, no per-ray clamp.
@@ -1270,7 +1270,7 @@ The vein gather reads 0 patches on every step at every `k`. Exit: no `k` meets t
 (the gather's mean within 3 % of the tree without the clamp at both poses; it falls 38 to 53
 %), and at 8 and 4 the composite's patch-pose mean (103.95, 108.40) is over the before reading
 77.10 (done-when 4). By the plan's rule dev stops: the remaining options are outside ADR-0023's
-design, and the architect writes ADR-0037 before any code. The tree carries no probe change
+design, and the architect writes a new ADR (next free number) before any code. The tree carries no probe change
 (the hash, the `f32` atlas and the clamp are patches under `live/`). Done-whens 3 and 5 are
 not met by any tried setting; 6 is not read for a kept mechanism.
 
@@ -1528,15 +1528,19 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   visits up to 3.44. Fixing it (a clamp that keeps the mean, or one sized by the hit's
   geometry) changes ADR-0018's estimator for every pass that uses it, and is its own plan.
   That plan decides whether the furnace test judges against pi again. Not this plan's scope.
+  At the close (2026-10-29) Plan 0048 takes it.
 
-- **ADR-0037, if the owner sees probe popping in Phase 7** (amended 2026-10-28, owner,
+- **A new ADR (next free number), if the owner sees probe popping in Phase 7** (amended 2026-10-28, owner,
   fourth). The slice hash leaves the patch pose's gather at about 8 patches a step. Inside
   ADR-0023's design the measured options are spent: a rotation per probe did not help, the
   `f32` atlas with a longer hysteresis lags (about 1831 frames at 0.99) and fails the
   furnace, and the per-ray clamp biases the light. The next options are new decisions: a
   separate emissive probe channel with its own history or guard, or a world-space cache
-  (ADR-0036's Alternative A). The architect writes ADR-0037 with those as its options, then
-  a plan, before any code.
+  (ADR-0036's Alternative A). The architect writes a new ADR (next free number) with those as its options, then
+  a plan, before any code. At the close (2026-10-29) the owner did not single out probe
+  popping. Phase 7's outcome (c) names two other faults, indirect light settling over seconds
+  after a move or a lamp toggle and small light dots on a fast turn or a dig, and hands both to
+  Plan 0049, a measure-first plan. That plan opens the new ADR if its spike points at the probes.
 
 - Plan 0032 amendment (when this plan merges): its directional sample and sky ray land in the
   emissive part at this plan's `H`. The gradient's emissive re-shade then has to include the
@@ -1544,3 +1548,10 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   plans. 0032's history bars are read at the new default.
 - If the 384 x 216 reading diverges from the bar: a spatial reuse radius that scales with the
   lighting grid.
+- Close review nits (2026-10-29), each for whichever plan next touches the file: a comment
+  line over 100 columns in `light.wgsl` (the `emissive_irradiance` header) and in
+  `apps/flythrough/src/hud.rs` (the banner's doc example). The Budgets' `VEIN_POSE` timing
+  was not read, because the fly-through has no pose flag; a `--pose` flag would let a later
+  plan read it. `ProbeVolume::update_list` filters all 32 768 slots on the CPU each frame
+  (0.52 to 0.59 ms of frame CPU against 0.44 to 0.46 ms on the RTX); a per-slice slot table
+  built once would remove it.

@@ -657,7 +657,7 @@ box and 0.17 ms on the iGPU, above the plan's guesses (0.03 to 0.08 ms) and insi
 line. Phase 4's loaded readings (dedd83c against e9879cc) are superseded.
 
 **Static emissive light on a long guarded history and probe slices spread by a hash (Plan 0047
-Phase 6, 2026-10-28; ADR-0036, ADR-0023).** `flythrough --level --headless --render 1920x1080
+Phase 6, 2026-10-28, the close's readings at v0.36.0; ADR-0036, ADR-0023).** `flythrough --level --headless --render 1920x1080
 --frames 300 --adapter NVIDIA|AMD --lamp on|off`, the spawn pose, the defaults (`own` 1.5, half
 lighting, 64 rays one in 8, emissive history 256, guard on, reuse cap 20), per-pass timestamps,
 median of the last 30 frames, release, exclusive perf lock, memory cap, on AC (power "Not
@@ -995,7 +995,7 @@ B at main 05a3a28, 254 476 352 B at 8a3fff3, +260 128 B: the meter's 240 x 135 t
 the 32-byte state and its uniform copy, the pass's 96-byte parameters and three 256-byte
 read-back buffers. The plan projected +0.26 MB.
 
-**The emissive accumulation in `f32` (Plan 0047 Phase 2; ADR-0036).** The temporal pass's
+**The emissive accumulation in `f32` (Plan 0047 Phase 2, the close's reading at v0.36.0; ADR-0036).** The temporal pass's
 accumulation pair is `rgba32float`, 16 B more per lighting pixel. `Frame::frame_bytes` printed by
 `flythrough --autopilot --headless --seed 1 --render 1920x1080` (RTX 3080 Laptop, exclusive perf
 lock, 1-minute load 7.7, loaded): 184 956 992 B at the default (`own` 1.5, half: 640 x 360
