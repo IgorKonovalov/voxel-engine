@@ -545,6 +545,46 @@ impl Composed for RawBrick {
     }
 }
 
+/// The cells the solid voxels of `src`, the brick of region cell `c`, land in when dropped by
+/// `dropped`, as `(destination cell, source layers, destination layer of the first source
+/// layer)`. Layers `r..8` of `src` (with `r = dropped mod 8`) land in the cell `dropped / 8`
+/// below `c`, layers `0..r` in the cell under that. A destination is named only when its
+/// source layers hold a solid voxel: a piece whose bottom layers are air lands in one cell, and
+/// the cell under it is neither read nor required to be resident.
+fn landings(
+    c: CellCoord,
+    src: &Brick,
+    dropped: i32,
+) -> impl Iterator<Item = (CellCoord, std::ops::Range<usize>, usize)> {
+    let (q, r) = (dropped.div_euclid(BE), dropped.rem_euclid(BE));
+    let [cx, cy, cz] = c.0;
+    let (r, be) = (r as usize, BE as usize);
+    let bits = src.solid_bits();
+    let upper = (CellCoord([cx, cy, cz - q]), r..be, 0);
+    let lower = (CellCoord([cx, cy, cz - q - 1]), 0..r, be - r);
+    [upper, lower]
+        .into_iter()
+        .filter(move |(_, layers, _)| bits[layers.clone()].iter().any(|&w| w != 0))
+}
+
+/// Fails with the chunk of the first landing cell of `snap`'s region, dropped by `dropped`,
+/// that is not resident, taking the region's cells ascending by `(x, y)`, then `z`.
+fn check_landings(
+    snap: &Snapshot,
+    reader: &mut Reader<'_>,
+    dropped: i32,
+) -> Result<(), ChunkCoord> {
+    for (&[cx, cy], zs) in &snap.stacks {
+        for &cz in zs {
+            let c = CellCoord([cx, cy, cz]);
+            for (to, _, _) in landings(c, &snap.packed[&CellKey(c)], dropped) {
+                reader.brick(to)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The bricks an op will write, composed in memory: each starts as the world's brick (or, for
 /// a region cell, as its spared voxels in air, since every other solid voxel leaves) and takes
 /// writes; [`Compose::commit`] stores each in canonical form.
@@ -563,28 +603,26 @@ impl<B: Composed> Compose<B> {
         Self { bricks }
     }
 
-    /// The composed brick of `c`, read from the world on first use.
+    /// The composed brick of `c`, read from the world on first use. Every cell an op composes
+    /// is resident by construction: a region cell is in the snapshot, a crushed cell was read
+    /// by the gap scan, and every landing cell is checked by [`check_landings`] before
+    /// anything is composed.
     fn brick(&mut self, reader: &mut Reader<'_>, c: CellCoord) -> &mut B {
-        self.bricks
-            .entry(CellKey(c))
-            .or_insert_with(|| B::of_world(reader.brick(c).expect("scanned resident")))
+        self.bricks.entry(CellKey(c)).or_insert_with(|| {
+            B::of_world(
+                reader
+                    .brick(c)
+                    .expect("composed cells are checked resident before composing"),
+            )
+        })
     }
 
-    /// Writes the solid voxels of `src`, the brick of region cell `c`, `dropped` voxels lower.
-    /// They land in at most two bricks: layers `r..8` of `src` (with `r = dropped mod 8`) in
-    /// the cell `dropped / 8` below `c`, layers `0..r` in the cell under that. Each destination
-    /// brick is looked up once and takes whole z-layers.
+    /// Writes the solid voxels of `src`, the brick of region cell `c`, `dropped` voxels lower,
+    /// into the cells [`landings`] names. Each destination brick is looked up once and takes
+    /// whole z-layers.
     fn place_dropped(&mut self, reader: &mut Reader<'_>, c: CellCoord, src: &Brick, dropped: i32) {
-        let (q, r) = (dropped.div_euclid(BE), dropped.rem_euclid(BE));
-        let [cx, cy, cz] = c.0;
-        let (r, be) = (r as usize, BE as usize);
-        // (destination cell, source layers, destination layer of the first source layer)
-        let upper = (CellCoord([cx, cy, cz - q]), r..be, 0);
-        let lower = (CellCoord([cx, cy, cz - q - 1]), 0..r, be - r);
-        for (to, layers, first) in [upper, lower] {
-            if !layers.is_empty() {
-                self.brick(reader, to).place(src, layers, first);
-            }
+        for (to, layers, first) in landings(c, src, dropped) {
+            self.brick(reader, to).place(src, layers, first);
         }
     }
 
@@ -852,6 +890,8 @@ impl World {
         if dropped == 0 {
             return Ok(DropResult::default());
         }
+
+        check_landings(&snap, &mut reader, dropped).map_err(EditError::NotResident)?;
 
         let mut moved = Counts::default();
         let mut crushed = Counts::default();

@@ -166,7 +166,9 @@ fn raycast_hit_list_is_pinned() {
 fn trace_materials_reports_the_cavity_and_the_rock() {
     let world = carved_world();
     assert_eq!(
-        world.trace_materials(centre_of_voxel([0, 0, 0]), UP, 100 * 256),
+        world
+            .trace_materials(centre_of_voxel([0, 0, 0]), UP, 100 * 256)
+            .unwrap(),
         [
             Run {
                 material: 0,
@@ -193,7 +195,9 @@ fn trace_materials_splits_at_a_layer_of_another_material() {
             Mode::Replace { from: 3, to: 2 },
         ))
         .unwrap();
-    let runs = world.trace_materials(centre_of_voxel([0, 0, 0]), UP, 100 * 256);
+    let runs = world
+        .trace_materials(centre_of_voxel([0, 0, 0]), UP, 100 * 256)
+        .unwrap();
     // Faces at z = 20 and z = 30 seen from z = 0.5: 19.5 and 29.5 voxels.
     assert_eq!(
         runs,
@@ -226,7 +230,9 @@ fn trace_materials_splits_at_a_layer_of_another_material() {
 fn trace_materials_covers_missing_chunks_as_air() {
     let world = carved_world();
     // From inside the cavity out past the extent's +z edge at z = 128.
-    let runs = world.trace_materials(centre_of_voxel([0, 0, 0]), UP, 200 * 256);
+    let runs = world
+        .trace_materials(centre_of_voxel([0, 0, 0]), UP, 200 * 256)
+        .unwrap();
     assert_eq!(
         runs.last(),
         Some(&Run {
@@ -246,7 +252,7 @@ fn trace_materials_agrees_with_the_raycast_and_the_voxels_it_crosses() {
         let o = Fixed3([0; 3].map(|_| rng.range(-9 * 256, 9 * 256)));
         let d = [0; 3].map(|_| rng.range(-1024, 1024));
         let max_t = rng.range(0, 40 * 256);
-        let runs = world.trace_materials(o, d, max_t);
+        let runs = world.trace_materials(o, d, max_t).unwrap();
         // The runs tile [0, max_t] and alternate material.
         assert_eq!(runs.first().map(|r| r.t0), Some(0));
         assert_eq!(runs.last().map(|r| r.t1), Some(max_t));
@@ -291,7 +297,7 @@ fn trace_materials_list_is_pinned() {
         let o = Fixed3([0; 3].map(|_| rng.range(-9 * 256, 9 * 256)));
         let d = [0; 3].map(|_| rng.range(-1024, 1024));
         let max_t = rng.range(0, 200 * 256);
-        let runs = world.trace_materials(o, d, max_t);
+        let runs = world.trace_materials(o, d, max_t).unwrap();
         runs_total += runs.len();
         h.write(&(runs.len() as u32).to_le_bytes());
         for r in runs {
@@ -336,8 +342,8 @@ fn a_clear_block_is_one_cell_of_the_walk() {
     assert_eq!(hit2, Some(hit));
     assert_eq!(cells2, 8);
     assert_eq!(
-        skip.trace_materials(origin, dir, 1700),
-        single.trace_materials(origin, dir, 1700)
+        skip.trace_materials(origin, dir, 1700).unwrap(),
+        single.trace_materials(origin, dir, 1700).unwrap()
     );
 }
 
@@ -416,6 +422,30 @@ fn rays_past_the_reach_limit_are_refused() {
         world.raycast(Fixed3([0, 0, (1 << 30) + 1]), [256, 0, 0], 256),
         refused(Field::Coord)
     );
+}
+
+/// `trace_materials` takes the raycast's limits: a ray past `ray_reach_max` or from an origin
+/// past `coord_max` is refused before any cell is walked.
+#[test]
+fn material_traces_past_the_reach_limit_are_refused() {
+    let world = carved_world();
+    let o = centre_of_voxel([0, 0, 0]);
+    let max = 1i64 << 22;
+    let refused = |what| Err(EditError::OutOfRange { what });
+    assert!(world.trace_materials(o, [256, 0, 0], max).is_ok());
+    assert_eq!(
+        world.trace_materials(o, [256, 0, 0], max + 1),
+        refused(Field::RayLength)
+    );
+    assert_eq!(
+        world.trace_materials(o, [1 << 40, 0, 0], 1),
+        refused(Field::RayLength)
+    );
+    assert_eq!(
+        world.trace_materials(Fixed3([0, 0, (1 << 30) + 1]), [256, 0, 0], 256),
+        refused(Field::Coord)
+    );
+    assert_eq!(world.trace_materials(o, [256, 0, 0], -1), Ok(vec![]));
 }
 
 /// A box query is capped at 1 024 voxels per axis and `2^30` voxels; a world built

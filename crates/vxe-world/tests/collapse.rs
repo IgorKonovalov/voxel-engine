@@ -457,6 +457,41 @@ fn a_drop_scanning_into_a_non_resident_chunk_changes_nothing() {
     );
 }
 
+/// A piece on local layers 4..8 of cell `(0, 0, 0)`, in brick row 0 of the lone chunk
+/// `[0, 0, 0]`, with air under it inside the chunk and chunk `[0, 0, -1]` absent.
+fn a_piece_over_a_missing_chunk() -> World {
+    build(&[([0, 0, 4], [8, 8, 8], 3)])
+}
+
+#[test]
+fn a_part_cell_drop_lands_without_reading_the_empty_cell_below() {
+    // Dropped by 4, the piece's layers 4..8 land on layers 0..4 of its own cell; its layers
+    // 0..4 are air and land nowhere, so the cell under it (in the absent chunk) is not read.
+    let world = a_piece_over_a_missing_chunk();
+    let count = |w: &World| w.count_in_box([0, 0, 0], [63, 63, 63]).unwrap();
+    let before = count(&world);
+    let r = world.drop_region(&[CellCoord([0, 0, 0])], 4).unwrap();
+    assert_eq!(r.dropped, 4);
+    assert_eq!(r.moved, [(3, 256)]);
+    assert_eq!(world.voxel_hash(), direct(&[([0, 0, 0], [8, 8, 4], 3)]));
+    assert_eq!(count(&world), before);
+    assert!(!world.store().contains(ChunkCoord([0, 0, -1])));
+    assert!(world.store().contains(ChunkCoord([0, 0, 0])));
+}
+
+#[test]
+fn a_part_cell_drop_that_reaches_the_missing_chunk_changes_nothing() {
+    // With `max_drop = 8` the scan runs through the cell's four air layers into chunk
+    // `[0, 0, -1]`, which is absent.
+    let world = a_piece_over_a_missing_chunk();
+    let before = world.voxel_hash();
+    assert_eq!(
+        world.drop_region(&[CellCoord([0, 0, 0])], 8),
+        Err(EditError::NotResident(ChunkCoord([0, 0, -1])))
+    );
+    assert_eq!(world.voxel_hash(), before);
+}
+
 #[test]
 fn a_solid_voxel_between_two_region_runs_wedges_the_piece() {
     // Region cells (4, 4, 3) and (4, 4, 5), full of material 3, over a floor up to z = 20; the

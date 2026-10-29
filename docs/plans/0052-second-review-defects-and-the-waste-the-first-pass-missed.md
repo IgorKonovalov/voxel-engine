@@ -1,6 +1,6 @@
 # 0052: The second review: five defects, the waste the first pass missed, and the testbed's failure semantics
 
-> **Status:** approved (2026-10-29)
+> **Status:** in-progress (2026-10-29)
 > **Created:** 2026-10-29
 > **Milestone:** cross-cutting (code health), like Plans 0044 and 0045. It serves the M2 to M5
 > figures already shipped and the determinism and headless promises in `docs/nfr.md`
@@ -540,7 +540,7 @@ Every reading names the machine, the commit, the lock and the load.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the world's two defects and its two unchecked doors | dev | not started | |
+| 1: the world's two defects and its two unchecked doors | dev | done | committed with this row |
 | 2: the wasm host charges before it works | dev | not started | |
 | 3: the testbed fails out loud, and the logic fails the same way twice | dev | not started | |
 | 4: the frame's idle probe volume, and the small corrections | dev | not started | |
@@ -551,6 +551,24 @@ Every reading names the machine, the commit, the lock and the load.
 | 9: the owner's removals | dev | not started | |
 
 ### Notes
+
+- Phase 1: `place_dropped` names a landing cell only when its source layers hold a solid voxel
+  (`landings`), and `check_landings` reads every landing cell (region cells ascending by
+  `(x, y)`, then `z`) before anything is composed. The new collapse test panics at the base
+  (`collapse.rs:570`, "scanned resident") and passes at the tip.
+- Phase 1: the out-of-band arrival sets `sweep` after the sweep block. The stream test's
+  first further poll removes the chunk from the store and the full tier (demotion queued);
+  the `demoted` event itself arrives when the worker returns the mips, read through
+  `wait_idle` as the second further poll. At the base the first further poll still reads
+  `Tier::Full` (assertion `left != right` at `tests/stream.rs:592`).
+- Phase 1: `stamp` checks `edit_axis_max` against the prefab's size before turning it, and
+  `coord_max` against both corners of the rotated volume (the plan names the origin only).
+- Phase 1 deviation: `crates/vxe-audio/tests/reflections.rs` (outside `Files touched`) takes
+  one `.unwrap()` for `trace_materials`' new `Result`.
+- Phase 1 gate: `--profile quick` ran 519 tests at load 12.3 (Plan 0050's lane building);
+  517 passed and two timed out at 30 s (`castle::the_castle_stands_in_the_hall_...`,
+  `replay::a_stamp_and_a_collapse_replay_from_the_save`); both pass alone (15.3 s, load 8.8).
+  Doctests, clippy `-D warnings` and fmt clean.
 
 ### Close triggers
 

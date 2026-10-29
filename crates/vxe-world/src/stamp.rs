@@ -14,6 +14,8 @@ use crate::brick::Brick;
 use crate::chunk::Chunk;
 use crate::coords::{BRICK_EDGE, CHUNK_EDGE, ChunkCoord, VoxelCoord, brick_slot, index_in_brick};
 use crate::edit::{EditError, EditResult};
+use crate::fixed::{FIXED_ONE, Fixed3};
+use crate::limits::Field;
 use crate::material::MaterialId;
 use crate::prefab::{Prefab, Rot};
 use crate::store::{World, read, write};
@@ -218,12 +220,23 @@ impl World {
     /// and reports what changed. Every masked voxel is written whatever the material flags.
     /// Fails, changing nothing, with the first chunk (ascending) that holds a masked voxel
     /// and is not resident.
+    ///
+    /// Refused with `OutOfRange`, changing nothing, under the world's limits like the other op
+    /// kinds: `EditExtent` when the prefab spans more than `edit_axis_max` voxels on an axis
+    /// (checked before it is turned; a turn permutes the axes), `Coord` when the rotated
+    /// volume's minimum or maximum corner lies past `coord_max`.
     pub fn stamp(
         &self,
         prefab: &Prefab,
         origin: impl Into<VoxelCoord>,
         rot: Rot,
     ) -> Result<EditResult, EditError> {
+        let limits = self.limits();
+        if prefab.size().iter().any(|&n| n > limits.edit_axis_max) {
+            return Err(EditError::OutOfRange {
+                what: Field::EditExtent,
+            });
+        }
         let rotated;
         let prefab = if rot == Rot::IDENTITY {
             prefab
@@ -235,6 +248,9 @@ impl World {
         let Some((lo, hi)) = voxel_box(origin, prefab.size()) else {
             return Ok(EditResult::default());
         };
+        for corner in [lo, hi] {
+            limits.coord(Fixed3(corner.map(|v| v * FIXED_ONE)))?;
+        }
         let o = origin.0.map(i64::from);
 
         // Residency first, ascending; the map guard lives to the end so no checked chunk can

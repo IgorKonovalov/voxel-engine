@@ -670,9 +670,9 @@ impl Streamer {
                         requeue.push(coord);
                         continue;
                     }
-                    // Past the full band it is inserted anyway; the sweep demotes it.
+                    // Past the full band it is inserted anyway; the next poll's sweep demotes
+                    // it (this poll's sweep runs before the insert, so it cannot).
                     if d > keep_full2 {
-                        self.sweep = true;
                         outside.push(coord);
                     }
                     inserts.push((coord, chunk));
@@ -734,7 +734,10 @@ impl Streamer {
             self.sweep = false;
             (evict, demote) = self.sweep_lists();
         }
-        // Checked by the next sweep, which a full scan would find them in.
+        // Checked by the next sweep, which a full scan would find them in. The sweep above ran
+        // before these chunks are inserted below, so the flag is set after it: the next poll
+        // sweeps them even when nothing else moves.
+        self.sweep |= !outside.is_empty();
         self.recheck.extend(outside);
         // Chunks inserted now that the sweep found outside their bands are left for the next
         // sweep; none is both inserted and removed in one poll.

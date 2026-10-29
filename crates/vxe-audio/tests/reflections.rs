@@ -549,6 +549,7 @@ fn reflection_hits_match_the_first_solid_run_of_the_ray() {
             let max_t = (range * FIXED_ONE as f32 * FIXED_ONE as f32 / len).round() as i64;
             let run = w
                 .trace_materials(origin, dir, max_t)
+                .unwrap()
                 .into_iter()
                 .find(|r| r.material != AIR)?;
             let point = std::array::from_fn(|k| {

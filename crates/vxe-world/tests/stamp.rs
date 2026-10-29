@@ -239,6 +239,52 @@ fn stamp_outside_the_extent_fails_with_the_first_missing_chunk_and_changes_nothi
     assert_eq!(world.voxel_hash(), before);
 }
 
+/// A stamp takes the world's limits like the other op kinds: an origin (or the far corner)
+/// past `coord_max` and a prefab wider than `edit_axis_max` are refused, changing nothing.
+#[test]
+fn stamps_past_the_limits_are_refused_and_change_nothing() {
+    let refused = |what| Err(EditError::OutOfRange { what });
+    let world = solid3_world();
+    let before = world.voxel_hash();
+    // `coord_max` is 2^30 fixed units, 2^22 voxels.
+    let edge = 1 << 22;
+    assert_eq!(
+        world.stamp(&Prefab::vault(16, 4), [edge + 1, 0, 0], Rot::IDENTITY),
+        refused(Field::Coord)
+    );
+    assert_eq!(
+        world.stamp(&Prefab::vault(16, 4), [0, 0, -edge - 1], Rot::IDENTITY),
+        refused(Field::Coord)
+    );
+    // The origin is in range; the far corner, 15 voxels on, is not.
+    assert_eq!(
+        world.stamp(&Prefab::vault(16, 4), [edge - 8, 0, 0], Rot::IDENTITY),
+        refused(Field::Coord)
+    );
+    assert_eq!(world.voxel_hash(), before);
+
+    let narrow = solid3_world().with_limits(WorldLimits {
+        edit_axis_max: 15,
+        ..WorldLimits::DEFAULT
+    });
+    let before = narrow.voxel_hash();
+    assert_eq!(Prefab::vault(16, 4).size(), [16, 16, 16]);
+    assert_eq!(
+        narrow.stamp(&Prefab::vault(16, 4), [0, 0, 0], Rot::IDENTITY),
+        refused(Field::EditExtent)
+    );
+    assert_eq!(narrow.voxel_hash(), before);
+    // At the limit the stamp runs.
+    let at = solid3_world().with_limits(WorldLimits {
+        edit_axis_max: 16,
+        ..WorldLimits::DEFAULT
+    });
+    assert!(
+        at.stamp(&Prefab::vault(16, 4), [0, 0, 0], Rot::IDENTITY)
+            .is_ok()
+    );
+}
+
 fn vault_at(origin: [i32; 3], rot: Rot) -> (Arc<Prefab>, VoxelCoord, Rot) {
     (Arc::new(Prefab::vault(16, 4)), VoxelCoord(origin), rot)
 }
