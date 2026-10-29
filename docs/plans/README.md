@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0051** (ADRs are a separate sequence; next free there is **0038**).
+**Next free number: 0052** (ADRs are a separate sequence; next free there is **0038**).
 
 ## Active roster
 
@@ -21,6 +21,7 @@ state from `git log`. Completed plans move to `done/`.
 | [0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) | The probe rays' direct light without the clamp's bias: candidate schemes measured, the furnace back at pi | approved | M2, ADR-0037 (proposed). After Plan 0049, whose bars it holds; before Plan 0032. |
 | [0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md) | Light settles fast, holds still in flight, no dots: a settle, shimmer and dot spike, then mechanisms by measurement | approved | M2, no ADR yet. First and alone after 0047 (owner, 2026-10-29); before 0048 and 0032. |
 | [0050](0050-watertight-contour-surface-crack-spike-and-closing-rule.md) | A watertight contour surface: a crack spike that names the wedges and triangles, then the closing rule by measurement | approved | M2, ADR-0011; ADR at the Phase 2 pick. Alone on main, before the light spike (owner, 2026-10-29). |
+| [0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md) | The steady-light spike: static light that converges and freezes (A), a world-space emissive cache (B), read against the wander, dots and shimmer | draft | M2, no ADR yet (after Phase 3). After Plan 0050's check, alone; 0048 and 0032 wait. |
 <!-- roster:end -->
 
 ## Recently closed
