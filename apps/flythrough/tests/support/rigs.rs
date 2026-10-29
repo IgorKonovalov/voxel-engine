@@ -1133,6 +1133,27 @@ pub fn diagonal_slab_camera() -> vxe_render::Camera {
     camera_toward(p.to_array(), CRACK_CENTRE)
 }
 
+/// A flat floor, rock at `z < 64`.
+pub fn floor_world(table: &MaterialTable) -> World {
+    half_space_world(vec![([0, 0, 1], 127)], table)
+}
+
+/// A flat vertical wall, rock at `x >= 80`, its face toward `-x`.
+pub fn wall_world(table: &MaterialTable) -> World {
+    half_space_world(vec![([-1, 0, 0], -161)], table)
+}
+
+/// The floor obliquely: 20 voxels above `(64, 64, 64)` and 30 back along `-x`, looking at it.
+pub fn floor_camera() -> vxe_render::Camera {
+    camera_toward([34.0, 64.0, 84.0], [64.0, 64.0, 64.0])
+}
+
+/// The wall obliquely: 20 voxels out from `(80, 64, 64)` along `-x` and 30 along `-y`,
+/// looking at it.
+pub fn wall_camera() -> vxe_render::Camera {
+    camera_toward([60.0, 34.0, 64.0], [80.0, 64.0, 64.0])
+}
+
 /// A floor (rock at z < 64) meeting a wall (rock at x >= 80) at 90 degrees: the concave corner
 /// along the line x = 80, z = 64.
 pub fn corner_world(table: &MaterialTable) -> World {

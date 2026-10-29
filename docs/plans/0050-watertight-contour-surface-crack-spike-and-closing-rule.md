@@ -427,8 +427,8 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The crack spike: classes, the view, and where they land | dev | done | committed with this row |
-| 2: A zero normal component, exact in the plane code | dev | not started | |
+| 1: The crack spike: classes, the view, and where they land | dev | done | 00cacd4 |
+| 2: A zero normal component, exact in the plane code | dev | done | committed with this row |
 | 3: The closing rules, each measured | dev | not started | |
 | 4: The pick as the default | dev | not started | |
 | 5: The owner's windowed check | human | not started | |
@@ -520,6 +520,82 @@ crack_classes`; two runs read identical rows.
   test-tiers scripts clean; `--profile quick` 517 of 518 passed, 1 timeout
   (`flythrough::replay a_stamp_and_a_collapse_replay_from_the_save` at 30 s, load average 31
   from another session; alone it passed in 14.6 s); `--profile gpu` 178 passed, 31 skipped.
+
+#### Phase 2
+
+Readings as Phase 1's (lavapipe, exclusive perf lock), at 00cacd4 plus this phase's diff.
+
+| scene | look | hits | left out | clean % | class 1 % | class 2 % | class 3 % | 1+2 px | dark % | bright % | self-hit % |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| tilted slab | start | 49366 | 191 | 94.11 | 0.000 | 4.070 | 1.825 | 2009 | 54.3 | 0.0 | 0.000 |
+| concave corner | start | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| 45-degree slab | start | 48333 | 142 | 97.90 | 0.000 | 0.000 | 2.102 | 0 | 0.0 | 0.0 | 0.000 |
+| floor | start | 43012 | 392 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| wall | start | 37800 | 180 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| diagonal slab | start | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| cavity | start | 57600 | 0 | 98.18 | 0.101 | 1.260 | 0.458 | 784 | 45.3 | 0.0 | 0.000 |
+| pillar | start | 3476 | 0 | 96.43 | 0.460 | 3.107 | 0.000 | 124 | 61.3 | 0.0 | 0.000 |
+| level vein | start | 82944 | 0 | 96.71 | 0.113 | 2.596 | 0.581 | 2247 | 32.0 | 0.4 | 0.077 |
+| level vein, lamp off | start | 82944 | 0 | 96.71 | 0.113 | 2.596 | 0.581 | 2247 | 77.6 | 1.1 | 0.000 |
+| level patch | start | 82944 | 0 | 91.33 | 0.034 | 6.315 | 2.318 | 5266 | 2.1 | 2.2 | 0.136 |
+| level patch, lamp off | start | 82944 | 0 | 91.33 | 0.034 | 6.315 | 2.318 | 5266 | 20.2 | 3.2 | 0.000 |
+| tilted slab | fit uniform27 | 49370 | 188 | 93.21 | 0.000 | 4.642 | 2.151 | 2292 | 53.8 | 0.0 | 0.000 |
+| concave corner | fit uniform27 | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| 45-degree slab | fit uniform27 | 48333 | 143 | 97.90 | 0.000 | 0.000 | 2.102 | 0 | 0.0 | 0.0 | 0.000 |
+| floor | fit uniform27 | 43012 | 392 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| wall | fit uniform27 | 37800 | 180 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| diagonal slab | fit uniform27 | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| cavity | fit uniform27 | 57600 | 0 | 97.84 | 0.115 | 1.576 | 0.469 | 974 | 40.8 | 0.0 | 0.000 |
+| pillar | fit uniform27 | 3472 | 0 | 95.05 | 0.461 | 4.493 | 0.000 | 172 | 66.3 | 0.0 | 0.000 |
+| level vein | fit uniform27 | 82944 | 0 | 96.28 | 0.113 | 2.920 | 0.682 | 2516 | 35.1 | 0.5 | 0.109 |
+| level patch | fit uniform27 | 82944 | 0 | 90.48 | 0.043 | 6.834 | 2.644 | 5704 | 4.0 | 2.2 | 0.197 |
+| tilted slab | offset volume | 49351 | 207 | 93.43 | 0.000 | 2.616 | 3.955 | 1291 | 56.2 | 0.0 | 0.000 |
+| concave corner | offset volume | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| 45-degree slab | offset volume | 48315 | 141 | 94.49 | 0.000 | 0.000 | 5.512 | 0 | 0.0 | 0.0 | 0.000 |
+| floor | offset volume | 43012 | 392 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| wall | offset volume | 37800 | 180 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| diagonal slab | offset volume | 57600 | 0 | 99.67 | 0.330 | 0.000 | 0.000 | 190 | 58.9 | 0.0 | 0.000 |
+| cavity | offset volume | 57600 | 0 | 98.04 | 0.122 | 0.997 | 0.844 | 644 | 46.4 | 0.0 | 0.000 |
+| pillar | offset volume | 3456 | 0 | 97.11 | 0.579 | 1.389 | 0.926 | 68 | 50.0 | 4.4 | 0.000 |
+| level vein | offset volume | 82944 | 0 | 96.33 | 0.152 | 1.919 | 1.594 | 1718 | 29.7 | 0.5 | 0.053 |
+| level patch | offset volume | 82944 | 0 | 91.00 | 0.046 | 4.802 | 4.151 | 4021 | 2.6 | 1.8 | 0.102 |
+
+- Done-when 1: `axis_planes_have_no_cracks` reads 0 in classes 1 and 2 for the floor (392
+  left out) and the wall (180 left out). The same test with the old code (the two shader
+  constants reverted as a scratch, then restored) also reads 0 for both, every class.
+- Done-when 2: `axis_planes_decode_to_the_exact_axis_normal` (mirror.rs), under all four
+  fits: floor voxel (10, 10, 2) attribute `0xb7df`, codes (31, 31), normal `(0, 0, 1)`; wall
+  voxel (63, 100, 20) `0xb7c0`, codes (0, 31), normal `(-1, 0, 0)`, bits equal. By the old
+  formula (`round(p / 2 + 1/2) x 63`, round-half-even) they were codes (32, 32) and (0, 32),
+  `0xb820` and `0xb800`. The offset codes the mirror tests pin (floor 11, edge 6) read as
+  before. Two mirror tests pin hashes of attribute words and move: `FIVE_BRICK_HASH`
+  `0xd795_d691_eff6_7ad3` to `0x2097_bf15_d528_0e26`
+  (`a_five_brick_list_matches_an_uncapped_mirror_and_the_one_brick_pass`, whose list still
+  equals the uncapped mirror's words) and `BESIDE_LOD_HASH` `0xda7d_5f1f_ace6_9921` to
+  `0xb326_6753_424e_d0ec` (`attributes_beside_lod_only_chunks_read_their_mips`, 40 face bricks
+  changed by the LOD neighbour).
+- Done-when 3, guardrails (lavapipe), 00ca974 then this commit:
+  `the_default_look_meets_the_guardrails` cavity normal error 7.02 then 7.19 degrees,
+  silhouette 32 then 32 px against face 172, `A` 6.81 then 6.83 %;
+  `contour_planes_cut_the_silhouette_and_normal_errors` (contour mode) at this commit 7.46
+  degrees, 36 px, 6.84 %; speck test contour only-with-shadows 4 then 6 (with 401 then 379,
+  without 399 then 374), face 34 then 34.
+- Done-when 4, moved goldens, share of pixels over 2/255 against the committed PNG:
+  `look_contour.png` 4.012 %, `look_wall_contour.png` 3.304 %,
+  `look_wall_contour_grain.png` 6.200 %, `look_wall_contour_sharp.png` 3.373 %. Every other
+  golden re-rendered at this commit reads the same pixels as Phase 1's re-render, and is not
+  re-blessed; `look_wall_face.png` and the other face goldens unchanged.
+- Deviation: `apps/flythrough/tests/sharpness.rs` (not in the list):
+  `detail_after_lighting_is_exact_for_the_lamp` read 98.389 % within 2/255 at this phase
+  against its floor 98.4 % (98.465 % at 00ca974; misses unlit 0.896 then 0.931 %, darker
+  0.639 then 0.681 %). The owner set the floor to 98.3 % (2026-10-29); the doc comment states
+  the reading.
+- Deviation: `crack_classes` gains the floor and wall rows; `mirror.rs` gains `raw_attr_at`.
+- Gate at this commit: build, clippy `-D warnings`, fmt, doctests, comment-hygiene and
+  test-tiers clean; `--profile quick --test-threads 8` 518 passed (at the default thread count
+  two CPU tests timed out at 30 s with the load average at 27, and passed alone in 14.8 s);
+  `--profile gpu` 177 of 179 passed, the two hash pins above failing, then `mirror` alone 45
+  of 45 at the new hashes.
 
 ### Notes
 

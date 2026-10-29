@@ -777,7 +777,7 @@ fn advance(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, t: f32, k: i32, face: i32
 
 // Octahedral decoding of 6 + 6 bits into a unit vector.
 fn decode_octahedral(e: u32) -> vec3<f32> {
-    let p = vec2<f32>(f32(e & 63u), f32((e >> 6u) & 63u)) / 63.0 * 2.0 - 1.0;
+    let p = vec2<f32>(f32(e & 63u), f32((e >> 6u) & 63u)) / 31.0 - 1.0;
     var n = vec3<f32>(p, 1.0 - abs(p.x) - abs(p.y));
     if (n.z < 0.0) {
         let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0));

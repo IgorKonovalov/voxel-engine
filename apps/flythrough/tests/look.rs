@@ -651,8 +651,8 @@ fn every_mode_with_and_without_detail() {
 
 use support::rigs::{
     POSE_SIZE, axis_slab_camera, axis_slab_world, corner_camera, corner_world,
-    diagonal_slab_camera, diagonal_slab_world, fit_rig_on, pose_level, pose_rig_on,
-    tilted_slab_camera, tilted_slab_world,
+    diagonal_slab_camera, diagonal_slab_world, fit_rig_on, floor_camera, floor_world, pose_level,
+    pose_rig_on, tilted_slab_camera, tilted_slab_world, wall_camera, wall_world,
 };
 use vxe_render::{CrackShares, Exposure, SurfaceFit, readback};
 
@@ -822,15 +822,17 @@ fn crack_reading(
     }
 }
 
-/// The tilted slab (0), the 45-degree slab (1) or the diagonal slab (2), on its own contour
-/// rig at the start look's fit, lit by the headlamp, at the look rigs' size, under the
-/// analytic window rule; `None` without a software adapter.
+/// The tilted slab (0), the 45-degree slab (1), the diagonal slab (2), the floor (3) or the
+/// wall (4), on its own contour rig at the start look's fit, lit by the headlamp, at the look
+/// rigs' size, under the analytic window rule; `None` without a software adapter.
 fn slab_reading(slab: u32) -> Option<CrackReading> {
     let table = flythrough::LookPreset::DEFAULT.materials();
     let (world, camera) = match slab {
         0 => (tilted_slab_world(&table), tilted_slab_camera()),
         1 => (axis_slab_world(&table), axis_slab_camera()),
-        _ => (diagonal_slab_world(&table), diagonal_slab_camera()),
+        2 => (diagonal_slab_world(&table), diagonal_slab_camera()),
+        3 => (floor_world(&table), floor_camera()),
+        _ => (wall_world(&table), wall_camera()),
     };
     let (device, queue) = software_device(attr_pool_bytes(&world).max(64 << 20))?;
     let fit = flythrough::LookPreset::DEFAULT.tuning.fit;
@@ -864,20 +866,24 @@ fn a_tilted_slab_has_cracks_today() {
     assert!(cracked >= 1, "{:?}", r.shares);
 }
 
-/// The diagonal slab (normal `normalize(1, 1, 1)`), seen nearly head-on, has no crack under
-/// the analytic window rule: its surface voxels share one neighbourhood and the plane code
-/// holds their normal exactly, so they share one plane and no ray reads class 1 or 2. It pins
-/// that the classification does not count a clean surface.
+/// A flat floor (rock at `z < 64`) and a flat vertical wall (rock at `x >= 80`), each seen
+/// obliquely in the start look, have no crack under the analytic window rule: their surface
+/// voxels share one neighbourhood and the plane code holds the axis normal exactly
+/// (ADR-0038), so they share one plane and no ray reads class 1 or 2. It pins that the
+/// classification does not count a clean surface.
 #[test]
-fn a_diagonal_slab_has_none() {
-    let Some(r) = slab_reading(2) else {
+fn axis_planes_have_no_cracks() {
+    let Some(floor) = slab_reading(3) else {
         return;
     };
+    let wall = slab_reading(4).expect("the floor's adapter");
     println!("{CRACK_HEADER}");
-    println!("{}", r.row("diagonal slab", "start look"));
-    assert!(r.shares.hits > 0);
-    assert_eq!(r.shares.classes[1], 0, "{:?}", r.shares);
-    assert_eq!(r.shares.classes[2], 0, "{:?}", r.shares);
+    for (name, r) in [("floor", &floor), ("wall", &wall)] {
+        println!("{}", r.row(name, "start look"));
+        assert!(r.shares.hits > 0, "{name}");
+        assert_eq!(r.shares.classes[1], 0, "{name}: {:?}", r.shares);
+        assert_eq!(r.shares.classes[2], 0, "{name}: {:?}", r.shares);
+    }
 }
 
 /// The crack readings' looks: the start look, and its tuning with one part swept.
@@ -962,8 +968,8 @@ fn write_side_by_side(r: &CrackReading, name: &str) {
 }
 
 /// The crack class table for every scene, pose and swept part (reading only; it asserts
-/// nothing): the tilted slab, the concave corner, the 45-degree slab, the diagonal slab, the
-/// cavity and the pillar at the look rigs' size under the analytic window rule, and the level at `VEIN_POSE` and `PATCH_POSE` at 384 x 216
+/// nothing): the tilted slab, the concave corner, the 45-degree slab, the floor, the wall, the
+/// diagonal slab, the cavity and the pillar at the look rigs' size under the analytic window rule, and the level at `VEIN_POSE` and `PATCH_POSE` at 384 x 216
 /// with the pose's exposure, indirect light off, each in the start look and with its fit or
 /// offset swept, lamp on, and the start look's poses with the lamp off too. The level's side-by-sides go to `live/cracks/`. On the adapter
 /// `VXE_TEST_ADAPTER` names (lavapipe unset):
@@ -984,6 +990,8 @@ fn crack_classes() {
             axis_slab_world(&table),
             axis_slab_camera(),
         ),
+        ("floor", floor_world(&table), floor_camera()),
+        ("wall", wall_world(&table), wall_camera()),
         (
             "diagonal slab",
             diagonal_slab_world(&table),
