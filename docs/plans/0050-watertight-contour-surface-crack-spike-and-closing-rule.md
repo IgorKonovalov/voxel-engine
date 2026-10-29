@@ -1,7 +1,11 @@
 # 0050: A watertight contour surface: a crack spike that names the wedges and triangles, then the closing rule chosen by measurement
 
-> **Status:** draft
+> **Status:** approved (2026-10-29)
 > **Created:** 2026-10-29
+> **Approved:** 2026-10-29 (owner), with the answers under "Owner answers": alone on main
+> with the light spike after its Phase 4 check; the contour goldens re-blessed by name; the
+> shadow origin in scope as sub-candidate O; the losing rules and `closing old` removed after
+> the pick.
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look decision: "smooth
 > and natural rock, not visible cubes")
 > **Related ADRs:** [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
@@ -334,7 +338,18 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 
 ## Owner answers
 
-_(Recorded before "go".)_
+1. **Order (owner, 2026-10-29).** This plan runs alone on main to its Phase 4 check. The light
+   spike the architect proposed the same day starts after that check. Plan 0049 stays parked
+   at its Phase 2.
+2. **Goldens (owner, 2026-10-29).** A watertight surface may move silhouettes, so the contour
+   goldens that move are re-blessed by name with their changed-pixel share in the log. The
+   face goldens must not move.
+3. **The shadow origin (owner, 2026-10-29).** In scope as sub-candidate O. Phase 1 reads the
+   self-hit share; Phase 2 keeps the push if it lowers self-hits without raising the speck
+   reading.
+4. **The losers (owner, 2026-10-29).** After the Phase 4 pick, the losing rules and
+   `closing old` are removed with their flags and banner modes, as Plan 0048's rule says. Their
+   readings stay in the log.
 
 ## Implementation log
 
