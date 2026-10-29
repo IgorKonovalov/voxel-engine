@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0052** (ADRs are a separate sequence; next free there is **0038**).
+**Next free number: 0053** (ADRs are a separate sequence; next free there is **0038**).
 
 ## Active roster
 
@@ -16,12 +16,13 @@ state from `git log`. Completed plans move to `done/`.
 | [0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md) | Aerial perspective over the near and far field, and volumetric clouds that shadow the ground | approved | M10, ADR-0030 (proposed). After Plans 0032 and 0033. |
 | [0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md) | Weather: rain, snow, wind, wet surfaces and snow cover, lightning | approved | M10, ADR-0031 (proposed). After Plan 0035. |
 | [0037](0037-night-sky-stars-moon-phases-sky-bodies-and-aurora.md) | The night sky: a star field, the moon's phases, sky bodies the game lists, an aurora that lights the ground, and a night tint | approved | M10, ADR-0032 (proposed). After Plans 0032 and 0035. |
-| [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, six verified defects | approved | Code health, no ADR. After every plan active on 2026-10-22. |
-| [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044. |
+| [0044](0044-hot-path-and-defect-pass.md) | The hot-path and defect pass: frame, sync, walk, edits and audio callback waste, six verified defects | approved | Code health, no ADR. After Plan 0051, before M10 (owner, 2026-10-29); Plan 0052 strikes what it fixed first. |
+| [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044, so after Plan 0051 and before M10. |
 | [0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) | The probe rays' direct light without the clamp's bias: candidate schemes measured, the furnace back at pi | approved | M2, ADR-0037 (proposed). After Plan 0049, whose bars it holds; before Plan 0032. |
 | [0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md) | Light settles fast, holds still in flight, no dots: a settle, shimmer and dot spike, then mechanisms by measurement | approved | M2, no ADR yet. First and alone after 0047 (owner, 2026-10-29); before 0048 and 0032. |
 | [0050](0050-watertight-contour-surface-crack-spike-and-closing-rule.md) | A watertight contour surface: a crack spike that names the wedges and triangles, then the closing rule by measurement | approved | M2, ADR-0011; ADR at the Phase 2 pick. Alone on main, before the light spike (owner, 2026-10-29). |
 | [0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md) | The steady-light spike: static light that converges and freezes, and a world-space emissive cache, read against wander, dots and shimmer | approved | M2, ADR after Phase 3. After Plan 0050's check, alone; 0048 and 0032 wait. |
+| [0052](0052-second-review-defects-and-the-waste-the-first-pass-missed.md) | The second review: five defects, the waste the first pass missed, and the testbed's failure semantics | approved | Code health, no ADR. A lane now, beside Plan 0050 (owner, 2026-10-29). |
 <!-- roster:end -->
 
 ## Recently closed
