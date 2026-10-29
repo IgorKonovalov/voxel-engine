@@ -1,7 +1,9 @@
 # 0051: The steady-light spike: static light that converges and freezes, and a world-space emissive cache, each read against the wander, the dots and the shimmer
 
-> **Status:** draft
+> **Status:** approved (2026-10-29)
 > **Created:** 2026-10-29
+> **Approved:** 2026-10-29 (owner): "we will start as soon as 50 is done". The lane starts
+> after Plan 0050's Phase 4 check, alone, as drafted.
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet and the probe volume's indirect light)
 > **Related ADRs:** [ADR-0036](../adrs/0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md)
@@ -350,7 +352,8 @@ Determinism is not touched: everything is in `vxe-render`.
 
 ## Owner answers
 
-_(Recorded before "go". The order is set: after Plan 0050's Phase 4 check, alone.)_
+1. **Approval and order (owner, 2026-10-29).** Approved as drafted. The lane starts as soon
+   as Plan 0050 is done (its Phase 4 check), and runs alone. No question was open at approval.
 
 ## Implementation log
 
