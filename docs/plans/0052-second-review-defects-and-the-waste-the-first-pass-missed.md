@@ -541,8 +541,8 @@ Every reading names the machine, the commit, the lock and the load.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: the world's two defects and its two unchecked doors | dev | done | 47eda2e |
-| 2: the wasm host charges before it works | dev | done | committed with this row |
-| 3: the testbed fails out loud, and the logic fails the same way twice | dev | not started | |
+| 2: the wasm host charges before it works | dev | done | b0640c9 |
+| 3: the testbed fails out loud, and the logic fails the same way twice | dev | done | committed with this row |
 | 4: the frame's idle probe volume, and the small corrections | dev | not started | |
 | 5: spans for the rows a shape touches, and smoothers that settle | dev | not started | |
 | 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | not started | |
@@ -599,6 +599,40 @@ Every reading names the machine, the commit, the lock and the load.
 - Phase 2 gate: quick 522 run, 521 passed, 1 timed out (`replay::a_stamp_and_a_collapse_
   replay_from_the_save` at 30 s, 1-minute load 20.8 from the other lane); it passed alone
   after Phase 1. Clippy and fmt clean.
+- Phase 3 pick: the native logic is documented fail-stop (`Logic::take_error`'s doc and the
+  testbed's module doc); `Server::tick` gets no `catch_unwind`. The doc edit is in
+  `crates/vxe-net/src/logic.rs`, which `Files touched` lists only for the other option.
+- Phase 3: `Run::failure` is a `Failure`, a shared `Arc<Mutex<Option<String>>>` that keeps
+  the first message, held by the app, the run and `main` (the shell consumes the app, so a
+  plain `Option<String>` on `Run` cannot reach `main`). `main` prints it once after the
+  teardown and the `teardown: done` line, then exits 1. The two init-time sync failures
+  (level and streaming) also set it, so the first frame exits instead of drawing on.
+- Phase 3: a replay log that does not read builds no `Run` (`Pending::Failed`), so its
+  trace shows the app, queue, device and adapter stages and not the run's mirror and world
+  stages; a re-simulation failure on the generation thread does the same. At the base the
+  read failure called `process::exit(1)` on the main thread before device creation.
+- Phase 3 deviation: the Run-level tests drive the extracted pieces, not `draw` and `tick`,
+  which need a device: `Run::mirror_failed` (what both `draw` sync paths return through) and
+  `session_outcome` (the headless runner's result) in
+  `a_failed_mirror_sync_ends_the_session_as_a_failure`; `Run::tick_server` (the GPU-free
+  part of `tick`) in `an_applied_op_no_logic_line_names_still_updates_the_coarse_grid`,
+  which reads `solid` 0 without the drain and 512 with it; `SettleClock::step` in
+  `the_settle_step_times_out_at_its_bound`. `draw`'s path itself is covered end to end by
+  `shutdown::a_mirror_that_cannot_sync_exits_1_after_the_teardown` (`--level
+  --mirror-budget 1`: status 1, one "mirror sync failed", the level's full trace), and the
+  replay case by `shutdown::a_replay_log_that_does_not_read_exits_1_after_the_teardown`
+  (with `--level`, which `--replay` requires).
+- Phase 3: the settle bound is a flat `SETTLE_FRAMES_MAX` = 36 000 frames (10 min at 60
+  fps); `pending` is the streamer's in-flight plus queued chunks plus the mirror's pending
+  chunks.
+- Phase 3: both `unreachable!`s answer with `not_the_result`, a refused-style line ("the
+  host answered a drop with a pile result"). Unit tests in `flythrough-logic` and
+  `tests/component.rs` drive a host whose drop answers a pile and whose pile answers a drop.
+- Phase 3 gate: quick 527 run, 525 passed, 2 timed out at 30 s under load 14.9 (`castle`,
+  `replay`, as in Phase 1); alone they pass at 10.1 s and 15.0 s (load 11.5). GPU tier,
+  `binary(shutdown)`, under the exclusive perf lock on lavapipe at load 6.0: 5 of 5 passed.
+  `-p flythrough --features wasm` `binary(component)`: 3 of 3. Clippy (workspace, and
+  `-p flythrough --features wasm`) and fmt clean.
 
 ### Close triggers
 

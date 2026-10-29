@@ -131,7 +131,11 @@
 //! from `target/guests/flythrough-logic.wasm`, or `--logic wasm=PATH`; needs a build with
 //! `--features wasm`, and `scripts/build-guests.sh` builds the component). The fly-through prints
 //! which runs; a hosted logic that fails (a trap, its fuel, its memory cap) is printed once and
-//! stopped, and the session continues without it. Replay re-simulates through the chosen logic too.
+//! stopped, and the session continues without it. The native logic is fail-stop: a panic in it
+//! unwinds out of the server's tick and ends the process, as any panic does. Replay
+//! re-simulates through the chosen logic too. A session that ends on an error (a replay log that
+//! does not read or re-simulate, a mirror sync that fails, an autopilot settle that times out)
+//! runs the normal teardown, then prints the error once and exits with status 1.
 //! One server tick runs per frame before the mirror sync, and the printed edit lines come from the
 //! client's events. With `--level`, `--save` writes the session's log file on exit and prints the
 //! world's hash; `--replay` rebuilds a saved session's world by re-simulating its inputs before the
@@ -201,7 +205,7 @@ mod fly;
 mod pad;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
@@ -2351,6 +2355,8 @@ enum Leg {
 struct Autopilot {
     leg: Leg,
     leg_start: Instant,
+    /// The frames spent in `Leg::Settle` so far, bounded.
+    settle: SettleClock,
     origin: Vec3,
     touched: Vec<ChunkCoord>,
     hash: u64,
@@ -2735,9 +2741,70 @@ struct BenchSum {
     touched: BTreeSet<ChunkCoord>,
 }
 
+/// The error that ended the session, shared by the app, its run and `main`: the first one
+/// set is kept, and `main` prints it after the teardown and exits with status 1.
+#[derive(Clone, Default)]
+struct Failure(Arc<Mutex<Option<String>>>);
+
+impl Failure {
+    /// Records `message` unless a failure is already recorded.
+    fn set(&self, message: String) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_or_insert(message);
+    }
+
+    fn is_some(&self) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+    }
+
+    /// The recorded failure, cleared.
+    fn take(&self) -> Option<String> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).take()
+    }
+}
+
+/// Frames the autopilot waits in `Leg::Settle` for full residency before it gives up: 10
+/// minutes at 60 frames a second, far past any settle the testbed has read.
+const SETTLE_FRAMES_MAX: u64 = 36_000;
+
+/// The autopilot's wait for full residency, counted in frames.
+#[derive(Default)]
+struct SettleClock {
+    frames: u64,
+}
+
+impl SettleClock {
+    /// One settle frame: `Continue` once residency is full or while under
+    /// [`SETTLE_FRAMES_MAX`] frames; at the bound, prints the timeout line with the `pending`
+    /// chunks (streamed or mirrored), records it in `failure` and returns `Exit`.
+    fn step(&mut self, full_residency: bool, pending: u64, failure: &Failure) -> Flow {
+        if full_residency {
+            return Flow::Continue;
+        }
+        self.frames += 1;
+        if self.frames < SETTLE_FRAMES_MAX {
+            return Flow::Continue;
+        }
+        let line = format!(
+            "autopilot: settle timed out at tick {}, pending {pending}",
+            self.frames
+        );
+        println!("{line}");
+        failure.set(line);
+        Flow::Exit
+    }
+}
+
 /// The running fly-through, once the world exists.
 struct Run {
     start: Instant,
+    /// Set by every error path that ends the session; see [`Failure`].
+    failure: Failure,
     /// The server's world, which the shared client, the mirror and the queries read.
     world: Arc<World>,
     /// `None` only while dropping.
@@ -3072,7 +3139,20 @@ impl Run {
     /// material names), the coarse grid updated from every applied result. A tick that
     /// finished a bench syncs the mirror at once and prints the bench line.
     fn tick(&mut self, gpu: &Gpu) {
-        let Some(net) = self.net.as_mut() else { return };
+        let (benches, refused, ms) = self.tick_server();
+        if benches > 0 {
+            self.bench_sync(gpu, benches * BENCH_CARVES, refused, ms);
+        }
+    }
+
+    /// One server tick and the client's events: prints the logic's lines, keeps the coarse
+    /// grid and the frame's history current with every applied op (those a logic line names
+    /// and those none does, such as the ops a logic applied in a tick it then failed), and
+    /// returns the benches completed, their refused carves and the tick's milliseconds.
+    fn tick_server(&mut self) -> (usize, usize, f64) {
+        let Some(net) = self.net.as_mut() else {
+            return (0, 0, 0.0);
+        };
         let t = now();
         let report = net.server.tick();
         let ms = ms_since(t);
@@ -3165,9 +3245,13 @@ impl Run {
                 }
             }
         }
-        if benches.0 > 0 {
-            self.bench_sync(gpu, benches.0 * BENCH_CARVES, benches.1, ms);
+        // Applied ops no logic line named still changed the world.
+        for event in ops {
+            if let Event::Applied { result, .. } = event {
+                self.edited(&result.edit_result());
+            }
         }
+        (benches.0, benches.1, ms)
     }
 
     /// The mirror sync after a bench, timed, with the bench line; with contour attributes, the
@@ -3374,7 +3458,7 @@ impl Run {
                     s.light_bricks,
                     s.light_us as f64 / 1e3
                 ),
-                Err(e) => eprintln!("mirror sync failed: {e}"),
+                Err(e) => self.failure.set(format!("mirror sync failed: {e}")),
             }
             mirror
         };
@@ -3488,7 +3572,7 @@ impl Run {
                     }
                 }
                 Err(e) => {
-                    eprintln!("mirror sync failed: {e}");
+                    self.failure.set(format!("mirror sync failed: {e}"));
                     break;
                 }
             }
@@ -3647,7 +3731,10 @@ impl Run {
         match p.leg {
             Leg::Settle => {
                 if !stream.full_residency {
-                    return Flow::Continue;
+                    let st = stream.streamer.stats();
+                    let pending =
+                        (st.in_flight + st.queued) as u64 + gfx.mirror.pending_chunks() as u64;
+                    return p.settle.step(false, pending, &self.failure);
                 }
                 let o = centre_fixed(self.fly.camera.position);
                 let op = EditOp::tool_along_ray(
@@ -4279,6 +4366,12 @@ impl Run {
 
     /// Ticks the server, then streams, syncs, marches and presents one frame begun at `t0`;
     /// `dt` is the frame interval the exposure adapts over in a window.
+    /// Records a failed mirror sync as the session's failure and ends it.
+    fn mirror_failed(&mut self, e: impl std::fmt::Display) -> Flow {
+        self.failure.set(format!("mirror sync failed: {e}"));
+        Flow::Exit
+    }
+
     fn draw(&mut self, gpu: &Gpu, surface: &wgpu::TextureView, t0: Instant, dt: f32) -> Flow {
         self.tick(gpu);
         // The sync's copies are recorded first, so the attribute pass and the march read
@@ -4289,8 +4382,7 @@ impl Run {
         let mut stream_ms = None;
         if self.stream.is_some() {
             if let Err(e) = self.stream_step(gpu, &mut enc) {
-                eprintln!("mirror sync failed: {e}");
-                return Flow::Exit;
+                return self.mirror_failed(e);
             }
             stream_ms = self.stream.as_ref().and_then(|s| s.cpu_ms.last().copied());
         } else if let Some(gfx) = self.gfx.as_mut() {
@@ -4303,10 +4395,7 @@ impl Run {
                     self.hud.sync = (s, ms);
                     stream_ms = Some(ms);
                 }
-                Err(e) => {
-                    eprintln!("mirror sync failed: {e}");
-                    return Flow::Exit;
-                }
+                Err(e) => return self.mirror_failed(e),
             }
         }
         self.pilot_sample();
@@ -4688,8 +4777,11 @@ fn centre_fixed(p: Vec3) -> Fixed3 {
 
 /// What the app builds its [`Run`] from once the device's limits are asked for.
 enum Pending {
-    /// The bounded level, generating on its own threads.
-    Level(JoinHandle<World>),
+    /// The bounded level, generating on its own threads; `Err` when it cannot be built (a
+    /// replay log that does not re-simulate).
+    Level(JoinHandle<Result<World, String>>),
+    /// No world: the session failed before generation (a replay log that does not read).
+    Failed,
     /// The streaming world, its workers already generating around the spawn.
     Stream(Box<(World, Streamer, usize)>),
 }
@@ -4710,16 +4802,24 @@ struct Flythrough {
     /// The gamepad, `None` under `--pad off`, headless, the autopilot, or when `gilrs`
     /// cannot start.
     pad: Option<Pad>,
+    /// The session's failure, shared with the run and `main`.
+    failure: Failure,
 }
 
 impl App for Flythrough {
     fn device_request(&mut self, adapter: &wgpu::Adapter) -> (wgpu::Features, wgpu::Limits) {
         if let Some(p) = self.pending.take() {
             let (world, stream) = match p {
-                Pending::Level(g) => (
-                    g.join().unwrap_or_else(|e| std::panic::resume_unwind(e)),
-                    None,
-                ),
+                Pending::Level(g) => {
+                    match g.join().unwrap_or_else(|e| std::panic::resume_unwind(e)) {
+                        Ok(world) => (world, None),
+                        Err(e) => {
+                            self.failure.set(e);
+                            return (wgpu::Features::empty(), wgpu::Limits::default());
+                        }
+                    }
+                }
+                Pending::Failed => return (wgpu::Features::empty(), wgpu::Limits::default()),
                 Pending::Stream(boxed) => {
                     let (world, streamer, workers) = *boxed;
                     (
@@ -4747,6 +4847,7 @@ impl App for Flythrough {
             let pilot = self.args.autopilot.then(|| Autopilot {
                 leg: Leg::Settle,
                 leg_start: self.start,
+                settle: SettleClock::default(),
                 origin: self.camera.position,
                 touched: Vec::new(),
                 hash: 0,
@@ -4792,6 +4893,7 @@ impl App for Flythrough {
             };
             self.run = Some(Run {
                 start: self.start,
+                failure: self.failure.clone(),
                 world,
                 net: Some(net),
                 spawn: voxel_of(self.camera.position),
@@ -4867,6 +4969,9 @@ impl App for Flythrough {
     }
 
     fn frame(&mut self, gpu: &Gpu, input: &Input, dt: f32, surface: &wgpu::TextureView) -> Flow {
+        if self.failure.is_some() {
+            return Flow::Exit;
+        }
         match self.run.as_mut() {
             Some(run) => run.frame(gpu, input, dt, surface),
             None => Flow::Exit,
@@ -4880,7 +4985,9 @@ impl App for Flythrough {
 /// the app exits. Teardown follows the windowed shell's order (the app, then the queue,
 /// device and adapter), traced alike. The instance reads wgpu's environment variables
 /// (`WGPU_BACKEND`, `WGPU_DX12_COMPILER`, ...) as the windowed shell's does.
+/// Returns the session's failure as `Err` once the teardown is done.
 fn run_headless(mut app: Flythrough, size: [u32; 2]) -> Result<(), String> {
+    let failure = app.failure.clone();
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let named = app.args.adapter.as_deref().and_then(|want| {
@@ -4961,7 +5068,13 @@ fn run_headless(mut app: Flythrough, size: [u32; 2]) -> Result<(), String> {
     teardown_stage("queue", || drop(queue));
     teardown_stage("device", || drop(device));
     teardown_stage("adapter", || drop(adapter));
-    Ok(())
+    session_outcome(&failure)
+}
+
+/// `Err` with the session's failure, if one was recorded; the headless runner's and the
+/// windowed shell's result once their teardown is done.
+fn session_outcome(failure: &Failure) -> Result<(), String> {
+    failure.take().map_or(Ok(()), Err)
 }
 
 /// Drives a future to completion on this thread; `wgpu`'s native futures are ready at once
@@ -5108,53 +5221,51 @@ fn main() {
     println!("logic: {}", args.logic);
 
     let seed = args.seed;
+    let failure = Failure::default();
     let (spawn, pending) = if let Some(path) = args.replay.clone() {
         let replay_logic = load_logic(&args.logic);
-        let file = match flythrough::read_log_file(&path) {
-            Ok(f) => f,
+        match flythrough::read_log_file(&path) {
             Err(e) => {
-                eprintln!("flythrough: --replay {}: {e}", path.display());
-                std::process::exit(1);
+                // The session tears down as usual and `main` prints this at the end.
+                failure.set(format!("--replay {}: {e}", path.display()));
+                (VoxelCoord([0; 3]), Pending::Failed)
             }
-        };
-        // The session continues under the save's seed.
-        args.seed = file.seed;
-        let table = materials(&args);
-        let source = CaveSource::new(file.seed, file.extent);
-        let with_vault = args.vault;
-        if with_vault {
-            println!(
-                "vault: {VAULT_EDGE}^3 shell room at {:?}",
-                source.vault_origin().0
-            );
-        }
-        let generation = std::thread::spawn(move || {
-            let (world, ops) = match flythrough::replay_log_on(
-                &file,
-                flythrough::Mode::Inputs,
-                ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS),
-                &table,
-                replay_logic,
-                with_vault,
-            ) {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("flythrough: --replay {}: {e}", path.display());
-                    std::process::exit(1);
+            Ok(file) => {
+                // The session continues under the save's seed.
+                args.seed = file.seed;
+                let table = materials(&args);
+                let source = CaveSource::new(file.seed, file.extent);
+                let with_vault = args.vault;
+                if with_vault {
+                    println!(
+                        "vault: {VAULT_EDGE}^3 shell room at {:?}",
+                        source.vault_origin().0
+                    );
                 }
-            };
-            println!(
-                "replayed {} inputs, {} ops, hash 0x{:016x}",
-                file.inputs.len(),
-                ops.len(),
-                world.voxel_hash()
-            );
-            if ops != file.ops {
-                println!("replay: the re-simulated op log differs from the saved one");
+                let generation = std::thread::spawn(move || {
+                    let (world, ops) = flythrough::replay_log_on(
+                        &file,
+                        flythrough::Mode::Inputs,
+                        ChunkExtent::new([0, 0, 0], LEVEL_CHUNKS),
+                        &table,
+                        replay_logic,
+                        with_vault,
+                    )
+                    .map_err(|e| format!("--replay {}: {e}", path.display()))?;
+                    println!(
+                        "replayed {} inputs, {} ops, hash 0x{:016x}",
+                        file.inputs.len(),
+                        ops.len(),
+                        world.voxel_hash()
+                    );
+                    if ops != file.ops {
+                        println!("replay: the re-simulated op log differs from the saved one");
+                    }
+                    Ok(world)
+                });
+                (source.spawn(), Pending::Level(generation))
             }
-            world
-        });
-        (source.spawn(), Pending::Level(generation))
+        }
     } else if let Some(edge) = args.room {
         let source = RoomSource::new(edge);
         let table = materials(&args);
@@ -5164,7 +5275,7 @@ fn main() {
             source.extent.max.0
         );
         let generation =
-            std::thread::spawn(move || World::generate(source.extent, &source, &table));
+            std::thread::spawn(move || Ok(World::generate(source.extent, &source, &table)));
         (source.spawn(), Pending::Level(generation))
     } else if args.showcase {
         let source = ShowcaseSource::new(seed);
@@ -5178,7 +5289,7 @@ fn main() {
                 ms_since(t),
                 world.stats().full_bricks
             );
-            world
+            Ok(world)
         });
         (args.shot.eye, Pending::Level(generation))
     } else if args.level {
@@ -5203,7 +5314,7 @@ fn main() {
                 ms_since(t),
                 world.stats().full_bricks
             );
-            world
+            Ok(world)
         });
         (source.spawn(), Pending::Level(generation))
     } else {
@@ -5298,6 +5409,7 @@ fn main() {
         audio,
         room_probe,
         pad,
+        failure: failure.clone(),
     };
     let result = if headless {
         run_headless(app, size)
@@ -5307,13 +5419,15 @@ fn main() {
             size,
             lock_cursor: true,
         };
-        vxe_app::run(config, app).map_err(|e| e.to_string())
+        vxe_app::run(config, app)
+            .map_err(|e| e.to_string())
+            .and_then(|()| session_outcome(&failure))
     };
+    log::info!("teardown: done, exiting the process");
     if let Err(e) = result {
         eprintln!("flythrough: {e}");
         std::process::exit(1);
     }
-    log::info!("teardown: done, exiting the process");
 }
 
 /// Bytes allocated on each thread, counted for the HUD's no-allocation test.
@@ -6066,6 +6180,7 @@ mod tests {
         };
         Run {
             start: now(),
+            failure: Failure::default(),
             world,
             net: Some(net),
             spawn: voxel_of(camera.position),
@@ -6116,6 +6231,63 @@ mod tests {
             ))
             .unwrap();
         world
+    }
+
+    /// A mirror sync that fails ends the session with its failure recorded, and the headless
+    /// runner's outcome is that failure as `Err`; with none recorded it is `Ok`.
+    #[test]
+    fn a_failed_mirror_sync_ends_the_session_as_a_failure() {
+        let mut run = bare_run(carved_rock());
+        assert!(!run.failure.is_some());
+        assert_eq!(session_outcome(&run.failure), Ok(()));
+        let e = vxe_render::MirrorError::PoolTooLarge {
+            needed: 2 << 20,
+            limit: 1 << 20,
+        };
+        let message = format!("mirror sync failed: {e}");
+        assert_eq!(run.mirror_failed(e), Flow::Exit);
+        assert!(run.failure.is_some());
+        // The first failure is kept.
+        run.failure.set("later".to_owned());
+        assert_eq!(session_outcome(&run.failure), Err(message));
+        assert_eq!(session_outcome(&run.failure), Ok(()));
+    }
+
+    /// An op applied in a tick with no logic line naming it (here one submitted to the server
+    /// directly; a hosted logic that applied ops and then trapped leaves the same) still
+    /// reaches the coarse grid by the end of the tick.
+    #[test]
+    fn an_applied_op_no_logic_line_names_still_updates_the_coarse_grid() {
+        let mut run = bare_run(carved_rock());
+        run.coarse = Some(Coarse::build(&run.world));
+        let solid = |run: &Run| {
+            let grid = &run.coarse.as_ref().unwrap().grid;
+            grid.cell(ChunkCoord([0, 0, 0]), 0).unwrap().solid
+        };
+        assert_eq!(solid(&run), 0, "the carve emptied cell (0, 0, 0)");
+        let fill = EditOp::box_(Fixed3([0; 3]), Fixed3([8 * FIXED_ONE; 3]), Mode::Fill(ROCK));
+        run.net.as_ref().unwrap().server.submit(fill);
+        let (benches, refused, _) = run.tick_server();
+        assert_eq!((benches, refused), (0, 0));
+        assert_eq!(solid(&run), 512);
+    }
+
+    /// The autopilot's settle step continues while full residency is under way and below the
+    /// bound, and at the bound prints, records the failure and exits.
+    #[test]
+    fn the_settle_step_times_out_at_its_bound() {
+        let failure = Failure::default();
+        let mut clock = SettleClock::default();
+        assert_eq!(clock.step(true, 0, &failure), Flow::Continue);
+        for _ in 1..SETTLE_FRAMES_MAX {
+            assert_eq!(clock.step(false, 7, &failure), Flow::Continue);
+        }
+        assert!(!failure.is_some());
+        assert_eq!(clock.step(false, 7, &failure), Flow::Exit);
+        assert_eq!(
+            failure.take().as_deref(),
+            Some("autopilot: settle timed out at tick 36000, pending 7")
+        );
     }
 
     /// The edits one server tick of `run` applied.
