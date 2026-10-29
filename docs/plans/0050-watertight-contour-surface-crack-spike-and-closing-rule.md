@@ -430,7 +430,7 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 | 1: The crack spike: classes, the view, and where they land | dev | done | 00cacd4 |
 | 2: A zero normal component, exact in the plane code | dev | done | 4b137e7 |
 | 3: The closing rules, each measured | dev | done | e9cae0e |
-| 4: The pick as the default | dev | done | committed with this row |
+| 4: The pick as the default | dev | done | 760950b |
 | 5: The owner's windowed check | human | not started | |
 | 6: The owner's findings, and the losers removed | dev | not started | |
 
@@ -768,12 +768,39 @@ extend 0.25 5.928, extend 0.5 5.926, blend 35.151 (light pre 7.005, blend 13.439
 
 ### Notes
 
+- Deviations are listed per phase above (Phase 1: `F9` and the self-hit in the hit pass;
+  Phase 2: the C5 floor at 98.3 % by the owner, two mirror hash pins; Phase 3: five rule
+  values and the push bit, the `CRACKS_VIEW` override pipeline; Phase 4: three tests pin
+  `Old`). Each phase's files outside its list are named in its section.
+- Unmet: the full profile at the tip is not green. `showcase_hall_golden_is_lit_by_its_four_ores`
+  fails at 00ca974 already (12.4601 %, same PNG); snap moves it to 13.5781 %. Not re-blessed.
+- Owed: the closing rule's ADR (the architect's). Phase 4 landed the default without it.
+- Noticed, not acted on: until Phase 6 deletes the losing rules, the hit pass costs +10 % (RTX)
+  and +40 % (Radeon) over 00ca974 in every rule (the owner accepted it, 2026-10-29);
+  `castle_gate_golden` peak RSS 953 MB alone against its 1 GiB bar, once 1.49 GB in a loaded
+  run; the flat 90-degree concave corner reads 0 cracks in every class, before and after.
+
 ### Close triggers
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** the cracks view (`F9`, `--view cracks`) with classes 1 to 3 and the
+  self-hit; ADR-0038's octahedral code (0..=62, an axis normal exact); five closing rules
+  behind `--closing old|snap|extend-0.25|extend-0.5|blend` and the shadow push behind
+  `--shadow-push on`; snap as the contour looks' default, push off.
+- **Public API changed:** `vxe_render::CrackClosing`, `vxe_render::CrackShares`,
+  `SurfaceTuning::closing` and `SurfaceTuning::shadow_push` (default `Old`, off), `ViewMode::Cracks`;
+  the plane attribute's normal code changes value (decode `q / 31 - 1`).
+- **Budget readings:** `docs/nfr.md` §2, the crack-closing paragraph: hit pass at the level's
+  spawn, 1080p from 720p, release, perf lock, load 1.1 to 3.0. RTX 3080 Laptop GPU: 0.598 ms at
+  00ca974, 0.658 ms at e9cae0e with snap (+10.0 %), 0.604 ms snap alone (+1.0 %). AMD Radeon
+  Graphics (RADV RENOIR): 4.264, 5.981 (+40.3 %), 4.364 (+2.3 %). Light with the push: 1.439
+  against 0.913 (RTX), 9.165 against 7.026 (Radeon). Mirror 157 872 640 B live, 259 203 264 B
+  allocated.
+- **Gate at the tip (760950b's tree):** `cargo nextest run --workspace --profile full
+  --test-threads 2`, exit 100: 720 run, 719 passed, 1 failed (`showcase_hall_golden_is_lit_by_its_four_ores`,
+  above), 13 skipped, 4810 s, lavapipe, load 7.9 at start; `cargo clippy --workspace
+  --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo test --doc --workspace`
+  7 passed; `cargo deny check` ok (advisories, bans, licenses, sources); the four
+  `scripts/check-*.mjs` 0.
+- **Outstanding `human` phases:** Phase 5, the owner's windowed check. Phase 6 (dev) follows it.
 
 ## Followups
