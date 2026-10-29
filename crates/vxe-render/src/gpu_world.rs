@@ -55,7 +55,7 @@
 //! needs one, lowest first, before a page never handed out. A brick whose slot size changes
 //! (a class, its translucent unit or its attributes) moves to a slot of its new bin in the
 //! same sync, and its entry is rewritten with it. No live brick moves otherwise. The pool is
-//! sharded over up to `MAX_SHARDS` storage buffers (ADR-0004): unit `u` lives in shard
+//! sharded over `MAX_SHARDS` storage buffers (ADR-0004): unit `u` lives in shard
 //! `u / units_per_shard`, a multiple of a page, so a slot never straddles two shards.
 //!
 //! The mirror reserves its VRAM once, at creation (ADR-0013): [`MirrorConfig::budget_bytes`]
@@ -258,7 +258,7 @@ pub const PAGE_UNITS: u32 = 4096;
 pub const BINS: [u32; 10] = [2, 3, 4, 6, 8, 12, 16, 20, 24, 36];
 /// How many bins there are.
 pub const BIN_COUNT: usize = BINS.len();
-/// Most storage buffers the pool is sharded over.
+/// Storage buffers the pool is sharded over: every frame shader binds all four.
 pub const MAX_SHARDS: u32 = 4;
 /// Storage buffers the frame's passes bind besides the pool shards: records, table,
 /// materials, light samples and the emission scale.
@@ -547,11 +547,6 @@ pub struct SyncStats {
     /// Chunks selected this sync but deferred for space; they stay pending. 0 when everything
     /// fit.
     pub deferred_chunks: u64,
-    /// Pool, mask or record buffers this sync created: 0, since `new` reserves them all.
-    pub buffers_created: u32,
-    /// Copies between mirror buffers this sync issued: 0, since no buffer is ever replaced
-    /// (the belt's copies are counted in `writes`).
-    pub copies: u32,
 }
 
 /// Which chunks the mirror holds.
@@ -625,8 +620,6 @@ pub struct ShardLayout {
     /// The largest multiple of `PAGE_UNITS` whose bytes fit one binding and one buffer, at
     /// most `max_shard_units` rounded down to a page.
     pub units_per_shard: u32,
-    /// `min(MAX_SHARDS, max_storage_buffers_per_shader_stage - OTHER_STORAGE_BUFFERS)`.
-    pub shards: u32,
     /// Chunk records the one record buffer can hold:
     /// `min(max_storage_buffer_binding_size, max_buffer_size) / RECORD_BYTES`.
     pub record_capacity: u32,
@@ -650,24 +643,19 @@ impl ShardLayout {
             units = units.min(u64::from(cap));
         }
         let units_per_shard = ((units / page) * page).clamp(page, u64::from(UNIT_MASK) + 1) as u32;
-        let shards = limits
-            .max_storage_buffers_per_shader_stage
-            .saturating_sub(OTHER_STORAGE_BUFFERS)
-            .clamp(1, MAX_SHARDS);
         let record_capacity = (bytes / RECORD_BYTES).min(u64::from(u32::MAX)) as u32;
-        let capacity = u64::from(units_per_shard) * u64::from(shards);
+        let capacity = u64::from(units_per_shard) * u64::from(MAX_SHARDS);
         Self {
             units_per_shard,
-            shards,
             record_capacity,
             reserved_units: capacity.min(u64::from(UNIT_MASK) + 1) as u32,
             reserved_records: record_capacity,
         }
     }
 
-    /// Units the pool can hold over all its shards.
+    /// Units the pool can hold over its [`MAX_SHARDS`] shards.
     pub fn capacity(&self) -> u64 {
-        u64::from(self.units_per_shard) * u64::from(self.shards)
+        u64::from(self.units_per_shard) * u64::from(MAX_SHARDS)
     }
 
     /// This layout reserving `budget_bytes`: past [`PLACEHOLDER_BYTES`], a record for each of

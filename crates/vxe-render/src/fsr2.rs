@@ -891,7 +891,7 @@ impl Fsr2 {
 
     /// FSR's constants for a frame of `params` (its first view), `reset` when history is
     /// dropped.
-    fn constants(&self, params: &Params, reset: bool) -> Fsr2Constants {
+    fn constants(&self, params: &Params, reset: bool, dt: f32) -> Fsr2Constants {
         let render = self.res.render.map(|n| n as i32);
         let display = self.res.display.map(|n| n as i32);
         let v = &params.views[0];
@@ -927,7 +927,7 @@ impl Fsr2 {
             previous_pre_exposure: if reset { pre_exposure } else { *prev },
             tan_half_fov: tan_h,
             jitter_sequence_length: jitter_phases(w, self.res.display[0]) as f32,
-            delta_time: 1.0 / 60.0,
+            delta_time: dt,
             dynamic_res_change: 0.0,
             view_space_to_meters: self.settings.metres_per_voxel,
             // SpdSetup over the whole render rectangle.
@@ -989,7 +989,7 @@ impl Fsr2 {
         f: &FrameInputs<'_>,
     ) -> Fsr2Binds {
         let reset = params.history & 2 == 0;
-        let c = self.constants(params, reset);
+        let c = self.constants(params, reset, f.dt);
         queue.write_buffer(&self.cb, 0, bytemuck::bytes_of(&c));
         queue.write_buffer(
             &self.input_tuning,
@@ -1153,6 +1153,8 @@ pub(crate) struct FrameInputs<'a> {
     pub lamp: &'a wgpu::Buffer,
     pub output: &'a wgpu::Texture,
     pub cur: usize,
+    /// The frame's step in seconds ([`crate::Frame::set_dt`]).
+    pub dt: f32,
 }
 
 #[cfg(test)]

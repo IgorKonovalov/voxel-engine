@@ -3403,10 +3403,13 @@ impl Run {
         } else {
             level_pool_units(&self.world, self.args.look.is_some()) * gpu_world::UNIT_BYTES
         };
-        (
-            adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
-            vxe_render::limits_for(adapter, pool),
-        )
+        // An adapter below the shaders' floor: name the limit, then request the floor, which
+        // the device request refuses on the same limit and the shell reports as a setup error.
+        let limits = vxe_render::limits_for(adapter, pool).unwrap_or_else(|e| {
+            eprintln!("flythrough: {e}");
+            *e.requested
+        });
+        (adapter.features() & wgpu::Features::TIMESTAMP_QUERY, limits)
     }
 
     fn init(&mut self, gpu: &Gpu) {

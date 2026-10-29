@@ -19,7 +19,7 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
         println!("skipped: no adapter");
         return None;
     };
-    let limits = vxe_render::limits_for(&adapter, 16 << 20);
+    let limits = vxe_render::limits_for(&adapter, 16 << 20).expect("the frame's limits");
     let desc = wgpu::DeviceDescriptor {
         required_limits: limits,
         ..Default::default()

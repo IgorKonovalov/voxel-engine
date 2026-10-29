@@ -717,7 +717,7 @@ fn cutaway_steps_from_outside_the_level_at_1080p() {
     .expect("an adapter");
     let pool_bytes = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits: vxe_render::limits_for(&adapter, pool_bytes),
+        required_limits: vxe_render::limits_for(&adapter, pool_bytes).expect("the frame's limits"),
         ..Default::default()
     }))
     .expect("a device");

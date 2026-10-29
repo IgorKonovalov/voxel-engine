@@ -63,9 +63,11 @@ pollster = "=1.0.1"
 sofar = { version = "=0.4.0", default-features = false }
 # Engine crates other engine crates depend on. The exact version tracks
 # [workspace.package].version above; bump both together.
+vxe-app = { path = "crates/vxe-app", version = "=0.36.0" }
 vxe-assets = { path = "crates/vxe-assets", version = "=0.36.0" }
 vxe-audio = { path = "crates/vxe-audio", version = "=0.36.0" }
 vxe-net = { path = "crates/vxe-net", version = "=0.36.0" }
+vxe-render = { path = "crates/vxe-render", version = "=0.36.0" }
 vxe-sim = { path = "crates/vxe-sim", version = "=0.36.0" }
 # Without its default `host` feature, so a guest takes only the bindings (`guest`).
 vxe-script-wasm = { path = "crates/vxe-script-wasm", version = "=0.36.0", default-features = false }

@@ -87,7 +87,8 @@ pub fn software_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue)> {
         offered.max_buffer_size
     );
     let desc = wgpu::DeviceDescriptor {
-        required_limits: vxe_render::limits_for(&adapter, pool_bytes),
+        required_limits: vxe_render::limits_for(&adapter, pool_bytes)
+            .expect("the frame's limits on the software adapter"),
         ..Default::default()
     };
     Some(pollster::block_on(adapter.request_device(&desc)).expect("device on the software adapter"))

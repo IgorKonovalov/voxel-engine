@@ -95,7 +95,7 @@ fn main() {
     let info = adapter.get_info();
     let compiler = std::env::var("WGPU_DX12_COMPILER").unwrap_or_else(|_| "auto".to_owned());
     let (device, _queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits: vxe_render::limits_for(&adapter, 16 << 20),
+        required_limits: vxe_render::limits_for(&adapter, 16 << 20).expect("the frame's limits"),
         ..Default::default()
     }))
     .expect("no device");

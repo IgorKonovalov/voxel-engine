@@ -8,13 +8,18 @@
 // phase of every lane. Nothing in nextest notices. This gate does.
 //
 // A test file is GPU when it, or a `support` module it declares (`mod support;`), names a
-// device entry point:
+// device entry point. Two more kinds of test binary are scanned, by their `#[cfg(test)]` items
+// alone (their other code runs as the program, not under the test harness): an example a
+// manifest marks `test = true` (`binary_id(<package>::example/<name>)`), and a binary crate's
+// `src/main.rs` with the modules it declares (`binary_id(<package>::bin/<package>)`). The
+// entry points:
 //
 //   software_device    the tests' shared helper that opens the software adapter
 //   wgpu::Instance     opening an instance directly
 //   request_adapter    asking an instance for an adapter
 //   fn device(         a crate-local `device()` helper, or a call to one: `device()`
-//   --headless         spawning a headless render of an app binary (it opens a device)
+//   --headless         spawning a headless render of an app binary (it opens a device); in a
+//                      binary's or an example's own test items, only beside `Command::new`
 //
 // The gpu filter is read from its one canonical copy, the filter of the
 // `[[profile.default.overrides]]` entry whose `test-group` is `lavapipe`. Its entries are
@@ -76,18 +81,51 @@ function code(path) {
 
 const reachesDevice = (src) => ENTRY_POINTS.some((re) => re.test(src));
 
-/** The package name in a Cargo.toml, and its `[[test]]` path -> name map. */
+/** As `reachesDevice`, for a binary's or an example's own test items: there `--headless` is
+ * also an argument its parser is tested on, so it counts only beside a spawned process. */
+const itemsReachDevice = (src) =>
+  ENTRY_POINTS.slice(0, -1).some((re) => re.test(src)) ||
+  (ENTRY_POINTS.at(-1).test(src) && /\bCommand::new\b/.test(src));
+
+/** The `#[cfg(test)]` items of comment-free source `src`: each attribute's item through its
+ * matching close brace, or through its `;` for a `mod name;` declaration. */
+function testItems(src) {
+  const out = [];
+  const attr = /#\[cfg\(test\)\]/g;
+  let m;
+  while ((m = attr.exec(src))) {
+    let i = m.index + m[0].length;
+    let depth = 0;
+    for (; i < src.length; i++) {
+      const ch = src[i];
+      if (ch === "{") depth++;
+      else if (ch === "}" && --depth === 0) break;
+      else if (ch === ";" && depth === 0) break;
+    }
+    out.push(src.slice(m.index, i + 1));
+    attr.lastIndex = i + 1;
+  }
+  return out.join("\n");
+}
+
+/** The package name in a Cargo.toml, its `[[test]]` path -> name map and the `[[example]]`
+ * paths marked `test = true`, path -> name. */
 function manifest(dir) {
   const text = readFileSync(join(ROOT, dir, "Cargo.toml"), "utf8");
   const name = /^\[package\][\s\S]*?^name\s*=\s*"([^"]+)"/m.exec(text)?.[1];
-  const tests = new Map();
-  for (const block of text.split(/^\[\[test\]\]\s*$/m).slice(1)) {
-    const body = block.split(/^\[/m)[0];
-    const tname = /^name\s*=\s*"([^"]+)"/m.exec(body)?.[1];
-    const tpath = /^path\s*=\s*"([^"]+)"/m.exec(body)?.[1] ?? `tests/${tname}.rs`;
-    if (tname) tests.set(tpath, tname);
-  }
-  return { name, tests };
+  const targets = (kind, dirName, keep) => {
+    const map = new Map();
+    for (const block of text.split(new RegExp(`^\\[\\[${kind}\\]\\]\\s*$`, "m")).slice(1)) {
+      const body = block.split(/^\[/m)[0];
+      const tname = /^name\s*=\s*"([^"]+)"/m.exec(body)?.[1];
+      const tpath = /^path\s*=\s*"([^"]+)"/m.exec(body)?.[1] ?? `${dirName}/${tname}.rs`;
+      if (tname && keep(body)) map.set(tpath, tname);
+    }
+    return map;
+  };
+  const tests = targets("test", "tests", () => true);
+  const examples = targets("example", "examples", (body) => /^test\s*=\s*true\s*$/m.test(body));
+  return { name, tests, examples };
 }
 
 /** The gpu filter (the `lavapipe` override's), every default-profile override filter, and each profile's default-filter. */
@@ -192,6 +230,36 @@ for (const file of testFiles.sort()) {
     );
   }
 }
+// Test binaries scanned by their `#[cfg(test)]` items: examples marked `test = true`, and a
+// binary crate's `src/main.rs` with the modules it declares.
+const testItemUnits = [];
+for (const file of files.filter((p) => /^(crates|apps)\/[^/]+\/Cargo\.toml$/.test(p)).sort()) {
+  const dir = file.split("/").slice(0, 2).join("/");
+  if (!manifests.has(dir)) manifests.set(dir, manifest(dir));
+  const { name: pkg, examples } = manifests.get(dir);
+  for (const [rel, ex] of examples) {
+    if (files.includes(`${dir}/${rel}`)) testItemUnits.push([pkg, `${pkg}::example/${ex}`, [`${dir}/${rel}`]]);
+  }
+  const main = `${dir}/src/main.rs`;
+  if (files.includes(main)) {
+    const mods = [...code(main).matchAll(/^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([a-z_][a-z0-9_]*)\s*;/gm)]
+      .map((m) => [`${dir}/src/${m[1]}.rs`, `${dir}/src/${m[1]}/mod.rs`].find((f) => files.includes(f)))
+      .filter(Boolean);
+    testItemUnits.push([pkg, `${pkg}::bin/${pkg}`, [main, ...mods]]);
+  }
+}
+for (const [pkg, id, sources] of testItemUnits) {
+  if (packages.has(pkg)) seenPackages.add(pkg);
+  if (binaries.has(id)) seenBinaries.add(id);
+  for (const file of sources) {
+    if (itemsReachDevice(testItems(code(file))) && !packages.has(pkg) && !binaries.has(id)) {
+      findings.push(
+        `${file} -> not in the gpu filter: add \`binary_id(${id})\` to the lavapipe override's filter and to the quick and gpu default-filters in ${CONFIG}`,
+      );
+    }
+  }
+}
+const scanned = testFiles.length + testItemUnits.length;
 for (const id of [...binaries].sort()) {
   if (!seenBinaries.has(id)) {
     findings.push(`binary_id(${id}) -> matches no test file: remove it from the gpu filter in ${CONFIG}`);
@@ -203,11 +271,12 @@ for (const pkg of [...packages].sort()) {
   }
 }
 
+
 if (findings.length) {
   for (const f of findings) console.error(f);
-  console.error(`${findings.length} finding(s) across ${testFiles.length} test files`);
+  console.error(`${findings.length} finding(s) across ${scanned} test binaries`);
   process.exit(1);
 }
 console.log(
-  `test tiers: ${testFiles.length} test files, gpu filter ${binaries.size} binaries + ${packages.size} package(s), all agree`,
+  `test tiers: ${testFiles.length} test files and ${testItemUnits.length} example and binary test modules, gpu filter ${binaries.size} binaries + ${packages.size} package(s), all agree`,
 );

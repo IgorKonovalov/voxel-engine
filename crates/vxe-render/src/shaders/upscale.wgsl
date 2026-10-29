@@ -24,7 +24,7 @@
 // Per output pixel, in the shaded view: the nearest internal sample's hit `rec` (the internal
 // pixel whose jittered sample lies nearest the centre). The current colour is the kernel
 // weighted mean of the samples around the nearest (`up_tuning.reconstruction`: a narrow
-// Gaussian or Blackman-Harris over the 3 x 3, Lanczos-2 over the 5 x 5, or the nearest alone;
+// Gaussian over the 3 x 3, Lanczos-2 over the 5 x 5, or the nearest alone;
 // the kernel at each sample's jittered position, distances in output pixels), clamped to the
 // range of the 3 x 3. History is taken when `Params.history` bit 1 says it is valid, `rec`
 // hit outside every edit box dilated by one voxel, and last frame's hit buffer agrees with
@@ -61,9 +61,8 @@ struct UpEdits {
 // `UpscaleUniform` in marcher.rs.
 struct UpTuning {
     // 0: Lanczos-2 over the 5 x 5 samples around the nearest; 1: the nearest sample alone;
-    // 2: the Gaussian `exp(-2.29 (d / width)^2)` over the 3 x 3; 3: a Blackman-Harris window
-    // of radius `1.65 width` over the 3 x 3. `d` is the sample's distance from the output
-    // pixel's centre in output pixels.
+    // 2: the Gaussian `exp(-2.29 (d / width)^2)` over the 3 x 3. `d` is the sample's distance
+    // from the output pixel's centre in output pixels.
     reconstruction: u32,
     // 0: bilinear; 1: the nearest texel; 2: Catmull-Rom over the 4 x 4 texels.
     fetch: u32,
@@ -71,7 +70,7 @@ struct UpTuning {
     // kernel weight over the kernel's peak; 2: that over `w_mean`, at most 1.
     blend: u32,
     // 0: a still pixel keeps its history unclipped; 1: unless the light at its hit changed
-    // (it is then clipped and blended as a moving one); 2: still pixels are clipped too.
+    // (it is then clipped and blended as a moving one).
     still_clip: u32,
     width: f32,
     alpha: f32,
@@ -102,10 +101,8 @@ struct UpTuning {
 const RECON_LANCZOS2: u32 = 0u;
 const RECON_NEAREST: u32 = 1u;
 const RECON_GAUSSIAN: u32 = 2u;
-const RECON_BLACKMAN_HARRIS: u32 = 3u;
 const FETCH_NEAREST: u32 = 1u;
 const FETCH_CATMULL_ROM: u32 = 2u;
-const FETCH_LANCZOS2: u32 = 3u;
 const BLEND_NEARNESS: u32 = 1u;
 const BLEND_MEAN_NEARNESS: u32 = 2u;
 const CLIP_STILL: f32 = 0.01;
@@ -138,15 +135,6 @@ fn lanczos2(x: f32) -> f32 {
     return 2.0 * sin(a) * sin(0.5 * a) / (a * a);
 }
 
-// The 4-term Blackman-Harris window of radius `r` at distance `d`, 1 at `d = 0`.
-fn blackman_harris(d: f32, r: f32) -> f32 {
-    if (d >= r) {
-        return 0.0;
-    }
-    let x = PI * d / r;
-    return 0.35875 + 0.48829 * cos(x) + 0.14128 * cos(2.0 * x) + 0.01168 * cos(3.0 * x);
-}
-
 // The reconstruction kernel's weight of a sample `d` output pixels (a vector) from the output
 // pixel's centre, 1 at the centre.
 fn up_kernel(d: vec2<f32>) -> f32 {
@@ -154,9 +142,6 @@ fn up_kernel(d: vec2<f32>) -> f32 {
         case 2u: {
             let s = up_tuning.width;
             return exp(-2.29 * dot(d, d) / (s * s));
-        }
-        case 3u: {
-            return blackman_harris(length(d), 1.65 * up_tuning.width);
         }
         case 1u: {
             return 1.0;
@@ -230,7 +215,7 @@ fn history_at(h: vec2<f32>) -> vec3<f32> {
     if (up_tuning.fetch == FETCH_NEAREST) {
         return hist_texel(vec2<i32>(floor(h)));
     }
-    if (up_tuning.fetch == FETCH_CATMULL_ROM || up_tuning.fetch == FETCH_LANCZOS2) {
+    if (up_tuning.fetch == FETCH_CATMULL_ROM) {
         // Catmull-Rom weights of the texels at offsets -1, 0, 1, 2 for fraction f.
         let w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
         let w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
@@ -238,21 +223,6 @@ fn history_at(h: vec2<f32>) -> vec3<f32> {
         let w3 = f * f * (-0.5 + 0.5 * f);
         var wx = array<f32, 4>(w0.x, w1.x, w2.x, w3.x);
         var wy = array<f32, 4>(w0.y, w1.y, w2.y, w3.y);
-        if (up_tuning.fetch == FETCH_LANCZOS2) {
-            // Lanczos-2 at the texels' offsets -1 - f, -f, 1 - f, 2 - f, normalised.
-            var sx = 0.0;
-            var sy = 0.0;
-            for (var i = 0; i < 4; i++) {
-                wx[i] = lanczos2(f32(i - 1) - f.x);
-                wy[i] = lanczos2(f32(i - 1) - f.y);
-                sx += wx[i];
-                sy += wy[i];
-            }
-            for (var i = 0; i < 4; i++) {
-                wx[i] /= sx;
-                wy[i] /= sy;
-            }
-        }
         var sum = vec3<f32>(0.0);
         for (var y = 0; y < 4; y++) {
             var row = vec3<f32>(0.0);
@@ -375,8 +345,7 @@ fn upscale(@builtin(global_invocation_id) gid: vec3<u32>) {
                     // camera without moving the history is an edit (rejected above) or light,
                     // which `still_clip` 1 clips and blends as motion.
                     var still = length(h - (vec2<f32>(gid.xy) + 0.5)) < CLIP_STILL;
-                    if (still && (up_tuning.still_clip == 2u
-                        || (up_tuning.still_clip == 1u && up_light_changed(rec)))) {
+                    if (still && up_tuning.still_clip == 1u && up_light_changed(rec)) {
                         still = false;
                     }
                     let b_lo = select(max(lo, mean - up_tuning.clip_gamma * sigma), vec3<f32>(-1e9), still);

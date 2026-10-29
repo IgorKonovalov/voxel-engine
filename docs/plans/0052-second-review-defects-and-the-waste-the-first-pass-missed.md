@@ -550,51 +550,107 @@ Every reading names the machine, the commit, the lock and the load.
 | 8: the owner picks what else goes | human | not started | |
 | 9: the owner's removals | dev | not started | |
 
-### Resume notes (2026-10-29, delete when Phase 7 lands)
+### Resume notes (2026-10-30, delete when Phase 7 lands)
 
-- **Done:** Phase 1 `47eda2e`, Phase 2 `b0640c9`, Phase 3 `a392e47`, Phase 5 `14f3841`
-  (committed ahead of Phase 4 by the orchestrator's order: CPU phases first). Status is
-  `in-progress`. Left: Phase 4, then 6, then 7; stop at Phase 8 (human). Do not edit
-  `march.wgsl` until the orchestrator says Plan 0050 merged; in Phase 7 inventory everything
-  and remove only what lives outside it.
-- **Phase 5 readings are in** (Notes). The edits bench reads slower at the tip on
-  `tool` (+17 %) and `tool_long` (+7 %) than at the base: the next agent should look at the
-  per-slab `Box` allocations and the `Vec<Option<Box<Slab>>>` sized over every brick row
-  (a short capsule pays them where the base paid one `vec!`), for example one arena `Vec`
-  of slabs indexed from a `u32` table, before Phase 4, and reread both benches under the
-  lock. The base reading was at load 2.1 to 2.2, the tip at 1.5, so load does not explain
-  it.
+- **Done:** Phase 1 `47eda2e`, 2 `b0640c9`, 3 `a392e47`, 5 `14f3841` plus its follow-up
+  `885fc1e`, 6 `fcc87bd`. Status is `in-progress`. Stopped after the Phase 5 follow-up's
+  reading by the orchestrator's rule (one honest attempt, `tool` still over the base); see
+  the Phase 5 Notes. Phases 4 and 7 are written and checkpointed in one `wip(render)`
+  commit (the one after this note's first version), not gated on the GPU tier.
+- **Left for Phase 4:** run the gpu tier under the lock on lavapipe (`--profile gpu`; it now
+  holds `crates/vxe-render/tests/frame.rs`), check every golden byte-identical, record
+  `frame_bytes` at the default in `docs/nfr.md` section 3 (not in `Files touched`: a
+  deviation). Open question: `frame.rs` asserts the volume adds `54 689 792 + 32` B (the
+  plan's figure plus the volume's 32-byte `ProbeUniform`, which `ProbeVolume::bytes`
+  counts); the plan's done-when says exactly 54 689 792. Options: (a) the architect amends
+  the figure to 54 689 824; (b) keep the uniform resident in the `Frame` outside the lazy
+  volume so the difference is 54 689 792.
+- **Phase 4 as written in the wip commit:** `Frame::probes` is a `OnceLock<ProbeVolume>`
+  built on the first encode with indirect light, on `probes()` (it keeps its `&ProbeVolume`
+  signature, so the testbed and tests are unchanged: a deviation, the plan lists `probes_mut`
+  and spacing changes only), on `probes_mut()` or on a spacing change, which drops the old
+  volume first; the frame keeps a `wgpu::Device` clone to build it. The gather bind group is
+  built only with indirect light. `SyncStats::buffers_created` and `copies` are removed with
+  their assertions (`mirror.rs`, `level_mirror.rs`). `FrameInputs::dt` carries `Frame::dt`
+  into FSR 2's `delta_time`. `params_for` no longer writes the history: `Params::lamp_pose`
+  (the old `_pad5`, which the shaders read as padding) carries `offset_right`,
+  `offset_down`, `turn`, and the encode's `LampKey` takes it with the intensity, the cone's
+  cosines and the shadow bit; `Frame::lamp_changed` reports the decision.
+  `limits_for` returns `Result<wgpu::Limits, LimitsError>` (capped at the offer; `Err`
+  names `max_storage_buffers_per_shader_stage` below 11), with `limits_within` for the
+  headless unit tests; every caller takes `.expect` or `?`, and the testbed prints the
+  reason and requests the floor so the device request fails on it (callers outside
+  `Files touched`: `main.rs`, `hero.rs`, `tests/support/mod.rs`, `golden.rs`,
+  `examples/pipeline_times.rs`). `ShardLayout` loses `shards` (always `MAX_SHARDS`).
+  `check-test-tiers.mjs` reads examples marked `test = true` and a binary's `src/main.rs`
+  with its declared modules by their `#[cfg(test)]` items (`--headless` counts there only
+  beside `Command::new`); the fixture's new files landed in `01c0b6e` (staged in this
+  lane when that commit was made), and its README and the script are in the wip commit:
+  `5 finding(s) across 7 test binaries` on the fixture, exit 0 on the tree. The flythrough
+  manifest takes the engine crates from the workspace table, which gains `vxe-app` and
+  `vxe-render` (root `Cargo.toml`, outside `Files touched`).
+- **Phase 7 as written in the wip commit:** removed `Reconstruction::BlackmanHarris`,
+  `HistoryFetch::Lanczos2`, `StillClip::Always` (`marcher.rs`, `upscale.wgsl`); nothing in
+  `march.wgsl`. The table below is the log's Phase 7 table to keep when Phase 7 lands.
+  Finding: the plan says the comparison walks have no caller; `LightParams { skips: false }`
+  and `{ masks: false }` are used in `crates/vxe-render/tests/walk.rs` and
+  `apps/flythrough/tests/golden.rs`.
+- **Gate state at the wip commit:** clippy `--workspace --all-targets` and
+  `-p flythrough --features wasm` clean, fmt clean, `check-test-tiers` 0; vxe-render quick
+  27 of 27, vxe-world quick 182 of 182. Workspace quick before the Phase 7 edits: 535 run,
+  4 timed out at 30 s at load 7.6 and rising (`determinism::showcase_vector`,
+  `determinism::castle_vector`, `castle`, `replay`); the two `determinism` ones are new to
+  the list and were not rerun alone. No gpu tier yet for Phases 4 and 7.
 - **Owner-facing findings so far** (repeat in the final message):
   1. Phase 2: a `1 024^3` `count_in_box` over a world with nothing resident completed at the
      base and now traps on fuel (its volume bound is past the default `10^10`); the test
-     asserts the new behaviour. The plan's Risks name this kind of case; the owner may want
-     a residency-aware bound instead.
-  0. Phase 5: the edits bench's `tool` reads 5.60 ms at the tip against 4.77 ms at the base
-     (`docs/nfr.md` section 4 expected lower or equal); see above.
+     asserts the new behaviour. The owner may want a residency-aware bound instead.
   2. Phase 2: the unsupported bound is `7 d (max_region + 2)` over distinct cells, not the
-     plan's `max_region x cells` (that product does not bound the flood, and it would trap
-     the duplicated over-cap list `charged_under` pins at `100 + 12 (cap + 1)`).
+     plan's `max_region x cells`.
   3. Phase 3: the Run-level tests drive extracted pieces (`mirror_failed`, `tick_server`,
-     `SettleClock`), not `draw`/`tick`, which need a device; `draw`'s path is covered end to
-     end in `tests/shutdown.rs` (gpu tier).
-- **Phase 4 notes:** `crates/vxe-render` and `apps/flythrough/tests/level_mirror.rs` are
-  untouched so far. `scripts/check-test-tiers.mjs` must learn binary `src/` (the
-  flythrough binary's test module is CPU-only today; keep it so). The new
-  `shutdown.rs` tests are already in the gpu filter (whole binary). Budget reading for
-  `frame_bytes` goes into `docs/nfr.md` section 3 (`Files touched` does not list
-  `docs/nfr.md`; the done-when names it, so log it as a deviation).
-- **Phase 6 notes:** `apps/flythrough/src/main.rs`'s `ShellConfig` literal is at the end of
-  `main`; the goldens' control passes are in `apps/flythrough/tests/golden.rs`; the slow
-  list is in `.config/nextest.toml`.
-- **Gate state at `14f3841`:** quick 529 run, 527 passed, 2 timed out at 30 s under load
-  (`castle::the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn`,
-  `replay::a_stamp_and_a_collapse_replay_from_the_save`; both pass alone, 10 s and 15 s);
-  clippy and fmt clean; gpu tier run only for `binary(shutdown)` (5 of 5); no full tier yet.
-- **Gotchas:** `scripts/build-guests.sh` must rerun after any `flythrough-logic` change (the
-  component test loads `target/guests/flythrough-logic.wasm`; run it inside the memory
-  scope). `tests/component.rs` needs `-p flythrough --features wasm`. While another lane
-  holds the lock, build in `CARGO_TARGET_DIR=target/alt` so a lock holder's cargo is not
-  blocked on the shared target dir. `live/` is untracked scratch.
+     `SettleClock`), not `draw`/`tick`; `draw`'s path is covered in `tests/shutdown.rs`.
+  4. Phase 5: `tool` 1.8 % over the base after the follow-up (see the Notes).
+  5. Phase 4: the 54 689 792 B figure omits the volume's 32-byte uniform.
+- **Gotchas:** `scripts/build-guests.sh` must rerun after any `flythrough-logic` change.
+  Build in `CARGO_TARGET_DIR=target/alt`. Bench binaries for the base, `14f3841` and the
+  follow-up are `live/edits-bench-*`, run by `live/edits-bench.sh` (waits for load under 2);
+  the golden timing binaries and script are `live/golden-{base,tip}` and
+  `live/golden-times.sh` (needs `bc` for the wall line, which is missing: read `finished
+  in`).
+
+- Phase 7 inventory (lines at `fcc87bd`; "mr" is `crates/vxe-render/src/marcher.rs`, "sh/"
+  `crates/vxe-render/src/shaders/`). Users are outside the definition and its flag mapping.
+  "rec." is the recommendation for Phase 8; "removed" rows went in this phase.
+
+| item | what | lives | ADR | users: src / tests / examples / live toggle | cost when off | rec. |
+|---|---|---|---|---|---|---|
+| `FLAG_SKIPS`, `LightParams::skips` | the walk steps one voxel or mip cell at a time, the comparison the hierarchy is held byte-identical to | mr `FLAG_SKIPS`, `light.rs` `skips`; sh/march.wgsl `descend`, `lookup_walk`, `tlookup` | none against (ADR-0002, ADR-0012 decide for skipping) | none / vxe-render `walk.rs`; flythrough `golden.rs` (the every-skip-off equality) / none / none | uniform branches in the march loop | keep (instrument); needs march.wgsl |
+| `FLAG_MASKS`, `LightParams::masks` | a full brick's voxels read through the pool, no mask test | mr `FLAG_MASKS`, `light.rs` `masks`; sh/march.wgsl `lookup_walk` | none | none / `walk.rs`, `golden.rs` / none / none | uniform branch in `lookup_walk` | keep (instrument); needs march.wgsl |
+| `CandidateDraw::Uniform`, `LIGHTING_UNIFORM_DRAW` | emissive candidates drawn uniformly over the light-sample buffer | mr `CandidateDraw`, `Lighting::draw`; sh/light.wgsl `candidate`, const in march.wgsl | ADR-0025 replaced it with the candidate table (table RMSE 0.35 of the uniform draw's) | none / flythrough `lights.rs` (`the_candidate_table_favours_near_emitters_without_bias`, its baseline) / none / none | uniform branch per candidate in the light pass | owner pick (loser with one test user); the const is in march.wgsl |
+| `ToneMap::Identity`, `LIGHTING_IDENTITY_TONE_MAP` | clamp and gamma instead of ACES | mr `ToneMap`; sh/composite.wgsl, sh/fsr2/tone.wgsl, const in march.wgsl | none | none / `golden.rs`, `indirect.rs`, `sharpness.rs`, `support/rigs.rs`, vxe-render `translucent.rs`, `walk.rs` / none / none | uniform branch per pixel in composite and tone | keep (instrument) |
+| `LodParams::forced_level` | every LOD-only chunk walked at one mip level | mr `LodParams`, `Params::forced_level`; sh/march.wgsl `lod_level` | none | `main.rs` (literal `None` only) / `golden.rs` (`lod.png`), `support/mod.rs` / none / none | one uniform word and a branch per LOD chunk | keep (instrument); needs march.wgsl |
+| `Upscaler::lanczos()` | the first upscaler build: Lanczos-2, bilinear fetch, fixed blend, never clip | mr `Upscaler::lanczos` | ADR-0024 Outcome: the measured loser against the shipped tuning | none / `upscale.rs` inside the ignored `the_upscalers_sharpness_readings` / none / none | nothing (a constructor) | owner pick |
+| `Reconstruction::Lanczos2` | Lanczos-2 over the 5 x 5 | mr `Reconstruction`; sh/upscale.wgsl `up_kernel` default arm, `lanczos2` | ADR-0024 Outcome picked the Gaussian | none / via `lanczos()` only / none / none | a switch arm and a wider loop bound | owner pick (goes with `lanczos()`; a remaining arm becomes the default) |
+| `Reconstruction::Nearest` | the nearest sample alone | mr; sh/upscale.wgsl case 1 | ADR-0024 Outcome picked the Gaussian | none / `upscale.rs` (ignored diagnostic) / none / none | a switch arm | owner pick |
+| `Reconstruction::BlackmanHarris` | a 4-term Blackman-Harris window over the 3 x 3 | mr `Reconstruction`, `Upscaler::kernel`, `uniform`; sh/upscale.wgsl `blackman_harris`, case 3 | ADR-0024: the amendment's candidate, the Outcome shipped the Gaussian | none / none / none / none | a switch arm | **removed** |
+| `HistoryFetch::Bilinear` | bilinear history fetch | mr; sh/upscale.wgsl `history_at` fall-through | ADR-0024 Outcome: Catmull-Rom; bilinear was the losing first build | none / via `lanczos()` only / none / none | the fall-through path | owner pick (goes with `lanczos()`) |
+| `HistoryFetch::Nearest` | the texel the position falls in | mr; sh/upscale.wgsl `FETCH_NEAREST` | ADR-0024 Outcome: Catmull-Rom | none / `upscale.rs` (ignored) / none / none | one uniform compare | owner pick |
+| `HistoryFetch::Lanczos2` | Lanczos-2 over the 4 x 4 history texels | mr; sh/upscale.wgsl `FETCH_LANCZOS2` block in `history_at` | ADR-0024 Outcome: Catmull-Rom | none / none / none / none | a compare and an untaken block | **removed** |
+| `Blend::Fixed` | the current colour at a constant alpha | mr; sh/upscale.wgsl implicit else | ADR-0024 Outcome: mean nearness | none / via `lanczos()` only / none / none | nothing | owner pick (goes with `lanczos()`) |
+| `Blend::Nearness` | unnormalised nearness | mr; sh/upscale.wgsl `BLEND_NEARNESS` | ADR-0024 Outcome: mean nearness | none / `upscale.rs` (ignored) / none / none | one compare | owner pick |
+| `StillClip::Never` | still pixels never clipped | mr; no shader code (value 0) | ADR-0024 Outcome: the light-change clip | none / `upscale.rs` (ignored `the_upscalers_lamp_and_history_weight_readings`), `lanczos()` / none / none | nothing | owner pick |
+| `StillClip::Always` | still pixels always clipped | mr; sh/upscale.wgsl `still_clip == 2` | ADR-0024 Outcome: the light-change clip | none / none / none / none | one compare per pixel | **removed** |
+| `UpTuning` (whole) | the upscale pass's selectors and values | sh/upscale.wgsl, mirrored as `InLamp` in sh/fsr2/input.wgsl; mr `UpscaleUniform` | ADR-0024 Outcome | n/a | an 80-byte uniform | keep while two variants of an axis survive; drop a selector when one is left |
+| `Sampler::List` | resampling over the frame's candidates alone, no reuse | mr `Sampler`, `LIGHTING_REUSE`; sh/light.wgsl | ADR-0018 Outcome: "the list stays a mode" | `hud.rs` (F4), `main.rs` `--sampler` / `lights.rs`, `emissive_stillness.rs`, `main.rs` unit test / `hero.rs` `--sampler` / F4 and CLI | nothing (the base path) | keep (ADR) |
+| `ShadowWalk::Full` | the shadow ray's full walk | mr `ShadowWalk`, `LIGHTING_COARSE_SHADOW`; sh/light.wgsl | ADR-0018 Outcome: "full stays a mode" | `hud.rs` (F3), `main.rs` `--shadow-walk` / `golden.rs`, `look.rs` / `hero.rs` / F3 and CLI | nothing | keep (ADR) |
+| `LightingResolution::Full` | lighting passes at the internal resolution | mr `LightingResolution` | ADR-0018 Outcome: "full stays a mode" | `hud.rs` (F6), `main.rs` `--lighting` / 11 test files (fsr2, golden, hud_golden, indirect, lights, sharpness, support, upscale; vxe-render exposure, translucent, walk) / `hero.rs` / F6 and CLI | nothing | keep (ADR, instrument) |
+| `HistoryKill::Gradient` | the A-SVGF gradient also shortens the lamp's history | mr `HistoryKill`, `LIGHTING_GRADIENT`; sh/gradient.wgsl, sh/temporal.wgsl, const in march.wgsl | ADR-0018 keeps it as a mode; ADR-0036 keeps its meaning for the lamp's part | `hud.rs` (F5), `main.rs` `--history` / `lights.rs`, `emissive_stillness.rs`, `main.rs` unit test / `hero.rs` / F5 and CLI | uniform branches in gradient and temporal | keep (ADR) |
+| `ProbeVolume::set_light_restarts` | the light-change restart off | `probes.rs`; read in mr `encode_with` | none | none / `indirect.rs` (`false` only in the ignored `the_lamp_off_fade_without_the_window`) / none / none | a CPU bool | owner pick |
+| `ProbeVolume::set_updates` | the per-frame probe update off, for preset probes | `probes.rs` | none | none / `indirect.rs`, `sharpness.rs` / none / none | a CPU bool | keep (instrument) |
+| `LightParams::shadows` (found beside) | no shadow ray | `light.rs` | none | none / `golden.rs`, `look.rs` / none / none | an existing flag bit | keep (instrument) |
+| `Lighting::filter`, `LIGHTING_FILTER_OFF` (found beside) | the a-trous filter off | mr; sh/composite.wgsl, const in march.wgsl | none | `main.rs` `--filter` / `golden.rs`, `indirect.rs`, `lights.rs`, `sharpness.rs`, vxe-render `exposure.rs` / `hero.rs` `--filter` / CLI | a uniform branch | keep |
+| `Fsr2::set_bypass`, `set_debug` (found beside) | FSR 2 bypassed at equal sizes; its history-weight debug output | `fsr2.rs` | none | none / flythrough `fsr2.rs`, `golden.rs` / none / none | a CPU bool | keep (instrument) |
+| `MirrorConfig::max_shard_units` (found beside) | caps the pool's shard size | `gpu_world.rs` | none | none / `golden.rs`, `level_mirror.rs`, `look.rs`, `support/mod.rs`, vxe-render `mirror.rs` / none / none | an `Option` | keep (instrument) |
 
 ### Notes
 
