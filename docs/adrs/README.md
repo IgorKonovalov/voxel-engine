@@ -7,7 +7,7 @@ the old one and update the status here.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0038.**
+**Next free number: 0039.**
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -52,6 +52,7 @@ the status.
 | [0035](0035-dx12-shaders-compile-with-wgpus-bundled-static-dxc.md) | DX12 shaders compile with wgpu's bundled static DXC, never FXC | accepted, Outcome (Plan 0046) |
 | [0036](0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md) | Static emissive light accumulates on a long full-precision history, guarded by an emissive-only gradient | accepted, Outcome (Plan 0047): H 256, the f32 store, the guard on; probe slices hashed |
 | [0037](0037-probe-rays-direct-light-keeps-its-energy-apart-from-the-screen-firefly-clamp.md) | The probe rays' direct light keeps its energy, under a scheme of its own apart from the screen's firefly clamp | proposed (Plan 0048) |
+| [0038](0038-the-contour-plane-code-holds-a-zero-normal-component-exactly.md) | The contour plane code holds a zero normal component exactly | proposed (Plan 0050 Phase 2); amends ADR-0011's code scale |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded
