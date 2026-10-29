@@ -1,7 +1,15 @@
 # 0049: Light settles fast and young pixels hold no dots: a settle-and-dot spike, then the probe response and the young pixels' filter chosen by measurement
 
-> **Status:** draft
+> **Status:** approved (2026-10-28)
 > **Created:** 2026-10-28
+> **Approved:** 2026-10-28 (owner), with the answers under "Owner answers". The spike runs
+> beside Plan 0048, and the mechanisms run after it. Plan 0032 waits for this plan, so the
+> order is 0047, 0048, 0049, 0032. Bars B1 and B2 are not fixed at approval: Phase 1 proposes
+> them from its readings, and the owner sets them in a new `human` Phase 2 before any
+> mechanism. Old Phases 2 to 6 become Phases 3 to 7. Exposure stays out of scope, and its
+> reading and filmstrip go to the owner. The adapter switch lands in Phase 1 as
+> `VXE_TEST_ADAPTER`, for reading-only tests. The gain question waits for Plan 0048's pick,
+> as a conditional in Phase 3.
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the "one-sample path tracing ...
 > temporal accumulation" bullet, and the probe volume's indirect light)
 > **Related ADRs:** [ADR-0023](../adrs/0023-indirect-light-from-a-scrolling-probe-volume.md)
@@ -25,11 +33,12 @@
 > merges: its stillness rig (`apps/flythrough/tests/support/stillness.rs`), its filmstrips,
 > its asserted bars and its defaults are this plan's "before". **Phase 1 may run beside
 > [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md)**: it adds rig code and
-> test-only accessors, no shader or default change. **Phases 2 onward start after Plan 0048
-> merges**, and Phase 2 re-reads the spike on 0048's tree first. **Before
-> [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**
-> (proposed; Owner questions 1 and 2). Drafted against main at cb7b70b and Plan 0047's branch
-> at e1cfe53. The names dev finds in the tree win.
+> test-only accessors, no shader or default change. Phase 2, the owner setting the bars,
+> follows Phase 1's readings. **Phases 3 onward, the mechanisms, start after Plan 0048
+> merges**, and Phase 3 re-reads the spike on 0048's tree first. **Before
+> [Plan 0032](0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)**,
+> which waits for this plan (owner, 2026-10-28). Drafted against main at cb7b70b and Plan
+> 0047's branch at e1cfe53. The names dev finds in the tree win.
 
 ## TL;DR
 
@@ -47,8 +56,10 @@ owner each run. The mechanism phases are candidates, each with a decision rule o
 spike's readings. On the settle side: a running-mean probe schedule in place of the fixed
 young blend, an update share for young probes, and a window when the lamp's pose moves. On
 the dot side: an age-aware clamp or filter for young pixels in the a-trous, and the
-reprojection's acceptance on a turn. Bars in frames and pixel counts close it. The owner
-checks the result in the window. The first thing anyone sees is Phase 1's test printing, per
+reprojection's acceptance on a turn. Bars in frames and pixel counts close it. Phase 1
+proposes those bars from its readings, and the owner sets them after seeing the readings and
+the filmstrips, before any mechanism is built (owner, 2026-10-28). The owner checks the result
+in the window. The first thing anyone sees is Phase 1's test printing, per
 event, the settle frames of each part with indirect on and off, and the dot counts by part
 and age.
 
@@ -218,15 +229,30 @@ lavapipe. A sweep's winner is re-read on lavapipe before its commit.
   - **Sweeps by scratch patch.** Constants the spike needs to vary are swept by patches under
     the worktree's `live/` (not committed, as Plan 0047 did). These are `FIREFLY_CLAMP` at 1,
     2 and 8, `YOUNG_UPDATES` and `HYSTERESIS`, and the upscaler off (scale 1).
-  - **The adapter.** The reading tests (not asserted, `#[ignore]` or env-gated) take an
-    adapter switch in test support, as rule 9c anticipates, so the spike runs on the RTX.
-    Asserted tests keep `force_fallback_adapter: true` (Owner question 6).
+  - **The adapter switch, `VXE_TEST_ADAPTER`** (owner, 2026-10-28). Rule 9c anticipates a
+    test-support switch, and this phase builds it for later lanes to reuse.
+    - **Where it lives.** One function in `apps/flythrough/tests/support/mod.rs`,
+      `reading_device(pool_bytes)`, beside `software_device`. Its doc comment names the
+      variable and the rule. Any reading-only render test in the workspace calls it, and
+      `crates/vxe-render/tests` can copy it.
+    - **Values.**
+      - Unset, empty or `fallback`: lavapipe through `force_fallback_adapter: true`, as
+        today.
+      - Any other value: the first adapter whose name contains it, ignoring case (`rtx`,
+        `radeon`). With no match, the test panics and lists the adapters.
+    - **What may call it.** Only reading tests: `#[ignore]`d or env-gated, printing readings,
+      asserting nothing that a gate runs. Every reading they print names the adapter.
+    - **What may not.** Asserted tests and goldens keep `software_device` and stay forced to
+      lavapipe. A test in Plan 0043's quick or gpu tiers that calls `reading_device` is a
+      review finding.
   - **Filmstrips.** With `STILL_FILMSTRIP` set, each event writes contact sheets of the
     composite, the gather and the age image under `live/filmstrip/<tag>/`. Dots are marked on
-    the composite's sheet.
+    the composite's sheet. Each event's `Auto` run also writes a strip of the composite beside
+    the pinned run's, with the exposure value printed per frame. That shows the owner what the
+    eye adds to the settle (owner, 2026-10-28).
 - **Files touched:** `apps/flythrough/tests/support/settle.rs` (new),
   `apps/flythrough/tests/support/stillness.rs` (shared helpers made public),
-  `apps/flythrough/tests/support/mod.rs` (the adapter switch),
+  `apps/flythrough/tests/support/mod.rs` (`reading_device` and `VXE_TEST_ADAPTER`),
   `apps/flythrough/tests/settle.rs` (new), `.config/nextest.toml` (the new file on the gpu
   and slow lists; `scripts/check-test-tiers.mjs` checks it), `crates/vxe-render/src/marcher.rs`
   (test-only reads, if a part has none), this plan's log.
@@ -237,7 +263,7 @@ lavapipe. A sweep's winner is re-read on lavapipe before its commit.
      reading is the finding.
   2. `a_turn_with_the_lamp_on_opens_no_window` asserts that a 90-degree yaw with the lamp on
      leaves the window closed. This records the gap the suspects name, as a reading. It
-     becomes a bar only if Phase 2 keeps the lamp-pose window.
+     becomes a bar only if Phase 3 keeps the lamp-pose window.
   3. `settle_readings` prints for each event, pose and lamp state: `S` per part with indirect
      on and off, the `Auto` run's exposure settle, the pinned-origin fly-in beside the
      following one, and the mean-luminance 90 % frame. The log carries the table, RTX and
@@ -255,10 +281,40 @@ lavapipe. A sweep's winner is re-read on lavapipe before its commit.
        upscaler's sweeps.
 
      Shares that cannot be separated are named as joint. The log states, per symptom, the
-     dominant source and its share.
+     dominant source and its share. If exposure owns a share, that share and its `Auto`
+     filmstrip go to the owner. No mechanism here is built for it (owner, 2026-10-28).
   6. The filmstrips exist for every event at both poses, and the log lists their paths.
+  7. `VXE_TEST_ADAPTER` works:
+     - unset, a reading test reports lavapipe;
+     - set to `rtx` on the dev box, it reports the RTX 3080 Laptop;
+     - `rg software_device` and `rg reading_device` show that no asserted test calls
+       `reading_device`.
+  8. **The proposed bars**, in the log under "Proposed B1 and B2", derived from the readings
+     and labelled as a proposal:
+     - **B1:** the composite's settle with indirect on against `S_off` at each event, as a
+       margin in frames, a ratio, or both.
+     - **B2:** the excess dots as a share of today's sum over frames 1 to 60, and a later
+       frame by which the excess falls under a share of frame 1's.
 
-### Phase 2: The light settles with indirect on about as fast as with it off
+     Each number cites the reading it comes from. The hand-off to the owner lists the
+     filmstrips beside it. **The lane stops here** until Phase 2 records the owner's bars.
+
+### Phase 2: The owner sets B1 and B2
+- **Owner skill:** human
+- **What:** the owner reads Phase 1's settle and dot tables, the attribution table, the
+  proposed B1 and B2, and the filmstrips, the `Auto` strips among them. The owner then sets
+  the two bars (owner, 2026-10-28). It needs no window, and it can happen while Plan 0048 is
+  still in flight.
+- **Files touched:** this plan's log, and "The bars" with the owner's numbers. The architect
+  makes that edit as a dated amendment, since dev edits only the Status line and the log.
+- **Done when:**
+  - The log records B1 and B2 as the owner set them: numbers in frames and dot counts, per
+    event where they differ, marked `(owner, <date>)`.
+  - "The bars" carries the same numbers.
+  - The owner states whether exposure's share, if any, changes ADR-0033's constants. That
+    change, if wanted, is another plan.
+
+### Phase 3: The light settles with indirect on about as fast as with it off
 - **Owner skill:** dev
 - **What:** re-read Phase 1's `settle_readings` on Plan 0048's merged tree, then build the
   candidates the decision rule names, in its order, and keep the first that meets bar B1
@@ -286,7 +342,8 @@ lavapipe. A sweep's winner is re-read on lavapipe before its commit.
   2. Keep the first candidate, or the first pair, that meets B1 at every event it serves.
   3. If the dominant source has no candidate here, stop for an architect amendment: a
      separate lamp channel in the probes, which needs ADR-0038; the emissive history, which
-     is ADR-0036's ground; or exposure, which goes to the owner (Owner question 5).
+     is ADR-0036's ground. Exposure is out of scope (owner, 2026-10-28). Its reading and
+     filmstrip went to the owner in Phase 2, and B1 is read with exposure pinned.
   4. If B1 already holds at every event on 0048's tree, the phase records "not needed" and
      builds nothing.
 - **Files touched:** `crates/vxe-render/src/probes.rs`, `crates/vxe-render/src/shaders/probe_update.wgsl`,
@@ -299,10 +356,13 @@ lavapipe. A sweep's winner is re-read on lavapipe before its commit.
   2. B3 and B4 hold.
   3. With the kept setting off, every image and test reads as before: the old path is
      bit-identical, asserted on one golden.
-  4. Plan 0048's scheme, if it keeps per-probe state on the hysteresis schedule (its B2
-     gain), follows the kept schedule, and its furnace bar still holds.
+  4. **Conditional, open until Plan 0048 picks its scheme** (owner, 2026-10-28). If 0048 kept
+     per-probe state blended on the hysteresis schedule (its scheme B2, the running gain),
+     the log records whether that state follows the kept schedule or keeps 0048's. The
+     owner decides this when 0048 picks. Either way 0048's furnace bar still holds. If 0048
+     kept another scheme, the log says "not applicable".
 
-### Phase 3: No dots on a fast turn or a dig
+### Phase 4: No dots on a fast turn or a dig
 - **Owner skill:** dev
 - **What:** build the dot candidates the decision rule names, in its order, and keep the
   first that meets bar B2 with B3 and B4 held.
@@ -320,7 +380,7 @@ lavapipe. A sweep's winner is re-read on lavapipe before its commit.
     rejects valid history on rotation. Source: age-0 dots on surfaces in view the frame before.
   - **Y4, the upscaler's young pixels.** If the upscaler owns the dots, its clip or RCAS is
     limited where the lighting history is young. Source: the upscaler's dots.
-- Dots carried by the gather go to Phase 2's candidates. The clamp's level is a reading only:
+- Dots carried by the gather go to Phase 3's candidates. The clamp's level is a reading only:
   the screen's clamp stays, as the owner ruled for Plan 0048.
 - **The decision rule:** a source owning at least 25 % of the excess dots at either event
   gets its candidate, in the order Y1, Y2, Y3, Y4 within its source. Keep the first that meets
@@ -336,7 +396,7 @@ lavapipe. A sweep's winner is re-read on lavapipe before its commit.
   2. B3 and B4 hold.
   3. The kept setting off is bit-identical to the before on one golden.
 
-### Phase 4: The bars as tests, the goldens, the readings, the owner's commands
+### Phase 5: The bars as tests, the goldens, the readings, the owner's commands
 - **Owner skill:** dev
 - **What:** turn B1 and B2 into asserted tests on lavapipe, re-bless the goldens the kept
   settings moved by Plan 0047's 1 % rule, read B4 on both adapters into `nfr.md`, and prepare
@@ -356,13 +416,13 @@ lavapipe. A sweep's winner is re-read on lavapipe before its commit.
 - **Done when:**
   1. `indirect_light_settles_about_as_fast_as_direct_light` asserts B1 at `VEIN_POSE` and
      `PATCH_POSE` for the fly-in, the lamp toggle (both ways) and the dig, lamp off. The lamp-on
-     fly-in is asserted too if Phase 2 kept L.
+     fly-in is asserted too if Phase 3 kept L.
   2. `a_fast_turn_and_a_dig_leave_no_dots` asserts B2.
   3. Every moved golden is named in the log with its share over 2/255.
   4. B4's readings are in `nfr.md` with machine, commit and load.
   5. The banner test reads the new modes.
 
-### Phase 5: The owner's windowed check
+### Phase 6: The owner's windowed check
 - **Owner skill:** human
 - **What:** the owner runs the four kinds of runs in the release fly-through on the dev box,
   each with the kept settings and with `old`, indirect on and off, auto exposure:
@@ -375,37 +435,39 @@ lavapipe. A sweep's winner is re-read on lavapipe before its commit.
 - **Files touched:** this plan's log.
 - **Done when:** the owner records one of three outcomes:
   - (a) the settle and the dots are gone, and the defaults stand;
-  - (b) another swept value is wanted, the default changes to it, and Phase 4's bars are
+  - (b) another swept value is wanted, the default changes to it, and Phase 5's bars are
     re-read;
-  - (c) something is still visible. The owner names which of the four runs, and Phase 6 or
+  - (c) something is still visible. The owner names which of the four runs, and Phase 7 or
     an architect amendment follows.
 
-### Phase 6: The owner's findings, if any
+### Phase 7: The owner's findings, if any
 - **Owner skill:** dev
-- **What:** if Phase 5 recorded (b), set the chosen value as the default and re-read Phase 4's
+- **What:** if Phase 6 recorded (b), set the chosen value as the default and re-read Phase 5's
   bars and goldens. If it recorded (c) for a source a kept candidate covers, sweep that
   candidate's parameter against the owner's run and re-read the bars. If it recorded (a), log
   "not needed" and change nothing. A source outside the kept candidates stops for an
   architect amendment. After the owner's pick, the losing candidates are removed with their
   flags, banner modes and tests, as Plan 0048 does, unless the owner keeps one for
   comparison.
-- **Files touched:** as Phases 2 to 4 for the candidate in question, this plan's log.
+- **Files touched:** as Phases 3 to 5 for the candidate in question, this plan's log.
 - **Done when:** the log records the owner's outcome and either "not needed" or the new
-  default with Phase 4's tests passing at it, and no losing candidate's flag remains in
+  default with Phase 5's tests passing at it, and no losing candidate's flag remains in
   `--help` or the banner.
 
 ## The bars
 
-These numbers are **proposed**. The spike reads today's values, and the owner confirms or
-resets them after Phase 1 (Owner question 4). All are read on lavapipe at 192 x 108 under
-`Manual(pose.exposure)`, both poses.
+**B1 and B2 are not fixed at approval** (owner, 2026-10-28). Phase 1 proposes them from its
+readings, and the owner sets them in Phase 2. Their form is fixed here, and their numbers come
+from Phase 2. **B3 and B4 stand as drafted.** All four are read on lavapipe at 192 x 108,
+both poses. B1 and B2 are read under `Manual(pose.exposure)`.
 
-- **B1, the settle.** At each event and lamp state, the composite's
-  `S_on <= max(S_off + 30, 1.25 S_off)` frames: half a second at 60 fps over the
-  indirect-off settle, or a quarter more, whichever is larger.
-- **B2, the dots.** At each yaw and at the dig, the excess dots summed over frames 1 to 60 are
-  at most 25 % of Phase 1's reading at the same run. The excess at frame 16 is at most 10 %
-  of the before's frame 1.
+- **B1, the settle.** At each event and lamp state, the composite's `S_on` against `S_off`:
+  the margin or ratio the owner sets in Phase 2. The architect's starting point at draft was
+  `S_on <= max(S_off + 30, 1.25 S_off)` frames, and Phase 1's proposal replaces it.
+- **B2, the dots.** At each yaw and at the dig, the excess dots summed over frames 1 to 60 as a
+  share of Phase 1's reading at the same run, and a frame by which the excess falls under a
+  share of the before's frame 1. The owner sets both numbers in Phase 2. The draft's starting
+  point was 25 % and 10 % by frame 16.
 - **B3, no regression.** Every asserted test in `apps/flythrough/tests/emissive_stillness.rs`,
   `apps/flythrough/tests/indirect.rs` (the furnace, the hole and the window tests) and
   `apps/flythrough/tests/lights.rs` (the reveal behind a plug) passes with its bars unchanged.
@@ -468,11 +530,12 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
   for that reason.
 - **The dot rule could count real detail.** The settled count is subtracted for this reason,
   and the filmstrips let the owner judge whether a counted dot is one he sees.
-- **Exposure may own the settle.** Then no mechanism here fixes it. The spike says so, and the
-  owner decides (Owner question 5).
+- **Exposure may own part of the settle.** It stays out of scope (owner, 2026-10-28). The
+  spike's reading and an `Auto` filmstrip go to the owner, who decides on ADR-0033's
+  constants.
 - **Plan 0048 moves the probe rays' variance.** Its schemes C and D change the per-visit noise,
-  which sets how fast a probe can respond quietly. That is why Phases 2 onward wait for it,
-  and Phase 2 re-reads the spike first.
+  which sets how fast a probe can respond quietly. That is why Phases 3 onward wait for it,
+  and Phase 3 re-reads the spike first.
 - **The fly-in on lavapipe is slow** (per-frame readbacks over 2048 frames after the stop). The
   asserted tests read at 192 x 108 and may stop reading at 1024 frames if every part has
   settled by then (logged).
@@ -488,33 +551,28 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 - Change Plan 0047's emissive history, guard or reuse cap.
 - The sun and sky's probe input (Plan 0032).
 
-## Owner questions
+## Owner answers
 
-1. **The order.** Proposed: Phase 1 (rig and readings only) may run beside Plan 0048 once Plan
-   0047 merges, and Phases 2 onward start after 0048 merges, re-reading the spike there.
-   Reasons:
-   - 0048 changes the probe rays' per-visit noise, and the settle candidates trade noise for
-     speed, so their bars should be read once, on 0048's tree.
-   - 0048's B2 gain, if it wins, runs on the probe schedule that Phase 2 may change.
-   - The spike changes no shader, so it moves no 0048 reading.
-
-   The alternative is all of this plan before 0048, which fixes the settle sooner but makes
-   0048 re-read its stillness and furnace bars on a new schedule. Which order?
-2. **Plan 0032 after this plan?** 0032 adds sky light to the probe rays and reads its bars on
-   the probes. Proposed: 0032 waits for this plan too, so the order is 0047, 0048, this plan,
-   then 0032. The architect amends 0032's "Starts after" on approval. Yes or no?
-3. **Plan 0048's gain and this plan's schedule.** If 0048 keeps scheme B2, a per-probe gain
-   blended on the hysteresis schedule, Phase 2's schedule change applies to the gain too
-   (done-when 4). This touches no 0048 phase, since 0048 lands first. Agreed?
-4. **The bars.** B1 is `S_on <= max(S_off + 30, 1.25 S_off)` frames. B2 is at most 25 % of
-   today's excess dots, and at most 10 % of the first frame's by frame 16. Confirm them now,
-   or set them after Phase 1's readings?
-5. **If exposure owns the settle** (the lamp-off dark adaptation of about 10 s), it stays
-   out of scope, with the spike's reading going to you to decide on ADR-0033's constants.
-   Agreed?
-6. **A test-support adapter switch.** Phase 1 adds the switch that lane rule 9c anticipates,
-   so reading-only render tests run on the RTX. Asserted tests and goldens stay forced to
-   lavapipe. Agreed?
+1. **Order (owner, 2026-10-28).**
+   - Phase 1, the spike, starts once Plan 0047 merges and runs beside Plan 0048.
+   - Phases 3 onward, the mechanisms, start after 0048 merges. Phase 3 re-reads the spike
+     there first.
+   - Phase 2, the owner's bars, follows Phase 1.
+   - The owner's answer used the draft's numbering, under which the mechanisms began at
+     Phase 2.
+2. **Plan 0032 waits for this plan (owner, 2026-10-28).** The order is 0047, 0048, 0049, then
+   0032. 0032's "Starts after", its index row and the roadmap say so.
+3. **Plan 0048's gain under this plan's schedule: open.** It is decided when 0048 picks its
+   scheme, and is carried as Phase 3's conditional done-when 4.
+4. **Bars B1 and B2 are not fixed now (owner, 2026-10-28).** Phase 1 produces the readings,
+   the filmstrips and a proposed B1 and B2 derived from them. The owner sets the bars in
+   Phase 2, before any mechanism. B3 and B4 stand as drafted.
+5. **Exposure (owner, 2026-10-28).** If exposure owns part of the settle, it stays out of
+   scope. The reading and a filmstrip go to the owner, who decides on ADR-0033's constants.
+6. **The test-support adapter switch (owner, 2026-10-28)** lands in Phase 1 as
+   `VXE_TEST_ADAPTER`, through `reading_device` in `apps/flythrough/tests/support/mod.rs`.
+   - It is for reading-only tests, and later lanes reuse it.
+   - Asserted tests and goldens stay forced to lavapipe.
 
 ## Implementation log
 
@@ -526,11 +584,12 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The settle-and-dot spike | dev | not started | |
-| 2: The light settles with indirect on about as fast as with it off | dev | not started | |
-| 3: No dots on a fast turn or a dig | dev | not started | |
-| 4: The bars as tests, the goldens, the readings, the owner's commands | dev | not started | |
-| 5: The owner's windowed check | human | not started | |
-| 6: The owner's findings, if any | dev | not started | |
+| 2: The owner sets B1 and B2 | human | not started | |
+| 3: The light settles with indirect on about as fast as with it off | dev | not started | |
+| 4: No dots on a fast turn or a dig | dev | not started | |
+| 5: The bars as tests, the goldens, the readings, the owner's commands | dev | not started | |
+| 6: The owner's windowed check | human | not started | |
+| 7: The owner's findings, if any | dev | not started | |
 
 ### Notes
 

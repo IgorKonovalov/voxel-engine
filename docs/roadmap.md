@@ -415,7 +415,12 @@ work), and the light (real-time GI standing in for the baked occlusion).
   2026-10-28): the clamp cuts the probe rays' direct light about 8.5 % low in the furnace.
   Plan 0048 (approved 2026-10-28, ADR-0037 proposed) measures probe-only schemes against pi,
   keeps the winner and today's clamp, and returns the furnace test to pi. The order is Plan
-  0047, then Plan 0048, then Plan 0032 (owner, 2026-10-28).
+  0047, then Plan 0048, then Plan 0049, then Plan 0032 (owner, 2026-10-28).
+- Indirect light that settles fast and young pixels without dots (the owner at Plan 0047's
+  windowed check, 2026-10-28): seconds of settling after a fly-in, a lamp toggle or a dig,
+  and bright dots after a fast turn or a dig. Plan 0049 (approved 2026-10-28, no ADR yet)
+  measures first, with a spike that runs beside Plan 0048. The owner sets the bars from the
+  spike's readings, and the mechanisms follow after 0048 and before 0032.
 - **Headless proof:** irradiance in a closed test box matches an analytic value within a stated
   tolerance; a carve invalidates exactly the touched history region.
 - **Visible proof:** golden images of a dark cave with one emissive vein, before and after a
