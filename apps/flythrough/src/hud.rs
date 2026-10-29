@@ -1427,7 +1427,7 @@ impl Modes {
         }
     }
 
-    /// Shows the banner from `now_ms` with the look in words, `look contour-sharp, closing old,
+    /// Shows the banner from `now_ms` with the look in words, `look contour-sharp, closing snap,
     /// detail on` (a contour preset names its crack-closing rule, and `shadow push on` when
     /// set): the first row of every banner from then on.
     pub fn show_look(&mut self, preset: &crate::LookPreset, detail: bool, now_ms: f64) {
@@ -1731,7 +1731,7 @@ mod mode_tests {
             m.show_look(&preset, true, t);
             let b = m.banner(t).expect("a press shows the banner");
             let words = if preset.normal_mode == vxe_render::NormalMode::Contour {
-                format!("look {}, closing old, detail on", preset.name)
+                format!("look {}, closing snap, detail on", preset.name)
             } else {
                 format!("look {}, detail on", preset.name)
             };
@@ -1772,7 +1772,7 @@ mod mode_tests {
         assert_eq!(
             m.banner(far).as_deref(),
             Some(
-                format!("look contour-grain, closing old\ndetail on, refitting\n{lighting}")
+                format!("look contour-grain, closing snap\ndetail on, refitting\n{lighting}")
                     .as_str()
             ),
             "a refit keeps the banner up"
@@ -1797,7 +1797,7 @@ mod mode_tests {
         assert_eq!(
             m.banner(5000.0).as_deref(),
             Some(
-                format!("look contour-sharp, closing old\ndetail on, view cracks\n{lighting}")
+                format!("look contour-sharp, closing snap\ndetail on, view cracks\n{lighting}")
                     .as_str()
             )
         );
@@ -1805,16 +1805,16 @@ mod mode_tests {
         m.show_view(ViewMode::Shaded, 9000.0);
         assert_eq!(
             m.banner(9000.0).as_deref(),
-            Some(format!("look contour-sharp, closing old\ndetail on\n{lighting}").as_str())
+            Some(format!("look contour-sharp, closing snap\ndetail on\n{lighting}").as_str())
         );
-        let mut snap = crate::LookPreset::CONTOUR_SHARP;
-        snap.tuning.closing = vxe_render::CrackClosing::Snap;
-        snap.tuning.shadow_push = true;
-        m.show_look(&snap, true, 20_000.0);
+        let mut old = crate::LookPreset::CONTOUR_SHARP;
+        old.tuning.closing = vxe_render::CrackClosing::Old;
+        old.tuning.shadow_push = true;
+        m.show_look(&old, true, 20_000.0);
         assert!(
             m.banner(20_000.0)
                 .unwrap()
-                .starts_with("look contour-sharp, closing snap\nshadow push on, detail on\n"),
+                .starts_with("look contour-sharp, closing old\nshadow push on, detail on\n"),
             "{:?}",
             m.banner(20_000.0)
         );

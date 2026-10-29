@@ -4713,7 +4713,7 @@ fn steps_line(h: &StepHistogram) -> String {
 
 /// `look face, detail off, view shaded` under `--look plain`, or with the preset's name,
 /// parts and rock's detail: `look contour-sharp (normals contour, fit weighted27, face mix
-/// 0, detail after lighting on, closing old, shadow push off), detail on (rock scale 4,
+/// 0, detail after lighting on, closing snap, shadow push off), detail on (rock scale 4,
 /// strength 0.1, fine 0), view shaded`.
 fn look_line(look: &LookParams, preset: Option<&LookPreset>) -> String {
     let on = if look.detail { "on" } else { "off" };
@@ -7211,13 +7211,13 @@ mod tests {
         let a = parse_args_from(argv(&[])).unwrap();
         assert_eq!(
             look_line(&a.start_look(), a.look.as_ref()),
-            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on, closing old, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on, closing snap, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
         );
         assert_eq!(a.look, Some(LookPreset::CONTOUR_SHARP));
         let c = parse_args_from(argv(&["--look", "contour"])).unwrap();
         assert_eq!(
             look_line(&c.start_look(), c.look.as_ref()),
-            "look contour (normals contour, fit uniform27, face mix 0, detail after lighting off, closing old, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+            "look contour (normals contour, fit uniform27, face mix 0, detail after lighting off, closing snap, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
         );
         assert_eq!(flythrough::ROCK_DETAIL, [4.0, 0.1]);
         let a = parse_args_from(argv(&["--look", "face"])).unwrap();
@@ -7250,11 +7250,11 @@ mod tests {
         };
         assert_eq!(
             line(&["--look", "contour-sharp"]),
-            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on, closing old, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on, closing snap, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
         );
         assert_eq!(
             line(&["--look", "contour-grain"]),
-            "look contour-grain (normals contour, fit uniform27, face mix 0, detail after lighting on, closing old, shadow push off), detail on (rock scale 2, strength 0.3, fine 0.5), view shaded"
+            "look contour-grain (normals contour, fit uniform27, face mix 0, detail after lighting on, closing snap, shadow push off), detail on (rock scale 2, strength 0.3, fine 0.5), view shaded"
         );
         for p in LookPreset::ALL {
             let a = parse_args_from(argv(&["--look", p.name])).unwrap();
@@ -7287,7 +7287,7 @@ mod tests {
                 "--rock-detail",
                 "2,0.2",
             ]),
-            "look contour (normals contour, fit weighted27 + volume, face mix 0.25, detail after lighting on, closing old, shadow push off), detail on (rock scale 2, strength 0.2, fine 0.5), view shaded"
+            "look contour (normals contour, fit weighted27 + volume, face mix 0.25, detail after lighting on, closing snap, shadow push off), detail on (rock scale 2, strength 0.2, fine 0.5), view shaded"
         );
         assert!(parse_args_from(argv(&["--plane-fit", "sobel"])).is_err());
         assert!(parse_args_from(argv(&["--face-mix", "0.6"])).is_err());

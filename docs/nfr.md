@@ -346,6 +346,23 @@ absolute value, is the reading. The tail is the machine's state, not the code: P
 of 426982e, re-run at the close review (2026-10-27 14:32, load 3.41), read p50 2.093 and p99
 23.314 ms.
 
+**The crack-closing rule at the level's spawn, both adapters (dev reference, Plan 0050 Phases
+3 and 4, 2026-10-29: the release binary of e9cae0e, whose `--closing snap` is Phase 4's
+default, against the binary of 00ca974 before the plan; "snap alone" is e9cae0e's tree with the
+blend and extend rules deleted, a scratch build of the code Plan 0050's Phase 6 leaves; each run
+under the exclusive perf lock; 1-minute load 1.1 to 3.0; `flythrough --level --seed 1 --headless
+--render 1920x1080 --frames 300 --adapter NVIDIA|AMD [--closing RULE] [--shadow-push on]`, 1080p
+from 1280 x 720, the median over three alternated rounds of each run's median of the last 30
+frames).** NVIDIA GeForce RTX 3080 Laptop GPU: hit 0.598 ms before the plan; e9cae0e 0.658
+with snap and 0.662 with `old` (+10.0 %, +10.7 %); snap alone 0.604 (+1.0 %), light 0.913
+against 0.904, and 1.439 with the shadow push. AMD Radeon Graphics (RADV RENOIR): hit 4.264;
+e9cae0e 5.981 with snap and 5.978 with `old` (+40.3 %, +40.2 %); snap alone 4.364 (+2.3 %),
+light 7.026 against 7.012, and 9.165 with the push. e9cae0e's light pass reads 1.529 (RTX) and
+8.893 (Radeon) with snap. The hit and light shaders hold 64 and 84 VGPRs before the plan and in
+snap alone, 128 each in e9cae0e, where the blend rule's code sits in every walking shader while
+the rules stay selectable (RADV shader stats). Mirror 157 872 640 B live, 259 203 264 B
+allocated in every run.
+
 **Mirror attribute pass (contour look), render-thread CPU: p99 under 4 ms on the dev reference,
 deferred work visible as face-mode normals for at most 250 ms** (budget, Plan 0023, ADR-0017;
 dev reference only). **Reading: a recorded miss (Plan 0023 Phase 6 quiet re-read, the Phase 6

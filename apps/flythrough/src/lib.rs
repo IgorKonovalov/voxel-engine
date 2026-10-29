@@ -367,8 +367,15 @@ impl LookPreset {
     }
 
     pub const FACE: Self = Self::plain("face", NormalMode::Face);
-    /// Contour with every tuning part off.
-    pub const CONTOUR: Self = Self::plain("contour", NormalMode::Contour);
+    /// Contour with every tuning part off but the crack-closing rule, snap (Plan 0050);
+    /// `--closing old` selects ADR-0011's hit rule.
+    pub const CONTOUR: Self = Self {
+        tuning: SurfaceTuning {
+            closing: CrackClosing::Snap,
+            ..TUNING_OFF
+        },
+        ..Self::plain("contour", NormalMode::Contour)
+    };
     /// The geometry and lighting-path fixes: the distance-weighted gradient (the fit with the
     /// highest mid-band contrast of the guardrail-passing fits) and the detail's lamp term
     /// applied at full resolution.
@@ -380,7 +387,7 @@ impl LookPreset {
                 offset: PlaneOffset::Fraction,
             },
             detail_after_lighting: true,
-            ..TUNING_OFF
+            ..Self::CONTOUR.tuning
         },
         ..Self::CONTOUR
     };
@@ -391,7 +398,7 @@ impl LookPreset {
         name: "contour-grain",
         tuning: SurfaceTuning {
             detail_after_lighting: true,
-            ..TUNING_OFF
+            ..Self::CONTOUR.tuning
         },
         rock_detail: [2.0, 0.3],
         detail_fine: 0.5,
@@ -444,7 +451,7 @@ impl LookPreset {
     }
 
     /// The parts beyond the normal mode: `fit uniform27, face mix 0, detail after lighting
-    /// off, closing old, shadow push off`.
+    /// off, closing snap, shadow push off`.
     pub fn parts(&self) -> String {
         let t = &self.tuning;
         let on = |b: bool| if b { "on" } else { "off" };

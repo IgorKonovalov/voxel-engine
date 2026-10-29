@@ -429,8 +429,8 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 |---|---|---|---|
 | 1: The crack spike: classes, the view, and where they land | dev | done | 00cacd4 |
 | 2: A zero normal component, exact in the plane code | dev | done | 4b137e7 |
-| 3: The closing rules, each measured | dev | done | committed with this row |
-| 4: The pick as the default | dev | not started | |
+| 3: The closing rules, each measured | dev | done | e9cae0e |
+| 4: The pick as the default | dev | done | committed with this row |
 | 5: The owner's windowed check | human | not started | |
 | 6: The owner's findings, and the losers removed | dev | not started | |
 
@@ -736,6 +736,35 @@ extend 0.25 5.928, extend 0.5 5.926, blend 35.151 (light pre 7.005, blend 13.439
 - Gate at this commit: build, clippy `-D warnings`, fmt, doctests, comment-hygiene and
   test-tiers clean; `--profile quick --test-threads 8` 518 passed; `--profile gpu` 179 passed,
   32 skipped.
+
+#### Phase 4
+
+- The default: `LookPreset::CONTOUR` takes `closing: CrackClosing::Snap` (shadow push off),
+  and `CONTOUR_SHARP` (the start look) and `CONTOUR_GRAIN` build on its tuning. `FACE`,
+  `TRILINEAR8`, `GRADIENT27` and `vxe_render::SurfaceTuning::default()` keep `Old`.
+  `--closing old|extend-0.25|extend-0.5|blend` and `--shadow-push on` stay selectable and
+  named on the banner.
+- Done-when 1: `the_closing_rule_leaves_no_crack` (lavapipe, 59.9 s) reads 0 in classes 1 and
+  2 on the tilted slab (191 left out), the concave corner and the cavity, and 0 at the vein
+  and the patch (`KEPT_POSE_CRACKS` = 0, 0).
+- Done-when 2, re-rendered with `VXE_BLESS=1` against Phase 3's re-render, share of pixels
+  over 2/255: `look_wall_contour_sharp.png` 1.229 %, `look_wall_contour_grain.png` 0.922 %
+  (the same against the committed PNGs); the other 27 read the same pixels and are not
+  re-blessed, the face goldens among them.
+- Done-when 3: `docs/nfr.md` §2 carries the hit and light passes of e9cae0e (snap and old)
+  and of snap alone against 00ca974 on both adapters, with load and the VGPR counts.
+- `the_default_look_meets_the_guardrails` at the default: cavity normal error 7.13 degrees,
+  silhouette 32 px against face 172, `A` 6.73 %.
+- Deviations: `a_tilted_slab_has_cracks_today`, `axis_planes_have_no_cracks` and
+  `crack_classes` pin `CrackClosing::Old` (the start look now closes the cracks); files
+  outside the list: `apps/flythrough/src/main.rs` and `hud.rs` (test strings that name the
+  rule), `apps/flythrough/tests/sharpness.rs` (`Candidate::closing`, so the default look's
+  guardrails read its rule).
+- Owed: the closing rule's ADR (the architect's; not written when this default landed).
+- Full profile on this tree (`--test-threads 2`, perf lock, load 7.9 at start): 720 run, 719
+  passed, 1 failed, 13 skipped, 4810 s. The failure: `showcase_hall_golden_is_lit_by_its_four_ores`,
+  13.5781 % of pixels over 2/255. The same test at 00ca974 (the plan's start, same PNG) reads
+  12.4601 %, and at this tree with `CrackClosing::Old` 12.4601 %. Not re-blessed.
 
 ### Notes
 
