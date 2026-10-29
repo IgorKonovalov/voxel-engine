@@ -544,8 +544,8 @@ Every reading names the machine, the commit, the lock and the load.
 | 2: the wasm host charges before it works | dev | done | b0640c9 |
 | 3: the testbed fails out loud, and the logic fails the same way twice | dev | done | a392e47 |
 | 4: the frame's idle probe volume, and the small corrections | dev | not started | |
-| 5: spans for the rows a shape touches, and smoothers that settle | dev | done (edits bench slower, see Notes) | 14f3841 |
-| 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | done (golden wall-time readings owed) | committed with this row |
+| 5: spans for the rows a shape touches, and smoothers that settle | dev | done; `tool` still 1.8 % over the base after the follow-up (owner question) | 14f3841, follow-up committed with this row |
+| 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | done (golden wall-time readings in Notes) | fcc87bd |
 | 7: the lab-mode inventory, and the removals that need no pick | dev | not started | |
 | 8: the owner picks what else goes | human | not started | |
 | 9: the owner's removals | dev | not started | |
@@ -719,6 +719,21 @@ Every reading names the machine, the commit, the lock and the load.
 - Phase 5 gate: quick 529 run, 527 passed, 2 timed out at 30 s under load (`castle`,
   `replay`, as in Phases 1 and 3). Doctests, clippy and fmt clean. Built in
   `target/alt` so the lock holder's cargo was never blocked on the target dir.
+- Phase 5 follow-up (`perf(world)`, this row's second commit): the slabs live in one arena
+  `Vec<Slab>` reached through a `u32` index per brick row (`NO_SLAB` before allocation), the
+  sphere's arena reserved for its brick rows up front; `OpRows::words` fetches the brick's
+  one slab once and indexes its rows locally, where `span` did a `div_euclid`, a slab
+  lookup and a `rem_euclid` per row. `span` is gone. The span-count test reads the same
+  13 888 entries; vxe-world quick 182 of 182.
+- Phase 5 follow-up readings (dev box, the RTX 3080 laptop, CPU bench, exclusive perf lock,
+  the three binaries run back to back once the 1-minute load was under 2: 1.24 at the
+  start, 1.53 at the end, quiet; criterion medians, raw in `live/edits-bench.log`), built
+  from the base's `edit.rs` (`a392e47`), `14f3841`'s and the follow-up's, each with the
+  current bench file: base `tool` 4.7907 ms, `tool_warm` 4.7894 ms, `tool_long` 5.8873 ms;
+  `14f3841` 5.5876, 5.5890, 6.2681 ms; follow-up 4.8757, 4.8850, 5.6083 ms. Finding: `tool`
+  and `tool_warm` stay 1.8 % and 2.0 % over the base (their confidence intervals do not
+  overlap), `tool_long` is 4.7 % under it. Stopped for the owner after this one attempt, as
+  the orchestrator asked.
 - Phase 6: `ShellConfig` gains `present_mode`, `power_preference`, `prefer_srgb` and `pacing`
   (`Pacing::Unthrottled | Cap { hz }`, exported from `vxe-app`) and a `Default` (title `vxe`,
   1280 x 720, cursor free, `AutoNoVsync`, `HighPerformance`, non-sRGB, `Unthrottled`); the
@@ -739,6 +754,15 @@ Every reading names the machine, the commit, the lock and the load.
 - Phase 6: the indirect golden's control pass renders `INDIRECT_CONTROL_FRAMES` = 64, the
   showcase's dark pass `SHOWCASE_DARK_FRAMES` = 8; `vein_cavity_render` and `showcase_hall`
   take `frames`. The lit passes are unchanged (1 600 and 64).
+- Phase 6 readings, the two goldens' test time (the harness's `finished in`), base binary
+  then tip binary, lavapipe, exclusive perf lock, one run each, loaded (indicative: this
+  lane's quick tier and Plan 0050's lane ran beside them): indirect 198.9 s at load 3.0
+  rising to 18.6, then 136.6 s at load 15.1 (-31 %); showcase 18.0 s at load 18.6, then
+  14.1 s at load 15.2 (-21 %). Both keep their blessed images (0.0000 % over 2/255) and
+  print the same control figures (indirect: 57 600 of 57 600 hit pixels differ, centre
+  `[0, 0, 0]` with indirect off; showcase: 0 pixels over 2/255 with the emission off,
+  29 806 light samples). The slow list is unchanged pending a quiet reading
+  (`live/golden-times.log`).
 - Phase 6 gate: quick 533 run, 531 passed, 2 timed out at 30 s under load (`castle`,
   `replay`, 1-minute load 4.1 at the start); alone they pass at 7.9 s and 15.0 s (load 20.5
   from the other lane). Doctests, clippy `-D warnings` and fmt clean. The golden wall-time

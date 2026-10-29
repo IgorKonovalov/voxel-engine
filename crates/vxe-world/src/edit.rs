@@ -819,9 +819,11 @@ const SLAB_ROWS: usize = (BRICK_EDGE * BRICK_EDGE) as usize;
 /// [`SLAB_ROWS`] entries with row `(y, z)` at `y mod 8 + 8 (z mod 8)`, empty as `(1, 0)`. A
 /// slab is allocated when one of its rows is first asked for (the sphere's all up front), so
 /// an op holds spans only for the brick rows it reaches: a long diagonal capsule's bounds
-/// span a million rows, and it reaches a few thousand. A row's span is the same whichever
-/// chunk or brick asks: the inside centres of a row are one interval within the bounds, and
-/// each brick clips it to its own `x` extent.
+/// span a million rows, and it reaches a few thousand. The slabs share one arena `Vec`,
+/// reached through a `u32` index per brick row, so an op pays one growing allocation rather
+/// than one per slab. A row's span is the same whichever chunk or brick asks: the inside
+/// centres of a row are one interval within the bounds, and each brick clips it to its own
+/// `x` extent.
 struct OpRows<'a> {
     shape: &'a Shape,
     lo: [i64; 3],
@@ -830,11 +832,16 @@ struct OpRows<'a> {
     by0: i64,
     bz0: i64,
     nby: i64,
-    /// Per brick row `(by - by0) + nby (bz - bz0)`, its slab once allocated.
-    slabs: Vec<Option<Box<Slab>>>,
+    /// Per brick row `(by - by0) + nby (bz - bz0)`, its slab's place in `slabs`, or
+    /// [`NO_SLAB`] before it is allocated.
+    index: Vec<u32>,
+    slabs: Vec<Slab>,
     /// Span entries allocated so far, [`SLAB_ROWS`] per slab.
     entries: usize,
 }
+
+/// [`OpRows::index`]'s mark of a brick row with no slab yet.
+const NO_SLAB: u32 = u32::MAX;
 
 /// One brick row's spans, and which are solved: bit `i` of `solved` for entry `i`; all set
 /// for a sphere's slabs, which are walked when allocated.
@@ -849,6 +856,7 @@ impl<'a> OpRows<'a> {
         let (by0, bz0) = (lo[1].div_euclid(be), lo[2].div_euclid(be));
         let nby = hi[1].div_euclid(be) - by0 + 1;
         let nbz = hi[2].div_euclid(be) - bz0 + 1;
+        let sphere = matches!(*shape, Shape::Sphere { .. });
         let mut rows = Self {
             shape,
             lo,
@@ -856,10 +864,11 @@ impl<'a> OpRows<'a> {
             by0,
             bz0,
             nby,
-            slabs: (0..nby * nbz).map(|_| None).collect(),
+            index: vec![NO_SLAB; (nby * nbz) as usize],
+            slabs: Vec::with_capacity(if sphere { (nby * nbz) as usize } else { 0 }),
             entries: 0,
         };
-        if let Shape::Sphere { .. } = *shape {
+        if sphere {
             for bz in bz0..bz0 + nbz {
                 for by in by0..by0 + nby {
                     rows.slab(by, bz);
@@ -869,15 +878,15 @@ impl<'a> OpRows<'a> {
         rows
     }
 
-    /// The slab of brick row `(by, bz)`, a brick row of the bounds, allocated on first use;
-    /// a sphere's is walked then, row by row within the bounds.
-    fn slab(&mut self, by: i64, bz: i64) -> &mut Slab {
+    /// The place in `slabs` of brick row `(by, bz)`'s slab, a brick row of the bounds,
+    /// allocated on first use; a sphere's is walked then, row by row within the bounds.
+    fn slab(&mut self, by: i64, bz: i64) -> usize {
         let i = ((by - self.by0) + self.nby * (bz - self.bz0)) as usize;
-        if self.slabs[i].is_none() {
-            let mut slab = Box::new(Slab {
+        if self.index[i] == NO_SLAB {
+            let mut slab = Slab {
                 span: [(1, 0); SLAB_ROWS],
                 solved: 0,
-            });
+            };
             if let Shape::Sphere { c, r } = *self.shape {
                 let be = i64::from(BRICK_EDGE);
                 let (ylo, yhi) = (
@@ -907,38 +916,34 @@ impl<'a> OpRows<'a> {
                 slab.solved = u64::MAX;
             }
             self.entries += SLAB_ROWS;
-            self.slabs[i] = Some(slab);
+            self.index[i] = u32::try_from(self.slabs.len()).expect("slabs fit u32");
+            self.slabs.push(slab);
         }
-        self.slabs[i].as_mut().expect("allocated above")
-    }
-
-    /// The span of row `(y, z)`, a row of the bounds.
-    fn span(&mut self, y: i64, z: i64) -> (i64, i64) {
-        let be = i64::from(BRICK_EDGE);
-        let (shape, x_lo, x_hi) = (self.shape, self.lo[0], self.hi[0]);
-        let slab = self.slab(y.div_euclid(be), z.div_euclid(be));
-        let i = slab_index(y, z);
-        if slab.solved >> i & 1 == 0 {
-            slab.solved |= 1 << i;
-            slab.span[i] = shape.row_span(y, z, x_lo, x_hi).unwrap_or((1, 0));
-        }
-        slab.span[i]
+        self.index[i] as usize
     }
 
     /// The shape words of the brick whose minimum voxel is `bmin` over its edit box
     /// `elo..=ehi` (rows of the bounds): each row's span clipped to the brick's `x` extent,
-    /// bit `x + 8 y` (brick-local) of word `z`; rows outside the box are empty. Branch-free per
-    /// row: the clipped span is the bits below `x1 + 1 - bmin.x` less the bits below
-    /// `x0 - bmin.x`, both clamped to `0..=8`; an empty span `(1, 0)` has equal bounds and sets
-    /// nothing.
+    /// bit `x + 8 y` (brick-local) of word `z`; rows outside the box are empty. The box lies
+    /// in one brick, so its rows are one slab's. Branch-free per row: the clipped span is the
+    /// bits below `x1 + 1 - bmin.x` less the bits below `x0 - bmin.x`, both clamped to
+    /// `0..=8`; an empty span `(1, 0)` has equal bounds and sets nothing.
     fn words(&mut self, bmin: [i64; 3], elo: [i64; 3], ehi: [i64; 3]) -> [u64; 8] {
         const ONES: [u64; 9] = [0, 1, 3, 7, 15, 31, 63, 127, 255];
         let be = i64::from(BRICK_EDGE);
+        let (shape, x_lo, x_hi) = (self.shape, self.lo[0], self.hi[0]);
+        let id = self.slab(bmin[1].div_euclid(be), bmin[2].div_euclid(be));
+        let slab = &mut self.slabs[id];
         let mut w = [0u64; 8];
         for z in elo[2]..=ehi[2] {
             let mut layer = 0u64;
             for y in elo[1]..=ehi[1] {
-                let (a, b) = self.span(y, z);
+                let i = ((y - bmin[1]) + be * (z - bmin[2])) as usize;
+                if slab.solved >> i & 1 == 0 {
+                    slab.solved |= 1 << i;
+                    slab.span[i] = shape.row_span(y, z, x_lo, x_hi).unwrap_or((1, 0));
+                }
+                let (a, b) = slab.span[i];
                 let lo = (a - bmin[0]).clamp(0, be) as usize;
                 let hi = (b + 1 - bmin[0]).clamp(0, be) as usize;
                 layer |= (ONES[hi] & !ONES[lo]) << (8 * (y - bmin[1]));
