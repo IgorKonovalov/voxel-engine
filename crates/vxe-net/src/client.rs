@@ -107,7 +107,7 @@ impl Client {
 
     /// Sends one input to the server's logic. Panics when `bytes` exceeds `u16::MAX` bytes.
     pub fn send_input(&self, bytes: Vec<u8>) {
-        self.endpoint.send(Message::Input { bytes }.encode());
+        self.endpoint.send(Message::Input { bytes }.encode().into());
     }
 
     /// True once an owned client has seen a result differ from the server's.

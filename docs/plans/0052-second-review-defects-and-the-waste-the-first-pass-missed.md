@@ -545,7 +545,7 @@ Every reading names the machine, the commit, the lock and the load.
 | 3: the testbed fails out loud, and the logic fails the same way twice | dev | done | a392e47 |
 | 4: the frame's idle probe volume, and the small corrections | dev | not started | |
 | 5: spans for the rows a shape touches, and smoothers that settle | dev | done (tip bench readings owed, see resume notes) | 14f3841 |
-| 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | not started | |
+| 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | done (golden wall-time readings owed) | committed with this row |
 | 7: the lab-mode inventory, and the removals that need no pick | dev | not started | |
 | 8: the owner picks what else goes | human | not started | |
 | 9: the owner's removals | dev | not started | |
@@ -710,6 +710,31 @@ Every reading names the machine, the commit, the lock and the load.
 - Phase 5 gate: quick 529 run, 527 passed, 2 timed out at 30 s under load (`castle`,
   `replay`, as in Phases 1 and 3). Doctests, clippy and fmt clean. Built in
   `target/alt` so the lock holder's cargo was never blocked on the target dir.
+- Phase 6: `ShellConfig` gains `present_mode`, `power_preference`, `prefer_srgb` and `pacing`
+  (`Pacing::Unthrottled | Cap { hz }`, exported from `vxe-app`) and a `Default` (title `vxe`,
+  1280 x 720, cursor free, `AutoNoVsync`, `HighPerformance`, non-sRGB, `Unthrottled`); the
+  testbed sets title, size and `lock_cursor` and takes the rest from `default()`. `Cap`
+  starts the loop on `ControlFlow::Wait` and `about_to_wait` sets `WaitUntil` the deadline
+  (`Pacing::next_deadline`, `1 000 000 / hz` us after the last frame start; `hz` 0 counts as
+  1) or requests the redraw once it has passed. `Unthrottled` is `Poll` plus a redraw on
+  every `about_to_wait`, as before.
+- Phase 6: `Channel::send` takes and `try_recv` returns `Arc<[u8]>`; `broadcast` converts
+  the encoded `Vec` once and sends an `Arc` clone per client. The counting test
+  (`server::tests::a_broadcast_encodes_once_and_copies_nothing_per_client`, a thread-local
+  allocation counter as the library's test allocator) reads 6 allocations for a 4-client
+  broadcast, equal to `Arc::<[u8]>::from(msg.encode())` alone (the `Vec`'s growth plus the
+  `Arc`), and the four received `Arc`s are `ptr_eq` and decode to the message. With a copy
+  per client in `broadcast` it reads 10 against 6. The channels are warmed with one
+  broadcast first, since `mpsc`'s first send on a queue allocates its block. The plan's
+  "one encode allocation" is read as "one encode's allocations".
+- Phase 6: the indirect golden's control pass renders `INDIRECT_CONTROL_FRAMES` = 64, the
+  showcase's dark pass `SHOWCASE_DARK_FRAMES` = 8; `vein_cavity_render` and `showcase_hall`
+  take `frames`. The lit passes are unchanged (1 600 and 64).
+- Phase 6 gate: quick 533 run, 531 passed, 2 timed out at 30 s under load (`castle`,
+  `replay`, 1-minute load 4.1 at the start); alone they pass at 7.9 s and 15.0 s (load 20.5
+  from the other lane). Doctests, clippy `-D warnings` and fmt clean. The golden wall-time
+  readings (base binary and tip binary, lavapipe, exclusive perf lock) were queued behind the
+  lock at commit time, to `live/golden-times.log`.
 
 ### Close triggers
 

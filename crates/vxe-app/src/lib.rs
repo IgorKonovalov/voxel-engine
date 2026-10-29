@@ -10,5 +10,5 @@ pub mod input;
 pub mod shell;
 
 pub use input::{Axis, Input, KeyCode, MouseButton, PadButton};
-pub use shell::{App, Flow, Gpu, ShellConfig, ShellError, backend_label, run};
+pub use shell::{App, Flow, Gpu, Pacing, ShellConfig, ShellError, backend_label, run};
 pub use {wgpu, winit};

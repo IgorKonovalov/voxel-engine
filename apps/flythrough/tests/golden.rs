@@ -1377,10 +1377,19 @@ const INDIRECT_FRAMES: u32 = 1600;
 /// count, so it needs no settled probe volume.
 const FSR2_INDIRECT_FRAMES: u32 = 64;
 
-/// The vein cavity after [`INDIRECT_FRAMES`] frames with the lamp off and indirect light
-/// `indirect`, read back.
-fn vein_cavity_render(world: &World, indirect: bool) -> Option<(Vec<u8>, Vec<[u16; 4]>)> {
-    vein_cavity_render_under(world, indirect, None, INDIRECT_FRAMES)
+/// Frames the indirect golden's control pass renders. With indirect light off no probe
+/// updates, so nothing settles past the frame history, which converges within the 64 frames
+/// the FSR 2 comparison also renders.
+const INDIRECT_CONTROL_FRAMES: u32 = 64;
+
+/// The vein cavity after `frames` frames with the lamp off and indirect light `indirect`,
+/// read back.
+fn vein_cavity_render(
+    world: &World,
+    indirect: bool,
+    frames: u32,
+) -> Option<(Vec<u8>, Vec<[u16; 4]>)> {
+    vein_cavity_render_under(world, indirect, None, frames)
 }
 
 /// [`vein_cavity_render`] after `frames` frames, under FSR 2 at scale 1 when `fsr2` is
@@ -1422,16 +1431,17 @@ fn vein_cavity_render_under(
 
 /// `indirect.png`: the cavity lit only by a vein around the partition's corner, after
 /// [`INDIRECT_FRAMES`] frames with indirect light; with indirect light off the same view
-/// differs in at least 20 % of its hit pixels by more than 8/255 (the vein's bounce light is
-/// what the golden shows).
+/// (after [`INDIRECT_CONTROL_FRAMES`]) differs in at least 20 % of its hit pixels by more
+/// than 8/255 (the vein's bounce light is what the golden shows).
 #[test]
 fn indirect_golden_shows_the_vein_s_bounce_light() {
     let world = vein_cavity();
-    let Some((lit, info)) = vein_cavity_render(&world, true) else {
+    let Some((lit, info)) = vein_cavity_render(&world, true, INDIRECT_FRAMES) else {
         return;
     };
     assert_golden("indirect.png", &lit);
-    let (off, _) = vein_cavity_render(&world, false).expect("the adapter rendered once");
+    let (off, _) = vein_cavity_render(&world, false, INDIRECT_CONTROL_FRAMES)
+        .expect("the adapter rendered once");
     let (mut hits, mut differ) = (0, 0);
     for (i, rec) in info.iter().enumerate() {
         if rec[3] & 1 == 0 {
@@ -1621,12 +1631,12 @@ fn upscaled_golden_sharpens_within_the_neighbourhood() {
     assert_eq!(over, 0);
 }
 
-/// The showcase's `hall` shot at the golden's size after [`SHOWCASE_FRAMES`] frames at the
+/// The showcase's `hall` shot at the golden's size after `frames` frames at the
 /// fly-through's defaults (indirect light on at the default probe spacing, our upscaler at
 /// its default scale 1.5 with its jitter, the lighting at its default resolution, `LookPreset::DEFAULT` with
 /// rock's detail), the lamp off, the shot's exposure and the showcase's light radius, under
 /// `table`.
-fn showcase_hall(table: &MaterialTable) -> Option<(Vec<u8>, u64)> {
+fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
     use flythrough::showcase::{SHOTS, ShowcaseSource};
     let source = ShowcaseSource::new(1);
     let world = World::generate(source.extent(), &source, table);
@@ -1687,7 +1697,7 @@ fn showcase_hall(table: &MaterialTable) -> Option<(Vec<u8>, u64)> {
         pitch: (shot.pitch_deg as f32).to_radians(),
         vfov: 70f32.to_radians(),
     };
-    for _ in 0..SHOWCASE_FRAMES {
+    for _ in 0..frames {
         frame.step(&device, &queue, &gpu, &camera, &LightParams::headlamp());
     }
     Some((
@@ -1698,6 +1708,10 @@ fn showcase_hall(table: &MaterialTable) -> Option<(Vec<u8>, u64)> {
 
 /// Frames the showcase golden settles over.
 const SHOWCASE_FRAMES: u32 = 64;
+
+/// Frames the showcase's dark pass renders: with every emission and the lamp off there is no
+/// light to settle, so the first frames are as black as the 64th.
+const SHOWCASE_DARK_FRAMES: u32 = 8;
 
 /// The hue class of a pixel brighter than 24/255: amber, ember, cyan or violet.
 fn hue_class(p: &[u8]) -> Option<usize> {
@@ -1724,7 +1738,7 @@ fn hue_class(p: &[u8]) -> Option<usize> {
 #[test]
 fn showcase_hall_golden_is_lit_by_its_four_ores() {
     let table = flythrough::showcase_materials();
-    let Some((lit, samples)) = showcase_hall(&table) else {
+    let Some((lit, samples)) = showcase_hall(&table, SHOWCASE_FRAMES) else {
         return;
     };
     assert_golden("showcase_hall.png", &lit);
@@ -1735,7 +1749,8 @@ fn showcase_hall_golden_is_lit_by_its_four_ores() {
             ..row.clone()
         });
     }
-    let (off, off_samples) = showcase_hall(&dark).expect("the adapter rendered once");
+    let (off, off_samples) =
+        showcase_hall(&dark, SHOWCASE_DARK_FRAMES).expect("the adapter rendered once");
     let lit_off = off
         .chunks(4)
         .filter(|p| p[..3].iter().any(|&c| c > 2))

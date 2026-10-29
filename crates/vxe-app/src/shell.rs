@@ -2,7 +2,7 @@
 //! creates the `wgpu` device and surface on first resume, and hands each frame to an [`App`].
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseScrollDelta, WindowEvent};
@@ -66,6 +66,56 @@ pub struct ShellConfig {
     pub size: [u32; 2],
     /// Hide and lock the cursor so mouse motion is relative (mouse look).
     pub lock_cursor: bool,
+    /// The surface's present mode. `AutoNoVsync` presents as fast as frames finish;
+    /// `AutoVsync` waits for the display.
+    pub present_mode: wgpu::PresentMode,
+    /// Which adapter the shell asks for.
+    pub power_preference: wgpu::PowerPreference,
+    /// Pick an sRGB surface format, where the hardware encodes on write. `false` picks a
+    /// non-sRGB format, for an app that writes display-encoded values itself.
+    pub prefer_srgb: bool,
+    /// When the next frame starts.
+    pub pacing: Pacing,
+}
+
+impl Default for ShellConfig {
+    /// A 1280 x 720 window titled `vxe`, cursor free, presenting without vsync on the
+    /// high-performance adapter, a non-sRGB surface and unthrottled frames.
+    fn default() -> Self {
+        Self {
+            title: "vxe".to_owned(),
+            size: [1280, 720],
+            lock_cursor: false,
+            present_mode: wgpu::PresentMode::AutoNoVsync,
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            prefer_srgb: false,
+            pacing: Pacing::Unthrottled,
+        }
+    }
+}
+
+/// When the shell starts the next frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pacing {
+    /// Request the next frame as soon as the event loop is idle (`ControlFlow::Poll`).
+    #[default]
+    Unthrottled,
+    /// Start a frame at most `hz` times a second: the loop sleeps
+    /// (`ControlFlow::WaitUntil`) until `1 / hz` after the last frame started. `hz` 0 is
+    /// treated as 1.
+    Cap { hz: u32 },
+}
+
+impl Pacing {
+    /// When the frame after one started at `last_start` may start; `None` for at once.
+    pub fn next_deadline(self, last_start: Instant) -> Option<Instant> {
+        match self {
+            Pacing::Unthrottled => None,
+            Pacing::Cap { hz } => {
+                Some(last_start + Duration::from_micros(1_000_000 / u64::from(hz.max(1))))
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -95,7 +145,11 @@ impl std::error::Error for ShellError {}
 /// the event loop, so it is gone before the first stage.
 pub fn run<A: App>(config: ShellConfig, app: A) -> Result<(), ShellError> {
     let event_loop = EventLoop::new().map_err(ShellError::EventLoop)?;
-    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.set_control_flow(match config.pacing {
+        Pacing::Unthrottled => ControlFlow::Poll,
+        // `about_to_wait` sets the deadline once a frame has started.
+        Pacing::Cap { .. } => ControlFlow::Wait,
+    });
     let mut shell = Shell {
         config,
         app,
@@ -216,7 +270,7 @@ impl<A: App> Shell<A> {
             .create_surface(window.clone())
             .map_err(|e| e.to_string())?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
+            power_preference: self.config.power_preference,
             compatible_surface: Some(&surface),
             ..Default::default()
         }))
@@ -233,12 +287,16 @@ impl<A: App> Shell<A> {
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .ok_or("the surface does not support this adapter")?;
-        // Prefer a non-sRGB format: the app writes display-encoded values.
+        // The first offered format whose encoding matches `prefer_srgb`, else the default.
         let caps = surface.get_capabilities(&adapter);
-        if let Some(&f) = caps.formats.iter().find(|f| !f.is_srgb()) {
+        if let Some(&f) = caps
+            .formats
+            .iter()
+            .find(|f| f.is_srgb() == self.config.prefer_srgb)
+        {
             config.format = f;
         }
-        config.present_mode = wgpu::PresentMode::AutoNoVsync;
+        config.present_mode = self.config.present_mode;
         surface.configure(&device, &config);
 
         if self.config.lock_cursor {
@@ -368,9 +426,38 @@ impl<A: App> ApplicationHandler for Shell<A> {
         log::info!("teardown: event loop exiting");
     }
 
-    fn about_to_wait(&mut self, _: &ActiveEventLoop) {
-        if let Some(state) = &self.state {
-            state.window.request_redraw();
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(state) = &self.state else {
+            return;
+        };
+        let deadline = self
+            .last_frame
+            .and_then(|last| self.config.pacing.next_deadline(last));
+        match deadline {
+            Some(at) if now() < at => event_loop.set_control_flow(ControlFlow::WaitUntil(at)),
+            _ => state.window.request_redraw(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_default_config_presents_unthrottled_without_vsync() {
+        let c = ShellConfig::default();
+        assert_eq!(c.present_mode, wgpu::PresentMode::AutoNoVsync);
+        assert_eq!(c.power_preference, wgpu::PowerPreference::HighPerformance);
+        assert!(!c.prefer_srgb);
+        assert_eq!(c.pacing, Pacing::Unthrottled);
+    }
+
+    #[test]
+    fn a_60_hz_cap_waits_16_666_us_after_the_last_frame_start() {
+        let start = now();
+        let next = Pacing::Cap { hz: 60 }.next_deadline(start);
+        assert_eq!(next, Some(start + Duration::from_micros(16_666)));
+        assert_eq!(Pacing::Unthrottled.next_deadline(start), None);
     }
 }

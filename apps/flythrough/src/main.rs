@@ -5418,6 +5418,7 @@ fn main() {
             title: "flythrough".to_owned(),
             size,
             lock_cursor: true,
+            ..ShellConfig::default()
         };
         vxe_app::run(config, app)
             .map_err(|e| e.to_string())
