@@ -45,8 +45,8 @@
 // In the cutaway view a hit takes the hemisphere term `PI (0.3 + 0.7 (0.5 + 0.5 n.z))`
 // instead, with no lamp, no emission and no shadow ray. Every shadow ray takes the frame's
 // shadow walk (`shadowed`): the full walk, or the coarse walk that treats any 2^3 block with a
-// set opaque bit as solid. Only the shaded view reads this pass's irradiance; the steps view
-// reads its shadow-ray counters; every other view skips the pass.
+// set opaque bit as solid. Only the shaded and cracks views read this pass's irradiance; the
+// steps view reads its shadow-ray counters; every other view skips the pass.
 
 @group(0) @binding(10) var<storage, read> light_samples: array<vec4<i32>>;
 @group(2) @binding(0) var hit_pos_in: texture_2d<f32>;
@@ -72,7 +72,7 @@ const CANDIDATE_DIMS: u32 = 6u;
 @compute @workgroup_size(8, 8, 1)
 fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
     let view = view_mode();
-    if (gid.x >= params.light_size.x || gid.y >= params.light_size.y || (view != VIEW_SHADED && view != VIEW_STEPS)) {
+    if (gid.x >= params.light_size.x || gid.y >= params.light_size.y || (view != VIEW_SHADED && view != VIEW_STEPS && view != VIEW_CRACKS)) {
         return;
     }
     let px = vec2<i32>(gid.xy);
@@ -89,7 +89,7 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
             walk_steps = 0u;
             loads = 0u;
             pool_reads = 0u;
-            shadowed(rec.p + shadow_normal_of(rec, ray.d) * SHADOW_OFFSET, to_light / dist, dist);
+            shadowed(shadow_origin(rec.p, shadow_normal_of(rec, ray.d)), to_light / dist, dist);
             counts = vec4<f32>(f32(walk_steps), f32(loads), f32(pool_reads), 1.0);
         }
         textureStore(irradiance_out, px, counts);
@@ -133,7 +133,7 @@ fn lamp_lit(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>) -> f32 {
     let cone = smoothstep(params.cos_outer, params.cos_inner, dot(-l, params.light_dir));
     var lit = params.light_intensity * cone * ndl / dist2;
     if ((params.flags & FLAG_SHADOWS) != 0u && lit > 0.0) {
-        if (shadowed(p + ns * SHADOW_OFFSET, l, sqrt(dist2))) {
+        if (shadowed(shadow_origin(p, ns), l, sqrt(dist2))) {
             lit = 0.0;
         }
     }
@@ -401,7 +401,7 @@ fn draw_candidates(px: vec2<u32>, p: vec3<f32>, n: vec3<f32>) -> Reservoir {
 fn resolve_emissive(r: Reservoir, p: vec3<f32>, ns: vec3<f32>) -> vec3<f32> {
     var e = vec3<f32>(0.0);
     if (r.w_sum > 0.0 && r.target_pdf > 0.0 && r.m > 0.0) {
-        let o = p + ns * SHADOW_OFFSET;
+        let o = shadow_origin(p, ns);
         let to = r.x - o;
         let dist = length(to);
         // Stop short of the face itself, which the ray reaches from its air side.

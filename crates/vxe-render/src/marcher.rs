@@ -233,14 +233,25 @@ pub enum ViewMode {
     /// The composited albedo, unlit and linear: each translucent layer's `albedo × opacity`
     /// front to back over the opaque hit's albedo; black on a miss.
     Albedo,
+    /// How each primary ray reached its hit in the contour look, over the shaded image
+    /// without its translucent layers: the hit pass writes the ray's crack class and whether
+    /// its lamp shadow ray found rock within 1.5 voxels of its origin (the self-hit) into
+    /// [`Frame::layers`] (r and g), and the composite paints them (see [`CrackShares`]). Every
+    /// pass of the shaded view runs. Class 0 is clean: no surface voxel passed outside its
+    /// plane since the ray last entered an empty cell. After such a pass, class 1 hits a
+    /// voxel with no plane, class 2 enters the hit voxel already inside its plane's solid
+    /// half-space, class 3 crosses the plane inside the hit voxel.
+    Cracks = 5,
 }
 
 impl ViewMode {
-    pub const ALL: [Self; 5] = [
+    /// The cycle's order.
+    pub const ALL: [Self; 6] = [
         Self::Shaded,
         Self::Normals,
         Self::HitMask,
         Self::Steps,
+        Self::Cracks,
         Self::Albedo,
     ];
 
@@ -251,11 +262,96 @@ impl ViewMode {
             Self::HitMask => "hitmask",
             Self::Steps => "steps",
             Self::Albedo => "albedo",
+            Self::Cracks => "cracks",
         }
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+
+    /// The next view in [`ViewMode::ALL`] order, wrapping.
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|&m| m == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+
+    /// Whether the frame lights this view as the shaded one: the light, probe, filter,
+    /// gradient and meter passes run.
+    pub fn shades(self) -> bool {
+        matches!(self, Self::Shaded | Self::Cracks)
+    }
+}
+
+/// The share of a cracks-view frame's hit pixels in each crack class and with a self-hit
+/// ([`ViewMode::Cracks`]), read from the hit pass's outputs.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CrackShares {
+    /// Hit pixels.
+    pub hits: u64,
+    /// Hit pixels in classes 0 to 3.
+    pub classes: [u64; 4],
+    /// Hit pixels whose lamp shadow ray found rock within 1.5 voxels of its origin.
+    pub self_hits: u64,
+}
+
+impl CrackShares {
+    /// From [`Frame::layers`] (`rgba16float`, the class in r and the self-hit in g) and
+    /// [`Frame::hit_records`] (`rgba16uint`, bit 0 of a's flags set on a hit) as
+    /// [`crate::readback::read_rgba16f`] and [`crate::readback::read_rgba16u`] return them,
+    /// one texel per pixel.
+    pub fn from_layers(layers: &[[f32; 4]], records: &[[u16; 4]]) -> Self {
+        let mut s = Self::default();
+        for (l, r) in layers.iter().zip(records) {
+            if r[3] & 1 == 0 {
+                continue;
+            }
+            s.hits += 1;
+            s.classes[(l[0].round() as usize).min(3)] += 1;
+            if l[1] > 0.5 {
+                s.self_hits += 1;
+            }
+        }
+        s
+    }
+
+    /// Each pixel's class (0 to 3, `None` on a miss) and self-hit, decoded from a cracks-view
+    /// image without an upscaler (`rgba8unorm`, the composite's colours: a miss black; class
+    /// 0 every channel in 4..=124, or magenta with a self-hit; class 1 red, 2 yellow, 3 blue,
+    /// each with a self-hit's 128 in its zero channel, blue's red).
+    pub fn decode_rgba8(p: &[u8]) -> Option<(u8, bool)> {
+        match (p[0], p[1], p[2]) {
+            (0, 0, 0) => None,
+            (255, 0, 0) => Some((1, false)),
+            (255, 0, 128) => Some((1, true)),
+            (255, 255, 0) => Some((2, false)),
+            (255, 255, 128) => Some((2, true)),
+            (0, 0, 255) => Some((3, false)),
+            (128, 0, 255) => Some((3, true)),
+            (255, 0, 255) => Some((0, true)),
+            _ => Some((0, false)),
+        }
+    }
+
+    /// [`CrackShares`] of a cracks-view image (see [`CrackShares::decode_rgba8`]).
+    pub fn from_rgba8(pixels: &[u8]) -> Self {
+        let mut s = Self::default();
+        for (class, self_hit) in pixels.chunks_exact(4).filter_map(Self::decode_rgba8) {
+            s.hits += 1;
+            s.classes[usize::from(class)] += 1;
+            s.self_hits += u64::from(self_hit);
+        }
+        s
+    }
+
+    /// Class `k`'s share of the hit pixels, 0 with none.
+    pub fn share(&self, k: usize) -> f64 {
+        self.classes[k] as f64 / self.hits.max(1) as f64
+    }
+
+    /// The self-hits' share of the hit pixels, 0 with none.
+    pub fn self_hit_share(&self) -> f64 {
+        self.self_hits as f64 / self.hits.max(1) as f64
     }
 }
 
@@ -2287,9 +2383,9 @@ impl Frame {
         keep_history: bool,
     ) {
         let mut p = *params;
-        // The probe passes run in the shaded view outside the cutaway, with indirect light on.
-        let indirect =
-            self.lighting.indirect && self.look.view == ViewMode::Shaded && !self.look.cutaway;
+        // The probe passes run in the shaded and cracks views outside the cutaway, with indirect
+        // light on.
+        let indirect = self.lighting.indirect && self.look.view.shades() && !self.look.cutaway;
         let probe_update = indirect && self.probes.updates();
         let mut light_window = false;
         let mut boxes: Vec<[[i32; 3]; 2]> = Vec::new();
@@ -2461,9 +2557,9 @@ impl Frame {
                 Res::Tex(&t.strata),
             ],
         );
-        // The filter runs in the shaded view unless switched off; the variance pass writes
-        // `filter[0]` and the iterations ping-pong, ending in `filter[0]`.
-        let filtering = self.lighting.filter && self.look.view == ViewMode::Shaded;
+        // The filter runs in the shaded and cracks views unless switched off; the variance pass
+        // writes `filter[0]` and the iterations ping-pong, ending in `filter[0]`.
+        let filtering = self.lighting.filter && self.look.view.shades();
         let variance_bind = bind_io(
             device,
             &self.variance_layout,
@@ -2559,7 +2655,7 @@ impl Frame {
             )
         });
         // The gradient pass runs for the gradient mode's lambda or the emissive guard's.
-        let gradient_on = self.look.view == ViewMode::Shaded
+        let gradient_on = self.look.view.shades()
             && (self.lighting.history == HistoryKill::Gradient
                 || self.lighting.flags() & LIGHTING_EMISSIVE_GUARD != 0);
         if !gradient_on {
@@ -2748,7 +2844,7 @@ impl Frame {
             Exposure::Manual(_) => self.metering,
         };
         let (strength, sigma) = metering.params();
-        let meter = self.look.view == ViewMode::Shaded;
+        let meter = self.look.view.shades();
         let mut mode = if meter { EX_METER } else { 0 };
         if let Exposure::Auto(_) = self.lighting.exposure {
             mode |= EX_AUTO;

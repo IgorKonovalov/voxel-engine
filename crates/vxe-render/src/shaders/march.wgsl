@@ -64,7 +64,9 @@
 //   2  storage texture  layer_out      rgba16float: the translucent layers in front of the hit
 //                                      (premultiplied colour, transmittance), lit by the lamp's
 //                                      cone and distance term except in the albedo view; in the
-//                                      steps view the primary ray's counters instead
+//                                      steps view the primary ray's counters instead; in the
+//                                      cracks view its crack class in r and its lamp shadow
+//                                      ray's self-hit (1 or 0) in g
 //
 // A pixel takes the first view whose rectangle holds it (the first when none does). Its ray
 // runs from the view's origin along `fwd + right x - up y`, x and y moving linearly across the
@@ -271,6 +273,7 @@ const VIEW_NORMALS: u32 = 1u;
 const VIEW_HITMASK: u32 = 2u;
 const VIEW_STEPS: u32 = 3u;
 const VIEW_ALBEDO: u32 = 4u;
+const VIEW_CRACKS: u32 = 5u;
 // The attribute of no plane.
 const NO_PLANE: u32 = 0xFFFFu;
 // Params.lighting bits.
@@ -363,6 +366,18 @@ var<private> coarse_span: vec2<f32> = vec2<f32>(3.0e38, -3.0e38);
 var<private> walk_steps: u32;
 var<private> loads: u32;
 var<private> pool_reads: u32;
+
+// How the last `march` reached its hit (the cracks view): `crack_passes` counts the surface
+// voxels it passed outside their plane's solid half-space (contour kind 2) since the last
+// empty cell it entered, and at the hit `crack_class` is 0 with no pass (or with contour off),
+// else CRACK_INTERIOR when the hit voxel has no plane (an interior voxel, a uniform brick, a
+// mip cell), CRACK_ENTRY when the ray enters the hit voxel already inside its half-space,
+// CRACK_CROSSING when it crosses the plane inside the voxel. 0 on a miss.
+var<private> crack_passes: u32;
+var<private> crack_class: u32;
+const CRACK_INTERIOR: u32 = 1u;
+const CRACK_ENTRY: u32 = 2u;
+const CRACK_CROSSING: u32 = 3u;
 
 fn reset_walk() {
     walk.in_chunk = false;
@@ -812,8 +827,9 @@ fn contour_attr(entry: u32, index: u32) -> u32 {
 }
 
 // The contour test of solid voxel `v`, entered at `t`: `kind` 0 when the voxel has no plane,
-// 1 for a hit at `t` with normal `n`, 2 when the ray misses the plane's solid half-space
-// inside the voxel's cube.
+// 1 for a hit at the entry `t` (the ray enters already inside the plane's solid half-space)
+// with normal `n`, 3 for a hit where the ray crosses the plane inside the voxel's cube, 2 when
+// the ray misses the half-space inside the cube.
 struct Contour {
     kind: u32,
     t: f32,
@@ -844,7 +860,7 @@ fn contour_test(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t: f32
     if (s_out > 0.0) {
         return Contour(2u, t, n);
     }
-    return Contour(1u, t + (t_out - t) * s_in / (s_in - s_out), n);
+    return Contour(3u, t + (t_out - t) * s_in / (s_in - s_out), n);
 }
 
 fn contour_active() -> bool {
@@ -886,6 +902,8 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
     v = clamp(v, bmin_i, bmax_i - vec3<i32>(1));
     let contour = contour_active();
     var passing = cutaway;
+    crack_passes = 0u;
+    crack_class = 0u;
 
     for (var step = 0u; step < MAX_STEPS; step++) {
         walk_steps += 1u;
@@ -909,14 +927,20 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
                 return Hit(true, v, axis, t, c.material, false, vec3<f32>(0.0));
             }
             let p = contour_test(o, d, inv, v, t, c);
-            if (p.kind == 0u) {
-                return Hit(true, v, axis, t, c.material, false, vec3<f32>(0.0));
-            }
-            if (p.kind == 1u) {
+            if (p.kind != 2u) {
+                if (crack_passes > 0u) {
+                    crack_class = select(select(CRACK_CROSSING, CRACK_ENTRY, p.kind == 1u), CRACK_INTERIOR, p.kind == 0u);
+                }
+                if (p.kind == 0u) {
+                    return Hit(true, v, axis, t, c.material, false, vec3<f32>(0.0));
+                }
                 return Hit(true, v, axis, p.t, c.material, true, p.n);
             }
             // The ray passes the voxel outside its plane: walk on as through air.
+            crack_passes += 1u;
             size = 1;
+        } else {
+            crack_passes = 0u;
         }
         // Leave the cell through its nearest face, the lower axis on a tie: the same
         // `(t, axis)` order `advance` crosses the other axes' planes in.
@@ -1343,6 +1367,38 @@ fn shadow_normal_of(rec: HitRecord, d: vec3<f32>) -> vec3<f32> {
     return face;
 }
 
+// Where the shadow rays of a hit at `p` with shadow normal `ns` start: SHADOW_OFFSET along
+// `ns`.
+fn shadow_origin(p: vec3<f32>, ns: vec3<f32>) -> vec3<f32> {
+    return p + ns * SHADOW_OFFSET;
+}
+
+// The cracks view's self-hit: a lamp shadow ray that finds rock within this many voxels of its
+// origin, three times SHADOW_OFFSET. A true occluder that close is a neighbouring voxel's own
+// plane.
+const SELF_HIT: f32 = 1.5;
+
+// Whether the lamp's shadow ray of hit `rec`, seen along `d`, finds rock within SELF_HIT of its
+// origin; false where the light pass casts no lamp shadow ray (lamp or shadows off, outside
+// the cone, facing away). The walk is the full one: SELF_HIT is inside the coarse walk's
+// margin.
+fn lamp_self_hit(rec: HitRecord, d: vec3<f32>) -> bool {
+    if ((params.lighting & LIGHTING_LAMP) == 0u || (params.flags & FLAG_SHADOWS) == 0u
+        || (params.flags & FLAG_CUTAWAY) != 0u) {
+        return false;
+    }
+    let to_light = params.light_pos - rec.p;
+    let dist2 = max(dot(to_light, to_light), 1e-4);
+    let l = to_light * inverseSqrt(dist2);
+    let cone = smoothstep(params.cos_outer, params.cos_inner, dot(-l, params.light_dir));
+    let lit = params.light_intensity * cone * max(dot(lighting_normal(rec), l), 0.0) / dist2;
+    if (lit <= 0.0) {
+        return false;
+    }
+    let o = shadow_origin(rec.p, shadow_normal_of(rec, d));
+    return march(o, l, min(sqrt(dist2), SELF_HIT), false).found;
+}
+
 // Whether the detail's shading is applied after lighting (flag bit 13 with the lamp on, not
 // in the cutaway view): the light pass then shades with the undetailed normal and the
 // composite applies `detail_lamp_ratio`.
@@ -1470,6 +1526,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     pool_reads = 0u;
     let h = march(o, d, BIG, (params.flags & FLAG_CUTAWAY) != 0u);
     // Read before the normal modes' lookups touch the walk and the counters.
+    let crack = select(0u, crack_class, h.found);
     let translucent_seen = walk.saw_translucent && params.translucent_layers > 0u;
     let counts = vec3<u32>(min(walk_steps, 255u), min(loads, 255u), min(pool_reads, 255u));
     let t_end = select(BIG, h.t, h.found);
@@ -1488,6 +1545,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // The primary ray's cost: its loop iterations, its storage loads and the pool loads
         // among them, each clamped at 255. No translucent walk in this view.
         layer = vec4<f32>(vec3<f32>(counts), 1.0);
+    } else if (view == VIEW_CRACKS) {
+        // The primary ray's crack class and its lamp shadow ray's self-hit. No translucent
+        // walk in this view.
+        var self_hit = false;
+        if (h.found) {
+            self_hit = lamp_self_hit(unpack_hit(pos, info), d);
+        }
+        layer = vec4<f32>(f32(crack), select(0.0, 1.0, self_hit), 0.0, 1.0);
     } else if (translucent_seen) {
         info.w |= HIT_TRANSLUCENT;
         layer = translucent_march(o, d, t_end, view != VIEW_ALBEDO);

@@ -427,12 +427,99 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The crack spike: classes, the view, and where they land | dev | not started | |
+| 1: The crack spike: classes, the view, and where they land | dev | done | committed with this row |
 | 2: A zero normal component, exact in the plane code | dev | not started | |
 | 3: The closing rules, each measured | dev | not started | |
 | 4: The pick as the default | dev | not started | |
 | 5: The owner's windowed check | human | not started | |
 | 6: The owner's findings, and the losers removed | dev | not started | |
+
+#### Phase 1
+
+Readings: lavapipe (llvmpipe, Mesa 26.2.5, LLVM 23.1.3), exclusive perf lock, worktree at
+00ca974 plus this phase's diff. Analytic scenes at 320 x 180 under the analytic window rule
+("left out" is the hits it excluded); the level at 384 x 216, the pose's manual exposure,
+indirect off, no upscaler. Start look = `LookPreset::DEFAULT`, detail on, headlamp, lamp on
+unless named. `cargo nextest run -p flythrough --test look --run-ignored only --no-capture
+crack_classes`; two runs read identical rows.
+
+| scene | look | hits | left out | clean % | class 1 % | class 2 % | class 3 % | 1+2 px | dark % | bright % | self-hit % |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| tilted slab | start | 49364 | 192 | 94.53 | 0.000 | 3.806 | 1.663 | 1879 | 54.1 | 0.0 | 0.000 |
+| concave corner | start | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| 45-degree slab | start | 48335 | 144 | 98.10 | 0.000 | 0.035 | 1.862 | 17 | 82.4 | 0.0 | 0.000 |
+| diagonal slab | start | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| cavity | start | 57600 | 0 | 98.12 | 0.087 | 1.356 | 0.434 | 831 | 43.2 | 0.0 | 0.000 |
+| pillar | start | 3476 | 0 | 96.61 | 0.460 | 2.934 | 0.000 | 118 | 63.6 | 0.0 | 0.000 |
+| level vein | start | 82944 | 0 | 96.71 | 0.099 | 2.614 | 0.576 | 2250 | 32.7 | 0.5 | 0.110 |
+| level vein, lamp off | start | 82944 | 0 | 96.71 | 0.099 | 2.614 | 0.576 | 2250 | 76.8 | 1.2 | 0.000 |
+| level patch | start | 82944 | 0 | 91.95 | 0.047 | 5.744 | 2.256 | 4803 | 4.5 | 2.0 | 0.117 |
+| level patch, lamp off | start | 82944 | 0 | 91.95 | 0.047 | 5.744 | 2.256 | 4803 | 21.4 | 3.2 | 0.000 |
+| tilted slab | fit uniform27 | 49373 | 188 | 93.12 | 0.000 | 4.922 | 1.963 | 2430 | 54.3 | 0.0 | 0.000 |
+| concave corner | fit uniform27 | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| 45-degree slab | fit uniform27 | 48335 | 145 | 98.10 | 0.000 | 0.035 | 1.862 | 17 | 82.4 | 0.0 | 0.000 |
+| diagonal slab | fit uniform27 | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| cavity | fit uniform27 | 57600 | 0 | 97.86 | 0.073 | 1.559 | 0.503 | 940 | 40.0 | 0.0 | 0.000 |
+| pillar | fit uniform27 | 3476 | 0 | 95.28 | 0.230 | 4.488 | 0.000 | 164 | 69.5 | 1.2 | 0.000 |
+| level vein | fit uniform27 | 82944 | 0 | 96.21 | 0.058 | 3.007 | 0.728 | 2542 | 34.6 | 0.7 | 0.122 |
+| level patch | fit uniform27 | 82944 | 0 | 90.55 | 0.055 | 6.821 | 2.570 | 5704 | 4.6 | 2.3 | 0.166 |
+| tilted slab | offset volume | 49348 | 211 | 93.81 | 0.000 | 2.634 | 3.554 | 1300 | 55.9 | 0.0 | 0.000 |
+| concave corner | offset volume | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| 45-degree slab | offset volume | 48314 | 142 | 94.88 | 0.000 | 0.048 | 5.075 | 23 | 91.3 | 0.0 | 0.000 |
+| diagonal slab | offset volume | 57600 | 0 | 99.77 | 0.233 | 0.000 | 0.000 | 134 | 60.4 | 0.0 | 0.000 |
+| cavity | offset volume | 57600 | 0 | 98.00 | 0.090 | 1.073 | 0.840 | 670 | 43.1 | 0.0 | 0.000 |
+| pillar | offset volume | 3456 | 0 | 97.34 | 0.463 | 1.273 | 0.926 | 60 | 53.3 | 0.0 | 0.000 |
+| level vein | offset volume | 82944 | 0 | 96.30 | 0.131 | 1.962 | 1.602 | 1736 | 31.3 | 1.0 | 0.082 |
+| level patch | offset volume | 82944 | 0 | 91.64 | 0.054 | 4.348 | 3.958 | 3651 | 5.5 | 1.7 | 0.077 |
+| tilted slab | clamp 0.5 (scratch) | 49359 | 194 | 93.63 | 0.012 | 3.158 | 3.199 | 1565 | 53.7 | 0.0 | 0.000 |
+| concave corner | clamp 0.5 (scratch) | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| 45-degree slab | clamp 0.5 (scratch) | 48335 | 144 | 98.10 | 0.000 | 0.035 | 1.862 | 17 | 82.4 | 0.0 | 0.000 |
+| diagonal slab | clamp 0.5 (scratch) | 57600 | 0 | 100.00 | 0.000 | 0.000 | 0.000 | 0 | 0.0 | 0.0 | 0.000 |
+| cavity | clamp 0.5 (scratch) | 57600 | 0 | 98.08 | 0.097 | 0.507 | 1.316 | 348 | 34.8 | 0.0 | 0.000 |
+| pillar | clamp 0.5 (scratch) | 3476 | 0 | 96.03 | 0.460 | 1.554 | 1.956 | 70 | 64.3 | 0.0 | 0.000 |
+| level vein | clamp 0.5 (scratch) | 82944 | 0 | 96.25 | 0.147 | 0.917 | 2.690 | 883 | 56.9 | 0.0 | 0.117 |
+| level patch | clamp 0.5 (scratch) | 82944 | 0 | 91.50 | 0.115 | 3.213 | 5.170 | 2760 | 9.9 | 2.0 | 0.099 |
+
+- The clamp sweep: `attrib.wgsl`'s `clamp(offset, -0.875, 0.875)` patched to `-0.5, 0.5`,
+  read, reverted (no diff in `attrib.wgsl` at this commit).
+- Done-when 1: `a_tilted_slab_has_cracks_today` reads 1879 class 1+2 pixels under the window
+  rule; the cracks view's colours decode to the layers' shares over every hit.
+- Done-when 2: `a_diagonal_slab_has_none` reads 0 in classes 1 and 2, 0 left out.
+- The concave corner (`corner_world`, `corner_camera` as specified) reads 0 in every class.
+- Side-by-sides (untracked): `live/cracks/{vein,patch}-{start-look,start-look-lamp-off,fit-uniform27,offset-volume}.png`.
+- Vein: the class 2 (yellow) regions are wedges on the bottoms and ends of the ledges, where
+  the owner's `wedges` and `step3` screenshots have the dark wedges; class 1 is a few red
+  specks on the same ledges. At 384 x 216 the shaded panel does not resolve the wedges by eye.
+- Patch: the class 2 regions are small triangles in a lattice across the floor, at the
+  vertices where the facets meet, where `step5` has the bright triangles; the upper wall has
+  larger class 2 saw-tooth slivers along its ledge edges.
+- Attribution (done-when 6): class 2 owns the wedges (76.8 % of the vein's class 1+2 pixels
+  dark with the lamp off), not class 1 (0.099 % of hits at the vein, 0.047 % at the patch).
+  Class 2 owns the triangles and the slivers (3.2 % of the patch's class 1+2 pixels bright with
+  the lamp off). The self-hit is 91 pixels at the vein and 97 at the patch with the lamp on
+  (0.110 %, 0.117 %), magenta dots inside the cone along ledge edges, against 2168 and 4764
+  class 2 pixels at the same poses: some dots inside the cone are self-hits, and the slivers
+  along those edges are class 2.
+- Deviations: no view-cycle key existed, `F9` added; the self-hit is computed in the hit pass
+  (`march.wgsl`, `lamp_self_hit`, per full pixel), not per lighting pixel in `light.wgsl`, and
+  `light.wgsl`'s shadow origins go through `shadow_origin()` (`gradient.wgsl` keeps its own);
+  the cracks view drops translucent layers, as the steps view does; files outside the list:
+  `crates/vxe-render/src/lib.rs` (the `CrackShares` export), `tests/support/mod.rs`
+  (`reading_device`, copied from branch `plan-0049`), `apps/flythrough/src/lib.rs` and the
+  pose parts of `main.rs` and `hud.rs` (`Pose`, `VEIN_POSE`, `PATCH_POSE`, `POSES`, `--pose`,
+  copied from branch `plan-0049`); the level is read with indirect off, the pose's manual
+  exposure and no upscaler; the poses are also read with the lamp off (start look); the dark
+  and bright shares are over the counted pixels.
+- Goldens: every golden re-rendered with `VXE_BLESS=1` (castle_golden, sharpness, golden,
+  look, fsr2 under `--profile gpu`) at 00ca974 and at this commit reads identical pixels, 29 of
+  29. Both differ from the committed PNGs by at most 2/255 in 8 of them (castle_gate,
+  dark_cave, dark_cave_half, look_wall_contour, look_wall_contour_grain,
+  look_wall_contour_sharp, look_wall_face, upscaled), 0 pixels over 2/255: the same at the
+  base, so the committed goldens were not touched.
+- Gate at this commit: build, clippy `-D warnings`, fmt, doctests, comment-hygiene and
+  test-tiers scripts clean; `--profile quick` 517 of 518 passed, 1 timeout
+  (`flythrough::replay a_stamp_and_a_collapse_replay_from_the_save` at 30 s, load average 31
+  from another session; alone it passed in 14.6 s); `--profile gpu` 178 passed, 31 skipped.
 
 ### Notes
 
