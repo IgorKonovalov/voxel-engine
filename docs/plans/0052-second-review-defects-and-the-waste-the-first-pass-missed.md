@@ -544,11 +544,57 @@ Every reading names the machine, the commit, the lock and the load.
 | 2: the wasm host charges before it works | dev | done | b0640c9 |
 | 3: the testbed fails out loud, and the logic fails the same way twice | dev | done | a392e47 |
 | 4: the frame's idle probe volume, and the small corrections | dev | not started | |
-| 5: spans for the rows a shape touches, and smoothers that settle | dev | done (tip bench readings owed, see resume notes) | committed with this row |
+| 5: spans for the rows a shape touches, and smoothers that settle | dev | done (tip bench readings owed, see resume notes) | 14f3841 |
 | 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | not started | |
 | 7: the lab-mode inventory, and the removals that need no pick | dev | not started | |
 | 8: the owner picks what else goes | human | not started | |
 | 9: the owner's removals | dev | not started | |
+
+### Resume notes (2026-10-29, delete when Phase 7 lands)
+
+- **Done:** Phase 1 `47eda2e`, Phase 2 `b0640c9`, Phase 3 `a392e47`, Phase 5 `14f3841`
+  (committed ahead of Phase 4 by the orchestrator's order: CPU phases first). Status is
+  `in-progress`. Left: Phase 4, then 6, then 7; stop at Phase 8 (human). Do not edit
+  `march.wgsl` until the orchestrator says Plan 0050 merged; in Phase 7 inventory everything
+  and remove only what lives outside it.
+- **Readings owed for Phase 5** (each under the exclusive perf lock, with the load):
+  the edits bench at the tip, `cargo bench -p vxe-world --bench edits -q -- "^tool"`
+  (compare `tool`, `tool_warm`, `tool_long` with the base numbers in the Notes); and the
+  mixer bench `mixer_block_silent` at the base and the tip. Two bench binaries are built for
+  the mixer: `live/mixer-bench-base` (the base's smoothers, the new bench case) and
+  `live/mixer-bench-tip`; run each from `crates/vxe-audio` as `../../live/mixer-bench-<b>
+  --bench "64 HRTF"`. At checkpoint both were queued on the lock behind Plan 0050's full
+  tier, writing to `live/bench-edits-tip.log` and `live/bench-mixer.log`; read those first,
+  and rerun if they are empty. Record them in the Notes and set Phase 5's row to `done`.
+- **Owner-facing findings so far** (repeat in the final message):
+  1. Phase 2: a `1 024^3` `count_in_box` over a world with nothing resident completed at the
+     base and now traps on fuel (its volume bound is past the default `10^10`); the test
+     asserts the new behaviour. The plan's Risks name this kind of case; the owner may want
+     a residency-aware bound instead.
+  2. Phase 2: the unsupported bound is `7 d (max_region + 2)` over distinct cells, not the
+     plan's `max_region x cells` (that product does not bound the flood, and it would trap
+     the duplicated over-cap list `charged_under` pins at `100 + 12 (cap + 1)`).
+  3. Phase 3: the Run-level tests drive extracted pieces (`mirror_failed`, `tick_server`,
+     `SettleClock`), not `draw`/`tick`, which need a device; `draw`'s path is covered end to
+     end in `tests/shutdown.rs` (gpu tier).
+- **Phase 4 notes:** `crates/vxe-render` and `apps/flythrough/tests/level_mirror.rs` are
+  untouched so far. `scripts/check-test-tiers.mjs` must learn binary `src/` (the
+  flythrough binary's test module is CPU-only today; keep it so). The new
+  `shutdown.rs` tests are already in the gpu filter (whole binary). Budget reading for
+  `frame_bytes` goes into `docs/nfr.md` section 3 (`Files touched` does not list
+  `docs/nfr.md`; the done-when names it, so log it as a deviation).
+- **Phase 6 notes:** `apps/flythrough/src/main.rs`'s `ShellConfig` literal is at the end of
+  `main`; the goldens' control passes are in `apps/flythrough/tests/golden.rs`; the slow
+  list is in `.config/nextest.toml`.
+- **Gate state at `14f3841`:** quick 529 run, 527 passed, 2 timed out at 30 s under load
+  (`castle::the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn`,
+  `replay::a_stamp_and_a_collapse_replay_from_the_save`; both pass alone, 10 s and 15 s);
+  clippy and fmt clean; gpu tier run only for `binary(shutdown)` (5 of 5); no full tier yet.
+- **Gotchas:** `scripts/build-guests.sh` must rerun after any `flythrough-logic` change (the
+  component test loads `target/guests/flythrough-logic.wasm`; run it inside the memory
+  scope). `tests/component.rs` needs `-p flythrough --features wasm`. While another lane
+  holds the lock, build in `CARGO_TARGET_DIR=target/alt` so a lock holder's cargo is not
+  blocked on the shared target dir. `live/` is untracked scratch.
 
 ### Notes
 
