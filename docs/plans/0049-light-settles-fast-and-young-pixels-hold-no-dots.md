@@ -48,7 +48,7 @@
 > in the old look (history 32), so they predate Plan 0047. (3) *Amended 2026-10-29 (owner):*
 > at the same check the light also shimmers or crawls during ordinary flight, with no fast
 > turn.
-> **Starts after:** [Plan 0047](0047-emissive-light-holds-still-long-guarded-history.md)
+> **Starts after:** [Plan 0047](done/0047-emissive-light-holds-still-long-guarded-history.md)
 > merges: its stillness rig (`apps/flythrough/tests/support/stillness.rs`), its filmstrips,
 > its asserted bars and its defaults are this plan's "before". *Amended 2026-10-29 (owner):*
 > the whole plan runs alone on 0047's merged tree, Phase 1 to Phase 7, with no lane beside it.

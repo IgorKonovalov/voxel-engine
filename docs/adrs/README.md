@@ -50,7 +50,7 @@ the status.
 | [0033](0033-eye-adaptation-as-an-asymmetric-two-stage-exposure-on-the-gpu.md) | Exposure adapts like an eye: fast toward bright, slow toward dark in two stages, metered and stepped on the GPU, applied as pre-exposure | accepted, Outcome (Plan 0040) |
 | [0034](0034-fsr-2-ported-to-wgsl-as-the-default-upscaler-candidate.md) | AMD FSR 2.2.1 ported to WGSL is the upscaler's default candidate; our own upscaler stays opt-in | accepted (Plan 0041, Outcome): shipped opt-in, ADR-0024's upscaler at 1.5 the default |
 | [0035](0035-dx12-shaders-compile-with-wgpus-bundled-static-dxc.md) | DX12 shaders compile with wgpu's bundled static DXC, never FXC | accepted, Outcome (Plan 0046) |
-| [0036](0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md) | Static emissive light accumulates on a long full-precision history, guarded by an emissive-only gradient | proposed (Plan 0047) |
+| [0036](0036-static-emissive-light-on-a-long-full-precision-history-guarded-by-an-emissive-gradient.md) | Static emissive light accumulates on a long full-precision history, guarded by an emissive-only gradient | accepted, Outcome (Plan 0047): H 256, the f32 store, the guard on; probe slices hashed |
 | [0037](0037-probe-rays-direct-light-keeps-its-energy-apart-from-the-screen-firefly-clamp.md) | The probe rays' direct light keeps its energy, under a scheme of its own apart from the screen's firefly clamp | proposed (Plan 0048) |
 <!-- roster:end -->
 

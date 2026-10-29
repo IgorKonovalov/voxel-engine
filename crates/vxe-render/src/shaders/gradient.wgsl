@@ -10,8 +10,10 @@
 //   2  texture_2d<f32>   grad_prev_light   last frame's irradiance from the light pass
 //   3  texture_2d<u32>   grad_prev_res     last frame's reservoirs
 //   4  storage texture   strata_out        rgba16float, one texel per stratum: the gradient
-//                                          lambda = |new - old| / max(new, old), then the new
-//                                          and old luminances
+//                                          lambda = |new - old| / max(new, old) of the whole
+//                                          light (the gradient mode, Params.lighting bit 3;
+//                                          else 0), then its new and old luminances, then the
+//                                          emissive guard's lambda (bit 10; else 0)
 //
 // One pixel per stratum, picked by a hash of the stratum and the frame, is re-shaded at last
 // frame's hit with this frame's lights and last frame's sample: the lamp at its current pose
@@ -19,6 +21,12 @@
 // visibility under last frame's W. Nothing changed, the re-shade equals last frame's estimate
 // (`target * W = w_sum / M`), so lambda is 0 but for f16 rounding. A pixel with no hit, or no
 // valid history, reads 0.
+//
+// The emissive guard (ADR-0036) compares the emissive re-shade alone with last frame's emissive
+// estimate, `luminance(prev_light.xyz)`, through a dead zone: `max(lambda - LAMBDA_FLOOR, 0) /
+// (1 - LAMBDA_FLOOR)`, so the bfloat16 W rounding (about 0.004) of a still scene reads 0 and a
+// change of 10 % or more still registers. Outside the gradient mode the lamp's re-shade and its
+// shadow ray are skipped.
 //
 // Both are compared pre-exposed (ADR-0033): the re-shade, computed in absolute units, times this
 // frame's exposure, and last frame's estimate times `exposure_ratio()`; the 1e-4 floor acts on
@@ -32,6 +40,8 @@
 
 // Strata edge in pixels; must match `GRADIENT_STRATUM` in `marcher.rs` and temporal.wgsl.
 const STRATUM: u32 = 3u;
+// The emissive guard's dead zone in lambda.
+const LAMBDA_FLOOR: f32 = 0.05;
 
 @compute @workgroup_size(8, 8, 1)
 fn gradient(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -50,10 +60,12 @@ fn gradient(@builtin(global_invocation_id) gid: vec3<u32>) {
             let d = normalize(rec.p - v.origin);
             let n = lighting_normal(rec);
             let ns = shadow_normal_of(rec, d);
-            var e = 0.0;
-            if ((params.lighting & LIGHTING_LAMP) != 0u) {
-                e = PI * lamp_lit(rec.p, n, ns);
+            let combined = (params.lighting & LIGHTING_GRADIENT) != 0u;
+            var lamp = 0.0;
+            if (combined && (params.lighting & LIGHTING_LAMP) != 0u) {
+                lamp = PI * lamp_lit(rec.p, n, ns);
             }
+            var emissive = 0.0;
             let stored = textureLoad(grad_prev_res, qi, 0);
             if ((stored.w & 0x8000000u) != 0u) {
                 let x = bitcast<vec3<f32>>(stored.xyz);
@@ -68,16 +80,24 @@ fn gradient(@builtin(global_invocation_id) gid: vec3<u32>) {
                         let to = x - o;
                         let dist = length(to);
                         if (!shadowed(o, to / dist, dist - 1e-3)) {
-                            e += min(t * w_big, FIREFLY_CLAMP * PI * luminance(le));
+                            emissive = min(t * w_big, FIREFLY_CLAMP * PI * luminance(le));
                         }
                     }
                 }
             }
-            e *= exposure_now();
             let prev_light = textureLoad(grad_prev_light, qi, 0);
-            let old = (luminance(prev_light.xyz) + prev_light.w) * exposure_ratio();
-            let lambda = abs(e - old) / max(max(e, old), 1e-4);
-            out = vec4<f32>(lambda, e, old, 0.0);
+            if (combined) {
+                let e = (lamp + emissive) * exposure_now();
+                let old = (luminance(prev_light.xyz) + prev_light.w) * exposure_ratio();
+                let lambda = abs(e - old) / max(max(e, old), 1e-4);
+                out = vec4<f32>(lambda, e, old, 0.0);
+            }
+            if ((params.lighting & LIGHTING_EMISSIVE_GUARD) != 0u) {
+                let e = emissive * exposure_now();
+                let old = luminance(prev_light.xyz) * exposure_ratio();
+                let lambda = abs(e - old) / max(max(e, old), 1e-4);
+                out.w = max(lambda - LAMBDA_FLOOR, 0.0) / (1.0 - LAMBDA_FLOOR);
+            }
         }
     }
     textureStore(strata_out, vec2<i32>(gid.xy), out);

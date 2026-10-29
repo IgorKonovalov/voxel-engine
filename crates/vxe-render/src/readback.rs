@@ -170,6 +170,19 @@ pub fn read_rgba16f(
     })
 }
 
+/// The pixels of an `rgba16float` or `rgba32float` texture as `f32`, rows top to bottom.
+pub fn read_float(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+) -> Vec<[f32; 4]> {
+    match texture.format() {
+        wgpu::TextureFormat::Rgba32Float => read_rgba32f(device, queue, texture),
+        wgpu::TextureFormat::Rgba16Float => read_rgba16f(device, queue, texture),
+        f => panic!("read_float reads rgba16float or rgba32float, not {f:?}"),
+    }
+}
+
 /// An IEEE binary16 value as `f32`.
 pub fn f16_to_f32(h: u16) -> f32 {
     let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };

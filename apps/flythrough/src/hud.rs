@@ -1214,7 +1214,7 @@ pub const BANNER_MS: f64 = 3000.0;
 /// (80 cells) and the golden's 320 pixels at scale 1 (40 cells).
 pub const BANNER_COLS: usize = 40;
 /// Rows the banner wraps into at most.
-pub const BANNER_ROWS: usize = 6;
+pub const BANNER_ROWS: usize = 7;
 
 /// A key that changes the lighting mode: `F3` to `F7` and `M`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1466,7 +1466,7 @@ impl Modes {
 
     /// The modes in words: `lighting half, shadow walk coarse, sampler reuse, history edits,
     /// lamp on, indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, emissive
-    /// history 32, exposure auto eye +1.53 EV` (the probe rays per update, the share of probes
+    /// history 256, guard on, reuse cap 20, exposure auto eye +1.53 EV` (the probe rays per update, the share of probes
     /// refreshed a frame, while indirect light is on the voxels between probes, and the
     /// exposure in EV, `log2 e`), after `source NAME, ` when the modes name a source.
     pub fn line(&self) -> String {
@@ -1481,7 +1481,7 @@ impl Modes {
             String::new()
         };
         format!(
-            "{source}lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, indirect {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, emissive history {}, exposure {} {:+.2} EV",
+            "{source}lighting {}, shadow walk {}, sampler {}, history {}, lamp {}, indirect {} at {} rays 1/{}{probes}, filter {}, ore pulse {}, emissive history {}, guard {}, reuse cap {}, exposure {} {:+.2} EV",
             self.resolution.name(),
             l.shadow_walk.name(),
             l.sampler.name(),
@@ -1493,6 +1493,8 @@ impl Modes {
             on(l.filter),
             on(self.pulse),
             l.emissive_history,
+            on(l.emissive_guard),
+            l.reuse_m_cap,
             self.exposure_mode(),
             self.exposure_ev()
         )
@@ -1559,7 +1561,7 @@ mod mode_tests {
         let start = m.banner(0.0).expect("the banner shows at the start");
         assert_eq!(
             start,
-            "lighting half, shadow walk coarse\nsampler reuse, history edits, lamp on\nindirect off at 64 rays 1/8, filter on\nore pulse off, emissive history 32\nexposure manual +0.00 EV"
+            "lighting half, shadow walk coarse\nsampler reuse, history edits, lamp on\nindirect off at 64 rays 1/8, filter on\nore pulse off, emissive history 256\nguard on, reuse cap 20\nexposure manual +0.00 EV"
         );
         assert!(start.lines().all(|l| l.len() <= BANNER_COLS));
         let mut t = 1000.0;

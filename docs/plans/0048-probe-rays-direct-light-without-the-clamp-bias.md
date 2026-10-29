@@ -30,7 +30,7 @@
 > plan's worktree under `live/` (`stepc-diag.log`, `stepc-donly.patch`, `stepc-noclamp.patch`).
 > **Starts after:** [Plan 0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md)
 > merges (amended 2026-10-29, owner), which itself starts after
-> [Plan 0047](0047-emissive-light-holds-still-long-guarded-history.md) merges. 0049 may change
+> [Plan 0047](done/0047-emissive-light-holds-still-long-guarded-history.md) merges. 0049 may change
 > the probe update's schedule, the gather's path to the screen, the young pixels' filter and
 > the upscaler's history, and adds the settle, dot and shimmer tests this plan must hold; dev
 > re-reads the names there. It changes the same probe and lighting code (`probe_update.wgsl`, `probes.rs`,

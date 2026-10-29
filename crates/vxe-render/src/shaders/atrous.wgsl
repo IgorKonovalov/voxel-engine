@@ -18,6 +18,7 @@
 //   0  texture_2d<f32>   hit_pos_in      this frame's hit positions
 //   1  texture_2d<u32>   hit_info_in     this frame's hit records
 //   2  texture_2d<f32>   accum_in        the temporal pass's accumulated irradiance
+//                                        (rgba32float)
 //   3  texture_2d<f32>   moments_in      the temporal pass's moments and age
 //   4  storage texture   filter_out      rgba16float: irradiance rgb, variance a
 // Bindings, group 2 of `atrous`:

@@ -87,7 +87,7 @@
 > **Starts after:** [Plan 0048](0048-probe-rays-direct-light-without-the-clamp-bias.md)
 > merges (amended 2026-10-29, owner). 0048 starts after
 > [Plan 0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md) merges, which itself
-> starts after [Plan 0047](0047-emissive-light-holds-still-long-guarded-history.md) merges. Plans 0024,
+> starts after [Plan 0047](done/0047-emissive-light-holds-still-long-guarded-history.md) merges. Plans 0024,
 > 0029, 0030, 0040 and 0038 are closed and on main.
 > The names in this plan were checked against main at bc1e7a5 and Plan 0047's branch at
 > c27891f. 0047 still has dev phases to run (its sweep may change `DEFAULT_EMISSIVE_HISTORY`

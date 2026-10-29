@@ -200,7 +200,17 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040 and 0041 closed)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041 and 0047 closed)
+
+Plan 0047, still emissive light, closed 2026-10-29 (v0.36.0, ADR-0036 accepted with an
+Outcome): the emissive part of the temporal pass accumulates in `f32` over a 256-frame
+history (`DEFAULT_EMISSIVE_HISTORY`, was 32), an emissive-only gradient guard shortens it
+where a reveal changes the light, and the probe slices are spread by a hash of the slot. A
+headless patch bar (`flythrough::emissive_stillness`) reads 1.50 patches a step at the patch
+pose with the lamp off, from 74 to 78, and 0.05 at `VEIN_POSE`. The owner's check found still
+walls much better. Indirect light that settles over seconds after a move or a lamp toggle, and
+light dots on a fast turn or a dig, go to Plan 0049. The firefly clamp's bias on the probe
+rays goes to Plan 0048.
 
 Plan 0038, the showcase cavern, closed 2026-10-28 (v0.35.0, testbed only, no ADR): the
 fly-through gains `--source cave|level|showcase` and `--shot`, and the showcase is a bounded,
@@ -409,8 +419,7 @@ work), and the light (real-time GI standing in for the baked occlusion).
   emission row; not yet planned.
 - Static emissive light that holds still (the owner, after Plan 0040's second session,
   2026-10-27): with the lamp off near a vein, wall patches step on one by one and flicker.
-  Plan 0047 (in progress, ADR-0036 proposed) gives the emissive part a long `f32` history guarded
-  by an emissive-only gradient, against a headless patch bar; after Plan 0040, before 0032.
+  Plan 0047 closed it for a still camera (v0.36.0); the motion faults go to Plan 0049.
 - The probe rays' direct light without the firefly clamp's bias (Plan 0047's step C,
   2026-10-28): the clamp cuts the probe rays' direct light about 8.5 % low in the furnace.
   Plan 0048 (approved 2026-10-28, ADR-0037 proposed) measures probe-only schemes against pi,

@@ -90,6 +90,10 @@ pub struct Params {
     pub emissive_history: f32,
     /// The size of the frame's image: the output size with the upscaler, else `size`.
     pub output_size: [u32; 2],
+    /// A reservoir's M is capped at this many times the frame's candidates
+    /// ([`Lighting::reuse_m_cap`]).
+    pub reuse_m_cap: u32,
+    pub _pad8: [u32; 3],
 }
 
 /// `Params::lighting` bit: the headlamp lights the frame.
@@ -101,8 +105,12 @@ pub const LIGHTING_REUSE: u32 = 1 << 2;
 /// `Params::lighting` bit: the temporal pass also shortens history by A-SVGF's gradient
 /// ([`History::Gradient`]).
 pub const LIGHTING_GRADIENT: u32 = 1 << 3;
-/// The emissive part's history in frames, by default.
-pub const DEFAULT_EMISSIVE_HISTORY: u32 = 32;
+/// The emissive part's history in frames, by default: the shortest of 64, 128, 256 and 512
+/// that holds static ore light still on the patch bar (ADR-0036). Light the emissive guard
+/// cannot see reaches 90 % in `ln 0.1 / ln(255/256)` = 589 frames.
+pub const DEFAULT_EMISSIVE_HISTORY: u32 = 256;
+/// [`Lighting::reuse_m_cap`] by default.
+pub const DEFAULT_REUSE_M_CAP: u32 = 20;
 /// Frames after an emission-scale change (the frame of the change too) during which the
 /// emissive part blends at no less
 /// than the lamp's 0.2 (`0.8^11 = 0.086`: a step settles within 10 % in them).
@@ -116,6 +124,10 @@ pub const LIGHTING_EMISSION_CHANGED: u32 = 1 << 8;
 /// emissive part's history. The light pass's lamp estimate carries no sampling noise (one
 /// point light, one shadow ray), so the reset adds none.
 pub const LIGHTING_LAMP_CHANGED: u32 = 1 << 9;
+/// `Params::lighting` bit: the emissive guard (ADR-0036, [`Lighting::emissive_guard`]): the
+/// gradient pass writes an emissive-only lambda, and the temporal pass raises the emissive
+/// part's blend to it and lowers the age by it. Set while emissive candidates are above 0.
+pub const LIGHTING_EMISSIVE_GUARD: u32 = 1 << 10;
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
 pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
 /// `Params::lighting` bit: candidates are drawn uniformly over the buffer
@@ -829,6 +841,14 @@ pub struct Lighting {
     /// Frames of history the emissive part of the irradiance blends over at least (static
     /// light holds still); the lamp's part keeps alpha 0.2.
     pub emissive_history: u32,
+    /// Reservoir reuse keeps at most this many times the frame's candidates of history in a
+    /// reservoir's M ([`Sampler::Reuse`]; default [`DEFAULT_REUSE_M_CAP`]): a higher cap holds
+    /// a kept point longer, a lower one decorrelates neighbouring frames' samples.
+    pub reuse_m_cap: u32,
+    /// The emissive guard (ADR-0036, on by default): the gradient pass re-shades last frame's
+    /// kept emitter points in every history mode, and where the emissive light changed the
+    /// emissive part's long history follows as fast as the change.
+    pub emissive_guard: bool,
     /// Indirect light from the probe volume (ADR-0023): the probes update and the gather adds
     /// their irradiance, in the shaded view outside the cutaway. Off by default.
     pub indirect: bool,
@@ -854,6 +874,8 @@ impl Default for Lighting {
             sampler: Sampler::default(),
             history: HistoryKill::default(),
             emissive_history: DEFAULT_EMISSIVE_HISTORY,
+            reuse_m_cap: DEFAULT_REUSE_M_CAP,
+            emissive_guard: true,
             indirect: false,
             probe_rays: crate::probes::RAYS_PER_PROBE,
             probe_slices: crate::probes::SLICES,
@@ -903,6 +925,11 @@ impl Lighting {
                 0
             }
             | if self.indirect { LIGHTING_INDIRECT } else { 0 }
+            | if self.emissive_guard && self.candidates > 0 {
+                LIGHTING_EMISSIVE_GUARD
+            } else {
+                0
+            }
             | if matches!(self.exposure, Exposure::Auto(_)) {
                 LIGHTING_AUTO_EXPOSURE
             } else {
@@ -1364,7 +1391,7 @@ impl Frame {
                 Io::Float,
                 Io::Float,
                 Io::Float,
-                f16,
+                Io::Store(wgpu::TextureFormat::Rgba32Float),
                 f16,
                 Io::Uniform,
                 Io::Float,
@@ -2063,7 +2090,8 @@ impl Frame {
         &self.targets.reservoir[self.cur]
     }
 
-    /// The temporal pass's accumulated irradiance (rgba16float, rgb).
+    /// The temporal pass's accumulated irradiance (rgba32float: the emissive part in rgb, the
+    /// lamp's in a).
     pub fn accumulated(&self) -> &wgpu::Texture {
         &self.targets.accum[self.cur]
     }
@@ -2196,6 +2224,7 @@ impl Frame {
             lod2_r2: (4 * self.lod.r_full).pow(2),
             exposure: self.lighting.manual_exposure(),
             emissive_history: self.lighting.emissive_history as f32,
+            reuse_m_cap: self.lighting.reuse_m_cap.max(1),
             output_size: if self.upscaling() {
                 self.output
             } else {
@@ -2529,8 +2558,14 @@ impl Frame {
                 ],
             )
         });
-        let gradient_on =
-            self.lighting.history == HistoryKill::Gradient && self.look.view == ViewMode::Shaded;
+        // The gradient pass runs for the gradient mode's lambda or the emissive guard's.
+        let gradient_on = self.look.view == ViewMode::Shaded
+            && (self.lighting.history == HistoryKill::Gradient
+                || self.lighting.flags() & LIGHTING_EMISSIVE_GUARD != 0);
+        if !gradient_on {
+            // No strata this frame: the temporal pass must not read last one's.
+            p.lighting &= !LIGHTING_EMISSIVE_GUARD;
+        }
         let full = [t.width.div_ceil(WORKGROUP), t.height.div_ceil(WORKGROUP)];
         let lw = t.light_size().map(|n| n.div_ceil(WORKGROUP));
         let strata = [t.strata.width(), t.strata.height()].map(|n| n.div_ceil(WORKGROUP));
@@ -2906,14 +2941,16 @@ struct Targets {
     layer: wgpu::Texture,
     /// The light pass's irradiance (rgba16float), on the lighting grid.
     irradiance: wgpu::Texture,
-    /// The temporal pass's accumulated irradiance and moments (rgba16float).
+    /// The temporal pass's accumulated irradiance (rgba32float: the emissive part's long
+    /// history keeps its mean, ADR-0036) and moments (rgba16float).
     accum: [wgpu::Texture; 2],
     moments: [wgpu::Texture; 2],
     /// The filter's ping-pong pair (rgba16float: irradiance rgb, variance a).
     filter: [wgpu::Texture; 2],
     /// The light pass's reservoirs (rgba32uint), this frame's and the last.
     reservoir: [wgpu::Texture; 2],
-    /// The gradient pass's strata, one texel per 3 x 3 lighting pixels (rgba16float).
+    /// The gradient pass's strata, one texel per 3 x 3 lighting pixels (rgba16float: the
+    /// combined lambda, the new and old luminances, the emissive guard's lambda).
     strata: wgpu::Texture,
     /// The frame's display-encoded image (rgba8unorm): the composite's output at the
     /// internal size, or with the upscaler at the output size, the composite's image in its
@@ -2971,7 +3008,7 @@ impl Targets {
             half_info: half.then(|| [0, 1].map(|_| lit("half hit info", Rgba16Uint))),
             layer: tex("layer", Rgba16Float),
             irradiance: lit("irradiance", Rgba16Float),
-            accum: [0, 1].map(|_| lit("accumulated irradiance", Rgba16Float)),
+            accum: [0, 1].map(|_| lit("accumulated irradiance", Rgba32Float)),
             moments: [0, 1].map(|_| lit("moments", Rgba16Float)),
             filter: [0, 1].map(|_| lit("filter", Rgba16Float)),
             reservoir: [0, 1].map(|_| lit("reservoir", Rgba32Uint)),
@@ -3031,7 +3068,7 @@ impl Targets {
         px * (2 * (16 + 8) + 8)
             + output * 4
             + history
-            + lpx * (half + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 16 + 8)
+            + lpx * (half + 8 + 2 * 16 + 2 * 8 + 2 * 8 + 2 * 16 + 8)
             + strata * 8
             + self.tiles.size()
     }

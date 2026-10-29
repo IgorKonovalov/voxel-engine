@@ -11,8 +11,10 @@
 //   4  texture_2d<f32>   irradiance_in   this frame's irradiance from the light pass
 //   5  texture_2d<f32>   prev_accum_in   last frame's accumulated irradiance
 //   6  texture_2d<f32>   prev_moments_in last frame's moments: luminance, its square, age
-//   7  storage texture   accum_out       rgba16float: the accumulated irradiance, the
-//                                        emissive part in rgb, the lamp's (white) in a
+//   7  storage texture   accum_out       rgba32float: the accumulated irradiance, the
+//                                        emissive part in rgb, the lamp's (white) in a; full
+//                                        precision, so a blend of 1 / emissive_history moves
+//                                        it however long the history (ADR-0036)
 //   8  storage texture   moments_out     rgba16float: first and second moments of the
 //                                        irradiance's luminance, then the age: frames of
 //                                        history reused, 0 after a reset
@@ -21,7 +23,10 @@
 //                                        the gradient mode (Params.lighting bit 3): the
 //                                        blend weight rises to twice the lambda averaged over
 //                                        the 3 x 3 strata around the reprojected pixel's
-//                                        (clamped to 1), and the age falls by that fraction
+//                                        (clamped to 1), and the age falls by that fraction;
+//                                        with the emissive guard (bit 10) the emissive
+//                                        part's blend rises the same way to the guard's
+//                                        lambda (its w), and the age falls by it too
 //
 // A hit is reprojected through the previous frame's view of the same index to a fractional
 // pixel as if both frames' rays went through their pixels' centres (`reproject_centred`: a
@@ -53,7 +58,7 @@
 @group(2) @binding(4) var irradiance_in: texture_2d<f32>;
 @group(2) @binding(5) var prev_accum_in: texture_2d<f32>;
 @group(2) @binding(6) var prev_moments_in: texture_2d<f32>;
-@group(2) @binding(7) var accum_out: texture_storage_2d<rgba16float, write>;
+@group(2) @binding(7) var accum_out: texture_storage_2d<rgba32float, write>;
 @group(2) @binding(8) var moments_out: texture_storage_2d<rgba16float, write>;
 
 // Up to MAX_EDITS boxes, inclusive voxel bounds: box i is `boxes[2 i]` to `boxes[2 i + 1]`.
@@ -75,18 +80,18 @@ const GRADIENT_GAIN: f32 = 2.0;
 // Strata edge in pixels; gradient.wgsl's STRATUM.
 const GRADIENT_STRATUM: f32 = 3.0;
 
-// The gradient pass's lambda at fractional pixel `q` of last frame, averaged over the 3 x 3
-// strata around its stratum.
-fn gradient_at(q: vec2<f32>) -> f32 {
+// The gradient pass's lambdas at fractional pixel `q` of last frame, averaged over the 3 x 3
+// strata around its stratum: the whole light's in x, the emissive guard's in y.
+fn gradient_at(q: vec2<f32>) -> vec2<f32> {
     let s = vec2<i32>(floor(q / GRADIENT_STRATUM));
     let n = vec2<i32>(textureDimensions(strata_in));
-    var sum = 0.0;
+    var sum = vec2<f32>(0.0);
     var count = 0.0;
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
             let t = s + vec2<i32>(x, y);
             if (all(t >= vec2<i32>(0)) && all(t < n)) {
-                sum += textureLoad(strata_in, t, 0).x;
+                sum += textureLoad(strata_in, t, 0).xw;
                 count += 1.0;
             }
         }
@@ -189,15 +194,21 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 // as fast as the lamp's.
                 a_emissive = max(a_emissive, ALPHA);
             }
-            if ((params.lighting & LIGHTING_GRADIENT) != 0u) {
-                // Where the light changed, the new sample weighs as much as the change.
-                let lambda = clamp(GRADIENT_GAIN * gradient_at(q + 0.5), 0.0, 1.0);
+            let gradient = (params.lighting & LIGHTING_GRADIENT) != 0u;
+            let guard = (params.lighting & LIGHTING_EMISSIVE_GUARD) != 0u;
+            if (gradient || guard) {
+                let lambdas = clamp(GRADIENT_GAIN * gradient_at(q + 0.5), vec2<f32>(0.0), vec2<f32>(1.0));
+                // Where the light changed, the new sample weighs as much as the change: the
+                // whole light's lambda in the gradient mode, the emissive part's own with the
+                // guard (the lamp's part never reads it).
+                let lambda = select(0.0, lambdas.x, gradient);
+                let lambda_emissive = max(lambda, select(0.0, lambdas.y, guard));
                 a = max(a, lambda);
-                a_emissive = max(a_emissive, lambda);
+                a_emissive = max(a_emissive, lambda_emissive);
                 // Rounded, not floored: lambda reads f16 and bfloat16 rounding (about 0.004)
                 // wherever emitted light reaches, and a floor would take a whole frame of age
                 // for it every frame, pinning the age, and so the blend, near the first frame.
-                age = floor(age * (1.0 - lambda) + 0.5);
+                age = floor(age * (1.0 - lambda_emissive) + 0.5);
             }
             if ((params.lighting & LIGHTING_LAMP_CHANGED) != 0u) {
                 a = 1.0;

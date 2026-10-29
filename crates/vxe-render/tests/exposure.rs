@@ -442,7 +442,7 @@ fn no_target_overflows_at_the_glare() {
         ("moments", frame.moments()),
         ("filtered", frame.filtered()),
     ] {
-        let texels = readback::read_rgba16f(&device, &queue, tex);
+        let texels = readback::read_float(&device, &queue, tex);
         let bad = texels.iter().flatten().filter(|v| !v.is_finite()).count();
         let max = texels.iter().flatten().fold(0.0f32, |m, &v| m.max(v));
         println!("{name}: largest {max}, {bad} non-finite");

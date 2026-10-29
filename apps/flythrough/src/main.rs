@@ -25,6 +25,7 @@
 //! [--fade-reading]
 //! [--shadow-walk full|coarse] [--filter on|off] [--light-radius N] [--sampler list|reuse]
 //! [--history edits|gradient] [--lighting full|half] [--emissive-history N]
+//! [--emissive-guard on|off] [--reuse-m-cap N]
 //! [--indirect on|off] [--probe-spacing N] [--probe-rays N] [--probe-slices N]
 //! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [--upscaler off|own|fsr2]
 //! [--exposure auto|E]
@@ -94,8 +95,11 @@
 //! (default 4); `--sampler reuse` adds last frame's reservoirs (ReSTIR) to the candidates;
 //! `--history gradient` also shortens history where A-SVGF's gradient sees the light change;
 //! `--lighting half` runs the lighting passes at half resolution on each edge;
-//! `--emissive-history N` sets the frames static emissive light accumulates over (default 32;
-//! the lamp's light keeps a short history); `--indirect off` turns the probe volume's indirect
+//! `--emissive-history N` sets the frames static emissive light accumulates over (default 256;
+//! the lamp's light keeps a short history); `--emissive-guard off` turns off the emissive-only
+//! gradient that shortens that history where emissive light changed (on by default,
+//! ADR-0036); `--reuse-m-cap N` caps a reused reservoir's M at N times the frame's candidates
+//! (default 20; 1 to 64); `--indirect off` turns the probe volume's indirect
 //! light off (on by default, ADR-0023); `--probe-spacing N` sets the voxels between its probes
 //! (default 16, 1.6 m; 4 to 64), `--probe-rays N` the rays each updated probe traces (default
 //! 64, 1 to 64) and `--probe-slices N` the share it refreshes a frame, one in N (8, the
@@ -421,6 +425,10 @@ struct Args {
     lighting: LightingResolution,
     /// `--emissive-history N`: frames the emissive light's history blends over at least.
     emissive_history: u32,
+    /// `--emissive-guard on|off`: the emissive-only gradient guard (on by default).
+    emissive_guard: bool,
+    /// `--reuse-m-cap N`: the reservoir reuse's cap on M, in frames' candidates.
+    reuse_m_cap: u32,
     /// `--indirect on|off`: indirect light from the probe volume (on by default).
     indirect: bool,
     /// `--probe-spacing N`: voxels between the probe volume's probes (default 16).
@@ -597,6 +605,8 @@ impl Args {
             sampler: self.sampler,
             history: self.history,
             emissive_history: self.emissive_history,
+            emissive_guard: self.emissive_guard,
+            reuse_m_cap: self.reuse_m_cap,
             indirect: self.indirect,
             probe_rays: self.probe_rays,
             probe_slices: self.probe_slices,
@@ -677,6 +687,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         history: HistoryKill::default(),
         lighting: LightingResolution::default(),
         emissive_history: vxe_render::DEFAULT_EMISSIVE_HISTORY,
+        emissive_guard: true,
+        reuse_m_cap: vxe_render::DEFAULT_REUSE_M_CAP,
         internal_scale: DEFAULT_SCALE,
         jitter: DEFAULT_JITTER,
         sharpen: DEFAULT_SHARPEN,
@@ -912,6 +924,21 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     .filter(|r| (0..=64).contains(r))
                     .ok_or(format!("--light-radius takes 0 to 64 chunks, not {v}"))
                     .map(Some)?;
+            }
+            "--reuse-m-cap" => {
+                let v = value()?;
+                args.reuse_m_cap = v
+                    .parse()
+                    .ok()
+                    .filter(|n| (1..=64).contains(n))
+                    .ok_or(format!("--reuse-m-cap takes 1 to 64, not {v}"))?;
+            }
+            "--emissive-guard" => {
+                args.emissive_guard = match value()?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    v => return Err(format!("--emissive-guard takes on or off, not {v}")),
+                }
             }
             "--filter" => {
                 args.filter = match value()?.as_str() {
@@ -6785,6 +6812,24 @@ mod tests {
         let d = parse(&[]).unwrap();
         assert!(d.emissive_ore && d.lamp && d.filter && d.indirect);
         assert!(d.start_lighting().indirect);
+        assert!(d.start_lighting().emissive_guard);
+        assert!(
+            !parse(&["--emissive-guard", "off"])
+                .unwrap()
+                .start_lighting()
+                .emissive_guard
+        );
+        assert_eq!(
+            d.start_lighting().reuse_m_cap,
+            vxe_render::DEFAULT_REUSE_M_CAP
+        );
+        assert_eq!(
+            parse(&["--reuse-m-cap", "8"])
+                .unwrap()
+                .start_lighting()
+                .reuse_m_cap,
+            8
+        );
         assert_eq!(d.probe_spacing, 16);
         assert_eq!(parse(&["--probe-spacing", "8"]).unwrap().probe_spacing, 8);
         let p = parse(&["--probe-rays", "32", "--probe-slices", "16"]).unwrap();
@@ -6812,7 +6857,7 @@ mod tests {
         // The line the fly-through prints at the start with no lighting flags.
         assert_eq!(
             d.start_modes(0.0).line(),
-            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, emissive history 32, exposure auto eye +0.00 EV"
+            "lighting half, shadow walk coarse, sampler reuse, history edits, lamp on, indirect on at 64 rays 1/8, probes 16, filter on, ore pulse off, emissive history 256, guard on, reuse cap 20, exposure auto eye +0.00 EV"
         );
         for (flag, err) in [
             ("--emissive-ore", "--emissive-ore takes on or off, not x"),
@@ -6837,6 +6882,11 @@ mod tests {
                 "--emissive-history",
                 "--emissive-history takes 1 to 4096 frames, not x",
             ),
+            (
+                "--emissive-guard",
+                "--emissive-guard takes on or off, not x",
+            ),
+            ("--reuse-m-cap", "--reuse-m-cap takes 1 to 64, not x"),
         ] {
             assert_eq!(parse(&[flag, "x"]).err().as_deref(), Some(err), "{flag}");
         }
