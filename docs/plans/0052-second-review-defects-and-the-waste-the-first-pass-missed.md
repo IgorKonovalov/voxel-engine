@@ -540,8 +540,8 @@ Every reading names the machine, the commit, the lock and the load.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the world's two defects and its two unchecked doors | dev | done | committed with this row |
-| 2: the wasm host charges before it works | dev | not started | |
+| 1: the world's two defects and its two unchecked doors | dev | done | 47eda2e |
+| 2: the wasm host charges before it works | dev | done | committed with this row |
 | 3: the testbed fails out loud, and the logic fails the same way twice | dev | not started | |
 | 4: the frame's idle probe volume, and the small corrections | dev | not started | |
 | 5: spans for the rows a shape touches, and smoothers that settle | dev | not started | |
@@ -569,6 +569,36 @@ Every reading names the machine, the commit, the lock and the load.
   517 passed and two timed out at 30 s (`castle::the_castle_stands_in_the_hall_...`,
   `replay::a_stamp_and_a_collapse_replay_from_the_save`); both pass alone (15.3 s, load 8.8).
   Doctests, clippy `-D warnings` and fmt clean.
+- Phase 2: `raycast`, `count-in-box` and `unsupported` pre-charge a bound and settle after
+  (refund, or charge the excess of a host past the bound). Bounds: `count_bound` is the box
+  volume; `ray_bound` is `1 + sum_k (ceil(|dir[k]| x max / 2^16) + 1)` steps (each walk step
+  crosses a voxel plane); `support_bound` is `7 d (max_region + 2)` steps over the `d`
+  distinct cells (the plan names `max_region x cells`; that product does not bound a
+  flood that starts from each of a cell's six neighbours, and it pre-charges a duplicated
+  list past `max_changed_cells` past the default fuel, where `charged_under` reads
+  `100 + 12 (cap + 1)`). `WasmConfig` gains `support_max_region` (default
+  `DEFAULT_SUPPORT.max_region`, 4 096) for it. The trap's message names the import
+  (unit test `a_bound_past_the_fuel_left_is_a_fuel_trap_naming_the_import`);
+  `LogicError::Fuel` carries no message, so the name is visible only on the
+  `wasmtime::Error`.
+- Phase 2 finding: `a_greedy_count_in_box_runs_out_of_fuel`'s last case, a `1 024^3` count
+  over a world with nothing resident, completed at the base (count 0, charge 100) and now
+  traps on fuel: its volume bound, `10 x 2^30 + 100`, is past the default `10^10`. The test
+  now asserts the trap and a host counter of 0, and adds a refused `1 025 x 1 x 1` box that
+  completes refunded to 100. This is the loose-bound case under the plan's Risks; flagged
+  for the owner.
+- Phase 2: the ray bound is loose through missing chunks (16 388 steps bounded against 257
+  walked for a `2^22` ray through an empty world), so `rays_are_charged_by_their_steps`'s
+  tight case traps on the first ray rather than about the fiftieth; the test asserts only
+  the trap.
+- Phase 2 deviation: the new restart case cannot trap in `init`, because `greedy`'s `init`
+  does nothing (the guest is outside `Files touched`). The restarted instance's next tick,
+  given the same `65^3` input, traps on fuel with the host counter still 0.
+- Phase 2 readings at the base: the host counter reads 1 for the `1 024^3` request and for
+  the `65^3` request (both new assertions fail at `left: 1, right: 0`); at the tip, 0.
+- Phase 2 gate: quick 522 run, 521 passed, 1 timed out (`replay::a_stamp_and_a_collapse_
+  replay_from_the_save` at 30 s, 1-minute load 20.8 from the other lane); it passed alone
+  after Phase 1. Clippy and fmt clean.
 
 ### Close triggers
 
