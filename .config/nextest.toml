@@ -2,7 +2,8 @@
 #
 #   cargo nextest run --profile quick   CPU-only tests; every dev phase; no perf lock, no GPU
 #   cargo nextest run --profile gpu     the GPU tests minus the slow list; under the perf lock
-#   cargo nextest run --profile full    everything; plan close, orchestrator merge
+#   cargo nextest run --profile full    everything; the close review (once per plan), a
+#                                       conflicted merge into main
 #   cargo nextest run --profile ci      the full tier with the GPU tests in parallel; CI only
 #
 # A bare `cargo nextest run` is the default profile, which is the full suite as well.

@@ -160,8 +160,11 @@ followup for a future plan, not a finding.
 - **For every test the plan named, open it and read the assertion body.** Look for tautologies,
   promised tests that were never written, and assertions weaker than the done-when claims.
 - **Run the gate yourself** (build, `cargo nextest run --workspace --profile full` under the
-  perf lock, doctests, clippy, fmt, deny) on the finished tree.
-  Don't copy the log's numbers.
+  perf lock, doctests, clippy, fmt, deny) on the finished tree, which already holds main
+  (the lane merged it before the review). Don't copy the log's numbers. This is the plan's
+  one full-tier run (owner, 2026-10-30; the lane and the merge into main don't repeat it), so
+  record its wall time and the load with it, and start it first, in the background, while
+  you read.
 - **Check every budget reading** in the close triggers against `nfr.md`: is there a number, a
   machine, a commit? A missing reading on a touched figure is a `major`.
 - Was any ADR silently reversed? Then either the code changes or a new ADR supersedes the old one.

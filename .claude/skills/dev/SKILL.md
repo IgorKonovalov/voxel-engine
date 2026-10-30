@@ -71,8 +71,9 @@ For each phase, in order:
      perf lock and kills a test past 30 s; a newly slow CPU test goes on the slow list there.
      Add `--profile gpu` (under the perf lock) when the phase's `Files touched` include
      `crates/vxe-render/`, a shader, or a fly-through render test. `--profile full` is the
-     whole suite and runs at the close. A bare `cargo nextest run` is the default profile,
-     which is also the full suite. `-E 'rdeps(<crate>)'` narrows `quick` further while
+     whole suite and runs once per plan, in the close review, not by you (owner,
+     2026-10-30: it holds the GPU for about an hour on lavapipe). A bare `cargo nextest run`
+     is the default profile, which is also the full suite. `-E 'rdeps(<crate>)'` narrows `quick` further while
      iterating; it is not the phase gate.
    - **A new test file that opens a GPU device** goes into the gpu filter;
      `node scripts/check-test-tiers.mjs` fails until it does and names the file and the entry.
@@ -107,8 +108,10 @@ Rules that compound:
 
 ## Step 4: After the last phase
 
-1. **Run the full gate on the tip** with `cargo nextest run --workspace --profile full`, plus
-   `cargo deny check`.
+1. **Confirm the gate at the tip**: build, `--profile quick`, `--profile gpu` under the perf
+   lock when any phase touched the renderer, doctests, clippy, fmt, `cargo deny check` and
+   the doc and tier scripts. Not `--profile full`: the close review runs it once, on the tree
+   that already holds main (owner, 2026-10-30).
 2. **Complete the close block** in the log and commit it as `docs(plans): …`. Backfill the final
    SHA. Write the `### Notes` (deviations, unmet done-whens, followups noticed and not acted on;
    empty is valid). Fill every `### Close triggers` bullet with raw facts: gate commands, exit

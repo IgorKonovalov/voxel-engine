@@ -16,7 +16,13 @@ prompt.
 - Only an approved plan gets a lane, and the owner's approval is its "go": say in the prompt
   that the go stands, so the `dev` skill doesn't wait for one.
 - One worktree per plan: `git worktree add -b plan-NNNN .claude/worktrees/plan-NNNN main`.
-  Respect the plan order the roadmap and plans index give ("After Plan N").
+- **Stacked lanes (owner, 2026-10-30).** "After Plan N" orders the merges, not the starts.
+  When Plan N's lane is still open, start the dependent lane from N's branch tip:
+  `git worktree add -b plan-MMMM .claude/worktrees/plan-MMMM plan-N`, and say in the prompt
+  that the base is `plan-N` at that SHA, so the dev agent knows N's names are in its tree.
+  When N merges into main, the stacked lane merges main into itself (lane rule 1; the merge
+  is mostly N's own commits), and N's review findings reach it the same way. It merges into
+  main only after N. A lane may stack on a lane that is itself stacked.
 - The prompt names the plan, the worktree, the branch base, `references/lane-rules.md`,
   which earlier plans have merged since the plan was drafted (the tree's names win, and the
   mapping goes in Notes), and the stop rule: stop at the first `human` phase or an
@@ -66,20 +72,28 @@ prompt.
   `merge: main into plan-NNNN (...)`. That code work is the lane's, not the orchestrator's;
   the merge into main stays the orchestrator's.
 - After the last dev phase and the owner's check, a **fresh** architect agent runs the close
-  review (architect Mode 4) in the lane's worktree. It reruns the gate itself, and on a clean
-  review it does the close ceremony on the branch. Findings go back to a dev agent as a fix
-  pass.
+  review (architect Mode 4) in the lane's worktree. It runs the full tier itself, and on a
+  clean review it does the close ceremony on the branch. Findings go back to a dev agent as a
+  fix pass.
+- **The full tier runs once per plan, in the close review (owner, 2026-10-30).** The lane
+  gates every phase with the quick tier and the GPU phases with the gpu tier, and its
+  close-out confirms both at the final tip; the review's run on the tree that already holds
+  main is the plan's one `--profile full`. The merge into main does not repeat it unless the
+  merge had a conflict. A fix pass after the review reruns only what the findings touched,
+  and the review reruns the full tier once more on the fixed tip.
 - Merge from the main checkout: `git merge --no-ff --no-commit plan-NNNN`, resolve, run the
   three doc gates, then commit `merge: plan-NNNN into main (<what>, vX.Y.Z)`.
   - Index conflicts: keep both sides' rows in number order. Next-free numbers are the higher
     of the two.
   - Plans that moved to `done/` break links in other plans; the link gate finds them.
   - When resolving with a script, read every file before writing it.
-  - **Run the full gate on the merged tree before committing**, when both sides changed code:
-    a clean textual merge can still fail to compile (a constant one lane removed and another
-    lane's new test uses). Use `set -o pipefail` so a `| tail` can't hide a failure, rebuild
-    the wasm guests (`scripts/build-guests.sh`) first, and run the full tier:
-    `cargo nextest run --workspace --profile full --no-fail-fast`, under the perf lock.
+  - **Gate the merged tree before committing.** Always: build, clippy and the quick tier
+    (minutes, no lock), because a clean textual merge can still fail to compile (a constant
+    one lane removed and another lane's new test uses). The full tier only when the merge had
+    a conflict: `cargo nextest run --workspace --profile full --no-fail-fast` under the perf
+    lock, after `scripts/build-guests.sh`, with `set -o pipefail` so a `| tail` can't hide a
+    failure. The lane merged main into itself before its review, so the merge into main is
+    normally conflict-free and already reviewed on that tree.
   - Two lanes closing in parallel both claim the next version; the second to merge renumbers
     (pins, lockfile, changelog, Status line, index row, roadmap, any ADR Outcome header).
 - Commit doc changes without asking. Push only when the owner says so.

@@ -9,8 +9,11 @@ plan lanes run at once, each in its own worktree at
 1. Work only inside your worktree. Never touch the main checkout or another lane's worktree.
    Never merge, push or switch branches; the orchestrator merges. The one exception: when the
    orchestrator asks, merge main into your own branch (`git merge --no-ff main`), resolve,
-   gate the merged tree with the full tier (`cargo nextest run --workspace --profile full
-   --no-fail-fast`, under the perf lock) and commit it as `merge: main into plan-NNNN (...)`.
+   gate the merged tree (build, clippy, fmt, the quick tier, and the gpu tier under the perf
+   lock when either side touched `crates/vxe-render/`, a shader or a fly-through render test)
+   and commit it as `merge: main into plan-NNNN (...)`. The full tier is not yours: it runs
+   once per plan, in the close review, on this merged tree. A stacked lane (one started from
+   another lane's branch) does the same merge when its base lane lands in main.
 2. Inside a plan you edit only the `Status:` line and the `## Implementation log` (the `dev`
    skill's rule). A done-when you cannot meet is a question, not an edit: stop and report it
    with options. Never weaken an assertion to make a bar pass.
@@ -39,7 +42,9 @@ plan lanes run at once, each in its own worktree at
    `--profile full` nextest passes with `--test-threads 2`. `CARGO_BUILD_JOBS` caps the build;
    nextest's `-j` is `--test-threads`, not build jobs. The tiers are in `.config/nextest.toml`:
    `--profile quick` is the phase gate, `--profile gpu` adds the render tests, `--profile full`
-   is everything (the default profile is the full suite too).
+   is everything and runs once per plan, in the close review, not in a lane (the default
+   profile is the full suite too). A lane runs `--profile full` only when the orchestrator
+   asks for a specific reading from it.
 5. Every cargo build, test, bench or fly-through run goes inside a memory-capped scope, so a
    runaway dies alone (the 2026-10-20 oomd kill took every session at once):
 

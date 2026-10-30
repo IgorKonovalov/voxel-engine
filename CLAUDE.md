@@ -13,7 +13,8 @@ the milestone sequence in `docs/roadmap.md`, the budgets in `docs/nfr.md`.
 > **Stack (ADR-0001):** Rust stable pinned in `rust-toolchain.toml`, edition 2024, `wgpu` +
 > WGSL compute ray marching, `winit` shell, Linux + Windows. Canonical commands: `cargo build`,
 > `cargo nextest run --profile quick|gpu|full` (`.config/nextest.toml`: CPU-only per phase,
-> render tests under the perf lock, everything at close; bare `run` is full),
+> render tests under the perf lock, everything once per plan in the close review; bare `run`
+> is full),
 > `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`,
 > `cargo deny check`.
 
