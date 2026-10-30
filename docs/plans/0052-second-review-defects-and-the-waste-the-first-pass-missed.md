@@ -396,7 +396,9 @@ Every phase:
     well under the `1 024 x 1 024` of the bounding box (state the measured number in the
     log). Its `EditResult` is byte-identical to `fa38340`'s, as is every pinned edit test.
   - `cargo bench -p vxe-world --bench edits` `tool_ops` is read before and after on the dev
-    box under the lock.
+    box under the lock. Amended 2026-10-30 (owner): `tool` and `tool_warm` within 2 % of the
+    base and `tool_long` not above it, at a quiet load; the base's whole-bounds span table
+    is the waste this phase removes, and a short capsule pays the arena's indexing for it.
   - A new mixer test plays a looping tone, sets its gain to 0, renders 10 s, and reads
     `own_gain == 0.0` and `gain == 0.0` exactly, and a low-pass state of exactly 0 for a
     silent stream voice after 10 s. At `fa38340` they are subnormal and non-zero.
@@ -494,7 +496,7 @@ struct Run { failure: Option<String>, /* … */ }
 | `docs/nfr.md` figure | Phase | Expected | How the close reads it |
 |---|---|---|---|
 | Section 3, `frame_bytes` at the default | 4 | lower by 54 689 824 B with indirect off (amended 2026-10-30 (owner), was 54 689 792); unchanged with it on | the headless `frame_bytes` test, recorded as a reading |
-| Section 4, edit cost (`tool_ops`) | 5 | lower or equal (a guess: the 16 MiB fill was most of a long capsule's cost) | `cargo bench -p vxe-world --bench edits`, dev box, lock, load |
+| Section 4, edit cost (`tool_ops`) | 5 | `tool` within 2 % of the base, `tool_long` not above it (amended 2026-10-30 (owner); was "lower or equal", a guess that the 16 MiB fill was most of a long capsule's cost) | `cargo bench -p vxe-world --bench edits`, dev box, lock, load |
 | Section 9, audio callback per block | 5 | the 64-silent-voices case within the spread of 64 fresh voices | `cargo bench -p vxe-audio --bench mixer` |
 | Section 2, frame time, hit and light passes | 9 | within the spread; lower if a march branch goes | the per-pass timer, both adapters |
 | Section 6, determinism | 1, 2, 5 | unchanged: every pinned hash equal; replay bytes equal | the existing tests |
@@ -551,6 +553,9 @@ Every reading names the machine, the commit, the lock and the load.
    rows up front, initialise only the slab rows inside the bounds) and re-reads under the
    lock at a quiet load. If `tool` is still above the base, the lane stops and the question
    returns here.
+   **Second answer (owner, 2026-10-30):** after that attempt `tool` reads 1.4 % over the base
+   and `tool_long` level (`c130daf`, quiet load); accepted. The Phase 5 done-when and the
+   Budgets row now read "within 2 %". No third attempt.
 5. **Phase 8 picks (owner, 2026-10-30).** Every row of Phase 7's table marked *owner pick* is
    *remove*: `Upscaler::lanczos()` with `Reconstruction::Lanczos2`, `HistoryFetch::Bilinear`
    and `Blend::Fixed`; `Reconstruction::Nearest`, `HistoryFetch::Nearest`, `Blend::Nearness`
