@@ -569,7 +569,7 @@ Every reading names the machine, the commit, the lock and the load.
 | 2: the wasm host charges before it works | dev | done | b0640c9 |
 | 3: the testbed fails out loud, and the logic fails the same way twice | dev | done | a392e47 |
 | 4: the frame's idle probe volume, and the small corrections | dev | not started | |
-| 5: spans for the rows a shape touches, and smoothers that settle | dev | done; `tool` still 1.8 % over the base after the follow-up (owner question) | 14f3841, follow-up committed with this row |
+| 5: spans for the rows a shape touches, and smoothers that settle | dev | done; `tool` still 1.4 % over the base after the second follow-up (owner question) | 14f3841, 885fc1e, second follow-up committed with this row |
 | 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | done (golden wall-time readings in Notes) | fcc87bd |
 | 7: the lab-mode inventory, and the removals that need no pick | dev | not started | |
 | 8: the owner picks what else goes | human | not started | |
@@ -636,6 +636,10 @@ Every reading names the machine, the commit, the lock and the load.
      `SettleClock`), not `draw`/`tick`; `draw`'s path is covered in `tests/shutdown.rs`.
   4. Phase 5: `tool` 1.8 % over the base after the follow-up (see the Notes).
   5. Phase 4: the 54 689 792 B figure omits the volume's 32-byte uniform.
+- **2026-10-30, third agent:** the Phase 5 second attempt is committed (`perf(world)`, the
+  commit after `9a4c99c`) and `tool` still reads 1.4 % over the base (Notes), so the lane
+  stopped by owner answer 4 before Phases 4, 7 and 9. Owner answers 3 and 5 settle the
+  Phase 4 figure (the `frame.rs` literal becomes a plain `54_689_824`) and the Phase 9 rows.
 - **Gotchas:** `scripts/build-guests.sh` must rerun after any `flythrough-logic` change.
   Build in `CARGO_TARGET_DIR=target/alt`. Bench binaries for the base, `14f3841` and the
   follow-up are `live/edits-bench-*`, run by `live/edits-bench.sh` (waits for load under 2);
@@ -815,6 +819,29 @@ Every reading names the machine, the commit, the lock and the load.
   and `tool_warm` stay 1.8 % and 2.0 % over the base (their confidence intervals do not
   overlap), `tool_long` is 4.7 % under it. Stopped for the owner after this one attempt, as
   the orchestrator asked.
+- Phase 5 second follow-up (`perf(world)`, owner answer 4): the arena is reserved up front
+  for every shape, `slabs` for the bounds' brick rows and one span `Vec` for the bounds'
+  rows (`(hi.y - lo.y + 1) (hi.z - lo.z + 1)` entries, so it never reallocates); a slab holds
+  only its brick row's rows inside the bounds, at `(y - ylo) + ny (z - zlo)` over the brick
+  row clipped to the bounds (the layout `sphere_row_spans` writes, so the sphere walks
+  straight into the arena with no copy), and only those are initialised. A slab is a
+  `base` offset into the span `Vec` and its `solved` word. The span-count test reads 13 828
+  entries for the diagonal capsule (edge slabs now hold fewer than 64), against the bound
+  64 x 217 = 13 888; its pinned result and hashes are unchanged; vxe-world quick 182 of 182.
+  The reservation for the diagonal capsule is 338 724 x 16 B (5.4 MB) of address space, of
+  which 13 828 entries are written.
+- Phase 5 second follow-up readings (dev box, the RTX 3080 laptop, CPU bench
+  `cargo bench -p vxe-world --bench edits -- "^tool"`, exclusive perf lock; base binary
+  built from `a392e47`'s `edit.rs` with the current bench file, tip binary from this row's
+  commit; criterion medians; raw in `live/edits-bench2.log`, `live/edits-bench3.log`):
+  - run 1, base then tip: base at load 1.98 (quiet) `tool` 4.7981 ms, `tool_warm` 4.8098 ms,
+    `tool_long` 5.9106 ms; tip at load 2.48 (loaded, indicative) 4.8804, 4.8770, 5.8849 ms.
+  - run 2, tip then base, load 1.47 at the start and 1.97 at the end (quiet): tip `tool`
+    4.8885 ms [4.8799, 4.8978], `tool_warm` 4.8714 ms, `tool_long` 5.8762 ms; base `tool`
+    4.8221 ms [4.8127, 4.8322], `tool_warm` 4.8096 ms, `tool_long` 5.8850 ms.
+  - Finding: `tool` 1.4 % and `tool_warm` 1.3 % over the base at the quiet run (intervals
+    do not overlap); `tool_long` 0.1 % under it. By owner answer 4 the lane stopped here;
+    Phases 4, 7 and 9 were not continued.
 - Phase 6: `ShellConfig` gains `present_mode`, `power_preference`, `prefer_srgb` and `pacing`
   (`Pacing::Unthrottled | Cap { hz }`, exported from `vxe-app`) and a `Default` (title `vxe`,
   1280 x 720, cursor free, `AutoNoVsync`, `HighPerformance`, non-sRGB, `Unthrottled`); the
