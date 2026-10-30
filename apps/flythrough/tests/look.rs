@@ -646,3 +646,666 @@ fn every_mode_with_and_without_detail() {
         assert_eq!(pair[0].2.1, pair[1].2.1, "{}", pair[0].0.name());
     }
 }
+
+// ---- Crack classes: how each primary ray of the contour look reached its hit ----
+
+use support::rigs::{
+    POSE_SIZE, axis_slab_camera, axis_slab_world, corner_camera, corner_world,
+    diagonal_slab_camera, diagonal_slab_world, fit_rig_on, floor_camera, floor_world, pose_level,
+    pose_rig_on, tilted_slab_camera, tilted_slab_world, wall_camera, wall_world,
+};
+use vxe_render::{CrackClosing, CrackShares, Exposure, SurfaceFit, readback};
+
+/// The look the fly-through starts in (`LookPreset::DEFAULT`, detail on) in `view`.
+fn start_look(view: ViewMode) -> LookParams {
+    let p = flythrough::LookPreset::DEFAULT;
+    LookParams {
+        normal_mode: p.normal_mode,
+        detail: true,
+        view,
+        tuning: p.tuning,
+        ..LookParams::default()
+    }
+}
+
+/// Frames a crack reading renders in each view before it reads the last: the lamp's term is
+/// whole from the first frame; the level's emissive estimate needs a few.
+const CRACK_FRAMES: u32 = 8;
+
+/// The analytic window rule: an analytic scene's surface is cut where it meets the mirror
+/// window's faces, so its bars count only hits whose hit point lies at least this many voxels
+/// inside the window on every axis.
+const WINDOW_MARGIN: f32 = 2.0;
+
+/// `world`'s mirror window (the analytic rigs mirror the whole extent) as its `[min, max)`
+/// voxel bounds per axis.
+fn analytic_window(world: &World) -> [[f32; 3]; 2] {
+    let e = world.extent();
+    [e.min, e.max].map(|c| c.min_voxel().0.map(|v| v as f32))
+}
+
+/// A crack reading of one scene in one look: the cracks view's shares over the counted hits
+/// (every hit, or under the analytic window rule those at least [`WINDOW_MARGIN`] inside the
+/// window), the hits left out, the counted class 1 and 2 pixels whose shaded display luma is
+/// dark (under 32/255) or bright (over its 5 x 5 median by more than 48/255), the shares over
+/// every hit, and the images and per-pixel classes the side-by-sides draw.
+struct CrackReading {
+    shares: CrackShares,
+    excluded: u64,
+    all: CrackShares,
+    dark: u64,
+    bright: u64,
+    shaded: Vec<u8>,
+    cracks: Vec<u8>,
+    /// Per pixel, the crack class of a hit, `None` on a miss.
+    classes: Vec<Option<u8>>,
+    size: [u32; 2],
+}
+
+impl CrackReading {
+    /// `| scene | look | hits | left out | clean % | 1 % | 2 % | 3 % | 1+2 px | dark % |
+    /// bright % | self-hit % |`, the dark and bright shares of the class 1 and 2 pixels.
+    fn row(&self, scene: &str, look: &str) -> String {
+        let s = &self.shares;
+        let cracked = s.classes[1] + s.classes[2];
+        let of = |n: u64| 100.0 * n as f64 / cracked.max(1) as f64;
+        format!(
+            "| {scene} | {look} | {} | {} | {:.2} | {:.3} | {:.3} | {:.3} | {cracked} | {:.1} | {:.1} | {:.3} |",
+            s.hits,
+            self.excluded,
+            100.0 * s.share(0),
+            100.0 * s.share(1),
+            100.0 * s.share(2),
+            100.0 * s.share(3),
+            of(self.dark),
+            of(self.bright),
+            100.0 * s.self_hit_share()
+        )
+    }
+}
+
+const CRACK_HEADER: &str = "| scene | look | hits | left out | clean % | class 1 % | class 2 % | class 3 % | class 1+2 px | of them dark % | of them bright % | self-hit % |\n|---|---|---|---|---|---|---|---|---|---|---|---|";
+
+/// Rec. 709 luma of pixel `i` of an RGBA image.
+fn luma_at(rgba: &[u8], i: usize) -> f64 {
+    let p = &rgba[i * 4..i * 4 + 3];
+    0.2126 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[2])
+}
+
+/// Renders `camera` lit by `light` in `look`'s shaded view and then its cracks view,
+/// [`CRACK_FRAMES`] frames each, and reads the last frame of each. With `window` (its
+/// `[min, max)` voxel bounds per axis, [`analytic_window`]) the shares count only the hits the analytic window
+/// rule keeps; without, every hit.
+fn crack_reading(
+    rig: &mut LookRig,
+    camera: &vxe_render::Camera,
+    light: &LightParams,
+    look: LookParams,
+    window: Option<[[f32; 3]; 2]>,
+) -> CrackReading {
+    let size = rig.frame.internal_size();
+    let mut run = |view: ViewMode| {
+        rig.frame.set_look(LookParams { view, ..look });
+        for _ in 0..CRACK_FRAMES {
+            rig.frame
+                .render(&rig.device, &rig.queue, &rig.gpu, camera, light);
+        }
+        readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target())
+    };
+    let shaded = run(ViewMode::Shaded);
+    let cracks = run(ViewMode::Cracks);
+    let layers = readback::read_rgba16f(&rig.device, &rig.queue, rig.frame.layers());
+    let records = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let all = CrackShares::from_layers(&layers, &records);
+    let positions = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let classes: Vec<Option<u8>> = layers
+        .iter()
+        .zip(&records)
+        .map(|(l, r)| (r[3] & 1 == 1).then(|| l[0].round().clamp(0.0, 3.0) as u8))
+        .collect();
+    let counted = |i: usize| {
+        window.is_none_or(|[lo, hi]| {
+            (0..3).all(|k| {
+                let c = positions[i][k];
+                c >= lo[k] + WINDOW_MARGIN && c <= hi[k] - WINDOW_MARGIN
+            })
+        })
+    };
+    let (w, h) = (size[0] as usize, size[1] as usize);
+    let (mut shares, mut excluded) = (CrackShares::default(), 0);
+    let (mut dark, mut bright) = (0, 0);
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            let Some(class) = classes[i] else {
+                continue;
+            };
+            if !counted(i) {
+                excluded += 1;
+                continue;
+            }
+            shares.hits += 1;
+            shares.classes[usize::from(class)] += 1;
+            shares.self_hits += u64::from(layers[i][1] > 0.5);
+            if !matches!(class, 1 | 2) {
+                continue;
+            }
+            let l = luma_at(&shaded, i);
+            if l < 32.0 {
+                dark += 1;
+            }
+            let mut n = Vec::with_capacity(25);
+            for dy in -2i64..=2 {
+                for dx in -2i64..=2 {
+                    let (xx, yy) = (x as i64 + dx, y as i64 + dy);
+                    if (0..w as i64).contains(&xx) && (0..h as i64).contains(&yy) {
+                        n.push(luma_at(&shaded, yy as usize * w + xx as usize));
+                    }
+                }
+            }
+            n.sort_by(f64::total_cmp);
+            if l > n[n.len() / 2] + 48.0 {
+                bright += 1;
+            }
+        }
+    }
+    CrackReading {
+        shares,
+        excluded,
+        all,
+        dark,
+        bright,
+        shaded,
+        cracks,
+        classes,
+        size,
+    }
+}
+
+/// The tilted slab (0), the 45-degree slab (1), the diagonal slab (2), the floor (3) or the
+/// wall (4), on its own contour rig at the start look's fit under ADR-0011's old hit rule
+/// (`CrackClosing::Old`), lit by the headlamp, at the look rigs' size, under the analytic
+/// window rule; `None` without a software adapter.
+fn slab_reading(slab: u32) -> Option<CrackReading> {
+    let table = flythrough::LookPreset::DEFAULT.materials();
+    let (world, camera) = match slab {
+        0 => (tilted_slab_world(&table), tilted_slab_camera()),
+        1 => (axis_slab_world(&table), axis_slab_camera()),
+        2 => (diagonal_slab_world(&table), diagonal_slab_camera()),
+        3 => (floor_world(&table), floor_camera()),
+        _ => (wall_world(&table), wall_camera()),
+    };
+    let (device, queue) = software_device(attr_pool_bytes(&world).max(64 << 20))?;
+    let fit = flythrough::LookPreset::DEFAULT.tuning.fit;
+    let mut rig = fit_rig_on(device, queue, &world, fit, [WIDTH, HEIGHT]);
+    Some(crack_reading(
+        &mut rig,
+        &camera,
+        &LightParams::headlamp(),
+        closing_look(ViewMode::Cracks, CrackClosing::Old, false),
+        Some(analytic_window(&world)),
+    ))
+}
+
+/// The tilted slab in the contour look the fly-through starts in, under the old hit rule, has
+/// cracked pixels under the analytic window rule: a ray that passes one surface voxel outside its plane and then hits a
+/// voxel with no plane (class 1) or enters the next voxel already inside its plane (class 2).
+/// The cracks view's colours decode to the same shares as the hit pass's layers.
+#[test]
+fn a_tilted_slab_has_cracks_today() {
+    let Some(r) = slab_reading(0) else {
+        return;
+    };
+    println!("{CRACK_HEADER}");
+    println!("{}", r.row("tilted slab", "start look"));
+    assert_eq!(
+        CrackShares::from_rgba8(&r.cracks),
+        r.all,
+        "the cracks view's colours decode to the layers' classes"
+    );
+    let cracked = r.shares.classes[1] + r.shares.classes[2];
+    assert!(cracked >= 1, "{:?}", r.shares);
+}
+
+/// A flat floor (rock at `z < 64`) and a flat vertical wall (rock at `x >= 80`), each seen
+/// obliquely in the start look under the old hit rule, have no crack under the analytic window rule: their surface
+/// voxels share one neighbourhood and the plane code holds the axis normal exactly
+/// (ADR-0038), so they share one plane and no ray reads class 1 or 2. It pins that the
+/// classification does not count a clean surface.
+#[test]
+fn axis_planes_have_no_cracks() {
+    let Some(floor) = slab_reading(3) else {
+        return;
+    };
+    let wall = slab_reading(4).expect("the floor's adapter");
+    println!("{CRACK_HEADER}");
+    for (name, r) in [("floor", &floor), ("wall", &wall)] {
+        println!("{}", r.row(name, "start look"));
+        assert!(r.shares.hits > 0, "{name}");
+        assert_eq!(r.shares.classes[1], 0, "{name}: {:?}", r.shares);
+        assert_eq!(r.shares.classes[2], 0, "{name}: {:?}", r.shares);
+    }
+}
+
+/// The crack readings' looks: the start look, and its tuning with one part swept.
+fn crack_looks() -> Vec<(&'static str, SurfaceFit)> {
+    use vxe_render::{PlaneFit, PlaneOffset};
+    let start = flythrough::LookPreset::DEFAULT.tuning.fit;
+    vec![
+        ("start look", start),
+        (
+            "fit uniform27",
+            SurfaceFit {
+                fit: PlaneFit::Uniform27,
+                ..start
+            },
+        ),
+        (
+            "offset volume",
+            SurfaceFit {
+                offset: PlaneOffset::VolumeMatched,
+                ..start
+            },
+        ),
+    ]
+}
+
+/// The look of a crack reading at `fit`: the start look with that plane fit, under the old hit
+/// rule.
+fn look_at_fit(fit: SurfaceFit) -> LookParams {
+    let mut look = closing_look(ViewMode::Cracks, CrackClosing::Old, false);
+    look.tuning.fit = fit;
+    look
+}
+
+/// Where the side-by-sides go: the worktree's untracked `live/cracks/`.
+fn cracks_dir() -> std::path::PathBuf {
+    let d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../live/cracks");
+    std::fs::create_dir_all(&d).expect("live/cracks is writable");
+    d
+}
+
+/// The density tile's edge in pixels.
+const CRACK_TILE: usize = 24;
+
+/// Writes `name.png`: the shaded image, the cracks view, and the shaded image with each 24 x
+/// 24-pixel tile tinted red by its share of class 1 and 2 pixels (full red at 5 %), side by
+/// side.
+fn write_side_by_side(r: &CrackReading, name: &str) {
+    let (w, h) = (r.size[0] as usize, r.size[1] as usize);
+    let mut out = vec![0u8; 3 * w * h * 4];
+    let tiles_x = w.div_ceil(CRACK_TILE);
+    let mut density = vec![0.0f64; tiles_x * h.div_ceil(CRACK_TILE)];
+    for y in 0..h {
+        for x in 0..w {
+            if matches!(r.classes[y * w + x], Some(1 | 2)) {
+                density[(y / CRACK_TILE) * tiles_x + x / CRACK_TILE] += 1.0;
+            }
+        }
+    }
+    let area = (CRACK_TILE * CRACK_TILE) as f64;
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            let a = (density[(y / CRACK_TILE) * tiles_x + x / CRACK_TILE] / area / 0.05).min(1.0);
+            for (panel, src) in [(0, &r.shaded), (1, &r.cracks), (2, &r.shaded)] {
+                let o = (y * 3 * w + panel * w + x) * 4;
+                for k in 0..3 {
+                    let v = f64::from(src[i * 4 + k]);
+                    let tinted = if panel == 2 {
+                        let target = if k == 0 { 255.0 } else { 0.0 };
+                        v + (target - v) * 0.75 * a
+                    } else {
+                        v
+                    };
+                    out[o + k] = tinted.round() as u8;
+                }
+                out[o + 3] = 255;
+            }
+        }
+    }
+    let path = cracks_dir().join(format!("{name}.png"));
+    write_png(&path, &out, 3 * w as u32, h as u32);
+    println!("wrote {}", path.display());
+}
+
+/// The crack class table for every scene, pose and swept part under ADR-0011's old hit rule
+/// (reading only; it asserts nothing): the tilted slab, the concave corner, the 45-degree slab,
+/// the floor, the wall, the diagonal slab, the cavity and the pillar at the look rigs' size
+/// under the analytic window rule, and the level at `VEIN_POSE` and `PATCH_POSE` at 384 x 216
+/// with the pose's exposure, indirect light off, each in the start look and with its fit or
+/// offset swept, lamp on, and the start look's poses with the lamp off too. The level's
+/// side-by-sides go to `live/cracks/`. On the adapter `VXE_TEST_ADAPTER` names (lavapipe
+/// unset):
+/// `cargo nextest run -p flythrough --test look --run-ignored only --no-capture crack_classes`.
+#[test]
+#[ignore = "a reading: prints the crack class table and writes the side-by-sides"]
+fn crack_classes() {
+    let table = flythrough::LookPreset::DEFAULT.materials();
+    let analytic: Vec<(&str, World, vxe_render::Camera)> = vec![
+        (
+            "tilted slab",
+            tilted_slab_world(&table),
+            tilted_slab_camera(),
+        ),
+        ("concave corner", corner_world(&table), corner_camera()),
+        (
+            "45-degree slab",
+            axis_slab_world(&table),
+            axis_slab_camera(),
+        ),
+        ("floor", floor_world(&table), floor_camera()),
+        ("wall", wall_world(&table), wall_camera()),
+        (
+            "diagonal slab",
+            diagonal_slab_world(&table),
+            diagonal_slab_camera(),
+        ),
+        ("cavity", cavity_world(), cavity_camera()),
+        ("pillar", pillar_world_with(table.clone()), pillar_camera()),
+    ];
+    let level = pose_level();
+    let pool = attr_pool_bytes(&level).max(256 << 20);
+    let Some((device, queue, adapter)) = reading_device(pool) else {
+        return;
+    };
+    println!("adapter {adapter}");
+    let mut rows = Vec::new();
+    for (look_name, fit) in crack_looks() {
+        for (name, world, camera) in &analytic {
+            let mut rig = fit_rig_on(device.clone(), queue.clone(), world, fit, [WIDTH, HEIGHT]);
+            let r = crack_reading(
+                &mut rig,
+                camera,
+                &LightParams::headlamp(),
+                look_at_fit(fit),
+                Some(analytic_window(world)),
+            );
+            println!("{}", r.row(name, look_name));
+            rows.push(r.row(name, look_name));
+        }
+        for pose in flythrough::POSES {
+            // The start look's poses are read with the lamp off too: the owner saw the wedges
+            // and the triangles with it off, where the shaded image is not lit to white.
+            let lamps: &[bool] = if look_name == "start look" {
+                &[true, false]
+            } else {
+                &[true]
+            };
+            for &lamp in lamps {
+                let mut rig = pose_rig_on(device.clone(), queue.clone(), &level, &pose, fit);
+                rig.frame.set_lighting(vxe_render::Lighting {
+                    exposure: Exposure::Manual(pose.exposure),
+                    indirect: false,
+                    lamp,
+                    ..rig.frame.lighting()
+                });
+                assert_eq!(rig.frame.internal_size(), POSE_SIZE);
+                let r = crack_reading(
+                    &mut rig,
+                    &pose.camera(),
+                    &LightParams::headlamp(),
+                    look_at_fit(fit),
+                    None,
+                );
+                let lamp_tag = if lamp { "" } else { " lamp off" };
+                let name = format!("level {}{lamp_tag}", pose.name);
+                println!("{}", r.row(&name, look_name));
+                rows.push(r.row(&name, look_name));
+                let tag = format!("{look_name}{lamp_tag}").replace(' ', "-");
+                write_side_by_side(&r, &format!("{}-{tag}", pose.name));
+            }
+        }
+    }
+    println!("\nadapter {adapter}\n{CRACK_HEADER}");
+    for r in rows {
+        println!("{r}");
+    }
+}
+
+/// The class 1 and 2 pixels the kept rule (snap) read at `VEIN_POSE` and `PATCH_POSE` on
+/// lavapipe, lamp on, start look (Plan 0050's Phase 3 table; Phase 2's old rule read 2247 and
+/// 5266).
+const KEPT_POSE_CRACKS: [u64; 2] = [0, 0];
+
+/// The look the fly-through starts in closes the contour surface's cracks: classes 1 and 2
+/// read 0 on the tilted slab, the concave corner and the cavity under the analytic window rule,
+/// and at most the kept rule's count at the vein and the patch.
+#[test]
+fn the_closing_rule_leaves_no_crack() {
+    let table = flythrough::LookPreset::DEFAULT.materials();
+    let level = pose_level();
+    let Some((device, queue)) = software_device(attr_pool_bytes(&level).max(256 << 20)) else {
+        return;
+    };
+    let look = start_look(ViewMode::Cracks);
+    assert_eq!(look.tuning.closing, CrackClosing::Snap);
+    let fit = look.tuning.fit;
+    println!("{CRACK_HEADER}");
+    for (name, world, camera) in [
+        (
+            "tilted slab",
+            tilted_slab_world(&table),
+            tilted_slab_camera(),
+        ),
+        ("concave corner", corner_world(&table), corner_camera()),
+        ("cavity", cavity_world(), cavity_camera()),
+    ] {
+        let mut rig = fit_rig_on(device.clone(), queue.clone(), &world, fit, [WIDTH, HEIGHT]);
+        let r = crack_reading(
+            &mut rig,
+            &camera,
+            &LightParams::headlamp(),
+            look,
+            Some(analytic_window(&world)),
+        );
+        println!("{}", r.row(name, "start look"));
+        assert!(r.shares.hits > 0, "{name}");
+        assert_eq!(r.shares.classes[1], 0, "{name}: {:?}", r.shares);
+        assert_eq!(r.shares.classes[2], 0, "{name}: {:?}", r.shares);
+    }
+    for (pose, kept) in flythrough::POSES.into_iter().zip(KEPT_POSE_CRACKS) {
+        let mut rig = pose_rig_on(device.clone(), queue.clone(), &level, &pose, fit);
+        rig.frame.set_lighting(vxe_render::Lighting {
+            exposure: Exposure::Manual(pose.exposure),
+            indirect: false,
+            ..rig.frame.lighting()
+        });
+        let r = crack_reading(
+            &mut rig,
+            &pose.camera(),
+            &LightParams::headlamp(),
+            look,
+            None,
+        );
+        let name = format!("level {}", pose.name);
+        println!("{}", r.row(&name, "start look"));
+        assert!(r.shares.hits > 0, "{name}");
+        let cracked = r.shares.classes[1] + r.shares.classes[2];
+        assert!(cracked <= kept, "{name}: {cracked} cracked against {kept}");
+    }
+}
+
+// ---- The crack-closing candidates ----
+
+/// The start look in `view` with crack-closing rule `closing` and shadow push `push`.
+fn closing_look(view: ViewMode, closing: CrackClosing, push: bool) -> LookParams {
+    let mut look = start_look(view);
+    look.tuning.closing = closing;
+    look.tuning.shadow_push = push;
+    look
+}
+
+/// Plan 0039's guardrails of the start look under `closing`, as
+/// `sharpness::the_default_look_meets_the_guardrails` reads them: the cavity's normal error
+/// (degrees) and axis fraction `A` at full lighting resolution, and the pillar's silhouette
+/// error (pixels), detail off.
+fn closing_guardrails(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    closing: CrackClosing,
+) -> (f64, f64, usize) {
+    let fit = flythrough::LookPreset::DEFAULT.tuning.fit;
+    let look = |view| LookParams {
+        detail: false,
+        ..closing_look(view, closing, false)
+    };
+    let cavity = cavity_world();
+    let mut rig = fit_rig_on(device.clone(), queue.clone(), &cavity, fit, [WIDTH, HEIGHT]);
+    let cam = cavity_camera();
+    let normals = rig.render(&cam, &LightParams::at_eye(), look(ViewMode::Normals));
+    let error = cavity_normal_error(&normals, &cam);
+    let axis = axis_fraction(&normals);
+    let pillar = pillar_world();
+    let mut rig = fit_rig_on(device.clone(), queue.clone(), &pillar, fit, [WIDTH, HEIGHT]);
+    let cam = pillar_camera();
+    let mask = rig.render(&cam, &LightParams::at_eye(), look(ViewMode::HitMask));
+    (error, axis, pillar_silhouette_error(&mask, &cam))
+}
+
+/// The speck test's reading of the contour look (the golden scene's tuning) under `closing`
+/// and shadow push `push`: dark specks with the headlamp's shadows, without, and only with,
+/// on the full shadow walk, as `contour_dark_specks_with_and_without_shadows` reads them.
+fn closing_specks(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    closing: CrackClosing,
+    push: bool,
+) -> (usize, usize, usize) {
+    let world = carved_world();
+    let mut rig = attr_rig_on(device.clone(), queue.clone(), &world, None);
+    rig.frame.set_lighting(vxe_render::Lighting {
+        shadow_walk: vxe_render::ShadowWalk::Full,
+        ..rig.frame.lighting()
+    });
+    let mut l = look(NormalMode::Contour, ViewMode::Shaded);
+    l.tuning.closing = closing;
+    l.tuning.shadow_push = push;
+    let off = LightParams {
+        shadows: false,
+        ..LightParams::headlamp()
+    };
+    let on = dark_specks(&rig.render(&scene_camera(), &LightParams::headlamp(), l));
+    let off = dark_specks(&rig.render(&scene_camera(), &off, l));
+    let only = on.iter().filter(|i| off.binary_search(i).is_err()).count();
+    (on.len(), off.len(), only)
+}
+
+/// The crack-closing candidates' readings (reading only; it asserts nothing): per rule, the
+/// crack class table of `crack_classes`' scenes and poses at the start look, Plan 0039's
+/// guardrails and the speck test's reading; and per rule with the shadow push, the poses'
+/// self-hit shares and the speck reading. On the adapter `VXE_TEST_ADAPTER` names (lavapipe
+/// unset): `cargo nextest run -p flythrough --test look --run-ignored only --no-capture
+/// closing_candidates`.
+#[test]
+#[ignore = "a reading: prints the closing candidates' tables"]
+fn closing_candidates() {
+    let table = flythrough::LookPreset::DEFAULT.materials();
+    let analytic: Vec<(&str, World, vxe_render::Camera)> = vec![
+        (
+            "tilted slab",
+            tilted_slab_world(&table),
+            tilted_slab_camera(),
+        ),
+        ("concave corner", corner_world(&table), corner_camera()),
+        (
+            "45-degree slab",
+            axis_slab_world(&table),
+            axis_slab_camera(),
+        ),
+        ("floor", floor_world(&table), floor_camera()),
+        ("wall", wall_world(&table), wall_camera()),
+        (
+            "diagonal slab",
+            diagonal_slab_world(&table),
+            diagonal_slab_camera(),
+        ),
+        ("cavity", cavity_world(), cavity_camera()),
+        ("pillar", pillar_world_with(table.clone()), pillar_camera()),
+    ];
+    let level = pose_level();
+    let pool = attr_pool_bytes(&level).max(256 << 20);
+    let Some((device, queue, adapter)) = reading_device(pool) else {
+        return;
+    };
+    println!("adapter {adapter}");
+    let fit = flythrough::LookPreset::DEFAULT.tuning.fit;
+    let face = {
+        let pillar = pillar_world();
+        let mut rig = LookRig::on(device.clone(), queue.clone(), &pillar, None);
+        let cam = pillar_camera();
+        let look = LookParams {
+            view: ViewMode::HitMask,
+            ..LookParams::default()
+        };
+        pillar_silhouette_error(&rig.render(&cam, &LightParams::at_eye(), look), &cam)
+    };
+    let mut rows = Vec::new();
+    let mut extra = Vec::new();
+    for closing in CrackClosing::ALL {
+        let name = closing.name();
+        for (scene, world, camera) in &analytic {
+            let mut rig = fit_rig_on(device.clone(), queue.clone(), world, fit, [WIDTH, HEIGHT]);
+            let r = crack_reading(
+                &mut rig,
+                camera,
+                &LightParams::headlamp(),
+                closing_look(ViewMode::Cracks, closing, false),
+                Some(analytic_window(world)),
+            );
+            println!("{}", r.row(scene, name));
+            rows.push(r.row(scene, name));
+        }
+        for push in [false, true] {
+            let look_name = if push {
+                format!("{name} + push")
+            } else {
+                name.to_owned()
+            };
+            for pose in flythrough::POSES {
+                for lamp in [true, false] {
+                    if push && !lamp {
+                        continue;
+                    }
+                    let mut rig = pose_rig_on(device.clone(), queue.clone(), &level, &pose, fit);
+                    rig.frame.set_lighting(vxe_render::Lighting {
+                        exposure: Exposure::Manual(pose.exposure),
+                        indirect: false,
+                        lamp,
+                        ..rig.frame.lighting()
+                    });
+                    let r = crack_reading(
+                        &mut rig,
+                        &pose.camera(),
+                        &LightParams::headlamp(),
+                        closing_look(ViewMode::Cracks, closing, push),
+                        None,
+                    );
+                    let lamp_tag = if lamp { "" } else { " lamp off" };
+                    let scene = format!("level {}{lamp_tag}", pose.name);
+                    println!("{}", r.row(&scene, &look_name));
+                    rows.push(r.row(&scene, &look_name));
+                    let tag = format!("{look_name}{lamp_tag}").replace([' ', '+'], "-");
+                    write_side_by_side(&r, &format!("{}-closing-{tag}", pose.name));
+                }
+            }
+            let (on, off, only) = closing_specks(&device, &queue, closing, push);
+            extra.push(format!(
+                "{look_name}: specks with shadows {on}, without {off}, only with {only}"
+            ));
+        }
+        let (error, axis, silhouette) = closing_guardrails(&device, &queue, closing);
+        extra.push(format!(
+            "{name}: cavity normal error {error:.2} degrees, silhouette {silhouette} px against face {face}, axis fraction {:.2} %",
+            axis * 100.0
+        ));
+        println!("{}", extra[extra.len() - 1]);
+    }
+    println!("\nadapter {adapter}\n{CRACK_HEADER}");
+    for r in rows {
+        println!("{r}");
+    }
+    for e in extra {
+        println!("{e}");
+    }
+}

@@ -162,6 +162,64 @@ pub const FLAG_CUTAWAY: u32 = 1 << 10;
 /// `Params::flags` bit: with the lamp on, the light pass shades with the undetailed normal and
 /// the composite applies the detail's `n.l` ratio ([`SurfaceTuning::detail_after_lighting`]).
 pub const FLAG_DETAIL_AFTER_LIGHTING: u32 = 1 << 13;
+/// `Params::flags` bits 14..16: the [`CrackClosing`] rule of the contour walk.
+pub const CLOSING_SHIFT: u32 = 14;
+/// `Params::flags` bit: push a contour hit's shadow origin clear of its neighbours' planes
+/// ([`SurfaceTuning::shadow_push`]).
+pub const FLAG_SHADOW_PUSH: u32 = 1 << 17;
+
+/// How the contour walk treats a ray that passes a surface voxel outside its plane and then
+/// reaches the next solid voxel (ADR-0011's hit rule leaves a crack there).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CrackClosing {
+    /// The next voxel's own test: a cube hit for a voxel with no plane, an entry hit with its
+    /// normal when the ray enters inside its plane, a crossing otherwise.
+    #[default]
+    Old = 0,
+    /// The walk keeps the last passed voxel's plane. A pass followed by a voxel with no plane
+    /// hits at the passed voxel's exit with the passed plane's normal; a pass followed by an
+    /// entry inside the next plane hits there with the normalised mean of the two normals.
+    Snap = 1,
+    /// Each plane is tested over the ray's segment through its cube dilated by a quarter voxel
+    /// on every side; a crossing in the dilation hits at the cube's exit point.
+    ExtendQuarter = 2,
+    /// `ExtendQuarter` with the cube dilated by half a voxel.
+    ExtendHalf = 3,
+    /// Inside a surface voxel the signed distance is the trilinear blend over the eight voxel
+    /// centres around the point of each voxel's plane distance there (an air voxel `+1`, a
+    /// solid voxel with no plane `-1`): continuous across cube faces. The crossing is
+    /// bracketed by the voxel's entry and exit and refined by two secant steps; the normal is
+    /// the blend of the planes' normals there. Up to 32 attribute reads per surface voxel.
+    Blend = 4,
+}
+
+impl CrackClosing {
+    pub const ALL: [Self; 5] = [
+        Self::Old,
+        Self::Snap,
+        Self::ExtendQuarter,
+        Self::ExtendHalf,
+        Self::Blend,
+    ];
+
+    /// `old`, `snap`, `extend 0.25`, `extend 0.5`, `blend`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Old => "old",
+            Self::Snap => "snap",
+            Self::ExtendQuarter => "extend 0.25",
+            Self::ExtendHalf => "extend 0.5",
+            Self::Blend => "blend",
+        }
+    }
+
+    /// The rule named `name` ([`CrackClosing::name`], or `extend-0.25` and `extend-0.5`).
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|c| c.name() == name || c.name().replace(' ', "-") == name)
+    }
+}
 
 /// How the marcher finds the normal at a hit, and in `Contour` the hit itself.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -233,14 +291,25 @@ pub enum ViewMode {
     /// The composited albedo, unlit and linear: each translucent layer's `albedo × opacity`
     /// front to back over the opaque hit's albedo; black on a miss.
     Albedo,
+    /// How each primary ray reached its hit in the contour look, over the shaded image
+    /// without its translucent layers: the hit pass writes the ray's crack class and whether
+    /// its lamp shadow ray found rock within 1.5 voxels of its origin (the self-hit) into
+    /// [`Frame::layers`] (r and g), and the composite paints them (see [`CrackShares`]). Every
+    /// pass of the shaded view runs. Class 0 is clean: no surface voxel passed outside its
+    /// plane since the ray last entered an empty cell. After such a pass, class 1 hits a
+    /// voxel with no plane, class 2 enters the hit voxel already inside its plane's solid
+    /// half-space, class 3 crosses the plane inside the hit voxel.
+    Cracks = 5,
 }
 
 impl ViewMode {
-    pub const ALL: [Self; 5] = [
+    /// The cycle's order.
+    pub const ALL: [Self; 6] = [
         Self::Shaded,
         Self::Normals,
         Self::HitMask,
         Self::Steps,
+        Self::Cracks,
         Self::Albedo,
     ];
 
@@ -251,11 +320,96 @@ impl ViewMode {
             Self::HitMask => "hitmask",
             Self::Steps => "steps",
             Self::Albedo => "albedo",
+            Self::Cracks => "cracks",
         }
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+
+    /// The next view in [`ViewMode::ALL`] order, wrapping.
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|&m| m == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+
+    /// Whether the frame lights this view as the shaded one: the light, probe, filter,
+    /// gradient and meter passes run.
+    pub fn shades(self) -> bool {
+        matches!(self, Self::Shaded | Self::Cracks)
+    }
+}
+
+/// The share of a cracks-view frame's hit pixels in each crack class and with a self-hit
+/// ([`ViewMode::Cracks`]), read from the hit pass's outputs.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CrackShares {
+    /// Hit pixels.
+    pub hits: u64,
+    /// Hit pixels in classes 0 to 3.
+    pub classes: [u64; 4],
+    /// Hit pixels whose lamp shadow ray found rock within 1.5 voxels of its origin.
+    pub self_hits: u64,
+}
+
+impl CrackShares {
+    /// From [`Frame::layers`] (`rgba16float`, the class in r and the self-hit in g) and
+    /// [`Frame::hit_records`] (`rgba16uint`, bit 0 of a's flags set on a hit) as
+    /// [`crate::readback::read_rgba16f`] and [`crate::readback::read_rgba16u`] return them,
+    /// one texel per pixel.
+    pub fn from_layers(layers: &[[f32; 4]], records: &[[u16; 4]]) -> Self {
+        let mut s = Self::default();
+        for (l, r) in layers.iter().zip(records) {
+            if r[3] & 1 == 0 {
+                continue;
+            }
+            s.hits += 1;
+            s.classes[(l[0].round() as usize).min(3)] += 1;
+            if l[1] > 0.5 {
+                s.self_hits += 1;
+            }
+        }
+        s
+    }
+
+    /// Each pixel's class (0 to 3, `None` on a miss) and self-hit, decoded from a cracks-view
+    /// image without an upscaler (`rgba8unorm`, the composite's colours: a miss black; class
+    /// 0 every channel in 4..=124, or magenta with a self-hit; class 1 red, 2 yellow, 3 blue,
+    /// each with a self-hit's 128 in its zero channel, blue's red).
+    pub fn decode_rgba8(p: &[u8]) -> Option<(u8, bool)> {
+        match (p[0], p[1], p[2]) {
+            (0, 0, 0) => None,
+            (255, 0, 0) => Some((1, false)),
+            (255, 0, 128) => Some((1, true)),
+            (255, 255, 0) => Some((2, false)),
+            (255, 255, 128) => Some((2, true)),
+            (0, 0, 255) => Some((3, false)),
+            (128, 0, 255) => Some((3, true)),
+            (255, 0, 255) => Some((0, true)),
+            _ => Some((0, false)),
+        }
+    }
+
+    /// [`CrackShares`] of a cracks-view image (see [`CrackShares::decode_rgba8`]).
+    pub fn from_rgba8(pixels: &[u8]) -> Self {
+        let mut s = Self::default();
+        for (class, self_hit) in pixels.chunks_exact(4).filter_map(Self::decode_rgba8) {
+            s.hits += 1;
+            s.classes[usize::from(class)] += 1;
+            s.self_hits += u64::from(self_hit);
+        }
+        s
+    }
+
+    /// Class `k`'s share of the hit pixels, 0 with none.
+    pub fn share(&self, k: usize) -> f64 {
+        self.classes[k] as f64 / self.hits.max(1) as f64
+    }
+
+    /// The self-hits' share of the hit pixels, 0 with none.
+    pub fn self_hit_share(&self) -> f64 {
+        self.self_hits as f64 / self.hits.max(1) as f64
     }
 }
 
@@ -278,6 +432,12 @@ pub struct SurfaceTuning {
     /// unit vector to the lamp, per full-resolution pixel. With the lamp off it changes
     /// nothing.
     pub detail_after_lighting: bool,
+    /// The contour walk's crack-closing rule; `Old` is ADR-0011's hit rule.
+    pub closing: CrackClosing,
+    /// A contour hit's shadow rays start at the first of 0.5, 0.75 and 1.0 voxel along the
+    /// shadow normal where no plane of the eight voxels around the point (under `Blend`, the
+    /// blended distance) holds it inside rock, else at 1.0; off, at 0.5.
+    pub shadow_push: bool,
 }
 
 /// The surface look: normal mode, procedural detail, view, translucent layers, cutaway and the
@@ -325,6 +485,12 @@ impl LookParams {
             | if self.cutaway { FLAG_CUTAWAY } else { 0 }
             | if self.tuning.detail_after_lighting {
                 FLAG_DETAIL_AFTER_LIGHTING
+            } else {
+                0
+            }
+            | (self.tuning.closing as u32) << CLOSING_SHIFT
+            | if self.tuning.shadow_push {
+                FLAG_SHADOW_PUSH
             } else {
                 0
             }
@@ -946,9 +1112,12 @@ impl Lighting {
     }
 }
 
-/// The hit pass: `march.wgsl`'s `main`, one primary ray per pixel into the hit buffer.
+/// The hit pass: `march.wgsl`'s `main`, one primary ray per pixel into the hit buffer, and in
+/// the cracks view its pipeline with `CRACKS_VIEW`, which records the crack classes and each
+/// hit's lamp self-hit.
 pub struct Marcher {
     pipeline: wgpu::ComputePipeline,
+    cracks: wgpu::ComputePipeline,
     out_layout: wgpu::BindGroupLayout,
 }
 
@@ -962,15 +1131,19 @@ impl Marcher {
                 storage_texture(2, wgpu::TextureFormat::Rgba16Float),
             ],
         });
-        let pipeline = compute_pipeline(
+        let layouts = [Some(world_layout), Some(&out_layout)];
+        let pipeline = compute_pipeline(device, "hit", MARCH_WGSL.into(), &layouts, "main");
+        let cracks = compute_pipeline_with(
             device,
-            "hit",
+            "hit cracks",
             MARCH_WGSL.into(),
-            &[Some(world_layout), Some(&out_layout)],
+            &layouts,
             "main",
+            &[("CRACKS_VIEW", 1.0)],
         );
         Self {
             pipeline,
+            cracks,
             out_layout,
         }
     }
@@ -2287,9 +2460,9 @@ impl Frame {
         keep_history: bool,
     ) {
         let mut p = *params;
-        // The probe passes run in the shaded view outside the cutaway, with indirect light on.
-        let indirect =
-            self.lighting.indirect && self.look.view == ViewMode::Shaded && !self.look.cutaway;
+        // The probe passes run in the shaded and cracks views outside the cutaway, with indirect
+        // light on.
+        let indirect = self.lighting.indirect && self.look.view.shades() && !self.look.cutaway;
         let probe_update = indirect && self.probes.updates();
         let mut light_window = false;
         let mut boxes: Vec<[[i32; 3]; 2]> = Vec::new();
@@ -2461,9 +2634,9 @@ impl Frame {
                 Res::Tex(&t.strata),
             ],
         );
-        // The filter runs in the shaded view unless switched off; the variance pass writes
-        // `filter[0]` and the iterations ping-pong, ending in `filter[0]`.
-        let filtering = self.lighting.filter && self.look.view == ViewMode::Shaded;
+        // The filter runs in the shaded and cracks views unless switched off; the variance pass
+        // writes `filter[0]` and the iterations ping-pong, ending in `filter[0]`.
+        let filtering = self.lighting.filter && self.look.view.shades();
         let variance_bind = bind_io(
             device,
             &self.variance_layout,
@@ -2559,7 +2732,7 @@ impl Frame {
             )
         });
         // The gradient pass runs for the gradient mode's lambda or the emissive guard's.
-        let gradient_on = self.look.view == ViewMode::Shaded
+        let gradient_on = self.look.view.shades()
             && (self.lighting.history == HistoryKill::Gradient
                 || self.lighting.flags() & LIGHTING_EMISSIVE_GUARD != 0);
         if !gradient_on {
@@ -2606,7 +2779,12 @@ impl Frame {
                 workgroups,
             }
         };
-        let mut hit: Vec<Dispatch<'_>> = vec![frame_pass(&self.hit.pipeline, &hit_bind, 1, full)];
+        let hit_pipeline = if self.look.view == ViewMode::Cracks {
+            &self.hit.cracks
+        } else {
+            &self.hit.pipeline
+        };
+        let mut hit: Vec<Dispatch<'_>> = vec![frame_pass(hit_pipeline, &hit_bind, 1, full)];
         if half {
             hit.push(frame_pass(&self.downsample, &downsample_bind, 3, lw));
         }
@@ -2748,7 +2926,7 @@ impl Frame {
             Exposure::Manual(_) => self.metering,
         };
         let (strength, sigma) = metering.params();
-        let meter = self.look.view == ViewMode::Shaded;
+        let meter = self.look.view.shades();
         let mut mode = if meter { EX_METER } else { 0 };
         if let Exposure::Auto(_) = self.lighting.exposure {
             mode |= EX_AUTO;
@@ -3117,6 +3295,18 @@ fn compute_pipeline(
     layouts: &[Option<&wgpu::BindGroupLayout>],
     entry: &str,
 ) -> wgpu::ComputePipeline {
+    compute_pipeline_with(device, label, source, layouts, entry, &[])
+}
+
+/// [`compute_pipeline`] with the pipeline-overridable constants `constants`.
+fn compute_pipeline_with(
+    device: &wgpu::Device,
+    label: &str,
+    source: String,
+    layouts: &[Option<&wgpu::BindGroupLayout>],
+    entry: &str,
+    constants: &[(&str, f64)],
+) -> wgpu::ComputePipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
         source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -3131,7 +3321,10 @@ fn compute_pipeline(
         layout: Some(&layout),
         module: &module,
         entry_point: Some(entry),
-        compilation_options: Default::default(),
+        compilation_options: wgpu::PipelineCompilationOptions {
+            constants,
+            ..Default::default()
+        },
         cache: None,
     })
 }

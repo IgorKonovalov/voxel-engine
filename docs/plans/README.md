@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0053** (ADRs are a separate sequence; next free there is **0038**).
+**Next free number: 0054** (ADRs are a separate sequence; next free there is **0041**).
 
 ## Active roster
 
@@ -20,9 +20,10 @@ state from `git log`. Completed plans move to `done/`.
 | [0045](0045-structure-pass-split-the-mega-files-share-the-fixtures.md) | The structure pass: split the mega files, share the fixtures, gate their regrowth | approved | Code health, no ADR. After Plan 0044, so after Plan 0051 and before M10. |
 | [0048](0048-probe-rays-direct-light-without-the-clamp-bias.md) | The probe rays' direct light without the clamp's bias: candidate schemes measured, the furnace back at pi | approved | M2, ADR-0037 (proposed). After Plan 0049, whose bars it holds; before Plan 0032. |
 | [0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md) | Light settles fast, holds still in flight, no dots: a settle, shimmer and dot spike, then mechanisms by measurement | approved | M2, no ADR yet. First and alone after 0047 (owner, 2026-10-29); before 0048 and 0032. |
-| [0050](0050-watertight-contour-surface-crack-spike-and-closing-rule.md) | A watertight contour surface: a crack spike that names the wedges and triangles, then the closing rule by measurement | approved | M2, ADR-0011; ADR at the Phase 2 pick. Alone on main, before the light spike (owner, 2026-10-29). |
+| [0050](0050-watertight-contour-surface-crack-spike-and-closing-rule.md) | A watertight contour surface: a crack spike that names the wedges and triangles, then the closing rule by measurement | in-progress | M2, ADR-0038, ADR-0039 (proposed). Phase 5 read (c): the boxes go to Plan 0053; Phase 6 unblocked. |
 | [0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md) | The steady-light spike: static light that converges and freezes, and a world-space emissive cache, read against wander, dots and shimmer | approved | M2, ADR after Phase 3. After Plan 0050's check, alone; 0048 and 0032 wait. |
 | [0052](0052-second-review-defects-and-the-waste-the-first-pass-missed.md) | The second review: five defects, the waste the first pass missed, and the testbed's failure semantics | approved | Code health, no ADR. A lane now, beside Plan 0050 (owner, 2026-10-29). |
+| [0053](0053-one-voxel-features-on-the-contour-surface-majority-fit-and-a-normal-field.md) | One-voxel features on the contour surface: a box metric, a majority-filtered plane fit, a normal field, and the owner's call | approved | M2, ADR-0040 (proposed). After Plan 0050 merges, alone; order vs 0051 is the owner's. |
 <!-- roster:end -->
 
 ## Recently closed
