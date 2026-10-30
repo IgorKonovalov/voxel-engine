@@ -463,9 +463,14 @@ Every phase:
   `## Followups` and left in place.
 - **Files touched:** as Phase 7.
 - **Done when:** no removed item's name appears under `crates/` or `apps/`; every golden is
-  byte-identical; the hit and light pass times are read on both adapters against their
-  latest `docs/nfr.md` section 2 readings and are within the spread (a removed uniform
-  branch in `descend` may read lower; that is recorded, not required).
+  byte-identical; the hit and light pass times are read on both adapters, on the same
+  command line, for the tree before this phase and the tree after it, interleaved, and the
+  after readings are within the before readings' spread (a removed uniform branch in
+  `descend` may read lower; that is recorded, not required). Amended 2026-10-30 (owner): the
+  bar was "within the spread of the latest `docs/nfr.md` section 2 readings", which are Plan
+  0047's; the RTX light pass has sat 7 to 8 % above them since before this plan, and section
+  2 has no hit reading for this command line, so that bar measured something this phase does
+  not change. The drift is a close-review finding for nfr and a followup.
 
 ## Data shapes
 
@@ -556,6 +561,11 @@ Every reading names the machine, the commit, the lock and the load.
    **Second answer (owner, 2026-10-30):** after that attempt `tool` reads 1.4 % over the base
    and `tool_long` level (`c130daf`, quiet load); accepted. The Phase 5 done-when and the
    Budgets row now read "within 2 %". No third attempt.
+6. **Phase 9 bar (owner, 2026-10-30).** The pass-time done-when compares the tree before
+   Phase 9 with the tree after it on the same command line, which `891655a`'s readings meet
+   on both adapters (hit and light unchanged, upscale 8 to 10 % lower). The RTX light pass's
+   7 to 8 % rise since Plan 0047's close is not this plan's; the close review records it
+   against nfr section 2 and it goes under Followups. No bisect before the close.
 5. **Phase 8 picks (owner, 2026-10-30).** Every row of Phase 7's table marked *owner pick* is
    *remove*: `Upscaler::lanczos()` with `Reconstruction::Lanczos2`, `HistoryFetch::Bilinear`
    and `Blend::Fixed`; `Reconstruction::Nearest`, `HistoryFetch::Nearest`, `Blend::Nearness`
@@ -964,3 +974,7 @@ Lines at `fcc87bd` ("mr" is `crates/vxe-render/src/marcher.rs`, "sh/"
 2. Camera-relative march coordinates before any world wider than 2^24 voxels.
 3. `Streamer::update`'s unused `_world` parameter and the four-name `CoarseGrid::update*`
    fan-out, for Plan 0045's split.
+4. The RTX 3080 light pass reads 0.88 to 0.91 ms on `--level --headless --render 1920x1080
+   --frames 300 --adapter NVIDIA` at `c7ed5a5`, 7 to 8 % above Plan 0047 Phase 6's lamp-on
+   reading; the Radeon reads inside 0047's spread. Bisect between 0047's close and
+   `c7ed5a5` (owner, 2026-10-30: after this plan, not in it).
