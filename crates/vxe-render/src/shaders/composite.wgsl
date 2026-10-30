@@ -271,10 +271,11 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
         }
     }
     if (view == VIEW_CRACKS) {
-        // The display colour; FSR 2's linear input takes it back through the display power
-        // over the exposure, so the classes keep their hue.
+        // The palette in display values, as the normals view writes its colours: the
+        // upscalers copy a view other than shaded and FSR 2's tone pass stores it as it comes,
+        // so the classes reach the window unchanged.
         let k = crack_colour(rec.found, display(c), layer);
-        textureStore(target_tex, px, vec4<f32>(select(k, pow(k, vec3<f32>(2.2)) / ex, HDR_TARGET), 1.0));
+        textureStore(target_tex, px, vec4<f32>(k, 1.0));
         return meter_of(c / ex);
     }
     if (rec.translucent) {

@@ -296,7 +296,6 @@ struct Candidate {
     after: bool,
     rock: [f32; 2],
     fine: f32,
-    closing: vxe_render::CrackClosing,
 }
 
 impl Candidate {
@@ -309,7 +308,6 @@ impl Candidate {
             after: false,
             rock: ROCK,
             fine: 0.0,
-            closing: vxe_render::CrackClosing::Old,
         }
     }
 
@@ -318,7 +316,6 @@ impl Candidate {
             fit: self.fit,
             face_mix: self.face_mix,
             detail_after_lighting: self.after,
-            closing: self.closing,
             ..SurfaceTuning::default()
         }
     }
@@ -801,7 +798,6 @@ fn the_default_look_meets_the_guardrails() {
         after: p.tuning.detail_after_lighting,
         rock: p.rock_detail,
         fine: p.detail_fine,
-        closing: p.tuning.closing,
     };
     let (error, axis, silhouette) = guardrails(&device, &queue, &c);
     let face = face_silhouette(&device, &queue);
