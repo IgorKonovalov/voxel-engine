@@ -1,6 +1,7 @@
 # 0054: The field surface: the trilinear zero set of the 27-fraction, a cost-and-look spike first, then band storage and the walk if the owner picks it
 
-> **Status:** draft
+> **Status:** approved
+> **Approved:** 2026-10-30 (owner, as drafted; the storage and cost bars are set at Phase 2 on Phase 1's readings)
 > **Created:** 2026-10-30
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look decision: "smooth
 > and natural rock, not visible cubes")
