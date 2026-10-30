@@ -1,6 +1,8 @@
 # 0052: The second review: five defects, the waste the first pass missed, and the testbed's failure semantics
 
-> **Status:** in-progress (2026-10-30): every phase implemented; awaiting the close review
+> **Status:** done (2026-10-30, v0.37.0): the close review found every phase built as planned and
+> amended, its done-whens defended by their assertions; no blocker or major, two main-owned gpu
+> failures recorded as followups.
 > **Created:** 2026-10-29
 > **Milestone:** cross-cutting (code health), like Plans 0044 and 0045. It serves the M2 to M5
 > figures already shipped and the determinism and headless promises in `docs/nfr.md`
@@ -1046,3 +1048,23 @@ Lines at `fcc87bd` ("mr" is `crates/vxe-render/src/marcher.rs`, "sh/"
    --frames 300 --adapter NVIDIA` at `c7ed5a5`, 7 to 8 % above Plan 0047 Phase 6's lamp-on
    reading; the Radeon reads inside 0047's spread. Bisect between 0047's close and
    `c7ed5a5` (owner, 2026-10-30: after this plan, not in it).
+5. `showcase_hall_golden_is_lit_by_its_four_ores` reads 13.5781 % at this plan's close (the full
+   tier on `200607c`), main's figure since Plan 0050's snap became the contour looks' default;
+   Plan 0050 Phase 6 re-blesses it. This plan's tree read 0.0000 % before the merge
+   (`a1260bd`).
+6. `castle_gate_golden`'s peak RSS crosses its 1 GiB bar only in a loaded run (1.48 to 1.50 GB in
+   the lane's gpu tiers after the merge, 951 MB alone; it passed in the close's full tier). The
+   bar measures the process, so neighbours' allocator pressure moves it; Plan 0050's log shows
+   the same. A per-test reading that does not depend on the run's company is owed.
+7. Close review minors: the autopilot's last report line calls `Frame::probes()`
+   (`apps/flythrough/src/main.rs:4081`), which now builds the 54.7 MB volume at the end of a
+   session with indirect light off just to print it; print it only with indirect on.
+   `Run::draw`'s doc comment sits above `Run::mirror_failed` (`main.rs:4438`), so `draw` has
+   none. `OpRows` reserves its span arena for the whole bounds (address space, up to 16 MiB at
+   `edit_axis_max`; owner answer 4), and the span-count test counts written entries, not the
+   reservation.
+8. `cargo deny` failed on wasmtime 49.0.4's advisories at this close (RUSTSEC-2026-0420, -0422,
+   -0423, -0424); main's chore commit bumps the pin to 49.0.5.
+9. The full tier read 6040.6 s for 745 tests with no per-test times printed; a full-tier run
+   that records per-test times (nextest's JUnit output) would let the close say which tests
+   carry it.
