@@ -2740,7 +2740,7 @@ impl GpuWorld {
         self.light_live
     }
 
-    /// The samples from 0 to the high-water mark: what a uniform draw over the buffer covers.
+    /// The samples from 0 to the buffer's high-water mark; freeing the top range lowers it.
     pub fn light_span(&self) -> u32 {
         self.light_high
     }

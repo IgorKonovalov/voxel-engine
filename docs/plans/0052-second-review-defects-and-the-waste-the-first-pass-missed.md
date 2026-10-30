@@ -588,7 +588,7 @@ Every reading names the machine, the commit, the lock and the load.
 | 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | done (golden wall-time readings in Notes) | fcc87bd, c7ed5a5 |
 | 7: the lab-mode inventory, and the removals that need no pick | dev | done | code in 1fdac4d; 033be68 |
 | 8: the owner picks what else goes | human | done (owner answer 5) | 9a4c99c |
-| 9: the owner's removals | dev | removals done but for the `march.wgsl` constant (deferred); the pass-time done-when is not met as written on the RTX light pass (owner question) | committed with this row |
+| 9: the owner's removals | dev | done (pass times on owner answer 6's bar) | 891655a; merge 4f42bce; follow-up committed with this row |
 
 ### Phase 7 inventory
 
@@ -907,9 +907,21 @@ Lines at `fcc87bd` ("mr" is `crates/vxe-render/src/marcher.rs`, "sh/"
 - Phase 9: removed `CandidateDraw` (both variants: one was left), `Lighting::draw`, the Rust
   `LIGHTING_UNIFORM_DRAW` and its flag mapping, and `light.wgsl`'s uniform-draw branch in
   `candidate` (the table's binding `count` became `chunks`, beside the face count's).
-  Deferred until Plan 0050 merges: the `LIGHTING_UNIFORM_DRAW` constant in `march.wgsl`
+  Deferred until Plan 0050 merged: the `LIGHTING_UNIFORM_DRAW` constant in `march.wgsl`
   (line 286; now unread), and `Params::light_span` (the `march.wgsl` `Params` field and its
   Rust mirror in `marcher.rs`), which only the uniform draw read and no shader reads now.
+- Phase 9 follow-up, after main merged in at `4f42bce`: the `march.wgsl` constant is gone, and
+  `Params::light_span` is `_pad4` in both the shader's `Params` and its Rust mirror, so the
+  block keeps its size and every later field its offset (`candidates` to `history`, then
+  `lamp_pose` as the shader's `_pad5..7`, then `prev_views`). Nothing else read the field;
+  `GpuWorld::light_span` (the buffer's high-water mark, read by `lights.rs`) stays, its doc
+  no longer naming the uniform draw. Sweep at this row's tree: `grep -rnE` of `crates/` and
+  `apps/` (`.rs`, `.wgsl`) for the names above plus `Params::light_span`,
+  `params.light_span`, `Lanczos2`, `MeanNearness`, `CatmullRom`, `LIGHTING_UNIFORM`,
+  `Lighting::draw`, `the_lamp_off_fade_without_the_window` finds FSR 2's own `Lanczos2`
+  comment in `fsr2/common.wgsl` (not a removed item) and `lights.rs`'s uniform-draw
+  reference RMSE (the re-derived test above). No pass-time reading: the follow-up removes an
+  unread constant and renames an unread word.
 - Phase 9: removed `ProbeVolume::set_light_restarts` and `light_restarts`; the light-change
   window opens on every lamp change; `set_probe_spacing` carries the origin and the update
   switch.
@@ -964,6 +976,34 @@ Lines at `fcc87bd` ("mr" is `crates/vxe-render/src/marcher.rs`, "sh/"
   so is the base's (0.884 to 0.913), so the gap is there before Phase 9. Hit and light
   are within the base's spread on both adapters; the upscale pass reads about 10 % lower on
   the RTX and about 8 % lower on the Radeon (medians). Stopped for the owner.
+- Merge of main (`4f42bce`, main at `7ef72e6`: Plan 0050 Phases 1 to 5). Conflicts: the
+  `vxe-render` re-export (main's `CrackClosing`, `CrackShares`; `CandidateDraw` stays out) and
+  `Frame::encode_with` (main's `ViewMode::shades()` with the lazily built probe volume). Not a
+  textual conflict but a compile one: main's `VXE_TEST_ADAPTER` device in
+  `apps/flythrough/tests/support/mod.rs` took `limits_for`'s value bare; it now `expect`s the
+  `Result`. Gate on the merged tree: clippy `-D warnings` (workspace, all targets; flythrough
+  `--features wasm`) and fmt clean; doctests 7 passed; quick 539 run, 538 passed, `replay`
+  timed out at 30 s (load 2.1 rising to 25.4), alone 14.4 s; gpu (lavapipe, exclusive perf
+  lock, load 15.1 at the start and 2.8 at the end) 185 run, 183 passed, 2 failed, 30 skipped,
+  1 633 s (`live/merge-gpu.log`):
+  - `showcase_hall_golden_is_lit_by_its_four_ores`: 13.5781 % of pixels over 2/255. Main's
+    own figure at `760950b` (Plan 0050's log: snap as the contour looks' default, not
+    re-blessed, owed to its Phase 6). The `a1260bd` tree (this branch before the merge, built
+    apart under `live/tree-a1260bd`) reads 0.0000 % on the same PNG (lavapipe, perf lock,
+    load 9.3, `live/showcase-a1260bd.log`). Plan 0050's log gives 12.4601 % at `00ca974`,
+    whose code is this branch's merge base.
+  - `castle_gate_golden`: the image 0.0000 %, peak RSS 1 482 031 104 B against the 1 GiB bar;
+    alone 951 308 288 B, pass (`live/merge-gpu-rerun.log`). Before the merge the full-profile
+    goldens read 803 008 512 B (`live/goldens9.log`). Plan 0050's log: 953 MB alone, once
+    1.49 GB in a loaded run.
+- Phase 9 follow-up gate (this row's tree): clippy (both forms) and fmt clean; quick 539 run,
+  536 passed, 3 timed out at 30 s at load 5.1 rising to 31.8 (a build ran beside it):
+  `collapse_level::the_level_sweep_drops_every_region`, `castle`, `replay`; alone 9.8 s,
+  10.5 s, 15.9 s (load 6.7). gpu (lavapipe, exclusive perf lock, load 9.2 at the start and
+  5.5 at the end) 185 run, 183 passed, 2 failed, 30 skipped, 1 874 s (`live/p9f-gpu.log`,
+  `live/p9f-gpu-stderr.log`): the same two, showcase 13.5781 %, castle peak RSS
+  1 496 014 848 B with its image 0.0000 %. Every other golden 0.0000 % over 2/255 (18
+  printed) and every split and bypass comparison `0 bytes differ` (11).
 
 ### Close triggers
 

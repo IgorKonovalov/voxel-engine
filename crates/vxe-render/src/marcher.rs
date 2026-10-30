@@ -66,9 +66,7 @@ pub struct Params {
     /// The manual exposure ([`Exposure::Manual`]); 1.0 and unread in auto, where the exposure
     /// state's `current` is the frame's.
     pub exposure: f32,
-    /// Light samples from 0 to the buffer's high-water mark, which the light pass draws
-    /// candidates from ([`GpuWorld::light_span`]).
-    pub light_span: u32,
+    pub _pad4: u32,
     /// Emissive candidates per pixel ([`Lighting::candidates`]).
     pub candidates: u32,
     /// The slot of the light-sample buffer where the frame's candidate table starts.
@@ -2317,7 +2315,6 @@ impl Frame {
                     0
                 },
             light_table_base: world.light_table_base(),
-            light_span: world.light_span(),
             candidates: self.lighting.candidates,
             frame: self.frame,
             light_size: self.targets.light_size(),
