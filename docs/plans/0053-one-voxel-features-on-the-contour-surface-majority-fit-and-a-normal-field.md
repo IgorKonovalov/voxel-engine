@@ -2,6 +2,11 @@
 
 > **Status:** approved
 > **Approved:** 2026-10-30 (owner, as drafted; the order against Plan 0051 and the two cost bars stay the owner's to set)
+> **Amended:** 2026-10-30 (architect, owner's answer): Phase 4 waits for
+> [Plan 0054](0054-field-surface-trilinear-zero-set-of-the-27-fraction.md)'s Phase 1, the
+> field-surface spike stacked on this plan's branch after Phase 3, and compares its
+> `--look field` as a sixth look in the same windowed session. Outcome (b) names the field
+> surface by its reading, not by a future plan.
 > **Created:** 2026-10-30
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look decision: "smooth
 > and natural rock, not visible cubes")
@@ -258,17 +263,18 @@ labelled with the adapter; every asserted reading, golden and gate stays on lava
 ### Phase 4: The owner's windowed check
 - **Owner skill:** human
 - **What:** the owner runs the release fly-through at `--pose vein` and `--pose patch`, lamp
-  on and off, shaded and normals views, in five looks: today's (snap), `--fit-filter
-  majority`, `--normal-field on`, both, and `--look cubes-field`, looking at the rods and
-  pillars along walls and ledge edges and the lone cubes on floors and ceilings from the Phase
-  5 screenshots of Plan 0050, and at the steps that remain at ledge corners.
-- **Files touched:** this plan's log.
+  on and off, shaded and normals views, in six looks: today's (snap), `--fit-filter
+  majority`, `--normal-field on`, both, `--look cubes-field`, and Plan 0054's `--look field`
+  (its Phase 1 spike, stacked on this branch after Phase 3, with its cost and census tables in
+  hand), looking at the rods and pillars along walls and ledge edges and the lone cubes on
+  floors and ceilings from the Phase 5 screenshots of Plan 0050, and at the steps that remain
+  at ledge corners.
+- **Files touched:** this plan's log and Plan 0054's.
 - **Done when:** the owner records one of: (a) a pick among the first four becomes the
-  default, with the cost reading of Phase 3 accepted or a bar set; (b) the boxes or the steps
-  still fail the eye, and the owner chooses between the field surface (ADR-0040 Alternative B,
-  the next plan, drafted after this check with the cost spike as its Phase 1) and
-  `cubes-field` as the default (contours dropped, ADR-0011 superseded). Either way Phase 5
-  runs.
+  default, with the cost reading of Phase 3 accepted or a bar set; (b) the field surface is
+  the pick (Plan 0054's Phase 2 outcome (a), its bars set there) and this plan's Phase 5 lands
+  nothing but the removals Plan 0054 does not cover; (c) `cubes-field` is the default
+  (contours dropped, ADR-0011 superseded). Either way Phase 5 runs.
 
 ### Phase 5: The pick as the default, the losers removed
 - **Owner skill:** dev
