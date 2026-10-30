@@ -575,8 +575,8 @@ Every reading names the machine, the commit, the lock and the load.
 | 3: the testbed fails out loud, and the logic fails the same way twice | dev | done | a392e47 |
 | 4: the frame's idle probe volume, and the small corrections | dev | done | code in 1fdac4d; f3fabfb |
 | 5: spans for the rows a shape touches, and smoothers that settle | dev | done (`tool` 1.4 % over the base, within the amended 2 %) | 14f3841, 885fc1e, c130daf |
-| 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | done (golden wall-time readings in Notes) | fcc87bd |
-| 7: the lab-mode inventory, and the removals that need no pick | dev | done | code in 1fdac4d; committed with this row |
+| 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | done (golden wall-time readings in Notes) | fcc87bd, slow-list follow-up committed with this row |
+| 7: the lab-mode inventory, and the removals that need no pick | dev | done | code in 1fdac4d; 033be68 |
 | 8: the owner picks what else goes | human | not started | |
 | 9: the owner's removals | dev | not started | |
 
@@ -864,6 +864,18 @@ Lines at `fcc87bd` ("mr" is `crates/vxe-render/src/marcher.rs`, "sh/"
   from the other lane). Doctests, clippy `-D warnings` and fmt clean. The golden wall-time
   readings (base binary and tip binary, lavapipe, exclusive perf lock) were queued behind the
   lock at commit time, to `live/golden-times.log`.
+- Phase 6 quiet readings, the two goldens' test time (the harness's `finished in`, and the
+  wall time around it), the same base and tip binaries as the reading above
+  (`live/golden-base`, `live/golden-tip`), lavapipe, exclusive perf lock, one run each, started
+  once the 1-minute load was under 2 (`live/golden-times2.log`). Load at each start: 1.48,
+  10.94, 9.21, 12.18 (after the first, lavapipe's own threads from the run before; nothing
+  else of ours ran): indirect 151.57 s base, 115.70 s tip (-24 %); showcase 17.90 s base,
+  14.56 s tip (-19 %). Both keep their blessed images (0.0000 % over 2/255) and print the
+  same control figures as before.
+- Phase 6 follow-up (`test(flythrough)`, this row's second commit): the showcase golden reads
+  under 20 s at the base and the tip, so it leaves the slow list (all three copies in
+  `.config/nextest.toml`) and runs in the gpu tier; the indirect golden stays on it.
+  `check-test-tiers` exit 0.
 - Phase 7: removed in `1fdac4d` (the rows marked **removed** in the inventory):
   `Reconstruction::BlackmanHarris` (with `Upscaler::kernel`'s and `uniform`'s arms and
   `upscale.wgsl`'s `blackman_harris` and case 3), `HistoryFetch::Lanczos2` (the
