@@ -275,8 +275,11 @@ Every phase:
   - `raycast`: charge `steps_cost` of a bound from `max` and `dir` (a DDA takes at most one
     step per axis crossing, plus the chunk-sized steps through missing chunks), refund after;
     or pass `fuel_left / per_step` into the walk as a step budget and trap when it runs out.
-  - `unsupported`: charge `steps_cost` of `SupportParams::max_region` times the cells first,
-    refund after.
+  - `unsupported`: charge `steps_cost` of a bound on the flood's steps first, refund after.
+    Amended 2026-10-30 (owner): the bound is `7 d (max_region + 2)` steps over the `d`
+    distinct cells, where a flood starts from each of a cell's six neighbours; it was
+    "`max_region` times the cells", which does not bound the flood and would trap the
+    duplicated over-cap list whose charge the done-when keeps at `100 + 12 (cap + 1)`.
   - A call whose bound exceeds the fuel left traps with `LogicError::Fuel` before any host
     work, with the import named in the trap's message. The module comment at `host.rs:63-76`
     is rewritten to say "before".
@@ -358,8 +361,9 @@ Every phase:
   `scripts/check-test-tiers.mjs`, `scripts/fixtures/`, `apps/flythrough/Cargo.toml`.
 - **Done when:**
   - A headless test builds a `Frame` with the default `Lighting` and reads `frame_bytes()`
-    smaller by exactly **54 689 792 bytes** than the same frame after `indirect` is switched
-    on and one frame is encoded. The probe tests, `indirect.png` and
+    smaller by exactly **54 689 824 bytes** than the same frame after `indirect` is switched
+    on and one frame is encoded (amended 2026-10-30 (owner): the volume also holds a 32-byte
+    uniform; the figure was 54 689 792, the data and scratch words alone). The probe tests, `indirect.png` and
     `fsr2_carries_the_indirect_golden_s_bounce_light` are byte-identical.
   - Building a `Frame` with indirect off under the counting allocator used by the HUD test
     allocates no buffer the size of the atlases; this is asserted by `frame_bytes()` before
@@ -489,7 +493,7 @@ struct Run { failure: Option<String>, /* … */ }
 
 | `docs/nfr.md` figure | Phase | Expected | How the close reads it |
 |---|---|---|---|
-| Section 3, `frame_bytes` at the default | 4 | lower by 54 689 792 B with indirect off; unchanged with it on | the headless `frame_bytes` test, recorded as a reading |
+| Section 3, `frame_bytes` at the default | 4 | lower by 54 689 824 B with indirect off (amended 2026-10-30 (owner), was 54 689 792); unchanged with it on | the headless `frame_bytes` test, recorded as a reading |
 | Section 4, edit cost (`tool_ops`) | 5 | lower or equal (a guess: the 16 MiB fill was most of a long capsule's cost) | `cargo bench -p vxe-world --bench edits`, dev box, lock, load |
 | Section 9, audio callback per block | 5 | the 64-silent-voices case within the spread of 64 fresh voices | `cargo bench -p vxe-audio --bench mixer` |
 | Section 2, frame time, hit and light passes | 9 | within the spread; lower if a march branch goes | the per-pass timer, both adapters |
@@ -535,6 +539,27 @@ Every reading names the machine, the commit, the lock and the load.
 1. **Packaging and order (owner, 2026-10-29).** One new plan for every new item; a lane now
    beside Plan 0050. Plans 0044 and 0045 re-gated to after Plan 0051, before M10. The shell
    keeps `AutoNoVsync` as its default.
+2. **Phase 2 bounds (owner, 2026-10-30).** Both accepted as built: the `count-in-box` volume
+   bound stays, so a `1 024^3` count over an empty world traps on fuel where it used to
+   complete with count 0 (the loose-bound price Risks names; a residency-aware bound would
+   need a `Host` trait change and is not wanted now). The `unsupported` bound is the
+   `7 d (max_region + 2)` formula; Phase 2's text is amended to it.
+3. **Phase 4 figure (owner, 2026-10-30).** The done-when and Budgets row read 54 689 824 B,
+   the volume's words plus its 32-byte uniform. The code stays as written.
+4. **Phase 5 bench (owner, 2026-10-30).** `tool` at 1.8 % over the base after the slab arena
+   is not accepted. The lane makes one more attempt (reserve the arena for the bounds' brick
+   rows up front, initialise only the slab rows inside the bounds) and re-reads under the
+   lock at a quiet load. If `tool` is still above the base, the lane stops and the question
+   returns here.
+5. **Phase 8 picks (owner, 2026-10-30).** Every row of Phase 7's table marked *owner pick* is
+   *remove*: `Upscaler::lanczos()` with `Reconstruction::Lanczos2`, `HistoryFetch::Bilinear`
+   and `Blend::Fixed`; `Reconstruction::Nearest`, `HistoryFetch::Nearest`, `Blend::Nearness`
+   and `StillClip::Never`; `CandidateDraw::Uniform` with `LIGHTING_UNIFORM_DRAW` (its
+   constant lives in `march.wgsl`, so that removal waits for Plan 0050's merge and is
+   otherwise done); `ProbeVolume::set_light_restarts`. Rows marked *keep* stay as
+   instruments; rows marked *keep (ADR)* stay. No row is *ask the architect*. When one
+   variant of an `UpTuning` axis is left, its selector goes with the arm, as the table's
+   `UpTuning` row says.
 
 ## Implementation log
 
