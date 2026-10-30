@@ -10,14 +10,24 @@
 > control is the `(1, 1, 1)` slab; analytic bars leave out hits near the mirror window's faces;
 > a new Phase 2 puts the plane code's normal on codes 0..=62 so a zero component is exact
 > (ADR-0038, proposed); the closing phases follow as Phases 3 to 6. Owner answers 5 to 7.
+> **Amended:** 2026-10-30 (architect, after Phase 5's outcome (c)): the flat-faced boxes are
+> a fault of the surface itself (one clipped cube per voxel, ADR-0011), not of the closing
+> rule, and no closing rule reaches them; they go to
+> [Plan 0053](0053-one-voxel-features-on-the-contour-surface-majority-fit-and-a-normal-field.md)
+> with [ADR-0040](../adrs/0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md)
+> (proposed). Phase 6 is unblocked and rewritten: the losers and `old` go, the window's cracks
+> palette is fixed, the showcase golden is re-blessed by name. The closing rule's ADR is
+> [ADR-0039](../adrs/0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md)
+> (proposed, accepted at this plan's close).
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look decision: "smooth
 > and natural rock, not visible cubes")
 > **Related ADRs:** [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
 > (the per-voxel plane and its hit rule, which this plan closes the cracks of; its Negative
 > consequences name the crude offset and the shadow-ray artifacts);
 > [ADR-0038](../adrs/0038-the-contour-plane-code-holds-a-zero-normal-component-exactly.md)
-> (proposed: the plane code's scale, Phase 2). The closing rule's ADR comes before Phase 4:
-> see Decision.
+> (proposed: the plane code's scale, Phase 2);
+> [ADR-0039](../adrs/0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md)
+> (proposed: the closing rule, written 2026-10-30 from Phase 3's readings).
 > **Source:** the owner at Plan 0049's live session 2, 2026-10-29 (`LIGHT-FEEDBACK.md`,
 > finding 5; screenshots `wedges`, `step3` and `step5` in
 > `.git/lane-archive/plan-0049/session2/`): dark triangular wedges where a ledge meets the wall
@@ -120,9 +130,18 @@ on every axis; each reading prints how many hits it left out. The level poses ar
 take every hit.
 
 **The closing rule's ADR.** The closing rule is a revisitable tradeoff with named
-alternatives, so the architect writes the next free ADR as an amendment before Phase 4 lands
-the pick as the default, naming the kept rule and the two rejected ones with Phase 3's
-readings. `docs/adrs/README.md` has the number.
+alternatives. ADR-0039 records the kept rule (snap) and the two rejected ones with Phase 3's
+readings; it was owed before Phase 4 and written at the 2026-10-30 amendment.
+
+**What this plan's rule does not reach (amendment, 2026-10-30).** Phase 5 found voxel-sized
+flat-faced boxes at both poses, in `old` and in snap alike, reading class 0 in the cracks
+view: one-voxel rods and pillars along walls and ledge edges, lone cubes on floors and
+ceilings, often two-toned in the normals view. They are not cracks. ADR-0011's surface is one
+cube per solid voxel clipped by one plane, and the plane of a one-voxel feature is fit from a
+27-voxel neighbourhood its base surface dominates: a rod on a floor keeps a flat top a third
+of a voxel up and vertical cube faces for sides, and the floor voxels beside it tilt their
+normals toward it. No rule that acts after a pass can round a feature whose exposed faces are
+hit directly from air. Plan 0053 carries the fix and its measurement.
 
 ## Architecture diagram
 
@@ -329,16 +348,43 @@ the adapter; every asserted reading, golden and gate stays on lavapipe.
   slivers are gone and the default stands; (b) another candidate or sweep value looks better,
   and it becomes the default; (c) something remains, named by pose and place.
 
-### Phase 6: The owner's findings, and the losers removed
+### Phase 6: The losers removed, the window's cracks palette, the showcase golden
 - **Owner skill:** dev
-- **What:** on (b), set the owner's pick as the default and re-read Phase 4's test and
-  goldens. On (c) for a class a candidate covers, sweep that candidate and re-read; a remaining
-  fault outside the classes stops for an architect amendment. On (a), log "not needed". Then
-  the losing candidates and `closing old` are removed with their flags and banner modes, as
-  Plan 0048's rule says (owner, 2026-10-28), unless the owner keeps one for comparison.
-- **Files touched:** as Phases 3 and 4, this plan's log.
-- **Done when:** the log records the outcome, Phase 4's test passes at the default, and no
-  losing candidate's flag remains in `--help` or the banner.
+- **What (rewritten at the 2026-10-30 amendment; the original read "on (c) for a class a
+  candidate covers, sweep that candidate; a remaining fault outside the classes stops for an
+  architect amendment"):** Phase 5's outcome (c) is a fault outside the classes and goes to
+  Plan 0053; this phase does not touch it. It removes the losing candidates (`extend-0.25`,
+  `extend-0.5`, `blend`) and `closing old` with their flag bits, `--closing` values and banner
+  modes, as Plan 0048's rule says (owner, 2026-10-28); the shadow push stays selectable (owner,
+  2026-10-29). `CrackClosing` keeps `Snap` alone, or goes, dev's call, with `SurfaceTuning`
+  and the pinned tests following: `a_tilted_slab_has_cracks_today` is deleted (its claim is
+  Phase 1's log row), `axis_planes_have_no_cracks` and `crack_classes` read the default rule,
+  and the sweeps that compared rules go with the rules. It fixes the window's cracks view:
+  the composite writes the palette after the tone map (or marks the view as a palette the
+  upscaler and tone map pass through), so the window shows red, yellow, blue and magenta as
+  the headless reading does. It re-blesses `showcase_hall_golden_is_lit_by_its_four_ores`
+  under owner answer 2 (a contour golden snap moved), logging the pre-plan drift (12.4601 % at
+  00ca974, before any change of this plan) beside snap's 13.5781 %.
+- **Files touched:** `crates/vxe-render/src/shaders/march.wgsl`, `light.wgsl`,
+  `composite.wgsl`, `crates/vxe-render/src/marcher.rs`, `crates/vxe-render/src/lib.rs`,
+  `apps/flythrough/src/lib.rs`, `main.rs`, `hud.rs`, `apps/flythrough/tests/look.rs`,
+  `sharpness.rs`, the showcase golden PNG, `docs/nfr.md` §2 (the snap-alone reading becomes
+  the tree's), this plan's log.
+- **Done when:**
+  1. No losing candidate's value remains in `--help`, the banner or `CrackClosing`;
+     `--closing` is gone or takes `snap` alone; `--shadow-push on` still works and is named on
+     the banner.
+  2. `the_closing_rule_leaves_no_crack` passes at the default; every contour golden reads the
+     same pixels as Phase 4's re-render except the showcase golden, re-blessed and named in the
+     log with both shares; the face goldens read byte for byte.
+  3. The hit pass at the level's spawn on both adapters, read as Phase 3 did against the
+     pre-plan binary, is within +5 % (RTX) and +10 % (Radeon), and `nfr.md` §2 carries it as
+     the tree's reading, replacing "snap alone".
+  4. A headless render of the vein pose in the cracks view through the window's post chain
+     (the upscaler on, the tone map on) reads its class 3 pixels blue and its self-hit pixels
+     magenta within 32/255 per channel of the palette, and the test that pins it is named in
+     the log.
+  5. The full profile is green at the tip, under the perf lock, with the counts in the log.
 
 ## Data shapes
 
@@ -432,7 +478,7 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 | 3: The closing rules, each measured | dev | done | e9cae0e |
 | 4: The pick as the default | dev | done | 760950b |
 | 5: The owner's windowed check | human | done (c) | committed with this row |
-| 6: The owner's findings, and the losers removed | dev | not started | |
+| 6: The losers removed, the window's cracks palette, the showcase golden | dev | not started (unblocked 2026-10-30) | |
 
 #### Phase 1
 
@@ -789,6 +835,8 @@ extend 0.25 5.928, extend 0.5 5.926, blend 35.151 (light pre 7.005, blend 13.439
   yellow, 482 blue, 64 magenta pixels; snap 0, 0, 482, 64.
 - Phase 6's rule: this fault is outside classes 1 to 3, so it stops for an architect
   amendment.
+- Architect, 2026-10-30: routed to Plan 0053 (ADR-0040 proposed); Phase 6 rewritten and
+  unblocked, see the header's second amendment.
 
 ### Notes
 
@@ -829,3 +877,8 @@ extend 0.25 5.928, extend 0.5 5.926, blend 35.151 (light pre 7.005, blend 13.439
   amendment for the flat-faced boxes.
 
 ## Followups
+
+- `castle_gate_golden`'s peak RSS reads 953 MB alone against its 1 GiB bar and 1.49 GB once in
+  a loaded bless run (Phase 3): the bar or the test's footprint needs a look before the next
+  plan that grows the mirror.
+- The flat-faced boxes of Phase 5: Plan 0053.
