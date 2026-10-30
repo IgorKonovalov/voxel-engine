@@ -64,8 +64,8 @@ fn camera() -> Camera {
 
 /// A frame with indirect light off (the default) holds no probe volume, before any encode
 /// and after one; the first encode with indirect light on builds it, and `frame_bytes` grows
-/// by exactly the volume: its atlases, state and scratch (12 615 680 + 1 056 768 words,
-/// 54 689 792 B) and its 32-byte uniform.
+/// by exactly the volume, 54 689 824 B: its atlases, state and scratch (12 615 680 +
+/// 1 056 768 words, 54 689 792 B) and its 32-byte uniform.
 #[test]
 fn the_probe_volume_is_built_on_the_first_encode_with_indirect_light() {
     let Some((device, queue)) = device() else {
@@ -96,7 +96,7 @@ fn the_probe_volume_is_built_on_the_first_encode_with_indirect_light() {
         "frame_bytes {before} B with indirect off, {} B after an encode with it on (+{grown} B)",
         frame.frame_bytes()
     );
-    assert_eq!(grown, 54_689_792 + uniform);
+    assert_eq!(grown, 54_689_824);
     assert_eq!(grown, frame.probes().bytes());
 }
 

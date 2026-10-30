@@ -573,8 +573,8 @@ Every reading names the machine, the commit, the lock and the load.
 | 1: the world's two defects and its two unchecked doors | dev | done | 47eda2e |
 | 2: the wasm host charges before it works | dev | done | b0640c9 |
 | 3: the testbed fails out loud, and the logic fails the same way twice | dev | done | a392e47 |
-| 4: the frame's idle probe volume, and the small corrections | dev | not started | |
-| 5: spans for the rows a shape touches, and smoothers that settle | dev | done; `tool` still 1.4 % over the base after the second follow-up (owner question) | 14f3841, 885fc1e, second follow-up committed with this row |
+| 4: the frame's idle probe volume, and the small corrections | dev | done | code in 1fdac4d; committed with this row |
+| 5: spans for the rows a shape touches, and smoothers that settle | dev | done (`tool` 1.4 % over the base, within the amended 2 %) | 14f3841, 885fc1e, c130daf |
 | 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | done (golden wall-time readings in Notes) | fcc87bd |
 | 7: the lab-mode inventory, and the removals that need no pick | dev | not started | |
 | 8: the owner picks what else goes | human | not started | |
@@ -769,6 +769,59 @@ Every reading names the machine, the commit, the lock and the load.
   `binary(shutdown)`, under the exclusive perf lock on lavapipe at load 6.0: 5 of 5 passed.
   `-p flythrough --features wasm` `binary(component)`: 3 of 3. Clippy (workspace, and
   `-p flythrough --features wasm`) and fmt clean.
+- Phase 4: `Frame::probes` is a `OnceLock<ProbeVolume>`, built on the first encode with
+  indirect light, on `probes()`, on `probes_mut()` or on a spacing change, which drops the
+  old volume first; the frame keeps a `wgpu::Device` clone to build it. The gather bind
+  group is built only with indirect light. Deviation: `probes()` keeps its `&ProbeVolume`
+  signature and builds the volume on first call (the plan lists `probes_mut` and spacing
+  changes), so the testbed and tests are unchanged.
+- Phase 4: `SyncStats::buffers_created` and `copies` are removed with their assertions
+  (`crates/vxe-render/tests/mirror.rs`, `apps/flythrough/tests/level_mirror.rs`).
+  `FrameInputs::dt` carries `Frame::dt` into FSR 2's `delta_time`.
+- Phase 4: `params_for` no longer writes the lamp history. `Params::lamp_pose` (the old
+  `_pad5`, which the shaders read as padding) carries `offset_right`, `offset_down` and
+  `turn`; the encode's `LampKey` takes them with the intensity, the cone's cosines and the
+  shadow bit from the `Params` it is given, and `Frame::lamp_changed` reports the decision.
+- Phase 4: `limits_for` returns `Result<wgpu::Limits, LimitsError>`, capped at the offer;
+  `Err` names `max_storage_buffers_per_shader_stage` below 11. `limits_within` is the
+  headless form for unit tests. `ShardLayout` loses `shards` (always `MAX_SHARDS`).
+  Deviation: callers outside `Files touched` take `.expect` or `?`: `apps/flythrough/src/
+  main.rs` (prints the reason and requests the floor so the device request fails on it),
+  `apps/flythrough/examples/hero.rs`, `apps/flythrough/tests/support/mod.rs`,
+  `apps/flythrough/tests/golden.rs`, `crates/vxe-render/examples/pipeline_times.rs`,
+  `crates/vxe-render/tests/{exposure,translucent,walk}.rs`.
+- Phase 4: `check-test-tiers.mjs` reads examples a manifest marks `test = true` and a binary's
+  `src/main.rs` with its declared modules, by their `#[cfg(test)]` items (`--headless`
+  counts there only beside `Command::new`). The fixture's new files landed in `01c0b6e`
+  (staged in this lane when that commit was made); the script and the fixture README in
+  `1fdac4d`. Fixture: exit 1, `5 finding(s) across 7 test binaries`, the example and the
+  binary-module cases among them; tree: exit 0 (`63 test files and 2 example and binary
+  test modules`).
+- Phase 4 deviation: `apps/flythrough/Cargo.toml` takes the engine crates from the
+  workspace table, which gains `vxe-app` and `vxe-render` (root `Cargo.toml`, outside
+  `Files touched`).
+- Phase 4 reading (lavapipe, exclusive perf lock, `crates/vxe-render/tests/frame.rs`, 64 x 64
+  frame, load 2.2 at the start): `frame_bytes` 412 008 B with indirect off, before an encode
+  and after one; 55 101 832 B after an encode with it on, +54 689 824 B, equal to
+  `ProbeVolume::bytes`; the test asserts the plain `54_689_824`. Deviation: the reading is
+  not written into `docs/nfr.md` section 3 (the lane writes no nfr; the close review does).
+- Phase 4: `a_params_built_between_encodes_does_not_move_the_lamp_the_encode_compares` reads
+  `lamp_changed` false for a after a with a `Params` for b built between, true for b after
+  a, false for b after b with one for a built between.
+- Phase 4 and 7 gate (the tree of this row's commit, `1fdac4d` plus the plain literal):
+  `--profile gpu` on lavapipe under the exclusive perf lock, load 5.9 at the start and 2.8
+  at the end: 180 run, 180 passed, 30 skipped, exit 0 (`live/gpu7.log`). The slow goldens
+  and every golden-asserting test, `--profile full`, one thread, captured output, load 2.2
+  to 3.7: 46 of 46 passed (`live/goldens7.log`); every golden prints `0.0000 % of pixels
+  differ by more than 2/255` (castle_gate, primary, headlamp, cutaway_level, dark_cave,
+  fsr2, dark_cave_half, indirect, lod, showcase_hall, translucent, upscaled, the four
+  look and four look_wall goldens), the six split goldens `0 bytes differ`, and the HUD's
+  pixel-exact and byte-for-byte tests pass. The harness's `assert_golden` measures pixels
+  over 2/255, not bytes. Quick tier: 535 run, 533 passed, 2 timed out at 30 s (`castle`,
+  `replay`) at load 4.6 rising to 24.4 (the other lane); alone they pass at 7.9 s and
+  14.1 s (load 18.3). `determinism::castle_vector` and `determinism::showcase_vector`
+  alone: pass at 5.7 s and 5.1 s (load 3.7 to 5.1). Doctests, clippy `-D warnings` and fmt
+  clean.
 - Phase 5 (committed before Phase 4, which needs the GPU lock): `OpRows` keeps spans in
   slabs, one per brick row `(by, bz)` of the bounds (64 entries and one solved word each),
   allocated on first use; the sphere's slabs are all walked up front, each by
