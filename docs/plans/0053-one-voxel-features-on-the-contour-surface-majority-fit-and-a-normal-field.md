@@ -1,6 +1,7 @@
 # 0053: One-voxel features on the contour surface: a box metric, a majority-filtered plane fit, a normal field, and the owner's call
 
-> **Status:** draft
+> **Status:** approved
+> **Approved:** 2026-10-30 (owner, as drafted; the order against Plan 0051 and the two cost bars stay the owner's to set)
 > **Created:** 2026-10-30
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look decision: "smooth
 > and natural rock, not visible cubes")
