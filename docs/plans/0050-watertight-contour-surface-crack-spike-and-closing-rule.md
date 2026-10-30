@@ -384,7 +384,10 @@ the adapter; every asserted reading, golden and gate stays on lavapipe.
      (the upscaler on, the tone map on) reads its class 3 pixels blue and its self-hit pixels
      magenta within 32/255 per channel of the palette, and the test that pins it is named in
      the log.
-  5. The full profile is green at the tip, under the perf lock, with the counts in the log.
+  5. The quick and gpu profiles are green at the tip (gpu under the perf lock), with the
+     counts in the log. Amended 2026-10-30 (owner): it read "the full profile is green at the
+     tip"; the full tier now runs once per plan, in the close review, on the lane tree that
+     already holds main (main's 81d99f8), and that run is this plan's.
 
 ## Data shapes
 
