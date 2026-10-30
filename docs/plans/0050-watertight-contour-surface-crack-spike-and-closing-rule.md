@@ -375,8 +375,13 @@ the adapter; every asserted reading, golden and gate stays on lavapipe.
      `--closing` is gone or takes `snap` alone; `--shadow-push on` still works and is named on
      the banner.
   2. `the_closing_rule_leaves_no_crack` passes at the default; every contour golden reads the
-     same pixels as Phase 4's re-render except the showcase golden, re-blessed and named in the
-     log with both shares; the face goldens read byte for byte.
+     same pixels as Phase 4's re-render except those that move when `Old` goes, each
+     re-blessed and named in the log with its share against Phase 4's re-render: the showcase
+     golden (both shares, the pre-plan drift and snap's) and, amended 2026-10-30 (owner answer
+     2), `look_contour.png` and `look_wall_contour.png`, which Phase 4 never re-rendered
+     because they take `SurfaceTuning::default()` and that stayed `Old` (a scratch read with
+     the default moved to `Snap`: 0.7639 % and 1.2274 % over 2/255, loaded). The face goldens
+     read byte for byte (`look_wall_face.png` read 0.0000 % in the same scratch).
   3. The hit pass at the level's spawn on both adapters, read as Phase 3 did against the
      pre-plan binary, is within +5 % (RTX) and +10 % (Radeon), and `nfr.md` §2 carries it as
      the tree's reading, replacing "snap alone".
@@ -466,6 +471,11 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 7. **The code's own steps (owner, 2026-10-29).** Folded into this plan as Phase 2, with the
    scale-62 code of ADR-0038 over snapping on decode; a zero component must be exact, not
    patched by the closing rule.
+
+8. **Phase 6's two look goldens (orchestrator under owner answer 2, 2026-10-30).** Removing
+   `Old` moves `look_contour.png` and `look_wall_contour.png`, which Phase 4 left on the
+   default tuning. Answer 2 already says a contour golden that moves is re-blessed by name
+   with its share; done-when 2 is amended to list them. No new rule and no second shader path.
 
 ## Implementation log
 
