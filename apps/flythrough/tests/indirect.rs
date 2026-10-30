@@ -713,14 +713,13 @@ fn first_under(series: &[f32], bar: f32) -> Option<usize> {
 /// the lamp switched off through `Frame::set_lighting` and `frames` more frames: the
 /// floor-centre indirect before the switch and at each frame after it, and whether each
 /// frame's update ran inside the light-change window.
-fn lamp_off_fade(restarts: bool, frames: u32) -> Option<(f32, Vec<f32>, Vec<bool>)> {
+fn lamp_off_fade(frames: u32) -> Option<(f32, Vec<f32>, Vec<bool>)> {
     let world = dull_box_world();
     let (device, queue) = software_device(64 << 20)?;
     let mut gpu = GpuWorld::new(&device, world.extent());
     gpu.sync_now(&world, &device, &queue).unwrap();
     let mut f = FloorProbe::new(&device, BOX_MIN[0]);
     f.camera.position.z = 32.0;
-    f.frame.probes_mut().set_light_restarts(restarts);
     let on = Lighting {
         lamp: true,
         ..f.frame.lighting()
@@ -746,7 +745,7 @@ fn lamp_off_fade(restarts: bool, frames: u32) -> Option<(f32, Vec<f32>, Vec<bool
 /// light-change window for exactly its 16 frames, which trace one probe in 4 a frame.
 #[test]
 fn switching_the_lamp_off_drops_the_probe_history() {
-    let Some((f0, series, window)) = lamp_off_fade(true, 160) else {
+    let Some((f0, series, window)) = lamp_off_fade(160) else {
         return;
     };
     let first = first_under(&series, 0.1 * f0);
@@ -761,24 +760,6 @@ fn switching_the_lamp_off_drops_the_probe_history() {
     for (i, &v) in series.iter().enumerate().skip(23) {
         assert!(v < 0.1 * f0, "frame {}: {v} against F0 {f0}", i + 1);
     }
-}
-
-/// The comparison for the lamp-off fade: the same switch with the light-change restart off,
-/// the probes fading at their settled hysteresis. Prints the first frame under 10 % of `F0`
-/// in 1600 frames; ignored by default (about 1900 frames on the software adapter).
-#[test]
-#[ignore = "a reading for the log, not a bar"]
-fn the_lamp_off_fade_without_the_window() {
-    let Some((f0, series, window)) = lamp_off_fade(false, 1600) else {
-        return;
-    };
-    let first = first_under(&series, 0.1 * f0);
-    println!(
-        "lamp off, restarts off: F0 {f0:.5}; first frame under 10 %: {first:?} in {} frames; every 100: {:?}",
-        series.len(),
-        series.iter().step_by(100).collect::<Vec<_>>()
-    );
-    assert!(window.iter().all(|&w| !w));
 }
 
 /// Emission step: in the furnace after 256 frames (floor-centre indirect `F0` near pi),

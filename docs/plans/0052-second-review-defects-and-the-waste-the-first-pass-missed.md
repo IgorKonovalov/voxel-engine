@@ -575,10 +575,10 @@ Every reading names the machine, the commit, the lock and the load.
 | 3: the testbed fails out loud, and the logic fails the same way twice | dev | done | a392e47 |
 | 4: the frame's idle probe volume, and the small corrections | dev | done | code in 1fdac4d; f3fabfb |
 | 5: spans for the rows a shape touches, and smoothers that settle | dev | done (`tool` 1.4 % over the base, within the amended 2 %) | 14f3841, 885fc1e, c130daf |
-| 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | done (golden wall-time readings in Notes) | fcc87bd, slow-list follow-up committed with this row |
+| 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | done (golden wall-time readings in Notes) | fcc87bd, c7ed5a5 |
 | 7: the lab-mode inventory, and the removals that need no pick | dev | done | code in 1fdac4d; 033be68 |
-| 8: the owner picks what else goes | human | not started | |
-| 9: the owner's removals | dev | not started | |
+| 8: the owner picks what else goes | human | done (owner answer 5) | 9a4c99c |
+| 9: the owner's removals | dev | removals done but for the `march.wgsl` constant (deferred); the pass-time done-when is not met as written on the RTX light pass (owner question) | committed with this row |
 
 ### Phase 7 inventory
 
@@ -884,6 +884,76 @@ Lines at `fcc87bd` ("mr" is `crates/vxe-render/src/marcher.rs`, "sh/"
 - Phase 7 finding: the plan says the comparison walks have no caller; `LightParams { skips:
   false }` and `{ masks: false }` are used in `crates/vxe-render/tests/walk.rs` and
   `apps/flythrough/tests/golden.rs` (the every-skip-off equality).
+
+- Phase 9 (owner answer 5): removed `Upscaler::lanczos()`, `Reconstruction` (`Lanczos2`,
+  `Nearest`, `Gaussian`), `HistoryFetch` (`Bilinear`, `Nearest`, `CatmullRom`), `Blend`
+  (`Fixed`, `Nearness`, `MeanNearness`) and `StillClip` (`Never`, `LightChange`): every axis
+  had one variant left, so each selector went with its losing arms, from `Upscaler`,
+  `UpscaleUniform` and its two WGSL mirrors (`UpTuning` in `upscale.wgsl`, `InLamp` in
+  `fsr2/input.wgsl`, both now 80 B). `upscale.wgsl` keeps one path: the Gaussian over the
+  3 x 3, the Catmull-Rom fetch, the mean-nearness blend, the light-change still clip;
+  `lanczos2`, the `RECON_`, `FETCH_` and `BLEND_` constants and the bilinear and nearest
+  fetches are gone. `Upscaler`'s doc now states the one mechanism.
+- Phase 9: removed `CandidateDraw` (both variants: one was left), `Lighting::draw`, the Rust
+  `LIGHTING_UNIFORM_DRAW` and its flag mapping, and `light.wgsl`'s uniform-draw branch in
+  `candidate` (the table's binding `count` became `chunks`, beside the face count's).
+  Deferred until Plan 0050 merges: the `LIGHTING_UNIFORM_DRAW` constant in `march.wgsl`
+  (line 286; now unread), and `Params::light_span` (the `march.wgsl` `Params` field and its
+  Rust mirror in `marcher.rs`), which only the uniform draw read and no shader reads now.
+- Phase 9: removed `ProbeVolume::set_light_restarts` and `light_restarts`; the light-change
+  window opens on every lamp change; `set_probe_spacing` carries the origin and the update
+  switch.
+- Phase 9 tests: `indirect.rs` loses the ignored `the_lamp_off_fade_without_the_window`
+  (it existed only for the restart switch) and `lamp_off_fade`'s switch argument;
+  `upscale.rs`'s two ignored no-bar diagnostics lose their rows for the removed variants
+  (`the_upscalers_sharpness_readings` reads the default alone; the lamp readings lose
+  "still never clipped"); `support/rigs.rs`'s first-upscaler reference constants keep
+  their values, their doc naming the settings instead of the removed constructor.
+- Phase 9 deviation (the lane's test re-derivation rule): in `lights.rs`,
+  `the_candidate_table_favours_near_emitters_without_bias` compared the table's one-frame
+  RMSE with the uniform draw's, rendered beside it. The claim and the bar stay (at most
+  half of the uniform draw's on the same scene); the reference is now the uniform draw's
+  RMSE read before its removal, `BUFFER_WIDE_DRAW_RMSE_REFERENCE = 1.1403`. Readings,
+  lavapipe, exclusive perf lock: before the removal (the `033be68` tree's test binary,
+  load 7.0, twice) table 0.3953, uniform 1.1403, ratio 0.347, both runs identical; after
+  (this row's tree) table 0.3953 against the reference 1.1403, ratio 0.347, pass
+  (`live/uniform-rmse.log`, `live/goldens9.log`).
+- Phase 9 sweep: `grep` of `crates/` and `apps/` for `CandidateDraw`, `UNIFORM_DRAW`,
+  `Reconstruction`, `HistoryFetch`, `StillClip`, `Blend::`, `Upscaler::lanczos`,
+  `light_restarts`, `RECON_`, `FETCH_`, `BLEND_`, `still_clip` finds only `march.wgsl:286`.
+- Phase 9 gate: `--profile gpu` on lavapipe under the exclusive perf lock, load 4.8 at the
+  start and 1.9 at the end: 181 run, 181 passed, 28 skipped (the showcase golden now in the
+  tier). The first run of it failed every render test on `light.wgsl`'s `count`
+  redefinition; fixed before this commit. Captured goldens (`--profile full`, one thread,
+  load 1.9 to 4.4): 45 of 45 passed; every golden `0.0000 %` over 2/255 as in Phase 4's
+  list, the six split goldens and FSR 2's bypass `0 bytes differ`. Quick: 535 run, 533
+  passed, 2 timed out at 30 s (`castle`, `replay`) at load 4.5 rising to 28.1; alone they
+  pass at 8.8 s and 14.4 s (load 26.0). Doctests, clippy (`--workspace --all-targets` and
+  `-p flythrough --features wasm`) `-D warnings`, fmt, `check-test-tiers` and
+  `check-comment-hygiene` clean.
+- Phase 9 readings: `flythrough --level --headless --render 1920x1080 --frames 300 --adapter
+  NVIDIA|AMD` (nfr section 2's latest command line; the level's lamp is on by default),
+  the spawn pose, the defaults (`own` 1.5, 1280 x 720 internal, half lighting), per-pass
+  timestamps, median of 30 frames, release; base the `c7ed5a5` tree (before Phase 9), tip
+  this row's tree; interleaved base then tip, three runs each, exclusive perf lock, started
+  once the 1-minute load was under 2 (load at the runs' starts 1.28 to 2.45; the RTX tip's
+  third run at 2.45 and the Radeon's first pair at 2.42 and 2.20 are loaded)
+  (`live/pass-times9.log`). The RTX selected with `--adapter NVIDIA`, the Radeon iGPU
+  (Cezanne, RADV RENOIR) with `--adapter AMD`. Milliseconds, base runs / tip runs:
+
+| adapter | hit | light | upscale | gpu frame |
+|---|---|---|---|---|
+| RTX 3080 Laptop | 0.586, 0.602, 0.594 / 0.592, 0.589, 0.587 | 0.884, 0.913, 0.897 / 0.888, 0.883, 0.881 | 0.540, 0.555, 0.549 / 0.496, 0.494, 0.491 | 4.400, 4.511, 4.457 / 4.422, 4.357, 4.339 |
+| Radeon (Cezanne, RADV) | 4.277, 4.262, 4.339 / 4.265, 4.300, 4.286 | 7.150, 7.024, 7.046 / 7.019, 7.039, 7.029 | 3.273, 3.239, 3.282 / 2.995, 3.009, 3.015 | 29.209, 29.004, 29.948 / 28.542, 29.085, 28.713 |
+
+- Phase 9 finding (done-when): nfr section 2's latest readings of this command line are Plan
+  0047 Phase 6's (lamp on: RTX light 0.816 to 0.826 ms, Radeon light 7.004 to 7.132 ms); it
+  names no hit figure for it (the nearest, Plan 0040's 1.363 to 1.395 ms, is at
+  `--upscaler off`, 1080p internal). The Radeon light pass at the tip (7.019 to 7.039) is
+  inside 0047's spread; the RTX light pass (0.881 to 0.888) is above it by about 7 to 8 %, and
+  so is the base's (0.884 to 0.913), so the gap is there before Phase 9. Hit and light
+  are within the base's spread on both adapters; the upscale pass reads about 10 % lower on
+  the RTX and about 8 % lower on the Radeon (medians). Stopped for the owner.
 
 ### Close triggers
 

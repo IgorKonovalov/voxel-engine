@@ -133,9 +133,6 @@ pub const LIGHTING_LAMP_CHANGED: u32 = 1 << 9;
 pub const LIGHTING_EMISSIVE_GUARD: u32 = 1 << 10;
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
 pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
-/// `Params::lighting` bit: candidates are drawn uniformly over the buffer
-/// ([`CandidateDraw::Uniform`]).
-pub const LIGHTING_UNIFORM_DRAW: u32 = 1 << 7;
 /// `Params::lighting` bit: the composite's tone map is the identity clamp.
 pub const LIGHTING_IDENTITY_TONE_MAP: u32 = 1 << 6;
 /// `Params::lighting` bit: the probe passes ran and the composite adds the gathered indirect
@@ -483,17 +480,6 @@ impl LightingResolution {
 /// frame, so a still camera's upsampled image holds still.
 const HALF_OFFSET: [u32; 2] = [0, 1];
 
-/// Where the light pass draws its emissive candidates from.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CandidateDraw {
-    /// The frame's table of emitter chunks near the camera, by power over squared distance
-    /// (ADR-0025).
-    #[default]
-    Table,
-    /// Uniformly over the whole light-sample buffer; for tests.
-    Uniform,
-}
-
 /// The ratio of the output size to the internal size the frame renders at, on each edge.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RenderScale {
@@ -560,76 +546,35 @@ pub fn jitter_at(frame: u32, phases: u32) -> [f32; 2] {
     [halton(i, 2) - 0.5, halton(i, 3) - 0.5]
 }
 
-/// How the upscale pass reconstructs this frame's colour at an output pixel from the internal
-/// samples around it; `d` is a sample's distance from the output pixel's centre, in output
-/// pixels.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Reconstruction {
-    /// The Lanczos-2 weighted mean of the 5 x 5 samples around the nearest.
-    Lanczos2,
-    /// The nearest sample alone.
-    Nearest,
-    /// `exp(-2.29 (d / width)^2)` over the 3 x 3 samples around the nearest: at width 1,
-    /// Karis's Gaussian fit of a Blackman-Harris window of width 3.3 ("High Quality Temporal
-    /// Supersampling", 2014).
-    Gaussian,
-}
-
-/// How the upscale pass reads last frame's history at the reprojected position.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HistoryFetch {
-    Bilinear,
-    /// The texel the position falls in.
-    Nearest,
-    /// Catmull-Rom over the 4 x 4 texels around the position, held non-negative.
-    CatmullRom,
-}
-
-/// The current colour's share of the upscale pass's blend where history is kept.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Blend {
-    /// [`Upscaler::alpha`].
-    Fixed,
-    /// [`Upscaler::alpha`] times the nearest sample's kernel weight over the kernel's peak: a
-    /// sample far from the output pixel's centre counts for less.
-    Nearness,
-    /// As [`Blend::Nearness`], divided by the nearest sample's mean kernel weight at the
-    /// frame's scale (its sample uniform over one internal pixel around the centre), at most 1:
-    /// the current colour's mean share stays [`Upscaler::alpha`].
-    MeanNearness,
-}
-
-/// Whether the upscale pass clips a still pixel's history (one that moved less than 0.01
-/// output pixels), which is otherwise the unclipped average of the jittered samples.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StillClip {
-    /// Never.
-    Never,
-    /// Where the light at the hit changed: the lamp's unshadowed term moved past
-    /// [`Upscaler::change_rel`] and [`Upscaler::change_abs`] since the lamp of
-    /// [`Upscaler::change_frames`] frames before, or an emission scale changed within
-    /// [`EMISSION_CHANGE_FRAMES`]. Such a pixel is clipped and blended as a moving one.
-    LightChange,
-}
-
-/// The upscale pass's reconstruction, history fetch and blend ([`Frame::set_upscaler`]).
+/// The upscale pass's tuning ([`Frame::set_upscaler`]). This frame's colour at an output
+/// pixel is reconstructed from the 3 x 3 internal samples around the nearest with the kernel
+/// `exp(-2.29 (d / width)^2)`, `d` a sample's distance from the output pixel's centre in
+/// output pixels: at width 1, Karis's Gaussian fit of a Blackman-Harris window of width 3.3
+/// ("High Quality Temporal Supersampling", 2014). Last frame's history is read at the
+/// reprojected position by Catmull-Rom over the 4 x 4 texels around it, held non-negative.
+/// The current colour's share of the blend where history is kept is the alpha times the
+/// nearest sample's kernel weight over the kernel's peak, divided by the nearest sample's
+/// mean kernel weight at the frame's scale (its sample uniform over one internal pixel
+/// around the centre), at most 1: a sample far from the output pixel's centre counts for
+/// less, and the current colour's mean share stays the alpha. A still pixel (one whose
+/// history moved less than 0.01 output pixels) keeps its history unclipped unless the light
+/// at its hit changed: the lamp's unshadowed term moved past [`Upscaler::change_rel`] and
+/// [`Upscaler::change_abs`] since the lamp of [`Upscaler::change_frames`] frames before, or
+/// an emission scale changed within [`EMISSION_CHANGE_FRAMES`]; such a pixel is clipped and
+/// blended as a moving one (ADR-0024).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Upscaler {
-    pub reconstruction: Reconstruction,
-    /// The width of [`Reconstruction::Gaussian`].
+    /// The reconstruction kernel's width.
     pub width: f32,
-    pub history_fetch: HistoryFetch,
-    pub blend: Blend,
-    /// The current colour's weight in the blend (see [`Blend`]) where the history held still.
+    /// The current colour's weight in the blend where the history held still.
     pub alpha: f32,
     /// [`Upscaler::alpha`] where the history moved by 0.01 output pixels or more.
     pub alpha_moving: f32,
     /// The clip box around the 3 x 3 samples' YCoCg mean, in standard deviations (inside
     /// their minimum and maximum).
     pub clip_gamma: f32,
-    pub still_clip: StillClip,
-    /// A light change: the lamp's term moved by more than this share of the larger of the two
-    /// ([`StillClip::LightChange`]).
+    /// A light change: the lamp's term moved by more than this share of the larger of the
+    /// two.
     pub change_rel: f32,
     /// ... and by more than this, in the lamp's irradiance units.
     pub change_abs: f32,
@@ -646,37 +591,13 @@ impl Default for Upscaler {
     /// (ADR-0024).
     fn default() -> Self {
         Self {
-            reconstruction: Reconstruction::Gaussian,
             width: 0.6,
-            history_fetch: HistoryFetch::CatmullRom,
-            blend: Blend::MeanNearness,
             alpha: 0.1,
             alpha_moving: 0.2,
             clip_gamma: 1.0,
-            still_clip: StillClip::LightChange,
             change_rel: 0.1,
             change_abs: 0.01,
             change_frames: 24,
-        }
-    }
-}
-
-impl Upscaler {
-    /// The first upscaler's settings: Lanczos-2 over the 5 x 5, a bilinear fetch, and the
-    /// current colour at 0.1 everywhere. Kept for comparisons.
-    pub fn lanczos() -> Self {
-        Self {
-            reconstruction: Reconstruction::Lanczos2,
-            width: 1.0,
-            history_fetch: HistoryFetch::Bilinear,
-            blend: Blend::Fixed,
-            alpha: 0.1,
-            alpha_moving: 0.1,
-            clip_gamma: 1.0,
-            still_clip: StillClip::Never,
-            change_rel: 0.1,
-            change_abs: 0.01,
-            change_frames: 12,
         }
     }
 }
@@ -685,10 +606,6 @@ impl Upscaler {
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct UpscaleUniform {
-    reconstruction: u32,
-    fetch: u32,
-    blend: u32,
-    still_clip: u32,
     width: f32,
     alpha: f32,
     alpha_moving: f32,
@@ -733,21 +650,7 @@ impl Upscaler {
     /// The reconstruction kernel at offset `(x, y)` output pixels, 1 at the centre
     /// (`up_kernel` in `upscale.wgsl`).
     fn kernel(&self, x: f32, y: f32) -> f32 {
-        let lanczos2 = |x: f32| {
-            let a = std::f32::consts::PI * x.abs();
-            if a < 1e-4 {
-                1.0
-            } else if x.abs() >= 2.0 {
-                0.0
-            } else {
-                2.0 * a.sin() * (0.5 * a).sin() / (a * a)
-            }
-        };
-        match self.reconstruction {
-            Reconstruction::Lanczos2 => lanczos2(x) * lanczos2(y),
-            Reconstruction::Nearest => 1.0,
-            Reconstruction::Gaussian => (-2.29 * (x * x + y * y) / (self.width * self.width)).exp(),
-        }
+        (-2.29 * (x * x + y * y) / (self.width * self.width)).exp()
     }
 
     /// The nearest sample's mean kernel weight at `scale` output pixels per internal pixel:
@@ -766,25 +669,6 @@ impl Upscaler {
 
     fn uniform(&self, scale: f32, old: Lamp) -> UpscaleUniform {
         UpscaleUniform {
-            reconstruction: match self.reconstruction {
-                Reconstruction::Lanczos2 => 0,
-                Reconstruction::Nearest => 1,
-                Reconstruction::Gaussian => 2,
-            },
-            fetch: match self.history_fetch {
-                HistoryFetch::Bilinear => 0,
-                HistoryFetch::Nearest => 1,
-                HistoryFetch::CatmullRom => 2,
-            },
-            blend: match self.blend {
-                Blend::Fixed => 0,
-                Blend::Nearness => 1,
-                Blend::MeanNearness => 2,
-            },
-            still_clip: match self.still_clip {
-                StillClip::Never => 0,
-                StillClip::LightChange => 1,
-            },
             width: self.width,
             alpha: self.alpha,
             alpha_moving: self.alpha_moving,
@@ -816,7 +700,6 @@ pub struct Lighting {
     pub shadow_walk: ShadowWalk,
     /// The a-trous filter runs; off, the composite shows the light pass's raw irradiance.
     pub filter: bool,
-    pub draw: CandidateDraw,
     pub sampler: Sampler,
     pub history: HistoryKill,
     /// Frames of history the emissive part of the irradiance blends over at least (static
@@ -851,7 +734,6 @@ impl Default for Lighting {
             candidates: 8,
             shadow_walk: ShadowWalk::default(),
             filter: true,
-            draw: CandidateDraw::default(),
             sampler: Sampler::default(),
             history: HistoryKill::default(),
             emissive_history: DEFAULT_EMISSIVE_HISTORY,
@@ -897,11 +779,6 @@ impl Lighting {
             }
             | if self.sampler == Sampler::Reuse {
                 LIGHTING_REUSE
-            } else {
-                0
-            }
-            | if self.draw == CandidateDraw::Uniform {
-                LIGHTING_UNIFORM_DRAW
             } else {
                 0
             }
@@ -1789,15 +1666,12 @@ impl Frame {
     pub fn set_probe_spacing(&mut self, device: &wgpu::Device, spacing: u32) {
         if spacing != self.probe_spacing {
             let old = self.probes.take();
-            let carried = old
-                .as_ref()
-                .map(|o| (o.pinned_origin(), o.updates(), o.light_restarts()));
+            let carried = old.as_ref().map(|o| (o.pinned_origin(), o.updates()));
             drop(old);
             let mut v = ProbeVolume::new(device, spacing);
-            if let Some((origin, updates, restarts)) = carried {
+            if let Some((origin, updates)) = carried {
                 v.set_origin(origin);
                 v.set_updates(updates);
-                v.set_light_restarts(restarts);
             }
             self.probe_spacing = spacing;
             let _ = self.probes.set(v);
@@ -2365,10 +2239,7 @@ impl Frame {
             }
             self.lamp_changed
                 .store(lamp_changed, std::sync::atomic::Ordering::Relaxed);
-            // A volume not built yet holds the defaults, light restarts on.
-            if h.light_key.is_some_and(|k| k != key)
-                && self.probes.get().is_none_or(ProbeVolume::light_restarts)
-            {
+            if h.light_key.is_some_and(|k| k != key) {
                 h.light_window = crate::probes::WINDOW_FRAMES;
             }
             h.light_key = Some(key);
