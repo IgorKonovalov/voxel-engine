@@ -573,88 +573,18 @@ Every reading names the machine, the commit, the lock and the load.
 | 1: the world's two defects and its two unchecked doors | dev | done | 47eda2e |
 | 2: the wasm host charges before it works | dev | done | b0640c9 |
 | 3: the testbed fails out loud, and the logic fails the same way twice | dev | done | a392e47 |
-| 4: the frame's idle probe volume, and the small corrections | dev | done | code in 1fdac4d; committed with this row |
+| 4: the frame's idle probe volume, and the small corrections | dev | done | code in 1fdac4d; f3fabfb |
 | 5: spans for the rows a shape touches, and smoothers that settle | dev | done (`tool` 1.4 % over the base, within the amended 2 %) | 14f3841, 885fc1e, c130daf |
 | 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | done (golden wall-time readings in Notes) | fcc87bd |
-| 7: the lab-mode inventory, and the removals that need no pick | dev | not started | |
+| 7: the lab-mode inventory, and the removals that need no pick | dev | done | code in 1fdac4d; committed with this row |
 | 8: the owner picks what else goes | human | not started | |
 | 9: the owner's removals | dev | not started | |
 
-### Resume notes (2026-10-30, delete when Phase 7 lands)
+### Phase 7 inventory
 
-- **Done:** Phase 1 `47eda2e`, 2 `b0640c9`, 3 `a392e47`, 5 `14f3841` plus its follow-up
-  `885fc1e`, 6 `fcc87bd`. Status is `in-progress`. Stopped after the Phase 5 follow-up's
-  reading by the orchestrator's rule (one honest attempt, `tool` still over the base); see
-  the Phase 5 Notes. Phases 4 and 7 are written and checkpointed in one `wip(render)`
-  commit (the one after this note's first version), not gated on the GPU tier.
-- **Left for Phase 4:** run the gpu tier under the lock on lavapipe (`--profile gpu`; it now
-  holds `crates/vxe-render/tests/frame.rs`), check every golden byte-identical, record
-  `frame_bytes` at the default in `docs/nfr.md` section 3 (not in `Files touched`: a
-  deviation). Open question: `frame.rs` asserts the volume adds `54 689 792 + 32` B (the
-  plan's figure plus the volume's 32-byte `ProbeUniform`, which `ProbeVolume::bytes`
-  counts); the plan's done-when says exactly 54 689 792. Options: (a) the architect amends
-  the figure to 54 689 824; (b) keep the uniform resident in the `Frame` outside the lazy
-  volume so the difference is 54 689 792.
-- **Phase 4 as written in the wip commit:** `Frame::probes` is a `OnceLock<ProbeVolume>`
-  built on the first encode with indirect light, on `probes()` (it keeps its `&ProbeVolume`
-  signature, so the testbed and tests are unchanged: a deviation, the plan lists `probes_mut`
-  and spacing changes only), on `probes_mut()` or on a spacing change, which drops the old
-  volume first; the frame keeps a `wgpu::Device` clone to build it. The gather bind group is
-  built only with indirect light. `SyncStats::buffers_created` and `copies` are removed with
-  their assertions (`mirror.rs`, `level_mirror.rs`). `FrameInputs::dt` carries `Frame::dt`
-  into FSR 2's `delta_time`. `params_for` no longer writes the history: `Params::lamp_pose`
-  (the old `_pad5`, which the shaders read as padding) carries `offset_right`,
-  `offset_down`, `turn`, and the encode's `LampKey` takes it with the intensity, the cone's
-  cosines and the shadow bit; `Frame::lamp_changed` reports the decision.
-  `limits_for` returns `Result<wgpu::Limits, LimitsError>` (capped at the offer; `Err`
-  names `max_storage_buffers_per_shader_stage` below 11), with `limits_within` for the
-  headless unit tests; every caller takes `.expect` or `?`, and the testbed prints the
-  reason and requests the floor so the device request fails on it (callers outside
-  `Files touched`: `main.rs`, `hero.rs`, `tests/support/mod.rs`, `golden.rs`,
-  `examples/pipeline_times.rs`). `ShardLayout` loses `shards` (always `MAX_SHARDS`).
-  `check-test-tiers.mjs` reads examples marked `test = true` and a binary's `src/main.rs`
-  with its declared modules by their `#[cfg(test)]` items (`--headless` counts there only
-  beside `Command::new`); the fixture's new files landed in `01c0b6e` (staged in this
-  lane when that commit was made), and its README and the script are in the wip commit:
-  `5 finding(s) across 7 test binaries` on the fixture, exit 0 on the tree. The flythrough
-  manifest takes the engine crates from the workspace table, which gains `vxe-app` and
-  `vxe-render` (root `Cargo.toml`, outside `Files touched`).
-- **Phase 7 as written in the wip commit:** removed `Reconstruction::BlackmanHarris`,
-  `HistoryFetch::Lanczos2`, `StillClip::Always` (`marcher.rs`, `upscale.wgsl`); nothing in
-  `march.wgsl`. The table below is the log's Phase 7 table to keep when Phase 7 lands.
-  Finding: the plan says the comparison walks have no caller; `LightParams { skips: false }`
-  and `{ masks: false }` are used in `crates/vxe-render/tests/walk.rs` and
-  `apps/flythrough/tests/golden.rs`.
-- **Gate state at the wip commit:** clippy `--workspace --all-targets` and
-  `-p flythrough --features wasm` clean, fmt clean, `check-test-tiers` 0; vxe-render quick
-  27 of 27, vxe-world quick 182 of 182. Workspace quick before the Phase 7 edits: 535 run,
-  4 timed out at 30 s at load 7.6 and rising (`determinism::showcase_vector`,
-  `determinism::castle_vector`, `castle`, `replay`); the two `determinism` ones are new to
-  the list and were not rerun alone. No gpu tier yet for Phases 4 and 7.
-- **Owner-facing findings so far** (repeat in the final message):
-  1. Phase 2: a `1 024^3` `count_in_box` over a world with nothing resident completed at the
-     base and now traps on fuel (its volume bound is past the default `10^10`); the test
-     asserts the new behaviour. The owner may want a residency-aware bound instead.
-  2. Phase 2: the unsupported bound is `7 d (max_region + 2)` over distinct cells, not the
-     plan's `max_region x cells`.
-  3. Phase 3: the Run-level tests drive extracted pieces (`mirror_failed`, `tick_server`,
-     `SettleClock`), not `draw`/`tick`; `draw`'s path is covered in `tests/shutdown.rs`.
-  4. Phase 5: `tool` 1.8 % over the base after the follow-up (see the Notes).
-  5. Phase 4: the 54 689 792 B figure omits the volume's 32-byte uniform.
-- **2026-10-30, third agent:** the Phase 5 second attempt is committed (`perf(world)`, the
-  commit after `9a4c99c`) and `tool` still reads 1.4 % over the base (Notes), so the lane
-  stopped by owner answer 4 before Phases 4, 7 and 9. Owner answers 3 and 5 settle the
-  Phase 4 figure (the `frame.rs` literal becomes a plain `54_689_824`) and the Phase 9 rows.
-- **Gotchas:** `scripts/build-guests.sh` must rerun after any `flythrough-logic` change.
-  Build in `CARGO_TARGET_DIR=target/alt`. Bench binaries for the base, `14f3841` and the
-  follow-up are `live/edits-bench-*`, run by `live/edits-bench.sh` (waits for load under 2);
-  the golden timing binaries and script are `live/golden-{base,tip}` and
-  `live/golden-times.sh` (needs `bc` for the wall line, which is missing: read `finished
-  in`).
-
-- Phase 7 inventory (lines at `fcc87bd`; "mr" is `crates/vxe-render/src/marcher.rs`, "sh/"
-  `crates/vxe-render/src/shaders/`). Users are outside the definition and its flag mapping.
-  "rec." is the recommendation for Phase 8; "removed" rows went in this phase.
+Lines at `fcc87bd` ("mr" is `crates/vxe-render/src/marcher.rs`, "sh/"
+`crates/vxe-render/src/shaders/`). Users are outside the definition and its flag mapping.
+"rec." is the recommendation for Phase 8; "removed" rows went in this phase.
 
 | item | what | lives | ADR | users: src / tests / examples / live toggle | cost when off | rec. |
 |---|---|---|---|---|---|---|
@@ -934,6 +864,14 @@ Every reading names the machine, the commit, the lock and the load.
   from the other lane). Doctests, clippy `-D warnings` and fmt clean. The golden wall-time
   readings (base binary and tip binary, lavapipe, exclusive perf lock) were queued behind the
   lock at commit time, to `live/golden-times.log`.
+- Phase 7: removed in `1fdac4d` (the rows marked **removed** in the inventory):
+  `Reconstruction::BlackmanHarris` (with `Upscaler::kernel`'s and `uniform`'s arms and
+  `upscale.wgsl`'s `blackman_harris` and case 3), `HistoryFetch::Lanczos2` (the
+  `FETCH_LANCZOS2` block in `history_at`), `StillClip::Always` (`still_clip == 2`). Nothing
+  in `march.wgsl`. The goldens and the gate are in the Phase 4 and 7 gate note above.
+- Phase 7 finding: the plan says the comparison walks have no caller; `LightParams { skips:
+  false }` and `{ masks: false }` are used in `crates/vxe-render/tests/walk.rs` and
+  `apps/flythrough/tests/golden.rs` (the every-skip-off equality).
 
 ### Close triggers
 
