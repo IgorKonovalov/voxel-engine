@@ -1207,3 +1207,402 @@ fn the_cracks_view_keeps_its_palette_through_the_window_chain() {
     );
     assert!(blue > 0 && magenta > 0, "blue {blue}, magenta {magenta}");
 }
+
+// ---- One-voxel boxes: the box metric and the tile-contrast metric ----
+
+use support::rigs::Feature;
+
+/// A hit point lies on a cube face when one of its coordinates is within this of an integer.
+const FACE_EPS: f32 = 1e-3;
+
+/// Adjacent hit pixels whose hit points lie within this many voxels of each other are on one
+/// surface (no depth edge) for the tile-contrast metric.
+const TILE_REACH: f32 = 1.5;
+
+/// A pair of such pixels is a tile edge when their shading normals differ by more than this
+/// many degrees.
+const TILE_DEGREES: f64 = 15.0;
+
+/// Whether voxel `v` of `world` is solid (not air; outside the world is air).
+fn solid_at(world: &World, v: [i32; 3]) -> bool {
+    world
+        .material_at(vxe_world::VoxelCoord(v))
+        .is_some_and(|m| m != vxe_world::AIR)
+}
+
+/// The face neighbours of `v` that are air in `world`.
+fn air_faces(world: &World, v: [i32; 3]) -> u32 {
+    let mut n = 0;
+    for k in 0..3 {
+        for s in [-1, 1] {
+            let mut u = v;
+            u[k] += s;
+            n += u32::from(!solid_at(world, u));
+        }
+    }
+    n
+}
+
+/// The solid voxels of the 27 around `v` in `world`, `v` itself included.
+fn count27(world: &World, v: [i32; 3]) -> u32 {
+    let mut n = 0;
+    for z in -1..=1 {
+        for y in -1..=1 {
+            for x in -1..=1 {
+                n += u32::from(solid_at(world, [v[0] + x, v[1] + y, v[2] + z]));
+            }
+        }
+    }
+    n
+}
+
+/// The box voxel hit point `p` lies on, if any: `p` lies on a cube face (a coordinate within
+/// [`FACE_EPS`] of an integer) between a solid voxel and an air voxel of `world`, and the
+/// solid one has two or more air face neighbours. A flat floor's face hits have one air face;
+/// a hit between two solid voxels lies on no exposed face.
+fn box_voxel(world: &World, p: [f32; 3]) -> Option<[i32; 3]> {
+    for k in 0..3 {
+        let r = p[k].round();
+        if (p[k] - r).abs() > FACE_EPS {
+            continue;
+        }
+        let mut lo = p.map(|c| c.floor() as i32);
+        lo[k] = r as i32 - 1;
+        let mut hi = lo;
+        hi[k] = r as i32;
+        let (sl, sh) = (solid_at(world, lo), solid_at(world, hi));
+        if sl == sh {
+            continue;
+        }
+        let v = if sl { lo } else { hi };
+        if air_faces(world, v) >= 2 {
+            return Some(v);
+        }
+    }
+    None
+}
+
+/// A box reading of one scene in one look: the crack reading, the box pixels among the counted
+/// hits sorted by their voxel's 27-count (under 14, 14 and over) and by its air faces (2, 3,
+/// 4 or more), and the tile-contrast share: of the counted adjacent hit-pixel pairs on one
+/// surface, those whose normals-view normals (detail off) differ by more than
+/// [`TILE_DEGREES`].
+struct BoxReading {
+    crack: CrackReading,
+    normals: Vec<u8>,
+    /// Per pixel, the box class: 0 none, 1 a box voxel with a 27-count under 14, 2 one of 14
+    /// or more.
+    boxes: Vec<u8>,
+    box_px: u64,
+    by_count: [u64; 2],
+    by_air: [u64; 3],
+    pairs: u64,
+    edges: u64,
+}
+
+impl BoxReading {
+    fn row(&self, scene: &str, look: &str) -> String {
+        let s = &self.crack.shares;
+        format!(
+            "| {scene} | {look} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.3} | {:.3} | {:.3} | {:.3} |",
+            s.hits,
+            self.crack.excluded,
+            self.box_px,
+            self.by_count[0],
+            self.by_count[1],
+            self.by_air[0],
+            self.by_air[1],
+            self.by_air[2],
+            self.pairs,
+            100.0 * self.edges as f64 / self.pairs.max(1) as f64,
+            100.0 * s.share(1),
+            100.0 * s.share(2),
+            100.0 * s.share(3),
+        )
+    }
+}
+
+const BOX_HEADER: &str = "| scene | look | hits | left out | box px | count < 14 | count >= 14 | 2 air | 3 air | 4+ air | pairs | tile edges % | class 1 % | class 2 % | class 3 % |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|";
+
+/// The angle in degrees between two normals-view pixels' normals.
+fn normal_angle(a: &[u8], b: &[u8]) -> f64 {
+    let (a, b) = (decode_normal(a), decode_normal(b));
+    if a.length() < 0.5 || b.length() < 0.5 {
+        return 0.0;
+    }
+    f64::from(a.normalize().dot(b.normalize()).clamp(-1.0, 1.0))
+        .acos()
+        .to_degrees()
+}
+
+/// [`crack_reading`] of `camera` in `look`, then its normals view with detail off, and the box
+/// and tile-contrast metrics over the hits it counts (`window` as there), `world` the CPU world
+/// the box metric reads.
+fn box_reading(
+    rig: &mut LookRig,
+    world: &World,
+    camera: &vxe_render::Camera,
+    light: &LightParams,
+    look: LookParams,
+    window: Option<[[f32; 3]; 2]>,
+) -> BoxReading {
+    let crack = crack_reading(rig, camera, light, look, window);
+    rig.frame.set_look(LookParams {
+        view: ViewMode::Normals,
+        detail: false,
+        ..look
+    });
+    for _ in 0..CRACK_FRAMES {
+        rig.frame
+            .render(&rig.device, &rig.queue, &rig.gpu, camera, light);
+    }
+    let normals = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
+    let positions = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let [w, h] = crack.size.map(|v| v as usize);
+    let counted: Vec<bool> = (0..w * h)
+        .map(|i| {
+            crack.classes[i].is_some()
+                && window.is_none_or(|[lo, hi]| {
+                    (0..3).all(|k| {
+                        let c = positions[i][k];
+                        c >= lo[k] + WINDOW_MARGIN && c <= hi[k] - WINDOW_MARGIN
+                    })
+                })
+        })
+        .collect();
+    let mut boxes = vec![0u8; w * h];
+    let (mut box_px, mut by_count, mut by_air) = (0, [0; 2], [0; 3]);
+    for i in 0..w * h {
+        if !counted[i] {
+            continue;
+        }
+        let p = [positions[i][0], positions[i][1], positions[i][2]];
+        let Some(v) = box_voxel(world, p) else {
+            continue;
+        };
+        let high = count27(world, v) >= 14;
+        boxes[i] = 1 + u8::from(high);
+        box_px += 1;
+        by_count[usize::from(high)] += 1;
+        by_air[(air_faces(world, v) as usize).clamp(2, 4) - 2] += 1;
+    }
+    let (mut pairs, mut edges) = (0, 0);
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            if !counted[i] {
+                continue;
+            }
+            for j in [(x + 1 < w).then_some(i + 1), (y + 1 < h).then_some(i + w)]
+                .into_iter()
+                .flatten()
+            {
+                if !counted[j] {
+                    continue;
+                }
+                let d: f32 = (0..3)
+                    .map(|k| (positions[i][k] - positions[j][k]).powi(2))
+                    .sum();
+                if d.sqrt() > TILE_REACH {
+                    continue;
+                }
+                pairs += 1;
+                if normal_angle(&normals[i * 4..i * 4 + 3], &normals[j * 4..j * 4 + 3])
+                    > TILE_DEGREES
+                {
+                    edges += 1;
+                }
+            }
+        }
+    }
+    BoxReading {
+        crack,
+        normals,
+        boxes,
+        box_px,
+        by_count,
+        by_air,
+        pairs,
+        edges,
+    }
+}
+
+/// Where the box side-by-sides go: the worktree's untracked `live/boxes/`.
+fn boxes_dir() -> std::path::PathBuf {
+    let d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../live/boxes");
+    std::fs::create_dir_all(&d).expect("live/boxes is writable");
+    d
+}
+
+/// Writes `name.png`: the shaded image, the normals view, and the shaded image with every box
+/// pixel painted, side by side: red where the box voxel's 27-count is 14 or more, yellow
+/// where it is under 14 (a protrusion).
+fn write_box_side_by_side(r: &BoxReading, name: &str) {
+    let [w, h] = r.crack.size.map(|v| v as usize);
+    let mut out = vec![0u8; 3 * w * h * 4];
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            for (panel, src) in [(0, &r.crack.shaded), (1, &r.normals), (2, &r.crack.shaded)] {
+                let o = (y * 3 * w + panel * w + x) * 4;
+                if panel == 2 && r.boxes[i] != 0 {
+                    let c = if r.boxes[i] == 2 {
+                        [255, 0, 0]
+                    } else {
+                        [255, 255, 0]
+                    };
+                    out[o..o + 3].copy_from_slice(&c);
+                } else {
+                    out[o..o + 3].copy_from_slice(&src[i * 4..i * 4 + 3]);
+                }
+                out[o + 3] = 255;
+            }
+        }
+    }
+    let path = boxes_dir().join(format!("{name}.png"));
+    write_png(&path, &out, 3 * w as u32, h as u32);
+    println!("wrote {}", path.display());
+}
+
+/// The box reading of `feature` in `look` on `device`, at the look rigs' size under the
+/// analytic window rule, lit by the headlamp.
+fn feature_reading(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    feature: Feature,
+    look: LookParams,
+) -> BoxReading {
+    let table = flythrough::LookPreset::DEFAULT.materials();
+    let world = feature.world(&table);
+    let mut rig = fit_rig_on(
+        device.clone(),
+        queue.clone(),
+        &world,
+        look.tuning.fit,
+        [WIDTH, HEIGHT],
+    );
+    box_reading(
+        &mut rig,
+        &world,
+        &feature.camera(),
+        &LightParams::headlamp(),
+        look,
+        Some(analytic_window(&world)),
+    )
+}
+
+/// The box reading of the level at `pose` in `look` (384 x 216, the pose's exposure, indirect
+/// off, lamp on or off), every hit counted.
+fn pose_box_reading(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    level: &World,
+    pose: &flythrough::Pose,
+    look: LookParams,
+    lamp: bool,
+) -> BoxReading {
+    let mut rig = pose_rig_on(device.clone(), queue.clone(), level, pose, look.tuning.fit);
+    rig.frame.set_lighting(vxe_render::Lighting {
+        exposure: Exposure::Manual(pose.exposure),
+        indirect: false,
+        lamp,
+        ..rig.frame.lighting()
+    });
+    assert_eq!(rig.frame.internal_size(), POSE_SIZE);
+    box_reading(
+        &mut rig,
+        level,
+        &pose.camera(),
+        &LightParams::headlamp(),
+        look,
+        None,
+    )
+}
+
+/// One-voxel features render as boxes in the look the fly-through starts in: on lavapipe under
+/// the analytic window rule, the rod, the lone cube, the groove and the wall pillar each read at
+/// least one box pixel (a hit on an exposed cube face of a voxel with two or more air faces)
+/// and the bare floor reads none.
+#[test]
+fn one_voxel_features_render_as_boxes_today() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let look = start_look(ViewMode::Shaded);
+    println!("{BOX_HEADER}");
+    for feature in [
+        Feature::Floor,
+        Feature::Rod,
+        Feature::LoneCube,
+        Feature::Groove,
+        Feature::WallPillar,
+    ] {
+        let r = feature_reading(&device, &queue, feature, look);
+        println!("{}", r.row(feature.name(), "start look"));
+        assert!(r.crack.shares.hits > 0, "{}", feature.name());
+        if feature == Feature::Floor {
+            assert_eq!(r.box_px, 0, "the bare floor has no box");
+        } else {
+            assert!(r.box_px >= 1, "{}: no box pixel", feature.name());
+        }
+    }
+}
+
+/// The box readings' looks: the start look, and its tuning with the volume-matched offset.
+fn box_looks() -> Vec<(&'static str, LookParams)> {
+    crack_looks()
+        .into_iter()
+        .filter(|(name, _)| *name != "fit uniform27")
+        .map(|(name, fit)| {
+            let mut look = start_look(ViewMode::Shaded);
+            look.tuning.fit = fit;
+            (name, look)
+        })
+        .collect()
+}
+
+/// The box and tile-contrast table for every one-voxel scene and both poses in each of
+/// [`box_looks`] (reading only; it asserts nothing): the scenes at the look rigs' size under
+/// the analytic window rule, the level at `VEIN_POSE` and `PATCH_POSE` at 384 x 216 with the
+/// pose's exposure and indirect light off, lamp on and off. Every reading's side-by-side goes
+/// to `live/boxes/`. `VXE_BOX_TAG` (optional) suffixes the look names, for a scratch build. On
+/// the adapter `VXE_TEST_ADAPTER` names (lavapipe unset):
+/// `cargo nextest run -p flythrough --test look --run-ignored only --no-capture box_readings`.
+#[test]
+#[ignore = "a reading: prints the box table and writes the side-by-sides"]
+fn box_readings() {
+    let level = pose_level();
+    let pool = attr_pool_bytes(&level).max(256 << 20);
+    let Some((device, queue, adapter)) = reading_device(pool) else {
+        return;
+    };
+    let tag = std::env::var("VXE_BOX_TAG").unwrap_or_default();
+    println!("adapter {adapter}");
+    let mut rows = Vec::new();
+    for (look_name, look) in box_looks() {
+        let look_name = format!("{look_name}{tag}");
+        for feature in Feature::ALL {
+            let r = feature_reading(&device, &queue, feature, look);
+            println!("{}", r.row(feature.name(), &look_name));
+            rows.push(r.row(feature.name(), &look_name));
+            let file = format!("{}-{look_name}", feature.name()).replace(' ', "-");
+            write_box_side_by_side(&r, &file);
+        }
+        for pose in flythrough::POSES {
+            for lamp in [true, false] {
+                let r = pose_box_reading(&device, &queue, &level, &pose, look, lamp);
+                let lamp_tag = if lamp { "" } else { " lamp off" };
+                let name = format!("level {}{lamp_tag}", pose.name);
+                println!("{}", r.row(&name, &look_name));
+                rows.push(r.row(&name, &look_name));
+                let file = format!("{}-{look_name}{lamp_tag}", pose.name).replace(' ', "-");
+                write_box_side_by_side(&r, &file);
+            }
+        }
+    }
+    println!("\nadapter {adapter}\n{BOX_HEADER}");
+    for r in rows {
+        println!("{r}");
+    }
+}
+

@@ -1290,3 +1290,152 @@ pub fn pose_rig_on(
         frame,
     }
 }
+
+// ---- The one-voxel scenes (tests/look.rs's box metric) ----
+
+/// A [`HalfSpaces`] world with boxes of rock added and boxes of air carved after it, each box
+/// `[min, max)` in voxels: the one-voxel features on a flat floor or a flat wall.
+pub struct Features {
+    pub base: HalfSpaces,
+    pub rock: Vec<([i64; 3], [i64; 3])>,
+    pub air: Vec<([i64; 3], [i64; 3])>,
+}
+
+fn in_box(v: [i64; 3], (lo, hi): &([i64; 3], [i64; 3])) -> bool {
+    (0..3).all(|k| v[k] >= lo[k] && v[k] < hi[k])
+}
+
+impl WorldSource for Features {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        let base = coord.min_voxel().0;
+        for slot in 0..CHUNK_BRICKS {
+            let b = brick_of_slot(slot);
+            out.set_brick(
+                slot,
+                Brick::from_fn(|l| {
+                    let v = [0, 1, 2].map(|k| i64::from(base[k] + b[k] * BRICK_EDGE + l[k]));
+                    let mut solid = self
+                        .base
+                        .0
+                        .iter()
+                        .any(|(a, c)| (0..3).map(|k| a[k] * (2 * v[k] + 1)).sum::<i64>() <= *c);
+                    solid |= self.rock.iter().any(|r| in_box(v, r));
+                    solid &= !self.air.iter().any(|r| in_box(v, r));
+                    if solid { ROCK } else { AIR }
+                }),
+            );
+        }
+    }
+}
+
+/// The one-voxel scenes' floor top: rock at `z < FEATURE_Z`, a floor feature's lowest voxels
+/// at `z = FEATURE_Z`. Inside a brick (60 = 7 x 8 + 4), so the floor's top bricks are Full and
+/// carry contour attributes; a floor at `z < 64` ends on a brick face and its top bricks are
+/// uniform rock, which has no planes.
+pub const FEATURE_Z: i64 = 60;
+
+/// The one-voxel scenes' wall face: rock at `x >= WALL_FEATURE_X`, inside a brick for the same
+/// reason.
+pub const WALL_FEATURE_X: i64 = 76;
+
+/// The one-voxel scenes: the six features of the box metric, the two-voxel ridge, and the
+/// bare floor as the control. A floor feature stands on rock at `z <` [`FEATURE_Z`] (`F`
+/// below), the wall pillar against rock at `x >=` [`WALL_FEATURE_X`] (`W`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Feature {
+    /// The bare floor.
+    Floor,
+    /// One voxel high and wide, 12 long along x, on the floor: `x in [58, 70)`, `y = 64`,
+    /// `z = F`.
+    Rod,
+    /// One voxel on the floor at `(64, 64, F)`.
+    LoneCube,
+    /// One wide and one deep, 12 long along x, cut into the floor's top layer: `x in [58,
+    /// 70)`, `y = 64`, `z = F - 1` is air.
+    Groove,
+    /// A one-voxel column 6 high against the wall's face: `x = W - 1`, `y = 64`, `z in [61,
+    /// 67)`.
+    WallPillar,
+    /// Two wide and one high, 12 long along x, on the floor: `y in [64, 66)`, `z = F`.
+    Ridge,
+    /// A one-voxel column 6 high on the floor, touching nothing else: `(64, 64, z)` for `z in
+    /// [F, F + 6)`.
+    FreePillar,
+    /// One thick, 8 high and 12 long on the floor: `x in [58, 70)`, `y = 64`, `z in [F, F +
+    /// 8)`.
+    Sheet,
+}
+
+impl Feature {
+    pub const ALL: [Feature; 8] = [
+        Feature::Floor,
+        Feature::Rod,
+        Feature::LoneCube,
+        Feature::Groove,
+        Feature::WallPillar,
+        Feature::Ridge,
+        Feature::FreePillar,
+        Feature::Sheet,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Feature::Floor => "bare floor",
+            Feature::Rod => "rod",
+            Feature::LoneCube => "lone cube",
+            Feature::Groove => "groove",
+            Feature::WallPillar => "wall pillar",
+            Feature::Ridge => "ridge",
+            Feature::FreePillar => "free pillar",
+            Feature::Sheet => "sheet",
+        }
+    }
+
+    /// The feature's world under `table`, over chunks `[0, 2)^3`.
+    pub fn world(self, table: &MaterialTable) -> World {
+        const F: i64 = FEATURE_Z;
+        const W: i64 = WALL_FEATURE_X;
+        let floor = HalfSpaces(vec![([0, 0, 1], 2 * F - 1)]);
+        let wall = HalfSpaces(vec![([-1, 0, 0], -(2 * W + 1))]);
+        let (base, rock, air) = match self {
+            Feature::Floor => (floor, vec![], vec![]),
+            Feature::Rod => (floor, vec![([58, 64, F], [70, 65, F + 1])], vec![]),
+            Feature::LoneCube => (floor, vec![([64, 64, F], [65, 65, F + 1])], vec![]),
+            Feature::Groove => (floor, vec![], vec![([58, 64, F - 1], [70, 65, F])]),
+            Feature::WallPillar => (wall, vec![([W - 1, 64, 61], [W, 65, 67])], vec![]),
+            Feature::Ridge => (floor, vec![([58, 64, F], [70, 66, F + 1])], vec![]),
+            Feature::FreePillar => (floor, vec![([64, 64, F], [65, 65, F + 6])], vec![]),
+            Feature::Sheet => (floor, vec![([58, 64, F], [70, 65, F + 8])], vec![]),
+        };
+        let source = Features { base, rock, air };
+        World::generate(ChunkExtent::new([0, 0, 0], [2, 2, 2]), &source, table)
+    }
+
+    /// About 1 m (10 voxels) from the feature's centre: a floor feature at the floor camera's
+    /// pitch (`atan(20 / 30)` down) from 45 degrees off the x axis, so a long side, an end and
+    /// the top show; the wall pillar along the wall camera's direction (level, `atan(30 /
+    /// 20)` off the wall's normal).
+    pub fn camera(self) -> vxe_render::Camera {
+        let f = FEATURE_Z as f32;
+        let (target, dir) = match self {
+            Feature::WallPillar => (
+                [WALL_FEATURE_X as f32 - 0.5, 64.5, 64.0],
+                Vec3::new(20.0, 30.0, 0.0),
+            ),
+            _ => {
+                let target = match self {
+                    Feature::Groove => [64.0, 64.5, f - 0.5],
+                    Feature::Ridge => [64.0, 65.0, f + 0.5],
+                    Feature::FreePillar => [64.5, 64.5, f + 3.0],
+                    Feature::Sheet => [64.0, 64.5, f + 4.0],
+                    Feature::LoneCube => [64.5, 64.5, f + 0.5],
+                    _ => [64.0, 64.5, f + 0.5],
+                };
+                let h = 30.0 / 2f32.sqrt();
+                (target, Vec3::new(h, h, -20.0))
+            }
+        };
+        let p = Vec3::from(target) - 10.0 * dir.normalize();
+        camera_toward(p.to_array(), target)
+    }
+}

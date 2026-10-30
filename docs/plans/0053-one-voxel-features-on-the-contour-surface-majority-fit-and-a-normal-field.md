@@ -1,6 +1,6 @@
 # 0053: One-voxel features on the contour surface: a box metric, a majority-filtered plane fit, a normal field, and the owner's call
 
-> **Status:** approved
+> **Status:** in-progress
 > **Approved:** 2026-10-30 (owner, as drafted; the order against Plan 0051 and the two cost bars stay the owner's to set)
 > **Created:** 2026-10-30
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look decision: "smooth
@@ -365,17 +365,106 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The box spike: two metrics, six scenes, the poses, and the hypotheses read | dev | not started | |
+| 1: The box spike: two metrics, six scenes, the poses, and the hypotheses read | dev | done | committed with this row |
 | 2: The plane fit on a majority-filtered occupancy | dev | not started | |
 | 3: The normal field, and the cubes-shaded-by-the-field preset | dev | not started | |
 | 4: The owner's windowed check | human | not started | |
 | 5: The pick as the default, the losers removed | dev | not started | |
+
+#### Phase 1
+
+Readings: lavapipe (llvmpipe, Mesa 26.2.5, LLVM 23.1.3), exclusive perf lock, 1-minute load
+0.6 to 2.2, worktree at cde413a plus this phase's diff. `cargo nextest run -p flythrough --test
+look --run-ignored only --no-capture box_readings`; the scenes at 320 x 180 under the analytic
+window rule, the level at 384 x 216 with the pose's exposure, indirect off, no upscaler. Box px
+splits: the box voxel's 27-count (under 14, 14 and over) and its air faces (2, 3, 4 or more).
+Tile edges: share of the counted adjacent pairs within 1.5 voxels whose normals-view normals
+(detail off) differ by more than 15 degrees. Start look (snap):
+
+| scene | hits | left out | box px | < 14 | >= 14 | 2 air | 3 air | 4+ air | pairs | tile edges % | class 1 % | class 2 % | class 3 % |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| bare floor | 50747 | 77 | 0 | 0 | 0 | 0 | 0 | 0 | 97251 | 0.000 | 0.000 | 0.000 | 0.000 |
+| rod | 50747 | 77 | 503 | 503 | 0 | 0 | 422 | 81 | 97251 | 0.785 | 0.000 | 0.000 | 0.747 |
+| lone cube | 50728 | 76 | 24 | 24 | 0 | 0 | 0 | 24 | 97232 | 0.000 | 0.000 | 0.000 | 0.000 |
+| groove | 51626 | 63 | 703 | 0 | 703 | 703 | 0 | 0 | 98926 | 0.647 | 0.000 | 0.000 | 1.253 |
+| wall pillar | 41400 | 180 | 276 | 276 | 0 | 0 | 210 | 66 | 80260 | 0.381 | 0.000 | 0.000 | 0.077 |
+| ridge | 50729 | 76 | 575 | 118 | 457 | 457 | 118 | 0 | 97216 | 0.728 | 0.000 | 0.000 | 1.459 |
+| free pillar | 48590 | 110 | 830 | 830 | 0 | 0 | 0 | 830 | 93192 | 0.098 | 0.000 | 0.000 | 0.000 |
+| sheet | 47782 | 116 | 8143 | 7751 | 392 | 8059 | 84 | 0 | 91542 | 0.965 | 0.000 | 0.000 | 0.375 |
+| level vein | 82944 | 0 | 35208 | 0 | 35208 | 21804 | 13404 | 0 | 165288 | 0.676 | 0.000 | 0.000 | 0.581 |
+| level vein lamp off | 82944 | 0 | 35208 | 0 | 35208 | 21804 | 13404 | 0 | 165288 | 0.676 | 0.000 | 0.000 | 0.581 |
+| level patch | 82944 | 0 | 38371 | 200 | 38171 | 24704 | 13467 | 200 | 165133 | 0.771 | 0.000 | 0.000 | 2.318 |
+| level patch lamp off | 82944 | 0 | 38371 | 200 | 38171 | 24704 | 13467 | 200 | 165133 | 0.771 | 0.000 | 0.000 | 2.318 |
+
+- `offset volume` (`PlaneOffset::VolumeMatched`) reads the same row on all eight scenes; at the
+  poses: vein 29654 box px (0, 29654; 17826, 11828, 0), tile edges 0.676 %, class 3 1.594 %;
+  patch 34759 (200, 34559; 21602, 12957, 200), 0.766 %, class 3 4.151 %. Lamp off reads the
+  same rows as lamp on in every look.
+- Scratch, neighbour clipping (`live/scratch/neighbour_clip.py` patches `march.wgsl`'s
+  `contour_test`: the segment through the cube is clipped by the voxel's own plane and the
+  planes of its six face neighbours that carry one, hit at its first point inside all of them,
+  passed when empty; read, reverted). Prediction: `rod` box px fall by about a third, `groove`
+  unchanged. Reading: `rod` 503 (unchanged), `groove` 621 (from 703); `wall pillar` 276,
+  `lone cube` 24, `free pillar` 830 unchanged; `ridge` 572, `sheet` 8062; tile edges rise on
+  every scene with a feature (`rod` 1.600 %, `groove` 1.105 %, `ridge` 1.652 %); vein 27062 box
+  px, class 3 3.719 %; patch 31918, class 3 8.735 %. The floor voxel the ADR's arithmetic cuts
+  the rod with, `(y - 1, z - 1)` of the rod voxel, is an edge neighbour, not a face neighbour;
+  the face neighbour under the rod reads count 21, normal +z, offset +0.833, the rod's own
+  plane height.
+- Scratch, clamp 0.5 (`attrib.wgsl`'s clamp patched to `[-0.5, 0.5]`, read, reverted).
+  Prediction: no change on `rod`. Reading: `rod` 503 (unchanged), every scene's box px unchanged
+  but `sheet` 8177; vein 31390 box px, patch 34236; class 3 rises at both (2.719 %, 5.487 %).
+- `offset volume` prediction (no change on `rod`, -0.167 for an axis normal either way):
+  reading `rod` 503, every scene unchanged.
+- Done-when 1: `one_voxel_features_render_as_boxes_today` (lavapipe) reads `rod` 503, `lone
+  cube` 24, `groove` 703, `wall pillar` 276 box px, `bare floor` 0.
+- Done-when 3, side-by-sides (untracked) `live/boxes/{vein,patch}-start-look[-lamp-off].png`
+  (shaded, normals view, shaded with box pixels red where the voxel counts 14 or more, yellow
+  under 14), and one per scene and look:
+  - Vein: red covers 42 % of the hits, triangles and quads on nearly every voxel tile of the
+    wall and ledge in frame (the cube-face part of clipped surface voxels with 2 or 3 air faces,
+    every one of count 14 or more); no yellow; no rod, pillar or lone cube of the owner's
+    screenshots (`.git/lane-archive/plan-0050/live/p5/`) is resolved in this 384 x 216 frame, so
+    the red does not single them out.
+  - Patch: red covers 46 % of the hits the same way over the floor and the wall; 200 yellow
+    pixels (count under 14, 4 or more air faces) on one protrusion at the frame's right edge by
+    the floor's edge, and a row of red rectangles along the floor's edge under the wall.
+- Deviations: the scenes' floor is rock at `z < 60` with the features at `z = 60`, and the
+  wall pillar's wall rock at `x >= 76` (`FEATURE_Z`, `WALL_FEATURE_X` in `rigs.rs`), not
+  `floor_world` (`z < 64`) and `wall_world` (`x >= 80`): their surfaces end on a brick face, so
+  the floor's and the wall's top bricks are uniform rock without attributes (first read on the RTX 3080 Laptop:
+  `rod` tile edges 0.000 %, every floor hit an axis cube face); the floor camera is placed 10
+  voxels from each feature's centre at the floor camera's pitch and 45 degrees of yaw, the
+  wall pillar's along the wall camera's direction; the side-by-sides paint box pixels of count
+  under 14 yellow; `box_readings` takes `VXE_BOX_TAG` to name a scratch build's rows.
+- Gate at this commit: build, clippy `-D warnings` 0, fmt 0, doctests 11 ok, the four
+  `scripts/check-*.mjs` 0; `--profile quick` 539 run, 538 passed, 1 timeout at load 23
+  (`flythrough::replay a_stamp_and_a_collapse_replay_from_the_save` 30 s; alone 13.8 s), 3
+  skipped; `--profile gpu --no-fail-fast` (perf lock, load 1.3 to 3.2) 186 run, 185 passed, 1
+  failed, 30 skipped: `sharpness detail_after_lighting_is_exact_for_the_lamp`, the base's
+  failure (Plan 0050 Phase 6's floor question), untouched.
 
 ### Notes
 
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Base: a stacked lane on branch `plan-0050-p6` at cde413a (Plan 0050 Phase 6's checkpoint, no
+  close commit yet), which holds what the header's "Starts after" names: the losing closing
+  rules deleted, `CrackClosing` and `SurfaceTuning::closing` gone (snap the walk's only rule),
+  the shadow push on flag bit 14, the cracks palette fix, the re-blessed `look_contour.png`,
+  `look_wall_contour.png` and `showcase_hall.png`, and Plan 0052 (v0.37.0: lab modes removed,
+  `Params::light_span` is `_pad4`, `limits_for` returns a `Result`, the probe volume lazy).
+  "The Plan 0050 close binary" reads as cde413a's binary. `sharpness
+  detail_after_lighting_is_exact_for_the_lamp` fails in the gpu tier on the base (98.028 %
+  against the 98.3 % floor waiting on the owner) and on every phase here; not touched.
+- Phase 1: the scenes' floor and wall sit inside a brick (rock at `z < 60`, `x >= 76`), not on
+  `floor_world` and `wall_world`; box pixels of count under 14 are yellow in the side-by-sides.
+- Noticed, not acted on: at both poses the box metric counts 42 % and 46 % of the hits, the
+  cube-face parts of ordinary clipped surface voxels with two or three air faces (count 14 or
+  more); only the count-under-14 class (0 at the vein, 200 px at the patch) is specific to
+  protrusions.
 
 ### Close triggers
 
