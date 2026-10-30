@@ -94,6 +94,51 @@ pub fn software_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue)> {
     Some(pollster::block_on(adapter.request_device(&desc)).expect("device on the software adapter"))
 }
 
+/// A device for a **reading-only** test, chosen by `VXE_TEST_ADAPTER` (lane rule 9c: iterate
+/// on the fast adapter, prove on lavapipe), with the chosen adapter's name for the readings'
+/// labels:
+/// - unset, empty or `fallback`: lavapipe, exactly as [`software_device`] picks it (`None`
+///   with a printed skip when the machine has none);
+/// - any other value: the first Vulkan adapter whose name contains it, ignoring case (`rtx`,
+///   `radeon`); with no match it panics and lists the adapters.
+///
+/// Only reading tests call it: `#[ignore]`d or env-gated tests that print readings, each
+/// reading naming the adapter, and assert nothing a gate runs. Asserted tests and goldens call
+/// [`software_device`] and stay on lavapipe, CI's adapter.
+pub fn reading_device(pool_bytes: u64) -> Option<(wgpu::Device, wgpu::Queue, String)> {
+    let want = std::env::var("VXE_TEST_ADAPTER").unwrap_or_default();
+    if want.is_empty() || want.eq_ignore_ascii_case("fallback") {
+        let (device, queue) = software_device(pool_bytes)?;
+        return Some((device, queue, "llvmpipe (lavapipe)".to_owned()));
+    }
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::VULKAN,
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    });
+    let adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN));
+    let names: Vec<String> = adapters.iter().map(|a| a.get_info().name).collect();
+    let needle = want.to_lowercase();
+    let Some(adapter) = adapters
+        .into_iter()
+        .find(|a| a.get_info().name.to_lowercase().contains(&needle))
+    else {
+        panic!("VXE_TEST_ADAPTER={want} matches no adapter; the adapters are {names:?}");
+    };
+    let info = adapter.get_info();
+    println!(
+        "adapter: {} ({:?}, driver {} {}), chosen by VXE_TEST_ADAPTER={want}",
+        info.name, info.backend, info.driver, info.driver_info
+    );
+    let desc = wgpu::DeviceDescriptor {
+        required_limits: vxe_render::limits_for(&adapter, pool_bytes)
+            .expect("the frame's limits on the chosen adapter"),
+        ..Default::default()
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&desc)).expect("device on the chosen adapter");
+    Some((device, queue, info.name))
+}
+
 /// The golden scene: cave seed 7 over chunks `[0, 6)^3`, spawn at its centre.
 pub fn scene_source() -> CaveSource {
     let extent = ChunkExtent::new([0, 0, 0], [6, 6, 6]);

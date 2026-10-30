@@ -10,13 +10,16 @@
 //! collapses as the level does, and does not take `--save`, `--replay`, `--vault`,
 //! `--autopilot`, `--room` or `--castle`. The banner's line then starts `source showcase`.
 //! `--shot hall|chasm|crystals` (with the showcase) starts at that shot's pose and exposure
-//! instead of `hall`'s.
+//! instead of `hall`'s. `--pose vein|patch` (with `--level`) starts at the settle rig's still
+//! camera of that name (`flythrough::VEIN_POSE`, `PATCH_POSE`) on auto exposure unless
+//! `--exposure` is given; the banner shows `pose vein` until the camera first moves.
 //!
-//! `flythrough [--seed N] [--level] [--source cave|level|showcase] [--shot NAME] [--vault] [--castle] [--castle-out PATH]
+//! `flythrough [--seed N] [--level] [--pose vein|patch] [--source cave|level|showcase] [--shot NAME] [--vault] [--castle] [--castle-out PATH]
 //! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look PRESET] [--rock-detail SCALE,STRENGTH] [--plane-fit FIT]
-//! [--plane-offset OFFSET] [--face-mix K] [--detail-fine W] [--detail-after on|off] [--view VIEW]
+//! [--plane-offset OFFSET] [--face-mix K] [--detail-fine W] [--detail-after on|off]
+//! [--closing RULE] [--shadow-push on|off] [--view VIEW]
 //! [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
@@ -73,14 +76,17 @@
 //! that
 //! look first; `--look` picks the starting preset (`flythrough::LookPreset`: `face`, `contour`,
 //! `contour-sharp`, `contour-grain`, `trilinear8`, `gradient27`), a normal mode with its plane
-//! fit, face mix, detail after lighting and rock's detail pair and fine weight, each part
-//! overridable by `--plane-fit`, `--plane-offset`, `--face-mix`, `--detail-after`,
-//! `--detail-fine` and `--rock-detail`; and `--look plain` starts in face mode without contour
+//! fit, face mix, detail after lighting, crack-closing rule, shadow push and rock's detail
+//! pair and fine weight, each part overridable by `--plane-fit`, `--plane-offset`,
+//! `--face-mix`, `--detail-after`, `--closing` (`old`, `snap`, `extend-0.25`, `extend-0.5`,
+//! `blend`: `vxe_render::CrackClosing`), `--shadow-push`, `--detail-fine` and `--rock-detail`; and `--look plain` starts in face mode without contour
 //! attributes or rock detail, detail off (`N` then skips the contour presets, `--detail` turns
 //! detail on), the look of Plan 0002's and Plan 0017's face readings. With contour attributes the autopilot's report adds the attribute
 //! pass's work list, CPU and GPU time over the flight. `--view`
-//! starts in a view (`shaded`, `normals`, `hitmask`, `steps`, `albedo`; with `--frames`, `steps`
-//! prints the last frame's mean and p99 steps per ray on exit);
+//! starts in a view (`shaded`, `normals`, `hitmask`, `steps`, `cracks`, `albedo`; with
+//! `--frames`, `steps` prints the last frame's mean and p99 steps per ray on exit, and `cracks`
+//! its crack classes' shares); `F9` cycles the views in that order, the banner naming the view
+//! and the stats HUD adding the cracks view's shares row (`vxe_render::ViewMode::Cracks`);
 //! `--translucent-layers` sets how many translucent voxels are composited in front of the opaque
 //! hit (default 4, 0 ignores them). `--emissive-ore off` keeps the ore dark (by default it
 //! glows, `flythrough::ORE_EMISSION`, and lights the cave through the light pass's emissive
@@ -234,10 +240,10 @@ use vxe_render::glam::Vec3;
 use vxe_render::gpu_world;
 use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
-    AttrWorkStats, AutoExposure, BELT_CHUNK_BYTES, Camera, Exposure, FRAME_PASSES, Frame, GpuWorld,
-    HistoryKill, HudColour, HudOverlay, LightParams, Lighting, LightingResolution, LodParams,
-    LookParams, MarchTimer, MirrorConfig, NormalMode, PassTimer, PlaneFit, PlaneOffset, Presenter,
-    RenderScale, Sampler, ShadowWalk, SyncStats, ViewMode, Window, wgpu,
+    AttrWorkStats, AutoExposure, BELT_CHUNK_BYTES, Camera, CrackClosing, Exposure, FRAME_PASSES,
+    Frame, GpuWorld, HistoryKill, HudColour, HudOverlay, LightParams, Lighting, LightingResolution,
+    LodParams, LookParams, MarchTimer, MirrorConfig, NormalMode, PassTimer, PlaneFit, PlaneOffset,
+    Presenter, RenderScale, Sampler, ShadowWalk, SyncStats, ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -347,6 +353,9 @@ struct Args {
     showcase: bool,
     /// `--shot NAME`: the showcase shot the camera starts at, and its exposure.
     shot: Shot,
+    /// `--pose NAME`: the settle rig's still camera the bounded level starts at (its exposure
+    /// is not applied).
+    pose: Option<flythrough::Pose>,
     autopilot: bool,
     headless: bool,
     /// `--adapter SUBSTRING`: a headless run takes the first adapter whose name contains it.
@@ -551,12 +560,13 @@ impl Args {
 
     /// The lighting modes at the start, the banner shown from `now_ms`, the auto exposure's
     /// slot `start_auto` under `--adaptation`'s name; the line names the showcase source first
-    /// and the probe spacing while indirect light is on.
+    /// and the probe spacing while indirect light is on, and the look's rows `--view`'s view.
     fn start_modes(&self, now_ms: f64) -> hud::Modes {
         let mut m = hud::Modes::new(self.start_lighting(), self.lighting, now_ms)
             .with_source(self.showcase.then_some("showcase"))
             .with_probe_spacing(self.probe_spacing);
         m.set_auto(self.adaptation, self.start_auto());
+        m.show_view(self.view, now_ms);
         m
     }
 
@@ -647,6 +657,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         level: false,
         showcase: false,
         shot: SHOTS[0],
+        pose: None,
         autopilot: false,
         headless: false,
         adapter: None,
@@ -716,6 +727,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     let mut face_mix = None;
     let mut detail_fine = None;
     let mut detail_after = None;
+    let mut closing = None;
+    let mut shadow_push = None;
     let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or(format!("{flag} needs a value"));
@@ -779,10 +792,17 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--face-mix" => face_mix = Some(parse_unit("--face-mix", &value()?, 0.5)?),
             "--detail-fine" => detail_fine = Some(parse_unit("--detail-fine", &value()?, 1.0)?),
             "--detail-after" => detail_after = Some(parse_on_off("--detail-after", &value()?)?),
+            "--closing" => {
+                let v = value()?;
+                closing = Some(CrackClosing::from_name(&v).ok_or(format!(
+                    "--closing takes old, snap, extend-0.25, extend-0.5 or blend, not {v}"
+                ))?);
+            }
+            "--shadow-push" => shadow_push = Some(parse_on_off("--shadow-push", &value()?)?),
             "--view" => {
                 let v = value()?;
                 args.view = ViewMode::from_name(&v).ok_or(format!(
-                    "--view takes shaded, normals, hitmask, steps or albedo, not {v}"
+                    "--view takes shaded, normals, hitmask, steps, cracks or albedo, not {v}"
                 ))?;
             }
             "--translucent-layers" => {
@@ -989,6 +1009,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     format!("--shot takes {}, not {v}", names.join(", "))
                 })?;
             }
+            "--pose" => {
+                let v = value()?;
+                args.pose = Some(flythrough::Pose::named(&v).ok_or_else(|| {
+                    let names: Vec<&str> = flythrough::POSES.iter().map(|p| p.name).collect();
+                    format!("--pose takes {}, not {v}", names.join(", "))
+                })?);
+            }
             "--source" => {
                 let v = value()?;
                 (args.level, args.showcase) = match v.as_str() {
@@ -1057,6 +1084,13 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     if args.showcase && !exposure_flag {
         args.exposure = Some(args.shot.exposure_milli as f32 / 1000.0);
     }
+    if args.pose.is_some() && !args.level {
+        let names: Vec<&str> = flythrough::POSES.iter().map(|p| p.name).collect();
+        return Err(format!(
+            "--pose places the camera on the bounded level ({}); it needs --level",
+            names.join(", ")
+        ));
+    }
     if shot_flag && !args.showcase {
         return Err("--shot frames the showcase; it needs --source showcase".to_owned());
     }
@@ -1081,6 +1115,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         p.tuning.face_mix = face_mix.unwrap_or(p.tuning.face_mix);
         p.detail_fine = detail_fine.unwrap_or(p.detail_fine);
         p.tuning.detail_after_lighting = detail_after.unwrap_or(p.tuning.detail_after_lighting);
+        p.tuning.closing = closing.unwrap_or(p.tuning.closing);
+        p.tuning.shadow_push = shadow_push.unwrap_or(p.tuning.shadow_push);
     } else if rock_detail.is_some() {
         return Err("--rock-detail does not apply under --look plain".to_owned());
     } else if plane_fit.is_some()
@@ -1088,10 +1124,12 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         || face_mix.is_some()
         || detail_fine.is_some()
         || detail_after.is_some()
+        || closing.is_some()
+        || shadow_push.is_some()
     {
         return Err(
-            "--plane-fit, --plane-offset, --face-mix, --detail-fine and --detail-after do not \
-             apply under --look plain"
+            "--plane-fit, --plane-offset, --face-mix, --detail-fine, --detail-after, --closing \
+             and --shadow-push do not apply under --look plain"
                 .to_owned(),
         );
     }
@@ -2119,6 +2157,8 @@ struct Hud {
     live_probes: Option<u32>,
     /// The last frame's steps view, read back while that view and the HUD are on.
     steps: Option<hud::StepsSample>,
+    /// The last frame's cracks view, read back while that view and the HUD are on.
+    cracks: Option<vxe_render::CrackShares>,
     /// The exposure state as last read back (`Frame::exposure_readout`), a few frames late.
     exposure: Option<vxe_render::ExposureReadout>,
     format_us: u32,
@@ -2147,6 +2187,7 @@ impl Hud {
             cpu_ms: 0.0,
             live_probes: None,
             steps: None,
+            cracks: None,
             exposure: None,
             format_us: 0,
             page_bytes: hud::page_bytes(),
@@ -2825,6 +2866,9 @@ struct Run {
     scene: Option<(String, f64)>,
     /// `--castle`'s current shot, which `I` advances; `None` without the castle.
     castle_shot: Option<castle::CastleShot>,
+    /// `--pose`'s banner row (`pose vein`) and the camera it starts at: the row shows until
+    /// the camera first moves.
+    pose: Option<(String, Camera)>,
     look: LookParams,
     /// The preset `N` last chose, or `--look`'s with its part flags.
     preset: LookPreset,
@@ -2963,6 +3007,7 @@ impl Run {
         };
         s.rss_bytes = h.rss_bytes;
         s.steps = h.steps;
+        s.cracks = h.cracks;
         s.camera = pos.to_array();
         s.cutaway = self.look.cutaway.then_some(self.cutaway.name());
         s.chunk = voxel_of(pos).chunk().0;
@@ -2972,9 +3017,20 @@ impl Run {
         s.exposure = Some(self.modes.exposure_row());
     }
 
-    /// The banner at the frame loop's clock: the scene's row while it shows (for
-    /// `hud::BANNER_MS` after it was last shown), over the lighting modes' banner and the
-    /// upscaler's, whichever show.
+    /// Drops `--pose`'s banner row once the camera has left the pose.
+    fn forget_pose_once_moved(&mut self) {
+        if self
+            .pose
+            .as_ref()
+            .is_some_and(|(_, at)| self.fly.camera != *at)
+        {
+            self.pose = None;
+        }
+    }
+
+    /// The banner at the frame loop's clock: `--pose`'s row until the camera first moves, the
+    /// scene's row while it shows (for `hud::BANNER_MS` after it was last shown), over the
+    /// lighting modes' banner and the upscaler's, whichever show.
     fn banner(&self) -> Option<String> {
         let now = ms_since(self.start);
         let scene = self
@@ -2982,10 +3038,16 @@ impl Run {
             .as_ref()
             .filter(|(_, at)| now - at < hud::BANNER_MS)
             .map(|(s, _)| s.to_owned());
-        let rows: Vec<String> = [scene, self.modes.banner(now), self.upscaler.banner(now)]
-            .into_iter()
-            .flatten()
-            .collect();
+        let pose = self.pose.as_ref().map(|(s, _)| s.to_owned());
+        let rows: Vec<String> = [
+            pose,
+            scene,
+            self.modes.banner(now),
+            self.upscaler.banner(now),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
         if rows.is_empty() {
             None
         } else {
@@ -2997,6 +3059,7 @@ impl Run {
     /// nothing once the buffers have grown to the rows' size.
     fn update_hud(&mut self, gpu: &Gpu) {
         self.refresh_hud_stats();
+        self.forget_pose_once_moved();
         let banner = self.banner();
         let h = &mut self.hud;
         h.format_rows();
@@ -4171,6 +4234,11 @@ impl Run {
             self.cutaway = self.cutaway.next();
             println!("cutaway {}", self.cutaway.name());
         }
+        if input.pressed(KeyCode::F9) {
+            self.look.view = self.look.view.next();
+            self.modes.show_view(self.look.view, ms_since(self.start));
+            println!("{}", look_line(&self.look, self.preset()));
+        }
         if input.pressed(KeyCode::KeyV) {
             self.look.detail = !self.look.detail;
             self.modes
@@ -4419,6 +4487,13 @@ impl Run {
             let h = StepHistogram::from_rgba8(&px, width);
             self.hud.steps = Some(hud::StepsSample::from_histogram(&h));
         }
+        self.hud.cracks = None;
+        if hud
+            && self.look.view == ViewMode::Cracks
+            && let Some(gfx) = &self.gfx
+        {
+            self.hud.cracks = Some(crack_shares(gpu, &gfx.frame));
+        }
         // With the stats HUD off the overlay draws the mode banner alone while it shows.
         let banner = (!hud).then(|| self.banner()).flatten();
         if hud {
@@ -4637,6 +4712,11 @@ impl Run {
             if self.coarse.is_some() {
                 println!("{}", self.coarse_line());
             }
+            if self.look.view == ViewMode::Cracks
+                && let Some(gfx) = &self.gfx
+            {
+                println!("{}", hud::cracks_row(&crack_shares(gpu, &gfx.frame)));
+            }
             if self.look.view == ViewMode::Steps
                 && let Some(gfx) = &self.gfx
             {
@@ -4701,6 +4781,14 @@ const ORE_PULSE_MEAN: f32 = 1.0;
 /// at 255 as the view does; the block-max mean is over 8 × 8 pixel blocks of each block's
 /// maximum steps; loads are the ray's 32-bit storage loads from the mirror, pool reads the
 /// pool loads among them.
+/// The cracks view's shares of the frame `frame` last rendered, read back from its hit pass's
+/// layers and records: a blocking copy of each.
+fn crack_shares(gpu: &Gpu, frame: &vxe_render::Frame) -> vxe_render::CrackShares {
+    let layers = readback::read_rgba16f(&gpu.device, &gpu.queue, frame.layers());
+    let records = readback::read_rgba16u(&gpu.device, &gpu.queue, frame.hit_records());
+    vxe_render::CrackShares::from_layers(&layers, &records)
+}
+
 fn steps_line(h: &StepHistogram) -> String {
     format!(
         "steps per ray ({} rays): mean {:.2}, p99 {}, block-max mean {:.2}; loads mean {:.2}, p99 {}; pool reads mean {:.2}, p99 {}",
@@ -4717,8 +4805,8 @@ fn steps_line(h: &StepHistogram) -> String {
 
 /// `look face, detail off, view shaded` under `--look plain`, or with the preset's name,
 /// parts and rock's detail: `look contour-sharp (normals contour, fit weighted27, face mix
-/// 0, detail after lighting on), detail on (rock scale 4, strength 0.1, fine 0), view
-/// shaded`.
+/// 0, detail after lighting on, closing snap, shadow push off), detail on (rock scale 4,
+/// strength 0.1, fine 0), view shaded`.
 fn look_line(look: &LookParams, preset: Option<&LookPreset>) -> String {
     let on = if look.detail { "on" } else { "off" };
     let view = look.view.name();
@@ -4918,6 +5006,10 @@ impl App for Flythrough {
                     .castle
                     .then(|| (castle_banner(self.args.castle_shot), ms_since(self.start))),
                 castle_shot: self.args.castle.then_some(self.args.castle_shot),
+                pose: self
+                    .args
+                    .pose
+                    .map(|p| (hud::pose_banner(p.name), self.camera)),
                 look: self.args.start_look(),
                 preset: self.args.look.unwrap_or(LookPreset::FACE),
                 preset_changed: false,
@@ -5134,6 +5226,25 @@ fn shot_camera(shot: &Shot) -> Camera {
         yaw: (shot.yaw_deg as f32).to_radians(),
         pitch: (shot.pitch_deg as f32).to_radians(),
         vfov: 70f32.to_radians(),
+    }
+}
+
+/// The camera the run starts at: the castle's shot, the showcase's shot, `--pose`'s still
+/// camera, or the spawn facing +x.
+fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
+    if args.castle {
+        castle_camera(args.castle_shot)
+    } else if args.showcase {
+        shot_camera(&args.shot)
+    } else if let Some(pose) = args.pose {
+        pose.camera()
+    } else {
+        Camera {
+            position: spawn.0.map(|v| v as f32 + 0.5).into(),
+            yaw: 0.0,
+            pitch: 0.0,
+            vfov: 70f32.to_radians(),
+        }
     }
 }
 
@@ -5361,18 +5472,20 @@ fn main() {
         )
     };
 
-    let camera = if args.castle {
-        castle_camera(args.castle_shot)
-    } else if args.showcase {
-        shot_camera(&args.shot)
-    } else {
-        Camera {
-            position: spawn.0.map(|v| v as f32 + 0.5).into(),
-            yaw: 0.0,
-            pitch: 0.0,
-            vfov: 70f32.to_radians(),
-        }
-    };
+    if let Some(pose) = args.pose {
+        println!(
+            "{}: position {:?}, yaw {} deg, pitch {} deg, {}",
+            hud::pose_banner(pose.name),
+            pose.position,
+            pose.yaw_deg,
+            pose.pitch_deg,
+            args.exposure
+                .map_or("exposure auto".to_owned(), |e| format!(
+                    "exposure manual {e}"
+                ))
+        );
+    }
+    let camera = start_camera(&args, spawn);
     let size = args.render.unwrap_or([1280, 720]);
     let headless = args.headless;
     if !headless && args.adapter.is_some() {
@@ -6199,6 +6312,7 @@ mod tests {
             upscaler_changed: false,
             scene: None,
             castle_shot: None,
+            pose: None,
             dig_radius: DIG_RADIUS,
             scroll: ScrollSteps::default(),
             triggers: [false; 2],
@@ -6366,6 +6480,84 @@ mod tests {
         input.pad_down(PadButton::DpadDown);
         run.handle_input(&input);
         assert_eq!(run.dig_radius, DIG_RADIUS + DIG_STEP);
+    }
+
+    /// `--level --pose vein|patch` starts the camera at exactly the settle rig's pose (its
+    /// position, yaw and pitch) and leaves the exposure on auto; `--pose` without `--level` and
+    /// an unknown name are errors that list the names; the banner's first row reads `pose vein`
+    /// until the camera moves.
+    #[test]
+    fn pose_starts_the_level_at_the_rigs_still_camera() {
+        for want in [flythrough::VEIN_POSE, flythrough::PATCH_POSE] {
+            let a = parse_args_from(argv(&["--level", "--pose", want.name])).expect("parses");
+            assert_eq!(a.pose, Some(want));
+            assert_eq!(a.exposure, None, "the pose's exposure is not applied");
+            let c = start_camera(&a, VoxelCoord([0, 0, 0]));
+            assert_eq!(c.position, Vec3::from(want.position));
+            assert_eq!(c.yaw, want.yaw_deg.to_radians());
+            assert_eq!(c.pitch, want.pitch_deg.to_radians());
+            assert_eq!(c, want.camera());
+        }
+        let e = parse_args_from(argv(&["--pose", "vein"]))
+            .err()
+            .expect("needs --level");
+        assert!(
+            e.contains("needs --level") && e.contains("vein, patch"),
+            "{e}"
+        );
+        let e = parse_args_from(argv(&["--level", "--pose", "cave"]))
+            .err()
+            .expect("unknown name");
+        assert_eq!(e, "--pose takes vein, patch, not cave");
+        assert!(parse_args_from(argv(&["--level", "--pose"])).is_err());
+
+        let mut run = bare_run(carved_rock());
+        let at = flythrough::VEIN_POSE.camera();
+        run.fly = Fly::new(at);
+        run.pose = Some((hud::pose_banner(flythrough::VEIN_POSE.name), at));
+        run.forget_pose_once_moved();
+        let banner = run.banner().expect("the pose's row shows");
+        assert_eq!(banner.lines().next(), Some("pose vein"), "{banner}");
+        run.fly.camera.position.x += 0.25;
+        run.forget_pose_once_moved();
+        assert!(
+            run.banner().is_none_or(|b| !b.contains("pose vein")),
+            "the row goes once the camera moves"
+        );
+    }
+
+    /// `F9` cycles the views shaded, normals, hitmask, steps, cracks, albedo, shaded; each
+    /// press shows the banner, which names the view (`view cracks`) unless it is shaded;
+    /// `--view cracks` parses.
+    #[test]
+    fn f9_cycles_the_views_and_the_banner_names_them() {
+        let mut run = bare_run(carved_rock());
+        let mut input = Input::default();
+        let mut seen = Vec::new();
+        for _ in 0..ViewMode::ALL.len() {
+            input.end_frame();
+            input.key_up(KeyCode::F9);
+            input.key_down(KeyCode::F9);
+            run.handle_input(&input);
+            let banner = run.banner().expect("a press shows the banner");
+            let named = banner
+                .lines()
+                .any(|l| l.split(", ").any(|p| p == "view cracks"));
+            assert_eq!(named, run.look.view == ViewMode::Cracks, "{banner}");
+            if run.look.view != ViewMode::Shaded {
+                let want = format!("view {}", run.look.view.name());
+                assert!(banner.contains(&want), "{banner}");
+            } else {
+                assert!(!banner.contains("view "), "{banner}");
+            }
+            seen.push(run.look.view.name());
+        }
+        assert_eq!(
+            seen,
+            ["normals", "hitmask", "steps", "cracks", "albedo", "shaded"]
+        );
+        let a = parse_args_from(argv(&["--view", "cracks"])).expect("parses");
+        assert_eq!(a.view, ViewMode::Cracks);
     }
 
     /// With the castle, `I` moves the camera to the next shot's pose and puts its name on the
@@ -7195,13 +7387,13 @@ mod tests {
         let a = parse_args_from(argv(&[])).unwrap();
         assert_eq!(
             look_line(&a.start_look(), a.look.as_ref()),
-            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on, closing snap, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
         );
         assert_eq!(a.look, Some(LookPreset::CONTOUR_SHARP));
         let c = parse_args_from(argv(&["--look", "contour"])).unwrap();
         assert_eq!(
             look_line(&c.start_look(), c.look.as_ref()),
-            "look contour (normals contour, fit uniform27, face mix 0, detail after lighting off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+            "look contour (normals contour, fit uniform27, face mix 0, detail after lighting off, closing snap, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
         );
         assert_eq!(flythrough::ROCK_DETAIL, [4.0, 0.1]);
         let a = parse_args_from(argv(&["--look", "face"])).unwrap();
@@ -7234,11 +7426,11 @@ mod tests {
         };
         assert_eq!(
             line(&["--look", "contour-sharp"]),
-            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on, closing snap, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
         );
         assert_eq!(
             line(&["--look", "contour-grain"]),
-            "look contour-grain (normals contour, fit uniform27, face mix 0, detail after lighting on), detail on (rock scale 2, strength 0.3, fine 0.5), view shaded"
+            "look contour-grain (normals contour, fit uniform27, face mix 0, detail after lighting on, closing snap, shadow push off), detail on (rock scale 2, strength 0.3, fine 0.5), view shaded"
         );
         for p in LookPreset::ALL {
             let a = parse_args_from(argv(&["--look", p.name])).unwrap();
@@ -7271,12 +7463,25 @@ mod tests {
                 "--rock-detail",
                 "2,0.2",
             ]),
-            "look contour (normals contour, fit weighted27 + volume, face mix 0.25, detail after lighting on), detail on (rock scale 2, strength 0.2, fine 0.5), view shaded"
+            "look contour (normals contour, fit weighted27 + volume, face mix 0.25, detail after lighting on, closing snap, shadow push off), detail on (rock scale 2, strength 0.2, fine 0.5), view shaded"
         );
         assert!(parse_args_from(argv(&["--plane-fit", "sobel"])).is_err());
         assert!(parse_args_from(argv(&["--face-mix", "0.6"])).is_err());
         assert!(parse_args_from(argv(&["--detail-fine", "-1"])).is_err());
         assert!(parse_args_from(argv(&["--detail-after", "yes"])).is_err());
+        for c in CrackClosing::ALL {
+            let name = c.name().replace(' ', "-");
+            assert_eq!(
+                line(&["--closing", &name, "--shadow-push", "on"]),
+                format!(
+                    "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on, closing {}, shadow push on), detail on (rock scale 4, strength 0.1, fine 0), view shaded",
+                    c.name()
+                )
+            );
+        }
+        assert!(parse_args_from(argv(&["--closing", "glue"])).is_err());
+        assert!(parse_args_from(argv(&["--look", "plain", "--closing", "snap"])).is_err());
+        assert!(parse_args_from(argv(&["--look", "plain", "--shadow-push", "on"])).is_err());
     }
 
     #[test]
@@ -7292,7 +7497,7 @@ mod tests {
         };
         assert_eq!(
             look_line(&look, Some(&p)),
-            "look face (normals face, fit uniform27, face mix 0, detail after lighting off), detail on (rock scale 4, strength 0.3, fine 0), view shaded"
+            "look face (normals face, fit uniform27, face mix 0, detail after lighting off, closing old, shadow push off), detail on (rock scale 4, strength 0.3, fine 0), view shaded"
         );
         assert_eq!(look_line(&look, None), "look face, detail on, view shaded");
     }

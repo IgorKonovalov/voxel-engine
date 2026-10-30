@@ -14,7 +14,9 @@ use std::sync::Arc;
 
 use vxe_audio::Listener;
 use vxe_net::{Logic, Server};
-use vxe_render::{Camera, NormalMode, PlaneFit, PlaneOffset, SurfaceFit, SurfaceTuning};
+use vxe_render::{
+    Camera, CrackClosing, NormalMode, PlaneFit, PlaneOffset, SurfaceFit, SurfaceTuning,
+};
 use vxe_world::hash::Fnv1a;
 use vxe_world::{
     BRICK_VOXELS, Brick, Chunk, ChunkCoord, ChunkExtent, ChunkMips, LogFile, Material,
@@ -23,6 +25,59 @@ use vxe_world::{
 
 use cave::CaveSource;
 use logic::DigLogic;
+
+/// A still camera on the bounded level (seed 1), with the manual exposure the stillness and
+/// settle rigs pin it at. `--level --pose NAME` starts the fly-through there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pose {
+    pub name: &'static str,
+    pub position: [f32; 3],
+    pub yaw_deg: f32,
+    pub pitch_deg: f32,
+    pub exposure: f32,
+}
+
+/// Facing the wall where the lamp-off patches were first counted. The exposure is the eye's
+/// adapted value after 600 frames with the lamp on and 900 off at 192 x 108.
+pub const PATCH_POSE: Pose = Pose {
+    name: "patch",
+    position: [676.2, 514.8, 193.1],
+    yaw_deg: 59.0,
+    pitch_deg: -9.7,
+    exposure: 10.9624,
+};
+
+/// Out from an ore vein along its normal, looking at it, at its eye's adapted value, read the
+/// same way.
+pub const VEIN_POSE: Pose = Pose {
+    name: "vein",
+    position: [727.5, 644.3, 208.5],
+    yaw_deg: 153.4,
+    pitch_deg: 0.0,
+    exposure: VEIN_EXPOSURE,
+};
+
+/// `VEIN_POSE`'s adapted exposure.
+pub const VEIN_EXPOSURE: f32 = 5.3720;
+
+/// The poses `--pose` takes, by name.
+pub const POSES: [Pose; 2] = [VEIN_POSE, PATCH_POSE];
+
+impl Pose {
+    /// The pose named `name`, if any.
+    pub fn named(name: &str) -> Option<Pose> {
+        POSES.into_iter().find(|p| p.name == name)
+    }
+
+    pub fn camera(&self) -> Camera {
+        Camera {
+            position: self.position.into(),
+            yaw: self.yaw_deg.to_radians(),
+            pitch: self.pitch_deg.to_radians(),
+            vfov: 70f32.to_radians(),
+        }
+    }
+}
 
 /// The fly-through's residency defaults (Plan 0002): full detail to 16 chunks (102 m), mips
 /// to 24 (154 m), one chunk of hysteresis.
@@ -295,6 +350,8 @@ const TUNING_OFF: SurfaceTuning = SurfaceTuning {
     },
     face_mix: 0.0,
     detail_after_lighting: false,
+    closing: CrackClosing::Old,
+    shadow_push: false,
 };
 
 impl LookPreset {
@@ -310,8 +367,15 @@ impl LookPreset {
     }
 
     pub const FACE: Self = Self::plain("face", NormalMode::Face);
-    /// Contour with every tuning part off.
-    pub const CONTOUR: Self = Self::plain("contour", NormalMode::Contour);
+    /// Contour with every tuning part off but the crack-closing rule, snap (Plan 0050);
+    /// `--closing old` selects ADR-0011's hit rule.
+    pub const CONTOUR: Self = Self {
+        tuning: SurfaceTuning {
+            closing: CrackClosing::Snap,
+            ..TUNING_OFF
+        },
+        ..Self::plain("contour", NormalMode::Contour)
+    };
     /// The geometry and lighting-path fixes: the distance-weighted gradient (the fit with the
     /// highest mid-band contrast of the guardrail-passing fits) and the detail's lamp term
     /// applied at full resolution.
@@ -323,7 +387,7 @@ impl LookPreset {
                 offset: PlaneOffset::Fraction,
             },
             detail_after_lighting: true,
-            ..TUNING_OFF
+            ..Self::CONTOUR.tuning
         },
         ..Self::CONTOUR
     };
@@ -334,7 +398,7 @@ impl LookPreset {
         name: "contour-grain",
         tuning: SurfaceTuning {
             detail_after_lighting: true,
-            ..TUNING_OFF
+            ..Self::CONTOUR.tuning
         },
         rock_detail: [2.0, 0.3],
         detail_fine: 0.5,
@@ -387,14 +451,17 @@ impl LookPreset {
     }
 
     /// The parts beyond the normal mode: `fit uniform27, face mix 0, detail after lighting
-    /// off`.
+    /// off, closing snap, shadow push off`.
     pub fn parts(&self) -> String {
         let t = &self.tuning;
+        let on = |b: bool| if b { "on" } else { "off" };
         format!(
-            "fit {}, face mix {}, detail after lighting {}",
+            "fit {}, face mix {}, detail after lighting {}, closing {}, shadow push {}",
             t.fit.name(),
             t.face_mix,
-            if t.detail_after_lighting { "on" } else { "off" }
+            on(t.detail_after_lighting),
+            t.closing.name(),
+            on(t.shadow_push)
         )
     }
 

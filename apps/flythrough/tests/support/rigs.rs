@@ -1,6 +1,7 @@
 //! The rigs of the upscalers' tests (Plan 0030's, shared with FSR 2's): the level at its
 //! spawn, the presenter's blit, image distances, and the stripe wall with its sharpness
-//! readings.
+//! readings; and the crack scenes of the contour look's crack classes (Plan 0050): analytic
+//! half-space worlds and the level at the settle rig's poses, mirrored with contour attributes.
 
 use super::*;
 use vxe_render::{
@@ -1062,4 +1063,230 @@ pub fn still_vein_flicker(jitter: bool, kind: UpscalerKind) -> Option<(f64, f64)
         }
     }
     Some((sum / n as f64, over as f64 / n as f64))
+}
+
+// ---- The crack scenes (tests/look.rs's crack classes) ----
+
+/// Air over chunks `[0, 2)^3` with `ROCK` wherever voxel `v` satisfies any of the half-spaces
+/// `a . (2 v + 1) <= c`: integer tests on twice the voxel centre, so each scene's plane cuts
+/// the voxel grid exactly where its formula says.
+pub struct HalfSpaces(pub Vec<([i64; 3], i64)>);
+
+impl WorldSource for HalfSpaces {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        let base = coord.min_voxel().0;
+        for slot in 0..CHUNK_BRICKS {
+            let b = brick_of_slot(slot);
+            out.set_brick(
+                slot,
+                Brick::from_fn(|l| {
+                    let v = [0, 1, 2].map(|k| i64::from(base[k] + b[k] * BRICK_EDGE + l[k]));
+                    let solid = self
+                        .0
+                        .iter()
+                        .any(|(a, c)| (0..3).map(|k| a[k] * (2 * v[k] + 1)).sum::<i64>() <= *c);
+                    if solid { ROCK } else { AIR }
+                }),
+            );
+        }
+    }
+}
+
+/// The crack scenes' box centre, in voxels.
+pub const CRACK_CENTRE: [f32; 3] = [64.0, 64.0, 64.0];
+
+/// `HalfSpaces` over chunks `[0, 2)^3` under `table`.
+pub fn half_space_world(spaces: Vec<([i64; 3], i64)>, table: &MaterialTable) -> World {
+    let source = HalfSpaces(spaces);
+    World::generate(ChunkExtent::new([0, 0, 0], [2, 2, 2]), &source, table)
+}
+
+/// Rock below the plane through [`CRACK_CENTRE`] with normal `normalize(1, 2, 3)`: neighbouring
+/// surface voxels see different 27-neighbourhoods, so their planes' offsets disagree.
+pub fn tilted_slab_world(table: &MaterialTable) -> World {
+    // a . (2 v + 1 - 128) <= 0 with a = (1, 2, 3).
+    half_space_world(vec![([1, 2, 3], 128 * 6)], table)
+}
+
+/// Rock below the plane `x + z = 128` through [`CRACK_CENTRE`], normal `normalize(1, 0, 1)`: a
+/// 45-degree staircase whose surface voxels all see the same 27-neighbourhood.
+pub fn axis_slab_world(table: &MaterialTable) -> World {
+    half_space_world(vec![([1, 0, 1], 256)], table)
+}
+
+/// Rock below the plane `x + y + z = 192` through [`CRACK_CENTRE`], normal
+/// `normalize(1, 1, 1)`: its surface voxels (those with `x + y + z = 191`) all see the same
+/// 27-neighbourhood, and the attribute's 6-bit octahedral code holds that normal exactly
+/// (`(1/3, 1/3)` is code 42 of 63 on each axis), so every surface voxel's plane is the same
+/// plane.
+pub fn diagonal_slab_world(table: &MaterialTable) -> World {
+    half_space_world(vec![([1, 1, 1], 384)], table)
+}
+
+/// The diagonal slab from its air side, 30 voxels out along its normal and 5 along
+/// `(1, -1, 0)`, looking at the centre: nearly head-on, so every hit lies within about 40
+/// voxels of the centre and the window's faces, where the surface voxels' neighbourhoods are
+/// cut, stay out of the frame.
+pub fn diagonal_slab_camera() -> vxe_render::Camera {
+    let n = Vec3::new(1.0, 1.0, 1.0).normalize();
+    let t = Vec3::new(1.0, -1.0, 0.0).normalize();
+    let p = Vec3::from(CRACK_CENTRE) + 30.0 * n + 5.0 * t;
+    camera_toward(p.to_array(), CRACK_CENTRE)
+}
+
+/// A flat floor, rock at `z < 64`.
+pub fn floor_world(table: &MaterialTable) -> World {
+    half_space_world(vec![([0, 0, 1], 127)], table)
+}
+
+/// A flat vertical wall, rock at `x >= 80`, its face toward `-x`.
+pub fn wall_world(table: &MaterialTable) -> World {
+    half_space_world(vec![([-1, 0, 0], -161)], table)
+}
+
+/// The floor obliquely: 20 voxels above `(64, 64, 64)` and 30 back along `-x`, looking at it.
+pub fn floor_camera() -> vxe_render::Camera {
+    camera_toward([34.0, 64.0, 84.0], [64.0, 64.0, 64.0])
+}
+
+/// The wall obliquely: 20 voxels out from `(80, 64, 64)` along `-x` and 30 along `-y`,
+/// looking at it.
+pub fn wall_camera() -> vxe_render::Camera {
+    camera_toward([60.0, 34.0, 64.0], [80.0, 64.0, 64.0])
+}
+
+/// A floor (rock at z < 64) meeting a wall (rock at x >= 80) at 90 degrees: the concave corner
+/// along the line x = 80, z = 64.
+pub fn corner_world(table: &MaterialTable) -> World {
+    half_space_world(vec![([0, 0, 1], 127), ([-1, 0, 0], -161)], table)
+}
+
+/// At `position` looking at `target`, 70 degrees vertical field of view.
+pub fn camera_toward(position: [f32; 3], target: [f32; 3]) -> vxe_render::Camera {
+    let d = Vec3::from(target) - Vec3::from(position);
+    vxe_render::Camera {
+        position: position.into(),
+        yaw: d.y.atan2(d.x),
+        pitch: (d.z / d.length()).asin(),
+        vfov: 70f32.to_radians(),
+    }
+}
+
+/// 30 voxels out from [`CRACK_CENTRE`] along the slab's normal `n` and 20 along `t`, looking
+/// at the centre: an oblique view of the slab's surface.
+pub fn slab_camera(n: [f32; 3], t: [f32; 3]) -> vxe_render::Camera {
+    let (n, t) = (Vec3::from(n).normalize(), Vec3::from(t).normalize());
+    let p = Vec3::from(CRACK_CENTRE) + 30.0 * n + 20.0 * t;
+    camera_toward(p.to_array(), CRACK_CENTRE)
+}
+
+/// The tilted slab from its air side, obliquely.
+pub fn tilted_slab_camera() -> vxe_render::Camera {
+    slab_camera([1.0, 2.0, 3.0], [2.0, -1.0, 0.0])
+}
+
+/// The 45-degree slab from its air side, obliquely.
+pub fn axis_slab_camera() -> vxe_render::Camera {
+    slab_camera([1.0, 0.0, 1.0], [0.0, 1.0, 0.0])
+}
+
+/// Inside the corner, at `(50.5, 64.5, 82.5)` looking +x at a pitch of -30 degrees: the
+/// centre ray meets the floor at the foot of the wall.
+pub fn corner_camera() -> vxe_render::Camera {
+    vxe_render::Camera {
+        position: [50.5, 64.5, 82.5].into(),
+        yaw: 0.0,
+        pitch: (-30f32).to_radians(),
+        vfov: 70f32.to_radians(),
+    }
+}
+
+/// `world` mirrored with contour attributes under plane fit `fit`, every attribute computed,
+/// over a fixed window, with a `size` frame lighting at full resolution.
+pub fn fit_rig_on(
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    world: &World,
+    fit: vxe_render::SurfaceFit,
+    size: [u32; 2],
+) -> LookRig {
+    let cfg = MirrorConfig {
+        budget_bytes: 512 << 20,
+        ..MirrorConfig::new(Window::Fixed(world.extent()))
+    };
+    let mut gpu = GpuWorld::with_surface_attrs(&device, cfg);
+    gpu.set_surface_fit(fit);
+    gpu.set_focus(VoxelCoord(CRACK_CENTRE.map(|c| c as i32)));
+    for _ in 0..4 {
+        gpu.sync_now(world, &device, &queue)
+            .expect("mirror fits the adapter");
+    }
+    drain_attrs(&device, &queue, &mut gpu);
+    let mut frame = Frame::new(&device, size[0], size[1]);
+    frame.set_resolution(&device, vxe_render::LightingResolution::Full);
+    LookRig {
+        device,
+        queue,
+        gpu,
+        frame,
+    }
+}
+
+/// Runs the attribute pass until its work list is empty.
+pub fn drain_attrs(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &mut GpuWorld) {
+    loop {
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let items = gpu.update_attrs(&mut enc);
+        queue.submit([enc.finish()]);
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("device poll after the attribute pass");
+        if items == 0 {
+            break;
+        }
+    }
+}
+
+/// The level the fly-through generates with `--level --seed 1` under its default look's
+/// materials, the ore emissive: the world the owner's `--pose` runs show.
+pub fn pose_level() -> World {
+    let source = flythrough::cave::CaveSource::new(
+        1,
+        ChunkExtent::new([0, 0, 0], flythrough::cave::LEVEL_CHUNKS),
+    );
+    let table = flythrough::with_emissive_ore(&flythrough::LookPreset::DEFAULT.materials());
+    World::generate(source.extent, &source, &table)
+}
+
+/// The level's frame size in the crack readings.
+pub const POSE_SIZE: [u32; 2] = [384, 216];
+
+/// The level mirrored whole with contour attributes under `fit` on `device`, focused on
+/// `pose`, with a [`POSE_SIZE`] frame at the fly-through's lighting defaults (no upscaler).
+pub fn pose_rig_on(
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    world: &World,
+    pose: &flythrough::Pose,
+    fit: vxe_render::SurfaceFit,
+) -> LookRig {
+    let cfg = MirrorConfig {
+        budget_bytes: 1 << 30,
+        ..MirrorConfig::new(Window::Fixed(world.extent()))
+    };
+    let mut gpu = GpuWorld::with_surface_attrs(&device, cfg);
+    gpu.set_surface_fit(fit);
+    gpu.set_focus(VoxelCoord(pose.position.map(|c| c.floor() as i32)));
+    for _ in 0..4 {
+        gpu.sync_now(world, &device, &queue)
+            .expect("mirror fits the adapter");
+    }
+    drain_attrs(&device, &queue, &mut gpu);
+    let frame = Frame::new(&device, POSE_SIZE[0], POSE_SIZE[1]);
+    LookRig {
+        device,
+        queue,
+        gpu,
+        frame,
+    }
 }

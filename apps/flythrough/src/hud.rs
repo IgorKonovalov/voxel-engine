@@ -369,6 +369,8 @@ pub struct HudStats {
     pub format_us: u32,
     /// The steps view's reading of the last frame, while that view is on.
     pub steps: Option<StepsSample>,
+    /// The cracks view's reading of the last frame, while that view is on.
+    pub cracks: Option<vxe_render::CrackShares>,
     /// The mirror's pressure against its reservation; `None` hides its row.
     pub pressure: Option<Pressure>,
     /// The gamepad row; `None` (no pad source in this run) hides it.
@@ -425,6 +427,19 @@ pub struct Pressure {
     pub pressure: f32,
     pub budget_bytes: u64,
     pub r_full: Option<[i32; 2]>,
+}
+
+/// The cracks row: each class's share of the hit pixels and the self-hits', in percent:
+/// `cracks clean 97.10 %, interior 0.52 %, entry 1.98 %, crossing 0.40 %, self-hit 0.31 %`.
+pub fn cracks_row(c: &vxe_render::CrackShares) -> String {
+    format!(
+        "cracks clean {:.2} %, interior {:.2} %, entry {:.2} %, crossing {:.2} %, self-hit {:.2} %",
+        100.0 * c.share(0),
+        100.0 * c.share(1),
+        100.0 * c.share(2),
+        100.0 * c.share(3),
+        100.0 * c.self_hit_share()
+    )
 }
 
 /// What the steps view read for one frame: the mean, p99 and block-max mean of steps per
@@ -494,6 +509,7 @@ impl HudStats {
             cutaway: None,
             format_us: 6,
             steps: None,
+            cracks: None,
             pressure: None,
             pad: None,
             lighting: None,
@@ -712,6 +728,9 @@ impl HudStats {
                     s.mean_steps, s.p99_steps, s.block_max_mean, s.mean_loads, s.mean_pool_reads
                 ),
             )?;
+        }
+        if let Some(c) = self.cracks {
+            row(out, HudColour::White, format_args!("{}", cracks_row(&c)))?;
         }
         if let Some(p) = &self.pad {
             row(out, HudColour::White, format_args!("{p}"))?;
@@ -953,6 +972,34 @@ mod tests {
                 .to_string()
                 .lines()
                 .any(|l| l.starts_with("steps per ray")),
+            "no row without a sample"
+        );
+    }
+
+    /// The cracks row appears only with a cracks sample, before the format row, and reads the
+    /// four classes' shares and the self-hits' in percent of the hit pixels.
+    #[test]
+    fn the_cracks_row_prints_the_last_frame_s_shares() {
+        let stats = HudStats {
+            cracks: Some(vxe_render::CrackShares {
+                hits: 2000,
+                classes: [1940, 10, 40, 10],
+                self_hits: 6,
+            }),
+            ..HudStats::default()
+        };
+        let lines = stats.to_string();
+        let lines: Vec<&str> = lines.lines().collect();
+        assert_eq!(
+            lines[lines.len() - 2],
+            "cracks clean 97.00 %, interior 0.50 %, entry 2.00 %, crossing 0.50 %, self-hit 0.30 %"
+        );
+        assert!(lines[lines.len() - 1].starts_with("format "));
+        assert!(
+            !HudStats::default()
+                .to_string()
+                .lines()
+                .any(|l| l.starts_with("cracks ")),
             "no row without a sample"
         );
     }
@@ -1208,13 +1255,19 @@ mod tests {
     }
 }
 
+/// `--pose`'s banner row, shown until the camera first moves: `pose vein`.
+pub fn pose_banner(name: &str) -> String {
+    format!("pose {name}")
+}
+
 /// How long the mode banner shows after the start or a change, in milliseconds.
 pub const BANNER_MS: f64 = 3000.0;
 /// The banner's widest row in characters: it fits a 1280-pixel window at the HUD's scale 2
 /// (80 cells) and the golden's 320 pixels at scale 1 (40 cells).
 pub const BANNER_COLS: usize = 40;
-/// Rows the banner wraps into at most.
-pub const BANNER_ROWS: usize = 7;
+/// Rows the banner wraps into at most: the look's words in two (a contour preset names its
+/// crack-closing rule) and the modes' line in six.
+pub const BANNER_ROWS: usize = 8;
 
 /// A key that changes the lighting mode: `F3` to `F7` and `M`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1301,6 +1354,9 @@ pub struct Modes {
     readout: Option<vxe_render::ExposureReadout>,
     /// The look's words, from the first [`Modes::show_look`]: the banner's first row on.
     look: Option<String>,
+    /// The view's name after the look's words, from [`Modes::show_view`] with any view but
+    /// `shaded`.
+    view: Option<&'static str>,
     /// The mirror refits to a new plane fit: the banner adds `refitting` and shows until it
     /// drains.
     refitting: bool,
@@ -1328,6 +1384,7 @@ impl Modes {
             },
             readout: None,
             look: None,
+            view: None,
             refitting: false,
             probe_spacing: vxe_render::probes::DEFAULT_PROBE_SPACING,
         }
@@ -1370,14 +1427,30 @@ impl Modes {
         }
     }
 
-    /// Shows the banner from `now_ms` with the look in words, `look contour-sharp, detail on`:
-    /// the first row of every banner from then on.
+    /// Shows the banner from `now_ms` with the look in words, `look contour-sharp, closing snap,
+    /// detail on` (a contour preset names its crack-closing rule, and `shadow push on` when
+    /// set): the first row of every banner from then on.
     pub fn show_look(&mut self, preset: &crate::LookPreset, detail: bool, now_ms: f64) {
-        self.look = Some(format!(
-            "look {}, detail {}",
-            preset.name,
-            if detail { "on" } else { "off" }
-        ));
+        let mut words = format!("look {}", preset.name);
+        if preset.normal_mode == vxe_render::NormalMode::Contour {
+            words += &format!(", closing {}", preset.tuning.closing.name());
+            if preset.tuning.shadow_push {
+                words += ", shadow push on";
+            }
+        }
+        words += if detail {
+            ", detail on"
+        } else {
+            ", detail off"
+        };
+        self.look = Some(words);
+        self.banner_at = now_ms;
+    }
+
+    /// Shows the banner from `now_ms` with `view NAME` after the look's words, or without it
+    /// for the shaded view.
+    pub fn show_view(&mut self, view: vxe_render::ViewMode, now_ms: f64) {
+        self.view = (view != vxe_render::ViewMode::Shaded).then(|| view.name());
         self.banner_at = now_ms;
     }
 
@@ -1510,12 +1583,15 @@ impl Modes {
     }
 
     /// The banner at `now_ms`: the look's words and `refitting` once [`Modes::show_look`]
-    /// gave them, then the modes' line, within [`BANNER_MS`] of the start or the last change
+    /// gave them, `view NAME` once [`Modes::show_view`] gave a view other than shaded, then
+    /// the modes' line, within [`BANNER_MS`] of the start or the last change
     /// or while refitting; each wrapped at its commas into rows of at most [`BANNER_COLS`]
     /// characters, one per text line; else `None`.
     pub fn banner(&self, now_ms: f64) -> Option<String> {
         (now_ms - self.banner_at < BANNER_MS || self.refitting).then(|| {
             let mut look: Vec<&str> = self.look.iter().flat_map(|l| l.split(", ")).collect();
+            let view = self.view.map(|v| format!("view {v}"));
+            look.extend(view.as_deref());
             if self.refitting {
                 look.push("refitting");
             }
@@ -1654,7 +1730,13 @@ mod mode_tests {
             preset = preset.next(true);
             m.show_look(&preset, true, t);
             let b = m.banner(t).expect("a press shows the banner");
-            assert_eq!(b, format!("look {}, detail on\n{lighting}", preset.name));
+            let words = if preset.normal_mode == vxe_render::NormalMode::Contour {
+                format!("look {}, closing snap, detail on", preset.name)
+            } else {
+                format!("look {}, detail on", preset.name)
+            };
+            let words = wrap(&words.split(", ").collect::<Vec<_>>()).join("\n");
+            assert_eq!(b, format!("{words}\n{lighting}"));
             assert!(b.lines().count() <= BANNER_ROWS && b.lines().all(|l| l.len() <= BANNER_COLS));
             assert_eq!(m.banner(t + BANNER_MS), None);
             names.push(preset.name);
@@ -1689,11 +1771,53 @@ mod mode_tests {
         let far = t + 10.0 * BANNER_MS;
         assert_eq!(
             m.banner(far).as_deref(),
-            Some(format!("look contour-grain, detail on, refitting\n{lighting}").as_str()),
+            Some(
+                format!("look contour-grain, closing snap\ndetail on, refitting\n{lighting}")
+                    .as_str()
+            ),
             "a refit keeps the banner up"
         );
         m.set_refitting(false);
         assert_eq!(m.banner(far), None, "it fades once the refit drains");
+    }
+
+    /// `F9`'s view shows on the banner after the look's words, `view cracks`, from the press
+    /// for `BANNER_MS`; the shaded view adds nothing.
+    #[test]
+    fn the_banner_names_the_view() {
+        use vxe_render::ViewMode;
+        let mut m = Modes::new(
+            vxe_render::Lighting::default(),
+            vxe_render::LightingResolution::default(),
+            0.0,
+        );
+        let lighting = m.banner(0.0).expect("the banner shows at the start");
+        m.show_look(&crate::LookPreset::CONTOUR_SHARP, true, 0.0);
+        m.show_view(ViewMode::Cracks, 5000.0);
+        assert_eq!(
+            m.banner(5000.0).as_deref(),
+            Some(
+                format!("look contour-sharp, closing snap\ndetail on, view cracks\n{lighting}")
+                    .as_str()
+            )
+        );
+        assert_eq!(m.banner(5000.0 + BANNER_MS), None);
+        m.show_view(ViewMode::Shaded, 9000.0);
+        assert_eq!(
+            m.banner(9000.0).as_deref(),
+            Some(format!("look contour-sharp, closing snap\ndetail on\n{lighting}").as_str())
+        );
+        let mut old = crate::LookPreset::CONTOUR_SHARP;
+        old.tuning.closing = vxe_render::CrackClosing::Old;
+        old.tuning.shadow_push = true;
+        m.show_look(&old, true, 20_000.0);
+        assert!(
+            m.banner(20_000.0)
+                .unwrap()
+                .starts_with("look contour-sharp, closing old\nshadow push on, detail on\n"),
+            "{:?}",
+            m.banner(20_000.0)
+        );
     }
 }
 

@@ -240,13 +240,15 @@ fn brick_kind(bw: vec3<i32>) -> vec2<u32> {
     return vec2<u32>(kind, entry);
 }
 
-// Octahedral encoding of the unit vector `n` into 6 + 6 bits.
+// Octahedral encoding of the unit vector `n` into 6 + 6 bits: each coordinate `p` in [-1, 1]
+// on codes 0..=62, `round((p + 1) * 31)`, so `p = 0` and `p = +-1` are codes 31, 0 and 62 and
+// every axis normal and zero component decodes exactly (ADR-0038). Code 63 is unused.
 fn encode_octahedral(n: vec3<f32>) -> u32 {
     var p = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
     if (n.z < 0.0) {
         p = (1.0 - abs(p.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), p >= vec2<f32>(0.0));
     }
-    let q = vec2<u32>(round(clamp(p * 0.5 + 0.5, vec2<f32>(0.0), vec2<f32>(1.0)) * 63.0));
+    let q = vec2<u32>(round(clamp(p + 1.0, vec2<f32>(0.0), vec2<f32>(2.0)) * 31.0));
     return q.x | (q.y << 6u);
 }
 

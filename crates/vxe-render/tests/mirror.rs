@@ -1537,12 +1537,13 @@ fn surface_attributes_are_indexed_by_popcount() {
     assert_eq!(w[UNIT_WORDS + 14] & 0xFFFF, 2);
 }
 
-/// The decoded attribute: the octahedral normal and the offset code, or `None` for no plane.
+/// The decoded attribute: the octahedral normal (codes `0..=62`, `q / 31 - 1`, as
+/// `march.wgsl` decodes it) and the offset code, or `None` for no plane.
 fn decode_attr(a: u16) -> Option<([f32; 3], u16)> {
     if a == NO_PLANE {
         return None;
     }
-    let q = [f32::from(a & 63), f32::from((a >> 6) & 63)].map(|v| v / 63.0 * 2.0 - 1.0);
+    let q = [f32::from(a & 63), f32::from((a >> 6) & 63)].map(|v| v / 31.0 - 1.0);
     let mut n = [q[0], q[1], 1.0 - q[0].abs() - q[1].abs()];
     if n[2] < 0.0 {
         let (x, y) = (n[0], n[1]);
@@ -3240,8 +3241,9 @@ fn a_five_brick_list_matches_an_uncapped_mirror_and_the_one_brick_pass() {
     );
 }
 
-/// The hash of the five bricks' attribute words as c6df852's pass wrote them.
-const FIVE_BRICK_HASH: u64 = 0xd795_d691_eff6_7ad3;
+/// The hash of the five bricks' attribute words as c6df852's one-brick workgroups wrote them,
+/// re-read with the plane code of ADR-0038 (codes `0..=62`).
+const FIVE_BRICK_HASH: u64 = 0x2097_bf15_d528_0e26;
 
 /// A `Mixed` full chunk at (1, 0, 0) whose five neighbours in a 3 x 2 x 1 window are LOD-only
 /// (their own mips): its bricks' attribute words, by world brick in ascending order, as an
@@ -3311,7 +3313,7 @@ fn attributes_beside_lod_only_chunks_read_their_mips() {
 }
 
 /// The hash of the full chunk's attribute words beside its LOD-only neighbours.
-const BESIDE_LOD_HASH: u64 = 0xda7d_5f1f_ace6_9921;
+const BESIDE_LOD_HASH: u64 = 0xb326_6753_424e_d0ec;
 
 // ---- Plane fits ----
 
@@ -3350,6 +3352,11 @@ fn attr_at(
     gpu: &GpuWorld,
     v: [i32; 3],
 ) -> Option<([f32; 3], u16)> {
+    decode_attr(raw_attr_at(device, queue, gpu, v))
+}
+
+/// The attribute of voxel `v` as the pool holds it, read back.
+fn raw_attr_at(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &GpuWorld, v: [i32; 3]) -> u16 {
     let vc = VoxelCoord(v);
     let c = vc.chunk();
     let l = vc.local();
@@ -3359,7 +3366,7 @@ fn attr_at(
         .expect("the voxel's chunk is mirrored");
     assert!(e & FULL_BIT != 0, "voxel {v:?} lies in a Full brick");
     let w = slot_words(device, queue, gpu, e);
-    decode_attr(attr_in(&w, e, index_in_brick(l.map(|x| x % BRICK_EDGE))))
+    attr_in(&w, e, index_in_brick(l.map(|x| x % BRICK_EDGE)))
 }
 
 fn angle_deg(a: [f32; 3], b: [f32; 3]) -> f32 {
@@ -3433,6 +3440,36 @@ fn plane_fits_agree_where_the_geometry_is_simple() {
                     "normal {n:.3?}, code {k} ({:+.3} voxel)",
                     (f32::from(k) - 7.0) / 8.0
                 ))
+            );
+        }
+    }
+}
+
+/// A flat floor's and a flat wall's surface voxels decode to the exact axis normal, every
+/// component bit-exact, under every fit: the floor's top voxel to `(0, 0, 1)` (octahedral
+/// codes `(31, 31)`) and a voxel in the middle of the block's `-x` wall to `(-1, 0, 0)`
+/// (`(0, 31)`), the plane code holding a zero component exactly (ADR-0038).
+#[test]
+fn axis_planes_decode_to_the_exact_axis_normal() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let (floor, edges) = (world(), edge_and_stair());
+    for fit in fits() {
+        for (world, v, want, codes) in [
+            (&floor, [10, 10, 2], [0.0, 0.0, 1.0], (31, 31)),
+            (&edges, [63, 100, 20], [-1.0, 0.0, 0.0], (0, 31)),
+        ] {
+            let gpu = fitted(&device, &queue, world, fit);
+            let a = raw_attr_at(&device, &queue, &gpu, v);
+            let (n, _) = decode_attr(a).unwrap_or_else(|| panic!("{v:?} has a plane"));
+            println!("{}: {v:?} attribute {a:#06x} normal {n:?}", fit.name());
+            assert_eq!((a & 63, (a >> 6) & 63), codes, "{}: {v:?}", fit.name());
+            assert_eq!(
+                n.map(f32::to_bits),
+                want.map(f32::to_bits),
+                "{}: {v:?}",
+                fit.name()
             );
         }
     }
