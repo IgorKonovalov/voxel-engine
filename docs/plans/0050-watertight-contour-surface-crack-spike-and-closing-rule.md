@@ -431,7 +431,7 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 | 2: A zero normal component, exact in the plane code | dev | done | 4b137e7 |
 | 3: The closing rules, each measured | dev | done | e9cae0e |
 | 4: The pick as the default | dev | done | 760950b |
-| 5: The owner's windowed check | human | not started | |
+| 5: The owner's windowed check | human | done (c) | committed with this row |
 | 6: The owner's findings, and the losers removed | dev | not started | |
 
 #### Phase 1
@@ -766,6 +766,30 @@ extend 0.25 5.928, extend 0.5 5.926, blend 35.151 (light pre 7.005, blend 13.439
   13.5781 % of pixels over 2/255. The same test at 00ca974 (the plan's start, same PNG) reads
   12.4601 %, and at this tree with `CrackClosing::Old` 12.4601 %. Not re-blessed.
 
+#### Phase 5
+
+- Owner, 2026-10-30, RTX 3080 Laptop GPU, release binary of d438ae6's tree, windowed:
+  `flythrough --level --seed 1 --pose vein --lamp on` (snap), the same with `--closing old`,
+  and `--pose patch --lamp on` (snap, lamp toggled off in the run); shaded, normals and cracks
+  views. Screenshots in the worktree's untracked `live/p5/`.
+- Outcome (c). Under snap the dark dots, wedges and triangles that `old` shows are gone.
+  Remaining at both poses, more where the geometry is complex: voxel-sized flat-faced boxes
+  (each face one flat normal-view colour): one-voxel rods and pillars along walls and ledge
+  edges, vertical and horizontal, and lone cubes on floors, walls and ceilings. The same boxes
+  show in `old`. In the cracks view they read class 0. Owner: the contour look cannot go
+  forward with them; fix it, or drop contours.
+- Not explained: the plane fit (`attrib.wgsl` `voxel_attr`) gives no plane only where all six
+  face neighbours are solid or the 27-voxel gradient sums to zero; a free one-voxel pillar
+  cancels, but a rod against a wall and a lone cube on a floor do not, and still show as
+  boxes. Not measured which hits carry no plane, which carry a plane and hit the box, and
+  which lie in a brick without attributes.
+- The window's cracks view does not show the palette: `old`'s class 2 wedges show dark olive,
+  not yellow (`composite.wgsl` writes `k^2.2 / exposure` to the HDR target, then the upscaler
+  and tone map). Headless at the vein pose (lavapipe, `live/cracks/`): `old` 94 red, 2153
+  yellow, 482 blue, 64 magenta pixels; snap 0, 0, 482, 64.
+- Phase 6's rule: this fault is outside classes 1 to 3, so it stops for an architect
+  amendment.
+
 ### Notes
 
 - Deviations are listed per phase above (Phase 1: `F9` and the self-hit in the hit pass;
@@ -801,6 +825,7 @@ extend 0.25 5.928, extend 0.5 5.926, blend 35.151 (light pre 7.005, blend 13.439
   --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo test --doc --workspace`
   7 passed; `cargo deny check` ok (advisories, bans, licenses, sources); the four
   `scripts/check-*.mjs` 0.
-- **Outstanding `human` phases:** Phase 5, the owner's windowed check. Phase 6 (dev) follows it.
+- **Outstanding `human` phases:** none. Phase 5 recorded (c); Phase 6 waits on an architect
+  amendment for the flat-faced boxes.
 
 ## Followups
