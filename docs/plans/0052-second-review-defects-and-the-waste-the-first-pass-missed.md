@@ -1,6 +1,6 @@
 # 0052: The second review: five defects, the waste the first pass missed, and the testbed's failure semantics
 
-> **Status:** in-progress (2026-10-29)
+> **Status:** in-progress (2026-10-30): every phase implemented; awaiting the close review
 > **Created:** 2026-10-29
 > **Milestone:** cross-cutting (code health), like Plans 0044 and 0045. It serves the M2 to M5
 > figures already shipped and the determinism and headless promises in `docs/nfr.md`
@@ -588,7 +588,7 @@ Every reading names the machine, the commit, the lock and the load.
 | 6: the shell's knobs, shared channel bytes, and cheaper control renders | dev | done (golden wall-time readings in Notes) | fcc87bd, c7ed5a5 |
 | 7: the lab-mode inventory, and the removals that need no pick | dev | done | code in 1fdac4d; 033be68 |
 | 8: the owner picks what else goes | human | done (owner answer 5) | 9a4c99c |
-| 9: the owner's removals | dev | done (pass times on owner answer 6's bar) | 891655a; merge 4f42bce; follow-up committed with this row |
+| 9: the owner's removals | dev | done (pass times on owner answer 6's bar) | 891655a; merge 4f42bce; follow-up 76bf25f |
 
 ### Phase 7 inventory
 
@@ -1004,8 +1004,36 @@ Lines at `fcc87bd` ("mr" is `crates/vxe-render/src/marcher.rs`, "sh/"
   `live/p9f-gpu-stderr.log`): the same two, showcase 13.5781 %, castle peak RSS
   1 496 014 848 B with its image 0.0000 %. Every other golden 0.0000 % over 2/255 (18
   printed) and every split and bypass comparison `0 bytes differ` (11).
+- Unmet at the tip: the gpu tier is not green. Its two failures arrive with main (above);
+  neither is re-blessed nor touched here. The Phase 9 done-when's "every golden is
+  byte-identical" holds for every golden but the showcase's, which reads main's figure.
+- Unmet at the tip: `cargo deny check` fails on advisories, four wasmtime and wasmtime-wasi
+  vulnerabilities (RUSTSEC-2026-0420, -0422, -0423, -0424) against the `=49.0.4` pin, fixed
+  in 49.0.5 and later. The lockfile is main's; this plan changes no dependency.
+- Not run: the full tier (owner rule on main at `81d99f8`, 2026-10-30: it runs once per plan
+  in the close review, on the tree that holds main). So the full tier's wall time the owner
+  asked for is the close review's reading.
 
 ### Close triggers
+
+- **Tip:** `76bf25f` (code), with this block on top; main merged in at `4f42bce` (main
+  `7ef72e6`).
+- **Gate at `76bf25f`'s tree** (lavapipe, `CARGO_BUILD_JOBS=4`, memory-capped scopes):
+  `cargo build --workspace` exit 0; `cargo nextest run --workspace --profile quick` exit 100,
+  539 run, 534 passed, 5 timed out at 30 s at load 11.6 rising to 35.4 (another program's
+  load), the five alone 14 run, 14 passed (`castle` x2, `collapse_level` x2, `replay`; 11.8 to
+  20.0 s, load 23.1) (`live/close-quick.log`); `--profile gpu` under the exclusive perf lock
+  exit 100, 185 run, 183 passed, 2 failed (the showcase golden, castle's peak RSS; Notes),
+  30 skipped, 1 874 s, load 9.2 at the start and 5.5 at the end; `cargo test --workspace
+  --doc` 7 passed; `cargo clippy --workspace --all-targets -- -D warnings` and `-p flythrough
+  --features wasm --all-targets` exit 0; `cargo fmt --all --check` exit 0; `cargo deny check`
+  exit non-zero (advisories FAILED, bans, licenses and sources ok); `check-doc-links`,
+  `check-comment-hygiene`, `check-index-rows`, `check-test-tiers` exit 0.
+- **Full tier:** owed to the close review (owner rule, `81d99f8`).
+- **Budget readings:** in the phases' Notes: Phase 4's volume (54 689 824 B), Phase 5's bench
+  (`tool` 1.4 % over the base, `c130daf`), Phase 6's golden wall times, Phase 9's pass times
+  (RTX 3080 Laptop and Radeon Cezanne RADV, `891655a` against `c7ed5a5`). None after the
+  merge: the follow-up changes no executed code.
 
 ## Followups
 
