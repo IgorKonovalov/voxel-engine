@@ -851,6 +851,66 @@ extend 0.25 5.928, extend 0.5 5.926, blend 35.151 (light pre 7.005, blend 13.439
 - Architect, 2026-10-30: routed to Plan 0053 (ADR-0040 proposed); Phase 6 rewritten and
   unblocked, see the header's second amendment.
 
+### Resume notes (2026-10-30, delete when Phase 6 lands)
+
+- State: 45bc227 (`wip(render)`) holds every Phase 6 change. Done-when 5 stops on the owner
+  question below; the floor and the test are untouched.
+- Owner question: `detail_after_lighting_is_exact_for_the_lamp` (`sharpness.rs`, C5 against
+  today on the wall, full tier, filter off) has the owner's floor 98.3 % (set 2026-10-29 from
+  98.389 % with today on `Old`). With `Old` removed both sides run snap: 98.028 % on lavapipe,
+  worst 230/255; misses 0.764 % unlit in C5 and lit today, 1.208 % lit and darker in C5 (the
+  ratio's clamp; 0.681 % at Phase 2), 0 other. Options: (a) the owner moves the floor to 98.0
+  % from the snap reading, the doc comment saying so (recommended: the claim stays C5 against
+  today under one rule); (b) keep 98.3 % and find why snap's hits make the clamp bind more,
+  code outside this phase and an architect amendment; (c) re-derive the test against another
+  subject, an architect amendment.
+- Done: `CrackClosing` and `SurfaceTuning::closing` removed (dev's call: the enum goes), the
+  extend and blend code, `PASSED_NO_PLANE`, `cube_exit`'s dilation, `--closing` (rejected
+  now), the banner's and look line's closing words; the shadow push moves from flag bit 17 to
+  14, `--shadow-push on` parses and the banner names it (`the_banner_names_the_view`).
+  `a_tilted_slab_has_cracks_today` deleted, its decode check moved into
+  `axis_planes_have_no_cracks`; `crack_classes` reads the default; `closing_candidates` and
+  its helpers deleted; `Candidate::closing` gone in `sharpness.rs`.
+- Palette: `composite.wgsl` writes the cracks palette in display values for both targets.
+  Headless FSR 2 at the vein (scratch reading, lavapipe) before the fix: near-black (k^2.2 /
+  exposure 5.372), 0 blue pixels; after: 914 near-blue, 120 near-magenta. Our upscaler copied
+  the palette exactly before and after. Not explained: the green cast in Phase 5's window
+  screenshots with `upscaler own`; headless, that chain reproduces nothing wrong.
+- Done-when 4: `the_cracks_view_keeps_its_palette_through_the_window_chain` (`look.rs`,
+  lavapipe; vein, 384 x 216 to 576 x 324, our upscaler, jitter, sharpening 0.5, ACES, the
+  pose's exposure, nearest jittered internal sample per output pixel): 1143 blue, 155 magenta
+  output pixels, worst channel 0/255 off (bar 32).
+- Goldens, re-rendered with `VXE_BLESS=1` on lavapipe, share over 2/255 against Phase 4's
+  re-render (`.git/lane-archive/plan-0050/live/golden-p4`): `look_contour.png` 0.7639 %,
+  `look_wall_contour.png` 1.2274 %, `showcase_hall.png` 13.5781 % (pre-plan drift 12.4601 % at
+  00ca974); re-blessed in 45bc227. The other 26 read the same pixels as Phase 4's re-render,
+  `look_wall_face.png` among them. `castle_gate`, `dark_cave`, `dark_cave_half`, `upscaled` and
+  `look_wall_face` were rewritten by the bless run and restored: identical to Phase 4's
+  re-render, at most 2/255 from the committed PNG at 0 % of pixels (Phase 1's drift).
+- Done-when 3 (not yet in `nfr.md`): hit pass at the level's spawn, `flythrough --level
+  --seed 1 --headless --render 1920x1080 --frames 300 --adapter NVIDIA|AMD`, 1080p from 720p,
+  release, exclusive perf lock, memory cap, three alternated rounds, median of each run's
+  median of the last 30 frames; pre = 00ca974's binary, tip = 45bc227's tree; load 1.48 at the
+  start, 1.5 to 3.4 during (loaded); `live/cost-p6.log`.
+
+  | adapter | hit pre | hit tip | light pre | light tip |
+  |---|---|---|---|---|
+  | NVIDIA GeForce RTX 3080 Laptop GPU | 0.608 | 0.616 (+1.3 %) | 0.923 | 0.925 |
+  | AMD Radeon Graphics (RADV RENOIR) | 4.279 | 4.298 (+0.4 %) | 7.266 | 7.175 |
+
+- Gate at 45bc227's tree: `--profile gpu` 185 run, 184 passed, 1 failed (the floor above), 29
+  skipped; `--profile quick` 539 run, 538 passed, 1 timeout at load about 30 (`replay
+  a_stamp_and_a_collapse_replay_from_the_save`, alone 13.8 s), 3 skipped; clippy workspace
+  and `-p flythrough --features wasm` 0, fmt 0, doctests ok, `cargo deny check` ok, the four
+  `scripts/check-*.mjs` 0. `scripts/build-guests.sh` is needed once in this worktree.
+- To finish: apply the owner's answer (for (a): `assert!(share >= 0.980, ...)` and the doc
+  comment's floor and reading in `sharpness.rs`); `--profile gpu` under the perf lock; replace
+  the "snap alone" reading in `docs/nfr.md` §2's crack-closing paragraph with the table above
+  as the tree's; replace these notes with the Phase 6 row and section; commit by explicit path
+  as `feat(render)`/`refactor(render)` for the phase; then the close-out (quick and gpu at the
+  tip, doctests, both clippies, fmt, deny, the four scripts; close block, Notes, Status line)
+  as a `docs(plans)` commit.
+
 ### Notes
 
 - Deviations are listed per phase above (Phase 1: `F9` and the self-hit in the hit pass;
