@@ -810,45 +810,14 @@ fn the_upscaler_keeps_stripe_edges_sharp_still_and_panning() {
 }
 
 /// A reading, no bar: the stripe readings in full (the far pans too) under the default
-/// upscaler, under the first one ([`Upscaler::lanczos`]), and the first one's blur
-/// decomposed: its current colour from the nearest sample alone, then its history fetched by
-/// nearest texel, each switched alone. Run with `--ignored`.
+/// upscaler. Run with `--ignored`.
 #[test]
 #[ignore = "a diagnostic reading of the upscaler's sharpness; run by hand with --ignored"]
 fn the_upscalers_sharpness_readings() {
-    use vxe_render::marcher::{HistoryFetch, Reconstruction};
     let Some(rig) = stripe_rig() else {
         return;
     };
-    let first = Upscaler::lanczos();
-    for (label, u) in [
-        ("default", Upscaler::default()),
-        (
-            "default, nearness unnormalised, 0.5 in motion",
-            Upscaler {
-                blend: vxe_render::marcher::Blend::Nearness,
-                alpha_moving: 0.5,
-                ..Upscaler::default()
-            },
-        ),
-        ("first upscaler", first),
-        (
-            "first, nearest sample",
-            Upscaler {
-                reconstruction: Reconstruction::Nearest,
-                ..first
-            },
-        ),
-        (
-            "first, nearest history texel",
-            Upscaler {
-                history_fetch: HistoryFetch::Nearest,
-                ..first
-            },
-        ),
-    ] {
-        stripe_readings(&rig, u, label, true);
-    }
+    stripe_readings(&rig, Upscaler::default(), "default", true);
 }
 
 // ---- Light changes under a still camera: the headlamp's sweep and step ----
@@ -869,18 +838,12 @@ fn a_sweeping_headlamp_and_a_lamp_step_keep_pace_with_plan_0024s_frame() {
 }
 
 /// A reading, no bar: the lamp readings in full (the emission step, the wobble and the trail
-/// too) under the default upscaler, with still pixels never clipped, and with the still
-/// blend at 1/16, which also reads the still camera, the flicker rig and the stripes. Run
+/// too) under the default upscaler and with the still blend at 1/16, which also reads the still camera, the flicker rig and the stripes. Run
 /// with `--ignored`.
 #[test]
 #[ignore = "a diagnostic reading of light changes and the history weight; run by hand with --ignored"]
 fn the_upscalers_lamp_and_history_weight_readings() {
-    use vxe_render::marcher::StillClip;
     let base = Upscaler::default();
-    let never = Upscaler {
-        still_clip: StillClip::Never,
-        ..base
-    };
     let sixteenth = Upscaler {
         alpha: 0.0625,
         ..base
@@ -888,7 +851,6 @@ fn the_upscalers_lamp_and_history_weight_readings() {
     if lamp_readings(UpscalerKind::Own(base), "default", true).is_none() {
         return;
     }
-    lamp_readings(UpscalerKind::Own(never), "still never clipped", true);
     for (label, u) in [("default", base), ("still alpha 1/16", sixteenth)] {
         let r = still_camera_reading(u).unwrap();
         let (m0, o0) = still_vein_flicker(false, UpscalerKind::Own(u)).unwrap();

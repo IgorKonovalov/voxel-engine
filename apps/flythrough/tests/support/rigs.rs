@@ -476,8 +476,9 @@ pub fn stripe_sharpness_at(
     sum
 }
 
-/// The first upscaler's (7cc58a4, [`Upscaler::lanczos`]) last panning frame at arm's length,
-/// sharpening 0: edge spread and gradient energy at scale 1 and at 1.5.
+/// The first upscaler's (7cc58a4: Lanczos-2 over the 5 x 5, a bilinear history fetch, a fixed
+/// blend) last panning frame at arm's length, sharpening 0: edge spread and gradient energy at
+/// scale 1 and at 1.5.
 pub const LANCZOS_PAN_U1: (f64, f64) = (2.020, 0.00357);
 pub const LANCZOS_PAN_U15: (f64, f64) = (2.404, 0.00281);
 

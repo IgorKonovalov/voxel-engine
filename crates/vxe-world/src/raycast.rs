@@ -176,10 +176,19 @@ impl World {
     /// The runs of equal material along the ray `origin + dir * t / 256`, `0 <= t <= max_t`,
     /// in order, covering `[0, max_t]` without gaps. Consecutive cells of one material merge
     /// into one run; a missing chunk reads as [`AIR`]. Empty when `max_t < 0`.
-    pub fn trace_materials(&self, origin: Fixed3, dir: [i64; 3], max_t: i64) -> Vec<Run> {
+    ///
+    /// Refused with `OutOfRange`, walking nothing, under the same limits as
+    /// [`World::raycast`]: the origin past `coord_max`, or the ray past `ray_reach_max`.
+    pub fn trace_materials(
+        &self,
+        origin: Fixed3,
+        dir: [i64; 3],
+        max_t: i64,
+    ) -> Result<Vec<Run>, EditError> {
+        self.limits().check_ray(origin, dir, max_t)?;
         let mut runs = Vec::new();
         if max_t < 0 {
-            return runs;
+            return Ok(runs);
         }
         let o = origin.0.map(i128::from);
         let d = dir.map(i128::from);
@@ -229,7 +238,7 @@ impl World {
                             t1: max_t,
                         });
                     }
-                    return runs;
+                    return Ok(runs);
                 }
             }
         }

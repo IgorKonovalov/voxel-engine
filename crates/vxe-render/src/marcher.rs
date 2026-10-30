@@ -66,9 +66,7 @@ pub struct Params {
     /// The manual exposure ([`Exposure::Manual`]); 1.0 and unread in auto, where the exposure
     /// state's `current` is the frame's.
     pub exposure: f32,
-    /// Light samples from 0 to the buffer's high-water mark, which the light pass draws
-    /// candidates from ([`GpuWorld::light_span`]).
-    pub light_span: u32,
+    pub _pad4: u32,
     /// Emissive candidates per pixel ([`Lighting::candidates`]).
     pub candidates: u32,
     /// The slot of the light-sample buffer where the frame's candidate table starts.
@@ -76,7 +74,10 @@ pub struct Params {
     /// Bit 0: the previous frame's hit buffer and history are valid (set by
     /// [`Frame::encode`]).
     pub history: u32,
-    pub _pad5: [u32; 3],
+    /// The lamp's `offset_right`, `offset_down` and `turn` ([`LightParams`]): what
+    /// [`Frame::encode`] compares between encodes, with the cone and intensity, to decide
+    /// [`LIGHTING_LAMP_CHANGED`]. The shaders read these words as padding.
+    pub lamp_pose: [f32; 3],
     /// The previous frame's views, for reprojection (set by [`Frame::encode`]).
     pub prev_views: [View; MAX_VIEWS],
     /// The lighting grid's size, full-resolution pixels per lighting pixel on an edge, and
@@ -130,9 +131,6 @@ pub const LIGHTING_LAMP_CHANGED: u32 = 1 << 9;
 pub const LIGHTING_EMISSIVE_GUARD: u32 = 1 << 10;
 /// `Params::lighting` bit: the a-trous filter is off ([`Lighting::filter`]).
 pub const LIGHTING_FILTER_OFF: u32 = 1 << 5;
-/// `Params::lighting` bit: candidates are drawn uniformly over the buffer
-/// ([`CandidateDraw::Uniform`]).
-pub const LIGHTING_UNIFORM_DRAW: u32 = 1 << 7;
 /// `Params::lighting` bit: the composite's tone map is the identity clamp.
 pub const LIGHTING_IDENTITY_TONE_MAP: u32 = 1 << 6;
 /// `Params::lighting` bit: the probe passes ran and the composite adds the gathered indirect
@@ -646,17 +644,6 @@ impl LightingResolution {
 /// frame, so a still camera's upsampled image holds still.
 const HALF_OFFSET: [u32; 2] = [0, 1];
 
-/// Where the light pass draws its emissive candidates from.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CandidateDraw {
-    /// The frame's table of emitter chunks near the camera, by power over squared distance
-    /// (ADR-0025).
-    #[default]
-    Table,
-    /// Uniformly over the whole light-sample buffer; for tests.
-    Uniform,
-}
-
 /// The ratio of the output size to the internal size the frame renders at, on each edge.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RenderScale {
@@ -723,82 +710,35 @@ pub fn jitter_at(frame: u32, phases: u32) -> [f32; 2] {
     [halton(i, 2) - 0.5, halton(i, 3) - 0.5]
 }
 
-/// How the upscale pass reconstructs this frame's colour at an output pixel from the internal
-/// samples around it; `d` is a sample's distance from the output pixel's centre, in output
-/// pixels.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Reconstruction {
-    /// The Lanczos-2 weighted mean of the 5 x 5 samples around the nearest.
-    Lanczos2,
-    /// The nearest sample alone.
-    Nearest,
-    /// `exp(-2.29 (d / width)^2)` over the 3 x 3 samples around the nearest: at width 1,
-    /// Karis's Gaussian fit of a Blackman-Harris window of width 3.3 ("High Quality Temporal
-    /// Supersampling", 2014).
-    Gaussian,
-    /// The 4-term Blackman-Harris window of radius `1.65 width` over the 3 x 3.
-    BlackmanHarris,
-}
-
-/// How the upscale pass reads last frame's history at the reprojected position.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HistoryFetch {
-    Bilinear,
-    /// The texel the position falls in.
-    Nearest,
-    /// Catmull-Rom over the 4 x 4 texels around the position, held non-negative.
-    CatmullRom,
-    /// Lanczos-2 over the 4 x 4 texels, normalised, held non-negative.
-    Lanczos2,
-}
-
-/// The current colour's share of the upscale pass's blend where history is kept.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Blend {
-    /// [`Upscaler::alpha`].
-    Fixed,
-    /// [`Upscaler::alpha`] times the nearest sample's kernel weight over the kernel's peak: a
-    /// sample far from the output pixel's centre counts for less.
-    Nearness,
-    /// As [`Blend::Nearness`], divided by the nearest sample's mean kernel weight at the
-    /// frame's scale (its sample uniform over one internal pixel around the centre), at most 1:
-    /// the current colour's mean share stays [`Upscaler::alpha`].
-    MeanNearness,
-}
-
-/// Whether the upscale pass clips a still pixel's history (one that moved less than 0.01
-/// output pixels), which is otherwise the unclipped average of the jittered samples.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StillClip {
-    /// Never.
-    Never,
-    /// Where the light at the hit changed: the lamp's unshadowed term moved past
-    /// [`Upscaler::change_rel`] and [`Upscaler::change_abs`] since the lamp of
-    /// [`Upscaler::change_frames`] frames before, or an emission scale changed within
-    /// [`EMISSION_CHANGE_FRAMES`]. Such a pixel is clipped and blended as a moving one.
-    LightChange,
-    /// Always, as a moving pixel.
-    Always,
-}
-
-/// The upscale pass's reconstruction, history fetch and blend ([`Frame::set_upscaler`]).
+/// The upscale pass's tuning ([`Frame::set_upscaler`]). This frame's colour at an output
+/// pixel is reconstructed from the 3 x 3 internal samples around the nearest with the kernel
+/// `exp(-2.29 (d / width)^2)`, `d` a sample's distance from the output pixel's centre in
+/// output pixels: at width 1, Karis's Gaussian fit of a Blackman-Harris window of width 3.3
+/// ("High Quality Temporal Supersampling", 2014). Last frame's history is read at the
+/// reprojected position by Catmull-Rom over the 4 x 4 texels around it, held non-negative.
+/// The current colour's share of the blend where history is kept is the alpha times the
+/// nearest sample's kernel weight over the kernel's peak, divided by the nearest sample's
+/// mean kernel weight at the frame's scale (its sample uniform over one internal pixel
+/// around the centre), at most 1: a sample far from the output pixel's centre counts for
+/// less, and the current colour's mean share stays the alpha. A still pixel (one whose
+/// history moved less than 0.01 output pixels) keeps its history unclipped unless the light
+/// at its hit changed: the lamp's unshadowed term moved past [`Upscaler::change_rel`] and
+/// [`Upscaler::change_abs`] since the lamp of [`Upscaler::change_frames`] frames before, or
+/// an emission scale changed within [`EMISSION_CHANGE_FRAMES`]; such a pixel is clipped and
+/// blended as a moving one (ADR-0024).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Upscaler {
-    pub reconstruction: Reconstruction,
-    /// The width of [`Reconstruction::Gaussian`] and [`Reconstruction::BlackmanHarris`].
+    /// The reconstruction kernel's width.
     pub width: f32,
-    pub history_fetch: HistoryFetch,
-    pub blend: Blend,
-    /// The current colour's weight in the blend (see [`Blend`]) where the history held still.
+    /// The current colour's weight in the blend where the history held still.
     pub alpha: f32,
     /// [`Upscaler::alpha`] where the history moved by 0.01 output pixels or more.
     pub alpha_moving: f32,
     /// The clip box around the 3 x 3 samples' YCoCg mean, in standard deviations (inside
     /// their minimum and maximum).
     pub clip_gamma: f32,
-    pub still_clip: StillClip,
-    /// A light change: the lamp's term moved by more than this share of the larger of the two
-    /// ([`StillClip::LightChange`]).
+    /// A light change: the lamp's term moved by more than this share of the larger of the
+    /// two.
     pub change_rel: f32,
     /// ... and by more than this, in the lamp's irradiance units.
     pub change_abs: f32,
@@ -815,37 +755,13 @@ impl Default for Upscaler {
     /// (ADR-0024).
     fn default() -> Self {
         Self {
-            reconstruction: Reconstruction::Gaussian,
             width: 0.6,
-            history_fetch: HistoryFetch::CatmullRom,
-            blend: Blend::MeanNearness,
             alpha: 0.1,
             alpha_moving: 0.2,
             clip_gamma: 1.0,
-            still_clip: StillClip::LightChange,
             change_rel: 0.1,
             change_abs: 0.01,
             change_frames: 24,
-        }
-    }
-}
-
-impl Upscaler {
-    /// The first upscaler's settings: Lanczos-2 over the 5 x 5, a bilinear fetch, and the
-    /// current colour at 0.1 everywhere. Kept for comparisons.
-    pub fn lanczos() -> Self {
-        Self {
-            reconstruction: Reconstruction::Lanczos2,
-            width: 1.0,
-            history_fetch: HistoryFetch::Bilinear,
-            blend: Blend::Fixed,
-            alpha: 0.1,
-            alpha_moving: 0.1,
-            clip_gamma: 1.0,
-            still_clip: StillClip::Never,
-            change_rel: 0.1,
-            change_abs: 0.01,
-            change_frames: 12,
         }
     }
 }
@@ -854,10 +770,6 @@ impl Upscaler {
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct UpscaleUniform {
-    reconstruction: u32,
-    fetch: u32,
-    blend: u32,
-    still_clip: u32,
     width: f32,
     alpha: f32,
     alpha_moving: f32,
@@ -902,34 +814,7 @@ impl Upscaler {
     /// The reconstruction kernel at offset `(x, y)` output pixels, 1 at the centre
     /// (`up_kernel` in `upscale.wgsl`).
     fn kernel(&self, x: f32, y: f32) -> f32 {
-        let lanczos2 = |x: f32| {
-            let a = std::f32::consts::PI * x.abs();
-            if a < 1e-4 {
-                1.0
-            } else if x.abs() >= 2.0 {
-                0.0
-            } else {
-                2.0 * a.sin() * (0.5 * a).sin() / (a * a)
-            }
-        };
-        match self.reconstruction {
-            Reconstruction::Lanczos2 => lanczos2(x) * lanczos2(y),
-            Reconstruction::Nearest => 1.0,
-            Reconstruction::Gaussian => (-2.29 * (x * x + y * y) / (self.width * self.width)).exp(),
-            Reconstruction::BlackmanHarris => {
-                let r = 1.65 * self.width;
-                let d = (x * x + y * y).sqrt();
-                if d >= r {
-                    0.0
-                } else {
-                    let t = std::f32::consts::PI * d / r;
-                    0.35875
-                        + 0.48829 * t.cos()
-                        + 0.14128 * (2.0 * t).cos()
-                        + 0.01168 * (3.0 * t).cos()
-                }
-            }
-        }
+        (-2.29 * (x * x + y * y) / (self.width * self.width)).exp()
     }
 
     /// The nearest sample's mean kernel weight at `scale` output pixels per internal pixel:
@@ -948,28 +833,6 @@ impl Upscaler {
 
     fn uniform(&self, scale: f32, old: Lamp) -> UpscaleUniform {
         UpscaleUniform {
-            reconstruction: match self.reconstruction {
-                Reconstruction::Lanczos2 => 0,
-                Reconstruction::Nearest => 1,
-                Reconstruction::Gaussian => 2,
-                Reconstruction::BlackmanHarris => 3,
-            },
-            fetch: match self.history_fetch {
-                HistoryFetch::Bilinear => 0,
-                HistoryFetch::Nearest => 1,
-                HistoryFetch::CatmullRom => 2,
-                HistoryFetch::Lanczos2 => 3,
-            },
-            blend: match self.blend {
-                Blend::Fixed => 0,
-                Blend::Nearness => 1,
-                Blend::MeanNearness => 2,
-            },
-            still_clip: match self.still_clip {
-                StillClip::Never => 0,
-                StillClip::LightChange => 1,
-                StillClip::Always => 2,
-            },
             width: self.width,
             alpha: self.alpha,
             alpha_moving: self.alpha_moving,
@@ -1001,7 +864,6 @@ pub struct Lighting {
     pub shadow_walk: ShadowWalk,
     /// The a-trous filter runs; off, the composite shows the light pass's raw irradiance.
     pub filter: bool,
-    pub draw: CandidateDraw,
     pub sampler: Sampler,
     pub history: HistoryKill,
     /// Frames of history the emissive part of the irradiance blends over at least (static
@@ -1036,7 +898,6 @@ impl Default for Lighting {
             candidates: 8,
             shadow_walk: ShadowWalk::default(),
             filter: true,
-            draw: CandidateDraw::default(),
             sampler: Sampler::default(),
             history: HistoryKill::default(),
             emissive_history: DEFAULT_EMISSIVE_HISTORY,
@@ -1082,11 +943,6 @@ impl Lighting {
             }
             | if self.sampler == Sampler::Reuse {
                 LIGHTING_REUSE
-            } else {
-                0
-            }
-            | if self.draw == CandidateDraw::Uniform {
-                LIGHTING_UNIFORM_DRAW
             } else {
                 0
             }
@@ -1210,8 +1066,12 @@ pub struct Frame {
     upscale_params: wgpu::Buffer,
     upscaler: Upscaler,
     history: std::sync::Mutex<History>,
-    /// The probe volume and its passes' group-3 layout; the gather's group-2 layout.
-    probes: ProbeVolume,
+    /// The probe volume, built on first use (an encode with indirect light, [`Frame::probes`],
+    /// [`Frame::probes_mut`] or a spacing change), at `probe_spacing`; its passes' group-3
+    /// layout; the gather's group-2 layout. The device builds the volume.
+    probes: std::sync::OnceLock<ProbeVolume>,
+    probe_spacing: u32,
+    device: wgpu::Device,
     probe_layout: wgpu::BindGroupLayout,
     gather_layout: wgpu::BindGroupLayout,
     gather: wgpu::ComputePipeline,
@@ -1222,6 +1082,8 @@ pub struct Frame {
     traced_probe_rays: std::sync::atomic::AtomicU64,
     /// Whether the last encode's probe update blended inside a light-change window.
     probe_light_window: std::sync::atomic::AtomicBool,
+    /// Whether the last encode with history set [`LIGHTING_LAMP_CHANGED`].
+    lamp_changed: std::sync::atomic::AtomicBool,
     /// The output size the frame's image is presented at; the targets are at the internal
     /// size.
     output: [u32; 2],
@@ -1268,9 +1130,7 @@ struct History {
     view_changed: bool,
     /// The lamps of the last encodes with history, newest last, at most [`LAMP_FRAMES`].
     lamps: std::collections::VecDeque<Lamp>,
-    /// The lamp the last `params_for` placed, and the static light of the last encode with
-    /// history (`None` before the first).
-    built_lamp: Option<LightParams>,
+    /// The static light of the last encode with history (`None` before the first).
     light_key: Option<LightKey>,
     /// Encoded frames with a probe update left in the open light-change window.
     light_window: u32,
@@ -1285,10 +1145,34 @@ struct History {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct LightKey {
     lamp: bool,
-    params: Option<LightParams>,
+    params: LampKey,
     shadow_walk: ShadowWalk,
     candidates: u32,
     emission_changed_at: Option<u32>,
+}
+
+/// The lamp's parameters as a frame's [`Params`] carry them: its camera-relative pose
+/// ([`Params::lamp_pose`]), its intensity, its cone's cosines and its shadow switch. `masks`
+/// and `skips` leave the walk byte-identical and are not part of it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LampKey {
+    pose: [f32; 3],
+    intensity: f32,
+    cos_inner: f32,
+    cos_outer: f32,
+    shadows: bool,
+}
+
+impl LampKey {
+    fn of(p: &Params) -> Self {
+        Self {
+            pose: p.lamp_pose,
+            intensity: p.light_intensity,
+            cos_inner: p.cos_inner,
+            cos_outer: p.cos_outer,
+            shadows: p.flags & FLAG_SHADOWS != 0,
+        }
+    }
 }
 
 impl LightKey {
@@ -1836,7 +1720,9 @@ impl Frame {
             kind: UpscalerKind::Off,
             fsr: None,
             composite_hdr: None,
-            probes: ProbeVolume::new(device, DEFAULT_PROBE_SPACING),
+            probes: std::sync::OnceLock::new(),
+            probe_spacing: DEFAULT_PROBE_SPACING,
+            device: device.clone(),
             probe_layout,
             gather_layout,
             gather,
@@ -1844,6 +1730,7 @@ impl Frame {
             probe_blend,
             traced_probe_rays: std::sync::atomic::AtomicU64::new(0),
             probe_light_window: std::sync::atomic::AtomicBool::new(false),
+            lamp_changed: std::sync::atomic::AtomicBool::new(false),
             exposure: ExposurePass::new(device),
             metering: Metering::default(),
             dt: 1.0 / 60.0,
@@ -1851,8 +1738,9 @@ impl Frame {
         }
     }
 
-    /// Sets the exposure pass's step in seconds (1/60 by default): the time the adapted level
-    /// moves over in each encoded frame. A negative or non-finite `dt` is 0, which holds it.
+    /// Sets the frame's step in seconds (1/60 by default): the time the exposure pass's
+    /// adapted level moves over in each encoded frame, and FSR 2's `delta_time`. A negative or
+    /// non-finite `dt` is 0, which holds the exposure.
     pub fn set_dt(&mut self, seconds: f32) {
         self.dt = if seconds.is_finite() {
             seconds.max(0.0)
@@ -1922,24 +1810,42 @@ impl Frame {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// The probe volume (ADR-0023).
-    pub fn probes(&self) -> &ProbeVolume {
-        &self.probes
+    /// Whether the last encode with history reset the lamp's history
+    /// ([`LIGHTING_LAMP_CHANGED`]): the lamp's switch, its parameters or its shadow walk
+    /// differ from the encode before.
+    pub fn lamp_changed(&self) -> bool {
+        self.lamp_changed.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// The probe volume (ADR-0023), built here if no encode with indirect light, no
+    /// [`Frame::probes_mut`] and no spacing change has built it yet. Until then the frame
+    /// holds none of its buffers.
+    pub fn probes(&self) -> &ProbeVolume {
+        self.probes
+            .get_or_init(|| ProbeVolume::new(&self.device, self.probe_spacing))
+    }
+
+    /// The probe volume, built here as [`Frame::probes`] does.
     pub fn probes_mut(&mut self) -> &mut ProbeVolume {
-        &mut self.probes
+        self.probes();
+        self.probes.get_mut().expect("built by probes()")
     }
 
     /// Replaces the probe volume with one of probes `spacing` voxels apart, every probe never
-    /// traced, when the spacing changes; its pinned origin and update switch carry over.
+    /// traced, when the spacing changes; the old volume's pinned origin and switches carry
+    /// over, and it is dropped before the new one is built.
     pub fn set_probe_spacing(&mut self, device: &wgpu::Device, spacing: u32) {
-        if spacing != self.probes.spacing() {
+        if spacing != self.probe_spacing {
+            let old = self.probes.take();
+            let carried = old.as_ref().map(|o| (o.pinned_origin(), o.updates()));
+            drop(old);
             let mut v = ProbeVolume::new(device, spacing);
-            v.set_origin(self.probes.pinned_origin());
-            v.set_updates(self.probes.updates());
-            v.set_light_restarts(self.probes.light_restarts());
-            self.probes = v;
+            if let Some((origin, updates)) = carried {
+                v.set_origin(origin);
+                v.set_updates(updates);
+            }
+            self.probe_spacing = spacing;
+            let _ = self.probes.set(v);
         }
     }
 
@@ -2280,10 +2186,10 @@ impl Frame {
         &self.targets.moments[self.cur]
     }
 
-    /// Bytes the frame's targets, its probe volume and FSR 2's resources occupy.
+    /// Bytes the frame's targets, its probe volume (once built) and FSR 2's resources occupy.
     pub fn frame_bytes(&self) -> u64 {
         self.targets.bytes()
-            + self.probes.bytes()
+            + self.probes.get().map_or(0, ProbeVolume::bytes)
             + self.exposure.bytes()
             + self.fsr.as_ref().map_or(0, Fsr2::bytes)
     }
@@ -2350,11 +2256,6 @@ impl Frame {
             "{} views",
             views.len()
         );
-        // The lamp the next encode with history compares against the last one's.
-        self.history
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .built_lamp = Some(*light);
         let (fwd, right, up) = camera.basis();
         let mut vs = [View::default(); MAX_VIEWS];
         vs[..views.len()].copy_from_slice(views);
@@ -2381,6 +2282,7 @@ impl Frame {
             window_size: e.size(),
             light_pos: (camera.position + right * light.offset_right - up * light.offset_down)
                 .to_array(),
+            lamp_pose: [light.offset_right, light.offset_down, light.turn],
             light_intensity: light.intensity,
             light_dir: (fwd * light.turn.cos() + right * light.turn.sin()).to_array(),
             cos_outer: light.outer.cos(),
@@ -2413,7 +2315,6 @@ impl Frame {
                     0
                 },
             light_table_base: world.light_table_base(),
-            light_span: world.light_span(),
             candidates: self.lighting.candidates,
             frame: self.frame,
             light_size: self.targets.light_size(),
@@ -2463,7 +2364,9 @@ impl Frame {
         // The probe passes run in the shaded and cracks views outside the cutaway, with indirect
         // light on.
         let indirect = self.lighting.indirect && self.look.view.shades() && !self.look.cutaway;
-        let probe_update = indirect && self.probes.updates();
+        // The volume exists from the first encode with indirect light on.
+        let volume = indirect.then(|| self.probes());
+        let probe_update = volume.is_some_and(ProbeVolume::updates);
         let mut light_window = false;
         let mut boxes: Vec<[[i32; 3]; 2]> = Vec::new();
         let mut edits = EditsUniform {
@@ -2495,19 +2398,18 @@ impl Frame {
             h.encoded = true;
             let key = LightKey {
                 lamp: self.lighting.lamp,
-                params: h.built_lamp.map(|l| LightParams {
-                    masks: true,
-                    skips: true,
-                    ..l
-                }),
+                params: LampKey::of(params),
                 shadow_walk: self.lighting.shadow_walk,
                 candidates: self.lighting.candidates,
                 emission_changed_at: self.probe_emission_changed_at,
             };
-            if h.light_key.is_some_and(|k| k.lamp_differs(&key)) {
+            let lamp_changed = h.light_key.is_some_and(|k| k.lamp_differs(&key));
+            if lamp_changed {
                 p.lighting |= LIGHTING_LAMP_CHANGED;
             }
-            if h.light_key.is_some_and(|k| k != key) && self.probes.light_restarts() {
+            self.lamp_changed
+                .store(lamp_changed, std::sync::atomic::Ordering::Relaxed);
+            if h.light_key.is_some_and(|k| k != key) {
                 h.light_window = crate::probes::WINDOW_FRAMES;
             }
             h.light_key = Some(key);
@@ -2757,6 +2659,7 @@ impl Frame {
                         lamp: &self.upscale_params,
                         output: &t.output,
                         cur: c,
+                        dt: self.dt,
                     },
                 ),
             )
@@ -2809,7 +2712,7 @@ impl Frame {
             .store(0, std::sync::atomic::Ordering::Relaxed);
         self.probe_light_window
             .store(light_window, std::sync::atomic::Ordering::Relaxed);
-        let probe_bind = indirect.then(|| {
+        let probe_bind = volume.map(|volume| {
             p.lighting |= LIGHTING_INDIRECT;
             if probe_update {
                 let slices = if light_window {
@@ -2817,43 +2720,45 @@ impl Frame {
                 } else {
                     self.lighting.slices()
                 };
-                let origin = self.probes.origin_for(p.views[0].origin);
+                let origin = volume.origin_for(p.views[0].origin);
                 let touched: Vec<[i32; 3]> = boxes
                     .iter()
-                    .flat_map(|&[min, max]| self.probes.touched(origin, min, max))
+                    .flat_map(|&[min, max]| volume.touched(origin, min, max))
                     .collect();
-                let list = self.probes.update_list(p.frame, slices, &touched);
-                queue.write_buffer(self.probes.scratch(), 0, bytemuck::cast_slice(&list));
+                let list = volume.update_list(p.frame, slices, &touched);
+                queue.write_buffer(volume.scratch(), 0, bytemuck::cast_slice(&list));
                 updates = list.len() as u32;
             }
             self.traced_probe_rays.store(
                 u64::from(updates) * u64::from(self.lighting.rays()),
                 std::sync::atomic::Ordering::Relaxed,
             );
-            self.write_probe_uniform(queue, &p, updates, light_window);
+            self.write_probe_uniform(queue, volume, &p, updates, light_window);
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("probes"),
                 layout: &self.probe_layout,
                 entries: &[
-                    buffer_entry(0, self.probes.data()),
-                    buffer_entry(1, self.probes.scratch()),
-                    buffer_entry(2, self.probes.uniform()),
+                    buffer_entry(0, volume.data()),
+                    buffer_entry(1, volume.scratch()),
+                    buffer_entry(2, volume.uniform()),
                 ],
             })
         });
-        let gather_bind = bind_io(
-            device,
-            &self.gather_layout,
-            &[
-                Res::Tex(t.lit_pos(c)),
-                Res::Tex(t.lit_info(c)),
-                Res::Tex(&t.indirect),
-            ],
-        );
-        if let Some(b) = &probe_bind {
+        let gather_bind = probe_bind.is_some().then(|| {
+            bind_io(
+                device,
+                &self.gather_layout,
+                &[
+                    Res::Tex(t.lit_pos(c)),
+                    Res::Tex(t.lit_info(c)),
+                    Res::Tex(&t.indirect),
+                ],
+            )
+        });
+        if let (Some(b), Some(g)) = (&probe_bind, &gather_bind) {
             gather.push(Dispatch {
                 pipeline: &self.gather,
-                groups: [Some(&world_bind), None, Some(&gather_bind), Some(b)],
+                groups: [Some(&world_bind), None, Some(g), Some(b)],
                 workgroups: lw,
             });
             if updates > 0 {
@@ -2962,16 +2867,23 @@ impl Frame {
     /// Writes the probe passes' uniform for the frame `p`: the volume's origin for its first
     /// view's eye, `updates` entries in the update list, and whether the light-change window
     /// is open.
-    fn write_probe_uniform(&self, queue: &wgpu::Queue, p: &Params, updates: u32, window: bool) {
+    fn write_probe_uniform(
+        &self,
+        queue: &wgpu::Queue,
+        volume: &ProbeVolume,
+        p: &Params,
+        updates: u32,
+        window: bool,
+    ) {
         let u = ProbeUniform {
-            origin: self.probes.origin_for(p.views[0].origin),
-            spacing: self.probes.spacing(),
+            origin: volume.origin_for(p.views[0].origin),
+            spacing: volume.spacing(),
             updates,
             rays: self.lighting.rays(),
             light_window: u32::from(window),
             _pad: 0,
         };
-        queue.write_buffer(self.probes.uniform(), 0, bytemuck::bytes_of(&u));
+        queue.write_buffer(volume.uniform(), 0, bytemuck::bytes_of(&u));
     }
 
     /// Renders `camera` over `world` lit by `light` as one frame alone, with no history,

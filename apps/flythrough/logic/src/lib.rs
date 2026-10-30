@@ -296,6 +296,18 @@ pub fn refused_line(error: &impl std::fmt::Display, ticks: u32, fell: i32) -> St
     format!("drop refused: {error}, after {ticks} ticks, fell {fell} voxels")
 }
 
+/// The refusal text for a host that answered an op of kind `want` with `got`, another
+/// kind's result: `the host answered a drop with a pile result`.
+fn not_the_result(want: &str, got: &OpResult) -> String {
+    let kind = match got {
+        OpResult::Edit(_) => "an edit",
+        OpResult::Drop(_) => "a drop",
+        OpResult::Remove(_) => "a remove",
+        OpResult::Pile(_) => "a pile",
+    };
+    format!("the host answered a {want} with {kind} result")
+}
+
 /// A region on its way down: its cells (one cell lower after each whole step), its voxels by
 /// material as the query reported them, the ticks it moved on, the voxels it fell and the
 /// voxels its drops crushed.
@@ -355,9 +367,15 @@ impl DigLogic {
                 yield_below: YIELD_BELOW,
             });
             lines.push(format!("op {DROP_VERB}"));
-            let d = match r {
-                Ok(OpResult::Drop(d)) => d,
-                Ok(other) => unreachable!("a drop gives a drop result, not {other:?}"),
+            // A host that answers a drop with another kind of result is refused like an error:
+            // the same line natively and as a component, and no panic.
+            let refused = match r {
+                Ok(OpResult::Drop(d)) => Ok(d),
+                Ok(other) => Err(not_the_result("drop", &other)),
+                Err(e) => Err(e.to_string()),
+            };
+            let d = match refused {
+                Ok(d) => d,
                 Err(e) => {
                     let line = refused_line(&e, f.ticks, f.fell);
                     let line = self.end_fall(host, &f, line, lines);
@@ -410,13 +428,14 @@ impl DigLogic {
         });
         lines.push(format!("op {PILE_VERB}"));
         match r {
-            Ok(r) => {
-                let placed = match r {
-                    OpResult::Pile(p) => p.placed,
-                    other => unreachable!("a pile gives a pile result, not {other:?}"),
-                };
-                format!("{line}, crushed {} voxels, {placed} rubble", f.crushed)
+            Ok(OpResult::Pile(p)) => {
+                format!("{line}, crushed {} voxels, {} rubble", f.crushed, p.placed)
             }
+            Ok(other) => format!(
+                "{line}, crushed {} voxels, pile refused: {}",
+                f.crushed,
+                not_the_result("pile", &other)
+            ),
             Err(e) => format!("{line}, crushed {} voxels, pile refused: {e}", f.crushed),
         }
     }
@@ -545,6 +564,116 @@ impl Logic for DigLogic {
         TickOutput {
             broadcast: lines.join("\n").into_bytes(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vxe_world::{DropResult, EditError, EditResult, Hit, PileResult};
+
+    /// A host that carves for any edit, reports one region after it, and answers drops and
+    /// piles with the results it holds, of whatever kind.
+    struct Answers {
+        drop: OpResult,
+        pile: OpResult,
+    }
+
+    impl Host for Answers {
+        fn apply(&mut self, op: Op) -> Result<OpResult, EditError> {
+            Ok(match op {
+                Op::Drop { .. } => self.drop.clone(),
+                Op::Pile { .. } => self.pile.clone(),
+                _ => OpResult::Edit(EditResult {
+                    changed_from: vec![(3, 1)],
+                    touched: Vec::new(),
+                    aabb: Some((VoxelCoord([0; 3]), VoxelCoord([7; 3]))),
+                }),
+            })
+        }
+
+        fn material_at(&self, _v: VoxelCoord) -> Option<MaterialId> {
+            None
+        }
+
+        fn raycast(&self, _origin: Fixed3, _dir: Fixed3, _max: i64) -> Option<Hit> {
+            None
+        }
+
+        fn count_in_box(&self, _lo: VoxelCoord, _hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
+            Vec::new()
+        }
+
+        fn unsupported(&self, _changed: &[CellCoord]) -> Vec<Region> {
+            vec![Region {
+                cells: vec![CellCoord([0, 0, 1])],
+                counts: vec![(3, 512)],
+                aabb: (VoxelCoord([0, 0, 8]), VoxelCoord([7, 7, 15])),
+            }]
+        }
+    }
+
+    /// The lines of a dig tick, then of the tick its region first falls in.
+    fn fall_lines(host: &mut Answers) -> Vec<String> {
+        let mut logic = DigLogic::default();
+        logic.init(host, 0);
+        let dig = DigInput::Dig {
+            origin: Fixed3([0; 3]),
+            dir: [256, 0, 0],
+            radius: FIXED_ONE,
+        };
+        let input = ClientInput {
+            client: 0,
+            bytes: dig.encode(),
+        };
+        let out = logic.tick(host, 0, &[input]);
+        let lines = String::from_utf8(out.broadcast).unwrap();
+        assert!(lines.contains("region "), "{lines}");
+        let out = logic.tick(host, 1, &[]);
+        String::from_utf8(out.broadcast)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// A drop answered with a pile result is refused like an error, not a panic.
+    #[test]
+    fn a_drop_answered_with_a_pile_result_is_refused() {
+        let mut host = Answers {
+            drop: OpResult::Pile(PileResult::default()),
+            pile: OpResult::Pile(PileResult::default()),
+        };
+        assert_eq!(
+            fall_lines(&mut host),
+            [
+                "op dropped",
+                "drop refused: the host answered a drop with a pile result, after 0 ticks, \
+                 fell 0 voxels"
+            ]
+        );
+    }
+
+    /// A landing's pile answered with a drop result is refused in the landing's line.
+    #[test]
+    fn a_pile_answered_with_a_drop_result_is_refused() {
+        let mut host = Answers {
+            drop: OpResult::Drop(DropResult {
+                dropped: 1,
+                crushed: vec![(3, 5)],
+                ..DropResult::default()
+            }),
+            pile: OpResult::Drop(DropResult::default()),
+        };
+        assert_eq!(
+            fall_lines(&mut host),
+            [
+                "op dropped",
+                "op piled",
+                "landed after 1 ticks, fell 1 voxels, crushed 5 voxels, pile refused: the host \
+                 answered a pile with a drop result"
+            ]
+        );
     }
 }
 

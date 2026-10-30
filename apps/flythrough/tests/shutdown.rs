@@ -108,6 +108,18 @@ fn dropping_the_streamer_before_the_world_returns_within_bound() {
 /// The fly-through's stderr teardown trace for `--headless --frames 3`, or `None` with a
 /// printed skip when the machine has no adapter. The run is killed past `RUN_BOUND`.
 fn headless_run_trace() -> Option<String> {
+    let (status, err) = headless_run(&[])?;
+    assert!(
+        status.success(),
+        "the fly-through failed: {status}; stderr:\n{err}"
+    );
+    Some(err)
+}
+
+/// The exit status and stderr of `--headless --frames 3` at 64x36 with `extra` arguments, or
+/// `None` with a printed skip when the machine has no adapter. The run is killed past
+/// `RUN_BOUND`.
+fn headless_run(extra: &[&str]) -> Option<(std::process::ExitStatus, String)> {
     const RUN_BOUND: Duration = Duration::from_secs(120);
     // `--look plain`: the teardown trace needs no contour attributes, and a plain mirror
     // builds no attribute pass. On DX12's software adapter (WARP) the attribute pass's
@@ -122,6 +134,7 @@ fn headless_run_trace() -> Option<String> {
             "--look",
             "plain",
         ])
+        .args(extra)
         .env("RUST_LOG", "flythrough=info")
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -154,11 +167,88 @@ fn headless_run_trace() -> Option<String> {
         println!("skipped: no adapter ({})", err.trim());
         return None;
     }
-    assert!(
-        status.success(),
-        "the fly-through failed: {status}; stderr:\n{err}"
+    Some((status, err))
+}
+
+/// The `teardown: ` lines of a trace, without the prefix.
+fn teardown_lines(err: &str) -> Vec<&str> {
+    err.lines()
+        .filter_map(|l| l.split_once("teardown: ").map(|(_, rest)| rest))
+        .collect()
+}
+
+/// Asserts that `lines` start, in order, with `expected`.
+fn assert_stages(lines: &[&str], expected: &[&str]) {
+    assert_eq!(lines.len(), expected.len(), "teardown trace: {lines:#?}");
+    for (line, want) in lines.iter().zip(expected) {
+        assert!(line.starts_with(want), "expected {want:?}, got {line:?}");
+    }
+}
+
+/// A replay log that does not read ends the session before any world exists: the app, the
+/// queue, the device and the adapter are dropped through their traced stages, and then the
+/// read error is printed once and the process exits with status 1.
+#[test]
+fn a_replay_log_that_does_not_read_exits_1_after_the_teardown() {
+    let missing = std::env::temp_dir().join("vxe-flythrough-no-such-replay.vxlog");
+    assert!(!missing.exists(), "{} exists", missing.display());
+    let path = missing.to_str().expect("a UTF-8 temp path");
+    let Some((status, err)) = headless_run(&["--level", "--replay", path]) else {
+        return;
+    };
+    assert_eq!(status.code(), Some(1), "stderr:\n{err}");
+    let printed = format!("flythrough: --replay {path}: ");
+    assert_eq!(err.matches(&printed).count(), 1, "stderr:\n{err}");
+    assert_stages(
+        &teardown_lines(&err),
+        &[
+            "the app asked to exit",
+            "dropping the app",
+            "app dropped in",
+            "dropping the queue",
+            "queue dropped in",
+            "dropping the device",
+            "device dropped in",
+            "dropping the adapter",
+            "adapter dropped in",
+            "done, exiting the process",
+        ],
     );
-    Some(err)
+}
+
+/// A level whose mirror budget (1 MiB) cannot hold its pool fails its first sync: the session
+/// ends through the run's traced stages (the GPU mirror and passes, the world) and the
+/// device's, then prints the sync error once and exits with status 1.
+#[test]
+fn a_mirror_that_cannot_sync_exits_1_after_the_teardown() {
+    let Some((status, err)) = headless_run(&["--level", "--mirror-budget", "1"]) else {
+        return;
+    };
+    assert_eq!(status.code(), Some(1), "stderr:\n{err}");
+    assert_eq!(
+        err.matches("mirror sync failed").count(),
+        1,
+        "stderr:\n{err}"
+    );
+    assert_stages(
+        &teardown_lines(&err),
+        &[
+            "the app asked to exit",
+            "dropping the app",
+            "dropping the GPU mirror and passes",
+            "GPU mirror and passes dropped in",
+            "dropping the world",
+            "world dropped in",
+            "app dropped in",
+            "dropping the queue",
+            "queue dropped in",
+            "dropping the device",
+            "device dropped in",
+            "dropping the adapter",
+            "adapter dropped in",
+            "done, exiting the process",
+        ],
+    );
 }
 
 /// `--frames` ends the run by returning `Flow::Exit` from the frame, the path Escape takes;
@@ -170,10 +260,7 @@ fn the_headless_flythrough_exits_through_every_teardown_stage_within_bound() {
     let Some(err) = headless_run_trace() else {
         return;
     };
-    let lines: Vec<&str> = err
-        .lines()
-        .filter_map(|l| l.split_once("teardown: ").map(|(_, rest)| rest))
-        .collect();
+    let lines = teardown_lines(&err);
     println!("{}", lines.join("\n"));
     let expected = [
         "the app asked to exit",
@@ -193,10 +280,7 @@ fn the_headless_flythrough_exits_through_every_teardown_stage_within_bound() {
         "adapter dropped in",
         "done, exiting the process",
     ];
-    assert_eq!(lines.len(), expected.len(), "teardown trace: {lines:#?}");
-    for (line, want) in lines.iter().zip(expected) {
-        assert!(line.starts_with(want), "expected {want:?}, got {line:?}");
-    }
+    assert_stages(&lines, &expected);
     // The app's stage contains the streamer's and the mirror's, so it is not summed again.
     let ms = |stage: &str| -> f64 {
         lines

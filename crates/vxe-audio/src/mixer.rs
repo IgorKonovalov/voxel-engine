@@ -50,7 +50,7 @@ use std::sync::Arc;
 use crate::acoustics::{BlockClock, reflection_directions};
 use crate::command::Command;
 use crate::hrtf::Hrtf;
-use crate::reverb::{Reverb, ReverbLine, ReverbNetwork, ReverbSettings};
+use crate::reverb::{Reverb, ReverbLine, ReverbNetwork, ReverbSettings, flush};
 use crate::room_curve::{ECHO_KNOTS, RoomCurve, curve_of};
 use crate::voice::{
     MAX_DELAY_FRAMES, MAX_TAPS, OPEN_CUTOFF_HZ, PlayParams, Source, Tap, TapState, Voice,
@@ -114,6 +114,22 @@ impl MixSettings {
         self.echo_gain * self.echo_by_room.gain_at(mfp_m)
     }
 }
+/// How near its target a one-pole smoother settles on it, at a block edge. Left alone, a
+/// smoother heading for 0 decays geometrically into subnormal floats within seconds and stays
+/// there, and subnormal arithmetic costs several times normal arithmetic on every later
+/// sample; a step of `1e-7` is 140 dB under a unit gain.
+const SETTLE_WITHIN: f32 = 1e-7;
+
+/// `x`, or `target` when `x` is within [`SETTLE_WITHIN`] of it.
+#[inline]
+fn settle(x: f32, target: f32) -> f32 {
+    if (x - target).abs() < SETTLE_WITHIN {
+        target
+    } else {
+        x
+    }
+}
+
 /// One tap slot as [`Mixer::tap_slots`] reads it.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -262,6 +278,14 @@ impl Mixer {
             gain: v.taps[i].gain,
             target: v.acoustic.taps[i],
         }))
+    }
+
+    /// The smoothed state of voice `id`, for tests: its own gain, its send, its gain, its
+    /// distance gain and its low-pass state, in that order. `None` when `id` is not playing.
+    #[doc(hidden)]
+    pub fn voice_smoothers(&self, id: VoiceId) -> Option<[f32; 5]> {
+        let v = self.voices.iter().find(|v| v.id == id)?;
+        Some([v.own_gain, v.send, v.gain, v.dist_gain, v.lowpass])
     }
 
     /// The fed tail network's lines, for tests: each line's current and target length.
@@ -432,8 +456,9 @@ impl Mixer {
                     *r = s * og;
                     *t += s * og * send;
                 }
-                v.own_gain = og;
-                v.send = send;
+                // Settled at the block's edge, as every smoother is: none rests in subnormals.
+                v.own_gain = settle(og, v.params.gain);
+                v.send = settle(send, send_to);
                 v.echo_pos = (echo_start + n) % len;
             }
             // The gain smoother's decay over this block.
@@ -471,8 +496,8 @@ impl Mixer {
                     g += (target_gain - g) * k;
                     *s *= g;
                 }
-                v.gain = g;
-                v.dist_gain = dist_gain + (v.dist_gain - dist_gain) * decay;
+                v.gain = settle(g, target_gain);
+                v.dist_gain = settle(dist_gain + (v.dist_gain - dist_gain) * decay, dist_gain);
             } else {
                 // The delay line carries the own gain; the distance and acoustic gain follow.
                 let mut g = v.dist_gain;
@@ -480,8 +505,8 @@ impl Mixer {
                     g += (dist_gain - g) * k;
                     dry[j] = x * g;
                 });
-                v.dist_gain = g;
-                v.gain = target_gain + (v.gain - target_gain) * decay;
+                v.dist_gain = settle(g, dist_gain);
+                v.gain = settle(target_gain + (v.gain - target_gain) * decay, target_gain);
             }
             // The coefficient moves every sample, so neither a probe's new cutoff nor the step
             // into or out of the bypass (a = 1) changes the output's slope at a block edge.
@@ -500,9 +525,9 @@ impl Mixer {
                 } else {
                     a
                 };
-                v.lowpass = y;
+                v.lowpass = flush(y);
             } else if let Some(&last) = dry.last() {
-                v.lowpass = last;
+                v.lowpass = flush(last);
             }
             match &self.hrtf {
                 Some(hrtf) => {
@@ -589,10 +614,8 @@ impl Mixer {
             g += (to - g) * self.smooth_k;
             *r = g;
         }
-        if (g - to).abs() < 1e-7 {
-            g = to;
-        }
-        self.echo_gain = g;
+        self.echo_gain = settle(g, to);
+        let g = self.echo_gain;
         let scaled = !(g0 == 1.0 && g == 1.0);
         for (bus, &world_dir) in self.buses.iter_mut().zip(&self.bus_dirs) {
             if !bus.live && !bus.ringing {
@@ -762,7 +785,7 @@ fn for_each_delayed(
 /// delay at once. A silent target holds the delay where it is, so a lost hit fades out at its
 /// last delay. The gain follows the one-pole smoother of [`crate::SMOOTHING_SECONDS`] at block
 /// edges (`decay` is the smoother's factor over the block) and moves linearly between them;
-/// within `1e-7` of its target it settles on it. A settled slot reads whole-frame samples with
+/// within [`SETTLE_WITHIN`] of its target it settles on it. A settled slot reads whole-frame samples with
 /// a constant gain.
 fn render_tap(
     state: &mut TapState,
@@ -787,10 +810,7 @@ fn render_tap(
         d0 + (target_delay - d0).clamp(-reach, reach)
     };
     let gain_to = if jumping { 0.0 } else { target.gain };
-    let mut g1 = gain_to + (g0 - gain_to) * decay;
-    if (g1 - gain_to).abs() < 1e-7 {
-        g1 = gain_to;
-    }
+    let g1 = settle(gain_to + (g0 - gain_to) * decay, gain_to);
     state.delay = d1;
     state.gain = g1;
     if g0 == 0.0 && g1 == 0.0 {

@@ -242,7 +242,12 @@ fn ray(
     let metres_per_t = dir_len / one / one * metres_per_voxel;
     let mut gain = 1.0f32;
     let mut thickness = 0.0f32;
-    for run in world.trace_materials(origin, dir, max_t) {
+    // A ray the world's limits refuse (an origin or a reach past them) traces nothing: the
+    // path counts as open air.
+    for run in world
+        .trace_materials(origin, dir, max_t)
+        .unwrap_or_default()
+    {
         if run.material == AIR {
             continue;
         }

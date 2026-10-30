@@ -422,11 +422,15 @@ fn main() -> Result<(), String> {
     let adapter_name = adapter.get_info().name;
     println!("rendering on {adapter_name}");
     let pool_bytes = flythrough::level_pool_units(&world, true) * vxe_render::gpu_world::UNIT_BYTES;
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits: vxe_render::limits_for(&adapter, pool_bytes),
-        ..Default::default()
-    }))
-    .map_err(|e| format!("no device: {e}"))?;
+    let (device, queue) =
+        pollster::block_on(
+            adapter.request_device(&wgpu::DeviceDescriptor {
+                required_limits: vxe_render::limits_for(&adapter, pool_bytes)
+                    .map_err(|e| format!("no device: {e}"))?,
+                ..Default::default()
+            }),
+        )
+        .map_err(|e| format!("no device: {e}"))?;
 
     // Contour attributes on the bounded path's mirror budget, fitted as the look says.
     let chunks = world.extent().len() as u64;

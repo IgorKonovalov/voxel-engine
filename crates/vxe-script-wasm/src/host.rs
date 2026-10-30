@@ -46,6 +46,10 @@ pub struct WasmConfig {
     pub max_restarts: u32,
     /// The fuel each host import is charged for the work it did.
     pub rates: WorkRates,
+    /// The support query's `max_region` the host's `unsupported` floods under, for that
+    /// import's fuel bound ([`WorkRates::support_bound`]). A host configured with a larger cap
+    /// is still charged exactly; only the trap before the work comes later.
+    pub support_max_region: u32,
 }
 
 impl Default for WasmConfig {
@@ -56,6 +60,7 @@ impl Default for WasmConfig {
             frame_ns: 16_666_667,
             max_restarts: 8,
             rates: WorkRates::DEFAULT,
+            support_max_region: vxe_net::DEFAULT_SUPPORT.max_region,
         }
     }
 }
@@ -63,17 +68,24 @@ impl Default for WasmConfig {
 /// The fuel a host import is charged, on top of the guest's own instructions.
 ///
 /// Before any host work, the imports that take a list are charged `per_byte` for each byte
-/// of it: `apply` its op bytes, `unsupported` 12 per changed cell. After the call returns:
-/// every call `per_call`; `apply` also `per_voxel` for each voxel in the op's bounds (an
-/// edit's shape bounds, a stamp's or a region op's changed bounds) and `64 x per_voxel` for
-/// each chunk it touched; `raycast` `per_step` for each step of its walk; `count_in_box`
+/// of it: `apply` its op bytes, `unsupported` 12 per changed cell. The charge for the work
+/// itself: every call `per_call`; `apply` also `per_voxel` for each voxel in the op's bounds
+/// (an edit's shape bounds, a stamp's or a region op's changed bounds) and `64 x per_voxel`
+/// for each chunk it touched; `raycast` `per_step` for each step of its walk; `count_in_box`
 /// `per_voxel` for each voxel it counted; `unsupported` `per_step` for each cell the support
 /// query looked at. A refused or undecodable call is charged its bytes and `per_call` only.
 /// The steps come from the lent host's stats (`Host::raycast_with_steps`,
-/// `Host::unsupported_with_steps`); a host that does not report them is charged none. A
-/// charge past the fuel left ends the call as [`LogicError::Fuel`], as an instruction
-/// overrun does. Every charge comes from integer counts the world produces, so it is the
-/// same on every machine.
+/// `Host::unsupported_with_steps`); a host that does not report them is charged none.
+///
+/// The three imports that walk the world (`raycast`, `count-in-box`, `unsupported`) are
+/// charged an upper bound of that work **before** the walk ([`WorkRates::ray_bound`],
+/// [`WorkRates::count_bound`], [`WorkRates::support_bound`]) and settle after it: the
+/// difference is refunded, or, past a bound a host exceeded, charged. A call that completes
+/// is so charged exactly what the work cost; a bound past the fuel left ends the call before
+/// any host work. `apply` and `material-at` are charged after the host returns. A charge
+/// past the fuel left ends the call as [`LogicError::Fuel`], as an instruction overrun does.
+/// Every charge comes from integer counts the world produces, so it is the same on every
+/// machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WorkRates {
     pub per_voxel: u64,
@@ -139,6 +151,50 @@ impl WorkRates {
         let voxels = counts.iter().fold(0u64, |n, &(_, c)| n.saturating_add(c));
         self.per_call
             .saturating_add(self.per_voxel.saturating_mul(voxels))
+    }
+
+    /// The most a `count_in_box` over the inclusive box `lo..=hi` can be charged: every voxel
+    /// of the box counted. A box reversed on an axis counts nothing.
+    pub fn count_bound(&self, lo: VoxelCoord, hi: VoxelCoord) -> u64 {
+        let voxels = (0..3)
+            .map(|k| {
+                let (l, h) = (i64::from(lo.0[k]), i64::from(hi.0[k]));
+                if h < l {
+                    0
+                } else {
+                    (h - l + 1).cast_unsigned()
+                }
+            })
+            .fold(1u64, u64::saturating_mul);
+        self.per_call
+            .saturating_add(self.per_voxel.saturating_mul(voxels))
+    }
+
+    /// The most a `raycast` along `origin + dir * t / 256`, `0 <= t <= max`, can be charged.
+    /// Each step of the world's walk leaves a cell of one or more whole voxels, so it crosses
+    /// at least one voxel plane; the ray crosses at most `ceil(|dir[k]| x max / 2^16) + 1`
+    /// planes on axis `k`, and the hit's cell is one step more.
+    pub fn ray_bound(&self, dir: Fixed3, max: i64) -> u64 {
+        let t = u128::from(max.max(0).cast_unsigned());
+        let steps = dir.0.iter().fold(1u128, |n, &d| {
+            let reach = u128::from(d.unsigned_abs()) * t;
+            n.saturating_add(reach.div_ceil(1 << 16)).saturating_add(1)
+        });
+        self.steps_cost(u64::try_from(steps).unwrap_or(u64::MAX))
+    }
+
+    /// The most an `unsupported` over `changed` can be charged by a host flooding under
+    /// `max_region` (`vxe_world::find_unsupported_with_stats`): each of the `d` distinct
+    /// cells and its six neighbours is a candidate, and each candidate starts at most one
+    /// flood of at most `max_region + 1` cells, so `7 d (max_region + 2)` steps.
+    pub fn support_bound(&self, changed: &[CellCoord], max_region: u32) -> u64 {
+        let mut cells = changed.to_vec();
+        cells.sort_unstable();
+        cells.dedup();
+        let steps = (cells.len() as u64)
+            .saturating_mul(7)
+            .saturating_mul(u64::from(max_region) + 2);
+        self.steps_cost(steps)
     }
 }
 
@@ -305,10 +361,52 @@ fn charge(store: &mut StoreContextMut<'_, State>, cost: u64) -> wasmtime::Result
     }
 }
 
-/// Registers the `host` imports. Each runs under [`guarded`] on the lent host, then is
-/// charged at `rates` for the work it did ([`WorkRates`]); the store's fuel is reachable
-/// from a `func_wrap` closure, not from a `bindgen` trait method.
-fn add_host(linker: &mut Linker<State>, rates: WorkRates) -> wasmtime::Result<()> {
+/// The out-of-fuel trap of an import whose pre-charged `bound` exceeds the `left` fuel,
+/// naming the import. [`classify`] reads it as [`LogicError::Fuel`].
+fn fuel_trap(import: &str, bound: u64, left: u64) -> wasmtime::Error {
+    wasmtime::Error::from(Trap::OutOfFuel).context(format!(
+        "host import `{import}` needs up to {bound} fuel before its work; {left} left"
+    ))
+}
+
+/// Takes the upper bound `bound` of an import's charge before its host work; past the fuel
+/// left, the call ends as an out-of-fuel trap naming `import` and no host work runs.
+fn precharge(
+    store: &mut StoreContextMut<'_, State>,
+    import: &str,
+    bound: u64,
+) -> wasmtime::Result<()> {
+    let left = store.get_fuel()?;
+    match left.checked_sub(bound) {
+        Some(left) => store.set_fuel(left),
+        None => {
+            store.set_fuel(0)?;
+            Err(fuel_trap(import, bound, left))
+        }
+    }
+}
+
+/// Settles a [`precharge`] of `bound` once the work is known to cost `cost`: refunds the
+/// difference, or charges the excess of a host that exceeded the bound.
+fn settle(store: &mut StoreContextMut<'_, State>, bound: u64, cost: u64) -> wasmtime::Result<()> {
+    match bound.checked_sub(cost) {
+        Some(refund) => {
+            let left = store.get_fuel()?;
+            store.set_fuel(left.saturating_add(refund))
+        }
+        None => charge(store, cost - bound),
+    }
+}
+
+/// Registers the `host` imports. Each runs under [`guarded`] on the lent host; the world
+/// walks are pre-charged their bound at `rates` and settled after, the others charged after
+/// ([`WorkRates`]). The store's fuel is reachable from a `func_wrap` closure, not from a
+/// `bindgen` trait method.
+fn add_host(
+    linker: &mut Linker<State>,
+    rates: WorkRates,
+    support_max_region: u32,
+) -> wasmtime::Result<()> {
     let mut host = linker.instance(HOST_INTERFACE)?;
     host.func_wrap(
         "apply",
@@ -340,13 +438,15 @@ fn add_host(linker: &mut Linker<State>, rates: WorkRates) -> wasmtime::Result<()
         "raycast",
         move |mut store: StoreContextMut<'_, State>,
               (origin, dir, max): (wit::Fixed3, wit::Fixed3, i64)| {
+            let bound = rates.ray_bound(fixed3(dir), max);
+            precharge(&mut store, "raycast", bound)?;
             let (hit, steps) = guarded(|| {
                 Ok(store
                     .data_mut()
                     .host()?
                     .raycast_with_steps(fixed3(origin), fixed3(dir), max))
             })?;
-            charge(&mut store, rates.steps_cost(steps))?;
+            settle(&mut store, bound, rates.steps_cost(steps))?;
             Ok((hit.map(|h| wit::Hit {
                 voxel: wit_voxel(h.voxel),
                 face: h.face.map(wit_face),
@@ -358,9 +458,11 @@ fn add_host(linker: &mut Linker<State>, rates: WorkRates) -> wasmtime::Result<()
     host.func_wrap(
         "count-in-box",
         move |mut store: StoreContextMut<'_, State>, (lo, hi): (wit::Voxel, wit::Voxel)| {
-            let counts =
-                guarded(|| Ok(store.data_mut().host()?.count_in_box(voxel(lo), voxel(hi))))?;
-            charge(&mut store, rates.count_cost(&counts))?;
+            let (lo, hi) = (voxel(lo), voxel(hi));
+            let bound = rates.count_bound(lo, hi);
+            precharge(&mut store, "count-in-box", bound)?;
+            let counts = guarded(|| Ok(store.data_mut().host()?.count_in_box(lo, hi)))?;
+            settle(&mut store, bound, rates.count_cost(&counts))?;
             Ok((counts,))
         },
     )?;
@@ -371,14 +473,15 @@ fn add_host(linker: &mut Linker<State>, rates: WorkRates) -> wasmtime::Result<()
                 &mut store,
                 rates.bytes_cost(changed.len().saturating_mul(12)),
             )?;
-            let (regions, steps) = guarded(|| {
-                let changed: Vec<CellCoord> = changed
-                    .into_iter()
-                    .map(|c| CellCoord([c.x, c.y, c.z]))
-                    .collect();
-                Ok(store.data_mut().host()?.unsupported_with_steps(&changed))
-            })?;
-            charge(&mut store, rates.steps_cost(steps))?;
+            let changed: Vec<CellCoord> = changed
+                .into_iter()
+                .map(|c| CellCoord([c.x, c.y, c.z]))
+                .collect();
+            let bound = rates.support_bound(&changed, support_max_region);
+            precharge(&mut store, "unsupported", bound)?;
+            let (regions, steps) =
+                guarded(|| Ok(store.data_mut().host()?.unsupported_with_steps(&changed)))?;
+            settle(&mut store, bound, rates.steps_cost(steps))?;
             Ok((regions.into_iter().map(wit_region).collect::<Vec<_>>(),))
         },
     )?;
@@ -476,7 +579,7 @@ impl WasmLogic {
         let mut linker = Linker::<State>::new(&engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker).map_err(load)?;
         shadow_timers(&mut linker).map_err(load)?;
-        add_host(&mut linker, config.rates).map_err(load)?;
+        add_host(&mut linker, config.rates, config.support_max_region).map_err(load)?;
         let pre = linker.instantiate_pre(&component).map_err(load)?;
         let pre = bindings::LogicPre::new(pre).map_err(load)?;
         Ok(Self {
@@ -705,6 +808,40 @@ impl Logic for WasmLogic {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pre-charge past the fuel left is an out-of-fuel trap, so [`classify`] reads it as
+    /// `LogicError::Fuel`, and its message names the import.
+    #[test]
+    fn a_bound_past_the_fuel_left_is_a_fuel_trap_naming_the_import() {
+        let e = fuel_trap("count-in-box", 10_737_418_340, 9_000);
+        assert_eq!(e.downcast_ref::<Trap>(), Some(&Trap::OutOfFuel));
+        let message = format!("{e:#}");
+        assert!(message.contains("`count-in-box`"), "{message}");
+        assert!(message.contains("10737418340"), "{message}");
+    }
+
+    /// The bounds: a box's volume, a ray's plane crossings, the support query's floods.
+    #[test]
+    fn the_bounds_cover_the_work_they_stand_for() {
+        let r = WorkRates::DEFAULT;
+        let v = |c: [i32; 3]| VoxelCoord(c);
+        assert_eq!(r.count_bound(v([0; 3]), v([63; 3])), 100 + 10 * (1 << 18));
+        assert_eq!(r.count_bound(v([0; 3]), v([1023; 3])), 100 + 10 * (1 << 30));
+        assert_eq!(r.count_bound(v([5, 0, 0]), v([0, 9, 9])), 100);
+        // 2^22 fixed units along x are 16 384 voxels: 16 385 planes, 1 on y and z, 1 more.
+        assert_eq!(
+            r.ray_bound(Fixed3([256, 0, 0]), 1 << 22),
+            100 + 10 * (16_385 + 1 + 1 + 1)
+        );
+        assert_eq!(r.ray_bound(Fixed3([256, 0, 0]), -5), 100 + 10 * 4);
+        assert_eq!(r.ray_bound(Fixed3([i64::MIN; 3]), i64::MAX), u64::MAX);
+        let c = |x| CellCoord([x, 0, 0]);
+        assert_eq!(
+            r.support_bound(&[c(1), c(2), c(1)], 4096),
+            100 + 10 * 2 * 7 * 4098
+        );
+        assert_eq!(r.support_bound(&[], 4096), 100);
+    }
 
     /// The cap holds across memories: a second memory cannot take what the first left.
     #[test]

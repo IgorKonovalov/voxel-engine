@@ -70,6 +70,7 @@ fn wasm_config_defaults() {
                 per_call: 100,
                 per_byte: 1,
             },
+            support_max_region: 4096,
         }
     );
     assert_eq!(WorkRates::default(), WorkRates::DEFAULT);
@@ -187,6 +188,7 @@ const SPIN_FUEL: WasmConfig = WasmConfig {
     frame_ns: 16_666_667,
     max_restarts: 8,
     rates: WorkRates::DEFAULT,
+    support_max_region: 4096,
 };
 
 #[test]
@@ -723,9 +725,48 @@ impl Host for GridHost<'_> {
     }
 }
 
-/// `count_in_box` is charged 10 fuel per voxel counted: `1 024^3` resident voxels cost
-/// `10 x 2^30`, past the default `10^10` per tick, and the tick traps on fuel; `64^3` costs
-/// `10 x 2^18 + 100` and completes, as does `1 024^3` over a world with nothing resident.
+/// [`WorldHost`] counting the `count_in_box` calls that reach it.
+struct CountingHost<'a> {
+    world: WorldHost<'a>,
+    counts: std::cell::Cell<u32>,
+}
+
+impl<'a> CountingHost<'a> {
+    fn new(world: &'a World) -> Self {
+        Self {
+            world: WorldHost(world),
+            counts: std::cell::Cell::new(0),
+        }
+    }
+}
+
+impl Host for CountingHost<'_> {
+    fn apply(&mut self, op: Op) -> Result<OpResult, EditError> {
+        self.world.apply(op)
+    }
+
+    fn material_at(&self, v: VoxelCoord) -> Option<MaterialId> {
+        self.world.material_at(v)
+    }
+
+    fn raycast(&self, origin: Fixed3, dir: Fixed3, max: i64) -> Option<Hit> {
+        self.world.raycast(origin, dir, max)
+    }
+
+    fn count_in_box(&self, lo: VoxelCoord, hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
+        self.counts.set(self.counts.get() + 1);
+        self.world.count_in_box(lo, hi)
+    }
+
+    fn unsupported(&self, changed: &[CellCoord]) -> Vec<Region> {
+        self.world.unsupported(changed)
+    }
+}
+
+/// `count_in_box` is charged 10 fuel per voxel counted, and the box's whole volume is
+/// pre-charged before the count: `1 024^3` voxels bound the charge at `10 x 2^30 + 100`,
+/// past the default `10^10` per tick, so the tick traps on fuel without the host counting a
+/// voxel, whether the box is resident or not. `64^3` costs `10 x 2^18 + 100` and completes.
 #[test]
 fn a_greedy_count_in_box_runs_out_of_fuel() {
     let config = WasmConfig::default();
@@ -735,11 +776,18 @@ fn a_greedy_count_in_box_runs_out_of_fuel() {
         &UniformSource(3),
         &test_table(),
     );
-    let (out, _) = greedy_tick(&solid, &config, count_input([0; 3], [1023; 3]));
+    let mut host = CountingHost::new(&solid);
+    let (out, _) = greedy_tick_on(&mut host, &config, count_input([0; 3], [1023; 3]));
     assert_eq!(out, Err(LogicError::Fuel { tick: 0 }));
+    assert_eq!(
+        host.counts.get(),
+        0,
+        "the host counted before the fuel check"
+    );
 
-    let (out, left) = greedy_tick(&solid, &config, count_input([0; 3], [63; 3]));
+    let (out, left) = greedy_tick_on(&mut host, &config, count_input([0; 3], [63; 3]));
     assert_eq!(out.unwrap().broadcast, (1u64 << 18).to_le_bytes());
+    assert_eq!(host.counts.get(), 1);
     let (zero, zero_left) = greedy_tick(
         &solid,
         &WasmConfig {
@@ -751,9 +799,69 @@ fn a_greedy_count_in_box_runs_out_of_fuel() {
     assert!(zero.is_ok());
     assert_eq!(zero_left.unwrap() - left.unwrap(), 10 * (1 << 18) + 100);
 
+    // Nothing resident: the count would find no voxel, but the bound is the box's volume.
     let empty = World::new(&test_table());
-    let (out, _) = greedy_tick(&empty, &config, count_input([0; 3], [1023; 3]));
+    let mut host = CountingHost::new(&empty);
+    let (out, _) = greedy_tick_on(&mut host, &config, count_input([0; 3], [1023; 3]));
+    assert_eq!(out, Err(LogicError::Fuel { tick: 0 }));
+    assert_eq!(host.counts.get(), 0);
+    // A box the world refuses (past `query_axis_max`) but whose bound fits is refunded down
+    // to `per_call`, as at the exact charge.
+    let (out, _) = greedy_tick(&empty, &config, count_input([0; 3], [1024, 0, 0]));
     assert_eq!(out.unwrap().broadcast, 0u64.to_le_bytes());
+    let mut host = WorldHost(&empty);
+    assert_eq!(charged(&mut host, &count_input([0; 3], [1024, 0, 0])), 100);
+}
+
+/// With fuel for exactly a `64^3` count, the count completes with no fuel left; a `65^3`
+/// count's bound is past it, so the tick traps on fuel before the host counts. Under
+/// restarts the next tick starts a fresh instance and its `init`, and the same input traps
+/// again, still without a count.
+#[test]
+fn a_count_one_voxel_wider_than_the_fuel_traps_before_the_host_counts() {
+    let solid = World::generate(
+        ChunkExtent::new([0, 0, 0], [2, 2, 2]),
+        &UniformSource(3),
+        &test_table(),
+    );
+    let input = count_input([0; 3], [63; 3]);
+    let zero = WasmConfig {
+        rates: WorkRates::ZERO,
+        ..WasmConfig::default()
+    };
+    let (out, zero_left) = greedy_tick(&solid, &zero, input.clone());
+    assert!(out.is_ok());
+    let own = zero.fuel_per_tick - zero_left.unwrap();
+    let config = WasmConfig {
+        fuel_per_tick: own + 10 * (1 << 18) + 100,
+        ..WasmConfig::default()
+    };
+    let (out, left) = greedy_tick(&solid, &config, input);
+    assert_eq!(out.unwrap().broadcast, (1u64 << 18).to_le_bytes());
+    assert_eq!(left, Some(0));
+
+    let wider = count_input([0; 3], [64; 3]);
+    let mut host = CountingHost::new(&solid);
+    let mut logic = WasmLogic::load(&guest("greedy"), &config).expect("greedy loads");
+    logic.try_init(&mut host, 0).expect("greedy's init returns");
+    assert_eq!(
+        logic.try_tick(&mut host, 0, std::slice::from_ref(&wider)),
+        Err(LogicError::Fuel { tick: 0 })
+    );
+    assert_eq!(host.counts.get(), 0);
+    assert_eq!(
+        logic.try_tick(&mut host, 1, std::slice::from_ref(&wider)),
+        Err(LogicError::Fuel { tick: 1 })
+    );
+    assert_eq!(
+        logic.take_restart(),
+        Some(LogicError::Restarted {
+            tick: 1,
+            after: 0,
+            restarts: 1
+        })
+    );
+    assert_eq!(host.counts.get(), 0);
 }
 
 /// 100 rays of `max_t = 2^22` through an empty world are charged `100 + 10 s` each, `s` the

@@ -31,11 +31,10 @@
 //
 // The emissive estimate is resampled importance sampling over `params.candidates`
 // candidates. Each draws a chunk from the candidate table with probability w / W (binary
-// search over the cumulative weights) and a sample uniformly in its range, or with
-// Params.lighting bit 7 (tests) a sample uniformly from the `params.light_span` of the buffer
-// (a hole, material 0, weighs nothing); then one of the sample's exposed faces that face the
-// hit uniformly, and a uniform point x on that unit face: source density
-// `(w / W) / len / faces` (or `1 / (span * faces)`) per unit area. Its target is the unshadowed contribution `lum(Le * scale) cos_hit cos_face /
+// search over the cumulative weights) and a sample uniformly in its range (a hole, material
+// 0, weighs nothing); then one of the sample's exposed faces that face the hit uniformly,
+// and a uniform point x on that unit face: source density `(w / W) / len / faces` per unit
+// area. Its target is the unshadowed contribution `lum(Le * scale) cos_hit cos_face /
 // d^2`, and one candidate is kept with probability proportional to target over source
 // density. One shadow ray to the kept point; unoccluded, the estimate of E is
 // `Le / lum(Le) * (sum of weights) / candidates`, unbiased for the irradiance from every
@@ -177,47 +176,36 @@ struct Candidate {
 fn candidate(px: vec2<u32>, j: u32, p: vec3<f32>, n: vec3<f32>) -> Candidate {
     var none = Candidate(vec3<f32>(0.0), vec3<f32>(0.0), 0.0, 0u, 0.0);
     let dim = 2u + CANDIDATE_DIMS * j;
-    // The sample and the inverse of its source probability.
-    var idx = 0u;
-    var inv_pdf = 0.0;
-    if ((params.lighting & LIGHTING_UNIFORM_DRAW) != 0u) {
-        let span = params.light_span;
-        if (span == 0u) {
-            return none;
-        }
-        idx = min(u32(rand(px, dim) * f32(span)), span - 1u);
-        inv_pdf = f32(span);
-    } else {
-        let head = table_slot(0u);
-        let count = head.x;
-        let total = bitcast<f32>(head.y);
-        if (count == 0u || total <= 0.0) {
-            return none;
-        }
-        // The first chunk whose cumulative weight exceeds u.
-        let u = rand(px, dim) * total;
-        var lo = 0u;
-        var hi = count - 1u;
-        while (lo < hi) {
-            let mid = (lo + hi) / 2u;
-            if (bitcast<f32>(table_slot(1u + mid).z) > u) {
-                hi = mid;
-            } else {
-                lo = mid + 1u;
-            }
-        }
-        let e = table_slot(1u + lo);
-        var prev = 0.0;
-        if (lo > 0u) {
-            prev = bitcast<f32>(table_slot(lo).z);
-        }
-        let w = bitcast<f32>(e.z) - prev;
-        if (w <= 0.0 || e.y == 0u) {
-            return none;
-        }
-        idx = e.x + min(u32(rand(px, dim + 5u) * f32(e.y)), e.y - 1u);
-        inv_pdf = total / w * f32(e.y);
+    let head = table_slot(0u);
+    let chunks = head.x;
+    let total = bitcast<f32>(head.y);
+    if (chunks == 0u || total <= 0.0) {
+        return none;
     }
+    // The first chunk whose cumulative weight exceeds u.
+    let u = rand(px, dim) * total;
+    var lo = 0u;
+    var hi = chunks - 1u;
+    while (lo < hi) {
+        let mid = (lo + hi) / 2u;
+        if (bitcast<f32>(table_slot(1u + mid).z) > u) {
+            hi = mid;
+        } else {
+            lo = mid + 1u;
+        }
+    }
+    let e = table_slot(1u + lo);
+    var prev = 0.0;
+    if (lo > 0u) {
+        prev = bitcast<f32>(table_slot(lo).z);
+    }
+    let w = bitcast<f32>(e.z) - prev;
+    if (w <= 0.0 || e.y == 0u) {
+        return none;
+    }
+    // The sample and the inverse of its source probability.
+    let idx = e.x + min(u32(rand(px, dim + 5u) * f32(e.y)), e.y - 1u);
+    let inv_pdf = total / w * f32(e.y);
     let s = light_samples[idx];
     let m = u32(s.w) & 0xFFFFu;
     if (m == 0u) {

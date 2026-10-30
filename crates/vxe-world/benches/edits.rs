@@ -115,6 +115,25 @@ fn tool_ops() -> Vec<EditOp> {
         .collect()
 }
 
+/// Long tool capsules: radius 2 voxels, segments of about 430 voxels along the eight space
+/// diagonals through the middle of the solid world, whose bounds cross 253 of its 256 voxels
+/// on every axis.
+fn long_tool_ops() -> Vec<EditOp> {
+    let c = centre_of_voxel([0, 0, 0]).0;
+    (0..8)
+        .map(|i| {
+            let d = [1, 2, 4].map(|b| if i & b == 0 { 1 } else { -1 });
+            let half = d.map(|s| s * 124 * FIXED_ONE);
+            EditOp::capsule(
+                Fixed3([0, 1, 2].map(|k| c[k] - half[k])),
+                Fixed3([0, 1, 2].map(|k| c[k] + half[k])),
+                2 * FIXED_ONE,
+                Mode::Carve,
+            )
+        })
+        .collect()
+}
+
 fn run(c: &mut Criterion, name: &str, setup: fn() -> World, ops: &[EditOp]) {
     c.bench_function(name, |b| {
         b.iter_batched(
@@ -278,6 +297,7 @@ fn edits(c: &mut Criterion) {
     run(c, "mixed", mixed_world, &spheres);
     run(c, "tool", solid_world, &tools);
     run(c, "tool_warm", solid_world_warm, &tools);
+    run(c, "tool_long", solid_world, &long_tool_ops());
 }
 
 criterion_group!(benches, edits, expand);

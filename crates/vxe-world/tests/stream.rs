@@ -6,7 +6,7 @@ mod support;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::TryRecvError;
-use std::sync::{Arc, Barrier, mpsc};
+use std::sync::{Arc, Barrier, Mutex, mpsc};
 
 use support::*;
 use vxe_world::*;
@@ -531,4 +531,71 @@ fn the_incremental_queue_and_sweep_equal_the_full_rebuild_over_a_walk() {
     assert_eq!(seen.len(), 26);
     assert_eq!(queues, unit);
     assert!(sweeps > 100, "{sweeps} incremental sweeps");
+}
+
+/// A uniform source of material 3 whose first `chunk` call reports its coordinate and blocks
+/// until released; every later call returns at once.
+struct GateSource {
+    entered: Mutex<Option<mpsc::Sender<ChunkCoord>>>,
+    release: Mutex<mpsc::Receiver<()>>,
+}
+
+impl WorldSource for GateSource {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        if let Some(tx) = self.entered.lock().unwrap().take() {
+            tx.send(coord).unwrap();
+            self.release.lock().unwrap().recv().unwrap();
+        }
+        UniformSource(3).chunk(coord, out);
+    }
+}
+
+/// A full chunk whose focus jumps away while it loads lands past the full band (inside the
+/// LOD band) and is inserted anyway; the next poll, with the focus still, sweeps it out of the
+/// full tier, and its demotion completes as a `demoted` event.
+#[test]
+fn a_full_chunk_landing_outside_its_band_is_demoted_by_the_next_poll() {
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let source = GateSource {
+        entered: Mutex::new(Some(entered_tx)),
+        release: Mutex::new(release_rx),
+    };
+    let world = World::new(&test_table());
+    // keep_full2 = 1, keep_lod2 = 9.
+    let mut s = Streamer::new(Arc::new(source), config(1, 3, 0, 1));
+    s.set_incremental_oracle(true);
+    s.update(&world, &[VoxelCoord([5, 5, 5])]);
+    let held = entered_rx.recv().unwrap();
+    // Two chunks along x from the held chunk: past the full band, inside the LOD band.
+    let focus = ChunkCoord([held.0[0] + 2, held.0[1], held.0[2]]);
+    s.update(&world, &[VoxelCoord(focus.0.map(|c| c * 64 + 5))]);
+    release_tx.send(()).unwrap();
+
+    let mut landed = false;
+    for _ in 0..1_000_000 {
+        let ev = s.poll(&world);
+        if ev.loaded.contains(&(held, Tier::Full)) {
+            landed = true;
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert!(landed, "{held:?} never landed");
+    assert_eq!(s.tier(held), Some(Tier::Full));
+    assert!(world.store().contains(held));
+
+    // The first further poll sweeps it: it leaves the store and the full tier, its demotion
+    // queued.
+    let ev = s.poll(&world);
+    assert!(!ev.loaded.contains(&(held, Tier::Full)));
+    assert_ne!(s.tier(held), Some(Tier::Full));
+    assert!(!world.store().contains(held));
+    // The second further poll applies the demotion's result once the worker returns it.
+    let ev = s.wait_idle(&world);
+    assert!(
+        ev.demoted.contains(&held) || ev.evicted.contains(&held),
+        "{held:?} neither demoted nor evicted: {ev:?}"
+    );
+    assert_eq!(s.tier(held), Some(Tier::LodOnly));
 }

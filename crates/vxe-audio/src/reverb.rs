@@ -232,8 +232,9 @@ fn line_filter(m: f32, t60: f32, hf_ratio: f32) -> (f32, f32) {
 /// normal arithmetic on every sample of every later block. `1e-20` is 400 dB under full
 /// scale, far under audibility and far above `f32::MIN_POSITIVE` (about `1.2e-38`), so no
 /// product of a flushed value with a gain under 1 reaches the subnormal range either; the
-/// network rings out to exact zeros. Portable: no flush-to-zero mode of the FPU is set.
-const FLUSH_BELOW: f32 = 1e-20;
+/// network rings out to exact zeros. Portable: no flush-to-zero mode of the FPU is set. The
+/// mixer's voice low-pass states flush by the same rule.
+pub(crate) const FLUSH_BELOW: f32 = 1e-20;
 
 /// `i` in `[0, 2 RING)` brought into the ring, without a division.
 #[inline]
@@ -243,7 +244,7 @@ fn wrap(i: usize) -> usize {
 
 /// `x`, or 0 when `|x| < FLUSH_BELOW`. A select, not a branch, in the compiled loop.
 #[inline]
-fn flush(x: f32) -> f32 {
+pub(crate) fn flush(x: f32) -> f32 {
     if x.abs() < FLUSH_BELOW { 0.0 } else { x }
 }
 

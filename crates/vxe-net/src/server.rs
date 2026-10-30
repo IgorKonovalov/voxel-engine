@@ -228,9 +228,10 @@ fn broadcast(clients: &[Endpoint], msg: &Message) {
     if clients.is_empty() {
         return;
     }
-    let bytes = msg.encode();
+    // One encode, shared: every client's queue holds the same allocation.
+    let bytes: Arc<[u8]> = msg.encode().into();
     for c in clients {
-        c.send(bytes.clone());
+        c.send(Arc::clone(&bytes));
     }
 }
 
@@ -689,4 +690,113 @@ mod tests {
             assert_eq!(steps, if runs { 7 + 5 } else { 0 }, "{n} cells");
         }
     }
+
+    /// One applied op broadcast to four clients costs the allocations of one encode and no
+    /// more: every client's queue holds the same bytes, and each decodes to the message.
+    #[test]
+    fn a_broadcast_encodes_once_and_copies_nothing_per_client() {
+        let carves = seeded_carves(0x0052, 1);
+        let world = Arc::new(solid3_world());
+        let mut server = Server::new(world.clone(), Box::new(EchoLogic), 0);
+        let (near, far) = MemChannel::pair();
+        server.attach(far);
+        let mut client = Client::shared(world, near);
+        server.submit(carves[0]);
+        server.tick();
+        let msg = client
+            .poll()
+            .into_iter()
+            .find_map(|e| match e {
+                Event::Applied {
+                    tick,
+                    seq,
+                    op,
+                    result,
+                } => Some(Message::Applied {
+                    tick,
+                    seq,
+                    op,
+                    result,
+                }),
+                _ => None,
+            })
+            .expect("the carve applied");
+
+        let pairs: Vec<_> = (0..4).map(|_| MemChannel::pair()).collect();
+        let (ours, theirs): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
+        // The first message on a fresh queue allocates the queue's block; send one first so
+        // the measured broadcast counts only what the broadcast itself allocates.
+        broadcast(&ours, &msg);
+        for t in &theirs {
+            assert!(t.try_recv().is_some());
+        }
+
+        let before = counting::allocations();
+        let alone: Arc<[u8]> = msg.encode().into();
+        let one_encode = counting::allocations() - before;
+        let before = counting::allocations();
+        broadcast(&ours, &msg);
+        let broadcast_allocs = counting::allocations() - before;
+        assert_eq!(
+            broadcast_allocs, one_encode,
+            "allocations of a 4-client broadcast"
+        );
+
+        let got: Vec<Arc<[u8]>> = theirs
+            .iter()
+            .map(|t| t.try_recv().expect("broadcast"))
+            .collect();
+        for g in &got {
+            assert!(
+                Arc::ptr_eq(g, &got[0]),
+                "one allocation shared by every client"
+            );
+            assert_eq!(**g, *alone);
+            assert_eq!(Message::decode(g).as_ref(), Ok(&msg));
+        }
+    }
 }
+
+/// Allocations made on each thread, counted for the broadcast's no-copy test.
+#[cfg(test)]
+mod counting {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    thread_local! {
+        static COUNT: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// The system allocator, counting each allocation and reallocation on the calling thread.
+    pub struct Counting;
+
+    // SAFETY: every call forwards to `System` unchanged; the count is a side effect that
+    // never allocates (a const-initialised thread-local `Cell`).
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let _ = COUNT.try_with(|c| c.set(c.get() + 1));
+            // SAFETY: the caller upholds `alloc`'s contract, which `System` shares.
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: `ptr` came from `System` through `alloc` or `realloc` with `layout`.
+            unsafe { System.dealloc(ptr, layout) }
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            let _ = COUNT.try_with(|c| c.set(c.get() + 1));
+            // SAFETY: as `dealloc`, and the caller upholds `realloc`'s size contract.
+            unsafe { System.realloc(ptr, layout, new_size) }
+        }
+    }
+
+    /// Allocations and reallocations this thread has made so far.
+    pub fn allocations() -> u64 {
+        COUNT.with(Cell::get)
+    }
+}
+
+#[cfg(test)]
+#[global_allocator]
+static ALLOC: counting::Counting = counting::Counting;

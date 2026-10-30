@@ -138,3 +138,106 @@ fn a_bench_applies_the_same_ops_natively_and_as_a_component() {
     assert_eq!(wasm_events, native_events);
     assert_eq!(wasm.world().voxel_hash(), native.world().voxel_hash());
 }
+
+/// A host that carves for any edit, reports one region after it, and answers drops and piles
+/// with the results it holds, of whatever kind.
+struct Answers {
+    drop: OpResult,
+    pile: OpResult,
+}
+
+impl vxe_net::Host for Answers {
+    fn apply(&mut self, op: Op) -> Result<OpResult, EditError> {
+        Ok(match op {
+            Op::Drop { .. } => self.drop.clone(),
+            Op::Pile { .. } => self.pile.clone(),
+            _ => OpResult::Edit(EditResult {
+                changed_from: vec![(3, 1)],
+                touched: Vec::new(),
+                aabb: Some((VoxelCoord([0; 3]), VoxelCoord([7; 3]))),
+            }),
+        })
+    }
+
+    fn material_at(&self, _v: VoxelCoord) -> Option<MaterialId> {
+        None
+    }
+
+    fn raycast(&self, _origin: Fixed3, _dir: Fixed3, _max: i64) -> Option<Hit> {
+        None
+    }
+
+    fn count_in_box(&self, _lo: VoxelCoord, _hi: VoxelCoord) -> Vec<(MaterialId, u64)> {
+        Vec::new()
+    }
+
+    fn unsupported(&self, _changed: &[CellCoord]) -> Vec<Region> {
+        vec![Region {
+            cells: vec![CellCoord([0, 0, 1])],
+            counts: vec![(3, 512)],
+            aabb: (VoxelCoord([0, 0, 8]), VoxelCoord([7, 7, 15])),
+        }]
+    }
+}
+
+/// The component's lines for a dig tick, then for the tick its region first falls in, on
+/// `host`; the component reports no error.
+fn component_fall_lines(host: &mut Answers) -> Vec<String> {
+    let mut logic = component();
+    logic.init(host, 0);
+    assert_eq!(logic.take_error(), None);
+    let dig = DigInput::Dig {
+        origin: Fixed3([0; 3]),
+        dir: [256, 0, 0],
+        radius: FIXED_ONE,
+    };
+    let input = vxe_net::ClientInput {
+        client: 0,
+        bytes: dig.encode(),
+    };
+    let out = logic.tick(host, 0, &[input]);
+    assert_eq!(logic.take_error(), None);
+    assert!(String::from_utf8_lossy(&out.broadcast).contains("region "));
+    let out = logic.tick(host, 1, &[]);
+    assert_eq!(logic.take_error(), None, "the component trapped");
+    String::from_utf8(out.broadcast)
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// As a component, a drop answered with a pile result and a pile answered with a drop result
+/// are refused in the logic's lines, as natively, and the component does not trap.
+#[test]
+fn the_component_refuses_a_result_of_the_wrong_kind_without_trapping() {
+    let mut host = Answers {
+        drop: OpResult::Pile(PileResult::default()),
+        pile: OpResult::Pile(PileResult::default()),
+    };
+    assert_eq!(
+        component_fall_lines(&mut host),
+        [
+            "op dropped",
+            "drop refused: the host answered a drop with a pile result, after 0 ticks, fell 0 \
+             voxels"
+        ]
+    );
+    let mut host = Answers {
+        drop: OpResult::Drop(DropResult {
+            dropped: 1,
+            crushed: vec![(3, 5)],
+            ..DropResult::default()
+        }),
+        pile: OpResult::Drop(DropResult::default()),
+    };
+    assert_eq!(
+        component_fall_lines(&mut host),
+        [
+            "op dropped",
+            "op piled",
+            "landed after 1 ticks, fell 1 voxels, crushed 5 voxels, pile refused: the host \
+             answered a pile with a drop result"
+        ]
+    );
+}

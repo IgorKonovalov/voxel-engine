@@ -2,3 +2,12 @@
 name = "app"
 version = "0.0.0"
 edition = "2024"
+
+# SEEDED: an example whose argument tests run with the package's tests.
+[[example]]
+name = "still"
+test = true
+
+# Not a test target: its device is opened by the program alone.
+[[example]]
+name = "plain"

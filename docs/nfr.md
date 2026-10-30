@@ -702,6 +702,26 @@ on: gradient 0.454 to 0.460, light 7.004 to 7.132, temporal 0.618 to 0.626, a-tr
 32 768 slots on the CPU each frame), RTX: base 0.439 to 0.461 ms, tip 0.523 to 0.592 ms.
 `Frame::frame_bytes` reads 184 956 992 B on both: the slice hash adds 0 B.
 
+**The lab modes removed (Plan 0052 Phase 9, the close's reading at v0.37.0).** The upscaler's
+losing reconstructions, fetches, blends and still clips, their `UpTuning` selectors, and the
+uniform candidate draw are gone. `flythrough --level --headless --render 1920x1080 --frames 300
+--adapter NVIDIA|AMD` at the defaults (`own` 1.5, 1280 x 720 internal, half lighting, the
+level's lamp on), per-pass timestamps, median of 30 frames, release, exclusive perf lock, base
+`c7ed5a5` (before the phase) and tip `891655a` interleaved, three runs each, 1-minute load 1.28
+to 2.45 at the runs' starts. Milliseconds, base runs / tip runs:
+
+| adapter | hit | light | upscale |
+|---|---|---|---|
+| RTX 3080 Laptop | 0.586, 0.602, 0.594 / 0.592, 0.589, 0.587 | 0.884, 0.913, 0.897 / 0.888, 0.883, 0.881 | 0.540, 0.555, 0.549 / 0.496, 0.494, 0.491 |
+| Radeon (Cezanne, RADV) | 4.277, 4.262, 4.339 / 4.265, 4.300, 4.286 | 7.150, 7.024, 7.046 / 7.019, 7.039, 7.029 | 3.273, 3.239, 3.282 / 2.995, 3.009, 3.015 |
+
+Hit and light inside the base's spread on both adapters; the upscale pass about 10 % lower on
+the RTX and 8 % lower on the Radeon. **Drift, not this plan's:** on this command line the RTX
+light pass has read 0.88 to 0.91 ms since before Plan 0052 (the `c7ed5a5` base), 7 to 8 % above
+Plan 0047 Phase 6's lamp-on 0.816 to 0.826 ms above; the Radeon reads inside 0047's spread. The
+bisect between 0047's close and `c7ed5a5` is owed (Plan 0052's Followups). No hit-pass figure
+for this command line existed before this reading.
+
 No frame may stall on paging: work attributable to streaming on the render thread is capped at
 the streaming line above; the rest runs on background threads.
 
@@ -1021,6 +1041,22 @@ adaptation's meter at 1280 x 720, 116 128 B); 262 770 752 B at scale 1, half (96
 lighting), +8 294 400 B over the eye adaptation's 254 476 352 B. The plan's bar is 16 B per
 lighting pixel at most.
 
+**The probe volume on demand (Plan 0052 Phase 4, the close's reading at v0.37.0).** A `Frame`
+builds its `ProbeVolume` only on the first encode with indirect light on (or on
+`probes()`, `probes_mut()` or a spacing change), so the default frame (indirect off) no longer
+holds it. The volume is 54 689 824 B: 12 615 680 + 1 056 768 words of atlases, state and scratch
+(54 689 792 B) and its 32-byte uniform. **Reading** (`crates/vxe-render/tests/frame.rs`,
+lavapipe, a 64 x 64 frame, exclusive perf lock, 1-minute load 2.2, `1fdac4d`): `frame_bytes`
+412 008 B with indirect off, before an encode and after one; 55 101 832 B after an encode with
+it on, +54 689 824 B, equal to `ProbeVolume::bytes`; the test asserts the figure. The
+fly-through turns indirect light on by default, so its frame is unchanged: `flythrough
+--autopilot --headless --seed 1 --render 1920x1080 --adapter NVIDIA` (release, RTX 3080 Laptop,
+exclusive perf lock, 1-minute load 9.3 to 17.8, loaded; the close review on `200607c`) prints
+frame targets 184 956 992 B, the 0047 figure above, of which the probe volume is 54 689 824 B
+(atlases 50 331 648 B, state 131 072 B, update list, rays and uniform 4 227 104 B, spacing 16).
+With `--indirect off` it would hold 130 267 168 B (arithmetic, not read). The saving is every
+engine `Frame` at `Lighting::default()`, the render tests' host RAM among them.
+
 **Prefabs (arithmetic, Plan 0008; no reading needed).** A `Prefab` holds 2 B of material plus
 one mask bit per voxel: a 16³ prefab is 8 KiB + 512 B, a 64³ one 512 KiB + 32 KiB. A parsed
 `.vox` model is capped at 256³ per axis (`MAX_MODEL_EDGE`), so the largest `to_prefab`
@@ -1109,6 +1145,20 @@ mean 423.5 to 427.9 us and p99 2258 to 2380 us per chunk with the castle, agains
   brick's shape words straight from row spans solved once per op (Plan 0031). On this reading
   the owner returned the line to **2.0 ms on the dev box** (2026-10-21): the `B` line meets it
   with about 1 ms to spare. No baseline-GPU reading.
+  **Span arena (Plan 0052 Phase 5, c130daf; bar amended by the owner 2026-10-30: `tool` and
+  `tool_warm` within 2 % of the base, `tool_long` not above it).** `OpRows` keeps row spans in
+  one arena of slabs, one per brick row it reaches, instead of a table over the op's whole
+  bounds: a diagonal capsule of 999 voxels at radius 2 writes 13 828 span entries against the
+  338 724 rows of its bounds (the arena is reserved for the bounds, about 5.4 MB of address
+  space, and only the reached rows are written). **Readings** (dev reference, AMD Ryzen 9
+  5900HS, `cargo bench -p vxe-world --bench edits -- "^tool"`, exclusive perf lock, criterion
+  medians; base binary built from `a392e47`'s `edit.rs` with the current bench file): quiet run,
+  tip then base, 1-minute load 1.47 to 1.97: tip `tool` 4.8885 ms, `tool_warm` 4.8714 ms,
+  `tool_long` 5.8762 ms; base 4.8221, 4.8096 and 5.8850 ms. `tool` +1.4 %, `tool_warm` +1.3 %
+  (their intervals do not overlap), `tool_long` -0.1 %: within the amended bar. The base's
+  bounds-wide table is the waste removed; a short capsule pays the arena's indexing for it.
+  `tool_long` is new in this plan (eight radius-2 capsules along the space diagonals, about 430
+  voxels long).
 - **Results** are returned synchronously with the edit, per material, exact.
 - **Stamp cost (proposals, Plan 0008):** a 16³ prefab stamp (the shelled box `Prefab::vault`)
   into solid rock costs under 100 µs, and a 64³ all-written prefab under 5 ms, both including
@@ -1433,6 +1483,21 @@ mean 423.5 to 427.9 us and p99 2258 to 2380 us per chunk with the castle, agains
   Before the tiers every phase gate was a full run under the lock, 4 to 7 minutes in the
   lanes' logs at 87e4b67. The CI Linux job time against run 39808788735's 981 s is owed by the
   first CI run after the merge into main (the Phase 3 amendment).
+  **Reading (Plan 0052 close review, 200607c with main 7ef72e6 merged, 745 tests, dev
+  reference on lavapipe, `CARGO_BUILD_JOBS=4`, `--test-threads 2`, exclusive perf lock, a 6 GiB
+  memory cap, built tree):** full 745 run, 744 passed, 1 failed (main's
+  `showcase_hall_golden_is_lit_by_its_four_ores`, owed to Plan 0050 Phase 6), 12 skipped,
+  **6040.6 s**, 1-minute load 3.94 at the start and 6.84 at the end with another project's
+  processes running (loaded). Plan 0040's close read 690 tests in 1440 s at load 3.5; the slow
+  list (Plan 0047's long emissive runs and the 1600-frame indirect golden among them) is most of
+  the difference, but the run printed no per-test times, so the split is not read.
+  **The two control renders (Plan 0052 Phase 6).** The indirect golden's control pass renders
+  64 frames (was 1600) and the showcase golden's dark pass 8 (was 64). Quiet readings, each test
+  alone, lavapipe, exclusive perf lock, load at each start 1.48 to 12.18 (lavapipe's own threads
+  from the run before): `indirect_golden_shows_the_vein_s_bounce_light` 151.57 s at the base,
+  115.70 s at the tip (-24 %); `showcase_hall_golden_is_lit_by_its_four_ores` 17.90 s and
+  14.56 s (-19 %). The showcase golden left the slow list. Re-read at the close review alone at
+  load 6.15 to 14.11 (loaded): indirect 149.0 s, showcase 16.5 s.
 - Pipeline creation, one compute pipeline per pass the renderer builds (attrib, the march hit
   pass and the nine march-prefixed passes), read by
   `cargo run -p vxe-render --release --example pipeline_times` (cold is the first creation on
@@ -1536,6 +1601,19 @@ protocol above. Other benches keep default-flag paired readings unless their pla
   **Reading (`cargo bench -p vxe-audio --bench mixer`, 32 voices of looping noise, each
   low-passed and carrying 16 taps):** 0.3619 ms (0.3615 to 0.3623) static; 0.6667 ms (0.6659
   to 0.6673) with the listener yawing 90 degrees per block, every voice crossfading its HRIR.
+  **Silent voices (Plan 0052 Phase 5, 14f3841).** The voice smoothers (own gain, send, gain,
+  distance gain) settle on their target within `1e-7` at each block edge and the voice
+  low-pass state flushes under reverb's `FLUSH_BELOW`, so a voice at gain 0 no longer decays
+  into subnormal floats. **Reading** (`cargo bench -p vxe-audio --bench mixer`,
+  `mixer_block_silent`, dev box, exclusive perf lock, load 1.36 to 2.96, default build, not the
+  ADR-0020 paired protocol): 64 voices at gain 0 after 10 s 1.7909 ms at the base (47 % over 64
+  fresh voices' 1.2177 ms), 1.1721 ms at the tip, inside the fresh case's spread (1.1951 to
+  1.2164 ms) and under it.
+- **HRTF ceiling (arithmetic, Plan 0052; no budget).** The HRIR convolution is the direct form:
+  2 ears x 128 taps per sample, 64 x 2 x 128 x 48 000 = 0.79 G multiply-adds a second at 64
+  voices (about 1 G with the filters and taps), twice
+  that while sources move and every voice crossfades two HRIRs. That is the mixer's ceiling on
+  voice count; a partitioned FFT convolution is the step when a consumer needs more voices.
 - **`Acoustics::update`, 32 sources:** about 1.0 ms per call, accepted by the owner
   2026-10-17 (D2b) over the plan's 0.5 ms proposal, which had no arithmetic behind it: about
   240 rays of about 100 voxel steps at about 40 ns, each step a chunk-map lookup and lock.
@@ -1589,6 +1667,9 @@ protocol above. Other benches keep default-flag paired readings unless their pla
   that a Switch-2-class device could run; a console port, its SDK and its certification are
   not planned, and Switch 1 is out of reach for a ray marcher of this shape (owner,
   2026-10-17).
+- Worlds wider than 2^24 voxels (about 1.7 km at 10 cm) from the camera. The march does its
+  world math in `f32`, exact to 2^24 voxels; a following window past that needs
+  camera-relative march coordinates, a future plan's work (Plan 0052's Followups).
 - Frame rates above 60 fps as a gate; they are welcome, not required. A fast machine
   reaches 120 fps through a performance profile, not through a budget row here.
 - VR on the baseline. The VR-readiness decision in `roadmap.md` keeps the renderer's doors

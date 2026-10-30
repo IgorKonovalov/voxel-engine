@@ -301,3 +301,49 @@ fn sixty_four_voices_render_a_block_without_allocating() {
     assert!(m.is_playing(VoiceId(64)));
     assert!(out.iter().all(|s| s.is_finite()));
 }
+
+/// Smoothers heading for 0 settle on exact zeros instead of decaying into subnormals: a
+/// looping tone turned down to gain 0 reads own gain and gain of exactly 0 after 10 s, and
+/// a stream voice that played a quarter second and then went silent, behind an occluder
+/// (the low-pass engaged), reads a low-pass state of exactly 0.
+#[test]
+fn smoothers_heading_for_zero_settle_on_exact_zeros() {
+    let mut m = flat(Mixer::panning(MPV));
+    m.apply(Command::Play(
+        VoiceId(1),
+        tone(440.0, 0.5, RATE as usize),
+        PlayParams {
+            looping: true,
+            ..PlayParams::at([20.0, 0.0, 0.0])
+        },
+    ));
+    let (mut writer, reader) = Stream::new();
+    let quarter = tone(440.0, 0.5, RATE as usize / 4);
+    let mut pushed = 0;
+    while pushed < quarter.len() {
+        let n = writer.push(&quarter.samples()[pushed..]);
+        assert!(n > 0, "the stream holds a quarter second");
+        pushed += n;
+    }
+    m.apply(Command::PlayStream(
+        VoiceId(2),
+        reader,
+        PlayParams::at([0.0, 20.0, 0.0]),
+    ));
+    let occluded = AcousticTargets {
+        gain: 0.5,
+        cutoff_hz: 500.0,
+        ..AcousticTargets::default()
+    };
+    m.apply(Command::SetAcoustics(VoiceId(2), occluded));
+    let mut out = vec![0.0; 2 * RATE as usize / 2];
+    m.render(&mut out, RATE as usize / 2);
+    m.apply(Command::SetGain(VoiceId(1), 0.0));
+    for _ in 0..20 {
+        m.render(&mut out, RATE as usize / 2);
+    }
+    let [own, _, gain, _, _] = m.voice_smoothers(VoiceId(1)).unwrap();
+    assert_eq!((own, gain), (0.0, 0.0), "own gain {own:e}, gain {gain:e}");
+    let [_, _, _, _, lowpass] = m.voice_smoothers(VoiceId(2)).unwrap();
+    assert_eq!(lowpass, 0.0, "low-pass state {lowpass:e}");
+}

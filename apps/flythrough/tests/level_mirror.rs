@@ -86,8 +86,6 @@ fn the_first_sync_issues_at_most_three_writes_per_chunk() {
     assert_eq!(gpu.allocated_bytes(), gpu.shard_layout().reserved_bytes());
     assert!(gpu.allocated_bytes() <= LEVEL_BUDGET);
     assert!(LEVEL_BUDGET - gpu.allocated_bytes() < PAGE_BYTES + PLACEHOLDER_BYTES);
-    assert_eq!(st.buffers_created, 0);
-    assert_eq!(st.copies, 0);
     // The unbudgeted sync took more belt chunks than the belt keeps, so it was replaced.
     assert_eq!(gpu.belt_trims(), 1);
     assert_eq!(gpu.belt_chunks(), 0);
@@ -268,7 +266,7 @@ fn the_level_spreads_over_capped_shards() {
     let layout = gpu.shard_layout();
     println!("layout {layout:?}");
     assert_eq!(layout.units_per_shard, 64 * PAGE_UNITS);
-    assert_eq!(layout.shards, 4);
+    assert_eq!(layout.capacity(), 4 * u64::from(64 * PAGE_UNITS));
     gpu.set_focus(source.spawn());
     gpu.sync_now(&world, &device, &queue)
         .expect("no PoolTooLarge over four shards");

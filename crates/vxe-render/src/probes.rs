@@ -153,8 +153,6 @@ pub struct ProbeVolume {
     pinned: Option<[i32; 3]>,
     /// Whether frames update probes; off holds what tests preset.
     updates: bool,
-    /// Whether a light change opens a window that restarts the probes' history.
-    light_restarts: bool,
 }
 
 /// `w` divided by `n`, rounded toward negative infinity.
@@ -262,7 +260,6 @@ impl ProbeVolume {
             spacing,
             pinned: None,
             updates: true,
-            light_restarts: true,
         }
     }
 
@@ -317,16 +314,6 @@ impl ProbeVolume {
 
     pub fn updates(&self) -> bool {
         self.updates
-    }
-
-    /// Turns the light-change restart on (the default) or off (a comparison for tests: a
-    /// light change then fades at the probes' settled hysteresis).
-    pub fn set_light_restarts(&mut self, on: bool) {
-        self.light_restarts = on;
-    }
-
-    pub fn light_restarts(&self) -> bool {
-        self.light_restarts
     }
 
     /// The volume's lowest world probe for a camera at `eye` (voxels): the probe cell holding

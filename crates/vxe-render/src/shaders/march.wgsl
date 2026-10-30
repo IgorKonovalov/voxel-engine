@@ -170,7 +170,7 @@ struct Params {
     lod1_r2: i32,
     lod2_r2: i32,
     exposure: f32,
-    light_span: u32,
+    _pad4: u32,
     candidates: u32,
     // The slot of light_samples where the frame's candidate table starts (light.wgsl).
     light_table_base: u32,
@@ -298,7 +298,6 @@ const LIGHTING_EMISSION_CHANGED: u32 = 256u;
 const LIGHTING_LAMP_CHANGED: u32 = 512u;
 const LIGHTING_EMISSIVE_GUARD: u32 = 1024u;
 const LIGHTING_IDENTITY_TONE_MAP: u32 = 64u;
-const LIGHTING_UNIFORM_DRAW: u32 = 128u;
 // The exposure is automatic: this frame's is the state's `current`, not `params.exposure`.
 const LIGHTING_AUTO_EXPOSURE: u32 = 8192u;
 // Hit record flags.

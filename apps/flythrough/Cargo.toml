@@ -20,15 +20,15 @@ wasm = ["dep:vxe-script-wasm"]
 env_logger.workspace = true
 gilrs.workspace = true
 log.workspace = true
-vxe-world = { path = "../../crates/vxe-world" }
-vxe-net = { path = "../../crates/vxe-net" }
-vxe-sim = { path = "../../crates/vxe-sim" }
-vxe-render = { path = "../../crates/vxe-render" }
-vxe-app = { path = "../../crates/vxe-app" }
+vxe-world.workspace = true
+vxe-net.workspace = true
+vxe-sim.workspace = true
+vxe-render.workspace = true
+vxe-app.workspace = true
 flythrough-logic = { path = "logic" }
 vxe-script-wasm = { workspace = true, features = ["host"], optional = true }
-vxe-audio = { path = "../../crates/vxe-audio" }
-vxe-assets = { path = "../../crates/vxe-assets" }
+vxe-audio.workspace = true
+vxe-assets.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

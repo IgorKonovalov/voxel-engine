@@ -59,10 +59,6 @@ struct InEdits {
 
 // upscale.wgsl's `UpTuning`, field for field (`UpscaleUniform` in marcher.rs).
 struct InLamp {
-    reconstruction: u32,
-    fetch: u32,
-    blend: u32,
-    still_clip: u32,
     width: f32,
     alpha: f32,
     alpha_moving: f32,

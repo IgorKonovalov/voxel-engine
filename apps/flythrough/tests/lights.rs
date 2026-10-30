@@ -520,7 +520,6 @@ fn floor_centre_series(
     device: &vxe_render::wgpu::Device,
     queue: &vxe_render::wgpu::Queue,
     gpu: &GpuWorld,
-    draw: vxe_render::CandidateDraw,
 ) -> Vec<f64> {
     let camera = vxe_render::Camera {
         position: [32.0, 32.0, 29.0].into(),
@@ -532,7 +531,6 @@ fn floor_centre_series(
     frame.set_resolution(device, vxe_render::LightingResolution::Full);
     frame.set_lighting(vxe_render::Lighting {
         lamp: false,
-        draw,
         ..vxe_render::Lighting::default()
     });
     (0..64)
@@ -550,10 +548,16 @@ fn floor_centre_series(
         .collect()
 }
 
+/// One frame's relative RMSE against 1.741 at the floor centre of `box_and_far_wall` when the
+/// light pass drew its candidates uniformly over the light-sample buffer instead of from the
+/// candidate table: read on lavapipe over the same 64 frames before that draw was removed
+/// (the table's ADR-0025 replaced it), twice, both 1.1403.
+const BUFFER_WIDE_DRAW_RMSE_REFERENCE: f64 = 1.1403;
+
 /// Near emitters win, unbiased inside the radius: with a far emissive wall of 4096 samples
 /// in the light radius beside the box's 400-sample ceiling, the floor centre's mean over 64
 /// frames is within 5 % of 1.741, and one frame's relative RMSE against 1.741 is at most half
-/// of the uniform draw's on the same scene.
+/// of the uniform draw's on the same scene ([`BUFFER_WIDE_DRAW_RMSE_REFERENCE`]).
 #[test]
 fn the_candidate_table_favours_near_emitters_without_bias() {
     let Some((device, queue)) = software_device(64 << 20) else {
@@ -574,20 +578,10 @@ fn the_candidate_table_favours_near_emitters_without_bias() {
             / analytic;
         (mean, rmse)
     };
-    let (mean, rmse) = stats(&floor_centre_series(
-        &device,
-        &queue,
-        &gpu,
-        vxe_render::CandidateDraw::Table,
-    ));
-    let (umean, urmse) = stats(&floor_centre_series(
-        &device,
-        &queue,
-        &gpu,
-        vxe_render::CandidateDraw::Uniform,
-    ));
+    let (mean, rmse) = stats(&floor_centre_series(&device, &queue, &gpu));
+    let urmse = BUFFER_WIDE_DRAW_RMSE_REFERENCE;
     println!(
-        "table: mean {mean:.4} ({:+.2} %), relative RMSE {rmse:.4}; uniform: mean {umean:.4}, relative RMSE {urmse:.4}; ratio {:.3}",
+        "table: mean {mean:.4} ({:+.2} %), relative RMSE {rmse:.4}; uniform draw's reference RMSE {urmse:.4}; ratio {:.3}",
         (mean / analytic - 1.0) * 100.0,
         rmse / urmse
     );
