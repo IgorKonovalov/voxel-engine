@@ -200,3 +200,21 @@ Added 2026-10-27, from Plan 0039 (the contour look at arm's length):
   partial face normal is not a route back to edge contrast.
 - **One plane per voxel still shows at arm's length.** The owner saw sharp voxel corners on
   some smooth walls in the default look; the plan's followups carry it.
+
+Added 2026-10-30, prior art read while Plan 0053 was drafted (`docs/references/voxel-optimizations.md`,
+Laine & Karras 2010, sections 3.2 to 3.4):
+
+- **The mechanism has one published precedent, and it relied on what we lack.** ESVO's
+  contours clip each voxel's cube by a pair of parallel planes, 32 bits per voxel, so this
+  decision's clipped cube is theirs with one plane and a `u16`. Their planes are fit from the
+  original triangle surface inside the voxel and placed to enclose it; ours are fit from the
+  27-voxel occupancy, which has no surface to enclose. A one-voxel feature therefore takes the
+  plane its surroundings dictate, the fault Plan 0050's Phase 5 found and Plan 0053 measures.
+- **They had the cracks too and chose enclosure over closure.** The paper accepts
+  discontinuities at voxel boundaries, names false self-shadowing as their cost and offsets
+  secondary rays to dodge it: this decision's shadow-origin rule. Their no-holes guarantee
+  comes from every contour enclosing the real surface; ADR-0039's snap closes the same gaps
+  without a surface to enclose.
+- **Their cure for corners was more planes per voxel from the hierarchy**, each voxel's
+  shape being the intersection of its cube with its ancestors' contours. Without enclosing
+  planes, intersecting more of them only removes more material (ADR-0040, Alternative A).

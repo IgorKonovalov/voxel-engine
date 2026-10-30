@@ -25,7 +25,24 @@ Each entry ends with the milestone it informs. The distilled list is at the end.
   (contours off, stopping at any voxel too small to cover a whole ray of the coarse grid), and
   each pixel's ray starts at its block's minimum distance less a margin. Their Table 2 reads 3
   to 27 % more primary rays per second from it across scenes and resolutions: a trim on top of
-  a hierarchy, not a replacement for one. M2 (a Plan 0015 followup).
+  a hierarchy, not a replacement for one. M2 (a Plan 0015 followup). Sections 3.2 to 3.4,
+  contours: the one published precedent for a per-voxel plane clipping a voxel's cube
+  (ADR-0011). A contour is a pair of parallel planes in 32 bits (three 6-bit normal
+  components, two 7-bit offsets), and a voxel's final shape is its cube intersected with its
+  own contour and every ancestor's, which is how they approximate sharp corners. Two facts
+  separate their scheme from ours. The planes are fit top-down from the **original triangle
+  surface** inside the voxel, greedily along the direction the cube most overestimates it, and
+  placed so the surface is fully enclosed; contours are omitted where the ancestors' shape
+  already fits. And they give up smoothness on purpose: "as long as we ensure that the
+  original surface is fully enclosed by each contour, we are guaranteed to get an
+  approximation that contains no holes", while "discontinuities at voxel boundaries may
+  introduce problems such as false self-shadowing or interreflections", worked around by
+  offsetting secondary rays. That is the crack and shadow-origin story of ADR-0011 and
+  ADR-0039 with enclosure as the cure instead of snap. A fit from binary occupancy has no
+  surface to enclose, so a one-voxel feature takes its surroundings' plane; the planes of a
+  feature's neighbours cannot tighten it the way enclosing ancestors can (ADR-0040,
+  Alternative A). Contours are off in the beam pass. Their purpose was silhouette error and
+  memory on undersampled meshes, not a smooth look. M2 (ADR-0011, ADR-0039, ADR-0040).
 - **Kämpe, Sintorn, Assarsson, "High Resolution Sparse Voxel DAGs", SIGGRAPH 2013.**
   <https://www.cse.chalmers.se/~uffe/HighResolutionSparseVoxelDAGs.pdf>. Merging identical
   subtrees turns an SVO into a DAG with one to three orders of magnitude fewer nodes, traversed

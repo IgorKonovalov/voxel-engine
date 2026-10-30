@@ -44,6 +44,15 @@ to 25 degrees across three tiles with hard edges between them. The eye reads thr
 tiles as a box; it read the same cubes shaded with a smooth gradient as rock at Plan 0005,
 where `Gradient27` was the owner's first preference on screen and lost on cost and silhouette.
 
+The prior art says the same (`docs/references/voxel-optimizations.md`, Laine & Karras 2010,
+sections 3.2 to 3.4). ESVO's contours are the one published form of a plane-clipped voxel
+cube, and they fit each plane from the original triangle surface so that it encloses it; a
+one-voxel rod there gets a slab as thin as the real rod. Our fit reads binary occupancy and
+has no surface to enclose, so the fault is in what the fit reads, not in the clipped cube.
+That is why this decision changes the fit's input and the shading normal and leaves the hit
+rule alone. No shipped voxel renderer we know of kept contours; the smooth ones march or mesh
+a field (Alternative B's family) and the ones at our voxel scale keep cubes (Alternative D).
+
 The budgets this touches: `nfr.md` §2 the hit pass (RTX 3080 Laptop 0.604 ms, Radeon RENOIR
 4.364 ms at the level's spawn, 1080p from 720p, snap alone) and the light pass (0.913 and
 7.026 ms), the attribute pass (the level's fill 17.0 ms on the dev box under the weighted
@@ -125,7 +134,10 @@ side face shrinks from 0.33 to about 0.20 voxel and stays vertical; on the groov
 voxels' planes, extended into the bottom voxel, cut nothing of its exposed face. It lost
 because clipping removes material from the feature's own cube and the flare and the fillet the
 eye needs are in the air cells beside it; Plan 0053's Phase 1 reads it as a scratch so the
-measurement, not this arithmetic, settles it.
+measurement, not this arithmetic, settles it. ESVO clips a voxel by its ancestors' contours
+in the same spirit, and it works there because every contour encloses the real surface, so
+an intersection only tightens toward it; a neighbour's occupancy-fit plane encloses nothing,
+so the intersection can only cut.
 
 ### Alternative B: a field surface, the trilinear zero set of the 27-fraction
 
