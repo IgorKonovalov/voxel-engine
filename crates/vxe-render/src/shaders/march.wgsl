@@ -1730,6 +1730,8 @@ var<private> fg_bits: u32;
 var<private> fc_held: bool;
 var<private> fc_base: vec3<i32>;
 var<private> fc: array<f32, 8>;
+// Bit i: corner i of the held cell is crisp (its band count carries CRISP_COUNT_BIT).
+var<private> fc_crisp: u32;
 
 fn reset_field_walk() {
     reset_walk();
@@ -1824,6 +1826,11 @@ fn field_byte(b: FBrick, i: u32) -> u32 {
 // The count of voxel `u`: a band voxel's from its band slot, else 27 for a solid voxel and 0
 // for air (a LOD-only chunk's through its mip cell).
 fn field_count(u: vec3<i32>) -> u32 {
+    return field_count_raw(u) & 0x1Fu;
+}
+
+// `field_count` with a band voxel's CRISP_COUNT_BIT kept.
+fn field_count_raw(u: vec3<i32>) -> u32 {
     let bw = floor_div(u, 8);
     let b = field_brick(bw);
     if (b.table == ABSENT) {
@@ -1836,7 +1843,7 @@ fn field_count(u: vec3<i32>) -> u32 {
     let i = l.x + 8u * (l.y + 8u * l.z);
     let k = field_byte(b, i);
     if (k != NOT_BAND) {
-        return k & 0x1Fu;
+        return k;
     }
     return select(0u, 27u, field_solid(b.entry, i));
 }
@@ -1992,17 +1999,44 @@ fn cubic_at(k: vec4<f32>, s: f32) -> f32 {
 
 // The first crossing of the field along `o + d t` for `t` in `[ta, tb]`, inside one dual
 // cell: found, or a leak at `ta` (see the walk's comment).
-fn field_piece(o: vec3<f32>, d: vec3<f32>, ta: f32, tb: f32) -> FHit {
-    var none = FHit(false, false, false, ta, vec3<f32>(0.0), vec3<i32>(0), vec3<f32>(0.0));
+// The dual cell holding the piece `[ta, tb]` of `o + d t`: its base voxel, its corners
+// loaded into `fc` and `fc_crisp` unless they are held.
+fn field_corners(o: vec3<f32>, d: vec3<f32>, ta: f32, tb: f32) -> vec3<i32> {
     let pm = o + d * (0.5 * (ta + tb));
     let base = vec3<i32>(floor(pm - 0.5));
     if (!fc_held || any(base != fc_base)) {
         fc_held = true;
         fc_base = base;
-        for (var i = 0u; i < 8u; i++) {
-            fc[i] = field_phi(base + vec3<i32>(vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u)));
+        fc_crisp = 0u;
+        // The corners in brick order, so `field_brick`'s held brick serves each brick's corners
+        // in a row: the bits of `j` go to the axes the cell does not cross a brick face on
+        // first, then to those it crosses.
+        let cross = (base & vec3<i32>(7)) == vec3<i32>(7);
+        let nc = u32(!cross.x) + u32(!cross.y) + u32(!cross.z);
+        let px = select(0u, nc, cross.x);
+        let py = select(u32(!cross.x), nc + u32(cross.x), cross.y);
+        let pz = select(u32(!cross.x) + u32(!cross.y), nc + u32(cross.x) + u32(cross.y), cross.z);
+        for (var j = 0u; j < 8u; j++) {
+            let i = ((j >> px) & 1u) | (((j >> py) & 1u) << 1u) | (((j >> pz) & 1u) << 2u);
+            let k = field_count_raw(base + vec3<i32>(vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u)));
+            fc[i] = f32(k & 0x1Fu) / 27.0 - 0.5;
+            if ((k & CRISP_COUNT_BIT) != 0u) {
+                fc_crisp |= 1u << i;
+            }
         }
     }
+    return base;
+}
+
+// Whether voxel `u`, a corner of the held cell at `base`, is crisp.
+fn corner_crisp(base: vec3<i32>, u: vec3<i32>) -> bool {
+    let o = vec3<u32>(u - base);
+    return ((fc_crisp >> (o.x + 2u * o.y + 4u * o.z)) & 1u) != 0u;
+}
+
+fn field_piece(o: vec3<f32>, d: vec3<f32>, ta: f32, tb: f32) -> FHit {
+    var none = FHit(false, false, false, ta, vec3<f32>(0.0), vec3<i32>(0), vec3<f32>(0.0));
+    let base = field_corners(o, d, ta, tb);
     let c = fc;
     var pos = false;
     var neg = false;
@@ -2106,7 +2140,9 @@ fn field_piece(o: vec3<f32>, d: vec3<f32>, ta: f32, tb: f32) -> FHit {
 
 // The field test of band voxel `v` over the ray's segment `[t0, t1]` through it: its pieces
 // in the dual cells, nearest first.
-fn field_voxel(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t0: f32, t1: f32) -> FHit {
+// With `crisp_test` (FLAG_CRISP on a solid voxel) a crisp `v` is its cube, hit at `t0`:
+// cube and not a leak; its crispness is read with the first piece's corners, of which `v` is one.
+fn field_voxel(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t0: f32, t1: f32, crisp_test: bool) -> FHit {
     var tm = select(vec3<f32>(BIG), (vec3<f32>(v) + 0.5 - o) * inv, d != vec3<f32>(0.0));
     tm = select(vec3<f32>(t1), tm, tm > vec3<f32>(t0) & tm < vec3<f32>(t1));
     var a = tm.x;
@@ -2128,6 +2164,13 @@ fn field_voxel(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t0: f32
         b = s;
     }
     let cuts = array<f32, 4>(a, b, c, t1);
+    if (crisp_test) {
+        let first = select(select(select(t1, c, c > t0), b, b > t0), a, a > t0);
+        let base = field_corners(o, d, t0, first);
+        if (corner_crisp(base, v)) {
+            return FHit(true, false, true, t0, vec3<f32>(0.0), v, vec3<f32>(0.5));
+        }
+    }
     var lo = t0;
     for (var i = 0u; i < 4u; i++) {
         let hi = cuts[i];
@@ -2145,9 +2188,12 @@ fn field_voxel(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t0: f32
 // The normal of a field hit at `f` in the cell at `base`: N1, the field's gradient, or with
 // FLAG_FIELD_BLEND N2, the corners' blend (see the walk's comment), N1 where it vanishes.
 fn field_normal(base: vec3<i32>, f: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
-    var c: array<f32, 8>;
-    for (var i = 0u; i < 8u; i++) {
-        c[i] = field_phi(base + vec3<i32>(vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u)));
+    // The hit's cell is the last one `field_piece` loaded: its corners are held.
+    var c = fc;
+    if (!fc_held || any(base != fc_base)) {
+        for (var i = 0u; i < 8u; i++) {
+            c[i] = field_phi(base + vec3<i32>(vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u)));
+        }
     }
     let n1 = normal_from_gradient(trilinear_gradient(c, f), fallback);
     if ((params.flags & FLAG_FIELD_BLEND) == 0u) {
@@ -2183,36 +2229,87 @@ fn field_normal(base: vec3<i32>, f: vec3<f32>, fallback: vec3<f32>) -> vec3<f32>
     return n1;
 }
 
+// Whether voxel `u` is crisp, from the held cell at `base` when `u` is one of its corners.
+fn held_crisp(held: bool, base: vec3<i32>, u: vec3<i32>) -> bool {
+    if (held && all(u >= base) && all(u <= base + vec3<i32>(1))) {
+        return corner_crisp(base, u);
+    }
+    return field_crisp(u);
+}
+
+// Whether voxel `u` is solid to the opaque walk (`lookup`'s `size == 0`: an opaque voxel; a
+// translucent one is air to it), read through `field_brick`'s held brick; a LOD-only chunk's
+// through `lookup`.
+fn field_opaque(u: vec3<i32>) -> bool {
+    let bw = floor_div(u, 8);
+    let b = field_brick(bw);
+    if (b.table == ABSENT) {
+        return false;
+    }
+    if ((b.table & LOD_BIT) != 0u) {
+        return lookup(u).size == 0;
+    }
+    let e = b.entry;
+    if (e == 0u) {
+        return false;
+    }
+    if ((e & FULL_BIT) == 0u) {
+        return (e & TRANSLUCENT_BIT) == 0u;
+    }
+    let l = vec3<u32>(u - bw * 8);
+    let i = l.x + 8u * (l.y + 8u * l.z);
+    return ((pool_word(e & UNIT_MASK, i / 32u) >> (i % 32u)) & 1u) != 0u;
+}
+
+// The material of voxel `u`, one `field_opaque` reads as solid: `lookup(u).material`.
+fn field_opaque_material(u: vec3<i32>) -> u32 {
+    let bw = floor_div(u, 8);
+    let b = field_brick(bw);
+    if ((b.table & LOD_BIT) != 0u) {
+        return lookup(u).material;
+    }
+    if ((b.entry & FULL_BIT) == 0u) {
+        return b.entry & MATERIAL_MASK;
+    }
+    let l = vec3<u32>(u - bw * 8);
+    return voxel_material(b.entry, l.x + 8u * (l.y + 8u * l.z));
+}
+
 // The material of a field hit at `p` seen along `d` in the cell at `base`, `f` its position
 // there: the voxel holding `p` when it is solid, else the solid corner of the cell with the
-// largest trilinear weight (0 when none is solid to the opaque walk).
+// largest trilinear weight, the first in corner order on a tie (0 when none is solid to the
+// opaque walk). A crisp voxel is not solid here.
 fn field_material(p: vec3<f32>, d: vec3<f32>, base: vec3<i32>, f: vec3<f32>) -> u32 {
     let crisp = (params.flags & FLAG_CRISP) != 0u;
+    let held = fc_held && all(base == fc_base);
     let at = voxel_at(p, d);
-    let own = lookup(at);
-    if (own.size == 0 && !(crisp && field_crisp(at))) {
-        return own.material;
+    if (field_opaque(at) && !(crisp && held_crisp(held, base, at))) {
+        return field_opaque_material(at);
     }
     var best = -1.0;
-    var m = 0u;
+    var chosen = vec3<i32>(0);
     for (var i = 0u; i < 8u; i++) {
         let o = vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u);
         let w3 = select(1.0 - f, f, o == vec3<u32>(1u));
         let w = w3.x * w3.y * w3.z;
         if (w > best) {
             let u = base + vec3<i32>(o);
-            let c = lookup(u);
-            if (c.size == 0 && !(crisp && field_crisp(u))) {
+            if (field_opaque(u) && !(crisp && held_crisp(held, base, u))) {
                 best = w;
-                m = c.material;
+                chosen = u;
             }
         }
     }
-    return m;
+    if (best < 0.0) {
+        return 0u;
+    }
+    return field_opaque_material(chosen);
 }
 
 // The field walk's first hit along `o + d t`, `t >= 0`, with the entry axis of its voxel
-// (-1 when the ray started inside it) and its material.
+// (-1 when the ray started inside it) and its material, FIELD_MATERIAL_PENDING for a field
+// hit, whose material `field_material` resolves after the walk.
+const FIELD_MATERIAL_PENDING: u32 = 0xFFFFFFFFu;
 struct FieldHit {
     h: FHit,
     axis: i32,
@@ -2253,20 +2350,20 @@ fn field_march(o: vec3<f32>, d: vec3<f32>) -> FieldHit {
         let c = field_cell(v);
         var size = c.size;
         if (size == 0) {
-            if (c.solid && (params.flags & FLAG_CRISP) != 0u && field_crisp(v)) {
-                // A crisp voxel: its cube, hit where the ray enters it.
-                var face = FHit(true, false, true, t, vec3<f32>(0.0), v, vec3<f32>(0.5));
-                return FieldHit(face, axis, lookup(v).material);
-            }
             if (!c.band) {
                 // A LOD cell, or a solid voxel outside the band: a cube hit, a leak unless LOD.
                 var face = FHit(true, !c.lod, true, t, vec3<f32>(0.0), v, vec3<f32>(0.5));
                 return FieldHit(face, axis, lookup(v).material);
             }
-            let h = field_voxel(o, d, inv, v, t, cube_exit(o, d, inv, v));
+            let crisp_test = c.solid && (params.flags & FLAG_CRISP) != 0u;
+            let h = field_voxel(o, d, inv, v, t, cube_exit(o, d, inv, v), crisp_test);
+            if (h.found && h.cube && !h.leak) {
+                // A crisp voxel: its cube, hit where the ray enters it.
+                return FieldHit(h, axis, field_opaque_material(v));
+            }
             if (h.found) {
-                let p = o + d * h.t;
-                return FieldHit(h, axis, field_material(p, d, h.base, h.f));
+                // The material is resolved after the walk (`field_pixel`).
+                return FieldHit(h, axis, FIELD_MATERIAL_PENDING);
             }
             size = 1;
         }
@@ -2292,8 +2389,11 @@ fn field_pixel(gid: vec2<u32>) {
     walk_steps = 0u;
     loads = 0u;
     pool_reads = 0u;
-    let fh = field_march(o, d);
+    var fh = field_march(o, d);
     let h = fh.h;
+    if (h.found && fh.material == FIELD_MATERIAL_PENDING) {
+        fh.material = field_material(o + d * h.t, d, h.base, h.f);
+    }
     let counts = vec3<u32>(min(walk_steps, 255u), min(loads, 255u), min(pool_reads, 255u));
     var pos = vec4<f32>(0.0, 0.0, 0.0, BIG);
     var info = vec4<u32>(0u);
