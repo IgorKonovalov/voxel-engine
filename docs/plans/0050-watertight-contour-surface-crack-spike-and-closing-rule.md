@@ -477,6 +477,14 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
    default tuning. Answer 2 already says a contour golden that moves is re-blessed by name
    with its share; done-when 2 is amended to list them. No new rule and no second shader path.
 
+9. **Phase 6's detail floor (owner, 2026-10-31).** `detail_after_lighting_is_exact_for_the_lamp`
+   compares C5 against today's render on the wall; with `Old` gone both sides run snap and it
+   reads 98.028 % against the 98.3 % floor set on 2026-10-29 under `Old` (98.389 %). The floor
+   moves to 98.0 %, from the snap reading, and the test's doc comment records both readings and
+   why: snap's closing normal makes the detail ratio's clamp bind on 1.208 % of the window
+   (0.681 % under `Old`). Accepted unseen as a small darkening along closed cracks; moot if
+   the field surface is picked.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
