@@ -718,9 +718,11 @@ the same rows as lamp on at both poses.
 - Gate at 1b36eb3: build, clippy (workspace and `-p flythrough --features wasm`), fmt,
   doctests, `cargo deny check`, the four scripts: 0. Quick (no lock, load 3.4 to 26): 540 run,
   539 passed, 1 timed out (`replay a_stamp_and_a_collapse_replay_from_the_save` 30.02 s; alone
-  13.81 s, load 21), 3 skipped. Gpu tier: started 12:40 under the lock, output in
-  `live/p3/gpu.log` (its result is the next agent's to read and record; if it was cut by the
-  reboot, rerun it).
+  13.81 s, load 21), 3 skipped. Gpu tier: started 12:40 under the lock (load 19.5) and
+  stopped by a SIGTERM after 72 s: 7 of 198 run, 6 passed, the 7th (`fsr2
+  a_still_camera_under_our_upscaler_is_nearer_the_linear_supersampled_render_than_a_blit`)
+  killed by the signal, 191 not run (`live/p3/gpu.log`). Rerun the gpu tier before the Phase 3
+  commit.
 - Phase 4 notes: the base binary for its cost reading is built (`live/base0050`). `cubes-field`
   rests on the plane attribute's normal field, so removing the attribute removes it too (the
   orchestrator lists it among the removals; the plan's "stays until the close" sentence is a
