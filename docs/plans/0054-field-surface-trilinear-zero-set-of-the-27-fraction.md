@@ -218,7 +218,12 @@ every asserted reading, golden and gate stays on lavapipe.
      printed beside the plane look's.
   2. `the_field_surface_has_no_boxes_and_no_leaks` asserts 0 box pixels on `rod`, `lone
      cube`, `groove`, `wall pillar` and `ridge`, 0 leaks on every analytic scene and at both
-     poses, and prints the tile-contrast share under N1 and N2 for every scene. If any scene
+     poses, and prints the tile-contrast share under N1 and N2 for every scene. Amended
+     2026-10-31 (architect, owner's pick): under the field look a box pixel also needs its
+     shading normal within 15 degrees of the face's axis normal; a curved-surface hit that
+     happens to lie within 1e-3 of a face plane is not a box. The plane look's metric is
+     unchanged. The counts under the unamended metric (9, 0, 8, 2, 10) stay in the log, and
+     the rod's flat top at z = 60.333 is named there for the owner's eye in Phase 2. If any scene
      reads leaks, dev stops for the architect: the band definition or the cell test is wrong.
   3. `field_readings` (ignored, a reading) prints the full table: every scene and pose, N1
      and N2, box pixels by count class, tile contrast, leaks, guardrails, the speck test, hit
@@ -399,6 +404,12 @@ is in `vxe-render`, a client-side view.
 - A tricubic or filtered surface, dilation, or per-material opt-outs.
 - The lighting: Plan 0051 is the light spike; this plan changes only which normal shades.
 - Decide the look. Phase 2 is the owner's, and (b) and (c) are real outcomes.
+
+## Owner answers
+
+1. **Phase 1's box pixels (owner, 2026-10-31, recommended option).** The field look's box
+   metric gains the 15-degree normal condition above. The cost (hit pass 6x to 12x the base)
+   is not a Phase 1 bar; the owner sets the bars at Phase 2 on these readings.
 
 ## Implementation log
 
