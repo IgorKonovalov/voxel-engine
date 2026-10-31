@@ -43,6 +43,18 @@ Each entry ends with the milestone it informs. The distilled list is at the end.
   feature's neighbours cannot tighten it the way enclosing ancestors can (ADR-0040,
   Alternative A). Contours are off in the beam pass. Their purpose was silhouette error and
   memory on undersampled meshes, not a smooth look. M2 (ADR-0011, ADR-0039, ADR-0040).
+- **Marmitt, Kleer, Wald, Friedrich, Slusallek, "Fast and Accurate Ray-Voxel Intersection
+  Techniques for Iso-Surface Ray Tracing", VMV 2004** (not re-verified today; the
+  bibliographic record is from memory), with **Parker et al., "Interactive Ray Tracing for
+  Isosurface Rendering", IEEE Visualization 1998** as the first GPU-free form. The ray-marched
+  isosurface of a trilinear field: inside one cell the field along the ray is a cubic in `t`,
+  and Marmitt isolates its roots by the cubic's extrema and refines the first sign change with
+  a few Newton or repeated-linear steps, which is both cheaper and more exact than Parker's
+  closed-form cubic. The trilinear zero set is continuous across cells, so the surface has no
+  cracks; its analytic gradient is not, so normals need a smoother source where the tiling
+  shows. The whole smooth-voxel family (marching cubes, dual contouring, surface nets, SDF
+  marchers such as Claybook and Dreams) renders a field this way, meshed or marched. M2
+  (Plan 0054, ADR-0040 Alternative B).
 - **Kämpe, Sintorn, Assarsson, "High Resolution Sparse Voxel DAGs", SIGGRAPH 2013.**
   <https://www.cse.chalmers.se/~uffe/HighResolutionSparseVoxelDAGs.pdf>. Merging identical
   subtrees turns an SVO into a DAG with one to three orders of magnitude fewer nodes, traversed

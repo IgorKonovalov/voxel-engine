@@ -3,7 +3,7 @@
 The one-minute "what's in flight" view. Read this first each session instead of re-deriving
 state from `git log`. Completed plans move to `done/`.
 
-**Next free number: 0054** (ADRs are a separate sequence; next free there is **0041**).
+**Next free number: 0055** (ADRs are a separate sequence; next free there is **0041**).
 
 ## Active roster
 
@@ -22,7 +22,8 @@ state from `git log`. Completed plans move to `done/`.
 | [0049](0049-light-settles-fast-and-young-pixels-hold-no-dots.md) | Light settles fast, holds still in flight, no dots: a settle, shimmer and dot spike, then mechanisms by measurement | approved | M2, no ADR yet. First and alone after 0047 (owner, 2026-10-29); before 0048 and 0032. |
 | [0050](0050-watertight-contour-surface-crack-spike-and-closing-rule.md) | A watertight contour surface: a crack spike that names the wedges and triangles, then the closing rule by measurement | in-progress | M2, ADR-0038, ADR-0039 (proposed). Phase 5 read (c): the boxes go to Plan 0053; Phase 6 unblocked. |
 | [0051](0051-steady-light-spike-converge-and-freeze-and-a-world-space-emissive-cache.md) | The steady-light spike: static light that converges and freezes, and a world-space emissive cache, read against wander, dots and shimmer | approved | M2, ADR after Phase 3. After Plan 0050's check, alone; 0048 and 0032 wait. |
-| [0053](0053-one-voxel-features-on-the-contour-surface-majority-fit-and-a-normal-field.md) | One-voxel features on the contour surface: a box metric, a majority-filtered plane fit, a normal field, and the owner's call | approved | M2, ADR-0040 (proposed). After Plan 0050 merges, alone; order vs 0051 is the owner's. |
+| [0053](0053-one-voxel-features-on-the-contour-surface-majority-fit-and-a-normal-field.md) | One-voxel features on the contour surface: a box metric, a majority-filtered plane fit, a normal field, and the owner's call | approved | M2, ADR-0040 (proposed). After 0050 Phase 6, alone; Phase 4 waits for 0054's spike. |
+| [0054](0054-field-surface-trilinear-zero-set-of-the-27-fraction.md) | The field surface: the trilinear zero set of the 27-fraction, a cost-and-look spike first, then band storage and the walk if the owner picks it | approved | M2, ADR after Phase 1. Stacked on plan-0053 after its Phase 3; its check is 0053's. |
 <!-- roster:end -->
 
 ## Recently closed
