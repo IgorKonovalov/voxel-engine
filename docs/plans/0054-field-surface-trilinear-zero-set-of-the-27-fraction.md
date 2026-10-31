@@ -847,6 +847,14 @@ which no deterministic path reads.
    field, so a flush inlay has no groove and each crisp feature's root carries a smooth collar
    of about one voxel, accepted. Phase 4c and ADR-0041 are amended on it (its Alternative G
    became the Decision, the air rule the rejected alternative).
+9. **The frame ledger's questions (owner, 2026-10-31).** The field must fit the cave frame and the
+   outdoor M10 frame (`docs/nfr.md` §2, Frame ledger): on today's ledger only scenario C (smooth
+   for some material types) fits the outdoor frame at its high guesses. The target is `nfr.md`'s
+   1080p output from 720p internal; the owner's window size is a reading. The Radeon iGPU is a
+   quality-profile question (internal resolution, lighting tier, possibly cubes only), not a gate
+   for this decision. Which materials are smooth is decided at Phase 4d, on done-when 8's
+   `--crisp none|rock|all` readings and the window session. The guessed ledger slices stay
+   guesses until their plans; done-when 8's 10 % tolerances stand.
 
 ## Implementation log
 
