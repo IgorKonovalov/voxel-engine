@@ -1257,15 +1257,19 @@ fn count27(world: &World, v: [i32; 3]) -> u32 {
 }
 
 /// The box voxel hit point `p` lies on, if any: `p` lies on a cube face (a coordinate within
-/// [`FACE_EPS`] of an integer) between a solid voxel and an air voxel of `world`, and the
-/// solid one has two or more air face neighbours. A flat floor's face hits have one air face;
-/// a hit between two solid voxels lies on no exposed face.
+/// [`FACE_EPS`] of an integer) between a solid voxel and an air voxel of `world`, the solid one
+/// has two or more air face neighbours, and `p` lies on none of that voxel's faces toward a
+/// solid neighbour. A flat floor's face hits have one air face; a hit between two solid voxels
+/// lies on no exposed face; a hit on the edge where an exposed face meets a face between two
+/// solid voxels (a plane hit along the outline of a feature's footprint, on the surface under
+/// it) is the surface's.
 fn box_voxel(world: &World, p: [f32; 3]) -> Option<[i32; 3]> {
+    let near = |c: f32| (c - c.round()).abs() <= FACE_EPS;
     for k in 0..3 {
-        let r = p[k].round();
-        if (p[k] - r).abs() > FACE_EPS {
+        if !near(p[k]) {
             continue;
         }
+        let r = p[k].round();
         let mut lo = p.map(|c| c.floor() as i32);
         lo[k] = r as i32 - 1;
         let mut hi = lo;
@@ -1275,7 +1279,16 @@ fn box_voxel(world: &World, p: [f32; 3]) -> Option<[i32; 3]> {
             continue;
         }
         let v = if sl { lo } else { hi };
-        if air_faces(world, v) >= 2 {
+        let on_buried_face = (0..3).filter(|&j| j != k && near(p[j])).any(|j| {
+            let r = p[j].round() as i32;
+            if r != v[j] && r != v[j] + 1 {
+                return false;
+            }
+            let mut u = v;
+            u[j] += if r == v[j] { -1 } else { 1 };
+            solid_at(world, u)
+        });
+        if !on_buried_face && air_faces(world, v) >= 2 {
             return Some(v);
         }
     }
@@ -1548,9 +1561,10 @@ fn one_voxel_features_render_as_boxes_today() {
     }
 }
 
-/// The box readings' looks: the start look, and its tuning with the volume-matched offset.
+/// The box readings' looks: the start look, its tuning with the volume-matched offset, and
+/// with the majority filter.
 fn box_looks() -> Vec<(&'static str, LookParams)> {
-    crack_looks()
+    let mut looks: Vec<(&'static str, LookParams)> = crack_looks()
         .into_iter()
         .filter(|(name, _)| *name != "fit uniform27")
         .map(|(name, fit)| {
@@ -1558,7 +1572,15 @@ fn box_looks() -> Vec<(&'static str, LookParams)> {
             look.tuning.fit = fit;
             (name, look)
         })
-        .collect()
+        .collect();
+    looks.push((
+        "majority",
+        with_filter(
+            start_look(ViewMode::Shaded),
+            vxe_render::OccupancyFilter::Majority,
+        ),
+    ));
+    looks
 }
 
 /// The box and tile-contrast table for every one-voxel scene and both poses in each of
@@ -1606,3 +1628,222 @@ fn box_readings() {
     }
 }
 
+// ---- The plane fit on a majority-filtered occupancy (ADR-0040) ----
+
+/// `look` with the plane fit's occupancy filter set to `filter`.
+fn with_filter(look: LookParams, filter: vxe_render::OccupancyFilter) -> LookParams {
+    let mut look = look;
+    look.tuning.fit.filter = filter;
+    look
+}
+
+/// The hit mask and the normals view (detail off) of `world` from `camera` in `look`, one frame
+/// each, lit by the headlamp, and the hit positions.
+fn mask_and_normals(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    world: &World,
+    camera: &vxe_render::Camera,
+    look: LookParams,
+) -> (Vec<u8>, Vec<u8>, Vec<[f32; 4]>) {
+    let mut rig = fit_rig_on(
+        device.clone(),
+        queue.clone(),
+        world,
+        look.tuning.fit,
+        [WIDTH, HEIGHT],
+    );
+    let light = LightParams::headlamp();
+    let mask = rig.render(
+        camera,
+        &light,
+        LookParams {
+            view: ViewMode::HitMask,
+            ..look
+        },
+    );
+    let normals = rig.render(
+        camera,
+        &light,
+        LookParams {
+            view: ViewMode::Normals,
+            detail: false,
+            ..look
+        },
+    );
+    let positions = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    (mask, normals, positions)
+}
+
+/// Whether the hit at `position` (a miss reads `t = BIG`) is kept by the analytic window rule
+/// in `window`: a miss, or a hit at least [`WINDOW_MARGIN`] inside the window on every axis.
+fn kept_by_window(position: [f32; 4], [lo, hi]: [[f32; 3]; 2]) -> bool {
+    position[3] > 1e20
+        || (0..3)
+            .all(|k| position[k] >= lo[k] + WINDOW_MARGIN && position[k] <= hi[k] - WINDOW_MARGIN)
+}
+
+/// The plane fit on the majority-filtered occupancy melts one-voxel features into the surface
+/// under them: on lavapipe under the analytic window rule the rod, the lone cube and the wall
+/// pillar read no box pixel in the start look with the filter; the bare floor and Plan 0050's
+/// floor and wall read the same hit mask and normals view byte for byte with and without it at
+/// every pixel the analytic window rule keeps in both (every voxel beside their surfaces
+/// counts 18 there, so nothing is filtered; the pixels left out are printed); and the tilted and
+/// 45-degree slabs, whose images may move under it, read no class 1 or 2 crack.
+#[test]
+fn the_majority_fit_melts_one_voxel_features() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let start = start_look(ViewMode::Shaded);
+    let majority = with_filter(start, vxe_render::OccupancyFilter::Majority);
+    println!("{BOX_HEADER}");
+    for feature in [Feature::Rod, Feature::LoneCube, Feature::WallPillar] {
+        let r = feature_reading(&device, &queue, feature, majority);
+        println!("{}", r.row(feature.name(), "majority"));
+        assert!(r.crack.shares.hits > 0, "{}", feature.name());
+        assert_eq!(
+            r.box_px,
+            0,
+            "{}: box pixels under the filter",
+            feature.name()
+        );
+    }
+    let table = flythrough::LookPreset::DEFAULT.materials();
+    for (name, world, camera) in [
+        (
+            "bare floor",
+            Feature::Floor.world(&table),
+            Feature::Floor.camera(),
+        ),
+        ("floor", floor_world(&table), floor_camera()),
+        ("wall", wall_world(&table), wall_camera()),
+    ] {
+        let plain = mask_and_normals(&device, &queue, &world, &camera, start);
+        let filtered = mask_and_normals(&device, &queue, &world, &camera, majority);
+        let window = analytic_window(&world);
+        let (mut kept, mut left_out) = (0, 0);
+        for i in 0..plain.2.len() {
+            if !kept_by_window(plain.2[i], window) || !kept_by_window(filtered.2[i], window) {
+                left_out += 1;
+                continue;
+            }
+            kept += usize::from(plain.0[i * 4] > 127);
+            let px = i * 4..i * 4 + 4;
+            assert_eq!(
+                plain.0[px.clone()],
+                filtered.0[px.clone()],
+                "{name}: the hit mask moved under the filter at pixel {i}"
+            );
+            assert_eq!(
+                plain.1[px.clone()],
+                filtered.1[px],
+                "{name}: the normals view moved under the filter at pixel {i}"
+            );
+        }
+        println!("{name}: {kept} hits the same with and without the filter, {left_out} left out");
+        assert!(kept > 0, "{name}: hits");
+    }
+    println!("{CRACK_HEADER}");
+    for (name, world, camera) in [
+        (
+            "tilted slab",
+            tilted_slab_world(&table),
+            tilted_slab_camera(),
+        ),
+        (
+            "45-degree slab",
+            axis_slab_world(&table),
+            axis_slab_camera(),
+        ),
+    ] {
+        let mut rig = fit_rig_on(
+            device.clone(),
+            queue.clone(),
+            &world,
+            majority.tuning.fit,
+            [WIDTH, HEIGHT],
+        );
+        let r = crack_reading(
+            &mut rig,
+            &camera,
+            &LightParams::headlamp(),
+            LookParams {
+                view: ViewMode::Cracks,
+                ..majority
+            },
+            Some(analytic_window(&world)),
+        );
+        println!("{}", r.row(name, "majority"));
+        assert!(r.shares.hits > 0, "{name}");
+        assert_eq!(r.shares.classes[1], 0, "{name}: {:?}", r.shares);
+        assert_eq!(r.shares.classes[2], 0, "{name}: {:?}", r.shares);
+    }
+}
+
+/// The guardrails of the "not a Lego look" bar in `look`, detail off: the cavity's normal
+/// error (degrees) and axis fraction `A`, and the pillar's silhouette error (pixels), each
+/// scene mirrored with contour attributes under the look's fit.
+fn look_guardrails(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    look: LookParams,
+) -> Guardrails {
+    let cavity = cavity_world();
+    let cam = cavity_camera();
+    let (_, normals, _) = mask_and_normals(device, queue, &cavity, &cam, look);
+    let pillar = pillar_world();
+    let pcam = pillar_camera();
+    let (mask, _, _) = mask_and_normals(device, queue, &pillar, &pcam, look);
+    Guardrails {
+        normal_error: cavity_normal_error(&normals, &cam),
+        silhouette: pillar_silhouette_error(&mask, &pcam),
+        axis_fraction: axis_fraction(&normals),
+    }
+}
+
+/// Face mode's pillar silhouette error, the silhouette guardrail's reference.
+fn face_silhouette_on(device: &vxe_render::wgpu::Device, queue: &vxe_render::wgpu::Queue) -> usize {
+    let pillar = pillar_world();
+    let mut rig = LookRig::on(device.clone(), queue.clone(), &pillar, None);
+    let cam = pillar_camera();
+    let mask = rig.render(
+        &cam,
+        &LightParams::at_eye(),
+        look(NormalMode::Face, ViewMode::HitMask),
+    );
+    pillar_silhouette_error(&mask, &cam)
+}
+
+/// The start look with the majority filter meets Plan 0039's guardrails: cavity normal error
+/// at most 12 degrees, pillar silhouette error at most half of face mode's, `A` at most 10 %.
+/// The start look's own are printed beside them.
+#[test]
+fn the_majority_fit_meets_the_guardrails() {
+    let Some((device, queue)) = software_device(attr_pool_bytes(&cavity_world()).max(64 << 20))
+    else {
+        return;
+    };
+    let start = start_look(ViewMode::Shaded);
+    let face = face_silhouette_on(&device, &queue);
+    for (name, look) in [
+        ("start look", start),
+        (
+            "majority",
+            with_filter(start, vxe_render::OccupancyFilter::Majority),
+        ),
+    ] {
+        let g = look_guardrails(&device, &queue, look);
+        println!(
+            "{name}: cavity normal error {:.2} degrees, silhouette {} px against face {face}, axis fraction {:.2} %",
+            g.normal_error,
+            g.silhouette,
+            g.axis_fraction * 100.0
+        );
+        if name == "majority" {
+            assert!(g.normal_error <= 12.0, "{g:?}");
+            assert!(2 * g.silhouette <= face, "{g:?} against face {face}");
+            assert!(g.axis_fraction <= 0.10, "{g:?}");
+        }
+    }
+}

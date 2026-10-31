@@ -682,7 +682,11 @@ fn candidate_sweep() {
     let today = Candidate::today();
     let fit = |name: &str, fit: PlaneFit, offset: PlaneOffset| Candidate {
         name: name.to_owned(),
-        fit: SurfaceFit { fit, offset },
+        fit: SurfaceFit {
+            fit,
+            offset,
+            ..SurfaceFit::default()
+        },
         ..today.clone()
     };
     let mut rows = vec![

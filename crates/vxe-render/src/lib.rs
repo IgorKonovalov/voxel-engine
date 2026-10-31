@@ -20,7 +20,7 @@ pub mod probes;
 pub mod readback;
 
 pub use attr_work::{AttrWorkStats, MirrorView};
-pub use attrib::{PlaneFit, PlaneOffset, SurfaceFit};
+pub use attrib::{OccupancyFilter, PlaneFit, PlaneOffset, SurfaceFit};
 pub use camera::{Camera, View};
 pub use exposure::{
     AutoExposure, EXPOSURE_WGSL, Exposure, ExposureReadout, ExposureState, Metering,

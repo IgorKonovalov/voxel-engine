@@ -49,11 +49,34 @@ impl PlaneOffset {
     }
 }
 
-/// The attribute pass's plane fit: its normal and its offset.
+/// Which occupancy the attribute pass fits a surface voxel's plane on: the voxels as they
+/// are, or a majority filter of them (ADR-0040), where a voxel counts as solid when at least
+/// 14 of the 27 voxels around it, itself included, are solid. Under the filter a one-voxel
+/// feature standing on a surface fits the plane of the surface under it; a voxel the filter
+/// buries keeps the unfiltered normal at the offset's clamp, and one whose filtered
+/// neighbourhood is empty has no plane.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OccupancyFilter {
+    #[default]
+    None,
+    Majority,
+}
+
+impl OccupancyFilter {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Majority => "majority",
+        }
+    }
+}
+
+/// The attribute pass's plane fit: its normal, its offset and the occupancy it reads.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SurfaceFit {
     pub fit: PlaneFit,
     pub offset: PlaneOffset,
+    pub filter: OccupancyFilter,
 }
 
 impl SurfaceFit {
@@ -61,14 +84,20 @@ impl SurfaceFit {
     fn bits(self) -> u32 {
         u32::from(self.fit == PlaneFit::Weighted27)
             | u32::from(self.offset == PlaneOffset::VolumeMatched) << 1
+            | u32::from(self.filter == OccupancyFilter::Majority) << 2
     }
 
-    /// `uniform27` or `weighted27`, `+ volume` for the volume-matched offset.
+    /// `uniform27` or `weighted27`, `+ volume` for the volume-matched offset, `+ majority`
+    /// for the majority filter.
     pub fn name(self) -> String {
-        match self.offset {
-            PlaneOffset::Fraction => self.fit.name().to_owned(),
-            PlaneOffset::VolumeMatched => format!("{} + volume", self.fit.name()),
+        let mut name = self.fit.name().to_owned();
+        if self.offset == PlaneOffset::VolumeMatched {
+            name += " + volume";
         }
+        if self.filter == OccupancyFilter::Majority {
+            name += " + majority";
+        }
+        name
     }
 }
 

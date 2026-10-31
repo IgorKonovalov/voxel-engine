@@ -18,7 +18,8 @@
 //! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
 //! [--autopilot] [--census] [--sync-budget MIB] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look PRESET] [--rock-detail SCALE,STRENGTH] [--plane-fit FIT]
-//! [--plane-offset OFFSET] [--face-mix K] [--detail-fine W] [--detail-after on|off]
+//! [--plane-offset OFFSET] [--fit-filter none|majority] [--face-mix K] [--detail-fine W]
+//! [--detail-after on|off]
 //! [--shadow-push on|off] [--view VIEW]
 //! [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
@@ -77,7 +78,8 @@
 //! look first; `--look` picks the starting preset (`flythrough::LookPreset`: `face`, `contour`,
 //! `contour-sharp`, `contour-grain`, `trilinear8`, `gradient27`), a normal mode with its plane
 //! fit, face mix, detail after lighting, shadow push and rock's detail pair and fine weight,
-//! each part overridable by `--plane-fit`, `--plane-offset`, `--face-mix`, `--detail-after`,
+//! each part overridable by `--plane-fit`, `--plane-offset`, `--fit-filter` (the plane fit's
+//! occupancy, ADR-0040), `--face-mix`, `--detail-after`,
 //! `--shadow-push`, `--detail-fine` and `--rock-detail`; and `--look plain` starts in face mode without contour
 //! attributes or rock detail, detail off (`N` then skips the contour presets, `--detail` turns
 //! detail on), the look of Plan 0002's and Plan 0017's face readings. With contour attributes the autopilot's report adds the attribute
@@ -241,8 +243,8 @@ use vxe_render::readback::{self, StepHistogram};
 use vxe_render::{
     AttrWorkStats, AutoExposure, BELT_CHUNK_BYTES, Camera, Exposure, FRAME_PASSES, Frame, GpuWorld,
     HistoryKill, HudColour, HudOverlay, LightParams, Lighting, LightingResolution, LodParams,
-    LookParams, MarchTimer, MirrorConfig, NormalMode, PassTimer, PlaneFit, PlaneOffset, Presenter,
-    RenderScale, Sampler, ShadowWalk, SyncStats, ViewMode, Window, wgpu,
+    LookParams, MarchTimer, MirrorConfig, NormalMode, OccupancyFilter, PassTimer, PlaneFit,
+    PlaneOffset, Presenter, RenderScale, Sampler, ShadowWalk, SyncStats, ViewMode, Window, wgpu,
 };
 use vxe_world::hash::mix64;
 use vxe_world::{
@@ -723,6 +725,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     let mut rock_detail = None;
     let mut plane_fit = None;
     let mut plane_offset = None;
+    let mut fit_filter = None;
     let mut face_mix = None;
     let mut detail_fine = None;
     let mut detail_after = None;
@@ -785,6 +788,14 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                     "fraction" => PlaneOffset::Fraction,
                     "volume" => PlaneOffset::VolumeMatched,
                     _ => return Err(format!("--plane-offset takes fraction or volume, not {v}")),
+                });
+            }
+            "--fit-filter" => {
+                let v = value()?;
+                fit_filter = Some(match v.as_str() {
+                    "none" => OccupancyFilter::None,
+                    "majority" => OccupancyFilter::Majority,
+                    _ => return Err(format!("--fit-filter takes none or majority, not {v}")),
                 });
             }
             "--face-mix" => face_mix = Some(parse_unit("--face-mix", &value()?, 0.5)?),
@@ -1104,6 +1115,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         p.rock_detail = rock_detail.unwrap_or(p.rock_detail);
         p.tuning.fit.fit = plane_fit.unwrap_or(p.tuning.fit.fit);
         p.tuning.fit.offset = plane_offset.unwrap_or(p.tuning.fit.offset);
+        p.tuning.fit.filter = fit_filter.unwrap_or(p.tuning.fit.filter);
         p.tuning.face_mix = face_mix.unwrap_or(p.tuning.face_mix);
         p.detail_fine = detail_fine.unwrap_or(p.detail_fine);
         p.tuning.detail_after_lighting = detail_after.unwrap_or(p.tuning.detail_after_lighting);
@@ -1112,14 +1124,15 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         return Err("--rock-detail does not apply under --look plain".to_owned());
     } else if plane_fit.is_some()
         || plane_offset.is_some()
+        || fit_filter.is_some()
         || face_mix.is_some()
         || detail_fine.is_some()
         || detail_after.is_some()
         || shadow_push.is_some()
     {
         return Err(
-            "--plane-fit, --plane-offset, --face-mix, --detail-fine, --detail-after and \
-             --shadow-push do not apply under --look plain"
+            "--plane-fit, --plane-offset, --fit-filter, --face-mix, --detail-fine, \
+             --detail-after and --shadow-push do not apply under --look plain"
                 .to_owned(),
         );
     }
@@ -7466,6 +7479,12 @@ mod tests {
         // The crack-closing rule is the contour walk's only one: no flag selects another.
         assert!(parse_args_from(argv(&["--closing", "snap"])).is_err());
         assert!(parse_args_from(argv(&["--look", "plain", "--shadow-push", "on"])).is_err());
+        assert_eq!(
+            line(&["--fit-filter", "majority"]),
+            "look contour-sharp (normals contour, fit weighted27 + majority, face mix 0, detail after lighting on, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+        );
+        assert!(parse_args_from(argv(&["--fit-filter", "median"])).is_err());
+        assert!(parse_args_from(argv(&["--look", "plain", "--fit-filter", "majority"])).is_err());
     }
 
     #[test]

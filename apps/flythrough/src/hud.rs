@@ -1265,8 +1265,8 @@ pub const BANNER_MS: f64 = 3000.0;
 /// The banner's widest row in characters: it fits a 1280-pixel window at the HUD's scale 2
 /// (80 cells) and the golden's 320 pixels at scale 1 (40 cells).
 pub const BANNER_COLS: usize = 40;
-/// Rows the banner wraps into at most: the look's words in two (a contour preset with the
-/// shadow push names it) and the modes' line in six.
+/// Rows the banner wraps into at most: the look's words in two (a contour preset names the
+/// shadow push and the fit filter when set) and the modes' line in six.
 pub const BANNER_ROWS: usize = 8;
 
 /// A key that changes the lighting mode: `F3` to `F7` and `M`.
@@ -1428,12 +1428,16 @@ impl Modes {
     }
 
     /// Shows the banner from `now_ms` with the look in words, `look contour-sharp, detail on`
-    /// (a contour preset adds `shadow push on` when set): the first row of every banner from
-    /// then on.
+    /// (a contour preset adds `shadow push on` and `fit filter majority` when set): the first
+    /// row of every banner from then on.
     pub fn show_look(&mut self, preset: &crate::LookPreset, detail: bool, now_ms: f64) {
         let mut words = format!("look {}", preset.name);
-        if preset.normal_mode == vxe_render::NormalMode::Contour && preset.tuning.shadow_push {
+        let contour = preset.normal_mode == vxe_render::NormalMode::Contour;
+        if contour && preset.tuning.shadow_push {
             words += ", shadow push on";
+        }
+        if contour && preset.tuning.fit.filter == vxe_render::OccupancyFilter::Majority {
+            words += ", fit filter majority";
         }
         words += if detail {
             ", detail on"
@@ -1815,6 +1819,18 @@ mod mode_tests {
                 .starts_with("look contour-sharp, shadow push on\ndetail on\n"),
             "{:?}",
             m.banner(20_000.0)
+        );
+        let mut filtered = crate::LookPreset::CONTOUR_SHARP;
+        filtered.tuning.fit.filter = vxe_render::OccupancyFilter::Majority;
+        m.show_look(&filtered, true, 30_000.0);
+        assert!(
+            m.banner(30_000.0).unwrap().starts_with(
+                "look contour-sharp, fit filter majority
+detail on
+"
+            ),
+            "{:?}",
+            m.banner(30_000.0)
         );
     }
 }

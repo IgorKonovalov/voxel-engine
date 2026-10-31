@@ -365,8 +365,8 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The box spike: two metrics, six scenes, the poses, and the hypotheses read | dev | done | committed with this row |
-| 2: The plane fit on a majority-filtered occupancy | dev | not started | |
+| 1: The box spike: two metrics, six scenes, the poses, and the hypotheses read | dev | done | eaea0f0 |
+| 2: The plane fit on a majority-filtered occupancy | dev | done | committed with this row |
 | 3: The normal field, and the cubes-shaded-by-the-field preset | dev | not started | |
 | 4: The owner's windowed check | human | not started | |
 | 5: The pick as the default, the losers removed | dev | not started | |
@@ -444,6 +444,102 @@ Tile edges: share of the counted adjacent pairs within 1.5 voxels whose normals-
   failed, 30 skipped: `sharpness detail_after_lighting_is_exact_for_the_lamp`, the base's
   failure (Plan 0050 Phase 6's floor question), untouched.
 
+#### Phase 2
+
+Readings as Phase 1's (lavapipe, exclusive perf lock, load 0.9 to 3.3, `box_readings`), at
+eaea0f0 plus this phase's diff, with the box metric's edge rule below; `majority` is the start
+look with `--fit-filter majority`. Lamp off reads the same rows as lamp on.
+
+| scene | look | hits | left out | box px | < 14 | >= 14 | 2 air | 3 air | 4+ air | pairs | tile edges % | class 1 % | class 2 % | class 3 % |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| bare floor | start look | 50747 | 77 | 0 | 0 | 0 | 0 | 0 | 0 | 97251 | 0.000 | 0.000 | 0.000 | 0.000 |
+| rod | start look | 50747 | 77 | 499 | 499 | 0 | 0 | 418 | 81 | 97251 | 0.785 | 0.000 | 0.000 | 0.747 |
+| lone cube | start look | 50728 | 76 | 24 | 24 | 0 | 0 | 0 | 24 | 97232 | 0.000 | 0.000 | 0.000 | 0.000 |
+| groove | start look | 51626 | 63 | 697 | 0 | 697 | 697 | 0 | 0 | 98926 | 0.647 | 0.000 | 0.000 | 1.253 |
+| wall pillar | start look | 41400 | 180 | 276 | 276 | 0 | 0 | 210 | 66 | 80260 | 0.381 | 0.000 | 0.000 | 0.077 |
+| ridge | start look | 50729 | 76 | 568 | 115 | 453 | 453 | 115 | 0 | 97216 | 0.728 | 0.000 | 0.000 | 1.459 |
+| free pillar | start look | 48590 | 110 | 828 | 828 | 0 | 0 | 0 | 828 | 93192 | 0.098 | 0.000 | 0.000 | 0.000 |
+| sheet | start look | 47782 | 116 | 8108 | 7717 | 391 | 8026 | 82 | 0 | 91542 | 0.965 | 0.000 | 0.000 | 0.375 |
+| level vein | start look | 82944 | 0 | 35098 | 0 | 35098 | 21734 | 13364 | 0 | 165288 | 0.676 | 0.000 | 0.000 | 0.581 |
+| level patch | start look | 82944 | 0 | 38250 | 199 | 38051 | 24624 | 13427 | 199 | 165133 | 0.771 | 0.000 | 0.000 | 2.318 |
+| bare floor | majority | 50747 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 97251 | 0.000 | 0.000 | 0.000 | 0.000 |
+| rod | majority | 50747 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 97251 | 0.000 | 0.000 | 0.000 | 0.824 |
+| lone cube | majority | 50728 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 97232 | 0.000 | 0.000 | 0.000 | 0.000 |
+| groove | majority | 51626 | 0 | 4870 | 0 | 4870 | 4870 | 0 | 0 | 98827 | 0.000 | 0.000 | 0.000 | 0.000 |
+| wall pillar | majority | 41400 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 80260 | 0.000 | 0.000 | 0.000 | 0.063 |
+| ridge | majority | 50729 | 0 | 498 | 63 | 435 | 435 | 63 | 0 | 97232 | 0.622 | 0.000 | 0.000 | 1.768 |
+| free pillar | majority | 48590 | 0 | 1182 | 1182 | 0 | 0 | 0 | 1182 | 93160 | 0.114 | 0.000 | 0.000 | 0.000 |
+| sheet | majority | 47803 | 0 | 14497 | 13912 | 585 | 7468 | 5700 | 1329 | 92035 | 0.759 | 0.000 | 0.000 | 0.987 |
+| level vein | majority | 82944 | 0 | 39263 | 0 | 39263 | 22337 | 16926 | 0 | 165288 | 0.717 | 0.000 | 0.000 | 0.565 |
+| level patch | majority | 82944 | 0 | 42080 | 257 | 41823 | 25769 | 16054 | 257 | 165006 | 1.208 | 0.000 | 0.000 | 2.171 |
+
+- The box metric's edge rule (this commit): a hit point that also lies within 1e-3 of one of
+  the box voxel's faces toward a solid neighbour is not a box pixel. Under the filter the rod
+  read 8 box pixels without it, every one at `z = 60.000` on the outline of the rod's footprint
+  (a plane hit on the floor's level, within 1e-3 of the rod's side or end face); with it, 0.
+  The start look's rows above are Phase 1's re-read under the rule (rod 503 to 499, groove 703
+  to 697, ridge 575 to 568, free pillar 830 to 828, sheet 8143 to 8108, vein 35208 to 35098,
+  patch 38371 to 38250; done-when 1 of Phase 1 still reads `rod` 499, `lone cube` 24, `groove`
+  697, `wall pillar` 276, `bare floor` 0).
+- Done-when 1: `the_majority_fit_melts_one_voxel_features` (lavapipe) reads 0 box px on `rod`,
+  `lone cube` and `wall pillar`; the hit mask and normals view equal byte for byte at the
+  pixels the analytic window rule keeps in both renders: bare floor 50747 hits (77 left out),
+  Plan 0050's floor 43012 (392), wall 37800 (180); tilted slab 49357 hits, 113 left out, clean
+  98.17 %, classes 1 and 2 0, class 3 1.825 %; 45-degree slab 48333, 19, 97.90 %, 0, 0, 2.102
+  %.
+- Done-when 2: `the_majority_filter_fits_a_rod_the_floors_plane` (`mirror.rs`, lavapipe):
+  under every fit with the filter the rod voxel reads `0x37df` (normal `(0, 0, 1)` bit-exact,
+  code 3), the floor voxel beside it `0xb7df`, the far floor's word (code 11); without the
+  filter the rod voxel reads code 6. Mirror bytes equal with and without the filter.
+- Done-when 3, `free pillar`: 48590 hits with and without the filter, box px 828 to 1182.
+  Per voxel row (RTX 3080 Laptop scratch, `VXE_TEST_ADAPTER=rtx`): the lowest row (z 60) 30
+  box px to 0 (its plane is its bottom face), rows 61 to 64 unchanged (150, 182, 210, 256), the
+  top row (z 65) 0 to 384 (a cube without a plane under the filter; today a plane with offset
+  -0.833). `sheet`: hits 47782 to 47803, box px 8108 to 14497; per row z 60 473 to 647, z 61
+  752 to 0, z 62 to 66 893, 1068, 1300, 1603, 2019 to 1154, 1398, 1721, 2152, 2761, the top row
+  (z 67) 0 to 4664; the end columns and the top row, cut by their planes today, are full cubes
+  under the filter (`live/boxes/sheet-majority.png`).
+- Done-when 4: the poses under the filter, classes 1 and 2 at 0 (table). Guardrails
+  (`the_majority_fit_meets_the_guardrails`, lavapipe): cavity normal error 7.16 degrees
+  (start look 7.13), silhouette 32 px against face 172 (32), `A` 6.78 % (6.73 %).
+- Done-when 5: the attribute pass, `flythrough --level --headless --seed 1 --render 1920x1080
+  --frames 300` (the initial fill) and `flythrough --autopilot --headless --seed 1` (GPU p50,
+  p99 over the frames with work), `--adapter NVIDIA|AMD`, `--fit-filter none|majority`,
+  release, each run under the exclusive perf lock and the memory cap, three alternated rounds,
+  medians; 1-minute load 1.0 to 11.0 (the autopilot's own world generation loads the box):
+  loaded, indicative. Adapters selected by `--adapter`.
+
+  | adapter | fill none | fill majority | ratio | p50 none | p50 majority | ratio | p99 none | p99 majority | ratio |
+  |---|---|---|---|---|---|---|---|---|---|
+  | NVIDIA GeForce RTX 3080 Laptop GPU | 14.216 | 20.593 | 1.45 | 0.906 | 1.355 | 1.50 | 1.196 | 1.874 | 1.57 |
+  | AMD Radeon Graphics (RADV RENOIR) | 59.767 | 73.473 | 1.23 | 1.272 | 1.569 | 1.23 | 1.613 | 2.053 | 1.27 |
+
+  The pre-plan binary (cde413a), three runs alternated with the tip's `none` at load 1.6 to
+  3.8: initial fill 17.84 ms (RTX), 95.57 ms (Radeon) against 14.20 and 59.73. Mirror 157 872
+  640 B live, 259 203 264 B allocated in every run of both binaries. The first
+  implementation (one 12-bit row a word, the filtered rows in their own array, 15 776 B of
+  workgroup memory, a per-cell neighbour switch and a per-cell popcount count) read fill 20.34
+  (none) and 47.28 ms (majority) on the RTX (2.32x), p50 1.249 and 2.859, p99 1.793 and
+  3.583; Radeon fill 81.34 and 141.47 (1.74x); rewritten before this commit (rows paired, the
+  filtered rows in the staged masks' words, a brick's row run from one mask word, the count
+  bit-sliced; a loop form of the same adds read RTX fill 14.200 and 21.227, Radeon 59.804
+  and 73.405, and was unrolled for the shader-portability test), the table above.
+- Deviations: files outside the list: `crates/vxe-render/src/attrib.rs` (`OccupancyFilter`,
+  `SurfaceFit::filter`, the bit), `crates/vxe-render/src/lib.rs` (the export),
+  `apps/flythrough/tests/sharpness.rs` (`..SurfaceFit::default()`); `marcher.rs` and
+  `gpu_world.rs` unchanged (the fit's bits reach the pass through `SurfaceFit::bits`); a voxel
+  whose six face neighbours are all filtered solid counts as buried (the unfiltered normal at
+  offset 7/8); without the filter the pass loads only the 10-cube of the 12-cube's rows; the filtered rows
+  live in the staged neighbour masks' words once the occupancy is set; the
+  byte-for-byte comparison of done-when 1 is over the pixels the analytic window rule keeps
+  (the floor's edge voxels on the window's faces erode under the filter); the box metric's edge
+  rule above; the banner names `fit filter majority`, the look line `+ majority`.
+- Gate at this commit: build, clippy `-D warnings` 0, fmt 0, doctests 11 ok, `cargo deny check` ok, the four
+  `scripts/check-*.mjs` 0; `--profile quick` 539 run, 538 passed, 1 timeout (`flythrough::replay
+  a_stamp_and_a_collapse_replay_from_the_save` 30 s, load 1.1 at the start; alone 13.8 s), 3
+  skipped; `--profile gpu --no-fail-fast` (perf lock, load 1.2 to 6.6) 189 run, 188 passed, 1
+  failed (`sharpness detail_after_lighting_is_exact_for_the_lamp`, the base's), 30 skipped.
+
 ### Notes
 
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
@@ -461,10 +557,16 @@ each. Empty is fine.)_
   against the 98.3 % floor waiting on the owner) and on every phase here; not touched.
 - Phase 1: the scenes' floor and wall sit inside a brick (rock at `z < 60`, `x >= 76`), not on
   `floor_world` and `wall_world`; box pixels of count under 14 are yellow in the side-by-sides.
+- Phase 2: the box metric's edge rule (a point on one of the box voxel's faces toward a solid
+  neighbour is not a box pixel) changes Phase 1's readings slightly; both are in the log.
 - Noticed, not acted on: at both poses the box metric counts 42 % and 46 % of the hits, the
   cube-face parts of ordinary clipped surface voxels with two or three air faces (count 14 or
   more); only the count-under-14 class (0 at the vein, 200 px at the patch) is specific to
   protrusions.
+- Noticed, not acted on: under the filter the poses' box pixels rise (vein 35098 to 39263, patch
+  38250 to 42080) and the patch's tile edges rise (0.771 to 1.208 %); the groove's box pixels
+  rise 697 to 4870 (its side voxels' faces into the groove, hit as cube faces under the floor's
+  plane).
 
 ### Close triggers
 

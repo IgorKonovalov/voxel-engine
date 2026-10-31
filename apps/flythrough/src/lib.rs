@@ -14,7 +14,9 @@ use std::sync::Arc;
 
 use vxe_audio::Listener;
 use vxe_net::{Logic, Server};
-use vxe_render::{Camera, NormalMode, PlaneFit, PlaneOffset, SurfaceFit, SurfaceTuning};
+use vxe_render::{
+    Camera, NormalMode, OccupancyFilter, PlaneFit, PlaneOffset, SurfaceFit, SurfaceTuning,
+};
 use vxe_world::hash::Fnv1a;
 use vxe_world::{
     BRICK_VOXELS, Brick, Chunk, ChunkCoord, ChunkExtent, ChunkMips, LogFile, Material,
@@ -339,12 +341,13 @@ pub struct LookPreset {
     pub detail_fine: f32,
 }
 
-/// Every part off: the uniform gradient, the fraction offset, no face mix, detail shaded in
-/// the light pass.
+/// Every part off: the uniform gradient, the fraction offset, no occupancy filter, no face
+/// mix, detail shaded in the light pass.
 const TUNING_OFF: SurfaceTuning = SurfaceTuning {
     fit: SurfaceFit {
         fit: PlaneFit::Uniform27,
         offset: PlaneOffset::Fraction,
+        filter: OccupancyFilter::None,
     },
     face_mix: 0.0,
     detail_after_lighting: false,
@@ -374,7 +377,7 @@ impl LookPreset {
         tuning: SurfaceTuning {
             fit: SurfaceFit {
                 fit: PlaneFit::Weighted27,
-                offset: PlaneOffset::Fraction,
+                ..Self::CONTOUR.tuning.fit
             },
             detail_after_lighting: true,
             ..Self::CONTOUR.tuning

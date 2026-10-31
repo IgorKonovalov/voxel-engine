@@ -3,13 +3,18 @@
 // workgroup g, and the last workgroup may run partly empty. A brick resolves itself and its 26
 // neighbours once (table and record reads), loads their non-air masks (16 words each) into
 // workgroup memory, lists its surface voxels in attribute-index order (each invocation scans
-// one byte of the surface mask), and sets the occupancy of the brick and a one-voxel shell
-// around it (10^3 voxels, as bits) from those masks, a LOD-only chunk's neighbour through
-// its level-1 mip brick's, reading voxel by voxel only a brick of more than 16 materials
-// holding a translucent voxel. Then
-// invocation t computes attribute words t, t + 64, ... (indices 2 w and 2 w + 1) up to the
-// surface's count and writes each whole; the words past it keep the "no plane" the upload
-// wrote. The four bricks share the workgroup's three barriers.
+// one byte of the surface mask), and sets the occupancy of the brick and a two-voxel shell
+// around it (12^3 voxels, two 12-bit rows a word, a brick's row run from one mask word) from
+// those masks, a LOD-only chunk's
+// neighbour through its level-1 mip brick's, reading voxel by voxel only a brick of more than
+// 16 materials holding a translucent voxel; without the majority filter only the brick and
+// its one-voxel shell (10^3) are set, all the fit reads. With the majority filter (params.fit
+// bit 2) it then sets the filtered occupancy of the brick and a one-voxel shell (10^3, one
+// 10-bit row a word, in the staged masks' words, counted a row at a time in bit-sliced adds): a voxel is solid there when at least 14 of the 27 voxels around it,
+// itself included, are solid. Then invocation t computes attribute words t, t + 64, ...
+// (indices 2 w and 2 w + 1) up to the surface's count and writes each whole; the words past
+// it keep the "no plane" the upload wrote. The four bricks share the workgroup's three
+// barriers, four with the filter.
 //
 // Bindings, group 0:
 //   0  uniform  params         mirror window, units per shard, work-list length, the
@@ -29,7 +34,8 @@
 // for a brick without attributes, which the pass leaves alone. A voxel's u16 is
 // bits 0..6 octahedral u, 6..12 octahedral v, 12..16 the plane offset code k in 0..=14 for
 // (k - 7) / 8 voxel along the normal from the voxel centre; 0xFFFF is "no plane": air, a voxel
-// whose six face neighbours are all solid, or one whose occupancy gradient vanishes.
+// whose six face neighbours are all solid, or one whose occupancy gradient vanishes; under the
+// majority filter, a voxel whose filtered gradient vanishes.
 //
 // The normal is the Gradient27 normal of occupancy (central differences over the 3 x 3 x 3
 // voxels around the voxel), read through the chunk table: neighbours across brick and chunk
@@ -41,6 +47,14 @@
 // cuts the 3 x 3 x 3 block about the voxel centre c into a solid volume equal to the solid
 // count, found by 8 bisection steps on [-1.5, 1.5]. Either is clamped to [-7/8, 7/8] and
 // rounded to the nearest 1/8.
+//
+// With params.fit bit 2 (`OccupancyFilter::Majority`, ADR-0040) the normal, the solid count
+// and the face test read the filtered occupancy instead; the voxel itself is still one of the
+// surface mask's. A voxel whose six face neighbours are all solid in the filtered occupancy
+// (the filter buries it: a one-voxel groove's bottom) takes the unfiltered normal and the
+// offset's clamp, 7/8, so it hits as its cube face shaded with the surface's normal; one whose
+// filtered gradient vanishes (an empty filtered neighbourhood: a free one-voxel pillar's upper
+// voxels) has no plane.
 
 struct Params {
     window_min: vec3<i32>,
@@ -48,7 +62,8 @@ struct Params {
     window_size: vec3<i32>,
     items: u32,
     groups_x: u32,
-    // Bit 0: the weighted gradient; bit 1: the volume-matched offset.
+    // Bit 0: the weighted gradient; bit 1: the volume-matched offset; bit 2: the majority
+    // filter.
     fit: u32,
     _pad1: u32,
     _pad2: u32,
@@ -56,6 +71,7 @@ struct Params {
 
 const FIT_WEIGHTED: u32 = 1u;
 const FIT_VOLUME: u32 = 2u;
+const FIT_MAJORITY: u32 = 4u;
 
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read_write> brick_pool0: array<u32>;
@@ -86,15 +102,20 @@ const NO_PLANE: u32 = 0xFFFFu;
 // `attrib::WORKGROUP` must match.
 const BRICKS: u32 = 4u;
 const LANES: u32 = 64u;
-// The occupancy box: the brick and a one-voxel shell, 10 voxels to an edge.
+// The fit's box: the brick and a one-voxel shell, 10 voxels to an edge, its cell c at
+// occupancy cell c + 1. The occupancy box: the brick and a two-voxel shell, 12 to an edge.
 const BOX: u32 = 10u;
+const OCC: u32 = 12u;
 
-// Per brick of the workgroup (brick b's at b times the per-brick length), 12 384 B in all:
-// its occupancy box as 1000 bits (word w set by invocation w alone); it and its 26
-// neighbours, index (dx + 1) + 3 (dy + 1) + 9 (dz + 1), how each is read (NB_AIR, NB_SOLID,
-// NB_MASK or NB_MIP with its entry, NB_VOXELS) and the NB_MASK and NB_MIP ones' non-air
-// masks; and its surface voxels' cells in attribute-index order, two u16 a word.
-var<workgroup> occ: array<u32, 128>;
+// Per brick of the workgroup (brick b's at b times the per-brick length), 13 024 B in all:
+// its occupancy box as 144 rows of 12 bits, two a word, row y + 12 z in half (row % 2) of
+// word row / 2, x in bit x (each word set by one invocation); it and its 26 neighbours,
+// index (dx + 1) + 3 (dy + 1) + 9 (dz + 1), how each is read (NB_AIR, NB_SOLID, NB_MASK or
+// NB_MIP with its entry, NB_VOXELS) and the NB_MASK and NB_MIP ones' non-air masks, whose
+// words, once the occupancy box is set, hold its filtered box instead: 100 rows of 10 bits,
+// row y + 10 z in word row; and its surface voxels' cells in attribute-index order, two u16
+// a word.
+var<workgroup> occ: array<u32, 288>;
 var<workgroup> nb_kind: array<u32, 108>;
 var<workgroup> nb_entry: array<u32, 108>;
 var<workgroup> nb_mask: array<u32, 1728>;
@@ -252,10 +273,55 @@ fn encode_octahedral(n: vec3<f32>) -> u32 {
     return q.x | (q.y << 6u);
 }
 
-// Occupancy of box cell `c` (each component in 0..10) of the workgroup's brick `b`.
+// Occupancy of fit-box cell `c` (each component in 0..10) of the workgroup's brick `b`.
 fn occ_at(b: u32, c: vec3<i32>) -> bool {
-    let j = u32(c.x) + BOX * (u32(c.y) + BOX * u32(c.z));
-    return ((occ[b * 32u + j / 32u] >> (j % 32u)) & 1u) != 0u;
+    return ((occ_row(b, u32(c.y + 1) + OCC * u32(c.z + 1)) >> u32(c.x + 1)) & 1u) != 0u;
+}
+
+// Row `r` (y + 12 z) of brick `b`'s occupancy box, 12 bits.
+fn occ_row(b: u32, r: u32) -> u32 {
+    return (occ[b * 72u + r / 2u] >> ((r & 1u) * 16u)) & 0xFFFu;
+}
+
+// Filtered occupancy of fit-box cell `c` (each component in 0..10) of brick `b`.
+fn occf_at(b: u32, c: vec3<i32>) -> bool {
+    let r = nb_mask[b * 432u + u32(c.y) + BOX * u32(c.z)];
+    return ((r >> u32(c.x)) & 1u) != 0u;
+}
+
+// The fit's gather over the 27 voxels around fit-box cell `c` of brick `b`, of the filtered
+// occupancy when `filtered` is set: the gradient's sum (each solid neighbour's offset, at
+// 1 / |o|^2 under the weighted fit), the solid count and the solid face neighbours.
+struct Gather {
+    g: vec3<f32>,
+    count: f32,
+    faces: u32,
+};
+
+fn gather(b: u32, c: vec3<i32>, filtered: bool) -> Gather {
+    let weighted = (params.fit & FIT_WEIGHTED) != 0u;
+    var r = Gather(vec3<f32>(0.0), 0.0, 0u);
+    for (var z = -1; z <= 1; z++) {
+        for (var y = -1; y <= 1; y++) {
+            for (var x = -1; x <= 1; x++) {
+                let o = vec3<i32>(x, y, z);
+                let on = select(occ_at(b, c + o), occf_at(b, c + o), filtered);
+                if (on) {
+                    let m = abs(x) + abs(y) + abs(z);
+                    if (weighted && m > 1) {
+                        r.g += vec3<f32>(o) / f32(m);
+                    } else {
+                        r.g += vec3<f32>(o);
+                    }
+                    r.count += 1.0;
+                    if (m == 1) {
+                        r.faces += 1u;
+                    }
+                }
+            }
+        }
+    }
+    return r;
 }
 
 // The attribute of the voxel at box cell `c` (each component in 1..9) of brick `b`.
@@ -263,39 +329,25 @@ fn voxel_attr(b: u32, c: vec3<i32>) -> u32 {
     if (!occ_at(b, c)) {
         return NO_PLANE;
     }
-    let weighted = (params.fit & FIT_WEIGHTED) != 0u;
-    var g = vec3<f32>(0.0);
-    var count = 0.0;
-    var faces = 0u;
-    for (var z = -1; z <= 1; z++) {
-        for (var y = -1; y <= 1; y++) {
-            for (var x = -1; x <= 1; x++) {
-                let o = vec3<i32>(x, y, z);
-                if (occ_at(b, c + o)) {
-                    let m = abs(x) + abs(y) + abs(z);
-                    if (weighted && m > 1) {
-                        g += vec3<f32>(o) / f32(m);
-                    } else {
-                        g += vec3<f32>(o);
-                    }
-                    count += 1.0;
-                    if (m == 1) {
-                        faces += 1u;
-                    }
-                }
-            }
-        }
+    let majority = (params.fit & FIT_MAJORITY) != 0u;
+    var f = gather(b, c, majority);
+    // Buried by the filter: the unfiltered normal at the clamp.
+    let buried = majority && f.faces == 6u;
+    if (buried) {
+        f = gather(b, c, false);
     }
-    let l2 = dot(g, g);
-    if (faces == 6u || l2 < 1e-12) {
+    let l2 = dot(f.g, f.g);
+    if (f.faces == 6u || l2 < 1e-12) {
         return NO_PLANE;
     }
-    let n = -g * inverseSqrt(l2);
+    let n = -f.g * inverseSqrt(l2);
     var offset = 0.0;
-    if ((params.fit & FIT_VOLUME) != 0u) {
-        offset = volume_matched_offset(n, count);
+    if (buried) {
+        offset = 0.875;
+    } else if ((params.fit & FIT_VOLUME) != 0u) {
+        offset = volume_matched_offset(n, f.count);
     } else {
-        offset = (count / 27.0 - 0.5) * 3.0;
+        offset = (f.count / 27.0 - 0.5) * 3.0;
     }
     offset = clamp(offset, -0.875, 0.875);
     let k = u32(round(offset * 8.0) + 7.0);
@@ -382,6 +434,57 @@ fn volume_matched_offset(n: vec3<f32>, count: f32) -> f32 {
     return 0.5 * (lo + hi);
 }
 
+// The occupancy of box cells x0..x1 (all in one neighbour along x) of row (ry, rz) of brick
+// `b` at `origin`, as bits x0..x1: a uniform neighbour's run at once, a Full brick's from one
+// mask word (a row of a brick is one byte of its mask), and a mip brick's or a voxel-read
+// brick's cell by cell.
+fn occ_run(b: u32, origin: vec3<i32>, x0: i32, x1: i32, ry: i32, rz: i32) -> u32 {
+    if (x1 <= x0) {
+        return 0u;
+    }
+    let ones = ((1u << u32(x1 - x0)) - 1u) << u32(x0);
+    // The neighbour on each axis: -1 for box cells 0 and 1, +1 for 10 and 11, else the brick.
+    let c0 = vec3<i32>(x0, ry, rz);
+    let d = select(vec3<i32>(0), vec3<i32>(-1), c0 < vec3<i32>(2))
+        + select(vec3<i32>(0), vec3<i32>(1), c0 > vec3<i32>(9));
+    let k = b * 27u + u32((d.x + 1) + 3 * (d.y + 1) + 9 * (d.z + 1));
+    let kind = nb_kind[k];
+    if (kind == NB_AIR) {
+        return 0u;
+    }
+    if (kind == NB_SOLID) {
+        return ones;
+    }
+    let l0 = vec3<u32>(c0 - vec3<i32>(2) - d * 8);
+    if (kind == NB_MASK) {
+        let i = l0.x + 8u * (l0.y + 8u * l0.z);
+        let m = nb_mask[k * UNIT_WORDS + i / 32u] >> (i % 32u);
+        return (m << u32(x0)) & ones;
+    }
+    var bits = 0u;
+    for (var x = x0; x < x1; x++) {
+        let l = vec3<u32>(vec3<i32>(x, ry, rz) - vec3<i32>(2) - d * 8);
+        var on = false;
+        if (kind == NB_VOXELS) {
+            on = solid(origin + vec3<i32>(x, ry, rz) - vec3<i32>(2));
+        } else {
+            // NB_MIP + o: voxel 4 o + l / 2 of the staged mip brick.
+            let o = kind - NB_MIP;
+            let m = (vec3<u32>(o, o >> 1u, o >> 2u) & vec3<u32>(1u)) * 4u + l / 2u;
+            let mi = m.x + 8u * (m.y + 8u * m.z);
+            on = ((nb_mask[k * UNIT_WORDS + mi / 32u] >> (mi % 32u)) & 1u) != 0u;
+        }
+        bits |= select(0u, 1u, on) << u32(x);
+    }
+    return bits;
+}
+
+// A bit-sliced full adder over 32 lanes: the sum bits of `a + b + c` in x, the carries in y.
+fn full_add(a: u32, b: u32, c: u32) -> vec2<u32> {
+    let p = a ^ b;
+    return vec2<u32>(p ^ c, (a & b) | (p & c));
+}
+
 @compute @workgroup_size(256, 1, 1)
 fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
     let b = li / LANES;
@@ -461,43 +564,77 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
         }
     }
     workgroupBarrier();
-    // Occupancy word t of the box (cells 32 t to 32 t + 31), set by one invocation each, so
-    // no word is shared between invocations.
-    if (compute && t < 32u) {
-        var word = 0u;
-        for (var j = 32u * t; j < min(32u * t + 32u, BOX * BOX * BOX); j++) {
-            let c = vec3<i32>(i32(j % BOX), i32((j / BOX) % BOX), i32(j / (BOX * BOX)));
-            // The neighbour on each axis: -1 for box cell 0, +1 for cell 9, else the brick.
-            let d = select(vec3<i32>(0), vec3<i32>(-1), c < vec3<i32>(1))
-                + select(vec3<i32>(0), vec3<i32>(1), c > vec3<i32>(8));
-            let k = b * 27u + u32((d.x + 1) + 3 * (d.y + 1) + 9 * (d.z + 1));
-            let l = vec3<u32>(c - vec3<i32>(1) - d * 8);
-            let i = l.x + 8u * (l.y + 8u * l.z);
-            var on = false;
-            switch nb_kind[k] {
-                case 1u: {
-                    on = true;
+    // Occupancy words t and t + 64 of the box (72 words, two rows of 12 cells each), each set
+    // by one invocation, so no word is shared between invocations. Without the filter the
+    // outer shell's rows and cells stay clear: the fit reads only the inner 10^3.
+    let majority = (params.fit & FIT_MAJORITY) != 0u;
+    let lo = select(1, 0, majority);
+    let hi = select(11, 12, majority);
+    if (compute) {
+        for (var w = t; w < OCC * OCC / 2u; w += LANES) {
+            var word = 0u;
+            for (var h = 0u; h < 2u; h++) {
+                let r = 2u * w + h;
+                let ry = i32(r % OCC);
+                let rz = i32(r / OCC);
+                var bits = 0u;
+                if (ry >= lo && ry < hi && rz >= lo && rz < hi) {
+                    // The row's three runs along x: the -x neighbour's cells 0 and 1, the
+                    // brick's 2..10, the +x neighbour's 10 and 11.
+                    bits = occ_run(b, origin, lo, 2, ry, rz) | occ_run(b, origin, 2, 10, ry, rz)
+                        | occ_run(b, origin, 10, hi, ry, rz);
                 }
-                case 2u: {
-                    on = ((nb_mask[k * UNIT_WORDS + i / 32u] >> (i % 32u)) & 1u) != 0u;
-                }
-                case 3u: {
-                    on = solid(origin + c - vec3<i32>(1));
-                }
-                case 0u: {}
-                default: {
-                    // NB_MIP + o: voxel 4 o + l / 2 of the staged mip brick.
-                    let o = nb_kind[k] - NB_MIP;
-                    let m = (vec3<u32>(o, o >> 1u, o >> 2u) & vec3<u32>(1u)) * 4u + l / 2u;
-                    let mi = m.x + 8u * (m.y + 8u * m.z);
-                    on = ((nb_mask[k * UNIT_WORDS + mi / 32u] >> (mi % 32u)) & 1u) != 0u;
-                }
+                word |= bits << (16u * h);
             }
-            word |= select(0u, 1u, on) << (j % 32u);
+            occ[b * 72u + w] = word;
         }
-        occ[b * 32u + t] = word;
     }
     workgroupBarrier();
+    if (majority) {
+        // Filtered rows t and t + 64 of the fit box (100 rows of 10 cells), all ten cells of a
+        // row at once in bit-sliced arithmetic: cell (x, y, z) sums the occupancy box's cells
+        // x..x + 2 of the nine rows (y + dy, z + dz), dy and dz in 0..3. The nine rows' column
+        // sums (0..9, four bit planes) go through full adders, then the three columns' sums
+        // through two ripple adders (0..27, five bit planes), compared with 14.
+        if (compute) {
+            for (var r = t; r < BOX * BOX; r += LANES) {
+                let ry = r % BOX;
+                let rz = r / BOX;
+                var rows: array<u32, 9>;
+                for (var j = 0u; j < 9u; j++) {
+                    rows[j] = occ_row(b, ry + j % 3u + OCC * (rz + j / 3u));
+                }
+                let a = full_add(rows[0], rows[1], rows[2]);
+                let c = full_add(rows[3], rows[4], rows[5]);
+                let e = full_add(rows[6], rows[7], rows[8]);
+                let ones = full_add(a.x, c.x, e.x);
+                let twos = full_add(a.y, c.y, e.y);
+                // Column sums: v0 + 2 v1 + 4 v2 + 8 v3.
+                let v0 = ones.x;
+                let v1 = ones.y ^ twos.x;
+                let c4 = ones.y & twos.x;
+                let v2 = twos.y ^ c4;
+                let v3 = twos.y & c4;
+                // Cell x sums columns x, x + 1 and x + 2: the planes shifted by 0, 1 and 2,
+                // added in two four-plane ripple adds into five planes (at most 27).
+                let p0 = full_add(v0, v0 >> 1u, 0u);
+                let p1 = full_add(v1, v1 >> 1u, p0.y);
+                let p2 = full_add(v2, v2 >> 1u, p1.y);
+                let p3 = full_add(v3, v3 >> 1u, p2.y);
+                let q0 = full_add(p0.x, v0 >> 2u, 0u);
+                let q1 = full_add(p1.x, v1 >> 2u, q0.y);
+                let q2 = full_add(p2.x, v2 >> 2u, q1.y);
+                let q3 = full_add(p3.x, v3 >> 2u, q2.y);
+                let s4 = p3.y ^ q3.y;
+                // At least 14 of 27: 16 and over, or 14 and 15.
+                let word = (s4 | (q3.x & q2.x & q1.x)) & 0x3FFu;
+                // The neighbours' staged masks are read only while the occupancy box is set:
+                // the filtered rows take their words.
+                nb_mask[b * 432u + r] = word;
+            }
+        }
+        workgroupBarrier();
+    }
     if (compute) {
         for (var w = t; 2u * w < n; w += LANES) {
             let pair = atomicLoad(&cells[b * 256u + w]);

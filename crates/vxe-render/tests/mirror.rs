@@ -3327,7 +3327,11 @@ fn fits() -> [vxe_render::SurfaceFit; 4] {
         (PlaneFit::Uniform27, PlaneOffset::VolumeMatched),
         (PlaneFit::Weighted27, PlaneOffset::VolumeMatched),
     ]
-    .map(|(fit, offset)| SurfaceFit { fit, offset })
+    .map(|(fit, offset)| SurfaceFit {
+        fit,
+        offset,
+        ..SurfaceFit::default()
+    })
 }
 
 /// `world` mirrored with attributes under `fit`, its attributes filled.
@@ -3574,4 +3578,72 @@ fn a_fit_change_refits_every_brick_under_the_cap() {
     let rock: &[f32] = bytemuck::cast_slice(&rows[64..]);
     assert_eq!([rock[8], rock[9], rock[11]], [2.0, 0.3, 0.5]);
     assert_eq!((gpu.mirror_bytes(), gpu.allocated_bytes()), bytes);
+}
+
+/// The floor of [`world`] (material 1 at `z < 3`) with a one-voxel rod on it: `x in [8, 20)`,
+/// `y = 16`, `z = 3`.
+fn rod_on_floor() -> World {
+    let world = world();
+    let f = |v: [i64; 3]| Fixed3(v.map(|x| x * FIXED_ONE));
+    world
+        .apply(&EditOp::box_(f([8, 16, 3]), f([20, 17, 4]), Mode::Fill(1)))
+        .expect("resident");
+    world
+}
+
+/// Under the majority filter a one-voxel rod on a floor fits the floor's plane, under every
+/// normal fit and offset: the rod voxel `(12, 16, 3)` (count 9 in the filtered occupancy, the
+/// floor's top layer alone) decodes to `(0, 0, 1)` bit-exact (octahedral codes `(31, 31)`)
+/// with offset code 3 (`(9/27 - 0.5) x 3 = -0.5`, its bottom face; the volume-matched plane
+/// of 9 solid voxels in the block lies there too), and the floor voxel beside it,
+/// `(12, 15, 2)`, carries the flat floor's attribute word, offset code 11, as a floor voxel far
+/// from the rod does. Without the filter the rod voxel's code is printed. The filter leaves
+/// the mirror's bytes as without it.
+#[test]
+fn the_majority_filter_fits_a_rod_the_floors_plane() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = rod_on_floor();
+    let far = [40, 40, 2];
+    for fit in fits() {
+        let plain = fitted(&device, &queue, &world, fit);
+        println!(
+            "{}: rod voxel {:?}",
+            fit.name(),
+            attr_at(&device, &queue, &plain, [12, 16, 3])
+        );
+        let bytes = (plain.mirror_bytes(), plain.allocated_bytes());
+        let fit = vxe_render::SurfaceFit {
+            filter: vxe_render::OccupancyFilter::Majority,
+            ..fit
+        };
+        let gpu = fitted(&device, &queue, &world, fit);
+        assert_eq!(
+            (gpu.mirror_bytes(), gpu.allocated_bytes()),
+            bytes,
+            "{}: mirror bytes",
+            fit.name()
+        );
+        let rod = raw_attr_at(&device, &queue, &gpu, [12, 16, 3]);
+        let (n, k) = decode_attr(rod).expect("the rod voxel has a plane");
+        println!("{}: rod voxel {rod:#06x} normal {n:?} code {k}", fit.name());
+        assert_eq!((rod & 63, (rod >> 6) & 63), (31, 31), "{}", fit.name());
+        assert_eq!(
+            n.map(f32::to_bits),
+            [0.0f32, 0.0, 1.0].map(f32::to_bits),
+            "{}",
+            fit.name()
+        );
+        assert_eq!(k, 3, "{}: rod code", fit.name());
+        let beside = raw_attr_at(&device, &queue, &gpu, [12, 15, 2]);
+        let flat = raw_attr_at(&device, &queue, &gpu, far);
+        println!(
+            "{}: beside {beside:#06x}, flat floor {flat:#06x}",
+            fit.name()
+        );
+        assert_eq!(beside, flat, "{}: the floor beside the rod", fit.name());
+        assert_eq!(flat >> 12, 11, "{}: floor code", fit.name());
+        assert_eq!(flat & 0xFFF, 31 | 31 << 6, "{}: floor normal", fit.name());
+    }
 }
