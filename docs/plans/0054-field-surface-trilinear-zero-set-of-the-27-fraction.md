@@ -516,6 +516,15 @@ is in `vxe-render`, a client-side view.
    to 0.645) and its reservation (259.2 to 393.9 MB) stand as "reads the band term"; the printed
    pressure stays 1.000 because the record term (one record per chunk) dominates at the level,
    as it did before this plan.
+7. **Phase 3b, the pick (owner, 2026-10-31, session 2, five runs at 17045d8's release binary).**
+   Outcome (a): the field per material, crisp materials as honest cubes. The rig in `face`:
+   "all good". In `field`: "not acceptable - invisible materials, only one trunk is visible,
+   invisible cast shadow" (the thin features vanish while their shadows stay, the shadow ray
+   walking the voxels). In `field-cubes`: "seems to be good". The vein and patch poses in
+   `field-cubes`: "looks good, but fps is really low" and "fps roughly same". The window's
+   march GPU p50 read 29.3 ms (vein) and 30.4 ms (patch) on the RTX 3080 Laptop, against
+   16.4 ms at the patch in session 1's `field` (window size not logged; `live/session2.log`,
+   `live/session1.log`). Phase 4 is rewritten on this pick.
 
 ## Implementation log
 
