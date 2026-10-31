@@ -200,7 +200,14 @@ layout.
   primary-ray frame time at 1080p on the dev box and on the baseline when available.
 - **ADRs expected:** storage layout and world access model (one ADR, Plan 0001).
 
-### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041 and 0047 closed)
+### M2: Lighting that holds in the dark (in progress: Plans 0005, 0013, 0015, 0017, 0021, 0023, 0024, 0027, 0028, 0029, 0030, 0038, 0039, 0040, 0041, 0047 and 0050 closed)
+
+Plan 0050, a watertight contour surface, closed 2026-10-31 (v0.38.0, ADR-0038 and ADR-0039
+accepted with Outcomes): a cracks view classifies how each primary ray reached its hit, the
+plane code holds a zero normal component exactly, and the walk closes a crack at the passed
+voxel's exit (snap) at +1.3 % (RTX) and +0.4 % (Radeon) on the hit pass. The owner's check
+found the wedges and triangles gone; the voxel-sized flat-faced boxes that remain go to Plan
+0053, with Plan 0054's field surface as its alternative.
 
 Plan 0047, still emissive light, closed 2026-10-29 (v0.36.0, ADR-0036 accepted with an
 Outcome): the emissive part of the temporal pass accumulates in `f32` over a 256-frame
