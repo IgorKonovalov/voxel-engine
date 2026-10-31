@@ -1,6 +1,8 @@
 # 0050: A watertight contour surface: a crack spike that names the wedges and triangles, then the closing rule chosen by measurement
 
-> **Status:** in-progress (2026-10-31): every phase done; awaiting the fresh-session close review
+> **Status:** done (2026-10-31, v0.38.0): closed clean at the fresh-session review; snap closes the
+> contour surface's cracks at +1.3 % (RTX) and +0.4 % (Radeon) on the hit pass, and the one-voxel boxes
+> Phase 5 found go to Plan 0053
 > **Created:** 2026-10-29
 > **Approved:** 2026-10-29 (owner), with the answers under "Owner answers": alone on main
 > with the light spike after its Phase 4 check; the contour goldens re-blessed by name; the
@@ -13,20 +15,20 @@
 > **Amended:** 2026-10-30 (architect, after Phase 5's outcome (c)): the flat-faced boxes are
 > a fault of the surface itself (one clipped cube per voxel, ADR-0011), not of the closing
 > rule, and no closing rule reaches them; they go to
-> [Plan 0053](0053-one-voxel-features-on-the-contour-surface-majority-fit-and-a-normal-field.md)
-> with [ADR-0040](../adrs/0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md)
+> [Plan 0053](../0053-one-voxel-features-on-the-contour-surface-majority-fit-and-a-normal-field.md)
+> with [ADR-0040](../../adrs/0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md)
 > (proposed). Phase 6 is unblocked and rewritten: the losers and `old` go, the window's cracks
 > palette is fixed, the showcase golden is re-blessed by name. The closing rule's ADR is
-> [ADR-0039](../adrs/0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md)
+> [ADR-0039](../../adrs/0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md)
 > (proposed, accepted at this plan's close).
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look decision: "smooth
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the surface-look decision: "smooth
 > and natural rock, not visible cubes")
-> **Related ADRs:** [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
+> **Related ADRs:** [ADR-0011](../../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
 > (the per-voxel plane and its hit rule, which this plan closes the cracks of; its Negative
 > consequences name the crude offset and the shadow-ray artifacts);
-> [ADR-0038](../adrs/0038-the-contour-plane-code-holds-a-zero-normal-component-exactly.md)
+> [ADR-0038](../../adrs/0038-the-contour-plane-code-holds-a-zero-normal-component-exactly.md)
 > (proposed: the plane code's scale, Phase 2);
-> [ADR-0039](../adrs/0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md)
+> [ADR-0039](../../adrs/0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md)
 > (proposed: the closing rule, written 2026-10-30 from Phase 3's readings).
 > **Source:** the owner at Plan 0049's live session 2, 2026-10-29 (`LIGHT-FEEDBACK.md`,
 > finding 5; screenshots `wedges`, `step3` and `step5` in
@@ -959,3 +961,17 @@ extend 0.25 5.928, extend 0.5 5.926, blend 35.151 (light pre 7.005, blend 13.439
   a loaded bless run (Phase 3): the bar or the test's footprint needs a look before the next
   plan that grows the mirror.
 - The flat-faced boxes of Phase 5: Plan 0053.
+- The green cast in Phase 5's window screenshots with `upscaler own` (Phase 6): headless,
+  that chain reproduces nothing wrong. It needs a windowed reading of the surface's own format
+  and the present pass, not another headless test.
+- The cracks view through FSR 2 rests on a scratch reading (914 near-blue, 120 near-magenta
+  at the vein); only our upscaler's chain is pinned by a test
+  (`the_cracks_view_keeps_its_palette_through_the_window_chain`). A plan that next touches the
+  FSR 2 tone pass or the composite's HDR store pins it there.
+- Under snap the walk returns the closing hit before it classifies, so classes 1 and 2 read 0
+  by construction and `the_closing_rule_leaves_no_crack` pins that snap is in place, not that
+  the closed surface is right. A closed-crack class in the cracks view (where snap fired)
+  would let the owner see the closures; Plan 0053's metric is the natural home.
+- `showcase_hall.png` was already stale at 00ca974 (12.4601 % over 2/255): it sat on the slow
+  list until Plan 0052, so no gpu tier read it and the bless runs did not rewrite it. The
+  re-bless at 45bc227 absorbs that drift; its source was not traced.

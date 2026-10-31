@@ -361,7 +361,10 @@ light 0.904 before and 1.529 with snap; Radeon hit 4.264, 5.981 with snap and 5.
 1.439 (RTX) and 9.165 (Radeon) with the shadow push. The hit and light shaders held 64 and 84 VGPRs
 before the plan and with the other rules deleted (a scratch build of e9cae0e's tree), 128 each in
 e9cae0e, where the blend rule's code sat in every walking shader (RADV shader stats). Mirror 157
-872 640 B live, 259 203 264 B allocated in every run.
+872 640 B live, 259 203 264 B allocated in every run. The attribute pass's initial fill with
+ADR-0038's plane code (Plan 0050's close review, 2026-10-31, the same two binaries, 1-minute
+load 1.65 to 2.91, three alternated rounds, medians; 383 608 bricks): RTX 3080 Laptop GPU 17.837
+ms against 17.814 (+0.1 %), Radeon RENOIR 95.627 against 95.531 (+0.1 %), equal to its noise.
 
 **Mirror attribute pass (contour look), render-thread CPU: p99 under 4 ms on the dev reference,
 deferred work visible as face-mode normals for at most 250 ms** (budget, Plan 0023, ADR-0017;

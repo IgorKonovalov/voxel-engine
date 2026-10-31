@@ -1,8 +1,8 @@
 # ADR-0039: The contour walk closes a crack at the passed voxel's exit, with the passed plane's normal
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-31, Plan 0050 closed; see Outcome)
 > **Date:** 2026-10-30
-> **Related plan(s):** [Plan 0050](../plans/0050-watertight-contour-surface-crack-spike-and-closing-rule.md)
+> **Related plan(s):** [Plan 0050](../plans/done/0050-watertight-contour-surface-crack-spike-and-closing-rule.md)
 > (Phases 3 and 4, whose readings this records). Amends
 > [ADR-0011](0011-contour-planes-in-attribute-pages-with-procedural-detail.md)'s hit rule in
 > what the walk does after it passes a surface voxel outside its plane.
@@ -81,3 +81,25 @@ too, is Plan 0053's deferred alternative, not this rule.
 ### Alternative C: the old rule, cracks left open
 
 The status quo. The owner's eye rejected the wedges and triangles at Plan 0049's live session.
+
+## Outcome
+
+**Accepted 2026-10-31 at Plan 0050's close (v0.38.0).** The decision shipped as written, with
+one change of shape: the rule is not a selectable value but the contour walk's only one.
+
+- **What shipped.** Plan 0050's Phase 6 removed `CrackClosing` and `SurfaceTuning::closing`
+  with the extend, blend and old rules and `--closing`, so the Decision's
+  `CrackClosing::Snap` is now simply what `march.wgsl` does after a pass. The shadow push stays
+  selectable (`SurfaceTuning::shadow_push`, `--shadow-push on`, `Params::flags` bit 14), off by
+  default. The second Negative consequence (128 VGPRs while the losers stayed) is gone with them.
+- **The cost, the tree's reading.** The hit pass at the level's spawn, 1080p from 720p, against
+  the binary before Plan 0050, read +1.3 % on the RTX 3080 Laptop GPU (0.616 against 0.608 ms)
+  and +0.4 % on the Radeon RENOIR (4.298 against 4.279), loaded; `docs/nfr.md` section 2.
+- **What it did not reach.** The owner's windowed check (Plan 0050 Phase 5) found the wedges,
+  triangles and slivers gone and voxel-sized flat-faced boxes remaining, in snap and the old
+  rule alike, reading class 0. They are a fault of one clipped cube per voxel, not a crack, and
+  belong to Plan 0053 and ADR-0040.
+- **Evidence note.** Under snap, classes 1 and 2 read 0 by construction: the walk returns the
+  closing hit before it would classify. The class readings compared the rules in Phase 3, where
+  they discriminated; at the default, the zero pins that snap is in place, and the owner's eye is
+  the evidence that the closed cracks do not read as a fault.
