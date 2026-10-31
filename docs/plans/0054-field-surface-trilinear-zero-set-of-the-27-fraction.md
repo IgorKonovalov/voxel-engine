@@ -304,6 +304,19 @@ every asserted reading, golden and gate stays on lavapipe.
   in the same units. `cubes-field` stays until the close as the comparison look and goes with
   the ADR's acceptance unless the owner keeps it. The LOD ring's mip cells stay cubes, as the
   planes stopped at the full radius today.
+
+  Amended 2026-10-31 (architect, from ADR-0041's drafting; the owner picked N1, so the N2
+  storage sentence above is moot): two things the text left open once the planes are gone.
+  *Shadows:* the spike's shadow rays still walked the planes. With the attribute removed the
+  shadow ray walks the voxel occupancy (the brick and mip walk without a plane test), with its
+  origin pushed along the field normal by the shadow push that exists today; it does not walk
+  the field, whose cost the owner's bar cannot carry twice. The speck test reads this at the
+  default and the log carries the count beside today's; a count above today's is a finding
+  for the close, not a stop. *Translucency:* translucent voxels count as solid in the field
+  for the primary hit, as the spike did; the translucent walk after the hit stays as today
+  over the voxel occupancy; `crates/vxe-render/tests/translucent.rs` and the cutaway tests
+  pass unchanged, and if one cannot, dev stops with the reading. Both choices are recorded
+  in ADR-0041 and are revisable by the walk-speed spike.
 - **Files touched:** `crates/vxe-render/src/shaders/march.wgsl`, `attrib.wgsl`, `light.wgsl`,
   `composite.wgsl`, `crates/vxe-render/src/marcher.rs`, `gpu_world.rs`, `lib.rs`,
   `apps/flythrough/src/lib.rs`, `main.rs`, `hud.rs`, `apps/flythrough/tests/look.rs`,
@@ -317,8 +330,11 @@ every asserted reading, golden and gate stays on lavapipe.
   2. Every moved golden is named in the log with its share of pixels over 2/255; the face
      goldens did not move (Plan 0050 owner answer 2).
   3. The hit and light passes at the level's spawn on both adapters, three alternated runs
-     against the Plan 0053 close binary, within the owner's cost bar; the VGPR counts of the
-     hit and light shaders are in the log.
+     against the Plan 0050 close binary (main at `28948a5`; amended 2026-10-31: it read "the
+     Plan 0053 close binary", and Plan 0053 closes together with this plan), within the
+     owner's cost bar on the RTX (hit plus light at most 5 ms; the spike read 4.36 ms, so the
+     margin is 0.64 ms) and as a reading on the Radeon; the VGPR counts of the hit and light
+     shaders are in the log.
   4. No removed setting's flag remains in `--help` or the banner; `cargo doc` has no mention
      of a plane attribute outside the ADR citations.
 
@@ -326,8 +342,10 @@ every asserted reading, golden and gate stays on lavapipe.
 - **Owner skill:** dev
 - **What:** `nfr.md` §2 and §3 carry the field's readings with machine, commit and load; the
   plan's log carries the close block. The field surface's ADR (drafted by the architect after
-  Phase 1, number from the index) is accepted at the close; ADR-0011 and ADR-0040 are marked
-  superseded by it, ADR-0039 superseded as moot (no cube face, no crack).
+  Phase 1, number from the index; it is ADR-0041, drafted 2026-10-31) is accepted at the
+  close; ADR-0011 (its surface; the per-material detail survives) and ADR-0040 are marked
+  superseded by it, ADR-0039 superseded as moot (no cube face, no crack), and ADR-0038 (the
+  plane code's zero component) superseded as moot with the attribute (amended 2026-10-31).
 - **Files touched:** `docs/nfr.md`, this plan's log.
 - **Done when:** the close block names every reading above; the full tier, clippy, fmt,
   doctests, deny and the doc gates are clean at the tip, with the full tier's wall time and
