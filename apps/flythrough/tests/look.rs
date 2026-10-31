@@ -1215,6 +1215,13 @@ use support::rigs::Feature;
 /// A hit point lies on a cube face when one of its coordinates is within this of an integer.
 const FACE_EPS: f32 = 1e-3;
 
+/// Under the field look a hit on a cube face is a box only when its shading normal (the hit
+/// record's, detail off) lies within this many degrees of the face's outward axis normal. The
+/// field surface is curved and crosses voxel face planes: a hit on it that happens to lie
+/// within [`FACE_EPS`] of a face plane, with a normal far from that face's, shows no cube face.
+/// The plane looks keep the position-only test.
+const FIELD_BOX_DEGREES: f32 = 15.0;
+
 /// Adjacent hit pixels whose hit points lie within this many voxels of each other are on one
 /// surface (no depth edge) for the tile-contrast metric.
 const TILE_REACH: f32 = 1.5;
@@ -1262,8 +1269,10 @@ fn count27(world: &World, v: [i32; 3]) -> u32 {
 /// solid neighbour. A flat floor's face hits have one air face; a hit between two solid voxels
 /// lies on no exposed face; a hit on the edge where an exposed face meets a face between two
 /// solid voxels (a plane hit along the outline of a feature's footprint, on the surface under
-/// it) is the surface's.
-fn box_voxel(world: &World, p: [f32; 3]) -> Option<[i32; 3]> {
+/// it) is the surface's. `facing` is asked of the face's outward axis normal (from the solid
+/// voxel toward the air one) and must hold too: [`box_reading`] passes the field look's
+/// normal condition through it, which holds for every face in every other look.
+fn box_voxel(world: &World, p: [f32; 3], facing: impl Fn([f32; 3]) -> bool) -> Option<[i32; 3]> {
     let near = |c: f32| (c - c.round()).abs() <= FACE_EPS;
     for k in 0..3 {
         if !near(p[k]) {
@@ -1279,6 +1288,11 @@ fn box_voxel(world: &World, p: [f32; 3]) -> Option<[i32; 3]> {
             continue;
         }
         let v = if sl { lo } else { hi };
+        let mut outward = [0.0; 3];
+        outward[k] = if sl { 1.0 } else { -1.0 };
+        if !facing(outward) {
+            continue;
+        }
         let on_buried_face = (0..3).filter(|&j| j != k && near(p[j])).any(|j| {
             let r = p[j].round() as i32;
             if r != v[j] && r != v[j] + 1 {
@@ -1371,6 +1385,9 @@ fn box_reading(
     }
     let normals = readback::read_rgba8(&rig.device, &rig.queue, rig.frame.target());
     let positions = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    let records = readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records());
+    let field = look.tuning.model == vxe_render::SurfaceModel::Field;
+    let cos_box = FIELD_BOX_DEGREES.to_radians().cos();
     let [w, h] = crack.size.map(|v| v as usize);
     let counted: Vec<bool> = (0..w * h)
         .map(|i| {
@@ -1390,7 +1407,9 @@ fn box_reading(
             continue;
         }
         let p = [positions[i][0], positions[i][1], positions[i][2]];
-        let Some(v) = box_voxel(world, p) else {
+        let n = support::rigs::octa16_normal(records[i][0], records[i][1]);
+        let facing = |a: [f32; 3]| !field || (0..3).map(|k| a[k] * n[k]).sum::<f32>() >= cos_box;
+        let Some(v) = box_voxel(world, p, facing) else {
             continue;
         };
         let high = count27(world, v) >= 14;
@@ -2214,7 +2233,9 @@ const FIELD_HEADER: &str = "| scene | look | hits | left out | box px | count < 
 /// rod, the lone cube, the groove, the wall pillar and the ridge read 0 box pixels in the field
 /// look, every analytic scene ([`field_scenes`]) and the level at `VEIN_POSE` and `PATCH_POSE`
 /// read 0 leaks, under N1 and N2; the tile-contrast share under each is printed for every
-/// scene.
+/// scene. A box pixel in the field look also needs its shading normal within
+/// [`FIELD_BOX_DEGREES`] of the face's axis normal (the field surface crosses face planes
+/// without showing a cube face there).
 #[test]
 fn the_field_surface_has_no_boxes_and_no_leaks() {
     let level = pose_level();

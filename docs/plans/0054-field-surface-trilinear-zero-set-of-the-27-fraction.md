@@ -420,7 +420,7 @@ is in `vxe-render`, a client-side view.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The field as a scratch look: dense storage, the walk, the readings and the census | dev | stopped: done-when 2 (box pixels) unmet | committed with this row (wip) |
+| 1: The field as a scratch look: dense storage, the walk, the readings and the census | dev | done | b282738 (the code, wip) and committed with this row (the field look's box rule) |
 | 2: The owner's windowed check, one session with Plan 0053's Phase 4 | human | not started | |
 | 3: Band slots in the size-classed mirror | dev | not started | |
 | 4: The field as the default walk, the planes removed | dev | not started | |
@@ -436,16 +436,22 @@ the same rows as lamp on at both poses.
 - Done-when 1, `the_field_surface_lies_on_the_flat_faces`: `floor` 43012 hits (230 left out),
   0 leaks, worst hit 7.63e-6 voxel off `z = 64` (start look 43012 hits, 392 left out); `wall`
   37800 hits (180), 0 leaks, worst 7.63e-6 off `x = 80` (start look 37800, 180).
-- Done-when 2, unmet: `the_field_surface_has_no_boxes_and_no_leaks` fails on box pixels. Leaks
-  read 0 on every analytic scene and at both poses under N1 and N2. Box px under N1 and N2
-  alike: `rod` 9, `lone cube` 0, `groove` 8, `wall pillar` 2, `ridge` 10. The rod's 9 (RTX
-  3080 Laptop scratch dump of each box pixel's point and normals-view normal): 8 on the bump's
-  flat top at `z = 60.333` within 1e-3 of the planes `y = 64` and `y = 65` with normal `+z`,
-  1 at `x = 58.0005` with normal `(-0.11, 0, 0.99)`: hit points on the field surface that
-  cross a voxel face's plane, which the metric's face test (a coordinate within 1e-3 of an
-  integer, between a solid and an air voxel, two or more air faces) counts. The slabs, the
-  cavity, the pillar and the poses read box px at the same rate (table).
-- Done-when 3, `field_readings` (lavapipe; the RTX 3080 Laptop run reads the same rows but
+- Done-when 2, as amended 2026-10-31: `box_reading` in `look.rs` takes the field look's normal
+  condition through `box_voxel`'s face test (`FIELD_BOX_DEGREES` 15: the hit record's
+  octahedral normal within 15 degrees of the face's outward axis normal), the plane looks
+  keep the position-only test. `the_field_surface_has_no_boxes_and_no_leaks` on lavapipe:
+  box px 0 on `rod`, `lone cube`, `groove`, `wall pillar`, `ridge` under N1 and N2; leaks 0 on
+  every analytic scene and at both poses under N1 and N2; every other analytic scene reads 0
+  box px; `level vein` 0, `level patch` N1 9, N2 0 (the poses carry no box assertion). The
+  plane-look counts of Plan 0053's tests at this commit: `one_voxel_features_render_as_boxes_today`
+  start look rod 499, lone cube 24, groove 697, wall pillar 276; `the_majority_fit_melts_one_voxel_features`
+  rod, lone cube, wall pillar 0 (both pass). Under the unamended metric (b282738) the field read
+  box px, N1 and N2 alike: `rod` 9, `lone cube` 0, `groove` 8, `wall pillar` 2, `ridge` 10. The
+  rod's 9 (RTX 3080 Laptop scratch dump of each box pixel's point and normals-view normal): 8
+  on the bump's flat top at `z = 60.333` within 1e-3 of the planes `y = 64` and `y = 65` with
+  normal `+z`, 1 at `x = 58.0005` with normal `(-0.11, 0, 0.99)`. The rod's flat top at
+  `z = 60.333` is for the owner's eye in Phase 2.
+- Done-when 3, `field_readings` (lavapipe, under the unamended box metric at b282738; the RTX 3080 Laptop run reads the same rows but
   tilted slab start look 49354 hits / 17962 box px, cavity start look 20258, pillar start
   look 8.836 %, patch N1/N2 314 box px):
 
@@ -581,31 +587,19 @@ the same rows as lamp on at both poses.
   `LookPreset::FIELD` sits in `LookPreset::ALL` after `cubes-field`; the banner names `field
   normal analytic|blend`, `BANNER_ROWS` stays 9; the hud test of each preset's banner
   expects the field's words.
-- Gate at this commit: build, clippy `-D warnings` 0, fmt 0, doctests ok, `cargo deny check`
-  ok, the four `scripts/check-*.mjs` 0; `--profile quick` 539 run, 538 passed, 1 timeout
-  (`flythrough::replay a_stamp_and_a_collapse_replay_from_the_save` 30 s at load 20; alone
-  13.96 s), 3 skipped; `--profile gpu --no-fail-fast`
-  (perf lock, load 13.1 at the start from the quick run's tail, 1.3 at the end) 196 run, 192
-  passed, 4 failed, 31 skipped: `look the_field_surface_has_no_boxes_and_no_leaks` (done-when
-  2 above) and the base's three (`look the_normal_field_has_no_tile_edges`, `look
-  the_normal_field_adds_no_dark_speck`, `sharpness detail_after_lighting_is_exact_for_the_lamp`).
-
-### Resume notes (2026-10-31, delete when Phase 1 lands)
-
-- State: Phase 1's code, tests and readings are in this wip commit; it stops on done-when 2's
-  box pixels, a question for the architect. Every other done-when reads as above (leaks 0
-  everywhere; no stop on the leak clause).
-- Question, done-when 2 (0 box pixels on `rod`, `lone cube`, `groove`, `wall pillar`, `ridge`):
-  the field reads 9, 0, 8, 2, 10, hit points on the curved surface within 1e-3 of a voxel
-  face's plane. Options: (a) the architect amends the box metric for the field look: a box
-  pixel also needs its normals-view normal within 15 degrees of that face's axis normal (the
-  rod's 9 have normals within 7 degrees of `+z` on `y`- and `x`-planes; the others not yet
-  read) (recommended); (b) the bar becomes a rate (box px at most 0.1 % of the counted hits:
-  the five scenes read at most 0.020 %, ridge; the diagonal slab reads 0.62 %, the vein 0.36 %); (c) keep the bar and the metric, and the field
-  reads unmet.
-- To finish on (a) or (b): change the metric or the assertion as amended, rerun
-  `the_field_surface_has_no_boxes_and_no_leaks` and `field_readings` on lavapipe, replace
-  these notes with the row's SHA, commit as `feat(render)`.
+- Gate at b282738: `--profile gpu` 196 run, 192 passed, 4 failed
+  (`the_field_surface_has_no_boxes_and_no_leaks` under the unamended metric and the base's
+  three below); the rest as at this commit.
+- Gate at this commit: build 0; clippy `-D warnings` 0 (workspace, and `-p flythrough
+  --features wasm`); fmt 0; doctests ok; `cargo deny check` ok; the four `scripts/check-*.mjs`
+  0; `--profile quick` (no lock, load 5.3 at the start, 24.9 at the end) 539 run, 537 passed,
+  2 timed out, 3 skipped: `flythrough::castle the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn`
+  30.07 s and `flythrough::replay a_stamp_and_a_collapse_replay_from_the_save` 30.03 s, alone
+  8.65 s and 14.71 s (load 23.0); `--profile gpu --no-fail-fast` on lavapipe (exclusive perf
+  lock, load 2.38 at the start, 1.24 at the end, 1895 s) 196 run, 193 passed, 3 failed, 31
+  skipped: the base's three, `look the_normal_field_adds_no_dark_speck`, `look
+  the_normal_field_has_no_tile_edges` (Plan 0053 Phase 3) and `sharpness
+  detail_after_lighting_is_exact_for_the_lamp` (98.028 %, Plan 0050 Phase 6).
 
 ### Notes
 
@@ -621,8 +615,11 @@ each. Empty is fine.)_
   base and not touched: `sharpness detail_after_lighting_is_exact_for_the_lamp` (98.028 %
   against 98.3 %), `look the_normal_field_has_no_tile_edges`, `look
   the_normal_field_adds_no_dark_speck`.
-- Phase 1: done-when 2's box pixels unmet (rod 9, groove 8, wall pillar 2, ridge 10); the
-  deviations are in the Phase 1 section.
+- Phase 1: the code and readings are in b282738 (wip); done-when 2's box rule for the field
+  look is in this phase's second commit. Under the unamended metric the field read rod 9, lone
+  cube 0, groove 8, wall pillar 2, ridge 10; the rod's flat top at `z = 60.333` is named for
+  the owner's Phase 2 look. The deviations are in the Phase 1 section; `field.rs` has one
+  comment reworded for the comment-hygiene gate.
 - Noticed, not acted on: the field walk reads every corner count through the chunk table, the
   record and the index, and the hit shader holds 128 VGPRs; no cost work was done.
 

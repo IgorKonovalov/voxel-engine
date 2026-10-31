@@ -243,7 +243,7 @@ impl FieldScratch {
             slots_per_shard,
             index_slots,
             index_cpu,
-            // Every row at the first encode: the shard is new.
+            // Every row at the first encode: the shard holds nothing yet.
             rows_changed: (0..records).collect(),
             chunks: HashMap::new(),
             free: Vec::new(),
