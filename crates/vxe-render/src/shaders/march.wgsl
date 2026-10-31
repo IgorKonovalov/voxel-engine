@@ -63,11 +63,6 @@
 //                                      contour-plane hit, bit 2 translucent layers in front,
 //                                      bits 3..5 the entry face's axis plus one (0: the ray
 //                                      started inside rock)
-//   3  storage  field_pool0    the field surface's scratch pool (`field.rs`), shard 0: its
-//                              index (FIELD_RECORD_WORDS a record: the slot count, 16 words of
-//                              slotted-brick bits, 512 slots or ABSENT), then slots of
-//                              FIELD_SLOT_WORDS (band mask, then the u8 counts); 4 is shard
-//                              1. Read by the hit pipeline with FIELD_SURFACE alone
 //   2  storage texture  layer_out      rgba16float: the translucent layers in front of the hit
 //                                      (premultiplied colour, transmittance), lit by the lamp's
 //                                      cone and distance term except in the albedo view; in the
@@ -164,8 +159,7 @@ struct Params {
     // (`SurfaceTuning::face_mix`); 0 keeps the plane's.
     face_mix: f32,
     window_size: vec3<i32>,
-    // Slots per field shard (the field surface's scratch pool); 0 without the pool.
-    field_slots: u32,
+    _pad3: i32,
     light_pos: vec3<f32>,
     light_intensity: f32,
     light_dir: vec3<f32>,
@@ -236,8 +230,6 @@ struct ExposureState {
 @group(1) @binding(0) var hit_pos_out: texture_storage_2d<rgba32float, write>;
 @group(1) @binding(1) var hit_info_out: texture_storage_2d<rgba16uint, write>;
 @group(1) @binding(2) var layer_out: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(3) var<storage, read> field_pool0: array<u32>;
-@group(1) @binding(4) var<storage, read> field_pool1: array<u32>;
 
 const ABSENT: u32 = 0xFFFFFFFFu;
 const FULL_BIT: u32 = 0x80000000u;
@@ -250,6 +242,7 @@ const MATERIAL_MASK: u32 = 0xFFFFu;
 const UNIT_MASK: u32 = 0x3FFFFFFu;
 const CLASS_SHIFT: u32 = 26u;
 const CLASS_WIDE: u32 = 5u;
+const CLASS_UNIFORM: u32 = 6u;
 // MaterialFlags::TRANSLUCENT, in the material row's flag bits.
 const MATERIAL_TRANSLUCENT: u32 = 2u;
 // u32 words of a pool unit and of a chunk record, and the record word where the brick entries
@@ -633,9 +626,10 @@ fn descend(v: vec3<i32>) -> Descent {
     return Descent(0, entry, cell, level, vec3<u32>(l), u32(l.x + 8 * (l.y + 8 * l.z)), true);
 }
 
-// Bit planes of a planar class: 0, 1, 2 or 4 for classes 1 to 4.
+// Bit planes of a planar class: 0, 1, 2 or 4 for classes 1 to 4, none for a uniform band
+// brick's slot (class 6, laid out as class 1).
 fn class_planes(cls: u32) -> u32 {
-    return select(cls - 1u, 4u, cls == 4u);
+    return select(select(cls - 1u, 4u, cls == 4u), 0u, cls == CLASS_UNIFORM);
 }
 
 // Units of a Full entry's payload: its planes, or 16 of raw ids for class Wide.
@@ -1653,13 +1647,17 @@ fn emission_of(m: u32) -> vec3<f32> {
 
 // ---- The field surface (flag bit 17, the hit pipeline with FIELD_SURFACE) ----
 //
-// ADR-0040's Alternative B, as a scratch: the surface is the zero set of `phi = count / 27 -
-// 1/2` trilinearly interpolated over the voxel centres, `count` a voxel's solid voxels among
-// the 27 around it, itself included (solid is not air, a translucent voxel included), read
-// from the scratch pool (`field.rs`) for a slotted brick and 0 or 27 for any other. The walk
-// is `march`'s DDA over the cells that hold a band voxel (0 < count < 27) or a solid one: a
-// slotted brick's band mask ORed with its opaque mask (all set for a uniform solid brick),
-// and a chunk or a group of bricks is skipped only when no brick of it is slotted. In a band
+// ADR-0041: the surface is the zero set of `phi = count / 27 - 1/2` trilinearly interpolated
+// over the voxel centres, `count` a voxel's solid voxels among the 27 around it, itself
+// included (solid is not air, a translucent voxel included). A band brick's header names its
+// band slot (HEADER_BAND_WORD: HEADER_BAND_BIT and the slot's first unit; a uniform band brick
+// has a class 6 slot for it): the band mask (unit 0, the opaque mask's layout), then the band
+// voxels' u8 counts in band-index order, the k-th in byte k % 4 of word k / 4 of unit 1 on. A
+// band voxel's count is read there, any other voxel's is 27 when it is solid and 0 when it is
+// air. The walk is `march`'s DDA over the cells that hold a band voxel (0 < count < 27) or a
+// solid one: a band brick's band mask ORed with its opaque mask (all set for a uniform solid
+// brick, a translucent one included), and a chunk or a group of bricks is skipped only when
+// its brick bits are clear. In a band
 // voxel the ray's segment through the voxel is split at the voxel's three mid-planes into its
 // pieces in the dual cells it crosses (the cubes between eight voxel centres, at most four),
 // and on a piece whose cell's eight corners mix signs `phi` along the ray is a cubic in `t`:
@@ -1678,45 +1676,23 @@ fn emission_of(m: u32) -> vec3<f32> {
 
 override FIELD_SURFACE: bool = false;
 
-const FIELD_SLOT_WORDS: u32 = 144u;
-const FIELD_COUNT_WORD: u32 = 16u;
-const FIELD_RECORD_WORDS: u32 = 529u;
-const FIELD_BITS_WORD: u32 = 1u;
-const FIELD_SLOT_WORD: u32 = 17u;
+const HEADER_BAND_WORD: u32 = 15u;
+const HEADER_BAND_BIT: u32 = 0x80000000u;
 // A piece that starts this far above zero (in phi) missed its crossing: a leak.
 const FIELD_LEAK_EPS: f32 = 1e-4;
 
-// Word `word` of field slot `slot`, counted as a pool load.
-fn field_word(slot: u32, word: u32) -> u32 {
-    loads += 1u;
-    pool_reads += 1u;
-    let n = params.field_slots;
-    let shard = slot / n;
-    let i = (slot - shard * n) * FIELD_SLOT_WORDS + word;
-    if (shard == 0u) {
-        return field_pool0[i];
-    }
-    return field_pool1[i];
-}
-
-// Word `i` of the field index (shard 0's first words), counted as a load.
-fn field_index_word(i: u32) -> u32 {
-    loads += 1u;
-    return field_pool0[i];
-}
-
 // The field's view of a brick: its chunk's table entry (ABSENT outside the window or for an
-// absent chunk) and, in a full chunk, the brick's record entry and field slot (ABSENT for
+// absent chunk) and, in a full chunk, the brick's record entry and band slot (ABSENT for
 // none).
 struct FBrick {
     table: u32,
     entry: u32,
-    slot: u32,
+    band: u32,
 };
 
 // The last brick `field_brick` resolved, the last 4^3 block row `field_cell` read (keyed by
-// slot and word), the last group of bricks it tested (keyed by record and word) and the last
-// dual cell's corners `field_piece` loaded.
+// band slot and word), the last group of bricks it tested (keyed by record and word) and the
+// last dual cell's corners `field_piece` loaded.
 var<private> fb_held: bool;
 var<private> fb_key: vec3<i32>;
 var<private> fb: FBrick;
@@ -1758,15 +1734,40 @@ fn field_brick(bw: vec3<i32>) -> FBrick {
             let b = bw - chunk * 8;
             let bi = u32(b.x + 8 * (b.y + 8 * b.z));
             r.entry = record_word(rec * RECORD_WORDS + ENTRY_WORD + bi);
-            r.slot = field_index_word(rec * FIELD_RECORD_WORDS + FIELD_SLOT_WORD + bi);
+            if ((r.entry & FULL_BIT) != 0u) {
+                let h = pool_word(r.entry & UNIT_MASK, HEADER_WORD + HEADER_BAND_WORD);
+                if ((h & HEADER_BAND_BIT) != 0u) {
+                    r.band = h & UNIT_MASK;
+                }
+            }
         }
     }
     fb = r;
     return r;
 }
 
-// The count of voxel `u`: a slotted brick's, else 27 for a solid voxel and 0 for air (a
-// LOD-only chunk's through its mip cell, a Full brick without a slot through its opaque bit).
+// Whether voxel `i` of the brick with record entry `entry` (in a full chunk) is solid to the
+// field: not air, a translucent voxel included.
+fn field_solid(entry: u32, i: u32) -> bool {
+    if ((entry & FULL_BIT) == 0u) {
+        return (entry & MATERIAL_MASK) != 0u;
+    }
+    let unit = entry & UNIT_MASK;
+    if (((pool_word(unit, i / 32u) >> (i % 32u)) & 1u) != 0u) {
+        return true;
+    }
+    if ((entry & TRANSLUCENT_BIT) == 0u) {
+        return false;
+    }
+    if (((entry >> CLASS_SHIFT) & 7u) == CLASS_WIDE) {
+        return voxel_material(entry, i) != 0u;
+    }
+    let t = pool_word(unit, PAYLOAD_WORD + UNIT_WORDS * payload_units(entry) + i / 32u);
+    return ((t >> (i % 32u)) & 1u) != 0u;
+}
+
+// The count of voxel `u`: a band voxel's from its band slot, else 27 for a solid voxel and 0
+// for air (a LOD-only chunk's through its mip cell).
 fn field_count(u: vec3<i32>) -> u32 {
     let bw = floor_div(u, 8);
     let b = field_brick(bw);
@@ -1778,13 +1779,19 @@ fn field_count(u: vec3<i32>) -> u32 {
     }
     let l = vec3<u32>(u - bw * 8);
     let i = l.x + 8u * (l.y + 8u * l.z);
-    if (b.slot != ABSENT) {
-        return (field_word(b.slot, FIELD_COUNT_WORD + i / 4u) >> (8u * (i % 4u))) & 0xFFu;
+    if (b.band != ABSENT) {
+        let w = i / 32u;
+        let m = pool_word(b.band, w);
+        let bit = 1u << (i % 32u);
+        if ((m & bit) != 0u) {
+            var k = countOneBits(m & (bit - 1u));
+            for (var j = 0u; j < w; j++) {
+                k += countOneBits(pool_word(b.band, j));
+            }
+            return (pool_word(b.band, UNIT_WORDS + k / 4u) >> (8u * (k % 4u))) & 0xFFu;
+        }
     }
-    if ((b.entry & FULL_BIT) == 0u) {
-        return select(0u, 27u, (b.entry & MATERIAL_MASK) != 0u);
-    }
-    return select(0u, 27u, ((pool_word(b.entry & UNIT_MASK, i / 32u) >> (i % 32u)) & 1u) != 0u);
+    return select(0u, 27u, field_solid(b.entry, i));
 }
 
 fn field_phi(u: vec3<i32>) -> f32 {
@@ -1819,9 +1826,8 @@ fn field_cell(v: vec3<i32>) -> FCell {
     }
     let rec = b.table & RECORD_MASK;
     if (skips) {
-        // A 2 x 2 x 2 group of bricks none of which is solid or slotted, from the record's
-        // brick bits and the field index's slotted bits (the same layout); in an empty chunk
-        // the brick bits are clear.
+        // A 2 x 2 x 2 group of bricks none of which is uniform air, from the record's brick
+        // bits (a band brick's entry is never 0); in an empty chunk they are clear.
         let lb = bw - chunk * 8;
         let g = vec3<u32>(lb / 2);
         let wi = 4u * g.z + g.y / 2u;
@@ -1829,11 +1835,10 @@ fn field_cell(v: vec3<i32>) -> FCell {
         if (!fg_held || any(key != fg_key)) {
             fg_held = true;
             fg_key = key;
-            let fbase = rec * FIELD_RECORD_WORDS + FIELD_BITS_WORD;
-            fg_bits = field_index_word(fbase + wi) | field_index_word(fbase + wi + 2u);
+            fg_bits = 0u;
             if ((b.table & EMPTY_BIT) == 0u) {
                 let base = rec * RECORD_WORDS;
-                fg_bits |= record_word(base + wi) | record_word(base + wi + 2u);
+                fg_bits = record_word(base + wi) | record_word(base + wi + 2u);
             }
         }
         if ((fg_bits & (0x0303u << (2u * g.x + 16u * (g.y & 1u)))) == 0u) {
@@ -1843,7 +1848,7 @@ fn field_cell(v: vec3<i32>) -> FCell {
     let l = vec3<u32>(v - bw * 8);
     let i = l.x + 8u * (l.y + 8u * l.z);
     let full = (b.entry & FULL_BIT) != 0u;
-    if (b.slot == ABSENT) {
+    if (b.band == ABSENT) {
         if (!full) {
             if ((b.entry & MATERIAL_MASK) == 0u) {
                 return FCell(select(1, 8, skips), false, false, false);
@@ -1851,35 +1856,36 @@ fn field_cell(v: vec3<i32>) -> FCell {
             // A uniform solid brick outside the band.
             return FCell(0, false, true, false);
         }
-        // A Full brick without a slot (the pool was full): its opaque voxels, outside the band.
+        // A Full brick outside the band: its opaque voxels.
         let c = lookup_walk(v, false);
         return FCell(c.size, false, c.size == 0, false);
     }
-    // A slotted brick: its band mask ORed with its opaque mask, read a 4^3 block row at a
-    // time as `mask_skip` reads the opaque mask.
+    // A band brick: its band mask ORed with its opaque mask, read a 4^3 block row at a time as
+    // `mask_skip` reads the opaque mask.
     let q = l / 4u;
     let w = 8u * q.z + q.y;
-    let key = b.slot * 16u + w;
+    let key = b.band * 16u + w;
     if (!fm_held || key != fm_key) {
         fm_held = true;
         fm_key = key;
-        fm_opaque = vec4<u32>(0u);
-        if (full) {
-            let unit = b.entry & UNIT_MASK;
+        let unit = b.entry & UNIT_MASK;
+        let cls = (b.entry >> CLASS_SHIFT) & 7u;
+        if (cls == CLASS_UNIFORM && (b.entry & TRANSLUCENT_BIT) != 0u) {
+            // A uniform translucent brick is solid to the field throughout.
+            fm_opaque = vec4<u32>(0xFFFFFFFFu);
+        } else {
             fm_opaque = vec4<u32>(
                 mask_word_at(unit, w),
                 mask_word_at(unit, w + 2u),
                 mask_word_at(unit, w + 4u),
                 mask_word_at(unit, w + 6u),
             );
-        } else if ((b.entry & MATERIAL_MASK) != 0u) {
-            fm_opaque = vec4<u32>(0xFFFFFFFFu);
         }
         fm_band = vec4<u32>(
-            field_word(b.slot, w),
-            field_word(b.slot, w + 2u),
-            field_word(b.slot, w + 4u),
-            field_word(b.slot, w + 6u),
+            pool_word(b.band, w),
+            pool_word(b.band, w + 2u),
+            pool_word(b.band, w + 4u),
+            pool_word(b.band, w + 6u),
         );
     }
     let mk = fm_opaque | fm_band;

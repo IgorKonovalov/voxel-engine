@@ -6,11 +6,11 @@ use std::sync::Arc;
 
 use vxe_render::attrib::{AttribBindings, AttribItem, AttribPass};
 use vxe_render::gpu_world::{
-    ABSENT, BINS, BITS_WORDS, CLASS_MASK, CLASS_SHIFT, CLASS_WIDE, EMPTY_BIT, ENTRY_WORD, FULL_BIT,
-    HEADER_TRANSLUCENT_WORD, LOD_BIT, LOD_LEVEL_ENTRY, NO_PLANE, PAGE_BYTES, PAGE_UNITS,
-    PLACEHOLDER_BYTES, RECORD_BYTES, RECORD_MASK, RECORD_WORDS, TRANSLUCENT_BIT, UNIT_BYTES,
-    UNIT_MASK, UNIT_WORDS, attr_offset, bin_of, budget_for, chunk_surface, payload_units,
-    slot_units, slots_per_page,
+    ABSENT, BIN_COUNT, BINS, BITS_WORDS, CLASS_MASK, CLASS_SHIFT, CLASS_UNIFORM, CLASS_WIDE,
+    EMPTY_BIT, ENTRY_WORD, FULL_BIT, HEADER_BAND_BIT, HEADER_BAND_WORD, HEADER_TRANSLUCENT_WORD,
+    LOD_BIT, LOD_LEVEL_ENTRY, NO_PLANE, PAGE_BYTES, PAGE_UNITS, PLACEHOLDER_BYTES, RECORD_BYTES,
+    RECORD_MASK, RECORD_WORDS, TRANSLUCENT_BIT, UNIT_BYTES, UNIT_MASK, UNIT_WORDS, attr_offset,
+    band_bin_of, bin_of, budget_for, chunk_surface, payload_units, slot_units, slots_per_page,
 };
 use vxe_render::{
     ATROUS_WGSL, ATTRIB_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, GpuWorld, LIGHT_WGSL, MARCH_WGSL,
@@ -1648,7 +1648,7 @@ fn the_attribute_pass_fills_the_floor_and_reaches_a_carve_s_neighbours() {
 
 /// The bound on pages ever issued for each bin's peak live slots: per bin with a slot, the
 /// pages its peak fills and one more.
-fn page_bound(peak: &[u32; 10]) -> u32 {
+fn page_bound(peak: &[u32; BIN_COUNT]) -> u32 {
     peak.iter()
         .enumerate()
         .filter(|(_, n)| **n > 0)
@@ -3646,4 +3646,74 @@ fn the_majority_filter_fits_a_rod_the_floors_plane() {
         assert_eq!(flat >> 12, 11, "{}: floor code", fit.name());
         assert_eq!(flat & 0xFFF, 31 | 31 << 6, "{}: floor normal", fit.name());
     }
+}
+
+/// A band-air brick's slot, bit-exact (ADR-0041): in a one-chunk world whose one solid brick
+/// is uniform, with the field surface on, the uniform air brick beside the solid brick's +x
+/// face is a band brick. Its entry is `Full` of class [`CLASS_UNIFORM`] and not translucent;
+/// its slot is two units, an opaque mask with no bit set and a header holding air as palette
+/// entry 0 and its band slot in [`HEADER_BAND_WORD`]; the band slot is two units of an exact
+/// bin, its band mask the face layer `x = 0` (64 bits), and its first count unit holds, after
+/// the field pass, the counts of the face layer in band-index order (voxel `(0, y, z)` at
+/// index `y + 8 z`): 4 at a corner of the face, 6 along an edge, 9 inside it.
+#[test]
+fn a_band_air_brick_s_slot_is_pinned() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let mut t = MaterialTable::new();
+    t.push(Material::named("rock"));
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &OneBrick(Brick::Uniform(1)),
+        &t,
+    );
+    let mut gpu = GpuWorld::with_config(&device, small(Window::Fixed(world.extent())));
+    gpu.set_field_surface(true);
+    gpu.sync_now(&world, &device, &queue).unwrap();
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    assert!(gpu.update_attrs(&mut enc) > 0);
+    queue.submit([enc.finish()]);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+
+    let c = ChunkCoord([0, 0, 0]);
+    let e = gpu.entry(c, brick_slot([1, 0, 0])).unwrap();
+    assert_eq!(e & !UNIT_MASK, FULL_BIT | CLASS_UNIFORM << CLASS_SHIFT);
+    let pool: Vec<u32> = bytemuck::pod_collect_to_vec(&readback::read_buffer(
+        &device,
+        &queue,
+        gpu.pool_shard(0),
+        0,
+        gpu.pool_shard(0).size(),
+    ));
+    let o = (e & UNIT_MASK) as usize * UNIT_WORDS;
+    assert_eq!(gpu.bin_of_unit(e & UNIT_MASK), Some(bin_of(2)));
+    assert_eq!(pool[o..o + UNIT_WORDS], [0; UNIT_WORDS]);
+    let header = &pool[o + UNIT_WORDS..o + 2 * UNIT_WORDS];
+    let band = header[HEADER_BAND_WORD] & UNIT_MASK;
+    let mut want = [0u32; UNIT_WORDS];
+    want[HEADER_BAND_WORD] = HEADER_BAND_BIT | band;
+    assert_eq!(header, want);
+
+    assert_eq!(gpu.bin_of_unit(band), Some(band_bin_of(2)));
+    let b = band as usize * UNIT_WORDS;
+    assert_eq!(pool[b..b + UNIT_WORDS], [0x0101_0101; UNIT_WORDS]);
+    let counts: Vec<u8> = pool[b + UNIT_WORDS..b + 2 * UNIT_WORDS]
+        .iter()
+        .flat_map(|w| w.to_le_bytes())
+        .collect();
+    let want: Vec<u8> = (0..64)
+        .map(|k| {
+            let edge = |v: usize| if v == 0 || v == 7 { 2 } else { 3 };
+            (edge(k % 8) * edge(k / 8)) as u8
+        })
+        .collect();
+    assert_eq!(counts[..8], [4, 6, 6, 6, 6, 6, 6, 4]);
+    assert_eq!(counts[8..16], [6, 9, 9, 9, 9, 9, 9, 6]);
+    assert_eq!(counts, want);
+    // The solid brick is a band brick too, its band its outer layer.
+    let s = gpu.entry(c, 0).unwrap();
+    assert_eq!(s & !UNIT_MASK, FULL_BIT | CLASS_UNIFORM << CLASS_SHIFT);
+    // The solid brick and the seven air bricks of the chunk around its corner.
+    assert_eq!(gpu.band_bricks(), 8);
 }

@@ -2064,14 +2064,16 @@ impl Gfx {
     }
 }
 
-/// The field surface's scratch pool: its live slots, the bytes of its buffers (outside the
-/// mirror's) and the bricks it had no slot for.
-fn field_line(f: &vxe_render::field::FieldScratch) -> String {
+/// The field surface's band slots in the mirror: the band bricks holding one and their units'
+/// bytes (each slot's whole bin, a uniform band brick's own slot included), inside the
+/// mirror's live bytes.
+fn field_line(mirror: &GpuWorld) -> String {
     format!(
-        "field pool: {} slots live, {} B in its buffers (outside the mirror), {} bricks without a slot",
-        f.live_slots(),
-        f.bytes(),
-        f.overflow()
+        "field band: {} band bricks, {} B of band slots, mirror {} B live, {} B allocated",
+        mirror.band_bricks(),
+        mirror.band_units() * vxe_render::gpu_world::UNIT_BYTES,
+        mirror.mirror_bytes(),
+        mirror.allocated_bytes()
     )
 }
 
@@ -3609,8 +3611,8 @@ impl Run {
         if gfx.mirror.surface_attrs() {
             println!("{}", attr_line("initial fill", gfx.timed_attrs(gpu)));
         }
-        if let Some(f) = gfx.mirror.field_pool() {
-            println!("{}", field_line(f));
+        if gfx.mirror.field_surface() {
+            println!("{}", field_line(&gfx.mirror));
         }
         if self.args.band_census && self.stream.is_none() {
             println!("{}", band_census_line(&self.world, &gfx.mirror));
@@ -3856,8 +3858,8 @@ impl Run {
                 stream.rule.r_full
             );
             println!("{}", bins_line(&gfx.mirror));
-            if let Some(f) = gfx.mirror.field_pool() {
-                println!("{}", field_line(f));
+            if gfx.mirror.field_surface() {
+                println!("{}", field_line(&gfx.mirror));
             }
             if self.args.band_census {
                 println!("{}", band_census_line(&self.world, &gfx.mirror));

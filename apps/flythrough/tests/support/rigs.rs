@@ -1232,8 +1232,8 @@ pub fn fit_rig_on(
     }
 }
 
-/// Builds the field surface's scratch pool on `rig`'s mirror of `world` when `look` walks the
-/// field (`SurfaceModel::Field`), syncs once so it takes every chunk, and fills it.
+/// Turns the field surface's band slots on in `rig`'s mirror of `world` when `look` walks the
+/// field (`SurfaceModel::Field`), syncs once so it writes every chunk again, and fills them.
 pub fn with_field_pool(rig: &mut LookRig, world: &World, look: &vxe_render::LookParams) {
     if look.tuning.model != vxe_render::SurfaceModel::Field {
         return;

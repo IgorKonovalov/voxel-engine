@@ -2148,6 +2148,65 @@ fn the_field_surface_lies_on_the_flat_faces() {
     }
 }
 
+/// A carve's band slot (ADR-0041): in `floor` (rock below `z = 64`) with the field look's band
+/// slots on, a sphere carve of radius 7 voxels about the centre of brick (4, 4, 4), deep in
+/// uniform rock, leaves that brick uniform air with rock diagonally beyond each of its corners.
+/// The one sync that writes the edit gives it a band slot (a `CLASS_UNIFORM` entry where a
+/// uniform rock entry was), and the field look from the hollow's centre reads every pixel a
+/// hit and 0 leaks on lavapipe.
+#[test]
+fn a_carve_gives_the_exposed_air_brick_a_band_slot() {
+    use vxe_render::gpu_world::{CLASS_MASK, CLASS_SHIFT, CLASS_UNIFORM, FULL_BIT};
+    use vxe_world::{Brick, ChunkCoord, EditOp, FIXED_ONE, Fixed3, Mode, brick_slot};
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let table = flythrough::LookPreset::DEFAULT.materials();
+    let world = floor_world(&table);
+    let look = field_look(ViewMode::Shaded, vxe_render::FieldNormal::Analytic);
+    let mut rig = fit_rig_on(device, queue, &world, look.tuning.fit, [WIDTH, HEIGHT]);
+    with_field_pool(&mut rig, &world, &look);
+    let (c, slot) = (ChunkCoord([0, 0, 0]), brick_slot([4, 4, 4]));
+    let before = rig.gpu.entry(c, slot).unwrap();
+    assert_eq!(before & FULL_BIT, 0, "uniform rock before the carve");
+    assert_ne!(before & 0xFFFF, 0, "uniform rock before the carve");
+    world
+        .apply(&EditOp::sphere(
+            Fixed3([36, 36, 36].map(|v| v * FIXED_ONE)),
+            7 * FIXED_ONE,
+            Mode::Carve,
+        ))
+        .unwrap();
+    {
+        let chunk = world.store().get(c).unwrap();
+        let chunk = chunk.read().unwrap();
+        assert!(matches!(chunk.brick(slot), Brick::Uniform(vxe_world::AIR)));
+    }
+    rig.gpu
+        .sync_now(&world, &rig.device, &rig.queue)
+        .expect("the edit's sync");
+    let after = rig.gpu.entry(c, slot).unwrap();
+    assert_ne!(after & FULL_BIT, 0);
+    assert_eq!(after >> CLASS_SHIFT & CLASS_MASK, CLASS_UNIFORM);
+    support::rigs::drain_attrs(&rig.device, &rig.queue, &mut rig.gpu);
+    let camera = vxe_render::Camera {
+        position: [36.0, 36.0, 36.0].into(),
+        yaw: 0.3,
+        pitch: -0.2,
+        vfov: 70f32.to_radians(),
+    };
+    let r = crack_reading(&mut rig, &camera, &LightParams::headlamp(), look, None);
+    let [w, h] = r.size;
+    println!(
+        "carve: {} hits of {} pixels, {} leaks",
+        r.shares.hits,
+        w * h,
+        r.shares.classes[1]
+    );
+    assert_eq!(r.shares.hits, u64::from(w * h));
+    assert_eq!(r.shares.classes[1], 0, "leaks");
+}
+
 /// The field readings' two normal sources: N1, the field's gradient, and N2, the corners'
 /// blend.
 fn field_looks() -> [(&'static str, LookParams); 2] {

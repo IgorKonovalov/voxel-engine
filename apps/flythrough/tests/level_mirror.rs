@@ -415,12 +415,13 @@ fn the_level_s_opaque_masks_are_its_solid_bits() {
     assert_eq!(checked, 383_608);
 }
 
-/// The field surface's band on the level (ADR-0040 Alternative B), counted on the CPU over
-/// every chunk of the extent (`flythrough::band_census`), and the scratch field pool built on
-/// the level's mirror at the spawn: every `Full` brick with a surface voxel is a band brick,
-/// and the pool's band bricks (slots whose band mask the field pass set) and its live slots
-/// equal the census's band bricks. The census and the pool's bytes are printed against the
-/// mirror's.
+/// The field surface's band on the level (ADR-0041), counted on the CPU over every chunk of
+/// the extent (`flythrough::band_census`), and the band slots of the level's mirror with
+/// contour attributes at the spawn: every `Full` brick with a surface voxel is a band brick,
+/// the mirror holds a band slot for each of the census's band bricks, and its live bytes grow
+/// by the census's packed bytes (a band mask and `ceil(n / 64)` count units per band brick, two
+/// header units for a uniform one) within 1 %, its reservation unchanged. The census, the
+/// band slots' bytes and the mirror's are printed.
 #[test]
 fn band_census() {
     let (world, source) = level();
@@ -441,9 +442,9 @@ fn band_census() {
     );
     assert_eq!(cs.surface_full_band_bricks, cs.surface_full_bricks);
     assert!(cs.surface_full_bricks > 0);
-    let Some((device, queue)) =
-        support::software_device(flythrough::level_pool_units(&world, true) * UNIT_BYTES)
-    else {
+    let Some((device, queue)) = support::software_device(
+        flythrough::level_pool_units(&world, true) * UNIT_BYTES + cs.packed_bytes * 2,
+    ) else {
         return;
     };
     let mut gpu = GpuWorld::with_surface_attrs(
@@ -457,7 +458,8 @@ fn band_census() {
     gpu.sync_now(&world, &device, &queue).unwrap();
     let (live, allocated) = (gpu.mirror_bytes(), gpu.allocated_bytes());
     gpu.set_field_surface(true);
-    gpu.sync_now(&world, &device, &queue).unwrap();
+    let st = gpu.sync_now(&world, &device, &queue).unwrap();
+    assert_eq!(st.pending_chunks, 0);
     loop {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         let n = gpu.update_attrs(&mut enc);
@@ -467,21 +469,22 @@ fn band_census() {
             break;
         }
     }
-    let pool = gpu.field_pool().expect("built above");
-    let band = pool.band_bricks(&device, &queue);
+    let grown = gpu.mirror_bytes() - live;
     println!(
-        "field pool at the spawn: {} live slots, {band} band bricks, {} without a slot, {} B in its buffers; mirror {} B live, {} B allocated ({live} and {allocated} before the pool)",
-        pool.live_slots(),
-        pool.overflow(),
-        pool.bytes(),
+        "band slots at the spawn: {} band bricks, {} B of band slots; mirror {} B live, {} B allocated ({live} and {allocated} without them), grown {grown} B against the census's packed {} B ({:+.3} %)",
+        gpu.band_bricks(),
+        gpu.band_units() * UNIT_BYTES,
         gpu.mirror_bytes(),
-        gpu.allocated_bytes()
+        gpu.allocated_bytes(),
+        cs.packed_bytes,
+        100.0 * (grown as f64 / cs.packed_bytes as f64 - 1.0)
     );
-    assert_eq!(pool.overflow(), 0);
-    assert_eq!(band, cs.bricks());
-    assert_eq!(pool.live_slots(), cs.bricks());
-    assert_eq!(
-        (gpu.mirror_bytes(), gpu.allocated_bytes()),
-        (live, allocated)
+    assert_eq!(gpu.band_bricks(), cs.bricks());
+    assert_eq!(gpu.band_units() * UNIT_BYTES, grown);
+    assert!(
+        grown.abs_diff(cs.packed_bytes) * 100 <= cs.packed_bytes,
+        "grown {grown} B against packed {} B",
+        cs.packed_bytes
     );
+    assert_eq!(gpu.allocated_bytes(), allocated);
 }

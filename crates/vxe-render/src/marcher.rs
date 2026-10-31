@@ -47,9 +47,7 @@ pub struct Params {
     /// [`SurfaceTuning::face_mix`].
     pub face_mix: f32,
     pub window_size: [i32; 3],
-    /// Field-surface slots per field shard ([`GpuWorld::field_slots_per_shard`]); 0 without
-    /// the field pool.
-    pub field_slots: u32,
+    pub _pad3: i32,
     pub light_pos: [f32; 3],
     pub light_intensity: f32,
     pub light_dir: [f32; 3],
@@ -182,8 +180,8 @@ pub const FLAG_FIELD_BLEND: u32 = 1 << 18;
 
 /// What the contour look's walk hits: the per-voxel planes (ADR-0011), or the field surface,
 /// the zero set of the trilinear interpolation of `count / 27 - 1/2` over the voxel centres,
-/// `count` a voxel's solid voxels among the 27 around it (ADR-0040 Alternative B, a scratch:
-/// its counts live in a pool beside the mirror, [`GpuWorld::set_field_surface`]).
+/// `count` a voxel's solid voxels among the 27 around it (ADR-0041: its counts live in the
+/// mirror's band slots, [`GpuWorld::set_field_surface`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SurfaceModel {
     #[default]
@@ -1015,8 +1013,6 @@ impl Marcher {
                 storage_texture(0, wgpu::TextureFormat::Rgba32Float),
                 storage_texture(1, wgpu::TextureFormat::Rgba16Uint),
                 storage_texture(2, wgpu::TextureFormat::Rgba16Float),
-                read_storage(3),
-                read_storage(4),
             ],
         });
         let layouts = [Some(world_layout), Some(&out_layout)];
@@ -1315,20 +1311,6 @@ enum Io {
 fn io_layout(device: &wgpu::Device, label: &str, io: &[Io]) -> wgpu::BindGroupLayout {
     let at: Vec<(u32, Io)> = io.iter().enumerate().map(|(i, &k)| (i as u32, k)).collect();
     io_layout_at(device, label, &at)
-}
-
-/// A read-only storage buffer at `binding`, for the compute stage.
-fn read_storage(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::COMPUTE,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only: true },
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    }
 }
 
 /// A group-2 layout of `io` at explicit binding numbers.
@@ -2349,7 +2331,6 @@ impl Frame {
                 | self.look.flags()
                 | if world.surface_attrs() { FLAG_ATTRS } else { 0 },
             units_per_shard: world.shard_layout().units_per_shard,
-            field_slots: world.field_slots_per_shard(),
             forced_level: self.lod.forced_level.unwrap_or(0),
             lod1_r2: (2 * self.lod.r_full).pow(2),
             lod2_r2: (4 * self.lod.r_full).pow(2),
@@ -2549,8 +2530,6 @@ impl Frame {
                 Res::Tex(&t.hit_pos[c]),
                 Res::Tex(&t.hit_info[c]),
                 Res::Tex(&t.layer),
-                Res::Buf(world.field_buffer(0)),
-                Res::Buf(world.field_buffer(1)),
             ],
         );
         let half = t.half_pos.is_some();

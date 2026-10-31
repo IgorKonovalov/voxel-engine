@@ -91,6 +91,7 @@ const TRANSLUCENT_BIT: u32 = 0x20000000u;
 const UNIT_MASK: u32 = 0x3FFFFFFu;
 const CLASS_SHIFT: u32 = 26u;
 const CLASS_WIDE: u32 = 5u;
+const CLASS_UNIFORM: u32 = 6u;
 const EMPTY_BIT: u32 = 0x20000000u;
 const RECORD_MASK: u32 = 0x1FFFFFFFu;
 const UNIT_WORDS: u32 = 16u;
@@ -198,10 +199,11 @@ fn solid(v: vec3<i32>) -> bool {
     return ((tw >> (i % 32u)) & 1u) != 0u;
 }
 
-// Units of a Full entry's payload: 0, 1, 2 or 4 planes for classes 1 to 4, 16 for Wide.
+// Units of a Full entry's payload: 0, 1, 2 or 4 planes for classes 1 to 4, 16 for Wide, none
+// for a uniform band brick's slot (class 6, laid out as class 1).
 fn payload_units(entry: u32) -> u32 {
     let cls = (entry >> CLASS_SHIFT) & 7u;
-    return select(select(cls - 1u, 4u, cls == 4u), 16u, cls == CLASS_WIDE);
+    return select(select(select(cls - 1u, 4u, cls == 4u), 16u, cls == CLASS_WIDE), 0u, cls == CLASS_UNIFORM);
 }
 
 // The unit offset of a Full entry's attributes from its first unit, as march.wgsl's.
@@ -653,43 +655,24 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
     }
 }
 
-// ---- The field pass (`field.rs`, ADR-0040 Alternative B) ----
+// ---- The field pass (`field.rs`, ADR-0041) ----
 //
-// Fills the field surface's scratch slots of a work list of bricks of any kind: per voxel its
-// count, the solid voxels among the 27 around it with itself (solid is not air, as for the
-// fit), and the band mask, set where the count is neither 0 nor 27. Four bricks a workgroup,
-// 64 invocations a brick, as `main`; the occupancy is `main`'s 10^3 box without the filter.
+// Fills the band slots of a work list of bricks of any kind: per band voxel its count, the
+// solid voxels among the 27 around it with itself (solid is not air, as for the fit). A band
+// slot is its band mask (one unit, the mask's layout: bit i % 32 of word i / 32 for voxel
+// i = x + 8 y + 64 z), which the upload wrote, then ceil(n / 64) units of u8 counts for its n
+// band voxels in band-index order: the k-th band voxel's in byte k % 4 of word k / 4. Four
+// bricks a workgroup, 64 invocations a brick, as `main`; the occupancy is `main`'s 10^3 box
+// without the filter. Every count unit is written whole, past the n-th byte as 0.
 //
-// Bindings, group 0: 0, 1..4, 5 and 6 as `main`'s, with params.slots the slots per field shard
-// (`_pad1`), then:
-//   8  storage  field_pool0   field shard 0, read-write; 9 is shard 1. Slot s is slot s % n of
-//                             shard s / n (n = params._pad1), 144 words: the band mask (bit
-//                             i % 32 of word i / 32), then the counts (voxel i in byte i % 4 of
-//                             word 16 + i / 4); shard 0 starts with the field index, slots no
-//                             item names
-//  11  storage  field_work    [n][4 x u32]: the brick's field slot, its origin in voxels
-//                             (x, y, z as i32 bits)
+// Bindings, group 0: 0, 1..4, 5 and 6 as `main`'s, then:
+//  11  storage  field_work    [n][4 x u32]: the band slot's first unit, the brick's origin in
+//                             voxels (x, y, z as i32 bits)
 
-@group(0) @binding(8) var<storage, read_write> field_pool0: array<u32>;
-@group(0) @binding(9) var<storage, read_write> field_pool1: array<u32>;
 @group(0) @binding(11) var<storage, read> field_work: array<vec4<u32>>;
-
-const FIELD_SLOT_WORDS: u32 = 144u;
-const FIELD_COUNT_WORD: u32 = 16u;
 
 // The band mask words of the workgroup's four bricks, 16 each.
 var<workgroup> band_words: array<atomic<u32>, 64>;
-
-fn store_field_word(slot: u32, word: u32, value: u32) {
-    let n = params._pad1;
-    let shard = slot / n;
-    let i = (slot - shard * n) * FIELD_SLOT_WORDS + word;
-    if (shard == 0u) {
-        field_pool0[i] = value;
-    } else {
-        field_pool1[i] = value;
-    }
-}
 
 @compute @workgroup_size(256, 1, 1)
 fn field_main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
@@ -697,15 +680,22 @@ fn field_main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_in
     let t = li % LANES;
     let item = (wg.y * params.groups_x + wg.x) * BRICKS + b;
     let listed = item < params.items;
-    var slot = 0u;
+    var unit = 0u;
     var origin = vec3<i32>(0);
     if (listed) {
         let w = field_work[item];
-        slot = w.x;
+        unit = w.x;
         origin = bitcast<vec3<i32>>(w.yzw);
     }
+    // The packed counts of brick b: words b * 128 + k / 4 of `cells`.
+    atomicStore(&cells[b * 128u + t], 0u);
+    atomicStore(&cells[b * 128u + 64u + t], 0u);
     if (t < 16u) {
-        atomicStore(&band_words[b * 16u + t], 0u);
+        var m = 0u;
+        if (listed) {
+            m = pool_word(unit, t);
+        }
+        atomicStore(&band_words[b * 16u + t], m);
     }
     if (listed && t < 27u) {
         let d = vec3<i32>(i32(t % 3u), i32((t / 3u) % 3u), i32(t / 9u)) - vec3<i32>(1);
@@ -753,7 +743,9 @@ fn field_main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_in
     }
     workgroupBarrier();
     // Invocation t counts row (y, z) = (t % 8, t / 8) of the brick: voxel l is occupancy
-    // cell l + 2, its 27 neighbours cells l + 1 to l + 3 on each axis.
+    // cell l + 2, its 27 neighbours cells l + 1 to l + 3 on each axis. The row's voxels are
+    // bits 8 (y % 4) .. 8 (y % 4) + 8 of mask word y / 4 + 2 z; its first band voxel's index is
+    // the band voxels of the words before and of the bits below in its word.
     if (listed) {
         let y = t % 8u;
         let z = t / 8u;
@@ -761,31 +753,35 @@ fn field_main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_in
         for (var j = 0u; j < 9u; j++) {
             rows[j] = occ_row(b, (y + 1u + j % 3u) + OCC * (z + 1u + j / 3u));
         }
-        var lo = 0u;
-        var hi = 0u;
-        var band = 0u;
+        let mw = y / 4u + 2u * z;
+        let shift = 8u * (y % 4u);
+        let word = atomicLoad(&band_words[b * 16u + mw]);
+        var k = countOneBits(word & ((1u << shift) - 1u));
+        for (var j = 0u; j < mw; j++) {
+            k += countOneBits(atomicLoad(&band_words[b * 16u + j]));
+        }
+        let row = (word >> shift) & 0xFFu;
         for (var x = 0u; x < 8u; x++) {
+            if (((row >> x) & 1u) == 0u) {
+                continue;
+            }
             var n = 0u;
             for (var j = 0u; j < 9u; j++) {
                 n += countOneBits((rows[j] >> (x + 1u)) & 7u);
             }
-            if (n > 0u && n < 27u) {
-                band |= 1u << x;
-            }
-            if (x < 4u) {
-                lo |= n << (8u * x);
-            } else {
-                hi |= n << (8u * (x - 4u));
-            }
+            atomicOr(&cells[b * 128u + k / 4u], n << (8u * (k % 4u)));
+            k += 1u;
         }
-        // Voxel i = x + 8 y + 64 z: counts word i / 4 = 2 t (+ 1), mask word i / 32 =
-        // y / 4 + 2 z at bit 8 (y % 4) + x.
-        store_field_word(slot, FIELD_COUNT_WORD + 2u * t, lo);
-        store_field_word(slot, FIELD_COUNT_WORD + 2u * t + 1u, hi);
-        atomicOr(&band_words[b * 16u + y / 4u + 2u * z], band << (8u * (y % 4u)));
     }
     workgroupBarrier();
-    if (listed && t < 16u) {
-        store_field_word(slot, t, atomicLoad(&band_words[b * 16u + t]));
+    if (listed) {
+        var n = 0u;
+        for (var j = 0u; j < 16u; j++) {
+            n += countOneBits(atomicLoad(&band_words[b * 16u + j]));
+        }
+        let words = UNIT_WORDS * ((n + 63u) / 64u);
+        for (var j = t; j < words; j += LANES) {
+            store_pool_word(unit, UNIT_WORDS + j, atomicLoad(&cells[b * 128u + j]));
+        }
     }
 }
