@@ -4,7 +4,8 @@
 > **Date:** 2026-10-31
 > **Related plan(s):** [Plan 0054](../plans/0054-field-surface-trilinear-zero-set-of-the-27-fraction.md)
 > (Phase 1's readings, the owner's Phase 2 pick and the owner's Phase 3b pick, owner answer 7,
-> are the evidence; its Phase 5 accepts this at the close; amended 2026-10-31 on answer 7). At acceptance this supersedes
+> are the evidence; its Phase 5 accepts this at the close; amended 2026-10-31 on answers 7
+> and 8). At acceptance this supersedes
 > [ADR-0011](0011-contour-planes-in-attribute-pages-with-procedural-detail.md)'s surface
 > (its procedural detail stays),
 > [ADR-0040](0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md),
@@ -56,18 +57,24 @@ crosses, and in each cell whose eight corners mix signs finds the first root of 
 reaches a count-27 voxel without a root is a leak, counted where the cracks view counted. **The
 shading normal is N1, the analytic gradient of the trilinear `phi` at the hit**; nothing is
 stored for it. The detail tilt and the lamp ratio read it, and the shadow ray leaves the hit
-along it. **A material is smooth or crisp, smooth by default.** A crisp material's voxels count as air in
-the field, sit in the band, and carry bit 7 of their `u8` count; the walk hits such a voxel as
-its cube where the ray enters it, with the entry face's normal, which is the plain cube walk's
-hit, kept as the crisp path. Where a smooth surface meets a crisp voxel it rounds away from it
-as from air: a crisp feature standing on a flat face leaves the face exactly flat, and a crisp
-inlay flush in a face opens a groove about 0.75 voxel deep along its edge (worked from the
-counts in Plan 0054 Phase 4c, pending the owner's seam rule there). The flag is a render
-property of the material row: `MaterialFlags::CRISP` in `vxe-world`'s table beside
-`TRANSLUCENT`, which no edit, query, collision or audio path reads, so the world stays
-headless and deterministic; it has no effect on a `TRANSLUCENT` row, and the opaque payload
-stays the consumer's (pending the owner's choice of its home in Plan 0054 Phase 4c; Alternative
-H is the renderer-side set). A chunk held as mips has no crisp voxel: its cells are cubes for
+along it. **A material is smooth or crisp, smooth by default.** **A crisp material's voxels
+count as solid in the field** (Plan 0054 owner answer 8), so the band and the counts are the
+plain occupancy's; a crisp voxel that touches air is a band voxel and carries bit 7 of its `u8`
+count, set by the field pass from the voxel's material row. The walk hits a crisp voxel as its
+cube where the ray enters it, with the entry face's normal, which is the plain cube walk's
+hit, kept as the crisp path, and tests no field piece inside it, so the part of the zero set
+that lies inside crisp cubes is never seen. Outside a crisp voxel a mixed-sign dual cell gives
+a field hit only when one of its solid band corners is smooth, so two crisp faces meeting in a
+concave corner stay sharp, and a field hit takes its largest-weight smooth corner's material.
+Where a smooth surface meets a crisp feature it therefore runs flush with a crisp inlay (no
+count changes, the face stays flat) and raises a smooth collar of the smooth material around a
+crisp feature's root: 0.19 voxel high around a one-voxel branch, 0.43 around a 2x2 rod, a full
+0.75-voxel fillet around a 3x3 rod or a two-voxel sheet, at most two voxels wide (worked from
+the counts in Plan 0054 Phase 4c). The flag is a render property of the material row:
+`MaterialFlags::CRISP` in `vxe-world`'s table beside `TRANSLUCENT` (owner answer 8), which no
+edit, query, collision or audio path reads, so the world stays headless and deterministic; it
+has no effect on a `TRANSLUCENT` row, and the opaque payload stays the consumer's. A chunk held
+as mips has no crisp voxel: its cells are cubes for
 every material. **Shadow rays walk the voxel occupancy**, crisp and smooth voxels alike, from
 an origin pushed along the hit's normal by the existing shadow push; they do not walk the
 field. **Translucent voxels count as solid in the field** for the primary hit, and the
@@ -123,8 +130,8 @@ do not change.
   acceptable - invisible materials, only one trunk is visible, invisible cast shadow". A
   consumer marks a material with thin features crisp or models them three voxels thick; a voxel
   left thin by a carve in a smooth material (a one-voxel wall between two tunnels) is invisible
-  and still collides. Whether that is accepted or met by an automatic per-voxel fallback is
-  open in Plan 0054 Phase 4c (pending the owner). The arithmetic, from
+  and still collides. Accepted for Plan 0054 (owner answer 8); an automatic per-voxel fallback
+  is a followup, and that plan's Phase 4a counts the level's thin voxels. The arithmetic, from
   the formula, not measured: a free one-voxel rod counts 3 (`phi = -0.39`), a free 2x2 rod 12
   (`-0.056`), a free one-voxel sheet 9 (`-1/6`); no dual cell around them mixes signs. A free
   3x3 rod and a two-voxel sheet show at about their true size. At 10 cm voxels a tree branch, a
@@ -132,9 +139,13 @@ do not change.
   world query. Phase 1's free pillar (0 box pixels) and sheet (6) agree.
 - **Crisp voxels cost on both sides.** The walk tests a band voxel's crisp bit: `field-cubes`
   read 5.41 against `field`'s 4.95 ms hit at the level's spawn on the RTX 3080 Laptop with no
-  crisp material present (Plan 0054 Phase 3a, 17045d8). Band bricks within one brick of a crisp
-  voxel take their counts from the CPU at the sync, a cost that grows with a world's crisp
-  content.
+  crisp material present (Plan 0054 Phase 3a, 17045d8, under the air rule); the corner rule
+  above reads the bit at a cell's corners too. The field pass reads a material per band voxel
+  in bricks that hold a crisp material, a cost that grows with a world's crisp content; the
+  counts need no material, so Phase 3a's CPU count path goes.
+- **A crisp feature's root wears a collar of the smooth material**, up to a full fillet for a
+  feature three voxels across: the crisp feature's honest cube silhouette is softened where it
+  meets smooth rock, and nowhere else.
 - **The bar is not met yet, and the window reads worse than the bar's figure.** Field-cubes hit
   plus light read 6.38 ms at the spawn against the 5 ms bar (17045d8), and the owner's window at
   the vein and patch read a march GPU p50 of 29.3 and 30.4 ms ("fps is really low"). Plan 0054
@@ -200,18 +211,21 @@ One surface everywhere, thin features modelled three voxels thick. Rejected by t
 the thin rig (owner answer 7): the one-voxel, diagonal and 2x2 features vanished while their
 shadows stayed. It is cheaper by the crisp test (4.95 against 5.41 ms hit, RTX, 17045d8).
 
-### Alternative G: crisp voxels count as solid in the field
+### Alternative G: crisp voxels count as air in the field (Phase 3a's rule)
 
-The smooth surface would run flush into a crisp inlay with no groove, but it would also fillet
-the concave corner at every crisp feature's root with a smooth skin of about one voxel, so a
-crisp branch would grow a rounded collar where it meets the trunk. Phase 3a built crisp as air
-and the owner judged that look ("seems to be good"); this stays the alternative if the seam's
-groove is refused (Plan 0054 Phase 4d).
+The smooth surface rounds away from a crisp voxel as from air: a crisp feature standing out of
+a flat face leaves the face exactly flat with no collar, but a crisp inlay flush in a face opens
+a groove about 0.75 voxel deep along its edge (a rock voxel beside a 3-deep inlay counts 12 at
+depth 0.5 and 18 at depth 1.5), and the counts of every band brick within one brick of a crisp
+voxel need the voxels' materials, which Phase 3a computed on the CPU at each sync. Phase 3a
+built it and the owner judged its rig "seems to be good", but chose crisp as solid for the
+Decision, the collar accepted (Plan 0054 owner answer 8). It stays the direction if the
+collar is refused at Plan 0054 Phase 4d.
 
 ### Alternative H: the crisp set held by the renderer (Phase 3a's scratch)
 
 `GpuWorld::set_crisp_materials` by material id leaves `vxe-world` untouched, but splits a
 material's definition between the world's table and a renderer call, and every renderer
 instance must be told. The material row already carries the renderer's properties
-(`TRANSLUCENT`, `detail`, `opacity`); the flag joins them (pending the owner, Plan 0054
-Phase 4c).
+(`TRANSLUCENT`, `detail`, `opacity`); the flag joins them. Rejected by the owner for the row's
+flag (Plan 0054 owner answer 8).

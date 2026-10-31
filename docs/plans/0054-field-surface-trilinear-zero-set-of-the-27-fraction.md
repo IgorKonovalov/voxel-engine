@@ -361,12 +361,11 @@ every asserted reading, golden and gate stays on lavapipe.
   result. `live/p4/phase4-wip.patch` (the planes', snap's, `cubes-field`'s and the attribute's
   removal, written against the held text) is Phase 4c's starting point; its band-prefix and
   pool-term pieces landed in Phase 3a and are dropped from it.
-- **Pending the owner** (the questions of this rewrite; until an answer lands in Owner answers,
-  the affected text is the recommended option and dev may start Phase 4a, which none of them
-  touches): 1, where the crisp flag lives (Phase 4c); 2, a thin free feature of a smooth
-  material, accepted or given a fallback (Phase 4c); 3, whether the window at the poses gets a
-  bar of its own (Phase 4b's done-when 2); 4, the seam rule, crisp as air or as solid in the
-  field (Phase 4c).
+- **Settled by owner answer 8:** the crisp flag lives on the material row (Phase 4c); a thin
+  free feature of a smooth material is accepted for this plan, its fallback a followup (Phase
+  4c); the window at the poses has no bar before Phase 4d (Phase 4b's done-when 2); crisp
+  voxels count as solid in the field, so a crisp feature's root carries a smooth collar and a
+  flush inlay has no groove (Phase 4c, amended on that answer).
 - **What is already known, from the logs (not a reading of this phase):** session 1's frame
   line reads the window at 2530 x 1378 from 1687 x 919 (the own upscaler at 1.5), 1.68x the
   pixels of the bar's 1280 x 720; the 16.4 ms of session 1's `field` at the patch is the march
@@ -470,9 +469,8 @@ every asserted reading, golden and gate stays on lavapipe.
      the walk-speed spike's, owner answer 3); the VGPRs and code bytes of the field hit pipeline
      before and after, from the RADV shader stats.
   2. The vein and the patch at the window's size (`--render 2530x1378`), shaded, lamp on, both
-     adapters, the GPU frame and hit against Phase 4a's rows; a reading, and the bar for it is
-     owner question 3 of this rewrite (pending the owner; under the recommended option there is
-     no bar here and the owner judges the window in Phase 4d).
+     adapters, the GPU frame and hit against Phase 4a's rows; a reading with no bar (owner answer
+     8): the owner judges the window in Phase 4d and sets a windowed bar there if needed.
   3. The surface did not move: `the_field_surface_lies_on_the_flat_faces` (1e-3 voxel),
      `the_field_surface_has_no_boxes_and_no_leaks` and `thin_features_in_the_field_and_per_material`
      pass unchanged on lavapipe, and the field and `field-cubes` hit masks at both poses and on
@@ -489,8 +487,7 @@ every asserted reading, golden and gate stays on lavapipe.
 - **Owner skill:** dev
 - **What:** the per-material surface as an engine mechanism, the field as the only smooth
   surface, and everything the planes needed gone.
-- **The crisp flag** (its home is owner question 1 of this rewrite, pending the owner; the text
-  below is the recommended option). `MaterialFlags::CRISP` in `vxe-world`'s material row,
+- **The crisp flag** (owner answer 8). `MaterialFlags::CRISP` in `vxe-world`'s material row,
   beside `TRANSLUCENT`: a render property of the row, as `detail` and `opacity` are. No edit,
   query, collision, coarse grid, collapse, raycast, census or audio path reads it, so the world
   stays headless and deterministic and its results do not move. Absent is smooth, the default:
@@ -503,25 +500,53 @@ every asserted reading, golden and gate stays on lavapipe.
   mirrors (`material_rows`); `GpuWorld::set_crisp_materials`, `SurfaceTuning::crisp` and its flag
   bit go. The fly-through's rig wood carries the flag in its row; `flythrough::CRISP_MATERIALS`
   goes.
-- **The GPU path stays Phase 3a's:** a crisp voxel counts as air in the field, is a band voxel,
-  and carries bit 7 of its `u8` count (`field::CRISP_COUNT_BIT`); the field walk hits it as its
-  cube where the ray enters it, with its entry face's normal, which is the plain cube walk's
-  hit (the cube walk stays as the crisp path). The counts of band bricks within one brick of a
-  crisp voxel come from the CPU (`field::band_of` at the end of the sync) as in Phase 3a, or
-  from the field pass reading each voxel's material row, dev's call on the done-when 4 reading.
-  A chunk held as mips holds no crisp voxel: its mip cells are cubes for every material, and a
-  rock voxel beside a LOD-only chunk counts that chunk's crisp voxels by their mip occupancy,
-  as solid (the transition at the full radius stays today's).
-- **The seam** (the rule is owner question 4 of this rewrite, pending the owner; the text is the
-  recommended option, Phase 3a's rule). Where a smooth surface meets a crisp voxel the field
-  sees the crisp voxel as air: a crisp feature standing on or out of a flat rock face leaves
-  that face exactly flat (worked from the counts: the face voxels count 18 and the voxels in
-  front of them 9 whether the voxel in front is air or crisp), and a crisp inlay flush in a
-  rock face opens a groove around it, the rock's edge rounding away from the inlay as from air
-  (worked: a rock voxel beside a 3-voxel-thick inlay counts 12 at depth 0.5 behind the face and
-  18 at depth 1.5, so the rock's crossing lies between them, about 0.75 voxel deep beside the
-  inlay's edge). The ray cannot pass through the groove: behind it is the inlay's cube or rock
-  of a positive count.
+- **The GPU path (amended on owner answer 8: crisp counts as solid).** The counts are the
+  plain occupancy counts, a crisp voxel solid among them, so the band and every count are
+  the `field` look's, and a crisp voxel is a band voxel exactly when it touches air. Such a
+  voxel carries bit 7 of its `u8` count (`field::CRISP_COUNT_BIT`); a crisp voxel of count 27
+  touches no air and is never entered but through a leak. Three rules hold the cubes honest:
+  - **Inside a crisp voxel the cube wins.** The walk hits a crisp voxel as its cube where the
+    ray enters it, with the entry face's normal (the plain cube walk's hit, kept as the crisp
+    path), and tests no field piece inside it. The field's zero set does lie inside crisp
+    cubes (a free crisp branch's voxels count 3 to 11, below zero, so the field's surface
+    passes inside the branch near its root), and none of it is seen.
+  - **Outside a crisp voxel, a mixed-sign dual cell gives a field hit only when one of its
+    solid band corners is smooth** (a solid band voxel without bit 7). A cell whose solid
+    corners are all crisp gives none, and the ray goes on to the cube: two crisp faces meeting
+    in a concave corner stay a sharp corner, not a fillet. The corner test reads the bit the
+    count byte already carries; its cost is Phase 4b's bar, re-read at done-when 6.
+  - **A field hit takes the material of its cell's largest-weight smooth solid corner**, so
+    the collar a crisp feature's root carries is the smooth material's, shaded by N1.
+  The field skin therefore lies over a crisp cube only where smooth voxels are within one voxel:
+  the collar at a crisp feature's root, and the face of a flush inlay's border, which lies on
+  the cube's face plane. **Phase 3a's CPU count path goes:** with crisp as solid, the field pass
+  computes every count from the mirror's occupancy, as it does for `field`; only bit 7 needs a
+  voxel's material, and the field pass sets it from the voxel's material and the row's `CRISP`
+  flag in the material buffer the mirror already holds (`material_rows` carries the flags),
+  skipping the read for a brick whose materials hold no crisp row; how the skip is known (a
+  per-brick bit from the CPU at upload, or the payload's palette) is dev's call on the
+  done-when 4 reading. `field::band_of`'s crisp counts, `GpuWorld::fix_crisp` and the work-list
+  exclusion of bricks near crisp voxels go. A chunk held as mips holds no crisp voxel: its mip
+  cells are cubes for every material, and a voxel beside a LOD-only chunk counts that chunk by
+  its mip occupancy, as solid either way (the transition at the full radius stays today's).
+- **The seam (owner answer 8: crisp as solid, the collar accepted).** Worked from the counts:
+  - *A crisp inlay flush in a flat rock face* changes no count (everything behind the plane is
+    solid either way), so the face is flat across it: the border's field hits lie on the plane
+    and the inlay's own pixels are cube hits on the same plane. No groove.
+  - *A crisp feature standing out of a flat rock face* raises a collar on the face around its
+    root. One-voxel branch: a face voxel beside the root counts 19 (a flat face's 18 plus the
+    branch voxel in its front layer) and the air voxel in front of it 11 (9, plus the branch's
+    two voxels in its window), so the crossing between their centres lies at
+    `0.204 / (0.204 + 0.093) = 0.69` of the way out, 0.19 voxel off the plane (the flat face's
+    0.5). 2x2 rod: 20 and 13, 0.43 voxel. 3x3 rod or a two-voxel sheet: 21 and 15, the air
+    voxel itself above zero, the crossing 0.75 voxel off the plane, a full fillet. A face voxel
+    two voxels from the feature's footprint counts 18 again, so the collar is at most two
+    voxels wide.
+  - *A crisp feature resting on a rock floor* is the same collar, the floor's face rising
+    around its foot.
+  - *Two crisp faces in a concave corner* keep the sharp corner (the corner rule above).
+  - The ray cannot pass through a seam: the field's band and counts are the `field` look's,
+    which read 0 leaks, and a crisp voxel stops the ray at its face.
 - **The field as the default.** The fly-through's default look is the field with the table's
   crisp materials as cubes; `field` and `field-cubes` become that one look, named `field`.
   `face` stays as the honest-cubes comparison look and the rig test's reference.
@@ -545,8 +570,7 @@ every asserted reading, golden and gate stays on lavapipe.
 - **Translucency** (the same amendment, kept): translucent voxels count as solid in the field
   for the primary hit, as the spike did; the translucent walk after the hit stays as today over
   the voxel occupancy. Both choices are in ADR-0041 and revisable by the walk-speed spike.
-- **Thin features in a smooth material** (owner question 2 of this rewrite, pending the owner;
-  the text is the recommended option). A free feature of a smooth material under about three
+- **Thin features in a smooth material** (owner answer 8). A free feature of a smooth material under about three
   voxels across still renders as nothing while its shadow, collision and sound stay (the
   shadow ray walks the voxels; Phase 3a's rig in `field` read 0 % of the face look's pixels for
   the one-voxel, diagonal and 2x2 features). This plan accepts it and records it in ADR-0041:
@@ -574,19 +598,26 @@ every asserted reading, golden and gate stays on lavapipe.
      within 2 % of the `face` look's pixels and 0 leaks, and with the flag cleared reads Phase
      3a's `field` column (0 px on the one-voxel, diagonal and 2x2 features).
   3. `a_smooth_surface_meets_a_crisp_cube_without_a_gap` on lavapipe, on a seam rig: a flat
-     rock wall with a crisp inlay 8 x 8 voxels across and 3 deep set flush in it, and the thin
-     rig's trunk with its crisp branches, each seen head-on and at 45 degrees. It asserts: 0
-     leaks and 0 misses inside each seam's screen box; head-on, every hit in the inlay's box
-     lies at most 1.5 voxels behind the wall's plane (from the counts above; a deeper hit is a
-     gap), and every hit on the wall more than 2 voxels from the inlay within 1e-3 voxel of the
-     plane; every hit whose material is the crisp one carries an axis-aligned normal; on the
-     trunk, every rock hit on the branches' face outside the branches' own pixels lies within
-     1e-3 voxel of the face's plane. It prints the groove's deepest hit, and the speck test's
-     count on the wall with and without the inlay (a higher count is a finding for the close,
-     not a stop).
-  4. The crisp CPU path's cost: `update + poll + sync` of the frame holding a radius-7 carve
-     beside the rig's crisp branches, against the same carve on the trunk's far side away from
-     every crisp voxel, both in the log, and against `nfr.md` §2's streaming line.
+     rock wall with a crisp inlay 8 x 8 voxels across and 3 deep set flush in it; the thin
+     rig's trunk with its crisp branches; and a crisp L (two crisp slabs 3 voxels thick meeting
+     at 90 degrees, standing on the rig's rock floor), each seen head-on and at 45 degrees. It
+     asserts: 0 leaks and 0 misses inside each seam's screen box. The inlay, head-on: every hit
+     in the wall's box, inlay included, lies within 1e-3 voxel of the wall's plane, and every
+     hit inside the inlay more than one voxel from its border is a cube hit (crisp material,
+     axis-aligned normal). The trunk: every rock hit on the branches' face more than 2 voxels
+     from every feature's footprint lies within 1e-3 voxel of the face's plane; within those 2
+     voxels every hit lies at most 1 voxel off the plane and has the rock's material; every hit
+     on a feature more than 2 voxels from the trunk is a cube hit. The L: every hit on it more
+     than 2 voxels from a rock voxel is a cube hit, its concave corner included. It prints the
+     collar's highest hit off the face per feature against the worked 0.19, 0.43 and 0.75
+     voxel, and the speck test's count on the trunk face with the branches crisp and with them
+     smooth (a higher count is a finding for the close, not a stop).
+  4. The crisp bit's cost on the attribute side: the field pass's GPU time at the level (no
+     crisp material) and on the thin rig against Phase 4b's tip, and `update + poll + sync` of
+     the frame holding a radius-7 carve beside the rig's crisp branches against the same carve
+     on the trunk's far side away from every crisp voxel, both in the log against `nfr.md` §2's
+     streaming line. `GpuWorld::fix_crisp` and `field::band_of`'s crisp counts no longer exist
+     (`cargo doc` and a grep say so).
   5. Every moved golden is named in the log with its share of pixels over 2/255; the face
      goldens did not move (Plan 0050 owner answer 2). `crates/vxe-render/tests/translucent.rs`
      and the cutaway tests pass unchanged, or dev stops with the reading.
@@ -608,7 +639,8 @@ every asserted reading, golden and gate stays on lavapipe.
   Phase 5 runs. (b) the frame rate is not: the owner names a windowed bar (the frame or the hit
   plus light at the poses, at the window's size), and an amendment returns to Phase 4b's
   rules with it. (c) the seam is not: the owner names the direction (ADR-0041's Alternative G,
-  crisp as solid in the field, or another), and an architect amendment follows.
+  crisp as air in the field, with its groove at a flush inlay, or another), and an architect
+  amendment follows.
 
 ### Phase 5: The readings, the ADR, the close block
 - **Owner skill:** dev
@@ -646,7 +678,7 @@ pub struct SurfaceTuning {
 // mask, counts; no payload. Its record entry carries bit 31 and the class, as Full bricks do.
 // A crisp voxel's u8 count carries bit 7 (Phase 3a); the count is in the low five bits.
 
-// illustrative: vxe-world, Phase 4c (pending owner question 1 of the Phase 4 rewrite)
+// illustrative: vxe-world, Phase 4c (owner answer 8)
 impl MaterialFlags {
     /// The renderer draws voxels of this material as cubes with face normals instead of the
     /// smooth surface. Nothing else reads it; no effect on a `TRANSLUCENT` row.
@@ -697,12 +729,12 @@ which no deterministic path reads.
   720p internal; the window ran at 1687 x 919 internal at poses whose hit per pixel is higher.
   Phase 4a attributes the gap and Phase 4d is where the owner judges the window; a windowed
   bar, if the owner sets one, comes from there.
-- **The crisp CPU path scales with crisp content.** Band bricks within one brick of a crisp
-  voxel take their counts from the CPU at the sync. The level has none; a consumer world with
-  many crisp materials pays it on every edit near them. Phase 4c's done-when 4 reads it, and
-  moving it to the field pass is dev's call there.
-- **A crisp inlay flush in a smooth face opens a groove** about 0.75 voxel deep along its edge
-  (worked in Phase 4c). Phase 4c's seam test bounds it and the owner sees it in Phase 4d.
+- **The crisp bit costs a material read in the field pass.** With crisp as solid (owner answer
+  8) the counts need no material, but bit 7 does; a world with many crisp materials pays a
+  material read per band voxel of their bricks. Phase 4c's done-when 4 reads it.
+- **A crisp feature's root carries a smooth collar** up to 0.75 voxel high and two voxels wide
+  (worked in Phase 4c), in the smooth material. The owner accepted it (owner answer 8); Phase
+  4c's seam test bounds it and the owner sees it in Phase 4d.
 - **The attribute pass under edits** now touches air bricks. Plan 0023's hitch budget is on
   the render thread's CPU, which the GPU pass does not load; the sync's new slot allocations
   for exposed air bricks do, and Phase 3's done-when 4 reads it.
@@ -770,6 +802,16 @@ which no deterministic path reads.
    march GPU p50 read 29.3 ms (vein) and 30.4 ms (patch) on the RTX 3080 Laptop, against
    16.4 ms at the patch in session 1's `field` (window size not logged; `live/session2.log`,
    `live/session1.log`). Phase 4 is rewritten on this pick.
+8. **The Phase 4 rewrite's four questions (owner, 2026-10-31).** (1) The crisp flag is
+   `MaterialFlags::CRISP` on `vxe-world`'s material row, the recommended option. (2) A thin free
+   feature of a smooth material is accepted for this plan and recorded in ADR-0041; an
+   automatic fallback is a followup, and Phase 4a's thin census measures how often it happens;
+   the recommended option. (3) The 5 ms bar at the spawn stays Phase 4b's gate; the poses at
+   the window's size are readings, and the owner sets a windowed bar at Phase 4d if needed; the
+   recommended option. (4) Not the recommended option: crisp voxels count as solid in the
+   field, so a flush inlay has no groove and each crisp feature's root carries a smooth collar
+   of about one voxel, accepted. Phase 4c and ADR-0041 are amended on it (its Alternative G
+   became the Decision, the air rule the rejected alternative).
 
 ## Implementation log
 
