@@ -1,6 +1,6 @@
 # 0050: A watertight contour surface: a crack spike that names the wedges and triangles, then the closing rule chosen by measurement
 
-> **Status:** in-progress (2026-10-29)
+> **Status:** in-progress (2026-10-31): every phase done; awaiting the fresh-session close review
 > **Created:** 2026-10-29
 > **Approved:** 2026-10-29 (owner), with the answers under "Owner answers": alone on main
 > with the light spike after its Phase 4 check; the contour goldens re-blessed by name; the
@@ -499,7 +499,7 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 | 3: The closing rules, each measured | dev | done | e9cae0e |
 | 4: The pick as the default | dev | done | 760950b |
 | 5: The owner's windowed check | human | done (c) | 98a835c |
-| 6: The losers removed, the window's cracks palette, the showcase golden | dev | done | 45bc227 (code), committed with this row |
+| 6: The losers removed, the window's cracks palette, the showcase golden | dev | done | 45bc227 (code), 76fa99f |
 
 #### Phase 1
 
@@ -913,38 +913,45 @@ extend 0.25 5.928, extend 0.5 5.926, blend 35.151 (light pre 7.005, blend 13.439
 - Deviations are listed per phase above (Phase 1: `F9` and the self-hit in the hit pass;
   Phase 2: the C5 floor at 98.3 % by the owner, two mirror hash pins; Phase 3: five rule
   values and the push bit, the `CRACKS_VIEW` override pipeline; Phase 4: three tests pin
-  `Old`). Each phase's files outside its list are named in its section.
-- Unmet: the full profile at the tip is not green. `showcase_hall_golden_is_lit_by_its_four_ores`
-  fails at 00ca974 already (12.4601 %, same PNG); snap moves it to 13.5781 %. Not re-blessed.
-- Owed: the closing rule's ADR (the architect's). Phase 4 landed the default without it.
-- Noticed, not acted on: until Phase 6 deletes the losing rules, the hit pass costs +10 % (RTX)
-  and +40 % (Radeon) over 00ca974 in every rule (the owner accepted it, 2026-10-29);
-  `castle_gate_golden` peak RSS 953 MB alone against its 1 GiB bar, once 1.49 GB in a loaded
-  run; the flat 90-degree concave corner reads 0 cracks in every class, before and after.
+  `Old`; Phase 6: the code in a `wip(render)` commit, 45bc227, and the C5 floor at 98.0 % by
+  the owner, answer 9). Each phase's files outside its list are named in its section.
+- Unmet: none as amended. The full tier is the close review's (done-when 5, amended
+  2026-10-30).
+- Owed: ADR-0039 and ADR-0038 stay proposed until the close.
+- Noticed, not acted on: the green cast in Phase 5's window screenshots with `upscaler own`
+  (Phase 6, not reproduced headless); `castle_gate_golden` peak RSS 953 MB alone against its
+  1 GiB bar, once 1.49 GB in a loaded run; the flat 90-degree concave corner reads 0 cracks in
+  every class, before and after; the quick tier's load-only timeouts at the close (below).
 
 ### Close triggers
 
 - **What shipped:** the cracks view (`F9`, `--view cracks`) with classes 1 to 3 and the
-  self-hit; ADR-0038's octahedral code (0..=62, an axis normal exact); five closing rules
-  behind `--closing old|snap|extend-0.25|extend-0.5|blend` and the shadow push behind
-  `--shadow-push on`; snap as the contour looks' default, push off.
-- **Public API changed:** `vxe_render::CrackClosing`, `vxe_render::CrackShares`,
-  `SurfaceTuning::closing` and `SurfaceTuning::shadow_push` (default `Old`, off), `ViewMode::Cracks`;
-  the plane attribute's normal code changes value (decode `q / 31 - 1`).
-- **Budget readings:** `docs/nfr.md` §2, the crack-closing paragraph: hit pass at the level's
-  spawn, 1080p from 720p, release, perf lock, load 1.1 to 3.0. RTX 3080 Laptop GPU: 0.598 ms at
-  00ca974, 0.658 ms at e9cae0e with snap (+10.0 %), 0.604 ms snap alone (+1.0 %). AMD Radeon
-  Graphics (RADV RENOIR): 4.264, 5.981 (+40.3 %), 4.364 (+2.3 %). Light with the push: 1.439
-  against 0.913 (RTX), 9.165 against 7.026 (Radeon). Mirror 157 872 640 B live, 259 203 264 B
-  allocated.
-- **Gate at the tip (760950b's tree):** `cargo nextest run --workspace --profile full
-  --test-threads 2`, exit 100: 720 run, 719 passed, 1 failed (`showcase_hall_golden_is_lit_by_its_four_ores`,
-  above), 13 skipped, 4810 s, lavapipe, load 7.9 at start; `cargo clippy --workspace
-  --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo test --doc --workspace`
-  7 passed; `cargo deny check` ok (advisories, bans, licenses, sources); the four
-  `scripts/check-*.mjs` 0.
-- **Outstanding `human` phases:** none. Phase 5 recorded (c); Phase 6 waits on an architect
-  amendment for the flat-faced boxes.
+  self-hit, its palette written in display values so the window's post chain keeps it;
+  ADR-0038's octahedral code (0..=62, an axis normal exact); snap as the only closing rule
+  (ADR-0039) and the shadow push behind `--shadow-push on`, off by default. The other four
+  rules, `old` and `--closing` are gone.
+- **Public API changed:** `vxe_render::CrackShares`, `SurfaceTuning::shadow_push` (default
+  off), `ViewMode::Cracks`; `CrackClosing` and `SurfaceTuning::closing`, added in Phase 3, are
+  removed again; the plane attribute's normal code changes value (decode `q / 31 - 1`).
+- **Budget readings:** `docs/nfr.md` §2, the crack-closing paragraph, the tree's reading: hit
+  pass at the level's spawn, 1080p from 720p, release, exclusive perf lock, load 1.48 to 3.4
+  (loaded), 45bc227's tree against 00ca974's binary. RTX 3080 Laptop GPU 0.616 against 0.608
+  ms (+1.3 %), light 0.925 against 0.923; AMD Radeon Graphics (RADV RENOIR) 4.298 against
+  4.279 (+0.4 %), light 7.175 against 7.266. Mirror 157 872 640 B live, 259 203 264 B
+  allocated (Phases 3 and 4).
+- **Gate at the tip (76fa99f's tree; the close commit changes this plan only):** `cargo build`
+  0; `cargo nextest run --workspace --profile quick` exit 100 at load 4.0 rising to 26: 539
+  run, 537 passed, 2 timed out at 30 s (`castle
+  the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn`, `replay
+  a_stamp_and_a_collapse_replay_from_the_save`), 3 skipped; alone, at load 24 to 18, each
+  passed (8.6 s, 15.2 s); `cargo nextest run
+  --workspace --profile gpu` (exclusive perf lock, lavapipe, load 4.20 at the start, 2.38 at the
+  end, loaded) exit 0: 185 run, 185 passed, 29 skipped, 1076 s; `cargo test --doc --workspace` 7 passed, 1 ignored;
+  `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo clippy -p flythrough
+  --all-targets --features wasm -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny
+  check` ok (advisories, bans, licenses, sources); the four `scripts/check-*.mjs` 0.
+- **Outstanding `human` phases:** none. Phase 5 recorded (c); its flat-faced boxes are Plan
+  0053's.
 
 ## Followups
 
