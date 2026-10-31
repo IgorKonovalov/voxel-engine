@@ -411,6 +411,26 @@ is in `vxe-render`, a client-side view.
    metric gains the 15-degree normal condition above. The cost (hit pass 6x to 12x the base)
    is not a Phase 1 bar; the owner sets the bars at Phase 2 on these readings.
 
+2. **Phase 2, the pick (owner, 2026-10-31, session 1, 14 runs at `b282738`'s release binary).**
+   Outcome (a): the field surface is the default surface look. At the vein the four plane looks
+   kept the rods and slabs ("same problem" through filter, field and both); `cubes-field` read
+   calmer ("not even too bad, if not for the lighting flickers") but at the patch showed thin
+   lit lines along cube edges ("not acceptable really"); the field read "smooth, wonderful" at
+   both poses. N1 analytic is the normal source: N2 showed "not much of a visual difference"
+   at either pose at twice N1's hit cost, so N2 goes. The flicker the owner saw in every look
+   is the lighting's (Plan 0051), not the surface's.
+3. **Phase 2, the cost bar (owner, 2026-10-31).** Set on the RTX 3080 Laptop: the hit plus
+   light passes at most 5 ms at the level's spawn, 1080p from 720p, release, perf lock, quiet
+   load (Phase 1 read 3.46 + 0.90 ms under N1 against 0.58 + 0.88 at the base). The Radeon
+   reading (30.0 + 6.9 ms, 7x the base hit) is recorded as out of budget on `docs/nfr.md`
+   section 1's slow adapter; a separate walk-speed spike, its own plan and ADR after this one,
+   decides whether the iGPU ships the field or falls back. Phase 2's done-when asked for a
+   Radeon bar too; amended 2026-10-31 (owner): the Radeon bar is that spike's to set.
+4. **Phase 2, the storage bar (owner, 2026-10-31).** Live band bytes at most the packed
+   figures plus 10 %: 106 MB at the level and 530 MB over the full flight at `r_full` 16, the
+   band pool inside the mirror's accounting (`mirror_bytes` and `allocated_bytes`). Phase 3
+   lands the packed layout; the spike's dense pool (241 MB / 1.15 GB) is not the bar.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
@@ -421,7 +441,7 @@ is in `vxe-render`, a client-side view.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The field as a scratch look: dense storage, the walk, the readings and the census | dev | done | b282738 (the code, wip) and committed with this row (the field look's box rule) |
-| 2: The owner's windowed check, one session with Plan 0053's Phase 4 | human | not started | |
+| 2: The owner's windowed check, one session with Plan 0053's Phase 4 | human | done (a): the field surface, N1 (owner, 2026-10-31; answers 2 to 4) | owner answers, this commit |
 | 3: Band slots in the size-classed mirror | dev | not started | |
 | 4: The field as the default walk, the planes removed | dev | not started | |
 | 5: The readings, the ADR, the close block | dev | not started | |
