@@ -87,9 +87,8 @@ fn shade(@builtin(global_invocation_id) gid: vec3<u32>) {
             let dist = max(length(to_light), 1e-2);
             walk_steps = 0u;
             loads = 0u;
-            pool_reads = 0u;
             shadowed(shadow_origin(rec.p, shadow_normal_of(rec, ray.d)), to_light / dist, dist);
-            counts = vec4<f32>(f32(walk_steps), f32(loads), f32(pool_reads), 1.0);
+            counts = vec4<f32>(f32(walk_steps), f32(counted_loads()), f32(counted_pool_reads()), 1.0);
         }
         textureStore(irradiance_out, px, counts);
         return;

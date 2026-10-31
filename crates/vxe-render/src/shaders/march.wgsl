@@ -377,10 +377,19 @@ var<private> coarse_span: vec2<f32> = vec2<f32>(3.0e38, -3.0e38);
 // loads from the mirror (table, record bits and entries, mask lines, the header's translucent
 // words, the rest of the slots), and the pool loads among them: every slot word but a mask
 // line's or a translucent word's. `main` resets them before the primary ray and reads them after it in the
-// steps view.
+// steps view. The loads count in the low half of `loads` and the pool loads in its high half
+// (one register; a ray past 65535 loads would carry into the high half, far above the 255 the
+// views clamp at).
 var<private> walk_steps: u32;
 var<private> loads: u32;
-var<private> pool_reads: u32;
+
+fn counted_loads() -> u32 {
+    return loads & 0xFFFFu;
+}
+
+fn counted_pool_reads() -> u32 {
+    return loads >> 16u;
+}
 
 // Set in the cracks view's hit pipeline alone: the walk records `crack_class` and the hit pass
 // traces each hit's lamp self-hit. A pipeline constant, so every other pipeline that walks
@@ -421,8 +430,7 @@ fn slot_word(unit: u32, word: u32) -> u32 {
 
 // `slot_word`, counted as a pool load.
 fn pool_word(unit: u32, word: u32) -> u32 {
-    loads += 1u;
-    pool_reads += 1u;
+    loads += 0x10001u;
     return slot_word(unit, word);
 }
 
@@ -1717,36 +1725,42 @@ struct FBrick {
 // The last brick `field_brick` resolved, the last 4^3 block row `field_cell` read (keyed by
 // band slot and word), the last group of bricks it tested (keyed by record and word) and the
 // last dual cell's corners `field_piece` loaded.
-var<private> fb_held: bool;
-var<private> fb_key: vec3<i32>;
+// Keys are packed into one word each, NOT_HELD when nothing is held. `fb_key` is the brick
+// coordinate's low ten bits per axis (`brick_key`): unique while the window, with the one brick
+// a corner reads past its edge, spans fewer than 1024 bricks (128 chunks) on every axis.
+const NOT_HELD: u32 = 0xFFFFFFFFu;
+var<private> fb_key: u32;
 var<private> fb: FBrick;
-var<private> fm_held: bool;
 var<private> fm_key: u32;
 var<private> fm_opaque: vec4<u32>;
 var<private> fm_band: vec4<u32>;
-var<private> fg_held: bool;
-var<private> fg_key: vec2<u32>;
+var<private> fg_key: u32;
 var<private> fg_bits: u32;
 var<private> fc_held: bool;
 var<private> fc_base: vec3<i32>;
-var<private> fc: array<f32, 8>;
-// Bit i: corner i of the held cell is crisp (its band count carries CRISP_COUNT_BIT).
-var<private> fc_crisp: u32;
+// The held cell's corner count bytes, corner i in byte i % 4 of word i / 4, CRISP_COUNT_BIT
+// kept: two registers held across the walk where eight `phi` values would take eight.
+var<private> fc_bytes: vec2<u32>;
 
 fn reset_field_walk() {
     reset_walk();
-    fb_held = false;
-    fm_held = false;
-    fg_held = false;
+    fb_key = NOT_HELD;
+    fm_key = NOT_HELD;
+    fg_key = NOT_HELD;
     fc_held = false;
 }
 
+fn brick_key(bw: vec3<i32>) -> u32 {
+    let k = vec3<u32>(bw) & vec3<u32>(1023u);
+    return k.x | (k.y << 10u) | (k.z << 20u);
+}
+
 fn field_brick(bw: vec3<i32>) -> FBrick {
-    if (fb_held && all(bw == fb_key)) {
+    let key = brick_key(bw);
+    if (key == fb_key) {
         return fb;
     }
-    fb_held = true;
-    fb_key = bw;
+    fb_key = key;
     var r = FBrick(ABSENT, 0u, ABSENT, vec2<u32>(0u));
     let chunk = floor_div(bw, 8);
     let rel = chunk - params.window_min;
@@ -1897,9 +1911,9 @@ fn field_cell(v: vec3<i32>) -> FCell {
         let lb = bw - chunk * 8;
         let g = vec3<u32>(lb / 2);
         let wi = 4u * g.z + g.y / 2u;
-        let key = vec2<u32>(rec, wi);
-        if (!fg_held || any(key != fg_key)) {
-            fg_held = true;
+        // Record indices stay below 2^28, so the key is never NOT_HELD.
+        let key = rec * 16u + wi;
+        if (key != fg_key) {
             fg_key = key;
             fg_bits = 0u;
             if ((b.table & EMPTY_BIT) == 0u) {
@@ -1931,8 +1945,7 @@ fn field_cell(v: vec3<i32>) -> FCell {
     let q = l / 4u;
     let w = 8u * q.z + q.y;
     let key = b.band * 16u + w;
-    if (!fm_held || key != fm_key) {
-        fm_held = true;
+    if (key != fm_key) {
         fm_key = key;
         let unit = b.entry & UNIT_MASK;
         let cls = (b.entry >> CLASS_SHIFT) & 7u;
@@ -2000,14 +2013,14 @@ fn cubic_at(k: vec4<f32>, s: f32) -> f32 {
 // The first crossing of the field along `o + d t` for `t` in `[ta, tb]`, inside one dual
 // cell: found, or a leak at `ta` (see the walk's comment).
 // The dual cell holding the piece `[ta, tb]` of `o + d t`: its base voxel, its corners
-// loaded into `fc` and `fc_crisp` unless they are held.
+// loaded into `fc_bytes` unless they are held.
 fn field_corners(o: vec3<f32>, d: vec3<f32>, ta: f32, tb: f32) -> vec3<i32> {
     let pm = o + d * (0.5 * (ta + tb));
     let base = vec3<i32>(floor(pm - 0.5));
     if (!fc_held || any(base != fc_base)) {
         fc_held = true;
         fc_base = base;
-        fc_crisp = 0u;
+        fc_bytes = vec2<u32>(0u);
         // The corners in brick order, so `field_brick`'s held brick serves each brick's corners
         // in a row: the bits of `j` go to the axes the cell does not cross a brick face on
         // first, then to those it crosses.
@@ -2019,10 +2032,7 @@ fn field_corners(o: vec3<f32>, d: vec3<f32>, ta: f32, tb: f32) -> vec3<i32> {
         for (var j = 0u; j < 8u; j++) {
             let i = ((j >> px) & 1u) | (((j >> py) & 1u) << 1u) | (((j >> pz) & 1u) << 2u);
             let k = field_count_raw(base + vec3<i32>(vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u)));
-            fc[i] = f32(k & 0x1Fu) / 27.0 - 0.5;
-            if ((k & CRISP_COUNT_BIT) != 0u) {
-                fc_crisp |= 1u << i;
-            }
+            fc_bytes[i / 4u] |= (k & 0xFFu) << (8u * (i % 4u));
         }
     }
     return base;
@@ -2031,13 +2041,28 @@ fn field_corners(o: vec3<f32>, d: vec3<f32>, ta: f32, tb: f32) -> vec3<i32> {
 // Whether voxel `u`, a corner of the held cell at `base`, is crisp.
 fn corner_crisp(base: vec3<i32>, u: vec3<i32>) -> bool {
     let o = vec3<u32>(u - base);
-    return ((fc_crisp >> (o.x + 2u * o.y + 4u * o.z)) & 1u) != 0u;
+    let i = o.x + 2u * o.y + 4u * o.z;
+    return ((fc_bytes[i / 4u] >> (8u * (i % 4u))) & CRISP_COUNT_BIT) != 0u;
 }
 
-fn field_piece(o: vec3<f32>, d: vec3<f32>, ta: f32, tb: f32) -> FHit {
+// The held cell's corner `phi` values.
+fn held_phi() -> array<f32, 8> {
+    var c: array<f32, 8>;
+    for (var i = 0u; i < 8u; i++) {
+        c[i] = f32((fc_bytes[i / 4u] >> (8u * (i % 4u))) & 0x1Fu) / 27.0 - 0.5;
+    }
+    return c;
+}
+
+// With `crisp_test`, the piece is the first of band voxel `v`'s segment, and a crisp `v` (one
+// of the piece's corners) is its cube, hit at `ta`.
+fn field_piece(o: vec3<f32>, d: vec3<f32>, ta: f32, tb: f32, crisp_test: bool, v: vec3<i32>) -> FHit {
     var none = FHit(false, false, false, ta, vec3<f32>(0.0), vec3<i32>(0), vec3<f32>(0.0));
     let base = field_corners(o, d, ta, tb);
-    let c = fc;
+    if (crisp_test && corner_crisp(base, v)) {
+        return FHit(true, false, true, ta, vec3<f32>(0.0), v, vec3<f32>(0.5));
+    }
+    let c = held_phi();
     var pos = false;
     var neg = false;
     for (var i = 0u; i < 8u; i++) {
@@ -2164,18 +2189,13 @@ fn field_voxel(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t0: f32
         b = s;
     }
     let cuts = array<f32, 4>(a, b, c, t1);
-    if (crisp_test) {
-        let first = select(select(select(t1, c, c > t0), b, b > t0), a, a > t0);
-        let base = field_corners(o, d, t0, first);
-        if (corner_crisp(base, v)) {
-            return FHit(true, false, true, t0, vec3<f32>(0.0), v, vec3<f32>(0.5));
-        }
-    }
     var lo = t0;
+    var first = crisp_test;
     for (var i = 0u; i < 4u; i++) {
         let hi = cuts[i];
         if (hi > lo) {
-            let h = field_piece(o, d, lo, hi);
+            let h = field_piece(o, d, lo, hi, first, v);
+            first = false;
             if (h.found) {
                 return h;
             }
@@ -2189,7 +2209,7 @@ fn field_voxel(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t0: f32
 // FLAG_FIELD_BLEND N2, the corners' blend (see the walk's comment), N1 where it vanishes.
 fn field_normal(base: vec3<i32>, f: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
     // The hit's cell is the last one `field_piece` loaded: its corners are held.
-    var c = fc;
+    var c = held_phi();
     if (!fc_held || any(base != fc_base)) {
         for (var i = 0u; i < 8u; i++) {
             c[i] = field_phi(base + vec3<i32>(vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u)));
@@ -2388,13 +2408,12 @@ fn field_pixel(gid: vec2<u32>) {
     let d = ray.d;
     walk_steps = 0u;
     loads = 0u;
-    pool_reads = 0u;
     var fh = field_march(o, d);
     let h = fh.h;
     if (h.found && fh.material == FIELD_MATERIAL_PENDING) {
         fh.material = field_material(o + d * h.t, d, h.base, h.f);
     }
-    let counts = vec3<u32>(min(walk_steps, 255u), min(loads, 255u), min(pool_reads, 255u));
+    let counts = vec3<u32>(min(walk_steps, 255u), min(counted_loads(), 255u), min(counted_pool_reads(), 255u));
     var pos = vec4<f32>(0.0, 0.0, 0.0, BIG);
     var info = vec4<u32>(0u);
     if (h.found) {
@@ -2437,12 +2456,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let d = ray.d;
     walk_steps = 0u;
     loads = 0u;
-    pool_reads = 0u;
     let h = march(o, d, BIG, (params.flags & FLAG_CUTAWAY) != 0u);
     // Read before the normal modes' lookups touch the walk and the counters.
     let crack = select(0u, crack_class, h.found);
     let translucent_seen = walk.saw_translucent && params.translucent_layers > 0u;
-    let counts = vec3<u32>(min(walk_steps, 255u), min(loads, 255u), min(pool_reads, 255u));
+    let counts = vec3<u32>(min(walk_steps, 255u), min(counted_loads(), 255u), min(counted_pool_reads(), 255u));
     let t_end = select(BIG, h.t, h.found);
     let view = view_mode();
     let px = vec2<i32>(gid.xy);

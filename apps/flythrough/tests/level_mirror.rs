@@ -488,3 +488,133 @@ fn band_census() {
     );
     assert_eq!(gpu.allocated_bytes(), allocated);
 }
+
+/// The level's thin voxels (a reading): the solid voxels whose 27-count is 1 to 13, so whose
+/// centre lies outside the field surface (3 a free one-voxel rod, 9 a free one-voxel sheet,
+/// 12 a free 2 x 2 rod or a one-voxel rod on a floor). A voxel whose 3 x 3 x 3 block reaches
+/// past the extent reads that outside as air (`flythrough::brick_counts`), so voxels on the
+/// extent's outer layer are counted apart. The histogram's total is asserted against
+/// [`brute_thin`]'s count over the same chunks.
+#[test]
+#[ignore = "a reading: the thin-voxel histogram of the level"]
+fn thin_census() {
+    let (world, _) = level();
+    let ext = world.extent();
+    let lo = ext.min.0.map(|c| c * CHUNK_EDGE);
+    let hi = ext.max.0.map(|c| c * CHUNK_EDGE - 1);
+    let mut hist = [0u64; 14];
+    let mut edge = [0u64; 14];
+    let mut solid_band = 0u64;
+    let mut brute = 0u64;
+    for c in world.store().coords() {
+        let arcs: Vec<_> = (0..27)
+            .map(|k| {
+                let d = [k % 3 - 1, (k / 3) % 3 - 1, k / 9 - 1];
+                world
+                    .store()
+                    .get(ChunkCoord([0, 1, 2].map(|a| c.0[a] + d[a])))
+            })
+            .collect();
+        let guards: Vec<_> = arcs
+            .iter()
+            .map(|a| a.as_ref().map(|a| a.read().unwrap()))
+            .collect();
+        let around: [Option<&Chunk>; 27] = std::array::from_fn(|k| guards[k].as_deref());
+        let Some(centre) = around[13] else { continue };
+        brute += brute_thin(&around);
+        for slot in 0..CHUNK_BRICKS {
+            let Some((counts, _)) = flythrough::brick_counts(&around, slot) else {
+                continue;
+            };
+            let solid = centre.brick(slot).solid_bits();
+            let b = brick_of_slot(slot);
+            for (i, &k) in counts.iter().enumerate() {
+                if (solid[i / 64] >> (i % 64)) & 1 == 0 || k == 0 || k >= 27 {
+                    continue;
+                }
+                solid_band += 1;
+                if k > 13 {
+                    continue;
+                }
+                let v = [i as i32 % 8, (i as i32 / 8) % 8, i as i32 / 64];
+                let g = [0, 1, 2].map(|a| c.0[a] * CHUNK_EDGE + b[a] * BRICK_EDGE + v[a]);
+                if (0..3).any(|a| g[a] == lo[a] || g[a] == hi[a]) {
+                    edge[k as usize] += 1;
+                } else {
+                    hist[k as usize] += 1;
+                }
+            }
+        }
+    }
+    let inner: u64 = hist.iter().sum();
+    let outer: u64 = edge.iter().sum();
+    println!(
+        "thin census: {solid_band} solid band voxels; {inner} with count 1 to 13 inside, {outer} on the extent's outer layer"
+    );
+    for k in 1..14 {
+        println!(
+            "count {k:2}: {:9} inside, {:9} on the outer layer",
+            hist[k], edge[k]
+        );
+    }
+    println!("thin census: the brute-force pass reads {brute} solid voxels with count 1 to 13");
+    assert_eq!(inner + outer, brute);
+}
+
+/// The solid voxels of the chunk at the centre of `around` (indexed `x + 3 y + 9 z`, the
+/// centre 13, `None` read as air) whose 27-count is 1 to 13, counted brute force: for each
+/// brick not uniform air, a 10 x 10 x 10 occupancy gathered voxel by voxel from the 27 bricks
+/// around it, then every solid voxel's 3 x 3 x 3 sum read off it.
+fn brute_thin(around: &[Option<&Chunk>; 27]) -> u64 {
+    let eb = CHUNK_EDGE / BRICK_EDGE;
+    // The solid bits of the brick at `b` (brick coordinates relative to the centre chunk).
+    let bits_of = |b: [i32; 3]| -> [u64; 8] {
+        let k = b.map(|v| v.div_euclid(eb) + 1);
+        around[(k[0] + 3 * k[1] + 9 * k[2]) as usize].map_or([0; 8], |ch| {
+            ch.brick(brick_slot(b.map(|v| v.rem_euclid(eb))))
+                .solid_bits()
+        })
+    };
+    let centre = around[13].expect("the centre chunk");
+    let mut n = 0u64;
+    let mut occ = [false; 1000];
+    for slot in 0..CHUNK_BRICKS {
+        let bits = centre.brick(slot).solid_bits();
+        if bits == [0; 8] {
+            continue;
+        }
+        let b = brick_of_slot(slot);
+        let near: [[u64; 8]; 27] = std::array::from_fn(|d| {
+            let d = d as i32;
+            bits_of([b[0] + d % 3 - 1, b[1] + (d / 3) % 3 - 1, b[2] + d / 9 - 1])
+        });
+        if near.iter().all(|m| *m == [u64::MAX; 8]) {
+            // Every voxel of the brick counts 27.
+            continue;
+        }
+        for (j, cell) in occ.iter_mut().enumerate() {
+            // Voxel `j` of the 10^3 block around the brick, at `-1..9` on each axis.
+            let q = [j % 10, (j / 10) % 10, j / 100].map(|v| v as i32 - 1);
+            let nb = q.map(|v| v.div_euclid(BRICK_EDGE) + 1);
+            let l = q.map(|v| v.rem_euclid(BRICK_EDGE));
+            let i = (l[0] + BRICK_EDGE * (l[1] + BRICK_EDGE * l[2])) as usize;
+            let m = &near[(nb[0] + 3 * nb[1] + 9 * nb[2]) as usize];
+            *cell = (m[i / 64] >> (i % 64)) & 1 != 0;
+        }
+        for i in 0..512usize {
+            if (bits[i / 64] >> (i % 64)) & 1 == 0 {
+                continue;
+            }
+            let v = [i % 8, (i / 8) % 8, i / 64];
+            let mut k = 0;
+            for d in 0..27 {
+                let q = [v[0] + d % 3, v[1] + (d / 3) % 3, v[2] + d / 9];
+                k += u32::from(occ[q[0] + 10 * (q[1] + 10 * q[2])]);
+            }
+            if (1..=13).contains(&k) {
+                n += 1;
+            }
+        }
+    }
+    n
+}

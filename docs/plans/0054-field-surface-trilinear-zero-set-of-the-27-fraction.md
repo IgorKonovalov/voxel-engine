@@ -881,7 +881,7 @@ which no deterministic path reads.
 | 3a: Free-standing thin features and a per-material scratch look | dev | done; done-when 3 (cost bar) and 4 (pressure) not met as stated | 17045d8 |
 | 3b: The owner's look at thin features and the per-material candidate | human | done (a): the field per material, crisp materials as cubes (owner, 2026-10-31; answer 7) | owner answers, be7b943 |
 | 4a: Where the window's frame time goes | dev | done; the windowed p50s not reproduced headless (done-when 2 names the remainder the window's) | 52cc078 |
-| 4b: The walk inside the bar | dev | stopped at the stop rule: five changes, `field-cubes` 5.185 ms, `field` 5.139 ms against 5.00 | committed with this row (wip) |
+| 4b: The walk inside the bar | dev | paused before its gate: `field-cubes` 4.761 ms, `field` 4.748 ms against 5.00 (RTX); RADV 128 VGPRs | 91f9066 (c1 to c5, wip) and committed with this row (wip, c8) |
 | 4c: The crisp flag, the field as the default, the planes removed | dev | not started | |
 | 4d: The owner's windowed check of the default | human | not started | |
 | 5: The readings, the ADR, the close block | dev | not started | |
@@ -1441,7 +1441,7 @@ output pixel. "default" is the base's `contour-sharp`. No code changed.
   layer, which the phase's text does not name.
 
 
-#### Phase 4b (stopped at the stop rule)
+#### Phase 4b
 
 Readings on the NVIDIA GeForce RTX 3080 Laptop GPU (`--adapter NVIDIA`) unless named;
 `flythrough --level --seed 1 --headless --frames 300 --render 1920x1080 --look field|field-cubes`
@@ -1450,7 +1450,8 @@ a 1-minute load under 2, three alternated rounds against 17045d8's release binar
 (`live/p4a/bin`), medians of the frame line's hit and light (`live/p4b/cost.sh`, logs
 `live/p4b/cost-cN/`); per-ray counters from one `--view steps` run; RADV shader stats of the
 field hit pipeline by `RADV_DEBUG=shaderstats,nocache --adapter AMD --frames 3`. Every change
-is in `march.wgsl` alone, measured one at a time on top of the previous one. Each tip's field
+is in `march.wgsl` alone (c8 also `light.wgsl`, the counters), measured one at a time on top
+of the previous one; c1 to c5 before the stop (91f9066), c6 to c8 after owner answer 10. Each tip's field
 and `field-cubes` hit positions and hit records at both poses (384 x 216) and on the thin rig
 (320 x 320), lavapipe, were dumped by a scratch test (`live/p4b/zz_field_dump.rs`, not
 committed) and compared with 17045d8's (`live/p4b/ref/`, `cmp.py`): c2, c4 and c5 read 0
@@ -1465,43 +1466,94 @@ and c4's).
 | c3: the corners loaded in brick order (the axes whose brick face the cell crosses last), so the held brick serves each brick's corners in a row | 6.358 | 4.530 / 0.968 / 5.498 | 5.769 | 4.464 / 0.979 / 5.443 | 126.00 | 87.96 | 256, 174 444 | 1.28-1.88 |
 | c4: `field_material` through the held brick (`field_opaque`, `field_opaque_material`) instead of up to nine `lookup`s, one material read for the chosen corner | 6.387 | 4.443 / 0.985 / 5.428 | 5.861 | 4.314 / 0.979 / 5.293 | 120.33 | 91.83 | 256, 213 820 | 0.91-1.72 |
 | c5: the material resolved after the walk (`FIELD_MATERIAL_PENDING`, `field_pixel`), out of the march loop | 6.352 | 4.219 / 0.966 / 5.185 | 5.750 | 4.160 / 0.979 / 5.139 | 120.33 | 91.83 | 256, 189 032 | 1.06-1.81 |
+| c6: `field_brick` reads the band word and the two band prefix words together (one dependency level fewer; reverted) | 6.525 | 4.220 / 0.981 / 5.201 | 5.924 | 4.105 / 0.981 / 5.086 | 120.33 | 91.83 | not read | 1.43-1.98 |
+| c7 (on c5): the held cell's corners as two words of count bytes (`fc_bytes`, `held_phi`) instead of eight `phi` and a crisp word | 6.477 | 4.151 / 0.949 / 5.100 | 5.935 | 4.033 / 0.949 / 4.982 | 120.33 | 91.83 | 256 (pre-sched 131), 189 128 | 1.78-1.95 |
+| c8: the held keys packed into one word each (`brick_key`, `NOT_HELD`; the held flags gone), the loads and pool loads counted in one word (`counted_loads`, `counted_pool_reads`), the crisp test inside the first piece (`field_piece`) instead of a second `field_corners` | 6.487 | 3.804 / 0.957 / 4.761 | 5.916 | 3.787 / 0.961 / 4.748 | 120.33 | 91.83 | 128 (pre-sched 126), 166 188 | 1.85-1.99 |
 
 The counters are `field-cubes`'s; `field` reads the same from c2 on. A scratch build at c3
 whose `field_material` returned material 1 (`s-nomat`, one round, not committed) read
 `field-cubes` 3.918 + 0.956 = 4.874 ms and `field` 3.828 + 0.957 = 4.785 ms, loads 114.15.
 
-- Done-when 1 not met: after five measured changes `field-cubes` reads 5.185 ms and `field`
-  5.139 ms hit plus light against the 5.00 ms bar (17045d8 in the same runs 6.352 and 5.750).
-  The stop rule's first case: dev stops for the owner.
-- The Radeon (AMD Radeon Graphics (RADV RENOIR), `--adapter AMD`, one round, load 0.60 to
-  1.50, indicative, `live/p4b/cost-c5-amd/`): c5 `field-cubes` 56.500 + 7.239 = 63.739 ms,
-  `field` 56.206 + 7.232 = 63.438, against 17045d8's 42.105 + 7.213 = 49.318 and 40.124 +
-  7.212 = 47.336. RADV allocates the field hit pipeline 256 VGPRs from c2 on (128 before).
-- Done-when 3, at c5: `the_field_surface_lies_on_the_flat_faces`,
-  `the_field_surface_has_no_boxes_and_no_leaks` and `thin_features_in_the_field_and_per_material`
-  on lavapipe (exclusive perf lock, `--profile gpu`, 708.2 s): 3 run, 3 passed (`live/p4b/dw3.log`); the thin census test is not added (it lands with the phase). Done-whens 2, 4 and 5 not read (the stop came first; the storage did
-  not move).
-- Left over the bar: 0.185 ms (`field-cubes`), 0.139 ms (`field`).
-- The next candidates, not measured: a direct band index per record (512 `u32` per record, as
-  the dense pool had: 6.6 MB at the level's 3200 records, 96.2 + 6.6 = 102.8 MB under the
-  106 MB bar; about 35 MB over the flight's 17 077 full chunks, 438.9 + 35 = 474 MB under 530
-  MB), replacing the header's band word and two prefix words (three pool reads per brick the
-  field walk resolves); its gain is bounded by the gap to b282738's dense pool (Phase 4a: hit
-  3.581 ms against c5's 4.160 for `field`, runs of different sessions). Splitting the field
-  hit pipeline by the crisp flag: `field` against `field-cubes` reads 0.046 ms at c5. Bringing
-  RADV back to 128 VGPRs (c2's change on that compiler): a Radeon term, not an RTX one.
+- Done-when 1, at c8 (the RTX rows above, three alternated rounds, 1-minute load 1.85 to
+  1.99): `field-cubes` 3.804 + 0.957 = 4.761 ms and `field` 3.787 + 0.961 = 4.748 ms hit plus
+  light against the 5.00 ms bar: met (17045d8 in the same runs 6.487 and 5.916). The Radeon
+  (AMD Radeon Graphics (RADV RENOIR), `--adapter AMD`, one round, load 1.48 to 1.96,
+  `live/p4b/cost-c8-amd/`): c8 `field-cubes` 31.104 + 7.256 = 38.360 ms, `field` 31.008 +
+  7.277 = 38.285, against 17045d8's 42.074 + 7.226 = 49.300 and 40.137 + 7.256 = 47.393 (c5:
+  56.500 + 7.239, 56.206 + 7.232). RADV shader stats of the field hit pipeline
+  (`live/p4b/radv.sh`, `--look field-cubes`): 17045d8 128 VGPRs, 155 020 B; c5 256, 189 032 B;
+  c8 128 VGPRs (pre-sched 126, 121 spilled SGPRs, 2 waves per SIMD), 166 188 B.
+- Owner answer 10's two changes: (i) the direct band index per record was not built; c6
+  measured the dependency level it removes (the header's band word read before the prefix),
+  with no gain beyond the runs' spread (`field-cubes` 5.201 against c5's 5.185, `field` 5.086
+  against 5.139), and was reverted; the field walk's resolved bricks are band bricks, so c6's
+  extra prefix reads for other Full bricks did not show in the counters. (ii) RADV back to 128
+  VGPRs took two measured steps, c7 (pre-sched 133 to 131, still 256) and c8 (128).
+- Done-when 2, at c8 (2530 x 1378 from 1687 x 919, shaded, lamp on, one round each against
+  17045d8 in the same session, loads 1.53 to 1.93; `live/p4b/cost-c8-{vein,patch}-{NVIDIA,AMD}/`),
+  GPU frame / hit:
 
-### Resume notes (2026-10-31, Phase 4b stopped at the stop rule, delete when Phase 4b lands)
+  | adapter | pose | 17045d8 `field-cubes` | c8 `field-cubes` | 17045d8 `field` | c8 `field` | Phase 4a `field-cubes` (17045d8) |
+  |---|---|---|---|---|---|---|
+  | RTX 3080 Laptop | vein | 15.356 / 5.129 | 10.727 / 4.315 | 12.220 / 5.114 | 10.692 / 4.288 | 12.025 / 5.480 |
+  | RTX 3080 Laptop | patch | 13.438 / 7.646 | 12.400 / 5.582 | 16.482 / 7.274 | 12.410 / 5.628 | 13.261 / 7.315 |
+  | Radeon RENOIR | vein | 79.222 / 39.613 | 71.899 / 32.084 | 77.719 / 38.468 | 71.660 / 32.009 | not read |
+  | Radeon RENOIR | patch | 88.828 / 55.074 | 77.137 / 43.144 | 87.304 / 53.574 | 76.923 / 43.030 | not read |
 
-- The code of c1 to c5 is committed as `wip(render)` with this section; the gate at it:
-  `shader_portability` and the three done-when 3 tests above. Not run at it: the quick and gpu
-  tiers, clippy (no Rust changed), the flythrough pose and window rows of done-when 2.
-- Tools (untracked, `live/p4b/`): `cost.sh cN` builds the worktree into `bin/flythrough-cN`
-  and reads one change (`ROUNDS`, `ADAPTER`, `SUFFIX`, `RES`, `POSE`); `dump.sh NAME` copies the
-  scratch dump test in, dumps on lavapipe, removes it and compares with `ref/`; `march-c3.wgsl`
-  is c3's shader. The thin census test is `live/p4a/thin-census.patch`.
-- Awaiting the owner's option (raise the bar, a lower internal resolution, the field inside a
-  radius, or accept and go on to Phase 4c).
+  The 17045d8 vein `field-cubes` GPU frame of 15.356 ms is one run (its passes after the hit
+  8.2 ms against 4.4 to 5.3 in the others).
+- Done-when 3, at c8: the dumps (`live/p4b/c8/`) against 17045d8's: hit masks 0 differing in
+  all six images, hit records (normal, material) 0 differing; hit positions 0 differing at the
+  patch and on the rig, 1 pixel differing at the vein in both looks (1.53e-5 voxel, within the
+  1e-3 bound; the root finder is unchanged, so exact equality is not met as stated). The three
+  tests in the gpu tier below.
+- Done-when 4: `gpu_world.rs` and the band slot layout did not change in this phase;
+  `level_mirror::band_census` (gpu tier) asserts the level's grown mirror equals the band
+  units' bytes (not yet read at c8, see the resume notes). The flight was not re-read (Phase 3's 438 898 624 B, the same layout).
+- Done-when 5, `level_mirror::thin_census` (ignored, a reading; release, 13.5 s): the
+  histogram of Phase 4a's done-when 4 (122 897 inside, 12 272 on the outer layer) and
+  `brute_thin`'s count of 135 169, asserted equal to their sum.
+- Deviations: change (i) not built (above); c7 and c8 are two steps for change (ii); c8 packs
+  the cost counters, which `light.wgsl`'s steps view reads (`counted_loads`,
+  `counted_pool_reads`); `level_mirror::thin_census` is the held patch plus `brute_thin` and
+  the assertion; the Radeon rows and the window rows are one round each.
+- Gate at c8 (this wip commit): build 0; clippy `-D warnings` 0; fmt 0; doctests ok; `cargo
+  deny check` ok; the four `scripts/check-*.mjs` 0; `--profile quick` (no lock, load 20.7 at
+  the end) 542 run, 542 passed (9 slow), 3 skipped. `--profile gpu` started 22:42 (exclusive
+  perf lock, load 19.1 at the start, right after the quick tier) and stopped at 22:56 on the
+  owner's pause: `castle_golden castle_gate_golden` failed (0.0000 % of pixels over 2/255,
+  peak RSS 1 186 762 752 B against its 1 GiB assertion); the rest not run.
+
+### Resume notes (2026-10-31 23:00, paused by the owner, delete when Phase 4b lands)
+
+- Done at this wip commit: c6 to c8 measured (the table above), c8 kept (c6 reverted, c7 is
+  inside c8); `level_mirror::thin_census` with `brute_thin` passes (release, `--ignored`);
+  done-whens 1, 2, 3 (dumps), 5 read. The tree also holds the start of Phase 4c's world
+  part: `MaterialFlags::CRISP`, `MaterialTable::is_crisp` (`crates/vxe-world/src/material.rs`)
+  and `edits::the_crisp_flag_is_a_row_property_only` (passes), not yet wired to the renderer.
+- Next, in order: (1) the gpu tier at this commit under the lock (`--profile gpu
+  --no-fail-fast`, at a load under 2; its first failure was `castle_gate_golden`'s peak RSS
+  1.19 GB against 1 GiB at load 19 with the image identical: re-run it alone to see whether
+  it is load or this tree); (2) `cargo nextest run -p flythrough --profile gpu --test
+  level_mirror -E 'test(band_census)' --no-capture` for done-when 4's figure (its `mirror`
+  line, expected 96 243 264 B grown); (3) fill those two into this section, delete these
+  notes, commit Phase 4b as `perf(render): ...` with `march.wgsl`, `light.wgsl`,
+  `apps/flythrough/tests/level_mirror.rs` and this plan; (4) Phase 4c.
+- Tools (untracked, `live/p4b/`): `cost.sh cN` (as before; `bin/flythrough-c8` is this tip's
+  release binary), `radv.sh cN` (RADV stats of the field hit pipeline, prints VGPRs and
+  pre-sched), `dump.sh NAME`, `cost-c8*/` the readings.
+- Phase 4c design worked so far (not code): with crisp as solid, the field pass sets bit 7
+  (`CRISP_COUNT_BIT`) and a new bit 6 (a smooth solid band voxel) in each count byte, so the
+  corner rule ("a field hit only when a solid band corner is smooth") reads `(fc_bytes.x |
+  fc_bytes.y) & 0x40404040` in `field_piece`; the field pass needs the materials buffer bound
+  and `voxel_material`, skipped for bricks whose palette holds no crisp row (a CPU bit in the
+  `FieldItem`'s unit, bit 31). The "no smooth near" bit: header word 15 bit 30, computed on
+  the CPU in `band_of`'s callers (`need`, `fix_band`) from the 27 bricks' palettes
+  (conservative), carried with the mask into `band_header`; the walk then treats such a band
+  brick as `face` does (`lookup_walk`, a solid voxel a cube hit, not a leak, material
+  `field_opaque_material`). The level's table has no translucent row, so `--crisp all` can
+  match `face` there. `live/p4/phase4-wip.patch` no longer applies (written against Phase 3);
+  its removals must be redone by hand.
 ### Resume notes (2026-10-31, held before Phase 4, delete when Phase 4 lands)
 
 - Held by the coordinator before Phase 4 (the owner is reconsidering the field as the
@@ -1554,6 +1606,10 @@ each. Empty is fine.)_
   4.36 ms). Done-when 4 not met as stated: `mirror pressure` still reads 1.000 at the level
   (the record term, 3200 of 3200); the band term moved the unit term from 0.980 to 0.645 and
   the reservation from 259.2 to 393.9 MB.
+- Phase 4b: owner answer 10's change (i), the direct band index, was not built (c6 measured
+  the dependency level it would remove, no gain, reverted); change (ii) is c7 and c8. Done-when
+  3: one hit position at the vein differs from 17045d8's by 1.53e-5 voxel in both looks with
+  the root finder unchanged.
 
 ### Close triggers
 

@@ -926,3 +926,35 @@ fn a_long_diagonal_capsule_allocates_spans_only_for_the_brick_rows_it_reaches() 
     assert_eq!(h, 0xac65_8493_f64b_99ea);
     assert_eq!(world.voxel_hash(), 0x2b8d_1391_b1a8_0d45);
 }
+
+#[test]
+fn the_crisp_flag_is_a_row_property_only() {
+    assert!(!Material::named("rock").flags.contains(MaterialFlags::CRISP));
+    let mut t = test_table();
+    assert!((0..=5).all(|id| !t.is_crisp(id)));
+    let wood = t.push(Material {
+        flags: MaterialFlags::CRISP,
+        ..Material::named("wood")
+    });
+    assert!(t.is_crisp(wood));
+    assert!(!t.is_crisp(wood + 1));
+
+    // The same carve on two worlds differing only in material 3's CRISP flag.
+    let mut crisp = test_table();
+    let mut rows: Vec<Material> = crisp.rows()[1..].to_vec();
+    rows[2].flags = rows[2].flags | MaterialFlags::CRISP;
+    crisp = MaterialTable::new();
+    for m in rows {
+        crisp.push(m);
+    }
+    assert!(crisp.is_crisp(3));
+    let source = FnSource(|v: VoxelCoord| if v.0[2] < 3 { 3 } else { 0 });
+    let smooth_world = World::generate(test_extent(), &source, &test_table());
+    let crisp_world = World::generate(test_extent(), &source, &crisp);
+    let op = sphere10(Mode::Carve);
+    let a = smooth_world.apply(&op).unwrap();
+    let b = crisp_world.apply(&op).unwrap();
+    assert_eq!(a, b);
+    assert!(!a.changed_from.is_empty());
+    assert_eq!(world_hash(&smooth_world), world_hash(&crisp_world));
+}
