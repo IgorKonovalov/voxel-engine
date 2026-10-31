@@ -639,6 +639,52 @@ the same rows as lamp on at both poses.
   the_normal_field_has_no_tile_edges` (Plan 0053 Phase 3) and `sharpness
   detail_after_lighting_is_exact_for_the_lamp` (98.028 %, Plan 0050 Phase 6).
 
+### Resume notes (2026-10-31, delete when Phase 3 lands)
+
+- Done: Phase 1 (b282738 code, abc8c16 box rule), Phase 2 (owner, 3ce35ac). Merged:
+  `plan-0053` at 8dd3ee4 into this branch (c773e5f; plan 0054's file kept from this branch),
+  then main at 929d1b3 (ba5b4d2: ADR-0041 drafted, Phase 4 and 5 amended). Nothing of
+  Phase 3 is written yet.
+- Gate at c773e5f (code unchanged since; ba5b4d2 is docs): build, clippy (workspace and
+  `-p flythrough --features wasm`), fmt, doctests, the four scripts 0; quick 539 run, 537
+  passed, 2 load timeouts (castle 30.07 s, replay 30.04 s at load 29; alone 8.8 s, 15.6 s);
+  gpu on lavapipe, exclusive perf lock, load 1.32 to 1.18, 1742 s: 196 run, 196 passed (the
+  base's three failures are green after the merge; the field test passes).
+- Left: Phases 3, 4, 5 in order, one commit each. Phase 4's cost reading is against main
+  28948a5's release binary (build it in a scratch worktree or a separate target dir; never
+  touch `target/alt/release/flythrough`'s owner session files under `live/session1*`).
+- Phase 3 starting points (read, not built):
+  - Today the scratch is `crates/vxe-render/src/field.rs` (`FieldScratch`: dense 9-unit slots,
+    index rows of 529 words per record in shard 0, CPU `is_band` over the 27 chunks around a
+    brick, `prepare` re-tests the border bricks of the 26 neighbour chunks of every written
+    chunk), wired from `GpuWorld::set_field_surface` and `prepare_field` at the end of `sync`;
+    the shader side is `attrib.wgsl`'s `field_main` (fills counts) and `march.wgsl`'s
+    `field_brick`/`field_count`/`field_cell` (read the index, the slot's band words at
+    `w, w+2, w+4, w+6`, counts at word 16 + i / 4).
+  - The mirror's slot is built by `fill_slot` and sized by `slot_units` / `need` in
+    `gpu_world.rs`; `upload_brick` writes a uniform brick as its material (no slot). Header
+    words: palette 0..8, translucent 8..10, surface prefix 10..14 (`HEADER_PREFIX_WORD`), attr
+    units and flags 14; word 15 is unused. A band prefix per layer in `u16` needs four words
+    the header does not have while the attribute stays (it goes in Phase 4): one candidate is
+    word 15 holding the band prefixes of layers 2, 4 and 6 at 9 bits each (the odd layer adds
+    a popcount of the layer below's two band words).
+  - Band membership crosses chunk faces (a brick on a chunk face beside a solid neighbour
+    chunk), while `sync`'s upload is chunk-local by design (module docs: "an upload never
+    couples chunks"). The scratch handled it by re-testing the border bricks of the 26
+    neighbours; slot sizes in the mirror then change for a neighbour chunk's bricks in the
+    same sync, which the bin rule allows (a brick that changes bin moves). Disclose the way
+    chosen as a deviation from "the neighbour masks it already reads for the surface mask".
+  - A non-band voxel of a band brick reads 27 when solid, 0 when air; solid includes
+    translucent (Phase 1 and the amended Phase 4). The opaque mask excludes translucent
+    voxels, so a non-band non-opaque voxel needs the translucent unit (planar) or the ids
+    (Wide). The materials table has a translucent glass (`apps/flythrough/src/lib.rs`).
+  - Done-when 2 and the flight: the spike's census (1 997 544 band bricks) reads chunks the
+    world does not hold as air; the pool (2 071 989 slots) gave slots by the mirror's view.
+    Read the bar against what the mirror holds and say how in the log (orchestrator,
+    2026-10-31).
+  - Done-when 3 compares with Phase 1's hit mask and normals view at both poses: keep a
+    reading from the tip before the storage change (the scratch path) to compare against.
+
 ### Notes
 
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
