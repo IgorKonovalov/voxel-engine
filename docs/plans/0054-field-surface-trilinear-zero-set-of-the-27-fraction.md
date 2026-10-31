@@ -509,6 +509,13 @@ is in `vxe-render`, a client-side view.
    the owner sees it on screen before deciding (Phases 3a and 3b, added); Phase 4 holds until
    then. Phase 1's free pillar and sheet readings (0 and 6 box pixels) are consistent with the
    arithmetic but were read as boxes gone, not as features gone.
+6. **Phase 3a's done-whens 3 and 4 (owner, 2026-10-31, the recommended options).** Done-when 3
+   read the field at 4.95 + 0.98 = 5.93 ms on the RTX 3080 Laptop (`field-cubes` 6.38) against
+   the 5 ms bar: the owner judges the look at Phase 3b first, and the walk-speed work goes into
+   Phase 4's rewrite, which keeps the same bar. Done-when 4: the level budget's unit term (0.980
+   to 0.645) and its reservation (259.2 to 393.9 MB) stand as "reads the band term"; the printed
+   pressure stays 1.000 because the record term (one record per chunk) dominates at the level,
+   as it did before this plan.
 
 ## Implementation log
 
