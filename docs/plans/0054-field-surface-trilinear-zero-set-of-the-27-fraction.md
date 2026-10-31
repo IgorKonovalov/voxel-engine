@@ -855,6 +855,16 @@ which no deterministic path reads.
    for this decision. Which materials are smooth is decided at Phase 4d, on done-when 8's
    `--crisp none|rock|all` readings and the window session. The guessed ledger slices stay
    guesses until their plans; done-when 8's 10 % tolerances stand.
+10. **Phase 4b's stop (owner, 2026-10-31, the recommended option).** After five measured changes
+    the RTX 3080 Laptop read `field-cubes` 5.185 ms and `field` 5.139 ms hit plus light against
+    the 5.00 ms bar, and RADV raised the field hit pipeline to 256 VGPRs (the Radeon's
+    `field-cubes` hit 42.1 to 56.5 ms, one round). The owner allows two more changes under the
+    same rules: a direct band index per record (inside the storage bar, about 102.8 of 106 MB at
+    the level and 474 of 530 MB over the flight, worked), and a change that brings RADV back to
+    128 VGPRs for the field hit pipeline without moving the RTX reading. After those two, dev goes
+    on to Phase 4c whatever the reading, and the bar is judged at Phase 4d with the frame ledger.
+    Phase 4d's session logs the frame line on every run, because Phase 4a found the window's hit
+    pass 2.3x to 3x the headless reading at the same size and view, unattributed.
 
 ## Implementation log
 
