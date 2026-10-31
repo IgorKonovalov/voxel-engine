@@ -135,7 +135,10 @@ labelled with the adapter; every asserted reading, golden and gate stays on lava
   within 1e-3 of an integer, as Plan 0050's scratch read it) of a solid voxel with two or more
   air face neighbours in the world. A flat floor's face hits have one air face and do not
   count; a convex edge voxel whose exposed faces its plane cuts away has no face hit and does
-  not count. Each box pixel is also sorted by the voxel's 27-count: under 14 (a protrusion the
+  not count. Amended 2026-10-31 (architect, from Phase 2's finding): a hit that also lies on
+  one of the box voxel's faces toward a solid neighbour does not count either; without this the
+  filtered rod read 8 pixels at z = 60.000, the floor plane's outline around the rod's footprint.
+  Phase 1's readings are logged under both forms. Each box pixel is also sorted by the voxel's 27-count: under 14 (a protrusion the
   majority filter melts) or 14 and over (a groove, a corner, a two-voxel feature: what the
   filter leaves), and by the voxel's air faces (2, 3, 4 or more).
 - **The tile-contrast metric:** over horizontally and vertically adjacent hit-pixel pairs
@@ -238,13 +241,20 @@ labelled with the adapter; every asserted reading, golden and gate stays on lava
   `apps/flythrough/src/lib.rs` (`LookPreset::CUBES_FIELD`), `main.rs`, `hud.rs`,
   `apps/flythrough/tests/look.rs`, `sharpness.rs`, this plan's log.
 - **Done when:**
-  1. `the_normal_field_has_no_tile_edges` asserts on lavapipe that `rod`, `lone cube`,
-     `groove` and `ridge` read 0 tile-contrast pairs under the field (filter off and on) and
-     that the hit mask of every scene is byte for byte the same with the field on and off (the
-     field moves no hit).
+  1. `the_normal_field_has_no_tile_edges` asserts on lavapipe that `rod`, `lone cube` and
+     `groove` read 0 tile-contrast pairs under the field with the filter on, prints the
+     readings with the filter off and for `ridge` (amended 2026-10-31 (owner): it asked 0 for
+     all four, filter off and on; with the filter off the rod reads 0.145 % and the groove
+     0.195 %, every rod pair across its 0.375-voxel step inside the metric's 1.5-voxel reach,
+     and the ridge 0.005 to 0.010 %; the field alone is therefore not a default candidate,
+     only field plus filter), and that the hit mask of every scene is byte for byte the same
+     with the field on and off (the field moves no hit).
   2. Plan 0039's guardrails under the field: cavity normal error at most today's 7.13 degrees
      (the blend rule read 5.81 with a related normal), `A` at most 10 %, the silhouette
-     unchanged; the speck test's reading at most today's.
+     unchanged; the speck test's total at most today's (amended 2026-10-31 (owner): it read
+     "the speck test's reading", per class; the shadow-only class went 6 to 8 while the
+     totals fell 365 to 240 with shadows and 360 to 233 without; the total is the bar and the
+     classes are readings).
   3. `cubes-field` reads the face silhouette (172 px against the pillar) and a cavity normal
      error at most 12 degrees; the banner names it.
   4. The cost: the hit and light passes at the level's spawn on both adapters, field off and
@@ -355,6 +365,14 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 - Give the LOD ring's mip cells a plane, or touch the lighting beyond which normal it shades
   with (Plan 0051 is the light spike).
 - A per-material opt-out of the filter.
+
+## Owner answers
+
+1. **Phase 3's two bars (owner, 2026-10-31, recommended options).** Done-when 1 reads 0 tile
+   edges under the filter for rod, lone cube and groove, the rest as readings; done-when 2's
+   speck bar is the total, not the per-class count. The orchestrator wrote both amendments.
+2. **Phase 2's edge rule (architect, 2026-10-31).** Accepted into Phase 1's box metric; the
+   definition carries it. Plan 0054's spike read its zeros under this rule.
 
 ## Implementation log
 
