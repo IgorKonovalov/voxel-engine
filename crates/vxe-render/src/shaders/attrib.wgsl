@@ -263,6 +263,21 @@ fn brick_kind(bw: vec3<i32>) -> vec2<u32> {
     return vec2<u32>(kind, entry);
 }
 
+// Layer `z`'s prefix (`z` in 0..8) in a packed prefix of two header words `lo`, `hi`
+// (`gpu_world::pack_prefix`): layers 1 to 4 in `lo` at bits 0, 7, 15 and 23 (7, 8, 8 and 9
+// bits wide), layers 5 to 7 in `hi` at bits 0, 9 and 18 (9 bits each); layer 0's is 0.
+fn layer_prefix(lo: u32, hi: u32, z: u32) -> u32 {
+    if (z == 0u) {
+        return 0u;
+    }
+    if (z >= 5u) {
+        return (hi >> (9u * (z - 5u))) & 0x1FFu;
+    }
+    let shift = select(8u * z - 9u, 0u, z == 1u);
+    let width = select(select(9u, 8u, z < 4u), 7u, z == 1u);
+    return (lo >> shift) & ((1u << width) - 1u);
+}
+
 // Octahedral encoding of the unit vector `n` into 6 + 6 bits: each coordinate `p` in [-1, 1]
 // on codes 0..=62, `round((p + 1) * 31)`, so `p = 0` and `p = +-1` are codes 31, 0 and 62 and
 // every axis normal and zero component decodes exactly (ADR-0038). Code 63 is unused.
@@ -505,7 +520,7 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
         let u = entry & UNIT_MASK;
         if ((pool_word(u, UNIT_WORDS + 14u) & 0xFFFFu) != 0u) {
             let s = UNIT_WORDS * attr_offset(entry);
-            let last = pool_word(u, UNIT_WORDS + 13u) >> 16u;
+            let last = layer_prefix(pool_word(u, UNIT_WORDS + 10u), pool_word(u, UNIT_WORDS + 11u), 7u);
             n = last + countOneBits(pool_word(u, s + 14u)) + countOneBits(pool_word(u, s + 15u));
         }
     }
@@ -555,8 +570,8 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
             below = countOneBits(lo) + countOneBits(hi & ((1u << (byte_at - 32u)) - 1u));
             bits = (hi >> (byte_at - 32u)) & 0xFFu;
         }
-        let prefix = pool_word(unit, UNIT_WORDS + 10u + z / 2u);
-        var k = ((prefix >> ((z & 1u) * 16u)) & 0xFFFFu) + below;
+        var k = layer_prefix(pool_word(unit, UNIT_WORDS + 10u), pool_word(unit, UNIT_WORDS + 11u), z)
+            + below;
         while (bits != 0u) {
             let x = firstTrailingBit(bits);
             bits &= bits - 1u;

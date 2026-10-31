@@ -34,7 +34,7 @@ pub fn level_rig(
     world: &World,
     camera: &vxe_render::Camera,
 ) -> Option<(wgpu::Device, wgpu::Queue, GpuWorld)> {
-    let pool = flythrough::level_pool_units(world, true) * vxe_render::gpu_world::UNIT_BYTES;
+    let pool = flythrough::level_pool_units(world, true, false) * vxe_render::gpu_world::UNIT_BYTES;
     let (device, queue) = software_device(pool)?;
     let cfg = MirrorConfig {
         budget_bytes: 256 << 20,
@@ -1233,11 +1233,18 @@ pub fn fit_rig_on(
 }
 
 /// Turns the field surface's band slots on in `rig`'s mirror of `world` when `look` walks the
-/// field (`SurfaceModel::Field`), syncs once so it writes every chunk again, and fills them.
+/// field (`SurfaceModel::Field`), with the fly-through's crisp materials
+/// (`flythrough::CRISP_MATERIALS`) when `look` honours them (`SurfaceTuning::crisp`), syncs
+/// once so it writes every chunk again, and fills them.
 pub fn with_field_pool(rig: &mut LookRig, world: &World, look: &vxe_render::LookParams) {
     if look.tuning.model != vxe_render::SurfaceModel::Field {
         return;
     }
+    rig.gpu.set_crisp_materials(if look.tuning.crisp {
+        &flythrough::CRISP_MATERIALS
+    } else {
+        &[]
+    });
     rig.gpu.set_field_surface(true);
     rig.gpu
         .sync_now(world, &rig.device, &rig.queue)

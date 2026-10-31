@@ -24,7 +24,7 @@
 //! [--band-census] [--view VIEW]
 //! [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
-//! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
+//! [--audio] [--audio-debug] [--room METRES] [--room-line] [--thin-rig] [--absorption A] [--mic]
 //! [--echo-db DB] [--tail-db DB] [--predelay-ms MS] [--tail-glide] [--direct-delay]
 //! [--flat-mix] [--pad on|off] [--emissive-ore on|off] [--lamp on|off] [--lamp-toggle N]
 //! [--fade-reading]
@@ -77,7 +77,7 @@
 //! rock's feature scale in voxels and strength, default `flythrough::ROCK_DETAIL`), and prints
 //! that
 //! look first; `--look` picks the starting preset (`flythrough::LookPreset`: `face`, `contour`,
-//! `contour-sharp`, `contour-grain`, `cubes-field`, `field`, `trilinear8`, `gradient27`), a normal mode with its plane
+//! `contour-sharp`, `contour-grain`, `cubes-field`, `field`, `field-cubes`, `trilinear8`, `gradient27`), a normal mode with its plane
 //! fit, face mix, detail after lighting, shadow push and rock's detail pair and fine weight,
 //! each part overridable by `--plane-fit`, `--plane-offset`, `--fit-filter` (the plane fit's
 //! occupancy, ADR-0040), `--normal-field` (shade with the planes' normal field, ADR-0040),
@@ -211,6 +211,13 @@
 //! whenever the listener's room fan completes (`F1` and `--audio-debug` print it too). Without
 //! `--audio`, `--room-line` runs the room fan with no output device: its block clock never
 //! advances, so a fan completes 8 frames after the start or after a 1 m move.
+//!
+//! `--thin-rig` runs in the bounded thin-feature scene (`flythrough::thin_rig`: a trunk on a
+//! floor with free one-, two- and three-voxel rods, a diagonal branch and two sheets of the
+//! rig's wood), from a camera in front of the trunk; not with `--level`, `--source showcase`,
+//! `--castle`, `--autopilot`, `--vault`, `--room`, `--save` or `--replay`. Under `--look
+//! field-cubes` the wood is the mirror's crisp material: the field counts it as air and hits
+//! it as cubes.
 
 mod fly;
 mod pad;
@@ -409,6 +416,9 @@ struct Args {
     logic: LogicChoice,
     /// `--room`: the edge, in voxels, of the closed cube of air the fly-through runs in.
     room: Option<i32>,
+    /// `--thin-rig`: the bounded thin-feature scene (`flythrough::thin_rig`) in place of the
+    /// cave.
+    thin_rig: bool,
     /// `--room-line`: print the room line whenever a fan completes (implied by `--room`).
     room_line: bool,
     /// `--absorption`: the cave row's absorption per metre.
@@ -554,6 +564,12 @@ impl Args {
         self.pad && !self.headless && !self.autopilot
     }
 
+    /// Whether `--look` starts in a field surface look, whose mirror budget takes the band.
+    fn field_look(&self) -> bool {
+        self.look
+            .is_some_and(|p| p.tuning.model == vxe_render::SurfaceModel::Field)
+    }
+
     /// The auto exposure of `--adaptation`, `--adapt` and `--metering`.
     fn start_auto(&self) -> AutoExposure {
         let mut a = self.adaptation.preset();
@@ -691,6 +707,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         replay: None,
         logic: LogicChoice::Native,
         room: None,
+        thin_rig: false,
         room_line: false,
         absorption: CAVE_ACOUSTIC[0],
         mic: false,
@@ -1024,6 +1041,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 }
             }
             "--level" => args.level = true,
+            "--thin-rig" => args.thin_rig = true,
             "--shot" => {
                 let v = value()?;
                 shot_flag = true;
@@ -1177,6 +1195,22 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 .to_owned(),
         );
     }
+    if args.thin_rig
+        && (args.level
+            || args.showcase
+            || args.castle
+            || args.autopilot
+            || args.vault
+            || args.room.is_some()
+            || args.save.is_some()
+            || args.replay.is_some())
+    {
+        return Err(
+            "--thin-rig builds its own world; it does not take --level, --source showcase, \
+             --castle, --autopilot, --vault, --room, --save or --replay"
+                .to_owned(),
+        );
+    }
     if args.castle && (args.level || args.vault || args.room.is_some()) {
         return Err(
             "--castle stands in the streamed cave; it does not take --level (too short for \
@@ -1185,7 +1219,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         );
     }
     if args.walk {
-        walk_allowed(!args.level && !args.showcase && args.room.is_none())
+        walk_allowed(!args.level && !args.showcase && args.room.is_none() && !args.thin_rig)
             .map_err(|e| format!("--walk: {e}"))?;
     }
     if (args.save.is_some() || args.replay.is_some()) && !args.level {
@@ -3534,7 +3568,11 @@ impl Run {
         let pool = if self.stream.is_some() {
             STREAM_POOL_BYTES
         } else {
-            level_pool_units(&self.world, self.args.look.is_some()) * gpu_world::UNIT_BYTES
+            level_pool_units(
+                &self.world,
+                self.args.look.is_some(),
+                self.args.field_look(),
+            ) * gpu_world::UNIT_BYTES
         };
         // An adapter below the shaders' floor: name the limit, then request the floor, which
         // the device request refuses on the same limit and the shell reports as a setup error.
@@ -3634,7 +3672,12 @@ impl Run {
                     .iter()
                     .map(|&v| v as u64)
                     .product();
-                level_mirror_budget(&self.world, chunks, self.args.look.is_some())
+                level_mirror_budget(
+                    &self.world,
+                    chunks,
+                    self.args.look.is_some(),
+                    self.args.field_look(),
+                )
             }
         })
     }
@@ -3652,6 +3695,7 @@ impl Run {
             Some(p) => {
                 let mut m = GpuWorld::with_surface_attrs(&gpu.device, cfg);
                 m.set_surface_fit(p.tuning.fit);
+                m.set_crisp_materials(crisp_materials(p));
                 m.set_field_surface(p.tuning.model == vxe_render::SurfaceModel::Field);
                 m
             }
@@ -4625,6 +4669,8 @@ impl Run {
         if std::mem::take(&mut self.preset_changed) && self.args.look.is_some() {
             gfx.mirror.set_surface_fit(self.preset.tuning.fit);
             gfx.mirror
+                .set_crisp_materials(crisp_materials(&self.preset));
+            gfx.mirror
                 .set_field_surface(self.preset.tuning.model == vxe_render::SurfaceModel::Field);
             gfx.mirror.rewrite_materials(
                 &preset_materials(&self.args, Some(&self.preset)),
@@ -5288,8 +5334,20 @@ fn preset_materials(args: &Args, preset: Option<&LookPreset>) -> MaterialTable {
     };
     if args.castle {
         flythrough::castle_materials(&table)
+    } else if args.thin_rig {
+        flythrough::with_wood(&table)
     } else {
         table
+    }
+}
+
+/// The materials the mirror marks crisp under `preset`: [`flythrough::CRISP_MATERIALS`] when
+/// it honours them (`SurfaceTuning::crisp`), else none.
+fn crisp_materials(preset: &LookPreset) -> &'static [vxe_world::MaterialId] {
+    if preset.tuning.crisp {
+        &flythrough::CRISP_MATERIALS
+    } else {
+        &[]
     }
 }
 
@@ -5323,6 +5381,8 @@ fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
         shot_camera(&args.shot)
     } else if let Some(pose) = args.pose {
         pose.camera()
+    } else if args.thin_rig {
+        flythrough::thin_rig_camera()
     } else {
         Camera {
             position: spawn.0.map(|v| v as f32 + 0.5).into(),
@@ -5465,6 +5525,19 @@ fn main() {
                 (source.spawn(), Pending::Level(generation))
             }
         }
+    } else if args.thin_rig {
+        let source = flythrough::thin_rig::ThinRig {
+            wood: flythrough::THIN_RIG_WOOD,
+        };
+        let table = materials(&args);
+        println!(
+            "thin rig: a 5-voxel trunk on a floor with free one-, two- and three-voxel rods, a \
+             diagonal branch and two sheets of wood, {:?} chunks",
+            source.extent().max.0
+        );
+        let generation =
+            std::thread::spawn(move || Ok(World::generate(source.extent(), &source, &table)));
+        (source.spawn(), Pending::Level(generation))
     } else if let Some(edge) = args.room {
         let source = RoomSource::new(edge);
         let table = materials(&args);
@@ -7528,7 +7601,7 @@ mod tests {
                 .err()
                 .as_deref(),
             Some(
-                "--look takes plain, face, contour, contour-sharp, contour-grain, cubes-field, field, trilinear8, gradient27, not contour-soft"
+                "--look takes plain, face, contour, contour-sharp, contour-grain, cubes-field, field, field-cubes, trilinear8, gradient27, not contour-soft"
             )
         );
         assert_eq!(

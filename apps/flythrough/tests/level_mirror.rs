@@ -37,7 +37,7 @@ fn level_config(world: &World) -> MirrorConfig {
 
 /// The software adapter with limits for the level's pool.
 fn device(world: &World) -> Option<(wgpu::Device, wgpu::Queue)> {
-    support::software_device(flythrough::level_pool_units(world, false) * UNIT_BYTES)
+    support::software_device(flythrough::level_pool_units(world, false, false) * UNIT_BYTES)
 }
 
 #[test]
@@ -443,7 +443,7 @@ fn band_census() {
     assert_eq!(cs.surface_full_band_bricks, cs.surface_full_bricks);
     assert!(cs.surface_full_bricks > 0);
     let Some((device, queue)) = support::software_device(
-        flythrough::level_pool_units(&world, true) * UNIT_BYTES + cs.packed_bytes * 2,
+        flythrough::level_pool_units(&world, true, false) * UNIT_BYTES + cs.packed_bytes * 2,
     ) else {
         return;
     };

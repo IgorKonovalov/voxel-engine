@@ -351,7 +351,7 @@ fn goldens_match_bit_exactly_over_one_and_several_shards() {
         return;
     }
     let world = carved_world();
-    let pool = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
+    let pool = flythrough::level_pool_units(&world, false, false) * UNIT_BYTES;
     let Some((device, queue)) = software_device(pool) else {
         return;
     };
@@ -651,7 +651,7 @@ fn cutaway_look() -> vxe_render::LookParams {
 #[test]
 fn cutaway_level_golden_shows_sky_and_lit_rock() {
     let world = seed_1_level();
-    let pool = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
+    let pool = flythrough::level_pool_units(&world, false, false) * UNIT_BYTES;
     let Some((device, queue)) = software_device(pool) else {
         return;
     };
@@ -715,7 +715,7 @@ fn cutaway_steps_from_outside_the_level_at_1080p() {
         ..Default::default()
     }))
     .expect("an adapter");
-    let pool_bytes = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
+    let pool_bytes = flythrough::level_pool_units(&world, false, false) * UNIT_BYTES;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_limits: vxe_render::limits_for(&adapter, pool_bytes).expect("the frame's limits"),
         ..Default::default()
@@ -1640,13 +1640,13 @@ fn showcase_hall(table: &MaterialTable, frames: u32) -> Option<(Vec<u8>, u64)> {
     use flythrough::showcase::{SHOTS, ShowcaseSource};
     let source = ShowcaseSource::new(1);
     let world = World::generate(source.extent(), &source, table);
-    let pool = flythrough::level_pool_units(&world, true) * UNIT_BYTES;
+    let pool = flythrough::level_pool_units(&world, true, false) * UNIT_BYTES;
     let (device, queue) = software_device(pool)?;
     let chunks = world.extent().len() as u64;
     let mut gpu = GpuWorld::with_surface_attrs(
         &device,
         MirrorConfig {
-            budget_bytes: flythrough::level_mirror_budget(&world, chunks, true),
+            budget_bytes: flythrough::level_mirror_budget(&world, chunks, true, false),
             light_radius: 19,
             ..MirrorConfig::new(Window::Fixed(world.extent()))
         },
@@ -1810,7 +1810,7 @@ fn the_lighting_targets_are_scale_free() {
         &source,
         &flythrough::with_emissive_ore(&cave_materials()),
     );
-    let pool = flythrough::level_pool_units(&world, false) * UNIT_BYTES;
+    let pool = flythrough::level_pool_units(&world, false, false) * UNIT_BYTES;
     let Some((device, queue)) = software_device(pool) else {
         return;
     };

@@ -1447,6 +1447,9 @@ impl Modes {
         if contour && preset.tuning.model == vxe_render::SurfaceModel::Field {
             words += ", field normal ";
             words += preset.tuning.field_normal.name();
+            if preset.tuning.crisp {
+                words += ", crisp cubes on";
+            }
         }
         words += if detail {
             ", detail on"
@@ -1740,11 +1743,13 @@ mod mode_tests {
             preset = preset.next(true);
             m.show_look(&preset, true, t);
             let b = m.banner(t).expect("a press shows the banner");
-            // The field surface names its normal source.
-            let field = if preset.tuning.model == vxe_render::SurfaceModel::Field {
-                ", field normal analytic"
-            } else {
-                ""
+            // The field surface names its normal source, and the crisp cubes when it has them.
+            let field = match (preset.tuning.model, preset.tuning.crisp) {
+                (vxe_render::SurfaceModel::Field, false) => ", field normal analytic",
+                (vxe_render::SurfaceModel::Field, true) => {
+                    ", field normal analytic, crisp cubes on"
+                }
+                _ => "",
             };
             let words = format!("look {}{field}, detail on", preset.name);
             let words = wrap(&words.split(", ").collect::<Vec<_>>()).join("\n");
@@ -1762,6 +1767,7 @@ mod mode_tests {
                 "contour-grain",
                 "cubes-field",
                 "field",
+                "field-cubes",
                 "trilinear8",
                 "gradient27",
                 "face"

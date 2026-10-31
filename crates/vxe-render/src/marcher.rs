@@ -177,6 +177,9 @@ pub const FLAG_FIELD: u32 = 1 << 17;
 /// `Params::flags` bit: the field surface's shading normal is the blend of its cell's corner
 /// normals ([`FieldNormal::Blend`]); clear, the gradient of the trilinear field.
 pub const FLAG_FIELD_BLEND: u32 = 1 << 18;
+/// `Params::flags` bit: the field walk hits a crisp voxel as its cube
+/// ([`SurfaceTuning::crisp`]).
+pub const FLAG_CRISP: u32 = 1 << 19;
 
 /// What the contour look's walk hits: the per-voxel planes (ADR-0011), or the field surface,
 /// the zero set of the trilinear interpolation of `count / 27 - 1/2` over the voxel centres,
@@ -443,6 +446,11 @@ pub struct SurfaceTuning {
     pub model: SurfaceModel,
     /// The field surface's shading normal.
     pub field_normal: FieldNormal,
+    /// A scratch: the field walk hits the voxels of the mirror's crisp materials
+    /// ([`GpuWorld::set_crisp_materials`], which the field counts as air) as their cubes, with
+    /// their entry face's normal, and gives a field hit the material of a solid voxel that is
+    /// not crisp.
+    pub crisp: bool,
 }
 
 /// The surface look: normal mode, procedural detail, view, translucent layers, cutaway and the
@@ -518,6 +526,7 @@ impl LookParams {
             } else {
                 0
             }
+            | if self.tuning.crisp { FLAG_CRISP } else { 0 }
     }
 }
 

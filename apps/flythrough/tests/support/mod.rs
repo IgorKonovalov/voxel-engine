@@ -540,7 +540,7 @@ use vxe_render::{Lighting, LightingResolution, NormalMode, ViewMode};
 /// Pool bytes a mirror with attributes needs for `world`'s bricks, with a page of headroom
 /// for each bin's partly filled page.
 pub fn attr_pool_bytes(world: &World) -> u64 {
-    (flythrough::level_pool_units(world, true) + 10 * u64::from(PAGE_UNITS)) * UNIT_BYTES
+    (flythrough::level_pool_units(world, true, false) + 10 * u64::from(PAGE_UNITS)) * UNIT_BYTES
 }
 
 /// `world` mirrored with contour attributes over a fixed window, shards capped at

@@ -23,7 +23,8 @@
 //! unit 1          the header (HEADER_* words): the brick's palette of up to 16 u16 ids,
 //!                 ascending, entry j in half j % 2 of word j / 2; the two translucent words
 //!                 (bit bx + 4 by + 16 bz set when 2^3 block (bx, by, bz) holds a TRANSLUCENT
-//!                 voxel); the surface prefix, attribute units and flags; the band slot
+//!                 voxel); the surface and band prefixes, attribute units and flags; the band
+//!                 slot
 //! units 2..       the payload: 0, 1, 2 or 4 bit planes in the mask's bit layout, plane k's
 //!                 bits forming bit k of a voxel's palette index; or, for a brick of more than
 //!                 16 materials (class Wide), 16 units of u16 ids, voxel i in half i % 2 of
@@ -40,7 +41,8 @@
 //! neighbour that is air inside the same chunk, or on a face of the chunk; no other chunk is
 //! read, so the attributes never couple chunks. The attribute of surface voxel `(x, y, z)` is at
 //! index `prefix[z] + popcount(surface[z] & ((1 << (x + 8 y)) - 1))`, the header carrying
-//! `prefix[z]`, the surface voxels of the layers below `z`. An upload of a dirty brick also
+//! `prefix[z]`, the surface voxels of the layers below `z`, packed into two words
+//! ([`pack_prefix`]). An upload of a dirty brick also
 //! re-uploads its face neighbours within the chunk, whose surface masks may have changed.
 //!
 //! The record entry of a `Full` brick names its first unit and its class (`CLASS_SHIFT`), so
@@ -83,7 +85,8 @@
 //! [`crate::field::band_mask`]) a *band slot*: one unit of its band mask (the opaque mask's
 //! layout), then `ceil(n / 64)` units of its `n` band voxels' `u8` counts in band-index order
 //! (the band voxels before it in voxel order), in a bin of exactly its size ([`SLOT_BINS`],
-//! [`band_bin_of`]). The brick's header names it ([`HEADER_BAND_WORD`]); a uniform band brick
+//! [`band_bin_of`]). The brick's header names it ([`HEADER_BAND_WORD`]) and holds its band
+//! prefix ([`HEADER_BAND_PREFIX_WORD`], [`pack_prefix`] of its band mask); a uniform band brick
 //! gets a slot of class [`CLASS_UNIFORM`] for that header, laid out as class 1. The CPU writes
 //! the mask and zeroed counts and lists the slot for the field pass, which fills the counts on
 //! the GPU after the attribute pass. A brick's band depends on the bricks around it, across
@@ -282,11 +285,14 @@ pub const OTHER_STORAGE_BUFFERS: u32 = 5;
 /// `u32` words of a slot's opaque mask (its unit 0): one bit per voxel.
 pub const OPAQUE_WORDS: usize = 16;
 /// The header unit's words: the palette (16 `u16`), the two translucent words (one bit per
-/// 2^3 block), the surface prefix (8 `u16`, the surface voxels below each layer), then the
-/// attribute units in the low half of a word and the flags in its high half.
+/// 2^3 block), the surface prefix and the band prefix (two words each, [`pack_prefix`]: the
+/// surface or band voxels below each layer), then the attribute units in the low half of a
+/// word and the flags in its high half.
 pub const HEADER_PALETTE_WORD: usize = 0;
 pub const HEADER_TRANSLUCENT_WORD: usize = 8;
 pub const HEADER_PREFIX_WORD: usize = 10;
+/// The band prefix of a band brick (ADR-0041), [`pack_prefix`] of its band mask.
+pub const HEADER_BAND_PREFIX_WORD: usize = 12;
 pub const HEADER_ATTR_WORD: usize = 14;
 /// Most units a full chunk's brick's contour attributes take: its surface mask and 512 `u16`.
 pub const MAX_ATTR_UNITS: u32 = 17;
@@ -297,6 +303,52 @@ pub const HEADER_HAS_SURFACE: u32 = 1;
 /// band slot's first unit; 0 for a brick without one.
 pub const HEADER_BAND_WORD: usize = 15;
 pub const HEADER_BAND_BIT: u32 = 1 << 31;
+/// The bit offset and width of layer `z`'s prefix (`z` in 1..8) inside the two words of a
+/// packed prefix: layers 1 to 4 in the first word at bits 0, 7, 15 and 23 (7, 8, 8 and 9 bits
+/// wide), layers 5 to 7 in the second at bits 0, 9 and 18 (9 bits each). Layer `z`'s prefix is
+/// at most `64 z`, so each fits its width; layer 0's is 0 and is not stored.
+const PREFIX_FIELDS: [(usize, u32, u32); 8] = [
+    (0, 0, 0),
+    (0, 0, 7),
+    (0, 7, 8),
+    (0, 15, 8),
+    (0, 23, 9),
+    (1, 0, 9),
+    (1, 9, 9),
+    (1, 18, 9),
+];
+
+/// The packed prefix of `mask` (bit `x + 8 y` of word `z` for voxel `(x, y, z)`): for each
+/// layer `z`, the set bits of the layers below it, in two words ([`PREFIX_FIELDS`]). The
+/// shaders read it back with `layer_prefix`.
+pub fn pack_prefix(mask: &[u64; 8]) -> [u32; 2] {
+    let mut out = [0u32; 2];
+    let mut below = 0u32;
+    for (z, w) in mask.iter().enumerate() {
+        let (word, shift, _) = PREFIX_FIELDS[z];
+        if z > 0 {
+            out[word] |= below << shift;
+        }
+        below += w.count_ones();
+    }
+    out
+}
+
+/// Layer `z`'s prefix in the packed prefix `words` ([`pack_prefix`]).
+pub fn layer_prefix(words: [u32; 2], z: usize) -> u32 {
+    let (word, shift, width) = PREFIX_FIELDS[z];
+    (words[word] >> shift) & ((1u32 << width) - 1)
+}
+
+/// Writes into `header` (a slot's header unit) the band slot `unit` of a band brick of band
+/// mask `mask`: [`HEADER_BAND_WORD`], and its band prefix in [`HEADER_BAND_PREFIX_WORD`].
+pub fn band_header(header: &mut [u32], unit: u32, mask: &[u64; 8]) {
+    header[HEADER_BAND_WORD] = HEADER_BAND_BIT | unit;
+    let p = pack_prefix(mask);
+    header[HEADER_BAND_PREFIX_WORD] = p[0];
+    header[HEADER_BAND_PREFIX_WORD + 1] = p[1];
+}
+
 /// Palette entries a slot's header holds.
 pub const PALETTE_ENTRIES: usize = 16;
 /// `u32` words of brick bits at the head of a chunk record: bit `b` of word `b / 32` is set
@@ -1045,6 +1097,9 @@ pub struct GpuWorld {
     /// The band masks of the chunk being selected or uploaded, by brick slot
     /// ([`GpuWorld::need`]).
     bands: Vec<Option<[u64; 8]>>,
+    /// The materials the field counts as air and the field walk hits as cubes, by id (a
+    /// scratch, [`GpuWorld::set_crisp_materials`]); empty for none.
+    crisp: Vec<bool>,
 }
 
 /// The field surface's band slots (ADR-0041, module docs) and the pass that fills them.
@@ -1253,6 +1308,7 @@ impl GpuWorld {
             field_bricks: HashSet::new(),
             field_shells: HashSet::new(),
             bands: Vec::new(),
+            crisp: Vec::new(),
         }
     }
 
@@ -1285,6 +1341,31 @@ impl GpuWorld {
         });
         for c in full {
             self.enqueue(c);
+        }
+    }
+
+    /// Marks the materials `ids` crisp for the field surface (a scratch, Plan 0054's
+    /// `field-cubes` look): the band counts a crisp voxel as air and holds every crisp voxel
+    /// with its count flagged ([`crate::field::CRISP_COUNT_BIT`]), so a field walk under
+    /// [`crate::SurfaceTuning::crisp`] hits it as its cube. The counts of a band brick within one brick
+    /// of a crisp voxel are computed on the CPU at the end of the sync that places its band slot.
+    /// A change drops and queues again every chunk mirrored full while the field is on.
+    pub fn set_crisp_materials(&mut self, ids: &[MaterialId]) {
+        let mut crisp = Vec::new();
+        for &m in ids {
+            let m = usize::from(m);
+            if crisp.len() <= m {
+                crisp.resize(m + 1, false);
+            }
+            crisp[m] = true;
+        }
+        if crisp == self.crisp {
+            return;
+        }
+        self.crisp = crisp;
+        if self.band.is_some() {
+            self.set_field_surface(false);
+            self.set_field_surface(true);
         }
     }
 
@@ -2129,6 +2210,9 @@ impl GpuWorld {
         if result.is_ok() {
             result = self.fix_band(world, enc, &mut st);
         }
+        if result.is_ok() {
+            self.fix_crisp(world, enc, &mut st);
+        }
         if result.is_ok()
             && st.chunks == 0
             && let Some(e) = short
@@ -2204,7 +2288,7 @@ impl GpuWorld {
             self.with_around(world, coord, ch, |around| {
                 for (i, &up) in set.iter().enumerate() {
                     if up {
-                        let m = crate::field::band_mask(around, i);
+                        let m = crate::field::band_of(around, i, &self.crisp).0;
                         bands[i] = (m != [0; 8]).then_some(m);
                     }
                 }
@@ -2726,7 +2810,7 @@ impl GpuWorld {
                 slots
                     .iter()
                     .map(|&i| {
-                        let m = crate::field::band_mask(around, i);
+                        let m = crate::field::band_of(around, i, &self.crisp).0;
                         (i, (m != [0; 8]).then_some(m))
                     })
                     .collect()
@@ -2742,18 +2826,16 @@ impl GpuWorld {
                 let entry = self.entries[at];
                 let r = match ch.brick(i) {
                     Brick::Full(p) => self.place_band(c, i, mask, enc, st).map(|ptr| {
-                        if ptr != (had != ABSENT).then_some(had) {
-                            // The slot keeps its unit and bin: only its header names the band.
-                            let surface =
-                                self.attrs_for(false).then(|| chunk_surface(ch.bricks(), i));
-                            let mut words = std::mem::take(&mut self.slot_words);
-                            self.fill_slot(p, surface, ptr, &mut words);
-                            let u = entry & UNIT_MASK;
-                            let k = self.bin_of_unit(u).expect("a live slot");
-                            self.stage(k, u + 1, &words[UNIT_WORDS..2 * UNIT_WORDS], enc, st);
-                            st.bytes += UNIT_BYTES;
-                            self.slot_words = words;
-                        }
+                        // The slot keeps its unit and bin: only its header names the band and
+                        // holds its prefix, which a new mask changes even in the same slot.
+                        let surface = self.attrs_for(false).then(|| chunk_surface(ch.bricks(), i));
+                        let mut words = std::mem::take(&mut self.slot_words);
+                        self.fill_slot(p, surface, ptr.zip(mask.as_ref()), &mut words);
+                        let u = entry & UNIT_MASK;
+                        let k = self.bin_of_unit(u).expect("a live slot");
+                        self.stage(k, u + 1, &words[UNIT_WORDS..2 * UNIT_WORDS], enc, st);
+                        st.bytes += UNIT_BYTES;
+                        self.slot_words = words;
                     }),
                     b @ Brick::Uniform(_) => {
                         let r = self.upload_brick(c, i, at, b, None, Some(mask), enc, st);
@@ -2781,6 +2863,53 @@ impl GpuWorld {
         band.fresh.clear();
         band.retry = retry;
         Ok(())
+    }
+
+    /// Writes on the CPU the counts of the band slots waiting for the field pass whose brick
+    /// lies within one brick of a crisp voxel ([`GpuWorld::set_crisp_materials`]), with their
+    /// crisp flags, and takes them off the field pass's work list, which reads the mirror's
+    /// occupancy and cannot tell a crisp voxel.
+    fn fix_crisp(&mut self, world: &World, enc: &mut wgpu::CommandEncoder, st: &mut SyncStats) {
+        if !self.crisp.contains(&true) {
+            return;
+        }
+        let Some(band) = &self.band else {
+            return;
+        };
+        let mut items: Vec<(u32, [i32; 3])> = band.items.iter().map(|(&u, &o)| (u, o)).collect();
+        items.sort_unstable();
+        let e = CHUNK_EDGE_BRICKS;
+        for (u, origin) in items {
+            let b = origin.map(|v| v.div_euclid(BRICK_EDGE));
+            let c = ChunkCoord(b.map(|v| v.div_euclid(e)));
+            let slot = brick_slot(b.map(|v| v.rem_euclid(e)));
+            let Some(arc) = world.store().get(c) else {
+                continue;
+            };
+            let ch = arc.read().unwrap_or_else(PoisonError::into_inner);
+            let (mask, counts) = self.with_around(world, c, &ch, |around| {
+                crate::field::band_of(around, slot, &self.crisp)
+            });
+            drop(ch);
+            let Some(counts) = counts else {
+                continue;
+            };
+            let units = crate::field::band_slot_units(crate::field::band_count(&mask));
+            let Some(k) = self.bin_of_unit(u) else {
+                continue;
+            };
+            if SLOT_BINS[k] != units {
+                // The world moved on since the slot was placed; the next sync places it again.
+                continue;
+            }
+            let mut words = vec![0u32; (units as usize - 1) * UNIT_WORDS];
+            for (j, &n) in counts.iter().enumerate() {
+                words[j / 4] |= u32::from(n) << (8 * (j % 4));
+            }
+            self.stage(k, u + 1, &words, enc, st);
+            st.bytes += (words.len() * 4) as u64;
+            self.band.as_mut().expect("on").items.remove(&u);
+        }
     }
 
     /// Sets the brick bits of the record at word `base` from its entries; true when they are
@@ -2820,19 +2949,22 @@ impl GpuWorld {
     ) -> Result<(), MirrorError> {
         let old = self.entries[i];
         let old_unit = (old & FULL_BIT != 0).then_some(old & UNIT_MASK);
+        let mask = band.flatten();
         let ptr = match band {
             Some(mask) => self.place_band(coord, slot, mask, enc, st)?,
             None => None,
         };
+        let header = ptr.zip(mask.as_ref());
         let mut words = std::mem::take(&mut self.slot_words);
         let (flag, code) = match brick {
             Brick::Full(p) => (
-                self.fill_slot(p, surface, ptr, &mut words),
+                self.fill_slot(p, surface, header, &mut words),
                 class_code(p.class()),
             ),
-            Brick::Uniform(m) if ptr.is_some() => {
-                (self.fill_uniform_slot(*m, ptr, &mut words), CLASS_UNIFORM)
-            }
+            Brick::Uniform(m) if ptr.is_some() => (
+                self.fill_uniform_slot(*m, header, &mut words),
+                CLASS_UNIFORM,
+            ),
             Brick::Uniform(m) => {
                 self.slot_words = words;
                 if let Some(u) = old_unit {
@@ -2940,7 +3072,12 @@ impl GpuWorld {
     /// with `m` as palette entry 0 (none for air), its translucent words all set for a
     /// translucent material, and `band` in [`HEADER_BAND_WORD`]; then, for a translucent
     /// material, a translucent unit all set. Returns `TRANSLUCENT_BIT` for a translucent `m`.
-    fn fill_uniform_slot(&self, m: MaterialId, band: Option<u32>, out: &mut Vec<u32>) -> u32 {
+    fn fill_uniform_slot(
+        &self,
+        m: MaterialId,
+        band: Option<(u32, &[u64; 8])>,
+        out: &mut Vec<u32>,
+    ) -> u32 {
         out.clear();
         out.resize(2 * UNIT_WORDS, 0);
         let translucent = self.translucent[usize::from(m)];
@@ -2949,8 +3086,8 @@ impl GpuWorld {
         }
         let header = UNIT_WORDS;
         out[header + HEADER_PALETTE_WORD] = u32::from(m);
-        if let Some(u) = band {
-            out[header + HEADER_BAND_WORD] = HEADER_BAND_BIT | u;
+        if let Some((u, mask)) = band {
+            band_header(&mut out[header..header + UNIT_WORDS], u, mask);
         }
         if translucent {
             out[header + HEADER_TRANSLUCENT_WORD] = !0;
@@ -2972,13 +3109,13 @@ impl GpuWorld {
         &self,
         p: &Packed,
         surface: Option<[u64; 8]>,
-        band: Option<u32>,
+        band: Option<(u32, &[u64; 8])>,
         out: &mut Vec<u32>,
     ) -> u32 {
         out.clear();
         out.resize(2 * UNIT_WORDS, 0);
-        if let Some(u) = band {
-            out[UNIT_WORDS + HEADER_BAND_WORD] = HEADER_BAND_BIT | u;
+        if let Some((u, mask)) = band {
+            band_header(&mut out[UNIT_WORDS..2 * UNIT_WORDS], u, mask);
         }
         let translucent = |m: MaterialId| self.translucent[usize::from(m)];
         let mut glass = [0u64; 8];
@@ -3023,13 +3160,11 @@ impl GpuWorld {
         }
         let surface = surface.filter(|s| popcount(s) > 0);
         if let Some(s) = &surface {
-            let mut below = 0u32;
-            for (z, w) in s.iter().enumerate() {
-                out[header + HEADER_PREFIX_WORD + z / 2] |= below << (16 * (z % 2));
-                below += w.count_ones();
-            }
+            let p = pack_prefix(s);
+            out[header + HEADER_PREFIX_WORD] = p[0];
+            out[header + HEADER_PREFIX_WORD + 1] = p[1];
             out[header + HEADER_ATTR_WORD] =
-                (surface_attr_units(below) - 1) | (HEADER_HAS_SURFACE << 16);
+                (surface_attr_units(popcount(s)) - 1) | (HEADER_HAS_SURFACE << 16);
         }
         match p.words() {
             Some(w) => {
@@ -3713,6 +3848,28 @@ fn materials_of(p: &Packed, f: impl Fn(MaterialId) -> bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The packed prefix reads back every layer's set bits below it, for a full mask (the
+    /// widest values: 64 z) and for a seeded mix.
+    #[test]
+    fn a_packed_prefix_reads_back_each_layer() {
+        let mut z = 0x0054_003a_u64;
+        let mut masks = vec![[!0u64; 8], [0; 8]];
+        for _ in 0..64 {
+            masks.push(std::array::from_fn(|_| {
+                z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                vxe_world::hash::mix64(z) & vxe_world::hash::mix64(z ^ 1)
+            }));
+        }
+        for m in masks {
+            let p = pack_prefix(&m);
+            let mut below = 0;
+            for (layer, w) in m.iter().enumerate() {
+                assert_eq!(layer_prefix(p, layer), below, "{m:x?} layer {layer}");
+                below += w.count_ones();
+            }
+        }
+    }
 
     /// 50 seeded shifts of -2..=2 chunks per axis of a 7-chunk window holding a seeded mix
     /// of mirrored and pending chunks: the slab lookup leaves the chunks the filter over every

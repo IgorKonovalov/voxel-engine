@@ -421,7 +421,8 @@ fn main() -> Result<(), String> {
     };
     let adapter_name = adapter.get_info().name;
     println!("rendering on {adapter_name}");
-    let pool_bytes = flythrough::level_pool_units(&world, true) * vxe_render::gpu_world::UNIT_BYTES;
+    let pool_bytes =
+        flythrough::level_pool_units(&world, true, false) * vxe_render::gpu_world::UNIT_BYTES;
     let (device, queue) =
         pollster::block_on(
             adapter.request_device(&wgpu::DeviceDescriptor {
@@ -437,7 +438,7 @@ fn main() -> Result<(), String> {
     let mut gpu = GpuWorld::with_surface_attrs(
         &device,
         MirrorConfig {
-            budget_bytes: flythrough::level_mirror_budget(&world, chunks, true),
+            budget_bytes: flythrough::level_mirror_budget(&world, chunks, true, false),
             light_radius,
             ..MirrorConfig::new(vxe_render::Window::Fixed(world.extent()))
         },

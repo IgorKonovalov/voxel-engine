@@ -387,7 +387,7 @@ fn bounded(seed: u64, chunks: [i32; 3], census: bool, showcase: bool) {
         mib(mirror as u64)
     );
     budget_lines(&face, &contour, s.chunks as u64);
-    let level_budget = flythrough::level_mirror_budget(&world, s.chunks as u64, true);
+    let level_budget = flythrough::level_mirror_budget(&world, s.chunks as u64, true, false);
     println!(
         "level budget:      {level_budget} ({:.1} MiB): level_mirror_budget(world, {}, contour), dig headroom included",
         mib(level_budget),

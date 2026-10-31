@@ -7,6 +7,7 @@ pub mod castle;
 pub mod cave;
 pub mod hud;
 pub mod showcase;
+pub mod thin_rig;
 pub use flythrough_logic as logic;
 
 use std::path::{Path, PathBuf};
@@ -21,7 +22,7 @@ use vxe_render::{
 use vxe_world::hash::Fnv1a;
 use vxe_world::{
     BRICK_VOXELS, Brick, Chunk, ChunkCoord, ChunkExtent, ChunkMips, LogFile, Material,
-    MaterialFlags, MaterialTable, OpLog, Residency, WireError, World,
+    MaterialFlags, MaterialId, MaterialTable, OpLog, Residency, WireError, World,
 };
 
 use cave::CaveSource;
@@ -112,16 +113,19 @@ pub const STREAM_MIRROR_BUDGET: u64 = vxe_render::gpu_world::DEFAULT_BUDGET_BYTE
 
 /// `Full` bricks of headroom beyond the bounded level's own, so digging has room: 64 Ki
 /// bricks, each at the largest slot the level's rock takes (6 units, and 6 plus the most
-/// attribute units with attributes).
+/// attribute units with attributes), and with the field a band slot of the most units
+/// ([`vxe_render::field::MAX_BAND_UNITS`]) beside each.
 pub const POOL_HEADROOM_BRICKS: u64 = 65_536;
 
 /// The pool units the bounded level `world` needs: each bin's `Full` bricks in whole pages
 /// of that bin, their slots with their chunk-local surface's contour attributes when `attrs`,
-/// plus the headroom.
-pub fn level_pool_units(world: &vxe_world::World, attrs: bool) -> u64 {
+/// and when `field` each band brick's band slot and each uniform band brick's slot in pages
+/// of theirs (the band as [`band_census`] reads it), plus the headroom.
+pub fn level_pool_units(world: &vxe_world::World, attrs: bool, field: bool) -> u64 {
+    use vxe_render::field::{MAX_BAND_UNITS, band_slot_units};
     use vxe_render::gpu_world::{
-        BIN_COUNT, BINS, MAX_ATTR_UNITS, PAGE_UNITS, bin_of, chunk_surface, slot_units,
-        slots_per_page,
+        BIN_COUNT, BINS, MAX_ATTR_UNITS, PAGE_UNITS, band_bin_of, bin_of, chunk_surface,
+        slot_units, slots_per_page,
     };
     let table = world.materials();
     let translucent = |m| {
@@ -131,12 +135,24 @@ pub fn level_pool_units(world: &vxe_world::World, attrs: bool) -> u64 {
     };
     let mut bins = [0u64; BIN_COUNT];
     for c in world.store().coords() {
-        let Some(chunk) = world.store().get(c) else {
+        let arcs = if field {
+            around_guards(world, c)
+        } else {
+            let mut v = vec![None; 27];
+            v[13] = world.store().get(c);
+            v
+        };
+        let guards: Vec<_> = arcs
+            .iter()
+            .map(|a| {
+                a.as_ref()
+                    .map(|a| a.read().unwrap_or_else(std::sync::PoisonError::into_inner))
+            })
+            .collect();
+        let around: [Option<&Chunk>; 27] = std::array::from_fn(|k| guards[k].as_deref());
+        let Some(chunk) = around[13] else {
             continue;
         };
-        let chunk = chunk
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for (i, b) in chunk.bricks().iter().enumerate() {
             if let vxe_world::Brick::Full(p) = b {
                 let surface = attrs.then(|| {
@@ -144,6 +160,20 @@ pub fn level_pool_units(world: &vxe_world::World, attrs: bool) -> u64 {
                     s.iter().map(|w| w.count_ones()).sum()
                 });
                 bins[bin_of(slot_units(p, translucent, surface))] += 1;
+            }
+            if !field {
+                continue;
+            }
+            let Some((counts, _)) = brick_counts(&around, i) else {
+                continue;
+            };
+            let n = counts.iter().filter(|&&k| k > 0 && k < 27).count() as u32;
+            if n == 0 {
+                continue;
+            }
+            bins[band_bin_of(band_slot_units(n))] += 1;
+            if let vxe_world::Brick::Uniform(m) = b {
+                bins[bin_of(2 + u32::from(translucent(*m)))] += 1;
             }
         }
     }
@@ -153,15 +183,15 @@ pub fn level_pool_units(world: &vxe_world::World, attrs: bool) -> u64 {
         .map(|(k, &n)| n.div_ceil(u64::from(slots_per_page(k))))
         .sum();
     let largest = 6 + if attrs { MAX_ATTR_UNITS } else { 0 };
-    let headroom = POOL_HEADROOM_BRICKS * u64::from(BINS[bin_of(largest)]);
-    pages * u64::from(PAGE_UNITS) + headroom
+    let per = u64::from(BINS[bin_of(largest)]) + if field { u64::from(MAX_BAND_UNITS) } else { 0 };
+    pages * u64::from(PAGE_UNITS) + POOL_HEADROOM_BRICKS * per
 }
 
 /// The mirror budget of the bounded level unless `--mirror-budget` sets one: the pool
 /// [`level_pool_units`] needs and a record for each of its `chunks`, sized from the world it
 /// loads rather than the streamed default.
-pub fn level_mirror_budget(world: &vxe_world::World, chunks: u64, attrs: bool) -> u64 {
-    vxe_render::gpu_world::budget_for(level_pool_units(world, attrs), chunks)
+pub fn level_mirror_budget(world: &vxe_world::World, chunks: u64, attrs: bool, field: bool) -> u64 {
+    vxe_render::gpu_world::budget_for(level_pool_units(world, attrs, field), chunks)
 }
 
 /// The audio listener for `camera`: its position (voxel units), its forward and its up. The
@@ -179,6 +209,49 @@ pub fn listener(camera: &Camera) -> Listener {
 /// The rubble a collapsing region leaves when `R` has the fly-through's logic remove
 /// unsupported regions instead of dropping them. The cave never generates it.
 pub use logic::RUBBLE;
+
+/// The material the [`thin_rig`] scene's branches, rods and sheets are made of, after the cave's
+/// rows: the rig's "wood".
+pub const THIN_RIG_WOOD: MaterialId = 5;
+
+/// The materials the mirror marks crisp for the looks that honour it
+/// ([`LookPreset::FIELD_CUBES`]): the thin rig's wood alone.
+pub const CRISP_MATERIALS: [MaterialId; 1] = [THIN_RIG_WOOD];
+
+/// `table` (the cave's rows) with the thin rig's wood appended at [`THIN_RIG_WOOD`].
+pub fn with_wood(table: &MaterialTable) -> MaterialTable {
+    let mut t = table.clone();
+    let wood = Material {
+        albedo: [0.45, 0.30, 0.16],
+        ..Material::named("rig wood")
+    };
+    assert_eq!(
+        t.push(wood),
+        THIN_RIG_WOOD,
+        "the wood follows the cave's rows"
+    );
+    t
+}
+
+/// The thin rig's camera: on -y in front of the trunk, at its spawn's centre, looking +y and
+/// slightly down at the features' middle.
+pub fn thin_rig_camera() -> Camera {
+    let eye = thin_rig::ThinRig {
+        wood: THIN_RIG_WOOD,
+    }
+    .spawn()
+    .0;
+    let p = eye.map(|v| v as f32 + 0.5);
+    let target = [64.5f32, 64.5, 90.0];
+    let d = [0, 1, 2].map(|k| target[k] - p[k]);
+    let len = d.iter().map(|v| v * v).sum::<f32>().sqrt();
+    Camera {
+        position: p.into(),
+        yaw: d[1].atan2(d[0]),
+        pitch: (d[2] / len).asin(),
+        vfov: 70f32.to_radians(),
+    }
+}
 
 /// The cave's table: air, rock, ore, the indestructible shell (at the ids `cave` uses), and
 /// [`RUBBLE`]. It lives here rather than in `cave.rs` so that file stays free of floating point.
@@ -357,6 +430,7 @@ const TUNING_OFF: SurfaceTuning = SurfaceTuning {
     cube_hits: false,
     model: SurfaceModel::Planes,
     field_normal: FieldNormal::Analytic,
+    crisp: false,
 };
 
 impl LookPreset {
@@ -427,18 +501,31 @@ impl LookPreset {
         ..Self::CONTOUR_SHARP
     };
 
+    /// The field surface with crisp materials (a scratch, Plan 0054 Phase 3a): the field look,
+    /// but the voxels of the mirror's crisp materials ([`CRISP_MATERIALS`]) count as air in the
+    /// field and are hit as their cubes with face normals.
+    pub const FIELD_CUBES: Self = Self {
+        name: "field-cubes",
+        tuning: SurfaceTuning {
+            crisp: true,
+            ..Self::FIELD.tuning
+        },
+        ..Self::FIELD
+    };
+
     pub const TRILINEAR8: Self = Self::plain("trilinear8", NormalMode::Trilinear8);
     pub const GRADIENT27: Self = Self::plain("gradient27", NormalMode::Gradient27);
 
     /// `N`'s order: the contour presets side by side after face, then the two diagnostic
     /// normal modes.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::FACE,
         Self::CONTOUR,
         Self::CONTOUR_SHARP,
         Self::CONTOUR_GRAIN,
         Self::CUBES_FIELD,
         Self::FIELD,
+        Self::FIELD_CUBES,
         Self::TRILINEAR8,
         Self::GRADIENT27,
     ];
@@ -494,6 +581,9 @@ impl LookPreset {
         }
         if t.model == SurfaceModel::Field {
             s += &format!(", surface field, field normal {}", t.field_normal.name());
+        }
+        if t.crisp {
+            s += ", crisp cubes on";
         }
         s
     }

@@ -277,6 +277,8 @@ const FLAG_CUBE_HITS: u32 = 65536u;
 const FLAG_FIELD: u32 = 131072u;
 // The field surface shades with its blended corner normals (`FieldNormal::Blend`).
 const FLAG_FIELD_BLEND: u32 = 262144u;
+// The field walk hits a crisp voxel (its band count carries CRISP_COUNT_BIT) as its cube.
+const FLAG_CRISP: u32 = 524288u;
 // Normal modes (flags bits 2..4) and views (flags bits 5..8).
 const NORMAL_FACE: u32 = 0u;
 const NORMAL_TRILINEAR8: u32 = 1u;
@@ -813,6 +815,21 @@ fn attr_offset(entry: u32) -> u32 {
     return 2u + payload_units(entry) + t;
 }
 
+// Layer `z`'s prefix (`z` in 0..8) in a packed prefix of two header words `lo`, `hi`
+// (`gpu_world::pack_prefix`): layers 1 to 4 in `lo` at bits 0, 7, 15 and 23 (7, 8, 8 and 9
+// bits wide), layers 5 to 7 in `hi` at bits 0, 9 and 18 (9 bits each); layer 0's is 0.
+fn layer_prefix(lo: u32, hi: u32, z: u32) -> u32 {
+    if (z == 0u) {
+        return 0u;
+    }
+    if (z >= 5u) {
+        return (hi >> (9u * (z - 5u))) & 0x1FFu;
+    }
+    let shift = select(8u * z - 9u, 0u, z == 1u);
+    let width = select(select(9u, 8u, z < 4u), 7u, z == 1u);
+    return (lo >> shift) & ((1u << width) - 1u);
+}
+
 // The contour attribute of voxel `index` of the Full brick with record entry `entry`: NO_PLANE
 // for a brick without attributes or a voxel off its surface mask, else the attribute at the
 // voxel's popcount index.
@@ -838,8 +855,8 @@ fn contour_attr(entry: u32, index: u32) -> u32 {
     if (bit == 0u) {
         return NO_PLANE;
     }
-    let prefix = pool_word(unit, HEADER_WORD + 10u + z / 2u);
-    let k = ((prefix >> ((z & 1u) * 16u)) & 0xFFFFu) + below;
+    let k = layer_prefix(pool_word(unit, HEADER_WORD + 10u), pool_word(unit, HEADER_WORD + 11u), z)
+        + below;
     let word = pool_word(unit, s + UNIT_WORDS + k / 2u);
     return (word >> ((k & 1u) * 16u)) & 0xFFFFu;
 }
@@ -1652,7 +1669,9 @@ fn emission_of(m: u32) -> vec3<f32> {
 // included (solid is not air, a translucent voxel included). A band brick's header names its
 // band slot (HEADER_BAND_WORD: HEADER_BAND_BIT and the slot's first unit; a uniform band brick
 // has a class 6 slot for it): the band mask (unit 0, the opaque mask's layout), then the band
-// voxels' u8 counts in band-index order, the k-th in byte k % 4 of word k / 4 of unit 1 on. A
+// voxels' u8 counts in band-index order, the k-th in byte k % 4 of word k / 4 of unit 1 on;
+// the brick's header holds its band prefix (HEADER_BAND_PREFIX_WORD, `layer_prefix`), so a
+// voxel's band index is its layer's prefix and the band bits below it in its layer. A
 // band voxel's count is read there, any other voxel's is 27 when it is solid and 0 when it is
 // air. The walk is `march`'s DDA over the cells that hold a band voxel (0 < count < 27) or a
 // solid one: a band brick's band mask ORed with its opaque mask (all set for a uniform solid
@@ -1666,7 +1685,10 @@ fn emission_of(m: u32) -> vec3<f32> {
 // above zero is a hit at its start. A leak is a ray that reaches a solid voxel outside the
 // band, a piece whose corners all lie above zero, or a piece that starts more than
 // FIELD_LEAK_EPS above zero: each is hit there as a cube and flagged, in the cracks view's
-// place. A LOD-only chunk is walked as `march` walks it, its cells cubes.
+// place. A LOD-only chunk is walked as `march` walks it, its cells cubes. With FLAG_CRISP
+// (a scratch, `GpuWorld::set_crisp_materials`) a solid voxel whose band count carries
+// CRISP_COUNT_BIT is hit as its cube where the ray enters it, with its entry face's normal;
+// the field counts it as air, so the rock's surface rounds away from it as from air.
 //
 // The shading normal is the normalised gradient of the trilinear `phi` at the hit, or with
 // FLAG_FIELD_BLEND the normalised trilinear blend at the hit of its cell's corner normals: a
@@ -1678,16 +1700,18 @@ override FIELD_SURFACE: bool = false;
 
 const HEADER_BAND_WORD: u32 = 15u;
 const HEADER_BAND_BIT: u32 = 0x80000000u;
+const HEADER_BAND_PREFIX_WORD: u32 = 12u;
 // A piece that starts this far above zero (in phi) missed its crossing: a leak.
 const FIELD_LEAK_EPS: f32 = 1e-4;
 
 // The field's view of a brick: its chunk's table entry (ABSENT outside the window or for an
-// absent chunk) and, in a full chunk, the brick's record entry and band slot (ABSENT for
-// none).
+// absent chunk) and, in a full chunk, the brick's record entry, band slot (ABSENT for none)
+// and, for a band brick, its header's band prefix (HEADER_BAND_PREFIX_WORD, two words).
 struct FBrick {
     table: u32,
     entry: u32,
     band: u32,
+    prefix: vec2<u32>,
 };
 
 // The last brick `field_brick` resolved, the last 4^3 block row `field_cell` read (keyed by
@@ -1721,7 +1745,7 @@ fn field_brick(bw: vec3<i32>) -> FBrick {
     }
     fb_held = true;
     fb_key = bw;
-    var r = FBrick(ABSENT, 0u, ABSENT);
+    var r = FBrick(ABSENT, 0u, ABSENT, vec2<u32>(0u));
     let chunk = floor_div(bw, 8);
     let rel = chunk - params.window_min;
     let w = params.window_size;
@@ -1735,9 +1759,14 @@ fn field_brick(bw: vec3<i32>) -> FBrick {
             let bi = u32(b.x + 8 * (b.y + 8 * b.z));
             r.entry = record_word(rec * RECORD_WORDS + ENTRY_WORD + bi);
             if ((r.entry & FULL_BIT) != 0u) {
-                let h = pool_word(r.entry & UNIT_MASK, HEADER_WORD + HEADER_BAND_WORD);
+                let unit = r.entry & UNIT_MASK;
+                let h = pool_word(unit, HEADER_WORD + HEADER_BAND_WORD);
                 if ((h & HEADER_BAND_BIT) != 0u) {
                     r.band = h & UNIT_MASK;
+                    r.prefix = vec2<u32>(
+                        pool_word(unit, HEADER_WORD + HEADER_BAND_PREFIX_WORD),
+                        pool_word(unit, HEADER_WORD + HEADER_BAND_PREFIX_WORD + 1u),
+                    );
                 }
             }
         }
@@ -1766,6 +1795,32 @@ fn field_solid(entry: u32, i: u32) -> bool {
     return ((t >> (i % 32u)) & 1u) != 0u;
 }
 
+// A band voxel's count byte, NOT_BAND for a voxel outside the band.
+const NOT_BAND: u32 = 0xFFFFFFFFu;
+// A crisp voxel's count byte carries this bit (`field::CRISP_COUNT_BIT`); the count is in the
+// low five bits.
+const CRISP_COUNT_BIT: u32 = 0x80u;
+
+// The count byte of voxel `i` of brick `b` (a full chunk's) from its band slot, or NOT_BAND.
+fn field_byte(b: FBrick, i: u32) -> u32 {
+    if (b.band == ABSENT) {
+        return NOT_BAND;
+    }
+    let w = i / 32u;
+    let m = pool_word(b.band, w);
+    let bit = 1u << (i % 32u);
+    if ((m & bit) == 0u) {
+        return NOT_BAND;
+    }
+    // The layer's prefix, the low word of the layer when `i` is in its high word, and the bits
+    // below `i` in its own word.
+    var k = layer_prefix(b.prefix.x, b.prefix.y, i / 64u) + countOneBits(m & (bit - 1u));
+    if ((w & 1u) != 0u) {
+        k += countOneBits(pool_word(b.band, w - 1u));
+    }
+    return (pool_word(b.band, UNIT_WORDS + k / 4u) >> (8u * (k % 4u))) & 0xFFu;
+}
+
 // The count of voxel `u`: a band voxel's from its band slot, else 27 for a solid voxel and 0
 // for air (a LOD-only chunk's through its mip cell).
 fn field_count(u: vec3<i32>) -> u32 {
@@ -1779,19 +1834,23 @@ fn field_count(u: vec3<i32>) -> u32 {
     }
     let l = vec3<u32>(u - bw * 8);
     let i = l.x + 8u * (l.y + 8u * l.z);
-    if (b.band != ABSENT) {
-        let w = i / 32u;
-        let m = pool_word(b.band, w);
-        let bit = 1u << (i % 32u);
-        if ((m & bit) != 0u) {
-            var k = countOneBits(m & (bit - 1u));
-            for (var j = 0u; j < w; j++) {
-                k += countOneBits(pool_word(b.band, j));
-            }
-            return (pool_word(b.band, UNIT_WORDS + k / 4u) >> (8u * (k % 4u))) & 0xFFu;
-        }
+    let k = field_byte(b, i);
+    if (k != NOT_BAND) {
+        return k & 0x1Fu;
     }
     return select(0u, 27u, field_solid(b.entry, i));
+}
+
+// Whether voxel `u` is crisp: a band voxel whose count byte carries CRISP_COUNT_BIT.
+fn field_crisp(u: vec3<i32>) -> bool {
+    let bw = floor_div(u, 8);
+    let b = field_brick(bw);
+    if (b.table == ABSENT || (b.table & LOD_BIT) != 0u) {
+        return false;
+    }
+    let l = vec3<u32>(u - bw * 8);
+    let k = field_byte(b, l.x + 8u * (l.y + 8u * l.z));
+    return k != NOT_BAND && (k & CRISP_COUNT_BIT) != 0u;
 }
 
 fn field_phi(u: vec3<i32>) -> f32 {
@@ -2128,8 +2187,10 @@ fn field_normal(base: vec3<i32>, f: vec3<f32>, fallback: vec3<f32>) -> vec3<f32>
 // there: the voxel holding `p` when it is solid, else the solid corner of the cell with the
 // largest trilinear weight (0 when none is solid to the opaque walk).
 fn field_material(p: vec3<f32>, d: vec3<f32>, base: vec3<i32>, f: vec3<f32>) -> u32 {
-    let own = lookup(voxel_at(p, d));
-    if (own.size == 0) {
+    let crisp = (params.flags & FLAG_CRISP) != 0u;
+    let at = voxel_at(p, d);
+    let own = lookup(at);
+    if (own.size == 0 && !(crisp && field_crisp(at))) {
         return own.material;
     }
     var best = -1.0;
@@ -2139,8 +2200,9 @@ fn field_material(p: vec3<f32>, d: vec3<f32>, base: vec3<i32>, f: vec3<f32>) -> 
         let w3 = select(1.0 - f, f, o == vec3<u32>(1u));
         let w = w3.x * w3.y * w3.z;
         if (w > best) {
-            let c = lookup(base + vec3<i32>(o));
-            if (c.size == 0) {
+            let u = base + vec3<i32>(o);
+            let c = lookup(u);
+            if (c.size == 0 && !(crisp && field_crisp(u))) {
                 best = w;
                 m = c.material;
             }
@@ -2191,6 +2253,11 @@ fn field_march(o: vec3<f32>, d: vec3<f32>) -> FieldHit {
         let c = field_cell(v);
         var size = c.size;
         if (size == 0) {
+            if (c.solid && (params.flags & FLAG_CRISP) != 0u && field_crisp(v)) {
+                // A crisp voxel: its cube, hit where the ray enters it.
+                var face = FHit(true, false, true, t, vec3<f32>(0.0), v, vec3<f32>(0.5));
+                return FieldHit(face, axis, lookup(v).material);
+            }
             if (!c.band) {
                 // A LOD cell, or a solid voxel outside the band: a cube hit, a leak unless LOD.
                 var face = FHit(true, !c.lod, true, t, vec3<f32>(0.0), v, vec3<f32>(0.5));

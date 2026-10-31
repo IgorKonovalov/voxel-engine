@@ -7,10 +7,11 @@ use std::sync::Arc;
 use vxe_render::attrib::{AttribBindings, AttribItem, AttribPass};
 use vxe_render::gpu_world::{
     ABSENT, BIN_COUNT, BINS, BITS_WORDS, CLASS_MASK, CLASS_SHIFT, CLASS_UNIFORM, CLASS_WIDE,
-    EMPTY_BIT, ENTRY_WORD, FULL_BIT, HEADER_BAND_BIT, HEADER_BAND_WORD, HEADER_TRANSLUCENT_WORD,
-    LOD_BIT, LOD_LEVEL_ENTRY, NO_PLANE, PAGE_BYTES, PAGE_UNITS, PLACEHOLDER_BYTES, RECORD_BYTES,
-    RECORD_MASK, RECORD_WORDS, TRANSLUCENT_BIT, UNIT_BYTES, UNIT_MASK, UNIT_WORDS, attr_offset,
-    band_bin_of, bin_of, budget_for, chunk_surface, payload_units, slot_units, slots_per_page,
+    EMPTY_BIT, ENTRY_WORD, FULL_BIT, HEADER_BAND_BIT, HEADER_BAND_PREFIX_WORD, HEADER_BAND_WORD,
+    HEADER_TRANSLUCENT_WORD, LOD_BIT, LOD_LEVEL_ENTRY, NO_PLANE, PAGE_BYTES, PAGE_UNITS,
+    PLACEHOLDER_BYTES, RECORD_BYTES, RECORD_MASK, RECORD_WORDS, TRANSLUCENT_BIT, UNIT_BYTES,
+    UNIT_MASK, UNIT_WORDS, attr_offset, band_bin_of, bin_of, budget_for, chunk_surface,
+    layer_prefix, payload_units, slot_units, slots_per_page,
 };
 use vxe_render::{
     ATROUS_WGSL, ATTRIB_WGSL, COMPOSITE_WGSL, GRADIENT_WGSL, GpuWorld, LIGHT_WGSL, MARCH_WGSL,
@@ -1359,8 +1360,9 @@ fn full_chunks_bricks_carry_their_surface_and_mip_bricks_no_attributes() {
             let mask: Vec<u32> = (0..16).map(|w| rb.word(u, s + w)).collect();
             assert_eq!(layers(&mask), surface, "{c:?} brick {i} surface");
             let mut below = 0;
+            let packed = [rb.word(u, UNIT_WORDS + 10), rb.word(u, UNIT_WORDS + 11)];
             for (z, layer) in surface.iter().enumerate() {
-                let prefix = rb.word(u, UNIT_WORDS + 10 + z / 2) >> (16 * (z % 2)) & 0xFFFF;
+                let prefix = layer_prefix(packed, z);
                 assert_eq!(prefix, below, "{c:?} brick {i} prefix {z}");
                 below += layer.count_ones();
             }
@@ -1403,7 +1405,7 @@ fn attr_in(w: &[u32], e: u32, i: usize) -> u16 {
     if layer >> b & 1 == 0 {
         return NO_PLANE;
     }
-    let prefix = (w[UNIT_WORDS + 10 + z / 2] >> (16 * (z % 2)) & 0xFFFF) as usize;
+    let prefix = layer_prefix([w[UNIT_WORDS + 10], w[UNIT_WORDS + 11]], z) as usize;
     let k = prefix + (layer & ((1u64 << b) - 1)).count_ones() as usize;
     (w[s + UNIT_WORDS + k / 2] >> (16 * (k & 1))) as u16
 }
@@ -3652,7 +3654,8 @@ fn the_majority_filter_fits_a_rod_the_floors_plane() {
 /// is uniform, with the field surface on, the uniform air brick beside the solid brick's +x
 /// face is a band brick. Its entry is `Full` of class [`CLASS_UNIFORM`] and not translucent;
 /// its slot is two units, an opaque mask with no bit set and a header holding air as palette
-/// entry 0 and its band slot in [`HEADER_BAND_WORD`]; the band slot is two units of an exact
+/// entry 0, its band slot in [`HEADER_BAND_WORD`] and its band prefix (8 band voxels a layer)
+/// in [`HEADER_BAND_PREFIX_WORD`]; the band slot is two units of an exact
 /// bin, its band mask the face layer `x = 0` (64 bits), and its first count unit holds, after
 /// the field pass, the counts of the face layer in band-index order (voxel `(0, y, z)` at
 /// index `y + 8 z`): 4 at a corner of the face, 6 along an edge, 9 inside it.
@@ -3693,6 +3696,10 @@ fn a_band_air_brick_s_slot_is_pinned() {
     let band = header[HEADER_BAND_WORD] & UNIT_MASK;
     let mut want = [0u32; UNIT_WORDS];
     want[HEADER_BAND_WORD] = HEADER_BAND_BIT | band;
+    // The band prefix: eight band voxels in each layer below, layers 1 to 4 at bits 0, 7, 15
+    // and 23 of the first word, 5 to 7 at bits 0, 9 and 18 of the second.
+    want[HEADER_BAND_PREFIX_WORD] = 8 | 16 << 7 | 24 << 15 | 32 << 23;
+    want[HEADER_BAND_PREFIX_WORD + 1] = 40 | 48 << 9 | 56 << 18;
     assert_eq!(header, want);
 
     assert_eq!(gpu.bin_of_unit(band), Some(band_bin_of(2)));

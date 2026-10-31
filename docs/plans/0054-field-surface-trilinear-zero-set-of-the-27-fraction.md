@@ -521,7 +521,9 @@ is in `vxe-render`, a client-side view.
 |---|---|---|---|
 | 1: The field as a scratch look: dense storage, the walk, the readings and the census | dev | done | b282738 (the code, wip) and committed with this row (the field look's box rule) |
 | 2: The owner's windowed check, one session with Plan 0053's Phase 4 | human | done (a): the field surface, N1 (owner, 2026-10-31; answers 2 to 4) | owner answers, this commit |
-| 3: Band slots in the size-classed mirror | dev | done | 1b36eb3 (the code, wip) and committed with this row (the log) |
+| 3: Band slots in the size-classed mirror | dev | done | 1b36eb3 (the code, wip) and b4fbfad (the log) |
+| 3a: Free-standing thin features and a per-material scratch look | dev | done; done-when 3 (cost bar) and 4 (pressure) not met as stated | committed with this row |
+| 3b: The owner's look at thin features and the per-material candidate | human | not started | |
 | 4: The field as the default walk, the planes removed | dev | not started | |
 | 5: The readings, the ADR, the close block | dev | not started | |
 
@@ -774,6 +776,104 @@ Readings on lavapipe unless named, exclusive perf lock; the code is 1b36eb3's.
   the_normal_field_adds_no_dark_speck`, `look the_normal_field_has_no_tile_edges`) pass in
   this run.
 
+#### Phase 3a
+
+Readings on lavapipe unless named, exclusive perf lock.
+
+- The rig (`flythrough::thin_rig`, `--thin-rig` in the fly-through, 2 x 2 x 2 chunks): rock
+  below `z = 64`; a rock trunk 5 x 5 at `x, y` 62..67 up to `z = 118`; on its +x face a
+  one-voxel branch (y 64, z 72), a 2 x 2 rod (z 78..80), a 3 x 3 rod (z 86..89) and a diagonal
+  branch from (67, 64, 96), one voxel per step in x and z; on its -x face a one-voxel sheet
+  (y 64, z 72..82) and a two-voxel sheet (y 64..66, z 88..98); every feature 14 voxels long,
+  at least 4 empty voxels from every other (a unit test checks both), of material 5 ("rig
+  wood", `flythrough::with_wood`). Camera `flythrough::thin_rig_camera()`: (64.5, 20.5, 94.5)
+  looking at (64.5, 64.5, 90.0), 70 degrees.
+- Done-when 1 and 2, `look::thin_features_in_the_field_and_per_material` (320 x 320, headlamp,
+  detail on, every hit counted; a feature's pixels are the hits whose point lies in the
+  feature's bounding box less the 2 voxels nearest the trunk, grown by 0.5 voxel):
+
+  | feature | face px | field px | field / face % | field-cubes px | field-cubes / face % |
+  |---|---|---|---|---|---|
+  | one-voxel branch | 439 | 0 | 0.0 | 439 | 100.0 |
+  | 2x2 rod | 827 | 0 | 0.0 | 827 | 100.0 |
+  | 3x3 rod | 1197 | 913 | 76.3 | 1197 | 100.0 |
+  | diagonal branch | 508 | 0 | 0.0 | 508 | 100.0 |
+  | one-voxel sheet | 3183 | 0 | 0.0 | 3183 | 100.0 |
+  | two-voxel sheet | 3489 | 2666 | 76.4 | 3489 | 100.0 |
+
+  Rig hits: face 49 417, field 47 173, field-cubes 48 871; leaks: field 0, field-cubes 0.
+  Field against field-cubes away from the wood (no corner of the hit's dual cell within one
+  voxel of a wood voxel, in either look): 37 069 hit pixels compared, 0 differ in hit position
+  or hit record, 11 874 left out. The level in field-cubes: `VEIN_POSE` 82 944 hits, 0 leaks;
+  `PATCH_POSE` 82 944 hits, 0 leaks; the shaded image is the field look's byte for byte at
+  both. Side-by-side (face, field, field-cubes): `live/thin/rig.png` (untracked).
+- Done-when 3, cost (`live/p3a/cost.sh`, logs `live/p3a/cost/`): `flythrough --level --seed 1
+  --headless --render 1920x1080 --frames 300 --adapter NVIDIA|AMD --look field|field-cubes`
+  and `flythrough --thin-rig --headless --render 1920x1080 --frames 300 ...`, 1080p from
+  1280 x 720, release, each run under the exclusive perf lock and the memory cap, started at a
+  1-minute load under 2 (0.56 to 1.92), three alternated rounds; medians of the `gpu hit` and
+  `light` line (the HUD's median of the last 30 frames). "Phase 3" is 1b36eb3's release binary
+  (`live/p3/flythrough-p3`, the walk counting by popcount), "3a" this commit's; adapters by
+  `--adapter`.
+
+  | adapter | scene | binary, look | hit ms | light ms | hit + light |
+  |---|---|---|---|---|---|
+  | NVIDIA GeForce RTX 3080 Laptop GPU | level | Phase 3, field | 6.56 | 0.95 | 7.51 |
+  | | level | 3a, field | 4.95 | 0.98 | 5.93 |
+  | | level | 3a, field-cubes | 5.41 | 0.97 | 6.38 |
+  | | rig | 3a, field | 5.35 | 0.13 | 5.48 |
+  | | rig | 3a, field-cubes | 4.68 | 0.13 | 4.81 |
+  | AMD Radeon Graphics (RADV RENOIR) | level | Phase 3, field | 55.17 | 7.24 | 62.41 |
+  | | level | 3a, field | 39.91 | 7.22 | 47.13 |
+  | | level | 3a, field-cubes | 41.84 | 7.22 | 49.06 |
+  | | rig | 3a, field | 49.34 | 1.01 | 50.35 |
+  | | rig | 3a, field-cubes | 40.43 | 0.98 | 41.41 |
+
+  The field look at the level reads 5.93 ms on the RTX against the owner's 5 ms bar: not met.
+  An exploratory RTX pass (lane rule 9c; one alternated pair of runs each, load 1.4 to 1.9)
+  with a one-layer band-mask cache and a one-word count cache in `field_byte` read 5.07 and
+  5.06 ms hit against 4.98 and 4.92 without; it was reverted.
+- Done-when 4: the fly-through's level mirror under `--look field` (RTX, 1b36eb3 against this
+  commit): reserved 259 203 264 B before, 393 945 280 B now (6 049 792 units, 3200 records);
+  254 115 904 B live in both; `mirror pressure 1.000` in both. The pressure is the larger of
+  the unit term and the record term (`GpuWorld::pressure`); the unit term moved from 0.980 to
+  0.645, the record term is 3200 of 3200 records (the level's budget reserves one record per
+  chunk of its extent) and reads 1.000 under every look.
+- Deviations (this commit):
+  - The band prefix is two packed header words (`HEADER_BAND_PREFIX_WORD` 12 and 13), and the
+    surface prefix moved into words 10 and 11 in the same packing (`gpu_world::pack_prefix`,
+    `layer_prefix` in both shaders: layers 1 to 4 in the first word at 7, 8, 8 and 9 bits,
+    5 to 7 in the second at 9 bits each); the held patch put the band prefix in words 10 to 13,
+    which the surface prefix holds while the attribute stays. `fix_band` restages a band
+    brick's header whenever it places its band slot, not only when the slot moved. The pinned
+    header of `mirror::a_band_air_brick_s_slot_is_pinned` gains the band prefix.
+  - `level_pool_units` and `level_mirror_budget` take a `field` flag (the fly-through passes
+    it when `--look` starts in a field look); with it, each band brick's band slot and each
+    uniform band brick's slot count in pages of their bins, and the headroom adds a
+    9-unit band slot per headroom brick. Every other caller passes `false` and reads the same
+    budget as before.
+  - The crisp flag is the mirror's crisp material set (`GpuWorld::set_crisp_materials`, by
+    material id) and `SurfaceTuning::crisp` (flag bit 19), not a material row column: the
+    band counts a crisp voxel as air and holds every crisp voxel, its `u8` count carrying bit
+    7 (`field::CRISP_COUNT_BIT`), so the walk tests a solid band voxel's count byte, not its
+    material row. Band bricks within one brick of a crisp voxel get their counts from the CPU
+    (`field::band_of`, `GpuWorld::fix_crisp` at the end of a sync) and leave the field pass's
+    work list. A chunk held as mips reads no crisp voxel. `flythrough::CRISP_MATERIALS` is
+    the rig's wood; `LookPreset::FIELD_CUBES` sits after `field` in `LookPreset::ALL`; the
+    banner reads `look field-cubes, field normal analytic, crisp cubes on`.
+  - Files: `apps/flythrough/src/thin_rig.rs` (new), `hud.rs`, `lib.rs`, `main.rs`
+    (`--thin-rig`), `tests/look.rs`, `tests/support/rigs.rs` (`with_field_pool` sets the crisp
+    set), the `level_pool_units` callers in `examples/` and `tests/`;
+    `crates/vxe-render/src/field.rs`, `gpu_world.rs`, `marcher.rs`, `attrib.wgsl`,
+    `march.wgsl`, `tests/mirror.rs`.
+- Gate at this commit: build, clippy `-D warnings` (workspace, and `-p flythrough --features
+  wasm`), fmt, doctests, `cargo deny check`, the four `scripts/check-*.mjs`: 0. `--profile
+  quick` (no lock, load 3.9 at the start, 21.6 at the end): 542 run, 542 passed (10 slow), 3
+  skipped. `--profile gpu --no-fail-fast` on lavapipe
+  (exclusive perf lock, 18:50 to 19:28, 2264.4 s, 1-minute load 19.9 at the start right after
+  the quick tier, 1.35 at the end): 199 run, 199 passed (14 slow), 31 skipped
+  (`live/p3a/gpu.log`).
+
 ### Resume notes (2026-10-31, held before Phase 4, delete when Phase 4 lands)
 
 - Held by the coordinator before Phase 4 (the owner is reconsidering the field as the
@@ -821,6 +921,11 @@ each. Empty is fine.)_
   comment reworded for the comment-hygiene gate.
 - Noticed, not acted on: the field walk reads every corner count through the chunk table, the
   record and the index, and the hit shader holds 128 VGPRs; no cost work was done.
+- Phase 3a: done-when 3 not met: the field look's hit plus light at the level reads 5.93 ms on
+  the RTX 3080 Laptop against the owner's 5 ms bar (Phase 3's 7.51 ms; Phase 1's dense pool
+  4.36 ms). Done-when 4 not met as stated: `mirror pressure` still reads 1.000 at the level
+  (the record term, 3200 of 3200); the band term moved the unit term from 0.980 to 0.645 and
+  the reservation from 259.2 to 393.9 MB.
 
 ### Close triggers
 
