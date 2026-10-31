@@ -1,8 +1,8 @@
 # ADR-0038: The contour plane code holds a zero normal component exactly
 
-> **Status:** proposed
+> **Status:** accepted (2026-10-31, Plan 0050 closed; see Outcome)
 > **Date:** 2026-10-29
-> **Related plan(s):** [Plan 0050](../plans/0050-watertight-contour-surface-crack-spike-and-closing-rule.md)
+> **Related plan(s):** [Plan 0050](../plans/done/0050-watertight-contour-surface-crack-spike-and-closing-rule.md)
 > (Phase 2). Amends [ADR-0011](0011-contour-planes-in-attribute-pages-with-procedural-detail.md)'s
 > attribute encoding in its normal's scale only.
 
@@ -64,3 +64,19 @@ Plan 0050's closing candidates (snap, extend, blend) close steps of 0.02 voxel a
 larger cracks, so the walk would hide them. It lost because the owner wants the surface itself
 to be one plane where the rock is flat (2026-10-29): a closing rule that patches a step it
 created by rounding hides the cause instead of fixing it.
+
+## Outcome
+
+**Accepted 2026-10-31 at Plan 0050's close (v0.38.0).** The decision shipped as written in
+Plan 0050's Phase 2.
+
+- **What shipped.** `encode_octahedral` writes `round((p + 1) * 31)` clamped to 62 and
+  `decode_octahedral` reads `q / 31 - 1`; a floor voxel's attribute decodes to `(0, 0, 1)` and a
+  wall voxel's to `(-1, 0, 0)` bit for bit under all four fits (`mirror.rs`,
+  `axis_planes_decode_to_the_exact_axis_normal`). Two mirror hash pins and four contour goldens
+  moved; the face goldens did not.
+- **What the readings showed.** The 45-degree slab's class 2 share fell from 0.035 % to 0, the
+  steps this ADR named. The flat floor and wall read 0 cracks under both codes, so the axis
+  planes pin the new code's exactness rather than a crack it removed. The tilted slab and the
+  poses moved within their noise (Plan 0050's Phase 2 table). No frame cost: the Radeon hit pass
+  read 4.715 ms at Phase 2 against 4.717 at Phase 1.

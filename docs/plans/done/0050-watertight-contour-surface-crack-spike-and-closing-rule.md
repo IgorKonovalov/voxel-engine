@@ -1,6 +1,8 @@
 # 0050: A watertight contour surface: a crack spike that names the wedges and triangles, then the closing rule chosen by measurement
 
-> **Status:** in-progress (2026-10-29)
+> **Status:** done (2026-10-31, v0.38.0): closed clean at the fresh-session review; snap closes the
+> contour surface's cracks at +1.3 % (RTX) and +0.4 % (Radeon) on the hit pass, and the one-voxel boxes
+> Phase 5 found go to Plan 0053
 > **Created:** 2026-10-29
 > **Approved:** 2026-10-29 (owner), with the answers under "Owner answers": alone on main
 > with the light spike after its Phase 4 check; the contour goldens re-blessed by name; the
@@ -13,20 +15,20 @@
 > **Amended:** 2026-10-30 (architect, after Phase 5's outcome (c)): the flat-faced boxes are
 > a fault of the surface itself (one clipped cube per voxel, ADR-0011), not of the closing
 > rule, and no closing rule reaches them; they go to
-> [Plan 0053](0053-one-voxel-features-on-the-contour-surface-majority-fit-and-a-normal-field.md)
-> with [ADR-0040](../adrs/0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md)
+> [Plan 0053](../0053-one-voxel-features-on-the-contour-surface-majority-fit-and-a-normal-field.md)
+> with [ADR-0040](../../adrs/0040-one-voxel-features-melt-into-the-contour-surface-by-a-majority-fit-and-a-normal-field.md)
 > (proposed). Phase 6 is unblocked and rewritten: the losers and `old` go, the window's cracks
 > palette is fixed, the showcase golden is re-blessed by name. The closing rule's ADR is
-> [ADR-0039](../adrs/0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md)
+> [ADR-0039](../../adrs/0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md)
 > (proposed, accepted at this plan's close).
-> **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look decision: "smooth
+> **Milestone:** M2 in [`docs/roadmap.md`](../../roadmap.md) (the surface-look decision: "smooth
 > and natural rock, not visible cubes")
-> **Related ADRs:** [ADR-0011](../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
+> **Related ADRs:** [ADR-0011](../../adrs/0011-contour-planes-in-attribute-pages-with-procedural-detail.md)
 > (the per-voxel plane and its hit rule, which this plan closes the cracks of; its Negative
 > consequences name the crude offset and the shadow-ray artifacts);
-> [ADR-0038](../adrs/0038-the-contour-plane-code-holds-a-zero-normal-component-exactly.md)
+> [ADR-0038](../../adrs/0038-the-contour-plane-code-holds-a-zero-normal-component-exactly.md)
 > (proposed: the plane code's scale, Phase 2);
-> [ADR-0039](../adrs/0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md)
+> [ADR-0039](../../adrs/0039-the-contour-walk-closes-a-crack-at-the-passed-voxels-exit.md)
 > (proposed: the closing rule, written 2026-10-30 from Phase 3's readings).
 > **Source:** the owner at Plan 0049's live session 2, 2026-10-29 (`LIGHT-FEEDBACK.md`,
 > finding 5; screenshots `wedges`, `step3` and `step5` in
@@ -375,8 +377,13 @@ the adapter; every asserted reading, golden and gate stays on lavapipe.
      `--closing` is gone or takes `snap` alone; `--shadow-push on` still works and is named on
      the banner.
   2. `the_closing_rule_leaves_no_crack` passes at the default; every contour golden reads the
-     same pixels as Phase 4's re-render except the showcase golden, re-blessed and named in the
-     log with both shares; the face goldens read byte for byte.
+     same pixels as Phase 4's re-render except those that move when `Old` goes, each
+     re-blessed and named in the log with its share against Phase 4's re-render: the showcase
+     golden (both shares, the pre-plan drift and snap's) and, amended 2026-10-30 (owner answer
+     2), `look_contour.png` and `look_wall_contour.png`, which Phase 4 never re-rendered
+     because they take `SurfaceTuning::default()` and that stayed `Old` (a scratch read with
+     the default moved to `Snap`: 0.7639 % and 1.2274 % over 2/255, loaded). The face goldens
+     read byte for byte (`look_wall_face.png` read 0.0000 % in the same scratch).
   3. The hit pass at the level's spawn on both adapters, read as Phase 3 did against the
      pre-plan binary, is within +5 % (RTX) and +10 % (Radeon), and `nfr.md` §2 carries it as
      the tree's reading, replacing "snap alone".
@@ -384,7 +391,10 @@ the adapter; every asserted reading, golden and gate stays on lavapipe.
      (the upscaler on, the tone map on) reads its class 3 pixels blue and its self-hit pixels
      magenta within 32/255 per channel of the palette, and the test that pins it is named in
      the log.
-  5. The full profile is green at the tip, under the perf lock, with the counts in the log.
+  5. The quick and gpu profiles are green at the tip (gpu under the perf lock), with the
+     counts in the log. Amended 2026-10-30 (owner): it read "the full profile is green at the
+     tip"; the full tier now runs once per plan, in the close review, on the lane tree that
+     already holds main (main's 81d99f8), and that run is this plan's.
 
 ## Data shapes
 
@@ -464,6 +474,19 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
    scale-62 code of ADR-0038 over snapping on decode; a zero component must be exact, not
    patched by the closing rule.
 
+8. **Phase 6's two look goldens (orchestrator under owner answer 2, 2026-10-30).** Removing
+   `Old` moves `look_contour.png` and `look_wall_contour.png`, which Phase 4 left on the
+   default tuning. Answer 2 already says a contour golden that moves is re-blessed by name
+   with its share; done-when 2 is amended to list them. No new rule and no second shader path.
+
+9. **Phase 6's detail floor (owner, 2026-10-31).** `detail_after_lighting_is_exact_for_the_lamp`
+   compares C5 against today's render on the wall; with `Old` gone both sides run snap and it
+   reads 98.028 % against the 98.3 % floor set on 2026-10-29 under `Old` (98.389 %). The floor
+   moves to 98.0 %, from the snap reading, and the test's doc comment records both readings and
+   why: snap's closing normal makes the detail ratio's clamp bind on 1.208 % of the window
+   (0.681 % under `Old`). Accepted unseen as a small darkening along closed cracks; moot if
+   the field surface is picked.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
@@ -477,8 +500,8 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 | 2: A zero normal component, exact in the plane code | dev | done | 4b137e7 |
 | 3: The closing rules, each measured | dev | done | e9cae0e |
 | 4: The pick as the default | dev | done | 760950b |
-| 5: The owner's windowed check | human | done (c) | committed with this row |
-| 6: The losers removed, the window's cracks palette, the showcase golden | dev | not started (unblocked 2026-10-30) | |
+| 5: The owner's windowed check | human | done (c) | 98a835c |
+| 6: The losers removed, the window's cracks palette, the showcase golden | dev | done | 45bc227 (code), 76fa99f |
 
 #### Phase 1
 
@@ -838,43 +861,99 @@ extend 0.25 5.928, extend 0.5 5.926, blend 35.151 (light pre 7.005, blend 13.439
 - Architect, 2026-10-30: routed to Plan 0053 (ADR-0040 proposed); Phase 6 rewritten and
   unblocked, see the header's second amendment.
 
+#### Phase 6
+
+- The code landed in 45bc227 (`wip(render)`, checkpointed on the floor question below); this
+  row's commit holds the floor, `nfr.md` §2 and the log.
+- Removed: `CrackClosing` and `SurfaceTuning::closing` (dev's call: the enum goes), the extend
+  and blend code, `PASSED_NO_PLANE`, `cube_exit`'s dilation, `--closing` (rejected now), the
+  banner's and look line's closing words. The shadow push moves from flag bit 17 to 14;
+  `--shadow-push on` parses and the banner names it (`the_banner_names_the_view`).
+  `a_tilted_slab_has_cracks_today` deleted, its decode check moved into
+  `axis_planes_have_no_cracks`; `crack_classes` reads the default; `closing_candidates` and its
+  helpers deleted; `Candidate::closing` gone in `sharpness.rs`.
+- Goldens, re-rendered with `VXE_BLESS=1` on lavapipe, share over 2/255 against Phase 4's
+  re-render (`.git/lane-archive/plan-0050/live/golden-p4`): `look_contour.png` 0.7639 %,
+  `look_wall_contour.png` 1.2274 %, `showcase_hall.png` 13.5781 % (pre-plan drift 12.4601 % at
+  00ca974); re-blessed in 45bc227. The other 26 read the same pixels as Phase 4's re-render,
+  `look_wall_face.png` among them. `castle_gate`, `dark_cave`, `dark_cave_half`, `upscaled` and
+  `look_wall_face` were rewritten by the bless run and restored: identical to Phase 4's
+  re-render, at most 2/255 from the committed PNG at 0 % of pixels (Phase 1's drift).
+- Done-when 3: hit pass at the level's spawn, `flythrough --level --seed 1 --headless --render
+  1920x1080 --frames 300 --adapter NVIDIA|AMD` (adapter by `--adapter`), 1080p from 720p,
+  release, exclusive perf lock, memory cap, three alternated rounds, median of each run's
+  median of the last 30 frames; pre = 00ca974's binary, tip = 45bc227's tree; load 1.48 at the
+  start, 1.5 to 3.4 during (loaded); `live/cost-p6.log`. In `nfr.md` §2 as the tree's reading.
+
+  | adapter | hit pre | hit tip | light pre | light tip |
+  |---|---|---|---|---|
+  | NVIDIA GeForce RTX 3080 Laptop GPU | 0.608 | 0.616 (+1.3 %) | 0.923 | 0.925 |
+  | AMD Radeon Graphics (RADV RENOIR) | 4.279 | 4.298 (+0.4 %) | 7.266 | 7.175 |
+
+- Done-when 4: `the_cracks_view_keeps_its_palette_through_the_window_chain` (`look.rs`,
+  lavapipe; vein, 384 x 216 to 576 x 324, our upscaler, jitter, sharpening 0.5, ACES, the
+  pose's exposure, nearest jittered internal sample per output pixel): 1143 blue, 155 magenta
+  output pixels, worst channel 0/255 off (bar 32). `composite.wgsl` writes the cracks palette
+  in display values for both targets.
+- FSR 2 at the vein (scratch reading, lavapipe): before the palette fix near-black (k^2.2 /
+  exposure 5.372), 0 blue pixels; after, 914 near-blue, 120 near-magenta. Our upscaler copied
+  the palette exactly before and after. Not explained: the green cast in Phase 5's window
+  screenshots with `upscaler own`; headless, that chain reproduces nothing wrong.
+- Deviation (owner answer 9, 2026-10-31): `detail_after_lighting_is_exact_for_the_lamp`'s
+  floor moves from 98.3 % to 98.0 %, the doc comment recording both readings. Readings
+  (lavapipe): 98.389 % under `Old` (2026-10-29); 98.028 % under snap at 45bc227's tree (fail
+  against 98.3 %, 2026-10-30) and at this row's tree (pass against 98.0 %, 2026-10-31, load
+  0.85), worst 230/255, misses 0.764 % unlit in C5 and lit today, 1.208 % lit and darker in C5
+  (0.681 % at Phase 2), 0 other; `R` today 0.842, C5 0.885.
+- Gate at this row's tree: `--profile gpu` (exclusive perf lock, lavapipe, load 3.22 at the
+  start, 2.42 at the end) exit 0, 185 run, 185 passed, 29 skipped, 994 s.
+  At 45bc227's tree: `--profile quick` 539 run, 538 passed, 1 timeout at load about 30 (`replay
+  a_stamp_and_a_collapse_replay_from_the_save`, alone 13.8 s), 3 skipped.
+
 ### Notes
 
 - Deviations are listed per phase above (Phase 1: `F9` and the self-hit in the hit pass;
   Phase 2: the C5 floor at 98.3 % by the owner, two mirror hash pins; Phase 3: five rule
   values and the push bit, the `CRACKS_VIEW` override pipeline; Phase 4: three tests pin
-  `Old`). Each phase's files outside its list are named in its section.
-- Unmet: the full profile at the tip is not green. `showcase_hall_golden_is_lit_by_its_four_ores`
-  fails at 00ca974 already (12.4601 %, same PNG); snap moves it to 13.5781 %. Not re-blessed.
-- Owed: the closing rule's ADR (the architect's). Phase 4 landed the default without it.
-- Noticed, not acted on: until Phase 6 deletes the losing rules, the hit pass costs +10 % (RTX)
-  and +40 % (Radeon) over 00ca974 in every rule (the owner accepted it, 2026-10-29);
-  `castle_gate_golden` peak RSS 953 MB alone against its 1 GiB bar, once 1.49 GB in a loaded
-  run; the flat 90-degree concave corner reads 0 cracks in every class, before and after.
+  `Old`; Phase 6: the code in a `wip(render)` commit, 45bc227, and the C5 floor at 98.0 % by
+  the owner, answer 9). Each phase's files outside its list are named in its section.
+- Unmet: none as amended. The full tier is the close review's (done-when 5, amended
+  2026-10-30).
+- Owed: ADR-0039 and ADR-0038 stay proposed until the close.
+- Noticed, not acted on: the green cast in Phase 5's window screenshots with `upscaler own`
+  (Phase 6, not reproduced headless); `castle_gate_golden` peak RSS 953 MB alone against its
+  1 GiB bar, once 1.49 GB in a loaded run; the flat 90-degree concave corner reads 0 cracks in
+  every class, before and after; the quick tier's load-only timeouts at the close (below).
 
 ### Close triggers
 
 - **What shipped:** the cracks view (`F9`, `--view cracks`) with classes 1 to 3 and the
-  self-hit; ADR-0038's octahedral code (0..=62, an axis normal exact); five closing rules
-  behind `--closing old|snap|extend-0.25|extend-0.5|blend` and the shadow push behind
-  `--shadow-push on`; snap as the contour looks' default, push off.
-- **Public API changed:** `vxe_render::CrackClosing`, `vxe_render::CrackShares`,
-  `SurfaceTuning::closing` and `SurfaceTuning::shadow_push` (default `Old`, off), `ViewMode::Cracks`;
-  the plane attribute's normal code changes value (decode `q / 31 - 1`).
-- **Budget readings:** `docs/nfr.md` §2, the crack-closing paragraph: hit pass at the level's
-  spawn, 1080p from 720p, release, perf lock, load 1.1 to 3.0. RTX 3080 Laptop GPU: 0.598 ms at
-  00ca974, 0.658 ms at e9cae0e with snap (+10.0 %), 0.604 ms snap alone (+1.0 %). AMD Radeon
-  Graphics (RADV RENOIR): 4.264, 5.981 (+40.3 %), 4.364 (+2.3 %). Light with the push: 1.439
-  against 0.913 (RTX), 9.165 against 7.026 (Radeon). Mirror 157 872 640 B live, 259 203 264 B
-  allocated.
-- **Gate at the tip (760950b's tree):** `cargo nextest run --workspace --profile full
-  --test-threads 2`, exit 100: 720 run, 719 passed, 1 failed (`showcase_hall_golden_is_lit_by_its_four_ores`,
-  above), 13 skipped, 4810 s, lavapipe, load 7.9 at start; `cargo clippy --workspace
-  --all-targets -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo test --doc --workspace`
-  7 passed; `cargo deny check` ok (advisories, bans, licenses, sources); the four
-  `scripts/check-*.mjs` 0.
-- **Outstanding `human` phases:** none. Phase 5 recorded (c); Phase 6 waits on an architect
-  amendment for the flat-faced boxes.
+  self-hit, its palette written in display values so the window's post chain keeps it;
+  ADR-0038's octahedral code (0..=62, an axis normal exact); snap as the only closing rule
+  (ADR-0039) and the shadow push behind `--shadow-push on`, off by default. The other four
+  rules, `old` and `--closing` are gone.
+- **Public API changed:** `vxe_render::CrackShares`, `SurfaceTuning::shadow_push` (default
+  off), `ViewMode::Cracks`; `CrackClosing` and `SurfaceTuning::closing`, added in Phase 3, are
+  removed again; the plane attribute's normal code changes value (decode `q / 31 - 1`).
+- **Budget readings:** `docs/nfr.md` §2, the crack-closing paragraph, the tree's reading: hit
+  pass at the level's spawn, 1080p from 720p, release, exclusive perf lock, load 1.48 to 3.4
+  (loaded), 45bc227's tree against 00ca974's binary. RTX 3080 Laptop GPU 0.616 against 0.608
+  ms (+1.3 %), light 0.925 against 0.923; AMD Radeon Graphics (RADV RENOIR) 4.298 against
+  4.279 (+0.4 %), light 7.175 against 7.266. Mirror 157 872 640 B live, 259 203 264 B
+  allocated (Phases 3 and 4).
+- **Gate at the tip (76fa99f's tree; the close commit changes this plan only):** `cargo build`
+  0; `cargo nextest run --workspace --profile quick` exit 100 at load 4.0 rising to 26: 539
+  run, 537 passed, 2 timed out at 30 s (`castle
+  the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn`, `replay
+  a_stamp_and_a_collapse_replay_from_the_save`), 3 skipped; alone, at load 24 to 18, each
+  passed (8.6 s, 15.2 s); `cargo nextest run
+  --workspace --profile gpu` (exclusive perf lock, lavapipe, load 4.20 at the start, 2.38 at the
+  end, loaded) exit 0: 185 run, 185 passed, 29 skipped, 1076 s; `cargo test --doc --workspace` 7 passed, 1 ignored;
+  `cargo clippy --workspace --all-targets -- -D warnings` 0; `cargo clippy -p flythrough
+  --all-targets --features wasm -- -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny
+  check` ok (advisories, bans, licenses, sources); the four `scripts/check-*.mjs` 0.
+- **Outstanding `human` phases:** none. Phase 5 recorded (c); its flat-faced boxes are Plan
+  0053's.
 
 ## Followups
 
@@ -882,3 +961,17 @@ extend 0.25 5.928, extend 0.5 5.926, blend 35.151 (light pre 7.005, blend 13.439
   a loaded bless run (Phase 3): the bar or the test's footprint needs a look before the next
   plan that grows the mirror.
 - The flat-faced boxes of Phase 5: Plan 0053.
+- The green cast in Phase 5's window screenshots with `upscaler own` (Phase 6): headless,
+  that chain reproduces nothing wrong. It needs a windowed reading of the surface's own format
+  and the present pass, not another headless test.
+- The cracks view through FSR 2 rests on a scratch reading (914 near-blue, 120 near-magenta
+  at the vein); only our upscaler's chain is pinned by a test
+  (`the_cracks_view_keeps_its_palette_through_the_window_chain`). A plan that next touches the
+  FSR 2 tone pass or the composite's HDR store pins it there.
+- Under snap the walk returns the closing hit before it classifies, so classes 1 and 2 read 0
+  by construction and `the_closing_rule_leaves_no_crack` pins that snap is in place, not that
+  the closed surface is right. A closed-crack class in the cracks view (where snap fired)
+  would let the owner see the closures; Plan 0053's metric is the natural home.
+- `showcase_hall.png` was already stale at 00ca974 (12.4601 % over 2/255): it sat on the slow
+  list until Plan 0052, so no gpu tier read it and the bless runs did not rewrite it. The
+  re-bless at 45bc227 absorbs that drift; its source was not traced.

@@ -263,15 +263,8 @@ const FLAG_ATTRS: u32 = 256u;
 const FLAG_SKIPS: u32 = 512u;
 const FLAG_CUTAWAY: u32 = 1024u;
 const FLAG_DETAIL_AFTER_LIGHTING: u32 = 8192u;
-// Flags bits 14..16: the contour walk's crack-closing rule (`CrackClosing`).
-const CLOSING_SHIFT: u32 = 14u;
-const CLOSING_OLD: u32 = 0u;
-const CLOSING_SNAP: u32 = 1u;
-const CLOSING_EXTEND_QUARTER: u32 = 2u;
-const CLOSING_EXTEND_HALF: u32 = 3u;
-const CLOSING_BLEND: u32 = 4u;
-// Flags bit 17: push a contour hit's shadow origin clear of its neighbours' planes.
-const FLAG_SHADOW_PUSH: u32 = 131072u;
+// Flags bit 14: push a contour hit's shadow origin clear of its neighbours' planes.
+const FLAG_SHADOW_PUSH: u32 = 16384u;
 // Normal modes (flags bits 2..4) and views (flags bits 5..8).
 const NORMAL_FACE: u32 = 0u;
 const NORMAL_TRILINEAR8: u32 = 1u;
@@ -285,9 +278,6 @@ const VIEW_ALBEDO: u32 = 4u;
 const VIEW_CRACKS: u32 = 5u;
 // The attribute of no plane.
 const NO_PLANE: u32 = 0xFFFFu;
-// `march`'s record of a passed voxel without a plane (the blend rule tests those too): not an
-// attribute the pass writes, whose codes stop at 62.
-const PASSED_NO_PLANE: u32 = 0xFFFEu;
 // Params.lighting bits.
 const LIGHTING_LAMP: u32 = 1u;
 const LIGHTING_COARSE_SHADOW: u32 = 2u;
@@ -843,10 +833,8 @@ fn contour_attr(entry: u32, index: u32) -> u32 {
 
 // The contour test of solid voxel `v`, entered at `t`: `kind` 0 when the voxel has no plane,
 // 1 for a hit at the entry `t` (the ray enters already inside the plane's solid half-space)
-// with normal `n`, 3 for a hit where the ray crosses the plane inside the voxel's cube (under
-// the extend rules, inside the cube dilated on its exit side, hitting at the cube's exit), 2
-// when the ray misses the half-space inside the cube. Under the blend rule the distance is
-// `blend_at`'s, and a voxel with no plane in a Full brick is tested too.
+// with normal `n`, 3 for a hit where the ray crosses the plane inside the voxel's cube, 2
+// when the ray misses the half-space inside the cube.
 struct Contour {
     kind: u32,
     t: f32,
@@ -854,11 +842,6 @@ struct Contour {
     // The voxel's attribute, NO_PLANE for none.
     a: u32,
 };
-
-// The crack-closing rule, `CLOSING_*`.
-fn closing() -> u32 {
-    return (params.flags >> CLOSING_SHIFT) & 7u;
-}
 
 // The offset of attribute `a`'s plane from its voxel's centre along its normal, in voxels.
 fn plane_offset(a: u32) -> f32 {
@@ -871,92 +854,11 @@ fn plane_distance(a: u32, v: vec3<i32>, p: vec3<f32>) -> f32 {
     return dot(decode_octahedral(a), p - vec3<f32>(v) - 0.5) - plane_offset(a);
 }
 
-// The blended distance at `p` (`s`, negative inside rock) and the blend of the planes'
-// normals there (`n`, unnormalised, zero when no plane contributes).
-struct Blend {
-    s: f32,
-    n: vec3<f32>,
-};
-
-// The trilinear blend over the eight voxel centres around `p` of each voxel's distance at
-// `p`: its plane's for a solid voxel with a plane, +1 for an empty cell (or outside the
-// window), -1 for a solid voxel without one. Continuous across cube faces, so the zero set
-// has no crack. Eight `lookup`s and up to eight attribute reads.
-fn blend_at(p: vec3<f32>) -> Blend {
-    let q = p - 0.5;
-    let b = vec3<i32>(floor(q));
-    let f = q - floor(q);
-    var s = 0.0;
-    var n = vec3<f32>(0.0);
-    for (var i = 0u; i < 8u; i++) {
-        let k = vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u);
-        let u = b + vec3<i32>(k);
-        let w3 = select(1.0 - f, f, k == vec3<u32>(1u));
-        let w = w3.x * w3.y * w3.z;
-        let c = lookup(u);
-        var du = 1.0;
-        if (c.size == 0) {
-            du = -1.0;
-            if (c.slot != ABSENT) {
-                let a = contour_attr(c.slot, c.index);
-                if (a != NO_PLANE) {
-                    let nu = decode_octahedral(a);
-                    du = dot(nu, p - vec3<f32>(u) - 0.5) - plane_offset(a);
-                    n += w * nu;
-                }
-            }
-        }
-        s += w * du;
-    }
-    return Blend(s, n);
-}
-
-// The unit blended normal of `b`, or `fallback` where no plane contributes.
-fn blend_normal(b: Blend, fallback: vec3<f32>) -> vec3<f32> {
-    let l = length(b.n);
-    return select(fallback, b.n / l, l > 1e-4);
-}
-
-// The ray parameter where it leaves cube `v` (dilated by `e` on its exit side).
-fn cube_exit(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, e: f32) -> f32 {
-    let edge = vec3<f32>(v) + select(vec3<f32>(-e), vec3<f32>(1.0 + e), d > vec3<f32>(0.0));
+// The ray parameter where it leaves cube `v`.
+fn cube_exit(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>) -> f32 {
+    let edge = vec3<f32>(v) + select(vec3<f32>(0.0), vec3<f32>(1.0), d > vec3<f32>(0.0));
     let tk = select(vec3<f32>(BIG), (edge - o) * inv, d != vec3<f32>(0.0));
     return min(min(tk.x, tk.y), tk.z);
-}
-
-// The blend rule's test of voxel `v` (attribute `a`, NO_PLANE for none) entered at `t`: a hit
-// at the entry where the blend is already inside rock; else the crossing bracketed by the
-// entry and the exit and refined by two secant steps, the hit at the second.
-fn blend_test(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t: f32, a: u32) -> Contour {
-    let own = select(decode_octahedral(a), -d, a == NO_PLANE);
-    let kind_in = select(1u, 0u, a == NO_PLANE);
-    let b_in = blend_at(o + d * t);
-    if (b_in.s <= 0.0) {
-        return Contour(kind_in, t, blend_normal(b_in, own), a);
-    }
-    let t_out = cube_exit(o, d, inv, v, 0.0);
-    let b_out = blend_at(o + d * t_out);
-    if (b_out.s > 0.0) {
-        return Contour(2u, t, own, a);
-    }
-    var ta = t;
-    var sa = b_in.s;
-    var tb = t_out;
-    var sb = b_out.s;
-    var tc = t_out;
-    var bc = b_out;
-    for (var k = 0u; k < 2u; k++) {
-        tc = ta + (tb - ta) * sa / (sa - sb);
-        bc = blend_at(o + d * tc);
-        if (bc.s > 0.0) {
-            ta = tc;
-            sa = bc.s;
-        } else {
-            tb = tc;
-            sb = bc.s;
-        }
-    }
-    return Contour(3u, tc, blend_normal(bc, own), a);
 }
 
 fn contour_test(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t: f32, c: Cell) -> Contour {
@@ -965,10 +867,6 @@ fn contour_test(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t: f32
         return none;
     }
     let a = contour_attr(c.slot, c.index);
-    let rule = closing();
-    if (rule == CLOSING_BLEND) {
-        return blend_test(o, d, inv, v, t, a);
-    }
     if (a == NO_PLANE) {
         return none;
     }
@@ -980,17 +878,10 @@ fn contour_test(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t: f32
     if (s_in <= 0.0) {
         return Contour(1u, t, n, a);
     }
-    let t_out = cube_exit(o, d, inv, v, 0.0);
+    let t_out = cube_exit(o, d, inv, v);
     let s_out = dot(n, o + d * t_out - centre) - offset;
     if (s_out <= 0.0) {
         return Contour(3u, t + (t_out - t) * s_in / (s_in - s_out), n, a);
-    }
-    if (rule == CLOSING_EXTEND_QUARTER || rule == CLOSING_EXTEND_HALF) {
-        let e = select(0.25, 0.5, rule == CLOSING_EXTEND_HALF);
-        let s_e = dot(n, o + d * cube_exit(o, d, inv, v, e) - centre) - offset;
-        if (s_e <= 0.0) {
-            return Contour(3u, t_out, n, a);
-        }
     }
     return Contour(2u, t, n, a);
 }
@@ -1038,10 +929,9 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
         crack_class = 0u;
     }
     // The attribute of the last surface voxel passed outside its plane since the last empty
-    // cell, NO_PLANE for none (PASSED_NO_PLANE for a voxel without one, under the blend rule):
-    // the snap rule's memory and the cracks view's pass. One register, not a normal and a count.
+    // cell, NO_PLANE for none: the crack-closing memory and the cracks view's pass. One
+    // register, not a normal and a count.
     var passed = NO_PLANE;
-    let snap = closing() == CLOSING_SNAP;
 
     for (var step = 0u; step < MAX_STEPS; step++) {
         walk_steps += 1u;
@@ -1066,7 +956,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
             }
             let p = contour_test(o, d, inv, v, t, c);
             if (p.kind != 2u) {
-                if (passed != NO_PLANE && snap && p.kind != 3u) {
+                if (passed != NO_PLANE && p.kind != 3u) {
                     // Close the crack at the passed voxel's exit, this voxel's entry: with
                     // the passed plane's normal before a voxel without a plane, with the
                     // mean of the two planes' normals before an entry already inside.
@@ -1085,7 +975,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
                 return Hit(true, v, axis, p.t, c.material, true, p.n);
             }
             // The ray passes the voxel outside its plane: walk on as through air.
-            passed = select(p.a, PASSED_NO_PLANE, p.a == NO_PLANE);
+            passed = p.a;
             size = 1;
         } else {
             passed = NO_PLANE;
@@ -1515,13 +1405,10 @@ fn shadow_normal_of(rec: HitRecord, d: vec3<f32>) -> vec3<f32> {
     return face;
 }
 
-// Whether a shadow origin at `q` lies clear of the rock the contour planes model: under the
-// blend rule where the blend is outside rock; else where no solid voxel without a plane holds
-// `q` and no plane of the eight voxels around `q` holds it inside its solid half-space.
+// Whether a shadow origin at `q` lies clear of the rock the contour planes model: no solid
+// voxel without a plane holds `q` and no plane of the eight voxels around `q` holds it inside
+// its solid half-space.
 fn origin_clear(q: vec3<f32>) -> bool {
-    if (closing() == CLOSING_BLEND) {
-        return blend_at(q).s > 0.0;
-    }
     let c0 = lookup(vec3<i32>(floor(q)));
     if (c0.size == 0 && (c0.slot == ABSENT || contour_attr(c0.slot, c0.index) == NO_PLANE)) {
         return false;

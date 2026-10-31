@@ -296,7 +296,6 @@ struct Candidate {
     after: bool,
     rock: [f32; 2],
     fine: f32,
-    closing: vxe_render::CrackClosing,
 }
 
 impl Candidate {
@@ -309,7 +308,6 @@ impl Candidate {
             after: false,
             rock: ROCK,
             fine: 0.0,
-            closing: vxe_render::CrackClosing::Old,
         }
     }
 
@@ -318,7 +316,6 @@ impl Candidate {
             fit: self.fit,
             face_mix: self.face_mix,
             detail_after_lighting: self.after,
-            closing: self.closing,
             ..SurfaceTuning::default()
         }
     }
@@ -467,9 +464,12 @@ fn sweep_row(device: &wgpu::Device, queue: &wgpu::Queue, c: &Candidate) -> Sweep
 }
 
 /// C5 is exact for the lamp: on the wall at the full tier with the filter off and no fine
-/// octave, detail after lighting matches today's render within 2/255 per channel at 98.3 % of
-/// the window's pixels (98.389 % read with the plane code of ADR-0038, the owner's floor of
-/// 2026-10-29); at the default tier its detail survival `R` is printed beside today's.
+/// octave, detail after lighting matches today's render within 2/255 per channel at 98.0 % of
+/// the window's pixels; at the default tier its detail survival `R` is printed beside today's.
+/// The floor is the owner's (2026-10-31), from the reading under the snap closing rule of
+/// ADR-0039, 98.028 % on lavapipe (2026-10-30). It read 98.389 % with the plane code of
+/// ADR-0038 under the old hit rule (2026-10-29, the floor then 98.3 %): snap's closing normal
+/// makes the detail ratio's clamp bind on 1.208 % of the window, against 0.681 % before.
 /// The misses are printed in two classes read from the images: C5 unlit where today is lit
 /// (the undetailed normal faces away from the lamp, so the light pass stores 0 and no ratio
 /// recovers it), and C5 lit but darker than today (the ratio's clamp at 2, or its floor on
@@ -521,7 +521,7 @@ fn detail_after_lighting_is_exact_for_the_lamp() {
         pct(darker),
         pct(n - within - unlit - darker),
     );
-    assert!(share >= 0.983, "{:.3} %", share * 100.0);
+    assert!(share >= 0.980, "{:.3} %", share * 100.0);
     for c in [&today, &c5] {
         let half = read(&mut rig, &cam, c.setting(Half, true));
         let full = read(&mut rig, &cam, c.setting(Full, false));
@@ -801,7 +801,6 @@ fn the_default_look_meets_the_guardrails() {
         after: p.tuning.detail_after_lighting,
         rock: p.rock_detail,
         fine: p.detail_fine,
-        closing: p.tuning.closing,
     };
     let (error, axis, silhouette) = guardrails(&device, &queue, &c);
     let face = face_silhouette(&device, &queue);
