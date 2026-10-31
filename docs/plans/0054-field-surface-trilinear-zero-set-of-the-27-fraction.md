@@ -868,9 +868,9 @@ which no deterministic path reads.
 | 1: The field as a scratch look: dense storage, the walk, the readings and the census | dev | done | b282738 (the code, wip) and committed with this row (the field look's box rule) |
 | 2: The owner's windowed check, one session with Plan 0053's Phase 4 | human | done (a): the field surface, N1 (owner, 2026-10-31; answers 2 to 4) | owner answers, this commit |
 | 3: Band slots in the size-classed mirror | dev | done | 1b36eb3 (the code, wip) and b4fbfad (the log) |
-| 3a: Free-standing thin features and a per-material scratch look | dev | done; done-when 3 (cost bar) and 4 (pressure) not met as stated | committed with this row |
+| 3a: Free-standing thin features and a per-material scratch look | dev | done; done-when 3 (cost bar) and 4 (pressure) not met as stated | 17045d8 |
 | 3b: The owner's look at thin features and the per-material candidate | human | done (a): the field per material, crisp materials as cubes (owner, 2026-10-31; answer 7) | owner answers, be7b943 |
-| 4a: Where the window's frame time goes | dev | not started | |
+| 4a: Where the window's frame time goes | dev | done; the windowed p50s not reproduced headless (done-when 2 names the remainder the window's) | committed with this row |
 | 4b: The walk inside the bar | dev | not started | |
 | 4c: The crisp flag, the field as the default, the planes removed | dev | not started | |
 | 4d: The owner's windowed check of the default | human | not started | |
@@ -1222,6 +1222,213 @@ Readings on lavapipe unless named, exclusive perf lock.
   (exclusive perf lock, 18:50 to 19:28, 2264.4 s, 1-minute load 19.9 at the start right after
   the quick tier, 1.35 at the end): 199 run, 199 passed (14 slow), 31 skipped
   (`live/p3a/gpu.log`).
+
+#### Phase 4a
+
+Readings on the NVIDIA GeForce RTX 3080 Laptop GPU (`--adapter NVIDIA`) unless named; release
+binaries built from `git archive` of each commit under `live/p4a/` (`build.sh`; a first pass
+reused one commit's artifacts across three source trees through `git archive`'s old mtimes and
+was discarded, the four binaries were rebuilt with `tar -m` and differ by md5); each run under
+the exclusive perf lock and the memory cap, started at a 1-minute load under 2, three
+alternated rounds (`live/p4a/matrix.sh`, `extra.sh`), medians of the frame line's per-pass
+times (the median of the last 30 frames of `--frames 300`); the per-ray counters from one
+`--view steps` run each (deterministic counts). Every render is 1.5x from internal
+(1920 x 1080 from 1280 x 720, 2530 x 1378 from 1687 x 919); the steps view counts one ray per
+output pixel. "default" is the base's `contour-sharp`. No code changed.
+
+- Done-when 1, the frame table (`--level --seed 1 --headless --frames 300 --adapter NVIDIA`;
+  the rig is `--thin-rig`, 17045d8 only; "loads" is the 1-minute load range of the three
+  runs; logs `live/p4a/runs/`, `live/p4a/extra/`):
+
+| binary | look | scene | render | view, lamp | loads | gpu frame | hit | light | gradient | temporal | atrous | probes | gather | composite | upscale | sharpen | exposure |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| main 28948a5 | default | patch | 2530x1378 | normals | 1.33-1.82 | 1.518 | 0.989 | 0.010 | 0.000 | 0.122 | 0.000 | 0.000 | 0.000 | 0.162 | 0.101 | 0.128 | 0.005 |
+| main 28948a5 | default | patch | 2530x1378 | shaded, lamp off | 1.36-1.72 | 6.331 | 1.110 | 1.293 | 0.123 | 0.127 | 0.902 | 1.267 | 0.143 | 0.301 | 0.872 | 0.133 | 0.058 |
+| main 28948a5 | default | patch | 2530x1378 | shaded, lamp on | 1.48-1.78 | 6.528 | 1.108 | 1.385 | 0.118 | 0.127 | 0.893 | 1.380 | 0.142 | 0.305 | 0.885 | 0.133 | 0.058 |
+| main 28948a5 | default | spawn | 1920x1080 | normals | 1.37-1.66 | 0.872 | 0.544 | 0.007 | 0.000 | 0.077 | 0.000 | 0.000 | 0.000 | 0.101 | 0.061 | 0.076 | 0.004 |
+| main 28948a5 | default | spawn | 1920x1080 | shaded, lamp on | 1.49-1.73 | 4.543 | 0.613 | 0.924 | 0.098 | 0.083 | 0.513 | 1.413 | 0.109 | 0.184 | 0.500 | 0.076 | 0.035 |
+| main 28948a5 | default | spawn | 2530x1378 | shaded, lamp on | 1.37-1.66 | 6.816 | 1.050 | 1.582 | 0.147 | 0.130 | 0.870 | 1.472 | 0.183 | 0.317 | 0.873 | 0.133 | 0.058 |
+| main 28948a5 | default | vein | 2530x1378 | normals | 1.23-1.52 | 1.237 | 0.710 | 0.009 | 0.000 | 0.122 | 0.000 | 0.000 | 0.000 | 0.162 | 0.101 | 0.128 | 0.004 |
+| main 28948a5 | default | vein | 2530x1378 | shaded, lamp off | 1.23-1.56 | 6.695 | 0.780 | 1.807 | 0.200 | 0.127 | 0.863 | 1.355 | 0.231 | 0.293 | 0.846 | 0.132 | 0.057 |
+| main 28948a5 | default | vein | 2530x1378 | shaded, lamp on | 1.34-1.61 | 6.846 | 0.779 | 1.818 | 0.194 | 0.126 | 0.871 | 1.467 | 0.231 | 0.296 | 0.866 | 0.131 | 0.057 |
+| main 28948a5 | face | patch | 2530x1378 | normals | 1.26-1.32 | 1.444 | 0.914 | 0.009 | 0.000 | 0.123 | 0.000 | 0.000 | 0.000 | 0.162 | 0.101 | 0.128 | 0.004 |
+| main 28948a5 | face | patch | 2530x1378 | shaded, lamp off | 1.28-1.40 | 5.972 | 1.022 | 1.139 | 0.110 | 0.136 | 0.898 | 1.063 | 0.141 | 0.300 | 0.952 | 0.137 | 0.058 |
+| main 28948a5 | face | patch | 2530x1378 | shaded, lamp on | 1.31-1.44 | 6.243 | 1.025 | 1.277 | 0.110 | 0.128 | 0.903 | 1.157 | 0.143 | 0.301 | 0.985 | 0.133 | 0.058 |
+| main 28948a5 | face | spawn | 1920x1080 | normals | 1.31-1.76 | 0.828 | 0.502 | 0.007 | 0.000 | 0.077 | 0.000 | 0.000 | 0.000 | 0.101 | 0.061 | 0.076 | 0.004 |
+| main 28948a5 | face | spawn | 1920x1080 | shaded, lamp on | 1.33-1.82 | 4.388 | 0.567 | 0.905 | 0.092 | 0.080 | 0.538 | 1.207 | 0.110 | 0.180 | 0.593 | 0.076 | 0.035 |
+| main 28948a5 | face | spawn | 2530x1378 | shaded, lamp on | 1.31-1.76 | 6.639 | 0.964 | 1.552 | 0.138 | 0.127 | 0.898 | 1.262 | 0.183 | 0.310 | 0.994 | 0.133 | 0.058 |
+| main 28948a5 | face | vein | 2530x1378 | normals | 1.31-1.44 | 1.181 | 0.651 | 0.009 | 0.000 | 0.123 | 0.000 | 0.000 | 0.000 | 0.162 | 0.101 | 0.127 | 0.004 |
+| main 28948a5 | face | vein | 2530x1378 | shaded, lamp off | 1.33-1.56 | 6.269 | 0.724 | 1.557 | 0.176 | 0.127 | 0.893 | 1.183 | 0.234 | 0.294 | 0.899 | 0.132 | 0.057 |
+| main 28948a5 | face | vein | 2530x1378 | shaded, lamp on | 1.36-1.70 | 6.403 | 0.720 | 1.610 | 0.174 | 0.136 | 0.883 | 1.240 | 0.231 | 0.292 | 0.909 | 0.137 | 0.058 |
+| b282738 | field | patch | 2530x1378 | normals | 1.09-1.87 | 5.387 | 4.849 | 0.010 | 0.000 | 0.123 | 0.000 | 0.000 | 0.000 | 0.163 | 0.103 | 0.131 | 0.005 |
+| b282738 | field | patch | 2530x1378 | normals, 3000 frames | 0.72-0.96 | 5.427 | 4.861 | 0.010 | 0.000 | 0.123 | 0.000 | 0.000 | 0.000 | 0.163 | 0.103 | 0.131 | 0.005 |
+| b282738 | field | patch | 2530x1378 | shaded, lamp off | 1.02-1.96 | 10.441 | 5.185 | 1.296 | 0.128 | 0.128 | 0.886 | 1.264 | 0.138 | 0.335 | 0.857 | 0.132 | 0.057 |
+| b282738 | field | patch | 2530x1378 | shaded, lamp on | 1.02-1.87 | 10.600 | 5.169 | 1.376 | 0.117 | 0.128 | 0.892 | 1.370 | 0.138 | 0.339 | 0.878 | 0.132 | 0.057 |
+| b282738 | field | spawn | 1920x1080 | normals | 1.26-1.38 | 3.707 | 3.379 | 0.007 | 0.000 | 0.076 | 0.000 | 0.000 | 0.000 | 0.101 | 0.062 | 0.077 | 0.005 |
+| b282738 | field | spawn | 1920x1080 | shaded, lamp on | 1.26-1.32 | 7.490 | 3.581 | 0.907 | 0.090 | 0.081 | 0.508 | 1.393 | 0.108 | 0.203 | 0.494 | 0.075 | 0.035 |
+| b282738 | field | spawn | 2530x1378 | shaded, lamp on | 1.24-1.43 | 11.634 | 5.650 | 1.551 | 0.140 | 0.128 | 1.199 | 1.444 | 0.178 | 0.344 | 0.856 | 0.131 | 0.057 |
+| b282738 | field | vein | 2530x1378 | normals | 1.02-1.86 | 4.213 | 3.643 | 0.010 | 0.000 | 0.132 | 0.000 | 0.000 | 0.000 | 0.175 | 0.109 | 0.137 | 0.005 |
+| b282738 | field | vein | 2530x1378 | shaded, lamp off | 1.11-1.84 | 9.957 | 3.879 | 1.858 | 0.207 | 0.128 | 0.870 | 1.382 | 0.231 | 0.334 | 0.858 | 0.132 | 0.058 |
+| b282738 | field | vein | 2530x1378 | shaded, lamp on | 1.21-1.47 | 10.054 | 3.875 | 1.851 | 0.195 | 0.128 | 0.868 | 1.490 | 0.231 | 0.337 | 0.877 | 0.132 | 0.057 |
+| b282738 | field N2 | vein | 2530x1378 | shaded, lamp on | 0.76-1.04 | 13.222 | 6.828 | 1.793 | 0.189 | 0.127 | 0.879 | 1.428 | 0.223 | 0.326 | 0.850 | 0.130 | 0.056 |
+| 1b36eb3 | field | patch | 2530x1378 | normals | 0.95-1.97 | 10.076 | 9.496 | 0.010 | 0.000 | 0.133 | 0.000 | 0.000 | 0.000 | 0.177 | 0.110 | 0.139 | 0.005 |
+| 1b36eb3 | field | patch | 2530x1378 | shaded, lamp off | 1.04-1.78 | 15.081 | 9.724 | 1.319 | 0.137 | 0.138 | 0.909 | 1.314 | 0.140 | 0.345 | 0.872 | 0.139 | 0.059 |
+| 1b36eb3 | field | patch | 2530x1378 | shaded, lamp on | 1.13-1.84 | 15.436 | 9.803 | 1.417 | 0.124 | 0.137 | 0.916 | 1.462 | 0.141 | 0.351 | 0.898 | 0.139 | 0.059 |
+| 1b36eb3 | field | spawn | 1920x1080 | normals | 1.08-1.94 | 6.941 | 6.598 | 0.008 | 0.000 | 0.082 | 0.000 | 0.000 | 0.000 | 0.109 | 0.066 | 0.083 | 0.005 |
+| 1b36eb3 | field | spawn | 1920x1080 | shaded, lamp on | 1.00-1.95 | 10.801 | 6.717 | 0.946 | 0.096 | 0.086 | 0.503 | 1.467 | 0.107 | 0.203 | 0.492 | 0.080 | 0.036 |
+| 1b36eb3 | field | spawn | 2530x1378 | shaded, lamp on | 1.15-1.86 | 16.534 | 10.599 | 1.615 | 0.148 | 0.137 | 0.859 | 1.514 | 0.178 | 0.348 | 0.859 | 0.138 | 0.058 |
+| 1b36eb3 | field | vein | 2530x1378 | normals | 1.16-1.82 | 7.811 | 7.269 | 0.010 | 0.000 | 0.124 | 0.000 | 0.000 | 0.000 | 0.165 | 0.104 | 0.133 | 0.005 |
+| 1b36eb3 | field | vein | 2530x1378 | shaded, lamp off | 1.26-1.89 | 13.699 | 7.351 | 1.951 | 0.223 | 0.137 | 0.880 | 1.469 | 0.231 | 0.338 | 0.860 | 0.139 | 0.059 |
+| 1b36eb3 | field | vein | 2530x1378 | shaded, lamp on | 1.21-1.96 | 13.796 | 7.303 | 1.926 | 0.210 | 0.137 | 0.887 | 1.566 | 0.231 | 0.341 | 0.876 | 0.138 | 0.059 |
+| 17045d8 | face | rig | 1920x1080 | shaded, lamp on | 1.35-1.91 | 2.329 | 0.617 | 0.105 | 0.016 | 0.048 | 0.260 | 0.659 | 0.081 | 0.124 | 0.315 | 0.074 | 0.033 |
+| 17045d8 | face | rig | 2530x1378 | shaded, lamp on | 1.35-1.83 | 3.556 | 1.071 | 0.169 | 0.022 | 0.082 | 0.428 | 0.689 | 0.131 | 0.216 | 0.552 | 0.135 | 0.056 |
+| 17045d8 | field-cubes | patch | 2530x1378 | normals | 1.51-1.89 | 7.828 | 7.287 | 0.011 | 0.000 | 0.125 | 0.000 | 0.000 | 0.000 | 0.165 | 0.104 | 0.134 | 0.005 |
+| 17045d8 | field-cubes | patch | 2530x1378 | shaded, lamp off | 1.55-1.97 | 13.026 | 7.431 | 1.343 | 0.137 | 0.138 | 0.938 | 1.331 | 0.142 | 0.325 | 0.879 | 0.140 | 0.060 |
+| 17045d8 | field-cubes | patch | 2530x1378 | shaded, lamp on | 1.72-1.97 | 13.261 | 7.315 | 1.400 | 0.123 | 0.137 | 0.937 | 1.475 | 0.139 | 0.325 | 0.891 | 0.139 | 0.059 |
+| 17045d8 | field-cubes | patch | 2530x1378 | shaded, lamp on, 3000 frames | 0.43-1.78 | 13.188 | 7.562 | 1.458 | 0.134 | 0.139 | 0.882 | 1.418 | 0.144 | 0.335 | 0.914 | 0.140 | 0.060 |
+| 17045d8 | field-cubes | rig | 1920x1080 | shaded, lamp on | 1.14-1.79 | 6.674 | 4.802 | 0.130 | 0.016 | 0.050 | 0.272 | 0.748 | 0.086 | 0.129 | 0.330 | 0.075 | 0.035 |
+| 17045d8 | field-cubes | rig | 2530x1378 | shaded, lamp on | 1.21-1.79 | 10.102 | 7.542 | 0.197 | 0.021 | 0.081 | 0.421 | 0.763 | 0.135 | 0.216 | 0.560 | 0.135 | 0.056 |
+| 17045d8 | field-cubes | spawn | 1920x1080 | normals | 1.68-1.87 | 5.631 | 5.299 | 0.008 | 0.000 | 0.082 | 0.000 | 0.000 | 0.000 | 0.110 | 0.066 | 0.082 | 0.005 |
+| 17045d8 | field-cubes | spawn | 1920x1080 | shaded, lamp on | 1.44-1.93 | 9.723 | 5.596 | 0.971 | 0.098 | 0.082 | 0.498 | 1.511 | 0.110 | 0.194 | 0.504 | 0.076 | 0.036 |
+| 17045d8 | field-cubes | spawn | 2530x1378 | shaded, lamp on | 1.74-1.90 | 14.505 | 8.653 | 1.621 | 0.149 | 0.136 | 0.866 | 1.516 | 0.179 | 0.329 | 0.863 | 0.137 | 0.058 |
+| 17045d8 | field-cubes | vein | 2530x1378 | normals | 1.88-1.97 | 6.034 | 5.486 | 0.011 | 0.000 | 0.125 | 0.000 | 0.000 | 0.000 | 0.165 | 0.106 | 0.136 | 0.005 |
+| 17045d8 | field-cubes | vein | 2530x1378 | shaded, lamp off | 1.86-1.93 | 11.908 | 5.353 | 1.954 | 0.230 | 0.129 | 0.892 | 1.487 | 0.233 | 0.315 | 0.861 | 0.134 | 0.059 |
+| 17045d8 | field-cubes | vein | 2530x1378 | shaded, lamp on | 1.87-1.91 | 12.025 | 5.480 | 1.993 | 0.214 | 0.130 | 0.891 | 1.597 | 0.238 | 0.324 | 0.898 | 0.136 | 0.059 |
+| 17045d8 | field-cubes | vein | 2530x1378 | shaded, lamp on, 3000 frames | 0.78-1.74 | 12.000 | 5.518 | 2.012 | 0.218 | 0.130 | 0.901 | 1.566 | 0.240 | 0.321 | 0.904 | 0.135 | 0.059 |
+| 17045d8 | field | patch | 2530x1378 | normals | 1.34-1.99 | 7.497 | 6.951 | 0.011 | 0.000 | 0.124 | 0.000 | 0.000 | 0.000 | 0.166 | 0.105 | 0.134 | 0.005 |
+| 17045d8 | field | patch | 2530x1378 | shaded, lamp off | 1.54-1.89 | 13.847 | 6.892 | 1.307 | 0.137 | 0.138 | 2.291 | 1.321 | 0.138 | 0.319 | 0.862 | 0.138 | 0.059 |
+| 17045d8 | field | patch | 2530x1378 | shaded, lamp on | 1.50-1.96 | 13.393 | 6.954 | 1.406 | 0.124 | 0.138 | 0.966 | 1.461 | 0.140 | 0.325 | 0.888 | 0.139 | 0.059 |
+| 17045d8 | field | rig | 1920x1080 | shaded, lamp on | 1.24-1.83 | 7.365 | 5.447 | 0.136 | 0.016 | 0.052 | 0.274 | 0.761 | 0.087 | 0.133 | 0.329 | 0.079 | 0.035 |
+| 17045d8 | field | rig | 2530x1378 | shaded, lamp on | 1.24-1.77 | 11.215 | 8.506 | 0.207 | 0.021 | 0.080 | 0.429 | 0.802 | 0.136 | 0.219 | 0.558 | 0.136 | 0.057 |
+| 17045d8 | field | spawn | 1920x1080 | normals | 1.04-1.89 | 5.172 | 4.839 | 0.008 | 0.000 | 0.077 | 0.000 | 0.000 | 0.000 | 0.102 | 0.063 | 0.078 | 0.005 |
+| 17045d8 | field | spawn | 1920x1080 | shaded, lamp on | 1.04-1.97 | 9.213 | 5.052 | 0.989 | 0.100 | 0.082 | 0.509 | 1.529 | 0.112 | 0.198 | 0.515 | 0.077 | 0.036 |
+| 17045d8 | field | spawn | 2530x1378 | shaded, lamp on | 1.03-1.91 | 13.873 | 7.884 | 1.663 | 0.151 | 0.136 | 0.888 | 1.568 | 0.183 | 0.335 | 0.883 | 0.137 | 0.059 |
+| 17045d8 | field | vein | 2530x1378 | normals | 1.55-1.98 | 5.765 | 5.184 | 0.011 | 0.000 | 0.134 | 0.000 | 0.000 | 0.000 | 0.175 | 0.111 | 0.141 | 0.005 |
+| 17045d8 | field | vein | 2530x1378 | shaded, lamp off | 1.64-1.93 | 11.494 | 5.179 | 1.971 | 0.228 | 0.137 | 0.885 | 1.476 | 0.235 | 0.319 | 0.871 | 0.139 | 0.059 |
+| 17045d8 | field | vein | 2530x1378 | shaded, lamp on | 1.17-1.97 | 11.743 | 5.240 | 1.994 | 0.216 | 0.129 | 0.892 | 1.621 | 0.239 | 0.324 | 0.900 | 0.134 | 0.058 |
+
+  Per-ray counters (`--view steps`, one run each, load 1.06 to 1.86; loads are the ray's 32-bit
+  storage loads, pool reads its pool words; p99 clamps at 255):
+
+| binary | look | scene | render | rays | steps mean / p99 | loads mean / p99 | pool reads mean / p99 | shadow rays: steps, loads mean / p99 |
+|---|---|---|---|---|---|---|---|---|
+| main 28948a5 | default | patch | 2530x1378 | 3486340 | 7.82 / 16 | 30.23 / 44 | 7.29 / 14 | 7.18, 23.26 / 34 |
+| main 28948a5 | default | spawn | 1920x1080 | 2073600 | 7.51 / 11 | 22.41 / 31 | 5.60 / 11 | 7.40, 16.40 / 27 |
+| main 28948a5 | default | spawn | 2530x1378 | 3486340 | 7.53 / 11 | 22.45 / 31 | 5.59 / 11 | 7.42, 16.45 / 27 |
+| main 28948a5 | default | vein | 2530x1378 | 3486340 | 5.11 / 8 | 20.73 / 31 | 6.67 / 14 | 6.55, 16.14 / 26 |
+| main 28948a5 | face | patch | 2530x1378 | 3486340 | 7.66 / 15 | 24.82 / 32 | 1.96 / 2 | 7.20, 22.28 / 30 |
+| main 28948a5 | face | spawn | 1920x1080 | 2073600 | 7.49 / 11 | 17.79 / 26 | 0.99 / 1 | 7.95, 17.66 / 28 |
+| main 28948a5 | face | spawn | 2530x1378 | 3486340 | 7.51 / 11 | 17.83 / 26 | 0.99 / 1 | 7.97, 17.69 / 28 |
+| main 28948a5 | face | vein | 2530x1378 | 3486340 | 5.05 / 8 | 16.05 / 22 | 2.00 / 2 | 6.44, 15.38 / 21 |
+| b282738 | field | patch | 2530x1378 | 3486340 | 9.75 / 17 | 111.91 / 223 | 54.21 / 110 | 6.92, 22.27 / 31 |
+| b282738 | field | spawn | 1920x1080 | 2073600 | 9.20 / 13 | 90.98 / 171 | 38.94 / 59 | 7.32, 16.25 / 27 |
+| b282738 | field | spawn | 2530x1378 | 3486340 | 9.19 / 13 | 90.83 / 170 | 39.04 / 59 | 7.34, 16.30 / 27 |
+| b282738 | field | vein | 2530x1378 | 3486340 | 7.03 / 11 | 81.37 / 138 | 42.31 / 66 | 6.41, 15.92 / 23 |
+| 1b36eb3 | field | patch | 2530x1378 | 3486340 | 9.75 / 17 | 244.37 / 255 | 233.90 / 255 | 6.92, 22.27 / 31 |
+| 1b36eb3 | field | spawn | 1920x1080 | 2073600 | 9.20 / 13 | 222.99 / 255 | 201.60 / 255 | 7.77, 19.29 / 29 |
+| 1b36eb3 | field | spawn | 2530x1378 | 3486340 | 9.19 / 13 | 223.07 / 255 | 201.82 / 255 | 7.78, 19.34 / 29 |
+| 1b36eb3 | field | vein | 2530x1378 | 3486340 | 7.03 / 11 | 214.08 / 255 | 201.19 / 255 | 6.41, 19.91 / 27 |
+| 17045d8 | face | rig | 1920x1080 | 2073600 | 11.16 / 20 | 19.05 / 45 | 0.13 / 2 | 8.80, 15.66 / 42 |
+| 17045d8 | face | rig | 2530x1378 | 3486340 | 11.10 / 20 | 18.81 / 45 | 0.13 / 2 | 8.80, 15.55 / 41 |
+| 17045d8 | field-cubes | patch | 2530x1378 | 3486340 | 9.75 / 17 | 178.87 / 255 | 136.85 / 255 | 6.92, 22.30 / 32 |
+| 17045d8 | field-cubes | rig | 1920x1080 | 2073600 | 15.84 / 36 | 104.98 / 255 | 59.74 / 255 | 13.68, 38.28 / 79 |
+| 17045d8 | field-cubes | rig | 2530x1378 | 3486340 | 15.72 / 36 | 103.62 / 255 | 58.77 / 255 | 13.68, 38.21 / 78 |
+| 17045d8 | field-cubes | spawn | 1920x1080 | 2073600 | 9.20 / 13 | 142.61 / 255 | 100.27 / 190 | 7.77, 19.31 / 29 |
+| 17045d8 | field-cubes | spawn | 2530x1378 | 3486340 | 9.19 / 13 | 142.36 / 255 | 100.15 / 189 | 7.78, 19.36 / 29 |
+| 17045d8 | field-cubes | vein | 2530x1378 | 3486340 | 7.03 / 11 | 137.23 / 231 | 105.53 / 168 | 6.41, 19.95 / 28 |
+| 17045d8 | field | patch | 2530x1378 | 3486340 | 9.75 / 17 | 173.60 / 255 | 131.17 / 255 | 6.92, 22.30 / 32 |
+| 17045d8 | field | rig | 1920x1080 | 2073600 | 17.87 / 41 | 118.84 / 255 | 72.86 / 255 | 14.51, 43.09 / 88 |
+| 17045d8 | field | rig | 2530x1378 | 3486340 | 17.69 / 41 | 117.06 / 255 | 71.47 / 255 | 14.50, 42.96 / 88 |
+| 17045d8 | field | spawn | 1920x1080 | 2073600 | 9.20 / 13 | 136.77 / 255 | 94.63 / 182 | 7.77, 19.31 / 29 |
+| 17045d8 | field | spawn | 2530x1378 | 3486340 | 9.19 / 13 | 136.52 / 255 | 94.52 / 182 | 7.78, 19.36 / 29 |
+| 17045d8 | field | vein | 2530x1378 | 3486340 | 7.03 / 11 | 131.04 / 219 | 99.79 / 161 | 6.41, 19.95 / 28 |
+
+  RADV shader stats (`RADV_DEBUG=shaderstats,nocache`, `--adapter AMD`, AMD Radeon Graphics
+  (RADV RENOIR), `--frames 3`, load 0.28 to 0.58; `live/p4a/radv/`): the base's hit shader
+  64 VGPRs, 31 396 B of code; the field hit pipeline 128 VGPRs at every plan binary, 117 060 B
+  (b282738), 131 920 B (1b36eb3), 155 020 B (17045d8, the same pipeline for `field` and
+  `field-cubes`: the crisp test is a flag bit, not a pipeline).
+- The CPU side (frame table runs, medians): `update + poll + sync` p50 / p99 at 17045d8, `field`
+  against `field-cubes`: spawn 1080p 0.034 / 0.070 and 0.038 / 0.061 ms, vein 0.039 / 0.075
+  and 0.036 / 0.063, patch 0.038 / 0.065 and 0.041 / 0.069 (base 0.029 to 0.036 / 0.053 to
+  0.066; b282738 0.047 to 0.059 / 0.084 to 0.127; 1b36eb3 0.032 to 0.039 / 0.067 to 0.082).
+  Startup: the level's upload reads 0.55 s (base), 1.57 s (b282738), 2.09 s (1b36eb3), 2.6 to
+  3.4 s (17045d8 `field`), 3.6 to 4.5 s (17045d8 `field-cubes`); the initial fill reads 12.3
+  to 17.8 ms (base), 23.8 (b282738), 25.0 in every 1b36eb3 run, and at 17045d8 either 25.1
+  (11 of 54 runs) or 123.8 to 149.0 ms (43 of 54), in both looks. Session 2's 125 to 149 ms
+  and 4.0 s are 17045d8's `field-cubes` startup figures; the per-frame CPU terms do not move
+  between `field` and `field-cubes`. The two-valued fill is not attributed.
+- Sustained load (`extra.sh`, 3000 frames, three rounds, load 0.43 to 1.78, `nvidia-smi`
+  sampled every 500 ms): b282738 `field` patch normals 5.427 ms GPU frame (300 frames: 5.387),
+  17045d8 `field-cubes` vein shaded 12.000 (12.025), patch 13.188 (13.261); the SM clock's mean
+  over a run 1191 to 1446 MHz, power 67 to 73 W, 64 to 68 C. b282738 `field --field-normal
+  blend` at the vein, shaded, 2530 x 1378: 13.222 ms GPU frame, hit 6.828 (session 1's N2
+  window line: 28.466, hit 22.993).
+- Done-when 2, the windowed gap. The windowed figures: session 1, b282738 `field` at the patch,
+  march GPU p50 16.369 ms over 396 timed frames, its frame line 2530 x 1378 from 1687 x 919 in
+  the normals view (GPU frame 16.260, hit 15.736, temporal 0.123, composite 0.161, upscale
+  0.100, sharpen 0.125); session 2, 17045d8 `field-cubes`, march GPU p50 29.270 (vein, 269
+  timed frames) and 30.359 ms (patch, 180), no frame line, so window size and view unknown;
+  the split below takes them as 2530 x 1378, shaded, lamp on. The headless reproduction at the
+  window's size and pose: 5.387 ms (session 1's case), 12.025 (vein) and 13.261 (patch): the
+  window reads 3.04x, 2.43x and 2.29x the headless frame, so the headless runs do not reproduce
+  the windowed p50s within 10 %. The terms, GPU frame medians from the table, chained:
+
+  | term | from | to | ms (vein) | ms (patch) | of it, the hit pass |
+  |---|---|---|---|---|---|
+  | view, normals to shaded | b282738 `field` patch normals 5.387 | b282738 `field` patch shaded 10.600 | +5.213 | +5.213 | +0.320 (light +1.366, the passes after light +3.527) |
+  | storage, dense pool to band slots with the prefix | b282738 `field` patch shaded 10.600 | 17045d8 `field` patch shaded 13.393 | +2.793 | +2.793 | +1.785 |
+  | the crisp test | 17045d8 `field` patch shaded 13.393 | 17045d8 `field-cubes` patch shaded 13.261 | -0.132 | -0.132 | +0.361 |
+  | pose, patch to vein | 17045d8 `field-cubes` patch 13.261 | 17045d8 `field-cubes` vein 12.025 | -1.236 | 0 | -1.835 |
+  | resolution | | | 0 | 0 | both sessions at the same window size as far as logged |
+  | headless gap | 5.387 | 12.025 / 13.261 | +6.638 | +7.874 | |
+  | windowed gap | 16.369 | 29.270 / 30.359 | +12.901 | +13.990 | |
+  | unattributed, the window's | | | +6.263 | +6.116 | |
+
+  Of the windowed figure itself, against its headless reproduction (session 1, where the frame
+  line exists): the hit pass reads 15.736 against 4.849 ms (3.25x) while every pass after it
+  reads within 0.006 ms of headless (temporal 0.123 / 0.123, composite 0.161 / 0.163, upscale
+  0.100 / 0.103, sharpen 0.125 / 0.131); session 1's N2 vein line the same way: hit 22.993 against 6.828 ms (3.37x),
+  light 1.683 / 1.793, atrous 0.772 / 0.879, probes 1.191 / 1.428, composite 0.301 / 0.326, upscale
+  0.746 / 0.850, sharpen 0.124 / 0.130. The window's remainder is in the hit pass alone. Session 1's
+  patch run carved five times before its frame line (`live/session1.log` lines 970 to 974) and
+  the camera was flown, so the view timed is not the pose's; the window's camera position is
+  not logged. The sustained runs read no drift. Not measured (lane rule 10): the window's
+  surface, present and the HUD timer.
+- Done-when 3, the spawn's split (1920 x 1080 from 1280 x 720, shaded, lamp on; hit + light):
+  17045d8 `field-cubes` 5.596 + 0.971 = 6.567 ms against the 5.00 ms bar (+1.567); against
+  b282738's 3.581 + 0.907 = 4.488 ms (Phase 1 read 4.36), +2.079 ms in two terms:
+
+  | term | hit ms | light ms | hit + light | loads / ray | pool reads / ray | code bytes |
+  |---|---|---|---|---|---|---|
+  | b282738 `field` (dense pool, direct index) | 3.581 | 0.907 | 4.488 | 90.98 | 38.94 | 117 060 |
+  | storage step 1: band slots counted by popcount (1b36eb3 `field`) | +3.136 | +0.039 | 7.663 | 222.99 | 201.60 | 131 920 |
+  | storage step 2: the band prefix (17045d8 `field`) | -1.665 | +0.043 | 6.041 | 136.77 | 94.63 | 155 020 |
+  | storage, net (b282738 to 17045d8 `field`) | +1.471 | +0.082 | +1.553 | +45.79 | +55.69 | |
+  | the crisp test (17045d8 `field-cubes`) | +0.544 | -0.018 | 6.567 (+0.526) | 142.61 (+5.84) | 100.27 (+5.64) | 155 020 |
+  | base `contour-sharp` / `face`, for scale | 0.613 / 0.567 | 0.924 / 0.905 | 1.537 / 1.472 | 22.41 / 17.79 | 5.60 / 0.99 | 31 396 |
+
+  Steps per ray read 9.20 mean, p99 13 in every field binary and look (base 7.51 / 7.49): the
+  DDA's path did not move; the terms are loads per step. VGPRs 128 in all three. The scratch
+  builds per term (the crisp test, the corner cache, the normal) were not made: the binaries
+  and looks separate the storage and crisp terms.
+- Done-when 4, the thin census (`level_mirror::thin_census`, a scratch reading run on the CPU
+  in release, 2.66 s; the test is held untracked as `live/p4a/thin-census.patch` and lands with
+  Phase 4b): the level at `--seed 1`, every chunk, 27 497 052 solid band voxels (the band
+  census's solid side); solid voxels by 27-count, those whose 3 x 3 x 3 block lies inside the
+  extent, and apart those on the extent's outer voxel layer (where the outside reads as air):
+
+  | count | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 1 to 13 |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | inside | 8 | 57 | 106 | 145 | 412 | 791 | 882 | 1 694 | 3 238 | 5 148 | 12 950 | 28 646 | 68 820 | 122 897 |
+  | outer layer | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 8 | 0 | 0 | 0 | 12 264 | 0 | 12 272 |
+
+- Deviations: the four binaries are rebuilt under `live/p4a/bin/`, not the earlier lane
+  binaries; lamp off was read in the shaded view only; the spawn at 2530 x 1378 in the shaded
+  view only; the rig at 2530 x 1378 and 1920 x 1080 for `face`, `field` and `field-cubes`;
+  the extra rows (3000 frames, N2 at the vein) are not in the phase's matrix; session 2's
+  window size and view are assumed, not logged; the thin census separates the extent's outer
+  layer, which the phase's text does not name.
 
 ### Resume notes (2026-10-31, held before Phase 4, delete when Phase 4 lands)
 
