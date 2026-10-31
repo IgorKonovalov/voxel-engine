@@ -2,6 +2,11 @@
 
 > **Status:** in-progress
 > **Approved:** 2026-10-30 (owner, as drafted; the order against Plan 0051 and the two cost bars stay the owner's to set)
+> **Amended:** 2026-10-30 (architect, owner's answer): Phase 4 waits for
+> [Plan 0054](0054-field-surface-trilinear-zero-set-of-the-27-fraction.md)'s Phase 1, the
+> field-surface spike stacked on this plan's branch after Phase 3, and compares its
+> `--look field` as a sixth look in the same windowed session. Outcome (b) names the field
+> surface by its reading, not by a future plan.
 > **Created:** 2026-10-30
 > **Milestone:** M2 in [`docs/roadmap.md`](../roadmap.md) (the surface-look decision: "smooth
 > and natural rock, not visible cubes")
@@ -135,7 +140,10 @@ labelled with the adapter; every asserted reading, golden and gate stays on lava
   within 1e-3 of an integer, as Plan 0050's scratch read it) of a solid voxel with two or more
   air face neighbours in the world. A flat floor's face hits have one air face and do not
   count; a convex edge voxel whose exposed faces its plane cuts away has no face hit and does
-  not count. Each box pixel is also sorted by the voxel's 27-count: under 14 (a protrusion the
+  not count. Amended 2026-10-31 (architect, from Phase 2's finding): a hit that also lies on
+  one of the box voxel's faces toward a solid neighbour does not count either; without this the
+  filtered rod read 8 pixels at z = 60.000, the floor plane's outline around the rod's footprint.
+  Phase 1's readings are logged under both forms. Each box pixel is also sorted by the voxel's 27-count: under 14 (a protrusion the
   majority filter melts) or 14 and over (a groove, a corner, a two-voxel feature: what the
   filter leaves), and by the voxel's air faces (2, 3, 4 or more).
 - **The tile-contrast metric:** over horizontally and vertically adjacent hit-pixel pairs
@@ -238,13 +246,20 @@ labelled with the adapter; every asserted reading, golden and gate stays on lava
   `apps/flythrough/src/lib.rs` (`LookPreset::CUBES_FIELD`), `main.rs`, `hud.rs`,
   `apps/flythrough/tests/look.rs`, `sharpness.rs`, this plan's log.
 - **Done when:**
-  1. `the_normal_field_has_no_tile_edges` asserts on lavapipe that `rod`, `lone cube`,
-     `groove` and `ridge` read 0 tile-contrast pairs under the field (filter off and on) and
-     that the hit mask of every scene is byte for byte the same with the field on and off (the
-     field moves no hit).
+  1. `the_normal_field_has_no_tile_edges` asserts on lavapipe that `rod`, `lone cube` and
+     `groove` read 0 tile-contrast pairs under the field with the filter on, prints the
+     readings with the filter off and for `ridge` (amended 2026-10-31 (owner): it asked 0 for
+     all four, filter off and on; with the filter off the rod reads 0.145 % and the groove
+     0.195 %, every rod pair across its 0.375-voxel step inside the metric's 1.5-voxel reach,
+     and the ridge 0.005 to 0.010 %; the field alone is therefore not a default candidate,
+     only field plus filter), and that the hit mask of every scene is byte for byte the same
+     with the field on and off (the field moves no hit).
   2. Plan 0039's guardrails under the field: cavity normal error at most today's 7.13 degrees
      (the blend rule read 5.81 with a related normal), `A` at most 10 %, the silhouette
-     unchanged; the speck test's reading at most today's.
+     unchanged; the speck test's total at most today's (amended 2026-10-31 (owner): it read
+     "the speck test's reading", per class; the shadow-only class went 6 to 8 while the
+     totals fell 365 to 240 with shadows and 360 to 233 without; the total is the bar and the
+     classes are readings).
   3. `cubes-field` reads the face silhouette (172 px against the pillar) and a cavity normal
      error at most 12 degrees; the banner names it.
   4. The cost: the hit and light passes at the level's spawn on both adapters, field off and
@@ -258,17 +273,18 @@ labelled with the adapter; every asserted reading, golden and gate stays on lava
 ### Phase 4: The owner's windowed check
 - **Owner skill:** human
 - **What:** the owner runs the release fly-through at `--pose vein` and `--pose patch`, lamp
-  on and off, shaded and normals views, in five looks: today's (snap), `--fit-filter
-  majority`, `--normal-field on`, both, and `--look cubes-field`, looking at the rods and
-  pillars along walls and ledge edges and the lone cubes on floors and ceilings from the Phase
-  5 screenshots of Plan 0050, and at the steps that remain at ledge corners.
-- **Files touched:** this plan's log.
+  on and off, shaded and normals views, in six looks: today's (snap), `--fit-filter
+  majority`, `--normal-field on`, both, `--look cubes-field`, and Plan 0054's `--look field`
+  (its Phase 1 spike, stacked on this branch after Phase 3, with its cost and census tables in
+  hand), looking at the rods and pillars along walls and ledge edges and the lone cubes on
+  floors and ceilings from the Phase 5 screenshots of Plan 0050, and at the steps that remain
+  at ledge corners.
+- **Files touched:** this plan's log and Plan 0054's.
 - **Done when:** the owner records one of: (a) a pick among the first four becomes the
-  default, with the cost reading of Phase 3 accepted or a bar set; (b) the boxes or the steps
-  still fail the eye, and the owner chooses between the field surface (ADR-0040 Alternative B,
-  the next plan, drafted after this check with the cost spike as its Phase 1) and
-  `cubes-field` as the default (contours dropped, ADR-0011 superseded). Either way Phase 5
-  runs.
+  default, with the cost reading of Phase 3 accepted or a bar set; (b) the field surface is
+  the pick (Plan 0054's Phase 2 outcome (a), its bars set there) and this plan's Phase 5 lands
+  nothing but the removals Plan 0054 does not cover; (c) `cubes-field` is the default
+  (contours dropped, ADR-0011 superseded). Either way Phase 5 runs.
 
 ### Phase 5: The pick as the default, the losers removed
 - **Owner skill:** dev
@@ -292,6 +308,13 @@ labelled with the adapter; every asserted reading, golden and gate stays on lava
   3. The hit, light and attribute pass readings on both adapters are in `nfr.md` §2 with
      machine, commit and load; mirror bytes are unchanged.
   4. No losing setting's flag remains in `--help` or the banner.
+
+  Amended 2026-10-31 (architect, on the owner's Phase 4 outcome (b), the field surface): this
+  phase has no work of its own. Plan 0054 Phase 4 makes the field the default walk and removes
+  the planes, and with them this plan's majority filter, normal field and `cubes-field` with
+  their flags and banner words; Plan 0054 Phase 5 marks ADR-0040 superseded by the field
+  surface's ADR. This plan closes together with Plan 0054, and its close review checks that
+  nothing of Phases 2 and 3 but the box metric and its tests survives.
 
 ## Data shapes
 
@@ -356,6 +379,28 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
   with (Plan 0051 is the light spike).
 - A per-material opt-out of the filter.
 
+## Owner answers
+
+1. **Phase 3's two bars (owner, 2026-10-31, recommended options).** Done-when 1 reads 0 tile
+   edges under the filter for rod, lone cube and groove, the rest as readings; done-when 2's
+   speck bar is the total, not the per-class count. The orchestrator wrote both amendments.
+2. **Phase 2's edge rule (architect, 2026-10-31).** Accepted into Phase 1's box metric; the
+   definition carries it. Plan 0054's spike read its zeros under this rule.
+
+3. **Phase 4, the owner's windowed check (owner, 2026-10-31, session 1 with Plan 0054's
+   Phase 2, 14 runs).** Outcome (b): the boxes still fail the eye in the plane looks and the
+   owner chooses the field surface (ADR-0040 Alternative B, Plan 0054), with N1 analytic
+   normals. Readings by look, in the owner's words: today, the filter, the field and both at
+   the vein "same problem" (the rods and slabs stand in every one); at the patch "very few
+   blocks, maybe acceptable" for the plane looks, so the plane looks fail at the vein, not
+   the patch. `cubes-field` at the vein: "not even too bad, if not for the lighting flickers";
+   at the patch: "not acceptable really, there are small light lines" along the cube edges
+   under the lamp (a finding: with cube hits on, the field normal and the cube face disagree
+   at an edge and a sliver of lamp light passes). The field surface: "smooth, wonderful" at
+   both poses; N2 "not much of a visual difference". Phase 3's RTX cost miss (+12 % hit plus
+   light for the normal field) is moot with the pick. The flicker is the lighting's (Plan
+   0051), seen in every look alike.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
@@ -367,9 +412,9 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 |---|---|---|---|
 | 1: The box spike: two metrics, six scenes, the poses, and the hypotheses read | dev | done | eaea0f0 |
 | 2: The plane fit on a majority-filtered occupancy | dev | done | 11a9b1e |
-| 3: The normal field, and the cubes-shaded-by-the-field preset | dev | stopped: done-whens 1 and 2 (specks) unmet | committed with this row (wip) |
-| 4: The owner's windowed check | human | not started | |
-| 5: The pick as the default, the losers removed | dev | not started | |
+| 3: The normal field, and the cubes-shaded-by-the-field preset | dev | done (the code in 811b37e, the amended bars' tests with this row) | committed with this row |
+| 4: The owner's windowed check | human | done (b): the field surface (owner, 2026-10-31; owner answer 3) | owner answers, this commit |
+| 5: The pick as the default, the losers removed | dev | subsumed by Plan 0054 Phases 4 and 5 (amended 2026-10-31) | |
 
 #### Phase 1
 
@@ -580,8 +625,11 @@ reads the same rows as lamp on.
 | level vein | cubes-field | 82944 | 0 | 67408 | 0 | 67408 | 25570 | 41838 | 0 | 165288 | 0.048 | 0.000 | 0.000 | 0.000 |
 | level patch | cubes-field | 82944 | 0 | 73887 | 655 | 73232 | 30927 | 42305 | 655 | 164977 | 0.254 | 0.000 | 0.000 | 0.000 |
 
-- Done-when 1, unmet: `the_normal_field_has_no_tile_edges` (lavapipe) fails at its first scene,
-  `rod` under `field`, 0.145 % tile edges (141 pairs). From the table: under `field` `rod`
+- Done-when 1 (as amended 2026-10-31): `the_normal_field_has_no_tile_edges` (lavapipe)
+  asserts 0 tile-contrast pairs under `majority + field` for `rod`, `lone cube` and `groove`
+  and prints the rest; it passes, reading the table's rows. At 811b37e, before the amendment,
+  it asserted 0 for all four scenes under both looks and failed at its first scene, `rod` under
+  `field`, 0.145 % tile edges (141 pairs). From the table: under `field` `rod`
   0.145 %, `lone cube` 0, `groove` 0.195 %, `ridge` 0.005 %; under `majority + field` `rod`,
   `lone cube`, `groove` 0, `ridge` 0.010 %. The remaining pairs straddle a step in depth
   within the 1.5-voxel reach: on `rod` every one pairs a floor hit beside the rod (`z = 60`,
@@ -591,9 +639,11 @@ reads the same rows as lamp on.
   the field on and off, filter off and on.
 - Done-when 2: `the_normal_field_meets_the_guardrails` (lavapipe): cavity normal error 5.69
   degrees under `field`, 5.72 under `majority + field` (start look 7.13), silhouette 32 px both
-  (32), `A` 5.41 and 5.50 %. Unmet, the speck reading: `the_normal_field_adds_no_dark_speck`
-  (contour golden scene, `look(Contour)`, full shadow walk) reads with, without, only with
-  shadows 365, 360, 6 without the field and 240, 233, 8 with it.
+  (32), `A` 5.41 and 5.50 %. `the_normal_field_adds_no_dark_speck` (contour golden scene,
+  `look(Contour)`, full shadow walk) reads with, without, only with shadows 365, 360, 6
+  without the field and 240, 233, 8 with it; as amended 2026-10-31 it asserts the totals
+  (240 at most 365, 233 at most 360) and prints the per-class counts, and passes. At 811b37e
+  it asserted the shadow-only class (8 at most 6) and failed.
 - Done-when 3: `cubes-field` silhouette 172 px against face 172, cavity normal error 5.74
   degrees, `A` 5.41 %; `the_banner_names_the_view` reads `look cubes-field, detail on`.
 - Done-when 4: hit and light at the level's spawn, `flythrough --level --headless --seed 1
@@ -626,38 +676,21 @@ reads the same rows as lamp on.
   unchanged; `BANNER_ROWS` 9 (the look's words wrap into three rows with the push, the filter
   and the field all named); `cubes-field` sits in `LookPreset::ALL` after `contour-grain`; the
   tests of done-whens 1 and 2 are split four ways (tile edges, hits, guardrails, specks).
-- Gate at this commit: build, clippy `-D warnings` 0, fmt 0, doctests 11 ok, `cargo deny check` ok, the four
-  `scripts/check-*.mjs` 0; `--profile quick` 539 run, 538 passed, 1 timeout (`flythrough::replay
-  a_stamp_and_a_collapse_replay_from_the_save` 30 s; alone 13.7 s), 3 skipped; `--profile gpu
-  --no-fail-fast` (perf lock, load 1.4 to 20 from the quick run's tail at the start) 193 run,
-  190 passed, 3 failed, 30 skipped: `look the_normal_field_has_no_tile_edges` and `look
-  the_normal_field_adds_no_dark_speck` (done-whens 1 and 2 above), `sharpness
+- Gate at 811b37e: build, clippy `-D warnings` 0, fmt 0, doctests 11 ok, `cargo deny check`
+  ok, the four `scripts/check-*.mjs` 0; `--profile quick` 539 run, 538 passed, 1 timeout
+  (`flythrough::replay a_stamp_and_a_collapse_replay_from_the_save` 30 s; alone 13.7 s), 3
+  skipped; `--profile gpu --no-fail-fast` 193 run, 190 passed, 3 failed, 30 skipped: the two
+  tests of done-whens 1 and 2 at their first bars, and `sharpness
   detail_after_lighting_is_exact_for_the_lamp` (the base's).
-
-### Resume notes (2026-10-31, delete when Phase 3 lands)
-
-- State: Phase 3's code, tests and readings are in this wip commit; the phase stops on two
-  done-whens, which wait on the architect and the owner. Phases 1 and 2 are done (eaea0f0,
-  11a9b1e).
-- Question 1, done-when 1 (`rod`, `lone cube`, `groove`, `ridge` read 0 tile-contrast pairs
-  under the field, filter off and on): under `field` `rod` 0.145 %, `groove` 0.195 %, `ridge`
-  0.005 %; under `majority + field` `rod`, `lone cube`, `groove` 0, `ridge` 0.010 %. Every
-  remaining pair on `rod` straddles the rod's step (0.375 voxel, inside the 1.5-voxel reach).
-  Options: (a) the architect re-words the bar: 0 pairs under the filter on `rod`, `lone cube`
-  and `groove`, the rest readings (the field leaves the steps the plan's Risks already name)
-  (recommended); (b) the metric excludes pairs across a depth step smaller than 1.5 voxels
-  (a metric change, the architect's); (c) a wider or different field (an ADR-0040 change).
-- Question 2, done-when 2's speck reading (at most today's): shadow-only dark specks 6 without
-  the field, 8 with it (with shadows 365 to 240, without 360 to 233; face mode's 34 is the
-  speck test's own bar). Options: (a) the owner accepts 8 against 6 with the totals falling
-  (recommended); (b) the shadow origin or the lamp's `n.l` reads the field differently, code
-  outside this phase's design and an architect amendment; (c) keep 6 and investigate the two
-  pixels first.
-- Also for the owner: the cost bar of done-when 4 (hit plus light +10 % RTX) reads +12.0 %;
-  the plan says a miss does not stop the phase.
-- To finish on (a)/(a): re-word nothing in code beyond the asserted scenes the amendment names;
-  rerun `--profile gpu` under the perf lock; replace these notes with the row's SHA; commit as
-  the phase (`feat(render)`).
+- Gate at this commit: build ok; clippy `--workspace --all-targets -D warnings` 0 and `-p
+  flythrough --features wasm --all-targets -D warnings` 0; fmt 0; doctests 11 binaries ok (7
+  passed, 1 ignored); `cargo deny check` ok; the four `scripts/check-*.mjs` 0; `--profile
+  quick` 539 run, 537 passed, 2 timed out (`flythrough::castle
+  the_castle_stands_in_the_hall_with_its_gate_facing_the_spawn` 30.1 s, alone 8.9 s;
+  `flythrough::replay a_stamp_and_a_collapse_replay_from_the_save` 30.0 s, alone 15.2 s; load
+  3.0 at the start, 23 at the end), 3 skipped; `--profile gpu --no-fail-fast` on lavapipe
+  (exclusive perf lock, 1-minute load 2.4 at the start) 193 run, 192 passed, 1 failed, 30
+  skipped: `sharpness detail_after_lighting_is_exact_for_the_lamp` (98.028 %, the base's).
 
 ### Notes
 
@@ -679,7 +712,15 @@ each. Empty is fine.)_
 - Phase 2: the box metric's edge rule (a point on one of the box voxel's faces toward a solid
   neighbour is not a box pixel) changes Phase 1's readings slightly; both are in the log.
 - Phase 3: `SurfaceTuning::cube_hits` beside `normal_field`; the field in `probe_gather.wgsl`
-  and `gradient.wgsl` too; `BANNER_ROWS` 9.
+  and `gradient.wgsl` too; `BANNER_ROWS` 9. The code is in 811b37e; the phase commit carries
+  the two tests at the amended bars (owner, 2026-10-31) and this log.
+- Phase 3: done-whens 1 and 2 as first written (0 tile edges with the filter off and on for
+  all four scenes; the shadow-only speck class at most today's) were not met; the owner
+  amended both on 2026-10-31 and the tests assert the amended bars.
+- Phase 3: done-when 4's RTX reading, +12.0 % hit plus light, misses the +10 % guess; the
+  Radeon's +7.3 % is inside +20 %.
+- Phase 1's box metric definition now carries Phase 2's edge rule as accepted text
+  (architect, 2026-10-31); the code already applied it, nothing changed.
 - Noticed, not acted on: at both poses the box metric counts 42 % and 46 % of the hits, the
   cube-face parts of ordinary clipped surface voxels with two or three air faces (count 14 or
   more); only the count-under-14 class (0 at the vein, 200 px at the patch) is specific to

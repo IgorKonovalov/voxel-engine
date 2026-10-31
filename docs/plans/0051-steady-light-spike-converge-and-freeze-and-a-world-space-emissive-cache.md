@@ -18,7 +18,7 @@
 > readings). The owner: "clearly something is wrong and we need to understand why", and,
 > agreeing with the assessment "mostly", a lean toward "simplification of lights, but
 > steadiness".
-> **Starts after:** [Plan 0050](0050-watertight-contour-surface-crack-spike-and-closing-rule.md)'s
+> **Starts after:** [Plan 0050](done/0050-watertight-contour-surface-crack-spike-and-closing-rule.md)'s
 > Phase 4 check (owner, 2026-10-29). It runs alone. Plan 0049 stays parked at its Phase 2;
 > its rig (`apps/flythrough/tests/support/settle.rs` on branch `plan-0049` at 121737f) is
 > this spike's instrument, merged or copied as Phase 1 says. Plans 0048 and 0032 wait for
