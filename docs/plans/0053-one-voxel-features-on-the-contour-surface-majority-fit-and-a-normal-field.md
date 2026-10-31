@@ -309,6 +309,13 @@ labelled with the adapter; every asserted reading, golden and gate stays on lava
      machine, commit and load; mirror bytes are unchanged.
   4. No losing setting's flag remains in `--help` or the banner.
 
+  Amended 2026-10-31 (architect, on the owner's Phase 4 outcome (b), the field surface): this
+  phase has no work of its own. Plan 0054 Phase 4 makes the field the default walk and removes
+  the planes, and with them this plan's majority filter, normal field and `cubes-field` with
+  their flags and banner words; Plan 0054 Phase 5 marks ADR-0040 superseded by the field
+  surface's ADR. This plan closes together with Plan 0054, and its close review checks that
+  nothing of Phases 2 and 3 but the box metric and its tests survives.
+
 ## Data shapes
 
 ```rust
@@ -380,6 +387,20 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 2. **Phase 2's edge rule (architect, 2026-10-31).** Accepted into Phase 1's box metric; the
    definition carries it. Plan 0054's spike read its zeros under this rule.
 
+3. **Phase 4, the owner's windowed check (owner, 2026-10-31, session 1 with Plan 0054's
+   Phase 2, 14 runs).** Outcome (b): the boxes still fail the eye in the plane looks and the
+   owner chooses the field surface (ADR-0040 Alternative B, Plan 0054), with N1 analytic
+   normals. Readings by look, in the owner's words: today, the filter, the field and both at
+   the vein "same problem" (the rods and slabs stand in every one); at the patch "very few
+   blocks, maybe acceptable" for the plane looks, so the plane looks fail at the vein, not
+   the patch. `cubes-field` at the vein: "not even too bad, if not for the lighting flickers";
+   at the patch: "not acceptable really, there are small light lines" along the cube edges
+   under the lamp (a finding: with cube hits on, the field normal and the cube face disagree
+   at an edge and a sliver of lamp light passes). The field surface: "smooth, wonderful" at
+   both poses; N2 "not much of a visual difference". Phase 3's RTX cost miss (+12 % hit plus
+   light for the normal field) is moot with the pick. The flicker is the lighting's (Plan
+   0051), seen in every look alike.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
@@ -392,8 +413,8 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 | 1: The box spike: two metrics, six scenes, the poses, and the hypotheses read | dev | done | eaea0f0 |
 | 2: The plane fit on a majority-filtered occupancy | dev | done | 11a9b1e |
 | 3: The normal field, and the cubes-shaded-by-the-field preset | dev | done (the code in 811b37e, the amended bars' tests with this row) | committed with this row |
-| 4: The owner's windowed check | human | not started | |
-| 5: The pick as the default, the losers removed | dev | not started | |
+| 4: The owner's windowed check | human | done (b): the field surface (owner, 2026-10-31; owner answer 3) | owner answers, this commit |
+| 5: The pick as the default, the losers removed | dev | subsumed by Plan 0054 Phases 4 and 5 (amended 2026-10-31) | |
 
 #### Phase 1
 
