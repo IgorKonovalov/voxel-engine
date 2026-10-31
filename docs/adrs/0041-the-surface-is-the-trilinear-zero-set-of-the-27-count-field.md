@@ -92,8 +92,17 @@ do not change.
 - **The look and the collision disagree by up to half a voxel**: the surface lies inside a convex
   edge and outside a concave corner, and a one-voxel feature still collides, blocks sound and
   counts in every world query while it renders as a bump (the rod's flat top at `z = 60.333`;
-  a free pillar thins away above its base). A consumer wanting 10 cm detail visible models it
-  two voxels thick.
+  a free pillar thins away above its base). Two voxels thick shows a feature only where it rests
+  on a surface (a 2x2 rod on a floor keeps its lower half as a bump).
+- **A free-standing feature under about three voxels across renders as nothing.** Worked from
+  the formula, not measured: a free one-voxel rod counts 3 (`phi = -0.39`), a free 2x2 rod 12
+  (`-0.056`), a free one-voxel sheet 9 (`-1/6`); no dual cell around them mixes signs. A free
+  3x3 rod and a two-voxel sheet show at about their true size. At 10 cm voxels a tree branch, a
+  rope, a rail or a grate vanishes while it still collides, blocks sound and counts in every
+  world query. Phase 1's free pillar (0 box pixels) and sheet (6) agree. Plan 0054 Phase 3a
+  measures it on a rig, and builds the field per material with honest cubes for crisp
+  materials as the candidate (owner, 2026-10-31); whether this ADR's surface applies to every
+  material or only to the materials marked smooth is open until that plan's Phase 3b.
 - N1's gradient is only C0 across cells: the normals view shows soft creases along the dual-cell
   grid (tile contrast at the vein 0.397 % under N1, 0 under N2). The owner did not see them in
   the shaded view.

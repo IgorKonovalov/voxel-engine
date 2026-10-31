@@ -292,8 +292,61 @@ every asserted reading, golden and gate stays on lavapipe.
   5. The attribute pass's cost under the autopilot flight on both adapters, three alternated
      runs against the Plan 0053 close binary; the reading is in the log against Phase 1's.
 
+### Phase 3a: Free-standing thin features and a per-material scratch look
+- **Owner skill:** dev
+- **What:** amended 2026-10-31 (owner, answer 5). The field cannot show a free-standing
+  feature thinner than about three voxels: worked from the formula, a free one-voxel rod
+  counts 3 (`phi = -0.39`), a free 2x2 rod 12 (`-0.056`), a free one-voxel sheet 9 (`-1/6`),
+  so no dual cell around them mixes signs and they render as nothing, while they still collide
+  and block sound. A 10 cm branch is one voxel. This phase shows it on screen and builds the
+  candidate the owner named, the field per material with honest cubes for the rest:
+  - **A thin-feature rig**, a scene the fly-through can load and the tests can render: a
+    vertical trunk 5 voxels across standing on a floor, carrying a free one-voxel branch along
+    x, a free 2x2 rod, a free 3x3 rod, a one-voxel diagonal branch (one voxel per step in x and
+    z), and a one-voxel and a two-voxel free sheet, each at least 12 voxels long and clear of
+    every other feature by 4 voxels, the branches of a second material id (the rig's "wood").
+  - **A scratch look `field-cubes`**: voxels whose material row is marked crisp (a scratch
+    flag on the material table's render side; the rig's wood is the only crisp material) count
+    as air in the field and are hit as honest cubes with face normals; every other voxel is the
+    field. A crisp voxel next to field rock is drawn as its cube; the rock's field rounds away
+    from it as from air.
+  - **Two cost changes that hold under any pick**, both in the held Phase 4 patch
+    (`live/p4/phase4-wip.patch`): the band prefix in the header (so the walk does not popcount
+    the band words) and the band term in `level_pool_units`.
+- **Files touched:** dev's call, inside `vxe-render` and `apps/flythrough`; the crisp flag is a
+  render-side scratch, not a `vxe-world` change; this plan's log.
+- **Done when:**
+  1. On lavapipe, a test renders the rig in the `field` look and reads, per feature, the hit
+     pixels inside the feature's screen box against the `face` look's; the log carries the
+     table. (The expectation from the formula: the one-voxel branch, the diagonal branch, the
+     2x2 rod and the one-voxel sheet read near 0, the 3x3 rod and the two-voxel sheet near the
+     face look's. The test asserts the measurement is taken, not the expectation.)
+  2. The same test in `field-cubes` reads every branch and sheet within 2 % of the `face`
+     look's pixels, 0 leaks on the rig and at both poses, and the trunk and floor's hits
+     byte for byte the `field` look's away from the crisp voxels' one-voxel neighbourhood.
+  3. The field look's hit pass at the level's spawn on the RTX 3080 Laptop, three alternated
+     quiet runs, with the band prefix: within the owner's bar (hit plus light at most 5 ms),
+     against the 6.48 ms scratch reading at b4fbfad; the Radeon as a reading. `field-cubes`
+     read the same way at the level (no crisp material there, so it measures the material
+     test's overhead) and at the rig.
+  4. The level's mirror pressure reads the band term (no longer 1.000 at 254.1 of 259.2 MB).
+
+### Phase 3b: The owner's look at thin features and the per-material candidate
+- **Owner skill:** human
+- **What:** one windowed session on the release binary at Phase 3a's tip: the rig in `face`,
+  `field` and `field-cubes`, at arm's length and at a few metres, lamp on; then the vein and
+  patch poses in `field-cubes` (no crisp material there, so it must read as `field`). The
+  owner picks: (a) the field per material, crisp materials as honest cubes; (b) the field
+  everywhere, thin features modelled three voxels thick; (c) neither, with a direction. Each
+  look's mode is in the banner.
+- **Done when:** the pick and the owner's words are in Owner answers; Phase 4 is rewritten by
+  the architect on it before dev starts it.
+
 ### Phase 4: The field as the default walk, the planes removed
 - **Owner skill:** dev
+- **Held 2026-10-31 (owner, answer 5):** do not start until Phase 3b's pick and the architect's
+  rewrite of this phase. Under pick (a) the plain cube walk stays as the crisp materials' path,
+  and the material test is a per-corner read the cost bar must carry.
 - **What:** the contour looks become field looks: the walk's hit test is the dual-cell
   crossing with the owner's normal source, the shadow origin steps along the field normal,
   the detail tilt and Plan 0039's lamp ratio read the field normal. The plane attribute, its
@@ -419,7 +472,8 @@ is in `vxe-render`, a client-side view.
   view of the voxels.
 - Give the LOD ring's mip cells a field, or a transition between the field and the cubes at
   the full radius beyond what the planes have today.
-- A tricubic or filtered surface, dilation, or per-material opt-outs.
+- A tricubic or filtered surface, or dilation. (Per-material opt-outs were here; amended
+  2026-10-31, owner answer 5: Phase 3a builds one as a scratch look.)
 - The lighting: Plan 0051 is the light spike; this plan changes only which normal shades.
 - Decide the look. Phase 2 is the owner's, and (b) and (c) are real outcomes.
 
@@ -448,6 +502,13 @@ is in `vxe-render`, a client-side view.
    figures plus 10 %: 106 MB at the level and 530 MB over the full flight at `r_full` 16, the
    band pool inside the mirror's accounting (`mirror_bytes` and `allocated_bytes`). Phase 3
    lands the packed layout; the spike's dense pool (241 MB / 1.15 GB) is not the bar.
+5. **After Phase 3, thin features (owner, 2026-10-31, the three recommended options).** The
+   owner reopened answer 2 on the arithmetic that a free-standing feature under about three
+   voxels across vanishes under the field (a 10 cm branch): "this solution deemed to be not
+   acceptable, or per material only". The materials without the field render as honest cubes;
+   the owner sees it on screen before deciding (Phases 3a and 3b, added); Phase 4 holds until
+   then. Phase 1's free pillar and sheet readings (0 and 6 box pixels) are consistent with the
+   arithmetic but were read as boxes gone, not as features gone.
 
 ## Implementation log
 
