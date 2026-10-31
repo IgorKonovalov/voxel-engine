@@ -985,6 +985,14 @@ pub struct GpuWorld {
     /// each `select` and kept for their capacity.
     selected: Vec<Selected>,
     stale: Vec<ChunkCoord>,
+    /// The field surface's scratch pool while it is on ([`GpuWorld::set_field_surface`]), and
+    /// what changed for it since the last sync, as the attribute pass's change sets.
+    field: Option<crate::field::FieldScratch>,
+    field_chunks: HashSet<ChunkCoord>,
+    field_bricks: HashSet<[i32; 3]>,
+    field_shells: HashSet<ChunkCoord>,
+    /// The hit pass's field bindings without the pool: one slot each.
+    field_placeholders: [wgpu::Buffer; crate::field::FIELD_SHARDS],
 }
 
 /// The mirror's staging belt: `wgpu`'s mapped chunks sub-allocated per staged run, each run
@@ -1162,7 +1170,92 @@ impl GpuWorld {
             rec_stage: Vec::new(),
             selected: Vec::new(),
             stale: Vec::new(),
+            field: None,
+            field_chunks: HashSet::new(),
+            field_bricks: HashSet::new(),
+            field_shells: HashSet::new(),
+            field_placeholders: std::array::from_fn(|_| {
+                Self::storage_buffer(device, "field_pool", crate::field::FIELD_SLOT_BYTES)
+            }),
         }
+    }
+
+    /// Builds or drops the field surface's scratch pool ([`crate::field`]). Built, it takes
+    /// every chunk mirrored full whole at the next `sync`, which fills its work list, and
+    /// [`GpuWorld::encode_attrs`] records the field pass after the attribute pass. Its bytes
+    /// are outside [`GpuWorld::mirror_bytes`] and [`GpuWorld::allocated_bytes`]
+    /// ([`GpuWorld::field_bytes`]).
+    pub fn set_field_surface(&mut self, on: bool) {
+        if on == self.field.is_some() {
+            return;
+        }
+        self.field_chunks.clear();
+        self.field_bricks.clear();
+        self.field_shells.clear();
+        self.field =
+            on.then(|| crate::field::FieldScratch::new(&self.device, self.layout.reserved_records));
+    }
+
+    /// Whether the field surface's scratch pool is built.
+    pub fn field_surface(&self) -> bool {
+        self.field.is_some()
+    }
+
+    /// The scratch pool, while it is built.
+    pub fn field_pool(&self) -> Option<&crate::field::FieldScratch> {
+        self.field.as_ref()
+    }
+
+    /// Field shard `k` for the hit pass: the pool's, or a placeholder without it.
+    pub fn field_buffer(&self, k: usize) -> &wgpu::Buffer {
+        self.field
+            .as_ref()
+            .map_or(&self.field_placeholders[k], |f| f.shard(k))
+    }
+
+    /// Slots per field shard; 0 without the pool.
+    pub fn field_slots_per_shard(&self) -> u32 {
+        self.field
+            .as_ref()
+            .map_or(0, crate::field::FieldScratch::slots_per_shard)
+    }
+
+    /// The scratch pool's buffers' bytes; 0 without it.
+    pub fn field_bytes(&self) -> u64 {
+        self.field
+            .as_ref()
+            .map_or(0, crate::field::FieldScratch::bytes)
+    }
+
+    /// The field work list's slots and origins waiting for the next `encode_attrs`.
+    pub fn field_items(&self) -> usize {
+        self.field.as_ref().map_or(0, |f| f.items().len())
+    }
+
+    /// Updates the scratch pool for what the last syncs changed, from `world`'s voxels.
+    fn prepare_field(&mut self, world: &World) {
+        let Some(mut field) = self.field.take() else {
+            return;
+        };
+        let whole = std::mem::take(&mut self.field_chunks);
+        let bricks = std::mem::take(&mut self.field_bricks);
+        let shells = std::mem::take(&mut self.field_shells);
+        let full: Vec<ChunkCoord> = self
+            .mirrored
+            .iter()
+            .filter(|(_, m)| !m.lod)
+            .map(|(&c, _)| c)
+            .collect();
+        field.prepare(
+            world,
+            |c| self.mirrored.get(&c).filter(|m| !m.lod).map(|m| m.record),
+            |c| self.mirrored.get(&c).is_some_and(|m| m.lod),
+            &full,
+            &whole,
+            &bricks,
+            &shells,
+        );
+        self.field = Some(field);
     }
 
     /// A mirror under `cfg` whose full chunks' `Full` bricks carry contour attributes in
@@ -1703,29 +1796,44 @@ impl GpuWorld {
         timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) -> usize {
         let n = self.attr_items.len();
+        let fields = self.field_items();
+        // With both passes, the attribute pass writes the start timestamp and the field pass
+        // the end, so the reading covers both.
+        let (attr_ts, field_ts) = match timestamps {
+            Some(t) if n > 0 && fields > 0 => (
+                Some(wgpu::ComputePassTimestampWrites {
+                    query_set: t.query_set,
+                    beginning_of_pass_write_index: t.beginning_of_pass_write_index,
+                    end_of_pass_write_index: None,
+                }),
+                Some(wgpu::ComputePassTimestampWrites {
+                    query_set: t.query_set,
+                    beginning_of_pass_write_index: None,
+                    end_of_pass_write_index: t.end_of_pass_write_index,
+                }),
+            ),
+            Some(t) if n > 0 => (Some(t), None),
+            t => (None, t),
+        };
+        let e = ChunkExtent::new(
+            self.window_min,
+            [0, 1, 2].map(|k| self.window_min[k] + self.window_size[k]),
+        );
+        let b = AttribBindings {
+            shards: [0, 1, 2, 3].map(|k| &self.shards[k]),
+            records: &self.records,
+            table: &self.table,
+            window: (e.min.0, e.size()),
+            units_per_shard: self.layout.units_per_shard,
+        };
         if let (Some(pass), Some(queue)) = (&mut self.attrib, &self.queue) {
-            let e = ChunkExtent::new(
-                self.window_min,
-                [0, 1, 2].map(|k| self.window_min[k] + self.window_size[k]),
-            );
-            let b = AttribBindings {
-                shards: [0, 1, 2, 3].map(|k| &self.shards[k]),
-                records: &self.records,
-                table: &self.table,
-                window: (e.min.0, e.size()),
-                units_per_shard: self.layout.units_per_shard,
-            };
-            pass.encode(
-                &self.device,
-                queue,
-                encoder,
-                &b,
-                &self.attr_items,
-                timestamps,
-            );
+            pass.encode(&self.device, queue, encoder, &b, &self.attr_items, attr_ts);
+        }
+        if let (Some(field), Some(queue)) = (&mut self.field, &self.queue) {
+            field.encode(queue, encoder, &b, field_ts);
         }
         self.attr_items.clear();
-        n
+        n + fields
     }
 
     /// The counters of the last work-list build.
@@ -1755,6 +1863,10 @@ impl GpuWorld {
         };
         if self.surface_attrs {
             self.shell_chunks.insert(coord);
+        }
+        if let Some(f) = &mut self.field {
+            f.drop_chunk(coord);
+            self.field_shells.insert(coord);
         }
         self.drop_lights(coord);
         let base = rec as usize * RECORD_WORDS;
@@ -1895,7 +2007,7 @@ impl GpuWorld {
         enc: &mut wgpu::CommandEncoder,
     ) -> Result<SyncStats, MirrorError> {
         let mut st = SyncStats::default();
-        if self.attrib.is_some() && self.queue.is_none() {
+        if (self.attrib.is_some() || self.field.is_some()) && self.queue.is_none() {
             self.queue = Some(queue.clone());
         }
         self.reconcile_window(world);
@@ -1950,6 +2062,7 @@ impl GpuWorld {
         }
         self.flush_records(enc, &mut st);
         self.flush_table(enc, &mut st);
+        self.prepare_field(world);
         st.pending_chunks = self.pending.len() as u64;
         self.bytes_written += st.bytes;
         result.map(|()| st)
@@ -2234,6 +2347,14 @@ impl GpuWorld {
                 self.attr_chunks.insert(coord);
             }
         }
+        if self.field.is_some() {
+            if every || lod {
+                self.field_shells.insert(coord);
+            }
+            if every && !lod {
+                self.field_chunks.insert(coord);
+            }
+        }
         let mut result = Ok(());
         let set = upload_set(bricks.len(), every, attrs, |i| bricks.is_dirty(i));
         for (i, &up) in set.iter().enumerate() {
@@ -2243,6 +2364,11 @@ impl GpuWorld {
             if self.surface_attrs && !every && !lod && bricks.is_dirty(i) {
                 let b = brick_of_slot(i);
                 self.attr_bricks
+                    .insert([0, 1, 2].map(|k| coord.0[k] * CHUNK_EDGE_BRICKS + b[k]));
+            }
+            if self.field.is_some() && !every && !lod && bricks.is_dirty(i) {
+                let b = brick_of_slot(i);
+                self.field_bricks
                     .insert([0, 1, 2].map(|k| coord.0[k] * CHUNK_EDGE_BRICKS + b[k]));
             }
             // The upload's backstop computed the surfaces under the same write lock.

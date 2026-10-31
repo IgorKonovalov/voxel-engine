@@ -9,6 +9,7 @@ pub mod attr_work;
 pub mod attrib;
 pub mod camera;
 pub mod exposure;
+pub mod field;
 pub mod font8x8;
 pub mod fsr2;
 pub mod gpu_world;
@@ -32,10 +33,10 @@ pub use gpu_world::{
 pub use hud::{HudColour, HudOverlay};
 pub use light::LightParams;
 pub use marcher::{
-    CrackShares, DEFAULT_EMISSIVE_HISTORY, DEFAULT_REUSE_M_CAP, FRAME_PASSES, Frame,
+    CrackShares, DEFAULT_EMISSIVE_HISTORY, DEFAULT_REUSE_M_CAP, FRAME_PASSES, FieldNormal, Frame,
     GRADIENT_STRATUM, HistoryKill, Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS,
     MAX_VIEWS, MarchTimer, Marcher, NormalMode, PassTimer, RenderScale, Sampler, ShadowWalk,
-    SurfaceTuning, ToneMap, ViewMode, jitter_at,
+    SurfaceModel, SurfaceTuning, ToneMap, ViewMode, jitter_at,
 };
 pub use present::Presenter;
 pub use probes::ProbeVolume;

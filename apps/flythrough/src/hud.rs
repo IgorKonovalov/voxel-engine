@@ -1429,7 +1429,8 @@ impl Modes {
 
     /// Shows the banner from `now_ms` with the look in words, `look contour-sharp, detail on`
     /// (a contour preset adds `shadow push on`, `fit filter majority` and `normal field on`
-    /// when set): the first row of every banner from then on.
+    /// when set, and the field surface its `field normal analytic` or `blend`): the first row
+    /// of every banner from then on.
     pub fn show_look(&mut self, preset: &crate::LookPreset, detail: bool, now_ms: f64) {
         let mut words = format!("look {}", preset.name);
         let contour = preset.normal_mode == vxe_render::NormalMode::Contour;
@@ -1442,6 +1443,10 @@ impl Modes {
         // `cubes-field` names its field by its name.
         if contour && preset.tuning.normal_field && !preset.tuning.cube_hits {
             words += ", normal field on";
+        }
+        if contour && preset.tuning.model == vxe_render::SurfaceModel::Field {
+            words += ", field normal ";
+            words += preset.tuning.field_normal.name();
         }
         words += if detail {
             ", detail on"
@@ -1735,7 +1740,13 @@ mod mode_tests {
             preset = preset.next(true);
             m.show_look(&preset, true, t);
             let b = m.banner(t).expect("a press shows the banner");
-            let words = format!("look {}, detail on", preset.name);
+            // The field surface names its normal source.
+            let field = if preset.tuning.model == vxe_render::SurfaceModel::Field {
+                ", field normal analytic"
+            } else {
+                ""
+            };
+            let words = format!("look {}{field}, detail on", preset.name);
             let words = wrap(&words.split(", ").collect::<Vec<_>>()).join("\n");
             assert_eq!(b, format!("{words}\n{lighting}"));
             assert!(b.lines().count() <= BANNER_ROWS && b.lines().all(|l| l.len() <= BANNER_COLS));
@@ -1750,6 +1761,7 @@ mod mode_tests {
                 "contour-sharp",
                 "contour-grain",
                 "cubes-field",
+                "field",
                 "trilinear8",
                 "gradient27",
                 "face"
@@ -1860,6 +1872,13 @@ detail on
             "{:?}",
             m.banner(50_000.0)
         );
+        let mut field = crate::LookPreset::FIELD;
+        field.tuning.field_normal = vxe_render::FieldNormal::Blend;
+        m.show_look(&field, true, 60_000.0);
+        let b = m.banner(60_000.0).unwrap();
+        let words = wrap(&["look field", "field normal blend", "detail on"]).join("\n");
+        assert!(b.starts_with(&format!("{words}\n")), "{b:?}");
+        assert!(b.lines().count() <= BANNER_ROWS && b.lines().all(|l| l.len() <= BANNER_COLS));
     }
 }
 

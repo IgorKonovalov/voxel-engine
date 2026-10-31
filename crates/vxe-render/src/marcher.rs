@@ -47,7 +47,9 @@ pub struct Params {
     /// [`SurfaceTuning::face_mix`].
     pub face_mix: f32,
     pub window_size: [i32; 3],
-    pub _pad3: i32,
+    /// Field-surface slots per field shard ([`GpuWorld::field_slots_per_shard`]); 0 without
+    /// the field pool.
+    pub field_slots: u32,
     pub light_pos: [f32; 3],
     pub light_intensity: f32,
     pub light_dir: [f32; 3],
@@ -169,6 +171,51 @@ pub const FLAG_NORMAL_FIELD: u32 = 1 << 15;
 /// `Params::flags` bit: in the contour look, the walk tests no plane and every solid voxel hits
 /// as its cube ([`SurfaceTuning::cube_hits`]).
 pub const FLAG_CUBE_HITS: u32 = 1 << 16;
+
+/// `Params::flags` bit: in the contour look, the hit pass's pipeline for the field surface
+/// walks the trilinear zero set of the 27-counts instead of the planes
+/// ([`SurfaceModel::Field`]).
+pub const FLAG_FIELD: u32 = 1 << 17;
+/// `Params::flags` bit: the field surface's shading normal is the blend of its cell's corner
+/// normals ([`FieldNormal::Blend`]); clear, the gradient of the trilinear field.
+pub const FLAG_FIELD_BLEND: u32 = 1 << 18;
+
+/// What the contour look's walk hits: the per-voxel planes (ADR-0011), or the field surface,
+/// the zero set of the trilinear interpolation of `count / 27 - 1/2` over the voxel centres,
+/// `count` a voxel's solid voxels among the 27 around it (ADR-0040 Alternative B, a scratch:
+/// its counts live in a pool beside the mirror, [`GpuWorld::set_field_surface`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SurfaceModel {
+    #[default]
+    Planes,
+    Field,
+}
+
+/// The field surface's shading normal: the normalised gradient of the trilinear field at the
+/// hit (`Analytic`), or the trilinear blend at the hit of its cell's eight corner normals
+/// (`Blend`): a solid corner's plane normal where it has a plane, else the normalised central
+/// difference of the 27-counts across the corner.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FieldNormal {
+    #[default]
+    Analytic,
+    Blend,
+}
+
+impl FieldNormal {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Analytic => "analytic",
+            Self::Blend => "blend",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        [Self::Analytic, Self::Blend]
+            .into_iter()
+            .find(|n| n.name() == name)
+    }
+}
 
 /// How the marcher finds the normal at a hit, and in `Contour` the hit itself.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -394,6 +441,10 @@ pub struct SurfaceTuning {
     /// The contour-look walk tests no plane: every solid voxel hits as its cube, with its
     /// entry face's normal, while the attributes stay for the normal field.
     pub cube_hits: bool,
+    /// What the contour look's walk hits: the planes, or the field surface.
+    pub model: SurfaceModel,
+    /// The field surface's shading normal.
+    pub field_normal: FieldNormal,
 }
 
 /// The surface look: normal mode, procedural detail, view, translucent layers, cutaway and the
@@ -456,6 +507,16 @@ impl LookParams {
             }
             | if self.tuning.cube_hits {
                 FLAG_CUBE_HITS
+            } else {
+                0
+            }
+            | if self.tuning.model == SurfaceModel::Field {
+                FLAG_FIELD
+            } else {
+                0
+            }
+            | if self.tuning.field_normal == FieldNormal::Blend {
+                FLAG_FIELD_BLEND
             } else {
                 0
             }
@@ -937,10 +998,12 @@ impl Lighting {
 
 /// The hit pass: `march.wgsl`'s `main`, one primary ray per pixel into the hit buffer, and in
 /// the cracks view its pipeline with `CRACKS_VIEW`, which records the crack classes and each
-/// hit's lamp self-hit.
+/// hit's lamp self-hit; in the field surface's look ([`SurfaceModel::Field`]) its pipeline with
+/// `FIELD_SURFACE`, which walks the field.
 pub struct Marcher {
     pipeline: wgpu::ComputePipeline,
     cracks: wgpu::ComputePipeline,
+    field: wgpu::ComputePipeline,
     out_layout: wgpu::BindGroupLayout,
 }
 
@@ -952,6 +1015,8 @@ impl Marcher {
                 storage_texture(0, wgpu::TextureFormat::Rgba32Float),
                 storage_texture(1, wgpu::TextureFormat::Rgba16Uint),
                 storage_texture(2, wgpu::TextureFormat::Rgba16Float),
+                read_storage(3),
+                read_storage(4),
             ],
         });
         let layouts = [Some(world_layout), Some(&out_layout)];
@@ -964,9 +1029,18 @@ impl Marcher {
             "main",
             &[("CRACKS_VIEW", 1.0)],
         );
+        let field = compute_pipeline_with(
+            device,
+            "hit field",
+            MARCH_WGSL.into(),
+            &layouts,
+            "main",
+            &[("FIELD_SURFACE", 1.0)],
+        );
         Self {
             pipeline,
             cracks,
+            field,
             out_layout,
         }
     }
@@ -1241,6 +1315,20 @@ enum Io {
 fn io_layout(device: &wgpu::Device, label: &str, io: &[Io]) -> wgpu::BindGroupLayout {
     let at: Vec<(u32, Io)> = io.iter().enumerate().map(|(i, &k)| (i as u32, k)).collect();
     io_layout_at(device, label, &at)
+}
+
+/// A read-only storage buffer at `binding`, for the compute stage.
+fn read_storage(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
 }
 
 /// A group-2 layout of `io` at explicit binding numbers.
@@ -2261,6 +2349,7 @@ impl Frame {
                 | self.look.flags()
                 | if world.surface_attrs() { FLAG_ATTRS } else { 0 },
             units_per_shard: world.shard_layout().units_per_shard,
+            field_slots: world.field_slots_per_shard(),
             forced_level: self.lod.forced_level.unwrap_or(0),
             lod1_r2: (2 * self.lod.r_full).pow(2),
             lod2_r2: (4 * self.lod.r_full).pow(2),
@@ -2460,6 +2549,8 @@ impl Frame {
                 Res::Tex(&t.hit_pos[c]),
                 Res::Tex(&t.hit_info[c]),
                 Res::Tex(&t.layer),
+                Res::Buf(world.field_buffer(0)),
+                Res::Buf(world.field_buffer(1)),
             ],
         );
         let half = t.half_pos.is_some();
@@ -2649,7 +2740,12 @@ impl Frame {
                 workgroups,
             }
         };
-        let hit_pipeline = if self.look.view == ViewMode::Cracks {
+        let field = self.look.tuning.model == SurfaceModel::Field
+            && self.look.normal_mode == NormalMode::Contour
+            && world.field_surface();
+        let hit_pipeline = if field {
+            &self.hit.field
+        } else if self.look.view == ViewMode::Cracks {
             &self.hit.cracks
         } else {
             &self.hit.pipeline

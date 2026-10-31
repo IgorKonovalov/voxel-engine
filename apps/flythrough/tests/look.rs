@@ -1494,6 +1494,7 @@ fn feature_reading(
         look.tuning.fit,
         [WIDTH, HEIGHT],
     );
+    with_field_pool(&mut rig, &world, &look);
     box_reading(
         &mut rig,
         &world,
@@ -1515,6 +1516,7 @@ fn pose_box_reading(
     lamp: bool,
 ) -> BoxReading {
     let mut rig = pose_rig_on(device.clone(), queue.clone(), level, pose, look.tuning.fit);
+    with_field_pool(&mut rig, level, &look);
     rig.frame.set_lighting(vxe_render::Lighting {
         exposure: Exposure::Manual(pose.exposure),
         indirect: false,
@@ -1657,6 +1659,7 @@ fn mask_and_normals(
         look.tuning.fit,
         [WIDTH, HEIGHT],
     );
+    with_field_pool(&mut rig, world, &look);
     let light = LightParams::headlamp();
     let mask = rig.render(
         camera,
@@ -2013,4 +2016,368 @@ fn the_normal_field_adds_no_dark_speck() {
         "contour golden scene specks (with, without, only with): {plain:?}, with the field {field:?}"
     );
     assert!(field.2 <= plain.2, "{field:?} against {plain:?}");
+}
+
+// ---- The field surface (ADR-0040 Alternative B, Plan 0054's scratch) ----
+
+use support::rigs::with_field_pool;
+
+/// The field look (`LookPreset::FIELD`, detail on) in `view` under `normal`.
+fn field_look(view: ViewMode, normal: vxe_render::FieldNormal) -> LookParams {
+    let mut look = preset_look(flythrough::LookPreset::FIELD, view);
+    look.tuning.field_normal = normal;
+    look
+}
+
+/// A crack reading of `world` from `camera` in `look` on its own fit rig at the look rigs'
+/// size under the analytic window rule, the field's pool built when `look` walks the field,
+/// with the hit positions of its last frame.
+fn field_crack_reading(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    world: &World,
+    camera: &vxe_render::Camera,
+    look: LookParams,
+) -> (CrackReading, Vec<[f32; 4]>) {
+    let mut rig = fit_rig_on(
+        device.clone(),
+        queue.clone(),
+        world,
+        look.tuning.fit,
+        [WIDTH, HEIGHT],
+    );
+    with_field_pool(&mut rig, world, &look);
+    let r = crack_reading(
+        &mut rig,
+        camera,
+        &LightParams::headlamp(),
+        look,
+        Some(analytic_window(world)),
+    );
+    let positions = readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions());
+    (r, positions)
+}
+
+/// The field surface lies on the flat faces: on lavapipe under the analytic window rule every
+/// hit on `floor` (rock at `z < 64`) lies within 1e-3 voxel of `z = 64` and every hit on `wall`
+/// (rock at `x >= 80`) within 1e-3 of `x = 80`, and neither reads a leak (the cracks view's
+/// class 1 in the field look). The hit counts print beside the start look's.
+#[test]
+fn the_field_surface_lies_on_the_flat_faces() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let table = flythrough::LookPreset::DEFAULT.materials();
+    for (name, world, camera, axis, plane) in [
+        (
+            "floor",
+            floor_world(&table),
+            floor_camera(),
+            2usize,
+            64.0f32,
+        ),
+        ("wall", wall_world(&table), wall_camera(), 0, 80.0),
+    ] {
+        let window = analytic_window(&world);
+        let (plane_look, _) = field_crack_reading(
+            &device,
+            &queue,
+            &world,
+            &camera,
+            start_look(ViewMode::Shaded),
+        );
+        let (field, positions) = field_crack_reading(
+            &device,
+            &queue,
+            &world,
+            &camera,
+            field_look(ViewMode::Shaded, vxe_render::FieldNormal::Analytic),
+        );
+        let mut worst = 0f32;
+        for (i, p) in positions.iter().enumerate() {
+            if field.classes[i].is_none() || !kept_by_window(*p, window) {
+                continue;
+            }
+            worst = worst.max((p[axis] - plane).abs());
+        }
+        println!(
+            "{name}: field {} hits ({} left out), {} leaks, worst {worst:.2e} voxel off the face; start look {} hits ({} left out)",
+            field.shares.hits,
+            field.excluded,
+            field.shares.classes[1],
+            plane_look.shares.hits,
+            plane_look.excluded
+        );
+        assert!(field.shares.hits > 0, "{name}");
+        assert!(worst <= 1e-3, "{name}: a hit {worst} voxel off the face");
+        assert_eq!(field.shares.classes[1], 0, "{name}: leaks");
+    }
+}
+
+/// The field readings' two normal sources: N1, the field's gradient, and N2, the corners'
+/// blend.
+fn field_looks() -> [(&'static str, LookParams); 2] {
+    [
+        (
+            "field N1",
+            field_look(ViewMode::Shaded, vxe_render::FieldNormal::Analytic),
+        ),
+        (
+            "field N2",
+            field_look(ViewMode::Shaded, vxe_render::FieldNormal::Blend),
+        ),
+    ]
+}
+
+/// The analytic scenes of the field readings: the one-voxel scenes (the box metric's), the
+/// tilted, 45-degree and diagonal slabs, the cavity and the pillar, each with its camera.
+fn field_scenes() -> Vec<(String, World, vxe_render::Camera)> {
+    let table = flythrough::LookPreset::DEFAULT.materials();
+    let mut scenes: Vec<(String, World, vxe_render::Camera)> = Feature::ALL
+        .into_iter()
+        .map(|f| (f.name().to_owned(), f.world(&table), f.camera()))
+        .collect();
+    scenes.push((
+        "tilted slab".into(),
+        tilted_slab_world(&table),
+        tilted_slab_camera(),
+    ));
+    scenes.push((
+        "45-degree slab".into(),
+        axis_slab_world(&table),
+        axis_slab_camera(),
+    ));
+    scenes.push((
+        "diagonal slab".into(),
+        diagonal_slab_world(&table),
+        diagonal_slab_camera(),
+    ));
+    scenes.push(("cavity".into(), cavity_world(), cavity_camera()));
+    scenes.push(("pillar".into(), pillar_world(), pillar_camera()));
+    scenes
+}
+
+/// The box reading of `world` from `camera` in `look` at the look rigs' size under the
+/// analytic window rule, lit by the headlamp, the field's pool built when `look` walks it.
+fn scene_box_reading(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    world: &World,
+    camera: &vxe_render::Camera,
+    look: LookParams,
+) -> BoxReading {
+    let mut rig = fit_rig_on(
+        device.clone(),
+        queue.clone(),
+        world,
+        look.tuning.fit,
+        [WIDTH, HEIGHT],
+    );
+    with_field_pool(&mut rig, world, &look);
+    box_reading(
+        &mut rig,
+        world,
+        camera,
+        &LightParams::headlamp(),
+        look,
+        Some(analytic_window(world)),
+    )
+}
+
+/// A row of the field table: the box row with the leaks (the cracks view's class 1 in the
+/// field look) in place of the crack classes.
+fn field_row(r: &BoxReading, scene: &str, look: &str) -> String {
+    let s = &r.crack.shares;
+    format!(
+        "| {scene} | {look} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.3} | {} |",
+        s.hits,
+        r.crack.excluded,
+        r.box_px,
+        r.by_count[0],
+        r.by_count[1],
+        r.by_air[0],
+        r.by_air[1],
+        r.by_air[2],
+        r.pairs,
+        100.0 * r.edges as f64 / r.pairs.max(1) as f64,
+        if look.starts_with("field") {
+            s.classes[1].to_string()
+        } else {
+            "-".to_owned()
+        },
+    )
+}
+
+const FIELD_HEADER: &str = "| scene | look | hits | left out | box px | count < 14 | count >= 14 | 2 air | 3 air | 4+ air | pairs | tile edges % | leaks |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|";
+
+/// The field surface has no box and no leak: on lavapipe under the analytic window rule the
+/// rod, the lone cube, the groove, the wall pillar and the ridge read 0 box pixels in the field
+/// look, every analytic scene ([`field_scenes`]) and the level at `VEIN_POSE` and `PATCH_POSE`
+/// read 0 leaks, under N1 and N2; the tile-contrast share under each is printed for every
+/// scene.
+#[test]
+fn the_field_surface_has_no_boxes_and_no_leaks() {
+    let level = pose_level();
+    let Some((device, queue)) = software_device(attr_pool_bytes(&level).max(256 << 20)) else {
+        return;
+    };
+    println!("{FIELD_HEADER}");
+    let boxed = ["rod", "lone cube", "groove", "wall pillar", "ridge"];
+    let mut failures = Vec::new();
+    for (scene, world, camera) in field_scenes() {
+        for (name, look) in field_looks() {
+            let r = scene_box_reading(&device, &queue, &world, &camera, look);
+            println!("{}", field_row(&r, &scene, name));
+            if r.crack.shares.hits == 0 {
+                failures.push(format!("{scene} {name}: no hit"));
+            }
+            if r.crack.shares.classes[1] != 0 {
+                failures.push(format!(
+                    "{scene} {name}: {} leaks",
+                    r.crack.shares.classes[1]
+                ));
+            }
+            if boxed.contains(&scene.as_str()) && r.box_px != 0 {
+                failures.push(format!("{scene} {name}: {} box px", r.box_px));
+            }
+        }
+    }
+    for pose in flythrough::POSES {
+        for (name, look) in field_looks() {
+            let r = pose_box_reading(&device, &queue, &level, &pose, look, true);
+            println!("{}", field_row(&r, &format!("level {}", pose.name), name));
+            if r.crack.shares.classes[1] != 0 {
+                failures.push(format!(
+                    "{} {name}: {} leaks",
+                    pose.name, r.crack.shares.classes[1]
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+/// Where the field side-by-sides go: the worktree's untracked `live/field/`.
+fn field_dir() -> std::path::PathBuf {
+    let d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../live/field");
+    std::fs::create_dir_all(&d).expect("live/field is writable");
+    d
+}
+
+/// Writes `name.png`: the plane look's shaded image and normals view, then each field
+/// reading's, side by side.
+fn write_field_side_by_side(plane: &BoxReading, fields: &[&BoxReading], name: &str) {
+    let [w, h] = plane.crack.size.map(|v| v as usize);
+    let mut panels: Vec<&[u8]> = vec![&plane.crack.shaded, &plane.normals];
+    for f in fields {
+        panels.push(&f.crack.shaded);
+        panels.push(&f.normals);
+    }
+    let n = panels.len();
+    let mut out = vec![0u8; n * w * h * 4];
+    for y in 0..h {
+        for (k, src) in panels.iter().enumerate() {
+            for x in 0..w {
+                let i = y * w + x;
+                let o = (y * n * w + k * w + x) * 4;
+                out[o..o + 3].copy_from_slice(&src[i * 4..i * 4 + 3]);
+                out[o + 3] = 255;
+            }
+        }
+    }
+    let path = field_dir().join(format!("{name}.png"));
+    write_png(&path, &out, (n * w) as u32, h as u32);
+    println!("wrote {}", path.display());
+}
+
+/// The field readings (reading only; it asserts nothing): the field table of every analytic
+/// scene and both poses (lamp on and off) under the start look, N1 and N2; Plan 0039's
+/// guardrails and the speck test under each; the side-by-sides of the poses and of the scenes
+/// under `live/field/` (the start look's shaded and normals view, then N1's and N2's). On the
+/// adapter `VXE_TEST_ADAPTER` names (lavapipe unset):
+/// `cargo nextest run -p flythrough --test look --run-ignored only --no-capture field_readings`.
+#[test]
+#[ignore = "a reading: prints the field table and writes the side-by-sides"]
+fn field_readings() {
+    let level = pose_level();
+    let Some((device, queue, adapter)) = reading_device(attr_pool_bytes(&level).max(256 << 20))
+    else {
+        return;
+    };
+    println!("adapter {adapter}");
+    let start = start_look(ViewMode::Shaded);
+    let mut rows = Vec::new();
+    let mut emit = |row: String| {
+        println!("{row}");
+        rows.push(row);
+    };
+    for (scene, world, camera) in field_scenes() {
+        let plane = scene_box_reading(&device, &queue, &world, &camera, start);
+        emit(field_row(&plane, &scene, "start look"));
+        let mut fields = Vec::new();
+        for (name, look) in field_looks() {
+            let r = scene_box_reading(&device, &queue, &world, &camera, look);
+            emit(field_row(&r, &scene, name));
+            fields.push(r);
+        }
+        let refs: Vec<&BoxReading> = fields.iter().collect();
+        write_field_side_by_side(&plane, &refs, &scene.replace(' ', "-"));
+    }
+    for pose in flythrough::POSES {
+        for lamp in [true, false] {
+            let lamp_tag = if lamp { "" } else { " lamp off" };
+            let scene = format!("level {}{lamp_tag}", pose.name);
+            let plane = pose_box_reading(&device, &queue, &level, &pose, start, lamp);
+            emit(field_row(&plane, &scene, "start look"));
+            let mut fields = Vec::new();
+            for (name, look) in field_looks() {
+                let r = pose_box_reading(&device, &queue, &level, &pose, look, lamp);
+                emit(field_row(&r, &scene, name));
+                fields.push(r);
+            }
+            let refs: Vec<&BoxReading> = fields.iter().collect();
+            write_field_side_by_side(
+                &plane,
+                &refs,
+                &format!("{}{lamp_tag}", pose.name).replace(' ', "-"),
+            );
+        }
+    }
+    let face = face_silhouette_on(&device, &queue);
+    let mut guard = Vec::new();
+    let world = carved_world();
+    let contour = look(NormalMode::Contour, ViewMode::Shaded);
+    for (name, l) in [("start look", start)].into_iter().chain(field_looks()) {
+        let g = look_guardrails(&device, &queue, l);
+        let mut rig = attr_rig_on(device.clone(), queue.clone(), &world, None);
+        let speck_look = LookParams {
+            tuning: vxe_render::SurfaceTuning {
+                model: l.tuning.model,
+                field_normal: l.tuning.field_normal,
+                ..contour.tuning
+            },
+            ..contour
+        };
+        with_field_pool(&mut rig, &world, &speck_look);
+        let specks = specks_in(&mut rig, speck_look);
+        guard.push(format!(
+            "| {name} | {:.2} | {} | {face} | {:.2} | {} | {} | {} |",
+            g.normal_error,
+            g.silhouette,
+            g.axis_fraction * 100.0,
+            specks.0,
+            specks.1,
+            specks.2
+        ));
+    }
+    println!("\nadapter {adapter}\n{FIELD_HEADER}");
+    for r in rows {
+        println!("{r}");
+    }
+    println!(
+        "\n| look | cavity normal error (deg) | silhouette px | face px | A % | specks with | without | only with |\n|---|---|---|---|---|---|---|---|"
+    );
+    for g in guard {
+        println!("{g}");
+    }
 }

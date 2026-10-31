@@ -1232,6 +1232,19 @@ pub fn fit_rig_on(
     }
 }
 
+/// Builds the field surface's scratch pool on `rig`'s mirror of `world` when `look` walks the
+/// field (`SurfaceModel::Field`), syncs once so it takes every chunk, and fills it.
+pub fn with_field_pool(rig: &mut LookRig, world: &World, look: &vxe_render::LookParams) {
+    if look.tuning.model != vxe_render::SurfaceModel::Field {
+        return;
+    }
+    rig.gpu.set_field_surface(true);
+    rig.gpu
+        .sync_now(world, &rig.device, &rig.queue)
+        .expect("mirror fits the adapter");
+    drain_attrs(&rig.device, &rig.queue, &mut rig.gpu);
+}
+
 /// Runs the attribute pass until its work list is empty.
 pub fn drain_attrs(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &mut GpuWorld) {
     loop {

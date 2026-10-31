@@ -20,7 +20,8 @@
 //! [--headless] [--look PRESET] [--rock-detail SCALE,STRENGTH] [--plane-fit FIT]
 //! [--plane-offset OFFSET] [--fit-filter none|majority] [--face-mix K] [--detail-fine W]
 //! [--detail-after on|off]
-//! [--shadow-push on|off] [--normal-field on|off] [--view VIEW]
+//! [--shadow-push on|off] [--normal-field on|off] [--field-normal analytic|blend]
+//! [--band-census] [--view VIEW]
 //! [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
@@ -76,10 +77,12 @@
 //! rock's feature scale in voxels and strength, default `flythrough::ROCK_DETAIL`), and prints
 //! that
 //! look first; `--look` picks the starting preset (`flythrough::LookPreset`: `face`, `contour`,
-//! `contour-sharp`, `contour-grain`, `cubes-field`, `trilinear8`, `gradient27`), a normal mode with its plane
+//! `contour-sharp`, `contour-grain`, `cubes-field`, `field`, `trilinear8`, `gradient27`), a normal mode with its plane
 //! fit, face mix, detail after lighting, shadow push and rock's detail pair and fine weight,
 //! each part overridable by `--plane-fit`, `--plane-offset`, `--fit-filter` (the plane fit's
 //! occupancy, ADR-0040), `--normal-field` (shade with the planes' normal field, ADR-0040),
+//! `--field-normal` (the field surface's shading normal under `--look field`: the field's
+//! gradient or the blend of its corner normals, ADR-0040 Alternative B),
 //! `--face-mix`, `--detail-after`,
 //! `--shadow-push`, `--detail-fine` and `--rock-detail`; and `--look plain` starts in face mode without contour
 //! attributes or rock detail, detail off (`N` then skips the contour presets, `--detail` turns
@@ -394,6 +397,10 @@ struct Args {
     hud: bool,
     /// `--census`: print the brick census on exit.
     census: bool,
+    /// `--band-census`: print the field surface's band census (`flythrough::band_census`) over
+    /// the chunks mirrored full after the level's first fill, or at the stream's full
+    /// residency.
+    band_census: bool,
     /// `--save`: where the session's log file is written on exit.
     save: Option<std::path::PathBuf>,
     /// `--replay`: the log file whose session is re-simulated before the first frame.
@@ -679,6 +686,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         translucent_layers: LookParams::default().translucent_layers,
         hud: false,
         census: false,
+        band_census: false,
         save: None,
         replay: None,
         logic: LogicChoice::Native,
@@ -732,6 +740,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     let mut detail_after = None;
     let mut shadow_push = None;
     let mut normal_field = None;
+    let mut field_normal = None;
     let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or(format!("{flag} needs a value"));
@@ -805,6 +814,14 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--detail-after" => detail_after = Some(parse_on_off("--detail-after", &value()?)?),
             "--shadow-push" => shadow_push = Some(parse_on_off("--shadow-push", &value()?)?),
             "--normal-field" => normal_field = Some(parse_on_off("--normal-field", &value()?)?),
+            "--field-normal" => {
+                let v = value()?;
+                field_normal = Some(
+                    vxe_render::FieldNormal::from_name(&v)
+                        .ok_or(format!("--field-normal takes analytic or blend, not {v}"))?,
+                );
+            }
+            "--band-census" => args.band_census = true,
             "--view" => {
                 let v = value()?;
                 args.view = ViewMode::from_name(&v).ok_or(format!(
@@ -1124,6 +1141,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         p.tuning.detail_after_lighting = detail_after.unwrap_or(p.tuning.detail_after_lighting);
         p.tuning.shadow_push = shadow_push.unwrap_or(p.tuning.shadow_push);
         p.tuning.normal_field = normal_field.unwrap_or(p.tuning.normal_field);
+        p.tuning.field_normal = field_normal.unwrap_or(p.tuning.field_normal);
     } else if rock_detail.is_some() {
         return Err("--rock-detail does not apply under --look plain".to_owned());
     } else if plane_fit.is_some()
@@ -1134,10 +1152,12 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         || detail_after.is_some()
         || shadow_push.is_some()
         || normal_field.is_some()
+        || field_normal.is_some()
     {
         return Err(
             "--plane-fit, --plane-offset, --fit-filter, --face-mix, --detail-fine, \
-             --detail-after, --shadow-push and --normal-field do not apply under --look plain"
+             --detail-after, --shadow-push, --normal-field and --field-normal do not apply \
+             under --look plain"
                 .to_owned(),
         );
     }
@@ -2042,6 +2062,46 @@ impl Gfx {
         let ms = timer.filter(|_| n > 0).map(|t| t.read_ms(&gpu.device));
         (n, ms)
     }
+}
+
+/// The field surface's scratch pool: its live slots, the bytes of its buffers (outside the
+/// mirror's) and the bricks it had no slot for.
+fn field_line(f: &vxe_render::field::FieldScratch) -> String {
+    format!(
+        "field pool: {} slots live, {} B in its buffers (outside the mirror), {} bricks without a slot",
+        f.live_slots(),
+        f.bytes(),
+        f.overflow()
+    )
+}
+
+/// The band census (`flythrough::band_census`) over the chunks `mirror` holds full, against
+/// the mirror's live bytes.
+fn band_census_line(world: &vxe_world::World, mirror: &GpuWorld) -> String {
+    let chunks: Vec<vxe_world::ChunkCoord> = world
+        .store()
+        .coords()
+        .into_iter()
+        .filter(|&c| mirror.is_mirrored(c) && !mirror.is_lod(c))
+        .collect();
+    let t = now();
+    let cs = flythrough::band_census(world, &chunks);
+    format!(
+        "band census over {} full chunks in {:.0} ms: band voxels {} solid, {} air; band bricks {} Full, {} uniform solid, {} uniform air ({} in all); Full bricks with a surface voxel {}, of them band {}; bytes packed {}, dense {}; mirror {} B live",
+        chunks.len(),
+        ms_since(t),
+        cs.solid_voxels,
+        cs.air_voxels,
+        cs.full_bricks,
+        cs.solid_bricks,
+        cs.air_bricks,
+        cs.bricks(),
+        cs.surface_full_bricks,
+        cs.surface_full_band_bricks,
+        cs.packed_bytes,
+        cs.dense_bytes,
+        mirror.mirror_bytes()
+    )
 }
 
 /// The pool's bins at a moment: per bin with a page, its slot size, live slots, spare units
@@ -3549,6 +3609,12 @@ impl Run {
         if gfx.mirror.surface_attrs() {
             println!("{}", attr_line("initial fill", gfx.timed_attrs(gpu)));
         }
+        if let Some(f) = gfx.mirror.field_pool() {
+            println!("{}", field_line(f));
+        }
+        if self.args.band_census && self.stream.is_none() {
+            println!("{}", band_census_line(&self.world, &gfx.mirror));
+        }
         self.gfx = Some(gfx);
     }
 
@@ -3584,6 +3650,7 @@ impl Run {
             Some(p) => {
                 let mut m = GpuWorld::with_surface_attrs(&gpu.device, cfg);
                 m.set_surface_fit(p.tuning.fit);
+                m.set_field_surface(p.tuning.model == vxe_render::SurfaceModel::Field);
                 m
             }
             None => GpuWorld::with_config(&gpu.device, cfg),
@@ -3789,6 +3856,12 @@ impl Run {
                 stream.rule.r_full
             );
             println!("{}", bins_line(&gfx.mirror));
+            if let Some(f) = gfx.mirror.field_pool() {
+                println!("{}", field_line(f));
+            }
+            if self.args.band_census {
+                println!("{}", band_census_line(&self.world, &gfx.mirror));
+            }
         }
         Ok(())
     }
@@ -4549,6 +4622,8 @@ impl Run {
         // detail rewrites the material rows; `--look plain` has neither.
         if std::mem::take(&mut self.preset_changed) && self.args.look.is_some() {
             gfx.mirror.set_surface_fit(self.preset.tuning.fit);
+            gfx.mirror
+                .set_field_surface(self.preset.tuning.model == vxe_render::SurfaceModel::Field);
             gfx.mirror.rewrite_materials(
                 &preset_materials(&self.args, Some(&self.preset)),
                 &gpu.queue,
@@ -7451,7 +7526,7 @@ mod tests {
                 .err()
                 .as_deref(),
             Some(
-                "--look takes plain, face, contour, contour-sharp, contour-grain, cubes-field, trilinear8, gradient27, not contour-soft"
+                "--look takes plain, face, contour, contour-sharp, contour-grain, cubes-field, field, trilinear8, gradient27, not contour-soft"
             )
         );
         assert_eq!(
