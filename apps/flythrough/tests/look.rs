@@ -1561,8 +1561,8 @@ fn one_voxel_features_render_as_boxes_today() {
     }
 }
 
-/// The box readings' looks: the start look, its tuning with the volume-matched offset, and
-/// with the majority filter.
+/// The box readings' looks: the start look, its tuning with the volume-matched offset, with
+/// the majority filter, with the normal field, with both, and the `cubes-field` preset.
 fn box_looks() -> Vec<(&'static str, LookParams)> {
     let mut looks: Vec<(&'static str, LookParams)> = crack_looks()
         .into_iter()
@@ -1573,12 +1573,16 @@ fn box_looks() -> Vec<(&'static str, LookParams)> {
             (name, look)
         })
         .collect();
+    let majority = with_filter(
+        start_look(ViewMode::Shaded),
+        vxe_render::OccupancyFilter::Majority,
+    );
+    looks.push(("majority", majority));
+    looks.push(("field", field_on(start_look(ViewMode::Shaded))));
+    looks.push(("majority + field", field_on(majority)));
     looks.push((
-        "majority",
-        with_filter(
-            start_look(ViewMode::Shaded),
-            vxe_render::OccupancyFilter::Majority,
-        ),
+        "cubes-field",
+        preset_look(flythrough::LookPreset::CUBES_FIELD, ViewMode::Shaded),
     ));
     looks
 }
@@ -1846,4 +1850,167 @@ fn the_majority_fit_meets_the_guardrails() {
             assert!(g.axis_fraction <= 0.10, "{g:?}");
         }
     }
+}
+
+// ---- The normal field and the cubes-shaded-by-the-field preset (ADR-0040) ----
+
+/// `look` shading with the planes' normal field.
+fn field_on(look: LookParams) -> LookParams {
+    let mut look = look;
+    look.tuning.normal_field = true;
+    look
+}
+
+/// Preset `p`'s look, detail on, in `view`.
+fn preset_look(p: flythrough::LookPreset, view: ViewMode) -> LookParams {
+    LookParams {
+        normal_mode: p.normal_mode,
+        detail: true,
+        view,
+        tuning: p.tuning,
+        ..LookParams::default()
+    }
+}
+
+/// The normal field leaves no tile edge: on lavapipe under the analytic window rule the rod,
+/// the lone cube, the groove and the ridge read no adjacent same-surface pair whose normals
+/// differ by more than 15 degrees with the field on, the plane fit's filter off and on.
+#[test]
+fn the_normal_field_has_no_tile_edges() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let start = start_look(ViewMode::Shaded);
+    let majority = with_filter(start, vxe_render::OccupancyFilter::Majority);
+    println!("{BOX_HEADER}");
+    for (name, look) in [
+        ("field", field_on(start)),
+        ("majority + field", field_on(majority)),
+    ] {
+        for feature in [
+            Feature::Rod,
+            Feature::LoneCube,
+            Feature::Groove,
+            Feature::Ridge,
+        ] {
+            let r = feature_reading(&device, &queue, feature, look);
+            println!("{}", r.row(feature.name(), name));
+            assert!(r.pairs > 0, "{}: pairs", feature.name());
+            assert_eq!(r.edges, 0, "{} under {name}: tile edges", feature.name());
+        }
+    }
+}
+
+/// The normal field moves no hit: every one-voxel scene's hit mask is byte for byte the same
+/// with the field on and off, the plane fit's filter off and on, on lavapipe.
+#[test]
+fn the_normal_field_moves_no_hit() {
+    let Some((device, queue)) = software_device(64 << 20) else {
+        return;
+    };
+    let start = start_look(ViewMode::Shaded);
+    let majority = with_filter(start, vxe_render::OccupancyFilter::Majority);
+    let table = flythrough::LookPreset::DEFAULT.materials();
+    for base in [start, majority] {
+        for feature in Feature::ALL {
+            let world = feature.world(&table);
+            let camera = feature.camera();
+            let off = mask_and_normals(&device, &queue, &world, &camera, base);
+            let on = mask_and_normals(&device, &queue, &world, &camera, field_on(base));
+            assert!(
+                off.0.chunks(4).any(|p| p[0] > 127),
+                "{}: hits",
+                feature.name()
+            );
+            assert!(
+                off.0 == on.0,
+                "{}: the hit mask moved under the field",
+                feature.name()
+            );
+        }
+    }
+}
+
+/// Dark specks of the contour golden scene in `look` that appear only with the headlamp's
+/// shadow ray, with the full shadow walk: `(with, without, only with)`.
+fn specks_in(rig: &mut LookRig, look: LookParams) -> (usize, usize, usize) {
+    rig.frame.set_lighting(vxe_render::Lighting {
+        shadow_walk: vxe_render::ShadowWalk::Full,
+        ..rig.frame.lighting()
+    });
+    let off_light = LightParams {
+        shadows: false,
+        ..LightParams::headlamp()
+    };
+    let on = dark_specks(&rig.render(&scene_camera(), &LightParams::headlamp(), look));
+    let off = dark_specks(&rig.render(&scene_camera(), &off_light, look));
+    let only = on.iter().filter(|i| off.binary_search(i).is_err()).count();
+    (on.len(), off.len(), only)
+}
+
+/// The normal field meets Plan 0039's guardrails: in the start look with the field (the plane
+/// fit's filter off and on), the cavity's normal error is at most the start look's, `A` at
+/// most 10 % and the pillar's silhouette the start look's. `cubes-field` reads face mode's
+/// silhouette and a cavity normal error of at most 12 degrees.
+#[test]
+fn the_normal_field_meets_the_guardrails() {
+    let Some((device, queue)) = software_device(attr_pool_bytes(&cavity_world()).max(64 << 20))
+    else {
+        return;
+    };
+    let start = start_look(ViewMode::Shaded);
+    let face = face_silhouette_on(&device, &queue);
+    let today = look_guardrails(&device, &queue, start);
+    let mut rows = Vec::new();
+    for (name, look) in [
+        ("start look", start),
+        ("field", field_on(start)),
+        (
+            "majority + field",
+            field_on(with_filter(start, vxe_render::OccupancyFilter::Majority)),
+        ),
+        (
+            "cubes-field",
+            preset_look(flythrough::LookPreset::CUBES_FIELD, ViewMode::Shaded),
+        ),
+    ] {
+        let g = look_guardrails(&device, &queue, look);
+        println!(
+            "{name}: cavity normal error {:.2} degrees, silhouette {} px against face {face}, axis fraction {:.2} %",
+            g.normal_error,
+            g.silhouette,
+            g.axis_fraction * 100.0
+        );
+        rows.push((name, g));
+    }
+    for (name, g) in &rows[1..3] {
+        assert!(
+            g.normal_error <= today.normal_error,
+            "{name}: {g:?} against {today:?}"
+        );
+        assert!(g.axis_fraction <= 0.10, "{name}: {g:?}");
+        assert_eq!(g.silhouette, today.silhouette, "{name}: {g:?}");
+    }
+    let cubes = rows[3].1;
+    assert_eq!(cubes.silhouette, face, "cubes-field: {cubes:?}");
+    assert!(cubes.normal_error <= 12.0, "cubes-field: {cubes:?}");
+}
+
+/// The contour golden scene's dark specks that appear only with the headlamp's shadow ray (the
+/// speck test's reading, full shadow walk) are with the normal field at most without it, on
+/// lavapipe.
+#[test]
+fn the_normal_field_adds_no_dark_speck() {
+    let world = carved_world();
+    let Some((device, queue)) = software_device(attr_pool_bytes(&world).max(64 << 20)) else {
+        return;
+    };
+    let mut rig = attr_rig_on(device, queue, &world, None);
+    let contour = look(NormalMode::Contour, ViewMode::Shaded);
+    let plain = specks_in(&mut rig, contour);
+    let field = specks_in(&mut rig, field_on(contour));
+    println!(
+        "contour golden scene specks (with, without, only with): {plain:?}, with the field {field:?}"
+    );
+    assert!(field.2 <= plain.2, "{field:?} against {plain:?}");
 }

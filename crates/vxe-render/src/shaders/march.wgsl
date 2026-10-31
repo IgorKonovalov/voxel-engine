@@ -7,7 +7,8 @@
 //                              bit 1: occupancy masks, bits 2..4: normal mode, bit 4: detail,
 //                              bits 5..8: view, bit 8: full chunks' bricks carry contour
 //                              attributes, bit 9: skip empty cells larger than a voxel, bit
-//                              10: cutaway, bit 13: detail after lighting), the lighting flags,
+//                              10: cutaway, bit 13: detail after lighting, bit 14: shadow push,
+//                              bit 15: normal field, bit 16: cube hits), the lighting flags,
 //                              exposure and the face mix
 //   1  storage  brick_pool0    shard 0 of the pool: [unit][16 x u32], 64-byte units; unit u is
 //                              unit u % units_per_shard of shard u / units_per_shard; 7, 8 and
@@ -265,6 +266,10 @@ const FLAG_CUTAWAY: u32 = 1024u;
 const FLAG_DETAIL_AFTER_LIGHTING: u32 = 8192u;
 // Flags bit 14: push a contour hit's shadow origin clear of its neighbours' planes.
 const FLAG_SHADOW_PUSH: u32 = 16384u;
+// The contour look shades with the planes' normal field (`with_field`).
+const FLAG_NORMAL_FIELD: u32 = 32768u;
+// The contour look's walk tests no plane: every solid voxel hits as its cube.
+const FLAG_CUBE_HITS: u32 = 65536u;
 // Normal modes (flags bits 2..4) and views (flags bits 5..8).
 const NORMAL_FACE: u32 = 0u;
 const NORMAL_TRILINEAR8: u32 = 1u;
@@ -888,7 +893,8 @@ fn contour_test(o: vec3<f32>, d: vec3<f32>, inv: vec3<f32>, v: vec3<i32>, t: f32
 
 fn contour_active() -> bool {
     return ((params.flags >> NORMAL_SHIFT) & 3u) == NORMAL_CONTOUR
-        && (params.flags & FLAG_ATTRS) != 0u;
+        && (params.flags & FLAG_ATTRS) != 0u
+        && (params.flags & FLAG_CUBE_HITS) == 0u;
 }
 
 // The first solid voxel along `o + d t` for `0 <= t <= t_limit`. With `cutaway` set the walk
@@ -1352,7 +1358,8 @@ fn octa16_decode(e: vec2<u32>) -> vec3<f32> {
 }
 
 // One pixel's hit record, decoded from the hit buffer: `n` is the shading normal before
-// detail, `axis` the entry face's axis (-1: the ray started inside rock).
+// detail, `axis` the entry face's axis (-1: the ray started inside rock). `nf` is the normal
+// the shading starts from: `n` as decoded, the normal field after `with_field`.
 struct HitRecord {
     found: bool,
     plane: bool,
@@ -1362,6 +1369,7 @@ struct HitRecord {
     p: vec3<f32>,
     t: f32,
     n: vec3<f32>,
+    nf: vec3<f32>,
 };
 
 fn unpack_hit(pos: vec4<f32>, info: vec4<u32>) -> HitRecord {
@@ -1375,20 +1383,62 @@ fn unpack_hit(pos: vec4<f32>, info: vec4<u32>) -> HitRecord {
         pos.xyz,
         pos.w,
         octa16_decode(info.xy),
+        octa16_decode(info.xy),
     );
 }
 
-// The detailed shading normal of a hit in xyz and its albedo factor in w: the hit's normal
-// and 1 without the detail flag or with a material of detail strength 0.
+// Whether the frame shades with the normal field: flag bit 15 in the contour look over a mirror
+// with attributes.
+fn normal_field_on() -> bool {
+    return (params.flags & FLAG_NORMAL_FIELD) != 0u && normal_mode() == NORMAL_CONTOUR
+        && (params.flags & FLAG_ATTRS) != 0u;
+}
+
+// `rec` with `nf` the normal field at its hit point when the frame shades with it: the
+// normalised trilinear blend, over the eight voxel centres around the point, of the plane
+// normals of the voxels that carry one (air, a voxel without a plane, a uniform brick's or a
+// mip cell's voxel add nothing); `n` where nothing is added. Eight `lookup`s and up to eight
+// attribute reads.
+fn with_field(rec: HitRecord) -> HitRecord {
+    var r = rec;
+    if (!rec.found || !normal_field_on()) {
+        return r;
+    }
+    // The lookups go through the walk's held words: a pass that has not walked yet holds
+    // zeroed ones, which `descend` would take for a held empty group.
+    reset_walk();
+    let q = rec.p - 0.5;
+    let b = vec3<i32>(floor(q));
+    let f = q - vec3<f32>(b);
+    var acc = vec3<f32>(0.0);
+    for (var i = 0u; i < 8u; i++) {
+        let o = vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u);
+        let c = lookup(b + vec3<i32>(o));
+        if (c.size == 0 && c.slot != ABSENT) {
+            let a = contour_attr(c.slot, c.index);
+            if (a != NO_PLANE) {
+                let w3 = select(1.0 - f, f, o == vec3<u32>(1u));
+                acc += w3.x * w3.y * w3.z * decode_octahedral(a);
+            }
+        }
+    }
+    if (dot(acc, acc) > 1e-12) {
+        r.nf = normalize(acc);
+    }
+    return r;
+}
+
+// The detailed shading normal of a hit in xyz and its albedo factor in w: the hit's shading
+// normal `nf` and 1 without the detail flag or with a material of detail strength 0.
 fn surface_detail(rec: HitRecord) -> vec4<f32> {
     if ((params.flags & FLAG_DETAIL) != 0u) {
         // Exactly no change at strength 0.
         let row = materials[rec.material * 4u + 2u];
         if (row.y > 0.0) {
-            return detail(rec.p, rec.n, row.x, row.y, row.w);
+            return detail(rec.p, rec.nf, row.x, row.y, row.w);
         }
     }
-    return vec4<f32>(rec.n, 1.0);
+    return vec4<f32>(rec.nf, 1.0);
 }
 
 // The shadow normal of a hit seen along `d` (see `shadow_normal`): the plane normal of a
@@ -1482,7 +1532,7 @@ fn detail_after_lighting() -> bool {
 // when the detail is applied after lighting.
 fn lighting_normal(rec: HitRecord) -> vec3<f32> {
     if (detail_after_lighting()) {
-        return rec.n;
+        return rec.nf;
     }
     return surface_detail(rec).xyz;
 }
@@ -1491,7 +1541,7 @@ fn lighting_normal(rec: HitRecord) -> vec3<f32> {
 // `clamp(max(nd.l, 0) / max(n.l, 1e-3), 0, 2)`, `l` the unit vector from the hit to the lamp.
 fn detail_lamp_ratio(rec: HitRecord, nd: vec3<f32>) -> f32 {
     let l = normalize(params.light_pos - rec.p);
-    return clamp(max(dot(nd, l), 0.0) / max(dot(rec.n, l), 1e-3), 0.0, 2.0);
+    return clamp(max(dot(nd, l), 0.0) / max(dot(rec.nf, l), 1e-3), 0.0, 2.0);
 }
 
 // `p` projected through previous view `v` to a fractional pixel of the target (pixel
@@ -1621,7 +1671,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         var self_hit = false;
         if (CRACKS_VIEW) {
             if (h.found) {
-                self_hit = lamp_self_hit(unpack_hit(pos, info), d);
+                self_hit = lamp_self_hit(with_field(unpack_hit(pos, info)), d);
             }
         }
         layer = vec4<f32>(f32(crack), select(0.0, 1.0, self_hit), 0.0, 1.0);

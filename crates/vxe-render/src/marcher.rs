@@ -163,6 +163,12 @@ pub const FLAG_DETAIL_AFTER_LIGHTING: u32 = 1 << 13;
 /// `Params::flags` bit: push a contour hit's shadow origin clear of its neighbours' planes
 /// ([`SurfaceTuning::shadow_push`]).
 pub const FLAG_SHADOW_PUSH: u32 = 1 << 14;
+/// `Params::flags` bit: in the contour look, shade with the trilinear field of the planes'
+/// normals around the hit ([`SurfaceTuning::normal_field`]).
+pub const FLAG_NORMAL_FIELD: u32 = 1 << 15;
+/// `Params::flags` bit: in the contour look, the walk tests no plane and every solid voxel hits
+/// as its cube ([`SurfaceTuning::cube_hits`]).
+pub const FLAG_CUBE_HITS: u32 = 1 << 16;
 
 /// How the marcher finds the normal at a hit, and in `Contour` the hit itself.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -379,6 +385,15 @@ pub struct SurfaceTuning {
     /// normal where no plane of the eight voxels around the point holds it inside rock, else
     /// at 1.0; off, at 0.5.
     pub shadow_push: bool,
+    /// The light pass and the composite shade a contour-look hit with the normal field: the
+    /// normalised trilinear blend, over the eight voxel centres around the hit point, of the
+    /// plane normals of the voxels that carry one (air and voxels without a plane add nothing;
+    /// with nothing added, the hit's own normal). The hit record and the shadow rays keep the
+    /// hit's own normal; the normals view and the detail's tilt take the field (ADR-0040).
+    pub normal_field: bool,
+    /// The contour-look walk tests no plane: every solid voxel hits as its cube, with its
+    /// entry face's normal, while the attributes stay for the normal field.
+    pub cube_hits: bool,
 }
 
 /// The surface look: normal mode, procedural detail, view, translucent layers, cutaway and the
@@ -431,6 +446,16 @@ impl LookParams {
             }
             | if self.tuning.shadow_push {
                 FLAG_SHADOW_PUSH
+            } else {
+                0
+            }
+            | if self.tuning.normal_field {
+                FLAG_NORMAL_FIELD
+            } else {
+                0
+            }
+            | if self.tuning.cube_hits {
+                FLAG_CUBE_HITS
             } else {
                 0
             }

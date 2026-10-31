@@ -1265,9 +1265,9 @@ pub const BANNER_MS: f64 = 3000.0;
 /// The banner's widest row in characters: it fits a 1280-pixel window at the HUD's scale 2
 /// (80 cells) and the golden's 320 pixels at scale 1 (40 cells).
 pub const BANNER_COLS: usize = 40;
-/// Rows the banner wraps into at most: the look's words in two (a contour preset names the
-/// shadow push and the fit filter when set) and the modes' line in six.
-pub const BANNER_ROWS: usize = 8;
+/// Rows the banner wraps into at most: the look's words in three (a contour preset names the
+/// shadow push, the fit filter and the normal field when set) and the modes' line in six.
+pub const BANNER_ROWS: usize = 9;
 
 /// A key that changes the lighting mode: `F3` to `F7` and `M`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1428,8 +1428,8 @@ impl Modes {
     }
 
     /// Shows the banner from `now_ms` with the look in words, `look contour-sharp, detail on`
-    /// (a contour preset adds `shadow push on` and `fit filter majority` when set): the first
-    /// row of every banner from then on.
+    /// (a contour preset adds `shadow push on`, `fit filter majority` and `normal field on`
+    /// when set): the first row of every banner from then on.
     pub fn show_look(&mut self, preset: &crate::LookPreset, detail: bool, now_ms: f64) {
         let mut words = format!("look {}", preset.name);
         let contour = preset.normal_mode == vxe_render::NormalMode::Contour;
@@ -1438,6 +1438,10 @@ impl Modes {
         }
         if contour && preset.tuning.fit.filter == vxe_render::OccupancyFilter::Majority {
             words += ", fit filter majority";
+        }
+        // `cubes-field` names its field by its name.
+        if contour && preset.tuning.normal_field && !preset.tuning.cube_hits {
+            words += ", normal field on";
         }
         words += if detail {
             ", detail on"
@@ -1745,6 +1749,7 @@ mod mode_tests {
                 "contour",
                 "contour-sharp",
                 "contour-grain",
+                "cubes-field",
                 "trilinear8",
                 "gradient27",
                 "face"
@@ -1831,6 +1836,29 @@ detail on
             ),
             "{:?}",
             m.banner(30_000.0)
+        );
+        let mut field = filtered;
+        field.tuning.normal_field = true;
+        field.tuning.shadow_push = true;
+        m.show_look(&field, true, 40_000.0);
+        let b = m.banner(40_000.0).unwrap();
+        let words = wrap(&[
+            "look contour-sharp",
+            "shadow push on",
+            "fit filter majority",
+            "normal field on",
+            "detail on",
+        ])
+        .join("\n");
+        assert!(b.starts_with(&format!("{words}\n")), "{b:?}");
+        assert!(b.lines().count() <= BANNER_ROWS && b.lines().all(|l| l.len() <= BANNER_COLS));
+        m.show_look(&crate::LookPreset::CUBES_FIELD, true, 50_000.0);
+        assert!(
+            m.banner(50_000.0)
+                .unwrap()
+                .starts_with("look cubes-field, detail on\n"),
+            "{:?}",
+            m.banner(50_000.0)
         );
     }
 }

@@ -20,7 +20,7 @@
 //! [--headless] [--look PRESET] [--rock-detail SCALE,STRENGTH] [--plane-fit FIT]
 //! [--plane-offset OFFSET] [--fit-filter none|majority] [--face-mix K] [--detail-fine W]
 //! [--detail-after on|off]
-//! [--shadow-push on|off] [--view VIEW]
+//! [--shadow-push on|off] [--normal-field on|off] [--view VIEW]
 //! [--detail]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--absorption A] [--mic]
@@ -76,10 +76,11 @@
 //! rock's feature scale in voxels and strength, default `flythrough::ROCK_DETAIL`), and prints
 //! that
 //! look first; `--look` picks the starting preset (`flythrough::LookPreset`: `face`, `contour`,
-//! `contour-sharp`, `contour-grain`, `trilinear8`, `gradient27`), a normal mode with its plane
+//! `contour-sharp`, `contour-grain`, `cubes-field`, `trilinear8`, `gradient27`), a normal mode with its plane
 //! fit, face mix, detail after lighting, shadow push and rock's detail pair and fine weight,
 //! each part overridable by `--plane-fit`, `--plane-offset`, `--fit-filter` (the plane fit's
-//! occupancy, ADR-0040), `--face-mix`, `--detail-after`,
+//! occupancy, ADR-0040), `--normal-field` (shade with the planes' normal field, ADR-0040),
+//! `--face-mix`, `--detail-after`,
 //! `--shadow-push`, `--detail-fine` and `--rock-detail`; and `--look plain` starts in face mode without contour
 //! attributes or rock detail, detail off (`N` then skips the contour presets, `--detail` turns
 //! detail on), the look of Plan 0002's and Plan 0017's face readings. With contour attributes the autopilot's report adds the attribute
@@ -730,6 +731,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     let mut detail_fine = None;
     let mut detail_after = None;
     let mut shadow_push = None;
+    let mut normal_field = None;
     let mut it = argv.into_iter();
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or(format!("{flag} needs a value"));
@@ -802,6 +804,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--detail-fine" => detail_fine = Some(parse_unit("--detail-fine", &value()?, 1.0)?),
             "--detail-after" => detail_after = Some(parse_on_off("--detail-after", &value()?)?),
             "--shadow-push" => shadow_push = Some(parse_on_off("--shadow-push", &value()?)?),
+            "--normal-field" => normal_field = Some(parse_on_off("--normal-field", &value()?)?),
             "--view" => {
                 let v = value()?;
                 args.view = ViewMode::from_name(&v).ok_or(format!(
@@ -1120,6 +1123,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         p.detail_fine = detail_fine.unwrap_or(p.detail_fine);
         p.tuning.detail_after_lighting = detail_after.unwrap_or(p.tuning.detail_after_lighting);
         p.tuning.shadow_push = shadow_push.unwrap_or(p.tuning.shadow_push);
+        p.tuning.normal_field = normal_field.unwrap_or(p.tuning.normal_field);
     } else if rock_detail.is_some() {
         return Err("--rock-detail does not apply under --look plain".to_owned());
     } else if plane_fit.is_some()
@@ -1129,10 +1133,11 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         || detail_fine.is_some()
         || detail_after.is_some()
         || shadow_push.is_some()
+        || normal_field.is_some()
     {
         return Err(
             "--plane-fit, --plane-offset, --fit-filter, --face-mix, --detail-fine, \
-             --detail-after and --shadow-push do not apply under --look plain"
+             --detail-after, --shadow-push and --normal-field do not apply under --look plain"
                 .to_owned(),
         );
     }
@@ -7446,7 +7451,7 @@ mod tests {
                 .err()
                 .as_deref(),
             Some(
-                "--look takes plain, face, contour, contour-sharp, contour-grain, trilinear8, gradient27, not contour-soft"
+                "--look takes plain, face, contour, contour-sharp, contour-grain, cubes-field, trilinear8, gradient27, not contour-soft"
             )
         );
         assert_eq!(
@@ -7484,6 +7489,15 @@ mod tests {
             "look contour-sharp (normals contour, fit weighted27 + majority, face mix 0, detail after lighting on, shadow push off), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
         );
         assert!(parse_args_from(argv(&["--fit-filter", "median"])).is_err());
+        assert_eq!(
+            line(&["--normal-field", "on"]),
+            "look contour-sharp (normals contour, fit weighted27, face mix 0, detail after lighting on, shadow push off, normal field on), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+        );
+        assert_eq!(
+            line(&["--look", "cubes-field"]),
+            "look cubes-field (normals contour, fit weighted27, face mix 0, detail after lighting on, shadow push off, normal field on, cube hits on), detail on (rock scale 4, strength 0.1, fine 0), view shaded"
+        );
+        assert!(parse_args_from(argv(&["--look", "plain", "--normal-field", "on"])).is_err());
         assert!(parse_args_from(argv(&["--look", "plain", "--fit-filter", "majority"])).is_err());
     }
 

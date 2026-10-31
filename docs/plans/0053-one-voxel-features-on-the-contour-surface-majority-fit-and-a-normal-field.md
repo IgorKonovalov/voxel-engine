@@ -366,8 +366,8 @@ Determinism is not touched: everything is in `vxe-render`, a client-side view.
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The box spike: two metrics, six scenes, the poses, and the hypotheses read | dev | done | eaea0f0 |
-| 2: The plane fit on a majority-filtered occupancy | dev | done | committed with this row |
-| 3: The normal field, and the cubes-shaded-by-the-field preset | dev | not started | |
+| 2: The plane fit on a majority-filtered occupancy | dev | done | 11a9b1e |
+| 3: The normal field, and the cubes-shaded-by-the-field preset | dev | stopped: done-whens 1 and 2 (specks) unmet | committed with this row (wip) |
 | 4: The owner's windowed check | human | not started | |
 | 5: The pick as the default, the losers removed | dev | not started | |
 
@@ -540,6 +540,125 @@ look with `--fit-filter majority`. Lamp off reads the same rows as lamp on.
   skipped; `--profile gpu --no-fail-fast` (perf lock, load 1.2 to 6.6) 189 run, 188 passed, 1
   failed (`sharpness detail_after_lighting_is_exact_for_the_lamp`, the base's), 30 skipped.
 
+#### Phase 3
+
+Readings as Phase 2's (lavapipe, exclusive perf lock, `box_readings`), at 11a9b1e plus this
+phase's diff; `field` is the start look with `--normal-field on`, `majority + field` with both,
+`cubes-field` the preset. The start look and `majority` rows read as Phase 2's table. Lamp off
+reads the same rows as lamp on.
+
+| scene | look | hits | left out | box px | < 14 | >= 14 | 2 air | 3 air | 4+ air | pairs | tile edges % | class 1 % | class 2 % | class 3 % |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| bare floor | field | 50747 | 77 | 0 | 0 | 0 | 0 | 0 | 0 | 97251 | 0.000 | 0.000 | 0.000 | 0.000 |
+| rod | field | 50747 | 77 | 499 | 499 | 0 | 0 | 418 | 81 | 97251 | 0.145 | 0.000 | 0.000 | 0.747 |
+| lone cube | field | 50728 | 76 | 24 | 24 | 0 | 0 | 0 | 24 | 97232 | 0.000 | 0.000 | 0.000 | 0.000 |
+| groove | field | 51626 | 63 | 697 | 0 | 697 | 697 | 0 | 0 | 98926 | 0.195 | 0.000 | 0.000 | 1.253 |
+| wall pillar | field | 41400 | 180 | 276 | 276 | 0 | 0 | 210 | 66 | 80260 | 0.042 | 0.000 | 0.000 | 0.077 |
+| ridge | field | 50729 | 76 | 568 | 115 | 453 | 453 | 115 | 0 | 97216 | 0.005 | 0.000 | 0.000 | 1.459 |
+| free pillar | field | 48590 | 110 | 828 | 828 | 0 | 0 | 0 | 828 | 93192 | 0.093 | 0.000 | 0.000 | 0.000 |
+| sheet | field | 47782 | 116 | 8108 | 7717 | 391 | 8026 | 82 | 0 | 91542 | 0.592 | 0.000 | 0.000 | 0.375 |
+| level vein | field | 82944 | 0 | 35098 | 0 | 35098 | 21734 | 13364 | 0 | 165288 | 0.034 | 0.000 | 0.000 | 0.581 |
+| level patch | field | 82944 | 0 | 38250 | 199 | 38051 | 24624 | 13427 | 199 | 165133 | 0.342 | 0.000 | 0.000 | 2.318 |
+| bare floor | majority + field | 50747 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 97251 | 0.000 | 0.000 | 0.000 | 0.000 |
+| rod | majority + field | 50747 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 97251 | 0.000 | 0.000 | 0.000 | 0.824 |
+| lone cube | majority + field | 50728 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 97232 | 0.000 | 0.000 | 0.000 | 0.000 |
+| groove | majority + field | 51626 | 0 | 4870 | 0 | 4870 | 4870 | 0 | 0 | 98827 | 0.000 | 0.000 | 0.000 | 0.000 |
+| wall pillar | majority + field | 41400 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 80260 | 0.000 | 0.000 | 0.000 | 0.063 |
+| ridge | majority + field | 50729 | 0 | 498 | 63 | 435 | 435 | 63 | 0 | 97232 | 0.010 | 0.000 | 0.000 | 1.768 |
+| free pillar | majority + field | 48590 | 0 | 1182 | 1182 | 0 | 0 | 0 | 1182 | 93160 | 0.117 | 0.000 | 0.000 | 0.000 |
+| sheet | majority + field | 47803 | 0 | 14497 | 13912 | 585 | 7468 | 5700 | 1329 | 92035 | 0.454 | 0.000 | 0.000 | 0.987 |
+| level vein | majority + field | 82944 | 0 | 39263 | 0 | 39263 | 22337 | 16926 | 0 | 165288 | 0.008 | 0.000 | 0.000 | 0.565 |
+| level patch | majority + field | 82944 | 0 | 42080 | 257 | 41823 | 25769 | 16054 | 257 | 165006 | 0.118 | 0.000 | 0.000 | 2.171 |
+| bare floor | cubes-field | 50747 | 153 | 0 | 0 | 0 | 0 | 0 | 0 | 97251 | 0.000 | 0.000 | 0.000 | 0.000 |
+| rod | cubes-field | 50747 | 153 | 3003 | 3003 | 0 | 0 | 2285 | 718 | 97031 | 0.000 | 0.000 | 0.000 | 0.000 |
+| lone cube | cubes-field | 50728 | 152 | 282 | 282 | 0 | 0 | 0 | 282 | 97200 | 0.000 | 0.000 | 0.000 | 0.000 |
+| groove | cubes-field | 51626 | 121 | 4870 | 0 | 4870 | 4870 | 0 | 0 | 98827 | 0.100 | 0.000 | 0.000 | 0.000 |
+| wall pillar | cubes-field | 41400 | 180 | 1438 | 1438 | 0 | 0 | 956 | 482 | 80158 | 0.000 | 0.000 | 0.000 | 0.000 |
+| ridge | cubes-field | 50729 | 153 | 4490 | 1080 | 3410 | 3410 | 1080 | 0 | 97000 | 0.016 | 0.000 | 0.000 | 0.000 |
+| free pillar | cubes-field | 48590 | 206 | 1312 | 1312 | 0 | 0 | 0 | 1312 | 93168 | 0.093 | 0.000 | 0.000 | 0.000 |
+| sheet | cubes-field | 47803 | 219 | 15630 | 14988 | 642 | 8277 | 6024 | 1329 | 92115 | 0.543 | 0.000 | 0.000 | 0.000 |
+| level vein | cubes-field | 82944 | 0 | 67408 | 0 | 67408 | 25570 | 41838 | 0 | 165288 | 0.048 | 0.000 | 0.000 | 0.000 |
+| level patch | cubes-field | 82944 | 0 | 73887 | 655 | 73232 | 30927 | 42305 | 655 | 164977 | 0.254 | 0.000 | 0.000 | 0.000 |
+
+- Done-when 1, unmet: `the_normal_field_has_no_tile_edges` (lavapipe) fails at its first scene,
+  `rod` under `field`, 0.145 % tile edges (141 pairs). From the table: under `field` `rod`
+  0.145 %, `lone cube` 0, `groove` 0.195 %, `ridge` 0.005 %; under `majority + field` `rod`,
+  `lone cube`, `groove` 0, `ridge` 0.010 %. The remaining pairs straddle a step in depth
+  within the 1.5-voxel reach: on `rod` every one pairs a floor hit beside the rod (`z = 60`,
+  field tilted about 17 degrees toward `+y`) with a hit on the rod's slab top or side (`z =
+  60.375`, field within 3 degrees of `+z`), 0.6 voxel apart (RTX 3080 Laptop scratch dump).
+  `the_normal_field_moves_no_hit` (lavapipe): every scene's hit mask equal byte for byte with
+  the field on and off, filter off and on.
+- Done-when 2: `the_normal_field_meets_the_guardrails` (lavapipe): cavity normal error 5.69
+  degrees under `field`, 5.72 under `majority + field` (start look 7.13), silhouette 32 px both
+  (32), `A` 5.41 and 5.50 %. Unmet, the speck reading: `the_normal_field_adds_no_dark_speck`
+  (contour golden scene, `look(Contour)`, full shadow walk) reads with, without, only with
+  shadows 365, 360, 6 without the field and 240, 233, 8 with it.
+- Done-when 3: `cubes-field` silhouette 172 px against face 172, cavity normal error 5.74
+  degrees, `A` 5.41 %; `the_banner_names_the_view` reads `look cubes-field, detail on`.
+- Done-when 4: hit and light at the level's spawn, `flythrough --level --headless --seed 1
+  --render 1920x1080 --frames 300 --adapter NVIDIA|AMD [--fit-filter majority --normal-field
+  off|on]`, 1080p from 1280 x 720, release, each run under the exclusive perf lock and the
+  memory cap, three alternated rounds, medians of each run's median of the last 30 frames;
+  "base" is cde413a's binary (the Plan 0050 close binary's stand-in); 1-minute load 0.9 to 3.4
+  (round 1 at 1.6 to 3.4, rounds 2 and 3 at 0.9 to 1.9); `--adapter`.
+
+  | adapter | binary, setting | hit ms | light ms | hit + light | against base |
+  |---|---|---|---|---|---|
+  | NVIDIA GeForce RTX 3080 Laptop GPU | base | 0.593 | 0.886 | 1.479 | |
+  | | tip, majority, field off | 0.587 | 0.883 | 1.470 | -0.6 % |
+  | | tip, majority, field on | 0.604 | 1.053 | 1.657 | +12.0 % |
+  | AMD Radeon Graphics (RADV RENOIR) | base | 4.291 | 7.014 | 11.305 | |
+  | | tip, majority, field off | 4.293 | 7.025 | 11.318 | +0.1 % |
+  | | tip, majority, field on | 4.290 | 7.844 | 12.134 | +7.3 % |
+
+  The RTX misses the +10 % guess (+12.0 %); the Radeon is inside +20 %. Initial fill in the
+  same runs: base 17.833 and 95.612 ms, tip with the filter 20.603 and 73.495 (one RTX run read
+  122.273). Mirror 157 872 640 B live, 259 203 264 B allocated in every run.
+- Done-when 5: the table above, with the crack classes.
+- Deviations: `SurfaceTuning::cube_hits` (flag bit 16) carries `cubes-field`'s plane test off,
+  beside `normal_field` (bit 15); the field applies to every hit of the contour look, plane or
+  cube; `HitRecord::nf` holds the field after `with_field`, read by `surface_detail`,
+  `lighting_normal` and `detail_lamp_ratio`, while the composite's bilateral weights and the
+  temporal passes keep the record's normal; `with_field` resets the walk's held words before
+  its lookups; files outside the list: `probe_gather.wgsl` and `gradient.wgsl` (they shade
+  through `surface_detail` and `lighting_normal`, so they take the field too); `sharpness.rs`
+  unchanged; `BANNER_ROWS` 9 (the look's words wrap into three rows with the push, the filter
+  and the field all named); `cubes-field` sits in `LookPreset::ALL` after `contour-grain`; the
+  tests of done-whens 1 and 2 are split four ways (tile edges, hits, guardrails, specks).
+- Gate at this commit: build, clippy `-D warnings` 0, fmt 0, doctests 11 ok, `cargo deny check` ok, the four
+  `scripts/check-*.mjs` 0; `--profile quick` 539 run, 538 passed, 1 timeout (`flythrough::replay
+  a_stamp_and_a_collapse_replay_from_the_save` 30 s; alone 13.7 s), 3 skipped; `--profile gpu
+  --no-fail-fast` (perf lock, load 1.4 to 20 from the quick run's tail at the start) 193 run,
+  190 passed, 3 failed, 30 skipped: `look the_normal_field_has_no_tile_edges` and `look
+  the_normal_field_adds_no_dark_speck` (done-whens 1 and 2 above), `sharpness
+  detail_after_lighting_is_exact_for_the_lamp` (the base's).
+
+### Resume notes (2026-10-31, delete when Phase 3 lands)
+
+- State: Phase 3's code, tests and readings are in this wip commit; the phase stops on two
+  done-whens, which wait on the architect and the owner. Phases 1 and 2 are done (eaea0f0,
+  11a9b1e).
+- Question 1, done-when 1 (`rod`, `lone cube`, `groove`, `ridge` read 0 tile-contrast pairs
+  under the field, filter off and on): under `field` `rod` 0.145 %, `groove` 0.195 %, `ridge`
+  0.005 %; under `majority + field` `rod`, `lone cube`, `groove` 0, `ridge` 0.010 %. Every
+  remaining pair on `rod` straddles the rod's step (0.375 voxel, inside the 1.5-voxel reach).
+  Options: (a) the architect re-words the bar: 0 pairs under the filter on `rod`, `lone cube`
+  and `groove`, the rest readings (the field leaves the steps the plan's Risks already name)
+  (recommended); (b) the metric excludes pairs across a depth step smaller than 1.5 voxels
+  (a metric change, the architect's); (c) a wider or different field (an ADR-0040 change).
+- Question 2, done-when 2's speck reading (at most today's): shadow-only dark specks 6 without
+  the field, 8 with it (with shadows 365 to 240, without 360 to 233; face mode's 34 is the
+  speck test's own bar). Options: (a) the owner accepts 8 against 6 with the totals falling
+  (recommended); (b) the shadow origin or the lamp's `n.l` reads the field differently, code
+  outside this phase's design and an architect amendment; (c) keep 6 and investigate the two
+  pixels first.
+- Also for the owner: the cost bar of done-when 4 (hit plus light +10 % RTX) reads +12.0 %;
+  the plan says a miss does not stop the phase.
+- To finish on (a)/(a): re-word nothing in code beyond the asserted scenes the amendment names;
+  rerun `--profile gpu` under the perf lock; replace these notes with the row's SHA; commit as
+  the phase (`feat(render)`).
+
 ### Notes
 
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
@@ -559,6 +678,8 @@ each. Empty is fine.)_
   `floor_world` and `wall_world`; box pixels of count under 14 are yellow in the side-by-sides.
 - Phase 2: the box metric's edge rule (a point on one of the box voxel's faces toward a solid
   neighbour is not a box pixel) changes Phase 1's readings slightly; both are in the log.
+- Phase 3: `SurfaceTuning::cube_hits` beside `normal_field`; the field in `probe_gather.wgsl`
+  and `gradient.wgsl` too; `BANNER_ROWS` 9.
 - Noticed, not acted on: at both poses the box metric counts 42 % and 46 % of the hits, the
   cube-face parts of ordinary clipped surface voxels with two or three air faces (count 14 or
   more); only the count-under-14 class (0 at the vein, 200 px at the patch) is specific to

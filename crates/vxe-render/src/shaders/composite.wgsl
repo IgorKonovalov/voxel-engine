@@ -252,7 +252,10 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
         c = CUTAWAY_SKY * ex;
     }
     if (rec.found) {
-        let st = surface_detail(rec);
+        // The normal field, when on, for the normals view and the detail; the lighting's
+        // bilateral weights below keep the record's normal.
+        let rf = with_field(rec);
+        let st = surface_detail(rf);
         if (view == VIEW_NORMALS) {
             textureStore(target_tex, px, vec4<f32>(st.xyz * 0.5 + 0.5, 1.0));
             return vec2<f32>(0.0);
@@ -263,7 +266,7 @@ fn composite_px(px: vec2<i32>) -> vec2<f32> {
         if (detail_after_lighting()) {
             // The ratio is the lamp's term; the indirect part was gathered with the detailed
             // normal already, so it is added unscaled.
-            e = lit.direct * detail_lamp_ratio(rec, st.xyz) + lit.indirect;
+            e = lit.direct * detail_lamp_ratio(rf, st.xyz) + lit.indirect;
         }
         c = albedo * e * (1.0 / PI);
         if ((params.flags & FLAG_CUTAWAY) == 0u) {

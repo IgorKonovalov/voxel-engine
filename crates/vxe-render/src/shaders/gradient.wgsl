@@ -54,7 +54,7 @@ fn gradient(@builtin(global_invocation_id) gid: vec3<u32>) {
     let q = gid.xy * STRATUM + vec2<u32>(h % STRATUM, (h / STRATUM) % STRATUM);
     if ((params.history & 1u) != 0u && all(q < params.light_size)) {
         let qi = vec2<i32>(q);
-        let rec = unpack_hit(textureLoad(grad_prev_pos, qi, 0), textureLoad(grad_prev_info, qi, 0));
+        let rec = with_field(unpack_hit(textureLoad(grad_prev_pos, qi, 0), textureLoad(grad_prev_info, qi, 0)));
         if (rec.found && (params.flags & FLAG_CUTAWAY) == 0u) {
             let v = params.prev_views[view_of(q * params.light_scale + unpack_offset(params.prev_light_offset))];
             let d = normalize(rec.p - v.origin);

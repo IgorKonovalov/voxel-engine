@@ -352,6 +352,8 @@ const TUNING_OFF: SurfaceTuning = SurfaceTuning {
     face_mix: 0.0,
     detail_after_lighting: false,
     shadow_push: false,
+    normal_field: false,
+    cube_hits: false,
 };
 
 impl LookPreset {
@@ -398,16 +400,29 @@ impl LookPreset {
         ..Self::CONTOUR
     };
 
+    /// Every voxel hit as its cube, shaded with the planes' normal field, at the start look's
+    /// fit and detail: ADR-0040's Alternative D, contours dropped, for comparison.
+    pub const CUBES_FIELD: Self = Self {
+        name: "cubes-field",
+        tuning: SurfaceTuning {
+            normal_field: true,
+            cube_hits: true,
+            ..Self::CONTOUR_SHARP.tuning
+        },
+        ..Self::CONTOUR_SHARP
+    };
+
     pub const TRILINEAR8: Self = Self::plain("trilinear8", NormalMode::Trilinear8);
     pub const GRADIENT27: Self = Self::plain("gradient27", NormalMode::Gradient27);
 
     /// `N`'s order: the contour presets side by side after face, then the two diagnostic
     /// normal modes.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::FACE,
         Self::CONTOUR,
         Self::CONTOUR_SHARP,
         Self::CONTOUR_GRAIN,
+        Self::CUBES_FIELD,
         Self::TRILINEAR8,
         Self::GRADIENT27,
     ];
@@ -444,17 +459,24 @@ impl LookPreset {
     }
 
     /// The parts beyond the normal mode: `fit uniform27, face mix 0, detail after lighting
-    /// off, shadow push off`.
+    /// off, shadow push off`, then `normal field on` and `cube hits on` when set.
     pub fn parts(&self) -> String {
         let t = &self.tuning;
         let on = |b: bool| if b { "on" } else { "off" };
-        format!(
+        let mut s = format!(
             "fit {}, face mix {}, detail after lighting {}, shadow push {}",
             t.fit.name(),
             t.face_mix,
             on(t.detail_after_lighting),
             on(t.shadow_push)
-        )
+        );
+        if t.normal_field {
+            s += ", normal field on";
+        }
+        if t.cube_hits {
+            s += ", cube hits on";
+        }
+        s
     }
 
     /// [`look_materials_with`] at this preset's rock pair, with rock's fine-octave weight.
