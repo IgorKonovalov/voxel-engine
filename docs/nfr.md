@@ -728,6 +728,158 @@ for this command line existed before this reading.
 No frame may stall on paging: work attributable to streaming on the render thread is capped at
 the streaming line above; the rest runs on background threads.
 
+### Frame ledger (2026-10-31)
+
+The frame the owner judges Plan 0054's field surface against at its Phase 4d: today's measured
+passes in three surface scenarios, beside a slice reserved for every planned system not yet in
+the frame, held against the 16.6 ms split above. It is a ledger, not a bar. Phase 4b's bar (RTX
+hit plus light at most 5 ms at the level's spawn, Plan 0054 owner answer 3) stands unchanged
+(owner, 2026-10-31: "do not tighten yet. maybe there is still a chance to have some smoothness,
+maybe only for certain types of materials"). Plain cubes everywhere, Teardown-style, are the
+owner's accepted fallback if the field cannot pay. A reading replaces a guess here as each plan
+closes.
+
+**Conditions.** The level's spawn, `flythrough --level --seed 1 --headless --render 1920x1080
+--frames 300 --adapter NVIDIA|AMD [--look L]`: 1080p output from 1280 x 720 internal (`own` at
+1.5), half lighting tier, coarse shadow walk, lamp on, release, exclusive perf lock and memory
+cap, three alternated rounds started at a 1-minute load under 2, the median over the rounds of
+each run's frame line (itself the median of the last 30 frames). Sources, untracked logs in
+Plan 0054's worktree:
+
+- cubes on the RTX: `face` at main `28948a5`, Plan 0054 Phase 4a's matrix (`live/p4a/runs/`),
+  read while that matrix was still running; Phase 4a's log table supersedes it.
+- cubes on the Radeon: **no `face` reading at this tree.** The default `contour-sharp` (the cube
+  walk with contour planes and snap) at `811b37e` (`live/cost/level-base-*.log`, Plan 0054 Phase
+  1's base) stands in as an upper bound: on the RTX at `28948a5` `face`'s hit reads 7.5 % under
+  the default's (0.567 against 0.613 ms).
+- the field: Plan 0054 Phase 3a's cost runs at `17045d8` (`live/p3a/cost/`, its done-when 3).
+  `field-cubes` is the field with the crisp test, the nearest reading of Phase 4c's default (no
+  level material is crisp, so it shows the crisp test's cost and no cube); `field` is without it.
+
+The split's lines group the passes: primary rays = hit; lighting = gradient + light + probes +
+gather; denoise = temporal + a-trous; upscale and post = composite + upscale + sharpen +
+exposure. The CPU is the render thread's frame CPU, which runs beside the GPU; at rest at the
+spawn its `update + poll + sync` reads p50 0.03 to 0.09 ms and p99 0.05 to 0.16 ms in every run
+above, and under motion it is §2's recorded streaming miss. **The ledger keeps the whole 1.0 ms
+streaming line reserved and holds the GPU frame against the other 15.6 ms.**
+
+**1. Measured, per pass (ms).** RTX = NVIDIA GeForce RTX 3080 Laptop GPU, Radeon = AMD Radeon
+Graphics (RADV RENOIR), the slow adapter (§1).
+
+| line (budget) | pass | RTX `face` | RTX `field-cubes` | RTX `field` | Radeon default | Radeon `field-cubes` | Radeon `field` |
+|---|---|---|---|---|---|---|---|
+| primary rays (3.0) | hit | 0.567 | 5.497 | 4.936 | 4.296 | 42.101 | 40.146 |
+| lighting (6.0) | gradient | 0.092 | 0.096 | 0.099 | 0.486 | 0.498 | 0.497 |
+| | light | 0.905 | 0.950 | 0.975 | 7.021 | 7.218 | 7.216 |
+| | probes | 1.207 | 1.475 | 1.501 | 8.229 | 8.614 | 8.587 |
+| | gather | 0.110 | 0.108 | 0.110 | 0.609 | 0.610 | 0.609 |
+| denoise (3.0) | temporal | 0.080 | 0.085 | 0.084 | 0.623 | 0.619 | 0.622 |
+| | a-trous | 0.538 | 0.495 | 0.502 | 2.347 | 2.350 | 2.346 |
+| upscale, post (1.5) | composite | 0.180 | 0.193 | 0.196 | 1.323 | 1.327 | 1.323 |
+| | upscale | 0.593 | 0.497 | 0.504 | 2.979 | 2.997 | 2.983 |
+| | sharpen | 0.076 | 0.079 | 0.077 | 0.649 | 0.650 | 0.650 |
+| | exposure | 0.035 | 0.036 | 0.036 | 0.029 | 0.029 | 0.029 |
+| **GPU frame** | | **4.388** | **9.501** | **9.010** | **28.688** | **67.007** | **65.052** |
+| lighting line | | 2.314 | 2.629 | 2.685 | 16.345 | 16.940 | 16.909 |
+| denoise line | | 0.618 | 0.580 | 0.586 | 2.970 | 2.969 | 2.968 |
+| post line | | 0.884 | 0.805 | 0.813 | 4.980 | 5.003 | 4.985 |
+| CPU (beside the GPU) | frame CPU | 0.546 | 0.846 | 0.847 | 0.781 | 0.935 | 0.824 |
+
+Read off it: on the RTX every line but primary rays is inside its budget in every look, and the
+field's cost is its hit pass (8.7x to 9.7x `face`'s) plus about 0.3 ms more probe update than
+`face`'s. On the
+Radeon the frame is over 16.6 ms before the surface is chosen: its lighting line alone reads
+2.7x the 6.0 ms budget and its post line 3.3x the 1.5 ms one.
+
+**The owner's window (a scaling note).** Session 1's frame line reads the window at 2530 x 1378
+from 1687 x 919 (`own` at 1.5), 1.68x the internal pixels of the conditions above. Measured
+there on the RTX, Phase 4a's matrix (`--render 2530x1378`, shaded, lamp on; in progress, two
+or three rounds), GPU frame in ms:
+
+| pose | `face` (`28948a5`) | default (`28948a5`) | `field` (`17045d8`) | `field-cubes` (`17045d8`) |
+|---|---|---|---|---|
+| spawn | 6.639 | 6.816 | 13.873 | 14.393 |
+| vein | 6.403 | 6.846 | 11.743 | 11.906 |
+| patch | 6.243 | 6.528 | 13.396 | 13.191 |
+
+The window reads about 1.5x the 1080p frame (`face` 6.639 / 4.388 = 1.51, `field-cubes` at the
+spawn 14.393 / 9.647 in the same matrix = 1.49). **Projection, not read:** the Radeon at the
+window about 1.5x its rows above (default about 43 ms, `field-cubes` about 100 ms), and every
+per-pixel slice in table 2 about 1.5x on either adapter.
+
+**2. Reserved slices for the systems not yet in the frame**, at the conditions above. RTX
+figures are the plans' own where a plan exists. Where a plan gives no slow-adapter figure the
+Radeon column is 6.5x the RTX's, today's measured ratio of the default frame at `811b37e` (28.688 /
+4.413 = 6.5x; the field's hit reads 7.7x), a guess. "Budgeted" means a plan's Budgets table states the
+figure, itself a guess until that plan's close reads it; "guess" means no plan exists yet.
+
+| system | RTX ms | Radeon ms | status | source |
+|---|---|---|---|---|
+| light quality: probe direct light, settle and dots | 0.1 to 0.3 | 0.4 to 1.7 | budgeted | Plan 0048 (probe update at most +5 %, its bar 6), Plan 0049 (variance, a-trous, temporal and shadow-origin guesses). Plan 0051 predicts a saving at rest on the RTX (probes under 0.2 ms, light + gradient + temporal under 0.6 ms) that is not counted until read |
+| liquids | 0.9 to 1.2 | 5.9 to 7.8 (6.5x) | budgeted | Plan 0034, ADR-0029: a half-screen lake in `Trace`, refraction walk 0.4 plus the liquid pass 0.5 to 0.8; under 0.5 in `Sky`; lava adds none |
+| voxel-model entities (creatures) | 0.3 to 0.8 | 2.0 to 5.2 (6.5x) | guess | M6 (`roadmap.md`): a top-level structure of AABBs per ray, a model walk on the pixels they cover; no plan or ADR yet |
+| entity shadows and motion vectors | 0.2 to 0.5 | 1.3 to 3.3 (6.5x) | guess | M6: shadow rays and probe rays test the same structure; the temporal pass's motion vectors |
+| volumetrics: dust, fog, smoke | 0.3 to 0.6 | 2.0 to 3.9 (6.5x) | guess | M8 (`roadmap.md`): a coarse volume marched at half resolution with a fixed step count; scaled from Plan 0035's cloud march |
+| effects: debris particles | 0.1 to 0.3 | 0.7 to 2.0 (6.5x) | guess | M8, no plan |
+| **cave frame subtotal** (the first consumer's) | **1.9 to 3.7** | **12.3 to 23.9** | | the six rows above |
+| sun and sky | 0.85 to 1.9 | 5.2 to 11.4 | budgeted | Plan 0032, ADR-0026, ADR-0027: sky LUTs, the directional and sky rays, the probes' sun rays, the gradient re-shade, the composite's sky |
+| far field | 0.3 to 1.0 | 2.0 to 6.5 (6.5x) | budgeted | Plan 0033, ADR-0028: outdoor horizon view, primary rays; the sun ray's growth is unprojected |
+| clouds and aerial perspective | 0.5 to 1.0 | 3.6 to 7.7 | budgeted | Plan 0035, ADR-0030; it proposes a 1.0 ms sub-line on the floor |
+| weather | 0.25 to 0.8 | 0.75 to 8.0 | budgeted | Plan 0036, ADR-0031: fall map, precipitation, composite terms |
+| night sky | 0.25 to 0.65 | 2.0 to 5.2 | budgeted | Plan 0037, ADR-0032: aurora and the composite's stars and bodies; it proposes a 0.3 ms cap on the floor |
+| **outdoor frame total** (cave rows plus M10) | **4.05 to 9.05** | **25.9 to 62.7** | | all rows |
+
+Game work is the consumer's CPU, outside this GPU ledger; today's frame CPU (table 1) runs
+beside the GPU.
+
+**3. The ledger: three surface scenarios.** (A) plain cubes everywhere (`face`); (B) the field
+for every material that is not crisp (Plan 0054's Phase 4c default, read as `field-cubes` at
+the level, where no material is crisp); (C) smoothness for some material types only, the field's
+cost scaling with the smooth share `s` of the on-screen surface: GPU frame = A + `s` x (B - A),
+a **projection** that assumes Plan 0054 Phase 4c's amended per-brick rule (a brick with no
+smooth voxel near walks as cubes) and a cost linear in the smooth pixels; rays that cross smooth
+band bricks before a crisp hit pay more than it says. The floor (§1's baseline, not on hand) is
+projected at 2x to 3x the RTX, the factor §2's Plan 0005 paragraph uses. "Left" is 15.6 ms
+minus the GPU frame: what remains for table 2.
+
+| scenario | RTX GPU frame | RTX left | Radeon GPU frame | Radeon left | floor, projected (2x to 3x RTX) | floor left |
+|---|---|---|---|---|---|---|
+| A, cubes | 4.39 | 11.2 | 28.7 (default, upper bound) | -13.1 | 8.8 to 13.2 | 6.8 to 2.4 |
+| B, field but crisp | 9.50 | 6.1 | 67.0 | -51.4 | 19.0 to 28.5 | -3.4 to -12.9 |
+| C, `s` = 0.25 (projection) | 5.67 | 9.9 | 38.3 | -22.7 | 11.3 to 17.0 | 4.3 to -1.4 |
+| C, `s` = 0.5 (projection) | 6.94 | 8.7 | 47.8 | -32.2 | 13.9 to 20.8 | 1.7 to -5.2 |
+| C, `s` = 0.75 (projection) | 8.22 | 7.4 | 57.4 | -41.8 | 16.4 to 24.7 | -0.8 to -9.1 |
+
+**4. What each scenario leaves, and the field's cost at which it still fits** (RTX, dev
+reference, 1080p; the cave frame needs 1.9 to 3.7 ms of table 2, the outdoor frame 4.05 to
+9.05 ms):
+
+- **A** leaves 11.2 ms: the cave frame and the outdoor frame both fit at every guess. On the
+  floor's projection it leaves 6.8 to 2.4 ms: the cave frame (3.8 to 11.1 ms at the floor's
+  factor) fits only toward the 2x end with the low guesses.
+- **B** leaves 6.1 ms: the cave frame fits with 2.4 to 4.2 ms to spare; the outdoor frame fits
+  only at its low guesses. B's passes other than the hit read 4.00 ms (9.501 - 5.497), so B
+  fits while the field's hit is at most 15.6 - 4.00 - the systems: **at most 7.9 ms for the
+  cave frame at its high guesses** (today 5.50), **at most 2.55 to 7.55 ms for the outdoor
+  frame**. Under Phase 4b's bar (hit plus light at most 5 ms, so a hit near 4.05 ms) B's frame
+  is about 8.05 ms and leaves 7.55 ms: the cave frame at every guess, the outdoor frame up to its
+  low-middle guesses. On the floor's projection B fits nothing at today's cost: at the 2x end
+  with the cave's low guesses the field's hit would need to read about 1.9 ms or less on the RTX.
+- **C** leaves 11.2 - `s` x 5.11 ms (5.11 = B - A today). It fits while the field's extra over
+  cubes is at most (11.2 - the systems) / `s`: for the outdoor frame at its high guesses
+  (9.05 ms) that is 8.6 ms at `s` = 0.25 (today's 5.11 fits), 4.3 ms at 0.5 and 2.9 ms at 0.75;
+  for the cave frame at its high guesses it fits at every `s` at today's cost. On the floor's 2x
+  end with the cave's low guesses the budget is 15.6 / 2 = 7.8 ms of RTX time, 5.9 ms after the
+  systems: A fits, and the field's extra may be 1.5 / `s` ms, 6.0 at `s` = 0.25 (today's cost
+  fits), 3.0 at 0.5. At the 3x end nothing fits, cubes included.
+- **The Radeon misses in every scenario before any system is added** (A over by 13.1 ms; its
+  lighting line alone 16.3 ms). That is a profile question (§1's portable profile: internal
+  resolution, lighting tier), not a surface one; the field's 7.7x hit ratio there is the walk-speed
+  spike's (Plan 0054 owner answer 3).
+- **At the owner's window** the RTX's B leaves 1.2 to 3.7 ms by pose (the window table) against
+  the cave frame's projected 2.9 to 5.6 ms there (table 2 x 1.5, a projection): B misses at the
+  window at the spawn and the patch; A leaves 9.0 to 9.4 ms and fits.
+
 ## 3. Memory
 
 | | Budget |

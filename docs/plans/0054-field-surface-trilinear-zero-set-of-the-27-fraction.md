@@ -547,6 +547,23 @@ every asserted reading, golden and gate stays on lavapipe.
   - *Two crisp faces in a concave corner* keep the sharp corner (the corner rule above).
   - The ray cannot pass through a seam: the field's band and counts are the `field` look's,
     which read 0 leaks, and a crisp voxel stops the ray at its face.
+- **A brick with no smooth voxel near walks as cubes. Amended 2026-10-31 (owner):** the cost
+  lever for "smoothness, maybe only for certain types of materials" (`nfr.md` §2, "Frame
+  ledger", scenario C). The rules above alone do not give it: with crisp counted as solid, a
+  crisp-only region keeps the `field` look's band and counts, so a ray through it still reads
+  the band mask, the counts and the corner bits of every dual cell it crosses and pays the field
+  walk's cost (Phase 3a's thin rig, its wood crisp: `field-cubes` hit 4.70 ms against `face`'s
+  0.64 on the RTX). The rule: a brick whose voxels and one-voxel shell hold no smooth solid voxel
+  can give no field hit (every dual cell with a corner in it has no smooth solid corner, the
+  second rule above), so the walk crosses it as `face` does: no band-mask, count or corner read
+  and no cubic, its crisp voxels hit as cubes with the entry face's normal, its air skipped by
+  the occupancy masks and the hierarchy as in `face`. The image does not change; only the cost
+  does. One bit per brick (in the record or the slot header, dev's call) carries "no smooth
+  near"; the field pass sets it from the same material read that sets bit 7 (a brick that
+  holds a smooth solid voxel is smooth-near without reading its shell), and an edit that touches a brick or its shell refreshes it with the counts. A brick of a
+  LOD-only chunk is cubes already. The field hit pipeline holds 128 VGPRs against the cube
+  walk's 64 (Phase 1's RADV stats), which caps the occupancy of cube-walking rays inside it;
+  splitting the pipeline (Phase 4b's list) is dev's to take if done-when 8 needs it.
 - **The field as the default.** The fly-through's default look is the field with the table's
   crisp materials as cubes; `field` and `field-cubes` become that one look, named `field`.
   `face` stays as the honest-cubes comparison look and the rig test's reference.
@@ -627,6 +644,22 @@ every asserted reading, golden and gate stays on lavapipe.
   7. No removed setting's flag remains in `--help` or the banner; `cargo doc` has no mention
      of a plane attribute outside the ADR citations; the banner names the look `field` and
      says nothing of crisp cubes (a material property, not a mode).
+  8. The cost lever (amended 2026-10-31, owner). The fly-through takes `--crisp none|rock|all`
+     (testbed only: it sets `MaterialFlags::CRISP` on the level's rows when the table is built,
+     `rock` on the rock row alone and `all` on every row that is not `TRANSLUCENT`; the
+     banner's world line lists the rows set, done-when 7's rule otherwise holding), and the
+     frame line prints the smooth share `s` of hit pixels (hits whose material is not crisp).
+     At the level's spawn, 1080p from 720p, release, three alternated quiet rounds on the RTX
+     and the Radeon, against `face` at the same tip: (i) `--crisp all` reads the hit pass within
+     10 % of `face`'s, and its hit mask, hit positions (1e-3 voxel), normals and materials at
+     the spawn, the vein and the patch (the 384 x 216 readback) are `face`'s bit for bit;
+     (ii) `--crisp rock` (crisp-majority: the level's bulk crisp, the ores and the rest smooth)
+     reads the hit pass at most `face + s x (none - face)` plus 10 % of the `none - face` gap,
+     with `s` its printed share; (iii) `--crisp none` (all smooth) is done-when 6's reading. The
+     log tabulates the hit and the GPU frame of the three and `face`, with `s`, per adapter, and
+     the same at the vein and the patch at the window's size (`--render 2530x1378`) as readings.
+     A miss stops dev with the table; the owner picks the lever's form (a per-band-cell bit, a
+     split pipeline, or the reading accepted).
 
 ### Phase 4d: The owner's windowed check of the default
 - **Owner skill:** human
@@ -634,7 +667,9 @@ every asserted reading, golden and gate stays on lavapipe.
   logged every run (the session script turns the HUD's timer on and greps the `frame (` lines,
   so the window's size and the view are on record): the level at the vein and the patch in the
   default look, lamp on and off, shaded, at the window's size of sessions 1 and 2; the thin rig
-  (the wood crisp by its row) and the seam rig, `face` beside.
+  (the wood crisp by its row) and the seam rig, `face` beside. The owner judges the frame rate
+  against [`nfr.md`](../nfr.md) §2, "Frame ledger" (2026-10-31): cubes, the field but crisp,
+  and the field for some materials only, beside the slices reserved for the systems to come.
 - **Done when:** the owner records one of: (a) the frame rate and the seam are acceptable;
   Phase 5 runs. (b) the frame rate is not: the owner names a windowed bar (the frame or the hit
   plus light at the poses, at the window's size), and an amendment returns to Phase 4b's
