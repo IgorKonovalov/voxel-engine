@@ -639,51 +639,93 @@ the same rows as lamp on at both poses.
   the_normal_field_has_no_tile_edges` (Plan 0053 Phase 3) and `sharpness
   detail_after_lighting_is_exact_for_the_lamp` (98.028 %, Plan 0050 Phase 6).
 
-### Resume notes (2026-10-31, delete when Phase 3 lands)
+### Resume notes (2026-10-31, second checkpoint, delete when Phase 3 lands)
 
-- Done: Phase 1 (b282738 code, abc8c16 box rule), Phase 2 (owner, 3ce35ac). Merged:
-  `plan-0053` at 8dd3ee4 into this branch (c773e5f; plan 0054's file kept from this branch),
-  then main at 929d1b3 (ba5b4d2: ADR-0041 drafted, Phase 4 and 5 amended). Nothing of
-  Phase 3 is written yet.
-- Gate at c773e5f (code unchanged since; ba5b4d2 is docs): build, clippy (workspace and
-  `-p flythrough --features wasm`), fmt, doctests, the four scripts 0; quick 539 run, 537
-  passed, 2 load timeouts (castle 30.07 s, replay 30.04 s at load 29; alone 8.8 s, 15.6 s);
-  gpu on lavapipe, exclusive perf lock, load 1.32 to 1.18, 1742 s: 196 run, 196 passed (the
-  base's three failures are green after the merge; the field test passes).
-- Left: Phases 3, 4, 5 in order, one commit each. Phase 4's cost reading is against main
-  28948a5's release binary (build it in a scratch worktree or a separate target dir; never
-  touch `target/alt/release/flythrough`'s owner session files under `live/session1*`).
-- Phase 3 starting points (read, not built):
-  - Today the scratch is `crates/vxe-render/src/field.rs` (`FieldScratch`: dense 9-unit slots,
-    index rows of 529 words per record in shard 0, CPU `is_band` over the 27 chunks around a
-    brick, `prepare` re-tests the border bricks of the 26 neighbour chunks of every written
-    chunk), wired from `GpuWorld::set_field_surface` and `prepare_field` at the end of `sync`;
-    the shader side is `attrib.wgsl`'s `field_main` (fills counts) and `march.wgsl`'s
-    `field_brick`/`field_count`/`field_cell` (read the index, the slot's band words at
-    `w, w+2, w+4, w+6`, counts at word 16 + i / 4).
-  - The mirror's slot is built by `fill_slot` and sized by `slot_units` / `need` in
-    `gpu_world.rs`; `upload_brick` writes a uniform brick as its material (no slot). Header
-    words: palette 0..8, translucent 8..10, surface prefix 10..14 (`HEADER_PREFIX_WORD`), attr
-    units and flags 14; word 15 is unused. A band prefix per layer in `u16` needs four words
-    the header does not have while the attribute stays (it goes in Phase 4): one candidate is
-    word 15 holding the band prefixes of layers 2, 4 and 6 at 9 bits each (the odd layer adds
-    a popcount of the layer below's two band words).
-  - Band membership crosses chunk faces (a brick on a chunk face beside a solid neighbour
-    chunk), while `sync`'s upload is chunk-local by design (module docs: "an upload never
-    couples chunks"). The scratch handled it by re-testing the border bricks of the 26
-    neighbours; slot sizes in the mirror then change for a neighbour chunk's bricks in the
-    same sync, which the bin rule allows (a brick that changes bin moves). Disclose the way
-    chosen as a deviation from "the neighbour masks it already reads for the surface mask".
-  - A non-band voxel of a band brick reads 27 when solid, 0 when air; solid includes
-    translucent (Phase 1 and the amended Phase 4). The opaque mask excludes translucent
-    voxels, so a non-band non-opaque voxel needs the translucent unit (planar) or the ids
-    (Wide). The materials table has a translucent glass (`apps/flythrough/src/lib.rs`).
-  - Done-when 2 and the flight: the spike's census (1 997 544 band bricks) reads chunks the
-    world does not hold as air; the pool (2 071 989 slots) gave slots by the mirror's view.
-    Read the bar against what the mirror holds and say how in the log (orchestrator,
-    2026-10-31).
-  - Done-when 3 compares with Phase 1's hit mask and normals view at both poses: keep a
-    reading from the tip before the storage change (the scratch path) to compare against.
+- Done: Phase 1 (b282738 code, abc8c16 box rule), Phase 2 (owner, 3ce35ac); merges c773e5f
+  (`plan-0053` at 8dd3ee4) and ba5b4d2 (main at 929d1b3). Phase 3's code is in 1b36eb3 (wip):
+  every done-when below is met and read; left for Phase 3 is the gpu tier's result, the
+  Phase 3 log section (move the readings below into it), the table row and a
+  `feat(render): ...` commit carrying the log (the code is already in 1b36eb3). Then Phases 4
+  and 5.
+- The first agent's five design points (kept): (1) header space for a band prefix: the header
+  had only word 15 free while the attribute stays; (2) band membership crosses chunk faces
+  while uploads were chunk-local; (3) a non-band voxel of a band brick reads 27 when solid,
+  translucent included, 0 when air; (4) the census reads chunks the world does not hold as air,
+  the mirror reads what it holds; read the flight's bar against the mirror and say so; (5) keep
+  a reading from before the storage change for done-when 3.
+- How Phase 3 resolved them (each a deviation for the Phase 3 log):
+  - The band data is a *separate* band slot (band mask unit, then `ceil(n / 64)` count units),
+    not appended "after its existing units": appended, the bins round it to 113.1 MB at the
+    level (p3) and 108.8 MB without attributes (p4), over the owner's 106 MB bar; a separate
+    slot in a bin of its exact size reads exactly the packed figure. `SLOT_BINS` (13) =
+    `BINS` (10, unchanged, brick slots) + 5, 7, 9 (band sizes `BINS` lacks); `BIN_COUNT` is
+    13; `band_bin_of`. The brick's header word 15 is `HEADER_BAND_BIT | band unit`. A uniform
+    band brick gets a 2-unit `CLASS_UNIFORM` (6) slot laid out as class 1 (3 units for a
+    translucent material); `class_planes`/`payload_units` read class 6 as 0 planes in both
+    shaders; `MirrorView::full_slot` skips class 6.
+  - No band prefix in the header in Phase 3 (the surface prefix holds words 10..13): the walk
+    counts it by popcount over the band words below (`field_count` in `march.wgsl`). This is
+    why the RTX hit pass reads 6.48 ms against Phase 1's 3.46 (one scratch run, field look,
+    level spawn, 1080p from 720p, load 1.7). Phase 4 must put the band prefix in header words
+    10..13 as `u16` per layer once the surface prefix goes, or the cost bar (5 ms hit + light)
+    fails; also consider caching the brick's header read in `field_brick`.
+  - Band masks are computed on the CPU from the world (`field::band_mask`, `Around`: a chunk
+    in the window the world holds full by its voxels, mips-only by its level-1 mips, else air),
+    in `need()` (select and the backstop) for every brick of `upload_set` (which takes the 26
+    in-chunk neighbours of a dirty brick when the field is on); `GpuWorld::fix_band` after the
+    uploads re-places the band slots of other chunks' bricks within one brick of chunks written
+    whole, dropped or LOD, and the 3^3 around dirty bricks, skipping bricks written this sync
+    (`Band::fresh`) and dirty bricks; a failed placement retries next sync (`Band::retry`).
+    The field pass (`attrib.wgsl` `field_main`) reads the CPU's mask and packs the counts.
+    `set_field_surface` drops and re-queues every full chunk.
+  - Files outside Phase 3's list: `field.rs` (rewritten), `marcher.rs` (scratch bindings and
+    `field_slots` removed), `main.rs` (`field_line`), `look.rs` (the edit test), `rigs.rs`
+    (doc), `examples/world_budget.rs` (`BIN_COUNT`). `target/alt/release/flythrough` was
+    rebuilt at 11:29 for a scratch test, before Phase 4 (the owner's session was done;
+    `live/flythrough-tip-wip` is Phase 1's binary).
+- Phase 3 readings (lavapipe unless named; exclusive perf lock):
+  - Done-when 1, `mirror::a_band_air_brick_s_slot_is_pinned`: passes (class 6 entry, 2-unit
+    slot, empty mask, header word 15 only; band slot 2 units in `band_bin_of(2)`, mask
+    `0x01010101` x 16, counts `4,6,6,6,6,6,6,4` then `6,9,...,9,6`, all 64 checked; 8 band
+    bricks).
+  - Done-when 2, `level_mirror::band_census`: 418 668 band bricks = census; mirror 157 872 640
+    -> 254 115 904 B live, grown 96 243 264 B = packed 96 243 264 B (+0.000 %), 543 629 312 B
+    allocated before and after (1 GiB test budget). Flight (RTX 3080 Laptop, `--autopilot
+    --headless --seed 1 --look field --band-census --adapter NVIDIA`, 1b36eb3's tree, load
+    1.7): full residency at 37.5 s, 17 077 full and 40 700 LOD-only chunks, 1 829 483 band
+    bricks, 438 898 624 B of band slots, mirror 1 310 578 476 B live (Phase 1 field off
+    871 679 852, +438 898 624), 3 221 014 080 B allocated (unchanged), pressure 0.620, r_full
+    16; the census over the same 17 077 chunks (world-absent as air): 1 997 544 band bricks,
+    packed 483 198 272 B; the mirror reads LOD-only neighbours by their mips. Bar: 96.2 <= 106
+    MB, 438.9 <= 530 MB. Level run (RTX): first sync 3059 ms with the field (Phase 1 1876).
+    Level budget (`level_pool_units`) has no band term: the field look's level mirror reads
+    pressure 1.000 (254.1 of 259.2 MB) inside the headroom; Phase 4 (field the default) must
+    add the band to it.
+  - Done-when 3: `live/p3/zz_field_dump.rs` (scratch, copy into `apps/flythrough/tests/` to
+    run, never commit) dumped the field look's hit mask and normals view at both poses, 384 x
+    216, lamp on, at b2c3fa1 (`live/p3/ref/`) and at the tip (`live/p3/tip/`): 0 bytes differ
+    in all four images.
+  - Done-when 4, `look::a_carve_gives_the_exposed_air_brick_a_band_slot` (sphere r 7 about
+    brick (4, 4, 4) of `floor`): class 6 after the edit's one sync; 57 600 hits of 57 600 px,
+    0 leaks. `the_field_surface_lies_on_the_flat_faces` unchanged (floor 43012 hits, wall
+    37800, 0 leaks, worst 7.63e-6).
+  - Done-when 5 (`live/p3/cost3.sh`, logs `live/p3/cost/`): autopilot attribute pass GPU,
+    three alternated rounds, medians of p50 / p99; the base is main 28948a5's release binary
+    (`live/base0050/target/release/flythrough`, built from `git archive`), not "the Plan 0053
+    close binary" (Plan 0053 closes with this plan); load 2.7 to 10.2, loaded, indicative:
+    RTX base 1.260 / 2.574 ms, Phase 1 field 3.346 / 6.802, Phase 3 field 1.093 / 2.573; Radeon
+    base 2.037 / 2.579, Phase 1 3.000 / 3.585, Phase 3 1.488 / 2.083.
+- Gate at 1b36eb3: build, clippy (workspace and `-p flythrough --features wasm`), fmt,
+  doctests, `cargo deny check`, the four scripts: 0. Quick (no lock, load 3.4 to 26): 540 run,
+  539 passed, 1 timed out (`replay a_stamp_and_a_collapse_replay_from_the_save` 30.02 s; alone
+  13.81 s, load 21), 3 skipped. Gpu tier: started 12:40 under the lock, output in
+  `live/p3/gpu.log` (its result is the next agent's to read and record; if it was cut by the
+  reboot, rerun it).
+- Phase 4 notes: the base binary for its cost reading is built (`live/base0050`). `cubes-field`
+  rests on the plane attribute's normal field, so removing the attribute removes it too (the
+  orchestrator lists it among the removals; the plan's "stays until the close" sentence is a
+  deviation to disclose). The field pass work list is uncapped (no `attr_cap`); with the plane
+  pass gone, `attr_work.rs` and `attrib.rs` (outside Phase 4's list) lose their plane purpose.
 
 ### Notes
 
