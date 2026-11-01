@@ -2032,7 +2032,10 @@ fn field_corners(o: vec3<f32>, d: vec3<f32>, ta: f32, tb: f32) -> vec3<i32> {
         for (var j = 0u; j < 8u; j++) {
             let i = ((j >> px) & 1u) | (((j >> py) & 1u) << 1u) | (((j >> pz) & 1u) << 2u);
             let k = field_count_raw(base + vec3<i32>(vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u)));
-            fc_bytes[i / 4u] |= (k & 0xFFu) << (8u * (i % 4u));
+            // A select, not a store through `fc_bytes[i / 4u]` (no runtime-indexed vector
+            // component store, `shader_portability`).
+            let byte = (k & 0xFFu) << (8u * (i % 4u));
+            fc_bytes |= select(vec2<u32>(byte, 0u), vec2<u32>(0u, byte), i >= 4u);
         }
     }
     return base;
