@@ -212,6 +212,8 @@ Amended 2026-11-01 (owner, Plan 0054 owner answer 13): honest cubes are the defa
 look, and the contour planes are removed; Plan 0054's field surface stays as an opt-in look,
 off by default, at about 3x the cubes' GPU frame in the owner's window. Whether liquids take
 it is Plan 0034's question.
+Amended 2026-11-01 (owner, Plan 0054 owner answer 14): cubes meet M2's surface-look goal;
+the field is a quality option revisited per material class, liquids first.
 
 Plan 0047, still emissive light, closed 2026-10-29 (v0.36.0, ADR-0036 accepted with an
 Outcome): the emissive part of the temporal pass accumulates in `f32` over a 256-frame

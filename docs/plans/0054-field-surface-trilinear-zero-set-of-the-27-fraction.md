@@ -736,6 +736,14 @@ every asserted reading, golden and gate stays on lavapipe.
      another golden already covers the field; the log names each moved, re-pointed or removed
      golden with its share of pixels over 2/255. `crates/vxe-render/tests/translucent.rs` and
      the cutaway tests pass unchanged, or dev stops with the reading.
+     Amended 2026-11-01 (owner, answer 15): `golden::showcase_hall_golden_is_lit_by_its_four_ores`
+     keeps the default (`face`) image; its hue bar becomes "at least two of the four hue
+     classes over 0.5 % of pixels and every class present (at least 1 pixel)", the honest
+     cubes' reading at 86611cc (amber 3.42, ember 0.41, cyan 2.71, violet 0.07 %) printed.
+     The default's shadow-speck count above main's (face 2083 / 2055 / 34 against snap's
+     365 / 360 / 6 on the contour golden scene, shadow rays over the voxel occupancy) is a
+     finding for the close review, not a stop; a shadow start for cubes is a followup unless
+     the review blocks on it.
   7. **Readings, not bars (done-whens 4, 6 and 8's cost rows).** One quiet round each, logged:
      the default's hit and light at the level's spawn, 1080p from 720p, on both adapters,
      against main `28948a5`'s default (the snap planes); `--look field`'s hit plus light
@@ -1007,6 +1015,15 @@ which no deterministic path reads.
     now": `face` becomes the default and the plan closes with the field kept as an option, off
     by default. Smooth for liquids is a question for Plan 0034, not a decision. Phases 4c, 4d
     and 5 and ADR-0041 are amended on it; answer 12's smooth-near work becomes a followup.
+14. **M2 and Plan 0053 (owner, 2026-11-01, both the recommended option).** Cubes meet M2's
+    surface-look goal; the field is a quality option revisited per material class, liquids
+    first at Plan 0034. Plan 0053 closes in the same session as this plan, ADR-0040 rejected
+    and never accepted, 0053 merging into main first.
+15. **The close's two findings (owner, 2026-11-01, both the recommended option).** The showcase
+    hall's ember class reads 0.41 % under `face` against the 0.5 % bar (main's planes 0.69 %):
+    the architect re-derives the bar for cubes rather than pinning the golden to the field or
+    moving the shot. The default's speck count above main's goes to the close review as a
+    finding. Phase 4c's close item 6 is amended on both.
 
 ## Implementation log
 
