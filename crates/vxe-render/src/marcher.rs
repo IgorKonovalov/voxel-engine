@@ -177,6 +177,19 @@ pub const FLAG_FIELD: u32 = 1 << 17;
 /// `Params::flags` bit: the field surface's shading normal is the blend of its cell's corner
 /// normals ([`FieldNormal::Blend`]); clear, the gradient of the trilinear field.
 pub const FLAG_FIELD_BLEND: u32 = 1 << 18;
+/// `Params::flags` bit, set by the frame and not by a look: the field look's split walk. The
+/// hit pipeline walks each ray as the cube walk does until it enters a brick the field can hit
+/// in (a band brick of a full chunk with a smooth solid voxel in it or its shell), and a second
+/// dispatch walks the field from there ([`Frame::set_field_split`]).
+pub const FLAG_FIELD_SPLIT: u32 = 1 << 19;
+
+/// `field_resume`'s workgroup size in `march.wgsl`: the split walk hands at most
+/// `SPLIT_GROUP` times the dispatch limit of rays on, and a frame of more pixels walks the
+/// field unsplit.
+const SPLIT_GROUP: u32 = 128;
+
+/// Workgroups a dispatch may count on one dimension (WebGPU's default limit).
+const MAX_WORKGROUPS: u32 = 65535;
 
 /// What the contour look's walk hits: the per-voxel planes (ADR-0011), or the field surface,
 /// the zero set of the trilinear interpolation of `count / 27 - 1/2` over the voxel centres,
@@ -997,24 +1010,43 @@ impl Lighting {
 /// The hit pass: `march.wgsl`'s `main`, one primary ray per pixel into the hit buffer, and in
 /// the cracks view its pipeline with `CRACKS_VIEW`, which records the crack classes and each
 /// hit's lamp self-hit; in the field surface's look ([`SurfaceModel::Field`]) its pipeline with
-/// `FIELD_SURFACE`, which walks the field.
+/// `FIELD_SURFACE`, which walks the field, or with the split walk ([`FLAG_FIELD_SPLIT`]) the
+/// plain pipeline and then `field_resume` over the rays it handed on.
 pub struct Marcher {
     pipeline: wgpu::ComputePipeline,
     cracks: wgpu::ComputePipeline,
     field: wgpu::ComputePipeline,
+    resume: wgpu::ComputePipeline,
     out_layout: wgpu::BindGroupLayout,
+    resume_layout: wgpu::BindGroupLayout,
 }
 
 impl Marcher {
     fn new(device: &wgpu::Device, world_layout: &wgpu::BindGroupLayout) -> Self {
-        let out_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("hit out"),
-            entries: &[
-                storage_texture(0, wgpu::TextureFormat::Rgba32Float),
-                storage_texture(1, wgpu::TextureFormat::Rgba16Uint),
-                storage_texture(2, wgpu::TextureFormat::Rgba16Float),
+        use wgpu::TextureFormat::{Rgba16Float, Rgba16Uint, Rgba32Float};
+        let out_layout = io_layout(
+            device,
+            "hit out",
+            &[
+                Io::Store(Rgba32Float),
+                Io::Store(Rgba16Uint),
+                Io::Store(Rgba16Float),
+                Io::Storage,
+                Io::Storage,
             ],
-        });
+        );
+        // The resume dispatch reads its workgroup count from the split arguments, so they are
+        // not bound to it.
+        let resume_layout = io_layout(
+            device,
+            "hit resume",
+            &[
+                Io::Store(Rgba32Float),
+                Io::Store(Rgba16Uint),
+                Io::Store(Rgba16Float),
+                Io::Storage,
+            ],
+        );
         let layouts = [Some(world_layout), Some(&out_layout)];
         let pipeline = compute_pipeline(device, "hit", MARCH_WGSL.into(), &layouts, "main");
         let cracks = compute_pipeline_with(
@@ -1033,11 +1065,20 @@ impl Marcher {
             "main",
             &[("FIELD_SURFACE", 1.0)],
         );
+        let resume = compute_pipeline(
+            device,
+            "hit field resume",
+            MARCH_WGSL.into(),
+            &[Some(world_layout), Some(&resume_layout)],
+            "field_resume",
+        );
         Self {
             pipeline,
             cracks,
             field,
+            resume,
             out_layout,
+            resume_layout,
         }
     }
 }
@@ -1072,6 +1113,8 @@ pub struct Frame {
     targets: Targets,
     lod: LodParams,
     look: LookParams,
+    /// Whether the field look takes the split walk ([`FLAG_FIELD_SPLIT`]); on by default.
+    field_split: bool,
     lighting: Lighting,
     /// The per-material emission scales, 1.0 unless set: an `f32` per material id for the
     /// light the frame's pixels sample, then [`EMISSION_ROWS`] more for the light the probe
@@ -1696,6 +1739,7 @@ impl Frame {
             resolution: LightingResolution::default(),
             lod: LodParams::default(),
             look: LookParams::default(),
+            field_split: true,
             lighting: Lighting::default(),
             emission_scale: wgpu::util::DeviceExt::create_buffer_init(
                 device,
@@ -2153,6 +2197,15 @@ impl Frame {
         self.look
     }
 
+    /// Whether the field look walks split ([`FLAG_FIELD_SPLIT`], the default): the cube
+    /// walk's pipeline carries each ray to the first brick the field can hit in, and the field
+    /// walk goes on from there. Off, the field walk carries every ray from its origin. Either
+    /// gives the same hit records; the split walks only when the world's table holds a crisp
+    /// row ([`GpuWorld::crisp_rows`]), outside the cracks and steps views.
+    pub fn set_field_split(&mut self, on: bool) {
+        self.field_split = on;
+    }
+
     /// Sets exposure, tone map, lamp, candidates and shadow walk.
     pub fn set_lighting(&mut self, lighting: Lighting) {
         self.lighting = lighting;
@@ -2530,6 +2583,8 @@ impl Frame {
                 Res::Tex(&t.hit_pos[c]),
                 Res::Tex(&t.hit_info[c]),
                 Res::Tex(&t.layer),
+                Res::Buf(&t.split_list),
+                Res::Buf(&t.split_args),
             ],
         );
         let half = t.half_pos.is_some();
@@ -2717,19 +2772,52 @@ impl Frame {
                 pipeline,
                 groups,
                 workgroups,
+                indirect: None,
             }
         };
         let field = self.look.tuning.model == SurfaceModel::Field
             && self.look.normal_mode == NormalMode::Contour
             && world.field_surface();
-        let hit_pipeline = if field {
+        // The split walk pays only where a brick walks as cubes: with no crisp row every band
+        // brick is a field brick. The cracks and steps views read the field walk's own leaks
+        // and counters, so they walk it unsplit.
+        let split = field
+            && self.field_split
+            && world.crisp_rows()
+            && !matches!(self.look.view, ViewMode::Cracks | ViewMode::Steps)
+            && u64::from(t.width) * u64::from(t.height)
+                <= u64::from(SPLIT_GROUP) * u64::from(MAX_WORKGROUPS);
+        let hit_pipeline = if split {
+            p.flags |= FLAG_FIELD_SPLIT;
+            &self.hit.pipeline
+        } else if field {
             &self.hit.field
         } else if self.look.view == ViewMode::Cracks {
             &self.hit.cracks
         } else {
             &self.hit.pipeline
         };
+        let resume_bind = split.then(|| {
+            encoder.clear_buffer(&t.split_args, 0, None);
+            encoder.clear_buffer(&t.split_list, 0, Some(16));
+            bind_io(
+                device,
+                &self.hit.resume_layout,
+                &[
+                    Res::Tex(&t.hit_pos[c]),
+                    Res::Tex(&t.hit_info[c]),
+                    Res::Tex(&t.layer),
+                    Res::Buf(&t.split_list),
+                ],
+            )
+        });
         let mut hit: Vec<Dispatch<'_>> = vec![frame_pass(hit_pipeline, &hit_bind, 1, full)];
+        if let Some(b) = &resume_bind {
+            hit.push(Dispatch {
+                indirect: Some(&t.split_args),
+                ..frame_pass(&self.hit.resume, b, 1, [0, 0])
+            });
+        }
         if half {
             hit.push(frame_pass(&self.downsample, &downsample_bind, 3, lw));
         }
@@ -2802,6 +2890,7 @@ impl Frame {
                 pipeline: &self.gather,
                 groups: [Some(&world_bind), None, Some(g), Some(b)],
                 workgroups: lw,
+                indirect: None,
             });
             if updates > 0 {
                 probes.push(frame_pass(&self.probe_trace, b, 3, [updates, 1]));
@@ -2850,7 +2939,10 @@ impl Frame {
                         pass.set_bind_group(g as u32, *b, &[]);
                     }
                 }
-                pass.dispatch_workgroups(d.workgroups[0], d.workgroups[1], 1);
+                match d.indirect {
+                    Some(args) => pass.dispatch_workgroups_indirect(args, 0),
+                    None => pass.dispatch_workgroups(d.workgroups[0], d.workgroups[1], 1),
+                }
             }
         }
         let exposure_pass = FRAME_PASSES.len() as u32 - 1;
@@ -3012,6 +3104,8 @@ pub(crate) struct Dispatch<'a> {
     pub pipeline: &'a wgpu::ComputePipeline,
     pub groups: [Option<&'a wgpu::BindGroup>; 4],
     pub workgroups: [u32; 2],
+    /// Dispatched with the workgroup counts this buffer holds at offset 0 instead.
+    pub indirect: Option<&'a wgpu::Buffer>,
 }
 
 fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
@@ -3094,6 +3188,11 @@ struct Targets {
     history: Option<[wgpu::Texture; 2]>,
     /// The exposure meter's tiles: two `f32` per 8 x 8 workgroup of the internal target.
     tiles: wgpu::Buffer,
+    /// The split walk's hand-off list (a count word and three of padding, then a `vec4<u32>`
+    /// per pixel) and its resume dispatch's workgroup counts (`march.wgsl`'s `SplitList` and
+    /// `SplitArgs`).
+    split_list: wgpu::Buffer,
+    split_args: wgpu::Buffer,
 }
 
 impl Targets {
@@ -3164,6 +3263,20 @@ impl Targets {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
+            split_list: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("split walk rays"),
+                size: 16 + 16 * u64::from(width) * u64::from(height),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            split_args: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("split walk dispatch"),
+                size: 16,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::INDIRECT
+                    | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
         }
     }
 
@@ -3203,6 +3316,8 @@ impl Targets {
             + lpx * (half + 8 + 2 * 16 + 2 * 8 + 2 * 8 + 2 * 16 + 8)
             + strata * 8
             + self.tiles.size()
+            + self.split_list.size()
+            + self.split_args.size()
     }
 }
 

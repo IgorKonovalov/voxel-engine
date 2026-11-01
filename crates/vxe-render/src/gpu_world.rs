@@ -993,6 +993,8 @@ pub struct GpuWorld {
     materials_written: bool,
     /// Material rows written: the rows `mirror_bytes` counts.
     material_rows: u64,
+    /// [`GpuWorld::crisp_rows`].
+    crisp_rows: bool,
     mirrored: HashMap<ChunkCoord, Mirrored>,
     /// CPU copy of every reserved record's entries, `reserved_records * RECORD_WORDS`, zeroed
     /// at creation (untouched pages cost no RAM until a record is written).
@@ -1244,6 +1246,7 @@ impl GpuWorld {
             materials: Self::create_materials(device, 1),
             materials_written: false,
             material_rows: 0,
+            crisp_rows: false,
             mirrored: HashMap::new(),
             entries: vec![0; layout.reserved_records as usize * RECORD_WORDS],
             free_records: Vec::new(),
@@ -1343,6 +1346,13 @@ impl GpuWorld {
     /// Whether band bricks carry band slots.
     pub fn field_surface(&self) -> bool {
         self.band.is_some()
+    }
+
+    /// Whether the table the mirror holds has a crisp row that is not translucent
+    /// ([`vxe_world::MaterialTable::is_crisp`]): one the field surface draws as cubes. False
+    /// before the first sync writes the rows.
+    pub fn crisp_rows(&self) -> bool {
+        self.crisp_rows
     }
 
     /// Band slots held, one per band brick of the chunks mirrored full; 0 without the field.
@@ -3566,6 +3576,10 @@ impl GpuWorld {
             self.materials = Self::create_materials(&self.device, rows.len());
         }
         self.material_rows = rows.len() as u64;
+        self.crisp_rows = (0..table.len()).any(|i| {
+            let id = i as MaterialId;
+            table.is_crisp(id) && !table.is_translucent(id)
+        });
         let bytes: &[u8] = bytemuck::cast_slice(&rows);
         self.belt.write(enc, &self.materials, 0, bytes);
         st.writes += 1;

@@ -231,6 +231,33 @@ struct ExposureState {
 @group(1) @binding(1) var hit_info_out: texture_storage_2d<rgba16uint, write>;
 @group(1) @binding(2) var layer_out: texture_storage_2d<rgba16float, write>;
 
+// The split field walk (FLAG_FIELD_SPLIT): the hit pipeline walks every ray as `march` does,
+// its cells cubes, until the ray enters a full chunk's brick that the field can hit in (a band
+// brick without BAND_CUBES_BIT), and appends the ray there to `split_list` with what the field
+// walk resumes from; `field_resume`, in a dispatch of `split_args.groups` workgroups, walks
+// the field from it. A ray entry: the pixel (x in bits 0..16, y in 16..32), `t` as bits, the
+// entered voxel relative to the window's first voxel (x, y in the third word, z and the
+// entry axis plus one in the fourth). The counts start at zero each frame (the frame clears
+// them); the first pixel writes the dispatch's y and z.
+struct SplitList {
+    count: atomic<u32>,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+    rays: array<vec4<u32>>,
+};
+struct SplitArgs {
+    groups: atomic<u32>,
+    y: u32,
+    z: u32,
+};
+@group(1) @binding(3) var<storage, read_write> split_list: SplitList;
+@group(1) @binding(4) var<storage, read_write> split_args: SplitArgs;
+// `field_resume`'s workgroup size (marcher.rs: SPLIT_GROUP).
+const SPLIT_GROUP: u32 = 128u;
+// A `march` miss's material when the split walk hands the ray on.
+const SPLIT_HANDOFF: u32 = 0xFFFFFFFFu;
+
 const ABSENT: u32 = 0xFFFFFFFFu;
 const FULL_BIT: u32 = 0x80000000u;
 const LOD_BIT: u32 = 0x40000000u;
@@ -277,6 +304,9 @@ const FLAG_CUBE_HITS: u32 = 65536u;
 const FLAG_FIELD: u32 = 131072u;
 // The field surface shades with its blended corner normals (`FieldNormal::Blend`).
 const FLAG_FIELD_BLEND: u32 = 262144u;
+// The field look's split walk: the hit pipeline's `main` walks to the first field brick and
+// hands the ray to `field_resume` (`split_pixel`).
+const FLAG_FIELD_SPLIT: u32 = 524288u;
 // Normal modes (flags bits 2..4) and views (flags bits 5..8).
 const NORMAL_FACE: u32 = 0u;
 const NORMAL_TRILINEAR8: u32 = 1u;
@@ -361,9 +391,17 @@ struct Walk {
     mask: vec4<u32>,
     // Set when a brick entry read since the reset carries TRANSLUCENT_BIT.
     saw_translucent: bool,
+    // With `split_walk`: `brick` is a field brick (a band brick without BAND_CUBES_BIT).
+    brick_field: bool,
 };
 
 var<private> walk: Walk;
+
+// Set by `split_pixel` around its `march`: `descend` reads each full chunk's Full brick's band
+// word as it enters the brick, and sets `split_entered` when the voxel it answers for lies in
+// a field brick, where `march` stops and hands the ray on. Clear for every other walk.
+var<private> split_walk: bool = false;
+var<private> split_entered: bool;
 
 // The stretch of the ray parameter over which `march` takes the coarse shadow walk's cells
 // (`lookup_walk`); empty (BIG, -BIG) for the full walk. The light pass sets it around a
@@ -576,6 +614,7 @@ fn absent_descent(size: i32) -> Descent {
 }
 
 fn descend(v: vec3<i32>) -> Descent {
+    split_entered = false;
     let skips = (params.flags & FLAG_SKIPS) != 0u;
     let chunk = floor_div(v, 64);
     let rel = chunk - params.window_min;
@@ -625,11 +664,17 @@ fn descend(v: vec3<i32>) -> Descent {
         walk.brick_entry =
             record_word(walk.base + ENTRY_WORD + walk.first + u32(b.x + e * (b.y + e * b.z)));
         walk.saw_translucent = walk.saw_translucent || (walk.brick_entry & TRANSLUCENT_BIT) != 0u;
+        walk.brick_field = false;
+        if (split_walk && level == 0u && (walk.brick_entry & FULL_BIT) != 0u) {
+            let h = pool_word(walk.brick_entry & UNIT_MASK, HEADER_WORD + HEADER_BAND_WORD);
+            walk.brick_field = (h & (HEADER_BAND_BIT | BAND_CUBES_BIT)) == HEADER_BAND_BIT;
+        }
     }
     let entry = walk.brick_entry;
     if (entry == 0u) {
         return empty_descent(select(cell, 8 * cell, skips));
     }
+    split_entered = walk.brick_field;
     let l = c - b * 8;
     return Descent(0, entry, cell, level, vec3<u32>(l), u32(l.x + 8 * (l.y + 8 * l.z)), true);
 }
@@ -960,7 +1005,7 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
         v = advance(o, d, inv, t, axis, face);
     }
     v = clamp(v, bmin_i, bmax_i - vec3<i32>(1));
-    let contour = contour_active();
+    let contour = contour_active() && !split_walk;
     var passing = cutaway;
     if (CRACKS_VIEW) {
         crack_class = 0u;
@@ -979,6 +1024,10 @@ fn march(o: vec3<f32>, d: vec3<f32>, t_limit: f32, cutaway: bool) -> Hit {
             return miss;
         }
         let c = lookup_walk(v, t >= coarse_span.x && t <= coarse_span.y);
+        if (split_entered) {
+            // The split walk's hand-off: the ray enters a field brick at `v`.
+            return Hit(false, v, axis, t, SPLIT_HANDOFF, false, vec3<f32>(0.0));
+        }
         var size = c.size;
         if (passing) {
             if (size == 0) {
@@ -2371,7 +2420,6 @@ fn field_march(o: vec3<f32>, d: vec3<f32>) -> FieldHit {
     if (t1 < max(t0, 0.0)) {
         return miss;
     }
-    reset_field_walk();
     var t = max(t0, 0.0);
     var axis = -1;
     var v = voxel_at(o + d * t, d);
@@ -2381,6 +2429,20 @@ fn field_march(o: vec3<f32>, d: vec3<f32>) -> FieldHit {
         v = advance(o, d, inv, t, axis, face);
     }
     v = clamp(v, bmin_i, bmax_i - vec3<i32>(1));
+    return field_walk(o, d, t, v, axis);
+}
+
+// The field walk from voxel `v`, entered at `t` through its face on `axis` (-1 for none):
+// `field_march`'s loop, and where `field_resume` takes a split walk's ray on.
+fn field_walk(o: vec3<f32>, d: vec3<f32>, t_start: f32, v_start: vec3<i32>, axis_start: i32) -> FieldHit {
+    var miss = FieldHit(FHit(false, false, false, 0.0, vec3<f32>(0.0), vec3<i32>(0), vec3<f32>(0.0)), -1, 0u);
+    let bmin_i = params.window_min * 64;
+    let bmax_i = (params.window_min + params.window_size) * 64;
+    let inv = select(vec3<f32>(BIG), 1.0 / d, d != vec3<f32>(0.0));
+    reset_field_walk();
+    var t = t_start;
+    var v = v_start;
+    var axis = axis_start;
     for (var step = 0u; step < MAX_STEPS; step++) {
         walk_steps += 1u;
         if (any(v < bmin_i) || any(v >= bmax_i)) {
@@ -2420,13 +2482,20 @@ fn field_march(o: vec3<f32>, d: vec3<f32>) -> FieldHit {
 
 // The hit pass's pixel in the field look: the field walk's hit record; the layer holds the
 // steps view's counters, the cracks view's leak (1 in r) or nothing (no translucent walk).
-fn field_pixel(gid: vec2<u32>) {
+// With `resume` the walk starts at voxel `v`, entered at `t` through its face on `axis` (a
+// split walk's hand-off), else at the ray's origin.
+fn field_pixel(gid: vec2<u32>, resume: bool, t: f32, v: vec3<i32>, axis: i32) {
     let ray = pixel_ray(gid);
     let o = ray.o;
     let d = ray.d;
     walk_steps = 0u;
     loads = 0u;
-    var fh = field_march(o, d);
+    var fh: FieldHit;
+    if (resume) {
+        fh = field_walk(o, d, t, v, axis);
+    } else {
+        fh = field_march(o, d);
+    }
     let h = fh.h;
     if (h.found && fh.material == FIELD_MATERIAL_PENDING) {
         fh.material = field_material(o + d * h.t, d, h.base, h.f);
@@ -2466,7 +2535,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     if (FIELD_SURFACE) {
-        field_pixel(gid.xy);
+        field_pixel(gid.xy, false, 0.0, vec3<i32>(0), -1);
+        return;
+    }
+    if ((params.flags & FLAG_FIELD_SPLIT) != 0u) {
+        split_pixel(gid.xy);
         return;
     }
     let ray = pixel_ray(gid.xy);
@@ -2512,4 +2585,61 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     textureStore(hit_pos_out, px, pos);
     textureStore(hit_info_out, px, info);
     textureStore(layer_out, px, layer);
+}
+
+// The split walk's pixel (FLAG_FIELD_SPLIT, in the hit pipeline without FIELD_SURFACE): the
+// ray walks as `march` walks with no plane test, every solid voxel a cube hit recorded as
+// `field_pixel` records one (its entry face's normal, the voxel's material, no translucent
+// walk), until it enters a field brick; there it is appended to `split_list` and its record is
+// left to `field_resume`. The cracks and steps views do not split (marcher.rs).
+fn split_pixel(gid: vec2<u32>) {
+    if (all(gid == vec2<u32>(0u))) {
+        split_args.y = 1u;
+        split_args.z = 1u;
+    }
+    let ray = pixel_ray(gid);
+    let d = ray.d;
+    split_walk = true;
+    let h = march(ray.o, d, BIG, false);
+    split_walk = false;
+    if (!h.found && h.material == SPLIT_HANDOFF) {
+        let k = atomicAdd(&split_list.count, 1u);
+        if (k % SPLIT_GROUP == 0u) {
+            atomicAdd(&split_args.groups, 1u);
+        }
+        let r = vec3<u32>(h.voxel - params.window_min * 64);
+        split_list.rays[k] = vec4<u32>(
+            gid.x | (gid.y << 16u),
+            bitcast<u32>(h.t),
+            r.x | (r.y << 16u),
+            r.z | (u32(h.axis + 1) << 16u),
+        );
+        return;
+    }
+    var pos = vec4<f32>(0.0, 0.0, 0.0, BIG);
+    var info = vec4<u32>(0u);
+    if (h.found) {
+        let flags = HIT_FOUND | (u32(h.axis + 1) << HIT_AXIS_SHIFT);
+        pos = vec4<f32>(ray.o + d * h.t, h.t);
+        info = vec4<u32>(octa16_encode(face_normal(d, h)), h.material, flags);
+    }
+    let px = vec2<i32>(gid);
+    textureStore(hit_pos_out, px, pos);
+    textureStore(hit_info_out, px, info);
+    textureStore(layer_out, px, vec4<f32>(0.0, 0.0, 0.0, 1.0));
+}
+
+// The split walk's field half: one ray of `split_list` per invocation, the field walk from
+// its hand-off, its record written as `field_pixel` writes it.
+@compute @workgroup_size(128, 1, 1)
+fn field_resume(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let k = gid.x;
+    if (k >= atomicLoad(&split_list.count)) {
+        return;
+    }
+    let e = split_list.rays[k];
+    let px = vec2<u32>(e.x & 0xFFFFu, e.x >> 16u);
+    let r = vec3<u32>(e.z & 0xFFFFu, e.z >> 16u, e.w & 0xFFFFu);
+    let v = vec3<i32>(r) + params.window_min * 64;
+    field_pixel(px, true, bitcast<f32>(e.y), v, i32(e.w >> 16u) - 1);
 }

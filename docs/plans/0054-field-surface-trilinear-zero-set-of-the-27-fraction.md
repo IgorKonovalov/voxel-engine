@@ -1604,11 +1604,71 @@ reference is Phase 4b's c8 release binary (`live/p4b/bin/flythrough-c8`).
   + 0.1 (none - face)` = 0.547 + 0 + 0.319 = 0.866 ms: not met. (iii) `--crisp none` 4.677 ms
   hit plus light, done-when 6's bar 5.00 (before the removals). Dev stops here (done-when 8's
   miss rule).
+- The split walk (owner answer 11, in the wip commit with this item). `march.wgsl`'s `main`
+  with `FLAG_FIELD_SPLIT` (`split_pixel`) walks each ray as `march` does with no plane test,
+  and `descend` reads a full chunk's Full brick's header band word as the walk enters the
+  brick; at the first brick that is a band brick without `BAND_CUBES_BIT` the ray is appended
+  to a hand-off list (pixel, `t`, the entered voxel, the entry axis) and a second dispatch of
+  the same pass, `field_resume` (128 a workgroup, its workgroup count written by the first
+  dispatch's atomics, `dispatch_workgroups_indirect`), walks the field from there
+  (`field_walk`, `field_march`'s loop). A field-walking ray stays in the field walk to its
+  end. The frame splits only when the mirrored table holds a crisp row that is not
+  translucent (`GpuWorld::crisp_rows`), outside the cracks and steps views, and at most
+  128 x 65535 pixels; `Frame::set_field_split(false)` walks unsplit. Targets: the list
+  (16 B a pixel plus 16) and the dispatch words (16 B) are in `Frame` bytes.
+- Deviation, the "no smooth near" rule (`attrib.wgsl` `field_main`): the first split read
+  (RTX, one round, load 1.95) gave `--crisp all` hit 0.568 against `face` 0.563, and `--crisp
+  rock` 2.707 against 0.866; a scratch marker (`live/p4c/zz_hand.rs`) found 55 463 of 82 944
+  pixels at the spawn handed off, at 21 bricks of rock and air whose 26 neighbours held 1 to 10
+  ore voxels (the palette rule set the bit only where no neighbour's palette held a smooth
+  material). `BAND_CUBES_BIT` is now set when no voxel of the brick or its one-voxel shell is
+  a smooth solid band voxel: the brick's own from its count bytes, a shell voxel's band test
+  from the full 12^3 occupancy box (the field pass filled 10^3 before), its material from its
+  brick's palette when that holds one kind, read when it holds both, smooth in a brick read
+  voxel by voxel or a mip brick; the shell is not read when no palette in the 27 holds a
+  smooth material. After it the marker read 0 pixels handed off at the spawn under `--crisp
+  rock`.
+- Hit records (lavapipe, HitMask view, 384 x 216 at the spawn (yaw 0), the vein and the patch,
+  320 x 320 on the thin rig, `live/p4c/zz_split.rs` via `live/p4c/split-cmp.sh`, log
+  `live/p4c/split-cmp-precise.log`): split against unsplit, every case (crisp all, rock, none
+  at the three poses; the rig, wood crisp and smooth): hit mask, position and `t`, normal,
+  material and flags equal at every pixel. `--crisp all`'s field against `face`: equal at every
+  pixel of the three poses (82 944 hits each), (i)'s bit-for-bit comparison. Against a scratch
+  build that never sets `BAND_CUBES_BIT` (`live/p4c/rec-nocubes`): none and the rig equal;
+  `all` differs at 41 (spawn), 92 (vein) and 23 (patch) pixels and `rock` at the same 41 at
+  the spawn: there the cubes-free walk gives field hits (plane flag, material 0 at the vein and
+  the patch, up to 3.35 voxel from the cube hit) in cells whose solid corners carry neither
+  count bit, which the cubes bricks walk as cubes. Finding for the close: a dual cell whose
+  solid corners are all non-band (count 27, no bit) and that mixes signs gives a field hit
+  with no smooth corner in a field brick too.
+- Done-when 8 on the split (`live/p4c/cost.sh s2`, logs `live/p4c/cost-s2/` (RTX, three
+  alternated rounds, load 0.83 to 1.95) and `live/p4c/cost-s2-amd/` (Radeon, one round, load
+  0.73 to 0.83), medians of the frame line's per-pass times over the rounds; hit / light / hit
+  + light / GPU frame, ms):
 
-### Resume notes (2026-11-01, done-when 8 missed, delete when Phase 4c lands)
+  | adapter | c8 `field` | `field --crisp none` | `field --crisp rock` | `field --crisp all` | `face` |
+  |---|---|---|---|---|---|
+  | RTX 3080 Laptop | 3.719 / 0.942 / 4.661 / 7.736 | 3.741 / 0.936 / 4.677 / 7.735, s 1.0000 | 0.561 / 0.917 / 1.478 / 4.526, s 0.0000 | 0.561 / 0.916 / 1.477 / 4.522, s 0.0000 | 0.552 / 0.869 / 1.421 / 4.244 |
+  | Radeon RENOIR (one round) | 31.015 / 7.248 / 38.263 / 56.173 | 30.459 / 7.312 / 37.771 / 55.628, s 1.0000 | 4.297 / 7.334 / 11.631 / 29.694, s 0.0000 | 4.295 / 7.330 / 11.625 / 29.654, s 0.0000 | 4.115 / 6.821 / 10.936 / 27.260 |
 
-- State: Phase 4b committed (f6e51a3). Phase 4c's crisp mechanism and `--crisp` are in the
-  wip commit with these notes (above). Not done: the removals (plane attribute, `attrib.rs`,
+  (i) `--crisp all`'s hit 0.561 against `face`'s 0.552, +1.6 % (Radeon +4.4 %) against 10 %,
+  and the records equal (above): met. (ii) `--crisp rock` (s 0.0000 at the spawn) 0.561
+  against `face + s (none - face) + 0.1 (none - face)` = 0.552 + 0 + 0.319 = 0.871 (Radeon
+  4.297 against 6.749): met. (iii) `--crisp none` 4.677 hit plus light (the split is off
+  without a crisp row). The light pass reads 0.047 ms over `face` in the field looks (0.916
+  against 0.869), not barred.
+- RADV shader stats (`live/p4c/radv.sh`, `RADV_DEBUG=shaderstats`, every compute shader of
+  the run): c8 holds one 128-VGPR shader (166 188 B), the tip two (169 392 and 168 604 B, the
+  field hit pipeline and `field_resume`); the shaders at 64 VGPRs and below keep their VGPRs,
+  and the code sizes that changed at 64 (31 604 to 42 688 B, 19 552 to 26 924 B) are taken to be
+  the cube walk's hit pipeline (now holding `split_pixel`) and the field pass by elimination;
+  RADV prints no pipeline names, so the attribution is not read.
+
+### Resume notes (2026-11-01, done-when 8 met on the split, delete when Phase 4c lands)
+
+- State: Phase 4b committed (f6e51a3). Phase 4c's crisp mechanism and `--crisp` are in
+  9314221; the split walk and the shell-exact cubes bit in the wip commit after it, done-when
+  8's spawn rows met (above). Not done: the removals (plane attribute, `attrib.rs`,
   `attr_work.rs` and its bench, the plane fit, `PlaneFit`, `PlaneOffset`, `OccupancyFilter`,
   `CrackClosing`, snap, the crack classes, `normal_field`, N2, `cubes-field`, the flags and
   banner rows of done-when 7; `live/p4/phase4-wip.patch` does not apply and is a guide only);
@@ -1617,14 +1677,9 @@ reference is Phase 4b's c8 release binary (`live/p4b/bin/flythrough-c8`).
   and its seam rig); done-when 4's field-pass and carve readings; the moved goldens
   (done-when 5); done-when 6 after the removals; the vein and patch rows of done-when 8; the
   quick and gpu tiers on this tree.
-- Where the `--crisp all` cost goes (not measured term by term): in a `BAND_CUBES_BIT` brick
-  each cell still resolves the brick through `field_brick` (table, record, header band word
-  and two prefix words) and then again through `lookup_walk`, and every non-band brick of the
-  walk takes `field_cell`'s path; `--crisp rock` adds the smooth-near bricks around the ore
-  and the field walk's cost in them. The owner's options (done-when 8's text): a per-band-cell
-  bit, a split pipeline (the face walk until a brick that is not cubes), or the reading
-  accepted.
-- Tools (untracked): `live/p4c/cost.sh NAME` (builds the tree's release binary into
+- Tools (untracked): `live/p4c/split-cmp.sh NAME` (records of `zz_split.rs` into
+  `live/p4c/rec-NAME`, `REF` to compare), `live/p4c/radv.sh BIN` (`LOOK`, `CRISP`),
+  `live/p4c/cost.sh NAME` (builds the tree's release binary into
   `live/p4c/bin/`, rounds of c8 `field` and the tip's `field --crisp none|rock|all` and
   `face`; `ADAPTER`, `ROUNDS`, `SUFFIX`, `RES`, `POSE`), `live/p4c/4c-part1.patch` (this wip's
   diff before Phase 4b's commit, kept for reference), `live/p4c/t1.log` (the tests above).
