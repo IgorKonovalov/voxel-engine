@@ -1041,8 +1041,8 @@ which no deterministic path reads.
 | 3b: The owner's look at thin features and the per-material candidate | human | done (a): the field per material, crisp materials as cubes (owner, 2026-10-31; answer 7) | owner answers, be7b943 |
 | 4a: Where the window's frame time goes | dev | done; the windowed p50s not reproduced headless (done-when 2 names the remainder the window's) | 52cc078 |
 | 4b: The walk inside the bar | dev | paused before its gate: `field-cubes` 4.761 ms, `field` 4.748 ms against 5.00 (RTX); RADV 128 VGPRs | 91f9066 (c1 to c5, wip) and committed with this row (wip, c8) |
-| 4c: The crisp flag, the field as the default, the planes removed | dev | paused at close item 6: `showcase_hall`'s hue bar under `face` (owner question) | 2bca6e4, 3a43c06 (wip) and committed with this row (wip) |
-| 4d: The owner's windowed check of the default | human | not started | |
+| 4c: The crisp flag, the field as the default, the planes removed | dev | done on the close list (owner answer 13); done-whens 1 to 8 replaced by it | 2bca6e4, 3a43c06, 86611cc (wip) and committed with this row |
+| 4d: The owner's windowed check of the default | human | dropped (owner answer 13) | |
 | 5: The readings, the ADR, the close block | dev | not started | |
 
 #### Phase 1
@@ -1956,14 +1956,19 @@ reference is Phase 4b's c8 release binary (`live/p4b/bin/flythrough-c8`).
     `face_against_contour_on_the_wall` rewrote `look_wall_face.png` with 32 pixels within
     2/255 of main's (0 over 2/255); the file is kept at main's bytes. `translucent.rs` and
     the cutaway tests pass unchanged.
-  - Item 6, not met: `golden::showcase_hall_golden_is_lit_by_its_four_ores` fails under
+  - Item 6, at 86611cc: `golden::showcase_hall_golden_is_lit_by_its_four_ores` failed under
     `face` on its hue bar (at least three of the four hue classes each 0.5 % of the pixels,
     288 px): hue shares amber 3.42 %, ember 0.41 %, cyan 2.71 %, violet 0.07 % (pixels 1968,
     234, 1561, 41), luma 14.2/255, 0 px lit with the emission off. Main's planes read ember
     0.69 % (Plan 0038's log); a scratch run of the same test under `LookPreset::FIELD` read
     amber 5.01 %, ember 0.79 %, cyan 4.41 %, violet 0.06 %, luma 15.5/255, and passes (the
     edit reverted; its image `live/p4c/showcase_hall-field.png`, 42.7535 % over 2/255 against
-    main's). The golden is blessed at `face`; the assertion is unchanged. Stopped for the owner.
+    main's). The golden is blessed at `face`. Stopped for the owner (answers 14 and 15).
+  - Item 6, owner answer 15 (committed with this row): the hue bar reads "at least two of the
+    four classes at 288 px (0.5 %) and every class at least 1 px". Lavapipe, exclusive perf
+    lock, load 1.02 (`live/p4c/showcase-bar.log`): passes, the image 0.0000 % over 2/255
+    against the blessed `face` golden; amber 3.42 %, ember 0.41 %, cyan 2.71 %, violet 0.07 %,
+    luma 14.2/255, 29 806 light samples, 0 px lit with the emission off.
   - Assertions turned into prints (deviation): `sharpness::face_against_contour_on_the_wall`'s
     `face S_mid > contour S_mid` (the plane's mid-band order): face 0.28182 against the field
     0.31432 (`field` preset 0.32004); `look::contour_dark_specks_with_and_without_shadows`'s
@@ -1988,6 +1993,19 @@ reference is Phase 4b's c8 release binary (`live/p4b/bin/flythrough-c8`).
     1080p): the default 0.630 / 0.104 / 2.402 (RTX), 4.884 / 0.945 / 16.659 (Radeon);
     `--look field` 4.821 / 0.126 / 6.667, s 0.8476 (RTX), 39.543 / 1.012 / 52.030 (Radeon);
     its field pass 0.064 ms (RTX) and 0.188 ms (Radeon) for 1186 band slots.
+  - Item 7, the flight (RTX, `--autopilot --headless --seed 1`, one round each, start load 1.75
+    to 1.90, the run raising it to 5.6 to 8.5): main's default full residency 17 077 full and
+    40 700 LOD-only chunks, mirror 871 679 852 B live, 3 221 014 080 B allocated, peak 992 795
+    308 B, streaming CPU p50 13.435 / p99 60.044 ms over 1366 frames, attribute pass GPU p50
+    1.154 / p99 1.771 ms, march GPU p50 8.628 / p99 19.951; the tip's default 502 928 492 B
+    live at full residency, peak 532 183 724 B, same allocation, streaming CPU p50 0.239 / p99
+    64.251 ms over 3148 frames, march GPU p50 3.031 / p99 5.767, no attribute or field pass;
+    `--look field` 941 827 116 B live (band slots 438 898 624 B, 1 829 483 band bricks), peak
+    967 839 468 B, streaming CPU p50 66.030 / p99 206.603 ms over 494 frames, field pass GPU
+    p50 0.634 / p99 1.388 ms, march GPU p50 8.153 / p99 39.488. The level: main 157 872 640 B
+    live, 259 203 264 B allocated; the default 62 846 720 B live, 88 285 376 B allocated;
+    `--look field` 159 089 984 B live (band 96 243 264 B, 418 668 band bricks), 223 027 392 B
+    allocated.
   - Item 7, VGPRs (RADV `shaderstats`, `live/p4c/radv.sh close`, load 3.1 to 4.1, not a timing
     reading): every compute pipeline is built at start-up, so `face`, `field` and `field
     --crisp rock` list the same shaders: two at 128 VGPRs (108 440 and 107 540 B, the field
@@ -2005,29 +2023,12 @@ reference is Phase 4b's c8 release binary (`live/p4b/bin/flythrough-c8`).
     `contour_golden`, `face_against_contour_on_the_wall`), 29 skipped; after them the last
     three pass (`live/p4c/close-tests*.log`, `live/p4c/bless-close2.log`) and the first fails
     as above. `castle_gate_golden` passed in that run.
-
-### Resume notes (2026-11-01, stopped at close item 6, delete when Phase 4c lands)
-
-- State: everything of the close list is in the wip commit with these notes, the readings
-  above; the one unmet item is `showcase_hall_golden_is_lit_by_its_four_ores`'s hue bar under
-  `face` (owner question). On the owner's answer: apply it, re-run that test and the gpu tier
-  under the perf lock, then make the Phase 4c commit (its row "done") and go to Phase 5.
-- Phase 5's readings are mostly taken here (item 7 and the flight below); the flight, RTX,
-  `--autopilot --headless --seed 1`, one round, load 1.75 to 1.90: main's default full
-  residency 17 077 full and 40 700 LOD-only chunks, mirror 871 679 852 B live, 3 221 014 080
-  B allocated, peak 992 795 308 B, streaming CPU p50 13.435 / p99 60.044 ms over 1366 frames,
-  attribute pass GPU p50 1.154 / p99 1.771 ms, march GPU p50 8.628 / p99 19.951; the tip's
-  default 502 928 492 B live at full residency, peak 532 183 724 B, same allocation,
-  streaming CPU p50 0.239 / p99 64.251 ms over 3148 frames, march GPU p50 3.031 / p99 5.767,
-  no attribute or field pass; `--look field` 941 827 116 B live (band slots 438 898 624 B,
-  1 829 483 band bricks), peak 967 839 468 B, streaming CPU p50 66.030 / p99 206.603 ms over
-  494 frames, field pass GPU p50 0.634 / p99 1.388 ms, march GPU p50 8.153 / p99 39.488. The
-  level: main 157 872 640 B live, 259 203 264 B allocated; the default 62 846 720 B live,
-  88 285 376 B allocated; `--look field` 159 089 984 B live (band 96 243 264 B), 223 027 392
-  B allocated.
-- Gotchas: `live/p4c/pngshare.py OLD NEW` reads a golden's share over 2/255;
-  `live/p4c/goldens-old/` holds main's copies; the scratch field-look showcase image is
-  `live/p4c/showcase_hall-field.png`.
+  - Gate after the hue bar (owner answer 15), on the tree of this row's commit:
+    `--profile gpu --no-fail-fast` (exclusive perf lock, memory cap, start load 1.89, end 1.57;
+    `live/p4c/gpu-close2.log`) 179 run, 179 passed (7 slow), 29 skipped, 1694.5 s;
+    `--profile quick` 539 run, 539 passed (8 slow), 3 skipped; doctests 8 passed, 1 ignored;
+    clippy `-D warnings` 0; fmt 0; `cargo deny check` 0; the doc-link, comment-hygiene,
+    index-row and test-tier scripts 0.
 
 ### Notes
 
