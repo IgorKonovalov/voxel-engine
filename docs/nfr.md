@@ -366,6 +366,48 @@ ADR-0038's plane code (Plan 0050's close review, 2026-10-31, the same two binari
 load 1.65 to 2.91, three alternated rounds, medians; 383 608 bricks): RTX 3080 Laptop GPU 17.837
 ms against 17.814 (+0.1 %), Radeon RENOIR 95.627 against 95.531 (+0.1 %), equal to its noise.
 
+**The default surface is honest cubes, the field an opt-in look (Plan 0054's close readings,
+ADR-0041; main `28948a5`'s release binary, its default the snap planes, against the release
+binary of `86611cc`'s tree, whose default is `face` with no attribute pass; one quiet round
+each, every run under the exclusive perf lock and the memory cap, started at a 1-minute load of
+1.75 to 1.99; `flythrough --level --seed 1 --headless --frames 300 --render 1920x1080 --adapter
+NVIDIA|AMD [--look field --crisp none|rock|all]`, 1080p from 1280 x 720, release, each run's
+frame line; logs `live/p4c/close/` in Plan 0054's worktree).** Hit / light / GPU frame, ms:
+
+| run | RTX 3080 Laptop | Radeon RENOIR |
+|---|---|---|
+| main `28948a5`, default (snap planes) | 0.612 / 0.921 / 4.516 | 4.288 / 7.045 / 28.801 |
+| `86611cc`, default (`face`) | 0.548 / 0.849 / 4.222 | 4.064 / 6.732 / 27.166 |
+| `86611cc`, `--look field --crisp none` | 3.827 / 0.891 / 7.511 | 30.734 / 7.108 / 54.522 |
+| `86611cc`, `--look field --crisp rock` | 0.570 / 0.855 / 4.263 | 4.308 / 6.966 / 28.015 |
+| `86611cc`, `--look field --crisp all` | 0.572 / 0.865 / 4.294 | 4.302 / 6.928 / 27.973 |
+
+The default's hit plus light reads 1.397 ms against main's 1.533 on the RTX and 10.796 against
+11.333 on the Radeon. The level's initial fill: main's attribute pass 17.832 ms GPU (RTX) and
+95.743 ms (Radeon); the default runs no attribute or field pass. The streamed flight
+(`flythrough --autopilot --headless --seed 1 --adapter NVIDIA`, one round each, started at a
+load of 1.75 to 1.90, the flight itself raising it to 5.6 to 8.5): main's default streaming CPU
+p50 13.435 / p99 60.044 ms over 1366 frames, attribute pass GPU p50 1.154 / p99 1.771 ms, march
+GPU p50 8.628 / p99 19.951 ms; the default at `86611cc` streaming CPU p50 0.239 / p99 64.251 ms
+over 3148 frames, march GPU p50 3.031 / p99 5.767 ms, no attribute or field pass. RADV shader
+stats at `86611cc` (load 3.1 to 4.1, not a timing reading): two compute shaders at 128 VGPRs
+(the field look's hit pipeline and its resume dispatch), two at 84, the rest at 64 and below, no
+spill; RADV prints no pipeline names, so the attribution is by elimination.
+
+**The opt-in field look, readings of an option and not budgets the default draws on (Plan 0054,
+same binaries, conditions and logs).** `--look field --crisp none` (every level material
+smooth): hit plus light 4.718 ms on the RTX against the 5.00 ms figure it was built against
+(Plan 0054 owner answer 3), 37.842 ms on the Radeon. Its field pass at the level's initial fill:
+12.130 ms GPU (RTX) and 61.049 ms (Radeon) with no crisp row, 102.702 and 100.118 ms under
+`--crisp rock`, 74.293 and 72.518 ms under `--crisp all`; over the RTX flight, p50 0.634 / p99
+1.388 ms, with streaming CPU p50 66.030 / p99 206.603 ms over 494 frames and march GPU p50 8.153
+/ p99 39.488 ms. The thin rig (`--thin-rig`, its wood crisp, 1080p): `face` 0.630 / 0.104 / 2.402
+ms (RTX) and 4.884 / 0.945 / 16.659 (Radeon); `--look field` 4.821 / 0.126 / 6.667 ms with a
+smooth share of 0.8476 (RTX) and 39.543 / 1.012 / 52.030 (Radeon); its field pass 0.064 ms (RTX)
+and 0.188 ms (Radeon) for 1186 band slots. The owner's window (Plan 0054 owner answer 13, RTX
+3080 Laptop, 2530 x 1378, `live/session3-seam.log`): GPU frame 12.0 ms on the seam rig against
+`face`'s 3.8, 7.8 ms on the thin rig against 3.4.
+
 **Mirror attribute pass (contour look), render-thread CPU: p99 under 4 ms on the dev reference,
 deferred work visible as face-mode normals for at most 250 ms** (budget, Plan 0023, ADR-0017;
 dev reference only). **Reading: a recorded miss (Plan 0023 Phase 6 quiet re-read, the Phase 6
@@ -737,7 +779,9 @@ hit plus light at most 5 ms at the level's spawn, Plan 0054 owner answer 3) stan
 (owner, 2026-10-31: "do not tighten yet. maybe there is still a chance to have some smoothness,
 maybe only for certain types of materials"). Plain cubes everywhere, Teardown-style, are the
 owner's accepted fallback if the field cannot pay. A reading replaces a guess here as each plan
-closes.
+closes. Plan 0054 closed on scenario A (owner answer 13, 2026-11-01: `face` the default, the
+field an opt-in look, its Phase 4d dropped); the close's readings are in the paragraphs "The
+default surface is honest cubes" above and "The `face` default carries no attribute" in §3.
 
 **Conditions.** The level's spawn, `flythrough --level --seed 1 --headless --render 1920x1080
 --frames 300 --adapter NVIDIA|AMD [--look L]`: 1080p output from 1280 x 720 internal (`own` at
@@ -898,6 +942,18 @@ merged binary of 4d68e91 against main's binary of dedd83c, both adapters):** the
 residency (17 077 full and 40 700 LOD-only chunks) 871 679 852 B live and 3 221 014 080 B
 allocated under both; the flights' peaks differ with the flight (882 016 044 to 996 021 932
 B live across both binaries).
+
+**The `face` default carries no attribute and no band term (Plan 0054's close readings, main
+`28948a5`'s release binary against `86611cc`'s, RTX 3080 Laptop GPU, exclusive perf lock and
+memory cap, one quiet round each at a start load of 1.75 to 1.99, `r_full` 16; logs
+`live/p4c/close/` in Plan 0054's worktree).** The level: main's default 157 872 640 B live and
+259 203 264 B allocated; the `face` default 62 846 720 B live and 88 285 376 B allocated. The
+streamed flight's full residency (17 077 full and 40 700 LOD-only chunks): main's default 871
+679 852 B live, peak 992 795 308 B, 3 221 014 080 B allocated; the `face` default 502 928 492 B
+live, peak 532 183 724 B, the same allocation. The opt-in `--look field`, as a reading of an
+option: the level 159 089 984 B live (96 243 264 B of band slots over 418 668 band bricks), 223
+027 392 B allocated; the flight 941 827 116 B live (438 898 624 B of band slots over 1 829 483
+band bricks), peak 967 839 468 B, against Plan 0054 owner answer 4's 106 and 530 MB.
 
 **The frame's targets (Plan 0024 Phase 11, `Frame::frame_bytes` printed by `flythrough
 --autopilot --headless --seed 1 --render 1920x1080`):** 308 736 000 B with full-resolution

@@ -1041,9 +1041,9 @@ which no deterministic path reads.
 | 3b: The owner's look at thin features and the per-material candidate | human | done (a): the field per material, crisp materials as cubes (owner, 2026-10-31; answer 7) | owner answers, be7b943 |
 | 4a: Where the window's frame time goes | dev | done; the windowed p50s not reproduced headless (done-when 2 names the remainder the window's) | 52cc078 |
 | 4b: The walk inside the bar | dev | paused before its gate: `field-cubes` 4.761 ms, `field` 4.748 ms against 5.00 (RTX); RADV 128 VGPRs | 91f9066 (c1 to c5, wip) and committed with this row (wip, c8) |
-| 4c: The crisp flag, the field as the default, the planes removed | dev | done on the close list (owner answer 13); done-whens 1 to 8 replaced by it | 2bca6e4, 3a43c06, 86611cc (wip) and committed with this row |
+| 4c: The crisp flag, the field as the default, the planes removed | dev | done on the close list (owner answer 13); done-whens 1 to 8 replaced by it | 2bca6e4, 3a43c06, 86611cc (wip) and 2bc7a5d |
 | 4d: The owner's windowed check of the default | human | dropped (owner answer 13) | |
-| 5: The readings, the ADR, the close block | dev | not started | |
+| 5: The readings, the ADR, the close block | dev | done (the readings in `nfr.md` §2 and §3; ADR-0041 not edited, the close review's) | committed with this row |
 
 #### Phase 1
 
@@ -2030,6 +2030,25 @@ reference is Phase 4b's c8 release binary (`live/p4b/bin/flythrough-c8`).
     clippy `-D warnings` 0; fmt 0; `cargo deny check` 0; the doc-link, comment-hygiene,
     index-row and test-tier scripts 0.
 
+#### Phase 5
+
+- `docs/nfr.md` §2 gains "The default surface is honest cubes, the field an opt-in look" (the
+  spawn's hit, light and GPU frame on both adapters, main `28948a5`'s default against
+  `86611cc`'s `face` default and `--look field --crisp none|rock|all`; the initial fill; the RTX
+  flight's streaming CPU, attribute and march p50 and p99; the VGPRs) and "The opt-in field
+  look" (hit plus light against the 5.00 ms figure, the field pass at the fill, on the flight
+  and on the thin rig, the thin rig's passes, owner answer 13's window readings). §3 gains "The
+  `face` default carries no attribute and no band term" (the level's and the flight's live,
+  peak and allocated bytes, main against `86611cc`, and `--look field`'s band bytes against
+  answer 4's 106 and 530 MB). The frame ledger's head names the close's scenario A and points
+  at both. Every figure is Phase 4c's close item 7 reading (`live/p4c/close/`, one quiet round
+  each), none retaken.
+- Not read: the default's poses at the window's size (Phase 5's amended text names the spawn on
+  both adapters, the fill, the flight and the bytes for the default; the window sizes only in
+  answer 13's readings); the flight on the Radeon.
+- ADR-0041, ADR-0011, ADR-0038, ADR-0039 and ADR-0040 are not edited (the architect's and the
+  close review's). Status stays `in-progress`: the close review sets `done`.
+
 ### Notes
 
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
@@ -2060,6 +2079,20 @@ each. Empty is fine.)_
   the dependency level it would remove, no gain, reverted); change (ii) is c7 and c8; c9 a
   portability fix. Done-when 3: one hit position at the vein differs from 17045d8's by
   1.53e-5 voxel in both looks with the root finder unchanged.
+- Phase 4c deviations (2bca6e4 unless named): `examples/world_budget.rs` keeps local copies of
+  `chunk_surface` and the attribute units; `contour-grain` removed though not named in "What
+  goes"; the stdout `attrib:` line is now `field pass: ...`; `sharpness::face_against_contour_on_the_wall`'s
+  `face S_mid > contour S_mid` and `look::contour_dark_specks_with_and_without_shadows`'s
+  only-with-shadows order turned into prints (86611cc); the seam test's box and footprint
+  definitions are dev's (3a43c06); answer 12's smooth-near bits not built (`live/p4c/air-bits.patch`).
+- Phase 4c done-whens 1 to 8 replaced by the close list (owner answer 13); done-when 8's (i)
+  and (ii) missed before the split walk (the first table) and met on it.
+- Findings for the close review: the default's shadow-speck count on the contour golden scene,
+  `face` 2083 / 2055 / 34 against main's snap 365 / 360 / 6; the seam rig's trunk leaks 15 and 19
+  at the 2x2 and 3x3 rods, its material-0 collar hits 2 and 3 and the L's 59 and 56 non-cube
+  corner hits (opt-in look); the cubes-free walk's material-0 field hits 41, 92, 23 px; the
+  trunk face specks 118 crisp against 67 smooth; `--crisp rock` reads the hit above `--crisp
+  none` at the vein and the patch (4.895 against 4.367, 6.559 against 5.513 ms, RTX).
 - `castle_golden castle_gate_golden`'s peak RSS (1 GiB assertion) reads about 914 MB alone and
   failed when run beside other lavapipe tests (1.19 GB at load 19 at c8; one failure in a
   five-test run at c9): load-dependent, the image identical.
@@ -2068,11 +2101,35 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** the fly-through's default look is `face` (honest cubes) with no attribute
+  pass, no band slot and no field pass; the field surface (the trilinear zero set of the
+  27-count, N1 normals) is the opt-in `--look field`, over band slots in the size-classed
+  mirror, with `MaterialFlags::CRISP` materials walked as cubes and the split walk (cube walk
+  until a band brick that is not cubes-only, then `field_resume`); the plane attribute, snap,
+  the plane fits and every plane look are removed.
+- **Public API changed:** `vxe-world`: `MaterialFlags::CRISP`, `MaterialTable::is_crisp`.
+  `vxe-render`: `attrib` and `attr_work` modules removed, `field` (the field pass,
+  `CRISP_COUNT_BIT`, `SMOOTH_COUNT_BIT`), `GpuWorld::with_field_surface`, `update_field`,
+  `crisp_rows`, `Frame::set_field_split`, `CrackShares { hits, leaks }` (the WGSL hit flag
+  `HIT_PLANE` renamed `HIT_FIELD`); removed
+  `PlaneFit`, `PlaneOffset`, `OccupancyFilter`, `SurfaceFit`, `SurfaceModel`, `FieldNormal`,
+  `SurfaceTuning::{fit, shadow_push, normal_field, cube_hits, model, field_normal, crisp}`,
+  `MirrorConfig::attr_cap`, `GpuWorld::{set_crisp_materials, fix_crisp}`. `flythrough`:
+  `LookPreset::DEFAULT` is `FACE`, `ALL` is face, field, trilinear8, gradient27; `--crisp
+  none|rock|all`, `--seam-rig`; removed `--plane-fit`, `--plane-offset`, `--fit-filter`,
+  `--shadow-push`, `--normal-field`, `--field-normal` and the plane presets.
+- **Budget readings:** in `docs/nfr.md` §2 ("The default surface is honest cubes", "The opt-in
+  field look") and §3 ("The `face` default carries no attribute and no band term"), each with
+  machine, commit `86611cc`, lock and load; Phase 4c's log for the rest (done-when 8's tables,
+  the poses at the window's size, the RADV stats).
+- **Gate at the tip:** at 2bc7a5d's tree (Phase 5 changes only docs): `cargo nextest run
+  --workspace --profile gpu --no-fail-fast` exit 0, 179 run, 179 passed, 29 skipped (exclusive
+  perf lock, memory cap, load 1.89 at start); `--profile quick` exit 0, 539 run, 539 passed, 3
+  skipped; `cargo test --doc` exit 0, 8 passed, 1 ignored; `cargo clippy --workspace
+  --all-targets -- -D warnings` exit 0; `cargo fmt --all --check` exit 0; `cargo deny check`
+  exit 0; `check-doc-links`, `check-comment-hygiene`, `check-index-rows`, `check-test-tiers`
+  exit 0 (re-run after the Phase 5 edits). `--profile full` not run (the close review's).
+- **Outstanding `human` phases:** none; Phase 4d dropped (owner answer 13).
 
 ## Followups
 
