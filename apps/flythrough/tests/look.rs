@@ -2702,3 +2702,91 @@ fn thin_features_in_the_field_and_per_material() {
     }
     assert!(failures.is_empty(), "{failures:?}");
 }
+
+/// The thin rig's hit positions and records in the hit-mask view, `look` with or without the
+/// split walk (`Frame::set_field_split`).
+fn thin_records(
+    device: &vxe_render::wgpu::Device,
+    queue: &vxe_render::wgpu::Queue,
+    world: &World,
+    look: LookParams,
+    split: bool,
+) -> (Vec<[f32; 4]>, Vec<[u16; 4]>) {
+    let mut rig = fit_rig_on(
+        device.clone(),
+        queue.clone(),
+        world,
+        look.tuning.fit,
+        THIN_SIZE,
+    );
+    with_field_pool(&mut rig, world, &look);
+    rig.frame.set_field_split(split);
+    let look = LookParams {
+        view: ViewMode::HitMask,
+        ..look
+    };
+    let _ = rig.render(
+        &flythrough::thin_rig_camera(),
+        &LightParams::headlamp(),
+        look,
+    );
+    (
+        readback::read_rgba32f(&rig.device, &rig.queue, rig.frame.hit_positions()),
+        readback::read_rgba16u(&rig.device, &rig.queue, rig.frame.hit_records()),
+    )
+}
+
+/// The pixels at which two readings differ in hit position (bits) or hit record.
+fn records_differ(a: &(Vec<[f32; 4]>, Vec<[u16; 4]>), b: &(Vec<[f32; 4]>, Vec<[u16; 4]>)) -> usize {
+    (0..a.0.len())
+        .filter(|&i| a.0[i].map(f32::to_bits) != b.0[i].map(f32::to_bits) || a.1[i] != b.1[i])
+        .count()
+}
+
+/// The split walk moves no hit: on lavapipe, the thin rig in the field look with its wood crisp
+/// reads the same hit position and record at every pixel split and unsplit; with every row that
+/// is not translucent crisp, the field look reads `face`'s at every pixel, split and unsplit.
+#[test]
+fn the_split_walk_moves_no_hit_record() {
+    let Some((device, queue)) = software_device(256 << 20) else {
+        return;
+    };
+    let field = preset_look(flythrough::LookPreset::FIELD, ViewMode::Shaded);
+    let face = preset_look(flythrough::LookPreset::FACE, ViewMode::Shaded);
+    let wood = thin_rig_world(vxe_world::MaterialFlags::CRISP);
+    let split = thin_records(&device, &queue, &wood, field, true);
+    let unsplit = thin_records(&device, &queue, &wood, field, false);
+    let hits = split.1.iter().filter(|r| r[3] & 1 != 0).count();
+    let wood_differ = records_differ(&split, &unsplit);
+    println!("crisp wood: {hits} hits, split against unsplit {wood_differ} pixels differ");
+    let base = flythrough::LookPreset::DEFAULT.materials();
+    let mut table = vxe_world::MaterialTable::new();
+    for row in base.rows().iter().skip(1) {
+        let mut row = row.clone();
+        if !row.is_translucent() {
+            row.flags = row.flags | vxe_world::MaterialFlags::CRISP;
+        }
+        table.push(row);
+    }
+    let table = flythrough::with_wood_flags(&table, vxe_world::MaterialFlags::CRISP);
+    let source = ThinRig {
+        wood: flythrough::THIN_RIG_WOOD,
+    };
+    let all = World::generate(source.extent(), &source, &table);
+    let face_records = thin_records(&device, &queue, &all, face, true);
+    let all_split = records_differ(
+        &thin_records(&device, &queue, &all, field, true),
+        &face_records,
+    );
+    let all_unsplit = records_differ(
+        &thin_records(&device, &queue, &all, field, false),
+        &face_records,
+    );
+    println!(
+        "every row crisp: against face, split {all_split} and unsplit {all_unsplit} pixels differ"
+    );
+    assert!(hits > 0, "the rig reads no hit");
+    assert_eq!(wood_differ, 0, "split against unsplit, crisp wood");
+    assert_eq!(all_split, 0, "split against face, every row crisp");
+    assert_eq!(all_unsplit, 0, "unsplit against face, every row crisp");
+}

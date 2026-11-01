@@ -1663,20 +1663,46 @@ reference is Phase 4b's c8 release binary (`live/p4b/bin/flythrough-c8`).
   and the code sizes that changed at 64 (31 604 to 42 688 B, 19 552 to 26 924 B) are taken to be
   the cube walk's hit pipeline (now holding `split_pixel`) and the field pass by elimination;
   RADV prints no pipeline names, so the attribution is not read.
+- Done-when 8 at the window's size, readings (`POSE=vein|patch RES=2530x1378 ROUNDS=1
+  cost.sh s2`, logs `live/p4c/cost-s2-{vein,patch}-{NVIDIA,AMD}/`, one round each, load 0.68
+  to 1.92; hit / light / GPU frame, ms, the run's last frame line):
+
+  | pose, adapter | c8 `field` | `--crisp none` | `--crisp rock` | `--crisp all` | `face` |
+  |---|---|---|---|---|---|
+  | vein, RTX | 4.322 / 1.971 / 10.713 | 4.367 / 1.963 / 10.764, s 1.0000 | 4.895 / 1.779 / 10.973, s 0.3371 | 0.686 / 1.691 / 6.624, s 0.0000 | 0.709 / 1.569 / 6.247 |
+  | vein, Radeon | 32.036 / 14.916 / 72.095 | 31.367 / 14.657 / 71.310, s 1.0000 | 35.462 / 13.656 / 74.129, s 0.3371 | 5.122 / 13.272 / 43.421, s 0.0000 | 5.142 / 12.342 / 40.604 |
+  | patch, RTX | 5.573 / 1.386 / 12.081 | 5.513 / 1.355 / 12.094, s 1.0000 | 6.559 / 1.338 / 11.934, s 0.2174 | 0.967 / 1.313 / 6.397, s 0.0000 | 1.000 / 1.210 / 6.001 |
+  | patch, Radeon | 43.056 / 10.383 / 76.924 | 42.029 / 10.501 / 75.872, s 1.0000 | 44.691 / 10.194 / 78.271, s 0.2174 | 7.149 / 9.958 / 40.453, s 0.0000 | 7.143 / 9.347 / 38.018 |
+
+  Finding (no bar at the poses): where smooth hits are on screen, `--crisp rock` reads the hit
+  above `--crisp none` (vein RTX 4.895 against 4.367 with s 0.3371, where (ii)'s formula would
+  give 2.308; patch 6.559 against 5.513 with s 0.2174). Not attributed: a handed-off ray stays
+  in the field walk to its end, and the resume dispatch walks the list in append order.
+- `look::the_split_walk_moves_no_hit_record` (lavapipe, gpu tier, in the wip commit with this
+  item): the thin rig, wood crisp, 48 939 hits, split against unsplit 0 pixels differ; every
+  row that is not translucent crisp, the field look against `face` 0 pixels differ split and
+  unsplit. Quick tier at 6def8f6: 543 run, 543 passed (9 slow), 3 skipped; clippy and fmt 0.
 
 ### Resume notes (2026-11-01, done-when 8 met on the split, delete when Phase 4c lands)
 
 - State: Phase 4b committed (f6e51a3). Phase 4c's crisp mechanism and `--crisp` are in
-  9314221; the split walk and the shell-exact cubes bit in the wip commit after it, done-when
-  8's spawn rows met (above). Not done: the removals (plane attribute, `attrib.rs`,
+  9314221; the split walk and the shell-exact cubes bit in 6def8f6, done-when 8's spawn rows
+  met; its pose rows and `the_split_walk_moves_no_hit_record` in the wip commit after it
+  (above). Stopped for a context checkpoint (lane rule 13) before the removals. Not done: the removals (plane attribute, `attrib.rs`,
   `attr_work.rs` and its bench, the plane fit, `PlaneFit`, `PlaneOffset`, `OccupancyFilter`,
   `CrackClosing`, snap, the crack classes, `normal_field`, N2, `cubes-field`, the flags and
   banner rows of done-when 7; `live/p4/phase4-wip.patch` does not apply and is a guide only);
   the field as `LookPreset::DEFAULT`; shadows over the voxel occupancy; the tests of done-whens
   1 and 3 (`the_default_surface_is_the_field`, `a_smooth_surface_meets_a_crisp_cube_without_a_gap`
-  and its seam rig); done-when 4's field-pass and carve readings; the moved goldens
-  (done-when 5); done-when 6 after the removals; the vein and patch rows of done-when 8; the
-  quick and gpu tiers on this tree.
+  and its seam rig); done-when 4's field-pass and carve readings (the field pass now also
+  fills the 12^3 box and tests the shell); the moved goldens (done-when 5); done-when 6 and
+  done-when 8's spawn rows re-read after the removals; the gpu tier on this tree; Phase 4d's
+  runner.
+- Gotchas: the split walk keeps the main hit pipeline's `march` (with `split_walk` and
+  `descend`'s band-word read) and `split_pixel`; removing the plane code must keep `contour`
+  off in it. `split_entered` is cleared at the top of every `descend`. The pose-row finding
+  above (rock over none where smooth hits show) is an owner question for Phase 4d, not a stop:
+  the bars of done-when 8 are the spawn's.
 - Tools (untracked): `live/p4c/split-cmp.sh NAME` (records of `zz_split.rs` into
   `live/p4c/rec-NAME`, `REF` to compare), `live/p4c/radv.sh BIN` (`LOOK`, `CRISP`),
   `live/p4c/cost.sh NAME` (builds the tree's release binary into
