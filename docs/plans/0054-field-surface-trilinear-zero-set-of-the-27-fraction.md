@@ -660,6 +660,12 @@ every asserted reading, golden and gate stays on lavapipe.
      the same at the vein and the patch at the window's size (`--render 2530x1378`) as readings.
      A miss stops dev with the table; the owner picks the lever's form (a per-band-cell bit, a
      split pipeline, or the reading accepted).
+     Amended 2026-11-01 (owner, answer 11): the lever is the split pipeline. A ray walks with
+     `face`'s walk and pipeline (its cube-walk register budget) until it enters a brick that is
+     neither LOD-only nor marked "no smooth near", and only from there takes the field walk; a
+     field-walking ray that crosses into a run of cubes bricks may stay in the field walk (dev's
+     call, measured). Bars (i) and (ii) stand unchanged and are re-read on the split; a second
+     miss stops dev with the table again.
 
 ### Phase 4d: The owner's windowed check of the default
 - **Owner skill:** human
@@ -865,6 +871,11 @@ which no deterministic path reads.
     on to Phase 4c whatever the reading, and the bar is judged at Phase 4d with the frame ledger.
     Phase 4d's session logs the frame line on every run, because Phase 4a found the window's hit
     pass 2.3x to 3x the headless reading at the same size and view, unattributed.
+11. **Done-when 8's miss (owner, 2026-11-01, the recommended option).** At 9314221 the RTX read
+    `--crisp all` 0.911 / 1.836 ms hit / hit plus light against `face`'s 0.547 / 1.420 (+66.5 %
+    on the hit, bar 10 %) and `--crisp rock` 2.230 ms hit against a bar of 0.866; the Radeon
+    +109 % for `all`. The owner picked the split pipeline (the face walk until a brick that is
+    not cubes) over a per-band-cell bit or accepting the reading; done-when 8 is amended on it.
 
 ## Implementation log
 
